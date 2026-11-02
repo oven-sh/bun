@@ -6,9 +6,9 @@ use crate::tokens::{Token, TokenKind};
 use crate::utils::ast_utils::is_start_of_expression_statement;
 use crate::utils::estree_compat::{estree_span, get_node_by_range_index};
 
-/// typescript-eslint's `isStartOfExpressionStatementNeedingParentheses`: whether code that starts
-/// with `first_token` would, in the place of the node, be taken for a block, a class declaration or
-/// a function declaration.
+/// typescript-eslint's `isStartOfExpressionStatementNeedingParentheses`: true if code that starts
+/// with `first_token` would, in the node's position, parse as a block, a class declaration or a
+/// function declaration.
 pub fn is_start_of_expression_statement_needing_parentheses<'a>(
     node: impl Into<Node<'a>>,
     first_token: &Token<'_>,
@@ -17,8 +17,8 @@ pub fn is_start_of_expression_statement_needing_parentheses<'a>(
         && is_start_of_expression_statement(node)
 }
 
-/// typescript-eslint's `isStartOfArrowFunctionBodyNeedingParentheses`: whether code that starts
-/// with `first_token` would, in the place of the node, be taken for the block of an arrow function.
+/// typescript-eslint's `isStartOfArrowFunctionBodyNeedingParentheses`: true if code that starts
+/// with `first_token` would, in the node's position, parse as an arrow function's block.
 pub fn is_start_of_arrow_function_body_needing_parentheses<'a>(
     node: impl Into<Node<'a>>,
     first_token: &Token<'_>,
@@ -26,8 +26,7 @@ pub fn is_start_of_arrow_function_body_needing_parentheses<'a>(
     first_token.is_punctuator("{") && is_start_of_arrow_function_body(node.into())
 }
 
-/// Whether `node` is what the expression that is the body of an arrow function starts with,
-/// outside of any parentheses.
+/// True if an arrow function's expression body starts with `node`, outside any parentheses.
 fn is_start_of_arrow_function_body(node: Node<'_>) -> bool {
     let mut current = node;
     loop {
@@ -48,12 +47,12 @@ fn is_start_of_arrow_function_body(node: Node<'_>) -> bool {
     }
 }
 
-/// typescript-eslint's `needsPrecedingSemicolon`: whether a `(`, a `[` or a `` ` `` put where the
-/// node starts needs a `;` before it. The node is at the start of an expression statement, of a
-/// member of a class, or of the body of an arrow function.
+/// typescript-eslint's `needsPrecedingSemicolon`: true if a `(`, `[` or `` ` `` inserted where the
+/// node starts needs a `;` before it. The node is at the start of an expression statement, a class
+/// member or an arrow function's body.
 ///
-/// It is a copy of an earlier version of ESLint's, which `ast_utils::needs_preceding_semicolon` is
-/// the current one of: that knows about type syntax and class fields.
+/// It's a copy of an earlier version of ESLint's function. `ast_utils::needs_preceding_semicolon`
+/// is the current version, which handles type syntax and class fields.
 pub fn needs_preceding_semicolon<'a>(node: impl Into<Node<'a>>) -> bool {
     let node = node.into();
     let file = node.file();
@@ -65,8 +64,8 @@ pub fn needs_preceding_semicolon<'a>(node: impl Into<Node<'a>>) -> bool {
         return false;
     }
     let mut previous_node = get_node_by_range_index(file, previous.start());
-    // In `@d export class C {}` the `ExportNamedDeclaration` starts at the `export`, so nothing
-    // in it is found for a position in the decorator.
+    // In `@d export class C {}` the `ExportNamedDeclaration` starts at the `export`, so a position
+    // in the decorator doesn't find anything inside it.
     let exported = previous_node
         .ancestors()
         .filter_map(Node::as_stmt)
@@ -95,8 +94,8 @@ pub fn needs_preceding_semicolon<'a>(node: impl Into<Node<'a>>) -> bool {
     }
     if is_punctuator && previous.is("}") {
         return match previous_node {
-            // The `BlockStatement` of a `FunctionExpression` that is not the value of a
-            // `MethodDefinition`.
+            // The `BlockStatement` of a `FunctionExpression` that isn't a `MethodDefinition`'s
+            // value.
             Node::Func(func) => {
                 func.body_span()
                     .is_some_and(|body| body.end == previous.end())
@@ -138,7 +137,7 @@ pub fn needs_preceding_semicolon<'a>(node: impl Into<Node<'a>>) -> bool {
         };
     }
     if previous.kind() == TokenKind::String {
-        // The module specifier, which is not a node here.
+        // The module specifier, which isn't a node here.
         return !matches!(
             previous_statement,
             Some(StmtKind::ExportStar { .. } | StmtKind::ExportNamed(_) | StmtKind::Import(_))

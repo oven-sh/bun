@@ -1,8 +1,8 @@
-//! oxfmt's `sortTailwindcss`: where the order of classes comes from.
+//! oxfmt's `sortTailwindcss`: where the class order comes from.
 //!
-//! Only the Tailwind CSS of the project knows it, and that is JavaScript. The formatter asks for the order of each list of
-//! classes that it comes across. A file with a class that is not known yet is put aside. When all files have had their
-//! turn, one script answers for all those classes, and the files that were put aside are formatted again.
+//! Only the project's own Tailwind CSS knows the order, and that's JavaScript. The formatter looks up the order of each
+//! class list it finds. A file with a class that isn't known yet is set aside. Once every file has been visited, one
+//! script answers for all the unknown classes, and the files that were set aside are formatted again.
 
 use super::files::Kind;
 use crate::evaluate::{TAILWIND, evaluate_input};
@@ -20,17 +20,17 @@ use std::borrow::Cow;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-/// Which Tailwind is asked: the package in the directory `root`, loaded with one of these files.
+/// Identifies a Tailwind to ask: the package in the directory `root`, loaded with one of these files.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-struct Which {
+struct TailwindId {
     root: Vec<u8>,
     config: Option<Vec<u8>>,
     stylesheet: Option<Vec<u8>>,
-    /// `root` is `prettier-plugin-tailwindcss`, and the Tailwind that it brings along is asked.
+    /// `root` is `prettier-plugin-tailwindcss`, and the Tailwind bundled with it is asked.
     is_bundled: bool,
 }
 
-impl Which {
+impl TailwindId {
     fn entries(&self) -> Vec<(Vec<u8>, Json)> {
         let path = |path: &Option<Vec<u8>>| path.clone().map_or(Json::Null, Json::String);
         vec![
@@ -41,35 +41,35 @@ impl Which {
         ]
     }
 
-    /// Whether JavaScript, where a path is a string, can name the files.
+    /// True if JavaScript, where a path is a string, can represent these paths.
     fn is_utf8(&self) -> bool {
         let mut paths = (self.config.iter().chain(&self.stylesheet)).chain([&self.root]);
         paths.all(|it| strings::is_valid_utf8(it))
     }
 }
 
-/// What is found from a directory upwards.
+/// The result of searching upwards from a directory.
 #[derive(Clone)]
 struct Found {
-    /// The directory of the package `tailwindcss`.
+    /// The `tailwindcss` package's directory.
     root: Vec<u8>,
     is_version_4: bool,
-    /// Unless it is version 4: the nearest `tailwind.config.*`.
+    /// The nearest `tailwind.config.*`. Always `None` for version 4.
     config: Option<Vec<u8>>,
 }
 
-/// `package`: what Tailwind CSS is called.
+/// `package` is the name Tailwind CSS is installed under.
 fn find(directory: &[u8], package: &[u8]) -> Option<Found> {
-    // Only another package of the workspace may depend on it. pnpm and Bun's isolated linker still have one place for all
-    // packages of an installation.
-    let places: [&[u8]; 3] = [
+    // Maybe only another workspace package depends on it. pnpm and Bun's isolated linker still link every installed
+    // package into one shared directory.
+    let module_directories: [&[u8]; 3] = [
         b"node_modules/",
         b"node_modules/.pnpm/node_modules/",
         b"node_modules/.bun/node_modules/",
     ];
-    let root = places.iter().find_map(|place| {
+    let root = module_directories.iter().find_map(|module_directory| {
         paths::ancestors(directory)
-            .map(|it| paths::join(it, &[place, package].concat()))
+            .map(|it| paths::join(it, &[module_directory, package].concat()))
             .find(|it| fs::is_file(&paths::join(it, b"package.json")))
     })?;
     let names: [&[u8]; 4] = [
@@ -92,14 +92,14 @@ fn find(directory: &[u8], package: &[u8]) -> Option<Found> {
     })
 }
 
-/// The version of the package `name` that is loaded from `directory`.
+/// Returns the version of the package `name` as resolved from `directory`.
 pub(crate) fn version_of_package(name: &[u8], directory: &[u8]) -> Option<[u64; 3]> {
     let file = [b"node_modules/", name, b"/package.json"].concat();
     let package = paths::ancestors(directory).find_map(|it| fs::read(&paths::join(it, &file)).ok());
     version_in(&bun_lint::json::parse(&package?)?)
 }
 
-/// `version` in a `package.json`.
+/// Parses `version` from a `package.json`.
 pub(crate) fn version_in(package: &Json) -> Option<[u64; 3]> {
     let parsed = bun_semver::Version::parse_utf8(package.get(b"version")?.as_str()?);
     let version = parsed.version.min();
@@ -108,16 +108,17 @@ pub(crate) fn version_in(package: &Json) -> Option<[u64; 3]> {
         .then_some([version.major, version.minor, version.patch])
 }
 
-/// The classes in files for which the same Tailwind is asked, each as [`key_of`] has it.
+/// The classes from all files that use the same Tailwind, each normalized by [`key_of`].
 #[derive(Default)]
 struct Group {
-    /// The ranks are among all of them.
+    /// Each rank is relative to all the classes in the group.
     known: FxHashMap<Vec<u8>, Rank>,
-    /// Asked for, and not known.
+    /// Looked up but not known yet.
     missing: Vec<Vec<u8>>,
 }
 
-/// `class` as the script reads it, and names it in its answer: the question is JSON, where what is not UTF-8 is U+FFFD.
+/// Returns `class` as the script sees it and echoes it in its answer. The request is JSON, where invalid UTF-8 becomes
+/// U+FFFD.
 fn key_of(class: &[u8]) -> Cow<'_, [u8]> {
     if strings::is_valid_utf8(class) {
         return Cow::Borrowed(class);
@@ -130,38 +131,38 @@ fn key_of(class: &[u8]) -> Cow<'_, [u8]> {
 
 #[derive(Default)]
 struct Known {
-    /// For a package of another name than `tailwindcss`, that is behind the directory, and a NUL.
+    /// For a package not named `tailwindcss`, the key is the directory, a NUL, and the package name.
     by_directory: FxHashMap<Vec<u8>, Option<Found>>,
-    groups: FxHashMap<Which, Group>,
-    /// The package that files with the option lack: the first in the order of the names.
+    groups: FxHashMap<TailwindId, Group>,
+    /// The package that's missing for files with the option on. If there are several, the first in sort order.
     not_installed: Option<Vec<u8>>,
-    /// Why the Tailwind of files that have classes cannot be asked: the first in the order of the texts.
-    of_other_version: Option<Vec<u8>>,
+    /// Why the Tailwind for files with classes can't be asked. If there are several reasons, the first in sort order.
+    version_mismatch: Option<Vec<u8>>,
 }
 
-/// What a run knows about the order of classes.
+/// Everything a run has learned about class order.
 #[derive(Default)]
 pub(crate) struct Classes {
     known: Guarded<Known>,
 }
 
-/// [`Classes`], for the files of a directory.
-struct OfGroup {
+/// A view of [`Classes`] for the files in one directory.
+struct GroupOrders {
     classes: Arc<Classes>,
-    /// `Err`: why it cannot be asked.
-    which: Result<Which, Vec<u8>>,
+    /// `Err` holds the reason it can't be asked.
+    which: Result<TailwindId, Vec<u8>>,
 }
 
-impl std::fmt::Debug for OfGroup {
+impl std::fmt::Debug for GroupOrders {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("OfGroup")
+        f.write_str("GroupOrders")
     }
 }
 
-/// A lock is around all that changes.
-impl std::panic::RefUnwindSafe for OfGroup {}
+/// All mutable state is behind a lock.
+impl std::panic::RefUnwindSafe for GroupOrders {}
 
-impl Orders for OfGroup {
+impl Orders for GroupOrders {
     fn has_tailwind(&self) -> bool {
         self.which.is_ok()
     }
@@ -171,8 +172,8 @@ impl Orders for OfGroup {
         let which = match &self.which {
             Ok(which) => which,
             Err(why) => {
-                if known.of_other_version.as_ref().is_none_or(|it| why < it) {
-                    known.of_other_version = Some(why.clone());
+                if known.version_mismatch.as_ref().is_none_or(|it| why < it) {
+                    known.version_mismatch = Some(why.clone());
                 }
                 return None;
             }
@@ -198,14 +199,14 @@ impl Orders for OfGroup {
 }
 
 impl Known {
-    /// Takes in what the script has answered about `asked`, in that order. Returns what it says about each Tailwind that
-    /// cannot be asked, if there are classes that it has to be asked about.
-    fn take_in(&mut self, asked: Vec<Which>, answer: &Json) -> Vec<Vec<u8>> {
+    /// Stores the script's answers, which are in the same order as `asked`. Returns the error for each Tailwind that
+    /// failed to load and still has unknown classes.
+    fn store_answers(&mut self, asked: Vec<TailwindId>, answer: &Json) -> Vec<Vec<u8>> {
         let mut failures = Vec::new();
         let answers = (answer.get(b"groups").and_then(Json::as_array)).unwrap_or_default();
         for (which, answer) in asked.into_iter().zip(answers) {
             if let Some(error) = answer.get(b"error").and_then(Json::as_str) {
-                // It is not asked again, unless there are files for it.
+                // Drop the group, so it isn't asked again unless another file needs it.
                 let group = self.groups.remove(&which);
                 if group.is_some_and(|it| !it.missing.is_empty()) {
                     let error: &[u8] = match which.is_utf8() {
@@ -230,7 +231,7 @@ impl Known {
                 group.known.insert(class.clone(), rank);
             }
         }
-        // Whatever the order of the answers is.
+        // Sorted, so the output doesn't depend on the order of the answers.
         bun_collections::index_sort::sort_slice(&mut failures[..]);
         failures
     }
@@ -250,12 +251,13 @@ const FUNCTIONS: [&[u8]; 9] = [
     b"tv",
 ];
 
-/// What turns the sorting on.
+/// The source that turned sorting on.
 #[derive(Clone, Copy)]
 pub(crate) enum SetBy<'a> {
-    /// `[fmt]` or the flag. Paths, which only `[fmt]` has, are relative to this directory: where bunfig.toml is.
+    /// `[fmt]` or the flag. Only `[fmt]` can have paths, and they're relative to this directory, which contains
+    /// bunfig.toml.
     Bun(&'a [u8]),
-    /// An oxfmt config in this directory, which paths are relative to.
+    /// An oxfmt config in this directory. Paths are relative to it.
     Oxfmt(&'a [u8]),
     /// `prettier-plugin-tailwindcss` in a Prettier config. Paths are relative to this directory.
     Plugin(&'a [u8]),
@@ -269,8 +271,9 @@ impl<'a> SetBy<'a> {
     }
 }
 
-/// `value`, which is `sortTailwindcss` as JSON, with its paths from the root: it goes into one that something else sets.
-pub(crate) fn with_whole_paths(value: &[u8], set_by: SetBy) -> Vec<u8> {
+/// Returns `value`, which is `sortTailwindcss` as JSON, with its paths made absolute. Needed before merging it into a
+/// value from another source, whose paths have a different base.
+pub(crate) fn with_absolute_paths(value: &[u8], set_by: SetBy) -> Vec<u8> {
     let Some(mut entries) = bun_lint::json::parse(value).and_then(Json::into_object) else {
         return value.to_vec();
     };
@@ -289,9 +292,9 @@ pub(crate) fn with_whole_paths(value: &[u8], set_by: SetBy) -> Vec<u8> {
 
 const PLUGIN: &[u8] = b"prettier-plugin-tailwindcss";
 
-/// The options of `prettier-plugin-tailwindcss` and what they are called in `sortTailwindcss`: four strings, two lists of
-/// strings, two that are on or off.
-const OPTIONS_OF_PLUGIN: [(&[u8], &[u8]); 8] = [
+/// `prettier-plugin-tailwindcss` options and their names in `sortTailwindcss`: four strings, two string lists, two
+/// booleans. [`plugin_option`] relies on that order.
+const PLUGIN_OPTIONS: [(&[u8], &[u8]); 8] = [
     (b"tailwindConfig", b"config"),
     (b"tailwindStylesheet", b"stylesheet"),
     (b"tailwindEntryPoint", b"entryPoint"),
@@ -302,13 +305,10 @@ const OPTIONS_OF_PLUGIN: [(&[u8], &[u8]); 8] = [
     (b"tailwindPreserveDuplicates", b"preserveDuplicates"),
 ];
 
-/// `name`, which a Prettier config sets to `value`, which is JSON, as an entry of `sortTailwindcss`. `None`: it is no option
-/// of the plugin. `Err`: what Prettier says about a value of the wrong type.
-pub(crate) fn option_of_plugin(
-    name: &[u8],
-    value: &[u8],
-) -> Option<Result<(Vec<u8>, Json), Vec<u8>>> {
-    let at = OPTIONS_OF_PLUGIN.iter().position(|it| it.0 == name)?;
+/// Converts the Prettier config option `name`, set to the JSON `value`, to a `sortTailwindcss` entry. `None` if it
+/// isn't one of the plugin's options. `Err` is Prettier's message for a value of the wrong type.
+pub(crate) fn plugin_option(name: &[u8], value: &[u8]) -> Option<Result<(Vec<u8>, Json), Vec<u8>>> {
+    let at = PLUGIN_OPTIONS.iter().position(|it| it.0 == name)?;
     let value = bun_lint::json::parse(value)?;
     let is_string = |it: &Json| matches!(it, Json::String(_));
     let (is_right, expected): (bool, &[u8]) = match at {
@@ -320,17 +320,17 @@ pub(crate) fn option_of_plugin(
         _ => (matches!(value, Json::Bool(_)), b"true or false"),
     };
     if is_right {
-        return Some(Ok((OPTIONS_OF_PLUGIN[at].1.to_vec(), value)));
+        return Some(Ok((PLUGIN_OPTIONS[at].1.to_vec(), value)));
     }
-    let mut refusal = [b"Invalid ", name, b" value. Expected ", expected].concat();
-    refusal.extend_from_slice(b", but received ");
-    super::config::write_as_shown(&mut refusal, &value);
-    refusal.push(b'.');
-    Some(Err(refusal))
+    let mut message = [b"Invalid ", name, b" value. Expected ", expected].concat();
+    message.extend_from_slice(b", but received ");
+    super::config::write_as_shown(&mut message, &value);
+    message.push(b'.');
+    Some(Err(message))
 }
 
-/// What the plugin says about its options, which are `entries` of `sortTailwindcss`.
-pub(crate) fn warning_of_plugin(entries: &[(Vec<u8>, Json)]) -> Option<Vec<u8>> {
+/// Returns the plugin's warning about its options, given as `sortTailwindcss` `entries`.
+pub(crate) fn plugin_warning(entries: &[(Vec<u8>, Json)]) -> Option<Vec<u8>> {
     let get = |key: &[u8]| {
         let path = entries.iter().find(|it| it.0 == key)?.1.as_str()?;
         (!path.is_empty()).then_some(path)
@@ -348,8 +348,9 @@ pub(crate) fn warning_of_plugin(entries: &[(Vec<u8>, Json)]) -> Option<Vec<u8>> 
     Some([&start[..], old, b"`."].concat())
 }
 
-/// Resolves `sortTailwindcss` for a file in `directory`. `value` is the option as JSON, and it isn't `false`. `None`: the
-/// package is not installed, so classes stay as they are. A shared config turns the option on for projects without Tailwind.
+/// Resolves `sortTailwindcss` for a file in `directory`. `value` is the option as JSON, and it isn't `false`. `None` if
+/// the package isn't installed, so classes aren't sorted. That isn't an error, because a shared config can turn the
+/// option on for projects without Tailwind.
 pub(crate) fn for_file(
     classes: &Arc<Classes>,
     value: &[u8],
@@ -365,7 +366,7 @@ pub(crate) fn for_file(
             .collect()
     };
     let path_at = |key: &[u8]| {
-        // The plugin takes an empty one for none.
+        // The plugin treats an empty path as unset.
         let path = get(key)?.as_str().filter(|it| !it.is_empty())?;
         Some(paths::resolve(base, &paths::from_native(path)))
     };
@@ -393,8 +394,9 @@ pub(crate) fn for_file(
         .or_else(|| sheets.into_iter().next());
     let config = config.into_iter().next();
     let follows_plugin = matches!(set_by, SetBy::Plugin(_));
-    // The plugin brings versions 3 and 4 along, for a project without the package and for an option of the other version.
-    let of_other_version: Option<&[u8]> = match &found {
+    // The plugin bundles versions 3 and 4, for projects without the package and for options meant for the other
+    // version.
+    let version_mismatch: Option<&[u8]> = match &found {
         Some(found) if found.is_version_4 && config.is_some() && stylesheet.is_none() => {
             Some(b"tailwindConfig is for Tailwind CSS 3")
         }
@@ -403,12 +405,12 @@ pub(crate) fn for_file(
         }
         _ => None,
     };
-    let bundled = match follows_plugin && (found.is_none() || of_other_version.is_some()) {
+    let bundled = match follows_plugin && (found.is_none() || version_mismatch.is_some()) {
         true => find(PLUGIN),
         false => None,
     };
     let is_bundled = bundled.is_some();
-    let which = match (bundled.or(found), of_other_version) {
+    let which = match (bundled.or(found), version_mismatch) {
         (Some(found), Some(option)) if follows_plugin && !is_bundled => Err([
             option,
             b", and another version is in ",
@@ -416,7 +418,7 @@ pub(crate) fn for_file(
             b"\n  Run bun add -d prettier-plugin-tailwindcss, which brings its own",
         ]
         .concat()),
-        (Some(found), _) => Ok(Which {
+        (Some(found), _) => Ok(TailwindId {
             root: found.root,
             config: config.or_else(|| found.config.filter(|_| stylesheet.is_none())),
             stylesheet,
@@ -440,7 +442,7 @@ pub(crate) fn for_file(
         preserves_duplicates: is_on(b"preserveDuplicates"),
         follows_plugin,
         oxc: Oxc::Absent,
-        orders: Box::new(OfGroup {
+        orders: Box::new(GroupOrders {
             classes: Arc::clone(classes),
             which,
         }),
@@ -449,39 +451,39 @@ pub(crate) fn for_file(
 }
 
 impl Classes {
-    /// Whether there are files for which the Tailwind that the plugin brings along is asked.
-    pub(crate) fn asks_plugin(&self) -> bool {
+    /// True if some files use the Tailwind bundled with the plugin.
+    pub(crate) fn uses_bundled_tailwind(&self) -> bool {
         let known = self.known.lock();
         let mut found = known.by_directory.iter().filter(|it| it.1.is_some());
         found.any(|it| it.0.ends_with(PLUGIN))
     }
 
-    /// For `--doctor`: there are files whose classes stay as they are.
+    /// The `--doctor` note that some files' classes aren't sorted.
     pub(crate) fn note(&self) -> Option<Vec<u8>> {
         let known = self.known.lock();
         let package = known.not_installed.as_deref()?;
         let has_some = known.by_directory.values().any(Option::is_some);
-        let (places, there): (&[u8], &[u8]) = match has_some {
+        let (in_some_directories, there): (&[u8], &[u8]) = match has_some {
             true => (b" in some directories", b" there"),
             false => (b"", b""),
         };
         let start = b"Tailwind CSS classes are not sorted";
         let why = b" is not installed";
-        Some([start, places, b" (", package, why, there, b")"].concat())
+        Some([start, in_some_directories, b" (", package, why, there, b")"].concat())
     }
 
-    /// Asks Tailwind about the classes that are not known. `Err`: for the user: there are files for which it cannot be
-    /// asked. What it says about the others is known all the same.
+    /// Asks Tailwind about the unknown classes. `Err` is the message to print when Tailwind can't be asked for some
+    /// files. The answers for the other files are still stored.
     pub(crate) fn ask(&self, environment: &Environment) -> Result<(), Vec<u8>> {
         let fail = |why: &[u8]| [b"sortTailwindcss: ", why].concat();
         let mut known = self.known.lock();
-        let of_other_version = known.of_other_version.as_deref().map(fail);
+        let version_mismatch = known.version_mismatch.as_deref().map(fail);
         if !known.groups.values().any(|it| !it.missing.is_empty()) {
-            return of_other_version.map_or(Ok(()), Err);
+            return version_mismatch.map_or(Ok(()), Err);
         }
-        // The ranks are among all classes that are asked about, so those that are known are asked about again.
-        // In an order that is the same on every machine.
-        let mut asked: Vec<Which> = known.groups.keys().cloned().collect();
+        // Ranks are relative to all the classes in one request, so the known classes are sent again. Sorted, so the
+        // request is the same on every machine.
+        let mut asked: Vec<TailwindId> = known.groups.keys().cloned().collect();
         bun_collections::index_sort::sort_slice(&mut asked[..]);
         let groups = asked.iter().map(|which| {
             let group = known.groups.get(which);
@@ -503,8 +505,13 @@ impl Classes {
         );
         let answer = evaluate_input(environment, TAILWIND, &environment.cwd, &text)
             .map_err(|why| fail(&why))?;
-        let failures: Vec<Vec<u8>> = (of_other_version.into_iter())
-            .chain(known.take_in(asked, &answer).iter().map(|it| fail(it)))
+        let failures: Vec<Vec<u8>> = (version_mismatch.into_iter())
+            .chain(
+                known
+                    .store_answers(asked, &answer)
+                    .iter()
+                    .map(|it| fail(it)),
+            )
             .collect();
         match failures.is_empty() {
             true => Ok(()),
@@ -513,8 +520,8 @@ impl Classes {
     }
 }
 
-/// Takes `sortTailwindcss` from `options`, which are for a file of this kind, if oxfmt does not sort in that language. The
-/// plugin of Prettier sorts in LWC and in MDX too.
+/// Removes `sortTailwindcss` from `options` if oxfmt doesn't sort classes in files of this `kind`. The Prettier plugin
+/// also sorts in LWC and MDX.
 pub(crate) fn only_where_sorted(options: &mut FormatOptions, kind: Option<Kind>) {
     use bun_format::html::Parser;
     let is_sorted = match kind {

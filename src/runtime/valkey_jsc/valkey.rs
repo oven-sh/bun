@@ -16,14 +16,6 @@ use super::protocol_jsc::{resp_value_to_js, valkey_error_to_js};
 use super::valkey_command_body as command;
 use super::valkey_command_body::{Args, Command};
 
-/// Codegen target name. `valkey.classes.ts` declares `name: "RedisClient"`, so
-/// `generate-classes.ts` resolves the native backing struct to
-/// `crate::valkey_jsc::valkey::RedisClient` and emits ~200
-/// `RedisClient::method(…)` thunks against it. The actual host type is
-/// `JSValkeyClient` (sibling `js_valkey.rs`); re-export it under the codegen
-/// spelling here so the generated `pub use` and prototype thunks resolve.
-pub(crate) use super::js_valkey_body::JSValkeyClient as RedisClient;
-
 bun_output::define_scoped_log!(debug, Redis, visible);
 
 /// Connection flags to track Valkey client state
@@ -542,6 +534,22 @@ impl ValkeyClient {
         Self::reject_all_pending_commands(&mut self.in_flight, &mut entries, &global_this, jsvalue)
     }
 
+    /// The open socket's TLS session broke, and uSockets closes it next: what was sent over it
+    /// hears why, and the rest is `on_close`'s, like any lost connection. The caller enters no
+    /// event loop scope, so the rejections are only observed once `on_close` has run.
+    pub(crate) fn on_tls_session_error(
+        &mut self,
+        ssl_error: &uws::us_bun_verify_error_t,
+    ) -> JsResult<()> {
+        if self.in_flight.is_empty() {
+            return Ok(());
+        }
+        let global_this = self.global_object();
+        let jsvalue = crate::socket::uws_jsc::verify_error_to_js(ssl_error, &global_this);
+        let mut entries = command::entry::Queue::new();
+        Self::reject_all_pending_commands(&mut self.in_flight, &mut entries, &global_this, jsvalue)
+    }
+
     /// Flush pending data to the socket
     pub(crate) fn flush_data(&mut self) -> bool {
         let chunk = self.write_buffer.remaining();
@@ -551,7 +559,7 @@ impl ValkeyClient {
         let wrote = self.socket.write(chunk);
         if wrote > 0 {
             self.write_buffer
-                .consume(u32::try_from(wrote).expect("int cast"));
+                .consume(usize::try_from(wrote).expect("int cast"));
         }
         self.write_buffer.len() > 0
     }
@@ -810,8 +818,7 @@ impl ValkeyClient {
                     return Ok(());
                 }
 
-                self.read_buffer
-                    .consume(u32::try_from(bytes_consumed).expect("int cast"));
+                self.read_buffer.consume(bytes_consumed);
                 self.reply_scanner.reset();
 
                 let mut value_to_handle = value; // Use temp var for defer

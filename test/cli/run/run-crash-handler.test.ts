@@ -1,6 +1,17 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isGlibc,
+  isLinux,
+  isPosix,
+  isWindows,
+  mergeWindowEnvs,
+  tempDir,
+} from "harness";
 import { rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import path from "path";
@@ -127,6 +138,40 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
     expect(proc.signalCode).toBe(expectedSignal);
     expect(exitCode).not.toBe(0);
     void stdout;
+  });
+});
+
+// mimalloc provides `operator new` only on Linux without ASAN.
+describe.if(isLinux && !isASAN)("operator new that fails to allocate", () => {
+  test.concurrent("reports out of memory", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        path.join(import.meta.dir, "fixture-crash.js"),
+        "operatorNew",
+        "--debug-crash-handler-use-trace-string",
+      ],
+      env: noReportEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("Bun has run out of memory");
+    expect(proc.signalCode).toBe("SIGABRT");
+    expect(exitCode).not.toBe(0);
+  });
+
+  // `std::stable_sort` retries with half the buffer when this form returns null.
+  test.concurrent("returns null from new (std::nothrow)", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `console.log(require("bun:internal-for-testing").crash_handler.operatorNew(true))`],
+      env: noReportEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(stdout).toBe("true\n");
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -579,6 +624,64 @@ describe.if(isPosix)("process.kill() aimed at the process itself is not reported
     expect(stderr).toContain("abort() called");
     expect(stderr).toContain("oh no: Bun has crashed");
     expect({ exitCode, exited }).toEqual({ exitCode: null, exited: diedFrom("SIGABRT") });
+  });
+});
+
+// A preloaded shim fails the syscall. The `ulimit -n` value that makes the loop fail first differs between builds.
+const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+describe.skipIf(!isGlibc || !cc)("out of file descriptors while creating the event loop", () => {
+  const shim = /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <stdlib.h>
+#include <string.h>
+
+static int should_fail(const char *name) {
+  if (strcmp(getenv("FAIL_LOOP_SYSCALL"), name) != 0) return 0;
+  errno = strcmp(getenv("FAIL_LOOP_ERRNO"), "ENFILE") == 0 ? ENFILE : EMFILE;
+  return 1;
+}
+
+int epoll_create1(int flags) {
+  if (should_fail("epoll_create1")) return -1;
+  return ((int (*)(int)) dlsym(RTLD_NEXT, "epoll_create1"))(flags);
+}
+
+int eventfd(unsigned int initval, int flags) {
+  if (should_fail("eventfd")) return -1;
+  return ((int (*)(unsigned int, int)) dlsym(RTLD_NEXT, "eventfd"))(initval, flags);
+}
+`;
+
+  test.concurrent.each([
+    ["epoll_create1", "EMFILE", "bun ran out of file descriptors (ProcessFdQuotaExceeded)"],
+    ["eventfd", "EMFILE", "bun ran out of file descriptors (ProcessFdQuotaExceeded)"],
+    ["eventfd", "ENFILE", "Your computer ran out of file descriptors (SystemFdQuotaExceeded)"],
+  ])("%s failing with %s exits 1 with the file descriptor error", async (syscall, errno, message) => {
+    using dir = tempDir("loop-init-fd-limit", {
+      "shim.c": shim,
+      "app.js": "console.log('entry point ran');\n",
+    });
+    const shimPath = path.join(String(dir), "shim.so");
+    const compiled = Bun.spawnSync({
+      cmd: [cc!, "-shared", "-fPIC", "-o", shimPath, "shim.c", "-ldl"],
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    expect(compiled.stderr.toString()).toBe("");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "app.js", "--debug-crash-handler-use-trace-string"],
+      cwd: String(dir),
+      env: { ...noReportEnv, LD_PRELOAD: shimPath, FAIL_LOOP_SYSCALL: syscall, FAIL_LOOP_ERRNO: errno },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr }).toEqual({ stdout: "", stderr: expect.stringContaining(message) });
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(1);
   });
 });
 

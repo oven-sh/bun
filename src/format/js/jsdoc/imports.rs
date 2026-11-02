@@ -1,4 +1,4 @@
-//! `@import` tags: those for the same module become one, and they are sorted.
+//! `@import` tags: merges the ones for the same module and sorts them.
 
 use super::line_buffer::LineBuffer;
 use super::text::{join, lines, trim_end_matches};
@@ -65,7 +65,7 @@ fn cmp_ascii_case_insensitive(a: &[u8], b: &[u8]) -> Ordering {
         .then(a.len().cmp(&b.len()))
 }
 
-/// What a specifier is sorted by: `B1` of `B as B1`.
+/// Returns a specifier's sort key: the `B1` of `B as B1`.
 fn import_specifier_sort_key(specifier: &[u8]) -> &[u8] {
     match strings::index_of(specifier, b" as ") {
         Some(index) => strings::trim_unicode_whitespace(&specifier[index + 4..]),
@@ -149,7 +149,7 @@ fn format_import_lines(import: &ImportInfo, quote: u8, content_lines: &mut LineB
     out.push(quote);
 }
 
-/// The lines for all `@import` tags of `tags` that can be parsed, and which of `tags` those are.
+/// Returns the lines for all the `@import` tags in `tags` that can be parsed, plus their indices in `tags`.
 pub(super) fn process_import_tags(
     tags: &[(JSDocTag<'_>, &[u8])],
     quote_style: QuoteStyle,

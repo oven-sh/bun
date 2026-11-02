@@ -80,7 +80,7 @@ pub(crate) fn write_switch_case<'a>(case: Case<'a>, f: &mut Formatter<'a>) {
     if first_statement.is_none() {
         return;
     }
-    // The `{` of a block that is all there is goes on the line of the `case`.
+    // If a block is the only statement, its `{` goes on the `case`'s line.
     match only_block {
         Some(_) => write!(f, [space(), FormatStatements(consequent)]),
         None => write!(

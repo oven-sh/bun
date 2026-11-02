@@ -1,0 +1,132 @@
+# A string that is not there a letter past the end goes into typed places.
+# FORM: AsRead
+# RUN: pipeline RemoveRedundantBarriers
+
+module m0 path="string-not-letter-past-end-typed-places.ts" displayPath="string-not-letter-past-end-typed-places.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="value" module=m0 declared={type=undefined|null|string|absent flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = String string="abc"
+    v3 = Convert v2 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v4 = Integer integer=9
+    v5 = ElemGet v3, v4
+    v6 = Convert v5 declared={type=undefined|null|string flags=[OmitsNull]} illTypedCause=FromLooseType
+    PutModuleVariable v6 variable=g0
+    v8 = String string="typeof "
+    v9 = TypeOf v6
+    v10 = Add v8, v9
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="console" [isFreeName]
+    v13 = Convert v12 declared={type=builtin(Console) flags=[IsExpected]}
+    v14 = PropGet v13 key="log"
+    v15 = Convert v14 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v16 = String string="is undefined "
+    v17 = TypeTest v6 testedType=undefined
+    v18 = Add v16, v17
+    v19 = Call v15, v13, v18 calleeKey="log" calleeName="console.log"
+    v20 = Builtin builtin=GlobalThis
+    v21 = PropGet v20 key="console" [isFreeName]
+    v22 = Convert v21 declared={type=builtin(Console) flags=[IsExpected]}
+    v23 = PropGet v22 key="log"
+    v24 = Convert v23 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v25 = String string="is empty "
+    v26 = String string=""
+    v27 = StrictEq v6, v26
+    v28 = Add v25, v27
+    v29 = Call v24, v22, v28 calleeKey="log" calleeName="console.log"
+    v30 = String string="!"
+    v31 = Add v6, v30
+    v32 = String string="?? "
+    v33 = TypeTest v6 testedType=undefined|null
+    Branch v33 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v34):
+    v35 = String string="nothing"
+    Jump -> next b3(v35, v34)
+  b2(v36):
+    Jump -> next b3(v36, v36)
+  b3(v37, v38: undefined|null|string):
+    v39 = Add v32, v37
+    v40 = Call v1, -, v38 calleeName="pass"
+    v41 = Call v1, -, v38 calleeName="pass"
+    v42 = NewClosure function=f2
+    v43 = Convert v42 declared={type=undefined|null|function|f2 flags=[OmitsNull, OmitsUndefined]}
+    v44 = Call v43 calleeName="later"
+    Jump -> next b4()
+  b4() handler=b6():
+    Jump -> next b5()
+  b5():
+    Jump -> next b7()
+  b6() role=CatchHandler:
+    Jump -> next b7()
+  b7():
+    Jump -> next b8()
+  b8() handler=b10():
+    Jump -> next b9()
+  b9():
+    Jump -> next b11()
+  b10() role=CatchHandler:
+    Jump -> next b11()
+  b11():
+    v45 = Undefined
+    Return v45
+}
+function f1 name="pass" module=m0 position=383 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="later" module=m0 position=1625 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f3] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="value"
+    v2 = String string="?"
+    v3 = Add v1, v2
+    v4 = Convert v3 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Return v4
+}
+function f3 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0 later
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "abc" @Cell = String string="abc"
+# CHECK-NEXT: v1: 9 @Int32 = Integer integer=9
+# CHECK-NEXT: v2: undefined|string @JSValue = StringRangeCharacterOrUndefined v0, -, -, v1
+# CHECK-NEXT: PutModuleVariable v2 variable=g0
+# CHECK-NEXT: v4: "typeof " @Cell = String string="typeof "
+# CHECK-NEXT: v5: string @Cell = TypeOf v2
+# CHECK-NEXT: v6: string @Cell = Add v4, v5 form=Strings
+# CHECK-NEXT: v7: "is undefined " @Cell = String string="is undefined "
+# CHECK-NEXT: v8: boolean @Boolean = TypeTest v2 testedType=undefined
+# CHECK-NEXT: v9: string @Cell = Add v7, v8 form=StringAndPrimitive
+# CHECK-NEXT: v10: undefined @JSValue = CallBuiltin -, v9 overload=ConsoleLog/0 accessSite=3
+# CHECK-NEXT: v11: "is empty " @Cell = String string="is empty "
+# CHECK-NEXT: v12: false @JSValue = Boolean
+# CHECK-NEXT: v13: string @Cell = Add v11, v12 form=StringAndPrimitive
+# CHECK-NEXT: v14: undefined @JSValue = CallBuiltin -, v13 overload=ConsoleLog/0 accessSite=6
+# CHECK-NEXT: v15: "!" @Cell = String string="!"
+# CHECK-NEXT: v16: string @Cell = Add v2, v15 form=StringAndPrimitive
+# CHECK-NEXT: v17: boolean @Boolean = TypeTest v2 testedType=undefined|null
+# CHECK-NEXT: TestAndBranch v17 -> taken b1(), notTaken b2(| 0)
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v18: "nothing" @Cell = String string="nothing"
+# CHECK-NEXT: Jump -> next b3(v18)
+# CHECK-NEXT: b2(v19: string @Cell):
+# CHECK-NEXT: Jump -> next b3(v19)
+# CHECK-NEXT: b3(v20: string @Cell):
+# CHECK-NEXT: v21: "?? " @Cell = String string="?? "
+# CHECK-NEXT: v22: string @Cell = Add v21, v20 form=Strings
+# CHECK-NEXT: v23: f1 @Cell = NewClosure function=f1 allocationSite=0 storage=Frame closureForm=Slim
+# CHECK-NEXT: v24: undefined|null|string @JSValue = Call v23, -, v2 calleeName="pass" accessSite=7 callees=[f1]
+# CHECK-NEXT: v25: undefined|null|string @JSValue = Call v23, -, v2 calleeName="pass" accessSite=8 callees=[f1]
+# CHECK-NEXT: v26: string @Cell = CallDirect function=f2 accessSite=9
+# CHECK-NEXT: v27: undefined @JSValue = Undefined
+# CHECK-NEXT: Return v27
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="later"
+# CHECK: module=m0 position=1625 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f3] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: undefined|string @JSValue = GetModuleVariable variable=g0
+# CHECK-NEXT: v1: "?" @Cell = String string="?"
+# CHECK-NEXT: v2: string @Cell = Add v0, v1 form=StringAndPrimitive
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }

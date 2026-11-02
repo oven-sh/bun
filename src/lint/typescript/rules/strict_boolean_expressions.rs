@@ -28,111 +28,111 @@ pub struct StrictBooleanExpressions {
     allow_string: bool,
 }
 
-const CONDITION_ERROR_ANY: Message = Message::new(
+const CONDITION_ERROR_ANY: &Message = &Message::new(
     "conditionErrorAny",
     "Unexpected any value in {{context}}. An explicit comparison or type conversion is required.",
 );
-const CONDITION_ERROR_NULLABLE_BOOLEAN: Message = Message::new(
+const CONDITION_ERROR_NULLABLE_BOOLEAN: &Message = &Message::new(
     "conditionErrorNullableBoolean",
     "Unexpected nullable boolean value in {{context}}. Please handle the nullish case explicitly.",
 );
-const CONDITION_ERROR_NULLABLE_ENUM: Message = Message::new(
+const CONDITION_ERROR_NULLABLE_ENUM: &Message = &Message::new(
     "conditionErrorNullableEnum",
     "Unexpected nullable enum value in {{context}}. Please handle the nullish/zero/NaN cases explicitly.",
 );
-const CONDITION_ERROR_NULLABLE_NUMBER: Message = Message::new(
+const CONDITION_ERROR_NULLABLE_NUMBER: &Message = &Message::new(
     "conditionErrorNullableNumber",
     "Unexpected nullable number value in {{context}}. Please handle the nullish/zero/NaN cases explicitly.",
 );
-const CONDITION_ERROR_NULLABLE_OBJECT: Message = Message::new(
+const CONDITION_ERROR_NULLABLE_OBJECT: &Message = &Message::new(
     "conditionErrorNullableObject",
     "Unexpected nullable object value in {{context}}. An explicit null check is required.",
 );
-const CONDITION_ERROR_NULLABLE_STRING: Message = Message::new(
+const CONDITION_ERROR_NULLABLE_STRING: &Message = &Message::new(
     "conditionErrorNullableString",
     "Unexpected nullable string value in {{context}}. Please handle the nullish/empty cases explicitly.",
 );
-const CONDITION_ERROR_NULLISH: Message = Message::new(
+const CONDITION_ERROR_NULLISH: &Message = &Message::new(
     "conditionErrorNullish",
     "Unexpected nullish value in conditional. The condition is always false.",
 );
-const CONDITION_ERROR_NUMBER: Message = Message::new(
+const CONDITION_ERROR_NUMBER: &Message = &Message::new(
     "conditionErrorNumber",
     "Unexpected number value in {{context}}. An explicit zero/NaN check is required.",
 );
-const CONDITION_ERROR_OBJECT: Message = Message::new(
+const CONDITION_ERROR_OBJECT: &Message = &Message::new(
     "conditionErrorObject",
     "Unexpected object value in {{context}}. The condition is always true.",
 );
-const CONDITION_ERROR_OTHER: Message = Message::new(
+const CONDITION_ERROR_OTHER: &Message = &Message::new(
     "conditionErrorOther",
     "Unexpected value in conditional. A boolean expression is required.",
 );
-const CONDITION_ERROR_STRING: Message = Message::new(
+const CONDITION_ERROR_STRING: &Message = &Message::new(
     "conditionErrorString",
     "Unexpected string value in {{context}}. An explicit empty string check is required.",
 );
-const CONDITION_FIX_CAST_BOOLEAN: Message = Message::new(
+const CONDITION_FIX_CAST_BOOLEAN: &Message = &Message::new(
     "conditionFixCastBoolean",
     "Explicitly convert value to a boolean (`Boolean(value)`)",
 );
-const CONDITION_FIX_COMPARE_ARRAY_LENGTH_NONZERO: Message = Message::new(
+const CONDITION_FIX_COMPARE_ARRAY_LENGTH_NONZERO: &Message = &Message::new(
     "conditionFixCompareArrayLengthNonzero",
     "Change condition to check array's length (`value.length > 0`)",
 );
-const CONDITION_FIX_COMPARE_ARRAY_LENGTH_ZERO: Message = Message::new(
+const CONDITION_FIX_COMPARE_ARRAY_LENGTH_ZERO: &Message = &Message::new(
     "conditionFixCompareArrayLengthZero",
     "Change condition to check array's length (`value.length === 0`)",
 );
-const CONDITION_FIX_COMPARE_EMPTY_STRING: Message = Message::new(
+const CONDITION_FIX_COMPARE_EMPTY_STRING: &Message = &Message::new(
     "conditionFixCompareEmptyString",
     "Change condition to check for empty string (`value !== \"\"`)",
 );
-const CONDITION_FIX_COMPARE_FALSE: Message = Message::new(
+const CONDITION_FIX_COMPARE_FALSE: &Message = &Message::new(
     "conditionFixCompareFalse",
     "Change condition to check if false (`value === false`)",
 );
-const CONDITION_FIX_COMPARE_NAN: Message = Message::new(
+const CONDITION_FIX_COMPARE_NAN: &Message = &Message::new(
     "conditionFixCompareNaN",
     "Change condition to check for NaN (`!Number.isNaN(value)`)",
 );
-const CONDITION_FIX_COMPARE_NULLISH: Message = Message::new(
+const CONDITION_FIX_COMPARE_NULLISH: &Message = &Message::new(
     "conditionFixCompareNullish",
     "Change condition to check for null/undefined (`value != null`)",
 );
-const CONDITION_FIX_COMPARE_STRING_LENGTH: Message = Message::new(
+const CONDITION_FIX_COMPARE_STRING_LENGTH: &Message = &Message::new(
     "conditionFixCompareStringLength",
     "Change condition to check string's length (`value.length !== 0`)",
 );
-const CONDITION_FIX_COMPARE_TRUE: Message = Message::new(
+const CONDITION_FIX_COMPARE_TRUE: &Message = &Message::new(
     "conditionFixCompareTrue",
     "Change condition to check if true (`value === true`)",
 );
-const CONDITION_FIX_COMPARE_ZERO: Message = Message::new(
+const CONDITION_FIX_COMPARE_ZERO: &Message = &Message::new(
     "conditionFixCompareZero",
     "Change condition to check for 0 (`value !== 0`)",
 );
-const CONDITION_FIX_DEFAULT_EMPTY_STRING: Message = Message::new(
+const CONDITION_FIX_DEFAULT_EMPTY_STRING: &Message = &Message::new(
     "conditionFixDefaultEmptyString",
     "Explicitly treat nullish value the same as an empty string (`value ?? \"\"`)",
 );
-const CONDITION_FIX_DEFAULT_FALSE: Message = Message::new(
+const CONDITION_FIX_DEFAULT_FALSE: &Message = &Message::new(
     "conditionFixDefaultFalse",
     "Explicitly treat nullish value the same as false (`value ?? false`)",
 );
-const CONDITION_FIX_DEFAULT_ZERO: Message = Message::new(
+const CONDITION_FIX_DEFAULT_ZERO: &Message = &Message::new(
     "conditionFixDefaultZero",
     "Explicitly treat nullish value the same as 0 (`value ?? 0`)",
 );
-const EXPLICIT_BOOLEAN_RETURN_TYPE: Message = Message::new(
+const EXPLICIT_BOOLEAN_RETURN_TYPE: &Message = &Message::new(
     "explicitBooleanReturnType",
     "Add an explicit `boolean` return type annotation.",
 );
-const NO_STRICT_NULL_CHECK: Message = Message::new(
+const NO_STRICT_NULL_CHECK: &Message = &Message::new(
     "noStrictNullCheck",
     "This rule requires the `strictNullChecks` compiler option to be turned on to function correctly.",
 );
-const PREDICATE_CANNOT_BE_ASYNC: Message = Message::new(
+const PREDICATE_CANNOT_BE_ASYNC: &Message = &Message::new(
     "predicateCannotBeAsync",
     "Predicate function should not be 'async'; expected a boolean return type.",
 );
@@ -153,7 +153,7 @@ enum ConditionError {
 }
 
 impl ConditionError {
-    fn message(self) -> Message {
+    fn message(self) -> &'static Message {
         match self {
             ConditionError::Any => CONDITION_ERROR_ANY,
             ConditionError::NullableBoolean => CONDITION_ERROR_NULLABLE_BOOLEAN,
@@ -187,14 +187,14 @@ const TRUTHY_STRING: VariantTypes = 1 << 10;
 /// A call of `getWrappingFixer` whose `wrap` is `` code => `${before}${code}${after}` ``.
 #[derive(Copy, Clone)]
 struct Suggestion {
-    message: Message,
-    /// `node: node.parent, innerNode: node`: the `!` around the node is replaced too.
+    message: &'static Message,
+    /// `node: node.parent, innerNode: node`, which also replaces the `!` around the node.
     replaces_negation: bool,
     before: &'static str,
     after: &'static str,
 }
 
-const fn wrap(message: Message, before: &'static str, after: &'static str) -> Suggestion {
+const fn wrap(message: &'static Message, before: &'static str, after: &'static str) -> Suggestion {
     Suggestion {
         message,
         replaces_negation: false,
@@ -204,7 +204,7 @@ const fn wrap(message: Message, before: &'static str, after: &'static str) -> Su
 }
 
 const fn wrap_in_place_of_negation(
-    message: Message,
+    message: &'static Message,
     before: &'static str,
     after: &'static str,
 ) -> Suggestion {
@@ -278,7 +278,7 @@ fn is_logical_negation_expression(node: Node) -> bool {
 }
 
 fn is_array_length_expression(node: Expr) -> bool {
-    // All of an optional chain is a `ChainExpression`, not a `MemberExpression`.
+    // A whole optional chain is a `ChainExpression`, not a `MemberExpression`.
     if node.is_chain_root() {
         return false;
     }
@@ -300,7 +300,7 @@ fn is_branded_boolean(ty: Type) -> bool {
             .any(|it| it.has_flags(TypeFlags::BOOLEAN.union(TypeFlags::BOOLEAN_LITERAL)))
 }
 
-/// Its type is `boolean`, `true` or `false`, whatever its operands are.
+/// True if the type is `boolean`, `true` or `false` regardless of the operands.
 fn is_always_boolean(node: Expr) -> bool {
     match node.kind() {
         ExprKind::True | ExprKind::False => true,
@@ -322,8 +322,8 @@ fn is_always_boolean(node: Expr) -> bool {
     }
 }
 
-/// Whether what listens for the parent of the logical expression `node` traverses `node`. Upstream
-/// finds it among its `traversedNodes` then, as a parent comes before its children.
+/// True if the listener for the logical expression `node`'s parent already traverses `node`. Upstream then finds `node`
+/// in its `traversedNodes`, because a parent is visited before its children.
 fn is_traversed_from_parent(node: Expr) -> bool {
     if node.with_jsdoc_cast() != node {
         return false;
@@ -333,7 +333,7 @@ fn is_traversed_from_parent(node: Expr) -> bool {
             ExprKind::Cond { test, .. } => test == node,
             ExprKind::Unary { op, .. } => op == UnOp::Not,
             ExprKind::Binary { op, .. } => matches!(op, BinOp::And | BinOp::Or),
-            // Every argument that is a logical expression, asserted or not.
+            // Every argument that's a logical expression, asserted or not.
             ExprKind::Call(call) => call.callee() != node,
             _ => false,
         },
@@ -453,7 +453,7 @@ struct TypeInfo {
     is_enum: bool,
 }
 
-/// tsgolint's `analyzeTypePart`. Whether a bigint is truthy decides nothing in `checkCondition`.
+/// tsgolint's `analyzeTypePart`. `checkCondition` doesn't depend on whether a bigint is truthy.
 fn analyze_type_part(ty: Type) -> TypeInfo {
     let flags = ty.flags();
     let (mut is_truthy, mut is_enum) = (false, false);
@@ -531,7 +531,7 @@ fn analyze_type_parts<'a>(types: impl Iterator<Item = Type<'a>>) -> TypeInfo {
             met_not_truthy = !part.is_truthy;
         }
     }
-    // Nullish parts alone are nullish, no parts at all are mixed.
+    // Only nullish parts means nullish. No parts at all means mixed.
     let variant = variant.unwrap_or(match is_nullable {
         true => TypeVariant::Nullish,
         false => TypeVariant::Mixed,
@@ -734,7 +734,7 @@ impl StrictBooleanExpressions {
                 unless(self.allow_nullable_object, ConditionError::NullableObject)
             }
             TypeVariant::Object => Some(ConditionError::Object),
-            // An enum beside other types is reported only where it can be nullish.
+            // An enum mixed with other types is only reported if it can be nullish.
             TypeVariant::Mixed if !info.is_enum => Some(ConditionError::Other),
             TypeVariant::Mixed if info.is_nullable => {
                 unless(self.allow_nullable_enum, ConditionError::NullableEnum)
@@ -765,13 +765,13 @@ impl StrictBooleanExpressions {
         }
     }
 
-    /// The operands of a logical expression are traversed in turn. Anything else is checked, unless
-    /// it is not a condition: then it is there for its side effects only.
+    /// Traverses the operands of a logical expression. Checks anything else, unless it isn't a condition and is only
+    /// evaluated for its side effects.
     fn traverse_node<'a>(&self, node: Expr<'a>, is_condition: bool, cx: &Cx<'a, Self>) {
         self.traverse(node.with_jsdoc_cast(), is_condition, cx);
     }
 
-    /// `node`: not what is around it, if that is a JSDoc cast.
+    /// `node` must already be inside its JSDoc cast, if it has one.
     fn traverse<'a>(&self, node: Expr<'a>, is_condition: bool, cx: &Cx<'a, Self>) {
         let mut pending: SmallVec<[(Expr<'a>, bool); 8]> = SmallVec::new();
         pending.push((node, is_condition));
@@ -792,7 +792,7 @@ impl StrictBooleanExpressions {
         }
     }
 
-    /// Reports a predicate of an array method that does not return a boolean value.
+    /// Reports an array method predicate that doesn't return a boolean.
     fn check_array_method_call_predicate<'a>(&self, predicate_node: Expr<'a>, cx: &Cx<'a, Self>) {
         let is_oxlint = cx.language().is_oxlint;
         let function = predicate_node.as_fn();
@@ -832,13 +832,13 @@ impl StrictBooleanExpressions {
             return;
         };
 
-        // oxlint points at the call.
-        let place = match predicate_node.parent() {
+        // oxlint reports the call.
+        let report_span = match predicate_node.parent() {
             Node::Expr(call) if cx.language().is_oxlint => call.span(),
             _ => predicate_node.span(),
         };
         let mut report = cx
-            .report(place, report_type.message())
+            .report(report_span, report_type.message())
             .data("context", "array predicate return type");
         if let Some(function) = function {
             if let FnBody::Expr(body) = function.body() {
@@ -876,8 +876,8 @@ impl StrictBooleanExpressions {
 const CONDITIONS: On = On::new()
     .exprs(&[ExprTag::Cond, ExprTag::Unary, ExprTag::Binary])
     .stmts(&[StmtTag::If, StmtTag::While, StmtTag::DoWhile, StmtTag::For])
-    // As nodes, which come last: oxlint reports a predicate at its call, after what the call is
-    // as a condition.
+    // Calls are listened to as nodes, which run last, because oxlint reports a predicate at its call, after any report
+    // about the call as a condition.
     .nodes(NodeTags::new().exprs(&[ExprTag::Call]));
 
 impl Rule for StrictBooleanExpressions {
@@ -923,7 +923,7 @@ impl Rule for StrictBooleanExpressions {
                 op: UnOp::Not,
                 operand,
             } => self.traverse_node(operand, true, cx),
-            // On its own a logical expression is control flow, and no condition itself.
+            // A logical expression on its own is control flow, not a condition.
             ExprKind::Binary { .. } => {
                 if ast_utils::is_logical_expression(node) && !is_traversed_from_parent(node) {
                     self.traverse(node, false, cx);

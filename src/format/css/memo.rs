@@ -1,8 +1,8 @@
-//! What declarations have been printed as.
+//! Caches the printed output of declarations.
 //!
-//! Style sheets say the same things over and over: half of the declarations of a style sheet are in it more than
-//! once, letter for letter, and three quarters of those of a project. What is printed for a declaration on one line
-//! depends on its text and on little else, so it is kept, and the next time it is neither parsed nor printed.
+//! Style sheets are repetitive. Half of a style sheet's declarations occur in it more than once, byte for byte, and so
+//! do three quarters of a project's. The output for a single-line declaration depends on its text and little else, so
+//! it's cached, and a repeated declaration is neither parsed nor printed again.
 
 use std::hash::Hasher;
 
@@ -25,15 +25,15 @@ struct Context {
 pub(crate) struct Memo {
     bytes: Vec<u8>,
     contexts: Vec<Context>,
-    /// The number of the first of `contexts`. No number is given twice.
+    /// The id of `contexts[0]`. Ids are never reused, even after a reset.
     first_context: u32,
     entries: Vec<Entry>,
-    /// For each hash, by its low bits or in one of the places that follow, the index of its entry plus one. Its
-    /// length is a power of two.
+    /// Open addressing with linear probing from the hash's low bits. Each slot holds an entry's index plus one, or 0.
+    /// The length is a power of two.
     table: Vec<u32>,
 }
 
-/// With more than that, it starts anew.
+/// The cache is reset when it grows past this.
 const MAX_BYTES: usize = 1 << 20;
 
 fn hash(context: u32, text: &[u8]) -> u64 {
@@ -56,8 +56,8 @@ impl Memo {
         (start, self.bytes.len() as u32)
     }
 
-    /// A number for all that the way a declaration is printed depends on besides its text: `flags`, and the name of
-    /// the at-rule that it is in.
+    /// Returns an id for everything besides the text that affects how a declaration is printed: `flags` and the name of
+    /// the enclosing at-rule.
     pub(crate) fn context(&mut self, flags: u32, at_rule: &[u8]) -> u32 {
         if self.bytes.len()
             + self.entries.len() * size_of::<Entry>()
@@ -81,7 +81,7 @@ impl Memo {
         self.first_context.wrapping_add(index as u32)
     }
 
-    /// What has been printed for the declaration `text`, and whether there is a group in it.
+    /// Returns the cached output for the declaration `text`, and whether it has a group in it.
     pub(crate) fn get(&self, context: u32, text: &[u8]) -> Option<(&[u8], bool)> {
         let mask = self.table.len().checked_sub(1)?;
         let hash = hash(context, text);
@@ -97,14 +97,14 @@ impl Memo {
         }
     }
 
-    /// `text` is not there yet.
+    /// `text` must not be cached yet.
     pub(crate) fn insert(&mut self, context: u32, text: &[u8], output: &[u8], has_group: bool) {
         if (self.entries.len() + 1) * 2 > self.table.len() {
             let len = (self.table.len() * 2).max(256);
             self.table.clear();
             self.table.resize(len, 0);
             for index in 0..self.entries.len() {
-                self.place(index);
+                self.insert_into_table(index);
             }
         }
         let (text_range, output) = (self.add(text), self.add(output));
@@ -115,11 +115,11 @@ impl Memo {
             output,
             has_group,
         });
-        self.place(self.entries.len() - 1);
+        self.insert_into_table(self.entries.len() - 1);
     }
 
-    /// Puts the entry `index` into the table, which has room.
-    fn place(&mut self, index: usize) {
+    /// Inserts entry `index` into the table, which must have a free slot.
+    fn insert_into_table(&mut self, index: usize) {
         let mask = self.table.len() - 1;
         let mut at = self.entries[index].hash as usize & mask;
         while self.table[at] != 0 {

@@ -6,8 +6,8 @@ use bun_lint::rule::Plugin;
 /// Disallow using `length` as the end argument of a `slice` call.
 pub struct NoLengthAsSliceEnd;
 
-const NO_LENGTH_AS_SLICE_END: Message =
-    Message::new("", "Passing `length` as the end argument of a `slice` call is unnecessary.");
+const NO_LENGTH_AS_SLICE_END: &Message =
+    &Message::new("", "Passing `length` as the end argument of a `slice` call is unnecessary.");
 
 impl Rule for NoLengthAsSliceEnd {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-length-as-slice-end", Kind::Suggestion).fixable(Fixable::Code);
@@ -33,7 +33,7 @@ impl Rule for NoLengthAsSliceEnd {
             && let Some(second_argument) = get_member_expr(second)
             && let Some((object_of_length, name, _)) = second_argument.as_dot()
             && name.name().is("length")
-            // oxlint panics if the callee is in parentheses.
+            // oxlint panics if the callee is parenthesized.
             && let Some(callee) = as_member_expression(call_expr.callee())
             && let Some((call_span, method)) = static_property_info(callee)
             && method.is("slice")

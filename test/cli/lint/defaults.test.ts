@@ -134,16 +134,17 @@ describe.concurrent("globals", () => {
     expect(exitCode).toBe(1);
   });
 
-  // Which names `**/*{.,_,-}{test,spec,e2e,cy}.{js,mjs,cjs,jsx,ts,mts,cts,tsx}` is for. A global of a test runner can't be
-  // assigned to. In another file nothing defines it, which is only reported in JavaScript.
-  test("a file is a test by what its name ends with", async () => {
+  // Checks which names `**/*{.,_,-}{test,spec,e2e,cy}.{js,mjs,cjs,jsx,ts,mts,cts,tsx}` matches. In a test file,
+  // assigning to a test runner's global is reported by no-global-assign. In any other file the global is undefined,
+  // which is only reported in JavaScript.
+  test("a file is a test file if its name ends with a test suffix", async () => {
     const [stems, separators] = [
       ["a", "", "a.b", "test"],
       [".", "_", "-", "", "+"],
     ];
     const words = ["test", "spec", "e2e", "cy", "tes", "tests", "Test", "atest"];
     const extensions = ["js", "mjs", "cjs", "jsx", "ts", "mts", "cts", "tsx"];
-    // To Windows and macOS `a.Test.js` is the file `a.test.js`.
+    // On Windows and macOS, `a.Test.js` and `a.test.js` are the same file.
     const folderOf = (word: string) => (word === "Test" ? "cased/" : "");
     const names = stems.flatMap(stem =>
       separators.flatMap(separator =>
@@ -225,7 +226,7 @@ skipWaitng();
     }
   });
 
-  test("the test folders count from the closest package.json, also when run from inside one", async () => {
+  test("test folders are matched relative to the closest package.json, even when run from inside one", async () => {
     const files = {
       "package.json": "{}",
       "test/a.js": 'describe("a", () => {});\n',
@@ -588,6 +589,75 @@ export namespace Shapes {
     expect(eslint).toEqual([`a.ts:2:3 error ${rule}`, `a.ts:8:8 error ${rule}`]);
   });
 
+  describe("no-var and a var that only declares a type", () => {
+    const files = {
+      "a.ts": `declare var top: number;
+// eslint-disable-next-line no-var
+declare var disabled: number;
+export declare var exported: number;
+declare namespace ns { var inNamespace: number; }
+declare module "m" { var inModule: number; }
+declare global { var inGlobal: number; }
+declare global { export var exportedInGlobal: number; }
+declare global { namespace inner { var nestedInGlobal: number; } }
+namespace real { declare var inReal: number; }
+var plain = 1;
+`,
+    };
+    const eslint = {
+      ...files,
+      "eslint.config.mjs": `export default [{ files: ["**/*.ts"], extends: ["typescript-eslint/base"], rules: { "no-var": "error" } }];\n`,
+    };
+    const oxlint = {
+      ...files,
+      ".oxlintrc.json": `{ "categories": { "correctness": "off" }, "rules": { "no-var": "error" } }`,
+    };
+    const at = (...places: string[]) => places.map(place => `a.ts:${place} error no-var`);
+
+    test("is reported with an ESLint config, so the comment that disables it isn't unused, and not without a config", async () => {
+      const [withEslint, native] = await Promise.all([lint(eslint, ["a.ts"]), lint(files, [])]);
+      expect(withEslint.reports).toEqual(at("1:1", "4:8", "5:24", "6:22", "8:25", "9:36", "10:18", "11:1"));
+      expect(native.reports.filter(it => it.endsWith(" no-var"))).toEqual(["a.ts:11:1 warning no-var"]);
+    });
+
+    test("with an ESLint config, --fix changes what ESLint changes", async () => {
+      const { texts } = await lint(eslint, ["--fix", "a.ts"]);
+      expect(texts["a.ts"]).toBe(`declare let top: number;
+// eslint-disable-next-line no-var
+declare var disabled: number;
+export declare var exported: number;
+declare namespace ns { let inNamespace: number; }
+declare module "m" { let inModule: number; }
+declare global { var inGlobal: number; }
+declare global { export var exportedInGlobal: number; }
+declare global { namespace inner { let nestedInGlobal: number; } }
+namespace real { declare let inReal: number; }
+let plain = 1;
+`);
+    });
+
+    test("with an ESLint 8 config, a var in declare global is reported too, and --fix changes none in a block", async () => {
+      const eslintrc = `{ "root": true, "parser": "@typescript-eslint/parser", "parserOptions": { "sourceType": "module" }, "rules": { "no-var": "error" } }`;
+      const eslint8 = { ...files, ".eslintrc.json": eslintrc };
+      const [{ reports }, { texts }] = await Promise.all([
+        lint(eslint8, ["--report-unused-disable-directives", "a.ts"]),
+        lint(eslint8, ["--fix", "a.ts"]),
+      ]);
+      expect(reports).toEqual(at("1:1", "4:8", "5:24", "6:22", "7:18", "8:25", "9:36", "10:18", "11:1"));
+      expect(texts["a.ts"]).toBe(
+        files["a.ts"].replace("declare var top", "declare let top").replace("var plain", "let plain"),
+      );
+    });
+
+    test("with an oxlint config, only a var in an ambient block isn't reported", async () => {
+      const { json } = await lint(oxlint, ["--report-unused-disable-directives", "a.ts"]);
+      const reports = json.diagnostics.map(
+        (it: any) => `${it.labels[0].span.line}:${it.labels[0].span.column} ${it.code}`,
+      );
+      expect(reports).toEqual(["1:9", "4:16", "10:26", "11:1"].map(place => `${place} eslint(no-var)`));
+    });
+  });
+
   const react = { "package.json": JSON.stringify({ dependencies: { react: "^19.0.0" } }) };
 
   test("a parameter named use isn't React's hook", async () => {
@@ -865,7 +935,7 @@ export const Mapped = ({ items }) => items.map(item => <li>{item}</li>);
     };
     const rule = "react/jsx-key";
     const { native, eslint } = await inBothModes(files, [rule]);
-    const at = (places: string[]) => places.map(place => `a.jsx:${place} error ${rule}`);
+    const at = (positions: string[]) => positions.map(position => `a.jsx:${position} error ${rule}`);
     const rendered = ["7:33", "7:45", "8:46", "10:11", "10:23", "12:29", "13:56"];
     expect(native).toEqual(at(rendered));
     expect(eslint).toEqual(at(["2:18", "2:31", "5:23", "5:33", "6:46", "6:69", ...rendered]));
@@ -909,7 +979,7 @@ export const HALF = 9007199254740993.5;
     };
     const rule = "no-loss-of-precision";
     const { native, eslint } = await inBothModes(files, [rule]);
-    const at = (places: string[]) => places.map(place => `${name}:${place} error ${rule}`);
+    const at = (positions: string[]) => positions.map(position => `${name}:${position} error ${rule}`);
     const integers = ["3:19", "4:20", "5:20", "6:21", "7:21", "8:21"];
     expect(native).toEqual(at(integers));
     expect(eslint).toEqual(at(["1:19", "2:20", ...integers]));
@@ -939,10 +1009,10 @@ export const HALF = 9007199254740993.5;
     };
     const { native, eslint } = await inBothModes(files, ["no-undef"]);
     expect(native).toEqual(["a.js:3:57 error no-undef"]);
-    expect(eslint).toEqual(["2:39", "2:51", "3:44", "3:57"].map(place => `a.js:${place} error no-undef`));
+    expect(eslint).toEqual(["2:39", "2:51", "3:44", "3:57"].map(position => `a.js:${position} error no-undef`));
     const strict = { "bunfig.toml": `[lint.rules]\n"no-undef" = ["error", { typeof = true }]\n` };
     expect((await inBothModes({ ...files, ...strict }, ["no-undef"])).native).toEqual(
-      ["2:14", "2:39", "2:51", "3:17", "3:44", "3:57"].map(place => `a.js:${place} error no-undef`),
+      ["2:14", "2:39", "2:51", "3:17", "3:44", "3:57"].map(position => `a.js:${position} error no-undef`),
     );
   });
 
@@ -998,7 +1068,7 @@ export const HALF = 9007199254740993.5;
       expect((await lint(commented, [])).reports).toEqual(expected);
     });
 
-    test("the options of an override replace those of [lint.rules], not the defaults", async () => {
+    test("an override's options replace the ones from [lint.rules], not the defaults", async () => {
       const bunfig = `[lint.rules]
 "no-irregular-whitespace" = ["error", { skipComments = false }]
 [[lint.overrides]]
@@ -1051,7 +1121,7 @@ describe.concurrent("JSX uses the function it compiles to", () => {
     expect(reports).toEqual([]);
   });
 
-  test.each(["a.jsx", "a.tsx"])("the function that a @jsx comment names isn't unused in %s", async name => {
+  test.each(["a.jsx", "a.tsx"])("the function named in a @jsx comment isn't unused in %s", async name => {
     const { reports } = await lint({ [name]: preact }, []);
     expect(reports).toEqual([]);
   });
@@ -1161,44 +1231,44 @@ export {};
 
   test.each([
     [
-      "a line that has something else on it stays",
+      "keeps a line that has something else on it",
       "const a = 1; // why\nconst b = 2; export {};\n",
       "// why\nexport {};\n",
     ],
-    ["no space stays at the end of a line", "g(); const a = 1;\nexport {};\n", "g();\nexport {};\n"],
+    ["leaves no trailing space", "g(); const a = 1;\nexport {};\n", "g();\nexport {};\n"],
     [
-      "no doubled space stays",
+      "leaves no double space",
       'import { a, used } from "./b.js";\nused();\n',
       'import { used } from "./b.js";\nused();\n',
     ],
     [
-      "no empty first line in a block",
+      "leaves no empty first line in a block",
       "export function f() {\n  const a = 1;\n\n  return 1;\n}\n",
       "export function f() {\n  return 1;\n}\n",
     ],
     [
-      "no empty last line in a block",
+      "leaves no empty last line in a block",
       "export function f() {\n  g();\n\n  const a = 1;\n}\n",
       "export function f() {\n  g();\n}\n",
     ],
     [
-      "no two empty lines in a row",
+      "leaves no two empty lines in a row",
       'import x from "./x.js";\n\nconst a = 1;\n\nexport const y = x;\n',
       'import x from "./x.js";\n\nexport const y = x;\n',
     ],
-    ["no empty line at the start of the file", "const a = 1;\n\nexport {};\n", "export {};\n"],
-    ["no empty line at the end of the file", "export {};\n\nconst a = 1;\n", "export {};\n"],
+    ["leaves no empty line at the start of the file", "const a = 1;\n\nexport {};\n", "export {};\n"],
+    ["leaves no empty line at the end of the file", "export {};\n\nconst a = 1;\n", "export {};\n"],
     [
-      "an empty line between two statements stays",
+      "keeps an empty line between two statements",
       "g();\nconst a = 1;\n\nh();\nexport {};\n",
       "g();\n\nh();\nexport {};\n",
     ],
     [
-      "the same with \\r\\n",
+      "handles \\r\\n the same way",
       "export function f() {\r\n  const a = 1;\r\n\r\n  return 1;\r\n}\r\n",
       "export function f() {\r\n  return 1;\r\n}\r\n",
     ],
-  ])("%s", async (_, code, expected) => {
+  ])("removing a declaration %s", async (_, code, expected) => {
     const { texts } = await lint({ "a.mjs": code }, ["--fix-suggestions"]);
     expect(texts["a.mjs"]).toBe(expected);
   });
@@ -1311,7 +1381,7 @@ export function Timer({ ms, cb }) {
     expect(reportsOf(dangerous)).toEqual([]);
   });
 
-  test("it leaves alone what would change working code or break the type check", async () => {
+  test("skips suggestions that would change working code or break the type check", async () => {
     const files = {
       "tsconfig.json": `{ "compilerOptions": { "strict": true, "lib": ["esnext", "dom"], "types": [] } }`,
       "a.ts": `// @ts-ignore
@@ -1437,6 +1507,7 @@ declare const c: any;
     const config = `export default [{ files: ["**/*.ts"], extends: ["typescript-eslint/recommended"] }];\n`;
     const { reports } = await lint({ "types.d.ts": code, "eslint.config.js": config }, ["types.d.ts"]);
     expect(reports).toEqual([
+      "types.d.ts:1:1 error no-var",
       "types.d.ts:1:16 error @typescript-eslint/no-explicit-any",
       "types.d.ts:2:19 error @typescript-eslint/no-misused-new",
       "types.d.ts:3:18 error @typescript-eslint/no-empty-object-type",
@@ -1462,7 +1533,7 @@ const h = 1;
   test.each([
     ["a.js", "no-unused-vars"],
     ["a.ts", "@typescript-eslint/no-unused-vars"],
-  ])("%s", async (name, rule) => {
+  ])("in %s", async (name, rule) => {
     const set = (setting: string) => ({ [name]: code, "bunfig.toml": `[lint.rules]\n"${rule}" = ${setting}\n` });
     const [plain, severity, options] = await Promise.all([
       lint({ [name]: code }, []),
@@ -1658,14 +1729,14 @@ export function useThing(a, on) {
       "src/App.jsx": component,
       "src/deep/App.jsx": component,
     };
-    const [searched, named, piped, printed] = await Promise.all([
+    const [searched, explicit, piped, printed] = await Promise.all([
       lint(files, []),
       lint(files, ["src/App.jsx", "src/deep/App.jsx"]),
       lint(files, ["--stdin", "--stdin-filename", "src/Other.jsx"], component),
       lint(files, ["--print-config", "src/App.jsx"]),
     ]);
     expect(searched.reports).toEqual([...found("src/App.jsx"), ...found("src/deep/App.jsx")]);
-    expect(named.reports).toEqual(searched.reports);
+    expect(explicit.reports).toEqual(searched.reports);
     expect(piped.reports).toEqual(found("src/Other.jsx"));
     expect(printed.json.rules["react-hooks/rules-of-hooks"]).toEqual([2]);
   });
@@ -1676,18 +1747,18 @@ export function useThing(a, on) {
       "server/package.json": `{ "dependencies": {} }`,
       "server/App.jsx": component,
     };
-    const [searched, named] = await Promise.all([lint(files, []), lint(files, ["server/App.jsx"])]);
+    const [searched, explicit] = await Promise.all([lint(files, []), lint(files, ["server/App.jsx"])]);
     expect(searched.reports).toEqual([]);
-    expect(named.reports).toEqual([]);
+    expect(explicit.reports).toEqual([]);
   });
 
   test("they also run on files passed by name and on stdin", async () => {
     const files = { "package.json": dependingOn("dependencies"), "src/App.jsx": component };
-    const [named, piped] = await Promise.all([
+    const [explicit, piped] = await Promise.all([
       lint(files, ["src/App.jsx"]),
       lint(files, ["--stdin", "--stdin-filename", "src/Other.jsx"], component),
     ]);
-    expect(named.reports).toEqual(found("src/App.jsx"));
+    expect(explicit.reports).toEqual(found("src/App.jsx"));
     expect(piped.reports).toEqual(found("src/Other.jsx"));
   });
 
@@ -1741,16 +1812,16 @@ export function useThing(a, on) {
       lint(files, ["--print-config", "App.jsx"]),
       lint(files, ["--print-config", "mail/App.jsx"]),
     ]);
-    const ofReact = (printed: { rules: object }) =>
+    const reactRules = (printed: { rules: object }) =>
       Object.fromEntries(Object.entries(printed.rules).filter(([name]) => name.startsWith("react")));
-    expect(ofReact(withReact.json)).toEqual({
+    expect(reactRules(withReact.json)).toEqual({
       "react-hooks/rules-of-hooks": [2],
       "react-hooks/exhaustive-deps": [1],
       "react/jsx-key": [2, { checkArraysOutsideJSX: false }],
       "react/jsx-uses-react": [2],
     });
     // `react/jsx-uses-react` reports nothing. It's also for Preact's `h`, so it doesn't depend on React.
-    expect(ofReact(without.json)).toEqual({
+    expect(reactRules(without.json)).toEqual({
       "react/jsx-key": [0, { checkArraysOutsideJSX: false }],
       "react/jsx-uses-react": [2],
     });
@@ -1758,9 +1829,9 @@ export function useThing(a, on) {
 
   test("they stay off with an ESLint or oxlint config", async () => {
     const files = { "package.json": dependingOn("dependencies"), "App.jsx": component };
-    const ofEslint = `export default [{ files: ["**/*.jsx"], languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } } }];\n`;
+    const eslintConfig = `export default [{ files: ["**/*.jsx"], languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } } }];\n`;
     const [eslint, oxlint] = await Promise.all([
-      lint({ ...files, "eslint.config.js": ofEslint }, ["App.jsx"]),
+      lint({ ...files, "eslint.config.js": eslintConfig }, ["App.jsx"]),
       lint({ ...files, ".oxlintrc.json": "{}" }, ["App.jsx"]),
     ]);
     expect(eslint.json).toEqual([expect.objectContaining({ messages: [] })]);
@@ -1777,7 +1848,7 @@ if (os.platform() === "never") {
 module.exports = os.platform();
 `;
   const returnOutside = "Parsing error: 'return' outside of function";
-  const ofModule = { "package.json": `{ "type": "module" }` };
+  const esmPackage = { "package.json": `{ "type": "module" }` };
 
   test.each([
     ["no package.json", {}],
@@ -1795,26 +1866,26 @@ module.exports = os.platform();
   });
 
   test(`reports a top-level return with "type": "module"`, async () => {
-    const { problems, exitCode } = await lint({ ...ofModule, "early.js": early }, []);
+    const { problems, exitCode } = await lint({ ...esmPackage, "early.js": early }, []);
     expect(problems).toEqual([`early.js:3:3 ${returnOutside}`]);
     expect(exitCode).toBe(1);
   });
 
   test("uses the type from the nearest package.json", async () => {
     const files = {
-      ...ofModule,
+      ...esmPackage,
       "early.js": early,
       "src/early.js": early,
       "legacy/package.json": "{}",
       "legacy/early.js": early,
-      "legacy/esm/package.json": ofModule["package.json"],
+      "legacy/esm/package.json": esmPackage["package.json"],
       "legacy/esm/early.js": early,
     };
     const expected = ["early.js", "legacy/esm/early.js", "src/early.js"].map(it => `${it}:3:3 ${returnOutside}`);
     const names = Object.keys(files).filter(it => it.endsWith(".js"));
-    const [all, named] = await Promise.all([lint(files, []), lint(files, names)]);
+    const [all, explicit] = await Promise.all([lint(files, []), lint(files, names)]);
     expect(all.problems.sort()).toEqual(expected);
-    expect(named.problems.sort()).toEqual(expected);
+    expect(explicit.problems.sort()).toEqual(expected);
   });
 
   test.each([
@@ -1825,11 +1896,11 @@ module.exports = os.platform();
     ["a top-level for await", "for await (const a of []) console.log(a);"],
   ])("%s makes a file a module", async (_, code) => {
     const files = { "a.js": `${code}\nreturn;\n`, "b.js": "" };
-    const [alone, inCommonJs] = await Promise.all([
+    const [withoutPackageJson, inCommonJs] = await Promise.all([
       lint(files, ["a.js"]),
       lint({ ...files, "package.json": `{ "type": "commonjs" }` }, ["a.js"]),
     ]);
-    expect(alone.problems).toEqual([`a.js:2:1 ${returnOutside}`]);
+    expect(withoutPackageJson.problems).toEqual([`a.js:2:1 ${returnOutside}`]);
     expect(inCommonJs.problems).toEqual([`a.js:2:1 ${returnOutside}`]);
   });
 
@@ -1866,7 +1937,7 @@ module.exports = os.platform();
   test.each(sloppy)("parses a CommonJS file in sloppy mode: %s", async (_, code, inStrictMode) => {
     const line = code.split("\n").length + 1;
     const files = { "a.js": `${code}\ndebugger;\n` };
-    const [commonJs, esm] = await Promise.all([lint(files, []), lint({ ...ofModule, ...files }, [])]);
+    const [commonJs, esm] = await Promise.all([lint(files, []), lint({ ...esmPackage, ...files }, [])]);
     expect(commonJs.problems.filter(it => it.includes("Parsing error"))).toEqual([]);
     expect(commonJs.reports).toContain(`a.js:${line}:1 error no-debugger`);
     expect(esm.problems).toEqual([expect.stringContaining(`Parsing error: ${inStrictMode}`)]);
@@ -1881,7 +1952,7 @@ module.exports = os.platform();
     const files = { "a.mjs": early, "a.cjs": early };
     const [inCommonJs, inModule] = await Promise.all([
       lint({ ...files, "package.json": `{ "type": "commonjs" }` }, []),
-      lint({ ...files, ...ofModule }, []),
+      lint({ ...files, ...esmPackage }, []),
     ]);
     expect(inCommonJs.problems).toEqual([`a.mjs:3:3 ${returnOutside}`]);
     expect(inModule.problems).toEqual([`a.mjs:3:3 ${returnOutside}`]);
@@ -1902,7 +1973,7 @@ module.exports = os.platform();
         "ecmaFeatures:{globalReturn:true}",
       ),
     ])(`%s allows a top-level return with "type": "module"`, async (_, files, flags) => {
-      const { problems, exitCode } = await lint({ ...ofModule, ...files, "early.js": early }, flags);
+      const { problems, exitCode } = await lint({ ...esmPackage, ...files, "early.js": early }, flags);
       expect(problems).toEqual([]);
       expect(exitCode).toBe(0);
     });
@@ -1949,7 +2020,7 @@ module.exports = os.platform();
     });
 
     test("--print-config prints the sourceType", async () => {
-      const files = { "esm/package.json": ofModule["package.json"] };
+      const files = { "esm/package.json": esmPackage["package.json"] };
       const sourceType = async (...args: string[]) =>
         (await lint(files, ["--print-config", ...args])).json.languageOptions.sourceType;
       expect(
@@ -1993,7 +2064,7 @@ module.exports = (function () {
       const files = {
         ...bunfig,
         "a.js": `"use strict";\nexport default 1;\n`,
-        "esm/package.json": ofModule["package.json"],
+        "esm/package.json": esmPackage["package.json"],
       };
       const { problems, texts } = await lint({ ...files, "esm/strict.js": strict }, ["--fix"]);
       expect(problems).toEqual([]);
@@ -2106,7 +2177,7 @@ module.exports = (function () {
   });
 
   test("with an .oxlintrc.json, allows a top-level return in a file without imports or exports", async () => {
-    const { json, exitCode } = await lint({ ...ofModule, ".oxlintrc.json": "{}", "early.js": early }, ["early.js"]);
+    const { json, exitCode } = await lint({ ...esmPackage, ".oxlintrc.json": "{}", "early.js": early }, ["early.js"]);
     expect(json.diagnostics).toEqual([]);
     expect(exitCode).toBe(0);
   });

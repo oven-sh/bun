@@ -10,7 +10,7 @@ use crate::span::Span;
 use crate::tokens::skip_trivia;
 use bun_core::strings;
 
-/// An offset, and what is asked about it.
+/// An offset, with the queries about it as methods.
 #[derive(Copy, Clone)]
 struct At(u32);
 
@@ -25,7 +25,7 @@ impl At {
         span.is_some_and(|it| self.is_in(it))
     }
 
-    /// `Identifier`, or `Literal` for a name that is written as a string.
+    /// `Identifier`, or `Literal` for a name written as a string.
     fn ident(self, ident: Ident<'_>) -> Option<&'static str> {
         self.is_in(ident.span()).then(|| match ident.is_string() {
             true => "Literal",
@@ -37,7 +37,7 @@ impl At {
         self.ident(ident?)
     }
 
-    /// The key of a property or a member, unless it is an expression in brackets, which is a node.
+    /// The key of a property or a member, unless it's an expression in brackets, which is a node.
     fn key<'a>(self, key: Option<Key<'a>>, file: &File<'a>) -> Option<&'static str> {
         let key = key?;
         let span = key.inner_span(file);
@@ -69,7 +69,7 @@ impl At {
             .then_some("Decorator")
     }
 
-    /// `A.B.C`. `qualified` is what the dots are in.
+    /// `A.B.C`. `qualified` is the type of the nodes that contain the dots.
     fn entity_name(self, name: EntityName<'_>, qualified: &'static str) -> Option<&'static str> {
         self.is_in(name.span())
             .then(|| match name.parts().any(|it| self.is_in(it.span())) {
@@ -195,7 +195,7 @@ impl At {
 
     fn func(self, func: Func<'_>) -> Option<&'static str> {
         let owner = func.owner();
-        // The span of a `Func` starts with the method, the property or the `export` that it is in.
+        // A `Func`'s span starts with the method, the property or the `export` that contains it.
         let outer = || match owner {
             Node::Member(member) => Some(
                 self.member(member)
@@ -249,7 +249,7 @@ impl At {
             .or_else(|| self.annotation(member.ty()))
     }
 
-    /// What the braces of `{e}`, `{}` and `{...e}` in JSX are.
+    /// The type of the braces of `{e}`, `{}` and `{...e}` in JSX.
     fn jsx_container(self, e: Expr<'_>) -> Option<&'static str> {
         let braces = e.jsx_container_span().filter(|it| self.is_in(*it))?;
         Some(match e.tag() {
@@ -403,7 +403,7 @@ impl At {
         }
     }
 
-    /// The type of the innermost node of ESTree in `node` that is not a node here.
+    /// The type of the innermost ESTree node in `node` that isn't a node here.
     fn inside(self, node: Node<'_>) -> Option<&'static str> {
         match node {
             Node::File(_) | Node::Pat(_) | Node::PatElem(_) | Node::Case(_) => None,
@@ -444,12 +444,12 @@ impl At {
     }
 }
 
-/// ESLint's `sourceCode.getNodeByRangeIndex(offset).type`, exactly as ESTree has it: also
-/// `BlockStatement` for the body of a function, `ClassBody`, `CatchClause`, `TemplateElement`,
-/// `JSXEmptyExpression`, `TSTypeAnnotation`, `Identifier` for a name, and the other types that are
-/// no nodes here. It is `"Program"` where ESLint answers `null`.
+/// ESLint's `sourceCode.getNodeByRangeIndex(offset).type`, exactly as in ESTree. That includes
+/// `BlockStatement` for a function's body, `ClassBody`, `CatchClause`, `TemplateElement`,
+/// `JSXEmptyExpression`, `TSTypeAnnotation`, `Identifier` for a name, and the other types that
+/// aren't nodes here. It's `"Program"` where ESLint returns `null`.
 ///
-/// It goes down from the file to the innermost node, as upstream, and allocates nothing.
+/// Like upstream, it descends from the file to the innermost node. It doesn't allocate.
 pub fn estree_type_at<'a>(file: &'a File<'a>, offset: u32) -> &'static str {
     let node = get_node_by_range_index(file, offset);
     At(offset)

@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Enforce consistent style for escaping `${` in template literals.
 pub struct ConsistentTemplateLiteralEscape;
 
-const CONSISTENT_TEMPLATE_LITERAL_ESCAPE: Message = Message::new("", "Invalid escape sequence in template literal.");
+const CONSISTENT_TEMPLATE_LITERAL_ESCAPE: &Message = &Message::new("", "Invalid escape sequence in template literal.");
 
 impl Rule for ConsistentTemplateLiteralEscape {
     const META: Meta =
@@ -24,7 +24,7 @@ impl Rule for ConsistentTemplateLiteralEscape {
         let Some(template_literal) = e.as_template() else {
             return;
         };
-        // Its own text only: templates can be in each other.
+        // Only its own quasis, because templates can nest.
         for i in 0..template_literal.quasi_count() {
             let (value, quasi_start) = (template_literal.raw(i), template_literal.quasi_span(i).start + 1);
             let mut from = 0;

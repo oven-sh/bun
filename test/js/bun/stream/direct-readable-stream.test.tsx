@@ -263,7 +263,7 @@ describe("ReactDOM", () => {
                 server?.stop(true);
               }
             })();
-            await expectMaxObjectTypeCount(expect, "ReadableHTTPResponseSinkController", 2);
+            await expectMaxObjectTypeCount(expect, "ReadableSinkController", 2);
           });
           const count = 4;
           it(`http server, ${count} requests`, async () => {
@@ -293,7 +293,7 @@ describe("ReactDOM", () => {
               }
             })();
             expect(remain).toBe(-1);
-            await expectMaxObjectTypeCount(expect, "ReadableHTTPResponseSinkController", 3);
+            await expectMaxObjectTypeCount(expect, "ReadableSinkController", 3);
           });
         },
       );
@@ -338,7 +338,7 @@ describe("ReactDOM", () => {
       }
       it("(teardown)", async () => {
         void server?.stop(true);
-        await expectMaxObjectTypeCount(expect, "ReadableHTTPSResponseSinkController", 3);
+        await expectMaxObjectTypeCount(expect, "ReadableSinkController", 3);
       });
     });
   }

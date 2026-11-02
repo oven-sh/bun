@@ -1,4 +1,4 @@
-//! Functions, classes and the other declarations, and what they consist of.
+//! Functions, classes and other declarations, and their parts.
 
 use super::{
     EntityName, Expr, File, Flags, FnKind, Ident, ImportAttributes, List, MemberKind, Name, Node,
@@ -17,8 +17,8 @@ handle! {
     /// function, a method, an accessor, a constructor, a static block, a signature, a function
     /// type.
     ///
-    /// It is not a node of its own in the source. It belongs to its [`Func::owner`]: a `Stmt`, an
-    /// `Expr`, a `Member` or a `TypeNode`.
+    /// It isn't a separate node in the source. It belongs to its [`Func::owner`], which is a `Stmt`, an `Expr`, a
+    /// `Member` or a `TypeNode`.
     Func, FnId, fns, Func
 }
 
@@ -27,7 +27,7 @@ pub enum FnBody<'a> {
     /// An overload, an ambient or abstract declaration, a signature.
     None,
     Block(List<'a, Stmt<'a>>),
-    /// Of an arrow function.
+    /// An arrow function's expression body.
     Expr(Expr<'a>),
 }
 
@@ -42,21 +42,19 @@ impl<'a> Func<'a> {
         self.raw().kind
     }
 
-    /// `ASYNC`, `GENERATOR`, and the modifiers of the declaration.
+    /// `ASYNC`, `GENERATOR`, and the declaration's modifiers.
     #[inline]
     pub fn flags(self) -> Flags {
         match self.file.has_synthetic_nodes() {
-            true => self.written_flags(),
+            true => self.source_flags(),
             false => self.raw().flags,
         }
     }
 
     #[inline(never)]
-    fn written_flags(self) -> Flags {
+    fn source_flags(self) -> Flags {
         match self.owner() {
-            Node::Member(member) => self
-                .file
-                .written_flags(self.raw().flags, member.modifiers()),
+            Node::Member(member) => self.file.source_flags(self.raw().flags, member.modifiers()),
             _ => self.raw().flags,
         }
     }
@@ -67,7 +65,7 @@ impl<'a> Func<'a> {
             || self.kind() == FnKind::Constructor && self.is_async_constructor()
     }
 
-    /// The HIR has no flag for the `async` of `static async constructor() {}`.
+    /// The HIR doesn't flag the `async` in `static async constructor() {}`.
     #[inline(never)]
     fn is_async_constructor(self) -> bool {
         matches!(self.owner(), Node::Member(member)
@@ -84,8 +82,8 @@ impl<'a> Func<'a> {
         self.kind() == FnKind::Arrow
     }
 
-    /// The name of a function declaration or expression. The name of a method is the
-    /// [`Member::key`] or the [`Prop::key`] of its owner.
+    /// The name of a function declaration or expression. A method's name is its owner's [`Member::key`] or
+    /// [`Prop::key`].
     #[inline]
     pub fn name(self) -> Option<Ident<'a>> {
         match self.kind() {
@@ -101,13 +99,13 @@ impl<'a> Func<'a> {
         List::run(self.file, self.raw().type_params)
     }
 
-    /// Without the `this` parameter.
+    /// Excludes the `this` parameter.
     #[inline]
     pub fn params(self) -> List<'a, Param<'a>> {
         List::run(self.file, self.raw().params)
     }
 
-    /// `this: T`, which is written first.
+    /// `this: T`, which always comes first.
     #[inline]
     pub fn this_param(self) -> Option<Param<'a>> {
         Param::some(self.file, self.raw().this_param).filter(|p| !super::Handle::is_synthetic(*p))
@@ -115,7 +113,7 @@ impl<'a> Func<'a> {
 
     #[inline]
     pub fn return_type(self) -> Option<TypeNode<'a>> {
-        TypeNode::written(self.file, self.raw().ret)
+        TypeNode::in_source(self.file, self.raw().ret)
     }
 
     #[inline]
@@ -132,15 +130,15 @@ impl<'a> Func<'a> {
         !matches!(self.raw().body, hir::FnBody::None)
     }
 
-    /// TypeScript's `NodeFlags.HasImplicitReturn` of a body that is a block: the binder's flow
-    /// reaches its end. tsgolint asks this, where ESLint asks [`Func::is_end_reachable`].
+    /// TypeScript's `NodeFlags.HasImplicitReturn` for a block body: the binder's flow reaches the end of the block.
+    /// tsgolint's rules use this where ESLint's use [`Func::is_end_reachable`].
     #[inline]
     pub fn has_implicit_return(self) -> bool {
         let info = self.file.bound.fns.get(self.id.idx());
         info.is_some_and(|info| info.end != bun_sema::bind::UNREACHABLE)
     }
 
-    /// The statements of a body that is a block.
+    /// The statements of a block body.
     #[inline]
     pub fn body_statements(self) -> Option<List<'a, Stmt<'a>>> {
         match self.body() {
@@ -149,7 +147,7 @@ impl<'a> Func<'a> {
         }
     }
 
-    /// The `{ .. }` of a body that is a block.
+    /// The `{ .. }` of a block body.
     pub fn body_span(self) -> Option<Span> {
         if !matches!(self.raw().body, hir::FnBody::Block(_)) {
             return None;
@@ -165,8 +163,7 @@ impl<'a> Func<'a> {
         Some(Span::new(start, self.span().end))
     }
 
-    /// The position of the `(` of the parameters. `None` for an arrow function, which may have
-    /// none.
+    /// The position of the parameter list's `(`. `None` for an arrow function, which may not have one.
     pub fn open_paren(self) -> Option<u32> {
         (!self.is_arrow() && self.kind() != FnKind::StaticBlock).then(|| self.raw().anchor)
     }
@@ -178,7 +175,7 @@ impl<'a> Func<'a> {
         self.is_arrow().then(|| Span::new(at, at + 2))
     }
 
-    /// What it belongs to.
+    /// The node it belongs to.
     #[inline]
     pub fn owner(self) -> Node<'a> {
         let file = self.file;
@@ -191,14 +188,14 @@ impl<'a> Func<'a> {
         }
     }
 
-    /// The function that encloses it.
+    /// The enclosing function.
     #[inline]
     pub fn enclosing(self) -> Option<Func<'a>> {
         Func::some(self.file, self.file.bound.fns.get(self.id.idx())?.enclosing)
     }
 
-    /// From its first token, which can be a modifier or a decorator, to its end. That of a method
-    /// or an accessor starts with the member: see [`Func::span_from_params`].
+    /// From its first token, which can be a modifier or a decorator, to its end. A method's or accessor's span starts
+    /// where the member starts. See also [`Func::span_from_params`].
     pub fn span(self) -> Span {
         let end = match self.owner() {
             Node::File(_) => self.raw().start,
@@ -210,14 +207,13 @@ impl<'a> Func<'a> {
         Span::new(self.raw().start, end)
     }
 
-    /// From the type parameters or the `(`. For a method or an accessor, this is what ESLint
-    /// calls the `FunctionExpression` that is the `value` of the `MethodDefinition` or the
-    /// `Property`.
+    /// Starts at the type parameters or the `(`. For a method or an accessor, this is the range of ESLint's
+    /// `FunctionExpression`, the `value` of the `MethodDefinition` or `Property`.
     pub fn span_from_params(self) -> Span {
         Span::new(self.start_of_params(), self.span().end)
     }
 
-    /// The position of the `<` of the type parameters, or of the `(`.
+    /// The position of the type parameters' `<`, or of the `(` if there are none.
     pub(super) fn start_of_params(self) -> u32 {
         match self.type_params().first() {
             Some(first) => self
@@ -228,7 +224,7 @@ impl<'a> Func<'a> {
         }
     }
 
-    /// The range of the node that ESLint has for it:
+    /// The range of ESLint's node for it:
     /// - a `FunctionDeclaration` or a `TSDeclareFunction`: the statement without `export` and
     ///   `export default`,
     /// - a `FunctionExpression` or an `ArrowFunctionExpression`: the expression,
@@ -250,15 +246,14 @@ impl<'a> Func<'a> {
         }
     }
 
-    /// The `this` parameter, if there is one, and the others: all that is written between the
-    /// parentheses.
+    /// Everything between the parentheses: the `this` parameter, if any, then the other parameters.
     #[inline]
     pub fn params_with_this(self) -> impl Iterator<Item = Param<'a>> + 'a {
         self.this_param().into_iter().chain(self.params())
     }
 
-    /// The position of the `)` of the parameters. `None` for an arrow function without
-    /// parentheses, and for a static block.
+    /// The position of the parameter list's `)`. `None` for an arrow function without parentheses and for a static
+    /// block.
     pub fn close_paren(self) -> Option<u32> {
         let text = self.file.text();
         let last = self.params().last().or_else(|| self.this_param());
@@ -286,8 +281,8 @@ impl<'a> Func<'a> {
         (text.get(at as usize) == Some(&close)).then_some(at)
     }
 
-    /// From the `(` to the `)` of the parameters. For an arrow function without parentheses, the
-    /// parameter. For an index signature, the brackets.
+    /// The parameter list from `(` to `)`. For an arrow function without parentheses, the parameter. For an index
+    /// signature, the brackets.
     pub fn params_span(self) -> Option<Span> {
         let Some(close) = self.close_paren() else {
             return self.params().first().map(Param::span);
@@ -305,7 +300,7 @@ impl<'a> Func<'a> {
         Some(Span::new(open, close + 1))
     }
 
-    /// The `return` statements in it, not those in nested functions.
+    /// Its `return` statements, excluding those in nested functions.
     pub fn returns(self) -> impl Iterator<Item = Stmt<'a>> + 'a {
         let file = self.file;
         let list = (file.bound.fns.get(self.id.idx())).map_or(hir::IdList::EMPTY, |f| f.returns);
@@ -313,7 +308,7 @@ impl<'a> Func<'a> {
         ids.iter().map(move |&s| Stmt::new(file, hir::StmtId(s)))
     }
 
-    /// The `yield` expressions in it, not those in nested functions.
+    /// Its `yield` expressions, excluding those in nested functions.
     pub fn yields(self) -> impl Iterator<Item = Expr<'a>> + 'a {
         let file = self.file;
         let list = (file.bound.fns.get(self.id.idx())).map_or(hir::IdList::EMPTY, |f| f.yields);
@@ -340,7 +335,7 @@ impl<'a> Param<'a> {
 
     #[inline]
     pub fn ty(self) -> Option<TypeNode<'a>> {
-        TypeNode::written(self.file, self.raw().ty)
+        TypeNode::in_source(self.file, self.raw().ty)
     }
 
     #[inline]
@@ -364,7 +359,7 @@ impl<'a> Param<'a> {
         self.flags().contains(Flags::OPTIONAL) && !self.flags().contains(Flags::REPARSED)
     }
 
-    /// `constructor(private x)`: it also declares a property of the class.
+    /// `constructor(private x)`, which also declares a class property.
     #[inline]
     pub fn is_parameter_property(self) -> bool {
         self.flags().contains(Flags::PARAMETER_PROPERTY)
@@ -379,7 +374,7 @@ impl<'a> Param<'a> {
         }
     }
 
-    /// From its first token, which can be a decorator, a modifier or the `...`.
+    /// Starts at its first token, which can be a decorator, a modifier or the `...`.
     pub fn span(self) -> Span {
         let raw = self.raw();
         let end = match raw.loc.end {
@@ -392,7 +387,7 @@ impl<'a> Param<'a> {
             .flatten()
             .max()
             .unwrap_or(raw.pos),
-            // The HIR has the end of a name that is written with an escape too early.
+            // The HIR's end is too early for a name written with an escape.
             end => end.max(self.pat().span().end),
         };
         Span::new(raw.pos, end)
@@ -402,9 +397,8 @@ impl<'a> Param<'a> {
         self.modifiers().iter().filter_map(Modifier::decorator)
     }
 
-    /// The pattern, the `?` and the type annotation. This is the range of ESLint's `Identifier`,
-    /// `ObjectPattern` or `ArrayPattern` for the parameter: typescript-eslint has `?` and the
-    /// annotation as parts of it.
+    /// The pattern, the `?` and the type annotation. This is the range of ESLint's `Identifier`, `ObjectPattern` or
+    /// `ArrayPattern` for the parameter, because typescript-eslint includes the `?` and the annotation in that node.
     pub fn binding_span(self) -> Span {
         let pat = self.pat().span();
         let end = match self.ty() {
@@ -415,9 +409,9 @@ impl<'a> Param<'a> {
         Span::new(pat.start, end)
     }
 
-    /// Without decorators and modifiers. This is the range of ESLint's node for the parameter,
-    /// or of the `parameter` of a `TSParameterProperty`: the `AssignmentPattern` of `a = 1`, the
-    /// `RestElement` of `...a`, otherwise [`Param::binding_span`].
+    /// Excludes decorators and modifiers. This is the range of ESLint's node for the parameter, or of the `parameter`
+    /// of a `TSParameterProperty`: the `AssignmentPattern` of `a = 1`, the `RestElement` of `...a`, otherwise
+    /// [`Param::binding_span`].
     pub fn span_without_modifiers(self) -> Span {
         let whole = self.span();
         let start = match self.modifiers().last() {
@@ -470,15 +464,15 @@ impl<'a> TypeParam<'a> {
         Span::new(self.raw().start, self.raw().end)
     }
 
-    /// What declares it: a `Func`, a `Class`, the `Stmt` of an interface or a type alias, or the
-    /// `TypeNode` of an `infer` or a mapped type.
+    /// The node that declares it: a `Func`, a `Class`, the `Stmt` of an interface or a type alias, or the `TypeNode` of
+    /// an `infer` or a mapped type.
     #[inline]
     pub fn parent(self) -> Node<'a> {
         Node::TypeParam(self).parent()
     }
 }
 
-// ───────────────────────────── names of members ─────────────────────────────
+// ───────────────────────────── member names ─────────────────────────────
 
 /// The name of a member of a class, an interface, a type literal, an object literal, an object
 /// pattern or an enum.
@@ -486,7 +480,7 @@ impl<'a> TypeParam<'a> {
 pub struct Key<'a> {
     kind: KeyKind<'a>,
     start: u32,
-    /// It is the name of a JSX attribute.
+    /// True for a JSX attribute name.
     is_jsx: bool,
 }
 
@@ -494,39 +488,39 @@ pub struct Key<'a> {
 pub enum KeyKind<'a> {
     /// `a`. In JSX also `a-b` and `a:b`.
     Ident(Name<'a>),
-    /// `"a"`: its value.
+    /// `"a"`. The name is the string's value.
     String(Name<'a>),
-    /// `0`, `1e3`, `0x10`, `1n`: the number as `String(n)` formats it.
+    /// `0`, `1e3`, `0x10`, `1n`. The name is the number as `String(n)` formats it.
     Number(Name<'a>),
     /// `#a`. The name includes the `#`.
     Private(Name<'a>),
-    /// `["a"]`, `` [`a`] ``: the value of the string.
+    /// `["a"]`, `` [`a`] ``. The name is the string's value.
     ComputedString(Name<'a>),
-    /// `[0]`: the number as `String(n)` formats it.
+    /// `[0]`. The name is the number as `String(n)` formats it.
     ComputedNumber(Name<'a>),
-    /// `[e]`, where `e` is not a bare string or number.
+    /// `[e]`, where `e` isn't a bare string or number.
     Computed(Expr<'a>),
 }
 
 impl<'a> KeyKind<'a> {
-    /// The HIR has no name for a `bigint`, or in a binding pattern the literal as it is written.
+    /// For a `bigint` key the HIR stores no name, or in a binding pattern the literal's source text.
     #[inline(never)]
-    fn of_bigint(file: &'a File<'a>, start: u32) -> Option<KeyKind<'a>> {
+    fn from_bigint(file: &'a File<'a>, start: u32) -> Option<KeyKind<'a>> {
         let rest = file.text().get(start as usize..)?;
         let literal = rest.get(..crate::tokens::token_len(rest))?;
         (rest.first()?.is_ascii_digit() && literal.ends_with(b"n"))
             .then(|| KeyKind::Number(file.name(file.atoms.intern(&decimal_digits(literal)))))
     }
 
-    /// The HIR has no name either for a `#name` that is not in a class, which declares nothing.
+    /// The HIR also stores no name for a `#name` outside a class, since it declares nothing.
     #[inline(never)]
-    fn of_unnamed(file: &'a File<'a>, start: u32) -> Option<KeyKind<'a>> {
+    fn from_unnamed(file: &'a File<'a>, start: u32) -> Option<KeyKind<'a>> {
         let rest = file.text().get(start as usize..)?;
         match rest.first()? {
             b'#' => Some(KeyKind::Private(
                 file.intern(rest.get(..crate::tokens::token_len(rest))?),
             )),
-            _ => KeyKind::of_bigint(file, start),
+            _ => KeyKind::from_bigint(file, start),
         }
     }
 }
@@ -541,33 +535,33 @@ impl<'a> Key<'a> {
     ) -> Option<Key<'a>> {
         match (key, name_kind, file.text().get(start as usize)) {
             (_, _, None | Some(b'"' | b'\'' | b'0'..=b'9')) => {
-                Key::new_in_general(file, key, name_kind, start)
+                Key::new_slow(file, key, name_kind, start)
             }
             (hir::PropKey::Name(name), NameKind::Identifier, _) => Some(Key {
                 kind: KeyKind::Ident(file.name(name)),
                 start,
                 is_jsx: false,
             }),
-            _ => Key::new_in_general(file, key, name_kind, start),
+            _ => Key::new_slow(file, key, name_kind, start),
         }
     }
 
     #[inline(never)]
-    fn new_in_general(
+    fn new_slow(
         file: &'a File<'a>,
         key: hir::PropKey,
         name_kind: NameKind,
         start: u32,
     ) -> Option<Key<'a>> {
-        let bigint = || KeyKind::of_bigint(file, start);
+        let bigint = || KeyKind::from_bigint(file, start);
         let kind = match key {
-            hir::PropKey::None => KeyKind::of_unnamed(file, start)?,
+            hir::PropKey::None => KeyKind::from_unnamed(file, start)?,
             hir::PropKey::Private(name) => KeyKind::Private(file.private_name(name)),
             hir::PropKey::Computed(e) => KeyKind::Computed(Expr::new(file, e)),
             hir::PropKey::Name(name) => {
                 let name = file.name(name);
                 match name_kind {
-                    // The HIR does not tell for the keys of `with { "type": "json" }`.
+                    // The HIR marks the string keys of `with { "type": "json" }` as identifiers.
                     NameKind::Identifier
                         if matches!(file.text().get(start as usize), Some(b'"' | b'\'')) =>
                     {
@@ -601,7 +595,7 @@ impl<'a> Key<'a> {
         self.kind
     }
 
-    /// It is written in brackets.
+    /// True if it's written in brackets.
     #[inline]
     pub fn is_computed(self) -> bool {
         matches!(
@@ -615,14 +609,14 @@ impl<'a> Key<'a> {
         matches!(self.kind, KeyKind::Private(_))
     }
 
-    /// It is the name of a JSX attribute.
+    /// True for a JSX attribute name.
     #[inline]
     pub fn is_jsx(self) -> bool {
         self.is_jsx
     }
 
-    /// The name of the property, unless it takes evaluating an expression to know it. That of
-    /// `#a` includes the `#`.
+    /// The property's name, or `None` if finding it would take evaluating an expression. The name of `#a` includes the
+    /// `#`.
     pub fn name(self) -> Option<Name<'a>> {
         match self.kind {
             KeyKind::Ident(name)
@@ -635,13 +629,13 @@ impl<'a> Key<'a> {
         }
     }
 
-    /// Whether the property is named `name`.
+    /// True if the property is named `name`.
     #[inline]
     pub fn is(self, name: &str) -> bool {
         self.name().is_some_and(|it| it.is(name))
     }
 
-    /// The span of a plain name in ASCII, which most keys are.
+    /// Fast path for a plain ASCII name, which most keys are.
     #[inline]
     fn span_of_ascii_name(self, file: &File<'a>) -> Option<Span> {
         match self.kind {
@@ -653,17 +647,17 @@ impl<'a> Key<'a> {
         }
     }
 
-    /// Without the brackets: the range of ESLint's `key`.
+    /// Excludes the brackets. This is the range of ESLint's `key`.
     #[inline]
     pub fn inner_span(self, file: &File<'a>) -> Span {
         match self.span_of_ascii_name(file) {
             Some(span) => span,
-            None => self.inner_span_in_general(file),
+            None => self.inner_span_slow(file),
         }
     }
 
     #[inline(never)]
-    fn inner_span_in_general(self, file: &File<'a>) -> Span {
+    fn inner_span_slow(self, file: &File<'a>) -> Span {
         let text = file.text();
         match self.kind {
             KeyKind::Computed(e) => e.span(),
@@ -672,21 +666,21 @@ impl<'a> Key<'a> {
                 let rest = text.get(literal as usize..).unwrap_or_default();
                 Span::new(literal, literal + crate::tokens::token_len(rest) as u32)
             }
-            _ => self.span_in_general(file),
+            _ => self.span_slow(file),
         }
     }
 
-    /// With the brackets or the quotes.
+    /// Includes the brackets or quotes.
     #[inline]
     pub fn span(self, file: &File<'a>) -> Span {
         match self.span_of_ascii_name(file) {
             Some(span) => span,
-            None => self.span_in_general(file),
+            None => self.span_slow(file),
         }
     }
 
     #[inline(never)]
-    fn span_in_general(self, file: &File<'a>) -> Span {
+    fn span_slow(self, file: &File<'a>) -> Span {
         let text = file.text();
         let end = match self.kind {
             KeyKind::Computed(e) => skip_trivia(text, e.outer_span().end) + 1,
@@ -712,7 +706,7 @@ impl<'a> Key<'a> {
     }
 }
 
-/// [`Key::is_computed`] of the key that the HIR has as `key` and `name_kind`.
+/// [`Key::is_computed`] for the HIR's `key` and `name_kind`, without building a [`Key`].
 #[inline]
 pub(super) fn is_computed(key: hir::PropKey, name_kind: NameKind) -> bool {
     match key {
@@ -727,8 +721,8 @@ pub(super) fn is_computed(key: hir::PropKey, name_kind: NameKind) -> bool {
     }
 }
 
-/// The length of the name that `text` starts with, if that and what follows it is ASCII without a
-/// `\\`: what `token_len` says, without looking for anything else that a token can be.
+/// The length of the identifier at the start of `text`, or `None` unless it and the byte after it are ASCII and not a
+/// `\\`. Same answer as `token_len`, without checking for the other kinds of token.
 #[inline]
 fn ascii_name_len(text: &[u8]) -> Option<usize> {
     static PART: ByteSet = ByteSet::of(b"_$")
@@ -758,7 +752,7 @@ fn decimal_digits(raw: &[u8]) -> Vec<u8> {
         [b'0', b'b' | b'B', rest @ ..] => (2, rest),
         _ => (10, digits),
     };
-    // The least significant first.
+    // Least significant digit first.
     let mut decimal: Vec<u8> = vec![0];
     for digit in digits.iter().filter_map(|b| (*b as char).to_digit(radix)) {
         let mut carry = digit;
@@ -779,8 +773,8 @@ fn decimal_digits(raw: &[u8]) -> Vec<u8> {
 }
 
 impl File<'_> {
-    /// The `a` and the `b` of the JSX name `a:b` that starts at `start`: ESLint's `namespace` and
-    /// `name` of a `JSXNamespacedName`. `None` if the name has no colon.
+    /// The `a` and `b` of the JSX name `a:b` starting at `start`, which are the `namespace` and `name` of ESLint's
+    /// `JSXNamespacedName`. `None` if the name has no colon.
     pub fn jsx_namespace_and_name(&self, start: u32) -> Option<(Span, Span)> {
         let text = self.text();
         let namespace = Span::new(start, jsx_identifier_end(text, start));
@@ -793,11 +787,11 @@ impl File<'_> {
     }
 }
 
-/// Where the identifier of JSX that starts at `at` ends. It can contain `-`.
+/// The end of the JSX identifier that starts at `at`. It can contain `-`.
 fn jsx_identifier_end(text: &[u8], at: u32) -> u32 {
     let mut rest = text.get(at as usize..).unwrap_or_default();
     let mut end = at;
-    // Once oxc's lexer is past a `-`, an escape ends the name.
+    // In oxc's lexer, an escape after a `-` ends the name.
     let mut is_past_dash = false;
     while let [b, after @ ..] = rest
         && !(*b == b'\\' && is_past_dash)
@@ -806,7 +800,7 @@ fn jsx_identifier_end(text: &[u8], at: u32) -> u32 {
             || (*b >= 0x80 && bun_core::strings::js_whitespace_len(rest) == 0))
     {
         is_past_dash |= *b == b'-';
-        // `\u{61}`. Only oxc takes an escape here.
+        // `\u{61}`. Only oxc accepts an escape here.
         let in_braces = match (b, after) {
             (b'\\', [b'u', b'{', ..]) => {
                 bun_core::strings::index_of_char_usize(after, b'}').map_or(0, |it| it + 1)
@@ -886,7 +880,7 @@ impl<'a> Class<'a> {
         self.raw().start
     }
 
-    /// The `Stmt` or the `Expr` that it is.
+    /// Its `Stmt` or `Expr`.
     #[inline]
     pub fn owner(self) -> Node<'a> {
         match self.file.bound.class_owner.get(self.id.idx()) {
@@ -896,7 +890,7 @@ impl<'a> Class<'a> {
         }
     }
 
-    /// From its first token, which can be a decorator or a modifier.
+    /// Starts at its first token, which can be a decorator or a modifier.
     pub fn span(self) -> Span {
         let end = match self.file.bound.class_owner.get(self.id.idx()) {
             Some(&ClassOwner::Expr(e)) => self.file.hir.exprs.get(e.idx()).map_or(0, |e| e.end),
@@ -906,8 +900,8 @@ impl<'a> Class<'a> {
         Span::new(self.raw().start, end.max(self.raw().start))
     }
 
-    /// The range of ESLint's `ClassDeclaration` or `ClassExpression`: without `export` and
-    /// `export default`, and without the decorators before them.
+    /// The range of ESLint's `ClassDeclaration` or `ClassExpression`, which excludes `export`, `export default` and any
+    /// decorators before them.
     pub fn estree_span(self) -> Span {
         match self.owner() {
             Node::Stmt(statement) => statement.span_without_export(),
@@ -936,7 +930,7 @@ impl<'a> Class<'a> {
             .unwrap_or_else(|| self.keyword_span().end);
         let text = self.file.text();
         let mut start = skip_trivia(text, head_end);
-        // `class A extends B, {}`: TypeScript's parser takes the comma, and its checker reports it.
+        // `class A extends B, {}`: TypeScript's parser accepts the comma and its checker reports it.
         if text.get(start as usize) == Some(&b',') {
             start = skip_trivia(text, start + 1);
         }
@@ -955,16 +949,16 @@ impl<'a> Member<'a> {
         &self.file.hir.members[self.id.idx()]
     }
 
-    /// `static constructor() {}` is a `Constructor` too, which for ESLint is a method: see
+    /// `static constructor() {}` is also a `Constructor`, but ESLint treats it as a method. See
     /// [`Member::is_constructor`].
     #[inline]
     pub fn kind(self) -> MemberKind {
         self.raw().kind
     }
 
-    /// ESLint's `kind === "constructor"`: a `Constructor` that is not `static`. Also a method of a
-    /// class that is written `"constructor"` where TypeScript's parser does not take that for the
-    /// constructor: `"constructor"<T>() {}`, `*"constructor"() {}`.
+    /// ESLint's `kind === "constructor"`: a `Constructor` that isn't `static`, or a class method named with the string
+    /// `"constructor"` that TypeScript's parser doesn't treat as the constructor, like `"constructor"<T>() {}` or
+    /// `*"constructor"() {}`.
     pub fn is_constructor(self) -> bool {
         let raw = self.raw();
         if raw.flags.contains(Flags::STATIC) {
@@ -1002,7 +996,7 @@ impl<'a> Member<'a> {
         Key::new(self.file, raw.key, name_kind, raw.name_pos)
     }
 
-    /// The `e` of a key that is a [`KeyKind::Computed`].
+    /// The `e` of a [`KeyKind::Computed`] key.
     #[inline]
     pub fn computed_key(self) -> Option<Expr<'a>> {
         match self.raw() {
@@ -1021,7 +1015,7 @@ impl<'a> Member<'a> {
     #[inline]
     pub fn flags(self) -> Flags {
         match self.file.has_synthetic_nodes() {
-            true => self.file.written_flags(self.raw().flags, self.modifiers()),
+            true => self.file.source_flags(self.raw().flags, self.modifiers()),
             false => self.raw().flags,
         }
     }
@@ -1031,7 +1025,7 @@ impl<'a> Member<'a> {
         self.flags().contains(Flags::STATIC)
     }
 
-    /// It is in an interface or a type literal, not in a class.
+    /// True if it's in an interface or a type literal rather than a class.
     #[inline]
     pub fn is_signature(self) -> bool {
         matches!(
@@ -1040,8 +1034,7 @@ impl<'a> Member<'a> {
         )
     }
 
-    /// The `constructor` of a constructor, which ESLint has as its `key`. It can be written as a
-    /// string.
+    /// A constructor's `constructor` token, which is its `key` in ESLint. It can be written as a string.
     #[inline]
     pub fn constructor_keyword(self) -> Option<Ident<'a>> {
         let raw = self.raw();
@@ -1053,22 +1046,22 @@ impl<'a> Member<'a> {
         }
     }
 
-    /// The type annotation of a property.
+    /// A property's type annotation.
     #[inline]
     pub fn ty(self) -> Option<TypeNode<'a>> {
         match self.raw().func.is_some() {
             true => None,
-            false => TypeNode::written(self.file, self.raw().ty),
+            false => TypeNode::in_source(self.file, self.raw().ty),
         }
     }
 
-    /// The initializer of a property.
+    /// A property's initializer.
     #[inline]
     pub fn init(self) -> Option<Expr<'a>> {
         Expr::some(self.file, self.raw().init)
     }
 
-    /// The function of anything but a property.
+    /// The function, for anything but a property.
     #[inline]
     pub fn func(self) -> Option<Func<'a>> {
         Func::some(self.file, self.raw().func)
@@ -1084,8 +1077,7 @@ impl<'a> Member<'a> {
         self.modifiers().iter().filter_map(Modifier::decorator)
     }
 
-    /// From its first token, which can be a decorator or a modifier. Its `;` or `,` is part of
-    /// it.
+    /// Starts at its first token, which can be a decorator or a modifier. Includes its `;` or `,`.
     #[inline]
     pub fn span(self) -> Span {
         Span::new(self.raw().start, self.raw().loc.end)
@@ -1097,7 +1089,7 @@ impl<'a> Member<'a> {
         match self.file.bound.member_owner.get(self.id.idx()) {
             Some(&MemberOwner::Class(class)) => Node::Class(Class::new(self.file, class)),
             Some(&MemberOwner::TypeLiteral(ty)) => Node::Type(TypeNode::new(self.file, ty)),
-            _ => Node::Member(self).parent_of_neither_expr_nor_stmt(),
+            _ => Node::Member(self).parent_of_other_node(),
         }
     }
 }
@@ -1113,7 +1105,7 @@ impl<'a> Modifier<'a> {
         &self.file.hir.modifiers[self.id.idx()]
     }
 
-    /// The flag of a keyword. Empty for a decorator.
+    /// A keyword's flag. Empty for a decorator.
     #[inline]
     pub fn flag(self) -> Flags {
         self.raw().kind.flag()
@@ -1168,14 +1160,14 @@ impl<'a> Prop<'a> {
         Key::new(self.file, raw.key, raw.name_kind, raw.pos)
     }
 
-    /// The key is written in brackets: [`Key::is_computed`].
+    /// Same as [`Key::is_computed`] on its key.
     #[inline]
     pub fn has_computed_key(self) -> bool {
         let raw = self.raw();
         raw.kind != PropKind::Spread && is_computed(raw.key, raw.name_kind)
     }
 
-    /// The `e` of a key that is a [`KeyKind::Computed`].
+    /// The `e` of a [`KeyKind::Computed`] key.
     #[inline]
     pub fn computed_key(self) -> Option<Expr<'a>> {
         match self.raw() {
@@ -1192,16 +1184,16 @@ impl<'a> Prop<'a> {
     }
 
     /// - `Init`: the value. `None` for a JSX attribute without one.
-    /// - `Shorthand`: the identifier. In a destructuring assignment `{ a = 1 }` it is an
-    ///   `Assign` of the default to the identifier.
-    /// - `Spread`: what is spread.
+    /// - `Shorthand`: the identifier. In a destructuring assignment `{ a = 1 }` it's an `Assign` of the default to the
+    ///   identifier.
+    /// - `Spread`: the spread expression.
     /// - `Method`, `Getter`, `Setter`: an `ExprKind::Fn`.
     #[inline]
     pub fn value(self) -> Option<Expr<'a>> {
         Expr::some(self.file, self.raw().value)
     }
 
-    /// The function of a method or an accessor.
+    /// A method's or accessor's function.
     pub fn func(self) -> Option<Func<'a>> {
         match self.kind() {
             PropKind::Method | PropKind::Getter | PropKind::Setter => self.value()?.as_fn(),
@@ -1221,14 +1213,14 @@ impl<'a> Prop<'a> {
         self.raw().name_kind == NameKind::Jsx
     }
 
-    /// It is a `key: "value"` of `with { .. }` after a module specifier or in an import type:
-    /// [`ImportAttributes::entries`]. It is not a node of the tree, its value is.
+    /// True for a `key: "value"` entry of the `with { .. }` after a module specifier or in an import type (see
+    /// [`ImportAttributes::entries`]). The entry isn't a node in the tree, but its value is.
     #[inline]
     pub fn is_import_attribute(self) -> bool {
         self.file.is_import_attribute(self.id)
     }
 
-    /// Keywords and decorators, in source order. All but the `async` of a method are errors.
+    /// Keywords and decorators, in source order. Everything but a method's `async` is an error.
     pub fn modifiers(self) -> List<'a, Modifier<'a>> {
         let all = self.file.hir.modifiers_of_props;
         match all.binary_search_by_key(&self.id.0, |it| it.0.0) {
@@ -1237,7 +1229,7 @@ impl<'a> Prop<'a> {
         }
     }
 
-    /// From its first token: `async`, `get`, `set`, `*`, `...`, or the name.
+    /// Starts at its first token: `async`, `get`, `set`, `*`, `...`, or the name.
     pub fn span(self) -> Span {
         let raw = self.raw();
         let end = match raw.end {
@@ -1255,14 +1247,14 @@ impl<'a> Prop<'a> {
             Some(&owner) if owner.is_some() && self.file.hir.import_attributes.is_empty() => {
                 Node::Expr(Expr::new(self.file, owner))
             }
-            _ => Node::Prop(self).parent_of_neither_expr_nor_stmt(),
+            _ => Node::Prop(self).parent_of_other_node(),
         }
     }
 }
 
 // ───────────────────────────── type declarations ─────────────────────────────
 
-/// Declares a handle for a declaration that is stored beside its statement.
+/// Declares a handle for a declaration that the HIR stores in a side table, linked to its statement.
 macro_rules! declaration {
     ($(#[$doc:meta])* $name:ident, $id:ident, $field:ident, $raw:ident) => {
         $(#[$doc])*
@@ -1302,7 +1294,6 @@ macro_rules! declaration {
                 self.id
             }
 
-            /// The statement that it is.
             #[inline]
             pub fn stmt(self) -> Stmt<'a> {
                 Stmt::new(self.file, self.raw().stmt)
@@ -1434,7 +1425,7 @@ impl<'a> EnumMember<'a> {
         Key::new(self.file, key, raw.name_kind, raw.pos)
     }
 
-    /// The `e` of a key that is a [`KeyKind::Computed`].
+    /// The `e` of a [`KeyKind::Computed`] key.
     #[inline]
     pub fn computed_key(self) -> Option<Expr<'a>> {
         let name = self.raw().computed_name;
@@ -1461,10 +1452,10 @@ impl<'a> EnumMember<'a> {
 declaration! {
     /// `namespace N { .. }`, `module N { .. }`, `declare module "m" { .. }`, `declare global { .. }`
     ///
-    /// `namespace A.B { .. }` is stored as a namespace `A` with the one statement `B { .. }`:
-    /// [`Module::nested`]. That statement is not a node: ESLint has one `TSModuleDeclaration` whose
-    /// `id` is a `TSQualifiedName`. No listener is called with it, the parent of the statements
-    /// between the braces is `A`, and they are the [`Module::body`] of `A`, as of `B`.
+    /// `namespace A.B { .. }` is stored as a namespace `A` whose only statement is `B { .. }` (see [`Module::nested`]).
+    /// That statement isn't a node, because ESLint has a single `TSModuleDeclaration` whose `id` is a
+    /// `TSQualifiedName`. So no listener is called with it, the statements between the braces have `A` as their parent,
+    /// and [`Module::body`] returns them for both `A` and `B`.
     Module, ModuleId, modules, Module
 }
 
@@ -1488,31 +1479,31 @@ impl<'a> Module<'a> {
         }
     }
 
-    /// The statements between the braces, for each of the names of `namespace A.B.C { .. }`.
+    /// The statements between the braces. It's the same list for the `A`, `B` and `C` of `namespace A.B.C { .. }`.
     #[inline]
     pub fn body(self) -> List<'a, Stmt<'a>> {
         self.innermost().stored_body()
     }
 
-    /// For the `A` of `namespace A.B { .. }`, the `B { .. }`.
+    /// For the `A` of `namespace A.B { .. }`, this is `B { .. }`.
     #[inline]
     fn stored_body(self) -> List<'a, Stmt<'a>> {
         List::ids(self.file, self.raw().body)
     }
 
-    /// `declare module "m";` has none.
+    /// False for `declare module "m";`.
     #[inline]
     pub fn has_body(self) -> bool {
         self.raw().has_body
     }
 
-    /// It is written with the keyword `module`, not `namespace`.
+    /// True if it's written with the `module` keyword instead of `namespace`.
     #[inline]
     pub fn uses_module_keyword(self) -> bool {
         self.raw().specifies_module
     }
 
-    /// The name, where it is written. For `declare global`, the keyword.
+    /// The span of the name. For `declare global`, the `global` keyword.
     pub fn name_span(self) -> Span {
         match self.name() {
             ModuleName::Ident(name) | ModuleName::String(name) => name.span(),
@@ -1523,7 +1514,7 @@ impl<'a> Module<'a> {
         }
     }
 
-    /// The `{ .. }`, for each of the names of `namespace A.B.C { .. }`.
+    /// The `{ .. }`. It's the same span for the `A`, `B` and `C` of `namespace A.B.C { .. }`.
     pub fn body_span(self) -> Option<Span> {
         let last = self.innermost();
         last.has_body().then(|| {
@@ -1534,7 +1525,7 @@ impl<'a> Module<'a> {
         })
     }
 
-    /// The `C` of `namespace A.B.C { .. }`. Itself, if its name has no dots.
+    /// The `C` of `namespace A.B.C { .. }`. Returns itself if its name has no dots.
     pub fn innermost(self) -> Module<'a> {
         let mut at = self;
         while let Some(nested) = at.nested() {
@@ -1543,7 +1534,7 @@ impl<'a> Module<'a> {
         at
     }
 
-    /// The `A` of `namespace A.B.C { .. }`, which is the node. Itself, if it is that.
+    /// The `A` of `namespace A.B.C { .. }`, which is the node. Returns itself if it's already the outermost.
     pub fn outermost(self) -> Module<'a> {
         let outer = match self.file.is_nested_namespace(self.raw().stmt) {
             true => self.stmt().parent().as_stmt().and_then(Stmt::as_module),
@@ -1601,7 +1592,7 @@ impl<'a> Import<'a> {
         List::run(self.file, self.raw().named)
     }
 
-    /// It has `{ }`, which can be empty.
+    /// True if it has `{ }`, even if they're empty.
     #[inline]
     pub fn has_named_imports(self) -> bool {
         self.raw().has_named_imports
@@ -1619,7 +1610,7 @@ impl<'a> Import<'a> {
         self.phase() == Some("defer")
     }
 
-    /// The `defer` of `import defer ..`, the `source` of `import source ..`.
+    /// `"defer"` for `import defer ..`, `"source"` for `import source ..`.
     pub fn phase(self) -> Option<&'static str> {
         let raw = self.raw();
         raw.is_deferred
@@ -1645,7 +1636,7 @@ impl<'a> Import<'a> {
         self.stmt().import_attributes()
     }
 
-    /// What is between `import` and `from`.
+    /// Everything between `import` and `from`.
     #[inline]
     pub fn clause_span(self) -> Span {
         Span::new(self.raw().clause_start, self.raw().clause_end)
@@ -1675,7 +1666,7 @@ impl<'a> ImportSpec<'a> {
         self.file.ident(self.raw().local, self.raw().pos)
     }
 
-    /// It has an `as`.
+    /// True if it has an `as`.
     #[inline]
     pub fn is_renamed(self) -> bool {
         self.raw().imported_pos != self.raw().pos
@@ -1732,7 +1723,7 @@ impl<'a> ImportEquals<'a> {
         self.raw().flags
     }
 
-    /// `require("spec")`: the range of ESLint's `TSExternalModuleReference`.
+    /// `require("spec")`, the range of ESLint's `TSExternalModuleReference`.
     pub fn require_span(self) -> Option<Span> {
         let spec = self.stmt().module_specifier_span()?;
         let text = self.file.text();
@@ -1807,7 +1798,7 @@ impl<'a> ExportSpec<'a> {
         self.file.ident(self.raw().exported, self.raw().pos)
     }
 
-    /// It has an `as`.
+    /// True if it has an `as`.
     #[inline]
     pub fn is_renamed(self) -> bool {
         self.raw().local_pos != self.raw().pos

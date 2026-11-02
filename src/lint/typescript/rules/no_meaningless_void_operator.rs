@@ -7,15 +7,15 @@ pub struct NoMeaninglessVoidOperator {
     check_never: bool,
 }
 
-const MEANINGLESS_VOID_ON_NON_CALL: Message = Message::new(
+const MEANINGLESS_VOID_ON_NON_CALL: &Message = &Message::new(
     "meaninglessVoidOnNonCall",
     "void operator is useless here; it should only discard a call's return value",
 );
-const MEANINGLESS_VOID_OPERATOR: Message = Message::new(
+const MEANINGLESS_VOID_OPERATOR: &Message = &Message::new(
     "meaninglessVoidOperator",
     "void operator shouldn't be used on {{type}}; it should convey that a return value is being ignored",
 );
-const REMOVE_VOID: Message = Message::new("removeVoid", "Remove 'void'");
+const REMOVE_VOID: &Message = &Message::new("removeVoid", "Remove 'void'");
 
 fn unwrap_void_argument(node: Expr<'_>) -> Expr<'_> {
     let mut current = node;
@@ -25,14 +25,14 @@ fn unwrap_void_argument(node: Expr<'_>) -> Expr<'_> {
             | ExprKind::AsConst(expr)
             | ExprKind::NonNull(expr)
             | ExprKind::Satisfies { expr, .. } => expr,
-            // The last of the expressions.
+            // The last expression of the sequence.
             ExprKind::Binary { op: BinOp::Comma, right, .. } => right,
             _ => return current,
         };
     }
 }
 
-/// Removes the `void` that `node` starts with, and what is before the next token. tsgolint 7.0 leaves that.
+/// Removes the `void` at the start of `node` and the trivia before the next token. tsgolint 7.0 keeps the trivia.
 fn fix(fixer: Fixer, node: Expr) -> Fix {
     let (file, start) = (fixer.file(), node.span().start);
     let end = if file.language().is_oxlint { start + 4 } else { skip_trivia(file.text(), start + 4) };
@@ -61,7 +61,7 @@ impl Rule for NoMeaninglessVoidOperator {
         match unwrap_void_argument(argument).kind() {
             // `() => void (x = 1)` discards the value of the assignment.
             ExprKind::Assign { .. } => return,
-            // tsgolint 7.0 goes by the type, whatever else the operand is.
+            // tsgolint 7.0 only goes by the type, whatever the operand is.
             _ if cx.language().is_oxlint => {}
             ExprKind::Call(_) => {}
             // `void 0` is a common way to write `undefined`.

@@ -18,10 +18,10 @@ export const TOML = b.namespace({
   },
   stringify: {
     args: { value: b.any, replacer: b.any },
-    /** As for YAML and JSON5. `space` is ignored: the output is line-oriented and has no nesting indentation. */
-    length: 3,
     returns: b.any,
     capability: "js",
     throws: true,
+    /** As for YAML and JSON5. `space` is ignored: the output is line-oriented and has no nesting indentation. */
+    length: 3,
   },
 });

@@ -1,5 +1,5 @@
-//! The rules that upstream's test files define for themselves and turn on with a comment in the
-//! code: `/*eslint custom/use-every-a:1*/`. What they do to a file is done here, around the linter.
+//! Rules that upstream's test files define for themselves and enable with a comment in the code, like
+//! `/*eslint custom/use-every-a:1*/`. Their effects are reimplemented here, outside the linter.
 
 use bun_core::strings;
 use bun_lint::ast::{File, Node, StmtTag};
@@ -10,7 +10,7 @@ use bun_lint::span::Span;
 use bun_lint::utils::sort;
 use std::cell::RefCell;
 
-/// The names of the rules, as the comments have them.
+/// The rule names, as written in the comments.
 const RULES: [&str; 8] = [
     "custom/use-every-a",
     "@rule-tester/use-every-a",
@@ -22,7 +22,7 @@ const RULES: [&str; 8] = [
     "@rule-tester/add-named-import",
 ];
 
-/// Whether `skip`, the reason why a case is not for everybody, is a rule of this file.
+/// True if `skip`, a case's recorded skip reason, is about a rule implemented in this file.
 pub(crate) fn is_known(skip: &[u8]) -> bool {
     skip.starts_with(b"test-only plugin: ") || skip.starts_with(b"test-only rule: ")
 }
@@ -36,7 +36,7 @@ fn mark_as_used<'a>(file: &'a File<'a>, name: &str, tags: &[StmtTag]) {
     }
 }
 
-/// `custom/add-named-import`: a fix at the end of the names of each import.
+/// `custom/add-named-import`: reports a fix at the end of each import's named specifiers.
 fn add_named_import<'a>(file: &'a File<'a>, id: &str, into: &mut Vec<LintMessage>) {
     for statement in file.stmts_of_kind(StmtTag::Import) {
         let span = statement.span();
@@ -68,10 +68,10 @@ fn add_named_import<'a>(file: &'a File<'a>, id: &str, into: &mut Vec<LintMessage
     }
 }
 
-/// The rules of this file that the code of a case turns on.
+/// The rules from this file that a case's code enables.
 pub(crate) struct Enabled {
     names: Vec<&'static str>,
-    /// What they report.
+    /// The messages they report.
     messages: RefCell<Vec<LintMessage>>,
 }
 
@@ -86,7 +86,7 @@ impl Enabled {
         }
     }
 
-    /// What they do before the rules that look at the whole file in the end.
+    /// Applies their effects. Call it before the rules that look at the whole file at the end.
     pub(crate) fn prepare<'a>(&self, file: &'a File<'a>) {
         for &name in &self.names {
             match name {
@@ -95,7 +95,8 @@ impl Enabled {
                 }
                 "custom/use-x" => mark_as_used(file, "x", &[StmtTag::Var]),
                 "test/use-a" => mark_as_used(file, "a", &[StmtTag::Var]),
-                // It gives each variable a reference that is nowhere in the code, after which nothing is known about the variable.
+                // It gives each variable a reference that isn't in the code, so nothing can be assumed about the
+                // variable anymore.
                 "test/unknown-ref" => file.symbols().for_each(|symbol| symbol.mark_used()),
                 "custom/add-named-import" | "@rule-tester/add-named-import" => {
                     add_named_import(file, name, &mut self.messages.borrow_mut());
@@ -105,7 +106,7 @@ impl Enabled {
         }
     }
 
-    /// `messages`: of the linter, which does not know these rules.
+    /// `messages` is the linter's output. The linter doesn't know these rules.
     pub(crate) fn finish(self, mut messages: Vec<LintMessage>) -> Vec<LintMessage> {
         messages.retain(|it| !matches!(&it.rule_id, Some(RuleId::Unknown(id)) if RULES.iter().any(|name| name.as_bytes() == &id[..])));
         messages.extend(self.messages.into_inner());

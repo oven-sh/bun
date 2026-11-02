@@ -1,6 +1,6 @@
 use crate::prelude::*;
 
-/// A `;`, unless the options say to leave them out.
+/// A `;`, unless the options turn semicolons off.
 pub(crate) struct OptionalSemicolon;
 
 impl<'a> Format<'a> for OptionalSemicolon {

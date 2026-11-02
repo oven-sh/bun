@@ -1,191 +1,109 @@
 //! `from_js`/`to_js` for `GetAddrInfo` and its nested option types, plus
 //! `address_to_js`/`addr_info_to_js_array`. The pure types stay in `src/dns/`.
 
-use bun_jsc::{
-    ComptimeStringMapExt as _, JSGlobalObject, JSValue, JsError, JsResult, StringJsc as _,
-};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
 
+use bun_dns::OptionsFromJsError as FromJSError;
 use bun_dns::{
     BACKEND_LABEL, Backend, FAMILY_MAP, Family, GetAddrInfoResult as GaiResult, Options,
     PROTOCOL_MAP, Protocol, ResultAny, SOCKET_TYPE_MAP, SocketType,
 };
 use bun_dns::{addr_info_count, address_to_string};
-// `FromJSError` is the union of all the per-field `Invalid*` variants plus
-// `JSError`. The enum lives in `bun_dns` (which has no `bun_jsc` dep), so the
-// `JsError → JSError` mapping is done locally via the `js()` helper below.
-use bun_dns::OptionsFromJsError as FromJSError;
 
-#[inline]
-fn js<T>(r: JsResult<T>) -> Result<T, FromJSError> {
-    r.map_err(|_: JsError| FromJSError::JSError)
+use crate::generated_bindgen::dns::{AddrInfoHint, LookupOptions};
+
+pub(crate) fn options_from_js(value: &LookupOptions<'_>) -> Result<Options, FromJSError> {
+    let mut options = Options::default();
+
+    if let Some(family) = value.family {
+        options.family = family_from_js(family)?;
+    }
+
+    if let Some(socktype) = value.socktype {
+        options.socktype = socket_type_from_js(socktype)?;
+    }
+
+    if let Some(protocol) = value.protocol {
+        options.protocol = protocol_from_js(protocol)?;
+    }
+
+    if let Some(backend) = value.backend {
+        options.backend = backend_from_js(backend)?;
+    }
+
+    if let Some(flags) = value.flags {
+        // Coerce to i32 and store/bit-test as u32.
+        let flags_int: i32 = flags as i32;
+        options.flags = flags_int;
+
+        // hints & ~(AI_ADDRCONFIG | AI_ALL | AI_V4MAPPED)) !== 0
+        let filter: u32 =
+            !((bun_dns::AI_ALL | bun_dns::AI_ADDRCONFIG | bun_dns::AI_V4MAPPED) as u32);
+        let int: u32 = flags_int as u32;
+        if int & filter != 0 {
+            return Err(FromJSError::InvalidFlags);
+        }
+    }
+
+    Ok(options)
 }
 
-pub(crate) fn options_from_js(
-    value: JSValue,
-    global: &JSGlobalObject,
-) -> Result<Options, FromJSError> {
-    if value.is_empty_or_undefined_or_null() {
-        return Ok(Options::default());
-    }
-
-    if value.is_object() {
-        let mut options = Options::default();
-
-        if let Some(family) = js(value.get(global, "family"))? {
-            options.family = family_from_js(family, global)?;
-        }
-
-        if let Some(socktype) = match js(value.get(global, "socketType"))? {
-            some @ Some(_) => some,
-            None => js(value.get(global, "socktype"))?,
-        } {
-            options.socktype = socket_type_from_js(socktype, global)?;
-        }
-
-        if let Some(protocol) = js(value.get(global, "protocol"))? {
-            options.protocol = protocol_from_js(protocol, global)?;
-        }
-
-        if let Some(backend) = js(value.get(global, "backend"))? {
-            options.backend = backend_from_js(backend, global)?;
-        }
-
-        if let Some(flags) = js(value.get(global, "flags"))? {
-            if !flags.is_null() {
-                if !flags.is_number() {
-                    return Err(FromJSError::InvalidFlags);
-                }
-
-                // Coerce to i32 and store/bit-test as u32.
-                let flags_int: i32 = js(flags.coerce::<i32>(global))?;
-                options.flags = flags_int;
-
-                // hints & ~(AI_ADDRCONFIG | AI_ALL | AI_V4MAPPED)) !== 0
-                let filter: u32 =
-                    !((bun_dns::AI_ALL | bun_dns::AI_ADDRCONFIG | bun_dns::AI_V4MAPPED) as u32);
-                let int: u32 = flags_int as u32;
-                if int & filter != 0 {
-                    return Err(FromJSError::InvalidFlags);
-                }
-            }
-        }
-
-        return Ok(options);
-    }
-
-    Err(FromJSError::InvalidOptions)
-}
-
-fn family_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Family, FromJSError> {
-    if value.is_empty_or_undefined_or_null() {
-        return Ok(Family::Unspecified);
-    }
-
-    if value.is_number() {
-        return match js(value.coerce::<i32>(global))? {
+fn family_from_js(value: AddrInfoHint<'_>) -> Result<Family, FromJSError> {
+    match value {
+        AddrInfoHint::Number(number) => match number as i32 {
             0 => Ok(Family::Unspecified),
             4 => Ok(Family::Inet),
             6 => Ok(Family::Inet6),
             _ => Err(FromJSError::InvalidFamily),
-        };
+        },
+        AddrInfoHint::Label(b"") => Ok(Family::Unspecified),
+        AddrInfoHint::Label(label) => FAMILY_MAP
+            .get(label)
+            .copied()
+            .ok_or(FromJSError::InvalidFamily),
     }
-
-    if value.is_string() {
-        // `Family.map` is a `ComptimeStringMap` ported as
-        // `bun_dns::FAMILY_MAP` (a `comptime_string_map!`); `.from_js` comes
-        // from `bun_jsc::ComptimeStringMapExt`.
-        return match js(FAMILY_MAP.from_js(global, value))? {
-            Some(f) => Ok(f),
-            None => {
-                if js(value.to_js_string(global))?.length() == 0 {
-                    return Ok(Family::Unspecified);
-                }
-                Err(FromJSError::InvalidFamily)
-            }
-        };
-    }
-
-    Err(FromJSError::InvalidFamily)
 }
 
-fn socket_type_from_js(value: JSValue, global: &JSGlobalObject) -> Result<SocketType, FromJSError> {
-    if value.is_empty_or_undefined_or_null() {
-        // Default to .stream
-        return Ok(SocketType::Stream);
-    }
-
-    if value.is_number() {
-        return match value.to_int32() {
+fn socket_type_from_js(value: AddrInfoHint<'_>) -> Result<SocketType, FromJSError> {
+    match value {
+        AddrInfoHint::Number(number) => match number as i32 {
             0 => Ok(SocketType::Unspecified),
             1 => Ok(SocketType::Stream),
             2 => Ok(SocketType::Dgram),
             _ => Err(FromJSError::InvalidSocketType),
-        };
+        },
+        AddrInfoHint::Label(b"") => Ok(SocketType::Unspecified),
+        AddrInfoHint::Label(label) => SOCKET_TYPE_MAP
+            .get(label)
+            .copied()
+            .ok_or(FromJSError::InvalidSocketType),
     }
-
-    if value.is_string() {
-        return match js(SOCKET_TYPE_MAP.from_js(global, value))? {
-            Some(s) => Ok(s),
-            None => {
-                if js(value.to_js_string(global))?.length() == 0 {
-                    return Ok(SocketType::Unspecified);
-                }
-                Err(FromJSError::InvalidSocketType)
-            }
-        };
-    }
-
-    Err(FromJSError::InvalidSocketType)
 }
 
-fn protocol_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Protocol, FromJSError> {
-    if value.is_empty_or_undefined_or_null() {
-        return Ok(Protocol::Unspecified);
-    }
-
-    if value.is_number() {
-        return match value.to_int32() {
+fn protocol_from_js(value: AddrInfoHint<'_>) -> Result<Protocol, FromJSError> {
+    match value {
+        AddrInfoHint::Number(number) => match number as i32 {
             0 => Ok(Protocol::Unspecified),
             6 => Ok(Protocol::Tcp),
             17 => Ok(Protocol::Udp),
             _ => Err(FromJSError::InvalidProtocol),
-        };
+        },
+        AddrInfoHint::Label(b"") => Ok(Protocol::Unspecified),
+        AddrInfoHint::Label(label) => PROTOCOL_MAP
+            .get(label)
+            .copied()
+            .ok_or(FromJSError::InvalidProtocol),
     }
-
-    if value.is_string() {
-        return match js(PROTOCOL_MAP.from_js(global, value))? {
-            Some(p) => Ok(p),
-            None => {
-                let str = js(value.to_js_string(global))?;
-                if str.length() == 0 {
-                    return Ok(Protocol::Unspecified);
-                }
-                Err(FromJSError::InvalidProtocol)
-            }
-        };
-    }
-
-    Err(FromJSError::InvalidProtocol)
 }
 
-fn backend_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Backend, FromJSError> {
-    if value.is_empty_or_undefined_or_null() {
+fn backend_from_js(label: &[u8]) -> Result<Backend, FromJSError> {
+    if label.is_empty() {
         return Ok(Backend::default());
     }
-
-    if value.is_string() {
-        return match js(BACKEND_LABEL.from_js(global, value))? {
-            Some(b) => Ok(b),
-            None => {
-                if js(value.to_js_string(global))?.length() == 0 {
-                    return Ok(Backend::default());
-                }
-                Err(FromJSError::InvalidBackend)
-            }
-        };
-    }
-
-    Err(FromJSError::InvalidBackend)
+    BACKEND_LABEL
+        .get(label)
+        .copied()
+        .ok_or(FromJSError::InvalidBackend)
 }
 
 pub(crate) fn result_any_to_js(

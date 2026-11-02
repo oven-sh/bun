@@ -4,24 +4,24 @@ use crate::ir::element::TextWidth;
 use crate::prelude::*;
 use std::borrow::Cow;
 
-/// The source text of `span` as it is. The comments in it count as printed.
+/// The source text of `span`, unchanged. The comments in it count as printed.
 pub(crate) struct FormatSuppressedNode(pub(crate) Span);
 
-/// For oxfmt a text over several lines breaks the groups around it, whatever it is. For Prettier what is not formatted is
-/// one string, which breaks nothing.
-fn text_over_several_lines_breaks_groups(f: &Formatter<'_>) -> bool {
+/// In oxfmt any multi-line text breaks the groups around it. In Prettier unformatted code is one string, which breaks
+/// nothing.
+fn multiline_text_breaks_groups(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
 impl<'a> Format<'a> for FormatSuppressedNode {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        write_source(self.0, !text_over_several_lines_breaks_groups(f), f);
+        write_source(self.0, !multiline_text_breaks_groups(f), f);
         f.comments_mut().mark_printed_in(self.0);
     }
 }
 
-/// The source text of `span`, which is a template without substitutions. For Prettier its lines are
-/// strings with a `literalline` between them, which breaks the groups around it.
+/// The source text of `span`, which is a template without substitutions. In Prettier its lines are strings with a
+/// `literalline` between them, which breaks the groups around it.
 pub(crate) struct FormatTemplateText(pub(crate) Span);
 
 impl<'a> Format<'a> for FormatTemplateText {
@@ -30,7 +30,7 @@ impl<'a> Format<'a> for FormatTemplateText {
     }
 }
 
-fn write_source(span: Span, is_one_string: bool, f: &mut Formatter<'_>) {
+fn write_source(span: Span, is_single_string: bool, f: &mut Formatter<'_>) {
     let source = f.source_text().text_for(&span);
     let text = match bun_core::strings::contains_char(source, b'\r') {
         false => Cow::Borrowed(source),
@@ -47,10 +47,10 @@ fn write_source(span: Span, is_one_string: bool, f: &mut Formatter<'_>) {
             Cow::Owned(text)
         }
     };
-    // For Prettier it is one string, and a line break in a string has no width: whether it fits is
-    // asked of all its lines together.
+    // In Prettier it's one string, and a line break in a string has no width, so the fit check measures all its lines
+    // together.
     let width = match TextWidth::from_text(&text, 0) {
-        width if !width.is_multiline() || !is_one_string => width,
+        width if !width.is_multiline() || !is_single_string => width,
         _ => TextWidth::multiline_string(
             bun_core::strings::split(&text, b"\n")
                 .map(|line| TextWidth::from_text(line, 0).value())

@@ -1,4 +1,5 @@
-// A project for each way in which oxlint's port of a rule differs from the plugin that it is a port of, and some for what is the same.
+// One project for each way oxlint's port of a rule differs from the original plugin, and some for behavior that's the
+// same.
 
 import audit from "./audit.json";
 
@@ -7,15 +8,15 @@ export interface Project {
   about: string;
   config: object;
   files: Record<string, string>;
-  /** It is linted with `--type-aware`. oxlint finds tsgolint through OXLINT_TSGOLINT_PATH. */
+  /** Lint with `--type-aware`. oxlint finds tsgolint through OXLINT_TSGOLINT_PATH. */
   typed?: boolean;
-  /** Links to directories: by the path of the link, where it leads, both from the directory of the project. */
+  /** Directory symlinks, as link path -> target. Both are relative to the project's directory. */
   links?: Record<string, string>;
 }
 
 type Label = { label?: string; span: { line: number; column: number; length: number } };
 
-/** All that oxlint marks for a diagnostic, and what it says there, if that is more than one place without a text. */
+/** Returns all of a diagnostic's labels with their text, or `undefined` if it only has one label without text. */
 export function labelsOf({ labels }: { labels: Label[] }): string | undefined {
   if (labels.length < 2 && !labels[0]?.label) return undefined;
   const text = ({ label, span }: Label) =>
@@ -39,13 +40,14 @@ const pair = (
   [b]: second,
 });
 
-// `#/lib` is found, and import/no-named-as-default then reports the import, in the files that the tsconfig.json with the alias is for.
+// `#/lib` only resolves in the files that the tsconfig.json with the alias applies to. There,
+// import/no-named-as-default reports the import.
 const lib = "export const foo = 1; export default foo;\n";
 const use = "import foo from '#/lib';\nexport { foo };\n";
 const inScript = `<script>\n${use}</script>\n`;
 const inFrontmatter = `---\n${use}---\n`;
 const namedAsDefault = rules(["import"], { "import/no-named-as-default": "error" });
-const whichFilesATsconfigIsFor: Project[] = [
+const tsconfigScopeProjects: Project[] = [
   {
     name: "tsconfig/extensions",
     about: "which extensions a tsconfig.json is for: Scope::has",
@@ -81,18 +83,22 @@ const whichFilesATsconfigIsFor: Project[] = [
       "x03-checkJs/a/lib.ts": lib,
       "x03-checkJs/a/use.js": use,
       "x03-checkJs/a/use.ts": use,
-      "x04-allowJs-false/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}, "allowJs": false, "checkJs": true}}',
+      "x04-allowJs-false/tsconfig.json":
+        '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}, "allowJs": false, "checkJs": true}}',
       "x04-allowJs-false/a/lib.ts": lib,
       "x04-allowJs-false/a/use.js": use,
-      "x05-include-vue/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}, "allowJs": true}, "include": ["a/**/*.vue", "a/**/*.svelte"]}',
+      "x05-include-vue/tsconfig.json":
+        '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}, "allowJs": true}, "include": ["a/**/*.vue", "a/**/*.svelte"]}',
       "x05-include-vue/a/lib.ts": lib,
       "x05-include-vue/a/use.vue": inScript,
       "x05-include-vue/a/use.svelte": inScript,
       "x05-include-vue/a/use.ts": use,
-      "x06-include-vue-no-allowJs/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "include": ["a/**/*.vue"]}',
+      "x06-include-vue-no-allowJs/tsconfig.json":
+        '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "include": ["a/**/*.vue"]}',
       "x06-include-vue-no-allowJs/a/lib.ts": lib,
       "x06-include-vue-no-allowJs/a/use.vue": inScript,
-      "x07-files-js/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "files": ["a/use.js", "a/use.vue"]}',
+      "x07-files-js/tsconfig.json":
+        '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "files": ["a/use.js", "a/use.vue"]}',
       "x07-files-js/a/lib.ts": lib,
       "x07-files-js/a/use.js": use,
       "x07-files-js/a/use.vue": inScript,
@@ -121,7 +127,8 @@ const whichFilesATsconfigIsFor: Project[] = [
       "c03b-exclude-glob/b/use.ts": use,
       "c03b-exclude-glob/c/b/use.ts": use,
       "c03b-exclude-glob/c/b/d/use.ts": use,
-      "c03c-exclude-file/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "exclude": ["a/use.ts", "a/*.spec.ts"]}',
+      "c03c-exclude-file/tsconfig.json":
+        '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "exclude": ["a/use.ts", "a/*.spec.ts"]}',
       "c03c-exclude-file/a/lib.ts": lib,
       "c03c-exclude-file/a/use.ts": use,
       "c03c-exclude-file/a/use2.ts": use,
@@ -130,12 +137,14 @@ const whichFilesATsconfigIsFor: Project[] = [
       "c04-files/a/lib.ts": lib,
       "c04-files/a/use.ts": use,
       "c04-files/a/use2.ts": use,
-      "c04b-files-and-include/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "files": ["a/use.ts"], "include": ["b"]}',
+      "c04b-files-and-include/tsconfig.json":
+        '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "files": ["a/use.ts"], "include": ["b"]}',
       "c04b-files-and-include/a/lib.ts": lib,
       "c04b-files-and-include/a/use.ts": use,
       "c04b-files-and-include/a/use2.ts": use,
       "c04b-files-and-include/b/use.ts": use,
-      "c04c-files-excluded/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "files": ["a/use.ts"], "exclude": ["a"]}',
+      "c04c-files-excluded/tsconfig.json":
+        '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "files": ["a/use.ts"], "exclude": ["a"]}',
       "c04c-files-excluded/a/lib.ts": lib,
       "c04c-files-excluded/a/use.ts": use,
       "c05-include-ext/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "include": ["a/**/*.ts"]}',
@@ -149,7 +158,8 @@ const whichFilesATsconfigIsFor: Project[] = [
       "c06-include-dir/a/use.ts": use,
       "c06-include-dir/a/d/use.ts": use,
       "c06-include-dir/b/use.ts": use,
-      "c06b-include-dir-slash/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "include": ["a/", "./b"]}',
+      "c06b-include-dir-slash/tsconfig.json":
+        '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "include": ["a/", "./b"]}',
       "c06b-include-dir-slash/a/lib.ts": lib,
       "c06b-include-dir-slash/a/use.ts": use,
       "c06b-include-dir-slash/a/d/use.ts": use,
@@ -163,11 +173,13 @@ const whichFilesATsconfigIsFor: Project[] = [
       "c07-include-star/a/lib.ts": lib,
       "c07-include-star/a/use.ts": use,
       "c07-include-star/a/d/use.ts": use,
-      "c07b-include-question/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "include": ["a/us?.ts"]}',
+      "c07b-include-question/tsconfig.json":
+        '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "include": ["a/us?.ts"]}',
       "c07b-include-question/a/lib.ts": lib,
       "c07b-include-question/a/use.ts": use,
       "c07b-include-question/a/usee.ts": use,
-      "c07c-include-starstar-end/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "include": ["a/**"]}',
+      "c07c-include-starstar-end/tsconfig.json":
+        '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "include": ["a/**"]}',
       "c07c-include-starstar-end/a/lib.ts": lib,
       "c07c-include-starstar-end/a/use.ts": use,
       "c07c-include-starstar-end/a/d/use.ts": use,
@@ -183,11 +195,13 @@ const whichFilesATsconfigIsFor: Project[] = [
       "c09-outdir/a/lib.ts": lib,
       "c09-outdir/a/use.ts": use,
       "c09-outdir/a/dist/use.ts": use,
-      "c09b-outdir-with-exclude/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}, "outDir": "a/dist"}, "exclude": ["zzz"]}',
+      "c09b-outdir-with-exclude/tsconfig.json":
+        '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}, "outDir": "a/dist"}, "exclude": ["zzz"]}',
       "c09b-outdir-with-exclude/a/lib.ts": lib,
       "c09b-outdir-with-exclude/a/use.ts": use,
       "c09b-outdir-with-exclude/a/dist/use.ts": use,
-      "c09c-declarationDir/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}, "declarationDir": "a/types"}}',
+      "c09c-declarationDir/tsconfig.json":
+        '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}, "declarationDir": "a/types"}}',
       "c09c-declarationDir/a/lib.ts": lib,
       "c09c-declarationDir/a/types/use.ts": use,
       "c10-defaults/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}}',
@@ -197,14 +211,16 @@ const whichFilesATsconfigIsFor: Project[] = [
       "c10-defaults/bower_components/use.ts": use,
       "c10-defaults/a/.hidden/use.ts": use,
       "c10-defaults/a/.use.ts": use,
-      "c10b-defaults-with-exclude/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "exclude": ["zzz"]}',
+      "c10b-defaults-with-exclude/tsconfig.json":
+        '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "exclude": ["zzz"]}',
       "c10b-defaults-with-exclude/a/lib.ts": lib,
       "c10b-defaults-with-exclude/a/bower_components/use.ts": use,
       "c10b-defaults-with-exclude/bower_components/use.ts": use,
       "c11-case/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "include": ["A/**/*"]}',
       "c11-case/a/lib.ts": lib,
       "c11-case/a/use.ts": use,
-      "c12-outside/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "include": ["../c12-sibling/**/*"]}',
+      "c12-outside/tsconfig.json":
+        '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "include": ["../c12-sibling/**/*"]}',
       "c12-outside/a/lib.ts": lib,
       "c12-outside/a/use.ts": use,
     },
@@ -237,7 +253,8 @@ const whichFilesATsconfigIsFor: Project[] = [
       "g05-star-in-dir/a/lib.ts": lib,
       "g05-star-in-dir/a/use.ts": use,
       "g05-star-in-dir/a/d/use.ts": use,
-      "g12-exclude-dir-slash/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "exclude": ["b/", "./c"]}',
+      "g12-exclude-dir-slash/tsconfig.json":
+        '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "exclude": ["b/", "./c"]}',
       "g12-exclude-dir-slash/a/lib.ts": lib,
       "g12-exclude-dir-slash/b/use.ts": use,
       "g12-exclude-dir-slash/c/use.ts": use,
@@ -254,11 +271,13 @@ const whichFilesATsconfigIsFor: Project[] = [
       "g16-file-noext/a/lib.ts": lib,
       "g16-file-noext/a/use.ts": use,
       "g16-file-noext/a/use/use.ts": use,
-      "g17-configDir/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "include": ["${configDir}/a/**/*"]}',
+      "g17-configDir/tsconfig.json":
+        '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "include": ["${configDir}/a/**/*"]}',
       "g17-configDir/a/lib.ts": lib,
       "g17-configDir/a/use.ts": use,
       "g17-configDir/b/use.ts": use,
-      "g18-vue-allowJs-dir/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}, "allowJs": true}, "include": ["a"]}',
+      "g18-vue-allowJs-dir/tsconfig.json":
+        '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}, "allowJs": true}, "include": ["a"]}',
       "g18-vue-allowJs-dir/a/lib.ts": lib,
       "g18-vue-allowJs-dir/a/use.vue": inScript,
       "g18-vue-allowJs-dir/a/use.js": use,
@@ -266,15 +285,18 @@ const whichFilesATsconfigIsFor: Project[] = [
       "g19-dts-only/a/lib.ts": lib,
       "g19-dts-only/a/use.d.ts": use,
       "g19-dts-only/a/use.ts": use,
-      "g21-files-rel/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "files": ["./a/use.ts", "a/../b/use.ts"]}',
+      "g21-files-rel/tsconfig.json":
+        '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "files": ["./a/use.ts", "a/../b/use.ts"]}',
       "g21-files-rel/a/lib.ts": lib,
       "g21-files-rel/a/use.ts": use,
       "g21-files-rel/b/use.ts": use,
-      "g22-trailing-starstar-slash/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "include": ["a/**/"]}',
+      "g22-trailing-starstar-slash/tsconfig.json":
+        '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "include": ["a/**/"]}',
       "g22-trailing-starstar-slash/a/lib.ts": lib,
       "g22-trailing-starstar-slash/a/use.ts": use,
       "g22-trailing-starstar-slash/a/d/use.ts": use,
-      "h01-js-explicit/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "include": ["a/**/*.js", "a/**/*.mjs", "a/**/*.jsx", "a/**/*.cjs"]}',
+      "h01-js-explicit/tsconfig.json":
+        '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "include": ["a/**/*.js", "a/**/*.mjs", "a/**/*.jsx", "a/**/*.cjs"]}',
       "h01-js-explicit/a/lib.ts": lib,
       "h01-js-explicit/a/use.js": use,
       "h01-js-explicit/a/use.mjs": use,
@@ -282,17 +304,20 @@ const whichFilesATsconfigIsFor: Project[] = [
       "h02-cjs-dotstar/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "include": ["a/*.*"]}',
       "h02-cjs-dotstar/a/lib.ts": lib,
       "h02-cjs-dotstar/a/use.mjs": use,
-      "h03-question-ext/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "include": ["a/use.?s", "a/use.vu?"]}',
+      "h03-question-ext/tsconfig.json":
+        '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "include": ["a/use.?s", "a/use.vu?"]}',
       "h03-question-ext/a/lib.ts": lib,
       "h03-question-ext/a/use.ts": use,
       "h03-question-ext/a/use.js": use,
       "h03-question-ext/a/use.vue": inScript,
-      "h04-brace-ext/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "include": ["a/*.{ts,vue,js}"]}',
+      "h04-brace-ext/tsconfig.json":
+        '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "include": ["a/*.{ts,vue,js}"]}',
       "h04-brace-ext/a/lib.ts": lib,
       "h04-brace-ext/a/use.ts": use,
       "h04-brace-ext/a/use.js": use,
       "h04-brace-ext/a/use.vue": inScript,
-      "h05-star-mid-ext/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "include": ["a/*.v*e", "a/*.j*"]}',
+      "h05-star-mid-ext/tsconfig.json":
+        '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "include": ["a/*.v*e", "a/*.j*"]}',
       "h05-star-mid-ext/a/lib.ts": lib,
       "h05-star-mid-ext/a/use.vue": inScript,
       "h05-star-mid-ext/a/use.js": use,
@@ -304,7 +329,8 @@ const whichFilesATsconfigIsFor: Project[] = [
       "h13-{y}/a/lib.ts": lib,
       "h13-{y}/a/use.ts": use,
       "h13-{y}/b/use.ts": use,
-      "h14-bang/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "include": ["a/**/*", "!a/d/**/*"]}',
+      "h14-bang/tsconfig.json":
+        '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "include": ["a/**/*", "!a/d/**/*"]}',
       "h14-bang/a/lib.ts": lib,
       "h14-bang/a/use.ts": use,
       "h14-bang/a/d/use.ts": use,
@@ -312,7 +338,8 @@ const whichFilesATsconfigIsFor: Project[] = [
       "h17-include-null/a/lib.ts": lib,
       "h17-include-null/a/use.ts": use,
       "h17-include-null/b/use.ts": use,
-      "h18-dotdot-in-pattern/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "include": ["b/../a/**/*"]}',
+      "h18-dotdot-in-pattern/tsconfig.json":
+        '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "include": ["b/../a/**/*"]}',
       "h18-dotdot-in-pattern/a/lib.ts": lib,
       "h18-dotdot-in-pattern/a/use.ts": use,
       "h18-dotdot-in-pattern/b/use.ts": use,
@@ -336,7 +363,8 @@ const whichFilesATsconfigIsFor: Project[] = [
       "r01/a/lib.ts": lib,
       "r01/a/use.ts": use,
       "r01/b/use.ts": use,
-      "r02/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./none/*"]}}, "references": [{"path": "./tsconfig.app.json"}]}',
+      "r02/tsconfig.json":
+        '{"compilerOptions": {"paths": {"#/*": ["./none/*"]}}, "references": [{"path": "./tsconfig.app.json"}]}',
       "r02/tsconfig.app.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "include": ["a/**/*"]}',
       "r02/a/lib.ts": lib,
       "r02/a/use.ts": use,
@@ -350,7 +378,8 @@ const whichFilesATsconfigIsFor: Project[] = [
       "r04/pkg/a/lib.ts": lib,
       "r04/pkg/a/use.ts": use,
       "r05/tsconfig.json": '{"files": [], "references": [{"path": "./tsconfig.app.json"}]}',
-      "r05/tsconfig.app.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}, "allowJs": true}, "include": ["a/**/*"]}',
+      "r05/tsconfig.app.json":
+        '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}, "allowJs": true}, "include": ["a/**/*"]}',
       "r05/a/lib.ts": lib,
       "r05/a/use.js": use,
       "r05/a/use.vue": inScript,
@@ -379,11 +408,13 @@ const whichFilesATsconfigIsFor: Project[] = [
       "p05/in/tsconfig.json": '{"compilerOptions": {}}',
       "p05/in/a/lib.ts": lib,
       "p05/in/a/use.ts": use,
-      "r06/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "references": [{"path": "./tsconfig.app.json"}]}',
+      "r06/tsconfig.json":
+        '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "references": [{"path": "./tsconfig.app.json"}]}',
       "r06/tsconfig.app.json": '{"compilerOptions": {"paths": {"#/*": ["./none/*"]}}, "include": ["a/**/*"]}',
       "r06/a/lib.ts": lib,
       "r06/a/use.ts": use,
-      "r07/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "references": [{"path": "./tsconfig.app.json"}]}',
+      "r07/tsconfig.json":
+        '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "references": [{"path": "./tsconfig.app.json"}]}',
       "r07/tsconfig.app.json": '{"compilerOptions": {"paths": {"#/*": ["./none/*"]}}, "include": ["b/**/*"]}',
       "r07/a/lib.ts": lib,
       "r07/a/use.ts": use,
@@ -409,7 +440,7 @@ const whichFilesATsconfigIsFor: Project[] = [
       "h06/a/lib.ts": lib,
       "h06/a/use.ts": use,
       "h07/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./in/a/*"]}}}',
-      "h07/in/tsconfig.json": '{ not json',
+      "h07/in/tsconfig.json": "{ not json",
       "h07/in/a/lib.ts": lib,
       "h07/in/a/use.ts": use,
       "h08/base.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "include": ["a/**/*"]}',
@@ -423,7 +454,8 @@ const whichFilesATsconfigIsFor: Project[] = [
       "h09/app.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}}, "include": ["a/**/*"]}',
       "h09/a/lib.ts": lib,
       "h09/a/use.ts": use,
-      "h10/tsconfig.json": "{ // c\n \"compilerOptions\": {\"paths\": {\"#/*\": [\"./a/*\"],},}, /* d */ \"include\": [\"a/**/*\",], }",
+      "h10/tsconfig.json":
+        '{ // c\n "compilerOptions": {"paths": {"#/*": ["./a/*"],},}, /* d */ "include": ["a/**/*",], }',
       "h10/a/lib.ts": lib,
       "h10/a/use.ts": use,
       "h10/b/use.ts": use,
@@ -434,7 +466,8 @@ const whichFilesATsconfigIsFor: Project[] = [
       "h20-node-modules/tsconfig.json": '{"compilerOptions": {"paths": {"#/*": ["./a/*"]}, "allowJs": true}}',
       "h20-node-modules/a/lib.ts": lib,
       "h20-node-modules/a/use.ts": use,
-      "h20-node-modules/node_modules/dep/index.ts": "import foo from '#/lib';\nexport const bar = 1; export default bar;\n",
+      "h20-node-modules/node_modules/dep/index.ts":
+        "import foo from '#/lib';\nexport const bar = 1; export default bar;\n",
       "h20-node-modules/a/use2.ts": "import bar from 'dep';\n",
     },
   },
@@ -468,7 +501,8 @@ const whichFilesATsconfigIsFor: Project[] = [
       "e05/a/use.ts": use,
       "e05/cfg/a/use.ts": use,
       "e06/base.json": '{"include": ["a/**/*"], "exclude": ["a/d"], "files": ["c/use.ts"]}',
-      "e06/tsconfig.json": '{"extends": "./base.json", "include": ["b/**/*"], "compilerOptions": {"paths": {"#/*": ["./a/*"]}}}',
+      "e06/tsconfig.json":
+        '{"extends": "./base.json", "include": ["b/**/*"], "compilerOptions": {"paths": {"#/*": ["./a/*"]}}}',
       "e06/a/lib.ts": lib,
       "e06/a/use.ts": use,
       "e06/b/use.ts": use,
@@ -487,24 +521,29 @@ const whichFilesATsconfigIsFor: Project[] = [
     about: "Graph::record_of: of a file with several scripts the last that can be parsed",
     config: namedAsDefault,
     files: {
-      "v01/a/comp.vue": "<script lang=\"ts\">\nexport function comp() {}\n</script>\n<script lang=\"ts\" setup>\nconst x = 1;\n</script>\n",
+      "v01/a/comp.vue":
+        '<script lang="ts">\nexport function comp() {}\n</script>\n<script lang="ts" setup>\nconst x = 1;\n</script>\n',
       "v01/a/use.ts": "import comp from './comp.vue';\n",
-      "v02/a/comp.vue": "<script lang=\"ts\" setup>\nconst x = 1;\n</script>\n<script lang=\"ts\">\nexport function comp() {}\n</script>\n",
+      "v02/a/comp.vue":
+        '<script lang="ts" setup>\nconst x = 1;\n</script>\n<script lang="ts">\nexport function comp() {}\n</script>\n',
       "v02/a/use.ts": "import comp from './comp.vue';\n",
-      "v03/a/comp.vue": "<script lang=\"ts\">\nexport function comp() {}\n</script>\n",
+      "v03/a/comp.vue": '<script lang="ts">\nexport function comp() {}\n</script>\n',
       "v03/a/use.ts": "import comp from './comp.vue';\n",
-      "v04/a/comp.vue": "<script lang=\"ts\">\nexport function comp() {}\n</script>\n<script lang=\"ts\" setup>\nconst x = ;\n</script>\n",
+      "v04/a/comp.vue":
+        '<script lang="ts">\nexport function comp() {}\n</script>\n<script lang="ts" setup>\nconst x = ;\n</script>\n',
       "v04/a/use.ts": "import comp from './comp.vue';\n",
-      "v05/a/comp.svelte": "<script context=\"module\">\nexport function comp() {}\n</script>\n<script>\nlet x = 1;\n</script>\n",
+      "v05/a/comp.svelte":
+        '<script context="module">\nexport function comp() {}\n</script>\n<script>\nlet x = 1;\n</script>\n',
       "v05/a/use.ts": "import comp from './comp.svelte';\n",
-      "v06/a/comp.astro": "---\nexport function comp() {}\n---\n<script>\nlet x = 1;\n</script>\n<script>\nlet y = 1;\n</script>\n",
+      "v06/a/comp.astro":
+        "---\nexport function comp() {}\n---\n<script>\nlet x = 1;\n</script>\n<script>\nlet y = 1;\n</script>\n",
       "v06/a/use.ts": "import comp from './comp.astro';\n",
     },
   },
 ];
 
-// The code of a package exports `code`, its types export `types`: the name that is missed tells which of them is read. Of a
-// CommonJS file nothing is known.
+// A package's code exports `code` and its types export `types`, so the name reported as missing shows which file was
+// read. A CommonJS file's exports are unknown.
 const textInPackage = (path: string) =>
   /\.d\.[cm]?ts$/.test(path)
     ? "export declare const types: number;\nexport declare const foo: number;\ndeclare const d: { foo: number };\nexport default d;\n"
@@ -513,7 +552,7 @@ const textInPackage = (path: string) =>
       : path.includes("named")
         ? "export const code = 1;\n"
         : "export const code = 1;\nexport const foo = 1;\nexport default { foo };\n";
-/** By the name of the package: its package.json, its files, and what is imported of it if that is not its entry. */
+/** Package name -> its package.json, its files, and the subpath to import if it isn't the package's entry point. */
 const packages: Record<string, [manifest: object | undefined, files: string[], subpath?: string]> = {
   "main": [{ main: "index.js" }, ["index.js"]],
   "main-commonjs": [{ main: "cjs.js", types: "cjs.d.ts" }, ["cjs.js", "cjs.d.ts"]],
@@ -566,7 +605,11 @@ const packages: Record<string, [manifest: object | undefined, files: string[], s
     ["t/sub.d.ts", "esm/sub.js", "cjs/sub.js"],
     "sub",
   ],
-  "sub-pattern": [{ exports: { "./*": { types: "./t/*.d.ts", default: "./esm/*.js" } } }, ["t/sub.d.ts", "esm/sub.js"], "sub"],
+  "sub-pattern": [
+    { exports: { "./*": { types: "./t/*.d.ts", default: "./esm/*.js" } } },
+    ["t/sub.d.ts", "esm/sub.js"],
+    "sub",
+  ],
   "sub-not-exported": [{ exports: { ".": "./index.js" } }, ["index.js", "sub.js"], "sub"],
   "nothing-but-at-types": [undefined, []],
 };
@@ -581,7 +624,8 @@ const codeOfPackages = [false, true].map((withAtTypes): Project => {
     }
     if (withAtTypes) {
       const declarations = `${subpath?.replace(".js", "") ?? "index"}.d.ts`;
-      files[`node_modules/@types/${name.replace("@", "").replace("/", "__")}/${declarations}`] = textInPackage(declarations);
+      files[`node_modules/@types/${name.replace("@", "").replace("/", "__")}/${declarations}`] =
+        textInPackage(declarations);
     }
     const specifier = JSON.stringify(subpath ? `${name}/${subpath}` : name);
     const text = lines(
@@ -590,12 +634,13 @@ const codeOfPackages = [false, true].map((withAtTypes): Project => {
       `export * from ${specifier};`,
       `export const code = [foo.foo, c, t, all.none];`,
     );
-    // import/named is not for TypeScript.
+    // import/named doesn't check TypeScript files.
     for (const extension of ["js", "ts"]) files[`${name.replace("@scope/", "scoped-")}.${extension}`] = text;
   }
   return {
     name: `import/code-of-packages${withAtTypes ? "-with-at-types" : ""}`,
-    about: "AsRequire::as_import: what is read of a package is its code, as Node.js finds it, whatever types there are for it",
+    about:
+      "AsRequire::as_import: what is read of a package is its code, as Node.js finds it, whatever types there are for it",
     config: rules(["import"], {
       "import/default": "warn",
       "import/export": "warn",
@@ -608,7 +653,8 @@ const codeOfPackages = [false, true].map((withAtTypes): Project => {
   };
 });
 
-// Each file that can be meant exports a name of its own: the names that import/namespace misses tell which of them is read.
+// Each file the specifier could resolve to exports a different name, so the names import/namespace reports as missing
+// show which file was read.
 const exporting = (name: string) => `export const ${name} = 1;\n`;
 const declaring = "export declare const types: number;\n";
 const reading = (specifier: string) =>
@@ -616,7 +662,7 @@ const reading = (specifier: string) =>
     `import * as all from ${JSON.stringify(specifier)};`,
     "export default [all.code, all.types, all.other, all.local, all.upper];",
   );
-/** `a.ts` reads the first of `specifiers`, `b.ts` the second. */
+/** `a.ts` imports the first of `specifiers`, `b.ts` the second, and so on. */
 const readers = (specifiers: string[], directory = "") =>
   Object.fromEntries(
     specifiers.map((it, index) => [`${directory}${String.fromCharCode(97 + index)}.ts`, reading(it)] as const),
@@ -733,103 +779,115 @@ const asNodeResolves: Project[] = [
       ["not-built", "source", "built", "declared", "cycle"].map(it => [`node_modules/${it}`, `packages/${it}`]),
     ),
   ),
-  whatIsRead("imports-and-own-name", "AsRequire::as_import: `imports`, and the `exports` of the package that the file is in", {
-    "tsconfig.json": { compilerOptions: { outDir: "./dist", rootDir: "./src" } },
-    "package.json": {
-      name: "own",
-      imports: {
-        "#elsewhere": { types: "./types/lib.d.ts", default: "./lib/lib.js" },
-        "#beside": { types: "./lib/beside.d.ts", default: "./lib/beside.js" },
-        "#condition": { require: "./lib/cjs.js", import: "./lib/lib.js" },
-        "#package": "pkg",
-        "#built": "./dist/built.js",
-        "#not-built": "./dist/not-built.js",
-        "#source/*": "./src/*.ts",
+  whatIsRead(
+    "imports-and-own-name",
+    "AsRequire::as_import: `imports`, and the `exports` of the package that the file is in",
+    {
+      "tsconfig.json": { compilerOptions: { outDir: "./dist", rootDir: "./src" } },
+      "package.json": {
+        name: "own",
+        imports: {
+          "#elsewhere": { types: "./types/lib.d.ts", default: "./lib/lib.js" },
+          "#beside": { types: "./lib/beside.d.ts", default: "./lib/beside.js" },
+          "#condition": { require: "./lib/cjs.js", import: "./lib/lib.js" },
+          "#package": "pkg",
+          "#built": "./dist/built.js",
+          "#not-built": "./dist/not-built.js",
+          "#source/*": "./src/*.ts",
+        },
+        exports: {
+          ".": { types: "./types/lib.d.ts", import: "./lib/lib.js" },
+          "./built": "./dist/built.js",
+          "./not-built": "./dist/not-built.js",
+        },
       },
-      exports: {
-        ".": { types: "./types/lib.d.ts", import: "./lib/lib.js" },
-        "./built": "./dist/built.js",
-        "./not-built": "./dist/not-built.js",
+      "lib/lib.js": exporting("local"),
+      "lib/cjs.js": "module.exports = {};\n",
+      "lib/beside.js": exporting("local"),
+      "lib/beside.d.ts": declaring,
+      "types/lib.d.ts": declaring,
+      "src/built.ts": exporting("other"),
+      "src/not-built.ts": exporting("other"),
+      "dist/built.js": exporting("code"),
+      "node_modules/pkg/package.json": {
+        main: "index.js",
+        types: "types/index.d.ts",
+        imports: { "#inner": { types: "./types/inner.d.ts", default: "./inner.js" }, "#other": "other" },
       },
+      "node_modules/pkg/index.js": `export * from "#inner";\nexport * from "#other";\n`,
+      "node_modules/pkg/inner.js": exporting("code"),
+      "node_modules/pkg/types/index.d.ts": declaring,
+      "node_modules/pkg/types/inner.d.ts": declaring,
+      "node_modules/other/package.json": { main: "lib.js", types: "types/lib.d.ts" },
+      "node_modules/other/lib.js": exporting("other"),
+      "node_modules/other/types/lib.d.ts": declaring,
+      "node_modules/@types/other/index.d.ts": declaring,
+      ...readers(
+        [
+          "#elsewhere",
+          "#beside",
+          "#condition",
+          "#package",
+          "#built",
+          "#not-built",
+          "#source/built",
+          "#none",
+          "own",
+          "own/built",
+          "own/not-built",
+          "own/lib/lib.js",
+        ],
+        "src/",
+      ),
     },
-    "lib/lib.js": exporting("local"),
-    "lib/cjs.js": "module.exports = {};\n",
-    "lib/beside.js": exporting("local"),
-    "lib/beside.d.ts": declaring,
-    "types/lib.d.ts": declaring,
-    "src/built.ts": exporting("other"),
-    "src/not-built.ts": exporting("other"),
-    "dist/built.js": exporting("code"),
-    "node_modules/pkg/package.json": {
-      main: "index.js",
-      types: "types/index.d.ts",
-      imports: { "#inner": { types: "./types/inner.d.ts", default: "./inner.js" }, "#other": "other" },
+  ),
+  whatIsRead(
+    "packages-further-up",
+    "a package without an entry is passed over, one whose `exports` do not have the name ends the search",
+    {
+      ...Object.fromEntries(
+        ["at-types", "no-entry", "types-only", "not-exported", "target-missing"].map(it => [
+          `node_modules/${it}/index.js`,
+          exporting("upper"),
+        ]),
+      ),
+      "in/node_modules/@types/at-types/index.d.ts": declaring,
+      "in/node_modules/no-entry/package.json": { main: "none.js" },
+      "in/node_modules/types-only/package.json": { types: "index.d.ts" },
+      "in/node_modules/types-only/index.d.ts": declaring,
+      "in/node_modules/not-exported/package.json": { exports: { "./other": "./other.js" } },
+      "in/node_modules/not-exported/other.js": exporting("other"),
+      "in/node_modules/target-missing/package.json": { exports: "./none.js" },
+      ...readers(["at-types", "no-entry", "types-only", "not-exported", "target-missing"], "in/"),
     },
-    "node_modules/pkg/index.js": `export * from "#inner";\nexport * from "#other";\n`,
-    "node_modules/pkg/inner.js": exporting("code"),
-    "node_modules/pkg/types/index.d.ts": declaring,
-    "node_modules/pkg/types/inner.d.ts": declaring,
-    "node_modules/other/package.json": { main: "lib.js", types: "types/lib.d.ts" },
-    "node_modules/other/lib.js": exporting("other"),
-    "node_modules/other/types/lib.d.ts": declaring,
-    "node_modules/@types/other/index.d.ts": declaring,
-    ...readers(
-      [
-        "#elsewhere",
-        "#beside",
-        "#condition",
-        "#package",
-        "#built",
-        "#not-built",
-        "#source/built",
-        "#none",
-        "own",
-        "own/built",
-        "own/not-built",
-        "own/lib/lib.js",
-      ],
-      "src/",
-    ),
-  }),
-  whatIsRead("packages-further-up", "a package without an entry is passed over, one whose `exports` do not have the name ends the search", {
-    ...Object.fromEntries(
-      ["at-types", "no-entry", "types-only", "not-exported", "target-missing"].map(it => [
-        `node_modules/${it}/index.js`,
-        exporting("upper"),
-      ]),
-    ),
-    "in/node_modules/@types/at-types/index.d.ts": declaring,
-    "in/node_modules/no-entry/package.json": { main: "none.js" },
-    "in/node_modules/types-only/package.json": { types: "index.d.ts" },
-    "in/node_modules/types-only/index.d.ts": declaring,
-    "in/node_modules/not-exported/package.json": { exports: { "./other": "./other.js" } },
-    "in/node_modules/not-exported/other.js": exporting("other"),
-    "in/node_modules/target-missing/package.json": { exports: "./none.js" },
-    ...readers(["at-types", "no-entry", "types-only", "not-exported", "target-missing"], "in/"),
-  }),
-  whatIsRead("directories-with-a-manifest", "AsRequire::as_import: a relative directory has an entry as a package has, but no `exports`", {
-    "fields/package.json": { main: "main.js", module: "module.js", types: "types.d.ts" },
-    "fields/main.js": exporting("other"),
-    "fields/module.js": exporting("code"),
-    "fields/types.d.ts": declaring,
-    "types-only/package.json": { types: "types.d.ts" },
-    "types-only/types.d.ts": declaring,
-    "types-only/index.ts": exporting("local"),
-    "main-missing/package.json": { main: "none.js" },
-    "main-missing/index.js": exporting("code"),
-    "exports/package.json": { exports: "./exported.js", main: "main.js" },
-    "exports/exported.js": exporting("other"),
-    "exports/main.js": exporting("code"),
-    "nested/package.json": { main: "./sub" },
-    "nested/sub/package.json": { main: "other.js" },
-    "nested/sub/other.js": exporting("other"),
-    "nested/sub/index.js": exporting("code"),
-    "beside.js": exporting("code"),
-    "beside/package.json": { main: "main.js" },
-    "beside/main.js": exporting("other"),
-    ...readers(["./fields", "./types-only", "./main-missing", "./exports", "./nested", "./beside", "./beside/"]),
-    ...readers([".", "./", "../fields"], "fields/"),
-  }),
+  ),
+  whatIsRead(
+    "directories-with-a-manifest",
+    "AsRequire::as_import: a relative directory has an entry as a package has, but no `exports`",
+    {
+      "fields/package.json": { main: "main.js", module: "module.js", types: "types.d.ts" },
+      "fields/main.js": exporting("other"),
+      "fields/module.js": exporting("code"),
+      "fields/types.d.ts": declaring,
+      "types-only/package.json": { types: "types.d.ts" },
+      "types-only/types.d.ts": declaring,
+      "types-only/index.ts": exporting("local"),
+      "main-missing/package.json": { main: "none.js" },
+      "main-missing/index.js": exporting("code"),
+      "exports/package.json": { exports: "./exported.js", main: "main.js" },
+      "exports/exported.js": exporting("other"),
+      "exports/main.js": exporting("code"),
+      "nested/package.json": { main: "./sub" },
+      "nested/sub/package.json": { main: "other.js" },
+      "nested/sub/other.js": exporting("other"),
+      "nested/sub/index.js": exporting("code"),
+      "beside.js": exporting("code"),
+      "beside/package.json": { main: "main.js" },
+      "beside/main.js": exporting("other"),
+      ...readers(["./fields", "./types-only", "./main-missing", "./exports", "./nested", "./beside", "./beside/"]),
+      ...readers([".", "./", "../fields"], "fields/"),
+    },
+  ),
 ];
 
 const hand: Project[] = [
@@ -966,7 +1024,7 @@ const hand: Project[] = [
   },
   {
     name: "no-cycle/self",
-    about: "Flavor::counts_self_imports, and Request::may_be_itself",
+    about: "Flavor::counts_self_imports, and Request::may_reexport_itself",
     config: noCycle(),
     files: {
       "a.ts": `import { a as x } from "./a";\nexport const a = x;\n`,
@@ -981,7 +1039,7 @@ const hand: Project[] = [
   },
   {
     name: "no-cycle/exports-itself-on-the-way",
-    about: "Request::may_be_itself: a module on the way that imports a name of its own and exports it: that is no step",
+    about: "Request::may_reexport_itself: a module on the way that imports a name of its own and exports it: that is no step",
     config: noCycle({ maxDepth: 2 }),
     files: {
       "a.ts": `import { bar } from "./m";\nexport const a = bar;\n`,
@@ -991,46 +1049,48 @@ const hand: Project[] = [
   },
   {
     name: "named/module-before-main",
-    about: "AsRequire::as_import, and the condition `module`: of a CommonJS file nothing is known, so nothing is missed in it",
+    about:
+      "AsRequire::as_import, and the condition `module`: of a CommonJS file nothing is known, so nothing is missed in it",
     config: rules(["import"], { "import/named": "warn" }),
     files: {
-      "node_modules/a/package.json": "{\"module\": \"esm.js\"}",
+      "node_modules/a/package.json": '{"module": "esm.js"}',
       "node_modules/a/lib.js": "exports.b = 1;\n",
       "node_modules/a/esm.js": "export const b = 1;\n",
-      "node_modules/b/package.json": "{\"main\": \"esm.js\"}",
+      "node_modules/b/package.json": '{"main": "esm.js"}',
       "node_modules/b/lib.js": "exports.b = 1;\n",
       "node_modules/b/esm.js": "export const b = 1;\n",
-      "node_modules/c/package.json": "{\"main\": \"lib.js\", \"module\": \"esm.js\"}",
+      "node_modules/c/package.json": '{"main": "lib.js", "module": "esm.js"}',
       "node_modules/c/lib.js": "exports.b = 1;\n",
       "node_modules/c/esm.js": "export const b = 1;\n",
-      "node_modules/d/package.json": "{\"main\": \"lib.js\", \"module\": \"./esm\"}",
+      "node_modules/d/package.json": '{"main": "lib.js", "module": "./esm"}',
       "node_modules/d/lib.js": "exports.b = 1;\n",
       "node_modules/d/esm.js": "export const b = 1;\n",
-      "node_modules/e/package.json": "{\"main\": \"lib.js\", \"jsnext:main\": \"esm.js\"}",
+      "node_modules/e/package.json": '{"main": "lib.js", "jsnext:main": "esm.js"}',
       "node_modules/e/lib.js": "exports.b = 1;\n",
       "node_modules/e/esm.js": "export const b = 1;\n",
-      "node_modules/f/package.json": "{\"main\": \"lib.js\", \"exports\": {\"import\": \"./esm.js\", \"require\": \"./lib.js\"}}",
+      "node_modules/f/package.json": '{"main": "lib.js", "exports": {"import": "./esm.js", "require": "./lib.js"}}',
       "node_modules/f/lib.js": "exports.b = 1;\n",
       "node_modules/f/esm.js": "export const b = 1;\n",
-      "node_modules/g/package.json": "{\"main\": \"lib.js\", \"exports\": {\"module\": \"./esm.js\", \"default\": \"./lib.js\"}}",
+      "node_modules/g/package.json": '{"main": "lib.js", "exports": {"module": "./esm.js", "default": "./lib.js"}}',
       "node_modules/g/lib.js": "exports.b = 1;\n",
       "node_modules/g/esm.js": "export const b = 1;\n",
-      "node_modules/h/package.json": "{\"main\": \"lib.js\", \"module\": \"esm.js\", \"types\": \"t.d.ts\"}",
+      "node_modules/h/package.json": '{"main": "lib.js", "module": "esm.js", "types": "t.d.ts"}',
       "node_modules/h/lib.js": "exports.b = 1;\n",
       "node_modules/h/esm.js": "export const b = 1;\n",
-      "node_modules/i/package.json": "{\"main\": \"lib.js\", \"browser\": \"esm.js\"}",
+      "node_modules/i/package.json": '{"main": "lib.js", "browser": "esm.js"}',
       "node_modules/i/lib.js": "exports.b = 1;\n",
       "node_modules/i/esm.js": "export const b = 1;\n",
-      "node_modules/j/package.json": "{\"main\": \"lib.js\", \"module\": \"none.js\"}",
+      "node_modules/j/package.json": '{"main": "lib.js", "module": "none.js"}',
       "node_modules/j/lib.js": "exports.b = 1;\n",
       "node_modules/j/esm.js": "export const b = 1;\n",
-      "node_modules/k/package.json": "{\"main\": \"lib.js\", \"module\": \"esm.js\", \"exports\": \"./lib.js\"}",
+      "node_modules/k/package.json": '{"main": "lib.js", "module": "esm.js", "exports": "./lib.js"}',
       "node_modules/k/lib.js": "exports.b = 1;\n",
       "node_modules/k/esm.js": "export const b = 1;\n",
-      "node_modules/l/package.json": "{\"exports\": {\"require\": \"./lib.js\", \"default\": \"./esm.js\"}}",
+      "node_modules/l/package.json": '{"exports": {"require": "./lib.js", "default": "./esm.js"}}',
       "node_modules/l/lib.js": "exports.b = 1;\n",
       "node_modules/l/esm.js": "export const b = 1;\n",
-      "a.js": "import { zz as a } from \"a\";\nimport { zz as b } from \"b\";\nimport { zz as c } from \"c\";\nimport { zz as d } from \"d\";\nimport { zz as e } from \"e\";\nimport { zz as f } from \"f\";\nimport { zz as g } from \"g\";\nimport { zz as h } from \"h\";\nimport { zz as i } from \"i\";\nimport { zz as j } from \"j\";\nimport { zz as k } from \"k\";\nimport { zz as l } from \"l\";\nexport default [a, b, c, d, e, f, g, h, i, j, k, l];\n",
+      "a.js":
+        'import { zz as a } from "a";\nimport { zz as b } from "b";\nimport { zz as c } from "c";\nimport { zz as d } from "d";\nimport { zz as e } from "e";\nimport { zz as f } from "f";\nimport { zz as g } from "g";\nimport { zz as h } from "h";\nimport { zz as i } from "i";\nimport { zz as j } from "j";\nimport { zz as k } from "k";\nimport { zz as l } from "l";\nexport default [a, b, c, d, e, f, g, h, i, j, k, l];\n',
     },
   },
   {
@@ -1230,19 +1290,36 @@ const hand: Project[] = [
   },
   {
     name: "no-unused-vars/ambient",
-    about: "in an ambient namespace or module only functions, interfaces, type aliases and namespaces are exported without a word; the one that has the declare says what it exports",
+    about:
+      "in an ambient namespace or module only functions, interfaces, type aliases and namespaces are exported without a word; the one that has the declare says what it exports",
     config: unused,
-    files: { "a.ts": "declare namespace Z {}\ndeclare namespace A0 { let v0: any; function f0(): void; class C0 {} enum E0 { A } interface I0 {} type T0 = 1; namespace N0 {} const enum CE0 { A } abstract class AC0 {} import IM0 = Z; }\ndeclare namespace A1 { let v1: any; function f1(): void; class C1 {} enum E1 { A } interface I1 {} type T1 = 1; namespace N1 {} const enum CE1 { A } abstract class AC1 {} import IM1 = Z; export {}; }\ndeclare namespace A2 { let v2: any; function f2(): void; class C2 {} enum E2 { A } interface I2 {} type T2 = 1; namespace N2 {} const enum CE2 { A } abstract class AC2 {} import IM2 = Z; export let x2: any; }\ndeclare module 'm3' { let v3: any; function f3(): void; class C3 {} enum E3 { A } interface I3 {} type T3 = 1; namespace N3 {} const enum CE3 { A } abstract class AC3 {} import IM3 = Z; }\ndeclare module 'm4' { let v4: any; function f4(): void; class C4 {} enum E4 { A } interface I4 {} type T4 = 1; namespace N4 {} const enum CE4 { A } abstract class AC4 {} import IM4 = Z; export {}; }\ndeclare module 'm5' { let v5: any; function f5(): void; class C5 {} enum E5 { A } interface I5 {} type T5 = 1; namespace N5 {} const enum CE5 { A } abstract class AC5 {} import IM5 = Z; export default 1; }\ndeclare namespace A6 { namespace B6 { let v6: any; function f6(): void; class C6 {} enum E6 { A } interface I6 {} type T6 = 1; namespace N6 {} const enum CE6 { A } abstract class AC6 {} import IM6 = Z; } }\ndeclare namespace A7 { namespace B7 { let v7: any; function f7(): void; class C7 {} enum E7 { A } interface I7 {} type T7 = 1; namespace N7 {} const enum CE7 { A } abstract class AC7 {} import IM7 = Z; export {}; } }\ndeclare namespace A8 { export {}; namespace B8 { let v8: any; function f8(): void; class C8 {} enum E8 { A } interface I8 {} type T8 = 1; namespace N8 {} const enum CE8 { A } abstract class AC8 {} import IM8 = Z; } }\ndeclare global { let v9: any; function f9(): void; class C9 {} enum E9 { A } interface I9 {} type T9 = 1; namespace N9 {} const enum CE9 { A } abstract class AC9 {} import IM9 = Z; }\ndeclare global { namespace B10 { let v10: any; function f10(): void; class C10 {} enum E10 { A } interface I10 {} type T10 = 1; namespace N10 {} const enum CE10 { A } abstract class AC10 {} import IM10 = Z; } }\ndeclare global { let v11: any; function f11(): void; class C11 {} enum E11 { A } interface I11 {} type T11 = 1; namespace N11 {} const enum CE11 { A } abstract class AC11 {} import IM11 = Z; export {}; }\nnamespace A12 { let v12: any; function f12(): void; class C12 {} enum E12 { A } interface I12 {} type T12 = 1; namespace N12 {} const enum CE12 { A } abstract class AC12 {} import IM12 = Z; }\ndeclare namespace A13.B13 { let v13: any; function f13(): void; class C13 {} enum E13 { A } interface I13 {} type T13 = 1; namespace N13 {} const enum CE13 { A } abstract class AC13 {} import IM13 = Z; }\nexport declare namespace A14 { let v14: any; function f14(): void; class C14 {} enum E14 { A } interface I14 {} type T14 = 1; namespace N14 {} const enum CE14 { A } abstract class AC14 {} import IM14 = Z; }\nnamespace A15 { declare namespace B15 { let v15: any; function f15(): void; class C15 {} enum E15 { A } interface I15 {} type T15 = 1; namespace N15 {} const enum CE15 { A } abstract class AC15 {} import IM15 = Z; } }\nexport {};\n", "b.ts": "declare namespace self { let close: any; const b: any; var c: any; function f(): void; class K {} interface I {} type T = 1; enum E { A } namespace N { let x: any; } }\ndeclare namespace CSS { let highlights: number | undefined; export let shown: number; }\nnamespace Plain { let p: any; export let q: any; }\ndeclare module 'm' { let a1: any; function f1(): void; export let a2: any; }\ndeclare module 'n' { let a3: any; export {}; }\ndeclare global { let g1: any; var g2: any; function g3(): void; interface G4 {} }\ndeclare namespace WithExport { let w1: any; export {}; }\nexport declare namespace Exp { let e1: any; namespace Inner { let e2: any; } }\ndeclare namespace Used { let u1: any; let u2: typeof u1; }\nself; CSS; Plain; WithExport; Used;\nexport {};\n", "c.d.ts": "declare namespace self { let close: any; function f(): void; }\ndeclare let top: any;\nnamespace Q { let r: any; }\n" },
+    files: {
+      "a.ts":
+        "declare namespace Z {}\ndeclare namespace A0 { let v0: any; function f0(): void; class C0 {} enum E0 { A } interface I0 {} type T0 = 1; namespace N0 {} const enum CE0 { A } abstract class AC0 {} import IM0 = Z; }\ndeclare namespace A1 { let v1: any; function f1(): void; class C1 {} enum E1 { A } interface I1 {} type T1 = 1; namespace N1 {} const enum CE1 { A } abstract class AC1 {} import IM1 = Z; export {}; }\ndeclare namespace A2 { let v2: any; function f2(): void; class C2 {} enum E2 { A } interface I2 {} type T2 = 1; namespace N2 {} const enum CE2 { A } abstract class AC2 {} import IM2 = Z; export let x2: any; }\ndeclare module 'm3' { let v3: any; function f3(): void; class C3 {} enum E3 { A } interface I3 {} type T3 = 1; namespace N3 {} const enum CE3 { A } abstract class AC3 {} import IM3 = Z; }\ndeclare module 'm4' { let v4: any; function f4(): void; class C4 {} enum E4 { A } interface I4 {} type T4 = 1; namespace N4 {} const enum CE4 { A } abstract class AC4 {} import IM4 = Z; export {}; }\ndeclare module 'm5' { let v5: any; function f5(): void; class C5 {} enum E5 { A } interface I5 {} type T5 = 1; namespace N5 {} const enum CE5 { A } abstract class AC5 {} import IM5 = Z; export default 1; }\ndeclare namespace A6 { namespace B6 { let v6: any; function f6(): void; class C6 {} enum E6 { A } interface I6 {} type T6 = 1; namespace N6 {} const enum CE6 { A } abstract class AC6 {} import IM6 = Z; } }\ndeclare namespace A7 { namespace B7 { let v7: any; function f7(): void; class C7 {} enum E7 { A } interface I7 {} type T7 = 1; namespace N7 {} const enum CE7 { A } abstract class AC7 {} import IM7 = Z; export {}; } }\ndeclare namespace A8 { export {}; namespace B8 { let v8: any; function f8(): void; class C8 {} enum E8 { A } interface I8 {} type T8 = 1; namespace N8 {} const enum CE8 { A } abstract class AC8 {} import IM8 = Z; } }\ndeclare global { let v9: any; function f9(): void; class C9 {} enum E9 { A } interface I9 {} type T9 = 1; namespace N9 {} const enum CE9 { A } abstract class AC9 {} import IM9 = Z; }\ndeclare global { namespace B10 { let v10: any; function f10(): void; class C10 {} enum E10 { A } interface I10 {} type T10 = 1; namespace N10 {} const enum CE10 { A } abstract class AC10 {} import IM10 = Z; } }\ndeclare global { let v11: any; function f11(): void; class C11 {} enum E11 { A } interface I11 {} type T11 = 1; namespace N11 {} const enum CE11 { A } abstract class AC11 {} import IM11 = Z; export {}; }\nnamespace A12 { let v12: any; function f12(): void; class C12 {} enum E12 { A } interface I12 {} type T12 = 1; namespace N12 {} const enum CE12 { A } abstract class AC12 {} import IM12 = Z; }\ndeclare namespace A13.B13 { let v13: any; function f13(): void; class C13 {} enum E13 { A } interface I13 {} type T13 = 1; namespace N13 {} const enum CE13 { A } abstract class AC13 {} import IM13 = Z; }\nexport declare namespace A14 { let v14: any; function f14(): void; class C14 {} enum E14 { A } interface I14 {} type T14 = 1; namespace N14 {} const enum CE14 { A } abstract class AC14 {} import IM14 = Z; }\nnamespace A15 { declare namespace B15 { let v15: any; function f15(): void; class C15 {} enum E15 { A } interface I15 {} type T15 = 1; namespace N15 {} const enum CE15 { A } abstract class AC15 {} import IM15 = Z; } }\nexport {};\n",
+      "b.ts":
+        "declare namespace self { let close: any; const b: any; var c: any; function f(): void; class K {} interface I {} type T = 1; enum E { A } namespace N { let x: any; } }\ndeclare namespace CSS { let highlights: number | undefined; export let shown: number; }\nnamespace Plain { let p: any; export let q: any; }\ndeclare module 'm' { let a1: any; function f1(): void; export let a2: any; }\ndeclare module 'n' { let a3: any; export {}; }\ndeclare global { let g1: any; var g2: any; function g3(): void; interface G4 {} }\ndeclare namespace WithExport { let w1: any; export {}; }\nexport declare namespace Exp { let e1: any; namespace Inner { let e2: any; } }\ndeclare namespace Used { let u1: any; let u2: typeof u1; }\nself; CSS; Plain; WithExport; Used;\nexport {};\n",
+      "c.d.ts":
+        "declare namespace self { let close: any; function f(): void; }\ndeclare let top: any;\nnamespace Q { let r: any; }\n",
+    },
   },
   {
     name: "counts/strict-vscode",
-    about: "a break after type arguments, a regular expression as the argument of RegExp, null as the this of what is no name, a function in the head of a loop",
-    config: rules([], { "no-unexpected-multiline": "error", "prefer-named-capture-group": "error", "no-useless-call": "error", "no-loop-func": "error" }),
-    files: { "a.ts": "declare function publicLog2<A, B>(...x: unknown[]): void;\npublicLog2<1, 2>\n('x', 1);\npublicLog2\n<1, 2>('x', 1);\npublicLog2<1, 2>('x', 1);\npublicLog2<1, 2> // c\n('x', 1);\npublicLog2<1, Array<2>>\n(('x'), 1);\nnew RegExp(/^python3? -m jupyter(\\b)/);\nRegExp(/a(b)/, 'u');\nnew RegExp('a(b)');\ndeclare const desc: any, f: any, o: any;\ndesc!.get!.call(null);\nf.call(null); f.call(undefined, 1); (f).call(null);\nf().call(null); (function () {}).call(undefined); o.f.call(null); o.f.call(o); (f as any).call(null); f!.call(null);\nf.apply(null, [1]); f().apply(undefined, [1]);\ndeclare const servers: { id: string }[], list: string[];\nfor (const item of list) {\n  let i = 2;\n  while (servers.some(s => s.id === item + i)) { i++; }\n}\nlet j = 2;\nwhile (servers.some(s => s.id === '' + j)) { j++; }\nfor (const item of list) {\n  for (let k = 0; servers.some(s => s.id === item + k); k++) {}\n  let m = 0;\n  do { m++; } while (servers.some(s => s.id === item + m));\n  for (const q of servers.filter(s => s.id === item + m)) { m++; }\n  for (const q in servers.filter(s => s.id === item + m)) { m++; }\n}\nlet n = 0;\nfor (const item of list) {\n  while (servers.some(s => s.id === item + n)) { n++; }\n  while (n < 3) { servers.some(s => s.id === item + n); n++; }\n}\n" },
+    about:
+      "a break after type arguments, a regular expression as the argument of RegExp, null as the this of what is no name, a function in the head of a loop",
+    config: rules([], {
+      "no-unexpected-multiline": "error",
+      "prefer-named-capture-group": "error",
+      "no-useless-call": "error",
+      "no-loop-func": "error",
+    }),
+    files: {
+      "a.ts":
+        "declare function publicLog2<A, B>(...x: unknown[]): void;\npublicLog2<1, 2>\n('x', 1);\npublicLog2\n<1, 2>('x', 1);\npublicLog2<1, 2>('x', 1);\npublicLog2<1, 2> // c\n('x', 1);\npublicLog2<1, Array<2>>\n(('x'), 1);\nnew RegExp(/^python3? -m jupyter(\\b)/);\nRegExp(/a(b)/, 'u');\nnew RegExp('a(b)');\ndeclare const desc: any, f: any, o: any;\ndesc!.get!.call(null);\nf.call(null); f.call(undefined, 1); (f).call(null);\nf().call(null); (function () {}).call(undefined); o.f.call(null); o.f.call(o); (f as any).call(null); f!.call(null);\nf.apply(null, [1]); f().apply(undefined, [1]);\ndeclare const servers: { id: string }[], list: string[];\nfor (const item of list) {\n  let i = 2;\n  while (servers.some(s => s.id === item + i)) { i++; }\n}\nlet j = 2;\nwhile (servers.some(s => s.id === '' + j)) { j++; }\nfor (const item of list) {\n  for (let k = 0; servers.some(s => s.id === item + k); k++) {}\n  let m = 0;\n  do { m++; } while (servers.some(s => s.id === item + m));\n  for (const q of servers.filter(s => s.id === item + m)) { m++; }\n  for (const q in servers.filter(s => s.id === item + m)) { m++; }\n}\nlet n = 0;\nfor (const item of list) {\n  while (servers.some(s => s.id === item + n)) { n++; }\n  while (n < 3) { servers.some(s => s.id === item + n); n++; }\n}\n",
+    },
   },
   {
     name: "no-unused-vars/place",
-    about: "oxlint_reports_the_declaration",
+    about: "oxlint_reports_at_declaration",
     config: unused,
     files: { "a.ts": `export function f() {\n  let n = 0;\n  n++;\n  let m;\n  m = 1;\n  m = 2;\n}\n` },
   },
@@ -1278,7 +1355,7 @@ const hand: Project[] = [
   },
   {
     name: "no-unused-vars/vars-local",
-    about: "oxlint_takes_for_global: with vars: local, a var at the top of the file, of a module too, and nothing else",
+    about: "oxlint_treats_as_global: with vars: local, a var at the top of the file, of a module too, and nothing else",
     config: rules(["typescript"], { "no-unused-vars": ["error", "local"] }),
     files: {
       "a.ts": `var a = 1;\nlet b = 2;\nconst c = 3;\nfunction d() {\n  var e = 4;\n}\nclass F {}\nexport {};\n`,
@@ -1350,7 +1427,7 @@ const hand: Project[] = [
   },
   {
     name: "consistent-type-imports/react",
-    about: "oxlint_takes_for_jsx_factory",
+    about: "oxlint_treats_as_jsx_factory",
     config: rules(["typescript"], { "typescript/consistent-type-imports": "error" }),
     files: {
       "a.ts": `import * as React from "react";\nexport function C(x: unknown) {\n  return x as React.ReactNode;\n}\n`,
@@ -1558,7 +1635,7 @@ const hand: Project[] = [
   },
   {
     name: "no-unused-vars/how-it-is-declared",
-    about: "oxlint_leaves_alone",
+    about: "oxlint_never_reports",
     config: unused,
     files: {
       "a.ts": lines(
@@ -2273,7 +2350,7 @@ const hand: Project[] = [
   {
     name: "no-control-regex/written",
     about: "how a character is written counts, in a string too; an octal escape whose first digit is the value",
-    config: rules([], {"no-control-regex": "error"}),
+    config: rules([], { "no-control-regex": "error" }),
     files: {
       "a.ts": lines(
         String.raw`/\1/;`,
@@ -2326,7 +2403,7 @@ const hand: Project[] = [
   {
     name: "no-control-regex/calls",
     about: "run_on_regex_node: which calls, which arguments, which flags",
-    config: rules([], {"no-control-regex": "error"}),
+    config: rules([], { "no-control-regex": "error" }),
     files: {
       "a.ts": lines(
         String.raw`RegExp('\x1f');`,
@@ -2375,7 +2452,7 @@ const hand: Project[] = [
   {
     name: "no-invalid-regexp/flags",
     about: "the flag, as it is written; the pattern only if the flags are a string",
-    config: rules([], {"no-invalid-regexp": "error"}),
+    config: rules([], { "no-invalid-regexp": "error" }),
     files: {
       "a.js": lines(
         String.raw`new RegExp('.', 'z');`,
@@ -2403,7 +2480,7 @@ const hand: Project[] = [
   {
     name: "no-invalid-regexp/allowed-flags",
     about: "a flag that the option allows can be there once",
-    config: rules([], {"no-invalid-regexp": ["error", {"allowConstructorFlags": ["a", "z"]}]}),
+    config: rules([], { "no-invalid-regexp": ["error", { "allowConstructorFlags": ["a", "z"] }] }),
     files: {
       "a.js": lines(
         String.raw`new RegExp('.', 'az');`,
@@ -2416,7 +2493,7 @@ const hand: Project[] = [
   {
     name: "no-invalid-regexp/calls",
     about: "whatever is called RegExp",
-    config: rules([], {"no-invalid-regexp": "error"}),
+    config: rules([], { "no-invalid-regexp": "error" }),
     files: {
       "a.ts": lines(
         String.raw`RegExp('[');`,
@@ -2440,7 +2517,7 @@ const hand: Project[] = [
   {
     name: "no-invalid-regexp/pattern",
     about: "what the parser of oxc says about a pattern, and where",
-    config: rules([], {"no-invalid-regexp": "error"}),
+    config: rules([], { "no-invalid-regexp": "error" }),
     files: {
       "a.js": lines(
         String.raw`new RegExp("[");`,
@@ -2571,7 +2648,7 @@ const hand: Project[] = [
   {
     name: "no-invalid-regexp/written",
     about: "the place in a string with escapes; a string is not read as JavaScript reads it",
-    config: rules([], {"no-invalid-regexp": "error"}),
+    config: rules([], { "no-invalid-regexp": "error" }),
     files: {
       "a.js": lines(
         String.raw`new RegExp('\[');`,
@@ -2595,7 +2672,7 @@ const hand: Project[] = [
   {
     name: "no-regex-spaces/written",
     about: "whatever stands for a space, by the bytes; not what is repeated; a call without its flags",
-    config: rules([], {"no-regex-spaces": "error"}),
+    config: rules([], { "no-regex-spaces": "error" }),
     files: {
       "a.ts": lines(
         String.raw`/a  b/;`,
@@ -2647,7 +2724,7 @@ const hand: Project[] = [
   {
     name: "no-useless-backreference/calls",
     about: "run_on_regex_node; the backreference as it is written",
-    config: rules([], {"no-useless-backreference": "error"}),
+    config: rules([], { "no-useless-backreference": "error" }),
     files: {
       "a.ts": lines(
         String.raw`/\1(a)/;`,
@@ -2677,7 +2754,7 @@ const hand: Project[] = [
   {
     name: "prefer-regex-literals/calls",
     about: "is_regexp_callee",
-    config: rules([], {"prefer-regex-literals": "error"}),
+    config: rules([], { "prefer-regex-literals": "error" }),
     files: {
       "a.ts": lines(
         String.raw`RegExp('a');`,
@@ -2703,24 +2780,15 @@ const hand: Project[] = [
         String.raw`{ let RegExp; new RegExp('a'); }`,
         String.raw`{ let window; new window.RegExp('a'); }`,
       ),
-      "b.ts": lines(
-        String.raw`RegExp = a;`,
-        String.raw`new RegExp('a');`,
-      ),
-      "d.ts": lines(
-        String.raw`import type RegExp from 'a';`,
-        String.raw`new RegExp('a');`,
-      ),
-      "e.ts": lines(
-        String.raw`declare const RegExp: any;`,
-        String.raw`new RegExp('a');`,
-      ),
+      "b.ts": lines(String.raw`RegExp = a;`, String.raw`new RegExp('a');`),
+      "d.ts": lines(String.raw`import type RegExp from 'a';`, String.raw`new RegExp('a');`),
+      "e.ts": lines(String.raw`declare const RegExp: any;`, String.raw`new RegExp('a');`),
     },
   },
   {
     name: "prefer-regex-literals/arguments",
     about: "what is under an `as` counts",
-    config: rules([], {"prefer-regex-literals": "error"}),
+    config: rules([], { "prefer-regex-literals": "error" }),
     files: {
       "a.ts": lines(
         String.raw`new RegExp('a');`,
@@ -2764,7 +2832,7 @@ const hand: Project[] = [
   {
     name: "prefer-regex-literals/wrapping",
     about: "disallowRedundantWrapping",
-    config: rules([], {"prefer-regex-literals": ["error", {"disallowRedundantWrapping": true}]}),
+    config: rules([], { "prefer-regex-literals": ["error", { "disallowRedundantWrapping": true }] }),
     files: {
       "a.ts": lines(
         String.raw`new RegExp('a');`,
@@ -2807,7 +2875,7 @@ const hand: Project[] = [
   {
     name: "require-unicode-regexp/calls",
     about: "is_regexp_callee",
-    config: rules([], {"require-unicode-regexp": "error"}),
+    config: rules([], { "require-unicode-regexp": "error" }),
     files: {
       "a.ts": lines(
         String.raw`RegExp('a');`,
@@ -2833,24 +2901,15 @@ const hand: Project[] = [
         String.raw`{ let RegExp; new RegExp('a'); }`,
         String.raw`{ let window; new window.RegExp('a'); }`,
       ),
-      "b.ts": lines(
-        String.raw`RegExp = a;`,
-        String.raw`new RegExp('a');`,
-      ),
-      "d.ts": lines(
-        String.raw`import type RegExp from 'a';`,
-        String.raw`new RegExp('a');`,
-      ),
-      "e.ts": lines(
-        String.raw`declare const RegExp: any;`,
-        String.raw`new RegExp('a');`,
-      ),
+      "b.ts": lines(String.raw`RegExp = a;`, String.raw`new RegExp('a');`),
+      "d.ts": lines(String.raw`import type RegExp from 'a';`, String.raw`new RegExp('a');`),
+      "e.ts": lines(String.raw`declare const RegExp: any;`, String.raw`new RegExp('a');`),
     },
   },
   {
     name: "require-unicode-regexp/flags",
     about: "resolve_flags",
-    config: rules([], {"require-unicode-regexp": "error"}),
+    config: rules([], { "require-unicode-regexp": "error" }),
     files: {
       "a.ts": lines(
         String.raw`const C = 'g', CU = 'u', CC = C, CGU = 'gu', SELF = SELF; let L = 'g'; var V = 'g';`,
@@ -2923,7 +2982,7 @@ const hand: Project[] = [
   {
     name: "require-unicode-regexp/v",
     about: "requireFlag",
-    config: rules([], {"require-unicode-regexp": ["error", {"requireFlag": "v"}]}),
+    config: rules([], { "require-unicode-regexp": ["error", { "requireFlag": "v" }] }),
     files: {
       "a.ts": lines(
         String.raw`new RegExp('a', 'u');`,
@@ -3190,7 +3249,7 @@ const hand: Project[] = [
   },
   {
     name: "no-use-before-define/key-of-type",
-    about: "oxlint_is_in_key_of_type",
+    about: "oxlint_is_in_type_member_key",
     config: rules([], { "no-use-before-define": "error" }),
     files: {
       "a.ts": lines(
@@ -4749,7 +4808,7 @@ const hand: Project[] = [
   },
   {
     name: "no-accessor-recursion/private-names",
-    about: "`#a` is compared without its `#`, the key \"#a\" as it is",
+    about: '`#a` is compared without its `#`, the key "#a" as it is',
     config: rules(["unicorn"], { "unicorn/no-accessor-recursion": "error" }),
     files: {
       "a.js": lines(
@@ -5663,7 +5722,8 @@ const hand: Project[] = [
   },
   {
     name: "places/typescript",
-    about: "no-extra-non-null-assertion, no-extraneous-class, no-namespace, no-require-imports, adjacent-overload-signatures",
+    about:
+      "no-extra-non-null-assertion, no-extraneous-class, no-namespace, no-require-imports, adjacent-overload-signatures",
     config: rules(["typescript"], {
       "typescript/no-extra-non-null-assertion": "error",
       "typescript/no-extraneous-class": "error",
@@ -5772,7 +5832,9 @@ const hand: Project[] = [
     config: rules(["typescript"], { "typescript/dot-notation": "error" }),
     typed: true,
     files: {
-      "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, target: "esnext", module: "esnext", noPropertyAccessFromIndexSignature: true } }),
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { strict: true, target: "esnext", module: "esnext", noPropertyAccessFromIndexSignature: true },
+      }),
       "a.ts": lines(
         `declare const a: any, b: { c: 1 }, d: Record<string, 1>, e: unknown;`,
         `a["f"];`,
@@ -5809,7 +5871,8 @@ const hand: Project[] = [
         `x = (1 as any) < 2;`,
         `switch (new Boolean(1) === a) {}`,
       ),
-      // In a file of its own: for oxlint the name of a constructor is that of the global if any reference of the file to it is.
+      // In its own file, because oxlint treats a constructor's name as the global if any reference to it in the file is
+      // the global.
       "b.ts": lines(`function d(Boolean) { new Boolean(1) === a; Boolean(1) ?? a; }`),
     },
   },
@@ -5995,7 +6058,14 @@ const hand: Project[] = [
         `declare function o2(a: 1): void;`,
         `export {};`,
       ),
-      "b.ts": lines(`const a = 1;`, `export function b() {`, `  function a(): void;`, `  function a() {}`, `  return a;`, `}`),
+      "b.ts": lines(
+        `const a = 1;`,
+        `export function b() {`,
+        `  function a(): void;`,
+        `  function a() {}`,
+        `  return a;`,
+        `}`,
+      ),
     },
   },
   {
@@ -6105,7 +6175,8 @@ const hand: Project[] = [
   },
   {
     name: "places/the-first-label-of-tsgolint-3",
-    about: "no-misused-promises (tsgolint_promise_range), no-unnecessary-type-parameters, no-duplicate-type-constituents",
+    about:
+      "no-misused-promises (tsgolint_promise_range), no-unnecessary-type-parameters, no-duplicate-type-constituents",
     config: rules(["typescript"], {
       "typescript/no-misused-promises": "error",
       "typescript/no-unnecessary-type-parameters": "error",
@@ -6233,7 +6304,10 @@ const hand: Project[] = [
     name: "strict-boolean-expressions/enums-where-numbers-are-not-allowed",
     about: "determine_report_type",
     config: rules(["typescript"], {
-      "typescript/strict-boolean-expressions": ["error", { allowNumber: false, allowString: false, allowNullableEnum: true }],
+      "typescript/strict-boolean-expressions": [
+        "error",
+        { allowNumber: false, allowString: false, allowNullableEnum: true },
+      ],
     }),
     typed: true,
     files: {
@@ -6388,7 +6462,7 @@ const hand: Project[] = [
   },
   {
     name: "no-unused-vars/beside-an-infer-of-the-same-name",
-    about: "oxlint_used_beside_infer",
+    about: "oxlint_uses_hidden_by_type_parameters",
     config: rules([], { "no-unused-vars": "error" }),
     files: {
       "a.ts": lines(
@@ -6453,7 +6527,7 @@ const hand: Project[] = [
   },
   {
     name: "explicit-function-return-type/without-a-body-decorators-defaults",
-    about: "is_only_declared, member_of, oxlint_is_default_of_parameter",
+    about: "is_only_declared, member_of, oxlint_is_parameter_default",
     config: rules(["typescript"], { "typescript/explicit-function-return-type": "error" }),
     files: {
       "a.ts": lines(
@@ -6502,7 +6576,8 @@ const hand: Project[] = [
   },
   {
     name: "typescript/six-rules-on-what-is-written",
-    about: "no-import-type-side-effects, no-dynamic-delete, no-inferrable-types, array-type, prefer-function-type, consistent-indexed-object-style",
+    about:
+      "no-import-type-side-effects, no-dynamic-delete, no-inferrable-types, array-type, prefer-function-type, consistent-indexed-object-style",
     config: rules(["typescript"], {
       "typescript/no-import-type-side-effects": "error",
       "typescript/no-dynamic-delete": "error",
@@ -6568,26 +6643,116 @@ const hand: Project[] = [
   },
   {
     name: "source-type/no-implicit-globals",
-    about: "a file without import and export is a script for oxlint, whatever its extension but .mjs and .mts; .cjs and .cts are CommonJS",
+    about:
+      "a file without import and export is a script for oxlint, whatever its extension but .mjs and .mts; .cjs and .cts are CommonJS",
     config: rules([], { "no-implicit-globals": "error" }),
     files: {
-      "s.js": lines(`var a = 1;`, `function b() {}`, `c = 1;`, `let d = 1;`, `class E {}`, `if (a) { function f() {} }`),
-      "s.ts": lines(`var a = 1;`, `function b() {}`, `c = 1;`, `let d = 1;`, `class E {}`, `if (a) { function f() {} }`),
-      "s.cjs": lines(`var a = 1;`, `function b() {}`, `c = 1;`, `let d = 1;`, `class E {}`, `if (a) { function f() {} }`),
-      "s.cts": lines(`var a = 1;`, `function b() {}`, `c = 1;`, `let d = 1;`, `class E {}`, `if (a) { function f() {} }`),
-      "s.mjs": lines(`var a = 1;`, `function b() {}`, `c = 1;`, `let d = 1;`, `class E {}`, `if (a) { function f() {} }`),
-      "s.mts": lines(`var a = 1;`, `function b() {}`, `c = 1;`, `let d = 1;`, `class E {}`, `if (a) { function f() {} }`),
-      "s.jsx": lines(`var a = 1;`, `function b() {}`, `c = 1;`, `let d = 1;`, `class E {}`, `if (a) { function f() {} }`),
-      "s.tsx": lines(`var a = 1;`, `function b() {}`, `c = 1;`, `let d = 1;`, `class E {}`, `if (a) { function f() {} }`),
-      "m.js": lines(`var a = 1;`, `function b() {}`, `c = 1;`, `let d = 1;`, `class E {}`, `if (a) { function f() {} }`, `export {};`),
-      "m.ts": lines(`var a = 1;`, `function b() {}`, `c = 1;`, `let d = 1;`, `class E {}`, `if (a) { function f() {} }`, `export {};`),
-      "i.js": lines(`import "x";`, `var a = 1;`, `function b() {}`, `c = 1;`, `let d = 1;`, `class E {}`, `if (a) { function f() {} }`),
-      "i.ts": lines(`import "x";`, `var a = 1;`, `function b() {}`, `c = 1;`, `let d = 1;`, `class E {}`, `if (a) { function f() {} }`),
+      "s.js": lines(
+        `var a = 1;`,
+        `function b() {}`,
+        `c = 1;`,
+        `let d = 1;`,
+        `class E {}`,
+        `if (a) { function f() {} }`,
+      ),
+      "s.ts": lines(
+        `var a = 1;`,
+        `function b() {}`,
+        `c = 1;`,
+        `let d = 1;`,
+        `class E {}`,
+        `if (a) { function f() {} }`,
+      ),
+      "s.cjs": lines(
+        `var a = 1;`,
+        `function b() {}`,
+        `c = 1;`,
+        `let d = 1;`,
+        `class E {}`,
+        `if (a) { function f() {} }`,
+      ),
+      "s.cts": lines(
+        `var a = 1;`,
+        `function b() {}`,
+        `c = 1;`,
+        `let d = 1;`,
+        `class E {}`,
+        `if (a) { function f() {} }`,
+      ),
+      "s.mjs": lines(
+        `var a = 1;`,
+        `function b() {}`,
+        `c = 1;`,
+        `let d = 1;`,
+        `class E {}`,
+        `if (a) { function f() {} }`,
+      ),
+      "s.mts": lines(
+        `var a = 1;`,
+        `function b() {}`,
+        `c = 1;`,
+        `let d = 1;`,
+        `class E {}`,
+        `if (a) { function f() {} }`,
+      ),
+      "s.jsx": lines(
+        `var a = 1;`,
+        `function b() {}`,
+        `c = 1;`,
+        `let d = 1;`,
+        `class E {}`,
+        `if (a) { function f() {} }`,
+      ),
+      "s.tsx": lines(
+        `var a = 1;`,
+        `function b() {}`,
+        `c = 1;`,
+        `let d = 1;`,
+        `class E {}`,
+        `if (a) { function f() {} }`,
+      ),
+      "m.js": lines(
+        `var a = 1;`,
+        `function b() {}`,
+        `c = 1;`,
+        `let d = 1;`,
+        `class E {}`,
+        `if (a) { function f() {} }`,
+        `export {};`,
+      ),
+      "m.ts": lines(
+        `var a = 1;`,
+        `function b() {}`,
+        `c = 1;`,
+        `let d = 1;`,
+        `class E {}`,
+        `if (a) { function f() {} }`,
+        `export {};`,
+      ),
+      "i.js": lines(
+        `import "x";`,
+        `var a = 1;`,
+        `function b() {}`,
+        `c = 1;`,
+        `let d = 1;`,
+        `class E {}`,
+        `if (a) { function f() {} }`,
+      ),
+      "i.ts": lines(
+        `import "x";`,
+        `var a = 1;`,
+        `function b() {}`,
+        `c = 1;`,
+        `let d = 1;`,
+        `class E {}`,
+        `if (a) { function f() {} }`,
+      ),
     },
   },
   {
     name: "source-type/no-redeclare",
-    about: "a file without import and export is a script for oxlint, whatever its extension but .mjs and .mts; .cjs and .cts are CommonJS",
+    about:
+      "a file without import and export is a script for oxlint, whatever its extension but .mjs and .mts; .cjs and .cts are CommonJS",
     config: rules([], { "no-redeclare": ["error", { builtinGlobals: true }] }),
     files: {
       "s.js": lines(`var Object = 1;`, `function Array() {}`, `var a; var a;`),
@@ -6606,40 +6771,158 @@ const hand: Project[] = [
   },
   {
     name: "source-type/no-eval",
-    about: "a file without import and export is a script for oxlint, whatever its extension but .mjs and .mts; .cjs and .cts are CommonJS",
+    about:
+      "a file without import and export is a script for oxlint, whatever its extension but .mjs and .mts; .cjs and .cts are CommonJS",
     config: rules([], { "no-eval": "error" }),
     files: {
-      "s.js": lines(`this.eval("a");`, `(function () { this.eval("b"); })();`, `(function () { "use strict"; this.eval("c"); })();`, `(() => this.eval("d"))();`),
-      "s.ts": lines(`this.eval("a");`, `(function () { this.eval("b"); })();`, `(function () { "use strict"; this.eval("c"); })();`, `(() => this.eval("d"))();`),
-      "s.cjs": lines(`this.eval("a");`, `(function () { this.eval("b"); })();`, `(function () { "use strict"; this.eval("c"); })();`, `(() => this.eval("d"))();`),
-      "s.cts": lines(`this.eval("a");`, `(function () { this.eval("b"); })();`, `(function () { "use strict"; this.eval("c"); })();`, `(() => this.eval("d"))();`),
-      "s.mjs": lines(`this.eval("a");`, `(function () { this.eval("b"); })();`, `(function () { "use strict"; this.eval("c"); })();`, `(() => this.eval("d"))();`),
-      "s.mts": lines(`this.eval("a");`, `(function () { this.eval("b"); })();`, `(function () { "use strict"; this.eval("c"); })();`, `(() => this.eval("d"))();`),
-      "s.jsx": lines(`this.eval("a");`, `(function () { this.eval("b"); })();`, `(function () { "use strict"; this.eval("c"); })();`, `(() => this.eval("d"))();`),
-      "s.tsx": lines(`this.eval("a");`, `(function () { this.eval("b"); })();`, `(function () { "use strict"; this.eval("c"); })();`, `(() => this.eval("d"))();`),
-      "m.js": lines(`this.eval("a");`, `(function () { this.eval("b"); })();`, `(function () { "use strict"; this.eval("c"); })();`, `(() => this.eval("d"))();`, `export {};`),
-      "m.ts": lines(`this.eval("a");`, `(function () { this.eval("b"); })();`, `(function () { "use strict"; this.eval("c"); })();`, `(() => this.eval("d"))();`, `export {};`),
-      "i.js": lines(`import "x";`, `this.eval("a");`, `(function () { this.eval("b"); })();`, `(function () { "use strict"; this.eval("c"); })();`, `(() => this.eval("d"))();`),
-      "i.ts": lines(`import "x";`, `this.eval("a");`, `(function () { this.eval("b"); })();`, `(function () { "use strict"; this.eval("c"); })();`, `(() => this.eval("d"))();`),
+      "s.js": lines(
+        `this.eval("a");`,
+        `(function () { this.eval("b"); })();`,
+        `(function () { "use strict"; this.eval("c"); })();`,
+        `(() => this.eval("d"))();`,
+      ),
+      "s.ts": lines(
+        `this.eval("a");`,
+        `(function () { this.eval("b"); })();`,
+        `(function () { "use strict"; this.eval("c"); })();`,
+        `(() => this.eval("d"))();`,
+      ),
+      "s.cjs": lines(
+        `this.eval("a");`,
+        `(function () { this.eval("b"); })();`,
+        `(function () { "use strict"; this.eval("c"); })();`,
+        `(() => this.eval("d"))();`,
+      ),
+      "s.cts": lines(
+        `this.eval("a");`,
+        `(function () { this.eval("b"); })();`,
+        `(function () { "use strict"; this.eval("c"); })();`,
+        `(() => this.eval("d"))();`,
+      ),
+      "s.mjs": lines(
+        `this.eval("a");`,
+        `(function () { this.eval("b"); })();`,
+        `(function () { "use strict"; this.eval("c"); })();`,
+        `(() => this.eval("d"))();`,
+      ),
+      "s.mts": lines(
+        `this.eval("a");`,
+        `(function () { this.eval("b"); })();`,
+        `(function () { "use strict"; this.eval("c"); })();`,
+        `(() => this.eval("d"))();`,
+      ),
+      "s.jsx": lines(
+        `this.eval("a");`,
+        `(function () { this.eval("b"); })();`,
+        `(function () { "use strict"; this.eval("c"); })();`,
+        `(() => this.eval("d"))();`,
+      ),
+      "s.tsx": lines(
+        `this.eval("a");`,
+        `(function () { this.eval("b"); })();`,
+        `(function () { "use strict"; this.eval("c"); })();`,
+        `(() => this.eval("d"))();`,
+      ),
+      "m.js": lines(
+        `this.eval("a");`,
+        `(function () { this.eval("b"); })();`,
+        `(function () { "use strict"; this.eval("c"); })();`,
+        `(() => this.eval("d"))();`,
+        `export {};`,
+      ),
+      "m.ts": lines(
+        `this.eval("a");`,
+        `(function () { this.eval("b"); })();`,
+        `(function () { "use strict"; this.eval("c"); })();`,
+        `(() => this.eval("d"))();`,
+        `export {};`,
+      ),
+      "i.js": lines(
+        `import "x";`,
+        `this.eval("a");`,
+        `(function () { this.eval("b"); })();`,
+        `(function () { "use strict"; this.eval("c"); })();`,
+        `(() => this.eval("d"))();`,
+      ),
+      "i.ts": lines(
+        `import "x";`,
+        `this.eval("a");`,
+        `(function () { this.eval("b"); })();`,
+        `(function () { "use strict"; this.eval("c"); })();`,
+        `(() => this.eval("d"))();`,
+      ),
     },
   },
   {
     name: "source-type/no-inner-declarations",
-    about: "a file without import and export is a script for oxlint, whatever its extension but .mjs and .mts; .cjs and .cts are CommonJS",
+    about:
+      "a file without import and export is a script for oxlint, whatever its extension but .mjs and .mts; .cjs and .cts are CommonJS",
     config: rules([], { "no-inner-declarations": ["error", "functions"] }),
     files: {
-      "s.js": lines(`if (a) { function b() {} }`, `function c() { if (a) { function d() {} } }`, `function e() { "use strict"; if (a) { function f() {} } }`),
-      "s.ts": lines(`if (a) { function b() {} }`, `function c() { if (a) { function d() {} } }`, `function e() { "use strict"; if (a) { function f() {} } }`),
-      "s.cjs": lines(`if (a) { function b() {} }`, `function c() { if (a) { function d() {} } }`, `function e() { "use strict"; if (a) { function f() {} } }`),
-      "s.cts": lines(`if (a) { function b() {} }`, `function c() { if (a) { function d() {} } }`, `function e() { "use strict"; if (a) { function f() {} } }`),
-      "s.mjs": lines(`if (a) { function b() {} }`, `function c() { if (a) { function d() {} } }`, `function e() { "use strict"; if (a) { function f() {} } }`),
-      "s.mts": lines(`if (a) { function b() {} }`, `function c() { if (a) { function d() {} } }`, `function e() { "use strict"; if (a) { function f() {} } }`),
-      "s.jsx": lines(`if (a) { function b() {} }`, `function c() { if (a) { function d() {} } }`, `function e() { "use strict"; if (a) { function f() {} } }`),
-      "s.tsx": lines(`if (a) { function b() {} }`, `function c() { if (a) { function d() {} } }`, `function e() { "use strict"; if (a) { function f() {} } }`),
-      "m.js": lines(`if (a) { function b() {} }`, `function c() { if (a) { function d() {} } }`, `function e() { "use strict"; if (a) { function f() {} } }`, `export {};`),
-      "m.ts": lines(`if (a) { function b() {} }`, `function c() { if (a) { function d() {} } }`, `function e() { "use strict"; if (a) { function f() {} } }`, `export {};`),
-      "i.js": lines(`import "x";`, `if (a) { function b() {} }`, `function c() { if (a) { function d() {} } }`, `function e() { "use strict"; if (a) { function f() {} } }`),
-      "i.ts": lines(`import "x";`, `if (a) { function b() {} }`, `function c() { if (a) { function d() {} } }`, `function e() { "use strict"; if (a) { function f() {} } }`),
+      "s.js": lines(
+        `if (a) { function b() {} }`,
+        `function c() { if (a) { function d() {} } }`,
+        `function e() { "use strict"; if (a) { function f() {} } }`,
+      ),
+      "s.ts": lines(
+        `if (a) { function b() {} }`,
+        `function c() { if (a) { function d() {} } }`,
+        `function e() { "use strict"; if (a) { function f() {} } }`,
+      ),
+      "s.cjs": lines(
+        `if (a) { function b() {} }`,
+        `function c() { if (a) { function d() {} } }`,
+        `function e() { "use strict"; if (a) { function f() {} } }`,
+      ),
+      "s.cts": lines(
+        `if (a) { function b() {} }`,
+        `function c() { if (a) { function d() {} } }`,
+        `function e() { "use strict"; if (a) { function f() {} } }`,
+      ),
+      "s.mjs": lines(
+        `if (a) { function b() {} }`,
+        `function c() { if (a) { function d() {} } }`,
+        `function e() { "use strict"; if (a) { function f() {} } }`,
+      ),
+      "s.mts": lines(
+        `if (a) { function b() {} }`,
+        `function c() { if (a) { function d() {} } }`,
+        `function e() { "use strict"; if (a) { function f() {} } }`,
+      ),
+      "s.jsx": lines(
+        `if (a) { function b() {} }`,
+        `function c() { if (a) { function d() {} } }`,
+        `function e() { "use strict"; if (a) { function f() {} } }`,
+      ),
+      "s.tsx": lines(
+        `if (a) { function b() {} }`,
+        `function c() { if (a) { function d() {} } }`,
+        `function e() { "use strict"; if (a) { function f() {} } }`,
+      ),
+      "m.js": lines(
+        `if (a) { function b() {} }`,
+        `function c() { if (a) { function d() {} } }`,
+        `function e() { "use strict"; if (a) { function f() {} } }`,
+        `export {};`,
+      ),
+      "m.ts": lines(
+        `if (a) { function b() {} }`,
+        `function c() { if (a) { function d() {} } }`,
+        `function e() { "use strict"; if (a) { function f() {} } }`,
+        `export {};`,
+      ),
+      "i.js": lines(
+        `import "x";`,
+        `if (a) { function b() {} }`,
+        `function c() { if (a) { function d() {} } }`,
+        `function e() { "use strict"; if (a) { function f() {} } }`,
+      ),
+      "i.ts": lines(
+        `import "x";`,
+        `if (a) { function b() {} }`,
+        `function c() { if (a) { function d() {} } }`,
+        `function e() { "use strict"; if (a) { function f() {} } }`,
+      ),
     },
   },
   {
@@ -6647,12 +6930,74 @@ const hand: Project[] = [
     about: "check_symbol: outside of a module, whatever has the name of a global",
     config: { ...rules([], { "no-redeclare": "error" }), globals: { myGlobal: "readonly", offGlobal: "off" } },
     files: {
-      "s.js": lines(`var Object;`, `let Array = 1;`, `function f(Map) { var Set; { let Promise; } }`, `class Symbol {}`, `const g = function JSON() {};`, `try {} catch (Error) {}`, `var h, h;`, `var window, process, myGlobal, offGlobal;`, `var Number; var Number;`, `var a; var a; var a;`),
-      "s.ts": lines(`var Object;`, `let Array = 1;`, `function f(Map) { var Set; { let Promise; } }`, `class Symbol {}`, `const g = function JSON() {};`, `try {} catch (Error) {}`, `var h, h;`, `var window, process, myGlobal, offGlobal;`, `var Number; var Number;`, `var a; var a; var a;`),
-      "c.cjs": lines(`var Object;`, `let Array = 1;`, `function f(Map) { var Set; { let Promise; } }`, `class Symbol {}`, `const g = function JSON() {};`, `try {} catch (Error) {}`, `var h, h;`, `var window, process, myGlobal, offGlobal;`, `var Number; var Number;`, `var a; var a; var a;`),
-      "m.js": lines(`var Object;`, `let Array = 1;`, `function f(Map) { var Set; { let Promise; } }`, `class Symbol {}`, `const g = function JSON() {};`, `try {} catch (Error) {}`, `var h, h;`, `var window, process, myGlobal, offGlobal;`, `var Number; var Number;`, `var a; var a; var a;`, `export {};`),
-      "n.mjs": lines(`var Object;`, `let Array = 1;`, `function f(Map) { var Set; { let Promise; } }`, `class Symbol {}`, `const g = function JSON() {};`, `try {} catch (Error) {}`, `var h, h;`, `var window, process, myGlobal, offGlobal;`, `var Number; var Number;`, `var a; var a; var a;`),
-      "t.ts": lines(`type Object = 1;`, `interface Array {}`, `enum Map {}`, `namespace Set {}`, `function f<Promise>() {}`),
+      "s.js": lines(
+        `var Object;`,
+        `let Array = 1;`,
+        `function f(Map) { var Set; { let Promise; } }`,
+        `class Symbol {}`,
+        `const g = function JSON() {};`,
+        `try {} catch (Error) {}`,
+        `var h, h;`,
+        `var window, process, myGlobal, offGlobal;`,
+        `var Number; var Number;`,
+        `var a; var a; var a;`,
+      ),
+      "s.ts": lines(
+        `var Object;`,
+        `let Array = 1;`,
+        `function f(Map) { var Set; { let Promise; } }`,
+        `class Symbol {}`,
+        `const g = function JSON() {};`,
+        `try {} catch (Error) {}`,
+        `var h, h;`,
+        `var window, process, myGlobal, offGlobal;`,
+        `var Number; var Number;`,
+        `var a; var a; var a;`,
+      ),
+      "c.cjs": lines(
+        `var Object;`,
+        `let Array = 1;`,
+        `function f(Map) { var Set; { let Promise; } }`,
+        `class Symbol {}`,
+        `const g = function JSON() {};`,
+        `try {} catch (Error) {}`,
+        `var h, h;`,
+        `var window, process, myGlobal, offGlobal;`,
+        `var Number; var Number;`,
+        `var a; var a; var a;`,
+      ),
+      "m.js": lines(
+        `var Object;`,
+        `let Array = 1;`,
+        `function f(Map) { var Set; { let Promise; } }`,
+        `class Symbol {}`,
+        `const g = function JSON() {};`,
+        `try {} catch (Error) {}`,
+        `var h, h;`,
+        `var window, process, myGlobal, offGlobal;`,
+        `var Number; var Number;`,
+        `var a; var a; var a;`,
+        `export {};`,
+      ),
+      "n.mjs": lines(
+        `var Object;`,
+        `let Array = 1;`,
+        `function f(Map) { var Set; { let Promise; } }`,
+        `class Symbol {}`,
+        `const g = function JSON() {};`,
+        `try {} catch (Error) {}`,
+        `var h, h;`,
+        `var window, process, myGlobal, offGlobal;`,
+        `var Number; var Number;`,
+        `var a; var a; var a;`,
+      ),
+      "t.ts": lines(
+        `type Object = 1;`,
+        `interface Array {}`,
+        `enum Map {}`,
+        `namespace Set {}`,
+        `function f<Promise>() {}`,
+      ),
     },
   },
   {
@@ -10194,7 +10539,7 @@ const hand: Project[] = [
   },
   {
     name: "explicit-function-return-type/defaults-of-parameters-by-default",
-    about: "oxlint_is_default_of_parameter: only what the type of the parameter says is left out",
+    about: "oxlint_is_parameter_default: only what the type of the parameter says is left out",
     config: rules(["typescript"], { "typescript/explicit-function-return-type": ["error", {}] }),
     files: {
       "a.ts": lines(
@@ -10216,8 +10561,10 @@ const hand: Project[] = [
   },
   {
     name: "explicit-function-return-type/defaults-of-parameters-allow-expressions",
-    about: "oxlint_is_default_of_parameter: only what the type of the parameter says is left out",
-    config: rules(["typescript"], { "typescript/explicit-function-return-type": ["error", { allowExpressions: true }] }),
+    about: "oxlint_is_parameter_default: only what the type of the parameter says is left out",
+    config: rules(["typescript"], {
+      "typescript/explicit-function-return-type": ["error", { allowExpressions: true }],
+    }),
     files: {
       "a.ts": lines(
         `type F = () => Promise<boolean>;`,
@@ -10238,8 +10585,10 @@ const hand: Project[] = [
   },
   {
     name: "explicit-function-return-type/defaults-of-parameters-typed-function-expressions-not-allowed",
-    about: "oxlint_is_default_of_parameter: only what the type of the parameter says is left out",
-    config: rules(["typescript"], { "typescript/explicit-function-return-type": ["error", { allowTypedFunctionExpressions: false }] }),
+    about: "oxlint_is_parameter_default: only what the type of the parameter says is left out",
+    config: rules(["typescript"], {
+      "typescript/explicit-function-return-type": ["error", { allowTypedFunctionExpressions: false }],
+    }),
     files: {
       "a.ts": lines(
         `type F = () => Promise<boolean>;`,
@@ -10260,8 +10609,13 @@ const hand: Project[] = [
   },
   {
     name: "explicit-function-return-type/defaults-of-parameters-allow-expressions-but-not-typed-ones",
-    about: "oxlint_is_default_of_parameter: only what the type of the parameter says is left out",
-    config: rules(["typescript"], { "typescript/explicit-function-return-type": ["error", { allowExpressions: true, allowTypedFunctionExpressions: false }] }),
+    about: "oxlint_is_parameter_default: only what the type of the parameter says is left out",
+    config: rules(["typescript"], {
+      "typescript/explicit-function-return-type": [
+        "error",
+        { allowExpressions: true, allowTypedFunctionExpressions: false },
+      ],
+    }),
     files: {
       "a.ts": lines(
         `type F = () => Promise<boolean>;`,
@@ -10282,8 +10636,10 @@ const hand: Project[] = [
   },
   {
     name: "explicit-function-return-type/defaults-of-parameters-const-assertions-not-allowed",
-    about: "oxlint_is_default_of_parameter: only what the type of the parameter says is left out",
-    config: rules(["typescript"], { "typescript/explicit-function-return-type": ["error", { allowDirectConstAssertionInArrowFunctions: false }] }),
+    about: "oxlint_is_parameter_default: only what the type of the parameter says is left out",
+    config: rules(["typescript"], {
+      "typescript/explicit-function-return-type": ["error", { allowDirectConstAssertionInArrowFunctions: false }],
+    }),
     files: {
       "a.ts": lines(
         `type F = () => Promise<boolean>;`,
@@ -10305,7 +10661,9 @@ const hand: Project[] = [
   {
     name: "explicit-function-return-type/without-a-body-and-allow-expressions",
     about: "a function that is only declared is allowed where a function expression is",
-    config: rules(["typescript"], { "typescript/explicit-function-return-type": ["error", { allowExpressions: true }] }),
+    config: rules(["typescript"], {
+      "typescript/explicit-function-return-type": ["error", { allowExpressions: true }],
+    }),
     files: {
       "a.ts": lines(
         `declare const dec: any;`,
@@ -10337,7 +10695,9 @@ const hand: Project[] = [
   {
     name: "explicit-function-return-type/without-a-body-and-allowed-names",
     about: "is_allowed_function comes first",
-    config: rules(["typescript"], { "typescript/explicit-function-return-type": ["error", { allowedNames: ["a", "t", "v", "c", "o"] }] }),
+    config: rules(["typescript"], {
+      "typescript/explicit-function-return-type": ["error", { allowedNames: ["a", "t", "v", "c", "o"] }],
+    }),
     files: {
       "a.ts": lines(
         `declare const dec: any;`,
@@ -10900,7 +11260,7 @@ const hand: Project[] = [
   },
   {
     name: "explicit-function-return-type/parentheses-and-objects-that-are-defaults-by-default",
-    about: "oxlint_hides_const_assertion, oxlint_is_default_of_parameter",
+    about: "oxlint_hides_const_assertion, oxlint_is_parameter_default",
     config: rules(["typescript"], { "typescript/explicit-function-return-type": ["error", {}] }),
     files: {
       "a.ts": lines(
@@ -10927,8 +11287,10 @@ const hand: Project[] = [
   },
   {
     name: "explicit-function-return-type/parentheses-and-objects-that-are-defaults-allow-expressions",
-    about: "oxlint_hides_const_assertion, oxlint_is_default_of_parameter",
-    config: rules(["typescript"], { "typescript/explicit-function-return-type": ["error", { allowExpressions: true }] }),
+    about: "oxlint_hides_const_assertion, oxlint_is_parameter_default",
+    config: rules(["typescript"], {
+      "typescript/explicit-function-return-type": ["error", { allowExpressions: true }],
+    }),
     files: {
       "a.ts": lines(
         `type S = { f: () => boolean; g: { h: () => boolean } };`,
@@ -10954,8 +11316,10 @@ const hand: Project[] = [
   },
   {
     name: "explicit-function-return-type/parentheses-and-objects-that-are-defaults-const-assertions-not-allowed",
-    about: "oxlint_hides_const_assertion, oxlint_is_default_of_parameter",
-    config: rules(["typescript"], { "typescript/explicit-function-return-type": ["error", { allowDirectConstAssertionInArrowFunctions: false }] }),
+    about: "oxlint_hides_const_assertion, oxlint_is_parameter_default",
+    config: rules(["typescript"], {
+      "typescript/explicit-function-return-type": ["error", { allowDirectConstAssertionInArrowFunctions: false }],
+    }),
     files: {
       "a.ts": lines(
         `type S = { f: () => boolean; g: { h: () => boolean } };`,
@@ -11055,7 +11419,7 @@ const hand: Project[] = [
   },
   {
     name: "no-unused-vars/what-only-a-logical-assignment-changes-or-a-comma-discards",
-    about: "oxlint_may_be_unused_after_all, is_exported",
+    about: "oxlint_unused_candidates, is_exported",
     config: rules([], { "no-unused-vars": "error" }),
     files: {
       "a.js": lines(
@@ -11106,8 +11470,10 @@ const hand: Project[] = [
   },
   {
     name: "no-unused-vars/what-a-comma-discards-with-all-arguments",
-    about: "oxlint_may_be_unused_after_all: unused_for_oxlint",
-    config: rules([], { "no-unused-vars": ["error", { args: "all", argsIgnorePattern: "^a[kn]$", varsIgnorePattern: "^[ab]$" }] }),
+    about: "oxlint_unused_candidates: unused_for_oxlint",
+    config: rules([], {
+      "no-unused-vars": ["error", { args: "all", argsIgnorePattern: "^a[kn]$", varsIgnorePattern: "^[ab]$" }],
+    }),
     files: {
       "a.js": lines(
         `var a; a ||= 1;`,
@@ -11157,7 +11523,7 @@ const hand: Project[] = [
   },
   {
     name: "no-unused-vars/beside-a-type-parameter-of-the-same-name",
-    about: "oxlint_used_beside_infer: the A of A.B is no type parameter",
+    about: "oxlint_uses_hidden_by_type_parameters: the A of A.B is no type parameter",
     config: rules([], { "no-unused-vars": "error" }),
     files: {
       "a.ts": lines(
@@ -11234,10 +11600,7 @@ const hand: Project[] = [
         `export const e = mock({ kind: "a" as "a" | "b" });`,
         `export const f: { kind: "a" | "b" } = { kind: "a" as "a" | "b" };`,
       ),
-      "z.ts": lines(
-        `declare const s: string;`,
-        `export const g = s as string;`,
-      ),
+      "z.ts": lines(`declare const s: string;`, `export const g = s as string;`),
       "d.ts": lines(
         `type C = "b" | "c"; type D = { a: C; e?: { a: C } };`,
         `export const f = <D>{ a: "b" as C };`,
@@ -11528,7 +11891,7 @@ const hand: Project[] = [
   },
   {
     name: "no-unnecessary-type-assertion/what-a-call-is-without-the-assertion",
-    about: "get_uncast_type: context_free_type_of_call_resolved_afresh",
+    about: "get_uncast_type: context_free_type_of_freshly_resolved_call",
     config: rules(["typescript"], { "typescript/no-unnecessary-type-assertion": "error" }),
     typed: true,
     files: {
@@ -11590,7 +11953,7 @@ const hand: Project[] = [
   },
   {
     name: "no-unnecessary-type-assertion/what-new-await-and-templates-are-without-the-assertion",
-    about: "get_uncast_type: context_free_type_of_call_resolved_afresh, through await",
+    about: "get_uncast_type: context_free_type_of_freshly_resolved_call, through await",
     config: rules(["typescript"], { "typescript/no-unnecessary-type-assertion": "error" }),
     typed: true,
     files: {
@@ -11843,10 +12206,7 @@ const hand: Project[] = [
         `export interface INodeOutputSlot { name: string; widget?: IWidgetLocator }`,
         `export class LGraphNode { outputs: INodeOutputSlot[] = []; }`,
       ),
-      "service.ts": lines(
-        `export const GET_CONFIG = Symbol();`,
-        `export const OTHER: unique symbol = Symbol();`,
-      ),
+      "service.ts": lines(`export const GET_CONFIG = Symbol();`, `export const OTHER: unique symbol = Symbol();`),
       "aug.ts": lines(
         `import { GET_CONFIG, OTHER } from "./service";`,
         `declare module "./interfaces" {`,
@@ -11937,7 +12297,8 @@ const hand: Project[] = [
   },
   {
     name: "places/how-much-is-pointed-at",
-    about: "prefer-literal-enum-member, no-misused-new, no-this-alias, explicit-function-return-type, no-useless-assignment: where the place ends",
+    about:
+      "prefer-literal-enum-member, no-misused-new, no-this-alias, explicit-function-return-type, no-useless-assignment: where the place ends",
     config: rules(["typescript"], {
       "typescript/prefer-literal-enum-member": "error",
       "typescript/no-misused-new": "error",
@@ -12095,7 +12456,7 @@ const hand: Project[] = [
   },
   {
     name: "no-unnecessary-type-assertion/a-call-among-the-arguments",
-    about: "is_asserted_type_expected_of_a_call_in_the_arguments; context_free_type_of_call_resolved_afresh",
+    about: "asserted_type_reaches_call_in_arguments; context_free_type_of_freshly_resolved_call",
     config: rules(["typescript"], { "typescript/no-unnecessary-type-assertion": "error" }),
     typed: true,
     files: {
@@ -12377,7 +12738,10 @@ const hand: Project[] = [
   {
     name: "counts/void-in-an-instantiation-and-every-parameter",
     about: "no-invalid-void-type: Instantiation; consistent-generic-constructors: Owner::of",
-    config: rules(["typescript"], { "typescript/no-invalid-void-type": "error", "typescript/consistent-generic-constructors": "error" }),
+    config: rules(["typescript"], {
+      "typescript/no-invalid-void-type": "error",
+      "typescript/consistent-generic-constructors": "error",
+    }),
     files: {
       "a.ts": lines(
         `declare class Tree<A, B> { a: A; b: B }`,
@@ -12621,13 +12985,16 @@ const hand: Project[] = [
     about: "112 specifiers in a table of 128 places: after a full group of 16 hashbrown looks 16 places on, then 48",
     config: rules(["import"], { "import/no-duplicates": "error" }),
     files: {
-      "a.js": Array.from({ length: 56 }, (_, i) => lines(`import { x as a${i} } from "./d53/m${i}";`, `import { x as b${i} } from "./d53/m${i}.js";`)).join(""),
+      "a.js": Array.from({ length: 56 }, (_, i) =>
+        lines(`import { x as a${i} } from "./d53/m${i}";`, `import { x as b${i} } from "./d53/m${i}.js";`),
+      ).join(""),
       ...Object.fromEntries(Array.from({ length: 56 }, (_, i) => [`d53/m${i}.js`, "export const x = 1;\n"])),
     },
   },
   {
     name: "no-unnecessary-condition/what-a-predicate-returns-and-the-first-signature",
-    about: "check_call_expression: the return type; check_optional_chain: the first signature; check_node: a literal, a conditional type",
+    about:
+      "check_call_expression: the return type; check_optional_chain: the first signature; check_node: a literal, a conditional type",
     config: rules(["typescript"], { "typescript/no-unnecessary-condition": "error" }),
     typed: true,
     files: {
@@ -12686,18 +13053,12 @@ const hand: Project[] = [
       "c01.ts": lines(
         `export async function f<T>(it: AsyncIterable<T>) { for await (const item of it) { if (item) { item; } } }`,
       ),
-      "c02.ts": lines(
-        `export async function f<T>(it: Iterable<T>) { for (const item of it) { if (item) { item; } } }`,
-      ),
+      "c02.ts": lines(`export async function f<T>(it: Iterable<T>) { for (const item of it) { if (item) { item; } } }`),
       "c03.ts": lines(
         `export async function f<T>(it: Iterable<Promise<T>>) { for await (const item of it) { if (item) { item; } } }`,
       ),
-      "c04.ts": lines(
-        `export async function f<T>(p: Promise<T>) { const item = await p; if (item) { item; } }`,
-      ),
-      "c05.ts": lines(
-        `export async function f<T>(p: T) { const item = await p; if (item) { item; } }`,
-      ),
+      "c04.ts": lines(`export async function f<T>(p: Promise<T>) { const item = await p; if (item) { item; } }`),
+      "c05.ts": lines(`export async function f<T>(p: T) { const item = await p; if (item) { item; } }`),
       "c06.ts": lines(
         `interface D { collections?: { [c: string]: { resources?: { [r: string]: number[] } | undefined } } }`,
         `export function h(d: D, c: string, r: string) { if (d.collections) { return d.collections[c].resources?.[r] ?? []; } return []; }`,
@@ -12715,10 +13076,7 @@ const hand: Project[] = [
         `declare function o(a: string, b: number): { id: 1 };`,
         `export const p7 = o("a", 1)?.id;`,
       ),
-      "c10.ts": lines(
-        `declare function o(a: string, b: number): { id: 1 };`,
-        `export const p7 = o("a", 1)?.id;`,
-      ),
+      "c10.ts": lines(`declare function o(a: string, b: number): { id: 1 };`, `export const p7 = o("a", 1)?.id;`),
       "c11.ts": lines(
         `declare const x: { o(a: string): { id: 1 } | undefined; o(a: string, b: number): { id: 1 } };`,
         `export const p7 = x.o("a", 1)?.id;`,
@@ -12952,7 +13310,10 @@ const hand: Project[] = [
   {
     name: "labels/type-exports-and-useless-defaults",
     about: "what tsgolint says beside the message: each export; the default and what has it",
-    config: rules(["typescript"], { "typescript/consistent-type-exports": "error", "typescript/no-useless-default-assignment": "error" }),
+    config: rules(["typescript"], {
+      "typescript/consistent-type-exports": "error",
+      "typescript/no-useless-default-assignment": "error",
+    }),
     typed: true,
     files: {
       "t.ts": lines(
@@ -13085,13 +13446,18 @@ const hand: Project[] = [
       ),
     },
   },
-  ...whichFilesATsconfigIsFor,
+  ...tsconfigScopeProjects,
   ...codeOfPackages,
   ...asNodeResolves,
   {
     name: "types/an-alias-is-a-deferred-reference",
     about: "is_unsafe_assignment: is_looked_into",
-    config: rules(["typescript"], { "typescript/no-unsafe-assignment": "error", "typescript/no-unsafe-return": "error", "typescript/no-unsafe-argument": "error", "typescript/no-unsafe-type-assertion": "error" }),
+    config: rules(["typescript"], {
+      "typescript/no-unsafe-assignment": "error",
+      "typescript/no-unsafe-return": "error",
+      "typescript/no-unsafe-argument": "error",
+      "typescript/no-unsafe-type-assertion": "error",
+    }),
     typed: true,
     files: {
       "a.ts": lines(
@@ -13596,7 +13962,10 @@ const hand: Project[] = [
   {
     name: "places/throw-undefined-and-a-template-with-space",
     about: "only_throw_error: statement; report_single_interpolation: template.span().start + 1",
-    config: rules(["typescript"], { "typescript/only-throw-error": "error", "typescript/no-unnecessary-template-expression": "error" }),
+    config: rules(["typescript"], {
+      "typescript/only-throw-error": "error",
+      "typescript/no-unnecessary-template-expression": "error",
+    }),
     typed: true,
     files: {
       "throw.ts": lines(
@@ -13695,7 +14064,8 @@ const hand: Project[] = [
   },
   {
     name: "explicit-module-boundary-types/walk",
-    about: "it goes down from each export through every expression but calls and JSX elements, follows an identifier only where that is the export, stops at an annotation, and says the same again for each export",
+    about:
+      "it goes down from each export through every expression but calls and JSX elements, follows an identifier only where that is the export, stops at an annotation, and says the same again for each export",
     config: rules(["typescript"], { "typescript/explicit-module-boundary-types": "error" }),
     files: {
       "a_typed.tsx": lines(
@@ -13953,15 +14323,9 @@ const hand: Project[] = [
         `export type T = () => void;`,
         `export interface Iface { m(a); }`,
       ),
-      "k_default1.ts": lines(
-        `export default () => 1;`,
-      ),
-      "k_default2.ts": lines(
-        `export default function () {}`,
-      ),
-      "k_default3.ts": lines(
-        `export default (function (a) {});`,
-      ),
+      "k_default1.ts": lines(`export default () => 1;`),
+      "k_default2.ts": lines(`export default function () {}`),
+      "k_default3.ts": lines(`export default (function (a) {});`),
       "k_default4.ts": lines(
         `const a = () => 1;`,
         `export default [a, () => 2, [a], { a }, ...[a], , function () {}, (a), a!];`,
@@ -13970,26 +14334,16 @@ const hand: Project[] = [
         `const a = () => 1;`,
         `export = { a, b: () => 2, c: [a], d: { a }, e() {}, get f() { return 1; }, set f(v) {}, ...a, g: (a)!, h: a as unknown };`,
       ),
-      "k_default6.ts": lines(
-        `const a = () => 1;`,
-        `export default a as unknown;`,
-      ),
-      "k_default7.ts": lines(
-        `const a = () => 1;`,
-        `export default x ? a : () => 2;`,
-      ),
-      "k_default8.ts": lines(
-        `export default async function named(a) {}`,
-      ),
-      "k_default9.js": lines(
-        `export default function named(a) {}`,
-        `export const b = () => 1;`,
-      ),
+      "k_default6.ts": lines(`const a = () => 1;`, `export default a as unknown;`),
+      "k_default7.ts": lines(`const a = () => 1;`, `export default x ? a : () => 2;`),
+      "k_default8.ts": lines(`export default async function named(a) {}`),
+      "k_default9.js": lines(`export default function named(a) {}`, `export const b = () => 1;`),
     },
   },
   {
     name: "explicit-module-boundary-types/overloads",
-    about: "allowOverloadFunctions: by the declarations of the variable; of a method by its name and `static`, not in a class that is the default export or exported by its name; an `export default function ();` counts for every function without a name",
+    about:
+      "allowOverloadFunctions: by the declarations of the variable; of a method by its name and `static`, not in a class that is the default export or exported by its name; an `export default function ();` counts for every function without a name",
     config: rules(["typescript"], {
       "typescript/explicit-module-boundary-types": ["error", { allowOverloadFunctions: true }],
     }),
@@ -14033,16 +14387,18 @@ const hand: Project[] = [
         `export class C { m() {} }`,
         `export const o = { m() {} };`,
       ),
-      "m_over3.ts": lines(
-        `export default class { m(): void; m() {} }`,
-      ),
+      "m_over3.ts": lines(`export default class { m(): void; m() {} }`),
     },
   },
   {
     name: "explicit-module-boundary-types/allowed-names",
-    about: "allowedNames: the name of the function or of what it was last under; not asked for an arrow function whose body is an expression",
+    about:
+      "allowedNames: the name of the function or of what it was last under; not asked for an arrow function whose body is an expression",
     config: rules(["typescript"], {
-      "typescript/explicit-module-boundary-types": ["error", { allowedNames: ["ok", "ok2", "ok3", "ok4", "5", "constructor", "ok5", "ok6"] }],
+      "typescript/explicit-module-boundary-types": [
+        "error",
+        { allowedNames: ["ok", "ok2", "ok3", "ok4", "5", "constructor", "ok5", "ok6"] },
+      ],
     }),
     files: {
       "m_names.ts": lines(
@@ -14126,7 +14482,8 @@ const hand: Project[] = [
   },
   {
     name: "explicit-module-boundary-types/untyped-function-expressions",
-    about: "without allowTypedFunctionExpressions the annotation of a variable does not stop it, that of a property does",
+    about:
+      "without allowTypedFunctionExpressions the annotation of a variable does not stop it, that of a property does",
     config: rules(["typescript"], {
       "typescript/explicit-module-boundary-types": ["error", { allowTypedFunctionExpressions: false }],
     }),
@@ -14304,7 +14661,8 @@ const hand: Project[] = [
   },
   {
     name: "explicit-function-return-type/accessor",
-    about: "an `accessor` is no property: not for the place, and its annotation types nothing; the parameter of a `catch` is no declarator",
+    about:
+      "an `accessor` is no property: not for the place, and its annotation types nothing; the parameter of a `catch` is no declarator",
     config: rules(["typescript"], { "typescript/explicit-function-return-type": "error" }),
     files: {
       "a.ts": lines(
@@ -14325,7 +14683,8 @@ const hand: Project[] = [
   },
   {
     name: "consistent-type-imports/ambient",
-    about: "what a class extends in an ambient context, and a computed key of an abstract, a declared or an ambient member and of every signature, is used as a type",
+    about:
+      "what a class extends in an ambient context, and a computed key of an abstract, a declared or an ambient member and of every signature, is used as a type",
     config: rules(["typescript"], { "typescript/consistent-type-imports": "error" }),
     files: {
       "a.d.ts": lines(
@@ -14539,7 +14898,8 @@ const hand: Project[] = [
   },
   {
     name: "no-invalid-void-type/overloads",
-    about: "overloads count for a union in the return type of the innermost function that is no arrow function; they are looked for in all statements around, of a method by `static` and the text of the key",
+    about:
+      "overloads count for a union in the return type of the innermost function that is no arrow function; they are looked for in all statements around, of a method by `static` and the text of the key",
     config: rules(["typescript"], { "typescript/no-invalid-void-type": "error" }),
     files: {
       "overloads.ts": lines(
@@ -14573,7 +14933,7 @@ const hand: Project[] = [
   },
   {
     name: "ban-ts-comment/decoration",
-    about: "find_directive_in_comment_for_oxlint",
+    about: "oxlint_find_directive_in_comment",
     config: rules(["typescript"], {
       "typescript/ban-ts-comment": "error",
       "typescript/prefer-ts-expect-error": "error",
@@ -14636,8 +14996,9 @@ const hand: Project[] = [
   },
   {
     name: "constructor-super/what-is-found",
-    about: "find_super_calls_in_cfg: a `super()` is found as a statement, as a branch of a `?:` that is one, and as a test",
-    config: rules([], {"constructor-super": "error"}),
+    about:
+      "find_super_calls_in_cfg: a `super()` is found as a statement, as a branch of a `?:` that is one, and as a test",
+    config: rules([], { "constructor-super": "error" }),
     files: {
       "a01.js": "class A extends B { constructor() { super(), this.a = 1; } }\n",
       "a02.js": "class A extends B { constructor() { (super()); } }\n",
@@ -14682,7 +15043,7 @@ const hand: Project[] = [
   {
     name: "constructor-super/paths",
     about: "analyze_super_paths, where it agrees with the code paths of ESLint",
-    config: rules([], {"constructor-super": "error"}),
+    config: rules([], { "constructor-super": "error" }),
     files: {
       "d01.js": "class A extends B { constructor() { for (;;) { super(); break; } } }\n",
       "d02.js": "class A extends B { constructor() { while (true) { super(); break; } } }\n",
@@ -14743,7 +15104,8 @@ const hand: Project[] = [
       "d63.js": "class A extends B { constructor() { a && b; super(); } }\n",
       "d64.js": "class A extends B { constructor() { super(); return; } }\n",
       "d65.js": "class A extends B { constructor() { super(); return a; } }\n",
-      "d66.js": "class A extends B { constructor() { if (a) { super(); } else if (b) { super(); } else { super(); } } }\n",
+      "d66.js":
+        "class A extends B { constructor() { if (a) { super(); } else if (b) { super(); } else { super(); } } }\n",
       "d67.js": "class A extends B { constructor() { if (a) { super(); } else if (b) { super(); } } }\n",
       "d68.js": "class A extends B { constructor() { for (var i = 0; i < 1; i++) { super(); } } }\n",
       "d69.js": "class A extends B { constructor() { for (super();;) { } } }\n",
@@ -14753,7 +15115,7 @@ const hand: Project[] = [
   {
     name: "no-useless-return/what-is-written-after",
     about: "analyze_ancestors, has_reachable_code_after",
-    config: rules([], {"no-useless-return": "error"}),
+    config: rules([], { "no-useless-return": "error" }),
     files: {
       "u01.ts": "function f() { switch (a) { case 1: return; case 2: foo(); } }\n",
       "u02.ts": "function f() { switch (a) { case 1: return; case 2: ; } }\n",
@@ -14827,13 +15189,14 @@ const hand: Project[] = [
       "v01.js": "return;\n",
       "v02.ts": "namespace N { return; }\n",
       "v03.js": "function f() { if (a) { return; }\n return; }\n",
-      "v06.js": "const f = () => { if (a) return; };\nconst o = { m() { return; }, get a() { return; }, set a(v) { return; } };\nasync function* g() { return; }",
+      "v06.js":
+        "const f = () => { if (a) return; };\nconst o = { m() { return; }, get a() { return; }, set a(v) { return; } };\nasync function* g() { return; }",
     },
   },
   {
     name: "class-methods-use-this/what-hides-this",
     about: "ThisFinder; the span of the key",
-    config: rules([], {"class-methods-use-this": "error"}),
+    config: rules([], { "class-methods-use-this": "error" }),
     files: {
       "k01.ts": "class foo { [(a,b)](){} }\n",
       "k02.ts": "class foo { get [(a)](){} }\n",
@@ -14877,8 +15240,8 @@ const hand: Project[] = [
       "k40.ts": "class B { n() { function f(this: B) {} } }\n",
       "k41.ts": "class B { n(this: B) {} }\n",
       "k42.tsx": "class B { n() { return <this.x /> } }\n",
-      "k44.ts": "class A { \"constructor\"() {} }\n",
-      "k45.ts": "class A { [\"constructor\"]() {} }\n",
+      "k44.ts": 'class A { "constructor"() {} }\n',
+      "k45.ts": 'class A { ["constructor"]() {} }\n',
       "k46.ts": "class A { m?() {} }\n",
       "k47.ts": "class A { declare m: () => void }\n",
       "k48.ts": "class A { m = (() => {}) }\n",
@@ -14901,7 +15264,7 @@ const hand: Project[] = [
   {
     name: "no-dupe-class-members/the-last-of-the-name",
     about: "run_once: defined_elements.insert",
-    config: rules([], {"no-dupe-class-members": "error"}),
+    config: rules([], { "no-dupe-class-members": "error" }),
     files: {
       "m01.js": "class A { get a() {} set 'a'(foo) {} get [`a`]() {} }\n",
       "m02.js": "A = class { a() {} get a() {} set a(foo) {} }\n",
@@ -14909,7 +15272,8 @@ const hand: Project[] = [
       "m04.js": "class A { a() {} static get a() {} a() {} }\n",
       "m05.js": "class A { static get a(){} static set a(foo){} set a(bar){} static get a(){} }\n",
       "m06.js": "(class { static set a(foo){} b(){} static get a(){} static c(){} static set a(bar){} })\n",
-      "m07.js": "class A { 'javascript:' = 1; static 'javascript:'() {} ['javascript:']() {} get 'javascript:x'() {} }\n",
+      "m07.js":
+        "class A { 'javascript:' = 1; static 'javascript:'() {} ['javascript:']() {} get 'javascript:x'() {} }\n",
       "m08.js": "let a; new class { a; #a; 'a'; m() { this.a; } };\n",
       "m09.js": "class A { b = 1; [`a`] = 1; [(`a`)] = 1; [('a')] = 1; [(a)] = 1; }\n",
       "m10.js": "class A { a() {} a() {} a() {} }\n",
@@ -14935,7 +15299,7 @@ const hand: Project[] = [
   {
     name: "accessor-pairs/names-and-descriptors",
     about: "static_name, are_keys_equivalent, check_property_descriptor, abstract accessors",
-    config: rules([], {"accessor-pairs": ["error", {"getWithoutSet": true, "enforceForTSTypes": true}]}),
+    config: rules([], { "accessor-pairs": ["error", { "getWithoutSet": true, "enforceForTSTypes": true }] }),
     files: {
       "p01.ts": "class foo { set [(a)](bar){} }\n",
       "p02.ts": "Reflect.defineProperty(foo, 'bar', { 'set'(val) { return 1; } })\n",
@@ -14964,7 +15328,8 @@ const hand: Project[] = [
       "p27.ts": "Object.defineProperty(foo, 'bar', { set: 1, get get() {} })\n",
       "p28.ts": "Reflect.defineProperties(foo, { baz: { set: 1 } })\n",
       "p29.ts": "Reflect.create(foo, { baz: { set: 1 } })\n",
-      "p30.ts": "Object.defineProperties(foo, { baz: { set: 1 }, ...x, [y]: { set: 2 }, get z() { return { set: 3 } } })\n",
+      "p30.ts":
+        "Object.defineProperties(foo, { baz: { set: 1 }, ...x, [y]: { set: 2 }, get z() { return { set: 3 } } })\n",
       "p31.ts": "Object.defineProperties({ baz: { set: 1 } })\n",
       "p32.ts": "Object.create({ baz: { set: 1 } })\n",
       "p33.ts": "function f(Object) { Object.defineProperty(foo, 'bar', { set: 1 }) }\n",
@@ -14998,7 +15363,7 @@ const hand: Project[] = [
   },
   {
     name: "prefer-for-of/parentheses-and-assignments",
-    about: "oxlint_minds_parentheses, oxlint_is_assignee; a[\"length\"]",
+    about: 'oxlint_minds_parentheses, oxlint_is_assignee; a["length"]',
     config: rules(["typescript"], { "typescript/prefer-for-of": "error" }),
     files: {
       "d.ts": lines(
@@ -15077,6 +15442,7 @@ const hand: Project[] = [
   },
 ];
 
-// The programs of an audit of the rules that need types against tsgolint, each a place where the two asked the type checker
-// something else. A group is a program of its own with the options in its name. Recorded from oxlint 1.86.0 with tsgolint 7.0.2003.
+// audit.json has programs from an audit of the type-aware rules against tsgolint. Each one is a spot where the two made
+// different type checker queries. Each group is a separate program with its options in its name. Recorded with oxlint
+// 1.86.0 and tsgolint 7.0.2003.
 export const projects: Project[] = [...hand, ...(audit as Project[]).map(it => ({ ...it, typed: true }))];

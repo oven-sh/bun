@@ -38,6 +38,7 @@ use crate::compile_result::{CompileDiagnostic, CompileOutput};
 use crate::hir::VariableBinding;
 use crate::imports::{ProgramContext, add_imports_to_program, validate_restricted_imports};
 use crate::lowering::FunctionNode;
+use crate::observer::{CompiledFunction, with_observation};
 use crate::pipeline;
 
 /// JSX runtime symbols the compiler may need to reference in generated code.
@@ -60,7 +61,7 @@ pub enum JsxImportKind {
 pub trait Host {
     fn symbols(&self) -> &[Symbol];
     fn module_scope(&self) -> &Scope;
-    fn import_records(&self) -> &[ImportRecord];
+    fn import_records(&self) -> &[ImportRecord<'_>];
 
     /// The operand of each `x as T` with the cast, in the order of the operands. The parser drops casts.
     fn type_casts(&self) -> &[(Loc, Loc)] {
@@ -83,8 +84,7 @@ pub trait Host {
         None
     }
 
-    /// Whether `ref_` is bound outside of the function that is compiled, which for the parser is
-    /// in the scope of the module.
+    /// Whether `ref_` is bound outside the function being compiled.
     fn is_module_level(&self, ref_: Ref) -> bool {
         self.symbols()
             .get(ref_.inner_index() as usize)
@@ -194,11 +194,13 @@ pub fn has_module_scope_opt_out(stmts: &[Stmt]) -> bool {
 /// visit pass — `scan_imports` populates that field only after visiting), so
 /// imported bindings reach `Environment::resolve_module_type` instead of
 /// degrading to `Global`.
+#[inline(never)]
 pub fn collect_import_bindings(
     stmts: &[Stmt],
     records: &[ImportRecord],
     symbols: &[Symbol],
 ) -> IndexMap<Ref, VariableBinding> {
+    bun_removable_features::removable_definition!(ReactCompiler, collect_import_bindings);
     let mut out = IndexMap::new();
     for stmt in stmts {
         let StmtData::SImport(import) = &stmt.data else {
@@ -976,8 +978,23 @@ fn get_react_function_type(
     func: &FunctionNode<'_>,
     body_directives: &[&[u8]],
     in_react_hoc: bool,
+    is_top_level: bool,
     opts: &ReactCompilerOptions,
 ) -> Option<ReactFunctionType> {
+    let mode = opts.compilation_mode.as_deref().unwrap_or("infer");
+    if mode == "all" && !is_top_level {
+        return None;
+    }
+    let component_or_hook_like = || {
+        get_component_or_hook_like(
+            host,
+            name,
+            func.args(),
+            func.has_rest_arg(),
+            func.body().stmts.slice(),
+            in_react_hoc,
+        )
+    };
     let has_dynamic_gating_directive = opts.dynamic_gating.is_some()
         && body_directives
             .iter()
@@ -985,35 +1002,31 @@ fn get_react_function_type(
     if find_directive_enabling_memoization(body_directives).is_some()
         || has_dynamic_gating_directive
     {
-        return Some(
-            get_component_or_hook_like(host, name, func, in_react_hoc)
-                .unwrap_or(ReactFunctionType::Other),
-        );
+        return Some(component_or_hook_like().unwrap_or(ReactFunctionType::Other));
     }
 
-    match opts.compilation_mode.as_deref().unwrap_or("infer") {
+    match mode {
         "annotation" => None,
-        "infer" => get_component_or_hook_like(host, name, func, in_react_hoc),
+        "infer" => component_or_hook_like(),
         "syntax" => None,
-        "all" => Some(
-            get_component_or_hook_like(host, name, func, in_react_hoc)
-                .unwrap_or(ReactFunctionType::Other),
-        ),
+        "all" => Some(component_or_hook_like().unwrap_or(ReactFunctionType::Other)),
         _ => None,
     }
 }
 
+/// Works on both visited and unvisited function bodies.
 fn get_component_or_hook_like(
     host: &dyn Host,
     name: Option<&[u8]>,
-    func: &FunctionNode<'_>,
+    args: &[G::Arg],
+    has_rest_arg: bool,
+    body: &[Stmt],
     in_react_hoc: bool,
 ) -> Option<ReactFunctionType> {
-    let body = func.body().stmts.slice();
     if let Some(fn_name) = name {
         if is_component_name(fn_name) {
             let is_component = calls_hooks_or_creates_jsx_in_stmts(host, body)
-                && is_valid_component_params(host, func.args(), func.has_rest_arg())
+                && is_valid_component_params(host, args, has_rest_arg)
                 && !returns_non_node_in_stmts(body);
             return if is_component {
                 Some(ReactFunctionType::Component)
@@ -1038,11 +1051,6 @@ fn get_component_or_hook_like(
     }
 
     None
-}
-
-/// The part of [`get_component_or_hook_like`] that the binding decides.
-fn is_component_or_hook_like_name(name: Option<&[u8]>, in_react_hoc: bool) -> bool {
-    name.is_some_and(|name| is_component_name(name) || is_hook_name(name)) || in_react_hoc
 }
 
 // -----------------------------------------------------------------------
@@ -1169,11 +1177,13 @@ impl ReactCompilerState {
     /// (`ProgramContext::init_from_scope`, restricted-import validation) is
     /// deferred to the first `maybe_compile_*` call so the parser can set
     /// `p.react_compiler = Some(..)` without a `&mut p` borrow conflict.
+    #[inline(never)]
     pub fn new(
         options: ReactCompilerOptions,
         has_module_scope_opt_out: bool,
         import_bindings: IndexMap<Ref, VariableBinding>,
     ) -> Self {
+        bun_removable_features::removable_definition!(ReactCompiler, Self::new);
         bun_core::scoped_log!(
             react_compiler,
             "ReactCompilerState::new opt_out={}",
@@ -1231,12 +1241,18 @@ impl ReactCompilerState {
         }
     }
 
-    /// Whether [`maybe_compile_pending`] can take this function, decided before its body is visited.
+    /// Decides, before any of a function is visited, whether [`maybe_compile_pending`] will be given it.
+    /// Functions nested in one that is given are never considered, so this has to be as exact as upstream's check.
+    #[allow(clippy::too_many_arguments)]
     pub fn may_compile(
         &self,
+        host: &dyn Host,
         name: Option<&[u8]>,
         in_react_hoc: bool,
+        is_top_level: bool,
         has_react_hooks_suppression: bool,
+        args: &[G::Arg],
+        has_rest_arg: bool,
         body: &[Stmt],
     ) -> bool {
         if self.fatal.is_some()
@@ -1256,6 +1272,10 @@ impl ReactCompilerState {
         if self.options.output_mode.as_deref() == Some("lint") {
             return false;
         }
+        let mode = self.options.compilation_mode.as_deref().unwrap_or("infer");
+        if mode == "all" && !is_top_level {
+            return false;
+        }
         if find_directive_enabling_memoization(&directives).is_some()
             || (self.options.dynamic_gating.is_some()
                 && directives
@@ -1264,11 +1284,23 @@ impl ReactCompilerState {
         {
             return true;
         }
-        match self.options.compilation_mode.as_deref().unwrap_or("infer") {
+        match mode {
             "all" => true,
-            "infer" => is_component_or_hook_like_name(name, in_react_hoc),
+            "infer" => {
+                get_component_or_hook_like(host, name, args, has_rest_arg, body, in_react_hoc)
+                    .is_some()
+            }
             _ => false,
         }
+    }
+
+    pub fn outlined_len(&self) -> usize {
+        self.outlined_decls.len()
+    }
+
+    /// Removes and returns the functions outlined since `outlined_len()` returned `from`. Any left here go at the end of the module.
+    pub fn take_outlined_from(&mut self, from: usize) -> impl Iterator<Item = Stmt> + '_ {
+        self.outlined_decls.drain(from..)
     }
 }
 
@@ -1286,8 +1318,13 @@ pub struct PendingCompile {
     pub flags: flags::FunctionSet,
     pub body_loc: Loc,
     pub args_loc: Loc,
+    /// The binding that names the function: its own declaration, or the `A` in `const A = () => {}`.
     pub binding: Option<Ref>,
+    /// The `B` in `function B() {}`. For a function expression, `B` is declared in the function's own scope.
+    pub own_name: Option<Ref>,
     pub in_react_hoc: bool,
+    /// Declared directly in module scope. `compilationMode: "all"` only compiles these.
+    pub is_top_level: bool,
 }
 
 /// Compiled function pieces that must be written back to the original
@@ -1304,7 +1341,40 @@ pub struct CompileResult {
 /// new body is returned as a `Vec` for the caller to splice into that buffer
 /// (so the existing mangle phase then runs on it), along with the new
 /// args/flags for `visit_func` / arrow-visit to apply.
+#[inline(never)]
 pub fn maybe_compile_pending(
+    state: &mut ReactCompilerState,
+    host: &mut dyn Host,
+    pending: &PendingCompile,
+    body: &mut [Stmt],
+    name: Option<&[u8]>,
+) -> Option<(Vec<Stmt>, CompileResult)> {
+    bun_removable_features::removable_definition!(ReactCompiler, maybe_compile_pending);
+    with_observation(|observation| {
+        let Some(observation) = observation else {
+            return compile_pending(state, host, pending, body, name);
+        };
+        let outlined_before = state.outlined_decls.len();
+        let mut recording = observation.record(host);
+        let compiled = compile_pending(state, &mut recording, pending, body, name);
+        let referenced = recording.into_referenced();
+        if let Some((body, result)) = &compiled {
+            let function = CompiledFunction {
+                parameters_loc: pending.args_loc,
+                parameters: result.args.slice(),
+                flags: result.flags,
+                body,
+                outlined: &state.outlined_decls[outlined_before..],
+                symbols: &[],
+                import_records: &[],
+            };
+            observation.report_function(host, referenced, &function);
+        }
+        compiled
+    })
+}
+
+fn compile_pending(
     state: &mut ReactCompilerState,
     host: &mut dyn Host,
     pending: &PendingCompile,
@@ -1328,6 +1398,7 @@ pub fn maybe_compile_pending(
         FunctionNode::Function(&tmp),
         name,
         pending.in_react_hoc,
+        pending.is_top_level,
     )?;
     let mut flags = pending.flags;
     set_flag(&mut flags, flags::Function::IsAsync, cf.is_async);
@@ -1348,6 +1419,7 @@ fn maybe_compile_node(
     node: FunctionNode<'_>,
     name: Option<&[u8]>,
     in_react_hoc: bool,
+    is_top_level: bool,
 ) -> Option<CodegenFunction> {
     bun_core::scoped_log!(
         react_compiler,
@@ -1371,6 +1443,7 @@ fn maybe_compile_node(
         &node,
         &body_directives,
         in_react_hoc,
+        is_top_level,
         &state.options,
     );
     bun_core::scoped_log!(react_compiler, "  -> fn_type={:?}", fn_type);
@@ -1462,7 +1535,29 @@ fn maybe_compile_node(
 /// `out_stmts` receives the `react/compiler-runtime` import statement
 /// (prepended) plus any outlined function decls (appended). Returns the
 /// summary `CompileOutput`.
+#[inline(never)]
 pub fn finish(
+    state: ReactCompilerState,
+    host: &mut dyn Host,
+    out_stmts: &mut Vec<Stmt>,
+) -> CompileOutput {
+    bun_removable_features::removable_definition!(ReactCompiler, finish);
+    with_observation(|observation| {
+        let Some(observation) = observation else {
+            return finish_program(state, host, out_stmts);
+        };
+        let output = finish_program(state, &mut observation.record(host), out_stmts);
+        match &output {
+            CompileOutput::Error { error, .. } => observation.report_failure(error),
+            CompileOutput::Unchanged | CompileOutput::Changed { .. } => {
+                observation.report_imports(out_stmts);
+            }
+        }
+        output
+    })
+}
+
+fn finish_program(
     mut state: ReactCompilerState,
     host: &mut dyn Host,
     out_stmts: &mut Vec<Stmt>,

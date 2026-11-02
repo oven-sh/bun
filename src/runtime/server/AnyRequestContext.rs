@@ -235,6 +235,10 @@ impl AnyRequestContext {
         dispatch!(self, (), |_T, ctx| ctx.deref())
     }
 
+    pub(crate) fn end_with_internal_server_error(self) {
+        dispatch!(self, (), |_T, ctx| ctx.end_with_internal_server_error())
+    }
+
     pub fn on_request_body_stream_drained(self) {
         dispatch!(
             self,

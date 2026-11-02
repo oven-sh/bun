@@ -19,8 +19,8 @@ use super::options::LogLevel;
 use super::package_json_editor::EditOptions;
 use super::package_json_write_back;
 use super::update_package_json_and_install::{
-    package_json_entry_or_crash, print_package_json_into_cache_entry,
-    remove_dependencies_from_package_json, remove_leftover_node_modules,
+    package_json_entry_or_crash, remove_dependencies_from_package_json,
+    remove_leftover_node_modules, save_entry,
 };
 use super::workspace_package_json_cache::{GetJSONOptions, GetResult, MapEntry};
 use super::workspace_selection::{self, Candidate, LinkTargets, RootSelection, WorkspaceGraph};
@@ -55,7 +55,7 @@ impl WorkspaceTarget {
             ResolutionTag::Root => Some(WorkspaceTarget::root()),
             ResolutionTag::Workspace => {
                 let buf = lockfile.buffers.string_bytes.as_slice();
-                let top_level = FileSystem::instance().top_level_dir();
+                let top_level = FileSystem::get().top_level_dir();
                 let mut path_buf = path_buffer_pool::get();
                 Some(WorkspaceTarget {
                     name: Box::from(lockfile.packages.items_name()[pkg_id as usize].slice(buf)),
@@ -74,7 +74,7 @@ impl WorkspaceTarget {
 }
 
 pub(crate) fn root_package_json_path() -> Box<[u8]> {
-    let top_level = FileSystem::instance().top_level_dir();
+    let top_level = FileSystem::get().top_level_dir();
     let mut buf = path_buffer_pool::get();
     let path: Box<[u8]> =
         join_abs_string_buf::<platform::Auto>(top_level, &mut buf.0, &[b"package.json"]).into();
@@ -130,7 +130,7 @@ pub(crate) fn select_targets(
     manager: &mut PackageManager,
     original_cwd: &[u8],
 ) -> Result<Vec<WorkspaceTarget>, Error> {
-    let top_level = FileSystem::instance().top_level_dir();
+    let top_level = FileSystem::get().top_level_dir();
     let WorkspaceMembers {
         root_path,
         root_name,
@@ -261,12 +261,7 @@ pub(crate) fn store_entry(
     root: bun_ast::Expr,
 ) {
     let log = manager.log_mut();
-    let entry = fetch_entry(manager, target);
-    print_package_json_into_cache_entry(entry, root);
-    if let Err(err) = entry.reparse_root(log) {
-        bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name());
-        Global::crash();
-    }
+    save_entry(fetch_entry(manager, target), root, log);
 }
 
 pub(crate) fn write_target(manager: &mut PackageManager, target: &WorkspaceTarget) -> bool {

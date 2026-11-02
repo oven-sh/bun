@@ -5,12 +5,11 @@ use super::{Names, has_room_on_the_stack, is_type_flag_set};
 use crate::types::tsutils::{is_type_reference, is_union_or_intersection_type};
 use crate::types::{Type, TypeFlags};
 
-/// `containsAllTypesByName(type, allowAny, allowedNames, matchAnyInstead)`: whether the type is,
-/// extends, or is made of nothing but types with one of the names.
+/// `containsAllTypesByName(type, allowAny, allowedNames, matchAnyInstead)`: true if the type is, extends, or consists
+/// only of types with one of the names.
 ///
-/// - `allow_any`: `any` and `unknown` do not count as a match. A type that the checker gave up on
-///   never does.
-/// - `match_any_instead`: one constituent or base type that matches is enough.
+/// - `allow_any`: `any` and `unknown` don't count as a match. A type the checker gave up on never does.
+/// - `match_any_instead`: one matching constituent or base type is enough.
 pub fn contains_all_types_by_name(
     ty: Type,
     allow_any: bool,
@@ -57,15 +56,14 @@ fn contains<'a>(
         }
     };
     match !is_constituents && types.len() > 1 {
-        true => known.get_or_ask(ty, ask),
+        true => known.get_or_compute(ty, ask),
         false => ask(known),
     }
 }
 
-/// tsgolint's own `containsAllTypesByName`, which is not typescript-eslint's: with
-/// `match_any_instead` every constituent of a union or an intersection has to match and one base
-/// type is enough, without it one constituent is enough and every base type has to match. `any`
-/// and `unknown` never match.
+/// tsgolint's own `containsAllTypesByName`, which differs from typescript-eslint's. With `match_any_instead`, every
+/// constituent of a union or intersection has to match and one base type is enough. Without it, one constituent is
+/// enough and every base type has to match. `any` and `unknown` never match.
 pub fn contains_all_types_by_name_as_tsgolint(
     ty: Type,
     allowed_names: impl Names,
@@ -101,7 +99,7 @@ fn contains_as_tsgolint<'a>(
             false => ty.types().iter().any(predicate),
         };
     }
-    // Empty unless it is a class or an interface.
+    // Empty unless it's a class or an interface.
     let bases = ty.get_base_types();
     let ask = |known: &mut BaseTypeAnswers<'a>| {
         let predicate =
@@ -112,7 +110,7 @@ fn contains_as_tsgolint<'a>(
         }
     };
     match bases.len() > 1 {
-        true => known.get_or_ask(ty, ask),
+        true => known.get_or_compute(ty, ask),
         false => ask(known),
     }
 }

@@ -5,8 +5,8 @@ use bun_lint::rule::Plugin;
 /// This rule enforces using `toBeObject()` to check if a value is of type `Object`.
 pub struct PreferToBeObject;
 
-const PREFER_TO_BE_OBJECT: Message =
-    Message::new("", "Prefer `toBeObject()` for object assertions");
+const PREFER_TO_BE_OBJECT: &Message =
+    &Message::new("", "Prefer `toBeObject()` for object assertions");
 
 impl Rule for PreferToBeObject {
     const META: Meta = Meta::oxlint(Plugin::Vitest, "prefer-to-be-object", Kind::Suggestion)
@@ -63,7 +63,7 @@ fn run<'a>(possible_vitest_node: PossibleJestNode<'a>, cx: &Cx<'a, PreferToBeObj
         Some(b"toBeFalsy") => true,
         _ => return,
     };
-    // `expectTypeOf(a instanceof Object).toBeTruthy()`. There can be one pair of parentheses around the argument.
+    // `expectTypeOf(a instanceof Object).toBeTruthy()`. The argument can have one pair of parentheses.
     if let Some(parent_call_expr) = parsed_expect_call.head.parent
         && let Some(binary_expr) = parent_call_expr.as_call().and_then(|it| it.args().first())
         && let ExprKind::Binary {

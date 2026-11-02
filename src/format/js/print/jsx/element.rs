@@ -186,7 +186,7 @@ impl<'a> AnyJsxTagWithChildren<'a> {
         }
     }
 
-    /// The source text of an element that has a `prettier-ignore` comment, with the comments of the element.
+    /// The source text of an element with a `prettier-ignore` comment, along with the element's comments.
     fn fmt_ignored(&self, f: &mut Formatter<'a>) {
         let skip_trailing_comments = f.context_mut().take_skip_trailing_comments();
         let comments = f.comments().of_node(self.expr.as_ast_nodes());
@@ -203,7 +203,7 @@ impl<'a> AnyJsxTagWithChildren<'a> {
 }
 
 impl<'a> Format<'a> for AnyJsxTagWithChildren<'a> {
-    /// Prettier's `printJsxElement`: the comments of the element are inside the parentheses.
+    /// Prettier's `printJsxElement`: the element's comments go inside the parentheses.
     fn fmt(&self, f: &mut Formatter<'a>) {
         let node = self.expr.as_ast_nodes();
         if !f.is_quiet() && f.comments().is_ignored(node) {
@@ -222,13 +222,13 @@ impl<'a> Format<'a> for AnyJsxTagWithChildren<'a> {
 /// );
 /// ```
 ///
-/// oxfmt on the left, Prettier on the right.
+/// oxfmt is on the left, Prettier on the right.
 pub(crate) fn ignored_jsx_gets_no_parentheses(f: &Formatter<'_>) -> bool {
     !f.options().flavor.is_oxfmt()
 }
 
-/// `{items.map((item) => <a />)}`: the body of an arrow function that is an argument of a call
-/// that is all there is in braces.
+/// `{items.map((item) => <a />)}`: the body of an arrow function that's an argument of a call, where the call is the
+/// only thing in the braces.
 fn should_expand(parent: AstNodes<'_>) -> bool {
     let AstNodes::ExpressionStatement(statement) = parent else {
         return false;
@@ -255,7 +255,7 @@ fn should_expand(parent: AstNodes<'_>) -> bool {
 enum ElementLayout<'a> {
     /// `<a></a>`
     NoChildren,
-    /// ``<a>{`b`}</a>``: the template is written right after the tag.
+    /// ``<a>{`b`}</a>``: the template is printed right after the tag.
     Template(Expr<'a>),
     Default,
 }

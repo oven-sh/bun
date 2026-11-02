@@ -13,11 +13,11 @@ use crate::write;
 pub(crate) fn write_program<'a>(file: &'a File<'a>, f: &mut Formatter<'a>) {
     let source = file.text();
     if source.starts_with(b"\xEF\xBB\xBF") {
-        // Prettier takes it off before it formats: it has no width.
+        // Prettier strips the BOM before formatting, so it has no width.
         f.write_text(&source[..3], Some(TextWidth::single(0)));
     }
     write_hashbang(false, f);
-    // The program only owns comments if there is no statement to attach them to.
+    // The program only owns comments if there's no statement to attach them to.
     let program = node_as_ast_nodes(Node::File(file));
     write!(
         f,
@@ -27,11 +27,12 @@ pub(crate) fn write_program<'a>(file: &'a File<'a>, f: &mut Formatter<'a>) {
             dangling_comments(program)
         ]
     );
-    // Behind the comments, if that is all there is in the file.
+    // In a file with only directives and comments, oxfmt's empty line after the last directive is printed after the
+    // comments.
     let ends_with_empty_line = (file.body().last()).is_some_and(|last| {
         is_directive_before_empty_line(last, f)
             && (source.get(last.span().end as usize..))
-                .is_some_and(|behind| !behind.trim_ascii().is_empty())
+                .is_some_and(|tail| !tail.trim_ascii().is_empty())
     });
     match ends_with_empty_line {
         true => write!(f, empty_line()),
@@ -39,7 +40,7 @@ pub(crate) fn write_program<'a>(file: &'a File<'a>, f: &mut Formatter<'a>) {
     }
 }
 
-/// `#!/usr/bin/env bun`. `is_last`: nothing is written behind it, not even a line break.
+/// `#!/usr/bin/env bun`. `is_last` means nothing is printed after it, not even a line break.
 pub(crate) fn write_hashbang(is_last: bool, f: &mut Formatter<'_>) {
     let source = f.source_text().as_bytes();
     let start = if source.starts_with(b"\xEF\xBB\xBF") {
@@ -51,7 +52,7 @@ pub(crate) fn write_hashbang(is_last: bool, f: &mut Formatter<'_>) {
         return;
     };
     let len = bun_core::strings::index_of_any(rest, b"\n\r").unwrap_or(rest.len());
-    // U+2028 and U+2029 end the line too.
+    // U+2028 and U+2029 also end the line.
     let len = [&b"\xE2\x80\xA8"[..], b"\xE2\x80\xA9"]
         .iter()
         .filter_map(|separator| bun_core::strings::index_of(&rest[..len], separator))
@@ -73,7 +74,7 @@ pub(crate) fn is_next_line_empty(source: SourceText<'_>, position: u32) -> bool 
     crate::text::is_next_line_empty(source.as_bytes(), position as usize)
 }
 
-/// Whether Prettier's `locEnd` of `statement` is before the `;` at its end.
+/// True if Prettier's `locEnd` of `statement` is before its final `;`.
 pub(crate) fn ends_before_semicolon(statement: Stmt<'_>) -> bool {
     let mut statement = statement;
     loop {
@@ -102,7 +103,7 @@ pub(crate) fn ends_before_semicolon(statement: Stmt<'_>) -> bool {
     }
 }
 
-/// Whether there is an empty line after `statement`.
+/// True if there's an empty line after `statement`.
 fn is_next_line_empty_after<'a>(statement: Stmt<'a>, f: &Formatter<'a>) -> bool {
     let (source, span) = (f.source_text(), statement.span());
     if is_next_line_empty(source, span.end) {
@@ -119,13 +120,13 @@ fn is_next_line_empty_after<'a>(statement: Stmt<'a>, f: &Formatter<'a>) -> bool 
         && is_next_line_empty(source, f.file().without_semicolon(span).end)
 }
 
-/// `type A = 1⏎⏎;(b)`: the `;` is that of the type alias. oxfmt keeps the empty line all the same.
+/// `type A = 1⏎⏎;(b)`: the `;` belongs to the type alias. oxfmt keeps the empty line anyway.
 fn empty_line_before_semicolon_is_after_any_statement(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// Prettier's `printStatementSequence`: the statements of a file, a block or a function body, each
-/// on its own line. An empty line after a statement is kept. Empty statements are left out.
+/// Prettier's `printStatementSequence`: the statements of a file, block or function body, each on its own line. Keeps
+/// an empty line after a statement and drops empty statements.
 #[derive(Copy, Clone)]
 pub(crate) struct FormatStatements<'a>(pub(crate) List<'a, Stmt<'a>>);
 
@@ -140,7 +141,7 @@ impl<'a> Format<'a> for FormatStatements<'a> {
                     match own_line_comment_before_semicolon(previous_statement, f) {
                         Some(comment) => f.lines_before(comment.span()) > 1,
                         None => {
-                            !is_behind_semicolon_and_blanks(statement, f)
+                            !follows_semicolon_and_spaces(statement, f)
                                 && is_next_line_empty_after(previous_statement, f)
                         }
                     };
@@ -163,9 +164,9 @@ impl<'a> Format<'a> for FormatStatements<'a> {
     }
 }
 
-/// `a ⏎ /* comment */; ⏎⏎ b`: see [`comment_before_semicolon_keeps_its_line`]. The comment is written on its own line behind
-/// `a;`, so an empty line is kept between the two only if there is one before the comment. A comment on the line of `a` can
-/// come first: `a // comment ⏎ // comment ⏎; ⏎⏎ b`
+/// `a ⏎ /* comment */; ⏎⏎ b`: see [`comment_before_semicolon_keeps_its_line`]. The comment is printed on its own line
+/// after `a;`, so an empty line between the two is kept only if there's one before the comment. A comment on `a`'s line
+/// can come first: `a // comment ⏎ // comment ⏎; ⏎⏎ b`
 fn own_line_comment_before_semicolon<'a>(
     statement: Stmt<'a>,
     f: &Formatter<'a>,
@@ -181,8 +182,9 @@ fn own_line_comment_before_semicolon<'a>(
         .find(|comment| comment.has_newline_before())
 }
 
-/// `a()⏎⏎; [b].c()`: oxfmt looks for an empty line before a statement, and over a `;` only if that is right before it.
-fn is_behind_semicolon_and_blanks<'a>(statement: Stmt<'a>, f: &Formatter<'a>) -> bool {
+/// `a()⏎⏎; [b].c()`: oxfmt looks for an empty line before a statement, and skips over a `;` only if it's right before
+/// the statement.
+fn follows_semicolon_and_spaces<'a>(statement: Stmt<'a>, f: &Formatter<'a>) -> bool {
     f.options().flavor.is_oxfmt()
         && !f.comments().has_comment_before(statement.span().start)
         && (f.file().text().get(..statement.span().start as usize)).is_some_and(|before| {
@@ -193,14 +195,14 @@ fn is_behind_semicolon_and_blanks<'a>(statement: Stmt<'a>, f: &Formatter<'a>) ->
         })
 }
 
-/// `function a() { "use strict";⏎⏎}`: oxfmt keeps the empty line after the last directive, whatever follows, be it
+/// `function a() { "use strict";⏎⏎}`: oxfmt keeps the empty line after the last directive no matter what follows, even
 /// nothing.
 fn is_directive_before_empty_line<'a>(last: Stmt<'a>, f: &Formatter<'a>) -> bool {
     f.options().flavor.is_oxfmt() && last.directive().is_some() && is_next_line_empty_after(last, f)
 }
 
-/// Prettier's `shouldExpressionStatementPrintOwnComments`: without semicolons, the `;` that a
-/// statement has to start with goes before a type cast comment, which has to stay next to its `(`.
+/// Prettier's `shouldExpressionStatementPrintOwnComments`: without semicolons, a statement's leading `;` goes before a
+/// type cast comment, which has to stay next to its `(`.
 #[inline]
 fn write_semicolon_before_type_cast_comment<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
     if !f.is_quiet() && f.options().semicolons.is_as_needed() {
@@ -217,16 +219,16 @@ fn write_semicolon_before_type_cast_comment_of<'a>(statement: Stmt<'a>, f: &mut 
     if let Some((_, rest)) = f.comments().of_node(node).leading.split_last()
         && follows_type_cast_comment(statement.span().start, f)
         && (!f.comments().is_ignored(node)
-            || semicolon_is_before_cast_comment_of_ignored_statement(f))
+            || semicolon_goes_before_ignored_statement_cast_comment(f))
         && expression_statement_needs_semicolon(statement, expression, f)
     {
         write!(f, [FormatLeadingComments::Comments(rest), ";"]);
     }
 }
 
-/// `// prettier-ignore ⏎ /** @type {T} */ (a).b()` without semicolons: Prettier writes the `;` right before the copied text,
-/// between the comment and its `(`. oxfmt keeps the two together: `;/** @type {T} */ (a).b()`
-pub(crate) fn semicolon_is_before_cast_comment_of_ignored_statement(f: &Formatter<'_>) -> bool {
+/// `// prettier-ignore ⏎ /** @type {T} */ (a).b()` without semicolons: Prettier prints the `;` right before the copied
+/// text, between the comment and its `(`. oxfmt keeps the two together: `;/** @type {T} */ (a).b()`
+pub(crate) fn semicolon_goes_before_ignored_statement_cast_comment(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 

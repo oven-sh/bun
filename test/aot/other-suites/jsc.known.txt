@@ -1,0 +1,114 @@
+# What differs between plain Bun and an executable over JavaScriptCore's own tests, and why: `bun test/aot/other-suites/run.ts jsc <JSTests> --known test/aot/other-suites/jsc.known.txt`
+# prints only what is not here. A line is `<kind> <test>: <why>`. A test that is the same again goes out of this file.
+DIES stress/bound-function-inline-terminal.js: a test of the jsc shell's watchdog: it takes all the memory or the time there is
+DIES stress/iterator-return-abrupt-lookup-builtins.js: the test changes a built-in object in a way that the tool's expression does not see, or hangs because the change was its way out
+DIES stress/js-fixed-array-out-of-memory.js: a test of the jsc shell's watchdog: it takes all the memory or the time there is
+DIES stress/out-of-memory-while-constructing-BytecodeGenerator.js: a test of the jsc shell's watchdog: it takes all the memory or the time there is
+DIES stress/test-out-of-memory.js: a test of the jsc shell's watchdog: it takes all the memory or the time there is
+DIES stress/typed-array-oom-in-buffer-accessor.js: a test of the jsc shell's watchdog: it takes all the memory or the time there is
+DIES stress/unshift-and-concurrent-access.js: the test changes a built-in object in a way that the tool's expression does not see, or hangs because the change was its way out
+DIFFERS ChakraCore/test/LetConst/defer2.js: both fail, each in its own way: the test wants a function of the jsc shell that has no stand-in, or the scope of a global script
+DIFFERS ChakraCore/test/LetConst/defer5.js: the executable is right: plain Bun drops a read in the temporal dead zone
+DIFFERS ChakraCore/test/es6/unicode_blue_533163_utf8.js: the executable is right: plain Bun drops a read in the temporal dead zone
+DIFFERS es6/Proxy_internal_get_calls_CreateDynamicFunction.js: the Function constructor with text that the compiler could not see
+DIFFERS mozilla/ecma_3/ExecutionContexts/10.1.3-1.js: both fail, each in its own way: the test wants a function of the jsc shell that has no stand-in, or the scope of a global script
+DIFFERS mozilla/js1_5/GetSet/getset-004.js: both fail, each in its own way: the test wants a function of the jsc shell that has no stand-in, or the scope of a global script
+DIFFERS mozilla/js1_5/GetSet/getset-005.js: both fail, each in its own way: the test wants a function of the jsc shell that has no stand-in, or the scope of a global script
+DIFFERS mozilla/js1_5/GetSet/getset-006.js: both fail, each in its own way: the test wants a function of the jsc shell that has no stand-in, or the scope of a global script
+DIFFERS mozilla/js1_5/LexicalConventions/regress-177314.js: both fail, each in its own way: the test wants a function of the jsc shell that has no stand-in, or the scope of a global script
+DIFFERS mozilla/js1_5/Regress/regress-170193.js: both fail, each in its own way: the test wants a function of the jsc shell that has no stand-in, or the scope of a global script
+DIFFERS stress/array-from-set-iterator-fast-path.js: the test changes a built-in object in a way that the tool's expression does not see, or hangs because the change was its way out
+DIFFERS stress/array-prototype-valueOf-override-should-not-break-toPrimitive.js: the test changes a built-in object in a way that the tool's expression does not see, or hangs because the change was its way out
+DIFFERS stress/arrowfunction-lexical-bind-supercall-4.js: eval("super()") in a derived constructor: text at run time does not reach super
+DIFFERS stress/assign-argument-in-inlined-call.js: f.arguments is null in a compiled function
+DIFFERS stress/async-generator-assertion.js: the same error with another text
+DIFFERS stress/async-iterator-open-fast-path-tiers.js: the test changes a built-in object in a way that the tool's expression does not see, or hangs because the change was its way out
+DIFFERS stress/await-expression-on-lhs-of-exponentiation.js: both fail, each in its own way: the test wants a function of the jsc shell that has no stand-in, or the scope of a global script
+DIFFERS stress/big-int-function-apply.js: the same error with another text
+DIFFERS stress/block-scoped-function-declarations.js: both fail, each in its own way: the test wants a function of the jsc shell that has no stand-in, or the scope of a global script
+DIFFERS stress/bytecode-optimizer-iterators.js: the same error with another text
+DIFFERS stress/bytecode-optimizer-static-scopes-hoisting-classes.js: both fail, each in its own way: the test wants a function of the jsc shell that has no stand-in, or the scope of a global script
+DIFFERS stress/bytecode-optimizer-static-scopes-misc.js: both fail, each in its own way: the test wants a function of the jsc shell that has no stand-in, or the scope of a global script
+DIFFERS stress/catch-rest-parameter.js: the same error with another text
+DIFFERS stress/check-symbol-description-oom.js: an out-of-memory RangeError of a string operation whose result nobody reads is not thrown
+DIFFERS stress/class-derived-from-null.js: the same error with another text
+DIFFERS stress/class-syntax-double-constructor.js: eval("super()") in a derived constructor: text at run time does not reach super
+DIFFERS stress/class-syntax-super-in-eval.js: eval("super()") in a derived constructor: text at run time does not reach super
+DIFFERS stress/cloned-arguments-should-visit-callee-during-gc.js: f.arguments is null in a compiled function
+DIFFERS stress/create-subclass-structure-might-throw.js: the Function constructor with text that the compiler could not see
+DIFFERS stress/date-symbol-toprimitive.js: the test changes a built-in object in a way that the tool's expression does not see, or hangs because the change was its way out
+DIFFERS stress/destructuring-assignment-accepts-iterables.js: the same error with another text
+DIFFERS stress/dfg-object-proto-accessor.js: the same error with another text
+DIFFERS stress/dfg-object-proto-getter.js: the same error with another text
+DIFFERS stress/disable-function-dot-arguments.js: f.arguments is null in a compiled function
+DIFFERS stress/error-description-on-symbols-should-not-crash.js: the same error with another text
+DIFFERS stress/eval-func-decl-block-does-not-invoke-setter.js: both fail, each in its own way: the test wants a function of the jsc shell that has no stand-in, or the scope of a global script
+DIFFERS stress/exception-in-strcat-string-overflow.js: an out-of-memory RangeError of a string operation whose result nobody reads is not thrown
+DIFFERS stress/exit-from-ftl-when-caller-passed-extra-args-then-use-function-dot-arguments.js: f.arguments is null in a compiled function
+DIFFERS stress/ftl-function-dot-arguments-with-callee-saves.js: f.arguments is null in a compiled function
+DIFFERS stress/ftl-object-get-prototype-of.js: the same error with another text
+DIFFERS stress/function-bind-caller.js: f.caller is null; positions of the iteration protocol in a stack
+DIFFERS stress/function-toString-native-one-line.js: a class of Bun's own prints [native code] in an executable: the test walks globalThis
+DIFFERS stress/generator-function-constructor.js: the same error with another text
+DIFFERS stress/generator-this.js: the same error with another text
+DIFFERS stress/get-arguments-length-fast.js: the same error with another text
+DIFFERS stress/get-stack-mapping-with-dead-get-stack.js: f.arguments is null in a compiled function
+DIFFERS stress/get-stack-mapping.js: f.arguments is null in a compiled function
+DIFFERS stress/in-by-val-inside-for-in-loop.js: the same error with another text
+DIFFERS stress/infer-constant-global-property.js: the test changes a built-in object in a way that the tool's expression does not see, or hangs because the change was its way out
+DIFFERS stress/inline-varargs-get-arguments.js: f.arguments is null in a compiled function
+DIFFERS stress/intl-data-time-format-string-overflow.js: both fail, each in its own way: the test wants a function of the jsc shell that has no stand-in, or the scope of a global script
+DIFFERS stress/invalidate-array-iterator-prototype-next.js: the test changes a built-in object in a way that the tool's expression does not see, or hangs because the change was its way out
+DIFFERS stress/iteration-helper-hidden.js: f.caller is null; positions of the iteration protocol in a stack
+DIFFERS stress/iterator-error-messages-consistent.js: the same error with another text
+DIFFERS stress/iterator-open-expression-info.js: f.caller is null; positions of the iteration protocol in a stack
+DIFFERS stress/labelled-function-declaration-scope.js: both fail, each in its own way: the test wants a function of the jsc shell that has no stand-in, or the scope of a global script
+DIFFERS stress/llint-lazy-call-link-info.js: the same error with another text
+DIFFERS stress/logical-assignment-operator-and.js: both fail, each in its own way: the test wants a function of the jsc shell that has no stand-in, or the scope of a global script
+DIFFERS stress/logical-assignment-operator-coalesce.js: both fail, each in its own way: the test wants a function of the jsc shell that has no stand-in, or the scope of a global script
+DIFFERS stress/logical-assignment-operator-or.js: both fail, each in its own way: the test wants a function of the jsc shell that has no stand-in, or the scope of a global script
+DIFFERS stress/map-clone-next-change.js: the test changes a built-in object in a way that the tool's expression does not see, or hangs because the change was its way out
+DIFFERS stress/map-constructor-adder.js: both fail, each in its own way: the test wants a function of the jsc shell that has no stand-in, or the scope of a global script
+DIFFERS stress/missing-exception-check-in-json-stringifier-gap.js: an out-of-memory RangeError of a string operation whose result nobody reads is not thrown
+DIFFERS stress/missing-exception-check-in-string-lastIndexOf.js: an out-of-memory RangeError of a string operation whose result nobody reads is not thrown
+DIFFERS stress/missing-exception-check-in-string-toLower.js: an out-of-memory RangeError of a string operation whose result nobody reads is not thrown
+DIFFERS stress/missing-exception-check-in-string-toUpper.js: an out-of-memory RangeError of a string operation whose result nobody reads is not thrown
+DIFFERS stress/mutual-tail-call-no-stack-overflow.js: both fail, each in its own way: the test wants a function of the jsc shell that has no stand-in, or the scope of a global script
+DIFFERS stress/object-get-own-property-descriptor-perform-to-object.js: the same error with another text
+DIFFERS stress/object-get-own-property-names-perform-to-object.js: the same error with another text
+DIFFERS stress/object-get-own-property-symbols-perform-to-object.js: the same error with another text
+DIFFERS stress/object-get-prototype-of-perform-to-object.js: the same error with another text
+DIFFERS stress/object-keys-perform-to-object.js: the same error with another text
+DIFFERS stress/object-prototype-proto-accessors-should-throw-on-undefined-this.js: the same error with another text
+DIFFERS stress/object-prototype-valueOf-override-should-not-break-toPrimitive.js: the test changes a built-in object in a way that the tool's expression does not see, or hangs because the change was its way out
+DIFFERS stress/out-of-memory-in-globalFuncUnescape.js: an out-of-memory RangeError of a string operation whose result nobody reads is not thrown
+DIFFERS stress/out-of-memory-while-describing-symbol-for-error.js: an out-of-memory RangeError of a string operation whose result nobody reads is not thrown
+DIFFERS stress/private-access-nested.js: the same error with another text
+DIFFERS stress/private-brand-installed-after-super-call-from-eval.js: eval("super()") in a derived constructor: text at run time does not reach super
+DIFFERS stress/promise-any-creates-aggregateerror-directly.js: both fail, each in its own way: the test wants a function of the jsc shell that has no stand-in, or the scope of a global script
+DIFFERS stress/property-enumeration-object-with-indexed-property-and-string-prototype.js: the executable follows the specification: a store under an index that a String object above holds read-only fails; JavaScriptCore makes an own property
+DIFFERS stress/proxy-revoke.js: the same error with another text
+DIFFERS stress/put-to-primitive.js: both fail, each in its own way: the test wants a function of the jsc shell that has no stand-in, or the scope of a global script
+DIFFERS stress/putstacksinking-callvarargs.js: f.arguments is null in a compiled function
+DIFFERS stress/putstacksinking-tailcallvarargs.js: f.arguments is null in a compiled function
+DIFFERS stress/regexp-test-minimum-length-filter.js: a pattern past the length limit: plain Bun throws a SyntaxError at first use, the executable answers false
+DIFFERS stress/regress-114860483.js: f.arguments is null in a compiled function
+DIFFERS stress/regress-185896.js: the same error with another text
+DIFFERS stress/set-clone-next-change.js: the test changes a built-in object in a way that the tool's expression does not see, or hangs because the change was its way out
+DIFFERS stress/set-constructor-adder.js: both fail, each in its own way: the test wants a function of the jsc shell that has no stand-in, or the scope of a global script
+DIFFERS stress/short-circuit-assignment-readonly-local.js: both fail, each in its own way: the test wants a function of the jsc shell that has no stand-in, or the scope of a global script
+DIFFERS stress/sloppy-mode-hoist-arguments-function-non-simple-parameter-list.js: both fail, each in its own way: the test wants a function of the jsc shell that has no stand-in, or the scope of a global script
+DIFFERS stress/sort-should-not-look-up-prototype-properties.js: the test changes a built-in object in a way that the tool's expression does not see, or hangs because the change was its way out
+DIFFERS stress/spread-array-iterator-watchpoint-2.js: the test changes a built-in object in a way that the tool's expression does not see, or hangs because the change was its way out
+DIFFERS stress/string-overflow-createError-builder.js: both fail, each in its own way: the test wants a function of the jsc shell that has no stand-in, or the scope of a global script
+DIFFERS stress/string-overflow-createError-fit.js: both fail, each in its own way: the test wants a function of the jsc shell that has no stand-in, or the scope of a global script
+DIFFERS stress/super-dot-call-and-apply.js: the same error with another text
+DIFFERS stress/symbol-array-from.js: both fail, each in its own way: the test wants a function of the jsc shell that has no stand-in, or the scope of a global script
+DIFFERS stress/tail-call-eval-identifier-resolving-to-non-eval-function.js: both fail, each in its own way: the test wants a function of the jsc shell that has no stand-in, or the scope of a global script
+DIFFERS stress/tail-call-no-stack-overflow.js: both fail, each in its own way: the test wants a function of the jsc shell that has no stand-in, or the scope of a global script
+DIFFERS stress/tail-call-varargs-no-stack-overflow.js: both fail, each in its own way: the test wants a function of the jsc shell that has no stand-in, or the scope of a global script
+DIFFERS stress/tdz-check-catch-read.js: the same error with another text
+DIFFERS stress/typed-array-from-array-iterator-protocol.js: the test changes a built-in object in a way that the tool's expression does not see, or hangs because the change was its way out
+DIFFERS stress/typed-array-slice-parent-species-replace.js: the test changes a built-in object in a way that the tool's expression does not see, or hangs because the change was its way out
+DIFFERS stress/weird-put-stack-varargs.js: f.arguments is null in a compiled function
+REFUSED stress/for-let-comma.js: `let` as an identifier in sloppy code is refused by the checker

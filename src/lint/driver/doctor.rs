@@ -1,7 +1,7 @@
-//! `--doctor` tells someone coming from ESLint, oxlint, Prettier or oxfmt what to expect before they switch. It loads the
-//! config and finds files the way a real run does, but it doesn't lint, format or write anything.
+//! `--doctor` tells someone coming from ESLint, oxlint, Prettier or oxfmt what to expect before they switch. It loads
+//! the config and finds files the way a real run does, but it doesn't lint, format or write anything.
 //!
-//! To say what runs where, it asks the same code that decides in a real run: each file's [`ResolvedConfig`] and
+//! To report what runs where, it uses the same code that decides in a real run: each file's [`ResolvedConfig`] and
 //! [`Route`], and the plugins' [`Host`]. [`watching`] records which packages a config file needs while it loads.
 
 mod packages;
@@ -91,7 +91,7 @@ pub(crate) struct Kinds(Vec<(Vec<u8>, usize)>);
 
 impl Kinds {
     pub(crate) fn add(&mut self, path: &[u8]) {
-        self.add_ending(crate::fmt::ending_of(path), 1);
+        self.add_ending(crate::fmt::extension_or_name(path), 1);
     }
 
     /// Adds `count` files with the extension `ending`. For a file without a dot, `ending` is its whole name.
@@ -116,7 +116,7 @@ impl Kinds {
     }
 
     /// `2 *.md, 1 *.json`
-    pub(crate) fn shown(&self) -> String {
+    pub(crate) fn summary(&self) -> String {
         let all = self.in_order().into_iter();
         let all: Vec<String> = all
             .map(|it| format!("{} {}", it.1, BStr::new(&it.0)))
@@ -195,7 +195,7 @@ impl Reason {
     }
 
     /// Printed after the number of rules, `count`.
-    fn shown(self, count: usize) -> &'static str {
+    fn explanation(self, count: usize) -> &'static str {
         match (self, count) {
             (Reason::NotSupported, 1) => "is not supported",
             (Reason::NotSupported, _) => "are not supported",
@@ -208,7 +208,7 @@ impl Reason {
         }
     }
 
-    /// True if not running these rules loses nothing, so the report only names a few. `-f json` lists them all.
+    /// True if not running these rules loses nothing, so the report only lists a few. `-f json` lists them all.
     fn is_harmless(self) -> bool {
         matches!(self, Reason::Formatting | Reason::NeedsTypes)
     }
@@ -284,8 +284,8 @@ impl Rules {
     }
 }
 
-/// Where a plugin comes from, for display: its package name, or its file path relative to `cwd` if it isn't in a package.
-/// `location` comes from [`Host::plugins`].
+/// Where a plugin comes from, for display: its package name, or its file path relative to `cwd` if it isn't in a
+/// package. `location` comes from [`Host::plugins`].
 fn source_of(location: &Json, cwd: &[u8]) -> Option<Vec<u8>> {
     let file = |path: &[u8]| {
         let path = paths::from_native(path);
@@ -299,23 +299,24 @@ fn source_of(location: &Json, cwd: &[u8]) -> Option<Vec<u8>> {
                 false => file(&[b"node_modules/", &specifier[..]].concat()),
             })
         }
-        [place, ..] => Some(file(
-            place
+        [origin, ..] => Some(file(
+            origin
                 .get(b"module")
-                .or_else(|| place.get(b"config"))?
+                .or_else(|| origin.get(b"config"))?
                 .as_str()?,
         )),
         [] => None,
     }
 }
 
-/// Some packages never export the plugin object their own configs use (eslint-plugin-unicorn is one), so `location` only
-/// names the config file. Then the plugin comes from the package the config loaded whose name gives its prefix.
+/// Some packages never export the plugin object their own configs use (eslint-plugin-unicorn is one), so `location`
+/// only has the config file. In that case the plugin comes from the package, among those the config loaded, whose name
+/// shortens to its prefix.
 fn package_of_prefix(location: &Json, loaded: &[Vec<u8>]) -> Option<Vec<u8>> {
-    let [place, _, Json::String(prefix)] = location.as_array()? else {
+    let [origin, _, Json::String(prefix)] = location.as_array()? else {
         return None;
     };
-    if place.get(b"module").is_some() || place.get(b"config").is_none() {
+    if origin.get(b"module").is_some() || origin.get(b"config").is_none() {
         return None;
     }
     let mut named = loaded
@@ -368,7 +369,7 @@ pub(crate) fn lint(
             Route::Unsupported => {
                 not_linted.add(&target.path);
                 lacks_eslint |= target.loaded.flavor == Flavor::Eslint
-                    && config.route_as_it_is(&target.path) == Route::Eslint;
+                    && config.route_without_processor(&target.path) == Route::Eslint;
             }
             Route::Native | Route::Language | Route::Processor => {
                 files += 1;
@@ -410,9 +411,12 @@ pub(crate) fn lint(
         .collect();
     let mut javascript: Vec<(Vec<u8>, Vec<Vec<u8>>)> = Vec::new();
     for rule in &rules.javascript {
-        let has_it =
+        let owns_rule =
             |plugin: &js_plugin::Plugin| plugin.rules.iter().any(|it| Arc::ptr_eq(it, rule));
-        let source = sources.iter().find(|it| has_it(it.0)).map(|it| &it.1[..]);
+        let source = sources
+            .iter()
+            .find(|it| owns_rule(it.0))
+            .map(|it| &it.1[..]);
         let source = source.unwrap_or_else(|| match parse_rule_id(&rule.id).0 {
             // Only `--rulesdir` adds rules without a prefix.
             b"" => b"--rulesdir",
@@ -427,10 +431,10 @@ pub(crate) fn lint(
         b.1.len().cmp(&a.1.len()).then_with(|| a.0.cmp(&b.0))
     });
 
-    let shown = |file: &Vec<u8>| paths::relative(cwd, file);
-    let file = own.file.as_ref().map(shown);
+    let to_relative = |file: &Vec<u8>| paths::relative(cwd, file);
+    let file = own.file.as_ref().map(to_relative);
     let nested = all_loaded.iter().skip(1).filter_map(|it| it.file.as_ref());
-    let nested = sorted(nested.map(shown).collect());
+    let nested = sorted(nested.map(to_relative).collect());
     let packages = Packages::new(cwd, &packages::is_for_linting, &|name| {
         let is_named = || sources.iter().any(|it| it.1 == name);
         if javascript.iter().any(|it| it.0 == name) {
@@ -448,9 +452,9 @@ pub(crate) fn lint(
     let mut notes = std::mem::take(&mut *loader.warnings.lock());
     notes.append(&mut *loader.advice.lock());
 
-    let ignored = loader.passed_over().map(|it| &it.0[..]);
+    let ignored = loader.ignored_eslint_config().map(|it| &it.0[..]);
 
-    let bunfig = (options.has_section_of_bunfig).then_some(&options.bunfig[..]);
+    let bunfig = (options.has_bunfig_section).then_some(&options.bunfig[..]);
     let mut out = Vec::new();
     if how.as_json {
         let javascript = javascript.iter().map(|it| (it.0.clone(), texts(&it.1)));
@@ -556,12 +560,12 @@ pub(crate) fn lint(
     );
     if by_eslint.count() > 0 {
         let what = noun(by_eslint.count(), "of them goes", "of them go");
-        let what = format!("{what} to your installed ESLint: {}", by_eslint.shown());
+        let what = format!("{what} to your installed ESLint: {}", by_eslint.summary());
         write_count(&mut out, colors, by_eslint.count(), &what);
     }
     if not_linted.count() > 0 {
         let what = noun(not_linted.count(), "file", "files");
-        let what = format!("{what} cannot be linted: {}", not_linted.shown());
+        let what = format!("{what} cannot be linted: {}", not_linted.summary());
         write_count(&mut out, colors, not_linted.count(), &what);
         if lacks_eslint {
             pretty!(
@@ -610,16 +614,24 @@ pub(crate) fn lint(
             let Some((reason, _)) = group.first() else {
                 continue;
             };
-            let shown = if reason.is_harmless() { 3 } else { group.len() };
-            let ids: Vec<&[u8]> = group.iter().take(shown).map(|it| &it.1[..]).collect();
+            let listed_count = if reason.is_harmless() { 3 } else { group.len() };
+            let ids: Vec<&[u8]> = group
+                .iter()
+                .take(listed_count)
+                .map(|it| &it.1[..])
+                .collect();
             pretty!(
                 &mut out,
                 colors,
                 "      {} <d>{}:<r> {}{}\n",
                 format_args!("{:>3}", group.len()),
-                reason.shown(group.len()),
+                reason.explanation(group.len()),
                 BStr::new(&ids.join(&b", "[..])),
-                if shown < group.len() { ", .." } else { "" }
+                if listed_count < group.len() {
+                    ", .."
+                } else {
+                    ""
+                }
             );
         }
     }

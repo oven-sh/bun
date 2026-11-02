@@ -1,10 +1,10 @@
-//! `object-type-checker.js` of eslint-plugin-es-x: what kind of object an expression is, as far as the syntax tells.
+//! `object-type-checker.js` from eslint-plugin-es-x: infers what kind of object an expression is, from syntax only.
 
 use bun_lint::prelude::*;
 use bun_lint::types::IdMap;
 use rustc_hash::FxHashMap;
 
-/// `WELLKNOWN_GLOBALS`: what a call of the global function `name` returns.
+/// `WELLKNOWN_GLOBALS`: the return type of the global function `name`.
 fn return_type_of_global(name: &[u8]) -> Option<&'static str> {
     const FUNCTIONS: [&str; 24] = [
         "String",
@@ -49,7 +49,7 @@ fn return_type_of_intl(name: &[u8]) -> Option<&'static str> {
     })
 }
 
-/// It is an identifier that refers to a global variable which the file does not declare.
+/// True if `e` is an identifier that refers to a global variable the file doesn't declare.
 fn is_global_object(e: Expr) -> bool {
     e.reference()
         .is_some_and(|it| it.symbol().is_none() && it.global().is_some())
@@ -58,13 +58,14 @@ fn is_global_object(e: Expr) -> bool {
 /// `buildExpressionTypeProvider`, for a file.
 #[derive(Default)]
 pub(crate) struct ExpressionTypes<'a> {
-    /// The expressions that are being looked at.
+    /// The stack of expressions currently being evaluated.
     tracked: Vec<Expr<'a>>,
-    /// The least position in `tracked` of an expression that was come to again since the one on top was come to.
-    came_again_to: Option<usize>,
-    /// What was found about an expression at a position in `tracked`, if it does not depend on what else was in there.
+    /// The lowest index in `tracked` of an expression that was reached again (a cycle) since the top one was pushed.
+    lowest_cycle_index: Option<usize>,
+    /// The cached result for an expression at a given depth of `tracked`. Only cached if it doesn't depend on what else
+    /// was on the stack.
     known: FxHashMap<(Expr<'a>, usize), Option<&'static str>>,
-    /// Whether a variable only has the value that it is declared with.
+    /// True if a variable only ever has the value it's declared with.
     is_never_written: IdMap<Symbol<'a>, bool>,
 }
 
@@ -75,21 +76,23 @@ impl<'a> ExpressionTypes<'a> {
             return None;
         }
         if let Some(at) = self.tracked.iter().position(|it| *it == node) {
-            self.came_again_to = Some(self.came_again_to.map_or(at, |it| it.min(at)));
+            self.lowest_cycle_index = Some(self.lowest_cycle_index.map_or(at, |it| it.min(at)));
             return None;
         }
         if let Some(&known) = self.known.get(&(node, depth)) {
             return known;
         }
-        let before = self.came_again_to.take();
+        let before = self.lowest_cycle_index.take();
         self.tracked.push(node);
         let result = self.compute(node);
         self.tracked.pop();
-        if self.came_again_to.is_none_or(|it| it >= depth) {
-            self.came_again_to = before;
+        if self.lowest_cycle_index.is_none_or(|it| it >= depth) {
+            self.lowest_cycle_index = before;
             self.known.insert((node, depth), result);
         } else {
-            self.came_again_to = self.came_again_to.min(before.or(self.came_again_to));
+            self.lowest_cycle_index = self
+                .lowest_cycle_index
+                .min(before.or(self.lowest_cycle_index));
         }
         result
     }

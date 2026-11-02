@@ -3,19 +3,19 @@ use crate::js::trivia::comments_stay_between_head_and_body;
 use crate::prelude::*;
 use crate::{format_args, write};
 
-/// Prettier's `printClause`: the body of an `if`, an `else`, a loop or a `with`. After a space if
-/// it is a block, otherwise on the next line if it does not fit.
+/// Prettier's `printClause`: the body of an `if`, `else`, loop or `with`. A block goes after a space. Anything else
+/// goes on the next line if it doesn't fit.
 pub(crate) struct FormatStatementBody<'a> {
     body: Stmt<'a>,
     force_space: bool,
     trailing_comments: TrailingComments,
 }
 
-/// Which of the trailing comments of a body are written with it. The caller writes the others.
+/// Which of a body's trailing comments are printed with it. The caller prints the others.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum TrailingComments {
     All,
-    /// Those on the line on which the body ends.
+    /// The ones on the line where the body ends.
     OnSameLine,
     None,
 }
@@ -57,7 +57,7 @@ impl<'a> Format<'a> for FormatStatementBody<'a> {
 }
 
 impl<'a> FormatStatementBody<'a> {
-    /// Not inlined: `if (a) if (b) ..` is nested, and what this needs of the stack would be taken at each level.
+    /// Not inlined: `if (a) if (b) ..` is nested, and inlining would add this function's stack use to every level.
     #[inline(never)]
     fn fmt_with_comments(&self, f: &mut Formatter<'a>) {
         let body = self.body;
@@ -108,8 +108,8 @@ impl<'a> FormatStatementBody<'a> {
     }
 }
 
-/// `if (a) b() // comment⏎;[c].d()`: the `;` ends `b()`. oxfmt writes the comment behind the `;`, and the statement that
-/// `b()` is the body of breaks. Not after `return` and `throw`.
+/// `if (a) b() // comment⏎;[c].d()`: the `;` ends `b()`. oxfmt prints the comment after the `;`, and the statement
+/// whose body is `b()` breaks. Not after `return` and `throw`.
 fn has_line_comment_before_semicolon<'a>(body: Stmt<'a>, f: &Formatter<'a>) -> bool {
     if f.is_quiet()
         || !f.options().flavor.is_oxfmt()
@@ -132,7 +132,7 @@ fn split_at_first_own_line(comments: CommentList<'_>) -> (CommentList<'_>, Comme
     comments.split_at(same_line_count)
 }
 
-/// An empty line if there is one before `comment`, which starts its line. Otherwise a line break.
+/// Prints an empty line if there's one before `comment`, which starts its line. Otherwise a line break.
 fn write_line_break_before(comment: Comment<'_>, f: &mut Formatter<'_>) {
     let start = comment.span().start as usize;
     match crate::text::is_previous_line_empty(f.source_text().as_bytes(), start) {
@@ -141,8 +141,8 @@ fn write_line_break_before(comment: Comment<'_>, f: &mut Formatter<'_>) {
     }
 }
 
-/// See [`comments_stay_between_head_and_body`]: what separates a head from `body`. A line break if the first leading
-/// comment of the body starts its line, otherwise a space.
+/// See [`comments_stay_between_head_and_body`]. Prints the separator between a head and `body`: a line break if the
+/// body's first leading comment starts its line, otherwise a space.
 ///
 /// ```js
 /// while (a)
@@ -160,11 +160,11 @@ pub(crate) fn write_space_before_body<'a>(body: AstNodes<'a>, f: &mut Formatter<
     }
 }
 
-/// See [`comments_stay_between_head_and_body`]: writes the comments between the end of a block or a statement and the
-/// keyword that continues it (`else`, `catch`, `finally`, `while`). The ones on the line of the block trail it, the others
-/// keep their lines. Returns whether the caller still has to separate the keyword from what is before it.
+/// See [`comments_stay_between_head_and_body`]. Prints the comments between the end of a block or statement and the
+/// keyword that continues it (`else`, `catch`, `finally`, `while`). The ones on the block's line trail it, and the
+/// others keep their lines. Returns true if the caller still has to separate the keyword from what's before it.
 ///
-/// `trailing`: the trailing comments of the block. `others`: the comments after them, which something else owns.
+/// `trailing` is the block's trailing comments. `others` is the comments after them, which another node owns.
 ///
 /// ```js
 /// if (a) {
@@ -203,9 +203,9 @@ fn write_run_of_comments_before_keyword<'a>(
     }
 }
 
-/// See [`comments_stay_between_head_and_body`]: writes `comments`, which are before a `;` or a `:` that the caller writes
-/// next. The ones on the line of what is before them trail it, the others keep their lines. Returns whether a line break
-/// has to follow the token, because a line comment is waiting for the end of the line.
+/// See [`comments_stay_between_head_and_body`]. Prints `comments`, which come before a `;` or `:` that the caller
+/// prints next. The ones on the line of the preceding code trail it, and the others keep their lines. Returns true if a
+/// line break has to follow the token because a line comment is waiting for the end of the line.
 ///
 /// ```js
 /// case a

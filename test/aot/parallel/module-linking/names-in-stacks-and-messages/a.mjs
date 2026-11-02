@@ -1,0 +1,1 @@
+function thrower() { throw new Error("a"); } export const stackA = () => { try { thrower(); } catch (e) { return e.stack.split("\n").slice(1, 3).map(l => l.trim().split(" ")[1]).join(); } }; const notFn = 1; export const msgA = () => { try { notFn(); } catch (e) { return e.message; } };

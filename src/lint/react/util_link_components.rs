@@ -3,10 +3,10 @@
 use bun_lint::prelude::*;
 use smallvec::{SmallVec, smallvec};
 
-/// The names of the attributes of a component that have a URL.
+/// Names of a component's attributes that hold a URL.
 type Attributes<'a> = SmallVec<[&'a [u8]; 2]>;
 
-/// What `getFormComponents` and `getLinkComponents` differ in.
+/// The parts where `getFormComponents` and `getLinkComponents` differ.
 struct Components {
     /// The key in the settings.
     setting: &'static [u8],
@@ -30,7 +30,7 @@ const LINK_COMPONENTS: Components = Components {
     default_attribute: b"href",
 };
 
-/// `[].concat(value)`, of which only strings can be the name of an attribute.
+/// `[].concat(value)`. Only strings are kept, because nothing else can be an attribute name.
 fn concat(value: Option<&Json>) -> Attributes<'_> {
     match value {
         Some(Json::Array(all)) => all.iter().filter_map(Json::as_str).collect(),
@@ -40,8 +40,8 @@ fn concat(value: Option<&Json>) -> Attributes<'_> {
 }
 
 impl Components {
-    /// `settings[..] || []`, as `concat` adds it to the default: what is no array is one element.
-    fn of_settings<'a>(&self, file: &'a File<'a>) -> &'a [Json] {
+    /// `settings[..] || []`, the way `concat` appends it to the default: a non-array value becomes one element.
+    fn from_settings<'a>(&self, file: &'a File<'a>) -> &'a [Json] {
         match file.settings().get(self.setting) {
             Some(Json::Array(all)) => all.as_slice(),
             Some(Json::String(falsy)) if falsy.is_empty() => &[],
@@ -54,16 +54,16 @@ impl Components {
         smallvec![self.default_attribute]
     }
 
-    /// `new Map(..).get(name)`: of two entries with one name the map has the later.
+    /// `new Map(..).get(name)`. If two entries have the same name, the later one wins.
     fn get<'a>(&self, file: &'a File<'a>, name: &[u8]) -> Option<Attributes<'a>> {
-        let of_settings = self.of_settings(file).iter().rev().find_map(|value| {
+        let from_settings = self.from_settings(file).iter().rev().find_map(|value| {
             if let Some(value) = value.as_str() {
                 return (value == name).then(|| self.default_attributes());
             }
             (value.get(b"name")?.as_str()? == name).then(|| concat(value.get(self.attribute)))
         });
         let is_default = name == self.default_component;
-        of_settings.or_else(|| is_default.then(|| self.default_attributes()))
+        from_settings.or_else(|| is_default.then(|| self.default_attributes()))
     }
 }
 

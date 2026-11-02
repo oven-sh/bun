@@ -1,15 +1,12 @@
 //! Turns a document into text.
 //!
-//! This is an implementation of Prettier's `printDocToString` for a flat document, which started
-//! as the printer of Biome and oxc.
+//! Implements Prettier's `printDocToString` for a flat document. It started out as Biome's and oxc's printer.
 //!
-//! - [`Printer::print_elements`] goes through the elements and decides for each group whether it
-//!   is printed on one line.
-//! - `document::propagate_expand` has measured most groups: see [`Flat`]. For those, the decision
-//!   takes the width of the group and a look at what follows it up to the next possible line
-//!   break ([`Printer::fits`]), and a group that fits is printed by [`Printer::print_flat`], which
-//!   has nothing to decide.
-//! - A group that has not been measured is measured here, element by element.
+//! - [`Printer::print_elements`] walks the elements and decides for each group whether it's printed on one line.
+//! - `document::Tracker` has already measured most groups (see [`Flat`]). For those, the decision only needs the
+//!   group's width and a look at what follows it up to the next possible line break ([`Printer::fits`]). A group that
+//!   fits is printed by [`Printer::print_flat`], which has no decisions to make.
+//! - A group that hasn't been measured is measured here, element by element.
 
 mod measure;
 mod output;
@@ -27,15 +24,14 @@ use smallvec::SmallVec;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum PrintError {
-    /// Start and end tags do not match, which is a bug in the code that writes the document.
+    /// Start and end tags don't match, which is a bug in the code that writes the document.
     InvalidDocument,
-    /// What is being measured depends on a group that was passed over by its [`Flat`]. It has to
-    /// be measured again, element by element. This does not leave the printer.
+    /// The content being measured depends on a group that was skipped using its [`Flat`]. It has to be measured again,
+    /// element by element. Never escapes the printer.
     MeasureAgain,
-    /// A [`GroupMode::StaysExpanded`] group breaks in a variant that is being tried. This does not
-    /// leave the printer.
+    /// A [`GroupMode::StaysExpanded`] group breaks in a variant that's being tried. Never escapes the printer.
     StaysExpanded,
-    /// Fills or variants are in each other so deeply that printing them would overflow the stack.
+    /// Fills or variants are nested so deeply that printing them would overflow the stack.
     NestedTooDeeply,
     /// See [`crate::is_too_long`].
     TooLong,
@@ -79,7 +75,7 @@ impl PrinterOptions {
     }
 }
 
-/// Some elements of the pool that follow one another: those from `at` up to `end`.
+/// A contiguous range of the pool: `at..end`.
 #[derive(Copy, Clone)]
 struct Run {
     at: u32,
@@ -96,7 +92,7 @@ impl Run {
     }
 }
 
-/// A [`Run`] that is being gone through.
+/// An iterator over a [`Run`].
 #[derive(Clone)]
 struct Elements<'d> {
     rest: std::slice::Iter<'d, FormatElement>,
@@ -121,13 +117,13 @@ impl<'d> Elements<'d> {
         self.rest.next()
     }
 
-    /// The index of the next element.
+    /// Returns the next element's index.
     #[inline]
     fn at(&self) -> u32 {
         self.end - self.rest.len() as u32
     }
 
-    /// What is left.
+    /// Returns the remaining elements.
     #[inline]
     fn run(&self) -> Run {
         Run {
@@ -141,7 +137,6 @@ impl<'d> Elements<'d> {
         self.rest.len() == 0
     }
 
-    /// Passes over the next `count` elements.
     #[inline]
     fn skip(&mut self, count: u32) {
         self.rest = self
@@ -152,7 +147,7 @@ impl<'d> Elements<'d> {
             .iter();
     }
 
-    /// The element at `index`, which is not behind, is the next.
+    /// Moves forward so the element at `index` is next. `index` must not be before the current position.
     #[inline]
     fn move_to(&mut self, index: u32) {
         self.skip(index.saturating_sub(self.at()));
@@ -165,23 +160,23 @@ enum FrameKind {
     Root,
     Group,
     Fill,
-    /// There is no such tag. See [`Printer::print_fill_item`].
+    /// No tag corresponds to this. See [`Printer::print_fill_item`].
     FillSeparator,
     Entry,
     LineSuffix,
 }
 
-/// What is pushed for a start tag and popped for its end tag.
+/// Pushed for a start tag and popped for its end tag.
 #[derive(Copy, Clone)]
 struct Frame {
     kind: FrameKind,
     mode: PrintMode,
 }
 
-/// The vectors of a [`Printer`], which keep their capacity from one file to the next.
+/// A [`Printer`]'s vectors, reused across files to keep their capacity.
 #[derive(Default)]
 pub(crate) struct PrinterBuffers {
-    /// What is to be printed after the current run. The last comes first.
+    /// Runs to print after the current one. The last entry is printed first.
     queue: Vec<Run>,
     frames: Vec<Frame>,
     /// The indentation of every enclosing indent and align. A dedent moves the top to `history`
@@ -191,30 +186,32 @@ pub(crate) struct PrinterBuffers {
     /// The indentation at each pending line suffix.
     suffix_indentions: Vec<Indention>,
     line_suffixes: Vec<(Interned, PrintMode)>,
-    /// By [`GroupId::index`].
+    /// Indexed by [`GroupId::index`].
     group_modes: Vec<Option<PrintMode>>,
-    /// What a [`Measure`] puts on top of `queue` and `frames`, which it leaves as they are.
+    /// A [`Measure`] layers these on top of `queue` and `frames`, which it doesn't modify.
     measure_queue: Vec<Run>,
     measure_frames: Vec<Frame>,
-    /// What [`Printer::try_expanded`] goes back to.
+    /// The state that [`Printer::try_expanded`] restores.
     before_try: BeforeTry,
-    /// Where the [`FormatElement::Cursor`]s of the last document are in its text.
+    /// Output offsets of the last document's [`FormatElement::Cursor`]s.
     pub(crate) marks: [Option<u32>; 2],
 }
 
-/// Copies of the vectors that printing not only adds to, as they were before the try. The others are cut back to their length.
+/// Copies of the vectors that printing does more than append to, taken before the try. The others are just truncated to
+/// their old length.
 #[derive(Default)]
 struct BeforeTry {
     indentions: Vec<Indention>,
     history: Vec<Indention>,
     suffix_indentions: Vec<Indention>,
     line_suffixes: Vec<(Interned, PrintMode)>,
-    /// The groups whose mode has been noted since.
+    /// Groups whose mode has been recorded since the try started.
     noted_groups: Vec<GroupId>,
-    /// [`BestFitting::first`] of each [`Fallback::FlattestIfStable`] that is being printed in the one that is tried.
+    /// [`BestFitting::first`] of each [`Fallback::FlattestIfStable`] currently being printed inside the one being
+    /// tried.
     inner: Vec<u32>,
-    /// Those that were being printed when a try ended early, the innermost first. Tried by itself, each would end the same
-    /// way: from its first line break on, what it prints does not depend on what is before it on the line.
+    /// The ones that were being printed when a try was aborted, innermost first. Trying each one separately would abort
+    /// the same way, because from its first line break on, its output doesn't depend on what's before it on the line.
     unstable: Vec<u32>,
 }
 
@@ -227,20 +224,20 @@ struct Printer<'d> {
     out: Out<'d>,
     pending_indent: Indention,
     pending_space: bool,
-    /// An enclosing group has been found to fit, so what is in it does not have to be measured.
+    /// An enclosing group is known to fit, so its content doesn't need to be measured.
     measured_group_fits: bool,
     /// See [`Printer::try_expanded`].
     is_trying: bool,
-    /// The index of the group that ended a try. It breaks in what is printed instead, and so do the groups that it is in,
-    /// as they do when the result is formatted again.
+    /// Index of the group that aborted a try. It breaks in the variant printed instead, and so do its enclosing groups,
+    /// just as they will when the output is formatted again.
     expanded_group: u32,
     has_empty_line: bool,
     line_width: usize,
-    /// What is being printed.
+    /// The run being printed.
     elements: Elements<'d>,
-    /// That of the last of `buffers.frames`.
+    /// The mode of the last frame in `buffers.frames`.
     mode: PrintMode,
-    /// `buffers.marks[i]` is after the pending indentation and space, if those are printed.
+    /// `buffers.marks[i]` must move past the pending indentation and space once those are printed.
     is_mark_pending: [bool; 2],
     /// The length of `out` before anything is printed.
     start: usize,
@@ -248,7 +245,7 @@ struct Printer<'d> {
     buffers: &'d mut PrinterBuffers,
 }
 
-/// Appends the text of the document `root` to `out`.
+/// Prints the document `root` and appends the text to `out`.
 pub(crate) fn print(
     root: Interned,
     storage: &Storage,
@@ -278,7 +275,7 @@ pub(crate) fn print(
         variants: &storage.variants,
         source,
         text: &storage.text,
-        // A document can be a small part of what is made of a large file.
+        // The document may cover only a small part of a large source file.
         out: Out::new(
             out,
             (source.len() + source.len() / 8).min(root.len as usize * 16) + 64,
@@ -317,9 +314,9 @@ impl<'d> Printer<'d> {
         }
     }
 
-    // ───────────────────────────── the queue ─────────────────────────────
+    // ───────────────────────────── queue ─────────────────────────────
 
-    /// The next element, which is removed from the queue.
+    /// Pops the next element off the queue.
     #[inline]
     fn next(&mut self) -> Option<&'d FormatElement> {
         loop {
@@ -330,7 +327,7 @@ impl<'d> Printer<'d> {
         }
     }
 
-    /// Puts `elements` before everything that is in the queue.
+    /// Puts `elements` at the front of the queue.
     #[inline]
     fn print_next(&mut self, elements: Interned) {
         if !self.elements.is_empty() {
@@ -339,7 +336,7 @@ impl<'d> Printer<'d> {
         self.elements = Elements::new(Run::of(elements), self.pool);
     }
 
-    /// The next element that stands for itself.
+    /// Returns the next real element, looking through `Nop`, `Cursor`, `Skip` and `Interned`.
     fn peek(&self) -> Option<&'d FormatElement> {
         first_of(self.elements.run(), self.pool).or_else(|| {
             self.buffers
@@ -362,7 +359,7 @@ impl<'d> Printer<'d> {
         self.mode = mode;
     }
 
-    /// Fails unless the innermost frame is of `kind`.
+    /// Fails unless the innermost frame's kind is `kind`.
     #[inline]
     fn pop(&mut self, kind: FrameKind) -> PrintResult<()> {
         match *self.buffers.frames.as_slice() {
@@ -395,7 +392,7 @@ impl<'d> Printer<'d> {
         self.variants.get(best_fitting.range()).unwrap_or_default()
     }
 
-    /// What has been found out about `interned`.
+    /// Returns the measurements recorded for `interned`.
     #[inline]
     fn flat_of(&self, interned: Interned) -> Flat {
         match (interned.start as usize)
@@ -407,7 +404,7 @@ impl<'d> Printer<'d> {
         }
     }
 
-    /// Whether [`Printer::print_flat`] can print content that is `flat`.
+    /// True if [`Printer::print_flat`] can print content with these measurements.
     #[inline]
     fn can_print_flat(&self, flat: Flat) -> bool {
         flat.flags.has(FlatFlags::MEASURED)
@@ -430,10 +427,10 @@ impl<'d> Printer<'d> {
 
     // ───────────────────────────── printing ─────────────────────────────
 
-    /// Prints what is in the queue.
+    /// Prints the queue.
     ///
-    /// `ENTRY`: only from the [`Tag::StartEntry`] that is next in the queue to its
-    /// [`Tag::EndEntry`], in `entry_mode`.
+    /// With `ENTRY`, it only prints from the [`Tag::StartEntry`] that's next in the queue to its [`Tag::EndEntry`], in
+    /// `entry_mode`.
     fn print_elements<const ENTRY: bool>(&mut self, entry_mode: PrintMode) -> PrintResult<()> {
         let mut depth = 0usize;
         loop {
@@ -493,7 +490,7 @@ impl<'d> Printer<'d> {
                         self.print_next(REST_OF_INDENTED_LINE_GROUP);
                     }
                 }
-                // `propagate_expand` has taken care of it.
+                // `document::Tracker` already handled it.
                 FormatElement::ExpandParent => {}
                 FormatElement::LineSuffixBoundary => {
                     self.flush_line_suffixes(Some(line_break(LineMode::Hard)))
@@ -508,7 +505,7 @@ impl<'d> Printer<'d> {
                             self.measured_group_fits = true;
                             PrintMode::Expanded
                         } else if self.mode.is_flat() && self.measured_group_fits {
-                            // An enclosing group fits, so this one does.
+                            // An enclosing group fits, so this one does too.
                             PrintMode::Flat
                         } else {
                             self.measured_group_fits = true;
@@ -587,14 +584,14 @@ impl<'d> Printer<'d> {
                         self.buffers.indentions.push(next);
                     }
                     Tag::StartConditionalContent(Condition {
-                        mode: wanted,
+                        mode: required_mode,
                         group_id,
                     }) => {
                         let group_mode = match group_id {
                             None => self.mode,
                             Some(id) => self.group_mode(*id).ok_or(PrintError::InvalidDocument)?,
                         };
-                        if group_mode != *wanted {
+                        if group_mode != *required_mode {
                             skip_conditional_content(&mut self.elements)?;
                         }
                     }
@@ -649,12 +646,12 @@ impl<'d> Printer<'d> {
             }
         }
 
-        // They come first, and then this again.
+        // Print the line suffixes first, then come back to this line break.
         if !self.buffers.line_suffixes.is_empty() {
             return self.flush_line_suffixes(Some(line_break(line_mode)));
         }
 
-        // Not if there is nothing on the line.
+        // Skip the line break if the current line is empty.
         if self.is_in_line() {
             self.out.trim_trailing_whitespace();
             self.pull_marks_back();
@@ -673,8 +670,7 @@ impl<'d> Printer<'d> {
         self.pending_indent = self.indention();
     }
 
-    /// Prints everything from the [`Tag::StartEntry`] that is next in the queue to its
-    /// [`Tag::EndEntry`], in `mode`.
+    /// Prints everything from the [`Tag::StartEntry`] that's next in the queue to its [`Tag::EndEntry`], in `mode`.
     fn print_entry(&mut self, mode: PrintMode) -> PrintResult<()> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(PrintError::NestedTooDeeply);
@@ -685,8 +681,8 @@ impl<'d> Printer<'d> {
         }
     }
 
-    /// Prints content on one line that is [`FlatFlags::MEASURED`]: there is nothing in it that
-    /// could break the line, and nothing that depends on anything outside of it.
+    /// Prints [`FlatFlags::MEASURED`] content on one line. Nothing in it can break the line or depends on anything
+    /// outside it.
     fn print_flat(&mut self, content: Run) -> PrintResult<()> {
         let mut queue = SmallVec::<[Elements<'d>; 8]>::new();
         let mut elements = Elements::new(content, self.pool);
@@ -775,7 +771,7 @@ impl<'d> Printer<'d> {
         Ok(())
     }
 
-    /// Puts the pending line suffixes in the queue, and after them `line_break`.
+    /// Queues the pending line suffixes, followed by `line_break`.
     fn flush_line_suffixes(&mut self, line_break: Option<Interned>) {
         if self.buffers.line_suffixes.is_empty() {
             return;
@@ -824,7 +820,7 @@ impl<'d> Printer<'d> {
         }
     }
 
-    /// `id`: [`BestFitting::first`].
+    /// `id` is the [`BestFitting::first`].
     #[inline(never)]
     fn print_flattest_if_stable(
         &mut self,
@@ -832,7 +828,7 @@ impl<'d> Printer<'d> {
         flattest: Interned,
         most_expanded: Interned,
     ) -> PrintResult<()> {
-        // It is not tried by itself: a group that ends this one ends the one that is being tried.
+        // No nested try. A group that would abort this one aborts the outer try.
         if self.is_trying {
             self.buffers.before_try.inner.push(id);
             self.print_variant(flattest, PrintMode::Expanded)?;
@@ -859,8 +855,8 @@ impl<'d> Printer<'d> {
         Ok(())
     }
 
-    /// Prints `variant` expanded. If a [`GroupMode::StaysExpanded`] group breaks in it, the printer
-    /// is left as it was, and this returns false.
+    /// Prints `variant` expanded. If a [`GroupMode::StaysExpanded`] group breaks in it, this restores the printer's
+    /// state and returns false.
     #[inline(never)]
     fn try_expanded(&mut self, variant: Interned) -> PrintResult<bool> {
         let out_len = self.out.len();
@@ -929,9 +925,8 @@ impl<'d> Printer<'d> {
     ///
     /// For each item, its separator and the next item:
     /// - All three fit: the item and the separator are printed flat.
-    /// - The item fits, the separator or the next item does not: the item is printed flat and the
-    ///   separator expanded.
-    /// - The item does not fit: both are printed expanded.
+    /// - The item fits, the separator or the next item doesn't: the item is printed flat and the separator expanded.
+    /// - The item doesn't fit: both are printed expanded.
     fn print_fill_entries(&mut self) -> PrintResult<()> {
         let mode = self.mode;
 
@@ -949,8 +944,8 @@ impl<'d> Printer<'d> {
             };
 
             for _ in 0..flat_pairs {
-                // A group in the item is measured again and may break. Then what has been
-                // measured from here on does not hold. For oxfmt it holds all the same.
+                // A group in the item is measured again and may break, which invalidates the measurements from here on.
+                // oxfmt keeps using them anyway.
                 let may_break = !self.measured_group_fits && !self.options.flavor.is_oxfmt();
                 self.print_fill_item(PrintMode::Flat, PrintMode::Flat)?;
                 self.print_entry(PrintMode::Flat)?;
@@ -980,22 +975,21 @@ impl<'d> Printer<'d> {
         }
     }
 
-    /// The number of pairs of an item and a separator that fit on the line, and how the pair
-    /// after them is printed.
+    /// Returns how many item/separator pairs fit on the line, and how to print the pair after them.
     fn measure_fill(&mut self, uses_flat: bool) -> PrintResult<(usize, FillPairLayout)> {
         let mut measure = Measure::new(self, uses_flat);
         measure.must_be_flat = true;
 
         let mut flat_pairs = 0usize;
-        // On a line that is too long already, Prettier's `fits` says no to everything, also to an item that is nothing, or a
-        // line break: the texts of `prettier-plugin-svelte` that start with a blank are fills whose items are the line breaks.
+        // On a line that's already too long, Prettier's `fits` rejects everything, even an empty item or a line break.
+        // That matters for `prettier-plugin-svelte`, where a text that starts with whitespace is a fill whose items are
+        // the line breaks.
         let is_too_long =
             !self.options.flavor.is_oxfmt() && measure.is_past(self.options.print_width);
         if is_too_long || !self.fill_entry_fits(&mut measure)? {
             return Ok((0, FillPairLayout::Expanded));
         }
-        // Goes on to the first item or separator that does not fit, so that no item is measured
-        // twice.
+        // Continue to the first item or separator that doesn't fit, so no item is measured twice.
         loop {
             if !self.is_measure_at_start_entry(&measure) {
                 return Ok((flat_pairs, FillPairLayout::Flat));
@@ -1013,15 +1007,15 @@ impl<'d> Printer<'d> {
         }
     }
 
-    /// Prints an item of a fill. Meanwhile, whoever measures past its end finds the mode that has
-    /// been decided for the separator after it on the stack.
+    /// Prints a fill item. While it prints, the mode chosen for the separator after it is on the frame stack, for any
+    /// measurement that runs past the item's end.
     fn print_fill_item(&mut self, mode: PrintMode, separator_mode: PrintMode) -> PrintResult<()> {
         self.push(FrameKind::FillSeparator, separator_mode);
         self.print_entry(mode)?;
         self.pop(FrameKind::FillSeparator)
     }
 
-    /// The indentation and the space that are due before the next text.
+    /// Prints the pending indentation and space before the next text.
     #[inline(always)]
     fn print_pending(&mut self) {
         if !self.pending_indent.is_empty() {
@@ -1037,7 +1031,7 @@ impl<'d> Printer<'d> {
         }
     }
 
-    /// The text of the document ends here, for now.
+    /// Returns the current end offset of the document's output.
     #[inline]
     fn position(&self) -> u32 {
         self.out.len().saturating_sub(self.start) as u32
@@ -1054,7 +1048,7 @@ impl<'d> Printer<'d> {
         self.is_mark_pending[index] = self.pending_space || !self.pending_indent.is_empty();
     }
 
-    /// What was pending has been printed.
+    /// Called once the pending indentation and space have been printed.
     #[cold]
     fn move_pending_marks(&mut self) {
         for index in 0..2 {
@@ -1064,7 +1058,8 @@ impl<'d> Printer<'d> {
         }
     }
 
-    /// Prettier's `trim`: what was pending or at the end of the line is not printed after all.
+    /// Prettier's `trim`. Pending or trailing whitespace ended up not being printed, so marks past the end are clamped
+    /// to it.
     #[inline]
     fn pull_marks_back(&mut self) {
         if self.buffers.marks != [None; 2] {
@@ -1092,7 +1087,7 @@ impl<'d> Printer<'d> {
         }
     }
 
-    /// Prints the part of `text` at `range`.
+    /// Prints `text[range]`.
     #[inline(always)]
     fn print_text(&mut self, text: &[u8], range: std::ops::Range<usize>, width: TextWidth) {
         self.print_pending();
@@ -1100,7 +1095,7 @@ impl<'d> Printer<'d> {
         if width.is_multiline() {
             let line_width = self.line_width + width.value() as usize;
             self.print_lines(text.get(range).unwrap_or_default());
-            // Prettier adds the width of the string, in which a line break is a character like another.
+            // Prettier adds the whole string's width, counting a line break like any other character.
             if width.is_one_string() {
                 self.line_width = line_width;
             }
@@ -1141,25 +1136,25 @@ impl<'d> Printer<'d> {
         self.line_width = 0;
     }
 
-    /// Something has been printed on this line. Its width says so, unless all of it is text without a width: control
-    /// characters, combining marks.
+    /// True if something has been printed on this line. A nonzero width shows that, unless everything on the line is
+    /// zero-width text such as control characters or combining marks.
     #[inline(always)]
     fn is_in_line(&self) -> bool {
         self.line_width > 0 || self.has_text_without_width()
     }
 
-    /// The byte order mark is not on the first line: Prettier takes it off before it formats.
+    /// The byte order mark doesn't count as text on the first line, because Prettier strips it before formatting.
     #[inline(never)]
     fn has_text_without_width(&self) -> bool {
-        let written = self.out.since(self.start);
-        !matches!(written.last(), None | Some(b'\n' | b'\r')) && written != b"\xEF\xBB\xBF"
+        let printed = self.out.since(self.start);
+        !matches!(printed.last(), None | Some(b'\n' | b'\r')) && printed != b"\xEF\xBB\xBF"
     }
 }
 
-/// The first element of `run` that stands for itself.
+/// Returns the first real element of `run`, looking through `Nop`, `Cursor`, `Skip` and `Interned`.
 fn first_of(run: Run, pool: &[FormatElement]) -> Option<&FormatElement> {
     let mut elements = Elements::new(run, pool);
-    // What follows the interned content that is being looked at.
+    // The rest of each run that encloses the current interned content.
     let mut outer = SmallVec::<[Elements<'_>; 4]>::new();
     loop {
         match elements.next() {
@@ -1175,8 +1170,8 @@ fn first_of(run: Run, pool: &[FormatElement]) -> Option<&FormatElement> {
     }
 }
 
-/// Passes over what is left of conditional content, whose start tag has just been taken from
-/// `elements`, and its end tag. The two are in the same run, as they are if a builder writes them.
+/// Skips the rest of conditional content, including its end tag. Its start tag has just been taken from `elements`.
+/// Both tags must be in the same run, which is always true when a builder writes them.
 fn skip_conditional_content(elements: &mut Elements<'_>) -> PrintResult<()> {
     let mut depth = 1usize;
     while let Some(element) = elements.next() {
@@ -1195,7 +1190,7 @@ fn skip_conditional_content(elements: &mut Elements<'_>) -> PrintResult<()> {
     Err(PrintError::InvalidDocument)
 }
 
-/// The same for a [`Tag::StartLineSuffix`]. Returns what is between the tags.
+/// Same, for a [`Tag::StartLineSuffix`]. Returns the content between the tags.
 fn take_line_suffix(elements: &mut Elements<'_>) -> PrintResult<Interned> {
     let start = elements.at();
     let mut depth = 1usize;
@@ -1221,9 +1216,9 @@ fn take_line_suffix(elements: &mut Elements<'_>) -> PrintResult<Interned> {
 enum FillPairLayout {
     /// The item, the separator and the next item fit.
     Flat,
-    /// The item fits. The separator or the next item does not.
+    /// The item fits. The separator or the next item doesn't.
     ItemFlatSeparatorExpanded,
-    /// The item does not fit.
+    /// The item doesn't fit.
     Expanded,
 }
 
@@ -1231,7 +1226,7 @@ enum FillPairLayout {
 pub(crate) enum Indention {
     /// A number of levels.
     Level(u32),
-    /// A number of levels and `align` spaces, which `align_count` aligns add up to.
+    /// A number of levels plus `align` spaces, which are the sum of `align_count` aligns.
     Align {
         level: u32,
         align: u32,
@@ -1266,7 +1261,7 @@ impl Indention {
         }
     }
 
-    /// One more level. With tabs, every align becomes a level too.
+    /// Adds one level. With tabs, every align becomes a level too.
     fn increment_level(self, indent_style: IndentStyle) -> Self {
         match self {
             Indention::Level(level) => Indention::Level(level.saturating_add(1)),
@@ -1287,7 +1282,7 @@ impl Indention {
         }
     }
 
-    /// `count` more spaces.
+    /// Adds `count` spaces.
     fn set_align(self, count: u32) -> Self {
         match self {
             Indention::Level(level) => Indention::Align {

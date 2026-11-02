@@ -9,9 +9,9 @@ pub struct RequireArraySortCompare {
     ignore_string_arrays: bool,
 }
 
-const REQUIRE_COMPARE: Message = Message::new("requireCompare", "Require 'compare' argument.");
+const REQUIRE_COMPARE: &Message = &Message::new("requireCompare", "Require 'compare' argument.");
 
-/// Whether `node` is an array of which all elements are strings.
+/// True if `node` is an array whose elements are all strings.
 fn is_string_array_node(node: Expr) -> bool {
     let ty = get_constrained_type_at_location(node);
     (ty.is_array_type() || ty.is_tuple_type())

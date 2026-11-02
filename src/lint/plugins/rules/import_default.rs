@@ -7,8 +7,8 @@ use std::cell::OnceCell;
 /// Ensure a default export is present, given a default import.
 pub struct Default;
 
-const NO_DEFAULT: Message = Message::new("", "No default export found in imported module \"{{source}}\".");
-const DEFAULT: Message = Message::new("", "No default export found in imported module {{imported_name}}");
+const NO_DEFAULT: &Message = &Message::new("", "No default export found in imported module \"{{source}}\".");
+const DEFAULT: &Message = &Message::new("", "No default export found in imported module {{imported_name}}");
 
 /// `oxc_span`'s `VALID_EXTENSIONS`
 fn has_valid_extension(path: &[u8]) -> bool {
@@ -25,7 +25,8 @@ impl Rule for Default {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        // oxlint knows the other files when all are read. The plugin reads the one that it asks about.
+        // oxlint's module records are complete only after every file has been read. The plugin loads the imported file
+        // on demand.
         if file.language().is_oxlint && is_waiting_for_modules(file) || file.modules().is_none() {
             return None;
         }
@@ -44,7 +45,7 @@ impl Rule for Default {
             };
             let specifier = import.spec().bytes();
             if is_oxlint {
-                // Its record has the imports of the top level.
+                // oxlint's module record only has the top-level imports.
                 if matches!(stmt.parent(), Node::File(_))
                     && let Some(remote) = get_loaded_module(file, specifier)
                     && remote.record.has_module_syntax

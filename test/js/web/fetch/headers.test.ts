@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isDebug } from "harness";
 // Namespace import so a missing binding fails only the kernel tests below
 // (accessing an absent export is `undefined`), not the whole file.
 import * as internalForTesting from "bun:internal-for-testing";
@@ -255,6 +256,46 @@ describe("Headers", () => {
       // @ts-expect-error
       expect(() => headers.append("expires")).toThrow(TypeError);
     });
+    test.each(["accept", "cookie", "x-repeated"])("throws when the joined %s value is too long", name => {
+      const half = Buffer.alloc(512 * 1024, "a").toString();
+      const headers = new Headers([[name, half]]);
+      const originalLimit = internalForTesting.setSyntheticAllocationLimitForTesting(1024 * 1024);
+      try {
+        expect(() => headers.append(name, half)).toThrow("Out of memory");
+        expect(headers.get(name)).toHaveLength(half.length);
+      } finally {
+        internalForTesting.setSyntheticAllocationLimitForTesting(originalLimit);
+      }
+    });
+    test("throws when the set-cookie list can't grow", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            // With a 64 KiB limit the list is capped at 8192 values.
+            const headers = new Headers();
+            for (let i = 0; i < 8192; i++) headers.append("set-cookie", "a");
+            try {
+              headers.append("set-cookie", "a");
+              console.log("no error");
+            } catch (e) {
+              console.log(e.name, e.message);
+            }
+            console.log(headers.getSetCookie().length);
+          `,
+        ],
+        env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(64 * 1024) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "RangeError Out of memory\n8192\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
   });
   describe("set()", () => {
     test("can set header", () => {
@@ -369,6 +410,28 @@ describe("Headers", () => {
       // @ts-expect-error
       expect(() => headers.get()).toThrow(TypeError);
     });
+    test("throws when the joined set-cookie values are too long", () => {
+      const half = Buffer.alloc(512 * 1024, "a").toString();
+      const headers = new Headers([
+        ["set-cookie", half],
+        ["set-cookie", half],
+      ]);
+      const originalLimit = internalForTesting.setSyntheticAllocationLimitForTesting(1024 * 1024);
+      try {
+        expect(() => headers.get("set-cookie")!.length).toThrow("Out of memory");
+        expect(headers.getSetCookie()).toHaveLength(2);
+      } finally {
+        internalForTesting.setSyntheticAllocationLimitForTesting(originalLimit);
+      }
+    });
+    test("joins many set-cookie values after a long first value", () => {
+      const headers = new Headers();
+      headers.append("set-cookie", Buffer.alloc(2 ** 20, "x").toString());
+      for (let i = 0; i < 2047; i++) headers.append("set-cookie", "a");
+      const joined = headers.get("set-cookie")!;
+      expect(joined.length).toBe(2 ** 20 + 3 * 2047);
+      expect(joined.slice(-4)).toBe("a, a");
+    });
   });
   describe("has()", () => {
     test("can check header", () => {
@@ -385,6 +448,12 @@ describe("Headers", () => {
       const headers = new Headers();
       // @ts-expect-error
       expect(() => headers.has()).toThrow(TypeError);
+    });
+    test("quotes an invalid name in the error, like get() and delete()", () => {
+      const headers = new Headers();
+      for (const method of ["has", "get", "delete"] as const) {
+        expect(() => headers[method]("a b")).toThrow(new TypeError("Invalid header name: 'a b'"));
+      }
     });
   });
   describe("entries()", () => {
@@ -1020,6 +1089,66 @@ describe("Headers", () => {
       ]);
       expect(headers.count).toBe(2);
     });
+  });
+
+  // Debug builds need minutes to validate the 4 GiB of values the child appends.
+  test.skipIf(isDebug)("fetch() and Bun.serve() reject headers that total 4 GiB or more", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+          // The 16 values share one 256 MiB string. Names and values total 2 ** 32 - 1 bytes,
+          // which is the maximum.
+          const value = Buffer.alloc(2 ** 28, "a").toString("latin1");
+          const headers = new Headers();
+          for (let i = 0; i < 15; i++) headers.append("set-cookie", value);
+          headers.append("set-cookie", value.slice(0, 2 ** 28 - 161));
+
+          async function outcome(fn) {
+            try {
+              await fn();
+              return "no error";
+            } catch (e) {
+              return e.name + ": " + e.message;
+            }
+          }
+          function serve(response) {
+            Bun.serve({ port: 0, routes: { "/": response } }).stop(true);
+          }
+
+          await using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+          const url = server.url.href;
+          const file = Bun.file(process.execPath);
+
+          // The headers fit by themselves, but not with the Content-Type that fetch() adds for the body.
+          const body = new Blob(["x"], { type: "text/plain" });
+          console.log("content-type:", await outcome(() => fetch(url, { method: "POST", body, headers })));
+
+          // This brings the total to 2 ** 32 + 10 bytes.
+          headers.append("set-cookie", "x");
+          console.log("fetch:", await outcome(() => fetch(url, { headers })));
+          console.log("proxy:", await outcome(() => fetch(url, { proxy: { url, headers } })));
+          console.log("static route:", await outcome(() => serve(new Response("body", { headers }))));
+          console.log("file route:", await outcome(() => serve(new Response(file, { headers }))));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    const error = "RangeError: Headers exceed the maximum total size of 4294967295 bytes";
+    expect(stdout.split("\n")).toEqual([
+      `content-type: ${error}`,
+      `fetch: ${error}`,
+      `proxy: ${error}`,
+      `static route: ${error}`,
+      `file route: ${error}`,
+      "",
+    ]);
+    expect(exitCode).toBe(0);
   });
 
   // Header-name lowercasing on iteration (Object.fromEntries / spread / toJSON /

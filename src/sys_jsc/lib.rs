@@ -1,4 +1,3 @@
-#![allow(non_snake_case)]
 //! JSC bridge crate for `bun_sys`. Adds `to_js`/`from_js` extension surfaces
 //! onto `bun_sys::{Fd, Error, SignalCode}` without pulling JSC types into the
 //! syscall layer.
@@ -10,6 +9,7 @@
 
 pub mod error_jsc;
 pub mod fd_jsc;
+pub(crate) mod generated_bindgen;
 pub mod signal_code_jsc;
 
 pub use error_jsc::ErrorJsc;
@@ -17,8 +17,8 @@ pub use fd_jsc::FdJsc;
 
 // Re-export the JSC types this crate's API surface needs.
 pub use bun_jsc::{
-    CallFrame, FromJsEnum, JSGlobalObject, JSPromise, JSString, JSValue, JsError, JsResult,
-    RangeErrorOptions, SystemError, VM,
+    FromJsEnum, JSGlobalObject, JSPromise, JSString, JSValue, JsError, JsResult, RangeErrorOptions,
+    SystemError, VM,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -40,6 +40,8 @@ pub trait SystemErrorJsc {
 
 impl SystemErrorJsc for bun_sys::SystemError {
     /// `SystemError.toErrorInstance(global)`.
+    #[cold]
+    #[inline(never)]
     fn to_error_instance(self, global: &JSGlobalObject) -> JSValue {
         bun_jsc::SystemError::from(self).to_error_instance(global)
     }
@@ -47,6 +49,8 @@ impl SystemErrorJsc for bun_sys::SystemError {
     /// `toErrorInstance` then attach the promise's await
     /// chain as async stack frames so threadpool-rejected promises get a
     /// useful trace.
+    #[cold]
+    #[inline(never)]
     fn to_error_instance_with_async_stack(
         self,
         global: &JSGlobalObject,

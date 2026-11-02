@@ -1,35 +1,35 @@
-//! What oxlint's rules of `import` ask about the file itself: the parts of its `ModuleRecord` that take no table, and a few methods of
-//! `LintContext` and `oxc_ast`. Each has the name that it has there. The whole record is in [`crate::module_record`].
+//! Queries that oxlint's `import` rules run on the linted file itself: the parts of its `ModuleRecord` that don't need
+//! a table, and a few `LintContext` and `oxc_ast` methods. Each keeps its oxlint name. The whole record is in
+//! [`crate::module_record`].
 //!
-//! The record is about the top level of the file: what is in a `declare module "m" { .. }` or a namespace is not in it.
+//! The record only covers the file's top level. It doesn't include the contents of a `declare module "m" { .. }` or a
+//! namespace.
 
-use crate::ast_util::{is_specific_id, scope_made_by};
+use crate::ast_util::{is_specific_id, scope_owner};
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 pub use bun_lint::utils::oxlint::{has_module_syntax, is_script};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::{SmallVec, smallvec};
 
-/// `node.scope_id() == ctx.scoping().root_scope_id()`: nothing around `node` makes a scope in `oxc_semantic`. `memo`: for this
-/// question only.
+/// `node.scope_id() == ctx.scoping().root_scope_id()`: true if no ancestor of `node` creates a scope in `oxc_semantic`.
+/// `memo` must only be used for this function.
 pub fn is_in_root_scope<'a>(node: Node<'a>, memo: &mut AncestorMemo<'a, ()>) -> bool {
-    memo.find(node, |child, parent| {
-        scope_made_by(child, parent).map(|_| ())
-    })
-    .is_none()
+    memo.find(node, |child, parent| scope_owner(child, parent).map(|_| ()))
+        .is_none()
 }
 
 /// For [`is_assignment_target`].
 pub type AssignmentTargets<'a> = AncestorMemo<'a, bool>;
 
-/// [`Expr::is_assignment_target`], for a rule that asks it of many expressions: that goes up through all the array and object literals
-/// around each.
+/// A memoized [`Expr::is_assignment_target`], for a rule that calls it on many expressions. The plain version walks up
+/// through all the enclosing array and object literals every time.
 pub fn is_assignment_target<'a>(e: Expr<'a>, memo: &mut AssignmentTargets<'a>) -> bool {
     let decide = |child: Node<'a>, parent: Node<'a>| {
         let at = match child {
             Node::Expr(at) if at.is_parenthesized() => return Some(false),
             Node::Expr(at) => at,
-            // From a property to its object.
+            // Continue from a property to its object.
             _ => {
                 return if matches!(parent, Node::Expr(_)) {
                     None
@@ -68,7 +68,7 @@ pub fn is_require_call(call: Call) -> bool {
         })
 }
 
-/// `CallExpression::common_js_require`: the `"a"` of `require("a")`.
+/// `CallExpression::common_js_require`: the `"a"` in `require("a")`.
 pub fn common_js_require(call: Call<'_>) -> Option<Expr<'_>> {
     let args = call.args();
     let first = args
@@ -77,7 +77,8 @@ pub fn common_js_require(call: Call<'_>) -> Option<Expr<'_>> {
     is_specific_id(call.callee(), "require").then_some(first)
 }
 
-/// The statements at the top level and in the namespaces, which is where an `import` or an `export` can be, in the order of the source.
+/// The statements at the top level and in namespaces, which is where an `import` or `export` can appear, in source
+/// order.
 pub fn module_items<'a>(file: &'a File<'a>) -> impl Iterator<Item = Stmt<'a>> {
     let mut pending: SmallVec<[ListIter<'a, Stmt<'a>>; 4]> = smallvec![file.body().iter()];
     std::iter::from_fn(move || {
@@ -115,7 +116,7 @@ pub fn is_type_export_declaration(stmt: Stmt) -> bool {
         || stmt.tag() != StmtTag::ImportEquals && stmt.flags().contains(Flags::AMBIENT)
 }
 
-/// What an [`ImportEntry`] imports, with where it is written.
+/// The imported name of an [`ImportEntry`], with the node that has its span.
 #[derive(Copy, Clone)]
 pub enum ImportImportName<'a> {
     /// `import { a as b }`
@@ -126,7 +127,7 @@ pub enum ImportImportName<'a> {
     Default(Ident<'a>),
 }
 
-/// A name that an `import` at the top level declares.
+/// A name declared by a top-level `import`.
 #[derive(Copy, Clone)]
 pub struct ImportEntry<'a> {
     pub declaration: Import<'a>,
@@ -166,7 +167,7 @@ pub fn import_entries_of(declaration: Import<'_>) -> impl Iterator<Item = Import
         })
 }
 
-/// The `import`s at the top level.
+/// The top-level `import`s.
 pub fn import_declarations<'a>(file: &'a File<'a>) -> impl Iterator<Item = Import<'a>> {
     file.body().iter().filter_map(|stmt| match stmt.kind() {
         StmtKind::Import(declaration) => Some(declaration),
@@ -179,10 +180,10 @@ pub fn import_entries<'a>(file: &'a File<'a>) -> impl Iterator<Item = ImportEntr
     import_declarations(file).flat_map(import_entries_of)
 }
 
-/// The names for which `export { name }` exports what another module has: `name` is imported, and not as a namespace. Such an entry
-/// is among the `indirect_export_entries`.
+/// The names for which `export { name }` is a re-export: `name` is imported, and not as a namespace. Such an export is
+/// in `indirect_export_entries`.
 fn reexported_imports<'a>(file: &'a File<'a>) -> FxHashSet<Name<'a>> {
-    // The first import of a name counts.
+    // If a name is imported twice, the first import wins.
     let mut is_reexported: FxHashMap<Name<'a>, bool> = FxHashMap::default();
     for entry in import_entries(file) {
         let is_namespace = matches!(entry.import_name, ImportImportName::NamespaceObject(_));
@@ -202,7 +203,7 @@ pub fn export_declaration_span(stmt: Stmt) -> Span {
     stmt.export_span().unwrap_or_else(|| stmt.span())
 }
 
-/// The `default` of `export default ..`.
+/// The `default` in `export default ..`.
 pub fn default_keyword_span(stmt: Stmt) -> Span {
     let keyword = stmt
         .modifiers()
@@ -218,8 +219,8 @@ pub fn default_keyword_span(stmt: Stmt) -> Span {
     })
 }
 
-/// `ModuleRecord::export_default`: the `default` of the first `export default ..` or `export { a as default }`. If there is none, of
-/// the first that exports what another module has.
+/// `ModuleRecord::export_default`: the `default` in the first `export default ..` or `export { a as default }`. If
+/// there's none, the `default` in the first re-export.
 pub fn export_default<'a>(file: &'a File<'a>) -> Option<Span> {
     let mut indirect = None;
     let mut reexported_imports_of_file = None;

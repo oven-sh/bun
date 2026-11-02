@@ -94,7 +94,7 @@ pub(crate) struct Entry {
     /// `Dep.Index` — head of the singly-linked dep chain for this dir.
     pub(crate) first_dep: u32,
     /// To pass to `Watcher.remove`.
-    pub(crate) watch_index: u16,
+    pub(crate) watch_index: bun_watcher::WatchItemIndex,
 }
 impl Default for Entry {
     fn default() -> Self {
@@ -172,11 +172,16 @@ impl DirectoryWatchStore {
         }
 
         let mut buf = bun_paths::path_buffer_pool::get();
-        let joined = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
-            bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(import_source),
-            &mut buf.0,
-            &[specifier],
-        );
+        let Some(joined) =
+            bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
+                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(import_source),
+                &mut buf.0,
+                &[specifier],
+            )
+        else {
+            // There's nothing to watch, like in `insert`'s NameTooLong case.
+            return Ok(());
+        };
         let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(joined);
 
         // The `import_source` parameter is not a stable string. Since the
@@ -262,6 +267,17 @@ impl DirectoryWatchStore {
 
         if found_existing {
             let prev_first = Some(self.watches.values()[gop_index].first_dep);
+            // Every rebuild of a file reports its failed imports again.
+            let mut it = prev_first;
+            while let Some(index) = it {
+                let dep = &self.dependencies[index as usize];
+                if dep.source_file_path.slice().as_ptr() == file_path.slice().as_ptr()
+                    && dep.specifier == specifier_cloned
+                {
+                    return Ok(());
+                }
+                it = dep.next;
+            }
             let dep = self.append_dep_assume_capacity(Dep {
                 next: prev_first,
                 source_file_path: file_path,
@@ -281,19 +297,18 @@ impl DirectoryWatchStore {
         });
 
         // Try to use an existing open directory handle
-        // SAFETY: server_transpiler is initialized by Framework::init_transpiler
-        // before DevServer accepts requests; `dev` is a valid *mut DevServer.
-        let cache_fd: Option<bun_sys::Fd> =
-            match unsafe { (*dev).server_transpiler.assume_init_mut() }
-                .resolver
-                .read_dir_info(dir_name_to_watch)
-            {
-                Ok(Some(cache)) => {
-                    let fd = cache.get_file_descriptor();
-                    if fd.is_valid() { Some(fd) } else { None }
-                }
-                Ok(None) | Err(_) => None,
-            };
+        // SAFETY: `dev` is the live DevServer that owns this store;
+        // `server_transpiler` is disjoint from `directory_watchers`.
+        let cache_fd: Option<bun_sys::Fd> = match unsafe { &mut (*dev).server_transpiler }
+            .resolver
+            .read_dir_info(dir_name_to_watch)
+        {
+            Ok(Some(cache)) => {
+                let fd = cache.get_file_descriptor();
+                if fd.is_valid() { Some(fd) } else { None }
+            }
+            Ok(None) | Err(_) => None,
+        };
 
         let (fd, owned_fd): (bun_sys::Fd, bool) = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
             if let Some(fd) = cache_fd {
@@ -319,8 +334,8 @@ impl DirectoryWatchStore {
                             // TODO: implement that. for now it ignores (BUN-10968)
                             return Err(DirectoryWatchInsertError::Ignore);
                         }
-                        bun_sys::E::ENOTDIR => return Err(DirectoryWatchInsertError::Ignore),
-                        _ => bun_core::todo_panic!("log watcher error"),
+                        // The resolver already reported the failed import.
+                        _ => return Err(DirectoryWatchInsertError::Ignore),
                     },
                 }
             }

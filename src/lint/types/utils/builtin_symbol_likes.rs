@@ -14,7 +14,7 @@ pub fn is_promise_constructor_like(ty: Type) -> bool {
     is_builtin_symbol_like(ty, "PromiseConstructor")
 }
 
-/// tsgolint's `t == checker.globalRegExpType`: the declared type of the `RegExp` of the default library.
+/// tsgolint's `t == checker.globalRegExpType`: the declared type of the default library's `RegExp`.
 pub fn is_global_reg_exp_type(ty: Type) -> bool {
     ty.get_symbol().is_some_and(|symbol| {
         symbol.name() == b"RegExp"
@@ -37,8 +37,8 @@ pub fn is_readonly_error_like(ty: Type) -> bool {
         })
 }
 
-/// `isReadonlyTypeLike(program, type, predicate)`: it is written as `Readonly<..>`, and `predicate`
-/// holds for it. Upstream's call without a predicate is always false.
+/// `isReadonlyTypeLike(program, type, predicate)`: true if it's written as `Readonly<..>` and `predicate` accepts it.
+/// Upstream's call without a predicate is always false.
 pub fn is_readonly_type_like<'a>(
     ty: Type<'a>,
     mut predicate: impl FnMut(Type<'a>) -> bool,
@@ -51,9 +51,9 @@ pub fn is_readonly_type_like<'a>(
     })
 }
 
-/// `isBuiltinTypeAliasLike(program, type, predicate)`: it is written as a generic type alias of the
-/// default library, and `predicate` holds for it. What `predicate` is given has an
-/// [`alias_symbol`](Type::alias_symbol) and [`alias_type_arguments`](Type::alias_type_arguments).
+/// `isBuiltinTypeAliasLike(program, type, predicate)`: true if it's written as a generic type alias from the default
+/// library and `predicate` accepts it. The type passed to `predicate` has an [`alias_symbol`](Type::alias_symbol) and
+/// [`alias_type_arguments`](Type::alias_type_arguments).
 pub fn is_builtin_type_alias_like<'a>(
     ty: Type<'a>,
     mut predicate: impl FnMut(Type<'a>) -> bool,
@@ -69,8 +69,8 @@ pub fn is_builtin_type_alias_like<'a>(
     })
 }
 
-/// `isBuiltinSymbolLike(program, type, symbolName)`: it is the class or the interface of that name
-/// in the default library, or one of those names, or it extends that.
+/// `isBuiltinSymbolLike(program, type, symbolName)`: true if it's the default library's class or interface with that
+/// name (or one of those names), or extends it.
 pub fn is_builtin_symbol_like(ty: Type, symbol_name: impl Names) -> bool {
     is_builtin_symbol_like_recurser(ty, |sub_type| {
         let Some(symbol) = sub_type.get_symbol() else {
@@ -81,9 +81,9 @@ pub fn is_builtin_symbol_like(ty: Type, symbol_name: impl Names) -> bool {
     })
 }
 
-/// `isBuiltinSymbolLikeRecurser(program, type, predicate)`: whether `predicate` holds for some
-/// constituent of an intersection, every constituent of a union, the constraint of a type
-/// parameter. Where it answers `None`, upstream's `null`, the base types are asked.
+/// `isBuiltinSymbolLikeRecurser(program, type, predicate)`: true if `predicate` accepts some constituent of an
+/// intersection, every constituent of a union, or a type parameter's constraint. Where it returns `None` (upstream's
+/// `null`), the base types are checked.
 pub fn is_builtin_symbol_like_recurser<'a>(
     ty: Type<'a>,
     mut predicate: impl FnMut(Type<'a>) -> Option<bool>,
@@ -91,25 +91,29 @@ pub fn is_builtin_symbol_like_recurser<'a>(
     recurse(ty, &mut predicate, &mut BaseTypeAnswers::default())
 }
 
-/// The answers to one question about the types that extend several, where the answer for a type is made of those for its base
-/// types. Where interfaces extend each other in the shape of diamonds, the paths to a base type are two to the power of their
-/// number.
+/// Memoizes one yes/no question for types with several base types, where a type's answer is derived from its base
+/// types' answers. When interfaces extend each other in diamond shapes, the number of paths to a base type is two to
+/// the power of the number of diamonds.
 #[derive(Default)]
 pub(crate) struct BaseTypeAnswers<'a> {
     known: IdMap<Type<'a>, bool>,
-    /// The types that are being asked about, from the outermost.
+    /// The types currently being computed, outermost first.
     open: SmallVec<[Type<'a>; 4]>,
-    /// The first of `open` that has been come across again since the last of them was begun with.
+    /// The lowest index in `open` that was reached again since the innermost open type was started.
     first_reopened: Option<usize>,
 }
 
 impl<'a> BaseTypeAnswers<'a> {
-    /// The answer for `ty`. `ask` finds it out if it is not known.
-    pub(crate) fn get_or_ask(&mut self, ty: Type<'a>, ask: impl FnOnce(&mut Self) -> bool) -> bool {
+    /// Returns the answer for `ty`, calling `ask` if it isn't cached.
+    pub(crate) fn get_or_compute(
+        &mut self,
+        ty: Type<'a>,
+        ask: impl FnOnce(&mut Self) -> bool,
+    ) -> bool {
         if let Some(&answer) = self.known.get(ty) {
             return answer;
         }
-        // It extends itself. What it extends besides is still to come where it was begun with.
+        // It extends itself. The frame that started it still has its other base types to check.
         if let Some(reopened) = self.open.iter().position(|it| *it == ty) {
             self.first_reopened = Some(
                 self.first_reopened
@@ -122,12 +126,13 @@ impl<'a> BaseTypeAnswers<'a> {
         self.open.push(ty);
         let answer = ask(self);
         self.open.pop();
-        let reopened_around = self.first_reopened.filter(|&first| first < index);
-        // A "no" for want of the answer for a type that is still open is not the answer elsewhere.
-        if answer || reopened_around.is_none() {
+        let reopened_outer = self.first_reopened.filter(|&first| first < index);
+        // A "no" that was computed while an outer type was still open may be wrong in another context, so don't cache
+        // it.
+        if answer || reopened_outer.is_none() {
             self.known.insert(ty, answer);
         }
-        self.first_reopened = match (reopened_before, reopened_around) {
+        self.first_reopened = match (reopened_before, reopened_outer) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
         };
@@ -171,7 +176,7 @@ fn recurse<'a>(
             .any(|base_type| recurse(base_type, predicate, known))
     };
     match base_types.len() > 1 {
-        true => known.get_or_ask(ty, ask),
+        true => known.get_or_compute(ty, ask),
         false => ask(known),
     }
 }

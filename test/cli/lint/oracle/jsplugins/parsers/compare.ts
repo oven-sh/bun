@@ -1,11 +1,12 @@
-// Real ESLint against `bun lint` on files that need a parser, a language or a processor of a plugin.
+// Compares `bun lint` with real ESLint on files that need a plugin's parser, language or processor.
 //
 //     bun compare.ts [--fix] [--show=3] [--threads=8] <config> <directory> <pattern..> -- <bun lint, as a command>
 //
-// `<config>` is next to a `node_modules` that has `eslint` (or `ESLINT_DIR` is a checkout of it) and the plugins. Both run in `<directory>` with `-c <config> -f json`,
-// with `--fix` also `--fix-dry-run`. Compared for each file: every message and every suppressed message as JSON (ruleId, severity,
-// message, line, column, endLine, endColumn, messageId, fix, suggestions, suppressions), `output`, the counts and
-// `usedDeprecatedRules`. Prints one line: how many files are identical, and what each run took.
+// `<config>` has to be next to a `node_modules` with the plugins and `eslint` (or set `ESLINT_DIR` to an ESLint
+// checkout). Both tools run in `<directory>` with `-c <config> -f json`, plus `--fix-dry-run` if `--fix` is passed. For
+// each file it compares every message and suppressed message as JSON (ruleId, severity, message, line, column, endLine,
+// endColumn, messageId, fix, suggestions, suppressions), `output`, the counts and `usedDeprecatedRules`. The last line
+// it prints has the number of identical files and each run's duration.
 
 import { dirname, join, relative } from "node:path";
 
@@ -54,7 +55,7 @@ for (const theirs of expected.results) {
   messages += theirs.messages.length;
   const mine = byPath.get(theirs.filePath);
   byPath.delete(theirs.filePath);
-  // The text of the file is in both.
+  // `source` is just the file's text.
   const strip = ({ source, ...rest }: any) => JSON.stringify(rest);
   if (mine !== undefined && strip(mine) === strip(theirs)) {
     same++;
@@ -80,7 +81,8 @@ for (const theirs of expected.results) {
     console.log(`     ours:   ${JSON.stringify(b[index])?.slice(0, 400)}`);
   }
 }
-for (const extra of [...byPath.keys()].slice(0, show)) console.log(`── ${relative(directory, extra)}\n   only linted by us`);
+for (const extra of [...byPath.keys()].slice(0, show))
+  console.log(`── ${relative(directory, extra)}\n   only linted by us`);
 const total = expected.results.length;
 console.log(
   `${same} / ${total} files identical${byPath.size ? `, ${byPath.size} only linted by us` : ""}, ${messages} messages, exit codes ${expected.code} / ${actual.code}, eslint ${expected.seconds} s, ours ${actual.seconds} s`,

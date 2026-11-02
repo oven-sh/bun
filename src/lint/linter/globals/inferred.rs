@@ -1,16 +1,16 @@
-//! The globals of a file by the types of the program that it belongs to: its libraries, the packages of types that it takes in,
+//! A file's globals according to the types of the program it belongs to: its libraries, the type packages it includes,
 //! `declare global`, its scripts.
 
 use crate::ast::File;
 use crate::language::{Global, InferGlobals};
 
-/// The globals of the programs that the files of a run belong to.
+/// The globals of the programs that a run's files belong to.
 pub trait InferredGlobals: Sync {
-    /// `None`: the file belongs to no program: nothing is known. `path`: [`File::path`].
+    /// `path` is [`File::path`]. Returns `None` if the file doesn't belong to any program, so nothing is known.
     fn of(&self, path: &[u8]) -> Option<ProgramGlobals<'_>>;
 
-    /// [`InferGlobals::ByOptions`]: what the tables have that stand for the libraries and the packages of types in the
-    /// options of its project. `None`: as above.
+    /// For [`InferGlobals::ByOptions`]: the contents of the tables that correspond to the libraries and type packages
+    /// in the project's options. Returns `None` in the same case as [`InferredGlobals::of`].
     fn chosen(&self, path: &[u8]) -> Option<ProgramGlobals<'_>> {
         self.of(path)
     }
@@ -20,8 +20,9 @@ pub trait InferredGlobals: Sync {
 pub struct ProgramGlobals<'a> {
     /// Sorted by name.
     pub names: &'a [InferredGlobal],
-    /// `checkJs`. Without it TypeScript reports nothing in JavaScript, so nobody has seen to it that what the JavaScript
-    /// of the project uses is declared: the names are there besides those of the configuration, not in their place.
+    /// `checkJs`. Without it TypeScript reports nothing in JavaScript, so there's no guarantee that everything the
+    /// project's JavaScript uses is declared. The names are then added to the config's globals instead of replacing
+    /// them.
     pub checks_javascript: bool,
 }
 
@@ -37,8 +38,8 @@ impl<'a> File<'a> {
         self.inferred_from.set(Some(all));
     }
 
-    /// What the program of the file declares as global. `None`: nothing is inferred for the file, or it is in no program.
-    /// The first call asks.
+    /// The globals that the file's program declares. `None` if nothing is inferred for the file, or it isn't in a
+    /// program. Computed on the first call.
     pub(crate) fn inferred_globals(&self) -> Option<ProgramGlobals<'a>> {
         if !(self.language().infers_globals).is_for(self.is_javascript()) {
             return None;
@@ -50,8 +51,9 @@ impl<'a> File<'a> {
         *self.inferred_globals.get_or_init(ask)
     }
 
-    /// Under [`InferGlobals::ByOptions`]: whether the types of the program of the file declare the value `name`, which
-    /// [`File::global`] does not know. The program is loaded for the answer, once: for who is about to report the name.
+    /// Under [`InferGlobals::ByOptions`]: true if the types of the file's program declare the value `name`, which
+    /// [`File::global`] doesn't know. This loads the program, once, so only call it when `name` is about to be
+    /// reported.
     pub fn is_declared_by_types(&self, name: &[u8]) -> bool {
         if self.language().infers_globals != InferGlobals::ByOptions
             || self.inferred_globals().is_none()
@@ -62,7 +64,7 @@ impl<'a> File<'a> {
             Some(ProgramGlobals { names, .. }) => names
                 .binary_search_by(|it| (*it.name).cmp(name))
                 .is_ok_and(|at| names[at].is_value),
-            // It cannot be loaded after all. Then nothing is known, and the configuration is asked.
+            // The program couldn't be loaded after all. Then nothing is known, so fall back to the config.
             None => {
                 let setting = self.language().config_globals().setting(name);
                 setting.is_some_and(|it| it != Global::Off)

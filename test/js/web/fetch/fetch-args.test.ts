@@ -164,7 +164,7 @@ describe.concurrent("fetch() early rejections are reported when unhandled", () =
   }
 
   const cases: [name: string, code: string, expectedStderr: string][] = [
-    ["no arguments", `fetch()`, "fetch() expects a string but received no arguments"],
+    ["no arguments", `fetch()`, 'The "input" argument must be specified'],
     ["blank url", `fetch("")`, "fetch() URL must not be a blank string"],
     ["invalid url", `fetch("not a url")`, "fetch() URL is invalid"],
     ["unsupported protocol", `fetch("gopher://example.com/")`, "protocol must be http:, https: or s3:"],

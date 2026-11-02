@@ -1,7 +1,7 @@
-//! `symbol.getJsDocTags()`, as far as `@deprecated` goes.
+//! `symbol.getJsDocTags()`, limited to what `@deprecated` needs.
 //!
-//! JSDoc comments of TypeScript files are not kept. What is asked here is read from the text,
-//! where TypeScript's parser attaches the comments: before the first token of a declaration.
+//! The JSDoc comments of TypeScript files aren't kept. They're read from the source text here,
+//! where TypeScript's parser attaches them: before a declaration's first token.
 
 use super::super::spans::{
     get_leading_comment_ranges, get_trailing_comment_ranges, unescaped_identifier,
@@ -9,10 +9,10 @@ use super::super::spans::{
 use super::*;
 
 bitflags::bitflags! {
-    /// Which tags there are.
+    /// The kinds of tags found.
     #[derive(Copy, Clone, PartialEq, Eq, Default)]
     struct TagSet: u8 {
-        /// A tag, whatever it is.
+        /// Any tag at all.
         const ANY = 1 << 0;
         const INHERIT_DOC = 1 << 1;
         /// `@typedef`, `@callback`
@@ -22,7 +22,7 @@ bitflags::bitflags! {
     }
 }
 
-/// What the tags of some JSDoc comments say.
+/// A summary of the tags in one or more JSDoc comments.
 #[derive(Default)]
 struct Tags {
     set: TagSet,
@@ -110,7 +110,7 @@ fn can_have_js_doc(kind: Kind) -> bool {
     )
 }
 
-/// The length of `{@link ..}` at the start of `text`. 0 if there is none.
+/// The length of the `{@link ..}` at the start of `text`, or 0.
 fn link_len(text: &[u8]) -> usize {
     let Some(rest) = text.strip_prefix(b"{@link") else {
         return 0;
@@ -125,8 +125,8 @@ fn link_len(text: &[u8]) -> usize {
     bun_core::strings::index_of_char_usize(text, b'}').map_or(0, |close| close + 1)
 }
 
-/// `parseTagComments`: `text`, which follows the name of a tag and ends before the next tag,
-/// without the margin of each line.
+/// `parseTagComments`. `text` runs from the end of a tag's name to the next tag. Returns it with
+/// each line's margin removed.
 fn tag_comment(text: &[u8]) -> Vec<u8> {
     let mut comment = Vec::new();
     for (index, line) in bun_core::strings::split(text, b"\n").enumerate() {
@@ -140,7 +140,7 @@ fn tag_comment(text: &[u8]) -> Vec<u8> {
         }
         comment.extend_from_slice(line.strip_suffix(b"\r").unwrap_or(line));
     }
-    // `removeLeadingNewlines` of what follows the last link.
+    // `removeLeadingNewlines` on the text after the last link.
     let (mut at, mut after_last_link) = (0, None);
     while let Some(found) = bun_core::strings::index_of_char_usize(&comment[at..], b'{') {
         at += found;
@@ -159,8 +159,8 @@ fn tag_comment(text: &[u8]) -> Vec<u8> {
     comment
 }
 
-/// `scanJSDocCommentForTags`, `hasJSDocTag`: the tag is looked for in a comment whose text has `@deprecated` before white space,
-/// a `}`, a `*` or its end. `@deprecated. Use x` is none.
+/// `scanJSDocCommentForTags`, `hasJSDocTag`: the tag is only looked for in a comment whose text has `@deprecated`
+/// followed by whitespace, `}`, `*` or the end of the comment. `@deprecated. Use x` doesn't count.
 fn may_have_deprecated_tag(comment: &[u8]) -> bool {
     let mut rest = comment;
     while let Some(at) = bun_core::strings::index_of_char_usize(rest, b'@') {
@@ -177,7 +177,7 @@ fn may_have_deprecated_tag(comment: &[u8]) -> bool {
     false
 }
 
-/// `jsDoc.tags` of the comment of `text` from `start` to `end`: a tag that is in another tag is not among them.
+/// `jsDoc.tags` of the comment at `start..end` in `text`. Tags nested in another tag aren't included.
 fn parse_tags(text: &[u8], start: usize, end: usize, is_stack_low: &dyn Fn() -> bool) -> Tags {
     let mut tags = Tags::default();
     let comment_end = end;
@@ -206,7 +206,8 @@ fn parse_tags(text: &[u8], start: usize, end: usize, is_stack_low: &dyn Fn() -> 
 }
 
 impl<'c, 'p, 's> Services<'c, 'p, 's> {
-    /// Calls `then` with the text of `file`. That of a file of the default library is not kept.
+    /// Calls `then` with `file`'s text. A default library file's text isn't kept, so it's read with
+    /// `read_library`.
     fn with_text<R>(&self, file: FileId, then: impl FnOnce(&[u8]) -> R) -> Option<R> {
         let module = self.c.files().module(file);
         if !module.hir.text.is_empty() {
@@ -230,12 +231,12 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         }
         // `node.pos`
         let mut pos = skip_trivia_back(text, hir.start(node) as usize);
-        // It takes the last `/*` for the start of a comment, which can be in the text of the comment.
+        // `skip_trivia_back` treats the last `/*` as a comment's start, but that `/*` can be inside the comment's text.
         let comments = &hir.comments[..];
         while let Some(comment) = comments
             .partition_point(|comment| (comment.pos as usize) < pos)
             .checked_sub(1)
-            .and_then(|around| comments.get(around))
+            .and_then(|preceding_index| comments.get(preceding_index))
             && pos < comment.end as usize
         {
             pos = skip_trivia_back(text, comment.pos as usize);
@@ -326,7 +327,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         };
         let collected = self.with_text(host.file, |text| {
             let mut tags = Tags::default();
-            // A variable, a parameter or a property has those of its initializer too.
+            // A variable, parameter or property also gets its initializer's tags.
             let is_variable_like = matches!(
                 hir.kind(at),
                 Kind::BindingElement
@@ -384,7 +385,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         if (tags.set & (TagSet::ANY | TagSet::INHERIT_DOC)) == TagSet::ANY || depth > 16 {
             return tags;
         }
-        // Those that a member inherits come first.
+        // Inherited tags come first.
         for &declaration in declarations {
             if let Some(mut inherited) =
                 self.js_doc_tags_of_base_of_declaration(declaration, name, depth)
@@ -396,7 +397,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         tags
     }
 
-    /// `getAllSuperTypeNodes`, which is asked for each member and each type parameter of the class or the interface.
+    /// `getAllSuperTypeNodes`. Cached, because every member and type parameter of the class or interface requests it.
     fn all_super_type_nodes(&mut self, file: FileId, node: Node) -> &'c [Node] {
         let container = NodeRef { file, node };
         if let Some(&known) = self.super_type_nodes.get(&container) {
@@ -411,7 +412,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                     false
                 });
             }
-            // The members come last.
+            // Members come after the heritage clauses, so stop at the first one.
             matches!(hir.data(clause), NodeData::Member(_))
         });
         let super_type_nodes = self.list(&super_type_nodes);
@@ -457,14 +458,14 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         None
     }
 
-    /// The text of the `@deprecated` tag among `getJSDocTags(node)`.
+    /// The text of the `@deprecated` tag in `getJSDocTags(node)`.
     pub fn deprecation_of_node(&mut self, node: NodeRef) -> Option<&'c [u8]> {
         let reason = self.js_doc_tags(node).deprecated?;
         Some(self.list(&reason))
     }
 
-    /// The text of the `deprecated` one of `symbol.getJsDocTags(checker)`: of the first of its
-    /// declarations that has one, or that it inherits.
+    /// The text of the `deprecated` tag in `symbol.getJsDocTags(checker)`. It comes from the first
+    /// declaration that has the tag or inherits it.
     pub fn deprecation_of_symbol(&mut self, symbol: SymbolRef) -> Option<&'c [u8]> {
         let declarations = self.declarations(symbol);
         let name = self.symbol_info(symbol).name;
@@ -474,7 +475,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         Some(self.list(&reason))
     }
 
-    /// The same of `signature.getJsDocTags()`.
+    /// The same for `signature.getJsDocTags()`.
     pub fn deprecation_of_signature(&mut self, signature: SigId) -> Option<&'c [u8]> {
         let declaration = self.signature_info(signature).declaration?;
         let name = self

@@ -1,14 +1,14 @@
-// What oxlint reports with its rules of the React Compiler for every input of a directory of fixtures.
+// Records what oxlint's React Compiler rules report for every input in a directory of fixtures.
 //
 //   bun oxlint.ts <fixtures> <out.jsonl> --oxlint=<path> [--threads=4] [--again] [--alone=50] [--single=50]
 //
-// One line for each file (`FileRecord` of shared.ts), in the order of the paths. The configuration is written next to the
-// output, as `<out>.config.json`. The directory of fixtures is only read, but give it a copy. `--oxlint` is an absolute path,
-// or a command that takes oxlint's arguments: --oxlint="/path/to/tool subcommand".
+// Writes one line per file (a `FileRecord` from shared.ts), sorted by path. The config is written next to the output,
+// as `<out>.config.json`. The fixtures are never modified, but pass a copy anyway. `--oxlint` is an absolute path, or a
+// command that takes oxlint's arguments: --oxlint="/path/to/tool subcommand".
 //
-//   --again      a second run on one thread: is every line the same?
-//   --alone=N    each rule alone on N files that have diagnostics: does a rule depend on which others are on?
-//   --single=N   N files, each in a process of its own: is the exit code what the record says?
+//   --again      runs a second time on one thread and checks that every line is the same
+//   --alone=N    runs each rule by itself on N files with diagnostics, to check that no rule depends on the others
+//   --single=N   runs N files in one process each and checks the exit code against the record
 
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -36,7 +36,8 @@ const threads = flags.get("threads") ?? "4";
 
 const config = `${out}.config.json`;
 writeFileSync(config, JSON.stringify(configOf(RULE_NAMES), null, 2) + "\n");
-// A rule that reports every file that has a line: a file with `@flow` that oxlint cannot parse is skipped without a word.
+// This config reports every non-empty file that oxlint parses. oxlint silently skips a file with `@flow` that it can't
+// parse.
 const probe = `${out}.probe.json`;
 writeFileSync(
   probe,
@@ -132,7 +133,7 @@ if (flags.has("again")) {
   console.log(table(["Run again on one thread", "Files", "Different"], [["", counts.files, different]]));
 }
 
-/** `count` files with diagnostics: three for each rule first, then those with the most rules. */
+/** Picks `count` files with diagnostics: first three per rule, then the files with the most rules. */
 function sample(count: number): string[] {
   const picked = new Set<string>();
   for (const rule of RULE_NAMES) {
@@ -159,12 +160,12 @@ if (flags.has("alone")) {
   const rows: (string | number)[][] = [];
   for (const rule of RULE_NAMES) {
     writeFileSync(one, JSON.stringify(configOf([rule])));
-    const alone = byFile(run(one, files, threads).report);
+    const isolated = byFile(run(one, files, threads).report);
     let diagnostics = 0;
     let different = 0;
     for (const path of files) {
       const expected = (together.get(path) ?? []).filter(diagnostic => diagnostic.rule === rule);
-      const actual = (alone.get(path) ?? []).filter(isRule);
+      const actual = (isolated.get(path) ?? []).filter(isRule);
       diagnostics += expected.length;
       if (JSON.stringify(expected) !== JSON.stringify(actual)) different++;
     }

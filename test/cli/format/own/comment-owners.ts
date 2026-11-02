@@ -1,4 +1,4 @@
-// Writes `comment-owners.txt`: the node that Prettier attaches each comment in the inputs of `cases` to.
+// Writes `comment-owners.txt`: the node that Prettier attaches each comment in the `cases` inputs to.
 //
 //   bun test/cli/format/own/comment-owners.ts <directory with node_modules/prettier>
 //
@@ -55,7 +55,7 @@ collect(import.meta.dir, "cases", files, name => !name.endsWith(".input"));
 let output = "";
 for (const [path, bytes] of [...files].sort(([a], [b]) => (a < b ? -1 : 1))) {
   const name = path.slice("cases/".length, -".input".length);
-  // The parser of a Flow case is in its `options.json`.
+  // A Flow case sets its parser in its `options.json`.
   if (!/\.[cm]?[jt]sx?$/.test(name) || name.startsWith("flow/")) continue;
   const text = Buffer.from(bytes).toString();
   const byteOffset = (index: number) => Buffer.byteLength(text.slice(0, index));

@@ -278,7 +278,7 @@ pub(super) const EMOJI: &[(u32, u32)] = &[
     (0x1FAEF, 0x1FAF8),
 ];
 
-/// An emoji that takes one column by itself.
+/// An emoji that's one column wide by itself.
 pub(super) const NARROW_EMOJI: &[(u32, u32)] = &[
     (0xA9, 0xA9),
     (0xAE, 0xAE),
@@ -435,7 +435,7 @@ pub(super) const EMOJI_MODIFIER_BASE: &[(u32, u32)] = &[
     (0x1FAF0, 0x1FAF8),
 ];
 
-/// The characters from U+0080 on that take no column for oxfmt (the `unicode-width` crate): measured with oxfmt 0.72,
+/// Characters from U+0080 up that are zero columns wide in oxfmt (the `unicode-width` crate). Measured with oxfmt 0.72,
 /// one character at a time in a string literal.
 pub(super) const OXFMT_ZERO_WIDTH: &[(u32, u32)] = &[
     (0xAD, 0xAD),

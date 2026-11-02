@@ -868,6 +868,138 @@ describe("spawn stdin ReadableStream", () => {
     },
   );
 
+  // Bun.spawn fails if the stdin stream is already locked, and it must not consume or modify that stream.
+  describe("a locked stdin stream is still readable by the consumer that locked it", () => {
+    const prelude = `
+      const bytes = new TextEncoder().encode("hello");
+      const decode = chunk => new TextDecoder().decode(chunk);
+      // For a locked stream, either Bun.spawn throws or its stdin pump rejects. The last printed line shows which.
+      const refusals = [];
+      const threw = error => refusals.push("threw " + error?.code);
+      process.on("unhandledRejection", error => refusals.push("unhandledRejection " + error?.code));
+      process.on("exit", () => console.log(refusals.join(", ") || "not refused"));
+      const exe = process.execPath;
+      const cmd = [exe, "-e", ""];
+      const count = [exe, "-e", "console.log((await Bun.stdin.bytes()).length)"];
+      const pulled = () => new ReadableStream({ type: "bytes", pull(c) { c.enqueue(bytes.slice()); c.close(); } });
+      const spawnWithStdin = stream => {
+        try { Bun.spawn({ cmd, stdin: stream, stdout: "ignore", stderr: "ignore" }); } catch (error) { threw(error); }
+      };
+    `;
+    // These don't use top-level await, so the child still exits if a read never settles.
+    const owners: [owner: string, read: string, script: string][] = [
+      [
+        "a BYOB reader",
+        "hello",
+        `
+          const stream = pulled();
+          const reader = stream.getReader({ mode: "byob" });
+          spawnWithStdin(stream);
+          reader.read(new Uint8Array(16)).then(({ value }) => console.log(decode(value)));
+        `,
+      ],
+      [
+        "a default reader",
+        "hello",
+        `
+          const stream = new ReadableStream({ start(c) { c.enqueue(bytes.slice()); c.close(); } });
+          const reader = stream.getReader();
+          spawnWithStdin(stream);
+          reader.read().then(({ value }) => console.log(decode(value)));
+        `,
+      ],
+      [
+        // The stream is unlocked when the stdin option is validated. The getter locks it before the pump starts.
+        "text() called from a later option getter",
+        "hello",
+        `
+          const stream = pulled();
+          let text;
+          try {
+            Bun.spawn({ cmd, stdin: stream, get stdout() { text ??= stream.text(); return "ignore"; }, stderr: "ignore" });
+          } catch (error) { threw(error); }
+          text.then(value => console.log(value));
+        `,
+      ],
+      [
+        // The stream is another child's stdout, so attaching it would steal the native source from the reader.
+        "a reader that a later option getter acquires on a child's stdout",
+        "hello 0",
+        `
+          const stream = Bun.spawn({ cmd: [exe, "-e", "await Bun.write(Bun.stdout, 'hello')"], stdout: "pipe", stderr: "inherit" }).stdout;
+          let reader, refused;
+          try {
+            refused = Bun.spawn({ cmd: count, stdin: stream, get stdout() { reader ??= stream.getReader(); return "pipe"; }, stderr: "inherit" });
+          } catch (error) { threw(error); }
+          (async () => {
+            let text = "";
+            for (let chunk; !(chunk = await reader.read()).done; ) text += decode(chunk.value);
+            console.log(text, refused ? (await refused.stdout.text()).trim() : 0);
+          })();
+        `,
+      ],
+    ];
+
+    test.concurrent.each(owners)("locked by %s", async (_owner, read, script) => {
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", prelude + script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const lines = stdout.trim().split("\n");
+      expect({
+        read: lines.slice(0, -1).join("\n"),
+        refusal: lines.at(-1),
+        stderr,
+        exitCode,
+        signalCode: proc.signalCode,
+      }).toEqual({
+        read,
+        refusal: expect.stringMatching(/^(threw|unhandledRejection) ERR_INVALID_STATE$/),
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+  });
+
+  // Bun.write() locks the process's stdin stream without starting its lazy source. A call that fails on that lock
+  // must not start the source either. Nothing reads the child's stdout until the child reports, so its write is
+  // still paused at that point.
+  test.skipIf(isWindows)(
+    "process.stdin throws when Bun.write() has locked the stdin stream, and doesn't consume any bytes",
+    async () => {
+      using dir = tempDir("spawn-stdin-lazy", { "in": Buffer.alloc(1 << 20, "a").toString() });
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+        const written = Bun.write(Bun.stdout, Bun.stdin.stream());
+        let code;
+        try { process.stdin.resume(); } catch (error) { code = error.code; }
+        await Bun.write(Bun.stderr, String(code));
+        await written;
+      `,
+        ],
+        env: bunEnv,
+        stdin: Bun.file(path.join(String(dir), "in")),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const report = await proc.stderr.getReader().read();
+      const [stdout, exitCode] = await Promise.all([proc.stdout.bytes(), proc.exited]);
+      expect({ report: new TextDecoder().decode(report.value), length: stdout.length, exitCode }).toEqual({
+        report: "ERR_INVALID_STATE",
+        length: 1 << 20,
+        exitCode: 0,
+      });
+    },
+  );
+
   test("ReadableStream object type count", async () => {
     const iterations = isASAN
       ? // With ASAN, entire process gets killed. Likely an OOM or out of file

@@ -12,6 +12,7 @@
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/TypedArrayInlines.h>
 #include <span>
+#include <wtf/SetForScope.h>
 
 // JSSQLStatement.cpp: the one-time sqlite3_config() calls of the process.
 extern "C" void Bun__initializeSQLite();
@@ -82,6 +83,32 @@ inline bool SqliteColumnNames::changed(sqlite3_stmt* stmt)
     if (bytes == m_bytes)
         return false;
     m_bytes = bytes;
+    return true;
+}
+
+// True if resetting or finalizing `stmt` commits a write that iterate() stopped on a row. At that commit, a full-text
+// index writes to its own tables with statements that call the connection's update hook and authorizer.
+inline bool sqliteCommitsWhenFinalized(sqlite3_stmt* stmt)
+{
+    return sqlite3_stmt_busy(stmt) && !sqlite3_stmt_readonly(stmt);
+}
+
+// JS can't run during GC or at process exit, and the cells a callback reads can be dead. While this is set, a user
+// function fails, the authorizer denies and the update hook isn't called. They check it before anything else.
+inline thread_local bool sqliteScriptIsForbidden = false;
+
+inline void sqliteFinalize(sqlite3_stmt* stmt, bool mayCallScript)
+{
+    WTF::SetForScope forbidScript { sqliteScriptIsForbidden, !mayCallScript };
+    sqlite3_finalize(stmt);
+}
+
+// The statement that called the function fails, so a commit that needs it is rolled back.
+inline bool sqliteFailsIfScriptIsForbidden(sqlite3_context* context)
+{
+    if (!sqliteScriptIsForbidden) [[likely]]
+        return false;
+    sqlite3_result_error(context, "", 0);
     return true;
 }
 
@@ -173,6 +200,8 @@ struct SqliteUserFunction {
 private:
     static void xFunc(sqlite3_context* context, int argc, sqlite3_value** argv)
     {
+        if (sqliteFailsIfScriptIsForbidden(context)) [[unlikely]]
+            return;
         auto* self = static_cast<SqliteUserFunction*>(sqlite3_user_data(context));
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(self->module.globalObject));
 
@@ -254,6 +283,8 @@ private:
 
     void stepOrInverse(sqlite3_context* context, int argc, sqlite3_value** argv, JSC::JSObject* callback)
     {
+        if (sqliteFailsIfScriptIsForbidden(context)) [[unlikely]]
+            return;
         auto& vm = JSC::getVM(module.globalObject);
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         if (scope.exception()) [[unlikely]]
@@ -276,6 +307,11 @@ private:
 
     void valueOrFinal(sqlite3_context* context, bool isFinal)
     {
+        if (sqliteFailsIfScriptIsForbidden(context)) [[unlikely]] {
+            if (isFinal)
+                destroyAccumulator(context);
+            return;
+        }
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(module.globalObject));
         auto* accumulator = scope.exception() ? nullptr : this->accumulator(context, scope);
 

@@ -1,4 +1,4 @@
-// Collects Prettier's fixtures and snapshots in `bundle.zst`.
+// Collects Prettier's fixtures and snapshots into `bundle.zst`.
 //
 //   bun test/cli/format/prettier/sync.ts <path to a checkout of prettier/prettier at a release tag, with its node_modules>
 //   bun test/cli/format/prettier/sync.ts --extract <part of a path, or ""> <directory>
@@ -11,9 +11,9 @@ import { collect, extract, writeBundle } from "../bundle.ts";
 const languages = ["js", "jsx", "typescript", "flow", "json", "css", "less", "scss", "graphql", "yaml", "markdown", "mdx", "handlebars", "html", "vue", "angular", "lwc", "mjml", "misc"];
 
 const ours = ["babel", "typescript", "json", "json5", "jsonc", "json-stringify", "css", "less", "scss", "graphql", "yaml", "markdown", "mdx", "glimmer", "html", "vue", "angular", "lwc", "mjml"];
-/** The parsers that count in the tests of a directory. `flow` only where it is the first: elsewhere `babel` stands for it. */
+/** The parsers that are tested in a directory. `flow` only where it's the first one: elsewhere `babel` covers it. */
 const parsersIn = (directory: string) => [...ours, ...(directory.startsWith("flow/") ? ["flow", "babel-flow"] : [])];
-/** The name of a file that is parsed with the parser. */
+/** Returns a file name that selects `parser`. */
 const fileFor = (parser: string, name: string) =>
   parser === "json-stringify"
     ? `${name}/package.json`
@@ -23,10 +23,11 @@ type Snippet = string | { name?: string; code: string; output?: string; filename
 type Options = { errors?: true | Record<string, true | string[]> } & Record<string, unknown>;
 
 /**
- * What is in a `format.test.js` and in no snapshot: the expected output of a snippet, if it is next to the input, and the text of a snippet
- * that is rejected, and the name of a file that a snippet is given. The tests are run here with a `runFormatTest` that takes notes. They are
- * written as the other fixtures are: in `inline-outputs` next to the test a snapshot file, in `rejected-snippets` the inputs and a snapshot
- * file. The names are in `snippet-filenames.txt`: the name of the snippet, a tab, the name of the file.
+ * Adds the data that's only in a `format.test.js` and not in any snapshot: a snippet's expected output if it's written
+ * next to the input, the text of a rejected snippet, and the file name given to a snippet. The tests are run here with
+ * a `runFormatTest` that records its arguments. The results are written in the same format as the other fixtures: a
+ * snapshot file in `inline-outputs` next to the test, and the inputs plus a snapshot file in `rejected-snippets`. The
+ * file names are written to `snippet-filenames.txt`, one per line: the snippet's name, a tab, the file name.
  */
 async function addFromTests(root: string, files: Map<string, Uint8Array>) {
   const prettier = { getSupportInfo: async () => ({ options: [{ name: "parser", choices: ours.map(value => ({ value })) }] }) };
@@ -48,7 +49,7 @@ async function addFromTests(root: string, files: Map<string, Uint8Array>) {
         for (const parser of parsers.filter(it => parsersIn(directory).includes(it))) {
           const list = errors === true || errors[parser];
           if (list === true || (Array.isArray(list) && filename !== undefined && list.includes(filename))) {
-            // The name that the test gives it can be what it is about: `script.cjs`.
+            // The file name that the test gives it can be the point of the test: `script.cjs`.
             const file = filename === undefined ? fileFor(parser, String(counts.size)) : `${counts.size}/${filename}`;
             counts.set(file, 1);
             files.set(`${directory}/rejected-snippets/${file}`, Buffer.from(code));
@@ -57,7 +58,7 @@ async function addFromTests(root: string, files: Map<string, Uint8Array>) {
         }
         if (filename !== undefined) filenames.add(`${name}\t${filename}\n`);
         if (output === undefined) return;
-        // The output is the same for all of them. The first of each language stands for the others.
+        // The output is the same for all of them, so the first parser of each language represents the others.
         const families = new Map(parsers.filter(it => parsersIn(directory).includes(it)).map(it => [/^babel$|^typescript$/.test(it) ? "js" : it, it]).reverse());
         for (const parser of [...families.values()].reverse()) {
           const title = `snippet: ${name}${Object.keys(options).length ? ` - ${JSON.stringify(options)}` : ""} format`;
@@ -91,7 +92,7 @@ if (source === "--extract" && rest.length === 2) {
   console.log(`${extract(bundle, rest[0], rest[1])} files in ${rest[1]}`);
 } else if (source && source !== "--extract") {
   const files = new Map<string, Uint8Array>();
-  // The snapshots say with which options an input is formatted.
+  // The snapshots record the options that each input is formatted with.
   for (const language of languages) {
     collect(join(source, "tests/format"), language, files, name => name === "format.test.js");
   }

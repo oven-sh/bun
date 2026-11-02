@@ -1,5 +1,5 @@
 use bun_lint_oxlint::ast_util::{as_member_expression, static_property_name};
-use bun_lint_oxlint::regex_flags::regex_of_option;
+use bun_lint_oxlint::regex_flags::option_regex;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -11,11 +11,12 @@ pub struct CatchErrorName {
     lowercase_name: String,
 }
 
-const CATCH_ERROR_NAME: Message =
-    Message::new("", "The catch parameter \"{{caught_ident}}\" should be named \"{{expected_name}}\"");
+const CATCH_ERROR_NAME: &Message =
+    &Message::new("", "The catch parameter \"{{caught_ident}}\" should be named \"{{expected_name}}\"");
 
 impl CatchErrorName {
-    /// The name itself, with underscores after it, or qualified: `error_`, `diagnosticError`, `diagnostic_error`.
+    /// Allows the name itself, with trailing underscores, or qualified: `error_`, `diagnosticError`,
+    /// `diagnostic_error`.
     fn is_name_allowed(&self, name: &[u8]) -> bool {
         if name == self.name.as_bytes() {
             return true;
@@ -45,7 +46,7 @@ impl CatchErrorName {
         let Some(symbol) = pat.symbol() else {
             return;
         };
-        // Not what the default value of a parameter is written to.
+        // Excludes the write reference that a parameter's default value creates.
         let references = || symbol.references().filter(|it| !matches!(it.node(), Node::Pat(_)));
         if name.bytes().starts_with(b"_") && references().next().is_none() {
             return;
@@ -54,7 +55,7 @@ impl CatchErrorName {
         cx.report(pat, CATCH_ERROR_NAME)
             .data("caught_ident", name)
             .data("expected_name", self.name.clone())
-            // Of one replacement oxlint says what it says of any.
+            // For a fix with a single replacement, oxlint prints its generic help instead.
             .help_with(|| match references().next() {
                 Some(_) if self.can_rename(symbol) => format!("Rename `{caught}` to `{}`", self.name),
                 _ => String::new(),
@@ -72,7 +73,7 @@ impl CatchErrorName {
             });
     }
 
-    /// `argument`: what is called with the error.
+    /// `argument` is the callback that receives the error.
     fn check_function_arguments<'a>(&self, argument: Option<Expr<'a>>, cx: &Cx<'a, Self>) {
         if let Some(param) = argument.and_then(Expr::as_fn).and_then(|it| it.params().first())
             && !param.is_rest()
@@ -92,7 +93,7 @@ impl Rule for CatchErrorName {
         let name = options.str("name").map(str::trim).filter(|it| text::is_identifier_name(it.as_bytes()));
         let name = name.unwrap_or("error");
         CatchErrorName {
-            ignore: options.strings("ignore").into_iter().filter_map(regex_of_option).collect(),
+            ignore: options.strings("ignore").into_iter().filter_map(option_regex).collect(),
             name: name.to_owned(),
             lowercase_name: name.to_lowercase(),
         }

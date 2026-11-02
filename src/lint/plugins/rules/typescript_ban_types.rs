@@ -4,10 +4,10 @@ use bun_lint::rule::Plugin;
 /// Disallow certain types.
 pub struct BanTypes;
 
-const TYPE: Message = Message::new("", "Do not use \"{{banned_type}}\" as a type. Use \"{{suggested_type}}\" instead");
-const TYPE_LITERAL: Message = Message::new("", "Prefer explicitly define the object shape");
-const FUNCTION: Message = Message::new("", "Don't use `Function` as a type");
-const OBJECT: Message = Message::new("", "'The `Object` type actually means \"any non-nullish value\"");
+const TYPE: &Message = &Message::new("", "Do not use \"{{banned_type}}\" as a type. Use \"{{suggested_type}}\" instead");
+const TYPE_LITERAL: &Message = &Message::new("", "Prefer explicitly define the object shape");
+const FUNCTION: &Message = &Message::new("", "Don't use `Function` as a type");
+const OBJECT: &Message = &Message::new("", "'The `Object` type actually means \"any non-nullish value\"");
 
 impl Rule for BanTypes {
     const META: Meta = Meta::oxlint(Plugin::TypeScript, "ban-types", Kind::Suggestion);
@@ -60,7 +60,7 @@ impl BanTypes {
             b"Function" => FUNCTION,
             _ => return,
         };
-        // What a class implements and an interface extends is no type reference.
+        // What a class implements or an interface extends isn't a type reference.
         let is_heritage = match ty.parent() {
             Node::Class(class) => class.implements().iter().any(|it| it == ty),
             Node::Stmt(stmt) => matches!(stmt.kind(), StmtKind::Interface(it) if it.extends().iter().any(|it| it == ty)),

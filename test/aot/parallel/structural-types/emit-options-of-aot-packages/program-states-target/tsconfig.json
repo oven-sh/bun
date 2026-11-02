@@ -1,0 +1,1 @@
+{ "compilerOptions": { "strict": true, "module": "preserve", "moduleResolution": "bundler", "target": "es2015" } }

@@ -160,8 +160,12 @@ public:
     HeaderIndex indexOf(HTTPHeaderName name) const;
 
     WEBCORE_EXPORT String get(HTTPHeaderName) const;
+    // Returns the Set-Cookie values joined with ", ", or nullopt if the result exceeds the max string length.
+    WEBCORE_EXPORT std::optional<String> tryJoinSetCookieHeaders() const;
     void set(HTTPHeaderName, const String& value);
     void add(HTTPHeaderName, const String& value);
+    // Returns false if the list of Set-Cookie values can't grow.
+    bool tryAddSetCookie(const String& value);
     WEBCORE_EXPORT bool contains(HTTPHeaderName) const;
     WEBCORE_EXPORT bool remove(HTTPHeaderName);
 
@@ -215,10 +219,9 @@ public:
     void setUncommonHeader(const String& name, const String& value);
     void addUncommonHeader(const String& name, const String& value);
     void addUncommonHeaderCloneName(const StringView name, const String& value);
-
-private:
     WEBCORE_EXPORT String getUncommonHeader(const StringView name) const;
 
+private:
     CommonHeadersVector m_commonHeaders;
     UncommonHeadersVector m_uncommonHeaders;
     Vector<String, 0> m_setCookieHeaders;

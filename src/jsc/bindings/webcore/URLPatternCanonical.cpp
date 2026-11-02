@@ -29,6 +29,7 @@
 #include "ExceptionOr.h"
 #include "URLDecomposition.h"
 #include "URLPattern.h"
+#include "StringSizeLimit.h"
 #include <wtf/URL.h>
 #include <wtf/URLParser.h>
 #include <wtf/text/MakeString.h>
@@ -78,7 +79,12 @@ ExceptionOr<String> canonicalizeProtocol(StringView value, BaseURLStringType val
     if (valueType == BaseURLStringType::Pattern)
         return strippedValue.toString();
 
-    URL dummyURL(makeString(strippedValue, "://w/"_s));
+    auto dummyURLString = tryMakeString(strippedValue, "://w/"_s);
+
+    if (dummyURLString.isNull() || Bun::exceedsStringLimit(dummyURLString.length())) [[unlikely]]
+        return Exception { ExceptionCode::OutOfMemoryError };
+
+    URL dummyURL(WTF::move(dummyURLString));
 
     if (!dummyURL.isValid())
         return Exception { ExceptionCode::TypeError, "Invalid input to canonicalize a URL protocol string."_s };
@@ -177,7 +183,12 @@ ExceptionOr<String> canonicalizeOpaquePathname(StringView value)
     if (value.isEmpty())
         return value.toString();
 
-    URL dummyURL(makeString("a:"_s, value));
+    auto dummyURLString = tryMakeString("a:"_s, value);
+
+    if (dummyURLString.isNull() || Bun::exceedsStringLimit(dummyURLString.length())) [[unlikely]]
+        return Exception { ExceptionCode::OutOfMemoryError };
+
+    URL dummyURL(WTF::move(dummyURLString));
 
     if (!dummyURL.isValid())
         return Exception { ExceptionCode::TypeError, "Invalid input to canonicalize a URL opaque path string."_s };
@@ -192,7 +203,10 @@ ExceptionOr<String> canonicalizePathname(StringView pathnameValue)
         return pathnameValue.toString();
 
     bool hasLeadingSlash = pathnameValue[0] == '/';
-    String maybeAddSlashPrefix = hasLeadingSlash ? pathnameValue.toString() : makeString("/-"_s, pathnameValue);
+    String maybeAddSlashPrefix = hasLeadingSlash ? pathnameValue.toString() : tryMakeString("/-"_s, pathnameValue);
+
+    if (maybeAddSlashPrefix.isNull() || Bun::exceedsStringLimit(maybeAddSlashPrefix.length())) [[unlikely]]
+        return Exception { ExceptionCode::OutOfMemoryError };
 
     // FIXME: Set state override to State::PathStart after URLParser supports state override.
     URL dummyURL(dummyURLCharacters);

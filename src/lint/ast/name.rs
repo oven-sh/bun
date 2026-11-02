@@ -4,8 +4,8 @@ use super::File;
 use crate::span::{Span, Spanned};
 use bun_sema::atom::{Atom, KNOWN_TEXTS};
 
-/// The text of an identifier, a property name or a string. Interned: two names of a file compare
-/// as numbers.
+/// The text of an identifier, a property name or a string. It's interned, so comparing two names from the same file is
+/// an integer comparison.
 #[derive(Copy, Clone)]
 pub struct Name<'a> {
     file: &'a File<'a>,
@@ -23,13 +23,13 @@ impl<'a> Name<'a> {
     pub fn bytes(self) -> &'a [u8] {
         match self.file.texts.in_source(self.atom) {
             Some(text) => text,
-            None => self.bytes_elsewhere(),
+            None => self.bytes_slow(),
         }
     }
 
-    /// It is not written in the source as it is, or the atoms are not the file's own.
+    /// The slow path: the name doesn't appear verbatim in the source, or the atoms aren't the file's own.
     #[inline(never)]
-    fn bytes_elsewhere(self) -> &'a [u8] {
+    fn bytes_slow(self) -> &'a [u8] {
         match KNOWN_TEXTS.get(self.atom.0 as usize) {
             Some(known) => known,
             None if self.atom.is_some() => self.file.atoms.bytes(self.atom),
@@ -37,12 +37,12 @@ impl<'a> Name<'a> {
         }
     }
 
-    /// Of [`Name::bytes`].
+    /// The length of [`Name::bytes`].
     #[inline]
     pub fn len(self) -> usize {
         match self.file.texts.span_of(self.atom) {
             Some((_, len)) => len as usize,
-            None => self.bytes_elsewhere().len(),
+            None => self.bytes_slow().len(),
         }
     }
 
@@ -56,18 +56,18 @@ impl<'a> Name<'a> {
         self.has(text.as_bytes())
     }
 
-    /// Whether it is one of `texts`.
+    /// True if it's one of `texts`.
     #[inline]
     pub fn is_any(self, texts: &[&str]) -> bool {
         match self.file.texts.span_of(self.atom) {
             Some(_) => texts.iter().any(|text| self.has(text.as_bytes())),
-            None => self.is_any_elsewhere(texts),
+            None => self.is_any_slow(texts),
         }
     }
 
     #[inline(never)]
-    fn is_any_elsewhere(self, texts: &[&str]) -> bool {
-        let bytes = self.bytes_elsewhere();
+    fn is_any_slow(self, texts: &[&str]) -> bool {
+        let bytes = self.bytes_slow();
         texts.iter().any(|text| bytes == text.as_bytes())
     }
 
@@ -139,10 +139,10 @@ impl std::fmt::Debug for Name<'_> {
     }
 }
 
-/// A name where it is written: the `b` of `a.b`, the `f` of `function f() {}`, a label.
+/// A name at a position in the source: the `b` of `a.b`, the `f` of `function f() {}`, a label.
 ///
-/// An identifier that is an expression is an [`Expr`](super::Expr) and one that is bound is a
-/// [`Pat`](super::Pat). This is for the names that are neither.
+/// An identifier expression is an [`Expr`](super::Expr) and a binding identifier is a [`Pat`](super::Pat). This is for
+/// names that are neither.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Ident<'a> {
     name: Name<'a>,
@@ -173,7 +173,7 @@ impl<'a> Ident<'a> {
         self.start
     }
 
-    /// It is written as a string: `import { "a b" as c }`, `declare module "m"`.
+    /// True if it's written as a string: `import { "a b" as c }`, `declare module "m"`.
     #[inline]
     pub fn is_string(self) -> bool {
         matches!(
@@ -185,13 +185,13 @@ impl<'a> Ident<'a> {
     pub fn span(self) -> Span {
         let len = match self.len_if_plain() {
             Some(len) => len,
-            None => self.written_len() as u32,
+            None => self.source_len() as u32,
         };
         Span::new(self.start, self.start + len)
     }
 
-    /// The length of the name if it is seen at once that it is written as it is: it has 16 bytes
-    /// at most, or the file has it here for the first time.
+    /// The name's length, if a cheap check shows the source here matches the name byte for byte: it's at most 16 bytes
+    /// long, or this is its first occurrence in the file.
     #[inline]
     fn len_if_plain(self) -> Option<u32> {
         let texts = &self.name.file.texts;
@@ -211,13 +211,14 @@ impl<'a> Ident<'a> {
     }
 
     #[inline(never)]
-    fn written_len(self) -> usize {
+    fn source_len(self) -> usize {
         let (text, name) = (self.name.file.text(), self.name.bytes());
-        let written = text.get(self.start as usize..).unwrap_or_default();
-        match !name.is_empty() && !self.is_string() && written.starts_with(name) {
+        let source_text = text.get(self.start as usize..).unwrap_or_default();
+        match !name.is_empty() && !self.is_string() && source_text.starts_with(name) {
             true => name.len(),
-            // It is written with escapes, or in quotes, where it can start with the name and go on: `"\""`.
-            false => crate::tokens::token_len(written),
+            // It's written with escapes or in quotes. A quoted name can start with its own value and continue, like
+            // `"\""`.
+            false => crate::tokens::token_len(source_text),
         }
     }
 }

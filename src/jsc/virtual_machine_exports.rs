@@ -1,8 +1,7 @@
 use core::ffi::c_void;
 
 use crate::{
-    CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, Strong, Task,
-    VirtualMachineRef as VirtualMachine,
+    JSGlobalObject, JSPromise, JSValue, Strong, Task, VirtualMachineRef as VirtualMachine,
 };
 use bun_core::String as BunString;
 use bun_sourcemap::SourceProviderMap;
@@ -57,8 +56,29 @@ pub fn exit_during_uncaught_exception(this: &mut VirtualMachine) {
     this.exit_on_uncaught_exception = true;
 }
 
-// `Bun__Process__send` lives in `bun_runtime::ipc_host` (its body — via
-// `do_send` — names the `bun_runtime::Listener` type; LAYERING).
+fn absolute_directory(directory: &BunString) -> Box<[u8]> {
+    let directory = directory.to_owned_slice();
+    let directory = if bun_paths::is_absolute(&directory) {
+        directory
+    } else {
+        let mut cwd_buf = bun_paths::path_buffer_pool::get();
+        match bun_sys::getcwd_z(&mut cwd_buf) {
+            Ok(cwd) => bun_paths::resolve_path::join::<bun_paths::resolve_path::platform::Auto>(&[
+                cwd.as_bytes(),
+                &directory,
+            ])
+            .to_vec(),
+            Err(_) => directory,
+        }
+    };
+    directory.into_boxed_slice()
+}
+
+/// Makes the path absolute now, because the report is written at exit and the working directory may change before then.
+// HOST_EXPORT(Bun__VirtualMachine__setSamplingProfilerDirectory, c)
+pub fn set_sampling_profiler_directory(this: &mut VirtualMachine, directory: &BunString) {
+    this.sampling_profiler_directory = Some(absolute_directory(directory));
+}
 
 // HOST_EXPORT(Bun__reportUnhandledError, c)
 pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) {
@@ -239,8 +259,8 @@ pub fn get_verbose_fetch_value() -> i32 {
     }
 }
 
-// `Bun__addBakeSourceProviderSourceMap` / `Bun__addDevServerSourceProvider` /
-// `Bun__removeDevServerSourceProvider` live in
+// `Bun__{add,remove}BakeSourceProviderSourceMap` /
+// `Bun__{add,remove}DevServerSourceProvider` live in
 // `bun_runtime::bake::source_provider_exports` (their callers are bake's C++
 // source providers; LAYERING).
 
@@ -272,31 +292,11 @@ pub fn remove_source_provider_source_map(
         .remove_source_provider(opaque_source_provider, slice.slice());
 }
 
-#[crate::host_fn(export = "Bun__setSyntheticAllocationLimitForTesting")]
-pub fn Bun__setSyntheticAllocationLimitForTesting(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
-    let [arg] = frame.arguments_as_array::<1>();
-    if frame.arguments_count() < 1 {
-        return Err(global.throw_not_enough_arguments(
-            "setSyntheticAllocationLimitForTesting",
-            1,
-            frame.arguments_count() as usize,
-        ));
-    }
-
-    if !arg.is_number() {
-        return Err(global.throw_invalid_arguments(format_args!(
-            "setSyntheticAllocationLimitForTesting expects a number"
-        )));
-    }
-
-    let limit: usize =
-        usize::try_from(arg.coerce_to_int64(global)?.max(1024 * 1024)).expect("int cast");
+pub(crate) fn set_synthetic_allocation_limit_for_testing(limit: f64) -> usize {
+    let limit: usize = usize::try_from((limit as i64).max(1024 * 1024)).expect("int cast");
     let prev = crate::virtual_machine::SYNTHETIC_ALLOCATION_LIMIT
         .swap(limit, core::sync::atomic::Ordering::Relaxed);
     crate::virtual_machine::STRING_ALLOCATION_LIMIT
         .store(limit, core::sync::atomic::Ordering::Relaxed);
-    Ok(JSValue::js_number(prev as f64))
+    prev
 }

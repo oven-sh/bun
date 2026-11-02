@@ -1,5 +1,6 @@
-//! Sorts that are compiled once for the whole program, where those of the standard library are compiled once for each
-//! type and closure, several KB each. All are stable. They cost a list of indices and a call for each comparison.
+//! Sorts that are compiled once for the whole program. The standard library's are instantiated for every type and
+//! closure, at several KB each. All of these are stable. They cost a list of indices and a function call per
+//! comparison.
 //!
 //! The standard library may panic if the comparison isn't a total order. [`sort_by`] accepts any comparison.
 

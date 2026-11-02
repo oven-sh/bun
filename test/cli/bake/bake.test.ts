@@ -296,6 +296,16 @@ test.concurrent.each([
     error: `"bake.config.ts": the framework of "a": 'fileSystemRouterTypes[0].clientPages' needs a 'clientEntryPoint'`,
   },
   {
+    name: "a framework whose clientPages has no serverExports list",
+    files: {
+      "bake.config.ts": `export default { plugins: [{ name: "a", framework: {
+        fileSystemRouterTypes: [{ root: "app/pages", style: "nextjs-pages", serverEntryPoint: "./r.ts", clientEntryPoint: "./c.ts", clientPages: {} }],
+      } }] };`,
+    },
+    waits: true,
+    error: `"bake.config.ts": the framework of "a": 'fileSystemRouterTypes[0].clientPages.serverExports' must be an array of export names`,
+  },
+  {
     name: "a .tsx page and an .html page at the same URL",
     files: {
       "app/pages/index.html": page,
@@ -440,7 +450,18 @@ test.concurrent.each([
   );
   const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
 
-  expect(await get(url, "/missing")).toBe("200 1");
+  // One save can start the process twice on Windows, and each start prints its own port.
+  if (!isWindows) {
+    expect(await get(url, "/missing")).toBe("200 1");
+    return;
+  }
+  const deadline = Date.now() + 10_000;
+  let response = "";
+  while (response !== "200 1" && Date.now() < deadline) {
+    const latest = [...output.text.matchAll(/url: (http:\/\/\S+)/g)].at(-1)![1];
+    response = await get(latest, "/missing").catch(String);
+  }
+  expect(response).toBe("200 1");
 });
 
 // Creating a symlink on Windows needs a privilege that CI does not have.
@@ -1181,6 +1202,50 @@ test.concurrent("a framework with clientPages puts the pages of a route in its b
   expect(bundle).not.toContain("about-page-module");
 });
 
+test.concurrent("the browser build of a page leaves out the serverExports of its framework", async () => {
+  using dir = tempDir("bake-command-server-exports", {
+    "app/secret.js": `export const secret = "server-only-secret";`,
+    // `getServerSideProps` is not a server export of this framework, so it stays.
+    "app/pages/index.js": `
+      import { secret } from "../secret.js";
+      export const loader = () => secret.length;
+      export const getServerSideProps = () => "kept-export";
+      export default () => "home-page-module";
+    `,
+    "render/server.ts": `export function render(request, meta) {
+      return new Response(meta.pageModule.loader() + " " + meta.modules.join(" "));
+    }`,
+    "render/client.ts": `import { route } from "bun:bake/client"; route.page();`,
+    "bake.config.ts": `export default {
+      plugins: [{
+        name: "fw",
+        framework: {
+          fileSystemRouterTypes: [{
+            root: "app/pages",
+            style: "nextjs-pages",
+            serverEntryPoint: "./render/server.ts",
+            clientEntryPoint: "./render/client.ts",
+            extensions: [".js"],
+            clientPages: { serverExports: ["loader"] },
+          }],
+        },
+      }],
+    };`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  // The server still has the loader.
+  const [status, length, bundleUrl] = (await get(url, "/")).split(" ");
+  expect(status).toBe("200");
+  expect(length).toBe("18");
+  const bundle = await (await fetch(new URL(bundleUrl, url))).text();
+  expect(bundle).toContain("home-page-module");
+  expect(bundle).toContain("kept-export");
+  expect(bundle).not.toContain("server-only-secret");
+});
+
 test.concurrent("bun bake sends a page's new code to a page load after an edit", async () => {
   using dir = tempDir("bake-command-page-edit", {
     "app/pages/index.tsx": `export default function Home() { return <h1>{"first-version"}</h1>; }`,
@@ -1345,6 +1410,63 @@ test.concurrent("the default framework sends the browser bundle before a slow Su
   await fetch(new URL("/release", url));
   for (let r = await reader.read(); !r.done; r = await reader.read()) html += decoder.decode(r.value, { stream: true });
   expect(html).toContain("late content");
+});
+
+test.concurrent(
+  "bun bake keeps an unused import of a page in the browser, and drops the imports of getStaticProps and getStaticPaths",
+  async () => {
+    using dir = tempDir("bake-command-page-data-static", {
+      "app/secret.js": `export const secret = "server-only-secret";`,
+      "app/paths.js": `export const paths = ["only-for-paths"];`,
+      "app/register.js": `globalThis.registered = "side-effect-kept"; export default 1;`,
+      "app/pages/[slug].jsx": `
+      import { secret } from "../secret.js";
+      import { paths } from "../paths.js";
+      import registered from "../register.js";
+      export const getStaticPaths = async () => ({ paths: paths.map(slug => ({ params: { slug } })), fallback: "blocking" });
+      export const getStaticProps = async ({ params }) => ({ props: { length: secret.length } });
+      export default function Post({ length }) {
+        return <h1>{"length " + length}</h1>;
+      }
+    `,
+    });
+    linkReact(String(dir));
+
+    await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+    const url = await getServerUrl(proc);
+
+    const html = await (await fetch(new URL("/x", url))).text();
+    expect(html).toContain("<h1>length 18</h1>");
+    const bundleUrl = html.match(/<script type="module" src="([^"]+)"/)![1];
+    const bundle = await (await fetch(new URL(bundleUrl, url))).text();
+    expect(bundle).not.toContain("server-only-secret");
+    expect(bundle).not.toContain("only-for-paths");
+    expect(bundle).toContain("side-effect-kept");
+  },
+);
+
+test.concurrent("bun bake leaves the server-only imports of a .jsx page out of its browser bundle", async () => {
+  using dir = tempDir("bake-command-page-data-jsx", {
+    "app/secret.js": `export const secret = "server-only-secret";`,
+    "app/pages/index.jsx": `
+      import { secret } from "../secret.js";
+      export const getServerSideProps = async () => ({ props: { length: secret.length } });
+      export default function Home({ length }) {
+        return <h1>{"length " + length}</h1>;
+      }
+    `,
+  });
+  linkReact(String(dir));
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  const html = await (await fetch(url)).text();
+  expect(html).toContain("<h1>length 18</h1>");
+  const bundleUrl = html.match(/<script type="module" src="([^"]+)"/)![1];
+  const bundle = await (await fetch(new URL(bundleUrl, url))).text();
+  expect(bundle).toContain("app/pages/index.jsx");
+  expect(bundle).not.toContain("server-only-secret");
 });
 
 test.concurrent("bun bake reports a page that a route of app/server.ts hides", async () => {

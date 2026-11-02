@@ -1,5 +1,5 @@
 use super::ts_declarations::{
-    comments_behind_type_alias_operator, comments_trailing_type_alias_left_side,
+    comments_after_type_alias_operator, comments_trailing_type_alias_left_side,
 };
 use crate::js::parentheses::ts_type::{effective_parent, needs_parentheses};
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
@@ -23,8 +23,8 @@ fn is_one_of_several_tuple_elements(parent: AstNodes<'_>) -> bool {
         if matches!(tuple.kind(), TypeKind::Tuple(elements) if elements.len() > 1))
 }
 
-/// Prettier's `shouldUnionTypePrintOwnComments`: [`write_ts_union_type_in`] writes the leading and trailing comments of the
-/// union `ty`, inside its indentation and its parentheses. False if `ty` is not a union.
+/// Prettier's `shouldUnionTypePrintOwnComments`: [`write_ts_union_type_in`] prints the leading and trailing comments of
+/// the union `ty`, inside its indentation and its parentheses. False if `ty` isn't a union.
 ///
 /// ```ts
 /// let a:
@@ -45,11 +45,11 @@ pub(crate) fn union_prints_own_comments<'a>(ty: TypeNode<'a>, f: &Formatter<'a>)
             parent,
             AstNodes::TSUnionType(_) | AstNodes::TSIntersectionType(_)
         )
-        && !(comments_stay_outside_of_parentheses(f) && needs_parentheses(ty, f))
+        && !(comments_stay_outside_parentheses(f) && needs_parentheses(ty, f))
 }
 
-/// `keyof /* comment */ (A | B)` stays as it is for oxfmt. Prettier writes the comments of a union in its parentheses.
-fn comments_stay_outside_of_parentheses(f: &Formatter<'_>) -> bool {
+/// oxfmt leaves `keyof /* comment */ (A | B)` as is. Prettier prints a union's comments inside its parentheses.
+fn comments_stay_outside_parentheses(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
@@ -63,8 +63,8 @@ fn comments_stay_outside_of_parentheses(f: &Formatter<'_>) -> bool {
 /// | C
 /// ```
 ///
-/// `is_indented_by_parent`: `ty` is the right side of a type alias, which has written a line break and an indentation
-/// after the `=`.
+/// `is_indented_by_parent` means `ty` is the right side of a type alias, which has already printed a line break and an
+/// indentation after the `=`.
 #[inline(never)]
 pub(crate) fn write_ts_union_type_in<'a>(
     ty: TypeNode<'a>,
@@ -122,7 +122,7 @@ pub(crate) fn write_ts_union_type_in<'a>(
 
     let members = UnionMembers {
         types,
-        comments_behind_first_operator: CommentList::empty(),
+        comments_after_first_operator: CommentList::empty(),
     };
     let printed = format_with(|f| {
         write!(
@@ -159,8 +159,8 @@ pub(crate) fn write_ts_union_type_in<'a>(
     if is_indented_by_parent || !should_indent_union_type(ty, parent) {
         return write!(f, printed);
     }
-    // With `experimentalTernaries` the type after `extends` is in parentheses that start with a line break. This is a second
-    // one, and Prettier writes both.
+    // With `experimentalTernaries` the type after `extends` is in parentheses that start with a line break. This is a
+    // second one, and Prettier prints both.
     let is_after_line_break = f.options().experimental_ternaries
         && matches!(parent, AstNodes::TSConditionalType(it) if matches!(it.kind(), TypeKind::Cond { extends, .. } if extends.span().contains(ty.span())));
     let line = if is_after_line_break {
@@ -171,9 +171,9 @@ pub(crate) fn write_ts_union_type_in<'a>(
     write!(f, group(&indent(&format_args!(line, printed))));
 }
 
-/// For oxfmt a `prettier-ignore` comment before a union applies to the whole union, as before any other node, and so does
-/// one after its last type that ends the line. For Prettier one on its own line before the union applies to the first type
-/// only, and one after the last type to that type.
+/// In oxfmt a `prettier-ignore` comment before a union applies to the whole union, as with any other node, and so does
+/// one after its last type that ends the line. In Prettier an own-line one before the union applies only to the first
+/// type, and one after the last type applies only to that type.
 fn is_ignored_by_comment_of_first_or_last_type<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> bool {
     if !f.options().flavor.is_oxfmt() || f.is_quiet() || !f.comments().has_suppression_comments() {
         return false;
@@ -194,8 +194,8 @@ fn is_ignored_by_comment_of_first_or_last_type<'a>(ty: TypeNode<'a>, f: &Formatt
         })
 }
 
-/// oxfmt follows Prettier 3.8: a union that does not fit where it is has each type on a line of its
-/// own. 3.9 first tries all of them on one line, after a line break.
+/// oxfmt follows Prettier 3.8: a union that doesn't fit puts each type on its own line. 3.9 first tries all of them on
+/// one line, after a line break.
 ///
 /// ```ts
 /// type A =              type A =
@@ -206,10 +206,10 @@ pub(crate) fn union_breaks_one_per_line(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// The comments that the union `ty`, whose parent is `parent`, writes before its first type, in source order:
-/// - the comments behind the `:` of a property signature, which dangle from it for oxfmt (`a: // comment ⏎ | B | C`),
-/// - the leading comments of the union,
-/// - the leading comments of its first type that are before its first `|`.
+/// The comments that the union `ty`, whose parent is `parent`, prints before its first type, in source order:
+/// - the comments after a property signature's `:`, which dangle from it in oxfmt (`a: // comment ⏎ | B | C`),
+/// - the union's leading comments,
+/// - its first type's leading comments that are before its first `|`.
 fn comments_before_first_type<'a>(
     ty: TypeNode<'a>,
     parent: AstNodes<'a>,
@@ -221,13 +221,13 @@ fn comments_before_first_type<'a>(
     if f.is_quiet() {
         return [CommentList::empty(); 3];
     }
-    let behind_colon = match (parent, parent.parent()) {
+    let after_colon = match (parent, parent.parent()) {
         (AstNodes::TSTypeAnnotation(_), signature @ AstNodes::TSPropertySignature(_)) => {
             f.comments().of_node(signature).dangling
         }
         _ => CommentList::empty(),
     };
-    let of_first_type = types.first().map_or(CommentList::empty(), |first| {
+    let first_type_comments = types.first().map_or(CommentList::empty(), |first| {
         let first = without_lone_operator(first).as_ast_nodes();
         let leading_comments = f.comments().of_node(first).leading;
         let before_union = (leading_comments.iter())
@@ -235,11 +235,11 @@ fn comments_before_first_type<'a>(
             .count();
         leading_comments.slice(0, before_union)
     });
-    let of_union = f.comments().of_node(AstNodes::TSUnionType(ty)).leading;
-    [behind_colon, of_union, of_first_type]
+    let union_comments = f.comments().of_node(AstNodes::TSUnionType(ty)).leading;
+    [after_colon, union_comments, first_type_comments]
 }
 
-/// oxc's `TSUnionType::write`, which is `printUnionType` of Prettier 3.8, for a union that is not written like an object
+/// oxc's `TSUnionType::write`, which is Prettier 3.8's `printUnionType`, for a union that isn't printed like an object
 /// type.
 fn write_union_one_per_line<'a>(
     ty: TypeNode<'a>,
@@ -252,22 +252,26 @@ fn write_union_one_per_line<'a>(
     let needs_parentheses = needs_parentheses(ty, f);
     let comments = match (prints_own_comments, needs_parentheses) {
         (true, _) => comments_before_first_type(ty, parent, f),
-        // `( // comment ⏎ A | B)[]`. The comments of the union are outside of the parentheses.
+        // `( // comment ⏎ A | B)[]`. The union's comments are outside the parentheses.
         (false, true) => {
-            let [_, _, of_first_type] = comments_before_first_type(ty, parent, f);
-            [CommentList::empty(), CommentList::empty(), of_first_type]
+            let [_, _, first_type_comments] = comments_before_first_type(ty, parent, f);
+            [
+                CommentList::empty(),
+                CommentList::empty(),
+                first_type_comments,
+            ]
         }
         (false, false) => [CommentList::empty(); 3],
     };
-    let [_, of_union, _] = comments;
+    let [_, union_comments, _] = comments;
     let leading_comments = || comments.into_iter().flatten();
     let is_after_code_at_end_of_line = |comment: Comment<'_>| {
         comment.is_block() && !comment.has_newline_before() && comment.has_newline_after()
     };
     let is_in_type_alias = matches!(parent, AstNodes::TSTypeAliasDeclaration(_));
     let has_end_of_line_comment = leading_comments().any(|comment| comment.has_newline_after());
-    // Comments go behind the `|` that is written before the first type, wherever they are in the text. Only if one of
-    // them ends its line do they all stay before it: there would be a line break between the `|` and the type.
+    // Comments go after the `|` that's printed before the first type, wherever they are in the source. But if one of
+    // them ends its line, they all stay before the `|`, or there would be a line break between the `|` and the type.
     //
     // ```ts
     // type A = /* comment */ B | C;      type A =
@@ -275,22 +279,22 @@ fn write_union_one_per_line<'a>(
     //                                      | C;
     // ```
     let has_comments_before_operator = has_end_of_line_comment;
-    // After the `?` or `:` of a conditional type the comments are behind the operator, and what follows is in line
-    // with them.
+    // After the `?` or `:` of a conditional type the comments go after the operator, and what follows lines up with
+    // them.
     let is_branch_of_conditional_type = matches!(parent, AstNodes::TSConditionalType(it) if matches!(it.kind(), TypeKind::Cond { yes, no, .. } if yes.span().contains(ty.span()) || no.span().contains(ty.span())));
 
     let should_indent = match parent {
         AstNodes::TSTypeAssertion(_)
         | AstNodes::TSTupleType(_)
         | AstNodes::TSTypeParameterInstantiation(_) => false,
-        // The line break after the `=`, which a comment forces, comes with an indentation.
+        // A comment forces the line break after the `=`, which already comes with an indentation.
         AstNodes::TSTypeAliasDeclaration(statement) => {
             !type_alias_union_breaks_after_operator(statement, ty, f)
         }
         AstNodes::TSConditionalType(_) if is_branch_of_conditional_type => {
             !has_comments_before_operator
         }
-        // A line comment before `as` is written behind it, with a line break and an indentation.
+        // A line comment before `as` is printed after it, with a line break and an indentation.
         AstNodes::TSAsExpression(cast) | AstNodes::TSSatisfiesExpression(cast) => {
             !matches!(cast.kind(), ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } if f.comments().has_printed_line_comment_after(expr.span().end))
         }
@@ -299,9 +303,9 @@ fn write_union_one_per_line<'a>(
     let starts_with_line_break = should_indent && !has_comments_before_operator;
     let members = UnionMembers {
         types,
-        comments_behind_first_operator: match has_comments_before_operator {
+        comments_after_first_operator: match has_comments_before_operator {
             true => CommentList::empty(),
-            false => of_union,
+            false => union_comments,
         },
     };
     let types = format_with(|f| {
@@ -360,11 +364,11 @@ fn is_jsdoc(comment: Comment<'_>) -> bool {
     comment.text().starts_with(b"/**")
 }
 
-/// oxc's `alias_union_breaks_after_operator`: whether the union `ty`, which is the type of the type alias `statement`,
+/// oxc's `alias_union_breaks_after_operator`: true if the union `ty`, which is the type alias `statement`'s type,
 /// leaves the line break and the indentation to the `=`.
 ///
-/// - A JSDoc comment behind code ends its line, or one over several lines has its stars lined up.
-/// - A comment that trails the left side ends the line of the `=`.
+/// - A JSDoc comment after code ends its line, or a multi-line one has its stars lined up.
+/// - A comment that trails the left side ends the `=`'s line.
 pub(crate) fn type_alias_union_breaks_after_operator<'a>(
     statement: Stmt<'a>,
     ty: TypeNode<'a>,
@@ -377,13 +381,13 @@ pub(crate) fn type_alias_union_breaks_after_operator<'a>(
     comments.into_iter().flatten().any(|comment| {
         comment.is_indentable_block()
             || (is_jsdoc(comment) && !comment.has_newline_before() && comment.has_newline_after())
-    }) || (comments_behind_type_alias_operator(statement, f).last())
+    }) || (comments_after_type_alias_operator(statement, f).last())
         .or_else(|| comments_trailing_type_alias_left_side(statement, f).last())
         .is_some_and(|comment| comment.has_newline_after())
 }
 
-/// oxc's `union_prints_itself`: a union that a `prettier-ignore` comment applies to is copied from the source, and its parent
-/// treats it like any other type.
+/// oxc's `union_prints_itself`: a union that a `prettier-ignore` comment applies to is copied from the source, and its
+/// parent treats it like any other type.
 pub(crate) fn union_prints_itself<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> bool {
     matches!(ty.kind(), TypeKind::Union(_))
         && (f.is_quiet()
@@ -391,9 +395,9 @@ pub(crate) fn union_prints_itself<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> bo
                 || is_ignored_by_comment_of_first_or_last_type(ty, f)))
 }
 
-/// Whether `ty`, the type of a property signature, is a union that writes the comments behind the `:` of the signature. See
+/// True if `ty`, a property signature's type, is a union that prints the comments after the signature's `:`. See
 /// [`comments_before_first_type`].
-pub(crate) fn union_writes_comments_behind_colon<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> bool {
+pub(crate) fn union_prints_comments_after_colon<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> bool {
     union_breaks_one_per_line(f) && union_prints_own_comments(ty, f) && union_prints_itself(ty, f)
 }
 
@@ -410,18 +414,18 @@ fn should_indent_union_type<'a>(ty: TypeNode<'a>, parent: AstNodes<'a>) -> bool 
     }
 }
 
-/// For oxfmt the comments after a type of a union are not aligned with it, unless it is a union in parentheses. For Prettier
-/// they are if there are comments before it.
-fn trailing_comments_are_outside_of_alignment(f: &Formatter<'_>) -> bool {
+/// oxfmt doesn't align the comments after a union's type with it, unless that type is a union in parentheses. Prettier
+/// aligns them if there are comments before the type.
+fn trailing_comments_are_outside_alignment(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// The types of a union that is not written like an object type, and the `|` between them.
+/// The types of a union that isn't printed like an object type, and the `|` between them.
 #[derive(Copy, Clone)]
 struct UnionMembers<'a> {
     types: List<'a, TypeNode<'a>>,
-    /// Leading comments of the union that are written with the first type.
-    comments_behind_first_operator: CommentList<'a>,
+    /// The union's leading comments that are printed with the first type.
+    comments_after_first_operator: CommentList<'a>,
 }
 
 impl<'a> Format<'a> for UnionMembers<'a> {
@@ -434,7 +438,7 @@ impl<'a> Format<'a> for UnionMembers<'a> {
                 write!(f, align(2, &member));
                 continue;
             }
-            // Only the type is aligned, so that a comment on its own line after it lines up with the `|`:
+            // Only the type is aligned, so that an own-line comment after it lines up with the `|`:
             //
             // ```ts
             // | A
@@ -444,8 +448,7 @@ impl<'a> Format<'a> for UnionMembers<'a> {
             let member = without_lone_operator(member);
             let node = member.as_ast_nodes();
             let has_leading_comments = !f.comments().of_node(node).leading.is_empty();
-            let are_trailing_comments_aligned = match trailing_comments_are_outside_of_alignment(f)
-            {
+            let are_trailing_comments_aligned = match trailing_comments_are_outside_alignment(f) {
                 // `| (A | B /* comment */)`
                 true => index > 0 && matches!(member.kind(), TypeKind::Union(_)),
                 false => has_leading_comments,
@@ -455,7 +458,7 @@ impl<'a> Format<'a> for UnionMembers<'a> {
                 continue;
             }
             let comments_of_union = (index == 0).then_some(FormatLeadingComments::Comments(
-                self.comments_behind_first_operator,
+                self.comments_after_first_operator,
             ));
             let member = FormatNodeWithoutTrailingComments(&member);
             write!(

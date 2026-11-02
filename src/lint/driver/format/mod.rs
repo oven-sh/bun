@@ -26,21 +26,21 @@ pub(crate) enum Format {
     Json,
     JsonWithMetadata,
     Unix,
-    /// With the code around each problem, as `bun check` prints errors in a terminal.
+    /// Shows the code around each problem, like `bun check`'s errors in a terminal.
     Pretty,
     /// The same in tags, for a language model.
     Agent,
-    /// Workflow commands of GitHub Actions.
+    /// GitHub Actions workflow commands.
     Github,
-    /// What oxlint calls `default`: `pretty`, with all else that there is to say after it.
+    /// oxlint's `default`: `pretty`, followed by everything else oxlint prints.
     OxlintDefault,
-    /// What oxlint calls by the same name, byte for byte.
+    /// oxlint's format of the same name, byte for byte.
     OxlintStylish,
     OxlintJson,
     OxlintUnix,
     OxlintAgent,
     OxlintGithub,
-    /// The same, whatever the configuration.
+    /// These four are the same with every config.
     Checkstyle,
     Junit,
     Gitlab,
@@ -50,8 +50,8 @@ pub(crate) enum Format {
 impl Format {
     pub(crate) const NAMES: &'static str = "stylish, pretty, json, json-with-metadata, unix, github, agent, checkstyle, junit, gitlab, sarif";
 
-    /// Says that none is called `name`.
-    pub(crate) fn is_missing(name: &[u8]) -> Vec<u8> {
+    /// The error for the unknown format `name`.
+    pub(crate) fn unknown_format_error(name: &[u8]) -> Vec<u8> {
         [
             b"Unknown format \"",
             name,
@@ -61,7 +61,7 @@ impl Format {
         .concat()
     }
 
-    /// `is_oxlint`: the configuration is oxlint's, so the names are too.
+    /// With `is_oxlint`, the config is oxlint's, so the names mean oxlint's formats.
     pub(crate) fn by_name(name: &[u8], is_oxlint: bool) -> Option<Format> {
         Some(match name {
             b"json-with-metadata" => Format::JsonWithMetadata,
@@ -85,8 +85,8 @@ impl Format {
         })
     }
 
-    /// Whether what it returns is all of standard output as oxlint prints it, with the end of the last line if there is one.
-    pub(crate) fn is_of_oxlint(self) -> bool {
+    /// True if the output is oxlint's entire standard output, including the final newline if there is one.
+    pub(crate) fn is_oxlint_output(self) -> bool {
         matches!(
             self,
             Format::OxlintDefault
@@ -102,29 +102,29 @@ impl Format {
         )
     }
 
-    /// Whether a person reads it, and nothing takes it apart.
-    pub(crate) fn is_for_people(self) -> bool {
+    /// True if it's meant for people and isn't parsed by tools.
+    pub(crate) fn is_human_readable(self) -> bool {
         matches!(
             self,
             Format::Pretty | Format::Stylish | Format::OxlintDefault | Format::OxlintStylish
         )
     }
 
-    /// Whether it reads [`FileResult::text`]. Those of oxlint count bytes, which the messages do not.
+    /// True if it reads [`FileResult::text`]. oxlint's formats print byte offsets, which the messages don't have.
     pub(crate) fn reads_text(self) -> bool {
-        self.is_of_oxlint()
+        self.is_oxlint_output()
             || matches!(
                 self,
                 Format::Json | Format::JsonWithMetadata | Format::Pretty | Format::Agent
             )
     }
 
-    /// Whether it prints [`LintMessage::suppressions`](bun_lint::linter::LintMessage::suppressions).
+    /// True if it prints [`LintMessage::suppressions`](bun_lint::linter::LintMessage::suppressions).
     pub(crate) fn reads_suppressions(self) -> bool {
         matches!(self, Format::Json | Format::JsonWithMetadata)
     }
 
-    /// Whether it prints [`LintMessage::help`](bun_lint::linter::LintMessage::help).
+    /// True if it prints [`LintMessage::help`](bun_lint::linter::LintMessage::help).
     pub(crate) fn reads_help(self) -> bool {
         matches!(
             self,
@@ -136,17 +136,17 @@ impl Format {
         )
     }
 
-    /// Whether it shows only some of many problems with all that there is to say about them, unless `--all` is given.
+    /// True if, when there are many problems, it prints only some of them in full unless `--all` is passed.
     pub(crate) fn groups(self) -> bool {
         matches!(self, Format::Pretty | Format::Agent | Format::OxlintDefault)
     }
 
-    /// Whether it prints fixes or suggestions.
-    pub(crate) fn reads_texts_of_fixes(self) -> bool {
+    /// True if it prints fixes or suggestions.
+    pub(crate) fn reads_fix_texts(self) -> bool {
         matches!(self, Format::Json | Format::JsonWithMetadata)
     }
 
-    /// Whether it prints fixes or suggestions, or counts what can be fixed.
+    /// True if it prints fixes or suggestions, or counts what can be fixed.
     pub(crate) fn reads_fixes(self) -> bool {
         matches!(
             self,
@@ -159,13 +159,13 @@ impl Format {
     }
 }
 
-/// ESLint's `ResultsMeta`, and what else a format wants to know.
 /// [`Context::with_help`](crate::lint::Context::with_help)
 pub(crate) type WithHelp<'m> =
     &'m (dyn Fn(&FileResult, Option<&[&RuleId]>) -> Vec<LintMessage> + Sync);
 
+/// ESLint's `ResultsMeta`, plus whatever else a format needs.
 pub(crate) struct Meta<'m> {
-    /// If the messages lack what it makes.
+    /// Set if the messages don't have their help text yet.
     pub(crate) help: Option<WithHelp<'m>>,
     pub(crate) cwd: &'m [u8],
     pub(crate) color: bool,
@@ -175,34 +175,34 @@ pub(crate) struct Meta<'m> {
     pub(crate) width: usize,
     /// `--color`, `--no-color`
     pub(crate) color_option: Option<bool>,
-    /// `maxWarnings` and `foundWarnings`, if there are too many.
+    /// `maxWarnings` and `foundWarnings`, if the limit is exceeded.
     pub(crate) max_warnings_exceeded: Option<(i64, usize)>,
-    /// What there is, with what `--quiet` and `--silent` hide.
+    /// The totals, including what `--quiet` and `--silent` hide.
     pub(crate) found: Counts,
-    /// How many files `--fix` has written.
+    /// How many files `--fix` wrote.
     pub(crate) fixed: usize,
-    /// This run has written `oxlint-suppressions.json`. `Some(true)`: there was one before.
+    /// Set if this run wrote `oxlint-suppressions.json`. `Some(true)` if the file already existed.
     pub(crate) updated_suppressions: Option<bool>,
-    /// `--all`: identical problems are not grouped.
+    /// `--all`: don't group identical problems.
     pub(crate) shows_all: bool,
-    /// Also print the `github` format: the run is one of GitHub Actions.
+    /// Also print the `github` format, because this runs in GitHub Actions.
     pub(crate) github_annotations: bool,
     pub(crate) run: oxlint::Run,
-    /// The configuration is oxlint's, so the run says that it is one of oxlint.
+    /// The config is oxlint's, so the output names oxlint as the tool.
     pub(crate) is_oxlint: bool,
     /// No ESLint or oxlint config applies.
     pub(crate) is_native: bool,
     pub(crate) pool: &'m Pool,
-    /// Of Bun.
+    /// Bun's version.
     pub(crate) version: &'m [u8],
 }
 
-/// The line and column of `message` for a format that ESLint doesn't have. `is_oxlint`: [`Meta::is_oxlint`], where a report at
-/// line 0 is one without a place.
-fn shown_at(message: &LintMessage, is_oxlint: bool) -> (u32, u32) {
+/// The line and column of `message` for a format that ESLint doesn't have. `is_oxlint` is [`Meta::is_oxlint`]. With it,
+/// a report at line 0 has no location.
+fn display_position(message: &LintMessage, is_oxlint: bool) -> (u32, u32) {
     match is_oxlint {
         true => (message.line, message.column),
-        false => message.place(),
+        false => message.line_and_column(),
     }
 }
 
@@ -222,7 +222,7 @@ fn linked<'n>(name: &'n [u8], message: &LintMessage, meta: &Meta) -> Cow<'n, [u8
     link(name, message, meta).map_or(Cow::Borrowed(name), Cow::Owned)
 }
 
-/// What ESLint's formatter of that name returns for `results`, which are sorted by path, or what oxlint prints.
+/// Returns what ESLint's formatter of that name returns for `results`, which are sorted by path, or what oxlint prints.
 pub(crate) fn format(format: Format, results: &[FileResult], meta: &Meta) -> Vec<u8> {
     let mut out = Vec::new();
     match format {
@@ -247,22 +247,25 @@ pub(crate) fn format(format: Format, results: &[FileResult], meta: &Meta) -> Vec
     out
 }
 
-/// What GitHub Actions gets besides the report: a workflow command for each problem. Empty: nothing.
-/// `is_alone`: the report is not on standard output, where they go.
+/// Returns the extra output for GitHub Actions: a workflow command for each problem, or nothing. `report_is_elsewhere`
+/// means the report itself doesn't go to standard output, where these commands go.
 pub(crate) fn annotations(
     format: Format,
     results: &[FileResult],
     meta: &Meta,
-    is_alone: bool,
+    report_is_elsewhere: bool,
 ) -> Vec<u8> {
     let mut out = Vec::new();
-    // Not among what a program reads, and not twice.
-    let fits = match format {
+    // Never mixed into output that a program parses, and never printed twice.
+    let is_allowed_here = match format {
         Format::Stylish | Format::Pretty => true,
         Format::Github => false,
-        _ => is_alone,
+        _ => report_is_elsewhere,
     };
-    if meta.github_annotations && fits && results.iter().any(|it| !it.messages.is_empty()) {
+    if meta.github_annotations
+        && is_allowed_here
+        && results.iter().any(|it| !it.messages.is_empty())
+    {
         excerpt::write_github(&mut out, results, meta);
     }
     out

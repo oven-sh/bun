@@ -24,7 +24,7 @@ use crate::hir::visitors::{ScopeBlockInfo, ScopeBlockTraversal};
 use crate::hir::{
     AstAlloc, BasicBlock, BlockId, DeclarationId, DependencyPathEntry, EvaluationOrder, FunctionId,
     GotoVariant, HirFunction, HirVec, IdentifierId, Instruction, InstructionKind, InstructionValue,
-    MutableRange, ParamPattern, Place, PlaceOrSpread, PropertyLiteral, ReactFunctionType,
+    MutableRange, ParamPattern, Phi, Place, PlaceOrSpread, PropertyLiteral, ReactFunctionType,
     ReactiveScopeDependency, ScopeId, Terminal, Type, hir_vec, visitors,
 };
 use crate::optimization::dead_code_elimination::find_semantic_only_caught_instructions;
@@ -1915,6 +1915,20 @@ impl<'a> DependencyCollectionContext<'a> {
         Ok(())
     }
 
+    /// Not in upstream (facebook/react#37224): a scope gives back a variable on a path that did not assign it too.
+    fn visit_phi(&mut self, phi: &Phi, before_block: EvaluationOrder, env: &mut Environment) {
+        for operand in phi.operands.values() {
+            // What is not declared yet comes from a loop back edge, later in the scope.
+            if self.temporaries.contains_key(operand.identifier)
+                || self.reassignments.contains_key(operand.identifier)
+            {
+                self.visit_operand(operand, env);
+            }
+        }
+        // Codegen reads a dependency by name before the scope, where the variable does not hold this phi yet.
+        self.declare(phi.place.identifier, before_block, env);
+    }
+
     fn current_scope(&self) -> Option<ScopeId> {
         self.scope_stack.last().copied()
     }
@@ -2318,11 +2332,15 @@ fn handle_function_deps(
         }
 
         // Record phi operands
-        for phi in &block.phis {
-            for (_pred_id, operand) in &phi.operands {
-                if let Some(maybe_optional_chain) = ctx.temporaries.get(operand.identifier) {
-                    ctx.visit_dependency(maybe_optional_chain.clone(), env);
-                }
+        if !block.phis.is_empty() {
+            let first = match block.instructions.first() {
+                Some(instr_id) => func.instructions[instr_id.0 as usize].id,
+                None => block.terminal.evaluation_order(),
+            };
+            // A scope starts at the id of its terminal, and the phis of the block of that terminal are before it.
+            let before_block = EvaluationOrder(first.0.saturating_sub(1));
+            for phi in &block.phis {
+                ctx.visit_phi(phi, before_block, env);
             }
         }
 

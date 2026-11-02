@@ -3,7 +3,7 @@
 // https://github.com/nodejs/node/blob/v26.3.0/lib/https.js
 const http = require("node:http");
 const { isIP } = require("internal/net/isIP");
-const { urlToHttpOptions } = require("internal/url");
+const { isURL, urlToHttpOptions } = require("internal/url");
 const { kEmptyObject, once } = require("internal/shared");
 const { validateObject } = require("internal/validators");
 const {
@@ -39,7 +39,7 @@ function request(...args: [input?: unknown, options?: unknown, cb?: unknown]) {
   if (typeof args[0] === "string") {
     const urlStr = ArrayPrototypeShift.$call(args);
     options = urlToHttpOptions(new URL(urlStr));
-  } else if (args[0] instanceof URL) {
+  } else if (isURL(args[0])) {
     options = urlToHttpOptions(ArrayPrototypeShift.$call(args));
   }
 
@@ -605,7 +605,7 @@ function Server(options, requestListener): void {
   this.ALPNCallback = options.ALPNCallback;
   const blockList = options.blockList;
   if (blockList) {
-    if (!$rust("node_net_binding.rs", "BlockList").isBlockList(blockList)) {
+    if (!$bindgen("BlockList.bind.ts", "BlockList").isBlockList(blockList)) {
       throw $ERR_INVALID_ARG_TYPE("options.blockList", "net.BlockList", blockList);
     }
     this.blockList = blockList;

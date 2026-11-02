@@ -1,10 +1,8 @@
-//! The intermediate representation: what the syntax is turned into, and what the printer turns
-//! into text.
+//! The intermediate representation: formatting turns the syntax tree into it, and the printer turns it into text.
 //!
-//! A document is a flat sequence of [`FormatElement`]s. Nesting is expressed by pairs of start and
-//! end [`Tag`]s. An element is 16 bytes and `Copy`: it never owns anything. Text is a range of the
-//! source or of the formatter's own text buffer, and a sub-document that is written in more than
-//! one place is a range of the formatter's pool.
+//! A document is a flat sequence of [`FormatElement`]s. Nesting is expressed by pairs of start and end [`Tag`]s. An
+//! element is 16 bytes and `Copy`, so it never owns anything. Text is a range of the source or of the formatter's own
+//! text buffer, and a sub-document that's written in more than one place is a range of the formatter's pool.
 
 use crate::options::Flavor;
 use std::num::NonZeroU32;
@@ -13,60 +11,57 @@ const _: () = assert!(size_of::<FormatElement>() == 16);
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub(crate) enum FormatElement {
-    /// Nothing: the place of a start tag that turned out not to be needed. See
+    /// A no-op left in the slot reserved for a start tag that turned out not to be needed. See
     /// `Formatter::reserve_tag`.
     Nop,
-    /// The next so many elements are not part of what this is in. They are what an [`Interned`]
-    /// is a range of, left where they were written. See `Formatter::capture`.
+    /// The next `len` elements aren't part of the enclosing content, so readers skip them. They're captured content
+    /// that an [`Interned`] points to, left where it was written. See `Formatter::capture`.
     Skip(Skip),
     /// A space, unless it would end up at the start or at the end of a line.
     Space,
     Line(LineMode),
-    /// The same as a group with this id, and in it an indent, and in that a
-    /// [`LineMode::SoftOrSpace`]: a line break that is taken, with one more level of indentation
-    /// after it, if what follows it does not fit on the line.
+    /// Shorthand for a group with this id that contains an indent that contains a [`LineMode::SoftOrSpace`]. It breaks,
+    /// and indents the next line one more level, if what follows doesn't fit on the line.
     IndentedLineGroup(GroupId),
     /// Forces the enclosing groups to break.
     ExpandParent,
-    /// A keyword or a punctuator: ASCII, without line breaks or tabs.
+    /// A keyword or punctuator: ASCII, no line breaks or tabs.
     Token(Token),
-    /// One that is only written if the enclosing group breaks: the same as a [`FormatElement::Token`]
-    /// in a [`Tag::StartConditionalContent`] for [`PrintMode::Expanded`] without a group id.
+    /// A token that's only printed if the enclosing group breaks. Shorthand for a [`FormatElement::Token`] in a
+    /// [`Tag::StartConditionalContent`] for [`PrintMode::Expanded`] without a group id.
     TokenIfBreaks(Token),
     /// A range of the source text.
     SourceText(Text),
     /// A range of the formatter's text buffer.
     OwnedText(Text),
-    /// Line suffixes do not move past this. If there are any pending, they are printed, and a
-    /// line break after them.
+    /// Line suffixes can't move past this. Any pending ones are printed here, followed by a line break.
     LineSuffixBoundary,
-    /// Content that is stored once and can be written any number of times.
+    /// Content that's stored once and can be written any number of times.
     Interned(Interned),
     /// Several ways to write the same thing. The printer picks the first that fits.
     BestFitting(BestFitting),
-    /// Prettier's `cursor`: the printer notes where in the text this is. It has no width and no
-    /// effect on anything.
+    /// Prettier's `cursor`. The printer records its offset in the output. It has no width and doesn't affect layout.
     Cursor(CursorMark),
     Tag(Tag),
 }
 
-/// An end of the part of the text that the cursor is in. See `cursor.rs`.
+/// One end of the text region that contains the cursor. See `cursor.rs`.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub(crate) enum CursorMark {
-    /// Of several that are printed, the last counts.
+    /// If several are printed, the last one wins.
     RegionStart,
-    /// Of several that are printed, the first counts.
+    /// If several are printed, the first one wins.
     RegionEnd,
 }
 
 /// See [`FormatElement::Skip`].
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub(crate) struct Skip {
-    /// The number of elements.
+    /// Number of elements to skip.
     pub(crate) len: u32,
-    /// What they are on one line.
+    /// Their flat (one-line) measurements.
     pub(crate) flat: Flat,
-    /// What `Storage::will_break` says about them.
+    /// The cached result of `Storage::will_break` for them.
     pub(crate) will_break: bool,
 }
 
@@ -81,15 +76,15 @@ impl Skip {
     }
 }
 
-/// What `document::propagate_expand` finds out about the content of a group, or about interned
-/// content: all that the printer has to know to tell whether it fits on the rest of a line.
+/// Measurements of a group's content, or of interned content, computed by `document::Tracker`. They're all the printer
+/// needs to decide whether the content fits on the rest of a line.
 ///
-/// A space is pending until a text follows it, and two in a row are one. So the spaces before
-/// the first text and after the last are not part of the width.
+/// A space is pending until text follows it, and two in a row collapse into one. So the spaces before the first text
+/// and after the last aren't part of the width.
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
 pub(crate) struct Flat {
-    /// The number of columns from the start of the first text to the end of the last. 0 if there
-    /// is no text: content with a text that has no width is not measured.
+    /// Columns from the start of the first text to the end of the last. 0 means there's no text, because content that
+    /// has a zero-width text isn't measured.
     pub(crate) width: u16,
     pub(crate) flags: FlatFlags,
 }
@@ -98,23 +93,22 @@ pub(crate) struct Flat {
 pub(crate) struct FlatFlags(u8);
 
 impl FlatFlags {
-    /// The rest is known, and printing the content flat is only a matter of writing its texts.
-    /// It is not set if that depends on what the printer has done before: the content has
-    /// something that depends on a group by its id, a line suffix, a forced line break in a
-    /// variant.
+    /// The other fields are valid, and printing the content flat just means writing its texts. Not set if the result
+    /// depends on earlier printer state, which is the case when the content refers to a group by id, has a line suffix,
+    /// or has a forced line break in a variant.
     pub(crate) const MEASURED: FlatFlags = FlatFlags(1);
     /// A [`FormatElement::Space`] comes after the last text.
     pub(crate) const ENDS_WITH_SPACE_ELEMENT: FlatFlags = FlatFlags(1 << 1);
-    /// A line break that is a space on one line comes before the first text.
+    /// A line break that prints as a space when flat comes before the first text.
     pub(crate) const STARTS_WITH_LINE: FlatFlags = FlatFlags(1 << 2);
     /// A [`FormatElement::Space`] comes before the first text. It counts unless the line is empty.
     pub(crate) const STARTS_WITH_SPACE: FlatFlags = FlatFlags(1 << 3);
-    /// A space is pending after the last text, be it for a line break or a [`FormatElement::Space`].
+    /// A space is pending after the last text, from either a line break or a [`FormatElement::Space`].
     pub(crate) const ENDS_WITH_SPACE: FlatFlags = FlatFlags(1 << 4);
     pub(crate) const HAS_LINE_SUFFIX_BOUNDARY: FlatFlags = FlatFlags(1 << 5);
-    /// There is a group with an id in it.
+    /// Contains a group with an id.
     pub(crate) const HAS_GROUP_IDS: FlatFlags = FlatFlags(1 << 6);
-    /// There is a forced line break in it. Of interned content only: a group has its mode.
+    /// Contains a forced line break. Only set for interned content, since a group records this in its mode.
     pub(crate) const EXPANDS: FlatFlags = FlatFlags(1 << 7);
 
     #[inline]
@@ -161,7 +155,7 @@ impl Token {
         self.len as usize
     }
 
-    /// With what is behind the text.
+    /// Returns all [`Token::MAX`] bytes, including the zero padding after the text.
     #[inline(always)]
     pub(crate) fn padded(&self) -> &[u8; Token::MAX] {
         &self.bytes
@@ -174,7 +168,7 @@ impl std::fmt::Debug for Token {
     }
 }
 
-/// A range of the source text or of the formatter's text buffer, and how wide it is.
+/// A range of the source text or of the formatter's text buffer, plus its width.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub(crate) struct Text {
     pub(crate) start: u32,
@@ -189,7 +183,7 @@ impl Text {
     }
 }
 
-/// The number of columns that a text takes up to its first line break, and whether it has one.
+/// A text's width in columns up to its first line break, plus whether it has one.
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub(crate) struct TextWidth(u32);
 
@@ -203,16 +197,14 @@ impl TextWidth {
         Self(width & !Self::FLAGS)
     }
 
-    /// `width`: up to the first line break. To Prettier the lines are strings with a `literalline`
-    /// between them.
+    /// `width` is measured up to the first line break. Prettier sees the lines as strings joined by `literalline`.
     #[inline]
     pub(crate) const fn multiline(width: u32) -> Self {
         Self(width & !Self::FLAGS | Self::MULTILINE)
     }
 
-    /// `width`: of all the lines together. To Prettier it is one string, in which a line break is a
-    /// character without width like another: whether it fits is asked of all of it and of what
-    /// follows it.
+    /// `width` is the total of all lines. Prettier sees one string in which a line break is just another zero-width
+    /// character, so the fit check covers the whole string and what follows it.
     #[inline]
     pub(crate) const fn multiline_string(width: u32) -> Self {
         Self(width & !Self::FLAGS | Self::FLAGS)
@@ -234,18 +226,18 @@ impl TextWidth {
         self.0 & Self::MULTILINE != 0
     }
 
-    /// `text` can have tabs, `\n` and anything else. A tab counts as nothing, like any control
-    /// character: that is what Prettier's `getStringWidth` does.
+    /// `text` may contain tabs, `\n` and anything else. A tab has zero width like any control character, as in
+    /// Prettier's `getStringWidth`.
     pub(crate) fn from_text(text: &[u8], _indent_width: u32) -> TextWidth {
         Self::from_text_as(text, Flavor::Prettier)
     }
 
-    /// The same as `flavor` counts.
+    /// Same, with `flavor`'s width rules.
     pub(crate) fn from_text_as(text: &[u8], flavor: Flavor) -> TextWidth {
         Self::from_text_with_tabs(text, flavor, 0)
     }
 
-    /// The same, in JavaScript: for oxfmt a tab is as wide as the indentation.
+    /// Same, for JavaScript, where oxfmt counts a tab as one indentation level wide.
     pub(crate) fn from_javascript(text: &[u8], flavor: Flavor, indent_width: u32) -> TextWidth {
         let tab_width = if flavor.is_oxfmt() { indent_width } else { 0 };
         Self::from_text_with_tabs(text, flavor, tab_width)
@@ -305,15 +297,16 @@ pub(crate) struct BestFitting {
     pub(crate) fallback: Fallback,
 }
 
-/// What the printer takes if no variant but the last fits.
+/// The printer's choice when no variant before the last one fits.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub(crate) enum Fallback {
     MostExpanded,
-    /// The flattest variant, expanded, unless a [`GroupMode::StaysExpanded`] group breaks in it. Then it is the most
-    /// expanded one, with that group broken. For two variants of which `will_break()` picks the second: that is what it
-    /// says when the result is formatted again.
+    /// The flattest variant, printed expanded, unless a [`GroupMode::StaysExpanded`] group breaks in it. In that case
+    /// it's the most expanded variant, with that group broken. Use it for two variants where the writer picks the
+    /// second outright if `will_break()` is true, because that's what `will_break()` returns when the output is
+    /// formatted again.
     ///
-    /// Expanded, the flattest variant has a line break before the first such group.
+    /// When expanded, the flattest variant has a line break before the first such group.
     FlattestIfStable,
 }
 
@@ -341,7 +334,7 @@ pub(crate) enum LineMode {
 }
 
 impl LineMode {
-    /// In the order they are declared.
+    /// In declaration order, so `mode as usize` is its index.
     pub(crate) const ALL: [LineMode; 6] = [
         LineMode::SoftOrSpace,
         LineMode::Soft,
@@ -360,7 +353,7 @@ impl LineMode {
 pub(crate) enum PrintMode {
     /// On one line.
     Flat,
-    /// Every soft line break is a line break.
+    /// Every soft line break is printed as a line break.
     Expanded,
 }
 
@@ -370,40 +363,38 @@ impl PrintMode {
     }
 }
 
-/// Marks the start or the end of content that is treated in a special way.
+/// Marks the start or end of content that gets special treatment.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum Tag {
     StartIndent,
     EndIndent,
-    /// The same as a [`Tag::StartIndent`] and a [`FormatElement::Line`] after it.
+    /// Shorthand for a [`Tag::StartIndent`] followed by a [`FormatElement::Line`].
     StartIndentWithLine(LineMode),
-    /// The same as a [`Tag::EndIndent`] and a [`FormatElement::Line`] after it.
+    /// Shorthand for a [`Tag::EndIndent`] followed by a [`FormatElement::Line`].
     EndIndentWithLine(LineMode),
     /// Indents by a number of spaces.
     StartAlign(Align),
     EndAlign,
     StartDedent(DedentMode),
     EndDedent(DedentMode),
-    /// Content that is written on one line if it fits, and otherwise with all of its own line
-    /// breaks.
+    /// Content that's printed on one line if it fits, and otherwise with all of its direct line breaks broken.
     StartGroup(Group),
     EndGroup,
-    /// Content that is only written if a group breaks, or only if it does not.
+    /// Content that's only printed if a group breaks, or only if it doesn't.
     StartConditionalContent(Condition),
     EndConditionalContent,
     StartIndentIfGroupBreaks(GroupId),
     EndIndentIfGroupBreaks(GroupId),
-    /// Alternating items and separators, each a [`Tag::StartEntry`] .. [`Tag::EndEntry`]. As many
-    /// as fit are written on each line.
+    /// Alternating items and separators, each a [`Tag::StartEntry`] .. [`Tag::EndEntry`]. Each line gets as many as
+    /// fit.
     StartFill,
     EndFill,
     StartEntry,
     EndEntry,
-    /// Content that is written at the end of the line.
+    /// Content that's printed at the end of the line.
     StartLineSuffix,
     EndLineSuffix,
-    /// Has no effect on the printer. It lets the code that writes the parent tell what the
-    /// content is.
+    /// Has no effect on the printer. It lets the code that writes the parent tell what the content is.
     StartLabelled(LabelId),
     EndLabelled,
 }
@@ -431,12 +422,12 @@ impl Tag {
 pub(crate) enum GroupMode {
     #[default]
     Flat,
-    /// The same, but it is [`GroupMode::Expand`] if it is broken in the source. So if it breaks because it does not fit, it is
-    /// written to break when the result is formatted again.
+    /// Like `Flat`, but the writer uses [`GroupMode::Expand`] instead when the group is broken in the source. So if
+    /// this group breaks because it doesn't fit, it'll be `Expand` when the output is formatted again.
     StaysExpanded,
-    /// It is written to break.
+    /// The writer forces it to break.
     Expand,
-    /// It breaks because something in it does.
+    /// It breaks because something inside it forces a break.
     Propagated,
 }
 
@@ -446,14 +437,14 @@ impl GroupMode {
     }
 }
 
-/// The halves of the numbers are apart so that it is aligned to two bytes, and the element is 16 bytes.
+/// The `u32`s are stored as `u16` halves so the struct is 2-byte aligned, which keeps [`FormatElement`] at 16 bytes.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
 pub(crate) struct Group {
-    /// 0 is none.
+    /// 0 means no id.
     id: [u16; 2],
-    /// Where the end tag is in the pool, once `flat` is measured.
+    /// The end tag's index in the pool. Only valid once `flat` is measured.
     end: [u16; 2],
-    /// Those of a [`Flat`].
+    /// `width` and `flags` are the fields of a [`Flat`].
     width: u16,
     flags: FlatFlags,
     mode: GroupMode,
@@ -494,7 +485,7 @@ impl Group {
         NonZeroU32::new(u32::from(self.id[0]) | u32::from(self.id[1]) << 16).map(GroupId)
     }
 
-    /// What the content is on one line.
+    /// Returns the content's flat measurements.
     #[inline]
     pub(crate) fn flat(&self) -> Flat {
         Flat {
@@ -503,7 +494,7 @@ impl Group {
         }
     }
 
-    /// The index of the end tag. Only if [`Group::flat`] is measured.
+    /// Returns the end tag's index. Only valid if [`Group::flat`] is measured.
     #[inline]
     pub(crate) fn end(&self) -> u32 {
         u32::from(self.end[0]) | u32::from(self.end[1]) << 16
@@ -526,9 +517,9 @@ pub(crate) enum DedentMode {
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(crate) struct Condition {
-    /// The mode of the group in which the content is written.
+    /// The content is printed only if the group is printed in this mode.
     pub(crate) mode: PrintMode,
-    /// The group, which comes before the content in the document. `None` is the enclosing one.
+    /// The group, which must come before the content in the document. `None` means the enclosing group.
     pub(crate) group_id: Option<GroupId>,
 }
 
@@ -556,7 +547,7 @@ impl Align {
     }
 }
 
-/// Names a group, for content elsewhere that depends on whether the group breaks.
+/// Identifies a group, so content elsewhere can depend on whether it breaks.
 #[derive(Clone, Copy, Eq, PartialEq, Hash)]
 pub(crate) struct GroupId(NonZeroU32);
 
@@ -578,7 +569,7 @@ impl std::fmt::Debug for GroupId {
     }
 }
 
-/// What [`Tag::StartLabelled`] says about the content.
+/// The label that [`Tag::StartLabelled`] attaches to its content.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(crate) struct LabelId(JsLabels);
 

@@ -1,5 +1,5 @@
-//! `a ? b : c` and `A extends B ? C : D` with the option `experimentalTernaries`: the `?` is at the
-//! end of the line of the condition. Prettier's `printTernary`.
+//! `a ? b : c` and `A extends B ? C : D` with the `experimentalTernaries` option: the `?` goes at the end of the
+//! condition's line. Prettier's `printTernary`.
 //!
 //! ```js
 //! const animal =
@@ -18,7 +18,7 @@ use crate::prelude::*;
 use crate::{format_args, write};
 
 impl<'a> Operand<'a> {
-    /// Whether one of the comments attached to it is a block comment that spans several lines.
+    /// True if one of its comments is a block comment that spans several lines.
     fn has_multiline_block_comment(self, f: &Formatter<'a>) -> bool {
         let comments = match self {
             Operand::Expr(e) if is_chain_expression_without_comments(e, f) => return false,
@@ -60,7 +60,7 @@ fn has_multiline_block_comments<'a>(conditional: ConditionalLike<'a>, f: &Format
     }
 }
 
-/// Content that has been formatted, to be written more than once.
+/// Formatted content that's printed more than once.
 struct Interned(Option<FormatElement>);
 
 impl<'a> Format<'a> for Interned {
@@ -71,7 +71,7 @@ impl<'a> Format<'a> for Interned {
     }
 }
 
-/// Prettier's `wrapInParens`: in parentheses, on lines of its own, if the enclosing group breaks.
+/// Prettier's `wrapInParens`: wrapped in parentheses, on its own lines, if the enclosing group breaks.
 struct WrapInParens<'b, T>(&'b T);
 
 impl<'a, T: Format<'a>> Format<'a> for WrapInParens<'_, T> {
@@ -87,8 +87,8 @@ impl<'a, T: Format<'a>> Format<'a> for WrapInParens<'_, T> {
     }
 }
 
-/// Whether `conditional`, an expression, breaks whatever its width: there is a conditional after
-/// its `?` or its `:`, or an operand has a block comment of several lines. Prettier's `shouldBreak`.
+/// True if `conditional`, an expression, breaks regardless of its width: there's a conditional after its `?` or `:`, or
+/// an operand has a multi-line block comment. Prettier's `shouldBreak`.
 pub(crate) fn should_break<'a>(conditional: Expr<'a>, f: &Formatter<'a>) -> bool {
     let ExprKind::Cond { yes, no, .. } = conditional.kind() else {
         return false;
@@ -99,7 +99,7 @@ pub(crate) fn should_break<'a>(conditional: Expr<'a>, f: &Formatter<'a>) -> bool
 }
 
 pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Formatter<'a>) {
-    // The last of what is before the `?`, what is after it, and what is after the `:`.
+    // The last operand before the `?`, the one after it, and the one after the `:`.
     let (test, consequent, alternate, parent) = match conditional {
         ConditionalLike::ConditionalExpression(e) => match e.kind() {
             ExprKind::Cond { test, yes, no } => (
@@ -166,11 +166,11 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
         ConditionalLike::ConditionalExpression(e) => should_extra_indent(e),
         ConditionalLike::TSConditionalType(_) => false,
     };
-    // So that what follows is right behind the `)`: `(a ? b : c\n).d`
+    // So that what follows comes right after the `)`: `(a ? b : c\n).d`
     let break_closing_paren = !is_ts_conditional
         && match parent {
             AstNodes::StaticMemberExpression(_) | AstNodes::PrivateFieldExpression(_) => true,
-            // It is the left side.
+            // It's the left side.
             AstNodes::BinaryExpression(binary) => binary
                 .binary_op()
                 .is_some_and(|operator| is_angular_pipe(operator, f)),
@@ -186,7 +186,7 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
         || is_alternate_ternary
         || has_multiline_block_comments(conditional, f);
 
-    // So that a short consequent is not pushed to the next line:
+    // So that a short consequent isn't pushed to the next line:
     //
     //   const result = foo != null ? foo : (
     //     some + long + expression
@@ -210,8 +210,8 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
             && matches!(test, Operand::Expr(test) if is_simple_expression_by_node_count(test, 1, f)))
         || try_to_parenthesize_alternate;
 
-    // Prettier's `alternateComments`: they are on lines of their own before the `:`. Prettier also writes the dangling
-    // comments of the test here, a second time: `f(/* comment */) ? a : b`.
+    // Prettier's `alternateComments`: they go on their own lines before the `:`. Prettier also prints the test's
+    // dangling comments here, a second time: `f(/* comment */) ? a : b`.
     let comments_before_colon = match (f.is_quiet(), conditional) {
         (true, _) => CommentList::empty(),
         (false, ConditionalLike::ConditionalExpression(e)) => {
@@ -311,10 +311,11 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
         );
     });
 
-    // What lines the alternate up with the consequent, which is indented.
+    // Lines the alternate up with the consequent, which is indented.
     let fill_tab = format_with(|f| match use_tabs {
         true => write!(f, text(b"\t")),
-        // What is too long for a text is too long for the indentation of the consequent, which the printer refuses.
+        // A width that's too long for a text is also too long for the consequent's indentation, which the printer
+        // rejects.
         false if crate::is_too_long(indent_width as usize) => {}
         false => write!(
             f,
@@ -382,7 +383,7 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
             write!(f, format_alternate);
         } else {
             let line = (is_in_jsx && !try_to_parenthesize_alternate).then(|| match conditional {
-                // Prettier writes both line breaks, which makes an empty line.
+                // Prettier prints both line breaks, which makes an empty line.
                 ConditionalLike::ConditionalExpression(e) if is_followed_by_line_break(e) => {
                     soft_empty_line()
                 }
@@ -417,8 +418,7 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
     }
 }
 
-/// What the outermost conditional is in that `e` is a consequent or an alternate of, directly or
-/// not.
+/// The parent of the outermost conditional that has `e` as a consequent or alternate, directly or nested.
 fn first_non_conditional_parent(e: Expr<'_>) -> AstNodes<'_> {
     let mut previous = e;
     let mut current = e.ast_parent();
@@ -431,8 +431,8 @@ fn first_non_conditional_parent(e: Expr<'_>) -> AstNodes<'_> {
     current
 }
 
-/// Whether a line break is written right after `e`, which is in JSX: it is the end of what is after
-/// the `?` of a conditional, or of the value of an attribute.
+/// True if a line break is printed right after `e`, which is in JSX: `e` ends a conditional's consequent or an
+/// attribute's value.
 fn is_followed_by_line_break(e: Expr<'_>) -> bool {
     let mut last = e;
     let mut parent = e.ast_parent();
@@ -447,15 +447,14 @@ fn is_followed_by_line_break(e: Expr<'_>) -> bool {
         && matches!(parent.parent(), AstNodes::JSXAttribute(_))
 }
 
-/// Prettier's `isSimpleExpressionByNodeCount`: whether there are at most `max` nodes in `e`, of
-/// those that are the value of a property of a node of ESTree. What is in a list, like the
-/// arguments of a call, does not count.
+/// Prettier's `isSimpleExpressionByNodeCount`: true if `e` has at most `max` nodes, counting only those that are the
+/// value of an ESTree node's property. Nodes in a list, like a call's arguments, don't count.
 fn is_simple_expression_by_node_count<'a>(e: Expr<'a>, max: u32, f: &Formatter<'a>) -> bool {
-    inner_node_count(e, max, f.context().has_tree_of_babel()) <= max
+    inner_node_count(e, max, f.context().has_babel_tree()) <= max
 }
 
-/// The count can stop at anything above `max`. Babel, which reads JavaScript for Prettier, has no
-/// `ChainExpression` and has a name in a `PrivateName`.
+/// The count can stop at anything above `max`. Babel, which Prettier uses to parse JavaScript, has no `ChainExpression`
+/// and wraps a name in a `PrivateName`.
 fn inner_node_count(e: Expr<'_>, max: u32, is_javascript: bool) -> u32 {
     let child = |e: Expr<'_>, count: u32| match count > max {
         true => count,
@@ -540,7 +539,7 @@ fn inner_node_count(e: Expr<'_>, max: u32, is_javascript: bool) -> u32 {
     }
 }
 
-/// The same for a type. Anything but the simplest counts as many.
+/// The same for a type. Anything but the simplest types counts as many nodes.
 fn inner_type_node_count(mut ty: TypeNode<'_>) -> u32 {
     let mut arrays = 0u32;
     while let TypeKind::Array(element) = ty.kind() {

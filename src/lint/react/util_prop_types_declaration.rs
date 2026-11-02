@@ -1,5 +1,6 @@
-//! `lib/util/propTypes.js` of eslint-plugin-react: what reads a declaration of prop types, be it
-//! made of calls of `PropTypes` or a type of TypeScript. The listeners are in `util_prop_types`.
+//! `lib/util/propTypes.js` of eslint-plugin-react: the code that reads a prop types declaration,
+//! whether it's built from `PropTypes` calls or is a TypeScript type. The listeners are in
+//! `util_prop_types`.
 //!
 //! | upstream | here |
 //! |---|---|
@@ -8,10 +9,10 @@
 //! | `getLeftMostTypeName`, `getRightMostTypeName` | `EntityName::first`, `EntityName::last` |
 //! | `new DeclarePropTypesForTSTypeAnnotation(..)` | [`declare_prop_types_for_ts_type_annotation`] |
 //! | `iterateProperties(context, properties, fn)` | a loop with `get_key_value` |
-//! | a key that is `undefined` | `None`. The property that it names is called `undefined` |
+//! | a key that is `undefined` | `None`. The property it creates is named `undefined` |
 //!
-//! What only the nodes of Flow and the trees of typescript-eslint-parser 20 get to is left out.
-//! Where upstream throws a `TypeError`, nothing is declared.
+//! Code that only Flow nodes and typescript-eslint-parser 20's trees can reach isn't ported. Where
+//! upstream throws a `TypeError`, nothing is declared.
 
 use crate::util_ast::{find_return_statement, get_key_value, get_property_name, name_of_key};
 use crate::util_components_list::{Children, DeclaredPropType, DeclaredPropTypes, PropTypeKind};
@@ -22,10 +23,10 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::borrow::Cow;
 
-/// What upstream throws where that has no end: `const a = PropTypes.arrayOf(a)`.
+/// Upstream throws this where its recursion never ends, as with `const a = PropTypes.arrayOf(a)`.
 pub(crate) struct RangeError;
 
-/// What `object[undefined] = ..` calls the property.
+/// The name of the property that `object[undefined] = ..` creates.
 pub(crate) const UNDEFINED: &[u8] = b"undefined";
 
 const ANY_KEY: &[u8] = b"__ANY_KEY__";
@@ -48,11 +49,11 @@ fn generic_type_param_index_where_props_are_present(name: &[u8]) -> Option<usize
     }
 }
 
-/// `genericReactTypesImport` and `localToImportedMap`: what the imports of `react` that the walk
-/// has got to call the module and its generic types.
+/// `genericReactTypesImport` and `localToImportedMap`: the local names for the `react` module and
+/// its generic types, from the imports that the walk has reached so far.
 #[derive(Default)]
 pub(crate) struct ReactTypeImports<'a> {
-    /// By the local name. `Some`: the name in `react`.
+    /// Keyed by local name. `Some` is the name that `react` exports.
     locals: FxHashMap<&'a [u8], Option<&'a [u8]>>,
 }
 
@@ -87,8 +88,8 @@ impl<'a> ReactTypeImports<'a> {
     }
 }
 
-/// `key`, which is `getKeyValue(context, property)`, as `[.., key].join(".")` has it: `undefined`
-/// and `null` are nothing there.
+/// `key`, which is `getKeyValue(context, property)`, as `[.., key].join(".")` prints it:
+/// `undefined` and `null` become empty strings.
 pub(crate) fn key_in_full_name<'k>(property: Prop<'_>, key: Option<&'k [u8]>) -> &'k [u8] {
     let is_null = match property.key().map(Key::kind) {
         Some(KeyKind::Computed(it)) => it.tag() == ExprTag::Null,
@@ -97,14 +98,14 @@ pub(crate) fn key_in_full_name<'k>(property: Prop<'_>, key: Option<&'k [u8]>) ->
     key.filter(|_| !is_null).unwrap_or_default()
 }
 
-/// What `buildReactDeclarationTypes` closes over.
+/// The state that `buildReactDeclarationTypes` closes over.
 struct ReactDeclarationTypes<'a, 'b> {
     root_node: Option<Node<'a>>,
     custom_validators: &'b [Box<[u8]>],
-    /// The values that `build` is looking at.
-    on_the_way: IdSet<Expr<'a>>,
-    /// It has come to one of these again, where upstream goes round until its stack is full, or the stack is full here:
-    /// nothing more is looked at.
+    /// The values that are being built right now, further up the stack.
+    in_progress: IdSet<Expr<'a>>,
+    /// Set when `build` reaches one of those values again, where upstream recurses until its stack
+    /// overflows, or when the stack is nearly full here. Nothing more is built after that.
     has_given_up: bool,
 }
 
@@ -115,8 +116,8 @@ impl<'a> ReactDeclarationTypes<'a, '_> {
             .any(|it| validator.bytes() == &**it)
     }
 
-    /// `resolveValueForIdentifierNode`, whose callback is `*node = new_value`. Whether that is
-    /// called.
+    /// `resolveValueForIdentifierNode`, whose callback is `*node = new_value`. Returns true if the
+    /// callback is called.
     fn resolve_value_for_identifier_node(&self, node: &mut Option<Expr<'a>>) -> bool {
         let (Some(root_node), Some(name)) = (self.root_node, node.and_then(Expr::as_ident)) else {
             return false;
@@ -134,14 +135,14 @@ impl<'a> ReactDeclarationTypes<'a, '_> {
     }
 
     fn build(&mut self, value: Option<Expr<'a>>, parent_name: &[u8]) -> DeclaredPropType<'a> {
-        let is_new = value.is_none_or(|it| self.on_the_way.insert(it));
+        let is_new = value.is_none_or(|it| self.in_progress.insert(it));
         self.has_given_up |= !is_new || !bun_core::StackCheck::init().is_safe_to_recurse();
         if self.has_given_up {
             return DeclaredPropType::default();
         }
         let built = self.build_declaration_types(value, parent_name);
         if let Some(it) = value {
-            self.on_the_way.remove(it);
+            self.in_progress.remove(it);
         }
         built
     }
@@ -252,8 +253,8 @@ impl<'a> ReactDeclarationTypes<'a, '_> {
     }
 }
 
-/// `buildReactDeclarationTypes`. A `parent_name` that is `undefined` or `null` is empty. The
-/// listeners for a `FunctionDeclaration` and an `ArrowFunctionExpression` have no `root_node`.
+/// `buildReactDeclarationTypes`. Pass an empty `parent_name` for `undefined` or `null`. The
+/// `FunctionDeclaration` and `ArrowFunctionExpression` listeners have no `root_node`.
 pub(crate) fn build_react_declaration_types<'a>(
     value: Option<Expr<'a>>,
     parent_name: &[u8],
@@ -263,7 +264,7 @@ pub(crate) fn build_react_declaration_types<'a>(
     let mut types = ReactDeclarationTypes {
         root_node,
         custom_validators,
-        on_the_way: IdSet::new(),
+        in_progress: IdSet::new(),
         has_given_up: false,
     };
     let built = types.build(value, parent_name);
@@ -294,8 +295,7 @@ pub(crate) fn is_valid_react_generic_type_annotation(
     }
 }
 
-/// `tsInterfaceBody.key[accessor]`: the `name` of an identifier, the `raw` of a number, the
-/// `value` of any other literal.
+/// `tsInterfaceBody.key[accessor]`: an identifier's `name`, a number's `raw`, or any other literal's `value`.
 fn key_of_signature(ts_interface_body: Member<'_>) -> Option<Cow<'_, [u8]>> {
     let (file, key) = (ts_interface_body.file(), ts_interface_body.key());
     let number = match key.map(Key::kind) {
@@ -306,15 +306,15 @@ fn key_of_signature(ts_interface_body: Member<'_>) -> Option<Cow<'_, [u8]>> {
         Some(KeyKind::Private(_)) => return key.and_then(name_of_key).map(Cow::Borrowed),
         _ => None,
     };
-    // A `bigint` is no number.
+    // A `bigint` isn't a number.
     match number.filter(|raw| !raw.ends_with(b"n")) {
         Some(raw) => Some(Cow::Borrowed(raw)),
         None => get_key_value(Node::Member(ts_interface_body)),
     }
 }
 
-/// The `VariableDeclaration`s of `sourceCode.ast.body` with a declarator whose `id.name` is
-/// `name`. `None`: `undefined`, which is the `name` of a pattern.
+/// The `VariableDeclaration`s in `sourceCode.ast.body` with a declarator whose `id.name` is `name`.
+/// `None` is `undefined`, which is a pattern's `name`.
 fn variable_declarations<'a>(
     file: &'a File<'a>,
     name: Option<Name<'a>>,
@@ -332,7 +332,7 @@ fn variable_declarations<'a>(
         };
         return file.body().iter().filter(declares_pattern).collect();
     };
-    // What the top level declares is in that scope, with the `var`s of the blocks in it.
+    // That scope has the top-level declarations, plus the `var`s hoisted out of nested blocks.
     let variable = file.top_level_scope().get_name(name);
     let mut found: SmallVec<[Stmt<'a>; 1]> = SmallVec::new();
     for definition in variable.into_iter().flat_map(Symbol::declarations) {
@@ -363,8 +363,8 @@ struct DeclarePropTypesForTsTypeAnnotation<'a, 'b> {
 }
 
 impl<'a> DeclarePropTypesForTsTypeAnnotation<'a, '_> {
-    /// `visitTSNode`. A `TSTypeAnnotation` is no node, nor is a `TSTypeParameterInstantiation`:
-    /// [`Self::visit_type_arguments`].
+    /// `visitTSNode`. A `TSTypeAnnotation` isn't a node here. Neither is a
+    /// `TSTypeParameterInstantiation`, which [`Self::visit_type_arguments`] handles.
     fn visit_ts_node(&mut self, node: Option<TypeNode<'a>>) {
         let Some(node) = node else {
             return;
@@ -381,8 +381,8 @@ impl<'a> DeclarePropTypesForTsTypeAnnotation<'a, '_> {
         }
     }
 
-    /// `this.visitTSNode(propsUtil.getTypeArguments(call))`, or if there are none
-    /// `this.shouldIgnorePropTypes = true`. Whether there are.
+    /// `this.visitTSNode(propsUtil.getTypeArguments(call))`, or `this.shouldIgnorePropTypes = true`
+    /// if there are no type arguments. Returns true if there are.
     fn visit_type_arguments(&mut self, call: Call<'a>) -> bool {
         let params = call.type_args();
         for x in params {
@@ -421,7 +421,7 @@ impl<'a> DeclarePropTypesForTsTypeAnnotation<'a, '_> {
             self.visit_ts_node(idx.and_then(|idx| node_type_arguments.get(idx)));
             return;
         }
-        // `A.B` has no `name`, as a type and as an expression.
+        // `A.B` has no `name`, neither as a type nor as an expression.
         let Some(type_name) = name.as_ident().map(Ident::name) else {
             self.should_ignore_prop_types = true;
             return;
@@ -434,12 +434,12 @@ impl<'a> DeclarePropTypesForTsTypeAnnotation<'a, '_> {
             self.should_ignore_prop_types = true;
             return;
         }
-        // The interfaces and type aliases of `sourceCode.ast.body` are what that scope has.
+        // That scope's interfaces and type aliases are the ones in `sourceCode.ast.body`.
         let variable = node.file().top_level_scope().get_name(type_name);
         let mut is_declared = false;
         for declaration in variable.into_iter().flat_map(Symbol::declarations) {
             let is_interface_or_type_alias = match declaration {
-                // An `ExportDefaultDeclaration` is not looked into.
+                // Upstream doesn't look into an `ExportDefaultDeclaration`.
                 Declaration::Interface(it) => !it.stmt().is_default_export(),
                 Declaration::TypeAlias(_) => true,
                 _ => false,
@@ -587,7 +587,7 @@ impl<'a> DeclarePropTypesForTsTypeAnnotation<'a, '_> {
             self.specify_optional_prop(b"className");
         }
         for ts_interface_body in std::mem::take(&mut self.found_declared_properties_list) {
-            // Not a `TSPropertySignature` and not a `TSMethodSignature`.
+            // Neither a `TSPropertySignature` nor a `TSMethodSignature`.
             if matches!(
                 ts_interface_body.kind(),
                 MemberKind::CallSignature
@@ -610,14 +610,15 @@ impl<'a> DeclarePropTypesForTsTypeAnnotation<'a, '_> {
     }
 }
 
-/// What is read of a `DeclarePropTypesForTSTypeAnnotation`.
+/// The fields that callers read from a `DeclarePropTypesForTSTypeAnnotation`.
 pub(crate) struct TsAnnotation<'a> {
     pub(crate) declared_prop_types: DeclaredPropTypes<'a>,
     pub(crate) should_ignore_prop_types: bool,
 }
 
-/// `new DeclarePropTypesForTSTypeAnnotation(propTypes, declaredPropTypes, rootNode)`. Of a
-/// `TSTypeAnnotation` the type in it. `root_node`: see [`build_react_declaration_types`].
+/// `new DeclarePropTypesForTSTypeAnnotation(propTypes, declaredPropTypes, rootNode)`. For a
+/// `TSTypeAnnotation`, pass the type inside it. For `root_node`, see
+/// [`build_react_declaration_types`].
 pub(crate) fn declare_prop_types_for_ts_type_annotation<'a>(
     prop_types: Option<TypeNode<'a>>,
     declared_prop_types: DeclaredPropTypes<'a>,

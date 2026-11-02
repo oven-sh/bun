@@ -1,69 +1,69 @@
-//! What a rule that holds a file against its formatted text sees of the formatter.
+//! The formatter interface for rules that compare a file with its formatted text.
 //!
-//! The printers, and what finds the configuration of Prettier for a file, are above this crate. Whoever lints the files provides
-//! them: [`File::formatter`].
+//! The printers, and the code that finds a file's Prettier config, live in crates above this one. The caller that lints
+//! the files provides them through [`File::formatter`].
 //!
-//! A rule stands in for that of a package only where the text is byte for byte what the package would get. So [`Formats`] says
-//! for each file whether it is: [`Formatted::NotNative`]. The rule then reports nothing and [hands the file back](File::hand_back):
-//! the rule of the package looks at it.
+//! A native rule only replaces a package's rule where its text is byte for byte what the package would produce.
+//! [`Formats`] reports for each file if that isn't the case, with [`Formatted::NotNative`]. The rule then reports
+//! nothing and [hands the file back](File::hand_back), and the package's rule checks it instead.
 
 use crate::ast::File;
 use crate::options::Json;
 use std::sync::Arc;
 
-/// Whose text is wanted.
+/// Selects the formatter whose output is produced.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum Like {
-    /// That of the `prettier` which `eslint-plugin-prettier` would load: `prettier/prettier`. It has to be a version whose
-    /// output `bun fmt` follows.
+pub enum FormatterKind {
+    /// The output of the `prettier` that `eslint-plugin-prettier` would load, for `prettier/prettier`. It has to be a
+    /// version whose output `bun fmt` matches.
     InstalledPrettier,
-    /// That of `bun fmt`, whatever is installed: `bun/format`.
+    /// The output of `bun fmt`, whatever is installed, for `bun/format`.
     BunFormat,
 }
 
 pub struct Request<'r> {
-    pub like: Like,
+    pub formatter_kind: FormatterKind,
     /// ESLint's `physicalFilename`.
     pub path_on_disk: &'r [u8],
-    /// ESLint's `filename`: something else than `path_on_disk` for a block that a processor has found in the file.
+    /// ESLint's `filename`. It differs from `path_on_disk` for a block that a processor extracted from the file.
     pub path: &'r [u8],
     /// Without a byte order mark.
     pub text: &'r [u8],
-    /// Options of Prettier, which win over those of its configuration.
+    /// Prettier options, which override the ones in its config.
     pub options: Option<&'r Json>,
-    /// `usePrettierrc`: whether the configuration of Prettier counts.
+    /// `usePrettierrc`: true if Prettier's config is used.
     pub uses_configuration: bool,
     /// `fileInfoOptions`: options for `prettier.getFileInfo()`.
     pub file_info_options: Option<&'r Json>,
     /// [`File::package_module`]
     pub package_module: Option<&'r [u8]>,
-    /// Only used with [`Like::InstalledPrettier`]. If set, the output has to match the installed packages, so their versions
-    /// are checked. Otherwise nothing has to be installed.
+    /// Only used with [`FormatterKind::InstalledPrettier`]. If set, the output has to match the installed packages, so
+    /// their versions are checked. Otherwise nothing has to be installed.
     pub follows_packages: bool,
 }
 
-/// Why the text would not be that of the package.
+/// Why the output wouldn't match the package's.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Reason {
-    /// The `prettier` that is installed is not of a version that `bun fmt` follows, or none is to be found.
+    /// The installed `prettier` isn't a version that `bun fmt` matches, or none was found.
     Version,
-    /// `eslint-plugin-prettier` is of a version that decides otherwise what is formatted and how.
-    VersionOfPlugin,
-    /// `eslint-plugin-prettier` is not to be found, so that nothing is known of its version.
+    /// The installed `eslint-plugin-prettier` is a version that decides differently what's formatted and how.
+    PluginVersion,
+    /// `eslint-plugin-prettier` wasn't found, so its version is unknown.
     PluginNotFound,
-    /// A plugin of Prettier that is not built in may print the file.
+    /// A Prettier plugin that isn't built in may print the file.
     Plugin,
-    /// `bun fmt` does not print the language itself.
+    /// `bun fmt` doesn't have its own printer for the language.
     Language,
-    /// An option that `bun fmt` does not know.
+    /// An option that `bun fmt` doesn't support.
     Option,
-    /// The configuration cannot be read.
+    /// The config can't be read.
     Configuration,
-    /// `bun fmt` finds a syntax error, whose words are not Prettier's.
+    /// `bun fmt` found a syntax error, and its message differs from Prettier's.
     SyntaxError,
-    /// `bun fmt` does not stand by what it has printed.
-    Refused,
-    /// `sortTailwindcss`, and a class that Tailwind CSS has not been asked about.
+    /// `bun fmt` couldn't verify its own output.
+    Unverified,
+    /// `sortTailwindcss` is on, and Tailwind CSS hasn't been queried about one of the classes.
     Classes,
     /// [`File::formatter`] is `None`.
     NoFormatter,
@@ -74,14 +74,14 @@ impl Reason {
     pub fn text(self) -> &'static str {
         match self {
             Reason::Version => "the installed prettier is not version 3.9, which bun fmt matches",
-            Reason::VersionOfPlugin => "the installed eslint-plugin-prettier is not version 5",
+            Reason::PluginVersion => "the installed eslint-plugin-prettier is not version 5",
             Reason::PluginNotFound => "eslint-plugin-prettier was not found",
             Reason::Plugin => "the Prettier config uses a plugin that bun fmt does not include",
             Reason::Language => "bun fmt does not support the language",
             Reason::Option => "bun fmt does not support one of the options",
             Reason::Configuration => "the Prettier config cannot be read",
             Reason::SyntaxError => "bun fmt found a syntax error",
-            Reason::Refused => "bun fmt could not verify its output",
+            Reason::Unverified => "bun fmt could not verify its output",
             Reason::Classes => "only bun fmt can sort Tailwind CSS classes",
             Reason::NoFormatter => "there is no formatter",
         }
@@ -89,10 +89,10 @@ impl Reason {
 }
 
 pub enum Formatted {
-    /// It is formatted.
+    /// The file is already formatted.
     Same,
     Text(Vec<u8>),
-    /// Prettier ignores the file, or the plugin leaves it alone: there is nothing to report.
+    /// Prettier ignores the file, or the plugin skips it, so there's nothing to report.
     Skipped,
     NotNative(Reason),
 }
@@ -110,13 +110,14 @@ pub struct Formatter<'a> {
 }
 
 impl<'a> File<'a> {
-    /// `None` where nobody provides one.
+    /// `None` if the caller didn't provide one.
     #[inline]
     pub fn formatter(&self) -> Option<Formatter<'a>> {
         self.formatter.get()
     }
 
-    /// `physical_path_len`: how much of the path of the file is that of the file on disk, if not all of it.
+    /// `physical_path_len` is the length of the prefix of the file's path that's the path on disk, or `None` if the
+    /// whole path is.
     pub fn set_formatter(&self, formats: &'a dyn Formats, physical_path_len: Option<usize>) {
         let path = self.path();
         let path_on_disk = physical_path_len
@@ -128,7 +129,8 @@ impl<'a> File<'a> {
         }));
     }
 
-    /// The rule that stands in for that of a package has nothing to say about the file: the rule of the package is asked.
+    /// Called by a native rule that replaces a package's rule when it can't handle the file. The package's rule runs on
+    /// the file instead.
     pub fn hand_back(&self, reason: Reason) {
         self.handed_back.set(Some(reason));
     }
@@ -137,14 +139,14 @@ impl<'a> File<'a> {
         self.handed_back.get()
     }
 
-    /// The file of the module that the configuration has loaded the plugin of the package from, if that is known. It is that
-    /// copy whose version counts, and the `prettier` that is found from there: a package manager can keep both out of reach
-    /// of the working directory.
+    /// Returns the path of the module that the config loaded the package's plugin from, if known. That copy's version
+    /// is the one that counts, along with the `prettier` that resolves from there. A package manager can install both
+    /// where they can't be resolved from the working directory.
     pub fn package_module(&self) -> Option<&[u8]> {
         self.package_module.get().map(|it| &**it)
     }
 
-    /// The first time counts.
+    /// Only the first call has an effect.
     pub fn set_package_module(&self, module: Arc<[u8]>) {
         let _ = self.package_module.set(module);
     }

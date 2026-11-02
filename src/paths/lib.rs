@@ -365,38 +365,6 @@ pub use path::{
     options as path_options,
 };
 
-/// Generic surface for the `buf` parameter on path-builder helpers
-/// (`appendStorePath`, `appendGlobalStoreEntryPath`, etc.). Callers pass
-/// `Path<U, KIND, SEP, CHECK>` for arbitrary const params, so expose the
-/// three operations the helpers need behind a trait and blanket-impl it for
-/// every monomorphisation.
-pub trait PathLike {
-    fn clear(&mut self);
-    fn append(&mut self, bytes: &[u8]);
-    fn append_fmt(&mut self, args: core::fmt::Arguments<'_>);
-}
-// Bound to `CheckLength::ASSUME` only. This prevents check-mode callers from
-// silently swallowing `MaxPathExceeded` through the duck-typed surface; they
-// must use `Path::append`/`?` directly.
-impl<U: PathUnit, const KIND: u8, const SEP: u8> PathLike
-    for path::Path<U, KIND, SEP, { path::options::CheckLength::ASSUME }>
-{
-    #[inline]
-    fn clear(&mut self) {
-        path::Path::clear(self)
-    }
-    #[inline]
-    fn append(&mut self, bytes: &[u8]) {
-        use path::options::AssumeOk as _;
-        path::Path::append(self, bytes).assume_ok()
-    }
-    #[inline]
-    fn append_fmt(&mut self, args: core::fmt::Arguments<'_>) {
-        use path::options::AssumeOk as _;
-        path::Path::append_fmt(self, args).assume_ok()
-    }
-}
-
 /// Width-generic dirname
 /// (POSIX `/` on Unix, disk-designator-aware on Windows). Backed by
 /// `path::dirname_generic`.
@@ -784,8 +752,7 @@ pub mod fs {
     /// NOTE: distinct from `crate::Path` (the buffer-backed AbsPath/RelPath). This is
     /// the *resolver* `Path`; addressed as `bun_paths::fs::Path`.
     ///
-    /// CANONICAL: `bun_paths::fs::Path<'static>` / `bun_resolver::fs::Path` are re-exports
-    /// of this type (D090). Resolver-tier methods (`dupe_alloc`, `loader`, `hash_key`,
+    /// CANONICAL: `bun_resolver::fs::Path` is a re-export of this type (D090). Resolver-tier methods (`dupe_alloc`, `loader`, `hash_key`,
     /// …) live on `bun_resolver::fs::PathResolverExt`.
     #[repr(C)]
     #[derive(Debug, Clone, Copy)]
@@ -815,32 +782,6 @@ pub mod fs {
     }
 
     impl<'a> Path<'a> {
-        /// Erase the borrow lifetime — some storage types
-        /// (`ImportRecord.path`, `Graph.input_files`) are pinned to
-        /// `Path<'static>` until the arena lifetime is re-threaded crate-wide.
-        ///
-        /// # Safety
-        /// Every borrowed slice in `self` (text/pretty/namespace) must outlive
-        /// every read through the returned `Path<'static>`.
-        #[inline]
-        pub unsafe fn into_static(self) -> Path<'static> {
-            #[inline(always)]
-            unsafe fn d(s: &[u8]) -> &'static [u8] {
-                // SAFETY: caller contract on `into_static`.
-                unsafe { &*core::ptr::from_ref::<[u8]>(s) }
-            }
-            // SAFETY: caller contract — see fn doc.
-            unsafe {
-                Path {
-                    pretty: d(self.pretty),
-                    text: d(self.text),
-                    namespace: d(self.namespace),
-                    is_disabled: self.is_disabled,
-                    is_symlink: self.is_symlink,
-                }
-            }
-        }
-
         pub(crate) const EMPTY: Path<'static> = Path {
             pretty: b"",
             text: b"",

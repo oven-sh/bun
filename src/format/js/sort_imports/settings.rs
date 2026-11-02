@@ -1,4 +1,4 @@
-//! The options, as they are in a configuration file.
+//! The options as they appear in a configuration file.
 
 use super::ianvs::{self, Matcher};
 use super::organize::{self, TypeOrder};
@@ -10,16 +10,15 @@ use bun_lint::options::Json;
 use bun_lint::regex::Regex;
 use std::sync::Arc;
 
-/// The options that are about imports, by name, with their values as they are written in JSON, a
-/// string without its quotes.
+/// The import-related options, by name. Values are raw JSON, except that a string has no quotes.
 ///
-/// | whose | options |
+/// | owner | options |
 /// | --- | --- |
 /// | both plugins | `plugins`, `importOrder`, `importOrderParserPlugins` |
 /// | `@trivago/prettier-plugin-sort-imports` | `importOrderSeparation`, `importOrderSortSpecifiers`, `importOrderGroupNamespaceSpecifiers`, `importOrderCaseInsensitive`, `importOrderSideEffects`, `importOrderSortByLength`, `importOrderImportAttributesKeyword`, `importOrderExclude` |
 /// | `@ianvs/prettier-plugin-sort-imports` | `importOrderTypeScriptVersion`, `importOrderCaseSensitive`, `importOrderSafeSideEffects` |
 /// | `prettier-plugin-organize-imports` | `organizeImportsSkipDestructiveCodeActions`, `organizeImportsTypeOrder` |
-/// | the `compilerOptions` of the `tsconfig.json` of the file, which that plugin reads | `tsconfig.jsx`, `tsconfig.jsxFactory`, `tsconfig.jsxFragmentFactory`, `tsconfig.reactNamespace` |
+/// | the `compilerOptions` in the file's `tsconfig.json`, which that plugin reads | `tsconfig.jsx`, `tsconfig.jsxFactory`, `tsconfig.jsxFragmentFactory`, `tsconfig.reactNamespace` |
 /// | oxfmt | `sortImports`, which used to be `experimentalSortImports` |
 /// | Bun | `bun.sortImports`, set by `sortImports` under `[fmt]` in bunfig.toml or by `--sort-imports` |
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
@@ -27,7 +26,7 @@ pub struct Settings {
     entries: Vec<(Box<[u8]>, Box<[u8]>)>,
 }
 
-const OF_TRIVAGO: [&[u8]; 8] = [
+const TRIVAGO_OPTIONS: [&[u8]; 8] = [
     b"importOrderSeparation",
     b"importOrderSortSpecifiers",
     b"importOrderGroupNamespaceSpecifiers",
@@ -38,23 +37,24 @@ const OF_TRIVAGO: [&[u8]; 8] = [
     b"importOrderExclude",
 ];
 
-const OF_IANVS: [&[u8]; 3] = [
+const IANVS_OPTIONS: [&[u8]; 3] = [
     b"importOrderTypeScriptVersion",
     b"importOrderCaseSensitive",
     b"importOrderSafeSideEffects",
 ];
 
-/// How the names of `@trivago/prettier-plugin-sort-imports`, of `@ianvs/prettier-plugin-sort-imports` and of their forks end.
+/// The suffix shared by the names of `@trivago/prettier-plugin-sort-imports`, `@ianvs/prettier-plugin-sort-imports` and
+/// their forks.
 const SORT_IMPORTS: &[u8] = b"/prettier-plugin-sort-imports";
 const ORGANIZE_IMPORTS: &[u8] = b"prettier-plugin-organize-imports";
-const OF_BUN: &[u8] = b"bun.sortImports";
+const BUN_OPTION: &[u8] = b"bun.sortImports";
 
 fn invalid(name: &[u8], value: &[u8]) -> Vec<u8> {
     [b"Invalid ", name, b" value: ", value, b"."].concat()
 }
 
 impl Settings {
-    /// Takes the option `name` if it is about imports. A later value replaces an earlier one.
+    /// Stores the option `name` if it's import-related. A later value replaces an earlier one.
     pub fn set(&mut self, name: &[u8], value: &[u8]) -> bool {
         let is_known = matches!(
             name,
@@ -63,7 +63,7 @@ impl Settings {
                 | b"importOrderParserPlugins"
                 | b"sortImports"
                 | b"experimentalSortImports"
-                | OF_BUN
+                | BUN_OPTION
         ) || name.starts_with(b"organizeImports")
             || matches!(
                 name,
@@ -72,8 +72,8 @@ impl Settings {
                     | b"tsconfig.jsxFragmentFactory"
                     | b"tsconfig.reactNamespace"
             )
-            || OF_TRIVAGO.contains(&name)
-            || OF_IANVS.contains(&name);
+            || TRIVAGO_OPTIONS.contains(&name)
+            || IANVS_OPTIONS.contains(&name);
         if is_known {
             self.entries.retain(|entry| &*entry.0 != name);
             self.entries.push((name.into(), value.into()));
@@ -81,27 +81,27 @@ impl Settings {
         is_known
     }
 
-    /// Also counts `name` as one of the `plugins`: `--plugin`.
+    /// Also counts `name` as one of the `plugins`, for `--plugin`.
     pub fn add_plugin(&mut self, name: &[u8]) {
         let named = [self.get(b"plugins").unwrap_or_default(), b" ", name].concat();
         self.set(b"plugins", &named);
     }
 
-    /// Whether one of the `plugins` is `name`, or ends with it.
-    fn names_plugin(&self, name: &[u8]) -> bool {
+    /// True if one of the `plugins` is `name`, or ends with it.
+    fn lists_plugin(&self, name: &[u8]) -> bool {
         strings::contains(self.get(b"plugins").unwrap_or_default(), name)
     }
 
-    /// Whether `prettier-plugin-organize-imports` is named, which asks the `tsconfig.json`.
+    /// True if `prettier-plugin-organize-imports` is listed. It reads the `tsconfig.json`.
     pub fn organizes_imports(&self) -> bool {
-        self.names_plugin(ORGANIZE_IMPORTS)
+        self.lists_plugin(ORGANIZE_IMPORTS)
     }
 
-    /// The options, with their values, of a plugin that is not named: Prettier does not know them.
-    pub fn of_plugins_not_named(&self) -> impl Iterator<Item = (&[u8], &[u8])> {
+    /// The options, with their values, of plugins that aren't listed. Prettier doesn't know them.
+    pub fn options_of_unlisted_plugins(&self) -> impl Iterator<Item = (&[u8], &[u8])> {
         let is_known = |name: &[u8]| match name {
-            name if name.starts_with(b"importOrder") => self.names_plugin(SORT_IMPORTS),
-            name if name.starts_with(b"organizeImports") => self.names_plugin(ORGANIZE_IMPORTS),
+            name if name.starts_with(b"importOrder") => self.lists_plugin(SORT_IMPORTS),
+            name if name.starts_with(b"organizeImports") => self.lists_plugin(ORGANIZE_IMPORTS),
             _ => true,
         };
         (self.entries.iter())
@@ -125,7 +125,7 @@ impl Settings {
         }
     }
 
-    /// An array of strings. One string is an array of one.
+    /// An array of strings. A single string counts as an array of one.
     fn strings(&self, name: &[u8]) -> Result<Option<Vec<Vec<u8>>>, Vec<u8>> {
         let Some(value) = self.get(name) else {
             return Ok(None);
@@ -143,10 +143,10 @@ impl Settings {
         strings.map(Some).ok_or_else(|| invalid(name, value))
     }
 
-    /// Whether the behaviour is that of `@ianvs/prettier-plugin-sort-imports`, where it differs
-    /// from `@trivago/prettier-plugin-sort-imports`, which it is a fork of. What says so, in this
-    /// order: the plugin that is named, an option or a special word that only one of them has.
-    /// Otherwise the more popular one it is.
+    /// True to behave like `@ianvs/prettier-plugin-sort-imports` where it differs from
+    /// `@trivago/prettier-plugin-sort-imports`, which it's a fork of. Decided by, in this order: the plugin that's
+    /// listed, then an option or a special word that only one of them has. Otherwise it falls back to trivago's, the
+    /// more popular one.
     fn is_ianvs(&self, order: Option<&[Vec<u8>]>) -> bool {
         let plugins = self.get(b"plugins").unwrap_or_default();
         let names = |name: &[u8]| strings::contains(plugins, name);
@@ -156,8 +156,8 @@ impl Settings {
             return names(b"@ianvs/prettier-plugin-sort-imports");
         }
         let has_any = |names: &[&[u8]]| self.entries.iter().any(|entry| names.contains(&&*entry.0));
-        if has_any(&OF_IANVS) || has_any(&OF_TRIVAGO) {
-            return has_any(&OF_IANVS);
+        if has_any(&IANVS_OPTIONS) || has_any(&TRIVAGO_OPTIONS) {
+            return has_any(&IANVS_OPTIONS);
         }
         order
             .unwrap_or_default()
@@ -217,7 +217,7 @@ impl Settings {
         })
     }
 
-    /// `examineAndNormalizePluginOptions`. `None`: `importOrder` is empty, which turns the plugin off.
+    /// `examineAndNormalizePluginOptions`. Returns `None` if `importOrder` is empty, which turns the plugin off.
     fn ianvs(&self, order: Option<Vec<Vec<u8>>>) -> Result<Option<ianvs::Options>, Vec<u8>> {
         let is_separator = |group: &[u8]| group.trim_ascii().is_empty();
         let mut order = order.unwrap_or_else(|| {
@@ -289,14 +289,18 @@ impl Settings {
         }))
     }
 
-    /// `None`: imports are left as they are. `Err`: what is wrong, for the user.
+    /// Returns `None` if imports are left as they are, and `Err` with a message for the user if the settings are
+    /// invalid.
     pub fn compile(&self) -> Result<Option<Arc<SortImports>>, Vec<u8>> {
         // The last one set wins.
-        let is_about_all = |it: &&(Box<[u8]>, Box<[u8]>)| {
-            matches!(&*it.0, b"sortImports" | b"experimentalSortImports" | OF_BUN)
+        let is_sort_imports_option = |it: &&(Box<[u8]>, Box<[u8]>)| {
+            matches!(
+                &*it.0,
+                b"sortImports" | b"experimentalSortImports" | BUN_OPTION
+            )
         };
-        if let Some((name, value)) = self.entries.iter().rfind(is_about_all) {
-            let is_native = **name == *OF_BUN;
+        if let Some((name, value)) = self.entries.iter().rfind(is_sort_imports_option) {
+            let is_native = **name == *BUN_OPTION;
             return Ok(super::oxfmt::compile(value, is_native)?.map(|options| {
                 Arc::new(SortImports {
                     how: match is_native {
@@ -306,9 +310,9 @@ impl Settings {
                 })
             }));
         }
-        // Prettier does not know the options of a plugin that is not named.
-        if !self.names_plugin(SORT_IMPORTS) {
-            if !self.names_plugin(ORGANIZE_IMPORTS) {
+        // Prettier doesn't know the options of a plugin that isn't listed.
+        if !self.lists_plugin(SORT_IMPORTS) {
+            if !self.lists_plugin(ORGANIZE_IMPORTS) {
                 return Ok(None);
             }
             let options = organize::Options {
@@ -349,7 +353,7 @@ impl Settings {
     }
 }
 
-/// `semver.valid(version)`: the three numbers, and whether it is a release and not a prerelease.
+/// `semver.valid(version)`: the three numbers, and true for a release, false for a prerelease.
 fn semver(version: &[u8]) -> Option<((u64, u64, u64), bool)> {
     let version = version.trim_ascii();
     let version = version.strip_prefix(b"=").unwrap_or(version);
@@ -377,7 +381,7 @@ fn semver(version: &[u8]) -> Option<((u64, u64, u64), bool)> {
         .then_some((numbers, prerelease.is_none()))
 }
 
-/// The `a` of `a.b.c`.
+/// The `a` in `a.b.c`.
 fn first_name(entity: &[u8]) -> &[u8] {
     strings::index_of_char_usize(entity, b'.').map_or(entity, |dot| &entity[..dot])
 }

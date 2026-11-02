@@ -21,6 +21,8 @@
 #include <JavaScriptCore/JSTypedArrays.h>
 #include <JavaScriptCore/TypedArrayType.h>
 #include <cmath>
+#include <wtf/StackPointer.h>
+#include <wtf/StdLibExtras.h>
 
 namespace Bun {
 namespace WebStreams {
@@ -169,6 +171,17 @@ void queueStreamsMicrotask(JSGlobalObject* globalObject, JSFunction* handler, JS
 {
     QueuedTask task { nullptr, InternalMicrotask::BunInvokeJobWithArguments, 0, globalObject, handler, value, context };
     globalObject->vm().queueMicrotask(WTF::move(task));
+}
+
+bool streamLinkMustDefer(JSC::VM& vm)
+{
+    // Leave room for the source's pull() or cancel() at the end of a chain. A JS call throws RangeError at the soft limit.
+#if ASAN_ENABLED
+    static constexpr size_t headroom = 384 * KB;
+#else
+    static constexpr size_t headroom = 128 * KB;
+#endif
+    return reinterpret_cast<uintptr_t>(currentStackPointer()) < reinterpret_cast<uintptr_t>(vm.softStackLimit()) + headroom;
 }
 
 bool canTransferArrayBuffer(JSC::ArrayBuffer& buffer)
@@ -463,6 +476,19 @@ void rejectPromise(JSGlobalObject* globalObject, JSPromise* promise, JSValue rea
 void markPromiseAsHandled(VM&, JSPromise* promise)
 {
     promise->markAsHandled();
+}
+
+void rejectPromiseAsHandled(JSGlobalObject* globalObject, JSPromise* promise, JSValue reason)
+{
+    promise->rejectAsHandled(getVM(globalObject), reason);
+}
+
+JSPromise* promiseRejectedWithAsHandled(JSGlobalObject* globalObject, JSValue reason)
+{
+    auto& vm = getVM(globalObject);
+    auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+    promise->rejectAsHandled(vm, reason);
+    return promise;
 }
 
 // The stream-level closed promise. The Pending guard makes every settle site unconditionally

@@ -1,6 +1,6 @@
-//! `angular-html-parser` 10.12: `ml_parser/lexer.ts`, without the syntax that Prettier does not turn on.
+//! `angular-html-parser` 10.12: `ml_parser/lexer.ts`, without the syntax that Prettier doesn't enable.
 //!
-//! The text has `\n` only. What a token says is a part of the text, so a token has ranges of it.
+//! The text only has `\n` line breaks. A token's contents are always substrings of the text, so a token stores spans.
 
 use super::error::{ErrorKind, SyntaxError};
 use bun_core::strings;
@@ -66,20 +66,20 @@ impl Span {
     }
 }
 
-/// `token.parts`, where it is not all of the text of the token.
+/// `token.parts`, where that isn't simply the token's whole text.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Parts {
-    /// None, or the text of the token.
+    /// No parts, or just the token's text.
     None,
     /// The prefix and the name of a tag or an attribute.
     Name(Span, Span),
-    /// The name of a block or a declaration, the value of a case.
+    /// The name of a block or a declaration, or the value of a case.
     Value(Span),
-    /// `else if`, however many blanks there are.
+    /// `else if`, with any amount of whitespace in between.
     ElseIf,
-    /// `default never`, however many blanks there are.
+    /// `default never`, with any amount of whitespace in between.
     DefaultNever,
-    /// What is in a comment in a start tag, and whether the comment ends with the line.
+    /// The contents of a comment in a start tag, and whether the comment ends at the end of the line.
     Comment(Span, bool),
 }
 
@@ -97,7 +97,7 @@ pub(crate) enum ContentType {
     ParsableData,
 }
 
-/// An attribute, for the one who decides what is in the element.
+/// An attribute, as passed to the callback that decides the element's content type.
 pub(crate) struct LexedAttribute<'a> {
     pub(crate) name: &'a [u8],
     /// The last piece of text in the value.
@@ -114,21 +114,21 @@ pub(crate) struct Options {
     pub(crate) allow_start_tag_comments: bool,
 }
 
-/// `getTagContentType(tagName, prefix, hasParent, attrs)`, without the prefix, which nobody looks at.
+/// `getTagContentType(tagName, prefix, hasParent, attrs)`, without the prefix, which is never used.
 pub(crate) type GetTagContentType<'f> =
     &'f dyn Fn(&[u8], bool, &[LexedAttribute<'_>]) -> ContentType;
 
-/// What is thrown.
+/// The exceptions that the lexer throws.
 enum Fail {
-    /// A `ParseError`, with where its span starts.
+    /// A `ParseError`, with the start of its span.
     Parse(u32),
-    /// A `CursorError`: the end of the text where there has to be more.
+    /// A `CursorError`: the text ended where more was expected.
     Cursor(u32),
 }
 
 type Result<T> = std::result::Result<T, Fail>;
 
-/// When a text with interpolations ends.
+/// The condition that ends a text with interpolations.
 #[derive(Copy, Clone)]
 enum End {
     Text,
@@ -138,7 +138,7 @@ enum End {
     UnquotedValue,
 }
 
-/// What ends a raw text.
+/// The marker that ends a raw text.
 #[derive(Copy, Clone)]
 enum EndMarker<'a> {
     Str(&'static [u8]),
@@ -163,7 +163,7 @@ const SUPPORTED_BLOCKS: [&[u8]; 13] = [
     b"@content",
 ];
 
-/// A character that is not ASCII and not a no-break space.
+/// Any non-ASCII character other than a no-break space.
 const OTHER: u32 = 0xFFFF;
 const NBSP: u32 = 160;
 
@@ -247,13 +247,13 @@ struct Tokenizer<'a, 'f> {
     /// `_currentTokenStart` and `_currentTokenType`
     current: Option<(u32, TokenType)>,
     expansion_case_stack: Vec<TokenType>,
-    /// The prefixes and the names.
+    /// Pairs of prefix and name.
     full_name_stack: Vec<(Span, Span)>,
-    /// Of the start tag that is being read.
+    /// The attributes of the start tag being read.
     attributes: Vec<LexedAttribute<'a>>,
     tokens: Vec<Token>,
     errors: Vec<SyntaxError<'a>>,
-    /// What the last `Fail::Parse` is about: its kind, where what it names is, `_isInExpansionForm()`.
+    /// Details of the last `Fail::Parse`: its kind, the span of the name in its message, and `_isInExpansionForm()`.
     thrown: (ErrorKind, Span, bool),
 }
 
@@ -314,7 +314,7 @@ impl<'a> Tokenizer<'a, '_> {
         self.error_of(ErrorKind::UnexpectedCharacter, start, rest)
     }
 
-    /// `_createError`. `named`: where what the message names is.
+    /// `_createError`. `named` is the span of the name in the message.
     fn error_of(&mut self, kind: ErrorKind, start: usize, named: Span) -> Fail {
         self.current = None;
         self.thrown = (kind, named, self.is_in_expansion_form());
@@ -362,7 +362,7 @@ impl<'a> Tokenizer<'a, '_> {
         is_next
     }
 
-    /// What matches is consumed even if not all of it does.
+    /// The part that matches is consumed even if the rest doesn't match.
     fn attempt_str_case_insensitive(&mut self, chars: &[u8]) -> bool {
         for expected in chars {
             match self.text.get(self.pos) {
@@ -481,7 +481,7 @@ impl<'a> Tokenizer<'a, '_> {
         }
     }
 
-    /// Goes on to the next character that can end a text that `end` ends, or start something in it.
+    /// Skips to the next character that can end a text terminated by `end`, or start something inside it.
     fn skip_plain_text(&mut self, end: End) {
         let rest = self.text.get(self.pos..).unwrap_or_default();
         let next = match end {
@@ -499,7 +499,7 @@ impl<'a> Tokenizer<'a, '_> {
         while self.peek() != 0 {
             let start = self.pos;
             match self.tokenize_one() {
-                // Nothing goes on from here.
+                // The lexer didn't advance, so it would loop forever.
                 Ok(()) if self.pos == start => {
                     self.handle_error(start as u32, (ErrorKind::Other, Span::new(0, 0), false));
                     break;
@@ -641,7 +641,7 @@ impl<'a> Tokenizer<'a, '_> {
         }
         let is_case = matches!(name, Parts::Value(name) if matches!(name.of(self.text), b"case" | b"default"));
         if self.peek() == 123 {
-            // The token starts behind the brace.
+            // The token starts after the brace.
             self.pos += 1;
             self.empty_token(TokenType::BlockOpenEnd)?;
         } else if self.is_block_start() && is_case {
@@ -726,7 +726,7 @@ impl<'a> Tokenizer<'a, '_> {
         Ok(())
     }
 
-    /// Returns whether a token has been made.
+    /// Returns true if it produced a token.
     fn tokenize_expansion_form(&mut self) -> Result<bool> {
         if self.is_expansion_form_start() {
             self.consume_expansion_form_start()?;
@@ -853,7 +853,7 @@ impl<'a> Tokenizer<'a, '_> {
         Ok(())
     }
 
-    /// Whether what ends a raw text is next.
+    /// True if the raw text's end marker comes next.
     fn is_at_end_marker(&self, marker: EndMarker<'_>) -> bool {
         match marker {
             EndMarker::Str(chars) => self.peek_str(chars),
@@ -891,7 +891,7 @@ impl<'a> Tokenizer<'a, '_> {
         };
         self.begin_token(kind);
         loop {
-            // Nothing happens before the next character that something can start with.
+            // Skip to the next character that can start anything.
             let rest = self.text.get(self.pos..).unwrap_or_default();
             let next = match consume_entities {
                 true => strings::index_of_any(rest, &[first, b'&']),
@@ -976,8 +976,7 @@ impl<'a> Tokenizer<'a, '_> {
         Ok(())
     }
 
-    /// What is in the `try` of `_consumeTagOpen`. `open_token`: the index of the first token, once it is
-    /// there.
+    /// The body of the `try` in `_consumeTagOpen`. `open_token` is set to the index of the first token once it exists.
     fn consume_tag_open_tokens(
         &mut self,
         start: usize,
@@ -1289,7 +1288,7 @@ pub(crate) fn tokenize<'a>(
         expansion_case_stack: Vec::new(),
         full_name_stack: Vec::new(),
         attributes: Vec::new(),
-        // As a rule a token is ten bytes or so.
+        // A token is typically about ten bytes.
         tokens: Vec::with_capacity(text.len().saturating_sub(start) / 8),
         errors: Vec::new(),
         thrown: (ErrorKind::Other, Span::new(0, 0), false),

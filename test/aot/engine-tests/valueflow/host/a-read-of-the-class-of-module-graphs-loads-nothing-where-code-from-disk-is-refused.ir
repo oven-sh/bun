@@ -1,0 +1,8 @@
+# new Bun.ModuleGraph().import(input); function kept(operand) { return operand }; globalThis.kept = kept
+# The build excludes code outside the image. The run time refuses every file that a graph is asked for, so the program stays closed
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: valueflow-solve unseen
+# CHECK-NOT: BunModuleGraph
+# CHECK: unseen-code no
+# CHECK-NEXT: modules-by-name no
+# PROGRAM-OF: a-read-of-the-class-of-module-graphs-loads-code-by-name.ir

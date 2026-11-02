@@ -1,4 +1,4 @@
-//! The comments of the two programs.
+//! Compares the comments of the two programs.
 
 use super::Difference;
 use bun_core::strings;
@@ -6,7 +6,7 @@ use bun_lint::ast::File;
 use bun_lint::tokens::Token;
 use bun_sema::hir::Comment;
 
-/// The text of a program, and where its comments are.
+/// A program's text and the list of its comments.
 type Comments<'a> = (&'a [u8], &'a [Comment]);
 
 #[optimize(size)]
@@ -15,7 +15,7 @@ fn text_of<'a>(text: &'a [u8], comment: Comment) -> &'a [u8] {
         .unwrap_or_default()
 }
 
-/// Allowed: the white space at the start and at the end of the lines of a comment.
+/// Whitespace at the start and end of a comment's lines may change, so it's trimmed.
 #[optimize(size)]
 fn lines(comment: &[u8]) -> impl Iterator<Item = &[u8]> {
     strings::split_crlf_lines(comment).map(strings::trim_js_whitespace)
@@ -26,7 +26,7 @@ fn is_same(before: &[u8], after: &[u8]) -> bool {
     before == after || lines(before).eq(lines(after))
 }
 
-/// Allowed: the comments are in another order.
+/// Compares the comments regardless of order, because their order may change.
 #[cold]
 #[optimize(size)]
 fn compare_in_any_order(before: Comments<'_>, after: Comments<'_>) -> Result<(), Difference> {
@@ -44,7 +44,7 @@ fn compare_in_any_order(before: Comments<'_>, after: Comments<'_>) -> Result<(),
         .zip(&ys)
         .find(|(x, y)| x.0 != y.0)
         .map(|(x, y)| (x.1, y.1));
-    let place = |all: &[(Vec<u8>, u32)], at: usize, text: &[u8]| {
+    let offset_at = |all: &[(Vec<u8>, u32)], at: usize, text: &[u8]| {
         all.get(at).map_or(text.len() as u32, |it| it.1)
     };
     let shorter = xs.len().min(ys.len());
@@ -53,8 +53,8 @@ fn compare_in_any_order(before: Comments<'_>, after: Comments<'_>) -> Result<(),
         None if xs.len() == ys.len() => Ok(()),
         None => Err(Difference::new(
             "the number of comments",
-            (before.0, place(&xs, shorter, before.0)),
-            (after.0, place(&ys, shorter, after.0)),
+            (before.0, offset_at(&xs, shorter, before.0)),
+            (after.0, offset_at(&ys, shorter, after.0)),
         )),
     }
 }
@@ -68,7 +68,7 @@ fn hashbang(text: &[u8]) -> &[u8] {
     let line = text
         .get(..strings::index_of_any(text, b"\n\r").unwrap_or(text.len()))
         .unwrap_or(text);
-    // U+2028 and U+2029 end the line too.
+    // U+2028 and U+2029 also end the line.
     let ends = [&b"\xE2\x80\xA8"[..], b"\xE2\x80\xA9"]
         .into_iter()
         .filter_map(|it| strings::index_of(line, it));
@@ -77,8 +77,8 @@ fn hashbang(text: &[u8]) -> &[u8] {
         .trim_ascii_end()
 }
 
-/// The tree does not list the comments of HTML, `<!-- a` and `--> a`. Those of `file` have to be
-/// somewhere in `after`.
+/// The tree doesn't list HTML-style comments, `<!-- a` and `--> a`. Each one in `file` has to
+/// appear somewhere in `after`.
 #[optimize(size)]
 fn find_html_comments<'f>(file: &'f File<'f>, after: &[u8]) -> Result<(), Difference> {
     let text = file.text();
@@ -88,7 +88,7 @@ fn find_html_comments<'f>(file: &'f File<'f>, after: &[u8]) -> Result<(), Differ
     {
         return Ok(());
     }
-    // At the end of a line.
+    // It only counts at the end of a line.
     let is_in_after = |comment: &[u8]| {
         let mut rest = after;
         while let Some(at) = strings::index_of(rest, comment) {
@@ -114,7 +114,7 @@ fn find_html_comments<'f>(file: &'f File<'f>, after: &[u8]) -> Result<(), Differ
     }
 }
 
-/// What is between `/**` and `*/`, if `comment` is a JSDoc comment.
+/// The text between `/**` and `*/`, if `comment` is a JSDoc comment.
 #[optimize(size)]
 fn jsdoc(comment: &[u8]) -> Option<&[u8]> {
     comment
@@ -123,9 +123,9 @@ fn jsdoc(comment: &[u8]) -> Option<&[u8]> {
         .filter(|inner| !inner.iter().all(|&it| it == b'*'))
 }
 
-/// Whether the JSDoc comment says more than the name of one tag. One that does not can be left out.
+/// True if the JSDoc comment has more than a single tag name. One that doesn't can be dropped.
 #[optimize(size)]
-fn says_something(inner: &[u8]) -> bool {
+fn has_content(inner: &[u8]) -> bool {
     let is_part_of_word = |it: &u8| it.is_ascii_alphanumeric() || !it.is_ascii();
     let mut words = inner
         .split(|it| !is_part_of_word(it) && *it != b'@')
@@ -136,7 +136,7 @@ fn says_something(inner: &[u8]) -> bool {
     }
 }
 
-/// The name or the keyword that follows the comment, if it is one that follows.
+/// The identifier or keyword right after the comment, or empty if something else follows.
 #[optimize(size)]
 fn word_after(text: &[u8], comment: Comment) -> &[u8] {
     let rest = text
@@ -149,23 +149,23 @@ fn word_after(text: &[u8], comment: Comment) -> &[u8] {
     rest.get(..len).unwrap_or_default()
 }
 
-/// Allowed, if JSDoc comments are formatted: anything in them, and those that say nothing are left out. If none is,
-/// each is before the same word.
+/// Used when JSDoc comments are formatted. Their content may change, and those without content may
+/// be dropped. If none is dropped, each must still precede the same word.
 #[optimize(size)]
 fn compare_without_jsdoc(before: Comments<'_>, after: Comments<'_>) -> Result<(), Difference> {
     type Lists = (Vec<Comment>, Vec<Comment>);
-    // Those that are not JSDoc comments, and those that are.
+    // The comments that aren't JSDoc, and those that are.
     let split = |(text, comments): Comments<'_>| -> Lists {
         comments
             .iter()
             .partition(|&&it| jsdoc(text_of(text, it)).is_none())
     };
     let (x, y) = (split(before), split(after));
-    let can_be_left_out =
+    let droppable_count =
         x.1.iter()
-            .filter(|&&it| !jsdoc(text_of(before.0, it)).is_some_and(says_something))
+            .filter(|&&it| !jsdoc(text_of(before.0, it)).is_some_and(has_content))
             .count();
-    if x.1.len() < y.1.len() || x.1.len() - y.1.len() > can_be_left_out {
+    if x.1.len() < y.1.len() || x.1.len() - y.1.len() > droppable_count {
         let end = |text: &[u8]| text.len() as u32;
         return Err(Difference::new(
             "the number of JSDoc comments",
@@ -186,7 +186,7 @@ fn compare_without_jsdoc(before: Comments<'_>, after: Comments<'_>) -> Result<()
     compare_in_any_order((before.0, &x.0), (after.0, &y.0))
 }
 
-/// `file`: the program before. `formats_jsdoc`: the option `jsdoc` is set.
+/// `file` is the program before formatting. `formats_jsdoc` means the `jsdoc` option is set.
 #[optimize(size)]
 pub(super) fn compare<'f>(
     file: &'f File<'f>,

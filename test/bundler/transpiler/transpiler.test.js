@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, hideFromStackTrace, integersThatNeedRounding, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, hideFromStackTrace, integersThatNeedRounding, isDebug, tempDir } from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -477,6 +477,22 @@ describe("Bun.Transpiler", () => {
       }
       exp(`x = ${kept}`, `x = ${keptOut};\n`);
       exp(`x = ${discarded}`, `x = ${discardedOut};\n`);
+    });
+
+    it("emitDecoratorMetadata in an arrow function with a return type in a true branch", async () => {
+      const script = `
+        const tsconfig = { compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } };
+        const transpiler = new Bun.Transpiler({ loader: "ts", tsconfig });
+        for (const head of ["()", "(b)", "(b: B)"]) {
+          const out = transpiler.transformSync(
+            "x = a ? " + head + ": T => { class A { @d() p: Date; @d() q: Map<K, V>; } return A; } : null;",
+          );
+          console.log(head, ...out.matchAll(/"design:type", typeof (\\w+)/g).map(m => m[1]));
+        }`;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("() Date Map\n(b) Date Map\n(b: B) Date Map\n");
+      expect(exitCode).toBe(0);
     });
 
     it("type-only import syntax", () => {
@@ -2374,6 +2390,41 @@ export default class {
       expect(output.includes("liveFS")).toBe(true);
     });
 
+    it("drops an import that only an eliminated export used", () => {
+      const code = `
+        import { db } from "./db";
+        export function loader() { return db.query(); }
+        export default function Page() { return 1; }
+      `;
+      for (const loader of ["js", "ts"]) {
+        const elim = new Bun.Transpiler({ loader, exports: { eliminate: ["loader"] } });
+        expect(elim.transformSync(code)).not.toContain("./db");
+        expect(elim.scan(code).imports.map(i => i.path)).not.toContain("./db");
+      }
+    });
+
+    it("with trimming off, an eliminated export takes only the imports it used", () => {
+      const code = `
+        import { db } from "./db";
+        import { other } from "./default-only";
+        import unused from "./side-effect";
+        export function loader() { return db.query(); }
+        export default other();
+      `;
+      for (const loader of ["js", "ts"]) {
+        const elim = new Bun.Transpiler({
+          loader,
+          trimUnusedImports: false,
+          treeShaking: false,
+          exports: { eliminate: ["loader", "default"] },
+        });
+        const output = elim.transformSync(code);
+        expect(output).not.toContain("./db");
+        expect(output).not.toContain("./default-only");
+        expect(output).toContain("./side-effect");
+      }
+    });
+
     it.todo("supports replacing exports", () => {
       const output = transpiler.transformSync(`
         import deadFS from 'fs';
@@ -2403,6 +2454,100 @@ export default class {
       expect(output.includes("__N_SSG")).toBe(true);
       expect(output.includes("localVarToReplace")).toBe(true);
       expect(output.includes("localVarToRemove")).toBe(false);
+    });
+
+    it("replaces and eliminates re-exports, exports without an initializer and hoistable exports", async () => {
+      const keep = `export const keep = 1;\n`;
+      const member = `var NS;\n((NS) => {\n  NS.A = 1;\n})(NS ||= {});\n`;
+      // [exports option, source, printed module]
+      const rows = [
+        [
+          { replace: { ReadStream: "x" } },
+          `export { ReadStream, WriteStream } from "node:fs"`,
+          `export var ReadStream = "x";\nexport { WriteStream } from "node:fs";\n`,
+        ],
+        [{ replace: { default: 1 } }, `export { default, b } from "x"`, `export default 1;\nexport { b } from "x";\n`],
+        [{ replace: { a: ["N", true] } }, `export { a, b } from "x"`, `export var N = true;\nexport { b } from "x";\n`],
+        [{ replace: { ns: 1 } }, `export * as ns from "x"`, `export var ns = 1;\n`],
+        [{ eliminate: ["A"] }, `export let A`, ``],
+        [{ eliminate: ["A"] }, `export let A, B = 1`, `export let B = 1;\n`],
+        [{ replace: { A: 1 } }, `export let A`, `export let A = 1;\n`],
+        [{ eliminate: ["A"] }, `namespace NS { export let A = 1 }`, member],
+        [{ eliminate: ["A"] }, `export class A {}\n${keep}`, keep],
+        [{ eliminate: ["default"] }, `export default 42;\n${keep}`, keep],
+        [{ replace: { default: ["N", 1] } }, `export default 42;\n${keep}`, `export var N = 1;\n${keep}`],
+        [{ replace: { default: ["N", 1] } }, `export default class A {}\n${keep}`, `export var N = 1;\n${keep}`],
+      ];
+      const print = rows =>
+        rows.map(([exports, source]) => new Bun.Transpiler({ loader: "ts", exports }).transformSync(source));
+      const result = await bunRun(["-e", `console.log(JSON.stringify((${print})(${JSON.stringify(rows)})))`]);
+      expect(result).toEqual({
+        stdout: JSON.stringify(rows.map(([, , module]) => module)),
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+
+    it("keeps string replacement values valid after another module is parsed", async () => {
+      using dir = tempDir("transpiler-replace-string-values", {
+        "other.cjs": Array.from({ length: 300 }, (_, i) => `exports.s${i} = "other string ${i}";`).join("\n"),
+        "entry.mjs": `
+          const transpiler = new Bun.Transpiler({ exports: { replace: { foo: "bar", default: "dflt" } } });
+          require("./other.cjs");
+          console.log(
+            JSON.stringify([
+              transpiler.transformSync("export const foo = 1;"),
+              transpiler.transformSync("export default 1;"),
+            ]),
+          );
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "entry.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(JSON.stringify(['export const foo = "bar";\n', 'export default "dflt";\n']) + "\n");
+      expect(exitCode).toBe(0);
+    });
+
+    it("takes a String object whose toString() loads a module as a replacement value", async () => {
+      using dir = tempDir("transpiler-replace-string-object", {
+        "other.cjs": `module.exports = 1;`,
+        "entry.cjs": `
+          const value = new String("ignored");
+          value.toString = () => (require("./other.cjs"), "bar");
+          const transpiler = new Bun.Transpiler({ exports: { replace: { foo: value } } });
+          console.log(transpiler.transformSync("export const foo = 1;"));
+        `,
+      });
+      expect(await bunRun(join(String(dir), "entry.cjs"))).toEqual({
+        stdout: `export const foo = "bar";`,
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+
+    it("prints `export default` for a replacement named default", () => {
+      const transpiler = new Bun.Transpiler({ exports: { replace: { x: ["default", 5] } } });
+      for (const source of [
+        `export let x;`,
+        `export var x;`,
+        `export let x = 1;`,
+        `export const x = 1;`,
+        `export function x() {}`,
+        `export class x {}`,
+      ]) {
+        expect(transpiler.transformSync(source)).toBe(`export default 5;\n`);
+      }
+      expect(transpiler.transformSync(`export let x, y;`)).toBe(`export default 5;\nexport let y;\n`);
+      expect(transpiler.transformSync(`let x;\nexport { x };`)).toBe(`let x;\nexport default 5;\n`);
     });
   });
 
@@ -2556,6 +2701,97 @@ export default <>hi</>
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe('console.log("bar");');
     expect(exitCode).toBe(0);
+  });
+
+  // The automatic JSX runtime passes a lone spread object directly as props.
+  describe("define with an object value", () => {
+    it("prints the full object at every use after JSX spreads it", () => {
+      const transpiler = new Bun.Transpiler({ loader: "jsx", define: { OBJ: '{"a":1}' } });
+      const source = [
+        `export const before = OBJ;`,
+        `export const spread = <div {...OBJ} />;`,
+        `export const child = <div {...{ ...OBJ }}>kid</div>;`,
+        `export const after = OBJ;`,
+      ].join("\n");
+      const expected = `export const before = { a: 1 };
+export const spread = jsxDEV_7x81h0kn("div", {
+  a: 1
+}, undefined, false, undefined, this);
+export const child = jsxDEV_7x81h0kn("div", {
+  a: 1,
+  children: "kid"
+}, undefined, false, undefined, this);
+export const after = { a: 1 };
+`;
+      // The transpiler reuses its define table, so transform twice.
+      expect([transpiler.transformSync(source), transpiler.transformSync(source)]).toEqual([expected, expected]);
+    });
+
+    // transform() parses on a pool thread, and every call shares the transpiler's define table.
+    it("prints the full object in every concurrent transform()", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const transpiler = new Bun.Transpiler({ loader: "jsx", define: { OBJ: '{"a":1}' } });
+            const source = Array.from(
+              { length: 200 },
+              (_, i) => "export const c" + i + " = <div {...OBJ}>kid</div>;\\nexport const p" + i + " = OBJ;",
+            ).join("\\n");
+            const outputs = await Promise.all(Array.from({ length: 8 }, () => transpiler.transform(source)));
+            const uses = outputs[0].split("a: 1").length - 1;
+            console.log(JSON.stringify({ distinct: new Set(outputs).size, uses }));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: JSON.stringify({ distinct: 1, uses: 400 }),
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+  });
+
+  it("Array.prototype as external is an empty array", () => {
+    const transform = external => new Bun.Transpiler({ external }).transformSync('import "a"; 1');
+    expect(transform(Array.prototype)).toBe(transform([]));
+  });
+
+  it("define errors after an earlier config error don't corrupt the log", async () => {
+    // An `external` with two `*` logs one error without aborting the constructor.
+    // The four define-key errors that follow make the log's buffer grow.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const define = { "0x": "1", "1x": "1", "2x": "1", "3x": "1" };
+          for (let i = 0; i < 20; i++) {
+            const t = new Bun.Transpiler({ external: ["a*b*c"], define });
+            if (i % 10 === 0) t.transformSync("export const a = 1;");
+            if (i % 10 === 9) Bun.gc(true);
+          }
+          Bun.gc(true);
+          console.log("constructed");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "constructed\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
   });
 
   it("JSX keys", () => {
@@ -5075,6 +5311,14 @@ console.log(foo, array);
     new Bun.Transpiler().scanImports("");
   });
 
+  it("transformSync treats an undefined context as omitted", () => {
+    const transpiler = new Bun.Transpiler();
+    expect(transpiler.transformSync("let a: number = 1;", "ts", undefined)).toBe("let a = 1;\n");
+    expect(() => transpiler.transformSync("let a: number = 1;", "ts", null)).toThrow(
+      "Expected context to be a object or loader for 'transformSync'.",
+    );
+  });
+
   it("preserves exotic directives", () => {
     expect(
       new Bun.Transpiler().transformSync(`"use client";
@@ -5340,6 +5584,31 @@ describe.concurrent("minify.identifiers on an empty source or a data loader", ()
   });
 });
 
+// Runs in a subprocess because a failure here aborts the process.
+it.concurrent('data loaders print only `export default` when the only key is "default"', async () => {
+  const result = await bunRun([
+    "-e",
+    `const transpiler = new Bun.Transpiler({ minify: { whitespace: true } });
+    const output = [];
+    for (const [loader, source] of [
+      ["json", '{"default": 1}'],
+      ["jsonc", '{"default": 1} // comment'],
+      ["json5", "{default: 1}"],
+      ["toml", "default = 1"],
+      ["yaml", "default: 1"],
+      ["xml", "<default>1</default>"],
+    ]) {
+      output.push([loader, transpiler.transformSync(source, loader), await transpiler.transform(source, loader)]);
+    }
+    console.log(JSON.stringify(output));`,
+  ]);
+  const number = "export default {default:1};";
+  const string = 'export default {default:"1"};';
+  const expected = ["json", "jsonc", "json5", "toml", "yaml"].map(loader => [loader, number, number]);
+  expected.push(["xml", string, string]);
+  expect(result).toEqual({ stdout: JSON.stringify(expected), stderr: "", exitCode: 0, signalCode: null });
+});
+
 it("runtime transpiler stack overflows", async () => {
   expect(async () => await import("./fixtures/lots-of-for-loop.js")).toThrow(`Maximum call stack size exceeded`);
 });
@@ -5411,6 +5680,118 @@ it("deeply nested expressions error instead of crashing the process", () => {
   expect(stdout.toString()).toBe("depth-ok\n");
   expect([exitCode, signalCode ?? undefined]).toEqual([0, undefined]);
 }, 60_000);
+
+it("moves import() and require() of a conditional into each branch", () => {
+  const transpiler = new Bun.Transpiler({ loader: "js", deadCodeElimination: true });
+  const branches = callee => `x = ${callee}(a ? "b" : c ? (d ? "e" : f) : "g");`;
+  const output = callee => `x = a ? ${callee}("b") : c ? d ? ${callee}("e") : ${callee}(f) : ${callee}("g");\n`;
+  for (const callee of ["import", "require", "require.resolve"]) {
+    expect(transpiler.transformSync(branches(callee))).toBe(output(callee));
+  }
+  expect(transpiler.scan(branches("import")).imports).toEqual([
+    { kind: "dynamic-import", path: "b" },
+    { kind: "dynamic-import", path: "e" },
+    { kind: "dynamic-import", path: "g" },
+  ]);
+});
+
+it.concurrent("doesn't crash on a deeply nested import() or require() of a long conditional chain", async () => {
+  const script = `
+    const transpiler = new Bun.Transpiler({ loader: "js", deadCodeElimination: true });
+    const chain = "(" + Buffer.alloc(40000, "a ? 'b' : ").toString() + "'c')";
+    for (const callee of ["import", "require", "require.resolve"]) {
+      // The depth limit differs between builds, so go deeper until the parser throws.
+      for (let depth = 250; ; depth += 250) {
+        try {
+          transpiler.scan("x = " + "g(".repeat(depth) + callee + chain + ")".repeat(depth));
+        } catch (e) {
+          if (e?.message !== "Maximum call stack size exceeded") throw e;
+          break;
+        }
+      }
+    }
+    console.log("ok");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "ok\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
+it.concurrent("matches a define key with many parts without crashing", async () => {
+  const parts = isDebug ? 12_000 : 500_000;
+  const script = `
+    const key = "a" + ".b".repeat(${parts});
+    // a["b"] matches the same define key as a.b.
+    const indexed = "a" + '["b"].b'.repeat(${parts / 2});
+    const transpiler = new Bun.Transpiler({ loader: "js", define: { [key]: "1" } });
+    process.stdout.write(transpiler.transformSync("x = " + key + "; y = " + indexed));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "x = 1;\ny = 1;\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
+// After a stack overflow, the visit pass skips every expression it hasn't visited yet.
+it.concurrent("reports only the stack overflow when the visit pass overflows", async () => {
+  const script = `
+    const chain = "a" + ".b".repeat(${isDebug ? 20_000 : 100_000});
+    // A skipped identifier has no symbol. This name's length is larger than the symbol table.
+    const name = Buffer.alloc(2000, "L").toString();
+    const legacyDecorators = { compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } };
+    const cases = [
+      ["[" + chain + ", " + name + " = 1] = y;"],
+      ["({ a: " + chain + ", " + name + " = 1 } = y);"],
+      ["x = typeof (false ? " + chain + " : " + name + ");"],
+      ["class A { a = " + chain + "; m() {} }"],
+      ["class A { a = " + chain + "; @dec m(@dec x: number): void {} }", legacyDecorators],
+    ];
+    const messages = cases.map(([source, tsconfig]) => {
+      try {
+        new Bun.Transpiler({ loader: "ts", tsconfig }).transformSync(source);
+        return "no error";
+      } catch (e) {
+        return e.message;
+      }
+    });
+    console.log(JSON.stringify(messages));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: JSON.stringify(Array(5).fill("Maximum call stack size exceeded")) + "\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
 
 it("deeply nested TypeScript types error instead of crashing the process", () => {
   const script = `
@@ -5872,6 +6253,124 @@ it("hexadecimal, octal and binary literals are rounded to the nearest double", (
   }
   expect(wrong).toEqual([]);
   expect(BigInt(0xb3c8bf81fdf2247) - 0xb3c8bf81fdf2247n).toBe(57n);
+});
+
+it("transformSync, scan and scanImports parse the original code when loader.toString() detaches it", async () => {
+  const script = `
+    const transpiler = new Bun.Transpiler({ loader: "js" });
+    const size = 1 << 16;
+    const keep = [];
+    function code() {
+      const bytes = new Uint8Array(size).fill(0x20);
+      new TextEncoder().encodeInto('import "original"; export const original = 1;//', bytes);
+      return bytes;
+    }
+    function loader(code) {
+      return Object.assign(new String("js"), {
+        toString() {
+          code.buffer.transfer(0);
+          for (let i = 0; i < 64; i++) keep.push(new Uint8Array(size).fill(0x20));
+          return "js";
+        },
+      });
+    }
+    const results = {};
+    for (const method of ["transformSync", "scan", "scanImports"]) {
+      const input = code();
+      results[method] = transpiler[method](input, loader(input));
+    }
+    console.log(JSON.stringify(results));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ results: stdout && JSON.parse(stdout), stderr }).toEqual({
+    results: {
+      transformSync: 'import"original";\nexport const original = 1;\n',
+      scan: { exports: ["original"], imports: [{ path: "original", kind: "import-statement" }] },
+      scanImports: [{ path: "original", kind: "import-statement" }],
+    },
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent.each([
+  {
+    macro: "shrinks the resizable input",
+    buffer: "new ArrayBuffer(bytes.length, { maxByteLength: bytes.length })",
+    invalidate: "globalThis.input.resize(0);",
+  },
+  {
+    macro: "overwrites the input and detaches it",
+    buffer: "new ArrayBuffer(bytes.length)",
+    invalidate: "new Uint8Array(globalThis.input).fill(0x20); globalThis.input.transfer(); Bun.gc(true);",
+  },
+])("transformSync and scan parse the original code when a macro $macro", async ({ buffer, invalidate }) => {
+  using dir = tempDir("transpiler-macro-takes-input", {
+    "macro.ts": `
+      export function invalidate() {
+        ${invalidate}
+        return "from the macro";
+      }
+    `,
+    "index.ts": `
+      import { join } from "node:path";
+
+      const macro = join(import.meta.dir, "macro.ts");
+      const source =
+        "import { invalidate } from " + JSON.stringify(macro) + ' with { type: "macro" };\\n' +
+        "export const fromTheMacro = invalidate();\\n" +
+        "export const filler = " + JSON.stringify(Buffer.alloc(100_000, "x").toString()) + ";\\n" +
+        "export const afterTheMacro = 'after the macro';\\n";
+
+      function input() {
+        const bytes = new TextEncoder().encode(source);
+        globalThis.input = ${buffer};
+        const view = new Uint8Array(globalThis.input);
+        view.set(bytes);
+        return view;
+      }
+
+      const transpiler = new Bun.Transpiler({ loader: "ts" });
+      const code = transpiler.transformSync(input());
+      const { exports } = transpiler.scan(input());
+      console.log(
+        JSON.stringify({
+          byteLength: globalThis.input.byteLength,
+          transformSync: [
+            code.includes('fromTheMacro = "from the macro"'),
+            code.includes('afterTheMacro = "after the macro"'),
+          ],
+          exports: exports.sort(),
+        }),
+      );
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Debug builds log each macro call to stdout first.
+  expect({ result: stdout.trim().split("\n").at(-1), stderr: stderr.trim() }).toEqual({
+    result: JSON.stringify({
+      byteLength: 0,
+      transformSync: [true, true],
+      exports: ["afterTheMacro", "filler", "fromTheMacro"],
+    }),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
 });
 
 // A numeric literal property name like `1e999` overflows to the number Infinity, which the

@@ -1,8 +1,8 @@
 //! Converts the nodes that the parser recorded around a comment into the nodes that the printers use.
 //!
-//! The printers work with [`AstNodes`](crate::js::ast_nodes::AstNodes), which has extra nodes that wrap a parser node or are part
-//! of one, such as `FunctionBody`, `TSTypeAnnotation` and `Decorator`. To find them, start at the recorded preceding or
-//! following node and walk up through `AstNodes::parent()` until the parent contains the comment.
+//! The printers work with [`AstNodes`](crate::js::ast_nodes::AstNodes), which has extra nodes that wrap a parser node
+//! or are part of one, such as `FunctionBody`, `TSTypeAnnotation` and `Decorator`. To find them, start at the recorded
+//! preceding or following node and walk up through `AstNodes::parent()` until the parent contains the comment.
 
 use super::{Options, Owner, flow};
 use crate::js::ast_nodes::{
@@ -28,7 +28,7 @@ pub(super) struct SurroundingNodes<'a> {
     pub(super) enclosing_node: Option<Owner<'a>>,
     pub(super) preceding_node: Option<Owner<'a>>,
     pub(super) following_node: Option<Owner<'a>>,
-    /// See [`AttachContext::list_elements_around`]. `enclosing_node` is not set.
+    /// See [`AttachContext::list_elements_around`]. If true, `enclosing_node` isn't set.
     pub(super) is_before_list_element: bool,
 }
 
@@ -38,26 +38,26 @@ pub(super) struct AttachContext<'a, 'c> {
     pub(super) options: Options,
     /// See [`crate::js::comments::cast_parens`].
     cast_parens: &'c [u32],
-    /// The last two answers of [`AttachContext::comments_between_same_tokens`].
+    /// The last two results of [`AttachContext::comments_between_same_tokens`].
     last_comments_between_tokens: Cell<[CommentsBetweenTokens; 2]>,
-    /// The last answer of [`AttachContext::has_bracket_in`].
+    /// The last result of [`AttachContext::has_bracket_in`].
     last_search_for_bracket: Cell<(Span, bool)>,
-    /// An expression, and what a chain of member accesses and calls that ends with it starts with. All comments between two
-    /// tokens ask about the same expression.
+    /// Caches an expression and the start of the chain of member accesses and calls that ends with it. All comments
+    /// between two tokens look up the same expression.
     pub(super) last_start_of_chain: Cell<Option<(Expr<'a>, Owner<'a>)>>,
     pub(super) is_name_of_type_query_or_jsx_element: AnswerForAncestors,
     pub(super) is_link_of_member_chain: AnswerForAncestors,
     pub(super) has_following_node: AnswerForAncestors,
 }
 
-/// The last answer to a question about a node that has the same answer for its parent, for the parent of that, and so on up to
-/// the node that decides it. `a()()()..` can be thousands of calls in each other with a comment in each, so the way up is gone
-/// once for all of them and not once for each.
+/// Caches the last answer to a question about a node, where the answer is the same for its parent, its grandparent, and
+/// so on up to the node that decides it. `a()()()..` can be thousands of nested calls with a comment in each, so the
+/// walk up happens once for all of them instead of once for each.
 #[derive(Default)]
 pub(super) struct AnswerForAncestors(Cell<Option<(Span, Span, bool)>>);
 
 impl AnswerForAncestors {
-    /// `step` returns the parent of a node if that has the same answer, or else the answer.
+    /// `step` returns the node's parent if it has the same answer, or else the answer.
     pub(super) fn find<T: Spanned + Copy>(
         &self,
         start: T,
@@ -65,7 +65,7 @@ impl AnswerForAncestors {
     ) -> bool {
         let mut node = start;
         let (last, answer) = loop {
-            // What contains the one node and is in the other is on the way from the one to the other.
+            // A node that contains `first` and is inside `last` is on the cached path between them.
             if let Some((first, last, answer)) = self.0.get()
                 && node.span().contains(first)
                 && last.contains(node.span())
@@ -82,8 +82,8 @@ impl AnswerForAncestors {
     }
 }
 
-/// What the rules ask about all the comments between two tokens. There can be thousands of them, so this is found once for all
-/// of them and not once for each.
+/// Facts the rules need about all the comments between two tokens. There can be thousands of them, so this is computed
+/// once for all of them instead of once for each.
 #[derive(Copy, Clone, Default)]
 pub(super) struct CommentsBetweenTokens {
     pub(super) first_id: u32,
@@ -94,7 +94,7 @@ pub(super) struct CommentsBetweenTokens {
     /// The first and the last comment that have no line break before them.
     pub(super) first_without_line_break_before: Option<u32>,
     pub(super) last_without_line_break_before: Option<u32>,
-    /// The first comment that is the last thing on its line, if it is on the line of the token before the comments.
+    /// The first comment that ends its line, if it's on the same line as the token before the comments.
     pub(super) first_that_ends_line_of_prev_token: Option<u32>,
 }
 
@@ -104,7 +104,7 @@ impl CommentsBetweenTokens {
     }
 }
 
-/// The member types of a union or an intersection type.
+/// Returns the member types of a union or intersection type.
 pub(super) fn union_members(ty: TypeNode<'_>) -> Option<List<'_, TypeNode<'_>>> {
     match ty.kind() {
         // Flow's `interface { .. }` as a type is an intersection in the tree.
@@ -114,7 +114,7 @@ pub(super) fn union_members(ty: TypeNode<'_>) -> Option<List<'_, TypeNode<'_>>> 
     }
 }
 
-/// The function of `node`, if `node` is a function, a method or a call signature.
+/// Returns `node`'s function if `node` is a function, a method or a call signature.
 pub(super) fn function_of(node: N<'_>) -> Option<Func<'_>> {
     match node {
         N::Function(func) | N::ArrowFunctionExpression(func) => Some(func),
@@ -131,7 +131,7 @@ pub(super) fn function_of(node: N<'_>) -> Option<Func<'_>> {
     }
 }
 
-/// The class member or object property whose value is `func`, if `func` is a method, a getter or a setter.
+/// Returns the class member or object property whose value is `func`, if `func` is a method, a getter or a setter.
 fn method_of(func: Func<'_>) -> Option<Node<'_>> {
     match func.owner() {
         owner @ Node::Member(_) => Some(owner),
@@ -152,7 +152,7 @@ pub(super) fn has_parameters(func: Func<'_>) -> bool {
     func.this_param().is_some() || !func.params().is_empty()
 }
 
-/// The `TSTypeAnnotation` around `node`, if `node` is the `T` of `a is T`.
+/// Returns the `TSTypeAnnotation` around `node`, if `node` is the `T` of `a is T`.
 fn type_annotation_of_predicate(node: N<'_>) -> Option<N<'_>> {
     let Node::Type(ty) = node.raw() else {
         return None;
@@ -160,13 +160,13 @@ fn type_annotation_of_predicate(node: N<'_>) -> Option<N<'_>> {
     (node == ty.as_ast_nodes() && is_type_of_predicate(ty)).then_some(N::TSTypeAnnotation(ty))
 }
 
-/// Whether `ty` is the `T` of `a is T`.
+/// True if `ty` is the `T` of `a is T`.
 fn is_type_of_predicate(ty: TypeNode<'_>) -> bool {
     matches!(ty.parent(), Node::Type(parent) if matches!(parent.kind(), TypeKind::Predicate { .. }))
 }
 
-/// `namespace A.B { .. }` is a namespace `B` in a namespace `A` in the HIR, and the statements are in `B`. In ESTree it is one
-/// declaration, so its body is the body of `A`.
+/// `namespace A.B { .. }` is a namespace `B` in a namespace `A` in the HIR, and the statements are in `B`. In ESTree
+/// it's one declaration, so its body is the body of `A`.
 fn body_of_whole_namespace(node: N<'_>) -> N<'_> {
     match node {
         N::TSModuleBlock(statement) => match statement.as_module() {
@@ -177,7 +177,7 @@ fn body_of_whole_namespace(node: N<'_>) -> N<'_> {
     }
 }
 
-/// The `{ .. }` body of `node`. The printers treat it as a separate node.
+/// Returns the `{ .. }` body of `node`. The printers treat it as a separate node.
 fn body_of(node: N<'_>) -> Option<N<'_>> {
     match node {
         N::Class(class) => Some(N::ClassBody(class)),
@@ -200,9 +200,9 @@ fn body_of(node: N<'_>) -> Option<N<'_>> {
     }
 }
 
-/// The enclosing, the preceding and the following node that the parser recorded for `comment`. The `{ .. }` of import
-/// attributes are an object literal in the HIR. ESTree has no node for them: the attributes are children of the
-/// declaration and come after its source.
+/// Returns the enclosing, preceding and following nodes that the parser recorded for `comment`, adjusted for import
+/// attributes. Their `{ .. }` is an object literal in the HIR, but ESTree has no node for it. There the attributes are
+/// children of the declaration and come after its source.
 fn recorded_nodes_without_import_attribute_braces<'a>(
     comment: comments::Comment<'a>,
 ) -> (
@@ -236,8 +236,8 @@ fn recorded_nodes_without_import_attribute_braces<'a>(
     (enclosing_node, preceding_node, following_node)
 }
 
-/// `import { type /* comment */ a } from "b"`: the parser takes a `type` or an `as` for a name until it has seen what follows,
-/// so it can have recorded a keyword. This replaces it with the name before or after the comment.
+/// `import { type /* comment */ a } from "b"`: the parser treats `type` or `as` as a name until it sees what follows,
+/// so it may have recorded a keyword. This replaces it with the name before or after the comment.
 fn without_keywords_of_specifier<'a>(
     enclosing_node: Option<Node<'a>>,
     preceding_node: &mut Option<NodeOrName<'a>>,
@@ -261,7 +261,8 @@ fn without_keywords_of_specifier<'a>(
     }
 }
 
-/// The import attribute whose value is `node`. In the HIR the parent of the value is the import, the export or the import type.
+/// Returns the import attribute whose value is `node`. In the HIR the value's parent is the import, the export or the
+/// import type.
 fn import_attribute_of_value(node: N<'_>) -> Option<N<'_>> {
     let N::StringLiteral(value) = node else {
         return None;
@@ -276,7 +277,8 @@ fn import_attribute_of_value(node: N<'_>) -> Option<N<'_>> {
         .map(N::ObjectProperty)
 }
 
-/// The import type whose attributes are the object `node`: the `import("a", { with: { b: "c" } })` around `{ b: "c" }`.
+/// Returns the import type whose attributes are the object `node`: the `import("a", { with: { b: "c" } })` around
+/// `{ b: "c" }`.
 fn import_type_of_attributes(node: N<'_>) -> Option<N<'_>> {
     let N::ObjectExpression(attributes) = node else {
         return None;
@@ -287,7 +289,7 @@ fn import_type_of_attributes(node: N<'_>) -> Option<N<'_>> {
     }
 }
 
-/// The `this` of `this is A` and of `asserts this` is a `TSThisType` in ESTree. The parser does not record it.
+/// The `this` of `this is A` and of `asserts this` is a `TSThisType` in ESTree. The parser doesn't record it.
 fn account_for_this_of_predicate(nodes: &mut SurroundingNodes<'_>, comment: Span) {
     let Some(Owner::Node(N::TSTypePredicate(predicate))) = nodes.enclosing_node else {
         return;
@@ -302,7 +304,8 @@ fn account_for_this_of_predicate(nodes: &mut SurroundingNodes<'_>, comment: Span
     }
 }
 
-/// The opening tag whose name is `node`: the `<a b="c">` around `a`. `AstNodes::parent` gives the element.
+/// Returns the opening tag whose name is `node`: the `<a b="c">` around `a`. `AstNodes::parent` would return the
+/// element.
 fn opening_element_of_name(node: N<'_>) -> Option<N<'_>> {
     let name = node.as_expression()?;
     match name.parent() {
@@ -313,8 +316,8 @@ fn opening_element_of_name(node: N<'_>) -> Option<N<'_>> {
     }
 }
 
-/// `export default function () {}` and `export default class {}` are one statement in the HIR, and have no child to climb up
-/// from. In ESTree the declaration is a child of the export.
+/// `export default function () {}` and `export default class {}` are one statement in the HIR, and have no child to
+/// climb up from. In ESTree the declaration is a child of the export.
 fn account_for_exported_declaration_without_children(
     nodes: &mut SurroundingNodes<'_>,
     comment: Span,
@@ -342,9 +345,9 @@ fn account_for_exported_declaration_without_children(
     }
 }
 
-/// In ESTree the type annotation is a child of the `Identifier`. So for the comment in `let a /* comment */: T`, the identifier
-/// is the enclosing node and not the preceding node. For oxfmt the two are siblings. The type annotation of `...a: T` is a
-/// child of the `RestElement`.
+/// In ESTree the type annotation is a child of the `Identifier`. So for the comment in `let a /* comment */: T`, the
+/// identifier is the enclosing node and not the preceding node. For oxfmt the two are siblings. The type annotation of
+/// `...a: T` is a child of the `RestElement`.
 fn account_for_type_annotation_of_identifier(nodes: &mut SurroundingNodes<'_>) {
     if let (
         Some(identifier @ Owner::Node(N::BindingIdentifier(name))),
@@ -367,7 +370,8 @@ fn account_for_type_annotation_of_identifier(nodes: &mut SurroundingNodes<'_>) {
     }
 }
 
-/// The parameter that `name` is, if it is an `Identifier` with decorators in ESTree: `(@a b: T) => {}`.
+/// Returns `name`'s parameter if ESTree represents the whole parameter as one `Identifier`, which then holds the
+/// decorators: `(@a b: T) => {}`.
 fn decorated_identifier(name: Pat<'_>) -> Option<Param<'_>> {
     match name.parent() {
         Node::Param(param)
@@ -379,8 +383,8 @@ fn decorated_identifier(name: Pat<'_>) -> Option<Param<'_>> {
     }
 }
 
-/// `(@a /* comment */ b: T) => {}`: the children of the `Identifier` are the decorators and the type annotation. The name
-/// itself is no node, so the following node is `: T`.
+/// `(@a /* comment */ b: T) => {}`: the children of the `Identifier` are the decorators and the type annotation. The
+/// name itself isn't a node, so the following node is `: T`.
 fn account_for_decorators_of_identifier(nodes: &mut SurroundingNodes<'_>) {
     if let (Some(Owner::Node(N::Decorator(_))), Some(Owner::Node(N::BindingIdentifier(name)))) =
         (nodes.preceding_node, nodes.following_node)
@@ -417,7 +421,7 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         }
     }
 
-    /// Whether there is a `[` in the text of `span`. All comments between two tokens ask about the same text.
+    /// True if the text of `span` contains a `[`. Cached, because all comments between two tokens check the same span.
     pub(super) fn has_bracket_in(&self, span: Span) -> bool {
         let (last_span, last_answer) = self.last_search_for_bracket.get();
         if last_span == span {
@@ -429,7 +433,7 @@ impl<'a, 'c> AttachContext<'a, 'c> {
     }
 
     pub(super) fn is_babel(&self) -> bool {
-        self.options.has_tree_of_babel
+        self.options.has_babel_tree
     }
 
     pub(super) fn program(&self) -> Owner<'a> {
@@ -440,7 +444,7 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         self.cast_parens.binary_search(&open).is_ok()
     }
 
-    /// The owner for the expression `e`. If `e` is wrapped in type cast parentheses, that is the outermost pair.
+    /// Returns the owner for the expression `e`. If `e` is wrapped in type cast parentheses, that's the outermost pair.
     pub(super) fn owner_of_expr(&self, e: Expr<'a>) -> Owner<'a> {
         if !self.cast_parens.is_empty()
             && e.is_parenthesized()
@@ -454,8 +458,8 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         Owner::Node(e.as_chain_element())
     }
 
-    /// The owner for the type `ty`. Prettier removes unions and intersections with a single member from its tree, as in
-    /// `type A = | B`.
+    /// Returns the owner for the type `ty`. Prettier removes unions and intersections with a single member from its
+    /// tree, as in `type A = | B`.
     pub(super) fn owner_of_type(&self, mut ty: TypeNode<'a>) -> Owner<'a> {
         while let Some(types) = union_members(ty)
             && types.len() == 1
@@ -466,7 +470,7 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         Owner::Node(ty.as_ast_nodes())
     }
 
-    /// Whether `owner` is the `A` of `| A` or `& A`. See [`AttachContext::owner_of_type`].
+    /// True if `owner` is the `A` of `| A` or `& A`. See [`AttachContext::owner_of_type`].
     pub(super) fn is_only_member_of_union(&self, owner: Owner<'a>) -> bool {
         matches!(owner, Owner::Node(node) if matches!(node.raw(), Node::Type(ty)
             if matches!(ty.parent(), Node::Type(parent)
@@ -475,7 +479,8 @@ impl<'a, 'c> AttachContext<'a, 'c> {
 
     pub(super) fn owner_of_stmt(&self, statement: Stmt<'a>) -> Owner<'a> {
         match statement.kind() {
-            // The HIR wraps an expression in the head of a `for`, and the object of a `with`, in a statement. ESTree does not.
+            // The HIR wraps an expression in the head of a `for`, and the object of a `with`, in a statement. ESTree
+            // doesn't.
             StmtKind::Expr(e)
                 if is_in_head_of_for(statement) || is_object_of_with(statement, e) =>
             {
@@ -503,8 +508,8 @@ impl<'a, 'c> AttachContext<'a, 'c> {
     fn owner_of_node_or_name(&self, node: NodeOrName<'a>, is_preceding_node: bool) -> Owner<'a> {
         match node {
             NodeOrName::Name(start) => Owner::Name(start),
-            // `a, b, c` is one flat `SequenceExpression` in ESTree, but `(a, b), c` in the HIR. For a comment after `a, b`, the
-            // preceding node is `b`.
+            // `a, b, c` is one flat `SequenceExpression` in ESTree, but `(a, b), c` in the HIR. For a comment after
+            // `a, b`, the preceding node is `b`.
             NodeOrName::Node(Node::Expr(mut e)) if is_preceding_node => {
                 while is_inner_comma(e)
                     && let ExprKind::Binary { right, .. } = e.kind()
@@ -513,14 +518,15 @@ impl<'a, 'c> AttachContext<'a, 'c> {
                 }
                 Owner::Node(e.as_chain_element())
             }
-            // The comment can be inside type cast parentheses around `e`. `climb_while` finds the ones it is outside of.
+            // The comment can be inside type cast parentheses around `e`. `climb_while` finds the ones it is outside
+            // of.
             NodeOrName::Node(Node::Expr(e)) => Owner::Node(e.as_chain_element()),
             NodeOrName::Node(node) => self.owner_of_node(node),
         }
     }
 
-    /// The closest ancestor of `owner` that comments can be attached to. `name_parent` is the parent to use for a name, which
-    /// does not know its own parent.
+    /// Returns the closest ancestor of `owner` that comments can be attached to. `name_parent` is the parent to use for
+    /// a name, which has no parent pointer.
     fn parent(&self, owner: Owner<'a>, name_parent: N<'a>) -> Option<Owner<'a>> {
         let mut node = match owner {
             Owner::Name(_) => name_parent,
@@ -585,7 +591,7 @@ impl<'a, 'c> AttachContext<'a, 'c> {
     /// Prettier's `canAttachComment`. Also false for nodes that exist in `AstNodes` but not in Prettier's tree.
     fn can_attach_comment(&self, node: N<'a>) -> bool {
         match node {
-            _ if self.file.is_flow() && flow::is_no_node(node) => false,
+            _ if self.file.is_flow() && flow::is_not_prettier_node(node) => false,
             N::ChainExpression(_)
             | N::FormalParameters(_)
             | N::Elision(_)
@@ -593,14 +599,16 @@ impl<'a, 'c> AttachContext<'a, 'c> {
             N::FunctionBody(func) => matches!(func.body(), FnBody::Block(_)),
             // The `a = 1` of `constructor(private a = 1) {}`. For oxfmt the parameter is one node.
             N::AssignmentPattern(Node::Param(_)) => !self.options.flavor.is_oxfmt(),
-            // The `FunctionExpression` inside a method. Babel has no such node. With typescript-estree, Prettier does not attach
-            // comments to it if it has no body, or if it is in a class and has neither parameters nor a return type.
+            // The `FunctionExpression` inside a method. Babel has no such node. With typescript-estree, Prettier
+            // doesn't attach comments to it if it has no body, or if it's in a class and has neither parameters nor a
+            // return type.
             N::Function(func) => match method_of(func) {
                 Some(_) if self.is_babel() || !func.has_body() => false,
                 Some(Node::Member(_)) => has_parameters(func) || func.return_type().is_some(),
                 _ => true,
             },
-            // A plain parameter like `a` is a single `Identifier` in ESTree, but a parameter wrapping an identifier here.
+            // A plain parameter like `a` is a single `Identifier` in ESTree, but a parameter wrapping an identifier
+            // here.
             N::BindingIdentifier(pat)
                 if self.file.is_flow() && flow::is_name_of_function_type_param(pat) =>
             {
@@ -627,7 +635,8 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         }
     }
 
-    /// Walks up from `owner` while `keep_climbing` accepts the parent's span. Returns the last accepted node and its parent.
+    /// Walks up from `owner` while `keep_climbing` accepts the parent's span. Returns the last accepted node and its
+    /// parent.
     fn climb_while(
         &self,
         mut owner: Owner<'a>,
@@ -636,7 +645,8 @@ impl<'a, 'c> AttachContext<'a, 'c> {
     ) -> (Owner<'a>, Option<Owner<'a>>) {
         loop {
             match self.parent(owner, name_parent) {
-                // Many pairs of type cast parentheses can be around one expression. If a pair is accepted, so are those in it.
+                // One expression can have many pairs of type cast parentheses around it. If a pair is accepted, so are
+                // the pairs inside it.
                 Some(Owner::CastParens(e, open))
                     if keep_climbing(self.span_of(Owner::CastParens(e, open))) =>
                 {
@@ -659,7 +669,7 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         end > 0 && self.file.text().get(end - 1) == Some(&byte)
     }
 
-    /// What the rules ask about all the comments between the same two tokens as `comment`.
+    /// Returns the facts about all the comments between the same two tokens as `comment`.
     pub(super) fn comments_between_same_tokens(
         &self,
         comment: comments::Comment<'a>,
@@ -702,9 +712,10 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         all
     }
 
-    /// Most comments are before a statement of a body or a member of a class, an interface or an enum, and after the one before
-    /// it or after the `{`. The parser has recorded the nodes that Prettier finds, and the enclosing node is a `Program`, a
-    /// `BlockStatement`, a `ClassBody`, a `TSInterfaceBody`, a `TSTypeLiteral` or a `TSEnumBody`, for which Prettier has no rule.
+    /// The fast path. Most comments come before a statement in a body or a member of a class, interface or enum, and
+    /// after the previous one or the `{`. In that case the parser already recorded the nodes that Prettier finds, and
+    /// the enclosing node is a `Program`, a `BlockStatement`, a `ClassBody`, a `TSInterfaceBody`, a `TSTypeLiteral` or
+    /// a `TSEnumBody`, for which Prettier has no rule.
     fn list_elements_around(&self, comment: comments::Comment<'a>) -> Option<SurroundingNodes<'a>> {
         if self.file.is_flow() {
             return None;
@@ -712,8 +723,8 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         let NodeOrName::Node(following_node) = comment.following_node()? else {
             return None;
         };
-        // The rules of oxfmt are about comments that stay on the line of what is before or after them: this one, or one between
-        // it and the following node. Mostly there is none between.
+        // oxfmt's rules only apply to comments that stay on the same line as what's before or after them. That could be
+        // this comment, or one between it and the following node, though usually there's none in between.
         if self.options.flavor.is_oxfmt() {
             if !comment.has_newline_before() {
                 return None;
@@ -732,7 +743,7 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         }
         let text = self.file.text();
         let enclosing_node = comment.enclosing_node();
-        // The body is no node in the HIR, so the enclosing node is what has the body.
+        // The body isn't a node in the HIR, so the enclosing node is the body's owner.
         let is_list_of_following_node = match (enclosing_node, following_node) {
             (None | Some(Node::Member(_)), Node::Stmt(_)) => true,
             (Some(Node::Stmt(statement)), Node::Stmt(_)) => match statement.tag() {
@@ -760,7 +771,7 @@ impl<'a, 'c> AttachContext<'a, 'c> {
                 Some(node)
             }
             (None, _) if enclosing_node.is_none() => None,
-            // What is before the `{` is not in the body.
+            // Whatever comes before the `{` isn't in the body.
             _ if self.prev_token_ends_with(comment, b'{') => None,
             _ => return None,
         };
@@ -830,8 +841,8 @@ impl<'a, 'c> AttachContext<'a, 'c> {
                 }
             }
             // The two parents differ, so one is inside the other, as in `class A { /* comment */ b() {} }`, where the
-            // preceding node `A` is in the class and the following node `b() {}` is in the class body. The inner parent is
-            // the enclosing node, and the node outside of it is not a sibling of the comment.
+            // preceding node `A` is in the class and the following node `b() {}` is in the class body. The inner parent
+            // is the enclosing node, and the node outside of it isn't a sibling of the comment.
             (Some((preceding_node, parent)), Some((_, other_parent)))
                 if span_len(parent) < span_len(other_parent) =>
             {
@@ -881,15 +892,15 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         if self.file.is_flow() {
             self.account_for_children_of_match(&mut nodes, comment);
         }
-        // With typescript-estree, Prettier gives a top-level comment no enclosing node.
+        // With typescript-estree, Prettier doesn't give a top-level comment an enclosing node.
         if !self.is_babel() && nodes.enclosing_node == Some(self.program()) {
             nodes.enclosing_node = None;
         }
         nodes
     }
 
-    /// `for ((a /* comment */) of b);`: in the HIR `(a /* comment */)` is an expression statement, and the parser has recorded
-    /// nothing after the comment in it. In ESTree `a` and `b` are children of the `for`.
+    /// `for ((a /* comment */) of b);`: in the HIR `(a /* comment */)` is an expression statement, and the parser
+    /// recorded nothing after the comment in it. In ESTree `a` and `b` are children of the `for`.
     fn account_for_expression_statement_in_head_of_for(
         &self,
         nodes: &mut SurroundingNodes<'a>,
@@ -921,8 +932,8 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         };
     }
 
-    /// The children of Babel's `ObjectMethod` are the key, the parameters and the body. Here the parameters and the body are in
-    /// a function expression, which Babel does not have.
+    /// The children of Babel's `ObjectMethod` are the key, the parameters and the body. Here the parameters and the
+    /// body are in a function expression, which Babel doesn't have.
     fn account_for_object_method_of_babel(&self, nodes: &mut SurroundingNodes<'a>, comment: Span) {
         let Some(Owner::Node(N::ObjectProperty(prop))) = nodes.enclosing_node else {
             return;
@@ -988,8 +999,8 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         }
     }
 
-    /// Prettier does not let a comment move from one `${}` of a template literal to another. The comment is in the parentheses
-    /// around one of the two expressions next to it, directly after the `${`, or directly before the `}`.
+    /// Prettier doesn't let a comment move from one `${}` of a template literal to another. The comment is in the
+    /// parentheses around one of the two expressions next to it, directly after the `${`, or directly before the `}`.
     fn stay_in_template_substitution(
         &self,
         nodes: &mut SurroundingNodes<'a>,
@@ -1015,8 +1026,8 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         }
     }
 
-    /// ESTree has a node for the closing tag of an element, and for the `<>` and `</>` of a fragment. `AstNodes` does not. A
-    /// comment inside one of them can only be next to something in the same tag.
+    /// ESTree has a node for the closing tag of an element, and for the `<>` and `</>` of a fragment. `AstNodes`
+    /// doesn't. A comment inside one of them can only be next to something in the same tag.
     fn stay_in_jsx_tag(&self, nodes: &mut SurroundingNodes<'a>, comment: Span) {
         let Some(Owner::Node(N::JSXElement(e) | N::JSXFragment(e))) = nodes.enclosing_node else {
             return;
@@ -1033,8 +1044,9 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         nodes.following_node = nodes.following_node.filter(is_in_tag);
     }
 
-    /// The children of Flow's `MatchExpression` and `MatchStatement` are the argument and the cases. Here the argument is in a
-    /// call and the cases of an expression are in an object, so a comment in one of the two does not see the other.
+    /// The children of Flow's `MatchExpression` and `MatchStatement` are the argument and the cases. Here the argument
+    /// is in a call and the cases of an expression are in an object, so a comment in one of the two doesn't see the
+    /// other.
     fn account_for_children_of_match(&self, nodes: &mut SurroundingNodes<'a>, comment: Span) {
         let Some(Owner::Node(enclosing_node)) = nodes.enclosing_node else {
             return;
@@ -1058,7 +1070,8 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         let mut all: Vec<SurroundingNodes<'a>> = Vec::with_capacity(self.file.comment_count());
         let mut next_token_start = u32::MAX;
         for comment in self.file.comments_by_id() {
-            // Nodes start and end at tokens. If no token is between two comments, the same nodes are around both.
+            // Nodes start and end at tokens. If there's no token between two comments, both have the same surrounding
+            // nodes.
             let nodes = match all.last() {
                 Some(&previous) if comment.next_token_start() == next_token_start => previous,
                 _ => self.surrounding_nodes(comment),

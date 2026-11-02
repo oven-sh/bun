@@ -6,7 +6,7 @@ use smallvec::{SmallVec, smallvec};
 /// Disallows string concatenation with `__dirname` and `__filename`.
 pub struct NoPathConcat;
 
-const NO_PATH_CONCAT: Message = Message::new("", "Use `path.join()` or `path.resolve()` instead of string concatenation");
+const NO_PATH_CONCAT: &Message = &Message::new("", "Use `path.join()` or `path.resolve()` instead of string concatenation");
 
 impl Rule for NoPathConcat {
     const META: Meta = Meta::oxlint(Plugin::Node, "no-path-concat", Kind::Suggestion);
@@ -55,11 +55,11 @@ fn is_path_sep(expr: Expr) -> bool {
     static_property_name(member).is_some_and(|it| it.is("sep")) && member.object().is_some_and(|it| is_specific_id(it, "path"))
 }
 
-/// What a text can start with.
+/// The first piece of a concatenated string.
 #[derive(Copy, Clone)]
 enum Start<'a> {
     Expr(Expr<'a>),
-    /// A template from its piece of text with this number on.
+    /// A template, starting at the quasi with this index.
     TemplateElement(Template<'a>, usize),
 }
 

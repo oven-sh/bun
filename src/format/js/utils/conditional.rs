@@ -12,7 +12,7 @@ pub(crate) enum ConditionalLike<'a> {
     TSConditionalType(TypeNode<'a>),
 }
 
-/// An operand of either.
+/// An operand of either kind of conditional.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(super) enum Operand<'a> {
     Expr(Expr<'a>),
@@ -54,7 +54,7 @@ impl<'a> ConditionalLike<'a> {
         }
     }
 
-    /// What is after the `?`, and what is after the `:`.
+    /// The operands after the `?` and after the `:`.
     fn consequent_and_alternate(&self) -> Option<(Operand<'a>, Operand<'a>)> {
         match self {
             ConditionalLike::ConditionalExpression(e) => match e.kind() {
@@ -69,8 +69,8 @@ impl<'a> ConditionalLike<'a> {
     }
 }
 
-/// Prettier's `shouldExtraIndentForConditionalExpression`: whether `conditional` is what a chain of member accesses and calls starts with, which is the whole of
-/// what is returned, assigned, ..:
+/// Prettier's `shouldExtraIndentForConditionalExpression`: true if `conditional` is the head of a chain of member
+/// accesses and calls, and that chain is the whole value that's returned, assigned, etc.:
 ///
 /// ```javascript
 /// return (
@@ -125,12 +125,12 @@ pub(super) fn should_extra_indent<'a>(conditional: Expr<'a>) -> bool {
     }
 }
 
-/// Where a conditional is in another.
+/// Where a conditional sits inside another one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConditionalLayout {
-    /// It is not in another conditional.
+    /// It isn't inside another conditional.
     Root {
-        /// One of the operands of it or of the conditionals in it is a JSX element.
+        /// One of its operands, or of the conditionals inside it, is a JSX element.
         jsx_chain: bool,
     },
     /// ```javascript
@@ -154,7 +154,7 @@ enum ConditionalLayout {
     ///   : e;
     /// ```
     NestedConsequent,
-    /// The condition is aligned with what is after the `:` of the parent.
+    /// The condition is aligned with what's after the parent's `:`.
     ///
     /// ```javascript
     /// a
@@ -209,7 +209,7 @@ pub(crate) fn is_jsx_conditional_chain(e: Expr<'_>) -> bool {
 impl<'a> FormatConditionalLike<'a> {
     fn layout(&self, f: &Formatter<'a>) -> ConditionalLayout {
         match (self.conditional, self.conditional.parent()) {
-            // For Prettier the parentheses of a type cast are a node, which is what it is in then.
+            // In Prettier a type cast's parentheses are a node, and that node is then the parent.
             (
                 ConditionalLike::ConditionalExpression(e),
                 AstNodes::ConditionalExpression(parent),
@@ -245,7 +245,7 @@ impl<'a> FormatConditionalLike<'a> {
             && matches!(self.conditional, ConditionalLike::ConditionalExpression(_))
             && match self.conditional.parent() {
                 AstNodes::StaticMemberExpression(_) | AstNodes::PrivateFieldExpression(_) => true,
-                // It is the left side.
+                // It's the left side.
                 AstNodes::BinaryExpression(binary) => binary
                     .binary_op()
                     .is_some_and(|operator| is_angular_pipe(operator, f)),
@@ -316,7 +316,7 @@ impl<'a> Format<'a> for ConditionalLike<'a> {
 
 struct FormatConditionalLike<'a> {
     conditional: ConditionalLike<'a>,
-    /// It is in a conditional that is a JSX chain.
+    /// It's inside a conditional that's a JSX chain.
     jsx_chain: bool,
 }
 
@@ -359,8 +359,8 @@ impl<'a> Format<'a> for FormatConditionalLike<'a> {
                     ConditionalLayout::Root { .. } | ConditionalLayout::NestedTest { .. } => {
                         write!(f, indent(&tail))
                     }
-                    // The `dedent` takes back the `align` of the parent, which with tabs would
-                    // become an indentation of its own.
+                    // The `dedent` undoes the parent's `align`, which with tabs would become an extra indentation
+                    // level.
                     ConditionalLayout::NestedConsequent => write!(f, dedent(&indent(&tail))),
                     ConditionalLayout::NestedAlternate => write!(f, tail),
                 }
@@ -392,8 +392,8 @@ impl<'a> Format<'a> for FormatConditionalLike<'a> {
     }
 }
 
-/// An operand of a conditional that has a JSX element in it. If the conditional breaks, it is in
-/// parentheses, unless it is `null`, `undefined` or a conditional after the `:`.
+/// An operand of a conditional that has a JSX element in it. If the conditional breaks, the operand is wrapped in
+/// parentheses, unless it's `null`, `undefined` or a conditional after the `:`.
 ///
 /// ```javascript
 /// a ? (
@@ -408,13 +408,13 @@ impl<'a> Format<'a> for FormatConditionalLike<'a> {
 /// ```
 struct FormatJsxChainExpression<'a> {
     expression: Expr<'a>,
-    /// It is what is after the `:`.
+    /// It's the operand after the `:`.
     is_alternate: bool,
 }
 
 impl<'a> Format<'a> for FormatJsxChainExpression<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        // A conditional expression in here is not written by way of `Expr`.
+        // A conditional expression in here isn't printed through `Expr`, so the stack check has to happen here.
         if !f.context_mut().has_stack_left() {
             return;
         }

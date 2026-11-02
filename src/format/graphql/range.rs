@@ -4,7 +4,7 @@ use super::parser::{Kind, NodeId, Tree};
 use bun_lint::span::Span;
 use smallvec::SmallVec;
 
-/// A node and its ancestors, from the inside out.
+/// A node and its ancestors, innermost first.
 type Path = SmallVec<[NodeId; 16]>;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -35,8 +35,8 @@ fn is_source_element(kind: Kind) -> bool {
     )
 }
 
-/// Prettier's `findNodeAtOffset`. If there is a source element at `offset` in `root`, `path` is the way to it, from
-/// the outside in.
+/// Prettier's `findNodeAtOffset`. Returns true if `root` has a source element at `offset`. `path` is then the path to
+/// it, outermost first.
 fn find_node_at_offset(
     tree: &Tree,
     root: NodeId,
@@ -51,7 +51,7 @@ fn find_node_at_offset(
             || (edge == Edge::End && offset == span.start)
             || (edge == Edge::Start && offset == span.end))
     };
-    // For each node of `path`, its children that have not been looked at.
+    // For each node in `path`, the children that haven't been visited yet.
     let mut rest: Vec<&[NodeId]> = Vec::new();
     if is_at_offset(root) {
         path.push(root);
@@ -74,7 +74,7 @@ fn find_node_at_offset(
     false
 }
 
-/// Prettier's `findSiblingAncestors`. The paths are from the inside out.
+/// Prettier's `findSiblingAncestors`. The paths are innermost first.
 fn find_sibling_ancestors(
     tree: &Tree,
     start_path: &[NodeId],
@@ -105,14 +105,14 @@ fn find_sibling_ancestors(
     Some((start_node, end_node))
 }
 
-/// The part of `text` that is formatted for the range from `start` to `end`.
+/// Returns the part of `text` to format for the range from `start` to `end`.
 pub(super) fn calculate_range(
     text: &[u8],
     tree: &Tree,
     mut start: usize,
     mut end: usize,
 ) -> Option<Span> {
-    // The range is narrowed so that it starts and ends with something.
+    // Trim whitespace from both ends of the range.
     let range = text.get(start..end)?;
     let trimmed = bun_core::strings::trim_js_whitespace_start(range);
     let is_blank = trimmed.is_empty();

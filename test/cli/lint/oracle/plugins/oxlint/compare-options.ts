@@ -1,10 +1,11 @@
-// The options that oxlint accepts for a rule are accepted by `bun lint` beside an .oxlintrc.json: a configuration that is refused ends the run.
+// Checks that `bun lint` with an .oxlintrc.json accepts every rule option that oxlint accepts. A rejected config ends
+// the run, so this matters.
 //
 //   BUN_LINT="bun lint" bun compare-options.ts
 //   OXLINT_BIN=<oxlint 1.87> bun compare-options.ts --record [--from=<directory with the test cases of the conformance suites>]
 //
-// options.json has, for each rule that both have, the options that oxlint accepts. `--record` asks oxlint about each of them again, one run
-// for each, and with `--from` about all options in the test cases too.
+// options.json lists the options oxlint accepts for each rule that both tools have. `--record` tries each of them on
+// oxlint again, one run per option set. With `--from` it also tries every option set in the test cases.
 
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -15,7 +16,7 @@ type Recorded = Record<string, unknown[][]>;
 const path = join(import.meta.dir, "options.json");
 const recorded: Recorded = JSON.parse(readFileSync(path, "utf8"));
 
-/** Configurations that have all accepted options between them: the first of each rule, the second of each rule that has two, .. */
+/** Returns configs that together cover all the accepted options. Config `n` has every rule's `n`-th option set. */
 export function configurations(all: Recorded): Record<string, unknown>[] {
   const most = Math.max(...Object.values(all).map(it => it.length));
   return Array.from({ length: most }, (_, index) => ({
@@ -29,8 +30,8 @@ export function configurations(all: Recorded): Record<string, unknown>[] {
   }));
 }
 
-/** What the tool says if it refuses one of the configurations, each of which has a directory of its own. */
-function refusal(command: string[], configs: object[]): string | undefined {
+/** Runs the tool with each config in its own directory. Returns its error output if it rejects one of them. */
+function rejectionMessage(command: string[], configs: object[]): string | undefined {
   const cwd = mkdtempSync(join(tmpdir(), "oxlint-options-"));
   try {
     writeFileSync(join(cwd, ".oxlintrc.json"), JSON.stringify({ categories: { correctness: "off" } }));
@@ -39,7 +40,10 @@ function refusal(command: string[], configs: object[]): string | undefined {
       writeFileSync(join(cwd, String(index), ".oxlintrc.json"), JSON.stringify(config));
       writeFileSync(join(cwd, String(index), "a.ts"), "export {};\n");
     });
-    const { stdout, stderr } = spawnSync(command[0], [...command.slice(1), "-f", "json", "."], { cwd, encoding: "utf8" });
+    const { stdout, stderr } = spawnSync(command[0], [...command.slice(1), "-f", "json", "."], {
+      cwd,
+      encoding: "utf8",
+    });
     return stdout.includes('"number_of_files"') ? undefined : (stderr || stdout).trim();
   } finally {
     rmSync(cwd, { recursive: true, force: true });
@@ -66,17 +70,20 @@ if (import.meta.main) {
           if (it.options?.length) candidates.set(JSON.stringify(it.options), it.options);
         }
       }
-      next[rule] = [...candidates.values()].filter(it => refusal([process.env.OXLINT_BIN!], [one(rule, it)]) === undefined);
+      next[rule] = [...candidates.values()].filter(
+        it => rejectionMessage([process.env.OXLINT_BIN!], [one(rule, it)]) === undefined,
+      );
     }
     writeFileSync(path, JSON.stringify(next, null, 1) + "\n");
   } else {
     const ours = (process.env.BUN_LINT ?? "bun lint").split(" ");
     let count = 0;
-    if (refusal(ours, configurations(recorded)) !== undefined) {
+    if (rejectionMessage(ours, configurations(recorded)) !== undefined) {
       for (const [rule, accepted] of Object.entries(recorded)) {
         for (const options of accepted) {
-          const message = refusal(ours, [one(rule, options)]);
-          if (message !== undefined) console.log(`${++count}. ${rule} ${JSON.stringify(options)}\n   ${message.replace(/\s+/g, " ")}`);
+          const message = rejectionMessage(ours, [one(rule, options)]);
+          if (message !== undefined)
+            console.log(`${++count}. ${rule} ${JSON.stringify(options)}\n   ${message.replace(/\s+/g, " ")}`);
         }
       }
     }

@@ -18,14 +18,14 @@ pub(crate) fn write_jsx_element<'a>(e: Expr<'a>, jsx: Jsx<'a>, f: &mut Formatter
     AnyJsxTagWithChildren { expr: e, jsx }.fmt(f);
 }
 
-/// The name in a tag: `a`, `a.b`, `a-b`, `a:b`.
+/// A tag name: `a`, `a.b`, `a-b`, `a:b`.
 struct FormatJsxName<'a>(Expr<'a>);
 
 impl<'a> Format<'a> for FormatJsxName<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let name = self.0;
         format_node(name.as_ast_nodes(), f, |f| match name.kind() {
-            // The object is not written by way of `Expr`.
+            // The object isn't printed through `Expr`, so the stack check has to happen here.
             ExprKind::Dot { .. } if !f.context_mut().has_stack_left() => {}
             ExprKind::Dot {
                 obj,
@@ -37,7 +37,7 @@ impl<'a> Format<'a> for FormatJsxName<'a> {
     }
 }
 
-/// `a`, `a-b`, `a:b`, with the comments of the names.
+/// `a`, `a-b`, `a:b`, with the names' comments.
 fn write_jsx_identifier<'a>(span: Span, f: &mut Formatter<'a>) {
     let text = f.source_text().text_for(&span);
     let is_part =
@@ -78,12 +78,12 @@ fn write_jsx_closing_element<'a>(name: Expr<'a>, f: &mut Formatter<'a>) {
     write!(f, ">");
 }
 
-/// `< /* prettier-ignore */ >` stays as it is for Prettier. oxfmt prints `</* prettier-ignore */>`.
+/// Prettier leaves `< /* prettier-ignore */ >` as is. oxfmt prints `</* prettier-ignore */>`.
 fn ignore_comment_applies_to_fragment_tag(f: &Formatter<'_>) -> bool {
     !f.options().flavor.is_oxfmt()
 }
 
-/// `<>` and `</>`, which is at `tag`, with the `comments` inside the tag. Prettier's `printJsxOpeningClosingFragment`.
+/// `<>` or `</>` at `tag`, with the `comments` inside the tag. Prettier's `printJsxOpeningClosingFragment`.
 fn write_jsx_fragment_tag<'a>(
     tag: Span,
     comments: CommentList<'a>,
@@ -125,7 +125,7 @@ fn write_jsx_fragment_tag<'a>(
     );
 }
 
-/// A child of an element, or the value of an attribute: text, an element, `{e}`, `{...e}`.
+/// An element's child or an attribute's value: text, an element, `{e}`, `{...e}`.
 #[derive(Copy, Clone)]
 pub(crate) struct FormatJsxChild<'a>(pub(crate) Expr<'a>);
 
@@ -192,14 +192,14 @@ fn write_jsx_expression_container<'a>(
     }
 }
 
-/// What is between the braces of `{/* comment */}`. Prettier's `printJsxEmptyExpression`.
+/// The content of the braces in `{/* comment */}`. Prettier's `printJsxEmptyExpression`.
 struct FormatJsxEmptyExpression<'a>(Expr<'a>);
 
 impl<'a> Format<'a> for FormatJsxEmptyExpression<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let comments = (f.comments()).of_node(AstNodes::JSXEmptyExpression(self.0));
-        // `{   /* prettier-ignore */   }`: for Prettier the comment also applies to the `JSXEmptyExpression` that owns it, which
-        // is everything between the braces, so the blanks stay.
+        // `{   /* prettier-ignore */   }`: in Prettier the comment also applies to the `JSXEmptyExpression` that owns
+        // it, which is everything between the braces, so the whitespace stays.
         if comments.is_ignored
             && let Some(braces) = self.0.jsx_container_span()
         {
@@ -227,14 +227,13 @@ impl<'a> Format<'a> for FormatJsxEmptyExpression<'a> {
 /// />
 /// ```
 ///
-/// Prettier on the left, oxfmt on the right: see [`has_comments_that_count`].
+/// Prettier is on the left, oxfmt on the right. See [`has_comments_that_count`].
 fn has_comments_in_braces<'a>(expression: Expr<'a>, f: &Formatter<'a>) -> bool {
     !f.is_quiet() && has_comments_that_count(expression, f)
 }
 
-/// Prettier's `shouldInline` in `printJsxExpressionContainer`: it starts right after the `{` and
-/// ends right before the `}`, even if it breaks. `is_child`: the braces are among the children of
-/// an element.
+/// Prettier's `shouldInline` in `printJsxExpressionContainer`: the expression starts right after the `{` and ends right
+/// before the `}`, even if it breaks. `is_child` means the braces are a child of an element.
 fn should_inline_jsx_expression<'a>(
     mut expression: Expr<'a>,
     mut is_child: bool,
@@ -300,13 +299,13 @@ pub(crate) fn write_jsx_attribute<'a>(attribute: Prop<'a>, f: &mut Formatter<'a>
     }
 }
 
-/// `a=/* prettier-ignore */ 'b'` is `a=/* prettier-ignore */ "b"` for Prettier: `printJsxAttribute` writes a string itself, ignored or
-/// not. oxfmt copies it.
-fn ignored_string_of_attribute_is_formatted(f: &Formatter<'_>) -> bool {
+/// Prettier prints `a=/* prettier-ignore */ 'b'` as `a=/* prettier-ignore */ "b"`: `printJsxAttribute` prints a string
+/// itself, ignored or not. oxfmt copies it.
+fn formats_ignored_attribute_string(f: &Formatter<'_>) -> bool {
     !f.options().flavor.is_oxfmt()
 }
 
-/// `"b"`, `{b}` or `<b />` after the `=` of an attribute.
+/// `"b"`, `{b}` or `<b />` after an attribute's `=`.
 struct FormatJsxAttributeValue<'a>(Expr<'a>);
 
 impl<'a> Format<'a> for FormatJsxAttributeValue<'a> {
@@ -318,7 +317,7 @@ impl<'a> Format<'a> for FormatJsxAttributeValue<'a> {
         let node = value.as_ast_nodes();
         if !matches!(node, AstNodes::StringLiteral(_))
             || !f.comments().is_ignored(node)
-            || !ignored_string_of_attribute_is_formatted(f)
+            || !formats_ignored_attribute_string(f)
         {
             return FormatJsxChild(value).fmt(f);
         }
@@ -328,14 +327,14 @@ impl<'a> Format<'a> for FormatJsxAttributeValue<'a> {
     }
 }
 
-/// `{...argument}`. Prettier's `printJsxSpreadAttributeOrChild`: the comments of the argument are written before the dots.
+/// `{...argument}`. Prettier's `printJsxSpreadAttributeOrChild`: the argument's comments are printed before the dots.
 fn write_jsx_spread<'a>(argument: Expr<'a>, f: &mut Formatter<'a>) {
     if !has_comments_in_braces(argument, f) {
         return write!(f, ["{...", argument, "}"]);
     }
     let comments = comments_of_expression(argument, f);
-    // `{⏎// prettier-ignore⏎...a⏎// comment⏎.b}`: a leading comment can be inside the argument. An ignored argument is copied
-    // with it.
+    // `{⏎// prettier-ignore⏎...a⏎// comment⏎.b}`: a leading comment can be inside the argument. An ignored argument is
+    // copied along with it.
     let leading_comments = match comments.is_ignored {
         true => {
             let count_before_argument = (comments.leading.iter())
@@ -358,7 +357,7 @@ fn write_jsx_spread<'a>(argument: Expr<'a>, f: &mut Formatter<'a>) {
     );
 }
 
-/// `{...e}` among the children of an element. `e`: the `Spread`.
+/// `{...e}` as a child of an element. `e` is the `Spread`.
 #[inline(never)]
 pub(crate) fn write_jsx_spread_child<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     if let ExprKind::Spread(argument) = e.kind() {
@@ -366,8 +365,7 @@ pub(crate) fn write_jsx_spread_child<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     }
 }
 
-/// Text that is written by itself. That among the children of an element is written word by word:
-/// see `child_list.rs`.
+/// Text that's printed as a whole. Text among an element's children is printed word by word in `child_list.rs`.
 pub(crate) fn write_jsx_text<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     write!(f, text(e.text()));
 }

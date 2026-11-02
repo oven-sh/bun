@@ -1,8 +1,8 @@
-//! `rangeStart` and `rangeEnd`: only the statements that a range of the text touches are formatted.
+//! `rangeStart` and `rangeEnd`: formats only the statements that the range touches.
 //!
 //! This is Prettier's `formatRange` (`src/main/core.js`) and `calculateRange`
-//! (`src/main/range.js`). The range is widened to whole statements, their text is parsed and
-//! formatted as a file of its own, indented like the line that it starts on, and put back.
+//! (`src/main/range.js`). The range is widened to whole statements. Their text is parsed and
+//! formatted as a separate file, indented like the line it starts on, and spliced back in.
 
 use crate::cursor::format_with;
 use crate::ir::element::{Align, FormatElement, Tag};
@@ -18,14 +18,14 @@ use bun_lint::ast::{File, FnBody, FnKind, Node, Stmt, StmtKind};
 use bun_lint::span::Span;
 use smallvec::SmallVec;
 
-/// Appends to `out` the text of `file` with what `options.range_start` and `options.range_end`
-/// select formatted. That is all of it if neither is set.
+/// Appends `file`'s text to `out`, with the part selected by `options.range_start` and
+/// `options.range_end` formatted. If neither is set, the whole file is formatted.
 ///
-/// `parse` is called at most once, with a part of the text. It has to parse that like `file` has
-/// been parsed, as a file with the same name, and call its second argument with the result.
+/// `parse` is called at most once, with a slice of the text. It must parse the slice the way `file`
+/// was parsed, as a file with the same name, and pass the result to its second argument.
 ///
-/// Returns where the cursor, which is at `options.cursor_offset` in the text of `file`, is in what
-/// is appended, in UTF-16 code units like the option. `None` if there is none.
+/// Returns the new position, within the appended text, of the cursor at `options.cursor_offset` in
+/// `file`'s text. It's in UTF-16 code units like the option. Returns `None` if there's no cursor.
 pub fn format_with_cursor<'a>(
     file: &'a File<'a>,
     options: &FormatOptions,
@@ -67,7 +67,7 @@ pub fn format_with_cursor<'a>(
     };
 
     let mut formatted = Vec::new();
-    // Where the cursor is in `formatted`, if it is in the range.
+    // The cursor's offset in `formatted`, if it's inside the range.
     let mut cursor_in_formatted = None;
     if !bun_core::strings::trim_js_whitespace_start(slice).is_empty() {
         let alignment = alignment_size(
@@ -103,7 +103,7 @@ pub fn format_with_cursor<'a>(
         formatted.truncate(bun_core::strings::trim_js_whitespace_end(&formatted).len());
     }
 
-    // Everything is put together with `\n`, which is replaced at the end.
+    // Assemble everything with `\n`, and convert the line endings at the end.
     let mut whole = Vec::with_capacity(text.len() + formatted.len());
     let mut cursor_in_whole = None;
     write_with_line_ending(before, b"\n", &mut whole);
@@ -132,12 +132,12 @@ pub fn format_with_cursor<'a>(
     Ok(cursor_in_out)
 }
 
-/// How long `text` is after each `\r\n` in it has become `\n`.
+/// Length of `text` once every `\r\n` is replaced with `\n`.
 pub(crate) fn normalized_len(text: &[u8]) -> usize {
     text.len() - bun_core::strings::count(text, b"\r\n")
 }
 
-/// `rangeStart`, `rangeEnd` and `cursorOffset`, which count UTF-16 code units, as offsets in the text.
+/// `rangeStart`, `rangeEnd` and `cursorOffset`, converted from UTF-16 code units to byte offsets.
 pub(crate) struct Offsets {
     pub(crate) start: usize,
     pub(crate) end: usize,
@@ -145,14 +145,15 @@ pub(crate) struct Offsets {
 }
 
 impl Offsets {
-    /// Prettier's `normalizeInputAndOptions`. `first`: where `text` starts after its byte order mark.
+    /// Prettier's `normalizeInputAndOptions`. `first` is the offset just past `text`'s byte order
+    /// mark.
     pub(crate) fn new(text: &[u8], first: usize, options: &FormatOptions) -> Offsets {
-        // After `\r\n` has become `\n`, an offset between the two is behind it.
+        // Once `\r\n` becomes `\n`, an offset between the two bytes lands after the line break.
         let after_line_break = |at: usize| match text.get(at.wrapping_sub(1)..=at) {
             Some(b"\r\n") => at + 1,
             _ => at,
         };
-        // An offset before the byte order mark or behind the end is as good as none.
+        // An offset inside the byte order mark or past the end of the text counts as unset.
         let offset_of = |index: Option<u32>| {
             offset_of_utf16_index(text, index?)
                 .map(after_line_break)
@@ -166,13 +167,13 @@ impl Offsets {
     }
 }
 
-/// `None` if `text` is shorter.
+/// Returns `None` if `index` is past the end of `text`.
 fn offset_of_utf16_index(text: &[u8], index: u32) -> Option<usize> {
     use bun_core::strings::{wtf8_len_utf16, wtf8_offset_of_utf16_index};
     (index <= wtf8_len_utf16(text)).then(|| wtf8_offset_of_utf16_index(text, index))
 }
 
-/// Prettier's `getAlignmentSize` of the white space that the last line of `before` starts with.
+/// Prettier's `getAlignmentSize` for the leading whitespace of `before`'s last line.
 pub(crate) fn alignment_size(before: &[u8], tab_width: u32) -> usize {
     let last = |line_break| {
         bun_core::strings::last_index_of_char(before, line_break).map_or(0, |at| at + 1)
@@ -209,8 +210,8 @@ pub(crate) fn write_with_line_ending(mut text: &[u8], line_ending: &[u8], out: &
     out.extend_from_slice(text);
 }
 
-/// Writes the document of `file` so that every line is indented by `alignment` columns more.
-/// Prettier's `addAlignmentToDoc`.
+/// Writes `file`'s document with every line indented by `alignment` extra columns. Prettier's
+/// `addAlignmentToDoc`.
 fn write_aligned<'a>(file: &'a File<'a>, alignment: usize, f: &mut Formatter<'a>) {
     let tab_width = f.options().indent_width.value().max(1) as usize;
     let (levels, spaces) = (alignment / tab_width, (alignment % tab_width) as u32);
@@ -220,7 +221,8 @@ fn write_aligned<'a>(file: &'a File<'a>, alignment: usize, f: &mut Formatter<'a>
     for _ in 0..levels {
         f.write_element(FormatElement::Tag(Tag::StartIndent));
     }
-    // It makes the indentation count for the first line, and is trimmed from the result.
+    // This line break makes the indentation apply to the first line too. It's trimmed from the
+    // result.
     if alignment > 0 {
         hard_line_break().fmt(f);
     }
@@ -240,8 +242,8 @@ enum Edge {
 }
 
 impl Edge {
-    /// Whether a node at `span` is looked at for `offset`. A range does not start in a node that
-    /// ends there, and does not end in one that starts there.
+    /// True if a node at `span` is a candidate for `offset`. A range doesn't start in a node that
+    /// ends at its start, and doesn't end in a node that starts at its end.
     fn is_in(self, offset: u32, span: Span) -> bool {
         match self {
             Edge::Start => span.start <= offset && offset < span.end,
@@ -252,10 +254,11 @@ impl Edge {
 
 type Path<'a> = SmallVec<[AstNodes<'a>; 16]>;
 
-/// Prettier's `locStart`: with the decorators before it.
+/// Prettier's `locStart`, which includes leading decorators.
 fn loc_start(node: AstNodes<'_>) -> u32 {
     let class = match node {
-        // Babel's `Program` starts where the text does, that of typescript-estree at the first token.
+        // Babel's `Program` starts at the start of the text, typescript-estree's at the first
+        // token.
         AstNodes::Program(Program(file)) => {
             let first = if file.has_bom() { BOM.len() as u32 } else { 0 };
             return match (file.is_javascript(), file.body().first()) {
@@ -283,7 +286,7 @@ fn full_span(node: AstNodes<'_>) -> Span {
     Span::new(loc_start(node), node.span().end)
 }
 
-/// Prettier's `locEnd`: a statement ends before its `;`.
+/// Prettier's `locEnd`, where a statement ends before its `;`.
 fn loc_end<'a>(node: AstNodes<'a>) -> u32 {
     use AstNodes as N;
     let span = node.span();
@@ -316,11 +319,11 @@ fn loc_end<'a>(node: AstNodes<'a>) -> u32 {
     }
 }
 
-/// Prettier's `isJsSourceElement`: the name of the node in ESTree is `Directive`,
+/// Prettier's `isJsSourceElement`. True if the node's ESTree type is `Directive` or
 /// `TSExportAssignment`, starts with `TSDeclare`, or ends with `Statement` or `Declaration`.
 fn is_source_element(node: AstNodes<'_>) -> bool {
     use AstNodes as N;
-    if crate::js::print::flow::is_no_source_element(node) {
+    if crate::js::print::flow::is_not_js_source_element(node) {
         return false;
     }
     match node {
@@ -361,7 +364,7 @@ fn is_source_element(node: AstNodes<'_>) -> bool {
         | N::ExpressionStatement(ExpressionStatement::Stmt(_)) => true,
         N::Function(func) => matches!(func.owner(), Node::Stmt(_)),
         N::Class(class) => matches!(class.owner(), Node::Stmt(_)),
-        // The `BlockStatement` that is the body of a function.
+        // A function body's `BlockStatement`.
         N::FunctionBody(func) => {
             matches!(func.body(), FnBody::Block(_)) && func.kind() != FnKind::StaticBlock
         }
@@ -369,7 +372,7 @@ fn is_source_element(node: AstNodes<'_>) -> bool {
     }
 }
 
-/// Whether ESTree has the node, and Prettier attaches comments to it.
+/// True if the node exists in ESTree and Prettier attaches comments to it.
 fn is_in_estree(node: AstNodes<'_>) -> bool {
     use AstNodes as N;
     match node {
@@ -382,7 +385,7 @@ fn is_in_estree(node: AstNodes<'_>) -> bool {
     }
 }
 
-/// The declaration in `export` and the declaration `statement`.
+/// The declaration inside `statement`, if `statement` is `export` followed by a declaration.
 fn exported_declaration(statement: Stmt<'_>) -> Option<AstNodes<'_>> {
     use AstNodes as N;
     if !statement.is_exported() {
@@ -399,10 +402,10 @@ fn exported_declaration(statement: Stmt<'_>) -> Option<AstNodes<'_>> {
     }
 }
 
-/// Prettier's `findNodeAtOffset`: the innermost statement or declaration that `offset` is in, and
-/// what that is in, from the inside out, without the file.
+/// Prettier's `findNodeAtOffset`. Returns the innermost statement or declaration that contains
+/// `offset`, followed by its ancestors from the inside out, excluding the file.
 fn find_node_at_offset<'a>(file: &'a File<'a>, offset: u32, edge: Edge) -> Option<Path<'a>> {
-    // Siblings do not overlap, so there is one way down.
+    // Siblings don't overlap, so there's only one path down.
     let mut innermost = Node::File(file);
     loop {
         let mut next = None;
@@ -423,7 +426,7 @@ fn find_node_at_offset<'a>(file: &'a File<'a>, offset: u32, edge: Edge) -> Optio
         }
     }
 
-    // The nodes of ESTree that are not nodes of their own here.
+    // ESTree nodes that don't have a separate node in this AST.
     let inner = match innermost {
         Node::Func(func) => Some(AstNodes::FunctionBody(func)),
         Node::Stmt(statement) => exported_declaration(statement),
@@ -441,8 +444,8 @@ fn find_node_at_offset<'a>(file: &'a File<'a>, offset: u32, edge: Edge) -> Optio
     Some(std::iter::once(first).chain(path).collect())
 }
 
-/// Prettier's `findSiblingAncestors`: widens two nodes as long as each stays within the other's
-/// side of the range.
+/// Prettier's `findSiblingAncestors`. Widens each node to an ancestor as long as it stays within
+/// the other's side of the range.
 fn find_sibling_ancestors<'a>(
     file: AstNodes<'a>,
     start_path: &[AstNodes<'a>],
@@ -453,7 +456,7 @@ fn find_sibling_ancestors<'a>(
     if start_node == end_node {
         return Some((start_node, end_node));
     }
-    // Prettier's `dropRootParents` only leaves out the file if there is anything else.
+    // Prettier's `dropRootParents` only drops the file if other ancestors remain.
     let root = [file];
     let start_ancestors = if start_ancestors.is_empty() {
         &root[..]
@@ -484,10 +487,10 @@ fn find_sibling_ancestors<'a>(
     Some((start_node, end_node))
 }
 
-/// Prettier's `calculateRange`: what to format so that everything from `start` to `end` is.
+/// Prettier's `calculateRange`. Returns the span to format so that `start..end` is covered.
 fn calculate_range<'a>(file: &'a File<'a>, mut start: u32, mut end: u32) -> Option<Span> {
     let text = file.text();
-    // The range is narrowed so that it starts and ends with something.
+    // Trim whitespace from both ends of the range.
     let selected = text.get(start as usize..end as usize)?;
     let trimmed = bun_core::strings::trim_js_whitespace_start(selected);
     let is_all_white_space = trimmed.is_empty();

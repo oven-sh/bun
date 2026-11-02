@@ -36,7 +36,6 @@
 #include "headers.h"
 #include "blob.h"
 #include "BunString.h"
-#include "ZigGeneratedClasses.h"
 #include "CloseEvent.h"
 #include <wtf/text/Base64.h>
 #include "Event.h"

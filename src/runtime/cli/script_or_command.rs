@@ -1,5 +1,4 @@
-//! `bun check`, `bun lint` and `bun fmt` ran the script of that name in `package.json` before they
-//! were commands, so where a project has such a script they still do. In that script, and in what it
+//! `bun check`, `bun lint`, `bun fmt` and `bun compile` ran the script of that name in `package.json` before they were commands, so where a project has such a script they still do. In that script, and in what it
 //! runs, they are the commands: `"lint": "bun lint"`. So it is with a file `lint.ts` and with
 //! `node_modules/.bin/lint`. With `--no-script` they are the commands whatever the project has.
 //! A `package.json` that names the script and can't be parsed stops `bun lint` and `bun fmt`, which can write files.
@@ -46,7 +45,7 @@ fn place_of_short_with_value(shorts: &[u8]) -> Option<usize> {
     for (at, short) in shorts.iter().enumerate() {
         match values_of(&|names| names.short == Some(*short)) {
             Some(Values::One | Values::Many) => return Some(at),
-            Some(Values::OneOptional) => return None,
+            Some(Values::OneOptional | Values::ManyOptional) => return None,
             Some(Values::None) => {}
             // It isn't a chain of flags of `bun`: `-f=agent` is for `bun lint`.
             None => return None,
@@ -138,7 +137,7 @@ pub(crate) fn arguments_before(command: &[u8]) -> Vec<&'static [u8]> {
 #[inline(never)]
 pub(crate) fn command_after_flags() -> Option<&'static [u8]> {
     let args: Vec<&'static [u8]> = bun_core::argv().into_iter().collect();
-    let is_command = |arg: &&[u8]| matches!(*arg, b"check" | b"lint" | b"fmt");
+    let is_command = |arg: &&[u8]| matches!(*arg, b"check" | b"lint" | b"fmt" | b"compile");
     if !args.iter().any(is_command) {
         return None;
     }
@@ -156,7 +155,9 @@ fn asks_the_command(command: &[u8], arg: &[u8]) -> bool {
     let name = bun_core::strings::split_once_char(arg, b'=').map_or(arg, |it| it.0);
     match name {
         b"--help" | b"-h" | b"--no-script" => true,
-        b"--help-all" | b"--doctor" => command != b"check",
+        b"--help-all" | b"--doctor" => command != b"check" && command != b"compile",
+        b"--aot" => command == b"check",
+        b"--library" => command == b"compile",
         b"--explain" => command == b"lint",
         _ => false,
     }
@@ -389,7 +390,7 @@ fn is_file_or_executable(name: &[u8], cwd: &[u8]) -> bool {
 
 /// The text of the `package.json` at `path`. A link in a repository can lead to `/dev/zero`: `bun run` stops at such a file, and
 /// finds no script in it.
-fn read_package_json(path: &[u8]) -> Option<Vec<u8>> {
+pub(super) fn read_package_json(path: &[u8]) -> Option<Vec<u8>> {
     use bun_sys::{EntryKind, O};
     // Otherwise opening a named pipe waits for somebody to open it for writing, who may never come.
     let without_waiting = if cfg!(unix) { O::NONBLOCK } else { 0 };
@@ -412,7 +413,7 @@ fn read_package_json(path: &[u8]) -> Option<Vec<u8>> {
 
 /// The `package.json` nearest to `dir`, which is where `bun run` looks: its directory, its path and
 /// its text.
-fn nearest_package_json(mut dir: &[u8]) -> Option<(&[u8], Vec<u8>, Vec<u8>)> {
+pub(super) fn nearest_package_json(mut dir: &[u8]) -> Option<(&[u8], Vec<u8>, Vec<u8>)> {
     loop {
         let path = below(dir, b"package.json");
         if let Some(contents) = read_package_json(&path) {
@@ -455,6 +456,7 @@ fn command_of_script(name: &[u8]) -> Option<&'static [u8]> {
         b"check" | b"precheck" | b"postcheck" => Some(b"check"),
         b"lint" | b"prelint" | b"postlint" => Some(b"lint"),
         b"fmt" | b"prefmt" | b"postfmt" => Some(b"fmt"),
+        b"compile" | b"precompile" | b"postcompile" => Some(b"compile"),
         _ => None,
     }
 }
@@ -491,7 +493,7 @@ pub(crate) fn note_package_script(env: &mut bun_dotenv::Loader, name: &[u8], dir
         }
     };
     // `name` takes the place of what another package manager has said, for what the script runs.
-    for command in [&b"check"[..], b"lint", b"fmt"] {
+    for command in [&b"check"[..], b"lint", b"fmt", b"compile"] {
         if let Some(inherited) = package_of_inherited_script(command) {
             note(command, &inherited);
         }
@@ -506,7 +508,7 @@ pub(crate) fn note_package_script(env: &mut bun_dotenv::Loader, name: &[u8], dir
 
 /// `note_package_script` for the file or the executable `name` that `bun <name>` or `bun run <name>` starts in `cwd`.
 pub(crate) fn note_file_or_executable(env: &mut bun_dotenv::Loader, name: &[u8], cwd: &[u8]) {
-    if matches!(name, b"check" | b"lint" | b"fmt") {
+    if matches!(name, b"check" | b"lint" | b"fmt" | b"compile") {
         note_package_script(env, name, cwd);
     }
 }

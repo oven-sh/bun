@@ -1,31 +1,33 @@
-// Generates `oxlint_fields.rs`: what the options of oxlint's rules look like, for `oxlint_options.rs`, which refuses what oxlint
-// refuses.
+// Generates `oxlint_fields.rs`: the shapes of oxlint's rule options, for `oxlint_options.rs`, which rejects what oxlint
+// rejects.
 //
 //   OXLINT=<the oxlint executable> SCHEMA=<configuration_schema.json of its package> node generate-oxlint-fields.mjs
 //
-// The executable is the judge. Each rule is given one odd value after the other, at every place of its options, and what it
-// answers says what it expects there: "invalid type: integer `1`, expected a boolean", "unknown field `zz`, expected one of ..".
-// The schema only says which rules there are and where to look further. Inside an untagged enum, where every answer is the same,
-// it also says what the parts are, and the executable is asked whether that is so.
+// The executable is the source of truth. Each rule is given one odd value after another, at every position in its
+// options, and its error tells what it expects there: "invalid type: integer `1`, expected a boolean", "unknown field
+// `zz`, expected one of ..". The schema is only used to list the rules and to decide where to probe further. Inside an
+// untagged enum, where every error is the same, it also provides the parts, and the executable is probed to confirm
+// them.
 //
 // The notation. A row is a letter for how the rule reads its options, and a type:
 //
-//   f  the first option   F  the same, and nothing is said about what was received   S  the second
-//   w  all of them        W  the same, and nothing is said about what was received
-//   P  no-restricted-properties   E  one of two, or both       L, U  rules that read by hand
+//   f  the first option   F  the same, but the error omits what was received   S  the second
+//   w  all of them        W  the same, but the error omits what was received
+//   P  no-restricted-properties   E  one of two, or both       L, U  rules that parse by hand
 //
 //   *  anything     b  bool       T F  only that bool   _  null    s  string   c  char   f  f64
 //   n0 .. n6        u8 u16 u32 u64 usize i32 i64        r"a""b"    a pattern of Rust's regex, between `a` and `b`
-//   ?t  Option      [t]"e"  Vec   {t}"e"  map: `e` is what is expected, if not "a sequence" or "a map"
-//   <a,b>  an enum  <a,b>"e"  a string that is one of these, or else the text `e` with the string for `$`
-//   #tt;   a tuple  |Name tt;  |"e"tt;  an untagged enum   /tt;  the first that fits, or the words of the last
-//   %"e"tt;  by the kind of the value   !"e"t  `true` fits and is refused   Q  memberSyntaxSortOrder   =1;  the row `=1`
-//   +tt  the first, and then the second   R2,3"e"  a number that is not from 2 to 3 is refused with `e`
-//   J"e"  the strings in a list are names of functions, of which Jest's rules make patterns. `e` is before what is wrong with one
-//   A  a severity that is not that of a rule, which only `shape.rs` writes
-//   (Name~!^ field!^@$:t ..)  a struct. `&` in the name is the rule in Pascal case. `~` it ignores unknown fields, `!` from a
-//   sequence it needs every field, `^` another struct is flattened into it. A field: `!` required, `^` of the flattened struct,
-//   `+` a sequence needs it, `@` another name of the field before it, `$` of the one after it, `@@` of the one before that.
+//   ?t  Option      [t]"e"  Vec   {t}"e"  map: `e` is the expected-type text, if it isn't "a sequence" or "a map"
+//   <a,b>  an enum  <a,b>"e"  a string that's one of these, or else the error `e` with `$` replaced by the string
+//   #tt;   a tuple  |Name tt;  |"e"tt;  an untagged enum   /tt;  the first that matches, or the last one's error
+//   %"e"tt;  by the value's kind   !"e"t  `true` matches but is rejected   Q  memberSyntaxSortOrder   =1;  row `=1`
+//   +tt  the first, and then the second   R2,3"e"  a number outside 2 to 3 is rejected with `e`
+//   J"e"  strings in a list are function names, which Jest's rules turn into patterns. `e` precedes a pattern's error
+//   A  a severity that isn't a rule's, which only `shape.rs` uses
+//   (Name~!^ field!^@$:t ..)  a struct. `&` in the name is the rule in Pascal case. `~` it ignores unknown fields,
+//   `!` it needs every field when read from a sequence, `^` another struct is flattened into it. A field: `!` required,
+//   `^` from the flattened struct, `+` a sequence needs it, `@` alias of the previous field, `$` of the next,
+//   `@@` of the one before the previous.
 
 import { execFileSync, spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -40,12 +42,12 @@ const plugins = [...new Set(Object.keys(rules).flatMap(it => (it.includes("/") ?
 const scratch = mkdtempSync(join(tmpdir(), "oxlint-fields-"));
 
 // ---------------------------------------------------------------------------------------------------------------------------
-// Asking. Every rule is worked out by an async function of its own. One run of oxlint answers one question of each.
+// Probing. Each rule is worked out by its own async function. One oxlint run answers one probe per rule.
 
 const pending = new Map();
 const answered = new Map();
 
-/** What oxlint says against `options` of `rule`: the lines below "Invalid configuration for rule". `null`: it takes them. */
+/** oxlint's error for `rule`'s `options`: the lines below "Invalid configuration for rule". `null` if accepted. */
 function probe(rule, options) {
   const key = `${rule} ${JSON.stringify(options)}`;
   if (answered.has(key)) return Promise.resolve(answered.get(key));
@@ -80,10 +82,10 @@ function refusalsIn(text) {
   for (const block of text.split(/\n\n/)) {
     const found = /^\s*x Invalid configuration for rule `([^`]+)`:\n([\s\S]*)$/.exec(block);
     if (!found) continue;
-    // It calls two plugins otherwise than the schema does.
+    // It names two plugins differently from the schema.
     const rule = found[1].replace(/^(jsx|react)_(a11y|perf)\//, "$1-$2/");
     const lines = found[2].split("\n").map(line => line.replace(/^  \| ?/, ""));
-    // It breaks a very long line.
+    // It wraps a very long line.
     all.set(rule, lines.join("\n").replace(/\n+$/, "").replace(/,\n`/g, ", `"));
   }
   return all;
@@ -181,7 +183,7 @@ function write(t) {
 const isInteger = v => Number.isInteger(v) && !Object.is(v, -0);
 const isMap = v => v !== null && typeof v === "object" && !Array.isArray(v);
 
-/** Whether `v` is a `t`, for what is in an untagged enum. */
+/** True if `v` is a `t`. Used for the parts of an untagged enum. */
 function fits(t, v) {
   switch (t.k) {
     case "any":
@@ -277,7 +279,7 @@ function alternatives(node) {
   return list ? list.flatMap(alternatives) : node ? [node] : [];
 }
 
-/** What the schema at `node` says about a value of `type`: "object" or "array". */
+/** The part of the schema at `node` that applies to a value of `type`: "object" or "array". */
 function partOf(node, type) {
   const all = alternatives(node).filter(it => it.type === type);
   if (type !== "object" || all.length < 2) return all[0];
@@ -348,12 +350,12 @@ function fromSchema(written) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
-// Working out a type from the answers
+// Inferring a type from the answers
 
 const ODD_VALUES = [null, true, 1, -1, 1.5, "x", "(", [], {}, { zz: 1 }, [[[]]], 256, 65536, 4294967296];
 const notes = [];
 
-/** The answer without what says where it was and what was received. */
+/** The answer without the parts that show the position and what was received. */
 const bare = answer =>
   answer &&
   answer
@@ -362,10 +364,10 @@ const bare = answer =>
     .replace(/\n  received config: `[\s\S]*`$/, "")
     .replace(/, received `[\s\S]*`$/, "");
 
-/** What a rule says about a value that it has read, which `oxlint_options.rs` has by hand. */
+/** Errors from a rule's own checks after deserializing, which `oxlint_options.rs` implements by hand. */
 const SAID_AFTERWARDS = /^(expected either `object` or `property`|`allow\w+` (requires|cannot be used with) `\w+`)$/;
 
-/** The fields of a struct with another flattened into it that are its own. */
+/** The own fields of structs that have another struct flattened into them. */
 const OWN_FIELDS = ["elementOverrides", "allowElement", "applyToNestedElements", "line", "block"];
 
 const DIRECTIVE = "expected a boolean, `allow-with-description`, or a descriptionFormat object";
@@ -373,7 +375,7 @@ const OPERATORS = `Invalid operator '$' in allow list. Valid values are: "!!", "
 
 const FRAGMENT = "<syntax,element>";
 
-/** Places where a rule has words of its own, or takes what the schema does not have: the rule, the place, and the type. */
+/** Where a rule has its own error text, or accepts what the schema lacks: the rule, the position, and the type. */
 const BY_HAND = {
   "typescript/ban-ts-comment 0.*": {
     text: `%${quoted(DIRECTIVE)}b<allow-with-description>"x"(D descriptionFormat:r);`,
@@ -392,7 +394,7 @@ const BY_HAND = {
 /** The names in "expected `a` or `b`" and "expected one of `a`, `b`, `c`". */
 const namesIn = text => [...(text ?? "").matchAll(/`([^`]+)`/g)].map(it => it[1]);
 
-/** The type at a place of the options of `rule`. `wrap(v)`: the options with `v` at that place. `node`: the schema there. */
+/** The type at one position in `rule`'s options. `wrap(v)` is the options with `v` there. `node` is the schema. */
 async function infer(rule, wrap, node, path) {
   if (BY_HAND[`${rule} ${path}`]) return { k: "text", ...BY_HAND[`${rule} ${path}`] };
   const ask = async v => {
@@ -411,7 +413,7 @@ async function infer(rule, wrap, node, path) {
     notes.push(`${rule} ${path}: ${why}`);
     return { k: "any" };
   };
-  // What is expected of a value that is neither a sequence nor a map. Those can be read as something else.
+  // What's expected for a value that's neither a sequence nor a map. Those two can be read as something else.
   const scalars = [...answers].filter(([key]) => !/^[[{]/.test(key)).map(it => it[1]);
   const expected = new Set(scalars.flatMap(it => /^invalid type: .*?, expected (.*)$/s.exec(it ?? "")?.[1] ?? []));
   if (expected.size !== 1) {
@@ -451,7 +453,7 @@ async function infer(rule, wrap, node, path) {
   const aboutUnknown = to({ zz: 1 });
   const list = /^unknown field `zz`, (?:expected (.*)|there are no fields)$/s.exec(aboutUnknown ?? "");
   const isOpen = aboutUnknown === null || /^missing field/.test(aboutUnknown);
-  // All of a map is flattened into it.
+  // A whole map is flattened into it.
   if (/^invalid type: integer `1`, expected /.test(aboutUnknown)) {
     const t = await infer(rule, v => wrap({ k: v }), part?.additionalProperties, `${path}{}`);
     return optional({ k: "map", t, expected: phrase });
@@ -472,7 +474,7 @@ async function infer(rule, wrap, node, path) {
       isFlattened: hasFlattened && !OWN_FIELDS.includes(field),
     })),
   );
-  // Two names of one field are next to each other.
+  // A field's aliases are adjacent.
   for (let at = 0; at + 1 < fields.length; at++) {
     const [one, other] = [fields[at], fields[at + 1]];
     const both = { ...required, [one.name]: sampleOf(one.t), [other.name]: sampleOf(other.t) };
@@ -480,7 +482,7 @@ async function infer(rule, wrap, node, path) {
     if (twice === one.name) other.alias = "@";
     if (twice === other.name) one.alias = "$";
   }
-  // The fields that a sequence has to have an element for. The order of the fields is known if they were listed.
+  // The fields that a sequence must have an element for. The field order is known if the error listed them.
   const own = fields.filter(it => !it.alias);
   for (const elements = []; list && elements.length < own.length;) {
     const at = Number(/^invalid length (\d+), expected struct/.exec((await ask([...elements])) ?? "")?.[1]);
@@ -491,7 +493,7 @@ async function infer(rule, wrap, node, path) {
   const hasNoDefaults = list ? own.length > 0 && own.every(it => it.isNeeded) : /^invalid length 0/.test(to([]) ?? "");
   if (hasNoDefaults) own.forEach(it => delete it.isNeeded);
   const struct = { k: "struct", name, fields, isOpen, hasFlattened, hasNoDefaults };
-  // A number or the like in place of the struct.
+  // A number or similar can replace the struct.
   const short = [];
   if (to(true) === null) short.push({ k: "bool" });
   if (to("x") === null) short.push({ k: "str" });
@@ -503,12 +505,12 @@ async function infer(rule, wrap, node, path) {
   return optional(short.length > 0 ? { k: "oneOf", alts: [...short, struct] } : struct);
 }
 
-/** The same where every answer is "data did not match any variant of untagged enum `name`". */
+/** Like `infer`, for when every answer is "data did not match any variant of untagged enum `name`". */
 async function inferUntagged(rule, wrap, node, path, name) {
   let t = fromSchema(node);
   if (t.k === "opt") t = t.t;
   t = t.k === "untagged" ? { ...t, name } : { k: "untagged", name, alts: [t] };
-  // One of the two names, and not both.
+  // Exactly one of the two names is given, never both.
   t.alts = t.alts.flatMap(alt => {
     if (alt.k !== "struct" || !alt.fields.some(it => it.name === "propNamePattern")) return [alt];
     return ["propName", "propNamePattern"].map(key => {
@@ -540,8 +542,9 @@ async function inferUntagged(rule, wrap, node, path, name) {
     );
   };
   for (const struct of structs) await refine(struct, v => v);
-  // The schema has the fields by their names. A sequence has them as they are declared: the one order in which it is taken, with
-  // a value for each field, with `null` for each that can be that, and with another kind of value for each that can be that.
+  // The schema sorts the fields by name. A sequence has them in declaration order, which is the one order that's
+  // accepted with a sample for each field, with `null` for each optional field, and with another kind of value for each
+  // field that allows one.
   if (t.alts.every(it => it.k !== "seq" && it.k !== "tuple")) {
     for (const struct of structs) {
       if (numberOfOrders(struct.fields) > 200) continue;
@@ -554,7 +557,7 @@ async function inferUntagged(rule, wrap, node, path, name) {
       const isTaken = async order => (await Promise.all(values.map(it => takes(order.map(it))))).every(Boolean);
       const taken = (await Promise.all(orders.map(async it => ((await isTaken(it)) ? [it] : [])))).flat();
       if (taken.length === 1) struct.fields = taken[0];
-      // It has other fields than the schema says, or is not read from a sequence.
+      // Its fields differ from the schema's, or it can't be read from a sequence.
       else if (taken.length === 0) struct.hasFlattened = true;
       else notes.push(`${rule} ${path}.${struct.name}: ${taken.length} of ${orders.length} orders are taken`);
     }
@@ -562,7 +565,7 @@ async function inferUntagged(rule, wrap, node, path, name) {
   return t;
 }
 
-/** `fields` in every order, without those that differ in where fields of one type are. */
+/** Every order of `fields`, skipping orders that only swap fields of the same type. */
 function ordersOf(fields) {
   if (fields.length < 2) return [fields];
   const firsts = fields.filter((it, at) => fields.findIndex(other => write(other.t) === write(it.t)) === at);
@@ -609,7 +612,7 @@ async function rowOf(rule) {
     const [types, before] = [[], []];
     for (let at = 1; at < items.length; at++) {
       const start = [...before];
-      // With one element either of the two is meant. The other is there to tell.
+      // A single element could be either of the two, so the other one is added to disambiguate.
       const end = isEither && at === 1 ? [sample(items[2])] : [];
       types.push(await infer(rule, v => [...start, v, ...end], items[at], String(at - 1)));
       before.push(sample(items[at]));
@@ -633,7 +636,7 @@ function replace(rule, from, to) {
   rows[rule] = next;
 }
 replace("sort-imports", "memberSyntaxSortOrder:[<none,all,multiple,single>]", "memberSyntaxSortOrder:Q");
-// One word in place of the struct, which no answer and no schema mentions.
+// A single word can replace the struct, which neither the answers nor the schema mention.
 replace("no-use-before-define", /^f(\(.*\))$/, 'f/<nofunc>"x"$1;');
 replace(
   "unicorn/import-style",
@@ -641,14 +644,14 @@ replace(
   `!${quoted("module style override boolean must be `false`")}|RawModuleStylesOverride b`,
 );
 
-// Most structs are called like their rule.
+// Most structs are named after their rule.
 for (const [rule, row] of Object.entries(rows)) {
   const words = rule.split("/").at(-1).split("-");
   const name = words.map(it => it[0].toUpperCase() + it.slice(1)).join("");
   if (row) rows[rule] = row.replaceAll(`(${name}`, "(&");
 }
 
-/** Where the type that starts at `from` ends. */
+/** The end of the type that starts at `from`. */
 function endOf(text, from) {
   let at = from;
   const skipQuoted = () => {
@@ -716,7 +719,7 @@ function endOf(text, from) {
   }
 }
 
-/** Every type in `text`, which is a type. */
+/** Every type nested in `text`, which is itself a type. */
 function* typesIn(text, from = 0, end = text.length) {
   for (let at = from; at < end; at++) {
     const isStart = at === from || ':?+[{#|/%;>")'.includes(text[at - 1]) || /[a-zA-Z0-9*_ ]/.test(text[at - 1]);
@@ -728,7 +731,7 @@ function* typesIn(text, from = 0, end = text.length) {
   }
 }
 
-// What several rows have is written once, as long as that saves something.
+// A type shared by several rows is written once, if that saves space.
 const shared = [];
 for (;;) {
   const count = new Map();
@@ -756,8 +759,9 @@ const lines = [
 ];
 const text = `//! Generated by \`generate-oxlint-fields.mjs\` from oxlint ${version}. Not edited by hand.
 
-/// For each rule of oxlint that takes options, as \`oxlint_rule_key\` writes it: a line break, the rule, a blank, and what its options
-/// look like. The script says how that is written. A rule of oxlint that is not here takes no options.
+/// One entry per oxlint rule that takes options: a line break, the rule as \`oxlint_rule_key\` writes it, a
+/// space, and the shape of its options. The script documents the notation. An oxlint rule that isn't listed takes
+/// no options.
 #[rustfmt::skip]
 pub(super) static OPTIONS: &str = concat!(
 ${lines.map(line => `    "\\n", r#"${line}"#,`).join("\n")}

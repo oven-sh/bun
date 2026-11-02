@@ -103,44 +103,24 @@ pub(crate) fn is_android_kernel() -> bool {
     })
 }
 
-#[inline]
-pub(crate) fn openat2_beneath(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Result<Fd, i32> {
-    if is_android_kernel() {
-        return Err(libc::ENOSYS);
-    }
-    let oflags = rustix::fs::OFlags::from_bits_retain(flags as u32);
-    let mode = rustix::fs::Mode::from_raw_mode(mode);
-    let dir = dir.as_borrowed_fd();
-    retry(|| {
-        rustix::fs::openat2(
-            dir,
-            path.as_cstr(),
-            oflags,
-            mode,
-            rustix::fs::ResolveFlags::BENEATH,
-        )
-    })
-    .map(own_fd)
-}
+pub(crate) use rustix::fs::ResolveFlags;
 
 #[inline]
-pub(crate) fn openat2_in_root(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Result<Fd, i32> {
-    if is_android_kernel() {
+pub(crate) fn openat2(
+    dir: Fd,
+    path: &ZStr,
+    flags: i32,
+    mode: Mode,
+    resolve: ResolveFlags,
+) -> Result<Fd, i32> {
+    use bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_RESOLVE_BENEATH as DISABLED;
+    if is_android_kernel() || DISABLED.get().unwrap_or(false) {
         return Err(libc::ENOSYS);
     }
     let oflags = rustix::fs::OFlags::from_bits_retain(flags as u32);
     let mode = rustix::fs::Mode::from_raw_mode(mode);
     let dir = dir.as_borrowed_fd();
-    retry(|| {
-        rustix::fs::openat2(
-            dir,
-            path.as_cstr(),
-            oflags,
-            mode,
-            rustix::fs::ResolveFlags::IN_ROOT | rustix::fs::ResolveFlags::NO_MAGICLINKS,
-        )
-    })
-    .map(own_fd)
+    retry(|| rustix::fs::openat2(dir, path.as_cstr(), oflags, mode, resolve)).map(own_fd)
 }
 
 #[inline]
@@ -421,19 +401,11 @@ pub(crate) unsafe fn pwritev(
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Raw `read(2)` — libc-convention return (for `linux::read`).
-///
-/// This is a libc-convention thunk: callers may pass `fd == -1` (expecting
-/// EBADF), `buf == NULL` with `count == 0` (expecting `0`), or an
-/// uninitialized buffer (legal for `read(2)`). Routing through rustix would
-/// require constructing `BorrowedFd` (UB for `-1`, its niche value) and
-/// `&mut [u8]` (UB for null or uninit). Instead forward the raw triple to
-/// the kernel via `libc::syscall(SYS_read, ..)` — pointer-only, no Rust
-/// references, identical semantics to the pre-refactor `libc::read` path
-/// minus the PLT hop and pthread cancellation point.
+/// Not rustix: `BorrowedFd` cannot hold `-1`, for which callers expect EBADF.
 #[inline]
-pub(crate) unsafe fn read_raw(fd: i32, buf: *mut u8, count: usize) -> isize {
-    // SAFETY: raw `read(2)`; kernel validates `fd`/`buf`/`count`.
-    unsafe { libc::syscall(libc::SYS_read, fd, buf, count) as isize }
+pub(crate) fn read_raw(fd: i32, buf: &mut [u8]) -> isize {
+    // SAFETY: `buf` is writable for `buf.len()` bytes; the kernel validates `fd`.
+    unsafe { libc::syscall(libc::SYS_read, fd, buf.as_mut_ptr(), buf.len()) as isize }
 }
 
 /// Raw `epoll_ctl(2)` — libc-convention return.
@@ -442,16 +414,17 @@ pub(crate) unsafe fn read_raw(fd: i32, buf: *mut u8, count: usize) -> isize {
 /// `epoll::add/modify/delete` because the typed API would require:
 ///   (a) constructing `BorrowedFd` for `epfd`/`fd` — UB if a caller probes
 ///       with `-1` (the niche value), whereas the kernel returns EBADF;
-///   (b) reinterpreting `*mut libc::epoll_event` as rustix's `Event` and
+///   (b) reinterpreting `libc::epoll_event` as rustix's `Event` and
 ///       reading its fields — a cross-crate layout pun whose soundness
 ///       depends on `EventData`/`EventFlags` having no invalid bit-patterns;
 ///   (c) synthesizing EINVAL for unknown `op` values ourselves rather than
 ///       letting the kernel reject them.
 /// Passing the raw quad straight through avoids all three.
 #[inline]
-pub(crate) unsafe fn epoll_ctl(epfd: i32, op: i32, fd: i32, event: *mut libc::epoll_event) -> i32 {
-    // SAFETY: raw `epoll_ctl(2)`; kernel validates `epfd`/`op`/`fd`; `event`
-    // may be null for CTL_DEL (kernel ignores it).
+pub(crate) fn epoll_ctl(epfd: i32, op: i32, fd: i32, event: Option<&libc::epoll_event>) -> i32 {
+    let event = event.map_or(core::ptr::null(), core::ptr::from_ref);
+    // SAFETY: the kernel validates `epfd`/`op`/`fd`; `event` is live, or null, which is
+    // EFAULT for every `op` but CTL_DEL.
     unsafe { libc::syscall(libc::SYS_epoll_ctl, epfd, op, fd, event) as i32 }
 }
 
@@ -459,10 +432,10 @@ pub(crate) unsafe fn epoll_ctl(epfd: i32, op: i32, fd: i32, event: *mut libc::ep
 ///
 /// Routed via `libc::syscall(SYS_sendfile, ..)` rather than rustix's
 /// `fs::sendfile` so that (a) `out_fd`/`in_fd == -1` yield EBADF instead of
-/// constructing a niche-invalid `BorrowedFd`, and (b) `offset` stays a raw
+/// constructing a niche-invalid `BorrowedFd`, and (b) `offset` is passed as
 /// `*mut loff_t` with no `&mut u64` type-pun.
 #[inline]
-pub(crate) unsafe fn sendfile(out_fd: i32, in_fd: i32, offset: *mut i64, count: usize) -> isize {
+pub(crate) fn sendfile(out_fd: i32, in_fd: i32, offset: Option<&mut i64>, count: usize) -> isize {
     // libc 0.2.186 omits `SYS_sendfile` from its aarch64 syscall tables (gnu,
     // musl, *and* android — every other arch has it). The
     // generic-syscall ABI (aarch64/riscv64/loongarch64) places `sendfile` at
@@ -473,7 +446,8 @@ pub(crate) unsafe fn sendfile(out_fd: i32, in_fd: i32, offset: *mut i64, count: 
     #[cfg(not(target_arch = "aarch64"))]
     const SYS_SENDFILE: libc::c_long = libc::SYS_sendfile;
 
-    // SAFETY: raw `sendfile(2)`; kernel validates fds; `offset` may be null.
+    let offset = offset.map_or(core::ptr::null_mut(), core::ptr::from_mut);
+    // SAFETY: the kernel validates the fds; `offset` is null or live.
     unsafe { libc::syscall(SYS_SENDFILE, out_fd, in_fd, offset, count) as isize }
 }
 
@@ -483,18 +457,19 @@ pub(crate) unsafe fn sendfile(out_fd: i32, in_fd: i32, offset: *mut i64, count: 
 /// `fs::copy_file_range` because the rustix wrapper hard-codes `flags = 0`.
 /// The pre-refactor path forwarded `flags` verbatim so the kernel can EINVAL
 /// future flag bits; preserve that behavior exactly. Also avoids the `BorrowedFd` niche hazard
-/// and `*mut i64 → &mut u64` type-pun on the offset pointers.
+/// and `&mut i64 → &mut u64` type-pun on the offsets.
 #[inline]
-pub(crate) unsafe fn copy_file_range(
+pub(crate) fn copy_file_range(
     in_: i32,
-    off_in: *mut i64,
+    off_in: Option<&mut i64>,
     out: i32,
-    off_out: *mut i64,
+    off_out: Option<&mut i64>,
     len: usize,
     flags: u32,
 ) -> isize {
-    // SAFETY: raw `copy_file_range(2)`; kernel validates fds; offset ptrs may
-    // be null.
+    let off_in = off_in.map_or(core::ptr::null_mut(), core::ptr::from_mut);
+    let off_out = off_out.map_or(core::ptr::null_mut(), core::ptr::from_mut);
+    // SAFETY: the kernel validates the fds; each offset is null or live.
     unsafe {
         libc::syscall(
             libc::SYS_copy_file_range,

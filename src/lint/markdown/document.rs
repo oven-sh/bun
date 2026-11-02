@@ -1,7 +1,6 @@
 //! A Markdown file's text and tree: `@eslint/markdown`'s `MarkdownSourceCode`.
 //!
-//! The tree is [mdast](https://github.com/syntax-tree/mdast), and its nodes have the positions that
-//! mdast-util-from-markdown gives them.
+//! The tree is [mdast](https://github.com/syntax-tree/mdast), with the same node positions as mdast-util-from-markdown.
 //!
 //! The tree stores byte offsets. The plugin's rules work with UTF-16 indices and do arithmetic on them, so the ports do
 //! the same arithmetic on an [`Index`]. In ASCII text the two are equal.
@@ -73,7 +72,7 @@ pub struct Document<'t> {
     is_ascii: bool,
     /// The last byte offset that was converted, and its index. Most lookups come in source order, and the whole file
     /// can be a single line, so the next lookup counts from here instead of from the start of the line.
-    last_asked: Cell<(u32, u32)>,
+    last_lookup: Cell<(u32, u32)>,
     length: OnceCell<Index>,
 }
 
@@ -88,7 +87,7 @@ impl<'t> Document<'t> {
             text,
             mdast,
             is_ascii: strings::first_non_ascii(text).is_none(),
-            last_asked: Cell::new((0, 0)),
+            last_lookup: Cell::new((0, 0)),
             length: OnceCell::new(),
         }
     }
@@ -161,17 +160,17 @@ impl<'t> Document<'t> {
             self.line_starts().get(line).copied().unwrap_or(0),
             self.line_indices().get(line).copied().unwrap_or(0),
         );
-        let last = self.last_asked.get();
+        let last = self.last_lookup.get();
         if (from.0..=offset).contains(&last.0) {
             from = last;
         }
         let index = from.1 + strings::wtf8_len_utf16(self.slice(Span::new(from.0, offset)));
-        self.last_asked.set((offset, index));
+        self.last_lookup.set((offset, index));
         Index::from(index)
     }
 
     /// Converts an index to a byte offset. An index outside the text is clamped to its start or end. An index in the
-    /// middle of a surrogate pair gives the start of the character.
+    /// middle of a surrogate pair maps to the start of the character.
     pub(crate) fn offset_of(&self, index: Index) -> u32 {
         let index = index.clamp(0, Index::from(u32::MAX)) as u32;
         if self.is_ascii {
@@ -182,7 +181,7 @@ impl<'t> Document<'t> {
             self.line_starts().get(line).copied().unwrap_or(0),
             self.line_indices().get(line).copied().unwrap_or(0),
         );
-        let last = self.last_asked.get();
+        let last = self.last_lookup.get();
         if (from.1..=index).contains(&last.1) {
             from = last;
         }
@@ -389,7 +388,7 @@ impl<'d> Node<'d> {
         self.document.slice(self.span())
     }
 
-    /// What the source has at the start of each further line of the node that `node.value` doesn't have: the `> ` of a
+    /// The prefixes of the node's second and later lines that are in the source but not in `node.value`: the `> ` of a
     /// block quote, the indentation of a list item.
     fn container_prefixes(self) -> Vec<Span> {
         let (text, value) = (self.text(), self.value().unwrap_or_default());

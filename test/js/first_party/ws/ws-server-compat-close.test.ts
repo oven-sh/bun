@@ -420,17 +420,18 @@ describe.each(implementations)("ws server close ($name)", ({ ws: implementation,
   describe.skipIf(isWindows)("under backpressure", () => {
     const size = 64 * 1024;
 
-    // Sends until the kernel buffer is full, then twice more. The client runs on this thread, so it can't read yet.
+    // Sends until three messages in a row have left something unwritten. The client runs on this thread, so it can't
+    // read yet. The kernel can still make room between two sends, by moving what it took to the client's buffer, and a
+    // send() that finds room also writes what the ones before it left.
     function fill(ws: WsSocket) {
       shrinkBuffers({ sender: ws });
       const results: Promise<string>[] = [];
-      const send = () => results.push(sendResult(ws, Buffer.alloc(size, results.length)));
-      while (ws.bufferedAmount === 0 && results.length < 256) send();
-      const written = results.length - 1;
-      const { bufferedAmount } = ws;
-      send();
-      send();
-      return { results, written, bufferedAmount };
+      let written = 0;
+      while (results.length - written < 3 && results.length < 256) {
+        results.push(sendResult(ws, Buffer.alloc(size, results.length)));
+        if (ws.bufferedAmount === 0) written = results.length;
+      }
+      return { results, written, bufferedAmount: ws.bufferedAmount };
     }
 
     function fillAndClose(ws: WsSocket) {

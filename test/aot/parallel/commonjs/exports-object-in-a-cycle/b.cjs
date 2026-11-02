@@ -1,0 +1,14 @@
+"use strict";
+const a = require("./a.cjs");
+exports.a = a;
+exports.keysOfAWhenRequired = Reflect.ownKeys(a).join();
+exports.earlyOfA = a.early;
+exports.lateOfAWhenRequired = a.late;
+exports.bOfAWhenRequired = ["b" in a, Object.hasOwn(a, "b"), typeof a.b].join();
+exports.aReadItself = a.readItself();
+exports.readLateOfA = () => a.late;
+a.storedByB = "stored by b";
+a.changedByB = "stored by b";
+a.createdByB = "stored by b";
+exports.deleted = delete a.deletedByB;
+exports.keysOfAAfterCall = a.addByCall();

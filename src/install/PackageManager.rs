@@ -555,7 +555,7 @@ pub struct PackageManager {
 
     pub(crate) global_link_dir: Option<bun_sys::Dir>,
     pub global_dir: Option<bun_sys::Dir>,
-    pub(crate) global_link_dir_path: Box<[u8]>,
+    pub(crate) global_link_dir_path: &'static [u8],
 
     pub(crate) on_wake: WakeHandler,
 
@@ -1041,19 +1041,17 @@ impl PackageManager {
     /// Reshaped for borrowck — `Lockfile::load_from_cwd` takes the manager as
     /// a separate argument while the receiver borrows `self.lockfile`, which
     /// is a self-referential split borrow. Encapsulated here so callers stay
-    /// in safe code: the returned `LoadResult` mutably borrows `self` for its
-    /// lifetime, after which `self.lockfile` holds the loaded data.
-    pub fn load_lockfile_from_cwd<const ATTEMPT_OTHER: bool>(
-        &mut self,
-    ) -> lockfile::LoadResult<'_> {
+    /// in safe code.
+    pub fn load_lockfile_from_cwd<const ATTEMPT_OTHER: bool>(&mut self) -> lockfile::LoadResult {
         self.clear_cached_items_depending_on_lockfile_buffer();
         let pm: *mut PackageManager = self;
         // SAFETY: `self.lockfile` is `Box<Lockfile>` — its pointee lives in a
         // separate heap allocation, so `&mut Lockfile` and `&mut PackageManager`
-        // never alias overlapping bytes. `Lockfile::load_from_cwd` reads
-        // `manager.options`/`manager.log` only and never re-projects
-        // `manager.lockfile`. Both raw pointers below are derived from `self`,
-        // so the caller's borrow stays on the Stacked-Borrows stack.
+        // never alias overlapping bytes. Both raw pointers below are derived
+        // from `self`, so the caller's borrow stays on the Stacked-Borrows stack.
+        // FIXME: a migration still reaches `manager.lockfile` while `*lf` is borrowed.
+        // `Package::parse_with_json` (yarn v1) reads it, and `populate_manifest_cache`
+        // (npm, pnpm, yarn) reads it and stores to `scratch.dependency_list_queue`.
         unsafe {
             let lf: *mut Lockfile = &raw mut *(*pm).lockfile;
             let log: *mut bun_ast::Log = (*pm).log;
@@ -1218,24 +1216,18 @@ impl PackageManager {
         // `AnyEventLoop::tick_raw` takes the type-erased
         // `(*mut c_void, fn(*mut c_void) -> bool)`; trampoline through a small wrapper so
         // `is_done_fn` receives `&mut C` and can drive `run_tasks` / record `err`.
-        struct Erased<C> {
-            ctx: *mut C,
+        struct Erased<'c, C> {
+            ctx: &'c mut C,
             is_done: fn(&mut C) -> bool,
         }
         fn trampoline<C>(p: *mut c_void) -> bool {
-            let erased = p as *const Erased<C>;
-            // SAFETY: `p` is the `Erased<C>` local we pass to `tick_raw` below. We only
-            // read its two POD fields here (no `&mut Erased` materialized — the local
-            // `&mut erased` borrow in the caller is still notionally live across the call).
-            let (ctx_ptr, is_done) = unsafe { ((*erased).ctx, (*erased).is_done) };
-            // SAFETY: `ctx_ptr` was derived from the caller's exclusive `closure: &mut C`
-            // and the caller does not touch `closure` again until `tick_raw` returns, so
-            // this is the unique live `&mut C` for the duration of the callback.
-            let ctx = unsafe { &mut *ctx_ptr };
-            is_done(ctx)
+            // SAFETY: `p` is the `Erased<C>` local we pass to `tick_raw` below, which
+            // nothing else touches until `tick_raw` returns.
+            let erased = unsafe { bun_ptr::callback_ctx::<Erased<'_, C>>(p) };
+            (erased.is_done)(erased.ctx)
         }
-        let mut erased = Erased::<C> {
-            ctx: std::ptr::from_mut::<C>(closure),
+        let mut erased = Erased {
+            ctx: closure,
             is_done: is_done_fn,
         };
         // Derive the event-loop pointer through `this`'s raw provenance (NOT
@@ -1327,7 +1319,7 @@ fn configure_env_for_scripts_run(
     if !init_cwd_entry.found_existing {
         *init_cwd_entry.value_ptr = dot_env::HashTableValue {
             value: Box::<[u8]>::from(without_trailing_slash_windows_path(
-                FileSystem::instance().top_level_dir(),
+                FileSystem::get().top_level_dir(),
             )),
         };
     }
@@ -1532,7 +1524,7 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
     match err {
         http::InitError::LoadCAFile => {
             let mut normalizer = PosixToWinNormalizer::default();
-            let normalized = normalizer.resolve_z(FileSystem::instance().top_level_dir(), abs_ca_z);
+            let normalized = normalizer.resolve_z(FileSystem::get().top_level_dir(), abs_ca_z);
             if !bun_sys::exists_z(normalized) {
                 Output::err(
                     "HTTPThread",
@@ -1707,7 +1699,7 @@ fn allocate_package_manager(
         wr!(postinstall_optimizer, Default::default());
         wr!(global_link_dir, None);
         wr!(global_dir, None);
-        wr!(global_link_dir_path, Box::default());
+        wr!(global_link_dir_path, b"");
         wr!(on_wake, WakeHandler::default());
         wr!(
             peer_dependencies,
@@ -2386,6 +2378,8 @@ pub fn init(
         }
         &mut *loader_ptr
     };
+    // The `[Nms] ".env"` line is a timing trace, like the other `print_elapsed` traces of install.
+    env.quiet_loaded_files = !cli.log_level.is_verbose();
     if !cli.env_files.is_empty() {
         // Load these before the cwd changes, because their paths are relative to it.
         env.load_process()?;
@@ -2422,7 +2416,7 @@ pub fn init(
     // Registers the resolver-tier singleton
     // and seeds `top_level_dir` from `getcwd`.
     bun_resolver::fs::FileSystem::init(None)?;
-    let fs = FileSystem::instance();
+    let fs = FileSystem::get();
     // `C:\` keeps its separator: `C:` is the current directory of drive C, not its root.
     let top_level_dir_no_trailing_slash = without_trailing_slash_windows_path(fs.top_level_dir());
     // SAFETY: CWD_BUF is a process-global path buffer only touched on the main thread.
@@ -2663,9 +2657,10 @@ pub fn init(
     // it.
     let _ = root_package_json_file.close();
 
+    let top_level_dir = fs.top_level_dir();
     // Returns the resolver's BSSMap-owned
     // `*EntriesOption` slot.
-    let entries_option = match fs.read_directory(fs.top_level_dir(), 0, true)? {
+    let entries_option = match FileSystem::instance().read_directory(top_level_dir, 0, true)? {
         fs::EntriesOption::Entries(e) => {
             // SAFETY: the BSSMap singleton owns `*e` for the process
             // lifetime, and `init()` runs single-threaded before any other
@@ -2681,7 +2676,7 @@ pub fn init(
     if cli.env_files.is_empty() && !cli.no_env_file && !ctx.args.disable_default_env_files {
         // `.data` must only be probed while `entries_mutex` is held.
         let env_probe_keys = {
-            let _entries_lock = FileSystem::instance().fs.entries_mutex.lock_guard();
+            let _entries_lock = FileSystem::get().fs.entries_mutex.lock_guard();
             dot_env::DirEntryKeys(
                 entries_option
                     .data
@@ -2717,7 +2712,7 @@ pub fn init(
             env,
             bun_paths::fs::FileSystem::instance().initial_top_level_dir(),
             &mut resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
-                fs.top_level_dir(),
+                top_level_dir,
                 &mut npmrc_local,
                 &[b".npmrc".as_slice()],
             )
@@ -3028,8 +3023,8 @@ fn init_with_runtime_once(
     // process, or be unreadable: ENOENT/EACCES/ENOTDIR), and bailing out here
     // leaves `holder::RAW_PTR` null rather than pointing at an uninitialized
     // manager. Returns the resolver's BSSMap-owned `*EntriesOption` slot.
-    let fs_instance = FileSystem::instance();
-    let root_dir = match fs_instance.read_directory(fs_instance.top_level_dir(), 0, true)? {
+    let top_level_dir = FileSystem::get().top_level_dir();
+    let root_dir = match FileSystem::instance().read_directory(top_level_dir, 0, true)? {
         // SAFETY: the BSSMap singleton owns `*e` for the process lifetime,
         // and runtime init runs once on the main thread before any other access.
         fs::EntriesOption::Entries(e) => unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(*e) },
@@ -3144,7 +3139,7 @@ fn init_with_runtime_once(
     }
 
     let mut original_package_json_path =
-        strings::without_trailing_slash(FileSystem::instance().top_level_dir()).to_vec();
+        strings::without_trailing_slash(FileSystem::get().top_level_dir()).to_vec();
     original_package_json_path.extend_from_slice(b"/package.json\0");
     let manager_ptr = allocate_package_manager(
         Options {
@@ -3191,8 +3186,8 @@ fn init_with_runtime_once(
 
     // Gate the disk load on the cached dir listing so the runtime auto-install
     // path doesn't open()/read() a lockfile that isn't there.
-    // `load_from_dir` mutates `*manager.lockfile` in place and returns a
-    // borrow of it, so `Ok` keeps the loaded value as-is.
+    // `load_from_dir` fills the lockfile in place, so `Ok` keeps the loaded
+    // value as-is.
     // `Lockfile::load_from_dir(manager, …)` is a
     // self-aliasing receiver+argument pair Rust forbids. Split-borrow by
     // temporarily moving the boxed lockfile out so the `&mut PackageManager`
@@ -3202,7 +3197,7 @@ fn init_with_runtime_once(
         FileSystem::instance().read_directory(project_dir, 0, false)
         && {
             // `.data` probes must hold `entries_mutex`.
-            let _entries_lock = FileSystem::instance().fs.entries_mutex.lock_guard();
+            let _entries_lock = FileSystem::get().fs.entries_mutex.lock_guard();
             entries.has_comptime_query(b"bun.lock") || entries.has_comptime_query(b"bun.lockb")
         }
         && let Ok(dir) = bun_sys::Dir::open(project_dir)
@@ -3293,7 +3288,7 @@ fn parse_runtime_root(
         });
     manager.lockfile = lockfile;
     if parse_log.errors > 0 {
-        parse_log.append_to_with_recycled(log, true);
+        parse_log.append_to(log);
     }
     result
 }

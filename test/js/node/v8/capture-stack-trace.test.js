@@ -3,6 +3,7 @@ import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { totalmem } from "node:os";
+import { createContext, runInContext } from "node:vm";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -1412,6 +1413,20 @@ test.concurrent.each([
   expect(exitCode).toBe(0);
 });
 
+test("Error.appendStackTrace keeps the stack trace when the source and destination are the same error", () => {
+  function f(n) {
+    if (n > 0) return f(n - 1) + 1;
+    try {
+      null();
+    } catch (e) {
+      Error.appendStackTrace(e, e);
+      expect(e.stack).toContain("at f ");
+    }
+    return 0;
+  }
+  f(64);
+});
+
 test("Error.stackTraceLimit default matches the limit captureStackTrace applies", async () => {
   // Run in a fresh process so nothing has written to Error.stackTraceLimit yet.
   const src = `
@@ -2088,3 +2103,82 @@ test.skipIf(totalmem() < 10 * 1024 ** 3)(
   },
   30_000,
 );
+
+test.each([
+  ["a Proxy", () => new Proxy({}, {})],
+  ["a Proxy of an Error", () => new Proxy(new Error("target"), {})],
+  [
+    "a revoked Proxy",
+    () => {
+      const { proxy, revoke } = Proxy.revocable({}, {});
+      revoke();
+      return proxy;
+    },
+  ],
+  ["import.meta.env", () => import.meta.env],
+])("Error.captureStackTrace throws for %s, as V8 does for a Proxy", (_, object) => {
+  expect(() => Error.captureStackTrace(object())).toThrow(
+    expect.objectContaining({ name: "TypeError", message: "invalid_argument" }),
+  );
+});
+
+test("Error.captureStackTrace accepts objects that aren't themselves a Proxy", () => {
+  const context = createContext({});
+  const inherits = Object.create(new Proxy({}, {}));
+  Error.captureStackTrace(inherits);
+  function fn() {}
+  Error.captureStackTrace(fn);
+  expect({
+    // Like Node, neither call throws and neither leaves a `stack` property behind.
+    globalOfContextFromInside: runInContext("Error.captureStackTrace(globalThis); typeof globalThis.stack", context),
+    globalOfContextFromOutside: Error.captureStackTrace(runInContext("this", context)),
+    inherits: typeof inherits.stack,
+    fn: typeof fn.stack,
+  }).toEqual({
+    globalOfContextFromInside: "undefined",
+    globalOfContextFromOutside: undefined,
+    inherits: "string",
+    fn: "string",
+  });
+});
+
+test("Error.captureStackTrace rejects a WebAssembly GC object", () => {
+  // (type $s (struct (field (mut i32))))
+  // (func (export "mk") (result (ref null $s)) struct.new_default $s)
+  // prettier-ignore
+  const bytes = new Uint8Array([
+    0, 0x61, 0x73, 0x6d, 1, 0, 0, 0,
+    1, 10, 2, 0x5f, 1, 0x7f, 1, 0x60, 0, 1, 0x63, 0,
+    3, 2, 1, 1,
+    7, 6, 1, 2, 0x6d, 0x6b, 0, 0,
+    10, 7, 1, 5, 0, 0xfb, 1, 0, 0x0b,
+  ]);
+  const struct = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk();
+  expect(() => Error.captureStackTrace(struct)).toThrow(new TypeError("invalid_argument"));
+});
+
+test.concurrent("a stack taken while a CommonJS module loads names the frame of require() anonymous", async () => {
+  using dir = tempDir("stack-while-commonjs-loads", {
+    "main.cjs": `require("./child.cjs");`,
+    "child.cjs": [
+      `const line = new Error().stack.split("\\n")[2];`,
+      `Error.prepareStackTrace = (_error, callSites) => callSites[1];`,
+      `const callSite = new Error().stack;`,
+      `console.log(JSON.stringify({ line, name: callSite.getFunctionName(), text: String(callSite) }));`,
+    ].join("\n"),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.cjs"],
+    cwd: String(dir),
+    // Debug builds show the frames of builtin JavaScript unless this is off.
+    env: { ...bunEnv, BUN_JSC_showPrivateScriptsInStackTraces: "0" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({
+    stdout: { line: "    at anonymous (unknown)", name: "anonymous", text: "anonymous (native)" },
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});

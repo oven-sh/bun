@@ -1,0 +1,47 @@
+# function on(table, type, listener) { table[type] = listener }
+# on(table, "one", first); on(table, "two", first); on(table, "two", second); on(table, "three", first); on(table, "three", second); on(table, "three", third); on(table, "open", unknown())
+# `on` is followed once for each key that its callers spell, so what lies under each key is known by itself. A call tests for two closures at most, and for none beside a value that nobody knows.
+# RUN: valueflow-results
+# CHECK: closure-stored-under-key "one" f1
+# CHECK-NEXT: closure-stored-under-key "two" f1
+# CHECK-NEXT: closure-stored-under-key "two" f2
+# CHECK-NOT: closure-stored-under-key
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Table"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0 fields=[]
+    v1 = NewClosure function=f4
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = String string="one"
+    v6 = String string="two"
+    v7 = String string="three"
+    v8 = String string="open"
+    v9 = Call v1, -, v0, v5, v2
+    v10 = Call v1, -, v0, v6, v2
+    v11 = Call v1, -, v0, v6, v3
+    v12 = Call v1, -, v0, v7, v2
+    v13 = Call v1, -, v0, v7, v3
+    v14 = Call v1, -, v0, v7, v4
+    v15 = Builtin builtin=GlobalThis
+    v16 = PropGet v15 key="unknown" [isFreeName]
+    v17 = Call v16
+    v18 = Call v1, -, v0, v8, v17
+    Return
+}
+function f1 name="first" results=[{type=anything}] {
+    Return
+}
+function f2 name="second" results=[{type=anything}] {
+    Return
+}
+function f3 name="third" results=[{type=anything}] {
+    Return
+}
+function f4 name="on" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    ElemSet v0, v1, v2
+    Return
+}

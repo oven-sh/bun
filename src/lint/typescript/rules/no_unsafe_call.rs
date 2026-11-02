@@ -11,29 +11,29 @@ use bun_lint::utils::ts_utils::get_this_expression;
 /// Disallow calling a value with type `any`.
 pub struct NoUnsafeCall;
 
-const ERROR_CALL: Message =
-    Message::new("errorCall", "Unsafe call of a type that could not be resolved.");
-const ERROR_CALL_THIS: Message = Message::new(
+const ERROR_CALL: &Message =
+    &Message::new("errorCall", "Unsafe call of a type that could not be resolved.");
+const ERROR_CALL_THIS: &Message = &Message::new(
     "errorCallThis",
     "Unsafe call of a `this` type that could not be resolved.",
 );
-const ERROR_NEW: Message = Message::new(
+const ERROR_NEW: &Message = &Message::new(
     "errorNew",
     "Unsafe construction of a type that could not be resolved.",
 );
-const ERROR_TEMPLATE_TAG: Message = Message::new(
+const ERROR_TEMPLATE_TAG: &Message = &Message::new(
     "errorTemplateTag",
     "Unsafe use of a template tag whose type could not be resolved.",
 );
-const UNSAFE_CALL: Message = Message::new("unsafeCall", "Unsafe call of {{type}} typed value.");
-const UNSAFE_CALL_THIS: Message = Message::new(
+const UNSAFE_CALL: &Message = &Message::new("unsafeCall", "Unsafe call of {{type}} typed value.");
+const UNSAFE_CALL_THIS: &Message = &Message::new(
     "unsafeCallThis",
     "Unsafe call of {{type}} typed value. `this` is typed as {{type}}.\nYou can try to fix this by turning on the `noImplicitThis` compiler option, or adding a `this` parameter to the function.",
 );
-const UNSAFE_NEW: Message =
-    Message::new("unsafeNew", "Unsafe construction of {{type}} typed value.");
-const UNSAFE_TEMPLATE_TAG: Message =
-    Message::new("unsafeTemplateTag", "Unsafe use of {{type}} typed template tag.");
+const UNSAFE_NEW: &Message =
+    &Message::new("unsafeNew", "Unsafe construction of {{type}} typed value.");
+const UNSAFE_TEMPLATE_TAG: &Message =
+    &Message::new("unsafeTemplateTag", "Unsafe use of {{type}} typed template tag.");
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Use {
@@ -67,9 +67,9 @@ fn check_call<'a>(node: Expr<'a>, reporting_node: Span, how: Use, cx: &Cx<'a, No
         return;
     }
 
-    // Also what extends `Function`, as `interface Foo extends Function {}`. Such a type is safe to
-    // call with a call or a construct signature, and safe to construct with a construct signature
-    // or a call signature that does not return `void`.
+    // This includes types that extend `Function`, like `interface Foo extends Function {}`. Such a type is safe to call
+    // if it has a call or construct signature, and safe to construct if it has a construct signature or a call
+    // signature that doesn't return `void`.
     if is_builtin_symbol_like(ty, "Function") {
         if !ty.get_construct_signatures().is_empty() {
             return;
@@ -105,8 +105,9 @@ impl Rule for NoUnsafeCall {
             ExprKind::TaggedTemplate(call) => (Use::TemplateTag, call),
             ExprKind::New(call) => {
                 check_call(call.callee(), node.span(), Use::New, cx);
-                // What is made can be called or be a tag: two reports at one place. typescript-eslint listens for callees and
-                // tags, with selectors that are more specific than `NewExpression` and so come after it; tsgolint for calls.
+                // The new object can itself be called or used as a tag, which gives two reports at one location.
+                // typescript-eslint listens for callees and tags, with selectors that are more specific than
+                // `NewExpression` and so run after it. tsgolint listens for calls.
                 if !cx.language().is_oxlint
                     && let Node::Expr(parent) = node.parent()
                 {

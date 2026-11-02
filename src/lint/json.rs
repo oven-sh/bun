@@ -1,5 +1,5 @@
-//! Reads JSON, with comments and trailing commas allowed, JSON5, TOML and YAML: the values of Bun's
-//! parsers as [`Json`].
+//! Reads JSON (comments and trailing commas allowed), JSON5, TOML and YAML with Bun's parsers and converts the values
+//! to [`Json`].
 
 use crate::linter::write_json;
 use crate::options::Json;
@@ -14,16 +14,16 @@ use bun_parsers::toml::TOML;
 use bun_parsers::yaml::{CyclicAliases, YAML};
 use std::borrow::Cow;
 
-/// Limits how deep a value from a config file can be nested. Most code that walks a config recurses without checking the
-/// stack, with frames of other sizes and maybe on another thread. So whatever builds a value for it only gets a quarter of
-/// the smallest stack.
+/// Limits how deeply a value from a config file can be nested. Most code that walks a config recurses without checking
+/// the stack, with different frame sizes and possibly on another thread. So the code that builds the value only gets a
+/// quarter of the smallest stack.
 #[derive(Copy, Clone)]
-pub(crate) struct RoomToNest(bun_core::StackCheck);
+pub(crate) struct NestingLimit(bun_core::StackCheck);
 
-impl RoomToNest {
-    pub(crate) fn new() -> RoomToNest {
+impl NestingLimit {
+    pub(crate) fn new() -> NestingLimit {
         let smallest = bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize;
-        RoomToNest(bun_core::StackCheck::init().with_at_most(smallest / 4))
+        NestingLimit(bun_core::StackCheck::init().with_at_most(smallest / 4))
     }
 
     #[inline]
@@ -32,9 +32,9 @@ impl RoomToNest {
     }
 }
 
-/// `None` if `text` is not JSON.
+/// Returns `None` if `text` isn't JSON.
 pub fn parse(text: &[u8]) -> Option<Json> {
-    // Which the parser takes for `{}`.
+    // The parser treats empty input as `{}`.
     if text.is_empty() {
         return None;
     }
@@ -52,12 +52,12 @@ pub fn parse(text: &[u8]) -> Option<Json> {
         Data::EObjectJSON(it) => JsonValue::Object(it),
         _ => return None,
     };
-    // The parser warns about a key that is written twice.
-    convert(&root, RoomToNest::new(), log.warnings > 0)
+    // The parser warns about a duplicate key.
+    convert(&root, NestingLimit::new(), log.warnings > 0)
 }
 
-/// `None`: it is nested too deeply.
-fn convert(value: &JsonValue, room: RoomToNest, has_repeats: bool) -> Option<Json> {
+/// Returns `None` if the value is nested too deeply.
+fn convert(value: &JsonValue, room: NestingLimit, has_duplicate_keys: bool) -> Option<Json> {
     if !room.has_more() {
         return None;
     }
@@ -69,17 +69,17 @@ fn convert(value: &JsonValue, room: RoomToNest, has_repeats: bool) -> Option<Jso
         JsonValue::Array(it) => {
             let mut items = Vec::with_capacity(it.get().items().len());
             for item in it.get().items() {
-                items.push(convert(item, room, has_repeats)?);
+                items.push(convert(item, room, has_duplicate_keys)?);
             }
             Json::Array(items)
         }
         JsonValue::Object(it) => {
             let mut entries = Vec::with_capacity(it.get().properties().len());
             for property in it.get().properties() {
-                let value = convert(&property.value, room, has_repeats)?;
+                let value = convert(&property.value, room, has_duplicate_keys)?;
                 entries.push((property.key.slice().to_vec(), value));
             }
-            match has_repeats {
+            match has_duplicate_keys {
                 true => Json::object(entries),
                 false => Json::Object(entries),
             }
@@ -87,7 +87,7 @@ fn convert(value: &JsonValue, room: RoomToNest, has_repeats: bool) -> Option<Jso
     })
 }
 
-/// The end of the string that starts at `start`, if serde_json takes it.
+/// Returns the end of the string that starts at `start`, if serde_json accepts it.
 fn end_of_strict_string(text: &[u8], start: usize) -> Option<usize> {
     let unit = |at: usize| {
         let digits = std::str::from_utf8(text.get(at..at + 4)?).ok()?;
@@ -114,7 +114,7 @@ fn end_of_strict_string(text: &[u8], start: usize) -> Option<usize> {
     }
 }
 
-/// The end of the number that starts at `start`, if it is one of JSON: not `01`, `1.`, `.5`, `0x10`.
+/// Returns the end of the number that starts at `start`, if it's valid JSON. `01`, `1.`, `.5` and `0x10` aren't.
 fn end_of_strict_number(text: &[u8], start: usize) -> Option<usize> {
     let digits = |at: usize| {
         let count = text[at..]
@@ -137,8 +137,9 @@ fn end_of_strict_number(text: &[u8], start: usize) -> Option<usize> {
     (!text.get(at).is_some_and(u8::is_ascii_alphanumeric)).then_some(at)
 }
 
-/// [`parse`], for an `.oxlintrc.json`. oxlint takes out the comments, among them those that start with `#`, and has serde_json
-/// read the rest. That refuses what Bun's parser takes from JavaScript: `'a'`, `0x10`, `"\x61"`, a byte order mark.
+/// [`parse`] for an `.oxlintrc.json`. oxlint strips the comments, including ones that start with `#`, and passes the
+/// rest to serde_json. serde_json rejects the JavaScript syntax that Bun's parser accepts: `'a'`, `0x10`, `"\x61"`, a
+/// byte order mark.
 pub fn parse_like_oxlint(text: &[u8]) -> Option<Json> {
     let line_end = |at: usize| {
         strings::index_of_char_usize(&text[at..], b'\n').map_or(text.len(), |it| at + it)
@@ -172,9 +173,10 @@ pub enum Notation {
     Yaml,
 }
 
-/// The value that `text` is in `notation`, as `JSON.stringify` writes it: what is not a finite number
-/// is `null`, a date of TOML is a string, as it is written. No document of YAML is `null`, several are
-/// an array. A repeated key is there once, at its first place, with its last value. `Err`: what is wrong with `text`.
+/// Parses `text` as `notation` and returns the value as `JSON.stringify` would write it. A non-finite number is `null`,
+/// and a TOML date is a string with its source text. A YAML file with no document is `null`, and one with several is an
+/// array. A repeated key appears once, at its first position, with its last value. `Err` holds the syntax error's
+/// message.
 pub fn parse_as(notation: Notation, text: &[u8]) -> Result<Json, Vec<u8>> {
     with_parsed(notation, text, from_parsed)
         .map_err(|error| error.message)?
@@ -188,8 +190,8 @@ pub struct SyntaxError {
     pub column: i32,
 }
 
-/// Calls `read` with the value that `text` is in `notation` as Bun's parser makes it, where each part knows its place in
-/// `text`. The value does not outlive the call. `Err`: what is wrong with `text`.
+/// Parses `text` as `notation` with Bun's parser and calls `read` with the value, whose nodes carry their positions in
+/// `text`. The value doesn't outlive the call. `Err` describes the syntax error.
 pub fn with_parsed<T>(
     notation: Notation,
     text: &[u8],
@@ -208,28 +210,30 @@ pub fn with_parsed<T>(
     };
     let Some(root) = root else {
         let first = log.msgs.first().map(|it| &it.data);
-        let place = first.and_then(|it| it.location.as_ref());
+        let error_location = first.and_then(|it| it.location.as_ref());
         return Err(SyntaxError {
             message: first.map_or_else(|| b"Syntax error".to_vec(), |it| it.text.to_vec()),
-            line: place.map_or(1, |it| it.line),
-            column: place.map_or(1, |it| it.column),
+            line: error_location.map_or(1, |it| it.line),
+            column: error_location.map_or(1, |it| it.column),
         });
     };
     Ok(read(&root))
 }
 
-/// A value of one of Bun's parsers, or a part of one, as [`parse_as`] returns it. `None`: it is nested too deep.
+/// Converts a value from one of Bun's parsers, or part of one, the way [`parse_as`] does. Returns `None` if it's nested
+/// too deeply.
 pub fn from_parsed(expr: &Expr) -> Option<Json> {
-    from_expr(expr, RoomToNest::new())
+    from_expr(expr, NestingLimit::new())
 }
 
-fn from_expr(expr: &Expr, room: RoomToNest) -> Option<Json> {
+fn from_expr(expr: &Expr, room: NestingLimit) -> Option<Json> {
     if !room.has_more() {
         return None;
     }
     Some(match &expr.data {
         Data::EBoolean(it) => Json::Bool(it.value),
-        // `.inf` of YAML, `inf` of TOML, `Infinity` of JSON5. What is no number is `null`, as for `JSON.stringify`.
+        // Infinity stays a number: YAML's `.inf`, TOML's `inf`, JSON5's `Infinity`. NaN becomes `null`, as in
+        // `JSON.stringify`.
         Data::ENumber(it) if !it.value().is_nan() => Json::Number(it.value()),
         Data::EString(it) if it.is_utf16 => Json::String(string_from_code_points(
             it.slice16().iter().map(|unit| u32::from(*unit)),
@@ -248,7 +252,7 @@ fn from_expr(expr: &Expr, room: RoomToNest) -> Option<Json> {
                 let (Some(key), Some(value)) = (&property.key, &property.value) else {
                     continue;
                 };
-                // `String(key)`, but for a key that is an array or an object.
+                // `String(key)`, except that a key that's an array or an object is written as JSON.
                 let key = match &mut from_expr(key, room)? {
                     Json::String(key) => std::mem::take(key),
                     Json::Number(key) => number_to_string(*key),

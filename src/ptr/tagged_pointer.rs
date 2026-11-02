@@ -93,12 +93,7 @@ impl From<Option<*mut c_void>> for TaggedPtr {
 // per instantiation).
 
 /// Implemented for the tuple of types passed to `TaggedPtrUnion<(...)>`.
-pub trait TypeList {
-    /// `@intFromEnum(@field(Tag, @typeName(Types[Types.len - 1])))` = 1024 - (LEN-1)
-    const MIN_TAG: TagType;
-    /// `@intFromEnum(@field(Tag, @typeName(Types[0])))` = 1024
-    const MAX_TAG: TagType = 1024;
-}
+pub trait TypeList {}
 
 /// `T: UnionMember<Ts>` ⇔ `T` is one of the types in the list `Ts`.
 pub trait UnionMember<Ts: TypeList> {
@@ -149,20 +144,8 @@ impl<Ts: TypeList> TaggedPtrUnion<Ts> {
     }
 
     #[inline]
-    pub fn as_uintptr(self) -> AddressableSize {
-        self.repr.ptr_bits()
-    }
-
-    #[inline]
     pub fn is<Type: UnionMember<Ts>>(self) -> bool {
         self.repr.data() == Type::TAG
-    }
-
-    #[inline]
-    pub fn is_valid(self) -> bool {
-        // switch (data) { MIN_TAG...MAX_TAG => true, else => false }
-        let d = self.repr.data();
-        d >= Ts::MIN_TAG && d <= Ts::MAX_TAG
     }
 
     #[inline]
@@ -185,10 +168,5 @@ impl<Ts: TypeList> TaggedPtrUnion<Ts> {
             repr: TaggedPtr::init(ptr, Type::TAG),
             _types: PhantomData,
         }
-    }
-
-    #[inline]
-    pub fn is_null(self) -> bool {
-        self.repr.ptr_bits() == 0
     }
 }

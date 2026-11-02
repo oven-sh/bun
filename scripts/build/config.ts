@@ -27,6 +27,11 @@ export type Mode = "full" | "codegen";
 export type WebKitMode = "prebuilt" | "local";
 /** The package manager for the package.json files the build installs. */
 export type PackageManager = "bun" | "npm";
+export type DebugInfo = "full" | "lines" | "none";
+
+export function defaultDebugInfo(cfg: Pick<Config, "debug" | "lto">): DebugInfo {
+  return cfg.debug || !cfg.lto ? "full" : "lines";
+}
 
 /**
  * Host platform — what's running the build. Distinguish from target
@@ -58,6 +63,14 @@ const versionDefaults = {
   nodejsV8Version: NODEJS_V8_VERSION,
   webkitVersion: WEBKIT_VERSION,
 };
+
+/**
+ * Returns the `process.versions.webkit` string for `webkitVersion`. A tag
+ * becomes the bare sha and a preview becomes `preview-pr-<N>-<sha8>`.
+ */
+export function webkitVersionName(webkitVersion: string): string {
+  return webkitVersion.startsWith("autobuild-") ? webkitVersion.slice("autobuild-".length) : webkitVersion;
+}
 
 /**
  * The full resolved build configuration. Every field is concrete — no
@@ -115,6 +128,28 @@ export interface Config {
 
   // ─── Features (all explicit booleans) ───
   lto: boolean;
+  /**
+   * The link goes through scripts/build/trim/link.ts, which lays the executable out by removable feature and writes the
+   * trim table into it. `bun build --compile --trim` needs that table in the bun it copies. Costs a second link.
+   */
+  trimmable: boolean;
+  /**
+   * The ahead-of-time compiler and what its programs need at run time. Off: JavaScriptCore and Bun's bindings are compiled
+   * with ENABLE_AOT=0, the crate `bun_aot` stays out of the link, and `--aot` answers that this build has no compiler.
+   */
+  aot: boolean;
+  /**
+   * Default true. Off compiles JavaScriptCore without its JIT tiers (Baseline, DFG, FTL, WebAssembly's BBQ and OMG plans,
+   * RegExp code made at run time): JavaScript, RegExps and WebAssembly that arrive at run time are interpreted. Programs
+   * compiled with `--aot` run as before, and one compiled by a Bun with the tiers runs on a Bun without them. B3, Air and
+   * the assembler stay as the back end of the ahead-of-time compiler.
+   */
+  jit: boolean;
+  /**
+   * Linux with glibc: the relative relocations of the executable are packed (DT_RELR). Smaller, and faster to load.
+   * Only glibc 2.36 and later load such a file, so it is for a build whose users are known.
+   */
+  relr: boolean;
   /** IR PGO: directory for .profraw output (instrumented build). Mutually exclusive with pgoUse. */
   pgoGenerate: string | undefined;
   /** IR PGO: .profdata file path (optimized build). Mutually exclusive with pgoGenerate. */
@@ -132,6 +167,57 @@ export interface Config {
   tinycc: boolean;
   valgrind: boolean;
   fuzzilli: boolean;
+  /** With `fuzzilli`: only the ahead-of-time compiler reports coverage (scripts/build/fuzzilli-compiler-coverage.txt). */
+  fuzzilliCompilerOnly: boolean;
+  /**
+   * Compile everything with `hardeningFlags` (flags.ts), JSC and ICU included: selects the `-hardened` WebKit prebuilt.
+   * The link makes a position-independent executable with full RELRO, eager binding and code in pages of its own.
+   * Defines BUN_HARDENED for C and C++ and `bun_hardened` for Rust. Costs file size, startup time and private memory.
+   * Leaves out one thing that any other build can do: an executable that it compiles ahead of time does not start where
+   * it cannot read its own file (`executeOnlyStart`).
+   * So far it has been built and run on Linux x64 with glibc alone.
+   */
+  hardened: boolean;
+  /**
+   * An executable that a hardened build compiles ahead of time exits at start unless the kernel denies it memory that
+   * is written and then executed: prctl(PR_SET_MDWE), Linux 6.3. On with `hardened`. Off: it also starts on an older
+   * kernel, where its seccomp filter alone refuses new executable memory. No environment variable does the same.
+   */
+  requireMdwe: boolean;
+  /**
+   * The environment variables that only a compiler, a test or somebody who debugs Bun sets are never read: those that
+   * write a file, print addresses, switch a check off or bring in other code. An executable compiled ahead of time takes a
+   * short list of BUN_JSC_* options, and the allocator its sizes and its pace. No setting is lost without a word: where
+   * the environment sets one of the variables that are never read, any other BUN_JSC_* option or any other MIMALLOC_*
+   * word, such an executable prints their names and exits with 1 before it runs any JavaScript. `bun` itself starts, and
+   * ignores them. On with `hardened`. Off: a hardened build that tests can steer as they steer any other, and that
+   * refuses nothing. No environment variable does the same.
+   */
+  lockEnvironment: boolean;
+  /**
+   * What an executable compiled ahead of time maps for as long as a VM or the process lives (its instance, its tables) lies
+   * between two pages that cannot be touched, at an address drawn for that mapping alone: an address of one says nothing
+   * about another's, nor about the C library's. So does every thread's second stack, where a hardened build has them.
+   * Costs a few system calls and 8 KB of page tables a mapping. On with `hardened`. Off: a hardened build to compare with.
+   */
+  guardedPages: boolean;
+  /**
+   * An executable compiled ahead of time maps its code out of its own file, at an address drawn at random. Where it cannot
+   * open that file (it may be run but not read: mode 0111) it moves the pages that its loader mapped to such an address
+   * instead, with mremap(). Off: there it says so and exits with 1 before any compiled code runs, and the code that
+   * moves is not in the binary: nothing of Bun's calls mremap() on the way to the program's first statement. Off with
+   * `hardened`. On: a hardened build to compare with.
+   * Defines BUN_REFUSES_EXECUTE_ONLY_START for C and C++, JSC included, and `bun_refuses_execute_only_start` for Rust.
+   */
+  executeOnlyStart: boolean;
+  /**
+   * Default false. On: behind the link, the new executable compiles Bun's own JavaScript ahead of time and the result
+   * goes into it as the section `.bun_library` (scripts/build/embed-compiled-library.ts). `bun test --aot` takes it for
+   * the lowest layer of a run that is built in layers, which otherwise compiles that code in every run. No segment
+   * holds the section, so nothing else reads or maps it. Costs file size. Changes no compiled code of Bun's: the same
+   * link without the section behaves as a build with this off.
+   */
+  compiledLibrary: boolean;
   /**
    * Compile usockets bsd_* syscall fault-injection hooks. Runtime-armed via
    * `bun:internal-for-testing` socketFaultInjection; disarmed cost is one
@@ -147,9 +233,28 @@ export interface Config {
   codeGenerationFromStrings: boolean;
   /**
    * Default true. Off builds a Bun with no `WebAssembly` global: the engine's `useWasm` option is
-   * false whatever `BUN_JSC_useWasm` says.
+   * false whatever `BUN_JSC_useWasm` says, and WebKit is built with ENABLE_WEBASSEMBLY=0, which
+   * leaves the engine's WebAssembly code out of the binary. Every package that loads a WebAssembly
+   * module stops working, and so do the modules that `bun build --compile --aot` compiles ahead of
+   * time: it warns at each one that a program imports, and the executable throws a ReferenceError.
+   * Takes a WebKit built from source (`webkit: "local"`) or the one prebuilt without WebAssembly,
+   * which `hardened`, `lto` and `aot` together select.
    */
   webAssembly: boolean;
+  /**
+   * Default true. Off builds a Bun with no `ShadowRealm` global: the engine's `useShadowRealm` option
+   * is false whatever `BUN_JSC_useShadowRealm` says. A WebKit built from source (`webkit: "local"`) is
+   * also built with ENABLE_SHADOW_REALM=0, which leaves the class out of the binary; a prebuilt one
+   * keeps it.
+   */
+  shadowRealm: boolean;
+  /**
+   * Default true. Off builds a Bun whose `bun:ffi` calls no native function and loads no library: dlopen(),
+   * linkSymbols(), CFunction(), JSCallback(), cc() with a `library` and what cc() returns throw. A WebKit built from
+   * source (`webkit: "local"`) is also built with ENABLE_FFI=0, which leaves the engine's half of those calls out of
+   * the binary; a prebuilt one keeps it.
+   */
+  ffi: boolean;
   /** Bundle small .cpp files into unified TUs (WebKit-style). See unified.ts. */
   unifiedSources: boolean;
   /**
@@ -164,6 +269,16 @@ export interface Config {
    * `-Z time-passes` are recorded next to each crate (rust/run.ts). `--timings` reads both (timings.ts).
    */
   timeTrace: boolean;
+  /**
+   * `codegen-units` of every crate, in place of the release profile's 1. A crate is then that many ThinLTO modules:
+   * rustc and the link work on them in parallel, and the link's cache keeps the ones an edit did not reach. For
+   * builds that are repeated all day. What ships keeps one module a crate. Undefined: what `Cargo.toml` says.
+   */
+  rustCodegenUnits: number | undefined;
+  rustIncremental: boolean;
+  rustLto: boolean;
+  debugInfo: DebugInfo;
+  linkerMap: boolean;
 
   // ─── Environment ───
   ci: boolean;
@@ -173,7 +288,8 @@ export interface Config {
   webkit: WebKitMode;
   /**
    * Deps built from a local checkout instead of the pinned tarball, keyed by
-   * dep name → absolute source dir. Set via `--local-deps=name=path[,...]`.
+   * dep name → absolute source dir. Set via `--local-deps=name=path[,...]`;
+   * `webkit: "local"` is the WebKit entry ($BUN_WEBKIT_PATH or vendor/WebKit).
    * The checkout is used as-is: no fetch, no `.ref` stamp, and the dep's
    * `patches` are NOT applied (they target the pinned tarball; a fork
    * checkout is expected to carry whatever you're iterating on).
@@ -231,8 +347,6 @@ export interface Config {
    */
   clangResourceDir: string | undefined;
   ar: string;
-  /** llvm-ranlib. undefined on windows (llvm-lib indexes itself). */
-  ranlib: string | undefined;
   /**
    * ld.lld on linux, lld-link on windows, ld64.lld when cross-compiling for
    * darwin from a non-darwin host. May be empty on native darwin (clang
@@ -262,7 +376,7 @@ export interface Config {
   esbuild: string;
   /** Optional — compiler launcher prefix. */
   ccache: string | undefined;
-  /** cmake executable. Required for nested dep builds. */
+  /** cmake executable: CI packages the zips with `cmake -E tar` (ci.ts). */
   cmake: string;
   /** cargo executable. undefined when no rust toolchain is available. */
   cargo: string | undefined;
@@ -291,20 +405,18 @@ export interface Config {
   rustHostTriple: string | undefined;
   /** Windows: MSVC link.exe path (to avoid Git's /usr/bin/link shadowing). */
   msvcLinker: string | undefined;
-  /** Windows: llvm-rc for nested cmake (CMAKE_RC_COMPILER). */
+  /** Windows: llvm-rc, compiles bun.exe's resources. */
   rc: string | undefined;
-  /** Windows: llvm-mt for nested cmake (CMAKE_MT). May be absent in some LLVM distros. */
-  mt: string | undefined;
   /** x64: nasm for BoringSSL's win-x64 assembly and libjpeg-turbo's x86_64 SIMD. */
   nasm: string | undefined;
 
   // ─── macOS SDK (darwin only, undefined elsewhere) ───
-  /** e.g. "13.0". Passed to deps as -DCMAKE_OSX_DEPLOYMENT_TARGET. */
+  /** e.g. "13.0". `-mmacosx-version-min`, for bun's sources and the deps' alike (flags.ts). */
   osxDeploymentTarget: string | undefined;
   /**
    * SDK path. Native darwin: from `xcrun --show-sdk-path`. Darwin
    * cross-compile from a non-darwin host: an extracted MacOSX*.sdk (see
-   * macos-sdk.ts). Passed to deps as -DCMAKE_OSX_SYSROOT / `-isysroot`.
+   * macos-sdk.ts). `-isysroot`, for bun's sources and the deps' alike.
    */
   osxSysroot: string | undefined;
 
@@ -352,6 +464,10 @@ export interface PartialConfig {
   buildType?: BuildType;
   mode?: Mode;
   lto?: boolean;
+  trimmable?: boolean;
+  jit?: boolean;
+  aot?: boolean;
+  relr?: boolean;
   pgoGenerate?: string;
   pgoUse?: string;
   asan?: boolean;
@@ -364,12 +480,26 @@ export interface PartialConfig {
   tinycc?: boolean;
   valgrind?: boolean;
   fuzzilli?: boolean;
+  fuzzilliCompilerOnly?: boolean;
+  hardened?: boolean;
+  requireMdwe?: boolean;
+  lockEnvironment?: boolean;
+  guardedPages?: boolean;
+  executeOnlyStart?: boolean;
+  compiledLibrary?: boolean;
   socketFaultInjection?: boolean;
   codeGenerationFromStrings?: boolean;
   webAssembly?: boolean;
+  shadowRealm?: boolean;
+  ffi?: boolean;
   unifiedSources?: boolean;
   archiveDeps?: boolean;
   timeTrace?: boolean;
+  rustCodegenUnits?: number;
+  rustIncremental?: boolean;
+  rustLto?: boolean;
+  debugInfo?: DebugInfo;
+  linkerMap?: boolean;
   ci?: boolean;
   buildkite?: boolean;
   webkit?: WebKitMode;
@@ -448,7 +578,6 @@ export interface Toolchain extends JsToolchain {
   /** `clang -print-resource-dir`. undefined on Windows. */
   clangResourceDir: string | undefined;
   ar: string;
-  ranlib: string | undefined;
   ld: string;
   /**
    * lld's Mach-O port (`ld64.lld`), resolved on non-darwin unix hosts.
@@ -489,19 +618,8 @@ export interface Toolchain extends JsToolchain {
    * (the GNU hard-link utility) from shadowing the real linker in PATH.
    */
   msvcLinker: string | undefined;
-  /**
-   * Windows only: llvm-rc (resource compiler). Passed to nested cmake
-   * as CMAKE_RC_COMPILER. cmake's own detection usually finds it, but
-   * that depends on PATH and cmake version — explicit is safer.
-   */
+  /** Windows only: llvm-rc (resource compiler). */
   rc: string | undefined;
-  /**
-   * Windows only: llvm-mt (manifest tool). Passed to nested cmake as
-   * CMAKE_MT. Optional — some LLVM distributions don't ship llvm-mt;
-   * when absent, cmake's STATIC_LIBRARY try-compile mode (set in
-   * source.ts) sidesteps the need.
-   */
-  mt: string | undefined;
   /** x64 targets: nasm for BoringSSL's win-x64 assembly and libjpeg-turbo's x86_64 SIMD. */
   nasm: string | undefined;
 }
@@ -548,6 +666,22 @@ export function detectLinuxAbi(): Abi {
   return existsSync("/etc/alpine-release") ? "musl" : "gnu";
 }
 
+export function glibcLoadsPackedRelocations(version: string): boolean {
+  const [major = 0, minor = 0] = version.split(".").map(Number);
+  return major > 2 || (major === 2 && minor >= 36);
+}
+
+function hostLoadsPackedRelocations(): boolean {
+  try {
+    const version = /^glibc (\d+\.\d+)/.exec(
+      execSync("getconf GNU_LIBC_VERSION", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }),
+    );
+    return version !== null && glibcLoadsPackedRelocations(version[1]!);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Minimum Android API level we target. 28 = Android 9 (2018), the oldest
  * release with the bionic syscall wrappers we rely on without raw-syscall
@@ -556,9 +690,9 @@ export function detectLinuxAbi(): Abi {
 export const ANDROID_API_LEVEL_DEFAULT = pins.androidNdk.apiLevel;
 
 /**
- * FreeBSD release we target. 14.x is the current production series; 14.3
- * is the oldest 14.x still on download.freebsd.org. Building against 14.3
- * produces binaries that run on 14.3+ (FreeBSD guarantees forward ABI
+ * FreeBSD release we target. 14.x is the current production series; 14.4
+ * is the oldest 14.x still on download.freebsd.org. Building against 14.4
+ * produces binaries that run on 14.4+ (FreeBSD guarantees forward ABI
  * compat within a major).
  */
 export const FREEBSD_VERSION_DEFAULT = pins.freebsd.version;
@@ -843,6 +977,8 @@ function resolveBase(partial: PartialConfig, host: Host, os: OS, arch: Arch, js:
   const revision = getGitRevision(cwd, debug && !ci ? buildDir : undefined);
   // Default from versions.ts. Override via --nodejs-version=<v> to test a bump.
   const nodejsVersion = partial.nodejsVersion ?? versionDefaults.nodejsVersion;
+  // Override via --webkit-version=<hash> to test a branch before bumping the pin.
+  const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
 
   return {
     bun: js.bun,
@@ -855,6 +991,7 @@ function resolveBase(partial: PartialConfig, host: Host, os: OS, arch: Arch, js:
     version,
     revision,
     nodejsVersion,
+    webkitVersion,
     abi,
     linux,
     darwin,
@@ -901,6 +1038,7 @@ export type CodegenFields = Pick<
   | "version"
   | "revision"
   | "nodejsVersion"
+  | "webkitVersion"
   | keyof JsToolchain
 >;
 
@@ -955,6 +1093,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     version,
     revision,
     nodejsVersion,
+    webkitVersion,
     bun,
     npm,
     jsRuntime,
@@ -1000,6 +1139,19 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // goes through LTO), so forcing it off also keeps the fetch from 404ing.
   if ((asan && lto) || fuzzilli || abi === "android" || freebsd || (windows && arm64)) {
     lto = false;
+  }
+
+  const rustLto = partial.rustLto ?? true;
+  if (lto && !rustLto) {
+    throw new BuildError("rustLto cannot be off where lto is on", { hint: "Pass --lto=off too" });
+  }
+
+  const debugInfo = partial.debugInfo ?? defaultDebugInfo({ debug, lto });
+  if (debugInfo !== "full" && debugInfo !== "lines" && debugInfo !== "none") {
+    throw new BuildError(`Unknown debugInfo: ${debugInfo}`, { hint: "Use full, lines or none" });
+  }
+  if (windows && partial.debugInfo !== undefined) {
+    throw new BuildError("debugInfo cannot be chosen for a Windows target");
   }
 
   // The link reads LLVM bitcode from both compilers with clang's LLVM (release crates are bitcode with or without `lto`),
@@ -1049,6 +1201,12 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const tinycc = partial.tinycc ?? !(abi === "android" || freebsd);
 
   const valgrind = partial.valgrind ?? false;
+  const hardened = partial.hardened ?? false;
+  const requireMdwe = partial.requireMdwe ?? hardened;
+  const lockEnvironment = partial.lockEnvironment ?? hardened;
+  const guardedPages = partial.guardedPages ?? hardened;
+  const executeOnlyStart = partial.executeOnlyStart ?? !hardened;
+  const compiledLibrary = partial.compiledLibrary ?? false;
   // Default follows asan: on for local debug (Linux / arm64 macOS) and CI
   // release-asan, off everywhere else. The fuzz tests are most useful when
   // memory errors are detectable, and the disarmed-hot-path cost (one acquire
@@ -1058,10 +1216,70 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // ─── Paths ───
   const vendorDir = resolve(cwd, "vendor");
 
+  const localDeps = parseLocalDeps(partial.localDeps, cwd);
+  const webkit = partial.webkit ?? (localDeps.WebKit !== undefined ? "local" : "prebuilt");
+  if (webkit === "local") {
+    localDeps.WebKit ??= expandLocalPath(process.env.BUN_WEBKIT_PATH || resolve(vendorDir, "WebKit"), cwd);
+  }
+
   // ─── Validation ───
   assert(!baseline || x64, "baseline=true requires arch=x64 (baseline disables AVX which is x64-only)");
+  assert(
+    !partial.relr || (linux && abi === "gnu"),
+    "relr=true requires os=linux and abi=gnu (packed relative relocations are loaded by glibc 2.36 and later; nothing says that this target's C library can)",
+  );
   assert(!valgrind || linux, "valgrind=true requires os=linux");
   assert(!(asan && valgrind), "Cannot enable both asan and valgrind simultaneously");
+  assert(!hardened || (linux && abi !== "android"), "hardened=true requires os=linux and abi=gnu or musl");
+  assert(!requireMdwe || hardened, "requireMdwe=true requires hardened=true");
+  assert(
+    !compiledLibrary || (linux && abi !== "android" && !hardened && (partial.aot ?? true)),
+    "compiledLibrary=true requires os=linux, abi=gnu or musl, aot=true and hardened=false",
+    { hint: "Only there does a realm take one compiled program above another" },
+  );
+  assert(
+    !compiledLibrary || (os === host.os && arch === host.arch && abi === (detectLinuxAbi() ?? abi)),
+    "compiledLibrary=true requires a build for this machine: the new executable compiles its own code",
+  );
+  assert(!lockEnvironment || hardened, "lockEnvironment=true requires hardened=true");
+  assert(!guardedPages || linux, "guardedPages=true requires os=linux");
+  assert(
+    guardedPages === hardened || webkit === "local",
+    "guardedPages=" + guardedPages + " with hardened=" + hardened + " requires webkit=local",
+    { hint: "The -hardened WebKit prebuilts are compiled with it, the others without" },
+  );
+  assert(
+    executeOnlyStart || (linux && abi !== "android"),
+    "executeOnlyStart=false requires os=linux and abi=gnu or musl",
+  );
+  assert(
+    executeOnlyStart !== hardened || webkit === "local",
+    "executeOnlyStart=" + executeOnlyStart + " with hardened=" + hardened + " requires webkit=local",
+    { hint: "The -hardened WebKit prebuilts are compiled without it, the others with it" },
+  );
+  const jit = partial.jit ?? true;
+  assert(
+    jit || webkit === "local",
+    "jit=false requires webkit=local: there is no prebuilt WebKit without the JIT tiers",
+  );
+  assert(jit || (partial.aot ?? true), "jit=false requires aot=true");
+  assert(jit || (linux && x64), "jit=false requires os=linux and arch=x64");
+  assert(jit || !(partial.trimmable ?? false), "jit=false can't be combined with trimmable=true");
+  assert(
+    !hardened || webkit === "local" || (x64 && abi === "gnu" && release && !asan && !assertions && !fuzzilli),
+    "hardened=true requires a Linux x64 glibc release build without asan, assertions or fuzzilli, or webkit=local",
+    { hint: "Those are the -hardened WebKit prebuilts there are (oven-sh/WebKit's .github/scripts/lanes.mjs)" },
+  );
+  assert(
+    (partial.webAssembly ?? true) || webkit === "local" || (hardened && lto && (partial.aot ?? true)),
+    "webAssembly=false requires hardened=true, lto=true and aot=true, or webkit=local",
+    { hint: "That is the one WebKit prebuilt without WebAssembly (oven-sh/WebKit's .github/scripts/lanes.mjs)" },
+  );
+  assert(
+    !hardened || toolchain.llvmStrip !== undefined,
+    "hardened=true requires llvm-strip (GNU strip writes a file without PT_GNU_RELRO)",
+    { hint: "Install llvm for the same version as clang: apt install llvm-23 (or equivalent)." },
+  );
   assert(os !== "linux" || abi !== undefined, "Linux builds require an abi (gnu, musl, or android)");
 
   // ─── Cross-compilation (Android) ───
@@ -1204,7 +1422,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
         });
       }
     }
-    if (partial.webkit === "local") {
+    if (webkit === "local") {
       throw new BuildError("Cross-compiling for Windows requires the prebuilt WebKit (webkit=local needs msbuild)", {
         hint: "Drop --webkit=local or build on a Windows host.",
       });
@@ -1214,14 +1432,12 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   }
 
   // ─── Versioning ───
-  // Defaults from versions.ts. Override via --webkit-version=<hash> etc.
-  // to test a branch before bumping the pinned default.
+  // Defaults from versions.ts. Override to test a bump before changing the
+  // pinned default.
   const nodejsAbiVersion = partial.nodejsAbiVersion ?? versionDefaults.nodejsAbiVersion;
   const nodejsV8Version = partial.nodejsV8Version ?? versionDefaults.nodejsV8Version;
-  const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
 
   // ─── macOS SDK ───
-  // Must be passed to nested cmake builds or they'll pick the wrong SDK.
   // Native darwin: ask xcode-select/xcrun. Cross-compiling from a non-darwin
   // host: an extracted MacOSX*.sdk — explicit path, well-known install, or
   // auto-downloaded into the cache dir (see macos-sdk.ts / ensureMacosSdk()).
@@ -1240,6 +1456,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // newer; only `-mmacosx-version-min` decides what the binary runs on).
   let ld64StripSwap: { ld: string; strip: string } | undefined;
   if (darwinCross) {
+    if (webkit === "local") {
+      throw new BuildError("Cross-compiling for macOS requires the prebuilt WebKit", {
+        hint: "Drop --webkit=local or build on a macOS host.",
+      });
+    }
     crossTarget = `${arm64 ? "arm64" : "x86_64"}-apple-macosx`;
     osxDeploymentTarget = partial.osxDeploymentTarget ?? MIN_OSX_DEPLOYMENT_TARGET;
     osxSysroot = resolveMacosSdkPath(partial.macosSdk, cacheDir, cwd);
@@ -1281,7 +1502,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     x64,
     arm64,
     host,
-    canRunOnHost: os === host.os && arch === host.arch && (!linux || abi === (detectLinuxAbi() ?? abi)),
+    canRunOnHost:
+      os === host.os &&
+      arch === host.arch &&
+      (!linux || abi === (detectLinuxAbi() ?? abi)) &&
+      (!partial.relr || hostLoadsPackedRelocations()),
     exeSuffix,
     objSuffix,
     libPrefix,
@@ -1291,6 +1516,16 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     release,
     mode: "full",
     lto,
+    jit,
+    trimmable:
+      (partial.trimmable ?? false) &&
+      release &&
+      !asan &&
+      !valgrind &&
+      linksWithLld({ darwin, crossTarget }) &&
+      host.os !== "windows",
+    aot: partial.aot ?? true,
+    relr: partial.relr ?? false,
     pgoGenerate,
     pgoUse,
     asan,
@@ -1304,16 +1539,30 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     tinycc,
     valgrind,
     fuzzilli,
+    hardened,
+    requireMdwe,
+    lockEnvironment,
+    guardedPages,
+    executeOnlyStart,
+    compiledLibrary,
     socketFaultInjection,
     codeGenerationFromStrings: partial.codeGenerationFromStrings ?? true,
     webAssembly: partial.webAssembly ?? true,
+    shadowRealm: partial.shadowRealm ?? true,
+    ffi: partial.ffi ?? true,
     unifiedSources: partial.unifiedSources ?? true,
     archiveDeps: partial.archiveDeps ?? false,
     timeTrace: partial.timeTrace ?? false,
+    rustCodegenUnits: partial.rustCodegenUnits,
+    rustIncremental: partial.rustIncremental ?? false,
+    rustLto,
+    debugInfo,
+    linkerMap: partial.linkerMap ?? true,
+    fuzzilliCompilerOnly: partial.fuzzilliCompilerOnly ?? false,
     ci,
     buildkite,
-    webkit: partial.webkit ?? "prebuilt",
-    localDeps: parseLocalDeps(partial.localDeps, cwd),
+    webkit,
+    localDeps,
     packageManager,
     cwd,
     buildDir,
@@ -1328,13 +1577,14 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     clangVersion: toolchain.clangVersion,
     clangResourceDir: toolchain.clangResourceDir,
     ar: toolchain.ar,
-    ranlib: toolchain.ranlib,
     ld: ld64StripSwap?.ld ?? toolchain.ld,
     // Cross strips: linux-gnu uses <triple>-strip (GNU, handles -R .eh_frame
     // fully; host strip rejects foreign-arch ELF); other cross targets use
-    // llvm-strip.
+    // llvm-strip. Hardened: llvm-strip, native or cross. Removing a mapped section makes GNU strip write
+    // new program headers, without PT_GNU_RELRO.
     strip:
       ld64StripSwap?.strip ??
+      (hardened ? toolchain.llvmStrip : undefined) ??
       (crossTarget !== undefined
         ? linux && abi === "gnu" && existsSync(`/usr/bin/${crossTarget}-strip`)
           ? `/usr/bin/${crossTarget}-strip`
@@ -1365,7 +1615,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     rustHostTriple: toolchain.rustHostTriple,
     msvcLinker: toolchain.msvcLinker,
     rc: toolchain.rc,
-    mt: toolchain.mt,
     nasm: toolchain.nasm,
     osxDeploymentTarget,
     osxSysroot,
@@ -1538,12 +1787,19 @@ function parseLocalDeps(spec: string | undefined, cwd: string): Record<string, s
         hint: "Example: --local-deps=mimalloc=~/code/mimalloc",
       });
     }
-    const name = entry.slice(0, eq);
-    let path = entry.slice(eq + 1);
-    if (path === "~" || path.startsWith("~/")) path = join(homedir(), path.slice(1));
-    out[name] = resolve(cwd, path);
+    out[entry.slice(0, eq)] = expandLocalPath(entry.slice(eq + 1), cwd);
   }
   return out;
+}
+
+/**
+ * Shells don't expand `~` inside quotes or after `=`. Relative paths are
+ * anchored to the repo root so ninja's regen rule (which runs from buildDir)
+ * resolves the same path as the initial configure.
+ */
+function expandLocalPath(path: string, cwd: string): string {
+  if (path === "~" || path.startsWith("~/") || path.startsWith("~\\")) return join(homedir(), path.slice(1));
+  return resolve(cwd, path);
 }
 
 /**
@@ -1640,6 +1896,15 @@ export function bunExeName(cfg: Config): string {
 }
 
 /**
+ * An lld does the link: every one but a native macOS link, which goes through Apple's ld. That linker takes none of
+ * lld's LTO-level or ICF options (it runs clang's libLTO at its default level and has no ICF), so flags.ts states
+ * those only where this holds. Lives here (not flags.ts) because `trimmable` is resolved from it.
+ */
+export function linksWithLld(c: Pick<Config, "darwin" | "crossTarget">): boolean {
+  return !c.darwin || c.crossTarget !== undefined;
+}
+
+/**
  * Whether this config produces a stripped `bun` alongside `bun-profile`.
  *
  * Only plain release builds strip — not debug (you want symbols), not
@@ -1668,23 +1933,42 @@ export function formatConfig(cfg: Config, exe: string): string {
   ];
   const features: string[] = [];
   if (cfg.lto) features.push("lto");
+  if (cfg.trimmable) features.push("trimmable");
+  if (!cfg.jit) features.push("no-jit");
+  if (!cfg.aot) features.push("no-aot");
+  if (cfg.relr) features.push("relr");
   if (cfg.pgoGenerate) features.push("pgo-gen");
   if (cfg.pgoUse) features.push("pgo-use");
   if (cfg.asan) features.push("asan");
   if (cfg.assertions) features.push("assertions");
   if (cfg.logs) features.push("logs");
   if (cfg.baseline) features.push("baseline");
+  if (cfg.rustCodegenUnits !== undefined) features.push(`rust-codegen-units:${cfg.rustCodegenUnits}`);
+  if (cfg.rustIncremental) features.push("rust-incremental");
+  if (!cfg.rustLto) features.push("rust-lto:off");
+  if (cfg.debugInfo !== defaultDebugInfo(cfg)) features.push(`debug-info:${cfg.debugInfo}`);
+  if (!cfg.linkerMap) features.push("linker-map:off");
   if (cfg.valgrind) features.push("valgrind");
-  if (cfg.fuzzilli) features.push("fuzzilli");
+  if (cfg.fuzzilli) features.push(cfg.fuzzilliCompilerOnly ? "fuzzilli:compiler-only" : "fuzzilli");
+  if (cfg.hardened) features.push("hardened");
+  if (cfg.requireMdwe !== cfg.hardened) features.push("require-mdwe:off");
+  if (cfg.lockEnvironment !== cfg.hardened) features.push("lock-environment:off");
+  if (cfg.guardedPages !== cfg.hardened) features.push(cfg.guardedPages ? "guarded-pages" : "guarded-pages:off");
+  if (cfg.executeOnlyStart === cfg.hardened) {
+    features.push(cfg.executeOnlyStart ? "execute-only-start" : "execute-only-start:off");
+  }
+  if (cfg.compiledLibrary) features.push("compiled-library");
   if (cfg.socketFaultInjection !== cfg.asan) {
     features.push(`socket-fault-injection:${cfg.socketFaultInjection ? "on" : "off"}`);
   }
   if (!cfg.codeGenerationFromStrings) features.push("code-generation-from-strings:off");
   if (!cfg.webAssembly) features.push("webassembly:off");
+  if (!cfg.shadowRealm) features.push("shadow-realm:off");
+  if (!cfg.ffi) features.push("ffi:off");
   if (!cfg.canary) features.push("canary:off");
   // Non-default modes — show so you notice when a build is unusual.
   if (cfg.webkit !== "prebuilt") features.push(`webkit:${cfg.webkit}`);
-  for (const name of Object.keys(cfg.localDeps)) features.push(`local:${name}`);
+  for (const name of Object.keys(cfg.localDeps)) if (name !== "WebKit") features.push(`local:${name}`);
   if (cfg.packageManager !== "bun") features.push(`package-manager:${cfg.packageManager}`);
   // Version pin overrides — show an identifying value so you catch "forgot
   // to revert my WebKit test branch" before the build goes weird. Strip the

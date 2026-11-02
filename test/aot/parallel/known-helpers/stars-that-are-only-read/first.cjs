@@ -1,0 +1,8 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.default = exports.own = exports.shared = exports.one = void 0;
+exports.one = "one of first";
+exports.shared = "shared of first";
+exports.own = "own of first";
+exports.default = "default of first";
+Object.defineProperty(exports, "hidden", { value: "hidden of first", enumerable: false, writable: true, configurable: true });

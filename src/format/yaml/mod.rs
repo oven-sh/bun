@@ -1,4 +1,5 @@
-//! YAML: Prettier's `language-yaml` and the tree of `yaml-unist-parser`, which is made of what Bun's parser reads.
+//! YAML: a port of Prettier's `language-yaml`, on `yaml-unist-parser`'s tree, which is built from the output of Bun's
+//! parser.
 
 mod ast;
 mod printer;
@@ -14,13 +15,13 @@ use crate::{FormatError, FormatOptions};
 use bun_parsers::yaml::{ParseError, YAML};
 use std::borrow::Cow;
 
-/// What can be used again for the next file.
+/// Allocations that can be reused for the next file.
 #[derive(Default)]
 pub struct Scratch {
     elements: Elements,
 }
 
-/// Whether Prettier takes the file at `path` for YAML.
+/// True if Prettier treats the file at `path` as YAML.
 pub fn is_yaml_path(path: &[u8]) -> bool {
     let name = bun_lint::paths::file_name(path);
     const EXTENSIONS: [&[u8]; 10] = [
@@ -47,22 +48,22 @@ pub fn is_yaml_path(path: &[u8]) -> bool {
         b".stylelintrc",
         b".lintstagedrc",
     ];
-    // Prettier's `getLanguageByFileName` compares the name in lower case.
+    // Prettier's `getLanguageByFileName` compares lowercased names.
     let name = name.to_ascii_lowercase();
     NAMES.iter().any(|it| it.eq_ignore_ascii_case(&name))
         || EXTENSIONS.iter().any(|extension| name.ends_with(extension))
 }
 
-/// The document for `text`, whose line breaks are `\n`, as a tree.
+/// Returns the doc for `text`, whose line breaks are `\n`, as a tree.
 pub(crate) fn document(text: &[u8], options: &FormatOptions) -> Result<Doc<'static>, FormatError> {
     let mut elements = Elements::default();
     write_document(text, options, &mut elements)?;
     elements.to_tree()
 }
 
-/// What Bun's parser refuses at the byte `at`.
+/// Converts an error that Bun's parser reports at byte `at`.
 #[cold]
-fn refusal(error: ParseError, at: usize) -> FormatError {
+fn to_format_error(error: ParseError, at: usize) -> FormatError {
     let message = match error {
         ParseError::StackOverflow => return FormatError::NestedTooDeeply,
         ParseError::OutOfMemory => Message::TooLarge,
@@ -83,19 +84,19 @@ fn refusal(error: ParseError, at: usize) -> FormatError {
     FormatError::SyntaxErrorAt(SyntaxError(message, at as u32))
 }
 
-/// Writes the document for `text`, whose line breaks are `\n`, to `out`, which is empty.
+/// Writes the doc for `text`, whose line breaks are `\n`, to `out`, which must be empty.
 fn write_document(
     text: &[u8],
     options: &FormatOptions,
     out: &mut Elements,
 ) -> Result<(), FormatError> {
-    // Whatever else is said to be wrong where the stack has run out.
-    let because_of = |stack: &Stack, error: SyntaxError| match stack.ran_out() {
+    // Running out of stack overrides whatever other error was reported.
+    let to_error = |stack: &Stack, error: SyntaxError| match stack.ran_out() {
         true => FormatError::NestedTooDeeply,
         false => FormatError::SyntaxErrorAt(error),
     };
     let stack = Stack::new();
-    // For `yaml`, U+0000 is a character like another.
+    // `yaml` treats U+0000 like any other character.
     let without_nul: Cow<'_, [u8]> = match bun_core::strings::contains_char(text, 0) {
         true => text.iter().map(|&byte| byte.max(1)).collect(),
         false => Cow::Borrowed(text),
@@ -103,8 +104,8 @@ fn write_document(
     let tree = YAML::parse_as_written(&without_nul, |documents, tokens| {
         ast::build(text, documents, tokens, &stack)
     })
-    .map_err(|(error, at)| refusal(error, at.min(text.len())))?
-    .map_err(|error| because_of(&stack, error))?;
+    .map_err(|(error, at)| to_format_error(error, at.min(text.len())))?
+    .map_err(|error| to_error(&stack, error))?;
     let mut printer = printer::Printer {
         tree: &tree,
         text,
@@ -112,7 +113,7 @@ fn write_document(
         single_quote: matches!(options.quote_style, QuoteStyle::Single),
         bracket_spacing: options.bracket_spacing.value(),
         trailing_comma: !matches!(options.trailing_commas, TrailingCommas::None),
-        // Without indentation there is no structure, so for oxfmt there is some.
+        // Without indentation there's no structure, so oxfmt uses at least 1.
         tab_width: (options.indent_width.value()).max(u32::from(options.flavor.is_oxfmt())),
         is_oxfmt: options.flavor.is_oxfmt(),
         is_last_document: true,
@@ -138,7 +139,7 @@ fn can_be_json(path: &[u8]) -> bool {
     matches!(name, b".prettierrc" | b".stylelintrc" | b".lintstagedrc")
 }
 
-/// Appends the formatted `text` to `out`. `options.filepath` says whether it can be JSON.
+/// Appends the formatted `text` to `out`. `options.filepath` decides whether it can be JSON.
 pub fn format(
     text: &[u8],
     options: &FormatOptions,
@@ -162,7 +163,7 @@ pub fn format(
         out.extend_from_slice(original);
         return Ok(());
     }
-    // Nothing in YAML is something that Prettier formats on its own.
+    // Prettier has no YAML node that it can format on its own, so a range changes nothing.
     let is_range = range.start > first || range.end < original.len();
     if options.insert_pragma
         && !options.require_pragma
@@ -175,11 +176,11 @@ pub fn format(
     if has_bom {
         out.extend_from_slice(BOM);
     }
-    // Prettier goes by what is white space in JavaScript, and makes nothing of a no-break space.
+    // Prettier trims what JavaScript counts as whitespace, so it turns a lone no-break space into an empty file.
     if text.trim_ascii().is_empty() {
         return Ok(());
     }
-    // It has to be YAML in any case.
+    // It has to parse as YAML in any case.
     let document = &mut scratch.elements;
     document.clear();
     write_document(&text, options, document)

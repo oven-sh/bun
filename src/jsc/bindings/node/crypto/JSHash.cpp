@@ -39,6 +39,7 @@ JSHash::~JSHash()
     if (m_zigHasher) {
         ExternZigHash::destroy(m_zigHasher);
     }
+    OPENSSL_cleanse(m_shortDigest.data(), m_shortDigest.size());
 }
 
 void JSHash::finishCreation(JSC::VM& vm)
@@ -176,6 +177,10 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
 
     // Check if the Hash is already finalized
     if (hash->m_finalized) {
+        // Hash.prototype._transform passes `false`. Node drops a chunk written after digest().
+        if (callFrame->argument(3).isFalse()) {
+            return JSValue::encode(jsUndefined());
+        }
         return Bun::ERR::CRYPTO_HASH_FINALIZED(scope, globalObject);
     }
 
@@ -200,6 +205,13 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
 
         auto inputView = inputString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
+
+        if (encoding == WebCore::BufferEncodingType::utf8 && inputView->is8Bit() && WTF::charactersAreAllASCII(inputView->span8())) {
+            if (!hash->update(byteCast<uint8_t>(inputView->span8()))) {
+                return Bun::ERR::CRYPTO_HASH_UPDATE_FAILED(scope, globalObject);
+            }
+            return JSValue::encode(hashWrapper);
+        }
 
         JSValue converted = JSValue::decode(WebCore::constructFromEncoding(globalObject, inputView, encoding));
         RETURN_IF_EXCEPTION(scope, {});
@@ -269,7 +281,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
                 return {};
             }
 
-            auto totalDigestLen = ExternZigHash::digest(hash->m_zigHasher, globalObject, std::span { data.get<uint8_t>(), data.size() });
+            auto totalDigestLen = ExternZigHash::digest(hash->m_zigHasher, std::span { data.get<uint8_t>(), data.size() });
             if (!totalDigestLen) {
                 throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to finalize digest"_s);
                 return {};
@@ -279,6 +291,15 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
             hash->m_digest = ByteSource::allocated(data.release());
             ExternZigHash::destroy(hash->m_zigHasher);
             hash->m_zigHasher = nullptr;
+        } else if (len <= hash->m_shortDigest.size()) {
+            ncrypto::Buffer<void> into { .data = hash->m_shortDigest.data(), .len = len };
+            if (!hash->m_ctx.digestFinalInto(&into)) {
+                throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to finalize digest"_s);
+                return {};
+            }
+
+            hash->m_digest = ByteSource::foreign(hash->m_shortDigest.data(), len);
+            hash->m_ctx.reset();
         } else {
             auto data = hash->m_ctx.digestFinal(len);
             if (!data) {
@@ -322,6 +343,7 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
     }
 
     JSValue algorithmOrHashInstanceValue = callFrame->argument(0);
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
 
     // Because we aren't checking if m_finalized true in Hash.prototype.copy, we need to check here
     // and make sure we validate arguments in the correct order.
@@ -336,7 +358,7 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
         }
 
         if (original->m_zigHasher) {
-            zigHasher.reset(ExternZigHash::getFromOther(zigGlobalObject, original->m_zigHasher));
+            zigHasher.reset(ExternZigHash::getFromOther(original->m_zigHasher));
         } else {
             md = original->m_ctx.getDigest();
         }
@@ -349,7 +371,7 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
 
         md = ncrypto::getDigestByName(algorithm);
         if (!md) {
-            zigHasher.reset(ExternZigHash::getByName(zigGlobalObject, algorithm));
+            zigHasher.reset(ExternZigHash::getByName(algorithm));
         }
     }
 

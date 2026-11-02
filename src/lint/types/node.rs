@@ -1,4 +1,4 @@
-//! `ts.Node` and `ts.SourceFile`: the syntax of any file of the program.
+//! `ts.Node` and `ts.SourceFile`: the syntax of any file in the program.
 
 use super::{ModifierFlags, NodeFlags, Signature, TsSymbol, Type};
 use crate::ast::{self, File};
@@ -10,12 +10,11 @@ use bun_sema::program::FileId;
 /// `ts.SyntaxKind`
 pub use bun_sema::node::Kind as SyntaxKind;
 
-/// `ts.Node`: a node of a file of the program, in the shape that TypeScript's syntax tree has.
+/// `ts.Node`: a node in any file of the program, shaped like TypeScript's syntax tree.
 ///
-/// This is what [`TsSymbol::declarations`] yields, which can be anywhere: in another file, in
-/// `node_modules`, in `lib.d.ts`. Rules look at the kind, the modifiers, the name and the parent of
-/// such a node, and at the file it is in. For the file that is linted, [`TsNode::to_ast`] leads back
-/// to the handles of [`ast`], which know much more.
+/// [`TsSymbol::declarations`] yields these, and they can be anywhere: in another file, in `node_modules`, in
+/// `lib.d.ts`. Rules look at such a node's kind, modifiers, name, parent and file. In the linted file,
+/// [`TsNode::to_ast`] maps back to the [`ast`] handles, which expose much more.
 ///
 /// `ts.isParameter(node)` is `node.kind() == SyntaxKind::Parameter`.
 #[derive(Copy, Clone)]
@@ -87,7 +86,7 @@ impl<'a> TsNode<'a> {
         self.some(self.file.query(|q| q.node_parent(self.raw)))
     }
 
-    /// Its parent, the parent of that, and so on. The last is the `SourceFile`.
+    /// Its parent, grandparent and so on. The last one is the `SourceFile`.
     pub fn ancestors(self) -> impl Iterator<Item = TsNode<'a>> {
         std::iter::successors(self.parent(), |node| node.parent())
     }
@@ -139,39 +138,38 @@ impl<'a> TsNode<'a> {
             .map(move |&node| TsNode::new(self.file, self.raw.file, node))
     }
 
-    /// `node.text` of an identifier, a private identifier, a string or a numeric literal. Empty for
-    /// any other node.
+    /// `node.text` of an identifier, a private identifier, a string or a numeric literal. Empty for any other node.
     pub fn text(self) -> &'a [u8] {
         self.file.query(|q| q.node_text(self.raw))
     }
 
-    /// `node.getText()`. Empty in a file of the default library, whose text is not kept.
+    /// `node.getText()`. Empty in a default library file, whose text isn't retained.
     pub fn get_source_text(self) -> &'a [u8] {
         self.file.query(|q| q.node_source_text(self.raw))
     }
 
-    /// The flags that the HIR has for the node, which besides the modifiers tell of tokens.
+    /// The HIR's flags for the node. Besides the modifiers, they record tokens like `?`, `...` and `!`.
     fn hir_flags(self) -> ast::Flags {
         self.file.query(|q| q.node_hir_flags(self.raw))
     }
 
-    /// `ts.isTypeOnlyImportOrExportDeclaration(node)`: a specifier, a clause or a namespace import
-    /// or export that is `type` itself or is part of an `import type` or an `export type`.
+    /// `ts.isTypeOnlyImportOrExportDeclaration(node)`: a specifier, a clause or a namespace import or export that's
+    /// marked `type` itself or is part of an `import type` or `export type`.
     pub fn is_type_only_import_or_export_declaration(self) -> bool {
         self.file.query(|q| q.is_type_only(self.raw, true))
     }
 
-    /// `node.questionToken !== undefined`: of a parameter, a property, a method.
+    /// `node.questionToken !== undefined` on a parameter, a property or a method.
     pub fn has_question_token(self) -> bool {
         self.hir_flags().contains(ast::Flags::OPTIONAL)
     }
 
-    /// `node.dotDotDotToken !== undefined`: of a parameter or a binding element.
+    /// `node.dotDotDotToken !== undefined` on a parameter or a binding element.
     pub fn has_dot_dot_dot_token(self) -> bool {
         self.hir_flags().contains(ast::Flags::REST)
     }
 
-    /// `node.exclamationToken !== undefined`: of a variable or a property.
+    /// `node.exclamationToken !== undefined` on a variable or a property.
     pub fn has_exclamation_token(self) -> bool {
         self.hir_flags().contains(ast::Flags::DEFINITE)
     }
@@ -197,23 +195,22 @@ impl<'a> TsNode<'a> {
         SourceFile::new(self.file, self.raw.file)
     }
 
-    /// It is in the file that is linted.
+    /// True if it's in the linted file.
     #[inline]
     pub fn is_in_linted_file(self) -> bool {
         self.raw.file == self.file.id_in_program()
     }
 
-    /// `[node.getStart(), node.getEnd()]`, which is a range of the text of **its** file. `0..0` in a
-    /// file of the default library, whose text is not kept, and for some of the nodes that have no
-    /// handle in [`ast`]: a `TemplateSpan`, a `CaseBlock`, `NamedExports`.
+    /// `[node.getStart(), node.getEnd()]`, a range in the text of **its own** file. `0..0` in a default library file,
+    /// whose text isn't retained, and for some nodes that have no handle in [`ast`]: a `TemplateSpan`, a `CaseBlock`,
+    /// `NamedExports`.
     pub fn span(self) -> Span {
         let (start, end) = self.file.query(|q| q.node_span(self.raw));
         Span::new(start, end)
     }
 
-    /// `services.tsNodeToESTreeNodeMap.get(node)`. `None` if it is in another file, or if it is a
-    /// node that has no handle: a name, a `Block` that is the body of a function, a heritage
-    /// clause.
+    /// `services.tsNodeToESTreeNodeMap.get(node)`. `None` if it's in another file, or if the node has no handle: a
+    /// name, a `Block` that's a function body, a heritage clause.
     pub fn to_ast(self) -> Option<ast::Node<'a>> {
         if !self.is_in_linted_file() {
             return None;
@@ -265,16 +262,17 @@ impl<'a> TsNode<'a> {
         )
     }
 
-    /// `checker.getContextFreeTypeOfExpression(node)` as one gets it who asks before anything has resolved the call
-    /// `node`: its type where nothing is expected of it. Nothing of it is kept: ask once.
-    pub fn get_context_free_type_of_call_resolved_afresh(self) -> Type<'a> {
+    /// `checker.getContextFreeTypeOfExpression(node)` as a caller would get it before anything has resolved the call
+    /// `node`: the call's type without a contextual type. Nothing is cached, so call it once.
+    pub fn get_context_free_type_of_freshly_resolved_call(self) -> Type<'a> {
         let id = self
             .file
-            .query(|q| q.context_free_type_of_call_resolved_afresh(self.raw));
+            .query(|q| q.context_free_type_of_freshly_resolved_call(self.raw));
         Type::new(self.file, id)
     }
 
-    /// The text of the `@deprecated` tag among `getJSDocTags(node)`: of the node itself, nothing is inherited.
+    /// The text of the `@deprecated` tag among `getJSDocTags(node)`. Only the node's own tags count, nothing is
+    /// inherited.
     pub fn deprecation(self) -> Option<&'a [u8]> {
         self.file.query(|q| q.deprecation_of_node(self.raw))
     }
@@ -371,7 +369,7 @@ impl<'a> SourceFile<'a> {
         self.info().file_name
     }
 
-    /// `program.isSourceFileDefaultLibrary(sourceFile)`: a `lib.*.d.ts` of TypeScript.
+    /// `program.isSourceFileDefaultLibrary(sourceFile)`: one of TypeScript's `lib.*.d.ts` files.
     pub fn is_default_library(self) -> bool {
         self.info().is_default_library
     }
@@ -381,18 +379,18 @@ impl<'a> SourceFile<'a> {
         self.info().is_declaration_file
     }
 
-    /// `program.isSourceFileFromExternalLibrary(sourceFile)`: it was found in `node_modules`.
+    /// `program.isSourceFileFromExternalLibrary(sourceFile)`: the file was found in `node_modules`.
     pub fn is_from_external_library(self) -> bool {
         self.info().is_from_external_library
     }
 
-    /// `program.sourceFileToPackageName.get(sourceFile.path)`: `foo` or `@scope/foo` for a file in
-    /// `node_modules/foo`. For `@types/foo` it is `@types/foo`.
+    /// `program.sourceFileToPackageName.get(sourceFile.path)`: `foo` or `@scope/foo` for a file in `node_modules/foo`.
+    /// For `@types/foo` it's `@types/foo`.
     pub fn package_name(self) -> Option<&'a [u8]> {
         self.info().package_name
     }
 
-    /// It is the file that is linted.
+    /// True if it's the linted file.
     #[inline]
     pub fn is_linted_file(self) -> bool {
         self.id == self.file.id_in_program()
@@ -400,8 +398,7 @@ impl<'a> SourceFile<'a> {
 }
 
 impl TsNode<'_> {
-    /// `clause.token` of a `HeritageClause`: `ExtendsKeyword` or `ImplementsKeyword`. `Unknown` for
-    /// any other node.
+    /// `clause.token` of a `HeritageClause`: `ExtendsKeyword` or `ImplementsKeyword`. `Unknown` for any other node.
     pub fn token(self) -> SyntaxKind {
         use bun_sema::node::Part;
         match self.file.query(|q| q.node_data(self.raw)) {

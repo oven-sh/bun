@@ -1,0 +1,96 @@
+# import { ReadStream, lstatSync } from "node:fs"; lstatSync(); import * as stream from "node:stream"; stream[name]
+# Of what a module of the run time exports the loader runs an accessor only for a name that something binds. node:fs has a variable for `ReadStream` and one for `lstatSync`:
+# the getter of `ReadStream` runs and requires internal/fs/streams, and the function under `lstatSync` arrives at the call. Nothing binds `promises`, so its getter does not run and node:fs/promises is not evaluated.
+# Whoever holds the namespace object reads any name, so both getters of node:stream run, and what they require is evaluated
+# LIBRARY: own
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f
+# CHECK: unreached f4
+# CHECK-NEXT: unreached f6
+# CHECK-NOT: unreached f
+# RUN(CALLS): valueflow-solve calls
+# CALLS: f0 v1 -> f2
+
+variable g0 name="ReadStream" module=m1 declared={type=anything} initialization=Undefined
+variable g1 name="lstatSync" module=m1 declared={type=anything} initialization=Undefined
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}, {target=m4 completes=true}]
+module m1 path="node:fs" displayPath="node:fs" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeFs body=f1 syntheticExports=[{name="ReadStream" variable=g0}, {name="lstatSync" variable=g1}]
+module m2 path="internal:fs/streams" displayPath="internal:fs/streams" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalFsStreams body=f5
+module m3 path="node:fs/promises" displayPath="node:fs/promises" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeFsPromises body=f6
+module m4 path="node:stream" displayPath="node:stream" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeStream body=f7
+module m5 path="internal:streams/writable" displayPath="internal:streams/writable" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalStreamsWritable body=f10
+module m6 path="internal:streams/readable" displayPath="internal:streams/readable" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalStreamsReadable body=f11
+entry module=m0
+layout L0 name="FileSystem"
+layout L1 name="Stream"
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = Call v0
+    v2 = GetModuleVariable variable=g0
+    v3 = ModuleNamespace module=m4
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="name" [isFreeName]
+    v6 = ElemGet v3, v5
+    Return
+}
+function f1 name="fs" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0 fields=[]
+    v1 = NewClosure function=f2
+    PropSet v0, v1 key="lstatSync" mode=Strict
+    v3 = NewClosure function=f3
+    DefineGetter v0, v3 key="ReadStream"
+    v5 = NewClosure function=f4
+    DefineGetter v0, v5 key="promises"
+    Return v0
+}
+function f2 name="lstatSync" module=m1 role=Library results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="ReadStream" module=m1 kind=Getter role=Library results=[{type=anything}] {
+  b0():
+    v0 = RequireBuiltinModule runtimeModule=InternalFsStreams
+    Return v0
+}
+function f4 name="promises" module=m1 kind=Getter role=Library results=[{type=anything}] {
+  b0():
+    v0 = RequireBuiltinModule runtimeModule=NodeFsPromises
+    Return v0
+}
+function f5 name="streams" module=m2 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    Return
+}
+function f6 name="promises" module=m3 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    Return
+}
+function f7 name="stream" module=m4 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L1 fields=[]
+    v1 = NewClosure function=f8
+    DefineGetter v0, v1 key="Writable"
+    v3 = NewClosure function=f9
+    DefineGetter v0, v3 key="Readable"
+    Return v0
+}
+function f8 name="Writable" module=m4 kind=Getter role=Library results=[{type=anything}] {
+  b0():
+    v0 = RequireBuiltinModule runtimeModule=InternalStreamsWritable
+    Return v0
+}
+function f9 name="Readable" module=m4 kind=Getter role=Library results=[{type=anything}] {
+  b0():
+    v0 = RequireBuiltinModule runtimeModule=InternalStreamsReadable
+    Return v0
+}
+function f10 name="writable" module=m5 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    Return
+}
+function f11 name="readable" module=m6 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    Return
+}

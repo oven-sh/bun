@@ -1,5 +1,5 @@
-// Turns the tests of the rules of other plugins into `fixtures/<plugin>/<rule>.json`, in the format of README.md, with what the
-// real plugin reports under the real ESLint.
+// Turns other plugins' rule tests into `fixtures/<plugin>/<rule>.json`, in the format README.md describes. Each case
+// records what the real plugin reports under real ESLint.
 //
 //   export ESLINT_DIR=<eslint> TYPESCRIPT_ESLINT_DIR=<typescript-eslint, built> OXC_DIR=<oxc> OXLINT_BIN=<oxlint>
 //   export REACT_DIR=<facebook/react> ESLINT_PLUGIN_IMPORT_DIR=<import-js/eslint-plugin-import, installed>
@@ -8,17 +8,17 @@
 //   node extract-plugins.ts [--out <fixtures>] [<plugin>/<rule>..]
 //   node extract-plugins.ts --cases <cases.json> --out <dir> <plugin>/<rule>     # your own inputs, see `extra-cases.ts`
 //
-// The cases of a rule, the valid ones first:
-// 1. The tests of the plugin itself. Its `RuleTester` is replaced by one that records.
-// 2. `import`: the tests that eslint-plugin-import-x has for the same rule.
-// 3. The tests that oxlint has for its port of the rule (`name` says where a case is from). What oxlint expects is not used.
+// A rule's cases come from these sources, valid cases first:
+// 1. The plugin's own tests. Its `RuleTester` is replaced by one that records the cases.
+// 2. For `import`, eslint-plugin-import-x's tests for the same rule.
+// 3. oxlint's tests for its port of the rule (`name` has the case's origin). oxlint's expectations aren't used.
 //
-// There are two parsers here, espree and that of typescript-eslint. What upstream tests with a parser of Babel or with an old
-// typescript-eslint is linted with espree, with JSX, and again as `file.tsx` with typescript-eslint, which is how most code that
-// these rules see is parsed. What neither can parse (Flow) is skipped.
+// Only two parsers are used here, espree and typescript-eslint's. A case that upstream tests with a Babel parser or an
+// old typescript-eslint is linted with espree with JSX on, and again as `file.tsx` with typescript-eslint, which is how
+// most code these rules see is parsed. A case that neither can parse (Flow) is skipped.
 //
-// `oxc/*` has no ESLint plugin: the oracle is the binary of oxlint. A message is at the primary label of its diagnostic, or at the
-// first, which is also where oxlint looks for a comment that disables the rule.
+// `oxc/*` has no ESLint plugin, so the oxlint binary is the oracle. A message's location is its diagnostic's first
+// label, which is also where oxlint looks for a comment that disables the rule.
 
 import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -42,7 +42,7 @@ import {
 
 type Config = Record<string, any>;
 
-/** A case before it is linted. */
+/** A case before it's linted. */
 interface Raw {
   valid: boolean;
   name: string | null;
@@ -52,9 +52,9 @@ interface Raw {
   settings?: Config;
   /** `ecmaVersion`, `sourceType`, `globals`, `parserOptions`, and `parser`: "espree" or "typescript". */
   languageOptions?: Config;
-  /** What upstream parses it with, if that is neither. */
+  /** Upstream's parser, if it's neither of those. */
   foreignParser?: string;
-  /** The case as upstream has it, to compare with what it asserts. */
+  /** Upstream's original case, for comparing the result with its assertions. */
   upstream?: Config;
 }
 
@@ -118,8 +118,12 @@ class RecordingRuleTester {
   }
 }
 
-/** Loads the CommonJS module `file` with `stubs` in place of the modules of these names. */
-function requireWithStubs(file: string, stubs: Record<string, unknown>, globals: Record<string, unknown> = {}): unknown {
+/** Loads the CommonJS module `file`. A `require` of a name in `stubs` returns the stub. */
+function requireWithStubs(
+  file: string,
+  stubs: Record<string, unknown>,
+  globals: Record<string, unknown> = {},
+): unknown {
   const module = Module as any;
   const [load, resolveFilename] = [module._load, module._resolveFilename];
   module._resolveFilename = function (request: string, ...rest: unknown[]) {
@@ -130,7 +134,14 @@ function requireWithStubs(file: string, stubs: Record<string, unknown>, globals:
     return name in stubs ? stubs[name] : load.call(this, request, ...rest);
   };
   const run = (_: string, body: () => void) => body();
-  Object.assign(globalThis, { describe: run, context: run, it: () => {}, before: () => {}, after: () => {}, ...globals });
+  Object.assign(globalThis, {
+    describe: run,
+    context: run,
+    it: () => {},
+    before: () => {},
+    after: () => {},
+    ...globals,
+  });
   try {
     return createRequire(file)(file);
   } finally {
@@ -139,7 +150,7 @@ function requireWithStubs(file: string, stubs: Record<string, unknown>, globals:
   }
 }
 
-/** Bundles a module, which may be TypeScript, into one CommonJS file. `directory`: where to, if it has to find packages. */
+/** Bundles a module (possibly TypeScript) into one CommonJS file. Pass `directory` if it has to resolve packages. */
 function bundleFile(entry: string, name: string, directory = scratch): string {
   const file = join(directory, `${name}.cjs`);
   const packages = directory === scratch ? ["--external=eslint"] : ["--packages=external"];
@@ -182,7 +193,7 @@ function reactHooks(rule: string): { rule: RuleModule; cases: Raw[] } {
     },
     { __EXPERIMENTAL__: true },
   );
-  // The parsers that a case is tested with, by the object that it is.
+  // The parsers each case is tested with. The runs share their case objects, so the object is the key.
   const parsers = new Map<Config, { valid: boolean; parsers: Set<string> }>();
   for (const run of runs) {
     const name: string | undefined = run.config.languageOptions?.parser?.foreignParser;
@@ -215,7 +226,7 @@ function reactHooks(rule: string): { rule: RuleModule; cases: Raw[] } {
 // import
 // ---------------------------------------------------------------------------
 
-/** What `flatConfigs.typescript` of the plugin sets, without which it does not look into TypeScript. */
+/** The settings from the plugin's `flatConfigs.typescript`. Without them it doesn't read TypeScript files. */
 const IMPORT_TYPESCRIPT_SETTINGS = {
   "import/extensions": [".ts", ".cts", ".mts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"],
   "import/external-module-folders": ["node_modules", "node_modules/@types"],
@@ -223,23 +234,27 @@ const IMPORT_TYPESCRIPT_SETTINGS = {
   "import/resolver": { node: { extensions: [".ts", ".cts", ".mts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"] } },
 };
 
-/** The files that the cases of `import/*` are, and that they import. */
+/** Copies the files that the `import/*` cases are linted as, and the files they import. */
 function copyImportProject(): string {
   const project = join(out, "import-project");
   if (casesFile) return join(import.meta.dirname, "fixtures/import-project");
   const files = join(realpathSync(requiredEnv("ESLINT_PLUGIN_IMPORT_DIR")), "tests/files");
   rmSync(project, { recursive: true, force: true });
   mkdirSync(project, { recursive: true });
-  for (const name of ["cycles", "restricted-paths", "bar.js", "package.json"]) cpSync(join(files, name), join(project, name), { recursive: true });
-  const ofOxlint = join(realpathSync(requiredEnv("OXC_DIR")), "crates/oxc_linter/fixtures/import/cycles");
-  for (const name of ["typescript", "issue_21252"]) cpSync(join(ofOxlint, name), join(project, "cycles", name), { recursive: true });
+  for (const name of ["cycles", "restricted-paths", "bar.js", "package.json"])
+    cpSync(join(files, name), join(project, name), { recursive: true });
+  const oxlintCycles = join(realpathSync(requiredEnv("OXC_DIR")), "crates/oxc_linter/fixtures/import/cycles");
+  for (const name of ["typescript", "issue_21252"])
+    cpSync(join(oxlintCycles, name), join(project, "cycles", name), { recursive: true });
   return project;
 }
 
-/** The paths in `options`, which upstream writes from its root, from `files`: that is the working directory of a case. */
+/** Makes the paths in `options` relative to `files`, a case's working directory. Upstream's start at its root. */
 function inProject(options: unknown[] | undefined, files: string): unknown[] | undefined {
   const text = JSON.stringify(options)?.replaceAll(JSON.stringify(files + "/").slice(1, -1), "");
-  return text === undefined ? undefined : JSON.parse(text.replaceAll('"./tests/files/', '"./').replaceAll('"tests/files/', '"'));
+  return text === undefined
+    ? undefined
+    : JSON.parse(text.replaceAll('"./tests/files/', '"./').replaceAll('"tests/files/', '"'));
 }
 
 function importPlugin(rule: string): { rule: RuleModule; cases: Raw[]; cwd: string } {
@@ -255,7 +270,7 @@ function importPlugin(rule: string): { rule: RuleModule; cases: Raw[]; cwd: stri
   process.chdir(root);
   try {
     requireWithStubs(bundleFile(join(root, `tests/src/rules/${rule}.js`), `${rule}.test`, built), {
-      // With a parser of Babel for every version: see `tests/src/utils.js`.
+      // These versions make `tests/src/utils.js` pick a Babel parser every time.
       "eslint/package.json": { version: "9.99.0" },
       eslint: { RuleTester: RecordingRuleTester },
       "typescript/package.json": { version: "5.9.0" },
@@ -277,7 +292,7 @@ function importPlugin(rule: string): { rule: RuleModule; cases: Raw[]; cwd: stri
         if (typeof item === "string") throw new Error("a case that is a string");
         const { parser: used, ...languageOptions } = { ...run.config.languageOptions, ...item.languageOptions };
         const name: string = used?.foreignParser ?? "espree";
-        // The options for Babel, and a version that only espree looks at.
+        // Drop Babel's options, and the version, which only espree reads.
         if (name === "babel") (delete languageOptions.parserOptions, delete languageOptions.ecmaVersion);
         cases.push({
           valid,
@@ -296,8 +311,8 @@ function importPlugin(rule: string): { rule: RuleModule; cases: Raw[]; cwd: stri
   return { rule: module, cases, cwd };
 }
 
-/** oxlint's `change_rule_path(..)`, by the line of the case. */
-function importCasesOfOxlint(rule: string): Raw[] {
+/** oxlint's cases for `import/<rule>`. A case's filename is the next `change_rule_path(..)` after its line. */
+function oxlintImportCases(rule: string): Raw[] {
   const path = `import/${rule.replaceAll("-", "_")}.rs`;
   const file = join(realpathSync(requiredEnv("OXC_DIR")), "crates/oxc_linter/src/rules", path);
   if (!existsSync(file)) return [];
@@ -306,7 +321,7 @@ function importCasesOfOxlint(rule: string): Raw[] {
     line: source.slice(0, it.index).split("\n").length,
     path: it[1],
   }));
-  // Nothing can judge what only oxlint can be told to do.
+  // `ignoreTypes: false` only exists in oxlint, so there's no oracle for it.
   const judged = oxlintCases(path).filter(it => (it.options?.[0] as Config | undefined)?.ignoreTypes !== false);
   return judged.map(it => {
     const line = Number(/:(\d+) /.exec(it.name!)![1]);
@@ -322,7 +337,7 @@ function importCasesOfOxlint(rule: string): Raw[] {
 // n
 // ---------------------------------------------------------------------------
 
-/** The directories with a `package.json` that says which versions of Node.js are supported. */
+/** Copies the directories whose `package.json` sets the supported Node.js versions. */
 function copyNodeProject(root: string): string {
   const project = join(out, "n-project");
   if (casesFile) return join(import.meta.dirname, "fixtures/n-project");
@@ -337,12 +352,12 @@ function copyNodeProject(root: string): string {
 function nodePlugin(rule: string): { rule: RuleModule; cases: Raw[]; cwd: string } {
   const root = realpathSync(requiredEnv("ESLINT_PLUGIN_N_DIR"));
   const cwd = copyNodeProject(root);
-  // Next to the test, which looks for its fixtures from where it is.
+  // The bundle goes next to the test, which finds its fixtures relative to its own path.
   const directory = join(root, "tests/lib/rules", dirname(rule));
   const name = rule.slice(rule.indexOf("/") + 1);
   runs.length = 0;
   const globals = createRequire(join(root, "package.json"))("globals");
-  /** `RuleTester` of `tests/test-helpers.js` */
+  /** Mirrors `RuleTester` in `tests/test-helpers.js`. */
   class NodeRuleTester extends RecordingRuleTester {
     constructor(config: Config = { languageOptions: {} }) {
       const { env, ...languageOptions } = config.languageOptions;
@@ -357,7 +372,7 @@ function nodePlugin(rule: string): { rule: RuleModule; cases: Raw[]; cwd: string
   }
   requireWithStubs(bundleFile(join(directory, `${name}.js`), `.extract-${name}`, directory), {
     "#test-helpers": { RuleTester: NodeRuleTester },
-    // For a test that imports the file of the helpers.
+    // For a test that imports the helpers by file path.
     eslint: { RuleTester: RecordingRuleTester },
     "eslint/package.json": { version: requireFromEslint("./package.json").version },
     "eslint/use-at-your-own-risk": {},
@@ -392,8 +407,12 @@ function nodePlugin(rule: string): { rule: RuleModule; cases: Raw[]; cwd: string
 // react
 // ---------------------------------------------------------------------------
 
-/** `minEcmaVersion` of `tests/helpers/parsers.js` */
-const REACT_FEATURES: Record<string, number> = { "class fields": 2022, "optional chaining": 2020, "nullish coalescing": 2020 };
+/** Mirrors `minEcmaVersion` in `tests/helpers/parsers.js`. */
+const REACT_FEATURES: Record<string, number> = {
+  "class fields": 2022,
+  "optional chaining": 2020,
+  "nullish coalescing": 2020,
+};
 
 function reactPlugin(rule: string): { rule: RuleModule; cases: Raw[] } {
   const root = realpathSync(requiredEnv("ESLINT_PLUGIN_REACT_DIR"));
@@ -402,7 +421,7 @@ function reactPlugin(rule: string): { rule: RuleModule; cases: Raw[] } {
   runs.length = 0;
   requireWithStubs(join(root, `tests/lib/rules/${rule}.js`), {
     "../../helpers/ruleTester": RecordingRuleTester,
-    // `all` makes a case for each parser that has the `features` of the case: that is done below.
+    // `all` makes one case per parser that supports the case's `features`. The loop below does that instead.
     "../../helpers/parsers": { all: (tests: unknown[]) => tests },
     "eslint/package.json": { version: requireFromEslint("./package.json").version },
   });
@@ -421,9 +440,15 @@ function reactPlugin(rule: string): { rule: RuleModule; cases: Raw[] } {
           options: item.options,
           settings: item.settings,
           upstream: item,
-          foreignParser: features.some(it => /^(flow|bind operator|do expressions)$/.test(it)) ? "babel-eslint" : undefined,
+          foreignParser: features.some(it => /^(flow|bind operator|do expressions)$/.test(it))
+            ? "babel-eslint"
+            : undefined,
         };
-        const languageOptions = { ecmaVersion: versions.length > 0 ? Math.max(...versions) : undefined, sourceType, parserOptions };
+        const languageOptions = {
+          ecmaVersion: versions.length > 0 ? Math.max(...versions) : undefined,
+          sourceType,
+          parserOptions,
+        };
         if (!features.some(it => /^(no-default|decorators|ts|types)$/.test(it))) {
           cases.push({ ...base, name: item.name ?? null, languageOptions: { ...languageOptions, parser: "espree" } });
         }
@@ -438,18 +463,21 @@ function reactPlugin(rule: string): { rule: RuleModule; cases: Raw[] } {
 }
 
 // ---------------------------------------------------------------------------
-// The tests of oxlint
+// oxlint's tests
 // ---------------------------------------------------------------------------
 
 function oxlintCases(path: string): Raw[] {
   const root = join(realpathSync(requiredEnv("OXC_DIR")), "crates/oxc_linter/src/rules");
-  // That module needs more of TypeScript than Node.js strips.
+  // extract-oxc.ts uses TypeScript syntax that Node.js can't strip, so run it with Bun.
   const program = `
     import { casesOfFile } from ${JSON.stringify(join(import.meta.dirname, "extract-oxc.ts"))};
     const stats = { parsed: 0, unparsed: 0, upstream: 0, duplicates: 0, kept: 0 };
     const cases = casesOfFile(await Bun.file(process.argv[1]).text(), process.argv[2], {}, stats, false);
     console.log(JSON.stringify({ cases, stats }));`;
-  const printed = execFileSync("bun", ["-e", program, join(root, path), path], { encoding: "utf8", maxBuffer: 1 << 28 });
+  const printed = execFileSync("bun", ["-e", program, join(root, path), path], {
+    encoding: "utf8",
+    maxBuffer: 1 << 28,
+  });
   const { cases, stats }: { cases: Config[]; stats: { unparsed: number } } = JSON.parse(printed);
   if (stats.unparsed > 0) console.error(`${path}: ${stats.unparsed} cases cannot be read`);
   return cases.map(it => ({ ...it, code: it.code, name: it.name ?? null, valid: / pass$/.test(it.name ?? "") }));
@@ -459,7 +487,7 @@ function oxlintCases(path: string): Raw[] {
 // Linting
 // ---------------------------------------------------------------------------
 
-// From the root, so that a file is configured wherever it is.
+// With the root as `cwd`, the config applies to a file in any directory.
 const linter = new Linter({ configType: "flat", cwd: "/" });
 
 interface Attempt {
@@ -484,15 +512,18 @@ function attempts(raw: Raw): Attempt[] {
   return parser === "espree" ? [first] : [first, ...typescript];
 }
 
-/** eslint-plugin-import loads the parsers in `import/parsers` by their names, from where it is. */
+/** eslint-plugin-import resolves the names in `import/parsers` from its own directory, so pass an absolute path. */
 function settingsToLintWith(settings: Config): Config {
   const parsers = settings["import/parsers"];
   if (!parsers?.["@typescript-eslint/parser"]) return settings;
   const { "@typescript-eslint/parser": extensions, ...others } = parsers;
-  return { ...settings, "import/parsers": { ...others, [requireFromEslint.resolve("@typescript-eslint/parser")]: extensions } };
+  return {
+    ...settings,
+    "import/parsers": { ...others, [requireFromEslint.resolve("@typescript-eslint/parser")]: extensions },
+  };
 }
 
-/** `ignoreTypes` is an option of oxlint. What it turns on is what eslint-plugin-import always does. */
+/** `ignoreTypes` is an oxlint-only option. `true` is what eslint-plugin-import always does, so drop it. */
 function optionsToLintWith(id: string, options: unknown[]): unknown[] {
   if (id !== "import/no-cycle" || (options[0] as Config | undefined)?.ignoreTypes !== true) return options;
   const { ignoreTypes: _, ...others } = options[0] as Config;
@@ -506,7 +537,10 @@ function record(id: string, rule: RuleModule, raw: Raw, cwd?: string): FixtureCa
   const given = raw.languageOptions ?? {};
   let last: { attempt: Attempt; messages: LintMessage[]; parserOptions: Config } | undefined;
   for (const attempt of attempts(raw)) {
-    const parserOptions = { ...given.parserOptions, ecmaFeatures: { ...given.parserOptions?.ecmaFeatures, jsx: attempt.jsx } };
+    const parserOptions = {
+      ...given.parserOptions,
+      ecmaFeatures: { ...given.parserOptions?.ecmaFeatures, jsx: attempt.jsx },
+    };
     const config = {
       files: ["**"],
       plugins: { [prefix]: { rules: { [name]: rule } } },
@@ -522,7 +556,7 @@ function record(id: string, rule: RuleModule, raw: Raw, cwd?: string): FixtureCa
       rules: { [id]: ["error", ...optionsToLintWith(id, options)] },
     };
     const filename = cwd && !attempt.filename.startsWith("<") ? resolve(cwd, attempt.filename) : attempt.filename;
-    // `basePath` of import/no-restricted-paths is `process.cwd()` unless the options say otherwise.
+    // import/no-restricted-paths defaults `basePath` to `process.cwd()`.
     const before = process.cwd();
     if (cwd) process.chdir(cwd);
     let messages: LintMessage[];
@@ -539,9 +573,14 @@ function record(id: string, rule: RuleModule, raw: Raw, cwd?: string): FixtureCa
   let skip: string | null = null;
   if (fatal) skip = raw.foreignParser ? `parser: ${raw.foreignParser}` : `fatal: ${fatal.message}`;
   const resolver = raw.settings?.["import/resolver"];
-  const isNode = resolver === undefined || resolver === "node" || (typeof resolver === "object" && Object.keys(resolver).join() === "node");
-  const isTypeScript = typeof resolver === "object" && Object.keys(resolver).join() === "eslint-import-resolver-typescript";
-  if (!isNode && !(isTypeScript && id === "import/no-restricted-paths")) skip ??= `resolver: ${JSON.stringify(resolver)}`;
+  const isNode =
+    resolver === undefined ||
+    resolver === "node" ||
+    (typeof resolver === "object" && Object.keys(resolver).join() === "node");
+  const isTypeScript =
+    typeof resolver === "object" && Object.keys(resolver).join() === "eslint-import-resolver-typescript";
+  if (!isNode && !(isTypeScript && id === "import/no-restricted-paths"))
+    skip ??= `resolver: ${JSON.stringify(resolver)}`;
   const dropped: string[] = [];
   const jsonOptions = jsonPart(options, dropped, "options") as unknown[];
   const settings = jsonPart(raw.settings ?? {}, dropped, "settings") as Config;
@@ -569,10 +608,10 @@ function record(id: string, rule: RuleModule, raw: Raw, cwd?: string): FixtureCa
 }
 
 // ---------------------------------------------------------------------------
-// oxc: the binary of oxlint is the oracle
+// oxc: the oxlint binary is the oracle
 // ---------------------------------------------------------------------------
 
-/** The id of a message, from the text that the functions in the source of the rule give their diagnostics. */
+/** Message ids by rule. oxlint has none, so each id is matched by the diagnostic text in the rule's source. */
 const OXC_MESSAGES: Record<string, Record<string, string>> = {
   "no-accumulating-spread": {
     reduceSpread: "Do not spread accumulators in Array.prototype.reduce()",
@@ -592,11 +631,18 @@ function recordWithOxlint(rule: string, raws: Raw[]): FixtureCase[] {
     writeFileSync(file, raw.code);
     writeFileSync(
       config,
-      JSON.stringify({ plugins: ["oxc"], categories: { correctness: "off" }, rules: { [`oxc/${rule}`]: ["error", ...(raw.options ?? [])] } }),
+      JSON.stringify({
+        plugins: ["oxc"],
+        categories: { correctness: "off" },
+        rules: { [`oxc/${rule}`]: ["error", ...(raw.options ?? [])] },
+      }),
     );
     let text: string;
     try {
-      text = execFileSync(bin, ["-c", config, "-f", "json", file], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+      text = execFileSync(bin, ["-c", config, "-f", "json", file], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
     } catch (error: any) {
       text = error.stdout;
     }
@@ -613,14 +659,26 @@ function recordWithOxlint(rule: string, raws: Raw[]): FixtureCase[] {
       .map(it => {
         const labels = it.labels.map((label: any) => {
           const [start, end] = [position(label.span.offset), position(label.span.offset + label.span.length)];
-          return { line: start.line, column: start.column, endLine: end.line, endColumn: end.column, label: label.label ?? null };
+          return {
+            line: start.line,
+            column: start.column,
+            endLine: end.line,
+            endColumn: end.column,
+            label: label.label ?? null,
+          };
         });
         const id = ids.find(([, message]) => message === it.message)?.[0];
         if (!id) throw new Error(`no id for: ${it.message}`);
-        // The primary label, which the output does not mark.
-        // Where oxlint prints it.
+        // The JSON output doesn't mark the primary label. oxlint prints the diagnostic at the first one.
         const { label: _, ...at } = labels[0];
-        return { messageId: id, message: it.message, ...at, fix: null, suggestions: [], oxlint: { labels, help: it.help ?? null } };
+        return {
+          messageId: id,
+          message: it.message,
+          ...at,
+          fix: null,
+          suggestions: [],
+          oxlint: { labels, help: it.help ?? null },
+        };
       })
       .sort((a, b) => a.line - b.line || a.column - b.column);
     return {
@@ -653,7 +711,15 @@ function ownCases(): Raw[] {
   return (Array.isArray(given) ? given : given.cases).map(it => {
     const item = typeof it === "string" ? { code: it } : it;
     const { code, options, filename, settings, languageOptions, name } = item;
-    return { valid: true, name: name ?? null, code, options, filename, settings: settings ?? undefined, languageOptions: languageOptions ?? undefined };
+    return {
+      valid: true,
+      name: name ?? null,
+      code,
+      options,
+      filename,
+      settings: settings ?? undefined,
+      languageOptions: languageOptions ?? undefined,
+    };
   });
 }
 
@@ -682,7 +748,7 @@ for (const id of wanted.length > 0 ? wanted : ALL) {
       if (!casesFile) loaded.cases.push(...oxlintCases(`react/${name.replaceAll("-", "_")}.rs`));
     } else if (plugin === "import") {
       loaded = importPlugin(name);
-      if (!casesFile) loaded.cases.push(...importCasesOfOxlint(name));
+      if (!casesFile) loaded.cases.push(...oxlintImportCases(name));
     } else if (plugin === "n") {
       loaded = nodePlugin(name);
     } else if (plugin === "react") {
@@ -696,11 +762,11 @@ for (const id of wanted.length > 0 ? wanted : ALL) {
       const made = record(id, loaded.rule, raw, loaded.cwd);
       if (raw.upstream && !made.skip) {
         const problems = compareWithUpstream(raw.upstream as any, raw.valid, made, loaded.rule, interpolate);
-        // The files that it imports are Flow.
+        // The files it imports are Flow.
         if (problems.length > 0 && raw.foreignParser) made.skip = `parser: ${raw.foreignParser}`;
         else if (problems.length > 0) disagreements.push(`#${index}: ${problems.join("; ")}`);
       }
-      // ESLint is the judge of what oxlint tests.
+      // For oxlint's cases, ESLint decides which are valid.
       if (!raw.upstream) made.valid = made.messages.length === 0;
       return made;
     });
@@ -711,6 +777,8 @@ for (const id of wanted.length > 0 ? wanted : ALL) {
   mkdirSync(dirname(file), { recursive: true });
   writeJson(file, { plugin, rule: name, meta, cases });
   const skipped = cases.filter(it => it.skip).length;
-  console.log(`${id}: ${cases.length} cases, ${skipped} skipped, ${disagreements.length} disagree with what upstream asserts`);
+  console.log(
+    `${id}: ${cases.length} cases, ${skipped} skipped, ${disagreements.length} disagree with what upstream asserts`,
+  );
   for (const line of disagreements) console.log(`  ${line}`);
 }

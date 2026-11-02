@@ -37,8 +37,8 @@ pub(crate) fn write_ts_tuple_type<'a>(
     write!(f, ["]", needs_parentheses.then_some(")")]);
 }
 
-/// An element and the comments around it are a group, as in Prettier's `printArrayElements`: a
-/// comment that ends its line in the source stays before the element if they fit on a line.
+/// An element and the comments around it form a group, as in Prettier's `printArrayElements`: a comment that ends its
+/// line in the source stays before the element if both fit on one line.
 struct FormatTupleElement<'a>(TupleElem<'a>);
 
 impl Spanned for FormatTupleElement<'_> {

@@ -7174,12 +7174,13 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // `getResolvedBaseConstraint`: a `StructuredType` is a `ConstrainedType`, so the depth test applies to it,
             // and `resolvedBaseConstraint` caches `noConstraintType` or the type itself from the first visit on.
+            // Resolving a mapped identity can itself depend on a cut constraint.
+            let (held_back, cuts) = (self.task.held_back(), self.constraint_cuts.get());
             let is_cut = depth >= 10
                 && (depth >= 50 || {
                     let identity = self.recursion_identity(ty);
                     self.constraint_stack.contains(&identity)
                 });
-            let (held_back, cuts) = (self.task.held_back(), self.constraint_cuts.get());
             let result = if is_cut {
                 self.cut_constraint_short();
                 None
@@ -7228,11 +7229,11 @@ impl<'p, 's> Checker<'p, 's> {
         // The recursion goes at least 10 levels deep and at most 50, and from level 10 on it stops
         // at an instantiation of the same declaration as an earlier level. The cutoff depends on
         // the enclosing chain, and `resolvedBaseConstraint` caches the result anyway.
+        let cuts = self.constraint_cuts.get();
         let identity = self.recursion_identity(ty);
         let depth = self.constraint_stack.len();
         let continues = depth < 10 || depth < 50 && !self.constraint_stack.contains(&identity);
         self.constraint_stack.push(identity);
-        let cuts = self.constraint_cuts.get();
         let result = if continues {
             let simplified = self.simplified(ty, false);
             self.compute_base_constraint(simplified)

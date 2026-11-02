@@ -316,6 +316,73 @@ describe("bundler", () => {
         });
       });
 
+      describe.each([
+        [
+          "arguments-body",
+          "arguments",
+          `
+          globalThis.factory = { h: type => type };
+          function render() { return <Comp />; }
+          console.log(render(1)[0]);
+        `,
+          "1",
+        ],
+        [
+          "arguments-default",
+          "arguments",
+          `
+          let depth = 0;
+          globalThis.factory = { get h() {
+            if (depth++ === 0) render(undefined, 2);
+            return type => type;
+          } };
+          function render(value = <Comp />, marker) { return value; }
+          console.log(render(undefined, 1)[1]);
+        `,
+          "1",
+        ],
+        [
+          "eval-before",
+          "component",
+          `
+          globalThis.factory = { h: type => type() };
+          function render() { let component = () => 123; eval(""); return <Comp />; }
+          console.log(render());
+        `,
+          "123",
+        ],
+        [
+          "eval-after",
+          "component",
+          `
+          globalThis.factory = { h: type => type() };
+          function render() { let component = () => 123; const value = <Comp />; eval(""); return value; }
+          console.log(render());
+        `,
+          "123",
+        ],
+      ])("reserved tag binding %s", (name, binding, source, stdout) => {
+        describe.each([false, true])("minify=%s", minify => {
+          itBundled(`jsx/PreserveReservedTagBinding-${backend}-${name}-${minify}`, {
+            files: { "/in.jsx": source },
+            backend,
+            jsx: { runtime: "preserve" },
+            define: { Comp: binding },
+            minifyIdentifiers: minify,
+            minifySyntax: minify,
+            minifyWhitespace: minify,
+            // The esbuild API harness does not forward defines.
+            skipOnEsbuild: true,
+            onAfterBundle(api) {
+              const out = api.readFile("/out.js");
+              const { code } = transformSync(out, { loader: "jsx", jsxFactory: "globalThis.factory.h" });
+              api.writeFile("/out.js", code);
+            },
+            run: { stdout },
+          });
+        });
+      });
+
       describe.each(["Comp", "Comp.Member"])("tag %s", tag => {
         itBundled(`jsx/PreserveInvalidDefinedTag-${backend}-${tag}`, {
           files: { "/in.jsx": `export default <${tag} />;` },
@@ -916,7 +983,7 @@ describe("bundler", () => {
         expect(out).toContain("data-long-name={");
         expect(out).toContain("</>");
         expect(out).toMatch(/<[A-Z][\w$]* \{\.\.\./);
-        expect(out).toMatch(/<[A-Z][\w$]* \/>/);
+        expect(out).toMatch(/<[A-Z][\w$]*(?:\.[\w$]+)* \/>/);
         expect(out).not.toContain("VeryLongComponent");
         expect(out).not.toContain("ImportedComponent");
         expect(out).not.toContain("spreadProps");
@@ -947,7 +1014,7 @@ describe("bundler", () => {
         onAfterBundle(api) {
           for (const file of ["/out/a.js", "/out/b.js"]) {
             const out = api.readFile(file);
-            expect(out).toMatch(/<[A-Z][\w$]* \/>/);
+            expect(out).toMatch(/<[A-Z][\w$]*(?:\.[\w$]+)* \/>/);
             const { code } = transformSync(out, { loader: "jsx", jsxFactory: "typeOfComponent" });
             api.writeFile(file, `const typeOfComponent = type => typeof type;\n${code}`);
           }

@@ -47,7 +47,35 @@ console.log(new Intl.NumberFormat("de").format(1234.5), new Intl.PluralRules("de
 console.log(new Intl.RelativeTimeFormat("de").format(-1, "day"), new Intl.ListFormat("de").format(["a", "b"]));`,
   // The locale comes with the command line: of a locale that the build can read, --aot makes the pattern itself, and the program asks for no data.
   "removed.ts": `console.log(new Date(0).toLocaleDateString(process.argv[2], { timeZone: "UTC" }));`,
+  "numbered.ts": `
+const asked = process.argv.slice(2);
+for (let at = 0; at < asked.length; at += 2) {
+  const options = { timeZone: "UTC", dateStyle: asked[at + 1] as "full" };
+  console.log(asked[at], new Date(0).toLocaleDateString(asked[at], options), new Intl.DateTimeFormat(asked[at], options).format(0));
+}`,
+  "numbered-by-use.ts": `
+const dateStyle = process.argv[2] as "full";
+console.log(new Intl.DateTimeFormat("ja-u-ca-japanese", { timeZone: "UTC", dateStyle }).format(0));
+console.log(new Intl.DateTimeFormat("he-u-ca-hebrew", { timeZone: "UTC", dateStyle }).format(0));`,
 };
+
+// Each of these date patterns names a numbering system for one of its fields, as ja with the japanese calendar does for the first year of an era.
+// ICU makes the rules of that system into number formats, and must not read the currency names of its default locale for them: they can be removed.
+const numbered = [
+  ["ja-u-ca-japanese", "full"],
+  ["he-u-ca-hebrew", "long"],
+  ["yi-u-ca-hebrew", "long"],
+  ["haw", "short"],
+  ["zh-u-ca-chinese", "full"],
+].flat();
+
+const inEveryHost = (cmd: string[], folder: string) =>
+  Promise.all(
+    hosts.map(async host => ({
+      host,
+      ...(await run(cmd, folder, { ...bunEnv, LANG: host, LC_ALL: host, LC_MESSAGES: host })),
+    })),
+  );
 
 (canTrim ? describe.concurrent : describe.skip)("--trim-locales", () => {
   for (const flags of [[], ["--aot"]]) {
@@ -77,13 +105,37 @@ console.log(new Intl.RelativeTimeFormat("de").format(-1, "day"), new Intl.ListFo
         ).toMatchObject({ exitCode: 0 });
         const expected = await run([bunExe(), "kept.ts"], folder);
         expect(expected).toMatchObject({ stderr: "", exitCode: 0 });
-        const answers = await Promise.all(
-          hosts.map(async host => ({
-            host,
-            ...(await run([join(folder, "kept")], folder, { ...bunEnv, LANG: host, LC_ALL: host, LC_MESSAGES: host })),
-          })),
+        expect(await inEveryHost([join(folder, "kept")], folder)).toEqual(hosts.map(host => ({ host, ...expected })));
+      },
+    );
+
+    test.skipIf(flags.length > 0 && !!unsupported)(
+      `${how}: a date whose pattern names a numbering system is formatted in a locale that was kept, whatever the locale of the host`,
+      async () => {
+        using dir = tempDir("compile-trim-locales-numbered", programs);
+        const folder = String(dir);
+        expect(
+          await run(
+            [
+              bunExe(),
+              "build",
+              "--compile",
+              ...flags,
+              ...withoutDebugInformation,
+              "--trim",
+              "--trim-locales=ja,he,yi,haw,zh",
+              "numbered.ts",
+              "--outfile",
+              "numbered",
+            ],
+            folder,
+          ),
+        ).toMatchObject({ exitCode: 0 });
+        const expected = await run([bunExe(), "numbered.ts", ...numbered], folder);
+        expect(expected).toMatchObject({ stderr: "", exitCode: 0 });
+        expect(await inEveryHost([join(folder, "numbered"), ...numbered], folder)).toEqual(
+          hosts.map(host => ({ host, ...expected })),
         );
-        expect(answers).toEqual(hosts.map(host => ({ host, ...expected })));
       },
     );
 
@@ -124,6 +176,40 @@ console.log(new Intl.RelativeTimeFormat("de").format(-1, "day"), new Intl.ListFo
       },
     );
   }
+
+  test.skipIf(!!unsupported)(
+    "--compile --aot: such a date is formatted in the locales that the program names, which are the ones kept without --trim-locales",
+    async () => {
+      using dir = tempDir("compile-trim-locales-numbered-by-use", programs);
+      const folder = String(dir);
+      const build = (name: string, ...locales: string[]) =>
+        run(
+          [
+            bunExe(),
+            "build",
+            "--compile",
+            "--aot",
+            ...withoutDebugInformation,
+            "--trim",
+            ...locales,
+            "numbered-by-use.ts",
+            "--outfile",
+            name,
+          ],
+          folder,
+        );
+      const sizeOf = (name: string) => statSync(join(folder, isWindows ? name + ".exe" : name)).size;
+      expect(await build("by-use")).toMatchObject({ exitCode: 0 });
+      expect(await build("listed", "--trim-locales=ja,he")).toMatchObject({ exitCode: 0 });
+      // Without the list the build removed the same locales.
+      expect(sizeOf("by-use")).toBe(sizeOf("listed"));
+      const expected = await run([bunExe(), "numbered-by-use.ts", "long"], folder);
+      expect(expected).toMatchObject({ stderr: "", exitCode: 0 });
+      expect(await inEveryHost([join(folder, "by-use"), "long"], folder)).toEqual(
+        hosts.map(host => ({ host, ...expected })),
+      );
+    },
+  );
 });
 
 describe.concurrent("--trim-locales without --trim", () => {

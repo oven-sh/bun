@@ -8,7 +8,7 @@ pub struct ReactNoLocalRenderHelpers {
     pattern: Option<Regex>,
 }
 
-const LOCAL_HELPER: Message = Message::new(
+const LOCAL_HELPER: &Message = &Message::new(
     "localHelper",
     "`{{name}}` is created again on every render, and React does not see it as a component. Move it out and make it a component.",
 );

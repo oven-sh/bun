@@ -4,7 +4,7 @@ import * as b from "../../codegen/bindgen-lib.ts";
 const chainable = { returns: b.self, passThis: true } as const;
 const chainableWithOptions = { ...chainable, args: { options: b.any }, capability: "js", throws: true } as const;
 /** Terminal async ops — run decode → pipeline → encode on the work pool. */
-const terminal = { returns: b.any, capability: "js", throws: true, passThis: true } as const;
+const terminal = { returns: b.any.returning("Promise"), capability: "js", throws: true, passThis: true } as const;
 
 export const Image = b.class({
   rustPath: "crate::image::Image",
@@ -29,7 +29,7 @@ export const Image = b.class({
     flop: chainable,
     heic: chainableWithOptions,
     /** Read-only after a pipeline has run; -1 before. */
-    height: { getter: b.i32 },
+    height: { getter: b.i32, pure: true },
     jpeg: chainableWithOptions,
     metadata: terminal,
     modulate: chainableWithOptions,
@@ -48,13 +48,13 @@ export const Image = b.class({
     /** Sharp-compat alias for `buffer()`; same native fn, no overhead. */
     toBuffer: { ...terminal, rustName: "buffer" },
     webp: chainableWithOptions,
-    width: { getter: b.i32 },
+    width: { getter: b.i32, pure: true },
     /** Encode → fs.writeFile, both off-thread; resolves bytes-written. */
     write: { ...terminal, args: { dest: b.any } },
   },
   static: {
     /** Process-global: "system" (CoreGraphics/WIC) or "bun" (static codecs). A task reads it when it launches. */
-    backend: { getter: b.any, setter: true, capability: "js", throws: true },
+    backend: { getter: b.any.returning("string"), setter: true, capability: "js", throws: true },
     clipboardChangeCount: { returns: b.f64 },
     /** null on Linux (no native API) and when the clipboard has no image. */
     fromClipboard: { returns: b.self.nullable, capability: "js", throws: true },

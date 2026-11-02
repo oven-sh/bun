@@ -32,11 +32,12 @@ use bun_lint::linter::config::json_for_oxlint;
 use bun_lint::linter::{
     Config, FileConfig, LegacyFile, LegacyOptions, NamedPlugin, Registry, ResolvedConfig,
     ShadowedBuiltinPlugin, canonical_oxlint_plugin, formatting_rules, is_oxlint_plugin,
-    oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key, parse_rule_id,
+    oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key, oxlint_written_name,
+    parse_rule_id,
 };
 use bun_lint::options::Json;
 use bun_lint::rule::{Frameworks, Plugin, minor_of};
-use bun_sema::util::FxHashMap;
+use bun_sema::util::{FxHashMap, FxHashSet};
 use bun_threading::Guarded;
 use std::borrow::Cow;
 use std::sync::{Arc, OnceLock};
@@ -766,16 +767,18 @@ fn apply_filters(
         entries.push((b"$categoriesOfTheFile".to_vec(), file_categories));
     }
     // oxlint merges the files first, so a flag changes an inherited rule like one of the file's own, and the options
-    // stay.
+    // stay. It merges by the names as they're written, so each alias of a rule is copied. An alias that stayed behind
+    // would keep its severity, and could be the one that wins.
     let has_key = |rules: &[(Vec<u8>, Json)], key: &[u8]| {
         rules.iter().any(|it| oxlint_rule_key(&it.0) == key)
     };
     if let Some(own) = section(entries, b"rules").filter(|_| !inherited.is_empty()) {
-        for (id, setting) in inherited {
-            if !has_key(own, &oxlint_rule_key(id)) {
-                own.push((id.clone(), setting.clone()));
-            }
-        }
+        let mut names: FxHashSet<_> = own.iter().map(|it| oxlint_written_name(&it.0)).collect();
+        let missing = inherited
+            .iter()
+            .filter(|it| names.insert(oxlint_written_name(&it.0)));
+        let missing: Vec<_> = missing.cloned().collect();
+        own.extend(missing);
     }
     for (severity, name) in filters {
         if name == b"all" {

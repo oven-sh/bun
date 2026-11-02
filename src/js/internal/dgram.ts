@@ -3,12 +3,18 @@
 // cluster-shared sockets and the udp_wrap internal binding that vendored Node
 // tests reach through bun:internal-for-testing's exposedInternals.
 
-const newSocketFd = $bindgen("udp_socket.bind.ts", "dgramNewSocketFd");
-const bindFd = $bindgen("udp_socket.bind.ts", "dgramBindFd");
-const getSockNameFd = $bindgen("udp_socket.bind.ts", "dgramGetSockNameFd");
-const guessHandleTypeFd = $bindgen("udp_socket.bind.ts", "dgramGuessHandleType");
-const adoptFd = $bindgen("udp_socket.bind.ts", "dgramAdoptFd");
-const closeFd = $bindgen("udp_socket.bind.ts", "dgramCloseFd");
+const newSocketFd: (isIPv6: boolean, isStream: boolean) => number = $bindgen("udp_socket.bind.ts", "dgramNewSocketFd");
+const bindFd: (fd: number, address: string, port: number, flags: number) => void = $bindgen(
+  "udp_socket.bind.ts",
+  "dgramBindFd",
+);
+const getSockNameFd: (fd: number) => { address: string; port: number; family: string } = $bindgen(
+  "udp_socket.bind.ts",
+  "dgramGetSockNameFd",
+);
+const guessHandleTypeFd: (fd: number) => string = $bindgen("udp_socket.bind.ts", "dgramGuessHandleType");
+const adoptFd: (fd: number) => void = $bindgen("udp_socket.bind.ts", "dgramAdoptFd");
+const closeFd: (fd: number) => void = $bindgen("udp_socket.bind.ts", "dgramCloseFd");
 
 const kStateSymbol = Symbol("state symbol");
 
@@ -18,7 +24,7 @@ const kStateSymbol = Symbol("state symbol");
 const UV_EBADF = -9;
 const UV_EINVAL = -22;
 
-function uvErrno(err, fallback) {
+function uvErrno(err, fallback: number): number {
   return typeof err?.errno === "number" && err.errno < 0 ? err.errno : fallback;
 }
 
@@ -37,15 +43,20 @@ class UDP {
     return this.#fd;
   }
 
-  bind(address, port, flags) {
+  bind(address: string | null | undefined, port: number | null | undefined, flags: number | null | undefined) {
     return this.#bind(address, port, flags, false);
   }
 
-  bind6(address, port, flags) {
+  bind6(address: string | null | undefined, port: number | null | undefined, flags: number | null | undefined) {
     return this.#bind(address, port, flags, true);
   }
 
-  #bind(address, port, flags, ipv6) {
+  #bind(
+    address: string | null | undefined,
+    port: number | null | undefined,
+    flags: number | null | undefined,
+    ipv6: boolean,
+  ) {
     try {
       if (this.#fd < 0) {
         this.#fd = newSocketFd(ipv6, false);
@@ -57,7 +68,7 @@ class UDP {
     }
   }
 
-  open(fd) {
+  open(fd: number) {
     if (guessHandleType(fd) !== "UDP") {
       return UV_EINVAL;
     }
@@ -72,7 +83,7 @@ class UDP {
     return 0;
   }
 
-  getsockname(out) {
+  getsockname(out: { address?: string; port?: number; family?: string }) {
     if (this.#fd < 0) {
       return UV_EBADF;
     }
@@ -87,7 +98,7 @@ class UDP {
     }
   }
 
-  close(cb?) {
+  close(cb?: () => void) {
     if (this.#fd >= 0) {
       closeFd(this.#fd);
       this.#fd = -1;
@@ -105,13 +116,19 @@ class UDP {
   }
 }
 
-function isInt32(value) {
+function isInt32(value: number) {
   return value === (value | 0);
 }
 
-function _createSocketHandle(address, port, addressType, fd, flags) {
+function _createSocketHandle(
+  address: string | null | undefined,
+  port: number | null | undefined,
+  addressType: string,
+  fd: number | null | undefined,
+  flags: number | null | undefined,
+) {
   const handle = new UDP();
-  let err;
+  let err: number | undefined;
 
   if (typeof fd === "number" && isInt32(fd) && fd > 0) {
     if (guessHandleType(fd) !== "UDP") {
@@ -131,7 +148,7 @@ function _createSocketHandle(address, port, addressType, fd, flags) {
   return handle;
 }
 
-function guessHandleType(fd) {
+function guessHandleType(fd: unknown) {
   if (typeof fd !== "number" || !isInt32(fd) || fd < 0) {
     return "UNKNOWN";
   }
@@ -143,4 +160,4 @@ export default {
   UDP,
   _createSocketHandle,
   guessHandleType,
-};
+} as const;

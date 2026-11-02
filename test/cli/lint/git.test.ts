@@ -680,7 +680,7 @@ describe.concurrent("bun lint --staged reads the staged version of a partly stag
     write(repo.root, "partly.js", tidy);
     const rules = ["--rule", "@typescript-eslint/await-thenable: error", "--rule", "no-useless-assignment: error"];
     const { stdout, exitCode } = await bun(repo.root, ["lint", "--staged", "--type-aware", ...rules]);
-    expect(stdout.match(/It is overwritten on line 3 before it is read\./g)).toHaveLength(2);
+    expect(stdout.match(/Reassigned on line 3 before it's read\./g)).toHaveLength(2);
     expect(exitCode).toBe(1);
   });
 

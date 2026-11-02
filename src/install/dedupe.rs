@@ -767,7 +767,7 @@ fn reachable(
 
 pub fn dedupe_before_install(
     manager: &mut PackageManager,
-    load_result: &LoadResult<'_>,
+    load_result: &LoadResult,
 ) -> crate::Result<()> {
     let quiet = manager.options.log_level == LogLevel::Silent;
 

@@ -1,0 +1,15 @@
+# Function.prototype.bind.call(Bun.Cookie, null).name
+# Bun.Cookie inherits from Object.prototype, and so does the bound function. Its own `name` is a string.
+# RUN: valueflow-apply
+# CHECK: AssumeType v4 provenType=undefined|string
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=FunctionPrototypeBind
+    v1 = Builtin builtin=BunCookie
+    v2 = Null
+    v3 = Call v0, v1, v2
+    v4 = PropGet v3 key="name"
+    Return v4
+}

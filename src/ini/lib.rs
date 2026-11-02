@@ -147,7 +147,7 @@ mod draft {
     // ──────────────────────────────────────────────────────────────────────────
 
     pub struct Parser<'a> {
-        pub(crate) source: &'a Source,
+        pub(crate) source: &'a Source<'a>,
         pub(crate) src: &'a [u8],
         pub out: Expr,
         pub(crate) env: &'a DotEnvLoader,
@@ -181,7 +181,7 @@ mod draft {
     }
 
     impl<'a> Parser<'a> {
-        pub fn init(source: &'a Source, env: &'a DotEnvLoader) -> Parser<'a> {
+        pub fn init(source: &'a Source<'a>, env: &'a DotEnvLoader) -> Parser<'a> {
             Parser {
                 src: source.contents.as_ref(),
                 out: Expr::init(E::Object::default(), Loc::EMPTY),
@@ -1171,7 +1171,7 @@ mod draft {
 
     impl RegistryKey {
         pub fn from_url(url_bytes: &[u8]) -> RegistryKey {
-            let owned = URL::from_string(&bun_core::String::borrow_utf8(url_bytes)).ok();
+            let owned = URL::from_string(&bun_core::StringView::borrow_utf8(url_bytes)).ok();
             let url = match &owned {
                 Some(owned) => owned.url(),
                 None => URL::parse(url_bytes),
@@ -1614,14 +1614,8 @@ mod draft {
         create_matcher,
     };
 
-    /// `PnpmMatcher.fromExpr` operating on
-    /// `bun_ast::Expr` instead of the lower-tier `bun_ast::Expr`.
-    ///
-    /// `bun_install_types` (T2) cannot depend on `bun_js_parser` (T4),
-    /// and the two `ExprData` enums are distinct (closed Rust enums; only the leaf
-    /// `E::*` payloads are shared). `bun_ini` depends on both, so the T4-typed
-    /// overload lives here. The matcher construction is delegated to the shared
-    /// `create_matcher` helper in `bun_install_types::NodeLinker`.
+    /// `PnpmMatcher.fromExpr` operating on `bun_ast::Expr`. The matcher construction is delegated
+    /// to the shared `create_matcher` helper in `bun_install_types::NodeLinker`.
     fn pnpm_matcher_from_expr(
         expr: &Expr,
         log: &mut Log,

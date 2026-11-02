@@ -6,7 +6,7 @@ use bun_core::strings;
 use super::bun_lockb::StreamType;
 use super::{
     DependencyIDList, DependencyList, ExternalStringBuffer, Lockfile, PackageIDList, Stream,
-    StringBuffer, Tree, assert_no_uninitialized_padding, tree,
+    StringBuffer, Tree, tree,
 };
 use crate::package_manager_real::package_manager_options::Options as PackageManagerOptions;
 use crate::{Aligner, DependencyID, PackageID, PackageManager, dependency, invalid_package_id};
@@ -58,13 +58,12 @@ mod sizes {
     ///
     /// This is the alignment of a slice descriptor (a `(*T, usize)` fat
     /// pointer) — i.e. pointer alignment, not element alignment. This 8-byte
-    /// boundary is load-bearing for on-disk parity AND for
-    /// `read_array::<ExternalString>` (which has a `u64` field) to produce an aligned `&[T]`.
+    /// boundary is load-bearing for on-disk parity, and `read_array` rejects a payload off its element's alignment.
     pub(super) const ALIGN_TYPE_0: usize = align_of::<usize>();
     const _: () = assert!(ALIGN_TYPE_0 == align_of::<&[Tree]>());
 }
 
-pub(crate) fn read_array<T: Copy>(stream: &mut Stream) -> crate::Result<Vec<T>> {
+pub(crate) fn read_array<T: bun_core::AnyBitPattern>(stream: &mut Stream) -> crate::Result<Vec<T>> {
     let start_pos = stream.read_int_le::<u64>()?;
 
     // 0xDEADBEEF: never written. Positions are absolute, follow a prefix and do not go backwards.
@@ -94,41 +93,22 @@ pub(crate) fn read_array<T: Copy>(stream: &mut Stream) -> crate::Result<Vec<T>> 
         return Ok(Vec::new());
     }
 
-    if start_pos % core::mem::align_of::<T>() as u64 != 0 || byte_len % size_of::<T>() as u64 != 0 {
+    // The copy below does not need it, but the writer aligns every payload.
+    if start_pos % core::mem::align_of::<T>() as u64 != 0 {
         return Err(crate::Error::CorruptLockfile);
     }
 
-    let start_pos = start_pos as usize;
-    let end_pos = end_pos as usize;
-    // SAFETY: `start_pos..end_pos` is in-bounds (checked above) and the lockfile
-    // writer aligned the payload to `align_of::<T>()` via `Aligner::write`.
-    let misaligned: &[T] = unsafe {
-        bun_core::ffi::slice(
-            stream.buffer.as_ptr().add(start_pos).cast::<T>(),
-            (end_pos - start_pos) / size_of::<T>(),
-        )
-    };
-
-    Ok(misaligned.to_vec())
+    bun_core::vec_from_bytes(&stream.buffer[start_pos as usize..end_pos as usize])
+        .ok_or(crate::Error::CorruptLockfile)
 }
 
-pub(crate) fn write_array<T>(
+/// `NoUninit` is what keeps garbage out of the lockfile: see `padding_checker.rs`.
+pub(crate) fn write_array<T: bun_core::NoUninit>(
     stream: &mut StreamType<'_>,
     array: &[T],
     prefix: &'static str,
 ) -> crate::Result<()> {
-    // This call is a zero-cost intent marker only — it carries no trait bound (see the
-    // doc comment on `assert_no_uninitialized_padding`). The actual compile-time
-    // enforcement is the per-type `const` field-offset asserts and the
-    // `layout_asserts` size/align pins in src/install/padding_checker.rs; any new
-    // `T` serialized through here must be added to that audit.
-    assert_no_uninitialized_padding(array);
-
-    // SAFETY: `T` has no uninitialized padding (audited via the per-type layout
-    // asserts in padding_checker.rs); reading its bytes is sound.
-    let bytes: &[u8] =
-        unsafe { bun_core::ffi::slice(array.as_ptr().cast::<u8>(), core::mem::size_of_val(array)) };
-    write_array_bytes(stream, bytes, prefix)
+    write_array_bytes(stream, bun_core::slice_as_bytes(array), prefix)
 }
 
 fn write_array_bytes(
@@ -153,7 +133,7 @@ fn write_array_bytes(
         stream.write_all(bytes)?;
     }
     let positioned: [u64; 2] = [real_start_pos, stream.get_pos()? as u64];
-    let positioned_bytes: &[u8; 16] = bytemuck::cast_ref(&positioned);
+    let positioned_bytes = bun_core::bytes_of(&positioned);
     let mut written: usize = 0;
     while written < 16 {
         written += stream.pwrite(&positioned_bytes[written..], start_pos + written);

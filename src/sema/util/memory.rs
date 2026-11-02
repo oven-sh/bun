@@ -1541,6 +1541,12 @@ mod tests {
         assert!(cells.existing(0).is_none());
         assert_eq!(cells.existing(5000).unwrap().load(Ordering::Relaxed), 9);
         assert_eq!(cells.existing(5001).unwrap().load(Ordering::Relaxed), 0);
+        // Another page of the chunk that's allocated now. Only the page's bit says that it was never written.
+        let other_page = 5000 + 2 * (SMALLEST_PAGE / size_of::<AtomicU64>()) as u32;
+        assert!(cells.existing(other_page).is_none());
+        assert!(cells.existing_acquire(other_page).is_none());
+        assert_eq!(cells.cell(other_page).load(Ordering::Relaxed), 0);
+        assert!(cells.existing(other_page).is_some());
         let lengths: Vec<usize> = cells.allocated().map(<[_]>::len).collect();
         assert_eq!(lengths, [1 << (FIRST_CELLS_BITS + 1)]);
         let all = cells.allocated().flatten();

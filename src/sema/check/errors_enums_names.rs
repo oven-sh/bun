@@ -65,7 +65,7 @@ impl Checker<'_, '_> {
         // `resolveName(node, GetFirstIdentifier(node).Text(), SymbolFlagsAlias, nil, false, true)`
         let first = first_identifier(hir, e);
         let resolves_to_import = match hir[first].kind {
-            ExprKind::Ident(name) if files.options.verbatim_module_syntax => {
+            ExprKind::Ident(name) if self.module_options(file).verbatim_module_syntax => {
                 let scope = self.enclosing_scope_of_expr(file, first);
                 let lookup = &mut |table: SymbolTable, entry: Option<Sym>, meaning: SymFlags| {
                     // `excludeGlobals`
@@ -83,7 +83,7 @@ impl Checker<'_, '_> {
         for &(_, end) in non_null_ends_in(hir, e) {
             let (start, _) = self.get_error_range_for_node(file, node);
             self.error_at((file, start, end), 2475, &[]);
-            if files.options.isolated_modules_reported
+            if self.module_options(file).isolated_modules_reported
                 && self.aliases_is_ambient_const_enum(symbol)
                 && !is_valid_type_only_alias_use_site(hir, node)
             {
@@ -104,8 +104,8 @@ impl Checker<'_, '_> {
                 self.error(file, node, 2475, &[]);
             }
             // Imports of ambient `const` enums are checked in `checkAliasSymbol`.
-            if (files.options.isolated_modules_reported
-                || files.options.verbatim_module_syntax && ok && !resolves_to_import)
+            if (self.module_options(file).isolated_modules_reported
+                || self.module_options(file).verbatim_module_syntax && ok && !resolves_to_import)
                 && self.aliases_is_ambient_const_enum(symbol)
                 && !is_valid_type_only_alias_use_site(hir, node)
             {
@@ -165,7 +165,7 @@ impl Checker<'_, '_> {
     /// `Resolve`, at an enum declaration: 1281.
     fn check_names_from_other_files(&mut self, file: FileId) {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
-        if !files.options.isolated_modules || hir.enums.is_empty() {
+        if !self.module_options(file).isolated_modules || hir.enums.is_empty() {
             return;
         }
         for &(e, scope) in &bound.free_idents {
@@ -282,7 +282,7 @@ impl Checker<'_, '_> {
     /// fragment factory at an opening fragment.
     fn check_jsx_factories(&mut self, file: FileId) {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
-        let options = &files.options;
+        let options = self.module_options(file);
         // `jsxFactoryRefErr`: otherwise `Resolve` doesn't report anything.
         if hir.jsx.is_empty() || options.jsx != crate::resolve::JsxEmit::React {
             return;
@@ -296,8 +296,8 @@ impl Checker<'_, '_> {
             return;
         }
         let (factory, fragment_factory) = (
-            super::errors_jsx::jsx_namespace(files, self.atoms(), hir, false),
-            super::errors_jsx::jsx_namespace(files, self.atoms(), hir, true),
+            super::errors_jsx::jsx_namespace(options, self.atoms(), hir, false),
+            super::errors_jsx::jsx_namespace(options, self.atoms(), hir, true),
         );
         let looks_up_fragment_factory =
             fragment_factory != factory && self.atoms().bytes(fragment_factory) != b"null";
@@ -440,7 +440,7 @@ pub(super) fn resolves_to_umd_global(
     name: Atom,
     meaning: SymFlags,
 ) -> bool {
-    !files.options.allow_umd_global_access
+    !files.module_options(file).allow_umd_global_access
         && files.module(file).is_module()
         && umd_global(files, name).is_some_and(|global| {
             // `getSymbol`: an alias is matched by its target's meaning, which is every meaning if it can't be resolved.

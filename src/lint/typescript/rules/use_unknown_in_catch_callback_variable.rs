@@ -10,30 +10,30 @@ use smallvec::SmallVec;
 /// Enforce typing arguments in Promise rejection callbacks as `unknown`.
 pub struct UseUnknownInCatchCallbackVariable;
 
-const ADD_UNKNOWN_REST_TYPE_ANNOTATION_SUGGESTION: Message = Message::new(
+const ADD_UNKNOWN_REST_TYPE_ANNOTATION_SUGGESTION: &Message = &Message::new(
     "addUnknownRestTypeAnnotationSuggestion",
     "Add an explicit `: [unknown]` type annotation to the rejection callback rest variable.",
 );
-const ADD_UNKNOWN_TYPE_ANNOTATION_SUGGESTION: Message = Message::new(
+const ADD_UNKNOWN_TYPE_ANNOTATION_SUGGESTION: &Message = &Message::new(
     "addUnknownTypeAnnotationSuggestion",
     "Add an explicit `: unknown` type annotation to the rejection callback variable.",
 );
-const USE_UNKNOWN: Message = Message::new(
+const USE_UNKNOWN: &Message = &Message::new(
     "useUnknown",
     "Prefer the safe `: unknown` for a `{{method}}`{{append}} callback variable.",
 );
-const USE_UNKNOWN_ARRAY_DESTRUCTURING_PATTERN: Message = Message::new(
+const USE_UNKNOWN_ARRAY_DESTRUCTURING_PATTERN: &Message = &Message::new(
     "useUnknownArrayDestructuringPattern",
     "Prefer the safe `: unknown` for a `{{method}}`{{append}} callback variable. The thrown error may not be iterable.",
 );
-const USE_UNKNOWN_OBJECT_DESTRUCTURING_PATTERN: Message = Message::new(
+const USE_UNKNOWN_OBJECT_DESTRUCTURING_PATTERN: &Message = &Message::new(
     "useUnknownObjectDestructuringPattern",
     "Prefer the safe `: unknown` for a `{{method}}`{{append}} callback variable. The thrown error may be nullable, or may not have the expected shape.",
 );
-const WRONG_REST_TYPE_ANNOTATION_SUGGESTION: Message =
-    Message::new("wrongRestTypeAnnotationSuggestion", "Change existing type annotation to `: [unknown]`.");
-const WRONG_TYPE_ANNOTATION_SUGGESTION: Message =
-    Message::new("wrongTypeAnnotationSuggestion", "Change existing type annotation to `: unknown`.");
+const WRONG_REST_TYPE_ANNOTATION_SUGGESTION: &Message =
+    &Message::new("wrongRestTypeAnnotationSuggestion", "Change existing type annotation to `: [unknown]`.");
+const WRONG_TYPE_ANNOTATION_SUGGESTION: &Message =
+    &Message::new("wrongTypeAnnotationSuggestion", "Change existing type annotation to `: unknown`.");
 
 #[derive(Copy, Clone)]
 struct PromiseMethod {
@@ -92,7 +92,7 @@ fn report<'a>(argument: Func<'a>, info: PromiseMethod, cx: &Cx<'a, UseUnknownInC
         return;
     };
     let outer = utils::estree_span(Node::Param(catch_variable));
-    let at_variable = |message: Message| cx.report(outer, message).data("method", info.method).data("append", info.append);
+    let at_variable = |message: &'static Message| cx.report(outer, message).data("method", info.method).data("append", info.append);
     let type_annotation = catch_variable.ty();
 
     if catch_variable.is_rest() {

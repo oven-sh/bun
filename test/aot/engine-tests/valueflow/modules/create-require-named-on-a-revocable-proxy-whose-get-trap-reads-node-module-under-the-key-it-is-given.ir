@@ -1,0 +1,40 @@
+# import imported from "node:module"; let Module = imported; pair = Proxy.revocable({}, { get: (target, key) => Module[key] }); pair.proxy.createRequire("/app/main.js")(globalThis.name)
+# The read of node:module under a key nobody knows does not answer createRequire. The read that names createRequire on the proxy that the pair holds does: the trap answers it.
+# The call of what createRequire returns loads code by name, and no other call does.
+# RUN: valueflow-solve unseen
+# CHECK: unseen LoadsCodeByName ModuleRequire f0:v17
+# CHECK-NOT: unseen LoadsCodeByName
+# CHECK: unseen-code yes
+
+module m0 path="/app/main.js" displayPath="main.js" kind=SourceText body=f0 requests=[{target=m1 completes=true}]
+module m1 path="node:module" displayPath="node:module" kind=Runtime exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeModule
+entry module=m0
+variable g0 name="Module" module=m0 declared={type=anything} initialization=Undefined
+layout L0 fields=[{key="get" declared={type=anything}}]
+layout L1
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=NodeModule
+    PutModuleVariable v0 variable=g0
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="name" [isFreeName]
+    v4 = NewObject layout=L1
+    v5 = FinishObject v4
+    v6 = NewClosure function=f1
+    v7 = NewObject layout=L0
+    PropDefine v7, v6 key="get"
+    v9 = FinishObject v7
+    v10 = Builtin builtin=Proxy
+    v11 = Builtin builtin=ProxyRevocable
+    v12 = Call v11, v10, v5, v9
+    v13 = PropGet v12 key="proxy"
+    v14 = PropGet v13 key="createRequire"
+    v15 = String string="/app/main.js"
+    v16 = Call v14, v13, v15
+    v17 = Call v16, -, v3
+    Return v17
+}
+function f1 name="get" module=m0 kind=Arrow parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = GetModuleVariable variable=g0
+    v3 = ElemGet v2, v1
+    Return v3
+}

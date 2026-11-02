@@ -1868,7 +1868,7 @@ mod __css_validation {
             all_import_records: *mut [ImportRecordList<'bump>],
             all_css_asts: *mut [CssCol],
             all_symbols: &'a symbol::Map,
-            all_sources: *mut [Source],
+            all_sources: *mut [Source<'a>],
             log: &'a mut Log,
         }
 
@@ -1913,8 +1913,7 @@ mod __css_validation {
                             bstr::BStr::new(property_name),
                             bstr::BStr::new(local_original_name),
                         ),
-                    )
-                    .clone_line_text(self.log.clone_line_text),
+                    ),
                     notes: Box::<[bun_ast::Data]>::from(
                         &[
                             bun_ast::range_data(

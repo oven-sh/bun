@@ -3,11 +3,11 @@ use bun_lint::prelude::*;
 /// Disallow unnecessary constraints on generic types.
 pub struct NoUnnecessaryTypeConstraint;
 
-const REMOVE_UNNECESSARY_CONSTRAINT: Message = Message::new(
+const REMOVE_UNNECESSARY_CONSTRAINT: &Message = &Message::new(
     "removeUnnecessaryConstraint",
     "Remove the unnecessary `{{constraint}}` constraint.",
 );
-const UNNECESSARY_CONSTRAINT: Message = Message::new(
+const UNNECESSARY_CONSTRAINT: &Message = &Message::new(
     "unnecessaryConstraint",
     "Constraining the generic type `{{name}}` to `{{constraint}}` does nothing and is unnecessary.",
 );

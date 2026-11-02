@@ -1,0 +1,41 @@
+# A value that is expected to be the native object or its stand-in written in JavaScript. The accessor of a locked prototype is entered without a lookup once the receiver is known to be the native one, so the union is tested for in front of a read of such a name as it is in front of a call. A name that the native class does not have as an accessor asks for no such test.
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot
+# RUN: pipeline PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="StandIn" module=m0 position=10 fields=[{key="status" declared={type=number}}, {key="note" declared={type=string}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given" [isFreeName]
+    v2 = CallDirect v1 function=f1
+    v3 = CallDirect v1 function=f2
+    v4 = PropGet v0 key="sink" [isFreeName]
+    v5 = Call v4, -, v2, v3
+    v6 = Integer integer=200
+    v7 = String string="made"
+    v8 = NewObject -, v6, v7 layout=L0 fields=[0, 1]
+    v9 = Call v4, -, v8
+    Return
+}
+
+function f1 name="statusOf" parameters=[{type=L0|Response flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L0|Response):
+    v1 = PropGet v0 key="status"
+    Return v1
+}
+# CHECK-LABEL: function f1 name="statusOf"
+# CHECK: = TypeTest {{*}}testedType=L0|Response
+# CHECK: = PropGet {{*}}key="status"
+
+function f2 name="unknownNameOf" parameters=[{type=L0|Response flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L0|Response):
+    v1 = PropGet v0 key="elsewhere"
+    Return v1
+}
+# CHECK-LABEL: function f2 name="unknownNameOf"
+# CHECK-NOT: testedType=L0|Response
+# CHECK: = PropGet {{*}}key="elsewhere"

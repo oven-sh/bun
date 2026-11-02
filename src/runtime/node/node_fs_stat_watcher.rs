@@ -789,8 +789,6 @@ impl StatWatcher {
             slice = &slice[b"file://".len()..];
         }
 
-        // SAFETY: `FileSystem::instance()` is initialized at process start
-        // (`FileSystem::init` runs before any JS module loads).
         let top_level_dir = fs::FileSystem::get().top_level_dir();
         let parts: [&[u8]; 1] = [slice];
         let file_path =

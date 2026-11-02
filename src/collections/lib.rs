@@ -155,7 +155,7 @@ pub use string_map::StringMap;
 pub use bun_ptr::tagged_pointer::{TaggedPtr, TaggedPtrUnion};
 // Lifetime-erasure helpers (RUST_PATTERNS.md §6/§18) — re-exported here so
 // crates that already depend on `bun_collections` (logger, css, js_parser,
-// crash_handler, watcher, http_types) can route the borrowck-dodge through
+// watcher, http_types) can route the borrowck-dodge through
 // one centralised `unsafe fn` instead of open-coding the lifetime cast.
 pub use bun_ptr::{RawSlice, detach_lifetime, detach_ref};
 
@@ -386,10 +386,6 @@ impl<T, const N: usize> SmallList<T, N> {
     #[inline]
     pub fn pop(&mut self) -> Option<T> {
         self.0.pop()
-    }
-    #[inline]
-    pub fn ordered_remove(&mut self, idx: u32) -> T {
-        self.0.remove(idx as usize)
     }
     #[inline]
     pub fn swap_remove(&mut self, idx: u32) -> T {

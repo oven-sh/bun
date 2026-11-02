@@ -1,16 +1,18 @@
 import * as b from "../../../codegen/bindgen-lib.ts";
 
 const js = { capability: "js", throws: true } as const;
-const method = { returns: b.any, ...js } as const;
+const objectIfOpen = { returns: b.any.returning("object", "undefined"), ...js } as const;
+const certificate = { returns: b.any.returning("Buffer", "undefined"), ...js } as const;
+const address = { returns: b.any.returning("SocketAddress", "undefined"), capability: "js" } as const;
 
 /** `internalBinding("quic").Endpoint` of Node. */
 export const QuicEndpoint = b.class({
   rustPath: "crate::node::quic::QuicEndpoint",
   construct: { passStructure: true, args: { options: b.any }, capability: "js", throws: true, length: 0 },
   proto: {
-    address: { returns: b.any, capability: "js" },
+    address,
     closeGracefully: { capability: "js", passThis: true },
-    connect: { ...method, args: { address: b.any, options: b.any, sessionTicket: b.any }, passThis: true },
+    connect: { ...objectIfOpen, args: { address: b.any, options: b.any, sessionTicket: b.any }, passThis: true },
     listen: { ...js, args: { options: b.any }, passThis: true },
     markBusy: { args: { busy: b.bool.loose } },
     releaseSocket: { capability: "js" },
@@ -21,18 +23,18 @@ export const QuicEndpoint = b.class({
 export const QuicSession = b.class({
   rustPath: "crate::node::quic::QuicSession",
   proto: {
-    applicationOptions: method,
+    applicationOptions: { returns: b.any.returning("object"), ...js },
     destroy: { ...js, args: { options: b.any } },
-    getCertificate: method,
-    getEphemeralKey: method,
-    getLocalAddress: { returns: b.any, capability: "js" },
-    getPeerCertificate: method,
-    getRemoteAddress: { returns: b.any, capability: "js" },
+    getCertificate: certificate,
+    getEphemeralKey: objectIfOpen,
+    getLocalAddress: address,
+    getPeerCertificate: certificate,
+    getRemoteAddress: address,
     gracefulClose: { ...js, args: { options: b.any } },
-    localTransportParams: method,
-    openStream: { ...method, args: { direction: b.any, body: b.any }, passThis: true },
-    remoteTransportParams: method,
-    sendDatagram: { ...method, args: { data: b.any } },
+    localTransportParams: objectIfOpen,
+    openStream: { ...objectIfOpen, args: { direction: b.any, body: b.any }, passThis: true },
+    remoteTransportParams: objectIfOpen,
+    sendDatagram: { ...js, args: { data: b.any }, returns: b.any.returning("bigint") },
     updateKey: { returns: b.bool },
   },
 });
@@ -49,10 +51,10 @@ export const QuicStream = b.class({
     initStreamingSource: {},
     pull: { ...js, args: { callback: b.any } },
     resetStream: { args: { code: b.any }, capability: "js" },
-    sendHeaders: { ...method, args: { kind: b.any, headers: b.any, flags: b.any } },
+    sendHeaders: { ...js, args: { kind: b.any, headers: b.any, flags: b.any }, returns: b.any.returning("boolean") },
     setPriority: { ...js, args: { priority: b.any } },
     setWakeup: { args: { callback: b.any }, capability: "js" },
     stopSending: { args: { code: b.any }, capability: "js" },
-    write: { ...method, args: { batch: b.any } },
+    write: { ...js, args: { batch: b.any }, returns: b.any.returning("number", "undefined") },
   },
 });

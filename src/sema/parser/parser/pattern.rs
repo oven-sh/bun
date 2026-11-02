@@ -83,12 +83,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 });
                 // `checkGrammarBindingElement`
                 if is_rest && self.token() == T::Comma && self.peek() == T::CloseBracket {
-                    self.flag(
-                        DiagnosticKind::Grammar,
-                        1013,
-                        (self.lx.start, self.lx.end),
-                        &[],
-                    );
+                    self.flag_early_error(1013, (self.lx.start, self.lx.end), &[]);
                 }
             }
             if !self.eat(T::Comma)
@@ -147,7 +142,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             }
             if property.is_rest && self.token() == T::CloseBrace {
                 let at = (self.prev_end() - 1, self.prev_end());
-                self.flag(DiagnosticKind::Grammar, 1013, at, &[]);
+                self.flag_early_error(1013, at, &[]);
             }
         }
         self.leave_list(lists);

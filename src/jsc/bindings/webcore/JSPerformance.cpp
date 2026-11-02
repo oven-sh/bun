@@ -122,6 +122,11 @@ JSC_DEFINE_HOST_FUNCTION(functionPerformanceNow, (JSGlobalObject * globalObject,
     return functionPerformanceNowBody(globalObject->vm());
 }
 
+extern "C" SYSV_ABI double AOT__performanceNow(JSC::JSGlobalObject* globalObject)
+{
+    return static_cast<double>(Bun__readOriginTimer(bunVM(globalObject->vm()))) / 1000000.0;
+}
+
 JSC_DEFINE_JIT_OPERATION(functionPerformanceNowWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSPerformance* castedThis))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -349,6 +354,7 @@ static inline EncodedJSValue jsPerformancePrototypeFunction_toJSONBody(JSGlobalO
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_toJSON, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(PerformanceTimeline, jsPerformancePrototypeFunction_toJSON);
     return IDLOperation<JSPerformance>::call<jsPerformancePrototypeFunction_toJSONBody>(*lexicalGlobalObject, *callFrame, "toJSON");
 }
 
@@ -364,6 +370,7 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_getEntriesBody(
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_getEntries, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(PerformanceTimeline, jsPerformancePrototypeFunction_getEntries);
     return IDLOperation<JSPerformance>::call<jsPerformancePrototypeFunction_getEntriesBody>(*lexicalGlobalObject, *callFrame, "getEntries");
 }
 
@@ -384,6 +391,7 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_getEntriesByTyp
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_getEntriesByType, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(PerformanceTimeline, jsPerformancePrototypeFunction_getEntriesByType);
     return IDLOperation<JSPerformance>::call<jsPerformancePrototypeFunction_getEntriesByTypeBody>(*lexicalGlobalObject, *callFrame, "getEntriesByType");
 }
 
@@ -407,6 +415,7 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_getEntriesByNam
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_getEntriesByName, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(PerformanceTimeline, jsPerformancePrototypeFunction_getEntriesByName);
     return IDLOperation<JSPerformance>::call<jsPerformancePrototypeFunction_getEntriesByNameBody>(*lexicalGlobalObject, *callFrame, "getEntriesByName");
 }
 
@@ -422,6 +431,7 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_clearResourceTi
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_clearResourceTimings, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(PerformanceTimeline, jsPerformancePrototypeFunction_clearResourceTimings);
     return IDLOperation<JSPerformance>::call<jsPerformancePrototypeFunction_clearResourceTimingsBody>(*lexicalGlobalObject, *callFrame, "clearResourceTimings");
 }
 
@@ -442,6 +452,7 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_setResourceTimi
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_setResourceTimingBufferSize, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(PerformanceTimeline, jsPerformancePrototypeFunction_setResourceTimingBufferSize);
     return IDLOperation<JSPerformance>::call<jsPerformancePrototypeFunction_setResourceTimingBufferSizeBody>(*lexicalGlobalObject, *callFrame, "setResourceTimingBufferSize");
 }
 
@@ -470,6 +481,7 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_markBody(JSC::J
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_mark, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(PerformanceMarks, jsPerformancePrototypeFunction_mark);
     return IDLOperation<JSPerformance>::call<jsPerformancePrototypeFunction_markBody>(*lexicalGlobalObject, *callFrame, "mark");
 }
 
@@ -490,6 +502,7 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_clearMarksBody(
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_clearMarks, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(PerformanceTimeline, jsPerformancePrototypeFunction_clearMarks);
     return IDLOperation<JSPerformance>::call<jsPerformancePrototypeFunction_clearMarksBody>(*lexicalGlobalObject, *callFrame, "clearMarks");
 }
 
@@ -518,6 +531,7 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_measureBody(JSC
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_measure, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(PerformanceMarks, jsPerformancePrototypeFunction_measure);
     return IDLOperation<JSPerformance>::call<jsPerformancePrototypeFunction_measureBody>(*lexicalGlobalObject, *callFrame, "measure");
 }
 
@@ -538,6 +552,7 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_clearMeasuresBo
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_clearMeasures, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(PerformanceTimeline, jsPerformancePrototypeFunction_clearMeasures);
     return IDLOperation<JSPerformance>::call<jsPerformancePrototypeFunction_clearMeasuresBody>(*lexicalGlobalObject, *callFrame, "clearMeasures");
 }
 

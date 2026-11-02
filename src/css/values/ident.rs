@@ -36,8 +36,7 @@ macro_rules! arena_slice_newtype {
             ///
             /// NOTE: the borrow is tied to `&self`. Call sites that must return
             /// the slice with the `'static` placeholder lifetime (e.g.
-            /// `IdentOrRef::{debug_ident,as_str,as_original_string}`,
-            /// `Printer::lookup_ident_or_ref`, `SelectorParser::namespace_for_prefix`)
+            /// `IdentOrRef::{debug_ident,as_str,as_original_string}`)
             /// still go through the raw `v` field directly until `'bump` is threaded.
             #[inline]
             pub fn v(&self) -> &[u8] {
@@ -186,7 +185,7 @@ arena_slice_newtype! {
 impl DashedIdent {
     pub fn parse(input: &mut Parser) -> CssResult<DashedIdent> {
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
         if !strings::starts_with(ident, b"--") {
             return Err(location.new_unexpected_token_error(Token::Ident(ident)));
         }
@@ -364,13 +363,8 @@ impl IdentOrRef {
         if let Some(ident) = self.as_ident() {
             hasher.update(ident.v());
         } else {
-            // SAFETY: self is #[repr(transparent)] u128 (16 bytes), so reading the first 2
-            // bytes is in-bounds. Hashing only 2 of the 16 bytes (sic) is preserved for
-            // behavioral compatibility; PR #30784 hashes the full identity.
-            let bytes = unsafe {
-                core::slice::from_raw_parts(std::ptr::from_ref::<Self>(self).cast::<u8>(), 2)
-            };
-            hasher.update(bytes);
+            // Only the bits of the `Ref`: in debug builds `__ptrbits` differs between equal refs.
+            hasher.update(&self.len_bits().to_ne_bytes());
         }
     }
 
@@ -417,6 +411,7 @@ pub(crate) fn is_reserved_custom_ident(s: &[u8]) -> bool {
             b"default",
             b"revert",
             b"revert-layer",
+            b"revert-rule",
         ],
     )
 }
@@ -429,7 +424,7 @@ arena_slice_newtype! {
 impl CustomIdent {
     pub fn parse(input: &mut Parser) -> CssResult<CustomIdent> {
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
         let valid = !is_reserved_custom_ident(ident);
 
         if !valid {

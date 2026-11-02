@@ -3,12 +3,24 @@
 //! `bun check`, `bun build --check` and `bun run --check` all use this, with different roots and different output
 //! formatting.
 
+mod compile;
+pub mod declaration_imports;
 pub mod format;
 pub mod host;
 pub mod outline;
+pub mod typed_files;
 
 pub use bun_sema::check::explain::MessageChain;
 pub use bun_sema::messages::Category;
+pub use compile::{
+    BuildDiagnostic, CheckedProgram, CompileRequest, Demotion, DemotionCause, EntryPointFailure,
+    EntryPoints, FileFinder, FileFinderTables, LoadFailure, LoadedProgram, Locator, PassCount,
+    Passes, RoleDecision, TextLocator, check_and_lower, check_and_lower_noting_commits,
+    decide_roles, drop_thread_caches, find_configuration_of_each_entry_point, keep_verified_roles,
+    load_program, load_program_of_loaded_files, load_program_with_parsed_files, log_message,
+    resolve_names_known_in_part, run_on_one_thread_while, run_on_region_thread,
+    run_on_threads_while, wake_idle_region_threads,
+};
 
 use bstr::ByteSlice;
 use bun_core::strings;
@@ -16,6 +28,8 @@ use bun_paths::path_buffer_pool;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_sema::atom::RecentAtoms;
+use bun_sema::check::aot::{DiagnosticClass, DiagnosticSubject};
+use bun_sema::check::commit::RefusedInstantiations;
 use bun_sema::check::errors::Checked;
 use bun_sema::check::explain::Explained;
 use bun_sema::check::{Program, Requested, compute_ecma_line_starts};
@@ -43,7 +57,8 @@ use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::cmp::Reverse;
 use std::collections::BTreeSet;
-use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
+use std::num::NonZeroUsize;
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::thread::ThreadId;
 use std::time::{Duration, Instant};
@@ -65,19 +80,29 @@ type CachesOfThread = (
 );
 
 impl ThreadCaches {
-    /// Lends the calling thread its set until the guard is dropped.
+    /// Lends the calling thread its set until the guard is dropped. A thread that has its set keeps it.
     pub fn lend(&self) -> impl Drop + '_ {
-        struct Lent<'a>(&'a ThreadCaches);
+        thread_local! {
+            static HAS_ITS_SET: Cell<bool> = const { Cell::new(false) };
+        }
+        struct Lent<'a>(Option<&'a ThreadCaches>);
         impl Drop for Lent<'_> {
             fn drop(&mut self) {
+                let Some(caches) = self.0 else {
+                    return;
+                };
+                HAS_ITS_SET.set(false);
                 let set = (
                     std::thread::current().id(),
                     RecentAtoms::take(),
                     bun_sema_parser::ThreadCaches::take(),
                     bun_sema::bind::ThreadCaches::take(),
                 );
-                self.0.idle.lock().push(set);
+                caches.idle.lock().push(set);
             }
+        }
+        if HAS_ITS_SET.replace(true) {
+            return Lent(None);
         }
         let thread = std::thread::current().id();
         let mut idle = self.idle.lock();
@@ -89,7 +114,7 @@ impl ThreadCaches {
             parser.install();
             binder.install();
         }
-        Lent(self)
+        Lent(Some(self))
     }
 
     /// Frees the buffers of the parser and the binder, which have the capacity of the largest file a thread has loaded.
@@ -133,19 +158,16 @@ pub fn for_each_parallel_in_runs(
     if count == 0 {
         return;
     }
-    let region = Region {
-        caches,
-        next: AtomicUsize::new(0),
-        count,
-        run,
-        work,
-    };
-    // A pool thread runs the whole region itself. See `runs_regions_inline`.
+    let region = Region::new(caches, count, run, work);
+    let runners = threads.clamp(1, count.div_ceil(run));
     if runs_regions_inline() {
-        return region.work_off();
+        region.work_off();
+    } else if is_pool_thread() {
+        region.work_off_with_idle_threads(runners - 1);
+    } else {
+        region_pool().each((), |(), (), _| region.work_off(), &mut vec![(); runners]);
     }
-    let mut runners = vec![(); threads.clamp(1, count.div_ceil(run))];
-    region_pool().each((), |(), (), _| region.work_off(), &mut runners);
+    region.panic.resume();
 }
 
 /// Like `for_each_parallel_in_runs`, while the calling thread runs `meanwhile`. A thread for which
@@ -158,19 +180,21 @@ pub(crate) fn for_each_parallel_while(
     work: &(dyn Fn(usize) + Sync),
     meanwhile: &mut dyn FnMut(),
 ) {
-    if count == 0 || runs_regions_inline() {
+    if count == 0 || runs_regions_inline() || is_pool_thread() {
         for_each_parallel_in_runs(caches, threads, count, run, work);
         return meanwhile();
     }
-    let region = Region {
-        caches,
-        next: AtomicUsize::new(0),
-        count,
-        run,
-        work,
-    };
+    let region = Region::new(caches, count, run, work);
     let mut runners = vec![(); threads.clamp(1, count.div_ceil(run))];
-    region_pool().each_while((), |(), (), _| region.work_off(), &mut runners, meanwhile);
+    region_pool().each_while(
+        (),
+        |(), (), _| region.work_off(),
+        &mut runners,
+        || {
+            region.panic.catch(meanwhile);
+        },
+    );
+    region.panic.resume();
 }
 
 /// Like `for_each_parallel_in_runs`, on the calling thread and on at most `helpers` pool threads. The calling thread
@@ -187,19 +211,18 @@ pub(crate) fn for_each_with_helpers(
         _ if runs_regions_inline() => 0,
         helpers => helpers,
     };
-    let region = Region {
-        caches,
-        next: AtomicUsize::new(0),
-        count,
-        run,
-        work,
-    };
-    region_pool().each_while(
-        (),
-        |(), (), _| region.work_off(),
-        &mut vec![(); helpers],
-        || region.work_off(),
-    );
+    let region = Region::new(caches, count, run, work);
+    if is_pool_thread() {
+        region.work_off_with_idle_threads(helpers);
+    } else {
+        region_pool().each_while(
+            (),
+            |(), (), _| region.work_off(),
+            &mut vec![(); helpers],
+            || region.work_off(),
+        );
+    }
+    region.panic.resume();
 }
 
 /// Like `for_each_parallel_in_runs`, on the calling thread, which runs a program, and on the other threads of that
@@ -211,15 +234,10 @@ pub(crate) fn for_each_with_share(
     run: usize,
     work: &(dyn Fn(usize) + Sync),
 ) {
-    let region = Region {
-        caches,
-        next: AtomicUsize::new(0),
-        count,
-        run,
-        work,
-    };
-    if runs_regions_inline() {
-        return region.work_off();
+    let region = Region::new(caches, count, run, work);
+    if runs_regions_inline() || is_pool_thread() {
+        region.work_off();
+        return region.panic.resume();
     }
     let helpers = shares.helpers_of_this_thread();
     region_pool().each_while(
@@ -231,6 +249,7 @@ pub(crate) fn for_each_with_share(
             region.work_off_with_spare_threads(shares);
         },
     );
+    region.panic.resume();
 }
 
 /// How a request's threads are divided among its programs while several of them run at the same time. Each program runs
@@ -359,12 +378,32 @@ pub fn run_regions_inline_on_this_thread() {
         .push(std::thread::current().id());
 }
 
-/// A pool thread that waited for the others could wait forever, because they may all be waiting like it.
+/// Like `run_regions_inline_on_this_thread`, until `work` returns.
+pub(crate) fn run_regions_inline_during(work: &mut dyn FnMut()) {
+    struct Reset(ThreadId);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            let mut threads = INLINE_REGION_THREADS.lock();
+            if let Some(at) = threads.iter().rposition(|&it| it == self.0) {
+                threads.swap_remove(at);
+            }
+        }
+    }
+    let thread = std::thread::current().id();
+    INLINE_REGION_THREADS.lock().push(thread);
+    let _reset = Reset(thread);
+    work();
+}
+
 fn runs_regions_inline() -> bool {
+    INLINE_REGION_THREADS
+        .lock()
+        .contains(&std::thread::current().id())
+}
+
+/// A pool thread that waited until other pool threads have started its tasks could wait forever, because they may all be waiting like it.
+fn is_pool_thread() -> bool {
     !bun_threading::thread_pool::Thread::current().is_null()
-        || INLINE_REGION_THREADS
-            .lock()
-            .contains(&std::thread::current().id())
 }
 
 /// From now on parallel regions run on their own pool. This is for work that blocks its thread on something Bun's pool
@@ -372,13 +411,94 @@ fn runs_regions_inline() -> bool {
 /// whose modules are loaded on that pool. `name`: the prefix of the thread names, before their number.
 pub fn use_dedicated_pool(name: &'static str) {
     DEDICATED_POOL.get_or_init(|| {
-        bun_threading::ThreadPool::init(bun_threading::thread_pool::Config {
+        let pool = bun_threading::ThreadPool::init(bun_threading::thread_pool::Config {
             max_threads: u32::from(bun_core::get_thread_count()),
             stack_size: WORKER_STACK_SIZE,
             ..Default::default()
         })
         .named(name)
+        .without_spare_threads();
+        if FITS_THREADS_TO_SOURCES.load(Ordering::Relaxed) {
+            pool.limit_threads(threads_for_sources_read());
+        } else if let Some(count) = NonZeroUsize::new(*CHOSEN_THREADS.lock()) {
+            pool.limit_threads(count.get());
+        }
+        pool
     });
+}
+
+static FITS_THREADS_TO_SOURCES: AtomicBool = AtomicBool::new(false);
+static SOURCE_BYTES_READ: AtomicUsize = AtomicUsize::new(0);
+/// The sum over the builds that chose and have not ended. 0: nobody chose.
+static CHOSEN_THREADS: Guarded<usize> = Guarded::new(0);
+
+/// A thread that joins a build touches megabytes of its own first, which takes about two milliseconds.
+const SOURCE_BYTES_PER_THREAD: usize = 32 << 10;
+/// The libraries' declarations and Bun's own modules, which are part of every build, keep this many threads busy.
+const THREADS_FOR_ANY_PROGRAM: usize = 4;
+
+fn threads_for_sources_read() -> usize {
+    THREADS_FOR_ANY_PROGRAM + SOURCE_BYTES_READ.load(Ordering::Relaxed) / SOURCE_BYTES_PER_THREAD
+}
+
+/// From now on the dedicated pool starts no more threads than there is source text for: `THREADS_FOR_ANY_PROGRAM`, and one more for every `SOURCE_BYTES_PER_THREAD` reported to `did_read_source` since this call.
+pub fn fit_threads_to_sources() {
+    SOURCE_BYTES_READ.store(0, Ordering::Relaxed);
+    FITS_THREADS_TO_SOURCES.store(true, Ordering::Relaxed);
+    if let Some(pool) = DEDICATED_POOL.get() {
+        pool.limit_threads(THREADS_FOR_ANY_PROGRAM);
+    }
+}
+
+/// The threads of a build whose thread count somebody chose. The builds of a process share the dedicated pool: it starts no more
+/// threads than those that have not ended chose together.
+pub struct ChosenThreads(usize);
+
+impl ChosenThreads {
+    /// Undoes `fit_threads_to_sources`.
+    pub fn new(count: NonZeroUsize) -> ChosenThreads {
+        FITS_THREADS_TO_SOURCES.store(false, Ordering::Relaxed);
+        let mut chosen = CHOSEN_THREADS.lock();
+        *chosen += count.get();
+        if let Some(pool) = DEDICATED_POOL.get() {
+            pool.allow_threads(*chosen);
+            pool.limit_threads(*chosen);
+        }
+        ChosenThreads(count.get())
+    }
+}
+
+impl Drop for ChosenThreads {
+    fn drop(&mut self) {
+        let mut chosen = CHOSEN_THREADS.lock();
+        *chosen -= self.0;
+        if let Some(pool) = DEDICATED_POOL.get()
+            && *chosen != 0
+        {
+            pool.limit_threads(*chosen);
+        }
+    }
+}
+
+/// The dedicated pool may have `count` threads, whatever the source text read so far has allowed.
+pub fn allow_threads(count: NonZeroUsize) {
+    if let Some(pool) = DEDICATED_POOL.get() {
+        pool.allow_threads(count.get());
+    }
+}
+
+/// Call this for each of the program's own files, not for those that are part of every build.
+pub fn did_read_source(bytes: usize) {
+    if !FITS_THREADS_TO_SOURCES.load(Ordering::Relaxed) {
+        return;
+    }
+    let before = SOURCE_BYTES_READ.fetch_add(bytes, Ordering::Relaxed);
+    if before / SOURCE_BYTES_PER_THREAD == (before + bytes) / SOURCE_BYTES_PER_THREAD {
+        return;
+    }
+    if let Some(pool) = DEDICATED_POOL.get() {
+        pool.allow_threads(threads_for_sources_read());
+    }
 }
 
 /// The pool that parallel regions run on.
@@ -395,9 +515,207 @@ struct Region<'a> {
     count: usize,
     run: usize,
     work: &'a (dyn Fn(usize) + Sync),
+    panic: FirstPanic,
 }
 
-impl Region<'_> {
+/// A panic on any thread of a region continues on the thread that started the region, once every thread has left it.
+/// This is for test programs. Bun aborts when it panics.
+#[derive(Default)]
+struct FirstPanic {
+    #[cfg(panic = "unwind")]
+    payload: Guarded<Option<Box<dyn std::any::Any + Send>>>,
+}
+
+impl FirstPanic {
+    /// Returns whether `run` returned.
+    fn catch(&self, run: impl FnOnce()) -> bool {
+        #[cfg(panic = "unwind")]
+        if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)) {
+            self.payload.lock().get_or_insert(payload);
+            return false;
+        }
+        #[cfg(not(panic = "unwind"))]
+        run();
+        true
+    }
+
+    fn resume(&self) {
+        #[cfg(panic = "unwind")]
+        {
+            let Some(payload) = self.payload.lock().take() else {
+                return;
+            };
+            let text = payload.downcast_ref::<String>().map(String::as_str);
+            match text.or_else(|| payload.downcast_ref::<&str>().copied()) {
+                // A test harness shows what the calling thread prints.
+                Some(text) => panic!("{text}"),
+                None => std::panic::resume_unwind(payload),
+            }
+        }
+    }
+}
+
+/// A region that pool threads may join until it's closed.
+struct JoinableRegion {
+    /// Valid while `state` counts a helper: the thread that started the region waits until it counts none.
+    region: *const Region<'static>,
+    /// `JoinableRegion::IS_CLOSED`, plus `JoinableRegion::ONE_HELPER` for each helper that is at work.
+    state: AtomicU32,
+    /// How many more helpers may be asked for.
+    helpers_left: AtomicUsize,
+}
+
+// SAFETY: `region` is only read, by `help`, and a `Region` is shared between threads by design.
+unsafe impl Send for JoinableRegion {}
+// SAFETY: as above.
+unsafe impl Sync for JoinableRegion {}
+
+impl JoinableRegion {
+    const IS_CLOSED: u32 = 1;
+    const ONE_HELPER: u32 = 2;
+
+    /// Asks the pool threads that have nothing to do right now to help, as far as there is a run for each.
+    ///
+    /// # Safety
+    /// `region` is valid: the caller started the region, or `state` counts it.
+    unsafe fn ask_idle_threads(self: &Arc<JoinableRegion>) {
+        use bun_threading::thread_pool::{Batch, Node, Task};
+        #[repr(C)]
+        struct Helper {
+            task: Task,
+            region: Arc<JoinableRegion>,
+        }
+        unsafe fn help(task: *mut Task) {
+            // SAFETY: the first field of a `Helper` allocated below, which is queued once.
+            let helper = unsafe { bun_core::heap::take(task.cast::<Helper>()) };
+            helper.region.help();
+        }
+        if self.helpers_left.load(Ordering::Relaxed) == 0 {
+            return;
+        }
+        let pool = region_pool();
+        // SAFETY: the caller's.
+        let runs_left = unsafe { (*self.region).runs_left() };
+        let wanted = pool.available_threads().min(runs_left.saturating_sub(1));
+        if wanted == 0 {
+            return;
+        }
+        let take = |left: usize| Some(left - wanted.min(left));
+        let left = self
+            .helpers_left
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, take)
+            .unwrap_or(0);
+        let helpers = wanted.min(left);
+        if helpers == 0 {
+            return;
+        }
+        let mut batch = Batch::default();
+        for _ in 0..helpers {
+            let task = Task {
+                node: Node::default(),
+                callback: help,
+            };
+            let region = Arc::clone(self);
+            let helper = bun_core::heap::into_raw(Box::new(Helper { task, region }));
+            batch.push(Batch::from(helper.cast::<Task>()));
+        }
+        pool.schedule(batch);
+    }
+
+    fn help(self: &Arc<JoinableRegion>) {
+        let joined = self
+            .state
+            .try_update(Ordering::Acquire, Ordering::Relaxed, |state| {
+                (state & JoinableRegion::IS_CLOSED == 0)
+                    .then_some(state + JoinableRegion::ONE_HELPER)
+            });
+        if joined.is_err() {
+            return;
+        }
+        // SAFETY: `state` counts this thread.
+        unsafe { (*self.region).work_off_asking(&mut || self.ask_idle_threads()) };
+        self.state
+            .fetch_or(JoinableRegion::IS_CLOSED, Ordering::Relaxed);
+        let before = self
+            .state
+            .fetch_sub(JoinableRegion::ONE_HELPER, Ordering::Release);
+        if before == JoinableRegion::IS_CLOSED | JoinableRegion::ONE_HELPER {
+            bun_threading::Futex::wake(&self.state, 1);
+        }
+    }
+
+    fn close_and_wait_for_helpers(&self) {
+        self.state
+            .fetch_or(JoinableRegion::IS_CLOSED, Ordering::Relaxed);
+        loop {
+            let state = self.state.load(Ordering::Acquire);
+            if state == JoinableRegion::IS_CLOSED {
+                return;
+            }
+            bun_threading::Futex::wait_forever(&self.state, state);
+        }
+    }
+}
+
+impl<'a> Region<'a> {
+    fn new(
+        caches: &'a ThreadCaches,
+        count: usize,
+        run: usize,
+        work: &'a (dyn Fn(usize) + Sync),
+    ) -> Region<'a> {
+        Region {
+            caches,
+            next: AtomicUsize::new(0),
+            count,
+            run,
+            work,
+            panic: FirstPanic::default(),
+        }
+    }
+
+    /// `work_off` on the calling thread, which at most `helpers` pool threads with nothing else to do join: those that
+    /// are idle now, and those that become idle while there are runs left.
+    fn work_off_with_idle_threads(&self, helpers: usize) {
+        if helpers == 0 {
+            return self.work_off();
+        }
+        let mut joinable: Option<Arc<JoinableRegion>> = None;
+        self.work_off_asking(&mut || {
+            if joinable.is_none() && region_pool().available_threads() == 0 {
+                return;
+            }
+            let joinable = joinable.get_or_insert_with(|| {
+                Arc::new(JoinableRegion {
+                    region: std::ptr::from_ref(self).cast::<Region<'static>>(),
+                    state: AtomicU32::new(0),
+                    helpers_left: AtomicUsize::new(helpers),
+                })
+            });
+            // SAFETY: this thread started the region.
+            unsafe { joinable.ask_idle_threads() };
+        });
+        if let Some(joinable) = joinable {
+            joinable.close_and_wait_for_helpers();
+        }
+    }
+
+    fn runs_left(&self) -> usize {
+        let claimed = self.next.load(Ordering::Relaxed);
+        self.count.saturating_sub(claimed).div_ceil(self.run)
+    }
+
+    /// `work_off` that calls `ask` before each run.
+    fn work_off_asking(&self, ask: &mut dyn FnMut()) {
+        let _lent = self.caches.lend();
+        loop {
+            ask();
+            if !self.works_on_next_run() {
+                break;
+            }
+        }
+    }
+
     /// `work_off`, for a thread that already has its caches. Before each run it looks for spare threads to help.
     fn work_off_with_spare_threads(&self, shares: &Shares) {
         loop {
@@ -415,36 +733,71 @@ impl Region<'_> {
                     || self.work_off_with_spare_threads(shares),
                 );
             }
-            let from = self.next.fetch_add(self.run, Ordering::Relaxed);
-            if from >= self.count {
+            if !self.works_on_next_run() {
                 break;
-            }
-            for i in from..(from + self.run).min(self.count) {
-                (self.work)(i);
             }
         }
     }
 
     fn work_off(&self) {
         let _lent = self.caches.lend();
-        loop {
-            let from = self.next.fetch_add(self.run, Ordering::Relaxed);
-            if from >= self.count {
-                break;
-            }
+        while self.works_on_next_run() {}
+    }
+
+    /// False: no run is left.
+    fn works_on_next_run(&self) -> bool {
+        let from = self.next.fetch_add(self.run, Ordering::Relaxed);
+        if from >= self.count {
+            return false;
+        }
+        let has_returned = self.panic.catch(|| {
             for i in from..(from + self.run).min(self.count) {
                 (self.work)(i);
             }
+        });
+        if !has_returned {
+            self.next.store(self.count, Ordering::Relaxed);
         }
+        has_returned
     }
 }
 
 /// A checker is replaced after it has checked `1 / MIN_TASKS` of the total cost, because its private tables grow with
 /// every file. A file that costs more than that is heavy and starts before the others.
 const MIN_TASKS: usize = 128;
+/// See `TaskSize::ByCostAndThreads`.
+const TASKS_PER_THREAD: usize = 64;
 /// A thread takes a run of consecutive files from the queue at a time. The run's cost is the remaining cost divided by
 /// the number of threads and by this.
 const RUNS_PER_THREAD: usize = 4;
+
+/// A thread calls this after each file it has checked. `files_left` is the number of files no thread has finished.
+///
+/// What a thread frees after a file lies between blocks that stay until the end of the check, so the pages stay
+/// resident, and no other thread can use them. On 157 MB of TypeScript that's 22 MB for each thread. Memory use is
+/// highest when the last files are checked, so the thread gives that memory back each time the number of files left
+/// has fallen by an eighth: under a hundred times in a check of 30,000 files, and most often near the end. At each
+/// halving it left 250 MB more at the peak of a program of 45,000 modules on 16 threads, and took the same time. More
+/// often than this gains nothing and takes longer.
+fn give_back_free_memory(files_left: usize) {
+    thread_local! {
+        /// `files_left` when the thread last gave memory back, or at its first file.
+        static LEFT_BEFORE: Cell<usize> = const { Cell::new(0) };
+    }
+    let before = LEFT_BEFORE.get();
+    let is_due = has_fallen_by_an_eighth(before, files_left);
+    // With more files left than before, this is the thread's first file of another check.
+    if is_due || files_left > before {
+        LEFT_BEFORE.set(files_left);
+    }
+    if is_due {
+        bun_sema::session::give_back_free_memory();
+    }
+}
+
+fn has_fallen_by_an_eighth(before: usize, files_left: usize) -> bool {
+    files_left < before && files_left <= before - before / 8
+}
 
 /// How many files a task checks. See `PlanOptions::task_size`.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -452,6 +805,10 @@ pub enum TaskSize {
     /// `1 / MIN_TASKS` of the total cost. In a program with fewer files than that, no two files share a task.
     #[default]
     ByCost,
+    /// As `ByCost`, with at least `TASKS_PER_THREAD` tasks for each thread. The tasks that run hold their private tables,
+    /// and a build also the trees that they have read and those of the files that were lowered since they began. So all
+    /// of them together get a small share of the program, however large it is.
+    ByCostAndThreads,
     OneFile,
     /// Every file that its thread takes from the queue, for as long as they're in program order. With one thread and
     /// `Request::order` 1, one task checks the whole program.
@@ -485,6 +842,9 @@ pub struct PlanOptions {
     /// copies the lines around it, which in a one-line bundle is a copy of the file. And the files aren't checked:
     /// `Request::after_file` requests the types it needs. See `Requested::Types`.
     pub skips_file_diagnostics: bool,
+    /// The configuration file of a path is looked for no further up than the directory that has its `package.json`
+    /// (`config::find_config_of_package`), and not from the working directory.
+    pub stays_inside_package: bool,
     /// A file of `Request::paths` is only checked in a project that includes it: the project of the nearest
     /// configuration file or one that it references, or else the same for the configuration files further up
     /// (`findOrCreateDefaultConfiguredProjectWorker`). A file that no project includes isn't checked.
@@ -905,6 +1265,17 @@ pub struct Request<'a> {
     /// still alive. This is how to read the type of every expression. A discarded task's files are rechecked, so this
     /// can be called more than once for a file, and the last call counts.
     pub after_file: Option<&'a (dyn Fn(&mut bun_sema::check::Checker<'_, '_>, FileId) + Sync)>,
+    /// Called with the loaded program, before any of it is checked.
+    #[cfg(test)]
+    pub loaded: Option<&'a (dyn Fn(&Program) + Sync)>,
+}
+
+/// One pass over the queue of files, as it ran.
+#[cfg(test)]
+#[derive(Clone)]
+pub struct RoundReport {
+    pub tasks: usize,
+    pub files: usize,
 }
 
 /// A diagnostic, ready to be formatted.
@@ -939,6 +1310,9 @@ pub struct Diagnostic {
     /// The project of a build that reported it, in build order. A file that two projects include counts as a file of
     /// each, just as it's a `SourceFile` of each program.
     pub project: u32,
+    pub class: DiagnosticClass,
+    pub subject: DiagnosticSubject,
+    pub file: Option<FileId>,
 }
 
 /// `taskResult.builder`: how much of a `Report` one task of a build printed.
@@ -956,6 +1330,8 @@ pub struct Incomplete {
     /// `hir::File::ran_out_of_stack`: the stack was too small for the tree. Otherwise it was too small for a checker
     /// query, which was abandoned.
     pub is_nested_too_deeply: bool,
+    /// `hir::File::deepest_nesting`, where the tree is whole.
+    pub deepest_nesting: u32,
 }
 
 impl Incomplete {
@@ -1046,6 +1422,8 @@ pub struct Report {
     pub files_not_checked: usize,
     /// The number of tasks that checked them. See `PlanOptions::task_size`.
     pub tasks_run: usize,
+    #[cfg(test)]
+    pub rounds: Vec<RoundReport>,
     /// Number of projects reported, if `references` are followed. Otherwise 0.
     pub projects_checked: usize,
     /// The configuration file has `references` and no files of its own, and `--build` wasn't given. `tsc` checks
@@ -1058,6 +1436,8 @@ pub struct Report {
     pub check_time: Duration,
     /// The maximum stack usage of any file, in bytes.
     pub deepest_stack: usize,
+    /// `Checker::work` of all the checkers together.
+    pub queries: usize,
 }
 
 impl Report {
@@ -1091,8 +1471,11 @@ impl Report {
         self.files_checked += other.files_checked;
         self.files_not_checked += other.files_not_checked;
         self.tasks_run += other.tasks_run;
+        #[cfg(test)]
+        self.rounds.extend(other.rounds);
         self.check_time += other.check_time;
         self.deepest_stack = self.deepest_stack.max(other.deepest_stack);
+        self.queries += other.queries;
     }
 
     /// `BuildTask.report`
@@ -1162,6 +1545,9 @@ fn new_compiler_diagnostic(code: u32, args: Box<[Box<[u8]>]>) -> Diagnostic {
         source_line: 0,
         related: Vec::new(),
         project: 0,
+        class: DiagnosticClass::of_code(code),
+        subject: DiagnosticSubject::None,
+        file: None,
     }
 }
 
@@ -1826,7 +2212,10 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         if let Some(known) = nearest_to.borrow().get(dir) {
             return known.clone();
         }
-        let nearest = config::find_config(disk, dir).or_else(|| config::find_config(disk, &cwd));
+        let nearest = match request.plan_options.stays_inside_package {
+            true => config::find_config_of_package(disk, dir),
+            false => config::find_config(disk, dir).or_else(|| config::find_config(disk, &cwd)),
+        };
         nearest_to
             .borrow_mut()
             .insert(dir.to_vec(), nearest.clone());
@@ -2843,6 +3232,9 @@ impl Host for WithOutputs<'_> {
             None => self.disk.parallel_while(count, work, meanwhile),
         }
     }
+    fn run_regions_inline(&self, work: &mut dyn FnMut()) {
+        self.disk.run_regions_inline(work);
+    }
     fn is_single_threaded(&self) -> bool {
         (self.built_now).is_some_and(|built_now| self.helpers(built_now) == 0)
     }
@@ -3544,6 +3936,8 @@ fn sort_and_deduplicate_with(
     diagnostics.dedup_by(|next, first| {
         let is_same = equal_diagnostics_no_related_info(first, next);
         if is_same {
+            first.class = first.class.stricter(next.class);
+            first.subject = first.subject.or(next.subject);
             first.related.append(&mut next.related);
             first.related.shared_sort_by(compare_diagnostics);
             first
@@ -3652,18 +4046,30 @@ fn may_declare_a_global(
     let Some(text) = host.read(path) else {
         return false;
     };
-    let has = |word: &[u8]| strings::contains(&text, word);
+    text_may_declare_a_global(path, &text, every_file_is_a_module, imports)
+}
+
+fn text_may_declare_a_global(
+    path: &[u8],
+    text: &[u8],
+    every_file_is_a_module: bool,
+    imports: &dyn Fn(&[u8]),
+) -> bool {
+    let has = |word: &[u8]| strings::contains(text, word);
     // `/// <reference lib="webworker" />`
     if has(b"<reference ") {
         return true;
     }
-    let mut from = 0;
-    while let Some(found) = strings::index_of(&text[from..], b"global") {
-        let before = text[..from + found].trim_ascii_end();
-        if before.len() < from + found && before.ends_with(b"declare") {
-            return true;
+    // `declare global`, and `declare module "x"`, which in a module adds to the module x.
+    for word in [&b"global"[..], b"module"] {
+        let mut from = 0;
+        while let Some(found) = strings::index_of(&text[from..], word) {
+            let before = text[..from + found].trim_ascii_end();
+            if before.len() < from + found && before.ends_with(b"declare") {
+                return true;
+            }
+            from += found + word.len();
         }
-        from += found + b"global".len();
     }
     let (mut from, mut has_import) = (0, false);
     while let Some(found) = strings::index_of(&text[from..], b"import") {
@@ -3679,6 +4085,125 @@ fn may_declare_a_global(
         && !has_import
         && !has(b"export")
         && !(is_javascript(path) && has(b"require"))
+}
+
+/// Calls `visit` with each string that stands behind `from`, `import` or `require`, in any form. Judged by the text: a false
+/// positive only costs a parse.
+fn for_each_imported_name(text: &[u8], visit: &mut dyn FnMut(&[u8])) {
+    for word in [&b"from"[..], b"import", b"require"] {
+        let mut from = 0;
+        while let Some(found) = strings::index_of(&text[from..], word) {
+            from += found + word.len();
+            let rest = text[from..].trim_ascii_start();
+            let rest = rest.strip_prefix(b"(").unwrap_or(rest).trim_ascii_start();
+            if let [quote @ (b'"' | b'\''), name @ ..] = rest
+                && let Some(end) = strings::index_of_char_usize(name, *quote)
+            {
+                visit(&name[..end]);
+            }
+        }
+    }
+}
+
+/// The path of `name`, which is relative, as seen from the folder `directory`.
+fn path_from_folder(directory: &[u8], name: &[u8]) -> Vec<u8> {
+    let joined = [directory, b"/", name].concat();
+    let mut parts: Vec<&[u8]> = Vec::new();
+    for part in strings::split(&joined, b"/") {
+        match part {
+            b"." => {}
+            b".." if parts.last().is_some_and(|last| !last.is_empty()) => drop(parts.pop()),
+            _ => parts.push(part),
+        }
+    }
+    parts.join(&b'/')
+}
+
+/// True if an import of `path`, a path without its resolution, may find one of `listed`.
+fn finds_listed_file(listed: &FxHashSet<&[u8]>, path: &[u8]) -> bool {
+    const ENDINGS: [&[u8]; 16] = [
+        b"",
+        b".ts",
+        b".tsx",
+        b".d.ts",
+        b".mts",
+        b".cts",
+        b".js",
+        b".jsx",
+        b".mjs",
+        b".cjs",
+        b".json",
+        b"/index.ts",
+        b"/index.tsx",
+        b"/index.d.ts",
+        b"/index.js",
+        b"/index.jsx",
+    ];
+    const WRITTEN_AS_JAVASCRIPT: [(&[u8], &[&[u8]]); 4] = [
+        (b".js", &[b".ts", b".tsx", b".d.ts"]),
+        (b".jsx", &[b".tsx"]),
+        (b".mjs", &[b".mts", b".d.mts"]),
+        (b".cjs", &[b".cts", b".d.cts"]),
+    ];
+    let is_listed =
+        |path: &[u8], ending: &[u8]| listed.contains([path, ending].concat().as_slice());
+    ENDINGS.iter().any(|ending| is_listed(path, ending))
+        || WRITTEN_AS_JAVASCRIPT.iter().any(|(written, endings)| {
+            path.strip_suffix(*written)
+                .is_some_and(|stem| endings.iter().any(|ending| is_listed(stem, ending)))
+        })
+}
+
+/// The files of `files` that a program that starts elsewhere can't see unless it names them: modules that declare nothing for
+/// other files and bring in nothing that could. A file of `files` that one imports is judged by itself. A file beyond them may
+/// declare anything, and of the files that name a package the first brings the package in. `is_wanted`: a file that counts
+/// whatever it holds. So a check of a few files of a large project reads each of the others once and parses only the few that
+/// matter.
+fn find_files_others_cannot_see(
+    host: &dyn Host,
+    files: &[Vec<u8>],
+    every_file_is_a_module: bool,
+    is_wanted: &(dyn Fn(&[u8]) -> bool + Sync),
+) -> FxHashSet<Vec<u8>> {
+    let listed: FxHashSet<&[u8]> = files.iter().map(|it| it.as_slice()).collect();
+    let may_be_seen: Vec<AtomicBool> = files.iter().map(|_| AtomicBool::new(false)).collect();
+    let packages: Guarded<Vec<(Vec<u8>, usize)>> = Guarded::new(Vec::new());
+    host.parallel(files.len(), &|at| {
+        let file = &files[at][..];
+        let is_seen = is_wanted(file) || is_declaration_file_name(file) || {
+            let text = (!file.ends_with(b".json"))
+                .then(|| host.read(file))
+                .flatten();
+            text.is_some_and(|text| {
+                let mut leads_beyond = false;
+                let mut named: Vec<(Vec<u8>, usize)> = Vec::new();
+                for_each_imported_name(&text, &mut |name| {
+                    if !is_relative(name) {
+                        named.push((name.to_vec(), at));
+                    } else if !leads_beyond {
+                        let path = path_from_folder(dirname::<Posix>(file), name);
+                        leads_beyond = !finds_listed_file(&listed, &path);
+                    }
+                });
+                if !named.is_empty() {
+                    packages.lock().append(&mut named);
+                }
+                leads_beyond
+                    || text_may_declare_a_global(file, &text, every_file_is_a_module, &|_| {})
+            })
+        };
+        may_be_seen[at].store(is_seen, Ordering::Relaxed);
+    });
+    // One file per name is enough to bring the package in, so the first counts.
+    let mut packages = std::mem::take(&mut *packages.lock());
+    packages.shared_sort_unstable();
+    packages.dedup_by(|a, b| a.0 == b.0);
+    for (_, at) in packages {
+        may_be_seen[at].store(true, Ordering::Relaxed);
+    }
+    let unseen = files.iter().zip(&may_be_seen);
+    let unseen = unseen.filter(|(_, it)| !it.load(Ordering::Relaxed));
+    unseen.map(|(file, _)| file.clone()).collect()
 }
 
 /// `check_project`. `named`: of all loaded files, only these files (sorted) and the files they refer to are checked.
@@ -3815,6 +4340,17 @@ fn check_named_files(
         && project.written.include.is_none()
         && project.written.files.is_none();
     let included = project.files.len();
+    if !request.plan_options.only_globals
+        && !project.options.reports_files_outside_its_roots()
+        && let Some(named) = named
+    {
+        let is_module = project.options.module_detection == ModuleDetection::Force;
+        let is_case_sensitive = host.is_case_sensitive();
+        project.options.roots_read_when_named =
+            find_files_others_cannot_see(host, &project.files, is_module, &|file| {
+                is_among(named, &to_path(file, is_case_sensitive))
+            });
+    }
     let raw_options = std::mem::take(&mut project.raw_compiler_options);
     let is_true = |name: &[u8]| raw_options.contains(&(name.to_vec(), Json::Bool(true)));
     project.options.keeps_comments = request.after_file.is_some();
@@ -3879,6 +4415,12 @@ fn check_named_files(
             example: example.clone(),
             load_time: report.load_time,
         });
+    }
+    #[cfg(test)]
+    {
+        if let Some(loaded) = request.loaded {
+            loaded(program);
+        }
     }
     let explains_files = is_true(b"explainFiles");
     let explain_files = |has_made_diagnostics: bool| {
@@ -3979,6 +4521,68 @@ fn check_named_files(
     // index.
     let rank = |f: FileId| program.files.rank_of_file(f);
     to_check.shared_sort_by_key(|&f| rank(f));
+    let report = check_loaded_files(LoadedFiles {
+        host,
+        request,
+        program,
+        report,
+        config_path,
+        to_check,
+        threads,
+        in_room,
+        is_reached,
+        explains_files,
+        explain_files: &explain_files,
+        lists_files_only,
+        about_options,
+        always_reported,
+        checking,
+        file_work: None,
+    });
+    root.release();
+    report
+}
+
+struct LoadedFiles<'a, 's> {
+    host: &'a dyn Host,
+    request: &'a Request<'a>,
+    program: &'a Program<'s>,
+    report: Report,
+    config_path: Vec<u8>,
+    to_check: Vec<FileId>,
+    threads: usize,
+    in_room: Option<&'a RoomSlot<'a>>,
+    is_reached: Option<Vec<bool>>,
+    explains_files: bool,
+    explain_files: &'a dyn Fn(bool) -> Vec<Vec<u8>>,
+    lists_files_only: bool,
+    about_options: Vec<Diagnostic>,
+    always_reported: usize,
+    checking: Instant,
+    file_work: Option<&'a compile::FileWork<'a, 's>>,
+}
+
+fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
+    let LoadedFiles {
+        host,
+        request,
+        program,
+        mut report,
+        config_path,
+        to_check,
+        threads,
+        in_room,
+        is_reached,
+        explains_files,
+        explain_files,
+        lists_files_only,
+        mut about_options,
+        always_reported,
+        checking,
+        file_work,
+    } = loaded;
+    let session = program.session;
+    let first_round = file_work.map_or(0, |work| work.first_round);
     let size = |f: FileId| program.files.modules[f.idx()].hir.source_len;
     report.files_checked = to_check.len();
     // `SkipTypeChecking`: besides its syntax errors, such a file only has what `Emit` reports, which is called after
@@ -3988,8 +4592,8 @@ fn check_named_files(
     // A `Checker` is about 30 KB. Boxing keeps this function's stack frame small.
     let boxed_checker = |spare| Box::new(program.checker_reusing(spare));
     let checker = boxed_checker(None);
-    let (type_checked, only_emitted): (Vec<FileId>, Vec<FileId>) =
-        (to_check.into_iter()).partition(|&file| checker.reports_semantic_errors(file));
+    let (type_checked, only_emitted): (Vec<FileId>, Vec<FileId>) = (to_check.into_iter())
+        .partition(|&file| file_work.is_some() || checker.reports_semantic_errors(file));
     drop(checker);
     let is_any_type_checked = !type_checked.is_empty();
     let (to_check, only_emitted) = match is_any_type_checked {
@@ -4012,6 +4616,7 @@ fn check_named_files(
     let emit_diagnostics: Guarded<Vec<Vec<Diagnostic>>> = Guarded::new(Vec::new());
     let incomplete: Guarded<Vec<Incomplete>> = Guarded::new(Vec::new());
     let deepest_stack = AtomicUsize::new(0);
+    let queries = AtomicUsize::new(0);
     // `Files::parse_and_bind` retains the text of every file except those of the default library.
     let text_of = |file: FileId| {
         let module = &program.files.modules[file.idx()];
@@ -4021,6 +4626,9 @@ fn check_named_files(
             std::borrow::Cow::Borrowed(&module.hir.text[..])
         }
     };
+    // The text and the line starts of each file that related information in another file points into. Thousands of
+    // errors can point into one declaration file.
+    let related_files: ShardedMap<FileId, (Cow<'_, [u8]>, Vec<u32>)> = ShardedMap::default();
     let show = |file: FileId, errors: Vec<Explained>, found: &Guarded<Vec<Vec<Diagnostic>>>| {
         if errors.is_empty() || request.plan_options.skips_file_diagnostics {
             return;
@@ -4042,6 +4650,7 @@ fn check_named_files(
                             text: related.text,
                             args: related.args,
                             message_chain: related.message_chain,
+                            file: compile::file_of_related(related.at),
                             ..global(0, &[""; 0])
                         };
                         let Some((related_file, start, end)) = related.at else {
@@ -4068,15 +4677,15 @@ fn check_named_files(
                             };
                         }
                         let other = &program.files.modules[related_file.idx()];
-                        let text = &text_of(related_file)[..];
-                        located(
-                            other.file_name(),
-                            text,
-                            &compute_ecma_line_starts(text),
-                            start,
-                            end,
-                            reported,
-                        )
+                        let (text, starts) = match related_files.get_ref(&related_file) {
+                            Some(known) => known,
+                            None => {
+                                let text = text_of(related_file);
+                                let starts = compute_ecma_line_starts(&text);
+                                related_files.insert_ref(related_file, (text, starts))
+                            }
+                        };
+                        located(other.file_name(), text, starts, start, end, reported)
                     })
                     .collect();
                 let reported = Diagnostic {
@@ -4090,6 +4699,9 @@ fn check_named_files(
                     },
                     args: e.args,
                     message_chain: e.message_chain,
+                    class: e.class,
+                    subject: e.subject,
+                    file: Some(file),
                     ..global(0, &[""; 0])
                 };
                 let path = module.file_name();
@@ -4110,6 +4722,7 @@ fn check_named_files(
     let new_checker = |expected: Requested, spare| {
         let mut checker = boxed_checker(spare);
         checker.set_requested(expected);
+        checker.set_left_out_bodies(file_work.and_then(|work| work.left_out_bodies));
         checker.begin_stack_budget();
         checker
     };
@@ -4144,6 +4757,7 @@ fn check_named_files(
             }
         }
         deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
+        queries.fetch_add(checker.work as usize, Ordering::Relaxed);
         Outcome {
             checked,
             incomplete,
@@ -4154,9 +4768,14 @@ fn check_named_files(
         // The diagnostics that were found are reported. Others may be missing, so the report lists the file as
         // incomplete.
         for file in outcome.incomplete {
+            let hir = program.files.hir(file);
             incomplete.lock().push(Incomplete {
                 path: program.files.modules[file.idx()].file_name().to_vec(),
-                is_nested_too_deeply: program.files.hir(file).ran_out_of_stack,
+                is_nested_too_deeply: hir.ran_out_of_stack,
+                deepest_nesting: match hir.ran_out_of_stack {
+                    true => 0,
+                    false => hir.deepest_nesting(),
+                },
             });
         }
         unfinished.lock().extend(outcome.checked);
@@ -4170,6 +4789,7 @@ fn check_named_files(
             .map(|one| Guarded::new(Some(one)))
             .collect();
         let finish = |i: usize| {
+            let _reading = bun_sema::program::ReadingNoTrees::begin();
             let (file, mut checked) = unfinished[i].lock().take().unwrap();
             if let Some(emitted_text) = checked.declaration_file.take() {
                 let path = program.files.modules[file.idx()].file_name().to_vec();
@@ -4206,6 +4826,8 @@ fn check_named_files(
         _ => threads,
     };
     let tasks_run = AtomicUsize::new(0);
+    #[cfg(test)]
+    let rounds: Guarded<Vec<RoundReport>> = Guarded::new(Vec::new());
     // The files of the discarded tasks.
     let lost: Guarded<Vec<usize>> = Guarded::new(Vec::new());
     // Which files are final, and the length of the final prefix in program order. The task that checks the next file
@@ -4230,6 +4852,11 @@ fn check_named_files(
         was_retried_without_cycle: bool,
         /// The file was already rechecked once because all earlier files were done.
         was_retried_as_first: bool,
+        /// What the file imports, and what that imports, as far as it was not final when the visit was discarded. Without the
+        /// files of its own import cycle.
+        imports_awaited: Vec<usize>,
+        /// The file was already rechecked once because all that it imports and all earlier files in its import cycle were done.
+        was_retried_behind_imports: bool,
         /// Number of times the file was rechecked before the last round.
         rechecks: usize,
     }
@@ -4239,6 +4866,29 @@ fn check_named_files(
         .enumerate()
         .map(|(index, &file)| (file, index)))
     .collect();
+    let imports_of = |importer: usize| {
+        let module = program.files.module(to_check[importer]);
+        let imported = module.edges.iter().chain(module.code_edges);
+        imported.filter_map(|file| index_of_file.get(file).copied())
+    };
+    // Whether the files in the import cycle of `to_check[index]` that come before it are final. `final_files`: what the lock holds.
+    let is_first_in_component = |index: usize, final_files: &(Vec<bool>, usize)| {
+        let (is_checked, next) = final_files;
+        let components = &program.files.components;
+        let component = components.of_file.get(to_check[index].idx());
+        let component = component.and_then(|&at| components.all.get(at as usize));
+        let same_component = component.map_or(&[][..], |it| it.files);
+        // Every file before `next` is final, and both lists are in program order.
+        let rank = |file: FileId| program.files.rank_of_file(file);
+        let final_members = to_check.get(*next).map_or(same_component.len(), |&first| {
+            same_component.partition_point(|&it| rank(it) < rank(first))
+        });
+        let same_component = same_component[final_members..].iter();
+        let same_component = same_component.filter_map(|it| index_of_file.get(it).copied());
+        same_component
+            .take_while(|&it| it < index)
+            .all(|before| is_checked[before])
+    };
     // A task that starts with a rechecked file gets its own round number, starting here, so task numbers stay unique.
     const FIRST_RECHECK_ROUND: usize = 2;
     // Every thread takes files from one queue until it's empty. `files`: in program order. `is_last_round`: one thread
@@ -4247,11 +4897,24 @@ fn check_named_files(
     // A file's check time is only known afterwards. So a thread only reserves the rest of its run, and a thread that
     // finds the queue empty takes half of another thread's run (`steal_run`).
     let run_tasks = |round: usize, files: &[usize], expected: Requested, is_last_round: bool| {
+        #[cfg(test)]
+        let tasks_before = tasks_run.load(Ordering::Relaxed);
+        // For the line that says where the threads of a round were.
+        let logs_round =
+            file_work.is_some() && bun_core::env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true);
+        let round_began = Instant::now();
+        let since_round_began = || round_began.elapsed().as_micros() as u64;
+        let (tasks_of_round, visits_thrown_away) = (AtomicUsize::new(0), AtomicUsize::new(0));
+        let most_logged_between_idle_moments = AtomicUsize::new(0);
+        let (busy, first_idle) = (AtomicU64::new(0), AtomicU64::new(u64::MAX));
+        // How long it took, when it began, and the bytes of its first file.
+        let longest_task = Guarded::new((0u64, 0u64, 0usize));
         let cost: usize = files.iter().map(|&file| size_of(file)).sum();
         // A checker is replaced after this much cost, because its private tables grow with every file.
         let task_cost = match request.plan_options.task_size {
             _ if is_last_round => usize::MAX,
             TaskSize::ByCost => (cost / MIN_TASKS).max(1),
+            TaskSize::ByCostAndThreads => (cost / MIN_TASKS.max(threads * TASKS_PER_THREAD)).max(1),
             TaskSize::OneFile => 1,
             TaskSize::Unlimited => usize::MAX,
         };
@@ -4259,15 +4922,64 @@ fn check_named_files(
         // The heavy files go first, largest first, so that no thread starts one when the others are nearly done. Then
         // the others in program order, because neighbors use the same types. A single thread takes them all in program
         // order.
-        let is_heavy = |file: &usize| workers != 1 && size_of(*file) >= task_cost;
+        // Shorter tasks make no more files heavy. Whatever starts ahead of program order meets cycles that it is not trusted
+        // about and commits that make a long task's invalid: with an eighth of the threshold, every second build of 13,000
+        // files of packages did a file of 10 MB twice.
+        let heavy_cost = match request.plan_options.task_size {
+            TaskSize::ByCostAndThreads if !is_last_round => (cost / MIN_TASKS).max(1),
+            _ => task_cost,
+        };
+        let is_heavy = |file: &usize| workers != 1 && size_of(*file) >= heavy_cost;
         let (mut queue, light): (Vec<usize>, Vec<usize>) =
             files.iter().partition(|it| is_heavy(it));
-        queue.shared_sort_by_key(|&file| Reverse(size_of(file)));
         let mut heavy = queue.len();
+        // The types of a JavaScript file come out of its code, so a heavy one asks about the code of what it imports. Where that
+        // is not final, its task meets cycles there that it is not trusted about, or a commit about those files makes its own
+        // invalid: it is thrown away, and may wait until the threads have come that far in program order. So of the other files
+        // those that heavy JavaScript files import, and what those import, go first, in program order, and such a heavy file
+        // begins when the last of its own has been taken. Every other heavy file begins at once.
+        let mut is_ahead = vec![false; to_check.len()];
+        let waits_for_imports = |file: usize| program.files.hir(to_check[file]).is_js;
+        let mut to_follow: Vec<usize> = (queue.iter().copied())
+            .filter(|&file| waits_for_imports(file))
+            .collect();
+        while let Some(importer) = to_follow.pop() {
+            for imported in imports_of(importer) {
+                if !std::mem::replace(&mut is_ahead[imported], true) {
+                    to_follow.push(imported);
+                }
+            }
+        }
+        let (ahead, light): (Vec<usize>, Vec<usize>) =
+            (light.into_iter()).partition(|&file| is_ahead[file]);
+        // For a file that goes ahead: how many of them have been taken when it has.
+        let mut taken_with = vec![0usize; to_check.len()];
+        for (at, &file) in ahead.iter().enumerate() {
+            taken_with[file] = at + 1;
+        }
+        // For a heavy file: how many of the files that go ahead have to be taken before it begins.
+        let mut taken_before = vec![0usize; to_check.len()];
+        let mut seen_from = vec![usize::MAX; to_check.len()];
+        for &heavy_file in queue.iter().filter(|&&file| waits_for_imports(file)) {
+            let mut to_follow = vec![heavy_file];
+            while let Some(importer) = to_follow.pop() {
+                for imported in imports_of(importer) {
+                    if std::mem::replace(&mut seen_from[imported], heavy_file) != heavy_file {
+                        taken_before[heavy_file] =
+                            taken_before[heavy_file].max(taken_with[imported]);
+                        to_follow.push(imported);
+                    }
+                }
+            }
+        }
+        queue.shared_sort_by_key(|&file| (taken_before[file], Reverse(size_of(file))));
+        let mut ahead_of_heavy = ahead.len();
+        let cost_ahead: usize = ahead.iter().map(|&file| size_of(file)).sum();
+        queue.extend(ahead);
         queue.extend(light);
         if request.order != 1 {
             queue.shared_sort_by_key(|&file| (file as u32 + 1).wrapping_mul(request.order));
-            heavy = 0;
+            (heavy, ahead_of_heavy) = (0, 0);
         }
         // Number of heavy files of `queue` taken, number of light ones taken, and the cost of the rest.
         let left = Guarded::new((0usize, 0usize, cost));
@@ -4278,23 +4990,64 @@ fn check_named_files(
         let take_run = |skips_heavy_files: bool| -> std::ops::Range<usize> {
             let (heavy_taken, light_taken, cost_left) = &mut *left.lock();
             let from = heavy + *light_taken;
-            if *heavy_taken < heavy && (!skips_heavy_files || from == queue.len()) {
+            let is_ahead_of_heavy = *light_taken < ahead_of_heavy;
+            if *heavy_taken < heavy
+                && *light_taken >= taken_before[queue[*heavy_taken]]
+                && (!skips_heavy_files || from == queue.len())
+            {
                 *heavy_taken += 1;
                 *cost_left = cost_left.saturating_sub(size_of(queue[*heavy_taken - 1]));
                 return *heavy_taken - 1..*heavy_taken;
             }
             let share = match is_last_round {
                 true => usize::MAX,
+                // Every thread gets some of them, so that they are soon done.
+                false if is_ahead_of_heavy => cost_ahead / (workers * RUNS_PER_THREAD),
                 false => *cost_left / (workers * RUNS_PER_THREAD),
             };
+            let end = match is_ahead_of_heavy {
+                true => heavy + ahead_of_heavy,
+                false => queue.len(),
+            };
             let (mut to, mut cost_of_run) = (from, 0);
-            while to < queue.len() && (to == from || cost_of_run < share) {
+            while to < end && (to == from || cost_of_run < share) {
                 cost_of_run += size_of(queue[to]);
                 to += 1;
             }
             *light_taken = to - heavy;
             *cost_left = cost_left.saturating_sub(cost_of_run);
             from..to
+        };
+        let beside_file = file_work
+            .and_then(|work| work.beside_file)
+            .filter(|_| workers > 1);
+        // Where in `queue` the files are that take one thread as long as all the files take all the threads.
+        let long_files: Vec<usize> = (0..heavy)
+            .filter(|&at| beside_file.is_some() && size_of(queue[at]) * workers >= cost)
+            .collect();
+        let long_files_with_second_thread = Guarded::new(0usize);
+        // A thread that comes once the visit of a long file has begun works beside it before it takes a file of its own.
+        let work_beside_a_file = || -> bool {
+            let Some(beside_file) = beside_file else {
+                return false;
+            };
+            let heavy_taken = left.lock().0;
+            let file = {
+                let mut served = long_files_with_second_thread.lock();
+                match long_files.get(*served) {
+                    Some(&at) if at < heavy_taken => {
+                        *served += 1;
+                        queue[at]
+                    }
+                    _ => return false,
+                }
+            };
+            let began = since_round_began();
+            let reading = bun_sema::program::ReadingTask::begin();
+            beside_file(to_check[file]);
+            drop(reading);
+            busy.fetch_add(since_round_began() - began, Ordering::Relaxed);
+            true
         };
         /// State that a worker with no files left waits on.
         #[derive(Default)]
@@ -4323,17 +5076,31 @@ fn check_named_files(
         //
         // A file that was discarded at a cycle is rechecked every time that cycle has been committed, because then it
         // gets past it. After an invalid commit or a missed cycle, nothing guarantees that the next commit won't
-        // discard the file again. So it gets one early recheck, and then waits until it's the first unchecked file. See
-        // also `take_first_unchecked_file`.
+        // discard the file again. So it gets one early recheck, and then waits until it's the first unchecked file or
+        // a worker has no other file (`is_idle`). See also `take_first_unchecked_file`.
         //
         // The round terminates, because a file is rechecked early only if another file became final since its last
         // visit began. That count only grows, and is bounded by the number of files. So it's greater at the start of
         // each early recheck of a file than at the start of the previous visit, whatever that visit was discarded for.
-        let take_file_to_recheck = || -> Option<usize> {
-            let next = final_files.lock().1;
+        let take_file_to_recheck = |is_idle: bool| -> Option<usize> {
+            let final_now = final_files.lock();
+            let next = final_now.1;
             let done = files_done.load(Ordering::Acquire);
             let last = program.last_commit();
             let (mut lost, mut visits) = (lost.lock(), visits.lock());
+            // Nothing is committed any more about what the file imports, and no cycle is left to close there. The cycles that are
+            // left only the importers of the file can reach, and about those a task is trusted once the earlier files of its
+            // import cycle are final. So it need not wait for every earlier file of the program.
+            let is_behind_its_imports = |file: usize, visit: &mut Visit| {
+                while visit
+                    .imports_awaited
+                    .pop_if(|&mut it| final_now.0[it])
+                    .is_some()
+                {}
+                !visit.was_retried_behind_imports
+                    && visit.imports_awaited.is_empty()
+                    && is_first_in_component(file, &final_now)
+            };
             let mut can_recheck = |file: usize| {
                 let visit = &mut visits[file];
                 let after = std::mem::replace(&mut visit.commits_compared, last);
@@ -4343,23 +5110,40 @@ fn check_named_files(
                 visit.can_recheck_early
                     && (visit.unresolved_cycle.is_empty()
                         && visit.files_done < done
-                        && (visit.was_discarded_at_cycle || !visit.was_retried_without_cycle)
-                        || file == next && !visit.was_retried_as_first)
+                        && (is_idle
+                            || visit.was_discarded_at_cycle
+                            || !visit.was_retried_without_cycle)
+                        || file == next && !visit.was_retried_as_first
+                        || is_behind_its_imports(file, visit))
             };
             let candidates = lost.iter().enumerate();
             let candidates = candidates.filter(|&(_, &file)| can_recheck(file));
             let candidates: Vec<(usize, usize)> =
                 candidates.map(|(at, &file)| (file, at)).collect();
             let &(file, at) = candidates.iter().min()?;
+            visits[file].was_retried_behind_imports |=
+                is_behind_its_imports(file, &mut visits[file]);
             visits[file].was_retried_as_first |= file == next;
             visits[file].was_retried_without_cycle |= !visits[file].was_discarded_at_cycle;
             visits[file].rechecks += 1;
             lost.swap_remove(at);
-            drop((lost, visits));
+            drop((lost, visits, final_now));
             if candidates.len() > 1 && activity.lock().waiting != 0 {
                 activity_has_changed.notify_one();
             }
             Some(file)
+        };
+        // The trees are freed when the last pass ends. Once a thread finds no file to take, packing them away first only
+        // takes time: the task of a long file would end with those of all the files that were committed while it ran.
+        let keeps_trees = AtomicBool::new(false);
+        let keep_the_trees_that_are_left = || {
+            if let Some(work) = file_work
+                && !is_last_round
+                && (work.is_last_pass)()
+                && !keeps_trees.swap(true, Ordering::Relaxed)
+            {
+                program.files.let_no_more_trees_go();
+            }
         };
         // Each thread's last task leaves its memory here for that thread's next task. The memory comes from the
         // thread's arena, so no other thread reuses it.
@@ -4373,13 +5157,16 @@ fn check_named_files(
                 let own = spares.iter().position(|it: &(ThreadId, _)| it.0 == thread);
                 own.map(|at| spares.swap_remove(at).1)
             };
+            let task_began = since_round_began();
+            let bytes_of_first = bytes_of(first);
             let mut checker = new_checker(expected, spare);
             // A task's index is the index of its first file, which is unique within the round.
             let round = match visits.lock()[first].rechecks {
                 rechecks if rechecks != 0 && !is_last_round => FIRST_RECHECK_ROUND + rechecks,
                 _ => round,
             };
-            checker.begin_task(round as u32, first as u32);
+            let reading = bun_sema::program::ReadingTask::begin();
+            checker.begin_task(first_round + round as u32, first as u32);
             checker.see_commits(is_last_round);
             let mut trees_to_free = Vec::new();
             let (mut spent, mut index) = (0, first);
@@ -4391,21 +5178,36 @@ fn check_named_files(
                     visit.files_done = files_done.load(Ordering::Acquire);
                 }
                 {
-                    let (is_checked, next) = &*final_files.lock();
-                    let is_done = |before: usize| is_checked[before];
-                    // The files in the same import cycle.
-                    let components = &program.files.components;
-                    let component = components.of_file.get(file.idx());
-                    let component = component.and_then(|&at| components.all.get(at as usize));
-                    let same_component = component.map_or(&[][..], |it| it.files).iter();
-                    let same_component =
-                        same_component.filter_map(|it| index_of_file.get(it).copied());
+                    let final_files = final_files.lock();
+                    let (is_checked, next) = &*final_files;
                     checker.set_first_in_order(
-                        (*next..index).all(is_done),
-                        same_component.take_while(|&it| it < index).all(is_done),
+                        (*next..index).all(|before| is_checked[before]),
+                        is_first_in_component(index, &final_files),
                     );
                 }
-                let checked = checker.check_file(file);
+                if let Some(work) = file_work {
+                    checker.set_requested((work.requested)(file));
+                }
+                let passes_over_depth_limit = file_work.is_some() && is_last_round;
+                checker.leave_depth_limit_unreported(passes_over_depth_limit);
+                checker.allow_refused_instantiations_of_next_file();
+                let mut checked = checker.check_file(file);
+                if passes_over_depth_limit {
+                    loop {
+                        match checker.compute_refused_instantiations() {
+                            RefusedInstantiations::None => break,
+                            RefusedInstantiations::Computed => {}
+                            RefusedInstantiations::StillRefused => {
+                                checker.leave_depth_limit_unreported(false)
+                            }
+                        }
+                        checked = checker.check_file(file);
+                        if !checker.leaves_depth_limit_unreported() {
+                            break;
+                        }
+                    }
+                    checker.leave_depth_limit_unreported(false);
+                }
                 if request.plan_options.discards_first_visits
                     && !is_last_round
                     && visits.lock()[index].rechecks == 0
@@ -4419,6 +5221,13 @@ fn check_named_files(
                     after_file(&mut checker, file);
                 }
                 let incomplete = checker.take_ran_out_of_stack().then_some(file);
+                if let Some(after_file) = file_work.and_then(|work| work.after_file)
+                    && !checker.was_discarded()
+                    && !is_last_round
+                {
+                    after_file(&mut checker, file);
+                    checker.take_ran_out_of_stack();
+                }
                 if let Some(progress) = request.progress {
                     progress.checked.fetch_add(1, Ordering::Relaxed);
                     let bytes = bytes_of(index);
@@ -4435,13 +5244,34 @@ fn check_named_files(
                         let bytes = bytes_of(index);
                         progress.bytes_checked.fetch_sub(bytes, Ordering::Relaxed);
                     }
+                    let imports_awaited = {
+                        let component_of = |index: usize| {
+                            (program.files.components.of_file).get(to_check[index].idx())
+                        };
+                        let mut is_seen = vec![false; to_check.len()];
+                        let (mut seen, mut followed) = (vec![index], 0);
+                        while let Some(&importer) = seen.get(followed) {
+                            followed += 1;
+                            let imported = imports_of(importer);
+                            seen.extend(
+                                imported.filter(|&it| !std::mem::replace(&mut is_seen[it], true)),
+                            );
+                        }
+                        let final_files = final_files.lock();
+                        seen.retain(|&it| {
+                            !final_files.0[it] && component_of(it) != component_of(index)
+                        });
+                        seen
+                    };
                     {
                         let visit = &mut visits.lock()[index];
                         visit.can_recheck_early = checker.can_recheck_early();
                         visit.unresolved_cycle = checker.take_unresolved_cycle();
                         visit.was_discarded_at_cycle = !visit.unresolved_cycle.is_empty();
+                        visit.imports_awaited = imports_awaited;
                     }
                     lost.lock().push(index);
+                    visits_thrown_away.fetch_add(1, Ordering::Relaxed);
                     note_change(upcoming.is_some());
                     break upcoming;
                 }
@@ -4452,8 +5282,22 @@ fn check_named_files(
                         *next += 1;
                     }
                 }
-                files_done.fetch_add(1, Ordering::Release);
-                if program.files.modules[file.idx()].is_leaf {
+                let done = files_done.fetch_add(1, Ordering::Release) + 1;
+                if let Some(work) = file_work
+                    && !is_last_round
+                {
+                    (work.after_commit)(file);
+                    if done == to_check.len() {
+                        keep_the_trees_that_are_left();
+                    }
+                    if (work.frees_tree)(file) && !keeps_trees.load(Ordering::Relaxed) {
+                        program.files.note_commit(file);
+                    }
+                }
+                give_back_free_memory(to_check.len().saturating_sub(done));
+                if program.files.modules[file.idx()].is_leaf
+                    && file_work.is_none_or(|work| (work.frees_tree)(file) && !is_last_round)
+                {
                     trees_to_free.push(file);
                 }
                 accept(Outcome {
@@ -4467,11 +5311,26 @@ fn check_named_files(
                 }
             };
             deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
+            queries.fetch_add(checker.work as usize, Ordering::Relaxed);
             tasks_run.fetch_add(1, Ordering::Relaxed);
+            most_logged_between_idle_moments.fetch_max(
+                checker.most_logged_between_idle_moments(),
+                Ordering::Relaxed,
+            );
             checker.end_task_after_commits();
             // The checker borrows the files' HIR, so it must be gone before their trees are freed.
             spares.lock().push((thread, checker.into_spare()));
             free_trees(trees_to_free);
+            drop(reading);
+            if logs_round {
+                let took = since_round_began() - task_began;
+                busy.fetch_add(took, Ordering::Relaxed);
+                tasks_of_round.fetch_add(1, Ordering::Relaxed);
+                let mut longest = longest_task.lock();
+                if took > longest.0 {
+                    *longest = (took, task_began, bytes_of_first);
+                }
+            }
             upcoming
         };
         let first_files_worker = AtomicUsize::new(usize::MAX);
@@ -4516,6 +5375,9 @@ fn check_named_files(
         let has_file_to_recheck = &has_file_to_recheck;
         let take_first_unchecked_file = &take_first_unchecked_file;
         let (activity, activity_has_changed) = (&activity, &activity_has_changed);
+        let (first_idle, since_round_began) = (&first_idle, &since_round_began);
+        let work_beside_a_file = &work_beside_a_file;
+        let keep_the_trees_that_are_left = &keep_the_trees_that_are_left;
         // Returns a closure that runs one task per call on the current thread. The closure returns false once this
         // thread has nothing left to do in this round.
         //
@@ -4544,8 +5406,11 @@ fn check_named_files(
             }
             let (mut first, mut is_active) = (None, false);
             move || {
+                if work_beside_a_file() {
+                    return true;
+                }
                 let mut next = || {
-                    if let Some(file) = take_file_to_recheck() {
+                    if let Some(file) = take_file_to_recheck(false) {
                         return Some(file);
                     }
                     if let Some(at) = runs.lock()[id].next() {
@@ -4561,7 +5426,8 @@ fn check_named_files(
                         take_run(is_mine || first_files_worker.load(Ordering::Relaxed) == id);
                     let at = run.next();
                     runs.lock()[id] = run;
-                    at.or_else(|| steal_run(id)).map(|at| queue[at])
+                    let file = at.or_else(|| steal_run(id)).map(|at| queue[at]);
+                    file.or_else(|| take_file_to_recheck(true))
                 };
                 let seen = {
                     let mut activity = activity.lock();
@@ -4583,6 +5449,10 @@ fn check_named_files(
                 if file.is_some() {
                     return true;
                 }
+                if logs_round {
+                    first_idle.fetch_min(since_round_began(), Ordering::Relaxed);
+                }
+                keep_the_trees_that_are_left();
                 if activity.active == 0 {
                     first = take_first_unchecked_file();
                     if first.is_some() {
@@ -4610,6 +5480,114 @@ fn check_named_files(
             }
             _ => host.parallel(workers, &|_| work()),
         }
+        if logs_round {
+            let wall = since_round_began().max(1);
+            let (took, began, bytes) = *longest_task.lock();
+            bun_core::print_errorln!(
+                "AOT round of the checker | {} | {} files, {} of them heavy, {} that those import go first | {} tasks | {} visits thrown away | wall {} ms | {}.{} of {} threads busy | the first thread found nothing to take at {} ms | the longest task {} ms, begun at {} ms with a file of {} KB | at most {} results stored between two idle moments of a task | {} long files, a second thread beside {} of them | the trees of {} files packed away",
+                match is_last_round {
+                    true => "one thread, in order",
+                    false => "all threads",
+                },
+                files.len(),
+                heavy,
+                ahead_of_heavy,
+                tasks_of_round.load(Ordering::Relaxed),
+                visits_thrown_away.load(Ordering::Relaxed),
+                wall / 1000,
+                busy.load(Ordering::Relaxed) / wall,
+                busy.load(Ordering::Relaxed) * 10 / wall % 10,
+                workers,
+                first_idle.load(Ordering::Relaxed).min(wall) / 1000,
+                took / 1000,
+                began / 1000,
+                bytes >> 10,
+                most_logged_between_idle_moments.load(Ordering::Relaxed),
+                long_files.len(),
+                *long_files_with_second_thread.lock(),
+                files
+                    .iter()
+                    .filter(|&&file| program.files.is_tree_gone(to_check[file]))
+                    .count(),
+            );
+        }
+        #[cfg(test)]
+        rounds.lock().push(RoundReport {
+            tasks: tasks_run.load(Ordering::Relaxed) - tasks_before,
+            files: files.len(),
+        });
+    };
+    // The last round is believed because one thread checks its files in order.
+    let work_after_last_round = |work: &compile::FileWork<'_, 's>,
+                                 files: &[usize],
+                                 expected: Requested| {
+        // The last round has checked the files, and that is all this pass wants of them.
+        let Some(after_file) = work.after_file else {
+            return;
+        };
+        const ROUND: u32 = 1 << 30;
+        let cost_of_run = |run: &[usize]| run.iter().map(|&file| size_of(file)).sum::<usize>();
+        let (others, lost_at_limit): (Vec<usize>, Vec<usize>) = {
+            let visits = visits.lock();
+            (files.iter().copied()).partition(|&file| visits[file].can_recheck_early)
+        };
+        let mut tasks: Vec<&[usize]> = others.chunks(1).collect();
+        if !lost_at_limit.is_empty() {
+            tasks.push(&lost_at_limit);
+        }
+        // The dearest tasks begin first, so that no thread begins one when the others are nearly done.
+        tasks.shared_sort_by_cached_key(|&task| Reverse(cost_of_run(task)));
+        // See `run_tasks`.
+        let spares = Guarded::new(Vec::new());
+        let began = Instant::now();
+        host.parallel(tasks.len(), &|at| {
+            let thread = std::thread::current().id();
+            let spare = {
+                let mut spares = spares.lock();
+                let own = spares.iter().position(|it: &(ThreadId, _)| it.0 == thread);
+                own.map(|at| spares.swap_remove(at).1)
+            };
+            let mut checker = new_checker(expected, spare);
+            checker.begin_task(first_round + ROUND, tasks[at][0] as u32);
+            checker.see_commits(true);
+            checker.set_first_in_order(true, true);
+            for &index in tasks[at] {
+                let file = to_check[index];
+                checker.set_requested((work.requested)(file));
+                // No ordinary visit at the end: it would store results cut off at the limit, for the next file to find.
+                checker.leave_depth_limit_unreported(true);
+                checker.allow_refused_instantiations_of_next_file();
+                loop {
+                    checker.check_file(file);
+                    after_file(&mut checker, file);
+                    if checker.compute_refused_instantiations() != RefusedInstantiations::Computed {
+                        break;
+                    }
+                }
+                checker.leave_depth_limit_unreported(false);
+                (work.after_commit)(file);
+                checker.take_ran_out_of_stack();
+            }
+            checker.end_task_after_commits();
+            spares.lock().push((thread, checker.into_spare()));
+        });
+        if bun_core::env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true) {
+            bun_core::print_errorln!(
+                "AOT round of the checker | what follows the files of the round in order | {} files | {} tasks | wall {} ms",
+                files.len(),
+                tasks.len(),
+                began.elapsed().as_millis(),
+            );
+        }
+        let is_freed =
+            |file: &FileId| program.files.modules[file.idx()].is_leaf && (work.frees_tree)(*file);
+        free_trees(
+            files
+                .iter()
+                .map(|&index| to_check[index])
+                .filter(is_freed)
+                .collect(),
+        );
     };
     let run_all_rounds = |expected: Requested| {
         let all: Vec<usize> = (0..to_check.len()).collect();
@@ -4618,6 +5596,9 @@ fn check_named_files(
         if !again.is_empty() {
             again.shared_sort_unstable();
             run_tasks(1, &again, expected, true);
+            if let Some(work) = file_work {
+                work_after_last_round(work, &again, expected);
+            }
         }
     };
     // `NewDiagnosticForNode` without a node: the range is empty, not undefined.
@@ -4773,7 +5754,12 @@ fn check_named_files(
         }
     }
     report.deepest_stack = deepest_stack.into_inner();
+    report.queries = queries.into_inner();
     report.tasks_run = tasks_run.into_inner();
+    #[cfg(test)]
+    {
+        report.rounds = std::mem::take(&mut *rounds.lock());
+    }
     report.incomplete = std::mem::take(&mut *incomplete.lock());
     report.incomplete.shared_sort();
     report.incomplete.dedup();
@@ -4787,6 +5773,5 @@ fn check_named_files(
     if let Some(room_slot) = in_room {
         room_slot.record_final_size(session.allocated_bytes());
     }
-    root.release();
     report
 }

@@ -1,0 +1,43 @@
+# A built-in that may read members it does not name runs the getters that the program has defined, inherited ones too, on every object it reaches. It calls no method that it finds.
+# RUN: valueflow-solve calls
+# CHECK: f0 v7 -> f1
+# CHECK-NEXT: f0 v11 -> BunDeepEquals
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f2
+# UNREACHED: unreached f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Headers" constructor=f1
+layout L1 name="Options" fields=[{key="headers" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 methodKind=Getter key="describe"
+    v4 = NewClosure function=f3
+    DefineMethod v1, v4 layout=L0 index=1 key="send"
+    v6 = FinishClass v1 layout=L0
+    v7 = Construct v6
+    v8 = NewObject -, v7 layout=L1 fields=[0]
+    v9 = FinishObject v8
+    v10 = Builtin builtin=BunDeepEquals
+    v11 = Call v10, -, v9, v9
+    Return
+}
+function f1 name="Headers" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="describe" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f3 name="send" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

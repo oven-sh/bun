@@ -180,8 +180,13 @@ pub(crate) fn take_held(cell: JSValue) -> JSValue {
 /// deinit() which detaches responses, unrefs bodies, and calls back into
 /// the server — all of which may unprotect JS values or allocate. We must
 /// defer that work to the event loop.
+#[inline(never)]
 #[unsafe(no_mangle)]
 extern "C" fn Bun__NativePromiseContext__destroy(ctx: *mut c_void, tag: u8) {
+    bun_removable_features::removable_definition!(Serve, Bun__NativePromiseContext__destroy);
+    bun_removable_features::removable_definition!(HtmlRewriter, Bun__NativePromiseContext__destroy);
+    bun_removable_features::removable_definition!(S3Client, Bun__NativePromiseContext__destroy);
+    bun_removable_features::removable_definition!(Cron, Bun__NativePromiseContext__destroy);
     let tag = Tag::from_raw(tag);
     clear_remembered_cell(ctx, tag);
     DeferredDerefTask::schedule(ctx, tag);

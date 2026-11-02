@@ -23,6 +23,12 @@ inputs:
   ninja-targets:
     description: "Space-separated build targets (`bun scripts/build.ts --target=…`)."
     default: "clone-lolhtml clone-rust-argon2"
+  webkit-generators-only:
+    description: >
+      "1" fetches the code generators of the prebuilt WebKit (half a megabyte)
+      in place of its tarball (440 MB). For a job whose targets compile and
+      link no C++: `codegen` reads nothing else of it.
+    default: "0"
 
 runs:
   using: composite
@@ -72,6 +78,7 @@ runs:
       shell: bash
       env:
         NINJA_TARGETS: ${{ inputs.ninja-targets }}
+        BUN_WEBKIT_GENERATORS_ONLY: ${{ inputs.webkit-generators-only }}
       run: |
         bun install --frozen-lockfile
         bun scripts/build.ts $(printf -- '--target=%s ' $NINJA_TARGETS)

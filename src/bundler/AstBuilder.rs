@@ -35,16 +35,15 @@ use bun_paths::fs::{Path as FsPath, PathName};
 
 pub(crate) struct AstBuilder<'a, 'bump> {
     pub(crate) bump: &'bump Bump,
-    pub(crate) source: &'a Source,
+    pub(crate) source: &'a Source<'a>,
     pub(crate) source_index: u32,
     pub(crate) stmts: Vec<Stmt>,
-    pub(crate) scopes: Vec<*mut Scope>,
     pub(crate) symbols: Vec<Symbol>,
-    pub(crate) import_records: Vec<ImportRecord>,
+    pub(crate) import_records: Vec<ImportRecord<'bump>>,
     pub(crate) named_imports: NamedImports,
     pub(crate) named_exports: NamedExports,
     pub(crate) import_records_for_current_part: Vec<u32>,
-    pub(crate) current_scope: *mut Scope,
+    pub(crate) current_scope: Scope,
     pub(crate) module_ref: Ref,
     pub(crate) declared_symbols: DeclaredSymbolList,
     /// When set, codegen is altered
@@ -60,22 +59,20 @@ pub(crate) struct AstBuilder<'a, 'bump> {
 impl<'a, 'bump> AstBuilder<'a, 'bump> {
     pub(crate) fn init(
         bump: &'bump Bump,
-        source: &'a Source,
+        source: &'a Source<'a>,
         hot_reloading: bool,
     ) -> Result<Self, OOM> {
-        let scope: *mut Scope = bump.alloc(Scope {
-            kind: ScopeKind::Entry,
-            label_ref: Ref::NONE,
-            parent: None,
-            ..Default::default()
-        });
         let mut ab = AstBuilder {
             bump,
-            current_scope: scope,
+            current_scope: Scope {
+                kind: ScopeKind::Entry,
+                label_ref: Ref::NONE,
+                parent: None,
+                ..Default::default()
+            },
             source,
             source_index: source.index.0,
             stmts: Vec::new(),
-            scopes: Vec::new(),
             symbols: Vec::new(),
             import_records: Vec::new(),
             import_records_for_current_part: Vec::new(),
@@ -91,27 +88,6 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         Ok(ab)
     }
 
-    /// Exclusive borrow of the bump-arena `Scope` that `current_scope` points
-    /// at. Centralizes the `unsafe { &mut *self.current_scope }` deref so the
-    /// invariant is stated once.
-    ///
-    /// SAFETY (encapsulated): `current_scope` is set to a live `bump.alloc`
-    /// allocation in [`init`](Self::init) / [`push_scope`](Self::push_scope)
-    /// and is never null afterwards. All other copies of this pointer (in
-    /// `self.scopes` and child `Scope.parent` links) are stored as raw
-    /// pointers / `StoreRef`s and are never dereferenced while a `&mut self`
-    /// borrow is held, so the returned `&mut Scope` is unique for its lifetime.
-    #[inline]
-    pub(crate) fn current_scope_mut(&mut self) -> &mut Scope {
-        debug_assert!(
-            !self.current_scope.is_null(),
-            "AstBuilder.current_scope read before init()"
-        );
-        // SAFETY: see fn doc — non-null bump-arena slot, exclusively borrowed
-        // through `&mut self`.
-        unsafe { &mut *self.current_scope }
-    }
-
     pub(crate) fn new_symbol(&mut self, kind: SymbolKind, identifier: &[u8]) -> Result<Ref, OOM> {
         let inner_index: RefInt = RefInt::try_from(self.symbols.len()).unwrap();
         self.symbols.push(Symbol {
@@ -120,11 +96,10 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             ..Default::default()
         });
         let ref_ = Ref::new(inner_index, self.source_index, RefTag::Symbol);
-        self.current_scope_mut().generated.push(ref_);
+        self.current_scope.generated.push(ref_);
         self.declared_symbols.append(DeclaredSymbol {
             ref_,
-            is_top_level: self.scopes.is_empty()
-                || core::ptr::eq(self.current_scope, self.scopes[0]),
+            is_top_level: true,
         })?;
         Ok(ref_)
     }
@@ -248,8 +223,6 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         target: options::Target,
     ) -> Result<crate::BundledAst<'bump>, OOM> {
         // TODO: missing import scanner
-        debug_assert!(self.scopes.is_empty());
-        let module_scope = self.current_scope;
 
         let mut parts = bun_ast::PartList::with_capacity_in(2, self.bump);
         // `*parts.mut_(i) = ...` on a grown-but-uninitialized slot first
@@ -284,15 +257,13 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         });
 
         let mut top_level_symbols_to_parts = TopLevelSymbolToParts::default();
-        // SAFETY: module_scope is a live arena allocation (set in init, scopes stack is empty)
-        let module_scope_ref = unsafe { &*module_scope };
-        let generated_len = module_scope_ref.generated.len();
+        let generated_len = self.current_scope.generated.len();
         top_level_symbols_to_parts.ensure_total_capacity(generated_len)?;
         // `ArrayHashMap` keeps keys/values in private `Vec`s and rebuilds
         // hashes on every `put_assume_capacity`, so a plain pre-reserved
         // insert loop suffices (and `re_index` is a no-op here). `Vec` is
         // move-only, so allocate a fresh one per key.
-        for &ref_ in module_scope_ref.generated.slice() {
+        for &ref_ in self.current_scope.generated.slice() {
             top_level_symbols_to_parts
                 .put_assume_capacity(ref_, bun_alloc::AstAlloc::vec_from_slice(&[1]));
         }
@@ -315,7 +286,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         // A `Vec<Stmt>` would
         // drop with `self`, leaving `parts[1].stmts` dangling once the
         // builder goes out of scope (UAF in the printer). Copy the `Copy`
-        // `Stmt`s/`*mut Scope`s into the bump arena so the returned
+        // `Stmt`s into the bump arena so the returned
         // `BundledAst` owns them with parser-arena lifetime.
         if self.hot_reloading {
             // get a estimate on how many statements there are going to be
@@ -389,9 +360,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                         // (`registerClientReference(...)`), which is not
                         // `can_be_moved()` — generate a temp const binding and
                         // reference it from `export_props`.
-                        // SAFETY: `StmtOrExpr` lives in the arena and has no
-                        // Drop fields, so a bitwise read is a plain value copy.
-                        let value = unsafe { core::ptr::read(&raw const st.value) }.to_expr();
+                        let value = st.value.to_expr();
                         let temp_id = self.generate_temp_ref(Some(b"default_export"));
                         parts[1].declared_symbols.append(DeclaredSymbol {
                             ref_: temp_id,
@@ -400,7 +369,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                         parts[1]
                             .symbol_uses
                             .put(temp_id, symbol::Use::unscoped(1))?;
-                        VecExt::append(&mut self.current_scope_mut().generated, temp_id);
+                        VecExt::append(&mut self.current_scope.generated, temp_id);
                         export_props.push(G::Property {
                             key: Some(Expr::init(E::String::init(b"default"), stmt.loc)),
                             value: Some(Expr::init_identifier(temp_id, stmt.loc)),
@@ -521,19 +490,13 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         }
 
         parts[1].declared_symbols = core::mem::take(&mut self.declared_symbols);
-        parts[1].scopes =
-            bun_ast::StoreSlice::new_mut(self.bump.alloc_slice_copy(self.scopes.as_slice()));
         parts[1].import_record_indices = bun_ast::PartImportRecordIndices::move_from_list(
             core::mem::take(&mut self.import_records_for_current_part),
         );
 
-        // SAFETY: module_scope is a live arena allocation. `Scope` is no-Drop
-        // arena POD, so a bitwise read is a plain value copy.
-        let module_scope_value: Scope = unsafe { core::ptr::read(module_scope) };
-
         Ok(crate::BundledAst {
             parts,
-            module_scope: module_scope_value,
+            module_scope: core::mem::take(&mut self.current_scope),
             symbols: bun_alloc::vec_from_iter_in(core::mem::take(&mut self.symbols), self.bump),
             exports_ref: Ref::NONE,
             wrapper_ref: Ref::NONE,

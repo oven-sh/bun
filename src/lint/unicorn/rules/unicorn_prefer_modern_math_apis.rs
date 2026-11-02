@@ -7,9 +7,9 @@ use smallvec::{SmallVec, smallvec};
 /// Checks for usage of legacy patterns for mathematical operations.
 pub struct PreferModernMathApis;
 
-const PREFER_MATH_ABS: Message = Message::new("", "Prefer `Math.abs(x)` over alternatives");
-const PREFER_MATH_HYPOT: Message = Message::new("", "Prefer `Math.hypot(…)` over alternatives");
-const PREFER_MATH_LOG_N: Message = Message::new("", "Prefer `Math.{{good_method}}(x)` over `{{bad_method}}`");
+const PREFER_MATH_ABS: &Message = &Message::new("", "Prefer `Math.abs(x)` over alternatives");
+const PREFER_MATH_HYPOT: &Message = &Message::new("", "Prefer `Math.hypot(…)` over alternatives");
+const PREFER_MATH_LOG_N: &Message = &Message::new("", "Prefer `Math.{{good_method}}(x)` over `{{bad_method}}`");
 
 impl Rule for PreferModernMathApis {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-modern-math-apis", Kind::Suggestion);

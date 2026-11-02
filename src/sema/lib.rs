@@ -5,6 +5,8 @@
 //! upstream function each piece of code corresponds to.
 
 #![feature(allocator_api)]
+#![feature(thread_local)]
+#![feature(rust_cold_cc)]
 
 pub mod atom;
 pub mod bind;
@@ -13,10 +15,16 @@ pub mod components;
 pub mod config;
 pub mod config_options;
 pub mod ecmascript;
+pub mod erasure;
+pub mod file_analysis;
+pub mod fold;
 pub mod hir;
+pub mod hir_from_data;
+pub mod import_sites;
 pub mod json;
 pub mod local;
 pub mod messages;
+pub mod module_format;
 pub mod node;
 pub mod program;
 pub mod resolve;

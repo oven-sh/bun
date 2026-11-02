@@ -396,7 +396,7 @@ impl Watcher {
         // handed out for reads: a reader that copied the number before this
         // ran would hit `EBADF`/`EISDIR` after (see `snapshot_package_json`).
         //
-        // We do NOT lock here: the only callers are deferred from
+        // We do NOT lock here: the only callers run inside
         // `WatcherContext::on_file_update`, which is itself invoked from
         // `dispatch_file_updates` while `self.mutex` is already held.
         // `bun_threading::Mutex` is non-recursive — re-locking here is

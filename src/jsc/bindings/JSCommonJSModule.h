@@ -31,6 +31,7 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionRequireCommonJS);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionRequireNativeModule);
 JSC_DECLARE_HOST_FUNCTION(functionJSCommonJSModule_compile);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionRequireTestModule);
 
 void populateESMExports(
     JSC::JSGlobalObject* globalObject,
@@ -74,6 +75,8 @@ public:
     // When the module is assigned a JSCommonJSModule parent, it is assigned to this field.
     // This is the normal state.
     JSC::Weak<JSCommonJSModule> m_parent {};
+    // `module.parent = 7`: from then on nobody asks the compiled program who required the file first.
+    bool m_isParentStored { false };
     // If compile is overridden, it is assigned to this field. The default
     // compile function is not stored here, but in
     mutable JSC::WriteBarrier<Unknown> m_overriddenCompile;
@@ -83,6 +86,9 @@ public:
     JSC::WriteBarrier<JSModuleGraph> m_moduleGraph;
 
     bool ignoreESModuleAnnotation { false };
+    // Of the module object of a file of an ahead-of-time executable: the number of the file in the executable. Its `exports`, `parent` and `children` are the engine's to answer.
+    static constexpr uint32_t noCompiledModule = UINT32_MAX;
+    uint32_t compiledModule { noCompiledModule };
     JSC::SourceCode sourceCode = JSC::SourceCode();
 
     static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
@@ -117,7 +123,7 @@ public:
         JSC::JSString* key,
         JSValue exportsObject, bool hasEvaluated, JSValue parent);
 
-    static JSObject* createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString, JSModuleGraph* = nullptr);
+    static JSObject* createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString, JSModuleGraph* = nullptr, JSCommonJSModule* requestingModule = nullptr);
     JSModuleGraph* moduleGraph() const { return m_moduleGraph.get(); }
     void setModuleGraph(JSC::VM&, JSModuleGraph*);
 
@@ -165,6 +171,9 @@ JSC::Structure* createCommonJSModuleStructure(
 // A `require.cache` object over `requireMap`: the global one, or a Bun.ModuleGraph's
 // together with one of the graph's modules (whose loader's ES modules it also lists).
 JSC::JSValue createRequireCacheObject(JSC::JSGlobalObject*, JSC::JSMap* requireMap, JSCommonJSModule* owner = nullptr);
+
+// Returns `graph`'s `require.cache` object, created on first use, or the global object's if `graph` is null.
+JSC::JSValue requireCacheOf(Zig::GlobalObject*, JSModuleGraph* graph, JSCommonJSModule* owner);
 
 // `graph`: the Bun.ModuleGraph whose loader is importing the file (the module goes in
 // its require cache), or null for the global object's loader.

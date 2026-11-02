@@ -209,11 +209,13 @@ pub(crate) fn is_strict_for_oxc<'a>(file: &'a File<'a>, tree: &ScopeTree, scope:
 fn has_use_strict(file: &File, statements: impl Iterator<Item = hir::StmtId>) -> bool {
     let hir = &file.hir;
     for s in statements {
-        let Some(hir::Stmt {
-            kind: StmtKind::Expr(e),
-            ..
-        }) = hir.stmts.get(s.idx())
-        else {
+        let Some(statement) = hir.stmts.get(s.idx()) else {
+            return false;
+        };
+        if file.has_synthetic_nodes() && file.is_in_jsdoc(statement.start) {
+            continue;
+        }
+        let (StmtKind::Expr(e) | StmtKind::Directive { expr: e, .. }) = &statement.kind else {
             return false;
         };
         let Some(hir::Expr {
@@ -754,6 +756,7 @@ impl<'f, 'a> Collector<'f, 'a> {
                 | StmtKind::Switch { .. }
                 | StmtKind::Try { .. }
                 | StmtKind::ExportAsNamespace(_)
+                | StmtKind::With { .. }
         );
         if !is_scope || matches!(bound.parent_of_stmt(hir::StmtId(i as u32)), Parent::None) {
             return;
@@ -764,12 +767,12 @@ impl<'f, 'a> Collector<'f, 'a> {
         };
         let (block, start, end) = (Block::Stmt(hir::StmtId(i as u32)), stmt.start, stmt.loc.end);
         match stmt.kind {
-            StmtKind::Block(parts) if is_with_statement(self.file, stmt) => {
-                let object = hir
-                    .ids
-                    .get(parts.start as usize)
-                    .and_then(|&it| hir.stmts.get(it as usize));
-                let inside = object.map_or(start, |it| it.loc.end);
+            StmtKind::With { object, .. } => {
+                let after = hir.parens.partition_point(|it| it.0.0 <= object.0);
+                let inside = match after.checked_sub(1).and_then(|last| hir.parens.get(last)) {
+                    Some(&(expr, _, paren_end)) if expr == object => paren_end,
+                    _ => hir.exprs.get(object.idx()).map_or(start, |it| it.end),
+                };
                 self.scope_from(ScopeKind::With, block, start, inside, end);
             }
             StmtKind::Block(_) if self.has_block_scopes => {
@@ -1039,17 +1042,6 @@ impl<'f, 'a> Collector<'f, 'a> {
             self.declaration(ScopeKind::TsModule, it.stmt, last_name_pos(self.file, it));
         }
     }
-}
-
-/// `with (object) body`, which the HIR stores as a block of the two.
-pub(crate) fn is_with_statement(file: &File, stmt: &hir::Stmt) -> bool {
-    !file.hir.with_bodies.is_empty()
-        && matches!(stmt.kind, StmtKind::Block(parts) if parts.len() == 2)
-        && file
-            .hir
-            .text
-            .get(stmt.start as usize..)
-            .is_some_and(|it| it.starts_with(b"with"))
 }
 
 /// True if `module` is the `B` in `namespace A.B`.

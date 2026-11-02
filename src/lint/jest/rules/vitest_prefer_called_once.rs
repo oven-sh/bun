@@ -6,8 +6,8 @@ use bun_lint::prelude::*;
 /// respectively.
 pub struct PreferCalledOnce<const RUNNER: u8 = { jest::VITEST }>;
 
-const PREFER_CALLED_ONCE: Message =
-    Message::new("", "The use of `toBeCalledTimes(1)` and `toHaveBeenCalledTimes(1)` is discouraged.");
+const PREFER_CALLED_ONCE: &Message =
+    &Message::new("", "The use of `toBeCalledTimes(1)` and `toHaveBeenCalledTimes(1)` is discouraged.");
 
 const MATCHERS: [&str; 2] = ["toBeCalledTimes", "toHaveBeenCalledTimes"];
 

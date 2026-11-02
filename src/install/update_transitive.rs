@@ -743,7 +743,7 @@ fn root_patched_dependencies<'a>(
     cache: &'a mut WorkspacePackageJSONCache,
     log: &mut bun_ast::Log,
     root_dir: &[u8],
-) -> Option<(&'a bun_ast::Source, bun_ast::Expr)> {
+) -> Option<(&'a bun_ast::Source<'a>, bun_ast::Expr)> {
     // SAFETY: written once inside `PackageManager::init` on this thread; only read afterwards.
     let mut path: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes();
     let mut path_buf = bun_paths::path_buffer_pool::get();

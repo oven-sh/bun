@@ -8,23 +8,23 @@ use bun_lint::types::{ObjectFlags, Type};
 /// Disallow type assertions that narrow a type.
 pub struct NoUnsafeTypeAssertion;
 
-const UNSAFE_OF_ANY_TYPE_ASSERTION: Message = Message::new(
+const UNSAFE_OF_ANY_TYPE_ASSERTION: &Message = &Message::new(
     "unsafeOfAnyTypeAssertion",
     "Unsafe assertion from {{type}} detected: consider using type guards or a safer assertion.",
 );
-const UNSAFE_TO_ANY_TYPE_ASSERTION: Message = Message::new(
+const UNSAFE_TO_ANY_TYPE_ASSERTION: &Message = &Message::new(
     "unsafeToAnyTypeAssertion",
     "Unsafe assertion to {{type}} detected: consider using a more specific type to ensure safety.",
 );
-const UNSAFE_TO_UNCONSTRAINED_TYPE_ASSERTION: Message = Message::new(
+const UNSAFE_TO_UNCONSTRAINED_TYPE_ASSERTION: &Message = &Message::new(
     "unsafeToUnconstrainedTypeAssertion",
     "Unsafe type assertion: '{{type}}' could be instantiated with an arbitrary type which could be unrelated to the original type.",
 );
-const UNSAFE_TYPE_ASSERTION: Message = Message::new(
+const UNSAFE_TYPE_ASSERTION: &Message = &Message::new(
     "unsafeTypeAssertion",
     "Unsafe type assertion: type '{{type}}' is more narrow than the original type.",
 );
-const UNSAFE_TYPE_ASSERTION_ASSIGNABLE_TO_CONSTRAINT: Message = Message::new(
+const UNSAFE_TYPE_ASSERTION_ASSIGNABLE_TO_CONSTRAINT: &Message = &Message::new(
     "unsafeTypeAssertionAssignableToConstraint",
     "Unsafe type assertion: the original type is assignable to the constraint of type '{{type}}', but '{{type}}' could be instantiated with a different subtype of its constraint.",
 );

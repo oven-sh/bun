@@ -45,10 +45,13 @@ struct LintTokenShape {
         EspreeComment,
         TypeScriptToken,
         TypeScriptRegex,
+        // typescript-estree's with `start` and `end`: see `LintHost::hasStartEnd`.
+        TypeScriptTokenWithStartEnd,
+        TypeScriptRegexWithStartEnd,
         OxlintToken,
         OxlintComment,
     };
-    static constexpr size_t kindCount = 8;
+    static constexpr size_t kindCount = 10;
 
     JSC::WriteBarrier<JSC::Structure> structure;
     // What's in `loc`. With ESLint a CustomGetterSetter, which the location replaces when it's first read. oxlint has a getter.

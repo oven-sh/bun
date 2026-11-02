@@ -55,3 +55,17 @@ pub use work_pool::{IntrusiveWorkTask, OwnedTask, WorkPool};
 pub fn current_thread_id() -> u64 {
     bun_safety::thread_id::current() as u64
 }
+
+/// For a thread whose work should only use processors that would otherwise be idle. It can't be undone on Linux.
+pub fn lower_current_thread_priority() {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    // SAFETY: no pointers. On Linux, `who == 0` is the calling thread.
+    unsafe {
+        libc::setpriority(libc::PRIO_PROCESS, 0, 19);
+    }
+    #[cfg(target_os = "macos")]
+    // SAFETY: no pointers.
+    unsafe {
+        libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_UTILITY, 0);
+    }
+}

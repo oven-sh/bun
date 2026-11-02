@@ -17,7 +17,6 @@ import { cares } from "./cares.ts";
 import { highway } from "./highway.ts";
 import { libdeflate } from "./libdeflate.ts";
 import { libjpegTurbo } from "./libjpeg-turbo.ts";
-import { libuv } from "./libuv.ts";
 import { libwebp } from "./libwebp.ts";
 import { lolhtml } from "./lolhtml.ts";
 import { lshpack } from "./lshpack.ts";
@@ -54,7 +53,6 @@ export const allDeps: readonly Dependency[] = [
   libwebp,
   cares,
   highway,
-  libuv,
   lolhtml,
   rustArgon2,
   lshpack,
@@ -80,7 +78,6 @@ export {
   highway,
   libdeflate,
   libjpegTurbo,
-  libuv,
   libwebp,
   lolhtml,
   lshpack,

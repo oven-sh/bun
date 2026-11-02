@@ -5668,12 +5668,12 @@ mod tests {
     use super::*;
 
     /// The answer with no shape. 40 calls on one shape have to give the same one, for each way to treat dots.
-    fn matches(glob: &[u8], path: &[u8]) -> bool {
-        let answer = match_on::<false>(glob, path).matches();
+    fn matches<const WINDOWS: bool>(glob: &[u8], path: &[u8]) -> bool {
+        let answer = match_on::<WINDOWS>(glob, path).matches();
         for dots in [Dots::Match, Dots::Hide, Dots::SkipTraversal] {
             let shape = Shape::of(glob);
             for call in 0..40 {
-                let again = match_prepared::<false>(glob, &shape, path, dots).matches();
+                let again = match_prepared::<WINDOWS>(glob, &shape, path, dots).matches();
                 let (glob, path) = (BStr::new(glob), BStr::new(path));
                 assert_eq!(
                     again, answer,
@@ -5689,7 +5689,7 @@ mod tests {
         for (glob, matched, others) in rows {
             for (paths, is_wanted) in [(matched, true), (others, false)] {
                 for path in strings::split(paths, b" ") {
-                    let is_match = matches(glob, path);
+                    let is_match = matches::<false>(glob, path);
                     assert_eq!(
                         is_match,
                         is_wanted,
@@ -5797,7 +5797,7 @@ mod tests {
             (b"**/*\xc3*\xa9", b"\xc3\xa9\xc3\xa8", false),
         ] {
             assert_eq!(
-                matches(glob, &below(name)),
+                matches::<false>(glob, &below(name)),
                 is_wanted,
                 "{:?} on {:?}",
                 BStr::new(glob),
@@ -5809,9 +5809,14 @@ mod tests {
     #[cfg(any(windows, debug_assertions))]
     #[test]
     fn a_match_for_windows_gets_the_same_answers() {
-        let matches = |glob: &[u8], path: &[u8]| match_on::<true>(glob, path).matches();
+        let matches = matches::<true>;
         assert!(matches(b"folder/{x,y\xe9}{a,*.bak}", b"folder\\x1.bak"));
+        assert!(matches(
+            b"folder/{x,y\xe9}{a,*.bak}",
+            b"folder\\y\xe9\x80\x80.bak"
+        ));
         assert!(!matches(b"folder/{x,y\xe9}{a,*.bak}", b"folder\\z.bak"));
         assert!(matches(b"folder/*\xc3*\xa9", b"folder\\\xc3\xa9\xc3\xa9"));
+        assert!(!matches(b"folder/*\xc3*\xa9", b"folder\\\xc3\xa9\xc3\xa8"));
     }
 }

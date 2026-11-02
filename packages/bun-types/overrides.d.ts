@@ -357,7 +357,8 @@ declare module "node:fs" {
      */
     followSymlinks?: boolean | undefined;
     /**
-     * Maximum number of directory levels to traverse. The `cwd` directory has a depth of `0`.
+     * Maximum depth of a match, counted in path segments below `cwd`. The `cwd` directory has a depth of `0`. A deeper
+     * path is not a match, and a directory at this depth is not read.
      * @default Infinity
      */
     maxDepth?: number | undefined;
@@ -370,7 +371,8 @@ declare module "node:fs" {
      */
     followSymlinks?: boolean | undefined;
     /**
-     * Maximum number of directory levels to traverse. The `cwd` directory has a depth of `0`.
+     * Maximum depth of a match, counted in path segments below `cwd`. The `cwd` directory has a depth of `0`. A deeper
+     * path is not a match, and a directory at this depth is not read.
      * @default Infinity
      */
     maxDepth?: number | undefined;
@@ -383,7 +385,8 @@ declare module "node:fs" {
      */
     followSymlinks?: boolean | undefined;
     /**
-     * Maximum number of directory levels to traverse. The `cwd` directory has a depth of `0`.
+     * Maximum depth of a match, counted in path segments below `cwd`. The `cwd` directory has a depth of `0`. A deeper
+     * path is not a match, and a directory at this depth is not read.
      * @default Infinity
      */
     maxDepth?: number | undefined;

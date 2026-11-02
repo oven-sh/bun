@@ -301,10 +301,11 @@ describePosix("Bun.write with a pipe source", () => {
       using dir = tempDir("bun-write-block-source", { "disk.img": bytes });
       const out = join(String(dir), "out.bin");
       const device = await losetup("--find", "--show", "--read-only", join(String(dir), "disk.img"));
+      if (!device) throw new Error("losetup did not attach a loop device");
       try {
         await using proc = Bun.spawn({
           cmd: [bunExe(), "-e", resolved("Bun.write(process.env.OUT, Bun.file(process.env.DEVICE))")],
-          env: { ...bunEnv, OUT: out, DEVICE: device! },
+          env: { ...bunEnv, OUT: out, DEVICE: device },
           stdout: "pipe",
           stderr: "pipe",
         });
@@ -317,7 +318,7 @@ describePosix("Bun.write with a pipe source", () => {
         });
         expect(exitCode).toBe(0);
       } finally {
-        if (device) await losetup("--detach", device);
+        await losetup("--detach", device);
       }
     });
 

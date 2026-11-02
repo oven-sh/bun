@@ -503,7 +503,7 @@ impl<'a> WindowReader<'a> {
 }
 
 impl InternalSourceMap<'_> {
-    /// Matches the semantics of `mapping::List::find_segment`: returns the last mapping with
+    /// Matches the semantics of `mapping::List::find`: returns the last mapping with
     /// generated position `<= (line, column)` whose generated line equals `line`.
     pub fn find(self, line: Ordinal, column: Ordinal) -> Option<Mapping> {
         let target_line = line.zero_based();

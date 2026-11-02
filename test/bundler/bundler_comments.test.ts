@@ -431,6 +431,8 @@ describe("multi-line comments", () => {
       // Verify we found a mapping for the comment
       expect(entry).toBeTruthy();
       expect(Object.keys(entry).length).toBeGreaterThan(0);
+      // A line that has no mapping finds the last mapping before it.
+      expect(entry.generatedLine).toBe(commentLineIndex);
 
       // The mapping should point back to the original source
       expect(entry!.originalSource!).toContain("entry.js");

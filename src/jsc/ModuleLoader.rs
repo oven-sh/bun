@@ -400,14 +400,29 @@ fn extract_namespace(specifier: &[u8]) -> &[u8] {
     }
 }
 
-/// Where the `namespace:` of `specifier` ends. A colon in a query starts no namespace.
+/// Where the `namespace:` of `specifier` ends. A colon in a query or in a path starts no namespace:
+/// "./a:b/x.js" and "/dir/a:b/x.js" are files. A namespace that starts with a separator is one
+/// segment ("/virtual:x.js").
 fn namespace_colon(specifier: &[u8]) -> Option<usize> {
+    use bun_paths::resolve_path::is_sep_native;
+    const SEPARATORS: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+    if let [b'.', rest @ ..] = specifier {
+        let rest = rest.strip_prefix(b".").unwrap_or(rest);
+        if rest.first().is_some_and(|&c| is_sep_native(c)) {
+            return None;
+        }
+    }
     let colon = bun_core::strings::index_of_char_usize(specifier, b':')?;
     if cfg!(windows)
         && colon == 1
         && specifier.len() > 3
         && bun_paths::resolve_path::is_sep_any(specifier[2])
         && bun_paths::resolve_path::is_drive_letter(specifier[0])
+    {
+        return None;
+    }
+    if is_sep_native(specifier[0])
+        && bun_core::strings::index_of_any(&specifier[1..colon], SEPARATORS).is_some()
     {
         return None;
     }

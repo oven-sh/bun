@@ -4866,7 +4866,7 @@ describe.concurrent("what onResolve and onLoad are asked about", () => {
     return { stdout, stderr, exitCode };
   }
 
-  const names = /plain\.ts|video\.3gp|ok\.yaml\.1|\.env|\.babelrc|LICENSE|\.1$/;
+  const names = /plain\.ts|video\.3gp|ok\.yaml\.1|note\.txt|\.env|\.babelrc|LICENSE|\.1$/;
   const specifiers = [
     "./plain.ts?v=123",
     "./plain.ts?v=123.456",
@@ -4892,6 +4892,8 @@ describe.concurrent("what onResolve and onLoad are asked about", () => {
     "./.env?v=1.2.3",
     "./.babelrc?mtime=1786494961337.0317",
     "./my.app/LICENSE?v=1.2",
+    // (A file name has no colon on Windows.)
+    ...(isWindows ? [] : ["./with:colon/note.txt"]),
   ];
   const files = {
     "plain.ts": `export const from = "disk";`,
@@ -4901,6 +4903,7 @@ describe.concurrent("what onResolve and onLoad are asked about", () => {
     ".env": "",
     ".babelrc": "",
     "my.app/LICENSE": "",
+    ...(isWindows ? {} : { "with:colon/note.txt": "" }),
     // The onResolve declines, the onLoad answers.
     "plugin.ts": `
       Bun.plugin({
@@ -5041,6 +5044,7 @@ describe.concurrent("what onResolve and onLoad are asked about", () => {
     ["virtual:thing", "virtual thing", "file virtual:thing"],
     ["virtual:thing.js?t=12:30", "virtual thing.js?t=12:30", "file virtual:thing.js?t=12:30"],
     ["/slash:thing.js", "/slash thing.js", "file /slash:thing.js"],
+    ...(isWindows ? [] : ([["./with:colon/note.txt"], ["<dir>/with:colon/note.txt"]] satisfies [string][])),
   ];
   // While an onResolve callback runs, the namespace "file" is asked only about a specifier with an extension, or a
   // callback that loads a module would be asked about that module without end. There an extension starts with a letter.
@@ -5218,4 +5222,145 @@ describe.concurrent("what onResolve and onLoad are asked about", () => {
       });
     },
   );
+});
+
+// A colon is a byte of a file name too. A path is in a namespace only when the colon is in its first segment:
+// "/virtual:x.js" is in "/virtual", and "/dir/with:colon/x.js" is a file.
+describe.concurrent("a path with a colon in it", () => {
+  async function run(files: Record<string, string>, args: string[]) {
+    using dir = tempDir("plugin-colon-in-path", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--no-install", ...args],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+  }
+
+  // Each file says "disk", and each onLoad says which file it was asked about.
+  const underColon = {
+    "with:colon/note.txt": "disk",
+    "é/with:colon/note.txt": "disk",
+    "with:colon/main.js": `console.log("disk main.js");`,
+    "with:colon/worker.js": `postMessage("disk worker.js");`,
+    "releases/2024-05-01T12:30:00Z/note.txt": "disk",
+    "plugin.ts": `
+      import { basename } from "node:path";
+      Bun.plugin({
+        name: "answers",
+        setup(build) {
+          const answer = (filter, contents) =>
+            build.onLoad({ filter }, ({ path }) => ({
+              contents: contents(JSON.stringify("onLoad " + basename(path))),
+              loader: "js",
+            }));
+          answer(/note\\.txt$/, from => "export default " + from + ";");
+          answer(/main\\.js$/, from => "console.log(" + from + ");");
+          answer(/worker\\.js$/, from => "postMessage(" + from + ");");
+        },
+      });
+    `,
+  };
+  const note = "./with:colon/note.txt";
+  it.skipIf(isWindows).each([
+    ["an import statement", "entry.mjs", `import note from "${note}"; console.log(note);`, "onLoad note.txt"],
+    ["import()", "entry.mjs", `console.log((await import("${note}")).default);`, "onLoad note.txt"],
+    ["require()", "entry.cjs", `console.log(require("${note}").default);`, "onLoad note.txt"],
+    [
+      "require() from a sibling directory, with ../",
+      "sub/entry.cjs",
+      `console.log(require("../with:colon/note.txt").default);`,
+      "onLoad note.txt",
+    ],
+    [
+      "import() under a directory that is not ASCII",
+      "entry.mjs",
+      `console.log((await import("./é/with:colon/note.txt")).default);`,
+      "onLoad note.txt",
+    ],
+    [
+      // No colon is typed: the link leads into a directory that is named after a time.
+      "import() of a symbolic link",
+      "entry.mjs",
+      `
+        require("node:fs").symlinkSync(import.meta.dir + "/releases/2024-05-01T12:30:00Z/note.txt", import.meta.dir + "/latest.txt");
+        console.log((await import("./latest.txt")).default);
+      `,
+      "onLoad note.txt",
+    ],
+    [
+      "Bun.ModuleGraph's import()",
+      "entry.mjs",
+      `await new Bun.ModuleGraph().import("./with:colon/main.js");`,
+      "onLoad main.js",
+    ],
+    [
+      "a Worker, as its entry point",
+      "entry.mjs",
+      `
+        const worker = new Worker(import.meta.dir + "/with:colon/worker.js", { preload: import.meta.dir + "/plugin.ts" });
+        worker.onmessage = ({ data }) => (console.log(data), worker.terminate());
+      `,
+      "onLoad worker.js",
+    ],
+  ])("is a file that onLoad is asked about, under such a directory, by %s", async (_, name, source, loaded) => {
+    expect(await run({ ...underColon, [name]: source }, ["--preload", "./plugin.ts", name])).toEqual({
+      stdout: [loaded],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.skipIf(isWindows)("is a file that onLoad is asked about, under such a directory, as the entry point", async () => {
+    expect(await run(underColon, ["--preload", "./plugin.ts", "./with:colon/main.js"])).toEqual({
+      stdout: ["onLoad main.js"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The last two rows are what the rule gives up. "/a/b" is a namespace of two segments: its key reads as a path,
+  // so the onLoad of "file" is asked about it and the one of "/a/b" is not. "/top:colon" has the colon in its first
+  // segment: its files read as keys in a namespace "/top", as before.
+  it("is in a namespace that starts with a slash only when the colon is in its first segment", async () => {
+    const source = `
+      const asked = [];
+      Bun.plugin({
+        name: "namespaces",
+        setup(build) {
+          const answers = {
+            virtual: { path: "x.js", namespace: "/virtual" },
+            late: { path: "x.js", namespace: "/late" },
+            deep: { path: "x.js", namespace: "/a/b" },
+            nowhere: { path: "/nowhere/with:colon/absent.js" },
+            device: { path: "//?/C:/not-on-disk/absent.js" },
+            top: { path: "/top:colon/absent.js" },
+          };
+          build.onResolve({ filter: /^(virtual|late|deep|nowhere|device|top)$/ }, ({ path }) => answers[path]);
+          for (const namespace of ["/virtual", "/a/b"])
+            build.onLoad({ filter: /.*/, namespace }, ({ path }) => ({ exports: { default: namespace + " " + path }, loader: "object" }));
+          build.onLoad({ filter: /absent\\.js$|x\\.js$/ }, ({ path }) => (asked.push(path), { exports: { default: "file " + path }, loader: "object" }));
+        },
+      });
+      for (const specifier of ["virtual", "late", "nowhere", "device", "deep", "top"])
+        console.log(await import(specifier).then(module => module.default, error => error.message.split(" imported")[0]));
+      console.log("asked in file:", JSON.stringify(asked));
+    `;
+    expect(await run({ "entry.mjs": source }, ["entry.mjs"])).toEqual({
+      stdout: [
+        "/virtual x.js",
+        "Cannot find module '/late:x.js'",
+        "file /nowhere/with:colon/absent.js",
+        "file //?/C:/not-on-disk/absent.js",
+        "file /a/b:x.js",
+        "Cannot find module '/top:colon/absent.js'",
+        `asked in file: ["/nowhere/with:colon/absent.js","//?/C:/not-on-disk/absent.js","/a/b:x.js"]`,
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });

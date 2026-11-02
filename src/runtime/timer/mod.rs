@@ -1025,14 +1025,19 @@ impl All {
 
     /// Pop the next due timer. `now` is filled lazily on first call so we
     /// don't pay for `clock_gettime` when the heap is empty.
-    fn next(&mut self, has_set_now: &mut bool, now: &mut Timespec) -> Option<*mut EventLoopTimer> {
+    fn next(
+        &mut self,
+        is_idle: bool,
+        has_set_now: &mut bool,
+        now: &mut Timespec,
+    ) -> Option<*mut EventLoopTimer> {
         let timer = self.timers.peek()?;
         if !*has_set_now {
             // Real clock: this heap is the opt-out-of-fake-timers set.
             *now = Timespec::now(TimespecMockMode::ForceRealTime);
             *has_set_now = true;
             // What this drain's callbacks set is due later than this, so it waits for the next turn of the event loop.
-            if let Some(deadline) = self.deadline_if_due_when_idle() {
+            if let Some(deadline) = self.deadline_if_due_when_idle().filter(|_| is_idle) {
                 if deadline.greater(now) {
                     *now = deadline;
                 }
@@ -1078,12 +1083,17 @@ impl All {
         // SAFETY: `this` is the live per-thread `All`; `vm` per fn contract.
         let _ = unsafe { Self::drain_due_wtf_timers(this, &mut wtf_now, vm) };
 
+        // An immediate or a task that the poll's callbacks queued runs before a timer that still has 1 ms to wait, as in Node.
+        // SAFETY: `vm` per fn contract.
+        let is_idle = unsafe {
+            (*(*vm.cast::<bun_jsc::virtual_machine::VirtualMachine>()).event_loop()).is_idle()
+        };
         let mut now = Timespec { sec: 0, nsec: 0 };
         let mut has_set_now = false;
         loop {
             // SAFETY: `this` derived from `&mut self`; short-lived exclusive
             // borrow scoped to this `next()` call only — dropped before fire().
-            let Some(t) = (unsafe { &mut *this }).next(&mut has_set_now, &mut now) else {
+            let Some(t) = (unsafe { &mut *this }).next(is_idle, &mut has_set_now, &mut now) else {
                 break;
             };
             // Note: re-pack into bun_event_loop's local Timespec stub

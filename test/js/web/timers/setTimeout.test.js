@@ -3,6 +3,8 @@ import { timerInternals } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, bunRun, isLinux, isWindows, tempDirWithFiles } from "harness";
+import { spawn } from "node:child_process";
+import { connect, createServer } from "node:net";
 import path from "node:path";
 
 it("setTimeout", async () => {
@@ -886,6 +888,41 @@ describe("a delay of 0", () => {
     );
     port1.close();
     expect(seen).toEqual(["message", "immediate", "timer"]);
+  });
+
+  // React's scheduler works in immediates, and Testing Library awaits a delay of 0 to let it finish.
+  it.each([
+    ["an immediate", run => void setImmediate(run)],
+    [
+      "a socket's callback",
+      run => {
+        const server = createServer(socket => socket.end("x")).listen(0, "127.0.0.1", () =>
+          connect(server.address().port, "127.0.0.1").once("data", run),
+        );
+        return () => server.close();
+      },
+    ],
+    ["a child process's exit", run => void spawn(bunExe(), ["--version"], { env: bunEnv }).once("exit", run)],
+  ])("set in %s, it still lets what was queued before it run first", async (_, from) => {
+    const seen = [];
+    const { port1, port2 } = new MessageChannel();
+    port1.onmessage = () => seen.push("message");
+    let close;
+    const waited = await new Promise(resolve => {
+      close = from(() => {
+        port2.postMessage(0);
+        setImmediate(() => seen.push("immediate"));
+        const start = performance.now();
+        setTimeout(() => {
+          seen.push("timer");
+          resolve(performance.now() - start);
+        }, 0);
+      });
+    });
+    port1.close();
+    close?.();
+    // A slow machine may take the whole 1 ms to get to the timers. Then it is due, as in Node.
+    if (waited < 1) expect(seen).toEqual(["message", "immediate", "timer"]);
   });
 
   it("keeps its place among the timers, as in Node", async () => {

@@ -707,7 +707,7 @@ const kOnreadBuffer = Symbol("kOnreadBuffer");
 const kOnreadPendingEnd = Symbol("kOnreadPendingEnd");
 const kOnreadReadRequested = Symbol("kOnreadReadRequested");
 const kOnreadEmptyTail = Buffer.alloc(0);
-// The write the handle queued, like Node's WriteWrap: { handle, callback, frame }.
+// The write the handle queued, like Node's WriteWrap. A member named `handle` here would be one more callee of every untyped `x.handle()` in a compiled program.
 const kWriteReq = Symbol("kWriteReq");
 // How many bytes the kernel had taken when the timer last found a write queue that moved.
 const kLastBytesSent = Symbol("kLastBytesSent");
@@ -718,7 +718,7 @@ const kServerSocket = Symbol("kServerSocket");
 function onWriteComplete(self: $Node.Socket, handle: SocketHandle, status) {
   const req = self[kWriteReq];
   // connect() settled the write of the handle it replaced.
-  if (req?.handle !== handle) return;
+  if (req?.writeHandle !== handle) return;
   self[kWriteReq] = undefined;
   let err: Error | null = null;
   if (status < 0) {
@@ -731,8 +731,9 @@ function onWriteComplete(self: $Node.Socket, handle: SocketHandle, status) {
     unrefAfterDrain(self, handle);
   }
   // Node's WriteWrap is an AsyncResource that write() creates.
-  if (err && endsWithoutError(self)) process.nextTick(AsyncContextFrame.run, req.frame, req.callback, undefined, err);
-  else AsyncContextFrame.run(req.frame, req.callback, undefined, err);
+  if (err && endsWithoutError(self))
+    process.nextTick(AsyncContextFrame.run, req.writeFrame, req.writeCallback, undefined, err);
+  else AsyncContextFrame.run(req.writeFrame, req.writeCallback, undefined, err);
 }
 function endNT(self: $Node.Socket, socket: SocketHandle | null, callback: WriteCallback) {
   // Node's _final half-closes the writable side (sends FIN) and leaves the
@@ -2294,7 +2295,7 @@ function startReadingNT(self) {
 Socket.prototype.connect = function connect(this: $Node.Socket, ...args) {
   $debug("Socket.prototype.connect");
   // The closed handle cancels its queued write from the event loop. By then that would fail this connection.
-  if (this.destroyed && this[kWriteReq]) onWriteComplete(this, this[kWriteReq].handle, uv().UV_ECANCELED);
+  if (this.destroyed && this[kWriteReq]) onWriteComplete(this, this[kWriteReq].writeHandle, uv().UV_ECANCELED);
   const [options, cb] = $isArray(args[0]) && args[0][normalizedArgsSymbol] ? args[0] : normalizeArgs(args);
   const isTLS = typeof this[bunTlsSymbol] === "function";
   {
@@ -3001,7 +3002,7 @@ Socket.prototype._write = function _write(
   if (this.secureConnecting) this[kPreHandshakeWrite] = true;
   const status = socket.$write(chunk, encoding);
   if (status === false) {
-    this[kWriteReq] = { handle: socket, callback, frame: AsyncContextFrame.current() };
+    this[kWriteReq] = { writeHandle: socket, writeCallback: callback, writeFrame: AsyncContextFrame.current() };
     // A pending write holds the loop even on a handle whose FIN/pause dropped
     // its hold (libuv: the uv_write_t is active); unrefAfterDrain lets go again.
     if ((this[kended] || this[kPausedUnref]) && !this[kUserUnrefed]) socket.ref?.();

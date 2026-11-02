@@ -16,8 +16,9 @@
 //!
 //! The grammar is `parser.rs`'s and the rules are `printer.rs`'s. Anything accepted here must be accepted there.
 
-use super::parser::{self, Tree, read_escape};
+use super::parser::{self, Tree};
 use super::printer::{Builder, write_string_with_escapes};
+use super::tokens::{Kind, Token, end_of_comment, scan};
 use super::{Scratch, comments};
 use crate::FormatOptions;
 use crate::css::doc::{self, Elements, Group, IndentCommand, Line};
@@ -28,7 +29,6 @@ use crate::text::{
     has_newline_backwards, is_followed_by_empty_line, is_next_line_empty, is_previous_line_empty,
 };
 use bun_core::strings;
-use bun_highway::ScannerStops;
 
 /// Why something can't be written the current way.
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -42,79 +42,6 @@ enum Refusal {
 }
 
 type Result<T = ()> = std::result::Result<T, Refusal>;
-
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum Kind {
-    // What a byte starts. Not the kind of a token.
-    Ignored,
-    Invalid,
-    Hash,
-    Quote,
-    Dot,
-    Digit,
-    ByteOrderMark,
-    // Tokens.
-    End,
-    Bang,
-    Dollar,
-    Amp,
-    ParenL,
-    ParenR,
-    Spread,
-    Colon,
-    Equals,
-    At,
-    BracketL,
-    BracketR,
-    BraceL,
-    Pipe,
-    BraceR,
-    Name,
-    Number,
-    String,
-    StringWithEscapes,
-    BlockString,
-}
-
-/// What a token that starts with each byte is.
-const KINDS: [Kind; 256] = {
-    let mut kinds = [Kind::Invalid; 256];
-    let mut byte = 0;
-    while byte < 256 {
-        kinds[byte] = match byte as u8 {
-            b'\t' | b' ' | b',' | b'\n' | b'\r' => Kind::Ignored,
-            b'#' => Kind::Hash,
-            b'"' => Kind::Quote,
-            b'.' => Kind::Dot,
-            b'0'..=b'9' | b'-' => Kind::Digit,
-            0xEF => Kind::ByteOrderMark,
-            b'!' => Kind::Bang,
-            b'$' => Kind::Dollar,
-            b'&' => Kind::Amp,
-            b'(' => Kind::ParenL,
-            b')' => Kind::ParenR,
-            b':' => Kind::Colon,
-            b'=' => Kind::Equals,
-            b'@' => Kind::At,
-            b'[' => Kind::BracketL,
-            b']' => Kind::BracketR,
-            b'{' => Kind::BraceL,
-            b'|' => Kind::Pipe,
-            b'}' => Kind::BraceR,
-            b'a'..=b'z' | b'A'..=b'Z' | b'_' => Kind::Name,
-            _ => Kind::Invalid,
-        };
-        byte += 1;
-    }
-    kinds
-};
-
-#[derive(Copy, Clone)]
-struct Token {
-    kind: Kind,
-    start: u32,
-    end: u32,
-}
 
 /// What's written before the next text, when writing straight to the output.
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -161,6 +88,7 @@ const MAX_NESTING: u32 = 64;
 /// Everything that writing changes, to take back what's been written.
 #[derive(Copy, Clone)]
 struct Mark {
+    index: usize,
     token: Token,
     last_end: u32,
     comment: u32,
@@ -179,12 +107,12 @@ struct Mark {
 
 struct Direct<'t, 'o> {
     text: &'t [u8],
-    /// Where runs of bytes end in `text`.
-    stops: ScannerStops<'o>,
     options: &'o FormatOptions,
     width: usize,
     tab_width: usize,
     use_tabs: bool,
+    /// Indentation is made of spaces, and so is all white space in a line of `text`.
+    has_only_spaces: bool,
     bracket_spacing: bool,
     /// Widths are Prettier's.
     measures_like_prettier: bool,
@@ -192,7 +120,10 @@ struct Direct<'t, 'o> {
     can_print_definitions: bool,
     stack: bun_core::StackCheck,
 
-    /// The next token.
+    tokens: &'o [Token],
+    /// The index of `token`.
+    index: usize,
+    /// The next token that isn't a comment.
     token: Token,
     /// The end of the token before `token`.
     last_end: u32,
@@ -277,22 +208,23 @@ fn write(
     out: &mut Vec<u8>,
 ) -> bool {
     let len = out.len();
+    out.reserve(text.len() + text.len() / 16 + 64);
+    let stops = scratch.stops.find(text);
+    let count = scan(text, stops, &mut scratch.tokens);
     let mut direct = Direct {
         text,
-        stops: scratch.stops.find(text),
         options,
         width: options.line_width.value() as usize,
         tab_width: options.indent_width.value() as usize,
         use_tabs: options.indent_style.is_tab(),
+        has_only_spaces: !options.indent_style.is_tab() && !strings::contains_char(text, b'\t'),
         bracket_spacing: options.bracket_spacing.value(),
         measures_like_prettier: !options.flavor.is_oxfmt(),
         can_print_definitions,
         stack: bun_core::StackCheck::init(),
-        token: Token {
-            kind: Kind::End,
-            start: 0,
-            end: 0,
-        },
+        tokens: scratch.tokens.get(..count).unwrap_or_default(),
+        index: 0,
+        token: Token::end_of(b""),
         last_end: 0,
         comment: NO_COMMENT,
         printer: doc::Printer::new(options, text, out),
@@ -330,135 +262,32 @@ impl<'t> Direct<'t, '_> {
 
     /// Makes the token after `token` the next one.
     #[inline]
-    fn read_token(&mut self) -> Result {
-        let text = self.text;
-        let mut at = self.token.end as usize;
+    fn read_token(&mut self) {
         self.last_end = self.token.end;
-        loop {
-            at = self.stops.after_blanks.next(at);
-            let Some(&byte) = text.get(at) else {
-                return self.found(Kind::End, text.len(), text.len());
-            };
-            match KINDS[byte as usize] {
-                Kind::Ignored => at += 1,
-                Kind::Name => {
-                    // To `after_name` a `$` is part of a name. `in_string` stops at it, and at nothing else in a name.
-                    let end = (self.stops.after_name.next(at)).min(self.stops.in_string.next(at));
-                    return self.found(Kind::Name, at, end);
-                }
-                Kind::Hash => {
-                    if self.comment == NO_COMMENT {
-                        self.comment = at as u32;
-                    }
-                    at = self.end_of_comment(at);
-                }
-                Kind::ByteOrderMark if text[at..].starts_with(crate::text::BOM) => at += 3,
-                kind @ (Kind::Invalid
-                | Kind::Quote
-                | Kind::Dot
-                | Kind::Digit
-                | Kind::ByteOrderMark) => return self.read_long_token(kind, at),
-                punctuator => return self.found(punctuator, at, at + 1),
-            }
-        }
+        self.index += 1;
+        self.load_token();
     }
 
+    /// Makes the token at `index`, or the first one after it that isn't a comment, the next one.
     #[inline]
-    fn found(&mut self, kind: Kind, start: usize, end: usize) -> Result {
-        self.token = Token {
-            kind,
-            start: start as u32,
-            end: end as u32,
-        };
-        Ok(())
-    }
-
-    fn end_of_comment(&self, start: usize) -> usize {
-        let rest = self.text.get(start..).unwrap_or_default();
-        start + strings::index_of_any(rest, b"\n\r").unwrap_or(rest.len())
-    }
-
-    fn byte(&self, at: usize) -> Option<u8> {
-        self.text.get(at).copied()
+    fn load_token(&mut self) {
+        match self.tokens.get(self.index) {
+            Some(token) if token.kind != Kind::Comment => self.token = *token,
+            _ => self.load_token_after_comments(),
+        }
     }
 
     #[inline(never)]
-    fn read_long_token(&mut self, kind: Kind, start: usize) -> Result {
-        let rest = self.text.get(start..).unwrap_or_default();
-        match kind {
-            Kind::Dot if rest.starts_with(b"...") => self.found(Kind::Spread, start, start + 3),
-            Kind::Quote if rest.starts_with(b"\"\"\"") => {
-                let mut at = 3;
-                loop {
-                    at += strings::index_of(rest.get(at..).unwrap_or_default(), b"\"\"\"")
-                        .ok_or(Refusal::Definition)?;
-                    // `\"""` doesn't end the string.
-                    if at == 3 || rest[at - 1] != b'\\' {
-                        return self.found(Kind::BlockString, start, start + at + 3);
-                    }
-                    at += 3;
-                }
+    fn load_token_after_comments(&mut self) {
+        while let Some(token) = self.tokens.get(self.index) {
+            if token.kind != Kind::Comment {
+                self.token = *token;
+                return;
             }
-            Kind::Quote => {
-                let (mut at, mut kind) = (1, Kind::String);
-                loop {
-                    at += strings::index_of_any(rest.get(at..).unwrap_or_default(), b"\"\\\n\r")
-                        .ok_or(Refusal::Definition)?;
-                    match rest[at] {
-                        b'"' => return self.found(kind, start, start + at + 1),
-                        b'\\' => {
-                            kind = Kind::StringWithEscapes;
-                            at += read_escape(&rest[at..]).ok_or(Refusal::Definition)?.1;
-                        }
-                        _ => return Err(Refusal::Definition),
-                    }
-                }
-            }
-            Kind::Digit => {
-                let end = self.end_of_number(start)?;
-                self.found(Kind::Number, start, end)
-            }
-            _ => Err(Refusal::Definition),
+            self.comment = self.comment.min(token.start);
+            self.index += 1;
         }
-    }
-
-    fn end_of_digits(&self, start: usize) -> Result<usize> {
-        let rest = self.text.get(start..).unwrap_or_default();
-        match rest.iter().take_while(|byte| byte.is_ascii_digit()).count() {
-            0 => Err(Refusal::Definition),
-            count => Ok(start + count),
-        }
-    }
-
-    fn end_of_number(&self, start: usize) -> Result<usize> {
-        let mut at = start;
-        if self.byte(at) == Some(b'-') {
-            at += 1;
-        }
-        if self.byte(at) == Some(b'0') {
-            at += 1;
-            if self.byte(at).is_some_and(|byte| byte.is_ascii_digit()) {
-                return Err(Refusal::Definition);
-            }
-        } else {
-            at = self.end_of_digits(at)?;
-        }
-        if self.byte(at) == Some(b'.') {
-            at = self.end_of_digits(at + 1)?;
-        }
-        if matches!(self.byte(at), Some(b'E' | b'e')) {
-            at += 1;
-            if matches!(self.byte(at), Some(b'+' | b'-')) {
-                at += 1;
-            }
-            at = self.end_of_digits(at)?;
-        }
-        match self.byte(at) {
-            Some(byte) if byte == b'.' || KINDS[byte as usize] == Kind::Name => {
-                Err(Refusal::Definition)
-            }
-            _ => Ok(at),
-        }
+        self.token = Token::end_of(self.text);
     }
 
     fn token_text(&self) -> &'t [u8] {
@@ -482,8 +311,26 @@ impl<'t> Direct<'t, '_> {
         if self.comment != NO_COMMENT {
             return Err(Refusal::Definition);
         }
-        self.put(self.token.start as usize, self.token.end as usize);
-        self.read_token()
+        let (start, end) = (self.token.start as usize, self.token.end as usize);
+        // What `put_on_new_line` finds out, from what's known about the token.
+        if self.gap == Gap::Lines
+            && !self.is_document
+            && self.has_only_spaces
+            && self.run_end == self.last_end as usize
+            && self.token.is_after_tidy_gap
+            && u32::from(self.token.line_feeds_before) == self.gap_lines
+            && start - self.run_end
+                == self.gap_lines as usize + self.indentation_len(self.gap_level)
+        {
+            self.gap = Gap::Nothing;
+            self.line_indent = self.gap_level as usize * self.tab_width;
+            self.run_end = end;
+            self.line_start = self.printer.out.len() + (start - self.run_start);
+        } else {
+            self.put(start, end);
+        }
+        self.read_token();
+        Ok(())
     }
 
     /// Leaves the next token out.
@@ -491,7 +338,8 @@ impl<'t> Direct<'t, '_> {
         if self.comment != NO_COMMENT {
             return Err(Refusal::Definition);
         }
-        self.read_token()
+        self.read_token();
+        Ok(())
     }
 
     #[inline]
@@ -629,17 +477,14 @@ impl<'t> Direct<'t, '_> {
         Ok(())
     }
 
-    /// `crate::text::is_next_line_empty`, for the end of a token.
+    /// `is_next_line_empty(text, last_end)`
     #[inline]
-    fn is_next_line_empty(&self, at: usize) -> bool {
-        if self.text.get(at) == Some(&b'\n') {
-            match self.text.get(self.stops.after_blanks.next(at + 1)) {
-                Some(b'\n') => return true,
-                Some(b'\r' | 0xE2) => {}
-                _ => return false,
-            }
+    fn is_next_line_empty(&self) -> bool {
+        let line_feeds = self.token.line_feeds_before;
+        match (self.token.is_after_tidy_gap || line_feeds == 0) && self.comment == NO_COMMENT {
+            true => line_feeds >= 2,
+            false => is_next_line_empty(self.text, self.last_end as usize),
         }
-        is_next_line_empty(self.text, at)
     }
 
     /// Ends a line that has no group, and leaves `count - 1` lines empty.
@@ -752,6 +597,7 @@ impl<'t> Direct<'t, '_> {
 
     fn mark(&self) -> Mark {
         Mark {
+            index: self.index,
             token: self.token,
             last_end: self.last_end,
             comment: self.comment,
@@ -771,6 +617,7 @@ impl<'t> Direct<'t, '_> {
 
     /// Takes back what's been read and written since `mark`, which was made outside of groups.
     fn reset(&mut self, mark: &Mark) {
+        self.index = mark.index;
         self.token = mark.token;
         self.last_end = mark.last_end;
         self.comment = mark.comment;
@@ -859,9 +706,10 @@ impl<'t> Direct<'t, '_> {
         .map_err(|_| Refusal::Text)?;
         crate::ir::run::print(root, source, self.options, self.document, self.printer.out)
             .map_err(|_| Refusal::Text)?;
-        self.token.end = end;
-        self.comment = NO_COMMENT;
-        self.read_token()?;
+        let rest = self.tokens.get(self.index..).unwrap_or_default();
+        self.index += rest.partition_point(|token| token.start < end);
+        (self.last_end, self.comment) = (end, NO_COMMENT);
+        self.load_token();
         self.resume();
         Ok(())
     }
@@ -876,7 +724,7 @@ impl<'t> Direct<'t, '_> {
         let (mut at, limit) = (self.comment as usize, self.token.start as usize);
         self.comment = NO_COMMENT;
         while at < limit {
-            let end = self.end_of_comment(at);
+            let end = end_of_comment(self.text, at);
             let content = self.text.get(at + 1..end).unwrap_or_default();
             if (self.options.flavor).is_ignore_comment(strings::trim_js_whitespace(content)) {
                 return Err(Refusal::Text);
@@ -915,14 +763,13 @@ impl<'t> Direct<'t, '_> {
         })
     }
 
-    /// Writes what's between an item that ends at `item_end` and the next one: Prettier's `printSequence`, joined with
-    /// `hardline`s. After the last item, only its comments.
-    fn end_item(&mut self, item_end: u32, is_last: bool) -> Result {
-        let item_end = item_end as usize;
-        let lines_after_item = |this: &Self| 1 + u32::from(this.is_next_line_empty(item_end));
+    /// Writes what's between an item that ends at `last_end` and the next one, which is on a line of its own. After the
+    /// last item, only its comments. `keeps_empty_lines` selects Prettier's `printSequence`.
+    fn end_item(&mut self, is_last: bool, keeps_empty_lines: bool) -> Result {
+        let lines_after_item = 1 + u32::from(keeps_empty_lines && self.is_next_line_empty());
         if self.comment == NO_COMMENT {
             if !is_last {
-                self.break_line(lines_after_item(self));
+                self.break_line(lines_after_item);
             }
             return Ok(());
         }
@@ -940,7 +787,7 @@ impl<'t> Direct<'t, '_> {
                 this.put_comment(start, end);
             } else if is_on_own_line {
                 if std::mem::take(&mut is_after_item) {
-                    this.break_line(lines_after_item(this));
+                    this.break_line(lines_after_item);
                 }
                 this.put_leading_comment(start, end);
             } else if is_first {
@@ -953,7 +800,7 @@ impl<'t> Direct<'t, '_> {
             Ok(())
         })?;
         if is_after_item && !is_last {
-            self.break_line(lines_after_item(self));
+            self.break_line(lines_after_item);
         }
         Ok(())
     }
@@ -961,7 +808,7 @@ impl<'t> Direct<'t, '_> {
     // ───────────────────────────── the grammar ─────────────────────────────
 
     fn document(&mut self) -> Result {
-        self.read_token()?;
+        self.load_token();
         self.comments_before_first_item(false)?;
         loop {
             let mark = self.mark();
@@ -974,7 +821,7 @@ impl<'t> Direct<'t, '_> {
                 }
             }
             let is_last = self.is(Kind::End);
-            self.end_item(self.last_end, is_last)?;
+            self.end_item(is_last, true)?;
             if is_last {
                 break;
             }
@@ -1184,7 +1031,7 @@ impl<'t> Direct<'t, '_> {
                 }
             }
             let is_last = self.is(Kind::BraceR);
-            self.end_item(self.last_end, is_last)?;
+            self.end_item(is_last, true)?;
             if is_last {
                 break;
             }
@@ -1340,6 +1187,7 @@ impl<'t> Direct<'t, '_> {
     fn list_as_group(&mut self, item: Item, close: Kind, keeps_empty_lines: bool) -> Result {
         self.start_group();
         self.take()?;
+        self.break_group_at_comment()?;
         let has_space = close == Kind::BraceR && self.bracket_spacing && !self.is(close);
         if has_space {
             self.space();
@@ -1349,10 +1197,11 @@ impl<'t> Direct<'t, '_> {
             self.soft_line();
             loop {
                 self.item(item)?;
+                self.break_group_at_comment()?;
                 if self.is(close) {
                     break;
                 }
-                if keeps_empty_lines && self.is_next_line_empty(self.last_end as usize) {
+                if keeps_empty_lines && self.is_next_line_empty() {
                     self.hard_lines(1)?;
                     self.soft_line();
                 } else {
@@ -1370,19 +1219,26 @@ impl<'t> Direct<'t, '_> {
         Ok(())
     }
 
+    /// A comment between the brackets of a list is printed with a forced line break.
+    fn break_group_at_comment(&self) -> Result {
+        match self.comment != NO_COMMENT && !self.is_document {
+            true => Err(Refusal::Layout),
+            false => Ok(()),
+        }
+    }
+
     /// The same where the group is known to break, straight to the output.
     fn list_on_lines(&mut self, item: Item, close: Kind, keeps_empty_lines: bool) -> Result {
         self.take()?;
         self.level += 1;
         self.hard_lines(1)?;
+        self.comments_before_first_item(true)?;
         loop {
             self.unit(|this| this.item(item))?;
             if self.is(close) {
                 break;
             }
-            let is_next_line_empty =
-                keeps_empty_lines && self.is_next_line_empty(self.last_end as usize);
-            self.break_line(1 + u32::from(is_next_line_empty));
+            self.end_item(false, keeps_empty_lines)?;
         }
         self.level -= 1;
         self.break_line(1);
@@ -1415,7 +1271,7 @@ impl<'t> Direct<'t, '_> {
     fn value(&mut self, is_const: bool) -> Result {
         match self.token.kind {
             Kind::Name | Kind::Number => self.take(),
-            Kind::String | Kind::StringWithEscapes => self.string(),
+            Kind::String | Kind::StringToMeasure | Kind::StringWithEscapes => self.string(),
             Kind::BlockString => self.block_string(),
             Kind::Dollar if !is_const => {
                 self.take()?;
@@ -1522,7 +1378,7 @@ impl<'t> Direct<'t, '_> {
     /// Prettier's `printDescription`. Returns true if there is one.
     fn description(&mut self, is_of_input_value: bool) -> Result<bool> {
         match self.token.kind {
-            Kind::String | Kind::StringWithEscapes => {
+            Kind::String | Kind::StringToMeasure | Kind::StringWithEscapes => {
                 self.string()?;
                 match is_of_input_value {
                     true => self.line()?,
@@ -1543,8 +1399,10 @@ impl<'t> Direct<'t, '_> {
             return Err(Refusal::Definition);
         }
         let raw = self.token_text();
-        if self.is(Kind::String) {
-            self.measure(raw)?;
+        if !self.is(Kind::StringWithEscapes) {
+            if self.is(Kind::StringToMeasure) {
+                self.measure(raw)?;
+            }
             self.put(self.token.start as usize, self.token.end as usize);
         } else {
             self.buffer.clear();
@@ -1559,7 +1417,8 @@ impl<'t> Direct<'t, '_> {
             measured?;
             self.put_buffer();
         }
-        self.read_token()
+        self.read_token();
+        Ok(())
     }
 
     /// See `Builder::block_string`. What that doesn't print the way Prettier does is left to it.
@@ -1623,6 +1482,7 @@ impl<'t> Direct<'t, '_> {
         }
         self.hard_lines(1)?;
         self.put(content_end, end);
-        self.read_token()
+        self.read_token();
+        Ok(())
     }
 }

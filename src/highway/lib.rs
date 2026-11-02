@@ -616,7 +616,13 @@ impl ScannerStopsBuffer {
 #[derive(Copy, Clone)]
 pub struct Stops<'a>(&'a [u8]);
 
-impl Stops<'_> {
+impl<'a> Stops<'a> {
+    /// All the bits, eight to a byte. At least 8 bytes are past the end of the text.
+    #[inline(always)]
+    pub fn bytes(self) -> &'a [u8] {
+        self.0
+    }
+
     /// The bits from `pos` on. The upper 7 may be zeros that were shifted in.
     #[inline(always)]
     pub fn window(self, pos: usize) -> u64 {

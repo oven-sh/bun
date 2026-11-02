@@ -14,6 +14,7 @@ pub(crate) mod embed;
 mod parser;
 mod printer;
 mod range;
+mod tokens;
 
 use crate::ir::element::{Align, FormatElement, LineMode, Tag};
 use crate::js::context::JsFormatContext;
@@ -39,6 +40,7 @@ pub struct Scratch {
     document: crate::Scratch,
     /// The rest is `direct`'s.
     stops: bun_highway::ScannerStopsBuffer,
+    tokens: Vec<tokens::Token>,
     elements: crate::css::doc::Elements,
     lines: Vec<(u32, u32)>,
     buffer: Vec<u8>,

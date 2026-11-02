@@ -2952,6 +2952,8 @@ impl<'p, 's> Checker<'p, 's> {
         let ty = self.type_from_node_uncached(file, node);
         let ty = self.conditional_flow_type_of_type(file, ty, node);
         let ty = self.with_alias_for_type_node(file, node, ty);
+        // tsgo creates the type now. See `push_serial`.
+        self.push_serial(ty);
         if self.is_innermost_tainted() {
             self.keep_type_of_annotation_in_cycle(ty);
         }

@@ -6276,6 +6276,193 @@ dynamic.getSSRProps = binding => {
       }
     });
 
+    // `PgTimestampBuilder`'s variance measurement nests `PgArrayBuilder`'s, which nests `PgColumnBuilder`'s, which
+    // re-enters `PgArrayBuilder`. tsgo decides whether a comparison is deeply nested by the order in which the types on
+    // the stack were created, so whether a re-entry is reached, and so whether 7.1 restarts the cycle, depends on what
+    // the task compared before. Ordering the stack by the height of the types instead reported a TS2322 here.
+    test.each([1, 8])("measures the variances of drizzle's column builders like tsc, on %d threads", async threads => {
+      using dir = project({
+        "index.ts": `
+import type { PgTimestampBuilderInitial } from './timestamp.js';
+declare const x: PgTimestampBuilderInitial<"a">;
+export const y: PgTimestampBuilderInitial<string> = x;
+`,
+        "timestamp.d.ts": `
+import type { ColumnBuilderBaseConfig, HasDefault } from "./column-builder.js";
+import { PgColumnBuilder } from "./common.js";
+export type PgTimestampBuilderInitial<TName extends string> = PgTimestampBuilder<{
+    name: TName;
+    dataType: 'date';
+    columnType: 'PgTimestamp';
+    data: Date;
+    driverParam: string;
+    enumValues: undefined;
+}>;
+export declare class PgTimestampBuilder<T extends ColumnBuilderBaseConfig<'date', 'PgTimestamp'>> extends PgColumnBuilder<T, {
+    withTimezone: boolean;
+    precision: number | undefined;
+}> {
+    defaultNow(): HasDefault<this>;
+}
+`,
+        "column-builder.d.ts": `
+// Unused: puts common.d.ts before this file in program order. tsc 7.0.2 rejects the test without it.
+import type { PgColumnBuilder as _Unused } from "./common.js";
+export interface SQL { brand: "SQL" }
+export type Simplify<T> = {
+    [K in keyof T]: T[K];
+} & {};
+export type ColumnDataType = 'string' | 'number' | 'array' | 'date';
+export interface ColumnBuilderBaseConfig<TDataType extends ColumnDataType, TColumnType extends string> {
+    name: string;
+    dataType: TDataType;
+    columnType: TColumnType;
+    data: unknown;
+    driverParam: unknown;
+    enumValues: string[] | undefined;
+}
+export type ColumnBuilderTypeConfig<T extends ColumnBuilderBaseConfig<ColumnDataType, string>, TTypeConfig extends object = object> = Simplify<{
+    brand: 'ColumnBuilder';
+    name: T['name'];
+    dataType: T['dataType'];
+    columnType: T['columnType'];
+    data: T['data'];
+    driverParam: T['driverParam'];
+    notNull: T extends {
+        notNull: infer U;
+    } ? U : boolean;
+    hasDefault: T extends {
+        hasDefault: infer U;
+    } ? U : boolean;
+    enumValues: T['enumValues'];
+    generated: T extends {
+        generated: infer G;
+    } ? G extends undefined ? unknown : G : unknown;
+} & TTypeConfig>;
+export type NotNull<T extends ColumnBuilderBase> = T & {
+    _: {
+        notNull: true;
+    };
+};
+export type HasDefault<T extends ColumnBuilderBase> = T & {
+    _: {
+        hasDefault: true;
+    };
+};
+export type IsPrimaryKey<T extends ColumnBuilderBase> = T & {
+    _: {
+        isPrimaryKey: true;
+    };
+};
+export type HasRuntimeDefault<T extends ColumnBuilderBase> = T & {
+    _: {
+        hasRuntimeDefault: true;
+    };
+};
+export type $Type<T extends ColumnBuilderBase, TType> = T & {
+    _: {
+        $type: TType;
+    };
+};
+export type HasGenerated<T extends ColumnBuilderBase, TGenerated extends {} = {}> = T & {
+    _: {
+        hasDefault: true;
+        generated: TGenerated;
+    };
+};
+export interface ColumnBuilderBase<T extends ColumnBuilderBaseConfig<ColumnDataType, string> = ColumnBuilderBaseConfig<ColumnDataType, string>, TTypeConfig extends object = object> {
+    _: ColumnBuilderTypeConfig<T, TTypeConfig>;
+}
+export declare abstract class ColumnBuilder<T extends ColumnBuilderBaseConfig<ColumnDataType, string> = ColumnBuilderBaseConfig<ColumnDataType, string>, TRuntimeConfig extends object = object, TTypeConfig extends object = object> implements ColumnBuilderBase<T, TTypeConfig> {
+    _: ColumnBuilderTypeConfig<T, TTypeConfig>;
+    $type<TType>(): $Type<this, TType>;
+    notNull(): NotNull<this>;
+    $defaultFn(fn: () => (this['_'] extends {
+        $type: infer U;
+    } ? U : this['_']['data']) | SQL): HasRuntimeDefault<HasDefault<this>>;
+    $default: (fn: () => (this["_"] extends {
+        $type: infer U;
+    } ? U : this["_"]["data"]) | SQL) => HasRuntimeDefault<HasDefault<this>>;
+    $onUpdateFn(fn: () => (this['_'] extends {
+        $type: infer U;
+    } ? U : this['_']['data']) | SQL): HasDefault<this>;
+    $onUpdate: (fn: () => (this["_"] extends {
+        $type: infer U;
+    } ? U : this["_"]["data"]) | SQL) => HasDefault<this>;
+    primaryKey(): IsPrimaryKey<NotNull<this>>;
+    abstract generatedAlwaysAs(as: SQL | T['data'] | (() => SQL)): HasGenerated<this, {
+        type: 'always';
+    }>;
+}
+`,
+        "common.d.ts": `
+/*
+ * Reduced from drizzle-orm@0.45.4 (pg-core/columns/common.d.ts).
+ *
+ * The length of this comment is part of the test. Where the declarations below
+ * start decides the order in which the checker creates the types it compares,
+ * and with it which comparison it cuts off as deeply nested. tsc accepts
+ * index.ts with the declarations at this position and rejects it at some
+ * others, and bun check has to agree. Do not reformat this file.
+ * ----------------------------------------------------------------------------
+ * ----------------------------------------------------------------------------
+ * ----------------------------------------------------------------------------
+ * ----------------------------------------------------------------------------
+ * ----------------------------------------------------------------------------
+ * ----------------------------------------------------------------------------
+ * ----------------------------------------------------------------------------
+ * ----------------------------------------------------------------------------
+ * ----------------------------------------------------------------------------
+ * ----------------------------------------------------------------------------
+ * ----------------------------------------------------------------------------
+ * ----------------------------------------------------------------------------
+ * ----------------------------------------------------------------------------
+ * -------
+ */
+import type { ColumnBuilderBaseConfig, ColumnDataType, HasGenerated, SQL, Simplify } from "./column-builder.js";
+import { ColumnBuilder } from "./column-builder.js";
+export declare abstract class PgColumnBuilder<T extends ColumnBuilderBaseConfig<ColumnDataType, string> = ColumnBuilderBaseConfig<ColumnDataType, string>, TRuntimeConfig extends object = object, TTypeConfig extends object = object> extends ColumnBuilder<T, TRuntimeConfig, TTypeConfig & {
+    dialect: 'pg';
+}> {
+    array<TSize extends number | undefined = undefined>(size?: TSize): PgArrayBuilder<{
+        name: T['name'];
+        dataType: 'array';
+        columnType: 'PgArray';
+        data: T['data'][];
+        driverParam: T['driverParam'][] | string;
+        enumValues: T['enumValues'];
+        size: TSize;
+        baseBuilder: T;
+    }, T>;
+    references(ref: () => unknown, actions?: { onUpdate?: string }): this;
+    unique(name?: string): this;
+    generatedAlwaysAs(as: SQL | T['data'] | (() => SQL)): HasGenerated<this, {
+        type: 'always';
+    }>;
+}
+export type PgArrayColumnBuilderBaseConfig = ColumnBuilderBaseConfig<'array', 'PgArray'> & {
+    size: number | undefined;
+    baseBuilder: ColumnBuilderBaseConfig<ColumnDataType, string>;
+};
+export declare class PgArrayBuilder<T extends PgArrayColumnBuilderBaseConfig, TBase extends ColumnBuilderBaseConfig<ColumnDataType, string> | PgArrayColumnBuilderBaseConfig> extends PgColumnBuilder<T, {
+    baseBuilder: TBase extends PgArrayColumnBuilderBaseConfig ? PgArrayBuilder<TBase, TBase extends {
+        baseBuilder: infer TBaseBuilder extends ColumnBuilderBaseConfig<any, any>;
+    } ? TBaseBuilder : never> : PgColumnBuilder<TBase, {}, Simplify<Omit<TBase, keyof ColumnBuilderBaseConfig<any, any>>>>;
+    size: T['size'];
+}, {
+    baseBuilder: TBase extends PgArrayColumnBuilderBaseConfig ? PgArrayBuilder<TBase, TBase extends {
+        baseBuilder: infer TBaseBuilder extends ColumnBuilderBaseConfig<any, any>;
+    } ? TBaseBuilder : never> : PgColumnBuilder<TBase, {}, Simplify<Omit<TBase, keyof ColumnBuilderBaseConfig<any, any>>>>;
+    size: T['size'];
+}> {
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir, ["--threads", String(threads)]);
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
     // The argument is wrong: without the cycle through `keyof typeof shapes`, TypeScript reports TS2345. Inside the initializer
     // that the type refers back to, the comparison re-enters itself, and TypeScript 7.0 and 7.1 keep the inner result.
     test("keeps the first result of a comparison that re-enters itself through a variable's initializer", async () => {

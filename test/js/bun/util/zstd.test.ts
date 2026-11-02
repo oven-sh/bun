@@ -265,8 +265,8 @@ describe("Zstandard compression", async () => {
           expect(syncDecompressed).toStrictEqual(asyncDecompressed);
 
           // Verify both match original
-          expect(syncDecompressed).toStrictEqual<Uint8Array>(input);
-          expect(asyncDecompressed).toStrictEqual<Uint8Array>(input);
+          expect(syncDecompressed).toStrictEqual(Buffer.from(input));
+          expect(asyncDecompressed).toStrictEqual(Buffer.from(input));
         });
       }
     });
@@ -1023,7 +1023,7 @@ describe.concurrent("Zstandard HTTP compression", () => {
     expect(response.headers.get("Content-Type")).toBe("application/octet-stream");
 
     const buffer = await response.bytes();
-    expect(buffer).toStrictEqual(testData.binary);
+    expect(buffer).toStrictEqual(new Uint8Array(testData.binary));
   });
 
   it("doesn't use zstd when not in Accept-Encoding", async () => {

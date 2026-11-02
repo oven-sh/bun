@@ -139,6 +139,7 @@
 #include "JSFetchHeaders.h"
 #include "FetchHeaders.h"
 #include "BunCompiledObjectEquality.h"
+#include "BunStrictClassEquality.h"
 #include "JavaScriptCore/AOTHost.h"
 #include "JavaScriptCore/AOTJSONHooks.h"
 #include "DOMURL.h"
@@ -1150,6 +1151,12 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         }
     }
 
+    // toStrictEqual() and Bun.deepEquals(a, b, true) compare the classes here, before any per-type comparison answers.
+    if constexpr (isStrict && !checkPrototypes && !skipPrototypeIdentity) {
+        if (!Bun::haveSameClassForStrictEquality(vm, globalObject, scope, c1, c2))
+            return false;
+    }
+
     std::optional<bool> isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, c1, c2);
     RETURN_IF_EXCEPTION(scope, false);
     if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
@@ -1782,7 +1789,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             }
 
             if (left->errorType() != right->errorType()) {
-                // quick check on ctors (does not handle subclasses)
+                // quick check on ctors (only the strict modes tell a subclass from its base, before this arm)
                 return false;
             }
 
@@ -3549,7 +3556,7 @@ bool JSC__JSValue__jestStrictDeepEquals(JSC::EncodedJSValue JSValue0, JSC::Encod
 }
 
 // node:assert deepStrictEqual / node:util.isDeepStrictEqual: strict deepEquals
-// plus node's [[Prototype]] identity rule (Bun.deepEquals stays prototype-blind).
+// plus node's [[Prototype]] identity rule (Bun.deepEquals and toStrictEqual() have Jest's constructor rule).
 bool Bun__deepEqualsNodeStrict(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject)
 {
     return deepEqualsWrapperImpl<true, false, true>(JSValue0, JSValue1, globalObject);

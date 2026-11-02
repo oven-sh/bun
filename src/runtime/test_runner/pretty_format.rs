@@ -87,8 +87,7 @@ pub(crate) struct FormatOptions {
     pub(crate) quote_strings: bool,
 }
 
-/// Vitest's `maxOutputLength`: once a side of a failure message has printed this many
-/// bytes, its nested objects and arrays print as `[Object]` or `[Array]`.
+/// Vitest's `maxOutputLength`. Past it, nested objects and arrays print as `[Object]` or `[Array]`.
 pub(crate) const OUTPUT_BUDGET: usize = 1_000_000;
 
 /// What one side of a failure message has printed so far.

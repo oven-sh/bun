@@ -566,6 +566,30 @@ describe("bundler", () => {
       stdout: '["inf","neg","inf","method","static"]',
     },
   });
+  // "1.#x" is a syntax error. A number literal, or a const enum member that is inlined to one,
+  // needs a space before the "." of a private name.
+  itBundled("minify/PrivateNameOfNumberLiteral", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { E } from "./enum";
+        class Foo {
+          #x = 1;
+          static literal() { try { return (1).#x; } catch (e) { return e.name; } }
+          static enumMember() { try { return E.One.#x; } catch (e) { return e.name; } }
+        }
+        console.log(Foo.literal(), Foo.enumMember());
+      `,
+      "enum.ts": /* ts */ `
+        export const enum E { One = 1 }
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    run: {
+      stdout: "TypeError TypeError",
+    },
+  });
   // https://github.com/oven-sh/bun/issues/40688: the same-target destructuring
   // transform must apply to every eligible run of declarations, not only the
   // run at the head of the list.

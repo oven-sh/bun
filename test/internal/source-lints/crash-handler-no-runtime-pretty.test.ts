@@ -10,8 +10,8 @@ import path from "node:path";
 //
 // clippy.toml denies the other forms that rewrite at run time (`pretty_fmt_rt`, `pretty_fmt_runtime`,
 // `pretty_fmt_args`). It cannot deny this one while calls outside the crash handler pass it a literal. Until those are
-// converted and clippy.toml names it, this lint keeps it out of the crash handler: no test runs the branch for a second
-// thread that crashes, or the code for Windows.
+// converted and clippy.toml names it, this lint keeps it out of the crash handler: the tests that take the memory away
+// do not reach every branch on every system.
 test("the crash handler does not rewrite color tags at run time", async () => {
   const crate = path.resolve(import.meta.dir, "..", "..", "..", "src", "crash_handler");
   const atRunTime = /\bpretty_fmt::</;
@@ -25,7 +25,8 @@ test("the crash handler does not rewrite color tags at run time", async () => {
     readFileSync(path.join(crate, file), "utf8")
       .split("\n")
       .forEach((line, i) => {
-        if (atRunTime.test(line.replace(/\/\/.*/, "")))
+        // Not only the part before `//`: the templates of the report hold links, and a call can come after one.
+        if (!/^\s*\/\//.test(line) && atRunTime.test(line))
           found.push(`src/crash_handler/${file}:${i + 1}: ${line.trim()}`);
       });
   }

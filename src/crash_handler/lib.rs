@@ -4021,7 +4021,7 @@ mod draft {
             link
         }
 
-        /// The loader names libc by its path, and a frame there used to take a copy of it.
+        /// The loader has a name for libc, its path, and the link of a report has none for a frame there.
         #[test]
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         fn frame_outside_the_executable_asks_for_no_memory() {
@@ -4088,7 +4088,7 @@ mod draft {
             assert_eq!(requests, 0);
         }
 
-        /// A crash can be inside `insert_builtin_module`, which used to allocate under a lock that the report took.
+        /// A crash can be inside `insert_builtin_module`, so the writer and the report take no lock and no memory.
         #[test]
         fn builtin_modules_are_listed_without_memory() {
             let (requests, ()) = requests_of(|| {

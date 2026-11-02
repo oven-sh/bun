@@ -4,6 +4,7 @@ import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, bunRun, isLinux, isWindows, tempDirWithFiles } from "harness";
 import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { connect, createServer } from "node:net";
 import path from "node:path";
 
@@ -872,6 +873,45 @@ describe("a delay of 0", () => {
     expect(fired).toBe(false);
   });
 
+  // Tests start a request or a write, wait for a few delays of 0, and expect it to have ended by then.
+  it.each([
+    [
+      "a listening server",
+      async () => {
+        const server = createServer().listen(0, "127.0.0.1");
+        await once(server, "listening");
+        return () => server.close();
+      },
+    ],
+    [
+      "a request",
+      async () => {
+        const server = Bun.serve({ port: 0, fetch: () => new Promise(() => {}) });
+        const controller = new AbortController();
+        fetch(server.url, { signal: controller.signal }).catch(() => {});
+        return () => (controller.abort(), server.stop(true));
+      },
+    ],
+    [
+      "a child process",
+      async () => {
+        const child = spawn(bunExe(), ["-e", "process.stdin.resume()"], {
+          env: bunEnv,
+          stdio: ["pipe", "ignore", "ignore"],
+        });
+        await once(child, "spawn");
+        return () => child.kill();
+      },
+    ],
+  ])("waits for Node's minimum of 1 ms while %s keeps the event loop alive", async (_, start) => {
+    const stop = await start();
+    const begin = performance.now();
+    for (let i = 0; i < 50; i++) await new Promise(resolve => setTimeout(resolve, 0));
+    const elapsed = performance.now() - begin;
+    await stop();
+    expect(elapsed).toBeGreaterThanOrEqual(49);
+  });
+
   it("still lets what was queued before it run first", async () => {
     const seen = [];
     const { port1, port2 } = new MessageChannel();
@@ -904,31 +944,50 @@ describe("a delay of 0", () => {
     ],
     ["a child process's exit", run => void spawn(bunExe(), ["--version"], { env: bunEnv }).once("exit", run)],
   ])("set in %s, it still lets what was queued before it run first", async (_, from) => {
-    // A slow machine may take the whole 1 ms to get to the timers. Then the timer is due, as in Node, and the round says nothing.
-    for (let round = 0; round < 10; round++) {
-      const seen = [];
-      const { port1, port2 } = new MessageChannel();
-      const { promise, resolve } = Promise.withResolvers();
-      const see = name => seen.push(name) === 3 && resolve();
-      let waited;
-      port1.onmessage = () => see("message");
-      const close = from(() => {
-        port2.postMessage(0);
-        setImmediate(see, "immediate");
-        const start = performance.now();
-        setTimeout(() => {
-          waited = performance.now() - start;
-          see("timer");
-        }, 0);
-      });
-      await promise;
-      port1.close();
-      close?.();
-      expect(seen.toSorted()).toEqual(["immediate", "message", "timer"]);
-      if (waited >= 1) continue;
-      expect(seen).toEqual(["message", "immediate", "timer"]);
-      break;
+    const seen = [];
+    const { port1, port2 } = new MessageChannel();
+    const { promise, resolve } = Promise.withResolvers();
+    const see = name => seen.push(name) === 3 && resolve();
+    let waited;
+    port1.onmessage = () => see("message");
+    const close = from(() => {
+      port2.postMessage(0);
+      setImmediate(see, "immediate");
+      const start = performance.now();
+      setTimeout(() => {
+        waited = performance.now() - start;
+        see("timer");
+      }, 0);
+    });
+    await promise;
+    port1.close();
+    close?.();
+    // After its 1 ms the timer is due, as in Node. A slow machine may take that long to get to the timers.
+    if (waited < 1) expect(seen).toEqual(["message", "immediate", "timer"]);
+    else expect(seen.toSorted()).toEqual(["immediate", "message", "timer"]);
+  });
+
+  it("set in an immediate, it does not wait, and still runs after the next immediate", async () => {
+    const orders = new Set();
+    let fired = false;
+    const timer = setTimeout(() => (fired = true), 350);
+    // With the minimum these take 400 ms or more.
+    for (let i = 0; i < 400; i++) {
+      await new Promise(resolve =>
+        setImmediate(() => {
+          const order = [];
+          const see = name => order.push(name) === 2 && (orders.add(order.join(" < ")), resolve());
+          const start = performance.now();
+          setTimeout(() => see(performance.now() - start < 1 ? "timer" : "due timer"), 0);
+          setImmediate(see, "immediate");
+        }),
+      );
     }
+    clearTimeout(timer);
+    expect(fired).toBe(false);
+    orders.delete("due timer < immediate");
+    orders.delete("immediate < due timer");
+    expect([...orders]).toEqual(["immediate < timer"]);
   });
 
   it("keeps its place among the timers, as in Node", async () => {

@@ -988,8 +988,9 @@ impl All {
         // Real clock: both heaps hold opt-out-of-fake-timers nodes armed in
         // real-time units; the mocked clock made internal pacing spin on re-arm.
         let now = *maybe_now.get_or_insert_with(|| Timespec::now(TimespecMockMode::ForceRealTime));
-        // SAFETY: `this` is live, and only this thread touches the regular heap.
-        let is_due_when_idle = (unsafe { &*this }).deadline_if_due_when_idle().is_some();
+        // SAFETY: `this` is live, and only this thread touches the regular heap; `vm` per fn contract.
+        let is_due_when_idle = (unsafe { &*this }).deadline_if_due_when_idle().is_some()
+            && unsafe { (*this).is_idle(vm) };
         if next.greater(&now) && !is_due_when_idle {
             *spec = next.duration(&now);
             if let Some(us) = quic_next_tick_us {
@@ -1011,6 +1012,24 @@ impl All {
                 nsec: (us % US_PER_S) * NS_PER_US,
             };
         }
+    }
+
+    /// Whether the event loop would only sleep until the next timer: nothing is queued, and nothing but timers and immediates
+    /// keeps it alive. A read, a request or a child process that is under way may well end within 1 ms, and tests count on that.
+    ///
+    /// # Safety
+    /// `vm` is the erased `*mut VirtualMachine` of the calling JS thread.
+    unsafe fn is_idle(&self, vm: *mut ()) -> bool {
+        // SAFETY: fn contract.
+        let vm = unsafe { &*vm.cast::<bun_jsc::virtual_machine::VirtualMachine>() };
+        #[cfg(not(windows))]
+        let own = u32::from(self.active_timer_count > 0) + u32::from(self.immediate_ref_count > 0);
+        // libuv stops a timer before it calls its callback, which is where the timers are drained.
+        #[cfg(windows)]
+        let own = u32::from(self.active_timer_count > 0 && self.uv_timer.is_active())
+            + u32::from(self.uv_idle.is_active());
+        // SAFETY: both belong to the live VM of this thread.
+        unsafe { (*vm.event_loop()).is_idle() && (*vm.uws_loop()).active_count() <= own }
     }
 
     /// The deadline of the first timer, if it is one that does not wait for it. See `EventLoopTimer::is_due_when_idle`.
@@ -1084,10 +1103,8 @@ impl All {
         let _ = unsafe { Self::drain_due_wtf_timers(this, &mut wtf_now, vm) };
 
         // An immediate or a task that the poll's callbacks queued runs before a timer that still has 1 ms to wait, as in Node.
-        // SAFETY: `vm` per fn contract.
-        let is_idle = unsafe {
-            (*(*vm.cast::<bun_jsc::virtual_machine::VirtualMachine>()).event_loop()).is_idle()
-        };
+        // SAFETY: `this` is the live per-thread `All`; `vm` per fn contract.
+        let is_idle = unsafe { (*this).is_idle(vm) };
         let mut now = Timespec { sec: 0, nsec: 0 };
         let mut has_set_now = false;
         loop {

@@ -195,6 +195,23 @@ void resumeNativeSource(JSReadableStream* stream)
         Bun__FileReader__resume(file->wrapped());
 }
 
+extern "C" void Bun__FileReader__onReaderRelease(void* source);
+
+void releaseNativeSource(JSReadableStream* stream)
+{
+    if (stream->m_controllerKind != ControllerKind::Default)
+        return;
+    auto* controller = uncheckedDowncast<JSReadableStreamDefaultController>(stream->m_controller.get());
+    if (controller->m_algorithms.kind != SourceKind::Native)
+        return;
+    auto* handle = uncheckedDowncast<JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get())->handle();
+    if (!handle)
+        return;
+    // Only a file source holds an event-loop ref or reads by itself, so Blob and Bytes handles have nothing to release.
+    if (auto* file = dynamicDowncast<JSFileInternalReadableStreamSource>(handle))
+        Bun__FileReader__onReaderRelease(file->wrapped());
+}
+
 // object.<name>(...args) with a real [[Get]], as the replaced builtins did.
 static JSValue invokeMethod(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* object, const Identifier& name, const MarkedArgumentBuffer& args)
 {

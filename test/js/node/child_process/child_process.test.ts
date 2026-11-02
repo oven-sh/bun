@@ -932,6 +932,25 @@ describe("spawn()", () => {
         stdin.write(Buffer.alloc(65536, "y"), cb);
       },
     ],
+    [
+      "a large write and two small ones",
+      3,
+      (stdin: Writable, cb: WriteCallback) => {
+        stdin.write(Buffer.alloc(65536, "y"), cb);
+        stdin.write("x", cb);
+        stdin.write("x", cb);
+      },
+    ],
+    [
+      "a small write from the callback of another",
+      2,
+      (stdin: Writable, cb: WriteCallback) => {
+        stdin.write("x", err => {
+          cb(err);
+          stdin.write("y", cb);
+        });
+      },
+    ],
   ])("%s to a stdin that the child has closed fails the callbacks and is an 'error'", async (_, count, write) => {
     const child = spawn(
       bunExe(),
@@ -967,6 +986,47 @@ describe("spawn()", () => {
     order.push("in a later tick:");
     await once(child, "close");
     expect(order).toEqual(["in a later tick:", "small", "large", "small again", "end"]);
+  });
+
+  it.each([
+    ["a small chunk", 6, (stdin: Writable, cb: WriteCallback) => void stdin.write("header", cb)],
+    [
+      "a chunk that fills the pipe",
+      65536,
+      (stdin: Writable, cb: WriteCallback) => void stdin.write(Buffer.alloc(65536, "h"), cb),
+    ],
+    [
+      "the first of many small chunks",
+      300 * 1024,
+      (stdin: Writable, cb: WriteCallback) => {
+        stdin.write(Buffer.alloc(1024, "s"), cb);
+        for (let i = 1; i < 300; i++) stdin.write(Buffer.alloc(1024, "s"));
+      },
+    ],
+  ])("the callback of %s does not wait until the child has read what stdin got after it", async (_, length, write) => {
+    // The child reads nothing before that callback tells it to.
+    const script = `
+      process.once("message", () => {
+        let length = 0;
+        process.stdin.on("data", chunk => (length += chunk.length));
+        process.stdin.on("end", () => process.send(length, () => process.disconnect()));
+      });
+    `;
+    const child = spawn(bunExe(), ["-e", script], { env: bunEnv, stdio: ["pipe", "ignore", "inherit", "ipc"] });
+    try {
+      const seen: unknown[] = [];
+      const received = once(child, "message");
+      write(child.stdin!, err => {
+        seen.push("first", err ?? null);
+        child.send("read");
+      });
+      child.stdin!.write(Buffer.alloc(1 << 20, "x"), err => seen.push("last", err ?? null));
+      child.stdin!.end();
+      expect(await received).toEqual([length + (1 << 20), undefined]);
+      expect(seen).toEqual(["first", null, "last", null]);
+    } finally {
+      child.kill("SIGKILL");
+    }
   });
 
   it("a callback of stdin.write() that throws does not take the others with it", async () => {

@@ -78,6 +78,8 @@ declare global {
       /** true: the path must be opened; a sink: a FileSink. */
       [kWriteStreamFastPath]?: undefined | true | FileSink;
       [kKeptChunkCallbacks]?: ErrorCallback[];
+      [kUnsentChunks]?: Promise<unknown>;
+      [kSinkError]?: Error;
     }
 
     interface ReadStream extends Readable, FileStreamFields {
@@ -106,6 +108,8 @@ const kIoDone = Symbol("kIoDone");
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
 const kKeptChunkCallbacks = Symbol("kKeptChunkCallbacks");
+const kUnsentChunks = Symbol("kUnsentChunks");
+const kSinkError = Symbol("kSinkError");
 const kFs = Symbol("kFs");
 
 let FileHandle: FileHandleInternals["FileHandle"] | undefined;
@@ -737,26 +741,47 @@ function emitDrain(stream: $Node.WriteStream) {
 function callsBackOnceSent(stream: $Node.WriteStream, fileSink: FileSink, cb: ErrorCallback) {
   const callbacks = stream[kKeptChunkCallbacks];
   if (callbacks === undefined) return false;
-  if (callbacks.push(cb) === 1) process.nextTick(flushNow, stream, fileSink);
+  const ahead = stream[kUnsentChunks];
+  // Behind chunks that the pipe has not taken yet, or that failed (1 is "fulfilled"), the chunk shares their answer.
+  if (ahead !== undefined && $peekPromiseStatus(ahead) !== 1) ahead.then(() => cb(null), cb);
+  else if (callbacks.push(cb) === 1) process.nextTick(flushNow, stream, fileSink);
   return true;
 }
 
 function flushNow(stream: $Node.WriteStream, fileSink: FileSink) {
   // Nothing is left when _final() or a chunk that the sink could not keep came first.
   if (stream[kKeptChunkCallbacks]!.length === 0) return;
-  const fail = (err: Error | null) => {
+  const done = afterKeptChunks(stream, err => {
     if (err) require("internal/streams/destroy").errorOrDestroy(stream, err);
-  };
-  flushSink(fileSink, afterKeptChunks(stream, fail));
+  });
+  // A sink that has failed in the meantime is ended, and would answer "nothing to do".
+  const failed = stream[kSinkError];
+  if (failed) done(failed);
+  else flushSink(stream, fileSink, done);
 }
 
-// What the sink kept goes out with the next thing that it sends, so those callbacks come first, with the same answer.
+// The callbacks of what the sink kept come first, with the same answer.
 function afterKeptChunks(stream: $Node.WriteStream, cb: ErrorCallback): ErrorCallback {
   const callbacks = stream[kKeptChunkCallbacks];
   if (callbacks === undefined || callbacks.length === 0) return cb;
   stream[kKeptChunkCallbacks] = [];
   callbacks.push(cb);
   return err => callInOrder(callbacks, err, 0);
+}
+
+// `unsent` is the sink's answer to a chunk that it could neither keep nor send whole. What it kept went to the pipe in the same call, ahead of that chunk.
+function afterChunksAhead(stream: $Node.WriteStream, unsent: Promise<unknown>, cb: ErrorCallback): ErrorCallback {
+  const callbacks = stream[kKeptChunkCallbacks];
+  if (callbacks === undefined) return cb;
+  stream[kUnsentChunks] = unsent;
+  // The call failed (0 is "pending"), for all of them.
+  if ($peekPromiseStatus(unsent) !== 0) return afterKeptChunks(stream, cb);
+  // They do not wait until the reader has taken the rest of a later chunk.
+  if (callbacks.length !== 0) {
+    stream[kKeptChunkCallbacks] = [];
+    process.nextTick(callInOrder, callbacks, null, 0);
+  }
+  return cb;
 }
 
 function callInOrder(callbacks: ErrorCallback[], err: Error | null, from: number) {
@@ -768,14 +793,16 @@ function callInOrder(callbacks: ErrorCallback[], err: Error | null, from: number
   }
 }
 
-function flushSink(fileSink: FileSink, cb: ErrorCallback) {
+function flushSink(stream: $Node.WriteStream, fileSink: FileSink, cb: ErrorCallback) {
   try {
     const maybePromise = fileSink.flush();
     if ($isPromise(maybePromise)) {
+      stream[kUnsentChunks] = maybePromise;
       maybePromise.then(() => cb(null), cb);
       return;
     }
   } catch (err) {
+    stream[kSinkError] = err as Error;
     cb(err as Error);
     return;
   }
@@ -788,7 +815,7 @@ function _write(this: $Node.WriteStream, data: Buffer, encoding: string, cb: Err
   if (fileSink && fileSink !== true) {
     const maybePromise = fileSink.write(data);
     if ($isPromise(maybePromise)) {
-      cb = afterKeptChunks(this, cb);
+      cb = afterChunksAhead(this, maybePromise, cb);
       maybePromise.then(() => {
         emitDrain(this);
         cb(null);
@@ -831,7 +858,7 @@ function underscoreWriteFast(this: $Node.WriteStream, data: Buffer, encoding: st
 
     const maybePromise = fileSink.write(data);
     if ($isPromise(maybePromise)) {
-      cb = afterKeptChunks(this, cb || streamNoop);
+      cb = afterChunksAhead(this, maybePromise, cb || streamNoop);
       maybePromise.then(
         () => {
           cb(null);
@@ -862,7 +889,7 @@ function finalFast(this: $Node.WriteStream, cb: ErrorCallback) {
   }
   const done = afterKeptChunks(this, cb);
   // What is thrown inside _final() counts as its failure, so the callbacks of writes run in a tick of their own.
-  flushSink(fileSink, done === cb ? cb : err => process.nextTick(done, err));
+  flushSink(this, fileSink, done === cb ? cb : err => process.nextTick(done, err));
 }
 
 // How the engine's "is not a function" names what it found.
@@ -908,7 +935,7 @@ function writeFast(
   if (fileSink && fileSink !== true) {
     const maybePromise = fileSink.write(data);
     if ($isPromise(maybePromise)) {
-      const done = afterKeptChunks(this, cb);
+      const done = afterChunksAhead(this, maybePromise, cb);
       // Two-arg then(): a throw from the fulfillment handler must not be
       // mistaken for a write failure.
       maybePromise.then(
@@ -964,7 +991,7 @@ writeStreamPrototype._writev = function (this: $Node.WriteStream, data: $Node.Ch
   if (fileSink && fileSink !== true) {
     const maybePromise = fileSink.write(Buffer.concat(chunks));
     if ($isPromise(maybePromise)) {
-      cb = afterKeptChunks(this, cb);
+      cb = afterChunksAhead(this, maybePromise, cb);
       maybePromise.then(() => {
         emitDrain(this);
         cb(null);
@@ -994,7 +1021,13 @@ writeStreamPrototype._writev = function (this: $Node.WriteStream, data: $Node.Ch
 writeStreamPrototype._destroy = function (this: $Node.WriteStream, err: Error | null, cb: ErrorCallback) {
   const sink = this[kWriteStreamFastPath];
   if (sink && sink !== true) {
-    const end = sink.end(err!);
+    let end;
+    try {
+      end = sink.end(err!);
+    } catch (e) {
+      this[kSinkError] = e as Error;
+      throw e;
+    }
     if ($isPromise(end)) {
       end.then(() => cb(err), cb);
       return;

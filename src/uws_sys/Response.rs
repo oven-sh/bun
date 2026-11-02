@@ -1245,6 +1245,7 @@ bitflags::bitflags! {
     /// Mirrors `uWS::HttpResponseData::state`. That word is wider than a byte —
     /// it also carries the response-framing and node:http bits above bit 7 — so
     /// this must stay `u32` even though only the bits below are named here.
+    /// A `static_assert` beside `uws_res_state` in `libuwsockets.cpp` repeats each value below.
     #[repr(transparent)]
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct State: u32 {

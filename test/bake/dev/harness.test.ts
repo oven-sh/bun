@@ -1,5 +1,6 @@
 // Tests for the behavior of bake-harness.ts and client-fixture.mjs themselves.
 import { expect } from "bun:test";
+import { appendFileSync } from "node:fs";
 import { devTest, emptyHtmlFile } from "../bake-harness";
 
 // Plain `await`, not `expect().rejects`: that matcher ticks the event loop from
@@ -80,5 +81,52 @@ devTest("disposing a client reports an exit code it produces while it is being d
     );
 
     expect(await rejectionMessage(c[Symbol.asyncDispose]())).toBe('Client exited: "Reload not called"');
+  },
+});
+
+devTest("the files of a batch reach the page in one hot update", {
+  // Only on Linux does `batchChanges` know that the dev server has every change.
+  skip: ["darwin", "win32"],
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import "./a";
+      import "./b";
+      import.meta.hot.accept();
+    `,
+    "a.ts": `import.meta.hot.accept();`,
+    "b.ts": `import.meta.hot.accept();`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { storeHotChunks: true });
+    // The marks that each hot update carries.
+    const updates: string[][] = [];
+    c.on("hmr-chunk", (chunk: string) => updates.push([...new Set(chunk.match(/(?<=")[ab]\d(?=")/g))].sort()));
+    {
+      await using batch = await dev.batchChanges();
+      // One write call for each file. The watcher hand-off of the dev server
+      // can drop a change when three groups of events arrive in a row.
+      appendFileSync(dev.join("a.ts"), `\nexport const mark = "a1";`);
+      appendFileSync(dev.join("b.ts"), `\nexport const mark = "b1";`);
+    }
+    // An update that the batch left behind would arrive before this one.
+    await dev.write("a.ts", `export const mark = "a2"; import.meta.hot.accept();`);
+    expect(updates).toEqual([["a1", "b1"], ["a2"]]);
+  },
+});
+
+devTest("a batch without a change is released", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      console.log("loaded");
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("loaded");
+    await c.expectNoWebSocketActivity(async () => {
+      await using batch = await dev.batchChanges();
+    });
   },
 });

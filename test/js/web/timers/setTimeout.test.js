@@ -904,25 +904,31 @@ describe("a delay of 0", () => {
     ],
     ["a child process's exit", run => void spawn(bunExe(), ["--version"], { env: bunEnv }).once("exit", run)],
   ])("set in %s, it still lets what was queued before it run first", async (_, from) => {
-    const seen = [];
-    const { port1, port2 } = new MessageChannel();
-    port1.onmessage = () => seen.push("message");
-    let close;
-    const waited = await new Promise(resolve => {
-      close = from(() => {
+    // A slow machine may take the whole 1 ms to get to the timers. Then the timer is due, as in Node, and the round says nothing.
+    for (let round = 0; round < 10; round++) {
+      const seen = [];
+      const { port1, port2 } = new MessageChannel();
+      const { promise, resolve } = Promise.withResolvers();
+      const see = name => seen.push(name) === 3 && resolve();
+      let waited;
+      port1.onmessage = () => see("message");
+      const close = from(() => {
         port2.postMessage(0);
-        setImmediate(() => seen.push("immediate"));
+        setImmediate(see, "immediate");
         const start = performance.now();
         setTimeout(() => {
-          seen.push("timer");
-          resolve(performance.now() - start);
+          waited = performance.now() - start;
+          see("timer");
         }, 0);
       });
-    });
-    port1.close();
-    close?.();
-    // A slow machine may take the whole 1 ms to get to the timers. Then it is due, as in Node.
-    if (waited < 1) expect(seen).toEqual(["message", "immediate", "timer"]);
+      await promise;
+      port1.close();
+      close?.();
+      expect(seen.toSorted()).toEqual(["immediate", "message", "timer"]);
+      if (waited >= 1) continue;
+      expect(seen).toEqual(["message", "immediate", "timer"]);
+      break;
+    }
   });
 
   it("keeps its place among the timers, as in Node", async () => {

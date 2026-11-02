@@ -184,6 +184,8 @@ bitflags::bitflags! {
         const KEEP_ALIVE               = 1 << 10; // default true
         /// A read failed with a non-retry errno. Set before the bytes read ahead of the failure are delivered, so a pull from inside that delivery cannot read the fd past the error. Never cleared: `start()`, `unpause()` and `from()` keep it, and only a reader from `init()` reads again.
         const READ_FAILED              = 1 << 11;
+        /// One chunk per wakeup also from what cannot block. For a parent that never says stop: a source that never runs dry would keep the loop to itself.
+        const IN_TURNS                 = 1 << 12;
     }
 }
 
@@ -623,9 +625,8 @@ impl BufferedReader {
         // afterwards, so the parent (which embeds this reader) must outlive it.
         let _parent = vtable.ref_parent();
         let mut received_hup = false;
-        // A used-up limit is reported without reading, so there is nothing to wait for.
         // SAFETY: caller contract; borrow ends at `;`.
-        if file_type == FileType::Pipe && !unsafe { (*this).limit.reached() } {
+        if unsafe { (*this).asks_before_reading(file_type) } {
             match bun_core::is_readable(fd) {
                 bun_core::Pollable::Ready => {}
                 bun_core::Pollable::Hup => received_hup = true,
@@ -652,6 +653,12 @@ impl BufferedReader {
         let _parent = vtable.ref_parent();
         // SAFETY: caller contract.
         unsafe { Self::read_loop(this, file_type, fd, received_hup) };
+    }
+
+    /// A pipe may block. In turns, all that is left is read once the other end is gone (on Windows one chunk has all that a pipe holds). A used-up limit is reported without reading.
+    fn asks_before_reading(&self, file_type: FileType) -> bool {
+        let in_turns = cfg!(not(windows)) && self.flags.contains(ReaderFlags::IN_TURNS);
+        (file_type == FileType::Pipe || in_turns) && !self.limit.reached()
     }
 
     fn begin_read(&self) -> Option<(Fd, FileType, BufferedReaderVTable)> {
@@ -815,6 +822,8 @@ impl BufferedReader {
         // SAFETY: caller contract — `this` is live.
         let vtable = unsafe { (*this).vtable };
         let streaming = vtable.is_streaming_enabled();
+        // SAFETY: caller contract; borrow ends at `;`.
+        let in_turns = unsafe { (*this).flags.contains(ReaderFlags::IN_TURNS) };
         let mut scratch = vtable.event_loop().claim_pipe_read_scratch();
         loop {
             // SAFETY: caller contract; borrow ends at `;`.
@@ -909,7 +918,7 @@ impl BufferedReader {
             if streaming && !keep_going && !received_hup {
                 return;
             }
-            if file_type != FileType::Pipe {
+            if file_type != FileType::Pipe && (received_hup || !in_turns) {
                 continue;
             }
 
@@ -967,9 +976,8 @@ impl BufferedReader {
             return (0, ReadState::Progress);
         }
         let _parent = vtable.ref_parent();
-        // As in `read`: a used-up limit is reported without reading.
         // SAFETY: caller contract; borrow ends at `;`.
-        if file_type == FileType::Pipe && !unsafe { (*this).limit.reached() } {
+        if unsafe { (*this).asks_before_reading(file_type) } {
             match bun_core::is_readable(fd) {
                 bun_core::Pollable::Ready | bun_core::Pollable::Hup => {}
                 bun_core::Pollable::NotReady => {

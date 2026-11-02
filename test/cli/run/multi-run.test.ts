@@ -1071,6 +1071,80 @@ describe.concurrent("timing edge cases", () => {
     // Waiting out the child's 30s sleep means the abort bypass regressed.
     expect(Date.now() - start).toBeLessThan(15000);
   });
+
+  // A pipe that is written faster than the runner reads it never runs dry.
+  describe("with output that never pauses", () => {
+    const busy = `
+      const fs = require("fs");
+      const chunk = Buffer.alloc(65536, Buffer.alloc(63, "x") + "\\n");
+      const end = Date.now() + 30_000;
+      for (let chunks = 1; Date.now() < end; chunks++) {
+        fs.writeSync(1, chunk);
+        // More than a pipe holds: the runner is reading by now.
+        if (chunks === 16) fs.writeFileSync("ready.txt", String(process.pid));
+      }
+    `;
+    const untilBusy = `while (!(await Bun.file("ready.txt").exists())) await Bun.sleep(10);`;
+
+    async function run(args: string[], dir: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        env: { ...bunEnv, NO_COLOR: "1", BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
+        cwd: dir,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const drained = (async () => {
+        for await (const _ of proc.stdout);
+      })();
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, drained]);
+      try {
+        const pid = Number(await Bun.file(path.join(dir, "ready.txt")).text());
+        if (Number.isInteger(pid) && pid > 0) process.kill(pid, "SIGKILL");
+      } catch {}
+      return { stderr, exitCode };
+    }
+
+    test("the failure of another script is noticed", async () => {
+      using dir = tempDir("mr-busy-fail", {
+        "busy.js": busy,
+        "fail.js": `${untilBusy} process.exit(3);`,
+        "package.json": JSON.stringify({
+          scripts: {
+            fail: `${bunExe()} fail.js`,
+            busy: `${bunExe()} busy.js`,
+          },
+        }),
+      });
+      const r = await run(["run", "--parallel", "fail", "busy"], String(dir));
+      expectExited(r.stderr, "fail", 3);
+      expect(r.exitCode).toBe(3);
+    });
+
+    test("a script is finished by its exit when the output is from a child it left behind", async () => {
+      using dir = tempDir("mr-busy-orphan", {
+        "busy.js": busy,
+        "leaves.js": `
+          Bun.spawn({
+            cmd: [process.execPath, "busy.js"],
+            stdio: ["ignore", "inherit", "ignore"],
+            detached: true,
+          }).unref();
+          ${untilBusy}
+        `,
+        "package.json": JSON.stringify({
+          scripts: {
+            leaves: `${bunExe()} leaves.js`,
+            quick: `echo quick-done`,
+          },
+        }),
+      });
+      const r = await run(["run", "--parallel", "leaves", "quick"], String(dir));
+      expectDone(r.stderr, "leaves");
+      expectDone(r.stderr, "quick");
+      expect(r.exitCode).toBe(0);
+    });
+  });
 });
 
 // ─── EXIT CODE PROPAGATION ───────────────────────────────────────────────────

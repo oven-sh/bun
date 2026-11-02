@@ -189,14 +189,20 @@ impl Worker {
             )),
         );
         if let Some(fd) = stdout {
-            this.out.reader.flags.insert(ReaderFlags::CHILD_STDIO);
+            this.out
+                .reader
+                .flags
+                .insert(ReaderFlags::CHILD_STDIO | ReaderFlags::IN_TURNS);
             this.out
                 .reader
                 .start(fd, true)
                 .map_err(|_| crate::Error::PipeStartFailed)?;
         }
         if let Some(fd) = stderr {
-            this.err.reader.flags.insert(ReaderFlags::CHILD_STDIO);
+            this.err
+                .reader
+                .flags
+                .insert(ReaderFlags::CHILD_STDIO | ReaderFlags::IN_TURNS);
             this.err
                 .reader
                 .start(fd, true)

@@ -142,13 +142,19 @@ impl<'a> ProcessHandle<'a> {
         if let Some(stdout) = stdout_fd {
             let _ = sys::set_nonblocking(stdout);
             handle.remaining_fds += 1;
-            handle.stdout.flags.insert(ReaderFlags::CHILD_STDIO);
+            handle
+                .stdout
+                .flags
+                .insert(ReaderFlags::CHILD_STDIO | ReaderFlags::IN_TURNS);
             handle.stdout.start(stdout, true)?;
         }
         if let Some(stderr) = stderr_fd {
             let _ = sys::set_nonblocking(stderr);
             handle.remaining_fds += 1;
-            handle.stderr.flags.insert(ReaderFlags::CHILD_STDIO);
+            handle
+                .stderr
+                .flags
+                .insert(ReaderFlags::CHILD_STDIO | ReaderFlags::IN_TURNS);
             handle.stderr.start(stderr, true)?;
         }
 

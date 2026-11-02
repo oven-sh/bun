@@ -190,7 +190,9 @@ impl<'a> ProcessHandle<'a> {
         ] {
             if let Some(fd) = fd {
                 let _ = bun_sys::set_nonblocking(fd);
-                pipe.reader.flags.insert(ReaderFlags::CHILD_STDIO);
+                pipe.reader
+                    .flags
+                    .insert(ReaderFlags::CHILD_STDIO | ReaderFlags::IN_TURNS);
                 pipe.reader.start(fd, true).map_err(Error::from)?;
             }
         }

@@ -1770,6 +1770,10 @@ pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
         return ranges;
     }
 
+    if target_line as usize >= LINE_RANGE_COUNT + LINES_WORTH_A_SKIP {
+        return line_ranges_far(text, first_line_feed, target_line);
+    }
+
     let mut lines = LinesAfterFirst {
         text,
         at: first_line_feed + 1,
@@ -1793,6 +1797,158 @@ pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
         },
     );
     ranges
+}
+
+/// The fewest lines before the result for which `skip_line_feeds` costs less than `LinesAfterFirst::next` for each one.
+const LINES_WORTH_A_SKIP: usize = 32;
+
+/// `index_of_line_ranges` after a first line that ends at `first_line_feed`, for a target line with `LINES_WORTH_A_SKIP` lines or more before the result.
+#[inline(never)]
+fn line_ranges_far<const LINE_RANGE_COUNT: usize>(
+    text: &[u8],
+    first_line_feed: usize,
+    target_line: u32,
+) -> BoundedArray<LineRange, LINE_RANGE_COUNT> {
+    let mut ranges = BoundedArray::<LineRange, LINE_RANGE_COUNT>::default();
+    let _ = ranges.push(LineRange {
+        start: 0,
+        end: first_line_feed as u32,
+    });
+    let mut lines = LinesAfterFirst {
+        text,
+        at: first_line_feed + 1,
+        prev_end: first_line_feed as u32,
+    };
+    // The first line of the result. `next` gives line 1 first.
+    let first_wanted = target_line - (LINE_RANGE_COUNT as u32 - 1);
+    let mut current_line: u32 = 1;
+    // The last lines that `skip_line_feeds` went past. `ranges` does not have them.
+    let mut skipped: Option<SkippedLines> = None;
+    // Lines from `next` since then.
+    let mut lines_since: usize = 0;
+    // Lines that `next` takes after a call of `skip_line_feeds` that did not reach `first_wanted`, and how many are left of them.
+    let mut steps: u32 = 1;
+    let mut from_next: u32 = 0;
+    loop {
+        if from_next == 0 && current_line < first_wanted {
+            let wanted = (first_wanted - current_line) as usize;
+            let (offset, count) = highway::skip_line_feeds(&text[lines.at..], wanted);
+            if count != 0 {
+                restore_skipped_lines(&mut ranges, text, skipped, lines_since);
+                skipped = Some(SkippedLines {
+                    start: lines.at,
+                    prev_end: lines.prev_end,
+                    end: lines.at + offset,
+                });
+                lines_since = 0;
+                lines.at += offset;
+                lines.prev_end = lines.at as u32 - 1;
+                current_line += count as u32;
+            }
+            from_next = steps;
+            // A `\r` alone stops `skip_line_feeds`. Where that leaves it too few lines, it is called less and less.
+            steps = if count < LINES_WORTH_A_SKIP {
+                steps.saturating_mul(2)
+            } else {
+                1
+            };
+        }
+        let Some(range) = lines.next() else {
+            return last_line_ranges(ranges, text, lines.prev_end, skipped, lines_since);
+        };
+        push_line_range(&mut ranges, range);
+        lines_since += 1;
+        if current_line >= target_line {
+            return ranges;
+        }
+        current_line += 1;
+        from_next = from_next.saturating_sub(1);
+    }
+}
+
+/// Lines that `skip_line_feeds` went past: each ends in a `\n`.
+#[derive(Copy, Clone)]
+struct SkippedLines {
+    /// Where the first one starts.
+    start: usize,
+    /// `LinesAfterFirst::prev_end` at `start`.
+    prev_end: u32,
+    /// After the `\n` of the last one.
+    end: usize,
+}
+
+/// The result of `line_ranges_far` for a text that ends before the target line: the last lines of the text.
+#[cold]
+fn last_line_ranges<const LINE_RANGE_COUNT: usize>(
+    mut ranges: BoundedArray<LineRange, LINE_RANGE_COUNT>,
+    text: &[u8],
+    prev_end: u32,
+    skipped: Option<SkippedLines>,
+    lines_since: usize,
+) -> BoundedArray<LineRange, LINE_RANGE_COUNT> {
+    restore_skipped_lines(&mut ranges, text, skipped, lines_since);
+    // The text after the last line break is the last line.
+    push_line_range(
+        &mut ranges,
+        LineRange {
+            start: prev_end,
+            // Wrapping cast.
+            end: text.len() as u32,
+        },
+    );
+    ranges
+}
+
+/// Puts the last lines of `skipped` into `ranges`, before the `lines_since` lines after them, if the result can have them.
+#[inline]
+fn restore_skipped_lines<const LINE_RANGE_COUNT: usize>(
+    ranges: &mut BoundedArray<LineRange, LINE_RANGE_COUNT>,
+    text: &[u8],
+    skipped: Option<SkippedLines>,
+    lines_since: usize,
+) {
+    let Some(skipped) = skipped else { return };
+    if lines_since + 1 >= LINE_RANGE_COUNT {
+        return;
+    }
+    restore_skipped_lines_cold(ranges, text, skipped, lines_since);
+}
+
+#[cold]
+fn restore_skipped_lines_cold<const LINE_RANGE_COUNT: usize>(
+    ranges: &mut BoundedArray<LineRange, LINE_RANGE_COUNT>,
+    text: &[u8],
+    skipped: SkippedLines,
+    lines_since: usize,
+) {
+    // The last lines, filled from the last one back: first the lines after the skipped ones.
+    let mut last_lines = [LineRange::default(); LINE_RANGE_COUNT];
+    let mut first = LINE_RANGE_COUNT;
+    for _ in 0..lines_since {
+        first -= 1;
+        last_lines[first] = ranges.pop().unwrap_or_default();
+    }
+    // Then the skipped lines. A line ends before the `\r` of a `\r\n`, and after a `\n` alone.
+    let mut line_feed = Some(skipped.end - 1);
+    while first > 1
+        && let Some(this_line_feed) = line_feed
+    {
+        let end = if this_line_feed > skipped.start && text[this_line_feed - 1] == b'\r' {
+            this_line_feed - 1
+        } else {
+            this_line_feed + 1
+        };
+        line_feed = last_index_of_char(&text[skipped.start..this_line_feed], b'\n')
+            .map(|i| skipped.start + i);
+        first -= 1;
+        last_lines[first] = LineRange {
+            start: line_feed.map_or(skipped.prev_end, |i| i as u32),
+            end: end as u32,
+        };
+    }
+    for range in &last_lines[first..] {
+        push_line_range(ranges, *range);
+    }
 }
 
 /// The lines of a text after its first one, as `index_of_line_ranges` cuts them.

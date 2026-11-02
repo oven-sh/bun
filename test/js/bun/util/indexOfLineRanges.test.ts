@@ -1,5 +1,7 @@
 import { stringsInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 // `bun.strings.indexOfLineRanges` finds the lines of the code frame of a printed error, and the
 // line of a CSS error: the byte ranges of a target line and of the lines before it, 1 or 6 in all.
@@ -56,7 +58,26 @@ function expected(text: Uint8Array, all: [number, number][], targetLine: number,
 
 /** Line numbers that are worth a look for a text of `lines` lines. */
 function targetLines(lines: number, random: () => number): number[] {
-  const targets = new Set<number>([0, 1, 2, 5, 6, 7, 45, 46, 47, lines - 2, lines - 1, lines, lines + 7, lines * 3]);
+  // From line 33 for one range and from line 38 for six, the lines before the result are counted and not cut.
+  const targets = new Set<number>([
+    0,
+    1,
+    2,
+    5,
+    6,
+    7,
+    32,
+    33,
+    34,
+    37,
+    38,
+    39,
+    lines - 2,
+    lines - 1,
+    lines,
+    lines + 7,
+    lines * 3,
+  ]);
   targets.add(0xffff_ffff);
   for (let i = 0; i < 10; i++) targets.add(Math.floor(random() * (lines + 2)));
   return [...targets].filter(target => target >= 0);
@@ -142,6 +163,15 @@ describe("indexOfLineRanges", () => {
     ["lines that get shorter", "x".repeat(100) + "\n" + (short + "\n").repeat(60) + "x\n".repeat(2_000)],
     ["a last line of 100,000 bytes", (short + "\n").repeat(400) + "x".repeat(100_000)],
     ["30,000 lines", (short + "\n").repeat(30_000)],
+    ["60 line feeds", "\n".repeat(60)],
+    ["a carriage return alone in 60 line feeds", "\n".repeat(40) + "\r" + "\n".repeat(19)],
+    ["lines of one byte", "a\n".repeat(300)],
+    ["long lines at the end", (short + "\n").repeat(400) + ("x".repeat(3_000) + "\n").repeat(8)],
+    ["long lines that end in `\\r\\n`", ("x".repeat(1_500) + "\r\n").repeat(120)],
+    ["long lines with tabs", ("\tdata".repeat(300) + "\n").repeat(120)],
+    ["a carriage return alone every 5 lines", ((short + "\n").repeat(4) + "a\rb\n").repeat(80)],
+    ["a carriage return alone in every line", "a\rb\n".repeat(300)],
+    ["lines that end in a carriage return alone", "one\n" + "abc\r".repeat(300)],
   ])("%s", (_, text) => {
     expect(mismatches(bytes(text), randomFrom(2))).toEqual([]);
   });
@@ -152,6 +182,19 @@ describe("indexOfLineRanges", () => {
       for (const last of ["", "last line"]) {
         const text = (short + "\n").repeat(60) + "a\rb\n" + (short + "\n").repeat(after) + last;
         found.push(...mismatches(bytes(text), randomFrom(after)).map(mismatch => `${after} lines after: ${mismatch}`));
+      }
+    }
+    expect(found).toEqual([]);
+  });
+
+  test("the text ends soon after two carriage returns alone", () => {
+    const found: string[] = [];
+    for (let between = 0; between <= 8; between++) {
+      for (let after = 0; after <= 8; after++) {
+        const lines = (count: number) => (short + "\n").repeat(count);
+        const text = lines(60) + "a\rb\n" + lines(between) + "c\rd\r\n" + lines(after) + (after % 2 ? "last line" : "");
+        const at = `${between} lines between, ${after} lines after`;
+        found.push(...mismatches(bytes(text), randomFrom(between * 9 + after)).map(mismatch => `${at}: ${mismatch}`));
       }
     }
     expect(found).toEqual([]);
@@ -188,5 +231,132 @@ describe("indexOfLineRanges", () => {
       found.push(...mismatches(Uint8Array.from(text), random).map(mismatch => `text ${seed}: ${mismatch}`));
     }
     expect(found).toEqual([]);
+  });
+});
+
+// The ranges reach a reader through the error printer, with 6 ranges, and through a CSS error, with 1.
+describe.concurrent("the code frame of an error that is far from the first line", () => {
+  const errorLine = 'throw new Error("far");';
+  // A module that throws on line `line`. Line `n` before that is `padding(n)`.
+  const moduleOf = (line: number, padding: (n: number) => string, lineBreak: string, after = 40) => {
+    const lines: string[] = [];
+    for (let n = 1; n < line; n++) lines.push(padding(n));
+    lines.push(errorLine);
+    for (let n = 0; n < after; n++) lines.push("// after");
+    return lines.join(lineBreak) + lineBreak;
+  };
+  // The frame that the module prints: the five lines before the error line, the error line, the
+  // caret and the message.
+  const frameOf = async (source: string) => {
+    using dir = tempDir("far-frame", { "far.ts": source });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "far.ts"],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, frame: stderr.split("\n").slice(0, 8), exitCode };
+  };
+  const frame = (line: number, padding: (n: number) => string) => ({
+    stdout: "",
+    frame: [
+      ...[5, 4, 3, 2, 1].map(before => `${line - before} | ${padding(line - before)}`),
+      `${line} | ${errorLine}`,
+      " ".repeat(String(line).length + 13) + "^",
+      "error: far",
+    ],
+    exitCode: 1,
+  });
+
+  const comment = (n: number) => `// line ${n}`;
+  test.each([
+    ["a line feed", "\n"],
+    ["a carriage return and a line feed", "\r\n"],
+  ])("lines that end in %s", async (_, lineBreak) => {
+    for (const line of [7, 40, 60, 300, 5_000]) {
+      expect(await frameOf(moduleOf(line, comment, lineBreak))).toEqual(frame(line, comment));
+    }
+  });
+
+  test.each([
+    ["tabs", (n: number) => `\t//\tline\t${n}`],
+    ["characters that are not ASCII", (n: number) => `// línea ${n} ☃`],
+    ["no characters", (n: number) => (n % 2 ? "" : `// line ${n}`)],
+    ["200 bytes", (n: number) => `// line ${n} ${"x".repeat(190)}`],
+  ])("lines of %s", async (_, padding) => {
+    expect(await frameOf(moduleOf(3_000, padding, "\n"))).toEqual(frame(3_000, padding));
+  });
+
+  test("a carriage return alone is the end of a line", async () => {
+    // The comment is line 100 and line 101.
+    const padding = (n: number) => (n === 100 ? "/* a\rb */" : comment(n > 100 ? n + 1 : n));
+    expect(await frameOf(moduleOf(2_999, padding, "\n"))).toEqual(frame(3_000, comment));
+  });
+
+  test("a long line before short lines", async () => {
+    const padding = (n: number) => (n === 100 ? `// line 100 ${"x".repeat(100_000)}` : comment(n));
+    expect(await frameOf(moduleOf(3_000, padding, "\n"))).toEqual(frame(3_000, padding));
+  });
+
+  // The line number is then past the end of the file.
+  test("a file that got shorter since it was loaded gives its last lines", async () => {
+    const kept =
+      'import { truncateSync } from "node:fs";\n' +
+      Array.from({ length: 999 }, (_, i) => comment(i + 2) + "\n").join("");
+    const source =
+      kept +
+      Array.from({ length: 1_999 }, (_, i) => comment(i + 1_001) + "\n").join("") +
+      'function fail() { throw new Error("far"); }\n' +
+      `try { fail(); } catch (e) { truncateSync(import.meta.path, ${kept.length + "// line".length}); console.error(e); }\n`;
+    expect(await frameOf(source)).toEqual({
+      stdout: "",
+      frame: [
+        "2995 | // line 996",
+        "2996 | // line 997",
+        "2997 | // line 998",
+        "2998 | // line 999",
+        "2999 | // line 1000",
+        "3000 | // line",
+        " ".repeat(35) + "^",
+        "error: far",
+      ],
+      exitCode: 0,
+    });
+  });
+
+  test("no line break after the error line", async () => {
+    const source = moduleOf(3_000, comment, "\n", 0);
+    expect(await frameOf(source.slice(0, -1))).toEqual(frame(3_000, comment));
+  });
+});
+
+describe("position.lineText of a CSS error that is far from the first line", () => {
+  test.concurrent.each([
+    [
+      "lines that end in a line feed",
+      "a { color: red; }\n".repeat(399) + '@import "x";\n' + "b {}\n".repeat(50),
+      '@import "x";',
+    ],
+    [
+      "lines that end in a carriage return and a line feed",
+      "a { color: red; }\r\n".repeat(399) + '@import "x";\r\nb {}\r\n',
+      '@import "x";',
+    ],
+    ["tabs", "\ta {\tcolor: red; }\n".repeat(399) + '\t@import "x";\n', '\t@import "x";'],
+    ["characters that are not ASCII", '/* é */ a { content: "☃"; }\n'.repeat(399) + '@import "x";\n', '@import "x";'],
+    ["no line break after the line", "a { color: red; }\n".repeat(399) + '@import "x";', '@import "x";'],
+    [
+      "a line of 50,000 bytes before it",
+      "a { color: red; }\n".repeat(200) + `/* ${"x".repeat(50_000)} */\n` + "a {}\n".repeat(198) + '@import "x";\n',
+      '@import "x";',
+    ],
+  ])("%s", async (_, source, lineText) => {
+    using dir = tempDir("css-line-text", { "in.css": source });
+    const result = await Bun.build({ entrypoints: [join(String(dir), "in.css")], throw: false });
+    expect(result.logs.map(({ position }) => ({ line: position?.line, lineText: position?.lineText }))).toEqual([
+      { line: 400, lineText },
+    ]);
   });
 });

@@ -1,6 +1,6 @@
 //! `angular-html-parser` 10.12: `ml_parser/parser.ts`.
 
-use super::ast::{Attribute, Id, Kind, Node, Span, StartTagComment, Tree};
+use super::ast::{Attribute, Flags, Id, Kind, Node, Span, StartTagComment, Tree};
 use super::data::{self, TagDefinition};
 use super::error::{ErrorKind, SyntaxError};
 use super::lexer::{
@@ -147,9 +147,7 @@ impl<'a> TreeBuilder<'a, '_, '_, '_> {
     fn consume_ready(&mut self, token: Token) {
         let mut node = Node::new(Kind::Ready, token.span);
         if let Parts::Ready(printed, level, flags) = token.parts {
-            node.name_span = printed;
-            node.attrs = (level, 0);
-            node.flags = flags;
+            (node.printed, node.printed_level, node.flags) = (printed, level, flags);
         }
         self.add_to_parent(node);
     }
@@ -523,8 +521,10 @@ impl<'a> TreeBuilder<'a, '_, '_, '_> {
     fn consume_element_start_tag(&mut self, start_tag_token: Token) {
         let first_attr = self.tree.attrs.len() as u32;
         let first_comment = self.tree.start_tag_comments.len() as u32;
+        let mut ready = Parts::None;
         loop {
             match self.peek().kind {
+                TokenType::ReadyAttributes => ready = self.advance().parts,
                 TokenType::AttrName => {
                     let name = self.advance();
                     let attr = self.consume_attr(name);
@@ -572,6 +572,10 @@ impl<'a> TreeBuilder<'a, '_, '_, '_> {
         node.tag_definition = definition;
         node.attrs = (first_attr, self.tree.attrs.len() as u32);
         node.start_tag_comments = (first_comment, self.tree.start_tag_comments.len() as u32);
+        if let Parts::Ready(printed, level, flags) = ready {
+            (node.printed, node.printed_level) = (printed, level);
+            node.flags |= flags | Flags::HAS_READY_START_TAG;
+        }
         let is_closed_by_child = self
             .container()
             .and_then(|it| self.definition_of_node(it))

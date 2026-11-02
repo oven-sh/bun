@@ -46,6 +46,8 @@ pub(crate) enum TokenType {
     IncompleteLet,
     /// Not a token of Angular's lexer: children that have been read by `runs.rs`.
     Ready,
+    /// The same for all that is between the name of a start tag and what ends the tag.
+    ReadyAttributes,
     Eof,
 }
 
@@ -620,19 +622,55 @@ impl<'a> Tokenizer<'a, '_> {
         let Some(ready) = self.runs.as_mut().and_then(|runs| runs.take(self.pos)) else {
             return false;
         };
-        self.tokens.push(Token {
-            kind: TokenType::Ready,
-            span: ready.span,
-            parts: Parts::Ready(ready.printed, ready.level, {
-                let mut flags = Flags::empty();
-                flags.set(Flags::ENDS_IN_TEXT, ready.ends_in_text);
-                flags.set(Flags::HAS_BROKEN_VOID_TAG, ready.has_broken_void_tag);
-                flags.set(Flags::IS_PRINTED_AS_WRITTEN, ready.is_printed_as_written);
-                flags
-            }),
-        });
-        self.pos = ready.span.end as usize;
+        let mut flags = Flags::empty();
+        flags.set(Flags::ENDS_IN_TEXT, ready.ends_in_text);
+        flags.set(Flags::HAS_BROKEN_VOID_TAG, ready.has_broken_void_tag);
+        flags.set(Flags::IS_PRINTED_AS_WRITTEN, ready.is_printed_as_written);
+        let parts = Parts::Ready(ready.printed, ready.level, flags);
+        let Span { start, end } = ready.span;
+        self.pos = end as usize;
+        if ready.name_end == 0 {
+            self.tokens.push(Token {
+                kind: TokenType::Ready,
+                span: ready.span,
+                parts,
+            });
+            return true;
+        }
+        let (prefix, name) = (
+            Span::new(start + 1, start + 1),
+            Span::new(start + 1, ready.name_end),
+        );
+        self.tokens.extend([
+            Token {
+                kind: TokenType::TagOpenStart,
+                span: Span::new(start, ready.name_end),
+                parts: Parts::Name(prefix, name),
+            },
+            Token {
+                kind: TokenType::ReadyAttributes,
+                span: Span::new(ready.name_end, end - 1),
+                parts,
+            },
+            Token {
+                kind: TokenType::TagOpenEnd,
+                span: Span::new(end - 1, end),
+                parts: Parts::None,
+            },
+        ]);
+        self.note_open_tag(prefix, name);
         true
+    }
+
+    /// `_handleFullNameStackForTagOpen`
+    fn note_open_tag(&mut self, prefix: Span, name: Span) {
+        if self
+            .full_name_stack
+            .last()
+            .is_none_or(|&last| self.is_same_name(last, (prefix, name)))
+        {
+            self.full_name_stack.push((prefix, name));
+        }
     }
 
     fn tokenize_one(&mut self) -> Result<()> {
@@ -1171,14 +1209,7 @@ impl<'a> Tokenizer<'a, '_> {
             !self.full_name_stack.is_empty(),
             &self.attributes,
         );
-        // `_handleFullNameStackForTagOpen`
-        if self
-            .full_name_stack
-            .last()
-            .is_none_or(|&last| self.is_same_name(last, (prefix, name)))
-        {
-            self.full_name_stack.push((prefix, name));
-        }
+        self.note_open_tag(prefix, name);
         if content_type == ContentType::ParsableData {
             return Ok(());
         }

@@ -246,22 +246,27 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
                     .needs_to_borrow_last_child_closing_tag_end_marker(parent)
             })
         };
-        if self.out.indent_level() != Some(node.attrs.0)
-            || !self.out.is_at_start_of_line()
-            || (node.has(Flags::HAS_BROKEN_VOID_TAG) && parent_prints_end_of_last_child())
-        {
+        if node.has(Flags::HAS_BROKEN_VOID_TAG) && parent_prints_end_of_last_child() {
             self.has_wrong_short_cut = true;
             return;
         }
         // The children are on lines of their own, so everything around them is broken.
         self.out.break_parent();
-        self.out.lines(
-            node.name_span
-                .of(match node.has(Flags::IS_PRINTED_AS_WRITTEN) {
-                    true => self.options.original_text,
-                    false => &self.tree.printed,
-                }),
-        );
+        self.print_printed(id);
+    }
+
+    /// Writes `Node::printed`, which has been read to start a line.
+    fn print_printed(&mut self, id: Id) {
+        let node = &self.tree[id];
+        if self.out.indent_level() != Some(node.printed_level) || !self.out.is_at_start_of_line() {
+            self.has_wrong_short_cut = true;
+            return;
+        }
+        let text = match node.has(Flags::IS_PRINTED_AS_WRITTEN) {
+            true => self.options.original_text,
+            false => &self.tree.printed,
+        };
+        self.out.lines(node.printed.of(text));
     }
 
     pub(crate) fn with_ancestor<R>(&mut self, print: impl FnOnce(&mut Self) -> R) -> R {
@@ -679,6 +684,9 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
     // ───────────────────────────── `print/tag.js` ─────────────────────────────
 
     pub(crate) fn print_opening_tag(&mut self, id: Id) {
+        if self.tree[id].has(Flags::HAS_READY_START_TAG) {
+            return self.print_printed(id);
+        }
         let tags = self.tags();
         self.out.built_text(|out| tags.opening_tag_start(id, out));
         self.print_attributes(id);

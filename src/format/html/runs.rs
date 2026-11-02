@@ -70,11 +70,13 @@ pub(crate) struct Parent<'a> {
     pub(crate) has_children: bool,
 }
 
-/// Children in a row.
+/// Children in a row, or a start tag.
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct Ready {
     /// From the start of the first child to the end of the last.
     pub(crate) span: Span,
+    /// Where the name ends, if this is the start tag of an element that goes the long way. Else 0.
+    pub(crate) name_end: u32,
     /// What is printed for them, from behind the indentation of the first line on: a range of `Tree::printed`, or of
     /// the source if `is_printed_as_written`.
     pub(crate) printed: Span,
@@ -93,6 +95,10 @@ struct Level {
     /// Where `<` is.
     start: usize,
     name_end: usize,
+    /// Behind `>`.
+    open_end: usize,
+    /// Where the start tag starts and ends in what is printed.
+    printed: (usize, usize),
     /// Its siblings in front of it.
     siblings: Siblings,
 }
@@ -454,22 +460,46 @@ impl Runs {
             }
         };
         let innermost = scanner.siblings;
-        let all = (self.levels.iter().map(|level| &level.siblings)).chain([&innermost]);
-        for siblings in all {
-            if siblings.last.at != 0 {
+        let printed = |from: usize, to: usize| {
+            Span::new(
+                from.wrapping_add(offset) as u32,
+                to.wrapping_add(offset) as u32,
+            )
+        };
+        let run_of = |siblings: &Siblings| {
+            (siblings.last.at != 0).then(|| Ready {
+                span: Span::new(siblings.first.0 as u32, siblings.last.at as u32),
+                name_end: 0,
+                printed: printed(siblings.first.1, siblings.last.printed),
+                is_printed_as_written,
+                level: siblings.level as u32,
+                ends_in_text: siblings.last.ends_in_text,
+                has_broken_void_tag: siblings.has_broken_void_tag,
+            })
+        };
+        // The start tag of an open element is printed as it has been written if the element is broken and starts a
+        // line. It is and it does if there is a run in it.
+        let outermost_without_run = match innermost.last.at != 0 {
+            true => self.levels.len(),
+            false => (self.levels.iter())
+                .rposition(|level| level.siblings.last.at != 0)
+                .unwrap_or(0),
+        };
+        for (index, level) in self.levels.iter().enumerate() {
+            self.found.extend(run_of(&level.siblings));
+            if index < outermost_without_run {
                 self.found.push(Ready {
-                    span: Span::new(siblings.first.0 as u32, siblings.last.at as u32),
-                    printed: Span::new(
-                        siblings.first.1.wrapping_add(offset) as u32,
-                        siblings.last.printed.wrapping_add(offset) as u32,
-                    ),
+                    span: Span::new(level.start as u32, level.open_end as u32),
+                    name_end: level.name_end as u32,
+                    printed: printed(level.printed.0, level.printed.1),
                     is_printed_as_written,
-                    level: siblings.level as u32,
-                    ends_in_text: siblings.last.ends_in_text,
-                    has_broken_void_tag: siblings.has_broken_void_tag,
+                    level: level.siblings.level as u32,
+                    ends_in_text: false,
+                    has_broken_void_tag: false,
                 });
             }
         }
+        self.found.extend(run_of(&innermost));
     }
 }
 
@@ -826,13 +856,16 @@ impl<'a> Scanner<'_, 'a> {
         if line_breaks == 0 {
             return self.element_on_one_line(start, element, width, open_end);
         }
+        let printed_from = self.out.len();
         self.put_whole_tag(start, to, has_attributes && width + 1 > room);
-        self.put_line(level + 1);
         self.levels.push(Level {
             start,
             name_end: to,
+            open_end,
+            printed: (printed_from, self.out.len()),
             siblings: self.siblings,
         });
+        self.put_line(level + 1);
         let inner = (definition, element.is_in_svg);
         self.siblings = Siblings::new(level + 1, inner, (first, self.out.len()), 0);
         Item::Open(first)

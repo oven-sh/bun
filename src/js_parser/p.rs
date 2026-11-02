@@ -4839,8 +4839,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && !is_skipped
                 {
                     let first_name = self.load_name_from_ref(first_name.ref_);
-                    use crate::scan::scan_symbols::TsNameBinding;
-                    members = match self.find_ts_name_binding(record.scope, first_name) {
+                    use crate::scan::scan_symbols::{TsNameBinding, find_ts_name_binding};
+                    members = match find_ts_name_binding(record.scope, first_name) {
                         TsNameBinding::Members(members) => Some(members),
                         TsNameBinding::Nothing => None,
                         TsNameBinding::Symbol(bound) => {

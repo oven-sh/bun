@@ -4110,6 +4110,10 @@ console.log(resolve.length)
     const define = new Bun.Transpiler({ loader: "js", define: { "CFG.n": "10" } });
     expect(define.transformSync(cls("return CFG.n.#x"))).toBe(printed("return 10 .#x") + "\n");
 
+    // Minified syntax folds "1 + 1" to a number, and drops the "?." that follows a number
+    expectPrintedMin_(cls("return (1 + 1).#x"), printed("return 2 .#x"));
+    expectPrintedMin_(cls("return (1)?.#x"), printed("return 1 .#x"));
+
     // These parse without the space
     expectPrinted_(cls("return (1)?.#x"), printed("return 1?.#x"));
     expectPrinted_(cls("return (1n).#x"), printed("return 1n.#x"));
@@ -4125,12 +4129,18 @@ console.log(resolve.length)
         #x = 1;
         static literal() { try { return (1).#x; } catch (e) { return e.name; } }
         static constant() { try { return k.#x; } catch (e) { return e.name; } }
+        static folded() { try { return (1 + 1).#x; } catch (e) { return e.name; } }
+        static optional() { try { return (1)?.#x; } catch (e) { return e.name; } }
       }
-      console.log(Foo.literal(), Foo.constant());
+      console.log(Foo.literal(), Foo.constant(), Foo.folded(), Foo.optional());
     `;
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "TypeError TypeError\n", stderr: "", exitCode: 0 });
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "TypeError TypeError TypeError TypeError\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   it("type only exports", () => {

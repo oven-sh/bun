@@ -1711,6 +1711,44 @@ describe.concurrent("bun test --isolate=modules", () => {
     expect(stdout).toContain("a false false\nc false false\n");
   });
 
+  test("a finished file's modules are released, with what their scope holds", async () => {
+    const files = {
+      "owned.js": `export const inOwnedGraph = new URLSearchParams("held=by-a-graph-the-file-made");`,
+      "a.test.js": `
+        import fs from "node:fs";
+        const moduleLevel = new URLSearchParams("held=by-the-module-scope");
+        // A graph the file's script made is disposed with the file. It stays reachable through node:fs, which every file shares.
+        fs.ownedGraph = new Bun.ModuleGraph();
+        const { inOwnedGraph } = await fs.ownedGraph.import(import.meta.dir + "/owned.js");
+        test("a", () => { expect([moduleLevel.get("held"), inOwnedGraph.get("held")]).toEqual(["by-the-module-scope", "by-a-graph-the-file-made"]); });
+      `,
+      "b.test.ts": `
+        import { generateHeapSnapshotForDebugging } from "bun:jsc";
+        import fs from "node:fs";
+        ${Heap}
+        test("b", async () => {
+          await expect(fs.ownedGraph.import(import.meta.dir + "/owned.js")).rejects.toThrow("ModuleGraph has been disposed");
+          // The finished file's graph is kept for its compiled code, but not its modules.
+          const heap = new Heap();
+          const held = heap.pathsTo("URLSearchParams").filter(path => path.includes("JSModuleEnvironment"));
+          const graphs = heap.pathsTo("ModuleGraph").filter(path => path === "root(StrongHandles) ModuleGraph").length;
+          console.log(JSON.stringify({ graphs, held }));
+        }, 120_000); // A heap snapshot takes 20 s on a busy debug build.
+      `,
+    };
+    using dir = tempDir("isolate-modules-released", files);
+    const { stdout, stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate=modules"],
+      ["./a.test.js", "./b.test.ts"],
+      // An in-flight JIT compilation roots the code it compiles, which would show up in the snapshot.
+      { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
+    );
+    const printed = stdout.replace(/^bun test .*\n/, "");
+    expect(printed, stderr).toStartWith("{");
+    expect({ ...JSON.parse(printed), exitCode }).toEqual({ graphs: 2, held: [], exitCode: 0 });
+  });
+
   test("with --parallel", async () => {
     const file = (name: string) => `
       import { inc } from "./state.js";

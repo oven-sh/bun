@@ -268,7 +268,9 @@ describe.if(!isWindows)("uv stubs", () => {
       errName: "EBADF",
       errNameR: "EBADF",
       errNameRSmallBuffer: "EBA",
+      unknownStrerror: unknown,
       unknownStrerrorR: unknown,
+      unknownErrName: unknown,
       unknownErrNameR: unknown,
     });
     expect(exitCode).toBe(0);
@@ -728,7 +730,9 @@ describe.if(!isWindows)("uv stubs", () => {
         `poll 0 ${UV_READABLE}`,
         `read 1 ${"x".charCodeAt(0)}`,
         "both 0 1",
-        `poll 0 ${UV_WRITABLE}`,
+        // The addon wrote a second byte after the start for both directions.
+        `seen 0 ${UV_READABLE | UV_WRITABLE}`,
+        `read 1 ${"z".charCodeAt(0)}`,
         "stopped 0 0",
         "close poll 1 0",
         "",
@@ -885,6 +889,70 @@ describe.if(!isWindows)("uv stubs", () => {
       0, // uv_poll_stop(A) after uv_close
       1, // uv_is_closing(A)
     ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("uv_poll_init fails for a regular file and for a directory", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`
+      const paths = ${JSON.stringify([addonPath, tempdir])};
+      console.log(JSON.stringify(paths.map(path => addon.testPollInitFile(path))));
+    `);
+    expect(stderr).toBe("");
+    // epoll refuses both fds. With kqueue, libuv's uv__io_check_fd returns UV_EINVAL for them.
+    const refused = isLinux ? -constants.errno.EPERM : -constants.errno.EINVAL;
+    expect(JSON.parse(stdout)).toEqual([refused, refused]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("uv_poll_init returns UV_EINVAL for the loop of another thread", async () => {
+    // uv_default_loop() is the main thread's loop, in a Worker too.
+    const { stdout, stderr, exitCode } = await runInChild(`
+      console.log("main", addon.testPollInitDefaultLoop());
+      const { Worker } = require("node:worker_threads");
+      const worker = new Worker(
+        \`
+          const { parentPort } = require("node:worker_threads");
+          parentPort.postMessage(require(${JSON.stringify(addonPath)}).testPollInitDefaultLoop());
+        \`,
+        { eval: true },
+      );
+      worker.on("message", message => console.log("worker", message));
+      worker.on("exit", code => console.log("worker exited", code));
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(`main 0\nworker ${-constants.errno.EINVAL}\nworker exited 0\n`);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("poll_cb doesn't run again while JS that it called runs the event loop", async () => {
+    // Bun.build() runs the event loop until the promise that a plugin's setup() returned settles. The addon's check
+    // callback reports from inside that run, after the loop polled the socket that poll_cb has not read yet.
+    const { stdout, stderr, exitCode } = await runInChild(`
+      let wait;
+      addon.testPollNestedLoop((event, a, b) => {
+        report(event, a, b);
+        if (event === "check") wait.reject(new Error("the event loop ran inside poll_cb"));
+        if (event !== "poll" || wait) return;
+        wait = Promise.withResolvers();
+        try {
+          Bun.build({ entrypoints: [], plugins: [{ name: "wait", setup: () => wait.promise }] });
+        } catch (error) {
+          console.log(error.message);
+        }
+      });
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(
+      [
+        `poll 0 ${UV_READABLE}`,
+        "check 1 0",
+        "the event loop ran inside poll_cb",
+        `read 1 ${"x".charCodeAt(0)}`,
+        // The most calls of poll_cb that were on the stack at once.
+        "depth 1 0",
+        "",
+      ].join("\n"),
+    );
     expect(exitCode).toBe(0);
   });
 

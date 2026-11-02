@@ -370,13 +370,22 @@ static napi_value test_sizes_and_names(napi_env env, napi_callback_info info) {
   return result;
 }
 
-// testStrerror() returns the message and the name of UV_EBADF from uv_strerror,
-// uv_err_name and their _r forms, and of a code that libuv doesn't define from
-// the _r forms (the other two leak a copy for such a code, like libuv's).
+// For a code that libuv doesn't define, uv_strerror and uv_err_name return a
+// copy that nothing frees, like libuv's. These keep the two copies reachable,
+// so that LeakSanitizer doesn't report them when the process exits.
+static const char *unknown_strerror;
+static const char *unknown_err_name;
+
+// testStrerror() returns the message and the name of UV_EBADF, and of a code
+// that libuv doesn't define, from uv_strerror, uv_err_name and their _r forms.
 static napi_value test_strerror(napi_env env, napi_callback_info info) {
   const int unknown = -123456;
   char buf[64];
   char small[4];
+  if (unknown_strerror == NULL)
+    unknown_strerror = uv_strerror(unknown);
+  if (unknown_err_name == NULL)
+    unknown_err_name = uv_err_name(unknown);
   napi_value result;
   napi_create_object(env, &result);
   set_string(env, result, "strerror", uv_strerror(UV_EBADF));
@@ -389,8 +398,10 @@ static napi_value test_strerror(napi_env env, napi_callback_info info) {
              uv_err_name_r(UV_EBADF, buf, sizeof(buf)));
   set_string(env, result, "errNameRSmallBuffer",
              uv_err_name_r(UV_EBADF, small, sizeof(small)));
+  set_string(env, result, "unknownStrerror", unknown_strerror);
   set_string(env, result, "unknownStrerrorR",
              uv_strerror_r(unknown, buf, sizeof(buf)));
+  set_string(env, result, "unknownErrName", unknown_err_name);
   set_string(env, result, "unknownErrNameR",
              uv_err_name_r(unknown, buf, sizeof(buf)));
   return result;
@@ -1200,6 +1211,8 @@ struct poll_test {
   // The handle watches fds[0]. The test writes to fds[1] or closes it.
   int fds[2];
   int calls;
+  // The events that poll_level_cb got since it watches both directions.
+  int seen;
   // The other test of a pair (start_poll_pair).
   struct poll_test *other;
 };
@@ -1252,21 +1265,32 @@ static struct poll_test *init_poll(napi_env env, napi_value callback,
 
 static void poll_level_cb(uv_poll_t *handle, int status, int events) {
   struct poll_test *test = handle->data;
+  char byte = 0;
   test->calls++;
-  report(&test->reporter, "poll", status, events);
   if (test->calls == 1) {
     // The byte stays unread, so the next loop iteration reports it again.
+    report(&test->reporter, "poll", status, events);
     return;
   }
   if (test->calls == 2) {
-    char byte = 0;
+    report(&test->reporter, "poll", status, events);
     int count = (int)read(test->fds[0], &byte, 1);
     report(&test->reporter, "read", count, byte);
-    // A start on a started handle replaces its events.
+    // A start on a started handle replaces its events. The second byte makes
+    // the socket readable again, so both directions are ready.
     int rc = uv_poll_start(handle, UV_READABLE | UV_WRITABLE, poll_level_cb);
     report(&test->reporter, "both", rc, uv_is_active((uv_handle_t *)handle));
+    if (write(test->fds[1], "z", 1) != 1)
+      abort();
     return;
   }
+  // epoll reports the two directions in one event, and kqueue in two.
+  test->seen |= events;
+  if (status == 0 && test->seen != (UV_READABLE | UV_WRITABLE))
+    return;
+  report(&test->reporter, "seen", status, test->seen);
+  int count = (int)read(test->fds[0], &byte, 1);
+  report(&test->reporter, "read", count, byte);
   int rc = uv_poll_stop(handle);
   report(&test->reporter, "stopped", rc, uv_is_active((uv_handle_t *)handle));
   uv_close((uv_handle_t *)handle, poll_test_close_cb);
@@ -1274,9 +1298,11 @@ static void poll_level_cb(uv_poll_t *handle, int status, int events) {
 
 // testPoll(callback) watches a socket that has one byte to read. The handle is
 // level-triggered: the callback runs on each loop iteration until it reads the
-// byte. It then watches both directions, and only writable is ready. Events:
+// byte. It then watches both directions and writes a second byte, so both are
+// ready. The callback collects those events until it has seen both directions,
+// because one event can report either one or both of them. Events:
 //   poll 0 UV_READABLE / poll 0 UV_READABLE / read 1 'x' / both 0 1
-//   poll 0 UV_WRITABLE / stopped 0 0 / close poll 1 0
+//   seen 0 UV_READABLE|UV_WRITABLE / read 1 'z' / stopped 0 0 / close poll 1 0
 // Returns [fd is non-blocking after init, uv_poll_start, is_active, has_ref].
 static napi_value test_poll(napi_env env, napi_callback_info info) {
   napi_value args[1];
@@ -1303,30 +1329,46 @@ static void poll_once_cb(uv_poll_t *handle, int status, int events) {
   uv_close((uv_handle_t *)handle, poll_test_close_cb);
 }
 
-static void *write_after_a_while(void *arg) {
+static void *write_from_thread(void *arg) {
   struct poll_test *test = arg;
-  usleep(30 * 1000);
   if (write(test->fds[1], "y", 1) != 1)
     abort();
   return NULL;
 }
 
+static void free_handle_close_cb(uv_handle_t *handle) { free(handle); }
+
+// Only the loop calls this, so the script has returned.
+static void start_writer_cb(uv_timer_t *timer) {
+  pthread_t thread;
+  if (pthread_create(&thread, NULL, write_from_thread, timer->data) != 0)
+    abort();
+  pthread_detach(thread);
+  uv_close((uv_handle_t *)timer, free_handle_close_cb);
+}
+
 // testPollFromThread(callback) watches a socket that another thread writes to
-// after the script has returned, so only the started handle keeps the process
-// alive. Events: poll 0 UV_READABLE / read 1 'y' / close poll 1 0
+// after the script has returned. A timer starts that thread. The timer is
+// unref'd, so only the started poll handle keeps the process alive, and
+// without it the process exits before the thread exists.
+// Events: poll 0 UV_READABLE / read 1 'y' / close poll 1 0
 static napi_value test_poll_from_thread(napi_env env, napi_callback_info info) {
   napi_value args[1];
   get_args(env, info, args, 1);
   struct poll_test *test = init_poll(env, args[0], POLL_SOCKET);
   if (test == NULL)
     return NULL;
-  pthread_t thread;
+  uv_timer_t *timer = malloc(sizeof(*timer));
   if (uv_poll_start(&test->poll, UV_READABLE, poll_once_cb) != 0 ||
-      pthread_create(&thread, NULL, write_after_a_while, test) != 0) {
+      uv_timer_init(get_loop(env, false), timer) != 0) {
+    free(timer);
     napi_throw_error(env, NULL, "start failed");
     return NULL;
   }
-  pthread_detach(thread);
+  uv_handle_set_data((uv_handle_t *)timer, test);
+  uv_unref((uv_handle_t *)timer);
+  if (uv_timer_start(timer, start_writer_cb, 0, 0) != 0)
+    napi_throw_error(env, NULL, "uv_timer_start failed");
   return NULL;
 }
 
@@ -1470,6 +1512,144 @@ static napi_value test_poll_pair(napi_env env, napi_callback_info info) {
   return start_poll_pair(env, info, poll_report_and_close_cb);
 }
 
+struct poll_nested_test {
+  uv_poll_t poll;
+  uv_check_t check;
+  struct reporter reporter;
+  int fds[2];
+  // The number of poll_nested_cb calls on the stack, and the most there were.
+  int depth;
+  int max_depth;
+  int open;
+};
+
+static void poll_nested_close_cb(uv_handle_t *handle) {
+  struct poll_nested_test *test = handle->data;
+  if (--test->open > 0)
+    return;
+  close(test->fds[0]);
+  close(test->fds[1]);
+  reporter_destroy(&test->reporter);
+  free(test);
+}
+
+// Reports only from inside poll_nested_cb. The loop runs the check handles
+// right after it polls, so this tells the script that the nested run polled.
+static void poll_nested_check_cb(uv_check_t *handle) {
+  struct poll_nested_test *test = handle->data;
+  if (test->depth > 0)
+    report(&test->reporter, "check", test->depth, 0);
+}
+
+static void poll_nested_cb(uv_poll_t *handle, int status, int events) {
+  struct poll_nested_test *test = handle->data;
+  if (++test->depth > test->max_depth)
+    test->max_depth = test->depth;
+  // The script runs the event loop in this call, and the byte is still unread.
+  report(&test->reporter, "poll", status, events);
+  if (--test->depth > 0)
+    return;
+  char byte = 0;
+  int count = (int)read(test->fds[0], &byte, 1);
+  report(&test->reporter, "read", count, byte);
+  int rc = uv_poll_stop(handle);
+  report(&test->reporter, "depth", test->max_depth, rc);
+  uv_close((uv_handle_t *)handle, poll_nested_close_cb);
+  uv_close((uv_handle_t *)&test->check, poll_nested_close_cb);
+}
+
+// testPollNestedLoop(callback) watches a socket that has one byte to read, and
+// reads it only after the script's callback has returned. The script runs the
+// event loop in that callback, which polls the readable socket again. libuv
+// never calls a callback inside another one, so poll_cb must not run in there.
+// Events: poll 0 UV_READABLE / check 1 0 / read 1 'x' / depth 1 0
+static napi_value test_poll_nested_loop(napi_env env, napi_callback_info info) {
+  napi_value args[1];
+  get_args(env, info, args, 1);
+  struct poll_nested_test *test = calloc(1, sizeof(*test));
+  uv_loop_t *loop = get_loop(env, false);
+  if (socketpair(AF_UNIX, SOCK_STREAM, 0, test->fds) != 0 ||
+      uv_poll_init(loop, &test->poll, test->fds[0]) != 0 ||
+      uv_check_init(loop, &test->check) != 0) {
+    free(test);
+    napi_throw_error(env, NULL, "init failed");
+    return NULL;
+  }
+  test->open = 2;
+  reporter_init(&test->reporter, env, args[0]);
+  uv_handle_set_data((uv_handle_t *)&test->poll, test);
+  uv_handle_set_data((uv_handle_t *)&test->check, test);
+  if (uv_poll_start(&test->poll, UV_READABLE, poll_nested_cb) != 0 ||
+      uv_check_start(&test->check, poll_nested_check_cb) != 0 ||
+      write(test->fds[1], "x", 1) != 1)
+    napi_throw_error(env, NULL, "start failed");
+  return NULL;
+}
+
+struct poll_init_test {
+  uv_poll_t poll;
+  int fds[2];
+};
+
+static void poll_init_close_cb(uv_handle_t *handle) {
+  // The handle is the first member of its test.
+  struct poll_init_test *test = (struct poll_init_test *)handle;
+  close_fd(&test->fds[0]);
+  close_fd(&test->fds[1]);
+  free(test);
+}
+
+// Returns uv_poll_init(loop, fd). It doesn't start the handle, and it closes
+// the handle, `fd` and `other_fd` (which can be -1). The close callback
+// doesn't use napi, because the thread that runs `loop` calls it.
+static napi_value poll_init_result(napi_env env, uv_loop_t *loop, int fd,
+                                   int other_fd) {
+  struct poll_init_test *test = calloc(1, sizeof(*test));
+  test->fds[0] = fd;
+  test->fds[1] = other_fd;
+  int rc = uv_poll_init(loop, &test->poll, fd);
+  if (rc == 0)
+    uv_close((uv_handle_t *)&test->poll, poll_init_close_cb);
+  else
+    // The handle isn't initialized, so there's nothing to close.
+    poll_init_close_cb((uv_handle_t *)&test->poll);
+  napi_value result;
+  napi_create_int32(env, rc, &result);
+  return result;
+}
+
+// testPollInitDefaultLoop() returns uv_poll_init of a socket on
+// uv_default_loop(), which is the main thread's loop on every thread. Only
+// the thread that runs a loop can use it, so it's UV_EINVAL in a Worker.
+static napi_value test_poll_init_default_loop(napi_env env,
+                                              napi_callback_info info) {
+  int fds[2];
+  if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) {
+    napi_throw_error(env, NULL, "socketpair failed");
+    return NULL;
+  }
+  return poll_init_result(env, uv_default_loop(), fds[0], fds[1]);
+}
+
+// testPollInitFile(path) returns uv_poll_init of an fd that's open on `path`.
+// uv.test.ts passes a regular file and a directory, which epoll can't watch
+// (EPERM) and libuv refuses for kqueue (UV_EINVAL).
+static napi_value test_poll_init_file(napi_env env, napi_callback_info info) {
+  napi_value args[1];
+  get_args(env, info, args, 1);
+  char path[4096];
+  size_t length = 0;
+  int fd = -1;
+  if (napi_get_value_string_utf8(env, args[0], path, sizeof(path), &length) ==
+      napi_ok)
+    fd = open(path, O_RDONLY);
+  if (fd < 0) {
+    napi_throw_error(env, NULL, "open failed");
+    return NULL;
+  }
+  return poll_init_result(env, get_loop(env, false), fd, -1);
+}
+
 static void unused_poll_cb(uv_poll_t *handle, int status, int events) {
   (void)handle;
   (void)status;
@@ -1508,11 +1688,15 @@ static uv_idle_t errors_poll_idle;
 static napi_value test_poll_errors(napi_env env, napi_callback_info info) {
   uv_loop_t *loop = get_loop(env, false);
   int fds[2];
-  // A high fd number, so that no other thread gets it while this function runs.
   int closed_fd = -1;
-  if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0 ||
-      (closed_fd = fcntl(fds[1], F_DUPFD, 1000)) < 0 ||
-      uv_idle_init(loop, &errors_poll_idle) != 0) {
+  if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0) {
+    // A high fd number, so that no other thread gets it while this function
+    // runs. If RLIMIT_NOFILE is too low for that, it's the lowest free number.
+    closed_fd = fcntl(fds[1], F_DUPFD, 1000);
+    if (closed_fd < 0)
+      closed_fd = dup(fds[1]);
+  }
+  if (closed_fd < 0 || uv_idle_init(loop, &errors_poll_idle) != 0) {
     napi_throw_error(env, NULL, "setup failed");
     return NULL;
   }
@@ -1632,6 +1816,15 @@ napi_value Init(napi_env env, napi_value exports) {
 
   napi_create_function(env, NULL, 0, test_poll_pair, NULL, &fn);
   napi_set_named_property(env, exports, "testPollPair", fn);
+
+  napi_create_function(env, NULL, 0, test_poll_nested_loop, NULL, &fn);
+  napi_set_named_property(env, exports, "testPollNestedLoop", fn);
+
+  napi_create_function(env, NULL, 0, test_poll_init_default_loop, NULL, &fn);
+  napi_set_named_property(env, exports, "testPollInitDefaultLoop", fn);
+
+  napi_create_function(env, NULL, 0, test_poll_init_file, NULL, &fn);
+  napi_set_named_property(env, exports, "testPollInitFile", fn);
 
   napi_create_function(env, NULL, 0, test_poll_unref, NULL, &fn);
   napi_set_named_property(env, exports, "testPollUnref", fn);

@@ -190,6 +190,8 @@ pub(crate) struct UvLoop {
     /// Lets `uv_async_send` post to the JS thread from any thread.
     handle: VmHandle,
     dispatch_state: AtomicU8,
+    /// True while a `poll_cb` is on the stack. A nested event loop run skips the poll handles, whose fds report again. JS thread only.
+    in_poll_cb: Cell<bool>,
     /// Async handles that are initialized and not closed. JS thread only.
     asyncs: JsCell<Vec<NonNull<UvAsync>>>,
     /// Handles the running dispatch pass hasn't visited yet, in reverse order.
@@ -290,6 +292,7 @@ impl UvLoop {
             vm,
             handle,
             dispatch_state: AtomicU8::new(DispatchState::Idle as u8),
+            in_poll_cb: Cell::new(false),
             asyncs: JsCell::new(Vec::new()),
             dispatching: JsCell::new(Vec::new()),
             idles: WatcherList::new(),
@@ -1147,10 +1150,26 @@ impl UvPoll {
         unsafe { (*handle).handle.type_ == UV_POLL }
     }
 
-    /// Like libuv's `uv_poll_init`: adds the fd and removes it to learn if the loop can watch it, then makes it non-blocking.
+    /// Like libuv's `uv__io_check_fd`, fails for an fd that the loop can't watch. Then makes the fd non-blocking.
     fn prepare_fd(poll: &mut FilePoll, uws_loop: &mut bun_io::Loop, fd: Fd) -> bun_sys::Result<()> {
-        poll.register(uws_loop, PollKind::Readable, false)?;
-        poll.unregister(uws_loop, false)?;
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            // epoll refuses an fd that it can't watch, or that it already has (`EEXIST`), and then changes nothing.
+            poll.register(uws_loop, PollKind::Readable, false)?;
+            poll.unregister(uws_loop, false)?;
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        {
+            // libuv's kqueue checks without its `EV_ADD` and `EV_DELETE`, which would replace and remove a knote that Bun has for the fd.
+            let _ = (poll, uws_loop);
+            let mode = bun_sys::fstat(fd)?.st_mode as bun_sys::Mode;
+            if bun_sys::S::ISREG(mode) || bun_sys::S::ISDIR(mode) {
+                return Err(bun_sys::Error::from_code(
+                    bun_sys::E::EINVAL,
+                    bun_sys::Tag::fstat,
+                ));
+            }
+        }
         bun_sys::set_nonblocking(fd)
     }
 
@@ -1219,9 +1238,12 @@ impl UvPoll {
             )
         };
         // SAFETY: the VM owns the loop, so it outlives its handles.
-        let vm = unsafe { &*(*loop_).vm.as_ptr() };
-        // Like libuv, no event that the loop dequeued before the handle was stopped or started.
-        if !active || vm.uws_loop_mut().iteration_number() == start_iteration {
+        let (loop_, vm) = unsafe { (&*loop_, &*(*loop_).vm.as_ptr()) };
+        // Like libuv, no event that the loop dequeued before the handle was stopped or started, and no callback inside another one.
+        if !active
+            || loop_.in_poll_cb.get()
+            || vm.uws_loop_mut().iteration_number() == start_iteration
+        {
             return;
         }
         // Don't run callbacks once the VM is stopping, like `before_poll`.
@@ -1260,8 +1282,10 @@ impl UvPoll {
         if let Some(cb) = cb {
             let _scope = vm.enter_event_loop_scope();
             let _handles = CallbackScope::open(global);
+            loop_.in_poll_cb.set(true);
             // SAFETY: calls the addon's callback on the loop thread with a handle it started.
             unsafe { cb(handle, status, events) };
+            loop_.in_poll_cb.set(false);
         }
         if global.has_exception() {
             // On `Err` the VM is terminating, and there's nothing else to run here.
@@ -1284,8 +1308,12 @@ pub(crate) unsafe extern "C" fn uv_poll_init(
         return UV_EBADF;
     }
     bun_output::scoped_log!(uv, "uv_poll_t {:?}: uv_poll_init({})", handle, fd);
-    // SAFETY: the loop is alive (fn contract), and this is the JS thread.
+    // SAFETY: the loop is alive (fn contract). Until the check below, this only reads `vm`, which nothing writes.
     let loop_ref = unsafe { &*loop_ };
+    // The `FilePoll` is this thread's, so the loop must be too. `uv_default_loop()` in a Worker is the main thread's.
+    if VirtualMachine::get_or_null() != Some(loop_ref.vm.as_ptr()) {
+        return UV_EINVAL;
+    }
     if loop_ref.watches_fd(fd) {
         return UV_EEXIST;
     }

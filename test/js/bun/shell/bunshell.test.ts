@@ -1812,6 +1812,21 @@ booga"
           .stderr("bun: no matches found: *.none\n")
           .runAsTest("a * is a glob only in the word that is the result");
 
+        // The rule for the last field is for a word with a form. A word with no form has its one walk for the last field
+        // as before, also when the `*` is in a field before it. sh walks the pattern of each field.
+        test("a * in a word with no form is as before", async () => {
+          using dir = tempDir("shell-word-no-form", { "qa": "" });
+          const run = async (word: string) => {
+            const { stdout, stderr, exitCode } = await $`echo ${{ raw: word }}`.cwd(String(dir)).quiet();
+            return [stdout.toString(), stderr.toString(), exitCode];
+          };
+          expect([await run("*$(echo a b)"), await run("*$(echo a qa)"), await run("*$(echo a b){x,y}")]).toEqual([
+            ["", "bun: no matches found: b\n", 1],
+            ["*a qa\n", "", 0],
+            ["", "bun: no matches found: b{x,y}\n", 1],
+          ]);
+        });
+
         test("whitespace at the end of a word adds no empty argument", async () => {
           expect(await argvOf("${U:-a}${U:-b c}d ${U:-a }${U:-} ${U:- } x${U:-b } ${U:-$(echo c) }")).toEqual([
             "ab",

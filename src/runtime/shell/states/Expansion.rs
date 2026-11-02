@@ -393,7 +393,7 @@ impl Expansion {
 
         let node = me.node;
         let atom = node.get();
-        if atom.has_glob_expansion() && Self::has_glob_syntax(me) {
+        if atom.has_glob_expansion() {
             // brace + glob composes. Keep
             // `current_out` (the original pattern, e.g. `src/*.{ts,tsx}`) so
             // the glob walker brace-expands and globs it; its matches are
@@ -473,11 +473,24 @@ impl Expansion {
         pattern
     }
 
-    /// Whether the field in `current_out` has a `*` of the script. The hint of the atom is for the whole word.
-    fn has_glob_syntax(me: &Expansion) -> bool {
-        me.meta_offsets
+    /// Whether the field in `current_out` is text: it has no `*` of the script, and the atom has a `${NAME<op>word}`.
+    /// The `*` of the hint is then in a word that is not the result, or in a field that ended. With no form, the one
+    /// walk of the atom is for this field also when it has no `*`.
+    fn is_text_of_form(me: &Expansion) -> bool {
+        let has_glob_syntax = me
+            .meta_offsets
             .iter()
-            .any(|&offset| me.current_out.get(offset as usize) == Some(&b'*'))
+            .any(|&offset| me.current_out.get(offset as usize) == Some(&b'*'));
+        if has_glob_syntax {
+            return false;
+        }
+        match me.node.get() {
+            ast::Atom::Simple(atom) => matches!(atom, ast::SimpleAtom::Param(_)),
+            ast::Atom::Compound(compound) => compound
+                .atoms
+                .iter()
+                .any(|atom| matches!(atom, ast::SimpleAtom::Param(_))),
+        }
     }
 
     /// Kick off an off-thread
@@ -488,8 +501,13 @@ impl Expansion {
         let cwd: Vec<u8>;
         {
             let me = interp.as_expansion_mut(this);
-            if !Self::has_glob_syntax(me) {
-                Self::push_current_out(me);
+            if Self::is_text_of_form(me) {
+                if matches!(me.state, ExpansionState::Glob) {
+                    // `do_brace_expand` added the variants.
+                    me.current_out.clear();
+                } else {
+                    Self::push_current_out(me);
+                }
                 me.state = ExpansionState::Done;
                 return Yield::Next(this);
             }

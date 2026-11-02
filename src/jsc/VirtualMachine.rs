@@ -5772,8 +5772,7 @@ impl VirtualMachine {
 
     /// Module-resolution core: resolves `specifier` relative to `source`, with
     /// path-length checks when `IS_A_FILE_PATH`. `Ok(Err(value))` is a
-    /// resolution failure to be thrown/rejected with `value`. `paths` is the `paths` option of
-    /// `require.resolve()`: the directories to look in, in place of the directory of `source`.
+    /// resolution failure to be thrown/rejected with `value`.
     pub fn resolve_maybe_needs_trailing_slash<const IS_A_FILE_PATH: bool>(
         global: &JSGlobalObject,
         specifier: &bun_core::String,

@@ -1243,8 +1243,7 @@ impl<'a> Resolver<'a> {
             .or_else(|| graph.file_at_source_path(path))
     }
 
-    /// `paths` is the `paths` option of `require.resolve()`: a relative or bare `import_path` is
-    /// looked up from each of these directories in turn, and not from `source_dir`.
+    /// `paths` is the option of `require.resolve()`: where a relative or bare `import_path` is looked up, in place of `source_dir`.
     pub fn resolve_and_auto_install<'r>(
         &mut self,
         source_dir: &[u8],

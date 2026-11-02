@@ -1,10 +1,16 @@
-import { describe, expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { afterAll, describe, expect } from "bun:test";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { join } from "node:path";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { test as oneAtATime } from "./supported";
 
 raiseDefaultTimeout(120_000);
+
+// Every test runs a project of its own, or waits for the two runs of the project that the cases with spelled spies share, so the
+// tests run at once: as many as --max-concurrency allows. Not on a debug build of Bun: there the longest build takes a third of
+// the time limit of its test with nothing beside it, and ran out of it beside four others.
+const test = isDebug ? oneAtATime : oneAtATime.concurrent;
 
 const math = {
   "math.ts": `
@@ -25,24 +31,119 @@ const imports = `
   import * as math from "./math";
   import { byName, byNamespace, insideTheModule, notSpiedOn } from "./user";`;
 
-async function runTests(directory: string, ...flags: string[]) {
-  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], directory, bunEnv);
-  const results = [...stderr.matchAll(/^\((pass|fail)\) (.*?)(?: \[.*\])?$/gm)].map(match => `${match[1]} ${match[2]}`);
-  // A crash prints only there, and the comparison below would hide it.
-  if (exitCode !== 0 && exitCode !== 1) console.error(stderr);
-  return { stdout, results, exitCode };
+/** What the test files of a run show: the lines that they print, and how each of their tests ends. */
+type Shown = { printed: string[]; results: string[] };
+type Run = Awaited<ReturnType<typeof runTests>>;
+
+const resultsIn = (log: string[]) =>
+  log.flatMap(line => /^\((pass|fail)\) (.*?)(?: \[.*\])?$/.exec(line)?.slice(1).join(" ") ?? []);
+
+function linesOf(text: string) {
+  const lines = text.split("\n");
+  // What follows the last line break is a line only if something stands there.
+  if (!lines.at(-1)) lines.pop();
+  return lines;
 }
 
-async function expectCompiledToRunAsPlain(files: Record<string, string>, ...flags: string[]) {
+/** `bun test` in a directory. A compiled run also tells what its build logged. */
+async function runTests(directory: string, flags: string[] = [], words?: string) {
+  const env = {
+    ...bunEnv,
+    ...(flags.includes("--debug-aot") && { BUN_JSC_logAOTPhaseTimes: "1" }),
+    ...(words && { BUN_DEBUG_TEST_AOT_WORDS: words }),
+  };
+  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], directory, env);
+  const log = stderr.split("\n");
+  return {
+    ended: {
+      // Every line but the first, which names this Bun.
+      printed: linesOf(stdout.replace(/^bun test v.*\n/, "")),
+      results: resultsIn(log),
+      // A run that fails says why there, and a crash prints only there. What the build logs of itself is left out.
+      stderr: exitCode ? log.filter(line => !/^(AOT | {2}\w+: wall \d)/.test(line)).join("\n") : "",
+      exitCode,
+    },
+    log,
+    // The first scan is that of the test files.
+    scan: log.find(line => line.startsWith("AOT test run | scan of ")),
+    build: {
+      loads: log.filter(line => line.startsWith("AOT phase times: front end | Load")).length,
+      startsOver: log.filter(line => line.startsWith("AOT build starts over")),
+    },
+  };
+}
+
+/** What a build says that found everything in the first load of the files: nothing sent it back to load them again. */
+const oneLoad = { loads: 1, startsOver: [] as string[] };
+
+/** A project of these files ends as `expected` says under plain `bun test`, and the same compiled. Answers the compiled run. */
+async function expectCompiledToRunAsPlain(expected: Shown, files: Record<string, string>, ...flags: string[]) {
   using dir = tempDir("spies-on-exports", files);
-  const plain = await runTests(String(dir), ...flags);
-  expect(plain.results.filter(result => result.startsWith("fail"))).toEqual([]);
-  expect(plain.results).not.toEqual([]);
-  expect(await runTests(String(dir), "--debug-aot", ...flags)).toEqual(plain);
+  const plain = await runTests(String(dir), flags);
+  expect(plain.ended).toEqual({ ...expected, stderr: "", exitCode: 0 });
+  const compiled = await runTests(String(dir), ["--debug-aot", ...flags]);
+  expect(compiled.ended).toEqual(plain.ended);
+  // A run that built nothing would end as the plain one too.
+  expect(compiled.build.loads).toBeGreaterThan(0);
+  return compiled;
 }
 
-test("a spy on an export records calls from importers and from the module itself", async () => {
-  await expectCompiledToRunAsPlain({
+// The cases whose spies each spell a file of the case and a name are the folders of one project, which runs once plain and once
+// compiled. For such a spy the build opens the export that it names, in the files of that folder, so no case changes what the
+// build knows about another. What else a test replaces reaches past its folder, so such a case has a build of its own: a module
+// of Bun, what a preload or a mock replaces, and whatever a spy opens that takes its object or its name from somewhere.
+const spelled = {
+  files: {} as Record<string, string>,
+  cases: 0,
+  project: undefined as ReturnType<typeof tempDir> | undefined,
+  runs: undefined as Promise<{ plain: Run; compiled: Run }> | undefined,
+};
+afterAll(() => spelled.project?.[Symbol.dispose]());
+
+function ranSpelled() {
+  return (spelled.runs ??= (async () => {
+    spelled.project = tempDir("spies-on-exports", spelled.files);
+    const plain = await runTests(String(spelled.project));
+    return { plain, compiled: await runTests(String(spelled.project), ["--debug-aot"]) };
+  })());
+}
+
+/** A folder's part of a run: its test file prints the folder first, and `bun test` names the file above its results. */
+function inFolder(folder: string, { ended, log }: Run): Shown {
+  // The next folder ends the part, and so does the count of the tests that passed, below the last file.
+  const ends = /^(c\d+(:|[\\/]one\.test\.ts:)| *\d+ pass)$/;
+  const below = (lines: string[], first: string) => {
+    const start = lines.indexOf(first) + 1;
+    const end = lines.findIndex((line, index) => index >= start && ends.test(line));
+    return start ? lines.slice(start, end < 0 ? undefined : end) : [];
+  };
+  return {
+    printed: below(ended.printed, `${folder}:`),
+    results: resultsIn(below(log, `${join(folder, "one.test.ts")}:`)),
+  };
+}
+
+function spelledSpy(title: string, expected: Shown, files: Record<string, string>) {
+  const folder = `c${String(++spelled.cases).padStart(2, "0")}`;
+  for (const [path, text] of Object.entries(files))
+    spelled.files[`${folder}/${path}`] = path === "one.test.ts" ? `console.log("${folder}:");\n${text}` : text;
+  test(title, async () => {
+    const { plain, compiled } = await ranSpelled();
+    expect(inFolder(folder, plain)).toEqual(expected);
+    expect(inFolder(folder, compiled)).toEqual(inFolder(folder, plain));
+  });
+}
+
+spelledSpy(
+  "a spy on an export records calls from importers and from the module itself",
+  {
+    printed: [
+      "3 3 4 3 3 4",
+      '[[1,2],[1,2],[2,2],[1,2],[1,2]] [{"type":"return","value":3},{"type":"return","value":3},{"type":"return","value":4},{"type":"return","value":3},{"type":"return","value":3}]',
+    ],
+    results: ["pass recorded"],
+  },
+  {
     ...math,
     "one.test.ts": `${imports}
       test("recorded", () => {
@@ -51,11 +152,13 @@ test("a spy on an export records calls from importers and from the module itself
         console.log(JSON.stringify(spy.mock.calls), JSON.stringify(spy.mock.results));
         expect(spy).toHaveBeenCalledTimes(5);
       });`,
-  });
-});
+  },
+);
 
-test("a spy's implementation replaces the export, and mockRestore() gives it back", async () => {
-  await expectCompiledToRunAsPlain({
+spelledSpy(
+  "a spy's implementation replaces the export, and mockRestore() gives it back",
+  { printed: ["3 3 4 3 3 4", "99 99 99 99 99 4", "2 2 4 2 2 4", "3 3 4 3 3 4"], results: ["pass replaced"] },
+  {
     ...math,
     "one.test.ts": `${imports}
       test("replaced", () => {
@@ -67,11 +170,13 @@ test("a spy's implementation replaces the export, and mockRestore() gives it bac
         spy.mockRestore();
         ${uses}
       });`,
-  });
-});
+  },
+);
 
-test("mock.restore() gives back every export that was spied on", async () => {
-  await expectCompiledToRunAsPlain({
+spelledSpy(
+  "mock.restore() gives back every export that was spied on",
+  { printed: ["1 1 2 1 1 4", "3 3 4 3 3 4"], results: ["pass restored"] },
+  {
     ...math,
     "one.test.ts": `${imports}
       test("restored", () => {
@@ -81,20 +186,24 @@ test("mock.restore() gives back every export that was spied on", async () => {
         mock.restore();
         ${uses}
       });`,
-  });
-});
+  },
+);
 
-test("jest.spyOn and vi.spyOn replace an export", async () => {
-  await expectCompiledToRunAsPlain({
+spelledSpy(
+  "jest.spyOn and vi.spyOn replace an export",
+  { printed: ["5 5 5 5 5 4", "3 3 4 3 3 4", "3 3 6 3 3 4", "3 3 4 3 3 4"], results: ["pass jest", "pass vi"] },
+  {
     ...math,
     "one.test.ts": `${imports}
       test("jest", () => { const spy = jest.spyOn(math, "add").mockReturnValue(5); ${uses} spy.mockRestore(); ${uses} });
       test("vi", () => { const spy = vi.spyOn(math, "twice").mockReturnValue(6); ${uses} spy.mockRestore(); ${uses} });`,
-  });
-});
+  },
+);
 
 test("a preload spies on an export for every test file", async () => {
+  const expected = { printed: ["spied a", "spied b"], results: ["pass a", "pass b"] };
   await expectCompiledToRunAsPlain(
+    expected,
     {
       "log.ts": `export function logEvent(name: string): string { return "real " + name; }`,
       "app.ts": `import { logEvent } from "./log";\nexport function start(name: string): string { return logEvent(name); }`,
@@ -118,8 +227,10 @@ test("a preload spies on an export for every test file", async () => {
   );
 });
 
-test("a spy on a name that another module exports again reaches the module that declares it", async () => {
-  await expectCompiledToRunAsPlain({
+spelledSpy(
+  "a spy on a name that another module exports again reaches the module that declares it",
+  { printed: ["7 7 7 7", "3 3 3 2"], results: ["pass through a barrel"] },
+  {
     ...math,
     "barrel.ts": `export { add } from "./math";\nexport * from "./user";`,
     "one.test.ts": `
@@ -132,11 +243,20 @@ test("a spy on a name that another module exports again reaches the module that 
         spy.mockRestore();
         console.log(barrel.add(1, 2), math.add(1, 2), barrel.byName(1, 2), barrel.insideTheModule(1));
       });`,
-  });
-});
+  },
+);
 
-test("a spy replaces an arrow function, a class and a default export", async () => {
-  await expectCompiledToRunAsPlain({
+spelledSpy(
+  "a spy replaces an arrow function, a class and a default export",
+  {
+    printed: [
+      "2 thing main 2,thing,main",
+      "10 mocked thing mocked main 10,mocked thing,mocked main",
+      "2 thing main 2,thing,main",
+    ],
+    results: ["pass replaced"],
+  },
+  {
     "things.ts": `
       export const arrow = (n: number): number => n + 1;
       export class Thing { name(): string { return "thing"; } }
@@ -158,11 +278,21 @@ test("a spy replaces an arrow function, a class and a default export", async () 
         for (const spy of spies) spy.mockRestore();
         show();
       });`,
-  });
-});
+  },
+);
 
 test("a spy replaces an export of a node: module for those who import the name or read the namespace", async () => {
-  await expectCompiledToRunAsPlain({
+  const expected = {
+    printed: [
+      `false false false ${join("a", "b")} string`,
+      "true true false joined number",
+      "true joined 5 6 3",
+      `false false false ${join("a", "b")} string`,
+      "false a string number",
+    ],
+    results: ["pass replaced"],
+  };
+  await expectCompiledToRunAsPlain(expected, {
     "io.ts": `
       import fsObject, { existsSync } from "node:fs";
       import * as fs from "node:fs";
@@ -193,8 +323,13 @@ test("a spy replaces an export of a node: module for those who import the name o
   });
 });
 
-test("a spy replaces a name of a CommonJS file for the ES modules that import it", async () => {
-  await expectCompiledToRunAsPlain({
+spelledSpy(
+  "a spy replaces a name of a CommonJS file for the ES modules that import it",
+  {
+    printed: ["hello a hello bhello b", "mocked hello bhello b", "mocked hello dhello d", "hello a hello bhello b"],
+    results: ["pass replaced"],
+  },
+  {
     "legacy.cjs": `exports.greet = function (name) { return "hello " + name; };\nexports.twice = function (name) { return exports.greet(name) + exports.greet(name); };`,
     "user.ts": `import { greet, twice } from "./legacy.cjs";\nexport const show = () => console.log(greet("a"), twice("b"));`,
     "one.test.ts": `
@@ -209,13 +344,44 @@ test("a spy replaces a name of a CommonJS file for the ES modules that import it
         spy.mockRestore();
         show();
       });`,
-  });
+  },
+);
+
+// The seven cases tell the build nothing about one another while the scan of their test files finds the eleven spies by file and
+// name and nothing else: no whole module, no module object that is handed on, nothing for a spy or a mock that nobody sees. Nor
+// may flow find an export behind the scan: that starts the build over.
+test("the spies that spell the module and the name open their exports and nothing else, in one load", async () => {
+  const { plain, compiled } = await ranSpelled();
+  expect({ stderr: plain.ended.stderr, exitCode: plain.ended.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  expect(compiled.ended).toEqual(plain.ended);
+  expect(compiled.scan).toContain(
+    "| sites: built-ins 0 | names added 0 | exports 11 | modules 0 | handed on 0 | mocks any module false | hands on any module false | spies on objects from somewhere false",
+  );
+  expect(compiled.build).toEqual(oneLoad);
 });
 
 const show = `console.log(byName(1, 2), byNamespace(1, 2), insideTheModule(2), notSpiedOn(8));`;
 
 test("a spy reaches a name of a CommonJS file through the files that export it again, for those who read the namespace objects", async () => {
-  await expectCompiledToRunAsPlain({
+  const expected = {
+    printed: [
+      "add [105,3,105,3,105,105] 105 3 105 3 105 105 8",
+      "add restored [3,3,3,3,3,3]",
+      "add [3,105,3,105,3,3] 3 105 3 105 3 3 4",
+      "add restored [3,3,3,3,3,3]",
+      "packageAdd [105,3,105,3,105,105] 105 3 105 3 105 105 8",
+      "packageAdd restored [3,3,3,3,3,3]",
+      "localAdd [3,105,3,105,3,3] 3 105 3 105 3 3 4",
+      "localAdd restored [3,3,3,3,3,3]",
+      "again [105,3,105,3,105,105] 105 3 105 3 105 105 8",
+      "again restored [3,3,3,3,3,3]",
+      "add [105,3,105,3,105,105] 105 3 105 3 105 105 8",
+      "add restored [3,3,3,3,3,3]",
+      "[105,3,105,3,105,105] 4",
+    ],
+    results: ["pass each in its turn", "pass by a name that is written out"],
+  };
+  await expectCompiledToRunAsPlain(expected, {
     "node_modules/cjs-pkg/package.json": `{ "name": "cjs-pkg", "main": "index.js" }`,
     "node_modules/cjs-pkg/index.js": `exports.add = function add(a, b) { return a + b; };`,
     "local.cjs": `exports.add = function add(a, b) { return a + b; };`,
@@ -270,15 +436,12 @@ test("a spy under names out of a list replaces each", async () => {
       import { show } from "./house";
       test("guarded", () => { show(); console.log(existsSync(".")); mock.restore(); show(); console.log(existsSync(".")); });`,
   };
-  await expectCompiledToRunAsPlain(files, "--preload", "./preload.ts");
-
-  using dir = tempDir("spies-on-exports", files);
-  const { stderr } = await run([bunExe(), "test", "--debug-aot", "--preload", "./preload.ts"], String(dir), {
-    ...bunEnv,
-    BUN_JSC_logAOTPhaseTimes: "1",
-  });
-  expect(stderr).toContain("AOT phase times: front end | Load");
-  expect(stderr).not.toMatch(/AOT build starts over \| replaced exports 0 > [1-9]/);
+  const expected = {
+    printed: ["guarded front guarded back guarded frontguarded back", "guarded", "front back frontback", "true"],
+    results: ["pass guarded"],
+  };
+  const compiled = await expectCompiledToRunAsPlain(expected, files, "--preload", "./preload.ts");
+  expect(compiled.build).toEqual(oneLoad);
 });
 
 test("a spy on an unknown object beside a load under an unknown path takes one first load", async () => {
@@ -300,13 +463,9 @@ test("a spy on an unknown object beside a load under an unknown path takes one f
         console.log(show());
       });`,
   });
-  const { stdout, stderr } = await run([bunExe(), "test", "--debug-aot"], String(dir), {
-    ...bunEnv,
-    BUN_JSC_logAOTPhaseTimes: "1",
-  });
-  expect(stdout).toContain("spied");
-  expect(stderr).toContain("AOT phase times:");
-  expect(stderr).not.toMatch(/AOT build starts over \| replaced exports 0 > [1-9]/);
+  const compiled = await runTests(String(dir), ["--debug-aot"]);
+  expect(compiled.ended).toEqual({ printed: ["spied"], results: ["pass spied"], stderr: "", exitCode: 0 });
+  expect(compiled.build).toEqual(oneLoad);
 });
 
 describe("a spy on what the front end sees handed over takes one first load", () => {
@@ -341,18 +500,15 @@ describe("a spy on what the front end sees handed over takes one first load", ()
         ${imports}
         test("spied", async () => { ${spy} console.log(one()); });`,
     });
-    const { stdout, stderr } = await run([bunExe(), "test", "--debug-aot"], String(dir), {
-      ...bunEnv,
-      BUN_JSC_logAOTPhaseTimes: "1",
-    });
-    expect(stdout).toContain("spied");
-    expect(stderr).toContain("AOT phase times:");
-    expect(stderr).not.toMatch(/AOT build starts over \| replaced exports 0 > [1-9]/);
+    const compiled = await runTests(String(dir), ["--debug-aot"]);
+    expect(compiled.ended).toEqual({ printed: ["spied"], results: ["pass spied"], stderr: "", exitCode: 0 });
+    expect(compiled.build).toEqual(oneLoad);
   });
 });
 
 test("a helper that is handed the namespace object and the name replaces the export", async () => {
-  await expectCompiledToRunAsPlain({
+  const expected = { printed: ["9 9 9 4", "3 3 4 4"], results: ["pass replaced"] };
+  await expectCompiledToRunAsPlain(expected, {
     ...math,
     "one.test.ts": `${imports}
       function replace(holder: object, name: string) { return spyOn(holder as any, name as any).mockReturnValue(9 as never); }
@@ -361,7 +517,11 @@ test("a helper that is handed the namespace object and the name replaces the exp
 });
 
 test("a spy on an object from somewhere replaces the export that goes by its name, in every module that is handed on", async () => {
-  await expectCompiledToRunAsPlain({
+  const expected = {
+    printed: ["spied spied spied 4", "spied ab spied", "3 3 4 4", "ab ab own"],
+    results: ["pass replaced"],
+  };
+  await expectCompiledToRunAsPlain(expected, {
     ...math,
     "shapes.ts": `export function add(a: string, b: string): string { return a + b; }\nexport function half(text: string): string { return text.slice(0, text.length / 2); }`,
     "holders.ts": `import * as math from "./math";\nimport * as shapes from "./shapes";\nexport const holders: Record<string, any>[] = [math, shapes, { add: () => "own" }];`,
@@ -380,7 +540,22 @@ test("a spy on an object from somewhere replaces the export that goes by its nam
 });
 
 test("a spy on an object from somewhere under a name out of a list, a constant, a parameter or another file", async () => {
-  await expectCompiledToRunAsPlain({
+  const expected = {
+    printed: [
+      "1 1 1 1",
+      "3 3 4 4",
+      "3 3 2 4",
+      "3 3 4 4",
+      "3 3 4 3",
+      "3 3 4 4",
+      "4 4 4 4",
+      "3 3 4 4",
+      "5 5 5 5",
+      "3 3 4 4",
+    ],
+    results: ["pass a list", "pass a loop", "pass a constant", "pass a parameter", "pass another file"],
+  };
+  await expectCompiledToRunAsPlain(expected, {
     ...math,
     "watch.ts": `import { spyOn } from "bun:test";\nexport function watch(holder: any, name: string) { return spyOn(holder, name).mockReturnValue(5 as never); }`,
     "one.test.ts": `${imports}
@@ -400,6 +575,7 @@ describe("a namespace object that goes somewhere reaches a spy that is called un
   const holder = `const holder: Record<string, any> = { it: math };`;
   const replaced = (spy: string) =>
     `test("replaced", () => { const spy = ${spy}.mockReturnValue(9); ${show} spy.mockRestore(); ${show} });`;
+  const expected = { printed: ["9 9 9 4", "3 3 4 4"], results: ["pass replaced"] };
   test.each([
     ["a variable", `const watch = spyOn; ${replaced(`watch(holder.it, "add")`)}`],
     ["a name taken out of jest", `const { spyOn: watch } = jest; ${replaced(`watch(holder.it, "add")`)}`],
@@ -409,11 +585,15 @@ describe("a namespace object that goes somewhere reaches a spy that is called un
     ["the object of bun:test", `import * as runner from "bun:test"; ${replaced(`runner.spyOn(holder.it, "add")`)}`],
     ["require", replaced(`require("bun:test").spyOn(holder.it, "add")`)],
   ])("%s", async (_, text) => {
-    await expectCompiledToRunAsPlain({ ...math, "one.test.ts": `${imports}\n${holder}\n${text}` });
+    await expectCompiledToRunAsPlain(expected, { ...math, "one.test.ts": `${imports}\n${holder}\n${text}` });
   });
 
   test("a file that exports it again", async () => {
-    await expectCompiledToRunAsPlain({
+    const both = {
+      printed: ["9 9 9 4", "3 3 4 4", "3 3 4 3", "3 3 4 4"],
+      results: ["pass replaced", "pass and once more"],
+    };
+    await expectCompiledToRunAsPlain(both, {
       ...math,
       "again.ts": `export { spyOn as watch } from "bun:test";`,
       "named.ts": `import { spyOn } from "bun:test";\nexport { spyOn as look };`,
@@ -428,7 +608,8 @@ describe("a namespace object that goes somewhere reaches a spy that is called un
 });
 
 test("a spy under a name that the build can't know replaces any export of the module", async () => {
-  await expectCompiledToRunAsPlain({
+  const expected = { printed: ["7 7 7 7", "3 3 4 4"], results: ["pass replaced"] };
+  await expectCompiledToRunAsPlain(expected, {
     ...math,
     "one.test.ts": `${imports}
       test("replaced", () => {
@@ -442,7 +623,8 @@ test("a spy under a name that the build can't know replaces any export of the mo
 });
 
 test("a spy and a namespace object that the build loses sight of", async () => {
-  await expectCompiledToRunAsPlain({
+  const expected = { printed: ["5 5 5 4", "3 3 4 4"], results: ["pass replaced"] };
+  await expectCompiledToRunAsPlain(expected, {
     ...math,
     "one.test.ts": `${imports}
       test("replaced", () => {
@@ -458,7 +640,11 @@ test("a spy and a namespace object that the build loses sight of", async () => {
 });
 
 test("a spy on what import() and require() answer", async () => {
-  await expectCompiledToRunAsPlain({
+  const expected = {
+    printed: ["3 3 3 4", "3 3 4 4", "3 3 40 4", "3 3 4 4"],
+    results: ["pass import()", "pass require()"],
+  };
+  await expectCompiledToRunAsPlain(expected, {
     ...math,
     "one.test.ts": `
       import { spyOn, test } from "bun:test";
@@ -494,14 +680,9 @@ test("a namespace object handed to a helper that spies does not build the progra
         expect(spy).toHaveBeenCalledTimes(2);
       });`,
   });
-  const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--debug-aot"], String(dir), {
-    ...bunEnv,
-    BUN_JSC_logAOTPhaseTimes: "1",
-  });
-  expect(stdout).toContain("3 3");
-  expect(stderr).toContain("AOT phase times: front end | Load");
-  expect(stderr).not.toMatch(/AOT build starts over \| replaced exports 0 > [1-9]/);
-  expect(exitCode).toBe(0);
+  const compiled = await runTests(String(dir), ["--debug-aot"]);
+  expect(compiled.ended).toEqual({ printed: ["3 3"], results: ["pass replaced"], stderr: "", exitCode: 0 });
+  expect(compiled.build).toEqual(oneLoad);
 });
 
 // Nothing follows the name here, so only that build can tell.
@@ -531,21 +712,19 @@ for (const [name, words, loads] of [["analysis switched off", "disable=flow-resu
       });`,
     });
     const flags = ["--preload", "./preload.ts"];
-    const plain = await runTests(String(dir), ...flags);
-    expect(plain.results).toEqual(["pass spies", "pass mock"]);
-    const { stderr, exitCode } = await run([bunExe(), "test", "--debug-aot", ...flags], String(dir), {
-      ...bunEnv,
-      BUN_DEBUG_TEST_AOT_WORDS: words,
-      BUN_JSC_logAOTPhaseTimes: "1",
-    });
-    expect(stderr).toContain("(pass) spies");
-    expect(stderr).toContain("(pass) mock");
-    expect(exitCode).toBe(0);
-    expect(stderr.match(/AOT phase times: front end \| Load/g)?.length).toBe(loads);
+    const plain = await runTests(String(dir), flags);
+    expect(plain.ended).toEqual({ printed: [], results: ["pass spies", "pass mock"], stderr: "", exitCode: 0 });
+    const compiled = await runTests(String(dir), ["--debug-aot", ...flags], words);
+    expect(compiled.ended).toEqual(plain.ended);
+    expect(compiled.build.loads).toBe(loads);
   });
 
 test("a tsconfig.json in a package's own folder does not decide whether its exports can be replaced", async () => {
-  await expectCompiledToRunAsPlain({
+  const expected = {
+    printed: ["spied! spied !", "real1real", "real", "mocked"],
+    results: ["pass a spy", "pass restored", "pass a mock"],
+  };
+  await expectCompiledToRunAsPlain(expected, {
     "node_modules/@scope/pkg/package.json": `{ "name": "@scope/pkg", "version": "1.0.0", "type": "module", "exports": { "./src/*.js": "./src/*.ts" } }`,
     "node_modules/@scope/pkg/tsconfig.json": `{}`,
     "node_modules/@scope/pkg/src/tiny.ts": `export const tiny = async (x: number) => "real" + x;\nexport function plain() { return "real"; }`,

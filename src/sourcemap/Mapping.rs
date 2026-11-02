@@ -459,6 +459,21 @@ const SEMICOLON_RUN: [u8; HALF_USIZE] = [b';'; HALF_USIZE];
 /// runtime-dispatched ISA; 128 bytes guarantees at least two full blocks.
 const SIMD_THRESHOLD: usize = 128;
 
+// PERF: not through `List::append`. With one caller, the loop of `parse`, rustc inlines it there. With two it is a call that costs each mapped row 41 instructions.
+#[cold]
+#[inline(never)]
+fn append_without_source(mapping: &mut List, generated: LineColumnOffset) {
+    let row = Mapping::without_source(generated);
+    bun_core::handle_oom(match &mut mapping.r#impl {
+        ListValue::WithoutNames(list) => list.append(MappingWithoutName {
+            generated: row.generated,
+            original: row.original,
+            source_index: row.source_index,
+        }),
+        ListValue::WithNames(list) => list.append(row),
+    });
+}
+
 pub fn parse(
     bytes: &[u8],
     estimated_mapping_count: Option<usize>,
@@ -577,13 +592,23 @@ pub fn parse(
 
         remain = &remain[generated_column_delta.start..];
 
-        if matches!(remain.first(), None | Some(b',' | b';')) {
-            // Also where the segment ends the string. Node.js through v26.13.0 reads that one as mapped, which ECMA-426 does not: https://github.com/nodejs/node/pull/66264
-            bun_core::handle_oom(mapping.append(&Mapping::without_source(generated)));
-            if remain.first() == Some(&b',') {
+        // A segment with one field. Node.js through v26.13.0 reads the one that ends the string as mapped, which ECMA-426 does not: https://github.com/nodejs/node/pull/66264
+        if remain.len() == 0 {
+            append_without_source(&mut mapping, generated);
+            break;
+        }
+
+        match remain[0] {
+            b',' => {
+                append_without_source(&mut mapping, generated);
                 remain = &remain[1..];
+                continue;
             }
-            continue;
+            b';' => {
+                append_without_source(&mut mapping, generated);
+                continue;
+            }
+            _ => {}
         }
 
         // Read the original source

@@ -485,6 +485,13 @@ describe.concurrent.skipIf(isWindows)(
       });
     });
 
+    test("fd is blocking again after process.abort()", async () => {
+      expect(await flagsAround(1, `void process.stdout.isTTY; process.abort()`)).toEqual({
+        probe: "1:blocking\nexit=134\n1:blocking\n",
+        shellExit: 0,
+      });
+    });
+
     test("a fd that was already nonblocking at startup stays nonblocking", async () => {
       // SIGKILL skips the restore, so the first step leaves the flag set for the second.
       expect(
@@ -499,33 +506,37 @@ describe.concurrent.skipIf(isWindows)(
     // The restore is for the description bun started with. A script that closes fd 1 and opens a file there gets a new
     // description, which the exit leaves alone (Node checks st_dev and st_ino the same way). A child that inherits it and
     // outlives bun reports its flags: the child's stdin is a pipe that only bun holds, so EOF there means bun has exited.
+    // The child writes the report into a FIFO that the outer shell reads, so the shell waits for it.
     test("a fd reopened by the script is left alone at exit", async () => {
       using dir = tempDir("stdout-reopened", {});
+      const fifo = path.join(String(dir), "probe.fifo");
       const reopen = `
         const fs = require("node:fs");
         fs.closeSync(1);
         if (fs.openSync(${JSON.stringify(path.join(String(dir), "out.txt"))}, "w") !== 1) throw new Error("fd 1 expected");
-        Bun.spawn(["sh", "-c", 'cat >/dev/null; PROBE_OUT_FD=2 "$0" "$1" 1', process.execPath, ${JSON.stringify(probe)}], {
+        Bun.spawn(["sh", "-c", 'cat >/dev/null; PROBE_OUT_FD=3 "$0" "$1" 1 3>"$2"', process.execPath, ${JSON.stringify(probe)}, ${JSON.stringify(fifo)}], {
           stdin: "pipe",
           stdout: "inherit",
           stderr: "inherit",
         });
         process.exit(0);`;
       const script = [
+        `mkfifo "$2"`,
         // Leaves the shell's fd 1 nonblocking: a restore that ignored the identity would set that bit on the file.
         `"$0" -e 'void process.stdout.isTTY; process.kill(process.pid, "SIGKILL")' </dev/null`,
-        `"$0" -e "$1" </dev/null; echo "exit=$?" >&2`,
+        `"$0" -e "$1" </dev/null; echo "exit=$?"`,
+        `cat "$2"`,
       ].join("\n");
       await using proc = spawn({
-        cmd: ["sh", "-c", script, bunExe(), reopen],
+        cmd: ["sh", "-c", script, bunExe(), reopen, fifo],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout, stderr: probeLines(stderr), exitCode }).toEqual({
-        stdout: "",
-        stderr: "exit=0\n1:blocking\n",
+        stdout: "exit=0\n1:blocking\n",
+        stderr: "",
         exitCode: 0,
       });
     });

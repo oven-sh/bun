@@ -136,28 +136,48 @@ fn raise_with_default_action(signal: c_int) {
 }
 
 #[cfg(unix)]
+unsafe extern "C" {
+    /// Bun's SIGINT and SIGTERM handler (c-bindings.cpp): it restores stdio and re-raises with the default action.
+    fn onExitSignal(signal: c_int);
+    fn bun_install_exit_signal_handler(signal: c_int);
+}
+
+/// Which signals had `onExitSignal` before the reporter replaced it.
+#[cfg(unix)]
+static REPLACED_EXIT_HANDLER: [AtomicBool; INTERRUPTIONS.len()] =
+    [const { AtomicBool::new(false) }; INTERRUPTIONS.len()];
+
+#[cfg(unix)]
 extern "C" fn handle_interruption(signal: c_int) {
     write_what_threads_are_compiling();
+    bun_core::output::source::stdio::restore();
     raise_with_default_action(signal);
 }
 
-/// A signal that the program handles or ignores stays as it is.
+/// A signal that the program handles or ignores stays as it is. Bun's own exit handler is replaced and put back.
 #[cfg(unix)]
 fn set_reports_interruptions(reports: bool) {
     let ours = handle_interruption as extern "C" fn(c_int) as usize;
-    let (from, to) = if reports {
-        (libc::SIG_DFL, ours)
-    } else {
-        (ours, libc::SIG_DFL)
-    };
-    for signal in INTERRUPTIONS {
+    let exit_handler = onExitSignal as unsafe extern "C" fn(c_int) as usize;
+    for (index, signal) in INTERRUPTIONS.into_iter().enumerate() {
         let mut current: libc::sigaction = bun_core::ffi::zeroed();
         // SAFETY: a null new action only reads the current one into valid memory.
-        if unsafe { libc::sigaction(signal, core::ptr::null(), &raw mut current) } != 0
-            || current.sa_sigaction != from
-        {
+        if unsafe { libc::sigaction(signal, core::ptr::null(), &raw mut current) } != 0 {
             continue;
         }
+        let to = if reports {
+            let replaces_exit_handler = current.sa_sigaction == exit_handler;
+            if current.sa_sigaction != libc::SIG_DFL && !replaces_exit_handler {
+                continue;
+            }
+            REPLACED_EXIT_HANDLER[index].store(replaces_exit_handler, Ordering::Relaxed);
+            ours
+        } else {
+            if current.sa_sigaction != ours {
+                continue;
+            }
+            libc::SIG_DFL
+        };
         let mut action: libc::sigaction = bun_core::ffi::zeroed();
         action.sa_sigaction = to;
         action.sa_flags = libc::SA_RESTART;
@@ -165,6 +185,10 @@ fn set_reports_interruptions(reports: bool) {
         unsafe {
             libc::sigemptyset(&raw mut action.sa_mask);
             libc::sigaction(signal, &raw const action, core::ptr::null_mut());
+        }
+        if !reports && REPLACED_EXIT_HANDLER[index].load(Ordering::Relaxed) {
+            // SAFETY: installs a handler on a signal number from the table above.
+            unsafe { bun_install_exit_signal_handler(signal) };
         }
     }
 }

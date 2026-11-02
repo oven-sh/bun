@@ -997,10 +997,15 @@ extern "C" void onExitSignal(int sig)
     Bun__raiseDefaultAction(sig);
 }
 
-static void installExitSignalHandler(int sig)
+// With a TTY on a stdio fd this replaces an inherited SIG_IGN too, as it always did, so a `&` job in a
+// package script still dies on Ctrl-C. Without a TTY, SIG_IGN stays.
+extern "C" void bun_install_exit_signal_handler(int sig)
 {
+    const bool anyTTY = bun_stdio_tty[0] || bun_stdio_tty[1] || bun_stdio_tty[2];
     struct sigaction sa;
-    if (sigaction(sig, nullptr, &sa) != 0 || sa.sa_handler != SIG_DFL)
+    if (sigaction(sig, nullptr, &sa) != 0)
+        return;
+    if (sa.sa_handler != SIG_DFL && !(anyTTY && sa.sa_handler == SIG_IGN))
         return;
 
     memset(&sa, 0, sizeof(sa));
@@ -1129,9 +1134,9 @@ extern "C" void bun_initialize_process()
         }
     }
 
-    // Restore stdio when SIGINT or SIGTERM kills the process. An inherited SIG_IGN stays.
-    installExitSignalHandler(SIGTERM);
-    installExitSignalHandler(SIGINT);
+    // Restore stdio when SIGINT or SIGTERM kills the process.
+    bun_install_exit_signal_handler(SIGTERM);
+    bun_install_exit_signal_handler(SIGINT);
 #elif OS(WINDOWS)
     for (int fd = 0; fd <= 2; ++fd) {
         auto handle = reinterpret_cast<HANDLE>(uv_get_osfhandle(fd));

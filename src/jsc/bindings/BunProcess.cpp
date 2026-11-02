@@ -167,6 +167,7 @@ extern "C" bool Bun__Node__ProcessPendingDeprecation;
 extern "C" void Bun__writeProfilesBeforeSelfKill(bool signalEndsProcess);
 #if !OS(WINDOWS)
 extern "C" void onExitSignal(int);
+extern "C" void bun_restore_stdio();
 #endif
 extern "C" int32_t bun_stdio_tty[3];
 
@@ -2111,6 +2112,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, 
 #else
     // process.abort() is user-requested; bypass the crash handler so it does
     // not print "Bun has crashed" or upload a report.
+    bun_restore_stdio();
     restoreDefaultSignalDisposition(SIGABRT);
     abort();
 #endif
@@ -2318,6 +2320,9 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionExecve, __attribute__((
             return {};
         }
     }
+
+    // The replacement program inherits fds 0-2: put their startup flags back first.
+    bun_restore_stdio();
 
     int savedErrno;
 

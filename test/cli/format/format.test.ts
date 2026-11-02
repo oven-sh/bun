@@ -1536,13 +1536,23 @@ describe.concurrent("bun fmt", () => {
     const names = Object.keys(files);
     const result = await format({ ".oxfmtrc.json": "{}", ...files }, names, { reads: names });
     expect(result.files).toEqual(files);
-    expect(result.stderr).toContain(
-      problem("a.ts", "Expected `,` or `}` but found `?`", [1, 34, "instant(page, callback, { baseURL? })"]),
-    );
-    expect(result.stderr).toContain(problem("b.ts", "Expected `,` or `}` but found `!`", [1, 6, "f({ a! })"]));
-    expect(result.stderr).toContain(problem("c.ts", "Expected `,` or `}` but found `?`", [1, 6, "f({ a?: 1 })"]));
-    expect(result.stderr).toContain(problem("d.ts", "Expected `:` but found `?`", [1, 6, "f({ 1? })"]));
+    const expected = [
+      problem("a.ts", "Expected `,` or `}` but found `?`", [1, 34, files["a.ts"]]),
+      problem("b.ts", "Expected `,` or `}` but found `!`", [1, 6, files["b.ts"]]),
+      problem("c.ts", "Expected `,` or `}` but found `?`", [1, 6, files["c.ts"]]),
+      problem("d.ts", "Expected `:` but found `?`", [1, 6, files["d.ts"]]),
+      "Error occurred when checking code style in the above files.",
+    ];
+    expect(result.stderr.split("\n\n").sort()).toEqual(expected.sort());
     expect(result.exitCode).toBe(2);
+    // Without the config, the file is rejected with TypeScript's wording.
+    const prettier = await format({ "a.ts": files["a.ts"] }, ["a.ts"], { reads: ["a.ts"] });
+    expect(prettier.files).toEqual({ "a.ts": files["a.ts"] });
+    expect(prettier.stderr).toBe(
+      problem("a.ts", "A shorthand property assignment cannot have a question token.", [1, 34, files["a.ts"]]) +
+        "\n\nFormatted 0 files, 0 unchanged",
+    );
+    expect(prettier.exitCode).toBe(2);
     // In Markdown, oxfmt leaves such a code block as it is and formats the rest of the file.
     const markdown = "# Title\n\n```ts\ninstant(page, callback, { baseURL? })\n```\n\n```ts\nf(  1  )\n```\n";
     const inMarkdown = await format({ ".oxfmtrc.json": "{}", "e.md": markdown }, ["e.md"], { reads: ["e.md"] });

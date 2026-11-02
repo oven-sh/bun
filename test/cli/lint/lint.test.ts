@@ -22287,6 +22287,10 @@ describe("TypeScript grammar errors with an .oxlintrc.json", () => {
     ["tsx", "await <a>b</a>; import.meta;", "Unterminated regular expression @11+18", "Unexpected token @11+18"],
     // A `<` that no type parameter follows.
     ["ts", "declare function <;", "Unexpected token @18+1"],
+    // `yield` before the `?` is a name to oxc. Bun prints `Unexpected token` in a .js file too.
+    ["ts", "f({ yield? })", 'Expected `,` or `}` but found `?` @9+1 "`,` or `}` expected", 2+1 "Opened here"'],
+    // Bun reports the modifier and then the `?`.
+    ["ts", "f({ async a?() {} })", "'async' modifier cannot be used here. @4+5 help: No modifiers are allowed here."],
   ];
   test.todo.each(knownDifferences)("prints oxlint's errors for a .%s file: %j", async (extension, code, ...errors) => {
     const name = `a.${extension}`;

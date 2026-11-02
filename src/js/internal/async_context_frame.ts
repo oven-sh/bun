@@ -40,6 +40,7 @@ const AsyncContextFrame = {
   /**
    * `frame` without the frames of Bun.ModuleGraphs. What something long-lived keeps when its later work must read
    * the AsyncLocalStorage stores of `frame` and must not keep a graph alive through the frame that entered it.
+   * A store value, and the frame of a module mock's factory, stay in it and are kept with it.
    */
   withoutModuleGraphs(frame) {
     asyncContextWithoutModuleGraphs ??= $newCppFunction(

@@ -721,6 +721,7 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
       },
     });
     // What a disposed graph's code opens never settles: the bind of a socket that such a graph made is the host's.
+    // It still reads the stores of createSocket(): the handle keeps them until close(), and dispose() does not clear them.
     expect(await layout("A", "the host", { disposeMakerFirst: true })).toEqual({
       "'message' reads": ofCreateSocket,
       "'message' runs in": "the host",
@@ -728,38 +729,39 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
     });
   });
 
+  // What createSocket() and a later 'message' read in a store. `arrange` calls `create` where the socket is to be made.
+  type Graph = InstanceType<typeof Bun.ModuleGraph>;
+  async function seenIn(arrange: (storage: AsyncLocalStorage<string>, graph: Graph, create: () => void) => void) {
+    const storage = new AsyncLocalStorage<string>();
+    const graph = new Bun.ModuleGraph();
+    const sender = dgram.createSocket("udp4");
+    const seen: Record<string, unknown> = {};
+    const created = Promise.withResolvers<dgram.Socket>();
+    arrange(storage, graph, () => {
+      seen["at createSocket()"] = storage.getStore();
+      created.resolve(dgram.createSocket("udp4"));
+    });
+    const socket = await created.promise;
+    try {
+      graph.run(() => storage.run("bind()", () => socket.bind(0, "127.0.0.1")));
+      await once(socket, "listening");
+      const message = Promise.withResolvers<unknown>();
+      socket.on("error", message.reject);
+      sender.on("error", message.reject);
+      socket.on("message", () => message.resolve(storage.getStore()));
+      sender.send("x", socket.address().port, "127.0.0.1");
+      seen["in 'message'"] = await message.promise;
+      return seen;
+    } finally {
+      socket.close();
+      sender.close();
+      graph.dispose();
+    }
+  }
   // disable() is noted on the newest frame, and a lookup reads only the note of the frame it starts at. node:dgram
   // keeps the stores of createSocket() without the frames of graphs, so 'message' starts one frame lower when the
   // newest frame was a graph's. It still reads what createSocket() read, with the note and without it.
   test("a node:dgram 'message' reads what createSocket() read when a store is disabled around a graph", async () => {
-    type Graph = InstanceType<typeof Bun.ModuleGraph>;
-    async function seenIn(arrange: (storage: AsyncLocalStorage<string>, graph: Graph, create: () => void) => void) {
-      const storage = new AsyncLocalStorage<string>();
-      const graph = new Bun.ModuleGraph();
-      const sender = dgram.createSocket("udp4");
-      const seen: Record<string, unknown> = {};
-      const created = Promise.withResolvers<dgram.Socket>();
-      arrange(storage, graph, () => {
-        seen["at createSocket()"] = storage.getStore();
-        created.resolve(dgram.createSocket("udp4"));
-      });
-      const socket = await created.promise;
-      try {
-        graph.run(() => storage.run("bind()", () => socket.bind(0, "127.0.0.1")));
-        await once(socket, "listening");
-        const message = Promise.withResolvers<unknown>();
-        socket.on("error", message.reject);
-        sender.on("error", message.reject);
-        socket.on("message", () => message.resolve(storage.getStore()));
-        sender.send("x", socket.address().port, "127.0.0.1");
-        seen["in 'message'"] = await message.promise;
-        return seen;
-      } finally {
-        socket.close();
-        sender.close();
-        graph.dispose();
-      }
-    }
     const store = "entered by the host";
     expect({
       "disabled inside the graph, before createSocket()": await seenIn((storage, graph, create) =>
@@ -784,6 +786,38 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
       },
     });
   });
+
+  // Not so yet: a disable() after createSocket(), in the same run(), with a frame of a graph in the async context.
+  // Node.js deletes the store from the frame that the socket's handle has, so 'message' reads none, and so does Bun
+  // with no graph in the context. Here the stores that node:dgram keeps are a copy, which the note of disable() does
+  // not reach: 'message' reads "entered". A WebSocket has the same limit.
+  test.failing(
+    "a node:dgram 'message' reads no store after a disable() that follows createSocket() inside a graph",
+    async () => {
+      const disabledLater = { "at createSocket()": "entered", "in 'message'": undefined };
+      expect({
+        "the store is entered inside the graph": await seenIn((storage, graph, create) =>
+          graph.run(() =>
+            storage.run("entered", () => {
+              create();
+              storage.disable();
+            }),
+          ),
+        ),
+        "the store is entered around the graph": await seenIn((storage, graph, create) =>
+          storage.run("entered", () =>
+            graph.run(() => {
+              create();
+              storage.disable();
+            }),
+          ),
+        ),
+      }).toEqual({
+        "the store is entered inside the graph": disabledLater,
+        "the store is entered around the graph": disabledLater,
+      });
+    },
+  );
 
   // A send() that waited behind backpressure is completed by the socket's drain or by close(). Its callback still
   // runs where that send() was made: in the caller's graph and store, as the callback of a ws send() does. With a

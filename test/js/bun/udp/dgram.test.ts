@@ -1015,14 +1015,17 @@ test("a send() that waited behind backpressure reports what its callback throws 
   });
 });
 
-// node:dgram saves the async context of createSocket() and of a queued send(). Where an ahead-of-time build cannot
-// follow a saved context, it takes every AsyncLocalStorage store of the program to be used by code it cannot see, and
-// keeps all that a store names. `bun check --aot` says what a build keeps. node:child_process reaches bind() for a
-// socket that a child receives. (Not on a debug build: the two reports take 50 s there.)
+// node:dgram saves the AsyncLocalStorage stores of createSocket() and the async context of a queued send(). Where an
+// ahead-of-time build cannot follow what is saved, it takes every store of the program to be used by code it cannot
+// see, and keeps all that a store names. `bun check --aot` says what a build keeps. node:child_process reaches bind()
+// for a socket that a child receives. (Not on a debug build: the three reports take 50 s there.)
 test.skipIf(aotUnsupported !== undefined || isDebug)(
-  "an ahead-of-time build removes what only a method of a store names, in a program that binds and sends and in one that spawns a child",
+  "an ahead-of-time build removes what only a method of a store names, in a program that makes a socket, in one that binds and sends and in one that spawns a child",
   async () => {
+    const makesSocket = "makes a node:dgram socket inside a store and closes it";
     const programs = {
+      [makesSocket]: `import { createSocket } from "node:dgram";
+storage.run(store, () => createSocket("udp4")).close();`,
       "binds a node:dgram socket and sends on it": `import { createSocket } from "node:dgram";
 const socket = createSocket("udp4");
 socket.bind(0, "127.0.0.1", () => socket.send("x", socket.address().port, "127.0.0.1", () => socket.close()));`,
@@ -1030,6 +1033,7 @@ socket.bind(0, "127.0.0.1", () => socket.send("x", socket.address().port, "127.0
 spawn(process.execPath, ["--version"]).on("exit", () => {});`,
     };
     const collation = "Intl.Collator and localeCompare (";
+    const seesEveryApi = "aot: trim: the compiler can see every API this program uses";
     const reports = await Promise.all(
       Object.entries(programs).map(async ([program, uses]) => {
         using dir = tempDir("dgram-aot-store", {
@@ -1053,16 +1057,111 @@ ${uses}
           stderr: "pipe",
         });
         const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-        return [program, { collation: stderr.split("\n").filter(line => line.includes(collation)), exitCode }];
+        const lines = stderr.split("\n");
+        const report = { collation: lines.filter(line => line.includes(collation)), exitCode };
+        // A bind and a spawn name an API by a key that is only known at run time, on main too.
+        return [
+          program,
+          program === makesSocket ? { "sees every API": lines.includes(seesEveryApi), ...report } : report,
+        ];
       }),
     );
     const removed = { collation: [expect.stringContaining(`aot: trim: removed ${collation}`)], exitCode: 0 };
     expect(Object.fromEntries(reports)).toEqual({
+      // createSocket() hands the async context to a native of ModuleGraph.cpp: the table of built-ins says what it answers.
+      [makesSocket]: { "sees every API": true, ...removed },
       "binds a node:dgram socket and sends on it": removed,
       "spawns a child process": removed,
     });
   },
 );
+
+// `bun test --isolate=modules` runs each test file inside a Bun.ModuleGraph, so every socket of a test file is made
+// with a frame of a graph in its async context. node:dgram keeps the stores without that frame.
+const storesInATestFile = `
+import { test } from "bun:test";
+import { AsyncLocalStorage } from "node:async_hooks";
+import dgram from "node:dgram";
+import { once } from "node:events";
+
+async function read(arrange) {
+  const storage = new AsyncLocalStorage();
+  const socket = arrange(storage, () => dgram.createSocket("udp4"));
+  const sender = dgram.createSocket("udp4");
+  try {
+    socket.bind(0, "127.0.0.1");
+    await once(socket, "listening");
+    const message = Promise.withResolvers();
+    socket.on("message", () => message.resolve(String(storage.getStore())));
+    socket.on("error", message.reject);
+    sender.on("error", message.reject);
+    sender.send("x", socket.address().port, "127.0.0.1");
+    return await message.promise;
+  } finally {
+    socket.close();
+    sender.close();
+  }
+}
+
+test("what 'message' reads", async () => {
+  console.log(
+    JSON.stringify({
+      "inside a Bun.ModuleGraph": Bun.ModuleGraph.current !== undefined,
+      "createSocket() inside a store": await read((storage, create) => storage.run("createSocket()", create)),
+      "createSocket() inside a store, then disable()": await read((storage, create) =>
+        storage.run("createSocket()", () => {
+          const socket = create();
+          storage.disable();
+          return socket;
+        }),
+      ),
+    }),
+  );
+});
+`;
+const readsInATestFile = new Map<string, Promise<Record<string, unknown>>>();
+function readsUnder(flags: string[]) {
+  const mode = flags.join(" ");
+  if (!readsInATestFile.has(mode)) {
+    readsInATestFile.set(
+      mode,
+      (async () => {
+        using dir = tempDir("dgram-test-modes", { "stores.test.js": storesInATestFile });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", ...flags, "./stores.test.js"],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const line = stdout.split("\n").find(each => each.startsWith("{"));
+        if (line === undefined || exitCode !== 0)
+          throw new Error(`bun test ${mode} exited with ${exitCode}: ${stderr}`);
+        return JSON.parse(line);
+      })(),
+    );
+  }
+  return readsInATestFile.get(mode)!;
+}
+const testModes = [[] as string[], ["--isolate"], ["--isolate=modules"]].map(
+  flags => [flags.join(" ") || "no flag", flags] as const,
+);
+const afterDisable = "createSocket() inside a store, then disable()";
+test.each(testModes)("bun test with %s: 'message' reads the store of createSocket()", async (_, flags) => {
+  const inGraph = flags.includes("--isolate=modules");
+  const { [afterDisable]: _later, ...reads } = await readsUnder(flags);
+  expect(reads).toEqual({ "inside a Bun.ModuleGraph": inGraph, "createSocket() inside a store": "createSocket()" });
+});
+// A disable() after createSocket() in the same run() deletes the store from the frame that the socket's handle has, in
+// Node.js and here. Not so yet with a frame of a graph in the async context: node:dgram keeps a copy of the stores
+// there, and the note of disable() goes on the frame that is current. 'message' then reads "createSocket()".
+for (const [mode, flags] of testModes) {
+  const known = flags.includes("--isolate=modules") ? test.failing : test;
+  known(`bun test with ${mode}: 'message' reads no store after a disable() that follows createSocket()`, async () => {
+    expect((await readsUnder(flags))[afterDisable]).toBe("undefined");
+  });
+}
 
 // Reserves an ephemeral UDP port and frees it, so datagrams sent there get
 // ICMP port-unreachable replies on loopback.

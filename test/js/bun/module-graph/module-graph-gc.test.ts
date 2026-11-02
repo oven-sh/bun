@@ -411,10 +411,12 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
   });
 
   // node:dgram keeps the AsyncLocalStorage stores of createSocket() for the bind() that opens the socket, and no frame
-  // of a graph. So a socket that the host holds does not keep the graph that made it, and a socket of the host's
-  // does not keep a graph whose script was on the stack when the host made or bound it. A socket the graph bound is
-  // the graph's: its handlers hold the graph until the host closes the socket. And the socket keeps the store values
-  // of createSocket(), as node's handle does: a value that holds a function of the graph holds the graph.
+  // of a graph. So a socket that the host holds does not keep the graph that made it through such a frame. Nor does
+  // a socket of the host's keep a graph whose script was on the stack when the host made or bound it: the frame that
+  // leaves a graph links to the frame of the graph, and what else the host opens over it (Bun.udpSocket() with a
+  // handler, a timer) does keep the graph. A socket the graph bound is the graph's: its handlers hold the graph
+  // until the host closes the socket. The stores stay on the handle until close(), and dispose() does not clear
+  // them: a store value that holds a function of the graph holds the graph.
   test("of the node:dgram sockets the host holds, one that the graph bound keeps the graph, and one whose store value is the graph's", async () => {
     const lifetimes = new Lifetimes();
     const storage = new AsyncLocalStorage<unknown>();
@@ -426,7 +428,7 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
       });
     // A bind to its port fails.
     const holder = await Bun.udpSocket({ hostname: "127.0.0.1", port: 0 });
-    // A listener of the host's that the graph's script calls runs as the host, in an async context that holds the graph.
+    // A listener of the host's that the graph's script calls runs as the host, over the frame that leaves the graph.
     const inListenerTheGraphCalls = <T>(graph: Graph, io: { dispatch(target: EventTarget): void }, fn: () => T): T => {
       const target = new EventTarget();
       let ranAs: string | undefined;

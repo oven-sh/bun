@@ -7,7 +7,7 @@ use bstr::BStr;
 
 use bun_core::{self as bstring, strings};
 use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsStructure, JsWrapper};
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
+use bun_jsc::{JSBigInt, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
 use bun_sourcemap::{Mapping, Ordinal, ParsedSourceMap, mapping};
 
 use crate::generated_bindgen::sourcemap::js_SourceMap as js;
@@ -216,6 +216,36 @@ impl JSSourceMap {
         Ok(JSValue::UNDEFINED)
     }
 
+    /// The search of Node's `findEntry`, which compares an argument as it is and only where it needs it: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map.js#L196-L217
+    fn mapping_at(
+        &self,
+        global: &JSGlobalObject,
+        line: Argument,
+        column: Argument,
+    ) -> JsResult<Option<Mapping>> {
+        // A map from `find_source_map` is a blob and has no list. There is none while `ENABLE_SOURCE_MAPS` is off.
+        let mappings = &self.sourcemap.mappings;
+        if mappings.generated().is_empty() {
+            return Ok(None);
+        }
+        let line_number = line.to_f64(global)?;
+        let mapping_line = last_not_after(line_number);
+        // Only a Number is `===` the line of a mapping. Any other line is after every mapping of that line.
+        if !line.is_number() || f64::from(mapping_line) != line_number {
+            return Ok(mappings.find_at_or_before(mapping_line, i32::MAX));
+        }
+        if !column.is_number() {
+            // Node compares the column only with a mapping of the line.
+            let last = mappings.find_at_or_before(mapping_line, i32::MAX);
+            if last.is_none_or(|last| last.generated.lines.zero_based() != mapping_line) {
+                return Ok(last);
+            }
+        }
+        let mapping_column = last_not_after(column.to_f64(global)?);
+        Ok(mappings.find_at_or_before(mapping_line, mapping_column))
+    }
+
+    /// Node's `findOrigin` as one native call: it converts each argument once, and it does not call a `findEntry` that a program replaced, which costs an entry object and a JS call. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map.js#L233-L252
     pub(crate) fn find_origin(
         &self,
         cx: &mut JsScope<'_>,
@@ -223,25 +253,30 @@ impl JSSourceMap {
         column_number: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let [line_number, column_number] = get_line_column(global, line_number, column_number)?;
-        if line_number < 0 || column_number < 0 {
-            return Ok(JSValue::create_empty_object(global, 0));
-        }
+        let line_number = Argument::new(line_number.to_js()).to_number(global)?;
+        let column_number = Argument::new(column_number.to_js()).to_number(global)?;
 
-        let Some(mapping) = self.sourcemap.find_mapping(
-            Ordinal::from_zero_based(line_number),
-            Ordinal::from_zero_based(column_number),
-        ) else {
+        let Some(mapping) = self
+            .mapping_at(
+                global,
+                Argument::Number(line_number - 1.0),
+                Argument::Number(column_number - 1.0),
+            )?
+            .filter(Mapping::has_source)
+        else {
             return Ok(JSValue::create_empty_object(global, 0));
         };
         let name = self.mapping_name_to_js(global, &mapping)?;
         let source = self.source_name_to_js(global, &mapping)?;
+        // In doubles, as Node adds them: the sum can be past `i32::MAX`.
+        let line_offset = line_number - f64::from(mapping.generated.lines.zero_based());
+        let column_offset = column_number - f64::from(mapping.generated.columns.zero_based());
         Ok(Bun__createNodeModuleSourceMapOriginObject(
             global,
             name,
-            JSValue::js_number(mapping.original.lines.zero_based() as f64),
-            JSValue::js_number(mapping.original.columns.zero_based() as f64),
             source,
+            JSValue::js_number(f64::from(mapping.original.lines.zero_based()) + line_offset),
+            JSValue::js_number(f64::from(mapping.original.columns.zero_based()) + column_offset),
         ))
     }
 
@@ -252,15 +287,12 @@ impl JSSourceMap {
         column_offset: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let [line_offset, column_offset] = get_line_column(global, line_offset, column_offset)?;
-        if line_offset < 0 || column_offset < 0 {
-            return Ok(JSValue::create_empty_object(global, 0));
-        }
-
-        let Some(mapping) = self.sourcemap.find_segment(
-            Ordinal::from_zero_based(line_offset),
-            Ordinal::from_zero_based(column_offset),
-        ) else {
+        let Some(mapping) = self.mapping_at(
+            global,
+            Argument::new(line_offset.to_js()),
+            Argument::new(column_offset.to_js()),
+        )?
+        else {
             return Ok(JSValue::create_empty_object(global, 0));
         };
 
@@ -278,24 +310,69 @@ impl JSSourceMap {
             global,
             JSValue::js_number(mapping.generated.lines.zero_based() as f64),
             JSValue::js_number(mapping.generated.columns.zero_based() as f64),
+            source,
             original(mapping.original.lines),
             original(mapping.original.columns),
-            source,
             name,
         ))
     }
 }
 
-fn get_line_column(
-    global: &JSGlobalObject,
-    line_number: JsLocal<'_>,
-    column_number: JsLocal<'_>,
-) -> JsResult<[i32; 2]> {
-    Ok([
-        // Node.js does no validations.
-        line_number.to_js().coerce_to_i32(global)?,
-        column_number.to_js().coerce_to_i32(global)?,
-    ])
+/// An argument of `findEntry` or `findOrigin`, as the caller passed it.
+#[derive(Clone, Copy)]
+enum Argument {
+    Number(f64),
+    Other(JSValue),
+}
+
+impl Argument {
+    fn new(value: JSValue) -> Argument {
+        if value.is_number() {
+            Argument::Number(value.as_number())
+        } else {
+            Argument::Other(value)
+        }
+    }
+
+    fn is_number(self) -> bool {
+        matches!(self, Argument::Number(_))
+    }
+
+    /// ToNumber, with no call for a Number.
+    fn to_number(self, global: &JSGlobalObject) -> JsResult<f64> {
+        match self {
+            Argument::Number(number) => Ok(number),
+            Argument::Other(value) => value.to_number(global),
+        }
+    }
+
+    /// What `<` compares the argument as. Node converts an object in each comparison, by ToNumeric. This converts it once, by ToNumber, so an object that converts to a BigInt throws.
+    fn to_f64(self, global: &JSGlobalObject) -> JsResult<f64> {
+        let big_int = match self {
+            Argument::Number(_) => None,
+            Argument::Other(value) => JSBigInt::from_js(value),
+        };
+        let Some(big_int) = big_int else {
+            return self.to_number(global);
+        };
+        // `<` compares a BigInt by its value. Every mapping is from 0 to `i32::MAX`: the place among them is all that counts.
+        Ok(if big_int.order(i64::from(i32::MAX)).is_gt() {
+            f64::INFINITY
+        } else if big_int.order(0i64).is_lt() {
+            f64::NEG_INFINITY
+        } else {
+            big_int.to_int64() as f64
+        })
+    }
+}
+
+/// The last line or column of a mapping that `<` does not put after `number`. NaN is not before any. `as` saturates.
+fn last_not_after(number: f64) -> i32 {
+    if number.is_nan() {
+        i32::MAX
+    } else {
+        number.floor() as i32
+    }
 }
 
 // Hand-written in `src/jsc/modules/NodeModuleModule.cpp`.
@@ -303,18 +380,18 @@ unsafe extern "C" {
     safe fn Bun__createNodeModuleSourceMapOriginObject(
         globalObject: &JSGlobalObject,
         name: JSValue,
-        line: JSValue,
-        column: JSValue,
-        source: JSValue,
+        fileName: JSValue,
+        lineNumber: JSValue,
+        columnNumber: JSValue,
     ) -> JSValue;
 
     safe fn Bun__createNodeModuleSourceMapEntryObject(
         globalObject: &JSGlobalObject,
         generatedLine: JSValue,
         generatedColumn: JSValue,
+        originalSource: JSValue,
         originalLine: JSValue,
         originalColumn: JSValue,
-        source: JSValue,
         name: JSValue,
     ) -> JSValue;
 }

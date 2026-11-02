@@ -142,10 +142,11 @@ impl List {
         Ok(())
     }
 
-    fn find_index_from_generated(
+    /// The index of the last mapping at or before `line:column`, on any line.
+    fn index_at_or_before(
         line_column_offsets: &[LineColumnOffset],
-        line: Ordinal,
-        column: Ordinal,
+        line: i32,
+        column: i32,
     ) -> Option<usize> {
         let mut count = line_column_offsets.len();
         let mut index: usize = 0;
@@ -153,9 +154,8 @@ impl List {
             let step = count / 2;
             let i: usize = index + step;
             let mapping = line_column_offsets[i];
-            if mapping.lines.zero_based() < line.zero_based()
-                || (mapping.lines.zero_based() == line.zero_based()
-                    && mapping.columns.zero_based() <= column.zero_based())
+            if mapping.lines.zero_based() < line
+                || (mapping.lines.zero_based() == line && mapping.columns.zero_based() <= column)
             {
                 index = i + 1;
                 count = count.saturating_sub(step + 1);
@@ -164,13 +164,17 @@ impl List {
             }
         }
 
-        if index > 0 {
-            if line_column_offsets[index - 1].lines.zero_based() == line.zero_based() {
-                return Some(index - 1);
-            }
-        }
+        index.checked_sub(1)
+    }
 
-        None
+    fn find_index_from_generated(
+        line_column_offsets: &[LineColumnOffset],
+        line: Ordinal,
+        column: Ordinal,
+    ) -> Option<usize> {
+        let index =
+            Self::index_at_or_before(line_column_offsets, line.zero_based(), column.zero_based())?;
+        (line_column_offsets[index].lines.zero_based() == line.zero_based()).then_some(index)
     }
 
     pub(crate) fn sort(&mut self) {
@@ -208,29 +212,30 @@ impl List {
 
     /// The mapping that covers `line:column`. `None` in a segment that has no source.
     pub fn find(&self, line: Ordinal, column: Ordinal) -> Option<Mapping> {
-        self.find_segment(line, column).filter(Mapping::has_source)
-    }
-
-    /// `find`, except that a position in a segment that has no source finds the row of that segment.
-    pub(crate) fn find_segment(&self, line: Ordinal, column: Ordinal) -> Option<Mapping> {
-        match &self.r#impl {
+        let mapping = match &self.r#impl {
             ListValue::WithoutNames(list) => {
-                if let Some(i) =
-                    Self::find_index_from_generated(list.items_generated(), line, column)
-                {
-                    return Some(list.get(i).to_named());
-                }
+                let i = Self::find_index_from_generated(list.items_generated(), line, column)?;
+                list.get(i).to_named()
             }
             ListValue::WithNames(list) => {
-                if let Some(i) =
-                    Self::find_index_from_generated(list.items_generated(), line, column)
-                {
-                    return Some(*list.get(i));
-                }
+                let i = Self::find_index_from_generated(list.items_generated(), line, column)?;
+                *list.get(i)
+            }
+        };
+        mapping.has_source().then_some(mapping)
+    }
+
+    /// The last row at or before `line:column`, on any line, with or without a source. The position is signed: the `SourceMap` of node:module looks up what its caller passes.
+    pub fn find_at_or_before(&self, line: i32, column: i32) -> Option<Mapping> {
+        match &self.r#impl {
+            ListValue::WithoutNames(list) => {
+                Self::index_at_or_before(list.items_generated(), line, column)
+                    .map(|i| list.get(i).to_named())
+            }
+            ListValue::WithNames(list) => {
+                Self::index_at_or_before(list.items_generated(), line, column).map(|i| *list.get(i))
             }
         }
-
-        None
     }
 
     pub fn generated(&self) -> &[LineColumnOffset] {

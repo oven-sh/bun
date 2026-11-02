@@ -1085,11 +1085,11 @@ static JSC::Structure* createNodeModuleSourceMapEntryStructure(JSC::VM& vm, JSC:
     RELEASE_ASSERT(offset == 0);
     structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "generatedColumn"), 0, offset);
     RELEASE_ASSERT(offset == 1);
-    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "originalLine"), 0, offset);
-    RELEASE_ASSERT(offset == 2);
-    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "originalColumn"), 0, offset);
-    RELEASE_ASSERT(offset == 3);
     structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "originalSource"), 0, offset);
+    RELEASE_ASSERT(offset == 2);
+    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "originalLine"), 0, offset);
+    RELEASE_ASSERT(offset == 3);
+    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "originalColumn"), 0, offset);
     RELEASE_ASSERT(offset == 4);
     structure = Structure::addPropertyTransition(vm, structure, vm.propertyNames->name, 0, offset);
     RELEASE_ASSERT(offset == 5);
@@ -1101,9 +1101,9 @@ extern "C" JSC::EncodedJSValue Bun__createNodeModuleSourceMapEntryObject(
     JSC::JSGlobalObject* globalObject,
     JSC::EncodedJSValue encodedGeneratedLine,
     JSC::EncodedJSValue encodedGeneratedColumn,
+    JSC::EncodedJSValue encodedOriginalSource,
     JSC::EncodedJSValue encodedOriginalLine,
     JSC::EncodedJSValue encodedOriginalColumn,
-    JSC::EncodedJSValue encodedOriginalSource,
     JSC::EncodedJSValue encodedName)
 {
     auto& vm = globalObject->vm();
@@ -1111,9 +1111,9 @@ extern "C" JSC::EncodedJSValue Bun__createNodeModuleSourceMapEntryObject(
     JSObject* object = JSC::constructEmptyObject(vm, zigGlobalObject->m_nodeModuleSourceMapEntryStructure.getInitializedOnMainThread(zigGlobalObject));
     object->putDirectOffset(vm, 0, JSC::JSValue::decode(encodedGeneratedLine));
     object->putDirectOffset(vm, 1, JSC::JSValue::decode(encodedGeneratedColumn));
-    object->putDirectOffset(vm, 2, JSC::JSValue::decode(encodedOriginalLine));
-    object->putDirectOffset(vm, 3, JSC::JSValue::decode(encodedOriginalColumn));
-    object->putDirectOffset(vm, 4, JSC::JSValue::decode(encodedOriginalSource));
+    object->putDirectOffset(vm, 2, JSC::JSValue::decode(encodedOriginalSource));
+    object->putDirectOffset(vm, 3, JSC::JSValue::decode(encodedOriginalLine));
+    object->putDirectOffset(vm, 4, JSC::JSValue::decode(encodedOriginalColumn));
     object->putDirectOffset(vm, 5, JSC::JSValue::decode(encodedName));
     return JSValue::encode(object);
 }
@@ -1125,11 +1125,11 @@ static JSC::Structure* createNodeModuleSourceMapOriginStructure(JSC::VM& vm, JSC
 
     structure = Structure::addPropertyTransition(vm, structure, vm.propertyNames->name, 0, offset);
     RELEASE_ASSERT(offset == 0);
-    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "line"), 0, offset);
-    RELEASE_ASSERT(offset == 1);
-    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "column"), 0, offset);
-    RELEASE_ASSERT(offset == 2);
     structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "fileName"), 0, offset);
+    RELEASE_ASSERT(offset == 1);
+    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "lineNumber"), 0, offset);
+    RELEASE_ASSERT(offset == 2);
+    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "columnNumber"), 0, offset);
     RELEASE_ASSERT(offset == 3);
 
     return structure;
@@ -1138,17 +1138,17 @@ static JSC::Structure* createNodeModuleSourceMapOriginStructure(JSC::VM& vm, JSC
 extern "C" JSC::EncodedJSValue Bun__createNodeModuleSourceMapOriginObject(
     JSC::JSGlobalObject* globalObject,
     JSC::EncodedJSValue encodedName,
-    JSC::EncodedJSValue encodedLine,
-    JSC::EncodedJSValue encodedColumn,
-    JSC::EncodedJSValue encodedSource)
+    JSC::EncodedJSValue encodedFileName,
+    JSC::EncodedJSValue encodedLineNumber,
+    JSC::EncodedJSValue encodedColumnNumber)
 {
     auto& vm = globalObject->vm();
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     JSObject* object = JSC::constructEmptyObject(vm, zigGlobalObject->m_nodeModuleSourceMapOriginStructure.getInitializedOnMainThread(zigGlobalObject));
     object->putDirectOffset(vm, 0, JSC::JSValue::decode(encodedName));
-    object->putDirectOffset(vm, 1, JSC::JSValue::decode(encodedLine));
-    object->putDirectOffset(vm, 2, JSC::JSValue::decode(encodedColumn));
-    object->putDirectOffset(vm, 3, JSC::JSValue::decode(encodedSource));
+    object->putDirectOffset(vm, 1, JSC::JSValue::decode(encodedFileName));
+    object->putDirectOffset(vm, 2, JSC::JSValue::decode(encodedLineNumber));
+    object->putDirectOffset(vm, 3, JSC::JSValue::decode(encodedColumnNumber));
     return JSValue::encode(object);
 }
 

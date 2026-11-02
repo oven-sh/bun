@@ -4360,6 +4360,87 @@ console.log(foo, array);
       );
     });
 
+    // The `with` object can have a property with the name of the const. That
+    // property shadows the const, so the read must stay a read.
+    it("const inlining keeps a read inside a with statement", () => {
+      var transpiler = new Bun.Transpiler({
+        inline: true,
+        platform: "bun",
+        allowBunRuntime: false,
+        minify: { syntax: true },
+      });
+
+      function check(input, output) {
+        expect(transpiler.transformSync(input)).toBe(output);
+      }
+      hideFromStackTrace(check);
+
+      check(
+        "function f(o) { const x = 1; with (o) { return x; } }",
+        "function f(o) {\n  const x = 1;\n  with (o)\n    return x;\n}\n",
+      );
+      check(
+        "function f(o) { const x = 1; with (o) { return typeof x; } }",
+        "function f(o) {\n  const x = 1;\n  with (o)\n    return typeof x;\n}\n",
+      );
+      check(
+        "function f(o) { const x = 1; with (o) { return delete x; } }",
+        "function f(o) {\n  const x = 1;\n  with (o)\n    return delete x;\n}\n",
+      );
+      check(
+        "function f(o) { const x = 1; with (o) { return x(); } }",
+        "function f(o) {\n  const x = 1;\n  with (o)\n    return x();\n}\n",
+      );
+      // A function created in the body captures the `with` object.
+      check(
+        "function f(o) { const x = 1; with (o) { return () => x; } }",
+        "function f(o) {\n  const x = 1;\n  with (o)\n    return () => x;\n}\n",
+      );
+      check(
+        "function f(a, b) { const x = 1; with (a) { with (b) { return x; } } }",
+        "function f(a, b) {\n  const x = 1;\n  with (a)\n    with (b)\n      return x;\n}\n",
+      );
+      check("const x = 1; with (o) { console.log(x); }", "const x = 1;\nwith (o)\n  console.log(x);\n");
+
+      // A read outside the body is still inlined. The read inside keeps the declaration.
+      check(
+        "function f(o) { const x = 1; g(x); with (o) { return x; } }",
+        "function f(o) {\n  const x = 1;\n  g(1);\n  with (o)\n    return x;\n}\n",
+      );
+      // The cases of a switch share one scope. A read in a later case keeps the declaration.
+      check(
+        "function f(k, o) { switch (k) { case 1: const x = 1; case 2: with (o) { return x; } } }",
+        "function f(k, o) {\n  switch (k) {\n    case 1:\n      const x = 1;\n    case 2:\n      with (o)\n        return x;\n  }\n}\n",
+      );
+      // A switch with no `with` in it still loses the declaration.
+      check(
+        "function f(k) { switch (k) { case 1: const x = 1; return x; } }",
+        "function f(k) {\n  switch (k) {\n    case 1:\n      return 1;\n  }\n}\n",
+      );
+      // The `with` object expression is evaluated outside the body.
+      check("function f() { const x = 1; with (x) { return y; } }", "function f() {\n  with (1)\n    return y;\n}\n");
+      // A const declared in the body's own block shadows the `with` object.
+      check("function f(o) { with (o) { const x = 1; return x; } }", "function f(o) {\n  with (o)\n    return 1;\n}\n");
+      // A read in a dead branch goes with the branch and does not keep the declaration.
+      check(
+        "function f(o) { const x = 1; if (false) with (o) { return x; } return x; }",
+        "function f(o) {\n  if (!1)\n    with (o)\n      ;\n  return 1;\n}\n",
+      );
+
+      // Without `minify.syntax` no declaration is removed, and the read stays too.
+      expect(
+        new Bun.Transpiler({ inline: true }).transformSync("function f(o) { const x = 1; with (o) { return x; } }"),
+      ).toBe("function f(o) {\n  const x = 1;\n  with (o) {\n    return x;\n  }\n}\n");
+      // Without `inline` every read is a name, and the one in the later case keeps the declaration too.
+      expect(
+        new Bun.Transpiler({ minify: { syntax: true } }).transformSync(
+          "function f(k, o) { switch (k) { case 1: const x = 1; case 2: with (o) { return x; } } }",
+        ),
+      ).toBe(
+        "function f(k, o) {\n  switch (k) {\n    case 1:\n      const x = 1;\n    case 2:\n      with (o)\n        return x;\n  }\n}\n",
+      );
+    });
+
     it("constant folding scopes", () => {
       var transpiler = new Bun.Transpiler({
         inline: true,

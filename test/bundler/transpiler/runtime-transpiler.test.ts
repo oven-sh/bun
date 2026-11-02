@@ -193,6 +193,110 @@ describe("with statement", () => {
 
     expect(exitCode).toBe(0);
   });
+
+  // The `with` object can have a property with the name of a `const` from an
+  // enclosing scope. Inside the `with` body that property shadows the const,
+  // so a read there is a lookup at run time and not the value of the const.
+  // Each expected value is what Node prints. A `.cjs` file runs in sloppy
+  // mode, which `with` needs.
+  test.concurrent("a read in the body is not replaced by the value of a shadowed const", async () => {
+    using dir = tempDir("with-shadows-const", {
+      "index.cjs": /* js */ `
+        const top = "const";
+        function read(o) { const x = "const"; with (o) { return x; } }
+        function closure(o) { const x = "const"; with (o) { return () => x; } }
+        function nested(a, b) { const x = "const"; with (a) { with (b) { return x; } } }
+        function outsideAndInside(o) { const x = "const"; const before = x; with (o) { return [before, x]; } }
+        function typeOf(o) { const x = "const"; with (o) { return typeof x; } }
+        function callTarget(o) { const x = "const"; with (o) { try { return x(); } catch (e) { return e.constructor.name; } } }
+        function topLevel(o) { with (o) { return top; } }
+        function deleteIt(o) { const x = "const"; with (o) { return [delete x, "x" in o]; } }
+        // Each read asks the object, also when the object does not have the name.
+        function proxyHas() {
+          const x = "const";
+          let seen = 0;
+          const o = new Proxy({}, { has(target, key) { if (key === "x") seen++; return false; } });
+          with (o) { x; x; }
+          return seen;
+        }
+        function unscopables() { const x = "const"; with ({ x: "with", [Symbol.unscopables]: { x: true } }) { return x; } }
+        // A const declared in the body's own block shadows the with object.
+        function declaredInBody(o) { with (o) { const x = "const"; return x; } }
+        // The cases of a switch share one scope, and the read is in a later case.
+        function laterCase(k, o) {
+          try {
+            switch (k) { case 1: const x = "const"; case 2: with (o) { return x; } }
+          } catch (e) { return e.constructor.name; }
+        }
+        console.log(
+          JSON.stringify({
+            read: [read({ x: "with" }), read({})],
+            closure: [closure({ x: "with" })(), closure({})()],
+            nested: [nested({ x: "outer" }, {}), nested({ x: "outer" }, { x: "inner" }), nested({}, {})],
+            outsideAndInside: outsideAndInside({ x: "with" }),
+            typeOf: [typeOf({ x: 1 }), typeOf({})],
+            callTarget: [callTarget({ x() { return this.tag; }, tag: "with" }), callTarget({})],
+            topLevel: [topLevel({ top: "with" }), topLevel({})],
+            deleteIt: [deleteIt({ x: "with" }), deleteIt({})],
+            proxyHas: proxyHas(),
+            unscopables: unscopables(),
+            declaredInBody: declaredInBody({ x: "with" }),
+            laterCase: [laterCase(1, { x: "with" }), laterCase(1, {}), laterCase(2, { x: "with" }), laterCase(2, {})],
+          }),
+        );
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      read: ["with", "const"],
+      closure: ["with", "const"],
+      nested: ["outer", "inner", "const"],
+      outsideAndInside: ["const", "with"],
+      typeOf: ["number", "string"],
+      callTarget: ["with", "TypeError"],
+      topLevel: ["with", "const"],
+      deleteIt: [
+        [true, false],
+        [false, false],
+      ],
+      proxyHas: 2,
+      unscopables: "const",
+      declaredInBody: "const",
+      laterCase: ["with", "const", "with", "ReferenceError"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // tsc computes an enum member when it compiles: `A = x` is emitted as `A = 1`.
+  // So a const in a member initializer is still replaced in a `with` body.
+  test.concurrent("a const in an enum member initializer in the body is still replaced", async () => {
+    using dir = tempDir("with-enum-initializer", {
+      "index.cts": /* ts */ `
+        const x = 1;
+        function f(o: any) { with (o) { enum E { A = x, B } return [E.A, E.B]; } }
+        console.log(JSON.stringify([f({}), f({ x: 5 })]));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.cts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "[[1,2],[1,2]]\n", stderr: "", exitCode: 0 });
+  });
 });
 
 test("math.pow", () => {

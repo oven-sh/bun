@@ -9,53 +9,55 @@ import { test } from "./supported";
 // name off the list, and whoever imported it was told at run time that the build had not found it.
 //
 // One file that mocks out of sight opens the whole run: the build then leaves every name that it does not find to the loader. A run for each way compiles Bun's own
-// code once for each, so all the ways lie in one project, which is built once in each form. Two things keep them apart there. Each way has a folder with a preload,
-// a name and readers of its own: a name is found only where the preload of its folder has mocked it. And the other preloads would hide a way that the build no
-// longer sees, so the scan in front of the build is read as well: it says of each file by itself whether it mocks a module that it does not spell.
-const ways: [how: string, folder: string, preload: string, text: (mocked: string) => string][] = [
+// code once for each, so all the ways lie in one project, which is built once in each form. Two things keep them apart there. Each way has a preload, a name and
+// readers of its own: a name is found only where the preload of its way has mocked it. And the other preloads would hide a way that the build no longer sees, so
+// the scan in front of the build is read as well: it says of each file by itself whether it mocks a module that it does not spell.
+const ways: [how: string, way: string, preload: string, text: (mocked: string) => string][] = [
   [
     "a pattern takes it from require()",
     "pattern",
-    "preload.cjs",
+    "preload-pattern.cjs",
     mocked => `const { mock } = require("bun:test");\nmock.module${mocked}`,
   ],
-  ["it is a member of require()", "member", "preload.cjs", mocked => `require("bun:test").mock.module${mocked}`],
+  ["it is a member of require()", "member", "preload-member.cjs", mocked => `require("bun:test").mock.module${mocked}`],
   [
     "a name holds what require() answered",
     "name",
-    "preload.cjs",
+    "preload-name.cjs",
     mocked => `const runner = require("bun:test");\nrunner.mock.module${mocked}`,
   ],
   [
     "an ES module calls require()",
     "es-module",
-    "preload.ts",
+    "preload-es-module.ts",
     mocked => `const { mock } = require("bun:test");\nmock.module${mocked}`,
   ],
   [
     "jest.mock() of require()",
     "jest",
-    "preload.cjs",
+    "preload-jest.cjs",
     mocked => `const { jest } = require("bun:test");\njest.mock${mocked}`,
   ],
   [
     "it is a member of the namespace",
     "namespace",
-    "preload.ts",
+    "preload-namespace.ts",
     mocked => `import * as runner from "bun:test";\nrunner.mock.module${mocked}`,
   ],
   [
     "a function is handed it",
     "handed",
-    "preload.ts",
+    "preload-handed.ts",
     mocked =>
       `import { mock } from "bun:test";\nfunction fake(handed: typeof mock) { handed.module${mocked} }\nfake(mock);`,
   ],
 ];
 
+// Every file lies in the one folder. `bun test` runs the test files of the folder that it starts in in the order of their names, and those of a folder below in
+// the order in which the disk lists them. So on every disk the lazy readers of a way ask for its name before its readers do, as in a project with one way.
 const files: Record<string, string> = {
   "package.json": `{ "type": "module" }`,
-  "bunfig.toml": `[test]\npreload = [${ways.map(([, folder, preload]) => `"./${folder}/${preload}"`).join(", ")}]\n`,
+  "bunfig.toml": `[test]\npreload = [${ways.map(([, , preload]) => `"./${preload}"`).join(", ")}]\n`,
   "nobody.test.ts": `import { test } from "bun:test";
 const here = import.meta.dirname;
 const say = (how: string, error: any) => console.log("SEEN nobody mocks it,", how, error.name, error.code, String(error.message).replaceAll(here, "<here>").split(" imported from ")[0]);
@@ -73,23 +75,23 @@ import { v } from "nobody-has-it-either";
 test("never runs", () => console.log("SEEN", v));
 `,
 };
-for (const [, folder, preload, text] of ways) {
-  const name = `made-up-${folder}`;
-  files[`${folder}/${preload}`] = text(`("${name}", () => ({ v: "mocked by ${folder}" }));`);
-  files[`${folder}/readers.test.ts`] = `import { test } from "bun:test";
+for (const [, way, preload, text] of ways) {
+  const name = `made-up-${way}`;
+  files[preload] = text(`("${name}", () => ({ v: "mocked by ${way}" }));`);
+  files[`readers-${way}.test.ts`] = `import { test } from "bun:test";
 import { v } from "${name}";
 test("three ways to read the mock", async () => {
-  console.log("SEEN ${folder} | the mock:", v, "|", require("${name}").v, "|", (await import("${name}")).v);
+  console.log("SEEN ${way} | the mock:", v, "|", require("${name}").v, "|", (await import("${name}")).v);
 });
 `;
   // Over layers these two lie in a program below the test files.
-  files[`${folder}/lazy.cjs`] = `exports.read = function () { return require("${name}").v; };`;
-  files[`${folder}/lazy-import.ts`] = `export async function read() { return (await import("${name}")).v; }`;
-  files[`${folder}/lazy-readers.test.ts`] = `import { test } from "bun:test";
-import { read as readByRequire } from "./lazy.cjs";
-import { read as readByImport } from "./lazy-import.ts";
+  files[`lazy-${way}.cjs`] = `exports.read = function () { return require("${name}").v; };`;
+  files[`lazy-import-${way}.ts`] = `export async function read() { return (await import("${name}")).v; }`;
+  files[`lazy-readers-${way}.test.ts`] = `import { test } from "bun:test";
+import { read as readByRequire } from "./lazy-${way}.cjs";
+import { read as readByImport } from "./lazy-import-${way}.ts";
 test("files that test files import read the mock when they are called", async () => {
-  console.log("SEEN ${folder} | the mock, from the files that test files import:", readByRequire(), "|", await readByImport());
+  console.log("SEEN ${way} | the mock, from the files that test files import:", readByRequire(), "|", await readByImport());
 });
 `;
 }
@@ -144,18 +146,18 @@ function ran(words?: string): Promise<Told> {
   });
 }
 
-/** What a run says of one way: what the test files of its folder printed, and how their tests ended. */
-function ofWay(told: Told, folder: string) {
+/** What a run says of one way: what its two test files printed, and how their tests ended. */
+function ofWay(told: Told, way: string) {
   const testsOf = (file: string) => {
-    const header = told.report.indexOf(`${folder}/${file}:`);
+    const header = told.report.indexOf(`${file}:`);
     // Up to the next test file, or to the counts.
     const behind = told.report.findIndex((line, index) => index > header && !/^(?:\(|error: |# )/.test(line));
     return header < 0 ? undefined : told.report.slice(header + 1, behind < 0 ? undefined : behind);
   };
   return {
-    printed: told.stdout.split("\n").filter(line => line.startsWith(`SEEN ${folder} | `)),
-    "lazy-readers.test.ts": testsOf("lazy-readers.test.ts"),
-    "readers.test.ts": testsOf("readers.test.ts"),
+    printed: told.stdout.split("\n").filter(line => line.startsWith(`SEEN ${way} | `)),
+    "the lazy readers": testsOf(`lazy-readers-${way}.test.ts`),
+    "the readers": testsOf(`readers-${way}.test.ts`),
   };
 }
 
@@ -169,6 +171,13 @@ test(
     const plain = await ran();
     expect(normalizeBunSnapshot(plain.stdout, String(project))).toMatchInlineSnapshot(`
       "bun test <version> (<revision>)
+      SEEN es-module | the mock, from the files that test files import: mocked by es-module | mocked by es-module
+      SEEN handed | the mock, from the files that test files import: mocked by handed | mocked by handed
+      SEEN jest | the mock, from the files that test files import: mocked by jest | mocked by jest
+      SEEN member | the mock, from the files that test files import: mocked by member | mocked by member
+      SEEN name | the mock, from the files that test files import: mocked by name | mocked by name
+      SEEN namespace | the mock, from the files that test files import: mocked by namespace | mocked by namespace
+      SEEN pattern | the mock, from the files that test files import: mocked by pattern | mocked by pattern
       SEEN nobody mocks it, require(): ResolveMessage MODULE_NOT_FOUND Cannot find module 'nobody-has-it'
       Require stack:
       - <here>/nobody.test.ts
@@ -182,23 +191,37 @@ test(
       SEEN nobody mocks it, require.resolve() of a whole path: ResolveMessage MODULE_NOT_FOUND Cannot find module '<here>/no-such-file.js'
       Require stack:
       - <here>/nobody.test.ts
-      SEEN es-module | the mock, from the files that test files import: mocked by es-module | mocked by es-module
       SEEN es-module | the mock: mocked by es-module | mocked by es-module | mocked by es-module
-      SEEN handed | the mock, from the files that test files import: mocked by handed | mocked by handed
       SEEN handed | the mock: mocked by handed | mocked by handed | mocked by handed
-      SEEN jest | the mock, from the files that test files import: mocked by jest | mocked by jest
       SEEN jest | the mock: mocked by jest | mocked by jest | mocked by jest
-      SEEN member | the mock, from the files that test files import: mocked by member | mocked by member
       SEEN member | the mock: mocked by member | mocked by member | mocked by member
-      SEEN name | the mock, from the files that test files import: mocked by name | mocked by name
       SEEN name | the mock: mocked by name | mocked by name | mocked by name
-      SEEN namespace | the mock, from the files that test files import: mocked by namespace | mocked by namespace
       SEEN namespace | the mock: mocked by namespace | mocked by namespace | mocked by namespace
-      SEEN pattern | the mock, from the files that test files import: mocked by pattern | mocked by pattern
       SEEN pattern | the mock: mocked by pattern | mocked by pattern | mocked by pattern"
     `);
     expect(normalizeBunSnapshot(plain.stderr, String(project))).toMatchInlineSnapshot(`
-      "nobody-imported.test.ts:
+      "lazy-readers-es-module.test.ts:
+      (pass) files that test files import read the mock when they are called
+
+      lazy-readers-handed.test.ts:
+      (pass) files that test files import read the mock when they are called
+
+      lazy-readers-jest.test.ts:
+      (pass) files that test files import read the mock when they are called
+
+      lazy-readers-member.test.ts:
+      (pass) files that test files import read the mock when they are called
+
+      lazy-readers-name.test.ts:
+      (pass) files that test files import read the mock when they are called
+
+      lazy-readers-namespace.test.ts:
+      (pass) files that test files import read the mock when they are called
+
+      lazy-readers-pattern.test.ts:
+      (pass) files that test files import read the mock when they are called
+
+      nobody-imported.test.ts:
 
       # Unhandled error between tests
       -------------------------------
@@ -209,46 +232,25 @@ test(
       nobody.test.ts:
       (pass) names that nobody mocks
 
-      es-module/lazy-readers.test.ts:
-      (pass) files that test files import read the mock when they are called
-
-      es-module/readers.test.ts:
+      readers-es-module.test.ts:
       (pass) three ways to read the mock
 
-      handed/lazy-readers.test.ts:
-      (pass) files that test files import read the mock when they are called
-
-      handed/readers.test.ts:
+      readers-handed.test.ts:
       (pass) three ways to read the mock
 
-      jest/lazy-readers.test.ts:
-      (pass) files that test files import read the mock when they are called
-
-      jest/readers.test.ts:
+      readers-jest.test.ts:
       (pass) three ways to read the mock
 
-      member/lazy-readers.test.ts:
-      (pass) files that test files import read the mock when they are called
-
-      member/readers.test.ts:
+      readers-member.test.ts:
       (pass) three ways to read the mock
 
-      name/lazy-readers.test.ts:
-      (pass) files that test files import read the mock when they are called
-
-      name/readers.test.ts:
+      readers-name.test.ts:
       (pass) three ways to read the mock
 
-      namespace/lazy-readers.test.ts:
-      (pass) files that test files import read the mock when they are called
-
-      namespace/readers.test.ts:
+      readers-namespace.test.ts:
       (pass) three ways to read the mock
 
-      pattern/lazy-readers.test.ts:
-      (pass) files that test files import read the mock when they are called
-
-      pattern/readers.test.ts:
+      readers-pattern.test.ts:
       (pass) three ways to read the mock
 
        15 pass
@@ -262,24 +264,24 @@ test(
 );
 
 for (const [form, words] of Object.entries(forms)) {
-  for (const [how, folder, preload] of ways) {
+  for (const [how, way, preload] of ways) {
     test(
       `a module that exists only as a mock is found: ${how}, ${form}`,
       async () => {
         const [plain, compiled] = [await ran(), await ran(words)];
         const found = {
           printed: [
-            `SEEN ${folder} | the mock, from the files that test files import: mocked by ${folder} | mocked by ${folder}`,
-            `SEEN ${folder} | the mock: mocked by ${folder} | mocked by ${folder} | mocked by ${folder}`,
+            `SEEN ${way} | the mock, from the files that test files import: mocked by ${way} | mocked by ${way}`,
+            `SEEN ${way} | the mock: mocked by ${way} | mocked by ${way} | mocked by ${way}`,
           ],
-          "lazy-readers.test.ts": ["(pass) files that test files import read the mock when they are called"],
-          "readers.test.ts": ["(pass) three ways to read the mock"],
+          "the lazy readers": ["(pass) files that test files import read the mock when they are called"],
+          "the readers": ["(pass) three ways to read the mock"],
         };
-        expect(ofWay(plain, folder)).toEqual(found);
+        expect(ofWay(plain, way)).toEqual(found);
         expect({
-          ...ofWay(compiled, folder),
-          "mocks out of sight, says the scan": compiled.mocksOutOfSight.filter(file => file.startsWith(`${folder}/`)),
-        }).toEqual({ ...found, "mocks out of sight, says the scan": [`${folder}/${preload}`] });
+          ...ofWay(compiled, way),
+          "mocks out of sight, says the scan": compiled.mocksOutOfSight.filter(file => file === preload),
+        }).toEqual({ ...found, "mocks out of sight, says the scan": [preload] });
       },
       limit,
     );
@@ -304,7 +306,7 @@ for (const [form, words] of Object.entries(forms)) {
             : /^(?:one program|programs without layers)\b.* \| test files 16\b/,
         ),
         // No other file of the project opens the run.
-        mocksOutOfSight: ways.map(([, folder, preload]) => `${folder}/${preload}`).sort(),
+        mocksOutOfSight: ways.map(([, , preload]) => preload).sort(),
         stdout: plain.stdout,
         report: plain.report,
         exitCode: 1,

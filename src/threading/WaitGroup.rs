@@ -20,8 +20,12 @@ pub struct WaitGroup {
 }
 
 impl WaitGroup {
-    pub fn init() -> Self {
-        Self::default()
+    pub const fn init() -> Self {
+        Self {
+            raw_count: AtomicUsize::new(0),
+            mutex: Mutex::new(),
+            cond: Condition::new(),
+        }
     }
 
     pub fn init_with_count(count: usize) -> Self {

@@ -1,0 +1,221 @@
+# The untyped twin: a name that is stored late and never with undefined, asked for before its first store: `if (!this.cache) this.cache = make()`.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="late-fields-never-undefined-read-untyped.js" displayPath="late-fields-never-undefined-read-untyped.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Holder" module=m0 position=148 constructor=f1 fields=[{key="id" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 module=m0 position=261 fields=[{key="made" declared={type=anything}}] ownFieldCount=1
+data d0 root=Array{contents=anything} module=m0
+data d1 root=Object{layout=L1 members=[{key="made" value=String{value="above"}}]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = PropGet v1 key="prototype"
+    v7 = Convert v6 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v8 = NewClosure function=f4
+    PropSet v7, v8 key="cacheOf"
+    v10 = PropGet v1 key="prototype"
+    v11 = Convert v10 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v12 = NewClosure function=f5
+    PropSet v11, v12 key="countOf"
+    v14 = Integer
+    v15 = Convert v14 declared={type=number flags=[IsExpected]}
+    v16 = Data data=d0
+    v17 = Convert v16 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v18 = Convert v17 declared={type=undefined|null|Array flags=[IsExpected]}
+    v19 = Integer
+    v20 = Convert v19 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v15, v20)
+  b1(v21, v22):
+    LoopHint
+    v24 = Integer integer=3000
+    v25 = Less v22, v24
+    Branch v25 -> taken b2(| 0), notTaken b5(| 0)
+  b2(v26):
+    v27 = Construct v1, -, v26 calleeName="Holder"
+    v28 = Convert v27 declared={type=undefined|null|object flags=[IsExpected]}
+    v29 = PropGet v18 key="push"
+    v30 = Convert v29 declared={type=undefined|null|function flags=[IsExpected]}
+    v31 = Call v30, v18, v28 calleeKey="push" calleeName="holders.push"
+    v32 = Call v3, -, v28 calleeName="peek"
+    v33 = Call v5, -, v28 calleeName="peekCount"
+    v34 = TypeTest v33 testedType=undefined
+    Branch v34 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v35):
+    v36 = Integer integer=3
+    v37 = Mod v26, v36
+    v38 = PropGet v28 key="cacheOf"
+    v39 = Convert v38 declared={type=undefined|null|function flags=[IsExpected]}
+    v40 = Call v39, v28 calleeKey="cacheOf" calleeName="holder.cacheOf"
+    v41 = Convert v40 declared={type=undefined|null|number|string|symbol|bigint|L1 flags=[IsExpected]}
+    v42 = PropGet v41 key="made"
+    v43 = PropGet v28 key="countOf"
+    v44 = Convert v43 declared={type=undefined|null|function flags=[IsExpected]}
+    v45 = Call v44, v28 calleeKey="countOf" calleeName="holder.countOf"
+    v46 = Add v42, v45
+    v47 = PropGet v28 key="countOf"
+    v48 = Convert v47 declared={type=undefined|null|function flags=[IsExpected]}
+    v49 = Call v48, v28 calleeKey="countOf" calleeName="holder.countOf"
+    v50 = Add v46, v49
+    v51 = Add v21, v50
+    v52 = Convert v51 declared={type=number flags=[IsExpected]}
+    v53 = Increment v26
+    v54 = Convert v53 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v52, v54)
+  b4(v55):
+    v56 = Builtin builtin=GlobalThis
+    v57 = PropGet v56 key="Error" [isFreeName]
+    v58 = Convert v57 declared={type=builtin(Error) flags=[IsExpected]}
+    v59 = String string="found something in a new object"
+    v60 = Construct v58, -, v59 calleeName="Error"
+    v61 = Convert v60 declared={type=undefined|null|Error flags=[IsExpected]}
+    Throw v61
+  b5(v62):
+    v63 = PropGet v1 key="prototype"
+    v64 = Convert v63 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v65 = Integer integer=100
+    PropSet v64, v65 key="count"
+    v67 = PropGet v1 key="prototype"
+    v68 = Convert v67 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v69 = Data data=d1
+    PropSet v68, v69 key="cache"
+    v71 = Undefined
+    Return v71
+}
+function f1 name="Holder" module=m0 position=148 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    v2 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    PropSet v2, v1 key="id"
+    v4 = Undefined
+    Return v4
+}
+function f2 name="peek" module=m0 position=419 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object):
+    v1 = PropGet v0 key="cache"
+    v2 = Convert v1 declared={type=undefined|null|number|string|symbol|bigint|L1 flags=[IsExpected]}
+    v3 = PropGet v0 key="cache"
+    v4 = Convert v3 declared={type=undefined|null|number|string|symbol|bigint|L1 flags=[IsExpected]}
+    v5 = PropGet v4 key="made"
+    v6 = Convert v5 declared={type=undefined|null|string flags=[IsExpected]}
+    Return v6
+}
+function f3 name="peekCount" module=m0 position=497 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|object):
+    v1 = PropGet v0 key="count"
+    Return v1
+}
+function f4 module=m0 position=215 flags=[HasThis] thisType={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} results=[{type=undefined|null|L1 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|object):
+    v1 = PropGet v0 key="cache"
+    v2 = Convert v1 declared={type=undefined|null|L1 flags=[IsExpected]}
+    v3 = PropGet v0 key="id"
+    v4 = NewObject layout=L1
+    PropDefine v4, v3 key="made"
+    v6 = FinishObject v4
+    PropSet v0, v6 key="cache"
+    v8 = PropGet v0 key="cache"
+    v9 = Convert v8 declared={type=undefined|null|L1 flags=[IsExpected]}
+    Return v9
+}
+function f5 module=m0 position=331 flags=[HasThis] thisType={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|object):
+    v1 = PropGet v0 key="count"
+    v2 = Convert v1 declared={type=number flags=[IsExpected]}
+    v3 = TypeTest v2 testedType=undefined
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    v5 = Integer
+    PropSet v0, v5 key="count"
+    Jump -> next b3()
+  b2(v7):
+    Jump -> next b3()
+  b3():
+    v8 = PropGet v0 key="count"
+    v9 = Increment v8
+    PropSet v0, v9 key="count"
+    v11 = Convert v9 declared={type=number flags=[IsExpected]}
+    Return v11
+}
+# -- generated: f4 f5
+# CHECK-LABEL: function f4 module=
+# CHECK: m0 position=215 flags=[HasThis] thisType={type=L0} results=[{type=undefined|L1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: v1: boolean = IsSlotFilled v0 key="cache" receivers=[L0] level=Expected
+# CHECK-NEXT: Branch v1 -> taken b2(), notTaken b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v2: anything = SuperGet v0, v0 key="cache"
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v3: int[-2147483643, 2147483647] = GetSlot v0 key="id" receivers=[L0] level=Proven accessSite=28
+# CHECK-NEXT: v4: L1 = NewObject -, v3 layout=L1 fields=[0] allocationSite=7 allocationClass=1
+# CHECK-NEXT: v5: L1 = FinishObject v4
+# CHECK-NEXT: v6: boolean = AreMembersUnchanged conditions=[{kind=MemberPassedByStores layout=L0 key="cache"}]
+# CHECK-NEXT: Branch v6 -> taken b3(| 0), notTaken b4()
+# CHECK-NEXT: b3(v7: guard):
+# CHECK-NEXT: PutSlot v0, v7, v5 key="cache" receivers=[L0] level=Expected accessSite=30
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b4() frequency=Unlikely:
+# CHECK-NEXT: PropSet v0, v5 key="cache" accessSite=30 receivers=[L0]
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v10: boolean = IsSlotFilled v0 key="cache" receivers=[L0] level=Expected
+# CHECK-NEXT: Branch v10 -> taken b6(| 0), notTaken b7()
+# CHECK-NEXT: b6(v11: guard):
+# CHECK-NEXT: v12: L1 = GetSlot v0, v11 key="cache" receivers=[L0] level=Expected accessSite=31
+# CHECK-NEXT: Jump -> next b8(v12)
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v13: anything = SuperGet v0, v0 key="cache"
+# CHECK-NEXT: v14: undefined|L1 = AssumeType v13 provenType=undefined|L1
+# CHECK-NEXT: Jump -> next b8(v14)
+# CHECK-NEXT: b8(v15: undefined|L1):
+# CHECK-NEXT: Return v15
+# CHECK-NEXT: }
+# CHECK-LABEL: function f5 module=
+# CHECK: m0 position=331 flags=[HasThis] thisType={type=L0} results=[{type=int|whole}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: v1: boolean = IsSlotFilled v0 key="count" receivers=[L0] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v1 -> taken b5(), notTaken b1()
+# CHECK-NEXT: b1() frequency=Unlikely:
+# CHECK-NEXT: v2: anything = SuperGet v0, v0 key="count"
+# CHECK-NEXT: v3: undefined|int|whole = AssumeType v2 provenType=undefined|int|whole
+# CHECK-NEXT: v4: undefined|int|whole ~ int|whole = Upcast v3 castType=undefined|int|whole
+# CHECK-NEXT: v5: boolean ~ false = TypeTest v4 testedType=undefined
+# CHECK-NEXT: Branch v5 -> taken b2(), notTaken b5()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v6: 0 = Integer
+# CHECK-NEXT: v7: boolean = AreMembersUnchanged conditions=[{kind=MemberPassedByStores layout=L0 key="count"}]
+# CHECK-NEXT: Branch v7 -> taken b3(| 0), notTaken b4()
+# CHECK-NEXT: b3(v8: guard):
+# CHECK-NEXT: PutSlot v0, v8, v6 key="count" receivers=[L0] level=Expected accessSite=33
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b4() frequency=Unlikely:
+# CHECK-NEXT: PropSet v0, v6 key="count" accessSite=33 receivers=[L0]
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v11: boolean = IsSlotFilled v0 key="count" receivers=[L0] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v11 -> taken b6(| 0), notTaken b7()
+# CHECK-NEXT: b6(v12: guard):
+# CHECK-NEXT: v13: int|whole = GetSlot v0, v12 key="count" receivers=[L0] level=Expected accessSite=34 [holdsDeclaredType]
+# CHECK-NEXT: Jump -> next b8(v13)
+# CHECK-NEXT: b7() frequency=Unlikely:
+# CHECK-NEXT: v14: anything = SuperGet v0, v0 key="count"
+# CHECK-NEXT: v15: undefined|int|whole = AssumeType v14 provenType=undefined|int|whole
+# CHECK-NEXT: Jump -> next b8(v15)
+# CHECK-NEXT: b8(v16: undefined|int|whole ~ int|whole):
+# CHECK-NEXT: v17: number ~ int|whole = Increment v16
+# CHECK-NEXT: v18: int|whole = AssumeType v17 provenType=int|whole
+# CHECK-NEXT: v19: boolean = AreMembersUnchanged conditions=[{kind=MemberPassedByStores layout=L0 key="count"}]
+# CHECK-NEXT: Branch v19 -> taken b9(| 0), notTaken b10()
+# CHECK-NEXT: b9(v20: guard):
+# CHECK-NEXT: PutSlot v0, v20, v18 key="count" receivers=[L0] level=Expected accessSite=35
+# CHECK-NEXT: Return v18
+# CHECK-NEXT: b10() frequency=Unlikely:
+# CHECK-NEXT: PropSet v0, v18 key="count" accessSite=35 receivers=[L0]
+# CHECK-NEXT: Return v18
+# CHECK-NEXT: }

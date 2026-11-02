@@ -1,0 +1,6 @@
+# sabotage=RemovedFieldsHaveUnknownReaders: the program answers something else
+# FORM: AsRead
+# RUN: run-in-shell
+# OPTIONS: sabotage=RemovedFieldsHaveUnknownReaders
+# CHECK-NOT: one seen,quiet,2,caught,2,2
+# PROGRAM-OF: removed-fields-have-unknown-readers-left-alone.ir

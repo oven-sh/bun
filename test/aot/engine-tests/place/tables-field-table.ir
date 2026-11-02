@@ -1,0 +1,54 @@
+# What a lookup by shape and name finds: a value in the cell, a narrow reference, a value in the Extension, any other field, and nothing under a name that the layout lacks. Layouts that say the same share a row
+# OPTIONS: references=narrow testing=NoLayoutIsMadeSeldom
+# RUN: tables field-table
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Pair" fields=[{key="first" declared={type=anything} flags=[IsRequired]}, {key="second" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="SamePair" fields=[{key="first" declared={type=anything} flags=[IsRequired]}, {key="second" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Typed" fields=[{key="first" declared={type=number} flags=[IsRequired]}, {key="owner" declared={type=L0} flags=[IsRequired]}]
+layout L3 name="Late" fields=[{key="late0" declared={type=anything}}, {key="late1" declared={type=anything}}, {key="late2" declared={type=anything}}, {key="late3" declared={type=anything}}, {key="late4" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = PropGet v0 key="input" [isFreeName]
+    v3 = ToNumber v2
+    v4 = ToString v2
+    v5 = NewObject -, v2, v2 layout=L0 fields=[0, 1]
+    v6 = FinishObject v5
+    v7 = NewObject -, v2, v2 layout=L1 fields=[0, 1]
+    v8 = FinishObject v7
+    v9 = NewObject -, v3, v6 layout=L2 fields=[0, 1]
+    v10 = FinishObject v9
+    v11 = NewObject layout=L3
+    v12 = FinishObject v11
+    ElemSet v6, v4, v2
+    ElemSet v8, v4, v2
+    ElemSet v12, v4, v2
+    v16 = Call v1, -, v6, v8, v10, v12
+    Return
+}
+
+# Eleven fields in nine entries: Pair and SamePair have one row.
+# CHECK: table rows=4 occupied=9 names=8
+# CHECK: lookup shape=1 name="owner" none
+# CHECK-NEXT: lookup shape=1 name="second" form=InlineValue offset=24 field=1 storedWithoutTypeTest
+# CHECK-NEXT: lookup shape=1 name="first" form=InlineValue offset=16 field=0 storedWithoutTypeTest
+# CHECK-NEXT: lookup shape=1 name="late4" none
+# CHECK: lookup shape=2 name="owner" none
+# CHECK-NEXT: lookup shape=2 name="second" form=InlineValue offset=24 field=1 storedWithoutTypeTest
+# CHECK-NEXT: lookup shape=2 name="first" form=InlineValue offset=16 field=0 storedWithoutTypeTest
+# A store to a field with a type has to test it, and a number is not read as eight bytes that are the value.
+# CHECK: lookup shape=3 name="owner" form=InlineNarrowCell offset=24 field=1
+# CHECK-NEXT: lookup shape=3 name="second" none
+# CHECK-NEXT: lookup shape=3 name="first" form=Field field=0
+# No store names a field of Late, so all five lie in the Extension.
+# CHECK: lookup shape=4 name="late1" form=OutOfLineValue offset=16 field=1 storedWithoutTypeTest
+# CHECK-NEXT: lookup shape=4 name="late0" form=OutOfLineValue offset=8 field=0 storedWithoutTypeTest
+# CHECK-NEXT: lookup shape=4 name="owner" none
+# CHECK-NEXT: lookup shape=4 name="second" none
+# CHECK-NEXT: lookup shape=4 name="first" none
+# CHECK-NEXT: lookup shape=4 name="late4" form=OutOfLineValue offset=40 field=4 storedWithoutTypeTest
+# CHECK-NEXT: lookup shape=4 name="late3" form=OutOfLineValue offset=32 field=3 storedWithoutTypeTest
+# CHECK-NEXT: lookup shape=4 name="late2" form=OutOfLineValue offset=24 field=2 storedWithoutTypeTest

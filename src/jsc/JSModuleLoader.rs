@@ -8,16 +8,18 @@ bun_opaque::opaque_ffi! {
 
 unsafe extern "C" {
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-    // ABI-identical to non-null `*const`); `Option<&BunString>` is ABI-identical
-    // to a nullable `*const BunString` via the guaranteed null-pointer optimization.
+    // ABI-identical to non-null `*const`), and so is `&BunString`.
     // The returned `*mut JSInternalPromise` is nullable; callers check before deref.
     safe fn JSC__JSModuleLoader__loadAndEvaluateModule(
         arg0: &JSGlobalObject,
-        arg1: Option<&BunString>,
+        arg1: &BunString,
+    ) -> *mut JSInternalPromise;
+    safe fn JSC__JSModuleLoader__resolveAndLoadAndEvaluateModule(
+        arg0: &JSGlobalObject,
+        arg1: &BunString,
     ) -> *mut JSInternalPromise;
 
-    // safe: same handle/reference contract as `loadAndEvaluateModule` above;
-    // `arg1` is always non-null at every Rust call site.
+    // safe: same handle/reference contract as above.
     safe fn JSModuleLoader__import(
         arg0: &JSGlobalObject,
         arg1: &BunString,
@@ -25,16 +27,30 @@ unsafe extern "C" {
 }
 
 impl JSModuleLoader {
-    /// Raw-pointer variant of `load_and_evaluate_module`. Returns the FFI
+    /// `JSC::loadAndEvaluateModule`, which takes a key: what is resolved already. Returns the FFI
     /// `*mut JSInternalPromise` directly so callers that need to store or pass
     /// a mutable cell pointer don't launder provenance through `&T -> *mut T`.
     pub fn load_and_evaluate_module_ptr(
         global_object: *mut JSGlobalObject,
-        module_name: Option<&BunString>,
+        key: &BunString,
     ) -> Option<core::ptr::NonNull<JSInternalPromise>> {
         // `JSGlobalObject` is an opaque ZST handle; `opaque_ref` is the
         // centralised zero-byte deref proof (panics on null).
         core::ptr::NonNull::new(JSC__JSModuleLoader__loadAndEvaluateModule(
+            JSGlobalObject::opaque_ref(global_object),
+            key,
+        ))
+    }
+
+    /// `JSModuleLoader::resolve` with no importer, then [`Self::load_and_evaluate_module_ptr`]
+    /// of the key. `None`, with the exception pending, if it does not resolve either.
+    pub fn resolve_and_load_and_evaluate_module_ptr(
+        global_object: *mut JSGlobalObject,
+        module_name: &BunString,
+    ) -> Option<core::ptr::NonNull<JSInternalPromise>> {
+        // `JSGlobalObject` is an opaque ZST handle; `opaque_ref` is the
+        // centralised zero-byte deref proof (panics on null).
+        core::ptr::NonNull::new(JSC__JSModuleLoader__resolveAndLoadAndEvaluateModule(
             JSGlobalObject::opaque_ref(global_object),
             module_name,
         ))

@@ -1,0 +1,22 @@
+------------------
+{ printWidth: 40 }
+------------------
+<script lang="ts">
+const a   = <div/>;
+</script>
+
+------------------
+{ printWidth: 80 }
+------------------
+<script lang="ts">
+const a   = <div/>;
+</script>
+
+-------------------
+{ printWidth: 100 }
+-------------------
+<script lang="ts">
+const a   = <div/>;
+</script>
+
+===================== End =====================

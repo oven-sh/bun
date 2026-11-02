@@ -21,9 +21,11 @@
       }
     },
     {
-      "files": ["src/codegen/bindgenv2/**/*.ts", "*.bindv2.ts"],
+      "files": ["src/runtime/cli/init/**"],
       "options": {
-        "printWidth": 100
+        "arrowParens": "always",
+        "printWidth": 80,
+        "quoteProps": "as-needed"
       }
     }
   ]

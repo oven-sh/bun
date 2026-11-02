@@ -1,0 +1,29 @@
+# Promise.reject(input).catch(e => console.log(e.message))
+# A promise brings the queue of process.nextTick, `$asyncContext` and the warnings that native code makes. What lies in them without a type was handed to native code: it makes no object of one of its classes for them.
+# So none of them is a reason why the object nobody knows at the formatter should have a method of the host. HostChoosesOperands (h7) stays down.
+# RUN: valueflow-why timeline
+# CHECK-NOT: flag h7
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Promise" [isFreeName]
+    v2 = PropGet v1 key="reject"
+    v3 = PropGet v0 key="input" [isFreeName]
+    v4 = Call v2, v1, v3 calleeKey="reject"
+    v5 = PropGet v4 key="catch"
+    v6 = NewClosure function=f1
+    v7 = Call v5, v4, v6 calleeKey="catch"
+    v8 = Undefined
+    Return v8
+}
+function f1 module=m0 kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="console" [isFreeName]
+    v3 = PropGet v2 key="log"
+    v4 = PropGet v0 key="message"
+    v5 = Call v3, v2, v4 calleeKey="log"
+    v6 = Undefined
+    Return v6
+}

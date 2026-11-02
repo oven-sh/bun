@@ -1,0 +1,37 @@
+------------------
+{ printWidth: 80 }
+------------------
+x = class extends (
+  a
+    // prettier-ignore
+    .b
+) {};
+
+class A
+  extends c
+  // prettier-ignore
+  ?.[d] {}
+
+y = class extends (
+  a.b // prettier-ignore
+) {};
+
+-------------------
+{ printWidth: 100 }
+-------------------
+x = class extends (
+  a
+    // prettier-ignore
+    .b
+) {};
+
+class A
+  extends c
+  // prettier-ignore
+  ?.[d] {}
+
+y = class extends (
+  a.b // prettier-ignore
+) {};
+
+===================== End =====================

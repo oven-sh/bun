@@ -1,7 +1,7 @@
 #include "root.h"
 #include "BunInjectedScriptHost.h"
 
-#include "ZigGeneratedClasses.h"
+#include "GeneratedResolveMessage.h"
 #include "DOMException.h"
 
 #include "JSDOMException.h"
@@ -27,7 +27,7 @@ JSValue BunInjectedScriptHost::subtype(JSGlobalObject* exec, JSValue value)
     VM& vm = exec->vm();
 
     if (
-        value.inherits<JSDOMException>() || value.inherits<JSResolveMessage>() || value.inherits<JSBuildMessage>())
+        value.inherits<JSDOMException>() || value.inherits<Bindgen::Generated::JSResolveMessage>() || value.inherits<Bindgen::Generated::JSBuildMessage>())
         return jsNontrivialString(vm, "error"_s);
 
     return jsUndefined();

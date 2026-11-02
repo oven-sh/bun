@@ -6,7 +6,7 @@ use bstr::BStr;
 use bun_core::strings;
 use bun_http_types::Method::Method;
 use bun_picohttp::Header as PicoHeader;
-use bun_ptr::{IntrusiveRc, RefCount};
+use bun_ptr::{RefCount, RefPtr};
 
 use super::acl::ACL;
 use super::storage_class::StorageClass;
@@ -150,25 +150,12 @@ fn aws_cache_set(day: u64, key: &[u8], digest: [u8; DIGESTED_HMAC_256_LEN]) {
     AWS_SIGNATURE_CACHE.set(day, key, digest)
 }
 
-/// BoringSSL `ENGINE*` for `EVP_Digest`. BoringSSL's `EVP_Digest` ignores the
-/// `impl` argument entirely (it's an OpenSSL-compat shim — see
-/// `vendor/boringssl/include/openssl/digest.h`: "BoringSSL does not support
-/// engines"), so passing null is fine.
-#[inline]
-fn boring_engine() -> *mut bun_sha_hmac::sha::ffi::ENGINE {
-    core::ptr::null_mut()
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // S3Credentials
 // ──────────────────────────────────────────────────────────────────────────
 
-// `bun.ptr.RefCount(...)` mixin → IntrusiveRc handles ref/deref; when count hits
-// zero the boxed allocation is dropped, which drops the Box<[u8]> fields, so no
-// explicit Drop body is needed here.
 #[derive(bun_ptr::RefCounted)]
 pub struct S3Credentials {
-    // Intrusive refcount; managed by bun_ptr::IntrusiveRc<S3Credentials>.
     ref_count: RefCount<S3Credentials>,
     pub access_key_id: Box<[u8]>,
     pub secret_access_key: Box<[u8]>,
@@ -185,7 +172,7 @@ pub struct S3Credentials {
 
 // `S3Credentials` owns its bytes via
 // `Box<[u8]>`, so a manual `Clone` deep-copies them and resets `ref_count` — the
-// intrusive count only applies to heap (`IntrusiveRc`) instances; a fresh value
+// intrusive count only applies to heap (`RefPtr`) instances; a fresh value
 // must start at 1.
 impl Clone for S3Credentials {
     fn clone(&self) -> Self {
@@ -226,7 +213,6 @@ impl S3Credentials {
     /// higher-tier callers (e.g. `bun_runtime`) can build the refcounted
     /// signing credentials from the lower-tier `bun_dotenv::S3Credentials`
     /// POD mirror without naming the private `ref_count` field.
-    #[allow(clippy::too_many_arguments)]
     pub fn new_value(
         access_key_id: Box<[u8]>,
         secret_access_key: Box<[u8]>,
@@ -259,8 +245,8 @@ impl S3Credentials {
             + self.bucket.len()
     }
 
-    pub fn dupe(&self) -> IntrusiveRc<S3Credentials> {
-        IntrusiveRc::new(S3Credentials {
+    pub fn dupe(&self) -> RefPtr<S3Credentials> {
+        RefPtr::new(S3Credentials {
             ref_count: RefCount::init(),
             access_key_id: self.access_key_id.clone(),
             secret_access_key: self.secret_access_key.clone(),
@@ -649,10 +635,7 @@ impl S3Credentials {
                     .map_err(|_| SignError::NoSpaceLeft)?;
                 };
                 let mut sha_digest = [0u8; bun_sha_hmac::SHA256::DIGEST];
-                // was `bun_jsc::VirtualMachine::get().rare_data().boring_engine()`;
-                // BoringSSL ignores the ENGINE arg, so pass null (see `boring_engine()` doc).
-                // SAFETY: `boring_engine()` returns null (default engine).
-                unsafe { bun_sha_hmac::SHA256::hash(canonical, &mut sha_digest, boring_engine()) };
+                bun_sha_hmac::SHA256::hash(canonical, &mut sha_digest);
 
                 let sign_value = buf_print(
                     &mut tmp_buffer,
@@ -757,10 +740,7 @@ impl S3Credentials {
                 )
                 .map_err(|_| SignError::NoSpaceLeft)?;
                 let mut sha_digest = [0u8; bun_sha_hmac::SHA256::DIGEST];
-                // was `bun_jsc::VirtualMachine::get().rare_data().boring_engine()`;
-                // BoringSSL ignores the ENGINE arg, so pass null (see `boring_engine()` doc).
-                // SAFETY: `boring_engine()` returns null (default engine).
-                unsafe { bun_sha_hmac::SHA256::hash(canonical, &mut sha_digest, boring_engine()) };
+                bun_sha_hmac::SHA256::hash(canonical, &mut sha_digest);
 
                 let sign_value = buf_print(
                     &mut tmp_buffer,
@@ -1253,8 +1233,6 @@ pub struct S3CredentialsWithOptions {
     pub request_payer: bool,
     /// indicates if the credentials have changed
     pub changed_credentials: bool,
-    /// indicates if the virtual hosted style is used
-    pub virtual_hosted_style: bool,
 }
 
 // ──────────────────────────────────────────────────────────────────────────

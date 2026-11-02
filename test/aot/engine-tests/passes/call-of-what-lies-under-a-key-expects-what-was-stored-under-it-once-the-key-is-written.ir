@@ -1,0 +1,54 @@
+# function on(type, listener) { table[type] = listener }  function emit(type) { return table[type]() }  on("one", first); on("other", second); loop { emit("one") }
+# The table comes from code that nobody sees, so nothing is known of what it holds. `emit` calls either listener. In its copy in the loop the key is written: the call tests for the closure that was stored under that key and enters it.
+# FORM: AsRead
+# RUN: pipeline ChooseCallingConventions
+# OPTIONS: check=VerifyEachPass heat=EverythingIsHot
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="table" module=m0 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="unknown" [isFreeName]
+    v2 = Call v1
+    PutModuleVariable v2 variable=g0
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f1
+    v6 = NewClosure function=f2
+    v7 = String string="one"
+    v8 = String string="other"
+    v9 = Call v4, -, v7, v5
+    v10 = Call v4, -, v8, v6
+    v11 = CallDirect function=f5
+    Return v11
+}
+function f1 name="first" results=[{type=anything}] capabilities=[HasOrdinaryFrame] {
+    v0 = Integer integer=1
+    Return v0
+}
+function f2 name="second" results=[{type=anything}] capabilities=[HasOrdinaryFrame] {
+    v0 = Integer integer=2
+    Return v0
+}
+function f3 name="on" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame] {
+    v2 = GetModuleVariable variable=g0
+    ElemSet v2, v0, v1
+    Return
+}
+function f4 name="emit" parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, MayBeInlined] {
+    v1 = GetModuleVariable variable=g0
+    v2 = ElemGet v1, v0
+    v3 = Call v2, v1
+    Return v3
+}
+function f5 name="caller" results=[{type=anything}] capabilities=[HasOrdinaryFrame] {
+    v0 = String string="one"
+    v1 = CallDirect v0 function=f4
+    Return v1
+# CHECK: [[read]]: anything = PropGet v0 key="one"
+# CHECK-NEXT: [[isFirst]]: boolean = IsClosureOf [[read]] function=f1
+# CHECK-NEXT: Branch [[isFirst]] -> taken
+# CHECK: = CallDirect function=f1 {{*}}[calleeIsPredicted]
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = Call [[read]], v0
+}

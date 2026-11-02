@@ -39,7 +39,7 @@ pub(crate) type FSEventStreamCallback = unsafe extern "C" fn(
 
 // we only care about info and perform
 #[repr(C)]
-pub struct CFRunLoopSourceContext {
+pub(crate) struct CFRunLoopSourceContext {
     pub(crate) version: CFIndex,
     pub(crate) info: *mut c_void,
     pub(crate) retain: Option<unsafe extern "C" fn(*const c_void) -> *const c_void>,
@@ -53,7 +53,7 @@ pub struct CFRunLoopSourceContext {
 }
 
 #[repr(C)]
-pub struct FSEventStreamContext {
+pub(crate) struct FSEventStreamContext {
     pub(crate) version: CFIndex,
     pub(crate) info: *mut c_void,
     pub(crate) pad: [*mut c_void; 3],
@@ -108,7 +108,7 @@ fn dlsym<T>(handle: *mut c_void, symbol: &core::ffi::CStr) -> Option<T> {
     // (or pointer-sized data symbol) declared by CoreFoundation/CoreServices; the const
     // assert above enforces size parity, and the null check rules out the absent-symbol
     // case so the resulting fn pointer is always non-null. Not expressible via
-    // bytemuck/as: fn pointers are not Pod and `as` can't cast data→fn pointers.
+    // `as`, which can't cast data→fn pointers.
     Some(unsafe { core::mem::transmute_copy::<*mut c_void, T>(&ptr) })
 }
 
@@ -116,7 +116,7 @@ fn dlsym<T>(handle: *mut c_void, symbol: &core::ffi::CStr) -> Option<T> {
 // `*const CFStringRef`; the dlopen handle they came from is leaked (never
 // dlclosed), so copies stay valid for the process lifetime.
 #[derive(Clone, Copy)]
-pub struct CoreFoundation {
+pub(crate) struct CoreFoundation {
     pub(crate) array_create: unsafe extern "C" fn(
         CFAllocatorRef,
         *mut *mut c_void,
@@ -155,7 +155,7 @@ unsafe impl Send for CoreFoundation {}
 unsafe impl Sync for CoreFoundation {}
 
 impl CoreFoundation {
-    pub fn get() -> CoreFoundation {
+    pub(crate) fn get() -> CoreFoundation {
         *FSEVENTS_CF.get_or_init(init_core_foundation)
     }
 }
@@ -163,7 +163,7 @@ impl CoreFoundation {
 // Clone/Copy: bitwise OK — resolved fn pointers (from a leaked, never-dlclosed
 // dlopen handle) plus a `u64` sentinel.
 #[derive(Clone, Copy)]
-pub struct CoreServices {
+pub(crate) struct CoreServices {
     pub(crate) fs_event_stream_create: unsafe extern "C" fn(
         CFAllocatorRef,
         FSEventStreamCallback,
@@ -184,7 +184,7 @@ pub struct CoreServices {
 }
 
 impl CoreServices {
-    pub fn get() -> CoreServices {
+    pub(crate) fn get() -> CoreServices {
         *FSEVENTS_CS.get_or_init(init_core_services)
     }
 }
@@ -265,7 +265,7 @@ fn init_core_services() -> CoreServices {
     }
 }
 
-pub struct FSEventsLoop {
+pub(crate) struct FSEventsLoop {
     signal_source: AtomicPtr<c_void>,
     loop_: AtomicPtr<c_void>,
     mutex: Mutex,
@@ -298,7 +298,7 @@ impl FSEventsLoop {
     }
 }
 
-pub struct Task {
+pub(crate) struct Task {
     pub ctx: *mut (),
     pub callback: fn(*mut ()),
 }
@@ -320,7 +320,7 @@ impl Task {
     }
 }
 
-pub struct ConcurrentTask {
+pub(crate) struct ConcurrentTask {
     pub task: Task,
     pub(crate) next: bun_threading::Link<ConcurrentTask>,
     pub(crate) auto_delete: bool,
@@ -332,17 +332,6 @@ unsafe impl bun_threading::Linked for ConcurrentTask {
     unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
         unsafe { core::ptr::addr_of!((*item).next) }
-    }
-}
-
-impl ConcurrentTask {
-    fn from(this: &mut ConcurrentTask, task: Task, auto_delete: bool) -> &mut ConcurrentTask {
-        *this = ConcurrentTask {
-            task,
-            next: bun_threading::Link::new(),
-            auto_delete,
-        };
-        this
     }
 }
 
@@ -481,19 +470,11 @@ impl FSEventsLoop {
 
     fn enqueue_task_concurrent(&self, task: Task) {
         let cf = CoreFoundation::get();
-        let concurrent = bun_core::heap::into_raw(Box::new(ConcurrentTask {
-            task: Task {
-                ctx: ptr::null_mut(),
-                callback: |_| {},
-            },
+        self.tasks.push(bun_core::heap::alloc_nn(ConcurrentTask {
+            task,
             next: bun_threading::Link::new(),
-            auto_delete: false,
+            auto_delete: true,
         }));
-        // SAFETY: concurrent is a valid freshly-boxed non-null pointer
-        unsafe {
-            ConcurrentTask::from(&mut *concurrent, task, true);
-            self.tasks.push(NonNull::new_unchecked(concurrent));
-        }
         let signal_source = self.signal_source.load(Ordering::Relaxed);
         let loop_ = self.loop_.load(Ordering::Acquire);
         // SAFETY: CF fn pointers loaded via dlsym; handles valid per above.
@@ -843,7 +824,7 @@ impl FSEventsLoop {
     }
 }
 
-pub struct FSEventsWatcher {
+pub(crate) struct FSEventsWatcher {
     /// Borrowed from the owning `PathWatcher`. The
     /// PathWatcher heap-allocates this watcher and only frees it after `Drop`
     /// (→ `unregister_watcher`) has run, so the bytes outlive every read in
@@ -858,7 +839,7 @@ pub struct FSEventsWatcher {
     pub ctx: *mut c_void,
 }
 
-pub type Callback = fn(ctx: *mut c_void, event: Event, is_file: bool);
+pub(crate) type Callback = fn(ctx: *mut c_void, event: Event, is_file: bool);
 pub(crate) type UpdateEndCallback = fn(ctx: *mut c_void);
 
 impl FSEventsWatcher {

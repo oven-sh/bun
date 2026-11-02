@@ -113,6 +113,4 @@ struct us_poll_t {
     } state;
 };
 
-#undef FD_BITS
-
 #endif // EPOLL_KQUEUE_H

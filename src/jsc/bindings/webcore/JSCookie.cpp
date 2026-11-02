@@ -287,6 +287,7 @@ using JSCookieDOMConstructor = JSDOMConstructor<JSCookie>;
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Cookie, JSCookieDOMConstructor::construct);
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = uncheckedDowncast<JSCookieDOMConstructor>(callFrame->jsCallee());
@@ -294,6 +295,11 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieDOMConstructor::
     // Check if this was called with 'new'
     if (!callFrame->thisValue().isObject()) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotAConstructorError(lexicalGlobalObject, callFrame->jsCallee()));
+
+    auto* structure = structureForNewTarget<Cookie>(lexicalGlobalObject, callFrame);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    RefPtr<Cookie> cookie;
 
     // Static method: parse(cookieString)
     if (callFrame->argumentCount() == 1 && callFrame->argument(0).isString()) {
@@ -311,10 +317,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieDOMConstructor::
             WebCore::propagateException(lexicalGlobalObject, throwScope, cookie_exception.releaseException());
             RELEASE_AND_RETURN(throwScope, {});
         }
-        auto cookie = cookie_exception.releaseReturnValue();
-
-        auto* globalObject = castedThis->globalObject();
-        RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS(lexicalGlobalObject, globalObject, WTF::move(cookie))));
+        cookie = cookie_exception.releaseReturnValue();
     } else if (callFrame->argumentCount() == 1 && callFrame->argument(0).isObject()) {
         // new Bun.Cooke({
         //     name: "name",
@@ -333,9 +336,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieDOMConstructor::
             WebCore::propagateException(lexicalGlobalObject, throwScope, cookie_exception.releaseException());
             RELEASE_AND_RETURN(throwScope, {});
         }
-        auto cookie = cookie_exception.releaseReturnValue();
-        auto* globalObject = castedThis->globalObject();
-        RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS(lexicalGlobalObject, globalObject, WTF::move(cookie))));
+        cookie = cookie_exception.releaseReturnValue();
     } else if (callFrame->argumentCount() >= 2) {
         // new Bun.Cookie("name", "value", {
         //     domain: "domain",
@@ -368,13 +369,12 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieDOMConstructor::
             WebCore::propagateException(lexicalGlobalObject, throwScope, cookie_exception.releaseException());
             RELEASE_AND_RETURN(throwScope, {});
         }
-        auto cookie = cookie_exception.releaseReturnValue();
-
-        auto* globalObject = castedThis->globalObject();
-        RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS(lexicalGlobalObject, globalObject, WTF::move(cookie))));
+        cookie = cookie_exception.releaseReturnValue();
+    } else {
+        return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     }
 
-    return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
+    return JSValue::encode(createWrapper<Cookie>(castedThis->globalObject(), structure, cookie.releaseNonNull()));
 }
 
 JSC_ANNOTATE_HOST_FUNCTION(JSCookieDOMConstructorConstruct, JSCookieDOMConstructor::construct);
@@ -931,14 +931,14 @@ size_t JSCookie::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
 
 JSC::JSValue toJS(JSC::JSGlobalObject* globalObject, CookieSameSite sameSite)
 {
-    auto& commonStrings = defaultGlobalObject(globalObject)->commonStrings();
+    auto& commonStrings = Bun::commonStrings(globalObject->vm());
     switch (sameSite) {
     case CookieSameSite::Strict:
-        return commonStrings.strictString(globalObject);
+        return commonStrings.strictString();
     case CookieSameSite::Lax:
-        return commonStrings.laxString(globalObject);
+        return commonStrings.laxString();
     case CookieSameSite::None:
-        return commonStrings.noneString(globalObject);
+        return commonStrings.noneString();
     default: {
         break;
     }

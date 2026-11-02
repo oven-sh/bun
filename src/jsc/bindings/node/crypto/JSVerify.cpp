@@ -13,7 +13,6 @@
 #include "NodeValidator.h"
 #include "JSBuffer.h"
 #include "CryptoUtil.h"
-#include "BunString.h"
 #include <openssl/bn.h>
 #include <openssl/ecdsa.h>
 #include <openssl/rsa.h>
@@ -271,6 +270,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
             .len = byteLength,
         };
 
+        ncrypto::ClearErrorOnReturn clearErrorOnReturn;
         if (!thisObject->m_mdCtx.digestUpdate(buffer)) {
             throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to update digest");
             return {};
@@ -295,6 +295,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
         .len = byteLength,
     };
 
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     if (!thisObject->m_mdCtx.digestUpdate(buffer)) {
         throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to update digest");
         return {};
@@ -383,7 +384,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
     // Create verification context
     auto pkctx = keyPtr.newCtx();
     if (!pkctx || pkctx.initForVerify() <= 0) {
-        throwCryptoError(globalObject, scope, ERR_peek_error(), "Failed to initialize verification context"_s);
+        throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to initialize verification context"_s);
         return {};
     }
 
@@ -399,14 +400,14 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
         }
 
         if (!ncrypto::EVPKeyCtxPointer::setRsaPadding(pkctx.get(), padding, effective_salt_len)) {
-            throwCryptoError(globalObject, scope, ERR_peek_error(), "Failed to set RSA padding"_s);
+            throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to set RSA padding"_s);
             return {};
         }
     }
 
     // Set signature MD from the digest context
     if (!pkctx.setSignatureMd(mdCtx)) {
-        throwCryptoError(globalObject, scope, ERR_peek_error(), "Failed to set signature message digest"_s);
+        throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to set signature message digest"_s);
         return {};
     }
 
@@ -469,41 +470,6 @@ void setupJSVerifyClassStructure(LazyClassStructure::Initializer& init)
     init.setPrototype(prototype);
     init.setStructure(structure);
     init.setConstructor(constructor);
-}
-
-std::optional<ncrypto::EVPKeyPointer> keyFromPublicString(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, const WTF::StringView& keyView)
-{
-    ncrypto::EVPKeyPointer::PublicKeyEncodingConfig publicConfig;
-    publicConfig.format = ncrypto::EVPKeyPointer::PKFormatType::PEM;
-
-    UTF8View keyUtf8(keyView);
-    auto keySpan = keyUtf8.span();
-
-    ncrypto::Buffer<const unsigned char> ncryptoBuf {
-        .data = reinterpret_cast<const unsigned char*>(keySpan.data()),
-        .len = keySpan.size(),
-    };
-
-    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
-
-    auto publicRes = ncrypto::EVPKeyPointer::TryParsePublicKey(publicConfig, ncryptoBuf);
-    if (publicRes) {
-        ncrypto::EVPKeyPointer keyPtr(WTF::move(publicRes.value));
-        return keyPtr;
-    }
-
-    if (publicRes.error.value() == ncrypto::EVPKeyPointer::PKParseError::NOT_RECOGNIZED) {
-        ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig privateConfig;
-        privateConfig.format = ncrypto::EVPKeyPointer::PKFormatType::PEM;
-        auto privateRes = ncrypto::EVPKeyPointer::TryParsePrivateKey(privateConfig, ncryptoBuf);
-        if (privateRes) {
-            ncrypto::EVPKeyPointer keyPtr(WTF::move(privateRes.value));
-            return keyPtr;
-        }
-    }
-
-    throwCryptoError(lexicalGlobalObject, scope, publicRes.openssl_error.value_or(0), "Failed to read public key"_s);
-    return std::nullopt;
 }
 
 } // namespace Bun

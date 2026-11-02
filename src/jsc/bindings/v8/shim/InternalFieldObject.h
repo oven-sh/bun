@@ -14,6 +14,11 @@ public:
 
     DECLARE_INFO;
 
+    static void destroy(JSC::JSCell* cell)
+    {
+        static_cast<InternalFieldObject*>(cell)->~InternalFieldObject();
+    }
+
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {

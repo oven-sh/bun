@@ -1,0 +1,22 @@
+# other.ts: export * as B from "bun"        main.ts: import { B } from "./other"; B.color("red", "hex")
+# Here `B` is the namespace object of the module, another object than `Bun`. The loader has filled it from `Bun`, name by name, so a read under a name finds what `Bun` holds under that name,
+# and it is a use of that member: the read names it by binding. That the namespace object was made is a use of no member: nothing else of `Bun` is used
+# RUN: valueflow-solve calls
+# CHECK: f0 v4 ->{{*}} BunColor
+# RUN(USED): valueflow-solve used
+# USED: BunColor
+# USED-NOT: BunGlob
+# USED-NOT: BunArchive
+
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="bun" displayPath="bun" kind=Runtime exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=Bun
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    v1 = PropGet v0 key="color"
+    v2 = String string="red"
+    v3 = String string="hex"
+    v4 = Call v1, v0, v2, v3
+    Return
+}

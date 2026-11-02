@@ -1,0 +1,10 @@
+import { check } from "../src/show";
+import { Circle, compare, sumXY, readKey } from "fake-shapes";
+import { Vec2, Temperature, Option } from "fake-typed";
+import { Square, Fever, Vec3, makeUser } from "../src/models";
+const F = "19";
+check(F, "toPrimitive, valueOf, toString", () => { const s = new Square("s", 3), t = new Temperature(20), v = new Vec3(1, 2, 3); return [`${s}`, +s, s + "", (s as any) + 1, (s as any) * 2, (s as any) > 8, `${t}`, +t, (t as any) + 1, (t as any) + "", `${v}`, v + "", [v] + "", String([s, v]), (t as any) < new Fever(21), (t as any) == 20, Number(v), isNaN(v as any)]; });
+check(F, "as keys and in the package's arithmetic", () => { const s = new Square("k", 1), v = new Vec2(1, 2); const o: any = { [s as any]: 1, [v as any]: 2 }; return [Object.keys(o), readKey(o, s as any), sumXY({ x: s, y: 1 }), sumXY({ x: new Temperature(1), y: new Temperature(2) }), sumXY({ x: v, y: v }), compare(new Temperature(1), 1)]; });
+check(F, "toStringTag and inspect", () => [Object.prototype.toString.call(new Square("s", 1)), Object.prototype.toString.call(new Vec2(0, 0)), String(Object(1n)), Bun.inspect(new Vec2(1, 2)), Bun.inspect(new Vec3(1, 2, 3)), Bun.inspect(new Square("s", 2)), Bun.inspect(new Circle("c", 1)), Bun.inspect(makeUser(3)), Bun.inspect(Option.some(1)), Bun.inspect(new Temperature(1)), Bun.inspect(Square), Bun.inspect(Vec2.prototype.add), Bun.inspect([new Fever(1)]), Bun.inspect(new Map([[new Vec2(0, 0), makeUser(1)]]))]);
+check(F, "typeof, truthiness, nullish", () => [Square, Vec2, new Vec2(0, 0), Vec2.zero, Option.none<number>().orElse(0), Option.some<number | null>(null).orElse(1), Option.some(0).map(n => n || "zero").orElse("zero")].map(v => [typeof v, !!v, v ?? "nullish"].slice(0, 2)));
+check(F, "dates and numbers as text", () => [new Date(0).toISOString(), JSON.stringify({ d: new Date(86400000) }), (1234.5678).toFixed(2), (0.1 + 0.2).toString(), (255).toString(16), (1e21).toString(), (-0).toString(), 1 / new Vec2(0, 0).x, Number("0x10"), parseInt("12px"), parseFloat(".5e1"), (123.456).toPrecision(4), new Intl.NumberFormat("en-US").format(1234567.891)]);

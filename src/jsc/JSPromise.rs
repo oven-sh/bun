@@ -32,13 +32,6 @@ unsafe extern "C" {
         arg0: &JSGlobalObject,
         js_value1: JSValue,
     ) -> *mut JSPromise;
-    /// **DEPRECATED** This function does not notify the VM about the rejection,
-    /// meaning it will not trigger unhandled rejection handling. Use
-    /// `JSC__JSPromise__rejectedPromise` instead.
-    safe fn JSC__JSPromise__rejectedPromiseValue(
-        arg0: &JSGlobalObject,
-        js_value1: JSValue,
-    ) -> JSValue;
     safe fn JSC__JSPromise__resolvedPromise(
         arg0: &JSGlobalObject,
         js_value1: JSValue,
@@ -120,19 +113,6 @@ impl Strong {
     #[inline]
     pub fn set(&mut self, global: &JSGlobalObject, value: JSValue) {
         self.strong.set(global, value);
-    }
-
-    /// Wrap an existing promise `JSValue` in a fresh Strong handle.
-    /// `Strong` owns its slot, so a literal copy would
-    /// double-free. Callers that need a second owner of the same promise
-    /// (e.g. `bake::DevServer::PromiseEnsureRouteBundledCtx::ensurePromise`)
-    /// allocate a second slot here instead.
-    pub fn from_value(value: JSValue, global: &JSGlobalObject) -> Self {
-        // No `as_promise()` debug-check here: this is reached from finalizers
-        // (Server::deinit_if_we_can) where JSCell::classInfo() would assert.
-        Self {
-            strong: JscStrong::create(value, global),
-        }
     }
 
     /// Borrow the GC-rooted `JSPromise` cell. Panics if the strong slot is
@@ -232,10 +212,8 @@ impl JSPromise {
             return value;
         }
 
-        if value.is_any_error() {
-            return Self::dangerously_create_rejected_promise_value_without_notifying_vm(
-                global, value,
-            );
+        if let Some(err) = value.to_error() {
+            return Self::rejected_promise(global, err).to_js();
         }
 
         Self::resolved_promise_value(global, value)
@@ -293,15 +271,16 @@ impl JSPromise {
         JSPromise::opaque_mut(JSC__JSPromise__rejectedPromise(global, value))
     }
 
-    /// **DEPRECATED** use `rejected_promise` instead.
-    ///
-    /// Create a new rejected promise without notifying the VM. Unhandled
-    /// rejections created this way will not trigger unhandled rejection handling.
-    pub fn dangerously_create_rejected_promise_value_without_notifying_vm(
+    /// Create a new promise rejected with the exception `err` proves is pending,
+    /// taking it off the VM. The reason is converted like [`reject`](Self::reject)
+    /// does; a termination is propagated instead of becoming a reason.
+    pub fn rejected_promise_with_caught_exception(
         global: &JSGlobalObject,
-        value: JSValue,
-    ) -> JSValue {
-        JSC__JSPromise__rejectedPromiseValue(global, value)
+        err: JsError,
+    ) -> JsResult<&mut JSPromise> {
+        let promise = Self::create(global);
+        promise.reject(global, Err(err))?;
+        Ok(promise)
     }
 
     /// Fulfill an existing promise with the value.
@@ -310,7 +289,9 @@ impl JSPromise {
     // ── the native → promise boundary ─────────────────────────────────────
     //
     // Every settlement native code performs funnels through `resolve` / `reject` below (the `Strong`
-    // methods delegate here). Settling enters JS and can throw (a thenable's `then`, stack overflow,
+    // methods delegate here). Native code that continues the script of a `Bun.ModuleGraph` that was
+    // disposed settles nothing: that graph hears no more from the event loop, as a terminated
+    // worker does not (`VirtualMachine::reports_to_nobody`). Settling enters JS and can throw (a thenable's `then`, stack overflow,
     // the VM's termination), so these return `JsResult<()>` with the exception pending, like any
     // other call into JS: a host function `?`s it; a loop-level completion folds it
     // (`report_error_or_terminate`). An empty `JSValue` is never a value — it means the producer's
@@ -324,6 +305,9 @@ impl JSPromise {
                 "resolve() with an empty JSValue and no pending exception"
             );
             return self.reject(global, Err(JsError::Thrown));
+        }
+        if global.bun_vm().reports_to_nobody() {
+            return Ok(());
         }
         // `[[ZIG_EXPORT(check_slow)]]`
         crate::cpp::JSC__JSPromise__resolve(self, global, value)
@@ -362,6 +346,9 @@ impl JSPromise {
             }
         };
 
+        if global.bun_vm().reports_to_nobody() {
+            return Ok(());
+        }
         // `[[ZIG_EXPORT(check_slow)]]`
         crate::cpp::JSC__JSPromise__reject(self, global, err)
     }
@@ -370,6 +357,9 @@ impl JSPromise {
         if value.is_empty() {
             self.set_handled();
             return self.reject(global, Ok(value));
+        }
+        if global.bun_vm().reports_to_nobody() {
+            return Ok(());
         }
         // `[[ZIG_EXPORT(check_slow)]]`
         crate::cpp::JSC__JSPromise__rejectAsHandled(self, global, value)

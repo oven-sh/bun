@@ -5,6 +5,7 @@
 #include "V8Local.h"
 #include "V8MaybeLocal.h"
 #include "V8String.h"
+#include "V8ScriptOrigin.h"
 #include "shim/Function.h"
 
 namespace v8 {
@@ -13,6 +14,8 @@ class Context;
 
 class Function : public Object {
 public:
+    BUN_EXPORT static const int kLineOffsetNotFound;
+
     BUN_EXPORT MaybeLocal<Object> NewInstance(Local<Context> context, int argc, Local<Value> argv[]) const;
 
     // Inline in v8-function.h, but under dllimport MSVC emits a call to it
@@ -24,6 +27,11 @@ public:
 
     BUN_EXPORT void SetName(Local<String> name);
     BUN_EXPORT Local<Value> GetName() const;
+
+    // 0-based, or kLineOffsetNotFound and an empty resource name without script source, as in V8.
+    BUN_EXPORT ScriptOrigin GetScriptOrigin() const;
+    BUN_EXPORT int GetScriptLineNumber() const;
+    BUN_EXPORT int GetScriptColumnNumber() const;
 };
 
 } // namespace v8

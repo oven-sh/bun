@@ -35,6 +35,18 @@ describe("Bun.cron (in-process)", () => {
     expect(() => j.stop()).not.toThrow();
   });
 
+  test("[Symbol.dispose] is named [Symbol.dispose], and is writable, configurable and not enumerable", () => {
+    using job = Bun.cron("* * * * *", () => {});
+    const { value, ...attributes } = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(job), Symbol.dispose)!;
+    expect({ name: value.name, length: value.length, ...attributes }).toEqual({
+      name: "[Symbol.dispose]",
+      length: 0,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+  });
+
   test("stop() cancels before first fire", () => {
     let called = false;
     const job = Bun.cron("* * * * *", () => {

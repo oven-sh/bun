@@ -1,0 +1,50 @@
+# `twin.index`, and nothing else is asked of the twin: an array of matches has an `index` too, so the name alone does not say that the object has a layout.
+# Where nothing is expected of the object, it is taken for one of the objects that the function handles elsewhere, if they hold the name.
+# An object of which something is expected keeps that, and so does one in a function that handles no object with the name
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="TreeNode" constructor=f3 fields=[{key="index" declared={type=number} flags=[IsRequired]}, {key="twin" declared={type=anything} flags=[IsRequired]}, {key="sibling" declared={type=anything} flags=[IsRequired]}] flow={baseState=None}
+layout L1 kind=Instance name="Cursor" constructor=f4 fields=[{key="index" declared={type=number} flags=[IsRequired]}, {key="line" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
+
+function f0 name="twinOfNodeThatIsHandledHere" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object):
+    v1 = PropGet v0 key="sibling"
+    v2 = PropGet v0 key="twin"
+    v3 = TypeTest v2 testedType=null
+    Branch v3 -> taken b1(), notTaken b2(| 0)
+  b1():
+    Return v1
+  b2(v4):
+    v5 = PropGet v4 key="index"
+    Return v5
+}
+# CHECK-LABEL: function f0 name="twinOfNodeThatIsHandledHere"
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK: = TypeTest {{*}} testedType=L0
+# CHECK: = GetSlot {{*}} key="index" receivers=[L0] level=Expected
+
+function f1 name="nothingWithTheNameIsHandledHere" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object):
+    v1 = PropGet v0 key="index"
+    Return v1
+}
+# CHECK-LABEL: function f1 name="nothingWithTheNameIsHandledHere"
+# CHECK-NEXT: b0(v0: anything ~ object):
+# CHECK-NEXT: = PropGet v0 key="index"
+
+function f2 name="somethingElseIsExpected" parameters=[{type=anything}, {type=Array flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object, v1: anything ~ Array):
+    v2 = PropGet v0 key="sibling"
+    v3 = PropGet v1 key="index"
+    v4 = StrictEq v2, v3
+    Return v4
+}
+# CHECK-LABEL: function f2 name="somethingElseIsExpected"
+# CHECK-NOT: TypeTest v1 testedType=L0
+# CHECK: Return
+
+function f3 name="TreeNode" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f4 name="Cursor" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1

@@ -17,6 +17,7 @@ import { expect, test } from "bun:test";
 import { generateKeyPairSync } from "node:crypto";
 import {
   listeningServer,
+  mysqlAckSessionSetup,
   mysqlAuthMoreData,
   mysqlAuthSwitchRequest,
   mysqlHandshakeV10,
@@ -41,7 +42,7 @@ async function switchLoop(opts: { handshakePlugin: string; switches: string[]; l
     socket.write(mysqlHandshakeV10({ authPlugin: opts.handshakePlugin }));
     socket.on("error", () => {});
     socket.on("close", () => sockets.delete(socket));
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), seq => {
         if (!sawHandshakeResponse) {
           sawHandshakeResponse = true;
@@ -133,7 +134,7 @@ test("MySQL: caching_sha2 perform_full_authentication is honoured at most once",
     socket.write(mysqlHandshakeV10({ authPlugin: "caching_sha2_password" }));
     socket.on("error", () => {});
     socket.on("close", () => sockets.delete(socket));
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
         if (phase === 0) {
           // HandshakeResponse41 → ask for full auth.
@@ -197,8 +198,8 @@ test.each([
     let phase = 0;
     socket.write(mysqlHandshakeV10({ authPlugin: handshake }));
     socket.on("error", () => {});
-    socket.on("data", chunk => {
-      buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), seq => {
+    socket.on("data", (chunk: Buffer) => {
+      buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
         if (phase === 0) {
           phase = 1;
           socket.write(mysqlAuthSwitchRequest(seq + 1, switchTo, Buffer.alloc(20, 0x62)));
@@ -206,6 +207,8 @@ test.each([
           phase = 2;
           responses++;
           socket.write(mysqlOkPacket(seq + 1));
+        } else {
+          mysqlAckSessionSetup(socket, payload);
         }
       });
     });

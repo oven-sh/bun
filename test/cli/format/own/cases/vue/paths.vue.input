@@ -1,0 +1,6 @@
+<template>
+  <a :b=" item " :c="item.name" :d="this.item" :e="!item.user.name.first" v-if="!!visible">{{item}} {{ item.name }} {{this.item}}</a>
+  <a :veryLongAttributeName="someObject.someProperty.anotherProperty.yetAnotherProperty.last"></a>
+  <p>{{ someObject.someProperty.anotherProperty.yetAnotherProperty.lastProperty.andOneMore }}</p>
+  <a :b="class" :c="new" :d=" default " :e="a.class.new" :f="undefined" :g="of.type.as"></a>
+</template>

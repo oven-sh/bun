@@ -1,0 +1,173 @@
+# `Object.assign` with typed objects as target and as source: it writes fields, adds optional fields, runs setters, and stops at an exception.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="object-assign.ts" displayPath="object-assign.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="node:url" displayPath="node:url" kind=RuntimeSource flags=[IsLoadedByImportOnly] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeUrl body=f4
+entry module=m0
+layout L0 kind=Instance name="Watched" module=m0 position=2339 constructor=f2 fields=[{key=#"#"@L0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"#port"@L0 declared={type=number} flags=[IsRequired, IsPrivate]}, {key="host" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=3
+layout L1 kind=Instance name="Point2" module=m0 position=3438 constructor=f3 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+layout L2 name="Conf" module=m0 position=154 fields=[{key="host" declared={type=undefined|null|string flags=[IsExpected, OmitsNull]}}, {key="port" declared={type=undefined|number}}, {key="secure" declared={type=undefined|boolean}}, {key="tags" declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull]}}] supertypes=[L6, L7] ownFieldCount=4
+layout L3 name="Addr" module=m0 position=1697 fields=[{key="host" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="path" declared={type=undefined|null|string flags=[IsExpected, OmitsNull]}}] ownFieldCount=2
+layout L4 module=m0 position=2230 fields=[{key="host" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="port" declared={type=number} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L5 fields=[{key="port" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+layout L6 module=m0 position=774 fields=[{key="host" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=1
+layout L7 fields=[{key="host" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="path" declared={type=undefined|null|string flags=[OmitsNull]}}, {key="port" declared={type=number} flags=[IsRequired]}, {key="secure" declared={type=undefined|boolean}}, {key="tags" declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull]}}] flags=[IsNeverAllocated] declaredOrder=[0, 2, 3, 4, 1] ownFieldCount=5 flow={allocation=NeverAllocated}
+layout L8 fields=[{key="host" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="port" declared={type=number} flags=[IsRequired]}, {key="secure" declared={type=boolean} flags=[IsRequired]}] declaredOrder=[1, 2, 0] ownFieldCount=3
+layout L9 kind=Instance name="Url" module=m1 position=2434 constructor=f5 fields=[{key="protocol" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsRequired] originLayout=L11 originField=11}, {key="slashes" declared={type=null|boolean} flags=[IsRequired] originLayout=L11 originField=16}, {key="auth" declared={type=undefined|null|string} flags=[IsRequired] originLayout=L11 originField=0}, {key="host" declared={type=undefined|null|string} flags=[IsRequired] originLayout=L11 originField=3}, {key="port" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsRequired] originLayout=L11 originField=10}, {key="hostname" declared={type=undefined|null|string} flags=[IsRequired] originLayout=L11 originField=4}, {key="hash" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsRequired] originLayout=L11 originField=2}, {key="search" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsRequired] originLayout=L11 originField=15}, {key="query" declared={type=undefined|null|string|object flags=[OmitsUndefined]} flags=[IsRequired] originLayout=L11 originField=12}, {key="pathname" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsRequired] originLayout=L11 originField=9}, {key="path" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsRequired] originLayout=L11 originField=8}, {key="href" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsRequired] originLayout=L11 originField=5}] supertypes=[L11] flags=[IsConstructorFunction] ownFieldCount=12
+layout L10 name="UrlPrototype" module=m1 position=2171 fields=[{key="format" declared={type=undefined|null|function|f7 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="parse" declared={type=undefined|null|function|f6 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="parseHost" declared={type=undefined|null|function|f10 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="resolve" declared={type=undefined|null|function|f8 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="resolveObject" declared={type=undefined|null|function|f9 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}] flags=[IsNeverAllocated] declaredOrder=[1, 0, 3, 4, 2] ownFieldCount=5 flow={allocation=NeverAllocated}
+layout L11 name="Url" module=m1 position=1620 fields=[{key="auth" declared={type=undefined|null|string} flags=[IsRequired]}, {key="format" declared={type=undefined|null|function|f7 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="hash" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsRequired]}, {key="host" declared={type=undefined|null|string} flags=[IsRequired]}, {key="hostname" declared={type=undefined|null|string} flags=[IsRequired]}, {key="href" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsRequired]}, {key="parse" declared={type=undefined|null|function|f6 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="parseHost" declared={type=undefined|null|function|f10 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="path" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsRequired]}, {key="pathname" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsRequired]}, {key="port" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsRequired]}, {key="protocol" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsRequired]}, {key="query" declared={type=undefined|null|string|object flags=[OmitsUndefined]} flags=[IsRequired]}, {key="resolve" declared={type=undefined|null|function|f8 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="resolveObject" declared={type=undefined|null|function|f9 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="search" declared={type=undefined|null|string flags=[OmitsUndefined]} flags=[IsRequired]}, {key="slashes" declared={type=null|boolean} flags=[IsRequired]}] supertypes=[L10] flags=[IsNeverAllocated] declaredOrder=[11, 16, 0, 3, 10, 4, 2, 15, 12, 9, 8, 5, 6, 1, 13, 14, 7] ownFieldCount=17 flow={allocation=NeverAllocated}
+data d0 root=Object{layout=L5 members=[{key="port" value=Number{value=8080}}]} module=m0
+data d1 root=Object{layout=L2 members=[{key="port" value=Number{value=1}}, {key="host" value=String{value="src"}}]} module=m0
+data d2 root=Object{layout=L2 members=[{key="host" value=String{value="kept place"}}]} module=m0
+data d3 root=Object{layout=L3 members=[{key="host" value=String{value="addr"}}, {key="path" value=String{value="/p"}}]} module=m0
+data d4 root=Array{contents=undefined|null|number|string|symbol|bigint|L2 elements=[Object{layout=L2 members=[{key="port" value=Number{value=1}}]}, Object{layout=L2 members=[{key="host" value=String{value="x"}}, {key="port" value=Number{value=2}}]}, Object{layout=L2 members=[{key="secure" value=Boolean{value=true}}]}, Object{layout=L2}, Object{layout=L2 members=[{key="tags" value=Array{contents=undefined|null|string elements=[String{value="t"}]}}, {key="host" value=String{value="y"}}]}]} module=m0
+data d5 root=Object{layout=L2 members=[{key="host" value=String{value="h"}}, {key="port" value=Number{value=80}}]} module=m0
+variable g0 name="conf" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = NewClass v0 layout=L1
+    v2 = FinishClass v1 layout=L1
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = GetModuleVariable variable=g0
+    v5 = Call v4 calleeName="conf"
+    v6 = Convert v5 declared={type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]}
+    v7 = Builtin builtin=Object
+    v8 = Builtin builtin=ObjectAssign
+    v9 = Data data=d0
+    v10 = Call v8, v7, v6, v9 calleeName="Object.assign"
+    v11 = PropGet v6 key="tags"
+    v12 = Undefined
+    v13 = Data data=d1
+    v14 = Convert v13 declared={type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]}
+    v15 = Builtin builtin=Object
+    v16 = Builtin builtin=ObjectAssign
+    v17 = Data data=d2
+    v18 = Call v16, v15, v17, v14 calleeName="Object.assign"
+    v19 = Data data=d3
+    v20 = Convert v19 declared={type=undefined|null|L0|L2|L3|L4|L6|L8|L9 flags=[OmitsNull, OmitsUndefined]}
+    v21 = GetModuleVariable variable=g0
+    v22 = Call v21 calleeName="conf"
+    v23 = Convert v22 declared={type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]}
+    v24 = Builtin builtin=Object
+    v25 = Builtin builtin=ObjectAssign
+    v26 = Call v25, v24, v23, v20 calleeName="Object.assign"
+    v27 = Builtin builtin=Object
+    v28 = Builtin builtin=ObjectAssign
+    v29 = GetModuleVariable variable=g0
+    v30 = Call v29 calleeName="conf"
+    v31 = Convert v30 declared={type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]}
+    v32 = Null
+    v33 = Undefined
+    v34 = Integer integer=5
+    v35 = Boolean boolean=true
+    v36 = String string="ab"
+    v37 = Call v28, v27, v31, v32, v33, v34, v35, v36 calleeName="Object.assign"
+    v38 = GetModuleVariable variable=g0
+    v39 = Call v38 calleeName="conf"
+    v40 = Convert v39 declared={type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]}
+    v41 = Convert v40 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v42 = Builtin builtin=Object
+    v43 = Builtin builtin=ObjectAssign
+    v44 = GetModuleVariable variable=g0
+    v45 = Call v44 calleeName="conf"
+    v46 = Convert v45 declared={type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]}
+    v47 = Call v43, v42, v46, v41 calleeName="Object.assign"
+    v48 = Construct v3 calleeName="Point2"
+    v49 = Construct v3 calleeName="Point2"
+    v50 = Data data=d4
+    v51 = Convert v50 declared={type=undefined|null|Array<undefined|null|number|string|symbol|bigint|L2> flags=[OmitsNull, OmitsUndefined]}
+    v52 = String string=""
+    v53 = Convert v52 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v54 = Integer
+    v55 = Convert v54 declared={type=number}
+    Jump -> next b1(v53, v55)
+  b1(v56: undefined|null|string, v57: number):
+    LoopHint
+    v59 = Builtin builtin=Object
+    v60 = Builtin builtin=ObjectAssign
+    v61 = GetModuleVariable variable=g0
+    v62 = Call v61 calleeName="conf"
+    v63 = Convert v62 declared={type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]}
+    v64 = Integer integer=5
+    v65 = Mod v57, v64
+    v66 = ElemGet v51, v65
+    v67 = Convert v66 declared={type=undefined|null|number|string|symbol|bigint|L2 flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v68 = Integer integer=2
+    v69 = Add v57, v68
+    v70 = Integer integer=5
+    v71 = Mod v69, v70
+    v72 = ElemGet v51, v71
+    v73 = Convert v72 declared={type=undefined|null|number|string|symbol|bigint|L2 flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v74 = Call v60, v59, v63, v67, v73 calleeName="Object.assign"
+    v75 = Convert v74 declared={type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v76 = PropGet v75 key="host"
+    v77 = PropGet v75 key="port"
+    v78 = Convert v77 declared={type=number} illTypedCause=Assertion
+    v79 = Add v76, v78
+    v80 = PropGet v75 key="secure"
+    v81 = String string="-"
+    v82 = Add v79, v81
+    v83 = PropGet v75 key="tags"
+    v84 = Undefined
+    v85 = Convert v84 declared={type=undefined|number} illTypedCause=Assertion
+    v86 = String string="-"
+    v87 = Add v82, v86
+    v88 = Builtin builtin=Object
+    v89 = Builtin builtin=ObjectKeys
+    v90 = Call v89, v88, v75 calleeName="Object.keys"
+    v91 = Convert v90 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v92 = PropGet v91 key="length"
+    v93 = Add v87, v92
+    v94 = String string=" "
+    v95 = Add v93, v94
+    v96 = Add v56, v95
+    v97 = Convert v96 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v98 = Increment v57
+    v99 = Convert v98 declared={type=number}
+    Jump -> next b1(v97, v99)
+}
+function f1 name="conf" module=m0 position=442 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Data data=d5
+    v1 = Convert v0 declared={type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]}
+    Return v1
+}
+function f2 name="Watched" module=m0 position=2339 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    Return v3
+}
+function f3 name="Point2" module=m0 position=3438 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1
+function f4 module=m1 kind=Module role=Library flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f5 name="Url" module=m1 position=2434 role=Library flags=[HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] constructedClass=L9
+function f6 name="parse" module=m1 position=5402 role=Library flags=[HasThis, IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f7 name="format" module=m1 position=22027 role=Library flags=[HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f8 name="resolve" module=m1 position=24054 role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f9 name="resolveObject" module=m1 position=24420 role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f10 name="parseHost" module=m1 position=34447 role=Library flags=[HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] functionTypes=[f21] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f11 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f12 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f13 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f14 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f15 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f16 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f17 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f11]
+function f18 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f12]
+function f19 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f13]
+function f20 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f14]
+function f21 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f15]
+# -- generated: conf
+# CHECK-LABEL: function {{*}}name="conf"
+# CHECK: module=m0 position=442 role=ResultWrapper flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f23 layout=L2} inlineFrames=[{}, {callee=f23 callPosition=442 module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "h" = String string="h"
+# CHECK-NEXT: v1: 80 = Integer integer=80
+# CHECK-NEXT: v2: L2 = NewObject -, v0, v1 layout=L2 fields=[0, 1] allocationSite=6 allocationClass=1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="conf"
+# CHECK: module=m0 position=442 role=ResultWorker flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type="h"}, {type=80}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1} creator=ResultWorker{origin=f1}

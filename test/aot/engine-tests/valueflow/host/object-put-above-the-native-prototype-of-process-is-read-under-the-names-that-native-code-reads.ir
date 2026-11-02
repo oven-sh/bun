@@ -1,0 +1,48 @@
+# const above = Object.create(null); above.stdin = [run]; above.emit = emit; above.helper = helper; Object.setPrototypeOf(Object.getPrototypeOf(process), above); delete process.stdin
+# `above` is not handed over: native code looks through it, under the names of the table's list. `process` may have lost its `stdin`, so that lookup comes to `above` and finds the array, with all it holds.
+# %EventEmitter%.prototype has `emit` among its own members, so nobody asks `above` for it, and native code looks up no `helper`
+# LIBRARY: own
+# RUN: valueflow-why escaped=f1 escaped=f2 escaped=f3 escaped-builtin=Process
+# CHECK: escaped=f1
+# CHECK-NEXT: n0 escaped
+# CHECK: escaped=f2
+# CHECK-NEXT: not held
+# CHECK-NEXT: escaped=f3
+# CHECK-NEXT: not held
+# CHECK-NEXT: escaped-builtin=Process
+# CHECK-NEXT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Object
+    v1 = Builtin builtin=ObjectCreate
+    v2 = Null
+    v3 = Call v1, v0, v2
+    v4 = NewClosure function=f1
+    v5 = NewArray v4 contents=anything
+    PropSet v3, v5 key="stdin" mode=Strict
+    v7 = NewClosure function=f2
+    PropSet v3, v7 key="emit" mode=Strict
+    v9 = NewClosure function=f3
+    PropSet v3, v9 key="helper" mode=Strict
+    v11 = Builtin builtin=ObjectSetPrototypeOf
+    v12 = Builtin builtin=EventEmitterPrototype
+    v13 = Call v11, v0, v12, v3
+    v14 = Builtin builtin=Process
+    v15 = PropDelete v14 key="stdin" mode=Sloppy
+    Return
+}
+function f1 name="run" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="emit" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="helper" results=[{type=anything}] {
+  b0():
+    Return
+}

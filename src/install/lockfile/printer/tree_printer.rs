@@ -3,22 +3,18 @@ use bun_io::Write;
 use bun_semver as semver;
 
 use crate::lockfile_real::package::PackageColumns as _;
-use crate::package_manager_real::TrackInstalledBin;
-use bun_core::fmt::PathSep;
-use bun_install::lockfile::{Printer, package::Meta as PackageMeta};
+use crate::package_manager_real::{PackageUpdateInfo, TrackInstalledBin};
+use bun_core::fmt::{PathSep, escape_control_chars};
+use bun_install::lockfile::{Printer, package::Meta as PackageMeta, reachable};
 use bun_install::{
-    self as install, Bin, Dependency, DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager,
-    PackageNameHash, Resolution, Subcommand, bin, resolution,
+    self as install, Bin, Dependency, DependencyID, DependencyVersionTag, INVALID_PACKAGE_ID,
+    PackageID, PackageManager, PackageNameHash, Resolution, Subcommand, bin, resolution,
 };
 use bun_sys::Fd;
 
 type Bitset = DynamicBitSet;
 
-fn print_installed_workspace_section<
-    W,
-    const ENABLE_ANSI_COLORS: bool,
-    const PRINT_SECTION_HEADER: bool,
->(
+fn print_installed_workspace_section<W: Write>(
     this: &Printer,
     manager: &mut PackageManager,
     writer: &mut W,
@@ -27,10 +23,11 @@ fn print_installed_workspace_section<
     printed_new_install: &mut bool,
     id_map: Option<&mut [DependencyID]>,
     update_owners: &[PackageID],
-) -> Result<(), crate::Error>
-where
-    W: Write,
-{
+    // The summary has no other sections, so `print_catalog_entry_updates` runs here.
+    sole_section: bool,
+    enable_ansi_colors: bool,
+    print_section_header: bool,
+) -> Result<(), crate::Error> {
     let lockfile = &this.lockfile;
     let string_buf = lockfile.buffers.string_bytes.as_slice();
     let packages_slice = lockfile.packages.slice();
@@ -53,16 +50,26 @@ where
     // `updating_packages` holds one original per name, so a name declared by several owners (or groups) is one row.
     let mut update_dedupe: HashMap<PackageNameHash, ()> = HashMap::new();
 
-    // Reshaped for borrowck — `id_map` is reborrowed per call below.
     let mut id_map = id_map;
+    macro_rules! print_section_header_once {
+        () => {
+            if print_section_header && !printed_section_header {
+                printed_section_header = true;
+                bun_core::write_pretty!(
+                    writer,
+                    enable_ansi_colors,
+                    "<r>\n<cyan>{s}<r><d>:<r>\n",
+                    bstr::BStr::new(names[workspace_package_id as usize].slice(string_buf)),
+                )?;
+            }
+        };
+    }
 
     // find the updated packages
     for &owner in update_owners {
-        for _dep_id in
+        for dep_id in
             resolutions_list[owner as usize].begin()..resolutions_list[owner as usize].end()
         {
-            let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
-
             match should_print_package_install(
                 this,
                 manager,
@@ -88,38 +95,35 @@ where
                     *printed_new_install = true;
                     printed_update = true;
 
-                    if PRINT_SECTION_HEADER {
-                        if !printed_section_header {
-                            printed_section_header = true;
-                            let workspace_name =
-                                names[workspace_package_id as usize].slice(string_buf);
-                            bun_core::write_pretty!(
-                                writer,
-                                ENABLE_ANSI_COLORS,
-                                "<r>\n<cyan>{s}<r><d>:<r>\n",
-                                bstr::BStr::new(workspace_name),
-                            )?;
-                        }
-                    }
-
-                    print_updated_package::<W, ENABLE_ANSI_COLORS>(
-                        this,
-                        manager,
-                        &update_info,
-                        writer,
-                    )?;
+                    print_section_header_once!();
+                    print_updated_package(this, manager, &update_info, writer, enable_ansi_colors)?;
                 }
             }
         }
     }
 
-    if !PRINT_SECTION_HEADER {
-        if print_transitive_updates::<W, ENABLE_ANSI_COLORS>(
+    if !print_section_header {
+        if sole_section
+            && print_catalog_entry_updates(
+                this,
+                manager,
+                installed,
+                pkg_metas,
+                &mut update_dedupe,
+                writer,
+                enable_ansi_colors,
+            )?
+        {
+            *printed_new_install = true;
+            printed_update = true;
+        }
+        if print_transitive_updates(
             this,
             manager,
             update_owners,
             installed,
             writer,
+            enable_ansi_colors,
         )? {
             *printed_new_install = true;
             printed_update = true;
@@ -132,11 +136,9 @@ where
         }
     }
 
-    for _dep_id in resolutions_list[workspace_package_id as usize].begin()
+    for dep_id in resolutions_list[workspace_package_id as usize].begin()
         ..resolutions_list[workspace_package_id as usize].end()
     {
-        let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
-
         match should_print_package_install(
             this,
             manager,
@@ -161,24 +163,13 @@ where
 
         *printed_new_install = true;
 
-        if PRINT_SECTION_HEADER {
-            if !printed_section_header {
-                printed_section_header = true;
-                let workspace_name = names[workspace_package_id as usize].slice(string_buf);
-                bun_core::write_pretty!(
-                    writer,
-                    ENABLE_ANSI_COLORS,
-                    "<r>\n<cyan>{s}<r><d>:<r>\n",
-                    bstr::BStr::new(workspace_name),
-                )?;
-            }
-        }
+        print_section_header_once!();
 
         if printed_update {
             printed_update = false;
             writer.write_str("\n")?;
         }
-        print_installed_package::<W, ENABLE_ANSI_COLORS>(this, manager, dep, package_id, writer)?;
+        print_installed_package(this, manager, dep, package_id, writer, enable_ansi_colors)?;
     }
 
     Ok(())
@@ -249,6 +240,7 @@ fn should_print_package_install(
         &pkg_metas[package_id as usize],
         this.options.cpu,
         this.options.os,
+        this.options.libc,
     ) {
         return ShouldPrintPackageInstallResult::No;
     }
@@ -256,10 +248,8 @@ fn should_print_package_install(
     let resolution = this.lockfile.packages.items_resolution()[package_id as usize];
     if resolution.tag == resolution::Tag::Npm {
         let npm_version = resolution.npm().version;
-        let name = dependency
-            .name
-            .slice(this.lockfile.buffers.string_bytes.as_slice());
-        if let Some(entry) = manager.updating_packages.get(name) {
+        let string_buf = this.lockfile.buffers.string_bytes.as_slice();
+        if let Some(entry) = update_info_of(manager, dependency, string_buf) {
             if let Some(original_version) = entry.original_version {
                 if !original_version.eql(npm_version) {
                     return ShouldPrintPackageInstallResult::Update(Box::new(
@@ -282,15 +272,44 @@ fn should_print_package_install(
     ShouldPrintPackageInstallResult::Yes
 }
 
-fn print_updated_package<W, const ENABLE_ANSI_COLORS: bool>(
+/// The original of a `catalog:` row whose entry `record_catalog_originals` recorded.
+fn catalog_update_info<'a>(
+    manager: &'a PackageManager,
+    dependency: &Dependency,
+    string_buf: &[u8],
+) -> Option<&'a PackageUpdateInfo> {
+    if dependency.version.tag != DependencyVersionTag::Catalog
+        || manager.updating_packages.is_empty()
+    {
+        return None;
+    }
+    manager
+        .updating_packages
+        .get(&PackageUpdateInfo::catalog_row_key(
+            dependency.name.slice(string_buf),
+            dependency.version.catalog().slice(string_buf),
+        ))
+}
+
+fn update_info_of<'a>(
+    manager: &'a PackageManager,
+    dependency: &Dependency,
+    string_buf: &[u8],
+) -> Option<&'a PackageUpdateInfo> {
+    catalog_update_info(manager, dependency, string_buf).or_else(|| {
+        manager
+            .updating_packages
+            .get(dependency.name.slice(string_buf))
+    })
+}
+
+fn print_updated_package<W: Write>(
     this: &Printer,
     manager: &mut PackageManager,
     update_info: &PackageUpdatePrintInfo,
     writer: &mut W,
-) -> Result<(), crate::Error>
-where
-    W: Write,
-{
+    enable_ansi_colors: bool,
+) -> Result<(), crate::Error> {
     let string_buf = this.lockfile.buffers.string_bytes.as_slice();
     let packages_slice = this.lockfile.packages.slice();
     let package_id = update_info.package_id as usize;
@@ -303,10 +322,10 @@ where
         packages_slice.items_name_hash()[package_id],
         &update_info.resolution,
     )?;
-    let Some(entry) = manager.updating_packages.get(dep_name) else {
+    let Some(entry) = update_info_of(manager, dependency, string_buf) else {
         return Ok(());
     };
-    write_updated_row::<W, ENABLE_ANSI_COLORS>(
+    write_updated_row(
         writer,
         dep_name,
         update_info.version,
@@ -314,6 +333,7 @@ where
         update_info.resolution.npm().version,
         string_buf,
         later.as_deref(),
+        enable_ansi_colors,
     )
 }
 
@@ -332,7 +352,7 @@ fn later_version_text(
     Ok(Some(text))
 }
 
-fn write_updated_row<W, const ENABLE_ANSI_COLORS: bool>(
+fn write_updated_row<W: Write>(
     writer: &mut W,
     name: &[u8],
     from: semver::Version,
@@ -340,11 +360,9 @@ fn write_updated_row<W, const ENABLE_ANSI_COLORS: bool>(
     to: semver::Version,
     to_buf: &[u8],
     later: Option<&[u8]>,
-) -> Result<(), crate::Error>
-where
-    W: Write,
-{
-    if ENABLE_ANSI_COLORS {
+    enable_ansi_colors: bool,
+) -> Result<(), crate::Error> {
+    if enable_ansi_colors {
         write!(
             writer,
             bun_core::pretty_fmt!("<r><cyan>↑<r> <b>{s}<r> <d>{f} →<r> <b><cyan>{f}<r>", true),
@@ -365,7 +383,7 @@ where
     if let Some(later) = later {
         bun_core::write_pretty!(
             writer,
-            ENABLE_ANSI_COLORS,
+            enable_ansi_colors,
             " <d>(<blue>v{s} available<r><d>)<r>",
             bstr::BStr::new(later),
         )?;
@@ -375,17 +393,48 @@ where
     Ok(())
 }
 
-/// Packages registered by the transitive half of `bun update` are not rows of the walked workspaces, so the walk above never reaches them; the walked workspaces' own targets stay with them.
-fn print_transitive_updates<W, const ENABLE_ANSI_COLORS: bool>(
+/// The one-section summary only walks the dependencies of `update_owners`, but other workspaces use
+/// catalog entries too.
+fn print_catalog_entry_updates<W: Write>(
+    this: &Printer,
+    manager: &mut PackageManager,
+    installed: &Bitset,
+    pkg_metas: &[PackageMeta],
+    update_dedupe: &mut HashMap<PackageNameHash, ()>,
+    writer: &mut W,
+    enable_ansi_colors: bool,
+) -> Result<bool, crate::Error> {
+    let string_buf = this.lockfile.buffers.string_bytes.as_slice();
+    let dependencies = this.lockfile.buffers.dependencies.as_slice();
+    let mut printed = false;
+    for (dep_id, dep) in dependencies.iter().enumerate() {
+        if catalog_update_info(manager, dep, string_buf).is_none() {
+            continue;
+        }
+        let dep_id = dep_id as DependencyID;
+        let ShouldPrintPackageInstallResult::Update(update_info) =
+            should_print_package_install(this, manager, dep_id, installed, None, pkg_metas)
+        else {
+            continue;
+        };
+        if update_dedupe.get_or_put(dep.name_hash)?.found_existing {
+            continue;
+        }
+        print_updated_package(this, manager, &update_info, writer, enable_ansi_colors)?;
+        printed = true;
+    }
+    Ok(printed)
+}
+
+/// The transitive half of `bun update` registers packages that are rows of no walked workspace.
+fn print_transitive_updates<W: Write>(
     this: &Printer,
     manager: &mut PackageManager,
     update_owners: &[PackageID],
     installed: &Bitset,
     writer: &mut W,
-) -> Result<bool, crate::Error>
-where
-    W: Write,
-{
+    enable_ansi_colors: bool,
+) -> Result<bool, crate::Error> {
     if !manager
         .updating_packages
         .values()
@@ -408,6 +457,14 @@ where
             if (package_id as usize) < pkg_resolutions.len() {
                 workspace_targets.set(package_id as usize);
             }
+        }
+    }
+    let rows = lockfile.buffers.dependencies.iter();
+    for (dep, &package_id) in rows.zip(lockfile.buffers.resolutions.iter()) {
+        if (package_id as usize) < pkg_resolutions.len()
+            && catalog_update_info(manager, dep, string_buf).is_some()
+        {
+            workspace_targets.set(package_id as usize);
         }
     }
 
@@ -439,7 +496,7 @@ where
         let Some(info) = manager.updating_packages.get(name) else {
             continue;
         };
-        write_updated_row::<W, ENABLE_ANSI_COLORS>(
+        write_updated_row(
             writer,
             name,
             original,
@@ -447,48 +504,48 @@ where
             version,
             string_buf,
             later.as_deref(),
+            enable_ansi_colors,
         )?;
         printed = true;
     }
     Ok(printed)
 }
 
-fn print_installed_package<W, const ENABLE_ANSI_COLORS: bool>(
+fn print_installed_package<W: Write>(
     this: &Printer,
     manager: &mut PackageManager,
     dependency: &Dependency,
     package_id: PackageID,
     writer: &mut W,
-) -> Result<(), crate::Error>
-where
-    W: Write,
-{
+    enable_ansi_colors: bool,
+) -> Result<(), crate::Error> {
     let string_buf = this.lockfile.buffers.string_bytes.as_slice();
     let packages_slice = this.lockfile.packages.slice();
     let resolution: Resolution = packages_slice.items_resolution()[package_id as usize];
     let name = dependency.name.slice(string_buf);
+    let version = bun_core::fmt::for_terminal(resolution.fmt(string_buf, PathSep::Posix));
 
     let package_name = packages_slice.items_name()[package_id as usize].slice(string_buf);
     if let Some(later_version_fmt) =
         manager.format_later_version_in_cache(package_name, dependency.name_hash, &resolution)
     {
-        if ENABLE_ANSI_COLORS {
+        if enable_ansi_colors {
             write!(
                 writer,
                 bun_core::pretty_fmt!(
                     "<r><green>+<r> <b>{s}<r><d>@{f}<r> <d>(<blue>v{f} available<r><d>)<r>\n",
                     true
                 ),
-                bstr::BStr::new(name),
-                resolution.fmt(string_buf, PathSep::Posix),
+                escape_control_chars(name),
+                version,
                 later_version_fmt,
             )?;
         } else {
             write!(
                 writer,
                 bun_core::pretty_fmt!("<r>+ {s}<r><d>@{f}<r> <d>(v{f} available)<r>\n", false),
-                bstr::BStr::new(name),
-                resolution.fmt(string_buf, PathSep::Posix),
+                escape_control_chars(name),
+                version,
                 later_version_fmt,
             )?;
         }
@@ -496,56 +553,54 @@ where
         return Ok(());
     }
 
-    if ENABLE_ANSI_COLORS {
+    if enable_ansi_colors {
         write!(
             writer,
             bun_core::pretty_fmt!("<r><green>+<r> <b>{s}<r><d>@{f}<r>\n", true),
-            bstr::BStr::new(name),
-            resolution.fmt(string_buf, PathSep::Posix),
+            escape_control_chars(name),
+            version,
         )?;
     } else {
         write!(
             writer,
             bun_core::pretty_fmt!("<r>+ {s}<r><d>@{f}<r>\n", false),
-            bstr::BStr::new(name),
-            resolution.fmt(string_buf, PathSep::Posix),
+            escape_control_chars(name),
+            version,
         )?;
     }
 
     Ok(())
 }
 
-fn print_installed_update_request<W, const ENABLE_ANSI_COLORS: bool>(
+fn print_installed_update_request<W: Write>(
     writer: &mut W,
     dependency: &Dependency,
     resolution: &Resolution,
     string_buf: &[u8],
     has_binaries: bool,
-) -> Result<(), crate::Error>
-where
-    W: Write,
-{
+    enable_ansi_colors: bool,
+) -> Result<(), crate::Error> {
     bun_core::write_pretty!(
         writer,
-        ENABLE_ANSI_COLORS,
+        enable_ansi_colors,
         "<r><green>installed<r> <b>{s}<r>",
-        bstr::BStr::new(dependency.name.slice(string_buf)),
+        escape_control_chars(dependency.name.slice(string_buf)),
     )?;
 
     if let Some(npm) = dependency.version.try_npm().filter(|npm| npm.is_alias) {
         bun_core::write_pretty!(
             writer,
-            ENABLE_ANSI_COLORS,
+            enable_ansi_colors,
             "<d>@npm:<r><b>{s}<r>",
-            bstr::BStr::new(npm.name.slice(string_buf)),
+            escape_control_chars(npm.name.slice(string_buf)),
         )?;
     }
 
     bun_core::write_pretty!(
         writer,
-        ENABLE_ANSI_COLORS,
+        enable_ansi_colors,
         "<d>@{f}<r>",
-        resolution.fmt(string_buf, PathSep::Posix),
+        bun_core::fmt::for_terminal(resolution.fmt(string_buf, PathSep::Posix)),
     )?;
     writer.write_str(if has_binaries {
         " with binaries:\n"
@@ -558,17 +613,15 @@ where
 
 /// - Prints an empty newline with no diffs
 /// - Prints a leading and trailing blank newline with diffs
-pub(crate) fn print<W, const ENABLE_ANSI_COLORS: bool>(
+#[inline(never)]
+pub(crate) fn print<W: Write>(
     this: &Printer,
     manager: &mut PackageManager,
     writer: &mut W,
     log_level: install::package_manager::Options::LogLevel,
-) -> Result<(), crate::Error>
-where
-    W: Write,
-{
+    enable_ansi_colors: bool,
+) -> Result<(), crate::Error> {
     writer.write_str("\n")?;
-    // `allocator` param dropped — global mimalloc.
     let slice = this.lockfile.packages.slice();
     let bins: &[Bin] = slice.items_bin();
     let resolved: &[Resolution] = slice.items_resolution();
@@ -595,32 +648,28 @@ where
             for dep_id in resolutions_list[0].begin()..resolutions_list[0].end() {
                 let dep = &dependencies_buffer[dep_id as usize];
                 if dep.behavior.is_workspace() {
-                    workspaces_to_print.push(DependencyID::try_from(dep_id).expect("int cast"));
+                    workspaces_to_print.push(dep_id);
                 }
             }
 
-            let mut found_workspace_to_print = false;
+            // Fills `id_map`.
             for &workspace_dep_id in &workspaces_to_print {
                 let workspace_package_id = resolutions_buffer[workspace_dep_id as usize];
                 for dep_id in resolutions_list[workspace_package_id as usize].begin()
                     ..resolutions_list[workspace_package_id as usize].end()
                 {
-                    match should_print_package_install(
+                    let _ = should_print_package_install(
                         this,
                         manager,
-                        DependencyID::try_from(dep_id).expect("int cast"),
+                        dep_id,
                         installed,
                         Some(&mut id_map),
                         pkg_metas,
-                    ) {
-                        ShouldPrintPackageInstallResult::Yes => found_workspace_to_print = true,
-                        _ => {}
-                    }
+                    );
                 }
             }
-            let _ = found_workspace_to_print;
 
-            print_installed_workspace_section::<W, ENABLE_ANSI_COLORS, false>(
+            print_installed_workspace_section(
                 this,
                 manager,
                 writer,
@@ -629,11 +678,14 @@ where
                 &mut had_printed_new_install,
                 None,
                 &[0],
+                /* sole_section */ false,
+                enable_ansi_colors,
+                /* print_section_header */ false,
             )?;
 
             for &workspace_dep_id in &workspaces_to_print {
                 let workspace_package_id = resolutions_buffer[workspace_dep_id as usize];
-                print_installed_workspace_section::<W, ENABLE_ANSI_COLORS, true>(
+                print_installed_workspace_section(
                     this,
                     manager,
                     writer,
@@ -642,6 +694,9 @@ where
                     &mut had_printed_new_install,
                     None,
                     &[workspace_package_id],
+                    /* sole_section */ false,
+                    enable_ansi_colors,
+                    /* print_section_header */ true,
                 )?;
             }
         } else {
@@ -684,7 +739,7 @@ where
                 }
             }
 
-            print_installed_workspace_section::<W, ENABLE_ANSI_COLORS, false>(
+            print_installed_workspace_section(
                 this,
                 manager,
                 writer,
@@ -693,22 +748,41 @@ where
                 &mut had_printed_new_install,
                 Some(&mut id_map),
                 &update_owners,
+                /* sole_section */ true,
+                enable_ansi_colors,
+                /* print_section_header */ false,
             )?;
         }
     } else {
         debug_assert_eq!(dependencies_buffer.len(), resolutions_buffer.len());
         let is_update = manager.subcommand == Subcommand::Update;
-        'outer: for (dep_id, (dependency, &package_id)) in dependencies_buffer
-            .iter()
-            .zip(resolutions_buffer)
-            .enumerate()
+        // List only the packages that an install would put on disk, and each of them once.
+        let wanted = reachable::packages(
+            this.lockfile,
+            resolutions_buffer,
+            reachable::Options {
+                bundled: true,
+                ..reachable::Options::install(manager)
+            },
+        );
+        let mut listed = Bitset::init_empty(resolved.len())?;
+        // A package is printed under the name of the first edge that reaches it. Peer edges come
+        // last, so a peer dependency's name is used only when no other edge reaches the package.
+        let edges = || {
+            dependencies_buffer
+                .iter()
+                .zip(resolutions_buffer)
+                .enumerate()
+        };
+        'outer: for (dep_id, (dependency, &package_id)) in edges()
+            .filter(|(_, (dependency, _))| !dependency.behavior.is_peer())
+            .chain(edges().filter(|(_, (dependency, _))| dependency.behavior.is_peer()))
         {
             if package_id >= end {
                 continue;
             }
-            if dependency.behavior.is_peer() {
-                continue;
-            }
+            let listed_before = listed.is_set(package_id as usize);
+            listed.set(package_id as usize);
             let package_name = dependency.name.slice(string_buf);
 
             if !this.updates.is_empty() {
@@ -726,13 +800,18 @@ where
                     }
                 }
             }
+            if listed_before || !wanted.is_set(package_id as usize) {
+                continue;
+            }
 
             bun_core::write_pretty!(
                 writer,
-                ENABLE_ANSI_COLORS,
+                enable_ansi_colors,
                 " <r><b>{s}<r><d>@<b>{f}<r>\n",
-                bstr::BStr::new(package_name),
-                resolved[package_id as usize].fmt(string_buf, PathSep::Auto),
+                bun_core::fmt::escape_control_chars(package_name),
+                bun_core::fmt::for_terminal(
+                    resolved[package_id as usize].fmt(string_buf, PathSep::Auto)
+                ),
             )?;
         }
     }
@@ -741,84 +820,70 @@ where
         writer.write_str("\n")?;
     }
 
-    if cfg!(debug_assertions) {
-        had_printed_new_install = false;
-    }
-
     let mut printed_installed_update_request = false;
     for &dependency_id in &id_map {
         if dependency_id == INVALID_PACKAGE_ID {
             continue;
         }
-        if cfg!(debug_assertions) {
-            had_printed_new_install = true;
-        }
+        printed_installed_update_request = true;
 
         let dependency = &dependencies_buffer[dependency_id as usize];
         let package_id = resolutions_buffer[dependency_id as usize];
         let bin = bins[package_id as usize];
         let resolution = &resolved[package_id as usize];
 
-        match bin.tag {
-            bin::Tag::None | bin::Tag::Dir => {
-                printed_installed_update_request = true;
+        if pkg_metas[package_id as usize].is_disabled(
+            this.options.cpu,
+            this.options.os,
+            this.options.libc.for_dependency(dependency.behavior),
+        ) {
+            bun_core::write_pretty!(
+                writer,
+                enable_ansi_colors,
+                "<r><yellow>skipped<r> <b>{s}<r><d>@{f}<r> <d>(unsupported platform)<r>\n",
+                escape_control_chars(dependency.name.slice(string_buf)),
+                bun_core::fmt::for_terminal(resolution.fmt(string_buf, PathSep::Posix)),
+            )?;
+            continue;
+        }
 
-                print_installed_update_request::<W, ENABLE_ANSI_COLORS>(
-                    writer, dependency, resolution, string_buf, false,
-                )?;
-            }
-            bin::Tag::Map | bin::Tag::File | bin::Tag::NamedFile => {
-                printed_installed_update_request = true;
+        let has_binaries = !matches!(bin.tag, bin::Tag::None | bin::Tag::Dir);
+        print_installed_update_request(
+            writer,
+            dependency,
+            resolution,
+            string_buf,
+            has_binaries,
+            enable_ansi_colors,
+        )?;
+        if !has_binaries {
+            continue;
+        }
 
-                let mut iterator = bin::NamesIterator {
-                    bin,
-                    i: 0,
-                    done: false,
-                    dir_iterator: None,
-                    package_name: dependency.name,
-                    // Never read on the .map/.file/.named_file paths this arm covers.
-                    destination_node_modules: Fd::INVALID,
-                    buf: bun_paths::PathBuffer::uninit(),
-                    string_buffer: string_buf,
-                    extern_string_buf: this.lockfile.buffers.extern_strings.as_slice(),
-                };
-
-                print_installed_update_request::<W, ENABLE_ANSI_COLORS>(
-                    writer, dependency, resolution, string_buf, true,
-                )?;
-
-                {
-                    if matches!(manager.track_installed_bin, TrackInstalledBin::Pending) {
-                        // `bin_name`'s borrow of `iterator.buf` must end before
-                        // the loop's `iterator.next()`.
-                        if let Some(bin_name) = iterator.next().unwrap_or(None) {
-                            let owned = Box::<[u8]>::from(bin_name);
-
-                            bun_core::write_pretty!(
-                                writer,
-                                ENABLE_ANSI_COLORS,
-                                "<r> <d>- <r><b>{s}<r>\n",
-                                bstr::BStr::new(&owned[..]),
-                            )?;
-
-                            manager.track_installed_bin = TrackInstalledBin::Basename(owned);
-                        }
-                    }
-
-                    while let Some(bin_name) = iterator.next().unwrap_or(None) {
-                        bun_core::write_pretty!(
-                            writer,
-                            ENABLE_ANSI_COLORS,
-                            "<r> <d>- <r><b>{s}<r>\n",
-                            bstr::BStr::new(bin_name),
-                        )?;
-                    }
-                }
+        let mut iterator = bin::NamesIterator {
+            bin,
+            i: 0,
+            done: false,
+            dir_iterator: None,
+            package_name: dependency.name,
+            // Never read on the .map/.file/.named_file paths.
+            destination_node_modules: Fd::INVALID,
+            buf: bun_paths::path_buffer_pool::get(),
+            string_buffer: string_buf,
+            extern_string_buf: this.lockfile.buffers.extern_strings.as_slice(),
+        };
+        while let Some(bin_name) = iterator.next().unwrap_or(None) {
+            bun_core::write_pretty!(
+                writer,
+                enable_ansi_colors,
+                "<r> <d>- <r><b>{s}<r>\n",
+                escape_control_chars(bin_name),
+            )?;
+            if matches!(manager.track_installed_bin, TrackInstalledBin::Pending) {
+                manager.track_installed_bin = TrackInstalledBin::Basename(Box::from(bin_name));
             }
         }
     }
-
-    let _ = had_printed_new_install;
 
     if printed_installed_update_request {
         writer.write_str("\n")?;

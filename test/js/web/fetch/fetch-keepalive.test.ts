@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tls } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tls } from "harness";
+import { once } from "node:events";
+import { connect, createServer, type AddressInfo, type Socket } from "node:net";
+import { release } from "node:os";
+import { join } from "node:path";
+import { createSecureContext, TLSSocket } from "node:tls";
 
 test("keepalive", async () => {
   using server = Bun.serve({
@@ -12,7 +17,7 @@ test("keepalive", async () => {
     const res = await fetch(`http://localhost:${server.port}`, {
       keepalive: false,
     });
-    const headers = await res.json();
+    const headers: any = await res.json();
     expect(headers.connection).toBeUndefined();
   }
 
@@ -20,7 +25,7 @@ test("keepalive", async () => {
     const res = await fetch(`http://localhost:${server.port}`, {
       keepalive: true,
     });
-    const headers = await res.json();
+    const headers: any = await res.json();
     expect(headers.connection).toBe("keep-alive");
   }
 
@@ -31,12 +36,12 @@ test("keepalive", async () => {
         "Connection": "HELLO!",
       },
     });
-    const headers = await res.json();
+    const headers: any = await res.json();
     expect(headers.connection).toBe("HELLO!");
   }
 });
 
-test("fetch does not reuse a pooled TLS connection for a request with a different Host header", async () => {
+test("fetch reuses a pooled TLS connection across requests with different Host headers", async () => {
   using server = Bun.serve({
     port: 0,
     tls,
@@ -58,19 +63,14 @@ test("fetch does not reuse a pooled TLS connection for a request with a differen
     return await res.text();
   };
 
-  // Two requests whose TLS handshake used the Host-header override
-  // "wrong.example" for SNI/certificate verification share one pooled
-  // connection (legitimate keep-alive still works).
-  const overrideA = await get({ Host: "wrong.example" });
-  const overrideB = await get({ Host: "wrong.example" });
-  expect(overrideB).toBe(overrideA);
-
-  // A request without the override expects the server identity to match
-  // url.hostname ("localhost"), so it must not be handed the connection
-  // that was only ever negotiated as "wrong.example". It has to open a new
-  // connection, which cannot have the same client port.
-  const plain = await get();
-  expect(plain).not.toBe(overrideA);
+  // The TLS handshake is keyed to the URL host (SNI and certificate
+  // verification both use url.hostname). A request-level Host header is only
+  // an HTTP field, so three requests with differing Host headers share one
+  // pooled connection.
+  const first = await get({ Host: "wrong.example" });
+  const second = await get({ Host: "another.example" });
+  const third = await get();
+  expect({ second, third }).toEqual({ second: first, third: first });
 });
 
 // Whether a completed response leaves its connection in the keep-alive pool is
@@ -702,3 +702,380 @@ for (const [label, earlyReply, body, first, onWindows] of earlyReplyCases) {
     });
   });
 }
+
+// A connection parked in the keep-alive pool is handed to the next request by
+// `HTTPThread::drain_events`, which runs before the event loop polls. So input
+// the origin wrote after its last response can still be unread in the kernel at
+// that moment, and `is_closed`/`is_shutdown`/`get_error` cannot see it. Writing
+// the next request onto that connection makes bun answer the request with bytes
+// that were already on the wire before it: an unsolicited response, or the
+// `HTTP/1.1 408 Request Timeout` plus `Connection: close` that many servers and
+// load balancers use to retire an idle keep-alive connection. The request was
+// never processed, yet `fetch()` resolves with 408 and the origin's timeout
+// body.
+//
+// Every round writes the injected event BEFORE it queues request 2, so the
+// bytes are in bun's kernel buffer before bun can write that request anywhere.
+// Two ballast requests to an origin that never answers are queued first, which
+// takes the HTTP thread out of `poll()`: without them the loop reads the
+// injected bytes on the idle connection and retires it through
+// `Handler::on_data`, which is the behaviour this check extends to the checkout
+// window. Whichever of the two gets there first, request 2 must be answered on
+// a connection the origin accepted later.
+const idleInjections: [label: string, bytes: string][] = [
+  [
+    "408 Request Timeout and Connection: close",
+    "HTTP/1.1 408 Request Timeout\r\nConnection: close\r\nContent-Length: 5\r\n\r\nT-OUT",
+  ],
+  ["a complete unsolicited response", "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nPWNED"],
+  ["one stray CRLF", "\r\n"],
+  ["64 bytes of garbage", Buffer.alloc(64, "!").toString()],
+  ["a FIN", ""],
+];
+// "Before" only holds when write() returns with the bytes already in the
+// peer's receive buffer. An AF_UNIX stream does that everywhere, and TCP
+// loopback does it on Linux and Windows 11. macOS hands a loopback segment to
+// the dlil input thread first, and Windows Server 2019 delivers it later too
+// while other loopback connections are busy. So it can land after the
+// checkout, which no client can tell from an answer: there only the
+// unix-socket pool is checked. fetch() does not pool unix sockets on Windows.
+// Both pools check a socket out through the same code.
+const lateLoopback = isMacOS || (isWindows && release() === "10.0.17763");
+const idleTransports = [...(lateLoopback ? [] : ["tcp"]), ...(isWindows ? [] : ["unix"])];
+
+test.concurrent.each(
+  idleTransports.flatMap(transport => idleInjections.map(([label, bytes]) => [transport, label, bytes])),
+)("%s: a pooled connection the origin answered with %s is not reused", async (transport, _label, bytes) => {
+  const rounds = 12;
+  using dir = tempDir("fetch-ka-idle", {});
+  // Subprocess so the keep-alive pool starts empty and so the origin shares a
+  // thread with the client: the injected write and the next fetch() are then
+  // ordered by the JS thread, not by a timer.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const bytes = ${JSON.stringify(bytes)};
+        const unix = ${JSON.stringify(transport === "unix" ? join(String(dir), "o.sock") : null)};
+        const misattributed = [];
+
+        // Accepts connections and never answers them.
+        using sink = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: { open() {}, data() {}, close() {}, error() {}, drain() {} },
+        });
+
+        let accepted = 0;
+        let idle = null;
+        using server = Bun.listen({
+          ...(unix ? { unix } : { hostname: "127.0.0.1", port: 0 }),
+          socket: {
+            open(socket) {
+              socket.data = { id: ++accepted, buf: "" };
+            },
+            data(socket, chunk) {
+              socket.data.buf += chunk.toString("latin1");
+              let end;
+              while ((end = socket.data.buf.indexOf("\\r\\n\\r\\n")) >= 0) {
+                const path = socket.data.buf.slice(0, end).split(" ")[1];
+                socket.data.buf = socket.data.buf.slice(end + 4);
+                const body = "c" + socket.data.id;
+                socket.write("HTTP/1.1 200 OK\\r\\nX-Conn: " + body + "\\r\\nContent-Length: " + body.length + "\\r\\n\\r\\n" + body);
+                if (path === "/warm") idle = socket;
+              }
+            },
+            close() {}, error() {}, drain() {},
+          },
+        });
+        const origin = unix ? "http://localhost" : "http://127.0.0.1:" + server.port;
+        const init = unix ? { unix } : {};
+
+        for (let round = 0; round < ${rounds}; round++) {
+          const warm = await fetch(origin + "/warm", init);
+          const warmConn = warm.headers.get("x-conn");
+          if ((await warm.text()) !== warmConn) throw new Error("warm body " + warmConn);
+
+          const ac = new AbortController();
+          const ballast = [0, 1].map(b =>
+            fetch("http://127.0.0.1:" + sink.port + "/" + round + "/" + b, { signal: ac.signal }).catch(() => {}),
+          );
+          if (bytes.length === 0) idle.end();
+          else idle.write(bytes);
+          const pending = fetch(origin + "/next", init);
+
+          let got;
+          try {
+            const next = await pending;
+            got = next.status + ":" + (await next.text());
+          } catch (e) {
+            got = "ERR:" + (e.code ?? e.name);
+          }
+          ac.abort();
+          await Promise.all(ballast);
+
+          // The parked connection was written to before this request existed,
+          // so the answer has to be an honest 200 from a connection the origin
+          // accepted later. Anything else means bun read the injected bytes as
+          // the answer.
+          const honest = /^200:c\\d+$/.test(got) && got !== "200:" + warmConn;
+          if (!honest) misattributed.push("round " + round + " -> " + got);
+        }
+        console.log(JSON.stringify({ misattributed }));
+        process.exit(0);
+        `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
+  expect({ result, exitCode }).toEqual({ result: { misattributed: [] }, exitCode: 0 });
+});
+
+test.skipIf(isWindows)("a full keep-alive pool evicts the longest-idle connection", async () => {
+  function makeServer() {
+    let connections = 0;
+    const srv = createServer(sock => {
+      connections++;
+      let buf = "";
+      sock.on("error", () => {});
+      sock.on("data", d => {
+        buf += d.toString("latin1");
+        let i: number;
+        while ((i = buf.indexOf("\r\n\r\n")) >= 0) {
+          buf = buf.slice(i + 4);
+          sock.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+        }
+      });
+    });
+    return { srv, connections: () => connections };
+  }
+  // One more distinct origin than the pool holds (64). Without eviction the
+  // last connection is closed instead of parked and its second request
+  // opens a new one.
+  const servers = Array.from({ length: 65 }, () => makeServer());
+  for (const s of servers) s.srv.listen(0, "127.0.0.1");
+  await Promise.all(servers.map(s => once(s.srv, "listening")));
+  try {
+    const urls = servers.map(s => `http://127.0.0.1:${(s.srv.address() as import("net").AddressInfo).port}/x`);
+    for (const url of urls) expect(await (await fetch(url)).text()).toBe("ok");
+    expect(await (await fetch(urls[64])).text()).toBe("ok");
+    expect(servers[64].connections()).toBe(1);
+  } finally {
+    for (const s of servers) s.srv.close();
+  }
+});
+
+// More concurrent requests to one origin than the pool holds (64). The origin
+// answers none of them until all have arrived, so each request gets its own
+// connection. When the responses complete, 64 connections are parked and the
+// rest are evicted. The origin must see each evicted one end with a clean EOF
+// ('end'), not ECONNRESET. Subprocess so the pool starts empty.
+test.concurrent.each(["http", "https"])(
+  "a full keep-alive pool closes the %s connections it evicts with FIN, not RST",
+  async scheme => {
+    const total = 80;
+    const evicted = total - 64;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+      import net from "node:net";
+      import tls from "node:tls";
+      const total = ${total};
+      const outcome = { connections: 0, ended: 0, reset: 0, other: [] };
+      const waiting = [];
+      const onConnection = sock => {
+        outcome.connections++;
+        let settled = false;
+        const settle = fn => { if (!settled) { settled = true; fn(); } };
+        sock.on("end", () => settle(() => outcome.ended++));
+        sock.on("error", err => settle(() => (err.code === "ECONNRESET" ? outcome.reset++ : outcome.other.push(String(err.code)))));
+        let buf = "";
+        sock.on("data", d => {
+          buf += d.toString("latin1");
+          let i;
+          while ((i = buf.indexOf("\\r\\n\\r\\n")) >= 0) {
+            buf = buf.slice(i + 4);
+            waiting.push(sock);
+            if (waiting.length === total) {
+              for (const s of waiting) s.write("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nok");
+            }
+          }
+        });
+      };
+      const server = ${scheme === "https" ? `tls.createServer(${JSON.stringify(tls)}, onConnection)` : "net.createServer(onConnection)"};
+      server.listen(0, "127.0.0.1");
+      await new Promise(r => server.on("listening", r));
+      const origin = "${scheme}://127.0.0.1:" + server.address().port;
+
+      const bodies = await Promise.all(
+        Array.from({ length: total }, (_, i) =>
+          fetch(origin + "/" + i, { tls: { rejectUnauthorized: false } }).then(r => r.text()),
+        ),
+      );
+      if (bodies.some(b => b !== "ok")) throw new Error("unexpected body");
+
+      // Every eviction has already issued its close by the time the last
+      // response resolved; wait for the origin side to observe each one.
+      while (outcome.ended + outcome.reset + outcome.other.length < ${evicted}) {
+        await new Promise(r => setImmediate(r));
+      }
+      console.log(JSON.stringify(outcome));
+      process.exit(0);
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
+    expect({ result, exitCode }).toEqual({
+      result: { connections: total, ended: evicted, reset: 0, other: [] },
+      exitCode: 0,
+    });
+  },
+);
+
+const NOT_A_TLS_RECORD = "not a tls record at all\r\n";
+// application_data, 32 bytes that no key authenticates.
+const UNAUTHENTICATED_RECORD = Buffer.concat([Buffer.from([0x17, 0x03, 0x03, 0x00, 0x20]), Buffer.alloc(32, 0x42)]);
+
+// Calls `onRequest` for every complete request that arrives on `socket`.
+function eachRequest(socket: Socket, onRequest: () => void) {
+  let buf = "";
+  socket.on("data", chunk => {
+    buf += chunk.toString("latin1");
+    let end: number;
+    while ((end = buf.indexOf("\r\n\r\n")) >= 0) {
+      const length = Number(/^content-length: (\d+)/im.exec(buf.slice(0, end))?.[1] ?? 0);
+      if (buf.length < end + 4 + length) return;
+      buf = buf.slice(end + 4 + length);
+      onRequest();
+    }
+  });
+}
+
+// An https origin that keeps its connections alive. It leaves the second request of its first connection, the one fetch
+// reuses, to `secondRequest`, which gets the TLS session and the TCP socket under it. `requests` is what arrived.
+async function originWithBrokenReuse(secondRequest: (session: TLSSocket, raw: Socket) => void) {
+  const secureContext = createSecureContext(tls);
+  const sockets: Socket[] = [];
+  const requests: string[] = [];
+  const server = createServer(raw => {
+    const connection = sockets.push(raw);
+    let count = 0;
+    const session = new TLSSocket(raw, { isServer: true, secureContext });
+    for (const socket of [raw, session]) socket.on("error", () => {});
+    eachRequest(session, () => {
+      requests.push(`connection ${connection} request ${++count}`);
+      if (connection === 1 && count === 2) return secondRequest(session, raw);
+      session.write("HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nContent-Length: 2\r\n\r\nok");
+    });
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  return {
+    url: `https://localhost:${(server.address() as AddressInfo).port}/`,
+    requests,
+    async [Symbol.asyncDispose]() {
+      for (const socket of sockets) socket.destroy();
+      await new Promise(closed => server.close(closed));
+    },
+  };
+}
+
+const bodyOrCode = (url: string, init: BunFetchRequestInit) =>
+  fetch(url, { tls: { ca: tls.cert }, ...init })
+    .then(response => response.text())
+    .catch(e => `${e.code}`);
+
+// A reused connection can be gone by the time the request reaches the origin, so a request that can be sent twice goes
+// out again on a new one when it ends before the response body, however it ends.
+test.concurrent.each<[string, Parameters<typeof originWithBrokenReuse>[0]]>([
+  ["bytes that are not a TLS record", (_session, raw) => raw.end(NOT_A_TLS_RECORD)],
+  ["a record that does not authenticate", (_session, raw) => raw.end(UNAUTHENTICATED_RECORD)],
+  [
+    "half a response head, then bytes that are not a TLS record",
+    (session, raw) => session.write("HTTP/1.1 200 OK\r\nContent-Le", () => raw.end(NOT_A_TLS_RECORD)),
+  ],
+  ["close_notify", session => session.end()],
+  ["FIN", (_session, raw) => raw.end()],
+  ["RST", (_session, raw) => raw.resetAndDestroy()],
+])("a GET that a reused https connection answers with %s is sent again", async (_label, secondRequest) => {
+  await using origin = await originWithBrokenReuse(secondRequest);
+  const bodies = [await bodyOrCode(origin.url, {}), await bodyOrCode(origin.url, {})];
+  expect({ bodies, requests: origin.requests }).toEqual({
+    bodies: ["ok", "ok"],
+    requests: ["connection 1 request 1", "connection 1 request 2", "connection 2 request 1"],
+  });
+});
+
+test.concurrent.each<[string, BunFetchRequestInit, Parameters<typeof originWithBrokenReuse>[0]]>([
+  ["a POST", { method: "POST", body: "x" }, (_session, raw) => raw.end(NOT_A_TLS_RECORD)],
+  [
+    "a GET whose response body has started",
+    {},
+    (session, raw) => session.write("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nok", () => raw.end(NOT_A_TLS_RECORD)),
+  ],
+])(
+  "%s on a reused https connection whose TLS session breaks is not sent again",
+  async (_label, init, secondRequest) => {
+    await using origin = await originWithBrokenReuse(secondRequest);
+    const bodies = [await bodyOrCode(origin.url, init), await bodyOrCode(origin.url, init)];
+    expect({ bodies, requests: origin.requests }).toEqual({
+      bodies: ["ok", "EPROTO"],
+      requests: ["connection 1 request 1", "connection 1 request 2"],
+    });
+  },
+);
+
+// The session with an https proxy is the one that breaks, under a CONNECT tunnel that fetch reuses.
+test.concurrent(
+  "a GET through a reused tunnel is sent again when the TLS session with the https proxy breaks",
+  async () => {
+    const secureContext = createSecureContext(tls);
+    const clients: Socket[] = [];
+    await using origin = await originWithBrokenReuse(() => clients[0].end(NOT_A_TLS_RECORD));
+    const proxy = createServer(raw => {
+      clients.push(raw);
+      const session = new TLSSocket(raw, { isServer: true, secureContext });
+      for (const socket of [raw, session]) socket.on("error", () => {});
+      let head = "";
+      session.on("data", function onHead(chunk) {
+        head += chunk.toString("latin1");
+        if (!head.includes("\r\n\r\n")) return;
+        session.off("data", onHead);
+        // fetch sends nothing more until it has the reply, so piping right after writing it misses no tunnel bytes.
+        const upstream = connect(Number(new URL(origin.url).port), "127.0.0.1", () => {
+          session.write("HTTP/1.1 200 Connection established\r\n\r\n");
+          session.pipe(upstream).pipe(session);
+        });
+        upstream.on("error", () => {});
+        raw.on("close", () => upstream.destroy());
+      });
+    });
+    proxy.listen(0, "127.0.0.1");
+    await once(proxy, "listening");
+    try {
+      const url = `https://localhost:${(proxy.address() as AddressInfo).port}`;
+      const init = { proxy: { url, respectNoProxy: false } };
+      const bodies = [await bodyOrCode(origin.url, init), await bodyOrCode(origin.url, init)];
+      expect({ bodies, requests: origin.requests, tunnels: clients.length }).toEqual({
+        bodies: ["ok", "ok"],
+        requests: ["connection 1 request 1", "connection 1 request 2", "connection 2 request 1"],
+        tunnels: 2,
+      });
+    } finally {
+      for (const client of clients) client.destroy();
+      await new Promise(closed => proxy.close(closed));
+    }
+  },
+);

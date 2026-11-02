@@ -342,6 +342,12 @@ impl<T: 'static, const Z: bool> Drop for CowSliceZ<T, Z> {
     }
 }
 
+impl<T: 'static, const Z: bool> AsRef<[T]> for CowSliceZ<T, Z> {
+    fn as_ref(&self) -> &[T] {
+        self.slice()
+    }
+}
+
 impl<const Z: bool> core::fmt::Display for CowSliceZ<u8, Z> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // `BStr` gives lossy Display over `[u8]` without UTF-8 validation.

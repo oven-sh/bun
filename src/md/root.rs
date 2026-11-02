@@ -18,27 +18,42 @@ pub struct RenderOptions {
 
 #[derive(Clone, Copy)]
 pub struct Options {
-    pub(crate) tables: bool,
-    pub(crate) strikethrough: bool,
-    pub(crate) tasklists: bool,
+    pub tables: bool,
+    pub strikethrough: bool,
+    pub tasklists: bool,
     pub permissive_autolinks: bool,
     pub permissive_url_autolinks: bool,
     pub permissive_www_autolinks: bool,
     pub permissive_email_autolinks: bool,
-    pub(crate) hard_soft_breaks: bool,
-    pub(crate) wiki_links: bool,
-    pub(crate) underline: bool,
-    pub(crate) latex_math: bool,
-    pub(crate) collapse_whitespace: bool,
-    pub(crate) permissive_atx_headers: bool,
-    pub(crate) no_indented_code_blocks: bool,
-    pub(crate) no_html_blocks: bool,
-    pub(crate) no_html_spans: bool,
+    pub hard_soft_breaks: bool,
+    pub wiki_links: bool,
+    pub underline: bool,
+    pub latex_math: bool,
+    pub collapse_whitespace: bool,
+    pub permissive_atx_headers: bool,
+    pub no_indented_code_blocks: bool,
+    pub no_html_blocks: bool,
+    pub no_html_spans: bool,
     /// GFM tag filter: replaces `<` with `&lt;` for disallowed HTML tags
     /// (title, textarea, style, xmp, iframe, noembed, noframes, script, plaintext).
-    pub(crate) tag_filter: bool,
+    pub tag_filter: bool,
     pub heading_ids: bool,
     pub autolink_headings: bool,
+    /// GFM: `[^label]: ..` is the definition of a footnote. Only for consumers
+    /// that look at `BLOCK_FOOTNOTE`.
+    pub footnotes: bool,
+    /// `$$` is a fence, like three backticks.
+    pub math_blocks: bool,
+    /// `:::name` starts a container that `:::` ends. Only for consumers that
+    /// look at `BLOCK_DIRECTIVE`.
+    pub directives: bool,
+    /// Strikethrough takes two tildes.
+    pub no_single_tilde: bool,
+    /// See `compat.rs`.
+    pub micromark: bool,
+    /// See `compat.rs`: what a parser that follows micromark need not do.
+    pub micromark_to_the_letter: bool,
+    pub mdx: bool,
 }
 
 impl Default for Options {
@@ -63,6 +78,13 @@ impl Default for Options {
             tag_filter: false,
             heading_ids: false,
             autolink_headings: false,
+            footnotes: false,
+            math_blocks: false,
+            directives: false,
+            no_single_tilde: false,
+            micromark: false,
+            micromark_to_the_letter: false,
+            mdx: false,
         }
     }
 }
@@ -89,6 +111,13 @@ impl Options {
         tag_filter: false,
         heading_ids: false,
         autolink_headings: false,
+        footnotes: false,
+        math_blocks: false,
+        directives: false,
+        no_single_tilde: false,
+        micromark: false,
+        micromark_to_the_letter: false,
+        mdx: false,
     };
 
     pub const TERMINAL: Self = Self {
@@ -120,6 +149,13 @@ impl Options {
             no_indented_code_blocks: self.no_indented_code_blocks,
             no_html_blocks: self.no_html_blocks,
             no_html_spans: self.no_html_spans,
+            footnotes: self.footnotes,
+            math_blocks: self.math_blocks,
+            directives: self.directives,
+            no_single_tilde: self.no_single_tilde,
+            micromark: self.micromark,
+            micromark_to_the_letter: self.micromark_to_the_letter,
+            mdx: self.mdx,
         }
     }
 
@@ -130,60 +166,6 @@ impl Options {
             autolink_headings: self.autolink_headings,
         }
     }
-
-    /// `(snake_case, camelCase, setter)` for every bool field — used by
-    /// `Bun.markdown`'s option parser.
-    pub const BOOL_FIELD_SETTERS: &'static [(
-        &'static str,
-        &'static str,
-        fn(&mut Options, bool),
-    )] = &[
-        ("tables", "tables", |o, v| o.tables = v),
-        ("strikethrough", "strikethrough", |o, v| o.strikethrough = v),
-        ("tasklists", "tasklists", |o, v| o.tasklists = v),
-        ("permissive_autolinks", "permissiveAutolinks", |o, v| {
-            o.permissive_autolinks = v
-        }),
-        (
-            "permissive_url_autolinks",
-            "permissiveUrlAutolinks",
-            |o, v| o.permissive_url_autolinks = v,
-        ),
-        (
-            "permissive_www_autolinks",
-            "permissiveWwwAutolinks",
-            |o, v| o.permissive_www_autolinks = v,
-        ),
-        (
-            "permissive_email_autolinks",
-            "permissiveEmailAutolinks",
-            |o, v| o.permissive_email_autolinks = v,
-        ),
-        ("hard_soft_breaks", "hardSoftBreaks", |o, v| {
-            o.hard_soft_breaks = v
-        }),
-        ("wiki_links", "wikiLinks", |o, v| o.wiki_links = v),
-        ("underline", "underline", |o, v| o.underline = v),
-        ("latex_math", "latexMath", |o, v| o.latex_math = v),
-        ("collapse_whitespace", "collapseWhitespace", |o, v| {
-            o.collapse_whitespace = v
-        }),
-        ("permissive_atx_headers", "permissiveAtxHeaders", |o, v| {
-            o.permissive_atx_headers = v
-        }),
-        ("no_indented_code_blocks", "noIndentedCodeBlocks", |o, v| {
-            o.no_indented_code_blocks = v
-        }),
-        ("no_html_blocks", "noHtmlBlocks", |o, v| {
-            o.no_html_blocks = v
-        }),
-        ("no_html_spans", "noHtmlSpans", |o, v| o.no_html_spans = v),
-        ("tag_filter", "tagFilter", |o, v| o.tag_filter = v),
-        ("heading_ids", "headingIds", |o, v| o.heading_ids = v),
-        ("autolink_headings", "autolinkHeadings", |o, v| {
-            o.autolink_headings = v
-        }),
-    ];
 }
 
 pub fn render_to_html(text: &[u8]) -> Result<Box<[u8]>, parser::ParserError> {
@@ -208,6 +190,23 @@ pub fn render_with_renderer<'a>(
         options.to_flags(),
         options.to_render_options(),
         renderer,
+        None,
+    )
+}
+
+/// The same with syntax of the consumer's own.
+pub fn render_with_extensions<'a>(
+    text: &'a [u8],
+    options: Options,
+    renderer: Renderer<'a>,
+    extensions: crate::types::Extensions<'a>,
+) -> Result<(), parser::ParserError> {
+    parser::render_with_renderer(
+        text,
+        options.to_flags(),
+        options.to_render_options(),
+        renderer,
+        Some(extensions),
     )
 }
 

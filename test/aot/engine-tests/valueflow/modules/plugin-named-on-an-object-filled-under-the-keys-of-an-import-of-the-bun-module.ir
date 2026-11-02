@@ -1,0 +1,21 @@
+# import bun from "bun"; copy = {}; copy[globalThis.key] = bun[globalThis.key]; copy.plugin(globalThis.options)
+# The import names the module, so a read that names plugin on what was filled under its keys finds Bun.plugin.
+# RUN: valueflow-solve unseen
+# CHECK: unseen RunsUnseenCode BunPlugin f0:v8
+
+module m0 path="/app/main.js" displayPath="main.js" kind=SourceText body=f0 requests=[{target=m1 completes=true}]
+module m1 path="bun" displayPath="bun" kind=Runtime exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=Bun
+entry module=m0
+layout L0 module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="key" [isFreeName]
+    v2 = PropGet v0 key="options" [isFreeName]
+    v3 = Builtin builtin=Bun
+    v4 = ElemGet v3, v1
+    v5 = NewObject layout=L0
+    ElemSet v5, v1, v4 mode=Strict
+    v7 = PropGet v5 key="plugin"
+    v8 = Call v7, v5, v2
+    Return v8
+}

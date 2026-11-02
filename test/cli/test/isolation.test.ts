@@ -286,33 +286,49 @@ describe.concurrent("bun test --isolate", () => {
     }
   });
 
-  test.each(["--isolate", "--isolate=modules", "--parallel=2", "--parallel=2 --isolate=modules"])(
+  // Windows counts a parallel worker's IPC pipe as work, so only serial runs
+  // can abandon this timeout-free hook when the event loop becomes empty.
+  test.each(
+    ["--isolate", "--isolate=modules", "--parallel=2", "--parallel=2 --isolate=modules"].filter(
+      mode => !isWindows || !mode.startsWith("--parallel"),
+    ),
+  )(
     "%s does not resume an abandoned hook during teardown",
     async mode => {
       using dir = tempDir("isolate-abandoned-hook", {
+        "node_modules/happy-dom/package.json": JSON.stringify({ name: "happy-dom", main: "index.js" }),
+        "node_modules/happy-dom/index.js": `
+          exports.Window = class Window {
+            document = {};
+            happyDOM = { async abort() {} };
+            close() {}
+          };
+        `,
         "a-owner.test.ts": `
           import { afterAll, afterEach, test } from "bun:test";
           import { appendFileSync } from "node:fs";
           const record = message => appendFileSync("events.txt", message + "\\n");
           const pendingHook = Promise.withResolvers();
-          const accepted = Promise.withResolvers();
-          const listener = Bun.listen({
-            hostname: "127.0.0.1", port: 0,
-            socket: {
-              open(socket) { socket.unref(); accepted.resolve(); },
-              data() {},
-              close() {
-                record("close owner");
-                pendingHook.resolve();
+          // Resources appear only after the empty event loop has abandoned the hook.
+          happyDOM.abort = async () => {
+            record("environment teardown");
+            const accepted = Promise.withResolvers();
+            const listener = Bun.listen({
+              hostname: "127.0.0.1", port: 0,
+              socket: {
+                open() { accepted.resolve(); },
+                data() {},
+                close() {
+                  record("close owner");
+                  pendingHook.resolve();
+                },
               },
-            },
-          });
-          const socket = await Bun.connect({
-            hostname: "127.0.0.1", port: listener.port, socket: { data() {} },
-          });
-          await accepted.promise;
-          socket.unref();
-          listener.unref();
+            });
+            await Bun.connect({
+              hostname: "127.0.0.1", port: listener.port, socket: { data() {} },
+            });
+            await accepted.promise;
+          };
           afterEach(() => pendingHook.promise, 0);
           afterAll(() => record("unexpected afterAll"));
           test("first", () => record("first owner"));
@@ -326,7 +342,7 @@ describe.concurrent("bun test --isolate", () => {
       });
       const { stderr, exitCode } = await runTests(
         String(dir),
-        mode.split(" "),
+        [...mode.split(" "), "--environment=happy-dom"],
         ["./a-owner.test.ts", "./b-observer.test.ts"],
         { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
       );
@@ -334,7 +350,9 @@ describe.concurrent("bun test --isolate", () => {
       expect(stderr).toContain("A test or hook with no timeout never settled");
       const events = fs.readFileSync(join(String(dir), "events.txt"), "utf8").trim().split("\n");
       expect(events.filter(event => event === "first owner")).toHaveLength(1);
+      expect(events.filter(event => event === "environment teardown")).toHaveLength(1);
       expect(events.filter(event => event === "close owner")).toHaveLength(1);
+      expect(events.indexOf("environment teardown")).toBeLessThan(events.indexOf("close owner"));
       expect(events.filter(event => event === "observer")).toHaveLength(1);
       expect(events).not.toContain("unexpected test");
       expect(events).not.toContain("unexpected afterAll");

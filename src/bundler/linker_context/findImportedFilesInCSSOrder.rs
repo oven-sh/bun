@@ -108,6 +108,21 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             BStr::new(&sources[source_index.get() as usize].path.pretty)
         }
 
+        fn push_entry(
+            &mut self,
+            kind: CssImportOrderKind<'a>,
+            wrapping_conditions: &Vec<ImportConditions>,
+        ) {
+            self.order.push(CssImportOrder {
+                kind,
+                // SAFETY: arena-backed `Vec` header; `CssImportOrder` suppresses
+                // `Drop` on it (see the note at `bitwise_copy`), so the aliased
+                // buffer is freed once with the arena.
+                conditions: unsafe { bitwise_copy(wrapping_conditions) },
+                condition_import_records: Vec::new(),
+            });
+        }
+
         /// Returns false if the traversal stopped because the chain is too deep.
         fn visit_import(
             &mut self,
@@ -152,12 +167,18 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             //
             // So that's what we do here. See "StyleRuleImport::requestStyleSheet()" in
             // WebKit for more information.
+            //
+            // An import that is not loaded still adds its layer to the layer order.
             for visited_source_index in self.visited.slice() {
                 if visited_source_index.get() == source_index.get() {
                     debug!(
                         "Skip file: {}={}",
                         source_index.get(),
                         self.input_file_pretty(source_index),
+                    );
+                    self.push_entry(
+                        CssImportOrderKind::Layers(Layers::Owned(Vec::new())),
+                        wrapping_conditions,
                     );
                     return;
                 }
@@ -172,16 +193,22 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             };
             let top_level_rules = &repr.rules;
 
-            // TODO: should we even do this? @import rules have to be the first rules in the stylesheet, why even allow pre-import layers?
-            // Any pre-import layers come first
-            // if len(repr.AST.LayersPreImport) > 0 {
-            //     order = append(order, cssImportOrder{
-            //         kind:                   cssImportLayers,
-            //         layers:                 repr.AST.LayersPreImport,
-            //         conditions:             wrappingConditions,
-            //         conditionImportRecords: wrappingImportRecords,
-            //     })
-            // }
+            // Any pre-import layers come first. In an anonymous layer each entry
+            // would be a layer of its own, so the statements stay in the file.
+            if !repr.layers_pre_import.is_empty()
+                && !wrapping_conditions
+                    .slice()
+                    .iter()
+                    .any(ImportConditions::has_anonymous_layer)
+            {
+                // See the `LayerName` note where the duplicate pass borrows `layer_names`.
+                let layers = core::ptr::NonNull::from(&repr.layers_pre_import)
+                    .cast::<Vec<LayerName>>();
+                self.push_entry(
+                    CssImportOrderKind::Layers(Layers::borrow(layers)),
+                    wrapping_conditions,
+                );
+            }
 
             // `visited.pop()` happens at the end of this function; the early
             // return above intentionally skips it.
@@ -308,18 +335,14 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                 );
             }
             // Accumulate imports in depth-first postorder
-            self.order.push(CssImportOrder {
-                // `crate::Index` (= `bun_ast::Index`) and the
-                // `bun_ast::Index` carried by `CssImportOrderKind::SourceIndex`
-                // are the same underlying index type;
-                // both are `#[repr(transparent)]` over `u32`.
-                kind: CssImportOrderKind::SourceIndex(AstIndex(source_index.get())),
-                // SAFETY: arena-backed `Vec` header; `CssImportOrder` suppresses
-                // `Drop` on it (see the note at `bitwise_copy`), so the aliased
-                // buffer is freed once with the arena.
-                conditions: unsafe { bitwise_copy(wrapping_conditions) },
-                condition_import_records: Vec::new(),
-            });
+            // `crate::Index` (= `bun_ast::Index`) and the
+            // `bun_ast::Index` carried by `CssImportOrderKind::SourceIndex`
+            // are the same underlying index type;
+            // both are `#[repr(transparent)]` over `u32`.
+            self.push_entry(
+                CssImportOrderKind::SourceIndex(AstIndex(source_index.get())),
+                wrapping_conditions,
+            );
 
             let _ = self.visited.pop();
         }
@@ -372,9 +395,15 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
     // evaluation.
     if has_external_import {
         // Pass 1: Pull out leading "@layer" and external "@import" rules
+        let is_statement = |entry: &CssImportOrder| match &entry.kind {
+            CssImportOrderKind::Layers(layers) => {
+                prints_as_layer_statement(layers.inner().is_empty(), entry.conditions.slice())
+            }
+            _ => false,
+        };
         let mut is_at_layer_prefix = true;
         for entry in order.slice() {
-            if (matches!(entry.kind, CssImportOrderKind::Layers(_)) && is_at_layer_prefix)
+            if (is_statement(entry) && is_at_layer_prefix)
                 || matches!(entry.kind, CssImportOrderKind::ExternalPath(_))
             {
                 // SAFETY: `entry` is moved back into `order` via
@@ -382,15 +411,13 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                 // each `CssImportOrder` value is dropped at most once.
                 wip_order.push(unsafe { bitwise_copy(entry) });
             }
-            if !matches!(entry.kind, CssImportOrderKind::Layers(_)) {
-                is_at_layer_prefix = false;
-            }
+            is_at_layer_prefix &= is_statement(entry);
         }
 
         // Pass 2: Append everything that we didn't pull out in pass 1
         is_at_layer_prefix = true;
         for entry in order.slice() {
-            if (!matches!(entry.kind, CssImportOrderKind::Layers(_)) || !is_at_layer_prefix)
+            if (!is_statement(entry) || !is_at_layer_prefix)
                 && !matches!(entry.kind, CssImportOrderKind::ExternalPath(_))
             {
                 // SAFETY: `entry` is moved back into `order` via
@@ -398,9 +425,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                 // each `CssImportOrder` value is dropped at most once.
                 wip_order.push(unsafe { bitwise_copy(entry) });
             }
-            if !matches!(entry.kind, CssImportOrderKind::Layers(_)) {
-                is_at_layer_prefix = false;
-            }
+            is_at_layer_prefix &= is_statement(entry);
         }
 
         memcpy_and_reset(&mut order, &mut wip_order);
@@ -467,7 +492,11 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                         if is_conditional_import_redundant(&entry.conditions, later) {
                             // Don't remove duplicates entirely. The import conditions may
                             // still introduce layers to the layer order. Represent this as a
-                            // file with an empty layer list.
+                            // file with an empty layer list, or keep the "@import" where
+                            // nothing else can do that among the hoisted imports.
+                            if !can_mask_external_import(&order.slice()[..i as usize], entry) {
+                                break;
+                            }
                             order.mut_(i as usize).kind =
                                 CssImportOrderKind::Layers(Layers::Owned(Vec::new()));
                             continue 'next_backward;
@@ -612,21 +641,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             let mut index: usize = 0;
             while index < layer_duplicates.len() as usize {
                 let dup_layers: &[LayerName] = layer_duplicates.at(index).layers.slice();
-                let both_equal = 'both_equal: {
-                    if layers_key.len() != dup_layers.len() {
-                        break 'both_equal false;
-                    }
-
-                    for (a, b) in layers_key.iter().zip(dup_layers) {
-                        if !a.eql(b) {
-                            break 'both_equal false;
-                        }
-                    }
-
-                    break 'both_equal true;
-                };
-
-                if both_equal {
+                if layer_lists_are_equal(layers_key, dup_layers) {
                     break;
                 }
                 index += 1;
@@ -644,6 +659,17 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             while j != 0 {
                 j -= 1;
                 let duplicate_index = duplicates[j];
+                // A file may have these names under "@media", which is no proof
+                // that it declares them for this list.
+                if !layers_key.is_empty()
+                    && matches!(entry.kind, CssImportOrderKind::Layers(_))
+                    && !matches!(
+                        wip_order.at(duplicate_index as usize).kind,
+                        CssImportOrderKind::Layers(_)
+                    )
+                {
+                    continue;
+                }
                 if is_conditional_import_redundant(
                     &entry.conditions,
                     &wip_order.at(duplicate_index as usize).conditions,
@@ -674,7 +700,9 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                             && duplicate_index as usize == wip_order.len() - 1
                         {
                             let other = wip_order.at(duplicate_index as usize);
-                            if matches!(other.kind, CssImportOrderKind::Layers(_))
+                            if let CssImportOrderKind::Layers(layers) = &other.kind
+                                && (layers_key.is_empty()
+                                    || core::ptr::eq(layers_key, layers.inner().slice()))
                                 && import_conditions_are_equal(
                                     entry.conditions.slice_const(),
                                     other.conditions.slice_const(),
@@ -838,6 +866,61 @@ fn shallow_clone_records<'a>(list: &Vec<ImportRecord<'a>>) -> Vec<ImportRecord<'
     out
 }
 
+fn layer_lists_are_equal(a: &[LayerName], b: &[LayerName]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.eql(b))
+}
+
+/// Whether two import orders print the same CSS. `CssImportOrder::hash` is not enough to tell.
+pub(crate) fn css_import_orders_are_equal(a: &[CssImportOrder], b: &[CssImportOrder]) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b).all(|(a, b)| {
+            import_conditions_are_equal(a.conditions.slice_const(), b.conditions.slice_const())
+                && match (&a.kind, &b.kind) {
+                    (CssImportOrderKind::Layers(a), CssImportOrderKind::Layers(b)) => {
+                        layer_lists_are_equal(a.inner().slice(), b.inner().slice())
+                    }
+                    (CssImportOrderKind::ExternalPath(a), CssImportOrderKind::ExternalPath(b)) => {
+                        a.text == b.text
+                    }
+                    (CssImportOrderKind::SourceIndex(a), CssImportOrderKind::SourceIndex(b)) => {
+                        a.get() == b.get()
+                    }
+                    _ => false,
+                }
+        })
+}
+
+/// Whether a list of layer names under these conditions prints only "@layer"
+/// statements, which may precede an "@import".
+fn prints_as_layer_statement(no_names: bool, conditions: &[ImportConditions]) -> bool {
+    match conditions {
+        [] => true,
+        [only] => {
+            no_names
+                && only.layer.as_ref().is_some_and(|layer| layer.v.is_some())
+                && only.supports.is_none()
+                && only.media.media_queries.is_empty()
+        }
+        _ => false,
+    }
+}
+
+/// Whether an external "@import" can give way to a later copy. If its conditions
+/// have a layer, something at its place must still declare that layer. An earlier
+/// copy can, and so can a statement ahead of all the hoisted imports.
+fn can_mask_external_import(earlier: &[CssImportOrder], import: &CssImportOrder) -> bool {
+    let conditions = import.conditions.slice();
+    if !conditions.iter().any(|c| c.layer.is_some()) {
+        return true;
+    }
+    let is_external = |e: &CssImportOrder| matches!(e.kind, CssImportOrderKind::ExternalPath(_));
+    let is_copy = |e: &CssImportOrder| {
+        css_import_orders_are_equal(core::slice::from_ref(e), core::slice::from_ref(import))
+    };
+    (prints_as_layer_statement(true, conditions) && !earlier.iter().any(is_external))
+        || earlier.iter().any(is_copy)
+}
+
 fn import_conditions_are_equal(a: &[ImportConditions], b: &[ImportConditions]) -> bool {
     if a.len() != b.len() {
         return false;
@@ -882,8 +965,8 @@ fn import_conditions_are_equal(a: &[ImportConditions], b: &[ImportConditions]) -
 /// For "lib.css", the entry with the conditions [supports(display: flex)] should
 /// make the entry with the conditions [supports(display: flex), screen] redundant.
 ///
-/// Note that all of this deliberately ignores the existence of "@layer" because
-/// that is handled separately. All of this is only for handling unlayered styles.
+/// A "@layer" condition that only the earlier one has means the two apply in
+/// different layers, so neither can stand for the other.
 fn is_conditional_import_redundant(
     earlier: &Vec<ImportConditions>,
     later: &Vec<ImportConditions>,
@@ -940,7 +1023,9 @@ fn is_conditional_import_redundant(
         return false;
     }
 
-    true
+    earlier.slice()[later.len()..]
+        .iter()
+        .all(|conditions| conditions.layer.is_none())
 }
 
 #[derive(Clone, Copy)]

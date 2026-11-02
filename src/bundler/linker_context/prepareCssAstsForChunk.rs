@@ -351,13 +351,26 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         // the tail).
                         //
                         // Regression: #28914
+                        //
+                        // The statements ahead of the first "@import" have an entry
+                        // of their own in the order, except in an anonymous layer.
                         let original_rules = ast.rules.v.as_slice();
+                        let keep_leading_layers = ast.layers_pre_import.is_empty()
+                            || entry
+                                .conditions
+                                .slice()
+                                .iter()
+                                .any(ImportConditions::has_anonymous_layer);
+                        let mut keep_layers = keep_leading_layers;
                         let mut layer_count: usize = 0;
                         let mut prefix_end: usize = original_rules.len();
                         'prefix_scan: for (idx, rule) in original_rules.iter().enumerate() {
                             match rule {
-                                BundlerCssRule::Import(_) | BundlerCssRule::Ignored => {}
-                                BundlerCssRule::LayerStatement(_) => layer_count += 1,
+                                BundlerCssRule::Import(_) => keep_layers = true,
+                                BundlerCssRule::Ignored => {}
+                                BundlerCssRule::LayerStatement(_) => {
+                                    layer_count += usize::from(keep_layers);
+                                }
                                 _ => {
                                     prefix_end = idx;
                                     break 'prefix_scan;
@@ -379,8 +392,11 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                                     layer_count + (original_rules.len() - prefix_end),
                                     bump,
                                 );
+                            keep_layers = keep_leading_layers;
                             for rule in &original_rules[0..prefix_end] {
-                                if matches!(rule, BundlerCssRule::LayerStatement(_)) {
+                                keep_layers |= matches!(rule, BundlerCssRule::Import(_));
+                                if keep_layers && matches!(rule, BundlerCssRule::LayerStatement(_))
+                                {
                                     // SAFETY: bitwise duplicate of a rule. The copy goes into
                                     // an `arena_rule_list` slab installed in `css_chunk.asts[i]`,
                                     // whose elements never run `Drop` (see `arena_rule_list` /

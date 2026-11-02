@@ -3382,10 +3382,6 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         argv1: JSValue,
     ) -> JSValue;
-    safe fn JSC__JSInternalPromise__resolvedPromise(
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) -> *mut JSInternalPromise;
 }
 
 fn get_origin_timestamp() -> u64 {
@@ -3855,11 +3851,9 @@ impl VirtualMachine {
                                 if let Some(stored) = self.pending_internal_promise() {
                                     return Ok(stored);
                                 }
-                                // `Promise.resolve(ret)` reads `ret.constructor` / `ret.then`,
-                                // which may throw.
-                                jsc::call_check_slow(global_ref, || {
-                                    JSC__JSInternalPromise__resolvedPromise(global_ref, ret)
-                                })?
+                                core::ptr::from_mut(crate::JSPromise::promise_resolve(
+                                    global_ref, ret,
+                                )?)
                             }
                             Err(err) => {
                                 let rejected =

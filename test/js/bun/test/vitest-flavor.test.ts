@@ -2219,6 +2219,14 @@ describe.concurrent("aroundEach and aroundAll", () => {
           aroundEach(runTest => { runTest(); console.log("returned"); });
           test("test", () => console.log("test"));
         });
+        describe("then() is called one microtask turn after the hook returns, and a second thenable is followed", () => {
+          const order = [];
+          aroundEach(runTest => {
+            Promise.resolve().then(() => order.push("turn 1")).then(() => order.push("turn 2"));
+            return { then(resolve) { order.push("then()"); resolve({ then(resolve, reject) { runTest().then(resolve, reject); } }); } };
+          });
+          test("test", () => console.log(order.join(", ")));
+        });
       `,
     });
     expect({ log, results, exitCode }).toEqual({
@@ -2231,12 +2239,47 @@ describe.concurrent("aroundEach and aroundAll", () => {
         "the thenable resolves",
         "returned",
         "test",
+        "turn 1, then(), turn 2",
       ],
       results: [
         "(pass) thenable > test",
         "(pass) thenable > next",
         "(pass) returns right after it calls runTest() > test",
+        "(pass) then() is called one microtask turn after the hook returns, and a second thenable is followed > test",
       ],
+      exitCode: 0,
+    });
+  });
+
+  test("the promise of a hook is awaited without a then() call", async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, describe, aroundEach, aroundAll, afterAll } from "vitest";
+        const then = Promise.prototype.then;
+        let thenCalls = 0;
+        const replacements = {
+          "then is not callable": undefined,
+          "then is replaced": function (...reactions) { thenCalls++; return then.apply(this, reactions); },
+        };
+        // Promise.prototype.then is replaced while the runner attaches to what the hook returned.
+        function whileReplaced(name, returned) {
+          Promise.prototype.then = replacements[name];
+          queueMicrotask(() => { Promise.prototype.then = then; });
+          return returned;
+        }
+        for (const name in replacements) {
+          describe(name, () => {
+            aroundAll(runSuite => whileReplaced(name, (async () => { await null; await runSuite(); })()));
+            aroundEach(runTest => whileReplaced(name, (async () => { await null; await runTest(); })()));
+            test("test", () => {});
+          });
+        }
+        afterAll(() => console.log("then() calls:", thenCalls));
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: ["then() calls: 0"],
+      results: ["(pass) then is not callable > test", "(pass) then is replaced > test"],
       exitCode: 0,
     });
   });
@@ -4626,6 +4669,51 @@ describe.concurrent("test.extend()", () => {
     });
   });
 
+  test("the promise of a fixture function is awaited without a then() call", async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test as base, expect, afterAll } from "vitest";
+        const then = Promise.prototype.then;
+        let thenCalls = 0;
+        const replacements = {
+          "then is not callable": undefined,
+          "then is replaced": function (...reactions) { thenCalls++; return then.apply(this, reactions); },
+        };
+        // Promise.prototype.then is replaced while the runner attaches to what the fixture function returned.
+        function whileReplaced(task, returned) {
+          Promise.prototype.then = replacements[task.name];
+          queueMicrotask(() => { Promise.prototype.then = then; });
+          return returned;
+        }
+        const test = base
+          .extend({ used: ({ task }, use) => whileReplaced(task, (async () => { await null; await use("used"); })()) })
+          .extend("built", ({ task }, {}) => whileReplaced(task, { then(resolve) { resolve("built"); } }));
+        for (const name in replacements) test(name, ({ used, built }) => { expect([used, built]).toEqual(["used", "built"]); });
+        afterAll(() => console.log("then() calls:", thenCalls));
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: ["then() calls: 0"],
+      results: ["(pass) then is not callable", "(pass) then is replaced"],
+      exitCode: 0,
+    });
+  });
+
+  test("a promise whose own then is not callable is awaited or passed on, as await does", async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test as base } from "vitest";
+        class Plain extends Promise {}
+        const withoutThen = promise => Object.assign(promise, { then: 1 });
+        const test = base
+          .extend("native", ({}, {}) => withoutThen(Promise.resolve("awaited")))
+          .extend("subclass", ({}, {}) => withoutThen(Plain.resolve("not awaited")));
+        test("fixtures", ({ native, subclass }) => { console.log(native, subclass instanceof Plain); });
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({ log: ["awaited true"], results: ["(pass) fixtures"], exitCode: 0 });
+  });
+
   test("a fixture that fails", async () => {
     const { log, results, errors, stderr, exitCode } = await runTests({
       "a.test.js": `
@@ -5023,6 +5111,32 @@ describe.concurrent("test.extend()", () => {
         "the next file",
       ],
       results: ["(fail) early", "(fail) perTest", "(fail) perFile", "(pass) a later test", "(pass) the next file"],
+      exitCode: 1,
+    });
+  });
+
+  test("a fixture function that settles after its test has ended runs its cleanup right away", async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test as base } from "vitest";
+        for (const event of ["unhandledRejection", "uncaughtException"]) process.on(event, error => console.log(event + ":", error.message));
+        const gate = Promise.withResolvers();
+        const late = cleanup => async ({}, { onCleanup }) => { onCleanup(cleanup); await gate.promise; };
+        const test = base
+          .extend("throws", late(() => { throw new Error("cleanup throws"); }))
+          .extend("rejects", late(async () => { throw new Error("cleanup rejects"); }));
+        test("throws", { timeout: 1 }, ({ throws }) => console.log("unreachable"));
+        test("rejects", { timeout: 1 }, ({ rejects }) => console.log("unreachable"));
+        test("a later test", async () => {
+          gate.resolve();
+          await new Promise(resolve => setImmediate(resolve));
+        });
+      `,
+    });
+    // The cleanup runs inside the reaction of the function's promise, so what it throws is thrown out of a job.
+    expect({ log, results, exitCode }).toEqual({
+      log: ["uncaughtException: cleanup throws", "unhandledRejection: cleanup rejects"],
+      results: ["(fail) throws", "(fail) rejects", "(pass) a later test"],
       exitCode: 1,
     });
   });

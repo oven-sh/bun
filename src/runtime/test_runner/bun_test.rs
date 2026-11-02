@@ -1535,6 +1535,17 @@ impl BunTest {
         Ok(if promise.status() == PromiseStatus::Fulfilled { returned } else { promise.to_js() })
     }
 
+    /// What `await returned` waits on: a native promise as is, any other thenable through a new promise that follows its `then()`. `None`: `await` gives `returned` itself.
+    pub(crate) fn awaited_promise(global_this: &JSGlobalObject, returned: JSValue) -> JsResult<Option<JSValue>> {
+        if !returned.is_object() {
+            return Ok(None);
+        }
+        let promise = bun_jsc::JSPromise::promise_resolve(global_this, returned)?;
+        let awaited = promise.to_js();
+        // A new promise that is fulfilled at once: `returned` has no callable `then`.
+        Ok((awaited == returned || promise.status() != PromiseStatus::Fulfilled).then_some(awaited))
+    }
+
     /// Vitest runs a function returned by `beforeEach` / `beforeAll` after the matching after-hooks.
     fn adopt_teardown(&mut self, data: &RefDataValue, returned: JSValue) {
         if !returned.is_callable() {

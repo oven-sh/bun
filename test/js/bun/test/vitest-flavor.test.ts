@@ -2595,6 +2595,105 @@ test.concurrent("a function that a thenable from beforeEach or beforeAll resolve
   });
 });
 
+describe.concurrent("a value that a test returns", () => {
+  test("then() is called one microtask turn after the callback returns, as with await", async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, describe, beforeAll, beforeEach, afterEach, afterAll, onTestFinished } from "bun:test";
+        // The shape of React's act(): it warns a caller that has not called then() two microtask turns after it returned.
+        const act = name => {
+          let awaited = false;
+          queueMicrotask(() => queueMicrotask(() => { if (!awaited) console.log(name + ": then() was not called in time"); }));
+          return { then(resolve) { awaited = true; setImmediate(resolve); } };
+        };
+        beforeAll(() => act("beforeAll"));
+        beforeEach(() => act("beforeEach"));
+        afterEach(() => act("afterEach"));
+        afterAll(() => act("afterAll"));
+        describe("block", () => act("describe"));
+        test("a thenable", () => { onTestFinished(() => act("onTestFinished")); return act("test"); });
+        const order = [];
+        const turns = () => void Promise.resolve().then(() => order.push("turn 1")).then(() => order.push("turn 2"));
+        test("the turn of then() of a thenable", () => { turns(); return { then(resolve) { order.push("then()"); resolve(); } }; });
+        afterAll(() => console.log(order.join(", ")));
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: ["turn 1, then(), turn 2"],
+      results: ["(pass) a thenable", "(pass) the turn of then() of a thenable"],
+      exitCode: 0,
+    });
+  });
+
+  test("a rejection that then() handles or leaves belongs to the callback that returned the value", async () => {
+    // then() hands its callbacks to a promise that was already rejected when the callback returned.
+    const forwardsRejected = `() => {
+      const rejected = Promise.reject(new Error("forwarded rejection"));
+      return { then(resolve, reject) { rejected.then(resolve, reject); } };
+    }`;
+    const [fails, expectedToFail, leaves] = await Promise.all([
+      runTests({ "a.test.js": `import { test } from "bun:test"; test("test", ${forwardsRejected});` }),
+      runTests({ "a.test.js": `import { test } from "bun:test"; test.failing("test", ${forwardsRejected});` }),
+      runTests({
+        "a.test.js": `
+          import { test, describe, afterEach } from "bun:test";
+          // then() leaves a rejection that nothing handles, and resolves.
+          const leaves = message => ({ then(resolve) { Promise.reject(new Error(message)); resolve(); } });
+          test("then() leaves a rejection", () => leaves("left by the test"));
+          test("the next test", () => {}, { retry: 2 });
+          describe("a hook", () => {
+            afterEach(() => leaves("left by afterEach"));
+            test("test", () => {});
+          });
+          test("the test after the hook", () => {}, { retry: 2 });
+        `,
+      }),
+    ]);
+    const outcome = ({ results, errors, exitCode }: Awaited<ReturnType<typeof runTests>>) => ({
+      results,
+      errors,
+      exitCode,
+    });
+    expect({ fails: outcome(fails), expectedToFail: outcome(expectedToFail), leaves: outcome(leaves) }).toEqual({
+      fails: { results: ["(fail) test"], errors: ["error: forwarded rejection"], exitCode: 1 },
+      expectedToFail: { results: ["(pass) test"], errors: [], exitCode: 0 },
+      leaves: {
+        results: [
+          "(fail) then() leaves a rejection",
+          "(pass) the next test",
+          "(pass) a hook > test",
+          "(pass) the test after the hook",
+        ],
+        errors: ["error: left by the test", "error: left by afterEach"],
+        exitCode: 1,
+      },
+    });
+  });
+
+  test("then() runs in the module graph of its file with --isolate=modules", async () => {
+    const { results, exitCode } = await runTests(
+      {
+        "a.test.js": `
+          import { test, beforeAll, describe, expect } from "bun:test";
+          const inGraph = [];
+          const thenable = name => ({ then(resolve) { inGraph.push([name, Bun.ModuleGraph.current !== undefined]); resolve(); } });
+          beforeAll(() => thenable("beforeAll"));
+          describe("block", () => { test("inside", () => {}); return thenable("describe"); });
+          test("a thenable", () => thenable("test"));
+          test("each then() ran in the graph of the file", () => {
+            expect(inGraph).toEqual([["describe", true], ["beforeAll", true], ["test", true]]);
+          });
+        `,
+      },
+      ["--isolate=modules"],
+    );
+    expect({ results, exitCode }).toEqual({
+      results: ["(pass) block > inside", "(pass) a thenable", "(pass) each then() ran in the graph of the file"],
+      exitCode: 0,
+    });
+  });
+});
+
 describe.concurrent("behavior depends on the module a function is imported from", () => {
   test(`"bun:test" tests get no context and "vitest" tests get no signal until they read it`, async () => {
     const file = (module: string) => `
@@ -4479,6 +4578,50 @@ describe.concurrent("test.extend()", () => {
         "accepted",
         `Error: test.extend(): the file-scoped fixture "f" cannot be defined inside describe(). Define it at the top level of the file`,
       ],
+      exitCode: 0,
+    });
+  });
+
+  test("then() of what a fixture function returns is called once", async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test as base, expect, afterAll } from "vitest";
+        const thenCalls = { lazy: 0, settled: 0, thenable: 0 };
+        // Like Bun.$: a pending Promise subclass that starts its work in the first then().
+        class Lazy extends Promise {
+          static get [Symbol.species]() { return Promise; }
+          #start;
+          constructor(work) {
+            let settle;
+            super((resolve, reject) => { settle = { resolve, reject }; });
+            this.#start = () => work(settle.resolve, settle.reject);
+          }
+          then(onFulfilled, onRejected) {
+            thenCalls.lazy++;
+            const start = this.#start;
+            this.#start = undefined;
+            start?.();
+            return super.then(onFulfilled, onRejected);
+          }
+        }
+        // A fulfilled Promise subclass whose then() does the work.
+        class Settled extends Promise {
+          #work;
+          constructor(work) { super(resolve => resolve()); this.#work = work; }
+          then(onFulfilled, onRejected) { thenCalls.settled++; return this.#work().then(onFulfilled, onRejected); }
+        }
+        const test = base.extend({
+          lazy: ({}, use) => new Lazy((resolve, reject) => { use("lazy").then(resolve, reject); }),
+          settled: ({}, use) => { const used = use("settled"); return new Settled(() => used); },
+          thenable: ({}, use) => { const used = use("thenable"); return { then(resolve, reject) { thenCalls.thenable++; return used.then(resolve, reject); } }; },
+        });
+        test("fixtures", ({ lazy, settled, thenable }) => { expect([lazy, settled, thenable]).toEqual(["lazy", "settled", "thenable"]); });
+        afterAll(() => console.log(JSON.stringify(thenCalls)));
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: ['{"lazy":1,"settled":1,"thenable":1}'],
+      results: ["(pass) fixtures"],
       exitCode: 0,
     });
   });

@@ -290,6 +290,11 @@ fn oxc_among<'p>(plugins: impl Iterator<Item = &'p [u8]>) -> Oxc {
     oxc
 }
 
+/// True if the plugin `name` is a package, as opposed to a path.
+fn is_package(name: &[u8]) -> bool {
+    !name.starts_with(b".") && !name.starts_with(b"/") && !name.starts_with(b"file:")
+}
+
 fn is_tailwind_plugin(name: &[u8]) -> bool {
     package_of(name) == TAILWIND_PLUGIN
 }
@@ -845,8 +850,7 @@ impl Plugins {
                 .map(<[u8]>::to_vec)
                 .collect(),
             packages: (plugins.iter().filter_map(Json::as_str))
-                .filter(|it| !it.starts_with(b".") && !it.starts_with(b"/"))
-                .filter(|it| !it.starts_with(b"file:"))
+                .filter(|it| is_package(it))
                 .map(<[u8]>::to_vec)
                 .collect(),
             endings: (plugins.iter())
@@ -1722,7 +1726,7 @@ impl<'c> Configs<'c> {
     ) -> impl Iterator<Item = &'s [u8]> + use<'s, 'c> {
         (self.plugins_for(scope, path).into_iter())
             .flat_map(|it| &it.packages)
-            .chain(&self.options.plugins)
+            .chain(self.options.plugins.iter().filter(|it| is_package(it)))
             .map(|it| &it[..])
     }
 

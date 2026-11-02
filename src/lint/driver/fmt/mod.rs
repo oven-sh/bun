@@ -2307,7 +2307,15 @@ impl Run<'_> {
         }
         let from_flag = options.format.iter().rfind(|it| it.0 == b"parser");
         let is_unknown = |it: &&(&[u8], Vec<u8>)| Kind::from_parser(&it.1).is_none();
-        if let Some((_, parser)) = from_flag.filter(is_unknown).filter(|_| !is_unnamed) {
+        // A parser that Prettier doesn't have can be a plugin's. Then `language_of` decides for each file.
+        let from_plugin = || {
+            (configs.for_directory(&environment.cwd))
+                .is_ok_and(|own| configs.lists_unknown_plugins(&own, None))
+        };
+        if let Some((_, parser)) = from_flag.filter(is_unknown)
+            && !is_unnamed
+            && !from_plugin()
+        {
             return self.fail(&cannot_resolve_parser(parser));
         }
         // Prettier parses everything in the directory with that parser: lock files, dotfiles, LICENSE. We only do that

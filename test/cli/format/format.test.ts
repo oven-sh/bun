@@ -4405,9 +4405,67 @@ exports.format = async (text, options) => {
         expect(sent).toEqual(["a.astro", "pre-commit"]);
         expect(result.stderr).toContain("Used your installed Prettier for 2 files in a language that needs a plugin");
         expect(result.exitCode).toBe(0);
+        const checked = await format(project, ["--check", "."]);
+        expect(checked.stderr).toContain("[warn] hooks/pre-commit\n");
+        expect(checked.exitCode).toBe(1);
         expect((await different(project, [])).sort()).toEqual(["a.astro", "b.js", "hooks/pre-commit"]);
         const piped = await format(project, ["--stdin-filepath", "hooks/pre-push"], { stdin: "<p   >c</p>\n" });
         expect(piped).toMatchObject({ raw: "<p >c</p>\n", stderr: "", exitCode: 0 });
+      },
+      timeout,
+    );
+
+    test(
+      "--parser with the plugin's parser and a file name: the file goes to Prettier",
+      async () => {
+        const project = { ...files, "hooks/pre-commit": "<p   >hook</p>\n" };
+        const reads = ["hooks/pre-commit", "node_modules/prettier/calls.txt"];
+        const result = await format(project, ["--parser", "astro", "hooks/pre-commit"], { reads });
+        expect(result.files["hooks/pre-commit"]).toBe("<p >hook</p>\n");
+        expect(
+          result.files[reads[1]]!.trim()
+            .split("\n")
+            .map(it => JSON.parse(it)),
+        ).toEqual([{ ...config, parser: "astro", filepath: expect.stringMatching(/[\\/]hooks[\\/]pre-commit$/) }]);
+        expect(result.exitCode).toBe(0);
+        const piped = await format(project, ["--parser", "astro", "--stdin-filepath", "hooks/pre-push"], {
+          stdin: "<p   >c</p>\n",
+        });
+        expect(piped).toMatchObject({ raw: "<p >c</p>\n", stderr: "", exitCode: 0 });
+        // Without a plugin in the config, the parser can't be anyone's.
+        const { ".prettierrc": _, ...unlisted } = project;
+        const refused = await format(unlisted, ["--parser", "astro", "hooks/pre-commit"], { reads });
+        expect(refused.files["hooks/pre-commit"]).toBe("<p   >hook</p>\n");
+        expect(refused.stderr).toBe('error: Couldn\'t resolve parser "astro".');
+        expect(refused.exitCode).toBe(2);
+      },
+      timeout,
+    );
+
+    // Same as Prettier with the plugin: the file goes to it, and it reports the parser.
+    test(
+      "a parser that no plugin has, while the config lists a plugin: Prettier's error for the file",
+      async () => {
+        const prettier = `const fs = require("node:fs");
+exports.resolveConfig = async (file, { config }) => JSON.parse(fs.readFileSync(config, "utf8"));
+class ConfigError extends Error {
+  name = "ConfigError";
+}
+exports.format = async (text, { parser }) => {
+  throw new ConfigError(\`Couldn't resolve parser "\${parser}".\`);
+};
+`;
+        const config = `{\n  "plugins": ["prettier-plugin-astro"],\n  "parser": "nonsense"\n}\n`;
+        const project = {
+          ...files,
+          "node_modules/prettier/index.cjs": prettier,
+          ".prettierrc": config,
+          "b.foo": "b\n",
+        };
+        const result = await format(project, ["b.foo"], { reads: ["b.foo"] });
+        expect(result.files["b.foo"]).toBe("b\n");
+        expect(result.stderr).toContain(`error: b.foo: ConfigError: Couldn't resolve parser "nonsense".`);
+        expect(result.exitCode).toBe(2);
       },
       timeout,
     );
@@ -4436,6 +4494,25 @@ exports.format = async (text, options) => {
         expect(prefers.exitCode).toBe(0);
       },
       timeout,
+    );
+
+    test.each([
+      [[], { ...config, printWidth: 40 }],
+      [["--config-precedence", "prefer-file"], config],
+    ])(
+      "an option that a [[fmt.overrides]] sets takes a flag's precedence in Prettier too: %j",
+      async (flags, options) => {
+        const bunfig = '[[fmt.overrides]]\nfiles = "*.astro"\noptions = { printWidth = 40 }\n';
+        const reads = ["a.astro", "node_modules/prettier/calls.txt"];
+        const result = await format({ ...files, "bunfig.toml": bunfig }, [...flags, "a.astro"], { reads });
+        expect(result.files["a.astro"]).toBe("<p >a</p>\n");
+        expect(
+          result.files[reads[1]]!.trim()
+            .split("\n")
+            .map(it => JSON.parse(it)),
+        ).toEqual([{ ...options, filepath: expect.stringMatching(/[\\/]a\.astro$/) }]);
+        expect(result.exitCode).toBe(0);
+      },
     );
 
     test(

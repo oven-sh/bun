@@ -58,7 +58,7 @@ test.each(modules)(
       stderr: "ignore",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    // On Windows setRawMode() goes through the handle of the stream, elsewhere through the file descriptor.
+    // On Windows getColorDepth() has its answer before it looks at the argument, as in Node.js.
     if (isWindows && id === "node:tty") expect(stdout).toMatchSnapshot("on Windows");
     else expect(stdout).toMatchSnapshot();
     expect(exitCode).toBe(0);

@@ -611,22 +611,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterRequireFunction,
         JSC::EncodedJSValue value,
         JSC::PropertyName propertyName))
 {
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* zigGlobal = defaultGlobalObject(globalObject);
-    JSValue receiver = JSValue::decode(thisValue);
-    bool isModulePrototype = false;
-    if (zigGlobal->m_nodeModuleConstructor.isInitialized()) {
-        auto* constructor = zigGlobal->m_nodeModuleConstructor.getInitializedOnMainThread(zigGlobal);
-        isModulePrototype = receiver == constructor->getDirect(vm, vm.propertyNames->prototype);
-    }
-    if (!isModulePrototype) {
-        auto* object = receiver.getObject();
-        if (!object)
-            return false;
-        PropertyDescriptor descriptor(JSValue::decode(value), 0);
-        RELEASE_AND_RETURN(scope, object->methodTable()->defineOwnProperty(object, globalObject, propertyName, descriptor, false));
-    }
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     Bun::willChangeRequireOverride(globalObject, JSC::AOT::RequireOverride::RequireFunction, true);
     RETURN_IF_EXCEPTION(scope, false);
     globalObject->putDirect(globalObject->vm(),

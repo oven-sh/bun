@@ -170,16 +170,31 @@ it("defines asymmetric variadic matchers that can be prefixed by not", () => {
   ).not.toThrow();
 });
 
-it("applies an asymmetric matcher passed as the whole toMatchObject argument", () => {
-  expect({ value: 2 }).toMatchObject(expect._toCustomEqual({ value: 2 }));
-  expect({ value: 2 }).not.toMatchObject(expect._toCustomEqual({ value: 3 }));
-  expect(() => expect({ value: 2 }).toMatchObject(expect._toCustomEqual({ value: 3 }))).toThrow();
+it("applies a custom asymmetric matcher that is the whole toMatchObject argument", () => {
+  // What a failed toMatchObject() throws: Jest and Bun name the matcher, Vitest spells it out.
+  const mismatch = /toMatchObject|match object/;
+  const received = { value: 2 };
+  expect(received).toMatchObject(expect._toCustomEqual({ value: 2 }));
+  expect(received).not.toMatchObject(expect._toCustomEqual({ value: 3 }));
+  expect(() => expect(received).toMatchObject(expect._toCustomEqual({ value: 3 }))).toThrow(mismatch);
+  expect(() => expect(received).not.toMatchObject(expect._toCustomEqual({ value: 2 }))).toThrow(mismatch);
 
-  expect({ value: 2 }).toMatchObject(expect.not._toCustomEqual({ value: 3 }));
-  expect({ value: 2 }).not.toMatchObject(expect.not._toCustomEqual({ value: 2 }));
+  // expect.not inverts the matcher
+  expect(received).toMatchObject(expect.not._toCustomEqual({ value: 3 }));
+  expect(received).not.toMatchObject(expect.not._toCustomEqual({ value: 2 }));
 
-  // the matcher receives the whole object, which is not a number
-  expect({ value: 2 }).not.toMatchObject(expect._toBeDivisibleBy(2));
+  // the matcher gets the whole received value, which is not a number
+  expect(received).not.toMatchObject(expect._toBeDivisibleBy(2));
+  /** @type {unknown[]} */
+  const seen = [];
+  const hasValue = (/** @type {number} */ value) =>
+    expect.toSatisfy((/** @type {any} */ other) => (seen.push(other), other.value === value));
+  expect(received).toMatchObject(hasValue(2));
+  expect(received).not.toMatchObject(hasValue(3));
+  expect(seen.length).toBeGreaterThanOrEqual(2);
+  expect(seen.every(value => value === received)).toBe(true);
+  // Vitest calls a matcher once more for each assertion, for a diff that it does not print.
+  if (isBun) expect(seen).toHaveLength(2);
 });
 
 it("prints the Symbol into the error message", () => {

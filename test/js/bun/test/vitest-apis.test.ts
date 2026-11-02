@@ -1031,6 +1031,19 @@ describe("expect.addEqualityTesters", () => {
     expect(seen).toHaveLength(1);
   });
 
+  test("a matcher that is the whole value of toMatchObject comes first too", () => {
+    seen.length = 0;
+    expect(litre()).toMatchObject(expect.any(Volume));
+    expect(expect.any(Volume)).toMatchObject(litre());
+    expect(seen).toHaveLength(0);
+    // Two matchers are not applied, so the testers get them, as they get two other values.
+    const [first, second] = [expect.any(Volume), expect.any(Volume)];
+    expect(first).toMatchObject(second);
+    expect(seen).toHaveLength(1);
+    expect(seen[0][1]).toBe(first);
+    expect(seen[0][2]).toBe(second);
+  });
+
   test("the sample of expect.objectContaining is a pattern, not a value for a tester", () => {
     expect(litre()).toEqual(thousandMillilitres());
     expect(litre()).not.toEqual(expect.objectContaining(thousandMillilitres()));

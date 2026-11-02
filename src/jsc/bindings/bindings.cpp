@@ -676,6 +676,22 @@ static bool mayBeAsymmetricMatcher(JSValue value)
     return value.isCell() && !value.isEmpty() && value.asCell()->type() == JSC::JSType(JSDOMWrapperType);
 }
 
+// Whether matchAsymmetricMatcher() would apply `value`, without applying it.
+static bool isBuiltinAsymmetricMatcher(JSValue value)
+{
+    using namespace Bun::Bindgen::Generated;
+    if (!mayBeAsymmetricMatcher(value))
+        return false;
+    JSCell* cell = value.asCell();
+    return dynamicDowncast<JSExpectAnything>(cell) || dynamicDowncast<JSExpectAny>(cell) || dynamicDowncast<JSExpectStringContaining>(cell) || dynamicDowncast<JSExpectStringMatching>(cell)
+        || dynamicDowncast<JSExpectArrayContaining>(cell) || dynamicDowncast<JSExpectObjectContaining>(cell) || dynamicDowncast<JSExpectCloseTo>(cell) || dynamicDowncast<JSExpectCustomAsymmetricMatcher>(cell);
+}
+
+extern "C" bool Expect__isAsymmetricMatcher(JSC::EncodedJSValue value)
+{
+    return isBuiltinAsymmetricMatcher(JSValue::decode(value));
+}
+
 extern "C" int8_t Expect__runEqualityTesters(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue a, JSC::EncodedJSValue b);
 
 static ALWAYS_INLINE bool hasEqualityTesters(JSGlobalObject* globalObject)
@@ -715,6 +731,17 @@ static ALWAYS_INLINE bool oneMayHaveAsymmetricMatchMethod(JSGlobalObject* global
     if (a && b && a.isCell() && b.isCell() && a.asCell()->structureID() == b.asCell()->structureID())
         return false;
     return mayHaveAsymmetricMatchMethod(globalObject, a) || mayHaveAsymmetricMatchMethod(globalObject, b);
+}
+
+// Whether matchRootAsymmetricMatcher() has to look at the two objects of toMatchObject. Almost never.
+static ALWAYS_INLINE bool mayBeRootAsymmetricMatcher(JSGlobalObject* globalObject, JSCell* received, JSCell* pattern)
+{
+    if (received->type() == JSC::JSType(JSDOMWrapperType) || pattern->type() == JSC::JSType(JSDOMWrapperType))
+        return true;
+    // Any property or script that names `asymmetricMatch` refs this atom, so a single ref means no object has one.
+    if (WebCore::builtinNames(globalObject->vm()).asymmetricMatchPublicName().impl()->hasOneRef())
+        return false;
+    return oneMayHaveAsymmetricMatchMethod(globalObject, received, pattern);
 }
 
 // Looks up asymmetricMatch() without running getters or Proxy traps. Returns an empty value if it isn't a method.
@@ -758,6 +785,33 @@ static NEVER_INLINE std::optional<bool> matchUserAsymmetricMatcher(JSGlobalObjec
     JSValue matched = JSC::call(globalObject, method, JSC::getCallData(method), methodOfA ? a : b, arguments);
     RETURN_IF_EXCEPTION(scope, false);
     return matched.toBoolean(globalObject);
+}
+
+// The matcher step of Jest's and Vitest's equals() for the two whole values of toMatchObject: a matcher is applied to the other value, unless that is a matcher too.
+static NEVER_INLINE AsymmetricMatcherResult matchRootAsymmetricMatcher(JSGlobalObject* globalObject, ThrowScope& scope, JSValue received, JSValue pattern)
+{
+    bool receivedIsBuiltin = isBuiltinAsymmetricMatcher(received);
+    bool patternIsBuiltin = isBuiltinAsymmetricMatcher(pattern);
+    JSValue methodOfReceived = receivedIsBuiltin ? JSValue() : asymmetricMatchMethod(globalObject, received);
+    JSValue methodOfPattern = patternIsBuiltin ? JSValue() : asymmetricMatchMethod(globalObject, pattern);
+    bool patternIsMatcher = patternIsBuiltin || methodOfPattern;
+    if (patternIsMatcher == (receivedIsBuiltin || methodOfReceived))
+        return AsymmetricMatcherResult::NOT_MATCHER;
+
+    JSValue matcher = patternIsMatcher ? pattern : received;
+    JSValue other = patternIsMatcher ? received : pattern;
+    if (receivedIsBuiltin || patternIsBuiltin)
+        return matchAsymmetricMatcher(globalObject, matcher, other, scope);
+
+    JSValue method = patternIsMatcher ? methodOfPattern : methodOfReceived;
+    MarkedArgumentBuffer arguments;
+    arguments.append(other);
+    JSValue matched = JSC::call(globalObject, method, JSC::getCallData(method), matcher, arguments);
+    RETURN_IF_EXCEPTION(scope, AsymmetricMatcherResult::FAIL);
+    // To Jest and Vitest an asymmetricMatch() that returns undefined decides nothing.
+    if (matched.isUndefined())
+        return AsymmetricMatcherResult::NOT_MATCHER;
+    return matched.toBoolean(globalObject) ? AsymmetricMatcherResult::PASS : AsymmetricMatcherResult::FAIL;
 }
 
 // Applies whichever of `value` and `pattern` is an asymmetric matcher. A Response or a URL has the type of one and is none.
@@ -3777,7 +3831,13 @@ bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSVal
 
     Bun::DeepMatchState state;
     state.records = !!replaced;
-    bool matched = Bun__deepMatch<true>(obj, subset, globalObject, scope, state, false);
+    AsymmetricMatcherResult rootMatcher = AsymmetricMatcherResult::NOT_MATCHER;
+    // toMatchObject() and the snapshot matchers refuse a value that isn't an object.
+    if (mayBeRootAsymmetricMatcher(globalObject, obj.asCell(), subset.asCell())) [[unlikely]] {
+        rootMatcher = matchRootAsymmetricMatcher(globalObject, scope, obj, subset);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    bool matched = rootMatcher == AsymmetricMatcherResult::NOT_MATCHER ? Bun__deepMatch<true>(obj, subset, globalObject, scope, state, false) : rootMatcher == AsymmetricMatcherResult::PASS;
     RETURN_IF_EXCEPTION(scope, false);
     if (replaced) {
         JSValue shown = matched == replaceWhen ? replaceMatchedProperties(globalObject, scope, state, obj, subset) : obj;

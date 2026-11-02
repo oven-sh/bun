@@ -652,49 +652,89 @@ Received: Instance {
   });
 });
 
-test("property matchers argument can itself be an asymmetric matcher", async () => {
-  const formattedReceived = '\n{\n  "a": 1,\n  "b": "two",\n}\n';
-  const inlineSnapshot = "`" + formattedReceived + "`";
-  using dir = tempDir("snapshot-top-level-matcher", {
-    "snap.test.ts": /*js*/ `
-      import { expect, test } from "bun:test";
-      const received = { a: 1, b: "two" };
-      test("file pass", () => {
-        expect(received).toMatchSnapshot(expect.objectContaining({ a: expect.any(Number) }));
-      });
-      test("file fail", () => {
-        expect(received).toMatchSnapshot(expect.objectContaining({ a: 2 }));
-      });
-      test("inline pass", () => {
-        expect(received).toMatchInlineSnapshot(expect.any(Object), ${inlineSnapshot});
-      });
-      test("inline fail", () => {
-        expect(received).toMatchInlineSnapshot(expect.any(Array), ${inlineSnapshot});
-      });
-    `,
+test("a matcher as the whole property matchers argument is applied", async () => {
+  const entry = (name: string, printed: string) => `\nexports[\`${name}\`] = \`\n${printed}\n\`;\n`;
+  const object = '{\n  "a": 1,\n  "b": "two",\n}';
+  const array = "[\n  1,\n  2,\n]";
+  const files = {
+    "snap.test.ts": `
+import { expect, test } from "bun:test";
+const received = { a: 1, b: "two" };
+test("file", () => {
+  expect(received).toMatchSnapshot(expect.objectContaining({ a: 2 }));
+});
+test("file with a hint", () => {
+  expect(received).toMatchSnapshot(expect.any(Array), "hint");
+});
+test("a saved entry", () => {
+  expect(received).toMatchSnapshot(expect.objectContaining({ a: 2 }));
+});
+test("inline", () => {
+  expect(received).toMatchInlineSnapshot(expect.any(Array), \`\n${object}\n\`);
+});
+test("inline without a snapshot", () => {
+  expect(received).toMatchInlineSnapshot(expect.any(Array));
+});
+test("an object with a method", () => {
+  expect(received).toMatchSnapshot({ asymmetricMatch: () => false });
+});
+test("a matcher as the received value", () => {
+  expect(expect.any(Object)).toMatchSnapshot({ a: 1 });
+});
+test("an array", () => {
+  expect([1, 2]).toMatchSnapshot(expect.arrayContaining([3]));
+});
+test("an array that matches", () => {
+  expect([1, 2]).toMatchSnapshot(expect.any(Array));
+  expect([1, 2]).toMatchSnapshot(expect.arrayContaining([1]));
+  expect([1, 2]).toMatchInlineSnapshot(expect.any(Array), \`\n${array}\n\`);
+});
+`,
+    "jest.test.ts": `
+import { expect, test } from "bun:test";
+test("a file of Jest", () => {
+  expect({ a: 1, b: "two" }).toMatchSnapshot(expect.objectContaining({ a: 2 }));
+});
+`,
+    "__snapshots__": {
+      "snap.test.ts.snap": headers.bun + entry("a saved entry 1", object),
+      "jest.test.ts.snap": headers.jest + entry("a file of Jest 1", object),
+    },
+  };
+  using dir = tempDir("snapshot-whole-matcher", files);
+
+  const { stderr, exitCode } = await runTests(String(dir), { CI: "false" }, "./snap.test.ts", "./jest.test.ts");
+  const read = (...path: string[]) => readFileSync(join(String(dir), ...path), "utf8");
+  expect({
+    results: stderr.match(/^\((pass|fail)\) .*?(?= \[)/gm),
+    mismatches: stderr.match(/Expected propertyMatchers to match properties from received object/g)?.length,
+    exitCode,
+    "snap.test.ts.snap": read("__snapshots__", "snap.test.ts.snap"),
+    "jest.test.ts.snap": read("__snapshots__", "jest.test.ts.snap"),
+    "snap.test.ts": read("snap.test.ts"),
+  }).toEqual({
+    results: [
+      "(fail) file",
+      "(fail) file with a hint",
+      "(fail) a saved entry",
+      "(fail) inline",
+      "(fail) inline without a snapshot",
+      "(fail) an object with a method",
+      "(fail) a matcher as the received value",
+      "(fail) an array",
+      "(pass) an array that matches",
+      "(fail) a file of Jest",
+    ],
+    mismatches: 9,
+    exitCode: 1,
+    // A matcher that does not match stores nothing, and the test file and the file of Jest stay as they are.
+    "snap.test.ts.snap":
+      files.__snapshots__["snap.test.ts.snap"] +
+      entry("an array that matches 1", array) +
+      entry("an array that matches 2", array),
+    "jest.test.ts.snap": files.__snapshots__["jest.test.ts.snap"],
+    "snap.test.ts": files["snap.test.ts"],
   });
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "./snap.test.ts"],
-    env: { ...bunEnv, CI: "false" },
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const output = stdout + stderr;
-
-  expect(output).toContain("(pass) file pass");
-  expect(output).toContain("(fail) file fail");
-  expect(output).toContain("(pass) inline pass");
-  expect(output).toContain("(fail) inline fail");
-  expect(output.match(/Expected propertyMatchers to match properties from received object/g)).toHaveLength(2);
-  expect(exitCode).toBe(1);
-
-  // a passing top-level matcher stores the received value as-is; a failing one stores nothing
-  expect(await Bun.file(`${dir}/__snapshots__/snap.test.ts.snap`).text()).toBe(
-    "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n\nexports[`file pass 1`] = `" + formattedReceived + "`;\n",
-  );
 });
 
 class InlineSnapshotTester {

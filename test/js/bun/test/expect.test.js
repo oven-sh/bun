@@ -4638,17 +4638,20 @@ describe("expect()", () => {
       });
     }
 
-    test("with an asymmetric matcher as the whole expected value", () => {
+    // What a failed toMatchObject() throws: Jest and Bun name the matcher, Vitest spells it out.
+    const mismatch = /toMatchObject|match object/;
+
+    test("an asymmetric matcher as the whole expected value is applied", () => {
       expect({ a: 1, b: 2 }).toMatchObject(expect.objectContaining({ a: 1 }));
       expect({ a: 1, b: 2 }).not.toMatchObject(expect.objectContaining({ a: 2 }));
       expect({ a: 1, b: 2 }).not.toMatchObject(expect.objectContaining({ c: 3 }));
-      expect(() => expect({ a: 1, b: 2 }).toMatchObject(expect.objectContaining({ a: 2 }))).toThrow();
-      expect(() => expect({ a: 1, b: 2 }).not.toMatchObject(expect.objectContaining({ a: 1 }))).toThrow();
+      expect(() => expect({ a: 1, b: 2 }).toMatchObject(expect.objectContaining({ a: 2 }))).toThrow(mismatch);
+      expect(() => expect({ a: 1, b: 2 }).not.toMatchObject(expect.objectContaining({ a: 1 }))).toThrow(mismatch);
 
       expect({ a: 1 }).toMatchObject(expect.any(Object));
       expect({ a: 1 }).not.toMatchObject(expect.any(Array));
-      expect(() => expect({ a: 1 }).toMatchObject(expect.any(Array))).toThrow();
-      expect(() => expect({ a: 1 }).not.toMatchObject(expect.any(Object))).toThrow();
+      expect(() => expect({ a: 1 }).toMatchObject(expect.any(Array))).toThrow(mismatch);
+      expect(() => expect({ a: 1 }).not.toMatchObject(expect.any(Object))).toThrow(mismatch);
 
       expect({ a: 1 }).toMatchObject(expect.anything());
       expect([1, 2]).toMatchObject(expect.any(Array));
@@ -4663,22 +4666,111 @@ describe("expect()", () => {
       // expect.not.* inverts the matcher itself
       expect({ a: 1 }).toMatchObject(expect.not.objectContaining({ a: 2 }));
       expect({ a: 1 }).not.toMatchObject(expect.not.objectContaining({ a: 1 }));
-      expect(() => expect({ a: 1 }).toMatchObject(expect.not.objectContaining({ a: 1 }))).toThrow();
+      expect(() => expect({ a: 1 }).toMatchObject(expect.not.objectContaining({ a: 1 }))).toThrow(mismatch);
 
-      // nested matchers inside a top-level matcher
+      // matchers inside the matcher, and an object inside expect.objectContaining() has to be equal
       expect({ a: { b: 1 }, c: "x" }).toMatchObject(expect.objectContaining({ a: { b: expect.any(Number) } }));
       expect({ a: { b: 1 }, c: "x" }).not.toMatchObject(expect.objectContaining({ a: { b: expect.any(String) } }));
+      expect({ a: { b: 1, c: 2 } }).not.toMatchObject(expect.objectContaining({ a: { b: 1 } }));
+
+      // a Response has the type of a matcher and is none, so it does not hide the matcher
+      expect(new Response("")).toMatchObject(expect.any(Response));
+      expect(new Response("")).not.toMatchObject(expect.any(Array));
     });
 
-    test("with an asymmetric matcher as the received value", () => {
+    test("an object with an asymmetricMatch() method as the whole expected value is applied", () => {
+      /** @type {unknown[]} */
+      const calls = [];
+      const isOne = { asymmetricMatch: (/** @type {any} */ other) => (calls.push(other), other.a === 1) };
+      const received = { a: 1 };
+      expect(received).toMatchObject(isOne);
+      // Vitest calls it once more, for a diff that it does not print.
+      expect(calls).toHaveLength(isVitest ? 2 : 1);
+      expect(calls[0]).toBe(received);
+      expect({ a: 2 }).not.toMatchObject(isOne);
+      expect(() => expect({ a: 2 }).toMatchObject(isOne)).toThrow(mismatch);
+
+      class IsOdd {
+        asymmetricMatch(/** @type {any} */ other) {
+          return other.n % 2 === 1;
+        }
+      }
+      expect({ n: 3 }).toMatchObject(new IsOdd());
+      expect({ n: 2 }).not.toMatchObject(new IsOdd());
+
+      // undefined decides nothing: the two values are compared as without the method
+      expect({ asymmetricMatch: () => undefined, a: 1 }).toMatchObject({ a: 1 });
+      expect({ asymmetricMatch: () => undefined, a: 1 }).not.toMatchObject({ a: 2 });
+      expect({ a: 1 }).not.toMatchObject({ asymmetricMatch: () => undefined });
+
+      const thrown = new RangeError("from the matcher");
+      const throws = {
+        asymmetricMatch() {
+          throw thrown;
+        },
+      };
+      let caught;
+      try {
+        expect({ a: 1 }).toMatchObject(throws);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBe(thrown);
+    });
+
+    test("an asymmetric matcher as the whole received value is applied", () => {
       expect(expect.any(Object)).toMatchObject({ a: 1 });
       expect(expect.any(Array)).not.toMatchObject({ a: 1 });
-      expect(() => expect(expect.any(Array)).toMatchObject({ a: 1 })).toThrow();
+      expect(() => expect(expect.any(Array)).toMatchObject({ a: 1 })).toThrow(mismatch);
+      expect(expect.anything()).toMatchObject({ a: 1 });
       expect(expect.objectContaining({ a: 1 })).toMatchObject({ a: 1, b: 2 });
       expect(expect.objectContaining({ a: 2 })).not.toMatchObject({ a: 1, b: 2 });
       expect(expect.arrayContaining([1])).toMatchObject([1, 2]);
       expect(expect.arrayContaining([3])).not.toMatchObject([1, 2]);
+      expect({ asymmetricMatch: (/** @type {any} */ other) => other.a === 1 }).toMatchObject({ a: 1 });
+      expect({ asymmetricMatch: () => false }).not.toMatchObject({});
+
+      // If both values are matchers, Jest and Vitest apply none. The two are then compared as before.
+      const any = expect.any(Number);
+      expect(any).toMatchObject(any);
+      expect(expect.any(Number)).toMatchObject(expect.any(Number));
+      const containing = expect.objectContaining({ a: 1 });
+      expect(containing).toMatchObject(containing);
+      expect(expect.any(Object)).not.toMatchObject({ asymmetricMatch: () => true });
     });
+
+    test("an asymmetric matcher as the whole expected value is applied after resolves and rejects", async () => {
+      await expect(Promise.resolve({ a: 1 })).resolves.toMatchObject(expect.objectContaining({ a: 1 }));
+      await expect(Promise.resolve({ a: 1 })).resolves.not.toMatchObject(expect.objectContaining({ a: 2 }));
+      await expect(Promise.reject({ a: 1 })).rejects.toMatchObject(expect.any(Object));
+      await expect(Promise.reject({ a: 1 })).rejects.not.toMatchObject(expect.any(Array));
+    });
+
+    if (isBun) {
+      test("an object that gets its asymmetricMatch() method after other toMatchObject() calls is applied", async () => {
+        const { bunEnv, bunExe } = require("harness");
+        // The script does not spell the name of the method, so no object has it before `matcher` is made.
+        const src = `
+          import { expect } from "bun:test";
+          const outcome = fn => { try { fn(); return "pass"; } catch { return "fail"; } };
+          const before = outcome(() => expect({ a: 1, b: 2 }).toMatchObject({ a: 1 }));
+          const matcher = { [["asymmetric", "Match"].join("")]: other => other.a === 1 };
+          console.log(before, outcome(() => expect({ a: 1 }).toMatchObject(matcher)), outcome(() => expect({ a: 2 }).toMatchObject(matcher)));
+        `;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", src],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toMatchObject({
+          stdout: "pass pass fail\n",
+          exitCode: 0,
+          signalCode: null,
+        });
+      });
+    }
   });
 
   describe("toMatch()", () => {

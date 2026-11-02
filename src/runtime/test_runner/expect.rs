@@ -609,15 +609,10 @@ impl Expect {
     }
 
     pub(crate) fn is_asymmetric_matcher(value: JSValue) -> bool {
-        if ExpectCustomAsymmetricMatcher::from_js(value).is_some() { return true; }
-        if ExpectAny::from_js(value).is_some() { return true; }
-        if ExpectAnything::from_js(value).is_some() { return true; }
-        if ExpectStringMatching::from_js(value).is_some() { return true; }
-        if ExpectCloseTo::from_js(value).is_some() { return true; }
-        if ExpectObjectContaining::from_js(value).is_some() { return true; }
-        if ExpectStringContaining::from_js(value).is_some() { return true; }
-        if ExpectArrayContaining::from_js(value).is_some() { return true; }
-        false
+        unsafe extern "C" {
+            safe fn Expect__isAsymmetricMatcher(value: JSValue) -> bool;
+        }
+        Expect__isAsymmetricMatcher(value)
     }
 
     /// Called by C++ when matching with asymmetric matchers
@@ -1310,7 +1305,12 @@ impl Expect {
 
             let prop_matchers = _prop_matchers;
 
-            let (matched, with_matchers) = value.jest_deep_match(prop_matchers, global_this, true)?;
+            // toMatchObject() applies a matcher that is the received value. A snapshot of a matcher is none: Jest throws for it.
+            let (matched, with_matchers) = if value.js_type() == bun_jsc::JSType::DOMWrapper && Self::is_asymmetric_matcher(value) {
+                (false, value)
+            } else {
+                value.jest_deep_match(prop_matchers, global_this, true)?
+            };
             if !matched {
                 // TODO: print diff with properties from propertyMatchers
                 let signature = Self::get_signature(fn_name, "<green>propertyMatchers<r>", false);

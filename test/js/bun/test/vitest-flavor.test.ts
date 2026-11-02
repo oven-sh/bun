@@ -2636,6 +2636,38 @@ describe.concurrent("behavior depends on the module a function is imported from"
     });
   });
 
+  test("toMatchObject() applies a matcher that is the whole expected or received value under both imports", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import * as bun from "bun:test";
+        import * as vitest from "vitest";
+        const outcome = fn => { try { fn(); return "passes"; } catch { return "fails"; } };
+        for (const [name, { test, expect }] of Object.entries({ bun, vitest })) {
+          test(name, () => {
+            console.log(name, "expected:", [
+              outcome(() => expect({ a: 1, b: 2 }).toMatchObject(expect.objectContaining({ a: 1 }))),
+              outcome(() => expect({ a: 1, b: 2 }).toMatchObject(expect.objectContaining({ a: 2 }))),
+              outcome(() => expect({ a: 1 }).toMatchObject(expect.any(Array))),
+              outcome(() => expect({ a: 1 }).not.toMatchObject(expect.any(Array))),
+              outcome(() => expect({ a: 1 }).toMatchObject({ asymmetricMatch: other => other.a === 1 })),
+            ].join(" "));
+            console.log(name, "received:", [
+              outcome(() => expect(expect.any(Object)).toMatchObject({ a: 1 })),
+              outcome(() => expect(expect.any(Array)).toMatchObject({ a: 1 })),
+            ].join(" "));
+          });
+        }
+      `,
+    });
+    expect({ log, exitCode }).toEqual({
+      log: ["bun", "vitest"].flatMap(name => [
+        `${name} expected: passes fails fails passes passes`,
+        `${name} received: passes fails`,
+      ]),
+      exitCode: 0,
+    });
+  });
+
   test("toHaveProperty() with an own key that is spelled like a path", async () => {
     const { log, exitCode } = await runTests({
       "a.test.js": `

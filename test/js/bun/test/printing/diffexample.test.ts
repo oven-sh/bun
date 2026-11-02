@@ -1199,9 +1199,12 @@ test("a value that prints as one token is not cut short", () => {
 
 test("no note when no value was cut short", () => {
   const long = Buffer.alloc(1_600_000, "x").toString();
-  // A string prints in full, whatever its length.
+  // The budget does not apply to a top-level string. The printer elides the
+  // middle of the over-long line, and that elision is not the cut the note reports.
   const diff = messageOf(() => expect(long + "A").toEqual(long + "B"));
   expect(diff).toStartWith("expect(received).toEqual(expected)");
+  expect(diff).toMatch(/^Expected: "x+\.\.\. \(\d+ bytes truncated\) \.\.\.x+B"$/m);
+  expect(diff).toMatch(/^Received: "x+\.\.\. \(\d+ bytes truncated\) \.\.\.x+A"$/m);
   expect(diff).not.toContain("note:");
   expect(messageOf(() => expect([long, Symbol("a")]).toEqual([long, Symbol("a")]))).toBe(
     `expect(received).toEqual(expected)\n\n${sentence}\n`,

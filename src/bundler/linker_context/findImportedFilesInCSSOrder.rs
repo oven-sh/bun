@@ -202,8 +202,8 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                     .any(ImportConditions::has_anonymous_layer)
             {
                 // See the `LayerName` note where the duplicate pass borrows `layer_names`.
-                let layers = core::ptr::NonNull::from(&repr.layers_pre_import)
-                    .cast::<Vec<LayerName>>();
+                let layers =
+                    core::ptr::NonNull::from(&repr.layers_pre_import).cast::<Vec<LayerName>>();
                 self.push_entry(
                     CssImportOrderKind::Layers(Layers::borrow(layers)),
                     wrapping_conditions,

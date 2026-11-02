@@ -6320,6 +6320,51 @@ export const c: PgTextBuilder<{ name: string; data: string }> = t1;
         expect(stdout).toBe("");
       });
 
+      // A comparison of two PgArrayBuilder instantiations measures PgArrayBuilder first, as the outermost measurement.
+      // The instantiation that `array()` returns is then created after the marker types, so the comparison is cut off
+      // and the cycle is found later. TypeScript 7.1 `--singleThreaded` reports both assignments when that file is
+      // checked first, and neither when the PgTextBuilder file is. 7.0 reports neither in both orders.
+      describe("the result of the outermost measurement depends on which file is checked first, as in TypeScript 7.1", () => {
+        const array = `
+import type { PgArrayBuilder } from "./builders";
+declare const a1: PgArrayBuilder<{ name: ""; data: unknown }, { name: ""; data: string }>;
+export const x: PgArrayBuilder<{ name: string; data: unknown }, { name: string; data: string }> = a1;
+`;
+        const files = { "builders.ts": builders.replaceAll("declare class", "export declare class") };
+        const text = `import type { PgTextBuilder } from "./builders";` + widening;
+
+        test("no error when the PgTextBuilder file is checked first", async () => {
+          using dir = project({ ...files, "a.ts": text, "b.ts": array });
+          const { stdout } = await check(dir, ["--threads", "1"]);
+          expect(stdout).toBe("");
+        });
+
+        test("both assignments are rejected when the PgArrayBuilder file is checked first", async () => {
+          using dir = project({ ...files, "a.ts": array, "b.ts": text });
+          const { stdout } = await check(dir, ["--threads", "1"]);
+          expect(stdout).toMatchInlineSnapshot(`
+            "a.ts(4,14): error TS2322: Type 'PgArrayBuilder<{ name: ""; data: unknown; }, { name: ""; data: string; }>' is not assignable to type 'PgArrayBuilder<{ name: string; data: unknown; }, { name: string; data: string; }>'.
+              The types of 'config.array().$type()' are incompatible between these types.
+                Type 'PgArrayBuilder<{ name: ""; data: unknown; }, { name: ""; data: string; }> & { _: { $type: unknown; }; }' is not assignable to type 'PgArrayBuilder<{ name: string; data: unknown; }, { name: string; data: string; }> & { _: { $type: unknown; }; }'.
+                  Type 'PgArrayBuilder<{ name: ""; data: unknown; }, { name: ""; data: string; }> & { _: { $type: unknown; }; }' is not assignable to type 'PgArrayBuilder<{ name: string; data: unknown; }, { name: string; data: string; }>'.
+                    The types of 'config.array()' are incompatible between these types.
+                      Type 'PgArrayBuilder<{ name: ""; data: unknown; }, { name: ""; data: string; }>' is not assignable to type 'PgArrayBuilder<{ name: string; data: unknown; }, { name: string; data: string; }>'.
+                        Type '{ name: string; data: unknown; }' is not assignable to type '{ name: ""; data: unknown; }'.
+                          Types of property 'name' are incompatible.
+                            Type 'string' is not assignable to type '""'.
+            b.ts(3,14): error TS2322: Type 'PgTextBuilder<{ name: ""; data: string; }>' is not assignable to type 'PgTextBuilder<{ name: string; data: string; }>'.
+              The types returned by '$type()' are incompatible between these types.
+                Type 'PgTextBuilder<{ name: ""; data: string; }> & { _: { $type: unknown; }; }' is not assignable to type 'PgTextBuilder<{ name: string; data: string; }> & { _: { $type: unknown; }; }'.
+                  Type 'PgTextBuilder<{ name: ""; data: string; }> & { _: { $type: unknown; }; }' is not assignable to type 'PgTextBuilder<{ name: string; data: string; }>'.
+                    The types returned by 'array()' are incompatible between these types.
+                      Type 'PgArrayBuilder<{ name: ""; data: unknown; }, { name: ""; data: string; }>' is not assignable to type 'PgArrayBuilder<{ name: string; data: unknown; }, { name: string; data: string; }>'.
+                        Type '{ name: string; data: unknown; }' is not assignable to type '{ name: ""; data: unknown; }'.
+                          Types of property 'name' are incompatible.
+                            Type 'string' is not assignable to type '""'."
+          `);
+        });
+      });
+
       // Between PgColumnBuilder instantiations the name is invariant. tsc 7.0.2 reports the first assignment only.
       test("still rejects narrowing and widening the name between PgColumnBuilder instantiations", async () => {
         using dir = project({

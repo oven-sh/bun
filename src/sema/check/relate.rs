@@ -4593,7 +4593,12 @@ impl<'p, 's> Checker<'p, 's> {
         {
             let t_is_older = self.older_than_markers.contains(&t);
             if t_is_older != self.older_than_markers.contains(&last) {
-                return !t_is_older;
+                // A type is created after the types it's built from, so a listed type is older than
+                // the other one unless it's built from it.
+                let (listed, other) = if t_is_older { (t, last) } else { (last, t) };
+                if !self.types().is_built_from(listed, other) {
+                    return !t_is_older;
+                }
             }
         }
         match self.types().nesting_order(t, last) {

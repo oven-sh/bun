@@ -1450,7 +1450,7 @@ impl EventLoop {
         result.ensure_still_alive();
         let jsc_vm = global_object.bun_vm().jsc_vm();
         let this: *mut Self = core::hint::black_box(this);
-        // SAFETY: as above; short-lived `&mut`.
+        // SAFETY: as above. The `&mut` spans the drain, as in `exit()`: the JS it runs re-enters the loop through the VM (R-2).
         unsafe { (*this).drain_microtasks_with_global(global_object, jsc_vm) }
             .map_err(|stopped| stopped.throw(global_object))?;
         Ok(result)

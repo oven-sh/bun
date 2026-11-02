@@ -1,5 +1,5 @@
 // What `bun fmt` prints for conditionals of arrow functions in TypeScript, judged by tsc's own parser: it has to read
-// the text as it reads the source. See `is_misread_by_tsc` and `AfterColon` in src/format/js/utils/conditional.rs.
+// the text as it reads the source. See `read_by_tsc` and `AfterColon` in src/format/js/utils/conditional.rs.
 //
 //   node judge.mjs --modules=<dir> --bun=<bun> [--main=<bun>] [--matrix [--jsx] | --values | --sites | --paths |
 //     --families | --comments | --file=<json>] [--bare] [--each] [--always] [--count=5000] [--seed=1]
@@ -19,12 +19,13 @@
 // - `--bare`: the parameters of the matrix have no parentheses, as `arrowParens: "avoid"` leaves them.
 // - `--values`: instead of the matrix, arrow functions without parentheses around their parameter as values in an
 //   object, an array or a class after the `:`. With parentheses, tsc reads on in some of them.
-// - `--sites`: conditionals after a `( .. )` and a `:` that the rule does not cover: `case (a, b):`, a `yield`,
-//   `() => async(q)`, `<U>(a, b)`, a conditional under `// prettier-ignore`. Parentheses that tsc does not need can
-//   change how it reads the text after such a `:`.
+// - `--sites`: what follows a `( .. )` and a `:` of another kind, with a conditional of its own and without one:
+//   `case (a, b):`, a `yield`, `() => async(q)`, `<U>(a, b)`, a conditional under `// prettier-ignore`. Parentheses
+//   that tsc does not need can change how it reads the text after such a `:`.
 // - `--paths`: the conditional of the rule at the end of what follows the `:` of another conditional, through arrow
 //   functions, conditionals, an assignment, brackets and a block. With `(d) =>` kept in it alone, tsc can read on
-//   from a `( .. )` before that other `:`: the rule keeps `(y) =>` after that `:` too.
+//   from a `( .. )` before that other `:`: the rule keeps `(y) =>` after that `:` too. With `f(q, r)` before the `:`
+//   of the inner one, only the outer one is misread: tsc reads the body of `y =>` on after that `:`.
 // - `--families`: the conditional of the rule before the `:` of another conditional, with a conditional of its own
 //   at the end of the arrow function that has the return type. With `(d) =>` kept in the first one alone, that one
 //   can take the `:` of the other: the rule keeps the names after each `:` of such a family.
@@ -56,9 +57,17 @@
 //   error. There must be none.
 // - `pairs`: it reads both as the source, and Bun prints something else than Prettier: parentheses that tsc does not
 //   need. There must be none. `broken` can only come from such parentheses.
+// - `repairedOfMain`: the same, where tsc does not read what `--main` prints as the source. With `--oxfmt`, main
+//   prints the parentheses of a JSDoc type cast, which Prettier does not print in a `.ts` file: `(d) =>` after
+//   `q => /** @type {F} */ ([q])` is needed there.
 // - `pairsBeforeBrokenList`: the same, where the parameters before the return type are on lines of their own and end
 //   in `,`. tsc reports a syntax error for Prettier's text there, and the parser of microsoft/TypeScript#64233 reads
-//   it as the source: `(e,)` is no expression. With `trailingComma: "none"`, or on one line, all of them misread it.
+//   it as the source: `(e,)` is no expression. A source counts here only if the reader misreads what Prettier prints
+//   for it with `trailingComma: "none"`. If not, it is one of `pairs`.
+// - `pairsAfterBrokenAssertion`: the same, where Prettier breaks a type assertion before the `:` after its `>`. The
+//   operand is in parentheses of its own there, `<any>(⏎(q, r)⏎)`, and tsc tries no parameters. Bun keeps `(d) =>`
+//   in both layouts. A source counts here only if the reader misreads what Prettier prints for it where the
+//   assertion fits on its line. If not, it is one of `pairs`.
 // - `silenced`: tsc reports a syntax error for what Prettier prints, and reads what Bun prints as another program
 //   with no error. With `--main`, only where main prints what Prettier prints: in a `.js` file, main prints
 //   `async<U>(q)` as `async < U > q`, and that is the other program. There must be none.
@@ -67,12 +76,13 @@
 // - `left`: it reads neither as the source. The rule keeps parentheses only in a family of conditionals with the
 //   shape of `a ? b => ({ c }) : (d) => (e): T => f` in it, before a return type that is one name. It leaves
 //   `a ? () => ({}) : c => c` and `a ? b => ({ c }) : d => (e): Promise<T> => f`, for which tsc reports a syntax
-//   error, and which the parser of microsoft/TypeScript#64233 reads as the source. `refusedAgain` and `changedAgain`
-//   are what a second run of Bun does with them: it reports the syntax error, or it prints the program that tsc
-//   reads. With `--main`, `anew` are the ones that main prints in another way: tsc still reports a syntax error for
-//   another part of the text. `anewChangedAgain` are the ones of them that a second run changes: tsc reads another
-//   program with no error there, from main's text too. `againNotAsOnMain` are the ones that main prints in the same
-//   way and formats again in another way. There must be none.
+//   error, and which the parser of microsoft/TypeScript#64233 reads as the source. `silent` are the ones that the
+//   reader reads as another program with no error. `refusedAgain` and `changedAgain` are what a second run of Bun
+//   does with them: it reports the syntax error, or it prints the program that tsc reads. With `--main`, `anew` are
+//   the ones that main prints in another way: tsc still reports a syntax error for another part of the text.
+//   `anewChangedAgain` are the ones of them that a second run changes: tsc reads another program with no error
+//   there, from main's text too. `againNotAsOnMain` are the ones that main prints in the same way and formats again
+//   in another way. There must be none.
 // - `asOnMain`: with `--main`, the sources that main prints as `--bun` does and that would count as `broken` or
 //   `pairs`. They are differences from Prettier that this rule does not make.
 // - `againstMain`: with `--main`, the sources that main prints in another way than `--bun`. `broken`: tsc reads
@@ -356,6 +366,8 @@ function matrix() {
     // A body that loses its parentheses when it breaks, and conditionals with a `( .. ) :` of their own.
     ..."(q) => (b ? c : (x, y))|b ? (x, y) : (inner) => ({ q })|b ? (inner) => ({ q }) : (x, y)".split("|"),
     ..."b ? (q) => ({ q }) : (s) => f(s)|(this, r)".split("|"),
+    // A type assertion to a keyword: `any` can be the name of a type parameter, and `void` cannot.
+    ..."<any>(q, r)|<void>(q, r)".split("|"),
   ];
   const after = [
     ..."(x) => x|(x) => (y) => 1|(x) => (id): T => 1|(x) => (y) => (id): T => 1|() => (y) => (id): T => 1".split("|"),
@@ -411,6 +423,10 @@ function matrix() {
     ..."(x) => <U>(id): T => 1|(x) => ({ id = 1 }): T => 1|(x) => ([id, key]): T => 1|(x) => (this, id): T => 1".split(
       "|",
     ),
+    // Two return types, and a return type before parameters that tsc is sure of: it gives up the last one that it
+    // can read on from.
+    ..."(x) => (p): Promise<R> => (g) => (id): T => 1|(x) => (p): R => (g) => (id): Promise<T> => 1".split("|"),
+    ..."(x) => (id): T => (s: S) => 1|(x) => (p, ...r): R => (g) => (id): T => 1|(x) => (this): T => 1".split("|"),
     // Names long enough for the parameters to be on lines of their own, where they end in `,`.
     `(x) => (${Array.from({ length: 4 }, (_, index) => `aLongNameOfAParameter${index}`).join(", ")}): T => 1`,
   ];
@@ -583,6 +599,8 @@ function sitesMatrix() {
         for (const a of after) for (const make of around) sources.push(`${site(make(`${test} ? ${b} : ${a}`))}\n`);
       }
     }
+    // What follows the `:` of the site with no conditional of its own.
+    for (const a of after) sources.push(`${site(a)}\n`);
   }
   return sources;
 }
@@ -591,6 +609,8 @@ function sitesMatrix() {
 function pathsMatrix() {
   const outerBefore = [
     ..."(a, b)|(q) => ({ q })|() => ({})|async(q)|z|(b = 1)|<U>(a, b)|(q) => [q]|(p: T) => ({})".split("|"),
+    // A conditional before the `:`: where it breaks, it has no parentheses. One that an arrow function returns can.
+    ..."b2 ? c2 : (a, b)|b2 ? c2 : (q) => ({ q })|(r2) => b2 ? c2 : (a, b)".split("|"),
   ];
   const paths = [
     ...[c => `(y) => ${c}`, c => `(y) => (z) => ${c}`, c => `(y) => t2 ? u : ${c}`, c => `t2 ? u : (y) => ${c}`],
@@ -604,8 +624,14 @@ function pathsMatrix() {
     ...[c => `(y): U => (z) => ${c}`, c => `(a1: T): U => (z) => ${c}`, c => `<V>(y): U => (z) => ${c}`],
     ...[c => `<V>(y) => (z) => ${c}`, c => `({ y }) => (z) => ${c}`, c => `(y = 1) => (z) => ${c}`],
   ];
-  const before = "() => ({})|(q) => ({ q })|(c: T) => ({})|(m, n)|async (q) => ({ q })".split("|");
-  const after = "(d) => (e): T => f|(d) => (g) => (e): T => f|(d) => (e, h): T => { return 1; }".split("|");
+  // With `f(q, r)` and `u` before the `:`, the inner conditional is not misread for itself: the outer one is.
+  const before = "() => ({})|(q) => ({ q })|(c: T) => ({})|(m, n)|async (q) => ({ q })|f(q, r)|u".split("|");
+  const after = [
+    ..."(d) => (e): T => f|(d) => (g) => (e): T => f|(d) => (e, h): T => { return 1; }".split("|"),
+    // A return type right after the `:`, with `async`, and two of them.
+    ..."(e): T => f|(e): T => (g) => f|async (d) => (e): T => f|(u): R => (d) => (e): T => f".split("|"),
+    ..."(u): Promise<R> => (d) => (e): T => f|(d) => (e): T => (s: S) => f".split("|"),
+  ];
   const statements = [
     ...[c => `x = ${c};`, c => `x = p ? (${c}) : z;`, c => `f(${c}, (s) => s);`, c => `const v = p ? w : ${c};`],
   ];
@@ -690,6 +716,8 @@ function commentsMatrix() {
     ..."(q) => (r) => ({ q, r })|async (q) => ({ q })|(a: T) => ({ a })|(q) => ({ c: f() })|(q) => [q]|(a, b)".split(
       "|",
     ),
+    // What has its `( .. )` only in a type cast, or as it is written under `// prettier-ignore`.
+    ..."(q) => r|(q) => [q, r]|(q) => (a = 1, b)|(q) => async(r)|(q) => <U>(r)|<U>(q)".split("|"),
   ];
   const after = [
     ..."(x) => (id): T => 1|(x) => (y) => (id): T => 1|(x) => (id, z): T => { return 1; }|(x) => x|(x) => (y) => 1".split(
@@ -818,10 +846,43 @@ async function judge(printWidth) {
   const byMain = named.main ? format(sources, printWidth, named.main) : [];
   // Where main prints the same text, a difference from Prettier is not from this rule.
   const isAsOnMain = index => byMain[index] != null && byMain[index] === ours[index];
-  // Parameters before a return type, on lines of their own: `(e,)` is no expression.
-  const endsListWithComma = text => /,\n\s*\): /.test(text);
   const theirs = await Promise.all(sources.map(byPrettier));
   readAll([...ours, ...theirs, ...byMain]);
+  // Parameters before a return type, on lines of their own: `(e,)` is no expression. Parentheses that Bun keeps in
+  // such a text are no error if the reader misreads what Prettier prints for the source without the `,`.
+  const hasListWithComma = text => typeof text === "string" && /,\n\s*\): /.test(text);
+  const withComma = sources
+    .map((_, index) => index)
+    .filter(index => ours[index] !== theirs[index] && [theirs[index], byMain[index]].some(hasListWithComma));
+  const withoutComma = await Promise.all(
+    withComma.map(index =>
+      prettier
+        .format(sources[index], { ...options, printWidth, trailingComma: "none", filepath: `a.${extension}` })
+        .catch(() => null),
+    ),
+  );
+  readAll(withoutComma);
+  const isMisreadWithoutComma = new Set(
+    withComma.filter((index, at) => withoutComma[at] == null || read(withoutComma[at]) !== read(sources[index])),
+  );
+  const endsListWithComma = (text, index) => hasListWithComma(text) && isMisreadWithoutComma.has(index);
+  // A type assertion that breaks after its `>` has its operand in parentheses of its own: `<any>(⏎(q, r)⏎)`, and tsc
+  // tries no parameters there. Parentheses that Bun keeps after such a text are no error if the reader misreads what
+  // Prettier prints for the source where the assertion fits on its line.
+  const hasBrokenAssertion = text => typeof text === "string" && /(^|[^\w$\])])<[\w$.]+>\(\n\s*\(/.test(text);
+  const withAssertion = sources
+    .map((_, index) => index)
+    .filter(index => ours[index] !== theirs[index] && [theirs[index], byMain[index]].some(hasBrokenAssertion));
+  const onOneLine = await Promise.all(
+    withAssertion.map(index =>
+      prettier.format(sources[index], { ...options, printWidth: 1000, filepath: `a.${extension}` }).catch(() => null),
+    ),
+  );
+  readAll(onOneLine);
+  const isMisreadOnOneLine = new Set(
+    withAssertion.filter((index, at) => onOneLine[at] == null || read(onOneLine[at]) !== read(sources[index])),
+  );
+  const isAfterBrokenAssertion = (text, index) => hasBrokenAssertion(text) && isMisreadOnOneLine.has(index);
   const again = format(ours, printWidth);
   const againByMain = named.main ? format(byMain, printWidth, named.main) : [];
   // Bun reads what Prettier prints, where tsc reads that as the source.
@@ -830,16 +891,20 @@ async function judge(printWidth) {
     printWidth,
   );
 
-  const counts = { sources: sources.length, broken: 0, pairs: 0, silenced: 0, repaired: 0, kept: 0 };
-  Object.assign(counts, { pairsBeforeBrokenList: 0, asOnMain: { broken: 0, pairs: 0 } });
-  Object.assign(counts, { left: { all: 0, anew: 0, refusedAgain: 0, changedAgain: 0, againNotAsOnMain: 0 } });
+  const counts = { sources: sources.length, broken: 0, pairs: 0, silenced: 0, repaired: 0, kept: 0, repairedOfMain: 0 };
+  Object.assign(counts, { pairsBeforeBrokenList: 0, pairsAfterBrokenAssertion: 0, asOnMain: { broken: 0, pairs: 0 } });
+  Object.assign(counts, {
+    left: { all: 0, silent: 0, anew: 0, refusedAgain: 0, changedAgain: 0, againNotAsOnMain: 0 },
+  });
   counts.left.anewChangedAgain = 0;
   const againstMain = { broken: 0, pairs: 0, silenced: 0, repaired: 0 };
   if (named.main) Object.assign(counts, { againstMain, refusedOnMainToo: 0 });
   Object.assign(counts, { unstable: 0, refusedAnew: 0, leftToEsbuild: 0 });
   const node = { broken: 0, ours: { source: 0, other: 0, error: 0 }, theirs: { source: 0, other: 0, error: 0 } };
   const shown = { broken: [], pairs: [], silenced: [], leftAnew: [], againNotAsOnMain: [], left: [], unstable: [] };
-  Object.assign(shown, { pairsBeforeBrokenList: [], brokenAsOnMain: [], anewChangedAgain: [] });
+  shown.leftSilent = [];
+  Object.assign(shown, { pairsBeforeBrokenList: [], pairsAfterBrokenAssertion: [], brokenAsOnMain: [] });
+  shown.anewChangedAgain = [];
   Object.assign(shown, { brokenAgainstMain: [], silencedAgainstMain: [], pairsAgainstMain: [] });
   Object.assign(shown, { refusedAnew: [], leftToEsbuild: [], brokenForNode: [] });
   const refused = new Set();
@@ -859,7 +924,7 @@ async function judge(printWidth) {
       const byTscOnMain = read(byMain[index]);
       const isSilent = !isRight && !read(ours[index]).startsWith("error: ");
       if (isRight && byTscOnMain === tree) {
-        if (!endsListWithComma(byMain[index])) {
+        if (!endsListWithComma(byMain[index], index) && !isAfterBrokenAssertion(byMain[index], index)) {
           counts.againstMain.pairs++;
           shown.pairsAgainstMain.push(`${oneLine(byMain[index])}\n    ${oneLine(ours[index])}`);
         }
@@ -883,6 +948,10 @@ async function judge(printWidth) {
     } else if (!isRight) {
       counts.left.all++;
       shown.left.push(both);
+      if (!read(ours[index]).startsWith("error: ")) {
+        counts.left.silent++;
+        shown.leftSilent.push(both);
+      }
       if (again[index] == null) counts.left.refusedAgain++;
       else if (again[index] !== ours[index]) counts.left.changedAgain++;
       if (isAsOnMain(index)) {
@@ -907,8 +976,14 @@ async function judge(printWidth) {
       }
     } else if (!isRightByPrettier) counts.repaired++;
     else if (ours[index] !== theirs[index]) {
-      const kind = isAsOnMain(index) ? null : endsListWithComma(theirs[index]) ? "pairsBeforeBrokenList" : "pairs";
-      if (kind == null) counts.asOnMain.pairs++;
+      const isBeforeList = endsListWithComma(theirs[index], index);
+      // tsc does not read what main prints as the source: the parentheses are a repair of that text.
+      const isRepairOfMain = typeof byMain[index] === "string" && !isAsOnMain(index) && read(byMain[index]) !== tree;
+      const isAfterAssertion = isAfterBrokenAssertion(theirs[index], index);
+      const exempt = isBeforeList ? "pairsBeforeBrokenList" : isAfterAssertion ? "pairsAfterBrokenAssertion" : "pairs";
+      const kind = isAsOnMain(index) || isRepairOfMain ? null : exempt;
+      if (isRepairOfMain) counts.repairedOfMain++;
+      else if (kind == null) counts.asOnMain.pairs++;
       else {
         counts[kind]++;
         shown[kind].push(`${oneLine(theirs[index])}\n    ${oneLine(ours[index])}`);
@@ -957,7 +1032,8 @@ async function judge(printWidth) {
   const result = { width: printWidth, ...counts, refused: refused.size, ...(countsNode ? { node } : {}) };
   console.log(JSON.stringify(result));
   // The next width has other texts.
-  for (const text of [...ours, ...theirs, ...again, ...byMain]) if (!sourceSet.has(text)) readings.delete(text);
+  for (const text of [...ours, ...theirs, ...again, ...byMain, ...withoutComma, ...onOneLine])
+    if (!sourceSet.has(text)) readings.delete(text);
   return result;
 }
 

@@ -358,7 +358,8 @@ fn ends_with_parameters<'a>(operand: Expr<'a>, f: &Formatter<'a>) -> bool {
     if body != operand && f.comments().is_ignored(operand.as_ast_nodes()) {
         let is_at_end = body.parens().len() == 1 && body.outer_span().end == operand.span().end;
         // `({ a: (b) })` has no parameter in it.
-        let is_plain = !f.source_text().text_for(&body.span()).contains(&b'(');
+        let is_plain =
+            !bun_core::strings::contains_char(f.source_text().text_for(&body.span()), b'(');
         return is_at_end
             && is_plain
             && (is_in_parentheses(body) || is_parameter_name(body, false));

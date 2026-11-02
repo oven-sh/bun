@@ -5916,7 +5916,8 @@ static void sortByCodePoint(JSC::PropertyNameArray::PropertyNameVector& names)
     std::sort(names.begin(), names.end(), [](const Identifier& a, const Identifier& b) { return codePointCompare(a.impl(), b.impl()) < 0; });
 }
 
-// A read of a property that holds the sandbox gives the context's global. A sandbox can be the global of another context.
+// A read of a property that holds the sandbox gives the global of the context, and the print shows a global too. A sandbox can be the global of another context.
+// Node prints the sandbox (https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/lib/internal/util/inspect.js#L2551-L2555). This printer lists inherited properties, so a sandbox that inherits from globalThis would list the host's globals.
 static bool isSandboxOf(JSC::JSGlobalProxy* contextGlobal, JSC::JSValue value)
 {
     while (contextGlobal) {
@@ -5926,6 +5927,12 @@ static bool isSandboxOf(JSC::JSGlobalProxy* contextGlobal, JSC::JSValue value)
             return false;
         if (value == sandbox)
             return true;
+        // The own slot of a Proxy is the slot of its target.
+        while (auto* proxyObject = dynamicDowncast<ProxyObject>(sandbox)) {
+            if (proxyObject->isRevoked())
+                return false;
+            sandbox = proxyObject->target();
+        }
         contextGlobal = dynamicDowncast<JSGlobalProxy>(sandbox);
     }
     return false;

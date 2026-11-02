@@ -9,6 +9,7 @@ import {
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
+import { DatabaseSync } from "node:sqlite";
 import { join } from "path";
 import util from "util";
 import vm from "vm";
@@ -1207,21 +1208,36 @@ describe("printing the global of a node:vm context", () => {
       expect([runInContext("me === globalThis", context), contextGlobal.me === contextGlobal]).toEqual([true, true]);
     });
 
-    // A read of a property that holds the sandbox gives the global, and so does the print.
-    it("a sandbox that inherits from globalThis and holds itself does not print the host's globals", () => {
+    // A read of a property that holds the sandbox gives the global, and the print shows a global. Node prints the sandbox.
+    // This printer lists inherited properties, so the sandbox of this test would print with the host's globals.
+    it("a sandbox that inherits from globalThis and holds itself prints as the global", () => {
       const sandbox = Object.create(globalThis);
       sandbox.global = sandbox;
       expect(print(runInContext("this", createContext(sandbox)))).toBe("{\n  global: [Global Object],\n}");
     });
 
-    it.each([
-      ["a plain object", () => ({ data: 1 }), "{\n  data: 1,\n  me: [Global Object],\n}"],
-      ["an object that inherits from globalThis", () => Object.create(globalThis), "{\n  me: [Global Object],\n}"],
-    ])("a sandbox that is the global of another context, whose sandbox is %s and holds itself", (_, make, printed) => {
-      const innerSandbox = make();
-      innerSandbox.me = innerSandbox;
-      const innerGlobal = runInContext("this", createContext(innerSandbox));
-      expect(print(runInContext("this", createContext(innerGlobal)))).toBe(printed);
+    describe.each([
+      ["the global of another context", innerGlobal => innerGlobal],
+      ["a Proxy of the global of another context", innerGlobal => new Proxy(innerGlobal, {})],
+    ])("a sandbox that is %s", (_, sandboxOf) => {
+      it.each([
+        ["a plain object", () => ({ data: 1 }), "{\n  data: 1,\n  me: [Global Object],\n}"],
+        ["an object that inherits from globalThis", () => Object.create(globalThis), "{\n  me: [Global Object],\n}"],
+      ])("whose sandbox is %s and holds itself", (_, make, printed) => {
+        const innerSandbox = make();
+        innerSandbox.me = innerSandbox;
+        const innerGlobal = runInContext("this", createContext(innerSandbox));
+        expect(print(runInContext("this", createContext(sandboxOf(innerGlobal))))).toBe(printed);
+      });
+    });
+
+    it("a Proxy sandbox whose target holds itself prints the target, as a read gives it", () => {
+      const target = { data: 1 };
+      target.me = target;
+      const context = createContext(new Proxy(target, {}));
+      const contextGlobal = runInContext("this", context);
+      expect(contextGlobal.me).toBe(target);
+      expect(print(contextGlobal)).toBe("{\n  data: 1,\n  me: {\n    data: 1,\n    me: [Circular],\n  },\n}");
     });
 
     // `var` puts an enumerable name on the global. The sandbox answers for its value from a slot that is not enumerable.
@@ -1339,6 +1355,19 @@ describe("printing the global of a node:vm context", () => {
       expect(calls()).toBe(0);
     });
 
+    it("a property named constructor prints as it does for any other object", () => {
+      const sandbox = { constructor: 1, a: 2 };
+      expect(print(runInNewContext("this", sandbox))).toBe(print(sandbox));
+    });
+
+    it("a native getter of the sandbox that throws prints undefined, as for any other object", () => {
+      const database = new DatabaseSync(":memory:");
+      database.close();
+      expect(() => database.isTransaction).toThrow("database is not open");
+      expect(print(database)).toContain("  isTransaction: undefined,\n");
+      expect(print(runInContext("this", createContext(database)))).toContain("  isTransaction: undefined,\n");
+    });
+
     // `var x` puts the name on the global, so that the print lists it. The Proxy answers for its value.
     describe("when the sandbox is a Proxy", () => {
       const contextGlobalOf = (target, handler) => {
@@ -1389,6 +1418,39 @@ describe("printing the global of a node:vm context", () => {
         asked = 0;
         expect(print(contextGlobal)).toBe("{}");
         expect(asked).toBe(2);
+      });
+
+      it("a vm timeout in the getOwnPropertyDescriptor trap at the lookup ends the print and the script", () => {
+        let asked = 0;
+        const target = { x: 1 };
+        Object.defineProperty(target, "printThis", {
+          value(contextGlobal) {
+            asked = 0;
+            return print(contextGlobal);
+          },
+        });
+        const sandbox = new Proxy(target, {
+          getOwnPropertyDescriptor(target, key) {
+            if (key === "x" && ++asked === 2) for (;;);
+            return Reflect.getOwnPropertyDescriptor(target, key);
+          },
+        });
+        expect(() => runInContext("printThis(this)", createContext(sandbox), { timeout: 20 })).toThrow(
+          expect.objectContaining({ code: "ERR_SCRIPT_EXECUTION_TIMEOUT" }),
+        );
+        expect(asked).toBe(2);
+        expect(print(runInNewContext("this", { after: 1 }))).toBe("{\n  after: 1,\n}");
+      });
+
+      it("an ownKeys trap that throws: the print throws the error", () => {
+        let throws = false;
+        const ownKeys = target => {
+          if (throws) throw new Error("from the ownKeys trap");
+          return Reflect.ownKeys(target);
+        };
+        const contextGlobal = runInContext("this", createContext(new Proxy({ a: 1 }, { ownKeys })));
+        throws = true;
+        expect(() => print(contextGlobal)).toThrow("from the ownKeys trap");
       });
     });
   });

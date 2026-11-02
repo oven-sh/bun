@@ -5659,7 +5659,8 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             TypeData::Cond { .. } => {
-                if self.is_deeply_nested_type(source, [&r.source_stack, &r.target_stack], true, 10) {
+                if self.is_deeply_nested_type(source, [&r.source_stack, &r.target_stack], true, 10)
+                {
                     return Ternary::MAYBE;
                 }
                 if matches!(self.data(target), TypeData::Cond { .. }) {

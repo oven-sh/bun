@@ -2545,8 +2545,10 @@ impl<'p, 's> Checker<'p, 's> {
         let scope = self.begin_scope();
         let target_serial = self.push_serial(target);
         let source_serial = self.push_serial(source);
-        self.reverse_mapped_source_stack.push((source, source_serial));
-        self.reverse_mapped_target_stack.push((target, target_serial));
+        self.reverse_mapped_source_stack
+            .push((source, source_serial));
+        self.reverse_mapped_target_stack
+            .push((target, target_serial));
         let saved = self.reverse_expanding;
         let (sources, targets) = (
             std::mem::take(&mut self.reverse_mapped_source_stack),

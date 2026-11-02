@@ -198,7 +198,7 @@ describe("with statement", () => {
   // The transpiler rewrites `module.require(x)` to `require(x)`. In a `with` body
   // the name `module` can be a property of the object, so the call stays as it is
   // written there. Each expected value is what Node prints.
-  test("module.require() in the body calls the function of the object", async () => {
+  test.concurrent("module.require() in the body calls the function of the object", async () => {
     using dir = tempDir("with-module-require", {
       "index.cjs": `
         const fs = require("node:fs");
@@ -257,7 +257,7 @@ describe("with statement", () => {
 
   // A bundle keeps the rewrite in a `with` body too. It is what loads "./dep.cjs":
   // the `module` that the bundle gives "lib.cjs" has no `require`.
-  test("module.require() in the body loads a file of the bundle", async () => {
+  test.concurrent("module.require() in the body loads a file of the bundle", async () => {
     using dir = tempDir("with-module-require-bundle", {
       "entry.cjs": `console.log(require("./lib.cjs")({}));`,
       "lib.cjs": `module.exports = function (o) { with (o) { return module.require("./dep.cjs"); } };`,

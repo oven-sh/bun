@@ -7,9 +7,7 @@ import { test as oneAtATime } from "./supported";
 
 raiseDefaultTimeout(120_000);
 
-// Every test runs a project of its own, or waits for the two runs of the project that the cases with spelled spies share, so the
-// tests run at once: as many as --max-concurrency allows. Not on a debug build of Bun: there the longest build takes a third of
-// the time limit of its test with nothing beside it, and ran out of it beside four others.
+// A debug build is too slow to run these at once: its longest build ran out of time beside four others.
 const test = isDebug ? oneAtATime : oneAtATime.concurrent;
 
 const math = {
@@ -88,10 +86,7 @@ async function expectCompiledToRunAsPlain(expected: Shown, files: Record<string,
   return compiled;
 }
 
-// The cases whose spies each spell a file of the case and a name are the folders of one project, which runs once plain and once
-// compiled. For such a spy the build opens the export that it names, in the files of that folder, so no case changes what the
-// build knows about another. What else a test replaces reaches past its folder, so such a case has a build of its own: a module
-// of Bun, what a preload or a mock replaces, and whatever a spy opens that takes its object or its name from somewhere.
+// One project for the cases whose spies each name a file of their own folder and an export: such a spy opens that export alone.
 const spelled = {
   files: {} as Record<string, string>,
   cases: 0,
@@ -347,15 +342,13 @@ spelledSpy(
   },
 );
 
-// The seven cases tell the build nothing about one another while the scan of their test files finds the eleven spies by file and
-// name and nothing else: no whole module, no module object that is handed on, nothing for a spy or a mock that nobody sees. Nor
-// may flow find an export behind the scan: that starts the build over.
+// The shared cases stay independent while the scan finds their eleven spies by name and nothing for the whole run.
 test("the spies that spell the module and the name open their exports and nothing else, in one load", async () => {
   const { plain, compiled } = await ranSpelled();
   expect({ stderr: plain.ended.stderr, exitCode: plain.ended.exitCode }).toEqual({ stderr: "", exitCode: 0 });
   expect(compiled.ended).toEqual(plain.ended);
-  expect(compiled.scan).toContain(
-    "| sites: built-ins 0 | names added 0 | exports 11 | modules 0 | handed on 0 | mocks any module false | hands on any module false | spies on objects from somewhere false",
+  expect(compiled.scan?.replace(/\| \d+ ms \|/, "|")).toBe(
+    "AOT test run | scan of 7 files and 14 beside them | sites: built-ins 0 | names added 0 | exports 11 | modules 0 | handed on 0 | mocks any module false | hands on any module false | spies on objects from somewhere false",
   );
   expect(compiled.build).toEqual(oneLoad);
 });

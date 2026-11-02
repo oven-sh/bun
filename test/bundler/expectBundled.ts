@@ -1480,6 +1480,7 @@ for (const [key, blob] of build.outputs) {
         await esbuild.build({
           bundle: true,
           entryPoints: [...entryPaths, ...(entryPointsRaw ?? [])],
+          external,
           ...(useOutFile ? { outfile: outfile! } : { outdir: outdir! }),
           plugins: pluginArray as any,
           jsx: jsx.runtime === "preserve" ? "preserve" : undefined,

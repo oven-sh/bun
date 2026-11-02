@@ -1478,10 +1478,10 @@ impl Listener {
         Ok(js::from_js(value).map(|listener| unsafe { listener.as_ref() }))
     }
 
-    /// `attach` is `NewApp::attach_listen_socket` of the server's app.
+    /// `attach` is `NewApp::attach_listen_socket` of the server's app. `dyn`: one body for the four server types.
     pub(crate) fn attach_http(
         &self,
-        attach: impl FnOnce(&mut uws_sys::ListenSocket, *mut uws::SocketGroup),
+        attach: &mut dyn FnMut(&mut uws_sys::ListenSocket, *mut uws::SocketGroup),
     ) -> Result<HttpAttached<'_>, bun_sys::E> {
         let (ls, port) = self.shared_listen_socket()?;
         let hostname = match &self.connection {

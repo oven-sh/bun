@@ -176,6 +176,14 @@ impl ServerConfig {
 
         cost
     }
+
+    /// node:http `server.listen(handle)`: the server binds nothing, and its address is the one of the handle.
+    pub(crate) fn set_borrowed_listener_address(&mut self, port: u16, hostname: Option<&[u8]>) {
+        self.address = Address::Tcp {
+            port,
+            hostname: hostname.map(ZBox::from_bytes),
+        };
+    }
 }
 
 // We need to be able to apply the route to multiple Apps even when there is only one RouteList.

@@ -1916,7 +1916,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     ) -> Result<(), bun_sys::E> {
         debug_assert!(self.config.get().is_node_http_server);
         let user = self.any_server_packed as *mut c_void;
-        let attached = handle.attach_http(|ls, owner_group| {
+        let attached = handle.attach_http(&mut |ls, owner_group| {
             // SAFETY: `owner_group` is the group of `handle`, which `attach_http` left with no vtable.
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
             unsafe { bun_opaque::opaque_deref_mut(app).attach_listen_socket(ls, owner_group, user) }
@@ -1928,10 +1928,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // for the server's lifetime); single-threaded JS context.
         unsafe { (*self.vm_mut()).event_loop_handle = Some(bun_io::Loop::get()) };
         self.config.with_mut(|config| {
-            config.address = server_config::Address::Tcp {
-                port: attached.port,
-                hostname: attached.hostname.map(bun_core::ZBox::from_bytes),
-            };
+            config.set_borrowed_listener_address(attached.port, attached.hostname);
         });
         // The handle holds the event loop or not as the server before us left it.
         if attached.referenced {

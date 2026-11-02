@@ -802,34 +802,32 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
   // Not so yet: a disable() after createSocket(), in the same run(), with a frame of a graph in the async context.
   // Node.js deletes the store from the frame that the socket's handle has, so 'message' reads none, and so does Bun
   // with no graph in the context. Here the stores that node:dgram keeps are a copy, which the note of disable() does
-  // not reach: 'message' reads "entered". A WebSocket has the same limit.
-  test.failing(
-    "a node:dgram 'message' reads no store after a disable() that follows createSocket() inside a graph",
-    async () => {
-      const disabledLater = { "at createSocket()": "entered", "in 'message'": undefined };
-      expect({
-        "the store is entered inside the graph": await seenIn((storage, graph, create) =>
-          graph.run(() =>
-            storage.run("entered", () => {
-              create();
-              storage.disable();
-            }),
-          ),
-        ),
-        "the store is entered around the graph": await seenIn((storage, graph, create) =>
-          storage.run("entered", () =>
-            graph.run(() => {
-              create();
-              storage.disable();
-            }),
-          ),
-        ),
-      }).toEqual({
-        "the store is entered inside the graph": disabledLater,
-        "the store is entered around the graph": disabledLater,
-      });
-    },
-  );
+  // not reach: 'message' reads "entered". A WebSocket has the same limit. dgram.test.ts has a row for it that runs.
+  // (todo and not failing: a test that starts inside the context of a disposed graph is not called, and passes.)
+  const disabledAfterCreateSocket: Record<string, Parameters<typeof seenIn>[0]> = {
+    "the store is entered inside the graph": (storage, graph, create) =>
+      graph.run(() =>
+        storage.run("entered", () => {
+          create();
+          storage.disable();
+        }),
+      ),
+    "the store is entered around the graph": (storage, graph, create) =>
+      storage.run("entered", () =>
+        graph.run(() => {
+          create();
+          storage.disable();
+        }),
+      ),
+  };
+  for (const [arrangement, arrange] of Object.entries(disabledAfterCreateSocket)) {
+    test.todo(
+      `a node:dgram 'message' reads no store after a disable() that follows createSocket(): ${arrangement}`,
+      async () => {
+        expect(await seenIn(arrange)).toEqual({ "at createSocket()": "entered", "in 'message'": undefined });
+      },
+    );
+  }
 
   // A send() that waited behind backpressure is completed by the socket's drain or by close(). Its callback still
   // runs where that send() was made: in the caller's graph and store, as the callback of a ws send() does. With a

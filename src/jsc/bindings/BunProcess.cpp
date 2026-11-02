@@ -493,8 +493,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         return ERR::MISSING_ARGS(scope, globalObject, "process.dlopen needs at least 2 arguments"_s);
     }
 
-    // Node converts the flags before it reads the module, and only when the argument is there. An explicit undefined is 0.
-    // https://github.com/nodejs/node/blob/v26.3.0/src/node_binding.cc#L461-L464
+    // As in Node, the flags come first and an explicit undefined is 0: https://github.com/nodejs/node/blob/v26.3.0/src/node_binding.cc#L461-L464
 #if OS(WINDOWS)
     // LoadLibrary takes no mode. Node converts the argument on Windows and never reads the result.
     [[maybe_unused]] int32_t flags = 0;
@@ -641,17 +640,14 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
     }
 #endif
 #ifdef __GNU_LIBRARY__
-    // glibc keeps this bit for sprof(1) and stops before it relocates the library, so dlsym() on the handle crashes. Node crashes.
-    // https://github.com/bminor/glibc/blob/glibc-2.41/elf/dl-open.c#L553-L555
+    // Node crashes: glibc does not relocate a library that it opens for sprof(1), and dlsym() on the handle faults. https://github.com/bminor/glibc/blob/glibc-2.41/elf/dl-open.c#L553-L555
     static constexpr int32_t glibcModeForSprof = 0x40000000;
     if (flags & glibcModeForSprof) [[unlikely]]
         return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, "invalid mode parameter"_s);
 #endif
 #ifdef RTLD_DEEPBIND
-    // A library opened with RTLD_DEEPBIND finds libc's functions before the executable's. AddressSanitizer ends the process for
-    // that (https://github.com/google/sanitizers/issues/611), and beside compiled code the library would set signal actions
-    // that BunSignalActions.cpp never sees.
-    if (ASAN_ENABLED || interceptsSignalFunctionsOfLibraries())
+    // A library opened with this flag finds libc's functions before the ones that this executable defines for it.
+    if (definesLibcFunctionsForLibraries())
         flags &= ~RTLD_DEEPBIND;
 #endif
     // Keep the addon's name in crash reports until this call returns, because its init functions run after dlopen().

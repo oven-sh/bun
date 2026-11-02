@@ -13,9 +13,8 @@ namespace Bun {
 int setSignalAction(int signalNumber, const struct sigaction* action, struct sigaction* previousAction);
 void (*setSignalHandler(int signalNumber, void (*handler)(int)))(int);
 
-// True while the calls that a library makes to those functions of libc have to arrive in this executable, which defines them
-// for the sake of compiled code. The calls of a library that was opened with RTLD_DEEPBIND go to libc.
-bool interceptsSignalFunctionsOfLibraries();
+// True while a library has to find functions of libc in this executable first: a sanitizer's, or the ones above beside compiled code.
+bool definesLibcFunctionsForLibraries();
 
 } // namespace Bun
 

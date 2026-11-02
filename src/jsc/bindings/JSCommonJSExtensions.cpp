@@ -26,9 +26,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLoaderJSON, (JSC::JSGlobalObject * globalObject, JSC:
 {
     return builtinLoader(globalObject, callFrame, BunLoaderTypeJSON);
 }
-// Like Node's handler, it calls whatever `process.dlopen` holds, with two arguments. onAssign() has no loader for it: under
-// another extension it is called as a handler of the program's own is.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L2038-L2041
+// Node's handler, which calls whatever process.dlopen holds: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L2038-L2041
 JSC_DEFINE_HOST_FUNCTION(jsLoaderNode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);

@@ -388,7 +388,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ..Default::default()
         });
         let value = p.new_expr(object, tag.loc);
-        let ref_ = p.generate_temp_var(b"jsxTag");
+        let ref_ = p.generate_temp_var(b"JSXTag");
+        p.symbols[ref_.inner_index() as usize].set_must_start_with_capital_letter_for_jsx(true);
         let binding = p.b(js_ast::B::Identifier { r#ref: ref_ }, tag.loc);
         let decl = p.s(
             js_ast::S::Local {
@@ -517,29 +518,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 !was_string && matches!(tag.data, Data::EString(_));
                             if matches!(root.data, Data::EImportIdentifier(_)) || is_defined_string
                             {
-                                // Capturing tag values at each use; linking can require computed access,
-                                // and JSX names can treat defined strings as bindings.
-                                let ref_ = p.generate_temp_var(b"JSXTag");
-                                let binding = p.b(js_ast::B::Identifier { r#ref: ref_ }, tag.loc);
-                                let decl = p.s(
-                                    js_ast::S::Local {
-                                        kind: js_ast::s::Kind::KVar,
-                                        decls: G::DeclList::init_one(G::Decl {
-                                            binding,
-                                            value: None,
-                                        }),
-                                        ..Default::default()
-                                    },
-                                    tag.loc,
-                                );
-                                p.nearest_stmt_list_mut()
-                                    .expect("JSX has a statement list")
-                                    .push(decl);
-                                p.record_usage(ref_);
-                                p.record_usage(ref_);
-                                let identifier = Expr::init_identifier(ref_, tag.loc);
-                                tag_initializer = Some(Expr::assign(identifier, tag));
-                                tag = identifier;
+                                let (member, initializer) = Self::jsx_tag_member(p, tag);
+                                tag = member;
+                                tag_initializer = Some(initializer);
                             }
                             let ref_ = match tag.data {
                                 Data::EIdentifier(identifier) => Some(identifier.ref_),

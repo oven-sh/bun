@@ -909,7 +909,13 @@ mod tests {
 
     #[test]
     fn a_worker_stops_at_a_prefix_or_a_block_of_a_frame_that_is_given_up() {
-        let params = small_params(Strategy::BtOpt, 6);
+        a_worker_stops(&small_params(Strategy::BtOpt, 6));
+        let mut with_rows = small_params(Strategy::Lazy, 6);
+        with_rows.use_row_match_finder = ParamSwitch::Enable;
+        a_worker_stops(&with_rows);
+    }
+
+    fn a_worker_stops(params: &CCtxParams) {
         let data = [0u8; 64];
         let input = Input {
             bufs: Buffers {
@@ -927,7 +933,7 @@ mod tests {
         let cancelled = Arc::new(AtomicBool::new(false));
         let mut cctx = FrameCompressor::for_worker(Arc::clone(&cancelled));
         let begin = |cctx: &mut FrameCompressor| {
-            cctx.begin(&input, Some(span(0, 32)), &params, 32, false)
+            cctx.begin(&input, Some(span(0, 32)), params, 32, false)
                 .map(|_| ())
         };
         let mut dst = [0u8; 128];

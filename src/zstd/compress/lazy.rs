@@ -5,16 +5,16 @@ use core::num::NonZeroU32;
 use core::ops::Range;
 
 use super::internal::{
-    BlockSrc, CompressionParameters, Descent, DictMatchState, DictMode, DictTree, First, Hash8,
-    Hasher, Hints, K_SEARCH_STRENGTH, MatchState, Near, Nodes, Older, Prefix, REPCODE1_TO_OFFBASE,
-    RowTags, SecondTagStats, SeqSink, SeqStore, Strategy, TreeInput, ZSTD_DUBT_UNSORTED_MARK,
-    ZSTD_ROW_HASH_CACHE_SIZE, bt_children, bt_look_ahead, bt_low, bt_nodes, bt_set_children,
-    bt_walk, count_2segments, hash_ptr, hashed_swap, index_overlap_check, offbase_is_offset,
-    offbase_to_offset, offset_to_offbase, table_get, table_put,
+    BlockSrc, CompressionParameters, Descent, DictMatchState, DictMode, DictTree, First,
+    HASH_READ_SIZE, Hash8, Hasher, Hints, K_SEARCH_STRENGTH, MatchState, Near, Nodes, Older,
+    Prefix, REPCODE1_TO_OFFBASE, RowTags, SecondTagStats, SeqSink, SeqStore, Strategy, TreeInput,
+    ZSTD_DUBT_UNSORTED_MARK, ZSTD_ROW_HASH_CACHE_SIZE, bt_children, bt_look_ahead, bt_low,
+    bt_nodes, bt_set_children, bt_walk, count_2segments, hashed_swap, index_overlap_check,
+    offbase_is_offset, offbase_to_offset, offset_to_offbase, table_get, table_put,
 };
 use crate::common::{ZSTD_BLOCKSIZE_MAX, ZSTD_REP_NUM};
 use crate::error::Result;
-use crate::util::{BUG, SliceExt, highbit32, read_le32, read_le64};
+use crate::util::{BUG, SliceExt, highbit32, read_le32};
 
 const K_LAZY_SKIPPING_STEP: u32 = 8;
 
@@ -876,26 +876,25 @@ impl<'a, const DICT_MODE: u8, const FAR: bool> Finder<'a> for TreeFinder<'a, DIC
 // ── hash chains ───────────────────────────────────────────────────────────
 
 /// `ZSTD_insertAndFindFirstIndex`: indexes the segment from `ms.next_to_update` up to the position `ip`, in the hash
-/// chains.
+/// chains. `ip` is not before that, and there are 7 bytes from it on. For a job that is 16 KB at most, as rows take over
+/// from a window of 32 KB on.
 pub(crate) fn insert_and_find_first_index(
     ms: &mut MatchState,
     prefix: Prefix<'_>,
     ip: usize,
 ) -> Result<()> {
-    let hash_log = ms.c_params.hash_log;
-    let mls = ms.c_params.min_match;
-    let chain_mask = (1u32 << ms.c_params.chain_log) - 1;
-    let target = prefix.index_of(ip);
-    let hash_table = ms.hash_table.as_mut_slice();
-    let chain_table = ms.chain_table.as_mut_slice();
-
-    for idx in ms.next_to_update..target {
-        let h = hash_ptr(prefix.buf, prefix.pos_of(idx), hash_log, mls)?;
-        let next_in_chain = core::mem::replace(hash_table.at_mut(h)?, idx);
-        chain_table.put((idx & chain_mask) as usize, next_in_chain)?;
+    if ms.hash_table.is_empty() || ms.chain_table.is_empty() {
+        return Err(BUG);
     }
-
-    ms.next_to_update = target;
+    let first = prefix.pos_of(ms.next_to_update);
+    let positions = prefix.buf.sub(first..ip + HASH_READ_SIZE - 1)?;
+    let chains = Chains {
+        hash_table: &mut ms.hash_table,
+        chain_table: &mut ms.chain_table,
+    };
+    let hasher = Hasher::new(ms.c_params.hash_log, ms.c_params.min_match);
+    chains.insert_all(hasher, positions, ms.next_to_update);
+    ms.next_to_update = prefix.index_of(ip);
     Ok(())
 }
 
@@ -1460,7 +1459,8 @@ fn row_prefetch<const ROW_ENTRIES: usize, const SECOND_TAGS: bool>(
 }
 
 /// `ZSTD_row_update`: indexes the segment from `ms.next_to_update` up to the position `ip`, in the rows of the
-/// row-based match finder.
+/// row-based match finder. There are 7 bytes from `ip` on.
+#[inline(never)]
 pub(crate) fn row_update(ms: &mut MatchState, prefix: Prefix<'_>, ip: usize) -> Result<()> {
     #[inline(always)]
     fn update<const ROW_ENTRIES: usize>(
@@ -1469,8 +1469,10 @@ pub(crate) fn row_update(ms: &mut MatchState, prefix: Prefix<'_>, ip: usize) -> 
         prefix: Prefix<'_>,
         indices: Range<u32>,
     ) -> Result<()> {
-        for idx in indices {
-            let hash = hasher.of::<false>(read_le64(prefix.buf, prefix.pos_of(idx))?);
+        let first = prefix.pos_of(indices.start);
+        let positions = (prefix.buf).span(first, indices.len() + HASH_READ_SIZE - 1)?;
+        for (idx, bytes) in indices.zip(positions.array_windows()) {
+            let hash = hasher.of::<false>(u64::from_le_bytes(*bytes));
             rows.row::<ROW_ENTRIES, false>(hash.hash)
                 .ok_or(BUG)?
                 .insert(hash, idx);
@@ -1478,22 +1480,30 @@ pub(crate) fn row_update(ms: &mut MatchState, prefix: Prefix<'_>, ip: usize) -> 
         Ok(())
     }
 
+    /// The prefix of a job can take 0.1 s, so a worker looks every so many positions whether there is any use in going on.
+    const PART: u32 = 1 << 16;
+
     row_flatten_tags(&mut ms.row_tags, &mut ms.tag_table)?;
     let mls = ms.c_params.min_match.min(6);
     let hash_bits = ms.row_hash_log + ZSTD_ROW_HASH_TAG_BITS;
     let hasher = RowHasher(Hash8::new(mls, hash_bits, ms.hash_salt));
-    let rows = Rows {
-        indices: &mut ms.hash_table,
-        tags: &mut ms.tag_table,
-    };
     let target = prefix.index_of(ip);
-    let indices = ms.next_to_update..target;
-    ms.next_to_update = target;
-    match ms.c_params.search_log.clamp(4, 6) {
-        4 => update::<16>(rows, hasher, prefix, indices),
-        5 => update::<32>(rows, hasher, prefix, indices),
-        _ => update::<64>(rows, hasher, prefix, indices),
+    while ms.next_to_update < target {
+        ms.check_cancelled()?;
+        let indices = ms.next_to_update..ms.next_to_update.saturating_add(PART).min(target);
+        ms.next_to_update = indices.end;
+        let rows = Rows {
+            indices: &mut ms.hash_table,
+            tags: &mut ms.tag_table,
+        };
+        match ms.c_params.search_log.clamp(4, 6) {
+            4 => update::<16>(rows, hasher, prefix, indices)?,
+            5 => update::<32>(rows, hasher, prefix, indices)?,
+            _ => update::<64>(rows, hasher, prefix, indices)?,
+        }
     }
+    ms.next_to_update = target;
+    Ok(())
 }
 
 /// Bit `n` is set if the entry `n` has the tag `tag`. This becomes a comparison of vectors.

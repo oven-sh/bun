@@ -1669,6 +1669,38 @@ describe("the output is that of zstd 1.5.7", () => {
     ]);
   });
 
+  it("after a dictionary that is indexed in several parts", () => {
+    // Rows take 65,536 positions at a time. The pieces are from all over it, then from where a part ends and from its end,
+    // whose last 8 positions are not indexed. 3 bits to a byte make for many candidates.
+    const next = xorshift(9);
+    const dictionary = Buffer.alloc(200_000);
+    for (let at = 0; at < dictionary.length; at++) dictionary[at] = next() >>> 29;
+    const fromAllOver = (i: number) => dictionary.subarray((i * 104_729) % 199_000).subarray(0, 8 + (i % 30));
+    const atTheEndOfAPart = (i: number) => dictionary.subarray(65_536 * (1 + (i % 3)) + (i >> 2) - 9).subarray(0, 40);
+    const data = Buffer.concat([
+      ...Array.from({ length: 400 }, (_, i) => fromAllOver(i)),
+      ...Array.from({ length: 48 }, (_, i) => atTheEndOfAPart(i)),
+      ...Array.from({ length: 6 }, (_, i) => dictionary.subarray(-7 - i)),
+    ]);
+    // Hash chains, which are indexed by as many bytes as the least length of a match, then rows.
+    const chains = { [c.ZSTD_c_windowLog]: 14, [c.ZSTD_c_chainLog]: 17, [c.ZSTD_c_hashLog]: 17 };
+    const all = [
+      ...[5, 8].map(n => ({ ...level(n), ...chains })),
+      ...[3, 6, 7].map(minMatch => ({ ...level(5), ...chains, [c.ZSTD_c_minMatch]: minMatch })),
+      ...[5, 8, 10].map(level),
+    ];
+    expect(all.map(params => digest(zlib.zstdCompressSync(data, { params, dictionary })))).toEqual([
+      "1781 f75b9689d167d764",
+      "3049 d39dde15a799187e",
+      "2458 6a9eaca5014ab4c7",
+      "1454 2f96fdade038991b",
+      "3566 626fb7b8cb1df2dd",
+      "1480 cf7dbfcd5f5f068f",
+      "3077 7c69c63d013fb421",
+      "1385 c99be48f15f658e8",
+    ]);
+  });
+
   it("where there are literals before a match in the trees of a dictionary that is searched in place", () => {
     // Few trees and few steps down them, so that it counts how many are left for the dictionary.
     const crowded = (n: number) => ({ ...level(n), [c.ZSTD_c_hashLog]: 10, [c.ZSTD_c_searchLog]: 2 });

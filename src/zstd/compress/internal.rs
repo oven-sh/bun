@@ -14,8 +14,7 @@ use crate::common::{
 };
 use crate::error::{Error, Result};
 use crate::util::{
-    BUG, SliceExt, append_at, copy, highbit32, make_room, read_le32, read_le64, reset_table,
-    try_zeroed, write_le24,
+    BUG, SliceExt, append_at, copy, highbit32, make_room, reset_table, try_zeroed, write_le24,
 };
 
 pub(crate) const K_SEARCH_STRENGTH: u32 = 8;
@@ -1801,42 +1800,16 @@ const PRIME_4_BYTES: u32 = 2_654_435_761;
 const PRIME_5_BYTES: u64 = 889_523_592_379;
 const PRIME_6_BYTES: u64 = 227_718_039_650_203;
 const PRIME_7_BYTES: u64 = 58_295_818_150_454_627;
-pub(crate) const PRIME_8_BYTES: u64 = 0xCF1B_BCDC_B7A5_6463;
-
-/// `ZSTD_hash3`
-#[inline(always)]
-const fn hash3(u: u32, h: u32, s: u32) -> u32 {
-    (((u << (32 - 24)).wrapping_mul(PRIME_3_BYTES)) ^ s) >> ((32 - h) & 31)
-}
-#[inline(always)]
-const fn hash4(u: u32, h: u32, s: u32) -> u32 {
-    ((u.wrapping_mul(PRIME_4_BYTES)) ^ s) >> ((32 - h) & 31)
-}
-#[inline(always)]
-const fn hash5(u: u64, h: u32, s: u64) -> usize {
-    ((((u << (64 - 40)).wrapping_mul(PRIME_5_BYTES)) ^ s) >> ((64 - h) & 63)) as usize
-}
-#[inline(always)]
-const fn hash6(u: u64, h: u32, s: u64) -> usize {
-    ((((u << (64 - 48)).wrapping_mul(PRIME_6_BYTES)) ^ s) >> ((64 - h) & 63)) as usize
-}
-#[inline(always)]
-const fn hash7(u: u64, h: u32, s: u64) -> usize {
-    ((((u << (64 - 56)).wrapping_mul(PRIME_7_BYTES)) ^ s) >> ((64 - h) & 63)) as usize
-}
-/// `ZSTD_hash8`
-#[inline(always)]
-pub(crate) const fn hash8(u: u64, h: u32, s: u64) -> usize {
-    (((u.wrapping_mul(PRIME_8_BYTES)) ^ s) >> ((64 - h) & 63)) as usize
-}
+const PRIME_8_BYTES: u64 = 0xCF1B_BCDC_B7A5_6463;
 
 /// `ZSTD_hash3Ptr` of the position that the 4 bytes `bytes` were read at. `h` is from 1 to 32, as for all these.
 #[inline(always)]
 pub(crate) const fn hash3_of(bytes: u32, h: u32) -> usize {
-    hash3(bytes, h, 0) as usize
+    ((bytes << (32 - 24)).wrapping_mul(PRIME_3_BYTES) >> ((32 - h) & 31)) as usize
 }
 
-/// [`hash_ptr`], out of the 8 bytes at the position.
+/// `ZSTD_hashPtr`, out of the 8 bytes at the position: a hash of `h_bits` bits of the first `mls` of them, or 4 if that is
+/// less.
 #[derive(Clone, Copy)]
 pub(crate) struct Hasher {
     /// Takes the bytes that do not count out, on the left.
@@ -1888,33 +1861,14 @@ impl Hasher {
         }
     }
 
-    /// [`hash_ptr`] of the position that the 8 bytes `bytes` were read at.
+    /// The hash of the position that the 8 bytes `bytes` were read at.
     #[inline(always)]
     pub(crate) const fn hash(self, bytes: u64) -> usize {
         (bytes.wrapping_mul(self.factor) >> self.shift) as usize
     }
 }
 
-/// `ZSTD_hashPtr`: a hash of `h_bits` bits of the `mls` bytes of `buf` at `pos`. Reads 4 bytes if `mls` is at most 4,
-/// else 8.
-#[inline(always)]
-pub(crate) fn hash_ptr(buf: &[u8], pos: usize, h_bits: u32, mls: u32) -> Result<usize> {
-    hash_ptr_salted(buf, pos, h_bits, mls, 0)
-}
-
-/// `ZSTD_hashPtrSalted`
-#[inline(always)]
-fn hash_ptr_salted(buf: &[u8], pos: usize, h_bits: u32, mls: u32, hash_salt: u64) -> Result<usize> {
-    Ok(match mls {
-        5 => hash5(read_le64(buf, pos)?, h_bits, hash_salt),
-        6 => hash6(read_le64(buf, pos)?, h_bits, hash_salt),
-        7 => hash7(read_le64(buf, pos)?, h_bits, hash_salt),
-        8 => hash8(read_le64(buf, pos)?, h_bits, hash_salt),
-        _ => hash4(read_le32(buf, pos)?, h_bits, hash_salt as u32) as usize,
-    })
-}
-
-/// [`hash_ptr`] of 4 bytes. To read no more than these crosses fewer lines of the cache than a [`Hasher`] does.
+/// What a [`Hasher`] gives for 4 bytes. To read no more than these crosses fewer lines of the cache than a [`Hasher`] does.
 #[derive(Clone, Copy)]
 pub(crate) struct Hash4 {
     h_bits: u32,
@@ -1923,11 +1877,11 @@ pub(crate) struct Hash4 {
 impl Hash4 {
     #[inline(always)]
     pub(crate) const fn hash(self, bytes: u32) -> usize {
-        hash4(bytes, self.h_bits, 0) as usize
+        (bytes.wrapping_mul(PRIME_4_BYTES) >> ((32 - self.h_bits) & 31)) as usize
     }
 }
 
-/// [`hash_ptr_salted`] of 4 to 6 bytes, out of the 8 bytes at the position: the multiplication also does the shift that
+/// `ZSTD_hashPtrSalted` of 4 to 6 bytes, out of the 8 bytes at the position: the multiplication also does the shift that
 /// leaves the other bytes out.
 #[derive(Clone, Copy)]
 pub(crate) struct Hash8 {

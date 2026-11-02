@@ -937,16 +937,6 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     return globalObject;
 }
 
-static bool isModuleEvaluated(JSC::AbstractModuleRecord* record)
-{
-    if (!record)
-        return false;
-    if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record))
-        return cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluated && !cyclic->evaluationError();
-    // SyntheticModuleRecord is "evaluated" once linked (it has an environment).
-    return record->moduleEnvironmentMayBeNull() != nullptr;
-}
-
 // A non-TLA record that is mid-evaluation: require() re-entered it from
 // inside its own evaluation (a require cycle). Its namespace is live —
 // hoisted functions callable, bindings not yet initialized in TDZ — the same
@@ -961,28 +951,6 @@ static bool isModuleEvaluating(JSC::AbstractModuleRecord* record)
 {
     auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record);
     return cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluating;
-}
-
-// No load of this entry is in flight: it evaluated (maybe with an error) or its load failed.
-static bool isModuleLoadSettled(JSC::ModuleRegistryEntry* entry)
-{
-    switch (entry->status()) {
-    case JSC::ModuleRegistryEntry::Status::New:
-    case JSC::ModuleRegistryEntry::Status::Fetching:
-        return false;
-    case JSC::ModuleRegistryEntry::Status::FetchFailed:
-    case JSC::ModuleRegistryEntry::Status::InstantiationFailed:
-    case JSC::ModuleRegistryEntry::Status::EvaluationFailed:
-        return true;
-    case JSC::ModuleRegistryEntry::Status::Fetched:
-        break;
-    }
-    auto* record = entry->record();
-    if (!record)
-        return false;
-    if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record))
-        return cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluated;
-    return record->moduleEnvironmentMayBeNull() != nullptr;
 }
 
 // Lets the next importer load them again. Returns "\nnote: " lines naming the modules the others were stuck on.
@@ -1041,137 +1009,6 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) BunString Bun__evict
     return Bun::toStringRef(notes.toString());
 }
 
-// The loader whose registry require.cache / require() of `requirer` (a CommonJS module, or
-// undefined) reads: its Bun.ModuleGraph's — null once that is disposed — or else the running test file's.
-static JSC::JSModuleLoader* moduleLoaderOfRequirer(JSC::JSGlobalObject* globalObject, JSValue requirer)
-{
-    auto* module = dynamicDowncast<Bun::JSCommonJSModule>(requirer);
-    if (auto* graph = module ? module->moduleGraph() : nullptr)
-        return graph->disposed() ? nullptr : graph->loader();
-    return Bun::testFileModuleLoader(defaultGlobalObject(globalObject));
-}
-
-// The files of a compiled program are modules of the realm. A Bun.ModuleGraph has modules of its own, and its require.cache shows those alone.
-static bool seesCompiledModules(JSC::JSGlobalObject* globalObject, JSValue requirer)
-{
-    return Bun::hasCompiledModules() && moduleLoaderOfRequirer(globalObject, requirer) == globalObject->moduleLoader();
-}
-
-// A key that is not an atom already names no module, and does not become one.
-static JSC::AbstractModuleRecord* evaluatedModuleRecord(JSC::JSGlobalObject* globalObject, JSValue keyValue, JSValue requirer)
-{
-    if (!keyValue.isString())
-        return nullptr;
-    auto atom = asString(keyValue)->toExistingAtomString(globalObject);
-    if (!atom.data)
-        return nullptr;
-    auto* loader = moduleLoaderOfRequirer(globalObject, requirer);
-    if (!loader)
-        return nullptr;
-    auto* entry = loader->registryEntry(JSC::Identifier::fromUid(globalObject->vm(), atom.data));
-    return entry && isModuleEvaluated(entry->record()) ? entry->record() : nullptr;
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionEsmNamespaceForCjs, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* record = evaluatedModuleRecord(globalObject, callFrame->argument(0), callFrame->argument(1));
-    RETURN_IF_EXCEPTION(scope, {});
-    if (!record)
-        return JSValue::encode(jsUndefined());
-    if (Bun::isRecordOfCompiledModule(record)) [[unlikely]] {
-        WTF::String key = asString(callFrame->argument(0))->value(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        JSValue compiled = Bun::loadCompiledModuleNamespace(defaultGlobalObject(globalObject), key);
-        RETURN_IF_EXCEPTION(scope, {});
-        return JSValue::encode(compiled ? compiled : jsUndefined());
-    }
-    auto* ns = record->getModuleNamespace(globalObject, false);
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(ns);
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryHasEvaluated, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* record = evaluatedModuleRecord(globalObject, callFrame->argument(0), callFrame->argument(1));
-    RETURN_IF_EXCEPTION(scope, {});
-    if (!record && callFrame->argument(0).isString() && seesCompiledModules(globalObject, callFrame->argument(1))) {
-        WTF::String key = asString(callFrame->argument(0))->value(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        return JSValue::encode(jsBoolean(Bun::isEvaluatedCompiledFile(defaultGlobalObject(globalObject), key)));
-    }
-    return JSValue::encode(jsBoolean(!!record));
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryDelete, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue keyValue = callFrame->argument(0);
-    if (!keyValue.isString())
-        return JSValue::encode(jsBoolean(false));
-    auto key = JSC::Identifier::fromString(vm, asString(keyValue)->value(globalObject));
-    RETURN_IF_EXCEPTION(scope, {});
-    auto* moduleLoader = moduleLoaderOfRequirer(globalObject, callFrame->argument(1));
-    if (!moduleLoader)
-        return JSValue::encode(jsBoolean(false));
-    // A module whose load is in flight is not in require.cache and is not evicted.
-    for (auto& [mapKey, entry] : moduleLoader->moduleMap()) {
-        if (mapKey.first == key.impl() && entry && !isModuleLoadSettled(entry.get()))
-            return JSValue::encode(jsBoolean(false));
-    }
-    return JSValue::encode(jsBoolean(moduleLoader->removeEntry(key))); // takes the loader's cellLock itself
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionRequireCacheWillSet, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue keyValue = callFrame->argument(0);
-    if (!keyValue.isString() || !seesCompiledModules(globalObject, callFrame->argument(2)))
-        return JSValue::encode(jsUndefined());
-    WTF::String key = asString(keyValue)->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    Bun::willSetRequireCacheEntry(uncheckedDowncast<Zig::GlobalObject>(globalObject), key, callFrame->argument(1));
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionRequireCacheDidDelete, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
-    JSValue keyValue = callFrame->argument(0);
-    if (!keyValue.isString() || !seesCompiledModules(globalObject, callFrame->argument(1)))
-        return JSValue::encode(jsUndefined());
-    WTF::String key = asString(keyValue)->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    Bun::didDeleteRequireCacheEntry(uncheckedDowncast<Zig::GlobalObject>(globalObject), key);
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsUndefined());
-}
-
-// Without an argument: whether the cache lists modules of the compiled program at all.
-// With a third: whether a require() has put the built-in module there. No entry is made.
-JSC_DEFINE_HOST_FUNCTION(functionRequireCacheCompiledEntry, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
-    if (!callFrame->argumentCount())
-        return JSValue::encode(jsBoolean(Bun::hasCompiledModules()));
-    JSValue keyValue = callFrame->uncheckedArgument(0);
-    if (!keyValue.isString() || !seesCompiledModules(globalObject, callFrame->argument(1)))
-        return JSValue::encode(jsUndefined());
-    WTF::String key = asString(keyValue)->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (callFrame->argument(2).isTrue())
-        return JSValue::encode(jsBoolean(Bun::isLibraryModuleInRequireCache(defaultGlobalObject(globalObject), key)));
-    JSValue entry = Bun::compiledRequireCacheEntry(defaultGlobalObject(globalObject), key);
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(entry ? entry : jsUndefined());
-}
-
 JSC_DEFINE_HOST_FUNCTION(functionIsHiddenFromRequireCache, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     if (!Bun::hasCompiledModules()) [[likely]]
@@ -1179,45 +1016,13 @@ JSC_DEFINE_HOST_FUNCTION(functionIsHiddenFromRequireCache, (JSC::JSGlobalObject 
     // A file can come back from the disk there: the cache shows it, as plain's does.
     if (Bun::requireCacheListsCompiledFiles(defaultGlobalObject(globalObject)))
         return JSValue::encode(jsBoolean(false));
-    if (!callFrame->argumentCount())
-        return JSValue::encode(jsBoolean(true));
-    JSValue keyValue = callFrame->uncheckedArgument(0);
+    JSValue keyValue = callFrame->argument(0);
     if (!keyValue.isString())
         return JSValue::encode(jsBoolean(false));
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     WTF::String key = asString(keyValue)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsBoolean(Bun::isHiddenFromRequireCache(key)));
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryEvaluatedKeys, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::MarkedArgumentBuffer keys;
-    HashSet<String> seen;
-    auto add = [&](const String& key) {
-        if (seen.add(key).isNewEntry)
-            keys.append(jsString(vm, key));
-    };
-    if (auto* loader = moduleLoaderOfRequirer(globalObject, callFrame->argument(0))) {
-        Bun::forEachModuleRegistrySpecifier(loader, [&](UniquedStringImpl* specifier, JSC::ModuleRegistryEntry* entry) {
-            if (isModuleEvaluated(entry->record()))
-                add(String { specifier });
-        });
-    }
-    if (seesCompiledModules(globalObject, callFrame->argument(0))) {
-        Bun::forEachEvaluatedCompiledFile(defaultGlobalObject(globalObject), [&](const String& path) {
-            add(path);
-        });
-    }
-    if (keys.hasOverflowed()) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope);
-        return {};
-    }
-    auto* array = JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), keys);
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(array);
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -3494,12 +3299,8 @@ JSC::JSObject* GlobalObject::lazyRequireCacheObject()
     if (JSObject* cache = m_lazyRequireCacheObject.get())
         return cache;
 
-    auto& vm = this->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue result = Bun::createRequireCacheObject(this, requireMap());
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    JSObject* cache = asObject(result);
-    m_lazyRequireCacheObject.set(vm, this, cache);
+    JSObject* cache = Bun::createRequireCacheObject(this, requireMap());
+    m_lazyRequireCacheObject.set(vm(), this, cache);
     return cache;
 }
 
@@ -3592,14 +3393,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         { BuiltinName::k_pokePromiseAsHandled, 1, jsBunPokePromiseAsHandled },
         { BuiltinName::k_webStreamClosedPromise, 1, jsWebStreamClosedPromise },
         { BuiltinName::k_webStreamControllerError, 2, jsWebStreamControllerError },
-        { BuiltinName::k_esmNamespaceForCjs, 2, functionEsmNamespaceForCjs },
-        { BuiltinName::k_esmRegistryDelete, 2, functionEsmRegistryDelete },
-        { BuiltinName::k_esmRegistryEvaluatedKeys, 1, functionEsmRegistryEvaluatedKeys },
-        { BuiltinName::k_esmRegistryHasEvaluated, 2, functionEsmRegistryHasEvaluated },
-        { BuiltinName::k_requireCacheWillSet, 3, functionRequireCacheWillSet },
         { BuiltinName::k_isHiddenFromRequireCache, 1, functionIsHiddenFromRequireCache },
-        { BuiltinName::k_requireCacheDidDelete, 2, functionRequireCacheDidDelete },
-        { BuiltinName::k_requireCacheCompiledEntry, 2, functionRequireCacheCompiledEntry },
         { BuiltinName::k_esmLoadSync, 2, functionEsmLoadSync },
         { BuiltinName::k_makeErrorWithCode, 2, jsFunctionMakeErrorWithCode },
         { BuiltinName::k_toClass, 1, jsFunctionToClass },
@@ -3650,13 +3444,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         builtinNames.evaluateCommonJSModulePrivateName(),
         2,
         Bun::jsFunctionEvaluateCommonJSModule,
-        ImplementationVisibility::Public,
-        NoIntrinsic,
-        PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | 0);
-    putDirectNativeFunction(vm, this,
-        builtinNames.evictIsolationSourceProviderCachePrivateName(),
-        1,
-        jsFunctionEvictIsolationSourceProviderCache,
         ImplementationVisibility::Public,
         NoIntrinsic,
         PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | 0);

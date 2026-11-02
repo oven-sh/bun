@@ -1580,25 +1580,6 @@ static JSValue didFulfillPendingVirtualModule(Zig::GlobalObject* globalObject, P
 
 using namespace Bun;
 
-BUN_DEFINE_HOST_FUNCTION(jsFunctionEvictIsolationSourceProviderCache, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSValue arg = callFrame->argument(0);
-    if (arg.isUndefined()) {
-        Bun::IsolatedModuleCache::clear(vm);
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    }
-    auto* str = arg.toStringOrNull(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (str) {
-        WTF::String key = str->value(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        Bun::IsolatedModuleCache::evict(vm, key);
-    }
-    return JSC::JSValue::encode(JSC::jsUndefined());
-}
-
 BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);

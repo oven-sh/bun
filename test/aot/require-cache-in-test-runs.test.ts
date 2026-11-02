@@ -332,6 +332,48 @@ test("every entry of require.cache can be read under --isolate", async () => {
   await expectCompiledToRunAsPlain(readsEveryEntry, "--isolate");
 });
 
+test("a property descriptor of require.cache holds the entry", async () => {
+  await expectCompiledToRunAsPlain({
+    "tsconfig.json": `{ "compilerOptions": { "noImplicitAny": false } }`,
+    "es.ts": `export const value = 1;`,
+    "common.cjs": `exports.value = 2;`,
+    "user.cjs": `exports.ask = () => require("./common.cjs").value;`,
+    "one.test.ts": `
+      import { test } from "bun:test";
+      import { value } from "./es";
+      import { ask } from "./user.cjs";
+      const cache = require.cache;
+      test("of a CommonJS file, an ES module and a built-in module", () => {
+        const common = require("./common.cjs");
+        const sqlite = require("bun:sqlite");
+        for (const name of ["./common.cjs", "./es", "./one.test.ts", "bun:sqlite"]) {
+          const key = require.resolve(name);
+          const listed = [key in cache, Object.hasOwn(cache, key), Object.keys(cache).includes(key)];
+          const { value: entry, ...attributes } = Object.getOwnPropertyDescriptor(cache, key)!;
+          console.log(name, listed.join(" "), entry === cache[key], JSON.stringify(attributes), Object.keys(entry.exports).slice(0, 1).join());
+        }
+        console.log(value, cache[require.resolve("./common.cjs")].exports === common, cache["bun:sqlite"].exports === sqlite);
+      });
+      test("behind a falsy value that is stored under the key", () => {
+        const key = require.resolve("./common.cjs");
+        const before = require("./common.cjs");
+        cache[key] = undefined;
+        console.log(key in cache, typeof Object.getOwnPropertyDescriptor(cache, key)!.value);
+        const after = require("./common.cjs");
+        const { value: entry } = Object.getOwnPropertyDescriptor(cache, key)!;
+        console.log(after === before, entry === cache[key], entry.exports === after);
+      });
+      test("of an entry that a definition stores", () => {
+        const key = require.resolve("./common.cjs");
+        const fake = { exports: { value: "defined" } };
+        Object.defineProperty(cache, key, { value: fake, writable: true, enumerable: true, configurable: true });
+        console.log(Object.getOwnPropertyDescriptor(cache, key)!.value === fake, require("./common.cjs").value, ask());
+        delete cache[key];
+        console.log(require("./common.cjs").value, ask());
+      });`,
+  });
+});
+
 test("modules with nothing to run are listed once their importer has run", async () => {
   await expectCompiledToRunAsPlain({
     "constant.ts": `export const value = 1;`,

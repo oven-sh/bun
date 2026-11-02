@@ -86,6 +86,21 @@ impl Resolver<'_, '_> {
 
     // `Reflect.deleteProperty(require.cache, key)`
     fn find_key_that_call_deletes(&self, table: ExprId) -> Option<ExprId> {
+        self.find_key_handed_to(table, &[BuiltinId::ReflectDeleteProperty])
+    }
+
+    // `Object.defineProperty(require.cache, key, { value: entry, writable: true, enumerable: true, configurable: true })`: the table keeps the entry
+    // as an assignment leaves it there, and a definition of another shape takes the entry out.
+    fn find_key_that_call_defines(&self, table: ExprId) -> Option<ExprId> {
+        let definitions = [
+            BuiltinId::ObjectDefineProperty,
+            BuiltinId::ReflectDefineProperty,
+        ];
+        self.find_key_handed_to(table, &definitions)
+    }
+
+    // The second operand of a call of one of `builtins` that has the table for its first.
+    fn find_key_handed_to(&self, table: ExprId, builtins: &[BuiltinId]) -> Option<ExprId> {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let mut operand = table;
         while let Parent::Expr(parent) = bound.parent_of_expr(operand)
@@ -101,10 +116,10 @@ impl Resolver<'_, '_> {
         };
         let callee = hir.skip_type_assertions(hir[call].callee);
         let mut operands = hir.ids(hir[call].args);
-        let is_deletion = mentioned_id(self.state(callee)).map(table::canonical_id)
-            == Some(BuiltinId::ReflectDeleteProperty);
+        let is_called = (mentioned_id(self.state(callee)).map(table::canonical_id))
+            .is_some_and(|callee| builtins.contains(&callee));
         let key = (operands.next() == Some(operand)).then(|| operands.next())?;
-        key.filter(|&key: &ExprId| is_deletion && !matches!(hir[key].kind, ExprKind::Spread(_)))
+        key.filter(|&key: &ExprId| is_called && !matches!(hir[key].kind, ExprKind::Spread(_)))
     }
 
     // `require.cache[key] = undefined`, `[require.cache[key]] = []`, `(require.cache[key] as unknown) &&= null`
@@ -140,22 +155,28 @@ impl Resolver<'_, '_> {
             }
             return;
         }
+        let key_of_operand = |key: ExprId| match hir.index_member_key(hir.skip_type_assertions(key))
+        {
+            MemberKey::Name(text) | MemberKey::PrivateName(text) => KeyOfModuleCache::Text(text),
+            MemberKey::Computed(key) => KeyOfModuleCache::Computed(key),
+        };
         if let Some(key) = self.find_key_that_call_deletes(table) {
-            let key = match hir.index_member_key(hir.skip_type_assertions(key)) {
-                MemberKey::Name(text) | MemberKey::PrivateName(text) => {
-                    KeyOfModuleCache::Text(text)
-                }
-                MemberKey::Computed(key) => KeyOfModuleCache::Computed(key),
-            };
-            return self.output.keys_taken_out_of_module_cache.push(key);
+            return (self.output.keys_taken_out_of_module_cache).push(key_of_operand(key));
+        }
+        if let Some(key) = self.find_key_that_call_defines(table) {
+            self.output
+                .keys_taken_out_of_module_cache
+                .push(key_of_operand(key));
+            return (self.output.keys_stored_in_module_cache).push(key_of_operand(key));
         }
         let is_handed_on = match self.classify_use(table) {
             MentionUse::Inspected
             | MentionUse::Holder
             | MentionUse::ReadByComputedKey
             | MentionUse::Aliased
-            | MentionUse::SearchedFor(_)
-            | MentionUse::SearchedForKeysOf(_) => false,
+            | MentionUse::SearchedFor(_) => false,
+            // `Object.defineProperties(require.cache, descriptors)` stores an entry under each key of `descriptors`.
+            MentionUse::SearchedForKeysOf(_) => true,
             MentionUse::StoredInto(symbol) => !self.holds(symbol, id),
             MentionUse::Called(_) | MentionUse::Destructured(_) | MentionUse::Exposed => {
                 !self.is_only_listed(table)

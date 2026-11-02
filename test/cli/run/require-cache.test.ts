@@ -50,6 +50,197 @@ describe.concurrent("require.cache", () => {
     expect(exitCode).toBe(0);
   });
 
+  // Node prints the same line: its require.cache is an object without a prototype that holds each entry as a data property.
+  test("a property descriptor of require.cache holds the entry, and the object has no prototype", async () => {
+    using dir = tempDir("require-cache-descriptor", {
+      "dep.cjs": `exports.dep = 1;`,
+      "index.cjs": `
+        const { isDeepStrictEqual, types } = require("node:util");
+        require("./dep.cjs");
+        const cache = require.cache;
+        const keys = Object.keys(cache);
+        const key = require.resolve("./dep.cjs");
+        const copy = order => {
+          const object = Object.create(null);
+          for (const k of order) object[k] = cache[k];
+          return object;
+        };
+        const reversed = [...keys].reverse();
+        const attempt = fn => {
+          try {
+            return fn();
+          } catch (error) {
+            return error.constructor.name;
+          }
+        };
+        const shape = d => d && [d.value === undefined ? "get" in d : d.value, d.writable, d.enumerable, d.configurable];
+
+        const descriptor = Object.getOwnPropertyDescriptor(cache, key);
+        const result = {
+          entries: keys.length,
+          descriptor: [descriptor.value === cache[key], descriptor.writable, descriptor.enumerable, descriptor.configurable],
+          descriptorHoldsEntry: keys.every(k => Object.getOwnPropertyDescriptor(cache, k).value === cache[k]),
+          reflect: Reflect.getOwnPropertyDescriptor(cache, key).value === cache[key],
+          clone: Object.create(null, Object.getOwnPropertyDescriptors(cache))[key] === cache[key],
+          sameOrder: [isDeepStrictEqual(copy(keys), cache, true), isDeepStrictEqual(cache, copy(keys), true)],
+          otherOrder: [isDeepStrictEqual(copy(reversed), cache, true), isDeepStrictEqual(cache, copy(reversed), true)],
+          withPrototypes: [isDeepStrictEqual(copy(keys), cache), isDeepStrictEqual(cache, copy(keys))],
+          isProxy: types.isProxy(cache),
+          inherited: [typeof cache.constructor, typeof cache.hasOwnProperty, typeof cache.toString, attempt(() => String(cache))],
+          missing: [Object.getOwnPropertyDescriptor(cache, "/missing"), "/missing" in cache, cache["/missing"]],
+        };
+
+        // A store through Reflect.set() with the cache as the receiver asks for a writable data property.
+        result.receiver = [Reflect.set({}, "/receiver", 1, cache), cache["/receiver"], delete cache["/receiver"], "/receiver" in cache];
+        const heir = Object.create(cache);
+        heir["/heir"] = 1;
+        result.heir = [Object.hasOwn(heir, "/heir"), "/heir" in cache, heir[key] === cache[key]];
+
+        cache["/null"] = null;
+        cache["/undefined"] = undefined;
+        result.falsy = [
+          cache["/null"],
+          "/null" in cache,
+          shape(Object.getOwnPropertyDescriptor(cache, "/null")),
+          "/undefined" in cache,
+          shape(Object.getOwnPropertyDescriptor(cache, "/undefined")),
+        ];
+        delete cache["/null"];
+        delete cache["/undefined"];
+
+        const entry = { exports: "defined" };
+        Object.defineProperty(cache, "/entry", { value: entry, writable: true, enumerable: true, configurable: true });
+        result.definedEntry = [cache["/entry"] === entry, Object.keys(cache).includes("/entry"), shape(Object.getOwnPropertyDescriptor(cache, "/entry")).slice(1)];
+        Object.defineProperty(cache, "/entry", { value: "again" });
+        result.redefinedEntry = shape(Object.getOwnPropertyDescriptor(cache, "/entry"));
+        Object.defineProperty(cache, "/entry", { enumerable: false });
+        result.hiddenEntry = [shape(Object.getOwnPropertyDescriptor(cache, "/entry")), Object.keys(cache).includes("/entry"), "/entry" in cache, delete cache["/entry"], "/entry" in cache];
+        Object.defineProperty(cache, "/getter", { get: () => "got", configurable: true });
+        result.getter = [cache["/getter"], shape(Object.getOwnPropertyDescriptor(cache, "/getter")), Object.keys(cache).includes("/getter"), delete cache["/getter"], "/getter" in cache];
+        Object.defineProperty(cache, "/fixed", { value: 5 });
+        result.fixed = [shape(Object.getOwnPropertyDescriptor(cache, "/fixed")), Reflect.ownKeys(cache).includes("/fixed"), Object.keys(cache).includes("/fixed"), delete cache["/fixed"], Object.keys(cache).length === keys.length];
+
+        const symbol = Symbol("key");
+        cache[symbol] = 1;
+        result.symbol = [cache[symbol], Object.getOwnPropertySymbols(cache).length, Object.keys(cache).length === keys.length, delete cache[symbol], symbol in cache];
+
+        // What a program puts on Object.prototype is no part of a descriptor.
+        Object.prototype.get = function () {};
+        Object.prototype.value = "inherited";
+        try {
+          result.pollutedPrototype = [Object.keys(cache).length === keys.length, Object.getOwnPropertyDescriptor(cache, key).value === cache[key]];
+        } finally {
+          delete Object.prototype.get;
+          delete Object.prototype.value;
+        }
+        console.log(JSON.stringify(result));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({
+        entries: 2,
+        descriptor: [true, true, true, true],
+        descriptorHoldsEntry: true,
+        reflect: true,
+        clone: true,
+        sameOrder: [true, true],
+        otherOrder: [true, true],
+        withPrototypes: [true, true],
+        isProxy: false,
+        inherited: ["undefined", "undefined", "undefined", "TypeError"],
+        missing: [undefined, false, undefined],
+        receiver: [true, 1, true, false],
+        heir: [true, false, true],
+        falsy: [null, true, [null, true, true, true], true, [false, true, true, true]],
+        definedEntry: [true, true, [true, true, true]],
+        redefinedEntry: ["again", true, true, true],
+        hiddenEntry: [["again", true, false, true], false, true, true, false],
+        getter: ["got", [true, undefined, false, true], false, true, false],
+        fixed: [[5, false, false, false], true, false, false, true],
+        symbol: [1, 1, true, true, false],
+        pollutedPrototype: [true, true],
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("every way to reach require.cache answers with the entry: Module._cache, a created require, a Worker, a Bun.ModuleGraph", async () => {
+    using dir = tempDir("require-cache-descriptor-routes", {
+      "dep.cjs": `exports.dep = 1;`,
+      "describe.cjs": `
+        module.exports = (cache, load) => {
+          load("./dep.cjs");
+          const key = require.resolve("./dep.cjs");
+          const { value, ...attributes } = Object.getOwnPropertyDescriptor(cache, key);
+          return [value === cache[key], cache[key].exports.dep, JSON.stringify(attributes), Object.getPrototypeOf(cache)];
+        };
+      `,
+      "worker.cjs": `postMessage(require("./describe.cjs")(require.cache, require));`,
+      "in-graph.mjs": `export const described = require("./describe.cjs")(require.cache, require);`,
+      "index.mjs": `
+        import Module, { createRequire } from "node:module";
+        import { join } from "node:path";
+        const describe = import.meta.require("./describe.cjs");
+        const created = createRequire(import.meta.url);
+        const worker = new Worker(new URL("./worker.cjs", import.meta.url).href);
+        const inWorker = await new Promise(resolve => {
+          worker.onmessage = event => resolve(event.data);
+          worker.onerror = event => resolve(event.message);
+        });
+        await worker.terminate();
+        const graph = new Bun.ModuleGraph();
+        const inGraph = (await graph.import(join(import.meta.dir, "in-graph.mjs"))).described;
+        const refused = [];
+        for (const lock of [Object.freeze, Object.seal, Object.preventExtensions]) {
+          try {
+            lock(require.cache);
+          } catch (error) {
+            refused.push(error.constructor.name);
+          }
+        }
+        console.log(JSON.stringify({
+          same: [Module._cache === require.cache, created.cache === require.cache, import.meta.require.cache === require.cache],
+          here: describe(require.cache, created),
+          inWorker,
+          inGraph,
+          // The loader adds keys to the cache whatever the object allows, so the object stays extensible.
+          refused,
+          stillLists: Object.isExtensible(require.cache) && Object.keys(require.cache).some(key => key.endsWith("dep.cjs")),
+        }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const described = [true, 1, JSON.stringify({ writable: true, enumerable: true, configurable: true }), null];
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({
+        same: [true, true, true],
+        here: described,
+        inWorker: described,
+        inGraph: described,
+        refused: ["TypeError", "TypeError", "TypeError"],
+        stillLists: true,
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("listing require.cache does not create a namespace object for each ES module", async () => {
     using dir = tempDir("require-cache-esm-namespaces", {
       "a.mjs": `export const a = 1;`,
@@ -60,19 +251,34 @@ describe.concurrent("require.cache", () => {
         import { join } from "node:path";
         const namespaces = () => heapStats().objectTypeCounts.ModuleNamespaceObject ?? 0;
         const aPath = join(import.meta.dir, "a.mjs");
-        const before = namespaces();
+        const bPath = join(import.meta.dir, "b.mjs");
+        let seen = namespaces();
+        const createdSince = () => {
+          const now = namespaces();
+          const created = now - seen;
+          seen = now;
+          return created;
+        };
         const keys = Object.keys(require.cache)
           .filter(key => key.startsWith(import.meta.dir))
           .map(key => key.slice(import.meta.dir.length + 1))
           .sort();
         const has = aPath in require.cache;
-        const descriptor = Object.getOwnPropertyDescriptor(require.cache, aPath);
-        const createdByListing = namespaces() - before;
+        const hasOwn = Object.hasOwn(require.cache, aPath);
+        let walked = 0;
+        for (const key in require.cache) if (key === aPath) walked++;
+        const createdByListing = createdSince();
+        // A descriptor holds the entry, so asking for one makes the entry, as reading the key does.
+        const { value, ...attributes } = Object.getOwnPropertyDescriptor(require.cache, aPath);
+        const createdByDescriptor = createdSince();
+        const descriptorHoldsEntry = value === Object.getOwnPropertyDescriptor(require.cache, aPath).value && value === require.cache[aPath];
+        const createdByReadingAgain = createdSince();
         const { a } = require.cache[aPath].exports;
-        const createdByGet = namespaces() - before - createdByListing;
+        const sameB = require.cache[bPath].exports.b === b;
+        const createdByGet = createdSince();
         // The key is now in both tables; it is still listed once.
         const listedAfterGet = Object.keys(require.cache).filter(key => key === aPath).length;
-        console.log(JSON.stringify({ b, keys, has, descriptor, createdByListing, a, createdByGet, listedAfterGet }));
+        console.log(JSON.stringify({ b, keys, has, hasOwn, walked, createdByListing, attributes, createdByDescriptor, descriptorHoldsEntry, createdByReadingAgain, a, sameB, createdByGet, listedAfterGet }));
       `,
     });
     await using proc = Bun.spawn({
@@ -88,9 +294,15 @@ describe.concurrent("require.cache", () => {
         b: 2,
         keys: ["a.mjs", "b.mjs"],
         has: true,
-        descriptor: { writable: false, enumerable: true, configurable: true },
+        hasOwn: true,
+        walked: 1,
         createdByListing: 0,
+        attributes: { writable: true, enumerable: true, configurable: true },
+        createdByDescriptor: 1,
+        descriptorHoldsEntry: true,
+        createdByReadingAgain: 0,
         a: 1,
+        sameB: true,
         createdByGet: 1,
         listedAfterGet: 1,
       }),

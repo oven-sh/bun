@@ -283,16 +283,8 @@ declare function $errno(): TODO;
 declare function $extname(): TODO;
 declare function $fatal(): TODO;
 declare function $format(): TODO;
+declare function $isHiddenFromRequireCache(key: string): boolean;
 // `requirer`: a CommonJS module; the registry is its Bun.ModuleGraph's loader's. Omitted: the global object's.
-declare function $esmNamespaceForCjs(key: string, requirer?: JSCommonJSModule): any | undefined;
-declare function $esmRegistryDelete(key: string, requirer?: JSCommonJSModule): boolean;
-declare function $esmRegistryEvaluatedKeys(requirer?: JSCommonJSModule): string[];
-declare function $esmRegistryHasEvaluated(key: string, requirer?: JSCommonJSModule): boolean;
-declare function $requireCacheCompiledEntry(key?: string, requirer?: JSCommonJSModule, onlyAsks?: boolean): any;
-declare function $requireCacheDidDelete(key: string, requirer?: JSCommonJSModule): void;
-declare function $requireCacheWillSet(key: string, value: unknown, requirer?: JSCommonJSModule): void;
-/** Without a key: does this process hide any file from require.cache? */
-declare function $isHiddenFromRequireCache(key?: string | symbol): boolean;
 declare function $esmLoadSync(key: string, requirer?: JSCommonJSModule): any;
 declare function $get(): TODO;
 declare function $handleEvent(): TODO;
@@ -366,7 +358,6 @@ declare function $evaluateCommonJSModule(
   moduleToEvaluate: JSCommonJSModule,
   sourceModule: JSCommonJSModule,
 ): JSCommonJSModule[];
-declare function $evictIsolationSourceProviderCache(key?: string): void;
 
 declare function $overridableRequire(this: JSCommonJSModule, id: string): any;
 

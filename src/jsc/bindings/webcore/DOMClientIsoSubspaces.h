@@ -41,6 +41,7 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForNodeVMSyntheticModule { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSCommonJSModule { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSCommonJSExtensions { nullptr };
+    GCClient::IsoSubspace* m_clientSubspaceForJSRequireCache { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSMockImplementation { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSModuleMock { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSMockFunction { nullptr };

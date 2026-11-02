@@ -42,6 +42,7 @@ public:
     IsoSubspace* m_subspaceForNodeVMSyntheticModule { nullptr };
     IsoSubspace* m_subspaceForJSCommonJSModule { nullptr };
     IsoSubspace* m_subspaceForJSCommonJSExtensions { nullptr };
+    IsoSubspace* m_subspaceForJSRequireCache { nullptr };
     IsoSubspace* m_subspaceForJSMockImplementation { nullptr };
     IsoSubspace* m_subspaceForJSModuleMock { nullptr };
     IsoSubspace* m_subspaceForJSMockFunction { nullptr };

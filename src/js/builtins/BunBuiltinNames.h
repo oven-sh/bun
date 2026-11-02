@@ -76,12 +76,7 @@ using namespace JSC;
     macro(env) \
     macro(errno) \
     macro(esmLoadSync) \
-    macro(esmNamespaceForCjs) \
-    macro(esmRegistryDelete) \
-    macro(esmRegistryEvaluatedKeys) \
-    macro(esmRegistryHasEvaluated) \
     macro(evaluateCommonJSModule) \
-    macro(evictIsolationSourceProviderCache) \
     macro(exchange) \
     macro(expires) \
     macro(exports) \
@@ -177,9 +172,6 @@ using namespace JSC;
     macro(relative) \
     macro(removeAbortAlgorithmFromSignal) \
     macro(require) \
-    macro(requireCacheCompiledEntry) \
-    macro(requireCacheDidDelete) \
-    macro(requireCacheWillSet) \
     macro(isHiddenFromRequireCache) \
     macro(requireCommonJS) \
     macro(requireESM) \

@@ -170,10 +170,13 @@ JSC::Structure* createCommonJSModuleStructure(
 
 // A `require.cache` object over `requireMap`: the global one, or a Bun.ModuleGraph's
 // together with one of the graph's modules (whose loader's ES modules it also lists).
-JSC::JSValue createRequireCacheObject(JSC::JSGlobalObject*, JSC::JSMap* requireMap, JSCommonJSModule* owner = nullptr);
+JSC::JSObject* createRequireCacheObject(Zig::GlobalObject*, JSC::JSMap* requireMap, JSCommonJSModule* owner = nullptr);
 
 // Returns `graph`'s `require.cache` object, created on first use, or the global object's if `graph` is null.
-JSC::JSValue requireCacheOf(Zig::GlobalObject*, JSModuleGraph* graph, JSCommonJSModule* owner);
+JSC::JSObject* requireCacheOf(Zig::GlobalObject*, JSModuleGraph* graph, JSCommonJSModule* owner);
+
+// What `$createCommonJSModule()` makes: the module object of `id`, with the parent that `requirer` (a CommonJS module, or undefined) stands for.
+JSCommonJSModule* createCommonJSModuleForRequirer(Zig::GlobalObject*, JSC::JSString* id, JSC::JSValue exportsObject, bool hasEvaluated, JSC::JSValue requirer);
 
 // `graph`: the Bun.ModuleGraph whose loader is importing the file (the module goes in
 // its require cache), or null for the global object's loader.

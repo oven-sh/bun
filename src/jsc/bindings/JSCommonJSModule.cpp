@@ -86,6 +86,7 @@
 #include "wtf/URL.h"
 #include "wtf/text/StringImpl.h"
 #include "JSCommonJSExtensions.h"
+#include "JSRequireCache.h"
 #include "BunCompiledModules.h"
 
 #include "ErrorCode.h"
@@ -493,28 +494,20 @@ JSC_DEFINE_CUSTOM_GETTER(jsRequireCacheGetter, (JSC::JSGlobalObject * globalObje
     return JSValue::encode(requireCacheOf(defaultGlobalObject(globalObject), requirer ? requirer->moduleGraph() : nullptr, requirer));
 }
 
-JSValue requireCacheOf(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JSCommonJSModule* owner)
+JSObject* requireCacheOf(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JSCommonJSModule* owner)
 {
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
     if (!graph)
-        RELEASE_AND_RETURN(scope, globalObject->lazyRequireCacheObject());
+        return globalObject->lazyRequireCacheObject();
     if (JSValue existing = graph->requireCache())
-        return existing;
-    JSValue cache = createRequireCacheObject(globalObject, graph->requireMap(), owner);
-    RETURN_IF_EXCEPTION(scope, {});
-    graph->setRequireCache(vm, cache);
+        return asObject(existing);
+    JSObject* cache = createRequireCacheObject(globalObject, graph->requireMap(), owner);
+    graph->setRequireCache(globalObject->vm(), cache);
     return cache;
 }
 
-JSValue createRequireCacheObject(JSC::JSGlobalObject* globalObject, JSC::JSMap* requireMap, JSCommonJSModule* owner)
+JSObject* createRequireCacheObject(Zig::GlobalObject* globalObject, JSC::JSMap* requireMap, JSCommonJSModule* owner)
 {
-    auto& vm = globalObject->vm();
-    auto* createRequireCache = JSFunction::create(vm, globalObject, commonJSCreateRequireCacheCodeGenerator(vm), globalObject);
-    MarkedArgumentBuffer args;
-    args.append(requireMap);
-    args.append(owner ? JSValue(owner) : jsUndefined());
-    return JSC::profiledCall(globalObject, ProfilingReason::API, createRequireCache, JSC::getCallData(createRequireCache), jsUndefined(), args);
+    return JSRequireCache::create(globalObject->vm(), globalObject, requireMap, owner);
 }
 
 JSC_DEFINE_CUSTOM_SETTER(jsRequireCacheSetter,
@@ -1071,6 +1064,22 @@ JSCommonJSModule* JSCommonJSModule::create(
     return cell;
 }
 
+JSCommonJSModule* createCommonJSModuleForRequirer(Zig::GlobalObject* globalObject, JSString* id, JSValue exportsObject, bool hasEvaluated, JSValue requirer)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue parent = Bun::parentSeenBy(globalObject, id, requirer);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    auto* module = JSCommonJSModule::create(globalObject, id, exportsObject, hasEvaluated, parent);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    // The require cache holds a module that requires another. What stands in for a file of the executable is in no cache, so the module that has it for a parent holds it.
+    if (parent != requirer)
+        module->m_overriddenParent.set(vm, module, parent);
+    return module;
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateCommonJSModule, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
     RELEASE_ASSERT(callframe->argumentCount() == 4);
@@ -1081,16 +1090,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateCommonJSModule, (JSGlobalObject * globa
     JSValue object = callframe->uncheckedArgument(1);
     JSValue hasEvaluated = callframe->uncheckedArgument(2);
     ASSERT(hasEvaluated.isBoolean());
-    JSValue requirer = callframe->uncheckedArgument(3);
-    JSValue parent = Bun::parentSeenBy(uncheckedDowncast<Zig::GlobalObject>(globalObject), id, requirer);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    auto* module = JSCommonJSModule::create(uncheckedDowncast<Zig::GlobalObject>(globalObject), id, object, hasEvaluated.isTrue(), parent);
-    RETURN_IF_EXCEPTION(scope, {});
-    // The require cache holds a module that requires another. What stands in for a file of the executable is in no cache, so the module that has it for a parent holds it.
-    if (parent != requirer)
-        module->m_overriddenParent.set(JSC::getVM(globalObject), module, parent);
-    return JSValue::encode(module);
+    RELEASE_AND_RETURN(scope, JSValue::encode(createCommonJSModuleForRequirer(uncheckedDowncast<Zig::GlobalObject>(globalObject), id, object, hasEvaluated.isTrue(), callframe->uncheckedArgument(3))));
 }
 
 JSCommonJSModule* JSCommonJSModule::create(

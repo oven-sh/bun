@@ -1224,10 +1224,10 @@ console.log("survived", require("./late.js"));`,
     expect(require("./esm_to_cjs_interop.mjs")).toEqual(Symbol.for("meow"));
   });
 
-  test("require.cache throws if it's first accessed near the stack limit, and the next access creates it", async () => {
+  test("require.cache is created when it's first accessed near the stack limit", async () => {
     const code = `
       const Module = require("node:module");
-      // Only the deepest frame catches the overflow, and any call into the builtin from there overflows again.
+      // Only the deepest frame catches the overflow, and any call into a builtin from there overflows again. Creating the cache calls none.
       function probe(useModuleCache) {
         let outcome;
         function recurse() {
@@ -1265,7 +1265,7 @@ console.log("survived", require("./late.js"));`,
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe(JSON.stringify([["RangeError", "RangeError"], null, true, true, true]));
+    expect(stdout.trim()).toBe(JSON.stringify([["object", "object"], null, true, true, true]));
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });

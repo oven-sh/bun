@@ -271,8 +271,6 @@ const moduleChildrenFunctions = [
   ),
 ];
 
-const requireCacheFunctions = [...functionsIn("builtins/CommonJS", "createRequireCache"), ...moduleChildrenFunctions];
-
 const fusedTraversalFunctions = functionsIn("prelude/array-traversal", "traverseArray");
 
 const streamedModuleFunctions = functionsIn("builtins/WasmStreaming", "consumeStream");
@@ -282,10 +280,10 @@ const fakeTimerFunctions = functionsIn("builtins/useFakeTimers", "createPerforma
 const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFunctionSpec[]>> = {
   "%ModuleObject%.children": moduleChildrenFunctions,
   "%ModuleObject%.parent": moduleChildrenFunctions,
-  "%ModuleRequire%.cache": requireCacheFunctions,
+  "%ModuleRequire%.cache": moduleChildrenFunctions,
   "%ModuleRequire%.main": [...functionsIn("builtins/CommonJS", "main"), ...moduleChildrenFunctions],
   "%ModuleRequire%.resolve": functionsIn("builtins/CommonJS", "requireResolve"),
-  "%ModuleRequirePrototype%.cache": requireCacheFunctions,
+  "%ModuleRequirePrototype%.cache": moduleChildrenFunctions,
   // In an executable the getter is native code.
   "%ModuleRequirePrototype%.main": moduleChildrenFunctions,
   "%ModuleRequirePrototype%.resolve": functionsIn("builtins/CommonJS", "requireResolve"),
@@ -349,7 +347,7 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
     ),
   ],
   "node:module._initPaths": [heldAs(b.functionIn("builtins/NodeModuleObject", "_initPaths"), "node:module._initPaths")],
-  "node:module._cache": requireCacheFunctions,
+  "node:module._cache": moduleChildrenFunctions,
   "process._rawDebug": [heldAs(processInternal("rawDebug"), "process._rawDebug")],
   "process.allowedNodeEnvironmentFlags": builtBy(
     "buildAllowedNodeEnvironmentFlags",

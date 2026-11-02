@@ -624,15 +624,8 @@ JSC_DEFINE_CUSTOM_SETTER(setterRequireFunction,
 
 static JSValue getModuleCacheObject(VM& vm, JSObject* moduleObject)
 {
-    // See getBuiltinModulesObject for why this needs a top exception scope.
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(moduleObject->globalObject());
-    JSValue cache = Bun::requireCacheOf(globalObject, Bun::testFileModuleGraph(globalObject), nullptr);
-    // An executable compiled ahead of time whose code never names the cache lacks the function that makes it. Its own files are never listed, so the cache is empty.
-    if (!cache && vm.hasCompiledCode() && scope.tryClearException())
-        return JSC::constructEmptyObject(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    return cache;
+    return Bun::requireCacheOf(globalObject, Bun::testFileModuleGraph(globalObject), nullptr);
 }
 
 static JSValue getModuleExtensionsObject(VM& vm, JSObject* moduleObject)

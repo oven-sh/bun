@@ -281,6 +281,18 @@ static inline int32_t WrapSub(int32_t a, int32_t b)
     return static_cast<int32_t>(static_cast<uint32_t>(a) - static_cast<uint32_t>(b));
 }
 
+// The row of a 1-field segment: -1 is no source index, line or column of a mapping. PERF: out of line. Inlined, these stores cost each mapped segment of the loop around them 2 instructions.
+static HWY_NOINLINE void StoreRowWithoutSource(int32_t* og, int32_t* oo, int32_t* os, int32_t* on, int32_t gen_line, int32_t gen_col)
+{
+    og[0] = gen_line;
+    og[1] = gen_col;
+    oo[0] = -1;
+    oo[1] = -1;
+    *os = -1;
+    if (on)
+        *on = -1;
+}
+
 } // namespace sourcemap_vlq
 } // namespace bun
 
@@ -922,19 +934,12 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
             if (HWY_UNLIKELY(field_count == 1)) {
                 needs_sort |= (d_gen < 0) ? 1 : 0;
                 gen_col = n_gen_col;
-                // A 1-field segment has no source: -1 is no source index, line or column of a mapping.
-                og[0] = gen_line;
-                og[1] = gen_col;
-                oo[0] = -1;
-                oo[1] = -1;
-                *os = -1;
+                StoreRowWithoutSource(og, oo, os, on, gen_line, gen_col);
                 og += 2;
                 oo += 2;
                 os += 1;
-                if (on) {
-                    *on = -1;
+                if (on)
                     on += 1;
-                }
                 const size_t adv = seg_len + ((semi >> seg_len) & 1 ? 0 : 1);
                 p += adv;
                 if (p >= N)

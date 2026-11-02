@@ -239,7 +239,6 @@
 "generic_body_not_generic:src/text_diff/lib.rs" = 3
 
 [bun_threading]
-"unsafe_send_covers_more_than_pointers:src/threading/Semaphore.rs" = 1
 "unsafe_send_covers_more_than_pointers:src/threading/channel.rs" = 1
 
 [bun_uws_sys]

@@ -1,0 +1,43 @@
+feature Tools "the Bun command line"
+  entered-from command-line
+  minimum 1000000
+
+feature Lint "bun lint"
+  entered-from command-line
+  minimum 5000000
+
+feature Install "bun install, bunx and the rest of the package manager"
+  entered-from command-line
+  minimum 500000
+
+feature Fmt "bun fmt"
+  entered-from command-line
+  minimum 2000000
+
+feature Check "bun check, and type checking in bun build and Bun.build"
+  entered-from command-line
+  minimum 7000000
+
+feature TestCommand "the bun test command"
+  entered-from command-line
+  minimum 300000
+
+feature BuildCommand "the bun build command"
+  entered-from command-line
+  minimum 2000000
+
+feature AotCompiler "the ahead-of-time compiler"
+  entered-from command-line
+  minimum 9000000
+
+feature Repl "bun repl"
+  entered-from command-line
+  minimum 80000
+
+feature Create "bun create and bun init"
+  entered-from command-line
+  minimum 1000000
+
+feature Upgrade "bun upgrade"
+  entered-from command-line
+  minimum 30000

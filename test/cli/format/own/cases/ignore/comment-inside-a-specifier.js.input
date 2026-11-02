@@ -1,0 +1,6 @@
+export { a
+// prettier-ignore
+as   b };
+import { c as
+// prettier-ignore
+d, e } from "f";

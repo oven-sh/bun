@@ -37,7 +37,8 @@ impl<'c, U: crate::xml::Unit> StructuralIndex<'c, U> {
     }
 
     fn with_producer(contents: &'c [U], use_scalar: bool) -> Self {
-        debug_assert!(contents.len() <= i32::MAX as usize);
+        // Positions are stored as `u32`; transcoding can double the parser's `i32::MAX` bound.
+        debug_assert!(contents.len() <= u32::MAX as usize);
         let win_cap = contents.len().min(REFILL_INPUT) + 64 + SENTINELS + LOOKBEHIND;
         StructuralIndex {
             contents,
@@ -121,21 +122,7 @@ impl<'c, U: crate::xml::Unit> StructuralIndex<'c, U> {
         if bun_core::env::IS_NATIVE && !self.use_scalar {
             let filled = self.win.len();
             let out = &mut self.win.spare_capacity_mut()[..chunk_len + 64];
-            let n = if U::WIDE {
-                bun_highway::xml_structural_index16_chunk(
-                    bytemuck::cast_slice(U::bytes(chunk)),
-                    self.src_off,
-                    out,
-                    &mut self.kernel_state,
-                )
-            } else {
-                bun_highway::xml_structural_index_chunk(
-                    U::bytes(chunk),
-                    self.src_off,
-                    out,
-                    &mut self.kernel_state,
-                )
-            };
+            let n = U::structural_index_chunk(chunk, self.src_off, out, &mut self.kernel_state);
             // SAFETY: the kernel initialized `n` entries of the spare capacity it was given.
             unsafe { self.win.set_len(filled + n) };
         } else {

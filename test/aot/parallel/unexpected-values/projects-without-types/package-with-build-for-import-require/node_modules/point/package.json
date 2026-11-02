@@ -1,0 +1,11 @@
+{
+  "name": "point",
+  "version": "1.0.0",
+  "main": "./build/point.cjs",
+  "exports": {
+    ".": {
+      "import": "./build/point.mjs",
+      "require": "./build/point.cjs"
+    }
+  }
+}

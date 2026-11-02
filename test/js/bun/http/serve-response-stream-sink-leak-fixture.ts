@@ -4,10 +4,7 @@
 // heap HTTPServerWritable/JSSink plus the promise plumbing used to wait for
 // the close, and all of it must be released when end() completes the
 // response; otherwise each request leaks the struct plus its buffer.
-const rss =
-  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? Bun.unsafe.memoryFootprint
-    : process.memoryUsage.rss;
+const rss = process.memoryUsage.rss;
 
 let controller: any;
 let pulled: { promise: Promise<void>; resolve: () => void };

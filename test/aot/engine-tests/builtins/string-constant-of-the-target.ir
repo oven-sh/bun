@@ -1,0 +1,56 @@
+# A member that the target of the build decides is a string constant of the table. A read of it becomes the text where nothing can have replaced the value
+# RUN: pass ResolveBuiltins
+# RUN(FLOW): pipeline ResolveBuiltins
+# RUN(ARM64): pipeline ResolveBuiltins
+# REQUIRES(ARM64): arm64
+# RUN(X64): pipeline ResolveBuiltins
+# REQUIRES(X64): x86_64
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    v1 = CallDirect function=f2
+    v2 = CallDirect function=f3
+    Return
+}
+
+function f1 name="platform" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="platform"
+    Return v1
+}
+# Plain Bun lets a program store to the property, so no lock stands for the proof.
+# CHECK-LABEL: function f1 name="platform"
+# CHECK: PropGet v0 key="platform"
+# FLOW-LABEL: function f1 name="platform"
+# FLOW-NOT: PropGet
+# FLOW: = String string="[[platform]]"
+
+function f2 name="architecture" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="arch"
+    Return v1
+}
+# CHECK-LABEL: function f2 name="architecture"
+# CHECK: PropGet v0 key="arch"
+# FLOW-LABEL: function f2 name="architecture"
+# FLOW-NOT: PropGet
+# FLOW: = String string="[[architecture]]"
+# ARM64-LABEL: function f2 name="architecture"
+# ARM64: = String string="arm64"
+# X64-LABEL: function f2 name="architecture"
+# X64: = String string="x64"
+
+function f3 name="textComputedByHost" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="execPath"
+    Return v1
+}
+# FLOW-LABEL: function f3 name="textComputedByHost"
+# FLOW-NOT: = String
+# FLOW: Return

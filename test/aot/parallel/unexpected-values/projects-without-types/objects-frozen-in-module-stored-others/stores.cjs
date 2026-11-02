@@ -1,0 +1,11 @@
+exports.mode = (function () { return this === undefined ? "strict" : "sloppy"; })();
+exports.set = function (object) { object.count = 2; return object.count; };
+exports.bump = function (object) { object.count++; return object.count; };
+exports.addTo = function (object) { object.count += 5; return object.count; };
+exports.extend = function (object) { object.extra = 1; return object.extra; };
+exports.remove = function (object) { return [delete object.count, object.count]; };
+exports.push = function (object) { return [object.list.push(2), object.list.length]; };
+exports.setElement = function (object) { object.list[0] = 9; return object.list[0]; };
+exports.setPastTheEnd = function (object) { object.list[3] = 9; return object.list.length; };
+exports.cut = function (object) { object.list.length = 0; return object.list.length; };
+exports.pop = function (object) { return [object.list.pop(), object.list.length]; };

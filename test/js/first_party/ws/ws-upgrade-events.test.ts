@@ -1,560 +1,648 @@
-// https://github.com/oven-sh/bun/issues/5951
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+// Tests a `ws` client's 'upgrade' and 'unexpected-response' events, the `http.IncomingMessage` they carry, and how a
+// non-101 response fails a socket that has no 'unexpected-response' listener. See ws-raw-peer.ts.
+// The request passed to 'unexpected-response' is covered in ws-client-compat-request.test.ts.
+import { describe, expect, test } from "bun:test";
+import type { ClientRequest, IncomingMessage } from "node:http";
+import {
+  acceptKey,
+  closedBeforeOpen,
+  connectClient,
+  createPeer,
+  encodeFrame,
+  implementations,
+  nextEvent,
+  OP,
+  openClient,
+  openEvents,
+  response101,
+  show,
+  showError,
+  type PeerOptions,
+  type RawSocket,
+} from "./ws-raw-peer";
 
-async function run(script: string) {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  if (exitCode !== 0) console.error(stderr);
-  return { stdout: normalizeBunSnapshot(stdout), stderr: normalizeBunSnapshot(stderr), exitCode };
+const unexpected503 = ['error Error "Unexpected server response: 503" rs=2', "close 1006 Buffer() rs=3"];
+
+/** A peer that sends `response` to every request and then closes the connection. */
+const respondsWith = (response: string): PeerOptions => ({
+  respond(conn: RawSocket) {
+    conn.socket.end(response);
+    return null;
+  },
+});
+const respondsWith503 = respondsWith("HTTP/1.1 503 Service Unavailable\r\n\r\n");
+
+async function readAll(response: IncomingMessage) {
+  let body = "";
+  for await (const chunk of response) body += chunk;
+  return body;
 }
 
-test.concurrent(
-  "ws on/addListener/prepend*/addEventListener for upgrade/unexpected-response emit no warning",
-  async () => {
-    const { stdout, stderr, exitCode } = await run(/* js */ `
-    const { WebSocket } = require("ws");
-    const ws = new WebSocket("ws://127.0.0.1:1");
-    const h = () => {};
-    for (const type of ["upgrade", "unexpected-response"]) {
-      ws.on(type, h);
-      ws.once(type, h);
-      ws.addListener(type, h);
-      ws.prependListener(type, h);
-      ws.prependOnceListener(type, h);
-      ws.addEventListener(type, h);
-    }
-    ws.on("error", () => {});
-    ws.terminate();
-    console.log("ok");
-  `);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("ok");
-    expect(exitCode).toBe(0);
-  },
-);
+const emitterMethods = ["on", "once", "addListener", "prependListener", "prependOnceListener"] as const;
 
-test.concurrent("ws emits 'unexpected-response' with status, headers and body on non-101", async () => {
-  const { stdout, exitCode } = await run(/* js */ `
-    const { createServer } = require("net");
-    const { once } = require("events");
-    const { WebSocket } = require("ws");
+describe.each(implementations)("ws client 'upgrade' and 'unexpected-response' events ($name)", row => {
+  const { ws: implementation, builtin } = row;
+  const { WebSocket } = implementation;
+  type WebSocket = InstanceType<typeof WebSocket>;
 
-    const server = createServer(s =>
-      s.once("data", () =>
-        s.end("HTTP/1.1 503 Service Unavailable\\r\\nX-Reason: not-ready\\r\\n\\r\\nworkerd starting"),
-      ),
-    ).listen(0, "127.0.0.1");
-    await once(server, "listening");
+  /** A client with no listeners at all. `connectClient()` would add 'error' and 'upgrade' listeners. */
+  function connectWithoutListeners(url: string) {
+    const ws = new WebSocket(url);
+    return { ws, [Symbol.dispose]: () => ws.on("error", () => {}).terminate() };
+  }
 
-    const ws = new WebSocket("ws://127.0.0.1:" + server.address().port);
-    ws.on("error", () => {});
-    const [req, res] = await new Promise(resolve =>
-      ws.once("unexpected-response", (req, res) => resolve([req, res])),
-    );
-    let body = "";
-    for await (const chunk of res) body += chunk;
-    console.log(JSON.stringify({
-      reqMethod: req?.method,
-      reqPath: req?.path,
-      reqGetHeader: typeof req?.getHeader === "function" ? req.getHeader("x-anything") ?? null : "missing",
-      statusCode: res.statusCode,
-      statusMessage: res.statusMessage,
-      xReason: res.headers["x-reason"],
-      body,
-    }));
-    await once(ws, "close");
-    server.close();
-  `);
-  // ws emits 'unexpected-response' with (ClientRequest, IncomingMessage). We
-  // don't use node:http so the request is a minimal synthetic stub — assert
-  // its method/path/getHeader surface so code that inspects the request
-  // object doesn't crash.
-  expect(stdout).toMatchInlineSnapshot(
-    `"{"reqMethod":"GET","reqPath":"/","reqGetHeader":null,"statusCode":503,"statusMessage":"Service Unavailable","xReason":"not-ready","body":"workerd starting"}"`,
-  );
-  expect(exitCode).toBe(0);
-});
+  describe("'upgrade'", () => {
+    test("fires before 'open' with the 101 response as an IncomingMessage", async () => {
+      await using client = await connectClient(
+        implementation,
+        {},
+        { headers: ["X-Foo: bar", "Set-Cookie: a=1", "Set-Cookie: b=2"] },
+      );
+      const [response, ...more] = await nextEvent(client.ws, "upgrade");
+      const conn = await client.peer.connection();
+      expect(more).toEqual([]);
+      expect({
+        class: response.constructor.name,
+        statusCode: response.statusCode,
+        statusMessage: response.statusMessage,
+        httpVersion: response.httpVersion,
+        complete: response.complete,
+        headers: { ...response.headers },
+        socket: typeof response.socket,
+      }).toEqual({
+        class: "IncomingMessage",
+        statusCode: 101,
+        statusMessage: "Switching Protocols",
+        httpVersion: "1.1",
+        complete: true,
+        headers: {
+          upgrade: "websocket",
+          connection: "Upgrade",
+          "sec-websocket-accept": acceptKey(conn.header("sec-websocket-key")),
+          "x-foo": "bar",
+          "set-cookie": ["a=1", "b=2"],
+        },
+        socket: "object",
+      });
+      expect(response.rawHeaders.slice(-6)).toEqual(["X-Foo", "bar", "Set-Cookie", "a=1", "Set-Cookie", "b=2"]);
+      await client.opened;
+      expect(client.events).toEqual(openEvents);
+    });
 
-// Diverges from real ws: with no 'unexpected-response' listener, real ws emits
-// "Unexpected server response: 503". Bun's shim only registers the native
-// handshake listener when the user subscribes to 'upgrade'/'unexpected-response',
-// so the unmodified native error surfaces instead.
-test.concurrent("ws emits native 'error' on non-101 when no 'unexpected-response' listener", async () => {
-  const { stdout, exitCode } = await run(/* js */ `
-    const { createServer } = require("net");
-    const { once } = require("events");
-    const { WebSocket } = require("ws");
+    test("a microtask queued in the listener runs after 'open'", async () => {
+      await using client = await connectClient(implementation);
+      const { ws } = client;
+      const states = await new Promise(resolve =>
+        ws.on("upgrade", () => {
+          const inListener = ws.readyState;
+          queueMicrotask(() => resolve({ inListener, inMicrotask: ws.readyState }));
+        }),
+      );
+      expect(states).toEqual({ inListener: WebSocket.CONNECTING, inMicrotask: WebSocket.OPEN });
+    });
 
-    const server = createServer(s =>
-      s.once("data", () => s.end("HTTP/1.1 503 Service Unavailable\\r\\n\\r\\n")),
-    ).listen(0, "127.0.0.1");
-    await once(server, "listening");
+    test.each(emitterMethods)("fires for a listener added with %s()", async method => {
+      await using client = await connectClient(implementation);
+      const emitter: NodeJS.EventEmitter = client.ws;
+      const [response] = await new Promise<any[]>(resolve => emitter[method]("upgrade", (...args) => resolve(args)));
+      expect(response.statusCode).toBe(101);
+    });
 
-    const ws = new WebSocket("ws://127.0.0.1:" + server.address().port);
-    const [err] = await once(ws, "error");
-    console.log(/Expected 101/.test(err.message) ? "got native 101 error" : "unexpected: " + err.message);
-    server.close();
-    process.exit(0);
-  `);
-  expect(stdout).toMatchInlineSnapshot(`"got native 101 error"`);
-  expect(exitCode).toBe(0);
-});
+    test("addEventListener() ignores it", async () => {
+      await using client = await connectClient(implementation);
+      const { ws } = client;
+      let calls = 0;
+      const before = ws.listenerCount("upgrade");
+      ws.addEventListener("upgrade" as any, () => calls++);
+      expect(ws.listenerCount("upgrade")).toBe(before);
+      await client.opened;
+      expect(calls).toBe(0);
+    });
 
-test.concurrent("ws emits 'upgrade' with headers before 'open' on 101", async () => {
-  const { stdout, exitCode } = await run(/* js */ `
-    const { createServer } = require("net");
-    const { createHash } = require("crypto");
-    const { once } = require("events");
-    const { WebSocket } = require("ws");
+    test("isn't emitted for a non-101 response", async () => {
+      await using client = await connectClient(implementation, {}, respondsWith503);
+      await client.closed;
+      expect(client.events).toEqual(unexpected503);
+    });
+  });
 
-    const server = createServer(conn => {
-      let buf = "";
-      const onData = chunk => {
-        buf += chunk.toString();
-        if (buf.indexOf("\\r\\n\\r\\n") === -1) return;
-        conn.off("data", onData);
-        const key = /Sec-WebSocket-Key: (.+)\\r\\n/i.exec(buf)[1];
-        const accept = createHash("sha1")
-          .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
-          .digest("base64");
-        conn.write(
-          "HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Accept: " +
-            accept + "\\r\\n\\r\\n",
-        );
-      };
-      conn.on("data", onData);
-    }).listen(0, "127.0.0.1");
-    await once(server, "listening");
+  describe("'unexpected-response'", () => {
+    test("passes the request and response while CONNECTING, and terminate() then fails the socket", async () => {
+      await using client = await connectClient(
+        implementation,
+        {},
+        { respond: () => "HTTP/1.1 401 Unauthorized\r\nContent-Length: 3\r\nX-A: 1\r\n\r\nfoo" },
+      );
+      const { ws, events } = client;
+      const [request, response, ...more] = await nextEvent(ws, "unexpected-response");
+      expect(ws.readyState).toBe(WebSocket.CONNECTING);
+      expect(more).toEqual([]);
+      expect({
+        request: request.constructor.name,
+        response: response.constructor.name,
+        statusCode: response.statusCode,
+        statusMessage: response.statusMessage,
+        httpVersion: response.httpVersion,
+        headers: { ...response.headers },
+        rawHeaders: response.rawHeaders,
+      }).toEqual({
+        request: "ClientRequest",
+        response: "IncomingMessage",
+        statusCode: 401,
+        statusMessage: "Unauthorized",
+        httpVersion: "1.1",
+        headers: { "content-length": "3", "x-a": "1" },
+        rawHeaders: ["Content-Length", "3", "X-A", "1"],
+      });
+      expect(await readAll(response)).toBe("foo");
+      expect(events).toEqual([]);
 
-    const ws = new WebSocket("ws://127.0.0.1:" + server.address().port);
-    const order = [];
-    ws.on("upgrade", res => order.push("upgrade:" + res.statusCode + ":" + typeof res.headers["sec-websocket-accept"]));
-    ws.on("open", () => {
-      order.push("open");
       ws.terminate();
-      server.close();
+      expect(ws.readyState).toBe(WebSocket.CLOSING);
+      await client.closed;
+      expect(events).toEqual(closedBeforeOpen);
     });
-    await once(ws, "close");
-    console.log(order.join(","));
-  `);
-  expect(stdout).toMatchInlineSnapshot(`"upgrade:101:string,open"`);
-  expect(exitCode).toBe(0);
-});
 
-// Real npm `ws` fires 'upgrade' and 'open' back-to-back in the same frame, so a
-// microtask queued inside an 'upgrade' handler runs after the socket is OPEN.
-// The native client dispatches 'upgrade' (handshake) then 'open' (connect); each
-// dispatch drains microtasks on exit, so without a shared event-loop scope the
-// queue drained *between* the two and the microtask observed readyState
-// CONNECTING (0). A single scope around both dispatches keeps the drain after
-// 'open', so the microtask sees OPEN (1).
-test.concurrent("ws microtask queued in 'upgrade' handler observes readyState OPEN", async () => {
-  const { stdout, exitCode } = await run(/* js */ `
-    const { createServer } = require("net");
-    const { createHash } = require("crypto");
-    const { once } = require("events");
-    const { WebSocket } = require("ws");
+    describe("response body", () => {
+      test.each([
+        { how: "with a Content-Length", response: "HTTP/1.1 403 Forbidden\r\nContent-Length: 2\r\n\r\nno", body: "no" },
+        { how: "with Content-Length: 0", response: "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n", body: "" },
+        {
+          how: "that ends when the connection closes",
+          response: "HTTP/1.1 503 Service Unavailable\r\nX-Reason: not-ready\r\n\r\nworkerd starting",
+          body: "workerd starting",
+        },
+        {
+          how: "with chunked encoding",
+          response: "HTTP/1.1 403 Forbidden\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nno\r\n4\r\n way\r\n0\r\n\r\n",
+          body: "no way",
+        },
+      ])("reads a body $how", async ({ response, body }) => {
+        await using client = await connectClient(implementation, {}, respondsWith(response));
+        const [, incoming] = await nextEvent(client.ws, "unexpected-response");
+        expect(await readAll(incoming)).toBe(body);
+      });
 
-    const server = createServer(conn => {
-      let buf = "";
-      const onData = chunk => {
-        buf += chunk.toString();
-        if (buf.indexOf("\\r\\n\\r\\n") === -1) return;
-        conn.off("data", onData);
-        const key = /Sec-WebSocket-Key: (.+)\\r\\n/i.exec(buf)[1];
-        const accept = createHash("sha1")
-          .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
-          .digest("base64");
-        conn.write(
-          "HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Accept: " +
-            accept + "\\r\\n\\r\\n",
-        );
+      const contentLengthHead = "HTTP/1.1 403 Forbidden\r\nContent-Length: 6\r\n\r\n";
+      const chunkedHead = "HTTP/1.1 403 Forbidden\r\nTransfer-Encoding: chunked\r\n\r\n";
+      const closeDelimitedHead = "HTTP/1.1 403 Forbidden\r\n\r\n";
+      type Context = { conn: RawSocket; ws: WebSocket; req: ClientRequest };
+      type BodyCase = {
+        how: string;
+        head: string;
+        bodyStart: string;
+        act(context: Context): void;
+        /** The error the `ws` socket fails with, if it fails too. */
+        socketError?: string;
+        /** Don't add an 'error' listener to the response. */
+        noErrorListener?: boolean;
       };
-      conn.on("data", onData);
-    }).listen(0, "127.0.0.1");
-    await once(server, "listening");
+      const sendFin = ({ conn }: Context) => conn.end();
+      const sendRst = ({ conn }: Context) => conn.reset();
+      const econnreset = 'Error "read ECONNRESET" ECONNRESET';
 
-    const ws = new WebSocket("ws://127.0.0.1:" + server.address().port);
-    const { promise, resolve } = Promise.withResolvers();
-    ws.on("upgrade", () => {
-      // Synchronously the socket is still CONNECTING; the microtask must not
-      // run until after 'open' has set it to OPEN.
-      const atUpgrade = ws.readyState;
-      queueMicrotask(() => resolve({ atUpgrade, inMicrotask: ws.readyState }));
+      /**
+       * Collects the events of the response, its request and the socket. The server sends `head` and `bodyStart`, the
+       * start of the body. `act` runs once `bodyStart` has arrived.
+       */
+      async function bodyEvents({ head, bodyStart, act, socketError, noErrorListener }: BodyCase) {
+        await using client = await connectClient(implementation, {}, { respond: () => head + bodyStart });
+        const { ws } = client;
+        const [req, res] = (await nextEvent(ws, "unexpected-response")) as [ClientRequest, IncomingMessage];
+        const response: string[] = [];
+        const request: string[] = [];
+        const closed = Promise.all([nextEvent(res, "close"), nextEvent(req, "close")]);
+        for (const name of ["aborted", "end", "close"]) res.on(name, () => response.push(name));
+        if (!noErrorListener) res.on("error", error => response.push(`error ${showError(error)}`));
+        for (const name of ["abort", "close"]) req.on(name, () => request.push(name));
+        req.on("error", error => request.push(`error ${showError(error)}`));
+        res.on("data", chunk => response.push(`data ${show(chunk)}`));
+        await nextEvent(res, "data");
+        act({ conn: await client.peer.connection(), ws, req });
+        await closed;
+        if (socketError) await client.closed;
+        // Copy the arrays, because disposing `client` aborts the request and would add more events.
+        return {
+          response: [...response],
+          request: [...request],
+          flags: { complete: res.complete, aborted: res.aborted, destroyed: [res.destroyed, req.destroyed] },
+          socket: [ws.readyState, ...client.events],
+        };
+      }
+      // The listener decides what happens to the socket, unless the request fails.
+      const expectedSocket = ({ socketError }: BodyCase) =>
+        socketError
+          ? [WebSocket.CLOSED, `error ${socketError} rs=2`, "close 1006 Buffer() rs=3"]
+          : [WebSocket.CONNECTING];
+      const expectedRequest = ({ socketError }: BodyCase) =>
+        socketError ? [`error ${socketError}`, "close"] : ["close"];
+      const truncatedBodyEvents = ['data Buffer("no")', "aborted", 'error Error "aborted" ECONNRESET', "close"];
+
+      test.each<BodyCase>([
+        {
+          how: "the last Content-Length byte",
+          head: contentLengthHead,
+          bodyStart: "no",
+          act: ({ conn }) => conn.write(" way"),
+        },
+        {
+          how: "the last chunk",
+          head: chunkedHead,
+          bodyStart: "2\r\nno\r\n",
+          act: ({ conn }) => conn.write("4\r\n way\r\n0\r\n\r\n"),
+        },
+        {
+          how: "FIN with no Content-Length or chunked encoding",
+          head: closeDelimitedHead,
+          bodyStart: "no",
+          act: ({ conn }) => conn.socket.end(" way"),
+        },
+      ])("completes at $how, emitting 'end' and 'close' on the response and 'close' on the request", async row => {
+        expect(await bodyEvents(row)).toEqual({
+          response: ['data Buffer("no")', 'data Buffer(" way")', "end", "close"],
+          request: ["close"],
+          flags: { complete: true, aborted: false, destroyed: [true, true] },
+          socket: expectedSocket(row),
+        });
+      });
+
+      // A body with no declared length ends whenever the connection ends, even on RST.
+      test("completes at RST with no Content-Length or chunked encoding", async () => {
+        const row = { how: "", head: closeDelimitedHead, bodyStart: "no", act: sendRst, socketError: econnreset };
+        expect(await bodyEvents(row)).toEqual({
+          response: ['data Buffer("no")', "end", "close"],
+          request: expectedRequest(row),
+          flags: { complete: true, aborted: false, destroyed: [true, true] },
+          socket: expectedSocket(row),
+        });
+      });
+
+      test.each<BodyCase>([
+        { how: "FIN before the last Content-Length byte", head: contentLengthHead, bodyStart: "no", act: sendFin },
+        {
+          how: "RST before the last Content-Length byte",
+          head: contentLengthHead,
+          bodyStart: "no",
+          act: sendRst,
+          socketError: econnreset,
+        },
+        { how: "FIN before the last chunk", head: chunkedHead, bodyStart: "2\r\nno\r\n", act: sendFin },
+        {
+          how: "RST before the last chunk",
+          head: chunkedHead,
+          bodyStart: "2\r\nno\r\n",
+          act: sendRst,
+          socketError: econnreset,
+        },
+        { how: "FIN inside a chunk", head: chunkedHead, bodyStart: "6\r\nno", act: sendFin },
+      ])("is truncated by $how, emitting 'aborted', 'error' and 'close' but not 'end'", async row => {
+        expect(await bodyEvents(row)).toEqual({
+          response: truncatedBodyEvents,
+          request: expectedRequest(row),
+          flags: { complete: false, aborted: true, destroyed: [true, true] },
+          socket: expectedSocket(row),
+        });
+      });
+
+      describe.each([
+        { body: "with a Content-Length", head: contentLengthHead, bodyStart: "no" },
+        { body: "with chunked encoding", head: chunkedHead, bodyStart: "2\r\nno\r\n" },
+        { body: "with neither", head: closeDelimitedHead, bodyStart: "no" },
+      ])("$body, when the server never sends the rest", ({ head, bodyStart }) => {
+        const closedEarly = 'Error "WebSocket was closed before the connection was established"';
+
+        // Bun's node:http emits 'end' on a close-delimited response when its request is destroyed, so npm ws running on
+        // Bun sees 'end' here.
+        test
+          .skipIf(!builtin && head === closeDelimitedHead)
+          .each<Pick<BodyCase, "how" | "act" | "socketError"> & { request: string[] }>([
+            { how: "req.destroy()", act: ({ req }) => req.destroy(), request: ["close"] },
+            { how: "req.abort()", act: ({ req }) => req.abort(), request: ["abort", "close"] },
+            { how: "ws.close()", act: ({ ws }) => ws.close(), request: ["abort", "close"], socketError: closedEarly },
+            {
+              how: "ws.terminate()",
+              act: ({ ws }) => ws.terminate(),
+              request: ["abort", "close"],
+              socketError: closedEarly,
+            },
+          ])("is truncated by $how", async ({ request, ...row }) => {
+          const { flags, ...events } = await bodyEvents({ head, bodyStart, ...row });
+          expect(events).toEqual({
+            response: truncatedBodyEvents,
+            request,
+            socket: expectedSocket({ head, bodyStart, ...row }),
+          });
+          // For a close-delimited body, Node sets both `complete` and `aborted` here.
+          expect(flags).toMatchObject({ aborted: true, destroyed: [true, true] });
+          if (head !== closeDelimitedHead) expect(flags.complete).toBe(false);
+        });
+      });
+
+      // Node's parser finishes the packet it already has, so the response still ends normally.
+      test.each([
+        { body: "with a Content-Length", fullResponse: contentLengthHead + "no way" },
+        { body: "with chunked encoding", fullResponse: chunkedHead + "6\r\nno way\r\n0\r\n\r\n" },
+        { body: "with Content-Length: 0", fullResponse: "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n" },
+      ])(
+        "a body $body that arrived in full with the head still ends after req.abort() in the listener",
+        async ({ fullResponse }) => {
+          await using client = await connectClient(implementation, {}, { respond: () => fullResponse });
+          const response: string[] = [];
+          const [res] = await new Promise<[IncomingMessage]>(resolve =>
+            client.ws.on("unexpected-response", (req: ClientRequest, res: IncomingMessage) => {
+              for (const name of ["aborted", "end", "close"]) res.on(name, () => response.push(name));
+              res.on("error", error => response.push(`error ${showError(error)}`));
+              res.on("close", () => resolve([res]));
+              req.abort();
+            }),
+          );
+          expect({ response, complete: res.complete, aborted: res.aborted }).toEqual({
+            response: ["end", "close"],
+            complete: true,
+            aborted: false,
+          });
+          expect([client.ws.readyState, ...client.events]).toEqual([WebSocket.CONNECTING]);
+        },
+      );
+
+      test("a truncated body doesn't throw without an 'error' listener", async () => {
+        const row = {
+          how: "",
+          head: contentLengthHead,
+          bodyStart: "no",
+          act: ({ req }: Context) => req.destroy(),
+          noErrorListener: true,
+        };
+        expect((await bodyEvents(row)).response).toEqual(['data Buffer("no")', "aborted", "close"]);
+      });
     });
-    const states = await promise;
-    console.log(JSON.stringify({
-      atUpgrade: states.atUpgrade,
-      inMicrotask: states.inMicrotask,
-      CONNECTING: WebSocket.CONNECTING,
-      OPEN: WebSocket.OPEN,
-    }));
-    ws.terminate();
-    server.close();
-  `);
-  // atUpgrade stays CONNECTING (0); the microtask drains after 'open' so it sees OPEN (1).
-  expect(stdout).toMatchInlineSnapshot(`"{"atUpgrade":0,"inMicrotask":1,"CONNECTING":0,"OPEN":1}"`);
-  expect(exitCode).toBe(0);
-});
 
-// The synthetic IncomingMessage passed to 'unexpected-response' must coalesce
-// duplicate headers the way Node's http.IncomingMessage.headers does (real ws
-// hands the consumer that Node object): singleton headers keep the first value
-// and discard duplicates, duplicate `cookie` joins with "; ", everything else
-// joins with ", ", and set-cookie is always an array. rawHeaders stays verbatim.
-test.concurrent("ws 'unexpected-response' coalesces duplicate headers like Node IncomingMessage", async () => {
-  const { stdout, exitCode } = await run(/* js */ `
-    const { createServer } = require("net");
-    const { once } = require("events");
-    const { WebSocket } = require("ws");
+    // An HTTP parser only treats a 101 as an upgrade if it has an Upgrade header and Connection contains "upgrade". Any
+    // other 101 is an ordinary response like a 404, and like every 1xx it has no body.
+    describe("a 101 that isn't a valid upgrade", () => {
+      type Response101 = { replace: Record<string, string | null>; headers?: string[]; after?: string | Buffer };
 
-    const server = createServer(s =>
-      s.once("data", () =>
-        s.end(
-          "HTTP/1.1 401 Unauthorized\\r\\n" +
-          // singleton header repeated -> first value kept
-          "Content-Length: 0\\r\\n" +
-          "Content-Length: 999\\r\\n" +
-          // duplicate cookie -> joined with "; "
-          "Cookie: a=1\\r\\n" +
-          "Cookie: b=2\\r\\n" +
-          // duplicate non-singleton -> joined with ", "
-          "X-Multi: one\\r\\n" +
-          "X-Multi: two\\r\\n" +
-          // set-cookie -> array
-          "Set-Cookie: s1=1\\r\\n" +
-          "Set-Cookie: s2=2\\r\\n" +
-          "\\r\\n",
+      /**
+       * Collects the events of the response, its request and the socket. `afterClose` runs once the response and the
+       * request have closed.
+       */
+      async function collectEvents(
+        { replace, headers, after = "" }: Response101,
+        afterClose: (conn: RawSocket) => void,
+      ) {
+        await using client = await connectClient(
+          implementation,
+          {},
+          { respond: conn => Buffer.concat([Buffer.from(response101(conn, headers, replace)), Buffer.from(after)]) },
+        );
+        const { ws } = client;
+        const response: string[] = [];
+        const request: string[] = [];
+        const [req, res] = await new Promise<[ClientRequest, IncomingMessage]>(resolve =>
+          ws.on("unexpected-response", (req: ClientRequest, res: IncomingMessage) => {
+            for (const name of ["aborted", "end", "close"]) res.on(name, () => response.push(name));
+            res.on("error", error => response.push(`error ${showError(error)}`));
+            res.on("data", chunk => response.push(`data ${show(chunk)}`));
+            for (const name of ["abort", "close"]) req.on(name, () => request.push(name));
+            req.on("error", error => request.push(`error ${showError(error)}`));
+            resolve([req, res]);
+          }),
+        );
+        if (!res.closed) await nextEvent(res, "close");
+        if (!request.includes("close")) await nextEvent(req, "close");
+        afterClose(await client.peer.connection());
+        // A round trip on a second connection gives the client time to react.
+        await using control = await openClient(implementation);
+        await control.conn.roundTrip();
+        // Copy the arrays, because disposing `client` aborts the request and would add more events.
+        return {
+          statusCode: res.statusCode,
+          response: [...response],
+          request: [...request],
+          flags: { complete: res.complete, aborted: res.aborted, destroyed: [res.destroyed, req.destroyed] },
+          socket: [ws.readyState, ...client.events],
+        };
+      }
+      // The response ends without waiting for the peer, and the listener decides what happens to the socket.
+      const emptyResponse = {
+        statusCode: 101,
+        response: ["end", "close"],
+        request: ["close"],
+        flags: { complete: true, aborted: false, destroyed: [true, true] },
+        socket: [WebSocket.CONNECTING],
+      };
+      const frame = encodeFrame(OP.text, "hi");
+
+      describe.each<Pick<Response101, "replace"> & { problem: string }>([
+        { problem: "no Upgrade header", replace: { Upgrade: null } },
+        { problem: "Connection: keep-alive", replace: { Connection: "keep-alive" } },
+        { problem: "no Connection header", replace: { Connection: null } },
+        { problem: "no Upgrade or Connection header", replace: { Upgrade: null, Connection: null } },
+      ])("$problem", ({ replace }) => {
+        describe.each([
+          { what: "nothing", after: "" },
+          { what: "a frame", after: frame },
+        ])("$what after the head", ({ after }) => {
+          test.each([
+            { then: "closes the connection", act: (conn: RawSocket) => conn.end() },
+            { then: "keeps it open", act: () => {} },
+          ])(
+            "the response ends immediately and the socket stays CONNECTING when the peer then $then",
+            async ({ act }) => {
+              expect(await collectEvents({ replace, after }, act)).toEqual(emptyResponse);
+            },
+          );
+        });
+      });
+
+      test.each<Omit<Response101, "replace"> & { what: string }>([
+        { what: "a Content-Length and that many bytes", headers: ["Content-Length: 3"], after: "abc" },
+        { what: "a Content-Length and no bytes", headers: ["Content-Length: 3"], after: "" },
+        { what: "chunked encoding", headers: ["Transfer-Encoding: chunked"], after: "3\r\nabc\r\n0\r\n\r\n" },
+        { what: "another response after it", after: "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi" },
+      ])("has no body even with $what", async row => {
+        expect(await collectEvents({ replace: { Upgrade: null }, ...row }, () => {})).toEqual(emptyResponse);
+      });
+
+      test("ignores a frame sent in a later packet", async () => {
+        expect(await collectEvents({ replace: { Upgrade: null } }, conn => conn.write(frame))).toEqual(emptyResponse);
+      });
+    });
+
+    test("joins repeated headers the way node:http does", async () => {
+      await using client = await connectClient(
+        implementation,
+        {},
+        respondsWith(
+          [
+            "HTTP/1.1 401 Unauthorized",
+            "Content-Type: text/plain",
+            "Content-Type: text/html",
+            "Cookie: a=1",
+            "Cookie: b=2",
+            "X-Multi: one",
+            "X-Multi: two",
+            "Set-Cookie: s1=1",
+            "Set-Cookie: s2=2",
+            "",
+            "",
+          ].join("\r\n"),
         ),
-      ),
-    ).listen(0, "127.0.0.1");
-    await once(server, "listening");
+      );
+      const [, response] = await nextEvent(client.ws, "unexpected-response");
+      expect({ ...response.headers }).toEqual({
+        "content-type": "text/plain",
+        cookie: "a=1; b=2",
+        "x-multi": "one, two",
+        "set-cookie": ["s1=1", "s2=2"],
+      });
+      // prettier-ignore
+      expect(response.rawHeaders).toEqual([
+        "Content-Type", "text/plain", "Content-Type", "text/html", "Cookie", "a=1", "Cookie", "b=2",
+        "X-Multi", "one", "X-Multi", "two", "Set-Cookie", "s1=1", "Set-Cookie", "s2=2",
+      ]);
+    });
 
-    const ws = new WebSocket("ws://127.0.0.1:" + server.address().port);
-    ws.on("error", () => {});
-    const [, res] = await new Promise(resolve =>
-      ws.once("unexpected-response", (req, res) => resolve([req, res])),
+    test.each(emitterMethods)("fires for a listener added with %s()", async method => {
+      await using client = await connectClient(implementation, {}, respondsWith503);
+      const emitter: NodeJS.EventEmitter = client.ws;
+      const [, response] = await new Promise<any[]>(resolve =>
+        emitter[method]("unexpected-response", (...args) => resolve(args)),
+      );
+      expect(response.statusCode).toBe(503);
+    });
+
+    test("addEventListener() ignores it, so the socket fails as if there were no listener", async () => {
+      await using client = await connectClient(implementation, {}, respondsWith503);
+      const { ws } = client;
+      let calls = 0;
+      ws.addEventListener("unexpected-response" as any, () => calls++);
+      expect(ws.listenerCount("unexpected-response")).toBe(0);
+      await client.closed;
+      expect(client.events).toEqual(unexpected503);
+      expect(calls).toBe(0);
+    });
+
+    // The listener is responsible for closing the socket. Until it does, the socket stays CONNECTING.
+    test.each([
+      { listener: "on('error')", add: (ws, onError) => ws.on("error", onError) },
+      { listener: "addEventListener('error')", add: (ws, onError) => ws.addEventListener("error", onError) },
+      { listener: "onerror", add: (ws, onError) => (ws.onerror = onError) },
+    ] as { listener: string; add(ws: WebSocket, onError: () => void): void }[])(
+      "doesn't call $listener or emit 'close' afterwards",
+      async ({ add }) => {
+        await using peer = await createPeer(respondsWith503);
+        using first = connectWithoutListeners(peer.url);
+        using control = connectWithoutListeners(peer.url);
+        const { ws } = first;
+        const seen: string[] = [];
+        add(ws, () => seen.push("error"));
+        ws.on("close", () => seen.push("close"));
+        const controlResponse = nextEvent(control.ws, "unexpected-response");
+        const [, response] = await nextEvent(ws, "unexpected-response");
+        expect(await readAll(response)).toBe("");
+        // A client that connected later has received its response, and both connections have closed.
+        await controlResponse;
+        for (let i = 0; i < 2; i++) {
+          const conn = await peer.connection();
+          await conn.closed;
+        }
+        expect(seen).toEqual([]);
+        expect(ws.readyState).toBe(WebSocket.CONNECTING);
+      },
     );
-    console.log(JSON.stringify({
-      contentLength: res.headers["content-length"],
-      cookie: res.headers["cookie"],
-      xMulti: res.headers["x-multi"],
-      setCookie: res.headers["set-cookie"],
-      rawContentLengths: res.rawHeaders.filter((_, i) => i % 2 === 0)
-        .reduce((n, k) => n + (k.toLowerCase() === "content-length" ? 1 : 0), 0),
-    }));
-    ws.terminate();
-    server.close();
-  `);
-  expect(stdout).toMatchInlineSnapshot(
-    `"{"contentLength":"0","cookie":"a=1; b=2","xMulti":"one, two","setCookie":["s1=1","s2=2"],"rawContentLengths":2}"`,
-  );
-  expect(exitCode).toBe(0);
-});
 
-test.concurrent("ws 'unexpected-response' fires for addListener / prependListener / addEventListener", async () => {
-  const { stdout, exitCode } = await run(/* js */ `
-    const { createServer } = require("net");
-    const { once } = require("events");
-    const { WebSocket } = require("ws");
-
-    async function runOne(register) {
-      const server = createServer(s =>
-        s.once("data", () => s.end("HTTP/1.1 503 Service Unavailable\\r\\n\\r\\n")),
-      ).listen(0, "127.0.0.1");
-      await once(server, "listening");
-
-      const ws = new WebSocket("ws://127.0.0.1:" + server.address().port);
-      ws.on("error", () => {});
-      const { promise, resolve } = Promise.withResolvers();
-      register(ws, resolve);
-      const res = await promise;
-      server.close();
-      try { ws.terminate(); } catch {}
-      return res;
-    }
-
-    const a = await runOne((ws, done) =>
-      ws.addListener("unexpected-response", (req, res) => done(res.statusCode)),
+    test.each([
+      { call: "close()", act: ws => ws.close() },
+      { call: "terminate()", act: ws => ws.terminate() },
+    ] as { call: string; act(ws: WebSocket): void }[])(
+      "$call in the listener sets CLOSING synchronously, then emits 'error' and 'close' 1006",
+      async ({ act }) => {
+        await using client = await connectClient(implementation, {}, respondsWith503);
+        const { ws, events } = client;
+        const states: number[] = [];
+        ws.on("unexpected-response", () => {
+          states.push(ws.readyState);
+          act(ws);
+          states.push(ws.readyState);
+        });
+        await client.closed;
+        expect(states).toEqual([WebSocket.CONNECTING, WebSocket.CLOSING]);
+        expect(events).toEqual(closedBeforeOpen);
+      },
     );
-    const b = await runOne((ws, done) =>
-      ws.prependListener("unexpected-response", (req, res) => done(res.statusCode)),
-    );
-    const c = await runOne((ws, done) =>
-      ws.prependOnceListener("unexpected-response", (req, res) => done(res.statusCode)),
-    );
-    const d = await runOne((ws, done) =>
-      // For upgrade/unexpected-response addEventListener is symmetric with
-      // removeEventListener (no DOM-style wrapping adapter) so handlers
-      // receive Node-style args.
-      ws.addEventListener("unexpected-response", (req, res) => done(res.statusCode)),
-    );
-    console.log(JSON.stringify({ a, b, c, d }));
-    process.exit(0);
-  `);
-  expect(stdout).toMatchInlineSnapshot(`"{"a":503,"b":503,"c":503,"d":503}"`);
-  expect(exitCode).toBe(0);
-});
+  });
 
-// Once 'unexpected-response' has fired, the native 'Expected 101' error must
-// NOT reach user 'error' handlers (real ws never emits 'error' when the
-// response was handled). The suppression has to apply uniformly across every
-// registration API — on('error'), addEventListener('error', …) and the
-// onerror setter — not just on()/once().
-test.concurrent(
-  "ws suppresses the native error after 'unexpected-response' across on/addEventListener/onerror",
-  async () => {
-    const { stdout, exitCode } = await run(/* js */ `
-    const { createServer } = require("net");
-    const { once } = require("events");
-    const { WebSocket } = require("ws");
+  describe("a non-101 response without an 'unexpected-response' listener", () => {
+    const describeEvent = (event: any, ws: WebSocket) =>
+      `${event.constructor.name} ${event.type} ${JSON.stringify(event.message)} error=${showError(event.error)} target=${event.target === ws}`;
+    const errorEvent =
+      'ErrorEvent error "Unexpected server response: 503" error=Error "Unexpected server response: 503" target=true';
 
-    // Register the 'error' handler via one of the three APIs, subscribe to
-    // 'unexpected-response', and report whether a spurious 'error' still fired.
-    async function runOne(registerError) {
-      const server = createServer(s =>
-        s.once("data", () => s.end("HTTP/1.1 503 Service Unavailable\\r\\n\\r\\n")),
-      ).listen(0, "127.0.0.1");
-      await once(server, "listening");
+    const listenerKinds: Record<string, { add(ws: WebSocket, seen: string[]): void; line?: string }> = {
+      "on('error')": {
+        add: (ws, seen) => ws.on("error", error => seen.push(`on ${showError(error)} rs=${ws.readyState}`)),
+        line: 'on Error "Unexpected server response: 503" rs=2',
+      },
+      "once('error')": {
+        add: (ws, seen) => ws.once("error", error => seen.push(`once ${showError(error)} rs=${ws.readyState}`)),
+        line: 'once Error "Unexpected server response: 503" rs=2',
+      },
+      "addEventListener('error')": {
+        add: (ws, seen) => ws.addEventListener("error", event => seen.push("listener " + describeEvent(event, ws))),
+        line: "listener " + errorEvent,
+      },
+      onerror: {
+        add: (ws, seen) => (ws.onerror = event => seen.push("onerror " + describeEvent(event, ws))),
+        line: "onerror " + errorEvent,
+      },
+      "on('upgrade')": { add: (ws, seen) => ws.on("upgrade", () => seen.push("upgrade")) },
+    };
 
-      const ws = new WebSocket("ws://127.0.0.1:" + server.address().port);
-      let errored = false;
-      registerError(ws, () => { errored = true; });
-      const { promise, resolve } = Promise.withResolvers();
-      ws.on("unexpected-response", (req, res) => resolve(res.statusCode));
-      const status = await promise;
-      // Give the native error a turn of the loop to (not) arrive.
-      await once(ws, "close").catch(() => {});
-      server.close();
-      return { status, errored };
-    }
+    // Each listener runs once, in the order added, regardless of the other listeners.
+    test.each(
+      [
+        ["on('error')"],
+        ["once('error')"],
+        ["addEventListener('error')"],
+        ["onerror"],
+        ["on('upgrade')", "on('error')"],
+        ["on('upgrade')", "addEventListener('error')"],
+        ["on('upgrade')", "onerror"],
+        ["on('error')", "addEventListener('error')"],
+        ["onerror", "on('error')"],
+        ["addEventListener('error')", "once('error')", "onerror", "on('error')"],
+      ].map(listeners => ({ listeners, label: listeners.join(", ") })),
+    )("$label: emits one 'error' with the status code, then 'close' 1006", async ({ listeners }) => {
+      await using peer = await createPeer(respondsWith503);
+      using client = connectWithoutListeners(peer.url);
+      const { ws } = client;
+      const seen: string[] = [];
+      for (const kind of listeners) listenerKinds[kind].add(ws, seen);
+      await new Promise<void>(resolve =>
+        ws.on("close", (...args) => {
+          seen.push(["close", ...args.map(show), `rs=${ws.readyState}`].join(" "));
+          resolve();
+        }),
+      );
+      expect(seen).toEqual([...listeners.flatMap(kind => listenerKinds[kind].line ?? []), "close 1006 Buffer() rs=3"]);
+      expect(await (await peer.connection()).remainingFrames()).toEqual([]);
+    });
 
-    const on = await runOne((ws, mark) => ws.on("error", mark));
-    const ael = await runOne((ws, mark) => ws.addEventListener("error", mark));
-    const prop = await runOne((ws, mark) => { ws.onerror = mark; });
-    console.log(JSON.stringify({ on, ael, prop }));
-    process.exit(0);
-  `);
-    // All three APIs: 'unexpected-response' seen (503), native 'error' suppressed.
-    expect(stdout).toMatchInlineSnapshot(
-      `"{"on":{"status":503,"errored":false},"ael":{"status":503,"errored":false},"prop":{"status":503,"errored":false}}"`,
-    );
-    expect(exitCode).toBe(0);
-  },
-);
-
-// The suppression must NOT apply when the consumer never subscribed to
-// 'unexpected-response'. A client that listens for 'upgrade' (arming the
-// handshake bridge) but registers its error handling via addEventListener
-// ('error') / onerror must still receive the native non-101 error — otherwise
-// the error is swallowed entirely.
-test.concurrent(
-  "ws still delivers the native error to addEventListener/onerror when there is no 'unexpected-response' listener",
-  async () => {
-    const { stdout, exitCode } = await run(/* js */ `
-    const { createServer } = require("net");
-    const { once } = require("events");
-    const { WebSocket } = require("ws");
-
-    async function runOne(registerError) {
-      const server = createServer(s =>
-        s.once("data", () => s.end("HTTP/1.1 503 Service Unavailable\\r\\n\\r\\n")),
-      ).listen(0, "127.0.0.1");
-      await once(server, "listening");
-
-      const ws = new WebSocket("ws://127.0.0.1:" + server.address().port);
-      // Arm the handshake bridge via 'upgrade' but do NOT listen for
-      // 'unexpected-response', so the native error path is exercised.
-      ws.on("upgrade", () => {});
-      const { promise, resolve } = Promise.withResolvers();
-      registerError(ws, err => resolve(/Expected 101/.test(err?.message ?? String(err))));
-      const gotExpected101 = await promise;
-      server.close();
-      try { ws.terminate(); } catch {}
-      return gotExpected101;
-    }
-
-    const ael = await runOne((ws, done) => ws.addEventListener("error", done));
-    const prop = await runOne((ws, done) => { ws.onerror = done; });
-    console.log(JSON.stringify({ ael, prop }));
-    process.exit(0);
-  `);
-    // Both DOM-style APIs receive the native 'Expected 101' error.
-    expect(stdout).toMatchInlineSnapshot(`"{"ael":true,"prop":true}"`);
-    expect(exitCode).toBe(0);
-  },
-);
-
-// With on('upgrade') + on('error') but no 'unexpected-response' listener, the
-// on('error') handler lives on BOTH the EventEmitter (gets the synthetic
-// "Unexpected server response" error) and — via the native bridge closure — on
-// this.#ws (would get the native 'Expected 101' error too). It must fire
-// exactly once, like real ws, not twice.
-test.concurrent(
-  "ws on('error') fires once (not twice) for a non-101 with no 'unexpected-response' listener",
-  async () => {
-    const { stdout, exitCode } = await run(/* js */ `
-    const { createServer } = require("net");
-    const { once } = require("events");
-    const { WebSocket } = require("ws");
-
-    const server = createServer(s =>
-      s.once("data", () => s.end("HTTP/1.1 503 Service Unavailable\\r\\n\\r\\n")),
-    ).listen(0, "127.0.0.1");
-    await once(server, "listening");
-
-    const ws = new WebSocket("ws://127.0.0.1:" + server.address().port);
-    ws.on("upgrade", () => {});
-    const messages = [];
-    ws.on("error", err => messages.push(err?.message ?? String(err)));
-    // Wait for close, then report how many 'error' events arrived.
-    await once(ws, "close").catch(() => {});
-    server.close();
-    try { ws.terminate(); } catch {}
-    console.log(JSON.stringify({ count: messages.length, first: messages[0] }));
-    process.exit(0);
-  `);
-    // Exactly one 'error' — the synthetic non-101 message — and the native
-    // 'Expected 101' follow-up is suppressed for EventEmitter listeners.
-    expect(stdout).toMatchInlineSnapshot(`"{"count":1,"first":"Unexpected server response: 503"}"`);
-    expect(exitCode).toBe(0);
-  },
-);
-
-// Mixed registration styles: on('error') (EventEmitter) AND addEventListener
-// ('error')/onerror (native this.#ws), with on('upgrade') but no
-// 'unexpected-response'. Each handler must fire exactly once — the synthetic
-// emit suppresses the EE bridge re-fire, but the DOM-style handler must still
-// receive the native error (gated on a separate "handled" flag).
-test.concurrent(
-  "ws error handlers each fire once when on('error') and addEventListener/onerror are mixed",
-  async () => {
-    const { stdout, exitCode } = await run(/* js */ `
-    const { createServer } = require("net");
-    const { once } = require("events");
-    const { WebSocket } = require("ws");
-
-    async function runOne(registerDom) {
-      const server = createServer(s =>
-        s.once("data", () => s.end("HTTP/1.1 503 Service Unavailable\\r\\n\\r\\n")),
-      ).listen(0, "127.0.0.1");
-      await once(server, "listening");
-
-      const ws = new WebSocket("ws://127.0.0.1:" + server.address().port);
-      ws.on("upgrade", () => {});
-      let onCount = 0;
-      let domCount = 0;
-      // The synthetic error (on) fires synchronously in #onHandshake; the
-      // native error (DOM handler) arrives a tick later after the client
-      // terminates. Await BOTH so neither the test nor 'close' races ahead of
-      // the native delivery.
-      const onSeen = Promise.withResolvers();
-      const domSeen = Promise.withResolvers();
-      ws.on("error", () => { onCount++; onSeen.resolve(); });
-      registerDom(ws, () => { domCount++; domSeen.resolve(); });
-      await Promise.all([onSeen.promise, domSeen.promise]);
-      server.close();
-      try { ws.terminate(); } catch {}
-      return { onCount, domCount };
-    }
-
-    const ael = await runOne((ws, h) => ws.addEventListener("error", h));
-    const prop = await runOne((ws, h) => { ws.onerror = h; });
-    console.log(JSON.stringify({ ael, prop }));
-    process.exit(0);
-  `);
-    // Both the on('error') handler and the DOM-style handler fire exactly once.
-    expect(stdout).toMatchInlineSnapshot(`"{"ael":{"onCount":1,"domCount":1},"prop":{"onCount":1,"domCount":1}}"`);
-    expect(exitCode).toBe(0);
-  },
-);
-
-// DOM dedup: registering the identical listener twice via addEventListener is
-// a no-op. Because we wrap the listener in a suppression closure, a naive
-// implementation would create two distinct wrappers and fire the handler
-// twice; removeEventListener must also detach it completely.
-test.concurrent(
-  "ws addEventListener('error', h) dedupes the same handler and removeEventListener detaches it",
-  async () => {
-    const { stdout, exitCode } = await run(/* js */ `
-    const { createServer } = require("net");
-    const { once } = require("events");
-    const { WebSocket } = require("ws");
-
-    const server = createServer(s =>
-      s.once("data", () => s.end("HTTP/1.1 503 Service Unavailable\\r\\n\\r\\n")),
-    ).listen(0, "127.0.0.1");
-    await once(server, "listening");
-
-    const ws = new WebSocket("ws://127.0.0.1:" + server.address().port);
-    let count = 0;
-    const h = () => { count++; };
-    ws.addEventListener("error", h);
-    ws.addEventListener("error", h); // duplicate — must be a no-op
-    await once(ws, "close").catch(() => {});
-    server.close();
-    try { ws.terminate(); } catch {}
-    // removeEventListener must fully detach (no leaked wrapper left behind).
-    ws.removeEventListener("error", h);
-    console.log(JSON.stringify({ count }));
-    process.exit(0);
-  `);
-    // The handler fires exactly once despite the duplicate registration.
-    expect(stdout).toMatchInlineSnapshot(`"{"count":1}"`);
-    expect(exitCode).toBe(0);
-  },
-);
-
-// DOM dedup must also apply to the Node-only 'upgrade'/'unexpected-response'
-// events. These register on the EventEmitter (super.on) which doesn't dedup,
-// so addEventListener with the same handler twice would fire it twice on a
-// 101 — real ws dedups every event type.
-test.concurrent("ws addEventListener('upgrade', h) dedupes the same handler", async () => {
-  const { stdout, exitCode } = await run(/* js */ `
-    const { createServer } = require("net");
-    const { createHash } = require("crypto");
-    const { once } = require("events");
-    const { WebSocket } = require("ws");
-
-    const server = createServer(conn => {
-      let buf = "";
-      const onData = chunk => {
-        buf += chunk.toString();
-        if (buf.indexOf("\\r\\n\\r\\n") === -1) return;
-        conn.off("data", onData);
-        const key = /Sec-WebSocket-Key: (.+)\\r\\n/i.exec(buf)[1];
-        const accept = createHash("sha1")
-          .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
-          .digest("base64");
-        conn.write(
-          "HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Accept: " +
-            accept + "\\r\\n\\r\\n",
-        );
-      };
-      conn.on("data", onData);
-    }).listen(0, "127.0.0.1");
-    await once(server, "listening");
-
-    const ws = new WebSocket("ws://127.0.0.1:" + server.address().port);
-    let count = 0;
-    const h = () => { count++; };
-    ws.addEventListener("upgrade", h);
-    ws.addEventListener("upgrade", h); // duplicate — must be a no-op
-    await once(ws, "open");
-    // removeEventListener must fully detach the single registration.
-    ws.removeEventListener("upgrade", h);
-    console.log(JSON.stringify({ count }));
-    ws.terminate();
-    server.close();
-    process.exit(0);
-  `);
-  // The handler fires exactly once despite the duplicate addEventListener.
-  expect(stdout).toMatchInlineSnapshot(`"{"count":1}"`);
-  expect(exitCode).toBe(0);
+    test("addEventListener('error') dedupes the same listener, and removeEventListener() removes it", async () => {
+      await using peer = await createPeer(respondsWith503);
+      using client = connectWithoutListeners(peer.url);
+      const { ws } = client;
+      const seen: string[] = [];
+      const kept = () => seen.push("kept");
+      const removed = () => seen.push("removed");
+      ws.addEventListener("error", kept);
+      ws.addEventListener("error", removed);
+      ws.addEventListener("error", kept);
+      ws.removeEventListener("error", removed);
+      expect(ws.listenerCount("error")).toBe(1);
+      await nextEvent(ws, "close");
+      expect(seen).toEqual(["kept"]);
+    });
+  });
 });

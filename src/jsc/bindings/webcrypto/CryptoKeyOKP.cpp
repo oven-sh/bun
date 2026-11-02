@@ -28,10 +28,11 @@
 
 #if ENABLE(WEB_CRYPTO)
 
+#include "BufferEncodingType.h"
 #include "CryptoAlgorithmRegistry.h"
 #include "JsonWebKey.h"
+#include "headers-handwritten.h"
 #include <wtf/CryptographicUtilities.h>
-#include <wtf/text/Base64.h>
 
 namespace WebCore {
 
@@ -142,7 +143,7 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importJwk(CryptoAlgorithmIdentifier identifie
             return nullptr;
         if (usages && !keyData.use.isEmpty() && keyData.use != "sig"_s)
             return nullptr;
-        if (keyData.key_ops && ((keyData.usages & usages) != usages))
+        if (!jwkKeyOpsAllow(keyData, usages))
             return nullptr;
         if (keyData.ext && !keyData.ext.value() && extractable)
             return nullptr;
@@ -154,27 +155,42 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importJwk(CryptoAlgorithmIdentifier identifie
             return nullptr;
         if (usages && !keyData.use.isEmpty() && keyData.use != "enc"_s)
             return nullptr;
-        if (keyData.key_ops && ((keyData.usages & usages) != usages))
+        if (!jwkKeyOpsAllow(keyData, usages))
             return nullptr;
         if (keyData.ext && !keyData.ext.value() && extractable)
             return nullptr;
         break;
     }
 
-    if (!keyData.d.isNull()) {
-        auto d = base64URLDecode(keyData.d);
-        if (!d)
-            return nullptr;
-        return create(identifier, namedCurve, CryptoKeyType::Private, WTF::move(*d), extractable, usages);
-    }
-
     if (keyData.x.isNull())
         return nullptr;
 
-    auto x = base64URLDecode(keyData.x);
-    if (!x)
+    // Node decodes these the way Buffer.from(encoded, "base64") does.
+    auto decode = [](const String& encoded) {
+        constexpr auto base64 = static_cast<uint8_t>(BufferEncodingType::base64);
+        Vector<uint8_t> decoded(encoded.length());
+        auto out = decoded.mutableSpan();
+        decoded.shrink(encoded.is8Bit()
+                ? Bun__encoding__writeLatin1(encoded.span8().data(), encoded.length(), out.data(), out.size(), base64)
+                : Bun__encoding__writeUTF16(encoded.span16().data(), encoded.length(), out.data(), out.size(), base64));
+        return decoded;
+    };
+
+    auto x = decode(keyData.x);
+    if (keyData.d.isNull())
+        return create(identifier, namedCurve, CryptoKeyType::Public, WTF::move(x), extractable, usages);
+
+    auto key = create(identifier, namedCurve, CryptoKeyType::Private, decode(keyData.d), extractable, usages);
+    if (!key)
         return nullptr;
-    return create(identifier, namedCurve, CryptoKeyType::Public, WTF::move(*x), extractable, usages);
+    // RFC 8037 section 2: "x" is required, and it is the public key of "d", which an Ed25519 key keeps after the seed.
+    auto& privateKey = key->platformKey();
+    bool belongs = namedCurve == NamedCurve::Ed25519
+        ? equalSpans(x.span(), privateKey.span().subspan(key->exportKeySizeInBytes()))
+        : x == x25519PublicFromPrivate(privateKey);
+    if (!belongs)
+        return nullptr;
+    return key;
 }
 
 ExceptionOr<Vector<uint8_t>> CryptoKeyOKP::exportRaw() const
@@ -221,26 +237,13 @@ ExceptionOr<JsonWebKey> CryptoKeyOKP::exportJwk() const
     return result;
 }
 
-bool CryptoKeyOKP::isValidOKPAlgorithm(CryptoAlgorithmIdentifier algorithm)
-{
-    return algorithm == CryptoAlgorithmIdentifier::Ed25519;
-}
-
 auto CryptoKeyOKP::algorithm() const -> KeyAlgorithm
 {
     CryptoKeyAlgorithm result;
     // FIXME: This should be set to the actual algorithm name in the case of X25519
     result.name = CryptoAlgorithmRegistry::singleton().name(algorithmIdentifier());
 
-    // This is commented out because the spec doesn't define the namedCurve field for OKP keys
-    // switch (m_curve) {
-    // case NamedCurve::X25519:
-    //     result.namedCurve = X25519;
-    //     break;
-    // case NamedCurve::Ed25519:
-    //     result.namedCurve = Ed25519;
-    //     break;
-    // }
+    // The spec doesn't define the namedCurve field for OKP keys.
 
     return result;
 }

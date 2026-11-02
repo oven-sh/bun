@@ -22,7 +22,7 @@ import { fileURLToPath } from "node:url";
 
 // @ts-ignore - @connectrpc types
 // @ts-ignore - @connectrpc/connect-node types
-import { createGrpcTransport } from "@connectrpc/connect-node";
+import { createGrpcTransport, type GrpcTransportOptions } from "@connectrpc/connect-node";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -127,7 +127,7 @@ describe("HTTP/2 FRAME_SIZE_ERROR with @connectrpc/connect-node", () => {
         rejectUnauthorized: false, // Accept self-signed cert
         ca: ca,
       },
-    });
+    } as GrpcTransportOptions);
 
     assert.ok(transport, "Transport should be created");
   });
@@ -142,7 +142,7 @@ describe("HTTP/2 FRAME_SIZE_ERROR with @connectrpc/connect-node", () => {
         rejectUnauthorized: false,
         ca: ca,
       },
-    });
+    } as GrpcTransportOptions);
 
     // Note: Without generated proto code, we can't easily use createClient
     // This test verifies the transport creation works
@@ -169,7 +169,7 @@ describe("HTTP/2 FRAME_SIZE_ERROR with @connectrpc/connect-node", () => {
           return next(req);
         },
       ],
-    });
+    } as GrpcTransportOptions);
 
     assert.ok(transport, "Transport with interceptors should be created");
   });
@@ -215,7 +215,7 @@ describe("HTTP/2 large frame handling (raw)", () => {
       },
     });
 
-    const remoteSettings = await new Promise<http2.Settings>((resolve, reject) => {
+    const remoteSettings = await new Promise<import("node:http2").Settings>((resolve, reject) => {
       client.on("remoteSettings", settings => {
         resolve(settings);
       });

@@ -134,7 +134,7 @@ const UPLOAD_MATRIX = cartesian({
 function makeUploadBody(
   shape: UploadShape,
   payload: string,
-): { body: BodyInit; duplex?: "half"; verify: (echoed: Buffer) => void } {
+): { body: Bun.BodyInit; duplex?: "half"; verify: (echoed: Buffer) => void } {
   switch (shape) {
     case "string":
       return { body: payload, verify: b => expect(b.toString("latin1")).toBe(payload) };
@@ -181,7 +181,7 @@ function makeUploadBody(
         for (const c of chunks) yield new TextEncoder().encode(c);
       }
       return {
-        body: gen() as unknown as BodyInit,
+        body: gen() as unknown as Bun.BodyInit,
         duplex: "half",
         verify: b => expect(b.toString("latin1")).toBe(payload),
       };
@@ -310,7 +310,7 @@ describe("CONNECT reply with ignored headers", () => {
     { "Content-Length": "9999" },
     { "Transfer-Encoding": "chunked" },
     { "Content-Length": "0", "Transfer-Encoding": "chunked" },
-  ]) {
+  ] as Record<string, string>[]) {
     test.concurrent(`CONNECT 200 with ${Object.keys(extra).join("+")} is ignored`, async () => {
       await using origin = await createAdversarialOrigin({ tls: true, body: "ignored-ok" });
       await using proxy = await createAdversarialProxy({ connectReplyHeaders: extra });

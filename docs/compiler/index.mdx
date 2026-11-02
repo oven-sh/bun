@@ -1,0 +1,41 @@
+---
+title: "Compiler"
+description: "Turn a TypeScript or JavaScript program into one executable file"
+---
+
+Bun turns a TypeScript or JavaScript program into one executable file. It runs on machines that don't have Bun installed.
+
+```ts cli.ts icon="/icons/typescript.svg"
+console.log("Hello world!");
+```
+
+```bash terminal icon="terminal"
+bun build --compile ./cli.ts --outfile mycli
+./mycli
+```
+
+```txt
+Hello world!
+```
+
+## Two ways to compile
+
+|                      | `bun build --compile`         | `bun compile`             |
+| -------------------- | ----------------------------- | ------------------------- |
+| The executable holds | Your bundled JavaScript       | Machine code              |
+| It runs              | With the JIT, like `bun run`  | Without a JIT             |
+| TypeScript types     | Removed, never checked        | Checked, then used        |
+| Builds for           | Any platform, with `--target` | The platform you build on |
+| Status               | Stable                        | Experimental              |
+
+`bun build --compile` runs everything that `bun run` runs. With `bun compile`, which is short for `bun build --compile --aot`, your program starts faster and uses less memory, and [a few things differ from `bun run`](/compiler/compatibility).
+
+## Read next
+
+- [Single-file executable](/compiler/executables): cross-compile, embed files, sign the executable.
+- [Bytecode caching](/compiler/bytecode): make an executable from `bun build --compile` start faster.
+- [Standalone HTML](/bundler/standalone-html): `--compile --target=browser` writes one `.html` file.
+- [Ahead-of-time compilation](/compiler/aot): what `bun compile` gets you, and when to stay with the JIT.
+- [Types](/compiler/types) and [typed percentage](/compiler/explain): how your types make compiled code faster.
+- [Compatibility](/compiler/compatibility) and [libraries](/compiler/libraries): what differs from `bun run`, and which packages it affects.
+- [Debugging](/compiler/debugging), [size](/compiler/size), [troubleshooting](/compiler/troubleshooting) and [how it works](/compiler/internals).

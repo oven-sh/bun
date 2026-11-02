@@ -1,0 +1,26 @@
+# fetch("https://example.com", { body: eval })
+# Native code keeps the options with all that they lead to. The evaluator inside has escaped with them, and that is a mention of it and no call.
+# The run time refuses an evaluator in an image whose build saw no application of one
+# RUN: valueflow-solve unseen
+# CHECK-NOT: unseen EvaluatesText
+# CHECK: unseen-code no
+# RUN(CALLS): valueflow-solve calls
+# CALLS: f0 v6 -> {{*}}Fetch
+# RUN(WHY): valueflow-why escaped-builtin=Eval
+# WHY: escaped-builtin=Eval
+# WHY-NEXT: n0 escaped
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Options" fields=[{key="body" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="fetch" [isFreeName]
+    v2 = String string="https://example.com"
+    v3 = Builtin builtin=Eval
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = FinishObject v4
+    v6 = Call v1, -, v2, v5
+    Return
+}

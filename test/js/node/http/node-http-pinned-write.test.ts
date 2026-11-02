@@ -14,8 +14,14 @@ const CHUNK_SIZE = 64 * 1024 * 1024;
 const PATTERN_256 = Buffer.from(Array.from({ length: 256 }, (_, i) => i));
 const PATTERN_64_HIGH = Buffer.from(Array.from({ length: 64 }, (_, i) => 0xc0 + i));
 
-function makePayload(size: number): Buffer {
+function makePayload(size: number): Buffer<ArrayBuffer> {
   return Buffer.alloc(size, PATTERN_256);
+}
+
+// A Buffer that already has an ArrayBuffer behind it: the pending write pins
+// that ArrayBuffer, so transfer() copies rather than detaches while it is held.
+function makeArrayBufferBackedPayload(size: number): Buffer<ArrayBuffer> {
+  return Buffer.from(new ArrayBuffer(size)).fill(PATTERN_256);
 }
 
 function sha1(buf: Uint8Array): string {
@@ -28,9 +34,9 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
   // reached on Windows (the bytes go straight to the kernel instead). The
   // correctness tests below still cover the write path there.
   test.skipIf(isWindows)(
-    "the buffer backing store is pinned while the write is pending, then released on drain",
+    "an ArrayBuffer-backed buffer is pinned while the write is pending, then released on drain",
     async () => {
-      const payload = makePayload(CHUNK_SIZE);
+      const payload = makeArrayBufferBackedPayload(CHUNK_SIZE);
       const expectedHash = sha1(payload);
 
       let detachedWhilePending: boolean | undefined;
@@ -84,7 +90,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
 
       // Now drain the client side and verify the body.
       const chunks: Buffer[] = [];
-      socket.on("data", chunk => chunks.push(chunk));
+      socket.on("data", (chunk: Buffer) => chunks.push(chunk));
       const closed = once(socket, "close");
       socket.resume();
       await closed;
@@ -101,6 +107,56 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
       expect(detachedAfterDrain).toBe(true);
     },
   );
+
+  // A plain Buffer has no ArrayBuffer until `.buffer` is touched, and the
+  // pending write holds it without materializing one (doing so registers the
+  // bytes with the GC a second time). transfer() mid-write therefore detaches,
+  // as in Node, but it moves the storage rather than freeing it, so the bytes
+  // still to be written reach the client intact.
+  test.skipIf(isWindows)("a plain Buffer transferred while its write is pending still arrives intact", async () => {
+    const payload = makePayload(CHUNK_SIZE);
+    const expectedHash = sha1(payload);
+    let detachedWhilePending: boolean | undefined;
+    let moved: ArrayBuffer | undefined;
+    let handlerError: unknown;
+    const serverReady = Promise.withResolvers<void>();
+
+    await using server = http.createServer(async (req, res) => {
+      try {
+        res.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Length": String(CHUNK_SIZE) });
+        res.write(payload);
+        moved = payload.buffer.transfer();
+        detachedWhilePending = payload.buffer.detached;
+        serverReady.resolve();
+        await once(res, "drain");
+        res.end();
+      } catch (e) {
+        handlerError = e;
+        serverReady.resolve();
+        res.destroy();
+      }
+    });
+    await once(server.listen(0), "listening");
+    const port = (server.address() as AddressInfo).port;
+    const socket = net.connect(port, "127.0.0.1");
+    await once(socket, "connect");
+    socket.pause();
+    socket.write(`GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+    await serverReady.promise;
+    const chunks: Buffer[] = [];
+    socket.on("data", (chunk: Buffer) => chunks.push(chunk));
+    const closed = once(socket, "close");
+    socket.resume();
+    await closed;
+    const received = Buffer.concat(chunks);
+
+    expect(handlerError).toBeUndefined();
+    const body = received.subarray(received.indexOf("\r\n\r\n") + 4);
+    expect(body.length).toBe(CHUNK_SIZE);
+    expect(sha1(body)).toBe(expectedHash);
+    expect(detachedWhilePending).toBe(true);
+    expect(moved?.byteLength).toBe(CHUNK_SIZE);
+  });
 
   test("Content-Length (non-chunked) path delivers the exact bytes", async () => {
     const payload = makePayload(CHUNK_SIZE);
@@ -339,6 +395,91 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
     });
     expect(exitCode).toBe(0);
   });
+
+  // `grow()` detaches a `WebAssembly.Memory`'s buffer and frees the old block, even if the buffer is pinned.
+  // The loopback send and receive buffers absorb several MB, so the body has to be big enough that part of it
+  // is still pending after write().
+  const WASM_PAGES = 512;
+  const wasmMemoryChild = /* js */ `
+    import http from "node:http";
+    import net from "node:net";
+    import { once } from "node:events";
+    const PAGES = ${WASM_PAGES}; // 32 MB
+    const newMemory = () => new WebAssembly.Memory({ initial: PAGES, maximum: PAGES + 4 });
+
+    const mem = newMemory();
+    const payload = new Uint8Array(mem.buffer).fill(7);
+    const CHUNK_SIZE = payload.byteLength;
+
+    let detachedAfterGrow;
+    const wrote = Promise.withResolvers();
+    const server = http.createServer((req, res) => {
+      res.writeHead(200, {
+        "Content-Type": "application/octet-stream",
+        "Content-Length": String(CHUNK_SIZE),
+      });
+      res.write(payload);
+      mem.grow(2);
+      detachedAfterGrow = payload.byteLength === 0;
+      // Claim the freed block so that reading it can't return the caller's bytes.
+      // A plain Uint8Array reuses it on release builds, and another memory does on debug builds.
+      globalThis.claim = Array.from({ length: 4 }, () => new Uint8Array(CHUNK_SIZE).fill(0xee)).concat(
+        Array.from({ length: 2 }, () => {
+          const memory = newMemory();
+          new Uint8Array(memory.buffer).fill(0xee);
+          return memory;
+        }),
+      );
+      wrote.resolve();
+      res.end(); // spills the pending tail
+    });
+    await once(server.listen(0), "listening");
+
+    const socket = net.connect(server.address().port, "127.0.0.1");
+    await once(socket, "connect");
+    socket.pause();
+    socket.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+    await wrote.promise;
+
+    const chunks = [];
+    socket.on("data", c => chunks.push(c));
+    const closed = once(socket, "close");
+    socket.resume();
+    await closed;
+
+    const received = Buffer.concat(chunks);
+    const body = received.subarray(received.indexOf("\\r\\n\\r\\n") + 4);
+    const expected = Buffer.alloc(CHUNK_SIZE, 7);
+    console.log(JSON.stringify({
+      detachedAfterGrow,
+      bodyLength: body.length,
+      bodyMatches: Buffer.compare(body, expected) === 0,
+    }));
+    server.close();
+  `;
+
+  test.skipIf(isWindows)(
+    "write() copies a WebAssembly.Memory's bytes, so growing the memory afterwards doesn't corrupt the body",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", wasmMemoryChild],
+        // Without fast memory, `grow()` moves the block on every platform. With system malloc, the freed block
+        // is unmapped.
+        env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0", Malloc: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr }).toEqual({
+        stdout: JSON.stringify({ detachedAfterGrow: true, bodyLength: WASM_PAGES * 64 * 1024, bodyMatches: true }),
+        stderr: expect.any(String),
+      });
+      expect(exitCode).toBe(0);
+    },
+    // Sending 32 MB on a debug build can exceed the default 5 s timeout.
+    30_000,
+  );
 
   test("a second write before drain releases the pin on the first buffer", async () => {
     let detachedAfterSecondWrite: boolean | undefined;

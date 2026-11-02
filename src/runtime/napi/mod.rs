@@ -7,12 +7,13 @@
 
 #[path = "napi_body.rs"]
 pub(crate) mod napi_body;
-pub use napi_body::NapiStatus;
 pub(crate) use napi_body::{
     NapiFinalizerTask, ThreadSafeFunction, fix_dead_code_elimination, napi_async_work,
 };
 
 pub(crate) mod libc_check;
+#[cfg(unix)]
+pub(crate) mod uv_posix;
 
 // ─── compiling free items ────────────────────────────────────────────────────
 

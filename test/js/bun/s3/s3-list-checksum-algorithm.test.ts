@@ -7,8 +7,8 @@ import { bunEnv, bunExe } from "harness";
 // The correct spelling is now the enumerable property; the old spelling is kept
 // as a non-enumerable alias so existing code that read it does not break.
 //
-// The S3 client does not honor NO_PROXY, so an inherited proxy would hijack
-// the request to the stub server. Run in a subprocess with proxy env cleared.
+// An inherited proxy would hijack the request to the stub server. Run in a
+// subprocess with proxy env cleared.
 const envWithoutProxy = {
   ...bunEnv,
   HTTP_PROXY: undefined,

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { createECDH, ECDH, getCurves } from "node:crypto";
+import { createContext, runInContext } from "node:vm";
 
 // Helper function to generate test key pairs for various curves
 function generateTestKeyPairs() {
@@ -201,7 +202,7 @@ test("ECDH.convertKey - supports different input and output encodings", () => {
   const compressedHex = testKeys["prime256v1"].compressed;
 
   // Convert from hex to buffer
-  const convertedToBuffer = ECDH.convertKey(compressedHex, "prime256v1", "hex", "buffer", "compressed");
+  const convertedToBuffer = ECDH.convertKey(compressedHex, "prime256v1", "hex", "buffer" as any, "compressed");
   expect(convertedToBuffer).toBeInstanceOf(Buffer);
   expect(convertedToBuffer.toString("hex")).toBe(compressedHex);
 
@@ -230,11 +231,13 @@ test("ECDH.convertKey - throws on invalid input", () => {
 
   // Invalid input encoding
   expect(() => {
+    // @ts-expect-error
     ECDH.convertKey("0102030405", "prime256v1", "invalid-encoding", "hex", "compressed");
   }).toThrow("Unknown encoding: invalid-encoding");
 
   // Invalid format
   expect(() => {
+    // @ts-expect-error
     ECDH.convertKey("0102030405", "prime256v1", "hex", "hex", "invalid-format");
   }).toThrow("Invalid ECDH format: invalid-format");
 });
@@ -252,7 +255,7 @@ test("ECDH - computeSecret throws when only a public key is set (no private key)
   // bob only sets a public key (a documented API) and never generates/sets a private key,
   // so the underlying key agreement cannot succeed.
   const bob = createECDH(curve);
-  bob.setPublicKey(alicePubKey);
+  (bob as any).setPublicKey(alicePubKey);
 
   // Must throw a clean error, never hand back a "secret" buffer.
   expect(() => bob.computeSecret(alicePubKey)).toThrow();
@@ -265,4 +268,36 @@ test("ECDH - computeSecret throws when only a public key is set (no private key)
   expect(carolSecret).toBeInstanceOf(Buffer);
   expect(carolSecret.length).toBeGreaterThan(0);
   expect(carolSecret.toString("hex")).toBe(aliceSecret.toString("hex"));
+});
+
+test.each([
+  [
+    "the main realm",
+    () =>
+      class MyECDH extends (ECDH as unknown as new (curve: string) => ECDH) {
+        publicKeyHex() {
+          return this.getPublicKey("hex");
+        }
+      },
+  ],
+  [
+    "a node:vm context",
+    () =>
+      runInContext(
+        `(class MyECDH extends ECDH { publicKeyHex() { return this.getPublicKey("hex"); } })`,
+        createContext({ ECDH }),
+      ),
+  ],
+])("ECDH - a subclass declared in %s has the subclass prototype and working keys", (_realm, declare) => {
+  const MyECDH = declare();
+
+  const alice = new MyECDH("prime256v1");
+  expect(Object.getPrototypeOf(alice)).toBe(MyECDH.prototype);
+  expect(alice).toBeInstanceOf(ECDH);
+
+  const bob = createECDH("prime256v1");
+  alice.generateKeys();
+  bob.generateKeys();
+  expect(alice.publicKeyHex()).toBe(alice.getPublicKey("hex"));
+  expect(alice.computeSecret(bob.getPublicKey())).toEqual(bob.computeSecret(alice.getPublicKey()));
 });

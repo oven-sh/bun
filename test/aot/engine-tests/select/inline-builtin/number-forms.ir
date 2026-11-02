@@ -1,0 +1,374 @@
+# Selection answers for each inline built-in of numbers, buffers and typed arrays whether the call stays, gets inline code with a miss edge to the call, or is inline code alone
+# FORM: Prepared
+# RUN: pass Select
+# RUN(FORMS): inline-forms
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="mathOnNumbers" parameters=[{type=number}, {type=i32}] results=[{type=anything}] {
+  b0(v0: number, v1: i32):
+    v2 = CallBuiltin -, v0 overload=MathAbs/0
+    v3 = CallBuiltin -, v0 overload=MathFloor/0
+    v4 = CallBuiltin -, v0 overload=MathCeil/0
+    v5 = CallBuiltin -, v0 overload=MathTrunc/0
+    v6 = CallBuiltin -, v0 overload=MathRound/0
+    v7 = CallBuiltin -, v0 overload=MathFround/0
+    v8 = CallBuiltin -, v0 overload=MathF16round/0
+    v9 = CallBuiltin -, v0 overload=MathSqrt/0
+    v10 = CallBuiltin -, v0, v0 overload=MathPow/0
+    v11 = CallBuiltin -, v0, v0 overload=MathMin/0
+    v12 = CallBuiltin -, v0, v0 overload=MathMax/0
+    v13 = CallBuiltin -, v1, v1 overload=MathImul/0
+    v14 = CallBuiltin -, v1 overload=MathClz32/0
+    v15 = CallBuiltin -, v0 overload=MathSign/0
+    v16 = CallBuiltin -, v0 overload=MathSin/0
+    v17 = CallBuiltin -, v0, v0 overload=MathAtan2/0
+    v18 = CallBuiltin -, v0 overload=IsNaN/0
+    v19 = CallBuiltin -, v0 overload=IsFinite/0
+    v20 = CallBuiltin overload=MathRandom/0
+    v21 = NewArray v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20 contents=anything
+    Return v21
+}
+# FORMS: function f0
+# FORMS-COUNT-19: Whole
+# FORMS-NOT: TwoWay
+# FORMS-NOT: Call
+# CHECK-LABEL: function f0 name="mathOnNumbers"
+# CHECK-NOT: CallBuiltin
+# CHECK-NOT: TryCallInline
+# CHECK: v2: {{*}} = CallInline -, v0 inlineBuiltin=MathAbs overload=MathAbs/0
+# CHECK-NEXT: v3: {{*}} = CallInline -, v0 inlineBuiltin=MathFloor overload=MathFloor/0
+# CHECK-NEXT: v4: {{*}} = CallInline -, v0 inlineBuiltin=MathCeil overload=MathCeil/0
+# CHECK-NEXT: v5: {{*}} = CallInline -, v0 inlineBuiltin=MathTrunc overload=MathTrunc/0
+# CHECK-NEXT: v6: {{*}} = CallInline -, v0 inlineBuiltin=MathRound overload=MathRound/0
+# CHECK-NEXT: v7: {{*}} = CallInline -, v0 inlineBuiltin=MathFround overload=MathFround/0
+# CHECK-NEXT: v8: {{*}} = CallInline -, v0 inlineBuiltin=MathF16Round overload=MathF16round/0
+# CHECK-NEXT: v9: {{*}} = CallInline -, v0 inlineBuiltin=MathSqrt overload=MathSqrt/0
+# CHECK-NEXT: v10: {{*}} = CallInline -, v0, v0 inlineBuiltin=MathPow overload=MathPow/0
+# CHECK-NEXT: v11: {{*}} = CallInline -, v0, v0 inlineBuiltin=MathMin overload=MathMin/0
+# CHECK-NEXT: v12: {{*}} = CallInline -, v0, v0 inlineBuiltin=MathMax overload=MathMax/0
+# CHECK-NEXT: v13: {{*}} = CallInline -, v1, v1 inlineBuiltin=MathImul overload=MathImul/0
+# CHECK-NEXT: v14: {{*}} = CallInline -, v1 inlineBuiltin=MathClz32 overload=MathClz32/0
+# CHECK-NEXT: v15: {{*}} = CallInline -, v0 inlineBuiltin=MathSign overload=MathSign/0
+# CHECK-NEXT: v16: {{*}} = CallInline -, v0 inlineBuiltin=MathFunction inlineParameters=[{{*}}] overload=MathSin/0
+# CHECK-NEXT: v17: {{*}} = CallInline -, v0, v0 inlineBuiltin=MathATan2 overload=MathAtan2/0
+# CHECK-NEXT: v18: {{*}} = CallInline -, v0 inlineBuiltin=IsNaN overload=IsNaN/0
+# CHECK-NEXT: v19: {{*}} = CallInline -, v0 inlineBuiltin=IsFinite overload=IsFinite/0
+# CHECK-NEXT: v20: {{*}} = CallInline inlineBuiltin=MathRandom overload=MathRandom/0
+
+function f1 name="numberTestsOnAnyValue" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallBuiltin -, v0 overload=NumberIsNaN/0
+    v2 = CallBuiltin -, v0 overload=NumberIsFinite/0
+    v3 = CallBuiltin -, v0 overload=NumberIsInteger/0
+    v4 = CallBuiltin -, v0 overload=NumberIsSafeInteger/0
+    v5 = NewArray v1, v2, v3, v4 contents=anything
+    Return v5
+}
+# FORMS: function f1
+# FORMS-NEXT: v1 {{*}} NumberIsNaN {{*}} Whole
+# FORMS-NEXT: v2 {{*}} NumberIsFinite {{*}} Whole
+# FORMS-NEXT: v3 {{*}} NumberIsInteger {{*}} Whole
+# FORMS-NEXT: v4 {{*}} NumberIsSafeInteger {{*}} Whole
+# CHECK-LABEL: function f1 name="numberTestsOnAnyValue"
+# CHECK-NOT: CallBuiltin
+# CHECK-COUNT-4: boolean = CallInline -, v0 inlineBuiltin=NumberIs
+
+function f2 name="hypotAtArgumentLimit" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = CallBuiltin -, v0, v0, v0 overload=MathHypot/0
+    Return v1
+}
+# FORMS: function f2
+# FORMS-NEXT: v1 {{*}} MathHypot {{*}} Whole
+# CHECK-LABEL: function f2 name="hypotAtArgumentLimit"
+# CHECK: v1: number = CallInline -, v0, v0, v0 inlineBuiltin=MathHypot overload=MathHypot/0
+
+function f3 name="hypotAboveArgumentLimit" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = CallBuiltin -, v0, v0, v0, v0 overload=MathHypot/0
+    Return v1
+}
+# CHECK-LABEL: function f3 name="hypotAboveArgumentLimit"
+# CHECK-NOT: CallInline
+# CHECK: v1: number = CallBuiltin -, v0, v0, v0, v0 overload=MathHypot/0
+# CHECK-NOT: CallInline
+
+function f4 name="minimumAndMaximumOfArray" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
+  b0(v0: Array<number, pristine[Storage, Names]>):
+    v1 = CallBuiltin -, v0 overload=MathMin/0 builtinCallForm=List
+    v2 = CallBuiltin -, v0 overload=MathMax/0 builtinCallForm=List
+    v3 = NewArray v1, v2 contents=anything
+    Return v3
+}
+# FORMS: function f4
+# FORMS-NEXT: v1 {{*}} MathMinOfArray {{*}} TwoWay
+# FORMS-NEXT: v2 {{*}} MathMaxOfArray {{*}} TwoWay
+# CHECK-LABEL: function f4 name="minimumAndMaximumOfArray"
+# CHECK: TryCallInline -, v0 inlineBuiltin=MathMinOfArray overload=MathMin/0 -> done [[done4]](), miss [[miss4]]()
+# CHECK: TryCallInline -, v0 inlineBuiltin=MathMaxOfArray overload=MathMax/0 -> done
+# CHECK: [[miss4]]() frequency=Rare:
+# CHECK-NEXT: number = CallBuiltin -, v0 overload=MathMin/0 builtinCallForm=List
+
+function f5 name="numberOfOneValue" parameters=[{type=string}, {type=bigint}] results=[{type=anything}] {
+  b0(v0: string, v1: bigint):
+    v2 = CallBuiltin -, v0 overload=Number/0
+    v3 = CallBuiltin -, v1 overload=Number/1
+    v4 = NewArray v2, v3 contents=anything
+    Return v4
+}
+# FORMS: function f5
+# FORMS-NEXT: v2 {{*}} CallNumberConstructor {{*}} TwoWay
+# FORMS-NEXT: v3 {{*}} CallNumberConstructor {{*}} TwoWay
+# CHECK-LABEL: function f5 name="numberOfOneValue"
+# CHECK: TryCallInline -, v0 inlineBuiltin=CallNumberConstructor overload=Number/0 -> done
+# CHECK: TryCallInline -, v1 inlineBuiltin=CallNumberConstructor overload=Number/1 -> done
+
+function f6 name="numberOfNothing" results=[{type=anything}] {
+  b0():
+    v0 = CallBuiltin overload=Number/1
+    Return v0
+}
+# FORMS: function f6
+# FORMS-NEXT: v0 {{*}} CallNumberConstructor {{*}} Call
+# CHECK-LABEL: function f6 name="numberOfNothing"
+# CHECK-NOT: CallInline
+# CHECK: v0: number = CallBuiltin overload=Number/1
+# CHECK-NOT: CallInline
+
+function f7 name="parseIntWithIntegerRadix" parameters=[{type=string}, {type=i32}] results=[{type=anything}] {
+  b0(v0: string, v1: i32):
+    v2 = CallBuiltin -, v0 overload=ParseInt/0
+    v3 = CallBuiltin -, v0, v1 overload=ParseInt/0
+    v4 = NewArray v2, v3 contents=anything
+    Return v4
+}
+# FORMS: function f7
+# FORMS-NEXT: v2 {{*}} ParseInt {{*}} TwoWay
+# FORMS-NEXT: v3 {{*}} ParseInt {{*}} TwoWay
+# CHECK-LABEL: function f7 name="parseIntWithIntegerRadix"
+# CHECK: TryCallInline -, v0 inlineBuiltin=ParseInt overload=ParseInt/0 -> done
+# CHECK: TryCallInline -, v0, v1 inlineBuiltin=ParseInt overload=ParseInt/0 -> done
+
+function f8 name="parseIntWithOtherRadix" parameters=[{type=string}, {type=undefined|i32}] results=[{type=anything}] {
+  b0(v0: string, v1: undefined|i32):
+    v2 = CallBuiltin -, v0, v1 overload=ParseInt/0
+    Return v2
+}
+# FORMS: function f8
+# FORMS-NEXT: v2 {{*}} ParseInt {{*}} Call
+# CHECK-LABEL: function f8 name="parseIntWithOtherRadix"
+# CHECK-NOT: CallInline
+# CHECK: v2: number = CallBuiltin -, v0, v1 overload=ParseInt/0
+# CHECK-NOT: CallInline
+
+function f9 name="numberToStringWithIntegerRadix" parameters=[{type=number}, {type=i32}] results=[{type=anything}] {
+  b0(v0: number, v1: i32):
+    v2 = CallBuiltin v0 overload=NumberPrototypeToString/0
+    v3 = CallBuiltin v0, v1 overload=NumberPrototypeToString/2
+    v4 = NewArray v2, v3 contents=anything
+    Return v4
+}
+# FORMS: function f9
+# FORMS-NEXT: v2 {{*}} NumberToString {{*}} TwoWay
+# FORMS-NEXT: v3 {{*}} NumberToString {{*}} TwoWay
+# CHECK-LABEL: function f9 name="numberToStringWithIntegerRadix"
+# CHECK: TryCallInline v0 inlineBuiltin=NumberToString overload=NumberPrototypeToString/0 -> done
+# CHECK: TryCallInline v0, v1 inlineBuiltin=NumberToString overload=NumberPrototypeToString/2 -> done
+
+function f10 name="numberToStringWithOtherRadix" parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: number):
+    v2 = CallBuiltin v0, v1 overload=NumberPrototypeToString/2
+    Return v2
+}
+# FORMS: function f10
+# FORMS-NEXT: v2 {{*}} NumberToString {{*}} Call
+# CHECK-LABEL: function f10 name="numberToStringWithOtherRadix"
+# CHECK-NOT: CallInline
+# CHECK: v2: string = CallBuiltin v0, v1 overload=NumberPrototypeToString/2
+# CHECK-NOT: CallInline
+
+function f11 name="dataViewAccess" parameters=[{type=DataView}, {type=number}, {type=bigint}] results=[{type=anything}] {
+  b0(v0: DataView, v1: number, v2: bigint):
+    v3 = CallBuiltin v0, v1 overload=DataViewPrototypeGetFloat64/0
+    v4 = CallBuiltin v0, v1 overload=DataViewPrototypeGetBigInt64/0
+    v5 = CallBuiltin v0, v1, v1 overload=DataViewPrototypeSetInt32/0
+    v6 = CallBuiltin v0, v1, v2 overload=DataViewPrototypeSetBigInt64/0
+    v7 = NewArray v3, v4 contents=anything
+    Return v7
+}
+# FORMS: function f11
+# FORMS-NEXT: v3 {{*}} DataViewGet {{*}} TwoWay
+# FORMS-NEXT: v4 {{*}} DataViewGet {{*}} TwoWay
+# FORMS-NEXT: v5 {{*}} DataViewSet {{*}} TwoWay
+# FORMS-NEXT: v6 {{*}} DataViewSet {{*}} TwoWay
+# CHECK-LABEL: function f11 name="dataViewAccess"
+# CHECK: TryCallInline v0, v1 inlineBuiltin=DataViewGet inlineParameters=[{{*}}] overload=DataViewPrototypeGetFloat64/0 -> done
+# CHECK: TryCallInline v0, v1, v2 inlineBuiltin=DataViewSet inlineParameters=[{{*}}] overload=DataViewPrototypeSetBigInt64/0 -> done
+
+function f12 name="dataViewAccessToHalfFloats" parameters=[{type=DataView}, {type=number}] results=[{type=anything}] {
+  b0(v0: DataView, v1: number):
+    v2 = CallBuiltin v0, v1 overload=DataViewPrototypeGetFloat16/0
+    v3 = CallBuiltin v0, v1, v1 overload=DataViewPrototypeSetFloat16/0
+    Return v2
+}
+# FORMS: function f12
+# FORMS-NEXT: v2 {{*}} DataViewGet {{*}} Call
+# FORMS-NEXT: v3 {{*}} DataViewSet {{*}} Call
+# CHECK-LABEL: function f12 name="dataViewAccessToHalfFloats"
+# CHECK-NOT: CallInline
+# CHECK: v2: number = CallBuiltin v0, v1 overload=DataViewPrototypeGetFloat16/0
+# CHECK-NEXT: v3: undefined = CallBuiltin v0, v1, v1 overload=DataViewPrototypeSetFloat16/0
+# CHECK-NOT: CallInline
+
+function f13 name="atomicsOnIntegerElements" parameters=[{type=Int32Array}, {type=number}] results=[{type=anything}] {
+  b0(v0: Int32Array, v1: number):
+    v2 = CallBuiltin -, v0, v1 overload=AtomicsLoad/0
+    v3 = CallBuiltin -, v0, v1, v1 overload=AtomicsAdd/0
+    v4 = CallBuiltin -, v0, v1, v1, v1 overload=AtomicsCompareExchange/0
+    v5 = NewArray v2, v3, v4 contents=anything
+    Return v5
+}
+# FORMS: function f13
+# FORMS-NEXT: v2 {{*}} Atomics {{*}} TwoWay
+# FORMS-NEXT: v3 {{*}} Atomics {{*}} TwoWay
+# FORMS-NEXT: v4 {{*}} Atomics {{*}} TwoWay
+# CHECK-LABEL: function f13 name="atomicsOnIntegerElements"
+# CHECK-COUNT-3: TryCallInline -, v0, v1{{*}} inlineBuiltin=Atomics inlineParameters=[{{*}}] overload=Atomics{{*}}/0 -> done
+# CHECK-NOT: TryCallInline
+
+function f14 name="atomicsWithoutOneElementType" parameters=[{type=Uint8Array|Int32Array}, {type=Float64Array}, {type=number}] results=[{type=anything}] {
+  b0(v0: Uint8Array|Int32Array, v1: Float64Array, v2: number):
+    v3 = CallBuiltin -, v0, v2, v2 overload=AtomicsAdd/0
+    v4 = CallBuiltin -, v1, v2, v2 overload=AtomicsAdd/0 builtinCallForm=AnyReceiver
+    v5 = NewArray v3, v4 contents=anything
+    Return v5
+}
+# FORMS: function f14
+# FORMS-NEXT: v3 {{*}} Atomics {{*}} Call
+# CHECK-LABEL: function f14 name="atomicsWithoutOneElementType"
+# CHECK-NOT: CallInline
+# CHECK: v3: {{*}} = CallBuiltin -, v0, v2, v2 overload=AtomicsAdd/0
+# CHECK-NEXT: v4: {{*}} = CallBuiltin -, v1, v2, v2 overload=AtomicsAdd/0 builtinCallForm=AnyReceiver
+# CHECK-NOT: CallInline
+
+function f15 name="bufferAccess" parameters=[{type=Buffer}, {type=number}, {type=bigint}] results=[{type=anything}] {
+  b0(v0: Buffer, v1: number, v2: bigint):
+    v3 = CallBuiltin v0 overload=BufferPrototypeReadUInt8/0
+    v4 = CallBuiltin v0, v1 overload=BufferPrototypeReadInt32LE/0
+    v5 = CallBuiltin v0, v1 overload=BufferPrototypeReadDoubleLE/0
+    v6 = CallBuiltin v0, v1 overload=BufferPrototypeReadBigInt64LE/0
+    v7 = CallBuiltin v0, v1, v1 overload=BufferPrototypeWriteInt32LE/0
+    v8 = CallBuiltin v0, v2, v1 overload=BufferPrototypeWriteBigInt64LE/0
+    v9 = NewArray v3, v4, v5, v6, v7, v8 contents=anything
+    Return v9
+}
+# FORMS: function f15
+# FORMS-COUNT-6: BufferAccess {{*}} TwoWay
+# CHECK-LABEL: function f15 name="bufferAccess"
+# CHECK-COUNT-6: TryCallInline v0{{*}} inlineBuiltin=BufferAccess inlineParameters=[
+
+function f16 name="bufferAccessOfThreeBytes" parameters=[{type=Buffer}, {type=number}] results=[{type=anything}] {
+  b0(v0: Buffer, v1: number):
+    v2 = Integer integer=3
+    v3 = CallBuiltin v0, v1, v2 overload=BufferPrototypeReadUIntBE/0
+    Return v3
+}
+# CHECK-LABEL: function f16 name="bufferAccessOfThreeBytes"
+# CHECK-NOT: CallInline
+# CHECK: v3: {{*}} = CallBuiltin v0, v1, v2 overload=BufferPrototypeReadUIntBE/0
+# CHECK-NOT: CallInline
+
+function f17 name="typedArrayLengths" parameters=[{type=Uint8Array}] results=[{type=anything}] {
+  b0(v0: Uint8Array):
+    v1 = CallBuiltin v0 overload=TypedArrayPrototypeLength/0
+    v2 = CallBuiltin v0 overload=TypedArrayPrototypeByteOffset/0
+    v3 = CallBuiltin v0 overload=TypedArrayPrototypeByteLength/0
+    v4 = NewArray v1, v2, v3 contents=anything
+    Return v4
+}
+# FORMS: function f17
+# FORMS-NEXT: v1 {{*}} TypedArrayLength {{*}} TwoWay
+# FORMS-NEXT: v2 {{*}} TypedArrayByteOffset {{*}} TwoWay
+# FORMS-NEXT: v3 {{*}} TypedArrayByteLength {{*}} TwoWay
+# CHECK-LABEL: function f17 name="typedArrayLengths"
+# CHECK: TryCallInline v0 inlineBuiltin=TypedArrayLength overload=TypedArrayPrototypeLength/0 -> done
+# CHECK: TryCallInline v0 inlineBuiltin=TypedArrayByteLength overload=TypedArrayPrototypeByteLength/0 -> done
+
+function f18 name="lengthsOfAbstractClass" parameters=[{type=TypedArray}] results=[{type=anything}] {
+  b0(v0: TypedArray):
+    v1 = CallBuiltin v0 overload=TypedArrayPrototypeLength/0
+    v2 = CallBuiltin v0 overload=TypedArrayPrototypeByteOffset/0
+    v3 = CallBuiltin v0 overload=TypedArrayPrototypeByteLength/0
+    v4 = NewArray v1, v2, v3 contents=anything
+    Return v4
+}
+# FORMS: function f18
+# FORMS-NEXT: v1 {{*}} TypedArrayLength {{*}} TwoWay
+# FORMS-NEXT: v2 {{*}} TypedArrayByteOffset {{*}} TwoWay
+# FORMS-NEXT: v3 {{*}} TypedArrayByteLength {{*}} Call
+# CHECK-LABEL: function f18 name="lengthsOfAbstractClass"
+# CHECK-NOT: inlineBuiltin=TypedArrayByteLength
+# CHECK: v3: {{*}} = CallBuiltin v0 overload=TypedArrayPrototypeByteLength/0
+# CHECK-NOT: inlineBuiltin=TypedArrayByteLength
+
+function f19 name="typedArrayWithLength" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = CallBuiltin -, v0 overload=Uint8Array/4
+    Return v1
+}
+# FORMS: function f19
+# FORMS-NEXT: v1 {{*}} TypedArrayWithLength {{*}} Whole
+# CHECK-LABEL: function f19 name="typedArrayWithLength"
+# CHECK-NOT: CallBuiltin
+# CHECK: v1: Uint8Array = CallInline -, v0 inlineBuiltin=TypedArrayWithLength overload=Uint8Array/4
+
+function f20 name="typedArrayWithoutNumberLength" parameters=[{type=undefined|number}] results=[{type=anything}] {
+  b0(v0: undefined|number):
+    v1 = CallBuiltin -, v0 overload=Uint8Array/4
+    v2 = CallBuiltin overload=Uint8Array/4
+    v3 = NewArray v1, v2 contents=anything
+    Return v3
+}
+# FORMS: function f20
+# FORMS-NEXT: v1 {{*}} TypedArrayWithLength {{*}} Call
+# FORMS-NEXT: v2 {{*}} TypedArrayWithLength {{*}} Call
+# CHECK-LABEL: function f20 name="typedArrayWithoutNumberLength"
+# CHECK-NOT: CallInline
+# CHECK: v1: Uint8Array = CallBuiltin -, v0 overload=Uint8Array/4
+# CHECK-NEXT: v2: Uint8Array = CallBuiltin overload=Uint8Array/4
+# CHECK-NOT: CallInline
+
+function f21 name="arrayFromTypedArray" parameters=[{type=Uint8Array<number, pristine[Names]>}] results=[{type=anything}] {
+  b0(v0: Uint8Array<number, pristine[Names]>):
+    v1 = Builtin builtin=Array
+    v2 = CallBuiltin v1, v0 overload=ArrayFrom/0
+    Return v2
+}
+# FORMS: function f21
+# FORMS-NEXT: v2 {{*}} ArrayFrom {{*}} TwoWay
+# CHECK-LABEL: function f21 name="arrayFromTypedArray"
+# CHECK: TryCallInline v1, v0 inlineBuiltin=ArrayFrom overload=ArrayFrom/0 -> done [[done21]](), miss [[miss21]]()
+# CHECK: [[miss21]]() frequency=Rare:
+# CHECK-NEXT: = CallBuiltin v1, v0 overload=ArrayFrom/0
+
+function f22 name="arrayFromElementsWithoutInlineAccess" parameters=[{type=BigInt64Array<bigint, pristine[Names]>}, {type=Float16Array<number, pristine[Names]>}, {type=TypedArray<number|bigint, pristine[Names]>}, {type=Uint8Array<number, pristine[Names]>}] results=[{type=anything}] {
+  b0(v0: BigInt64Array<bigint, pristine[Names]>, v1: Float16Array<number, pristine[Names]>, v2: TypedArray<number|bigint, pristine[Names]>, v3: Uint8Array<number, pristine[Names]>):
+    v4 = Builtin builtin=Array
+    v5 = CallBuiltin v4, v0 overload=ArrayFrom/0
+    v6 = CallBuiltin v4, v1 overload=ArrayFrom/0
+    v7 = CallBuiltin v4, v2 overload=ArrayFrom/0
+    v8 = Undefined
+    v9 = CallBuiltin v4, v3, v8 overload=ArrayFrom/0
+    v10 = NewArray v5, v6, v7, v9 contents=anything
+    Return v10
+}
+# FORMS: function f22
+# FORMS-NEXT: v5 {{*}} ArrayFrom {{*}} Call
+# FORMS-NEXT: v6 {{*}} ArrayFrom {{*}} Call
+# FORMS-NEXT: v7 {{*}} ArrayFrom {{*}} Call
+# FORMS-NEXT: v9 {{*}} ArrayFrom {{*}} Call
+# CHECK-LABEL: function f22 name="arrayFromElementsWithoutInlineAccess"
+# CHECK-NOT: CallInline
+# CHECK-COUNT-4: = CallBuiltin v4, {{*}} overload=ArrayFrom/0
+# CHECK-NOT: CallInline

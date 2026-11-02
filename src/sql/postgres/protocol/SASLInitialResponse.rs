@@ -23,7 +23,7 @@ impl SASLInitialResponse {
         let header: [u8; 5] = {
             let mut h = [0u8; 5];
             h[0] = b'p';
-            h[1..].copy_from_slice(&int32(count));
+            h[1..].copy_from_slice(&int32(count)?);
             h
         };
         writer.write(&header)?;

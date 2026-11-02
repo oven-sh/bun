@@ -1,0 +1,5 @@
+let name = entry.slice(0, 1)// Remove one.
+    .replace(/a/g, '')// Remove two. They are gone.
+    // This is on a line of its own.
+    // And this.
+    .replace(/b/g, '');

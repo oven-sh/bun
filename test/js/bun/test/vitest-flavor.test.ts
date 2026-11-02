@@ -2600,6 +2600,42 @@ describe.concurrent("behavior depends on the module a function is imported from"
     });
   });
 
+  test("toMatchObject() compares an expected Set and Map under both imports", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import * as bun from "bun:test";
+        import * as vitest from "vitest";
+        const outcome = fn => { try { fn(); return "passes"; } catch { return "fails"; } };
+        const key = Symbol("key");
+        for (const [name, { test, expect }] of Object.entries({ bun, vitest })) {
+          test(name, () => {
+            console.log(name, "Set:", [
+              outcome(() => expect({ k: new Set([1]) }).toMatchObject({ k: new Set([1]) })),
+              outcome(() => expect({ k: new Set([1]) }).toMatchObject({ k: new Set([2]) })),
+              outcome(() => expect({ k: new Set([{ a: 1, b: 2 }]) }).toMatchObject({ k: new Set([{ a: 1 }]) })),
+            ].join(" "));
+            console.log(name, "Map:", [
+              outcome(() => expect({ k: new Map([["a", 1]]) }).toMatchObject({ k: new Map([["a", 1]]) })),
+              outcome(() => expect({ k: new Map([["a", 1]]) }).toMatchObject({ k: new Map([["a", 2]]) })),
+            ].join(" "));
+            // Vitest does not read the symbol keys of a pattern, and it lets two invalid Dates match.
+            console.log(name, "symbol key:", outcome(() => expect({ [key]: new Set([1]) }).toMatchObject({ [key]: new Set([2]) })));
+            console.log(name, "invalid Date:", outcome(() => expect({ k: new Set([new Date(NaN)]) }).toMatchObject({ k: new Set([new Date(NaN)]) })));
+          });
+        }
+      `,
+    });
+    expect({ log, exitCode }).toEqual({
+      log: ["bun", "vitest"].flatMap(name => [
+        `${name} Set: passes fails passes`,
+        `${name} Map: passes fails`,
+        `${name} symbol key: fails`,
+        `${name} invalid Date: fails`,
+      ]),
+      exitCode: 0,
+    });
+  });
+
   test("toHaveProperty() with an own key that is spelled like a path", async () => {
     const { log, exitCode } = await runTests({
       "a.test.js": `

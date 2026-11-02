@@ -3799,6 +3799,12 @@ if (isBun) {
         expect(mocked.mockReset().getMockImplementation()).toBeUndefined();
       });
 
+      // jest-mock-extended passes its optional implementation on like this.
+      test("is undefined for a mock made with undefined", () => {
+        expect(fn(undefined).getMockImplementation()).toBeUndefined();
+        expect(fn(undefined)()).toBeUndefined();
+      });
+
       test("is still undefined after mockImplementation() without a function", () => {
         const implementation = () => 1;
         expect(fn().mockImplementation().getMockImplementation()).toBeUndefined();

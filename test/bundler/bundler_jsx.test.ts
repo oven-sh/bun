@@ -282,6 +282,40 @@ describe("bundler", () => {
         });
       });
 
+      describe.each([false, true])("defined global tag values, minify=%s", minify => {
+        itBundled(`jsx/PreserveDefinedGlobalTag-${backend}-${minify}`, {
+          files: {
+            "/in.jsx": `
+              const events = [];
+              Object.defineProperty(globalThis, "component", {
+                get() { events.push("component"); return () => "component"; }
+              });
+              globalThis.factory = {
+                get h() {
+                  events.push("factory");
+                  return type => { events.push(typeof type); return type(); };
+                }
+              };
+              console.log(<Comp />, JSON.stringify(events));
+            `,
+          },
+          backend,
+          jsx: { runtime: "preserve" },
+          define: { Comp: "component" },
+          minifyIdentifiers: minify,
+          minifySyntax: minify,
+          minifyWhitespace: minify,
+          // The esbuild API harness does not forward defines.
+          skipOnEsbuild: true,
+          onAfterBundle(api) {
+            const out = api.readFile("/out.js");
+            const { code } = transformSync(out, { loader: "jsx", jsxFactory: "globalThis.factory.h" });
+            api.writeFile("/out.js", code);
+          },
+          run: { stdout: 'component ["factory","component","function"]' },
+        });
+      });
+
       describe.each(["Comp", "Comp.Member"])("tag %s", tag => {
         itBundled(`jsx/PreserveInvalidDefinedTag-${backend}-${tag}`, {
           files: { "/in.jsx": `export default <${tag} />;` },

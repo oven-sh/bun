@@ -783,7 +783,7 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     if (opened == 0) {
         /* Same as the exhausted path in us_internal_socket_after_open: a
          * real connect failure must not be reported as a caller abort. */
-        c->error = ECONNREFUSED;
+        c->error = LIBUS_ECONNREFUSED;
         us_connecting_socket_close(c);
     }
 }
@@ -807,7 +807,7 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                      * us_connecting_socket_close defaults c->error to
                      * ECANCELED (caller abort) and never invalidates the
                      * DNS cache entry for the dead host. */
-                    c->error = ECONNREFUSED;
+                    c->error = LIBUS_ECONNREFUSED;
                     us_connecting_socket_close(c);
                 }
             }

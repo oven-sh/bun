@@ -54,6 +54,11 @@ it("throws an error when the directory is not found", () => {
   ).toThrow("no such file or directory");
 });
 
+it("fetch() rejects with ENOENT when nothing is at the path", async () => {
+  const unix = isWindows ? `\\\\.\\pipe\\fetch-unix-missing-${process.pid}` : join(tmp_dir, "missing.sock");
+  await expect(fetch("http://localhost/", { unix })).rejects.toMatchObject({ code: "ENOENT" });
+});
+
 if (process.platform === "linux") {
   it("works with abstract namespace", async () => {
     const unix = "\0" + Math.random().toString(36).slice(2).repeat(100).slice(0, 105);

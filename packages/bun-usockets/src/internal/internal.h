@@ -109,6 +109,7 @@ static inline void *us_xcalloc(size_t count, size_t size) {
 #define LIBUS_ERR WSAGetLastError()
 #define LIBUS_SET_ERR(error) WSASetLastError(error)
 #define LIBUS_ECONNRESET WSAECONNRESET
+#define LIBUS_ECONNREFUSED WSAECONNREFUSED
 /* What libuv translates to UV_ECANCELED (uv_translate_sys_error). */
 #define LIBUS_ECANCELED WSAEINTR
 /* Winsock has none. This is the number of node:os constants and util.getSystemErrorName on Windows. */
@@ -119,6 +120,7 @@ static inline void *us_xcalloc(size_t count, size_t size) {
 #define LIBUS_ERR errno
 #define LIBUS_SET_ERR(error) (errno = (error))
 #define LIBUS_ECONNRESET ECONNRESET
+#define LIBUS_ECONNREFUSED ECONNREFUSED
 #define LIBUS_ECANCELED ECANCELED
 #define LIBUS_EPROTO EPROTO
 #endif

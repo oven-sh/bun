@@ -271,3 +271,38 @@ describe.skipIf(isWindows)("WebSocket over unix domain socket", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe.skipIf(!isWindows)("WebSocket over a named pipe", () => {
+  const pipePath = (name: string) => `\\\\.\\pipe\\bun.ws.${name}.${process.pid}`;
+
+  test("ws+unix: echoes through Bun.serve({ unix })", async () => {
+    const unix = pipePath("echo");
+    using server = Bun.serve({
+      unix,
+      fetch(req, server) {
+        return server.upgrade(req) ? undefined : new Response(new URL(req.url).pathname, { status: 400 });
+      },
+      websocket: {
+        message(ws, message) {
+          ws.send("echo:" + message);
+        },
+      },
+    });
+    const ws = new WebSocket(`ws+unix:${unix}:/chat`);
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    ws.onopen = () => ws.send("hello");
+    ws.onmessage = event => resolve(String(event.data));
+    ws.onerror = reject;
+    expect(await promise).toBe("echo:hello");
+    ws.close();
+  });
+
+  test("ws+unix: fails with ENOENT when the pipe does not exist", async () => {
+    const ws = new WebSocket(`ws+unix:${pipePath("missing")}`);
+    const { promise, resolve } = Promise.withResolvers<{ error: unknown; close: number }>();
+    let error: unknown;
+    ws.onerror = event => (error = (event as ErrorEvent).error?.code);
+    ws.onclose = event => resolve({ error, close: event.code });
+    expect(await promise).toEqual({ error: "ENOENT", close: 1006 });
+  });
+});

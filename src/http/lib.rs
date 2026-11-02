@@ -2327,18 +2327,7 @@ impl<'a> HTTPClient<'a> {
             self.fail(crate::Error::DNSResolveFailed);
             return;
         }
-        // Windows: only a WSA code names a cause. Below that range is the CRT's
-        // `ECONNREFUSED` uSockets stores when every address of a name failed,
-        // a different number in `SystemErrno`; and WSAENOTCONN is its recv()
-        // probe finding the socket unconnected after SO_ERROR was consumed.
-        const WSA_FIRST: i32 = 10000;
-        const WSAENOTCONN: i32 = 10057;
-        self.state.connect_errno =
-            if cfg!(windows) && (connect_errno < WSA_FIRST || connect_errno == WSAENOTCONN) {
-                0
-            } else {
-                connect_errno
-            };
+        self.state.connect_errno = connect_errno;
         self.fail(crate::Error::ConnectionRefused);
     }
 

@@ -408,8 +408,13 @@ describe("expect()", () => {
     await expect(rejected).rejects.toBe(error);
     expect([resolved.thenCalls, rejected.thenCalls]).toEqual([1, 1]);
 
-    await expectFailure(() => expect(new Settled(() => Promise.reject(error))).resolves.toBeNull()).toThrow();
-    await expectFailure(() => expect(new Settled(() => Promise.resolve("parsed"))).rejects.toThrow()).toThrow();
+    if (isBun) {
+      const notResolved = new Settled(() => Promise.reject(error));
+      const notRejected = new Settled(() => Promise.resolve("parsed"));
+      await expectFailure(() => expect(notResolved).resolves.toBeNull()).toThrow("Received promise that rejected");
+      await expectFailure(() => expect(notRejected).rejects.toBe(error)).toThrow("Received promise that resolved");
+      expect([notResolved.thenCalls, notRejected.thenCalls]).toEqual([1, 1]);
+    }
   });
 
   test("can call without an argument", () => {

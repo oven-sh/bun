@@ -3052,7 +3052,7 @@ describe.concurrent("util.inspect() of a mocked module", () => {
     );
   });
 
-  test("does not read an export named constructor", async () => {
+  test("prints a mocked module whose constructor and toString exports cannot be read", async () => {
     await expectFixturesToPass(
       {
         "dep.ts": `export const a = "real-a";`,
@@ -3077,6 +3077,8 @@ describe.concurrent("util.inspect() of a mocked module", () => {
             expect(util.inspect(ns)).toEndWith("{ a: 'other-a' }");
             expect(util.inspect([ns])).toEndWith("{ a: 'other-a' } ]");
             expect(util.inspect({ ns }, { depth: 0 })).toStartWith("{ ns: [Module");
+            expect(() => ns.toString).toThrow('No "toString" export is defined on the mock of "./dep".');
+            expect(util.format("%s", ns)).toEndWith("{ a: 'other-a' }");
           });
 
           test("a mocked module that is printed before its factory has returned", () => {

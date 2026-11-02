@@ -2677,8 +2677,17 @@ function hasBuiltInToString(value) {
   let hasOwnToString = ObjectPrototypeHasOwnProperty;
   let hasOwnToPrimitive = ObjectPrototypeHasOwnProperty;
 
+  // `toString` of a module namespace object is an export, and reading it throws for the same two cases as `constructor`
+  // in internalGetConstructorName(). Such a value has no `toString` function.
+  let toString;
+  try {
+    toString = value.toString;
+  } catch {
+    // As for a value without `toString`.
+  }
+
   // Count objects without `toString` and `Symbol.toPrimitive` function as built-in.
-  if (typeof value.toString !== "function") {
+  if (typeof toString !== "function") {
     if (typeof value[SymbolToPrimitive] !== "function") {
       return true;
     } else if (ObjectPrototypeHasOwnProperty.$call(value, SymbolToPrimitive)) {

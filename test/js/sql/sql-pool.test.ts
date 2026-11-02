@@ -867,6 +867,100 @@ describeWithContainer("postgres_plain", { image: "postgres_plain" }, container =
       jest.useRealTimers();
     }
   });
+
+  describe("the server ends the sessions while queries wait behind the one each runs", () => {
+    const url = () => `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
+
+    /** `count` inserts that each wait for an advisory lock, on a pool whose sessions are all ended while they do. */
+    async function endSessionsUnder(
+      options: Bun.SQL.Options,
+      count: number,
+      run: (sql: SQL, insert: (on: Tag, i: number) => Promise<unknown>) => Promise<string>[],
+    ) {
+      await container.ready;
+      const app = `bun_requeue_${Bun.randomUUIDv7("hex").slice(-12)}`;
+      const table = app;
+      const key = (Math.random() * 2 ** 31) | 0;
+      await using admin = new SQL({ url: url(), max: 1 });
+      await using holder = new SQL({ url: url(), max: 1 });
+      await using sql = new SQL({ url: url(), ...options, connection: { application_name: app } });
+      await admin.unsafe(`create table ${table} (i int)`);
+      try {
+        await holder.unsafe(`select pg_advisory_lock(${key})`);
+        await sql`select 1`;
+        const insert = (on: Tag, i: number) =>
+          on.unsafe(`insert into ${table} select $1::int from (select pg_advisory_xact_lock($2::bigint)) l`, [i, key]);
+        const outcomes = run(sql, insert);
+        const sessions = async () =>
+          (
+            await admin.unsafe(
+              `select count(*)::int as n from pg_stat_activity where application_name = $1 and wait_event_type = 'Lock'`,
+              [app],
+            )
+          )[0].n;
+        const max = options.max ?? 10;
+        while ((await sessions()) < Math.min(max, count)) {}
+        await admin.unsafe(`select pg_terminate_backend(pid) from pg_stat_activity where application_name = $1`, [app]);
+        await holder.unsafe(`select pg_advisory_unlock(${key})`);
+        const results = await Promise.all(outcomes);
+        const [{ n: rows }] = await admin.unsafe(`select count(*)::int as n from ${table}`);
+        return { results, rows };
+      } finally {
+        await admin.unsafe(`drop table ${table}`);
+      }
+    }
+
+    const tally = (results: string[]) => {
+      const counts: Record<string, number> = {};
+      for (const result of results) counts[result] = (counts[result] ?? 0) + 1;
+      return counts;
+    };
+
+    test("the queries that never ran are sent again on new connections", async () => {
+      const count = 40;
+      const { results, rows } = await endSessionsUnder({ max: 4 }, count, (sql, insert) =>
+        Array.from({ length: count }, (_, i) => outcome(insert(sql, i))),
+      );
+      // One per session: the query that it was at work on.
+      expect({ outcomes: tally(results), rows }).toEqual({
+        outcomes: { resolved: count - 4, ERR_POSTGRES_SERVER_ERROR: 4 },
+        rows: count - 4,
+      });
+    });
+
+    test("max: 1: they are not sent again, and fail with an error that says they never ran", async () => {
+      const errors: any[] = [];
+      const { results, rows } = await endSessionsUnder({ max: 1 }, 4, (sql, insert) =>
+        Array.from({ length: 4 }, (_, i) =>
+          outcome(
+            insert(sql, i).catch(err => {
+              errors[i] = err;
+              throw err;
+            }),
+          ),
+        ),
+      );
+      expect({ results, rows }).toEqual({
+        results: [
+          "ERR_POSTGRES_SERVER_ERROR",
+          "ERR_POSTGRES_CONNECTION_CLOSED",
+          "ERR_POSTGRES_CONNECTION_CLOSED",
+          "ERR_POSTGRES_CONNECTION_CLOSED",
+        ],
+        rows: 0,
+      });
+      expect(errors.slice(1).map(err => [err.message, err.cause?.errno])).toEqual(
+        Array(3).fill(["Connection closed before the query ran", "57P01"]),
+      );
+    });
+
+    test("a transaction's queries are not sent again", async () => {
+      const { results, rows } = await endSessionsUnder({ max: 2 }, 1, (sql, insert) => [
+        outcome(sql.begin(tx => Promise.all([0, 1, 2].map(i => insert(tx, i))))),
+      ]);
+      expect({ results, rows }).toEqual({ results: ["ERR_POSTGRES_SERVER_ERROR"], rows: 0 });
+    });
+  });
 });
 
 // A real server does not say how many logins it refused. Not concurrent: a login is 4096 rounds of PBKDF2 on this thread.

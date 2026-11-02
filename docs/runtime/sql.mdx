@@ -1394,6 +1394,15 @@ await Promise.all([
 - When Bun cannot open a new connection, callers wait for the connections that are open. They reject with the error of that attempt only when the pool has no connection left. A caller that finds every open connection reserved makes Bun try again at once. While an open connection can still take queries, Bun adds at most one connection at a time for the queries that wait, and after each failed attempt it pauses before the next: a few tens of milliseconds at first, then twice as long each time, up to 1 second.
 - Bun closes a connection that goes back to the pool inside a transaction, and the server rolls that transaction back. That covers a reserved connection that you release after a manual `BEGIN`, and a query that leaves a transaction open or failed, such as `SELECT 1; BEGIN`. Queries of other callers that Bun already sent behind such a query are rolled back with it. With `max: 1`, where a manual `BEGIN` is allowed, a query can leave its transaction open.
 
+### When the server closes a connection
+
+Bun sends several queries on one connection without waiting for each answer. When a PostgreSQL connection closes, for example because of a failover, a proxy restart or `pg_terminate_backend`, Bun knows which of its queries never ran: those it had not sent yet and, when the server ended the session with an error, those that wait behind the query the server was running.
+
+- Bun sends a query that never ran again on another connection of the pool.
+- The query that the server was running fails with the server's error, such as `57P01`, or with `ERR_POSTGRES_CONNECTION_CLOSED`. It may have run.
+- Inside a transaction, every query that has not finished fails with the error that closed the connection, and the server rolls the transaction back. Retry the whole transaction.
+- With `max: 1` and on a reserved connection, Bun does not send a query again, because a manual `BEGIN` or a `SET` on that connection would not apply to it. A query that never ran rejects with `ERR_POSTGRES_CONNECTION_CLOSED` and the message `Connection closed before the query ran`, and its `cause` is the error that closed the connection. Such a query is safe to retry.
+
 ### Hot reloading
 
 With `bun --hot`, a `new SQL()` with the same connection settings takes over the open connections of the previous load. A reload opens no new connection, and the database sees the same sessions.

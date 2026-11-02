@@ -471,7 +471,7 @@ Options for the `trust` command:
 - `--all`: Trust all untrusted dependencies.
 - `--dry-run`: Print the scripts that would run and the packages that would be trusted, without running scripts or writing `package.json` and `bun.lock`.
 
-A package that does not come from the npm registry (a tarball, `git`, `file:` or `link:` dependency) also has to be declared in the `package.json` of the project or of a workspace. `bun install`, `bun pm trust` and `bun add --trust` do not run the scripts of the others, and `bun pm untrusted` marks them with `cannot be trusted by name`.
+A package that does not come from the npm registry (a tarball, `git`, `file:` or `link:` dependency) also has to be declared in the `package.json` of the project or of a workspace. `bun install`, `bun pm trust` and `bun add --trust` do not run the scripts of the others, and `bun pm untrusted` marks them with `cannot trust by name: add it to your package.json dependencies`.
 
 ## default-trusted
 

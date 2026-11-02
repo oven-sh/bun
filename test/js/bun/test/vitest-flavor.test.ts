@@ -2550,6 +2550,9 @@ test.concurrent.each(["bun:test", "@jest/globals"])(
           then(resolve, reject) { console.log(name + ": then()"); this.end(error => (error ? reject(error) : resolve())); },
         });
         const thenable = (name, then) => ({ then(resolve, reject) { console.log(name + ": then()"); then?.(resolve, reject); } });
+        class Sub extends Promise {
+          then(onFulfilled, onRejected) { console.log("a Promise subclass: then()"); return super.then(onFulfilled, onRejected); }
+        }
         describe("a hook", () => {
           beforeEach(done => request("beforeEach").end(done));
           test("a request", done => request("test").end(done));
@@ -2557,6 +2560,7 @@ test.concurrent.each(["bun:test", "@jest/globals"])(
         test.each([["each"]])("test.each with a done parameter: %s", (name, done) => request(name).end(done));
         test("a thenable that rejects", done => { done(); return thenable("rejects", (resolve, reject) => reject(new Error("rejected"))); });
         test("a thenable that never settles", done => { done(); return thenable("never settles"); }, 10);
+        test("a Promise subclass", done => { done(); return Sub.resolve(); });
         test("done() is never called", done => request("never sent"), 10);
         test("done(error) is called later", done => { setImmediate(() => done(new Error("from done()"))); return request("never sent"); });
       `,
@@ -2568,6 +2572,7 @@ test.concurrent.each(["bun:test", "@jest/globals"])(
         "(pass) test.each with a done parameter: each",
         "(pass) a thenable that rejects",
         "(pass) a thenable that never settles",
+        "(pass) a Promise subclass",
         "(fail) done() is never called",
         "(fail) done(error) is called later",
       ],
@@ -2895,48 +2900,6 @@ describe.concurrent("a value that a test returns", () => {
       exitCode: 0,
     });
   });
-
-  test.each(["bun:test", "@jest/globals"])(
-    "then() of what a callback with a done parameter returns is not called: %s",
-    async module => {
-      const { log, results, errors, exitCode } = await runTests({
-        "a.test.js": `
-          import { test, describe, beforeEach } from "${module}";
-          // The shape of a supertest request: end() sends it, and then() calls end() too.
-          const request = name => ({
-            end(callback) {
-              if (this.sent) throw new Error(name + ": end() was called twice");
-              this.sent = true;
-              setImmediate(() => { console.log(name + ": sent"); callback(); });
-              return this;
-            },
-            then(resolve, reject) { console.log(name + ": then()"); this.end(error => (error ? reject(error) : resolve())); },
-          });
-          class Sub extends Promise {
-            then(onFulfilled, onRejected) { console.log("a Promise subclass: then()"); return super.then(onFulfilled, onRejected); }
-          }
-          describe("a hook", () => {
-            beforeEach(done => request("beforeEach").end(done));
-            test("a thenable", done => request("test").end(done));
-          });
-          test("a Promise subclass", done => { done(); return Sub.resolve(); });
-          test("done() is never called", done => request("never sent"), 10);
-          test("done(error) is called later", done => { setImmediate(() => done(new Error("from done()"))); return request("never sent"); });
-        `,
-      });
-      expect({ log, results, errors, exitCode }).toEqual({
-        log: ["beforeEach: sent", "test: sent"],
-        results: [
-          "(pass) a hook > a thenable",
-          "(pass) a Promise subclass",
-          "(fail) done() is never called",
-          "(fail) done(error) is called later",
-        ],
-        errors: ["error: from done()"],
-        exitCode: 1,
-      });
-    },
-  );
 });
 
 describe.concurrent("behavior depends on the module a function is imported from", () => {

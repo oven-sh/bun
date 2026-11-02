@@ -465,7 +465,7 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
                     };
 
                     // Parse the JSON source map
-                    match parse_json(json_slice, result) {
+                    match parse_json(&arena, json_slice, result) {
                         Ok(parsed) => {
                             break 'parsed (SourceMapLoadHint::IsExternalMap, parsed);
                         }
@@ -490,7 +490,7 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
                         let Some(data) = provider.get_external_data(source_filename) else {
                             break 'fallback_to_normal;
                         };
-                        match parse_json(data, result) {
+                        match parse_json(&arena, data, result) {
                             Ok(parsed) => {
                                 break 'parsed (SourceMapLoadHint::IsExternalMap, parsed);
                             }
@@ -535,7 +535,7 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
                     Err(_) => break 'try_external,
                 };
 
-                match parse_json(&data, result) {
+                match parse_json(&arena, &data, result) {
                     Ok(parsed) => break 'parsed (SourceMapLoadHint::IsExternalMap, parsed),
                     Err(err) => {
                         // Print warning even if this came from non-visible code like
@@ -863,28 +863,32 @@ pub(crate) fn parse_url(
         return Err(crate::Error::UnsupportedFormat);
     };
 
-    parse_json(json_bytes, hint)
+    parse_json(arena, json_bytes, hint)
 }
 
 /// Parses a JSON source-map
 ///
 /// `source` must be in UTF-8 and can be freed after this call.
 /// The mappings are owned by the global allocator.
-pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Result<ParseUrl> {
+/// The AST nodes of the JSON go to `arena`.
+pub(crate) fn parse_json(
+    arena: &bun_alloc::Arena,
+    source: &[u8],
+    hint: ParseUrlResultHint,
+) -> crate::Result<ParseUrl> {
     use crate::mapping::SourceMap as SourceMapLog;
-    use bun_ast::StoreResetGuard as DataStoreScope;
     use std::sync::Arc;
 
     let json_src = bun_ast::Source::init_path_string("sourcemap.json", source);
     let mut log = bun_ast::Log::init();
     // `defer log.deinit()` → Drop
 
-    // the allocator given to the JS parser is not respected for all parts
-    // of the parse, so we need to remember to reset the ast store on entry
-    // and on every exit path. A source map may be parsed lazily from a thread that never ran the parser (a stack trace
-    // remapped from a collector thread's end phase), so make sure this thread has the stores at all.
-    bun_ast::initialize_store();
-    let _store_scope = DataStoreScope::new();
+    // This can run in a GC end phase: an outer frame may still read this thread's AST store, or the thread has none.
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
+    let _ast_scope = ast_memory_allocator.enter();
+    // In a debug build, a node that goes to that store panics.
+    let _stmt_guard = bun_ast::stmt::Disabler::scope();
+    let _expr_guard = bun_ast::expr::Disabler::scope();
     bun_core::scoped_log!(SourceMapLog, "parse (JSON, {} bytes)", source.len());
     let parsed = match bun_parsers::json::ParsedJson::parse_json(&json_src, &mut log) {
         Ok(p) => p,

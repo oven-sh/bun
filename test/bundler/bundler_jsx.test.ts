@@ -631,6 +631,8 @@ describe("bundler", () => {
     });
 
     itBundled("jsx/TsconfigPreserveIsIgnored", {
+      // Bun ignores tsconfig preservation so the same config can run JSX files.
+      skipOnEsbuild: true,
       files: {
         "/in.tsx": `export const element = <><SolidLike /></>;`,
         "/tsconfig.json": `{"compilerOptions":{"jsx":"preserve","jsxImportSource":"solid-js","target":"ESNext"}}`,
@@ -647,6 +649,8 @@ describe("bundler", () => {
     });
 
     itBundled("jsx/PreserveBunfigRuntime", {
+      // esbuild does not read `bunfig.toml`.
+      skipOnEsbuild: true,
       files: {
         "/in.tsx": `export const element = <article data-source="bunfig">Bunfig</article>;`,
         "/bunfig.toml": `jsx = "preserve"`,
@@ -1027,6 +1031,8 @@ describe("bundler", () => {
     });
 
     itBundled("jsx/PreserveKeyAfterSpreadDoesNotLower", {
+      // esbuild does not support `@jsxRuntime preserve` or bare `key` in automatic mode.
+      skipOnEsbuild: true,
       files: {
         "/in.tsx": `
           /* @jsxRuntime preserve */

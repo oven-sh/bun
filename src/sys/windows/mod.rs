@@ -1213,10 +1213,23 @@ pub struct EXCEPTION_POINTERS {
     pub ContextRecord: *mut core::ffi::c_void,
 }
 
-/// Best-effort `major.build` string from `RtlGetVersion`. Cached in a
-/// `OnceLock<String>` so the per-call allocation goes away after the first
-/// call.
-pub fn detect_runtime_version() -> &'static str {
+/// What [`detect_runtime_version`] found. It displays as `major.build`, or as `unknown`.
+#[derive(Clone, Copy)]
+pub struct RuntimeVersion {
+    major_and_build: Option<(u32, u32)>,
+}
+
+impl core::fmt::Display for RuntimeVersion {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.major_and_build {
+            Some((major, build)) => write!(f, "{major}.{build}"),
+            None => f.write_str("unknown"),
+        }
+    }
+}
+
+/// Best-effort version of Windows from `RtlGetVersion`. The crash handler prints it, so it allocates nothing.
+pub fn detect_runtime_version() -> RuntimeVersion {
     #[repr(C)]
     struct OSVERSIONINFOW {
         dwOSVersionInfoSize: u32,
@@ -1231,16 +1244,13 @@ pub fn detect_runtime_version() -> &'static str {
         // ntdll only writes the struct and returns NTSTATUS — no preconditions.
         safe fn RtlGetVersion(info: &mut OSVERSIONINFOW) -> i32;
     }
-    static CACHE: std::sync::OnceLock<std::string::String> = std::sync::OnceLock::new();
     bun_core::impl_zeroable!(OSVERSIONINFOW);
-    CACHE.get_or_init(|| {
-        let mut info: OSVERSIONINFOW = bun_core::ffi::zeroed();
-        info.dwOSVersionInfoSize = core::mem::size_of::<OSVERSIONINFOW>() as u32;
-        if RtlGetVersion(&mut info) != 0 {
-            return std::string::String::from("unknown");
-        }
-        std::format!("{}.{}", info.dwMajorVersion, info.dwBuildNumber)
-    })
+    let mut info: OSVERSIONINFOW = bun_core::ffi::zeroed();
+    info.dwOSVersionInfoSize = core::mem::size_of::<OSVERSIONINFOW>() as u32;
+    RuntimeVersion {
+        major_and_build: (RtlGetVersion(&mut info) == 0)
+            .then_some((info.dwMajorVersion, info.dwBuildNumber)),
+    }
 }
 
 pub use bun_windows_sys::externs::InitializeProcThreadAttributeList;

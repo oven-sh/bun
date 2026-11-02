@@ -260,3 +260,169 @@ describe("JSON", () => {
   describe.each(["a.json", "package.json", "a.json5", "a.jsonc"])("%s", name => expectSame(name, texts, options));
   describe("sorted", () => expectSame("package.json", texts, [["--sort-package-json"]]));
 });
+
+describe("GraphQL", () => {
+  // The flag is only compiled into debug and canary builds.
+  const hasFlag = isDebug || Bun.spawnSync({ cmd: [bunExe(), "--revision"], env: bunEnv }).stdout.includes("canary");
+
+  /** Formats `texts` as files, with and without the short cuts. */
+  async function format(texts: string[], flags: string[]) {
+    const files = Object.fromEntries(texts.map((text, index) => [`${index}.graphql`, text]));
+    return await Promise.all(
+      [[], ["--no-short-cuts"]].map(async own => {
+        using dir = tempDir("format-short-cuts-graphql", files);
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "fmt",
+            "--write",
+            "--no-config",
+            "--no-editorconfig",
+            "--log-level=warn",
+            ...flags,
+            ...own,
+            ".",
+          ],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return {
+          texts: texts.map((_, index) => readFileSync(join(String(dir), `${index}.graphql`), "utf8")),
+          said: `${stdout}${stderr}`.split("\n").sort().join("\n"),
+          exitCode,
+        };
+      }),
+    );
+  }
+
+  const long = "a".repeat(30);
+  const texts = [
+    // Written as it's printed, and not.
+    "query A {\n  a\n  b: c\n  ...D\n  ... on E {\n    f\n  }\n}\n",
+    "query A{a,b:c,...D,... on E{f}}",
+    "{a{b{c{d}}}}\n\n\n\n{ e }\nquery   { f }\n",
+    "type A {\n  a: B\n  c: [D!]!\n\n  e(f: G = 1, h: [I] = [1, 2]): J @k\n}\n",
+    "type A{a:B,c:[D!]!,e(f:G=1,h:[I]=[1,2]):J@k}",
+    "    type A {\n        a: B\n\tc: D\n}\n",
+    "schema { query: A mutation: B }\nextend schema @a\nextend schema { subscription: C }\n",
+    "scalar A\nscalar B @c\nextend scalar D @e\nenum F { G H @i }\nextend enum F { J }\ninput K { l: M = { n: 1 } }\n",
+    "union A = B | C\nunion D = | E | F\nunion G\nextend union H = I\nunion J @k = L\n",
+    `union A = ${long} | ${long} | ${long}\n`,
+    "interface A implements B & C { d: E }\ntype F implements & G & H\ntype I implements J @k { l: M }\n",
+    `type A implements ${long} & ${long} & ${long} { b: C }\n`,
+    "directive @a(b: C = 1 @d) repeatable on FIELD | QUERY\ndirective @e on | FIELD\nextend directive @f @g\n",
+    "fragment A on B { c }\nfragment D($e: F = 1) on G @h { i }\n{ ...J(k: 1) @l }\n",
+    "query A($b: C = 1 @d, $e: [F!]! = [1]) @g(h: 1) @i { j }\nsubscription { a }\nmutation B { c }\nquery ($a: B) { c }\n",
+    // What doesn't fit.
+    `{ a(b: "${long}", c: "${long}", d: "${long}") { e } }\n`,
+    `{ a(b: { c: "${long}", d: ["${long}", "${long}", "${long}"] }) }\n`,
+    `{\n  a(\n    b: 1\n    c: 2\n  )\n  d(\n    e: "${long}${long}${long}"\n  ) {\n    f\n  }\n}\n`,
+    `{ a @${long}(b: 1) @${long}(c: 2) @${long}(d: 3) { e } }\n`,
+    `query ${long}($a: ${long}, $b: ${long}) @${long} @${long} @${long} { c }\n`,
+    `type A { ${long}(b: ${long}, c: ${long}): ${long} @${long} @${long} }\n`,
+    `type A { b(c: D): ${long}${long}${long} @e(f: 1) }\n`,
+    `{ a(b: [[[[["${long}", "${long}"], ["${long}"]]]]]) }\n`,
+    "{ a(b: [], c: {}, d: [[]], e: { f: {} }) }\n",
+    // Lines that are kept, in lists that keep them and in lists that don't.
+    "{ a(b: 1\n\n\nc: 2) }\n",
+    "{ a(b: [1\n\n2], c: { d: 1\n\ne: 2 }) }\n",
+    "query ($a: B\n\n$c: D) { e }\n",
+    "type A { b(c: D\n\n e: F): G }\n",
+    "{\n  a\n\n\n  b\n  ,\n  c\n\n  ,\n\n  d ,\n\n  e\n}\n",
+    // Comments between items, and elsewhere.
+    "# a\n\n# b\n{ c } # d\n# e\n\n# f\n{ g }\n# h\n\n\n# i",
+    "{\n  # a\n  b # c\n  # d\n\n  # e\n  f\n  # g\n\n  # h\n}\n",
+    "{ # a\n  b\n}\ntype C { # d\n  e: F\n}\n",
+    "type A {\n  # b\n  c: D # e\n  , # f\n  g: H\n}\n",
+    "{ a(\n  # b\n  c: 1 # d\n  # e\n\n  f: 2\n) }\n",
+    "{ a(c: 1, # d\n  f: 2 # g\n) }\n",
+    "{ a(c: 1\n  # g\n) }\n{ a(c: 1 # h\n) @i }\n",
+    "{ a( # b\n c: 1) }\n{ a(b: [ # c\n 1\n # d\n 2]) }\n{ a(b: {\n # c\n d: 1 }) }\n{ a(b: [\n # c\n]) }\n",
+    "query ( # a\n $b: C # d\n $e: F\n) { g }\n",
+    "type A # b\n{ c: D }\ntype E # f\nimplements G\n{ a # b\n (c: 1) }\n{ a # b\n { c } }\n{ a # b\n : c }\n",
+    "type A implements B &\n# c\nD { e: F }\n",
+    '"a" # b\ntype C\n"""d"""\n# e\ntype F { "g" # h\n i: J }\n',
+    "# prettier-ignore\n{a}\n{b}\n",
+    "{\n  # prettier-ignore\n  a(b:1)\n  c(d:1)\n}\n{ a # prettier-ignore\n}\n",
+    "#\n#a\n#  b  \n{ c }#d\n",
+    // Strings.
+    '"a" type B { "c" d: E "f" g(h: I "j" k: L): M }\n',
+    '"""a""" type B { """c""" d: E """f""" g(h: I """j""" k: L): M }\n',
+    '"""\na\n"""\ntype B {\n  """\n  c\n\n  d\n  """\n  e: F\n}\n',
+    '"""\n    a\n      b\n\n\n\n    c\n"""\ntype D\n',
+    '""" a """ type B\n"""a """ type B\n""" a\n""" type B\n"""\n a  \n b\t\n""" type B\n"""\n\n   \n""" type B\n"""""" type B\n',
+    '"""\n a\n   \n b\n""" type C\n"""a\n  b\n c""" type D\n"""\n\ta\n\t\tb\n""" type E\n',
+    '"""a \\""" b""" type C\n{ a(b: """c""", d: """\ne\n""") }\n',
+    '{ a(b: "c\\"d", e: "\\u00e9\\n\\t\\\\", f: "\\u{1F600}", g: "\\r") }\n',
+    `{ a(b: "漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字", c: "漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字漢") }\n`,
+    `{ a(b: "éééééééééééééééééééééééééééééééééé", c: "ééééééééééééééééééééééééééééé") }\n`,
+    '{ a(b: "\t\x7f\x01", c: "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀") }\n',
+    // Tokens.
+    "{ a(b: $c, d: [$e$f], g: -1.5e+3, h: 0, i: true, j: null, k: ENUM, l: 1e5) }\n",
+    "﻿{ a }\n{ ﻿ b }\n",
+    "{ a }\r\n{ b(c: 1\r\n\r\nd: 2) }\r\n",
+    "{ a }\r{ b }\r",
+    `{ ${"a".repeat(70)} ${"b".repeat(200)}(c: 1) }\n`,
+    `{ ${"a { ".repeat(70)}b${" }".repeat(70)} }\n`,
+    `{ a(b: ${"[".repeat(70)}1${"]".repeat(70)}) }\n`,
+    `type A { b: ${"[".repeat(70)}C${"]".repeat(70)} }\n`,
+    // Errors.
+    "{ a",
+    "{ a }}",
+    "{ a(b: ) }",
+    "{ a }\n{ b(c: 01) }",
+    '{ a }\n{ b(c: "d) }',
+    '{ a }\n"""b',
+    "{ a }\ntype B { c: D = 1 }",
+    "{ a }\nenum B { true }",
+    "{ a }\nextend type B",
+    "{ a }\ndirective @b on C",
+    "{ a }\nquery ($b: C = $d) { e }",
+    "{ a }\nfragment on on B { c }",
+    "{ a }\n{ ...B { c } }",
+    "{ a }\n{ b ? }",
+    "{ a }\n{ b   c }",
+    '"a" { b }',
+    '"a" extend type B @c',
+    "# a",
+    "",
+    "\n\n",
+  ];
+
+  test
+    .skipIf(!hasFlag)
+    .concurrent.each(
+      [
+        [],
+        ["--print-width=40"],
+        ["--print-width=1"],
+        ["--print-width=100000"],
+        ["--tab-width=4"],
+        ["--tab-width=0"],
+        ["--tab-width=5000", "--print-width=20"],
+        ["--use-tabs"],
+        ["--use-tabs", "--tab-width=8", "--print-width=30"],
+        ["--no-bracket-spacing"],
+        ["--end-of-line=crlf"],
+        ["--end-of-line=cr"],
+        ["--end-of-line=auto"],
+        ["--insert-pragma"],
+        ["--require-pragma"],
+      ].map(flags => [flags.join(" ") || "defaults", flags] as const),
+    )("%s", async (_, flags) => {
+    const [short, long] = await format(texts, flags);
+    expect(short.texts).toEqual(long.texts);
+    expect(short.said).toEqual(long.said);
+    expect(short.exitCode).toBe(long.exitCode);
+  });
+
+  test.skipIf(!hasFlag)("what has been formatted", async () => {
+    const [formatted] = await format(texts, []);
+    const [short, long] = await format(formatted.texts, []);
+    expect(short.texts).toEqual(long.texts);
+    expect(short.said).toEqual(long.said);
+  });
+});

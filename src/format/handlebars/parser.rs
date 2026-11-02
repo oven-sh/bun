@@ -649,7 +649,27 @@ impl Parser<'_> {
             (name, tail)
         };
         let tail = self.tree.add_names(tail);
-        let node = self.tree.add(Kind::Path { head, name, tail }, start, end);
+        // Names that need no brackets and can't be taken for anything else, with dots between them.
+        let is_as_written = is_plain
+            && !is_verbatim
+            && !has_slash
+            && segments.iter().enumerate().all(|(index, segment)| {
+                let name = self.text(segment.part);
+                name.first()
+                    .is_some_and(|first| first.is_ascii_alphabetic() || *first == b'_')
+                    && match name {
+                        b"true" | b"false" | b"null" | b"undefined" | b"else" => false,
+                        b"this" => index == 0 && is_this,
+                        _ => true,
+                    }
+            });
+        let kind = Kind::Path {
+            head,
+            name,
+            tail,
+            is_as_written,
+        };
+        let node = self.tree.add(kind, start, end);
         if is_verbatim {
             self.tree.keep_verbatim(node);
         }

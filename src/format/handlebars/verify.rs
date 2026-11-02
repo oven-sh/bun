@@ -423,7 +423,9 @@ impl<'a> Writer<'a> {
                 self.out.push(b'(');
                 self.call(call);
             }
-            Kind::Path { head, name, tail } => {
+            Kind::Path {
+                head, name, tail, ..
+            } => {
                 self.out.push(head as u8);
                 self.field(b'p', self.text(name));
                 self.names(tail);

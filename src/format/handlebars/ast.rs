@@ -148,6 +148,8 @@ pub(crate) enum Kind {
         /// `head.original`
         name: Text,
         tail: Range,
+        /// It's known to be printed as it's written.
+        is_as_written: bool,
     },
     String {
         value: Text,

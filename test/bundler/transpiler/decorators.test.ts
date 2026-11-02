@@ -1098,9 +1098,9 @@ test("removes decorated declare and abstract fields from a class expression", as
 });
 
 test("lowering many decorated instance fields into a large constructor body stays linear", async () => {
-  // Hold N fixed; compare M=100 vs M=50000. tLarge/tSmall is about 1.6. If the
-  // splice-after-super() were O(M*N) instead of O(M+N), it would be 3.3 to 3.9 in a
-  // debug build and 29 to 74 in a release build.
+  // Hold N fixed; compare M=100 vs M=50000. tLarge/tSmall is about 1.6 on every build.
+  // If the splice-after-super() were O(M*N) instead of O(M+N), it would be 3.3 to 3.9
+  // on a debug build, 17 to 29 on a release ASAN build and 29 to 74 on a release build.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1145,7 +1145,7 @@ test("lowering many decorated instance fields into a large constructor body stay
     exitCode: 0,
   });
   const { tSmall, tLarge } = JSON.parse(stdout);
-  // One wall-clock sample of each, beside the other test files of a CI batch: the ratio
-  // has reached 6.7 there with nothing wrong. Only a release build has room above that.
-  expect(tLarge).toBeLessThan(tSmall * (isDebug || isASAN ? 3 : 10));
+  // One wall-clock sample of each, beside the other test files of a CI batch. With nothing
+  // wrong, the ratio has reached 6.7 there on a release build and 3.2 on the ASAN build.
+  expect(tLarge).toBeLessThan(tSmall * (isDebug ? 3 : isASAN ? 6 : 10));
 }, 90_000);

@@ -380,7 +380,7 @@ impl Entry {
                 let mut total: usize = 0;
                 for v in vecs {
                     debug_assert!(v.len > 0);
-                    // `uv_buf_t::len` is `ULONG` (u32) on Windows, `usize` on POSIX.
+                    // `len` is `ULONG` (u32) on Windows, `usize` on POSIX.
                     total += v.len as usize;
                 }
                 debug_assert!(file_len == total);
@@ -846,14 +846,7 @@ impl RuntimeTranspilerCache {
             if !dirname.is_empty() {
                 let dir =
                     sys::Dir::cwd().make_open_path(dirname, sys::OpenDirOptions::default())?;
-                let dfd = dir.into_raw();
-                break 'brk match dfd.make_lib_uv_owned() {
-                    Ok(f) => f,
-                    Err(e) => {
-                        dfd.close();
-                        return Err(e.into());
-                    }
-                };
+                break 'brk dir.into_raw();
             }
 
             break 'brk Fd::cwd();

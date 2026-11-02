@@ -616,10 +616,6 @@ const checkServerIdentityInHandshake: (socket: SocketHandle, inHandshake: boolea
 );
 // destroy() in the handshake callback: drops the handshake flight that the native layer holds.
 const releaseHeldFlight: (socket: SocketHandle) => void = $bindgen("socket_body.bind.ts", "releaseHeldFlight");
-const isNamedPipeSocket: (socket: SocketHandle | null) => boolean = $bindgen(
-  "socket_body.bind.ts",
-  "isNamedPipeSocket",
-);
 const getBufferedAmount: (socket: SocketHandle) => number = $bindgen("socket_body.bind.ts", "getBufferedAmount");
 
 const bunTlsSymbol: typeof netSymbols.bunTlsSymbol = netSymbols.bunTlsSymbol;
@@ -897,7 +893,7 @@ function attachClientTLS(
   if (self.destroyed || (!upgradeDuplex && !handle)) return;
   const options = { data: { self, req: {} }, tls, socket: self[khandlers], isServer: false };
   try {
-    if (upgradeDuplex || isNamedPipeSocket(handle) || hasUnflushedWrites(connection)) {
+    if (upgradeDuplex || hasUnflushedWrites(connection)) {
       attachTLSEngine(self, connection, options);
     } else {
       adoptTLSPair(self, connection, upgradeTLSDeferred(handle!, options));
@@ -3076,8 +3072,8 @@ Socket.prototype[kUpgradeServerTLS] = function (
   linkUpgraded(this, connection);
   const options = { data: this, tls, socket: serverHandlersFor(this), isServer: true };
   const socket = connection._handle;
-  if (!socket || connection.encrypted || isNamedPipeSocket(socket) || hasUnflushedWrites(connection)) {
-    // No adoptable fd (generic Duplex, named pipe, never dialed), TLS over TLS (the fd belongs to the
+  if (!socket || connection.encrypted || hasUnflushedWrites(connection)) {
+    // No adoptable fd (generic Duplex, never dialed), TLS over TLS (the fd belongs to the
     // outer SSL layer), or pending plain writes that must flush first.
     attachTLSEngine(this, connection, options);
   } else if (connection.connecting) {

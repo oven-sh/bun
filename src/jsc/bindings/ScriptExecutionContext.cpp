@@ -388,12 +388,6 @@ bool ScriptExecutionContext::ensureOnContextThread(ScriptExecutionContextIdentif
     return true;
 }
 
-ScriptExecutionContext* ScriptExecutionContext::getMainThreadScriptExecutionContext()
-{
-    Locker locker { allScriptExecutionContextsMapLock };
-    return allScriptExecutionContextsMap().get(1);
-}
-
 void ScriptExecutionContext::checkConsistency() const
 {
 #if ASSERT_ENABLED

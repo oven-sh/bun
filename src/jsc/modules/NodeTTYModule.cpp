@@ -2,9 +2,27 @@
 
 #include "NodeTTYModule.h"
 
+#if OS(WINDOWS)
+#include <windows.h>
+
+extern "C" void* Bun__getOSFHandle(int fd);
+#endif
+
 using namespace JSC;
 
 namespace Zig {
+
+bool isTTY(int fd)
+{
+#if !OS(WINDOWS)
+    return isatty(fd);
+#else
+    // NUL is a character device too, but only a console has a console mode.
+    HANDLE handle = fd >= 0 ? Bun__getOSFHandle(fd) : INVALID_HANDLE_VALUE;
+    DWORD mode;
+    return GetFileType(handle) == FILE_TYPE_CHAR && GetConsoleMode(handle, &mode);
+#endif
+}
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionTty_isatty, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
@@ -17,20 +35,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionTty_isatty, (JSGlobalObject * globalObject, C
     int fd = callFrame->argument(0).toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-#if !OS(WINDOWS)
-    bool isTTY = isatty(fd);
-#else
-    bool isTTY = false;
-    switch (uv_guess_handle(fd)) {
-    case UV_TTY:
-        isTTY = true;
-        break;
-    default:
-        break;
-    }
-#endif
-
-    return JSValue::encode(jsBoolean(isTTY));
+    return JSValue::encode(jsBoolean(isTTY(fd)));
 }
 
 } // namespace Zig

@@ -1,12 +1,17 @@
-#include "uv-posix-polyfills.h"
+#include "uv-polyfills.h"
 
-#if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
+void __bun_throw_not_implemented(const char* symbol_name)
+{
+    CrashHandler__unsupportedUVFunction(symbol_name);
+}
+
+#if OS(WINDOWS)
+#include "uv-polyfills-windows.c"
+#else
 
 #include <pthread.h>
 #include <unistd.h>
 #include <stdlib.h>
-#include <string.h>
-#include <limits.h>
 
 // libuv does the annoying thing of #undef'ing these
 #include <errno.h>
@@ -16,70 +21,19 @@
 #define UV__ERR(x) (x)
 #endif
 
-#if defined(PATH_MAX)
-#define UV__PATH_MAX PATH_MAX
-#else
-#define UV__PATH_MAX 8192
-#endif
-
-void __bun_throw_not_implemented(const char* symbol_name)
-{
-    CrashHandler__unsupportedUVFunction(symbol_name);
-}
-
 // Internals
 
 uint64_t uv__hrtime(uv_clocktype_t type);
 
 #if defined(__linux__)
-#include "uv-posix-polyfills-linux.c"
+#include "uv-polyfills-linux.c"
 #elif defined(__APPLE__)
-#include "uv-posix-polyfills-darwin.c"
+#include "uv-polyfills-darwin.c"
 #elif defined(__FreeBSD__)
-#include "uv-posix-polyfills-posix.c"
+#include "uv-polyfills-posix.c"
 #elif defined(__CYGWIN__) || defined(__MSYS__) || defined(__HAIKU__) || defined(__QNX__) || defined(__GNU__)
-#include "uv-posix-polyfills-posix.c"
+#include "uv-polyfills-posix.c"
 #endif
-
-// Copy-pasted from libuv
-UV_EXTERN int uv_cwd(char* buffer, size_t* size)
-{
-    char scratch[1 + UV__PATH_MAX];
-
-    if (buffer == NULL || size == NULL || *size == 0)
-        return UV_EINVAL;
-
-    /* Try to read directly into the user's buffer first... */
-    if (getcwd(buffer, *size) != NULL)
-        goto fixup;
-
-    if (errno != ERANGE)
-        return UV__ERR(errno);
-
-    /* ...or into scratch space if the user's buffer is too small
-     * so we can report how much space to provide on the next try.
-     */
-    if (getcwd(scratch, sizeof(scratch)) == NULL)
-        return UV__ERR(errno);
-
-    buffer = scratch;
-
-fixup:
-
-    *size = strlen(buffer);
-
-    if (*size > 1 && buffer[*size - 1] == '/') {
-        *size -= 1;
-        buffer[*size] = '\0';
-    }
-
-    if (buffer == scratch) {
-        *size += 1;
-        return UV_ENOBUFS;
-    }
-
-    return 0;
-}
 
 uv_pid_t uv_os_getpid()
 {
@@ -178,9 +132,22 @@ UV_EXTERN void uv_mutex_unlock(uv_mutex_t* mutex)
         abort();
 }
 
+// On Unix a uv_os_fd_t is an int, so both conversions are no-ops.
+UV_EXTERN uv_os_fd_t uv_get_osfhandle(int fd)
+{
+    return fd;
+}
+
+UV_EXTERN int uv_open_osfhandle(uv_os_fd_t os_fd)
+{
+    return os_fd;
+}
+
+#endif
+
 // These functions only need the headers, so they're copied from libuv
-// (version.c, uv-common.c, uv-data-getter-setters.c, unix/core.c). The
-// functions that need a loop are in src/runtime/napi/uv_posix.rs.
+// (version.c, uv-common.c, uv-data-getter-setters.c). The functions that
+// need a loop are in src/runtime/napi/uv.rs.
 
 #define UV_STRINGIFY(v) UV_STRINGIFY_HELPER(v)
 #define UV_STRINGIFY_HELPER(v) #v
@@ -297,7 +264,7 @@ UV_EXTERN void uv_req_set_data(uv_req_t* req, void* data)
     req->data = data;
 }
 
-// A uv_loop_t* points to a UvLoop (uv_posix.rs), whose first field is also `data`.
+// A uv_loop_t* points to a UvLoop (uv.rs), whose first field is also `data`.
 UV_EXTERN void* uv_loop_get_data(const uv_loop_t* loop)
 {
     return loop->data;
@@ -307,16 +274,3 @@ UV_EXTERN void uv_loop_set_data(uv_loop_t* loop, void* data)
 {
     loop->data = data;
 }
-
-// On Unix a uv_os_fd_t is an int, so both conversions are no-ops.
-UV_EXTERN uv_os_fd_t uv_get_osfhandle(int fd)
-{
-    return fd;
-}
-
-UV_EXTERN int uv_open_osfhandle(uv_os_fd_t os_fd)
-{
-    return os_fd;
-}
-
-#endif

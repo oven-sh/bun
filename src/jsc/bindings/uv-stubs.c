@@ -1,7 +1,6 @@
 // GENERATED CODE - DO NOT MODIFY BY HAND
-#include "uv-posix-polyfills.h"
+#include "uv-polyfills.h"
 
-#if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
 UV_EXTERN int uv_accept(uv_stream_t* server, uv_stream_t* client)
 {
     __bun_throw_not_implemented("uv_accept");
@@ -1827,4 +1826,3 @@ UV_EXTERN void uv_wtf8_to_utf16(const char* wtf8,
     __bun_throw_not_implemented("uv_wtf8_to_utf16");
     __builtin_unreachable();
 }
-#endif

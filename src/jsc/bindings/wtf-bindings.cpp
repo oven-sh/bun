@@ -15,9 +15,6 @@
 static_assert(WTF::maxECMAScriptTime == 8.64e15, "bun_jsc::wtf::MAX_ECMASCRIPT_TIME in WTF.rs must match");
 
 #include "wtf/SIMDUTF.h"
-#if OS(WINDOWS)
-#include <uv.h>
-#endif
 
 #if !OS(WINDOWS)
 #include <stdatomic.h>
@@ -201,11 +198,9 @@ static int ttySetMode(int fd, int mode, BunTTYState& state, int action)
 
     return rc;
 }
-#endif
 
 extern "C" int Bun__ttySetMode(int fd, int mode, void* rawState, int drain)
 {
-#if !OS(WINDOWS)
     // Copied in and out so callers can hand us an unaligned byte buffer: the
     // JS streams keep theirs in a Uint8Array.
     BunTTYState state;
@@ -217,14 +212,8 @@ extern "C" int Bun__ttySetMode(int fd, int mode, void* rawState, int drain)
     int rc = ttySetMode(fd, mode, state, drain ? TCSADRAIN : TCSANOW);
     memcpy(rawState, &state, sizeof(state));
     return rc;
-#else
-    UNUSED_PARAM(fd);
-    UNUSED_PARAM(mode);
-    UNUSED_PARAM(rawState);
-    UNUSED_PARAM(drain);
-    return 0;
-#endif
 }
+#endif
 
 extern "C" double WTF__parseDouble(const Latin1Character* string, size_t length, size_t* position)
 {

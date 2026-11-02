@@ -123,6 +123,13 @@ export function pathToUpperSnakeCase(filepath: string) {
     .toUpperCase();
 }
 
+/** The schemas named by `--sources=<a>,<b>` or, one on each line, by the file of `--sources-file=<file>`. */
+export function sourcesArgument(args: Record<string, string | boolean | undefined>): string[] | null {
+  const { sources, "sources-file": file } = args;
+  if (typeof file === "string") return fs.readFileSync(file, "utf8").split(/\r?\n/).filter(Boolean);
+  return typeof sources === "string" ? sources.split(",").filter(Boolean) : null;
+}
+
 export function argParse(keys: string[]): any {
   const options: { [key: string]: boolean | string } = {};
   for (const arg of process.argv.slice(2)) {

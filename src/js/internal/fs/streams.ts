@@ -77,6 +77,7 @@ declare global {
       [kIsPerformingIO]: boolean;
       /** true: the path must be opened; a sink: a FileSink. */
       [kWriteStreamFastPath]?: undefined | true | FileSink;
+      [kFlushIsScheduled]?: boolean;
     }
 
     interface ReadStream extends Readable, FileStreamFields {
@@ -104,6 +105,7 @@ const kIoDone = Symbol("kIoDone");
 // Bun supports a fast path for `createWriteStream("path.txt")` where instead of
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
+const kFlushIsScheduled = Symbol("kFlushIsScheduled");
 const kFs = Symbol("kFs");
 
 let FileHandle: FileHandleInternals["FileHandle"] | undefined;
@@ -731,6 +733,24 @@ function emitDrain(stream: $Node.WriteStream) {
   }
 }
 
+// A sink says "written" of a small chunk that it only keeps for later: whether that fails shows when it is sent.
+function flushSoon(stream: $Node.WriteStream, fileSink: FileSink) {
+  if (stream[kFlushIsScheduled]) return;
+  stream[kFlushIsScheduled] = true;
+  process.nextTick(flushNow, stream, fileSink);
+}
+
+function flushNow(stream: $Node.WriteStream, fileSink: FileSink) {
+  stream[kFlushIsScheduled] = false;
+  const { errorOrDestroy } = require("internal/streams/destroy");
+  try {
+    const maybePromise = fileSink.flush();
+    if ($isPromise(maybePromise)) maybePromise.then(undefined, err => errorOrDestroy(stream, err));
+  } catch (err) {
+    errorOrDestroy(stream, err as Error);
+  }
+}
+
 function _write(this: $Node.WriteStream, data: Buffer, encoding: string, cb: ErrorCallback) {
   const fileSink = this[kWriteStreamFastPath];
 
@@ -745,6 +765,7 @@ function _write(this: $Node.WriteStream, data: Buffer, encoding: string, cb: Err
         .catch(cb);
       return false; // Indicate backpressure
     } else {
+      flushSoon(this, fileSink);
       cb(null);
       return true; // No backpressure
     }
@@ -793,6 +814,7 @@ function underscoreWriteFast(this: $Node.WriteStream, data: Buffer, encoding: st
       );
       return false;
     } else {
+      flushSoon(this, fileSink);
       if (cb) process.nextTick(cb, null);
       return true;
     }
@@ -881,6 +903,7 @@ function writeFast(
       );
       return false; // Indicate backpressure
     } else {
+      flushSoon(this, fileSink);
       cb(null);
       return true; // No backpressure
     }
@@ -928,6 +951,7 @@ writeStreamPrototype._writev = function (this: $Node.WriteStream, data: $Node.Ch
         .catch(cb);
       return false;
     } else {
+      flushSoon(this, fileSink);
       cb(null);
       return true;
     }

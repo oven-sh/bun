@@ -377,11 +377,7 @@ export default b.declarations(
     ...nativeBindings("Bindgen", "socket_body.bind.ts", "upgradeDuplexToTLS"),
   ),
   extendAll(["Sockets", ...tlsSocketFeatures], "%TCPSocket%"),
-  extendAll(
-    ["Sockets"],
-    "%Listener%",
-    ...nativeBindings("Bindgen", "socket_body.bind.ts", "getBufferedAmount", "isNamedPipeSocket"),
-  ),
+  extendAll(["Sockets"], "%Listener%", ...nativeBindings("Bindgen", "socket_body.bind.ts", "getBufferedAmount")),
 
   extendAll(
     ["Dns"],

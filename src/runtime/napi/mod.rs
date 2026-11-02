@@ -12,8 +12,7 @@ pub(crate) use napi_body::{
 };
 
 pub(crate) mod libc_check;
-#[cfg(unix)]
-pub(crate) mod uv_posix;
+pub(crate) mod uv;
 
 // ─── compiling free items ────────────────────────────────────────────────────
 

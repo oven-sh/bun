@@ -229,6 +229,31 @@ pub trait JobContext: Sized + 'static {
     }
 }
 
+/// Where a job's [`run`](JobContext::run) happens.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RunsOn {
+    WorkPool,
+    /// [`WorkPool::schedule_waiting`]
+    WaitingPool,
+    /// `run` is over when [`Job::schedule_on`] returns. `then` still comes from the event loop.
+    JsThread,
+}
+
+impl RunsOn {
+    /// For a job whose blocking calls read a descriptor or write to `writes_to`.
+    pub fn for_io(writes_to: Option<bun_core::Fd>) -> RunsOn {
+        // Elsewhere a `Blob` job polls, and `fs.read()` of a pipe holds a thread of the one pool.
+        if !cfg!(windows) {
+            return RunsOn::WorkPool;
+        }
+        match writes_to {
+            // Written before the call returns, as in any Windows process: `process.exit()` loses nothing and the order is kept.
+            Some(fd) if fd.is_stdout_or_stderr() => RunsOn::JsThread,
+            _ => RunsOn::WaitingPool,
+        }
+    }
+}
+
 /// The type-erased head of every [`Job<C>`] (one task tag serves every `C`),
 /// linked into its VM's [`JobList`] while the job is live.
 #[repr(C)]
@@ -340,6 +365,11 @@ impl<C: JobContext> Job<C> {
     /// JS thread: build the job, keep the loop alive for it, hand it to the pool.
     #[track_caller]
     pub fn schedule(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) {
+        Self::schedule_on(RunsOn::WorkPool, cx, off, js)
+    }
+
+    #[track_caller]
+    pub fn schedule_on(runs_on: RunsOn, cx: &JsThread<'_>, off: C::OffThread, js: C::Js) {
         let mut keep_alive = KeepAlive::default();
         keep_alive.ref_(bun_io::js_vm_ctx());
         let job = bun_core::heap::into_raw(Box::new(Self {
@@ -361,7 +391,7 @@ impl<C: JobContext> Job<C> {
             ticket: Some(cx.vm().ticket()),
             task: WorkPoolTask {
                 node: Default::default(),
-                callback: Self::run_on_pool,
+                callback: Self::run_task,
             },
             keep_alive,
             off,
@@ -372,11 +402,16 @@ impl<C: JobContext> Job<C> {
             if C::CANCELLABLE {
                 cx.vm().jobs.with_mut(|j| j.push(&raw mut (*job).header));
             }
-            WorkPool::schedule(&raw mut (*job).task);
+            let task = &raw mut (*job).task;
+            match runs_on {
+                RunsOn::WorkPool => WorkPool::schedule(task),
+                RunsOn::WaitingPool => WorkPool::schedule_waiting(task),
+                RunsOn::JsThread => Self::run_task(task),
+            }
         }
     }
 
-    fn run_on_pool(task: *mut WorkPoolTask) {
+    fn run_task(task: *mut WorkPoolTask) {
         // SAFETY: only reachable through the `task.callback` slot wired in
         // `schedule`; the pool calls back with exactly that field of a live job.
         let this: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, task) };

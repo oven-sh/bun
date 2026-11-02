@@ -801,15 +801,6 @@ export const socketFaultInjection = {
   clear: $bindgen("socket_body.bind.ts", "clearSocketFaults"),
 };
 
-export const namedPipeInternals = {
-  /**
-   * Live native contexts behind sockets over Windows named pipes: one per
-   * connecting or connected `Bun.connect({ unix: "\\\\.\\pipe\\..." })` socket and
-   * one per accepted pipe client. Always 0 on other platforms.
-   */
-  liveCount: $bindgen("socket_body.bind.ts", "namedPipeContextLiveCount"),
-};
-
 export const duplexTLSInternals = {
   /**
    * Live native contexts behind TLS sockets that run over a JS stream
@@ -972,7 +963,7 @@ export const getEventLoopStats: () => {
   numPolls: number;
   loopActive: boolean;
   eventLoopAlive: boolean;
-  /** usockets/libuv loop iterations so far (us_internal_loop_pre count). */
+  /** usockets loop iterations so far (us_internal_loop_pre count). */
   iteration: number;
 } = $bindgen("event_loop.bind.ts", "getActiveTasks");
 
@@ -980,8 +971,6 @@ export const hostedGitInfo = {
   parseUrl: $bindgen("hosted_git_info_jsc.bind.ts", "parseUrl"),
   fromUrl: $bindgen("hosted_git_info_jsc.bind.ts", "fromUrl"),
 };
-
-export const translateUVErrorToE = $bindgen("error_jsc.bind.ts", "translateUVErrorToE");
 
 export const translateNtStatusToE = $bindgen("error_jsc.bind.ts", "translateNtStatusToE");
 

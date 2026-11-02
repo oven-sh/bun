@@ -3,7 +3,7 @@
 #include "root.h"
 
 #if OS(WINDOWS)
-#include <uv.h>
+#include <windows.h>
 #elif OS(DARWIN)
 #include <mach/task.h>
 #include <mach/semaphore.h>
@@ -23,7 +23,7 @@ public:
 
 private:
 #if OS(WINDOWS)
-    uv_sem_t m_semaphore;
+    HANDLE m_semaphore;
 #elif OS(DARWIN)
     semaphore_t m_semaphore;
 #else

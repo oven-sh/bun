@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <algorithm>
 #include <sys/stat.h>
-#include <uv.h>
 #include <fcntl.h>
 #include <windows.h>
 #include <string.h>
@@ -34,11 +33,6 @@ extern "C" int stat64(
     _Out_ struct _stat64* _Stat)
 {
     return _stat64(_FileName, _Stat);
-}
-
-extern "C" int kill(int pid, int sig)
-{
-    return uv_kill(pid, sig);
 }
 
 #endif

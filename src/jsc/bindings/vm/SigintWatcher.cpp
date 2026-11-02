@@ -5,7 +5,7 @@
 #include <windows.h>
 #endif
 
-extern "C" void Bun__onPosixSignal(int signalNumber);
+extern "C" void Bun__onSignal(int signalNumber);
 extern "C" void Bun__ensureSignalHandler();
 
 namespace Bun {
@@ -68,7 +68,7 @@ void SigintWatcher::install()
                 m_waiting.clear();
 #if !OS(WINDOWS)
                 if (!signalInnermost()) {
-                    Bun__onPosixSignal(SIGINT);
+                    Bun__onSignal(SIGINT);
                 }
 #else
                 signalInnermost();
@@ -91,7 +91,7 @@ void SigintWatcher::uninstall()
 #else
         struct sigaction action;
         memset(&action, 0, sizeof(struct sigaction));
-        action.sa_handler = Bun__onPosixSignal;
+        action.sa_handler = Bun__onSignal;
         sigemptyset(&action.sa_mask);
         sigaddset(&action.sa_mask, SIGINT);
         action.sa_flags = SA_RESTART;

@@ -97,7 +97,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
         let mut i: usize = css_chunk.imports_in_chunk_in_order.len() as usize;
         while i != 0 {
             i -= 1;
-            let (before, after) =
+            let SharedAnonymousConditions { before, after } =
                 shared_anonymous_conditions(css_chunk.imports_in_chunk_in_order.slice(), i);
             let private_conditions = before.max(after);
             let entry = css_chunk.imports_in_chunk_in_order.mut_(i);
@@ -468,10 +468,19 @@ fn arena_rule_list_one(bump: &Bump, rule: BundlerCssRule) -> BundlerCssRuleList 
     arena_rule_list(v)
 }
 
-/// The number of leading conditions that entry `i` shares with the entry before
-/// it and with the entry after it. The entries of one anonymous layer must print
-/// in one block, so they open and close those conditions only once.
-pub(crate) fn shared_anonymous_conditions(order: &[CssImportOrder], i: usize) -> (usize, usize) {
+/// The number of leading conditions that an entry shares with its neighbours.
+#[derive(Clone, Copy)]
+pub(crate) struct SharedAnonymousConditions {
+    pub before: usize,
+    pub after: usize,
+}
+
+/// The entries of one anonymous layer must print in one block, so they open and
+/// close the conditions they share only once.
+pub(crate) fn shared_anonymous_conditions(
+    order: &[CssImportOrder],
+    i: usize,
+) -> SharedAnonymousConditions {
     let shared = |a: &CssImportOrder, b: &CssImportOrder| {
         if matches!(a.kind, CssImportOrderKind::ExternalPath(_))
             || matches!(b.kind, CssImportOrderKind::ExternalPath(_))
@@ -484,11 +493,12 @@ pub(crate) fn shared_anonymous_conditions(order: &[CssImportOrder], i: usize) ->
             .rposition(|(a, b)| a.has_anonymous_layer() && ImportConditions::layers_eql(a, b))
             .map_or(0, |last| last + 1)
     };
-    (
-        i.checked_sub(1)
+    SharedAnonymousConditions {
+        before: i
+            .checked_sub(1)
             .map_or(0, |prev| shared(&order[prev], &order[i])),
-        order.get(i + 1).map_or(0, |next| shared(&order[i], next)),
-    )
+        after: order.get(i + 1).map_or(0, |next| shared(&order[i], next)),
+    }
 }
 
 /// The blocks of `conditions` around no rules. `ManuallyDrop`, because the rules

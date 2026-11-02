@@ -11,7 +11,7 @@ use crate::bun_css::{
 
 use crate::chunk::{Content, CssChunk, CssImportOrderKind};
 use crate::linker_context::prepare_css_asts_for_chunk::{
-    empty_blocks, shared_anonymous_conditions,
+    SharedAnonymousConditions, empty_blocks, shared_anonymous_conditions,
 };
 use crate::linker_context_mod::LinkerContext;
 use crate::thread_pool::Worker;
@@ -222,7 +222,7 @@ fn shared_block_edges<'a>(
     arena: &'a bun_alloc::Arena,
 ) -> Result<SharedBlockEdges, ()> {
     let order = css_content.imports_in_chunk_in_order.slice();
-    let (before, after) = shared_anonymous_conditions(order, i);
+    let SharedAnonymousConditions { before, after } = shared_anonymous_conditions(order, i);
     let (outer, inner) = (before.min(after), before.max(after));
     if inner == 0 {
         return Ok(SharedBlockEdges::default());

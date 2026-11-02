@@ -1321,7 +1321,7 @@ fn push_codepoint(buf: &mut Vec<u8>, cp: CodePoint) {
     buf.extend_from_slice(&tmp[..n]);
 }
 
-/// The length of the text at the start of `text`, up to a backslash.
+/// The length of `text` up to a backslash. It reads short text itself: `index_of_char` was slower.
 #[inline(always)]
 fn text_len(text: &[u8]) -> usize {
     const ONES: u64 = 0x0101_0101_0101_0101;

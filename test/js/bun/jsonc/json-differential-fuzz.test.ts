@@ -77,7 +77,8 @@ function genStringToken(rng: Rng): string {
         break;
       case 8:
         // Text between two escapes that is longer than the 4, 8 and 16 to 64 bytes the parser reads in one step.
-        body += rng.pick(["a", "~", "é", "日", "🚀"]).repeat(rng.range(7, 150));
+        const text = rng.pick(["a", "~", "é", "日", "🚀"]);
+        body += Buffer.alloc(rng.range(7, 150) * Buffer.byteLength(text), text).toString();
         break;
     }
   }

@@ -210,9 +210,9 @@ private:
 bool shouldDropCallbackOfStoppedModuleGraph(Zig::GlobalObject*, JSC::JSValue asyncContext);
 
 // Returns `asyncContext` with the frames that enter or leave a graph's context removed, leaving only the
-// AsyncLocalStorage stores (and the frame of a module mock's factory, which is not of a graph). Use it for long-lived
-// objects (e.g. an open WebSocket) that save an async context but must not keep the graph alive. Their callbacks
-// restore this context, then use a ModuleGraphContextScope.
+// AsyncLocalStorage stores. Use it for long-lived objects (e.g. an open WebSocket) that save an async context but
+// must not keep the graph alive. Their callbacks restore this context, then use a ModuleGraphContextScope.
+// The frame of a mock.module() factory is not a graph's and stays.
 JSC::JSValue asyncContextWithoutModuleGraphs(Zig::GlobalObject*, JSC::JSValue asyncContext);
 
 // Call after native code sets or restores the current async context. With no script on the stack, `asyncContext`

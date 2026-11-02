@@ -481,7 +481,7 @@ static JSValue makeContextCurrent(Zig::GlobalObject* globalObject, JSModuleGraph
     return previous;
 }
 
-// For built-ins that keep the AsyncLocalStorage stores something was made in and not its graph (the handle of a node:dgram socket). Keeps asyncContextWithoutModuleGraphs() of `frame` for `owner` and answers true, or answers false where that is `frame` itself: built-in JS then keeps `frame`. Kept here and not there, because an ahead-of-time build loses the types of a program's stores where built-in JS holds a frame that native code has made.
+// Keeps asyncContextWithoutModuleGraphs(frame) for `owner`, or answers false where that is `frame` itself. Not returned to built-in JS: an ahead-of-time build loses the types of a program's stores where JS holds a frame that native code made.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionKeepAsyncContextWithoutModuleGraphs, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto* global = defaultGlobalObject(globalObject);
@@ -500,7 +500,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionKeepAsyncContextWithoutModuleGraphs, (JSGloba
     return JSValue::encode(jsBoolean(true));
 }
 
-// Makes current the async context that such a built-in does its later work in: the stores kept for `owner` (`frame` where built-in JS kept it) inside the graph that the running script is in, so that what opens there is that graph's. Built-in JS puts back what was current.
+// Makes current what was kept for `owner` (or `frame`), entered by the graph of the running script: what opens there is that graph's. Built-in JS puts back what was current.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionEnterAsyncContextInCurrentModuleGraph, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto* global = defaultGlobalObject(globalObject);

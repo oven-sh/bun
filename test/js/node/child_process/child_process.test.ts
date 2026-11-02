@@ -886,6 +886,8 @@ describe("spawn()", () => {
     });
   });
 
+  type WriteCallback = (err?: Error | null) => void;
+
   // fs.closeSync() leaves 0, 1 and 2 open on Windows, as in Node.js.
   const closeStdin = isWindows
     ? `const kernel32 = require("bun:ffi").dlopen("kernel32.dll", {
@@ -896,23 +898,41 @@ describe("spawn()", () => {
     : `require("fs").closeSync(0);`;
 
   it.each([
-    ["one small write", (stdin: Writable) => void stdin.write("x")],
+    ["one small write", 1, (stdin: Writable, cb: WriteCallback) => void stdin.write("x", cb)],
     [
       "several small writes",
-      (stdin: Writable) => {
-        for (let i = 0; i < 5; i++) stdin.write("x");
+      5,
+      (stdin: Writable, cb: WriteCallback) => {
+        for (let i = 0; i < 5; i++) stdin.write("x", cb);
       },
     ],
     [
       "small writes under cork()",
-      (stdin: Writable) => {
+      2,
+      (stdin: Writable, cb: WriteCallback) => {
         stdin.cork();
-        stdin.write("x");
-        stdin.write("y");
+        stdin.write("x", cb);
+        stdin.write("y", cb);
         stdin.uncork();
       },
     ],
-  ])("%s to a stdin that the child has closed is an 'error'", async (_, write) => {
+    [
+      "a small write and end()",
+      1,
+      (stdin: Writable, cb: WriteCallback) => {
+        stdin.write("x", cb);
+        stdin.end();
+      },
+    ],
+    [
+      "a small write and a large one",
+      2,
+      (stdin: Writable, cb: WriteCallback) => {
+        stdin.write("x", cb);
+        stdin.write(Buffer.alloc(65536, "y"), cb);
+      },
+    ],
+  ])("%s to a stdin that the child has closed fails the callbacks and is an 'error'", async (_, count, write) => {
     const child = spawn(
       bunExe(),
       ["-e", `${closeStdin} process.stdout.write("ready\\n"); setInterval(() => {}, 1e5);`],
@@ -924,13 +944,49 @@ describe("spawn()", () => {
       const closed = Promise.withResolvers<void>();
       child.stdin!.on("error", (err: NodeJS.ErrnoException) => seen.push(err.code, err.syscall));
       child.stdin!.on("close", closed.resolve);
-      write(child.stdin!);
+      write(child.stdin!, err => seen.push(`callback ${(err as NodeJS.ErrnoException | null)?.code}`));
       await closed.promise;
-      expect(seen).toEqual(["EPIPE", "write"]);
+      expect(seen).toEqual([...new Array(count).fill("callback EPIPE"), "EPIPE", "write"]);
       expect(child.stdin!.destroyed).toBe(true);
     } finally {
       child.kill("SIGKILL");
     }
+  });
+
+  it("stdin calls back in the order of the writes, small or large", async () => {
+    const child = spawn(bunExe(), ["-e", "process.stdin.resume()"], {
+      env: bunEnv,
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+    const order: string[] = [];
+    const stdin = child.stdin!;
+    stdin.write("a", () => order.push("small"));
+    stdin.write(Buffer.alloc(1 << 20, "b"), () => order.push("large"));
+    stdin.write("c", () => order.push("small again"));
+    stdin.end(() => order.push("end"));
+    order.push("in a later tick:");
+    await once(child, "close");
+    expect(order).toEqual(["in a later tick:", "small", "large", "small again", "end"]);
+  });
+
+  it("a callback of stdin.write() that throws does not take the others with it", async () => {
+    const script = `
+      const child = require("child_process").spawn(process.execPath, ["-e", "process.stdin.resume()"], {
+        stdio: ["pipe", "ignore", "ignore"],
+      });
+      const seen = [];
+      process.on("uncaughtException", err => seen.push("uncaught " + err.message));
+      child.stdin.on("error", err => seen.push("'error' " + err.message));
+      child.stdin.write("a", () => {
+        throw new Error("first");
+      });
+      child.stdin.write("b", () => seen.push("second"));
+      child.stdin.end(() => seen.push("end"));
+      child.on("close", () => console.log(seen.join(", ")));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "uncaught first, second, end\n", stderr: "", exitCode: 0 });
   });
 
   it("stdin write failure (EPIPE) emits 'error' and destroys even with a write callback", async () => {

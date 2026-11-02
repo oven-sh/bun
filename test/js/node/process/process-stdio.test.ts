@@ -160,6 +160,22 @@ describe.concurrent("process-stdio", () => {
     );
   });
 
+  test("a write to process.stdout or process.stderr queues no tick", async () => {
+    const script = `
+      const { stdout, stderr, nextTick } = process;
+      const queued = [];
+      process.nextTick = (...args) => queued.push(args);
+      stdout.write("out ");
+      stderr.write("err");
+      process.nextTick = nextTick;
+      console.log(queued.length);
+    `;
+    await using proc = spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "out 0\n", stderr: "err" });
+    expect(exitCode).toBe(0);
+  });
+
   test.skipIf(isWindows)("process.stdout still writes when it's first read with no file descriptors left", async () => {
     const script = `
       const fs = require("node:fs");

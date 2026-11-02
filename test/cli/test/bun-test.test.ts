@@ -512,8 +512,12 @@ describe("bun test", () => {
       expect(stderr.match(/::(?:endgroup|group)::/g) ?? []).toEqual(
         Array.from({ length: groups }, () => ["::group::", "::endgroup::"]).flat(),
       );
-      if (outcome === "load error") expect(stderr).toContain("group load sentinel");
-      if (outcome === "teardown error") expect(stderr).toContain("group teardown sentinel");
+      if (outcome === "load error" || outcome === "teardown error") {
+        const sentinel = outcome === "load error" ? "group load sentinel" : "group teardown sentinel";
+        const sentinelAt = stderr.indexOf(sentinel);
+        expect(sentinelAt).toBeGreaterThan(stderr.indexOf("::group::"));
+        expect(sentinelAt).toBeLessThan(stderr.indexOf("::endgroup::"));
+      }
       if (args.includes("--parallel=2")) expect(stdout).toContain("PARALLEL");
       expect(exitCode).toBe(outcome === "pass" ? 0 : 1);
     });

@@ -479,8 +479,7 @@ JSValue replacedModuleResolveFilename(JSGlobalObject* lexicalGlobalObject, Zig::
     unsigned attributes;
     JSValue value = constructor->getDirect(vm, name, attributes);
     if (!value || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)) {
-        // A Get, as `Module._resolveFilename(...)` is in Node.js: the property can be an accessor, or be gone from
-        // the constructor and found on its prototype chain.
+        // An accessor, or a name that only the prototype chain has.
         value = constructor->get(lexicalGlobalObject, name);
         RETURN_IF_EXCEPTION(scope, {});
     }
@@ -693,8 +692,8 @@ static JSValue getGlobalPathsObject(VM& vm, JSObject* moduleObject)
     return globalPaths;
 }
 
-// Like the runMain setter and the read of _resolveFilename: writing back the default (e.g. copying Module's statics
-// onto a subclass, as jest-runtime does) is not an override.
+// Like the runMain setter: writing back the default (e.g. copying Module's statics onto a
+// subclass, as jest-runtime does) is not an override.
 // A wrapper that is not the default is a string compiled around every CommonJS module.
 static void setModuleWrapper(Zig::GlobalObject* global, JSC::ThrowScope& scope, String&& start, String&& end)
 {
@@ -781,9 +780,7 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleWrapper,
     return true;
 }
 
-// The `require` of a module calls `$overridableRequire` (CommonJS.ts), which is the loader. At the first change of
-// Module.prototype.require the watchpoint makes `$overridableRequire` the function that calls what the property holds.
-// The loader has no `resolve`, nor any other property of a module's `require`.
+// Module.prototype.require starts as the loader, which has no `resolve` nor any other property of a module's `require`.
 static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)
 {
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
@@ -1214,8 +1211,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsModuleResolveFilenameSlowPathEnabled,
                 ->hasOverriddenModuleResolveFilenameFunction));
 }
 
-// For tests: what the watch on each hook does. "armed": require() does not read the property. "fired": it reads it.
-// "not watched": it reads it because the property could not be watched. Undefined before the holder of the hook exists.
+// For tests: "armed", "fired" or "not watched" for each hook, and undefined before the holder of the hook exists.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionLoaderHookWatchpoints,
     (JSGlobalObject * lexicalGlobalObject,
         CallFrame* callframe))

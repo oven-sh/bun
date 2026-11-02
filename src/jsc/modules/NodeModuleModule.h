@@ -20,10 +20,7 @@ using namespace JSC;
 namespace Bun {
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsModuleResolveFilenameSlowPathEnabled);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionLoaderHookWatchpoints);
-// Module._resolveFilename and Module.prototype.require are data properties, and require() calls what they hold.
-// It reads neither before a program changes it: one of these is on each property, and the engine fires it at the
-// first change of any kind (an assignment, Object.defineProperty, delete, a native putDirect). It fires once:
-// from then on require() reads the property for as long as the realm lives.
+// On Module._resolveFilename and on Module.prototype.require: fires once, at the first change of any kind, and from then on require() reads the property.
 enum class LoaderHook : bool { ResolveFilename, Require };
 class LoaderHookWatchpoint final : public JSC::AdaptiveInferredPropertyValueWatchpointBase {
     WTF_MAKE_TZONE_ALLOCATED(LoaderHookWatchpoint);
@@ -39,8 +36,7 @@ private:
     LoaderHook m_hook;
 };
 
-// What Module._resolveFilename holds, for a realm whose `hasOverriddenModuleResolveFilenameFunction` is set.
-// Empty if that is the default function again.
+// What Module._resolveFilename holds once `hasOverriddenModuleResolveFilenameFunction` is set, or empty for the default function.
 JSC::JSValue replacedModuleResolveFilename(JSC::JSGlobalObject* lexicalGlobalObject, Zig::GlobalObject*);
 JSC::JSValue createStreamIterEnabledFlag(Zig::GlobalObject*);
 void addNodeModuleConstructorProperties(JSC::VM &vm, Zig::GlobalObject *globalObject);

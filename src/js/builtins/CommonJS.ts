@@ -17,9 +17,7 @@ export function require(this: JSCommonJSModule, _id: string) {
   return $overridableRequire.$apply(this, arguments);
 }
 
-// `$overridableRequire` once a program has changed `Module.prototype.require` in any way. The `require` of a module
-// then calls what the property holds at that time, as `mod.require(path)` does in Node.js:
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/helpers.js#L190-L192
+// `$overridableRequire` once a program has changed `Module.prototype.require`: it calls what the property holds.
 $visibility = "Private";
 export function requireFromModulePrototype(this: JSCommonJSModule, _id: string) {
   // A getter on the property gets the module as `this`, as it does where a module inherits the property.

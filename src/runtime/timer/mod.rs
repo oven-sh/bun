@@ -612,7 +612,7 @@ impl All {
         // Real clock: both heaps hold opt-out-of-fake-timers nodes armed in
         // real-time units; the mocked clock made internal pacing spin on re-arm.
         let now = *maybe_now.get_or_insert_with(|| Timespec::now(TimespecMockMode::ForceRealTime));
-        if next.greater(&now) && !self.is_due_when_idle() {
+        if next.greater(&now) && !(self.is_due_when_idle() && self.is_idle(vm)) {
             *spec = next.duration(&now);
             if let Some(us) = quic_next_tick_us {
                 if us >= 0 {
@@ -633,6 +633,23 @@ impl All {
                 nsec: (us % US_PER_S) * NS_PER_US,
             };
         }
+    }
+
+    /// Whether the event loop would only sleep until the next timer: nothing is queued, and nothing but timers and immediates
+    /// keeps it alive. A read, a request or a child process that is under way may well end within 1 ms, and tests count on that.
+    fn is_idle(&self, vm: &VirtualMachine) -> bool {
+        #[cfg(not(windows))]
+        let own = u32::from(self.active_timer_count.get() > 0)
+            + u32::from(self.immediate_ref_count.get() > 0);
+        #[cfg(windows)]
+        let own = {
+            // SAFETY: JS thread only, and `is_active` runs no callback.
+            let (uv_timer, uv_idle) = unsafe { (&*self.uv_timer.get(), &*self.uv_idle.get()) };
+            // libuv stops a timer before it calls its callback, which is where the timers are drained.
+            u32::from(self.active_timer_count.get() > 0 && uv_timer.is_active())
+                + u32::from(uv_idle.is_active())
+        };
+        vm.event_loop().is_idle() && vm.uws_loop().active_count() <= own
     }
 
     /// Whether the first timer does not wait for its deadline. See `EventLoopTimer::is_due_when_idle`.
@@ -673,7 +690,7 @@ impl All {
         let _ = self.drain_due_wtf_timers(&mut wtf_now, vm);
 
         // An immediate or a task that the poll's callbacks queued runs before a timer that still has 1 ms to wait, as in Node.
-        let is_idle = vm.event_loop().is_idle();
+        let is_idle = self.is_idle(vm);
         let mut now = Timespec { sec: 0, nsec: 0 };
         let mut has_set_now = false;
         while let Some(t) = self.next(is_idle, &mut has_set_now, &mut now) {

@@ -92,6 +92,32 @@ static JSString* stringOfKey(VM& vm, UniquedStringImpl* key)
     });
 }
 
+// JSMap compiles its hash table into every caller: these three hold the one copy of each operation that the hooks share.
+// JSMap::get() answers undefined for a key that the map does not have, and `isStored` tells that apart from a key that holds undefined.
+static NEVER_INLINE JSValue entryInMap(JSGlobalObject* globalObject, JSMap* map, JSString* key, bool& isStored)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    isStored = false;
+    JSValue stored = map->get(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, {});
+    isStored = !stored.isUndefined();
+    if (!isStored) {
+        isStored = map->has(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    return stored;
+}
+
+static NEVER_INLINE void setInMap(JSGlobalObject* globalObject, JSMap* map, JSString* key, JSValue value)
+{
+    map->set(globalObject, key, value);
+}
+
+static NEVER_INLINE void removeFromMap(JSGlobalObject* globalObject, JSMap* map, JSString* key)
+{
+    map->remove(globalObject, key);
+}
+
 static AbstractModuleRecord* evaluatedModuleRecord(Zig::GlobalObject* globalObject, JSCommonJSModule* owner, UniquedStringImpl* key)
 {
     auto* loader = loaderOf(globalObject, owner);
@@ -118,7 +144,8 @@ JSValue JSRequireCache::entryMadeOnRead(UniquedStringImpl* key)
 
     JSString* keyString = stringOfKey(vm, key);
     JSMap* map = m_requireMap.get();
-    JSValue stored = map->get(globalObject, keyString);
+    bool isStored;
+    JSValue stored = entryInMap(globalObject, map, keyString, isStored);
     RETURN_IF_EXCEPTION(scope, {});
     if (stored.toBoolean(globalObject))
         return stored;
@@ -131,11 +158,9 @@ JSValue JSRequireCache::entryMadeOnRead(UniquedStringImpl* key)
             return compiled;
     }
 
-    if (!stored.isUndefined())
+    if (isStored)
         return stored;
-    bool isStored = map->has(globalObject, keyString);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (isStored || isBuiltinKey(key))
+    if (isBuiltinKey(key))
         return jsUndefined();
 
     // An ES module that only `import` has loaded gets its module object here: the namespace object is made for it, and the record keeps that.
@@ -154,7 +179,7 @@ JSValue JSRequireCache::entryMadeOnRead(UniquedStringImpl* key)
     }
     auto* module = createCommonJSModuleForRequirer(globalObject, keyString, moduleNamespace, true, m_owner ? JSValue(m_owner.get()) : jsUndefined());
     RETURN_IF_EXCEPTION(scope, {});
-    map->set(globalObject, keyString, module);
+    setInMap(globalObject, map, keyString, module);
     RETURN_IF_EXCEPTION(scope, {});
     return module;
 }
@@ -187,16 +212,9 @@ bool JSRequireCache::getOwnPropertySlot(JSObject* object, JSGlobalObject* lexica
     if (isHiddenKey(globalObject, key))
         return false;
 
-    JSString* keyString = stringOfKey(vm, key);
-    JSMap* map = thisObject->m_requireMap.get();
-    JSValue stored = map->get(globalObject, keyString);
+    bool isStored;
+    JSValue stored = entryInMap(globalObject, thisObject->m_requireMap.get(), stringOfKey(vm, key), isStored);
     RETURN_IF_EXCEPTION(scope, false);
-    // JSMap::get() answers undefined for a key that it does not have.
-    bool isStored = !stored.isUndefined();
-    if (!isStored) {
-        isStored = map->has(globalObject, keyString);
-        RETURN_IF_EXCEPTION(scope, false);
-    }
     if (isStored) {
         // A compiled file that ran again left the falsy value that asked for it in the require map: the engine holds its entry.
         if (Bun::hasCompiledModules() && !stored.toBoolean(globalObject) && thisObject->seesCompiledModules(globalObject)) [[unlikely]]
@@ -231,7 +249,7 @@ bool JSRequireCache::store(Zig::GlobalObject* globalObject, UniquedStringImpl* k
         Bun::willSetRequireCacheEntry(globalObject, String(key), value);
         RETURN_IF_EXCEPTION(scope, false);
     }
-    m_requireMap->set(globalObject, stringOfKey(vm, key), value);
+    setInMap(globalObject, m_requireMap.get(), stringOfKey(vm, key), value);
     RETURN_IF_EXCEPTION(scope, false);
     return true;
 }
@@ -251,7 +269,8 @@ bool JSRequireCache::put(JSCell* cell, JSGlobalObject* lexicalGlobalObject, Prop
     PropertySlot own(thisObject, PropertySlot::InternalMethodType::GetOwnProperty);
     if (Base::getOwnPropertySlot(thisObject, lexicalGlobalObject, propertyName, own)) [[unlikely]] {
         // A setter or a read-only property that Object.defineProperty() left on the object answers, unless the require map has the key since.
-        bool isStored = thisObject->m_requireMap->has(globalObject, stringOfKey(vm, key));
+        bool isStored;
+        entryInMap(globalObject, thisObject->m_requireMap.get(), stringOfKey(vm, key), isStored);
         RETURN_IF_EXCEPTION(scope, false);
         if (!isStored) {
             // JSObject::put() hands an index back to putByIndex().
@@ -282,7 +301,7 @@ bool JSRequireCache::takeOut(Zig::GlobalObject* globalObject, UniquedStringImpl*
         Bun::didDeleteRequireCacheEntry(globalObject, path);
         RETURN_IF_EXCEPTION(scope, false);
     }
-    m_requireMap->remove(globalObject, stringOfKey(vm, key));
+    removeFromMap(globalObject, m_requireMap.get(), stringOfKey(vm, key));
     RETURN_IF_EXCEPTION(scope, false);
 
     if (auto* loader = loaderOf(globalObject, m_owner.get())) {
@@ -406,7 +425,8 @@ bool JSRequireCache::defineOwnProperty(JSObject* object, JSGlobalObject* lexical
     auto* globalObject = thisObject->zigGlobalObject();
     JSMap* map = thisObject->m_requireMap.get();
     JSString* keyString = stringOfKey(vm, key);
-    bool isStored = map->has(globalObject, keyString);
+    bool isStored;
+    entryInMap(globalObject, map, keyString, isStored);
     RETURN_IF_EXCEPTION(scope, false);
     bool isOwn = false;
     {
@@ -449,7 +469,7 @@ bool JSRequireCache::defineOwnProperty(JSObject* object, JSGlobalObject* lexical
         RETURN_IF_EXCEPTION(scope, false);
     }
     // Reading the value above has stored the entry of a key that only the loader listed.
-    map->remove(globalObject, keyString);
+    removeFromMap(globalObject, map, keyString);
     RETURN_IF_EXCEPTION(scope, false);
 
     std::optional<uint32_t> index = parseIndex(propertyName);

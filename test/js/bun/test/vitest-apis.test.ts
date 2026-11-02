@@ -1235,11 +1235,25 @@ describe("expect.addEqualityTesters", () => {
       expect(make()).not.toEqual(make());
       expect(make()).not.toStrictEqual(make());
       expect([make()]).not.toContainEqual(make());
-      if (!(make() instanceof Map)) expect({ a: make() }).not.toMatchObject({ a: make() });
+      expect({ a: make() }).not.toMatchObject({ a: make() });
     }
     expect({ a: unequal, b: 1 }).not.toEqual({ b: 1, a: unequal });
     expect(new Float64Array([1, 2])).toEqual(new Float64Array([1, 2]));
     expect(new Float64Array([1, 2])).not.toEqual(new Float64Array([1, 3]));
+  });
+
+  test("a tester decides for two functions before toMatchObject compares them by identity", () => {
+    const tagged = (tag: string) => Object.assign(() => {}, { tag });
+    expect.addEqualityTesters([
+      (a, b) =>
+        typeof a === "function" && typeof b === "function" && "tag" in a && "tag" in b ? a.tag === b.tag : undefined,
+    ]);
+    expect({ cb: tagged("x") }).toMatchObject({ cb: tagged("x") });
+    expect({ cb: tagged("x") }).not.toMatchObject({ cb: tagged("y") });
+    expect({ s: new Set([tagged("x")]) }).toMatchObject({ s: new Set([tagged("x")]) });
+    expect({ s: new Set([tagged("x")]) }).not.toMatchObject({ s: new Set([tagged("y")]) });
+    expect({ m: new Map([["k", tagged("x")]]) }).toMatchObject({ m: new Map([["k", tagged("x")]]) });
+    expect({ m: new Map([["k", tagged("x")]]) }).not.toMatchObject({ m: new Map([["k", tagged("y")]]) });
   });
 
   test("testers run on the elements of typed arrays", () => {

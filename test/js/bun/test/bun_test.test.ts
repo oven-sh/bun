@@ -586,7 +586,7 @@ describe.concurrent("the callbacks of a test run with the event loop entered", (
           console.log(JSON.stringify({ order }));
         });
 
-        describe("afterEach runs before a timer that is due", () => {
+        describe("afterEach runs before an immediate that is pending", () => {
           let where = "";
           let fired = Promise.withResolvers();
           const seen = [];
@@ -594,25 +594,20 @@ describe.concurrent("the callbacks of a test run with the event loop entered", (
             seen.push(where);
             fired.resolve();
           };
-          const untilTimersAreDue = () => {
-            const start = performance.now();
-            while (performance.now() - start < 2);
-          };
           afterEach(async () => {
             where = "afterEach";
             await fired.promise;
             fired = Promise.withResolvers();
           });
           test("when the test only waited for a promise job", async () => {
-            setTimeout(callback, 0);
-            untilTimersAreDue();
+            setImmediate(callback);
             await 0;
             where = "after the test";
           });
-          test("when setImmediate resumed the test", async () => {
-            await new Promise(resolve => setImmediate(resolve));
-            setTimeout(callback, 0);
-            untilTimersAreDue();
+          test("when an earlier immediate resumed the test", async () => {
+            const resumed = new Promise(resolve => setImmediate(resolve));
+            setImmediate(callback);
+            await resumed;
             where = "after the test";
           });
           test("prints", () => {

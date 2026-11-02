@@ -1,3 +1,5 @@
+#[cfg(unix)]
+use core::sync::atomic::AtomicU64;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
 use crate::JSGlobalObject;
@@ -14,18 +16,22 @@ const BUFFER_SIZE: usize = 8192;
 
 /// Signal numbers queued by signal handlers on any thread for the main loop.
 #[cfg(unix)]
-#[derive(Default)]
 pub struct PosixSignalHandle {
     ring: SignalRing<BUFFER_SIZE>,
 }
 
+/// The process's one ring. A loop of the main VM drains it once `Bun__ensureSignalHandler` set its `signal_handler`.
+#[cfg(unix)]
+static HANDLE: PosixSignalHandle = PosixSignalHandle {
+    ring: SignalRing::new(),
+};
+
+/// Signals whose JS listeners changed while a restart ran its listeners (bit `n`): a removed one has SIG_DFL by now.
+#[cfg(unix)]
+static LISTENERS_CHANGED_BY_RESTART: AtomicU64 = AtomicU64::new(0);
+
 #[cfg(unix)]
 impl PosixSignalHandle {
-    // `pub const new = bun.TrivialNew(@This());`
-    pub(crate) fn new(init: Self) -> Box<Self> {
-        Box::new(init)
-    }
-
     /// Returns `false` if the ring is full. The caller wakes the loop on `true`.
     pub(crate) fn enqueue(&self, signal: u8) -> bool {
         self.ring.enqueue(signal)
@@ -41,6 +47,36 @@ impl PosixSignalHandle {
             event_loop.enqueue_task(task);
         }
     }
+
+    /// Any thread. Bit `n` is set while signal `n` is in the ring. Takes nothing out of it.
+    fn queued_signals(&self) -> u64 {
+        let mut queued = 0u64;
+        self.ring.for_each_queued(|signal| {
+            queued |= 1u64.checked_shl(u32::from(signal)).unwrap_or(0);
+        });
+        queued
+    }
+}
+
+/// Ends the process when a SIGHUP, SIGINT, SIGQUIT or SIGTERM of `reset_signals` (bit `n`) is still in the ring.
+#[cfg(unix)]
+#[unsafe(no_mangle)]
+extern "C" fn Bun__deliverQueuedPosixSignals(reset_signals: u64) {
+    const ENDS_PROCESS: u64 =
+        1 << libc::SIGHUP | 1 << libc::SIGINT | 1 << libc::SIGQUIT | 1 << libc::SIGTERM;
+    let listened = reset_signals | LISTENERS_CHANGED_BY_RESTART.load(Ordering::SeqCst);
+    let queued = HANDLE.queued_signals() & listened & ENDS_PROCESS;
+    if queued == 0 {
+        return;
+    }
+    let signal = queued.trailing_zeros() as i32;
+    // Watch mode ends with code 0 on a SIGINT that no listener takes, like node's watcher.
+    if signal == libc::SIGINT && WATCH_MODE_KILL_SIGNAL.load(Ordering::Relaxed) != 0 {
+        // SAFETY: `_exit(2)` takes no pointers.
+        unsafe { libc::_exit(0) }
+    }
+    // Exits with 128 + `signal` where the kernel drops the signal (PID 1).
+    bun_core::Global::raise_default_action(signal)
 }
 
 /// This is the signal handler entry point. Calls enqueue on the ring buffer.
@@ -152,6 +188,11 @@ pub(crate) extern "C" fn Bun__onSignalListenerCountChanged(number: i32, count: i
     if number == i32::from(SIGINT_NUMBER) {
         WATCH_SIGINT_LISTENERS.store(count, Ordering::Release);
     }
+    #[cfg(unix)]
+    if IS_EMITTING_WATCH_KILL_SIGNAL.load(Ordering::Relaxed) {
+        let bit = 1u64.checked_shl(number as u32).unwrap_or(0);
+        LISTENERS_CHANGED_BY_RESTART.fetch_or(bit, Ordering::SeqCst);
+    }
 }
 
 /// Watcher-thread query: only ever true for `bun run --watch` (the count is
@@ -224,9 +265,7 @@ extern "C" fn Bun__ensureSignalHandler() {
             // SAFETY: `vm` and its event loop are process-lifetime.
             let this = unsafe { &mut *(*vm).event_loop() };
             if this.signal_handler.is_none() {
-                let boxed = PosixSignalHandle::new(PosixSignalHandle::default());
-                this.signal_handler =
-                    Some(bun_ptr::BackRef::from(bun_core::heap::into_raw_nn(boxed)));
+                this.signal_handler = Some(bun_ptr::BackRef::new(&HANDLE));
             }
         }
     }

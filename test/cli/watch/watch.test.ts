@@ -1,6 +1,6 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBroken, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import {
   copyFileSync,
@@ -138,89 +138,232 @@ setInterval(() => {}, 1000);
   10000,
 );
 
-// Spawns `bun --watch --watch-kill-signal SIGINT <entry>`, touches the entry once
-// its first boot prints "started", then waits for whichever comes first: the
-// process exiting, or a second "started" (the execve reload went through).
-// Returns how many boots were seen; the caller asserts on the exit.
-async function touchOnceAndAwaitExitOrReboot(dir: string, entry: string): Promise<number> {
-  const path = join(dir, entry);
-  watchee = spawn({
-    cwd: dir,
-    cmd: [bunExe(), "--watch", "--watch-kill-signal", "SIGINT", entry],
+// Children of `reloadOnce` that still run. A case that times out never reaches its `finally`.
+const reloaded = new Set<Subprocess>();
+
+// Runs `source` as `file` under `bun <command>` and saves the file again when the first boot prints
+// "started". Resolves when the process exits or prints "started" a second time (the execve reload
+// went through), whichever comes first. `output` has every other line of stdout.
+async function reloadOnce(
+  source: string,
+  command: string[],
+  { file = "app.js", prefix = [] as string[], files = {} as Record<string, string> } = {},
+) {
+  using dir = tempDir("watch-queued-signal", { ...files, [file]: source });
+  const path = join(String(dir), file);
+  const proc = spawn({
+    cwd: String(dir),
+    cmd: [...prefix, bunExe(), ...command, file],
     env: bunEnv,
     stdout: "pipe",
     stderr: "inherit",
     stdin: "ignore",
   });
-  const rebooted = Promise.withResolvers<void>();
-  let starts = 0;
-  const pump = (async () => {
-    const decoder = new TextDecoder();
-    let buffered = "";
-    for await (const chunk of watchee.stdout) {
-      buffered += decoder.decode(chunk, { stream: true });
-      let newline;
-      while ((newline = buffered.indexOf("\n")) !== -1) {
-        const line = buffered.slice(0, newline);
-        buffered = buffered.slice(newline + 1);
-        if (!line.includes("started")) continue;
-        if (++starts === 1) {
-          await Bun.write(path, (await Bun.file(path).text()) + "\n// touched\n");
-        } else {
-          rebooted.resolve();
+  reloaded.add(proc);
+  try {
+    const rebooted = Promise.withResolvers<void>();
+    const output: string[] = [];
+    let starts = 0;
+    const pump = (async () => {
+      const decoder = new TextDecoder();
+      let buffered = "";
+      for await (const chunk of proc.stdout) {
+        buffered += decoder.decode(chunk, { stream: true });
+        let newline;
+        while ((newline = buffered.indexOf("\n")) !== -1) {
+          const line = buffered.slice(0, newline);
+          buffered = buffered.slice(newline + 1);
+          if (line !== "started") output.push(line);
+          else if (++starts === 1) await Bun.write(path, source + "// saved again\n");
+          else rebooted.resolve();
         }
       }
-    }
-  })();
-  await Promise.race([watchee.exited, rebooted.promise]);
-  if (starts === 1) await pump;
-  return starts;
+    })();
+    await Promise.race([proc.exited, rebooted.promise]);
+    // An exited process has closed stdout: read to its end, so that a second boot is not missed.
+    if (starts === 1) await pump;
+    return { starts, output, exitCode: proc.exitCode, signalCode: proc.signalCode };
+  } finally {
+    // SIGKILL, not the default SIGTERM: the fixtures listen for SIGTERM.
+    proc.kill("SIGKILL");
+    await proc.exited;
+    reloaded.delete(proc);
+  }
 }
 
-// The signal handler installed for process.on(<signal>) only queues the signal
-// for the JS thread. Once a watch reload is under way that thread never ticks
-// again, so a SIGTERM that lands during the reload used to be discarded by the
-// execve and the process came back up instead of dying (the parent in
-// test-watch-mode-kill-signal-override.mjs kills the watcher exactly then).
-// The reload must deliver whatever is still queued with the default
-// disposition: here the process has to die of the SIGTERM instead of rebooting.
-describe.skipIf(isWindows)("a signal caught during a --watch reload is not lost", () => {
-  // The kill-signal listener runs synchronously before the execve; the SIGTERM
-  // it sends itself is queued behind it and must still terminate the process.
-  it("when it arrives while the kill-signal listeners run on the JS thread", async () => {
-    using dir = tempDir("watch-signal-during-kill-signal-emit", {
-      "app.js": `process.on("SIGTERM", () => {});
-process.on("SIGINT", () => {
+// Whether this user can make bun the first process of a new PID namespace.
+const unsharePid = ["unshare", "--user", "--map-root-user", "--pid", "--fork", "--kill-child"];
+const canUnsharePid =
+  isLinux &&
+  Bun.which("unshare") !== null &&
+  Bun.spawnSync({ cmd: [...unsharePid, "true"], stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+
+// The handler of process.on(<signal>) only queues the signal number for the JS thread. A watch
+// reload replaces the process image with execve, and the JS thread does not run the queue again
+// before it. The new image knows nothing of a queued signal: it boots with the same pid as if
+// nobody sent it. This is how test-watch-mode-kill-signal-default.mjs timed out in CI: its parent
+// sends SIGTERM when it reads the line that the kill-signal listener prints. The reload must end
+// the process when a signal that asks for that (SIGHUP, SIGINT, SIGQUIT, SIGTERM) is still queued.
+describe.skipIf(isWindows)("a signal still queued for JS at a --watch reload", () => {
+  afterAll(async () => {
+    for (const proc of reloaded) {
+      proc.kill("SIGKILL");
+      await proc.exited;
+    }
+  });
+
+  // A child process sends the signal, as a supervisor does.
+  const send = `const send = signal => require("node:child_process").execFileSync("/bin/sh", ["-c", "kill -" + signal.slice(3) + " $PPID"]);\n`;
+  // `block` keeps the JS thread out of its event loop, and `idle` keeps it in. Both end by
+  // themselves, so that a leaked process does not stay.
+  const block = `Bun.sleepSync(30_000);\nprocess.exit(1);\n`;
+  const idle = `setTimeout(() => process.exit(1), 30_000);\n`;
+  // The image that has this listener goes away: the listener must not run.
+  const listen = (signal: string) => `process.on("${signal}", () => console.log("${signal} listener ran"));\n`;
+  const queued = (signal: string) => `${send}${listen(signal)}send("${signal}");\nconsole.log("started");\n${block}`;
+  const watch = (killSignal: string) => ["--watch", "--watch-kill-signal", killSignal];
+
+  const endedBy = (signalCode: string) => ({ starts: 1, output: [] as string[], exitCode: null, signalCode });
+  const rebooted = { starts: 2, output: [] as string[], exitCode: null, signalCode: null };
+
+  describe.concurrent("ends the process", () => {
+    // The JS thread runs the kill-signal listener (SIGINT here) and then the execve.
+    it.each([
+      ["calls process.exit()", "process.exit(0);"],
+      ["returns", ""],
+    ])("when it arrived while the kill-signal listener ran, which %s", async (_, last) => {
+      const source = `${send}${listen("SIGTERM")}process.on("SIGINT", () => {
+  send("SIGTERM");
+  ${last}
+});
+console.log("started");
+${idle}`;
+      expect(await reloadOnce(source, watch("SIGINT"))).toEqual(endedBy("SIGTERM"));
+    });
+
+    // The shape of test-watch-mode-kill-signal-default.mjs. The listener runs once, for the restart.
+    it("when the kill signal arrived while its own listener ran", async () => {
+      const source = `${send}process.on("SIGTERM", () => {
+  console.log("SIGTERM listener ran");
+  send("SIGTERM");
+  process.exit(0);
+});
+console.log("started");
+${idle}`;
+      const expected = { ...endedBy("SIGTERM"), output: ["SIGTERM listener ran"] };
+      expect(await reloadOnce(source, watch("SIGTERM"))).toEqual(expected);
+    });
+
+    // The last SIGTERM listener goes away while the restart runs its listeners, and SIGTERM has its
+    // default action from then on. The signal that came before that is still queued.
+    it.each([
+      ["once()", `process.once("SIGTERM", () => send("SIGTERM"));\nprocess.once("SIGTERM", () => {});`],
+      [
+        "off()",
+        `const listener = () => {\n  send("SIGTERM");\n  process.off("SIGTERM", listener);\n};\nprocess.on("SIGTERM", listener);`,
+      ],
+      [
+        "an exit listener",
+        `process.on("SIGTERM", () => {\n  send("SIGTERM");\n  process.exit(0);\n});\nprocess.on("exit", () => process.removeAllListeners("SIGTERM"));`,
+      ],
+    ])("when the restart removed its listener with %s", async (_, listeners) => {
+      const source = `${send}${listeners}\nconsole.log("started");\n${idle}`;
+      expect(await reloadOnce(source, watch("SIGTERM"))).toEqual(endedBy("SIGTERM"));
+    });
+
+    // The JS thread never gets to the queue again. With no listener for the kill signal (SIGINT)
+    // the watcher thread calls execve at once. With one (SIGTERM) the grace timer's thread does.
+    it.each(["SIGINT", "SIGTERM"])(
+      "when another thread reloads around a blocked JS thread (kill signal %s)",
+      async killSignal => {
+        expect(await reloadOnce(queued("SIGTERM"), watch(killSignal))).toEqual(endedBy("SIGTERM"));
+      },
+    );
+
+    it("when it is SIGHUP", async () => {
+      expect(await reloadOnce(queued("SIGHUP"), watch("SIGINT"))).toEqual(endedBy("SIGHUP"));
+    });
+
+    // node's watcher exits with code 0 on SIGINT, and so does `bun --watch` when no listener takes it.
+    it("with exit code 0 when it is SIGINT", async () => {
+      const expected = { starts: 1, output: [], exitCode: 0, signalCode: null };
+      expect(await reloadOnce(queued("SIGINT"), watch("SIGTERM"))).toEqual(expected);
+    });
+
+    // `bun test --watch` has no kill signal and no rule for SIGINT. Its first line of stdout is its version.
+    it.each(["SIGTERM", "SIGINT"])("under `bun test --watch` when it is %s", async signal => {
+      const expected = { ...endedBy(signal), output: [expect.stringMatching(/^bun test /)] };
+      expect(await reloadOnce(queued(signal), ["test", "--watch"], { file: "app.test.js" })).toEqual(expected);
+    });
+
+    // The kernel drops a signal with the default action that PID 1 sends to itself.
+    it.skipIf(!canUnsharePid)("with exit code 128 + the signal number when bun is PID 1", async () => {
+      const expected = { starts: 1, output: [], exitCode: 128 + 15, signalCode: null };
+      expect(await reloadOnce(queued("SIGTERM"), watch("SIGINT"), { prefix: unsharePid })).toEqual(expected);
+    });
+
+    // A macro runs on its own event loop, and a signal that arrives then is queued through that loop.
+    it("when it arrived while a macro ran", async () => {
+      const macro = `export function listenThenGetSignal() {
+  process.on("SIGTERM", () => console.log("SIGTERM listener ran"));
+  Bun.spawnSync({ cmd: ["/bin/sh", "-c", "kill -TERM $PPID"] });
+  return 1;
+}
+`;
+      const source = `import { listenThenGetSignal } from "./macro.ts" with { type: "macro" };
+listenThenGetSignal();
+console.log("started");
+${block}`;
+      const { output, ...result } = await reloadOnce(source, watch("SIGINT"), {
+        file: "app.ts",
+        files: { "macro.ts": macro },
+      });
+      // A debug build also prints a line for each macro call.
+      expect({ ...result, listenerRan: output.includes("SIGTERM listener ran") }).toEqual({
+        starts: 1,
+        exitCode: null,
+        signalCode: "SIGTERM",
+        listenerRan: false,
+      });
+    });
+
+    // node restarts here: the signal of the script reaches only the child of node's watcher. Bun
+    // has one pid, so a signal that the script sends to that pid is also a signal to the watcher.
+    it("when the script sent it to its own pid", async () => {
+      const source = `${listen("SIGTERM")}process.on("SIGINT", () => {
   process.kill(process.pid, "SIGTERM");
   process.exit(0);
 });
 console.log("started");
-setInterval(() => {}, 1000);
-`,
+${idle}`;
+      expect(await reloadOnce(source, watch("SIGINT"))).toEqual(endedBy("SIGTERM"));
     });
-    const starts = await touchOnceAndAwaitExitOrReboot(String(dir), "app.js");
-    expect(starts).toBe(1);
-    expect(watchee.signalCode).toBe("SIGTERM");
-  }, 10000);
+  });
 
-  // No listener for the kill signal, so the watcher thread execve's on its own
-  // while the JS thread is still spinning with the SIGTERM sitting in its queue.
-  it("when it is queued and the watcher thread reloads around a busy JS thread", async () => {
-    using dir = tempDir("watch-signal-queued-busy", {
-      "busy.js": `process.on("SIGTERM", () => {});
-console.log("started");
-process.kill(process.pid, "SIGTERM");
-// Self-limiting spin, like the wedge fixtures further down: long enough for
-// the watcher thread to reload around it, bounded so a leaked process exits on its own.
-const end = Date.now() + 30_000;
-while (Date.now() < end) {}
-process.exit(1);
-`,
+  describe.concurrent("does not end the process", () => {
+    // The listener took the signal, and the next save still restarts the process (#13539 is about that).
+    it("when its listener already ran", async () => {
+      const source = `${send}process.on("SIGTERM", () => console.log("started"));\nsend("SIGTERM");\n${idle}`;
+      expect(await reloadOnce(source, watch("SIGINT"))).toEqual(rebooted);
     });
-    const starts = await touchOnceAndAwaitExitOrReboot(String(dir), "busy.js");
-    expect(starts).toBe(1);
-    expect(watchee.signalCode).toBe("SIGTERM");
-  }, 10000);
+
+    // Without a reload the JS thread finds no listener for this signal, and nothing happens.
+    it("when the script removed its listener before the restart", async () => {
+      const source = `${send}const listener = () => {};
+process.on("SIGTERM", listener);
+send("SIGTERM");
+process.off("SIGTERM", listener);
+console.log("started");
+${block}`;
+      expect(await reloadOnce(source, watch("SIGINT"))).toEqual(rebooted);
+    });
+
+    // Only a signal that asks the process to end is acted on. Another one is dropped, as before:
+    // the process does not end, and SIGTSTP does not stop it.
+    it.each(["SIGUSR2", "SIGTSTP", "SIGPIPE", "SIGWINCH"])("when it is %s", async signal => {
+      expect(await reloadOnce(queued(signal), watch("SIGINT"))).toEqual(rebooted);
+    });
+  });
 });
 
 // While one thread is inside execve(2), Linux fails every clone(CLONE_FS) in

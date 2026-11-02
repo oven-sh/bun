@@ -103,6 +103,17 @@ impl<const CAPACITY: usize> SignalRing<CAPACITY> {
         }
     }
 
+    /// Any thread. Calls `f` with each published signal, oldest first, and takes none out.
+    pub fn for_each_queued(&self, mut f: impl FnMut(u8)) {
+        let (head, tail) = unpack(self.state.load(Ordering::Acquire));
+        for offset in 0..tail.wrapping_sub(head) {
+            let signal = self.slot(head.wrapping_add(offset)).load(Ordering::Acquire);
+            if signal != 0 {
+                f(signal);
+            }
+        }
+    }
+
     /// Starts both indices at `index`, to put the `u16` wrap within reach.
     #[cfg(test)]
     fn starting_at(index: u16) -> Self {
@@ -257,5 +268,65 @@ mod tests {
         assert_eq!(ring.dequeue(), Some(2));
         assert_eq!(ring.dequeue(), Some(3));
         assert_eq!(ring.dequeue(), None);
+    }
+
+    fn queued<const CAPACITY: usize>(ring: &SignalRing<CAPACITY>) -> Vec<u8> {
+        let mut signals = Vec::new();
+        ring.for_each_queued(|signal| signals.push(signal));
+        signals
+    }
+
+    #[test]
+    fn view_reports_what_is_queued_and_takes_nothing() {
+        let ring = SignalRing::<4>::starting_at(u16::MAX - 1);
+        assert_eq!(queued(&ring), []);
+        for signal in 1..=4u8 {
+            assert!(ring.enqueue(signal));
+        }
+        assert_eq!(queued(&ring), [1, 2, 3, 4]);
+        assert_eq!(queued(&ring), [1, 2, 3, 4]);
+        assert_eq!(ring.dequeue(), Some(1));
+        assert_eq!(queued(&ring), [2, 3, 4]);
+        for signal in 2..=4u8 {
+            assert_eq!(ring.dequeue(), Some(signal));
+        }
+        assert_eq!(queued(&ring), []);
+    }
+
+    #[test]
+    fn view_passes_over_a_claimed_slot() {
+        let ring = SignalRing::<8>::new();
+        // A producer between its CAS and its store.
+        let (_, claimed) = unpack(ring.state.fetch_add(pack(0, 1), Ordering::AcqRel));
+        assert!(ring.enqueue(2));
+        assert_eq!(queued(&ring), [2]);
+        assert_eq!(ring.dequeue(), None);
+
+        ring.slot(claimed).store(1, Ordering::Release);
+        assert_eq!(queued(&ring), [1, 2]);
+        assert_eq!(ring.dequeue(), Some(1));
+        assert_eq!(ring.dequeue(), Some(2));
+    }
+
+    /// The view runs on a thread that is neither a producer nor the consumer.
+    #[test]
+    fn view_from_another_thread_loses_no_signal() {
+        let ring = SignalRing::<64>::new();
+        let finished = AtomicUsize::new(0);
+        let (result, unknown_in_view) = std::thread::scope(|scope| {
+            let viewer = scope.spawn(|| {
+                let mut unknown = 0usize;
+                while finished.load(Ordering::Acquire) == 0 {
+                    ring.for_each_queued(|signal| unknown += usize::from(signal > PRODUCERS));
+                    std::thread::yield_now();
+                }
+                unknown
+            });
+            let result = stress(&ring, usize::MAX);
+            finished.store(1, Ordering::Release);
+            (result, viewer.join().unwrap())
+        });
+        assert_eq!((result.zeros, result.unknown, unknown_in_view), (0, 0, 0));
+        assert_eq!(result.dequeued, result.accepted);
     }
 }

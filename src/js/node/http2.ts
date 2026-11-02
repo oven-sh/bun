@@ -2139,7 +2139,7 @@ enum StreamState {
   // callback). Until then no 'error' listener can exist, so stream errors must not be emitted:
   // node never constructs the JS stream object before a complete header block arrives.
   Delivered = 1 << 6,
-  // close(code) scheduled an RST_STREAM, so neither _final nor the last DATA frame may send END_STREAM first.
+  // close() ends the stream with an RST_STREAM, so a write still in flight doesn't get END_STREAM behind it.
   RstPending = 1 << 7,
   // The request HEADERS that opened this server stream carried END_STREAM.
   EndAfterHeaders = 1 << 8,
@@ -2147,6 +2147,8 @@ enum StreamState {
   EndedForUser = 1 << 9,
   // The stream closed on the wire and waits for a reader before it emits 'end' and 'close'. Session teardown destroys it.
   AwaitsReader = 1 << 10,
+  // The server ended the stream before respond(), which then puts END_STREAM on the HEADERS frame.
+  EndedBeforeHeaders = 1 << 11,
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2701,7 +2703,11 @@ class Http2Stream extends (Duplex as $Node.DuplexConstructor) {
         this.push(null);
       }
       const endWritable = abortIfWritableOpen(this);
-      if (endWritable) this.end();
+      if (endWritable) {
+        // Set first: with nothing left to write, end() calls _final() before it returns.
+        if (!this.pending) this[bunHTTP2StreamStatus] |= StreamState.RstPending;
+        this.end();
+      }
       this.rstCode = code;
       markStreamClosed(this);
       if (this.pending) {
@@ -2827,7 +2833,12 @@ class Http2Stream extends (Duplex as $Node.DuplexConstructor) {
       }
       return;
     }
-    if ((status & StreamState.RstPending) !== 0) {
+    // Like node, close() with nothing left to write still sends END_STREAM ahead of its RST_STREAM, unless trailers would carry it.
+    if (
+      (status & StreamState.RstPending) !== 0 &&
+      ((status & StreamState.Closed) !== 0 || this[bunHTTP2WaitForTrailers])
+    ) {
+      this[bunHTTP2WaitForTrailers] = false;
       this[bunHTTP2StreamStatus] |= StreamState.WritableClosed;
       callback();
       return;
@@ -2837,8 +2848,9 @@ class Http2Stream extends (Duplex as $Node.DuplexConstructor) {
       const native = session[bunHTTP2Native];
       if (native) {
         if (this instanceof ServerHttp2Stream && !this.headersSent && !native.isStreamClosed(this.#id)) {
-          // An empty DATA frame ahead of the response HEADERS is a connection error for the peer.
-          this[bunHTTP2StreamFinal] = callback;
+          // An empty DATA frame ahead of the response HEADERS is a connection error for the peer. Like node, send nothing and emit 'finish'.
+          this[bunHTTP2StreamStatus] |= StreamState.EndedBeforeHeaders | StreamState.WritableClosed;
+          callback();
           return;
         }
         // When waitForTrailers is active, writing an empty DATA frame with
@@ -3820,8 +3832,7 @@ class ServerHttp2Stream extends Http2Stream {
       statusCode === HTTP_STATUS_RESET_CONTENT ||
       statusCode === HTTP_STATUS_NOT_MODIFIED ||
       this.headRequest === true ||
-      // end() ran first and _final is waiting for these HEADERS to carry END_STREAM.
-      typeof this[bunHTTP2StreamFinal] === "function"
+      (this[bunHTTP2StreamStatus] & StreamState.EndedBeforeHeaders) !== 0
     ) {
       endStream = true;
     }
@@ -4843,6 +4854,8 @@ class ServerHttp2Session extends Http2Session {
     }
     this.#destroying = true;
     emitHttp2SessionPerf(this, this.#parser, this[bunHTTP2Socket]);
+    const socket = this[bunHTTP2Socket];
+    let destroysSocket = false;
     try {
       const server = this[kServer];
       if (server) {
@@ -4866,7 +4879,6 @@ class ServerHttp2Session extends Http2Session {
         this[kSessionDestroyError] = error;
       }
 
-      const socket = this[bunHTTP2Socket];
       if (!this.#connected) return;
       // Only a teardown the session starts itself ends a graceful close(). A destroy() that the program calls destroys every stream.
       const endsGracefulClose = this[kInternalDestroy] === true && this.#isClosedAndIdle();
@@ -4896,7 +4908,8 @@ class ServerHttp2Session extends Http2Session {
       settleUnreadClosedStreams(unread, error, endsGracefulClose, !socket || socket.destroyed);
       this.#connected = false;
       if (socket) {
-        if (error || !this.#closeCalled) {
+        destroysSocket = !!error || !this.#closeCalled;
+        if (destroysSocket) {
           endThenDestroySessionSocket(socket, error);
         } else {
           // Unread inbound bytes (a late GOAWAY from the peer) would turn the close into an RST.
@@ -4923,8 +4936,14 @@ class ServerHttp2Session extends Http2Session {
       runInFrame(asyncFrame, this.emit, this, "error", error);
     }
     // node emits the session 'close' event asynchronously (a listener attached right after
-    // close()/destroy() returns must still observe it).
-    process.nextTick(emitSessionCloseNT, this, asyncFrame);
+    // close()/destroy() returns must still observe it), after the socket's. Only wait for that one
+    // if this call also destroys the socket: after close(), it closes when the peer does, if ever.
+    // A Duplex from createConnection may never emit it (node wraps that one in a socket of its own).
+    if (destroysSocket && socket instanceof net.Socket && !socket.destroyed) {
+      socket.once("close", FunctionPrototypeBind.$call(emitSessionCloseNT, undefined, this, asyncFrame));
+    } else {
+      process.nextTick(emitSessionCloseNT, this, asyncFrame);
+    }
   }
 }
 // Outbound-progress snapshot taken the last time the session's idle timer expired while writes
@@ -5974,6 +5993,7 @@ class ClientHttp2Session extends Http2Session {
     }
     this.#destroying = true;
     emitHttp2SessionPerf(this, this.#parser, socket);
+    let destroysSocket = false;
     try {
       if (this[kTimeout]) {
         clearTimeout(this[kTimeout]);
@@ -6036,7 +6056,8 @@ class ClientHttp2Session extends Http2Session {
       settleUnreadClosedStreams(unread, error, endsGracefulClose, !socket || socket.destroyed);
       this.#connected = false;
       if (socket) {
-        if (error || !this.#closeCalled) {
+        destroysSocket = !!error || !this.#closeCalled;
+        if (destroysSocket) {
           endThenDestroySessionSocket(socket, error);
         } else {
           // Unread inbound bytes (a late GOAWAY from the peer) would turn the close into an RST.
@@ -6064,8 +6085,14 @@ class ClientHttp2Session extends Http2Session {
       runInFrame(asyncFrame, this.emit, this, "error", error);
     }
     // node emits the session 'close' event asynchronously (a listener attached right after
-    // close()/destroy() returns must still observe it).
-    process.nextTick(emitSessionCloseNT, this, asyncFrame);
+    // close()/destroy() returns must still observe it), after the socket's. Only wait for that one
+    // if this call also destroys the socket: after close(), it closes when the peer does, if ever.
+    // A Duplex from createConnection may never emit it (node wraps that one in a socket of its own).
+    if (destroysSocket && socket instanceof net.Socket && !socket.destroyed) {
+      socket.once("close", FunctionPrototypeBind.$call(emitSessionCloseNT, undefined, this, asyncFrame));
+    } else {
+      process.nextTick(emitSessionCloseNT, this, asyncFrame);
+    }
   }
 
   request(headers?: HeadersObject | any[] | null, options?: ClientRequestOptions) {

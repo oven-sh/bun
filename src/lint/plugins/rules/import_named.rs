@@ -14,9 +14,9 @@ pub struct Named {
     commonjs: bool,
 }
 
-const NOT_FOUND: Message = Message::new("", "{{name}} not found in '{{source}}'");
-const NOT_FOUND_VIA: Message = Message::new("", "{{name}} not found via {{deepPath}}");
-const OXLINT: Message = Message::new("", "named import {{imported_name}} not found");
+const NOT_FOUND: &Message = &Message::new("", "{{name}} not found in '{{source}}'");
+const NOT_FOUND_VIA: &Message = &Message::new("", "{{name}} not found via {{deepPath}}");
+const OXLINT: &Message = &Message::new("", "named import {{imported_name}} not found");
 
 #[derive(Default)]
 pub struct State<'a> {

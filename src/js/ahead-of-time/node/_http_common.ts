@@ -8,10 +8,6 @@ const { checkIsHttpToken } = require("internal/validators");
 const FreeList = require("internal/freelist");
 const http = require("internal/http");
 const { drainMicrotasks } = http;
-// A symbol taken out of a pattern is a plain `symbol` for the type checker, and what it keys is untyped.
-const kIncomingMessage: typeof http.kIncomingMessage = http.kIncomingMessage;
-const kSkipPendingData: typeof http.kSkipPendingData = http.kSkipPendingData;
-const kHeaderSource: typeof http.kHeaderSource = http.kHeaderSource;
 
 interface HTTPParserConstructor {
   new (): $Node.HTTPParser;
@@ -49,6 +45,10 @@ interface HTTPParserBinding {
 
 const { methods, allMethods, HTTPParser } = process.binding("http_parser") as HTTPParserBinding;
 const incoming = require("node:_http_incoming");
+// A symbol taken out of a pattern is a plain `symbol` for the type checker, and what it keys is untyped.
+const kIncomingMessage: typeof http.kIncomingMessage = http.kIncomingMessage;
+const kSkipPendingData: typeof http.kSkipPendingData = http.kSkipPendingData;
+const kHeaderSource: typeof http.kHeaderSource = http.kHeaderSource;
 
 const { IncomingMessage, readStart, readStop } = incoming;
 

@@ -8,15 +8,19 @@ use super::type_hashes::{TypeHashes, hash_types};
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{
     Data, EvalScope, ExpectedResult, Function, Layout, ModuleReferenceKind, RuntimeFunctionEntry,
-    TypeSite, Variable,
+    TypeSite, Variable, VariableFlags, VariableInitialization,
 };
+use crate::ir::ids::{optional_id_from_word, optional_id_to_word};
+use crate::ir::waiting_lists::{AsNumbers, WaitingLists};
 use crate::ir::{
-    FunctionId, Id, InParallel, LayoutId, PropertyKeyId, PropertyKeyTable, Reference, StringTable,
-    TypeTable, VariableId, for_each_mut,
+    DeclaredType, FunctionId, Id, InParallel, LayoutId, PositionFlags, PropertyKeyId,
+    PropertyKeyTable, Reference, StringTable, TypeTable, VariableId, for_each_mut,
 };
 use crate::load::ProgramFile;
 use crate::lower::{DefinedObjectType, FamilyFacts, Fragment, ModuleFragment, ObjectTypeKey};
 use crate::modules::ModuleFailureId;
+use bun_core::Pod;
+use bun_sema::erasure::PackedTypeRanges;
 use core::hash::{BuildHasher, Hash};
 use rustc_hash::FxBuildHasher;
 use std::sync::Arc;
@@ -40,10 +44,11 @@ fn sum_in_place(counts: &mut [u32]) {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub(super) struct ShardIndex {
     ids: Vec<u32>,
-    starts: [u32; SHARD_COUNT + 1],
+    /// `SHARD_COUNT + 1` of them. None: the index is not made yet.
+    starts: Vec<u32>,
 }
 
 impl ShardIndex {
@@ -64,7 +69,10 @@ impl ShardIndex {
             ids[*cursor as usize] = id as u32;
             *cursor += 1;
         }
-        ShardIndex { ids, starts }
+        ShardIndex {
+            ids,
+            starts: starts.to_vec(),
+        }
     }
 
     pub(super) fn shard(&self, shard: usize) -> &[u32] {
@@ -140,13 +148,22 @@ pub(super) struct KeyList<K> {
 
 impl<K: Hash> KeyList<K> {
     pub(super) fn new(keys: Vec<K>) -> KeyList<K> {
-        let hashes: Vec<u64> = keys.iter().map(hash_key).collect();
-        let shards = ShardIndex::new(hashes.iter().copied());
+        let mut list = KeyList::without_index(keys);
+        list.index();
+        list
+    }
+
+    fn without_index(keys: Vec<K>) -> KeyList<K> {
         KeyList {
             keys,
-            hashes,
-            shards,
+            hashes: Vec::new(),
+            shards: ShardIndex::default(),
         }
+    }
+
+    fn index(&mut self) {
+        self.hashes = self.keys.iter().map(hash_key).collect();
+        self.shards = ShardIndex::new(self.hashes.iter().copied());
     }
 }
 
@@ -301,6 +318,8 @@ pub(super) struct UnitRecords {
 
 #[derive(Clone)]
 pub struct LinkUnit {
+    /// The lists of `for_each_waiting_list` until `index`.
+    waiting: WaitingLists,
     pub(super) file: ProgramFile,
     pub(super) is_checked: bool,
     pub(super) strings: StringTable,
@@ -315,6 +334,7 @@ pub struct LinkUnit {
     pub(super) variables: KeyList<ProgramVariableKey>,
     pub(super) modules: Vec<ProgramModule>,
     pub(super) module_failures: Vec<ModuleFailureId>,
+    /// Their code is packed (`Body::pack_code`).
     pub(super) function_definitions: Vec<(FunctionId, Arc<Function>)>,
     pub(super) function_references: ReferenceLists,
     pub(super) layout_definitions: Vec<(LayoutId, Layout)>,
@@ -337,6 +357,11 @@ const fn assert_send<T: Send>() {}
 const _: () = assert_send::<LinkUnit>();
 
 impl LinkUnit {
+    pub fn take_types_in_function_text(&mut self) -> Option<(ProgramFile, PackedTypeRanges)> {
+        let types = self.module.types_in_function_text.take()?;
+        Some((self.file, types))
+    }
+
     pub(super) fn release_hashes_of_strings_and_types(&mut self) {
         self.string_shards.ids = Vec::new();
         self.type_hashes.types = Vec::new();
@@ -353,40 +378,84 @@ impl LinkUnit {
         })
     }
 
+    /// Makes what the link finds the strings, the types and the keys of the unit by. The units of the whole program wait
+    /// for the link beside the trees and the types, so none of it is made before.
+    pub(super) fn index(&mut self) {
+        if !self.string_shards.starts.is_empty() {
+            return;
+        }
+        let mut waiting = core::mem::take(&mut self.waiting);
+        self.for_each_waiting_list(&mut GiveBack(&mut waiting));
+        let strings = &self.strings;
+        self.string_shards = ShardIndex::new(strings.ids().map(|id| strings.hash(id)));
+        self.layouts.index();
+        self.functions.index();
+        self.variables.index();
+        let (layouts, functions) = (&self.layouts.keys, &self.functions.keys);
+        self.type_hashes = hash_types(&self.types, strings, layouts, functions);
+        let type_hashes = self.type_hashes.types.iter();
+        self.type_shards = ShardIndex::new(type_hashes.map(|hash| hash.0[0]));
+    }
+
+    /// The long lists of plain records that nothing reads before the link.
+    fn for_each_waiting_list(&mut self, each: &mut impl ForEachList) {
+        each.numbers(&mut self.function_references.ids);
+        each.numbers(&mut self.function_references.ends);
+        each.numbers(&mut self.function_references.rows);
+        each.records(&mut self.functions.keys);
+        each.records(&mut self.variable_definitions);
+        each.records(self.property_keys.list_mut());
+    }
+
+    /// `index` comes before the link reads it.
     pub fn new(context: &KeyContext<'_>, fragment: Fragment) -> LinkUnit {
-        let strings = fragment.strings;
-        let string_shards = ShardIndex::new(strings.ids().map(|id| strings.hash(id)));
+        let (mut strings, mut property_keys, mut types) =
+            (fragment.strings, fragment.property_keys, fragment.types);
+        strings.forget_ids();
+        property_keys.forget_ids();
+        types.forget_ids();
         let layout_keys = fragment.layout_keys.into_iter();
-        let layouts = KeyList::new(layout_keys.map(|key| context.layout_key(key)).collect());
         let function_keys = fragment.function_keys.into_iter();
-        let functions = KeyList::new(function_keys.map(|key| context.function_key(key)).collect());
-        let type_hashes = hash_types(&fragment.types, &strings, &layouts.keys, &functions.keys);
-        let type_shards = ShardIndex::new(type_hashes.types.iter().map(|hash| hash.0[0]));
         let variable_keys = fragment.variable_keys.into_iter();
         let module_keys = fragment.module_keys.into_iter();
         let function_references = ReferenceLists::new(&fragment.functions);
+        let mut function_definitions = fragment.functions;
+        let mut scratch = Vec::new();
+        for (_, function) in &mut function_definitions {
+            // Lowering shares only signatures, which have no code.
+            if !function.body.code.is_empty() {
+                Arc::make_mut(function).body.pack_code(&mut scratch);
+            }
+        }
         let module_failures = fragment.module_failure_keys.into_iter();
-        LinkUnit {
+        let mut unit = LinkUnit {
+            waiting: WaitingLists::default(),
             file: ProgramFile {
                 project: context.project,
                 file: context.file(fragment.file),
             },
             is_checked: fragment.is_checked,
             strings,
-            string_shards,
-            property_keys: fragment.property_keys,
-            types: fragment.types,
-            type_hashes,
-            type_shards,
-            functions,
-            layouts,
+            string_shards: ShardIndex::default(),
+            property_keys,
+            types,
+            type_hashes: TypeHashes::default(),
+            type_shards: ShardIndex::default(),
+            functions: KeyList::without_index(
+                function_keys.map(|key| context.function_key(key)).collect(),
+            ),
+            layouts: KeyList::without_index(
+                layout_keys.map(|key| context.layout_key(key)).collect(),
+            ),
             code_layout_count: fragment.code_layout_count,
-            variables: KeyList::new(variable_keys.map(|key| context.variable_key(key)).collect()),
+            variables: KeyList::without_index(
+                variable_keys.map(|key| context.variable_key(key)).collect(),
+            ),
             modules: module_keys.map(|module| context.module(module)).collect(),
             module_failures: module_failures
                 .map(|id| context.module_failure(id))
                 .collect(),
-            function_definitions: fragment.functions,
+            function_definitions,
             function_references,
             layout_definitions: fragment.layouts,
             object_types: fragment.object_types,
@@ -406,6 +475,103 @@ impl LinkUnit {
             family_facts: fragment.family_facts,
             runtime_functions: fragment.runtime_functions,
             module: fragment.module,
-        }
+        };
+        let mut waiting = WaitingLists::default();
+        unit.for_each_waiting_list(&mut Take(&mut waiting));
+        unit.waiting = waiting;
+        unit
+    }
+}
+
+trait ForEachList {
+    fn numbers<T: Pod>(&mut self, list: &mut Vec<T>);
+    fn records<T: AsNumbers>(&mut self, list: &mut Vec<T>);
+}
+
+struct Take<'a>(&'a mut WaitingLists);
+
+impl ForEachList for Take<'_> {
+    fn numbers<T: Pod>(&mut self, list: &mut Vec<T>) {
+        self.0.take(list);
+    }
+
+    fn records<T: AsNumbers>(&mut self, list: &mut Vec<T>) {
+        self.0.take_as_numbers(list);
+    }
+}
+
+struct GiveBack<'a>(&'a mut WaitingLists);
+
+impl ForEachList for GiveBack<'_> {
+    fn numbers<T: Pod>(&mut self, list: &mut Vec<T>) {
+        self.0.give_back(list);
+    }
+
+    fn records<T: AsNumbers>(&mut self, list: &mut Vec<T>) {
+        self.0.give_back_from_numbers(list);
+    }
+}
+
+impl AsNumbers for (VariableId, Variable) {
+    type Numbers = [u32; 10];
+
+    fn to_numbers(self) -> [u32; 10] {
+        let Variable {
+            name,
+            module,
+            declared:
+                DeclaredType {
+                    ty,
+                    site,
+                    flags: position,
+                },
+            initialization,
+            function,
+            owner,
+            flags,
+        } = self.1;
+        [
+            self.0.to_word(),
+            optional_id_to_word(name),
+            module.to_word(),
+            ty.to_word(),
+            optional_id_to_word(site),
+            position.to_wire(),
+            initialization.to_wire(),
+            optional_id_to_word(function),
+            optional_id_to_word(owner),
+            flags.to_wire(),
+        ]
+    }
+
+    fn from_numbers(numbers: [u32; 10]) -> (VariableId, Variable) {
+        let [
+            id,
+            name,
+            module,
+            ty,
+            site,
+            position,
+            initialization,
+            function,
+            owner,
+            flags,
+        ] = numbers;
+        let declared = DeclaredType {
+            ty: Id::from_word(ty),
+            site: optional_id_from_word(site),
+            flags: PositionFlags::from_wire(position).expect("`to_numbers` wrote it"),
+        };
+        let variable = Variable {
+            name: optional_id_from_word(name),
+            module: Id::from_word(module),
+            declared,
+            initialization: VariableInitialization::from_wire(initialization)
+                .expect("`to_numbers` wrote it"),
+            function: optional_id_from_word(function),
+            owner: optional_id_from_word(owner),
+            flags: VariableFlags::from_wire(flags).expect("`to_numbers` wrote it"),
+        };
+        (Id::from_word(id), variable)
     }
 }

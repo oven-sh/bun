@@ -104,12 +104,13 @@ type ModuleKind = {
   name: string;
   extension: string;
   barrelExtension?: string;
+  member?(number: number): string;
   source(index: number): string;
   barrel(members: number[]): string;
   index(barrels: string[]): string;
 };
 
-function moduleKind({ name, extension, barrelExtension = extension, source, barrel, index }: ModuleKind): Kind {
+function moduleKind({ name, extension, barrelExtension = extension, member = number => `m${number}`, source, barrel, index }: ModuleKind): Kind {
   return {
     name,
     isSlowToCompile: true,
@@ -118,7 +119,7 @@ function moduleKind({ name, extension, barrelExtension = extension, source, barr
       const barrels: string[] = [];
       for (let start = 0; start < count; start += modulesPerBarrel) {
         const members = range(first + start, Math.min(modulesPerBarrel, count - start));
-        for (const member of members) files[`${folder}/m${member}.${extension}`] = source(member);
+        for (const number of members) files[`${folder}/${member(number)}.${extension}`] = source(number);
         barrels.push(`barrel${start / modulesPerBarrel}`);
         files[`${folder}/${barrels.at(-1)}.${barrelExtension}`] = barrel(members);
       }
@@ -210,6 +211,17 @@ export const kinds: Kind[] = [
     maxCount: builtinModules.length,
     files: (folder, _, count) => ({ [`${folder}/index.ts`]: useAllFunction(builtinModules.slice(0, count).map(name => `import("node:${name}")`), unknownArray) }),
   },
+  declarationKind({ name: "objects created below a prototype", typed: false, isSlowToCompile: true, declaration: i => `const p${i} = { get() { return ${i}; } };\nexport function create${i}(value) { const created = Object.create(p${i}); created.value = value; return created; }`, use: i => `create${i}(1).get()` }),
+  declarationKind({ name: "recursive functions", typed: true, declaration: i => `export function r${i}(n: number): number { return n <= 0 ? ${i} : r${i}(n - 1) + 1; }`, use: i => `r${i}(2)` }),
+  declarationKind({ name: "functions held in a list", typed: false, header: `export const held = [];\n`, declaration: i => `export function h${i}(a) { return a + ${i}; }\nheld.push(h${i});`, use: i => `held[${i} % held.length](1)` }),
+  moduleKind({
+    name: "ES modules in their own folders",
+    extension: "ts",
+    member: i => `package${i}/source/index`,
+    source: i => `export function f${i}(): number { return ${i}; }\n`,
+    barrel: members => members.map(i => `import { f${i} } from "./package${i}/source/index";\n`).join("") + useAllFunction(members.map(i => `f${i}()`), unknownArray),
+    index: importBarrels,
+  }),
 ];
 
 export const folderName = (kind: Kind) => kind.name.replaceAll(" ", "-");
@@ -217,12 +229,25 @@ const indexSpecifier = (folder: string, files: Files) => `./${folder}/index${`${
 
 const workerCount = 4;
 
-export const scenarios = ["nothing", "serve", "request", "workers", "terminate", "inspect", "require cache", "require cache keys", "context", "stat", "resolve", "stack", "throw", "collect", "import"] as const;
+export const scenarios = ["nothing", "serve", "request", "workers", "terminate", "inspect", "require cache", "require cache keys", "context", "stat", "resolve", "stack", "throw", "class without new", "collect", "import"] as const;
+export const scenariosByName = ["nothing", "import by name", "import of a missing package", "require by name"] as const;
 export const useEverything = "use everything";
+
+const casesByName = `  case "import by name":
+    import(process.argv[3] ?? "./imported").then(ready);
+    break;
+  case "import of a missing package":
+    import(process.argv[3] ?? "a-package-that-is-missing").catch(ready);
+    break;
+  case "require by name":
+    require(process.argv[3] ?? "./imported");
+    ready();
+    break;
+`;
 
 export type Unused = { kind: Kind; count: number };
 
-export function generateProgram(used: Kind[], usedCount: number, unused: Unused[]): Files {
+export function generateProgram(used: Kind[], usedCount: number, unused: Unused[], loadsByName = false): Files {
   const files: Files = {};
   let cases = "";
   const usedSpecifiers: string[] = [];
@@ -245,6 +270,7 @@ export function generateProgram(used: Kind[], usedCount: number, unused: Unused[
 function ready() {
   process.kill(process.pid, "SIGSTOP");
 }
+class Called {}
 function readMissingProperty(value: any) {
   return value.property.another;
 }
@@ -313,6 +339,13 @@ switch (process.argv[2]) {
       ready();
     }
     break;
+  case "class without new":
+    try {
+      (Called as any)();
+    } catch {
+      ready();
+    }
+    break;
   case "collect":
     Bun.gc(true);
     ready();
@@ -330,7 +363,7 @@ ${useInTurn(usedSpecifiers)}      ready();
 ${useInTurn(unusedSpecifiers)}      ready();
     })();
     break;
-${cases}}
+${cases}${loadsByName ? casesByName : ""}}
 `;
   return files;
 }

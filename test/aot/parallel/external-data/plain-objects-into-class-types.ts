@@ -1,16 +1,16 @@
 // Further ways by which plain data that has all the members of a class comes to be held to it: a spread argument, a static field, the default of a parameter, a typed function that untyped code calls, a type guard handed on as a value, a union with a built-in class. Each row has a class of its own, so that what enters in one row shows in the types of that class alone. `x as unknown as T` yields the value of x: where x is typed, nothing untyped enters.
-// IR+ ^layout (L\d+) .*name="PushedBySpread" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
-// IR+ ^layout (L\d+) .*name="Spliced" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
-// IR+ ^layout (L\d+) .*name="InAStaticField" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
-// IR+ ^layout (L\d+) .*name="ByADefault" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
-// IR+ ^layout (L\d+) .*name="GivenToAnArrow" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
-// IR+ ^layout (L\d+) .*name="GivenToAFunctionExpression" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
-// IR+ ^layout (L\d+) .*name="GivenToADeclaredFunction" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
-// IR+ ^layout (L\d+) .*name="GivenToAReducer" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
-// IR+ ^layout (L\d+) .*name="FilteredByAGuard" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
-// IR+ ^layout (L\d+) .*name="FoundByAGuard" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
-// IR+ ^layout (L\d+) .*name="InAUnionWithAnError" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
-// IR- ^layout (L\d+) .*name="CastFromATypedValue" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
+// IR+ ^layout (L\d+) .*name="PushedBySpread" [\s\S]* receivers=\[[^\]\n]*\b\1\b[^\]\n]*\.\.\]
+// IR= 2 readSpliced  = PropGet v\d+ key="(name|id)" 
+// IR+ ^layout (L\d+) .*name="InAStaticField" [\s\S]* receivers=\[[^\]\n]*\b\1\b[^\]\n]*\.\.\]
+// IR+ ^layout (L\d+) .*name="ByADefault" [\s\S]* receivers=\[[^\]\n]*\b\1\b[^\]\n]*\.\.\]
+// IR+ ^layout (L\d+) .*name="GivenToAnArrow" [\s\S]* receivers=\[[^\]\n]*\b\1\b[^\]\n]*\.\.\]
+// IR+ ^layout (L\d+) .*name="GivenToAFunctionExpression" [\s\S]* receivers=\[[^\]\n]*\b\1\b[^\]\n]*\.\.\]
+// IR+ ^layout (L\d+) .*name="GivenToADeclaredFunction" [\s\S]* receivers=\[[^\]\n]*\b\1\b[^\]\n]*\.\.\]
+// IR+ ^layout (L\d+) .*name="GivenToAReducer" [\s\S]* receivers=\[[^\]\n]*\b\1\b[^\]\n]*\.\.\]
+// IR+ ^layout (L\d+) .*name="FilteredByAGuard" [\s\S]* receivers=\[[^\]\n]*\b\1\b[^\]\n]*\.\.\]
+// IR+ ^layout (L\d+) .*name="FoundByAGuard" [\s\S]* receivers=\[[^\]\n]*\b\1\b[^\]\n]*\.\.\]
+// IR+ ^layout (L\d+) .*name="InAUnionWithAnError" [\s\S]* receivers=\[[^\]\n]*\b\1\b[^\]\n]*\.\.\]
+// IR- ^layout (L\d+) .*name="CastFromATypedValue" [\s\S]* receivers=\[[^\]\n]*\b\1\b[^\]\n]*\.\.\]
 function obj(entries: any[]): any { const o: any = {}; for (const entry of entries) o[entry[0]] = entry[1]; return o; }
 function data(): any { return [obj([["id", 1], ["name", "given"]]), obj([["name", "second"], ["id", 2]])]; }
 
@@ -76,7 +76,7 @@ function readGivenToAReducer(u: GivenToAReducer): string { return u.name + u.id;
 function useGivenToAReducer(u: GivenToAReducer) { console.log("GivenToAReducer:", readGivenToAReducer(u), u instanceof GivenToAReducer, readGivenToAReducer(new GivenToAReducer())); }
 {
 const names: string = data().reduce((all: string, u: GivenToAReducer) => all + readGivenToAReducer(u), "");
-console.log(names);
+console.log(names, readGivenToAReducer(new GivenToAReducer()));
 }
 
 class FilteredByAGuard { id: number = 0; name: string = "made"; }

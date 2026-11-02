@@ -131,3 +131,61 @@ describe("v8.GCProfiler", () => {
     });
   });
 });
+
+describe("--expose-gc", () => {
+  async function run(...args: string[]) {
+    await using process = Bun.spawn({ cmd: [bunExe(), ...args], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      process.stdout.text(),
+      process.stderr.text(),
+      process.exited,
+    ]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  test.concurrent("v8.setFlagsFromString() gives gc() to the contexts that node:vm makes afterwards", async () => {
+    const script = `
+      const v8 = require("node:v8"), vm = require("node:vm");
+      const has = () => vm.runInNewContext("typeof gc");
+      const before = vm.createContext({});
+      const log = [has()];
+      v8.setFlagsFromString("--expose-gc");
+      log.push(has(), typeof globalThis.gc, vm.runInContext("typeof gc", before), vm.runInNewContext("gc")());
+      v8.setFlagsFromString("--no-expose-gc");
+      log.push(has());
+      v8.setFlagsFromString("--expose_gc");
+      log.push(has());
+      v8.setFlagsFromString("--noexpose_gc");
+      log.push(has());
+      v8.setFlagsFromString("--stack-size=900 --expose-gc");
+      log.push(has());
+      console.log(JSON.stringify(log));
+    `;
+    const { stdout, stderr, exitCode } = await run("-e", script);
+    expect(stderr).toBe("");
+    // What Node prints.
+    expect(JSON.parse(stdout)).toEqual([
+      "undefined",
+      "function",
+      "undefined",
+      "undefined",
+      null,
+      "undefined",
+      "function",
+      "undefined",
+      "function",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("on the command line gives gc() to the contexts of node:vm too", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      "--expose-gc",
+      "-p",
+      `require("node:vm").runInNewContext("typeof gc")`,
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("function");
+    expect(exitCode).toBe(0);
+  });
+});

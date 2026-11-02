@@ -8,9 +8,9 @@ use bun_lint_oxlint::import::is_in_root_scope;
 /// Forbid webpack loader syntax in imports.
 pub struct NoWebpackLoaderSyntax(Visitor);
 
-const UNEXPECTED: Message =
-    Message::new("", "Unexpected '!' in '{{name}}'. Do not use import syntax to configure webpack loaders.");
-const OXLINT: Message = Message::new("", "Unexpected `!` in `{{name}}`.");
+const UNEXPECTED: &Message =
+    &Message::new("", "Unexpected '!' in '{{name}}'. Do not use import syntax to configure webpack loaders.");
+const OXLINT: &Message = &Message::new("", "Unexpected `!` in `{{name}}`.");
 
 /// True for what oxlint checks: a top-level `import`, and a `require(..)` without parentheses that's in the root scope.
 fn is_seen_by_oxlint<'a>(importer: Node<'a>, memo: &mut AncestorMemo<'a, ()>) -> bool {

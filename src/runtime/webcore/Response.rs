@@ -1125,7 +1125,7 @@ impl Response {
             // It has no header list either, so the type its body implies is the one header to copy.
             if body.value.get().content_type().is_empty() && !source.content_type().is_empty() {
                 if let BodyValue::Locked(stream) = body.value_mut() {
-                    stream.content_type.clone_from(source.content_type());
+                    stream.set_content_type(source.content_type().clone());
                 } else {
                     let headers = init.headers.insert(HeadersRef::create_empty());
                     source.put_content_type_default(headers, global_this)?;

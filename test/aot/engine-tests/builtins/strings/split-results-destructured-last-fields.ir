@@ -420,5 +420,5 @@ function f19 name="otherLength" module=m0 position=3821 flags=[IsChecked, HasExp
 # -- generated: longSeparator
 # CHECK-LABEL: function {{*}}name="longSeparator"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 115, patchpoints: 14, rare instructions: 15
+# CHECK-NEXT: instructions: 114, patchpoints: 14, rare instructions: 15
 # CHECK-NEXT: end of function f7

@@ -212,7 +212,7 @@ pub struct PendingValue {
     pub(crate) size_hint: blob::SizeType,
     pub(crate) facts: BodyFacts,
     /// The `Content-Type` this body implied before it became a stream. A stream passed in as a body implies none.
-    pub(crate) content_type: blob::BlobContentType,
+    pub(crate) content_type: Option<Box<blob::BlobContentType>>,
 
     pub(crate) deinit: bool,
     pub(crate) action: Action,
@@ -262,7 +262,7 @@ impl Default for PendingValue {
             producer: streams::SourceHandle::None,
             size_hint: 0,
             facts: BodyFacts::empty(),
-            content_type: blob::BlobContentType::default(),
+            content_type: None,
             deinit: false,
             action: Action::None,
         }
@@ -270,6 +270,21 @@ impl Default for PendingValue {
 }
 
 impl PendingValue {
+    fn content_type(&self) -> &blob::BlobContentType {
+        static NONE: blob::BlobContentType = blob::BlobContentType::Static(b"");
+        self.content_type.as_deref().unwrap_or(&NONE)
+    }
+
+    fn take_content_type(&mut self) -> blob::BlobContentType {
+        self.content_type
+            .take()
+            .map_or_else(Default::default, |boxed| *boxed)
+    }
+
+    pub(crate) fn set_content_type(&mut self, content_type: blob::BlobContentType) {
+        self.content_type = (!content_type.is_empty()).then(|| Box::new(content_type));
+    }
+
     /// Once `readable` is set the live handle is `NewSource.producer`; these
     /// hooks go stale when the producer (e.g. `FetchTasklet`) is freed.
     fn detach_producer(&mut self) {
@@ -361,7 +376,7 @@ impl PendingValue {
                 Action::GetJSONSource => global_this.readable_stream_to_json_source(readable.value),
                 Action::GetBlob => global_this.readable_stream_to_body_blob(
                     readable.value,
-                    bun_string_jsc::create_utf8_for_js(global_this, self.content_type.as_slice())?,
+                    bun_string_jsc::create_utf8_for_js(global_this, self.content_type().given())?,
                 ),
                 Action::GetFormData(encoding) => {
                     let boundary = match *encoding.take().unwrap() {
@@ -728,7 +743,7 @@ impl Value {
         static NONE: blob::BlobContentType = blob::BlobContentType::Static(b"");
         match self {
             Value::Blob(blob) => blob.content_type.get(),
-            Value::Locked(locked) => &locked.content_type,
+            Value::Locked(locked) => locked.content_type(),
             _ => &NONE,
         }
     }
@@ -753,7 +768,7 @@ impl Value {
     /// Replaces a stream that nothing has read with the bytes lifted out of it. They keep the type this body implied.
     fn replace_stream_with(&mut self, bytes: AnyBlob) {
         let content_type = match self {
-            Value::Locked(locked) => core::mem::take(&mut locked.content_type),
+            Value::Locked(locked) => locked.take_content_type(),
             _ => blob::BlobContentType::default(),
         };
         *self = Value::from(bytes);
@@ -882,13 +897,10 @@ impl Value {
                 ReadableStream::errored(cx.global(), reason)?
             }
         };
-        *self = Value::Locked(PendingValue {
-            content_type,
-            ..PendingValue::from_stream(
-                ReadableStream::from_js_direct(stream).unwrap(),
-                cx.global(),
-            )
-        });
+        let mut locked =
+            PendingValue::from_stream(ReadableStream::from_js_direct(stream).unwrap(), cx.global());
+        locked.set_content_type(content_type);
+        *self = Value::Locked(locked);
         Ok(stream)
     }
 
@@ -1175,7 +1187,7 @@ impl Value {
 
             if let Some(promise_) = locked.promise.take() {
                 let promise = promise_.as_any_promise().unwrap();
-                let content_type = core::mem::take(&mut locked.content_type);
+                let content_type = locked.take_content_type();
                 // `wrap` turns what the conversion throws (a string too long, a JSON parse error) into a rejection.
                 promise.wrap(cx.global(), |_| {
                     locked.action.convert(new, content_type, cx)
@@ -1727,7 +1739,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 unreachable!()
             };
             if matches!(action, Action::GetBlob) {
-                locked.content_type = content_type;
+                locked.set_content_type(content_type);
             }
             return locked.set_promise(global_object, action, readable);
         }

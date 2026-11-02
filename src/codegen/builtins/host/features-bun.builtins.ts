@@ -140,9 +140,16 @@ export default b.declarations(
     ),
   ),
   extendAll(["InternalForTesting", "FsStats"], ...nativeBindings("Bindgen", "Stat.bind.ts", "createStatsForIno")),
+  extendAll(["InternalForTesting", "Test"], ...nativeBindings("Bindgen", "FakeTimers.bind.ts", "fakeLibraryTimers")),
   extendAll(["InternalForTesting", "Buffer"], ...nativeBindings("Bindgen", "memory_pressure.bind.ts", "psiTrigger")),
 
-  extendAll(["Test", ...runtimeTranspilerFeatures, "DeepEquals"], "Bun.jest", "bun:test", "%Expect%"),
+  extendAll(
+    ["Test", ...runtimeTranspilerFeatures, "DeepEquals"],
+    "Bun.jest",
+    "bun:test",
+    "bun:test/vitest",
+    "%Expect%",
+  ),
   extendAll(["Test"], ...nativeBindings("Bindgen", "jest.bind.ts", "fileGeneration", "nodeTestMarkResult")),
   extendAll(
     bundlerFeatures,
@@ -173,6 +180,12 @@ export default b.declarations(
     "%ExpectTypeOf%",
     "%ScopeFunctions%",
     "%DoneCallback%",
+    "%ExpectDeferred%",
+    "%TestContext%",
+    "%AroundHook%",
+    "%TestFixtures%",
+    "%ActiveFixture%",
+    "%ViWait%",
   ),
 
   extendAll(["WebView", "ChildProcess", "X509", ...tlsSocketFeatures], "Bun.WebView"),
@@ -182,7 +195,17 @@ export default b.declarations(
   extendAll(
     ["Ffi", ...nativeAddonFeatures],
     "Bun.FFI",
-    ...nativeBindings("Bindgen", "ffi.bind.ts", "cc", "closeCallback"),
+    ...nativeBindings(
+      "Bindgen",
+      "ffi.bind.ts",
+      "cc",
+      "closeCallback",
+      "linkLibrary",
+      "makeCallback",
+      "makeFunction",
+      "openLibrary",
+      "printSource",
+    ),
   ),
   extendAll(["Ffi"], "bun:ffi", "%FFI%"),
 
@@ -453,14 +476,11 @@ export default b.declarations(
       "NodeTLS.cpp",
       "getBundledRootCertificates",
       "getExtraCACertificates",
+      "getSystemCACertificates",
       "loadExtraCACertificates",
       "parseCACertificates",
       "selectServerName",
     ),
-  ),
-  extendAll(
-    ["Tls", "SystemCaCertificates"],
-    ...nativeBindings("NewCppFunction", "NodeTLS.cpp", "getSystemCACertificates"),
   ),
 
   // reload() changes none of these: the server stays what its first options made it.

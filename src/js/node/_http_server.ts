@@ -77,6 +77,8 @@ const {
   onDataIncomingMessage,
   RE_CONN_CLOSE,
 } = require("internal/http");
+// The key that internal/timers exports as `kTimeout`.
+const kTimeout = Symbol.for("::buntimeout::");
 const { FakeSocket } = require("internal/http/FakeSocket");
 const NumberIsNaN = Number.isNaN;
 
@@ -1641,7 +1643,6 @@ function emitUpgrade(socket, req, complete) {
 function onUpgradeRequestClose(this: any) {
   this[kUpgradeStream]?.requestBodyCompleted();
 }
-const { kTimeout } = require("internal/timers");
 // Scratch options object for the builtin ServerResponse (see the dispatcher).
 const scratchResponseOptions = {
   [kHandle]: undefined,
@@ -2618,6 +2619,7 @@ function ServerResponse(req, options): void {
   this.req = req;
   this.sendDate = true;
   this._sent100 = false;
+  this._expect_continue = false;
   this[kPendingCallbacks] = [];
 
   // this is matching node's behaviour
@@ -3814,7 +3816,6 @@ function failPendingWriteCallbacks(res, error) {
   }
 }
 
-ServerResponse.prototype._expect_continue = false;
 OriginalWriteHeadFn = ServerResponse.prototype.writeHead;
 OriginalImplicitHeadFn = ServerResponse.prototype._implicitHeader;
 

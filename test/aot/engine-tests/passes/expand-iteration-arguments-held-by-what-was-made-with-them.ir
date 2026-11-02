@@ -38,7 +38,7 @@ function f1 name="capturedByAClosureAndWalkedInALoop" flags=[HasArgumentCount, H
     Jump -> next b1()
 # CHECK: [[opened1]]: undefined = CallDirect v3 function=f7 [isNeverInlined]
 # CHECK: [[next1]]: anything = ResultAt [[opened1]] index=1
-# CHECK: anything = Call [[next1]],
+# CHECK: = CallDirect {{*}}, [[next1]] function={{*}} [isNeverInlined]
 # CHECK-NOT: ElemGet
 }
 

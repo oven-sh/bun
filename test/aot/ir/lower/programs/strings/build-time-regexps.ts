@@ -61,14 +61,25 @@ console.log(out.map(String).join(" | "));
 // CHECK-NEXT: b0(v0: undefined|null|string):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Builtin builtin=Array
-// CHECK-NEXT: v2 = Builtin builtin=ArrayFrom
-// CHECK-NEXT: v3 = Call v2, v1, v0 calleeName="Array.from"
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|Array<undefined|null|string> site=[[w_3]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-// CHECK-NEXT: v5 = PropGet v4 key="join"
-// CHECK-NEXT: v6 = String string=""
-// CHECK-NEXT: v7 = Call v5, v4, v6 calleeKey="join" calleeName="join"
-// CHECK-NEXT: ReturnCall v7 casts=[{declared={type=undefined|null|string site=[[w_3]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=[[w_2]] flags=[OmitsNull, OmitsUndefined]}}]
+// CHECK-NEXT: v1 = Builtin builtin=ArrayFrom
+// CHECK-NEXT: v2 = IsPristineArray v0
+// CHECK-NEXT: Branch v2 -> taken b2(), notTaken b3()
+// CHECK-NEXT: b2():
+// CHECK-NEXT: v3 = NewArray contents=anything
+// CHECK-NEXT: AppendSpread v3, v0
+// CHECK-NEXT: v5 = Convert v3 declared={type=undefined|null|Array<undefined|null|string> site=[[w_3]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+// CHECK-NEXT: Jump -> next b4(v5)
+// CHECK-NEXT: b3():
+// CHECK-NEXT: v6 = Builtin builtin=Array [isNotReadFromHolder]
+// CHECK-NEXT: v7 = Builtin builtin=ArrayFrom [isNotReadFromHolder]
+// CHECK-NEXT: v8 = Call v7, v6, v0
+// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|Array<undefined|null|string> site=[[w_3]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+// CHECK-NEXT: Jump -> next b4(v9)
+// CHECK-NEXT: b4(v10):
+// CHECK-NEXT: v11 = PropGet v10 key="join"
+// CHECK-NEXT: v12 = String string=""
+// CHECK-NEXT: v13 = Call v11, v10, v12 calleeKey="join" calleeName="join"
+// CHECK-NEXT: ReturnCall v13 casts=[{declared={type=undefined|null|string site=[[w_3]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=[[w_2]] flags=[OmitsNull, OmitsUndefined]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="ansiRegex"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_4]] flags=[IsExpected]}] results=[{type=undefined|null|RegExp site=[[w_5]] flags=[OmitsNull, OmitsUndefined]}] {
@@ -108,37 +119,30 @@ console.log(out.map(String).join(" | "));
 // CHECK-NEXT: v17 = Convert v16 declared={type=boolean} illTypedCause=Assertion
 // CHECK-NEXT: v18 = String string="(?:\\u0007|\\u001B\\u005C|\\u009C)"
 // CHECK-NEXT: v19 = Convert v18 declared={type=undefined|null|"(?:\\u0007|\\u001B\\u005C|\\u009C)" site=[[w_7]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v20 = String string="(?:(?:\\u001B\\]|\\u009D)[^\\u0007\\u001B\\u009C\\u009D]*"
-// CHECK-NEXT: v21 = ToString v19
-// CHECK-NEXT: v22 = String string=")"
-// CHECK-NEXT: v23 = Strcat v20, v21, v22
-// CHECK-NEXT: v24 = String string="(?:(?:\\u001B\\]|\\u009D)[^\\u0007\\u001B\\u009C\\u009D]*(?:\\u0007|\\u001B\\u005C|\\u009C))"
-// CHECK-NEXT: v25 = Convert v24 declared={type=undefined|null|"(?:(?:\\u001B\\]|\\u009D)[^\\u0007\\u001B\\u009C\\u009D]*(?:\\u0007|\\u001B\\u005C|\\u009C))" site=[[w_8]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v26 = String string="[\\u001B\\u009B]{{*}}[\\]()#;?]*(?:\\d{1,4}(?:[;:]\\d{0,4})*)?[\\dA-PR-TZcf-nq-uy=><~]"
-// CHECK-NEXT: v27 = Convert v26 declared={type=undefined|null|"[\\u001B\\u009B]{{*}}[\\]()#;?]*(?:\\d{1,4}(?:[;:]\\d{0,4})*)?[\\dA-PR-TZcf-nq-uy=><~]" site=[[w_9]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v28 = ToString v25
-// CHECK-NEXT: v29 = String string="|"
-// CHECK-NEXT: v30 = ToString v27
-// CHECK-NEXT: v31 = Strcat v28, v29, v30
-// CHECK-NEXT: v32 = String string="(?:(?:\\u001B\\]|\\u009D)[^\\u0007\\u001B\\u009C\\u009D]*(?:\\u0007|\\u001B\\u005C|\\u009C))|[\\u001B\\u009B]{{*}}[\\]()#;?]*(?:\\d{1,4}(?:[;:]\\d{0,4})*)?[\\dA-PR-TZcf-nq-uy=><~]"
-// CHECK-NEXT: v33 = Convert v32 declared={type=undefined|null|"(?:(?:\\u001B\\]|\\u009D)[^\\u0007\\u001B\\u009C\\u009D]*(?:\\u0007|\\u001B\\u005C|\\u009C))|[\\u001B\\u009B]{{*}}[\\]()#;?]*(?:\\d{1,4}(?:[;:]\\d{0,4})*)?[\\dA-PR-TZcf-nq-uy=><~]" site=[[w_10]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v34 = Builtin builtin=RegExp
-// CHECK-NEXT: v35 = ToBoolean v17
-// CHECK-NEXT: Branch v35 -> taken b13(| 0), notTaken b15(| 0)
-// CHECK-NEXT: b13(v36):
+// CHECK-NEXT: v20 = String string="(?:(?:\\u001B\\]|\\u009D)[^\\u0007\\u001B\\u009C\\u009D]*(?:\\u0007|\\u001B\\u005C|\\u009C))"
+// CHECK-NEXT: v21 = Convert v20 declared={type=undefined|null|"(?:(?:\\u001B\\]|\\u009D)[^\\u0007\\u001B\\u009C\\u009D]*(?:\\u0007|\\u001B\\u005C|\\u009C))" site=[[w_8]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v22 = String string="[\\u001B\\u009B]{{*}}[\\]()#;?]*(?:\\d{1,4}(?:[;:]\\d{0,4})*)?[\\dA-PR-TZcf-nq-uy=><~]"
+// CHECK-NEXT: v23 = Convert v22 declared={type=undefined|null|"[\\u001B\\u009B]{{*}}[\\]()#;?]*(?:\\d{1,4}(?:[;:]\\d{0,4})*)?[\\dA-PR-TZcf-nq-uy=><~]" site=[[w_9]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v24 = String string="(?:(?:\\u001B\\]|\\u009D)[^\\u0007\\u001B\\u009C\\u009D]*(?:\\u0007|\\u001B\\u005C|\\u009C))|[\\u001B\\u009B]{{*}}[\\]()#;?]*(?:\\d{1,4}(?:[;:]\\d{0,4})*)?[\\dA-PR-TZcf-nq-uy=><~]"
+// CHECK-NEXT: v25 = Convert v24 declared={type=undefined|null|"(?:(?:\\u001B\\]|\\u009D)[^\\u0007\\u001B\\u009C\\u009D]*(?:\\u0007|\\u001B\\u005C|\\u009C))|[\\u001B\\u009B]{{*}}[\\]()#;?]*(?:\\d{1,4}(?:[;:]\\d{0,4})*)?[\\dA-PR-TZcf-nq-uy=><~]" site=[[w_10]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v26 = Builtin builtin=RegExp
+// CHECK-NEXT: v27 = String string="(?:(?:\\u001B\\]|\\u009D)[^\\u0007\\u001B\\u009C\\u009D]*(?:\\u0007|\\u001B\\u005C|\\u009C))|[\\u001B\\u009B]{{*}}[\\]()#;?]*(?:\\d{1,4}(?:[;:]\\d{0,4})*)?[\\dA-PR-TZcf-nq-uy=><~]"
+// CHECK-NEXT: v28 = ToBoolean v17
+// CHECK-NEXT: Branch v28 -> taken b13(| 0), notTaken b15(| 0)
+// CHECK-NEXT: b13(v29):
 // CHECK-NEXT: Jump -> next b14()
 // CHECK-NEXT: b14():
-// CHECK-NEXT: v37 = Undefined
-// CHECK-NEXT: Jump -> next b17(v37)
-// CHECK-NEXT: b15(v38):
+// CHECK-NEXT: v30 = Undefined
+// CHECK-NEXT: Jump -> next b17(v30)
+// CHECK-NEXT: b15(v31):
 // CHECK-NEXT: Jump -> next b16()
 // CHECK-NEXT: b16():
-// CHECK-NEXT: v39 = String string="g"
-// CHECK-NEXT: Jump -> next b17(v39)
-// CHECK-NEXT: b17(v40):
-// CHECK-NEXT: v41 = Construct v34, -, v33, v40 calleeName="RegExp"
-// CHECK-NEXT: v42 = Convert v41 declared={type=undefined|null|RegExp site=[[w_11]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: Return v42
+// CHECK-NEXT: v32 = String string="g"
+// CHECK-NEXT: Jump -> next b17(v32)
+// CHECK-NEXT: b17(v33):
+// CHECK-NEXT: v34 = Construct v26, -, v27, v33 calleeName="RegExp"
+// CHECK-NEXT: v35 = Convert v34 declared={type=undefined|null|RegExp site=[[w_11]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: Return v35
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="withFlags"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=[[w_12]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|RegExp site=[[w_13]] flags=[OmitsNull, OmitsUndefined]}] {

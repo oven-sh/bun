@@ -170,6 +170,7 @@ function isHttpOrHttpsPrefixed(value: string | null | undefined) {
 
 function parseURL(url: string | URL | UrlObject) {
   if (typeof url === "string" || url instanceof URL) return new URL(url);
+  if (require("internal/url").isURL(url)) return new URL(url.href);
   if (!url || typeof url !== "object") throw new TypeError("url must be a string, URL, or UrlObject");
   let { port, path, origin } = url;
   const { pathname, hostname, protocol, search } = url;

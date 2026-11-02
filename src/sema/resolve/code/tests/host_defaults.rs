@@ -108,6 +108,7 @@ fn default_host_selects_loader_by_path_alone() {
     let loader = Bare.loader_of(&LoaderRequest {
         path: MAIN,
         kind: CodeImportKind::Require,
+        is_linked_by_bundler: true,
         type_attribute: Some(b"text"),
         embed_attribute: Some(b"true"),
         settings: &settings,
@@ -215,6 +216,7 @@ fn default_host_leaves_tree_and_payload_unchanged() {
         bound: &bound,
         analysis: &analysis,
         settings: &settings,
+        import_meta_main: None,
     };
     let change = Bare.transform_tree(arena, &atoms, &mut transform, &mut payload);
     assert_eq!(change, TreeChange::Unchanged);

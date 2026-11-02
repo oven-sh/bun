@@ -1,7 +1,6 @@
 // Own keys stay in creation order when one object gets more keys than a key order can hold.
-// COUNTER: KeyOrderLimit >= 1
-// COUNTER: DeleteOfRequiredField = 0
-// COUNTER: NoExtraPropertiesWord = 0
+// COUNTER: KeyOrdersStoredOutOfLine >= 1
+// COUNTER: FieldsLeftSlotByDelete = 5003
 class Bag { constructor() { this.first = 0 } mark(value) { this.late = value } unmark() { delete this.late } total() { return this.first + (this.late ?? 0) } }
 function countDifferences(object, expected) { const keys = Object.keys(object); let count = keys.length === expected.length ? 0 : 1; for (let i = 0; i < expected.length; i++) if (keys[i] !== expected[i]) count++; return count }
 function show(label, object, expected) {

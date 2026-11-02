@@ -97,7 +97,7 @@ main().catch(e => print("failed", String(e)));
 // CHECK-NEXT: Return v1
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="next"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=env [[L_5]] flags=[IsFromCompiler]}, {type=undefined|null|string|Array flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|null|[[L_6]] flags=[IsExpected]}] functionTypes={{*}}[[f_7]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=env [[L_5]] flags=[IsFromCompiler]}, {type=undefined|null|string|Array flags=[IsExpected] variableName="values"}] thisType={type=anything} results=[{type=undefined|null|[[L_6]] flags=[IsExpected]}] functionTypes={{*}}[[f_7]]] {
 // CHECK-NEXT: b0(v0: env [[L_5]], v1: undefined|null|string|Array):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

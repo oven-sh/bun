@@ -152,6 +152,15 @@ fn create_jsc_ffi_function(
     })
 }
 
+/// Throws in a Bun built with `--ffi=off`. Loading a library runs its constructors.
+fn throw_if_disabled(global: &JSGlobalObject) -> JsResult<()> {
+    unsafe extern "C" {
+        /// Defined in `JSCFFIBridge.cpp`.
+        safe fn Bun__FFI__throwIfDisabled(global: &JSGlobalObject);
+    }
+    jsc::call_check_slow(global, || Bun__FFI__throwIfDisabled(global))
+}
+
 /// Raw extern fn pointers fed to the TCC-JIT'd C trampolines via `add_symbol`.
 mod exposed_to_ffi {
     use super::{JSGlobalObject, JSValue};
@@ -1075,6 +1084,9 @@ impl FFI {
             object.get_own(global_this, &bun_core::StringView::borrow_utf8(b"library"))?
         {
             compile_c.libraries = StringArray::from_js(global_this, library_value, "library")?;
+            if !compile_c.libraries.items.is_empty() {
+                throw_if_disabled(global_this)?;
+            }
         }
 
         if let Some(flags_value) = object.get_truthy(global_this, "flags")? {
@@ -1453,6 +1465,60 @@ impl FFI {
     }
 }
 
+/// The `Bun.FFI` functions return validation errors instead of throwing them. `bun:ffi` calls the wrappers below, which throw.
+fn throw_if_error(global: &JSGlobalObject, result: JSValue) -> JsResult<JSValue> {
+    if result.is_error() {
+        return Err(global.throw_value(result));
+    }
+    Ok(result)
+}
+
+impl FFI {
+    pub(crate) fn open_library<'a>(
+        cx: &mut JsScope<'a>,
+        name: Option<&[u8]>,
+        symbols: JsLocal<'a>,
+    ) -> JsResult<JSValue> {
+        let result = Self::dlopen(cx, name, symbols)?;
+        throw_if_error(cx.global(), result)
+    }
+
+    pub(crate) fn link_library<'a>(
+        cx: &mut JsScope<'a>,
+        symbols: JsLocal<'a>,
+    ) -> JsResult<JSValue> {
+        let result = Self::link_symbols(cx, symbols)?;
+        throw_if_error(cx.global(), result)
+    }
+
+    pub(crate) fn make_function<'a>(
+        cx: &mut JsScope<'a>,
+        options: JsLocal<'a>,
+        name: Option<bun_core::String>,
+    ) -> JsResult<JSValue> {
+        let result = Self::cfunction(cx, options, name)?;
+        throw_if_error(cx.global(), result)
+    }
+
+    pub(crate) fn make_callback<'a>(
+        cx: &mut JsScope<'a>,
+        options: JsLocal<'a>,
+        callback: JsLocal<'a>,
+    ) -> JsResult<JSValue> {
+        let result = Self::callback(cx, options, callback)?;
+        throw_if_error(cx.global(), result)
+    }
+
+    pub(crate) fn print_source<'a>(
+        cx: &mut JsScope<'a>,
+        symbols: JsLocal<'a>,
+        is_callback: bool,
+    ) -> JsResult<JSValue> {
+        let result = Self::view_source(cx, symbols, is_callback)?;
+        throw_if_error(cx.global(), result)
+    }
+}
+
 /// Creates an Exception object indicating that options object is invalid.
 /// The exception is not thrown on the VM.
 fn invalid_options_arg(global: &JSGlobalObject) -> JSValue {
@@ -1530,6 +1596,7 @@ impl FFI {
             return Ok(global.to_invalid_arguments(format_args!("Expected at least one symbol")));
         }
 
+        throw_if_disabled(global)?;
         let dylib: bun_sys::DynLib = 'brk: {
             // First try using the name directly
             match bun_sys::DynLib::open(name) {

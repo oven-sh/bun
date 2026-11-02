@@ -1,12 +1,12 @@
-// TypeScript's classes are structural: plain data with all the members of a class is of its type. Parsed data that is held to an array, a Map, a Set, a Promise, a tuple or a record OF such a class is read as in plain Bun, as data held to the class itself is. Each row has a class of its own, so that what enters in one row shows in the types of that class alone. A class with a private or protected member or a #name is compared by its declaration: only its own instances are of its type, and it stays as it is.
-// IR+ ^layout (L\d+) .*name="InAnnotatedArray" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
-// IR+ ^layout (L\d+) .*name="InResultArray" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
-// IR+ ^layout (L\d+) .*name="InCastArrayPassedOn" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
-// IR+ ^layout (L\d+) .*name="InCastArrayStored" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
-// IR+ ^layout (L\d+) .*name="InFieldOfAClass" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
-// IR- ^layout (L\d+) .*name="NeverGiven" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
-// IR- ^layout (L\d+) .*name="WithAPrivateField" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
-// IR- ^layout (L\d+) .*name="WithAPrivateName" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
+// TypeScript's classes are structural: plain data with all the members of a class is of its type. Parsed data that is held to an array, a Map, a Set, a Promise, a tuple or a record OF such a class is read as in plain Bun, as data held to the class itself is. Each row has a class of its own. What is parsed is read by name: the twelve rows of the top-level code, and `first` and the arrow function over what a Store holds where they are handed something else than an instance. Nothing that reads `field` is proven to read an instance but where one was made in sight, and there nothing is left to read. A class with a private or protected member or a #name is compared by its declaration: only its own instances are of its type, and it stays as it is.
+// IRM= 12  = PropGet v\d+ key="field" 
+// IRM= 0  = GetSlot v\d+.* key="field" 
+// IR= 1 first  = PropGet v\d+ key="field" 
+// IR+ ^function f\d+ module=.* role=GenericVersion .*\n(?:  .*\n)*?    v\d+: .* = PropGet v\d+ key="field" 
+// IR-  = GetSlot v\d+ key="field" receivers=\[L\d+\] level=Proven
+// IR- ^layout (L\d+) .*name="NeverGiven" [\s\S]* receivers=\[[^\]\n]*\b\1\b[^\]\n]*\.\.\]
+// IR- ^layout (L\d+) .*name="WithAPrivateField" [\s\S]* receivers=\[[^\]\n]*\b\1\b[^\]\n]*\.\.\]
+// IR- ^layout (L\d+) .*name="WithAPrivateName" [\s\S]* receivers=\[[^\]\n]*\b\1\b[^\]\n]*\.\.\]
 class InAnnotatedArray { field: string = "made"; }
 class InResultArray { field: string = "made"; }
 class InCastArrayPassedOn { field: string = "made"; }

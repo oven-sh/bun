@@ -1,12 +1,17 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 afe29fb2efa84479ced4a04d59fb30de1930442adb75ed02f1e8a3cef0652475.
+// Written against that file with the SHA-256 f14645fc6af6a16c956042871af63a64d9e96e9d5646368ab76f6ecf97ccffe8.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
 const EventEmitter = require("node:events");
 const { Stream, Duplex } = require("node:stream");
+const { Stream: StreamOfLibrary } = require("internal/streams/legacy");
 const StreamPrototype = Stream.prototype;
-const plainStream: $Node.Stream = new Stream();
+// A name read from `plainStream` is looked up from Stream.prototype on. No constructor runs: the other text makes no stream here.
+function PlainStream() {}
+$toClass(PlainStream, "PlainStream", StreamOfLibrary);
+if (Stream !== StreamOfLibrary) Object.setPrototypeOf(PlainStream.prototype, StreamPrototype);
+const plainStream: any = new PlainStream();
 const DuplexPrototype = Stream.Duplex.prototype;
 const ReadablePrototype = Stream.Readable.prototype;
 const duplexResume = DuplexPrototype.resume;
@@ -20,7 +25,6 @@ const kSocketFlowMask = kFlowing | kHasPaused | kPaused | (1 << 1) | (1 << 4) | 
 const kSocketFlows = kFlowing | kHasPaused;
 const kResumeScheduled = 1 << 16;
 const { isIP } = require("internal/net/isIP");
-const { constructors: netConstructors } = require("internal/net/symbols");
 const {
   _checkInvalidHeaderChar: checkInvalidHeaderChar,
   chunkExpression,
@@ -2915,7 +2919,7 @@ function loadNet(tls: $Node.HttpServerTLSOptions | null) {
   if (NetSocket === undefined) {
     NetSocket = require("node:net").Socket;
     // Where a program has stored another class in `net.Socket`, no socket has this prototype and no short road is taken.
-    const ownPrototype = netConstructors.Socket!.prototype;
+    const ownPrototype = netSymbols.constructors.Socket!.prototype;
     netSocketPrototype = ownPrototype;
     netSocketResume = ownPrototype.resume;
     netSocketSetTimeout = ownPrototype.setTimeout;
@@ -3422,6 +3426,7 @@ function ServerResponse(
     this.req = req;
     this.sendDate = true;
     this._sent100 = false;
+    this._expect_continue = false;
     this[kPendingCallbacks] = noCallbacks;
     if (!nativeHasBody) this._hasBody = false;
     this[kHandle] = nativeHandle;
@@ -3491,6 +3496,7 @@ function ServerResponse(
   this.req = req;
   this.sendDate = true;
   this._sent100 = false;
+  this._expect_continue = false;
   this[kPendingCallbacks] = [];
 
   if (req.method === "HEAD") this._hasBody = false;
@@ -3527,6 +3533,7 @@ function initializeStoreByStore(
   res.req = req;
   res.sendDate = true;
   res._sent100 = false;
+  res._expect_continue = false;
   res[kPendingCallbacks] = [];
 
   if (req.method === "HEAD") res._hasBody = false;
@@ -3552,7 +3559,7 @@ function adoptResponse(res: $Node.ServerResponse): void {
   exchange.flags = EXCHANGE_HAS_PENDING_CALLBACKS | EXCHANGE_HAS_STAND_IN;
   res.$exchange = exchange;
 }
-Object.defineProperty(ServerResponse, "length", { __proto__: null, value: 2, configurable: true });
+Object.$defineProperty(ServerResponse, "length", { __proto__: null, value: 2, configurable: true });
 // A response whose own statusCode was deleted sends 200, as in Node.js.
 ServerResponse.prototype.statusCode = 200;
 // A connection that closes under the ended response it carries completes it. Node 26.12 emits no 'finish' and fails the end() callback.
@@ -5321,8 +5328,6 @@ function failPendingWriteCallbacks(res: $Node.ServerResponse, error: Error | nul
     process.nextTick(callbacks[i], failure);
   }
 }
-
-ServerResponse.prototype._expect_continue = false;
 
 function defaultShouldUpgradeCallback(this: $Node.HttpServer) {
   return this.listenerCount("upgrade") > 0;

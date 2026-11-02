@@ -125,36 +125,35 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v4: f3 = NewClosure function=f3 allocationSite=2
 # CHECK-NEXT: v5: f3 = NewClass v4 layout=L1
 # CHECK-NEXT: v6: f3 = FinishClass v5 layout=L1
-# CHECK-NEXT: v7: anything = GetBuiltinValue builtin=ProcessArgv overload=ProcessArgv/0
-# CHECK-NEXT: v8: anything ~ builtin(ProcessArgv) = Upcast v7 castType=anything
+# CHECK-NEXT: v7: Array<string> = GetBuiltinValue builtin=ProcessArgv overload=ProcessArgv/0
+# CHECK-NEXT: v8: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v7 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v9: 2 = Integer integer=2
-# CHECK-NEXT: v10: anything = ElemGet v8, v9 accessSite=1 [keyIsIntegral]
-# CHECK-NEXT: v11: anything = GetBuiltinValue builtin=ProcessArgv overload=ProcessArgv/0
-# CHECK-NEXT: v12: anything ~ builtin(ProcessArgv) = Upcast v11 castType=anything
+# CHECK-NEXT: v10: undefined|string = ElemGet v8, v9 accessSite=1 [keyIsIntegral]
+# CHECK-NEXT: v11: Array<string> = GetBuiltinValue builtin=ProcessArgv overload=ProcessArgv/0
+# CHECK-NEXT: v12: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v11 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v13: 9 = Integer integer=9
-# CHECK-NEXT: v14: anything = ElemGet v12, v13 accessSite=4 [keyIsIntegral]
+# CHECK-NEXT: v14: undefined|string = ElemGet v12, v13 accessSite=4 [keyIsIntegral]
 # CHECK-NEXT: v15: 3 = Integer integer=3
 # CHECK-NEXT: PropSet v2, v15 key="added" accessSite=5
 # CHECK-NEXT: v17: i32 = CallDirect function=f1 accessSite=6
-# CHECK-NEXT: v18: anything = GetBuiltinValue builtin=ProcessArgv overload=ProcessArgv/0
-# CHECK-NEXT: v19: anything ~ builtin(ProcessArgv) = Upcast v18 castType=anything
+# CHECK-NEXT: v18: Array<string> = GetBuiltinValue builtin=ProcessArgv overload=ProcessArgv/0
+# CHECK-NEXT: v19: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v18 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v20: 9 = Integer integer=9
-# CHECK-NEXT: v21: anything = ElemGet v19, v20 accessSite=8 [keyIsIntegral]
-# CHECK-NEXT: v22: anything ~ undefined|null|string = Upcast v21 castType=anything
-# CHECK-NEXT: v23: boolean = TypeTest v22 testedType=undefined|null
-# CHECK-NEXT: Branch v23 -> taken b1(), notTaken b2(| 0)
+# CHECK-NEXT: v21: undefined|string = ElemGet v19, v20 accessSite=8 [keyIsIntegral]
+# CHECK-NEXT: v22: boolean = TypeTest v21 testedType=undefined|null
+# CHECK-NEXT: Branch v22 -> taken b1(), notTaken b2(| 0)
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v24: "ent" = String string="ent"
+# CHECK-NEXT: v23: "ent" = String string="ent"
+# CHECK-NEXT: Jump -> next b3(v23)
+# CHECK-NEXT: b2(v24: string):
 # CHECK-NEXT: Jump -> next b3(v24)
-# CHECK-NEXT: b2(v25: boolean|number|string|symbol|bigint|object ~ string):
-# CHECK-NEXT: Jump -> next b3(v25)
-# CHECK-NEXT: b3(v26: boolean|number|string|symbol|bigint|object ~ string):
-# CHECK-NEXT: v27: "abs" = String string="abs"
-# CHECK-NEXT: v28: string = Add v27, v26
-# CHECK-NEXT: v29: "now" = String string="now"
-# CHECK-NEXT: ElemSet v6, v28, v29 accessSite=9
-# CHECK-NEXT: v31: undefined = Undefined
-# CHECK-NEXT: Return v31
+# CHECK-NEXT: b3(v25: string):
+# CHECK-NEXT: v26: "abs" = String string="abs"
+# CHECK-NEXT: v27: string = Strcat v26, v25 [isLikelyKey]
+# CHECK-NEXT: v28: "now" = String string="now"
+# CHECK-NEXT: ElemSet v6, v27, v28 accessSite=9
+# CHECK-NEXT: v30: undefined = Undefined
+# CHECK-NEXT: Return v30
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="readAddedFromLowest"
 # CHECK: module=m0 position=523 flags=[HasExplicitName] thisType={type=anything} results=[{type=i32}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

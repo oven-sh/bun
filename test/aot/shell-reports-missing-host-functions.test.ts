@@ -96,3 +96,26 @@ test.skipIf(!!scriptSkipReason)(
   },
   290_000,
 );
+
+// The shell throws an Error for the module while `import()` loads what the imported file needs. Such an error lists no frame of the importer,
+// and a validating build compares the two ways in which the frames are listed.
+test.skipIf(!!scriptSkipReason)(
+  "a validating build whose import() reaches a module only Bun has is skipped by the name of the module",
+  async () => {
+    using folder = tempDir("aot-missing-host-module", {
+      "programs/host/imports/main.mjs": `// Flags: --aot-validate\nawait import("./needs.mjs");\n`,
+      "programs/host/imports/needs.mjs": `import { existsSync } from "node:fs";\nconsole.log(typeof existsSync);\n`,
+    });
+    const { stdout, stderr, exitCode } = await run(
+      [python!, join(import.meta.dir, "shell", "quick.py"), "host/imports"],
+      undefined,
+      { ...scriptEnvironment(), PROGRAMS: join(String(folder), "programs"), WORK: join(String(folder), "work") },
+    );
+    expect(stderr).toBe("");
+    expect(stdout.split("\n").filter(line => line !== "")).toEqual([
+      "host/imports: skipped: it needs the host's node:fs",
+    ]);
+    expect(exitCode).toBe(0);
+  },
+  290_000,
+);

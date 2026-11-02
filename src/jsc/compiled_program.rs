@@ -49,7 +49,34 @@ unsafe extern "C" {
     safe fn Bun__AOT__takePagesForTablesOfFirstThread();
     safe fn Bun__isCompiledProgramFile(path: &bun_core::String) -> bool;
     safe fn Bun__isCompiledProgramFileInSomeForm(path: &bun_core::String) -> bool;
+    safe fn Bun__AOT__willRunEntryPointAgain(global: &JSGlobalObject, path: &bun_core::String);
+    safe fn Bun__AOT__mayHoldPathStartingWith(start: &bun_core::String) -> bool;
+    safe fn Bun__AOT__isLeftToCodeOutsideImage(
+        specifier: &bun_core::String,
+        directory_of_importer: &bun_core::String,
+    ) -> bool;
     safe fn Bun__AOT__entryPointIsCommonJS(global: &JSGlobalObject) -> bool;
+    fn Bun__AOT__forEachFilePathStartingWith(
+        start: Bytes,
+        context: *mut core::ffi::c_void,
+        each: unsafe extern "C" fn(*mut core::ffi::c_void, Bytes) -> bool,
+    );
+    fn Bun__AOT__forEachCountedFile(
+        vm: *mut crate::VM,
+        context: *mut core::ffi::c_void,
+        each: unsafe extern "C" fn(*mut core::ffi::c_void, Bytes, *const u64, usize),
+    );
+    fn Bun__AOT__forEachFirstLoad(
+        vm: *mut crate::VM,
+        context: *mut core::ffi::c_void,
+        each: unsafe extern "C" fn(*mut core::ffi::c_void, Bytes, bool),
+    );
+    fn Bun__AOT__noteFirstLoadInEarlierProcess(
+        vm: *mut crate::VM,
+        path: Bytes,
+        was_synchronous: bool,
+    );
+    fn Bun__AOT__imagesHoldFile(images: *const Bytes, count: usize, path: Bytes) -> bool;
     safe fn Bun__AOT__errorIfCodeOutsideImageIsRefused(
         global: &JSGlobalObject,
         code: crate::ErrCode,
@@ -105,6 +132,51 @@ pub extern "C" fn Bun__AOT__pathOfForm(
             *is_form_without_attributes = places.is_form_without_attributes;
             bun_core::String::clone_utf8(&places.path_of_form)
         }
+        None => bun_core::String::DEAD,
+    }
+}
+
+/// BunCompiledModules.cpp. Zero: there is no such file.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__AOT__stampOfFile(path: &bun_core::String) -> u64 {
+    let Ok(stat) = bun_sys::stat(&bun_core::ZBox::from_bytes(path.to_utf8().slice())) else {
+        return 0;
+    };
+    let stat = bun_sys::PosixStat::init(&stat);
+    bun_aot::module_keys::stamp_of_file(stat.mtim.sec, stat.mtim.nsec, stat.size)
+}
+
+/// BunCompiledModules.cpp. `require` looks in `require.cache` for a Node.js module that is named without `node:`, under the name as it is written.
+/// The path of the module that such a name finds. `Dead`: it is no such name.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__AOT__nodeModuleNamedWithoutPrefix(
+    name: &bun_core::String,
+) -> bun_core::String {
+    let name = name.to_utf8();
+    let alias =
+        bun_resolve_builtins::Alias::get(name.slice(), bun_ast::Target::Bun, Default::default());
+    match alias.map(|alias| alias.path.as_bytes()) {
+        Some(path) if path.starts_with(b"node:") && path != name.slice() => {
+            bun_core::String::clone_utf8(path)
+        }
+        _ => bun_core::String::DEAD,
+    }
+}
+
+/// The path under which the executable knows `path`, a file of the machine that built it, as `__filename` and `require.resolve` name it.
+fn find_path_in_executable(path: &[u8]) -> Option<Vec<u8>> {
+    let graph = standalone_module_graph()?;
+    let public_root = graph.base_public_path_with_default_suffix();
+    graph
+        .compiled_program()?
+        .public_path_of_source(public_root, path)
+}
+
+/// BunCompiledModules.cpp. `find_path_in_executable`. `Dead`: it is no such path.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__AOT__pathInExecutable(path: &bun_core::String) -> bun_core::String {
+    match find_path_in_executable(path.to_utf8().slice()) {
+        Some(path) => bun_core::String::clone_utf8(&path),
         None => bun_core::String::DEAD,
     }
 }
@@ -201,24 +273,45 @@ fn entry_module_key_in<'a>(graph: &'static dyn StandaloneModuleGraph, path: &'a 
     }
 }
 
+/// `bun test --rerun-each`: the next load of the test file runs its body again, over what it imports as that stands.
+pub fn will_run_entry_point_again(global: &JSGlobalObject, key: &[u8]) {
+    if compiled_program().is_some() {
+        Bun__AOT__willRunEntryPointAgain(global, &bun_core::StringView::from_bytes(key));
+    }
+}
+
 pub fn is_compiled_module(path: &[u8]) -> bool {
     compiled_program().is_some()
         && Bun__isCompiledProgramFile(&bun_core::StringView::from_bytes(path))
+}
+
+// On Windows the path of a compiled module has backslashes, and the resolver joins the path of a file of the executable with forward slashes.
+fn with_separators_of_image(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    if cfg!(windows) && bun_core::strings::contains_char(path, b'/') {
+        let to_backslash = |&byte: &u8| if byte == b'/' { b'\\' } else { byte };
+        return path.iter().map(to_backslash).collect();
+    }
+    path.into()
+}
+
+fn may_hold_module_path_starting_with(start: &[u8]) -> bool {
+    let start = with_separators_of_image(start);
+    Bun__AOT__mayHoldPathStartingWith(&bun_core::StringView::from_bytes(&start))
+}
+
+fn is_left_to_code_outside_image(specifier: &[u8], directory_of_importer: &[u8]) -> bool {
+    let directory = with_separators_of_image(directory_of_importer);
+    Bun__AOT__isLeftToCodeOutsideImage(
+        &bun_core::StringView::from_bytes(specifier),
+        &bun_core::StringView::from_bytes(&directory),
+    )
 }
 
 /// The resolver keeps what it answers for as long as the process lives, so each path is copied once.
 fn find_module_path(path: &[u8]) -> Option<&'static [u8]> {
     static PATHS: bun_threading::Guarded<BTreeSet<&'static [u8]>> =
         bun_threading::Guarded::new(BTreeSet::new());
-    // On Windows the path of a compiled module has backslashes, and the resolver joins the path of a file of the executable with forward slashes.
-    let with_backslashes: Vec<u8>;
-    let path = if cfg!(windows) && bun_core::strings::contains_char(path, b'/') {
-        let to_backslash = |&byte: &u8| if byte == b'/' { b'\\' } else { byte };
-        with_backslashes = path.iter().map(to_backslash).collect();
-        &with_backslashes[..]
-    } else {
-        path
-    };
+    let path = &with_separators_of_image(path)[..];
     // The attributes of the import say which form of the file is asked for, and the resolver does not see them.
     if !Bun__isCompiledProgramFileInSomeForm(&bun_core::StringView::from_bytes(path)) {
         return None;
@@ -230,6 +323,92 @@ fn find_module_path(path: &[u8]) -> Option<&'static [u8]> {
     let kept: &'static [u8] = Box::leak(Box::from(path));
     paths.insert(kept);
     Some(kept)
+}
+
+fn for_each_module_path_starting_with(start: &[u8], mut each: &mut dyn FnMut(&[u8]) -> bool) {
+    unsafe extern "C" fn call(context: *mut core::ffi::c_void, path: Bytes) -> bool {
+        // SAFETY: `context` is the `each` below, which outlives the walk, and `path` is readable during the call.
+        unsafe {
+            let each = &mut *context.cast::<&mut dyn FnMut(&[u8]) -> bool>();
+            each(core::slice::from_raw_parts(path.ptr, path.len))
+        }
+    }
+    let context = (&raw mut each).cast::<core::ffi::c_void>();
+    // SAFETY: `start` and `context` outlive the call, which keeps neither.
+    unsafe { Bun__AOT__forEachFilePathStartingWith(bytes_of(start), context, call) };
+}
+
+/// The files that have run in a program built for `bun test --aot --coverage`: what the build said of each, and how often its places ran, by
+/// the build's numbers. A place past the end has not run.
+pub fn for_each_counted_file(global: &JSGlobalObject, mut each: &mut dyn FnMut(&[u8], &[u64])) {
+    unsafe extern "C" fn call(
+        context: *mut core::ffi::c_void,
+        description: Bytes,
+        counts: *const u64,
+        count: usize,
+    ) {
+        // SAFETY: `context` is the `each` below, which outlives the walk. `description` and `counts` are readable during the call.
+        unsafe {
+            let each = &mut *context.cast::<&mut dyn FnMut(&[u8], &[u64])>();
+            let counts = match count {
+                0 => &[][..],
+                _ => core::slice::from_raw_parts(counts, count),
+            };
+            each(
+                core::slice::from_raw_parts(description.ptr, description.len),
+                counts,
+            )
+        }
+    }
+    if compiled_program().is_none() {
+        return;
+    }
+    let context = (&raw mut each).cast::<core::ffi::c_void>();
+    // SAFETY: the VM is that of this thread, and `context` outlives the call, which does not keep it.
+    unsafe { Bun__AOT__forEachCountedFile(global.vm_ptr(), context, call) };
+}
+
+/// `Bun__AOT__isLoadedSynchronously`: the first load of a CommonJS file decides for every realm of the process, as the text that
+/// `bun test --isolate` keeps does. The files that have been asked about, in this process or in one that handed them on.
+pub fn for_each_first_load(global: &JSGlobalObject, mut each: &mut dyn FnMut(&[u8], bool)) {
+    unsafe extern "C" fn call(context: *mut core::ffi::c_void, path: Bytes, was_synchronous: bool) {
+        // SAFETY: `context` is the `each` below, which outlives the walk. `path` is readable during the call.
+        unsafe {
+            let each = &mut *context.cast::<&mut dyn FnMut(&[u8], bool)>();
+            each(
+                core::slice::from_raw_parts(path.ptr, path.len),
+                was_synchronous,
+            )
+        }
+    }
+    if compiled_program().is_none() {
+        return;
+    }
+    let context = (&raw mut each).cast::<core::ffi::c_void>();
+    // SAFETY: the VM is that of this thread, and `context` outlives the call, which does not keep it.
+    unsafe { Bun__AOT__forEachFirstLoad(global.vm_ptr(), context, call) };
+}
+
+/// What `for_each_first_load` named in the process that ran the test files before those of this one.
+pub fn note_first_load_in_earlier_process(
+    global: &JSGlobalObject,
+    path: &[u8],
+    was_synchronous: bool,
+) {
+    if compiled_program().is_none() {
+        return;
+    }
+    // SAFETY: the VM is that of this thread, and `path` outlives the call, which copies it.
+    unsafe {
+        Bun__AOT__noteFirstLoadInEarlierProcess(global.vm_ptr(), bytes_of(path), was_synchronous)
+    };
+}
+
+/// For a build above `images`, the first of them first, which does not run them: whether the file with code at `path` is a module of one of them, entry point or not.
+pub fn images_hold_file(images: &[&'static [u8]], path: &[u8]) -> bool {
+    let images: Vec<Bytes> = images.iter().map(|image| bytes_of(image)).collect();
+    // SAFETY: the images stay for as long as the process. The list and `path` outlive the call, which keeps neither.
+    unsafe { Bun__AOT__imagesHoldFile(images.as_ptr(), images.len(), bytes_of(path)) }
 }
 
 /// `path` names JavaScript, TypeScript, WebAssembly or a native addon that is not compiled into the executable.
@@ -413,23 +592,77 @@ mod write_execute {
         Err(Failure::Failed { call, errno })
     }
 
+    /// A started program inherits the filter. Without address randomization its loader runs where this process's own does.
+    #[cfg(bun_hardened)]
+    fn has_fixed_addresses() -> bool {
+        const ASKS_FOR_THE_PERSONALITY: libc::c_ulong = 0xffff_ffff;
+        // SAFETY: the request takes and returns integers only.
+        let personality = unsafe { libc::personality(ASKS_FOR_THE_PERSONALITY) };
+        personality != -1 && personality & libc::ADDR_NO_RANDOMIZE != 0
+    }
+
+    /// What is loaded at its first use, which the filter would refuse.
+    #[cfg(all(bun_hardened, target_env = "gnu"))]
+    fn load_libraries_early() {
+        use bun_exe_format::executable_memory_filter::name_services;
+        use bun_removable_features::{Feature, is_removed};
+        let load = |name: &core::ffi::CStr| {
+            // SAFETY: `name` ends with a NUL and outlives the call.
+            unsafe { libc::dlopen(name.as_ptr(), libc::RTLD_NOW) };
+        };
+        // SAFETY: it returns a string that ends with a NUL and lives as long as the process.
+        let version = unsafe { core::ffi::CStr::from_ptr(libc::gnu_get_libc_version()) };
+        let mut version = bun_core::strings::split(version.to_bytes(), b".")
+            .map(|part| core::str::from_utf8(part).ok()?.parse::<u32>().ok());
+        let version = (version.next().flatten(), version.next().flatten());
+        // glibc 2.34 moved libutil, librt and the services `files` and `dns` into libc.so.6.
+        let is_merged = version >= (Some(2), Some(34));
+        // pthread_exit() unwinds with it, and only a reload calls that.
+        if !is_removed(Feature::HotReload) {
+            load(c"libgcc_s.so.1");
+        }
+        if !is_merged && !is_removed(Feature::Terminal) {
+            load(c"libutil.so.1");
+        }
+        if !is_merged && !is_removed(Feature::WebView) {
+            load(c"librt.so.1");
+        }
+        let configuration =
+            bun_sys::File::read_from(bun_sys::Fd::cwd(), b"/etc/nsswitch.conf").unwrap_or_default();
+        let databases: [&[u8]; 5] = [b"hosts", b"passwd", b"group", b"initgroups", b"services"];
+        for service in name_services(&configuration, &databases) {
+            if is_merged && (service == b"files" || service == b"dns") {
+                continue;
+            }
+            let name = [b"libnss_", service, b".so.2"].concat();
+            if let Ok(name) = std::ffi::CString::new(name) {
+                load(&name);
+            }
+        }
+    }
+
     #[cfg(bun_hardened)]
     pub(super) fn refuse_new_executable_memory(
         image_code: core::ops::Range<u64>,
     ) -> Result<(), Failure> {
         use bun_exe_format::executable_memory_filter::{Libraries, program};
         use bun_removable_features::{Feature, is_removed};
-        let libraries = match [
+        let loads_no_library = [
             Feature::Ffi,
             Feature::NativeAddons,
             Feature::SqliteExtensions,
+            Feature::Secrets,
         ]
         .into_iter()
-        .all(is_removed)
-        {
+        .all(is_removed);
+        let libraries = match loads_no_library && !has_fixed_addresses() {
             true => Libraries::AreNeverLoaded,
             false => Libraries::MayBeLoaded,
         };
+        #[cfg(target_env = "gnu")]
+        if libraries == Libraries::AreNeverLoaded {
+            load_libraries_early();
+        }
         let mut code_of_this_process = executable_segments();
         code_of_this_process.push(image_code);
         let program = program(&code_of_this_process, libraries);
@@ -562,12 +795,14 @@ fn use_image_on_this_thread(program: &'static CompiledProgram, image: &'static [
         descriptor: file.descriptor,
         offset: file.offset + offset_in_images as i64,
     });
+    let all_images = bun_resolver::compiled_program::RANGE_OF_ALL_IMAGES.get();
+    let all_images = all_images.copied().unwrap_or(program.image);
     // SAFETY: the images are part of the `'static` graph, which is never unmapped. `file` and
     // `identity` outlive the call.
     let raw_verdict = unsafe {
         Bun__AOT__useImage(
             bytes_of(image),
-            bytes_of(program.image),
+            bytes_of(all_images),
             file.as_ref().map_or(core::ptr::null(), core::ptr::from_ref),
             identity.as_ptr(),
         )
@@ -592,9 +827,67 @@ pub(crate) fn runs_worker_of_text_apart() -> bool {
         .is_some_and(|admitted| admitted.contains(AdmittedCode::INSPECTOR));
     !admits_inspector
         && !loads_code_outside_image(program)
-        && bun_removable_features::RuntimeRequirement::WholeRuntime.is_available()
+        && bun_removable_features::can_run_uncompiled_code()
         && bun_core::code_generation_from_strings_by_flags()
             != bun_core::CodeGenerationFromStrings::Strict
+}
+
+/// Whether a Worker that starts from a file on disk runs it apart from the compiled program, as one that starts from text does.
+pub(crate) fn runs_worker_from_disk_apart() -> bool {
+    program_of_executable().is_some_and(|program| program.allows_code_from_disk)
+        && runs_worker_of_text_apart()
+}
+
+/// BunCompiledModules.cpp. `path` is the text that the Worker of this thread starts from, and only what `--trim` removed keeps it from running: see `runs_worker_of_text_apart`.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__AOT__isWorkerTextRefusedByTrimming(
+    global: &JSGlobalObject,
+    path: &bun_core::String,
+) -> bool {
+    let vm = global.bun_vm();
+    vm.worker_ref().is_some()
+        && vm.main() == Some(path.to_utf8().slice())
+        && !bun_removable_features::can_run_uncompiled_code()
+}
+
+/// BunCompiledModules.cpp
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__AOT__isStartOfWorker(
+    global: &JSGlobalObject,
+    path: &bun_core::String,
+) -> bool {
+    let vm = global.bun_vm();
+    vm.worker_ref().is_some() && vm.main() == Some(path.to_utf8().slice())
+}
+
+/// BunCompiledModules.cpp. The entry point, and in a test run the test file that the runner has started last.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__AOT__isMainModule(global: &JSGlobalObject, path: &bun_core::String) -> bool {
+    let Some(main) = global.bun_vm().main() else {
+        return false;
+    };
+    let path = path.to_utf8();
+    // `Bun.main = require.resolve("./other.cjs")`
+    main == path.slice() || find_path_in_executable(main).is_some_and(|main| main == path.slice())
+}
+
+/// BunCompiledModules.cpp
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__AOT__isLoadedSynchronously(
+    global: &JSGlobalObject,
+    path: &bun_core::String,
+) -> bool {
+    let vm = global.bun_vm();
+    vm.main() == Some(path.to_utf8().slice())
+        || global.has_plugins()
+        || !vm.transpiler_store.enabled
+        || crate::node_compile_cache::is_enabled()
+}
+
+/// BunCompiledModules.cpp
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__AOT__allowsCodeFromDisk() -> bool {
+    program_of_executable().is_some_and(|program| program.allows_code_from_disk)
 }
 
 /// On the thread of a Worker that starts from text, before its VM is created. False where this Bun runs nothing but compiled code.
@@ -658,6 +951,10 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
         };
         let _ = IDENTITY.set(identity);
         use_image_on_this_thread(program, program.first_image());
+        let above = bun_resolver::compiled_program::PROGRAMS_ABOVE.get();
+        for &program in above.into_iter().flatten() {
+            use_image_on_this_thread(program, program.first_image());
+        }
         Bun__AOT__takePagesForTablesOfFirstThread();
         #[cfg(not(bun_hardened))]
         write_execute::deny();
@@ -670,6 +967,9 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
             }
         }
         program.set_module_lookup(find_module_path);
+        program.set_test_of_path_starts(may_hold_module_path_starting_with);
+        program.set_module_listing(for_each_module_path_starting_with);
+        program.set_test_of_names_left_outside(is_left_to_code_outside_image);
         bun_crash_handler::report_aborts();
         #[cfg(not(bun_locked_environment))]
         if is_verbose {

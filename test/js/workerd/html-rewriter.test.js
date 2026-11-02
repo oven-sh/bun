@@ -2056,15 +2056,17 @@ it("#3334 regression", async () => {
 });
 
 // None of these inputs has a header list yet: nothing passed `headers`, and nothing has read `.headers`.
+// The last column is the `type` of blob(). A Blob keeps what the program gave it until reading .body moves its type to the header list.
 describe.each([
-  ["a Bun.file()", "", dir => new Response(Bun.file(join(dir, "page.html")))],
+  ["a Bun.file()", "", dir => new Response(Bun.file(join(dir, "page.html"))), "text/html;charset=utf-8"],
   // This one is still being rewritten when transform() returns.
   [
     "a Bun.file() that takes many reads",
     Buffer.alloc(1024 * 1024, "x").toString(),
     dir => new Response(Bun.file(join(dir, "page.html"))),
+    "text/html;charset=utf-8",
   ],
-  ["a Blob with a type", "", () => new Response(new Blob(["<p>hi</p>"], { type: "text/html" }))],
+  ["a Blob with a type", "", () => new Response(new Blob(["<p>hi</p>"], { type: "text/html" })), "text/html"],
   [
     "a Blob with a type, after .body was read",
     "",
@@ -2073,8 +2075,9 @@ describe.each([
       response.body;
       return response;
     },
+    "text/html;charset=utf-8",
   ],
-])("transform(response) keeps the Content-Type that %s implies", (_, filler, input) => {
+])("transform(response) keeps the Content-Type that %s implies", (_, filler, input, typeOfBlob) => {
   const make = () => {
     const dir = tempDir("rewriter-content-type", { "page.html": "<p>hi</p>" + filler });
     const transform = () =>
@@ -2108,7 +2111,7 @@ describe.each([
   it("as the type of blob()", async () => {
     using made = make();
     const blob = await made.transform().blob();
-    expect({ type: blob.type, rewritten: isRewritten(await blob.text()) }).toEqual(expected);
+    expect({ type: blob.type, rewritten: isRewritten(await blob.text()) }).toEqual({ ...expected, type: typeOfBlob });
   });
 
   it("in a clone", async () => {

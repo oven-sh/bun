@@ -25,7 +25,6 @@
 
 "use strict";
 
-const { URL, URLSearchParams, URLPattern } = globalThis as typeof globalThis & { URLPattern: unknown };
 const { domainToASCII, domainToUnicode, idnaToASCII, isURL, urlToHttpOptions } = require("internal/url");
 const { validateString, validateObject } = require("internal/validators");
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
@@ -1241,7 +1240,7 @@ function getPathFromURLWin32(url: URL): string {
       }
     }
   }
-  pathname = pathname.replace(/\//g, "\\");
+  pathname = `${pathname}`.replace(/\//g, "\\");
   pathname = decodeURIComponent(pathname);
   if (hostname !== "") {
     // UNC path: \\hostname\path
@@ -1268,16 +1267,18 @@ function getPathFromURLPosix(url: URL): string {
       }
     }
   }
-  return decodeURIComponent(pathname);
+  // As in Node, a non-string `pathname` is returned as is, so the caller's path validation rejects it.
+  return `${pathname}`.includes("%") ? decodeURIComponent(pathname) : pathname;
 }
 
 function fileURLToPath(url: string | URL, options?: { windows?: boolean }) {
   const windows = options?.windows;
-  if (windows !== undefined && windows !== null) {
+  // Bun.fileURLToPath only accepts a string or a native URL, so foreign URLs are handled here.
+  if ((windows !== undefined && windows !== null) || (typeof url !== "string" && !(url instanceof URL))) {
     let parsed: URL;
     if (typeof url === "string") {
       parsed = new URL(url);
-    } else if (url instanceof URL) {
+    } else if (isURL(url)) {
       parsed = url;
     } else {
       throw $ERR_INVALID_ARG_TYPE("path", ["string", "URL"], url);
@@ -1285,7 +1286,7 @@ function fileURLToPath(url: string | URL, options?: { windows?: boolean }) {
     if (parsed.protocol !== "file:") {
       throw $ERR_INVALID_URL_SCHEME("file");
     }
-    return windows ? getPathFromURLWin32(parsed) : getPathFromURLPosix(parsed);
+    return (windows ?? process.platform === "win32") ? getPathFromURLWin32(parsed) : getPathFromURLPosix(parsed);
   }
   try {
     return Bun.fileURLToPath(url as any);

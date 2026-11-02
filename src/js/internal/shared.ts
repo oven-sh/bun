@@ -85,36 +85,26 @@ class ExceptionWithHostPort extends Error {
   }
 }
 
-// https://github.com/nodejs/node/blob/v26.5.0/lib/internal/errors.js#L689-L716
-class UVExceptionWithHostPort extends Error {
-  errno: number;
-  syscall: string;
-  port?: number;
-  address: string | null;
-
-  constructor(err: number, syscall: string, address: string | null, port?: number) {
-    const util = require("node:util");
-    const code = util.getSystemErrorName(err);
-    let details = "";
-    if (port && port > 0) {
-      details = ` ${address}:${port}`;
-    } else if (address) {
-      details = ` ${address}`;
-    }
-
-    super(`${syscall} ${code}: ${util.getSystemErrorMessage(err)}${details}`);
-
-    this.code = code;
-    this.errno = err;
-    this.syscall = syscall;
-    this.address = address;
-    if (port) {
-      this.port = port;
-    }
+// https://github.com/nodejs/node/blob/v26.5.0/lib/internal/errors.js#L689-L716, without a class of its own: every program loads this module.
+function uvExceptionWithHostPort(err: number, syscall: string, address: string | null, port?: number) {
+  const util = require("node:util");
+  const code = util.getSystemErrorName(err);
+  let details = "";
+  if (port && port > 0) {
+    details = ` ${address}:${port}`;
+  } else if (address) {
+    details = ` ${address}`;
   }
-  get ["constructor"]() {
-    return Error;
+
+  const error: any = new Error(`${syscall} ${code}: ${util.getSystemErrorMessage(err)}${details}`);
+  error.code = code;
+  error.errno = err;
+  error.syscall = syscall;
+  error.address = address;
+  if (port) {
+    error.port = port;
   }
+  return error;
 }
 
 // The error net.Server emits for what Bun.serve() or Bun.listen() threw. `address` is null for a descriptor, `port` is -1 for a pipe.
@@ -131,7 +121,7 @@ function listenException(err, address: string | null, port?: number) {
     else if (code === "ENOENT") code = "EACCES";
   }
   const errno = process.binding("uv")[`UV_${code}`];
-  return errno === undefined ? err : new UVExceptionWithHostPort(errno, "listen", address, port);
+  return errno === undefined ? err : uvExceptionWithHostPort(errno, "listen", address, port);
 }
 
 // The error dgram.Socket reports for what Bun.udpSocket() threw. `address` is undefined for a descriptor, which Node opens.

@@ -4,7 +4,7 @@ use bun_lint::prelude::*;
 /// This rule warns about usage of `.todo` in `describe`, `it`, or `test` functions.
 pub struct WarnTodo<const RUNNER: u8 = { jest::VITEST }>;
 
-const WARN_TODO: Message = Message::new("", "The use of `.todo` is not recommended.");
+const WARN_TODO: &Message = &Message::new("", "The use of `.todo` is not recommended.");
 
 impl<const RUNNER: u8> Rule for WarnTodo<RUNNER> {
     const META: Meta = jest::meta(RUNNER, "warn-todo", Kind::Problem);

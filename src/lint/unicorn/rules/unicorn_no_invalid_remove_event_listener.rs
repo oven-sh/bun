@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// It warns when you use a non-function value as the second argument of `removeEventListener`.
 pub struct NoInvalidRemoveEventListener;
 
-const INVALID_CALL: Message = Message::new("", "Invalid `removeEventListener` call.");
+const INVALID_CALL: &Message = &Message::new("", "Invalid `removeEventListener` call.");
 
 /// The name token in `a.name`, but not in `a.#name`.
 fn static_member_name(callee: Expr<'_>) -> Option<Ident<'_>> {

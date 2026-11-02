@@ -238,10 +238,12 @@ impl CryptoHasher {
     fn update<'a>(&mut self, heap: &JsHeap<'a>, input: &[u8]) -> bindgen::Result<'a, ()> {
         match self {
             CryptoHasher::Evp(evp) => evp.update(input),
-            CryptoHasher::Hmac(hmac) => hmac
-                .as_mut()
-                .ok_or_else(|| Self::hmac_consumed(heap))?
-                .update(input),
+            CryptoHasher::Hmac(hmac) => {
+                let hmac = hmac.as_mut().ok_or_else(|| Self::hmac_consumed(heap))?;
+                if hmac.update(input) {
+                    return Ok(());
+                }
+            }
             CryptoHasher::Zig(zig) => {
                 zig.update(input);
                 return Ok(());

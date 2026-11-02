@@ -176,7 +176,7 @@ for (const use in uses) for (const change in changes) attempt(use + ", the gette
 // CHECK-NEXT: Return v14
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=env [[L_5]] flags=[IsFromCompiler]}, {type=undefined|null|function flags=[IsExpected]}, {type=undefined|null|Array<number> flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes={{*}}[[f_6]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=env [[L_5]] flags=[IsFromCompiler]}, {type=undefined|null|function flags=[IsExpected] variableName="change"}, {type=undefined|null|Array<number> flags=[IsExpected] variableName="list"}] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes={{*}}[[f_6]]] {
 // CHECK-NEXT: b0(v0: env [[L_5]], v1: undefined|null|function, v2: undefined|null|Array<number>):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

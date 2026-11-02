@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, statSync } from "fs";
 import { tmpdir } from "os";
 import "../harness/without-installing-packages";
 import { dirname, join, resolve } from "path";
+import { ownTemporaryFolder } from "../harness/temporary-folders";
 
 type Outcome = { stdout: string; error: string; exitCode: number | null; signal: string | null };
 type Range = { first: number; count: number } | undefined;
@@ -217,7 +218,7 @@ async function main(): Promise<number> {
   }
   reference = toOutcome(referenceRun);
 
-  const folder = mkdtempSync(join(tmpdir(), "aot-bisect-"));
+  const folder = ownTemporaryFolder(mkdtempSync(join(tmpdir(), "aot-bisect-")));
   const removeFolder = () => rmSync(folder, { recursive: true, force: true });
   process.once("SIGINT", () => {
     removeFolder();

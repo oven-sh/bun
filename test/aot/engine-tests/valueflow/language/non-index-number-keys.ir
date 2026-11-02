@@ -103,7 +103,7 @@ function f2 name="Span" module=m0 position=293 kind=BaseConstructor flags=[HasNe
 # CHECK-NEXT: v5: anything ~ undefined|null|Array<number> = Upcast v4 castType=anything
 # CHECK-NEXT: v6: undefined|null|Array<number> = Check v5 expectedType=undefined|null|Array<number>
 # CHECK-NEXT: v7: Array<undefined|null|string> = Data data=d0 allocationSite=0
-# CHECK-NEXT: v53: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v7 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v53: Array<"n0"|"n1"|"n2"|"n3", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v7 provenType=Array<"n0"|"n1"|"n2"|"n3", proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v8: Array<int[10, 13]> = Data data=d1 allocationSite=1
 # CHECK-NEXT: v54: Array<int[10, 13], proven, Int32, pristine[Storage, Names, Dense]> = AssumeType v8 provenType=Array<int[10, 13], proven, Int32, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v9: Array<fractional> = Data data=d2 allocationSite=2
@@ -120,10 +120,10 @@ function f2 name="Span" module=m0 position=293 kind=BaseConstructor flags=[HasNe
 # CHECK-NEXT: v50: undefined|null|L0 = Check v17 expectedType=undefined|null|L0 cause=AddedByPass
 # CHECK-NEXT: v18: Array<never> = NewArray v49, v50 contents=never allocationSite=3 [contentsAreProven]
 # CHECK-NEXT: v56: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v18 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v19: Array<Array<int[10, 13]|fractional|string, proven, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v53, v54, v55, v56 contents=Array<int[10, 13]|fractional|string, proven, pristine[Storage, Names, Dense]> allocationSite=4 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v57: Array<Array<int[10, 13]|fractional|string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v19 provenType=Array<Array<int[10, 13]|fractional|string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v20: Array<Array<int[10, 13]|fractional|string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = Upcast v57 castType=undefined|null|Array<undefined|null|object>
-# CHECK-NEXT: v58: Array<Array<int[10, 13]|fractional|string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v20 provenType=Array<Array<int[10, 13]|fractional|string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v19: Array<Array<int[10, 13]|fractional|"n0"|"n1"|"n2"|"n3", proven, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v53, v54, v55, v56 contents=Array<int[10, 13]|fractional|"n0"|"n1"|"n2"|"n3", proven, pristine[Storage, Names, Dense]> allocationSite=4 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v57: Array<Array<int[10, 13]|fractional|"n0"|"n1"|"n2"|"n3", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v19 provenType=Array<Array<int[10, 13]|fractional|"n0"|"n1"|"n2"|"n3", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v20: Array<Array<int[10, 13]|fractional|"n0"|"n1"|"n2"|"n3", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = Upcast v57 castType=undefined|null|Array<undefined|null|object>
+# CHECK-NEXT: v58: Array<Array<int[10, 13]|fractional|"n0"|"n1"|"n2"|"n3", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v20 provenType=Array<Array<int[10, 13]|fractional|"n0"|"n1"|"n2"|"n3", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v21: iteratorstate = IteratorOpen v58 [storageIsUndecided]
 # CHECK-NEXT: v22: undefined = IteratorResume v21
 # CHECK-NEXT: v23: anything = ResultAt v22 index=1
@@ -141,11 +141,11 @@ function f2 name="Span" module=m0 position=293 kind=BaseConstructor flags=[HasNe
 # CHECK-NEXT: v29: number = Check v28 expectedType=number
 # CHECK-NEXT: v30: boolean = StrictEq v24, v53
 # CHECK-NEXT: Branch v30 -> taken b4(| 0, 1), notTaken b5(| 0, 1)
-# CHECK-NEXT: b4(v31: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>, v32: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>) handler=b9():
+# CHECK-NEXT: b4(v31: Array<"n0"|"n1"|"n2"|"n3", proven, Contiguous, pristine[Storage, Names, Dense]>, v32: Array<"n0"|"n1"|"n2"|"n3", proven, Contiguous, pristine[Storage, Names, Dense]>) handler=b9():
 # CHECK-NEXT: v33: "p" = String string="p"
 # CHECK-NEXT: v34: string = Add v33, v29
 # CHECK-NEXT: Jump -> next b8(v34)
-# CHECK-NEXT: b5(v35: undefined|null|object, v36: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>) handler=b9():
+# CHECK-NEXT: b5(v35: undefined|null|object, v36: Array<"n0"|"n1"|"n2"|"n3", proven, Contiguous, pristine[Storage, Names, Dense]>) handler=b9():
 # CHECK-NEXT: v37: boolean = StrictEq v35, v56
 # CHECK-NEXT: Branch v37 -> taken b6(| 0, 1), notTaken b7(| 0, 1)
 # CHECK-NEXT: b6(v38: Array<never, proven, pristine[Storage, Names, Dense]>, v39: Array<never, proven, pristine[Storage, Names, Dense]>) handler=b9():

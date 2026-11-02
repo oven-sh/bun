@@ -78,6 +78,12 @@ inline bool hasDuplicateJwkKeyOps(const std::optional<Vector<CryptoKeyUsage>>& k
     return false;
 }
 
+// Whether `key_ops`, if the key has any, is well formed and covers `usages`.
+inline bool jwkKeyOpsAllow(const JsonWebKey& jwk, CryptoKeyUsageBitmap usages)
+{
+    return !jwk.key_ops || (!hasDuplicateJwkKeyOps(jwk.key_ops) && (jwk.usages & usages) == usages);
+}
+
 } // namespace WebCore
 
 #endif // ENABLE(WEB_CRYPTO)

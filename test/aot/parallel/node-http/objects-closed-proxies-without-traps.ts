@@ -1633,594 +1633,594 @@ defined anew true added false removed true absent removed true absent found fals
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: nothing itself, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself open 48 keys, 48 found, 48 writable, 48 configurable
-as that open 48 keys, 48 found, 48 writable, 48 configurable
+itself open 49 keys, 49 found, 49 writable, 49 configurable
+as that open 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added true removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: seal itself, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: seal a Proxy, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: seal a Proxy, then used as that
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: seal a Proxy of a Proxy, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: seal a Proxy with every trap, then used itself
-traps while closing: 50 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+traps while closing: 51 of them for a key that is not listed: 0
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: seal a Proxy with every trap, then used as that
-traps while closing: 50 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+traps while closing: 51 of them for a key that is not listed: 0
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: seal a Proxy with every trap of a Proxy with every trap, then used itself
-traps while closing: 247 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+traps while closing: 252 of them for a key that is not listed: 0
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: seal a revoked Proxy, then used itself
 closing threw TypeError
 traps while closing: 0 of them for a key that is not listed: 0
-itself open 48 keys, 48 found, 48 writable, 48 configurable
+itself open 49 keys, 49 found, 49 writable, 49 configurable
 asking threw TypeError
 changing threw TypeError
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: seal a Proxy of a revoked Proxy, then used itself
 closing threw TypeError
 traps while closing: 0 of them for a key that is not listed: 0
-itself open 48 keys, 48 found, 48 writable, 48 configurable
+itself open 49 keys, 49 found, 49 writable, 49 configurable
 asking threw TypeError
 changing threw TypeError
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: seal a Proxy that traps defineProperty, then used itself
-traps while closing: 48 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+traps while closing: 49 of them for a key that is not listed: 0
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: seal a Proxy that traps deleteProperty, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: seal a Proxy that traps get, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: seal a Proxy that traps getOwnPropertyDescriptor, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: seal a Proxy that traps getPrototypeOf, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: seal a Proxy that traps has, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: seal a Proxy that traps isExtensible, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: seal a Proxy that traps ownKeys, then used itself
 traps while closing: 1 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: seal a Proxy that traps preventExtensions, then used itself
 traps while closing: 1 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: seal a Proxy that traps set, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: preventExtensions itself, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: preventExtensions a Proxy, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: preventExtensions a Proxy, then used as that
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: preventExtensions a Proxy of a Proxy, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: preventExtensions a Proxy with every trap, then used itself
 traps while closing: 1 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: preventExtensions a Proxy with every trap, then used as that
 traps while closing: 1 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: preventExtensions a Proxy with every trap of a Proxy with every trap, then used itself
 traps while closing: 3 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: preventExtensions a revoked Proxy, then used itself
 closing threw TypeError
 traps while closing: 0 of them for a key that is not listed: 0
-itself open 48 keys, 48 found, 48 writable, 48 configurable
+itself open 49 keys, 49 found, 49 writable, 49 configurable
 asking threw TypeError
 changing threw TypeError
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: preventExtensions a Proxy of a revoked Proxy, then used itself
 closing threw TypeError
 traps while closing: 0 of them for a key that is not listed: 0
-itself open 48 keys, 48 found, 48 writable, 48 configurable
+itself open 49 keys, 49 found, 49 writable, 49 configurable
 asking threw TypeError
 changing threw TypeError
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: preventExtensions a Proxy that traps defineProperty, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: preventExtensions a Proxy that traps deleteProperty, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: preventExtensions a Proxy that traps get, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: preventExtensions a Proxy that traps getOwnPropertyDescriptor, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: preventExtensions a Proxy that traps getPrototypeOf, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: preventExtensions a Proxy that traps has, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: preventExtensions a Proxy that traps isExtensible, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: preventExtensions a Proxy that traps ownKeys, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: preventExtensions a Proxy that traps preventExtensions, then used itself
 traps while closing: 1 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, before the answer: preventExtensions a Proxy that traps set, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: nothing itself, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself open 48 keys, 48 found, 48 writable, 48 configurable
-as that open 48 keys, 48 found, 48 writable, 48 configurable
+itself open 49 keys, 49 found, 49 writable, 49 configurable
+as that open 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added true removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: freeze itself, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
-as that closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
+itself closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
+as that closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | nobody caught TypeError in set | nobody caught TypeError in emitCloseNT | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: freeze a Proxy, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
-as that closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
+itself closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
+as that closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | nobody caught TypeError in set | nobody caught TypeError in emitCloseNT | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: freeze a Proxy, then used as that
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
-as that closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
+itself closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
+as that closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | nobody caught TypeError in set | nobody caught TypeError in emitCloseNT | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: freeze a Proxy of a Proxy, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
-as that closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
+itself closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
+as that closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | nobody caught TypeError in set | nobody caught TypeError in emitCloseNT | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: freeze a Proxy with every trap, then used itself
-traps while closing: 98 of them for a key that is not listed: 0
-itself closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
-as that closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
+traps while closing: 100 of them for a key that is not listed: 0
+itself closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
+as that closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | nobody caught TypeError in set | nobody caught TypeError in emitCloseNT | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: freeze a Proxy with every trap, then used as that
-traps while closing: 98 of them for a key that is not listed: 0
-itself closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
-as that closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
+traps while closing: 100 of them for a key that is not listed: 0
+itself closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
+as that closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | nobody caught TypeError in set | nobody caught TypeError in emitCloseNT | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: freeze a Proxy with every trap of a Proxy with every trap, then used itself
-traps while closing: 439 of them for a key that is not listed: 0
-itself closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
-as that closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
+traps while closing: 448 of them for a key that is not listed: 0
+itself closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
+as that closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | nobody caught TypeError in set | nobody caught TypeError in emitCloseNT | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: freeze a revoked Proxy, then used itself
 closing threw TypeError
 traps while closing: 0 of them for a key that is not listed: 0
-itself open 48 keys, 48 found, 48 writable, 48 configurable
+itself open 49 keys, 49 found, 49 writable, 49 configurable
 asking threw TypeError
 changing threw TypeError
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: freeze a Proxy of a revoked Proxy, then used itself
 closing threw TypeError
 traps while closing: 0 of them for a key that is not listed: 0
-itself open 48 keys, 48 found, 48 writable, 48 configurable
+itself open 49 keys, 49 found, 49 writable, 49 configurable
 asking threw TypeError
 changing threw TypeError
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: freeze a Proxy that traps defineProperty, then used itself
-traps while closing: 48 of them for a key that is not listed: 0
-itself closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
-as that closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
+traps while closing: 49 of them for a key that is not listed: 0
+itself closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
+as that closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | nobody caught TypeError in set | nobody caught TypeError in emitCloseNT | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: freeze a Proxy that traps deleteProperty, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
-as that closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
+itself closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
+as that closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | nobody caught TypeError in set | nobody caught TypeError in emitCloseNT | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: freeze a Proxy that traps get, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
-as that closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
+itself closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
+as that closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | nobody caught TypeError in set | nobody caught TypeError in emitCloseNT | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: freeze a Proxy that traps getOwnPropertyDescriptor, then used itself
-traps while closing: 48 of them for a key that is not listed: 0
-itself closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
-as that closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
+traps while closing: 49 of them for a key that is not listed: 0
+itself closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
+as that closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | nobody caught TypeError in set | nobody caught TypeError in emitCloseNT | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: freeze a Proxy that traps getPrototypeOf, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
-as that closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
+itself closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
+as that closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | nobody caught TypeError in set | nobody caught TypeError in emitCloseNT | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: freeze a Proxy that traps has, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
-as that closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
+itself closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
+as that closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | nobody caught TypeError in set | nobody caught TypeError in emitCloseNT | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: freeze a Proxy that traps isExtensible, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
-as that closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
+itself closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
+as that closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | nobody caught TypeError in set | nobody caught TypeError in emitCloseNT | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: freeze a Proxy that traps ownKeys, then used itself
 traps while closing: 1 of them for a key that is not listed: 0
-itself closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
-as that closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
+itself closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
+as that closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | nobody caught TypeError in set | nobody caught TypeError in emitCloseNT | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: freeze a Proxy that traps preventExtensions, then used itself
 traps while closing: 1 of them for a key that is not listed: 0
-itself closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
-as that closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
+itself closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
+as that closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | nobody caught TypeError in set | nobody caught TypeError in emitCloseNT | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: freeze a Proxy that traps set, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
-as that closed sealed frozen 48 keys, 48 found, 0 writable, 0 configurable
+itself closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
+as that closed sealed frozen 49 keys, 49 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | nobody caught TypeError in set | nobody caught TypeError in emitCloseNT | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: seal itself, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: seal a Proxy, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: seal a Proxy, then used as that
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: seal a Proxy of a Proxy, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: seal a Proxy with every trap, then used itself
-traps while closing: 50 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+traps while closing: 51 of them for a key that is not listed: 0
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: seal a Proxy with every trap, then used as that
-traps while closing: 50 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+traps while closing: 51 of them for a key that is not listed: 0
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: seal a Proxy with every trap of a Proxy with every trap, then used itself
-traps while closing: 247 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+traps while closing: 252 of them for a key that is not listed: 0
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: seal a revoked Proxy, then used itself
 closing threw TypeError
 traps while closing: 0 of them for a key that is not listed: 0
-itself open 48 keys, 48 found, 48 writable, 48 configurable
+itself open 49 keys, 49 found, 49 writable, 49 configurable
 asking threw TypeError
 changing threw TypeError
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: seal a Proxy of a revoked Proxy, then used itself
 closing threw TypeError
 traps while closing: 0 of them for a key that is not listed: 0
-itself open 48 keys, 48 found, 48 writable, 48 configurable
+itself open 49 keys, 49 found, 49 writable, 49 configurable
 asking threw TypeError
 changing threw TypeError
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: seal a Proxy that traps defineProperty, then used itself
-traps while closing: 48 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+traps while closing: 49 of them for a key that is not listed: 0
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: seal a Proxy that traps deleteProperty, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: seal a Proxy that traps get, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: seal a Proxy that traps getOwnPropertyDescriptor, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: seal a Proxy that traps getPrototypeOf, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: seal a Proxy that traps has, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: seal a Proxy that traps isExtensible, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: seal a Proxy that traps ownKeys, then used itself
 traps while closing: 1 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: seal a Proxy that traps preventExtensions, then used itself
 traps while closing: 1 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: seal a Proxy that traps set, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 48 keys, 48 found, 48 writable, 0 configurable
-as that closed sealed 48 keys, 48 found, 48 writable, 0 configurable
+itself closed sealed 49 keys, 49 found, 49 writable, 0 configurable
+as that closed sealed 49 keys, 49 found, 49 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: preventExtensions itself, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: preventExtensions a Proxy, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: preventExtensions a Proxy, then used as that
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: preventExtensions a Proxy of a Proxy, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: preventExtensions a Proxy with every trap, then used itself
 traps while closing: 1 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: preventExtensions a Proxy with every trap, then used as that
 traps while closing: 1 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: preventExtensions a Proxy with every trap of a Proxy with every trap, then used itself
 traps while closing: 3 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: preventExtensions a revoked Proxy, then used itself
 closing threw TypeError
 traps while closing: 0 of them for a key that is not listed: 0
-itself open 48 keys, 48 found, 48 writable, 48 configurable
+itself open 49 keys, 49 found, 49 writable, 49 configurable
 asking threw TypeError
 changing threw TypeError
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: preventExtensions a Proxy of a revoked Proxy, then used itself
 closing threw TypeError
 traps while closing: 0 of them for a key that is not listed: 0
-itself open 48 keys, 48 found, 48 writable, 48 configurable
+itself open 49 keys, 49 found, 49 writable, 49 configurable
 asking threw TypeError
 changing threw TypeError
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: preventExtensions a Proxy that traps defineProperty, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: preventExtensions a Proxy that traps deleteProperty, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: preventExtensions a Proxy that traps get, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: preventExtensions a Proxy that traps getOwnPropertyDescriptor, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: preventExtensions a Proxy that traps getPrototypeOf, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: preventExtensions a Proxy that traps has, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: preventExtensions a Proxy that traps isExtensible, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: preventExtensions a Proxy that traps ownKeys, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: preventExtensions a Proxy that traps preventExtensions, then used itself
 traps while closing: 1 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's response, after the answer: preventExtensions a Proxy that traps set, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 48 keys, 48 found, 48 writable, 48 configurable
-as that closed 48 keys, 48 found, 48 writable, 48 configurable
+itself closed 49 keys, 49 found, 49 writable, 49 configurable
+as that closed 49 keys, 49 found, 49 writable, 49 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in onNodeHTTPRequest | nobody caught TypeError in markResponseEndedNT | response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a client's request: nothing itself, then used itself

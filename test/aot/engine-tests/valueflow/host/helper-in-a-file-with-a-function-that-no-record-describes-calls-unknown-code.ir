@@ -11,7 +11,7 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 module m1 path="Ipc.ts" displayPath="Ipc.ts" flags=[IsLibrary]
 entry module=m0
-runtimefunction id=65561 function=f1
+runtimefunction id=IpcParseHandle function=f1
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
   b0():
     v0 = Builtin builtin=Process
@@ -20,7 +20,7 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     v3 = Call v1, v0, v2
     Return
 }
-function f1 name="parseHandle" module=m1 role=Library enclosingRuntimeFunction=65561 parameters=[{type=anything}] results=[{type=anything}] {
+function f1 name="parseHandle" module=m1 role=Library enclosingRuntimeFunction=IpcParseHandle parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
     v1 = NewClosure function=f2
     v2 = Call v1, -, v0

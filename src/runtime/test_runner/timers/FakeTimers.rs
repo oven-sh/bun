@@ -1017,8 +1017,7 @@ impl FakeTimers {
         // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
         unsafe { (*timer_all()).fake_timers.advance_clock_to(global, at) };
         let _firing = Firing::begin();
-        // A control fires this below the JS that called it, where the callback's exit must not drain microtasks.
-        // A drive step and the tick timer drain once they return.
+        // Keeps the callback's exit from draining microtasks inside the control that fires it.
         let _entered = global.bun_vm().enter_event_loop_scope_without_checkpoint();
         let vm = VirtualMachine::get_mut_ptr();
         let mut thrown = JSValue::ZERO;

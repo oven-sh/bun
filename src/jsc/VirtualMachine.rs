@@ -1622,8 +1622,8 @@ impl VirtualMachine {
     }
 
     /// `event_loop().enter()` now, `.exit_without_checkpoint()` on drop, for a
-    /// dispatcher that drains microtasks itself, or for native code that
-    /// script called: see [`EventLoop::enter_scope_without_checkpoint`].
+    /// dispatcher that drains microtasks itself: see
+    /// [`EventLoop::enter_scope_without_checkpoint`].
     #[inline]
     pub fn enter_event_loop_scope_without_checkpoint(
         &self,

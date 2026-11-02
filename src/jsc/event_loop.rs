@@ -391,10 +391,6 @@ impl EventLoop {
     /// drains are unconditional, so the held count does not skip them, and the
     /// continuations they run are covered by it as well.
     ///
-    /// Also for native code that script called and that runs callbacks before
-    /// it returns (a fake timer control, `WebSocket::cancel`). It owes no
-    /// checkpoint: that one belongs to whoever called the script.
-    ///
     /// # Safety
     /// As [`Self::enter_scope`].
     #[inline]

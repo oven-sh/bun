@@ -284,6 +284,12 @@ ${idle}`;
       expect(await reloadOnce(queued("SIGHUP"), watch("SIGINT"))).toEqual(endedBy("SIGHUP"));
     });
 
+    // The default action of SIGQUIT also writes a core file. `ulimit -c 0` keeps that out of the test.
+    it("when it is SIGQUIT", async () => {
+      const prefix = ["/bin/sh", "-c", 'ulimit -c 0; exec "$0" "$@"'];
+      expect(await reloadOnce(queued("SIGQUIT"), watch("SIGINT"), { prefix })).toEqual(endedBy("SIGQUIT"));
+    });
+
     // node's watcher exits with code 0 on SIGINT, and so does `bun --watch` when no listener takes it.
     it("with exit code 0 when it is SIGINT", async () => {
       const expected = { starts: 1, output: [], exitCode: 0, signalCode: null };

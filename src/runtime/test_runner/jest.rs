@@ -102,6 +102,10 @@ impl CurrentFile {
         Output::flush();
     }
 
+    pub(crate) fn has_printed_header(&self) -> bool {
+        self.has_printed_filename
+    }
+
     pub(crate) fn print_if_needed(&mut self) {
         if self.has_printed_filename {
             return;

@@ -33,7 +33,9 @@ import { connect as tlsConnect } from "node:tls";
 import { inspect } from "node:util";
 import tunnel from "tunnel";
 import { run as runHTTPProxyTest } from "./node-http-proxy.js";
-const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test } = createTest(import.meta.path);
+const { describe, expect, it, beforeAll, afterAll, afterEach, createDoneDotAll, mock, test } = createTest(
+  import.meta.path,
+);
 
 function listen(server: Server, protocol: string = "http"): Promise<URL> {
   return new Promise((resolve, reject) => {
@@ -491,10 +493,6 @@ describe("node:http", () => {
             res.end("Hello World");
             return;
           }
-          if (reqUrl.pathname === "/timeout") {
-            // The client owns timeout cleanup; this route must never send a response.
-            return;
-          }
           if (reqUrl.pathname === "/pathTest") {
             res.end("Path correct!\n");
             return;
@@ -728,8 +726,17 @@ describe("node:http", () => {
       });
     });
 
-    it("should allow us to set timeout with request.setTimeout or `timeout` in options", done => {
-      runTest(done, async (server, serverPort, done) => {
+    describe("request timeout cleanup", () => {
+      let cleanup: (() => Promise<void>) | undefined;
+      afterEach(async () => {
+        // A framework timeout does not unwind the test's suspended await.
+        await cleanup?.();
+        cleanup = undefined;
+      });
+
+      it("should allow us to set timeout with request.setTimeout or `timeout` in options", async () => {
+        // The server stays silent so only a client timeout can complete the requests.
+        const server = createServer(() => {});
         const requests: {
           req: http.ClientRequest;
           reason: Error;
@@ -738,14 +745,29 @@ describe("node:http", () => {
           destroyedAtTimeout: boolean[];
           closed: Promise<void>;
         }[] = [];
-        let failure;
+        let closing: Promise<void> | undefined;
+        const close = () =>
+          (closing ??= (async () => {
+            for (const { req, reason } of requests) {
+              if (!req.destroyed) req.destroy(reason);
+            }
+            server.closeAllConnections();
+            await Promise.all(requests.map(({ closed }) => closed));
+            if (server.listening) {
+              await new Promise<void>((resolve, reject) => {
+                server.close(error => (error ? reject(error) : resolve()));
+              });
+            }
+          })());
+        cleanup = close;
         try {
+          await once(server.listen(0, "127.0.0.1"), "listening");
+          const { port } = server.address() as AddressInfo;
           for (const useOptions of [true, false]) {
             const reason = new Error(useOptions ? "options timeout cleanup" : "setTimeout cleanup");
             const req = request({
-              host: "localhost",
-              port: serverPort,
-              path: "/timeout",
+              host: "127.0.0.1",
+              port,
               ...(useOptions ? { timeout: 500 } : {}),
             });
             const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
@@ -790,14 +812,8 @@ describe("node:http", () => {
             expect(errors[0]).toBe(reason);
             expect(req.destroyed).toBe(true);
           }
-        } catch (error) {
-          failure = error;
         } finally {
-          for (const { req, reason } of requests) {
-            if (!req.destroyed) req.destroy(reason);
-          }
-          await Promise.all(requests.map(({ closed }) => closed));
-          done(failure);
+          await close();
         }
       });
     });

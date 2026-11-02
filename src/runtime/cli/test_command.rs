@@ -5698,7 +5698,12 @@ impl Drop for EnteredFile<'_> {
                 self.global.bun_vm().as_mut().global(),
             );
         }
-        if self.end_output_group {
+        if self.end_output_group
+            && jest::Jest::runner()
+                .unwrap()
+                .current_file
+                .has_printed_header()
+        {
             pretty_errorln!("<r>\n::endgroup::\n");
             Output::flush();
         }

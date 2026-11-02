@@ -368,16 +368,18 @@ impl<'a> PackageFilterIterator<'a> {
         let pattern: &[u8] = &self.patterns[self.pattern_idx];
         // bun_glob copies `pattern`/`cwd` internally.
         // outer `?` propagates the error, inner converts `Maybe(Self)` to a Result.
-        let walker = OwnedWalker(bun_core::heap::alloc_nn(GlobWalker::init_with_cwd(
+        let mut walker = GlobWalker::init_with_cwd(
             pattern,
             self.root_dir,
             true,
             true,
             false,
-            true,
+            false,
             true,
             Some(glob_ignore_fn),
-        )??));
+        )??;
+        walker.literal_target_error_is_fatal();
+        let walker = OwnedWalker(bun_core::heap::alloc_nn(walker));
         // SAFETY: `walker` does not touch the allocation until it frees it, and `iter` is dropped
         // before that on every path (as the later local here, as the earlier field of `ActiveWalk`
         // afterwards), so this is the only access to the walker while the erased borrow is live.

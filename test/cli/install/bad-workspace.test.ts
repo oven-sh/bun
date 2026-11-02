@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
 import { dirname, join } from "path";
 
@@ -79,6 +79,55 @@ test.concurrent.skipIf(isWindows || isRoot).each([
   } finally {
     chmodSync(secret, 0o755);
   }
+});
+
+// The walk of `pkgs/*` looks `package.json` up by name in each directory, and the install
+// reads what it finds. Not on Windows, where making a symlink needs a privilege.
+describe.concurrent.skipIf(isWindows)("glob entry that reaches a package.json that is a symlink", () => {
+  function projectWithLinkedPackageJson(target: string) {
+    const dir = tempDir("bad-workspace-glob-link", {
+      "package.json": rootPackageJson(["pkgs/*"]),
+      ...PKG1,
+      "elsewhere.json": JSON.stringify({ name: "linked" }),
+    });
+    const link = join(String(dir), "pkgs", "linked", "package.json");
+    mkdirSync(dirname(link));
+    symlinkSync(target, link);
+    return { cwd: String(dir), link, [Symbol.dispose]: () => dir[Symbol.dispose]() };
+  }
+
+  test.each([
+    ["to itself", "package.json", "ELOOP"],
+    ["through a file", join("..", "..", "elsewhere.json", "below"), "ENOTDIR"],
+  ])("linked %s: the install fails and names the link", async (_, target, errno) => {
+    using project = projectWithLinkedPackageJson(target);
+
+    const { stderr, exitCode } = await runInstall(project.cwd);
+
+    expect(errorLines(stderr)).toEqual([
+      `error: Failed to run workspace pattern pkgs/* due to error ${errno} (fstatat "${project.link}")`,
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("linked to nothing: the directory is not a member", async () => {
+    using project = projectWithLinkedPackageJson("nothing");
+
+    await expectOnlyPkg1Found(project.cwd);
+  });
+
+  test("linked to a file: the directory is a member", async () => {
+    using project = projectWithLinkedPackageJson(join("..", "..", "elsewhere.json"));
+
+    const { stderr, exitCode } = await runInstall(project.cwd);
+
+    expect(stderr).not.toContain("error:");
+    expect(Object.values(install_test_helpers.parseLockfile(project.cwd).workspace_paths).sort()).toEqual([
+      "pkgs/linked",
+      "pkgs/pkg1",
+    ]);
+    expect(exitCode).toBe(0);
+  });
 });
 
 // `bun add` walks the glob again when it writes package.json back. The registry removes the

@@ -1,5 +1,8 @@
 import fg from "fast-glob";
 import { fdir } from "fdir";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { bench, group, run } from "../runner.mjs";
 
 const normalPattern = "*.ts";
@@ -136,6 +139,43 @@ group({ name: `sync multi-level pattern="${multiLevelPattern}"`, summary: true }
       const entries = new fdir().withFullPaths().glob(multiLevelPattern).crawl(process.cwd()).sync();
     });
 });
+
+// A last component without glob syntax: one lookup in each directory that `*` matches, no listing.
+const literalTailCwd = mkdtempSync(join(tmpdir(), "bun-bench-glob-literal-tail-"));
+process.on("exit", () => rmSync(literalTailCwd, { recursive: true, force: true }));
+let literalTailSymlinks = true;
+for (let i = 0; i < 1000; i++) {
+  const dir = join(literalTailCwd, "packages", `p${i}`);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "package.json"), "{}");
+  try {
+    if (literalTailSymlinks) symlinkSync("package.json", join(dir, "linked.json"));
+  } catch {
+    literalTailSymlinks = false;
+  }
+}
+
+for (const onlyFiles of [true, false]) {
+  for (const [kind, pattern] of [
+    ["hit", "packages/*/package.json"],
+    ["miss", "packages/*/missing.json"],
+    ["symlink", "packages/*/linked.json"],
+  ]) {
+    if (kind === "symlink" && !literalTailSymlinks) continue;
+    const opts = { cwd: literalTailCwd, onlyFiles };
+
+    group(`sync literal tail ${kind} onlyFiles=${onlyFiles} pattern="${pattern}"`, () => {
+      bench("fast-glob", () => {
+        const entries = fg.globSync([pattern], opts);
+      });
+
+      if (Glob)
+        bench("Bun.Glob", () => {
+          const entries = [...new Glob(pattern).scanSync(opts)];
+        });
+    });
+  }
+}
 
 await run({
   avg: true,

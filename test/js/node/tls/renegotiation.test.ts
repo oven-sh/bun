@@ -1,14 +1,14 @@
 import type { Subprocess } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
-import { readFileSync } from "fs";
 import { constants as cryptoConstants } from "crypto";
+import { readFileSync } from "fs";
 import { bunEnv, bunExe, isIPv6, tls } from "harness";
 import type { IncomingMessage } from "http";
 import type { AddressInfo, Socket as NetSocket } from "net";
-import { connect as netConnect, createServer as createNetServer } from "net";
+import { createServer as createNetServer, connect as netConnect } from "net";
 import { join } from "path";
 import { Duplex } from "stream";
-import { connect as tlsConnect, createSecureContext } from "tls";
+import { createSecureContext, connect as tlsConnect } from "tls";
 import { startRecordingProxy } from "../../web/websocket/proxy-test-utils";
 let url: URL;
 let process: Subprocess<"ignore", "pipe", "inherit"> | null = null;

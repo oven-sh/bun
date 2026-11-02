@@ -1930,8 +1930,7 @@ impl Run<'_> {
         let formatting = started.elapsed();
 
         let (mut different, mut unchanged, mut failed) = (0usize, 0usize, 0usize);
-        // The first error that Prettier stops at. It's printed last, after the files that were written before it was
-        // seen are staged.
+        // The first error that Prettier stops at. It's printed last, once the files written before it are staged.
         let mut stopped = None;
         let mut warnings = std::mem::take(warnings.get_mut());
         sort_slice_by(&mut warnings[..], |a, b| a.0.cmp(&b.0));

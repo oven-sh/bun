@@ -894,6 +894,7 @@ impl TranspilerJob {
             module_type,
             keep_json_and_toml_as_one_statement: false,
             allow_bytecode_cache: true,
+            forbid_jsx_preserve: true,
         };
 
         // `defer { if should_close && input_file_fd.isValid() { close } }`

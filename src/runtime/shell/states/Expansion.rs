@@ -473,9 +473,7 @@ impl Expansion {
         pattern
     }
 
-    /// Whether the field in `current_out` is text: it has no `*` of the script, and the atom has a `${NAME<op>word}`.
-    /// The `*` of the hint is then in a word that is not the result, or in a field that ended. With no form, the one
-    /// walk of the atom is for this field also when it has no `*`.
+    /// Whether the field in `current_out` is text: it has no `*` of the script, and the atom has a `${NAME<op>word}`. With no form, the walk of the atom is for this field also when it has no `*`.
     fn is_text_of_form(me: &Expansion) -> bool {
         let has_glob_syntax = me
             .meta_offsets

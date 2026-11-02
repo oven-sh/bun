@@ -366,9 +366,51 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    /// Create a JSX member tag and an initializer that defers reading its value until after the JSX factory.
-    fn jsx_tag_member(p: &mut Self, tag: Expr) -> (Expr, Expr) {
+    /// Create a JSX member tag, its initializer, and an optional parameter binding for a per-call scope.
+    fn jsx_tag_member(p: &mut Self, tag: Expr) -> (Expr, Expr, Option<Ref>) {
+        let mut object = E::Object::default();
         let body = G::FnBody::init_return_expr(p.arena, tag).expect("arena allocation failed");
+        let body = if tag.data.e_identifier().is_some_and(|id| {
+            p.symbols[id.ref_.inner_index() as usize]
+                .original_name
+                .slice()
+                == b"arguments"
+        }) {
+            // Capturing lexical `arguments` in an arrow; the getter has its own `arguments`.
+            let read = p.new_expr(
+                E::Arrow {
+                    body,
+                    prefer_expr: true,
+                    ..Default::default()
+                },
+                tag.loc,
+            );
+            let key = p.new_expr(E::EString::from_static(b"read"), tag.loc);
+            object.properties.push(G::Property {
+                key: Some(key),
+                value: Some(read),
+                ..Default::default()
+            });
+            let this = p.new_expr(E::This {}, tag.loc);
+            let target = p.new_expr(
+                E::Dot {
+                    target: this,
+                    name: b"read".as_slice().into(),
+                    ..Default::default()
+                },
+                tag.loc,
+            );
+            let call = p.new_expr(
+                E::Call {
+                    target,
+                    ..Default::default()
+                },
+                tag.loc,
+            );
+            G::FnBody::init_return_expr(p.arena, call).expect("arena allocation failed")
+        } else {
+            body
+        };
         let getter = p.new_expr(
             E::Function {
                 func: G::Fn {
@@ -379,7 +421,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             tag.loc,
         );
         let key = p.new_expr(E::EString::from_static(b"value"), tag.loc);
-        let mut object = E::Object::default();
         object.properties.push(G::Property {
             kind: G::PropertyKind::Get,
             flags: Flags::Property::IsMethod.into(),
@@ -388,27 +429,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ..Default::default()
         });
         let value = p.new_expr(object, tag.loc);
-        let ref_ = p.generate_temp_var(b"JSXTag");
+        let scoped = p.current_scope().kind == js_ast::scope::Kind::FunctionArgs;
+        let ref_ = if scoped {
+            p.generate_temp_ref(Some(b"JSXTag"))
+        } else {
+            p.generate_temp_var(b"JSXTag")
+        };
         p.symbols[ref_.inner_index() as usize].set_must_start_with_capital_letter_for_jsx(true);
-        let binding = p.b(js_ast::B::Identifier { r#ref: ref_ }, tag.loc);
-        let decl = p.s(
-            js_ast::S::Local {
-                kind: js_ast::s::Kind::KVar,
-                decls: G::DeclList::init_one(G::Decl {
-                    binding,
-                    value: None,
-                }),
-                ..Default::default()
-            },
-            tag.loc,
-        );
-        p.nearest_stmt_list_mut()
-            .expect("JSX has a statement list")
-            .push(decl);
-        p.record_usage(ref_);
-        p.record_usage(ref_);
         let identifier = Expr::init_identifier(ref_, tag.loc);
-        let initializer = Expr::assign(identifier, value);
+        let initializer = if scoped {
+            value
+        } else {
+            let binding = p.b(js_ast::B::Identifier { r#ref: ref_ }, tag.loc);
+            let decl = p.s(
+                js_ast::S::Local {
+                    kind: js_ast::s::Kind::KVar,
+                    decls: G::DeclList::init_one(G::Decl {
+                        binding,
+                        value: None,
+                    }),
+                    ..Default::default()
+                },
+                tag.loc,
+            );
+            p.nearest_stmt_list_mut()
+                .expect("JSX has a statement list")
+                .push(decl);
+            p.record_usage(ref_);
+            Expr::assign(identifier, value)
+        };
+        p.record_usage(ref_);
         let tag = p.new_expr(
             E::Dot {
                 target: identifier,
@@ -418,7 +468,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
             tag.loc,
         );
-        (tag, initializer)
+        (tag, initializer, scoped.then_some(ref_))
     }
 
     // PERF(port:frame): keep these large, infrequently-taken arms out of the
@@ -486,6 +536,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match p.jsx_transform {
             JSXTransformType::React => {
                 let mut tag_initializer = None;
+                let mut tag_binding = None;
                 let mut invalid_tag = false;
                 let tag: Expr = 'tagger: {
                     if let Some(mut tag) = e_.tag {
@@ -516,32 +567,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
                             let is_defined_string =
                                 !was_string && matches!(tag.data, Data::EString(_));
-                            if matches!(root.data, Data::EImportIdentifier(_)) || is_defined_string
+                            let identifier = tag.data.e_identifier();
+                            let has_lowercase_name = identifier.is_some_and(|id| {
+                                p.symbols[id.ref_.inner_index() as usize]
+                                    .original_name
+                                    .slice()
+                                    .first()
+                                    .is_some_and(u8::is_ascii_lowercase)
+                            });
+                            if matches!(root.data, Data::EImportIdentifier(_))
+                                || is_defined_string
+                                || has_lowercase_name
                             {
-                                let (member, initializer) = Self::jsx_tag_member(p, tag);
+                                let (member, initializer, binding) = Self::jsx_tag_member(p, tag);
                                 tag = member;
                                 tag_initializer = Some(initializer);
-                            }
-                            let ref_ = match tag.data {
-                                Data::EIdentifier(identifier) => Some(identifier.ref_),
-                                Data::EImportIdentifier(identifier) => Some(identifier.ref_),
-                                _ => None,
-                            };
-                            if let Some(ref_) = ref_ {
-                                let symbol = &mut p.symbols[ref_.inner_index() as usize];
-                                if symbol.kind == js_ast::symbol::Kind::Unbound
-                                    && symbol
-                                        .original_name
-                                        .slice()
-                                        .first()
-                                        .is_some_and(u8::is_ascii_lowercase)
-                                {
-                                    let (member, initializer) = Self::jsx_tag_member(p, tag);
-                                    tag = member;
-                                    tag_initializer = Some(initializer);
-                                } else {
-                                    symbol.set_must_start_with_capital_letter_for_jsx(true);
-                                }
+                                tag_binding = binding;
+                            } else if let Some(id) = identifier {
+                                p.symbols[id.ref_.inner_index() as usize]
+                                    .set_must_start_with_capital_letter_for_jsx(true);
                             }
                         }
                         break 'tagger tag;
@@ -871,14 +915,43 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     e_.children.truncate(last_child as usize);
 
                     // Draining nested scopes before discarding an invalid tag.
-                    *e = if invalid_tag {
-                        p.new_expr(E::Missing {}, expr.loc)
-                    } else {
-                        match tag_initializer {
-                            Some(initializer) => initializer.join_with_comma(expr),
-                            None => expr,
-                        }
+                    if invalid_tag {
+                        *e = p.new_expr(E::Missing {}, expr.loc);
+                        return;
+                    }
+                    let Some(initializer) = tag_initializer else {
+                        *e = expr;
+                        return;
                     };
+                    let Some(ref_) = tag_binding else {
+                        *e = initializer.join_with_comma(expr);
+                        return;
+                    };
+                    // Isolating parameter defaults; a hoisted temporary would be shared by reentrant calls.
+                    let binding = p.b(js_ast::B::Identifier { r#ref: ref_ }, tag.loc);
+                    let args = p.arena.alloc_slice_fill_iter([G::Arg {
+                        binding,
+                        ..Default::default()
+                    }]);
+                    let body = G::FnBody::init_return_expr(p.arena, expr)
+                        .expect("arena allocation failed");
+                    let target = p.new_expr(
+                        E::Arrow {
+                            args: js_ast::StoreSlice::new_mut(args),
+                            body,
+                            prefer_expr: true,
+                            ..Default::default()
+                        },
+                        expr.loc,
+                    );
+                    *e = p.new_expr(
+                        E::Call {
+                            target,
+                            args: ExprNodeList::init_one(initializer),
+                            ..Default::default()
+                        },
+                        expr.loc,
+                    );
                     return;
                 } else {
                     unreachable!();

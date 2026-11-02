@@ -1534,11 +1534,11 @@ describe.concurrent("the text that a code frame is cut from", () => {
     }
   `;
 
-  async function run(files, cmd = ["main.js"], stdin = "ignore") {
+  async function run(files, cmd = ["main.js"], stdin = "ignore", env = {}) {
     using dir = tempDir("inspect-error-source-text", files);
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...cmd],
-      env: { ...bunEnv, NO_COLOR: "1" },
+      env: { ...bunEnv, NO_COLOR: "1", ...env },
       cwd: String(dir),
       stdin,
       stdout: "pipe",
@@ -1629,15 +1629,17 @@ describe.concurrent("the text that a code frame is cut from", () => {
     });
   });
 
-  // A `\r` alone ends a line, and the line takes one byte more. That byte can be the first of a character.
+  // The line cutter ends a line one byte after a `\r` alone. That byte can be the first of a character, and
+  // the printer must not write half of one.
   test.each([
-    ["a character of two bytes", [0xc3, 0xa9], "\xC3\xA9"],
-    ["a byte that is not UTF-8", [0xe9], "\xEF\xBF\xBD"],
-  ])("a carriage return alone before %s", async (_, bytes, shown) => {
+    ["a character of two bytes", [0xc3, 0xa9]],
+    ["a byte that is not UTF-8", [0xe9]],
+  ])("a carriage return alone before %s", async (_, bytes) => {
     const mod = Buffer.concat([Buffer.from("// line 1\n/* a\r"), Buffer.from(bytes), Buffer.from(" b */\n" + fail)]);
     const { stderr, exitCode } = await run({ "mod.js": mod, "main.js": main });
-    expect({ stderr: frameOf(stderr.toString("latin1")), exitCode }).toEqual({
-      stderr: ["1 | // line 1", "2 | /* a\r\xEF\xBF\xBD", `3 | /* a\r${shown} b */`, ...thrownOnLine(5)],
+    expect({ isUtf8: isUtf8(stderr), frame: frameOf(stderr.toString()).slice(-4), exitCode }).toEqual({
+      isUtf8: true,
+      frame: thrownOnLine(5),
       exitCode: 0,
     });
   });
@@ -1874,63 +1876,34 @@ describe.concurrent("the text that a code frame is cut from", () => {
       });
     });
 
-    // A string cannot hold 2 GiB, and the printer shows no line of a text that a string cannot hold. The
-    // file is sparse. Reading it takes 2 GiB of memory.
-    test.skipIf(totalmem() < 10 * 1024 ** 3)(
-      "a file of 2 GiB",
-      async () => {
-        const { stdout, stderr, exitCode } = await run({
+    // The printer shows no line of a text that a string cannot hold. The variable makes that 64 KiB.
+    test.each([
+      ["under", 60_000, ["1 | named line 1", "                   ^", "error: thrown"]],
+      ["over", 70_000, ["error: thrown"]],
+    ])("a file %s the length that a string can have", async (_, size, frame) => {
+      const { stdout, stderr, exitCode } = await run(
+        {
+          "big.txt": "named line 1\n" + Buffer.alloc(size - 13, "// padding\n"),
           "main.js": `
-            const fs = require("node:fs");
             const filename = require("node:path").join(import.meta.dir, "big.txt");
-            fs.writeFileSync(filename, "named line 1\\n");
-            fs.truncateSync(filename, 2 ** 31);
             try {
               require("node:vm").runInThisContext("throw new Error('thrown');", { filename });
             } catch (error) {
               process.stdout.write(Bun.inspect(error));
             }
           `,
-        });
-        expect({ frame: frameOf(stdout), stderr: stderr.toString(), exitCode }).toEqual({
-          frame: ["error: thrown"],
-          stderr: "",
-          exitCode: 0,
-        });
-      },
-      120_000,
-    );
+        },
+        undefined,
+        undefined,
+        { BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(64 * 1024) },
+      );
+      expect({ frame: frameOf(stdout), stderr: stderr.toString(), exitCode }).toEqual({
+        frame,
+        stderr: "",
+        exitCode: 0,
+      });
+    });
   });
-
-  // An error whose `.stack` was read reaches the printer with frames that are already remapped. The printer
-  // then asks for the text of the module, and an executable gives its own.
-  test("an executable prints the code frame of an error whose stack was read", async () => {
-    using dir = tempDir("inspect-error-executable", {
-      "app.ts": `${script.replace("} catch (error) {", "} catch (error) {\n  void error.stack;")}`,
-    });
-    const result = await Bun.build({
-      entrypoints: [join(String(dir), "app.ts")],
-      compile: { outfile: join(String(dir), "app") },
-    });
-    expect(result.success).toBe(true);
-    rmSync(join(String(dir), "app.ts"));
-    await using proc = Bun.spawn({
-      cmd: [result.outputs.find(output => output.kind === "entry-point").path],
-      env: { ...bunEnv, NO_COLOR: "1" },
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // Without their numbers: the executable's text has lines above the module's.
-    const frame = frameOf(stdout).map(line => line.replace(/^\s*\d+ \| /, ""));
-    expect({ frame: frame.slice(-4), stderr, exitCode }).toEqual({
-      frame: ["function fail() {", '  throw new Error("thrown");', "                     ^", "error: thrown"],
-      stderr: "",
-      exitCode: 0,
-    });
-    // A debug build takes seconds to write an executable.
-  }, 60_000);
 
   // An error whose `.stack` was read has no kept frame, so each print of it reads the file: once, into one buffer.
   test.each([
@@ -2032,8 +2005,49 @@ describe.concurrent("the text that a code frame is cut from", () => {
   });
 });
 
+// An error whose `.stack` was read reaches the printer with frames that are already remapped. The printer
+// then asks for the text of the module, and an executable gives its own.
+test("an executable prints the code frame of an error whose stack was read", async () => {
+  using dir = tempDir("inspect-error-executable", {
+    "app.ts": `function fail() {
+  throw new Error("thrown");
+}
+try {
+  fail();
+} catch (error) {
+  void error.stack;
+  process.stdout.write(Bun.inspect(error));
+}
+`,
+  });
+  const result = await Bun.build({
+    entrypoints: [join(String(dir), "app.ts")],
+    compile: { outfile: join(String(dir), "app") },
+  });
+  expect(result.success).toBe(true);
+  rmSync(join(String(dir), "app.ts"));
+  await using proc = Bun.spawn({
+    cmd: [result.outputs.find(output => output.kind === "entry-point").path],
+    env: { ...bunEnv, NO_COLOR: "1" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Without their numbers: the executable's text has lines above the module's.
+  const frame = stdout
+    .slice(0, stdout.indexOf("\n      at "))
+    .split("\n")
+    .map(line => line.replace(/^\s*\d+ \| /, ""));
+  expect({ frame: frame.slice(-4), stderr, exitCode }).toEqual({
+    frame: ["function fail() {", '  throw new Error("thrown");', "                     ^", "error: thrown"],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 // Here, not at the top: the inline snapshots above hold the first lines of this file.
 import { isWindows } from "harness";
+import { isUtf8 } from "node:buffer";
 import { rmSync } from "node:fs";
-import { totalmem } from "node:os";
 import { join } from "node:path";

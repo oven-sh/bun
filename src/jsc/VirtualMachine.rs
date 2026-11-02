@@ -4510,6 +4510,11 @@ fn code_frame_lines_as_utf8(text: &[u8], ranges: &mut CodeFrameRanges) -> Option
             end: lines.len() as u32,
         };
     }
+    // U+FFFD is three bytes. Lines that no longer fit `u32` ranges are not shown.
+    if u32::try_from(lines.len()).is_err() {
+        ranges.clear();
+        lines.clear();
+    }
     Some(lines)
 }
 

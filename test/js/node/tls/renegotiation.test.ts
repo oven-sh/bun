@@ -1,12 +1,14 @@
 import type { Subprocess } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
 import { readFileSync } from "fs";
+import { constants as cryptoConstants } from "crypto";
 import { bunEnv, bunExe, isIPv6, tls } from "harness";
 import type { IncomingMessage } from "http";
-import { connect as netConnect } from "net";
+import type { AddressInfo, Socket as NetSocket } from "net";
+import { connect as netConnect, createServer as createNetServer } from "net";
 import { join } from "path";
 import { Duplex } from "stream";
-import { connect as tlsConnect } from "tls";
+import { connect as tlsConnect, createSecureContext } from "tls";
 import { startRecordingProxy } from "../../web/websocket/proxy-test-utils";
 let url: URL;
 let process: Subprocess<"ignore", "pipe", "inherit"> | null = null;
@@ -1742,7 +1744,7 @@ function serverWithoutRenegotiationInfo() {
   const handshake = Buffer.concat([Buffer.from([0x02, 0x00, 0x00, body.length]), body]);
   const serverHello = Buffer.concat([Buffer.from([0x16, 0x03, 0x03, 0x00, handshake.length]), handshake]);
   const reply = Promise.withResolvers<string>();
-  const server = require("net").createServer((socket: import("net").Socket) => {
+  const server = createNetServer((socket: NetSocket) => {
     let sentHello = false;
     socket.on("data", (chunk: Buffer) => {
       if (!sentHello) {
@@ -1757,12 +1759,12 @@ function serverWithoutRenegotiationInfo() {
   });
   server.listen(0, "127.0.0.1");
   return {
-    port: (server.address() as import("net").AddressInfo).port,
+    port: (server.address() as AddressInfo).port,
     clientReply: reply.promise,
     [Symbol.dispose]: () => server.close(),
   };
 }
-const SSL_OP_LEGACY_SERVER_CONNECT: number = require("crypto").constants.SSL_OP_LEGACY_SERVER_CONNECT;
+const SSL_OP_LEGACY_SERVER_CONNECT: number = cryptoConstants.SSL_OP_LEGACY_SERVER_CONNECT;
 
 function tlsConnectError(options: Record<string, unknown>): Promise<Error & { code?: string }> {
   return new Promise((resolve, reject) => {
@@ -1771,6 +1773,7 @@ function tlsConnectError(options: Record<string, unknown>): Promise<Error & { co
       reject(new Error("the handshake completed"));
     });
     socket.on("error", resolve);
+    socket.on("close", () => reject(new Error("the socket closed without an error")));
   });
 }
 
@@ -1791,7 +1794,7 @@ it("tls.connect accepts a TLS 1.2 server without renegotiation_info with secureO
 
 it("tls.connect honours SSL_OP_LEGACY_SERVER_CONNECT set on a secureContext", async () => {
   using server = serverWithoutRenegotiationInfo();
-  const secureContext = require("tls").createSecureContext({ secureOptions: SSL_OP_LEGACY_SERVER_CONNECT });
+  const secureContext = createSecureContext({ secureOptions: SSL_OP_LEGACY_SERVER_CONNECT });
   const error = await tlsConnectError({ port: server.port, secureContext });
   expect(await server.clientReply).toBe(UNEXPECTED_MESSAGE_ALERT);
   expect(error.code).toBe("ERR_SSL_UNEXPECTED_MESSAGE");
@@ -1825,8 +1828,22 @@ it("WebSocket rejects a TLS 1.2 server without renegotiation_info", async () => 
   const ws = new WebSocket(`wss://127.0.0.1:${server.port}/`, { tls: { rejectUnauthorized: false } });
   ws.onopen = () => failed.reject(new Error("the connection opened"));
   ws.onerror = event => failed.resolve((event as ErrorEvent).message);
+  ws.onclose = event => failed.reject(new Error(`the socket closed without an error: ${event.code}`));
   expect(await server.clientReply).toBe(HANDSHAKE_FAILURE_ALERT);
   expect(await failed.promise).toContain("UNSAFE_LEGACY_RENEGOTIATION_DISABLED");
+});
+
+it("WebSocket accepts a TLS 1.2 server without renegotiation_info with secureOptions SSL_OP_LEGACY_SERVER_CONNECT", async () => {
+  using server = serverWithoutRenegotiationInfo();
+  const failed = Promise.withResolvers<string>();
+  const ws = new WebSocket(`wss://127.0.0.1:${server.port}/`, {
+    tls: { rejectUnauthorized: false, secureOptions: SSL_OP_LEGACY_SERVER_CONNECT },
+  });
+  ws.onopen = () => failed.reject(new Error("the connection opened"));
+  ws.onerror = event => failed.resolve((event as ErrorEvent).message);
+  ws.onclose = event => failed.reject(new Error(`the socket closed without an error: ${event.code}`));
+  expect(await server.clientReply).toBe(UNEXPECTED_MESSAGE_ALERT);
+  expect(await failed.promise).toContain("UNEXPECTED_MESSAGE");
 });
 
 it("Bun.connect rejects a TLS 1.2 server without renegotiation_info", async () => {
@@ -1844,6 +1861,7 @@ it("Bun.connect rejects a TLS 1.2 server without renegotiation_info", async () =
         socket.end();
       },
       error: (_socket, error) => failed.resolve(error),
+      close: () => failed.reject(new Error("the socket closed without an error")),
     },
   });
   expect(await server.clientReply).toBe(HANDSHAKE_FAILURE_ALERT);
@@ -1865,6 +1883,7 @@ it("Bun.connect accepts a TLS 1.2 server without renegotiation_info with secureO
         socket.end();
       },
       error: (_socket, error) => failed.resolve(error),
+      close: () => failed.reject(new Error("the socket closed without an error")),
     },
   });
   expect(await server.clientReply).toBe(UNEXPECTED_MESSAGE_ALERT);

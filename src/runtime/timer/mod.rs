@@ -645,7 +645,12 @@ impl All {
 
     /// Pop the next due timer. `now` is filled lazily on first call so we
     /// don't pay for `clock_gettime` when the heap is empty.
-    fn next(&self, has_set_now: &mut bool, now: &mut Timespec) -> Option<*mut EventLoopTimer> {
+    fn next(
+        &self,
+        is_idle: bool,
+        has_set_now: &mut bool,
+        now: &mut Timespec,
+    ) -> Option<*mut EventLoopTimer> {
         // SAFETY: peek returns a live heap node
         let first = unsafe { &*self.timers.peek()? };
         if !*has_set_now {
@@ -653,7 +658,7 @@ impl All {
             *now = Timespec::now(TimespecMockMode::ForceRealTime);
             *has_set_now = true;
             // What this drain's callbacks set is due later than this, so it waits for the next turn of the event loop.
-            if first.is_due_when_idle.get() && first.next.get().greater(now) {
+            if is_idle && first.is_due_when_idle.get() && first.next.get().greater(now) {
                 *now = first.next.get();
             }
         }
@@ -667,9 +672,11 @@ impl All {
         let mut wtf_now: Option<Timespec> = None;
         let _ = self.drain_due_wtf_timers(&mut wtf_now, vm);
 
+        // An immediate or a task that the poll's callbacks queued runs before a timer that still has 1 ms to wait, as in Node.
+        let is_idle = vm.event_loop().is_idle();
         let mut now = Timespec { sec: 0, nsec: 0 };
         let mut has_set_now = false;
-        while let Some(t) = self.next(&mut has_set_now, &mut now) {
+        while let Some(t) = self.next(is_idle, &mut has_set_now, &mut now) {
             // SAFETY: `t` was just popped from the intrusive heap and is live.
             let fired = unsafe { crate::dispatch::fire_timer(t, &now, vm) };
             if fold_timer(vm, fired).is_err() {

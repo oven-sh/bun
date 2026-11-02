@@ -534,7 +534,8 @@ describe("net.Socket write", () => {
         socket.once("connect", (...args) => {
           socket.write("script\n", err => {
             if (err) return reject(err);
-            socket.end(() => setTimeout(resolve, 3));
+            socket.once("close", resolve);
+            socket.end();
           });
         });
         socket.connect(port, "127.0.0.1");

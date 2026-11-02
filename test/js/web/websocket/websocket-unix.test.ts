@@ -297,8 +297,11 @@ describe.skipIf(!isWindows)("WebSocket over a named pipe", () => {
     ws.close();
   });
 
-  test("ws+unix: fails with ENOENT when the pipe does not exist", async () => {
-    const ws = new WebSocket(`ws+unix:${pipePath("missing")}`);
+  test.each([
+    ["does not exist", "missing"],
+    ["has a name that is too long to exist", Buffer.alloc(300, "n").toString()],
+  ])("ws+unix: fails with ENOENT when the pipe %s", async (_, name) => {
+    const ws = new WebSocket(`ws+unix:${pipePath(name)}`);
     const { promise, resolve } = Promise.withResolvers<{ error: unknown; close: number }>();
     let error: unknown;
     ws.onerror = event => (error = (event as ErrorEvent).error?.code);

@@ -1674,12 +1674,11 @@ impl<const SSL: bool> Drop for HTTPClient<SSL> {
     }
 }
 
-/// `errno` is the system's own number, which on Windows is a Win32 or Winsock error.
 fn socket_errno_name(errno: c_int) -> Option<&'static str> {
     if errno == 0 {
         return None;
     }
-    bun_errno::SystemErrno::init(i64::from(errno)).map(Into::into)
+    bun_errno::SystemErrno::from_os_code(errno).map(Into::into)
 }
 
 /// Errno name after `socket(2)` / `connect(2)` failed synchronously. Winsock does not report through `errno`.

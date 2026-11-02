@@ -75,7 +75,7 @@ fn read_error_from_close_code(code: c_int) -> sys::Error {
 /// WSAECONNABORTED and codes without a name are ECONNRESET, as on libuv's read path (uv__process_tcp_read_req).
 #[cfg(windows)]
 fn errno_from_windows_code(code: c_int) -> sys::SystemErrno {
-    match sys::SystemErrno::init(code.unsigned_abs()) {
+    match sys::SystemErrno::from_os_code(code) {
         Some(errno) if errno != sys::SystemErrno::ECONNABORTED => errno,
         _ => sys::SystemErrno::ECONNRESET,
     }
@@ -1273,10 +1273,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         errno: c_int,
     ) -> JsResult<()> {
         jsc::mark_binding!();
-        // uSockets reports the system's own number, which on Windows is a Win32 or Winsock error.
         #[cfg(windows)]
-        let errno = sys::SystemErrno::init(errno.unsigned_abs())
-            .unwrap_or(sys::SystemErrno::ECONNREFUSED) as c_int;
+        let errno = sys::SystemErrno::from_os_code(errno).unwrap_or(sys::SystemErrno::ECONNREFUSED)
+            as c_int;
         Self::connect_failed(this, errno, socket.dns_error(), NativeSocketRef::Held)
     }
 

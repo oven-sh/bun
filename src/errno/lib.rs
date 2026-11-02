@@ -284,6 +284,14 @@ pub fn from_errno(errno: i32) -> SystemErrno {
 }
 
 impl SystemErrno {
+    /// `code` is the system's own number, as uSockets reports it: an errno, or on Windows a Win32 or Winsock error, which `init(i64)` would take for an errno.
+    pub fn from_os_code(code: core::ffi::c_int) -> Option<SystemErrno> {
+        #[cfg(windows)]
+        return SystemErrno::init(code.unsigned_abs());
+        #[cfg(not(windows))]
+        return SystemErrno::init(i64::from(code));
+    }
+
     /// `None` if `err` is not an OS error or its code has no `SystemErrno`.
     pub fn from_io_error(err: &std::io::Error) -> Option<SystemErrno> {
         // A Win32 code there, which the `u32` entry point maps (`i64` would take it for an errno).

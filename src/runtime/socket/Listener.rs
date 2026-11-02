@@ -365,12 +365,7 @@ impl Listener {
             ));
             log!("Failed to listen {}", errno);
             use bun_sys::SystemErrno;
-            // uSockets reports the system's own number, which on Windows is a Win32 or Winsock error.
-            #[cfg(windows)]
-            let code = SystemErrno::init(errno.unsigned_abs());
-            #[cfg(not(windows))]
-            let code = SystemErrno::init(errno as i64);
-            let code = match code {
+            let code = match SystemErrno::from_os_code(errno) {
                 Some(SystemErrno::ENAMETOOLONG) => Some(SystemErrno::EINVAL),
                 Some(SystemErrno::ENOTSOCK | SystemErrno::EBADF | SystemErrno::EOPNOTSUPP)
                     if matches!(connection, UnixOrHost::Fd(_)) =>

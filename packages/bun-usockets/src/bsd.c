@@ -1619,7 +1619,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t l
         /* The path could not be expressed as a sockaddr_un (the basename
          * exceeds sun_path even with the dirfd workaround); surface the errno
          * so the caller can report something better than a codeless failure. */
-        if (error && errno) *error = errno;
+        if (error && LIBUS_ERR) *error = LIBUS_ERR;
         return LIBUS_SOCKET_ERROR;
     }
 

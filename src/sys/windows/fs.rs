@@ -245,7 +245,7 @@ bun_core::impl_zeroable!(
 );
 
 /// The errno Node reports for a Win32 error code.
-fn errno(code: Win32Error) -> E {
+pub fn errno(code: Win32Error) -> E {
     match code {
         Win32Error::NOACCESS => E::EFAULT,
         Win32Error::NO_DATA => E::EAGAIN,

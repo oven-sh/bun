@@ -668,7 +668,7 @@ impl UDPSocket {
             }
             this.closed.set(true);
             if err != 0 {
-                let errno = SystemErrno::init(err as i64);
+                let errno = SystemErrno::from_os_code(err);
                 let code: &'static str = errno.map(Into::into).unwrap_or("UNKNOWN");
                 // The system's own number is a Winsock error there, which `util.getSystemErrorName` does not know.
                 #[cfg(windows)]

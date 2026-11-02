@@ -48,6 +48,7 @@ export const xxHash3ForTesting: (view: ArrayBufferView, seed?: number | bigint) 
 // scannerRunStops fills `arg` with its three bitmaps and returns 0. lineStarts
 // fills `arg` with uint32 offsets and returns how many. oddBlocks fills `arg`
 // with uint64 words and returns 0.
+// skipLineFeeds reads `n` from `arg` as a uint32, writes the count there, and returns the offset.
 export const highwayStringsForTesting: (
   op:
     | "indexOfChar"
@@ -68,6 +69,7 @@ export const highwayStringsForTesting: (
     | "memrmem16"
     | "scannerRunStops"
     | "lineStarts"
+    | "skipLineFeeds"
     | "oddBlocks",
   haystack: Uint8Array,
   arg: number | Uint8Array,

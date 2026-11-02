@@ -535,6 +535,31 @@ unsafe extern "C" fn highway_count_char(p: *const u8, len: usize, needle: u8) ->
 }
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
+unsafe extern "C" fn highway_skip_line_feeds(
+    p: *const u8,
+    len: usize,
+    n: usize,
+    count_out: *mut usize,
+) -> usize {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    let text = unsafe { bytes(p, len) };
+    let (mut end, mut count) = (0, 0);
+    for (i, &byte) in text.iter().enumerate() {
+        // A `\r` that no `\n` follows ends the count.
+        if count == n || (byte == b'\r' && text.get(i + 1) != Some(&b'\n')) {
+            break;
+        }
+        if byte == b'\n' {
+            count += 1;
+            end = i + 1;
+        }
+    }
+    // SAFETY: the caller passes a place for the count.
+    unsafe { count_out.write(count) };
+    end
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
 unsafe extern "C" fn highway_line_starts(p: *const u8, len: usize, out: *mut u32) -> usize {
     // SAFETY: the caller passes a slice, as a pointer and a length.
     let text = unsafe { bytes(p, len) };

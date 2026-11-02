@@ -344,6 +344,207 @@ size_t LineStartsImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, uint32_
     return static_cast<size_t>(end - out);
 }
 
+// True if each byte of the two vectors at `p` is printable ASCII. Such bytes have no line break.
+static HWY_INLINE bool IsPrintableAscii2(const uint8_t* HWY_RESTRICT p)
+{
+    const hn::ScalableTag<int8_t> d;
+    // As a signed byte, a control byte or a byte above 0x7F is less than a space.
+    const auto space = hn::Set(d, int8_t { ' ' });
+    const auto v0 = hn::LoadU(d, reinterpret_cast<const int8_t*>(p));
+    const auto v1 = hn::LoadU(d, reinterpret_cast<const int8_t*>(p) + hn::Lanes(d));
+    return hn::AllFalse(d, hn::Or(hn::Lt(v0, space), hn::Lt(v1, space)));
+}
+
+// Counts the `\n` of `text`, `n` at most and up to a `\r` that no `\n` follows, into `count_out`. Returns the offset after the last one counted, or 0.
+size_t SkipLineFeedsImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, size_t n, size_t* HWY_RESTRICT count_out)
+{
+    D8 d;
+    const hn::Repartition<uint64_t, D8> d64;
+    const size_t N = hn::Lanes(d);
+    // Vectors in a block at most: a byte that counts one lane cannot overflow.
+    constexpr size_t kLongestBlock = 254;
+    // Vectors in a block at least, if the text has as many.
+    constexpr size_t kShortBlock = 16;
+    const auto vec_lf = hn::Set(d, uint8_t { '\n' });
+    const auto vec_cr = hn::Set(d, uint8_t { '\r' });
+    const auto one = hn::Set(d, uint8_t { 1 });
+
+    ASSERT(text_len >= 64);
+    *count_out = 0;
+    if (n == 0) return 0;
+    size_t remaining = n;
+    // A `\n` that the first two loops counted, if there is one, is before this offset.
+    size_t counted_end = 0;
+    // The loops look at the byte before each byte, so they start after the first one.
+    if (text[0] == '\n') {
+        if (--remaining == 0) {
+            *count_out = 1;
+            return 1;
+        }
+        counted_end = 1;
+    }
+    size_t pos = 1;
+
+    const size_t skip_end = text_len < 2 * N ? 0 : text_len - 2 * N + 1;
+    // Bytes in a line, on average, from which the loop for long lines costs less than the blocks.
+    const size_t long_line = HWY_MAX(size_t { 256 }, 8 * N);
+    bool is_dense = false;
+    size_t longest_block = kShortBlock;
+    // Not 0 after a block with a `\r` alone or with the n-th `\n`: the next blocks are halves of it, and then of those.
+    size_t half_block = 0;
+    // What the loop for long lines gave since `run_start`: the `\n`, and the bytes that went by as printable ASCII.
+    size_t run_start = pos;
+    size_t run_count = 0;
+    size_t run_skipped = 0;
+    size_t skips_in_vain = 2;
+    // Blocks to wait before the next try of the loop for long lines, after a run that gave little.
+    size_t wait = 0;
+    size_t next_wait = 1;
+
+    const hn::CappedTag<uint8_t, 64> d_bits;
+    const size_t bits = hn::Lanes(d_bits);
+    const auto bits_lf = hn::Set(d_bits, uint8_t { '\n' });
+    const auto bits_cr = hn::Set(d_bits, uint8_t { '\r' });
+
+    for (;;) {
+        // Blocks of whole vectors, two at a time, for short lines. A block counts its `\n` and does not look where each one is.
+        while (is_dense && text_len - pos >= 2 * N) {
+            size_t vectors = half_block;
+            if (half_block == 0) {
+                // A block of fewer bytes than `remaining` cannot have the n-th `\n`.
+                vectors = HWY_MIN(longest_block, HWY_MAX(kShortBlock, (remaining - 1) / N & ~size_t { 1 }));
+                longest_block = HWY_MIN(2 * longest_block, kLongestBlock);
+            }
+            vectors = HWY_MIN(vectors, (text_len - pos) / N & ~size_t { 1 });
+            const uint8_t* p = text + pos;
+            const uint8_t* const block_end = p + vectors * N;
+            auto counts = hn::Zero(d);
+            auto lone_cr = hn::MaskFalse(d);
+            do {
+                const auto lf0 = hn::Eq(hn::LoadU(d, p), vec_lf);
+                const auto lf1 = hn::Eq(hn::LoadU(d, p + N), vec_lf);
+                // A `\r` in the byte before, and no `\n` here.
+                const auto lone0 = hn::AndNot(lf0, hn::Eq(hn::LoadU(d, p - 1), vec_cr));
+                const auto lone1 = hn::AndNot(lf1, hn::Eq(hn::LoadU(d, p + N - 1), vec_cr));
+                counts = hn::MaskedAddOr(counts, lf0, counts, one);
+                counts = hn::MaskedAddOr(counts, lf1, counts, one);
+                lone_cr = hn::Or(lone_cr, hn::Or(lone0, lone1));
+                p += 2 * N;
+            } while (p != block_end);
+            const size_t count = static_cast<size_t>(hn::ReduceSum(d64, hn::SumsOf8(counts)));
+            if (!hn::AllFalse(d, lone_cr) || count >= remaining) {
+                // The last loop finds a `\r` alone, or the n-th `\n`, in a short block.
+                if (vectors <= kShortBlock) goto exact;
+                half_block = (vectors / 2 + 1) & ~size_t { 1 };
+                continue;
+            }
+            remaining -= count;
+            pos += vectors * N;
+            if (count != 0) counted_end = pos;
+            if (half_block == 0 && count * long_line < vectors * N) {
+                if (wait == 0) {
+                    is_dense = false;
+                    skips_in_vain = 0;
+                    run_start = pos;
+                    run_count = 0;
+                    run_skipped = 0;
+                } else {
+                    wait--;
+                }
+            }
+        }
+
+        // Two vectors at a time, for long lines: it first goes past the vectors that are printable ASCII only.
+        for (;;) {
+            if (text_len - pos < 2 * N) goto exact;
+            if (text[pos - 1] != '\r') {
+                const size_t before = pos;
+                while (pos < skip_end && IsPrintableAscii2(text + pos))
+                    pos += 2 * N;
+                if (pos == before) {
+                    skips_in_vain++;
+                } else {
+                    skips_in_vain = 0;
+                    run_skipped += pos - before;
+                    if (pos >= skip_end) {
+                        // The last bytes of the text, with some that went by before them.
+                        if (IsPrintableAscii2(text + text_len - 2 * N)) pos = text_len;
+                        goto exact;
+                    }
+                }
+            }
+            const uint8_t* p = text + pos;
+            const auto lf0 = hn::Eq(hn::LoadU(d, p), vec_lf);
+            const auto lf1 = hn::Eq(hn::LoadU(d, p + N), vec_lf);
+            const auto lone0 = hn::AndNot(lf0, hn::Eq(hn::LoadU(d, p - 1), vec_cr));
+            const auto lone1 = hn::AndNot(lf1, hn::Eq(hn::LoadU(d, p + N - 1), vec_cr));
+            const size_t count = hn::CountTrue(d, lf0) + hn::CountTrue(d, lf1);
+            if (!hn::AllFalse(d, hn::Or(lone0, lone1)) || count >= remaining) goto exact;
+            remaining -= count;
+            pos += 2 * N;
+            if (count != 0) counted_end = pos;
+            run_count += count;
+            const size_t run = pos - run_start;
+            if (skips_in_vain >= 3 || run >= 2 * long_line) {
+                // Back to blocks if lines are half as long after all, or if few bytes are printable ASCII.
+                if (skips_in_vain >= 3 || run_count * long_line >= 2 * run || run_skipped * 2 < run) {
+                    is_dense = true;
+                    longest_block = kShortBlock;
+                    wait = next_wait;
+                    next_wait *= 2;
+                    break;
+                }
+                next_wait = 1;
+                run_start = pos;
+                run_count = 0;
+                run_skipped = 0;
+            }
+        }
+    }
+
+exact:
+    // A vector at a time, with a bit for each `\n` and `\r`: a short block, or the last bytes of the text.
+    uint64_t counted_lf = 0;
+    size_t counted_lf_pos = 0;
+    uint64_t cr_before = text[pos - 1] == '\r';
+    while (pos < text_len) {
+        // The last vector of the text starts before `pos` if fewer bytes are left.
+        const size_t before_pos = text_len - pos < bits ? bits - (text_len - pos) : 0;
+        const auto v = hn::LoadU(d_bits, text + pos - before_pos);
+        uint64_t lf = hn::BitsFromMask(d_bits, hn::Eq(v, bits_lf)) >> before_pos;
+        const uint64_t cr = hn::BitsFromMask(d_bits, hn::Eq(v, bits_cr)) >> before_pos;
+        // A `\r` that no `\n` follows. For a `\r` in the last byte, the next vector says.
+        uint64_t lone = 0;
+        if ((cr | cr_before) != 0) {
+            lone = ((cr & ~(lf >> 1)) & ~(uint64_t { 1 } << (bits - 1))) | (cr_before & ~lf);
+            if (lone != 0) lf &= (lone & (~lone + 1)) - 1;
+            cr_before = cr >> (bits - 1);
+        }
+        if (lf != 0) {
+            const size_t count = hwy::PopCount(lf);
+            if (count >= remaining) {
+#pragma clang loop unroll(disable)
+                while (--remaining != 0)
+                    lf &= lf - 1;
+                *count_out = n;
+                return pos + hwy::Num0BitsBelowLS1Bit_Nonzero64(lf) + 1;
+            }
+            remaining -= count;
+            counted_lf = lf;
+            counted_lf_pos = pos;
+        }
+        if (lone != 0) break;
+        pos += bits;
+    }
+
+    *count_out = n - remaining;
+    if (counted_lf != 0) return counted_lf_pos + 64 - hwy::Num0BitsAboveMS1Bit_Nonzero64(counted_lf);
+    // Kept out of line: this is for a count that ends early with no `\n` in the last loop.
+    if (counted_end != 0) [[clang::noinline]]
+        return LastIndexOfCharImpl(text, counted_end, '\n') + 1;
+    return 0;
+}
+
 // --- Implementation Details ---
 
 size_t IndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, const uint8_t* HWY_RESTRICT chars, size_t chars_len)
@@ -2682,6 +2883,7 @@ HWY_EXPORT(MemMem16Impl);
 HWY_EXPORT(MemRMem16Impl);
 HWY_EXPORT(OddBlocksImpl);
 HWY_EXPORT(ScannerRunStopsImpl);
+HWY_EXPORT(SkipLineFeedsImpl);
 HWY_EXPORT(VisibleLatin1WidthExcludeANSIImpl);
 HWY_EXPORT(VisibleLatin1WidthImpl);
 HWY_EXPORT(VisibleUTF16WidthImpl);
@@ -2835,6 +3037,11 @@ size_t highway_count_char(const uint8_t* HWY_RESTRICT haystack, size_t haystack_
 size_t highway_line_starts(const uint8_t* HWY_RESTRICT text, size_t text_len, uint32_t* HWY_RESTRICT out)
 {
     return BUN_HWY_DISPATCH(LineStartsImpl)(text, text_len, out);
+}
+
+size_t highway_skip_line_feeds(const uint8_t* HWY_RESTRICT text, size_t text_len, size_t n, size_t* HWY_RESTRICT count_out)
+{
+    return BUN_HWY_DISPATCH(SkipLineFeedsImpl)(text, text_len, n, count_out);
 }
 
 size_t highway_index_of_escape_char8(const uint8_t* HWY_RESTRICT input, size_t len)

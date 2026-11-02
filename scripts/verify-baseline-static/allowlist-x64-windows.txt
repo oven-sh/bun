@@ -1281,3 +1281,14 @@ bun::N_AVX3_SPR::OddBlocksImpl         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, 
 bun::N_AVX3_ZEN4::ScannerRunStopsImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 bun::N_AVX3_ZEN4::LineStartsImpl       [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 bun::N_AVX3_ZEN4::OddBlocksImpl        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
+
+# ----------------------------------------------------------------------------
+# Bun's Highway kernel for the line of a printed error that is far from the first line. Gate: hwy::SupportedTargets via CPUID.
+# (6 symbols)
+# ----------------------------------------------------------------------------
+bun::N_AVX2::SkipLineFeedsImpl         [AVX, AVX2, BMI1, BMI2]
+bun::N_AVX3::SkipLineFeedsImpl         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
+bun::N_AVX10_2::SkipLineFeedsImpl      [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
+bun::N_AVX3_DL::SkipLineFeedsImpl      [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
+bun::N_AVX3_SPR::SkipLineFeedsImpl     [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
+bun::N_AVX3_ZEN4::SkipLineFeedsImpl    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]

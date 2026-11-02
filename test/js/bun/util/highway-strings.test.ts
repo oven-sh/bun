@@ -600,6 +600,164 @@ describe("lineStarts", () => {
   });
 });
 
+describe("skipLineFeeds", () => {
+  // The kernel counts the `\n` of a text, `n` at most, and stops at a `\r` that no `\n` follows.
+  // It gives the offset after the last `\n` that it counted, and the count.
+  function skipLineFeeds(text: Uint8Array, n: number): string {
+    const count = new Uint32Array([n]);
+    const end = hw("skipLineFeeds", text, new Uint8Array(count.buffer));
+    return `${end},${count[0]}`;
+  }
+  // The offset after each `\n` that counts.
+  function lineFeedEnds(text: Uint8Array): number[] {
+    const ends: number[] = [];
+    for (let i = 0; i < text.length; i++) {
+      if (text[i] === 0x0a) ends.push(i + 1);
+      else if (text[i] === 0x0d && text[i + 1] !== 0x0a) break;
+    }
+    return ends;
+  }
+  function compareSkips(text: Uint8Array, at: string, more: (lineFeeds: number) => number[] = () => []) {
+    const ends = lineFeedEnds(text);
+    const counts = [0, 1, 2, 3, 16, 17, 33, ends.length >> 1, ends.length - 1, ends.length, ...more(ends.length)];
+    for (const n of new Set([...counts.filter(n => n >= 0 && n <= ends.length + 1), 0xffff_ffff])) {
+      const count = Math.min(n, ends.length);
+      compare("skipLineFeeds", skipLineFeeds(text, n), `${count ? ends[count - 1] : 0},${count}`, () => `${at} n=${n}`);
+    }
+  }
+  // The kernel takes a text of 64 bytes or more.
+  const lengths = [64, 65, 79, 80, 96, 127, 128, 129, 255, 257];
+  const copyAt = (bytes: Uint8Array, off: number) => {
+    const copy = new Uint8Array(bytes.length + off);
+    copy.set(bytes, off);
+    return copy.subarray(off);
+  };
+  const line = "  const value = compute(input, 42);";
+
+  it("one kind of byte", () => {
+    for (const len of [...lengths, 511, 512, 513, 1029, 2050]) {
+      for (const off of OFFSETS) {
+        for (const byte of [0x0a, 0x0d, 0x61, 0x00, 0x0b, 0x09, 0x1a, 0x8a]) {
+          compareSkips(new Uint8Array(len + off).fill(byte).subarray(off), `len=${len} off=${off} byte=${byte}`);
+        }
+      }
+    }
+  });
+
+  it("one line break at every interesting position", () => {
+    for (const len of [64, 65, 96, 128, 129, 257]) {
+      for (const off of OFFSETS) {
+        for (const pos of positions(len)) {
+          // Printable bytes go by in another way than the other bytes.
+          for (const [name, base] of [
+            ["printable", new Uint8Array(len + off).fill(0x61).subarray(off)],
+            ["not ASCII", filler(len, off)],
+          ] as const) {
+            for (const [what, bytes] of [
+              ["\\n", [0x0a]],
+              ["\\r", [0x0d]],
+              ["\\r\\n", [0x0d, 0x0a]],
+              ["\\r\\r\\n", [0x0d, 0x0d, 0x0a]],
+              ["\\n\\r", [0x0a, 0x0d]],
+            ] as const) {
+              const text = copyAt(base, off);
+              text.set(bytes.slice(0, len - pos), pos);
+              compareSkips(text, `len=${len} off=${off} pos=${pos} ${name} ${what}`);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it("a line break that is not like the others, at every position in 700 bytes", () => {
+    for (const [name, lineBreak, other] of [
+      ["a \\r alone between \\n", "\n", "\r"],
+      ["a \\r alone between \\r\\n", "\r\n", "\r"],
+      ["a \\n between \\r\\n", "\r\n", "\n"],
+      ["a \\r\\n between \\n", "\n", "\r\n"],
+    ] as const) {
+      const text = enc(Buffer.alloc(40 * 25, "0123456789abcdefghijklmnopqrstu" + lineBreak).toString());
+      for (let pos = 0; pos < 700; pos++) {
+        const changed = copyAt(text, pos % 3);
+        changed.set(enc(other), pos);
+        compareSkips(changed, `${name} pos=${pos}`);
+      }
+    }
+  });
+
+  it("lines of every length up to 130", () => {
+    for (const lineBreak of ["\n", "\r\n"]) {
+      const lines = Array.from({ length: 131 }, (_, length) => Buffer.alloc(length, "a").toString() + lineBreak);
+      for (const off of OFFSETS) {
+        compareSkips(copyAt(enc(lines.join("")), off), `ascending off=${off}`);
+        compareSkips(
+          copyAt(enc(lines.toReversed().join("") + "no line break at the end"), off),
+          `descending off=${off}`,
+        );
+        compareSkips(
+          copyAt(enc(lines.join("") + "a\rb" + lines.join("")), off),
+          `a \\r alone in the middle off=${off}`,
+        );
+      }
+    }
+  });
+
+  it("texts of 100,000 bytes and more", () => {
+    const short = Buffer.alloc(3000 * (line.length + 1), line + "\n").toString();
+    const long = Array.from({ length: 60 }, (_, i) => Buffer.alloc(700 + 37 * i, "x").toString() + "\n").join("");
+    const tabs = Array.from({ length: 60 }, (_, i) => Buffer.alloc(900 + 10 * i, "\tdata").toString() + "\n").join("");
+    for (const [name, text] of [
+      ["short lines", short],
+      ["short lines that end in \\r\\n", short.replaceAll("\n", "\r\n")],
+      ["long lines", long],
+      ["long lines that end in \\r\\n", long.replaceAll("\n", "\r\n")],
+      ["long lines with tabs", tabs],
+      ["short lines, long lines, short lines", short + long + short],
+      ["long lines, short lines, long lines with tabs", long + short + tabs + short],
+      ["a \\r alone after short lines", short + "a\rb\n" + short],
+      ["a \\r alone after long lines", long + "a\rb\n" + long],
+      ["a \\r alone in a long line", long + Buffer.alloc(5000, "x").toString() + "\r" + long],
+      ["no line break after the last line", short + Buffer.alloc(3000, "x").toString()],
+      ["a \\r is the last byte", short + "\r"],
+    ] as const) {
+      // The n-th line feed in each part of the text, and at each distance from the end.
+      compareSkips(enc(text), name, lineFeeds => [
+        ...Array.from({ length: 64 }, (_, i) => 1 + i * (1 + (lineFeeds >> 6))),
+        ...Array.from({ length: 70 }, (_, back) => lineFeeds - back),
+      ]);
+    }
+  });
+
+  it("texts of random lines", () => {
+    let state = 0x2545f491;
+    const random = (below: number) => {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+      return Math.floor((state / 0x1_0000_0000) * below);
+    };
+    for (let text = 0; text < 300; text++) {
+      // How long a line is at most, and how many of 64 lines end in another way than `\n`.
+      const longest = [1, 6, 40, 140, 900][random(5)];
+      const crlf = [0, 0, 1, 64][random(4)];
+      const alone = [0, 0, 0, 1, 8][random(5)];
+      const bytes: number[] = [];
+      const length = 64 + random(6000);
+      while (bytes.length < length) {
+        for (let i = random(longest + 1); i > 0; i--)
+          bytes.push(random(40) === 0 ? [0x09, 0xc3, 0x00][random(3)] : 0x61);
+        if (random(64) < alone) bytes.push(0x0d, 0x62);
+        if (random(64) < crlf) bytes.push(0x0d);
+        bytes.push(0x0a);
+      }
+      compareSkips(copyAt(Uint8Array.from(bytes), random(3)), `text ${text}`);
+    }
+  });
+
+  it("rejects a text of fewer than 64 bytes", () => {
+    expect(() => hw("skipLineFeeds", new Uint8Array(63), new Uint8Array(4))).toThrow(RangeError);
+  });
+});
+
 describe("oddBlocks", () => {
   const isPlain = (b: number) => (b >= 0x20 && b <= 0x7e && b !== 0x5c) || b === 0x09 || b === 0x0a || b === 0x0d;
   // Both sides of a block of 64 bytes and of a word of 64 blocks.

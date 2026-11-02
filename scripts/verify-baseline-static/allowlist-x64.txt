@@ -1419,6 +1419,17 @@ _ZN3bun11N_AVX3_ZEN419ScannerRunStopsImplEPKhmPhm  [AVX, AVX2, AVX512BW, AVX512D
 _ZN3bun11N_AVX3_ZEN414LineStartsImplEPKhmPj        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 _ZN3bun11N_AVX3_ZEN413OddBlocksImplEPKhmPm         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 
+# ----------------------------------------------------------------------------
+# Bun's Highway kernel for the line of a printed error that is far from the first line. Gate: hwy::SupportedTargets via CPUID.
+# (6 symbols)
+# ----------------------------------------------------------------------------
+_ZN3bun6N_AVX217SkipLineFeedsImplEPKhmmPm          [AVX, AVX2, BMI1, BMI2]
+_ZN3bun6N_AVX317SkipLineFeedsImplEPKhmmPm          [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
+_ZN3bun9N_AVX10_217SkipLineFeedsImplEPKhmmPm       [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
+_ZN3bun9N_AVX3_DL17SkipLineFeedsImplEPKhmmPm       [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
+_ZN3bun10N_AVX3_SPR17SkipLineFeedsImplEPKhmmPm     [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
+_ZN3bun11N_AVX3_ZEN417SkipLineFeedsImplEPKhmmPm    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
+
 
 # ----------------------------------------------------------------------------
 # The ahead-of-time compiler's count of instructions per pass. Gate: cap_user_rdpmc

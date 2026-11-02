@@ -18,6 +18,7 @@ extern "C" size_t highway_last_index_of_char(const uint8_t* haystack, size_t hay
 extern "C" size_t highway_index_of_not_char(const uint8_t* haystack, size_t haystack_len, uint8_t value);
 extern "C" size_t highway_count_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
 extern "C" size_t highway_line_starts(const uint8_t* text, size_t text_len, uint32_t* out);
+extern "C" size_t highway_skip_line_feeds(const uint8_t* text, size_t text_len, size_t n, size_t* count_out);
 extern "C" size_t highway_index_of_any_char(const uint8_t* text, size_t text_len, const uint8_t* chars, size_t chars_len);
 extern "C" size_t highway_last_index_of_any_char(const uint8_t* text, size_t text_len, const uint8_t* chars, size_t chars_len);
 extern "C" size_t highway_index_of_untidy_slash(const uint8_t* path, size_t len);
@@ -43,6 +44,7 @@ namespace Bun {
 // for memmem/memrmem the match offset with -1 for "not found". scannerRunStops
 // writes its three bitmaps into `arg`, a third of the view each, and returns 0.
 // lineStarts writes uint32 offsets into `arg` and returns how many.
+// skipLineFeeds reads `n` from `arg` as a uint32, writes the count there, and returns the offset.
 // oddBlocks writes its uint64 words into `arg` and returns 0.
 // The kernels that look for slashes ignore `arg`. commonPrefixLength compares `haystack` with `arg`.
 BUN_DEFINE_HOST_FUNCTION(Bun__highwayStringsForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -134,6 +136,15 @@ BUN_DEFINE_HOST_FUNCTION(Bun__highwayStringsForTesting, (JSC::JSGlobalObject * g
             return {};
         }
         result = highway_line_starts(haystack, len, reinterpret_cast<uint32_t*>(const_cast<uint8_t*>(needle)));
+    } else if (op == "skipLineFeeds"_s) {
+        if (reinterpret_cast<uintptr_t>(needle) % alignof(uint32_t) || needle_len < sizeof(uint32_t) || len < 64) {
+            throwRangeError(globalObject, scope, "needs an aligned uint32, and a text of 64 bytes"_s);
+            return {};
+        }
+        auto* n = reinterpret_cast<uint32_t*>(const_cast<uint8_t*>(needle));
+        size_t count = 0;
+        result = highway_skip_line_feeds(haystack, len, *n, &count);
+        *n = static_cast<uint32_t>(count);
     } else if (op == "oddBlocks"_s) {
         if (reinterpret_cast<uintptr_t>(needle) % alignof(uint64_t) || needle_len / sizeof(uint64_t) < (len + 4095) / 4096) {
             throwRangeError(globalObject, scope, "needs an aligned uint64 per 4096 bytes of text"_s);

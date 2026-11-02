@@ -13,6 +13,14 @@ unsafe extern "C" {
     fn highway_line_starts(text: *const u8, text_len: usize, out: *mut u32) -> usize;
 
     #[cfg(not(miri))]
+    fn highway_skip_line_feeds(
+        text: *const u8,
+        text_len: usize,
+        n: usize,
+        count: *mut usize,
+    ) -> usize;
+
+    #[cfg(not(miri))]
     fn highway_memmem(
         haystack: *const u8,
         haystack_len: usize,
@@ -337,6 +345,34 @@ pub fn line_starts(text: &[u8]) -> Vec<u32> {
     // SAFETY: the kernel has written that many after the first.
     unsafe { starts.set_len(1 + written) };
     starts
+}
+
+/// Counts the `\n` of `text`: `n` at most, and none after a `\r` that no `\n` follows. Returns the offset after the last one counted, or 0, and the count.
+pub fn skip_line_feeds(text: &[u8], n: usize) -> (usize, usize) {
+    // The kernel takes a text of 64 bytes or more.
+    #[cfg(not(miri))]
+    if text.len() >= 64 {
+        let mut count = 0;
+        // SAFETY: `text` is readable, and the kernel writes one `usize` to `count`.
+        let end = unsafe { highway_skip_line_feeds(text.as_ptr(), text.len(), n, &raw mut count) };
+        debug_assert_eq!((end, count), skip_line_feeds_scalar(text, n));
+        return (end, count);
+    }
+    skip_line_feeds_scalar(text, n)
+}
+
+fn skip_line_feeds_scalar(text: &[u8], n: usize) -> (usize, usize) {
+    let (mut end, mut count) = (0, 0);
+    for (i, &byte) in text.iter().enumerate() {
+        if count == n || (byte == b'\r' && text.get(i + 1) != Some(&b'\n')) {
+            break;
+        }
+        if byte == b'\n' {
+            count += 1;
+            end = i + 1;
+        }
+    }
+    (end, count)
 }
 
 #[inline(always)]

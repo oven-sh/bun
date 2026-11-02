@@ -1,37 +1,13 @@
-import { afterEach, beforeEach, expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
-import { availableParallelism } from "node:os";
-import { raiseDefaultTimeout } from "./harness/default-timeout";
-import { availableMemory, memoryLimitOfCommandsAtOnce } from "./harness/memory-limit";
+import { expect } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
-import { test as oneAtATime } from "./supported";
+import { test } from "./supported";
 
 // Over layers, the files of packages that only computed imports reach are a program of their own, under the files of the project.
 // The build of the layer above it begins beside its build. Of the program below a front end needs to know only which files it
 // holds, so that build guesses them: what the build below begins with. It waits for the program before it checks types, and looks
 // whether the guess was right. Where it was not, it is started again above the program, as it would have been without all this.
 // `TestRunLayersBuiltAlone`: every layer is built with nothing beside it.
-
-// The tests run at once: each builds and runs in a folder of its own.
-const test = oneAtATime.concurrent;
-// A test has one run over layers in flight, and the build of its lowest layer keeps several processors busy: a quarter as many
-// tests as processors run at once, two at least. Such a run takes 1.2 GB of the machine's memory with a debug build and 0.2 GB
-// with a release build, and a build with a sanitizer is taken for a debug build. run() ends every run of the file where the
-// machine has less left than a seventh of what the commands of a file may hold, so no more tests run at once than have room
-// beside twice that, one at least. The others wait in a hook without a limit, where the time of a test does not run.
-const roomForARun = (isDebug || isASAN ? 2 : 0.5) * 2 ** 30;
-const roomNow = availableMemory() - (2 * memoryLimitOfCommandsAtOnce) / 7;
-let free = Math.max(1, Math.min(Math.max(2, availableParallelism() >> 2), Math.floor(roomNow / roomForARun)));
-const waiting: (() => void)[] = [];
-beforeEach(() => (free > 0 ? void free-- : new Promise<void>(resolve => waiting.push(resolve))), 0);
-afterEach(() => {
-  const next = waiting.shift();
-  if (next) next();
-  else free++;
-});
-// supported.ts sets the limit for the first file of a process alone. A test takes a debug build one to four and a half minutes,
-// by how busy the machine is.
-raiseDefaultTimeout(isDebug ? 900_000 : 120_000);
 
 // The lowest layer of a run holds Bun's own code, and its build is most of what a run costs. That build starts over where the
 // layer holds a CommonJS file of a package, and the layer holds twice as many of Bun's modules where a file requires a name that
@@ -122,42 +98,35 @@ async function runTests(directory: string, words: string, ...flags: string[]) {
 }
 type Ran = Awaited<ReturnType<typeof runTests>>;
 
-/** Plain Bun prints `seen` in the folder and ends so, the run over layers does the same, and its two layers are built as `built`. */
-async function runsAsPlain(directory: string, words: string, seen: Ran["seen"], built: NonNullable<Ran["built"]>) {
+/**
+ * Plain Bun prints `seen` in the folder and ends so. Each run over layers, one for each of the `words`, does the same, and its two
+ * layers are built as is said beside its words. The runs over layers of a test go at once.
+ */
+async function runsAsPlain(directory: string, seen: Ran["seen"], builds: Record<string, NonNullable<Ran["built"]>>) {
   const plain = await runTests(directory, "");
   expect(plain).toEqual({ built: undefined, seen });
-  const compiled = await runTests(directory, words, "--aot");
-  expect(compiled.seen).toEqual(plain.seen);
-  if (compiled.built) expect(compiled.built).toEqual(built);
+  const compiled = await Promise.all(Object.keys(builds).map(words => runTests(directory, words, "--aot")));
+  for (const [index, words] of Object.keys(builds).entries()) {
+    expect({ words, seen: compiled[index].seen }).toEqual({ words, seen: plain.seen });
+    if (compiled[index].built) expect({ words, ...compiled[index].built }).toEqual({ words, ...builds[words] });
+  }
 }
 
 test("a right guess: one build of the project's files, begun beside the build below", async () => {
   using dir = tempDir("aot-layer-begins-beside", files);
   await runsAsPlain(
     String(dir),
-    "TestRunLayers:2",
     {
       stdout: ["another file runs", "parsed 1.5", `seen shared:direct [{"name":"one"},{"name":"two"}] one,two`],
       results: twoFilesPass,
       exitCode: 0,
     },
-    { began: { guessed: 2, otherwise: 0, endsAsItBegan: true }, builds: beside },
-  );
-});
-
-test("TestRunLayersBuiltAlone: every layer is built with nothing beside it", async () => {
-  using dir = tempDir("aot-layer-begins-alone", files);
-  await runsAsPlain(
-    String(dir),
-    "TestRunLayers:2,TestRunLayersBuiltAlone",
     {
-      stdout: ["another file runs", "parsed 1.5", `seen shared:direct [{"name":"one"},{"name":"two"}] one,two`],
-      results: twoFilesPass,
-      exitCode: 0,
+      "TestRunLayers:2": { began: { guessed: 2, otherwise: 0, endsAsItBegan: true }, builds: beside },
+      "TestRunLayers:2,TestRunLayersBuiltAlone": { began: undefined, builds: oneAfterTheOther },
     },
-    { began: undefined, builds: oneAfterTheOther },
   );
-});
+}, 240_000);
 
 test("the program below ends with more that is replaced than it was told of: the build above is started again", async () => {
   using dir = tempDir("aot-layer-begins-beside-again", {
@@ -166,15 +135,14 @@ test("the program below ends with more that is replaced than it was told of: the
   });
   await runsAsPlain(
     String(dir),
-    "TestRunLayers:2",
     {
       stdout: ["another file runs", "parsed 7", `seen shared:direct [{"name":"one"},{"name":"two"}] one,two`],
       results: twoFilesPass,
       exitCode: 0,
     },
-    { began: { guessed: 2, otherwise: 0, endsAsItBegan: false }, builds: startedAgain },
+    { "TestRunLayers:2": { began: { guessed: 2, otherwise: 0, endsAsItBegan: false }, builds: startedAgain } },
   );
-});
+}, 240_000);
 
 test("a file that the project's files and the files behind the computed import both load runs once", async () => {
   // The lowest layer takes the files of packages that the test files reach by the names in their texts, and the guess takes what
@@ -190,7 +158,6 @@ test("a file that the project's files and the files behind the computed import b
   });
   await runsAsPlain(
     String(dir),
-    "TestRunLayers:2",
     {
       stdout: [
         "another file runs",
@@ -209,9 +176,9 @@ test("a file that the project's files and the files behind the computed import b
       exitCode: 0,
     },
     // The guess holds the two files that the import stands for. The program also holds the file that one of them requires.
-    { began: { guessed: 2, otherwise: 1, endsAsItBegan: true }, builds: startedAgain },
+    { "TestRunLayers:2": { began: { guessed: 2, otherwise: 1, endsAsItBegan: true }, builds: startedAgain } },
   );
-});
+}, 240_000);
 
 test("no computed import: the build above goes on without a program below", async () => {
   using dir = tempDir("aot-layer-begins-beside-nothing", {
@@ -221,8 +188,7 @@ test("no computed import: the build above goes on without a program below", asyn
   });
   await runsAsPlain(
     String(dir),
-    "TestRunLayers:2",
     { stdout: ["value 1"], results: [" 0 fail", " 1 pass", "(pass) one", "Ran 1 test across 1 file."], exitCode: 0 },
-    { began: { guessed: 0, otherwise: 0, endsAsItBegan: true }, builds: beside },
+    { "TestRunLayers:2": { began: { guessed: 0, otherwise: 0, endsAsItBegan: true }, builds: beside } },
   );
-});
+}, 240_000);

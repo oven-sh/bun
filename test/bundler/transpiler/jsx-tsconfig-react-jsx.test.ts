@@ -114,30 +114,32 @@ describe("tsconfig compilerOptions.jsx", () => {
     ["react-jsx", "shim/jsx-runtime"],
     ["react-jsxdev", "shim/jsx-dev-runtime"],
   ])("CLI runtime %s", (runtime, importSource) => {
-    test.concurrent.each([undefined, "production", "development"] as const)(
-      "selects the runtime with NODE_ENV=%s",
-      async NODE_ENV => {
-        const expectedSource =
-          NODE_ENV === "production"
-            ? "shim/jsx-runtime"
-            : NODE_ENV === "development"
-              ? "shim/jsx-dev-runtime"
-              : importSource;
-        using dir = tempDir("jsx-cli-runtime", shimFiles);
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "build", "m.jsx", `--jsx-runtime=${runtime}`, "--jsx-import-source=shim", "--external=shim*"],
-          env: { ...bunEnv, NODE_ENV, BUN_ENV: undefined },
-          cwd: String(dir),
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect(stdout).toContain(`"${expectedSource}"`);
-        expect(stdout).not.toContain(expectedSource === "shim/jsx-runtime" ? "jsx-dev-runtime" : '"shim/jsx-runtime"');
-        expect(stderr).toBe("");
-        expect(exitCode).toBe(0);
-      },
-    );
+    test.concurrent.each([
+      [undefined, undefined],
+      ["production", undefined],
+      ["development", undefined],
+      [undefined, "production"],
+      [undefined, "development"],
+      ["development", "production"],
+      ["production", "development"],
+    ] as const)("selects the runtime with NODE_ENV=%s, BUN_ENV=%s", async (NODE_ENV, BUN_ENV) => {
+      const mode = BUN_ENV ?? NODE_ENV;
+      const expectedSource =
+        mode === "production" ? "shim/jsx-runtime" : mode === "development" ? "shim/jsx-dev-runtime" : importSource;
+      using dir = tempDir("jsx-cli-runtime", shimFiles);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "m.jsx", `--jsx-runtime=${runtime}`, "--jsx-import-source=shim", "--external=shim*"],
+        env: { ...bunEnv, NODE_ENV, BUN_ENV },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toContain(`"${expectedSource}"`);
+      expect(stdout).not.toContain(expectedSource === "shim/jsx-runtime" ? "jsx-dev-runtime" : '"shim/jsx-runtime"');
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
   });
 
   // The Solid.js JSX transform was removed in 88538b7c2c.

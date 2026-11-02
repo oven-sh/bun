@@ -6,14 +6,18 @@
 //! that has already listed the directories. What a project includes is decided from its patterns.
 
 use crate::host::{UncachedDisk, from_native};
-use crate::{Listed, has_no_installed_dependencies, installed_typescript, major_of_typescript_at, project_that_checks};
+use crate::{
+    Listed, has_no_installed_dependencies, installed_typescript, major_of_typescript_at,
+    project_that_checks,
+};
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_sema::config::{self, Roots, SplitFilePath};
 use bun_sema::json::Json;
 use bun_sema::program::libs_referenced_by;
 use bun_sema::resolve::{
-    CachedConfig, Host, Options, ancestors, contains_path, inside, is_same_path, join, output_declaration_file_name,
+    CachedConfig, Host, Options, ancestors, contains_path, inside, is_same_path, join,
+    output_declaration_file_name,
 };
 use bun_sema::session::Session;
 use bun_sema::util::{FxHashMap, FxHashSet};
@@ -112,7 +116,10 @@ impl Outlines {
                     let reached = project.reached.get_or_init(|| self.reached_from(project));
                     // Globals read sources, so build-order cycles do not invalidate their owner.
                     let redirects = output_declaration_file_name(&path, None).is_some()
-                        && reached.iter().filter_map(Weak::upgrade).any(|it| includes_file(&it));
+                        && reached
+                            .iter()
+                            .filter_map(Weak::upgrade)
+                            .any(|it| includes_file(&it));
                     (Listed::AsConfigured, redirects)
                 });
                 Some((listed, project.references.clone()))

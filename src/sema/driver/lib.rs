@@ -2045,7 +2045,11 @@ impl Projects {
             return false;
         }
         let is_case_sensitive = disk.is_case_sensitive();
-        if !self.searched.as_ref().is_some_and(|it| is_same_path(&it.config, config, is_case_sensitive)) {
+        if !self
+            .searched
+            .as_ref()
+            .is_some_and(|it| is_same_path(&it.config, config, is_case_sensitive))
+        {
             let Some(root) = self.load(disk, request, config) else {
                 return false;
             };
@@ -2058,7 +2062,9 @@ impl Projects {
             graph.setup_build_tasks(config);
             let reads_sources = request.plan_options.reads_sources_of_references && !request.build;
             let valid = graph.errors.is_empty() || reads_sources;
-            let sources = graph.projects.iter()
+            let sources = graph
+                .projects
+                .iter()
                 .filter(|it| !is_same_path(&it.project.config_path, config, is_case_sensitive))
                 .flat_map(|it| &it.project.files)
                 .map(|file| to_path(file, is_case_sensitive).into_owned())
@@ -2077,22 +2083,31 @@ impl Projects {
             return false;
         }
         if listed == Listed::AsConfigured {
-            return searched.sources.contains(&*to_path(file, is_case_sensitive));
+            return searched
+                .sources
+                .contains(&*to_path(file, is_case_sensitive));
         }
-        let references = searched.projects.iter().filter(|it| {
-            !is_same_path(&it.project.config_path, config, is_case_sensitive)
-        });
+        let references = searched
+            .projects
+            .iter()
+            .filter(|it| !is_same_path(&it.project.config_path, config, is_case_sensitive));
         // A hypothetical allowJs owner must include the path, not merely share its directory.
-        let references: Vec<Vec<u8>> = references.filter(|it| {
-            let options = &it.project.options;
-            let base = dirname::<Posix>(&it.project.config_path);
-            config::matched_include_spec(&options.include_specs, base, file, is_case_sensitive).is_some()
-                || options.file_specs.iter().any(|(text, path)| {
-                    !text.is_empty() && is_same_path(path, file, is_case_sensitive)
-                })
-        }).map(|it| it.project.config_path.clone()).collect();
+        let references: Vec<Vec<u8>> = references
+            .filter(|it| {
+                let options = &it.project.options;
+                let base = dirname::<Posix>(&it.project.config_path);
+                config::matched_include_spec(&options.include_specs, base, file, is_case_sensitive)
+                    .is_some()
+                    || options.file_specs.iter().any(|(text, path)| {
+                        !text.is_empty() && is_same_path(path, file, is_case_sensitive)
+                    })
+            })
+            .map(|it| it.project.config_path.clone())
+            .collect();
         let path = to_path(file, is_case_sensitive);
-        references.iter().any(|it| self.lists(disk, request, it, Listed::WithJavaScript, &path))
+        references
+            .iter()
+            .any(|it| self.lists(disk, request, it, Listed::WithJavaScript, &path))
     }
 
     /// `findOrCreateDefaultConfiguredProjectWorker` below `config`, not above it: the first that reads `file` itself.
@@ -3944,7 +3959,10 @@ fn check_with_references(
                     && (per_project.any(|it| is_referenced.contains(&(it.project as usize)))
                         || selected_elsewhere)
         };
-        if is_root && !reads_sources && let Some((Extent::Project, files)) = named {
+        if is_root
+            && !reads_sources
+            && let Some((Extent::Project, files)) = named
+        {
             project.options.named_source_roots = files.iter().cloned().collect();
         }
         project.options.is_build = reports_references || !is_root;

@@ -223,27 +223,37 @@ describe.concurrent("bun lint", () => {
       }
     });
 
-    test.each([false, true])("fast and full inference read source owners despite build-order cycles: %s", async circular => {
-      const project = (files: string[], references: { path: string; circular?: boolean }[] = []) =>
-        JSON.stringify({
-          compilerOptions: { allowJs: true, checkJs: true, noEmit: true, lib: ["es5"], types: [] },
-          files,
-          references,
-        });
-      const files = {
-        "tsconfig.json": project([], [{ path: "./b.json" }, { path: "./c.json" }]),
-        "b.json": project(["x.js"], [{ path: "./d.json", circular }]),
-        "d.json": project(["x.js"], [{ path: "./b.json" }]),
-        "c.json": project(["x.js", "c.d.ts"]),
-        "c.d.ts": "declare const SELECTED_OWNER_GLOBAL: number;\n",
-        "x.js": "SELECTED_OWNER_GLOBAL;\n",
-      };
-      for (const inference of ["--infer-globals=fast", "--infer-globals"]) {
-        const { stdout, exitCode } = await lint(files, [inference, "--rule", "no-undef: error", "-f", "unix", "x.js"]);
-        expect(exitCode).toBe(0);
-        expect(stdout).toBe("");
-      }
-    });
+    test.each([false, true])(
+      "fast and full inference read source owners despite build-order cycles: %s",
+      async circular => {
+        const project = (files: string[], references: { path: string; circular?: boolean }[] = []) =>
+          JSON.stringify({
+            compilerOptions: { allowJs: true, checkJs: true, noEmit: true, lib: ["es5"], types: [] },
+            files,
+            references,
+          });
+        const files = {
+          "tsconfig.json": project([], [{ path: "./b.json" }, { path: "./c.json" }]),
+          "b.json": project(["x.js"], [{ path: "./d.json", circular }]),
+          "d.json": project(["x.js"], [{ path: "./b.json" }]),
+          "c.json": project(["x.js", "c.d.ts"]),
+          "c.d.ts": "declare const SELECTED_OWNER_GLOBAL: number;\n",
+          "x.js": "SELECTED_OWNER_GLOBAL;\n",
+        };
+        for (const inference of ["--infer-globals=fast", "--infer-globals"]) {
+          const { stdout, exitCode } = await lint(files, [
+            inference,
+            "--rule",
+            "no-undef: error",
+            "-f",
+            "unix",
+            "x.js",
+          ]);
+          expect(exitCode).toBe(0);
+          expect(stdout).toBe("");
+        }
+      },
+    );
 
     test("fast and full inference find an ancestor that includes the file", async () => {
       const files = {

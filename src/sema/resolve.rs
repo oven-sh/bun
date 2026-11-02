@@ -426,7 +426,11 @@ impl Options {
         self.with_path(name, |path| self.referenced_source_at(files, path))
     }
 
-    fn referenced_source_at<'a>(&self, files: &'a ProjectFiles, path: &[u8]) -> Option<&'a ProjectFile> {
+    fn referenced_source_at<'a>(
+        &self,
+        files: &'a ProjectFiles,
+        path: &[u8],
+    ) -> Option<&'a ProjectFile> {
         let file = self.last_referenced(files.sources.get(path)?)?;
         // Shared ProjectFiles belongs to every program. Only this program's named roots bypass declaration redirects.
         (file.output_dts.is_empty() || !self.named_source_roots.contains(path)).then_some(file)

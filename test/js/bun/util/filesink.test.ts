@@ -1778,6 +1778,21 @@ describe.concurrent("start() on an open writer", () => {
     expect(result).toEqual({ target: "short", initial: "", closed: "all" });
   });
 
+  it("start({ path }) after end() writes to the new path", async () => {
+    const result = await run(`
+      const [first, second] = [join(dir, "first.txt"), join(dir, "second.txt")];
+      const writer = Bun.file(first).writer();
+      writer.write("to the first");
+      await writer.end();
+      writer.start({ path: second });
+      const written = writer.write("to the second");
+      await writer.end();
+      const out = { written, first: read(first), second: read(second) };
+      console.log(JSON.stringify({ ...out, closed: await closed() }));
+    `);
+    expect(result).toEqual({ written: 13, first: "to the first", second: "to the second", closed: "all" });
+  });
+
   // /dev/ptmx is a TTY that opens by path with no terminal attached, and `closed()` sees it on Linux.
   it.skipIf(!isLinux)("start({ path }) moves a writer from a TTY to a regular file", async () => {
     const result = await run(`

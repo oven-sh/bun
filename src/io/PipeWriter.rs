@@ -1170,6 +1170,7 @@ impl<Parent: StreamingWriterParent> StreamingWriter<Parent> {
 
         // What an earlier start() left.
         self.close();
+        self.is_done = false;
         self.handle = handle;
         #[cfg(windows)]
         {

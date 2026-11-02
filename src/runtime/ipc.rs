@@ -1427,8 +1427,10 @@ impl SendQueue {
                         item.data.cursor = 0;
                         item.is_offered = false;
                         #[cfg(windows)]
-                        if let Some(handle) = &mut item.handle {
-                            // If it fails, the peer refuses what it has opened already.
+                        if let Some(handle) = &mut item.handle
+                            && handle.close_on_complete
+                        {
+                            // A socket that stays with its owner may be closed by now. Without a new export the peer gets the last one again, and refuses it if it has opened it.
                             let _ = handle.export();
                         }
                         item

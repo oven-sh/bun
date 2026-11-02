@@ -2880,16 +2880,15 @@ pub fn return_address() -> usize {
     // Miri cannot execute `frame_address`'s inline asm, and an address read out
     // of a register is not a pointer it can dereference. 0 = "no trim", the
     // same value the arches without an asm! mapping return. `cfg!` rather than
-    // `#[cfg]` so the read below stays compiled (and `PC_OFFSET` live).
+    // `#[cfg]` so the read below stays compiled.
     if cfg!(miri) {
         return 0;
     }
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     {
-        let fp = debug::frame_address();
-        // SAFETY: `fp` is this function's own valid frame pointer; the
-        // return-address slot at `[fp + PC_OFFSET]` is always mapped.
-        unsafe { *((fp + debug::PC_OFFSET) as *const usize) }
+        // SAFETY: this is inlined, so the frame pointer is the address of the
+        // caller's frame record.
+        unsafe { debug::return_address_of_frame(debug::frame_address()) }
     }
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     {

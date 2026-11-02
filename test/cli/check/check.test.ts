@@ -6310,9 +6310,10 @@ export const c: PgTextBuilder<{ name: string; data: string }> = t1;
         expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
       });
 
-      // The symptom of #47707: `ReturnType` takes the false branch of its conditional type, `any`, when the last
-      // overload's return type is not assignable to the widened one.
-      test("resolves ReturnType of an overloaded function that returns a column builder", async () => {
+      // The shape of #47707: `ReturnType` of the builder function is the last overload's return type, and a call's
+      // result widens to it. The `ReturnType` assertions hold without the fix too, because the erased last overload
+      // returns `PgTextBuilder<{ name: any; ... }>`. The widening does not.
+      test("resolves ReturnType of an overloaded builder function and widens a call's result to it", async () => {
         using dir = project({
           "a.ts":
             builders +

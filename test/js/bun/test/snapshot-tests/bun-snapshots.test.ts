@@ -33,6 +33,30 @@ test("ArrayBuffer values are serialized like typed arrays", () => {
   `);
 });
 
+test("property matchers leave out the private fields of a class", () => {
+  class Counter {
+    #n;
+    name = "c";
+    constructor(n: number) {
+      this.#n = n;
+    }
+    get n() {
+      return this.#n;
+    }
+  }
+  expect({ k: new Counter(1), id: 5 }).toMatchInlineSnapshot(
+    { k: new Counter(2), id: expect.any(Number) },
+    `
+    {
+      "id": Any<Number>,
+      "k": Counter {
+        "name": "c",
+      },
+    }
+  `,
+  );
+});
+
 describe("toMatchSnapshot errors", () => {
   it("should throw if property matchers exist and received is not an object", () => {
     expect(() => {

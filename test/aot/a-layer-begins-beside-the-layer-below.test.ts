@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, expect } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { availableParallelism } from "node:os";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
+import { availableMemory, memoryLimitOfCommandsAtOnce } from "./harness/memory-limit";
 import { run } from "./harness/run";
 import { test as oneAtATime } from "./supported";
 
@@ -14,8 +15,13 @@ import { test as oneAtATime } from "./supported";
 // The tests run at once: each builds and runs in a folder of its own.
 const test = oneAtATime.concurrent;
 // A test has one run over layers in flight, and the build of its lowest layer keeps several processors busy: a quarter as many
-// tests as processors run at once, two at least. The others wait in a hook without a limit, where the time of a test does not run.
-let free = Math.max(2, availableParallelism() >> 2);
+// tests as processors run at once, two at least. Such a run takes 1.2 GB of the machine's memory with a debug build and 0.2 GB
+// with a release build, and a build with a sanitizer is taken for a debug build. run() ends every run of the file where the
+// machine has less left than a seventh of what the commands of a file may hold, so no more tests run at once than have room
+// beside twice that, one at least. The others wait in a hook without a limit, where the time of a test does not run.
+const roomForARun = (isDebug || isASAN ? 2 : 0.5) * 2 ** 30;
+const roomNow = availableMemory() - (2 * memoryLimitOfCommandsAtOnce) / 7;
+let free = Math.max(1, Math.min(Math.max(2, availableParallelism() >> 2), Math.floor(roomNow / roomForARun)));
 const waiting: (() => void)[] = [];
 beforeEach(() => (free > 0 ? void free-- : new Promise<void>(resolve => waiting.push(resolve))), 0);
 afterEach(() => {
@@ -23,9 +29,9 @@ afterEach(() => {
   if (next) next();
   else free++;
 });
-// supported.ts sets the limit for the first file of a process alone. A debug build takes one to six minutes for one run over
-// layers, by how busy the machine is.
-raiseDefaultTimeout(isDebug ? 1_800_000 : 120_000);
+// supported.ts sets the limit for the first file of a process alone. A test takes a debug build one to four and a half minutes,
+// by how busy the machine is.
+raiseDefaultTimeout(isDebug ? 900_000 : 120_000);
 
 // The lowest layer of a run holds Bun's own code, and its build is most of what a run costs. That build starts over where the
 // layer holds a CommonJS file of a package, and the layer holds twice as many of Bun's modules where a file requires a name that

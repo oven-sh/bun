@@ -3826,7 +3826,7 @@ uint8_t GlobalObject::drainMicrotasks()
 // One case is answered here instead: a Rust frame can be leaving through
 // `exit()` with a (non-termination) exception pending that the dispatcher above
 // it will take and report. For drainMicrotasks() an exception pending on entry
-// is a caller bug (its C++ callers are top-level loops); for this caller it only
+// is a caller bug (each C++ caller checks or reports its callback's exception first); for this caller it only
 // means "not a checkpoint yet" - so say so (2) without draining or reporting,
 // and the fold checkpoints once it has taken the exception.
 extern "C" uint8_t JSC__JSGlobalObject__drainMicrotasks(Zig::GlobalObject* globalObject)
@@ -4010,13 +4010,15 @@ RefPtr<Performance> GlobalObject::performance()
 
 extern "C" void Bun__handleRejectedPromise(Zig::GlobalObject* JSGlobalObject, JSC::JSPromise* promise, JSC::EncodedJSValue rejectionOwner);
 
-void GlobalObject::handleRejectedPromises()
+// True if a promise was reported: the listeners that ran may have queued ticks or microtasks.
+bool GlobalObject::handleRejectedPromises()
 {
     if (m_aboutToBeNotifiedRejectedPromises.isEmpty()) [[likely]]
-        return;
+        return false;
 
     JSC::VM& virtual_machine = vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(virtual_machine);
+    bool reported = false;
     do {
         // Move the whole list out under one cellLock, then iterate linearly —
         // the same pattern JSC's VM::didExhaustMicrotaskQueue and WebCore's
@@ -4032,10 +4034,11 @@ void GlobalObject::handleRejectedPromises()
             // From here on a handler on this promise is late: promiseRejectionTracker(Handle) owes it 'rejectionHandled'.
             m_aboutToBeNotifiedRejectedPromises.markReported(this, promise);
 
+            reported = true;
             Bun__handleRejectedPromise(this, promise, JSValue::encode(rejectionOwners.at(i)));
             if (auto ex = scope.exception()) {
                 if (virtual_machine.isTerminationException(ex)) [[unlikely]]
-                    return;
+                    return true;
                 (void)scope.tryClearException();
                 this->reportUncaughtExceptionAtEventLoop(this, ex);
             }
@@ -4043,6 +4046,7 @@ void GlobalObject::handleRejectedPromises()
         // An unhandledRejection handler may itself reject a promise; loop
         // until the list stays empty.
     } while (!m_aboutToBeNotifiedRejectedPromises.isEmpty());
+    return reported;
 }
 
 DEFINE_VISIT_CHILDREN(GlobalObject);

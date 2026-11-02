@@ -4662,7 +4662,7 @@ __attribute__((__always_inline__)) JSC::VM* JSC__JSGlobalObject__vm(JSC::JSGloba
 
 void JSC__JSGlobalObject__handleRejectedPromises(JSC::JSGlobalObject* arg0)
 {
-    return uncheckedDowncast<Zig::GlobalObject>(arg0)->handleRejectedPromises();
+    uncheckedDowncast<Zig::GlobalObject>(arg0)->handleRejectedPromises();
 }
 
 extern "C" size_t Bun__holdRejectedPromises(Zig::GlobalObject* globalObject)

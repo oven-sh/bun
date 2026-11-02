@@ -927,6 +927,52 @@ void queue_work_and_call(const FunctionCallbackInfo<Value> &info) {
   info.GetReturnValue().Set(Number::New(isolate, rc));
 }
 
+static void log_make_callback_result(MaybeLocal<Value> result) {
+  LOG_EXPR(result.IsEmpty());
+  if (!result.IsEmpty()) {
+    LOG_EXPR(result.ToLocalChecked()->IsUndefined());
+  }
+}
+
+struct MakeCallbackWork {
+  uv_work_t req;
+  Isolate *isolate;
+  Global<Function> callbacks[2];
+};
+
+// Calls node::MakeCallback twice from after_work_cb, with no JavaScript below.
+void make_callbacks_from_event_loop(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  auto *work = new MakeCallbackWork;
+  work->req.data = work;
+  work->isolate = isolate;
+  work->callbacks[0].Reset(isolate, info[0].As<Function>());
+  work->callbacks[1].Reset(isolate, info[1].As<Function>());
+  uv_queue_work(
+      node::GetCurrentEventLoop(isolate), &work->req, [](uv_work_t *req) {},
+      [](uv_work_t *req, int status) {
+        auto *work = static_cast<MakeCallbackWork *>(req->data);
+        Isolate *isolate = work->isolate;
+        {
+          HandleScope scope(isolate);
+          Local<Object> recv = isolate->GetCurrentContext()->Global();
+          for (Global<Function> &callback : work->callbacks) {
+            log_make_callback_result(node::MakeCallback(
+                isolate, recv, callback.Get(isolate), 0, nullptr, {0, 0}));
+          }
+        }
+        delete work;
+      });
+}
+
+// Calls node::MakeCallback while its JS caller is running.
+void make_callback_from_js(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  log_make_callback_result(
+      node::MakeCallback(isolate, isolate->GetCurrentContext()->Global(),
+                         info[0].As<Function>(), 0, nullptr, {0, 0}));
+}
+
 void test_v8_object_get_by_key(const FunctionCallbackInfo<Value> &info) {
   printf("Testing Object::Get(context, key)...\n");
 
@@ -2252,6 +2298,9 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "test_uv_os_getpid", test_uv_os_getpid);
   NODE_SET_METHOD(exports, "test_uv_os_getppid", test_uv_os_getppid);
   NODE_SET_METHOD(exports, "queue_work_and_call", queue_work_and_call);
+  NODE_SET_METHOD(exports, "make_callbacks_from_event_loop",
+                  make_callbacks_from_event_loop);
+  NODE_SET_METHOD(exports, "make_callback_from_js", make_callback_from_js);
   NODE_SET_METHOD(exports, "test_v8_object_get_by_key",
                   test_v8_object_get_by_key);
   NODE_SET_METHOD(exports, "test_v8_object_get_by_index",

@@ -1,5 +1,24 @@
 const path = require("node:path");
 
+// Returns a function that logs `name`, then queues a tick and a promise reaction that log it too.
+function queueingCallback(name) {
+  return () => {
+    console.log(name);
+    process.nextTick(() => console.log(name, "tick"));
+    Promise.resolve().then(() => console.log(name, "microtask"));
+    return name;
+  };
+}
+
+// Returns an async function that logs `name` before and after an await.
+function awaitingCallback(name) {
+  return async () => {
+    console.log(name);
+    await null;
+    console.log(name, "after await");
+  };
+}
+
 module.exports = debugMode => {
   const nativeModule = require(`./build/${debugMode ? "Debug" : "Release"}/v8tests`);
   return {
@@ -297,6 +316,152 @@ module.exports = debugMode => {
     test_uv_queue_work_on_current_event_loop() {
       const rc = nativeModule.queue_work_and_call((...args) => console.log("after_work_cb", ...args));
       console.log("uv_queue_work", rc);
+    },
+
+    test_make_callback_from_event_loop() {
+      nativeModule.make_callbacks_from_event_loop(queueingCallback("callback 1"), queueingCallback("callback 2"));
+    },
+
+    test_make_callback_from_js() {
+      nativeModule.make_callback_from_js(queueingCallback("callback"));
+      console.log("JS caller continues");
+    },
+
+    test_make_callback_from_event_loop_throws() {
+      process.on("uncaughtException", error => console.log("uncaughtException:", error.message));
+      const callback1 = queueingCallback("callback 1");
+      nativeModule.make_callbacks_from_event_loop(() => {
+        callback1();
+        throw new Error("thrown by callback 1");
+      }, queueingCallback("callback 2"));
+    },
+
+    test_make_callback_from_js_throws() {
+      try {
+        nativeModule.make_callback_from_js(() => {
+          throw new Error("thrown by the callback");
+        });
+        console.log("did not throw");
+      } catch (e) {
+        console.log("caught:", e.message);
+      }
+    },
+
+    test_make_callback_from_js_not_callable() {
+      try {
+        nativeModule.make_callback_from_js({});
+        console.log("did not throw");
+      } catch (e) {
+        console.log("caught:", e.constructor.name);
+      }
+    },
+
+    // Nothing on the way here may read process.nextTick: Bun creates its tick queue on the first read, and this is the
+    // case where the microtasks run without one. That is why the tests below require their modules themselves.
+    test_make_callback_from_event_loop_awaits() {
+      nativeModule.make_callbacks_from_event_loop(awaitingCallback("callback 1"), awaitingCallback("callback 2"));
+    },
+
+    test_make_callback_from_event_loop_rejects() {
+      process.on("unhandledRejection", error => console.log("unhandledRejection:", error.message));
+      nativeModule.make_callbacks_from_event_loop(async () => {
+        console.log("callback 1");
+        await null;
+        throw new Error("rejected by callback 1");
+      }, queueingCallback("callback 2"));
+    },
+
+    // Each report queues a tick and a promise reaction, and the tick of the first report rejects another promise.
+    test_make_callback_from_event_loop_rejects_again() {
+      let reports = 0;
+      process.on("unhandledRejection", error => {
+        const n = ++reports;
+        console.log(`unhandledRejection ${n}:`, error.message);
+        process.nextTick(() => {
+          console.log(`listener ${n} tick`);
+          if (n === 1) Promise.reject(new Error("rejected by the tick of listener 1"));
+        });
+        Promise.resolve().then(() => console.log(`listener ${n} microtask`));
+      });
+      nativeModule.make_callbacks_from_event_loop(async () => {
+        console.log("callback 1");
+        await null;
+        throw new Error("rejected by callback 1");
+      }, queueingCallback("callback 2"));
+    },
+
+    test_make_callback_from_event_loop_enter_with(throws) {
+      const { AsyncLocalStorage } = require("node:async_hooks");
+      const storage = new AsyncLocalStorage();
+      process.on("uncaughtException", error =>
+        console.log("uncaughtException:", error.message, "store:", storage.getStore()),
+      );
+      nativeModule.make_callbacks_from_event_loop(
+        () => {
+          storage.enterWith("entered by callback 1");
+          console.log("callback 1 store:", storage.getStore());
+          if (throws) throw new Error("thrown by callback 1");
+          return "callback 1";
+        },
+        () => {
+          console.log("callback 2 store:", storage.getStore());
+          return "callback 2";
+        },
+      );
+    },
+
+    // `where`: the stop comes in a "microtask" or a "tick" that callback 1 queued, or in the "callback" itself.
+    // `what`: "exit" calls process.exit(0), "terminate" spins until the main thread gets its message and calls
+    // worker.terminate(), "throw" throws with no uncaughtException listener in the Worker. A microtask that throws
+    // is not tested: that is an unhandled rejection, and Bun gives such a Worker the exit code 0.
+    test_make_callback_from_event_loop_worker_stops(where, what) {
+      const { Worker } = require("node:worker_threads");
+      const argv = [
+        "stop_worker_from_make_callback",
+        JSON.stringify([where, what]),
+        "null",
+        ...(debugMode ? ["debug"] : []),
+      ];
+      const worker = new Worker(path.join(__dirname, "main.js"), { argv });
+      if (what === "terminate") worker.once("message", () => worker.terminate());
+      // Printed at the exit, so that the line has one place among those of the Worker's thread.
+      let error = "none";
+      worker.on("error", e => (error = e.message));
+      worker.on("exit", code => console.log(`worker error: ${error}, worker exited with code ${code}`));
+    },
+
+    // The Worker of the test above runs this. It writes with fs.writeSync: in Node a Worker's console.log goes through
+    // the main thread and would come after what the addon prints.
+    stop_worker_from_make_callback(where, what) {
+      const fs = require("node:fs");
+      const { parentPort } = require("node:worker_threads");
+      process.on("exit", () => fs.writeSync(1, "worker exit event\n"));
+      const stop = () => {
+        if (what === "terminate") {
+          fs.writeSync(1, `the ${where} spins until worker.terminate()\n`);
+          parentPort.postMessage("spinning");
+          for (;;) {}
+        }
+        if (what === "throw") {
+          fs.writeSync(1, `the ${where} throws\n`);
+          throw new Error(`thrown by the ${where}`);
+        }
+        fs.writeSync(1, `the ${where} calls process.exit(0)\n`);
+        process.exit(0);
+      };
+      nativeModule.make_callbacks_from_event_loop(
+        () => {
+          fs.writeSync(1, "callback 1\n");
+          if (where === "callback") stop();
+          else if (where === "tick") process.nextTick(stop);
+          else Promise.resolve().then(stop);
+          return "callback 1";
+        },
+        () => {
+          fs.writeSync(1, "callback 2 ran\n");
+          return "callback 2";
+        },
+      );
     },
 
     test_v8_object_get_set_exceptions() {

@@ -7,10 +7,6 @@
 #include "../V8Isolate.h"
 #include "Oddball.h"
 
-namespace Bun {
-class HandleScopeImpl;
-}
-
 namespace v8 {
 
 namespace shim {
@@ -52,8 +48,9 @@ public:
         return m_v8FunctionStructure.getInitializedOnMainThread(globalObject);
     }
 
-    // Returns the scope for v8::Global handles. It's never closed.
-    HandleScopeBuffer* globalHandles();
+    // Whether disposed v8::Global handles of the VM wait for a scope to close. A copy that the VM's GlobalHandleRegistry keeps in each realm.
+    bool hasDisposedGlobalHandles() const { return m_hasDisposedGlobalHandles; }
+    void setHasDisposedGlobalHandles(bool value) { m_hasDisposedGlobalHandles = value; }
 
     // Returns the innermost open scope's V8 handles (GlobalObject::m_currentHandleScopeImpl). Like V8,
     // aborts if no scope is open. Bun opens a scope around every native callback it makes.
@@ -109,10 +106,6 @@ public:
     WTF::Vector<std::pair<Isolate::GCCallbackWithData, void*>>& gcEpilogueCallbacks() { return m_gcEpilogueCallbacks; }
     WTF::Vector<std::pair<NearHeapLimitCallback, void*>>& nearHeapLimitCallbacks() { return m_nearHeapLimitCallbacks; }
 
-    // MakeWeak/ClearWeak bookkeeping: global-handle slot (in globalHandles()) to
-    // the parameter passed to MakeWeak.
-    WTF::HashMap<uintptr_t*, void*>& weakHandleParameters() { return m_weakHandleParameters; }
-
     Isolate* isolate() { return &m_isolate; }
 
     DECLARE_INFO;
@@ -130,12 +123,11 @@ private:
     // No inline capacity, because in-cell inline Vector storage would leave stale ASAN container
     // annotations behind (this cell is swept without running destructors).
     WTF::Vector<TaggedPointer*> m_activeReturnValueSlots;
-    JSC::LazyProperty<GlobalInternals, Bun::HandleScopeImpl> m_globalHandles;
+    bool m_hasDisposedGlobalHandles { false };
 
     WTF::Vector<std::pair<Isolate::GCCallbackWithData, void*>> m_gcPrologueCallbacks;
     WTF::Vector<std::pair<Isolate::GCCallbackWithData, void*>> m_gcEpilogueCallbacks;
     WTF::Vector<std::pair<NearHeapLimitCallback, void*>> m_nearHeapLimitCallbacks;
-    WTF::HashMap<uintptr_t*, void*> m_weakHandleParameters;
 
     Oddball m_undefinedValue;
     Oddball m_nullValue;

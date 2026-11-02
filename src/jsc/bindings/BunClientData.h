@@ -137,6 +137,12 @@ class DecoderStringTable;
 class PrelinkedModuleGraph;
 }
 
+namespace v8 {
+namespace shim {
+class GlobalHandleRegistry;
+}
+}
+
 namespace Bun {
 // Out-of-line `JSC::Structure::create` / `JSC::reifyStaticProperties` for the
 // once-per-class setup paths, so each wrapper class doesn't inline them.
@@ -309,6 +315,9 @@ public:
     // after every swap.
     WTF::UncheckedKeyHashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
     Vector<Bun::IsolatedInternalModule> isolationInternalModules;
+
+    // The handles of this VM's v8::Globals (v8/shim/GlobalHandleRegistry.h). Null until a realm of the VM uses the V8 API.
+    std::unique_ptr<v8::shim::GlobalHandleRegistry> v8GlobalHandleRegistry;
 
     void reconcileWeakReferencesAtGCEnd(JSC::VM&, JSC::CollectionScope) final;
 

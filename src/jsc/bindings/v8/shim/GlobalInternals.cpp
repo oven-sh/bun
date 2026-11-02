@@ -2,6 +2,7 @@
 
 #include "../V8ObjectTemplate.h"
 #include "InternalFieldObject.h"
+#include "GlobalHandleRegistry.h"
 #include "HandleScopeBuffer.h"
 #include "../V8FunctionTemplate.h"
 #include "../V8Function.h"
@@ -10,12 +11,10 @@
 
 #include "JavaScriptCore/FunctionPrototype.h"
 #include "JavaScriptCore/LazyClassStructureInlines.h"
-#include "JavaScriptCore/LazyPropertyInlines.h"
 #include "JavaScriptCore/VMTrapsInlines.h"
 
 using JSC::ClassInfo;
 using JSC::LazyClassStructure;
-using JSC::LazyProperty;
 using JSC::Structure;
 using JSC::VM;
 
@@ -46,9 +45,7 @@ void GlobalInternals::finishCreation(VM& vm)
     m_v8FunctionStructure.initLater([](LazyClassStructure::Initializer& init) {
         init.setStructure(Function::createStructure(init.vm, init.global));
     });
-    m_globalHandles.initLater([](const LazyProperty<GlobalInternals, Bun::HandleScopeImpl>::Initializer& init) {
-        init.set(Bun::HandleScopeImpl::create(init.vm, init.owner->m_globalObject->HandleScopeImplStructure(), nullptr));
-    });
+    GlobalHandleRegistry::ensure(vm).addRealm(this);
 }
 
 template<typename Visitor>
@@ -61,15 +58,9 @@ void GlobalInternals::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_objectTemplateStructure.visit(visitor);
     thisObject->m_functionTemplateStructure.visit(visitor);
     thisObject->m_v8FunctionStructure.visit(visitor);
-    thisObject->m_globalHandles.visit(visitor);
 }
 
 DEFINE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE, GlobalInternals);
-
-HandleScopeBuffer* GlobalInternals::globalHandles()
-{
-    return &m_globalHandles.getInitializedOnMainThread(this)->ensureV8Handles(&m_isolate);
-}
 
 HandleScopeBuffer* GlobalInternals::currentHandleScope()
 {

@@ -2224,8 +2224,7 @@ function formatNamespaceObject(keys: Key[], ctx: Context, value, recurseTimes: n
       output[i] = formatProperty(ctx, value, recurseTimes, keys[i], kObjectType, desc);
     } catch (err) {
       const uninitialized = isNativeError(err) && err.name === "ReferenceError";
-      // Node.js asserts a ReferenceError for every error. In Bun, describing an export of a mocked module reads it, and
-      // a getter of the object the mock's factory returned can throw anything.
+      // Describing an export of a mocked module runs a getter of its factory's object, which can throw any error.
       assert(uninitialized || !described);
       // Use the existing functionality. This makes sure the indentation and
       // line breaks are always correct. Otherwise it is very difficult to keep
@@ -2684,13 +2683,12 @@ function hasBuiltInToString(value) {
   let hasOwnToString = ObjectPrototypeHasOwnProperty;
   let hasOwnToPrimitive = ObjectPrototypeHasOwnProperty;
 
-  // `toString` of a module namespace object is an export, and reading it throws for the same two cases as `constructor`
-  // in internalGetConstructorName(). Such a value has no `toString` function.
   let toString;
   try {
     toString = value.toString;
-  } catch {
-    // As for a value without `toString`.
+  } catch (err) {
+    // Only a mocked module throws for an export that it does not have.
+    if (!isModuleNamespaceObject(value) || "toString" in value) throw err;
   }
 
   // Count objects without `toString` and `Symbol.toPrimitive` function as built-in.
@@ -2984,15 +2982,11 @@ function previewEntries(val, isIterator = false) {
 }
 function internalGetConstructorName(val): string {
   if (!val || typeof val !== "object") throw new Error("Invalid object");
-  // Node.js asks the engine, which runs no code of the value. Here the read can throw: `constructor` of a module
-  // namespace object is an export. One that is uninitialized throws, and so does one that the factory of a mocked
-  // module did not return. An export is also not the constructor of the namespace object.
+  // Node.js asks the engine, which runs no getter and does not take an export named `constructor` for a constructor.
   let ctorName;
   try {
     ctorName = val.constructor?.name;
-  } catch {
-    // Name the value by its tag.
-  }
+  } catch {}
   if (ctorName && !isModuleNamespaceObject(val)) return ctorName;
   const str = ObjectPrototypeToString.$call(val);
   const m = StringPrototypeMatch.$call(str, /^\[object ([^\]]+)\]/); // e.g. [object Boolean]

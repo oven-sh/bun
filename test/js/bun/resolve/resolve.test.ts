@@ -458,9 +458,10 @@ it("can resolve with source directories that do not exist", () => {
 });
 
 describe.concurrent("require.resolve() with paths", () => {
-  it("looks up the path that an onResolve callback returns in paths", async () => {
+  it("looks up the path that an onResolve callback returns in paths, in their order", async () => {
     using dir = tempDir("resolve-paths-on-resolve", {
       "renamed.js": ``,
+      "first/renamed.js": ``,
       "other/renamed.js": ``,
       "plugin.ts": `
         Bun.plugin({
@@ -472,8 +473,12 @@ describe.concurrent("require.resolve() with paths", () => {
       `,
       "entry.cjs": `
         const short = path => path.slice(__dirname.length + 1).replaceAll("\\\\", "/");
+        const first = __dirname + "/first";
+        const other = __dirname + "/other";
         console.log(short(require.resolve("./original")));
-        console.log(short(require.resolve("./original", { paths: [__dirname + "/other"] })));
+        console.log(short(require.resolve("./original", { paths: [other] })));
+        console.log(short(require.resolve("./original", { paths: [first, other] })));
+        console.log(short(require.resolve("./original", { paths: [other, first] })));
       `,
     });
     await using proc = Bun.spawn({
@@ -485,7 +490,7 @@ describe.concurrent("require.resolve() with paths", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
-      stdout: ["renamed.js", "other/renamed.js"],
+      stdout: ["renamed.js", "other/renamed.js", "first/renamed.js", "other/renamed.js"],
       stderr: "",
       exitCode: 0,
     });

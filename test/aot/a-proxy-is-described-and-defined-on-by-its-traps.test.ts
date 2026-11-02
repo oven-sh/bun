@@ -3,10 +3,13 @@
 // what the traps get and what they answer has to be what plain Bun hands them, and a program that does no more than this to a proxy
 // uses no more of the built-ins than it names. JSON.stringify asks a proxy by get, ownKeys and getOwnPropertyDescriptor in the same way.
 // console.log prints the target of a proxy and asks nothing. Each scene has a proxy and a handler of its own.
-import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { afterAll, expect } from "bun:test";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { built, slot, spawned, told } from "./harness/commands";
+import { readBuildReport } from "./harness/build-report";
+import { built, limitWithASAN, slot, spawned, told } from "./harness/commands";
+import { withReport } from "./harness/flags";
 import { test } from "./supported";
 
 const scenes: [name: string, does: string][] = [
@@ -369,25 +372,84 @@ await 0;
 for (const line of lines) console.log(line);
 `;
 
-test("the two traps get and answer what they do in plain Bun", async () => {
-  using dir = tempDir("aot-own-property-traps", { "main.mjs": program });
-  const folder = String(dir);
-  const executable = join(folder, isWindows ? "main.exe" : "main");
-  await slot(async () => {
-    built(
-      await spawned([bunExe(), "build", "--compile", "--aot", "./main.mjs", "--outfile", executable], folder, bunEnv),
-    );
-    const plain = told(await spawned([bunExe(), "./main.mjs"], folder, bunEnv));
-    expect(plain.stdout.split("\n").length).toBeGreaterThan(scenes.length);
-    expect(told(await spawned([executable], folder, bunEnv))).toEqual(plain);
-  });
-}, 240_000);
+test.concurrent(
+  "the two traps get and answer what they do in plain Bun",
+  async () => {
+    using dir = tempDir("aot-own-property-traps", { "main.mjs": program });
+    const folder = String(dir);
+    const executable = join(folder, isWindows ? "main.exe" : "main");
+    await slot(async () => {
+      built(
+        await spawned([bunExe(), "build", "--compile", "--aot", "./main.mjs", "--outfile", executable], folder, bunEnv),
+      );
+      const plain = told(await spawned([bunExe(), "./main.mjs"], folder, bunEnv));
+      // The line of each scene. In front of them stands what console.log makes of a proxy.
+      expect(
+        normalizeBunSnapshot(
+          plain.stdout
+            .split("\n")
+            .slice(-scenes.length - 1)
+            .join("\n"),
+        ),
+      ).toMatchInlineSnapshot(`
+        "the answer holds what the trap's answer holds: returned: describe a | made by the trap false false true [value,writable,enumerable,configurable]
+        the answer holds the accessors that the trap answers: returned: set x | got by object undefined [get,set,enumerable,configurable]
+        a trap that answers nothing: returned: describe a | describe a | undefined false
+        a getter of the trap's answer runs: returned: value is read | from the getter
+        what was described is defined elsewhere under the same key: returned: described [a]
+        a field of the target that only the trap's built-in sees: returned: on the target true false
+        the trap gets a descriptor of the engine's own: returned: define a [value,enumerable] false given undefined true undefined | true false true undefined
+        a trap that writes to its descriptor leaves the program's alone: returned: given [value,configurable]
+        the value that is defined goes where the trap puts it: returned: through the trap through the trap
+        the accessors that are defined reach the trap: returned: the setter got y | [get,set,configurable] the getter ran undefined
+        the proxy that Object.defineProperty answers is the proxy: returned: get a | of the target
+        a trap that refuses: TypeError: false
+        a trap that throws: returned: thrown by define | thrown by describe | thrown by describe | thrown by describe
+        Reflect.set asks its receiver what is there and defines the value: returned: describe a | define a [value,writable,enumerable,configurable] first | true | describe a | define a [value] second | true | describe a | second
+        a setter that Reflect.set finds runs for the proxy: returned: get name | setter 1 true the target | true
+        a store on the proxy and on its heir: returned: STORED undefined STORED of the heir [b] [a] | the other defines c for another proxy | true
+        a store under a key of the command line: returned: 1 [a]
+        the three tests for an own property: returned: describe a | describe made | describe none | true true false | describe a | describe none | true false | describe a | describe made | true false | describe Symbol(Symbol.iterator) | false
+        a handler without the trap hands the question on to the target: returned: of the target true | defined through [a,b] | true set through
+        a trap that is put there later: returned: 1 | from the later trap | the later trap defines 2
+        traps that are built-ins: returned: by Reflect by Reflect true set
+        a proxy of a proxy: returned: outer defines a | inner defines a through both | inner describes a | outer describes a | inner describes a | inner describes a | through both
+        what the engine holds against the target: returned: TypeError | TypeError | TypeError | undefined | TypeError | TypeError
+        a key that is converted: returned: the key is converted | describe string made | the key is converted | define string made | describe string 1 | describe symbol Symbol(s) | define symbol Symbol(s)
+        JSON.stringify lists the proxy and reads what it lists: returned: get toJSON | ownKeys | describe a | describe b | describe made | get a | get b | get made | get toJSON | ownKeys | describe a | describe b | describe made | get a | get b | get made | {"a":{"mark":"of the target"},"b":2,"made":{"mark":"made by get"}} 111
+        JSON.stringify calls the toJSON that get answers, on the proxy: returned: get toJSON | toJSON  true | get toJSON | toJSON 0 true | {"mark":"from toJSON"} [{"mark":"from toJSON"}]
+        JSON.stringify goes on to what the traps answer: returned: the inner toJSON runs | {"x":"inner"}
+        JSON.stringify of a proxy of a list: returned: get toJSON | get length | get 0 | get 1 | [{"mark":"first"},2]
+        JSON.stringify without a trap lists the target: returned: the getter runs for true | {"seen":{"mark":"only by JSON"},"computed":1}
+        JSON.stringify with a function or a list beside the proxy: returned: get toJSON | replacer  true | ownKeys | get a | replacer a false | get b | replacer b false | {"a":1,"b":2} | get toJSON | get b | {"b":2}
+        a trap that throws while JSON.stringify lists: returned: thrown by ownKeys
+        console.log prints the target and asks no trap: returned: []
+        console.log calls what the target has for the formatter: returned: the target's own printer runs for the target true | the target's own printer runs for the target true
+        a text with a % converts the proxy behind it: returned: get Symbol(Symbol.toPrimitive) | get toString | get toJSON | ownKeys | describe a | get a | get Symbol(Symbol.toPrimitive) | get valueOf | get toString
+        a text of the command line in front of a proxy: returned: get Symbol(Symbol.toPrimitive) | get toString
+        console.dir and console.table of a proxy: returned: the options are asked for depth | the options are asked for colors | get Symbol(Symbol.iterator) | ownKeys | get a | get b
+        the methods of Object.prototype that only look at their receiver: returned: get a | true 1 | get Symbol(Symbol.toStringTag) | [object Tagged] | false true | get toString | get Symbol(Symbol.toStringTag) | [object Tagged] | get valueOf | get toString | get Symbol(Symbol.toStringTag) | true [object Tagged] object
+        __defineGetter__ and __defineSetter__ reach the trap that defines: TypeError: define a [get,enumerable,configurable] the getter ran undefined | the setter got given | define b [set,enumerable,configurable] undefined undefined | the getter ran
+        __lookupGetter__ and __lookupSetter__ ask the trap that describes and go on above: returned: describe made | describe own | describe inherited | made by the trap of the target from above | describe inherited | describe none | function undefined | getPrototypeOf | from above
+        the methods of Function.prototype refuse a proxy of what is no function: returned: TypeError | TypeError | TypeError | TypeError | false
+        a proxy of a function is bound, called and printed: returned: describe length | get length | get name | apply [the bound operand] | apply [x] | called with the bound operand bound named 1 called with x string
+        a get that answers under the name in upper case: returned: describe A | describe a | b true false {"A":"b","by":"toJSON"} [object Object] true
+        a trap's answer that is no object: returned: TypeError"
+      `);
+      expect(plain.exitCode).toBe(0);
+      expect(told(await spawned([executable], folder, bunEnv))).toEqual(plain);
+    });
+  },
+  240_000,
+);
 
-// One scene to a program, so that nothing another scene does to its proxy hides what this one's compiled code does.
-test.concurrent.each(scenes)(
-  "alone: %s",
-  async (name, does) => {
-    const alone = `
+// One scene to a program, so that nothing another scene does to its proxy hides what this one's compiled code does. A build is
+// what costs, so a build holds several of them: --aot-separate-programs compiles each entry point as it is compiled when it is
+// built alone, and BUN_AOT_START_AT says at which of them a run starts.
+const alone = scenes.map(([name, does], index) => ({
+  name,
+  file: `scene-${String(index).padStart(2, "0")}.mjs`,
+  text: `
 function show(value) {
   if (typeof value === "symbol") return String(value);
   if (Array.isArray(value)) return "[" + value.map(show).join(",") + "]";
@@ -399,20 +461,82 @@ ${does}
 } catch (error) {
   console.log(error.constructor.name);
 }
-`;
-    using dir = tempDir("aot-own-property-trap", { "main.mjs": alone });
-    const folder = String(dir);
-    const executable = join(folder, isWindows ? "main.exe" : "main");
-    await slot(async () => {
+`,
+}));
+const aloneDir = tempDir("aot-own-property-trap", Object.fromEntries(alone.map(({ file, text }) => [file, text])));
+afterAll(() => aloneDir[Symbol.dispose]());
+const aloneFolder = String(aloneDir);
+const executableNamed = (name: string) => join(aloneFolder, isWindows ? `${name}.exe` : name);
+
+// A build compiles its programs one after another, so it holds five scenes at the most, and the builds run beside one another.
+const buildCount = Math.ceil(alone.length / 5);
+type Run = Awaited<ReturnType<typeof spawned>>;
+const runs: Promise<Map<string, Run>>[] = [];
+let startsWhereTold: Promise<boolean> | undefined;
+/**
+ * How each scene of build `number` ran as a program of that build's executable. The build starts with the first test that asks
+ * for it. Its executable is as large as Bun, and is gone when its scenes have run.
+ */
+const runsOfBuild = (number: number) =>
+  (runs[number] ??= slot(async () => {
+    const files = alone.filter((_, index) => index % buildCount === number).map(({ file }) => file);
+    const executable = executableNamed(`build-${number}`);
+    const report = join(aloneFolder, `build-${number}.json`);
+    const flags = ["--aot-separate-programs", "--root=.", ...withReport(report, "summary")];
+    const entryPoints = files.map(file => `./${file}`);
+    built(
+      await spawned(
+        [bunExe(), "build", "--compile", "--aot", ...flags, ...entryPoints, "--outfile", executable],
+        aloneFolder,
+        bunEnv,
+        // Five programs may take longer than the one that the limit is made for.
+        2 * limitWithASAN,
+      ),
+    );
+    // Scenes that a build had joined into one program would still print what they print in plain Bun.
+    expect(readBuildReport(report).statistics.WholeEngineRuns).toBe(files.length);
+    // Only a canary build reads BUN_AOT_START_AT, and it refuses a name that no entry point has.
+    startsWhereTold ??= spawned([executable], aloneFolder, { ...bunEnv, BUN_AOT_START_AT: "no-scene.mjs" }).then(
+      refused => refused.stderr.includes("BUN_AOT_START_AT"),
+    );
+    const ran = new Map<string, Run>();
+    for (const file of files) {
+      if (await startsWhereTold) {
+        ran.set(file, await spawned([executable], aloneFolder, { ...bunEnv, BUN_AOT_START_AT: file }));
+        continue;
+      }
+      // Any other Bun starts an executable at its first entry point, so there each scene gets an executable of its own.
+      const own = executableNamed(file.replace(".mjs", ""));
       built(
-        await spawned([bunExe(), "build", "--compile", "--aot", "./main.mjs", "--outfile", executable], folder, bunEnv),
+        await spawned([bunExe(), "build", "--compile", "--aot", `./${file}`, "--outfile", own], aloneFolder, bunEnv),
       );
-      expect(told(await spawned([executable], folder, bunEnv))).toEqual(
-        told(await spawned([bunExe(), "./main.mjs"], folder, bunEnv)),
-      );
+      ran.set(file, await spawned([own], aloneFolder, bunEnv));
+      rmSync(own, { force: true });
+    }
+    rmSync(executable, { force: true });
+    return ran;
+  }));
+
+test.concurrent.each(alone.map(({ name }, index): [string, number] => [name, index]))(
+  "alone: %s",
+  async (_name, index) => {
+    const { file } = alone[index];
+    const compiled = (await runsOfBuild(index % buildCount)).get(file)!;
+    const plain = await slot(() => spawned([bunExe(), `./${file}`], aloneFolder, bunEnv));
+    // Two runs that fail alike, or print nothing, would agree and show nothing.
+    expect({
+      stderr: plain.exitCode === 0 ? "" : plain.stderr,
+      exitCode: plain.exitCode,
+      signal: plain.signal,
+    }).toEqual({
+      stderr: "",
+      exitCode: 0,
+      signal: null,
     });
+    expect(plain.stdout).not.toBe("");
+    expect(told(compiled)).toEqual(told(plain));
   },
-  240_000,
+  600_000,
 );
 
 const handler = `{
@@ -448,44 +572,42 @@ const answersInUpperCase = `{
   getOwnPropertyDescriptor(target, key) { return Reflect.getOwnPropertyDescriptor(target, key); },
   defineProperty(target, key, descriptor) { target[key] = String(descriptor.value); return true; },
 }`;
+/** What `bun check --aot --explain=trim` says of a program, line by line, and how it ends. */
+async function explained(source: string) {
+  using dir = tempDir("aot-own-property-report", { "main.js": source });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "check", "--aot", "--no-pretty", "--explain=trim", "main.js"],
+    cwd: String(dir),
+    env: { ...bunEnv, NO_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { lines: (stdout + stderr).split("\n"), exitCode, signal: proc.signalCode };
+}
+
 for (const [what, text] of Object.entries({
   "a method that the proxy inherits": `console.log(proxy.hasOwnProperty("A"));`,
   "JSON.stringify": `console.log(JSON.stringify(proxy));`,
 }))
   test.concurrent(`${what}, found by a get that answers in upper case, gives no trap away`, async () => {
-    using dir = tempDir("aot-own-property-report", {
-      "main.js": `const proxy = new Proxy({ A: "a", toJSON: () => ({}) }, ${answersInUpperCase});\n${text}\n`,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "check", "--aot", "--no-pretty", "--explain=trim", "main.js"],
-      cwd: String(dir),
-      env: { ...bunEnv, NO_COLOR: "1" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const lines = (stdout + stderr).split("\n");
+    const { lines, ...end } = await explained(
+      `const proxy = new Proxy({ A: "a", toJSON: () => ({}) }, ${answersInUpperCase});\n${text}\n`,
+    );
     expect(lines).toContain("aot: trim: the compiler can see every API this program uses");
+    expect(lines).toContain("aot: trim: uses global Proxy");
     // What every object inherits, at the most.
     expect(lines.filter(line => line.endsWith("(escapes, so any member may be used)")).length).toBeLessThanOrEqual(20);
+    expect(end).toEqual({ exitCode: 0, signal: null });
   });
 
 for (const [what, text] of Object.entries(closed))
   test.concurrent(`${what} uses no built-in that the program does not name`, async () => {
-    using dir = tempDir("aot-own-property-report", {
-      "main.js": `const proxy = new Proxy({ A: "a" }, ${handler});\n${text}\n`,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "check", "--aot", "--no-pretty", "--explain=trim", "main.js"],
-      cwd: String(dir),
-      env: { ...bunEnv, NO_COLOR: "1" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const lines = (stdout + stderr).split("\n");
+    const { lines, ...end } = await explained(`const proxy = new Proxy({ A: "a" }, ${handler});\n${text}\n`);
     expect(lines).toContain("aot: trim: the compiler can see every API this program uses");
+    expect(lines).toContain("aot: trim: uses global Proxy");
     expect(
       lines.flatMap(line => /trim: uses (.*) \(escapes, so any member may be used\)$/.exec(line)?.[1] ?? []),
     ).toEqual([]);
+    expect(end).toEqual({ exitCode: 0, signal: null });
   });

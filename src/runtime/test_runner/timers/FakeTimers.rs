@@ -1942,7 +1942,10 @@ pub(crate) fn get_timer_count(heap: &JsHeap<'_>) -> JsResult<usize> {
 
 pub(crate) fn clear_all_timers(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JsResult<JSValue> {
     let global = cx.global();
-    error_unless_fake_timers(global)?;
+    // As in Jest and Vitest: a shared `afterEach` also calls this after a test that faked no timers.
+    if !is_active() {
+        return Ok(chainable_this(global, this_value));
+    }
 
     // SAFETY: per-thread `timer::All`; the borrow ends before `release`.
     let cleared = unsafe { (*timer_all()).fake_timers.clear() };

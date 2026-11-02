@@ -1028,8 +1028,9 @@ describe("copyFileSync", () => {
       `${source} onto a symlink to a file: ${emptied("file.txt", mode)}`,
       `${source} onto a dangling symlink: ${emptied("target.txt", mode)}`,
     ];
-    // The gate on macOS keeps a socket at ENOTSUP. Everywhere else open(2) fails, as in Node.js.
-    const socket = `a socket to a new path: ${isMacOS ? "ENOTSUP" : "ENXIO"}, new.txt is absent`;
+    // open(2) of a socket fails with ENXIO on Linux and with EOPNOTSUPP on FreeBSD. The gate on macOS gives ENOTSUP.
+    const socketCode = isMacOS ? "ENOTSUP" : isFreeBSD ? "EOPNOTSUPP" : "ENXIO";
+    const socket = `a socket to a new path: ${socketCode}, new.txt is absent`;
     const sameAsNode = [
       ...withoutBytes("/dev/null", "666"),
       ...withoutBytes("an empty file with mode 666", "666"),
@@ -1040,10 +1041,11 @@ describe("copyFileSync", () => {
       `a FIFO that holds bytes to a new path: ${emptied("new.txt", "640")}`,
       "left in the FIFO: unread",
       `a directory to a new path: ${directoryCode}, new.txt is absent`,
-      ...(isMacOS ? [] : [socket]),
+      ...(isLinux ? [socket] : []),
     ];
     const differentFromNode = [
-      ...(isMacOS ? [socket] : []),
+      // Node.js reports errno 102 from open(2) on macOS. On FreeBSD it names errno 45 ENOTSUP.
+      ...(isLinux ? [] : [socket]),
       ...(isLinux
         ? [
             // The steps of a regular source: the destination gets the mode of the source. Node.js fails with

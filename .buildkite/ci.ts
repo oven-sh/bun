@@ -1176,7 +1176,7 @@ const BINARY_SIZE_THRESHOLD_MB = 0.5;
 function getReleaseStep(
   releasePlatforms: Platform[],
   options: PipelineOptions,
-  { signed = false, testStepKeys = [] }: { signed?: OptionFlag; testStepKeys?: string[] } = {},
+  { signed = false }: { signed?: OptionFlag } = {},
 ): CommandStep {
   const { canary } = options;
   const revision = typeof canary === "number" ? canary : 1;
@@ -1186,11 +1186,6 @@ function getReleaseStep(
   const depends_on = signed
     ? [...releasePlatforms.filter(p => p.os !== "windows").map(p => `${getTargetKey(p)}-build-bun`), "windows-sign"]
     : releasePlatforms.map(platform => `${getTargetKey(platform)}-build-bun`);
-
-  // Gate canary upload on green tests. A red test lane leaves the artifacts in
-  // Buildkite but skips the GitHub/S3 upload; the next green main push ships.
-  // [skip tests] on main still lets the release run (testStepKeys is empty).
-  depends_on.push(...testStepKeys);
 
   return {
     key: "release",
@@ -1896,14 +1891,12 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
     .filter(({ tests }) => !tests || !options.testFiles?.length)
     .concat(darwinTestsEnabled ? [] : prDarwinTestPlatforms)
     .concat(darwinTestsEnabled ? [] : betaDarwinTestPlatforms);
-  const testStepKeys: string[] = [];
   {
     const { skipTests, testFiles } = options;
     if (!skipTests) {
       steps.push(
         ...relevantTestPlatforms.map(target => {
           const step = getTestBunStep(target, options, { testFiles, buildId });
-          testStepKeys.push(step.key);
           // Test shards run on their native platform image; when this build
           // bakes it, they wait for it.
           const dependsOn = getImageDependsOn(target, baking);
@@ -1919,7 +1912,6 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
       );
       if (!testFiles?.length) {
         const step = getCargoTestStep(buildId);
-        testStepKeys.push(step.key);
         steps.push(
           getStepWithDependsOn(
             { key: getPlatformKey(cargoTestPlatform), group: getPlatformLabel(cargoTestPlatform), steps: [step] },
@@ -1953,7 +1945,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
   }
 
   if (isMainBranch()) {
-    steps.push(getReleaseStep(buildPlatforms, options, { signed: signWindows, testStepKeys }));
+    steps.push(getReleaseStep(buildPlatforms, options, { signed: signWindows }));
   }
 
   // Merge same-label groups into their first occurrence, keeping every

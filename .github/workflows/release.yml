@@ -93,6 +93,7 @@ jobs:
     if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-npm == 'true' }}
     permissions:
       contents: read
+      id-token: write
     defaults:
       run:
         working-directory: packages/bun-release
@@ -103,6 +104,10 @@ jobs:
           persist-credentials: false
           # To workaround issue
           ref: main
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: latest
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
@@ -113,7 +118,7 @@ jobs:
         run: bun upload-npm -- "$BUN_VERSION" publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: "false"
   npm-types:
     name: Release types to NPM
     runs-on: ubuntu-latest
@@ -122,6 +127,7 @@ jobs:
     if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-types == 'true' }}
     permissions:
       contents: read
+      id-token: write
     defaults:
       run:
         working-directory: packages/bun-types
@@ -160,11 +166,9 @@ jobs:
       - name: Release
         if: ${{ env.BUN_VERSION == 'canary' || env.BUN_LATEST == 'true' }}
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/.npmrc
           NPM_TAG: ${{ env.BUN_VERSION == 'canary' && 'canary' || 'latest' }}
+          NPM_CONFIG_PROVENANCE: "false"
         run: |
-          echo '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}' > "$NPM_CONFIG_USERCONFIG"
           VERSION=$(node -p 'require("./package.json").version')
           if [ "$(npm view bun-types@"$VERSION" version 2>/dev/null)" = "$VERSION" ]; then
             echo "bun-types@$VERSION already published, skipping"

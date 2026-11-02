@@ -335,6 +335,12 @@ impl WebWorker {
         self.eval_mode
     }
 
+    /// Whether the entry point is text and not a file: a `data:` or `blob:` URL, which is also what
+    /// `node:worker_threads` makes of `eval: true`.
+    pub(crate) fn entry_point_is_text(&self) -> bool {
+        is_text_specifier(&self.unresolved_specifier)
+    }
+
     /// Borrowed from the C++ `WorkerOptions` (kept alive by the owning
     /// `WebCore::Worker`).
     #[inline]
@@ -452,8 +458,7 @@ impl WebWorker {
 
         // The VM of the Worker is created for a program. The Worker resolves the specifier again and reports what is wrong with it.
         let specifier = spec_slice.slice();
-        let is_text = specifier.starts_with(b"data:") || specifier.starts_with(b"blob:");
-        let runs_apart = match is_text {
+        let runs_apart = match is_text_specifier(specifier) {
             true => crate::compiled_program::runs_worker_of_text_apart(),
             false => crate::compiled_program::runs_worker_from_disk_apart(),
         };
@@ -1625,6 +1630,10 @@ unsafe fn resolve_entry_point_specifier_quietly<'s>(
         (*parent).transpiler.set_log(log_before);
         path
     }
+}
+
+fn is_text_specifier(specifier: &[u8]) -> bool {
+    specifier.starts_with(b"data:") || specifier.starts_with(b"blob:")
 }
 
 /// Resolve a worker entry-point specifier to a path the module loader can

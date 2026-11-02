@@ -2553,10 +2553,8 @@ describe.concurrent("onResolve is called for a specifier with no extension and n
     const files = {
       ...packages,
       "node_modules/helper-pkg/package.json": `{ "name": "helper-pkg", "main": "index.js" }`,
-      // (The digit after the dot of "v1.4" does not make it a path with an extension.)
-      "node_modules/helper-pkg/index.js": `let lazy, versioned; exports.help = path => ((versioned ??= require("./lib/v1.4")), (lazy ??= require("./lib/lazy")))(path);`,
+      "node_modules/helper-pkg/index.js": `let lazy; exports.help = path => (lazy ??= require("./lib/lazy"))(path);`,
       "node_modules/helper-pkg/lib/lazy.js": `module.exports = path => (path === "aliased" ? { path: "dep-pkg" } : undefined);`,
-      "node_modules/helper-pkg/lib/v1.4.js": ``,
       "plugin.ts": `
         Bun.plugin({
           name: "catch-all",
@@ -2573,6 +2571,33 @@ describe.concurrent("onResolve is called for a specifier with no extension and n
     const { stdout, stderr, exitCode } = await run(files, ["--preload", "./plugin.ts", "entry.cjs"]);
     expect({ stdout: stdout.slice(1), stderr, exitCode }).toEqual({
       stdout: ["onResolve aliased", "onResolve ./lib/foo", "onResolve helper-pkg", "dep-pkg lib/foo dep-pkg"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The digit after the dot of "v1.4" does not make it a path with an extension.
+  it("nor for one that is named with a digit after its last dot", async () => {
+    const files = {
+      "node_modules/helper-pkg/package.json": `{ "name": "helper-pkg", "main": "index.js" }`,
+      "node_modules/helper-pkg/index.js": `let lazy; exports.help = path => (lazy ??= require("./lib/v1.4"))(path);`,
+      "node_modules/helper-pkg/lib/v1.4.js": `module.exports = path => (path === "aliased" ? { path: "helper-pkg" } : undefined);`,
+      "plugin.ts": `
+        Bun.plugin({
+          name: "catch-all",
+          setup(build) {
+            build.onResolve({ filter: /.*/ }, ({ path }) => {
+              console.log("onResolve", path);
+              return require("helper-pkg").help(path);
+            });
+          },
+        });
+      `,
+      "entry.cjs": `console.log(typeof require("aliased").help);`,
+    };
+    const { stdout, stderr, exitCode } = await run(files, ["--preload", "./plugin.ts", "entry.cjs"]);
+    expect({ stdout: stdout.slice(1), stderr, exitCode }).toEqual({
+      stdout: ["onResolve aliased", "function"],
       stderr: "",
       exitCode: 0,
     });

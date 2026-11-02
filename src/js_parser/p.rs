@@ -576,13 +576,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// A revisited node can be part of a `define` value, which is shared with other parses.
     pub(crate) is_revisit_for_substitution: bool,
 
-    /// What `leave_define_to_member_read` leaves for the member read around it: the value of an
-    /// object or array define, or a value inside one. It is a node of the define table, which
-    /// every parse shares.
+    /// The node of the shared define table that a define leaves for the member read around it.
     pub(crate) define_member_target: Option<js_ast::ExprData>,
-    /// Set while a member read that takes no member visits its target again: the define there
-    /// puts a copy of its whole value in its place, as it does for any other use. That visit
-    /// reports no error of strict mode a second time.
+    /// Set while a member read that takes no member visits its target again for the whole value.
     pub(crate) keeps_define_whole: bool,
 
     pub(crate) method_call_must_be_replaced_with_undefined: bool,
@@ -7204,11 +7200,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Expr { data: value, loc }
     }
 
-    /// Where a use of the define value `value` is the target of a member read, leaves `value` to
-    /// that read and returns true. The read is the `e_dot`, the `e_index` or the declaration with
-    /// an object pattern that visits the use with `is_property_access_target`. An `e_dot` or an
-    /// `e_index` then copies the one member that it reads, and the declaration copies all of
-    /// `value`.
+    /// Leaves `value` to the `e_dot`, `e_index` or object pattern around its use, and returns true.
     #[inline(never)]
     pub(crate) fn leave_define_to_member_read(
         &mut self,
@@ -7222,8 +7214,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !in_.is_property_access_target || !has_members || self.keeps_define_whole {
             return false;
         }
-        // A visit for a substitution finds the index of the read visited already: a key that the
-        // first visit computed is no literal in the source.
+        // There the index is visited already: a computed key is a string, and no literal of the source.
         if self.is_revisit_for_substitution {
             return false;
         }
@@ -7232,10 +7223,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         true
     }
 
-    /// Finishes the member read `e`, the visit of whose target left a define value. Returns true
-    /// when `e` is done: it is the own member that it names, or that member is left to the member
-    /// read around `e`. Otherwise the define under `e` is now a copy of its whole value: the
-    /// target was visited again, unless it is the identifier of the define itself.
+    /// Returns true when `e` is done. Otherwise the define under `e` is now a copy of its whole value.
     #[cold]
     #[inline(never)]
     pub(crate) fn read_member_of_define(&mut self, e: &mut Expr, in_: ExprIn) -> bool {
@@ -7256,9 +7244,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             js_ast::ExprData::EIndex(index) => index.optional_chain,
             _ => None,
         };
-        // A store (`x.a = 1`, `x.a++`) and a call (`x.a()`, `` x.a`` ``) do more with the object
-        // than a read of the member. A link of an optional chain (`x?.a`) keeps the object too:
-        // no define of a path matches through `?.`.
+        // A store and a call use the object itself, and no define of a path matches through `?.`.
         let is_plain_read = in_.assign_target == js_ast::AssignTarget::None
             && optional_chain.is_none()
             && !is_this_read(self.call_target)

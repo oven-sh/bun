@@ -731,9 +731,7 @@ pub mod defines {
         true
     }
 
-    /// What the member read `read` gives on a fresh copy of `value`, the value of an object or
-    /// array define or a value inside one: `value.name`, or `value[key]` with a key that is a
-    /// string or a number. `None` when the own properties do not decide the read.
+    /// The own member of the define value `value` that `read` names, with a name, a string or a number.
     #[inline(never)]
     pub fn own_member_of_read(value: ExprData, read: ExprData) -> Option<ExprData> {
         match read {

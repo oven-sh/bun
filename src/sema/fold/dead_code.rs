@@ -50,8 +50,7 @@ impl<'s> Folder<'_, 's> {
         roots
     }
 
-    /// The object and the key of each read that has a member of a define value in its place and is not dead itself: `CONFIG`
-    /// and `"a"` in `CONFIG["a"]`.
+    /// The object and the key of each read that a member of a define value replaces and that is not dead itself.
     pub(super) fn find_parts_of_define_member_reads(&self, dead: &MarkedNodes) -> PositionSet {
         let mut parts = Vec::new();
         for &read in &self.reads_of_define_members {

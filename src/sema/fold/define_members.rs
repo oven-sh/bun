@@ -89,8 +89,7 @@ impl<'s> Folder<'_, 's> {
         })
     }
 
-    /// The own member that `e` reads out of the define value in place of `object`. `P::read_member_of_define` has the rule: the key
-    /// is a name or a literal in the source, and nothing but a read is done with the member.
+    /// The own member that `e` reads out of the define value in place of `object`, by the rule of `P::read_member_of_define`.
     fn find_own_member(
         &self,
         e: ExprId,
@@ -121,8 +120,7 @@ impl<'s> Folder<'_, 's> {
         Some(DefineMember { value, ..define })
     }
 
-    /// The transpiler has the value of a define in place of the object, and prints a read of an own member of it as that member.
-    /// `path` is what the define table has for the path of `e`.
+    /// Decides `e` as the own member that the transpiler prints in its place. `path` is what the define table has for `e`.
     pub(super) fn fold_define_member(
         &mut self,
         e: ExprId,
@@ -139,8 +137,7 @@ impl<'s> Folder<'_, 's> {
         self.define_members.insert(e, member);
         let decision = match member.value {
             DefineValue::Constant(constant) => Decision::Constant(constant),
-            // The transpiler leaves an object or an array to the member read around it. That read has a member of it in its
-            // place, or the whole value of the define is under it again.
+            // The transpiler leaves an object or an array to the member read around it, which decides.
             DefineValue::Data(_) if self.is_object_of_member_access(e) => return None,
             DefineValue::Data(data) => Decision::Data(data),
             DefineValue::GlobalPath(_)
@@ -157,8 +154,7 @@ impl<'s> Folder<'_, 's> {
         Some(self.decide(e, decision))
     }
 
-    /// A define that `bun build` adds by itself, such as `process.env.NODE_ENV`, has decided `e`. `bun run` has no such define: it
-    /// reads the member out of the object that `--define` gives for the path in front. Where that is the same value, it folds `e` too.
+    /// A define of the build alone decided `e`. `bun run` folds `e` too where the user's object has the same value there.
     pub(super) fn note_member_that_bun_run_reads(
         &mut self,
         e: ExprId,

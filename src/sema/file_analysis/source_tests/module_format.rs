@@ -627,8 +627,7 @@ const FORMATS_WITH_USER_DEFINES: &[(&str, &str, ModuleFormat)] = &[
     ("a.js", r#"if (SETTINGS.missing) require("a");"#, CommonJs),
     ("a.js", r#"if (SETTINGS?.debug) require("a");"#, CommonJs),
     ("a.js", r#"if (BUILT.debug) require("a");"#, CommonJs),
-    // `bun run` reads the member out of the object where the build has a define of its own for the path. It folds the same
-    // only where the two values are the same.
+    // Where the build has a define of its own for the path, `bun run` folds the same only if the member has the same value.
     ("a.js", r#"if (app.same !== "s") require("a");"#, Esm),
     (
         "a.js",

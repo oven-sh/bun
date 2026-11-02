@@ -171,8 +171,7 @@ impl<'s> Checker<'_, 's> {
             .is_some_and(|compiled| compiled.analysis.decisions.is_dead_expr(expression))
     }
 
-    /// `CONFIG` in `CONFIG.a`, where the build has a member of the define value in place of the read. The object starts where the
-    /// read starts, so what is reported there is about the read.
+    /// The object or the key of a read that a member of a define value replaces: an error there is about the read.
     #[inline]
     pub(in crate::check) fn is_part_of_define_member_read(
         &self,

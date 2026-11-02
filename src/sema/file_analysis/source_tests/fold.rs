@@ -179,8 +179,7 @@ const MEMBERS_OF_DEFINES: &[(&str, &str, &str)] = &[
     ("a.mjs", "CFG.l[0] = 1;", "unknown"),
     ("a.mjs", "CFG.l[0]();", "unknown"),
     ("a.ts", "(CFG.a.b as any)();", "unknown"),
-    // A build without --minify-syntax has no define in place of a path that ends in `["name"]`. No build has one in place
-    // of a path that holds `?.`.
+    // No define stands in place of a path that holds `?.`, or that ends in `["name"]` without --minify-syntax.
     ("a.mjs", r#"process["env"].DBG;"#, "unknown"),
     ("a.mjs", "process?.env.DBG;", "unknown"),
     ("a.mjs", "process.env?.DBG;", "unknown"),
@@ -1618,8 +1617,7 @@ fn members_of_object_and_array_defines() {
         assert!(decisions.is_dead_expr(object));
         assert!(decisions.is_dead_expr(s.ident("CFG", 0)));
     });
-    // Where the read at the end of a chain takes no member, the whole value of the define is under the chain, as it is for any
-    // other use.
+    // Where the read at the end of a chain takes no member, the whole value of the define is under the chain.
     for text in [
         "CFG.a.b();",
         "CFG.a.missing;",

@@ -130,8 +130,7 @@ impl<'s> FoldInputs<'s> {
             .is_some_and(|node| self.nodes[node as usize].is_user_defined)
     }
 
-    /// A define of the path that `--define` or bunfig.toml names, and that a build does not put in place of it because the last
-    /// link is `["name"]`.
+    /// A user's define of the path that a build does not put in place of it, because the last link is `["name"]`.
     pub(super) fn is_user_defined_behind_index(&self, state: PathState) -> bool {
         let node = state.node.map(|node| &self.nodes[node as usize]);
         state.ends_with_index

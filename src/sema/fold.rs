@@ -213,8 +213,7 @@ impl<'s> Decisions<'s> {
         self.dead_stmts.has(stmt.idx())
     }
 
-    /// The object or the key of a read that has a member of a define value in its place: `CONFIG` in `CONFIG.a`. It is dead
-    /// only because of that read, and a type error there is an error of the read.
+    /// The object or the key of a live read that a member of a define value replaces: `CONFIG` in `CONFIG.a`.
     #[inline]
     pub fn is_part_of_define_member_read(&self, expr: ExprId) -> bool {
         self.parts_of_define_member_reads.has(expr.idx())

@@ -65,6 +65,8 @@ bitflags::bitflags! {
         const ENDS_IN_TEXT = 1 << 17;
         /// `Kind::Ready`: what is printed is right only if the parent does not print the end of its last child.
         const HAS_BROKEN_VOID_TAG = 1 << 18;
+        /// `Kind::Ready`: what is printed is a part of the source.
+        const IS_PRINTED_AS_WRITTEN = 1 << 19;
     }
 }
 
@@ -85,7 +87,7 @@ pub(crate) struct Node<'a> {
     pub(crate) span: Span,
     pub(crate) start_span: Span,
     pub(crate) end_span: Span,
-    /// Declaration: the span of the value. `Kind::Ready`: a range of `Tree::printed`.
+    /// Declaration: the span of the value. `Kind::Ready`: a range of `Tree::printed`, or of the source.
     pub(crate) name_span: Span,
     /// A range of `Tree::attrs`. `Kind::Ready`: the number of `indent`s that it has been read for, and 0.
     pub(crate) attrs: (u32, u32),

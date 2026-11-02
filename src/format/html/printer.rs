@@ -255,7 +255,13 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
         }
         // The children are on lines of their own, so everything around them is broken.
         self.out.break_parent();
-        self.out.lines(node.name_span.of(&self.tree.printed));
+        self.out.lines(
+            node.name_span
+                .of(match node.has(Flags::IS_PRINTED_AS_WRITTEN) {
+                    true => self.options.original_text,
+                    false => &self.tree.printed,
+                }),
+        );
     }
 
     pub(crate) fn with_ancestor<R>(&mut self, print: impl FnOnce(&mut Self) -> R) -> R {

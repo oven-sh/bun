@@ -627,6 +627,7 @@ impl<'a> Tokenizer<'a, '_> {
                 let mut flags = Flags::empty();
                 flags.set(Flags::ENDS_IN_TEXT, ready.ends_in_text);
                 flags.set(Flags::HAS_BROKEN_VOID_TAG, ready.has_broken_void_tag);
+                flags.set(Flags::IS_PRINTED_AS_WRITTEN, ready.is_printed_as_written);
                 flags
             }),
         });

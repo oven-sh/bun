@@ -75,8 +75,10 @@ pub(crate) struct Parent<'a> {
 pub(crate) struct Ready {
     /// From the start of the first child to the end of the last.
     pub(crate) span: Span,
-    /// What is printed for them, from behind the indentation of the first line on: a range of `Tree::printed`.
+    /// What is printed for them, from behind the indentation of the first line on: a range of `Tree::printed`, or of
+    /// the source if `is_printed_as_written`.
     pub(crate) printed: Span,
+    pub(crate) is_printed_as_written: bool,
     /// The number of `indent`s that it has been read for.
     pub(crate) level: u32,
     /// `isTextLikeNode(getLastDescendant(lastChild))`
@@ -165,6 +167,21 @@ fn breaks_its_content(name: &[u8], display: Display) -> bool {
         )
 }
 
+/// `getStringWidth`
+fn width_of_word(word: &[u8]) -> usize {
+    // The letters from U+00C0 to U+02FF and from U+0380 to U+07FF are one column wide and part of no emoji.
+    let (mut width, mut rest) = (0, word);
+    loop {
+        rest = match rest {
+            [] => return width,
+            [0x20..=0x7E, rest @ ..] => rest,
+            [0xC3..=0xCB | 0xCE..=0xDF, 0x80..=0xBF, rest @ ..] => rest,
+            _ => return crate::ir::width::string_width(word) as usize,
+        };
+        width += 1;
+    }
+}
+
 /// What the name of an element and the place where it is say about it.
 #[derive(Copy, Clone)]
 struct Element<'a> {
@@ -201,6 +218,81 @@ struct Words {
     width: usize,
     /// Some of it is not ASCII.
     is_wide: bool,
+    /// One blank is between two words.
+    has_single_blanks: bool,
+}
+
+/// What is printed. What is written is compared with what comes next in the source, and is only copied once the two
+/// differ: text that is formatted already is copied in one piece, or not at all.
+struct Sink<'s, 'a> {
+    text: &'a [u8],
+    out: &'s mut Vec<u8>,
+    /// This range of `text` comes behind `out`.
+    pending: std::ops::Range<usize>,
+}
+
+impl Sink<'_, '_> {
+    /// How many bytes have been written.
+    #[inline]
+    fn len(&self) -> usize {
+        self.out.len() + self.pending.len()
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn flush(&mut self) {
+        self.out
+            .extend_from_slice(self.text.get(self.pending.clone()).unwrap_or_default());
+        self.pending.start = self.pending.end;
+    }
+
+    /// Writes `text[start..end]`.
+    #[inline]
+    fn source(&mut self, start: usize, end: usize) {
+        if start != self.pending.end {
+            self.flush();
+            self.pending.start = start;
+        }
+        self.pending.end = end;
+    }
+
+    #[inline]
+    fn push(&mut self, byte: u8) {
+        match self.text.get(self.pending.end) == Some(&byte) {
+            true => self.pending.end += 1,
+            false => {
+                self.flush();
+                self.out.push(byte);
+            }
+        }
+    }
+
+    #[inline]
+    fn put(&mut self, bytes: &[u8]) {
+        let end = self.pending.end + bytes.len();
+        match self.text.get(self.pending.end..end) == Some(bytes) {
+            true => self.pending.end = end,
+            false => {
+                self.flush();
+                self.out.extend_from_slice(bytes);
+            }
+        }
+    }
+
+    /// Writes a line break and `count` times `byte`.
+    #[inline]
+    fn line(&mut self, byte: u8, count: usize) {
+        let (start, end) = (self.pending.end + 1, self.pending.end + 1 + count);
+        if self.text.get(self.pending.end) == Some(&b'\n')
+            && (self.text.get(start..end)).is_some_and(|it| it.iter().all(|it| *it == byte))
+        {
+            self.pending.end = end;
+            return;
+        }
+        self.flush();
+        self.out.push(b'\n');
+        self.out.resize(self.out.len() + count, byte);
+    }
 }
 
 // The kinds of bytes in a text.
@@ -227,31 +319,45 @@ const TEXT_KINDS: [u8; 256] = {
     kinds
 };
 
-// The kinds of bytes in the name of an attribute.
-const NAME: u8 = 0;
-const NAME_UPPER: u8 = 1;
-const NAME_BRACKET: u8 = 2;
-/// White space, `>`, `/`, `=`: what a name can end at.
-const NAME_END: u8 = 3;
-const NAME_NEVER: u8 = 4;
+/// The same where only a blank is white space and only plain characters make up words.
+const PLAIN_TEXT_KINDS: [u8; 256] = {
+    let mut kinds = [END; 256];
+    let mut byte = 0;
+    while byte < 256 {
+        if TEXT_KINDS[byte] == WORD {
+            kinds[byte] = WORD;
+        }
+        byte += 1;
+    }
+    kinds[b' ' as usize] = SPACE;
+    kinds
+};
 
-const NAME_KINDS: [u8; 256] = {
-    let mut kinds = [NAME_NEVER; 256];
+// What the bytes of the name of an attribute are. A small letter and `-` are nothing of this.
+const NAME_CAPITAL: u8 = 1;
+/// What is in no name that HTML knows.
+const NAME_MARK: u8 = 2;
+/// White space, `>`, `/`, `=`: what a name can end at.
+const NAME_END: u8 = 0x40;
+const NAME_NEVER: u8 = 0x80;
+
+const NAME_BITS: [u8; 256] = {
+    let mut bits = [NAME_NEVER; 256];
     let mut byte = 33;
     while byte < 127 {
-        kinds[byte] = match byte as u8 {
-            b'A'..=b'Z' => NAME_UPPER,
-            b'[' | b']' => NAME_BRACKET,
+        bits[byte] = match byte as u8 {
+            b'a'..=b'z' | b'-' => 0,
+            b'A'..=b'Z' => NAME_CAPITAL,
             b'>' | b'/' | b'=' => NAME_END,
             b'<' | b'\'' | b'"' => NAME_NEVER,
-            _ => NAME,
+            _ => NAME_MARK,
         };
         byte += 1;
     }
-    kinds[b' ' as usize] = NAME_END;
-    kinds[b'\n' as usize] = NAME_END;
-    kinds[b'\t' as usize] = NAME_END;
-    kinds
+    bits[b' ' as usize] = NAME_END;
+    bits[b'\n' as usize] = NAME_END;
+    bits[b'\t' as usize] = NAME_END;
+    bits
 };
 
 /// True for a byte of a value between double quotes that is printed as it is and is one column wide.
@@ -275,10 +381,8 @@ pub(crate) struct Runs {
     /// Up to here the text has been looked at: no run starts here or before that is not in `found`.
     pub(crate) scanned_to: usize,
     levels: Vec<Level>,
-    /// Where the blanks between the attributes of a start tag are in `printed`.
-    separators: Vec<usize>,
-    /// A start tag on one line, while it is written again with an attribute to a line.
-    tag: Vec<u8>,
+    /// Where the attributes of a start tag start and end.
+    attributes: Vec<(usize, usize)>,
 }
 
 impl Runs {
@@ -289,8 +393,7 @@ impl Runs {
             next: 0,
             scanned_to: 0,
             levels: Vec::new(),
-            separators: Vec::new(),
-            tag: Vec::new(),
+            attributes: Vec::new(),
         }
     }
 
@@ -314,14 +417,18 @@ impl Runs {
     ) {
         self.levels.clear();
         let definition = (parent.element).map_or(&data::DEFAULT_TAG_DEFINITION, |it| it.1);
-        let first = (start, printed.len());
+        let printed_so_far = printed.len();
+        let first = (start, printed_so_far);
         let mut scanner = Scanner {
             text,
             settings: self.settings,
             levels: &mut self.levels,
-            separators: &mut self.separators,
-            tag: &mut self.tag,
-            out: printed,
+            attributes: &mut self.attributes,
+            out: Sink {
+                text,
+                out: printed,
+                pending: start..start,
+            },
             siblings: Siblings::new(
                 parent.level,
                 (definition, parent.is_in_svg),
@@ -337,13 +444,26 @@ impl Runs {
             self.scanned_to = usize::MAX;
             return;
         }
+        // Nothing has been copied: all that has been written is in the source, from `start` on.
+        let is_printed_as_written = scanner.out.out.len() == printed_so_far;
+        let offset = match is_printed_as_written {
+            true => start.wrapping_sub(printed_so_far),
+            false => {
+                scanner.out.flush();
+                0
+            }
+        };
         let innermost = scanner.siblings;
         let all = (self.levels.iter().map(|level| &level.siblings)).chain([&innermost]);
         for siblings in all {
             if siblings.last.at != 0 {
                 self.found.push(Ready {
                     span: Span::new(siblings.first.0 as u32, siblings.last.at as u32),
-                    printed: Span::new(siblings.first.1 as u32, siblings.last.printed as u32),
+                    printed: Span::new(
+                        siblings.first.1.wrapping_add(offset) as u32,
+                        siblings.last.printed.wrapping_add(offset) as u32,
+                    ),
+                    is_printed_as_written,
                     level: siblings.level as u32,
                     ends_in_text: siblings.last.ends_in_text,
                     has_broken_void_tag: siblings.has_broken_void_tag,
@@ -358,10 +478,9 @@ struct Scanner<'s, 'a> {
     settings: Settings,
     /// The elements that are open in the run.
     levels: &'s mut Vec<Level>,
-    separators: &'s mut Vec<usize>,
-    tag: &'s mut Vec<u8>,
-    /// What is printed. What has been written for a child that goes the long way after all stays there, unused.
-    out: &'s mut Vec<u8>,
+    attributes: &'s mut Vec<(usize, usize)>,
+    /// What has been written for a child that goes the long way after all stays there, unused.
+    out: Sink<'s, 'a>,
     /// The children of the innermost open element.
     siblings: Siblings,
     /// From what reads a child: its last descendant is a text or a comment.
@@ -421,8 +540,8 @@ impl<'a> Scanner<'_, 'a> {
     }
 
     fn put_end_tag(&mut self, name: &[u8]) {
-        self.put(b"</");
-        self.put(name);
+        self.out.put(b"</");
+        self.out.put(name);
         self.out.push(b'>');
     }
 
@@ -503,20 +622,9 @@ impl<'a> Scanner<'_, 'a> {
         })
     }
 
-    #[inline]
-    fn put(&mut self, bytes: &[u8]) {
-        self.out.extend_from_slice(bytes);
-    }
-
-    #[inline]
-    fn put_source(&mut self, start: usize, end: usize) {
-        self.out
-            .extend_from_slice(self.text.get(start..end).unwrap_or_default());
-    }
-
     /// A line break and the indentation of `level`.
+    #[inline]
     fn put_line(&mut self, level: usize) {
-        self.out.push(b'\n');
         let (byte, count) = match self.settings.uses_tabs {
             true => (b'\t', level),
             false => (b' ', level * self.settings.indent_width),
@@ -525,7 +633,7 @@ impl<'a> Scanner<'_, 'a> {
             self.is_indented_too_far = true;
             return;
         }
-        self.out.resize(self.out.len() + count, byte);
+        self.out.line(byte, count);
     }
 
     /// Reads children from `start` on. Returns up to where the text need not be looked at again.
@@ -631,7 +739,7 @@ impl<'a> Scanner<'_, 'a> {
             }
             (b'<', b'a'..=b'z' | b'A'..=b'Z') => {
                 let len = (self.text.get(next + 1..).unwrap_or_default().iter())
-                    .take_while(|byte| NAME_KINDS[**byte as usize] < NAME_END)
+                    .take_while(|byte| NAME_BITS[**byte as usize] < NAME_END)
                     .count();
                 let sibling = self.text.get(next + 1..next + 1 + len).unwrap_or_default();
                 !self.siblings.parent_definition.is_closed_by_child(sibling)
@@ -663,29 +771,10 @@ impl<'a> Scanner<'_, 'a> {
         // How many columns are left for the tag.
         let room = (self.settings.line_width).saturating_sub(level * self.settings.indent_width);
 
-        // The start tag on one line, without what ends it.
-        let tag_start = self.out.len();
-        self.put_source(start, to);
-        self.separators.clear();
-        let (mut at, mut width) = (to, to - start);
-        loop {
-            let attribute = self.skip_space(at).0;
-            match (self.at(attribute), self.at(attribute + 1)) {
-                (b'>', _) | (b'/', b'>') => {
-                    at = attribute;
-                    break;
-                }
-                _ if attribute == at => return Item::No,
-                _ => {}
-            }
-            self.separators.push(self.out.len());
-            self.out.push(b' ');
-            let Some((end, attribute_width)) = self.attribute(name, attribute) else {
-                return Item::No;
-            };
-            (at, width) = (end, width + 1 + attribute_width);
-        }
-        let has_attributes = !self.separators.is_empty();
+        let Some((at, width)) = self.read_tag(name, to, to - start, true) else {
+            return Item::No;
+        };
+        let has_attributes = !self.attributes.is_empty();
         self.ends_in_text = false;
 
         if self.at(at) == b'/' || definition.is_void {
@@ -693,14 +782,16 @@ impl<'a> Scanner<'_, 'a> {
             if must_be_empty || !self.ends_line(end) {
                 return Item::No;
             }
-            match !has_attributes || width + 3 <= room {
-                true => self.put(b" />"),
-                false => {
-                    self.break_tag(tag_start, level);
-                    self.put(b"/>");
+            let is_broken = has_attributes && width + 3 > room;
+            self.put_tag(start, to, is_broken);
+            match is_broken {
+                true => {
+                    self.put_line(level);
                     self.siblings.has_broken_void_tag = true;
                 }
+                false => self.out.push(b' '),
             }
+            self.out.put(b"/>");
             return Item::Ends(end);
         }
 
@@ -713,10 +804,11 @@ impl<'a> Scanner<'_, 'a> {
             if !is_empty || !self.ends_line(end) {
                 return Item::No;
             }
-            if has_attributes && width + 1 + name.len() + 3 > room {
-                self.break_tag(tag_start, level);
-            }
-            self.out.push(b'>');
+            self.put_whole_tag(
+                start,
+                to,
+                has_attributes && width + 1 + name.len() + 3 > room,
+            );
             self.put_end_tag(name);
             return Item::Ends(end);
         }
@@ -728,16 +820,13 @@ impl<'a> Scanner<'_, 'a> {
                 return Item::No;
             };
             if let Some(end) = self.end_tag(words.close, name) {
-                return self.element_with_words(tag_start, element, width, open_end, words, end);
+                return self.element_with_words(start, element, width, open_end, words, end);
             }
         }
         if line_breaks == 0 {
-            return self.element_on_one_line(element, width, open_end);
+            return self.element_on_one_line(start, element, width, open_end);
         }
-        if has_attributes && width + 1 > room {
-            self.break_tag(tag_start, level);
-        }
-        self.put(b">");
+        self.put_whole_tag(start, to, has_attributes && width + 1 > room);
         self.put_line(level + 1);
         self.levels.push(Level {
             start,
@@ -749,37 +838,74 @@ impl<'a> Scanner<'_, 'a> {
         Item::Open(first)
     }
 
-    /// Writes the start tag from `tag_start` on again with an attribute to a line, and a line break behind the last
-    /// one.
-    fn break_tag(&mut self, tag_start: usize, level: usize) {
-        self.tag.clear();
-        self.tag
-            .extend_from_slice(self.out.get(tag_start..).unwrap_or_default());
-        self.out.truncate(tag_start);
-        let mut from = 0;
-        for index in 0..self.separators.len() {
-            let separator = self.separators[index] - tag_start;
-            self.out
-                .extend_from_slice(self.tag.get(from..separator).unwrap_or_default());
-            self.put_line(level + 1);
-            from = separator + 1;
+    /// Reads the attributes of the element `name` from `at` on, behind the name, into `attributes`. `width` is how wide
+    /// the tag is so far. Returns where `>` or `/>` is, and how wide the tag is on one line without it. `None` if an
+    /// attribute is not printed as it is written, or there is a line break and `can_span_lines` is false.
+    fn read_tag(
+        &mut self,
+        name: &[u8],
+        mut at: usize,
+        mut width: usize,
+        can_span_lines: bool,
+    ) -> Option<(usize, usize)> {
+        self.attributes.clear();
+        loop {
+            let (attribute, line_breaks) = match self.at(at) {
+                b'>' => return Some((at, width)),
+                _ => self.skip_space(at),
+            };
+            if line_breaks > 0 && !can_span_lines {
+                return None;
+            }
+            match (self.at(attribute), self.at(attribute + 1)) {
+                (b'>', _) | (b'/', b'>') => return Some((attribute, width)),
+                _ if attribute == at => return None,
+                _ => {}
+            }
+            let (end, attribute_width) = self.attribute(name, attribute)?;
+            self.attributes.push((attribute, end));
+            (at, width) = (end, width + 1 + attribute_width);
         }
-        self.out
-            .extend_from_slice(self.tag.get(from..).unwrap_or_default());
-        self.put_line(level);
     }
 
-    /// An element with nothing but `words` in it. Its start tag has been written on one line from `tag_start` on,
-    /// without `>`, is `width` columns wide and ends at `open_end`.
+    /// Writes the start tag that starts at `start`, whose attributes are in `attributes`, without what ends it: on one
+    /// line, or with an attribute to a line.
+    fn put_tag(&mut self, start: usize, name_end: usize, is_broken: bool) {
+        let level = self.siblings.level;
+        self.out.source(start, name_end);
+        for index in 0..self.attributes.len() {
+            let Some(&(from, to)) = self.attributes.get(index) else {
+                break;
+            };
+            match is_broken {
+                true => self.put_line(level + 1),
+                false => self.out.push(b' '),
+            }
+            self.out.source(from, to);
+        }
+    }
+
+    /// The same with `>`, which is on a line of its own behind attributes on lines of their own.
+    fn put_whole_tag(&mut self, start: usize, name_end: usize, is_broken: bool) {
+        self.put_tag(start, name_end, is_broken);
+        if is_broken {
+            self.put_line(self.siblings.level);
+        }
+        self.out.push(b'>');
+    }
+
+    /// An element with nothing but `words` in it. Its start tag starts at `start`, is `width` columns wide on one line
+    /// without `>`, and ends at `open_end`. Its attributes are in `attributes`.
     fn element_with_words(
         &mut self,
-        tag_start: usize,
-        Element { name, display, .. }: Element<'_>,
+        start: usize,
+        element: Element<'_>,
         width: usize,
         open_end: usize,
         words: Words,
         end: usize,
     ) -> Item {
+        let Element { name, display, .. } = element;
         if breaks_its_content(name, display) || !self.ends_line(end) {
             return Item::No;
         }
@@ -803,7 +929,10 @@ impl<'a> Scanner<'_, 'a> {
             + name.len()
             + 3;
         if flat_width <= room {
-            self.put(if blank_in_front { b"> " } else { b">" });
+            self.put_whole_tag(start, element.name_end, false);
+            if blank_in_front {
+                self.out.push(b' ');
+            }
             self.put_words(words, usize::MAX, 0, 0, 0);
             if blank_behind {
                 self.out.push(b' ');
@@ -815,21 +944,10 @@ impl<'a> Scanner<'_, 'a> {
             is_inline && !has_space_in_front,
             is_inline && !has_space_behind,
         );
-        let is_broken = !self.separators.is_empty() && width + usize::from(!hugs_start) > room;
-        if is_broken {
-            self.break_tag(tag_start, level);
-            if hugs_start {
-                // No line break is printed behind the last attribute.
-                let indentation = match self.settings.uses_tabs {
-                    true => level,
-                    false => level * self.settings.indent_width,
-                };
-                self.out
-                    .truncate(self.out.len().saturating_sub(indentation + 1));
-            }
-        }
-        if !hugs_start {
-            self.out.push(b'>');
+        let is_broken = !self.attributes.is_empty() && width + usize::from(!hugs_start) > room;
+        match hugs_start {
+            true => self.put_tag(start, element.name_end, is_broken),
+            false => self.put_whole_tag(start, element.name_end, is_broken),
         }
         self.put_line(level + 1);
         if hugs_start {
@@ -844,8 +962,8 @@ impl<'a> Scanner<'_, 'a> {
             suffix,
         );
         if hugs_end {
-            self.put(b"</");
-            self.put(name);
+            self.out.put(b"</");
+            self.out.put(name);
             self.put_line(level);
             self.out.push(b'>');
         } else {
@@ -856,9 +974,15 @@ impl<'a> Scanner<'_, 'a> {
     }
 
     /// An element with texts and elements in it, which have nothing but a text in them, all on one line of the source
-    /// from `open_end` on, if it fits on one line. Its start tag has been written on one line without `>` and is `width`
-    /// columns wide.
-    fn element_on_one_line(&mut self, element: Element<'_>, width: usize, open_end: usize) -> Item {
+    /// from `open_end` on, if it fits on one line. Its start tag starts at `start` and is `width` columns wide on one line
+    /// without `>`. Its attributes are in `attributes`.
+    fn element_on_one_line(
+        &mut self,
+        start: usize,
+        element: Element<'_>,
+        width: usize,
+        open_end: usize,
+    ) -> Item {
         let Element { name, display, .. } = element;
         if breaks_its_content(name, display) {
             return Item::No;
@@ -866,7 +990,7 @@ impl<'a> Scanner<'_, 'a> {
         let level = self.siblings.level;
         let room = (self.settings.line_width).saturating_sub(level * self.settings.indent_width);
         let is_inline = display == Display::Inline;
-        self.out.push(b'>');
+        self.put_whole_tag(start, element.name_end, false);
         // How many bytes what is written from here on is longer than it is wide.
         let (content_start, mut excess) = (self.out.len(), 0);
         let (mut at, mut is_first, mut has_braces) = (open_end, true, false);
@@ -933,10 +1057,10 @@ impl<'a> Scanner<'_, 'a> {
         if at == start || (self.at(at) == b'<' && !self.ends_text(at)) {
             return None;
         }
-        self.put_source(start, at);
+        self.out.source(start, at);
         let word = self.text.get(start..at)?;
         let excess = match is_wide {
-            true => word.len() - (crate::ir::width::string_width(word) as usize).min(word.len()),
+            true => word.len() - width_of_word(word).min(word.len()),
             false => 0,
         };
         Some((at, excess))
@@ -960,25 +1084,11 @@ impl<'a> Scanner<'_, 'a> {
         }
         let is_block = display.is_block_like();
         let written_from = self.out.len();
-        self.put_source(start, to);
-        let (mut at, mut width) = (to, to - start);
-        loop {
-            let attribute = self.skip_space(at);
-            match (self.at(attribute.0), self.at(attribute.0 + 1)) {
-                (b'>', _) | (b'/', b'>') if attribute.1 == 0 => {
-                    at = attribute.0;
-                    break;
-                }
-                _ if attribute.0 == at || attribute.1 > 0 => return None,
-                _ => {}
-            }
-            self.out.push(b' ');
-            let (end, attribute_width) = self.attribute(name, attribute.0)?;
-            (at, width) = (end, width + 1 + attribute_width);
-        }
+        let (mut at, width) = self.read_tag(name, to, to - start, false)?;
+        self.put_tag(start, to, false);
         self.ends_in_text = false;
         if self.at(at) == b'/' || definition.is_void {
-            self.put(b" />");
+            self.out.put(b" />");
             let end = at + if self.at(at) == b'/' { 2 } else { 1 };
             return Some((end, self.out.len() - written_from - (width + 3), is_block));
         }
@@ -1016,68 +1126,65 @@ impl<'a> Scanner<'_, 'a> {
         }
     }
 
-    /// The attribute that starts at `from`, if it is `name` or `name="value"` and is printed like that. Writes it.
-    /// Returns where it ends and how wide it is.
-    fn attribute(&mut self, element: &[u8], from: usize) -> Option<(usize, usize)> {
-        let (mut at, mut seen, mut open_brackets) = (from, 0u8, 0i32);
-        loop {
-            let byte = self.at(at);
-            let kind = NAME_KINDS[byte as usize];
-            if kind >= NAME_END {
-                if kind != NAME_END {
-                    return None;
-                }
-                break;
-            }
-            seen |= 1 << kind;
-            if kind == NAME_BRACKET {
-                open_brackets += if byte == b'[' { 1 } else { -1 };
-            }
-            at += 1;
-        }
-        let name = self.text.get(from..at)?;
+    /// The attribute that starts at `from`, if it is `name` or `name="value"` and is printed like that. Returns where it
+    /// ends and how wide it is.
+    fn attribute(&self, element: &[u8], from: usize) -> Option<(usize, usize)> {
+        let rest = self.text.get(from..)?;
+        let mut seen = 0;
+        let len = rest.iter().position(|byte| {
+            let bits = NAME_BITS[*byte as usize];
+            seen |= bits;
+            bits >= NAME_END
+        })?;
+        let (name, behind) = rest.split_at_checked(len)?;
         // A name that starts with a bracket goes on over blanks and quotes until the bracket is closed. `a:` is an
         // error.
-        if name.is_empty()
-            || (name[0] == b'[' && open_brackets != 0)
-            || name.ends_with(b":")
-            || (self.at(at) == b'/' && self.at(at + 1) != b'>')
+        if seen & NAME_NEVER != 0
+            || matches!(name, [] | [.., b':'])
+            || matches!(behind, [b'/', next, ..] if *next != b'>')
+            || (name[0] == b'['
+                && bun_core::strings::count_char(name, b'[')
+                    != bun_core::strings::count_char(name, b']'))
         {
             return None;
         }
         // `normalizeName`
-        if seen & (1 << NAME_UPPER) != 0
+        if seen & (NAME_CAPITAL | NAME_MARK) == NAME_CAPITAL
             && matches!(self.settings.parser, Parser::Html | Parser::Mjml)
-            && !name.contains(&b':')
-            && data::is_attribute_of_element(element, &name.to_ascii_lowercase())
         {
+            let mut lower = smallvec::SmallVec::<[u8; 32]>::from_slice(name);
+            lower.make_ascii_lowercase();
+            if data::is_attribute_of_element(element, &lower) {
+                return None;
+            }
+        }
+        let at = from + len;
+        let [b'=', quoted @ ..] = behind else {
+            return Some((at, len));
+        };
+        let [b'"', value_and_rest @ ..] = quoted else {
             return None;
-        }
-        if self.at(at) != b'=' {
-            self.put_source(from, at);
-            return Some((at, at - from));
-        }
-        if self.at(at + 1) != b'"' {
-            return None;
-        }
+        };
         let value_start = at + 2;
         let mut end = value_start;
-        let (mut has_braces, mut is_wide) = (false, false);
+        let (mut has_braces, mut is_wide, mut has_reference) = (false, false, false);
+        let mut rest = value_and_rest;
         loop {
-            while IS_PLAIN_IN_VALUE[self.at(end) as usize] {
-                end += 1;
-            }
-            match self.at(end) {
+            let plain = (rest.iter()).position(|byte| !IS_PLAIN_IN_VALUE[*byte as usize])?;
+            end += plain;
+            match rest[plain] {
                 b'"' => break,
-                b'{' | b'\\' | b'&' | 128.. => {
+                byte @ (b'{' | b'\\' | b'&' | 128..) => {
+                    has_reference |= byte == b'&';
                     end = self.odd_in_text(end, &mut has_braces, &mut is_wide)? + 1;
+                    rest = self.text.get(end..)?;
                 }
                 _ => return None,
             }
         }
         let value = self.text.get(value_start..end)?;
         // `unescapeQuoteEntities`
-        if bun_core::strings::contains_char(value, b'&')
+        if has_reference
             && (bun_core::strings::contains(value, b"&quot;")
                 || bun_core::strings::contains(value, b"&apos;"))
         {
@@ -1089,7 +1196,6 @@ impl<'a> Scanner<'_, 'a> {
             return None;
         }
         end += 1;
-        self.put_source(from, end);
         let width = match is_wide {
             true => at + 3 - from + crate::ir::width::string_width(value) as usize,
             false => end - from,
@@ -1210,12 +1316,40 @@ impl<'a> Scanner<'_, 'a> {
         if let Some(words) = self.measured.filter(|it| it.start == start) {
             return Some(words);
         }
-        let mut at = start;
+        // Most texts are words of plain characters with one blank between them, on one line.
         // No branch at white space: words are of any length, so it would be mispredicted at every word.
+        let (mut before, mut twice) = (0, 0);
+        let plain = (self.text.get(start..)?.iter()).position(|byte| {
+            let kind = PLAIN_TEXT_KINDS[*byte as usize];
+            twice |= kind & before;
+            before = kind;
+            kind >= END
+        })?;
+        if self.at(start + plain) == b'<' && twice == 0 {
+            let close = start + plain;
+            let end = close - usize::from(self.at(close.wrapping_sub(1)) == b' ');
+            if !self.ends_text(close) || end <= start {
+                return None;
+            }
+            let words = Words {
+                start,
+                end,
+                close,
+                width: end - start,
+                is_wide: false,
+                has_single_blanks: true,
+            };
+            self.measured = Some(words);
+            return Some(words);
+        }
+        let mut at = start;
         let (mut before, mut count, mut bytes, mut end) = (SPACE, 0usize, 0usize, start);
         let (mut has_braces, mut is_wide) = (false, false);
+        // Set for a tab or a line break.
+        let mut odd_space = 0;
         loop {
-            let mut kind = TEXT_KINDS[self.at(at) as usize];
+            let byte = self.at(at);
+            let mut kind = TEXT_KINDS[byte as usize];
             if kind >= END {
                 if kind == END {
                     break;
@@ -1226,6 +1360,7 @@ impl<'a> Scanner<'_, 'a> {
                 kind = WORD;
             }
             at += 1;
+            odd_space |= kind & u8::from(byte != b' ');
             let is_word = usize::from(kind ^ 1);
             count += usize::from(before) & is_word;
             bytes += is_word;
@@ -1245,13 +1380,17 @@ impl<'a> Scanner<'_, 'a> {
             close: at,
             width: bytes + count - 1,
             is_wide,
+            // White space behind the last word does not count.
+            has_single_blanks: bytes + count - 1 == end - start
+                && (odd_space == 0
+                    || !(self.text.get(start..end)?.iter()).any(|it| matches!(it, b'\t' | b'\n'))),
         };
         if is_wide {
             // Each word is a string of its own to Prettier.
             words.width = (self.text.get(start..end)?)
                 .split(|byte| TEXT_KINDS[*byte as usize] == SPACE)
                 .filter(|word| !word.is_empty())
-                .map(|word| crate::ir::width::string_width(word) as usize + 1)
+                .map(|word| width_of_word(word) + 1)
                 .sum::<usize>()
                 - 1;
         }
@@ -1269,6 +1408,9 @@ impl<'a> Scanner<'_, 'a> {
         prefix: usize,
         suffix: usize,
     ) {
+        if line_width == usize::MAX && words.has_single_blanks {
+            return self.out.source(words.start, words.end);
+        }
         let text = self.text;
         let indentation = level * self.settings.indent_width;
         let mut column = indentation + prefix;
@@ -1280,7 +1422,7 @@ impl<'a> Scanner<'_, 'a> {
             }
             let word = text.get(start..at).unwrap_or_default();
             let width = match words.is_wide {
-                true => crate::ir::width::string_width(word) as usize,
+                true => width_of_word(word),
                 false => word.len(),
             };
             let needed = width + if at == words.end { suffix } else { 0 };
@@ -1296,7 +1438,7 @@ impl<'a> Scanner<'_, 'a> {
                     }
                 }
             }
-            self.out.extend_from_slice(word);
+            self.out.source(start, at);
             column += width;
             while at < words.end && TEXT_KINDS[self.at(at) as usize] == SPACE {
                 at += 1;
@@ -1346,7 +1488,7 @@ impl<'a> Scanner<'_, 'a> {
         if is_where_end_tag_will_be || !self.ends_line(end) {
             return Item::No;
         }
-        self.put_source(start, end);
+        self.out.source(start, end);
         self.ends_in_text = true;
         Item::Ends(end)
     }

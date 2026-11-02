@@ -1115,6 +1115,19 @@ impl<'d> Printer<'d> {
 
     #[cold]
     fn print_lines(&mut self, text: &[u8]) {
+        if !self.options.marks_line_breaks_in_texts
+            && matches!(self.options.line_ending, LineEnding::Lf | LineEnding::Auto)
+            && let Some(last_line_break) = bun_core::strings::last_index_of_char(text, b'\n')
+        {
+            self.out.bytes(text);
+            let width = TextWidth::from_javascript(
+                &text[last_line_break + 1..],
+                self.options.flavor,
+                self.options.indent_width,
+            );
+            self.line_width = width.value() as usize;
+            return;
+        }
         let mut lines = bun_core::strings::split(text, b"\n");
         if let Some(first) = lines.next() {
             self.out.bytes(first);

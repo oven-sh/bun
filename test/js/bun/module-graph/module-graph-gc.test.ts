@@ -46,6 +46,8 @@ const dir = String(
       import https from "node:https";
       // A node:dgram socket that nothing has bound yet.
       export function dgramSocket() { return dgram.createSocket("udp4"); }
+      // The same, made in a store whose value holds a function of the graph.
+      export function dgramSocketInStoreOfTheGraph(storage) { return storage.run({ log() {} }, dgramSocket); }
       // Calls the listeners of the host's target while the graph's script is on the stack.
       export function dispatch(target) { target.dispatchEvent(new Event("call")); }
       export function dgramSend(socket) { socket.send("from the graph"); }
@@ -409,10 +411,11 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
   // node:dgram keeps the AsyncLocalStorage stores of createSocket() for the bind() that opens the socket, and no frame
   // of a graph. So a socket that the host holds does not keep the graph that made it, and a socket of the host's
   // does not keep a graph whose script was on the stack when the host made or bound it. A socket the graph bound is
-  // the graph's: its handlers hold the graph until the host closes the socket.
-  test("of the node:dgram sockets the host holds, only one that the graph bound keeps the graph", async () => {
+  // the graph's: its handlers hold the graph until the host closes the socket. And the socket keeps the store values
+  // of createSocket(), as node's handle does: a value that holds a function of the graph holds the graph.
+  test("of the node:dgram sockets the host holds, one that the graph bound keeps the graph, and one whose store value is the graph's", async () => {
     const lifetimes = new Lifetimes();
-    const storage = new AsyncLocalStorage<string>();
+    const storage = new AsyncLocalStorage<unknown>();
     const sockets: Record<string, dgram.Socket> = {};
     const bind = (socket: dgram.Socket, port: number) =>
       new Promise<string>(resolve => {
@@ -440,6 +443,7 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
       "made in the graph, never bound, and the graph is dropped with no dispose()",
       "made in the graph, bound by the host",
       "made in the graph, bound by the graph",
+      "made in the graph in a store whose value holds a function of the graph, never bound",
       "made by the host in a listener the graph's script calls, never bound",
       "made by the host in a listener the graph's script calls, bound by the host later",
       "made by the host before, bound by the host in a listener the graph's script calls",
@@ -449,7 +453,9 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
         for (const row of rows) {
           const graph = lifetimes.track(row, new ModuleGraph({ globals: { TAG: row, control: control() } }));
           const io = await graph.import(file("io.mjs"));
-          if (row.startsWith("made in the graph")) {
+          if (row.startsWith("made in the graph in a store")) {
+            sockets[row] = graph.run(() => io.dgramSocketInStoreOfTheGraph(storage));
+          } else if (row.startsWith("made in the graph")) {
             const socket = (sockets[row] = graph.run(() => storage.run("createSocket()", () => io.dgramSocket())));
             if (row.endsWith("a bind by the host failed")) expect(await bind(socket, holder.port)).toBe("EADDRINUSE");
             if (row.endsWith("bound by the host")) expect(await bind(socket, 0)).toBe("listening");
@@ -467,9 +473,12 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
           if (!row.endsWith("with no dispose()")) graph.dispose();
         }
       })();
-      const boundByTheGraph = "made in the graph, bound by the graph";
-      expect(await lifetimes.stillAlive(...rows.filter(row => row !== boundByTheGraph))).toEqual([]);
-      expect(await lifetimes.survives(boundByTheGraph)).toBe(true);
+      const kept = [
+        "made in the graph, bound by the graph",
+        "made in the graph in a store whose value holds a function of the graph, never bound",
+      ];
+      expect(await lifetimes.stillAlive(...rows.filter(row => !kept.includes(row)))).toEqual([]);
+      for (const row of kept) expect([row, await lifetimes.survives(row)]).toEqual([row, true]);
     } finally {
       for (const socket of Object.values(sockets)) socket.close();
       holder.close();

@@ -19,6 +19,7 @@ use crate::load::source_provider::{
 };
 
 const IMPORTER: &[u8] = b"/project/a.ts";
+const DIRECTORY: &[u8] = b"/directory/of/the/host";
 const MAX_FOLDED_STRING_BYTES: usize = 1 << 16;
 const ANSWERS: &[(&str, f64)] = &[
     ("default", 7.0),
@@ -72,7 +73,8 @@ fn to_owned_result(result: HostValue<'_>, atoms: &Interner<'_>) -> OwnedValue {
 #[derive(Clone, PartialEq, Debug)]
 struct RecordedCall {
     importer: Vec<u8>,
-    macro_path: Vec<u8>,
+    specifier: Vec<u8>,
+    directory: Vec<u8>,
     export_name: Vec<u8>,
     arguments: Vec<OwnedValue>,
 }
@@ -125,7 +127,8 @@ impl SourceProvider for RecordingProvider {
         let arguments = arguments.map(|value| to_owned_value(value, atoms));
         self.calls.lock().push(RecordedCall {
             importer: call.importer.to_vec(),
-            macro_path: call.macro_path.to_vec(),
+            specifier: call.specifier.to_vec(),
+            directory: call.directory.to_vec(),
             export_name: call.export_name.to_vec(),
             arguments: arguments.collect(),
         });
@@ -169,13 +172,6 @@ impl Outcome {
     fn export_names(&self) -> Vec<&[u8]> {
         let calls = self.calls.iter();
         calls.map(|call| call.export_name.as_slice()).collect()
-    }
-}
-
-fn resolve_fixture(specifier: &[u8]) -> Option<Vec<u8>> {
-    match specifier {
-        b"./m" => Some(b"/project/m.ts".to_vec()),
-        _ => None,
     }
 }
 
@@ -250,12 +246,12 @@ fn run_rounds(setup: Setup, text: &str) -> Outcome {
             hir: &hir,
             bound: &bound,
             analysis: &analysis,
-            resolve: &resolve_fixture,
         };
         let round = run_macros(
             &provider,
             &messages,
             setup.runs_macros,
+            DIRECTORY,
             arena,
             &atoms,
             &request,
@@ -301,7 +297,8 @@ fn named_import_receives_written_arguments() {
          f(1, 'a', [true, null], { k: 2 });");
     let expected = RecordedCall {
         importer: IMPORTER.to_vec(),
-        macro_path: b"/project/m.ts".to_vec(),
+        specifier: b"./m".to_vec(),
+        directory: DIRECTORY.to_vec(),
         export_name: b"f".to_vec(),
         arguments: vec![
             OwnedValue::Number(1.0),
@@ -521,12 +518,13 @@ fn disabled_macros_and_importers_in_node_modules_run_nothing() {
 }
 
 #[test]
-fn specifier_without_file_stays_as_written() {
-    for specifier in ["node:fs", "./missing"] {
+fn specifier_stays_as_written() {
+    for specifier in ["node:fs", "./m", "../m.ts", "package/sub", "#name"] {
         let outcome = run(&format!(
             "import {{ f }} from '{specifier}' with {{ type: 'macro' }}; f();"
         ));
-        assert_eq!(outcome.calls[0].macro_path, specifier.as_bytes());
+        assert_eq!(outcome.calls[0].specifier, specifier.as_bytes());
+        assert_eq!(outcome.calls[0].directory, DIRECTORY);
     }
 }
 

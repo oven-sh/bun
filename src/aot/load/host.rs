@@ -1180,6 +1180,7 @@ impl CodeHost for LoadHost<'_> {
             self.input.provider,
             self.input.messages,
             self.input.options.load.runs_macros,
+            &self.directory_of(request.importer),
             arena,
             atoms,
             request,

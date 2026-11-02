@@ -162,7 +162,7 @@ fn big_int_expr(digits: &'static [u8]) -> Expr {
 
 fn reported_text(error: NotData) -> Vec<u8> {
     let mut log = Log::default();
-    report_not_data(&mut log, b"/project/value.toml", "the value", error);
+    report_not_data(&mut log, None, b"/project/value.toml", "the value", error);
     assert_eq!(log.errors, 1);
     assert_eq!(log.msgs.len(), 1);
     log.msgs[0].data.text.to_vec()

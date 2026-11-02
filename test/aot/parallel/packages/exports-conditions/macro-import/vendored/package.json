@@ -1,0 +1,6 @@
+{
+  "name": "vendored",
+  "version": "1.0.0",
+  "main": "./main.ts",
+  "module": "./module.ts"
+}

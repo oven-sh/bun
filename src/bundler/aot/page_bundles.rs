@@ -300,7 +300,7 @@ fn parse_page_manifest<'s>(
             return Err(Failed);
         };
         data_value_from_expr(&root, scratch, arena, atoms).map_err(|error| {
-            report_not_data(log, path, "the manifest", error);
+            report_not_data(log, None, path, "the manifest", error);
             Failed
         })
     })

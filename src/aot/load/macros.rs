@@ -35,6 +35,7 @@ pub(crate) fn run_macros<'s>(
     provider: &dyn SourceProvider,
     messages: &LoadMessages,
     runs_macros: bool,
+    directory: &[u8],
     arena: &'s Arena,
     atoms: &Interner<'s>,
     request: &MacroRequest<'_, 's>,
@@ -87,15 +88,11 @@ pub(crate) fn run_macros<'s>(
             Err(_) if !results.is_empty() => break,
             Err(argument) => waiting.push((expr, argument)),
             Ok(arguments) => {
-                let specifier = atoms.bytes(hir[import].spec);
-                let macro_path = match (request.resolve)(specifier) {
-                    Some(path) => to_native(&path).to_vec(),
-                    None => specifier.to_vec(),
-                };
                 let call = MacroCall {
                     importer: to_native(request.importer),
                     position: range_of_node(hir, NodeData::Expr(expr)).0,
-                    macro_path: &macro_path,
+                    specifier: atoms.bytes(hir[import].spec),
+                    directory: to_native(directory),
                     export_name: atoms.bytes(export_name),
                     arguments: &arguments,
                 };

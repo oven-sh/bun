@@ -194,7 +194,6 @@ fn default_host_leaves_tree_and_payload_unchanged() {
         hir: &hir,
         bound: &bound,
         analysis: &analysis,
-        resolve: &|_| None,
     };
     assert!(
         Bare.run_macros(arena, &atoms, &macros, &mut payload)

@@ -8,6 +8,7 @@ import { describe, test } from "../supported";
 type Files = Record<string, string>;
 
 const COMPILED = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
+const NO_COLOR = { ...bunEnv, NO_COLOR: "1" };
 const BOTH_MODES = [[], ["--aot"]];
 const AOT_ONLY = [["--aot"]];
 const exe = (name: string) => name + (isWindows ? ".exe" : "");
@@ -74,7 +75,68 @@ const calling = (names: string, body: string): Files => ({
   "main.ts": `import { ${names} } from "./macros" with { type: "macro" };\n${body}\n`,
 });
 
-const expanded: Record<string, { files: Files; prints: string; modes?: string[][] }> = {
+const who = (file: string) => `export function who(): string {\n  return ${JSON.stringify(file)};\n}\n`;
+
+// Packages whose every file says which file it is. A macro import takes the file that `bun run` takes for it.
+const PACKAGES: Files = {
+  "node_modules/typed/package.json": `{ "name": "typed", "exports": { "aot": "./index.aot.ts", "default": "./index.ts" } }`,
+  "node_modules/typed/index.aot.ts": who("index.aot.ts"),
+  "node_modules/typed/index.ts": who("index.ts"),
+  "node_modules/two-entries/package.json": `{ "name": "two-entries", "main": "./main.ts", "module": "./module.ts" }`,
+  "node_modules/two-entries/main.ts": who("main.ts"),
+  "node_modules/two-entries/module.ts": who("module.ts"),
+  "node_modules/two-formats/package.json": `{ "name": "two-formats", "main": "./index.cjs", "module": "./index.mjs", "types": "./index.d.ts" }`,
+  "node_modules/two-formats/index.cjs": `exports.who = function who() {\n  return "index.cjs";\n};\n`,
+  "node_modules/two-formats/index.mjs": `export function who() {\n  return "index.mjs";\n}\n`,
+  "node_modules/two-formats/index.d.ts": `export declare function who(): string;\n`,
+  "node_modules/for-development/package.json": `{ "name": "for-development", "exports": { "development": "./dev.ts", "default": "./index.ts" } }`,
+  "node_modules/for-development/dev.ts": who("dev.ts"),
+  "node_modules/for-development/index.ts": who("index.ts"),
+};
+
+const IMPORTING_PACKAGES = `import { who as typed } from "typed" with { type: "macro" };
+import { who as twoEntries } from "two-entries" with { type: "macro" };
+import { who as twoFormats } from "two-formats" with { type: "macro" };
+import { who as forDevelopment } from "for-development" with { type: "macro" };
+`;
+
+// `below/calls.ts` has a `node_modules` of its own. `registry` counts in the one file of it that the macros load.
+const callingPackages: Files = {
+  ...PACKAGES,
+  "node_modules/nearest/package.json": `{ "name": "nearest", "main": "./index.ts" }`,
+  "node_modules/nearest/index.ts": who("above"),
+  "below/node_modules/nearest/package.json": `{ "name": "nearest", "main": "./index.ts" }`,
+  "below/node_modules/nearest/index.ts": who("below"),
+  "below/node_modules/only-below/package.json": `{ "name": "only-below", "main": "./index.ts" }`,
+  "below/node_modules/only-below/index.ts": who("below"),
+  "below/calls.ts": `import { who as nearest } from "nearest" with { type: "macro" };
+import { who as onlyBelow } from "only-below" with { type: "macro" };
+export const found: string = nearest() + " " + onlyBelow();
+`,
+  "node_modules/registry/package.json": `{ "name": "registry", "main": "./main.ts", "module": "./module.ts" }`,
+  ...Object.fromEntries(
+    ["main.ts", "module.ts"].map(file => [
+      "node_modules/registry/" + file,
+      `const names: string[] = [];
+export function register(name: string): number {
+  return names.push(name);
+}
+`,
+    ]),
+  ),
+  "through.ts": `import { register } from "registry";
+export function registerThrough(name: string): number {
+  return register(name);
+}
+`,
+  "main.ts": `${IMPORTING_PACKAGES}import { register } from "registry" with { type: "macro" };
+import { registerThrough } from "./through" with { type: "macro" };
+import { found } from "./below/calls";
+console.log(typed(), twoEntries(), twoFormats(), forDevelopment(), found, register("a"), registerThrough("b"), register("c"));
+`,
+};
+
+const expanded: Record<string, { files: Files; prints: string; modes?: string[][]; flags?: string[] }> = {
   "returns a number": {
     files: calling("number", "console.log(number() + 1, typeof number());"),
     prints: "43 number\n",
@@ -158,6 +220,32 @@ console.log(readFileSync("note.txt", "utf8").trim());
     },
     prints: "read at build time\n",
   },
+  // `bun build` without --aot takes "module" and "development", and loads `registry` twice.
+  "functions of packages": {
+    files: callingPackages,
+    prints: "index.ts main.ts index.cjs index.ts below below 1 2 3\n",
+    modes: AOT_ONLY,
+  },
+  "functions of packages with --packages=external": {
+    files: callingPackages,
+    flags: ["--packages=external"],
+    prints: "index.ts main.ts index.cjs index.ts below below 1 2 3\n",
+    modes: AOT_ONLY,
+  },
+  "functions of packages with --external": {
+    files: callingPackages,
+    flags: ["typed", "two-entries", "two-formats", "for-development", "nearest", "only-below", "registry"].flatMap(
+      name => ["--external", name],
+    ),
+    prints: "index.ts main.ts index.cjs index.ts below below 1 2 3\n",
+    modes: AOT_ONLY,
+  },
+  "functions of packages with --conditions=development": {
+    files: callingPackages,
+    flags: ["--conditions=development"],
+    prints: "index.ts main.ts index.cjs dev.ts below below 1 2 3\n",
+    modes: AOT_ONLY,
+  },
   "macro module is evaluated once for two importers": {
     files: {
       "counter.ts": `let calls = 0;
@@ -185,6 +273,19 @@ console.log([first, second].sort().join());
   },
 };
 
+const withoutFileForBunRun: Files = {
+  "node_modules/only-typed/package.json": `{ "name": "only-typed", "exports": { "aot": "./index.aot.ts" } }`,
+  "node_modules/only-typed/index.aot.ts": who("index.aot.ts"),
+  "node_modules/only-for-development/package.json": `{ "name": "only-for-development", "exports": { "development": "./dev.ts" } }`,
+  "node_modules/only-for-development/dev.ts": who("dev.ts"),
+  "main.ts": `import { who as onlyTyped } from "only-typed" with { type: "macro" };
+// @ts-ignore
+import { who as onlyForDevelopment } from "only-for-development" with { type: "macro" };
+console.log(onlyTyped(), onlyForDevelopment());
+`,
+};
+const notFound = ['Macro "only-typed" not found', 'Macro "only-for-development" not found'];
+
 const rejected: Record<string, { files: Files; flags?: string[]; messages: string[] }> = {
   "macro throws": {
     files: calling("throws", "console.log(throws());"),
@@ -196,11 +297,15 @@ const rejected: Record<string, { files: Files; flags?: string[]; messages: strin
   },
   "macro result contains itself": {
     files: calling("returnsCycle", "console.log(returnsCycle());"),
-    messages: ["the macro result of ", "macros.ts", "contains a circular reference"],
+    messages: ['the result of the macro "returnsCycle" of "./macros" contains a circular reference', "main.ts"],
   },
   "export does not exist": {
     files: calling("missing", "console.log(missing());"),
     messages: ["Macro 'missing' not found in"],
+  },
+  "package without a file that bun run takes": {
+    files: withoutFileForBunRun,
+    messages: notFound,
   },
   "argument is not a constant": {
     files: calling("kindsOf", "let x = Date.now();\nconsole.log(kindsOf(x));"),
@@ -232,7 +337,7 @@ console.log(value);
 
 const REACT_STAND_IN = join(import.meta.dir, "..", "react-compiler", "react-stand-in");
 
-const COMPONENT_PROGRAM: Files = {
+const COMPONENT_BUILD: Files = {
   ...Object.fromEntries(
     ["compiler-runtime.js", "jsx-runtime.d.ts", "jsx-runtime.js"].map(name => [
       "react-stand-in/" + name,
@@ -260,7 +365,12 @@ const result = await Bun.build({
 for (const log of result.logs) console.error(String(log));
 process.exit(result.success ? 0 : 1);
 `,
-  "label.ts": `let calls = 0;
+};
+
+const componentPrograms: Record<string, { files: Files; prints: string; modes?: string[] }> = {
+  "component file that calls a macro": {
+    files: {
+      "label.ts": `let calls = 0;
 export function label() {
   return "from the macro";
 }
@@ -268,15 +378,104 @@ export function countCalls() {
   return ++calls;
 }
 `,
-  "Titled.tsx": `import { countCalls, label } from "./label" with { type: "macro" };
+      "Titled.tsx": `import { countCalls, label } from "./label" with { type: "macro" };
 export function Titled(props: { title: string }) {
   const lines = [props.title, label(), countCalls()];
   return <p>{lines.join(" ")}</p>;
 }
 export const callsBehindTitled = countCalls();
 `,
-  "main.ts": `import { Titled, callsBehindTitled } from "./Titled";
+      "main.ts": `import { Titled, callsBehindTitled } from "./Titled";
 console.log(Titled({ title: "shown" }), callsBehindTitled);
+`,
+    },
+    prints: "<p>shown from the macro 1</p> 2\n",
+  },
+  // The parser that compiles the components runs the calls in parentheses, and the load runs those of `main.ts`.
+  "component file and another file call functions of packages": {
+    files: {
+      ...PACKAGES,
+      "Titled.tsx": `${IMPORTING_PACKAGES}export function Titled(props: { title: string }) {
+  const lines = [props.title, (typed)(), (twoEntries)(), (twoFormats)(), (forDevelopment)()];
+  return <p>{lines.join(" ")}</p>;
+}
+`,
+      "main.ts": `${IMPORTING_PACKAGES}import { Titled } from "./Titled";
+console.log(Titled({ title: "shown" }), typed(), twoEntries(), twoFormats(), forDevelopment());
+`,
+    },
+    prints: "<p>shown index.ts main.ts index.cjs index.ts</p> index.ts main.ts index.cjs index.ts\n",
+    modes: ["aot"],
+  },
+};
+
+// A module that a plugin makes up is no file. Its macros are looked for from the folder in its path, like what else it imports.
+const PLUGIN_PROGRAM: Files = {
+  ...PACKAGES,
+  "tsconfig.json": tsconfig(),
+  "build.ts": `import { join } from "node:path";
+const [outfile, mode] = process.argv.slice(2);
+const result = await Bun.build({
+  entrypoints: ["./main.ts"],
+  target: "bun",
+  plugins: [
+    {
+      name: "made-up",
+      setup(build) {
+        const path = join(import.meta.dir, "folder", "made-up.ts");
+        build.onResolve({ filter: /^made-up$/ }, () => ({ path, namespace: "made-up" }));
+        build.onLoad({ filter: /.*/, namespace: "made-up" }, () => ({
+          contents: [
+            'import { where } from "./beside" with { type: "macro" };',
+            ${JSON.stringify(IMPORTING_PACKAGES)},
+            'export const found: string = where() + " " + typed();',
+            'export const taken: string = twoEntries() + " " + twoFormats() + " " + forDevelopment();',
+          ].join("\\n"),
+          loader: "ts",
+        }));
+      },
+    },
+  ],
+  compile: { outfile, aot: mode === "aot" },
+  throw: false,
+});
+for (const log of result.logs) console.error(String(log));
+process.exit(result.success ? 0 : 1);
+`,
+  "folder/beside.ts": `export function where(): string {
+  return "folder/beside.ts";
+}
+`,
+  "beside.ts": `export function where(): string {
+  return "beside.ts";
+}
+`,
+  "main.ts": `// @ts-ignore
+import { found, taken } from "made-up";
+console.log(found);
+console.log(taken);
+`,
+};
+
+// `bun check` runs no program. A branch that stays only where a macro ran another file has a type error.
+const CHECKED_PROGRAM: Files = {
+  ...PACKAGES,
+  "tsconfig.json": tsconfig(),
+  "main.ts": `${IMPORTING_PACKAGES}if (typed() !== "index.ts") typed() satisfies never;
+if (twoEntries() !== "main.ts") twoEntries() satisfies never;
+if (twoFormats() !== "index.cjs") twoFormats() satisfies never;
+if (forDevelopment() !== "index.ts") forDevelopment() satisfies never;
+`,
+};
+
+const TESTED_PROGRAM: Files = {
+  ...PACKAGES,
+  "tsconfig.json": tsconfig(),
+  "packages.test.ts": `import { expect, test } from "bun:test";
+${IMPORTING_PACKAGES}
+test("each macro ran the file that bun test takes", () => {
+  expect([typed(), twoEntries(), twoFormats(), forDevelopment()]).toEqual(["index.ts", "main.ts", "index.cjs", "index.ts"]);
+});
 `,
 };
 
@@ -292,7 +491,7 @@ async function buildAndRun(command: string[], program: string, folder: string, i
 }
 
 describe.concurrent("compile/aot/load/macros", () => {
-  for (const [name, { files, prints, modes = BOTH_MODES }] of Object.entries(expanded)) {
+  for (const [name, { files, prints, modes = BOTH_MODES, flags = [] }] of Object.entries(expanded)) {
     test(
       name,
       () =>
@@ -301,7 +500,7 @@ describe.concurrent("compile/aot/load/macros", () => {
           const folder = String(dir);
           for (const mode of modes) {
             const program = join(folder, exe("program" + mode.length));
-            const command = [bunExe(), "build", "--compile", ...mode, "main.ts", "--outfile", program];
+            const command = [bunExe(), "build", "--compile", ...mode, ...flags, "main.ts", "--outfile", program];
             const ran = await buildAndRun(command, program, folder, mode.length > 0);
             expect({ mode, stdout: ran.stdout, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
               mode,
@@ -315,23 +514,86 @@ describe.concurrent("compile/aot/load/macros", () => {
     );
   }
 
+  for (const [name, { files, prints, modes = ["bundled", "aot"] }] of Object.entries(componentPrograms)) {
+    test(
+      name,
+      () =>
+        slot(async () => {
+          using dir = tempDir("aot-load-macros", { ...COMPONENT_BUILD, ...files });
+          const folder = String(dir);
+          for (const mode of modes) {
+            const program = join(folder, exe("program-" + mode));
+            const ran = await buildAndRun([bunExe(), "build.ts", program, mode], program, folder, mode === "aot");
+            expect({ mode, ...ran }).toEqual({
+              mode,
+              stdout: prints,
+              stderr: expect.stringContaining("[react-compiler] a cache of "),
+              exitCode: 0,
+              signal: null,
+            });
+          }
+        }),
+      600_000,
+    );
+  }
+
   test(
-    "component file that calls a macro",
+    "module that a plugin makes up calls macros",
     () =>
       slot(async () => {
-        using dir = tempDir("aot-load-macros", COMPONENT_PROGRAM);
+        using dir = tempDir("aot-load-macros", PLUGIN_PROGRAM);
         const folder = String(dir);
-        for (const mode of ["bundled", "aot"]) {
+        // `Bun.build` without `aot` takes "module" and "development" for the second line.
+        const prints = {
+          bundled: expect.stringMatching(/^folder\/beside\.ts index\.ts\n/),
+          aot: "folder/beside.ts index.ts\nmain.ts index.cjs index.ts\n",
+        };
+        for (const mode of ["bundled", "aot"] as const) {
           const program = join(folder, exe("program-" + mode));
           const ran = await buildAndRun([bunExe(), "build.ts", program, mode], program, folder, mode === "aot");
-          expect({ mode, ...ran }).toEqual({
+          expect({ mode, stdout: ran.stdout, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
             mode,
-            stdout: "<p>shown from the macro 1</p> 2\n",
-            stderr: expect.stringContaining("[react-compiler] a cache of "),
+            stdout: prints[mode],
             exitCode: 0,
             signal: null,
           });
         }
+      }),
+    600_000,
+  );
+
+  test(
+    "bun check --aot runs the files that a build runs",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-load-macros", CHECKED_PROGRAM);
+        const checked = await spawned([bunExe(), "check", "--aot", "--no-pretty", "main.ts"], String(dir), NO_COLOR);
+        expect({ output: checked.stdout + checked.stderr, exitCode: checked.exitCode }).toEqual({
+          output: expect.stringContaining("No type errors"),
+          exitCode: 0,
+        });
+        using without = tempDir("aot-load-macros", { "tsconfig.json": tsconfig(), ...withoutFileForBunRun });
+        const refused = await spawned(
+          [bunExe(), "check", "--aot", "--no-pretty", "main.ts"],
+          String(without),
+          NO_COLOR,
+        );
+        for (const message of notFound) expect(refused.stdout + refused.stderr).toContain(message);
+        expect(refused.exitCode).toBe(1);
+      }),
+    600_000,
+  );
+
+  test(
+    "bun test --aot runs the files that bun test takes",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-load-macros", TESTED_PROGRAM);
+        const tested = await spawned([bunExe(), "test", "--aot", "./packages.test.ts"], String(dir), NO_COLOR);
+        expect({ output: tested.stdout + tested.stderr, exitCode: tested.exitCode }).toEqual({
+          output: expect.stringContaining("1 pass"),
+          exitCode: 0,
+        });
       }),
     600_000,
   );
@@ -346,7 +608,7 @@ describe.concurrent("compile/aot/load/macros", () => {
           const folder = String(dir);
           const program = join(folder, exe("program"));
           const command = [bunExe(), "build", "--compile", "--aot", ...flags, "main.ts", "--outfile", program];
-          const built = await spawned(command, folder, { ...bunEnv, NO_COLOR: "1" });
+          const built = await spawned(command, folder, NO_COLOR);
           const output = built.stdout + built.stderr;
           expect({
             output,

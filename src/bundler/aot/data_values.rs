@@ -5,7 +5,7 @@ use bun_aot::diagnostic_codes::Code;
 use bun_aot::diagnostics::log_diagnostic;
 use bun_aot::statistics::{LimitId, LimitValues};
 use bun_ast::expr::Data;
-use bun_ast::{E, Expr, ExprNodeList, G, Loc, Log, StoreRef};
+use bun_ast::{E, Expr, ExprNodeList, G, Loc, Log, Source, StoreRef};
 use bun_core::strings::{is_valid_utf8, wtf8_has_surrogate, wtf8_to_utf16, wtf16_to_wtf8};
 use bun_sema::atom::{Atom, Interner, number_to_string};
 use bun_sema::hir_from_data::DataValue;
@@ -317,22 +317,29 @@ pub(crate) fn write_data_value(
     }
 }
 
+/// `source`: the file that the error is reported in, where that is another one than `path` names.
 #[allow(clippy::needless_pass_by_value)] // the end of the error
-pub(crate) fn report_not_data(log: &mut Log, path: &[u8], subject: &str, error: NotData) {
+pub(crate) fn report_not_data(
+    log: &mut Log,
+    source: Option<&Source>,
+    path: &[u8],
+    subject: &str,
+    error: NotData,
+) {
     let path = bstr::BStr::new(path);
     match error {
         NotData::Expression => log.add_error_fmt(
-            None,
+            source,
             Loc::EMPTY,
             format_args!("{subject} of \"{path}\" is not a plain value"),
         ),
         NotData::Cyclic => log.add_error_fmt(
-            None,
+            source,
             Loc::EMPTY,
             format_args!("{subject} of \"{path}\" contains a circular reference"),
         ),
         NotData::TooLarge => log.add_error_fmt(
-            None,
+            source,
             Loc::EMPTY,
             format_args!(
                 "{subject} of \"{path}\" has more than {} values ({})",

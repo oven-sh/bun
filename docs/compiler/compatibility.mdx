@@ -158,6 +158,7 @@ One `require()` of the package is enough for the last row, in any file or packag
 - A folder of your own with a `package.json` follows the same rules: `import "./lib"`.
 - `"exports"` wins over both fields, in an executable and under `bun run`.
 - [`bun test --aot`](/compiler/debugging#what-differs-from-an-executable) loads `"main"`, as `bun test` does.
+- A [macro](/bundler/macros) import runs while the program builds. `bun compile` loads `"main"` for it, as `bun run` does. With `--no-aot`, the build loads `"module"`.
 
 The two files of a package usually export the same things, so this rarely shows. If it does, put `"main"` first:
 

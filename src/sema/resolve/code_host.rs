@@ -367,7 +367,6 @@ pub struct MacroRequest<'a, 's> {
     pub hir: &'a File<'s>,
     pub bound: &'a Bound<'s>,
     pub analysis: &'a FileAnalysis<'s>,
-    pub resolve: &'a dyn Fn(&[u8]) -> Option<Vec<u8>>,
 }
 
 pub struct TransformRequest<'a, 's> {

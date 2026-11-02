@@ -71,9 +71,13 @@ fn convert_defines<'s>(
                 path: define_path(&entry.parts, arena, atoms),
                 value,
             }),
-            Err(error) => {
-                report_not_data(log, &entry.parts.join(&b'.'), "the --define value", error)
-            }
+            Err(error) => report_not_data(
+                log,
+                None,
+                &entry.parts.join(&b'.'),
+                "the --define value",
+                error,
+            ),
         }
     }
     defines

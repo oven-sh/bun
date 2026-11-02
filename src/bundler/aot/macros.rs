@@ -2,7 +2,7 @@ use super::components;
 use super::data_values::{
     DataValueBuilder, ExprBuilder, PortableValue, report_not_data, write_data_value, write_expr,
 };
-use super::services::BuildContext;
+use super::services::{BuildContext, directory_for_resolver, find_as_bun_run};
 use crate::Transpiler;
 use bun_alloc::{Arena, AstAlloc};
 use bun_aot::load::source_provider::{ComponentFile, Failed, MacroCall};
@@ -80,7 +80,8 @@ impl MacroThread {
             .collect();
         let call = PortableCall {
             importer: call.importer.to_vec(),
-            macro_path: call.macro_path.to_vec(),
+            specifier: call.specifier.to_vec(),
+            directory: directory_for_resolver(call.directory),
             export_name: call.export_name.to_vec(),
             arguments,
         };
@@ -243,7 +244,8 @@ unsafe impl Sync for BorrowedParse {}
 
 struct PortableCall {
     importer: Vec<u8>,
-    macro_path: Vec<u8>,
+    specifier: Vec<u8>,
+    directory: Vec<u8>,
     export_name: Vec<u8>,
     arguments: Vec<PortableValue>,
 }
@@ -309,6 +311,7 @@ fn run_jobs(shared: &Shared, mut run_job: impl FnMut(&Work) -> Outcome) {
 #[allow(clippy::needless_pass_by_value)] // the thread's own
 fn thread_main(shared: Arc<Shared>, context: BuildContext) {
     Output::Source::configure_named_thread(zstr!("bun macros"));
+    context.with_transpiler(resolve_as_bun_run);
     // The virtual machine keeps the log pointer of its first call, so every job uses one log.
     let mut log = Log::init();
     run_jobs(&shared, |work| {
@@ -335,12 +338,20 @@ fn thread_main(shared: Arc<Shared>, context: BuildContext) {
         log.reset();
         Outcome { log: owned, answer }
     });
-    context.with_worker(|transpiler, _| {
+    context.with_transpiler(|transpiler| {
         if let Some(macros) = transpiler.macro_context.take() {
             macros.deinit();
         }
     });
     js_parser::Macro::collect_vm_garbage();
+}
+
+/// The macro context of `transpiler` finds the file of a macro with this resolver, which has the options of `bun build`. A macro of a compiled program runs the file that `bun run` takes for it.
+fn resolve_as_bun_run(transpiler: &mut Transpiler<'static>) {
+    let asked_for = &transpiler.options.custom_conditions;
+    find_as_bun_run(&mut transpiler.resolver.opts, asked_for);
+    // "main" where a package has "module" too.
+    transpiler.resolver.prefer_module_field = false;
 }
 
 fn call_macro(
@@ -370,8 +381,8 @@ fn call_macro(
         .as_mut()
         .expect("Worker::create wires it")
         .call(
-            &call.macro_path,
-            source.path.source_dir(),
+            &call.specifier,
+            &call.directory,
             log,
             &source,
             Range::NONE,
@@ -391,7 +402,9 @@ fn call_macro(
     match write_expr(&value, arena, &mut portable) {
         Ok(()) => Ok(portable),
         Err(error) => {
-            report_not_data(log, &call.macro_path, "the macro result", error);
+            let export_name = bstr::BStr::new(&call.export_name);
+            let subject = format!("the result of the macro \"{export_name}\"");
+            report_not_data(log, Some(&source), &call.specifier, &subject, error);
             Err(Failed)
         }
     }
@@ -408,7 +421,8 @@ mod tests {
     fn work_with_contents(contents: Vec<u8>) -> Work {
         Work::Macro(PortableCall {
             importer: Vec::new(),
-            macro_path: Vec::new(),
+            specifier: Vec::new(),
+            directory: Vec::new(),
             export_name: contents,
             arguments: Vec::new(),
         })

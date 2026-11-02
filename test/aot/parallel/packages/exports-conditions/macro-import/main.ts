@@ -1,0 +1,25 @@
+// A macro runs in the build, not in the program. Its import takes the file that `bun run` takes for it: not the "aot" file of a package, and "main" where a package has "module" too.
+import { who as aot } from "m_aot" with { type: "macro" };
+import { who as aotMacro } from "m_aot_macro" with { type: "macro" };
+import { who as macroAot } from "m_macro_aot" with { type: "macro" };
+import { who as macro } from "m_macro" with { type: "macro" };
+import { who as macroNested } from "m_macro_nested" with { type: "macro" };
+import { who as macroSubpath } from "m_macro_subpath/sub" with { type: "macro" };
+import { who as ownImports } from "#who" with { type: "macro" };
+import { who as mainModule } from "m_main_module" with { type: "macro" };
+import { who as twoFormats } from "m_two_formats" with { type: "macro" };
+import { who as moduleIndex } from "m_module_index" with { type: "macro" };
+import { who as folder } from "./vendored" with { type: "macro" };
+import { who as development } from "m_development" with { type: "macro" };
+console.log("m_aot:", aot());
+console.log("m_aot_macro:", aotMacro());
+console.log("m_macro_aot:", macroAot());
+console.log("m_macro:", macro());
+console.log("m_macro_nested:", macroNested());
+console.log("m_macro_subpath/sub:", macroSubpath());
+console.log("#who:", ownImports());
+console.log("m_main_module:", mainModule());
+console.log("m_two_formats:", twoFormats());
+console.log("m_module_index:", moduleIndex());
+console.log("./vendored:", folder());
+console.log("m_development:", development());

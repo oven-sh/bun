@@ -2,8 +2,8 @@ use super::*;
 use crate::import_sites::ImportSiteKind;
 use crate::program::code_test_host::{NATIVE_ADDON_LOADER, RecordedLoaderRequest, TEXT_LOADER};
 use crate::resolve::{
-    CodeFailure, CodeFile, ComputedCandidate, ComputedResolution, ComputedSpelling,
-    ComputedUnknown, ExternalKind, SiteResolution,
+    CodeFailure, CodeFile, CodeImportKind, CodeResolution, ComputedCandidate, ComputedResolution,
+    ComputedSpelling, ComputedUnknown, ExternalKind, HostResolution, SiteResolution,
 };
 
 const ERASED: SiteResolution<'static> = SiteResolution::Constant(CodeResolution::Erased);

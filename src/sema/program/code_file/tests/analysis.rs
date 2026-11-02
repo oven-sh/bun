@@ -4,7 +4,7 @@ use crate::fold::{Constant, Decision};
 use crate::hir_from_data::DataValue;
 use crate::module_format::ModuleFormat;
 use crate::program::code_test_host::TEXT_LOADER;
-use crate::resolve::{EnclosingPackage, ExternalKind};
+use crate::resolve::EnclosingPackage;
 
 const LARGE_STACK_BYTES: usize = 64 << 20;
 const NESTING_DEPTH: usize = 200_000;
@@ -452,43 +452,6 @@ fn jsx_mode_follows_settings() {
         });
         assert_eq!(jsx_mode_of(&automatic, &atoms), expected);
     }
-}
-
-#[test]
-fn macro_import_resolves_to_disk_file_only() {
-    let module = HostModuleId(1);
-    let path = || b"/p/macro.ts".to_vec();
-    let host = StatementsHost {
-        claims: vec![
-            ("claimed-path", HostResolution::Path(path())),
-            (
-                "claimed-source",
-                HostResolution::ModuleSource {
-                    module,
-                    path: path(),
-                },
-            ),
-            ("claimed-module", HostResolution::Module(module)),
-            (
-                "claimed-external",
-                HostResolution::External {
-                    specifier: b"claimed-external".to_vec(),
-                    kind: ExternalKind::UncompiledCode,
-                },
-            ),
-            ("claimed-erased", HostResolution::Erased),
-        ],
-        ..host_of(&[("/p/a.ts", ""), ("/p/macro.ts", "")])
-    };
-    with_context(&host, |context| {
-        let resolve = |specifier: &[u8]| resolve_macro_import(context, b"/p/a.ts", specifier);
-        assert_eq!(resolve(b"./macro.ts"), Some(path()));
-        assert_eq!(resolve(b"./macro"), Some(path()));
-        assert_eq!(resolve(b"./missing.ts"), None);
-        for (specifier, _) in &host.claims {
-            assert_eq!(resolve(specifier.as_bytes()), None, "{specifier}");
-        }
-    });
 }
 
 fn add_class_with_private_field(file: &mut FileBuilder, name: Atom) -> ClassId {

@@ -19,7 +19,7 @@ use bun_js_printer::renamer::{NoOpRenamer, Renamer};
 use bun_js_printer::{self as js_printer, PrintResult};
 use bun_paths::resolve_path::posix_to_platform_in_place;
 use bun_react_compiler::Observer;
-use bun_resolver::options::{ExternalModules, Packages};
+use bun_resolver::options::{BundleOptions as ResolverOptions, ExternalModules, Packages};
 use bun_resolver::package_json::Status;
 use bun_resolver::package_names::RefusedName;
 use bun_resolver::{DataURL, GlobalCache, Resolver, ResultUnion};
@@ -63,9 +63,14 @@ impl BuildContext {
         &self,
         work: impl FnOnce(&mut Transpiler<'static>, &Arena) -> R,
     ) -> R {
+        self.with_transpiler(|transpiler| with_ast_scope(|arena| work(transpiler, arena)))
+    }
+
+    /// `with_worker` for what builds no tree.
+    pub(crate) fn with_transpiler<R>(&self, work: impl FnOnce(&mut Transpiler<'static>) -> R) -> R {
         let mut worker = scopeguard::guard(Worker::get(self.bundle()), |worker| worker.unget());
         let data = worker.data.as_mut().expect("Worker::get creates it");
-        with_ast_scope(|arena| work(&mut data.transpiler, arena))
+        work(&mut data.transpiler)
     }
 }
 
@@ -90,17 +95,8 @@ impl FileFinder {
     /// `transpiler` outlives what is returned and is not written in the meantime.
     pub unsafe fn new(transpiler: &Transpiler<'_>, conditions: &[Vec<u8>]) -> FileFinder {
         let mut options = crate::transpiler::resolver_bundle_options_subset(&transpiler.options);
-        // Whoever asks has taken out what is external and the modules of Bun's own that it has.
-        options.mark_builtins_as_external = false;
-        options.packages = Packages::Bundle;
-        options.external = ExternalModules::default();
+        find_as_bun_run(&mut options, &transpiler.options.custom_conditions);
         options.preserve_symlinks = transpiler.resolver.opts.preserve_symlinks;
-        // `bun build` adds "development" by itself. A compiled program runs the files that `bun run` runs.
-        let mut asked_for = transpiler.options.custom_conditions.iter();
-        if !asked_for.any(|condition| **condition == *b"development") {
-            options.conditions.import.swap_remove(b"development");
-            options.conditions.require.swap_remove(b"development");
-        }
         for condition in conditions {
             options.conditions.import.insert(condition, ());
             options.conditions.require.insert(condition, ());
@@ -128,11 +124,7 @@ impl FileFinder {
             unsafe { Resolver::scoped_log(&raw mut *resolver, NonNull::from(&mut unread_log)) };
         resolver.prefer_module_field = search.prefers_module_field;
         resolver.esm_failure = None;
-        let mut directory = to_native(search.directory).to_vec();
-        posix_to_platform_in_place(&mut directory);
-        if directory.last() != Some(&bun_paths::SEP) {
-            directory.push(bun_paths::SEP);
-        }
+        let directory = directory_for_resolver(to_native(search.directory));
         let result = resolver.resolve_and_auto_install(
             &directory,
             search.specifier,
@@ -158,6 +150,32 @@ impl FileFinder {
             },
         }
     }
+}
+
+/// Makes the options of `bun build` find the file that `bun run` loads. `asked_for`: the conditions that the build names.
+pub(crate) fn find_as_bun_run(options: &mut ResolverOptions, asked_for: &[Box<[u8]>]) {
+    // Whoever asks for a file of the program has taken out what is external and the modules of Bun's own. Nothing is external to a macro.
+    options.mark_builtins_as_external = false;
+    options.packages = Packages::Bundle;
+    options.external = ExternalModules::default();
+    // `bun build` adds "development" by itself.
+    if !asked_for
+        .iter()
+        .any(|condition| **condition == *b"development")
+    {
+        options.conditions.import.swap_remove(b"development");
+        options.conditions.require.swap_remove(b"development");
+    }
+}
+
+/// A directory as Bun's resolver takes the one that it looks from.
+pub(crate) fn directory_for_resolver(native: &[u8]) -> Vec<u8> {
+    let mut directory = native.to_vec();
+    posix_to_platform_in_place(&mut directory);
+    if directory.last() != Some(&bun_paths::SEP) {
+        directory.push(bun_paths::SEP);
+    }
+    directory
 }
 
 fn describe_failure(status: Status) -> FoundCode {
@@ -526,10 +544,12 @@ impl SourceProvider for BundlerServices {
 
 #[cfg(test)]
 mod tests {
-    use super::{BundlerServices, with_ast_scope, with_test_context};
+    use super::{BundlerServices, find_as_bun_run, with_ast_scope, with_test_context};
+    use crate::transpiler::resolver_bundle_options_subset;
     use bun_aot::SourceProvider;
     use bun_aot::load::source_provider::ModuleName;
     use bun_ast::{E, Expr, ExprData, Loc};
+    use bun_resolver::options::Packages;
 
     fn allocate_array() -> Expr {
         Expr::init(E::Array::default(), Loc::EMPTY)
@@ -552,6 +572,36 @@ mod tests {
                 assert!(services.shut_down().is_empty());
             },
         );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn options_of_build_find_as_bun_run() {
+        for (asked_for, stays) in [(&b"custom"[..], false), (b"development", true)] {
+            let is_kept = with_test_context(
+                |options| {
+                    (options.conditions.append_slice(&[b"development"])).expect("a short list");
+                    options.packages = crate::options::PackagesOption::External;
+                    (options.external.node_modules.insert(b"left-out")).expect("a short set");
+                },
+                |context| {
+                    let mut options = resolver_bundle_options_subset(context.options());
+                    assert!(options.conditions.import.contains(b"development"));
+                    find_as_bun_run(&mut options, &[Box::from(asked_for)]);
+                    assert!(matches!(options.packages, Packages::Bundle));
+                    assert!(!options.mark_builtins_as_external);
+                    assert!(!options.external.node_modules.contains(b"left-out"));
+                    let conditions = &options.conditions;
+                    assert!(conditions.import.contains(b"bun"));
+                    assert_eq!(
+                        conditions.import.contains(b"development"),
+                        conditions.require.contains(b"development")
+                    );
+                    conditions.import.contains(b"development")
+                },
+            );
+            assert_eq!(is_kept, stays);
+        }
     }
 
     #[test]

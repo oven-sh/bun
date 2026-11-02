@@ -9,9 +9,8 @@ use crate::hir_from_data::HostValue;
 use crate::import_sites::{AutomaticJsx, JsxMode, find_exported_requires};
 use crate::module_format::{DeclaredModuleType, ModuleFormat};
 use crate::resolve::{
-    CodeImportForm, CodeImportKind, CodeParseRequest, CodeRequest, CodeResolution, HostPayload,
-    HostResolution, JsxRuntime, JsxSettings, MacroRequest, ParsedCode, TransformRequest,
-    TranspileSettings, TreeChange,
+    CodeParseRequest, HostPayload, JsxRuntime, JsxSettings, MacroRequest, ParsedCode,
+    TransformRequest, TranspileSettings, TreeChange,
 };
 use std::cmp::Ordering;
 
@@ -451,7 +450,6 @@ fn analyze_with_host<'s>(
         host, ref atoms, ..
     } = context;
     let settings = tree.request.settings;
-    let resolve = |specifier: &[u8]| resolve_macro_import(context, path, specifier);
     let mut is_transformed = false;
     loop {
         let (bound, analysis) = analyze_file(&mut tree.hir, bind, fold, file, atoms, arena);
@@ -468,7 +466,6 @@ fn analyze_with_host<'s>(
                 hir: &tree.hir,
                 bound: &bound,
                 analysis: &analysis,
-                resolve: &resolve,
             };
             let new_values = host.run_macros(arena, atoms, &request, &mut tree.payload);
             let merged = merge_host_values(file.host_values, new_values, arena);
@@ -526,29 +523,6 @@ pub(super) fn import_meta_main(
         (true, MainModule::EntryPoint, 1) if file.path.len() != key.path.len() => None,
         (true, MainModule::EntryPoint, 1) => Some(true),
         (true, MainModule::EntryPoint | MainModule::EntryPointOfProcessOrWorker, _) => None,
-    }
-}
-
-fn resolve_macro_import(
-    context: &CodeLoadContext<'_, '_, '_>,
-    importer: &[u8],
-    specifier: &[u8],
-) -> Option<Vec<u8>> {
-    let request = CodeRequest {
-        specifier,
-        importer,
-        directory: &context.host.directory_of(importer),
-        kind: CodeImportKind::Import,
-        form: CodeImportForm::Macro,
-    };
-    match context.host.resolve_code(&request) {
-        HostResolution::Unclaimed => {}
-        _ => return None,
-    }
-    match context.resolver.resolve_code(&request) {
-        CodeResolution::File(found) if found.host_module.is_some() => None,
-        CodeResolution::File(found) => Some(found.path.to_vec()),
-        _ => None,
     }
 }
 

@@ -153,7 +153,7 @@ fn parse_structured_value<'s>(
             return Err(Failed);
         };
         data_value_from_expr(&root, scratch, arena, atoms).map_err(|error| {
-            report_not_data(log, source.path.text, "the value", error);
+            report_not_data(log, None, source.path.text, "the value", error);
             Failed
         })
     })

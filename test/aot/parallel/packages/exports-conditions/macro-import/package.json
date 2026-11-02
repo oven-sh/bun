@@ -1,0 +1,10 @@
+{
+  "name": "program",
+  "version": "1.0.0",
+  "imports": {
+    "#who": {
+      "macro": "./who.macro.ts",
+      "default": "./who.ts"
+    }
+  }
+}

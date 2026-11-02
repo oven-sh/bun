@@ -1429,13 +1429,6 @@ impl Layers {
         Layers::Borrowed(bun_ptr::BackRef::from(p))
     }
 
-    /// Drop owned (arena-backed, so no-op) and
-    /// install a fresh owned value.
-    #[inline]
-    pub(crate) fn replace(&mut self, new: Vec<bun_css::LayerName>) {
-        *self = Layers::Owned(new);
-    }
-
     /// If borrowed, deep-clone into an owned
     /// list and return `&mut` to it; if already owned, return as-is.
     pub(crate) fn to_owned(&mut self) -> &mut Vec<bun_css::LayerName> {

@@ -1180,6 +1180,7 @@ b {
 }
 
 /* entry.css */
+
 `);
     },
   });
@@ -1362,6 +1363,7 @@ c {
 }
 
 /* entry.css */
+
 `);
     },
   });
@@ -1399,6 +1401,7 @@ c {
 @import "https://example.com/print.css" print;
 
 /* entry.css */
+
 `);
     },
   });
@@ -1690,6 +1693,7 @@ c {
 }
 
 /* entry.css */
+
 `);
     },
   });
@@ -2532,7 +2536,7 @@ describe("bundler", () => {
   });
 
   // Each case prints the layers in the order of the source files. `.t` gets the same color from `out` as from them.
-  const layerOrderCases: Record<string, { files: Record<string, string>; out: string; todo?: string }> = {
+  const layerOrderCases: Record<string, { files: Record<string, string>; out: string }> = {
     StatementBeforeImport: {
       files: {
         "/entry.css": /* css */ `
@@ -2611,7 +2615,7 @@ describe("bundler", () => {
       },
       out: "@layer a;@layer b{.g{c:d}}.leaf{c:d}.f{c:d}",
     },
-    // Each entry under a bare "layer" is a layer of its own, so the statements stay with the rules they order.
+    // A statement ahead of the imports stays ahead of them in the one anonymous layer.
     StatementInAnonymousLayerImport: {
       files: {
         "/entry.css": /* css */ `
@@ -2626,7 +2630,7 @@ describe("bundler", () => {
         `,
         "/leaf.css": `.leaf { c: d }`,
       },
-      out: "@layer{.leaf{c:d}}@layer{@layer p,q;@layer q{.x{c:e}}@layer p{.x{c:f}}}.z{c:d}",
+      out: "@layer{@layer p,q;.leaf{c:d}@layer q{.x{c:e}}@layer p{.x{c:f}}}.z{c:d}",
     },
     // A copy with no layer does not cover a list under "layer(w)": the list is what declares "w" ahead of "u".
     ListForADuplicateImportUnderLayer: {
@@ -2700,7 +2704,6 @@ describe("bundler", () => {
       out: "@layer a;@layer c;@layer{@layer c;@layer a{.t{color:#00f}}}@layer c;@layer a{.t{color:#00f}}@layer c{.t{color:red}}",
     },
     FileWithImportsUnderBareLayerAndBare: {
-      todo: 'a file with imports under a bare "layer" prints as several anonymous layers',
       files: {
         "/entry.css": /* css */ `
           @layer a;
@@ -2716,7 +2719,6 @@ describe("bundler", () => {
       out: "@layer a;@layer{@layer a{.t{color:#00f}}@layer a{@layer c{.t{color:red}}}}@layer a{.t{color:#00f}}@layer a{@layer c{.t{color:red}}}",
     },
     ImportantUnderBareLayer: {
-      todo: 'two imports with a bare "layer" count as equal, though each one is a layer of its own',
       files: {
         "/entry.css": /* css */ `
           @import "./f2.css" layer;
@@ -2730,6 +2732,87 @@ describe("bundler", () => {
         "/f2.css": `.t { color: blue !important }`,
       },
       out: "@layer{.t{color:#00f!important}}@layer a;@layer{.t{color:#00f!important}}@layer a{.t{color:red!important}}",
+    },
+    // Each visit of a bare "layer" is a layer of its own, so a copy in one does not cover a copy in the other.
+    TwoBareImportsOfFilesWithOneImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.css" layer;
+          @import "./b.css" layer;
+        `,
+        "/a.css": /* css */ `
+          @import "./leaf.css";
+          .a { c: d }
+        `,
+        "/b.css": /* css */ `
+          @import "./leaf.css";
+          .b { c: d }
+        `,
+        "/leaf.css": `.leaf { c: d }`,
+      },
+      out: "@layer{.leaf{c:d}.a{c:d}}@layer{.leaf{c:d}.b{c:d}}",
+    },
+    SameFileVisitedTwiceWithABareImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.css";
+          @import "./z.css";
+          @import "./a.css";
+        `,
+        "/a.css": /* css */ `
+          @import "./leaf.css" layer;
+          .a { c: d }
+        `,
+        "/leaf.css": `.leaf { c: d }`,
+        "/z.css": `.z { c: d }`,
+      },
+      out: "@layer{.leaf{c:d}}.z{c:d}@layer{.leaf{c:d}}.a{c:d}",
+    },
+    // "p" and "q" of the first x.css order the layers inside the block, where the later copy prints.
+    MaskedCopyInsideABareImport: {
+      files: {
+        "/entry.css": `@import "./lib.css" layer;`,
+        "/lib.css": /* css */ `
+          @import "./x.css";
+          @import "./y.css";
+          @import "./x.css";
+        `,
+        "/x.css": /* css */ `
+          @layer p, q;
+          @layer q { .x { c: d } }
+        `,
+        "/y.css": `@layer q { .y { c: d } } @layer p { .y { c: e } }`,
+      },
+      out: "@layer{@layer p,q,q;@layer q{.y{c:d}}@layer p{.y{c:e}}@layer p,q;@layer q{.x{c:d}}}",
+    },
+    BlocksInsideAndOutsideABareImport: {
+      files: {
+        "/entry.css": `@import "./mid.css" screen;`,
+        "/mid.css": /* css */ `
+          @import "./lib.css" layer(w) supports(display: grid);
+          .mid { c: d }
+        `,
+        "/lib.css": /* css */ `
+          @import "./one.css" layer;
+          .lib { c: d }
+        `,
+        "/one.css": /* css */ `
+          @import "./two.css" print;
+          @import "./three.css" layer;
+          .one { c: d }
+        `,
+        "/two.css": `.two { c: d }`,
+        "/three.css": /* css */ `
+          @import "./four.css";
+          .three { c: d }
+        `,
+        "/four.css": `.four { c: d }`,
+      },
+      out:
+        "@media screen{@supports (display:grid){@layer w{@layer{@media print{.two{c:d}}" +
+        "@layer{.four{c:d}.three{c:d}}.one{c:d}}}}}" +
+        "@media screen{@supports (display:grid){@layer w{.lib{c:d}}}}" +
+        "@media screen{.mid{c:d}}",
     },
     // An "@import" that closes a cycle is not loaded, but it still declares its layer.
     CyclicLayeredImport: {
@@ -2791,9 +2874,8 @@ describe("bundler", () => {
       out: "@layer a;@layer{.t{color:#00f}}@layer a{.t{color:red}}",
     },
   };
-  for (const [name, { files, out, todo }] of Object.entries(layerOrderCases)) {
+  for (const [name, { files, out }] of Object.entries(layerOrderCases)) {
     itBundled(`css/CSSAtLayerOrder${name}`, {
-      todo: !!todo,
       files,
       outfile: "/out.css",
       minifyWhitespace: true,
@@ -2802,6 +2884,39 @@ describe("bundler", () => {
       },
     });
   }
+
+  itBundled("css/CSSAtLayerBareImportPrintsOneIndentedBlock", {
+    files: {
+      "/entry.css": `@import "./lib.css" layer print;`,
+      "/lib.css": /* css */ `
+        @import "./leaf.css";
+        .lib { color: red }
+      `,
+      "/leaf.css": `@layer a { .leaf { color: red } }`,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toBe(`/* leaf.css */
+@media print {
+  @layer {
+    @layer a {
+      .leaf {
+        color: red;
+      }
+    }
+
+/* lib.css */
+    .lib {
+      color: red;
+    }
+  }
+}
+
+/* entry.css */
+
+`);
+    },
+  });
 
   // esbuild's TestCSSAtLayerBeforeImportBundle, with its snapshot.
   itBundled("css/CSSAtLayerBeforeImportBundle", {

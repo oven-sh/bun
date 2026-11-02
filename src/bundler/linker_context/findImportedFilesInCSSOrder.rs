@@ -7,7 +7,7 @@ use bun_collections::{ArrayHashMap, StringArrayHashMap, VecExt};
 use bun_core::{StackCheck, handle_oom};
 
 use crate::Graph::Graph;
-use crate::bun_css::css_parser::BundlerCssRule;
+use crate::bun_css::css_parser::{BundlerCssRule, ImportRule};
 use crate::bun_css::{BundlerStyleSheet, ImportConditions, LayerName};
 use crate::chunk::{CssImportOrder, CssImportOrderKind, Layers};
 use crate::linker_context_mod::debug;
@@ -94,6 +94,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         has_external_import: bool,
         visited: Vec<Index>,
         order: Vec<CssImportOrder<'a>>,
+        anonymous_layers: u32,
 
         stack_check: StackCheck,
         /// Set when the stack is nearly exhausted. The traversal then unwinds
@@ -121,6 +122,24 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                 conditions: unsafe { bitwise_copy(wrapping_conditions) },
                 condition_import_records: Vec::new(),
             });
+        }
+
+        /// Every visit of a bare "layer" makes a new anonymous layer, also when it
+        /// is the same rule or its conditions look the same.
+        fn append_conditions(
+            &mut self,
+            conditions: &mut Vec<ImportConditions>,
+            import_rule: &ImportRule,
+        ) {
+            // SAFETY: never dropped (see the note at `bitwise_copy`).
+            let mut appended = unsafe { bitwise_copy(&import_rule.conditions) };
+            if appended.has_anonymous_layer()
+                && let Some(layer) = &mut appended.layer
+            {
+                self.anonymous_layers += 1;
+                layer.anonymous_id = self.anonymous_layers;
+            }
+            conditions.append_assume_capacity(appended);
         }
 
         /// Returns false if the traversal stopped because the chain is too deep.
@@ -193,14 +212,8 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             };
             let top_level_rules = &repr.rules;
 
-            // Any pre-import layers come first. In an anonymous layer each entry
-            // would be a layer of its own, so the statements stay in the file.
-            if !repr.layers_pre_import.is_empty()
-                && !wrapping_conditions
-                    .slice()
-                    .iter()
-                    .any(ImportConditions::has_anonymous_layer)
-            {
+            // Any pre-import layers come first.
+            if !repr.layers_pre_import.is_empty() {
                 // See the `LayerName` note where the duplicate pass borrows `layer_names`.
                 let layers =
                     core::ptr::NonNull::from(&repr.layers_pre_import).cast::<Vec<LayerName>>();
@@ -235,10 +248,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                             );
 
                             // Append these import conditions to the state
-                            // SAFETY: never dropped (see the note at `bitwise_copy`).
-                            nested_conditions.append_assume_capacity(unsafe {
-                                bitwise_copy(&import_rule.conditions)
-                            });
+                            self.append_conditions(&mut nested_conditions, import_rule);
                             let followed = self.visit_import(
                                 source_index,
                                 record,
@@ -274,10 +284,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                             let mut all_conditions =
                                 fork_conditions(wrapping_conditions, self.arena);
                             let all_import_records = shallow_clone_records(wrapping_import_records);
-                            // SAFETY: never dropped (see the note at `bitwise_copy`).
-                            all_conditions.append_assume_capacity(unsafe {
-                                bitwise_copy(&import_rule.conditions)
-                            });
+                            self.append_conditions(&mut all_conditions, import_rule);
                             self.order.push(CssImportOrder {
                                 kind: CssImportOrderKind::ExternalPath(record.path),
                                 conditions: all_conditions,
@@ -360,6 +367,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         all_import_records: all_import_records_slice,
         has_external_import: false,
         order: Vec::new(),
+        anonymous_layers: 0,
         stack_check: StackCheck::init(),
         too_deep: None,
     };
@@ -551,32 +559,23 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                         continue 'next_forward;
                     }
 
-                    // Truncate the conditions at the first anonymous layer
-                    for (i, conditions) in entry.conditions.slice().iter().enumerate() {
-                        // The layer is anonymous if it's a "layer" token without any
-                        // children instead of a "layer(...)" token with children:
-                        //
-                        //   /* entry.css */
-                        //   @import "foo.css" layer;
-                        //
-                        //   /* foo.css */
-                        //   @layer foo;
-                        //
-                        // We don't need to generate this (as far as I can tell):
-                        //
-                        //   @layer {
-                        //     @layer foo;
-                        //   }
-                        //
-                        if conditions.has_anonymous_layer() {
-                            // SAFETY: `i < entry.conditions.len() <= capacity`;
-                            // shrinking exposes no uninitialized range. The
-                            // truncated tail is arena-owned (`fork_conditions`)
-                            // and bulk-freed with the arena, so skipping `Drop` is sound.
-                            unsafe { entry.conditions.set_len((i as u32) as usize) };
-                            layers.replace(Vec::new());
-                            break;
-                        }
+                    // With no names to declare, truncate the conditions at the
+                    // first anonymous layer. The layer is anonymous if it's a
+                    // "layer" token without any children instead of a
+                    // "layer(...)" token with children. Names stay: they order
+                    // the layers of the block that the entry shares.
+                    if layers.inner().is_empty()
+                        && let Some(i) = entry
+                            .conditions
+                            .slice()
+                            .iter()
+                            .position(ImportConditions::has_anonymous_layer)
+                    {
+                        // SAFETY: `i < entry.conditions.len() <= capacity`;
+                        // shrinking exposes no uninitialized range. The
+                        // truncated tail is arena-owned (`fork_conditions`)
+                        // and bulk-freed with the arena, so skipping `Drop` is sound.
+                        unsafe { entry.conditions.set_len(i) };
                     }
 
                     // If there are no layer names for this file, trim all conditions

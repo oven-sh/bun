@@ -2440,3 +2440,37 @@ test.concurrent("a package.json of about 16384 bytes is read to its last byte", 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: JSON.stringify(sizes) + "\n", stderr: "", exitCode: 0 });
 });
+
+// The second of those reads asked for one byte more than the file has, so a third read() returned nothing.
+const countsReads = isLinux && /^syscr: /m.test(readFileSync("/proc/self/io", "utf8"));
+test.skipIf(!countsReads)("a package.json of 16384 bytes takes no more read() calls than a short one", async () => {
+  const sizes = [2000, 16383, 40000];
+  const files: Record<string, string> = {
+    "main.js": `
+      const fs = require("node:fs");
+      const reads = () => Number(/^syscr: (\\d+)/m.exec(fs.readFileSync("/proc/self/io", "utf8"))[1]);
+      const counts = ${JSON.stringify(sizes)}.map(size => {
+        const before = reads();
+        require("pkg-" + size);
+        return reads() - before;
+      });
+      console.log(JSON.stringify(counts.map(count => count - counts[0])));
+    `,
+  };
+  for (const size of sizes) {
+    const head = `{"name":"pkg-${size}","description":"`;
+    const tail = `","main":"./entry.js"}`;
+    files[`node_modules/pkg-${size}/package.json`] = head + Buffer.alloc(size - head.length - tail.length, "d") + tail;
+    files[`node_modules/pkg-${size}/entry.js`] = `module.exports = ${size};`;
+  }
+  using dir = tempDir("resolve-package-json-reads", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "[0,0,0]\n", stderr: "", exitCode: 0 });
+});

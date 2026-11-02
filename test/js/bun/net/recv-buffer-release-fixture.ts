@@ -49,7 +49,7 @@ async function overUDP() {
 }
 
 async function settle(tails: Tails) {
-  const deadline = performance.now() + 30_000;
+  const deadline = performance.now() + 10_000;
   let settled = resident(tails);
   while ((settled.recv || settled.tls) && performance.now() < deadline) {
     await Bun.sleep(20);

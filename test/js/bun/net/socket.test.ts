@@ -393,6 +393,8 @@ describe.concurrent("socket", () => {
       expect(second).toEqual({ recv: 0, tls: 0 });
       expect(exitCode).toBe(0);
     },
+    // Two releases are two seconds on any build, and the fixture waits 10 s for each before it reports a failure.
+    60_000,
   );
 
   it("reload() should preserve active_connections (no UAF / counter underflow)", async () => {

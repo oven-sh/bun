@@ -315,7 +315,21 @@ describe("transpiler cache", () => {
     );
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("(/* token */ a)");
     expect(newCacheCount()).toBe(1);
+
+    // A run that does not take the entry writes it again. A cache hit reads the window stream of the source map only
+    // to map a position (see "cached sourcemap with a corrupted body"), so other bytes there stay if the run took the entry.
+    const entry = join(cache_dir, readdirSync(cache_dir)[0]);
+    const marked = readFileSync(entry);
+    const sourceMapAt = Number(marked.readBigUInt64LE(54));
+    const sourceMapEnd = sourceMapAt + Number(marked.readBigUInt64LE(62));
+    const streamAt = sourceMapAt + marked.readUInt32LE(sourceMapAt + 28);
+    expect(streamAt).toBeLessThan(sourceMapEnd);
+    expect(sourceMapEnd).toBeLessThanOrEqual(marked.length);
+    marked.fill(0xff, streamAt, sourceMapEnd);
+    writeFileSync(entry, marked);
+
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("(/* token */ a)");
+    expect(readFileSync(entry).equals(marked)).toBeTrue();
     expect(newCacheCount()).toBe(0);
   });
   test("--feature flag invalidates cache", () => {

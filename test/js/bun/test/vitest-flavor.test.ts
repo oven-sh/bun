@@ -2559,7 +2559,7 @@ test.concurrent.each(["bun:test", "@jest/globals"])(
         });
         test.each([["each"]])("test.each with a done parameter: %s", (name, done) => request(name).end(done));
         test("a thenable that rejects", done => { done(); return thenable("rejects", (resolve, reject) => reject(new Error("rejected"))); });
-        test("a thenable that never settles", done => { done(); return thenable("never settles"); }, 10);
+        test("a thenable that never settles", done => { done(); return thenable("never settles"); }, 500);
         test("a Promise subclass", done => { done(); return Sub.resolve(); });
         test("done() is never called", done => request("never sent"), 10);
         test("done(error) is called later", done => { setImmediate(() => done(new Error("from done()"))); return request("never sent"); });

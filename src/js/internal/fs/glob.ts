@@ -812,10 +812,11 @@ class Glob {
     }
   }
 
-  // Only a walk with `maxDepth` on Windows or macOS pays for the second generator.
+  // Only a walk with `maxDepth` on Windows or macOS pays for the second generator. The constructor made its result set.
   glob() {
-    const results = this.#results;
-    return limiterAsksFileSystem && results instanceof LimitedResultSet ? this.#globLimited(results) : this.#glob();
+    return limiterAsksFileSystem && this.#depthLimiter !== null
+      ? this.#globLimited(this.#results as LimitedResultSet)
+      : this.#glob();
   }
   // The walker stays at its match while this waits for the file system, as it does at Node's `await` there.
   async *#globLimited(results: LimitedResultSet) {

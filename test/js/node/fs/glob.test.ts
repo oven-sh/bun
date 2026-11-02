@@ -1041,16 +1041,12 @@ describe("maxDepth", () => {
         stderr: "pipe",
       });
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      // The generator has a wrapper of the same name with some 60 bytes of bytecode. The body is the large one.
-      const bytes = [
-        ...stderr.matchAll(
-          /^Optimized #iterateSubpatterns#\w+:\[[^\]]*, (\d+)[^\]]*\] using DFG with DFG into (\d+) bytes/gm,
-        ),
-      ]
-        .filter(match => Number(match[1]) > 1000)
-        .map(match => Number(match[2]));
+      // The generator has a small wrapper of the same name. The body is the large one.
+      const bytes = [...stderr.matchAll(/^Optimized #iterateSubpatterns#.* using DFG .* into (\d+) bytes/gm)].map(
+        match => Number(match[1]),
+      );
       // With no such line, the report itself says why.
-      return { bytes: bytes.at(-1) ?? stderr, exitCode };
+      return { bytes: bytes.length ? Math.max(...bytes) : stderr, exitCode };
     }
     const [atTheDefaultLimit, withNothingInlined] = await Promise.all([dfgCodeOfTheBody(), dfgCodeOfTheBody("1")]);
     expect({

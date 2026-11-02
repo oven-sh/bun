@@ -2552,6 +2552,7 @@ bool Bun__deepMatch(
                 case AsymmetricMatcherResult::FAIL:
                     return false;
                 case AsymmetricMatcherResult::PASS:
+                    state.recordIfAsked(obj, subsetObj, property, subsetProp, jsNull());
                     // continue to next subset prop
                     continue;
                 case AsymmetricMatcherResult::NOT_MATCHER:
@@ -2561,6 +2562,7 @@ bool Bun__deepMatch(
                 if (auto matched = matchUserAsymmetricMatcher(globalObject, throwScope, prop, subsetProp)) [[unlikely]] {
                     if (!*matched)
                         return false;
+                    state.recordIfAsked(obj, subsetObj, property, subsetProp, jsNull());
                     continue;
                 }
             }
@@ -3601,24 +3603,28 @@ static JSObject* shallowCopyForDeepMatch(JSGlobalObject* globalObject, ThrowScop
 }
 
 // Returns `root` with matched properties replaced by their asymmetric matchers, copying only the objects that change.
-static JSValue replaceMatchedProperties(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, JSValue root, JSValue rootPattern)
+// A record with a null patternOfValue is for the diff of a failed match only. A snapshot keeps the received value there.
+static JSValue replaceMatchedProperties(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, JSValue root, JSValue rootPattern, bool matched)
 {
     using Pair = std::pair<EncodedJSValue, EncodedJSValue>;
     auto pairAt = [&](size_t index) { return Pair { JSValue::encode(state.recorded.at(index)), JSValue::encode(state.recorded.at(index + 1)) }; };
-    auto matchedMatcher = [&](size_t record) { return state.recorded.at(record * 4 + 3).isUndefined(); };
+    auto isReplaced = [&](size_t record) {
+        JSValue patternOfValue = state.recorded.at(record * 4 + 3);
+        return patternOfValue.isUndefined() || (patternOfValue.isNull() && !matched);
+    };
     size_t records = state.recordedNames.size();
 
     // Keyed by (object, pattern), since an object that appears twice can meet a different pattern in each place.
     std::map<Pair, JSObject*> copies;
     for (size_t i = 0; i < records; i++) {
-        if (matchedMatcher(i))
+        if (isReplaced(i))
             copies.emplace(pairAt(i * 4), nullptr);
     }
     // Also copy every object that leads to one of those. Runs to a fixed point because of cycles.
     for (bool changed = true; changed;) {
         changed = false;
         for (size_t i = records; i-- > 0;) {
-            if (!matchedMatcher(i) && copies.contains(pairAt(i * 4 + 2)) && copies.emplace(pairAt(i * 4), nullptr).second)
+            if (!isReplaced(i) && copies.contains(pairAt(i * 4 + 2)) && copies.emplace(pairAt(i * 4), nullptr).second)
                 changed = true;
         }
     }
@@ -3635,7 +3641,7 @@ static JSValue replaceMatchedProperties(JSGlobalObject* globalObject, ThrowScope
         if (holder == copies.end() || !holder->second)
             continue;
         JSValue value = state.recorded.at(i * 4 + 2);
-        if (!matchedMatcher(i)) {
+        if (!isReplaced(i)) {
             auto nested = copies.find(pairAt(i * 4 + 2));
             if (nested == copies.end() || !nested->second)
                 continue;
@@ -3660,7 +3666,7 @@ bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSVal
     bool matched = Bun__deepMatch<true>(obj, subset, globalObject, scope, state, false);
     RETURN_IF_EXCEPTION(scope, false);
     if (replaced) {
-        JSValue shown = matched == replaceWhen ? replaceMatchedProperties(globalObject, scope, state, obj, subset) : obj;
+        JSValue shown = matched == replaceWhen ? replaceMatchedProperties(globalObject, scope, state, obj, subset, matched) : obj;
         RETURN_IF_EXCEPTION(scope, false);
         *replaced = JSValue::encode(shown);
     }

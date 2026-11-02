@@ -3937,6 +3937,81 @@ describe("expect()", () => {
 `,
       );
     });
+    describe("the diff leaves out a property that matched", () => {
+      const isOne = { asymmetricMatch: (/** @type {unknown} */ value) => value === 1 };
+      class IsOne {
+        asymmetricMatch(/** @type {unknown} */ value) {
+          return value === 1;
+        }
+      }
+      const changedRows = (/** @type {object} */ received, /** @type {object} */ expected) => {
+        let message = "";
+        try {
+          expect(received).toMatchObject(expected);
+        } catch (error) {
+          message = Bun.stripANSI(ANY(error).message);
+        }
+        return message.split("\n").filter(line => /^[-+] /.test(line));
+      };
+      const onlyB = ['-   "b": 3,', '+   "b": 2,', "- Expected  - 1", "+ Received  + 1"];
+
+      test_skipIf(!isBun).each([
+        ["an object with an asymmetricMatch() method", { a: 1, c: 5, b: 2 }, { a: isOne, c: expect.any(Number), b: 3 }],
+        ["an asymmetricMatch() method of a class", { a: 1, b: 2 }, { a: new IsOne(), b: 3 }],
+        [
+          "asymmetricMatch() in a nested object and in an array",
+          { o: { a: 1, list: [1, 2] }, b: 2 },
+          { o: { a: isOne, list: [isOne, 2] }, b: 3 },
+        ],
+        ["asymmetricMatch() in the received value", { a: isOne, b: 2 }, { a: 1, b: 3 }],
+        ["a matcher of expect in the received value", { a: expect.any(Number), b: 2 }, { a: 1, b: 3 }],
+        [
+          "a matcher of expect in the received value that matched an object",
+          { a: expect.any(Object), b: 2 },
+          { a: { k: 1 }, b: 3 },
+        ],
+      ])("through %s", (_, received, expected) => {
+        expect(changedRows(received, expected)).toEqual(onlyB);
+      });
+
+      test_skipIf(!isBun)("also when the pattern leaves out a key of the received value", () => {
+        expect(changedRows({ a: 1, extra: 0, b: 2 }, { a: isOne, b: 3 })).toEqual([
+          '-   "b": 3,',
+          '+   "b": 2,',
+          '+   "extra": 0,',
+          "- Expected  - 1",
+          "+ Received  + 2",
+        ]);
+      });
+
+      test_skipIf(!isBun)("and keeps a property that a matcher rejected", () => {
+        expect(changedRows({ a: 2, b: 2 }, { a: isOne, b: 2 })).toEqual([
+          '-   "a": {',
+          '-     "asymmetricMatch": [Function],',
+          "-   },",
+          '+   "a": 2,',
+          "- Expected  - 3",
+          "+ Received  + 1",
+        ]);
+        expect(changedRows({ a: expect.any(String), b: 2 }, { a: 1, b: 2 })).toEqual([
+          '-   "a": 1,',
+          '+   "a": Any<String>,',
+          "- Expected  - 1",
+          "+ Received  + 1",
+        ]);
+      });
+
+      test_skipIf(!isBun)("and changes neither the received value nor the pattern", () => {
+        const anyNumber = expect.any(Number);
+        const received = Object.freeze({ a: 1, inner: Object.freeze({ n: anyNumber }), b: 2 });
+        const pattern = Object.freeze({ a: isOne, inner: Object.freeze({ n: 5 }), b: 3 });
+        expect(changedRows(received, pattern)).toEqual(onlyB);
+        expect(received.a).toBe(1);
+        expect(received.inner.n).toBe(anyNumber);
+        expect(pattern.a).toBe(isOne);
+        expect(pattern.inner.n).toBe(5);
+      });
+    });
     test("leaves the received object as it is", () => {
       class Point {
         x = 1;

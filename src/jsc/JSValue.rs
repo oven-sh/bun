@@ -2793,6 +2793,8 @@ impl JSValue {
     /// `JSValue.jestDeepMatch` — `expect(a).toMatchObject(b)` /
     /// snapshot-property-matcher subset comparison. Also returns the value to print for `self`. If the result
     /// equals `replace_when`, that's a copy with `subset`'s asymmetric matchers in place of what they matched.
+    /// The copy of a failed match also has `subset`'s value wherever an `asymmetricMatch()` method or a matcher
+    /// in `self` matched.
     pub fn jest_deep_match(
         self,
         subset: JSValue,

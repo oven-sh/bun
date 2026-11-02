@@ -4824,8 +4824,8 @@ it.concurrent("the path passed to onLoad is still valid after the module is free
   });
 });
 
-// A specifier is read as the loader reads it: its query is neither its extension nor its namespace, and an extension
-// can start with a digit.
+// onLoad is asked about a key whose query has a dot or a colon in it, and about a path whose extension starts with a
+// digit.
 describe.concurrent("what onResolve and onLoad are asked about", () => {
   // (--no-install: nothing here may ask the registry, whatever a build under test does with a bare name.)
   async function run(files: Record<string, string>, args: string[], cwd = ".") {
@@ -4852,6 +4852,11 @@ describe.concurrent("what onResolve and onLoad are asked about", () => {
     "./plain.ts?t=12:30",
     // https://github.com/oven-sh/bun/issues/37699
     "./plain.ts?mtime=1786494961337.0317",
+    "./plain.ts?v=x.4",
+    "./plain.ts?v=1.4a",
+    "./plain.ts?v=1..",
+    "./plain.ts?v=1.x.4",
+    "./plain.ts?123.456",
     // https://github.com/oven-sh/bun/issues/4609
     "./video.3gp",
     "./ok.yaml.1",
@@ -4907,6 +4912,42 @@ describe.concurrent("what onResolve and onLoad are asked about", () => {
       stderr: "",
       exitCode: 0,
     });
+  });
+
+  // https://github.com/oven-sh/bun/issues/37699
+  it("is such a file by its absolute path in a compiled executable", async () => {
+    using dir = tempDir("plugin-asked-compiled", {
+      "plain.ts": `export const from = "disk";`,
+      "main.ts": `
+        Bun.plugin({
+          name: "asked",
+          setup(build) {
+            build.onLoad({ filter: /plain\\.ts/ }, () => ({ contents: "export const from = 'onLoad';", loader: "js" }));
+          },
+        });
+        for (const specifier of process.argv.slice(2)) console.log((await import(specifier)).from);
+      `,
+    });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--outfile", "asked", "main.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [buildErrors, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+    expect({ buildErrors, buildExitCode }).toEqual({ buildErrors: expect.any(String), buildExitCode: 0 });
+
+    const plain = resolve(String(dir), "plain.ts");
+    await using proc = Bun.spawn({
+      cmd: [resolve(String(dir), isWindows ? "asked.exe" : "asked"), plain + "?v=123.456", plain + "?t=12:30"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "onLoad\nonLoad\n", stderr: "", exitCode: 0 });
   });
 
   // https://github.com/oven-sh/bun/issues/4609

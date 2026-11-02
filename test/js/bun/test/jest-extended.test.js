@@ -137,6 +137,16 @@ describe("jest-extended", () => {
     }
   });
 
+  if (isBun) {
+    test("toBeOneOf() rejects a list that is not an array or an iterable object", () => {
+      const message = "Expected value must be an array or an iterable object: ";
+      // A string is not a list, also when the received value is a string.
+      expect(() => expect("a").toBeOneOf("abc")).toThrow(message + '"abc"');
+      expect(() => expect("a").not.toBeOneOf("abc")).toThrow(message + '"abc"');
+      expect(() => expect(1).toBeOneOf(1)).toThrow(message + "1");
+    });
+  }
+
   test("toBeNil()", () => {
     expect(null).toBeNil();
     expect(undefined).toBeNil();

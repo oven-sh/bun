@@ -312,7 +312,7 @@ interface QueuedSend {
   port: number | undefined;
   address: string | null | undefined;
   req: SendRequest;
-  // The async context of the send(), where node makes the request that it completes: https://github.com/nodejs/node/blob/v26.3.0/lib/dgram.js#L738
+  // The async context of a send() that has a callback, where node makes the request that it completes: https://github.com/nodejs/node/blob/v26.3.0/lib/dgram.js#L738
   frame: unknown;
 }
 
@@ -348,7 +348,14 @@ function saveStoresOfHandle(handle: UDPHandle, frame: unknown) {
 // Bun.udpSocket() takes the socket's Bun.ModuleGraph from the async context: the socket opens in the graph of the caller, entered over the stores of createSocket().
 function openInStoresOfHandle(stores: unknown, udpOptions: any) {
   inCurrentModuleGraph ??= $newCppFunction("ModuleGraph.cpp", "jsFunctionAsyncContextInCurrentModuleGraph", 1);
-  return require("internal/async_context_frame").run(inCurrentModuleGraph!(stores), Bun.udpSocket, Bun, udpOptions);
+  const AsyncContextFrame = require("internal/async_context_frame");
+  // Not AsyncContextFrame.run(): handed `Bun` or `process` as a value, an ahead-of-time build keeps every member of it, and the apply() in run() hides the type of what the call returns.
+  const previous = AsyncContextFrame.exchange(inCurrentModuleGraph!(stores));
+  try {
+    return Bun.udpSocket(udpOptions);
+  } finally {
+    AsyncContextFrame.exchange(previous);
+  }
 }
 
 function newHandle(type: string, lookup: LookupFunction | undefined) {
@@ -480,7 +487,14 @@ function handleQueueSend(
   // same way.
   const length = data.byteLength;
   handle.sendQueue ??= [];
-  handle.sendQueue.push({ data, length, port, address, req, frame: $getInternalField($asyncContext, 0) });
+  handle.sendQueue.push({
+    data,
+    length,
+    port,
+    address,
+    req,
+    frame: req.callback ? $getInternalField($asyncContext, 0) : undefined,
+  });
   handle.queueCount += 1;
   handle.queueSize += length;
   return 0;
@@ -539,10 +553,16 @@ function completeQueuedSend(handle: UDPHandle, entry: QueuedSend, err: unknown) 
     const sent = err === undefined ? entry.length : 0;
     const frame = entry.frame;
     // Queued inside the frame of the send(), so that what the callback throws is reported in it too. The frames are equal in every program without AsyncLocalStorage and Bun.ModuleGraph, which never loads the helper.
-    if (frame === $getInternalField($asyncContext, 0)) process.nextTick(runQueuedSendComplete, req, err, sent);
+    if (!req.callback || frame === $getInternalField($asyncContext, 0))
+      process.nextTick(runQueuedSendComplete, req, err, sent);
     else {
-      const run = require("internal/async_context_frame").run;
-      run(frame, process.nextTick, process, runQueuedSendComplete, req, err, sent);
+      const AsyncContextFrame = require("internal/async_context_frame");
+      const previous = AsyncContextFrame.exchange(frame);
+      try {
+        process.nextTick(runQueuedSendComplete, req, err, sent);
+      } finally {
+        AsyncContextFrame.exchange(previous);
+      }
     }
   }
 }

@@ -80,8 +80,7 @@ pub(crate) struct RunningEntry {
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Reaction {
     None,
-    /// Only reactions with no function for a rejection, such as `.finally(f)` and `.then(f)`, down to promises with
-    /// no reaction. Each rejects the promise it returned with the same error, so nothing can handle the rejection.
+    /// Only reactions that reject the promise they returned with the same error, such as `.finally(f)` and `.then(f)`.
     PassesOn,
     /// Something that can handle it, such as `.catch(f)` or an `await`.
     MayHandle,
@@ -250,8 +249,7 @@ impl RunningEntry {
     }
 
     /// `failure` is the matcher's error when nothing can handle the rejection of its promise, so it has to be reported here.
-    /// With `ends_test`, a test that reports it is over even if its function still runs.
-    fn release(self, global: &JSGlobalObject, failure: Option<JSValue>, ends_test: bool) {
+    fn release(self, global: &JSGlobalObject, failure: Option<JSValue>, ends_running_test: bool) {
         let Some(buntest) = self.buntest.upgrade() else {
             return;
         };
@@ -281,7 +279,7 @@ impl RunningEntry {
                 // take(), so the entry ends only once even if several matchers release before the runner's next step.
                 let ends = (none_left || sequence.maybe_skip)
                     && core::mem::take(&mut sequence.callback_done);
-                (ends || (ends_test && sequence.active_entry == sequence.test_entry))
+                (ends || (ends_running_test && sequence.active_entry == sequence.test_entry))
                     .then_some(self.entry)
             }
             // During collection the runner isn't waiting on these yet, so there's nothing to wake.
@@ -749,8 +747,7 @@ impl ExpectDeferred {
         match held {
             Some(held) if reaction != Reaction::MayHandle => {
                 if reaction == Reaction::PassesOn {
-                    // The reactions still reject the promises they returned with the error. The entry reports the
-                    // failure, so those rejections are not errors of their own.
+                    // The entry reports the failure, so the rejections that the reactions pass on are not errors of their own.
                     let on_copy = private_function(global, generated::Bun__ExpectDeferred__onCopy)
                         .bind(
                             global,
@@ -761,8 +758,7 @@ impl ExpectDeferred {
                         )?;
                     ExpectDeferred__watchCopies(global, promise, on_copy);
                 }
-                // What those reactions pass on is an unhandled rejection to the event loop, and that ends the test
-                // that runs. So does this report of it.
+                // This report replaces an unhandled rejection, and one of those ends the test that runs.
                 held.release(global, Some(error), reaction == Reaction::PassesOn);
                 settle.reject_as_handled(global, error)
             }
@@ -940,9 +936,7 @@ pub(crate) fn on_settled(cx: &mut JsScope<'_>, _value: JsLocal<'_>, deferred: Js
     Ok(())
 }
 
-/// Runs when a promise that `ExpectDeferred__watchCopies` watches has settled. `error` is bound: what the call failed
-/// with. The entry that waited for the call has reported it, so a rejection with it is handled. A rejection with
-/// anything else, such as what a `.finally()` callback threw, is one of its own and stays unhandled.
+/// `error` is bound: what the call failed with. Its entry has reported it, so only a rejection with it is handled here.
 pub(crate) fn on_copy(
     _cx: &mut JsScope<'_>,
     error: JsLocal<'_>,

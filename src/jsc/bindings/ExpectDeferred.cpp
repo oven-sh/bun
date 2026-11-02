@@ -80,8 +80,7 @@ static JSPromise* passesRejectionOnTo(InternalMicrotask task, JSValue cell, JSVa
     }
 }
 
-// Whether nothing can handle a rejection of `promise`: each reaction on it only passes the rejection on, to a promise
-// for which the same is true. `end` gets the promises with no reaction, which is where the rejection ends up.
+// Whether every reaction down from `promise` only passes a rejection on. `end` gets each promise that the rejection ends up at.
 template<typename Functor>
 static bool onlyPassesRejectionOn(JSPromise* promise, const Functor& end, unsigned depth = 0)
 {
@@ -129,9 +128,7 @@ extern "C" bool ExpectDeferred__onlyPassesRejectionOn(EncodedJSValue promise)
     return onlyPassesRejectionOn(uncheckedDowncast<JSPromise>(JSValue::decode(promise)), [](JSPromise*) {});
 }
 
-// For a promise that only passes its rejection on: `onCopy(value, end)` runs when `end`, a promise that the rejection
-// ends up at, settles. This reaction does not count as a handler. A rejection of `end` stays unhandled until a reaction
-// of user code or ExpectDeferred__markHandled() takes it.
+// Calls `onCopy(value, end)` when `end`, a promise that a rejection of `promise` ends up at, settles.
 extern "C" void ExpectDeferred__watchCopies(JSGlobalObject* globalObject, EncodedJSValue promise, EncodedJSValue onCopy)
 {
     auto& vm = getVM(globalObject);
@@ -142,6 +139,7 @@ extern "C" void ExpectDeferred__watchCopies(JSGlobalObject* globalObject, Encode
         auto* end = uncheckedDowncast<JSPromise>(ends.at(i));
         // `onCopy` for a fulfilment too: without a function, JSC passes the value on to a promise, and there is none.
         end->performPromiseThenWithContext(vm, globalObject, JSValue::decode(onCopy), JSValue::decode(onCopy), jsUndefined(), end);
+        // That reaction is not a handler: a rejection of `end` stays unhandled until user code or ExpectDeferred__markHandled() takes it.
         end->setFlags(end->flags() & ~JSPromise::isHandledFlag);
     }
 }

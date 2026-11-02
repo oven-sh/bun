@@ -1,6 +1,7 @@
 import { escapeHTML } from "bun" with { type: "macro" };
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import defaultMacro, {
@@ -584,6 +585,137 @@ test("a macro in a module transpiled off the main thread sees --define", async (
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ lastLine: stdout.trim().split("\n").pop(), stderr }).toEqual({ lastLine: "prod", stderr: "" });
   expect(exitCode).toBe(0);
+});
+
+// A module that `import()` loads is transpiled on a pool thread, from a copy of the main thread's
+// transpiler. The `paths` of a resolve that the main thread makes at that time are for that resolve
+// only: the module still finds its macro in its own directory.
+//
+// Nothing here waits for time to pass. The pool has two threads. One reads a FIFO until the end.
+// The other transpiles holds-the-thread.ts, whose macro waits to write to the FIFO of gate-1. So
+// uses-a-macro.ts waits for a thread. The resolver reads the tsconfig.json of each directory it
+// visits, and what that extends: in gate-1 and gate-2 that is a FIFO, and a read of a FIFO waits
+// for a writer. The main thread, inside the resolve, first lets holds-the-thread.ts finish, which
+// starts uses-a-macro.ts, and then waits in gate-2 for the first macro of uses-a-macro.ts.
+describe.skipIf(isWindows)("a module transpiled while the main thread resolves with paths", () => {
+  async function run(
+    resolveWithPaths: string,
+    macroSpecifier: "./the-macro.ts" | "the-macro",
+    macroIsResolved: "during the call" | "after the call",
+  ) {
+    const afterTheCall = macroIsResolved === "after the call";
+    const macro = (found: string) => `export function macro() {\n  return "${found}";\n}\n`;
+    const manifest = `{ "name": "the-macro", "main": "index.ts" }\n`;
+    using dir = tempDir("macro-during-resolve-paths", {
+      "own/the-macro.ts": macro("own-dir"),
+      "own/node_modules/the-macro/package.json": manifest,
+      "own/node_modules/the-macro/index.ts": macro("own-dir"),
+      "other/the-macro.ts": macro("paths-dir"),
+      "other/node_modules/the-macro/package.json": manifest,
+      "other/node_modules/the-macro/index.ts": macro("paths-dir"),
+      "gate-1/tsconfig.json": `{ "extends": "./fifo.json" }\n`,
+      "gate-2/tsconfig.json": `{ "extends": "./fifo.json" }\n`,
+      "own/holds-the-thread.ts": [
+        `import { writeFileSync } from "node:fs" with { type: "macro" };`,
+        `writeFileSync("holds-the-thread.started", "");`,
+        `writeFileSync("gate-1/fifo.json", "{}");`,
+        ``,
+      ].join("\n"),
+      "own/uses-a-macro.ts": [
+        `import { readFileSync, writeFileSync } from "node:fs" with { type: "macro" };`,
+        `import { macro } from "${macroSpecifier}" with { type: "macro" };`,
+        `writeFileSync("gate-2/fifo.json", "{}");`,
+        // Waits for the main thread to write to it, which it does after the call.
+        afterTheCall ? `readFileSync("returned.fifo", "utf8");` : ``,
+        `export const value = macro();`,
+        ``,
+      ].join("\n"),
+      "main.cjs": `
+        const fs = require("node:fs");
+        const path = require("node:path");
+        const until = async condition => { while (!condition()) await new Promise(resolve => setImmediate(resolve)); };
+        (async () => {
+          const parked = fs.promises.readFile("parked.fifo");
+          let writeEnd;
+          await until(() => {
+            try {
+              writeEnd = fs.openSync("parked.fifo", fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+            } catch (error) {
+              // No pool thread reads it yet.
+              if (error.code !== "ENXIO") throw error;
+            }
+            return writeEnd !== undefined;
+          });
+          const holder = import("./own/holds-the-thread.ts");
+          await until(() => fs.existsSync("holds-the-thread.started"));
+          const user = import("./own/uses-a-macro.ts");
+          await new Promise(resolve => setImmediate(resolve));
+          const paths = ["gate-1", "gate-2", "other"].map(name => path.resolve(name));
+          try {
+            ${resolveWithPaths};
+          } catch (error) {
+            if (error.code !== "MODULE_NOT_FOUND") throw error;
+          }
+          ${afterTheCall ? `fs.writeFileSync("returned.fifo", "");` : ``}
+          console.log((await user).value);
+          await holder;
+          fs.closeSync(writeEnd);
+          await parked;
+        })();
+      `,
+    });
+    for (const fifo of ["parked.fifo", "gate-1/fifo.json", "gate-2/fifo.json", "returned.fifo"])
+      mkfifo(path.join(String(dir), fifo));
+    await using proc = Bun.spawn({
+      // A lookup of the package that misses must not go on to the registry.
+      cmd: [bunExe(), "--no-install", "main.cjs"],
+      env: {
+        ...bunEnv,
+        UV_THREADPOOL_SIZE: "2",
+        ...(afterTheCall
+          ? {
+              // ASAN does not see libpas free `paths`. It sees the system allocator do it.
+              Malloc: "1",
+              // symbolize=0: a symbolized report of a debug build takes longer than the test may.
+              // detect_leaks=0: with `Malloc`, LeakSanitizer also counts what WebKit never frees.
+              ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":"),
+            }
+          : {}),
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Debug builds also print "[macro] call <name>" to stdout.
+    return { lastLine: stdout.trim().split("\n").pop(), stderr, exitCode };
+  }
+
+  const requireResolve = `require.resolve("./no-such-file", { paths })`;
+  test.concurrent.each([
+    ["in its own directory during require.resolve()", requireResolve, "./the-macro.ts", "during the call"],
+    [
+      "in its own directory during require()",
+      `require("./no-such-file", { paths })`,
+      "./the-macro.ts",
+      "during the call",
+    ],
+    [
+      "in its own directory during Module._resolveFilename()",
+      `require("node:module")._resolveFilename("./no-such-file", module, false, { paths })`,
+      "./the-macro.ts",
+      "during the call",
+    ],
+    ["in its own node_modules during require.resolve()", requireResolve, "the-macro", "during the call"],
+    // The call has freed `paths` by then.
+    ["in its own directory after require.resolve() returned", requireResolve, "./the-macro.ts", "after the call"],
+  ] as const)("finds its macro %s", async (_name, resolveWithPaths, macroSpecifier, macroIsResolved) => {
+    expect(await run(resolveWithPaths, macroSpecifier, macroIsResolved)).toEqual({
+      lastLine: "own-dir",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 // `Bun.build()` parses on the process-wide worker pool. The macro VM a worker creates takes the

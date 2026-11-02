@@ -5518,6 +5518,7 @@ impl VirtualMachine {
         is_esm: bool,
         is_a_file_path: bool,
         global_cache: bun_resolver::GlobalCache,
+        paths: Option<&[bun_core::String]>,
     ) -> crate::CrateResult<()> {
         use bun_js_parser::Macro;
         use bun_resolver::{ResultUnion, node_fallbacks};
@@ -5600,6 +5601,7 @@ impl VirtualMachine {
                 normalized_specifier,
                 import_kind,
                 global_cache,
+                paths,
             ) {
                 ResultUnion::Success(r) => break r,
                 ResultUnion::Failure(e) => return Err(e.into()),
@@ -5616,11 +5618,14 @@ impl VirtualMachine {
                         continue;
                     }
                     if !retry_on_not_found {
-                        if let Some(chai) = self.resolve_chai_next_to_vitest(
-                            normalized_specifier,
-                            source_to_use,
-                            import_kind,
-                        ) {
+                        // `paths` replaces the importer, which is where that lookup starts.
+                        if paths.is_none()
+                            && let Some(chai) = self.resolve_chai_next_to_vitest(
+                                normalized_specifier,
+                                source_to_use,
+                                import_kind,
+                            )
+                        {
                             break chai;
                         }
                         return Err(crate::CrateError::ModuleNotFound);
@@ -5747,12 +5752,19 @@ impl VirtualMachine {
             b"vitest/package.json",
             kind,
             GlobalCache::disable,
+            None,
         ) else {
             return None;
         };
         let vitest_dir =
             bun_resolver::fs::PathName::init(vitest.path_const()?.text).dir_with_trailing_slash();
-        match resolver.resolve_and_auto_install(vitest_dir, b"chai", kind, GlobalCache::disable) {
+        match resolver.resolve_and_auto_install(
+            vitest_dir,
+            b"chai",
+            kind,
+            GlobalCache::disable,
+            None,
+        ) {
             ResultUnion::Success(chai) => Some(chai),
             _ => None,
         }
@@ -5760,13 +5772,15 @@ impl VirtualMachine {
 
     /// Module-resolution core: resolves `specifier` relative to `source`, with
     /// path-length checks when `IS_A_FILE_PATH`. `Ok(Err(value))` is a
-    /// resolution failure to be thrown/rejected with `value`.
+    /// resolution failure to be thrown/rejected with `value`. `paths` is the `paths` option of
+    /// `require.resolve()`: the directories to look in, in place of the directory of `source`.
     pub fn resolve_maybe_needs_trailing_slash<const IS_A_FILE_PATH: bool>(
         global: &JSGlobalObject,
         specifier: &bun_core::String,
         source: &bun_core::String,
         mut query_string: Option<&mut bun_core::String>,
         mode: ResolveMode,
+        paths: Option<&[bun_core::String]>,
     ) -> JsResult<Result<bun_core::String, JSValue>> {
         if let Some(resolved) = Self::resolve_with_on_resolve::<IS_A_FILE_PATH>(
             global,
@@ -5775,6 +5789,7 @@ impl VirtualMachine {
             query_string.as_deref_mut(),
             mode,
             false,
+            paths,
         )? {
             return Ok(resolved);
         }
@@ -5785,10 +5800,12 @@ impl VirtualMachine {
             query_string,
             mode,
             global.bun_vm().transpiler.resolver.opts.global_cache,
+            paths,
         )
     }
 
     /// `None` when no `onResolve` claims `specifier`, or `same_is_no_answer` is set and it returns `specifier` unchanged.
+    /// `paths` is where the path that a callback returns is looked up. A resolve that a callback makes has its own.
     pub(crate) fn resolve_with_on_resolve<const IS_A_FILE_PATH: bool>(
         global: &JSGlobalObject,
         specifier: &bun_core::String,
@@ -5796,6 +5813,7 @@ impl VirtualMachine {
         query_string: Option<&mut bun_core::String>,
         mode: ResolveMode,
         same_is_no_answer: bool,
+        paths: Option<&[bun_core::String]>,
     ) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
         let answer = match run_on_resolve(global, specifier, source)? {
             None => return Ok(None),
@@ -5834,6 +5852,7 @@ impl VirtualMachine {
             query_string,
             mode,
             global_cache,
+            paths,
         )?;
         // Not on disk, for an `onLoad` to serve.
         if resolved.is_err() && global.has_on_load(&answer.to_utf8())? {
@@ -5849,6 +5868,7 @@ impl VirtualMachine {
         query_string: Option<&mut bun_core::String>,
         mode: ResolveMode,
         global_cache: bun_resolver::GlobalCache,
+        paths: Option<&[bun_core::String]>,
     ) -> JsResult<Result<bun_core::String, JSValue>> {
         const MAX_LEN: usize = (bun_paths::MAX_PATH_BYTES as f64 * 1.5) as usize;
         // `data:` URLs carry the module source inline and never touch the
@@ -5994,6 +6014,7 @@ impl VirtualMachine {
             mode.is_esm(),
             IS_A_FILE_PATH,
             global_cache,
+            paths,
         );
         if let Err(err) = resolve_result {
             let import_kind = mode.import_kind();
@@ -8365,11 +8386,10 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
         .to_js())
 }
 
-/// Keeps a resolve made inside an `onResolve` callback from inheriting the outer resolve's state.
+/// The VM is inside an `onResolve` callback for as long as this lives.
 struct OnResolveScope<'a> {
     vm: &'a VirtualMachine,
     was_in_on_resolve: bool,
-    custom_dir_paths: Option<&'static [bun_core::String]>,
 }
 
 impl<'a> OnResolveScope<'a> {
@@ -8377,7 +8397,6 @@ impl<'a> OnResolveScope<'a> {
         Self {
             vm,
             was_in_on_resolve: vm.is_in_on_resolve.replace(true),
-            custom_dir_paths: vm.as_mut().transpiler.resolver.custom_dir_paths.take(),
         }
     }
 }
@@ -8385,7 +8404,6 @@ impl<'a> OnResolveScope<'a> {
 impl Drop for OnResolveScope<'_> {
     fn drop(&mut self) {
         self.vm.is_in_on_resolve.set(self.was_in_on_resolve);
-        self.vm.as_mut().transpiler.resolver.custom_dir_paths = self.custom_dir_paths;
     }
 }
 

@@ -138,6 +138,7 @@ impl FileFinder {
             search.specifier,
             kind,
             GlobalCache::disable,
+            None,
         );
         let failure = resolver.esm_failure.take();
         let result = match result {

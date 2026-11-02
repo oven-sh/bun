@@ -1350,6 +1350,7 @@ extern "C" fn Zig__GlobalObject__resolve(
         source,
         Some(query),
         crate::virtual_machine::ResolveMode::Esm,
+        None,
     ) {
         Ok(Ok(path)) => *res = ErrorableString::ok(path),
         Ok(Err(value)) => *res = ErrorableString::err(value),
@@ -1404,6 +1405,7 @@ extern "C" fn Bun__resolveWithOnResolve(
         Some(query),
         crate::virtual_machine::ResolveMode::Esm,
         true,
+        None,
     ) {
         Ok(None) => return false,
         Ok(Some(Ok(path))) => *res = ErrorableString::ok(path),

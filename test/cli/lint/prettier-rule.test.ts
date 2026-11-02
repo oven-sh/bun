@@ -209,6 +209,16 @@ describe.concurrent("prettier/prettier", () => {
       { ".prettierrc": `{ "plugins": ["prettier-plugin-of-theirs"] }` },
       "the Prettier config uses a plugin that bun fmt does not include",
     ],
+    [
+      "a plugin's language in a template",
+      installed(),
+      {
+        ".prettierrc": `{ "plugins": ["@prettier/plugin-pug"] }`,
+        "node_modules/@prettier/plugin-pug/package.json": "{}",
+        "a.js": "const a = markdown`\n\\`\\`\\`pug\ndiv\n  span hello\n\\`\\`\\`\n`;\n",
+      },
+      "the Prettier config uses a plugin that bun fmt does not include",
+    ],
   ])("runs the package's rule: %s", async (_, packages, more, why) => {
     const files = { "a.js": "const a = {b:1}\n", ...packages, ...more, "eslint.config.mjs": config() };
     // The note is only printed in the formats meant for people.

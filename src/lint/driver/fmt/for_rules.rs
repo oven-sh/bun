@@ -295,6 +295,7 @@ impl<'e> ForRules<'e> {
             Ok((text, _)) if text == request.text => Ok(Formatted::Same),
             Ok((text, _)) => Ok(Formatted::Text(text)),
             Err(Failure::Syntax(_)) => Err(Reason::SyntaxError),
+            Err(Failure::NeedsPlugin(_)) => Err(Reason::Plugin),
             Err(Failure::Bug | Failure::Changed(_) | Failure::Unread(_)) => Err(Reason::Unverified),
         }
     }

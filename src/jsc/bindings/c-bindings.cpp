@@ -997,8 +997,7 @@ extern "C" void onExitSignal(int sig)
     Bun__raiseDefaultAction(sig);
 }
 
-// With a TTY on a stdio fd this replaces an inherited SIG_IGN too, as it always did, so a `&` job in a
-// package script still dies on Ctrl-C. Without a TTY, SIG_IGN stays.
+// With a TTY this replaces an inherited SIG_IGN too, as before, so a `&` job in a package script dies on Ctrl-C.
 extern "C" void bun_install_exit_signal_handler(int sig)
 {
     const bool anyTTY = bun_stdio_tty[0] || bun_stdio_tty[1] || bun_stdio_tty[2];

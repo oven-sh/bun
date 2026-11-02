@@ -606,6 +606,34 @@ unsafe extern "C" fn highway_scanner_run_stops(
 }
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
+unsafe extern "C" fn highway_yaml_marks(p: *const u8, len: usize, out: *mut u8, plane_len: usize) {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    let text = unsafe { bytes(p, len) };
+    // SAFETY: `out` has four bitmaps, `plane_len` bytes apart, each with 8 bytes per 64 bytes of text.
+    let planes =
+        unsafe { core::slice::from_raw_parts_mut(out, 3 * plane_len + len.div_ceil(64) * 8) };
+    for (block, chunk) in text.chunks(64).enumerate() {
+        // What is past the end of the text counts as NUL.
+        let mut marks = [
+            u64::MAX.checked_shl(chunk.len() as u32).unwrap_or(0),
+            0,
+            0,
+            0,
+        ];
+        for (i, &c) in chunk.iter().enumerate() {
+            marks[0] |= u64::from(c < b' ') << i;
+            marks[1] |= u64::from(c == b' ') << i;
+            marks[2] |= u64::from(matches!(c, b':' | b'#')) << i;
+            marks[3] |= u64::from(matches!(c, b'"' | b'\'' | b'\\')) << i;
+        }
+        for (plane, marks) in marks.iter().enumerate() {
+            let at = plane * plane_len + block * 8;
+            planes[at..at + 8].copy_from_slice(&marks.to_le_bytes());
+        }
+    }
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
 unsafe extern "C" fn highway_index_of_any_char(
     p: *const u8,
     len: usize,

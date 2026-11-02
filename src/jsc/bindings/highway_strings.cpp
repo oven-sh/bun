@@ -1040,6 +1040,55 @@ void ScannerRunStopsImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, uint
     }
 }
 
+// YamlMarksImpl for the 64 bytes at `block`: 8 bytes for each bitmap, the first at `plane`.
+static HWY_INLINE void YamlMarksOfBlock(const uint8_t* HWY_RESTRICT block, uint8_t* HWY_RESTRICT plane, size_t plane_len)
+{
+    const hn::CappedTag<uint8_t, 64> d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_space = hn::Set(d, uint8_t { ' ' });
+    const auto vec_colon = hn::Set(d, uint8_t { ':' });
+    const auto vec_hash = hn::Set(d, uint8_t { '#' });
+    const auto vec_double_quote = hn::Set(d, uint8_t { '"' });
+    const auto vec_single_quote = hn::Set(d, uint8_t { '\'' });
+    const auto vec_backslash = hn::Set(d, uint8_t { '\\' });
+
+    uint64_t control = 0, space = 0, indicator = 0, quote = 0;
+    for (size_t i = 0; i < 64; i += N) {
+        const auto vec = hn::LoadU(d, block + i);
+        control |= hn::BitsFromMask(d, hn::Lt(vec, vec_space)) << i;
+        space |= hn::BitsFromMask(d, hn::Eq(vec, vec_space)) << i;
+        indicator |= hn::BitsFromMask(d, hn::Or(hn::Eq(vec, vec_colon), hn::Eq(vec, vec_hash))) << i;
+        quote |= hn::BitsFromMask(d, hn::Or(hn::Or(hn::Eq(vec, vec_double_quote), hn::Eq(vec, vec_single_quote)), hn::Eq(vec, vec_backslash))) << i;
+    }
+
+    std::memcpy(plane, &control, 8);
+    std::memcpy(plane + plane_len, &space, 8);
+    std::memcpy(plane + 2 * plane_len, &indicator, 8);
+    std::memcpy(plane + 3 * plane_len, &quote, 8);
+}
+
+// What src/format/yaml/direct.rs tells the lines of YAML apart by: one pass over the text instead of a loop over
+// the bytes of each line. Writes four bitmaps, `plane_len` bytes apart, with one bit per byte of the text (bit i of
+// byte j is byte 8 * j + i):
+//   plane 0: a control character
+//   plane 1: a space
+//   plane 2: `:` or `#`
+//   plane 3: `"`, `'` or `\`
+// Each plane gets ceil(text_len / 64) * 8 bytes. What is past the end of the text counts as NUL.
+void YamlMarksImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, uint8_t* HWY_RESTRICT out, size_t plane_len)
+{
+    const size_t whole_blocks = text_len / 64;
+    for (size_t i = 0; i < whole_blocks; ++i) {
+        YamlMarksOfBlock(text + 64 * i, out + 8 * i, plane_len);
+    }
+    if (const size_t rest = text_len % 64) {
+        uint8_t last_block[64] = {};
+        std::memcpy(last_block, text + 64 * whole_blocks, rest);
+        YamlMarksOfBlock(last_block, out + 8 * whole_blocks, plane_len);
+    }
+}
+
 // What the formatter in src/format takes a closer look at: everything but the printable characters of
 // ASCII other than the backslash, and tab, line feed and carriage return.
 static constexpr ScannerNibbles kOddByte = [] {
@@ -2685,6 +2734,7 @@ HWY_EXPORT(ScannerRunStopsImpl);
 HWY_EXPORT(VisibleLatin1WidthExcludeANSIImpl);
 HWY_EXPORT(VisibleLatin1WidthImpl);
 HWY_EXPORT(VisibleUTF16WidthImpl);
+HWY_EXPORT(YamlMarksImpl);
 
 } // namespace bun
 #include "BufferStringSearch.h"
@@ -2880,6 +2930,11 @@ size_t highway_index_of_interesting_character_in_multiline_comment(const uint8_t
 void highway_scanner_run_stops(const uint8_t* HWY_RESTRICT text, size_t text_len, uint8_t* HWY_RESTRICT out, size_t plane_len)
 {
     BUN_HWY_DISPATCH(ScannerRunStopsImpl)(text, text_len, out, plane_len);
+}
+
+void highway_yaml_marks(const uint8_t* HWY_RESTRICT text, size_t text_len, uint8_t* HWY_RESTRICT out, size_t plane_len)
+{
+    BUN_HWY_DISPATCH(YamlMarksImpl)(text, text_len, out, plane_len);
 }
 
 void highway_odd_blocks(const uint8_t* HWY_RESTRICT text, size_t text_len, uint64_t* HWY_RESTRICT out)

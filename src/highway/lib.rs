@@ -59,6 +59,8 @@ unsafe extern "C" {
 
     fn highway_scanner_run_stops(text: *const u8, text_len: usize, out: *mut u8, plane_len: usize);
 
+    fn highway_yaml_marks(text: *const u8, text_len: usize, out: *mut u8, plane_len: usize);
+
     fn highway_odd_blocks(text: *const u8, text_len: usize, out: *mut u64);
 
     fn highway_index_of_newline_or_non_ascii(haystack: *const u8, haystack_len: usize) -> usize;
@@ -617,7 +619,7 @@ pub struct Stops<'a>(&'a [u8]);
 impl Stops<'_> {
     /// The bits from `pos` on. The upper 7 may be zeros that were shifted in.
     #[inline(always)]
-    fn window(self, pos: usize) -> u64 {
+    pub fn window(self, pos: usize) -> u64 {
         let at = pos >> 3;
         match self.0.get(at..at + 8) {
             Some(bits) => u64::from_le_bytes(bits.try_into().unwrap_or_default()) >> (pos & 7),
@@ -641,6 +643,51 @@ impl Stops<'_> {
                 return pos + window.trailing_zeros() as usize;
             }
             pos += 56;
+        }
+    }
+}
+
+/// Buffer for [`YamlMarks`]. Keep one per thread so the allocation is reused from text to text.
+#[derive(Default)]
+pub struct YamlMarksBuffer {
+    /// As long as the longest text so far needs.
+    planes: Vec<u8>,
+}
+
+/// What the lines of YAML are told apart by, with one bit per byte of a text. One kernel call finds them for the whole
+/// text. A position up to the length of the text can be asked about.
+#[derive(Copy, Clone)]
+pub struct YamlMarks<'a> {
+    /// Control characters. Everything past the end of the text counts as one.
+    pub control: Stops<'a>,
+    pub spaces: Stops<'a>,
+    /// `:` and `#`.
+    pub indicators: Stops<'a>,
+    /// `"`, `'` and `\`.
+    pub quotes: Stops<'a>,
+}
+
+impl YamlMarksBuffer {
+    pub fn find(&mut self, text: &[u8]) -> YamlMarks<'_> {
+        // 8 bytes more than the kernel writes, so that `Stops::window` can load a whole word at any position.
+        let plane_len = text.len().div_ceil(64) * 8 + 8;
+        if self.planes.len() < 4 * plane_len {
+            self.planes.resize(4 * plane_len, 0);
+        }
+        let planes = &mut self.planes[..4 * plane_len];
+        for (index, plane) in planes.chunks_exact_mut(plane_len).enumerate() {
+            plane[plane_len - 8..].fill(if index == 0 { 0xFF } else { 0 });
+        }
+        // SAFETY: `text` is readable, and the kernel writes `plane_len - 8` bytes to each of the four planes.
+        unsafe { highway_yaml_marks(text.as_ptr(), text.len(), planes.as_mut_ptr(), plane_len) };
+        let (control, rest) = planes.split_at(plane_len);
+        let (spaces, rest) = rest.split_at(plane_len);
+        let (indicators, quotes) = rest.split_at(plane_len);
+        YamlMarks {
+            control: Stops(control),
+            spaces: Stops(spaces),
+            indicators: Stops(indicators),
+            quotes: Stops(quotes),
         }
     }
 }

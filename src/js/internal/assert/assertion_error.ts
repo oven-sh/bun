@@ -4,6 +4,7 @@ const { SafeSet } = require("internal/primordials");
 const { inspect } = require("internal/util/inspect");
 const colors = require("internal/util/colors");
 const { validateObject } = require("internal/validators");
+const { isErrorStackTraceLimitWritable } = require("internal/repl/node-errors");
 const { printMyersDiff, printSimpleMyersDiff } = require("internal/assert/myers_diff") as typeof Internal;
 
 const ErrorCaptureStackTrace = Error.captureStackTrace;
@@ -274,9 +275,8 @@ class AssertionError extends Error {
     } = options;
     let { actual, expected } = options;
 
-    // NOTE: stack trace is always writable.
     const limit = Error.stackTraceLimit;
-    Error.stackTraceLimit = 0;
+    if (isErrorStackTraceLimitWritable()) Error.stackTraceLimit = 0;
 
     if (message != null) {
       if (kMethodsWithCustomMessageDiff.has(operator)) {
@@ -369,7 +369,7 @@ class AssertionError extends Error {
       }
     }
 
-    Error.stackTraceLimit = limit;
+    if (isErrorStackTraceLimitWritable()) Error.stackTraceLimit = limit;
 
     this.generatedMessage = !message;
     ObjectDefineProperty(this, "name", {

@@ -417,6 +417,18 @@ describe("expect()", () => {
     }
   });
 
+  // The matcher is the first reaction of the promise, as in Jest and Vitest.
+  test("resolves and rejects compare before a reaction that is attached after the matcher call", async () => {
+    for (const outcome of ["resolves", "rejects"]) {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      const matcher = expect(promise)[outcome].toEqual({ checked: false });
+      const later = (/** @type {{ checked: boolean }} */ value) => void (value.checked = true);
+      promise.then(later, later);
+      (outcome === "resolves" ? resolve : reject)({ checked: false });
+      await matcher;
+    }
+  });
+
   test("can call without an argument", () => {
     expect().toBe(undefined);
   });

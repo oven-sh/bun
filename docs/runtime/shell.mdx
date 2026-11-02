@@ -307,6 +307,14 @@ import { $ } from "bun";
 await $`FOO=foo bun -e 'console.log(process.env.FOO)'`; // foo\n
 ```
 
+Bun Shell does not expand `*` in the value of `NAME=value command` or `export NAME=value`. The command gets the text:
+
+```js
+import { $ } from "bun";
+
+await $`DEBUG=* bun -e 'console.log(process.env.DEBUG)'`; // *\n
+```
+
 Use string interpolation to set the value:
 
 ```js

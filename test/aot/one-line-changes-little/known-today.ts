@@ -16,7 +16,7 @@ export const knownInLibrary: Readonly<Record<string, string>> = {
   "inspect-custom": "507 functions, 718,412 bytes",
   "worker": "498 functions, 771,660 bytes",
   "vm": "559 functions, 851,968 bytes",
-  "require-cache": "539 functions, 726,628 bytes",
+  "require-cache": "448 functions, 706,184 bytes",
   "module-require": "498 functions, 771,660 bytes",
   "extends-function": "575 functions, 917,504 bytes",
   "extends-promise": "512 functions, 718,412 bytes",

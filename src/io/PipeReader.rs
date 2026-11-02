@@ -184,7 +184,7 @@ bitflags::bitflags! {
         const KEEP_ALIVE               = 1 << 10; // default true
         /// A read failed with a non-retry errno. Set before the bytes read ahead of the failure are delivered, so a pull from inside that delivery cannot read the fd past the error. Never cleared: `start()`, `unpause()` and `from()` keep it, and only a reader from `init()` reads again.
         const READ_FAILED              = 1 << 11;
-        /// One chunk per wakeup also from what cannot block. For a parent that never says stop: a source that never runs dry would keep the loop to itself.
+        /// One chunk per wakeup also from what cannot block. For a streaming parent that never says stop: a source that never runs dry would keep the loop to itself.
         const IN_TURNS                 = 1 << 12;
     }
 }

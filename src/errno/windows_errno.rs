@@ -208,7 +208,7 @@ impl SystemErrnoInit for i64 {
         // EINVAL (Win32 ERROR_INVALID_DATA) instead of EACCES (discriminant 13).
         //
         // CHECKED, not `from_raw`: the Rust i64 impl is a cross-platform shim
-        // and some Windows-reachable callers (`Listener.rs`, `udp_socket.rs`)
+        // and a caller on Windows may have
         // widened a `c_int` holding `WSAGetLastError()` (e.g. 10048). Those are
         // NOT valid `SystemErrno` discriminants, so an unchecked transmute is
         // immediate UB. Validate first; on miss, fall through to the Win32/uv

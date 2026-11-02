@@ -649,7 +649,11 @@ impl UDPSocket {
         };
         drop(hostname_z);
         if created.is_null() && err == 0 && config.fd.is_some() {
-            err = libc::EINVAL;
+            #[cfg(windows)]
+            let invalid = c_int::from(bun_sys::windows::Win32Error::WSAEINVAL.0);
+            #[cfg(not(windows))]
+            let invalid = libc::EINVAL;
+            err = invalid;
         }
         this.socket.set(if created.is_null() {
             None

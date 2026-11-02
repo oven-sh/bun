@@ -61,48 +61,41 @@ describe.skipIf(isWindows || !systemCC || !!unsupported)("compile/aot/process-dl
     };
   }
 
-  test(
-    "the flags are converted before the module is read, and the library is opened with them",
-    () =>
-      slot(async () => {
-        const expected = {
-          stdout:
-            "converted: flags, exports\n" +
-            "the plugin answers 43\n" +
-            "a symbol for the flags throws TypeError ERR_INVALID_ARG_TYPE\n" +
-            "one argument throws TypeError ERR_MISSING_ARGS\n",
-          stderr: "",
-          exitCode: 0,
-          signal: null,
-        };
-        const { compiled, plain } = await run("flags");
-        expect(plain).toEqual(expected);
-        expect(compiled).toEqual(expected);
-      }),
-    600_000,
-  );
+  test("the flags are converted before the module is read, and the library is opened with them", () =>
+    slot(async () => {
+      const expected = {
+        stdout:
+          "converted: flags, exports\n" +
+          "the plugin answers 43\n" +
+          "a symbol for the flags throws TypeError ERR_INVALID_ARG_TYPE\n" +
+          "one argument throws TypeError ERR_MISSING_ARGS\n",
+        stderr: "",
+        exitCode: 0,
+        signal: null,
+      };
+      const { compiled, plain } = await run("flags");
+      expect(plain).toEqual(expected);
+      expect(compiled).toEqual(expected);
+    }));
 
   // An executable with compiled code defines libc's signal functions, so that the action that a library sets for SIGSEGV stays
   // behind the one that compiled code needs. A library opened with RTLD_DEEPBIND would find libc's functions first, so there
   // the flag is not passed on. glibc alone has it, and a sanitizer's run time defines sigaction() and signal() itself.
-  test.skipIf(!isGlibc || isASAN)(
-    "RTLD_DEEPBIND is passed on under plain Bun, and not beside compiled code",
-    () =>
-      slot(async () => {
-        const { compiled, plain } = await run("deep-binding");
-        expect(plain).toEqual({
-          stdout: "signal() of the addon is the program's own: false\nreads of null that threw a TypeError: 10\n",
-          stderr: "",
-          exitCode: 0,
-          signal: null,
-        });
-        expect(compiled).toEqual({
-          stdout: "signal() of the addon is the program's own: true\nreads of null that threw a TypeError: 10\n",
-          stderr: "",
-          exitCode: 0,
-          signal: null,
-        });
-      }),
-    600_000,
+  test.skipIf(!isGlibc || isASAN)("RTLD_DEEPBIND is passed on under plain Bun, and not beside compiled code", () =>
+    slot(async () => {
+      const { compiled, plain } = await run("deep-binding");
+      expect(plain).toEqual({
+        stdout: "signal() of the addon is the program's own: false\nreads of null that threw a TypeError: 10\n",
+        stderr: "",
+        exitCode: 0,
+        signal: null,
+      });
+      expect(compiled).toEqual({
+        stdout: "signal() of the addon is the program's own: true\nreads of null that threw a TypeError: 10\n",
+        stderr: "",
+        exitCode: 0,
+        signal: null,
+      });
+    }),
   );
 });

@@ -1249,17 +1249,19 @@ test("reports an uncalled function on the last line of a // @bun file without a 
 
 // A segment of a source map with one field says that the generated code from its column on comes from no source.
 test("a function in generated code that has no source is not a function of the file", async () => {
-  const line = "export function app() { return 1; } function glue() { return 2; }";
-  expect(line.indexOf("function glue")).toBe(36);
+  const line =
+    "export function app() { return 1; } function glue() { return 2; } for (let i = 0; i < 5; i++) { globalThis.n = i; }";
+  expect([line.indexOf("function glue"), line.indexOf("globalThis.n")]).toEqual([36, 96]);
   using dir = tempDir("cov-no-source-segment", {
     "prebuilt.js": `// @bun\n${line}\n//# sourceMappingURL=prebuilt.js.map\n`,
-    // Line 1 maps to line 1 of the source up to column 36, where the one-field segment "oC" starts.
+    // The map is of the file to itself. Line 2 maps to line 2 up to column 36, where the one-field segment "oC"
+    // starts, and again from column 96, the body of the loop, which runs five times.
     "prebuilt.js.map": JSON.stringify({
       version: 3,
-      sources: ["prebuilt.ts"],
+      sources: ["prebuilt.js"],
       sourcesContent: [null],
       names: [],
-      mappings: ";AAAA,oC;",
+      mappings: ";AACA,oC,4DAAA",
     }),
     "a.test.ts": `
       import { expect, test } from "bun:test";
@@ -1278,7 +1280,8 @@ test("a function in generated code that has no source is not a function of the f
   expect(stderr).toContain(" 1 pass");
   const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
   const record = lcov.split("end_of_record").find(r => r.includes("SF:prebuilt.js\n"));
-  expect(record?.trim()).toBe("TN:\nSF:prebuilt.js\nFNF:1\nFNH:1\nDA:1,1\nLF:1\nLH:1");
+  // The one-field segment starts no line of its own: line 2 has the count of its first mapped segment, not of the loop.
+  expect(record?.trim()).toBe("TN:\nSF:prebuilt.js\nFNF:1\nFNH:1\nDA:2,1\nLF:1\nLH:1");
   expect(exitCode).toBe(0);
 });
 

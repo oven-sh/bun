@@ -578,18 +578,8 @@ pub fn parse(
         remain = &remain[generated_column_delta.start..];
 
         if matches!(remain.first(), None | Some(b',' | b';')) {
-            // Node reads a one-field segment that ends the string as a mapped one with zero deltas.
-            let row = if remain.is_empty() && source_index < sources_count {
-                Mapping {
-                    generated,
-                    original,
-                    source_index,
-                    name_index: if has_names { name_index } else { -1 },
-                }
-            } else {
-                Mapping::without_source(generated)
-            };
-            bun_core::handle_oom(mapping.append(&row));
+            // Also where the segment ends the string. Node.js through v26.13.0 reads that one as mapped, which ECMA-426 does not: https://github.com/nodejs/node/pull/66264
+            bun_core::handle_oom(mapping.append(&Mapping::without_source(generated)));
             if remain.first() == Some(&b',') {
                 remain = &remain[1..];
             }

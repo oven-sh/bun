@@ -352,10 +352,6 @@ impl ParsedSourceMap {
             writer.write_all(VLQ::encode(orig.columns.zero_based() - last_oc).slice())?;
             last_oc = orig.columns.zero_based();
         }
-        // `mapping::parse` reads a one-field segment that ends the string as a mapped one.
-        if self.mappings.source_index().last().is_some_and(|&i| i < 0) {
-            writer.write_byte(b';')?;
-        }
         Ok(())
     }
 

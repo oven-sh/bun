@@ -419,6 +419,70 @@ describe("source map remapping of the printed stack", () => {
     expect({ scalar, simd }).toEqual({ scalar: expected, simd: expected });
   });
 
+  // The same for a segment that ends the `mappings` string. Node.js through
+  // v26.13.0 gives such a segment the source of the segment before it:
+  // https://github.com/nodejs/node/pull/66264
+  test.concurrent("external map that ends with a segment that has no source", async () => {
+    const program = last =>
+      [
+        "// @bun",
+        "const out = {};",
+        "try { glue(); } catch (e) { out.glueInspect = Bun.inspect(e); }",
+        "try { glue(); } catch (e) { out.glueStack = e.stack; }",
+        "console.log(JSON.stringify(out));",
+        ...last,
+      ].join("\n") + "\n";
+    const glue = 'function glue() { throw new Error("GLUE"); } glue();';
+    const onTheLine = program([`function app() { return 1; } ${glue}`]);
+    const onALaterLine = program(["function app() { return 1; }", glue]);
+    expect(onTheLine.split("\n")[5].indexOf(glue)).toBe(29);
+
+    // Lines 3 and 4 map to orig.ts:11:5 and 21:5, and the line of `app` to
+    // orig.ts:31:5. The one-field segment starts where `glue` does: "6B" is
+    // column 29 of the line of `app`, "A" is column 0 of the line after it.
+    const withMap = (source, map) => ({
+      "main.js": source + "//# sourceMappingURL=main.js.map\n",
+      "main.js.map": JSON.stringify({ version: 3, names: [], ...map }),
+    });
+    const files = ["orig.ts", "main.js"];
+    const read = ({ dir, out, stderr, exitCode }) => ({
+      glueInspect: frames(out.glueInspect, dir, files),
+      glueStack: frames(out.glueStack, dir, files),
+      uncaught: frames(stderr, dir, files),
+      exitCode,
+    });
+    const [unmappedOnTheLine, unmappedOnALaterLine, afterAMappedSegment, aloneOnTheLastLine, withoutSources] = (
+      await Promise.all([
+        run({ "main.js": onTheLine }),
+        run({ "main.js": onALaterLine }),
+        run(withMap(onTheLine, { sources: ["orig.ts"], sourcesContent: [null], mappings: ";;AAUI;AAUA;;AAUA,6B" })),
+        run(withMap(onALaterLine, { sources: ["orig.ts"], sourcesContent: [null], mappings: ";;AAUI;AAUA;;AAUA;A" })),
+        run(withMap(onTheLine, { sources: [], sourcesContent: [], mappings: ";;;;;6B" })),
+      ])
+    ).map(read);
+
+    const inMain = [
+      expect.stringMatching(/^at glue \(main\.js:\d+:\d+\)$/),
+      expect.stringMatching(/^at main\.js:\d+:\d+$/),
+    ];
+    expect({
+      glueInspect: unmappedOnTheLine.glueInspect,
+      glueStack: unmappedOnTheLine.glueStack,
+      uncaught: unmappedOnTheLine.uncaught,
+    }).toEqual({ glueInspect: inMain, glueStack: inMain, uncaught: inMain });
+    const mapped = unmapped => ({
+      glueInspect: [unmapped.glueInspect[0], "at orig.ts:11:5"],
+      glueStack: [unmapped.glueStack[0], "at orig.ts:21:5"],
+      uncaught: unmapped.uncaught,
+      exitCode: 1,
+    });
+    expect({ afterAMappedSegment, aloneOnTheLastLine, withoutSources }).toEqual({
+      afterAMappedSegment: mapped(unmappedOnTheLine),
+      aloneOnTheLastLine: mapped(unmappedOnALaterLine),
+      withoutSources: unmappedOnTheLine,
+    });
+  });
+
   // Modules bun transpiled itself. `present.ts` stays on disk; `deleted.ts` is
   // removed after it was loaded, so the code frame can no longer be read back.
   // Reading error.stack first makes the printer start from the already

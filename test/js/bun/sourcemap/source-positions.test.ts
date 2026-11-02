@@ -1609,12 +1609,6 @@ describe.concurrent("a loaded file with its own source map", () => {
         { "ak.js.map": map },
         "",
       ],
-      // Only white space ends the URL.
-      "a control character in the URL": [
-        `//# sourceMappingURL=al\u0001.js.map\n`,
-        { "al\u0001.js.map": map },
-        "original.ts",
-      ],
       "data: with base64": [comment(dataUrl(map)), {}, "original.ts"],
       "data: with a charset before base64": [
         comment(dataUrl(map, "application/json;charset=utf-8;base64")),
@@ -1655,6 +1649,12 @@ describe.concurrent("a loaded file with its own source map", () => {
         ],
         // The URL of a file on another host names no file on POSIX. On Windows it is a UNC path.
         "a host before an absolute path": [root => comment(`//host${root}/forms/ao.js.map`), { "ao.js.map": map }, ""],
+        // Only white space ends the URL. Windows has no file with a control character in its name.
+        "a control character in the URL": [
+          `//# sourceMappingURL=al\u0001.js.map\n`,
+          { "al\u0001.js.map": map },
+          "original.ts",
+        ],
       }),
     };
     const files: Record<string, string | ((at: { root: string }) => string)> = {};

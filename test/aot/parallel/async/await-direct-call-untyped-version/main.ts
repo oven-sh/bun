@@ -1,5 +1,6 @@
 // A thousand calls of an async function that awaits another async function by name, all suspended. The arguments have one property more than the declared type, and another file of the program calls bound functions that it picks by a computed key, so every call runs the untyped version of the function. The awaited call makes no promise there either.
 // The expected text is that of compiled code: an engine that makes a promise for every call holds three thousand.
+// Prints what the compiler saves: promises
 import { heapStats } from "bun:jsc";
 import "./binds.js";
 type Pair = { a: number; b: number };

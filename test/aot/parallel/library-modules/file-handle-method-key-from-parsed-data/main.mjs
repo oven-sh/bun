@@ -8,8 +8,3 @@ try {
   console.log(error.message.split(". ")[0]);
 }
 await box.handle.close();
-
-/* Output:
-function readLines
-'readLines' was not compiled into this executable because your code never calls it
-*/

@@ -1,0 +1,263 @@
+# -- source: list-pushed-onto-a-list.ts
+# // `list.push(...other)` and its two older spellings append the elements of the other list in one operation and read the new length. No list of arguments is made and
+# // Array.prototype.push is not called, but for a list that would not fit on the stack.
+# declare const input: any;
+# const other: number[] = [4, 5, 6];
+# function spreads(list: number[]): number {
+#   return list.push(...other);
+# }
+# function applies(list: number[]): number {
+#   return list.push.apply(list, other);
+# }
+# function appliesThePrototypes(list: number[]): number {
+#   return Array.prototype.push.apply(list, other);
+# }
+# function ignoresTheLength(list: number[]): number[] {
+#   list.push(...other);
+#   return list;
+# }
+# (globalThis as any).answer = [spreads([+input]), applies([+input]), appliesThePrototypes([+input]), ignoresTheLength([+input])];
+# -- end of source
+# FORM: AsRead
+# OPTIONS: disable=pass:InlineCalls
+# RUN: pipeline FinishBirths
+
+module m0 path="list-pushed-onto-a-list.ts" displayPath="list-pushed-onto-a-list.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/FunctionPrototype.ts" displayPath="/$bun/js/engine/FunctionPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+typesite w0 module=m0 position=285 kind=Variable
+typesite w1 module=m0 position=331 kind=Parameter
+typesite w2 module=m0 position=314 kind=Result
+typesite w3 module=m0 position=406 kind=Parameter
+typesite w4 module=m0 position=389 kind=Result
+typesite w5 module=m0 position=503 kind=Parameter
+typesite w6 module=m0 position=473 kind=Result
+typesite w7 module=m0 position=607 kind=Parameter
+typesite w8 module=m0 position=581 kind=Result
+typesite w9 module=m0 position=705 kind=CallResult
+typesite w10 module=m0 position=724 kind=CallResult
+typesite w11 module=m0 position=743 kind=CallResult
+typesite w12 module=m0 position=775 kind=CallResult
+typesite w13 module=m0 position=366 kind=CallResult
+typesite w14 module=m0 position=441 kind=CallResult
+typesite w15 module=m0 position=538 kind=CallResult
+typesite w16 module=m0 position=637 kind=CallResult
+data d0 root=Array{contents=number elements=[Number{value=4}, Number{value=5}, Number{value=6}]} module=m0
+variable g0 name="other" module=m0 declared={type=undefined|null|absent|Array<number> site=w0 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v6 = NewClosure function=f4 @0
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v8 = Data data=d0 @303
+    v9 = Convert v8 declared={type=undefined|null|Array<number> site=w0 flags=[OmitsNull, OmitsUndefined]} @303
+    PutModuleVariable v9 variable=g0 @285
+    v11 = Builtin builtin=GlobalThis @676
+    v12 = PropGet v11 key="globalThis" [isFreeName] @676
+    v13 = Convert v12 declared={type=builtin(GlobalThis) flags=[IsExpected]} @676
+    v14 = Convert v13 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @676
+    v15 = Builtin builtin=GlobalThis @720
+    v16 = PropGet v15 key="input" [isFreeName] @720
+    v17 = Convert v16 declared={type=number flags=[IsExpected]} @720
+    v18 = ToNumber v17 @714
+    v19 = NewArray v18 contents=number @713
+    v20 = Call v1, -, v19 calleeName="spreads" @705
+    v21 = Convert v20 declared={type=number site=w9} @705
+    v22 = Builtin builtin=GlobalThis @739
+    v23 = PropGet v22 key="input" [isFreeName] @739
+    v24 = Convert v23 declared={type=number flags=[IsExpected]} @739
+    v25 = ToNumber v24 @733
+    v26 = NewArray v25 contents=number @732
+    v27 = Call v3, -, v26 calleeName="applies" @724
+    v28 = Convert v27 declared={type=number site=w10} @724
+    v29 = Builtin builtin=GlobalThis @771
+    v30 = PropGet v29 key="input" [isFreeName] @771
+    v31 = Convert v30 declared={type=number flags=[IsExpected]} @771
+    v32 = ToNumber v31 @765
+    v33 = NewArray v32 contents=number @764
+    v34 = Call v5, -, v33 calleeName="appliesThePrototypes" @743
+    v35 = Convert v34 declared={type=number site=w11} @743
+    v36 = Builtin builtin=GlobalThis @799
+    v37 = PropGet v36 key="input" [isFreeName] @799
+    v38 = Convert v37 declared={type=number flags=[IsExpected]} @799
+    v39 = ToNumber v38 @793
+    v40 = NewArray v39 contents=number @792
+    v41 = Call v7, -, v40 calleeName="ignoresTheLength" @775
+    v42 = Convert v41 declared={type=undefined|null|Array<number> site=w12 flags=[OmitsNull, OmitsUndefined]} @775
+    v43 = NewArray v21, v28, v35, v42 contents=anything @704
+    PropSet v14, v43 key="answer" @676
+    v45 = Undefined @676
+    Return v45 @676
+}
+function f1 name="spreads" module=m0 position=314 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>):
+    Jump -> next b1() @314
+  b1():
+    v1 = PropGet v0 key="push" @366
+    v2 = NewArray contents=anything @376
+    v3 = GetModuleVariable variable=g0 @384 @379
+    v4 = CheckInitialized v3 name="other" @384 @379
+    AppendSpread v2, v4 @379
+    v6 = CallList v1, v0, v2 calleeKey="push" calleeName="list.push" @371
+    ReturnCall v6 casts=[{declared={type=number site=w13}}, {declared={type=number site=w2}}] @371
+}
+function f2 name="applies" module=m0 position=389 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w3 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w4}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>):
+    Jump -> next b1() @389
+  b1():
+    v1 = PropGet v0 key="push" @441
+    v2 = PropGet v1 key="apply" @446
+    v3 = GetModuleVariable variable=g0 @468 @463
+    v4 = CheckInitialized v3 name="other" @468 @463
+    v5 = Call v2, v1, v0, v4 calleeKey="apply" calleeName="list.push.apply" @451
+    ReturnCall v5 casts=[{declared={type=number site=w14}}, {declared={type=number site=w4}}] @451
+}
+function f3 name="appliesThePrototypes" module=m0 position=473 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w5 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w6}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>):
+    Jump -> next b1() @473
+  b1():
+    v1 = Builtin builtin=ArrayPrototypePush @538
+    v2 = PropGet v1 key="apply" @554
+    v3 = Convert v2 declared={type=builtin(FunctionPrototypeApply) flags=[IsExpected]} @538
+    v4 = GetModuleVariable variable=g0 @576 @571
+    v5 = CheckInitialized v4 name="other" @576 @571
+    v6 = Call v3, v1, v0, v5 calleeKey="apply" calleeName="Array.prototype.push.apply" @559
+    ReturnCall v6 casts=[{declared={type=number site=w15}}, {declared={type=number site=w6}}] @559
+}
+function f4 name="ignoresTheLength" module=m0 position=581 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w7 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<number> site=w8 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>):
+    Jump -> next b1() @581
+  b1():
+    v1 = PropGet v0 key="push" @637
+    v2 = NewArray contents=anything @647
+    v3 = GetModuleVariable variable=g0 @655 @650
+    v4 = CheckInitialized v3 name="other" @655 @650
+    AppendSpread v2, v4 @650
+    v6 = CallList v1, v0, v2 calleeKey="push" calleeName="list.push" @642
+    v7 = Convert v6 declared={type=number site=w16} illTypedCause=DeclarationWithoutBody @637
+    v8 = Convert v0 declared={type=undefined|null|Array<number> site=w8 flags=[OmitsNull, OmitsUndefined]} @667
+    Return v8 @667
+}
+function f5 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @25
+  b1():
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @78
+  b2(v3):
+    Jump -> next b3() @78
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b4(v10):
+    Jump -> next b5() @78
+  b5():
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f6 name="apply" module=m2 position=1161 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=FunctionPrototypeApply thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|function, v1: anything, v2: anything):
+    Jump -> next b1() @1161
+  b1():
+    v3 = Builtin builtin=FunctionPrototypeCall [isNotReadFromHolder] @1248
+    v4 = StrictEq v0, v3 @1239
+    Branch v4 -> taken b3(), notTaken b2() @1239
+  b2():
+    v5 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1283
+    v6 = StrictEq v0, v5 @1239
+    Branch v6 -> taken b3(), notTaken b4() @1239
+  b3():
+    v7 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1333
+    v8 = Call v7, v0, v1, v2 [isDoneInPlace] @1333
+    Return v8 @1388
+  b4():
+    v9 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1414
+    v10 = Call v9, v0, v1, v2 [isDoneInPlace] @1414
+    ReturnCall v10 @1414
+}
+runtimefunction id=FunctionPrototypeApply function=f6
+runtimefunction id=ArrayIteratorPrototypeNext function=f5 visibility=Private
+# -- generated: spreads applies appliesThePrototypes ignoresTheLength
+# CHECK-LABEL: function {{*}}name="spreads"
+# CHECK: module=m0 position=314 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<undefined|number, proven, pristine[Storage, Names, Dense]> site=w1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<undefined|number, proven, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v1: Array<int[4, 6], proven, Int32, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g0
+# CHECK-NEXT: v2: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v3: 65535 = Integer integer=65535
+# CHECK-NEXT: v4: boolean = LessEq v2, v3
+# CHECK-NEXT: Branch v4 -> taken b2(), notTaken b1()
+# CHECK-NEXT: b1() frequency=Rare:
+# CHECK-NEXT: v5: builtin(ArrayPrototypePush) = Builtin builtin=ArrayPrototypePush
+# CHECK-NEXT: v6: anything = CallList v5, v0, v1 calleeKey="push" calleeName="list.push" accessSite=11 callees=[builtin(ArrayPrototypePush)]
+# CHECK-NEXT: ReturnCall v6 casts=[{declared={type=number site=w13 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w2 flags=[IsExpected]} resolution=Nothing}, {declared={type=number} resolution=Assume}]
+# CHECK-NEXT: b2():
+# CHECK-NEXT: AppendElements v0, v1
+# CHECK-NEXT: v8: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0 @371 tail
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="applies"
+# CHECK: module=m0 position=389 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<undefined|number, proven, pristine[Storage, Names, Dense]> site=w3 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w4}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<undefined|number, proven, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v1: Array<int[4, 6], proven, Int32, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g0
+# CHECK-NEXT: v2: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v3: 65535 = Integer integer=65535
+# CHECK-NEXT: v4: boolean = LessEq v2, v3
+# CHECK-NEXT: Branch v4 -> taken b2(), notTaken b1()
+# CHECK-NEXT: b1() frequency=Rare:
+# CHECK-NEXT: v5: builtin(ArrayPrototypePush) = Builtin builtin=ArrayPrototypePush
+# CHECK-NEXT: v6: anything = CallList v5, v0, v1 accessSite=14
+# CHECK-NEXT: ReturnCall v6 casts=[{declared={type=number site=w14 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w4 flags=[IsExpected]} resolution=Nothing}, {declared={type=number} resolution=Assume}]
+# CHECK-NEXT: b2():
+# CHECK-NEXT: AppendElements v0, v1
+# CHECK-NEXT: v8: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0 @451 tail
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="appliesThePrototypes"
+# CHECK: module=m0 position=473 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<undefined|number, proven, pristine[Storage, Names, Dense]> site=w5 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w6}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<undefined|number, proven, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v1: Array<int[4, 6], proven, Int32, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g0
+# CHECK-NEXT: v2: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v3: 65535 = Integer integer=65535
+# CHECK-NEXT: v4: boolean = LessEq v2, v3
+# CHECK-NEXT: Branch v4 -> taken b2(), notTaken b1()
+# CHECK-NEXT: b1() frequency=Rare:
+# CHECK-NEXT: v5: builtin(ArrayPrototypePush) = Builtin builtin=ArrayPrototypePush
+# CHECK-NEXT: v6: anything = CallList v5, v0, v1 accessSite=16
+# CHECK-NEXT: ReturnCall v6 casts=[{declared={type=number site=w15 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w6 flags=[IsExpected]} resolution=Nothing}, {declared={type=number} resolution=Assume}]
+# CHECK-NEXT: b2():
+# CHECK-NEXT: AppendElements v0, v1
+# CHECK-NEXT: v8: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0 @559 tail
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="ignoresTheLength"
+# CHECK: module=m0 position=581 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<undefined|number, proven, pristine[Storage, Names, Dense]> site=w7 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<undefined|number, proven, pristine[Storage, Names, Dense]> site=w8 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<undefined|number, proven, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v1: Array<int[4, 6], proven, Int32, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g0
+# CHECK-NEXT: v2: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v3: 65535 = Integer integer=65535
+# CHECK-NEXT: v4: boolean = LessEq v2, v3
+# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: AppendElements v0, v1
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v6: builtin(ArrayPrototypePush) = Builtin builtin=ArrayPrototypePush
+# CHECK-NEXT: v7: anything = CallList v6, v0, v1 calleeKey="push" calleeName="list.push" accessSite=18 callees=[builtin(ArrayPrototypePush)]
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: }

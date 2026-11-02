@@ -6,8 +6,8 @@ use bun_lint::rule::Plugin;
 /// Disallow nested ternary expressions.
 pub struct NoNestedTernary;
 
-const UNPARENTHESIZED_NESTED_TERNARY: Message = Message::new("", "Unexpected nested ternary expression without parentheses.");
-const DEEPLY_NESTED_TERNARY: Message = Message::new("", "Unexpected deeply nested ternary expression.");
+const UNPARENTHESIZED_NESTED_TERNARY: &Message = &Message::new("", "Unexpected nested ternary expression without parentheses.");
+const DEEPLY_NESTED_TERNARY: &Message = &Message::new("", "Unexpected deeply nested ternary expression.");
 
 impl Rule for NoNestedTernary {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-nested-ternary", Kind::Suggestion).fixable(Fixable::Code);

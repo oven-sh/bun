@@ -96,7 +96,11 @@ pub fn with_front_end_inputs<R>(
         transpiler, None, &arena, event_loop, false, None, &arena,
     );
     let mut bundle = started.ok()?;
-    let services = BundlerServices::new(NonNull::from(&mut *bundle).cast(), MODULE_PREFIX);
+    let services = BundlerServices::new(
+        NonNull::from(&mut *bundle).cast(),
+        MODULE_PREFIX,
+        &inputs.options.user_defined_names,
+    );
     let result = then(&options, &services, log);
     drop(services.shut_down());
     bundle.deinit_without_freeing_arena();

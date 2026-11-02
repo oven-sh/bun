@@ -214,7 +214,7 @@ function f21 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v20: whole = Double number=Infinity
 # CHECK-NEXT: v21: "1" = String string="1"
 # CHECK-NEXT: v22: true = Boolean boolean=true
-# CHECK-NEXT: v23: symbol = Builtin builtin=SymbolIterator
+# CHECK-NEXT: v23: @@iterator = Builtin builtin=SymbolIterator
 # CHECK-NEXT: v24: bigint = BigInt digits="1"
 # CHECK-NEXT: v25: builtin(Proxy) = Builtin builtin=Proxy
 # CHECK-NEXT: v26: Array<never> = Data data=d5 allocationSite=9
@@ -259,16 +259,16 @@ function f21 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v55: builtin(JSONStringify) = Upcast v76 castType=anything
 # CHECK-NEXT: v77: builtin(JSONStringify) = AssumeType v55 provenType=builtin(JSONStringify)
 # CHECK-NEXT: v56: 0 = Integer
-# CHECK-NEXT: v57: Array<anything, proven, pristine[Storage, Names, Dense]> = Call v3, -, v56 calleeName="asValue" accessSite=6 callees=[f6]
-# CHECK-NEXT: v78: Array<anything, proven, pristine[Storage, Names, Dense]> = AssumeType v57 provenType=Array<anything, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v57: Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> = Call v3, -, v56 calleeName="asValue" accessSite=6 callees=[f6]
+# CHECK-NEXT: v78: Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v57 provenType=Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v58: anything = Call v77, v53, v78 calleeKey="stringify" calleeName="JSON.stringify" accessSite=7 callees=[builtin(JSONStringify)]
 # CHECK-NEXT: v59: undefined = Undefined
 # CHECK-NEXT: Return v59
 # CHECK-NEXT: b3():
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b4() handler=b5():
-# CHECK-NEXT: v60: anything ~ undefined|null|function = Upcast v50 castType=anything
-# CHECK-NEXT: v81: undefined|f1|f3|f4|f5|f6 = AssumeType v60 provenType=undefined|f1|f3|f4|f5|f6
+# CHECK-NEXT: v60: anything ~ undefined|null|function|f1|f3|f4|f5|f6 = Upcast v50 castType=anything
+# CHECK-NEXT: v81: f1|f3|f4|f5|f6 = AssumeType v60 provenType=f1|f3|f4|f5|f6
 # CHECK-NEXT: PutModuleVariable v81 variable=g4
 # CHECK-NEXT: v62: anything = PropGet v74 key="map" accessSite=8
 # CHECK-NEXT: v79: builtin(ArrayPrototypeMap) = AssumeType v62 provenType=builtin(ArrayPrototypeMap)
@@ -288,7 +288,7 @@ function f21 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b1() handler=b2():
 # CHECK-NEXT: v2: builtin(String) = Builtin builtin=String
 # CHECK-NEXT: v3: anything = Call v0, -, v1 calleeName="f" accessSite=10 callees=[f1, f3, f4, f5, f6]
-# CHECK-NEXT: v8: Array<anything, proven, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=Array<anything, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v8: Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v4: anything = Call v2, -, v8 calleeName="String" accessSite=11 callees=[builtin(String)]
 # CHECK-NEXT: v9: string = AssumeType v4 provenType=string
 # CHECK-NEXT: v5: string = Upcast v9 castType=anything
@@ -299,13 +299,13 @@ function f21 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="asValue"
-# CHECK: module=m0 position=995 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=Array<anything, proven, pristine[Storage, Names, Dense]>}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=995 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: undefined|f9 = GetModuleVariable variable=g2
 # CHECK-NEXT: v2: undefined|f9 = Upcast v1 castType=anything
-# CHECK-NEXT: v3: undefined|f9 = AssumeType v2 provenType=undefined|f9
-# CHECK-NEXT: v4: anything = Call v3, -, v0 calleeName="isArray" accessSite=13 callees=[f9]
-# CHECK-NEXT: v5: anything ~ boolean = Upcast v4 castType=anything
+# CHECK-NEXT: v3: undefined|f9 ~ f9 = AssumeType v2 provenType=undefined|f9
+# CHECK-NEXT: v4: anything ~ undefined|null|string = Call v3, -, v0 calleeName="isArray" accessSite=13 callees=[f9]
+# CHECK-NEXT: v5: anything ~ undefined|null|string = Upcast v4 castType=anything
 # CHECK-NEXT: v6: undefined = GetModuleVariable variable=g3
 # CHECK-NEXT: v7: undefined = Upcast v6 castType=anything
 # CHECK-NEXT: v8: never = Call v7, -, v0 calleeName="isInteger" accessSite=14 callees=[]
@@ -315,7 +315,7 @@ function f21 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK: m0 position=1576 length=1 thisType={type=anything} parameters=[{type=undefined|null|boolean|number|string|symbol|bigint|L0|Array<number>|Uint8Array flags=[IsExpected]}] results=[{type=anything}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|boolean|number|string|symbol|bigint|L0|Array<number>|Uint8Array):
 # CHECK-NEXT: v1: f2 = GetModuleVariable variable=g1
-# CHECK-NEXT: v2: undefined|f1|f3|f4|f5|f6 = GetModuleVariable variable=g4
+# CHECK-NEXT: v2: f1|f3|f4|f5|f6 = GetModuleVariable variable=g4
 # CHECK-NEXT: v3: anything = Call v1, -, v2, v0 calleeName="attempt" accessSite=15 callees=[f2]
 # CHECK-NEXT: ReturnCall v3
 # CHECK-NEXT: }

@@ -1237,6 +1237,15 @@ impl<'s> File<'s> {
 
     #[inline]
     fn parents(&self) -> &Parents {
+        match (self.lazy.cells.parents).get() {
+            Some(parents) => parents,
+            None => self.init_parents(),
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn init_parents(&self) -> &Parents {
         (self.lazy.cells.parents).get_or_init(|| self.compute_parents())
     }
 
@@ -1810,6 +1819,15 @@ impl<'s> File<'s> {
 
     #[inline]
     fn owners(&self) -> &Owners {
+        match (self.lazy.cells.owners).get() {
+            Some(owners) => owners,
+            None => self.init_owners(),
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn init_owners(&self) -> &Owners {
         (self.lazy.cells.owners).get_or_init(|| self.compute_owners())
     }
 
@@ -1871,10 +1889,21 @@ impl<'s> File<'s> {
     /// Returns the kind of each HIR node that `kind` has computed, and 0, which is `Kind::Unknown`, for the others.
     #[inline]
     fn known_kinds(&self) -> &[AtomicU16] {
+        match (self.lazy.cells.kinds).get() {
+            Some(kinds) => &**kinds,
+            None => self.init_known_kinds(),
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn init_known_kinds(&self) -> &[AtomicU16] {
         let total = self.bases.0[VECTORS] as usize;
         (self.lazy.cells.kinds).get_or_init(|| AtomicU16::zeroed_slice_in(total, Global))
     }
 
+    #[cold]
+    #[inline(never)]
     fn compute_kind(&self, node: Node) -> Kind {
         let kind = self.kind_from_hir(node);
         if let Some(known) = self.known_kinds().get(node.idx()) {

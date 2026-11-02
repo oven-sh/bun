@@ -1,0 +1,343 @@
+# Two factories fill what two base factories have made, by constructors that nobody can name at build time, and each base factory hands its new object through one function that counts it and returns it. What that function answers a call with is what that call gave it: the names that a factory stores are fields of the class that its own base factory makes, and not of the other class.
+# -- source: fields-of-objects-handed-through-a-function-that-returns-its-argument.js
+# class NodeObject {
+#   constructor(kind) {
+#     this.kind = kind;
+#     this.flags = 0;
+#   }
+# }
+# class IdentifierObject {
+#   constructor(kind) {
+#     this.kind = kind;
+#     this.flags = 0;
+#   }
+# }
+# const allocator = { getNodeConstructor: () => NodeObject, getIdentifierConstructor: () => IdentifierObject };
+# // A function that nobody knows at build time gets hold of the allocator.
+# id(allocator);
+# let count = 0;
+# function countNode(node) {
+#   count++;
+#   return node;
+# }
+# function createBaseNode(kind) {
+#   return countNode(new (allocator.getNodeConstructor())(kind));
+# }
+# function createBaseIdentifier(kind) {
+#   return countNode(new (allocator.getIdentifierConstructor())(kind));
+# }
+# function createBinary(left, right) {
+#   const node = createBaseNode(1);
+#   node.left = left;
+#   node.right = right;
+#   return node;
+# }
+# function createIdentifier(text) {
+#   const node = createBaseIdentifier(2);
+#   node.escapedText = text;
+#   return node;
+# }
+# function sum(node) {
+#   return node.kind === 1 ? sum(node.left) + sum(node.right) : node.escapedText.length;
+# }
+# const tree = createBinary(createIdentifier("ab"), createBinary(createIdentifier("c"), createIdentifier("def")));
+# print(String(sum(tree)));
+# print(Object.keys(tree).join());
+# print(Object.keys(tree.left).join());
+# print(String(count));
+# -- end of source
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(FLOW): valueflow-apply
+# FLOW: layout {{*}}name="NodeObject" {{*}}flow={occupancy=FilledWithValueAtBirth}}, {key="left" declared={type=anything} flags=[IsAddedLate, IsEnforced, IsFilledByCreator]}, {key="right" declared={type=anything} flags=[IsAddedLate, IsEnforced, IsFilledByCreator]}] ownFieldCount=2
+# FLOW: layout {{*}}name="IdentifierObject" {{*}}flow={occupancy=FilledWithValueAtBirth}}, {key="escapedText" declared={type=anything} flags=[IsAddedLate, IsEnforced, IsFilledByCreator]}] ownFieldCount=2
+# RUN(RUNS): run-in-shell
+# RUNS: 6
+# RUNS-NEXT: kind,flags,left,right
+# RUNS-NEXT: kind,flags,escapedText
+# RUNS-NEXT: 5
+# RUNS-NEXT: exited with 0
+
+module m0 path="fields-of-objects-handed-through-a-function-that-returns-its-argument.js" displayPath="fields-of-objects-handed-through-a-function-that-returns-its-argument.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="NodeObject" module=m0 position=6 constructor=f7 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}, {key="flags" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L1 kind=Instance name="IdentifierObject" module=m0 position=95 constructor=f8 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}, {key="flags" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L2 module=m0 position=202 fields=[{key="getIdentifierConstructor" declared={type=undefined|null|function|f10 flags=[IsExpected]} flags=[IsRequired]}, {key="getNodeConstructor" declared={type=undefined|null|function|f9 flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+variable g0 name="countNode" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="createBaseNode" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="createBaseIdentifier" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="sum" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="NodeObject" module=m0 declared={type=absent|f7 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g5 name="IdentifierObject" module=m0 declared={type=absent|f8 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g6 name="allocator" module=m0 declared={type=undefined|null|absent|L2 flags=[IsExpected]} flags=[IsImmutable]
+variable g7 name="count" module=m0 declared={type=number|absent flags=[IsExpected]}
+variable g8 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g9 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f5 @0
+    v1 = Convert v0 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = NewClosure function=f6 @0
+    v3 = Convert v2 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v4 = NewClosure function=f7 @0
+    v5 = NewClass v4 layout=L0 @0
+    PutModuleVariable v5 variable=g8 @0
+    v7 = FinishClass v5 layout=L0 @0
+    v8 = Convert v7 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v9 = Convert v7 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    PutModuleVariable v9 variable=g4 @0
+    v11 = NewClosure function=f8 @89
+    v12 = NewClass v11 layout=L1 @89
+    PutModuleVariable v12 variable=g9 @89
+    v14 = FinishClass v12 layout=L1 @89
+    v15 = Convert v14 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType @89
+    v16 = Convert v14 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType @89
+    PutModuleVariable v16 variable=g5 @89
+    v18 = NewClosure function=f9 @224
+    v19 = Convert v18 declared={type=undefined|null|function|f9 flags=[IsExpected]} @224
+    v20 = NewObject layout=L2 @204
+    PropDefine v20, v19 key="getNodeConstructor" @204
+    v22 = NewClosure function=f10 @268
+    v23 = Convert v22 declared={type=undefined|null|function|f10 flags=[IsExpected]} @268
+    PropDefine v20, v23 key="getIdentifierConstructor" @242
+    v25 = FinishObject v20 @202
+    v26 = Convert v25 declared={type=undefined|null|L2 flags=[IsExpected]} @202
+    PutModuleVariable v26 variable=g6 @190
+    v28 = Builtin builtin=GlobalThis @368
+    v29 = PropGet v28 key="id" [isFreeName] @368
+    v30 = Call v29, -, v26 calleeName="id" @368
+    v31 = Integer @395
+    v32 = Convert v31 declared={type=number flags=[IsExpected]} @395
+    PutModuleVariable v32 variable=g7 @387
+    v34 = String string="ab" @1062
+    v35 = Call v3, -, v34 calleeName="createIdentifier" @1045
+    v36 = Convert v35 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @1045
+    v37 = String string="c" @1099
+    v38 = Call v3, -, v37 calleeName="createIdentifier" @1082
+    v39 = Convert v38 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @1082
+    v40 = String string="def" @1122
+    v41 = Call v3, -, v40 calleeName="createIdentifier" @1105
+    v42 = Convert v41 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @1105
+    v43 = Call v1, -, v39, v42 calleeName="createBinary" @1069
+    v44 = Convert v43 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @1069
+    v45 = Call v1, -, v36, v44 calleeName="createBinary" @1032
+    v46 = Convert v45 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @1032
+    v47 = Convert v46 declared={type=undefined|null|object flags=[IsExpected]} @1032
+    v48 = Builtin builtin=GlobalThis @1132
+    v49 = PropGet v48 key="print" [isFreeName] @1132
+    v50 = Builtin builtin=String @1138
+    v51 = GetModuleVariable variable=g3 @1145
+    v52 = Call v51, -, v47 calleeName="sum" @1145
+    v53 = Call v50, -, v52 calleeName="String" @1138
+    v54 = Convert v53 declared={type=undefined|null|string flags=[IsExpected]} @1138
+    v55 = Call v49, -, v54 calleeName="print" @1132
+    v56 = Builtin builtin=GlobalThis @1158
+    v57 = PropGet v56 key="print" [isFreeName] @1158
+    v58 = Builtin builtin=Object @1164
+    v59 = Builtin builtin=ObjectKeys @1164
+    v60 = Call v59, v58, v47 calleeName="Object.keys" @1171
+    v61 = Convert v60 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @1164
+    v62 = PropGet v61 key="join" @1180
+    v63 = Convert v62 declared={type=undefined|null|function flags=[IsExpected]} @1164
+    v64 = Call v63, v61 calleeKey="join" calleeName="join" @1182
+    v65 = Convert v64 declared={type=undefined|null|string flags=[IsExpected]} @1164
+    v66 = Call v57, -, v65 calleeName="print" @1158
+    v67 = Builtin builtin=GlobalThis @1191
+    v68 = PropGet v67 key="print" [isFreeName] @1191
+    v69 = Builtin builtin=Object @1197
+    v70 = Builtin builtin=ObjectKeys @1197
+    v71 = PropGet v47 key="left" @1209
+    v72 = Call v70, v69, v71 calleeName="Object.keys" @1204
+    v73 = Convert v72 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @1197
+    v74 = PropGet v73 key="join" @1218
+    v75 = Convert v74 declared={type=undefined|null|function flags=[IsExpected]} @1197
+    v76 = Call v75, v73 calleeKey="join" calleeName="join" @1220
+    v77 = Convert v76 declared={type=undefined|null|string flags=[IsExpected]} @1197
+    v78 = Call v68, -, v77 calleeName="print" @1191
+    v79 = Builtin builtin=GlobalThis @1229
+    v80 = PropGet v79 key="print" [isFreeName] @1229
+    v81 = Builtin builtin=String @1235
+    v82 = GetModuleVariable variable=g7 @1247 @1242
+    v83 = CheckInitialized v82 name="count" @1247 @1242
+    v84 = Call v81, -, v83 calleeName="String" @1235
+    v85 = Convert v84 declared={type=undefined|null|string flags=[IsExpected]} @1235
+    v86 = Call v80, -, v85 calleeName="print" @1229
+    v87 = Undefined @1229
+    Return v87 @1229
+}
+function f1 name="countNode" module=m0 position=398 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0|L1 flags=[IsExpected]}] results=[{type=undefined|null|L0|L1 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0|L1):
+    Jump -> next b1() @398
+  b1():
+    v1 = GetModuleVariable variable=g7 @427
+    v2 = CheckInitialized v1 name="count" @427
+    v3 = Increment v2 @427
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @427
+    v5 = GetModuleVariable variable=g7 @427
+    v6 = CheckInitialized v5 name="count" @427
+    PutModuleVariable v4 variable=g7 @427
+    v8 = Convert v0 declared={type=undefined|null|L0|L1 flags=[IsExpected]} @445
+    Return v8 @445
+}
+function f2 name="createBaseNode" module=m0 position=453 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|L0|L1 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @453
+  b1():
+    v1 = GetModuleVariable variable=g0 @494
+    v2 = GetModuleVariable variable=g6 @509
+    v3 = CheckInitialized v2 name="allocator" @509
+    v4 = PropGet v3 key="getNodeConstructor" @509
+    v5 = Convert v4 declared={type=undefined|null|function|f9 flags=[IsExpected]} @509
+    v6 = Call v5, v3 calleeKey="getNodeConstructor" calleeName="allocator.getNodeConstructor" @519
+    v7 = Convert v6 declared={type=undefined|null|function|f7 flags=[IsExpected]} @509
+    v8 = Convert v0 declared={type=number flags=[IsExpected]} @541
+    v9 = Construct v7, -, v8 @538 constructs
+    v10 = Convert v9 declared={type=undefined|null|L0 flags=[IsExpected]} @504
+    v11 = Call v1, -, v10 calleeName="countNode" @494
+    ReturnCall v11 casts=[{declared={type=undefined|null|L0|L1 flags=[IsExpected]}}] @494
+}
+function f3 name="createBaseIdentifier" module=m0 position=551 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|L0|L1 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @551
+  b1():
+    v1 = GetModuleVariable variable=g0 @598
+    v2 = GetModuleVariable variable=g6 @613
+    v3 = CheckInitialized v2 name="allocator" @613
+    v4 = PropGet v3 key="getIdentifierConstructor" @613
+    v5 = Convert v4 declared={type=undefined|null|function|f10 flags=[IsExpected]} @613
+    v6 = Call v5, v3 calleeKey="getIdentifierConstructor" calleeName="allocator.getIdentifierConstructor" @623
+    v7 = Convert v6 declared={type=undefined|null|function|f8 flags=[IsExpected]} @613
+    v8 = Convert v0 declared={type=number flags=[IsExpected]} @651
+    v9 = Construct v7, -, v8 @648 constructs
+    v10 = Convert v9 declared={type=undefined|null|L1 flags=[IsExpected]} @608
+    v11 = Call v1, -, v10 calleeName="countNode" @598
+    ReturnCall v11 casts=[{declared={type=undefined|null|L0|L1 flags=[IsExpected]}}] @598
+}
+function f4 name="sum" module=m0 position=909 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object):
+    Jump -> next b1() @909
+  b1():
+    v1 = PropGet v0 key="kind" @939
+    v2 = Integer integer=1 @953
+    v3 = StrictEq v1, v2 @939
+    Branch v3 -> taken b2(| 0), notTaken b4(| 0) @939
+  b2(v4):
+    v5 = NarrowByField v0, v4 key="kind" @939
+    Jump -> next b3() @939
+  b3():
+    v6 = GetModuleVariable variable=g3 @957
+    v7 = PropGet v5 key="left" @961
+    v8 = Convert v7 declared={type=undefined|null|object flags=[IsExpected]} @961
+    v9 = Call v6, -, v8 calleeName="sum" @957
+    v10 = GetModuleVariable variable=g3 @974
+    v11 = PropGet v5 key="right" @978
+    v12 = Convert v11 declared={type=undefined|null|object flags=[IsExpected]} @978
+    v13 = Call v10, -, v12 calleeName="sum" @974
+    v14 = Add v9, v13 @957
+    Jump -> next b6(v14) @957
+  b4(v15):
+    v16 = NarrowByField v0, v15 key="kind" @939
+    Jump -> next b5() @939
+  b5():
+    v17 = PropGet v16 key="escapedText" @992
+    v18 = PropGet v17 key="length" @997
+    Jump -> next b6(v18) @992
+  b6(v19):
+    Return v19 @992
+}
+function f5 name="createBinary" module=m0 position=661 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}, {type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}] results=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|object, v1: undefined|null|number|string|symbol|bigint|object):
+    Jump -> next b1() @661
+  b1():
+    v2 = GetModuleVariable variable=g1 @713
+    v3 = Integer integer=1 @728
+    v4 = Call v2, -, v3 calleeName="createBaseNode" @713
+    v5 = Convert v4 declared={type=undefined|null|L0|L1 flags=[IsExpected]} @713
+    v6 = Convert v5 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @713
+    PropSet v6, v0 key="left" @734
+    PropSet v6, v1 key="right" @754
+    Return v6 @783
+}
+function f6 name="createIdentifier" module=m0 position=791 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1() @791
+  b1():
+    v1 = GetModuleVariable variable=g2 @840
+    v2 = Integer integer=2 @861
+    v3 = Call v1, -, v2 calleeName="createBaseIdentifier" @840
+    v4 = Convert v3 declared={type=undefined|null|L0|L1 flags=[IsExpected]} @840
+    v5 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @840
+    PropSet v5, v0 key="escapedText" @867
+    Return v5 @901
+}
+function f7 name="NodeObject" module=m0 position=57 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @57
+  b1():
+    v2 = GetConstructPrototype v0 layout=L0 @57
+    v3 = NewObject v2 layout=L0 @57
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @57
+    v5 = Convert v4 declared={type=undefined|null|L0 flags=[IsExpected]} @45
+    PropSet v5, v1 key="kind" @45
+    v7 = Convert v4 declared={type=undefined|null|L0 flags=[IsExpected]} @67
+    v8 = Integer @80
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @67
+    PropSet v7, v9 key="flags" @67
+    v11 = Undefined @67
+    v12 = TypeTest v11 testedType=object @67
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0) @67
+  b2(v13):
+    Jump -> next b4(v13) @67
+  b3(v14):
+    Jump -> next b4(v4) @67
+  b4(v15):
+    Return v15 @67
+}
+function f8 name="IdentifierObject" module=m0 position=152 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @152
+  b1():
+    v2 = GetConstructPrototype v0 layout=L1 @152
+    v3 = NewObject v2 layout=L1 @152
+    v4 = Convert v3 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @152
+    v5 = Convert v4 declared={type=undefined|null|L1 flags=[IsExpected]} @140
+    PropSet v5, v1 key="kind" @140
+    v7 = Convert v4 declared={type=undefined|null|L1 flags=[IsExpected]} @162
+    v8 = Integer @175
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @162
+    PropSet v7, v9 key="flags" @162
+    v11 = Undefined @162
+    v12 = TypeTest v11 testedType=object @162
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0) @162
+  b2(v13):
+    Jump -> next b4(v13) @162
+  b3(v14):
+    Jump -> next b4(v4) @162
+  b4(v15):
+    Return v15 @162
+}
+function f9 name="getNodeConstructor" module=m0 position=224 kind=Arrow thisType={type=anything} results=[{type=undefined|null|function|f7 flags=[IsExpected]}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @224
+  b1():
+    v0 = GetModuleVariable variable=g4 @230
+    v1 = CheckInitialized v0 name="NodeObject" @230
+    v2 = Convert v1 declared={type=undefined|null|function|f7 flags=[IsExpected]} @230
+    Return v2 @230
+}
+function f10 name="getIdentifierConstructor" module=m0 position=268 kind=Arrow thisType={type=anything} results=[{type=undefined|null|function|f8 flags=[IsExpected]}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @268
+  b1():
+    v0 = GetModuleVariable variable=g5 @274
+    v1 = CheckInitialized v0 name="IdentifierObject" @274
+    v2 = Convert v1 declared={type=undefined|null|function|f8 flags=[IsExpected]} @274
+    Return v2 @274
+}
+function f11 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f15 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]

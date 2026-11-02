@@ -674,6 +674,39 @@ fn the_run_time_answers_a_require_of_a_file_that_a_module_it_requires_imports() 
 }
 
 #[test]
+fn the_run_time_answers_a_require_of_a_file_that_an_import_call_names_while_the_file_runs() {
+    let files = [
+        (
+            "main.mjs",
+            "import './itself.cjs'; import './above.cjs'; import './beside.cjs';",
+        ),
+        ("itself.cjs", "exports.one = 1; import('./itself.cjs');"),
+        ("above.cjs", "require('./below.cjs');"),
+        ("below.cjs", "import('./above.cjs');"),
+        (
+            "beside.cjs",
+            "import('./other.cjs'); require('./beside.cjs');",
+        ),
+        ("other.cjs", "exports.one = 1;"),
+    ];
+    with_plan(&files, |plan| {
+        let graph = &plan.graph;
+        for file in ["itself.cjs", "above.cjs"] {
+            assert!(
+                graph.may_be_imported_while_it_runs(plan.module(file)),
+                "{file}"
+            );
+        }
+        for file in ["main.mjs", "below.cjs", "beside.cjs", "other.cjs"] {
+            assert!(
+                !graph.may_be_imported_while_it_runs(plan.module(file)),
+                "{file}"
+            );
+        }
+    });
+}
+
+#[test]
 fn a_request_to_a_file_that_is_left_out_goes() {
     let files = [
         (

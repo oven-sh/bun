@@ -7,7 +7,7 @@
 // next unrelated timer happens to wake the loop.
 //
 // The drop happens when a poll callback re-enters `us_loop_run_bun_tick`
-// (e.g. `expect(p).resolves` → `waitForPromise` → `autoTick`), which
+// (e.g. `Bun.build()` with an async plugin `setup()` → `waitForPromise` → `autoTick`), which
 // overwrites the shared `loop->ready_polls` / `num_ready_polls` /
 // `current_ready_poll` while the outer dispatch is still mid-iteration.
 // The outer loop resumes with the inner tick's indices and silently skips
@@ -56,7 +56,10 @@ test.skipIf(!isLinux)(
           // the kernel with no re-arm path.
           if (!nested) {
             nested = true;
-            expect(Bun.sleep(1)).resolves.toBe(undefined);
+            Bun.build({
+              entrypoints: ["./none.js"],
+              plugins: [{ name: "nested tick", setup: () => Bun.sleep(1) }],
+            }).catch(() => {});
           }
           resolve();
         },
@@ -69,6 +72,16 @@ test.skipIf(!isLinux)(
     await Promise.all(exits);
   },
 );
+
+// `Bun.build()` waits for an async plugin `setup()` by ticking the loop. True if the timer fired under the call.
+function tickEventLoop() {
+  let ticked = false;
+  Bun.build({
+    entrypoints: ["./none.js"],
+    plugins: [{ name: "nested tick", setup: () => Bun.sleep(1).then(() => void (ticked = true)) }],
+  }).catch(() => {});
+  return ticked;
+}
 
 test.skipIf(isWindows)("a nested event-loop tick dispatches the rest of the outer tick's batch", async () => {
   const [socketFd, socketPeer] = createSocketPair();
@@ -85,7 +98,7 @@ test.skipIf(isWindows)("a nested event-loop tick dispatches the rest of the oute
   closeSync(socketPeer);
   await received.promise;
   // This runs in a microtask under the socket's poll callback, so waiting for the timer ticks the loop from inside it.
-  expect(Bun.sleep(1)).resolves.toBe(undefined);
+  expect(tickEventLoop()).toBe(true);
   expect(await text).toBe("hi");
 });
 
@@ -95,6 +108,7 @@ test.skipIf(isWindows)("a nested event-loop tick doesn't dispatch a socket's wri
   const big = Buffer.alloc(4 * 1024 * 1024, "x");
   const scratch = Buffer.alloc(1024 * 1024);
   const received = Promise.withResolvers<void>();
+  const ticked = Promise.withResolvers<boolean>();
   let drains = 0;
   try {
     using _socket = await Bun.connect({
@@ -110,13 +124,14 @@ test.skipIf(isWindows)("a nested event-loop tick doesn't dispatch a socket's wri
           if (++drains > 1) return;
           // Fill the send buffer again, so the socket still polls for writable while the loop ticks from inside this handler.
           socket.write(big);
-          expect(Bun.sleep(1)).resolves.toBe(undefined);
+          ticked.resolve(tickEventLoop());
         },
         data: () => received.resolve(),
       },
     } as any);
     await received.promise;
-    expect(drains).toBe(1);
+    // The nested tick delivers the data, so this runs inside it. Count the drains once the handler has returned.
+    expect({ ticked: await ticked.promise, drains }).toEqual({ ticked: true, drains: 1 });
   } finally {
     closeSync(peerFd);
   }

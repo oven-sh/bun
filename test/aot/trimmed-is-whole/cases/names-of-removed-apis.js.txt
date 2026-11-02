@@ -78,3 +78,23 @@ try {
 } catch (error) {
   console.log(error.name, error.message);
 }
+//// a-class-that-a-module-exports-too
+//@ alone
+//@ removes AbortController
+console.log(typeof AbortController, AbortController.name, AbortController.length, {} instanceof AbortController, "abort" in AbortController.prototype);
+console.log(Object.getOwnPropertyNames(AbortController).join(), "AbortSignal" in AbortController);
+//// members-that-a-module-puts-on-a-class
+//@ alone
+console.log(typeof AbortController.default, typeof AbortController.AbortSignal, Object.getOwnPropertyNames(AbortController).join());
+const exported = require("abort-controller");
+console.log(exported === AbortController, AbortController.default === AbortController, AbortController.AbortSignal === AbortSignal, Object.getOwnPropertyNames(AbortController).join());
+//// functions-on-classes
+//@ alone
+//@ removes Bun.Cookie
+//@ removes Bun.WebView
+//@ removes FormData
+//@ removes SubtleCrypto
+//@ removes URL
+console.log(typeof Bun.Cookie.from, Bun.Cookie.from.name, Bun.Cookie.from.length, typeof Bun.Cookie.parse, Bun.Cookie.parse.name, Bun.Cookie.parse.length);
+console.log(typeof Bun.WebView.closeAll, Bun.WebView.closeAll.name, typeof FormData.from, FormData.from.name, typeof SubtleCrypto.supports, SubtleCrypto.supports.length);
+console.log(typeof URL.createObjectURL, URL.createObjectURL.name, URL.createObjectURL.length, typeof URL.revokeObjectURL, Object.keys(URL.revokeObjectURL).length);

@@ -464,9 +464,13 @@ impl JSBundleCompletionTask {
     }
 
     /// Port of `JSBundleCompletionTask.doCompilation`.
-    fn do_compilation(&mut self, output_files: &mut Vec<OutputFile>) -> CompileResult {
-        let compile_options = self
-            .config
+    fn do_compilation(
+        config: &JSBundlerConfig,
+        env: &mut bun_dotenv::Loader,
+        log: &mut bun_ast::Log,
+        output_files: &mut Vec<OutputFile>,
+    ) -> CompileResult {
+        let compile_options = config
             .compile
             .as_ref()
             .expect("Unexpected: No compile options provided");
@@ -487,7 +491,7 @@ impl JSBundleCompletionTask {
             return CompileResult::fail(CompileErrorReason::NoEntryPoint);
         };
 
-        let full_outfile_path = executable_path(&self.config, compile_options);
+        let full_outfile_path = executable_path(config, compile_options);
 
         let dirname: &[u8] = paths::dirname(&full_outfile_path).unwrap_or(b".");
         let basename: &[u8] = paths::basename(&full_outfile_path);
@@ -564,7 +568,7 @@ impl JSBundleCompletionTask {
         let trim_plan = match compile_ahead_of_time::plan_bundle_trimming(
             compile_options,
             output_files,
-            &mut self.env,
+            env,
             flags,
         ) {
             Ok(plan) => plan,
@@ -583,8 +587,8 @@ impl JSBundleCompletionTask {
             root_dir.fd,
             module_prefix,
             outfile_for_executable,
-            &mut self.env,
-            self.config.format,
+            env,
+            config.format,
             &WindowsOptions {
                 hide_console: compile_options.windows_hide_console,
                 icon: opt_box(&compile_options.windows_icon_path.list),
@@ -612,7 +616,7 @@ impl JSBundleCompletionTask {
             }
         };
         compile_ahead_of_time::add_notes(
-            &mut self.log,
+            log,
             crate::cli::build_command::collect_trim_log_lines(
                 &additions.details,
                 &compile_options.trim,
@@ -636,13 +640,9 @@ impl JSBundleCompletionTask {
                 true
             } else if matches!(result, CompileResult::Success)
                 && output_files[i].output_kind == OutputKind::Sourcemap
-                && matches!(output_files[i].value, OutputFileValue::Buffer { .. })
+                && let OutputFileValue::Buffer { bytes } = &output_files[i].value
             {
-                let bytes_len = match &output_files[i].value {
-                    OutputFileValue::Buffer { bytes } => bytes.len(),
-                    _ => 0,
-                };
-                if bytes_len > 0 {
+                if !bytes.is_empty() {
                     // Derive the .map filename from the sourcemap's own dest_path,
                     // placed in the same directory as the compiled executable.
                     let derived_map_basename: Box<[u8]>;
@@ -672,11 +672,6 @@ impl JSBundleCompletionTask {
                         &sourcemap_full_path
                     } else {
                         map_basename
-                    };
-                    let bytes: &[u8] = match &output_files[i].value {
-                        OutputFileValue::Buffer { bytes } => bytes,
-                        // SAFETY: `Buffer` arm checked above.
-                        _ => unsafe { core::hint::unreachable_unchecked() },
                     };
                     let write_result = NodeFS::write_file_with_path_buffer(
                         &mut pathbuf,
@@ -824,7 +819,7 @@ impl JSBundleCompletionTask {
         }
 
         // Copy the BackRef out (it is `Copy`) so `global_this` borrows a local
-        // instead of `*this` — `do_compilation`/`to_js_error` below need `&mut *this`.
+        // instead of `*this` — `to_js_error` below needs `&mut *this`.
         let global_this_ref = this.global_this;
         let global_this = global_this_ref.get();
         // `Strong::swap` ties the returned `&mut JSPromise` to
@@ -834,16 +829,15 @@ impl JSBundleCompletionTask {
         let promise: *mut JSPromise = this.promise.swap();
         let promise = JSPromise::opaque_mut(promise);
 
-        // `do_compilation` borrows `&mut self` while needing
-        // `&mut output_files` from inside `self.result`. Temporarily move the
-        // Vec out via `take` so the method gets a disjoint `&mut self`.
-        if matches!(this.result, BundleV2Result::Value(_)) && this.config.compile.is_some() {
-            let mut output_files = match &mut this.result {
-                BundleV2Result::Value(build) => core::mem::take(&mut build.output_files),
-                // SAFETY: arm checked above.
-                _ => unsafe { core::hint::unreachable_unchecked() },
-            };
-            let compile_result = this.do_compilation(&mut output_files);
+        if let BundleV2Result::Value(build) = &mut this.result
+            && this.config.compile.is_some()
+        {
+            let compile_result = Self::do_compilation(
+                &this.config,
+                &mut this.env,
+                &mut this.log,
+                &mut build.output_files,
+            );
             // `defer compile_result.deinit()` — `CompileResult` is a Rust enum
             // with owned `Vec<u8>` payloads; drops at end of scope.
 
@@ -854,30 +848,14 @@ impl JSBundleCompletionTask {
                     bun_ast::Loc::EMPTY,
                     format_args!("{}", bstr::BStr::new(err.slice())),
                 );
-                // `this.result.value.deinit()` — owned fields drop with the
-                // overwrite below; `output_files` (moved out above) drops here.
-                drop(output_files);
+                // `this.result.value.deinit()` — owned fields drop with the overwrite.
                 this.result = BundleV2Result::Err(bun_bundler::Error::CompilationFailed);
-            } else {
-                // Put the compacted output_files back.
-                match &mut this.result {
-                    BundleV2Result::Value(build) => build.output_files = output_files,
-                    // SAFETY: arm checked above.
-                    _ => unsafe { core::hint::unreachable_unchecked() },
-                }
             }
         }
 
-        // `to_js_error` borrows `&mut self`, which would overlap a
-        // `&mut this.result` match scrutinee. Dispatch the pending/err arms
-        // first, then take a fresh `&mut` for Value.
-        if matches!(this.result, BundleV2Result::Pending) {
-            unreachable!();
-        }
-        if matches!(this.result, BundleV2Result::Err(_)) {
-            return this.to_js_error(promise, global_this);
-        }
         match &mut this.result {
+            BundleV2Result::Pending => unreachable!(),
+            BundleV2Result::Err(_) => return this.to_js_error(promise, global_this),
             BundleV2Result::Value(build) => {
                 let output_files = &mut build.output_files;
                 let output_files_js =
@@ -986,8 +964,6 @@ impl JSBundleCompletionTask {
                     return promise.resolve(global_this, build_output);
                 }
             }
-            // SAFETY: Pending/Err already returned above.
-            _ => unsafe { core::hint::unreachable_unchecked() },
         }
         Ok(())
     }
@@ -1032,16 +1008,11 @@ static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDis
             .load(core::sync::atomic::Ordering::Acquire)
     },
     enqueue_task_concurrent: |c, task| {
-        // SAFETY: `task` is a fresh non-null `ConcurrentTask` passed through
-        // from the bundler vtable; the queue takes ownership.
-        unsafe {
-            let task = core::ptr::NonNull::new_unchecked(task);
-            from_completion_handle(c)
-                .bundle_ticket
-                .as_ref()
-                .expect("a running Bun.build holds a ticket")
-                .post(task);
-        }
+        from_completion_handle(c)
+            .bundle_ticket
+            .as_ref()
+            .expect("a running Bun.build holds a ticket")
+            .post(task);
     },
 };
 
@@ -1463,15 +1434,8 @@ impl CompletionStruct for JSBundleCompletionTask {
         let transpiler: &'a mut Transpiler<'a> = bump.alloc(t);
 
         // Post-init field wiring.
-        // Reborrow through a raw ptr so `&mut self` is usable
-        // again after handing `&'a mut Transpiler` (which is tied to `bump`,
-        // not `self`) to the trait method.
-        let tp: *mut Transpiler<'a> = transpiler;
-        // SAFETY: `tp` aliases nothing in `self`; lives in `bump`.
-        self.configure_bundler(unsafe { &mut *tp }, bump)?;
-        // SAFETY: `tp` was the unique `&'a mut` slot from `bump.alloc`; the
-        // reborrow above has ended.
-        Ok(unsafe { &mut *tp })
+        self.configure_bundler(transpiler, bump)?;
+        Ok(transpiler)
     }
 
     fn init_and_run<'a>(

@@ -162,7 +162,7 @@ console.log(describe(afterwards), afterwards.a);
 
 // GENERATED: ordinaryStar frozenTarget hasOwnProperty
 // CHECK-LABEL: function {{*}}name="ordinaryStar"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} length=2 captures=[{type=undefined|null|[[f_1]] flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_2]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} length=2 captures=[{type=undefined|null|[[f_1]] flags=[IsExpected] variableName="ordinaryBinding"}] thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_2]]] {
 // CHECK-NEXT: b0(v0: undefined|null|[[f_1]], v1: undefined|null|object, v2: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -206,7 +206,7 @@ console.log(describe(afterwards), afterwards.a);
 // CHECK-NEXT: Jump -> next b2(v25)
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="frozenTarget"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=1 captures=[{type=[[f_3]] flags=[IsFromCompiler]}, {type=undefined|null|[[f_4]]|builtin(ObjectFreeze) flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|[[L_5]] flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes={{*}}[[f_6]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=1 captures=[{type=[[f_3]] flags=[IsFromCompiler] variableName="describe"}, {type=undefined|null|[[f_4]]|builtin(ObjectFreeze) flags=[IsExpected] variableName="freeze"}] thisType={type=anything} parameters=[{type=undefined|null|[[L_5]] flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes={{*}}[[f_6]]] {
 // CHECK-NEXT: b0(v0: [[f_3]], v1: undefined|null|[[f_4]]|builtin(ObjectFreeze), v2: undefined|null|[[L_5]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

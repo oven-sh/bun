@@ -45,11 +45,6 @@ pub(crate) type WriteFileOnWriteFileCallback =
 /// The completion token a `WriteFile` keeps across its async I/O.
 pub(crate) type WriteFileTask = bun_jsc::Completion<WriteFile>;
 
-// SAFETY: the two blobs are native values holding store refs (atomic counts);
-// io-loop registration state and an opaque completion ctx that only the
-// JS-thread completion dereferences — nothing used off-thread is thread-affine.
-unsafe impl Send for WriteFile {}
-
 impl bun_jsc::JobContext for WriteFile {
     const CANCELLABLE: bool = cfg!(not(windows));
     type OffThread = Self;

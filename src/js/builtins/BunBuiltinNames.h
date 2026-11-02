@@ -42,9 +42,11 @@ using namespace JSC;
     macro(armedTimeout) \
     macro(arrayBuffer) \
     macro(asUint8Array) \
+    macro(asymmetricMatch) \
     macro(atimeMs) \
     macro(attributes) \
     macro(autoAllocateChunkSize) \
+    macro(bareStandardStreamPrototypes) \
     macro(basename) \
     macro(birthtimeMs) \
     macro(blob) \
@@ -67,10 +69,12 @@ using namespace JSC;
     macro(dest) \
     macro(detail) \
     macro(dirname) \
+    macro(document) \
     macro(domain) \
     macro(drain) \
     macro(encoding) \
     macro(end) \
+    macro(env) \
     macro(errno) \
     macro(esmLoadSync) \
     macro(esmNamespaceForCjs) \
@@ -109,6 +113,7 @@ using namespace JSC;
     macro(internalRequire) \
     macro(isAbortSignal) \
     macro(isAbsolute) \
+    macro(isEqualNode) \
     macro(isOpen) \
     macro(isPrepared) \
     macro(isUncloneable) \
@@ -117,6 +122,7 @@ using namespace JSC;
     macro(json) \
     macro(kResistStopPropagation) \
     macro(lazy) \
+    macro(lightStandardStreams) \
     macro(lineText) \
     macro(loadEsmIntoCjs) \
     macro(main) \
@@ -136,6 +142,9 @@ using namespace JSC;
     macro(mtimeMs) \
     macro(napiDlopenHandle) \
     macro(napiWrappedContents) \
+    macro(natives) \
+    macro(nodeName) \
+    macro(nodeType) \
     macro(normalize) \
     macro(onClose) \
     macro(onDrain) \
@@ -169,6 +178,8 @@ using namespace JSC;
     macro(relative) \
     macro(removeAbortAlgorithmFromSignal) \
     macro(require) \
+    macro(requireCacheCompiledEntry) \
+    macro(requireCacheDidDelete) \
     macro(requireCacheWillSet) \
     macro(isHiddenFromRequireCache) \
     macro(requireCommonJS) \

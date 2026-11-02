@@ -384,13 +384,13 @@ function f66 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v4: 1 = Integer integer=1
 # CHECK-NEXT: v5: L3 = NewObject -, v4 layout=L3 fields=[0] allocationSite=10 allocationClass=0
+# CHECK-NEXT: v6: f32 = NewClosure v5 function=f32 allocationSite=9 storage=Frame
 # CHECK-NEXT: Jump -> next b3()
-# CHECK-NEXT: b2(v6: f7) frequency=Rare:
-# CHECK-NEXT: v7: undefined|null|L0 = Call v6 calleeName="make" accessSite=10 callees=[f7, f8]
+# CHECK-NEXT: b2(v7: f7) frequency=Rare:
+# CHECK-NEXT: v8: undefined|null|L0 = Call v7 calleeName="make" accessSite=10 callees=[f7, f8]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b3() handler=b4():
-# CHECK-NEXT: v8: f32 = NewClosure v5 function=f32 allocationSite=9 storage=Frame
-# CHECK-NEXT: v9: undefined|null|string = Call v8 calleeName="action" accessSite=6 callees=[f18, f32]
+# CHECK-NEXT: v9: undefined|null|string = Call v6 calleeName="action" accessSite=6 callees=[f18, f32]
 # CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: b4() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b5()

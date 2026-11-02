@@ -1,0 +1,12 @@
+import { check } from "../src/show";
+import { typedSum, typedLength, typedFirst, typedVec, typedOptional, typedRecord, typedUnion, typedCallback } from "../src/middle";
+import { total, sumField, weigh, nameOf, reduceNumbers, Vec2, colorName, grow } from "fake-typed";
+import { callTwice } from "fake-shapes";
+const F = "31";
+const odd: any[] = [undefined, null, 1, 1.5, -0, NaN, "text", "", true, 10n, Symbol.for("s"), {}, [], [1], { x: 1, y: 2 }, new Vec2(3, 4), () => 1, { valueOf() { return 7; } }, { length: 3 }, new Date(0)];
+const tryAll = (f: (v: any) => unknown) => odd.map(v => { try { return f(v); } catch (e) { return (e as Error).name; } });
+check(F, "numbers", () => [tryAll(v => typedSum(v, 1)), tryAll(v => typedSum(1, v)), tryAll(v => (typedSum as any)(v))]);
+check(F, "texts and lists", () => [tryAll(typedLength), tryAll(typedFirst), tryAll(v => reduceNumbers(v, (a, b) => a + b, 0)), tryAll(v => sumField(v)), tryAll(v => sumField([v]))]);
+check(F, "objects", () => [tryAll(typedVec), tryAll(typedRecord), tryAll(nameOf), tryAll(v => total([v])), tryAll(v => total(v)), tryAll(weigh), tryAll(grow), tryAll(v => new Vec2(1, 2).add(v).parts()), tryAll(v => new Vec2(v, v).parts()), tryAll(v => new Vec2(1, 2).equals(v))]);
+check(F, "unions, enums, callbacks", () => [tryAll(typedUnion), tryAll(colorName), tryAll(typedCallback), tryAll(v => typedCallback(() => v))]);
+check(F, "numbers of arguments", () => [(typedOptional as any)(), typedOptional(1), typedOptional(1, 2), typedOptional(1, 2, 3, 4), typedOptional(1, undefined, 3), (typedSum as any)(1, 2, 3), callTwice(typedSum as any, 1), callTwice(typedOptional as any), [1, 2, 3].map(typedOptional as any), [1, 2].map(typedSum as any)]);

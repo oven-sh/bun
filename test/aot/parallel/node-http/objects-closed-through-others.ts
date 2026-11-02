@@ -63,15 +63,22 @@ async function runCase(level: Level, target: Target, moment: Moment) {
   const { port } = server.address() as AddressInfo;
   const answers: string[] = [];
   for (let index = 0; index < 4; index++) {
-    try {
-      const answer = await fetch(`http://127.0.0.1:${port}/${index}`, {
-        method: "POST",
-        body: "body",
-        signal: AbortSignal.timeout(20000),
-      });
-      answers.push(`${index}: ${answer.status} ${answer.headers.get("x-turn")} ${await answer.text()}`);
-    } catch (error) {
-      answers.push(`${index}: ${(error as Error)?.name}`);
+    for (let attempt = 0; ; attempt++) {
+      const handled = turn;
+      try {
+        const answer = await fetch(`http://127.0.0.1:${port}/${index}`, {
+          method: "POST",
+          body: "body",
+          signal: AbortSignal.timeout(20000),
+        });
+        answers.push(`${index}: ${answer.status} ${answer.headers.get("x-turn")} ${await answer.text()}`);
+      } catch (error) {
+        // The server dropped the connection after the last exchange. On a busy machine the client may send on it before it
+        // notices, and then the handler never sees the request. That says nothing about the closed object: send it again.
+        if (turn === handled && attempt < 3) continue;
+        answers.push(`${index}: ${(error as Error)?.name}`);
+      }
+      break;
     }
     await new Promise(resolve => setTimeout(resolve, 2));
   }

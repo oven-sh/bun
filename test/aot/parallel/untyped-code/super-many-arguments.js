@@ -14,7 +14,7 @@ function callsIn(counts, ...besides) {
   return sum;
 }
 // These make the text that is printed, list the names for it and keep it in a set; a cell or an array where the allocator has none at hand is the work of the run time; a place that several kinds of objects pass tries now and then to remember the one that it sees.
-const owed = ["operationAOTConcat", "operationAOTConcatenate", "operationAOTSetAdd", "operationAOTStackStringBuilderAppend", "operationAOTStackStringBuilderFinish", "operationAOTValueAdd", "operationAOTOwnPropertyKeys", "operationAOTAllocateSlow", "operationAOTArraySlice", "operationAOTFillSiteCache"];
+const owed = ["operationAOTConcat", "operationAOTConcatenate", "operationAOTConcatenatePair", "operationAOTSetAdd", "operationAOTStackStringBuilderAppend", "operationAOTStackStringBuilderFinish", "operationAOTValueAdd", "operationAOTOwnPropertyKeys", "operationAOTAllocateSlow", "operationAOTArraySlice", "operationAOTFillSiteCache"];
 function Request(id, params, raw, query, log, context) {
   this.id = id;
   this.params = params;

@@ -65,5 +65,7 @@ console.log("built and ran");
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v0 = String string="text"
 // CHECK-NEXT: v1 = Convert v0 declared={type=number site=[[w_4]]} illTypedCause=SuppressedError
-// CHECK-NEXT: Return v1
+// CHECK-NEXT: v2 = String string="text"
+// CHECK-NEXT: v3 = Convert v2 declared={type=number site=[[w_3]]}
+// CHECK-NEXT: Return v3
 // CHECK-NEXT: }

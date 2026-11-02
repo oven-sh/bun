@@ -154,7 +154,7 @@ const _: () = {
 
         fn parse_value(
             this: &mut Self,
-            name: &[u8],
+            name: &'static [u8],
             input: &mut Parser,
         ) -> Result<Self::Declaration> {
             crate::match_ignore_ascii_case! { name, {
@@ -163,7 +163,7 @@ const _: () = {
                 },
                 b"inherits" => {
                     let location = input.current_source_location();
-                    let ident = input.expect_ident_cloned()?;
+                    let ident = input.expect_ident()?;
                     this.inherits = Some(crate::match_ignore_ascii_case! { ident, {
                         b"true" => true,
                         b"false" => false,

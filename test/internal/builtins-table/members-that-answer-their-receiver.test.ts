@@ -38,6 +38,8 @@ test("a member that is passed its wrapper and answers an object of its class may
       anyObject: { returns: b.any.returning("object"), passThis: true, capability: "heap" },
     `),
   ).toEqual({
+    "%Other%.prototype.@@toStringTag": [],
+    "%Thing%.prototype.@@toStringTag": [],
     "%Thing%.prototype.ref": ["Retains", "Returns"],
     "%Thing%.prototype.remove": ["Retains", "Returns"],
     "%Thing%.prototype.append": ["Retains", "Returns"],
@@ -56,6 +58,8 @@ test("one that is not passed its wrapper, or answers nothing that its receiver c
       later: { returns: b.any.returning("Promise"), passThis: true, capability: "heap" },
     `),
   ).toEqual({
+    "%Other%.prototype.@@toStringTag": [],
+    "%Thing%.prototype.@@toStringTag": [],
     "%Thing%.prototype.copy": ["Retains"],
     "%Thing%.prototype.size": ["Retains"],
     "%Thing%.prototype.other": ["Retains"],

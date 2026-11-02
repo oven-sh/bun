@@ -8,12 +8,12 @@ function byCharacter(text: string, count: number): string {
   for (let i = 0; i < count; i++) out += text[i];
   return out;
 }
-function byPiece(pieces: Piece[]): string {
+export function byPiece(pieces: Piece[]): string {
   let out = "";
   for (const piece of pieces) out += piece;
   return out;
 }
-function byString(pieces: string[]): string {
+export function byString(pieces: string[]): string {
   let out = "";
   for (const piece of pieces) out += piece;
   return out;

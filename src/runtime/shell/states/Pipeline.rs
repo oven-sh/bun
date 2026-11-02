@@ -178,7 +178,6 @@ impl Pipeline {
             }
         }
 
-        let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
         let mut cmds: Vec<CmdOrResult> = Vec::with_capacity(cmd_count);
         for item in items {
             if matches!(item, ast::PipelineItem::Assigns(_)) {
@@ -193,7 +192,7 @@ impl Pipeline {
                     me.io.stdin.clone()
                 } else {
                     let r = IOReader::init(pipes[cmd_idx - 1][0], evtloop);
-                    r.set_interp(interp_ptr);
+                    r.set_interp(interp);
                     InKind::Fd(r)
                 };
                 let stdout = if cmd_idx == cmd_count - 1 {
@@ -210,7 +209,7 @@ impl Pipeline {
                         },
                         evtloop,
                     );
-                    w.set_interp(interp_ptr);
+                    w.set_interp(interp);
                     OutKind::Fd(crate::shell::io::OutFd {
                         writer: w,
                         captured: None,

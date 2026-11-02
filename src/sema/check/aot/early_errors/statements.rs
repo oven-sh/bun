@@ -102,6 +102,8 @@ impl Checker<'_, '_> {
                 self.check_module_syntax_position(file, s, 1258);
                 self.check_module_syntax_in_namespace(file, s, 1319);
             }
+            // `@typedef {Object} lunr.Index`: the namespace that a dotted name in a tag stands for. A comment may stand anywhere.
+            StmtKind::Module(_) if hir.is_in_jsdoc(hir[s].start) => {}
             StmtKind::Module(_)
             | StmtKind::ImportEquals(_)
             | StmtKind::ExportAssign(_)

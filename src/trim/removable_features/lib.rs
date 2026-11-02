@@ -12,7 +12,9 @@ mod generated {
 
 pub use feature_set::FeatureSet;
 pub use generated::{FEATURES_HASH, Feature, TrimFeature};
-pub use requirement::RuntimeRequirement;
+pub use requirement::{
+    RuntimeRequirement, can_run_uncompiled_code, features_running_uncompiled_code,
+};
 pub use state::{
     MAX_REMOVED_RANGES, RemovableFeatureState, RemovedRange, abort_for_removed_feature,
     abort_for_removed_feature_entered, find_removed_range, is_removed, is_trimmed, removal_of,

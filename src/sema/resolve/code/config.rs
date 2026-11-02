@@ -1,4 +1,5 @@
-use super::search::is_in_node_modules;
+use super::computed::{is_inside, split_after_last_slash};
+use super::search::{is_in_node_modules, join_unrooted};
 use super::*;
 use crate::atom::{Atom, Interner};
 use crate::hir::JsxPragmas;
@@ -75,21 +76,69 @@ pub struct TranspileSettings {
 
 pub(in crate::resolve) struct CodeConfig<'h> {
     pub base_url: Option<&'h [u8]>,
-    /// The keys of `paths`.
-    paths: &'h [&'h [u8]],
+    /// Each key of `paths` with what may stand for it, as absolute paths.
+    paths: &'h [(&'h [u8], &'h [&'h [u8]])],
+    /// What the substitutions of `paths` were relative to.
+    paths_directory: &'h [u8],
     pub settings: &'h TranspileSettings,
+}
+
+/// What `paths` and `baseUrl` let a name mean that is no path.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(in crate::resolve) enum ConfiguredName<'h> {
+    /// A key without a star.
+    Whole(&'h [u8]),
+    /// `"@/*": ["./src/*"]`: what follows `written` is a path from `directory`.
+    Below {
+        written: &'h [u8],
+        directory: &'h [u8],
+    },
 }
 
 impl<'h> CodeConfig<'h> {
     pub(in crate::resolve) fn can_match_prefix(&self, prefix: &[u8]) -> bool {
-        self.paths.iter().any(|&key| {
-            let Some(star) = strings::index_of_char_usize(key, b'*') else {
-                return key.starts_with(prefix);
-            };
-            let key_prefix = &key[..star];
-            key_prefix.starts_with(prefix) || prefix.starts_with(key_prefix)
-        })
+        self.paths.iter().any(|&(key, _)| can_match(key, prefix))
     }
+
+    /// Where a name that begins with `prefix` may lie by `paths` and `baseUrl`, beside the installed packages.
+    /// `None`: a key says it in another form than `"a/*": ["./b/*"]`, or the prefix names no folder below the one that the config starts from: it may be any file of the project.
+    pub(in crate::resolve) fn find_names_that_begin_with(
+        &self,
+        prefix: &[u8],
+    ) -> Option<Vec<ConfiguredName<'h>>> {
+        let below = |written: &'h [u8], directory: &'h [u8], start: &[u8]| {
+            let remaining = prefix.strip_prefix(written).unwrap_or_default();
+            let root = join_unrooted(directory, split_after_last_slash(remaining).0);
+            let names_folder = !is_inside(start, strings::without_trailing_slash(&root));
+            names_folder.then_some(ConfiguredName::Below { written, directory })
+        };
+        let mut names = Vec::new();
+        for &(key, substitutions) in self.paths.iter().filter(|it| can_match(it.0, prefix)) {
+            let Some(written) = key.strip_suffix(b"*") else {
+                if strings::contains_char(key, b'*') {
+                    return None;
+                }
+                names.push(ConfiguredName::Whole(key));
+                continue;
+            };
+            for &substitution in substitutions {
+                let directory = substitution.strip_suffix(b"/*")?;
+                names.push(below(written, directory, self.paths_directory)?);
+            }
+        }
+        if let Some(base_url) = self.base_url {
+            names.push(below(b"", base_url, base_url)?);
+        }
+        Some(names)
+    }
+}
+
+fn can_match(key: &[u8], prefix: &[u8]) -> bool {
+    let Some(star) = strings::index_of_char_usize(key, b'*') else {
+        return key.starts_with(prefix);
+    };
+    let key_prefix = &key[..star];
+    key_prefix.starts_with(prefix) || prefix.starts_with(key_prefix)
 }
 
 pub(in crate::resolve) struct ConfigCaches<'h> {
@@ -165,6 +214,8 @@ struct ParsedConfig {
     extends: Option<Vec<u8>>,
     base_url: Option<Vec<u8>>,
     paths: Option<Paths>,
+    /// What the substitutions of `paths` are relative to.
+    paths_directory: Vec<u8>,
     jsx: JsxFields,
     emits_decorator_metadata: bool,
     experimental_decorators: bool,
@@ -195,6 +246,7 @@ impl ParsedConfig {
         ParsedConfig {
             extends,
             paths: paths.map(|entries| parse_paths(entries, config_dir, has_base_url)),
+            paths_directory: base_url.clone().unwrap_or_else(|| config_dir.to_vec()),
             base_url,
             jsx: JsxFields::parse(options),
             emits_decorator_metadata: bool_entry(options, b"emitDecoratorMetadata") == Some(true),
@@ -209,6 +261,7 @@ impl ParsedConfig {
         self.base_url = self.base_url.take().or(parent.base_url);
         if self.paths.is_none() {
             self.paths = parent.paths;
+            self.paths_directory = parent.paths_directory;
         }
         self.jsx.inherit(parent.jsx);
         self.emits_decorator_metadata |= parent.emits_decorator_metadata;
@@ -337,10 +390,17 @@ impl<'h> Resolver<'h> {
         let session: &'h Session = self.session;
         let arena = session.arena();
         let entries = merged.paths.as_deref().unwrap_or_default();
-        let paths = entries.iter().map(|(key, _)| self.keep(key));
+        let paths = entries.iter().map(|(key, substitutions)| {
+            let absolute = substitutions
+                .iter()
+                .map(|it| self.keep(&join(&merged.paths_directory, it)));
+            let absolute: &'h [&'h [u8]] = arena.alloc_slice_fill_iter(absolute);
+            (self.keep(key), absolute)
+        });
         let config: &'h CodeConfig<'h> = arena.alloc(CodeConfig {
             base_url: merged.base_url.as_deref().map(|it| self.keep(it)),
             paths: arena.alloc_slice_fill_iter(paths),
+            paths_directory: self.keep(&merged.paths_directory),
             settings: self.create_settings(&merged),
         });
         Some(config)

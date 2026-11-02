@@ -1238,11 +1238,9 @@ impl<'a> SelectorParser<'a> {
         })
     }
 
-    pub(crate) fn namespace_for_prefix(&mut self, prefix: Ident) -> Option<Str> {
+    pub(crate) fn namespace_for_prefix(&mut self, prefix: Str) -> Option<Str> {
         let _ = self;
-        // SAFETY: `Ident.v` borrows the parser arena which outlives the parse
-        // session (`'static` is a placeholder for the arena lifetime).
-        Some(unsafe { crate::arena_str(prefix.v) })
+        Some(prefix)
     }
 
     pub(crate) fn parse_functional_pseudo_element(
@@ -1378,18 +1376,7 @@ impl<'a> SelectorParser<'a> {
     ) -> CResult<PseudoClass> {
         let pseudo_class = crate::match_ignore_ascii_case! { name, {
             b"lang" => {
-                // `expect_ident_or_string` returns `&'_ [u8]`
-                // (lifetime-tied to `&mut self`), which can't satisfy
-                // `parse_comma_separated`'s HRTB. Clone the token to extract
-                // the underlying `&'static [u8]` payload directly.
-                let languages = parser.parse_comma_separated(|p| -> CResult<Str> {
-                    let loc = p.current_source_location();
-                    let tok = *p.next()?;
-                    match tok {
-                        Token::Ident(i) | Token::QuotedString(i) => Ok(i),
-                        t => Err(loc.new_unexpected_token_error(t)),
-                    }
-                })?;
+                let languages = parser.parse_comma_separated(|p| p.expect_ident_or_string())?;
                 return Ok(PseudoClass::Lang { languages });
             },
             b"dir" => PseudoClass::Dir {
@@ -3512,9 +3499,6 @@ pub(crate) fn parse_attribute_selector<Impl: BunSelectorImpl>(
         ));
     };
 
-    // `expect_ident_or_string` returns `&'_ [u8]` (lifetime-tied to
-    // `&mut *input`); `parse_attribute_flags(input)` below needs `input` again.
-    // Clone the token so the borrow is released before we re-borrow.
     let value_str: Str = {
         let value_loc = input.current_source_location();
         let tok = *input.next()?;
@@ -3943,8 +3927,7 @@ pub(crate) fn parse_qualified_name<Impl: BunSelectorImpl>(
             };
             if n {
                 let prefix: Impl::NamespacePrefix = Ident { v: value };
-                let result: Option<Impl::NamespaceUrl> =
-                    parser.namespace_for_prefix(Ident { v: value });
+                let result: Option<Impl::NamespaceUrl> = parser.namespace_for_prefix(value);
                 let url: Impl::NamespaceUrl = match result {
                     Some(url) => url,
                     None => {

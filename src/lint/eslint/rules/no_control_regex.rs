@@ -6,13 +6,13 @@ use bun_lint_oxlint::regex_pattern::run_on_regex_node;
 /// Disallow control characters in regular expressions.
 pub struct NoControlRegex;
 
-const UNEXPECTED: Message = Message::new(
+const UNEXPECTED: &Message = &Message::new(
     "unexpected",
     "Unexpected control character(s) in regular expression: {{controlChars}}.",
 );
 /// oxlint's messages.
-const CONTROL_CHARACTER: Message = Message::new("unexpected", "Unexpected control character");
-const CONTROL_CHARACTERS: Message = Message::new("unexpected", "Unexpected control characters");
+const CONTROL_CHARACTER: &Message = &Message::new("unexpected", "Unexpected control character");
+const CONTROL_CHARACTERS: &Message = &Message::new("unexpected", "Unexpected control characters");
 
 struct Collector<'s> {
     source: &'s [u8],

@@ -1,5 +1,4 @@
-// What is pushed is known to be an int32 or a number where the analysis of the whole program says what the operands are, or warm code tests them. A build with every function cold and without
-// the results of the analysis has neither, so there each of the lists is born for every value: empty-literal-without-declared-type-born.expected.every-function-cold-and-no-flow-results.txt.
+// An empty list without a declared type is born with the storage for what is pushed into it: int32s, numbers, or every value.
 import { jscDescribe } from "bun:jsc";
 
 const enum Flag {

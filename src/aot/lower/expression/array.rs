@@ -1,9 +1,11 @@
 use bun_core::printer::{FIRST_ASCII, LAST_ASCII, bmp_escape, surrogate_pair_escape};
 use bun_core::strings::{CodepointIterator, Cursor};
+use bun_sema::atom::Atom;
 use bun_sema::hir::{Branches, ExprId, ExprKind, NodeData};
 use smallvec::SmallVec;
 
 use crate::diagnostic_codes::Code;
+use crate::engine::describe_regexp_syntax_error;
 use crate::ir::generated::RegExpFlags;
 use crate::ir::{TypeId, TypeTable, ValueId};
 use crate::lower::{FileLowering, FunctionLowering};
@@ -51,6 +53,10 @@ pub(super) fn lower_regexp_literal(
         unreachable!("lower_regexp_literal takes a Regex expression");
     };
     let letters = lowering.file.queries.atom_bytes(flags);
+    if is_left_out_and_invalid(lowering.file, literal, pattern, flags) {
+        let empty = lowering.file.intern_bytes(b"(?:)");
+        return lowering.builder.new_reg_exp(empty, RegExpFlags::default());
+    }
     let Some(flags) = regexp_flags(letters) else {
         let span = lowering.file.span_of(NodeData::Expr(literal));
         let diagnostics = &mut lowering.file.diagnostics;
@@ -62,6 +68,26 @@ pub(super) fn lower_regexp_literal(
         None => lowering.file.intern_atom(pattern),
     };
     lowering.builder.new_reg_exp(pattern, flags)
+}
+
+/// `bun run` never parses a literal that its transpiler leaves out, so one that JavaScript rejects stops nothing. It stays an object for a test of its truth.
+fn is_left_out_and_invalid(
+    file: &FileLowering<'_, '_, '_, '_>,
+    literal: ExprId,
+    pattern: Atom,
+    flags: Atom,
+) -> bool {
+    let position = file.hir[literal].pos;
+    if !file
+        .transpiled
+        .as_ref()
+        .is_some_and(|it| !it.has_regexp_literal_at(position))
+    {
+        return false;
+    }
+    let letters = file.queries.atom_bytes(flags);
+    regexp_flags(letters).is_none()
+        || describe_regexp_syntax_error(file.queries.atom_bytes(pattern), letters).is_some()
 }
 
 /// As `js_printer` writes a literal for `bun run`, so that `source` reads the same. `None`: as written.
@@ -96,7 +122,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.lower_elements(TypeTable::ANYTHING, prefix, arguments, position)
     }
 
-    fn lower_elements(
+    pub(in crate::lower) fn lower_elements(
         &mut self,
         contents: TypeId,
         prefix: &[ValueId],

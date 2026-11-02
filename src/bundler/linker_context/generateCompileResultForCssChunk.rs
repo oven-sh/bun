@@ -82,15 +82,9 @@ fn generate_compile_result_for_css_chunk_impl(
     // `bun_js_printer::MangledProps`; no cast needed.
     let local_names: &LocalsResultsMap = &c.mangled_props;
     let parse_graph = c.parse_graph();
-    // SAFETY: read-only fan-out of `&[Box<[u8]>]` as `&[&[u8]]`; relies on
-    // fat-pointer field-order equivalence (see `boxed_slices_as_borrowed`).
-    let unique_keys: &[&[u8]] = unsafe {
-        bun_ptr::boxed_slices_as_borrowed(
-            parse_graph
-                .input_files
-                .items_unique_key_for_additional_file(),
-        )
-    };
+    let unique_keys = parse_graph
+        .input_files
+        .items_unique_key_for_additional_file();
 
     match &css_import.kind {
         CssImportOrderKind::Layers(_) | CssImportOrderKind::ExternalPath(_) => {

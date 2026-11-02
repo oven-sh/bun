@@ -285,10 +285,127 @@ export function encodeNumbers(numbers: number[]): Uint8Array {
   return Uint8Array.from(bytes);
 }
 
-export function encodeBundledPositions(written: string, output: string, map: SourceMap, evaluated: string): Uint8Array {
+/** A file of src/js as it is written, and where its words stand in what `bun run` evaluates. */
+export interface Reading {
+  written: Words;
+  evaluated: Words;
+  /** As `Aligner` has them. */
+  partners: Int32Array;
+  corrections: Uint8Array;
+  /** Where the texts start that `evaluated` is made of. A stack trace counts the lines of each by itself. */
+  startsOfTexts: number[];
+}
+
+export function readModule(written: string, output: string, map: SourceMap, evaluated: string): Reading {
   const [wordsOfWritten, wordsOfEvaluated] = [new Words(written), new Words(evaluated)];
   const found = findWordsInEvaluatedText(wordsOfWritten, output, map, wordsOfEvaluated);
-  return encodeWordsInEvaluatedText(wordsOfWritten, wordsOfEvaluated, found);
+  return {
+    written: wordsOfWritten,
+    evaluated: wordsOfEvaluated,
+    ...readWithCorrections(wordsOfWritten, wordsOfEvaluated, found),
+    startsOfTexts: [0],
+  };
+}
+
+export function encodeBundledPositions(written: string, output: string, map: SourceMap, evaluated: string): Uint8Array {
+  return readModule(written, output, map, evaluated).corrections;
+}
+
+/** A function of a file of src/js/builtins, which is bundled by itself. `evaluated` is `output` with pieces replaced. */
+export interface BundledFunction {
+  name: string;
+  output: string;
+  map: SourceMap;
+  evaluated: string;
+}
+
+/**
+ * The same as readModule() for a file of src/js/builtins. `functions` are in the order in which the file writes them, and the words
+ * are found in what `bun run` evaluates for each, one behind the other in that order.
+ */
+export function readFileOfFunctions(written: string, functions: BundledFunction[]): Reading {
+  const [wordsOfWritten, wordsOfEvaluated] = [
+    new Words(written),
+    new Words(functions.map(it => it.evaluated).join("")),
+  ];
+  const starts = functions.map(({ name }) => {
+    const start = new RegExp(String.raw`^export\s+(?:async\s+)?function\s+${name}\b`, "m").exec(written);
+    if (!start) throw new Error(`The file does not write "export function ${name}" at the start of a line`);
+    return start.index;
+  });
+  const countWordsInFrontOf = (words: Words, index: number) => {
+    const number = words.starts.findIndex(start => start >= index);
+    return number < 0 ? words.length : number;
+  };
+  const found = new Map<number, number>();
+  const startsOfTexts: number[] = [];
+  let startOfText = 0;
+  for (const [n, { output, map, evaluated }] of functions.entries()) {
+    const [part, partOfEvaluated] = [new Words(written.slice(starts[n], starts[n + 1])), new Words(evaluated)];
+    const first = countWordsInFrontOf(wordsOfWritten, starts[n]);
+    const firstOfEvaluated = countWordsInFrontOf(wordsOfEvaluated, startOfText);
+    for (const [number, partner] of findWordsInEvaluatedText(part, output, map, partOfEvaluated))
+      found.set(first + number, partner < 0 ? -1 : firstOfEvaluated + partner);
+    // `export async function name(` stands for `(async function (`, and starts where that starts.
+    const [keyword, keywordOfEvaluated] = [
+      part.spelled.indexOf("function"),
+      partOfEvaluated.spelled.indexOf("function"),
+    ];
+    for (let number = 0; number < keyword; number++) found.set(first + number, firstOfEvaluated);
+    found.set(first + keyword, firstOfEvaluated + keywordOfEvaluated);
+    found.set(first + keyword + 1, -1);
+    startsOfTexts.push(startOfText);
+    startOfText += evaluated.length;
+  }
+  return {
+    written: wordsOfWritten,
+    evaluated: wordsOfEvaluated,
+    ...readWithCorrections(wordsOfWritten, wordsOfEvaluated, found),
+    startsOfTexts,
+  };
+}
+
+const placeInFrontOfWord = /\/\* as in (\S+): (.+?) \*\/\s*/g;
+
+/**
+ * `text` is what the compiler reads under the name `file`. In front of a word, a comment `as in <other file>:` quotes the other file
+ * up to a word: a stack trace shows the word of `text`, and what follows it, where `bun run` has that word. Answers a line of the
+ * manifest for each: where the word starts, then the line, the column and the column of the end, which count from 0.
+ */
+export function listPlacesInOtherFiles(file: string, text: string, read: (other: string) => Reading): string[] {
+  return Array.from(text.matchAll(placeInFrontOfWord), match => {
+    const [comment, other, quote] = match;
+    const { written, evaluated, partners, startsOfTexts } = read(other);
+    const at = written.text.indexOf(quote);
+    if (at < 0 || written.text.includes(quote, at + 1))
+      throw new Error(`${file}: ${other} does not have "${quote}" once`);
+    const partner = partners[written.ends.indexOf(at + quote.length)] ?? -1;
+    if (partner < 0)
+      throw new Error(`${file}: what \`bun run\` evaluates for ${other} has no word for the end of "${quote}"`);
+    const index = match.index + comment.length;
+    if (!isWordAt(text, index)) throw new Error(`${file}: no word follows the comment that quotes "${quote}"`);
+    const start = evaluated.starts[partner] - (evaluated.text[evaluated.starts[partner] - 1] === "@" ? 1 : 0);
+    const inFront = evaluated.text.slice(
+      startsOfTexts.findLast(it => it <= start),
+      start,
+    );
+    const column = inFront.length - (inFront.lastIndexOf("\n") + 1);
+    return [
+      "place",
+      file,
+      Buffer.byteLength(text.slice(0, index)),
+      inFront.split("\n").length - 1,
+      column,
+      column + evaluated.ends[partner] - start,
+    ].join("\t");
+  });
+}
+
+const partOfModule = /^\/\* part of: (\S+) \*\/$/m;
+
+/** The module that `text` holds a part of, if `text` has a line that says so. */
+export function findModuleHeldInPart(text: string): string | undefined {
+  return partOfModule.exec(text)?.[1];
 }
 
 const quoteInFrontOfWord = /\/\* as: (.+?) \*\/\s*/g;

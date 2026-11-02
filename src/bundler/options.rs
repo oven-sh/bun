@@ -467,6 +467,17 @@ pub struct LoaderResult<'a> {
     pub package_json: Option<&'a PackageJSON>,
 }
 
+impl LoaderResult<'_> {
+    /// The loader that `fetch_without_on_load_plugins` and the error printer take for a name that gives none. Not the default of a load through the module loader.
+    pub fn default_loader(&self) -> Loader {
+        if self.is_main {
+            Loader::Js
+        } else {
+            Loader::File
+        }
+    }
+}
+
 /// Vite's import path suffixes, as in `./icon.svg?raw`.
 #[derive(Clone, Copy)]
 pub enum ImportSuffix {

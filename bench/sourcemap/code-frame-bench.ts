@@ -22,21 +22,34 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), "code-frame-bench-"));
 process.on("exit", () => fs.rmSync(dir, { recursive: true, force: true }));
 
 type Places = { sites: (() => Error)[]; long: () => Error };
+type Shape = {
+  /** One line of padding, without its line break. */
+  line?: string;
+  lineBreak?: string;
+  /** Where the places are, from 0 (the first lines) to 1 (the last lines). */
+  at?: number;
+  /** Text before everything else. */
+  head?: string;
+};
 
 // `sites[i]()` returns an error thrown on its own line. `long()` throws on a
 // line of 5000 bytes. Comment lines before and after them pad the source to
-// `bytes`, so the places are in the middle of a large source.
-function placesSource(bytes: number): string {
-  let places = "export const sites: (() => Error)[] = [\n";
+// `bytes`, so the places are in the middle of a large source unless `at` says
+// otherwise.
+function placesSource(bytes: number, shape: Shape = {}): string {
+  const { line = "// padding padding padding padding padding padding padding padding", lineBreak = "\n", at = 0.5 } = shape;
+  let places = "export const sites: (() => Error)[] = [" + lineBreak;
   for (let i = 0; i <= KEPT; i++) {
-    places += `  () => { try { throw new Error("site ${i}"); } catch (e) { return e as Error; } },\n`;
+    places += `  () => { try { throw new Error("site ${i}"); } catch (e) { return e as Error; } },` + lineBreak;
   }
-  places += "];\n";
-  places += `export function long(): Error { try { throw new Error("long"); } catch (e) { return e as Error; } } // ${Buffer.alloc(5000, "p")}\n`;
-  const line = "// padding padding padding padding padding padding padding padding\n";
-  const lines = Math.max(0, bytes - places.length) / 2 / line.length;
-  const padding = Buffer.alloc(Math.floor(lines) * line.length, line).toString();
-  return padding + places + padding;
+  places += "];" + lineBreak;
+  places += `export function long(): Error { try { throw new Error("long"); } catch (e) { return e as Error; } } // ${Buffer.alloc(5000, "p")}${lineBreak}`;
+  const head = shape.head ?? "";
+  const padding = line + lineBreak;
+  const lines = Math.floor(Math.max(0, bytes - places.length - head.length) / Buffer.byteLength(padding));
+  const before = Math.floor(lines * at);
+  const repeat = (count: number) => Buffer.alloc(count * Buffer.byteLength(padding), padding).toString();
+  return head + repeat(before) + places + repeat(lines - before);
 }
 
 // Microseconds per call of `fn(i)`. A pass is `callsPerPass` calls, and only
@@ -97,4 +110,23 @@ for (const [size, bytes] of [
   if (!build.success) throw new AggregateError(build.logs, "the bundle of the fixture failed");
   const bundle = path.join(dir, "out", `${size}-bundled.js`);
   report(`${size} bundle with an external source map`, bundle, fs.statSync(bundle + ".map").size);
+}
+
+// More shapes of a large module that bun transpiled. The printer reads the file
+// and finds the lines that end at the error, so what comes before the error
+// counts. Each print is of another place than the `KEPT` prints before it, so
+// each one loads.
+for (const [name, shape] of [
+  ["places in the first lines", { at: 0 }],
+  ["places in the last lines", { at: 1 }],
+  ["tabs", { line: "//\tpadding padding padding padding\tpadding padding padding" }],
+  ["text that is not ASCII", { line: "// " + Buffer.alloc(64, "é").toString() }],
+  ["one character that is not ASCII, places in the last lines", { head: "// é\n", at: 1 }],
+  ["lines that end in CRLF", { lineBreak: "\r\n" }],
+] as [string, Shape][]) {
+  const source = path.join(dir, `shape-${name.replace(/[^a-z]+/gi, "-")}.ts`);
+  fs.writeFileSync(source, placesSource(LARGE_BYTES, shape));
+  const { sites } = require(source) as Places;
+  for (let i = 0; i <= KEPT; i++) Bun.inspect(sites[i]());
+  console.log(`[${flag}] large module, ${name.padEnd(58)} ${measure(KEPT + 1, i => Bun.inspect(sites[i]())).padStart(16)}`);
 }

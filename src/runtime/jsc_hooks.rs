@@ -24,7 +24,7 @@ use core::ptr;
 
 use bun_jsc::bun_string_jsc;
 use bun_jsc::js_promise::Status as PromiseStatus;
-use bun_jsc::module_loader::{ArenaResetGuard, FetchFlags, TranspileArgs, TranspileExtra};
+use bun_jsc::module_loader::{ArenaResetGuard, TranspileArgs, TranspileExtra};
 use bun_jsc::resolved_source::Bytecode;
 use bun_jsc::virtual_machine::{
     CancelHotRunTimers, InitOptions, MainEntryPoint, RuntimeHooks,
@@ -2280,6 +2280,8 @@ unsafe fn __bun_transpile_source_code(
 /// `vm.transpiler` while also touching `vm.module_loader` / `vm.bun_watcher`,
 /// which would alias under `&mut` (PORTING.md §Forbidden). Per-field deref via
 /// the raw ptr, mirroring `auto_tick` above.
+// PERF: out of line, each load copies the `ResolvedSource` once more on return.
+#[inline(always)]
 fn transpile_source_code_inner<const DATA_ONLY: bool>(
     jsc_vm: *mut VirtualMachine,
     args: &TranspileArgs<'_>,
@@ -2326,25 +2328,10 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
     let (loader, module_type): (Loader, ModuleType) =
         unsafe { ((*extra).loader, (*extra).module_type) };
 
-    let disable_transpilying = args.flags.disable_transpiling();
     let specifier = args.specifier;
     let referrer = args.referrer;
     let input_specifier = &args.input_specifier;
     let global_object = args.global_object;
-
-    // ── disable_transpiling fast-path for non-JS-like loaders ───────────────
-    if disable_transpilying
-        && !(loader.is_java_script_like()
-            || matches!(
-                loader,
-                L::Toml | L::Yaml | L::Json5 | L::Xml | L::Text | L::Json | L::Jsonc
-            ))
-    {
-        return Ok(ResolvedSource {
-            source_url: input_specifier.create_if_different(path.text),
-            ..Default::default()
-        });
-    }
 
     match loader {
         // ────────────────────────────────────────────────────────────────────
@@ -2399,8 +2386,8 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
             let give_back_arena = true;
             // Note: a scopeguard so `?`-early-returns still run the cleanup.
             let mut arena_guard = scopeguard::guard(
-                (jsc_vm, arena, give_back_arena, args.flags),
-                |(jsc_vm, mut arena, give_back, flags)| {
+                (jsc_vm, arena, give_back_arena),
+                |(jsc_vm, mut arena, give_back)| {
                     // SAFETY: `jsc_vm` is the live per-thread VM (closure runs
                     // on the same thread, before the hook returns).
                     let slot = unsafe { &mut (*jsc_vm).module_loader.transpile_source_code_arena };
@@ -2427,13 +2414,12 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         return;
                     }
                     if slot.is_none() {
-                        if flags != FetchFlags::PrintSource {
-                            // SAFETY: per fn contract — `jsc_vm` is the live
-                            // per-thread VM (closure runs on the same thread,
-                            // before the hook returns).
-                            if unsafe { (*jsc_vm).smol } {
-                                arena.reset();
-                            } else {
+                        // SAFETY: per fn contract — `jsc_vm` is the live
+                        // per-thread VM (closure runs on the same thread,
+                        // before the hook returns).
+                        match unsafe { (*jsc_vm).smol } {
+                            true => arena.reset(),
+                            false => {
                                 // See `MimallocArena::reset_retain_with_limit`
                                 // for why this is a no-op-until-limit rather
                                 // than a bump-pointer reset (each fresh
@@ -2590,7 +2576,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
             let mut input_file_fd = bun_sys::Fd::INVALID;
             // The deferred fd close is independent of `give_back_arena`
             // and must fire on every exit path: parse failure, JSON early
-            // return, `disable_transpilying`, already_bundled, empty `.cjs`,
+            // return, already_bundled, empty `.cjs`,
             // cache-hit, AsyncModule, the wasm recurse, and the print error.
             // Note: reshaped for borrowck — capture raw pointers so the
             // guard does not alias the parser's `file_fd_ptr` /
@@ -2707,7 +2693,6 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     allow_bytecode_cache: true,
                     set_breakpoint_on_first_line,
                     runtime_transpiler_cache: if !DATA_ONLY
-                        && !disable_transpilying
                         && !<RuntimeTranspilerCache as bun_bundler::RuntimeTranspilerCacheExt>::disabled()
                     {
                         Some(&mut cache)
@@ -2732,7 +2717,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 // Both the file-only and transpiled arms hit the same
                 // `parse_maybe_return_file_only_allow_shared_buffer` body, so
                 // dispatch at runtime via the const-generic bool.
-                let return_file_only = disable_transpilying || loader == L::Json;
+                let return_file_only = loader == L::Json;
                 let parse_result: Option<ParseResult> = if DATA_ONLY {
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     let transpiler = unsafe { &mut (*jsc_vm).transpiler };
@@ -2759,19 +2744,17 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
 
                 let Some(mut parse_result) = parse_result else {
                     // Register with watcher even on parse failure.
-                    if !disable_transpilying {
-                        // SAFETY: see Note on `_fd_guard` — reborrow via
-                        // the raw pointers so the guard stays valid.
-                        maybe_watch_file(
-                            jsc_vm,
-                            unsafe { &mut *should_close_ptr },
-                            unsafe { *input_file_fd_ptr },
-                            is_node_override,
-                            path,
-                            hash,
-                            package_json,
-                        );
-                    }
+                    // SAFETY: see Note on `_fd_guard` — reborrow via
+                    // the raw pointers so the guard stays valid.
+                    maybe_watch_file(
+                        jsc_vm,
+                        unsafe { &mut *should_close_ptr },
+                        unsafe { *input_file_fd_ptr },
+                        is_node_override,
+                        path,
+                        hash,
+                        package_json,
+                    );
                     arena_guard.2 = false; // give_back_arena = false
                     // Node compile cache: record the failed module so exit-time
                     // persist logs the "was not initialized" skip (Node parity).
@@ -2804,26 +2787,23 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                             log: args.log,
                             virtual_source: Some(&parse_result.source),
                             global_object: args.global_object,
-                            flags: args.flags,
                             extra: &raw mut wasm_extra,
                         },
                     );
                 }
 
                 // Register with watcher on success too.
-                if !disable_transpilying {
-                    // SAFETY: see Note on `_fd_guard` — reborrow via the
-                    // raw pointers so the guard stays valid.
-                    maybe_watch_file(
-                        jsc_vm,
-                        unsafe { &mut *should_close_ptr },
-                        unsafe { *input_file_fd_ptr },
-                        is_node_override,
-                        path,
-                        hash,
-                        package_json,
-                    );
-                }
+                // SAFETY: see Note on `_fd_guard` — reborrow via the
+                // raw pointers so the guard stays valid.
+                maybe_watch_file(
+                    jsc_vm,
+                    unsafe { &mut *should_close_ptr },
+                    unsafe { *input_file_fd_ptr },
+                    is_node_override,
+                    path,
+                    hash,
+                    package_json,
+                );
 
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM;
                 // `transpiler.log` was swapped to non-null `args.log` above.
@@ -2839,13 +2819,13 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
 
                 // Set before the early returns below (cache hit, `// @bun`, async queue):
                 // every later module load is gated on this flag.
-                if is_main && !disable_transpilying {
+                if is_main {
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     unsafe { (*jsc_vm).has_loaded = true };
                 }
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                 let is_bun_test = unsafe { (*jsc_vm).transpiler.options.rewrite_jest_for_tests };
-                if (is_main || is_preload) && !disable_transpilying && is_bun_test {
+                if (is_main || is_preload) && is_bun_test {
                     let imports_vitest = cache.imports_vitest
                         || parse_result
                             .ast
@@ -2867,25 +2847,6 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         source_code: bun_core::String::clone_utf8(&source.contents),
                         source_url: input_specifier.create_if_different(path.text),
                         tag: ResolvedSourceTag::JsonForObjectLoader,
-                        ..Default::default()
-                    });
-                }
-
-                // disable_transpiling: return raw source.
-                if disable_transpilying {
-                    let source_code = match args.flags {
-                        FetchFlags::PrintSource => {
-                            // The file contents live in a Drop-carrying
-                            // `source_contents_backing` on `parse_result`, so a
-                            // borrow would dangle once `parse_result` drops on
-                            // return. Clone instead.
-                            bun_core::String::clone_utf8(&source.contents)
-                        }
-                        FetchFlags::Transpile => unreachable!(),
-                    };
-                    return Ok(ResolvedSource {
-                        source_code,
-                        source_url: input_specifier.create_if_different(path.text),
                         ..Default::default()
                     });
                 }
@@ -3141,7 +3102,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     }
 
                     // Hand `arena` ownership to the queue (defuse the give-back guard).
-                    let (_, arena, _, _) = scopeguard::ScopeGuard::into_inner(arena_guard);
+                    let (_, arena, _) = scopeguard::ScopeGuard::into_inner(arena_guard);
                     // Hand the `AstAlloc` state to the queue too: the queued
                     // AST's small `AstVec`s live in its inline bump chunk.
                     let ast_alloc_state = ast_alloc_scope.take_state();
@@ -3493,14 +3454,6 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
         // .html
         // ────────────────────────────────────────────────────────────────────
         L::Html => {
-            if disable_transpilying {
-                use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
-                return Ok(ResolvedSource {
-                    source_url: input_specifier.create_if_different(path.text),
-                    tag: ResolvedSourceTag::Esm,
-                    ..Default::default()
-                });
-            }
             let html_bundle = bun_removable_features::call_removable_or!(
                 Bundler,
                 Throw,
@@ -3528,15 +3481,6 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
         // Everything else — file loader: `export default <path>`.
         // ────────────────────────────────────────────────────────────────────
         _ => {
-            if disable_transpilying {
-                use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
-                return Ok(ResolvedSource {
-                    source_url: input_specifier.create_if_different(path.text),
-                    tag: ResolvedSourceTag::Esm,
-                    ..Default::default()
-                });
-            }
-
             if args.virtual_source.is_none() {
                 auto_watch_file(jsc_vm, path.text);
             }
@@ -5135,7 +5079,6 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
         log: &raw mut *log,
         virtual_source: lr.virtual_source,
         global_object: global,
-        flags: FetchFlags::Transpile,
         extra: &raw mut extra,
     };
 
@@ -5230,7 +5173,6 @@ pub(crate) fn transpile_as_loaded(
         log: &raw mut log,
         virtual_source: Some(&virtual_source),
         global_object: global,
-        flags: FetchFlags::Transpile,
         extra: &raw mut extra,
     };
     transpile_source_code_inner::<false>(jsc_vm, &args).ok()
@@ -5334,7 +5276,6 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
         log: &raw mut log,
         virtual_source: Some(&virtual_source),
         global_object: global,
-        flags: FetchFlags::Transpile,
         extra: &raw mut extra,
     };
 

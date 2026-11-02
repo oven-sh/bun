@@ -1517,3 +1517,537 @@ code();`;
   expect(stderr).toMatch(/error: boom\n +at code \(.*:3:9\)\n/);
   expect(exitCode).toBe(1);
 });
+
+// The code frame of a printed error is cut from the text of the module as it was written. The printer takes
+// that text from where a load of the module takes it: the file, or what stands in for one.
+describe.concurrent("the text that a code frame is cut from", () => {
+  const padding = count => Array.from({ length: count }, (_, i) => `// line ${i + 1}\n`).join("");
+  const fail = 'export function fail() {\n  throw new Error("thrown");\n}\n';
+  // Prints the error that `fail()` of `mod.js` throws: to stdout as a string, to stderr as the printer's bytes.
+  const main = `
+    const { fail } = await import("./mod.js");
+    try {
+      fail();
+    } catch (error) {
+      process.stdout.write(Bun.inspect(error));
+      console.error(error);
+    }
+  `;
+
+  async function run(files, cmd = ["main.js"], stdin = "ignore", env = {}) {
+    using dir = tempDir("inspect-error-source-text", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...cmd],
+      env: { ...bunEnv, NO_COLOR: "1", ...env },
+      cwd: String(dir),
+      stdin,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.bytes(), proc.exited]);
+    return { stdout, stderr: Buffer.from(stderr), exitCode };
+  }
+  // The lines of the frame, the caret and the message: what is above the stack.
+  const frameOf = text => text.slice(0, text.indexOf("\n      at ")).split("\n");
+
+  const thrownOnLine = line => [
+    `${line - 1} | export function fail() {`,
+    `${line} |   throw new Error("thrown");`,
+    `${" ".repeat(String(line).length)}               ^`,
+    "error: thrown",
+  ];
+
+  test.each([
+    ["a UTF-8 byte order mark is not part of line 1", Buffer.from("\uFEFF" + fail), thrownOnLine(2)],
+    [
+      "a UTF-16 file is shown as UTF-8",
+      Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(padding(2) + fail, "utf16le")]),
+      ["1 | // line 1", "2 | // line 2", ...thrownOnLine(4)],
+    ],
+    [
+      "bytes that are not UTF-8 above the lines of the frame",
+      Buffer.concat([Buffer.from("// caf"), Buffer.from([0xe9]), Buffer.from(" is not UTF-8\n" + padding(6) + fail)]),
+      ["4 | // line 3", "5 | // line 4", "6 | // line 5", "7 | // line 6", ...thrownOnLine(9)],
+    ],
+    [
+      "a file that ends without a line break",
+      Buffer.from((padding(2) + fail).trimEnd()),
+      ["1 | // line 1", "2 | // line 2", ...thrownOnLine(4)],
+    ],
+  ])("%s", async (_, mod, frame) => {
+    const { stdout, stderr, exitCode } = await run({ "mod.js": mod, "main.js": main });
+    expect({ stdout: frameOf(stdout), stderr: frameOf(stderr.toString()), exitCode }).toEqual({
+      stdout: frame,
+      stderr: frame,
+      exitCode: 0,
+    });
+  });
+
+  // The printer writes a line's bytes as they are, and U+FFFD for the ones that are not UTF-8.
+  test.each([
+    ["a byte that is not UTF-8", [0xe9], ["1 | // caf\xEF\xBF\xBD is not UTF-8"]],
+    ["a character that is cut off", [0xe2, 0x82], ["1 | // caf\xEF\xBF\xBD is not UTF-8"]],
+    ["a character of two bytes", [0xc3, 0xa9], ["1 | // caf\xC3\xA9 is not UTF-8"]],
+  ])("%s in a line of the frame", async (_, bytes, lines) => {
+    const mod = Buffer.concat([Buffer.from("// caf"), Buffer.from(bytes), Buffer.from(" is not UTF-8\n" + fail)]);
+    const { stderr, exitCode } = await run({ "mod.js": mod, "main.js": main });
+    expect({ stderr: frameOf(stderr.toString("latin1")), exitCode }).toEqual({
+      stderr: [...lines, ...thrownOnLine(3)],
+      exitCode: 0,
+    });
+  });
+
+  // The printer keeps the lines of a frame for the next print of the same place: as it showed them.
+  test("a line that is not UTF-8 is the same in the next print", async () => {
+    const mod = Buffer.concat([Buffer.from("// caf"), Buffer.from([0xe9]), Buffer.from(" is not UTF-8\n" + fail)]);
+    const { stdout, exitCode } = await run({
+      "mod.js": mod,
+      "main.js": `
+        const { getCounters } = require("bun:internal-for-testing");
+        const { fail } = await import("./mod.js");
+        let error;
+        try {
+          fail();
+        } catch (e) {
+          error = e;
+        }
+        const prints = [0, 1].map(() => {
+          const before = getCounters().codeFrame_sourceLoads;
+          const text = Bun.inspect(error);
+          return [getCounters().codeFrame_sourceLoads - before, text.slice(0, text.indexOf("\\n      at ")).split("\\n")];
+        });
+        console.log(JSON.stringify(prints));
+      `,
+    });
+    const frame = ["1 | // caf\uFFFD is not UTF-8", ...thrownOnLine(3)];
+    expect({ prints: JSON.parse(stdout), exitCode }).toEqual({
+      prints: [
+        [1, frame],
+        [0, frame],
+      ],
+      exitCode: 0,
+    });
+  });
+
+  // The line cutter ends a line one byte after a `\r` alone. That byte can be the first of a character, and
+  // the printer must not write half of one.
+  test.each([
+    ["a character of two bytes", [0xc3, 0xa9]],
+    ["a byte that is not UTF-8", [0xe9]],
+  ])("a carriage return alone before %s", async (_, bytes) => {
+    const mod = Buffer.concat([Buffer.from("// line 1\n/* a\r"), Buffer.from(bytes), Buffer.from(" b */\n" + fail)]);
+    const { stderr, exitCode } = await run({ "mod.js": mod, "main.js": main });
+    expect({ isUtf8: isUtf8(stderr), frame: frameOf(stderr.toString()).slice(-4), exitCode }).toEqual({
+      isUtf8: true,
+      frame: thrownOnLine(5),
+      exitCode: 0,
+    });
+  });
+
+  // The reader takes the first 16384 bytes of a file in one read, and a longer file in two. The error is on
+  // the last line, which has no line break: the last byte that was read is the last of the frame.
+  test.each([16382, 16383, 16384, 16385, 16386, 40000])("a file of %d bytes", async size => {
+    const last = 'export function fail() { throw new Error("thrown"); }';
+    const line = "// " + Buffer.alloc(60, "f").toString() + "\n";
+    const lines = Math.floor((size - last.length) / line.length) - 1;
+    const rest = size - last.length - lines * line.length;
+    const mod =
+      Buffer.alloc(lines * line.length, line).toString() + "//" + Buffer.alloc(rest - 3, "g").toString() + "\n" + last;
+    expect(mod.length).toBe(size);
+    const { stdout, exitCode } = await run({ "mod.js": mod, "main.js": main });
+    expect({ stdout: frameOf(stdout).slice(-3), exitCode }).toEqual({
+      stdout: [`${lines + 2} | ${last}`, " ".repeat(String(lines + 2).length + 38) + "^", "error: thrown"],
+      exitCode: 0,
+    });
+  });
+
+  // With no text on the disk the printer has only what ran. The comment is in the file alone.
+  test.each([
+    ["deleted", `fs.unlinkSync(path);`],
+    ["emptied", `fs.writeFileSync(path, "");`],
+  ])("a file that was %s after the module loaded", async (_, change) => {
+    const { stdout, exitCode } = await run({
+      "mod.js": "// only on the disk\n" + fail,
+      "main.js": `
+        const fs = require("node:fs");
+        const path = require("node:path").join(import.meta.dir, "mod.js");
+        const { fail } = await import("./mod.js");
+        ${change}
+        try {
+          fail();
+        } catch (error) {
+          process.stdout.write(Bun.inspect(error));
+        }
+      `,
+    });
+    const frame = frameOf(stdout);
+    expect({
+      message: frame.at(-1),
+      fromDisk: frame.some(line => line.includes("only on the disk")),
+      exitCode,
+    }).toEqual({
+      message: "error: thrown",
+      fromDisk: false,
+      exitCode: 0,
+    });
+  });
+
+  const virtual = '// not a file\nexport function fail() {\n  throw new Error("thrown");\n}\n';
+  const virtualFrame = ["1 | // not a file", ...thrownOnLine(3)];
+  const printed = url => `
+    const { fail } = await import(${url});
+    try {
+      fail();
+    } catch (error) {
+      process.stdout.write(Bun.inspect(error));
+    }
+  `;
+
+  test("a module of a blob: URL", async () => {
+    const url = `URL.createObjectURL(new Blob([${JSON.stringify(virtual)}], { type: "text/javascript" }))`;
+    const { stdout, exitCode } = await run({ "main.js": printed(url) });
+    expect({ stdout: frameOf(stdout), exitCode }).toEqual({ stdout: virtualFrame, exitCode: 0 });
+  });
+
+  test("a module of a blob: URL of a file", async () => {
+    const url = `URL.createObjectURL(Bun.file(require("node:path").join(import.meta.dir, "blobbed.js")))`;
+    const { stdout, exitCode } = await run({ "blobbed.js": virtual, "main.js": printed(url) });
+    expect({ stdout: frameOf(stdout), exitCode }).toEqual({ stdout: virtualFrame, exitCode: 0 });
+  });
+
+  // The printer, as on main, reads what follows the last "." of a `data:` URL as an extension. The module
+  // loader does not ("A `data:` URL has no file name", src/runtime/jsc_hooks.rs). This row reaches the
+  // printer's read of a `data:` URL. It is not the rule.
+  test("a module of a data: URL whose text ends in .js", async () => {
+    const url = `"data:text/javascript," + encodeURIComponent(${JSON.stringify(virtual + "//.js")})`;
+    const { stdout, exitCode } = await run({ "main.js": printed(url) });
+    expect({ stdout: frameOf(stdout), exitCode }).toEqual({ stdout: virtualFrame, exitCode: 0 });
+  });
+  test.todo("a module of a data: URL shows its own text whatever the text ends in");
+  test.each([
+    ["a data: URL", `"data:text/javascript," + encodeURIComponent(${JSON.stringify(virtual)})`],
+    ["a base64 data: URL", `"data:text/javascript;base64," + btoa(${JSON.stringify(virtual)})`],
+  ])("the error of a module of %s", async (_, url) => {
+    const { stdout, exitCode } = await run({ "main.js": printed(url) });
+    expect({ message: frameOf(stdout).at(-1), exitCode }).toEqual({ message: "error: thrown", exitCode: 0 });
+  });
+
+  const script =
+    'function fail() {\n  throw new Error("thrown");\n}\ntry {\n  fail();\n} catch (error) {\n  process.stdout.write(Bun.inspect(error));\n}\n';
+  const scriptFrame = [
+    "1 | function fail() {",
+    '2 |   throw new Error("thrown");',
+    "                ^",
+    "error: thrown",
+  ];
+
+  test("the script of bun -e", async () => {
+    const { stdout, exitCode } = await run({}, ["-e", script]);
+    expect({ stdout: frameOf(stdout), exitCode }).toEqual({ stdout: scriptFrame, exitCode: 0 });
+  });
+
+  test("the script of bun -", async () => {
+    const { stdout, exitCode } = await run({}, ["-"], new Blob([script]));
+    expect({ stdout: frameOf(stdout), exitCode }).toEqual({ stdout: scriptFrame, exitCode: 0 });
+  });
+
+  // A name that gives no loader is JavaScript when it is the entry point.
+  test.each(["script", "script.unknown-extension"])("an entry point named %s", async name => {
+    const { stdout, exitCode } = await run({ [name]: script }, [`./${name}`]);
+    expect({ stdout: frameOf(stdout), exitCode }).toEqual({ stdout: scriptFrame, exitCode: 0 });
+  });
+
+  test("a module that an import suffix makes", async () => {
+    const { stdout, exitCode } = await run({
+      "worker.js": "postMessage(1);\n",
+      "main.js": `
+        import Wrapper from "./worker.js?sharedworker";
+        // The module calls this constructor.
+        globalThis.SharedWorker = undefined;
+        try {
+          Wrapper({});
+        } catch (error) {
+          process.stdout.write(Bun.inspect(error));
+        }
+      `,
+    });
+    expect({ stdout: frameOf(stdout).map(line => line.replace(/"[^"]*worker\.js"/, '"worker.js"')), exitCode }).toEqual(
+      {
+        stdout: [
+          "1 | export default function WorkerWrapper(options) {",
+          '2 |   return new SharedWorker("worker.js", { type: "module", name: options?.name });',
+          "             ^",
+          'TypeError: undefined is not a constructor (evaluating \'new SharedWorker("worker.js", { type: "module", name: options?.name })\')',
+        ],
+        exitCode: 0,
+      },
+    );
+  });
+
+  test("a node fallback module", async () => {
+    const { stdout, exitCode } = await run({
+      "main.js": `
+        const util = await import("/bun-vfs$$/node_modules/util/index.js");
+        try {
+          util.promisify(3);
+        } catch (error) {
+          process.stdout.write(Bun.inspect(error));
+        }
+      `,
+    });
+    const frame = frameOf(stdout);
+    // The frame is of the fallback's own text, which is minified.
+    expect({ lines: frame.length, message: frame.at(-1), exitCode }).toEqual({
+      lines: 8,
+      message: 'TypeError: The "original" argument must be of type Function',
+      exitCode: 0,
+    });
+    expect(frame.slice(0, 6).join("\n")).toContain("isArray(ar){return Array.isArray(ar)}");
+  });
+
+  // Code that runs in node:vm names its own file. Today the printer reads that file when it prints an
+  // error of the code, if the loader of the name is one of text (oven-sh/bun#41477 is about whether it
+  // should). These tests hold what it shows, so that a change of how it reads a source does not change it.
+  describe("node:vm code whose filename names a file", () => {
+    // The frame of an error on line `line` of code that names `name`.
+    async function vmFrameOf(name, content, line = 4) {
+      const { stdout, stderr, exitCode } = await run({
+        ...(content === undefined ? {} : { [name]: content }),
+        "main.js": `
+          const filename = require("node:path").join(import.meta.dir, ${JSON.stringify(name)});
+          const code = "\\n".repeat(${line - 2}) + "function fail() {\\n  throw new Error('thrown');\\n}\\nfail();";
+          try {
+            require("node:vm").runInThisContext(code, { filename });
+          } catch (error) {
+            process.stdout.write(Bun.inspect(error));
+          }
+        `,
+      });
+      return { frame: frameOf(stdout), stderr: stderr.toString(), exitCode };
+    }
+    const caret = "                     ^";
+    const numbered = (from, to) =>
+      Array.from({ length: to - from + 1 }, (_, i) => `${from + i} | named line ${from + i}`);
+    const named = "named line 1\nnamed line 2\nnamed line 3\nnamed line 4\n";
+
+    test.each([
+      ["data.json", numbered(1, 4)],
+      ["notes.txt", numbered(1, 4)],
+      ["module.ts", numbered(1, 4)],
+      ["notes.md", []],
+      ["style.css", []],
+      ["LICENSE", []],
+      ["not-there.ts", []],
+    ])("filename %s", async (name, lines) => {
+      expect(await vmFrameOf(name, name === "not-there.ts" ? undefined : named)).toEqual({
+        frame: [...lines, ...(lines.length ? [caret] : []), "error: thrown"],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // Bytes that are not UTF-8 beside a line break keep every line at its number: in the frame they are
+    // U+FFFD, and above it they change nothing.
+    test.each([
+      ["a byte that is not UTF-8 before a line feed", [0xe9]],
+      ["a cut-off character before a line feed", [0xe2, 0x80]],
+    ])("%s", async (_, bytes) => {
+      const rest = Array.from({ length: 8 }, (_, i) => `named line ${i + 2}\n`).join("");
+      const content = Buffer.concat([Buffer.from("caf"), Buffer.from(bytes), Buffer.from("\n" + rest)]);
+      const [inFrame, above] = await Promise.all([
+        vmFrameOf("notes.txt", content, 4),
+        vmFrameOf("notes.txt", content, 9),
+      ]);
+      expect({ inFrame, above }).toEqual({
+        inFrame: { frame: ["1 | caf\uFFFD", ...numbered(2, 4), caret, "error: thrown"], stderr: "", exitCode: 0 },
+        above: { frame: [...numbered(4, 9), caret, "error: thrown"], stderr: "", exitCode: 0 },
+      });
+    });
+
+    test("a cut-off character at the end of the file", async () => {
+      const content = Buffer.concat([
+        Buffer.from("named line 1\nnamed line 2\nnamed line 3\ncaf"),
+        Buffer.from([0xe2, 0x82]),
+      ]);
+      expect(await vmFrameOf("notes.txt", content, 4)).toEqual({
+        frame: [...numbered(1, 3), "4 | caf\uFFFD", caret, "error: thrown"],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // The printer shows no line of a text that a string cannot hold. The variable makes that 64 KiB.
+    test.each([
+      ["under", 60_000, ["1 | named line 1", "                   ^", "error: thrown"]],
+      ["over", 70_000, ["error: thrown"]],
+    ])("a file %s the length that a string can have", async (_, size, frame) => {
+      const { stdout, stderr, exitCode } = await run(
+        {
+          "big.txt": "named line 1\n" + Buffer.alloc(size - 13, "// padding\n"),
+          "main.js": `
+            const filename = require("node:path").join(import.meta.dir, "big.txt");
+            try {
+              require("node:vm").runInThisContext("throw new Error('thrown');", { filename });
+            } catch (error) {
+              process.stdout.write(Bun.inspect(error));
+            }
+          `,
+        },
+        undefined,
+        undefined,
+        { BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(64 * 1024) },
+      );
+      expect({ frame: frameOf(stdout), stderr: stderr.toString(), exitCode }).toEqual({
+        frame,
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
+  // An error whose `.stack` was read has no kept frame, so each print of it reads the file: once, into one buffer.
+  test.each([
+    ["ASCII", "p"],
+    ["not ASCII", "\u00e9"],
+  ])("a print makes no allocator heap and no second copy of a file that is %s", async (_, char) => {
+    const size = 1024 * 1024;
+    const line = Buffer.from("// " + char.repeat(30) + "\n");
+    const mod = Buffer.concat([
+      Buffer.from(fail),
+      Buffer.alloc(size - fail.length - ((size - fail.length) % line.length), line),
+    ]);
+    const { stdout, stderr, exitCode } = await run({
+      "mod.js": mod,
+      "main.js": `
+        const { heapStats } = require("bun:jsc");
+        const { getCounters } = require("bun:internal-for-testing");
+        const { fail } = await import("./mod.js");
+        let error;
+        try {
+          fail();
+        } catch (e) {
+          error = e;
+        }
+        void error.stack;
+        const first = Bun.inspect(error);
+        // Something else can make a heap while one window runs, so the least of three counts.
+        const windows = [];
+        for (let i = 0; i < 3; i++) {
+          const before = heapStats().mimalloc;
+          const loads = getCounters().codeFrame_sourceLoads;
+          for (let print = 0; print < 50; print++) Bun.inspect(error);
+          const after = heapStats().mimalloc;
+          windows.push({
+            loads: getCounters().codeFrame_sourceLoads - loads,
+            heaps: after.heaps.total - before.heaps.total,
+            requested: (after.malloc_requested - before.malloc_requested) / 50,
+          });
+        }
+        console.log(
+          JSON.stringify({
+            frame: first.slice(0, first.indexOf("\\n      at ")).split("\\n"),
+            loads: windows.map(it => it.loads),
+            heaps: Math.min(...windows.map(it => it.heaps)),
+            requested: Math.min(...windows.map(it => it.requested)),
+          }),
+        );
+      `,
+    });
+    expect(stderr.toString()).toBe("");
+    const { frame, loads, heaps, requested } = JSON.parse(stdout);
+    expect({ frame, loads, heaps, exitCode }).toEqual({
+      frame: thrownOnLine(2),
+      loads: [50, 50, 50],
+      heaps: 0,
+      exitCode: 0,
+    });
+    // The file in one buffer of the allocator, or in none where another allocator gives it.
+    expect(requested).toBeLessThan(mod.length * 1.5);
+  });
+
+  // The reader leaves the file open for a watcher. The printer has none.
+  test.skipIf(isWindows)("prints leave no file open", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "mod.js": fail,
+      "main.js": `
+        const fs = require("node:fs");
+        const { getCounters } = require("bun:internal-for-testing");
+        const { fail } = await import("./mod.js");
+        let error;
+        try {
+          fail();
+        } catch (e) {
+          error = e;
+        }
+        // Each print of an error whose \`.stack\` was read reads the file.
+        void error.stack;
+        const before = fs.readdirSync("/dev/fd").length;
+        const loads = getCounters().codeFrame_sourceLoads;
+        const first = Bun.inspect(error);
+        for (let print = 0; print < 1000; print++) Bun.inspect(error);
+        const after = fs.readdirSync("/dev/fd").length;
+        console.log(
+          JSON.stringify({
+            frame: first.slice(0, first.indexOf("\\n      at ")).split("\\n"),
+            loads: getCounters().codeFrame_sourceLoads - loads,
+            opened: after - before,
+          }),
+        );
+      `,
+    });
+    expect(stderr.toString()).toBe("");
+    expect({ ...JSON.parse(stdout), exitCode }).toEqual({
+      frame: thrownOnLine(2),
+      loads: 1001,
+      opened: 0,
+      exitCode: 0,
+    });
+  });
+});
+
+// An error whose `.stack` was read reaches the printer with frames that are already remapped. The printer
+// then asks for the text of the module, and an executable gives its own.
+test("an executable prints the code frame of an error whose stack was read", async () => {
+  using dir = tempDir("inspect-error-executable", {
+    "app.ts": `function fail() {
+  throw new Error("thrown");
+}
+try {
+  fail();
+} catch (error) {
+  void error.stack;
+  process.stdout.write(Bun.inspect(error));
+}
+`,
+  });
+  const result = await Bun.build({
+    entrypoints: [join(String(dir), "app.ts")],
+    compile: { outfile: join(String(dir), "app") },
+  });
+  expect(result.success).toBe(true);
+  rmSync(join(String(dir), "app.ts"));
+  await using proc = Bun.spawn({
+    cmd: [result.outputs.find(output => output.kind === "entry-point").path],
+    env: { ...bunEnv, NO_COLOR: "1" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Without their numbers: the executable's text has lines above the module's.
+  const frame = stdout
+    .slice(0, stdout.indexOf("\n      at "))
+    .split("\n")
+    .map(line => line.replace(/^\s*\d+ \| /, ""));
+  expect({ frame: frame.slice(-4), stderr, exitCode }).toEqual({
+    frame: ["function fail() {", '  throw new Error("thrown");', "                     ^", "error: thrown"],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// Here, not at the top: the inline snapshots above hold the first lines of this file.
+import { isWindows } from "harness";
+import { isUtf8 } from "node:buffer";
+import { rmSync } from "node:fs";
+import { join } from "node:path";

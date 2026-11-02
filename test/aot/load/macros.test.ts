@@ -543,9 +543,9 @@ describe.concurrent("compile/aot/load/macros", () => {
       slot(async () => {
         using dir = tempDir("aot-load-macros", PLUGIN_PROGRAM);
         const folder = String(dir);
-        // `Bun.build` without `aot` takes "module" and "development" for the second line.
+        // `Bun.build` without `aot` takes "module" and "development" for the second line. https://github.com/oven-sh/bun/pull/46802 changes that.
         const prints = {
-          bundled: expect.stringMatching(/^folder\/beside\.ts index\.ts\n/),
+          bundled: "folder/beside.ts index.ts\nmodule.ts index.mjs dev.ts\n",
           aot: "folder/beside.ts index.ts\nmain.ts index.cjs index.ts\n",
         };
         for (const mode of ["bundled", "aot"] as const) {

@@ -633,6 +633,18 @@ fn each_error_is_reported_once() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn error_is_reported_in_the_given_file() {
+    let source = Source::init_path_string(b"/project/main.ts", b"");
+    for error in [NotData::Expression, NotData::Cyclic, NotData::TooLarge] {
+        let mut log = Log::default();
+        report_not_data(&mut log, Some(&source), b"./macros", "the result", error);
+        let location = log.msgs[0].data.location.as_ref().expect("a location");
+        assert_eq!(&*location.file, b"/project/main.ts");
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 #[should_panic(expected = "a finished sink holds one value")]
 fn finishing_empty_sink_panics() {
     with_scope(|atoms, arena, _| {

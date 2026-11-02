@@ -163,6 +163,9 @@ test("prints the stack trace when a `sources` entry is longer than a path buffer
 // in that store and rewind it, and the next map's nodes then went over the first nodes of the data file: the value
 // came back with keys missing or wrong and exit code 0, or the process crashed.
 const GC_MODULES = 4;
+// Whether a collection formats a given stack is not up to the test: on macOS arm64 it formats three of these four.
+// Two are needed. On a release build it was the second source map of one collection that damaged the value.
+const GC_MIN_REMAPPED = 2;
 // The first value is larger than what the heap may grow by before it is collected, so the collection starts in the
 // middle of the conversion. The nodes of the small values after it are the next ones in the store.
 const GC_BIG_LENGTH = 4 * 1024 * 1024;
@@ -195,10 +198,12 @@ const gcFixture: Record<string, string> = {
 
       let data = how === "import" ? (await import(file)).default : require(file);
       // A stack that a collection formatted during the load is a string by now. One that it did not format is
-      // formatted by this, and is not counted: the load no longer does what this test is for.
+      // formatted by this, and is not counted. With fewer than ${GC_MIN_REMAPPED} counted, the load no longer does what
+      // this test is for.
       Error.prepareStackTrace = () => "no collection formatted this stack";
       let remapped = 0;
       for (let i = 0; i < ${GC_MODULES}; i++) if (errors[i].stack.includes("m" + i + ".ts:5:3")) remapped++;
+      remapped = Math.min(remapped, ${GC_MIN_REMAPPED});
 
       data = data.root ?? data;
       let intact = 0;
@@ -208,7 +213,8 @@ const gcFixture: Record<string, string> = {
   `,
 };
 for (let i = 0; i < GC_MODULES; i++) {
-  // `inner` is dead once `make` returns, and the Error holds its frame: the next collection formats the stack.
+  // `inner` is garbage once `make` returns, and the Error holds its frame: a collection that finds `inner` dead
+  // formats the stack.
   gcFixture[`m${i}.js`] =
     `// @bun\nexport function make() { return (function inner() { const error = new Error("e${i}"); return error; })(); }\n//# sourceMappingURL=m${i}.js.map\n`;
   // Line 2 of the module is line 5, column 3 of its source.
@@ -240,7 +246,7 @@ describe.concurrent("a source map that a collection parses leaves the AST store 
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-      stdout: JSON.stringify({ keys: GC_SMALL + 1, big: GC_BIG_LENGTH, intact: GC_SMALL, remapped: GC_MODULES }),
+      stdout: JSON.stringify({ keys: GC_SMALL + 1, big: GC_BIG_LENGTH, intact: GC_SMALL, remapped: GC_MIN_REMAPPED }),
       stderr: "",
       exitCode: 0,
     });

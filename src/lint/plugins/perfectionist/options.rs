@@ -126,8 +126,8 @@ pub(crate) struct SortOptions {
     pub(crate) fallback_sort: FallbackSort,
     pub(crate) sort_by: SortBy,
     /// `locales`: the collator of `a.localeCompare(b, locales)` and of natural-orderby's `compare({ locale })`.
-    /// `None` is the root collation, which the default `'en-US'` is too. No group overrides it. A tag that is not
-    /// well-formed leaves this `None` and sets [`Configuration::invalid_locale`].
+    /// `None` is the root collation, which the default `'en-US'` is too, and a list with no supported tag. No group
+    /// overrides it. A tag that is not well-formed leaves this `None` and sets [`Configuration::invalid_locale`].
     pub(crate) locale: Option<strings::Collator>,
 }
 
@@ -1184,10 +1184,9 @@ fn matches_single_regex_schema(value: &Json) -> bool {
     }
 }
 
-/// `locales`, as `Intl.Collator` reads it: a string on its own, or a list whose first tag decides (ICU opens a
-/// well-formed tag it has no data for as the root collation, so which tag of a list is the first *supported* one
-/// cannot be told here). Every tag has to be well-formed, wherever it is in the list: `Err` is the message of the
-/// `RangeError` that `localeCompare` throws for the first one that is not.
+/// `locales`, as `Intl.Collator` reads it: a string on its own, or a list whose first supported tag decides, and
+/// `None` for the root collation when none is. Every tag has to be well-formed, wherever it is in the list: `Err`
+/// is the message of the `RangeError` that `localeCompare` throws for the first one that is not.
 fn locale_of(value: Option<&Json>) -> Result<Option<strings::Collator>, Vec<u8>> {
     let Some(value) = value else {
         return Ok(None);
@@ -1196,16 +1195,9 @@ fn locale_of(value: Option<&Json>) -> Result<Option<strings::Collator>, Vec<u8>>
         Json::Array(items) => items.as_slice(),
         single => std::slice::from_ref(single),
     };
-    let mut first = None;
-    for tag in locales.iter().filter_map(Json::as_str) {
-        let Some(collator) = strings::Collator::open(tag) else {
-            let mut message = b"Invalid language tag: ".to_vec();
-            message.extend_from_slice(tag);
-            return Err(message);
-        };
-        if first.is_none() {
-            first = Some(collator);
-        }
-    }
-    Ok(first)
+    strings::Collator::open_first(locales.iter().filter_map(Json::as_str)).map_err(|tag| {
+        let mut message = b"Invalid language tag: ".to_vec();
+        message.extend_from_slice(tag);
+        message
+    })
 }

@@ -21,7 +21,11 @@ unsafe extern "C" {
         b: *const u16,
         b_len: usize,
     ) -> i32;
-    fn Bun__collatorForLanguageTag(tag: *const u8, tag_len: usize) -> *const c_void;
+    fn Bun__collatorForLanguageTag(
+        tag: *const u8,
+        tag_len: usize,
+        is_well_formed: *mut bool,
+    ) -> *const c_void;
     fn Bun__collatorCollateUTF8(
         collator: *const c_void,
         a: *const u8,
@@ -42,7 +46,9 @@ unsafe extern "C" {
 #[derive(Clone, Copy)]
 enum With {
     /// The root collation (`"en"`), with `numeric: true, sensitivity: "base"` when set.
-    Root { numeric_and_base: bool },
+    Root {
+        numeric_and_base: bool,
+    },
     Locale(Collator),
 }
 
@@ -88,13 +94,25 @@ fn collate(a: &[u8], b: &[u8], with: With) -> Ordering {
 
 /// `a.localeCompare(b, "en")`, for WTF-8. Other bytes are what `TextDecoder` makes of them. 50 ns for two module specifiers.
 pub fn locale_compare(a: &[u8], b: &[u8]) -> Ordering {
-    collate(a, b, With::Root { numeric_and_base: false })
+    collate(
+        a,
+        b,
+        With::Root {
+            numeric_and_base: false,
+        },
+    )
 }
 
 /// `new Intl.Collator("en", { numeric: true, sensitivity: "base" }).compare(a, b)`, for WTF-8: without
 /// regard to case and accents, and a run of digits counts as the number that it is.
 pub fn locale_compare_numeric_base(a: &[u8], b: &[u8]) -> Ordering {
-    collate(a, b, With::Root { numeric_and_base: true })
+    collate(
+        a,
+        b,
+        With::Root {
+            numeric_and_base: true,
+        },
+    )
 }
 
 /// `new Intl.Collator(locale)`: ICU's collator for one BCP 47 language tag (`"zh-CN"`), which orders as
@@ -108,14 +126,52 @@ unsafe impl Send for Collator {}
 // SAFETY: as above.
 unsafe impl Sync for Collator {}
 
+/// Why [`Collator::open`] has no collator for a language tag.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoCollator {
+    /// The tag is not well-formed (`"zh_CN"`): `localeCompare` throws a `RangeError` for it.
+    Malformed,
+    /// A well-formed tag ICU has no collation data for (`"xx"`): `Intl` passes it over for the next of a list, or
+    /// the default locale.
+    Unsupported,
+}
+
 impl Collator {
-    /// `None` for a tag that is not well-formed, which `localeCompare` throws a `RangeError` for. A well-formed tag
-    /// that ICU has no data for gets the root collation, as `Intl` falls back to the default locale. 150 us the
-    /// first time a tag is opened, a hash lookup after that.
-    pub fn open(locale: &[u8]) -> Option<Collator> {
-        // SAFETY: a live slice, which is read and not kept.
-        let collator = unsafe { Bun__collatorForLanguageTag(locale.as_ptr(), locale.len()) };
-        NonNull::new(collator.cast_mut()).map(Collator)
+    /// The collator of one tag. Supported is what `Intl.Collator.supportedLocalesOf` says: ICU has data for the
+    /// tag or for a prefix of it, as `"zh-CN"` has `"zh"`. 150 us the first time a tag is opened, a hash lookup
+    /// after that.
+    pub fn open(locale: &[u8]) -> Result<Collator, NoCollator> {
+        let mut is_well_formed = false;
+        // SAFETY: a live slice, which is read and not kept; `is_well_formed` is a live local.
+        let collator = unsafe {
+            Bun__collatorForLanguageTag(locale.as_ptr(), locale.len(), &mut is_well_formed)
+        };
+        match NonNull::new(collator.cast_mut()) {
+            Some(collator) => Ok(Collator(collator)),
+            None if is_well_formed => Err(NoCollator::Unsupported),
+            None => Err(NoCollator::Malformed),
+        }
+    }
+
+    /// `new Intl.Collator(locales)` for a list of tags: the first one that is supported, or `None` when none is,
+    /// for the default locale's collation, which is the root. `Err` is the first tag of the list that is not
+    /// well-formed, wherever it is: `localeCompare` throws a `RangeError` for it before any tag is matched.
+    pub fn open_first<'a>(
+        locales: impl IntoIterator<Item = &'a [u8]>,
+    ) -> Result<Option<Collator>, &'a [u8]> {
+        let mut first = None;
+        for tag in locales {
+            match Collator::open(tag) {
+                Ok(collator) => {
+                    if first.is_none() {
+                        first = Some(collator);
+                    }
+                }
+                Err(NoCollator::Unsupported) => {}
+                Err(NoCollator::Malformed) => return Err(tag),
+            }
+        }
+        Ok(first)
     }
 
     /// `Intl.Collator.prototype.compare`, for WTF-8. Other bytes are what `TextDecoder` makes of them.
@@ -124,11 +180,11 @@ impl Collator {
     }
 }
 
-/// `a.localeCompare(b, locale)`, for WTF-8: the root collation when `locale` is not a well-formed language tag.
-/// Looks the collator up by tag each time; a loop keeps a [`Collator`] instead.
+/// `a.localeCompare(b, locale)`, for WTF-8: the root collation when `locale` is not a well-formed language tag or
+/// not a supported one. Looks the collator up by tag each time; a loop keeps a [`Collator`] instead.
 pub fn locale_compare_in(locale: &[u8], a: &[u8], b: &[u8]) -> Ordering {
     match Collator::open(locale) {
-        Some(collator) => collator.compare(a, b),
-        None => locale_compare(a, b),
+        Ok(collator) => collator.compare(a, b),
+        Err(_) => locale_compare(a, b),
     }
 }

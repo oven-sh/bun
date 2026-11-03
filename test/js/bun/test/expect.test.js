@@ -3859,6 +3859,268 @@ describe("expect()", () => {
       different.other.back = { v: 3 };
       expect(received).not.toMatchObject(different);
     });
+
+    // Jest and Vitest compare two arrays with the equals() of toEqual(), which takes a key that one array lacks for undefined.
+    describe("an array against an array", () => {
+      const withKey = (/** @type {any[]} */ array, /** @type {PropertyKey} */ key, /** @type {unknown} */ value) =>
+        Object.assign(array, { [key]: value });
+      const withGetter = (/** @type {any[]} */ array, /** @type {PropertyKey} */ key, /** @type {unknown} */ value) =>
+        Object.defineProperty(array, key, { get: () => value, enumerable: true, configurable: true });
+      const hidden = (/** @type {any[]} */ array, /** @type {PropertyKey} */ key, /** @type {unknown} */ value) =>
+        Object.defineProperty(array, key, { value, enumerable: false, writable: true, configurable: true });
+      const throwing = (/** @type {any[]} */ array, /** @type {PropertyKey} */ key) =>
+        Object.defineProperty(array, key, {
+          get() {
+            throw new Error("thrown by the getter");
+          },
+          enumerable: true,
+          configurable: true,
+        });
+
+      test("a hole matches undefined", async () => {
+        expect([, 1]).toMatchObject([undefined, 1]);
+        expect([undefined, 1]).toMatchObject([, 1]);
+        expect([1, , 3]).toMatchObject([1, undefined, 3]);
+        expect([1, undefined]).toMatchObject([1, ,]);
+        expect(new Array(2)).toMatchObject([undefined, undefined]);
+        expect([undefined, undefined]).toMatchObject(new Array(2));
+        // as many keys, and not the same keys
+        expect([undefined, , 1]).toMatchObject([, undefined, 1]);
+        // at any depth, and an object in the array is still compared as a subset
+        expect({ a: [, 1] }).toMatchObject({ a: [undefined, 1] });
+        expect({ a: [undefined, 1] }).toMatchObject({ a: [, 1] });
+        expect([[[, 1]]]).toMatchObject([[[undefined, 1]]]);
+        expect({ a: [{ b: [, { c: 1, d: 2 }] }] }).toMatchObject({ a: [{ b: [undefined, { c: 1 }] }] });
+        // a key that is no index, and a getter
+        expect(withKey([1], "x", undefined)).toMatchObject([1]);
+        expect([1]).toMatchObject(withKey([1], "x", undefined));
+        expect(withGetter([0, 1], 0, undefined)).toMatchObject([, 1]);
+        expect([, 1]).toMatchObject(withGetter([0, 1], 0, undefined));
+        await expect(Promise.resolve([, 1])).resolves.toMatchObject([undefined, 1]);
+        expect(() => expect([, 1]).not.toMatchObject([undefined, 1])).toThrow();
+        expect(() => expect({ a: [undefined, 1] }).not.toMatchObject({ a: [, 1] })).toThrow();
+      });
+
+      test("a hole matches nothing else", () => {
+        expect([, 1]).not.toMatchObject([null, 1]);
+        expect([null, 1]).not.toMatchObject([, 1]);
+        expect([, 1]).not.toMatchObject([0, 1]);
+        expect([0, 1]).not.toMatchObject([, 1]);
+        expect([, 1]).not.toMatchObject([{}, 1]);
+        expect([{}, 1]).not.toMatchObject([, 1]);
+        expect([, 1]).not.toMatchObject([[], 1]);
+        expect([, 1]).not.toMatchObject([undefined, 2]);
+        expect([1, , 3]).not.toMatchObject([1, 2, 3]);
+        expect([5, , 1]).not.toMatchObject([, undefined, 1]);
+        expect({ a: [[, 1]] }).not.toMatchObject({ a: [[null, 1]] });
+        expect([, 1]).not.toMatchObject([expect.anything(), 1]);
+        expect([, 1]).not.toMatchObject([expect.any(Number), 1]);
+        expect([, 1]).not.toMatchObject([expect.stringContaining("a"), 1]);
+        expect(() => expect([, 1]).toMatchObject([null, 1])).toThrow();
+      });
+
+      test("a key that only one array has is compared", () => {
+        const symbol = Symbol("s");
+        expect(withKey([1], "x", 1)).not.toMatchObject([1]);
+        expect([1]).not.toMatchObject(withKey([1], "x", 1));
+        expect(withKey([1], symbol, 1)).not.toMatchObject([1]);
+        expect([1]).not.toMatchObject(withKey([1], symbol, 1));
+        expect(withKey([1], "x", undefined)).not.toMatchObject(withKey([1], "y", 1));
+        expect(withKey([1], "x", 1)).not.toMatchObject(withKey([1], "y", 1));
+        expect(withKey([1], "x", { a: 1, b: 2 })).toMatchObject(withKey([1], "x", { a: 1 }));
+        // a name that every array inherits
+        expect(withKey([, 1], "at", 1)).not.toMatchObject([undefined, 1]);
+        expect([undefined, 1]).not.toMatchObject(withKey([, 1], "at", 1));
+        expect(withKey([1, 2], "a", 1)).not.toMatchObject(withKey([1, 2], "constructor", Array));
+        expect(withKey([1], "constructor", new URL("http://a/"))).not.toMatchObject([1]);
+        // one such name on each array
+        const { concat, at } = Array.prototype;
+        expect(withKey([, 1], "concat", concat)).not.toMatchObject(withKey([undefined, 1], "at", at));
+        expect(withKey([, 1], "filter", { status: "open" })).not.toMatchObject(withKey([undefined, 1], "sort", {}));
+        // a property that is not enumerable is no key, but the other array can have it as a key
+        expect(hidden([5, 1, 2], 0, 5)).not.toMatchObject([5, 1, ,]);
+        expect(hidden([1], "x", 5)).not.toMatchObject(withKey([1], "x", expect.any(Number)));
+        const strings = ((/** @type {TemplateStringsArray} */ strings) => strings)`a${1}b`;
+        expect(strings).not.toMatchObject(withKey(["a", "b"], "raw", expect.any(Array)));
+        expect(hidden([1, 1], 0, 1)).toMatchObject(hidden([1, 1], 1, 1));
+        expect(hidden(withKey([1], "a", 1), "b", 2)).toMatchObject(withKey(hidden([1], "a", 1), "b", 2));
+      });
+
+      test("an object is still a subset", () => {
+        expect([, 1]).not.toMatchObject({ 0: undefined });
+        expect([undefined, 1]).toMatchObject({ 0: undefined });
+        expect({ a: 1 }).not.toMatchObject({ a: 1, b: undefined });
+        expect({ a: [{ b: 1 }] }).not.toMatchObject({ a: [{ b: 1, c: undefined }] });
+        expect({ a: [{ b: 1, c: undefined }] }).toMatchObject({ a: [{ b: 1 }] });
+      });
+
+      test("says what toEqual() says of a value or a matcher opposite a hole", () => {
+        const hole = Symbol("hole");
+        expect.extend({
+          toBeNothing: (/** @type {unknown} */ received) => ({ pass: received === undefined, message: () => "" }),
+        });
+        const values = [() => hole, () => undefined, () => null, () => 1];
+        const matchers = [
+          () => expect.anything(),
+          () => expect.any(Number),
+          () => expect.closeTo(1),
+          () => expect.not.stringContaining("a"),
+          () => expect.not.stringMatching(/a/),
+          () => expect.not.arrayContaining([1]),
+          () => expect.not.objectContaining({ a: 1 }),
+          // @ts-expect-error
+          () => expect.toBeNothing(),
+          () => ({ asymmetricMatch: (/** @type {unknown} */ value) => value === undefined }),
+        ];
+        // Jest has none of these three.
+        if (isBun) {
+          matchers.push(
+            () => expect.not.anything(),
+            () => expect.not.any(Number),
+            () => expect.toSatisfy((/** @type {unknown} */ value) => value === undefined),
+          );
+        }
+        const all = [...values, ...matchers];
+        const arrayOf = (/** @type {() => unknown} */ make) => {
+          const array = new Array(2);
+          const value = make();
+          if (value !== hole) array[0] = value;
+          array[1] = 1;
+          return array;
+        };
+        const passes = (/** @type {() => void} */ assertion) => {
+          try {
+            assertion();
+            return true;
+          } catch {
+            return false;
+          }
+        };
+        const differ = [];
+        let pairs = 0;
+        all.forEach((received, i) =>
+          all.forEach((expected, j) => {
+            // never a matcher opposite a matcher
+            if (i >= values.length && j >= values.length) return;
+            pairs++;
+            const equal = passes(() => expect(arrayOf(received)).toEqual(arrayOf(expected)));
+            const matches = passes(() => expect(arrayOf(received)).toMatchObject(arrayOf(expected)));
+            if (equal !== matches) differ.push({ received: i, expected: j, equal, matches });
+          }),
+        );
+        expect(pairs).toBe(isBun ? 112 : 88);
+        expect(differ).toEqual([]);
+      });
+
+      test("a getter of a key that only one array has is called", () => {
+        expect(() => expect(throwing([1], "x")).not.toMatchObject([1])).toThrow("thrown by the getter");
+        expect(() => expect([1]).not.toMatchObject(throwing([1], "x"))).toThrow("thrown by the getter");
+        expect(() => expect({ a: [throwing([1], "x")] }).not.toMatchObject({ a: [[1]] })).toThrow(
+          "thrown by the getter",
+        );
+      });
+
+      // Jest 30.5.2 asks a matcher about a key that the other array lacks. Vitest 4.1.12 and 5.0.3 do not.
+      test_skipIf(isVitest)("a matcher opposite a hole gets undefined", () => {
+        /** @type {unknown[]} */
+        const seen = [];
+        const matcher = { asymmetricMatch: (/** @type {unknown} */ value) => seen.push(value) > 0 };
+        expect([, 1]).toMatchObject([expect.not.stringContaining("a"), 1]);
+        expect([expect.not.stringContaining("a"), 1]).toMatchObject([, 1]);
+        expect([1]).toMatchObject(withKey([1], "x", expect.not.stringMatching(/a/)));
+        expect(withKey([1], "x", expect.not.stringMatching(/a/))).toMatchObject([1]);
+        expect([, 1]).toMatchObject([matcher, 1]);
+        expect([matcher, 1]).toMatchObject([, 1]);
+        expect(seen).toEqual([undefined, undefined]);
+        // A matcher for a key that the received array inherits gets what the array inherits.
+        class Sized extends Array {
+          get size() {
+            return 1;
+          }
+        }
+        expect(Sized.of(1)).toMatchObject(withKey([1], "size", expect.closeTo(1)));
+        expect(Sized.of(1)).not.toMatchObject(withKey([1], "size", expect.closeTo(2)));
+        expect([1]).toMatchObject(withKey([1], "at", expect.anything()));
+        expect([1]).toMatchObject(withKey([1], "at", expect.any(Function)));
+        expect([1]).not.toMatchObject(withKey([1], "at", expect.any(Number)));
+      });
+
+      // Jest 30.5.2 takes a symbol key that one array lacks for undefined too. Vitest 4.1.12 and 5.0.3 do not: vitest-dev/vitest#8342.
+      test_skipIf(isVitest)("a symbol key that one array lacks is undefined there", () => {
+        const symbol = Symbol("s");
+        expect(withKey([1], symbol, undefined)).toMatchObject([1]);
+        expect([1]).toMatchObject(withKey([1], symbol, undefined));
+      });
+
+      // Jest 30.5.2 does not compare the lengths. Vitest 4.1.12 and 5.0.3 do, and Bun does.
+      test_skipIf(isJest)("the lengths are the same", () => {
+        expect([1, 2, 3]).not.toMatchObject([1, 2, 3, undefined]);
+        expect([1, undefined]).not.toMatchObject([1]);
+        expect(new Array(3)).not.toMatchObject([]);
+        expect([]).not.toMatchObject(new Array(3));
+        expect(Object.assign([1, 2, 3], { length: 4 })).not.toMatchObject([1, 2, 3]);
+        expect({ a: [1] }).not.toMatchObject({ a: [1, undefined] });
+      });
+
+      if (isBun) {
+        test("Bun.deepMatch has the same rule", () => {
+          expect(Bun.deepMatch([undefined, 1], [, 1])).toBe(true);
+          expect(Bun.deepMatch([, 1], [undefined, 1])).toBe(true);
+          expect(Bun.deepMatch({ a: [[, 1]] }, { a: [[undefined, 1]], b: 2 })).toBe(true);
+          expect(Bun.deepMatch(withKey([1], "x", undefined), [1])).toBe(true);
+          expect(Bun.deepMatch([null, 1], [, 1])).toBe(false);
+          expect(Bun.deepMatch([, 1], [0, 1])).toBe(false);
+          expect(Bun.deepMatch([1], withKey([1], "x", 1))).toBe(false);
+          expect(Bun.deepMatch([1, undefined], [1])).toBe(false);
+          const { concat, at } = Array.prototype;
+          expect(Bun.deepMatch(withKey([undefined, 1], "at", at), withKey([, 1], "concat", concat))).toBe(false);
+          // It has no matchers, so one is a value like any other.
+          expect(Bun.deepMatch([expect.not.stringContaining("a"), 1], [, 1])).toBe(false);
+        });
+
+        test("Bun.deepMatch throws what a read of a key that only one array has throws", () => {
+          expect(() => Bun.deepMatch(throwing([1], "x"), [1])).toThrow("thrown by the getter");
+          expect(() => Bun.deepMatch([1], throwing([1], "x"))).toThrow("thrown by the getter");
+          // arrays of different lengths do not match, and nothing is read
+          expect(Bun.deepMatch(throwing([1, 2], "x"), [1])).toBe(false);
+          let armed = false;
+          const other = new Proxy([1], {
+            getOwnPropertyDescriptor(target, key) {
+              if (armed && key === "x") throw new Error("thrown by the trap");
+              return Reflect.getOwnPropertyDescriptor(target, key);
+            },
+          });
+          const holder = new Proxy(withKey([1], "x", undefined), {});
+          armed = true;
+          expect(() => Bun.deepMatch(holder, other)).toThrow("thrown by the trap");
+        });
+
+        // The sample of expect.objectContaining() keeps its rule: an array needs as many keys as the sample, and each key of it.
+        test("expect.objectContaining() of an array is not changed", () => {
+          expect([, 1]).not.toEqual(expect.objectContaining([undefined, 1]));
+          expect([undefined, , 1]).not.toEqual(expect.objectContaining([, undefined, 1]));
+          expect([1, 2]).toEqual(expect.objectContaining([1, 2]));
+          // Vitest 4.1.12 passes these two, where the array has each key of the sample and one more.
+          expect([undefined, 1]).not.toEqual(expect.objectContaining([, 1]));
+          expect(withKey([1], "x", undefined)).not.toEqual(expect.objectContaining([1]));
+          // an array inside is compared as toEqual() compares it
+          expect({ a: [, 1] }).toEqual(expect.objectContaining({ a: [undefined, 1] }));
+        });
+
+        test("the diff shows a matcher that matched a hole in its place", () => {
+          let message = "";
+          try {
+            expect([, 1]).toMatchObject([expect.not.stringContaining("a"), 2]);
+          } catch (e) {
+            message = stripVTControlCharacters(ANY(e).message);
+          }
+          expect(message).toBe(
+            'expect(received).toMatchObject(expected)\n\n  [\n    StringNotContaining "a",\n-   2,\n+   1,\n  ]\n\n- Expected  - 1\n+ Received  + 1\n',
+          );
+        });
+      }
+    });
+
     test("an object that occurs twice shows, in each place, what the pattern there says", () => {
       const number = expect.any(Number);
       const shared = { id: 123.5, k: 2.5 };

@@ -2937,6 +2937,10 @@ declare module "bun" {
    * Returns true if all properties in the subset exist in the
    * other and have equal values.
    *
+   * Two arrays match as a whole, not as a subset. They need the same length
+   * and the same own enumerable properties, with matching values. A property
+   * that one array lacks, such as a hole, is `undefined` there.
+   *
    * This also powers expect().toMatchObject in `bun:test`
    */
   function deepMatch(subset: unknown, a: unknown): boolean;

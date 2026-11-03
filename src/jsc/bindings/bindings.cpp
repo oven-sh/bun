@@ -623,6 +623,25 @@ AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSV
     return result;
 }
 
+// The values that matchAsymmetricMatcherAndGetFlags() handles. A URL or a Blob has the type tag of one and is none.
+static bool isAsymmetricMatcher(JSValue value)
+{
+    using namespace Bun::Bindgen::Generated;
+    if (value.isEmpty() || !value.isCell())
+        return false;
+    JSCell* cell = value.asCell();
+    if (cell->type() != JSC::JSType(JSDOMWrapperType))
+        return false;
+    return cell->inherits<JSExpectAnything>()
+        || cell->inherits<JSExpectAny>()
+        || cell->inherits<JSExpectStringContaining>()
+        || cell->inherits<JSExpectStringMatching>()
+        || cell->inherits<JSExpectArrayContaining>()
+        || cell->inherits<JSExpectObjectContaining>()
+        || cell->inherits<JSExpectCloseTo>()
+        || cell->inherits<JSExpectCustomAsymmetricMatcher>();
+}
+
 template<typename PromiseType, bool isInternal>
 static void handlePromise(PromiseType* promise, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue ctx, Zig::FFIFunction resolverFunction, Zig::FFIFunction rejecterFunction)
 {
@@ -742,6 +761,39 @@ static JSValue asymmetricMatchMethod(JSGlobalObject* globalObject, JSValue value
         object = asObject(prototype);
     }
     return {};
+}
+
+// The key step of Jest's equals() for two arrays: a key that only one has can stand for undefined in the other, as in `[, 1]` and `[undefined, 1]`.
+static NEVER_INLINE bool reconcileArrayKeys(JSGlobalObject* globalObject, ThrowScope& scope, bool withMatchers, JSObject* obj, PropertyNameArrayBuilder& objProps, JSObject* subsetObj, PropertyNameArrayBuilder& subsetProps)
+{
+    size_t unshared[2] = { 0, 0 };
+    for (bool ofSubset : { true, false }) {
+        JSObject* holder = ofSubset ? subsetObj : obj;
+        JSObject* other = ofSubset ? obj : subsetObj;
+        PropertyNameArrayBuilder& from = ofSubset ? subsetProps : objProps;
+        PropertyNameArrayBuilder& into = ofSubset ? objProps : subsetProps;
+        for (size_t i = 0, count = from.size(); i < count; i++) {
+            // add() skips a name that the list has. The walk compares the names that subsetProps gets here.
+            size_t held = into.size();
+            into.add(from[i]);
+            if (into.size() == held)
+                continue;
+            JSValue value = holder->get(globalObject, from[i]);
+            RETURN_IF_EXCEPTION(scope, false);
+            bool canBeAbsent = value.isUndefined() || (withMatchers && (isAsymmetricMatcher(value) || asymmetricMatchMethod(globalObject, value)));
+            bool otherOwnsIt = false;
+            if (canBeAbsent || !ofSubset) {
+                otherOwnsIt = other->hasOwnProperty(globalObject, from[i]);
+                RETURN_IF_EXCEPTION(scope, false);
+                // Jest's walk needs a key of the received array to be undefined or a matcher there, or a property of the expected array.
+                if (!canBeAbsent && !otherOwnsIt)
+                    return false;
+            }
+            unshared[ofSubset] += !canBeAbsent || otherOwnsIt;
+        }
+    }
+    // Jest compares the counts: a key of one array can be a property of the other that isn't enumerable, and the walk compares those.
+    return unshared[0] == unshared[1];
 }
 
 // Jest and Vitest treat any object with an asymmetricMatch() method as a matcher. Returns nullopt if neither or both are.
@@ -2505,7 +2557,7 @@ bool Bun__deepMatch(
     // - two "simple" arrays
     // similar to what is done in deepEquals (canPerformFastPropertyEnumerationForIterationBun)
 
-    // arrays should match exactly
+    // Two arrays match as a whole, not as a subset: the keys of both are compared, and the lengths as in Vitest (Jest's toMatchObject() skips the lengths).
     bool objIsArray = isArray(globalObject, objValue);
     RETURN_IF_EXCEPTION(throwScope, false);
     bool subsetIsArray = objIsArray && isArray(globalObject, subsetValue);
@@ -2517,16 +2569,29 @@ bool Bun__deepMatch(
         PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
         obj->getPropertyNames(globalObject, objProps, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(throwScope, false);
-        if (objProps.size() != subsetProps.size()) {
-            return false;
+        if (isMatchingObjectContaining) {
+            // For expect.objectContaining(array) the two arrays need as many keys, and the walk needs each key of the sample.
+            if (objProps.size() != subsetProps.size()) {
+                return false;
+            }
+        } else if (objProps.data()->propertyNameVector() != subsetProps.data()->propertyNameVector()) [[unlikely]] {
+            bool canMatch = reconcileArrayKeys(globalObject, throwScope, enableAsymmetricMatchers, obj, objProps, subsetObj, subsetProps);
+            RETURN_IF_EXCEPTION(throwScope, false);
+            if (!canMatch) {
+                return false;
+            }
         }
     }
 
     for (const auto& property : subsetProps) {
         JSValue prop = obj->getIfPropertyExists(globalObject, property);
         RETURN_IF_EXCEPTION(throwScope, false);
-        if (prop.isEmpty()) {
-            return false;
+        if (prop.isEmpty()) [[unlikely]] {
+            // Between two arrays, a key that the received one lacks is undefined there.
+            if (!subsetIsArray || isMatchingObjectContaining) {
+                return false;
+            }
+            prop = jsUndefined();
         }
 
         JSValue subsetProp = subsetObj->get(globalObject, property);

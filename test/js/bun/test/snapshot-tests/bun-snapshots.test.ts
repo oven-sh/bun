@@ -81,3 +81,48 @@ describe("toMatchSnapshot errors", () => {
     }).toThrow();
   });
 });
+
+// Jest writes the same for these three. Vitest writes the first two, and its matcher is not asked about a hole.
+test("property matchers take a hole of an array for undefined", () => {
+  expect({ list: [, 1], id: 5 }).toMatchInlineSnapshot(
+    { list: [undefined, 1], id: expect.any(Number) },
+    `
+    {
+      "id": Any<Number>,
+      "list": [
+        undefined,
+        1,
+      ],
+    }
+  `,
+  );
+  expect({ list: [undefined, 1] }).toMatchInlineSnapshot(
+    { list: [, 1] },
+    `
+    {
+      "list": [
+        undefined,
+        1,
+      ],
+    }
+  `,
+  );
+  expect({ list: [, 1, { a: 1, b: 2 }] }).toMatchInlineSnapshot(
+    { list: [expect.not.stringContaining("a"), 1, { a: expect.any(Number) }] },
+    `
+    {
+      "list": [
+        StringNotContaining "a",
+        1,
+        {
+          "a": Any<Number>,
+          "b": 2,
+        },
+      ],
+    }
+  `,
+  );
+  expect(() => expect({ list: [, 1] }).toMatchSnapshot({ list: [null, 1] })).toThrow(
+    "to match properties from received object",
+  );
+});

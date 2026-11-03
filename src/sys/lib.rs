@@ -2339,6 +2339,19 @@ mod posix_impl {
             Tag::stat,
         )
     }
+    /// `statx` by path that makes a network file system fetch the attributes again.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub fn statx_force_sync(path: &ZStr, mask: u32) -> Maybe<PosixStat> {
+        // `AT_STATX_FORCE_SYNC` of the kernel UAPI: `libc` has no name for it on musl.
+        const AT_STATX_FORCE_SYNC: c_int = 0x2000;
+        statx_impl(
+            Fd::from_native(libc::AT_FDCWD),
+            Some(path),
+            AT_STATX_FORCE_SYNC,
+            mask,
+            Tag::stat,
+        )
+    }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn lstatx(path: &ZStr, mask: u32) -> Maybe<PosixStat> {
         statx_impl(
@@ -8963,6 +8976,49 @@ pub fn get_fd_path_z<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'
 #[inline]
 pub fn iterate_dir(dir: Fd) -> dir_iterator::WrappedIterator {
     dir_iterator::iterate(dir)
+}
+
+/// One stat by path, following links, that is not answered from a network file system's attribute cache on Linux.
+pub fn stat_force_sync(path: &ZStr) -> Maybe<PosixStat> {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if SUPPORTS_STATX_ON_LINUX.load(core::sync::atomic::Ordering::Relaxed) {
+        return statx_force_sync(path, STATX_MASK_FOR_STATS);
+    }
+    stat(path).map(|stat| PosixStat::init(&stat))
+}
+
+/// Whether the file system of `path` stamps a change with this machine's clock. False for a network mount and for a type not listed.
+pub fn stamps_with_local_clock(path: &ZStr) -> bool {
+    #[cfg(unix)]
+    {
+        let Ok(fs) = statfs(path) else {
+            return false;
+        };
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            // ext2/3/4, xfs, btrfs, tmpfs, overlayfs, f2fs, zfs, bcachefs (`linux/magic.h`).
+            matches!(
+                fs.f_type as u32,
+                0xEF53
+                    | 0x5846_5342
+                    | 0x9123_683E
+                    | 0x0102_1994
+                    | 0x794C_7630
+                    | 0xF2F5_2010
+                    | 0x2FC1_2FC1
+                    | 0xCA45_1A4E
+            )
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        {
+            (fs.f_flags as u64) & (libc::MNT_LOCAL as u64) != 0
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        false
+    }
 }
 /// `bun.sys.exists`. Non-NUL-terminated convenience over
 /// [`exists_z`]: copies into a stack `PathBuffer`, NUL-terminates, then

@@ -247,18 +247,21 @@ export function placesThatCall(file: Uint8Array, names: readonly string[]): Plac
 
 const isIn = (value: number, ...ranges: number[]) => ranges.some((low, index) => index % 2 === 0 && value >= low && value <= ranges[index + 1]!);
 const prefixes = [0x26, 0x2e, 0x36, 0x3e, 0x64, 0x65, 0x66, 0x67, 0xf0, 0xf2, 0xf3];
+// A REX prefix is one too, and the processor takes any number of them in any order.
+const isPrefix = (byte: number) => (byte & 0xf0) === 0x40 || prefixes.includes(byte);
 
 // How many bytes the x64 instruction at `at` takes, or 0 for one that this does not know.
 function instructionLength(file: Uint8Array, at: number): number {
   let next = at;
   let hasSmallOperands = false;
   let hasSmallAddresses = false;
-  for (; prefixes.includes(file[next]!); next++) {
+  let hasWideOperands = false;
+  for (; isPrefix(file[next]!); next++) {
     hasSmallOperands ||= file[next] === 0x66;
     hasSmallAddresses ||= file[next] === 0x67;
+    // A REX prefix counts only directly in front of the opcode: `48 40 b8` is `mov eax, imm32`, and `48 66 b8` is `mov ax, imm16`.
+    hasWideOperands = (file[next]! & 0xf8) === 0x48;
   }
-  const hasWideOperands = (file[next]! & 0xf8) === 0x48;
-  if ((file[next]! & 0xf0) === 0x40) next++;
   let opcode = file[next++]!;
   // 0 is the table of opcodes of one byte, 1 the one after `0f`, 2 after `0f 38`, 3 after `0f 3a`. VEX and EVEX prefixes name one.
   let table = 0;
@@ -304,15 +307,16 @@ function instructionLength(file: Uint8Array, at: number): number {
 
 // Where the x64 instruction at `at` has its opcode: behind its prefixes.
 function opcodeOf(file: Uint8Array, at: number): number {
-  while (prefixes.includes(file[at]!)) at++;
-  return (file[at]! & 0xf0) === 0x40 ? at + 1 : at;
+  while (isPrefix(file[at]!)) at++;
+  return at;
 }
 
 // Whether one of the instructions from `from` on has its opcode at `opcode`. Undefined where one of them is unknown.
 function reaches(file: Uint8Array, from: number, opcode: number): boolean | undefined {
   for (;;) {
     const length = instructionLength(file, from);
-    if (length === 0) return undefined;
+    // Two zero bytes are `add [rax], al`, which no compiler writes: they are padding or data, and what is behind them is not known.
+    if (length === 0 || (file[from] === 0 && file[from + 1] === 0)) return undefined;
     if (from + length > opcode) return opcodeOf(file, from) === opcode;
     from += length;
   }
@@ -322,23 +326,22 @@ function reaches(file: Uint8Array, from: number, opcode: number): boolean | unde
 function isAnOpcode({ file, functions, dataInCode }: Image, opcode: number, start: number, base: number): boolean {
   if (dataInCode.some(([from, to]) => base + opcode >= from && base + opcode < to)) return false;
   // One of any 15 bytes in a row begins an instruction, as none is longer. From 64 bytes ahead, a reading that began inside one has nearly always joined the real ones.
-  const readFrom: number[] = [];
-  if (opcode - 78 >= start) for (let ahead = 64; ahead < 64 + 15; ahead++) readFrom.push(opcode - ahead);
+  let isPassed = false;
+  for (let ahead = 64; ahead < 64 + 15 && opcode - 78 >= start; ahead++) {
+    const isReached = reaches(file, opcode - ahead, opcode);
+    if (isReached) return true;
+    isPassed ||= isReached === false;
+  }
   let next = 0;
   for (let end = functions.length; next < end; ) {
     const middle = (next + end) >> 1;
     if (functions[middle]! - base <= opcode) next = middle + 1;
     else end = middle;
   }
-  // A function begins with an instruction too.
-  if (next > 0 && functions[next - 1]! - base >= start) readFrom.push(functions[next - 1]! - base);
-  // It is no opcode only if a reading passes over it and none reaches it. Where nothing can be read, the place is reported.
-  let isPassed = false;
-  for (const from of readFrom) {
-    const isReached = reaches(file, from, opcode);
-    if (isReached) return true;
-    isPassed ||= isReached === false;
-  }
+  // A function begins with an instruction. Where the file says where that is, only the reading from there shows that this is no opcode.
+  const from = next > 0 ? functions[next - 1]! - base : -1;
+  if (from >= start) return reaches(file, from, opcode) !== false;
+  // Elsewhere it is none if a reading passes over it and none reaches it. Where nothing can be read, the place is reported.
   return !isPassed;
 }
 

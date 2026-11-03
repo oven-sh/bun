@@ -210,21 +210,29 @@ describe("in x64 code, the scan reports a call only where an instruction begins"
   test("not inside `shr ecx, 1`, which CI read as a jump to execvp", () => {
     const at = 0x105e364c0;
     const filled = Buffer.alloc(80, 0xcc).toString("hex");
+    // vaddph xmm0, xmm0, xmm1, which the scan cannot read, and 32 times `nop`.
+    const unknown = "62f57c0858c1" + Buffer.alloc(32, 0x90).toString("hex");
+    // This is what CI printed.
+    const place = {
+      name: "execvp",
+      address: 4393755892,
+      code: "39c373378b470825ffffff7f89c1d1e94883f9014811c84839f0480f46c64883f811be1000000048",
+    };
     expect({
       "the file says where the function begins": placesThatCall(machO(at, expandCapacity, [at]), ["execvp"]),
       "80 bytes that --trim filled are in front": placesThatCall(machO(at - 80, filled + expandCapacity), ["execvp"]),
-      // With nothing to read the function from, the place is reported. This is what CI printed.
+      // With nothing to read the function from, the place is reported.
       "neither": placesThatCall(machO(at, expandCapacity), ["execvp"]),
+      // Where the file says where the function begins, only reading it from there can show that a place is none.
+      "the function begins with an instruction that the scan cannot read": placesThatCall(
+        machO(at - 38, unknown + expandCapacity, [at - 38]),
+        ["execvp"],
+      ),
     }).toEqual({
       "the file says where the function begins": [],
       "80 bytes that --trim filled are in front": [],
-      "neither": [
-        {
-          name: "execvp",
-          address: 4393755892,
-          code: "39c373378b470825ffffff7f89c1d1e94883f9014811c84839f0480f46c64883f811be1000000048",
-        },
-      ],
+      "neither": [place],
+      "the function begins with an instruction that the scan cannot read": [place],
     });
   });
 
@@ -271,6 +279,32 @@ describe("in x64 code, the scan reports a call only where an instruction begins"
       ["e8", stub],
       "c3", // ret
     ]);
+    expect(addressesOf(machO(at, code))).toEqual(places);
+  });
+
+  test("a call behind prefixes that the processor ignores", () => {
+    const at = 0x105e36400;
+    const { code, places } = assemble(at, [
+      expandCapacity.slice(0, -2),
+      // Of two REX prefixes only the last one counts: this is `mov rax, imm64`, and not `mov eax, imm32` with 4 bytes
+      // of other instructions behind it.
+      "4848b8" + "00000000000000b8",
+      ["e8", stub],
+      // A REX prefix with another prefix behind it does not count: this is `mov ax, imm16`.
+      "4866b8" + "0000",
+      ["e8", stub],
+      ["4848e8", stub], // call with two REX prefixes
+      "c3", // ret
+    ]);
+    expect(addressesOf(machO(at, code))).toEqual(places);
+  });
+
+  test("a call behind padding of zeros", () => {
+    // Read as instructions, three zero bytes are `add [rax], al` and the first byte of `add al, ch`, which takes the
+    // `e8` of the call as its operand. No compiler writes `add [rax], al`: two zero bytes are padding or data, and
+    // the scan cannot tell what the bytes behind them are.
+    const at = 0x105e36400;
+    const { code, places } = assemble(at, [expandCapacity, "000000", ["e8", stub], "c3"]);
     expect(addressesOf(machO(at, code))).toEqual(places);
   });
 });

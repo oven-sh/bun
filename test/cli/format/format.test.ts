@@ -7638,6 +7638,17 @@ try {
         ...":::\n,:::a\n,:::a\nb\n:::\n\n,:-\n,a\n    - b\n,a\n    <!-- b -->\n,a\n    ```\n,a  \n    # b\n".split(","),
         ..."| a |\n| - |\n| b |\n\n,| - |\n,|\n,http://a.b ,www.a.b ,a@b.c ,a@,a  \n,a\\\n".split(","),
         ..."中文 a\n,a,\ta\n,\n, , ,😀 ".split(","),
+        // What is looked for ahead where text isn't parsed: the end of the line, of Liquid, of emphasis, of a tag, of a
+        // fence, an empty line.
+        ..."- a_b\n,- a_ b\n,a_b\n,| a_b |\n,[a]({{ b }}) ,[a]({{ b ,{{ a\n,a\n{{ b }}\n,**a\n,**a\n\n,- **a\n,_a\n\n".split(
+          ",",
+        ),
+        ...'```js\na\n\n,```\na\n ```\n\n,<A\n,<A>\n\n,<A b="\n\n,a <b c="d\n\n,<!-- a\n\n,{/* a\n\n,{/* a */}\n\n'.split(
+          ",",
+        ),
+        ...'`a\n\n,``a`\n\n,[a\n\n,[a](b\n\n,[a](b "c\n\n,aw.\n,aw. ,a  b\n,a  b ,a://b\n\n,a\n# b\n,a\n- b\n\n,a\n> b\n\n'.split(
+          ",",
+        ),
       ];
       const each = (line: (index: number) => string) =>
         Array.from({ length: count }, (_, index) => line(index)).join("");
@@ -7647,8 +7658,20 @@ try {
         `| a | b |\n| - | - |\n${"| c | d |\n".repeat(count)}`,
         each(index => `${"  ".repeat(index % 40)}- a\n`),
         each(index => `${"> ".repeat((index % 40) + 1)}a\n`),
+        // Read to the end before it turns out that the parser has to read it.
+        `${"- a_b\n".repeat(count)}- a_ b\n`,
+        `${"- a\n".repeat(count)}- *\n`,
+        `${"- a\n\n".repeat(count)}- *\n`,
+        `${"1. a\n".repeat(count)}1. *\n`,
+        `${"> a\n".repeat(count)}> *\n`,
+        `${"a\n".repeat(count)}*\n`,
+        `| a |\n| - |\n${"| a_b |\n".repeat(count)}| a_ b |\n`,
+        `<div>\n${"a\n".repeat(count)} \n`,
+        `<A>\n${"a\n".repeat(count)}/\n`,
+        `\`\`\`\n${"a\n".repeat(count)}\`\`\` b\n`,
       ];
-      const prose = "The quick brown fox jumps over the lazy dog, and *then* it `rests` for a [while](u).\n\n";
+      // `__` keeps it from being printed without being parsed, which takes a tenth of the time.
+      const prose = "The quick brown fox jumps over the lazy dog, and __then__ it `rests` for a [while](u).\n\n";
       const length = Math.ceil(texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length);
       const run = (text: (index: number) => string) =>
         format(

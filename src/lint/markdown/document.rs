@@ -356,7 +356,8 @@ impl<'d> Node<'d> {
             | Kind::Export
             | Kind::Jsx
             | Kind::EsComment
-            | Kind::Sentence => "",
+            | Kind::Sentence
+            | Kind::AsWritten => "",
         }
     }
 

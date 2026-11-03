@@ -93,6 +93,21 @@ The tokens of a text are printed in their order, nearly all as they are written,
 - **No token waits for another.** `tokens::scan` finds all tokens first, from the bitmaps of `bun_highway::ScannerStops`. Reading a token where the last one ends is a chain of loads that took 40 % of the time.
 - **Comments** between two items of a block, of a list in brackets that is on lines, and between definitions are written where `comments::attach` and `Builder::print` put them: `Direct::end_item`. A token that is taken with a comment before it refuses the definition, so an item that goes on behind a comment is never taken for two.
 
+## Markdown and MDX: what isn't parsed
+
+With `proseWrap: "preserve"` most of a text is printed as it's written, or nearly so. `markdown/as_written.rs` reads such text once and makes no nodes of what is in it. The long way (parser, tree, `Doc`, printer) takes 40 cycles per byte, the `Reader` 6.
+
+- **Blocks below the root** (`Reader::lines_at`): paragraphs, headings, fenced code, lists, block quotes, tables, HTML, Liquid, thematic breaks, for MDX comments and JSX that can't be parsed. `bun_md` asks at every line where a block can start outside of all containers (`Extensions::lines`) and skips what the `Reader` takes. A run of such blocks is one node, `Kind::AsWritten`, whose neighbors see the kinds of its first and last block (`Node::first_kind`, `last_kind`). A text that's read from start to end never meets the parser: `parse::tree_without_parser`.
+- **What is in a paragraph or a heading that the parser has found**, in a list or a quote (`Reader::content_of`, asked by `Builder::leaf_source`): the parser doesn't read it, and it's one `AsWritten` in that node.
+- **Code in a language that has a formatter** is found the same way (`What::Code`), and gets the node that the parser would have made.
+- **What has to be certain is the output, not the tree.** `[a]` is printed the same whether or not `a` is defined, and so is `**` whether or not it's strong emphasis. What has to be excluded is that the parser finds something in the bytes that's printed in another way. Every byte that can start or end something is looked at and has to be explained. Whatever isn't is refused: the block goes to the parser.
+- **Small differences are written, not refused**: the padding of a table, `*` for `-`, `*a*` for `_a_`, two spaces in a row, the empty lines between two blocks. `Reader::replace` copies the run to `Tree::rewritten` from the first difference on. A run without one is a range of the text.
+- **What depends on a neighbor that the `Reader` doesn't see is checked in the tree**: a list that follows a list gets another marker, and a block after `<!-- prettier-ignore -->` stays as it is. `Preprocessor::is_wrong_as_written` says so, and the text is parsed once more without the `Reader`.
+- **A line that ends a paragraph is read in another way than one that follows an empty line** (`>2. a` is no list there). So a paragraph that's ended by a line which the `Reader` then refuses goes to the parser together with that line.
+- **MDX has its own rules** (`Reader::mdx_content`): a tokenizer of remark-parse 8 looks for its end in the text as it's written, code included, and text with a `*` or a `_` is written anew.
+- **What is below the root is printed as soon as it has a document** (`Printer::print_to`): nothing there is in a group or indented. A part that's only texts and forced line breaks isn't measured (`write_lines`).
+- All of it is off with `no_short_cuts`, for another `proseWrap`, for oxfmt's flavor, in a template and in a code block. `test/cli/format/short-cuts.test.ts` has the shapes that a fuzzer found to differ.
+
 ## Syntax errors
 
 `[error] a.css: SyntaxError: Unclosed string (3:6)`, and under it the lines around the place as Prettier shows them. `syntax_error.rs`:

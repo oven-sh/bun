@@ -94,6 +94,33 @@ fn has_line_break(doc: &Doc<'_>) -> bool {
     false
 }
 
+/// Writes `doc`, which isn't indented, if it's nothing but texts and forced line breaks, so that nothing has to be
+/// measured. Returns whether it is. Without `out` it only looks.
+fn write_lines(doc: &Doc<'_>, mut out: Option<&mut doc::Printer<'_>>) -> bool {
+    let mut rest: smallvec::SmallVec<[std::slice::Iter<'_, Doc<'_>>; 8]> =
+        smallvec::SmallVec::new();
+    rest.push(std::slice::from_ref(doc).iter());
+    while let Some(docs) = rest.last_mut() {
+        let Some(doc) = docs.next() else {
+            rest.pop();
+            continue;
+        };
+        match (doc, out.as_deref_mut()) {
+            (Doc::Array(parts), _) => rest.push(parts.iter()),
+            (Doc::MarkAsRoot(contents), _) => rest.push(std::slice::from_ref(&**contents).iter()),
+            (Doc::BreakParent | Doc::Text(_) | Doc::Line(Line::Hard | Line::Literal), None) => {}
+            (Doc::BreakParent, _) => {}
+            (Doc::Text(text), Some(out)) => out.write_text(text),
+            (Doc::Line(Line::Hard), Some(out)) => {
+                out.write_hard_line(0);
+            }
+            (Doc::Line(Line::Literal), Some(out)) => out.write_literal_line(),
+            _ => return false,
+        }
+    }
+    true
+}
+
 /// Returns the line break to print after `line`, which is printed verbatim. A `hardline` would trim trailing spaces and
 /// tabs, so a line that ends with one gets a literal line break.
 fn line_break_after<'a>(line: &[u8]) -> Doc<'a> {
@@ -633,17 +660,17 @@ impl<'a> Printer<'a, '_> {
         let is_in_tight_list_item = parent.kind == Kind::ListItem
             && (node.kind == Kind::List || !self.is_loose_list_item(node.parent));
         let is_previous_ignore = self.prettier_ignore(node.previous) == Some(Ignore::Next);
-        let is_html_after_html_or_paragraph = node.kind == Kind::Html
+        let is_html_after_html_or_paragraph = node.first_kind() == Kind::Html
             && follows_directly
-            && match previous.kind {
+            && match previous.last_kind() {
                 Kind::Html => true,
                 Kind::Paragraph => {
                     (!self.is_mdx || parent.kind == Kind::ListItem) && !self.is_lazy_html(node)
                 }
                 _ => false,
             };
-        let is_liquid_without_blank_line = (node.kind == Kind::LiquidNode
-            || previous.kind == Kind::LiquidNode)
+        let is_liquid_without_blank_line = (node.first_kind() == Kind::LiquidNode
+            || previous.last_kind() == Kind::LiquidNode)
             && follows_directly;
         !(is_sibling_node
             || is_in_tight_list_item
@@ -718,29 +745,78 @@ impl<'a> Printer<'a, '_> {
     fn print_children_with(
         &mut self,
         parent: NodeId,
-        mut processor: impl FnMut(&mut Self, NodeId) -> Option<Doc<'a>>,
+        processor: impl FnMut(&mut Self, NodeId) -> Option<Doc<'a>>,
     ) -> Doc<'a> {
         let mut parts = Vec::new();
+        self.write_children_with(parent, processor, &mut |part| parts.push(part));
+        Doc::Array(parts)
+    }
+
+    /// The same. `write` gets the parts of the array one after the other.
+    fn write_children_with(
+        &mut self,
+        parent: NodeId,
+        mut processor: impl FnMut(&mut Self, NodeId) -> Option<Doc<'a>>,
+        write: &mut dyn FnMut(Doc<'a>),
+    ) {
+        let mut is_first = true;
         let mut child = self.node(parent).map_or(NONE, |node| node.first_child);
         while let Some(node) = self.node(child) {
             if let Some(result) = processor(self, child) {
-                if !parts.is_empty() && self.is_lazy_html_in_tight_item(node) {
-                    parts.push(Doc::Dedent(Box::new(hardline())));
-                } else if !parts.is_empty() && self.should_pre_print_hardline(node) {
-                    parts.extend([Doc::Line(Line::Hard), Doc::BreakParent]);
+                if !is_first && self.is_lazy_html_in_tight_item(node) {
+                    write(Doc::Dedent(Box::new(hardline())));
+                } else if !is_first && self.should_pre_print_hardline(node) {
+                    write(Doc::Line(Line::Hard));
+                    write(Doc::BreakParent);
                     if self.should_pre_print_double_hardline(node) {
-                        parts.extend([Doc::Line(Line::Hard), Doc::BreakParent]);
+                        write(Doc::Line(Line::Hard));
+                        write(Doc::BreakParent);
                     }
                 }
-                parts.push(result);
+                is_first = false;
+                write(result);
             }
             child = node.next;
         }
-        Doc::Array(parts)
     }
 
     fn print_children(&mut self, parent: NodeId) -> Doc<'a> {
         self.print_children_with(parent, |printer, child| Some(printer.print(child)))
+    }
+
+    pub(crate) fn has_failed(&self) -> bool {
+        self.failure.is_some() || self.stack.ran_out()
+    }
+
+    /// Prints the document of `root`, part by part. `elements` is there for its memory.
+    pub(crate) fn print_to(
+        &mut self,
+        root: NodeId,
+        elements: &mut doc::Elements,
+        out: &mut doc::Printer<'_>,
+    ) {
+        if self.node(root).is_none_or(|root| root.first_child == NONE) {
+            return;
+        }
+        self.write_root(root, &mut |part| {
+            match &part {
+                Doc::Line(Line::Hard) => {
+                    out.write_hard_line(0);
+                    return;
+                }
+                Doc::BreakParent => return,
+                Doc::Text(text) => return out.write_text(text),
+                _ => {}
+            }
+            if !write_lines(&part, None) {
+                elements.clear();
+                elements.document(&part);
+                out.print(elements, 0, 0);
+                return;
+            }
+            write_lines(&part, Some(out));
+        });
+        out.write_hard_line(0);
     }
 
     /// Prints a node: verbatim if it's ignored, as its embedded language, or as Markdown.
@@ -1857,6 +1933,11 @@ impl<'a> Printer<'a, '_> {
                 ]
             }
             Kind::InlineMath => Doc::from(self.source(node)),
+            // Blocks below the root, where nothing is indented, or the lines of a paragraph or a heading.
+            Kind::AsWritten => match self.kind(node.parent) {
+                Some(Kind::Root) => Doc::from(self.tree.as_written(self.text, node)),
+                _ => replace_end_of_line(self.tree.as_written(self.text, node), hardline),
+            },
         }
     }
 
@@ -2133,6 +2214,12 @@ impl<'a> Printer<'a, '_> {
     /// Prettier's `printRoot`: everything between `<!-- prettier-ignore-start -->` and `<!-- prettier-ignore-end -->`
     /// is left as is.
     fn print_root(&mut self, root: NodeId) -> Doc<'a> {
+        let mut parts = Vec::new();
+        self.write_root(root, &mut |part| parts.push(part));
+        Doc::Array(parts)
+    }
+
+    fn write_root(&mut self, root: NodeId, write: &mut dyn FnMut(Doc<'a>)) {
         let mut ranges: Vec<(NodeId, NodeId)> = Vec::new();
         let mut start = None;
         for child in self.tree.children(root) {
@@ -2144,7 +2231,7 @@ impl<'a> Printer<'a, '_> {
         }
         let mut ranges = ranges.into_iter().peekable();
         let mut is_in_range = false;
-        self.print_children_with(root, |printer, child| {
+        let print = |printer: &mut Self, child: NodeId| {
             if let Some(&(start, end)) = ranges.peek() {
                 if child == start {
                     is_in_range = true;
@@ -2170,7 +2257,8 @@ impl<'a> Printer<'a, '_> {
                 }
             }
             Some(printer.print(child))
-        })
+        };
+        self.write_children_with(root, print, write);
     }
 
     // ───────────────────────────── lists ─────────────────────────────

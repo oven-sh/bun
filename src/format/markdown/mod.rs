@@ -6,6 +6,7 @@
 //! text ─ bun_md ─→ events ─ parse ─→ Tree (mdast) ─ preprocess ─→ sentences ─ printer ─→ the document of `css::doc`
 //! ```
 
+mod as_written;
 pub mod ast;
 pub(crate) mod embed;
 mod parse;
@@ -22,6 +23,7 @@ use crate::range::{Offsets, write_with_line_ending};
 use crate::stack::Stack;
 use crate::text::BOM;
 use crate::{FormatError, FormatOptions};
+use std::cell::RefCell;
 
 /// True if Prettier treats the file at `path` as Markdown.
 pub fn is_markdown_path(path: &[u8]) -> bool {
@@ -37,10 +39,14 @@ pub fn is_markdown_path(path: &[u8]) -> bool {
         b".ronn",
         b".scd",
     ];
-    let name = bun_lint::paths::file_name(path).to_ascii_lowercase();
-    matches!(&name[..], b"contents.lr" | b"readme")
-        || EXTENSIONS.iter().any(|extension| name.ends_with(extension))
-        || name.ends_with(b".workbook")
+    let name = bun_lint::paths::file_name(path);
+    let ends_with = |end: &[u8]| {
+        name.len() >= end.len() && name[name.len() - end.len()..].eq_ignore_ascii_case(end)
+    };
+    name.eq_ignore_ascii_case(b"contents.lr")
+        || name.eq_ignore_ascii_case(b"readme")
+        || EXTENSIONS.iter().any(|extension| ends_with(extension))
+        || ends_with(b".workbook")
 }
 
 pub fn is_mdx_path(path: &[u8]) -> bool {
@@ -55,6 +61,16 @@ const MDX_ES_SYNTAX: &[u8] = b"\0es";
 #[derive(Default)]
 pub struct Scratch {
     tree: ast::Tree,
+    as_written: as_written::Memory,
+    elements: doc::Elements,
+    guests: Guests,
+}
+
+/// The same for the formatters of code blocks and front matter.
+#[derive(Default)]
+struct Guests {
+    json: crate::json::Scratch,
+    yaml: crate::yaml::Scratch,
 }
 
 /// Fills `tree` with the syntax tree of `text`, a description in a JSDoc comment. Returns the root.
@@ -289,6 +305,27 @@ pub(crate) fn oxfmt_parser_for(language: &[u8]) -> Option<(&'static [u8], &'stat
     })
 }
 
+/// The parser for a code block in `language`, and what `oxfmt_parser_for` returns with it.
+fn parser_for(language: &[u8], options: &FormatOptions) -> Option<(&'static [u8], &'static [u8])> {
+    match language {
+        MDX_JSX | MDX_ES_SYNTAX => Some((b"babel", b"")),
+        // A plugin's language, which oxfmt supports too.
+        b"svelte" if options.svelte.is_on => Some((b"svelte", b"")),
+        _ if options.flavor.is_oxfmt() => oxfmt_parser_for(language),
+        b"angular-html" => Some((b"angular", b"")),
+        _ => Some((infer_parser(language)?, b"")),
+    }
+}
+
+/// True if a code block in `language` is handed to a formatter.
+fn is_formatted(language: &[u8], options: &FormatOptions) -> bool {
+    matches!(
+        options.embedded_language_formatting,
+        EmbeddedLanguageFormatting::Auto
+    ) && !language.is_empty()
+        && parser_for(language, options).is_some()
+}
+
 /// Formats `code`, the content of a code block in `language`, for lines of `width` columns.
 fn format_embedded(
     language: &[u8],
@@ -297,25 +334,14 @@ fn format_embedded(
     options: &FormatOptions,
     is_in_template: bool,
     format_block: Option<&mut FormatBlock<'_>>,
+    guests: &mut Guests,
 ) -> Option<Vec<u8>> {
     // Nothing to format: empty front matter.
     if language.is_empty() {
         return Some(Vec::new());
     }
     let is_mdx_jsx = language == MDX_JSX;
-    let mut oxfmt_file_name: &[u8] = b"";
-    let parser: &[u8] = match language {
-        _ if is_mdx_jsx || language == MDX_ES_SYNTAX => b"babel",
-        // A plugin's language, which oxfmt supports too.
-        b"svelte" if options.svelte.is_on => b"svelte",
-        _ if options.flavor.is_oxfmt() => {
-            let parser;
-            (parser, oxfmt_file_name) = oxfmt_parser_for(language)?;
-            parser
-        }
-        b"angular-html" => b"angular",
-        _ => infer_parser(language)?,
-    };
+    let (parser, oxfmt_file_name) = parser_for(language, options)?;
     let in_fragment;
     let code = match is_mdx_jsx {
         true => {
@@ -350,7 +376,7 @@ fn format_embedded(
     };
     let mut out = Vec::new();
     let is_done = if let Some(parser) = crate::json::Parser::from_name(parser) {
-        crate::json::format(code, parser, &options, &mut Default::default(), &mut out).is_ok()
+        crate::json::format(code, parser, &options, &mut guests.json, &mut out).is_ok()
     } else if let Some(parser) = crate::css::Parser::from_name(parser) {
         crate::css::format(code, parser, &options, &mut Default::default(), &mut out).is_ok()
     } else if let Some(parser) = crate::html::Parser::from_name(parser) {
@@ -372,9 +398,7 @@ fn format_embedded(
             b"glimmer" => {
                 crate::handlebars::format(code, &options, &mut Default::default(), &mut out).is_ok()
             }
-            b"yaml" => {
-                crate::yaml::format(code, &options, &mut Default::default(), &mut out).is_ok()
-            }
+            b"yaml" => crate::yaml::format(code, &options, &mut guests.yaml, &mut out).is_ok(),
             b"svelte" => {
                 let scratch = &mut Default::default();
                 crate::svelte::format(b"", code, &options, None, scratch, &mut out).is_ok()
@@ -563,10 +587,39 @@ fn format_in(
         return Ok(());
     }
 
-    let tree = &mut scratch.tree;
-    with_document(text, &options, tree, mode, format_block, |document| {
-        doc::print(document, &options, text, out)
-    })?
+    let Scratch {
+        tree,
+        as_written,
+        elements,
+        guests,
+    } = scratch;
+    if options.no_short_cuts {
+        return with_document(text, &options, tree, mode, format_block, |document| {
+            doc::print(document, &options, text, out)
+        })?;
+    }
+    out.reserve(text.len() + 1);
+    // What is right below the root is in no group and not indented, so it's printed as soon as it has a document.
+    let written = out.len();
+    let as_written = Some(as_written);
+    let done = with_printer(
+        text,
+        &options,
+        tree,
+        mode,
+        format_block,
+        as_written,
+        guests,
+        |printer, root| {
+            let mut out = doc::Printer::new(&options, text, out);
+            printer.print_to(root, elements, &mut out);
+            out.result()
+        },
+    );
+    if !matches!(done, Ok(Ok(()))) {
+        out.truncate(written);
+    }
+    done?
 }
 
 /// Calls `then` with the document for `text`, in which every line break is `\n`.
@@ -575,8 +628,39 @@ fn with_document<R>(
     options: &FormatOptions,
     tree: &mut ast::Tree,
     mode: Mode,
-    mut format_block: Option<&mut FormatBlock<'_>>,
+    format_block: Option<&mut FormatBlock<'_>>,
     then: impl FnOnce(doc::Doc<'_>) -> R,
+) -> Result<R, FormatError> {
+    let print = |printer: &mut printer::Printer<'_, '_>, root| {
+        let document = printer.print(root);
+        (!printer.has_failed()).then(|| then(document))
+    };
+    // A printer that has failed makes it an error.
+    let guests = &mut Guests::default();
+    with_printer(text, options, tree, mode, format_block, None, guests, print)
+        .and_then(|result| result.ok_or(FormatError::InvalidDocument))
+}
+
+/// True if the blocks of `text` that are printed as they are written can be found without parsing them.
+fn has_short_cuts(text: &[u8], options: &FormatOptions, mode: Mode) -> bool {
+    options.prose_wrap == crate::options::ProseWrap::Preserve
+        && !options.flavor.is_oxfmt()
+        && !options.is_in_markdown
+        && !mode.is_in_template
+        && !bun_core::strings::contains_char(text, 0)
+}
+
+/// Calls `then` with a printer for the tree of `text`, in which every line break is `\n`, and the root.
+/// `as_written` is there for its memory, if `then` prints what is below the root by itself.
+fn with_printer<R>(
+    text: &[u8],
+    options: &FormatOptions,
+    tree: &mut ast::Tree,
+    mode: Mode,
+    mut format_block: Option<&mut FormatBlock<'_>>,
+    as_written: Option<&mut as_written::Memory>,
+    guests: &mut Guests,
+    then: impl FnOnce(&mut printer::Printer<'_, '_>, ast::NodeId) -> R,
 ) -> Result<R, FormatError> {
     let blanked = parse::blank_front_matter(text);
     let original = text;
@@ -588,22 +672,44 @@ fn with_document<R>(
     } else {
         parse::Syntax::Markdown
     };
-    let root = parse::parse(text, original, syntax, tree).ok_or(FormatError::NestedTooDeeply)?;
-    let mut preprocessor = preprocess::Preprocessor {
-        text,
-        original,
-        wraps_lines: options.prose_wrap == crate::options::ProseWrap::Always,
-        is_mdx: mode.is_mdx,
-        is_for_oxfmt: options.flavor.is_oxfmt(),
-        tree,
-        tab_width: options.indent_width.value() as usize,
-        stack_check: crate::stack::check_for_tree(),
-        is_nested_too_deeply: false,
+    let mut memory =
+        as_written.filter(|_| blanked.is_none() && has_short_cuts(text, options, mode));
+    let root = loop {
+        let reader = memory.as_deref_mut().map(|memory| {
+            RefCell::new(as_written::Reader::new(
+                text,
+                options,
+                mode.is_mdx,
+                std::mem::take(memory),
+            ))
+        });
+        let root = parse::parse(text, original, syntax, tree, reader.as_ref());
+        if let (Some(memory), Some(reader)) = (memory.as_deref_mut(), reader) {
+            *memory = reader.into_inner().into_memory();
+            memory.swap_rewritten(&mut tree.rewritten);
+        }
+        let root = root.ok_or(FormatError::NestedTooDeeply)?;
+        let mut preprocessor = preprocess::Preprocessor {
+            text,
+            original,
+            wraps_lines: options.prose_wrap == crate::options::ProseWrap::Always,
+            is_mdx: mode.is_mdx,
+            is_for_oxfmt: options.flavor.is_oxfmt(),
+            tree,
+            tab_width: options.indent_width.value() as usize,
+            stack_check: crate::stack::check_for_tree(),
+            is_nested_too_deeply: false,
+            is_wrong_as_written: false,
+        };
+        preprocessor.run(root);
+        if preprocessor.is_nested_too_deeply {
+            return Err(FormatError::NestedTooDeeply);
+        }
+        if !preprocessor.is_wrong_as_written {
+            break root;
+        }
+        memory = None;
     };
-    preprocessor.run(root);
-    if preprocessor.is_nested_too_deeply {
-        return Err(FormatError::NestedTooDeeply);
-    }
 
     let formats_embedded = matches!(
         options.embedded_language_formatting,
@@ -617,6 +723,7 @@ fn with_document<R>(
             options,
             mode.is_in_template,
             format_block.as_deref_mut(),
+            guests,
         ),
         false => None,
     };
@@ -634,10 +741,10 @@ fn with_document<R>(
         stack: Stack::for_tree(),
         failure: None,
     };
-    let document = printer.print(root);
+    let result = then(&mut printer, root);
     match printer.failure {
         _ if printer.stack.ran_out() => Err(FormatError::NestedTooDeeply),
         Some(failure) => Err(failure),
-        None => Ok(then(document)),
+        None => Ok(result),
     }
 }

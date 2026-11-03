@@ -1260,6 +1260,11 @@ impl<'o> Printer<'o> {
         self.write_indent(indent)
     }
 
+    /// Prints a `literalline` where nothing is indented.
+    pub(crate) fn write_literal_line(&mut self) {
+        self.out.extend_from_slice(self.literal_new_line);
+    }
+
     fn trim(&mut self) {
         while self.out.len() > self.start && matches!(self.out.last(), Some(b' ' | b'\t')) {
             self.out.pop();

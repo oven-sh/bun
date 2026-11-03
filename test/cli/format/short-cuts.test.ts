@@ -427,3 +427,128 @@ describe("GraphQL", () => {
     expect(short.said).toEqual(long.said);
   });
 });
+
+const markdownOptions = [
+  [],
+  ["--embedded-language-formatting=off"],
+  ["--tab-width=4"],
+  ["--tab-width=3"],
+  ["--tab-width=0"],
+  ["--tab-width=5000"],
+  ["--use-tabs"],
+  ["--print-width=1"],
+  ["--end-of-line=crlf"],
+  ["--end-of-line=cr"],
+  ["--prose-wrap=always"],
+  ["--prose-wrap=never"],
+  ["--single-quote"],
+  ["--insert-pragma"],
+];
+
+describe("Markdown", () => {
+  const texts = [
+    // The common shapes.
+    "# Title\n\nA paragraph with `code`, a [link](https://example.com/a_b?c=d&e) and **strong** words.\nIts second line.\n\n## Next\n\n---\n\nThe end.\n",
+    "# Title\nText right below it.\n## Next\n```sh\nls\n```\nMore text.\n---\nThe end",
+    "Text\n\n\n\nafter three empty lines.\n \n\t\nAnd after lines of white space.\n\n\n",
+    "---\ntitle: a\n---\n\n# Title\n\nText.\n",
+    "---\ntitle:   a\n---\n{{ liquid }}\n\nText.\n",
+    "\n\n# After empty lines\n",
+    "\ufeff# After a byte order mark\n\nText.\n",
+    "Text without a line break at its end",
+    "A line  with two spaces, one at its end \nand a hard break  \nand `two  in code` and ![two  in an image](a).\n",
+    "Windows\r\n\r\n- line\r\n- endings\r\n\r\n| a | b |\r\n| - | - |\r\n| c | d |\r\n",
+    "a\0b\n\n# c\n",
+    "\f\n# e\n",
+    // Code.
+    "```js\nconst  a = 1\n```\n\n```\nplain\n```\n\n```unknown meta  data\n  kept  \n```\n\n```ts title=\"a\"\nlet  b\n```\n",
+    "```\n```\n\n```\n\n```\n\n``` js\na\n```\n\n```js \na\n```\n\n````md\n```js\na\n```\n````\n\n~~~\na\n~~~\n",
+    "```js\na\n ```\n\n```js\na\n```  \n\n```js\n`` ``` ``\n```\n\n```a`b\n```\n\n```a\\b &amp;\nc\n```\n\n```js\nnot closed\n",
+    "```css\na{b:c}\n```\n\n```json\n{\"a\":1}\n```\n\n```yaml\na:   1\n```\n\n```html\n<p>a</p>\n```\n\n```js\nsyntax error (\n```\n",
+    // Emphasis, and what only looks like it.
+    "*a* and _b_ and *two words* and (*c*) and *d*.\n\na*b*c and a_b_c and snake_case_name and _open and 2 * 3 and *.txt\n",
+    "**a** and __b__ and **a_b** and **a\\*b** and ***c*** and **a* b and *a** b\n\n_a_ _b_ and *a*_b_ and _a *b* c_ and _a_b and a_ b_\n",
+    "_[a](b)_ and [_a_](b) and [*a*](b) and [**a**](b) and ~~a~~ and ~a~ and ~~~a\n",
+    "**a\u2028** b and **\u2029a** b and **\u00a0a** and **中文**中文 and 中文**中文**\n",
+    "e\n*http://a\n\ne\n*a*\n\ne\n**a**\n\ne\n* a\n",
+    // Code spans.
+    "`a` and `` a`b `` and `` `a` `` and ` a ` and `  ` and ` a` and ``a`` and `a\nb` and `not closed\n",
+    "`a {{ b` }} *c* `d` and {{ a ` b }} *c* ` d\n",
+    // Links, images, references.
+    "[a](b) [a](<b c>) [a](b \"c\") [a](b 'c') [a](b (c)) [a](b \"c'd\") [a]() [a](b(c)d) [a](b\\)c) [a](b&amp;c) [a](b&c)\n",
+    "[a] [a][b] [a][] [a]: b [^a] [[a]] ![a](b) ![a] ![a][b] [![a](b)](c) [a [b](c)](d) a] b [c\n\n[a]: d\n",
+    "\\[a] and \\[[a](b)] and \\[[a]] and a\\\nb and \\_a\\_ and a\\",
+    "[a\nb](c) and [a](b\nc)\n\n[*a*]\n\n[*a*]: b\n",
+    // Addresses.
+    "See http://a.b/c_d, https://a.b/c?d=e&f#g (http://a.b/c) and www.a.b and WWW.A.B and a@b.c and a_b@c.d.\n",
+    "http://a.b/*c* and http://a.b/_c_ and http://a.b`c` and http://a.b[c] and [http://a.b](http://a.b) and now. www\n",
+    "<http://a.b> <a@b.c> <a b> <a> </a> <a b=\"c*d*\"> <a\nb> < a <= b <1@b.c> <!-- c --> <?php ?> <br/> a<b>c\n",
+    // What a line of a paragraph starts with.
+    "a\n1. b\n\na\n2. b\n\na\n1986. b\n\na\n1986 b\n\na\n- b\n\na\n-b\n\na\n+ b\n\na\n# b\n\na\n#b\n\na\n> b\n\na\n=\n\na\n-\n\na\n---\n",
+    "a\n```\nb\n```\n\na\n```b`c\n\na\n~~~\nb\n~~~\n\na\n$$\nb\n$$\n\na\n<div>\n\na\n<b>\n\na\n<b>\n:\n\na\n:::\n\na\n:-\n\na\n| b |\n\na | b\n- | -\n",
+    "a\n b\n  c\n    d\n\ta\n\na\n    {{}}\n\na\n    - b\n",
+    "}\n>2. a\n\n}\n>1. a\n\n}\n- 2. a\n",
+    ":::tip\na\n:::\n\n::: a\n\nb\n\n:::\n",
+    // Liquid.
+    "{{ a }}\n\n{% b %}\n{{ c }}\ntext\n{{ d }}\n# e\n{{ f }}\n<div>\n</div>\n{{ g }}\n\n{{ h }} \n# i\n\n{{ j\n}}\n\n{{ k }} l {{ m }}\n",
+    "n\n{{}}\n#\n\n{{}}\nn\n-\n\n{{}}\n|\n\n{{}}\n>\n\n{{}}\n~\n\n{{}}\ni  \n",
+    "[a]({{ b }}) and [a]({{< b \"c\" >}}) and ![a]({{ b }}) and [a](b{{ c }})\n",
+    // HTML.
+    "<div>\n  <p>*a*</p>  \n\n</div>\n\n<img src=\"a\">\n\n<img src=\"a\"> b\n\n<span>a</span> *b*\n\n<my-element>\n\n<p-a>\n\n</div>\n  \n<div>\n",
+    "<!-- a -->\n\n<!-- a\nb -->\n\n<!-- a --> b\n\n<!-->\n<n s=\"\">\n\n<!-- a -->\n<div>\n\n<style>\n\na {}\n</style>\n\n<pre>\n\n</pre>\n",
+    "<g s=\"\">\n\ufeff",
+    "<div>\n\u00a0\n",
+    // Comments that tell the printer to leave something alone.
+    "<!-- prettier-ignore -->\n| a | b |\n|--|--|\n\n| a | b |\n|--|--|\n",
+    "<!--prettier-ignore-->\ns\n\n\ne\n\n<!--prettier-ignore-->\n# N\ns\n\n<!--prettier-ignore-->\n*a*  b\n- s\n",
+    "<!-- prettier-ignore-start -->\n*a*\n\n| a |\n|-|\n<!-- prettier-ignore-end -->\n\n*b*\n",
+    // Lists.
+    "- a\n- b\n  c\n- d\n\n- e\n\n- f\n  - g\n    - h\n  - i\n\n  - j\n- k\n",
+    "* a\n* b\n  + c\n  + d\n\ntext\n\n+ e\n",
+    "- a\n\n* b\n\n+ c\n\n- d\n\n\n- e\n",
+    "- a\n\n  b\n\n- c\n\n      d\n\n- e\n  ```\n  f\n  ```\n\n- g\n  > h\n\n- i\nj\n\n- k\n   l\n",
+    "- [ ] a\n- [x] b\n- [X] c\n- [a](b)\n- [ ]\n",
+    "-  a\n-   b\n-\n- \n-\tc\n - d\n",
+    "- - a\n- # b\n- > c\n- 1. d\n- ---\n- * * *\n",
+    "- t\n  {{}}\n\n- {{ a }}\n\n- a\n{{ b }}\n",
+    "- a\n\n    code\n\n- a\n\n<!-- -->\n\n    code\n",
+    "1. a\n2. b\n3. c\n\ntext\n\n1. a\n1. b\n1. c\n\ntext\n\n0. a\n1. b\n1. c\n\ntext\n\n0. a\n1. b\n2. c\n\ntext\n\n5. a\n7. b\n",
+    "1. a\n   b\n2. c\n   1. d\n   2. e\n   - f\n\n9. a\n10. b\n    c\n\n1) a\n2) b\n\n01. a\n\n1234567890. a\n\n1.  a\n2.  b\n",
+    "1. a\n\n2. b\n\n- c\n\n1. d\n\n1) e\n",
+    "- a\n  2. b\n\n- a\n  1. b\n\n1. a\n  - b\n",
+    // Block quotes.
+    "> a\n> b\n>\n> c\n\n> a\nb\n\n>a\n\n>  a\n\n> # a\n\n> - a\n\n> > a\n\n>\n> a\n\n> a\n>\n\n> a\n> \n> b\n\n> a\n> {{ b }}\n",
+    // Tables.
+    "| a | b |\n| --- | --- |\n| c | d |\n\n| a   | b   |\n| --- | --- |\n| c   | d   |\n",
+    "| a | b | c | d |\n|:-|-:|:-:|-|\n| left | right | center | none |\n| 中文 | é | 😀 | `a\\|b` |\n|||||\n",
+    "| a |\n|-|\n| b | c |\n\n| a | b |\n|-|-|\n| c |\n\na | b\n-|-\nc | d\n\n| a |\n|-|\n| b\n\n| a |\n| b |\n\n| a |\n|-|\nb\n",
+    "| a |\n|-|\n| *b* |\n| a  b |\n| a\\|b |\n| a\\\\|b |\n| <br> |\n| <a b=\"|\"> |\n| {{ c }} |\n| {{ c | d }} |\n| `a|b` |\n| [a](b) |\n| \ta |\n",
+    "| a |\n|-|\n| b |\n{{ c }}\n\n| a |\n|-|\n  \ntext\n",
+    "|||||\n|-|-|-|-|\n|||||\n",
+  ];
+  expectSame("a.md", texts, markdownOptions);
+});
+
+describe("MDX", () => {
+  const texts = [
+    "---\ntitle: a\n---\n\n# Title\n\nA paragraph with `code`, a [link](/a/b) and **strong** words.\nIts second line.\n\n```ts\nlet  a\n```\n\n---\n\nThe end.\n",
+    "import a from  'a'\nexport const b = 1\n\nimportant text\n\nexports\n\ntext\nimport c from 'c'\n",
+    "{/* a */}\n\n{/* a */}\n```js\nb\n```\n\n{/* a */}\ntext\n\n{/*a*/}\n\n{/*  a  */}\n\n{/* a */} b\n\n{/* a */} b {/* c */}\n\n{/* é */}\n\n# {/* a */}\n",
+    "{/* prettier-ignore */}\n| a | b |\n|--|--|\n\n{/* prettier-ignore */}\n*a*  b\n\n*c*\n",
+    "<A />\n\n<A>\n\ntext\n\n</A>\n\n<A b=\"c\">\n  <B>\n\n<A>b</A>\n\n<A.B c>\n\n<a-b>\n\n<pre>\n\n<A>\n  \n</A>\n\n<A>\n<!-- b -->\n\n<A b={c}>\n\n<>\n\n<A>\u00a0\n",
+    "a <b>c</b> d <br/> e < f <= g <A b=\"*c*\" /> *h*\n\na {b} c {{ d }} e {% f %} g { h } i {/* j */}\n",
+    "_a_ and *a* and _two words_ and a_b and a_b_ c and _a and snake_case `a_` and __a__\n\n**a** and **a b** and ** a** and **a **  and **a*b** and **`a*b`** and **a_b** and **[a](b)** and ***a***\n",
+    "[a](b) and [a](b \"c\") and [a] and [a][b] and ![a](b) and [`a`](b) and [a](é) and [a\\]](b) and a] b\n\n[a](b)\n\n[a]: b\n",
+    "a\\*b and a\\_b and a\\#b and a $b$ c and ~a~ and ~~a~~ and http://a.b and www.a.b and a@b.c\n",
+    "**Note**: a\n\n🟢 a\n\n\u00a0a\n\n\ufeffa\n\n135 rules.\n\n1. a\n\n1.5 b\n\na\n**b**\n\na\n🟢 b\n\na\n1 b\n\na\u00a0\n",
+    "- a\n- b\n  c\n- **d**\n\n- e\n  - f\n\n* g\n\n1. a\n2. b\n\n- a\n\n  b\n\n- [a](b)\n- _a_\n- 1,000\n",
+    "- f\n  - g\n\n  - j\n- k\n\n- a\n  - b\n\n- c\n",
+    "a_b\u00e9 and \u00e9a_b and a_b \u00e9\n",
+    "> a\n> b\n>\n> c\n\n> a\nb\n",
+    "| a | b |\n| --- | --- |\n| `c\\|d` | e\\|f |\n| <br/> | < 1 |\n| _g_ | **h** |\n\n| a |\n|-|\n| `b|c` |\n\n| a | b |\n|-|-|\n| c |\n",
+    "{|||\n|-\n\n|||||\n|-|-|-:|-|\n",
+    "\f\n```\n\n```\n",
+    "a\n\n\n\nb\n# c\nd\n```\ne\n```\nf\n",
+  ];
+  expectSame("a.mdx", texts, markdownOptions);
+});

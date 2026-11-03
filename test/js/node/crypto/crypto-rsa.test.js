@@ -314,6 +314,14 @@ test(`RSA with RSA_PKCS1_OAEP_PADDING`, () => {
   test_rsa("RSA_PKCS1_OAEP_PADDING", "sha512", "sha512");
 });
 
+test.each([null, 0, -0, false, "", NaN, 0n])("padding: %p is the default padding", padding => {
+  const input = Buffer.from("input");
+  expect(crypto.privateDecrypt(rsaKeyPem, crypto.publicEncrypt({ key: rsaPubPem, padding }, input))).toEqual(input);
+  expect(crypto.privateDecrypt({ key: rsaKeyPem, padding }, crypto.publicEncrypt(rsaPubPem, input))).toEqual(input);
+  expect(crypto.publicDecrypt(rsaPubPem, crypto.privateEncrypt({ key: rsaKeyPem, padding }, input))).toEqual(input);
+  expect(crypto.publicDecrypt({ key: rsaPubPem, padding }, crypto.privateEncrypt(rsaKeyPem, input))).toEqual(input);
+});
+
 test(`RSA with hash mismatch`, () => {
   expect(() => {
     test_rsa("RSA_PKCS1_OAEP_PADDING", "sha256", "sha512");

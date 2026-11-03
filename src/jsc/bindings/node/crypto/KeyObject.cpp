@@ -670,8 +670,7 @@ JSValue KeyObject::exportAsymmetric(JSGlobalObject* globalObject, ThrowScope& sc
                     JSValue typeValue = options->get(globalObject, Identifier::fromString(vm, "type"_s));
                     RETURN_IF_EXCEPTION(scope, {});
                     if (!typeValue.isUndefined()) {
-                        auto* typeStr = typeValue.toString(globalObject);
-                        RETURN_IF_EXCEPTION(scope, {});
+                        auto* typeStr = typeValue.isString() ? asString(typeValue) : jsEmptyString(vm);
                         auto typeView = typeStr->view(globalObject);
                         RETURN_IF_EXCEPTION(scope, {});
                         if (typeView == "compressed"_s) {
@@ -1511,13 +1510,13 @@ KeyObject KeyObject::getKeyObjectHandleFromRaw(JSGlobalObject* globalObject, Thr
     };
 
     int nid = 0;
-    if (WTF::equalIgnoringASCIICase(asymmetricKeyType, "ed25519"_s))
+    if (asymmetricKeyType == "ed25519"_s)
         nid = EVP_PKEY_ED25519;
-    else if (WTF::equalIgnoringASCIICase(asymmetricKeyType, "ed448"_s))
+    else if (asymmetricKeyType == "ed448"_s)
         nid = EVP_PKEY_ED448;
-    else if (WTF::equalIgnoringASCIICase(asymmetricKeyType, "x25519"_s))
+    else if (asymmetricKeyType == "x25519"_s)
         nid = EVP_PKEY_X25519;
-    else if (WTF::equalIgnoringASCIICase(asymmetricKeyType, "x448"_s))
+    else if (asymmetricKeyType == "x448"_s)
         nid = EVP_PKEY_X448;
 
     // Validate key type / format compatibility (Node's ValidateRawKeyImportFormat).
@@ -1526,7 +1525,7 @@ KeyObject KeyObject::getKeyObjectHandleFromRaw(JSGlobalObject* globalObject, Thr
             ERR::CRYPTO_INCOMPATIBLE_KEY_OPTIONS(scope, globalObject);
             return {};
         }
-    } else if (int pqcNid = pqcKeyTypeToNid(asymmetricKeyType, /* ignoreCase */ true)) {
+    } else if (int pqcNid = pqcKeyTypeToNid(asymmetricKeyType)) {
         nid = pqcNid;
     } else if (isUnavailablePqcKeyType(asymmetricKeyType)) {
         // SLH-DSA and ML-KEM-512 have no EVP_PKEY support in vendored BoringSSL.
@@ -1536,7 +1535,7 @@ KeyObject KeyObject::getKeyObjectHandleFromRaw(JSGlobalObject* globalObject, Thr
         ERR::CRYPTO_INCOMPATIBLE_KEY_OPTIONS(scope, globalObject);
         return {};
     } else {
-        ERR::INVALID_ARG_VALUE(scope, globalObject, "key"_s, jsUndefined(), makeString("Invalid asymmetricKeyType: "_s, asymmetricKeyType));
+        throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE, makeString("Invalid asymmetricKeyType: "_s, asymmetricKeyType));
         return {};
     }
 
@@ -1933,8 +1932,8 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
             return { .keyData = handle.data() };
         }
 
-        auto* formatString = formatValue.toString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
+        // Node compares with ===. parseKeyEncoding() below refuses what is not a string.
+        auto* formatString = formatValue.isString() ? asString(formatValue) : jsEmptyString(vm);
         auto formatView = formatString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 

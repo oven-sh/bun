@@ -676,6 +676,20 @@ describe("Decipheriv", () => {
   });
 });
 
+it.each([
+  ["Cipheriv", ["aes-128-ctr", Buffer.alloc(16), Buffer.alloc(16)], object => object.update("a")],
+  ["Decipheriv", ["aes-128-ctr", Buffer.alloc(16), Buffer.alloc(16)], object => object.update("a")],
+  ["Hmac", ["sha256", "key"], object => object.update("a").digest()],
+])("%s.call(this) initializes an instance of a function that inherits from it", (name, args, use) => {
+  const Base = crypto[name];
+  function Derived() {
+    Base.call(this, ...args);
+  }
+  util.inherits(Derived, Base);
+  expect(use(new Derived())).toEqual(use(new Base(...args)));
+  expect(Base.call({}, ...args)).toBeInstanceOf(Base);
+});
+
 describe("DiffieHellman", () => {
   it("should have correct method names", () => {
     const dh = crypto.createDiffieHellman(512);
@@ -1464,6 +1478,59 @@ describe("KeyObject raw-public / raw-private / raw-seed formats", () => {
     ).toThrow(expect.objectContaining({ code: "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS" }));
   });
 
+  it.each(["Ed25519", "ED25519", "X25519", "EC", "ML-DSA-44", "Ml-Dsa-65", "ML-KEM-768"])(
+    "asymmetricKeyType %j is not how a key type is spelled",
+    asymmetricKeyType => {
+      const invalid = expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_VALUE",
+        message: `Invalid asymmetricKeyType: ${asymmetricKeyType}`,
+      });
+      const key = Buffer.alloc(32);
+      expect(() => crypto.createPublicKey({ key, format: "raw-public", asymmetricKeyType })).toThrow(invalid);
+      expect(() => crypto.createPrivateKey({ key, format: "raw-private", asymmetricKeyType })).toThrow(invalid);
+      expect(() => crypto.createPrivateKey({ key, format: "raw-seed", asymmetricKeyType })).toThrow(invalid);
+    },
+  );
+
+  describe.each([
+    ["an array", name => [name]],
+    ["an object with toString()", name => ({ toString: () => name })],
+    ["a String object", name => new String(name)],
+    ["a symbol", name => Symbol(name)],
+  ])("%s", (_, wrap) => {
+    it("is not a format to import", () => {
+      const { publicKey } = crypto.generateKeyPairSync("ed25519");
+      expect(() => crypto.createPublicKey({ key: publicKey.export({ format: "jwk" }), format: wrap("jwk") })).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: expect.stringContaining('The "key.key" property must be of type string or an instance of'),
+        }),
+      );
+      expect(() =>
+        crypto.createPublicKey({
+          key: publicKey.export({ format: "raw-public" }),
+          format: wrap("raw-public"),
+          asymmetricKeyType: "ed25519",
+        }),
+      ).toThrow(expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_VALUE" }));
+    });
+
+    it("is not a type of raw-public to export", () => {
+      const { publicKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+      expect(() => publicKey.export({ format: "raw-public", type: wrap("compressed") })).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_VALUE",
+          message: expect.stringContaining(
+            "The property 'options.type' must be one of: 'compressed', 'uncompressed'. Received ",
+          ),
+        }),
+      );
+    });
+  });
+
   it("publicEncrypt is not confused by a buffer detached from an oaepLabel getter", () => {
     const { publicKey, privateKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
     const label = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
@@ -2010,6 +2077,24 @@ describe("Sign and Verify", () => {
     ["a negative salt length", { padding: crypto.constants.RSA_PKCS1_PSS_PADDING, saltLength: -5 }],
   ])("verify() is false with %s", (_, options) => {
     expect(verifier().verify({ key: rsa.publicKey, ...options }, rsaSignature)).toBe(false);
+  });
+
+  it.each(["md5", "ripemd160", "sha512-256", "sha3-256", "blake2b512"])(
+    "throw for an EC key with %s, which BoringSSL has no ECDSA for",
+    digest => {
+      const invalidDigest = expect.objectContaining({ name: "Error", code: "ERR_OSSL_EVP_INVALID_DIGEST_TYPE" });
+      expect(() => crypto.createSign(digest).update(data).sign(ec.privateKey)).toThrow(invalidDigest);
+      expect(() => crypto.createVerify(digest).update(data).verify(ec.publicKey, Buffer.alloc(64))).toThrow(
+        invalidDigest,
+      );
+    },
+  );
+
+  it("sign() returns a Buffer on an ArrayBuffer of its own length", () => {
+    // The DER of a P-521 signature is always shorter than the most that BoringSSL allows for.
+    const { privateKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-521" });
+    const signature = crypto.createSign("sha256").update(data).sign(privateKey);
+    expect(signature.buffer.byteLength).toBe(signature.length);
   });
 
   it("verify() throws for an ieee-p1363 signature of the wrong length", () => {

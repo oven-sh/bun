@@ -20,7 +20,7 @@ enum class DSASigEnc {
 // ML-DSA / ML-KEM parameter sets, as provided by BoringSSL's EVP_PKEY
 // integration. BoringSSL has ML-KEM-768 and ML-KEM-1024 but not ML-KEM-512.
 // Each returns 0 / a null literal / nullptr for any other key type.
-int pqcKeyTypeToNid(const WTF::StringView& name, bool ignoreCase = false);
+int pqcKeyTypeToNid(const WTF::StringView& name);
 ASCIILiteral pqcNidToKeyTypeName(int nid);
 bool isMlDsaNid(int nid);
 bool isMlKemNid(int nid);

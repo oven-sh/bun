@@ -1,0 +1,245 @@
+//! `perfectionist/sort-union-types`: `rules/sort-union-types.ts` and `rules/sort-union-or-intersection-types/*` of
+//! eslint-plugin-perfectionist. The engine in `crate::perfectionist` sorts and reports; this file turns the members of
+//! a union into its sorting nodes and decides what only this rule decides: the selector of a member, its name, and
+//! that the `|` before a member is the token whose comments count as the member's.
+
+use crate::perfectionist::configuration_if::{Subject, matching_configuration};
+use crate::perfectionist::disabled::DisabledLines;
+use crate::perfectionist::fixes::{FixOptions, make_fixes, range_to_diff};
+use crate::perfectionist::options::{RuleKind, RuleOptions};
+use crate::perfectionist::sort::{IgnoredForGroup, Sorted};
+use crate::perfectionist::{FileState, Messages, SortingNode, groups, partition, report, sort};
+use bun_core::strings;
+use bun_lint::prelude::*;
+use bun_lint::rule::Plugin;
+use smallvec::SmallVec;
+use std::borrow::Cow;
+
+/// Enforce sorted union types.
+pub struct SortUnionTypes {
+    options: RuleOptions,
+}
+
+pub struct State(pub(crate) FileState);
+
+const ORDER: &Message = &Message::new(
+    "unexpectedUnionTypesOrder",
+    "Expected \"{{right}}\" to come before \"{{left}}\".",
+);
+const GROUP_ORDER: &Message = &Message::new(
+    "unexpectedUnionTypesGroupOrder",
+    "Expected \"{{right}}\" ({{rightGroup}}) to come before \"{{left}}\" ({{leftGroup}}).",
+);
+const MISSED_SPACING: &Message = &Message::new(
+    "missedSpacingBetweenUnionTypes",
+    "Missed spacing between \"{{left}}\" and \"{{right}}\".",
+);
+const EXTRA_SPACING: &Message = &Message::new(
+    "extraSpacingBetweenUnionTypes",
+    "Extra spacing between \"{{left}}\" and \"{{right}}\".",
+);
+
+/// Upstream's `availableMessageIds`.
+const MESSAGES: Messages = Messages {
+    unexpected_order: ORDER,
+    unexpected_group_order: GROUP_ORDER,
+    unexpected_dependency_order: None,
+    missed_spacing: MISSED_SPACING,
+    extra_spacing: EXTRA_SPACING,
+};
+
+/// `context.id`, which an `eslint-disable` comment names.
+const RULE_ID: &[u8] = b"perfectionist/sort-union-types";
+
+/// Upstream's `tokenValueToIgnoreBefore`: a comment before the `|` of a member is the member's.
+const TOKEN_TO_IGNORE_BEFORE: &str = "|";
+
+/// The `selectors` of a member, the `switch` of `sortUnionOrIntersectionTypes` on the ESTree type: one, or none
+/// for a type it has no case for (`TSIntrinsicKeyword`, `TSTypePredicate`). `typeof import("x")` is a
+/// `TSTypeQuery` there, so it is an operator and not an import.
+fn selectors(ty: TypeNode<'_>) -> &'static [&'static str] {
+    match ty.kind() {
+        TypeKind::Template(_)
+        | TypeKind::StringLit(_)
+        | TypeKind::NumberLit(_)
+        | TypeKind::BigIntLit { .. }
+        | TypeKind::BoolLit(_) => &["literal"],
+        TypeKind::IndexedAccess { .. }
+        | TypeKind::Ref { .. }
+        | TypeKind::Array(_)
+        | TypeKind::Infer(_) => &["named"],
+        TypeKind::Intersection(_) => &["intersection"],
+        TypeKind::Keyword(Keyword::Undefined | Keyword::Null | Keyword::Void) => &["nullish"],
+        TypeKind::Cond { .. } => &["conditional"],
+        TypeKind::Fn(_) => &["function"],
+        TypeKind::Keyword(Keyword::Intrinsic) => &[],
+        TypeKind::Keyword(_) => &["keyword"],
+        TypeKind::Keyof(_)
+        | TypeKind::Readonly(_)
+        | TypeKind::UniqueSymbol
+        | TypeKind::Unique(_)
+        | TypeKind::Typeof { .. }
+        | TypeKind::Import {
+            is_typeof: true, ..
+        } => &["operator"],
+        TypeKind::Object(_) | TypeKind::Mapped(_) => &["object"],
+        TypeKind::Import {
+            is_typeof: false, ..
+        } => &["import"],
+        TypeKind::Tuple(_) => &["tuple"],
+        TypeKind::Union(_) => &["union"],
+        TypeKind::Error | TypeKind::Heritage { .. } | TypeKind::Predicate { .. } => &[],
+    }
+}
+
+/// Upstream's `computeNodeName`: the member's text. A nested union or intersection starts at its leading `|` or
+/// `&` when it has one, and loses it (`/^\s*[&|]\s*/u`) so that both spellings sort the same.
+fn node_name<'a>(file: &'a File<'a>, ty: TypeNode<'a>) -> &'a [u8] {
+    let text = file.slice(ty.span());
+    if !matches!(ty.tag(), TypeTag::Union | TypeTag::Intersection) {
+        return text;
+    }
+    let after_space = strings::trim_js_whitespace_start(text);
+    match after_space
+        .strip_prefix(b"|")
+        .or_else(|| after_space.strip_prefix(b"&"))
+    {
+        Some(rest) => strings::trim_js_whitespace_start(rest),
+        None => text,
+    }
+}
+
+impl SortUnionTypes {
+    /// Upstream's `sortUnionType`, through `sortUnionOrIntersectionTypes`.
+    fn sort_union_type<'a>(
+        &self,
+        ty: TypeNode<'a>,
+        types: List<'a, TypeNode<'a>>,
+        cx: &mut Cx<'a, Self>,
+    ) {
+        let file = cx.file();
+        let state = &cx.state.0;
+        if let Some(error) = &state.settings_error {
+            cx.throw(ty, "Error", error.clone());
+            return;
+        }
+        let configurations = state
+            .with_settings
+            .as_deref()
+            .unwrap_or(&self.options.configurations);
+
+        let names: SmallVec<[&'a [u8]; 8]> =
+            types.iter().map(|member| node_name(file, member)).collect();
+        let matched =
+            matching_configuration(configurations, Subject::Union(ty), names.iter().copied());
+        let config = match matched {
+            Ok(index) => match configurations.get(index) {
+                Some(config) => config,
+                None => return,
+            },
+            Err(rejected) => {
+                rejected.throw(cx, ty);
+                return;
+            }
+        };
+        if !report::can_report_errors(config, false) {
+            return;
+        }
+        let disabled_lines = state
+            .disabled_lines
+            .get_or_init(|| DisabledLines::compute(file, RULE_ID));
+
+        let mut nodes: Vec<SortingNode<'a>> = Vec::with_capacity(types.len());
+        let mut partition_id = 1;
+        let mut last: Option<Span> = None;
+        for (member, &name) in types.iter().zip(&names) {
+            let span = member.span();
+            let group = match groups::compute_group(config, selectors(member), &[], name, b"") {
+                Ok(group) => group,
+                Err(message) => {
+                    cx.throw(ty, "SyntaxError", message);
+                    return;
+                }
+            };
+            match partition::should_partition(
+                file,
+                config,
+                last,
+                span,
+                Some(TOKEN_TO_IGNORE_BEFORE),
+            ) {
+                Ok(true) => partition_id += 1,
+                Ok(false) => {}
+                Err(message) => {
+                    cx.throw(ty, "SyntaxError", message);
+                    return;
+                }
+            }
+            nodes.push(SortingNode {
+                span,
+                outer_span: member.outer_span(),
+                name: Cow::Borrowed(name),
+                value: b"",
+                size: range_to_diff(file, span),
+                group,
+                group_index: groups::group_index(config, group),
+                partition_id,
+                is_eslint_disabled: disabled_lines.contains(file, span),
+                dependency_names: SmallVec::new(),
+                dependencies: SmallVec::new(),
+            });
+            last = Some(span);
+        }
+
+        // `sortNodesExcludingEslintDisabled`
+        let sorted = Sorted {
+            all: sort::sort_nodes_by_groups(&nodes, config, false, IgnoredForGroup::Nothing),
+            without_disabled: sort::sort_nodes_by_groups(
+                &nodes,
+                config,
+                true,
+                IgnoredForGroup::Nothing,
+            ),
+        };
+        report::report_all_errors(cx, &MESSAGES, &nodes, &sorted, config, |_| {
+            make_fixes(
+                file,
+                &nodes,
+                &sorted.without_disabled,
+                config,
+                FixOptions {
+                    add_safety_semicolon_when_inline: false,
+                },
+            )
+        });
+    }
+}
+
+impl Rule for SortUnionTypes {
+    const META: Meta = Meta::plugin(Plugin::Perfectionist, "sort-union-types", Kind::Suggestion)
+        .fixable(Fixable::Code)
+        .recommended()
+        .reports_on_exit();
+    const ON: On = On::new().types(&[TypeTag::Union]);
+    type State<'a> = State;
+
+    fn new(options: &Options) -> Self {
+        SortUnionTypes {
+            options: RuleOptions::new(options, RuleKind::UnionTypes),
+        }
+    }
+
+    fn validate(options: &Options) -> Result<(), Vec<u8>> {
+        RuleOptions::validate(options, RuleKind::UnionTypes)
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State> {
+        Some(State(self.options.file_state(file.settings())))
+    }
+
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        if let TypeKind::Union(types) = ty.kind() {
+            self.sort_union_type(ty, types, cx);
+        }
+    }
+}

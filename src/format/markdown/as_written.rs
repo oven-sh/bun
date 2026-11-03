@@ -1192,14 +1192,74 @@ impl<'t> Reader<'t> {
     }
 
     fn is_jsx_as_printed(&self, start: usize, end: usize) -> Option<bool> {
-        let options = self.options;
-        let print_width = options.line_width.value() as usize;
-        let tab_width = options.indent_width.value() as usize;
-        let uses_tabs = matches!(options.indent_style, crate::options::IndentStyle::Tab);
-        let is_one_per_line =
-            options.attribute_position == crate::options::AttributePosition::Multiline;
+        // What is read has names, strings for attributes, and words. Every option is named, so that a new one is looked
+        // at: JavaScript doesn't get to see what is found to be formatted.
+        let FormatOptions {
+            line_width,
+            indent_width,
+            indent_style,
+            attribute_position,
+            jsx_quote_style,
+            // Sorts the classes in a string.
+            tailwind,
+            // Prints something else than the code.
+            debug_comments,
+            // Where a tag that's broken ends. One that's read is on one line.
+            bracket_same_line: _,
+            // For what isn't read: other strings, expressions, statements, comments.
+            quote_style: _,
+            quote_properties: _,
+            trailing_commas: _,
+            semicolons: _,
+            arrow_parentheses: _,
+            bracket_spacing: _,
+            expand: _,
+            experimental_operator_position: _,
+            experimental_ternaries: _,
+            sort_imports: _,
+            jsdoc: _,
+            // `jsx` asks. Without a formatter it's printed as it's written, too.
+            embedded_language_formatting: _,
+            format_javascript: _,
+            // There's no `Reader` with another value.
+            prose_wrap: _,
+            flavor: _,
+            is_in_markdown: _,
+            no_short_cuts: _,
+            // For the whole text. JavaScript gets its own.
+            line_ending: _,
+            filepath: _,
+            parser: _,
+            range_start: _,
+            range_end: _,
+            cursor_offset: _,
+            insert_pragma: _,
+            require_pragma: _,
+            check_ignore_pragma: _,
+            is_mdx_jsx: _,
+            is_mdx_es_syntax: _,
+            // For other languages.
+            html_whitespace_sensitivity: _,
+            vue_indent_script_and_style: _,
+            svelte: _,
+            embedded_html: _,
+            html_template_depth: _,
+            is_in_html_file: _,
+            parse_javascript: _,
+            parse_parts: _,
+            in_html: _,
+            sort_package_json: _,
+            toml: _,
+        } = self.options;
+        let print_width = line_width.value() as usize;
+        let tab_width = indent_width.value() as usize;
+        let uses_tabs = matches!(indent_style, crate::options::IndentStyle::Tab);
+        let is_one_per_line = *attribute_position == crate::options::AttributePosition::Multiline;
         let byte = |at: usize| self.byte(at);
-        if !options.jsx_quote_style.is_double() {
+        if !jsx_quote_style.is_double()
+            || tailwind.is_some()
+            || *debug_comments != crate::options::DebugComments::Off
+        {
             return None;
         }
         let tag = self.jsx_opening_tag(start, end)?;

@@ -620,7 +620,58 @@ describe("MDX", () => {
     ["--jsx-single-quote"],
     ["--single-attribute-per-line"],
     ["--bracket-same-line"],
+    // For what is in JSX, `import` and `export`, which is handed to JavaScript unless it's formatted already.
+    ["--no-semi"],
+    ["--no-bracket-spacing"],
+    ["--quote-props=consistent"],
+    ["--trailing-comma=none"],
+    ["--arrow-parens=avoid"],
+    ["--object-wrap=collapse"],
+    ["--experimental-ternaries"],
+    ["--experimental-operator-position=start"],
+    ["--html-whitespace-sensitivity=ignore"],
+    ["--vue-indent-script-and-style"],
   ]);
+
+  // What is formatted already isn't as it's printed if its classes are sorted.
+  test.skipIf(!hasFlag).concurrent("with prettier-plugin-tailwindcss", async () => {
+    const plugin = "prettier-plugin-tailwindcss";
+    const files = {
+      "node_modules/tailwindcss/package.json": `{ "name": "tailwindcss", "version": "4.0.0", "main": "index.js" }`,
+      "node_modules/tailwindcss/theme.css": "",
+      "node_modules/tailwindcss/index.js": `const order = ["flex", "p-4"];
+exports.__unstable__loadDesignSystem = async () => ({
+  getClassOrder: classes => classes.map(name => [name, order.includes(name) ? BigInt(order.indexOf(name)) : null]),
+});
+`,
+      [`node_modules/${plugin}/package.json`]: `{ "name": "${plugin}", "type": "module", "exports": "./index.mjs" }`,
+      [`node_modules/${plugin}/index.mjs`]: "export const options = {};\nexport const parsers = {};\n",
+      ".prettierrc": `{ "plugins": ["${plugin}"] }`,
+      "a.mdx":
+        '<a className="p-4 flex" />\n\n<A className="p-4 flex">b</A>\n\n<A className="p-4 flex">\n  <code className="p-4 flex">b</code>\n</A>\n\n' +
+        '<A className="p-4 flex">\n\nb\n\n</A>\n\nexport const c = <a className="p-4 flex" />;\n\n```jsx\n<a className="p-4 flex" />;\n```\n',
+      "a.md":
+        '<a class="p-4 flex"></a>\n\nb <a class="p-4 flex">c</a>\n\n```jsx\n<a className="p-4 flex" />;\n```\n\n```html\n<a class="p-4 flex"></a>\n```\n',
+    };
+    const [short, long] = await Promise.all(
+      [[], ["--no-short-cuts"]].map(async own => {
+        using dir = tempDir("format-short-cuts", files);
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "fmt", "--write", "--log-level=warn", ...own, "a.mdx", "a.md"],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const [mdx, md] = ["a.mdx", "a.md"].map(name => readFileSync(join(String(dir), name), "utf8"));
+        return { mdx, md, stdout, stderr, exitCode };
+      }),
+    );
+    expect(short).toEqual(long);
+    expect(short.mdx).toStartWith('<a className="flex p-4" />\n\n<A className="flex p-4">b</A>\n');
+    expect(short.exitCode).toBe(0);
+  });
 });
 
 describe.skipIf(!hasFlag)("style sheets", () => {

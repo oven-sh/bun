@@ -149,6 +149,23 @@ describe("ChildProcess.spawn()", () => {
     },
   );
 
+  it.skipIf(!isWindows).each(["SIGWINCH", 28])("kill(%p) throws ENOSYS and leaves the child alone", async signal => {
+    const child = spawn(bunExe(), ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore", env: bunEnv });
+    const errors: unknown[] = [];
+    child.on("error", err => errors.push(err));
+    await once(child, "spawn");
+    const closed = once(child, "close");
+    try {
+      expect(() => child.kill(signal as NodeJS.Signals)).toThrow(
+        expect.objectContaining({ code: "ENOSYS", syscall: "kill" }),
+      );
+      expect([child.killed, child.kill(0), errors]).toEqual([false, true, []]);
+    } finally {
+      child.kill("SIGKILL");
+    }
+    expect(await closed).toEqual([null, "SIGKILL"]);
+  });
+
   // The child ends by itself, so that a timeout that does not end it is a failure and not a hang.
   it.skipIf(!isWindows).each(["SIGHUP", 28])(
     "the timeout of spawnSync with killSignal %p ends the child as SIGKILL does",

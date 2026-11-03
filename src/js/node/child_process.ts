@@ -1658,7 +1658,9 @@ class ChildProcess extends EventEmitter {
         handle.kill(signal);
         this.killed = true;
         return true;
-      } catch (e) {
+      } catch (e: any) {
+        // The platform cannot send this signal.
+        if (e?.code === "ENOSYS" || e?.code === "EINVAL") throw e;
         this.emit("error", e);
       }
     }

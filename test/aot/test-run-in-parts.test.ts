@@ -8,7 +8,8 @@ import { run } from "./harness/run";
 import { envOf, files, twoFiles } from "./harness/test-run-in-parts";
 import { test as oneAtATime } from "./supported";
 
-// supported.ts sets the limit for the first file of a process alone.
+// supported.ts sets the limit for the first file of a process alone. A Bun with assertions keeps the 270 s that the runner gives a case
+// there: beside the builds of other files, the one build of a case takes several times as long as alone.
 raiseDefaultTimeout(120_000);
 
 // A run in parts compiles Bun's own code once more, and its case waits for that. So no case holds two such runs, and the cases run
@@ -78,7 +79,13 @@ Ran 9 tests across 7 files.
   exitCode: 1,
 };
 
+/** The same from several workers: whichever stream a worker writes to, its lines come out on stderr. */
+const fromWorkers: Printed = { ...inOneProcess, stdout: "", stderr: inOneProcess.stdout + inOneProcess.stderr };
+
 const preload = ["--preload", "./preload.ts"];
+
+/** The folder of a project reads `<dir>`, with a `/` behind it on every platform. */
+const inDir = (text: string, directory: string) => text.replaceAll(directory, "<dir>").replaceAll("<dir>\\", "<dir>/");
 
 /**
  * Runs `bun test` in a folder. Of what it printed, the folder reads `<dir>`, and no line is left that says the version, how the run is
@@ -90,24 +97,24 @@ async function printed(directory: string, words: string | undefined, ...flags: s
   const toAProgram = words?.match(/TestRunPartFiles:(\d+)/)?.[1];
   if (toAProgram) expect(stderr).toMatch(new RegExp(`^AOT test run \\| .* \\| to a program ${toAProgram}\\b`, "m"));
   const told = (text: string) =>
-    text
-      .replaceAll(directory, "<dir>")
+    inDir(text, directory)
       .replace(/^(bun test v|AOT test run \|).*\n/gm, "")
       .replace(/ \[[\d.]+ ?m?s\]$/gm, "");
   return { stdout: told(stdout), stderr: told(stderr), exitCode };
 }
 
 /**
- * For a run whose workers print at once: all of its lines in the order of a dictionary. The name of a file is left out: it is
- * printed again wherever the lines of another file came between.
+ * For a run whose workers print at once: the lines of each stream in the order of a dictionary. The name of a file is left out: it
+ * is printed again wherever the lines of another file came between.
  */
-const inAnyOrder = ({ stdout, stderr, exitCode }: Printed) => ({
-  lines: `${stdout}\n${stderr}`
-    .split("\n")
-    .filter(line => line !== "" && !/^\w\.test\.ts:$/.test(line))
-    .sort(),
-  exitCode,
-});
+const inAnyOrder = ({ stdout, stderr, exitCode }: Printed) => {
+  const sorted = (text: string) =>
+    text
+      .split("\n")
+      .filter(line => line !== "" && !/^\w\.test\.ts:$/.test(line))
+      .sort();
+  return { stdout: sorted(stdout), stderr: sorted(stderr), exitCode };
+};
 
 // One run in parts answers two cases: how it reads, and what its junit report holds. The case that comes first starts it.
 let oneRun: Promise<{ plain: Printed; inParts: Printed; reports: { plain: string; inParts: string } }> | undefined;
@@ -117,8 +124,7 @@ const withJunitReport = () =>
     const junit = (name: string) => ["--reporter=junit", `--reporter-outfile=${name}.xml`];
     // Without what differs from run to run: when a file ran, where, and for how long. A CI also names its job and commit in each suite.
     const report = (name: string) =>
-      readFileSync(join(String(dir), `${name}.xml`), "utf8")
-        .replaceAll(String(dir), "<dir>")
+      inDir(readFileSync(join(String(dir), `${name}.xml`), "utf8"), String(dir))
         .replace(/ (time|hostname|timestamp)="[^"]*"/g, "")
         .replace(/^ *<properties>[^]*?<\/properties>\n/gm, "");
     const plain = await printed(String(dir), undefined, ...preload, ...junit("plain"));
@@ -135,7 +141,7 @@ test("a test run in parts reads as one run", async () => {
 test("under --parallel the parts run at once, with the same report", async () => {
   using dir = tempDir("aot-test-run-in-parts-parallel", files);
   const plain = await printed(String(dir), undefined, ...preload, "--parallel=3");
-  expect(inAnyOrder(plain)).toEqual(inAnyOrder(inOneProcess));
+  expect(inAnyOrder(plain)).toEqual(inAnyOrder(fromWorkers));
   const inParts = await printed(String(dir), twoFiles, ...preload, "--aot", "--parallel=3");
   expect(inAnyOrder(inParts)).toEqual(inAnyOrder(plain));
 });
@@ -167,7 +173,7 @@ test("with --timings and --parallel the parts run at once, with the same report"
   using dir = tempDir("aot-test-run-in-parts-timings-parallel", withTimings);
   const threeWorkers = ["--parallel=3", "--timings=timings.json"];
   const plain = await printed(String(dir), undefined, ...preload, ...threeWorkers);
-  expect(inAnyOrder(plain)).toEqual(inAnyOrder(inOneProcess));
+  expect(inAnyOrder(plain)).toEqual(inAnyOrder(fromWorkers));
   const inParts = await printed(String(dir), twoFiles, ...preload, "--aot", ...threeWorkers);
   expect(inAnyOrder(inParts)).toEqual(inAnyOrder(plain));
 });
@@ -201,7 +207,20 @@ Ran 3 tests across 3 files.
 
 test("the junit report of a run in parts has every test", async () => {
   const { reports } = await withJunitReport();
-  const cases = [...reports.plain.matchAll(/<testcase name="([^"]*)"/g)].map(match => match[1]);
-  expect(cases).toEqual(["a", "b", "c", "d", "d skipped", "e", "e fails", "f", "(unhandled error)"]);
+  // Each case of the plain report with the element that stands in it. Where the test passed there is none.
+  const cases = [...reports.plain.matchAll(/<testcase name="([^"]*)"[^>]*?(?:\/>|>\s*<(\w+))/g)].map(
+    ([, name, ended = "passed"]) => `${name}: ${ended}`,
+  );
+  expect(cases).toEqual([
+    "a: passed",
+    "b: passed",
+    "c: passed",
+    "d: passed",
+    "d skipped: skipped",
+    "e: passed",
+    "e fails: failure",
+    "f: passed",
+    "(unhandled error): failure",
+  ]);
   expect(reports.inParts).toEqual(reports.plain);
 });

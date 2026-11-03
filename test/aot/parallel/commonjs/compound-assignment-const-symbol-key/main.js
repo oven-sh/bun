@@ -10,7 +10,8 @@
 // IR= 0 increment ElemSet
 // IRT= 1 underOneOfTwo ElemGet
 // IR= 1 underWhatIsGiven ElemGet
-// IR= 1 underWhatALoopCarries ElemGet
+// IR= 3 underWhatALoopCarries ElemGet v0, v[0-9]+ accessSite=([0-9]+) 
+// IR= 0 underWhatALoopCarries  = (PropGet|GetSlot)
 "use strict";
 const { kSocket, kCount, kOther } = require("./keys");
 const lines = [];

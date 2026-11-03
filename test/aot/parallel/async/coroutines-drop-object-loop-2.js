@@ -1,4 +1,4 @@
-// Seed 2409 of fuzz/values-that-end-before-a-suspension-beside-values-that-cross-it.ts, with an object that is last read before a loop of collections and waits; the coroutine waits for a timer before it makes the object, as the loop does.
+// Seed 2409 of fuzz/liveness-around-suspension.ts, with an object that is last read before a loop of collections and waits; the coroutine waits for a timer before it makes the object, as the loop does.
 const lines = [];
 function show(value) {
   if (typeof value === "function") return "function>" + show(value());

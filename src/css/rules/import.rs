@@ -12,18 +12,21 @@ use bun_alloc::Arena;
 pub struct Layer {
     /// PERF: null pointer optimizaiton, nullable
     pub v: Option<LayerName>,
+    /// Set by the bundler. Each visit of a bare `layer` import is a layer of its own.
+    pub anonymous_id: u32,
 }
 
 impl Layer {
     pub(crate) fn deep_clone(&self, bump: &Arena) -> Self {
         Self {
             v: self.v.as_ref().map(|n| n.deep_clone(bump)),
+            anonymous_id: self.anonymous_id,
         }
     }
 
     pub fn eql(&self, other: &Self) -> bool {
         match (&self.v, &other.v) {
-            (None, None) => true,
+            (None, None) => self.anonymous_id == other.anonymous_id,
             (None, _) | (_, None) => false,
             (Some(a), Some(b)) => a.eql(b),
         }

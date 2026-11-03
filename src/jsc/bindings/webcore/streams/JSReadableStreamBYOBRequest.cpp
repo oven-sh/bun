@@ -108,8 +108,8 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBRequestPrototype_inspectCustom, (JS
     if (!thisObject) [[unlikely]]
         return JSValue::encode(thisValue);
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
-    data->putDirect(vm, Identifier::fromString(vm, "view"_s), thisObject->m_view.get() ? JSValue(thisObject->m_view.get()) : jsNull(), 0);
-    data->putDirect(vm, Identifier::fromString(vm, "controller"_s), thisObject->m_controller.get() ? JSValue(thisObject->m_controller.get()) : jsUndefined(), 0);
+    Bun::putDirectNamed(vm, data, "view"_s, thisObject->m_view.get() ? JSValue(thisObject->m_view.get()) : jsNull());
+    Bun::putDirectNamed(vm, data, "controller"_s, thisObject->m_controller.get() ? JSValue(thisObject->m_controller.get()) : jsUndefined());
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "ReadableStreamBYOBRequest"_s, data));
 }
 

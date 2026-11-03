@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""unions-of-look-alike-classes.py <seed>: well-typed TypeScript. Three or four classes have the same members under the same names, and each keeps them its own way: in another order, as a field stored in the constructor, as a field with an initializer, as an accessor, inherited from a base class. A value typed as their union, with or without null and undefined, is held in a parameter, a field, an element, a captured variable or a destructured parameter, and a function reads several members of it one after the other: plainly, behind `!`, `?.`, a test for null, `instanceof`, `in`, in closures that are called at once, in loops, under try. One class runs hot first, then each of the others arrives, then null and undefined. A compiler that splits the union for one member and tests the value once for the next has to keep apart what each test has proven of which class. Every line is as in plain Bun."""
+"""unions-of-look-alike-classes.py <seed>: Well-typed TypeScript. Three or four classes have the same members under the
+same names, each implemented differently: in another order, as a constructor-assigned field, as an initialized field,
+as an accessor. Code uses them through a union.
+"""
 import random, sys
 
 seed = int(sys.argv[1])

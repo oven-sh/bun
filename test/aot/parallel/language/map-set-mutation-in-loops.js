@@ -1,9 +1,7 @@
 // Loops over a Map or a Set, directly and through keys(), values() and entries(), whose body deletes, adds, overwrites or clears. A loop visits what plain Bun visits: an entry added during the loop, never an entry deleted before the loop reached it.
-// CALLS+ mapDestructured OpenPairIterationInFrame
-// CALLS+ mapDestructured StepIterationInFrame
-// CALLS+ mapEntriesDestructured OpenTableIterationInFrame
-// CALLS+ mapEntriesDestructured StepIterationInFrame
-// CALLS+ keysThroughGenerator StepIteration\b
+// IR= 0 mapDestructured key="done"
+// IR= 0 mapEntriesDestructured key="done"
+// IR= 0 keysThroughGenerator key="done"
 import vm from "node:vm";
 
 const limit = 16;

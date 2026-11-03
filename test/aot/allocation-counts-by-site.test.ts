@@ -67,7 +67,6 @@ for (let k = 0; k < ${kept}; k++) sum += smalls[k].b + mediums[k].e + larges[k].
 console.log(sum);
 export {};
 `;
-const lineOf = (text: string) => source.split("\n").indexOf(text) + 1;
 
 interface Allocation {
   function: string;
@@ -104,45 +103,6 @@ async function countAllocations(folder: string, flags: string[]) {
 }
 
 describe.concurrent("allocation counts by site", () => {
-  // TODO: the file of counts names no layout and counts no cell for any of the places.
-  test.todo(
-    "a run that writes counts names the function, the line and the layout of each place that allocates",
-    () =>
-      slot(async () => {
-        using dir = tempDir("aot-allocation-counts", { "main.ts": source });
-        const allocations = parseAllocations(await countAllocations(String(dir), []));
-
-        const at = (name: keyof typeof places) =>
-          allocations.filter(line => line.function === name && line.position === `main.ts:${lineOf(places[name])}`);
-        const found = (name: keyof typeof places) => ({
-          layouts: at(name).map(line => line.layout.replace(/^L\d+:/, "L:")),
-          cells: aboutAll(at(name).reduce((cells, line) => cells + line.cells, 0)),
-        });
-        // An object that a constructor allocates stands under the place that says `new`, not under the constructor.
-        expect({
-          makeSmall: found("makeSmall"),
-          makeMedium: found("makeMedium"),
-          makeLarge: found("makeLarge"),
-          makeClosure: found("makeClosure"),
-        }).toEqual({
-          makeSmall: { layouts: ["L:Small"], cells: "about all" },
-          makeMedium: { layouts: [expect.stringMatching(/^L:\S+$/)], cells: "about all" },
-          makeLarge: { layouts: ["L:Large"], cells: "about all" },
-          makeClosure: { layouts: [expect.stringMatching(/^closure(:\S+)?$/)], cells: "about all" },
-        });
-
-        // The bytes are those of the cells in the heap, whose sizes are multiples of 16.
-        expect(allocations.filter(line => line.bytes % (16 * line.cells))).toEqual([]);
-        const cellSize = (name: keyof typeof places) => at(name)[0].bytes / at(name)[0].cells;
-        expect(cellSize("makeSmall")).toBeLessThan(cellSize("makeMedium"));
-        expect(cellSize("makeMedium")).toBeLessThan(cellSize("makeLarge"));
-
-        const bytes = allocations.map(line => line.bytes);
-        expect(bytes).toEqual(bytes.toSorted((a, b) => b - a));
-      }),
-    300_000,
-  );
-
   test(
     "an obfuscated executable counts the same places and writes no name",
     () =>

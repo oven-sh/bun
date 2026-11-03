@@ -9,10 +9,12 @@ use crate::generated_bindgen::expect::js_ExpectAny;
 
 use super::Expect;
 use super::ExpectAny;
+use super::Promise;
 use super::get_signature;
 use super::throw;
 
 impl Expect {
+    #[optimize(size)]
     pub(crate) fn to_throw(
         &self,
         this_value: JsWrapper<'_, Self>,
@@ -59,10 +61,16 @@ impl Expect {
 
         let not = this.flags.get().not();
 
-        let (result_, return_value_from_function) = this.get_value_as_to_throw(
-            global,
-            this.get_value(global, this_value, "toThrow", "<green>expected<r>")?,
-        )?;
+        let received = this.get_value(global, this_value, "toThrow", "<green>expected<r>")?;
+        // Nothing was thrown if the promise resolved to a value that can't be called. Jest, unlike Vitest, counts an error as thrown.
+        let resolved_without_throwing = this.flags.get().promise() == Promise::Resolves
+            && !received.js_type().is_function()
+            && (!received.is_any_error() || this.is_vitest());
+        let (result_, return_value_from_function) = if resolved_without_throwing {
+            (None, received)
+        } else {
+            this.get_value_as_to_throw(global, received)?
+        };
 
         let did_throw = result_.is_some();
 

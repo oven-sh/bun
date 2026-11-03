@@ -4,8 +4,8 @@ use bun_lint::rule::Plugin;
 /// Prefer `.addEventListener()` and `.removeEventListener()` over `on`-functions.
 pub struct PreferAddEventListener;
 
-const PREFER_ADD_EVENT_LISTENER: Message =
-    Message::new("", "Prefer `addEventListener()` over their `on`-function counterparts.");
+const PREFER_ADD_EVENT_LISTENER: &Message =
+    &Message::new("", "Prefer `addEventListener()` over their `on`-function counterparts.");
 
 /// Sorted.
 const DOM_EVENT_TYPE_NAMES: [&str; 198] = [

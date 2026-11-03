@@ -2,14 +2,16 @@
 mod tests;
 
 use crate::builtins::RuntimeModule;
+use crate::ir::waiting_lists::AsNumbers;
 use crate::ir::{FunctionKey, LayoutKey, VariableKey};
 use crate::load::{ProgramFile, ProjectId, Sources};
 use crate::modules::{ModuleFailureId, ModuleGraph, ModuleRef};
+use bun_ast::Loader;
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::check::aot::{
     ClassDeclaration, ClassRef, FunctionRef, ObjectOrigin, TypeParameterRef,
 };
-use bun_sema::hir::FnId;
+use bun_sema::hir::{ClassId, FnId, MemberId};
 use bun_sema::program::{FileId, Sym};
 use core::cmp::Ordering;
 
@@ -21,6 +23,64 @@ pub struct InProject<K> {
 
 pub type ProgramFunctionKey = InProject<FunctionKey>;
 pub type ProgramLayoutKey = InProject<LayoutKey>;
+
+/// The kind of key together with the project, the file, and what the key names in the file.
+impl AsNumbers for ProgramFunctionKey {
+    type Numbers = [u32; 3];
+
+    fn to_numbers(self) -> [u32; 3] {
+        let (kind, file, named) = match self.key {
+            FunctionKey::ModuleBody(file) => (0, file, 0),
+            FunctionKey::WrappedModuleBody(file) => (1, file, 0),
+            FunctionKey::FaceBody(file) => (2, file, 0),
+            FunctionKey::CheckBody(file) => (3, file, 0),
+            FunctionKey::Source(FunctionRef { file, function }) => (4, file, function.0),
+            FunctionKey::Signature(FunctionRef { file, function }) => (5, file, function.0),
+            FunctionKey::ClassSignature(ClassRef { file, class }) => (6, file, class.0),
+            FunctionKey::ImplicitConstructor(ClassRef { file, class }) => (7, file, class.0),
+            FunctionKey::InstanceInitializer(ClassRef { file, class }) => (8, file, class.0),
+            FunctionKey::StaticInitializer(ClassRef { file, class }) => (9, file, class.0),
+            FunctionKey::AccessorGetter { file, member } => (10, file, member.0),
+            FunctionKey::AccessorSetter { file, member } => (11, file, member.0),
+            FunctionKey::PrivateNameTest { file, member } => (12, file, member.0),
+        };
+        let kind_in_project = kind * ProjectId::COUNT as u32 + self.project as u32;
+        [kind_in_project, file.0, named]
+    }
+
+    fn from_numbers([kind_in_project, file, named]: [u32; 3]) -> ProgramFunctionKey {
+        let file = FileId(file);
+        let function = FunctionRef {
+            file,
+            function: FnId(named),
+        };
+        let class = ClassRef {
+            file,
+            class: ClassId(named),
+        };
+        let member = MemberId(named);
+        let key = match kind_in_project / ProjectId::COUNT as u32 {
+            0 => FunctionKey::ModuleBody(file),
+            1 => FunctionKey::WrappedModuleBody(file),
+            2 => FunctionKey::FaceBody(file),
+            3 => FunctionKey::CheckBody(file),
+            4 => FunctionKey::Source(function),
+            5 => FunctionKey::Signature(function),
+            6 => FunctionKey::ClassSignature(class),
+            7 => FunctionKey::ImplicitConstructor(class),
+            8 => FunctionKey::InstanceInitializer(class),
+            9 => FunctionKey::StaticInitializer(class),
+            10 => FunctionKey::AccessorGetter { file, member },
+            11 => FunctionKey::AccessorSetter { file, member },
+            12 => FunctionKey::PrivateNameTest { file, member },
+            _ => unreachable!("`to_numbers` wrote it"),
+        };
+        InProject {
+            project: ProjectId::ALL[kind_in_project as usize % ProjectId::COUNT],
+            key,
+        }
+    }
+}
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ProgramModule {
@@ -38,6 +98,7 @@ pub enum ProgramModule {
     External {
         importer: ProgramFile,
         specifier: Atom,
+        type_attribute: Option<Loader>,
     },
 }
 
@@ -212,6 +273,7 @@ impl Rehoming<'_> {
     fn variable_key(&self, mut key: VariableKey) -> VariableKey {
         match &mut key {
             VariableKey::Symbol(symbol)
+            | VariableKey::RequiredAnswer(symbol)
             | VariableKey::PrivateState {
                 state: symbol,
                 part: _,
@@ -330,9 +392,11 @@ impl KeyContext<'_> {
             ModuleRef::External {
                 importer,
                 specifier,
+                type_attribute,
             } => ProgramModule::External {
-                importer: in_project(importer),
+                importer: in_project(self.graph.importer_of_external(importer, specifier)),
                 specifier,
+                type_attribute,
             },
         }
     }
@@ -367,14 +431,17 @@ pub fn compare_program_modules(
             External {
                 importer: a_importer,
                 specifier: a_specifier,
+                type_attribute: a_type,
             },
             External {
                 importer: b_importer,
                 specifier: b_specifier,
+                type_attribute: b_type,
             },
         ) => a_importer
             .cmp(&b_importer)
-            .then_with(|| atoms.bytes(a_specifier).cmp(atoms.bytes(b_specifier))),
+            .then_with(|| atoms.bytes(a_specifier).cmp(atoms.bytes(b_specifier)))
+            .then_with(|| a_type.map(|it| it as u8).cmp(&b_type.map(|it| it as u8))),
         (Runtime(_), _) => Ordering::Less,
         (_, Runtime(_)) => Ordering::Greater,
         _ => unreachable!("a module that has its text in a file is ordered by the file"),

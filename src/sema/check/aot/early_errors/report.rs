@@ -29,7 +29,11 @@ impl Checker<'_, '_> {
         self.report_hir_diagnostics(file, &[DiagnosticKind::Checker]);
         self.check_early_errors(file);
         let mut found = self.reported.split_off(from);
-        found.retain(|d| d.file == file && d.class == DiagnosticClass::EarlyError);
+        // `/** @import Foo#bar */`: a mistake in a comment of a JavaScript file keeps no program from running.
+        let hir = self.hir(file);
+        found.retain(|d| {
+            d.file == file && d.class == DiagnosticClass::EarlyError && !hir.is_in_jsdoc(d.start)
+        });
         if !found.is_empty() {
             self.file_with_early_error = Some(file);
         }

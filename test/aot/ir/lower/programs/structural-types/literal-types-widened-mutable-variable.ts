@@ -230,7 +230,7 @@ attempt("honest again", () => [double(four), isOn(on), new Fixed().twice(), new 
 // CHECK-NEXT: Return v18
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="read"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|[[L_11]] site=[[w_12]] flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number site=[[w_13]]}] functionTypes={{*}}[[f_14]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|[[L_11]] site=[[w_12]] flags=[OmitsNull, OmitsUndefined] variableName="box"}] thisType={type=anything} results=[{type=number site=[[w_13]]}] functionTypes={{*}}[[f_14]]] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_11]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

@@ -62,6 +62,25 @@ impl CommonJsNames {
                 .is_some_and(is_created)
     }
 
+    /// Whoever gets the object once the body has run finds the name on it, whether or not a loop over the object sees it.
+    pub(in crate::modules) fn has_name_once_run(&self, module: ModuleRef, name: Atom) -> bool {
+        let Some(&index) = self.index.get(&module) else {
+            return false;
+        };
+        let entries = &self.entries[index];
+        let mut names = entries.names.iter();
+        !entries.is_half
+            && !entries.is_replaced_late
+            && entries.has_names
+            && names.any(|entry| entry.name == name && entry.created_at != u32::MAX)
+    }
+
+    /// What `require` of the module answers is an object on which no trap runs: the text makes it.
+    pub(in crate::modules) fn exports_ordinary_object(&self, module: ModuleRef) -> bool {
+        let index = self.index.get(&module);
+        index.is_some_and(|&index| self.entries[index].exports_ordinary_object)
+    }
+
     /// Somebody may look at the module while its body runs.
     pub(in crate::modules) fn is_half(&self, module: ModuleRef) -> bool {
         let index = self.index.get(&module);

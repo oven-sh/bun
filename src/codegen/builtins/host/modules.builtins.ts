@@ -39,6 +39,13 @@ const resolvesFromModule = {
   implementation: b.generic,
 } satisfies b.FunctionField;
 
+// The receiver stands where the bound form has the module object: a Module._resolveFilename that the program has replaced is called with it.
+const resolvesFromReceiver = {
+  ...resolvesFromModule,
+  this: b.any,
+  uses: { ...resolvesFromModule.uses, this: [b.everything] },
+} satisfies b.FunctionField;
+
 const resolvesFromImportMeta = (specifier: b.TableType) =>
   ({
     this: b.any,
@@ -50,12 +57,25 @@ const resolvesFromImportMeta = (specifier: b.TableType) =>
     implementation: b.generic,
   }) satisfies b.FunctionField;
 
+// JSMock__jsSpyOn finds the property on the object or above it, keeps what stands there and may call it, and puts a function of its own under the name on the object
+// itself: as a value where a function stood, as a getter and a setter otherwise. mockRestore() stores the original in the same place. It reads no other name and hands
+// the object to nobody: it keeps it weakly. So a test that spies on one export of a module doesn't open the others.
+const spiedName = b.keyFrom("method");
 const spyOn = {
   args: { object: b.object, method: b.propertyKey.loose },
   returns: b.any,
   capability: "js",
   throws: true,
-  uses: { object: [b.everything, b.definesName(b.keyFrom("method"), b.callable)] },
+  uses: {
+    object: [
+      b.readByKey(spiedName, b.nativeMemory),
+      b.definesName(spiedName, b.callable),
+      b.definesAccessor("Getter", spiedName, b.callable),
+      b.definesAccessor("Setter", spiedName, b.callable),
+      b.runs("PrototypeChain"),
+      ...b.ownPropertyTraps,
+    ],
+  },
   implementation: b.generic,
 } satisfies b.FunctionField;
 
@@ -73,6 +93,18 @@ const changesOnItsOwn = { mutability: "ChangesOnItsOwn" } satisfies b.EntryColum
 
 const constantUnlessWritten = { mutability: "ConstantUnlessWritten" } satisfies b.EntryColumns;
 
+// A require function finds these three on the object above it. The table lists them under both.
+const inheritedByRequire = {
+  cache: b.property(moduleCache, changesOnItsOwn),
+  main: {
+    getter: b.union(moduleObject, b.undefined),
+    capability: "js",
+    uses: { this: b.inspected },
+    implementation: b.generic,
+  },
+  extensions: b.property(moduleExtensions, changesOnItsOwn),
+} satisfies Record<string, b.Field>;
+
 // INIT_NATIVE_MODULE (src/jsc/modules/_NativeModule.h) makes the object that require() answers with constructEmptyObject.
 const objectsMadeByNativeModuleMacro: readonly b.BuiltinPath[] = [
   "bun:jsc",
@@ -86,22 +118,16 @@ const objectsMadeByNativeModuleMacro: readonly b.BuiltinPath[] = [
 export default b.declarations(
   b.namespace("%ModuleCache%", {}),
   b.namespace("%ModuleExtensions%", {}),
-  b.namespace(
-    "%ModuleRequire%",
-    {
-      resolve: resolvesFromModule,
-      cache: b.property(moduleCache, changesOnItsOwn),
-      main: {
-        getter: b.union(moduleObject, b.undefined),
-        capability: "js",
-        uses: { this: b.inspected },
-        implementation: b.generic,
-      },
-      extensions: b.property(moduleExtensions, changesOnItsOwn),
-    },
-    { scope: "Module" },
-  ),
+  b.namespace("%ModuleRequire%", { resolve: resolvesFromModule, ...inheritedByRequire }, { scope: "Module" }),
   b.fn("%ModuleRequire%", loadsModule),
+  // RequireFunctionPrototype in src/jsc/bindings/JSCommonJSModule.cpp.
+  b.namespace(
+    "%ModuleRequirePrototype%",
+    { resolve: resolvesFromReceiver, ...inheritedByRequire },
+    { listsAllMembers: true },
+  ),
+  b.inherits("%ModuleRequirePrototype%", "Function.prototype"),
+  b.inherits("%ModuleRequire%", "%ModuleRequirePrototype%"),
   b.namespace(
     "%ModuleObject%",
     {
@@ -134,9 +160,13 @@ export default b.declarations(
       hot: b.property(b.undefined),
       resolve: resolvesFromImportMeta(b.string.loose),
       resolveSync: resolvesFromImportMeta(b.string.loose.refusing(b.null)),
+      "@@toStringTag": b.property(b.string),
     },
-    { scope: "Module" },
+    // ImportMetaObjectPrototypeValues in ImportMetaObject.cpp.
+    { scope: "Module", listsAllMembers: true },
   ),
+  // A lookup goes on there. Object.getPrototypeOf() answers null.
+  b.inherits("%ImportMeta%", "Object.prototype"),
   b.same("%ImportMeta%.require", "%ModuleRequire%"),
   b.same("%ModuleObject%.require", "%ModuleRequire%"),
   b.fn("process.getBuiltinModule", {
@@ -255,6 +285,10 @@ export default b.declarations(
   b.fn("bun:test.spyOn", spyOn),
   b.namespace("bun:test.jest", { spyOn }),
   b.namespace("bun:test.vi", { spyOn }),
+  b.fn("bun:test/vitest.spyOn", spyOn),
+  b.namespace("bun:test/vitest.jest", { spyOn }),
+  b.namespace("bun:test/vitest.vi", { spyOn }),
+  b.namespace("bun:test/vitest.vitest", { spyOn }),
   b.namespace("%bun:bundle%", {
     feature: {
       args: { flag: b.string },

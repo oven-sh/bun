@@ -113,7 +113,7 @@ impl<'a> Report<'a> {
             }
         }
 
-        if generator.loads == 0 {
+        if generator.loads == 0 && byte_range_mapping.compiled.is_none() {
             return None;
         }
         if generator.loads > 1 {
@@ -618,6 +618,160 @@ pub struct ByteRangeMapping {
     /// Of the text.
     source_hash: u64,
     pub source_url: Utf8Bytes<'static>,
+    /// `bun test --aot --coverage`: JSC has compiled no text of the file, or not every time it was loaded.
+    compiled: Option<CompiledCounts>,
+}
+
+/// How often the parts of a file ran as compiled code. The offsets count code units of the file as it is written, which is what the
+/// source map's original columns count.
+struct CompiledCounts {
+    blocks: Vec<CountedRange>,
+    /// Those that JSC would know of: a function is found when what is around it runs.
+    functions: Vec<CountedRange>,
+    /// Every function of the file, by where it starts.
+    all_functions: Vec<CompiledFunction>,
+    /// Offset of the first unit of each line.
+    line_starts: Vec<u32>,
+}
+
+#[derive(Clone, Copy)]
+struct CompiledFunction {
+    range: CountedRange,
+    /// No other function starts between the start of this one and there.
+    end_of_head: u32,
+    is_known: bool,
+}
+
+impl CompiledCounts {
+    /// `ranges` has a line for each counter, in bytes of `text`: `b <start> <end>`; `f <start> <end> <counter of the code that makes the function> <end of head>`;
+    /// `s <start> <end> <counter>` for text that another counter counts as well; `e <start> <end> <counter of the code around it> <end of head>` for a function
+    /// that runs where it stands; `o <start> <end> <offset>` for text that is printed a second time where the text at the offset runs.
+    fn parse(ranges: &[u8], counts: &[u64], text: &[u8]) -> Option<CompiledCounts> {
+        // By byte offset: how many code units are in front of it.
+        let units_before: Option<Vec<u32>> = (!text.is_ascii()).then(|| {
+            let mut before = Vec::with_capacity(text.len() + 1);
+            let mut units = 0u32;
+            for &byte in text {
+                before.push(units);
+                units += match byte {
+                    0x80..=0xBF => 0,
+                    0xF0..=0xFF => 2,
+                    _ => 1,
+                };
+            }
+            before.push(units);
+            before
+        });
+        let in_units = |offset: u32| match &units_before {
+            Some(before) => before
+                .get(offset as usize)
+                .or_else(|| before.last())
+                .copied()
+                .unwrap_or(0),
+            None => offset,
+        };
+        let count_of = |counter: usize| {
+            u32::try_from(counts.get(counter).copied().unwrap_or(0)).unwrap_or(u32::MAX)
+        };
+
+        let mut blocks = Vec::new();
+        let mut functions = Vec::new();
+        let mut all_functions = Vec::new();
+        let mut called_where_they_stand = Vec::new();
+        let mut printed_twice = Vec::new();
+        for (counter, line) in bun_core::strings::split(ranges, b"\n").enumerate() {
+            if line.is_empty() {
+                break;
+            }
+            let mut words = bun_core::strings::split(line, b" ");
+            let kind = words.next()?;
+            let mut number = || bun_core::fmt::parse_int::<u32>(words.next()?, 10).ok();
+            let mut range = CountedRange {
+                range: ByteRange {
+                    start: in_units(number()?),
+                    end: in_units(number()?),
+                },
+                count: count_of(counter),
+            };
+            match kind {
+                b"b" => blocks.push(range),
+                b"s" => {
+                    range.count = count_of(number()? as usize);
+                    blocks.push(range);
+                }
+                b"o" => printed_twice.push((range, in_units(number()?))),
+                b"e" => {
+                    let is_known = count_of(number()? as usize) > 0;
+                    called_where_they_stand.push((range, in_units(number()?), is_known));
+                }
+                b"f" => {
+                    let is_known = count_of(number()? as usize) > 0;
+                    if is_known {
+                        functions.push(range);
+                    } else {
+                        blocks.push(range);
+                    }
+                    all_functions.push(CompiledFunction {
+                        range,
+                        end_of_head: in_units(number()?),
+                        is_known,
+                    });
+                }
+                _ => return None,
+            }
+        }
+
+        let mut line_starts = vec![0u32];
+        let mut bytes = text.iter().enumerate().peekable();
+        while let Some((i, &byte)) = bytes.next() {
+            let ends_line = match byte {
+                b'\r' => bytes.peek().is_none_or(|&(_, &next)| next != b'\n'),
+                b'\n' => true,
+                // U+2028 and U+2029
+                0xA8 | 0xA9 => i >= 2 && text[i - 2] == 0xE2 && text[i - 1] == 0x80,
+                _ => false,
+            };
+            if ends_line {
+                line_starts.push(in_units(u32::try_from(i + 1).ok()?));
+            }
+        }
+        if !called_where_they_stand.is_empty() || !printed_twice.is_empty() {
+            let counts = ExecutionCounts::new(&blocks, &functions);
+            for (mut range, end_of_head, is_known) in called_where_they_stand {
+                range.count = counts.at(range.range.start).unwrap_or(0);
+                if is_known {
+                    functions.push(range);
+                }
+                all_functions.push(CompiledFunction {
+                    range,
+                    end_of_head,
+                    is_known,
+                });
+            }
+            for (mut range, elsewhere) in printed_twice {
+                range.count = counts
+                    .at(range.range.start)
+                    .max(counts.at(elsewhere))
+                    .unwrap_or(0);
+                blocks.push(range);
+            }
+        }
+        blocks.sort_unstable_by_key(|block| block.range);
+        functions.sort_unstable_by_key(|function| function.range);
+        all_functions.sort_unstable_by_key(|function| function.range.range);
+        Some(CompiledCounts {
+            blocks,
+            functions,
+            all_functions,
+            line_starts,
+        })
+    }
+
+    fn offset_of(&self, position: bun_sourcemap::LineColumnOffset) -> Option<u32> {
+        let line = usize::try_from(position.lines.zero_based()).ok()?;
+        let column = u32::try_from(position.columns.zero_based()).ok()?;
+        self.line_starts.get(line)?.checked_add(column)
+    }
 }
 
 // Keys are already wyhashes (`bun_wyhash::hash` of the source URL — see
@@ -681,13 +835,16 @@ impl ByteRangeMapping {
         ignore_sourcemap: bool,
     ) -> Result<Report<'_>, bun_alloc::AllocError> {
         let source_url = self.source_url.slice();
-        let source_map: Option<std::sync::Arc<ParsedSourceMap>> = if ignore_sourcemap {
-            None
-        } else {
+        let saved_source_map = || {
             bun_jsc::VirtualMachine::VirtualMachine::get()
                 .as_mut()
                 .source_mappings()
                 .get(source_url)
+        };
+        let source_map: Option<std::sync::Arc<ParsedSourceMap>> = if ignore_sourcemap {
+            None
+        } else {
+            saved_source_map()
         };
 
         let mut blocks: Vec<CountedRange> =
@@ -715,6 +872,57 @@ impl ByteRangeMapping {
 
         let counts = ExecutionCounts::new(&blocks, &functions);
         let mut lines = LineCounts::default();
+
+        // Compiled code knows where it stands in the file as written, so each mapping is asked after by where it comes from.
+        let compiled_counts = (self.compiled.as_ref())
+            .map(|compiled| ExecutionCounts::new(&compiled.blocks, &compiled.functions));
+        let source_map_of_compiled = match &self.compiled {
+            Some(_) => source_map.clone().or_else(saved_source_map),
+            None => None,
+        };
+        if let Some(counts) = &compiled_counts
+            && source_map_of_compiled.is_none()
+        {
+            // A `// @bun` file runs as it is written.
+            for (line, &start) in self.line_starts.iter().enumerate() {
+                let end = self.line_starts.get(line + 1).copied();
+                for offset in start..end.unwrap_or(source_len) {
+                    self.count_line(counts, offset, line, &mut lines);
+                }
+            }
+        }
+        if let (Some(compiled), Some(compiled_counts), Some(source_map)) = (
+            &self.compiled,
+            &compiled_counts,
+            source_map_of_compiled.as_deref(),
+        ) {
+            let mut previous_original = None;
+            source_map.for_each_mapping(|mapping| {
+                // As below.
+                let original = (
+                    mapping.original.lines.zero_based(),
+                    mapping.original.columns.zero_based(),
+                );
+                if previous_original.replace(original) == Some(original) {
+                    return;
+                }
+                let shown = if ignore_sourcemap {
+                    mapping.generated
+                } else {
+                    mapping.original
+                };
+                if let Ok(line) = usize::try_from(shown.lines.zero_based())
+                    && let Some(offset) = self.offset_of(mapping.generated)
+                    && self.executable_units.is_set(offset as usize)
+                    && let Some(count) = compiled
+                        .offset_of(mapping.original)
+                        .and_then(|at| compiled_counts.at(at))
+                {
+                    // The file may have run from its text as well, and loads add up.
+                    lines.add(line, count.saturating_add(counts.at(offset).unwrap_or(0)));
+                }
+            });
+        }
 
         if let Some(source_map) = source_map.as_deref() {
             let mut previous_original = None;
@@ -755,6 +963,36 @@ impl ByteRangeMapping {
                 let (line, column) = self.line_and_column_of(function.range.start);
                 source_map.find_mapping(line, column).is_some()
             });
+        }
+
+        if let Some(compiled) = &self.compiled {
+            // A function that JSC has found in the text is one of the file's: the one whose head the start of JSC's range comes from, or the
+            // next one, where the transpiler maps no token of the head.
+            let mut of_file = compiled.all_functions.clone();
+            if let Some(source_map) = source_map_of_compiled.as_deref() {
+                functions.retain(|function| {
+                    let (line, column) = self.line_and_column_of(function.range.start);
+                    let Some(at) = source_map
+                        .find_mapping(line, column)
+                        .and_then(|mapping| compiled.offset_of(mapping.original))
+                    else {
+                        return true;
+                    };
+                    let after = of_file.partition_point(|it| it.range.range.start <= at);
+                    let index = match after.checked_sub(1) {
+                        Some(before) if at <= of_file[before].end_of_head => before,
+                        _ => after,
+                    };
+                    let Some(same) = of_file.get_mut(index) else {
+                        return true;
+                    };
+                    same.range.count = same.range.count.saturating_add(function.count);
+                    same.is_known = true;
+                    false
+                });
+            }
+            functions.extend(of_file.iter().filter(|it| it.is_known).map(|it| it.range));
+            blocks.extend_from_slice(&compiled.blocks);
         }
 
         let (executable_lines, lines_which_have_executed) = lines.bitsets()?;
@@ -824,7 +1062,30 @@ impl ByteRangeMapping {
             source_ids: vec![source_id],
             source_hash,
             source_url,
+            compiled: None,
         }
+    }
+
+    /// For a file that ran as compiled code. `transpiled` is what JSC would have compiled of `text`, and its source map is saved.
+    /// `ranges` and `counts`: `CompiledCounts::parse`.
+    pub fn add_compiled_file(
+        path: &[u8],
+        text: &[u8],
+        transpiled: &bun_core::String,
+        already_bundled: bool,
+        ranges: &[u8],
+        counts: &[u64],
+    ) {
+        let Some(compiled) = CompiledCounts::parse(ranges, counts, text) else {
+            return;
+        };
+        let this = find_or_insert(
+            &bun_core::StringView::from_bytes(path),
+            transpiled,
+            None,
+            already_bundled,
+        );
+        this.compiled = Some(compiled);
     }
 
     /// `scan` sets no brace. Those of an object literal are code, and the printer marks them.
@@ -1028,6 +1289,16 @@ extern "C" fn ByteRangeMapping__generate(
     source_id: i32,
     already_bundled: bool,
 ) {
+    find_or_insert(str_, source_contents_str, Some(source_id), already_bundled);
+}
+
+/// The entry of the file with that text, which JSC knows under `source_id` too.
+fn find_or_insert(
+    str_: &bun_core::String,
+    source_contents_str: &bun_core::String,
+    source_id: Option<i32>,
+    already_bundled: bool,
+) -> &'static mut ByteRangeMapping {
     // SAFETY: thread_map() returns a pointer into this thread's owned Box<HashMap>;
     // valid for the lifetime of the thread, and we are the only mutable accessor on
     // this thread for the duration of this call.
@@ -1039,15 +1310,18 @@ extern "C" fn ByteRangeMapping__generate(
     let source_hash = bun_wyhash::hash(source_contents.slice());
 
     // Another text replaces the entry: the line table and the saved source map describe one text.
-    if let Some(existing) = map.get_mut(&hash)
-        && existing.source_hash == source_hash
+    if map
+        .get(&hash)
+        .is_some_and(|existing| existing.source_hash == source_hash)
     {
-        existing.source_ids.push(source_id);
-        return;
+        let existing = map.get_mut(&hash).unwrap();
+        existing.source_ids.extend(source_id);
+        return existing;
     }
 
-    let mut new_value =
-        ByteRangeMapping::compute(source_contents_str, source_hash, source_id, source_url);
+    let mut new_value = ByteRangeMapping::compute(source_contents_str, source_hash, 0, source_url);
+    new_value.source_ids.clear();
+    new_value.source_ids.extend(source_id);
     // `node:inspector` turns the profiler on too. Nothing is marked for it.
     if bun_jsc::VirtualMachine::VirtualMachine::get()
         .as_mut()
@@ -1058,6 +1332,7 @@ extern "C" fn ByteRangeMapping__generate(
         new_value.set_object_braces_executable(source_contents.slice(), already_bundled);
     }
     map.insert(hash, new_value);
+    map.get_mut(&hash).unwrap()
 }
 
 /// For a provider that wraps another one. `module._compile()` wraps a text of its own.

@@ -17,6 +17,8 @@ unsafe extern "C" {
     /// No preconditions; returns null on failure.
     pub safe fn mi_zalloc(size: usize) -> *mut c_void;
     pub fn mi_usable_size(p: *const c_void) -> usize;
+    /// The size of the block that a request for `size` bytes gets. No preconditions.
+    pub safe fn mi_good_size(size: usize) -> usize;
 }
 
 pub type mi_output_fun = extern "C" fn(*const c_char, *mut c_void);

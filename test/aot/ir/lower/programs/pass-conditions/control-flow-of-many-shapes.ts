@@ -917,7 +917,7 @@ console.log(log.join("\n"));
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.iterator]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, IsNamedByComputedKey] captures=[{type=env [[L_9]] flags=[IsFromCompiler]}, {type=undefined|null|string site=[[w_4]] flags=[OmitsNull, OmitsUndefined]}, {type=number site=[[w_5]]}, {type=number site=[[w_6]]}] thisType={type=anything} results=[{type=undefined|null|Generator<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, IsNamedByComputedKey] captures=[{type=env [[L_9]] flags=[IsFromCompiler]}, {type=undefined|null|string site=[[w_4]] flags=[OmitsNull, OmitsUndefined] variableName="name"}, {type=number site=[[w_5]] variableName="n"}, {type=number site=[[w_6]] variableName="failAt"}] thisType={type=anything} results=[{type=undefined|null|Generator<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: env [[L_9]], v1: undefined|null|string, v2: number, v3: number):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -935,7 +935,7 @@ console.log(log.join("\n"));
 // CHECK-NEXT: Return v14
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="return"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 captures=[{type=env [[L_9]] flags=[IsFromCompiler]}, {type=undefined|null|string site=[[w_4]] flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|[[L_21]] flags=[IsExpected]}] functionTypes={{*}}[[f_19]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 captures=[{type=env [[L_9]] flags=[IsFromCompiler]}, {type=undefined|null|string site=[[w_4]] flags=[OmitsNull, OmitsUndefined] variableName="name"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|[[L_21]] flags=[IsExpected]}] functionTypes={{*}}[[f_19]]] {
 // CHECK-NEXT: b0(v0: env [[L_9]], v1: undefined|null|string, v2: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

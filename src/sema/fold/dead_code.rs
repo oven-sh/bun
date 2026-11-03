@@ -31,7 +31,7 @@ impl<'s> Folder<'_, 's> {
                     None => None,
                 };
                 roots.all.extend(excluded.map(TreeNode::Stmt));
-                if self.is_folded_by_bun_run(test) {
+                if self.is_truthy_in_bun_run(test).is_some() {
                     roots.in_bun_run.extend(excluded.map(TreeNode::Stmt));
                 }
             } else {
@@ -46,7 +46,22 @@ impl<'s> Folder<'_, 's> {
             roots.in_bun_run.extend_from_slice(&roots.all[first..]);
         }
         self.push_statements_removed_by_bun_run(&mut roots);
+        self.push_expressions_in_comments(&mut roots);
         roots
+    }
+
+    // `/** @import {Promise<Array<string>>} p */`: the parser reads a JSX element there. A comment is no code.
+    fn push_expressions_in_comments(&self, roots: &mut DeadRoots) {
+        if self.hir.jsdoc_comments.is_empty() {
+            return;
+        }
+        let first = roots.all.len();
+        let expressions = (0..).map(ExprId).zip(self.hir.exprs.iter());
+        let in_comments = expressions.filter(|(_, it)| self.hir.is_in_jsdoc(it.pos));
+        roots
+            .all
+            .extend(in_comments.map(|(expression, _)| TreeNode::Expr(expression)));
+        roots.in_bun_run.extend_from_slice(&roots.all[first..]);
     }
 
     fn push_default_exports_of_types(&self, roots: &mut DeadRoots) {

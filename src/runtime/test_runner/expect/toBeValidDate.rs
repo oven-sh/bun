@@ -7,6 +7,7 @@ use super::get_signature;
 use super::throw;
 
 impl Expect {
+    #[optimize(size)]
     pub(crate) fn to_be_valid_date(
         &self,
         this_value: JsWrapper<'_, Self>,

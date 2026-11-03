@@ -1,13 +1,8 @@
 #!/usr/bin/env python3
-"""typed-programs.py <seed>: a random TypeScript program, written from a grammar that knows the types.
-
-Interfaces, type aliases, classes with subclasses, accessors and private fields, discriminated unions, enums, tuples, arrays, maps, sets,
-optional members, generic helpers, closures, generators and async functions are declared at random. Every expression is made for the type that
-its place wants, so the program passes `strict` and no value is ever of another type than TypeScript says. Objects of the typed code are
-handed to untyped code (`launder`), which does to them what JavaScript may do without breaking the type: extra, deleted and reordered
-properties, accessors in place of data, frozen and sealed objects, another prototype in between, proxies, clones. Typed code then goes on
-using what comes back. Each episode prints one line, `<label>: <what it saw>`, or `THROWS <name>` where an exception leaves it.
-As plain Bun, line by line."""
+"""typed-programs.py <seed>: A random TypeScript program from a type-aware grammar: interfaces, type aliases, classes
+with subclasses, accessors and private fields, discriminated unions, enums, tuples, arrays, maps, sets, generics,
+closures.
+"""
 import random, sys
 
 seed = int(sys.argv[1]) if len(sys.argv) > 1 else 1

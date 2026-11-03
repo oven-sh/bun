@@ -387,3 +387,32 @@ fn remap_of_body_without_references_changes_nothing() {
     body.remap_ids(&IdMapStorage::new(0, |_| REMAP_OFFSET).as_id_map());
     assert_eq!(body, function.body);
 }
+
+#[test]
+fn packed_code_comes_back_word_for_word() {
+    let widths = [0, 1, 0x7f, 0x80, 0x3fff, 0x4000, 0x1f_ffff, 0x20_0000];
+    let wide = [0xfff_ffff, 0x1000_0000, ABSENT_WORD - 1, ABSENT_WORD];
+    let mut scratch = Vec::new();
+    for length in 0..=widths.len() + wide.len() {
+        let code: Vec<u32> = widths.iter().chain(&wide).copied().take(length).collect();
+        let mut body = Body {
+            code: code.clone(),
+            block_count: 1,
+            value_count: 0,
+        };
+        body.pack_code(&mut scratch);
+        body.unpack_code();
+        assert_eq!(body.code, code);
+    }
+}
+
+#[test]
+fn packed_code_of_small_words_is_a_quarter_as_long() {
+    let mut body = Body {
+        code: vec![5; 400],
+        block_count: 1,
+        value_count: 0,
+    };
+    body.pack_code(&mut Vec::new());
+    assert_eq!(body.code.len(), 101);
+}

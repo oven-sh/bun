@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""optional-number-and-boolean-fields.py <seed>: optional and nullable number and boolean fields of records and classes, tested in every way a program tests them, for every value the type admits and every way the field can come to be absent. The seed picks the type of the field.
-As plain Bun, line by line."""
+"""optional-number-and-boolean-fields.py <seed>: Optional and nullable number and boolean fields of records and classes,
+tested in every way a program tests them, for every value the type allows and every way the field can be absent.
+"""
 TYPES = [("x?: number", ["absent", "undefined", "0", "-0", "NaN", "1", "-1", "1.5", "2147483648", "Infinity"]), ("x: number | undefined", ["undefined", "0", "-0", "NaN", "1", "1.5"]), ("x: number | null", ["null", "0", "-0", "NaN", "1", "1.5"]), ("x?: number | null", ["absent", "undefined", "null", "0", "-0", "NaN", "7"]), ("x: number | null | undefined", ["undefined", "null", "0", "NaN", "7.25"]),
          ("x?: boolean", ["absent", "undefined", "true", "false"]), ("x: boolean | undefined", ["undefined", "true", "false"]), ("x: boolean | null", ["null", "true", "false"]), ("x?: boolean | null", ["absent", "undefined", "null", "true", "false"])]
 TESTS = ["o.x ? 'yes' : 'no'", "!o.x", "!!o.x", "o.x === undefined", "o.x !== undefined", "o.x === null", "o.x == null", "o.x != null", "o.x == undefined", "typeof o.x", "typeof o.x === 'number'", "typeof o.x === 'undefined'", "typeof o.x === 'boolean'", "typeof o.x === 'object'", "o.x ?? 'fallback'", "o.x || 'fallback'", "o.x && 'then'", "'x' in o", "Object.keys(o).join()", "JSON.stringify(o)", "o.x === void 0 ? 'void' : String(o.x)",

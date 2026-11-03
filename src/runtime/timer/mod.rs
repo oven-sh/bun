@@ -109,6 +109,7 @@ macro_rules! impl_timer_object {
                 interval: u32,
                 callback: ::bun_jsc::JSValue,
                 arguments: ::bun_jsc::JSValue,
+                clock: super::Clock,
             ) -> ::bun_jsc::JSValue {
                 // Heap-allocate; `*mut Self` is the
                 // pointer the JS wrapper holds. Ownership
@@ -124,7 +125,7 @@ macro_rules! impl_timer_object {
                 // owned here; `internals.init()` writes every field.
                 unsafe {
                     (*payload).internals.init(
-                        js_value, cx, id, kind, interval, callback, arguments,
+                        js_value, cx, id, kind, interval, callback, arguments, clock,
                     );
                 }
                 if cx.vm().as_mut().is_inspector_enabled() {
@@ -212,6 +213,13 @@ pub(crate) struct TimerHeap(bun_io::heap::Intrusive<EventLoopTimer, TimerHeapCtx
 
 impl TimerHeap {
     #[inline]
+    pub(crate) fn peek(&self) -> Option<*mut EventLoopTimer> {
+        let r = self.0.peek();
+        if r.is_null() { None } else { Some(r) }
+    }
+
+    /// The deadline of the first timer.
+    #[inline]
     pub(crate) fn peek_next(&self) -> Option<Timespec> {
         // SAFETY: the root is null or a linked node, and `insert`'s contract
         // keeps a linked node valid.
@@ -230,7 +238,7 @@ impl TimerHeap {
     /// # Safety
     /// `v` is a node currently in *this* heap.
     #[inline]
-    unsafe fn remove(&mut self, v: *mut EventLoopTimer) {
+    pub(crate) unsafe fn remove(&mut self, v: *mut EventLoopTimer) {
         // SAFETY: forwarded — see fn contract.
         unsafe { self.0.remove(v) };
     }
@@ -248,6 +256,45 @@ impl TimerHeap {
         // SAFETY: `insert`'s contract keeps every linked node valid. `find_max`
         // visits only linked nodes and returns null or one of them.
         unsafe { self.0.find_max().as_ref() }.map(|t| t.next)
+    }
+
+    /// Only a faked `setImmediate` puts an `ImmediateObject` in a heap.
+    pub(crate) fn first_immediate(&self) -> Option<*mut EventLoopTimer> {
+        let mut first: Option<*mut EventLoopTimer> = None;
+        let mut stack = vec![self.0.root];
+        while let Some(node) = stack.pop() {
+            if node.is_null() {
+                continue;
+            }
+            // SAFETY: reachable nodes stay live while linked (intrusive invariant maintained by `All`).
+            unsafe {
+                stack.push((*node).heap.child);
+                stack.push((*node).heap.next);
+                if (*node).tag == EventLoopTimerTag::ImmediateObject
+                    && first.is_none_or(|first| EventLoopTimer::less((), &*node, &*first))
+                {
+                    first = Some(node);
+                }
+            }
+        }
+        first
+    }
+
+    pub(crate) fn has_program_timer(&self) -> bool {
+        let mut stack = vec![self.0.root];
+        while let Some(node) = stack.pop() {
+            if node.is_null() {
+                continue;
+            }
+            // SAFETY: reachable nodes stay live while linked (intrusive invariant maintained by `All`).
+            let node = unsafe { &*node };
+            if !node.tag.is_housekeeping() {
+                return true;
+            }
+            stack.push(node.heap.child);
+            stack.push(node.heap.next);
+        }
+        false
     }
 
     #[inline]
@@ -521,8 +568,11 @@ pub(crate) struct All {
     pub(crate) warned_negative_number: bool,
     /// Whether we have emitted a warning for passing NaN for the timeout duration
     pub(crate) warned_not_number: bool,
+    /// `bun test`: see `EventLoopTimer::is_due_when_idle`. Testing Library and user-event await a `setTimeout()`
+    /// without a delay after every step.
+    pub(crate) zero_delay_is_due_when_idle: bool,
     /// Incremented when timers are scheduled or rescheduled. See
-    /// TimerObjectInternals.epoch. Masked to 25 bits on increment.
+    /// TimerObjectInternals.epoch. Masked to 24 bits on increment.
     pub(crate) epoch: u32,
     pub(crate) immediate_ref_count: i32,
     #[cfg(windows)]
@@ -546,6 +596,7 @@ impl All {
             uv_timer: bun_core::ffi::zeroed(),
             warned_negative_number: false,
             warned_not_number: false,
+            zero_delay_is_due_when_idle: false,
             epoch: 0,
             immediate_ref_count: 0,
             #[cfg(windows)]
@@ -584,19 +635,32 @@ impl All {
         // timers (setTimeout/setInterval/AbortSignal.timeout) fire in insertion
         // order. Before heap insert: `EventLoopTimer::less` reads epoch as tiebreak.
         // SAFETY: `timer` is live (caller contract).
-        if let Some(flags) = unsafe { js_timer_flags_ptr(timer) } {
-            self.epoch = self.epoch.wrapping_add(1) & ((1u32 << 25) - 1);
+        let flags = unsafe { js_timer_flags_ptr(timer) };
+        if let Some(flags) = flags {
+            self.epoch = self.epoch.wrapping_add(1) & TimerFlags::EPOCH_MASK;
             // SAFETY: `flags` points into the live container recovered above.
             unsafe { (*flags.as_ptr()).set_epoch(self.epoch) };
         }
 
-        if self.fake_timers.is_active() && tag.allow_fake_timers() {
+        let fake = match tag {
+            // A JS timer stays on the clock it was created on.
+            EventLoopTimerTag::TimeoutObject | EventLoopTimerTag::ImmediateObject => {
+                // SAFETY: as above.
+                flags.is_some_and(|flags| unsafe { flags.as_ref() }.fake())
+            }
+            EventLoopTimerTag::AbortSignalTimeout => {
+                self.fake_timers.abort_signal_timeout_clock() == Clock::Fake
+            }
+            _ => tag.allow_fake_timers() && self.fake_timers.set_timeout_clock() == Clock::Fake,
+        };
+        if fake {
             // SAFETY: see fn contract
             unsafe {
                 self.fake_timers.timers.insert(timer);
                 (*timer).state = EventLoopTimerState::ACTIVE;
                 (*timer).in_heap = InHeap::Fake;
             }
+            self.fake_timers.post_auto_step();
         } else {
             // SAFETY: see fn contract
             unsafe {
@@ -672,7 +736,11 @@ impl All {
 
         // minimum 1ms
         // https://github.com/nodejs/node/blob/f552c86fecd6c2ba9e832ea129b731dd63abdbe2/src/env.cc#L1512
-        let wait_ms = core::cmp::max(1, wait.ms_unsigned());
+        let wait_ms = if self.deadline_if_due_when_idle().is_some() {
+            0
+        } else {
+            core::cmp::max(1, wait.ms_unsigned())
+        };
 
         // SAFETY: `uv_timer_init` ran above; the handle is live.
         let due_in = unsafe { uv::uv_timer_get_due_in(&self.uv_timer) };
@@ -897,7 +965,9 @@ impl All {
         // Real clock: both heaps hold opt-out-of-fake-timers nodes armed in
         // real-time units; the mocked clock made internal pacing spin on re-arm.
         let now = *maybe_now.get_or_insert_with(|| Timespec::now(TimespecMockMode::ForceRealTime));
-        if next.greater(&now) {
+        // SAFETY: `this` is live, and only this thread touches the regular heap.
+        let is_due_when_idle = (unsafe { &*this }).deadline_if_due_when_idle().is_some();
+        if next.greater(&now) && !is_due_when_idle {
             *spec = next.duration(&now);
             if let Some(us) = quic_next_tick_us {
                 if us >= 0 {
@@ -920,6 +990,16 @@ impl All {
         }
     }
 
+    /// The deadline of the first timer, if it is one that does not wait for it. See `EventLoopTimer::is_due_when_idle`.
+    fn deadline_if_due_when_idle(&self) -> Option<Timespec> {
+        // SAFETY: `peek` returns a live heap node.
+        let first = unsafe { &*self.timers.peek()? };
+        first.is_due_when_idle.then_some(Timespec {
+            sec: first.next.sec,
+            nsec: first.next.nsec,
+        })
+    }
+
     /// Pop the next due timer. `now` is filled lazily on first call so we
     /// don't pay for `clock_gettime` when the heap is empty.
     fn next(&mut self, has_set_now: &mut bool, now: &mut Timespec) -> Option<*mut EventLoopTimer> {
@@ -928,6 +1008,12 @@ impl All {
             // Real clock: this heap is the opt-out-of-fake-timers set.
             *now = Timespec::now(TimespecMockMode::ForceRealTime);
             *has_set_now = true;
+            // What this drain's callbacks set is due later than this, so it waits for the next turn of the event loop.
+            if let Some(deadline) = self.deadline_if_due_when_idle() {
+                if deadline.greater(now) {
+                    *now = deadline;
+                }
+            }
         }
         if next.greater(now) {
             return None;
@@ -1215,6 +1301,12 @@ pub(crate) enum TimeoutWarning {
     TimeoutOverflowWarning,
     TimeoutNegativeWarning,
     TimeoutNaNWarning,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum Clock {
+    Real,
+    Fake,
 }
 
 #[repr(u8)]

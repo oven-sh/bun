@@ -1,5 +1,4 @@
 // A json file imported and required is one object or two.
-// Reference: bun build --compile
 import data from "./data.json";
 import * as space from "./data.json";
 import load from "./load.cjs";

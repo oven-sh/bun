@@ -1049,6 +1049,8 @@ pub mod waiter_thread_posix {
 
     pub struct ProcessQueue {
         pub(crate) queue: ConcurrentQueue<Process>,
+        /// Entries in `queue` plus the waiter thread's `active`. Decremented only after the entry's exit is posted.
+        pub(crate) watched: AtomicU32,
     }
 
     /// Intrusive node pushed onto `ConcurrentQueue` from the JS thread and
@@ -1148,10 +1150,12 @@ pub mod waiter_thread_posix {
         pub(crate) const fn new() -> Self {
             Self {
                 queue: ConcurrentQueue::new(),
+                watched: AtomicU32::new(0),
             }
         }
 
         pub(crate) fn append(&self, process: *mut Process) {
+            self.watched.fetch_add(1, Ordering::SeqCst);
             self.queue.push(bun_core::heap::alloc_nn(TaskQueueEntry {
                 process,
                 next: bun_threading::Link::new(),
@@ -1205,6 +1209,7 @@ pub mod waiter_thread_posix {
 
                 if remove {
                     let _ = active.remove(i);
+                    self.watched.fetch_sub(1, Ordering::SeqCst);
                 } else {
                     i += 1;
                 }
@@ -1326,6 +1331,11 @@ pub mod waiter_thread_posix {
         #[inline]
         pub(crate) fn should_use_waiter_thread() -> bool {
             bun_spawn_sys::waiter_thread_flag::get()
+        }
+
+        /// True while any thread's child has an exit still to post. After `false`, the caller must still check its task queue.
+        pub fn is_watching() -> bool {
+            INSTANCE.js_process.watched.load(Ordering::SeqCst) > 0
         }
 
         #[cfg(any(target_os = "linux", target_os = "android"))]

@@ -1360,6 +1360,7 @@ impl Host for UncachedDisk<'_> {
             atoms,
             options.experimental_decorators,
             options.module_detection == ModuleDetection::Force,
+            options.reads_as_bun_run,
         )
     }
     fn parse_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {
@@ -1541,6 +1542,7 @@ impl Host for Disk {
             atoms,
             options.experimental_decorators,
             options.module_detection == ModuleDetection::Force,
+            options.reads_as_bun_run,
         )
     }
     fn parse_top_level<'s>(
@@ -1559,6 +1561,7 @@ impl Host for Disk {
             atoms,
             options.experimental_decorators,
             options.module_detection == ModuleDetection::Force,
+            options.reads_as_bun_run,
         )
     }
     fn parse_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {

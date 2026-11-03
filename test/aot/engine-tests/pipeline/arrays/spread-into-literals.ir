@@ -211,71 +211,143 @@ function f14 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b1(v6: int[0, 4]):
 # CHECK-NEXT: v7: 4 = Integer integer=4
 # CHECK-NEXT: v8: boolean = Less v6, v7
-# CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b13()
+# CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b24()
 # CHECK-NEXT: b2(v9: int[0, 3]):
 # CHECK-NEXT: Switch v9 cases=[0, 1, 2] -> case b3(v0), case b3(v1), case b3(v2), otherwise b3(v3)
 # CHECK-NEXT: b3(v10: int[0, 200000]):
 # CHECK-NEXT: v11: 1 = Integer integer=1
 # CHECK-NEXT: v12: int[1, 4] = Add v9, v11
 # CHECK-NEXT: v13: 0 = Integer
-# CHECK-NEXT: v14: 1 = Integer integer=1
-# CHECK-NEXT: v15: 70000 = Integer integer=70000
-# CHECK-NEXT: v16: 200000 = Integer integer=200000
-# CHECK-NEXT: v17: 0 = Integer
-# CHECK-NEXT: Jump -> next b4(v17)
-# CHECK-NEXT: b4(v18: int[0, 4]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v20: 4 = Integer integer=4
-# CHECK-NEXT: v21: boolean = Less v18, v20
-# CHECK-NEXT: Branch v21 -> taken b5(| 0), notTaken b12()
-# CHECK-NEXT: b5(v22: int[0, 3]):
-# CHECK-NEXT: Switch v22 cases=[0, 1, 2] -> case b6(v13), case b6(v14), case b6(v15), otherwise b6(v16)
-# CHECK-NEXT: b6(v23: int[0, 200000]):
-# CHECK-NEXT: v24: 1 = Integer integer=1
-# CHECK-NEXT: v25: int[1, 4] = Add v22, v24
-# CHECK-NEXT: v26: anything ~ undefined|null|Array<number> = Call v5, -, v10 calleeName="integers" accessSite=3 callees=[f2]
-# CHECK-NEXT: v27: anything ~ undefined|null|Array<number> = Call v5, -, v23 calleeName="integers" accessSite=4 callees=[f2]
-# CHECK-NEXT: v28: "integers " = String string="integers "
-# CHECK-NEXT: v29: " and " = String string=" and "
-# CHECK-NEXT: v30: string = Strcat v28, v10, v29, v23
-# CHECK-NEXT: Jump -> next b7()
-# CHECK-NEXT: b7() handler=b10():
-# CHECK-NEXT: v31: f4 = NewClosure v26, v27 function=f4 allocationSite=7 storage=Frame
-# CHECK-NEXT: v32: anything ~ undefined|null|string = Call v31 calleeName="run" accessSite=6 callees=[f4, f5, f7]
-# CHECK-NEXT: v33: boolean ~ true = TypeTest v32 testedType=undefined|null|boolean|number|string|symbol|bigint
-# CHECK-NEXT: Branch v33 -> taken b8(| 0), notTaken b9(| 0)
-# CHECK-NEXT: b8(v34: undefined|null|boolean|number|string|symbol|bigint ~ undefined|null|string) handler=b10():
-# CHECK-NEXT: v35: string = CallBuiltin -, v34 overload=String/0 accessSite=7
-# CHECK-NEXT: Jump -> next b11(v35)
-# CHECK-NEXT: b9(v36: object) frequency=Unlikely handler=b10():
-# CHECK-NEXT: v37: string = ToString v36 calledBuiltin=String
-# CHECK-NEXT: Jump -> next b11(v37)
-# CHECK-NEXT: b10() role=CatchHandler:
-# CHECK-NEXT: v38: anything = CatchValue
-# CHECK-NEXT: v39: "threw " = String string="threw "
-# CHECK-NEXT: v40: anything = PropGet v38 key="name" accessSite=8
-# CHECK-NEXT: v41: string = Add v39, v40
-# CHECK-NEXT: Jump -> next b11(v41)
-# CHECK-NEXT: b11(v42: string):
-# CHECK-NEXT: v43: " -> " = String string=" -> "
-# CHECK-NEXT: v44: string = Strcat v30, v43, v42
-# CHECK-NEXT: v45: undefined = CallBuiltin -, v44 overload=ConsoleLog/0 accessSite=11
-# CHECK-NEXT: Jump -> next b4(v25)
-# CHECK-NEXT: b12():
+# CHECK-NEXT: v15: 0 = Upcast v13 castType=int[0, 200000]
+# CHECK-NEXT: v16: anything ~ undefined|null|Array<number> = Call v5, -, v10 calleeName="integers" accessSite=3 callees=[f2]
+# CHECK-NEXT: v17: anything ~ undefined|null|Array<number> = Call v5, -, v15 calleeName="integers" accessSite=4 callees=[f2]
+# CHECK-NEXT: v18: "integers " = String string="integers "
+# CHECK-NEXT: v19: " and " = String string=" and "
+# CHECK-NEXT: v20: string = Strcat v18, v10, v19, v15
+# CHECK-NEXT: v21: f4 = NewClosure v16, v17 function=f4 allocationSite=7 storage=Frame
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4() handler=b7():
+# CHECK-NEXT: v22: anything ~ undefined|null|string = Call v21 calleeName="run" accessSite=6 callees=[f4, f5, f7]
+# CHECK-NEXT: v23: boolean ~ true = TypeTest v22 testedType=undefined|null|boolean|number|string|symbol|bigint
+# CHECK-NEXT: Branch v23 -> taken b5(| 0), notTaken b6(| 0)
+# CHECK-NEXT: b5(v24: undefined|null|boolean|number|string|symbol|bigint ~ undefined|null|string) handler=b7():
+# CHECK-NEXT: v25: string = CallBuiltin -, v24 overload=String/0 accessSite=7
+# CHECK-NEXT: Jump -> next b8(v25)
+# CHECK-NEXT: b6(v26: object) frequency=Unlikely handler=b7():
+# CHECK-NEXT: v27: string = ToString v26 calledBuiltin=String
+# CHECK-NEXT: Jump -> next b8(v27)
+# CHECK-NEXT: b7() role=CatchHandler:
+# CHECK-NEXT: v28: anything = CatchValue
+# CHECK-NEXT: v29: "threw " = String string="threw "
+# CHECK-NEXT: v30: anything = PropGet v28 key="name" accessSite=8
+# CHECK-NEXT: v31: string = Add v29, v30
+# CHECK-NEXT: Jump -> next b8(v31)
+# CHECK-NEXT: b8(v32: string):
+# CHECK-NEXT: v33: " -> " = String string=" -> "
+# CHECK-NEXT: v34: string = Strcat v20, v33, v32
+# CHECK-NEXT: v35: undefined = CallBuiltin -, v34 overload=ConsoleLog/0 accessSite=11
+# CHECK-NEXT: v36: 1 = Integer integer=1
+# CHECK-NEXT: v37: 1 = Upcast v36 castType=int[0, 200000]
+# CHECK-NEXT: v38: anything ~ undefined|null|Array<number> = Call v5, -, v10 calleeName="integers" accessSite=3 callees=[f2]
+# CHECK-NEXT: v39: anything ~ undefined|null|Array<number> = Call v5, -, v37 calleeName="integers" accessSite=4 callees=[f2]
+# CHECK-NEXT: v40: "integers " = String string="integers "
+# CHECK-NEXT: v41: " and " = String string=" and "
+# CHECK-NEXT: v42: string = Strcat v40, v10, v41, v37
+# CHECK-NEXT: v43: f4 = NewClosure v38, v39 function=f4 allocationSite=7 storage=Frame
+# CHECK-NEXT: Jump -> next b9()
+# CHECK-NEXT: b9() handler=b12():
+# CHECK-NEXT: v44: anything ~ undefined|null|string = Call v43 calleeName="run" accessSite=6 callees=[f4, f5, f7]
+# CHECK-NEXT: v45: boolean ~ true = TypeTest v44 testedType=undefined|null|boolean|number|string|symbol|bigint
+# CHECK-NEXT: Branch v45 -> taken b10(| 0), notTaken b11(| 0)
+# CHECK-NEXT: b10(v46: undefined|null|boolean|number|string|symbol|bigint ~ undefined|null|string) handler=b12():
+# CHECK-NEXT: v47: string = CallBuiltin -, v46 overload=String/0 accessSite=7
+# CHECK-NEXT: Jump -> next b13(v47)
+# CHECK-NEXT: b11(v48: object) frequency=Unlikely handler=b12():
+# CHECK-NEXT: v49: string = ToString v48 calledBuiltin=String
+# CHECK-NEXT: Jump -> next b13(v49)
+# CHECK-NEXT: b12() role=CatchHandler:
+# CHECK-NEXT: v50: anything = CatchValue
+# CHECK-NEXT: v51: "threw " = String string="threw "
+# CHECK-NEXT: v52: anything = PropGet v50 key="name" accessSite=8
+# CHECK-NEXT: v53: string = Add v51, v52
+# CHECK-NEXT: Jump -> next b13(v53)
+# CHECK-NEXT: b13(v54: string):
+# CHECK-NEXT: v55: " -> " = String string=" -> "
+# CHECK-NEXT: v56: string = Strcat v42, v55, v54
+# CHECK-NEXT: v57: undefined = CallBuiltin -, v56 overload=ConsoleLog/0 accessSite=11
+# CHECK-NEXT: v58: 70000 = Integer integer=70000
+# CHECK-NEXT: v59: 70000 = Upcast v58 castType=int[0, 200000]
+# CHECK-NEXT: v60: anything ~ undefined|null|Array<number> = Call v5, -, v10 calleeName="integers" accessSite=3 callees=[f2]
+# CHECK-NEXT: v61: anything ~ undefined|null|Array<number> = Call v5, -, v59 calleeName="integers" accessSite=4 callees=[f2]
+# CHECK-NEXT: v62: "integers " = String string="integers "
+# CHECK-NEXT: v63: " and " = String string=" and "
+# CHECK-NEXT: v64: string = Strcat v62, v10, v63, v59
+# CHECK-NEXT: v65: f4 = NewClosure v60, v61 function=f4 allocationSite=7 storage=Frame
+# CHECK-NEXT: Jump -> next b14()
+# CHECK-NEXT: b14() handler=b17():
+# CHECK-NEXT: v66: anything ~ undefined|null|string = Call v65 calleeName="run" accessSite=6 callees=[f4, f5, f7]
+# CHECK-NEXT: v67: boolean ~ true = TypeTest v66 testedType=undefined|null|boolean|number|string|symbol|bigint
+# CHECK-NEXT: Branch v67 -> taken b15(| 0), notTaken b16(| 0)
+# CHECK-NEXT: b15(v68: undefined|null|boolean|number|string|symbol|bigint ~ undefined|null|string) handler=b17():
+# CHECK-NEXT: v69: string = CallBuiltin -, v68 overload=String/0 accessSite=7
+# CHECK-NEXT: Jump -> next b18(v69)
+# CHECK-NEXT: b16(v70: object) frequency=Unlikely handler=b17():
+# CHECK-NEXT: v71: string = ToString v70 calledBuiltin=String
+# CHECK-NEXT: Jump -> next b18(v71)
+# CHECK-NEXT: b17() role=CatchHandler:
+# CHECK-NEXT: v72: anything = CatchValue
+# CHECK-NEXT: v73: "threw " = String string="threw "
+# CHECK-NEXT: v74: anything = PropGet v72 key="name" accessSite=8
+# CHECK-NEXT: v75: string = Add v73, v74
+# CHECK-NEXT: Jump -> next b18(v75)
+# CHECK-NEXT: b18(v76: string):
+# CHECK-NEXT: v77: " -> " = String string=" -> "
+# CHECK-NEXT: v78: string = Strcat v64, v77, v76
+# CHECK-NEXT: v79: undefined = CallBuiltin -, v78 overload=ConsoleLog/0 accessSite=11
+# CHECK-NEXT: v80: 200000 = Integer integer=200000
+# CHECK-NEXT: v81: 200000 = Upcast v80 castType=int[0, 200000]
+# CHECK-NEXT: v82: anything ~ undefined|null|Array<number> = Call v5, -, v10 calleeName="integers" accessSite=3 callees=[f2]
+# CHECK-NEXT: v83: anything ~ undefined|null|Array<number> = Call v5, -, v81 calleeName="integers" accessSite=4 callees=[f2]
+# CHECK-NEXT: v84: "integers " = String string="integers "
+# CHECK-NEXT: v85: " and " = String string=" and "
+# CHECK-NEXT: v86: string = Strcat v84, v10, v85, v81
+# CHECK-NEXT: v87: f4 = NewClosure v82, v83 function=f4 allocationSite=7 storage=Frame
+# CHECK-NEXT: Jump -> next b19()
+# CHECK-NEXT: b19() handler=b22():
+# CHECK-NEXT: v88: anything ~ undefined|null|string = Call v87 calleeName="run" accessSite=6 callees=[f4, f5, f7]
+# CHECK-NEXT: v89: boolean ~ true = TypeTest v88 testedType=undefined|null|boolean|number|string|symbol|bigint
+# CHECK-NEXT: Branch v89 -> taken b20(| 0), notTaken b21(| 0)
+# CHECK-NEXT: b20(v90: undefined|null|boolean|number|string|symbol|bigint ~ undefined|null|string) handler=b22():
+# CHECK-NEXT: v91: string = CallBuiltin -, v90 overload=String/0 accessSite=7
+# CHECK-NEXT: Jump -> next b23(v91)
+# CHECK-NEXT: b21(v92: object) frequency=Unlikely handler=b22():
+# CHECK-NEXT: v93: string = ToString v92 calledBuiltin=String
+# CHECK-NEXT: Jump -> next b23(v93)
+# CHECK-NEXT: b22() role=CatchHandler:
+# CHECK-NEXT: v94: anything = CatchValue
+# CHECK-NEXT: v95: "threw " = String string="threw "
+# CHECK-NEXT: v96: anything = PropGet v94 key="name" accessSite=8
+# CHECK-NEXT: v97: string = Add v95, v96
+# CHECK-NEXT: Jump -> next b23(v97)
+# CHECK-NEXT: b23(v98: string):
+# CHECK-NEXT: v99: " -> " = String string=" -> "
+# CHECK-NEXT: v100: string = Strcat v86, v99, v98
+# CHECK-NEXT: v101: undefined = CallBuiltin -, v100 overload=ConsoleLog/0 accessSite=11
 # CHECK-NEXT: Jump -> next b1(v12)
-# CHECK-NEXT: b13():
-# CHECK-NEXT: v46: "detached typed array" = String string="detached typed array"
-# CHECK-NEXT: v47: f5 = NewClosure function=f5 allocationSite=2 storage=Frame
-# CHECK-NEXT: v48: undefined = CallDirect v46, v47 function=f21 accessSite=0
-# CHECK-NEXT: v49: f6 = NewClosure function=f6 allocationSite=3
-# CHECK-NEXT: v50: L1 = NewObject -, v49 layout=L1 fields=[0] allocationSite=4 allocationClass=0
-# CHECK-NEXT: v51: L1 = FinishObject v50
-# CHECK-NEXT: PutModuleVariable v51 variable=g2
-# CHECK-NEXT: v53: "next throws" = String string="next throws"
-# CHECK-NEXT: v54: f7 = NewClosure function=f7 allocationSite=5 storage=Frame
-# CHECK-NEXT: v55: undefined = CallDirect v53, v54 function=f21 accessSite=2
-# CHECK-NEXT: v56: undefined = Undefined
-# CHECK-NEXT: Return v56
+# CHECK-NEXT: b24():
+# CHECK-NEXT: v102: "detached typed array" = String string="detached typed array"
+# CHECK-NEXT: v103: f5 = NewClosure function=f5 allocationSite=2 storage=Frame
+# CHECK-NEXT: v104: undefined = CallDirect v102, v103 function=f21 accessSite=0
+# CHECK-NEXT: v105: f6 = NewClosure function=f6 allocationSite=3
+# CHECK-NEXT: v106: L1 = NewObject -, v105 layout=L1 fields=[0] allocationSite=4 allocationClass=0
+# CHECK-NEXT: v107: L1 = FinishObject v106
+# CHECK-NEXT: PutModuleVariable v107 variable=g2
+# CHECK-NEXT: v109: "next throws" = String string="next throws"
+# CHECK-NEXT: v110: f7 = NewClosure function=f7 allocationSite=5 storage=Frame
+# CHECK-NEXT: v111: undefined = CallDirect v109, v110 function=f21 accessSite=2
+# CHECK-NEXT: v112: undefined = Undefined
+# CHECK-NEXT: Return v112
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="report"
 # CHECK: module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string}, {type=f4|f5|f7}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
@@ -411,39 +483,39 @@ function f14 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0(v0: string, v1: f4|f5|f7):
 # CHECK-NEXT: v2: boolean = TypeTest v1 testedType=f5
 # CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2(| 0)
-# CHECK-NEXT: b1() handler=b8():
+# CHECK-NEXT: b1() handler=b6():
 # CHECK-NEXT: v3: anything ~ undefined|null|string = CallDirect function=f5 accessSite=6
 # CHECK-NEXT: Jump -> next b5(v3)
 # CHECK-NEXT: b2(v4: f4|f7):
 # CHECK-NEXT: v5: boolean = TypeTest v4 testedType=f7
 # CHECK-NEXT: Branch v5 -> taken b3(), notTaken b4(| 0)
-# CHECK-NEXT: b3() frequency=Rare handler=b8():
+# CHECK-NEXT: b3() frequency=Rare handler=b6():
 # CHECK-NEXT: v6: undefined|null|string = CallDirect function=f7 accessSite=6
-# CHECK-NEXT: Jump -> next b6(v6)
-# CHECK-NEXT: b4(v7: f4) frequency=Unlikely handler=b8():
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b4(v7: f4) frequency=Unlikely handler=b6():
 # CHECK-NEXT: v8: anything ~ undefined|null|string = Call v7 calleeName="run" accessSite=6 callees=[f4, f5, f7]
 # CHECK-NEXT: Jump -> next b5(v8)
 # CHECK-NEXT: b5(v9: anything ~ undefined|null|string):
 # CHECK-NEXT: v10: boolean ~ true = TypeTest v9 testedType=undefined|null|boolean|number|string|symbol|bigint
-# CHECK-NEXT: Branch v10 -> taken b6(| 0), notTaken b7(| 0)
-# CHECK-NEXT: b6(v11: undefined|null|boolean|number|string|symbol|bigint ~ undefined|null|string) handler=b8():
-# CHECK-NEXT: v12: string = CallBuiltin -, v11 overload=String/0 accessSite=7
-# CHECK-NEXT: Jump -> next b9(v12)
-# CHECK-NEXT: b7(v13: object) frequency=Unlikely handler=b8():
-# CHECK-NEXT: v14: string = ToString v13 calledBuiltin=String
-# CHECK-NEXT: Jump -> next b9(v14)
-# CHECK-NEXT: b8() role=CatchHandler:
-# CHECK-NEXT: v15: anything = CatchValue
-# CHECK-NEXT: v16: "threw " = String string="threw "
-# CHECK-NEXT: v17: anything = PropGet v15 key="name" accessSite=8
-# CHECK-NEXT: v18: string = Add v16, v17
-# CHECK-NEXT: Jump -> next b9(v18)
-# CHECK-NEXT: b9(v19: string):
-# CHECK-NEXT: v20: " -> " = String string=" -> "
-# CHECK-NEXT: v21: string = Strcat v0, v20, v19
-# CHECK-NEXT: v22: undefined = CallBuiltin -, v21 overload=ConsoleLog/0 accessSite=11
-# CHECK-NEXT: v23: undefined = Undefined
-# CHECK-NEXT: Return v23
+# CHECK-NEXT: Branch v10 -> taken b8(| 0), notTaken b9(| 0)
+# CHECK-NEXT: b6() role=CatchHandler:
+# CHECK-NEXT: v11: anything = CatchValue
+# CHECK-NEXT: v12: "threw " = String string="threw "
+# CHECK-NEXT: v13: anything = PropGet v11 key="name" accessSite=8
+# CHECK-NEXT: v14: string = Add v12, v13
+# CHECK-NEXT: Jump -> next b7(v14)
+# CHECK-NEXT: b7(v15: string):
+# CHECK-NEXT: v16: " -> " = String string=" -> "
+# CHECK-NEXT: v17: string = Strcat v0, v16, v15
+# CHECK-NEXT: v18: undefined = CallBuiltin -, v17 overload=ConsoleLog/0 accessSite=11
+# CHECK-NEXT: v19: undefined = Undefined
+# CHECK-NEXT: Return v19
+# CHECK-NEXT: b8(v20: undefined|null|boolean|number|string|symbol|bigint ~ undefined|null|string) handler=b6():
+# CHECK-NEXT: v21: string = CallBuiltin -, v20 overload=String/0 accessSite=7
+# CHECK-NEXT: Jump -> next b7(v21)
+# CHECK-NEXT: b9(v22: object) frequency=Unlikely handler=b6():
+# CHECK-NEXT: v23: string = ToString v22 calledBuiltin=String
+# CHECK-NEXT: Jump -> next b7(v23)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="next"
 # CHECK: module=m0 position=2722 kind=Method role=GenericEntrypoint flags=[HasThis] captures=[{type=f8}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f8} creator=Entrypoint{target=f8 arguments=Registers} inlineFrames=[{}, {callee=f8 callPosition=2722 isTailCall=true module=m0}] {

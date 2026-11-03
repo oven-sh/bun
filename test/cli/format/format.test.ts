@@ -6856,6 +6856,57 @@ exports.format = async text => "by Prettier";
     expect(result.exitCode).toBe(0);
   });
 
+  // One for each check that is skipped in a file where the parser has not seen what the check is about.
+  test.each([
+    "a() = 1",
+    "[a()] = b",
+    "a()++",
+    "for (a() of b);",
+    "for (async of a);",
+    "if (a) let b;",
+    "while (a) async function f() {}",
+    "for (using a in b);",
+    "class A { #a; b() { delete this.#a; } }",
+    "function f() { new.a; }",
+    "({ get a(b) {} })",
+    'function f(a = 1) { "use strict"; }',
+    "async function f(a = await b) {}",
+    "function* f(a = yield) {}",
+    "class A extends B { #a; b() { super.#a; } }",
+    "class A { constructor() {} constructor() {} }",
+    "class A { #a; #a; }",
+    "({ a = 1 })",
+    "({ __proto__: 1, __proto__: 2 })",
+    "break;",
+    "a: { continue a; }",
+    "a: a: b;",
+    "let let = 1;",
+    "switch (a) { default: default: }",
+    "throw\na;",
+    "a ?? b || c",
+    "a?.b`c`",
+    "/a/gg",
+    "new import('a')",
+    "function f() { super(); }",
+  ])("JavaScript that Prettier rejects is a syntax error: %j", async code => {
+    const files = { "a.js": code + "\n", "flow.js": `// @flow\n${code}\n` };
+    const result = await format(files, ["a.js", "flow.js"], { reads: ["a.js", "flow.js"] });
+    expect(result.files).toEqual(files);
+    expect(result.stderr).toMatch(syntaxErrorIn("a.js"));
+    expect(result.stderr).toMatch(syntaxErrorIn("flow.js"));
+    expect(result.exitCode).toBe(2);
+  });
+
+  test.each(["function f<>() {}", "class A { m<>() {} }", "interface A<> {}", "type A<> = 1", "type A = <>() => void"])(
+    "an empty list of type parameters is a syntax error: %j",
+    async code => {
+      const result = await format({ "a.ts": code + "\n" }, ["a.ts"], { reads: ["a.ts"] });
+      expect(result.files).toEqual({ "a.ts": code + "\n" });
+      expect(result.stderr).toMatch(syntaxErrorIn("a.ts"));
+      expect(result.exitCode).toBe(2);
+    },
+  );
+
   test.each([
     "function f(x: number): string",
     "function* g()",

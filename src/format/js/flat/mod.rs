@@ -354,6 +354,8 @@ struct Line<'f, 'a> {
     is_odd: bool,
     /// The source isn't plain, so every text from it is looked at and measured.
     is_careful: bool,
+    /// All of the source is known to be plain.
+    is_plain: bool,
     /// On one line it's too wide, so the outermost group breaks.
     breaks: bool,
     /// The indentation is known, so that what's too wide can break.
@@ -483,6 +485,10 @@ impl<'a> Formatter<'a> {
         {
             return false;
         }
+        // Looking at all of a long item takes longer than an attempt that ends where the source isn't plain.
+        let is_short = span.len() <= 256;
+        let is_plain = is_short && self.is_plain_source(span);
+        let is_careful = is_short && !is_plain;
         let buffers = &mut self.context_mut().line_buffers;
         let mut text = std::mem::take(&mut buffers.text);
         let parts = buffers.parts.pop().unwrap_or_default();
@@ -502,7 +508,8 @@ impl<'a> Formatter<'a> {
             must_fit: usize::MAX,
             is_too_wide: false,
             is_odd: false,
-            is_careful: false,
+            is_careful,
+            is_plain,
             breaks: false,
             // What's decided by a column needs to know what follows to the column.
             is_certain: state.is_certain && after.0 == after.1,
@@ -514,7 +521,10 @@ impl<'a> Formatter<'a> {
             has_semicolons: state.has_semicolons,
             f: self,
             source,
-            plain_source: source,
+            plain_source: match is_careful {
+                true => &[],
+                false => source,
+            },
             checked_to: span.start,
             nesting: 0,
             parts,
@@ -861,7 +871,7 @@ impl<'a> Line<'_, 'a> {
             if has_odd_line(self.text_of(span)) {
                 return Err(Refused);
             }
-        } else if !self.f.is_plain_source(span) {
+        } else if !self.is_plain && !self.f.is_plain_source(span) {
             self.is_odd = true;
             return Err(Refused);
         }

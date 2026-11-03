@@ -4090,6 +4090,12 @@ describe.concurrent("a rejection left by the callback that settles", () => {
         await new Promise(resolve => setTimeout(resolve));
       }${options});
     `;
+    // Still runs when the turn in which it started ends.
+    const nextWaitsATurn = (options = "") => `
+      test("next", async () => {
+        await new Promise(resolve => setImmediate(resolve));
+      }${options});
+    `;
 
     // With { retry }, a charge to the next test would make the run pass.
     test.each(Object.entries({ "": "", ", and not a next test that would pass on its retry": ", { retry: 1 }" }))(
@@ -4115,6 +4121,28 @@ describe.concurrent("a rejection left by the callback that settles", () => {
       expect({ results: results(stderr), errors, exitCode }).toEqual({
         ...failsThatTest,
         results: ["(pass) leaves", "(pass) next"],
+      });
+      expect(stderr).toContain("Unhandled error between tests");
+    });
+
+    // The report of what the test rejected itself queues a step of the runner. The afterEach() hook finds that step when
+    // it drains its microtasks, and the step that already runs has to stay the one that ends in that turn.
+    test("isn't charged to the next test after a test that left a rejection of its own", async () => {
+      const { stderr, errors, exitCode } = await runFiles({
+        "a.test.ts": `
+          ${imports}
+          describe("scope", () => {
+            beforeEach(async () => {${leavesLater}});
+            afterEach(() => {});
+            test("leaves", () => void Promise.reject(new Error("own")));
+          });
+          ${nextWaitsATurn(", { retry: 1 }")}
+        `,
+      });
+      expect({ results: results(stderr), errors, exitCode }).toEqual({
+        results: ["(fail) scope > leaves", "(pass) next"],
+        errors: ["error: own", "error: left"],
+        exitCode: 1,
       });
       expect(stderr).toContain("Unhandled error between tests");
     });

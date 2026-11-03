@@ -1130,7 +1130,8 @@ impl BunTest {
             return;
         };
         let phase = strong.get().pending_phase;
-        strong.get().in_drain_step = true;
+        // A drain inside the step calls this again. That call starts nothing, and the step that runs keeps its mark.
+        let was_in_drain_step = core::mem::replace(&mut strong.get().in_drain_step, true);
         // After a termination the exception is still pending, and the caller's next drain reports it.
         let _ = Box::new(RunTestsTask {
             weak: Rc::downgrade(&strong),
@@ -1138,7 +1139,7 @@ impl BunTest {
             phase,
         })
         .call();
-        strong.get().in_drain_step = false;
+        strong.get().in_drain_step = was_in_drain_step;
     }
 
     /// Inside a microtask drain, leaves the step to another sequence or attempt to the queued task. The turn's own report runs first.

@@ -675,9 +675,10 @@ const files = {
             write(path.join(pkg, "package.json"), '{ "name": "pkg", "main": ');
             return () => write(path.join(pkg, "package.json"), '{ "name": "pkg", "main": "./real.cjs" }');
           },
-          // An "imports" entry added above the importer, for a file that is above it too. One lookup
-          // from there gives that directory a new record and takes nothing of the importer's
-          // directory from the caches, so the importer's directory keeps its link to the old one.
+          // An "imports" entry added above the importer. One lookup from there gives that directory a
+          // new record. The alias names a file that is above the importer too, so that lookup does not
+          // come through the importer's directory: there it would leave a new record as well, and the
+          // Worker would find the module at once. The importer's directory keeps its link to the old one.
           parentlink(top, dir) {
             fs.mkdirSync(dir, { recursive: true });
             write(path.join(top, "real.cjs"), "");

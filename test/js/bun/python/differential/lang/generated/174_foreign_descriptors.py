@@ -117,8 +117,8 @@ try: print('object.__new__(K).r =>', end=" "); t(lambda: object.__new__(K).r)
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: t(lambda: object.__new__(K).r)')
 try: print('setattr(object.__new__(K), "r", 1) =>', end=" "); t(lambda: setattr(object.__new__(K), "r", 1))
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: t(lambda: setattr(object.__new__(K), "r", 1))')
-try: print('K() =>', end=" "); t(lambda: K())
-except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: t(lambda: K())')
+try: print('type(K()).__name__ =>', end=" "); t(lambda: type(K()).__name__)
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: t(lambda: type(K()).__name__)')
 try:
     class N:
         f = dict.__dict__["fromkeys"]

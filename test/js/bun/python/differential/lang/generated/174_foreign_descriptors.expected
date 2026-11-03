@@ -1,6 +1,6 @@
 status: 0
-script: da1e0049862fd09d
-source: 708052b580d2cc9e
+script: 8224c9fe044d524a
+source: bfddae2296b86286
 ---
 c.m => TypeError descriptor 'upper' for 'str' objects doesn't apply to a 'C' object
 c.m() => TypeError descriptor 'upper' for 'str' objects doesn't apply to a 'C' object
@@ -34,7 +34,7 @@ setattr(object.__new__(K), "x", 1) => TypeError descriptor 'x' for 'A' objects d
 delattr(object.__new__(K), "x") => TypeError descriptor 'x' for 'A' objects doesn't apply to a 'K' object
 object.__new__(K).r => TypeError descriptor 'real' for 'int' objects doesn't apply to a 'K' object
 setattr(object.__new__(K), "r", 1) => TypeError descriptor 'real' for 'int' objects doesn't apply to a 'K' object
-K() => <__main__.K object at 0x7f63def0d6d0>
+type(K()).__name__ => 'K'
 N().f => TypeError descriptor 'fromkeys' requires a subtype of 'dict' but received 'N'
 N.f => TypeError descriptor 'fromkeys' requires a subtype of 'dict' but received 'N'
 N.h("00") => TypeError descriptor 'fromhex' requires a subtype of 'bytes' but received 'N'

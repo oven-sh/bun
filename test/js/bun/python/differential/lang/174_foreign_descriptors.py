@@ -68,7 +68,7 @@ t(lambda: setattr(object.__new__(K), "x", 1))
 t(lambda: delattr(object.__new__(K), "x"))
 t(lambda: object.__new__(K).r)
 t(lambda: setattr(object.__new__(K), "r", 1))
-t(lambda: K())
+t(lambda: type(K()).__name__)
 class N:
     f = dict.__dict__["fromkeys"]
     h = bytes.__dict__["fromhex"]

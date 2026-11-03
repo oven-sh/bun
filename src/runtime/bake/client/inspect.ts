@@ -255,9 +255,6 @@ function formatObject(ctx: InspectContext, value: any, recurseTimes: number) {
  * @returns {string} Formatted array
  */
 function formatArray(ctx: InspectContext, value: any[], recurseTimes: number) {
-  // Special case for empty arrays
-  if (value.length === 0 && Object.keys(value).length === 0) return "[]";
-
   const maxLength = Math.min(ctx.maxArrayLength!, value.length);
   const output: string[] = [];
 
@@ -279,12 +276,17 @@ function formatArray(ctx: InspectContext, value: any[], recurseTimes: number) {
     return !(Number(key) >= 0 && Number(key) < value.length && Number(key) === +key);
   });
 
-  if (keys.length > 0) {
-    for (const key of keys) {
-      output.push(`${key}: ${formatValue(ctx, value[key], recurseTimes)}`);
+  for (const key of keys) {
+    try {
+      const desc = Object.getOwnPropertyDescriptor(value, key);
+      const accessor = desc?.get ? (desc.set ? "[Getter/Setter]" : "[Getter]") : desc?.set ? "[Setter]" : null;
+      output.push(`${key}: ${accessor ?? formatValue(ctx, value[key], recurseTimes)}`);
+    } catch {
+      output.push(`${key}: undefined`);
     }
   }
 
+  if (output.length === 0) return "[]";
   return `[ ${output.join(", ")} ]`;
 }
 

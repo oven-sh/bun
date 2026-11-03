@@ -520,6 +520,10 @@ devTest("browser console forwarding prints the named properties of an array with
     }),
     "index.ts": `
       console.log("array-probe", Object.assign([], { total: 7001 }), Object.assign([5], { total: 7001 }), []);
+      let calls = 0;
+      const lazy = { get: () => ++calls, enumerable: true };
+      console.log("getter-probe", Object.defineProperty([], "lazy", lazy), Object.defineProperty([5], "lazy", lazy));
+      console.log("getter-calls", calls);
     `,
     "bun.app.ts": `
       import html from "./index.html";
@@ -539,9 +543,13 @@ devTest("browser console forwarding prints the named properties of an array with
   htmlFiles: [],
   async test(dev) {
     await using c = await dev.client("/");
-    await c.expectMessage("array-probe");
+    await c.expectMessage("array-probe", "getter-probe", "getter-calls");
     const line = await dev.output.waitForLine(/\[browser\].*array-probe/);
     expect(line.input).toContain("array-probe [ total: 7001 ] [ 5, total: 7001 ] []");
+    const getters = await dev.output.waitForLine(/\[browser\].*getter-probe/);
+    expect(getters.input).toContain("getter-probe [ lazy: [Getter] ] [ 5, lazy: [Getter] ]");
+    const calls = await dev.output.waitForLine(/\[browser\].*getter-calls/);
+    expect(calls.input).toContain("getter-calls 0");
   },
 });
 

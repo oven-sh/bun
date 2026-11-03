@@ -2709,14 +2709,22 @@ bool Bun__deepMatch(
     // - two "simple" arrays
     // similar to what is done in deepEquals (canPerformFastPropertyEnumerationForIterationBun)
 
-    // arrays should match exactly
-    bool objIsArray = isArray(globalObject, objValue);
-    RETURN_IF_EXCEPTION(throwScope, false);
-    bool subsetIsArray = isArray(globalObject, subsetValue);
+    // The sample of expect.objectContaining() is a list of keys, as in Vitest. An array sample has no rule of its own.
+    bool subsetIsArray = !isMatchingObjectContaining && isArray(globalObject, subsetValue);
     RETURN_IF_EXCEPTION(throwScope, false);
     if (subsetIsArray) {
-        // An array pattern needs an array. An object pattern can be satisfied by one.
-        if (!objIsArray || obj->getArrayLength() != subsetObj->getArrayLength()) {
+        // An array pattern needs an array of the same length. An object pattern can be satisfied by an array.
+        bool objIsArray = isArray(globalObject, objValue);
+        RETURN_IF_EXCEPTION(throwScope, false);
+        if (!objIsArray) {
+            return false;
+        }
+        // A Proxy of an array has no indexed storage. toLength() reads its length through its traps.
+        uint64_t objLength = toLength(globalObject, obj);
+        RETURN_IF_EXCEPTION(throwScope, false);
+        uint64_t subsetLength = toLength(globalObject, subsetObj);
+        RETURN_IF_EXCEPTION(throwScope, false);
+        if (objLength != subsetLength) {
             return false;
         }
         PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
@@ -3709,11 +3717,16 @@ static JSObject* shallowCopyForDeepMatch(JSGlobalObject* globalObject, ThrowScop
 {
     auto& vm = JSC::getVM(globalObject);
     JSObject* copy = nullptr;
-    if (isJSArray(object)) {
+    // A Proxy is copied as what it stands for, through its traps.
+    bool isProxy = object->type() == ProxyObjectType;
+    bool copyIsArray = isProxy ? isArray(globalObject, object) : isJSArray(object);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (copyIsArray) {
         copy = constructEmptyArray(globalObject, nullptr, 0);
         RETURN_IF_EXCEPTION(scope, nullptr);
-    } else if (object->type() == FinalObjectType || JSC::AOT::PropertyWalk::isCompiledObject(object)) {
-        JSValue prototype = object->getPrototypeDirect();
+    } else if (isProxy || object->type() == FinalObjectType || JSC::AOT::PropertyWalk::isCompiledObject(object)) {
+        JSValue prototype = isProxy ? object->getPrototype(globalObject) : object->getPrototypeDirect();
+        RETURN_IF_EXCEPTION(scope, nullptr);
         copy = prototype.isObject() ? constructEmptyObject(globalObject, asObject(prototype)) : constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
     } else {
         return nullptr;
@@ -3735,7 +3748,11 @@ static JSObject* shallowCopyForDeepMatch(JSGlobalObject* globalObject, ThrowScop
     }
     // The loop can't define `length` (it's not configurable), and trailing holes only exist through it.
     if (auto* array = dynamicDowncast<JSArray>(copy)) {
-        array->setLength(globalObject, uncheckedDowncast<JSArray>(object)->length(), false);
+        uint64_t length = toLength(globalObject, object);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (length > std::numeric_limits<unsigned>::max())
+            return nullptr;
+        array->setLength(globalObject, static_cast<unsigned>(length), false);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
     return copy;

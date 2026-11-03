@@ -4250,6 +4250,54 @@ describe("expect()", () => {
       expect(otherRealm()).not.toMatchObject([1, { a: 2 }]);
     });
 
+    // A Proxy of an array is an array. Its length and its elements are read through its traps.
+    test("an array behind a Proxy matches an array pattern", () => {
+      expect(new Proxy([1, { a: 1 }], {})).toMatchObject([1, { a: 1 }]);
+      expect(new Proxy([1, { a: 1 }], {})).not.toMatchObject([1, { a: 2 }]);
+      expect(new Proxy([1, 2], {})).not.toMatchObject([1]);
+      expect(new Proxy([1], {})).not.toMatchObject([1, 2]);
+      expect([1, { a: 1 }]).toMatchObject(new Proxy([1, { a: 1 }], {}));
+      expect([1]).not.toMatchObject(new Proxy([1, 2], {}));
+      expect(new Proxy([1], {})).toMatchObject(new Proxy([1], {}));
+      expect({ k: new Proxy([1], {}) }).toMatchObject({ k: [1] });
+      expect({ k: new Proxy([1], {}) }).not.toMatchObject({ k: [] });
+      if (!isJest) {
+        // Vitest and Bun compare the lengths through the trap. Jest's toMatchObject never reads `length`.
+        const lengthOf = (/** @type {() => unknown} */ length) =>
+          new Proxy([1], { get: (t, k, r) => (k === "length" ? length() : Reflect.get(t, k, r)) });
+        const throws = lengthOf(() => {
+          throw new Error("no length");
+        });
+        expect(() => expect(throws).not.toMatchObject([1])).toThrow("no length");
+        expect(() => expect(lengthOf(() => Symbol())).not.toMatchObject([1])).toThrow(
+          "Cannot convert a symbol to a number",
+        );
+      }
+    });
+
+    // The sample of expect.objectContaining() is a list of keys. An array sample is satisfied by any
+    // object that has those keys.
+    test("an array sample of expect.objectContaining() is a list of keys", () => {
+      expect({ 0: 1, 1: 2 }).toEqual(expect.objectContaining([1, 2]));
+      expect({ 0: 1, 1: 3 }).not.toEqual(expect.objectContaining([1, 2]));
+      expect({ 0: 1 }).not.toEqual(expect.objectContaining([1, 2]));
+      expect({ k: { 0: 1 } }).toMatchObject({ k: expect.objectContaining([1]) });
+      expect({ 0: 1, 1: 2 }).toMatchObject(expect.objectContaining([1, 2]));
+      expect({ 0: 1, 1: 2 }).not.toMatchObject([1, 2]);
+      const f = jest.fn();
+      (function () {
+        f(arguments);
+      })("a", "b");
+      expect(f).toHaveBeenCalledWith(expect.objectContaining(["a"]));
+      expect(f).not.toHaveBeenCalledWith(expect.objectContaining(["b"]));
+      if (!isJest) {
+        // An array received value is walked by its keys too, as in Vitest. Jest 30 refuses it.
+        expect([1, 2, 3]).toEqual(expect.objectContaining([1, 2]));
+        expect([1]).not.toEqual(expect.objectContaining([1, 2]));
+        expect(new Proxy([1, 2, 3], {})).toEqual(expect.objectContaining([1, 2]));
+      }
+    });
+
     if (isBun) {
       test("Bun.deepMatch leaves out private fields, and an array in the subset needs an array", () => {
         class Counter {
@@ -4268,6 +4316,11 @@ describe("expect()", () => {
         expect(Bun.deepMatch({ 0: 1 }, [1])).toBe(true);
         expect(Bun.deepMatch(["x"], Object.setPrototypeOf(["x"], null))).toBe(true);
         expect(Bun.deepMatch([1, 2], runInNewContext("[1, 2]"))).toBe(true);
+        expect(Bun.deepMatch([1], new Proxy([1], {}))).toBe(true);
+        expect(Bun.deepMatch([1, 2], new Proxy([1], {}))).toBe(false);
+        expect(Bun.deepMatch(new Proxy([1], {}), [1, 2])).toBe(false);
+        const symbolLength = new Proxy([1], { get: (t, k, r) => (k === "length" ? Symbol() : Reflect.get(t, k, r)) });
+        expect(() => Bun.deepMatch([1], symbolLength)).toThrow("Cannot convert a symbol to a number");
       });
     }
 

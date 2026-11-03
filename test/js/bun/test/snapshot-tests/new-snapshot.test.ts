@@ -54,11 +54,12 @@ test("--update-snapshots keeps the old file until the new contents are written",
   expect(await update({})).toEqual({ exitCode: 0, snap: header + '\nexports[`one 1`] = `"new"`;\n' });
 });
 
-test("property matchers that are one asymmetric matcher store nothing when the matcher does not match", async () => {
+test("property matchers that are one asymmetric matcher store the received value, or nothing when the matcher does not match", async () => {
   const header = "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n";
   const source = `
     import { test, expect } from "bun:test";
     test("plain", () => { expect({ a: 1 }).toMatchSnapshot(); });
+    test("matches", () => { expect({ a: 1 }).toMatchSnapshot(expect.objectContaining({ a: 1 })); });
     test("file", () => { expect({ a: 1 }).toMatchSnapshot(expect.objectContaining({ b: 1 })); });
     test("inline", () => { expect({ a: 1 }).toMatchInlineSnapshot(expect.any(Array)); });
   `;
@@ -75,13 +76,42 @@ test("property matchers that are one asymmetric matcher store nothing when the m
   expect({
     results: stderr.match(/^\((pass|fail)\) \w+/gm),
     exitCode,
-    // the file snapshot has no entry for "file", and no inline snapshot was written into the test
+    // the entry of "matches" is the received value, the file snapshot has no entry for "file", and no inline snapshot was written into the test
     snap: fs.readFileSync(`${dir}/__snapshots__/a.test.ts.snap`, "utf8"),
     source: fs.readFileSync(`${dir}/a.test.ts`, "utf8"),
   }).toEqual({
-    results: ["(pass) plain", "(fail) file", "(fail) inline"],
+    results: ["(pass) plain", "(pass) matches", "(fail) file", "(fail) inline"],
     exitCode: 1,
-    snap: header + '\nexports[`plain 1`] = `\n{\n  "a": 1,\n}\n`;\n',
+    snap: header + '\nexports[`plain 1`] = `\n{\n  "a": 1,\n}\n`;\n' + '\nexports[`matches 1`] = `\n{\n  "a": 1,\n}\n`;\n',
     source,
   });
+});
+
+test("a property matcher behind a Proxy is stored as the matcher", async () => {
+  const source = `
+    import { test, expect } from "bun:test";
+    const id = Number(process.env.ID);
+    test("array", () => { expect({ a: new Proxy([{ id }], {}) }).toMatchSnapshot({ a: [{ id: expect.any(Number) }] }); });
+    test("object", () => { expect(new Proxy({ id }, {})).toMatchSnapshot({ id: expect.any(Number) }); });
+  `;
+  using dir = tempDir("snapshot-proxy-holder", { "a.test.ts": source });
+  async function run(id: number) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      cwd: String(dir),
+      env: { ...bunEnv, CI: "false", ID: String(id) },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { results: stderr.match(/^\((pass|fail)\) \w+/gm), exitCode };
+  }
+  // the first run stores the matchers, so the second run with another id passes
+  expect(await run(1)).toEqual({ results: ["(pass) array", "(pass) object"], exitCode: 0 });
+  expect(fs.readFileSync(`${dir}/__snapshots__/a.test.ts.snap`, "utf8")).toBe(
+    "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n" +
+      '\nexports[`array 1`] = `\n{\n  "a": [\n    {\n      "id": Any<Number>,\n    },\n  ],\n}\n`;\n' +
+      '\nexports[`object 1`] = `\n{\n  "id": Any<Number>,\n}\n`;\n',
+  );
+  expect(await run(2)).toEqual({ results: ["(pass) array", "(pass) object"], exitCode: 0 });
 });

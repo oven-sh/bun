@@ -1570,6 +1570,7 @@ describe.skipIf(!hasFlag)("what breaks whether it fits or not, and what only loo
           `a = (\n<>\n${first}\n<Divider orientation="left">sub-element xxxxxxxxxxxxxxxxxx center</Divider> <Row>\n</Row>\n</>\n);\n`,
       )
       .join(""),
+    "optional-targets.ts": "a?.bbbbbbbb.cccc = `/${dddd.eeeee}/`;\na?.b = c(dddddddd, eeeeeeee);\nf = a?.b.c = `${dddddddddd}`;\n",
     // A comment before the \`{\` is printed before the first statement, which starts after it.
     "static-blocks.ts": "class A { static /*\nd*/ { f(aaaaaaaaaa, bbbbbbbbbb); } }\nclass B { static /* c */ { f(aaaaaa, bbbbbb); } }\n",
     // Where the column is a guess, the printer has to know of the \`;\` or the \`,\` after a chain that always breaks.

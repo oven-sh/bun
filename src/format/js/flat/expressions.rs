@@ -284,8 +284,10 @@ impl<'a> Line<'_, 'a> {
 
     pub(super) fn assignment(&mut self, e: Expr<'a>, is_last: bool) -> Written {
         let (op, target, value) = e.as_assign().ok_or(Refused)?;
+        // `a?.b = c` isn't valid, and has a layout of its own.
         if matches!(target.tag(), ExprTag::Object | ExprTag::Array)
             || !matches!(e.as_chain_element(), AstNodes::AssignmentExpression(_))
+            || strings::index_of(self.text_of(target.span()), b"?.").is_some()
         {
             return Err(Refused);
         }

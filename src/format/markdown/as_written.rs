@@ -1886,6 +1886,10 @@ impl<'t> Reader<'t> {
                 b'|' if CELL => break at,
                 b' ' => {
                     let spaces = self.count_spaces(at);
+                    // The end of what's nested isn't the end of the cell.
+                    if spaces > 1 && is_nested {
+                        return None;
+                    }
                     if matches!(byte(at + spaces), 0 | b'\n' | b'|') {
                         at += spaces;
                         break at - spaces;

@@ -19,7 +19,7 @@ describe("parse shell", () => {
   test("a fatal lexer error keeps the diagnostics recorded before it", () => {
     // A stray `)` is recorded and lexing goes on. The 129th nested `$(` stops
     // the lexer. Both lines must reach the caller.
-    const deep = "$(".repeat(129) + "x" + ")".repeat(129);
+    const deep = Buffer.alloc(2 * 129, "$(").toString() + "x" + Buffer.alloc(129, ")").toString();
     let e: any;
     try {
       parse({ raw: [") " + deep] } as any);

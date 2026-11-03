@@ -23,7 +23,7 @@ describe("bun exec", () => {
     .runAsTest("a script that does not parse exits 2");
 
   // 129 nested `$(` stop the lexer itself, the other failure path in the parser.
-  TestBuilder.command`${BUN} exec ${"echo " + "$(".repeat(129) + "x" + ")".repeat(129)}`
+  TestBuilder.command`${BUN} exec ${"echo " + Buffer.alloc(2 * 129, "$(").toString() + "x" + Buffer.alloc(129, ")").toString()}`
     .env(bunEnv)
     .exitCode(2)
     .stderr(s => expect(s).toEndWith("due to error Subshell nesting depth exceeded\n"))

@@ -23,7 +23,7 @@ use crate::span::Span;
 use crate::tokens::{skip_trivia, token_len};
 use crate::types::IdMap;
 use crate::utils::oxlint::{is_script, is_strict_mode, source_type};
-use bun_core::strings;
+use bun_core::{lexer, strings};
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::{
     self, BinOp, Chain, Diagnostic, DiagnosticKind, Flags, FnKind, ModifierKind, UnOp,
@@ -658,8 +658,20 @@ fn oxc_checks<'a, 'c>(file: &'a File<'a>, candidates: Option<&'c Candidates>) ->
     }
 }
 
-fn is_identifier_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | 0x80..)
+/// Where the last character of `text` starts, if it can be part of a name. A byte order mark and a no-break space
+/// can't: not every byte above 0x7F belongs to a name.
+fn start_of_last_name_character(text: &[u8]) -> Option<usize> {
+    match *text.last()? {
+        byte @ ..0x80 => {
+            (byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$')).then(|| text.len() - 1)
+        }
+        _ => {
+            let (character, start) = lexer::last_char(text);
+            (lexer::is_type_script_identifier_part(character)
+                || lexer::is_recent_identifier_part(character))
+            .then_some(start)
+        }
+    }
 }
 
 impl<'a, 'c> Checks<'a, 'c> {
@@ -761,13 +773,19 @@ impl<'a, 'c> Checks<'a, 'c> {
         skip_trivia(self.file.text(), at + self.token_at(at).len() as u32)
     }
 
-    /// The start of the token before the one at `at`. Only correct for a word or a one-character punctuator.
+    /// The start of the token before the one at `at`, or `at` if that is the first token of the file. Only correct for
+    /// a word or a one-character punctuator.
     fn before_token(&self, at: u32) -> u32 {
         let text = self.file.text();
         let end = self.file.end_of_token_before(at) as usize;
-        let mut start = end.saturating_sub(1);
-        while start > 0 && is_identifier_byte(text[start]) && is_identifier_byte(text[start - 1]) {
-            start -= 1;
+        if end == 0 {
+            return at;
+        }
+        let Some(mut start) = start_of_last_name_character(&text[..end]) else {
+            return lexer::last_char(&text[..end]).1 as u32;
+        };
+        while let Some(before) = start_of_last_name_character(&text[..start]) {
+            start = before;
         }
         start as u32
     }

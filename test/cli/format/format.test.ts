@@ -890,6 +890,44 @@ describe.concurrent("bun fmt", () => {
     }
   });
 
+  // Prettier 3.9.9 rejects the code whatever white space is before it.
+  describe.each<[string, string, number, number]>([
+    ["nothing", "", 1, 0],
+    ["a byte order mark", "﻿", 1, 0],
+    ["a byte order mark and a zero width no-break space", "﻿﻿", 1, 1],
+    ["a no-break space", " ", 1, 1],
+    ["an ideographic space", "　", 1, 1],
+    ["a line separator", " ", 2, 0],
+    ["a name that isn't ASCII and a no-break space", "é; ", 1, 3],
+    ["a space", " ", 1, 1],
+    ["a comment", "/**/", 1, 4],
+  ])("a syntax error in the first words of a file, after %s", (_, before, line, columns) => {
+    test.each([
+      ["a.js", 'import.d("foo");', 8, "The only valid meta property for import is 'import.meta'"],
+      ["a.mjs", "import . d;", 10, "The only valid meta property for import is 'import.meta'"],
+      ["a.cjs", "import/**/.d;", 12, "The only valid meta property for import is 'import.meta'"],
+      ["a.jsx", 'import.defers("a");', 8, "The only valid meta property for import is 'import.meta'"],
+      ["a.ts", 'import.d("foo");', 1, "'d' is not a valid meta-property for keyword 'import'."],
+      ["a.tsx", 'import.d("foo");', 1, "'d' is not a valid meta-property for keyword 'import'."],
+      ["a.mts", 'import.d("foo");', 1, "'d' is not a valid meta-property for keyword 'import'."],
+    ])("%s: %s", async (name, code, column, message) => {
+      const result = await format({}, ["--stdin-filepath", name], { stdin: `${before}${code}\n` });
+      expect(result.stderr).toEndWith(`\nerror: ${message}\n    at ${name}:${line}:${column + columns}`);
+      expect(result.raw).toBe("");
+      expect(result.exitCode).toBe(2);
+    });
+
+    // oxlint 1.70.0, which has the same parser as oxfmt, reports only this one.
+    test.each(["a.js", "a.ts"])("with an .oxfmtrc.json, %s: import / a", async name => {
+      const files = { [name]: `${before}import / a\n`, ".oxfmtrc.json": "{}\n" };
+      const result = await format(files, ["--check", name]);
+      expect(result.stderr).toContain(
+        `\nerror: Expected \`from\` but found \`/\`\n    at ${name}:${line}:${8 + columns}`,
+      );
+      expect(result.exitCode).toBe(2);
+    });
+  });
+
   test("a TOML syntax error uses Bun's parser message and is only a warning, because oxfmt skips such a file", async () => {
     const files = { "a.toml": 'a = 1\nb = "c\n', ".oxfmtrc.json": "{}\n" };
     const warning = [

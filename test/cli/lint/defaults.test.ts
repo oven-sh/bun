@@ -2002,6 +2002,34 @@ module.exports = os.platform();
       );
     });
 
+    // This is what acorn 8.15.0 reports. ESLint removes a byte order mark before it parses.
+    test.each<[string, string, number]>([
+      ["nothing", "", 0],
+      ["a byte order mark", "﻿", 0],
+      ["a no-break space", " ", 1],
+      ["a space", " ", 1],
+      ["a comment", "/**/", 4],
+    ])("a syntax error in the first words of a file, after %s", async (_, before, columns) => {
+      const onlyInModule = "'import' and 'export' may appear only with 'sourceType: module'";
+      const rows: [name: string, code: string, column: number, message: string][] = [
+        ["a.mjs", "interface A {}", 1, "The keyword 'interface' is reserved"],
+        ["b.mjs", "enum E {}", 1, "The keyword 'enum' is reserved"],
+        ["c.mjs", "export type A = 1;", 8, "Unexpected token type"],
+        ["d.mjs", "export interface A {}", 8, "Unexpected token interface"],
+        ["e.mjs", "export enum E {}", 8, "Unexpected token enum"],
+        ["f.mjs", "import.d();", 8, "The only valid meta property for import is 'import.meta'"],
+        ["g.cjs", "import.d();", 8, "The only valid meta property for import is 'import.meta'"],
+        ["h.cjs", "export default", 1, onlyInModule],
+        ["i.cjs", "export *;", 1, onlyInModule],
+        ["j.cjs", 'import a, from "a";', 1, onlyInModule],
+      ];
+      const files = Object.fromEntries(rows.map(([name, code]) => [name, `${before}${code}\n`]));
+      const { problems } = await lint(files, []);
+      expect(problems.toSorted()).toEqual(
+        rows.map(([name, , column, message]) => `${name}:1:${column + columns} Parsing error: ${message}`),
+      );
+    });
+
     test("top-level declarations are global in a script but not in a CommonJS file", async () => {
       const files = { "a.js": "var a = 1;\nconsole.log(a);\n" };
       const rule = ["--rule", "no-implicit-globals: error"];

@@ -157,6 +157,8 @@ plugins! {
     Import: ["import", "import-x"], Replaces(Some("eslint-plugin-import"), "2.32.0"), Part;
     /// `n/no-unsupported-features/es-syntax`
     Node: ["n", "node"], Replaces(Some("eslint-plugin-n"), "18.4.1"), Part;
+    /// `perfectionist/sort-objects`
+    Perfectionist: ["perfectionist"], Replaces(Some("eslint-plugin-perfectionist"), "5.13.0"), Part;
     /// `oxc/no-accumulating-spread`
     Oxc: ["oxc"], Here, Part;
     /// `unicorn/no-null`

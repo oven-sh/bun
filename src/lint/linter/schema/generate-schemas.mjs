@@ -81,7 +81,7 @@ let at = 0;
 while (at < bundle.length) {
   const end = bundle.indexOf(10, at);
   const [, path, length] = /^=== \/(.*) (\d+)$/.exec(bundle.toString("utf8", at, end));
-  const [, id] = /^((?:import|json|markdown|n|oxc|react|react-hooks)\/.*)\.json$/.exec(path) ?? [];
+  const [, id] = /^((?:import|json|markdown|n|oxc|perfectionist|react|react-hooks)\/.*)\.json$/.exec(path) ?? [];
   if (id !== undefined && !(id in pluginRules)) {
     const { schema, defaultOptions } = JSON.parse(bundle.toString("utf8", end + 1, end + 1 + Number(length))).meta;
     // The fixtures have `null` for a field the rule doesn't have.

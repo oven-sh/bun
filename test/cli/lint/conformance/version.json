@@ -70,6 +70,10 @@
     "version": "8.0.3",
     "commit": "e93e014c89115d151572a70fa65841fe85e009cc"
   },
+  "eslint-plugin-perfectionist": {
+    "version": "5.13.0",
+    "commit": "9ee9e5b6edbec9e3b9936e5677105404fe656a0b"
+  },
   "lodash": {
     "version": "4.18.1"
   },

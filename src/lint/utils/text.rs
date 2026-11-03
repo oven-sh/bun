@@ -20,6 +20,7 @@
 //! | `String.fromCodePoint(...values)`, `String.fromCharCode(...values)` | [`string_from_code_points`], [`strings::push_codepoint_wtf8_joined`] |
 //! | `a < b`, `a.localeCompare`-free sorting | [`strings::order_utf16`] |
 //! | `require("natural-compare")` | [`natural_compare`] |
+//! | `require("natural-orderby").compare()` | [`natural_orderby`] |
 //! | `esutils.keyword.isIdentifierES5`, `isIdentifierES6` | [`is_identifier_es5`], [`is_identifier_es6`] |
 //! | `s.split(/\r\n\|[\r\n\u2028\u2029]/u)`, `/\r\n\|[\r\n\u2028\u2029]/u.test(s)` | [`strings::js_lines`], [`strings::contains_js_line_break`] |
 //! | `s.slice(a, b)` with UTF-16 indices (an index in the middle of a surrogate pair is treated as the pair's start) |
@@ -299,6 +300,301 @@ pub fn natural_compare(a: &[u8], b: &[u8]) -> Ordering {
         return compare_units(a, b);
     }
     compare_units(&strings::wtf8_to_utf16(a), &strings::wtf8_to_utf16(b))
+}
+
+/// The npm package `natural-orderby`'s `compare()` on two strings, which eslint-plugin-perfectionist sorts with for
+/// `type: "natural"`. Unlike [`natural_compare`]: the texts are lower-cased and trimmed first, a text that `Number()`
+/// parses (`0x10`, `1e3`, `-1`, `001`) is that number, a number comes before text, and text with a character outside
+/// ASCII is ordered as `localeCompare` orders it. A text that looks like a date (`2024-01-05`, `1/5/2024`) is
+/// compared as `Date.parse` parses it, where that has one reading.
+pub fn natural_orderby(a: &[u8], b: &[u8]) -> Ordering {
+    natural_orderby::compare(a, b)
+}
+
+mod natural_orderby {
+    use super::{number_to_string, to_lower_case};
+    use bun_core::fmt::js_string_to_number;
+    use bun_core::strings;
+    use std::borrow::Cow;
+    use std::cmp::Ordering;
+
+    /// One piece of a text: a run of digits (or the leading number) or the text between two.
+    struct Chunk<'a> {
+        /// Whitespace collapsed to one space and trimmed.
+        text: Cow<'a, [u8]>,
+        number: Option<f64>,
+    }
+
+    pub(super) fn compare(a: &[u8], b: &[u8]) -> Ordering {
+        if a == b {
+            return Ordering::Equal;
+        }
+        let (a, b) = (stringify(a), stringify(b));
+        let (number_a, number_b) = (numberify(&a), numberify(&b));
+        if let (Some(number_a), Some(number_b)) = (number_a, number_b) {
+            return compare_numbers(number_a, number_b);
+        }
+        // `createChunkMaps(parsedNumber ? `${parsedNumber}` : stringValue)`
+        let printed_a = number_a.filter(|n| *n != 0.0).map(number_to_string);
+        let printed_b = number_b.filter(|n| *n != 0.0).map(number_to_string);
+        let chunks_a = chunks_of(printed_a.as_deref().unwrap_or(&a));
+        let chunks_b = chunks_of(printed_b.as_deref().unwrap_or(&b));
+        compare_chunks(&chunks_a, &chunks_b)
+    }
+
+    /// `value.toLowerCase().replace(/^\s+|\s+$/g, "")`
+    fn stringify(text: &[u8]) -> Cow<'_, [u8]> {
+        match to_lower_case(text) {
+            Cow::Borrowed(lower) => Cow::Borrowed(strings::trim_js_whitespace(lower)),
+            Cow::Owned(lower) => Cow::Owned(strings::trim_js_whitespace(&lower).to_vec()),
+        }
+    }
+
+    /// `Number(value.replace(/_/g, ""))`, then `Date.parse(value)` for a text that looks like a date.
+    fn numberify(text: &[u8]) -> Option<f64> {
+        parse_number(text).or_else(|| parse_date(text))
+    }
+
+    fn parse_number(text: &[u8]) -> Option<f64> {
+        if text.is_empty() {
+            return None;
+        }
+        let number = if strings::contains_char(text, b'_') {
+            let without: Vec<u8> = text.iter().copied().filter(|&c| c != b'_').collect();
+            js_string_to_number(&without)
+        } else {
+            js_string_to_number(text)
+        };
+        (!number.is_nan()).then_some(number)
+    }
+
+    /// `Date.parse` of the two forms that `RE_DATE` accepts without words, `YYYY-MM-DD` and `M/D/YYYY` (also with
+    /// `-`), as milliseconds since the epoch. The forms with words in them are not dates here.
+    fn parse_date(text: &[u8]) -> Option<f64> {
+        let mut parts = [0u32; 3];
+        let mut lengths = [0usize; 3];
+        let mut index = 0;
+        for &c in text {
+            match c {
+                b'0'..=b'9' if lengths[index] < 4 => {
+                    parts[index] = parts[index] * 10 + u32::from(c - b'0');
+                    lengths[index] += 1;
+                }
+                b'/' | b'-' if index < 2 && lengths[index] > 0 => index += 1,
+                _ => return None,
+            }
+        }
+        if index != 2 || lengths[2] == 0 {
+            return None;
+        }
+        let (year, month, day) = if lengths[0] == 4 {
+            (parts[0], parts[1], parts[2])
+        } else {
+            let year = match lengths[2] {
+                ..=2 if parts[2] < 50 => parts[2] + 2000,
+                ..=2 => parts[2] + 1900,
+                _ => parts[2],
+            };
+            (year, parts[0], parts[1])
+        };
+        if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+            return None;
+        }
+        Some(days_from_civil(year, month, day) * 86_400_000.0)
+    }
+
+    /// Days since 1970-01-01 of a proleptic Gregorian date.
+    fn days_from_civil(year: u32, month: u32, day: u32) -> f64 {
+        let (year, month, day) = (f64::from(year), f64::from(month), f64::from(day));
+        let year = if month <= 2.0 { year - 1.0 } else { year };
+        let era = (year / 400.0).floor();
+        let year_of_era = year - era * 400.0;
+        let month_index = if month > 2.0 { month - 3.0 } else { month + 9.0 };
+        let day_of_year = (153.0 * month_index + 2.0).div_euclid(5.0) + day - 1.0;
+        let day_of_era =
+            year_of_era * 365.0 + (year_of_era / 4.0).floor() - (year_of_era / 100.0).floor() + day_of_year;
+        era * 146_097.0 + day_of_era - 719_468.0
+    }
+
+    fn compare_numbers(a: f64, b: f64) -> Ordering {
+        a.partial_cmp(&b).unwrap_or(Ordering::Equal)
+    }
+
+    fn chunks_of(text: &[u8]) -> Vec<Chunk<'_>> {
+        let pieces = split(text);
+        let mut chunks = Vec::with_capacity(pieces.len());
+        for (index, piece) in pieces.iter().enumerate() {
+            let previous = index.checked_sub(1).and_then(|i| pieces.get(i)).copied();
+            chunks.push(Chunk { text: normalize(piece), number: numeric_chunk(piece, previous) });
+        }
+        chunks
+    }
+
+    /// `value.replace(RE_NUMBERS, "\0$1\0").replace(/\0$/, "").replace(/^\0/, "").split("\0")`
+    fn split(text: &[u8]) -> Vec<&[u8]> {
+        let mut pieces = Vec::new();
+        let mut start = 0;
+        let mut at = 0;
+        if let Some(end) = leading_number(text) {
+            pieces.push(&text[..end]);
+            start = end;
+            at = end;
+        }
+        while at < text.len() {
+            if text[at].is_ascii_digit() {
+                let mut end = at + 1;
+                while text.get(end).is_some_and(u8::is_ascii_digit) {
+                    end += 1;
+                }
+                if at > start || !pieces.is_empty() {
+                    pieces.push(&text[start..at]);
+                }
+                pieces.push(&text[at..end]);
+                start = end;
+                at = end;
+            } else {
+                at += 1;
+            }
+        }
+        if start < text.len() {
+            pieces.push(&text[start..]);
+        }
+        pieces
+    }
+
+    /// The end of a match of `^0x[\da-fA-F]+$` or `^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?(?!\.\d+)(?=\D|\s|$)`
+    /// at the start of `text`, which is lower case.
+    fn leading_number(text: &[u8]) -> Option<usize> {
+        if let Some(hex) = text.strip_prefix(b"0x")
+            && !hex.is_empty()
+            && hex.iter().all(u8::is_ascii_hexdigit)
+        {
+            return Some(text.len());
+        }
+        let digits = |from: usize| text.get(from..).map_or(0, |rest| rest.iter().take_while(|c| c.is_ascii_digit()).count());
+        let mut at = usize::from(matches!(text.first(), Some(b'+' | b'-')));
+        let integer = digits(at);
+        at += integer;
+        if text.get(at) == Some(&b'.') && (integer > 0 || text.get(at + 1).is_some_and(u8::is_ascii_digit)) {
+            at += 1 + digits(at + 1);
+        } else if integer == 0 {
+            return None;
+        }
+        let mantissa = at;
+        if text.get(at) == Some(&b'e') {
+            let sign = usize::from(matches!(text.get(at + 1), Some(b'+' | b'-')));
+            let exponent = digits(at + 1 + sign);
+            if exponent > 0 {
+                at += 1 + sign + exponent;
+            }
+        }
+        let allowed = |end: usize| {
+            let next = text.get(end);
+            let fraction_follows = next == Some(&b'.') && text.get(end + 1).is_some_and(u8::is_ascii_digit);
+            !fraction_follows && !next.is_some_and(u8::is_ascii_digit)
+        };
+        if allowed(at) {
+            Some(at)
+        } else if at != mantissa && allowed(mantissa) {
+            Some(mantissa)
+        } else {
+            None
+        }
+    }
+
+    /// `normalizeNumericChunk`: the number a chunk is, unless it is the fraction after a `.`.
+    fn numeric_chunk(chunk: &[u8], previous: Option<&[u8]>) -> Option<f64> {
+        if !is_int_or_float(chunk) {
+            return None;
+        }
+        // `/^0+[1-9]{1}[0-9]*$/`
+        let leading_zero = chunk.first() == Some(&b'0')
+            && chunk.iter().all(u8::is_ascii_digit)
+            && chunk.iter().any(|c| (b'1'..=b'9').contains(c));
+        if leading_zero && previous == Some(b".") {
+            return None;
+        }
+        Some(parse_number(chunk).unwrap_or(0.0))
+    }
+
+    /// `/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/`
+    fn is_int_or_float(text: &[u8]) -> bool {
+        let digits = |from: usize| text.get(from..).map_or(0, |rest| rest.iter().take_while(|c| c.is_ascii_digit()).count());
+        let mut at = usize::from(matches!(text.first(), Some(b'+' | b'-')));
+        let integer = digits(at);
+        at += integer;
+        if text.get(at) == Some(&b'.') {
+            let fraction = digits(at + 1);
+            if integer == 0 && fraction == 0 {
+                return false;
+            }
+            at += 1 + fraction;
+        } else if integer == 0 {
+            return false;
+        }
+        if let Some(b'e' | b'E') = text.get(at) {
+            let sign = usize::from(matches!(text.get(at + 1), Some(b'+' | b'-')));
+            let exponent = digits(at + 1 + sign);
+            if exponent == 0 {
+                return false;
+            }
+            at += 1 + sign + exponent;
+        }
+        at == text.len()
+    }
+
+    /// `chunk.replace(/\s+/g, " ").replace(/^\s+|\s+$/g, "")`
+    fn normalize(chunk: &[u8]) -> Cow<'_, [u8]> {
+        let trimmed = strings::trim_js_whitespace(chunk);
+        let mut at = 0;
+        while at < trimmed.len() {
+            let space = strings::js_whitespace_len(&trimmed[at..]);
+            if space == 0 {
+                at += 1;
+                continue;
+            }
+            let mut out = trimmed[..at].to_vec();
+            while at < trimmed.len() {
+                let space = strings::js_whitespace_len(&trimmed[at..]);
+                if space > 0 {
+                    out.push(b' ');
+                    at += space;
+                } else {
+                    out.push(trimmed[at]);
+                    at += 1;
+                }
+            }
+            return Cow::Owned(out);
+        }
+        Cow::Borrowed(trimmed)
+    }
+
+    fn compare_chunks(a: &[Chunk<'_>], b: &[Chunk<'_>]) -> Ordering {
+        for (chunk_a, chunk_b) in a.iter().zip(b) {
+            if chunk_a.text == chunk_b.text {
+                continue;
+            }
+            if chunk_a.text.is_empty() != chunk_b.text.is_empty() {
+                return if chunk_a.text.is_empty() { Ordering::Less } else { Ordering::Greater };
+            }
+            return match (chunk_a.number, chunk_b.number) {
+                (Some(number_a), Some(number_b)) => compare_numbers(number_a, number_b)
+                    .then_with(|| strings::order_utf16(&chunk_a.text, &chunk_b.text)),
+                (Some(_), None) => Ordering::Less,
+                (None, Some(_)) => Ordering::Greater,
+                (None, None) => {
+                    if strings::first_non_ascii(&chunk_a.text).is_some()
+                        || strings::first_non_ascii(&chunk_b.text).is_some()
+                    {
+                        strings::locale_compare(&chunk_a.text, &chunk_b.text)
+                    } else {
+                        strings::order_utf16(&chunk_a.text, &chunk_b.text)
+                    }
+                }
+            };
+        }
+        a.len().cmp(&b.len())
+    }
 }
 
 /// `esutils.keyword.isKeywordES6(name, false)`, or `null`, `true` or `false`.

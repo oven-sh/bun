@@ -1,0 +1,80 @@
+# A namespace object that is only read and tested under names that the build knows leaves the exports that nobody names unread. A test of a name is a read of the export: it shows whether the export is there.
+# Whoever lists the keys, copies the properties, reads or tests under a key nobody knows, also through an object that inherits from the namespace object, or hands the object to native code may read every export.
+#   import * as listed ..  Object.keys(listed); "b" in tested; console.log(printed); name in walked; Object.create(inherited)[name]; ({ x: name, ...spread })
+# FORM: AsRead
+# RUN: valueflow-apply
+# RUN(RESULTS): valueflow-results
+# CHECK: variable g0 {{*}}flow={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation isUnchangedDuringActivation=true}
+# CHECK-NEXT: variable g1 {{*}}reads=NeverRead
+# CHECK-NOT: reads=
+# CHECK: module m0 path=
+# RESULTS: module m0 namespaceUse=NeverCreated
+# RESULTS-NEXT: module m2 namespaceUse=NamedReadsOnly
+# RESULTS-NOT: module m3
+# RESULTS-NOT: module m4
+# RESULTS-NOT: module m5
+# RESULTS-NOT: module m6
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}, {target=m3 completes=true}, {target=m4 completes=true}, {target=m5 completes=true}, {target=m6 completes=true}]
+module m1 path="listed.js" displayPath="listed.js" body=f1 exports=[{name="a" variable=g0}]
+module m2 path="tested.js" displayPath="tested.js" body=f2 exports=[{name="a" variable=g1}, {name="b" variable=g2}]
+module m3 path="printed.js" displayPath="printed.js" body=f3 exports=[{name="a" variable=g3}]
+module m4 path="walked.js" displayPath="walked.js" body=f4 exports=[{name="a" variable=g4}]
+module m5 path="inherited.js" displayPath="inherited.js" body=f5 exports=[{name="a" variable=g5}]
+module m6 path="spread.js" displayPath="spread.js" body=f6 exports=[{name="a" variable=g6}]
+entry module=m0
+layout L0 name="Copy" fields=[{key="x" declared={type=anything}}]
+variable g0 name="a" module=m1 declared={type=anything}
+variable g1 name="a" module=m2 declared={type=anything}
+variable g2 name="b" module=m2 declared={type=anything}
+variable g3 name="a" module=m3 declared={type=anything}
+variable g4 name="a" module=m4 declared={type=anything}
+variable g5 name="a" module=m5 declared={type=anything}
+variable g6 name="a" module=m6 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="name" [isFreeName]
+    v2 = ModuleNamespace module=m1
+    v3 = Builtin builtin=ObjectKeys
+    v4 = Call v3, -, v2
+    v5 = ModuleNamespace module=m2
+    v6 = PropHas v5 key="b"
+    v7 = ModuleNamespace module=m3
+    v8 = Builtin builtin=ConsoleLog
+    v9 = Call v8, -, v7
+    v10 = ModuleNamespace module=m4
+    v11 = ElemHas v10, v1
+    v12 = ModuleNamespace module=m5
+    v13 = Builtin builtin=ObjectCreate
+    v14 = Call v13, -, v12
+    v15 = ElemGet v14, v1
+    v16 = ModuleNamespace module=m6
+    v17 = NewObject -, v1 layout=L0 fields=[0]
+    CopyDataProperties v17, v16
+    Return
+}
+function f1 name="body1" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="body2" module=m2 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="body3" module=m3 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="body4" module=m4 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f5 name="body5" module=m5 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f6 name="body6" module=m6 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}

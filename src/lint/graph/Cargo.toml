@@ -1,0 +1,20 @@
+[package]
+name = "bun_lint_graph"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+bun_lint.workspace = true
+bun_sema.workspace = true
+bun_sema_driver.workspace = true
+bun_sema_parser.workspace = true
+bun_core.workspace = true
+bun_glob.workspace = true
+bun_threading.workspace = true
+smallvec.workspace = true
+
+[lints]
+workspace = true

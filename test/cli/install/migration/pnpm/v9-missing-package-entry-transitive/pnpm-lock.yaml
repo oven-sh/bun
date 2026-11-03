@@ -1,0 +1,25 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      pkg-a:
+        specifier: git+ssh://git@example.com/org/pkg-a.git#v1
+        version: git+ssh://git@example.com/org/pkg-a.git#0123456789abcdef0123456789abcdef01234567
+
+packages:
+
+  pkg-a@git+ssh://git@example.com/org/pkg-a.git#0123456789abcdef0123456789abcdef01234567:
+    resolution: {commit: 0123456789abcdef0123456789abcdef01234567, repo: ssh://git@example.com/org/pkg-a.git, type: git}
+    version: 1.0.0
+
+snapshots:
+
+  pkg-a@git+ssh://git@example.com/org/pkg-a.git#0123456789abcdef0123456789abcdef01234567:
+    dependencies:
+      no-deps: 9.9.9

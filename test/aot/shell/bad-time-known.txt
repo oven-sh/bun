@@ -1,0 +1,3 @@
+# Programs that end with a realm that is having a bad time, which bad-time.py does not count, and why.
+# None. The built-ins of a compiled program are read-only, so nothing can be put at an index above its arrays, and an accessor at an index of any other prototype changes the objects below that prototype alone.
+# A realm with an image that begins to have a bad time all the same stops the process, which bad-time.py reports as a death by a signal.

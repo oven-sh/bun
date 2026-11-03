@@ -1,7 +1,9 @@
 #include "V8String.h"
 #include "V8HandleScope.h"
+#include "helpers.h"
 #include "wtf/SIMDUTF.h"
 #include "v8_compatibility_assertions.h"
+#include "headers-handwritten.h"
 
 ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::String)
 
@@ -37,7 +39,11 @@ MaybeLocal<String> String::NewFromUtf8(Isolate* isolate, char const* data, NewSt
     std::span<const unsigned char> span(reinterpret_cast<const unsigned char*>(data), length);
     JSString* jsString = nullptr;
     // ReplacingInvalidSequences matches how v8 behaves here
-    auto string = WTF::String::fromUTF8ReplacingInvalidSequences(span);
+    auto string = Zig::convertUTF8ToString(span);
+    if (string.isNull() && length > 0) [[unlikely]] {
+        // empty, like the too-long case above
+        return MaybeLocal<String>();
+    }
     switch (type) {
     case NewStringType::kNormal:
         jsString = JSC::jsString(vm, string);
@@ -51,6 +57,14 @@ MaybeLocal<String> String::NewFromUtf8(Isolate* isolate, char const* data, NewSt
         break;
     }
     return MaybeLocal<String>(isolate->currentHandleScope()->createLocal<String>(vm, jsString));
+}
+
+Local<String> String::NewFromUtf8Literal(Isolate* isolate, const char* literal, NewStringType type, int length)
+{
+    // V8 statically asserts the literal length is in range, so this never returns empty.
+    Local<String> result;
+    (void)NewFromUtf8(isolate, literal, type, length).ToLocal(&result);
+    return result;
 }
 
 MaybeLocal<String> String::NewFromOneByte(Isolate* isolate, const uint8_t* data, NewStringType type, int signed_length)
@@ -68,7 +82,7 @@ MaybeLocal<String> String::NewFromOneByte(Isolate* isolate, const uint8_t* data,
     }
 
     auto& vm = isolate->vm();
-    std::span<const unsigned char> span(data, length);
+    std::span<const Latin1Character> span(byteCast<Latin1Character>(data), length);
     JSString* jsString = nullptr;
     switch (type) {
     case NewStringType::kNormal: {
@@ -141,9 +155,6 @@ bool String::IsExternalOneByte() const
     return !impl->isNull() && impl->impl()->isExternal() && impl->is8Bit();
 }
 
-extern "C" size_t TextEncoder__encodeInto8(const Latin1Character* stringPtr, size_t stringLen, void* ptr, size_t len);
-extern "C" size_t TextEncoder__encodeInto16(const char16_t* stringPtr, size_t stringLen, void* ptr, size_t len);
-
 int String::WriteUtf8(Isolate* isolate, char* buffer, int length, int* nchars_ref, int options) const
 {
     RELEASE_ASSERT(options == 0);
@@ -152,10 +163,11 @@ int String::WriteUtf8(Isolate* isolate, char* buffer, int length, int* nchars_re
 
     size_t unsigned_length = length < 0 ? static_cast<size_t>(std::numeric_limits<int>::max()) : static_cast<size_t>(length);
 
-    uint64_t result = string.is8Bit() ? TextEncoder__encodeInto8(string.span8().data(), string.span8().size(), buffer, unsigned_length)
-                                      : TextEncoder__encodeInto16(string.span16().data(), string.span16().size(), buffer, unsigned_length);
-    uint32_t read = static_cast<uint32_t>(result);
-    uint32_t written = static_cast<uint32_t>(result >> 32);
+    TextEncoderEncodeIntoResult result = string.is8Bit() ? TextEncoder__encodeInto8(string.span8().data(), string.span8().size(), buffer, unsigned_length)
+                                                         : TextEncoder__encodeInto16(string.span16().data(), string.span16().size(), buffer, unsigned_length);
+    // unsigned_length <= INT_MAX, so both counts fit in 32 bits here.
+    uint32_t read = static_cast<uint32_t>(result.read);
+    uint32_t written = static_cast<uint32_t>(result.written);
 
     if (written < length && read == string.length()) {
         buffer[written] = 0;
@@ -184,7 +196,7 @@ void String::WriteV2(Isolate* isolate, uint32_t offset, uint32_t length, uint16_
     if (length > 0) {
         auto str = jsString->view(isolate->globalObject());
         if (str->is8Bit()) {
-            WTF::copyElements(std::span<uint16_t>(buffer, length), str->span8().subspan(offset, length));
+            WTF::copyElements(std::span<uint16_t>(buffer, length), byteCast<uint8_t>(str->span8().subspan(offset, length)));
         } else {
             memcpy(buffer, str->span16().subspan(offset, length).data(), static_cast<size_t>(length) * sizeof(uint16_t));
         }
@@ -204,7 +216,7 @@ void String::WriteOneByteV2(Isolate* isolate, uint32_t offset, uint32_t length, 
             memcpy(buffer, str->span8().subspan(offset, length).data(), length);
         } else {
             // like V8, only the least significant byte of each code unit is written
-            WTF::copyElements(std::span<Latin1Character>(buffer, length), str->span16().subspan(offset, length));
+            WTF::copyElements(std::span<Latin1Character>(byteCast<Latin1Character>(buffer), length), str->span16().subspan(offset, length));
         }
     }
     if (flags & WriteFlags::kNullTerminate) {
@@ -231,37 +243,15 @@ size_t String::WriteUtf8V2(Isolate* isolate, char* buffer, size_t capacity, int 
         // uses when kReplaceInvalidUtf8 is not set, so the result size matches either
         // way).
         if (str->is8Bit()) {
-            // Latin-1 expands at most 2x: 2 * (2^31 - 1) < 2^32, so the packed
-            // 32-bit counts cannot wrap.
             const auto span = str->span8();
-            uint64_t result = TextEncoder__encodeInto8(span.data(), span.size(), buffer, writableCapacity);
-            read = static_cast<uint32_t>(result);
-            written = static_cast<uint32_t>(result >> 32);
+            TextEncoderEncodeIntoResult result = TextEncoder__encodeInto8(span.data(), span.size(), buffer, writableCapacity);
+            read = result.read;
+            written = result.written;
         } else {
-            // UTF-16 expands up to 3x, which can exceed the 32-bit counts
-            // TextEncoder__encodeInto packs its result into (3 * (2^31 - 1) >
-            // 2^32). Encode in chunks small enough that each chunk's counts
-            // fit, accumulating in size_t.
             const auto span = str->span16();
-            const size_t total = span.size();
-            constexpr size_t maxChunk = static_cast<size_t>(1) << 30; // <= 3 GiB UTF-8 per chunk
-            while (read < total) {
-                size_t chunkLength = std::min(maxChunk, total - read);
-                // Never split a surrogate pair across chunks: the encoder
-                // would see two unpaired halves and write U+FFFD twice.
-                if (read + chunkLength < total && U16_IS_LEAD(span[read + chunkLength - 1])) {
-                    chunkLength--;
-                }
-                uint64_t result = TextEncoder__encodeInto16(span.data() + read, chunkLength, buffer + written, writableCapacity - written);
-                const uint32_t chunkRead = static_cast<uint32_t>(result);
-                const uint32_t chunkWritten = static_cast<uint32_t>(result >> 32);
-                read += chunkRead;
-                written += chunkWritten;
-                if (chunkRead < chunkLength) {
-                    // Ran out of output capacity.
-                    break;
-                }
-            }
+            TextEncoderEncodeIntoResult result = TextEncoder__encodeInto16(span.data(), span.size(), buffer, writableCapacity);
+            read = result.read;
+            written = result.written;
         }
     }
 

@@ -101,6 +101,24 @@ static napi_value get_object_from_ref(const Napi::CallbackInfo &info) {
   return wrapped_object;
 }
 
+// is_wrapped_object_collected(): boolean
+// Checks whether the referent has been collected without materializing it as
+// a JS value. Returning the object to JS (like get_object_from_ref does) puts
+// a pointer to it in stack slots that a conservative GC scan may find, which
+// can keep the object alive indefinitely and make collection polls flaky.
+static napi_value is_wrapped_object_collected(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  napi_value wrapped_object = nullptr;
+  NODE_API_CALL(env, napi_get_reference_value(env, ref_to_wrapped_object,
+                                              &wrapped_object));
+
+  napi_value result;
+  NODE_API_CALL(env,
+                napi_get_boolean(env, wrapped_object == nullptr, &result));
+  return result;
+}
+
 // get_wrap_data_from_ref(): number|undefined
 static napi_value get_wrap_data_from_ref(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
@@ -221,6 +239,7 @@ void register_wrap_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, create_wrap);
   REGISTER_FUNCTION(env, exports, get_wrap_data);
   REGISTER_FUNCTION(env, exports, get_object_from_ref);
+  REGISTER_FUNCTION(env, exports, is_wrapped_object_collected);
   REGISTER_FUNCTION(env, exports, get_wrap_data_from_ref);
   REGISTER_FUNCTION(env, exports, remove_wrap);
   REGISTER_FUNCTION(env, exports, unref_wrapped_value);

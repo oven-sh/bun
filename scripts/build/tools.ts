@@ -9,16 +9,18 @@
 import { execSync, spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, join } from "node:path";
-import type { Arch, OS, Toolchain } from "./config.ts";
+import { delimiter, join, resolve } from "node:path";
+import { pins } from "./ci-images/spec.ts";
+import type { Arch, Config, OS, Toolchain } from "./config.ts";
 import { BuildError } from "./error.ts";
+import { writeIfChanged } from "./fs.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Version range checking
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * Parse a version like "21.1.8" out of arbitrary text (tool --version output).
+ * Parse a version like "23.1.1" out of arbitrary text (tool --version output).
  * Returns the first X.Y.Z found, or undefined.
  */
 function parseVersion(text: string): string | undefined {
@@ -80,14 +82,16 @@ export function satisfiesRange(version: string, range: string | undefined): bool
 // ───────────────────────────────────────────────────────────────────────────
 
 export interface ToolSpec {
-  /** Names to try, in order. On Windows `.exe` is appended automatically. */
+  /** Names to try, in order. On Windows `windowsExt` is appended automatically. */
   names: string[];
+  /** The file extension on Windows. Default `.exe`. npm is `npm.cmd`. */
+  windowsExt?: string;
   /** Extra search paths beyond $PATH. Tried FIRST (more specific). */
   paths?: string[];
-  /** Version constraint, e.g. `">=21.1.0 <22.0.0"`. */
+  /** Search only `paths`, never $PATH. */
+  pathsOnly?: boolean;
+  /** Version constraint, e.g. `">=23.1.0 <24.0.0"`. */
   version?: string;
-  /** How to get the version. `"--version"` (default) or `"version"` (go/zig style). */
-  versionArg?: string;
   /** If true, throws BuildError when not found. */
   required: boolean;
   /** Extra hint text for the error message. */
@@ -134,6 +138,44 @@ export function findBun(os: OS): string {
 }
 
 /**
+ * On a CI machine the tools come from its image, and the image installs what
+ * ci-images/spec.ts pins. A tool that reports another version means the
+ * machine is not the image the spec describes. Elsewhere clang only has to be
+ * of the pin's release series (findLlvmTool).
+ */
+export function checkImageTools(toolchain: { bun: string; cmake: string; clangVersion: string | undefined }): void {
+  const tools: [name: string, expected: string, actual: { version: string } | { reason: string }][] = [
+    ["bun", pins.bun.version, getToolVersion(toolchain.bun, "--version")],
+    ["cmake", pins.cmake.version, getToolVersion(toolchain.cmake, "--version")],
+    // CI runs the build with the image's node.
+    ["node", pins.nodejs.version, { version: process.versions.node }],
+  ];
+  // An explicit LLVM directory is its own pin (see toolchainOverride).
+  if (toolchainOverride.llvm === undefined) {
+    const version = toolchain.clangVersion;
+    tools.push(["clang", pins.llvm.version, version === undefined ? { reason: "of no known version" } : { version }]);
+  }
+  for (const [name, expected, actual] of tools) {
+    if (!("version" in actual) || actual.version !== expected) {
+      throw new BuildError(
+        `${name} is ${"version" in actual ? actual.version : actual.reason}, and scripts/build/ci-images/spec.ts pins ${expected}`,
+        { hint: "This machine was not started from the image the spec describes." },
+      );
+    }
+  }
+}
+
+/** Find npm for `--package-manager=npm`. npm ships with Node.js. */
+export function findNpm(): string {
+  return findTool({
+    names: ["npm"],
+    windowsExt: ".cmd",
+    required: true,
+    hint: "--package-manager=npm installs with npm. Install Node.js, which includes npm.",
+  })!.path;
+}
+
+/**
  * Check if a file exists and is executable.
  */
 function isExecutable(p: string): boolean {
@@ -155,6 +197,24 @@ function isExecutable(p: string): boolean {
  * otherwise → failure reason for the rejection log).
  */
 function getToolVersion(exe: string, versionArg: string): { version: string } | { reason: string } {
+  const result = askVersion(exe, versionArg);
+  if ("reason" in result) return result;
+  // Some tools print their version to stderr instead of stdout. Check both.
+  const version = parseVersion(result.stdout) ?? parseVersion(result.stderr);
+  if (version !== undefined) return { version };
+  // Parse failed — include what we saw (truncated) so the error is
+  // actionable instead of just "could not parse".
+  const output = (result.stdout + result.stderr).trim().slice(0, 200);
+  if (result.status !== 0) {
+    return { reason: `exited ${result.status}: ${output || "(no output)"}` };
+  }
+  return { reason: `no X.Y.Z in output: ${output || "(empty)"}` };
+}
+
+function askVersion(
+  exe: string,
+  versionArg: string,
+): { stdout: string; stderr: string; status: number | null } | { reason: string } {
   // stdio ignore on stdin: on Windows CI the parent's stdin can be a
   // handle that blocks the child's CRT init. --version never reads stdin.
   // 30s timeout: cold start of a large binary (clang is 100+ MB) through
@@ -167,16 +227,66 @@ function getToolVersion(exe: string, versionArg: string): { version: string } | 
   if (result.error) {
     return { reason: `spawn failed: ${result.error.message}` };
   }
-  // Some tools print their version to stderr instead of stdout. Check both.
-  const version = parseVersion(result.stdout ?? "") ?? parseVersion(result.stderr ?? "");
-  if (version !== undefined) return { version };
-  // Parse failed — include what we saw (truncated) so the error is
-  // actionable instead of just "could not parse".
-  const output = ((result.stdout ?? "") + (result.stderr ?? "")).trim().slice(0, 200);
-  if (result.status !== 0) {
-    return { reason: `exited ${result.status}: ${output || "(no output)"}` };
+  return { stdout: result.stdout ?? "", stderr: result.stderr ?? "", status: result.status };
+}
+
+/** The tools whose output stays in the build directory from one build to the next. */
+export type IdentifiedTool = "cc" | "cxx" | "hostCc" | "nasm" | "ld";
+
+/**
+ * `<buildDir>/toolchain-identity/<tool>.txt`: which compiler, assembler or
+ * linker this build directory's artifacts come from, as the tool reports
+ * itself. An edge names the file of each tool it runs as an input, so
+ * replacing a tool rebuilds what that tool produced and nothing else. The Rust
+ * units get the same from the rustc version and commit in their hash.
+ *
+ * ninja cannot see a replaced tool on its own. A command line names the tool
+ * by path, and an upgrade behind a stable path (a package manager's `current`
+ * link, a Homebrew `opt/` symlink, /usr/bin) leaves the path, and so the
+ * command, unchanged. Naming the binary as an input does not help either: a
+ * freshly installed binary keeps its packaged mtime, which is usually older
+ * than the objects it should invalidate. The build directory then holds
+ * objects from two compilers, and with LTO their bitcode meets in one link —
+ * LLVM 21's next to LLVM 23's failed with `undefined symbol: hwy::Abort`.
+ *
+ * The archiver and the resource compiler have no file: llvm-lib and llvm-rc
+ * do not report a version, and what they write does not depend on one.
+ */
+export function toolIdentityFile(cfg: Config, tool: IdentifiedTool): string {
+  return resolve(cfg.buildDir, "toolchain-identity", `${tool}.txt`);
+}
+
+/** Called by configure, before ninja runs. An unchanged tool keeps its file's mtime and rebuilds nothing. */
+export function writeToolIdentities(cfg: Config): void {
+  const tools: IdentifiedTool[] = ["cc", "cxx", "hostCc", "nasm", "ld"];
+  for (const tool of tools) {
+    const path = cfg[tool];
+    // Absent on this platform: no nasm, and `ld` is "" on macOS, where clang finds the linker itself.
+    if (path === undefined || path === "") continue;
+    writeIfChanged(toolIdentityFile(cfg, tool), toolIdentity(path) + "\n");
   }
-  return { reason: `no X.Y.Z in output: ${output || "(empty)"}` };
+}
+
+/**
+ * What a tool says it is: the line of its `--version` output that carries the version. For an llvm.org build
+ * that is `clang version 23.1.1 (https://github.com/llvm/llvm-project <commit>)` — the release and the exact
+ * commit, the same on every machine. (The lines after it name the install directory.)
+ */
+export function toolIdentity(exe: string): string {
+  const result = askVersion(exe, "--version");
+  const line =
+    "reason" in result
+      ? undefined
+      : `${result.stdout}\n${result.stderr}`
+          .split("\n")
+          .map(l => l.trim())
+          .find(l => /\d+\.\d+/.test(l));
+  if (line === undefined) {
+    throw new BuildError(`Cannot tell which ${exe} this is`, {
+      hint: `\`${exe} --version\` ${"reason" in result ? result.reason : "printed no version"}`,
+    });
+  }
+  return line;
 }
 
 /**
@@ -210,9 +320,11 @@ export function clangTargetArch(clang: string): Arch | undefined {
  * Returns the absolute path or undefined (if not required).
  */
 export function findTool(spec: ToolSpec): FoundTool | undefined {
-  const exeSuffix = process.platform === "win32" ? ".exe" : "";
-  const searchPaths = [...(spec.paths ?? []), ...(process.env.PATH ?? "").split(delimiter).filter(p => p.length > 0)];
-  const versionArg = spec.versionArg ?? "--version";
+  const exeSuffix = process.platform === "win32" ? (spec.windowsExt ?? ".exe") : "";
+  const searchPaths = spec.pathsOnly
+    ? [...(spec.paths ?? [])]
+    : [...(spec.paths ?? []), ...(process.env.PATH ?? "").split(delimiter).filter(p => p.length > 0)];
+  const versionArg = "--version";
   const rejections: Rejection[] = [];
 
   for (const name of spec.names) {
@@ -261,13 +373,29 @@ export function findTool(spec: ToolSpec): FoundTool | undefined {
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * LLVM version constraint. Any version in the same major.minor range is
- * accepted (e.g. Alpine 3.23 ships 21.1.2 while we target 21.1.8).
+ * LLVM version constraint: the release CI's images install. Any version in
+ * the same major.minor range is accepted: a package manager can often only be
+ * asked for a major (apt.llvm.org serves snapshots of the release branch).
  */
-export const LLVM_VERSION = "21.1.8";
-const LLVM_MAJOR = "21";
-const LLVM_MINOR = "1";
+export const LLVM_VERSION = pins.llvm.version;
+const [LLVM_MAJOR, LLVM_MINOR] = LLVM_VERSION.split(".");
 const LLVM_VERSION_RANGE = `>=${LLVM_MAJOR}.${LLVM_MINOR}.0 <${LLVM_MAJOR}.${LLVM_MINOR}.99`;
+
+/**
+ * Explicit toolchain directories, for building Bun with a self-built LLVM /
+ * Rust (the oven-sh/rust toolchain build trains its PGO profiles this way).
+ * When set they are the ONLY place the corresponding tools are taken from,
+ * and the LLVM version pin above is not enforced — the directory is the pin.
+ *
+ *   BUN_TOOLCHAIN_LLVM   dir containing bin/clang, bin/ld.lld, bin/llvm-ar, …
+ *   BUN_TOOLCHAIN_RUST   rustc sysroot dir containing bin/rustc (and bin/cargo)
+ *   BUN_TOOLCHAIN_CARGO  cargo binary, if not <BUN_TOOLCHAIN_RUST>/bin/cargo
+ */
+export const toolchainOverride = {
+  llvm: process.env.BUN_TOOLCHAIN_LLVM,
+  rust: process.env.BUN_TOOLCHAIN_RUST,
+  cargo: process.env.BUN_TOOLCHAIN_CARGO,
+};
 
 /**
  * Known LLVM install locations per platform. Call ONCE from
@@ -276,6 +404,7 @@ const LLVM_VERSION_RANGE = `>=${LLVM_MAJOR}.${LLVM_MINOR}.0 <${LLVM_MAJOR}.${LLV
  * configure time.
  */
 function llvmSearchPaths(os: OS, arch: Arch): string[] {
+  if (toolchainOverride.llvm !== undefined) return [join(toolchainOverride.llvm, "bin")];
   const paths: string[] = [];
 
   if (os === "darwin") {
@@ -316,7 +445,7 @@ function llvmSearchPaths(os: OS, arch: Arch): string[] {
 }
 
 /**
- * Version-suffixed command names (e.g. clang-21, clang-21.1).
+ * Version-suffixed command names (e.g. clang-23, clang-23.1).
  * Unix distros often only ship these suffixed versions.
  */
 function llvmNameVariants(name: string): string[] {
@@ -352,7 +481,8 @@ function findLlvmTool(
     required: opts.required,
     hint: llvmInstallHint(os),
   };
-  if (opts.checkVersion) spec.version = LLVM_VERSION_RANGE;
+  if (opts.checkVersion) spec.version = toolchainOverride.llvm !== undefined ? "ignore" : LLVM_VERSION_RANGE;
+  if (toolchainOverride.llvm !== undefined) spec.pathsOnly = true;
   return findTool(spec);
 }
 
@@ -387,19 +517,20 @@ export function resolveLlvmToolchain(
   | "hostCc"
   | "hostCxx"
   | "ar"
-  | "ranlib"
   | "ld"
   | "ld64Lld"
-  | "rustLld"
   | "rustLlvmVersion"
   | "rustSysroot"
   | "rustHostTriple"
   | "strip"
   | "llvmStrip"
+  | "nm"
+  | "readobj"
+  | "objdump"
+  | "cxxfilt"
   | "dsymutil"
   | "ccache"
   | "rc"
-  | "mt"
   | "nasm"
   | "clangVersion"
   | "clangResourceDir"
@@ -466,17 +597,6 @@ export function resolveLlvmToolchain(
     required: true,
   })?.path;
 
-  // ranlib: llvm-ranlib (unix hosts only — llvm-lib targets don't need it).
-  // Needed for nested cmake builds (CMAKE_RANLIB). llvm-ar's `s` flag does the
-  // same thing for our direct archives, but deps may call ranlib explicitly.
-  let ranlib: string | undefined;
-  if (os !== "windows") {
-    ranlib = findLlvmTool("llvm-ranlib", paths, os, {
-      checkVersion: false,
-      required: true,
-    })?.path;
-  }
-
   // ld: lld-link for windows targets, ld.lld on Linux (passed as --ld-path=).
   // On Darwin clang drives the system linker directly.
   let ld: string;
@@ -510,6 +630,17 @@ export function resolveLlvmToolchain(
     llvmStrip = strip;
   }
 
+  // llvm-nm: reads ELF, Mach-O, COFF and LTO bitcode objects alike, which is
+  // what the per-dep undefined-symbol checks need. Same package as llvm-ar,
+  // so it is only ever missing from a partial LLVM install; then the checks
+  // are skipped rather than the build refused.
+  const nm = findLlvmTool("llvm-nm", paths, os, { checkVersion: false, required: false })?.path;
+  // The post-link binary checks (verify-binary.ts) read the executable with
+  // these; a partial install skips the checks rather than the build.
+  const readobj = findLlvmTool("llvm-readobj", paths, os, { checkVersion: false, required: false })?.path;
+  const objdump = findLlvmTool("llvm-objdump", paths, os, { checkVersion: false, required: false })?.path;
+  const cxxfilt = findLlvmTool("llvm-cxxfilt", paths, os, { checkVersion: false, required: false })?.path;
+
   // dsymutil: required on darwin; optional elsewhere (needed only when
   // cross-compiling a darwin release from a non-darwin host).
   let dsymutil: string | undefined;
@@ -519,43 +650,23 @@ export function resolveLlvmToolchain(
     dsymutil = findLlvmTool("dsymutil", paths, os, { checkVersion: false, required: false })?.path;
   }
 
-  // rc/mt: windows targets only. Passed to nested cmake — when
-  // CMAKE_C_COMPILER is an explicit path, cmake's find_program for these
-  // may not search the compiler's directory, so we resolve them here and
-  // pass explicitly. rc is required (cmake's try_compile on windows uses
-  // it, and the final link embeds windows-app-info.res); mt is optional
-  // (not all LLVM distros ship it — source.ts sets
-  // CMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY as fallback).
+  // rc: windows targets only (the final link embeds windows-app-info.res).
   let rc: string | undefined;
-  let mt: string | undefined;
   if (msvcTarget) {
     rc = findLlvmTool("llvm-rc", paths, os, { checkVersion: false, required: true })?.path;
-    mt = findLlvmTool("llvm-mt", paths, os, { checkVersion: false, required: false })?.path;
   }
 
-  // nasm: windows-x64 targets only. BoringSSL's win-x64 assembly is NASM
-  // syntax (perlasm emits gas .S everywhere else, including win-aarch64).
-  // clang's integrated assembler can't read NASM, and OPENSSL_NO_ASM is a
-  // 5-10× crypto perf hit, so this is required when targeting win-x64.
-  let nasm: string | undefined;
-  if (msvcTarget) {
-    nasm = findTool({
-      names: ["nasm"],
-      // boringssl's win-x64 .asm needs nasm; win-aarch64 uses gas .S.
-      // `arch` here is the HOST arch — the target isn't known yet inside
-      // resolveToolchain(). compile.ts:nasm() asserts at the use site
-      // with the same hint, so a missing nasm still fails clearly.
-      required: false,
-      hint:
-        os === "windows"
-          ? "Install from https://nasm.us or `winget install NASM.NASM`"
-          : "Install nasm from your distro (apt install nasm) or https://nasm.us",
-    })?.path;
-  }
+  // nasm: BoringSSL win-x64 and libjpeg-turbo x86_64 SIMD; compile.ts:nasm() asserts at the use site.
+  const nasm = findTool({
+    names: ["nasm"],
+    required: false,
+    hint:
+      os === "windows"
+        ? "Install from https://nasm.us or `winget install NASM.NASM`"
+        : "Install nasm from your distro (apt/dnf/brew install nasm) or https://nasm.us",
+  })?.path;
 
-  // rust-lld: optional alternative linker for cross-language LTO when
-  // rustc's bundled LLVM is newer than clang's. See findRustLld().
-  const { rustLld, rustLlvmVersion, rustSysroot, rustHostTriple } = findRustLld(os);
+  const { rustLlvmVersion, rustSysroot, rustHostTriple } = probeRustToolchain(os);
 
   // ccache: optional. If found, used as compiler launcher.
   const ccache = findTool({ names: ["ccache"], required: false })?.path;
@@ -577,19 +688,20 @@ export function resolveLlvmToolchain(
     hostCc,
     hostCxx,
     ar,
-    ranlib,
     ld,
     ld64Lld,
-    rustLld,
     rustLlvmVersion,
     rustSysroot,
     rustHostTriple,
     strip,
     llvmStrip,
+    nm,
+    readobj,
+    objdump,
+    cxxfilt,
     dsymutil,
     ccache,
     rc,
-    mt,
     nasm,
   };
 }
@@ -618,102 +730,119 @@ export interface CargoToolchain {
 }
 
 /**
- * Locate rustc's bundled lld and its LLVM version.
+ * Ask the pinned rustc what it is: its LLVM version (resolveConfig() requires
+ * clang's to be the same major), its sysroot and its host triple.
  *
- * rustc ships its own copy of lld (built against the same LLVM rustc emits
- * bitcode with). When `-Clinker-plugin-lto` is on and rustc's LLVM is newer
- * than clang's, clang's `ld.lld` can't read the rust bitcode ("Unknown
- * attribute kind"). LLVM bitcode is forward-compatible only — a newer lld
- * reads older bitcode, never the reverse — so the fix is to link with
- * rust-lld instead, which reads both clang's (older) and rustc's (same)
- * bitcode.
- *
- * The path under `gcc-ld/` is a wrapper that invokes the sibling
- * `rust-lld` binary in the right "flavor" (ld.lld / ld64.lld / lld-link),
- * matching what `--ld-path=` expects on each platform. On Windows we use
- * `rust-lld.exe` directly since lld-link mode is selected by argv[0] there.
- *
- * Returns undefined for both fields if rustc isn't installed or its sysroot
- * doesn't have the expected layout (e.g. distro-packaged rustc without the
- * `rust-lld` component).
+ * Every field is undefined if rustc isn't installed or doesn't answer.
  */
-export function findRustLld(os: OS): {
-  rustLld: string | undefined;
+export function probeRustToolchain(os: OS): {
   rustLlvmVersion: string | undefined;
-  /** `rustc --print sysroot` — needed for bundled `llvm-nm` even when rust-lld itself isn't used. */
+  /** `rustc --print sysroot` of the pinned toolchain; its `bin/rustc` is the real compiler behind the rustup proxy. */
   rustSysroot: string | undefined;
-  /** `host:` line from `rustc -vV` — the rustlib subdirectory name. */
   rustHostTriple: string | undefined;
 } {
-  const none = { rustLld: undefined, rustLlvmVersion: undefined, rustSysroot: undefined, rustHostTriple: undefined };
+  const none = { rustLlvmVersion: undefined, rustSysroot: undefined, rustHostTriple: undefined };
   // Look up rustc the same way findCargo does cargo: $CARGO_HOME/bin first.
   const cargoHome = process.env.CARGO_HOME ?? join(homedir(), ".cargo");
-  const rustc = findTool({ names: ["rustc"], paths: [join(cargoHome, "bin")], required: false })?.path;
+  const rustc =
+    toolchainOverride.rust !== undefined
+      ? join(toolchainOverride.rust, "bin", os === "windows" ? "rustc.exe" : "rustc")
+      : findTool({ names: ["rustc"], paths: [join(cargoHome, "bin")], required: false })?.path;
   if (rustc === undefined) return none;
 
-  // The link-only CI mode runs `findRustLld()` on an agent that downloads
-  // `libbun_rust.a` rather than building it, so the pinned nightly may not be
-  // installed there yet. `rustc --print sysroot` (a rustup proxy invocation)
-  // would auto-install — but the download blows past a short spawnSync timeout
-  // and the silent failure leaves `rustLld` undefined, which falls back to the
-  // system lld. With cross-language LTO that means lld 21 reading rust-emitted
-  // LLVM 22 bitcode → `Invalid record`. Pre-flight a `rustup toolchain
-  // install` so the proxy resolves instantly: idempotent ~70ms when already
-  // installed, downloads on a stale agent. Skip when there's no pinned channel
-  // or no rustup — the `rustc` queries below will just use whatever's there.
+  // The pinned nightly may not be installed on this machine yet. Pre-flight a
+  // `rustup toolchain install` so the `rustc` queries below (rustup proxy
+  // invocations) resolve instantly and rust-src is there: idempotent (~0.5s,
+  // it re-checks the channel manifest) when already installed, downloads on a
+  // stale agent.
+  // `-q` also hides the download progress, so say how long it took whenever
+  // it evidently did more than that check: every build job of CI build 91391
+  // spent 34-36s in here without a line of output. Skip when there's no
+  // pinned channel or no rustup — the `rustc` queries below will just use
+  // whatever's there — and when the pinned toolchain is already complete: the
+  // check of the manifest goes to the network, and on a bad day that alone
+  // took 22 to 63s of every build on a machine that had everything.
   const rustup = findTool({ names: ["rustup"], paths: [join(cargoHome, "bin")], required: false })?.path;
   const channel = readRustToolchainChannel();
-  if (rustup !== undefined && channel !== undefined) {
+  if (rustup !== undefined && channel !== undefined && !pinnedToolchainIsInstalled(channel)) {
+    const started = performance.now();
     spawnSync(
       rustup,
       ["-q", "toolchain", "install", channel, "--no-self-update", "--profile", "minimal", "--component", "rust-src"],
       {
         encoding: "utf8",
         timeout: 300_000,
-        stdio: ["ignore", "ignore", "inherit"], // surface download/error output; `-q` hides `info:` noise
+        stdio: ["ignore", "ignore", "inherit"], // surface error output; `-q` hides `info:` noise
       },
     );
+    const seconds = (performance.now() - started) / 1000;
+    if (seconds >= 5) {
+      console.log(
+        `rustup spent ${seconds.toFixed(0)}s installing the pinned toolchain (${channel}); it was missing or incomplete on this machine`,
+      );
+    }
   }
 
   // One spawn for both sysroot and host triple / LLVM version. `-vV` prints
   // `host: <triple>` and `LLVM version: X.Y.Z`; sysroot needs its own query.
-  // Generous timeout: if the toolchain install above was skipped (no rustup),
-  // this proxy invocation may still be the one that auto-installs.
+  //
+  // RUSTUP_TOOLCHAIN pins the proxy to the channel the pre-flight just
+  // ensured. Without it the proxy, running in the repo root, applies
+  // rust-toolchain.toml in full: besides selecting the channel it installs
+  // every entry of its `components` and `targets` lists that is missing
+  // (rustfmt, clippy, miri and the std of 11 targets — ~2.4 GB),
+  // with its output piped into nowhere here. The build itself installs what
+  // it needs (rust-src above, the target's std in the rust_build_cross rule),
+  // and the toml still applies to anyone running cargo directly. Generous
+  // timeout: without rustup there is no pre-flight and this proxy invocation
+  // may still be the one that auto-installs the channel.
+  const env = channel !== undefined ? { ...process.env, RUSTUP_TOOLCHAIN: channel } : process.env;
+  // stderr to the terminal: when the proxy cannot provide the toolchain, what it says is the explanation.
   const sysroot = spawnSync(rustc, ["--print", "sysroot"], {
     encoding: "utf8",
     timeout: 300_000,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["ignore", "pipe", "inherit"],
+    env,
   }).stdout?.trim();
   const vv = spawnSync(rustc, ["-vV"], {
     encoding: "utf8",
     timeout: 30_000,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["ignore", "pipe", "inherit"],
+    env,
   }).stdout;
   if (!sysroot || !vv) return none;
 
   const rustHostTriple = vv.match(/^host:\s*(\S+)/m)?.[1];
   const rustLlvmVersion = vv.match(/^LLVM version:\s*(\d+\.\d+\.\d+)/m)?.[1];
-  if (rustHostTriple === undefined) return { ...none, rustSysroot: sysroot, rustLlvmVersion };
+  return { rustLlvmVersion, rustSysroot: sysroot, rustHostTriple };
+}
 
-  const bin = join(sysroot, "lib", "rustlib", rustHostTriple, "bin");
-  const candidate =
-    os === "windows"
-      ? join(bin, "rust-lld.exe")
-      : os === "darwin"
-        ? join(bin, "gcc-ld", "ld64.lld")
-        : join(bin, "gcc-ld", "ld.lld");
-  const rustLld = isExecutable(candidate) ? candidate : undefined;
-  return { rustLld, rustLlvmVersion, rustSysroot: sysroot, rustHostTriple };
+/**
+ * The toolchain of a dated channel never changes, so once rustup has recorded
+ * what the pre-flight asks for (`lib/rustlib/components`, written when a
+ * component is in place) there is nothing left to ask.
+ */
+function pinnedToolchainIsInstalled(channel: string): boolean {
+  if (!/-\d{4}-\d{2}-\d{2}$/.test(channel)) return false;
+  const toolchains = join(process.env.RUSTUP_HOME ?? join(homedir(), ".rustup"), "toolchains");
+  if (!existsSync(toolchains)) return false;
+  return readdirSync(toolchains).some(name => {
+    const list = join(toolchains, name, "lib", "rustlib", "components");
+    if (!name.startsWith(`${channel}-`) || !existsSync(list)) return false;
+    const components = readFileSync(list, "utf8").split("\n");
+    return ["rustc-", "cargo-", "rust-std-", "rust-src"].every(prefix => components.some(c => c.startsWith(prefix)));
+  });
 }
 
 /**
  * Read the pinned channel from `rust-toolchain.toml` at the repo root.
  * Mirrors `readRustToolchainChannel()` in config.ts but stays in `tools.ts`
- * because `findRustLld()` runs during `resolveToolchain()` — *before*
+ * because `probeRustToolchain()` runs during `resolveToolchain()` — *before*
  * `resolveConfig()` reads the channel into `cfg.rustToolchain`. Both walk the
  * same file; keeping the parse local avoids an import cycle.
  */
 function readRustToolchainChannel(): string | undefined {
+  if (toolchainOverride.rust !== undefined) return undefined; // not a rustup toolchain
   // tools.ts lives at `scripts/build/`; the toolchain file is two levels up.
   const path = join(import.meta.dirname, "..", "..", "rust-toolchain.toml");
   if (!existsSync(path)) return undefined;
@@ -736,16 +865,12 @@ export function findCargo(hostOs: OS): CargoToolchain | undefined {
 
   // Search $CARGO_HOME/bin BEFORE $PATH. Some systems have an outdated
   // distro cargo in /usr/bin that shadows rustup's — we want rustup's.
-  const cargo = findTool({
-    names: ["cargo"],
-    paths: [join(cargoHome, "bin")],
-    required: false,
-  })?.path;
+  const cargo =
+    toolchainOverride.cargo ??
+    (toolchainOverride.rust !== undefined
+      ? join(toolchainOverride.rust, "bin", hostOs === "windows" ? "cargo.exe" : "cargo")
+      : findTool({ names: ["cargo"], paths: [join(cargoHome, "bin")], required: false })?.path);
   if (cargo === undefined) return undefined;
-
-  // Suppress unused warning for hostOs — kept in signature for future
-  // host-specific path resolution (e.g. %PROGRAMFILES% probing on win32).
-  void hostOs;
 
   return { cargo, cargoHome, rustupHome };
 }
@@ -763,24 +888,26 @@ export function findCargo(hostOs: OS): CargoToolchain | undefined {
  */
 export function findMsvcLinker(arch: Arch): string | undefined {
   // VS2022 standard layout:
-  //   C:/Program Files/Microsoft Visual Studio/2022/<edition>/VC/Tools/MSVC/<ver>/bin/<host>/<target>/link.exe
-  // Edition is Community|Professional|Enterprise|BuildTools.
-  const vsBase = "C:/Program Files/Microsoft Visual Studio/2022";
-  if (!existsSync(vsBase)) return undefined;
+  //   <base>/Microsoft Visual Studio/2022/<edition>/VC/Tools/MSVC/<ver>/bin/<host>/<target>/link.exe
+  // Community, Professional and Enterprise are 64-bit programs. BuildTools,
+  // which is what CI's images have, goes under Program Files (x86).
+  const vsBases = ["C:/Program Files", "C:/Program Files (x86)"].map(base => `${base}/Microsoft Visual Studio/2022`);
 
   // Pick the latest MSVC toolset version across all editions. Usually
-  // there's only one edition installed, but BuildTools + Community can
-  // coexist on CI.
+  // there's only one edition installed, but BuildTools can be beside another.
   let latestVer: string | undefined;
   let latestToolset: string | undefined;
-  for (const edition of readdirSync(vsBase)) {
-    const msvcDir = join(vsBase, edition, "VC/Tools/MSVC");
-    if (!existsSync(msvcDir)) continue;
-    for (const ver of readdirSync(msvcDir)) {
-      // Lexicographic comparison works for MSVC versions (14.xx.yyyyy).
-      if (latestVer === undefined || ver > latestVer) {
-        latestVer = ver;
-        latestToolset = join(msvcDir, ver);
+  for (const vsBase of vsBases) {
+    if (!existsSync(vsBase)) continue;
+    for (const edition of readdirSync(vsBase)) {
+      const msvcDir = join(vsBase, edition, "VC/Tools/MSVC");
+      if (!existsSync(msvcDir)) continue;
+      for (const ver of readdirSync(msvcDir)) {
+        // Lexicographic comparison works for MSVC versions (14.xx.yyyyy).
+        if (latestVer === undefined || ver > latestVer) {
+          latestVer = ver;
+          latestToolset = join(msvcDir, ver);
+        }
       }
     }
   }

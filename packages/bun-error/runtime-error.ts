@@ -1,6 +1,6 @@
 // Based on https://github.com/stacktracejs/error-stack-parser/blob/master/error-stack-parser.js
 
-import type { StackFramePosition, StackFrameScope, StackFrame as StackFrameType } from "../../src/api/schema";
+import type { StackFramePosition, StackFrameScope, StackFrame as StackFrameType } from "./schema";
 
 export class StackFrame implements StackFrameType {
   function_name: string;
@@ -23,6 +23,7 @@ export class StackFrame implements StackFrameType {
     this.scope = 3;
     this.position = {
       line: line,
+      column: column,
       source_offset: -1,
       line_start: -1,
       line_stop: -1,
@@ -39,8 +40,8 @@ const CHROME_IE_STACK_REGEXP = /^\s*at .*(\S+:\d+|\(native\))/m;
 const SAFARI_NATIVE_CODE_REGEXP = /^(eval@)?(\[native code])?$/;
 
 export default class RuntimeError {
-  original: Error;
-  stack: StackFrame[];
+  original!: Error;
+  stack!: StackFrame[];
 
   static from(error: Error): RuntimeError {
     const runtime = new RuntimeError();
@@ -74,7 +75,7 @@ export default class RuntimeError {
 
     var regExp = /(.+?)(?::(\d+))?(?::(\d+))?$/;
     var parts = regExp.exec(urlLike.replace(/[()]/g, ""));
-    return [parts[1], parts[2] || undefined, parts[3] || undefined];
+    return [parts![1], parts![2] || undefined, parts![3] || undefined];
   }
 
   static parseV8OrIE(error) {

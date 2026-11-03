@@ -1,0 +1,31 @@
+# console.log(Object.create({ inner: { [Symbol.for("nodejs.util.inspect.custom")]() { return "custom" } } }))
+# The formatter shows what an object inherits. So it comes by `inner`, which lies on the object above the printed one, and calls its custom inspect function.
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Inner"
+layout L1 name="Above" fields=[{key="inner" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject layout=L0
+    v2 = Builtin builtin=SymbolFor
+    v3 = String string="nodejs.util.inspect.custom"
+    v4 = Call v2, -, v3
+    ElemSet v1, v4, v0
+    v6 = NewObject -, v1 layout=L1 fields=[0]
+    v7 = Builtin builtin=Object
+    v8 = Builtin builtin=ObjectCreate
+    v9 = Call v8, v7, v6
+    v10 = Builtin builtin=Console
+    v11 = Builtin builtin=ConsoleLog
+    v12 = Call v11, v10, v9
+    Return
+}
+function f1 name="custom" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="custom"
+    Return v1
+}

@@ -1,0 +1,17 @@
+------------------
+{ printWidth: 80 }
+------------------
+/* prettier-ignore */ a<b>;
+x = /* prettier-ignore */ new a;
+f(new a() /* prettier-ignore */);
+x = [/* prettier-ignore */ a<b>, c];
+
+-------------------
+{ printWidth: 100 }
+-------------------
+/* prettier-ignore */ a<b>;
+x = /* prettier-ignore */ new a;
+f(new a() /* prettier-ignore */);
+x = [/* prettier-ignore */ a<b>, c];
+
+===================== End =====================

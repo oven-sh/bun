@@ -5,6 +5,7 @@ import {
   bunEnv,
   bunExe,
   canBuildNodeAddons,
+  expectRssDeltaBelow,
   isASAN,
   isBroken,
   isMusl,
@@ -69,12 +70,7 @@ async function install(srcDir: string, tmpDir: string, runtime: Runtime): Promis
   }
 }
 
-async function build(
-  srcDir: string,
-  tmpDir: string,
-  runtime: Runtime,
-  buildMode: BuildMode,
-): Promise<{ out: string; err: string; description: string }> {
+async function build(srcDir: string, tmpDir: string, runtime: Runtime, buildMode: BuildMode): Promise<void> {
   const build = spawn({
     cmd:
       runtime == Runtime.bun
@@ -273,11 +269,21 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     it("creates objects with internal fields", async () => {
       await checkSameOutput("test_v8_object_template");
     });
+    it("frees the internal fields of collected instances", async () => {
+      await expectRssDeltaBelow(
+        ["--smol", join(directories.bunRelease, "main.js"), "test_v8_internal_field_object_leak", "[]", "null"],
+        { release: 40, debug: 55 },
+      );
+    });
   });
 
   describe("FunctionTemplate", () => {
     it("keeps the data parameter alive", async () => {
       await checkSameOutput("test_v8_function_template");
+    });
+    it("SetClassName propagates to GetFunction result", async () => {
+      const out = await checkSameOutput("test_v8_function_template_set_class_name");
+      expect(out).toContain("MyNamedClass");
     });
   });
 
@@ -289,6 +295,11 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
 
     it("correctly receives the this value from JS", async () => {
       await checkSameOutput("call_function_with_weird_this_values");
+    });
+
+    it("receives globalThis as this when called bare through a closure", async () => {
+      const output = await checkSameOutput("call_function_bare_through_closure");
+      expect(output).toContain("bare call returned globalThis: true");
     });
   });
 
@@ -341,9 +352,155 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     });
   });
 
+  describe("ReturnValue", () => {
+    it("keeps the returned value alive when the scope it was created in closes", async () => {
+      await checkSameOutput("test_v8_return_value_from_inner_scope");
+    });
+  });
+
   describe("MaybeLocal", () => {
     it("correctly handles ToLocal and ToLocalChecked operations", async () => {
       await checkSameOutput("test_v8_maybe_local");
+    });
+  });
+
+  describe("Integer", () => {
+    it("can create and read back int32 values", async () => {
+      await checkSameOutput("test_v8_integer");
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/42195
+  describe("Function script origin", () => {
+    it("reports the file, line, and column of a JS function", async () => {
+      const out = await checkSameOutput("test_v8_function_script_origin");
+      expect(out).toContain("file: module.js");
+    });
+  });
+
+  describe("Value::ToInt32", () => {
+    it("converts values like the JS ToInt32 operation", async () => {
+      await checkSameOutput("test_v8_value_to_int32");
+    });
+  });
+
+  describe("Object::DefineOwnProperty", () => {
+    it("applies PropertyAttribute flags to the defined property", async () => {
+      await checkSameOutput("test_v8_define_own_property");
+    });
+  });
+
+  describe("BigInt", () => {
+    it("BigInt::New creates a JS bigint with the given int64 value", async () => {
+      await checkSameOutput("test_v8_bigint");
+    });
+  });
+
+  describe("String::NewFromUtf8Literal", () => {
+    it("creates strings from C string literals (ASCII and UTF-8)", async () => {
+      await checkSameOutput("test_v8_string_from_utf8_literal");
+    });
+  });
+
+  describe("PrototypeTemplate / Template::Set / SetNativeDataProperty", () => {
+    it("prototype methods and native accessors are reachable on instances", async () => {
+      await checkSameOutput("test_v8_prototype_template");
+    });
+
+    it("native accessor callbacks see the object as their holder on property access", async () => {
+      const output = await checkSameOutput("native_accessor_holder_on_property_access");
+      expect(output).toBe(["getter holder is the object: true", "setter holder is the object: true"].join("\n"));
+    });
+
+    // Only Bun exposes a native data property's getter and setter as callable functions, so this
+    // cannot be compared against Node: the receiver has to be converted the way a sloppy-mode
+    // function would, in particular a bare call through a closure must not hand the accessor the
+    // scope object JSC leaves in the this slot.
+    it("native accessor callbacks get a sloppy-mode holder when called as functions", async () => {
+      const expected = [
+        "bare getter(): globalThis",
+        "getter.call(undefined): globalThis",
+        "getter.call(null): globalThis",
+        "getter.call(5): a Number object",
+        "getter.call(obj): the object",
+        "bare setter(): globalThis",
+        "setter.call(undefined): globalThis",
+        "setter.call(null): globalThis",
+        "setter.call(5): a Number object",
+        "setter.call(obj): the object",
+      ].join("\n");
+      for (const buildMode of [BuildMode.release, BuildMode.debug]) {
+        const output = await runOn(Runtime.bun, buildMode, "native_accessor_holder_for_weird_receivers");
+        expect(output.replaceAll(/^\[\w+\].+$/gm, "").trim(), `addon built in ${BuildMode[buildMode]} mode`).toBe(
+          expected,
+        );
+      }
+    });
+  });
+
+  describe("ArrayBuffer / TypedArray", () => {
+    it("can create an ArrayBuffer and read through its BackingStore", async () => {
+      await checkSameOutput("test_v8_arraybuffer");
+    });
+    it("can create Uint8Array/Uint32Array views with offset and length", async () => {
+      await checkSameOutput("test_v8_typedarray");
+    });
+  });
+
+  describe("Function::Call / NewInstance", () => {
+    it("Function::Call forwards recv and argv", async () => {
+      await checkSameOutput("test_v8_function_call");
+    });
+    it("Function::NewInstance constructs via a FunctionTemplate", async () => {
+      await checkSameOutput("test_v8_function_new_instance");
+    });
+    it("FunctionTemplate::GetFunction returns the same function on repeat calls", async () => {
+      await checkSameOutput("test_v8_getfunction_memoized");
+    });
+  });
+
+  describe("Map", () => {
+    it("Map::Set and Map::Delete mutate the underlying JS Map", async () => {
+      await checkSameOutput("test_v8_map");
+    });
+  });
+
+  describe("Exception", () => {
+    it("Exception::Error/TypeError create throwable Error objects", async () => {
+      await checkSameOutput("test_v8_exception");
+    });
+    it("Exception::Error/TypeError accept an empty message", async () => {
+      const output = await checkSameOutput("test_v8_exception_empty_message");
+      expect(output).toBe(['Error message = "" own = true', 'TypeError message = "" own = true'].join("\n"));
+    });
+    it("Isolate::ThrowError accepts an empty message", async () => {
+      const output = await checkSameOutput("test_v8_throw_error_empty_message");
+      expect(output).toBe('caught Error message = "" own = true');
+    });
+    it("Array, Uint8Array, Uint32Array and BigInt ::New work while an exception is pending", async () => {
+      const output = await checkSameOutput("test_v8_new_values_with_pending_exception");
+      expect(output).toEndWith("caught pending");
+    });
+  });
+
+  describe("Aligned internal fields", () => {
+    it("round-trips pointers through Set/GetAlignedPointerInInternalField", async () => {
+      await checkSameOutput("test_v8_aligned_pointer_in_internal_field");
+    });
+  });
+
+  describe("CpuProfiler", () => {
+    it("Start/Stop returns a profile with a root node", async () => {
+      await checkSameOutput("test_v8_cpu_profiler");
+    });
+    it("accepts overlapping sessions and returns a profile for each", async () => {
+      // Regression test for dd-trace's profiler, which calls Start() for the
+      // next cycle before Stop() of the current one (see @datadog/pprof).
+      await checkSameOutput("test_v8_cpu_profiler_overlapping_sessions");
+    });
+    it("StartProfiling/StopProfiling key sessions by title and GetTitle returns it", async () => {
+      // google's pprof addon uses the title-keyed overloads (#19678).
+      await checkSameOutput("test_v8_cpu_profiler_title_api");
     });
   });
 
@@ -356,6 +513,13 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
   describe("uv_os_getppid", () => {
     it.skipIf(isWindows)("returns the same result as getppid on POSIX", async () => {
       await checkSameOutput("test_uv_os_getppid");
+    });
+  });
+
+  describe("uv_queue_work", () => {
+    // TODO: on Windows libuv calls after_work_cb with no handle scope open, so creating a handle aborts.
+    it.skipIf(isWindows)("runs on node::GetCurrentEventLoop and after_work_cb can use a v8::HandleScope", async () => {
+      await checkSameOutput("test_uv_queue_work_on_current_event_loop");
     });
   });
 });
@@ -670,6 +834,251 @@ for (const [hi, lo] of [
         "number true",
         "isnan = 1",
         "number true",
+      ]);
+      expect(exitCode).toBe(0);
+    },
+    10 * 60 * 1000,
+  );
+});
+
+// Node runs every Node-API callback inside a v8::HandleScope, so an addon that calls the V8 API
+// from one doesn't need to open its own scope. With the Node 26 headers, an addon's
+// v8::HandleScope is inlined and never calls into Bun either.
+describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("V8 API from Node-API callbacks", () => {
+  it(
+    "creates handles in the Node-API scope, keeps them alive, and releases them when it closes",
+    async () => {
+      using dir = tempDir(
+        "v8-api-from-napi",
+        standaloneAddonFiles(
+          "hybridnapi",
+          `// A Node-API addon whose callbacks also use the V8 C++ API. Node runs every Node-API callback
+// inside a v8::HandleScope, so the callbacks below only open one when that's what they test.
+// Each callback returns its result as a string so run.js can print everything in order.
+#include <node.h>
+#include <node_api.h>
+#include <cstdio>
+#include <cstring>
+
+namespace hybrid_test {
+
+using namespace v8;
+
+Global<Array> stashed_array;
+
+napi_value to_napi_string(napi_env env, const char* text) {
+  napi_value result;
+  napi_create_string_utf8(env, text, NAPI_AUTO_LENGTH, &result);
+  return result;
+}
+
+// Bun's callback overload of Array::New opens an EscapableHandleScope around the callbacks.
+napi_value describe_new_values(napi_env env, Isolate* isolate) {
+  Local<Array> array = Array::New(isolate, 3);
+  Local<String> string =
+      String::NewFromUtf8(isolate, "string from v8", NewStringType::kNormal).ToLocalChecked();
+  int next = 0;
+  Local<Array> from_callback =
+      Array::New(isolate->GetCurrentContext(), 4,
+                 [&]() -> MaybeLocal<Value> { return Number::New(isolate, next++); })
+          .ToLocalChecked();
+  char string_text[64];
+  string->WriteUtf8V2(isolate, string_text, sizeof string_text, String::WriteFlags::kNullTerminate);
+  char result[128];
+  snprintf(result, sizeof result, "arrays of length %u and %u, '%s'", array->Length(),
+           from_callback->Length(), string_text);
+  return to_napi_string(env, result);
+}
+
+napi_value without_scope(napi_env env, napi_callback_info info) {
+  return describe_new_values(env, Isolate::GetCurrent());
+}
+
+napi_value with_scope(napi_env env, napi_callback_info info) {
+  Isolate* isolate = Isolate::GetCurrent();
+  HandleScope scope(isolate);
+  return describe_new_values(env, isolate);
+}
+
+napi_value with_escapable_scope(napi_env env, napi_callback_info info) {
+  Isolate* isolate = Isolate::GetCurrent();
+  Local<String> escaped;
+  {
+    EscapableHandleScope scope(isolate);
+    escaped = scope.Escape(
+        String::NewFromUtf8(isolate, "escaped string", NewStringType::kNormal).ToLocalChecked());
+  }
+  char text[64];
+  escaped->WriteUtf8V2(isolate, text, sizeof text, String::WriteFlags::kNullTerminate);
+  return to_napi_string(env, text);
+}
+
+napi_value constructor(napi_env env, napi_callback_info info) {
+  napi_value description = describe_new_values(env, Isolate::GetCurrent());
+  napi_value this_arg;
+  size_t argc = 0;
+  napi_get_cb_info(env, info, &argc, nullptr, &this_arg, nullptr);
+  napi_set_named_property(env, this_arg, "description", description);
+  return this_arg;
+}
+
+void call_argument(napi_env env, napi_callback_info info, napi_value* result) {
+  size_t argc = 1;
+  napi_value callback;
+  napi_get_cb_info(env, info, &argc, &callback, nullptr, nullptr);
+  napi_value global;
+  napi_get_global(env, &global);
+  napi_call_function(env, global, callback, 0, nullptr, result);
+}
+
+// Handles created in a callback must keep their values alive for the rest of the callback,
+// including across a GC that the callback triggers. The argument is a function that runs the GC.
+napi_value survives_gc(napi_env env, napi_callback_info info) {
+  Isolate* isolate = Isolate::GetCurrent();
+  constexpr int count = 500;
+  Local<String> strings[count];
+  for (int i = 0; i < count; i++) {
+    char text[32];
+    snprintf(text, sizeof text, "string %d", i);
+    strings[i] = String::NewFromUtf8(isolate, text, NewStringType::kNormal).ToLocalChecked();
+  }
+
+  napi_value ignored;
+  call_argument(env, info, &ignored);
+
+  int intact = 0;
+  for (int i = 0; i < count; i++) {
+    char expected[32], actual[32];
+    snprintf(expected, sizeof expected, "string %d", i);
+    strings[i]->WriteUtf8V2(isolate, actual, sizeof actual, String::WriteFlags::kNullTerminate);
+    intact += strcmp(expected, actual) == 0;
+  }
+  char result[64];
+  snprintf(result, sizeof result, "%d of %d strings intact after gc", intact, count);
+  return to_napi_string(env, result);
+}
+
+constexpr int num_buffers = 1000;
+
+// The argument is a function that runs the GC and returns the number of live ArrayBuffers. Reports
+// whether the buffers the caller created in already-closed scopes were collected.
+napi_value describe_released(napi_env env, napi_callback_info info) {
+  napi_value live_value;
+  call_argument(env, info, &live_value);
+  int32_t live = -1;
+  napi_get_value_int32(env, live_value, &live);
+  return to_napi_string(env, live < num_buffers / 10 ? "released before the callback returned"
+                                                     : "still alive when the callback returned");
+}
+
+napi_value napi_scopes_release(napi_env env, napi_callback_info info) {
+  Isolate* isolate = Isolate::GetCurrent();
+  for (int i = 0; i < num_buffers; i++) {
+    napi_handle_scope scope;
+    napi_open_handle_scope(env, &scope);
+    ArrayBuffer::New(isolate, 8);
+    napi_close_handle_scope(env, scope);
+  }
+  return describe_released(env, info);
+}
+
+// Doesn't open a scope. run.js checks that the buffers are released once this returns.
+napi_value create_buffers(napi_env env, napi_callback_info info) {
+  Isolate* isolate = Isolate::GetCurrent();
+  for (int i = 0; i < num_buffers; i++) {
+    ArrayBuffer::New(isolate, 8);
+  }
+  return nullptr;
+}
+
+napi_value stash_array(napi_env env, napi_callback_info info) {
+  Isolate* isolate = Isolate::GetCurrent();
+  stashed_array.Reset(isolate, Array::New(isolate, 5));
+  return nullptr;
+}
+
+// Global::Get creates its Local with V8's inline handle creation code, which calls into Bun through
+// HandleScope::Extend instead of a value constructor like Array::New. Each inline HandleScope
+// releases those handles through HandleScope::DeleteExtensions when it closes.
+napi_value read_stashed_array(napi_env env, napi_callback_info info) {
+  Isolate* isolate = Isolate::GetCurrent();
+  unsigned total_length = 0;
+  for (int i = 0; i < 1000; i++) {
+    HandleScope scope(isolate);
+    total_length += stashed_array.Get(isolate)->Length();
+  }
+  Local<Array> array = stashed_array.Get(isolate);
+  char result[96];
+  snprintf(result, sizeof result, "stashed array of length %u, %u in total over 1000 inline scopes",
+           array->Length(), total_length);
+  stashed_array.Reset();
+  return to_napi_string(env, result);
+}
+
+napi_value init(napi_env env, napi_value exports) {
+  struct {
+    const char* name;
+    napi_callback callback;
+  } functions[] = {
+      {"withoutScope", without_scope},
+      {"withScope", with_scope},
+      {"withEscapableScope", with_escapable_scope},
+      {"survivesGc", survives_gc},
+      {"napiScopesRelease", napi_scopes_release},
+      {"createBuffers", create_buffers},
+      {"stashArray", stash_array},
+      {"readStashedArray", read_stashed_array},
+  };
+  for (auto& function : functions) {
+    napi_value value;
+    napi_create_function(env, function.name, NAPI_AUTO_LENGTH, function.callback, nullptr, &value);
+    napi_set_named_property(env, exports, function.name, value);
+  }
+  napi_value klass;
+  napi_define_class(env, "Klass", NAPI_AUTO_LENGTH, constructor, nullptr, 0, nullptr, &klass);
+  napi_set_named_property(env, exports, "Klass", klass);
+  return exports;
+}
+
+}  // namespace hybrid_test
+
+NAPI_MODULE(NODE_GYP_MODULE_NAME, hybrid_test::init)`,
+          `const addon = require("./build/Release/hybridnapi");
+const { heapStats } = require("bun:jsc");
+
+function gc() {
+  Bun.gc(true);
+}
+
+function liveArrayBuffers() {
+  gc();
+  return heapStats().objectTypeCounts.ArrayBuffer ?? 0;
+}
+
+console.log("function without scope:", addon.withoutScope());
+console.log("function with scope:", addon.withScope());
+console.log("function with escapable scope:", addon.withEscapableScope());
+console.log("class constructor:", new addon.Klass().description);
+console.log("survives gc:", addon.survivesGc(gc));
+console.log("per-iteration napi_handle_scope:", addon.napiScopesRelease(liveArrayBuffers));
+addon.createBuffers();
+console.log("no scope:", liveArrayBuffers() < 100 ? "released when the callback returned" : "still alive after the callback returned");
+addon.stashArray();
+console.log("global handle:", addon.readStashedArray());`,
+        ),
+      );
+      const cwd = String(dir);
+      await buildStandaloneAddon(cwd);
+      const { lines, err, exitCode } = await runStandaloneAddon(cwd);
+      expect(lines, `stderr:\n${err}`).toEqual([
+        "function without scope: arrays of length 3 and 4, 'string from v8'",
+        "function with scope: arrays of length 3 and 4, 'string from v8'",
+        "function with escapable scope: escaped string",
+        "class constructor: arrays of length 3 and 4, 'string from v8'",
+        "survives gc: 500 of 500 strings intact after gc",
+        "per-iteration napi_handle_scope: released before the callback returned",
+        "no scope: released when the callback returned",
+        "global handle: stashed array of length 5, 5000 in total over 1000 inline scopes",
       ]);
       expect(exitCode).toBe(0);
     },

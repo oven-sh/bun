@@ -1,0 +1,11 @@
+{{@a/b}} {{a.[b].[c d]}}
+{{&a}}
+{{1.50}} {{-0}} {{007}}
+{{^a}}b{{else}}c{{/a}} {{#a}}b{{^}}c{{/a}}
+<!-- {{#if a}} --> {{> b}} {{/if}} -->
+<imG></imG> <a b=c/> <a b={{c}}/>
+a\{{b}} c\\{{d}} e\\\{{f}}
+{{#a}}{{else}}{{#if b}}{{/if}}{{/a}} {{#a}}{{else b}}{{else a}}{{/a}} {{#a}}{{~else b~}}c{{~/a~}}
+{{a "b\"c" 'd\'e' g="h'i\"j"}}
+<title><b></title> <style>a<b{c:d}</style> <script>a</b></script>
+{{a "f\"}}

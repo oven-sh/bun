@@ -6,7 +6,7 @@
  * invocations can race to create the same container, and the loser exits with
  * "Conflict. The container name ... is already in use". So instead of letting
  * each process shell out to compose (and retrying on conflicts), exactly one
- * process does: scripts/runner.node.mjs spawns this coordinator once per
+ * process does: scripts/runner.node.ts spawns this coordinator once per
  * shard, with the shard's test paths on argv and a unix socket path in
  * BUN_DOCKER_COORDINATOR_SOCKET. ensure() in test/docker/index.ts connects to
  * that socket, sends the service name, and waits for the ready message with
@@ -26,11 +26,11 @@ import * as net from "node:net";
 import { ensure, type ServiceInfo, type ServiceName } from "./index.ts";
 import { prestartMap as prestartMapRaw } from "./prestart-map.mjs";
 
-// Keys are paths relative to test/ — that's the shape runner.node.mjs passes
+// Keys are paths relative to test/ — that's the shape runner.node.ts passes
 // (getTests() walks from testsPath, not repo root). Prefix-matched. The map
 // literal lives in prestart-map.mjs (add new entries THERE) because
-// scripts/runner.node.mjs — plain Node, which cannot import .ts — also reads
-// it to schedule docker-backed test files last within the shard.
+// scripts/runner.node.ts, which plain Node runs, also reads it to schedule
+// docker-backed test files last within the shard.
 const prestartMap = prestartMapRaw as Record<string, readonly ServiceName[]>;
 
 const socketPath = process.env.BUN_DOCKER_COORDINATOR_SOCKET;

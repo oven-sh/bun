@@ -1,0 +1,26 @@
+{
+  "_id": "bundled-shadow-peer-host",
+  "name": "bundled-shadow-peer-host",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "bundled-shadow-peer-host",
+      "version": "1.0.0",
+      "dependencies": {
+        "bundled-shadow-peer-inner": "1.0.0",
+        "bundled-shadow-shared": "1.0.0"
+      },
+      "bundleDependencies": [
+        "bundled-shadow-peer-inner"
+      ],
+      "_id": "bundled-shadow-peer-host@1.0.0",
+      "dist": {
+        "integrity": "sha512-hOrxItd+YcG100DXs5GSOSc+o+Uvcd5KBgJjhvmd6LWQivdoKo02bPCPD+Rijug4zHwIQQeQFbnBazfPg88TAw==",
+        "shasum": "4ff479a3931d1864c8f082429009e8a2ac0db57f",
+        "tarball": "http://localhost:4873/bundled-shadow-peer-host/-/bundled-shadow-peer-host-1.0.0.tgz"
+      }
+    }
+  }
+}

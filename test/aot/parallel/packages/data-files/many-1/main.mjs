@@ -1,0 +1,23 @@
+// Loads one program after another. Each imports a package of its own in one way.
+console.log("## assets.json_default.mjs");
+await import("./assets.json_default.mjs");
+console.log("## assets.json_kinds.mjs");
+await import("./assets.json_kinds.mjs");
+console.log("## assets.text.mjs");
+await import("./assets.text.mjs");
+console.log("## assets.toml.mjs");
+await import("./assets.toml.mjs");
+console.log("## assets.jsonc.mjs");
+await import("./assets.jsonc.mjs");
+console.log("## assets.yaml.mjs");
+await import("./assets.yaml.mjs");
+console.log("## assets.native.cjs");
+await import("./assets.native.cjs");
+console.log("## assets.native_by_platform.cjs");
+await import("./assets.native_by_platform.cjs");
+console.log("## assets.optional.cjs");
+await import("./assets.optional.cjs");
+console.log("## assets.optional.mjs");
+await import("./assets.optional.mjs");
+console.log("## assets.optional_peer.cjs");
+await import("./assets.optional_peer.cjs");

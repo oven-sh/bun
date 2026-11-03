@@ -4,6 +4,9 @@ if (!common.hasIntl) {
   // A handful of the tests fail when ICU is not included.
   common.skip('missing Intl');
 }
+// toascii.json expects the Unicode 16 UTS #46 table, which ICU ships from 76 on.
+if (parseInt(process.versions.icu) < 76)
+  common.skip('ICU predates Unicode 16');
 
 const fixtures = require('../common/fixtures');
 const { test, assert_equals, assert_throws } = require('../common/wpt').harness;

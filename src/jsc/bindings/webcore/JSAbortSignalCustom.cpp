@@ -40,12 +40,6 @@ bool JSAbortSignalOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> ha
     }
 
     if (!abortSignal.aborted()) {
-        if (abortSignal.isFollowingSignal()) {
-            if (reason) [[unlikely]]
-                *reason = "Is Following Signal"_s;
-            return true;
-        }
-
         if (abortSignal.hasActiveTimeoutTimer() && abortSignal.hasTimeoutObserver()) {
             if (reason) [[unlikely]]
                 *reason = "Has Observed Timeout"_s;

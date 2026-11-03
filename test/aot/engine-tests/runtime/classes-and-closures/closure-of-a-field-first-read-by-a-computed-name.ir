@@ -1,0 +1,58 @@
+# class Widget {
+#   count = 0;
+#   handler = () => ++this.count;
+# }
+# function make() { return new Widget(); }
+# function take(widget, name) { return widget[name]; }
+# The constructor leaves the closure of the field unmade. A read that knows neither the object nor the name finds the slot by the name at run time, and finds no closure made yet. The stub that looks the name up makes it by the stub that serves the reads by slot: no call into the run time. The second read finds the same closure.
+# FORM: AsRead
+# OPTIONS: references=narrow
+# STATISTIC: FieldsDeferringClosures = 1
+# RUN: run-in-shell --aotCountsPath=/dev/null let make; globalThis.register = value => { if (!make) { make = value; return; } const take = value; let sum = 0; for (let turn = 0; turn < 100; turn++) { const widget = make(); const handler = take(widget, "handler"); sum += handler() + handler() + (take(widget, "handler") === handler ? 0 : 1000) + take(widget, "count"); } print(sum); let calls = ""; const lines = aotRuntimeCounters().split("\n"); for (let i = 0; i < lines.length; i++) { if (/operation:operationAOT(ReadField|MaterializeDeferredClosure)/.test(lines[i])) calls += lines[i] + " "; } print(calls || "made without a call"); };
+# CHECK: 500
+# CHECK: made without a call
+# CHECK: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="Widget" module=m0 declared={type=anything} initialization=Undefined
+layout L0 kind=Instance name="Widget" constructor=f1 fields=[{key="count" declared={type=anything} flags=[IsRequired]}, {key="handler" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    PutModuleVariable v2 variable=g0
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="register" [isFreeName]
+    v6 = NewClosure function=f3
+    v7 = Call v5, -, v6
+    v8 = NewClosure function=f4
+    v9 = Call v5, -, v8
+    Return v9
+}
+function f1 name="Widget" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Integer integer=0
+    PropDefine v2, v3 key="count"
+    v5 = NewClosure v2 function=f2
+    PropDefine v2, v5 key="handler"
+    Return v2
+}
+function f2 name="handler" kind=Arrow captures=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="count"
+    v2 = Integer integer=1
+    v3 = Add v1, v2
+    PropSet v0, v3 key="count"
+    Return v3
+}
+function f3 name="make" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = Construct v0
+    Return v1
+}
+function f4 name="take" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+}

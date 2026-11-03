@@ -177,6 +177,7 @@ pub static LOADER_API_NAMES: api::Loader = {
     b"toml" => api::Loader::toml,
     b"yaml" => api::Loader::yaml,
     b"json5" => api::Loader::json5,
+    b"xml" => api::Loader::xml,
     b"wasm" => api::Loader::wasm,
     b"node" => api::Loader::napi,
     b"dataurl" => api::Loader::dataurl,
@@ -212,6 +213,7 @@ impl LoaderExt for Loader {
             Loader::Toml => api::Loader::toml,
             Loader::Yaml => api::Loader::yaml,
             Loader::Json5 => api::Loader::json5,
+            Loader::Xml => api::Loader::xml,
             Loader::Wasm => api::Loader::wasm,
             Loader::Napi => api::Loader::napi,
             Loader::Base64 => api::Loader::base64,
@@ -236,6 +238,7 @@ impl LoaderExt for Loader {
             api::Loader::toml => Loader::Toml,
             api::Loader::yaml => Loader::Yaml,
             api::Loader::json5 => Loader::Json5,
+            api::Loader::xml => Loader::Xml,
             api::Loader::wasm => Loader::Wasm,
             api::Loader::napi => Loader::Napi,
             api::Loader::base64 => Loader::Base64,
@@ -259,19 +262,4 @@ impl LoaderExt for Loader {
 pub enum BuiltInModule {
     Import(Box<[u8]>),
     Code(Box<[u8]>),
-}
-
-// `ExportsKind::to_module_type` — moved here from `bun_ast::nodes` to avoid
-// the `bun_options_types → bun_ast → bun_options_types` cycle.
-impl From<bun_ast::ExportsKind> for ModuleType {
-    fn from(k: bun_ast::ExportsKind) -> Self {
-        use bun_ast::ExportsKind as K;
-        match k {
-            K::None => ModuleType::Unknown,
-            K::Cjs => ModuleType::Cjs,
-            K::EsmWithDynamicFallback | K::EsmWithDynamicFallbackFromCjs | K::Esm => {
-                ModuleType::Esm
-            }
-        }
-    }
 }

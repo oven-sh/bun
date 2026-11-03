@@ -17,10 +17,10 @@ function translatePeerCertificate(c) {
   }
   if (c.infoAccess != null) {
     const info = c.infoAccess;
-    const parsed = (c.infoAccess = Object.create(null));
+    const parsed: Record<string, unknown[]> = (c.infoAccess = Object.create(null));
 
     // XXX: More key validation?
-    info.replace(/([^\n:]*):([^\n]*)(?:\n|$)/g, (all, key, val) => {
+    info.replace(/([^\n:]*):([^\n]*)(?:\n|$)/g, (all: string, key: string, val: string) => {
       if (val.charCodeAt(0) === 0x22) {
         // The translatePeerCertificate function is only
         // used on internally created legacy certificate

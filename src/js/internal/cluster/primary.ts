@@ -1,27 +1,73 @@
+import type { ClusterWorker } from "internal/cluster/Worker";
+
 const EventEmitter = require("node:events");
 const Worker = require("internal/cluster/Worker");
-const RoundRobinHandle = require("internal/cluster/RoundRobinHandle");
-const SharedHandle = require("internal/cluster/SharedHandle");
-const path = require("node:path");
-const { throwNotImplemented, kHandle } = require("internal/shared");
+const { kHandle } = require("internal/shared");
 
-const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
-const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessagePrimary", 3);
+const sendHelper = $bindgen("node_cluster_binding.bind.ts", "sendHelperPrimary");
+const onInternalMessage: (
+  handle: unknown,
+  worker: ClusterWorker,
+  callback: (this: ClusterWorker, message, handle: unknown) => void,
+) => void = $bindgen("node_cluster_binding.bind.ts", "onInternalMessagePrimary");
+const validateFd: (fd: number, wantDgram: boolean) => number = $bindgen(
+  "node_cluster_binding.bind.ts",
+  "clusterValidateFd",
+);
+const isDgramSocketFd: (fd: number) => boolean = $bindgen("udp_socket.bind.ts", "dgramIsFdAdopted");
+const { UV_EEXIST, UV_EINVAL, UV_ENOBUFS } = process.binding("uv");
 
-let child_process;
+let child_process: $BunModules["node:child_process"] | undefined;
+let RoundRobinHandle: $BunModules["internal/cluster/RoundRobinHandle"] | undefined;
+let SharedHandle: $BunModules["internal/cluster/SharedHandle"] | undefined;
+type Handle = InstanceType<NonNullable<typeof RoundRobinHandle>> | InstanceType<NonNullable<typeof SharedHandle>>;
 
 const ArrayPrototypeSlice = Array.prototype.slice;
 const ObjectValues = Object.values;
 const ObjectKeys = Object.keys;
 
-const cluster = new EventEmitter();
+interface ClusterSettings {
+  args?: string[];
+  exec?: string;
+  execArgv?: string[];
+  silent?: boolean;
+  cwd?: string;
+  serialization?: "json" | "advanced";
+  windowsHide?: boolean;
+  stdio?: unknown[];
+  gid?: number;
+  uid?: number;
+}
+
+interface PrimaryCluster extends InstanceType<typeof EventEmitter> {
+  isWorker: boolean;
+  isMaster: boolean;
+  isPrimary: boolean;
+  Worker: typeof Worker;
+  workers: Record<number, ClusterWorker>;
+  settings: ClusterSettings;
+  SCHED_NONE: number;
+  SCHED_RR: number;
+  schedulingPolicy: number;
+  setupPrimary(options?: ClusterSettings): void;
+  setupMaster(options?: ClusterSettings): void;
+  fork(env?: Record<string, string | undefined>): ClusterWorker;
+  disconnect(cb?: () => void): void;
+}
+
+interface DgramShareError extends Error {
+  code?: string;
+  syscall?: string;
+}
+
+const cluster = new EventEmitter() as PrimaryCluster;
 const intercom = new EventEmitter();
 const SCHED_NONE = 1;
 const SCHED_RR = 2;
 
 export default cluster;
 
-const handles = new Map();
+const handles = new Map<string, Handle>();
 cluster.isWorker = false;
 cluster.isMaster = true; // Deprecated alias. Must be same as isPrimary.
 cluster.isPrimary = true;
@@ -39,13 +85,7 @@ const schedulingPolicyEnv = process.env.NODE_CLUSTER_SCHED_POLICY;
 let schedulingPolicy = 0;
 if (schedulingPolicyEnv === "rr") schedulingPolicy = SCHED_RR;
 else if (schedulingPolicyEnv === "none") schedulingPolicy = SCHED_NONE;
-else if (process.platform === "win32") {
-  // // Round-robin doesn't perform well on
-  // // Windows due to the way IOCP is wired up.
-  // schedulingPolicy = SCHED_NONE;
-  // TODO
-  schedulingPolicy = SCHED_RR;
-} else schedulingPolicy = SCHED_RR;
+else schedulingPolicy = SCHED_RR;
 cluster.schedulingPolicy = schedulingPolicy;
 
 cluster.setupPrimary = function (options) {
@@ -77,9 +117,9 @@ function setupSettingsNT(settings) {
   cluster.emit("setup", settings);
 }
 
-function createWorkerProcess(id, env) {
+function createWorkerProcess(id: number, env: Record<string, string | undefined> | undefined) {
   const workerEnv = { ...process.env, ...env, NODE_UNIQUE_ID: `${id}` };
-  const execArgv = [...cluster.settings.execArgv];
+  const execArgv = [...cluster.settings.execArgv!];
 
   child_process ??= require("node:child_process");
   return child_process.fork(cluster.settings.exec, cluster.settings.args, {
@@ -95,7 +135,7 @@ function createWorkerProcess(id, env) {
   });
 }
 
-function removeWorker(worker) {
+function removeWorker(worker: ClusterWorker) {
   if (!worker) throw new Error("ERR_INTERNAL_ASSERTION");
   delete cluster.workers[worker.id];
 
@@ -105,11 +145,12 @@ function removeWorker(worker) {
   }
 }
 
-function removeHandlesForWorker(worker) {
+// channelGone: the channel is closed, so nothing the worker still holds can be acked (a primary disconnect() keeps it up until the acks arrive).
+function removeHandlesForWorker(worker: ClusterWorker, channelGone: boolean) {
   if (!worker) throw new Error("ERR_INTERNAL_ASSERTION");
 
   handles.forEach((handle, key) => {
-    if (handle.remove(worker)) handles.delete(key);
+    if (handle.remove(worker, channelGone)) handles.delete(key);
   });
 }
 
@@ -117,26 +158,26 @@ cluster.fork = function (env) {
   cluster.setupPrimary();
   const id = ++ids;
   const workerProcess = createWorkerProcess(id, env);
-  const worker = new Worker({
+  const worker: ClusterWorker = new Worker({
     id: id,
     process: workerProcess,
   });
 
-  worker.on("message", function (message, handle) {
+  worker.on("message", function (this: ClusterWorker, message: unknown, handle: unknown) {
     cluster.emit("message", this, message, handle);
   });
 
   // FIXME: throwing an error in this function does not get caught
   // at least in the cases where #handle has become null
   // may be always; don't have time to investigate right now
-  worker.process.once("exit", (exitCode, signalCode) => {
+  worker.process.once("exit", (exitCode: unknown, signalCode: unknown) => {
     /*
      * Remove the worker from the workers list only
      * if it has disconnected, otherwise we might
      * still want to access it.
      */
     if (!worker.isConnected()) {
-      removeHandlesForWorker(worker);
+      removeHandlesForWorker(worker, true);
       removeWorker(worker);
     }
 
@@ -153,7 +194,7 @@ cluster.fork = function (env) {
      * associated with this worker because it is
      * not connected to the primary anymore.
      */
-    removeHandlesForWorker(worker);
+    removeHandlesForWorker(worker, true);
 
     /*
      * Remove the worker from the workers list only
@@ -174,7 +215,7 @@ cluster.fork = function (env) {
   return worker;
 };
 
-function emitForkNT(worker) {
+function emitForkNT(worker: ClusterWorker) {
   cluster.emit("fork", worker);
 }
 
@@ -202,38 +243,78 @@ const methodMessageMapping = {
   queryServer,
 };
 
-function onmessage(message, _handle) {
+function onmessage(this: ClusterWorker, message, _handle: unknown) {
   const worker = this;
 
-  const fn = methodMessageMapping[message.act];
+  const fn: ((worker: ClusterWorker, message) => void) | undefined = methodMessageMapping[message.act];
 
   if (typeof fn === "function") fn(worker, message);
 }
 
-function online(worker) {
+function online(worker: ClusterWorker) {
   worker.state = "online";
   worker.emit("online");
   cluster.emit("online", worker);
 }
 
-function exitedAfterDisconnect(worker, message) {
+function exitedAfterDisconnect(worker: ClusterWorker, message) {
   worker.exitedAfterDisconnect = true;
   send(worker, { ack: message.seq });
 }
 
-function queryServer(worker, message) {
+// A handle closes its fd when its last worker is removed, so a second handle for the same fd
+// would close it while the first handle still uses it.
+function isFdInUse(fd: number, isUdp: boolean) {
+  // SharedHandle rejects a number that isn't a valid fd.
+  if ((fd | 0) !== fd) return false;
+  if (isUdp && isDgramSocketFd(fd)) return true;
+  let inUse = false;
+  handles.forEach(handle => {
+    if (handle.fd === fd) inUse = true;
+  });
+  return inUse;
+}
+
+function queryServer(worker: ClusterWorker, message) {
   // Stop processing if worker already disconnecting
   if (worker.exitedAfterDisconnect) return;
 
-  const key = `${message.address}:${message.port}:${message.addressType}:` + `${message.fd}:${message.index}`;
-  let handle = handles.get(key);
+  RoundRobinHandle ??= require("internal/cluster/RoundRobinHandle");
+  SharedHandle ??= require("internal/cluster/SharedHandle");
+
+  const key =
+    `${message.address}:${message.port}:${message.addressType}:${message.fd}` +
+    (message.port === 0 ? `:${message.index}` : "");
+  const cachedHandle = handles.get(key);
+  let handle: Handle | undefined;
+  if (cachedHandle && !cachedHandle.has(worker)) handle = cachedHandle;
+
+  const kSharedOnlyHint =
+    "TLS and non-TLS cluster workers cannot share the same address:port under SCHED_RR " +
+    "(Bun's TLS accept is native and cannot adopt round-robin connection fds)";
+  if (handle !== undefined && message.sharedOnly === true && handle instanceof RoundRobinHandle) {
+    send(worker, { errno: UV_EINVAL, key, ack: message.seq, data: handle.data, bunHint: kSharedOnlyHint }, null);
+    return;
+  }
+  if (
+    schedulingPolicy === SCHED_RR &&
+    handle !== undefined &&
+    message.sharedOnly !== true &&
+    handle instanceof SharedHandle &&
+    handle.sharedOnly &&
+    message.addressType !== "udp4" &&
+    message.addressType !== "udp6"
+  ) {
+    send(worker, { errno: UV_EINVAL, key, ack: message.seq, data: handle.data, bunHint: kSharedOnlyHint }, null);
+    return;
+  }
 
   if (handle === undefined) {
     let address = message.address;
 
     // Find shortest path for unix sockets because of the ~100 byte limit
     if (message.port < 0 && typeof address === "string" && process.platform !== "win32") {
-      address = path.relative(process.cwd(), address);
+      address = require("node:path").relative(process.cwd(), address);
 
       if (message.address.length < address.length) address = message.address;
     }
@@ -241,37 +322,46 @@ function queryServer(worker, message) {
     // UDP is exempt from round-robin connection balancing for what should
     // be obvious reasons: it's connectionless. There is nothing to send to
     // the workers except raw datagrams and that's pointless.
-    if (message.addressType === "udp4" || message.addressType === "udp6") {
-      if (process.platform === "win32") {
-        // Sharing a dgram descriptor with a worker is not supported on
-        // Windows. Node's write of the handle fails with ENOTSUP on the
-        // primary-side Worker object and the worker never gets a reply —
-        // node's test-dgram-bind-shared-ports.js asserts exactly that.
-        const error = new Error(`write ENOTSUP - cannot share a dgram socket with a worker on Windows`);
-        error.code = "ENOTSUP";
-        error.syscall = "write";
-        worker.emit("error", error);
+    if (process.platform === "win32" && (message.addressType === "udp4" || message.addressType === "udp6")) {
+      const error: DgramShareError = new Error(`write ENOTSUP - cannot share a dgram socket with a worker on Windows`);
+      error.code = "ENOTSUP";
+      error.syscall = "write";
+      worker.emit("error", error);
+      return;
+    }
+    const fd = message.fd;
+    if (typeof fd === "number" && fd >= 0) {
+      const isUdp = message.addressType === "udp4" || message.addressType === "udp6";
+      if (isFdInUse(fd, isUdp)) {
+        // Like node, report a wrong fd type before reporting that the fd is in use.
+        const errno = validateFd(fd, isUdp) || UV_EEXIST;
+        send(worker, { errno, key, ack: message.seq, data: cachedHandle ? cachedHandle.data : message.data }, null);
         return;
       }
+    }
+    if (
+      schedulingPolicy !== SCHED_RR ||
+      message.sharedOnly === true ||
+      message.addressType === "udp4" ||
+      message.addressType === "udp6"
+    ) {
       handle = new SharedHandle(key, address, message);
-    } else if (schedulingPolicy !== SCHED_RR) {
-      throwNotImplemented("node:cluster SCHED_NONE");
     } else {
       handle = new RoundRobinHandle(key, address, message);
     }
 
-    handles.set(key, handle);
+    if (!cachedHandle) handles.set(key, handle);
   }
 
   if (!handle.data) handle.data = message.data;
 
   // Set custom server data
-  handle.add(worker, (errno, reply, handle) => {
-    const { data } = handles.get(key);
+  handle.add(worker, (errno, reply, serverHandle) => {
+    const data = handles.get(key)?.data;
 
-    if (errno) handles.delete(key); // Gives other workers a chance to retry.
+    if (errno && !cachedHandle) handles.delete(key);
 
-    send(
+    const sent = send(
       worker,
       {
         errno,
@@ -280,12 +370,18 @@ function queryServer(worker, message) {
         data,
         ...reply,
       },
-      handle,
+      serverHandle,
     );
+    if (sent === null && serverHandle !== null && serverHandle !== undefined) {
+      send(worker, { errno: UV_ENOBUFS, key, ack: message.seq, data }, null);
+      // The worker never got the handle, so it will never send act:close for it.
+      if (handle.remove(worker) && handles.get(key) === handle) handles.delete(key);
+    }
+    if (cachedHandle && handle !== cachedHandle && !errno) handle.remove(worker);
   });
 }
 
-function listening(worker, message) {
+function listening(worker: ClusterWorker, message) {
   const info = {
     addressType: message.addressType,
     address: message.address,
@@ -300,35 +396,28 @@ function listening(worker, message) {
 
 // Server in worker is closing, remove from list. The handle may have been
 // removed by a prior call to removeHandlesForWorker() so guard against that.
-function close(worker, message) {
+function close(worker: ClusterWorker, message) {
   const key = message.key;
   const handle = handles.get(key);
 
   if (handle && handle.remove(worker)) handles.delete(key);
 }
 
-function send(worker, message, handle?, cb?) {
-  if (handle) {
-    // Descriptor-bearing replies travel as a NODE_HANDLE envelope so the
-    // worker pairs the descriptor with the message and acks it; the inner
-    // message is marked NODE_CLUSTER so it is dispatched as a cluster-internal
-    // message rather than a process 'message' event.
-    message = { cmd: "NODE_HANDLE", type: "dgram.Native", message: { ...message, cmd: "NODE_CLUSTER" } };
-  }
+function send(worker: ClusterWorker, message: object, handle?: object | null, cb?: (reply) => void) {
   return sendHelper(worker.process[kHandle], message, handle, cb);
 }
 
 // Extend generic Worker with methods specific to the primary process.
-Worker.prototype.disconnect = function () {
+Worker.prototype.disconnect = function (this: ClusterWorker) {
   this.exitedAfterDisconnect = true;
   send(this, { act: "disconnect" });
-  this.process.disconnect();
-  removeHandlesForWorker(this);
+  this.process.disconnect!();
+  removeHandlesForWorker(this, false);
   removeWorker(this);
   return this;
 };
 
-Worker.prototype.destroy = function (signo) {
+Worker.prototype.destroy = function (this: ClusterWorker, signo?: string) {
   const proc = this.process;
   const signal = signo || "SIGTERM";
 

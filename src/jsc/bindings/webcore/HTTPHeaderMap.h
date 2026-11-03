@@ -83,23 +83,6 @@ public:
             String key;
             std::optional<HTTPHeaderName> keyAsHTTPHeaderName;
             String value;
-
-            String name() const
-            {
-                if (keyAsHTTPHeaderName) {
-                    return WTF::httpHeaderNameDefaultCaseStringImpl(keyAsHTTPHeaderName.value());
-                }
-
-                return key;
-            }
-            String asciiLowerCaseName() const
-            {
-                if (keyAsHTTPHeaderName) {
-                    return WTF::httpHeaderNameStringImpl(keyAsHTTPHeaderName.value());
-                }
-
-                return lowercaseHeaderName(key);
-            }
         };
 
         const KeyValue* get() const
@@ -163,22 +146,9 @@ public:
     bool isEmpty() const { return m_commonHeaders.isEmpty() && m_uncommonHeaders.isEmpty() && m_setCookieHeaders.isEmpty(); }
     int size() const { return m_commonHeaders.size() + m_uncommonHeaders.size() + m_setCookieHeaders.size(); }
 
-    void clear()
-    {
-        m_commonHeaders.clear();
-        m_uncommonHeaders.clear();
-    }
-
-    void shrinkToFit()
-    {
-        m_commonHeaders.shrinkToFit();
-        m_uncommonHeaders.shrinkToFit();
-    }
-
     WEBCORE_EXPORT String get(const StringView name) const;
     WEBCORE_EXPORT void set(const String& name, const String& value);
     WEBCORE_EXPORT void add(const String& name, const String& value);
-    WEBCORE_EXPORT void append(const String& name, const String& value);
     WEBCORE_EXPORT bool contains(const StringView) const;
     WEBCORE_EXPORT int64_t indexOf(StringView name) const;
     WEBCORE_EXPORT bool remove(const StringView);
@@ -190,8 +160,12 @@ public:
     HeaderIndex indexOf(HTTPHeaderName name) const;
 
     WEBCORE_EXPORT String get(HTTPHeaderName) const;
+    // Returns the Set-Cookie values joined with ", ", or nullopt if the result exceeds the max string length.
+    WEBCORE_EXPORT std::optional<String> tryJoinSetCookieHeaders() const;
     void set(HTTPHeaderName, const String& value);
     void add(HTTPHeaderName, const String& value);
+    // Returns false if the list of Set-Cookie values can't grow.
+    bool tryAddSetCookie(const String& value);
     WEBCORE_EXPORT bool contains(HTTPHeaderName) const;
     WEBCORE_EXPORT bool remove(HTTPHeaderName);
 
@@ -245,10 +219,9 @@ public:
     void setUncommonHeader(const String& name, const String& value);
     void addUncommonHeader(const String& name, const String& value);
     void addUncommonHeaderCloneName(const StringView name, const String& value);
-
-private:
     WEBCORE_EXPORT String getUncommonHeader(const StringView name) const;
 
+private:
     CommonHeadersVector m_commonHeaders;
     UncommonHeadersVector m_uncommonHeaders;
     Vector<String, 0> m_setCookieHeaders;

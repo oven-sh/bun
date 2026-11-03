@@ -1,0 +1,20 @@
+# In a test run a reached call of spyOn lists the locked member that its operands name. Outside a test run nothing is listed
+# RUN: valueflow-results
+# OPTIONS: admit=ReplacedBuiltins
+# CHECK: replaced-builtin PromiseRace
+# CHECK-NEXT: replaced-builtin StringPrototypeIndexOf
+# CHECK-NOT: replaced-builtin
+
+module m0 path="main.test.js" displayPath="main.test.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=BunTestSpyOn
+    v1 = Builtin builtin=StringPrototype
+    v2 = String string="indexOf"
+    v3 = Call v0, -, v1, v2
+    v4 = Builtin builtin=Promise
+    v5 = String string="race"
+    v6 = Call v0, -, v4, v5
+    Return
+}

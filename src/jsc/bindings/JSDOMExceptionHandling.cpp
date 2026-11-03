@@ -58,22 +58,13 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* except
     (void)scope.tryClearException();
     vm.clearLastException();
 
-    auto* globalObject = uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject);
-    // if (auto* window = dynamicDowncast<JSDOMWindow>( globalObject)) {
-    //     if (!window->wrapped().isCurrentlyDisplayedInFrame())
-    //         return;
-    // }
-
     int lineNumber = 0;
     int columnNumber = 0;
     String exceptionSourceURL;
-    // if (auto* callFrame = callStack->firstNonNativeCallFrame()) {
-    //     lineNumber = callFrame->lineNumber();
-    //     columnNumber = callFrame->columnNumber();
-    //     exceptionSourceURL = callFrame->sourceURL();
-    // }
 
-    Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+    // The listener's realm can be a node:vm context, which isn't a Zig::GlobalObject.
+    Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(lexicalGlobalObject, exception);
+    RETURN_IF_EXCEPTION(scope, );
 
     if (exceptionDetails) {
         auto errorMessage = retrieveErrorMessage(*lexicalGlobalObject, vm, exception->value(), scope);
@@ -115,7 +106,21 @@ String retrieveErrorMessage(JSGlobalObject& lexicalGlobalObject, VM& vm, JSValue
     return errorMessage;
 }
 
-JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec, const String& message)
+JSValue createDOMExceptionObject(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec, const String& message)
+{
+    // FIXME: All callers to createDOMException need to pass in the correct global object.
+    // For now, we're going to assume the lexicalGlobalObject. Which is wrong in cases like this:
+    // frames[0].document.createElement(null, null); // throws an exception which should have the subframe's prototypes.
+    // https://bugs.webkit.org/show_bug.cgi?id=222229
+    JSDOMGlobalObject* globalObject = deprecatedGlobalObjectForPrototype(lexicalGlobalObject);
+    JSValue errorObject = toJS(lexicalGlobalObject, globalObject, DOMException::create(ec, message));
+
+    ASSERT(errorObject);
+    addErrorInfo(lexicalGlobalObject, asObject(errorObject), true);
+    return errorObject;
+}
+
+JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec, const String& message, const String& extra)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     if (vm.hasPendingTerminationException()) [[unlikely]]
@@ -154,34 +159,38 @@ JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec
     case ExceptionCode::InvalidThisError:
         return Bun::createInvalidThisError(lexicalGlobalObject, message.isEmpty() ? "Expected this to be of a different type"_s : message);
 
-    case ExceptionCode::InvalidURLError:
-        return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_URL, message.isEmpty() ? "Invalid URL"_s : message);
+    case ExceptionCode::InvalidURLError: {
+        // Node's ERR_INVALID_URL: plain TypeError (`${err}` has no [code]
+        // suffix), message "Invalid URL" (nodejs/node#38614), the offending
+        // input on `error.input`, and — only when a base argument was passed —
+        // the raw base string on `error.base`. `extra` carries the base; a
+        // null String means the one-arg constructor was used.
+        auto& vm = JSC::getVM(lexicalGlobalObject);
+        auto* error = JSC::createTypeError(lexicalGlobalObject, "Invalid URL"_s);
+        Bun::putDirectNamed(vm, error, "code"_s, JSC::jsString(vm, WTF::String("ERR_INVALID_URL"_s)));
+        error->putDirect(vm, vm.propertyNames->input, JSC::jsString(vm, message));
+        if (!extra.isNull())
+            Bun::putDirectNamed(vm, error, "base"_s, JSC::jsString(vm, extra));
+        return error;
+    }
 
     case ExceptionCode::CryptoOperationFailedError:
         return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_CRYPTO_OPERATION_FAILED, message.isEmpty() ? "Crypto operation failed"_s : message);
 
     case ExceptionCode::EVENT_RECURSION:
         return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_EVENT_RECURSION, message);
+    case ExceptionCode::WORKER_INVALID_EXEC_ARGV:
+        return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_WORKER_INVALID_EXEC_ARGV, message);
 
-    default: {
-        // FIXME: All callers to createDOMException need to pass in the correct global object.
-        // For now, we're going to assume the lexicalGlobalObject. Which is wrong in cases like this:
-        // frames[0].document.createElement(null, null); // throws an exception which should have the subframe's prototypes.
-        // https://bugs.webkit.org/show_bug.cgi?id=222229
-        JSDOMGlobalObject* globalObject = deprecatedGlobalObjectForPrototype(lexicalGlobalObject);
-        JSValue errorObject = toJS(lexicalGlobalObject, globalObject, DOMException::create(ec, message));
-
-        ASSERT(errorObject);
-        addErrorInfo(lexicalGlobalObject, asObject(errorObject), true);
-        return errorObject;
-    }
+    default:
+        return createDOMExceptionObject(lexicalGlobalObject, ec, message);
     }
     return {};
 }
 
 JSValue createDOMException(JSGlobalObject& lexicalGlobalObject, Exception&& exception)
 {
-    return createDOMException(&lexicalGlobalObject, exception.code(), exception.releaseMessage());
+    return createDOMException(&lexicalGlobalObject, exception.code(), exception.releaseMessage(), exception.releaseExtra());
 }
 
 void propagateExceptionSlowPath(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& throwScope, Exception&& exception)

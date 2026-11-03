@@ -34,8 +34,7 @@
     Exposed=(Window,Worker),
     EnabledAtRuntime=WebSocketEnabled
 ] interface WebSocket : EventTarget {
-    [CallWith=CurrentScriptExecutionContext] constructor(USVString url, optional sequence<DOMString> protocols = []);
-    [CallWith=CurrentScriptExecutionContext] constructor(USVString url, DOMString protocol);
+    [CallWith=CurrentScriptExecutionContext] constructor(USVString url, optional (DOMString or sequence<DOMString> or WebSocketOptions) protocols);
 
     readonly attribute USVString URL; // Lowercased .url is the one in the spec, but leaving .URL for compatibility reasons.
     readonly attribute USVString url;

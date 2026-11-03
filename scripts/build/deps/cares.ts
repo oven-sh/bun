@@ -12,7 +12,7 @@ import type { Config } from "../config.ts";
 import type { Dependency } from "../source.ts";
 import { depBuildDir } from "../source.ts";
 
-const CARES_COMMIT = "3ac47ee46edd8ea40370222f91613fc16c434853";
+const CARES_COMMIT = "0b88066f79ac9745d6819899f1794df91b73c873";
 
 // prettier-ignore
 const SOURCES = [
@@ -136,8 +136,8 @@ function buildH(cfg: Config): string {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// ares_config.h — private, included by every .c via ares_setup.h. Same shape
-// as libarchive's: HAVE_* booleans + the recv/send prototype types c-ares
+// ares_config.h — private, included by every .c via ares_setup.h.
+// HAVE_* booleans + the recv/send prototype types c-ares
 // uses to cast its socket calls.
 // ───────────────────────────────────────────────────────────────────────────
 

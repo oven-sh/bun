@@ -35,8 +35,8 @@ describe.skipIf(!isWindows)("Bun.listen named-pipe error path", () => {
           console.error("expected code EADDRINUSE, got", e.code);
           process.exit(1);
         }
-        if (e.errno !== -98) {
-          console.error("expected errno -98, got", e.errno);
+        if (require("util").getSystemErrorName(e.errno) !== "EADDRINUSE") {
+          console.error("expected errno to resolve to EADDRINUSE, got", e.errno);
           process.exit(1);
         }
         if (e.syscall !== "listen") {

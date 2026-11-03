@@ -2,18 +2,19 @@ use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
     EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
-    ParseFlagResult, ShellTask, parse_flags, unsupported_flag,
+    ParseFlagResult, ShellTask, parse_flags,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
+use core::ops::ControlFlow;
 
 #[derive(Default)]
-pub struct Touch {
+pub(crate) struct Touch {
     pub(crate) state: State,
 }
 
 #[derive(Default)]
-pub enum State {
+pub(crate) enum State {
     #[default]
     Idle,
     Exec(ExecState),
@@ -21,7 +22,7 @@ pub enum State {
     Done,
 }
 
-pub struct ExecState {
+pub(crate) struct ExecState {
     pub(crate) started: bool,
     pub(crate) tasks_count: usize,
     pub(crate) tasks_done: usize,
@@ -30,10 +31,10 @@ pub struct ExecState {
     /// Index into argv where filepath args start.
     pub(crate) args_start: usize,
     pub(crate) err: Option<bun_sys::Error>,
-    /// FIFO of in-flight OutputTask pointers awaiting an IOWriter chunk
-    /// completion. Stopgap until `WriterTag` can carry the `*mut OutputTask`
+    /// FIFO of in-flight `OutputTask`s awaiting an IOWriter chunk
+    /// completion. Stopgap until `WriterTag` can carry the `OutputTask`
     /// directly — see mkdir.rs `Exec::output_queue` for rationale.
-    pub(crate) output_queue: std::collections::VecDeque<*mut OutputTask<Touch>>,
+    pub(crate) output_queue: std::collections::VecDeque<Box<OutputTask<Touch>>>,
 }
 
 impl Touch {
@@ -95,7 +96,7 @@ impl Touch {
                     Action::Schedule(exec.args_start)
                 }
             }
-            State::WaitingWriteErr => return Yield::failed(),
+            State::WaitingWriteErr => return Yield::suspended(),
             State::Done => return Builtin::done(interp, cmd, 0),
         };
         match action {
@@ -137,19 +138,12 @@ impl Touch {
             None
         };
         if let Some(task) = pending {
-            // SAFETY: `task` was heap-allocated in `OutputTask::new` and
-            // pushed by `write_err`/`write_out`; not yet freed.
-            return unsafe { OutputTask::<Touch>::on_io_writer_chunk(task, interp, written, e) };
+            return OutputTask::<Touch>::on_io_writer_chunk(task, interp, written, e);
         }
         Self::next(interp, cmd)
     }
 
-    /// # Safety
-    /// `task` must be a live heap allocation produced by
-    /// [`ShellTouchTask::create`]; ownership is reclaimed here.
-    fn on_shell_touch_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellTouchTask) {
-        // SAFETY: task was heap-allocated in create(); reclaim.
-        let mut task = unsafe { bun_core::heap::take(task) };
+    fn on_shell_touch_task_done(interp: &Interpreter, cmd: NodeId, task: &mut ShellTouchTask) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.tasks_done += 1;
         }
@@ -170,27 +164,28 @@ impl OutputTaskVTable for Touch {
     fn write_err(
         interp: &Interpreter,
         cmd: NodeId,
-        child: *mut OutputTask<Self>,
+        child: Box<OutputTask<Self>>,
         errbuf: &[u8],
-    ) -> Option<Yield> {
+    ) -> ControlFlow<Yield, Box<OutputTask<Self>>> {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_waiting += 1;
         }
         if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
             // Stash so on_io_writer_chunk can route to the OutputTask state
             // machine and reclaim the box (stopgap for missing WriterTag).
-            if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-                exec.output_queue.push_back(child);
-            }
+            let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
+                unreachable!()
+            };
+            exec.output_queue.push_back(child);
             let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Some(
+            return ControlFlow::Break(
                 Builtin::of_mut(interp, cmd)
                     .stderr
                     .enqueue(childptr, errbuf, safeguard),
             );
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
-        None
+        ControlFlow::Continue(child)
     }
     fn on_write_err(interp: &Interpreter, cmd: NodeId) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
@@ -200,27 +195,27 @@ impl OutputTaskVTable for Touch {
     fn write_out(
         interp: &Interpreter,
         cmd: NodeId,
-        child: *mut OutputTask<Self>,
-        output: &mut OutputSrc,
-    ) -> Option<Yield> {
+        child: Box<OutputTask<Self>>,
+    ) -> ControlFlow<Yield, Box<OutputTask<Self>>> {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_waiting += 1;
         }
         if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-            if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-                exec.output_queue.push_back(child);
-            }
+            let buf = child.output.slice().to_vec();
+            let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
+                unreachable!()
+            };
+            exec.output_queue.push_back(child);
             let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            let buf = output.slice().to_vec();
-            return Some(
+            return ControlFlow::Break(
                 Builtin::of_mut(interp, cmd)
                     .stdout
                     .enqueue(childptr, &buf, safeguard),
             );
         }
-        let buf = output.slice().to_vec();
+        let buf = child.output.slice().to_vec();
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
-        None
+        ControlFlow::Continue(child)
     }
     fn on_write_out(interp: &Interpreter, cmd: NodeId) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
@@ -233,7 +228,7 @@ impl OutputTaskVTable for Touch {
 }
 
 /// utimes() the path (creating it on ENOENT) on a worker thread.
-pub struct ShellTouchTask {
+pub(crate) struct ShellTouchTask {
     pub(crate) cmd: NodeId,
     pub(crate) filepath: Vec<u8>,
     pub(crate) cwd_path: Vec<u8>,
@@ -265,15 +260,17 @@ impl ShellTouchTask {
     pub(crate) fn run_from_thread_pool(this: &mut ShellTouchTask) {
         use bun_paths::resolve_path::{self, Platform, platform};
         use bun_sys::FdExt as _;
-        // We have to give an absolute path.
-        let mut buf = bun_paths::PathBuffer::uninit();
+        // We have to give an absolute path. An operand that does not fit the
+        // path buffer is still passed on whole, so the OS reports ENAMETOOLONG
+        // for it like for any other operand.
+        let mut spill = Vec::new();
         let filepath: &bun_core::ZStr = if Platform::AUTO.is_absolute(&this.filepath) {
-            // Re-terminate into the path buffer (`filepath` is the bare argv
-            // bytes without the trailing NUL).
-            resolve_path::join_z_buf::<platform::Auto>(buf.as_mut_slice(), &[&this.filepath])
+            // Re-terminate (`filepath` is the bare argv bytes without the
+            // trailing NUL).
+            resolve_path::join_z_spill::<platform::Auto>(&mut spill, &[&this.filepath])
         } else {
-            resolve_path::join_z_buf::<platform::Auto>(
-                buf.as_mut_slice(),
+            resolve_path::join_z_spill::<platform::Auto>(
+                &mut spill,
                 &[&this.cwd_path, &this.filepath],
             )
         };
@@ -310,17 +307,30 @@ impl ShellTouchTask {
 
     /// # Safety
     /// `this` must be a live heap allocation produced by [`Self::create`];
-    /// ownership is consumed via [`Touch::on_shell_touch_task_done`].
+    /// ownership is reclaimed here.
     fn run_from_main_thread(this: *mut ShellTouchTask, interp: &Interpreter) {
         // SAFETY: `this` is a live heap-allocated task.
-        let cmd = unsafe { (*this).cmd };
-        // SAFETY: forwarded from caller's contract.
-        Touch::on_shell_touch_task_done(interp, cmd, this);
+        let mut task = unsafe { bun_core::heap::take(this) };
+        let cmd = task.cmd;
+        Touch::on_shell_touch_task_done(interp, cmd, &mut task);
     }
 }
 
 impl bun_event_loop::Taskable for ShellTouchTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellTouchTask;
+    /// A pool completion that will not run: drop the keep-alive and the box
+    /// (nothing else frees an unrun one).
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box the builtin scheduled.
+        unsafe {
+            (*this).task.unref_unrun();
+            drop(bun_core::heap::take(this));
+        }
+    }
+    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellTouchTask {
@@ -336,37 +346,34 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellTouchTask {
 }
 
 #[derive(Clone, Copy, Default)]
-pub struct Opts {}
+pub(crate) struct Opts {}
 
 impl FlagParser for Opts {
-    fn parse_long(&mut self, flag: &[u8]) -> Option<ParseFlagResult> {
+    fn parse_long<'a>(&mut self, flag: &'a [u8]) -> Option<ParseFlagResult<'a>> {
         match flag {
-            b"--no-create" => Some(ParseFlagResult::Unsupported(unsupported_flag(
-                b"--no-create",
-            ))),
-            b"--date" => Some(ParseFlagResult::Unsupported(unsupported_flag(b"--date"))),
-            b"--reference" => Some(ParseFlagResult::Unsupported(unsupported_flag(
-                b"--reference=FILE",
-            ))),
-            b"--time" => Some(ParseFlagResult::Unsupported(unsupported_flag(
-                b"--reference=FILE",
-            ))),
+            b"--no-create" => Some(ParseFlagResult::Unsupported(b"--no-create")),
+            b"--date" => Some(ParseFlagResult::Unsupported(b"--date")),
+            b"--reference" => Some(ParseFlagResult::Unsupported(b"--reference=FILE")),
+            b"--time" => Some(ParseFlagResult::Unsupported(b"--reference=FILE")),
             _ => None,
         }
     }
 
-    fn parse_short(&mut self, ch: u8, smallflags: &[u8], i: usize) -> Option<ParseFlagResult> {
+    fn parse_short<'a>(
+        &mut self,
+        ch: u8,
+        smallflags: &'a [u8],
+        i: usize,
+    ) -> Option<ParseFlagResult<'a>> {
         match ch {
-            b'a' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-a"))),
-            b'c' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-c"))),
-            b'd' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-d"))),
-            b'h' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-h"))),
-            b'm' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-m"))),
-            b'r' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-r"))),
-            b't' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-t"))),
-            _ => Some(ParseFlagResult::IllegalOption(
-                &raw const smallflags[1 + i..],
-            )),
+            b'a' => Some(ParseFlagResult::Unsupported(b"-a")),
+            b'c' => Some(ParseFlagResult::Unsupported(b"-c")),
+            b'd' => Some(ParseFlagResult::Unsupported(b"-d")),
+            b'h' => Some(ParseFlagResult::Unsupported(b"-h")),
+            b'm' => Some(ParseFlagResult::Unsupported(b"-m")),
+            b'r' => Some(ParseFlagResult::Unsupported(b"-r")),
+            b't' => Some(ParseFlagResult::Unsupported(b"-t")),
+            _ => Some(ParseFlagResult::IllegalOption(&smallflags[1 + i..])),
         }
     }
 }

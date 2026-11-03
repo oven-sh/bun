@@ -61,7 +61,6 @@ public:
 
     NamedCurve namedCurve() const { return m_curve; }
 
-    static bool isValidOKPAlgorithm(CryptoAlgorithmIdentifier);
     static KeyMaterial ed25519PublicFromPrivate(const KeyMaterial& privateKey);
     static KeyMaterial x25519PublicFromPrivate(const KeyMaterial& privateKey);
     static KeyMaterial ed25519PrivateFromSeed(KeyMaterial&& seed);
@@ -85,8 +84,6 @@ private:
     static bool isPlatformSupportedCurve(NamedCurve);
     static std::optional<CryptoKeyPair> platformGeneratePair(CryptoAlgorithmIdentifier, NamedCurve, bool extractable, CryptoKeyUsageBitmap);
     Vector<uint8_t> platformExportRaw() const;
-    Vector<uint8_t> platformExportSpki() const;
-    Vector<uint8_t> platformExportPkcs8() const;
 
     NamedCurve m_curve;
     KeyMaterial m_data;

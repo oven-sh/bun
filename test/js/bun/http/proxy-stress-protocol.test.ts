@@ -75,7 +75,7 @@ describe("early reply during upload", () => {
       url: `${withTls ? "https" : "http"}://localhost:${port}`,
       port,
       close: () => server.close(),
-      [Symbol.asyncDispose]: async () => server.close(),
+      [Symbol.asyncDispose]: async (): Promise<any> => server.close(),
     };
   }
 
@@ -235,7 +235,7 @@ describe("1xx through tunnel", () => {
     await once(server, "listening");
     return {
       url: `${withTls ? "https" : "http"}://localhost:${(server.address() as net.AddressInfo).port}`,
-      [Symbol.asyncDispose]: async () => server.close(),
+      [Symbol.asyncDispose]: async (): Promise<any> => server.close(),
     };
   }
 
@@ -387,7 +387,7 @@ describe("HTTP/1.0 origin through tunnel", () => {
     await once(server, "listening");
     return {
       url: `${withTls ? "https" : "http"}://localhost:${(server.address() as net.AddressInfo).port}`,
-      [Symbol.asyncDispose]: async () => server.close(),
+      [Symbol.asyncDispose]: async (): Promise<any> => server.close(),
     };
   }
 

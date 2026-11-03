@@ -1,0 +1,1 @@
+globalThis.log ??= []; const note = s => globalThis.log.push(s); note("main"); import "./a.mjs"; import "./b.mjs"; export * from "./c.mjs"; note("before require"); require("./r.cjs"); note("after require"); await import("./b.mjs"); console.log(globalThis.log.join());

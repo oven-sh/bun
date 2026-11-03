@@ -9,7 +9,7 @@
 //!
 //! Ported from TypeScript `src/ReactiveScopes/AlignMethodCallScopes.ts`.
 
-use std::collections::HashMap;
+use crate::collections::FxHashMap as HashMap;
 
 use crate::hir::environment::Environment;
 use crate::hir::{EvaluationOrder, HirFunction, IdentifierId, InstructionValue, ScopeId};
@@ -24,8 +24,12 @@ use crate::utils::DisjointSet;
 ///
 /// Corresponds to TS `alignMethodCallScopes(fn: HIRFunction): void`.
 pub(crate) fn align_method_call_scopes(func: &mut HirFunction, env: &mut Environment) {
+    if !env.has_stack() {
+        return;
+    }
+
     // Maps an identifier to the scope it should be assigned to (or None to remove scope)
-    let mut scope_mapping: HashMap<IdentifierId, Option<ScopeId>> = HashMap::new();
+    let mut scope_mapping: HashMap<IdentifierId, Option<ScopeId>> = HashMap::default();
     let mut merged_scopes = DisjointSet::<ScopeId>::new();
 
     // Phase 1: Walk instructions and collect scope relationships
@@ -76,7 +80,8 @@ pub(crate) fn align_method_call_scopes(func: &mut HirFunction, env: &mut Environ
     // Phase 2: Merge scope ranges for unioned scopes.
     // Use a HashMap to accumulate min/max across all scopes mapping to the same root,
     // matching TS behavior where root.range is updated in-place during iteration.
-    let mut range_updates: HashMap<ScopeId, (EvaluationOrder, EvaluationOrder)> = HashMap::new();
+    let mut range_updates: HashMap<ScopeId, (EvaluationOrder, EvaluationOrder)> =
+        HashMap::default();
 
     merged_scopes.for_each(|scope_id, root_id| {
         if scope_id == root_id {
@@ -108,13 +113,16 @@ pub(crate) fn align_method_call_scopes(func: &mut HirFunction, env: &mut Environ
 
     // Sync identifier mutable_ranges that shared the old scope range.
     // Uses MutableRangeId for exact identity matching instead of value comparison.
-    for ident in &mut env.identifiers {
-        if let Some(scope_id) = ident.scope {
-            if let Some(&orig_range_id) = original_range_ids.get(&scope_id) {
-                if ident.mutable_range.id == orig_range_id {
-                    let new_range = &env.scopes[scope_id.0 as usize].range;
-                    ident.mutable_range.start = new_range.start;
-                    ident.mutable_range.end = new_range.end;
+    // This runs for each nested function, and the identifiers are those of all functions.
+    if !original_range_ids.is_empty() {
+        for ident in &mut env.identifiers {
+            if let Some(scope_id) = ident.scope {
+                if let Some(&orig_range_id) = original_range_ids.get(&scope_id) {
+                    if ident.mutable_range.id == orig_range_id {
+                        let new_range = &env.scopes[scope_id.0 as usize].range;
+                        ident.mutable_range.start = new_range.start;
+                        ident.mutable_range.end = new_range.end;
+                    }
                 }
             }
         }

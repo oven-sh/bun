@@ -60,18 +60,13 @@ test("native ReadableStream reuses the pull buffer across small reads", async ()
   // through the native pull path.
   expect(chunks.length).toBeGreaterThanOrEqual(CHUNKS_TO_WRITE);
 
-  // Consecutive small reads should land in the same backing buffer (the
-  // tail subarray is reused until a read fills it). 128 bytes of 2-byte
-  // chunks fits well inside one 256KB buffer, so the whole stream should
-  // share a handful at most. Pre-fix every chunk had its own 256KB
-  // buffer, so this was ~chunks.length.
+  // A small read is copied out right-sized and the pull slab is reused for
+  // the next read, so each chunk's backing store is its own few bytes rather
+  // than a 256KB slab per chunk (~chunks.length * 256KB ≈ 16 MB before).
   const distinctBuffers = new Set(chunks.map(c => c.buffer));
-  expect(distinctBuffers.size).toBeLessThan(8);
-
   let backingBytes = 0;
   for (const buf of distinctBuffers) backingBytes += buf.byteLength;
-  // Pre-fix this was ~chunks.length * 256KB ≈ 16 MB.
-  expect(backingBytes).toBeLessThan(4 * 1024 * 1024);
+  expect(backingBytes).toBeLessThan(64 * 1024);
 });
 
 // Abandoning a Bun.file().stream() reader mid-file (no cancel(), no EOF) must

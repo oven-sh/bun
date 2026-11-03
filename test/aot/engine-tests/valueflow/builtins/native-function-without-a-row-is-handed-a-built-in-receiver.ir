@@ -1,0 +1,23 @@
+# $newCppFunction(..).call(process); $newCppFunction(..)(process)
+# The function of a native binding hangs on no object of the realm, so a built-in object that it is called on is handed to it like an argument.
+# The example is a function for Bun's own tests: the table will not come to describe it.
+# LIBRARY: own
+# RUN: valueflow-why escaped-builtin=Process
+# CHECK: escaped-builtin=Process
+# CHECK-NEXT: escaped {{*}}by Call f1 v2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    Return
+}
+function f1 name="library" role=Library results=[{type=anything}] {
+  b0():
+    v0 = NativeBinding builtin=NativeNewCppFunctionInternalForTestingCppJsFunction_hasReifiedStatic
+    v1 = Builtin builtin=Process
+    v2 = Call v0, v1
+    Return
+}

@@ -1382,6 +1382,7 @@ impl CompletionStruct for JSBundleCompletionTask {
     fn create_and_configure_transpiler<'a>(
         &mut self,
         bump: &'a Arena,
+        generation: bun_core::Generation,
     ) -> bun_bundler::Result<&'a mut Transpiler<'a>> {
         let config = &self.config;
         let opts = api::TransformOptions {
@@ -1432,6 +1433,8 @@ impl CompletionStruct for JSBundleCompletionTask {
         let env: *mut bun_dotenv::Loader = &raw mut *self.env;
         let t = Transpiler::init(bump, log, opts, Some(env))?;
         let transpiler: &'a mut Transpiler<'a> = bump.alloc(t);
+        // Set before `configure_bundler`, which reads the directory caches.
+        transpiler.resolver.generation = generation;
 
         // Post-init field wiring.
         self.configure_bundler(transpiler, bump)?;

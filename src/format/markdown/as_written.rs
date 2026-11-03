@@ -1853,10 +1853,13 @@ impl<'t> Reader<'t> {
                             }
                             at += 1;
                         }
-                        if at < text.len()
-                            && STOPS_WORDS[text[at] as usize]
-                            && !matches!(text[at], b'\n' | b']' | b'|')
-                        {
+                        let ends = match byte(at) {
+                            b' ' | b'\n' => true,
+                            b']' => is_in_link || is_in_image,
+                            b'|' => CELL,
+                            _ => at >= text.len(),
+                        };
+                        if !ends {
                             return None;
                         }
                         continue;

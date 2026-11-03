@@ -2041,8 +2041,8 @@ describe("deno_task", () => {
         .stderr("")
         .runAsTest("a digit that ends a word is not an fd");
 
-      TestBuilder.command`echo hi 1>&2 msg`
-        .stderr(s => expect(s).toContain("command not found: msg"))
+      TestBuilder.command`echo hi 1>&2 no_such_cmd_47822`
+        .stderr(s => expect(s).toContain("command not found: no_such_cmd_47822"))
         .exitCode(1)
         .runAsTest("a word after 1>&2 is not a file");
 

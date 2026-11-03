@@ -33,6 +33,9 @@ impl<'a> Line<'_, 'a> {
         if self.is_flow {
             self.check_flow_statement(statement)?;
         }
+        if let Some(written) = self.plain_statement(statement) {
+            return written;
+        }
         match statement.kind() {
             StmtKind::Expr(expression) => {
                 // A directive, or a string in parentheses that would be one without them.

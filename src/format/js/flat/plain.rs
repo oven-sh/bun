@@ -172,6 +172,35 @@ impl<'a> Line<'_, 'a> {
         }
     }
 
+    /// Writes `statement` if it's a plain expression, or returns one. Returns `None`, with nothing written, if it isn't.
+    #[inline]
+    pub(super) fn plain_statement(&mut self, statement: Stmt<'a>) -> Option<Written> {
+        let file = self.f.file();
+        let start = self.len;
+        let written = match file.plain_stmt(statement.id())?.kind {
+            hir::StmtKind::Expr(e) => {
+                // In parentheses, without which it would be a directive.
+                if matches!(file.plain_expr(e)?.kind, hir::ExprKind::String(_)) {
+                    return None;
+                }
+                self.last_plain_expr(e, Place::Other, true)?
+            }
+            hir::StmtKind::Return(e) => {
+                // Nothing is returned if there's no such expression.
+                file.plain_expr(e)?;
+                match self.token("return ") {
+                    Ok(()) => self.last_plain_expr(e, Place::Other, false).or_else(|| {
+                        self.len = start;
+                        None
+                    })?,
+                    refused => refused,
+                }
+            }
+            _ => return None,
+        };
+        Some(written.and_then(|()| self.semicolon()))
+    }
+
     /// [`Line::last_expr`] for an expression that `is_statement`, or else the argument of `return` or `throw`.
     #[inline]
     pub(super) fn last_expr_of_statement(&mut self, e: Expr<'a>, is_statement: bool) -> Written {

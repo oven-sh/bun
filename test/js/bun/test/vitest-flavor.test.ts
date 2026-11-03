@@ -540,6 +540,111 @@ describe.concurrent("test context", () => {
     });
   });
 
+  test("a callback that throws after its timeout keeps its own result, and one that returns is timed out", async () => {
+    // Each callback blocks for longer than its timeout before it yields, so the timeout timer cannot run first.
+    const { log, results, errors, stderr, exitCode } = await runTests({
+      "a.test.js": `
+        import { afterEach, aroundEach, describe, expect, onTestFinished, test } from "vitest";
+        const block = () => Bun.sleepSync(30);
+        test("throws", { timeout: 10 }, ({ signal }) => {
+          onTestFinished(() => console.log("throws, signal.aborted:", signal.aborted));
+          block();
+          throw new Error("thrown by the test");
+        });
+        test("returns", { timeout: 10 }, ({ signal }) => {
+          onTestFinished(() => console.log("returns, signal.aborted:", signal.aborted));
+          block();
+        });
+        test("skips", { timeout: 10 }, ({ skip }) => {
+          block();
+          skip();
+        });
+        test("throws after expect.soft() failed", { timeout: 10 }, () => {
+          expect.soft(1).toBe(2);
+          block();
+          throw new Error("thrown after expect.soft()");
+        });
+        test("returns after expect.soft() failed", { timeout: 10 }, () => {
+          expect.soft(1).toBe(2);
+          block();
+        });
+        test("onTestFinished throws", () => {
+          onTestFinished(() => { block(); throw new Error("thrown by onTestFinished"); }, 10);
+        });
+        describe("afterEach throws after its test failed", () => {
+          afterEach(() => { block(); throw new Error("thrown by afterEach"); }, 10);
+          test("test", () => { throw new Error("thrown in time"); });
+        });
+        describe("afterEach returns after its test failed", () => {
+          afterEach(block, 10);
+          test("test", () => { throw new Error("thrown in time"); });
+        });
+        describe("aroundEach throws in its set-up", () => {
+          aroundEach(() => { block(); throw new Error("thrown by the set-up"); }, 10);
+          test("test", () => {});
+        });
+        describe("aroundEach throws in its teardown", () => {
+          // The timeout is longer here because the set-up has to call runTest() before it.
+          aroundEach(async runTest => { await runTest(); Bun.sleepSync(300); throw new Error("thrown by the teardown"); }, 250);
+          test("test", () => {});
+        });
+        describe("afterEach throws after skip()", () => {
+          afterEach(() => { block(); throw new Error("thrown by afterEach after skip()"); }, 10);
+          test("test", ({ skip }) => skip());
+        });
+        // The runner reports an error for the next two, so they failed and did not only return.
+        describe("aroundEach returns without runTest()", () => {
+          aroundEach(() => block(), 10);
+          test("test", () => {});
+        });
+        const withFixture = test.extend({ late: async ({}, use) => block() });
+        withFixture("a fixture returns without use()", { timeout: 10 }, ({ late }) => {});
+      `,
+    });
+    const lines = stderr.split("\n");
+    const timedOut = lines.flatMap((line, i) =>
+      /^  \^ .*timed out/.test(line) ? [lines[i - 1].replace(/ \[[\d.]+ms\]$/, "")] : [],
+    );
+    expect({ log, results, timedOut, errors, exitCode }).toEqual({
+      log: ["throws, signal.aborted: false", "returns, signal.aborted: true"],
+      results: [
+        "(fail) throws",
+        "(fail) returns",
+        "(skip) skips",
+        "(fail) throws after expect.soft() failed",
+        "(fail) returns after expect.soft() failed",
+        "(fail) onTestFinished throws",
+        "(fail) afterEach throws after its test failed > test",
+        "(fail) afterEach returns after its test failed > test",
+        "(fail) aroundEach throws in its set-up > test",
+        "(fail) aroundEach throws in its teardown > test",
+        "(skip) afterEach throws after skip() > test",
+        "(fail) aroundEach returns without runTest() > test",
+        "(fail) a fixture returns without use()",
+      ],
+      timedOut: [
+        "(fail) returns",
+        "(fail) returns after expect.soft() failed",
+        "(fail) afterEach returns after its test failed > test",
+      ],
+      errors: [
+        "error: thrown by the test",
+        "error: expect(received).toBe(expected)",
+        "error: thrown after expect.soft()",
+        "error: expect(received).toBe(expected)",
+        "error: thrown by onTestFinished",
+        "error: thrown in time",
+        "error: thrown by afterEach",
+        "error: thrown in time",
+        "error: thrown by the set-up",
+        "error: thrown by the teardown",
+        "AroundHookSetupError: The `runTest()` callback was not called in the `aroundEach` hook. Make sure to call `runTest()` to run the test.",
+        'error: Fixture "late" returned without calling use()',
+      ],
+      exitCode: 1,
+    });
+  });
+
   test("annotate() records into task.annotations", async () => {
     const { log, exitCode } = await runTests({
       "a.test.js": `

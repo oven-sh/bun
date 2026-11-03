@@ -141,6 +141,30 @@ describe("node:test", () => {
     });
   });
 
+  test("should report the error of a test that throws after the timeout, and time out one that returns", async () => {
+    const { exitCode, stderr } = await runTests(["30-late-throw-without-yield.js"], {}, ["--timeout", "50"]);
+    const lines = stderr.split(/\r?\n/).map(line => line.replace(/ \[[\d.]+ms\]$/, ""));
+    const results = lines.filter(line => /^\((pass|fail)\) /.test(line));
+    const timedOut = lines.flatMap((line, i) => (/^  \^ .*timed out/.test(line) ? [lines[i - 1]] : []));
+    const errors = lines.filter(line => line.startsWith("error: "));
+    expect({ errors, results, timedOut, exitCode }).toEqual({
+      errors: ["error: thrown by the test", "error: test was expected to fail but passed", "error: thrown by the hook"],
+      results: [
+        "(fail) throws",
+        "(fail) returns",
+        "(fail) expectFailure returns",
+        "(fail) expectFailure throws",
+        "(fail) t.skip(), then a bun:test hook throws > test",
+      ],
+      timedOut: [
+        "(fail) returns",
+        "(fail) expectFailure throws",
+        "(fail) t.skip(), then a bun:test hook throws > test",
+      ],
+      exitCode: 1,
+    });
+  });
+
   test("should not leak file-level beforeEach hooks across files in one process", async () => {
     const { exitCode, stderr } = await runTests(["14-root-hooks-a.js", "14-root-hooks-b.js"]);
     expect(stderr).toContain("4 pass");

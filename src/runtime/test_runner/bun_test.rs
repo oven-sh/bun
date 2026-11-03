@@ -986,7 +986,8 @@ impl BunTest {
         Self::bun_test_then_or_catch(cx.global(), value.to_js(), context, true)
     }
 
-    fn on_done_error(global_this: &JSGlobalObject, entry: &RefDataValue, error: JSValue) {
+    /// Whether the error failed the running test.
+    fn on_done_error(global_this: &JSGlobalObject, entry: &RefDataValue, error: JSValue) -> bool {
         if let Some(strong) = clone_active_strong() {
             let this = strong.get();
             let is_running_test = this
@@ -1000,10 +1001,11 @@ impl BunTest {
                 this.add_result(*entry);
                 Self::run_next_tick(&Rc::downgrade(&strong), global_this, *entry);
                 global_this.bun_vm().as_mut().unhandled_error_counter += 1;
-                return;
+                return true;
             }
         }
         let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, error, false);
+        false
     }
 
     pub(crate) fn bun_test_done_callback(
@@ -1028,7 +1030,7 @@ impl BunTest {
         } else {
             // error is only reported for the first done() call
             if was_error {
-                Self::on_done_error(global_this, &this.entry, value);
+                this.failed_test.set(Self::on_done_error(global_this, &this.entry, value));
             }
         }
         this.called.set(true);
@@ -1330,7 +1332,6 @@ impl BunTest {
         }
     }
 
-    /// if sync, the result is returned. if async, None is returned.
     #[optimize(size)]
     pub(crate) fn run_test_callback(
         this_strong: &BunTestPtr,
@@ -1340,7 +1341,7 @@ impl BunTest {
         cfg_done_parameter: bool,
         cfg_data: RefDataValue,
         timeout: &Timespec,
-    ) -> Option<RefDataValue> {
+    ) -> CallbackEnd {
         let _g = group_begin!();
         // Raw `*mut` (via `UnsafeCell`) — the JS event-loop call below can
         // re-enter `bun_test_then_or_catch` / `bun_test_done_callback` /
@@ -1376,6 +1377,7 @@ impl BunTest {
 
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
         unsafe { (*this).update_min_timeout(global_this, timeout) };
+        let mut end = CallbackEnd::Returned;
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { cfg_args };
         // SAFETY: `this_strong` keeps the cell alive and in place for the whole call.
         let on_stack = unsafe { OnStack::enter(&raw const (*this).execution.on_stack, &cfg_data) };
@@ -1393,6 +1395,7 @@ impl BunTest {
         {
             Ok(v) => v,
             Err(_) => {
+                end = CallbackEnd::Failed;
                 global_this.clear_termination_exception();
                 // SAFETY: re-derive after JS callback returned; no outer `&mut` was held across it.
                 unsafe { (*this).on_uncaught_exception(global_this, global_this.try_take_exception(), false, &cfg_data) };
@@ -1436,6 +1439,9 @@ impl BunTest {
             if let Some(dcb_data) = done_callback.as_class_ref::<DoneCallback>() {
                 if dcb_data.called.get() {
                     // done callback already called or the callback errored; add result immediately
+                    if dcb_data.failed_test.get() {
+                        end = CallbackEnd::Failed;
+                    }
                 } else {
                     let r = Self::ref_(this_strong, cfg_data);
                     let alias = NonNull::new(r.as_ptr())
@@ -1483,14 +1489,14 @@ impl BunTest {
                             Bun__TestScope__Describe2__bunTestCatch,
                         );
                         // TODO: properly propagate exception upwards
-                        return None;
+                        return CallbackEnd::Running;
                     }
                     PromiseStatus::Fulfilled => {
                         // Do not register a then callback when it's already fulfilled.
                         let value = bun_jsc::JSPromise::opaque_mut(promise).result(global_this.vm());
                         // SAFETY: as in the `Rejected` arm.
                         unsafe { (*this).adopt_teardown(&cfg_data, value) };
-                        return Some(cfg_data);
+                        return end;
                     }
                     PromiseStatus::Rejected => {
                         let value = bun_jsc::JSPromise::opaque_mut(promise).result(global_this.vm());
@@ -1500,7 +1506,7 @@ impl BunTest {
 
                         // We previously marked it as handled above.
 
-                        return Some(cfg_data);
+                        return CallbackEnd::Failed;
                     }
                 }
             }
@@ -1509,7 +1515,7 @@ impl BunTest {
         if dcb_ref.is_some() {
             // completed asynchronously
             bun_core::scoped_log!(bun_test_group, "callTestCallback -> wait for done callback");
-            return None;
+            return CallbackEnd::Running;
         }
 
         bun_core::scoped_log!(bun_test_group, "callTestCallback -> sync");
@@ -1517,7 +1523,7 @@ impl BunTest {
             // SAFETY: re-derived after the JS callback returned; sole `&mut` at this point.
             unsafe { (*this).adopt_teardown(&cfg_data, result) };
         }
-        Some(cfg_data)
+        end
     }
 
     /// A promise that follows `returned` if it's a thenable other than a promise. Otherwise `returned`.
@@ -1919,6 +1925,16 @@ pub enum HandleUncaughtExceptionResult {
 
 pub(crate) type ResultQueue = LinearFifo<RefDataValue, bun_collections::linear_fifo::DynamicBuffer<RefDataValue>>;
 // bun.LinearFifo(.Dynamic) → second generic is the buffer strategy.
+
+/// How a callback that `run_test_callback` called ended.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum CallbackEnd {
+    /// Its promise or its `done` is still pending.
+    Running,
+    Returned,
+    /// It threw, its promise rejected, or its `done(error)` failed the test.
+    Failed,
+}
 
 pub(crate) enum StepResult {
     Waiting { timeout: Timespec },

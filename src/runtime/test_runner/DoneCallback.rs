@@ -10,6 +10,8 @@ pub(crate) struct DoneCallback {
     /// Some = not called yet. None = done already called, no-op.
     pub(crate) r#ref: JsCell<Option<RefPtr<RefData>>>,
     pub(crate) called: Cell<bool>, // = false
+    /// `done(error)` failed the running test.
+    pub(crate) failed_test: Cell<bool>,
     pub(crate) entry: RefDataValue,
 }
 
@@ -20,6 +22,7 @@ impl DoneCallback {
         let done_callback = DoneCallback {
             r#ref: JsCell::new(None),
             called: Cell::new(false),
+            failed_test: Cell::new(false),
             entry,
         };
 

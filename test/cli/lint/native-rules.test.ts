@@ -761,6 +761,7 @@ export default [
       const files = oneRule(rule, {}, { perfectionist: "ab" });
       const { stdout, stderr, exitCode } = await lint(files, ["-f", "json", "a.ts"]);
       expect(stderr).toContain("error: Invalid Perfectionist setting(s): 0, 1\nOccurred while linting ");
+      expect(stderr).toContain(`a.ts:${rules.indexOf(rule) + 1}\nRule: "perfectionist/${rule}"\n`);
       expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
     });
 

@@ -141,8 +141,7 @@ JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 // node-style callback shims in src/js.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionReportUncaughtException);
 
-// (fn, arg): queues fn(arg) on the VM's task queue, in the caller's async context: the slot of
-// libuv's pending phase. What fn throws is reported as uncaught. Used, via $newCppFunction, by node:net.
+// (fn, arg): queues fn(arg) on the VM's task queue in the caller's async context. A throw is reported as uncaught.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionQueueLoopTask);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsStandardOutputStream);

@@ -803,8 +803,7 @@ function endNT(self: $Node.Socket, socket: SocketHandle | null, callback: WriteC
   // Destroyed since _final: node's shutdown() reports the closed handle and _final calls back at once.
   if (!handle || self.destroyed) return callback();
   handle.shutdown();
-  // Node completes the request from libuv's pending phase, after this nextTick drain and its microtasks:
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L560-L566
+  // Node completes the request from libuv's pending phase (afterShutdown), after this drain and its microtasks.
   self[kShutdownCallback] = callback;
   (queueLoopTask ??= $newCppFunction("BunProcess.cpp", "jsFunctionQueueLoopTask", 2))(completeShutdownNT, self);
 }

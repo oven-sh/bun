@@ -1449,11 +1449,8 @@ impl<'a> Formatter<'a> {
                     // `get_length()` answers the largest length for a Proxy or an `arguments` object that has none.
                     let len: u32 = if js_type.is_array() {
                         value.get_length(self.global_this)? as u32
-                    } else if js_type.is_arguments() {
-                        // An `arguments` object can claim any `length`, so its items end at its last own index.
-                        length_of(self.global_this, value)?.min(end_of_own_indexes(self.global_this, value)?)
                     } else {
-                        length_of(self.global_this, value)?
+                        length_of_array_like(self.global_this, value, js_type)?
                     };
                     if len == 0 {
                         let empty: &[u8] = if js_type.is_arguments() { b"Arguments []" } else { b"[]" };
@@ -3194,12 +3191,19 @@ fn length_of(global: &JSGlobalObject, value: JSValue) -> JsResult<u32> {
     jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__lengthOf(global, value))
 }
 
-/// One past the largest own index of `value`.
-fn end_of_own_indexes(global: &JSGlobalObject, value: JSValue) -> JsResult<u32> {
+/// The `length` of a Proxy or an `arguments` object. An `arguments` object can claim any `length`, so its items end at its last own index.
+#[cold]
+#[inline(never)]
+fn length_of_array_like(global: &JSGlobalObject, value: JSValue, js_type: JSType) -> JsResult<u32> {
     unsafe extern "C" {
         safe fn SnapshotFormat__endOfOwnIndexes(global: &JSGlobalObject, value: JSValue) -> u32;
     }
-    jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__endOfOwnIndexes(global, value))
+    let length = length_of(global, value)?;
+    if !js_type.is_arguments() || length == 0 || has_index(global, value, length - 1)? {
+        return Ok(length);
+    }
+    let end = jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__endOfOwnIndexes(global, value))?;
+    Ok(length.min(end))
 }
 
 /// `Number(value)`, so a BigInt converts instead of throwing.

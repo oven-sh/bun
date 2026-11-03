@@ -1168,6 +1168,59 @@ devTest("barrel optimization skips unused submodules", {
   },
 });
 
+// A save of an importer bundles the barrel again with the same output. The
+// barrel is not in the hot update, so the page keeps the accept boundary of
+// `page.ts` and does not reload (#47857). The barrel has the `"use client"`
+// directive of react-router.
+devTest("barrel optimization: a save of an importer does not reload a page with no accept boundary above the barrel", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["main.ts"] }),
+    "main.ts": `
+      import { Alpha } from 'barrel-lib';
+      import { page } from './page.ts';
+      console.log('main ' + Alpha + ' ' + page());
+    `,
+    "page.ts": `
+      import { Beta } from 'barrel-lib';
+      export const page = () => 'page 1 ' + Beta;
+      console.log('page loaded');
+      import.meta.hot.accept();
+    `,
+    "node_modules/barrel-lib/package.json": JSON.stringify({
+      name: "barrel-lib",
+      version: "1.0.0",
+      main: "./index.js",
+      sideEffects: false,
+    }),
+    "node_modules/barrel-lib/index.js": `
+      "use client";
+      export { Alpha } from './alpha.js';
+      export { Beta } from './beta.js';
+      export { Gamma } from './gamma.js';
+    `,
+    "node_modules/barrel-lib/alpha.js": `export const Alpha = "ALPHA";`,
+    "node_modules/barrel-lib/beta.js": `export const Beta = "BETA";`,
+    "node_modules/barrel-lib/gamma.js": `export const Gamma = "GAMMA";`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { storeHotChunks: true });
+    await c.expectMessage("page loaded", "main ALPHA page 1 BETA");
+    await dev.write(
+      "page.ts",
+      `
+      import { Beta } from 'barrel-lib';
+      export const page = () => 'page 2 ' + Beta;
+      console.log('page loaded');
+      import.meta.hot.accept();
+    `,
+    );
+    await c.expectMessage("page loaded");
+    const chunk = await c.getMostRecentHmrChunk();
+    expect(chunk).toContain('"page.ts": [');
+    expect(chunk).not.toContain('"node_modules/barrel-lib/index.js": [');
+  },
+});
+
 // The barrel file is bundled again with the saved file, and its output is the
 // same. It copies the exports of `x.ts` when it runs (`export *`), so it must
 // run again after `x.ts`.

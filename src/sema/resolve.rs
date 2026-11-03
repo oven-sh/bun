@@ -2377,7 +2377,9 @@ pub fn is_declaration_file_name(path: &[u8]) -> bool {
     let is_separator = |byte: &u8| matches!(byte, b'/' | b'\\');
     let root_is_one_slash = path.first() == Some(&b'/') && !path.get(1).is_some_and(is_separator);
     if !root_is_one_slash || path.last().is_some_and(is_separator) {
-        return strings::contains(path, b".d.") && !get_declaration_file_extension(path).is_empty();
+        // Every such name has `.d.` in it.
+        return path.windows(3).any(|it| it == b".d.")
+            && !get_declaration_file_extension(path).is_empty();
     }
     // The base name is the end of such a path, from its last separator on.
     SUPPORTED_DECLARATION_EXTENSIONS

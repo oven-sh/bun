@@ -48,8 +48,8 @@ enum {
     LIBUS_WAKE_NOTIFIED = 2,
 };
 
-/* Asking the kernel for more than 16 packets makes it allocate, at a cost that grows with the number
- * (0.27 us for 16, 0.33 us for 128, 0.78 us for 1024). This many cost next to nothing, and a loop that fills them asks for more. */
+/* Asking the kernel for more than 16 packets makes it allocate, at a cost that grows with the number.
+ * This many cost next to nothing, and a loop that fills them asks for more. */
 #define LIBUS_FIRST_READY_POLLS 64
 
 /* Request blocks */
@@ -147,7 +147,7 @@ typedef struct {
     AFD_POLL_HANDLE_INFO Handles[1];
 } AFD_POLL_INFO;
 
-/* Cancelling walks every request outstanding on the helper: 2 us with 32 of them, 850 us with 10000. */
+/* Cancelling walks every request outstanding on the helper, so its cost grows with their number. */
 #define LIBUS_AFD_GROUP_SIZE 32
 
 struct us_internal_afd_group_t {
@@ -315,7 +315,9 @@ static void us_internal_afd_on_complete(struct us_loop_t *loop, struct us_intern
     }
 
     if (reported & AFD_POLL_LOCAL_CLOSE) {
-        /* Closed without us_poll_stop. Asking again would watch whichever socket gets this handle value next. */
+        /* Closed without us_poll_stop. Whichever socket gets this handle value next is not the owner's to watch, use or close. */
+        p->state.fd = LIBUS_SOCKET_ERROR;
+        us_internal_iocp_dispatch(loop, p, 1, 0, 0);
         return;
     }
 

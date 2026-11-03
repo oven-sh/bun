@@ -1364,6 +1364,8 @@ struct us_internal_pipe_instance_t {
 struct us_internal_pipe_listener_req_t {
     struct us_internal_poll_req_t req;
     WCHAR *name;
+    /* Since the last us_internal_pipe_update, of which there is one per turn of the loop. */
+    int num_accepted;
     struct us_internal_pipe_instance_t instances[LIBUS_PIPE_INSTANCES];
 };
 
@@ -1459,12 +1461,16 @@ int us_internal_pipe_listen(struct us_loop_t *loop, struct us_poll_t *p, const c
 HANDLE us_internal_pipe_accept(struct us_poll_t *p) {
     struct us_internal_pipe_listener_req_t *listener = (struct us_internal_pipe_listener_req_t *) p->state.req;
     HANDLE accepted = INVALID_HANDLE_VALUE;
+    /* A new instance can have its client at once, and the caller goes on for as long as there is a connection. */
+    int may_accept = listener->num_accepted < LIBUS_PIPE_INSTANCES;
     for (int i = 0; i < LIBUS_PIPE_INSTANCES; i++) {
         struct us_internal_pipe_instance_t *instance = &listener->instances[i];
-        if (instance->is_connected && accepted == INVALID_HANDLE_VALUE) {
+        if (instance->is_connected && may_accept) {
             accepted = instance->handle;
             instance->handle = NULL;
             instance->is_connected = 0;
+            listener->num_accepted++;
+            may_accept = 0;
         }
         if (!instance->handle && !instance->listen.is_armed) {
             us_internal_pipe_instance_open(instance, 0);
@@ -1494,6 +1500,7 @@ void us_internal_pipe_update(struct us_internal_poll_req_t *req) {
 
     if (req->kind == LIBUS_POLL_KIND_PIPE_LISTENER) {
         struct us_internal_pipe_listener_req_t *listener = (struct us_internal_pipe_listener_req_t *) req;
+        listener->num_accepted = 0;
         for (int i = 0; i < LIBUS_PIPE_INSTANCES && (events & LIBUS_SOCKET_READABLE); i++) {
             if (listener->instances[i].is_connected) {
                 us_internal_iocp_queue_ready(req);

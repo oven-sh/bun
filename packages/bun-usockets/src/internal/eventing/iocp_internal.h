@@ -91,7 +91,7 @@ void us_internal_iocp_queue_ready(struct us_internal_poll_req_t *req);
 int us_internal_pipe_error(struct us_poll_t *p);
 
 /* The helper threads call the system and little else. What they would commit otherwise is what the executable asks for
- * its main thread, and a stack that is reserved smaller than that is committed in full, without a guard page. */
+ * its main thread. */
 #define LIBUS_HELPER_STACK_COMMIT (64 * 1024)
 #define LIBUS_NS_PER_MS 1000000ULL
 #define LIBUS_100NS_PER_MS 10000

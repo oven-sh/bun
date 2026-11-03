@@ -1307,8 +1307,7 @@ it.if(isWindows)("should not leak when connect({path}) fails while polling for a
 });
 
 // fs.openSync() gives a synchronous handle, as a child inherits from most parents. A thread reads and writes it for
-// the event loop, and every write here has to get past the read that waits on the handle. Runs in a child because
-// what used to happen is an event loop that never comes back from write().
+// the event loop, and every write here has to get past the read that waits on the handle.
 it.if(isWindows)("writes to and ends a named pipe opened with fs.openSync() while a read waits on it", async () => {
   const script = /* js */ `
     const fs = require("node:fs");
@@ -1379,6 +1378,84 @@ it.if(isWindows)("echoes what arrives on a named pipe opened with fs.openSync()"
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: `${1024 * 1024} true\n`, stderr: "", exitCode: 0 });
+});
+
+// The instance of the pipe that takes the place of an accepted one can have its client at once.
+it.if(isWindows)("a named pipe server lets the event loop turn while clients keep coming", async () => {
+  const script = /* js */ `
+    const net = require("node:net");
+    const { spawn } = require("node:child_process");
+    const path = "\\\\\\\\.\\\\pipe\\\\bun-test-accept-" + process.pid;
+    const client = "const fs = require('node:fs'); for (;;) try { fs.closeSync(fs.openSync(process.argv[1], 'r+')); } catch {}";
+    let turn = 0, done = false;
+    (function next() {
+      turn++;
+      if (!done) setImmediate(next);
+    })();
+    let accepted = 0, lastTurn = -1, inThisTurn = 0, most = 0;
+    const children = [];
+    const server = net.createServer(peer => {
+      peer.on("error", () => {});
+      peer.destroy();
+      inThisTurn = turn === lastTurn ? inThisTurn + 1 : 1;
+      lastTurn = turn;
+      most = Math.max(most, inThisTurn);
+      // Long enough for the next client to get in.
+      for (const until = performance.now() + 1; performance.now() < until; );
+      if (++accepted < 200) return;
+      done = true;
+      for (const child of children) child.kill();
+      server.close();
+      console.log(most);
+    });
+    server.listen(path, () => {
+      for (let i = 0; i < 4; i++) children.push(spawn(process.execPath, ["-e", client, path], { stdio: "ignore" }));
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(Number(stdout)).toBeWithin(1, 5);
+  expect(exitCode).toBe(0);
+});
+
+it.if(isWindows)("a socket whose handle other code closes gets an error", async () => {
+  const script = /* js */ `
+    const net = require("node:net");
+    const { closesocket } = require("bun:ffi").dlopen("ws2_32.dll", {
+      closesocket: { args: ["u64"], returns: "i32" },
+    }).symbols;
+    const afterTurns = (turns, callback) => (turns ? setImmediate(afterTurns, turns - 1, callback) : callback());
+    const server = net.createServer(peer => {
+      peer.on("error", error => console.log("error", error.code));
+      peer.on("close", hadError => {
+        console.log("close", hadError);
+        client.destroy();
+        server.close();
+      });
+      // By then the event loop waits for more.
+      peer.once("data", () => afterTurns(3, () => closesocket(peer._handle.fd)));
+    });
+    let client;
+    server.listen(0, "127.0.0.1", () => {
+      client = net.connect(server.address().port, "127.0.0.1");
+      client.on("error", () => {});
+      client.write("x");
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "error ENOTSOCK\nclose true\n", stderr: "", exitCode: 0 });
 });
 
 // Winsock asks its providers about a handle that it does not know, and on this one the question waits for the read.

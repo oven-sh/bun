@@ -1,4 +1,3 @@
-use core::ops::ControlFlow;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::io::Write as _;
@@ -7,10 +6,9 @@ use bun_core::ZBox;
 use bun_sys::{E, FdExt, O, S, dir_iterator};
 
 use crate::shell::ExitCode;
-use crate::shell::builtin::{Builtin, IoKind, Kind};
+use crate::shell::builtin::{Builtin, BuiltinIO, IoKind, Kind};
 use crate::shell::interpreter::{
-    EventLoopHandle, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable, ShellTask,
-    shell_lstatat, shell_openat, shell_statat,
+    EventLoopHandle, Interpreter, NodeId, ShellTask, shell_lstatat, shell_openat, shell_statat,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -34,12 +32,10 @@ pub(crate) struct ExecState {
     pub(crate) err: Option<bun_sys::Error>,
     pub(crate) task_count: AtomicUsize,
     pub(crate) tasks_done: usize,
+    /// Chunks queued on an `IOWriter`.
     pub(crate) output_waiting: usize,
+    /// Chunks whose `on_io_writer_chunk` ran.
     pub(crate) output_done: usize,
-    /// FIFO of in-flight `OutputTask`s awaiting an IOWriter chunk
-    /// completion. Stopgap until `WriterTag` can carry the `OutputTask`
-    /// directly — see mkdir.rs `Exec::output_queue` for rationale.
-    pub(crate) output_queue: std::collections::VecDeque<Box<OutputTask<Ls>>>,
 }
 
 enum ParseFlag {
@@ -97,7 +93,6 @@ impl Ls {
                     tasks_done: 0,
                     output_waiting: 0,
                     output_done: 0,
-                    output_queue: std::collections::VecDeque::new(),
                 });
 
                 // Stable address: `Ls` lives in `Box<Ls>` (Builtin::Impl::Ls),
@@ -177,40 +172,58 @@ impl Ls {
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
-        written: usize,
-        e: Option<bun_sys::SystemError>,
+        _: usize,
+        _: Option<bun_sys::SystemError>,
     ) -> Yield {
-        if matches!(Self::state_mut(interp, cmd).state, State::WaitingWriteErr) {
-            return Builtin::done(interp, cmd, 1);
-        }
-        let pending = if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_queue.pop_front()
-        } else {
-            None
-        };
-        if let Some(task) = pending {
-            return OutputTask::<Ls>::on_io_writer_chunk(task, interp, written, e);
+        match &mut Self::state_mut(interp, cmd).state {
+            State::WaitingWriteErr => return Builtin::done(interp, cmd, 1),
+            State::Exec(exec) => exec.output_done += 1,
+            State::Idle | State::Done => {}
         }
         Self::next(interp, cmd)
     }
 
     fn on_shell_ls_task_done(interp: &Interpreter, cmd: NodeId, task: &mut ShellLsTask) {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.tasks_done += 1;
-        }
-        let output = core::mem::take(&mut task.output);
-        let output_task = OutputTask::<Ls>::new(cmd, OutputSrc::Arrlist(output));
-
-        let errstr: Option<Vec<u8>> = task.err.take().map(|e| {
-            let s = Builtin::task_error_to_string(interp, cmd, Kind::Ls, &e).to_vec();
+        if let Some(e) = task.err.take() {
+            let errstr = Builtin::task_error_to_string(interp, cmd, Kind::Ls, &e).to_vec();
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 if exec.err.is_none() {
                     exec.err = Some(e);
                 }
             }
-            s
-        });
-        OutputTask::<Ls>::start(output_task, interp, errstr.as_deref()).run(interp);
+            Self::write(interp, cmd, IoKind::Stderr, &errstr);
+        }
+        Self::write(interp, cmd, IoKind::Stdout, &task.output);
+        // Counted only now: a chunk that completes inside `write` must not find every task done while
+        // a write of this one is still to come.
+        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+            exec.tasks_done += 1;
+        }
+        Self::next(interp, cmd).run(interp);
+    }
+
+    /// Writes `buf` to stdout or stderr. A chunk queued on an `IOWriter` is counted in
+    /// `output_waiting`; `on_io_writer_chunk` runs once for it, now or later.
+    fn write(interp: &Interpreter, cmd: NodeId, io_kind: IoKind, buf: &[u8]) {
+        if buf.is_empty() {
+            return;
+        }
+        fn stream(builtin: &mut Builtin, io_kind: IoKind) -> &mut BuiltinIO {
+            match io_kind {
+                IoKind::Stdout => &mut builtin.stdout,
+                IoKind::Stderr => &mut builtin.stderr,
+            }
+        }
+        let Some(safeguard) = stream(Builtin::of_mut(interp, cmd), io_kind).needs_io() else {
+            let _ = Builtin::write_no_io(interp, cmd, io_kind, buf);
+            return;
+        };
+        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+            exec.output_waiting += 1;
+        }
+        stream(Builtin::of_mut(interp, cmd), io_kind)
+            .enqueue(ChildPtr::new(cmd, WriterTag::Builtin), buf, safeguard)
+            .run(interp);
     }
 
     /// Returns the index of the first non-flag arg, or `None` if there are no
@@ -265,73 +278,6 @@ impl Ls {
             crate::shell::builtin::Impl::Ls(l) => &mut **l,
             _ => unreachable!(),
         }
-    }
-}
-
-impl OutputTaskVTable for Ls {
-    fn write_err(
-        interp: &Interpreter,
-        cmd: NodeId,
-        child: Box<OutputTask<Self>>,
-        errbuf: &[u8],
-    ) -> ControlFlow<Yield, Box<OutputTask<Self>>> {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_waiting += 1;
-        }
-        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
-            // Stash so on_io_writer_chunk can route to the OutputTask state
-            // machine and reclaim the box (stopgap for missing WriterTag).
-            let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
-                unreachable!()
-            };
-            exec.output_queue.push_back(child);
-            let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            return ControlFlow::Break(
-                Builtin::of_mut(interp, cmd)
-                    .stderr
-                    .enqueue(childptr, errbuf, safeguard),
-            );
-        }
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
-        ControlFlow::Continue(child)
-    }
-    fn on_write_err(interp: &Interpreter, cmd: NodeId) {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_done += 1;
-        }
-    }
-    fn write_out(
-        interp: &Interpreter,
-        cmd: NodeId,
-        child: Box<OutputTask<Self>>,
-    ) -> ControlFlow<Yield, Box<OutputTask<Self>>> {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_waiting += 1;
-        }
-        if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-            let buf = child.output.slice().to_vec();
-            let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
-                unreachable!()
-            };
-            exec.output_queue.push_back(child);
-            let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            return ControlFlow::Break(
-                Builtin::of_mut(interp, cmd)
-                    .stdout
-                    .enqueue(childptr, &buf, safeguard),
-            );
-        }
-        let buf = child.output.slice().to_vec();
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
-        ControlFlow::Continue(child)
-    }
-    fn on_write_out(interp: &Interpreter, cmd: NodeId) {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_done += 1;
-        }
-    }
-    fn on_done(interp: &Interpreter, cmd: NodeId) -> Yield {
-        Self::next(interp, cmd)
     }
 }
 

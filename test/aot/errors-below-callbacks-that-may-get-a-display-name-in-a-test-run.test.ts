@@ -158,11 +158,9 @@ if (isDebug)
 
 // Each run is a test of its own, so `bun test --max-concurrency` says how many of them are built at once.
 for (const [form, words, more] of forms) {
-  test.skipIf(isDebug && words !== oneProgram).concurrent(
-    `a stack through three programs names its callbacks as plain Bun does: ${form}`,
-    async () => {
+  test
+    .skipIf(isDebug && words !== oneProgram)
+    .concurrent(`a stack through three programs names its callbacks as plain Bun does: ${form}`, async () => {
       expect(await seenIn(words, more)).toEqual({ ...expected, builtAsOneProgram: words === oneProgram });
-    },
-    480_000,
-  );
+    });
 }

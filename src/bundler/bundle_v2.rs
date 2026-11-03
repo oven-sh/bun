@@ -2646,6 +2646,16 @@ pub mod bv2_impl {
             }
         }
 
+        /// What the lookup of an import record does after a miss. A miss that the program handles is taken as it is, except under the dev server, which waits for the file.
+        #[inline]
+        fn after_miss(&self, handles_import_errors: bool) -> _resolver::AfterMiss {
+            if handles_import_errors && self.dev_server.is_none() {
+                _resolver::AfterMiss::TrustCache
+            } else {
+                _resolver::AfterMiss::Recheck
+            }
+        }
+
         /// This runs on the Bundle Thread.
         pub(crate) fn run_resolver(
             &mut self,
@@ -2738,11 +2748,18 @@ pub mod bv2_impl {
                 }
             }
 
+            let handles_import_errors = self.graph.ast.items_import_records()
+                [import_record.importer_source_index as usize]
+                .as_slice()[import_record.import_record_index as usize]
+                .flags
+                .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
+            let after_miss = self.after_miss(handles_import_errors);
             // SAFETY: see `transpiler` note above.
-            let resolve_result = match unsafe { &mut *transpiler }.resolver.resolve(
+            let resolve_result = match unsafe { &mut *transpiler }.resolver.resolve_as(
                 source_dir,
                 &import_record.specifier,
                 import_record.kind,
+                after_miss,
             ) {
                 Ok(r) => r,
                 Err(err) => {
@@ -2768,7 +2785,6 @@ pub mod bv2_impl {
                         }
                     }
 
-                    let handles_import_errors;
                     // reshaped for borrowck — `log_for_resolution_failures` borrows
                     // `&mut self`; the returned log is backed by either a DevServer-owned slot or
                     // `*self.transpiler.log` (both raw-pointer-derived), so detach the lifetime
@@ -2787,10 +2803,6 @@ pub mod bv2_impl {
                                 [import_record.importer_source_index as usize]
                                 .as_mut_slice()
                                 [import_record.import_record_index as usize];
-                        handles_import_errors = record
-                            .flags
-                            .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
-
                         // Disable failing packages from being printed: the output may be broken, but every resolve error is reported, not just the first.
                         record.path.is_disabled = true;
                         record
@@ -6801,10 +6813,18 @@ pub mod bv2_impl {
                     }
                 }
 
+                let handles_import_errors = import_record
+                    .flags
+                    .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
+                let after_miss = self.after_miss(handles_import_errors);
                 let resolve_result: _resolver::Result<'a> = match transpiler
                     .resolver
-                    .resolve_with_framework(source_dir, import_record.path.text, import_record.kind)
-                {
+                    .resolve_with_framework_as(
+                        source_dir,
+                        import_record.path.text,
+                        import_record.kind,
+                        after_miss,
+                    ) {
                     Ok(r) => r,
                     Err(err) => {
                         // borrowck — `log_for_resolution_failures` returns
@@ -6843,9 +6863,7 @@ pub mod bv2_impl {
                         if err == _resolver::Error::ModuleNotFound {
                             let add_error = bun_ast::Log::add_resolve_error_with_text_dupe;
 
-                            if !import_record
-                                .flags
-                                .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
+                            if !handles_import_errors
                                 && !self.transpiler.options.ignore_module_resolution_errors
                             {
                                 last_error = Some(err.into());
@@ -6945,9 +6963,7 @@ pub mod bv2_impl {
                                 }
                             }
                         } else {
-                            let report = !import_record
-                                .flags
-                                .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
+                            let report = !handles_import_errors
                                 && !self.transpiler.options.ignore_module_resolution_errors;
                             let ours = log_unhandled_resolve_error(
                                 log,

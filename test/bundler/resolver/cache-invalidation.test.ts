@@ -469,4 +469,51 @@ describe("resolver cache invalidation", () => {
 
     expect(await build()).toEqual({ top: "new new", one: "new new", two: "new new" });
   });
+
+  // The second build takes the record of sub/ as the first one left it, and says again what the first one read there.
+  test("a config file that does not parse fails each build of its project", async () => {
+    using dir = tempDir("cache-test-unparsed-config", {
+      "entry.ts": `import { value } from "./sub/mod.ts"; console.log(value);`,
+      "sub/mod.ts": `export const value = 1;`,
+      "sub/tsconfig.json": `{ "compilerOptions": { "paths": `,
+    });
+    const build = async () => {
+      const result = await Bun.build({ entrypoints: [path.join(String(dir), "entry.ts")], throw: false });
+      return { success: result.success, logs: result.logs.map(log => log.message) };
+    };
+    const first = await build();
+    expect(first).toEqual({ success: false, logs: ["Unexpected end of file"] });
+    expect(await build()).toEqual(first);
+  });
+
+  test("a lookup that finds its module when it is run again keeps the error of the config file it read", async () => {
+    using dir = tempDir("cache-test-rerun-keeps-config-error", {
+      "entry.js": `import { early } from "./lib/early.js"; import { value } from "./pkg"; console.log(early, value);`,
+      "lib/early.js": `export const early = 1;`,
+      "pkg/package.json": JSON.stringify({ name: "pkg", main: "../lib/late.js" }),
+      "pkg/tsconfig.json": `{ "compilerOptions": { "paths": `,
+    });
+    const root = String(dir);
+    // The build has listed lib/ for the first import. The plugin writes lib/late.js and declines, so the lookup of
+    // "./pkg" reads pkg/ for the first time, with its tsconfig.json, and misses in lib/. It finds lib/late.js when it
+    // is run again.
+    const writesTheMainFile: Bun.BunPlugin = {
+      name: "writes-the-main-file",
+      setup(build) {
+        build.onResolve({ filter: /^\.\/pkg$/ }, () => {
+          writeFileSync(path.join(root, "lib", "late.js"), `export const value = 2;`);
+          return undefined;
+        });
+      },
+    };
+    const result = await Bun.build({
+      entrypoints: [path.join(root, "entry.js")],
+      plugins: [writesTheMainFile],
+      throw: false,
+    });
+    expect({ success: result.success, logs: result.logs.map(log => log.message) }).toEqual({
+      success: false,
+      logs: ["Unexpected end of file"],
+    });
+  });
 });

@@ -563,7 +563,7 @@ fn is_node_inside_deferred_function<'a, 'p>(
             if let Node::Expr(e) = ancestor
                 && let Some(call) = e.as_call()
                 && let Some(name) = call.callee().as_ident()
-                && groups::matches(ignore_callback_dependencies_patterns, name.bytes())?
+                && ignore_callback_dependencies_patterns.first_match(name.bytes())?
             {
                 return Ok(true);
             }

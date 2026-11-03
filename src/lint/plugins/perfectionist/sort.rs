@@ -244,6 +244,9 @@ pub(crate) fn sort_nodes_by_dependencies(
     order: &[u32],
     ignore_eslint_disabled: bool,
 ) -> Vec<u32> {
+    if nodes.iter().all(|node| node.dependency_names.is_empty()) {
+        return order.to_vec();
+    }
     let in_cycle = nodes_in_circular_dependencies(nodes, order);
     let mut walk = DependencyWalk {
         nodes,

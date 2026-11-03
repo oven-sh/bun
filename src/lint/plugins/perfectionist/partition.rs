@@ -2,7 +2,7 @@
 //! that `sort-objects` starts at a spread, a rest element or a computed key are the rule's own.
 
 use super::disabled::eslint_disabled_rules;
-use super::options::{CommentMatcher, Configuration, PartitionByComment, Pattern, Patterns};
+use super::options::{CommentMatcher, Configuration, PartitionByComment};
 use bun_core::strings;
 use bun_lint::prelude::*;
 
@@ -141,22 +141,8 @@ pub(crate) fn is_partition_comment<'c>(
     match matcher {
         CommentMatcher::Never => Ok(false),
         CommentMatcher::Always => Ok(true),
-        CommentMatcher::Patterns(patterns) => matches(
-            strings::trim_js_whitespace(comment.comment_value()),
-            patterns,
-        ),
-    }
-}
-
-/// Upstream's `matches`: any of the patterns matches. A pattern that `new RegExp` rejects is the error, unless one
-/// before it matched.
-fn matches<'c>(value: &[u8], patterns: &'c Patterns) -> Result<bool, &'c str> {
-    for pattern in &patterns.0 {
-        match pattern {
-            Pattern::Valid(regex) if regex.test(value) => return Ok(true),
-            Pattern::Valid(_) => {}
-            Pattern::Invalid(message) => return Err(message.as_str()),
+        CommentMatcher::Patterns(patterns) => {
+            patterns.first_match(strings::trim_js_whitespace(comment.comment_value()))
         }
     }
-    Ok(false)
 }

@@ -170,23 +170,15 @@ fn range_replacement(text: &[u8], newlines_between: f64, is_on_same_line: bool) 
     if newlines_between == 0.0 {
         return replacement;
     }
-    let mut index = 0.0;
-    while index < newlines_between {
-        add_newline_before_first_newline(&mut replacement);
-        index += 1.0;
-    }
-    if is_on_same_line {
-        add_newline_before_first_newline(&mut replacement);
-    }
+    let count = newlines_between.ceil() as usize + usize::from(is_on_same_line);
+    add_newlines_before_first_newline(&mut replacement, count);
     replacement
 }
 
-/// Upstream's `addNewlineBeforeFirstNewline`.
-fn add_newline_before_first_newline(value: &mut Vec<u8>) {
-    match strings::index_of_char_usize(value, b'\n') {
-        Some(at) => value.insert(at, b'\n'),
-        None => value.push(b'\n'),
-    }
+/// Upstream's `addNewlineBeforeFirstNewline`, `count` times at once.
+fn add_newlines_before_first_newline(value: &mut Vec<u8>, count: usize) {
+    let at = strings::index_of_char_usize(value, b'\n').unwrap_or(value.len());
+    value.splice(at..at, std::iter::repeat_n(b'\n', count));
 }
 
 /// `getStringWithoutInvalidNewlines`: `value.replaceAll(/\n\s*\n/gu, '\n')`. Upstream's second `replaceAll(/\n+/gu,

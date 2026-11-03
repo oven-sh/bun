@@ -5,9 +5,10 @@
 
 #include <JavaScriptCore/IntlObject.h>
 #include <cstring>
-#include <mutex>
-#include <string>
-#include <unordered_map>
+#include <wtf/HashMap.h>
+#include <wtf/Lock.h>
+#include <wtf/NeverDestroyed.h>
+#include <wtf/text/StringHash.h>
 
 #if __has_include(<unicode/ucol.h>)
 #include <unicode/ucol.h>
@@ -82,39 +83,41 @@ static const UCollator* get(bool isNumericAndBase)
 // that is not well-formed, with it true for one ICU has no collation data for.
 static const UCollator* forLanguageTag(const char* tag, size_t tagLength, bool* isWellFormed)
 {
-    static std::mutex mutex;
-    static std::unordered_map<std::string, const UCollator*> byTag;
+    static WTF::Lock lock;
+    static WTF::NeverDestroyed<WTF::HashMap<WTF::String, const UCollator*>> byTag;
 
     *isWellFormed = false;
-    std::string key(tag, tagLength);
+    WTF::String key = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const uint8_t*>(tag), tagLength });
+    if (key.isEmpty())
+        return nullptr;
     {
-        std::lock_guard<std::mutex> guard(mutex);
-        if (auto found = byTag.find(key); found != byTag.end()) {
+        WTF::Locker locker { lock };
+        if (auto found = byTag->find(key); found != byTag->end()) {
             *isWellFormed = true;
-            return found->second;
+            return found->value;
         }
     }
 
-    WTF::String tagString = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const uint8_t*>(tag), tagLength });
-    if (!JSC::isStructurallyValidLanguageTag(tagString))
+    if (!JSC::isStructurallyValidLanguageTag(key))
         return nullptr;
     *isWellFormed = true;
 
-    WTF::String canonical = JSC::canonicalizeUnicodeLocaleID(WTF::StringView(tagString));
+    WTF::String canonical = JSC::canonicalizeUnicodeLocaleID(WTF::StringView(key));
     if (canonical.isNull())
         return nullptr;
     // `BestAvailableLocale`: the tag without its extensions, or a prefix of it, has collation data.
     if (JSC::bestAvailableLocale(JSC::intlCollatorAvailableLocales(), JSC::removeUnicodeLocaleExtension(canonical)).isNull())
         return nullptr;
 
-    // ICU's locale ID of the tag has the extensions as keywords. Only the three `Intl.Collator` honours are kept.
+    // ICU's locale ID of the tag has the extensions as keywords. Only the three `Intl.Collator` honours are kept. An
+    // ID or a value that fills its buffer is not terminated (`U_STRING_NOT_TERMINATED_WARNING`, which is not a failure).
     Vector<char, 32> localeID = JSC::localeIDBufferForLanguageTagWithNullTerminator(canonical.ascii());
     if (localeID.isEmpty())
         return nullptr;
     UErrorCode status = U_ZERO_ERROR;
     char locale[ULOC_FULLNAME_CAPACITY];
-    uloc_getBaseName(localeID.span().data(), locale, ULOC_FULLNAME_CAPACITY, &status);
-    if (U_FAILURE(status))
+    int32_t localeLength = uloc_getBaseName(localeID.span().data(), locale, ULOC_FULLNAME_CAPACITY, &status);
+    if (U_FAILURE(status) || localeLength < 0 || localeLength >= ULOC_FULLNAME_CAPACITY)
         return nullptr;
     for (const char* keyword : { "collation", "colnumeric", "colcasefirst" }) {
         char value[ULOC_KEYWORDS_CAPACITY];
@@ -122,25 +125,27 @@ static const UCollator* forLanguageTag(const char* tag, size_t tagLength, bool* 
         int32_t length = uloc_getKeywordValue(localeID.span().data(), keyword, value, ULOC_KEYWORDS_CAPACITY, &status);
         if (U_FAILURE(status) || length <= 0)
             continue;
+        if (length >= ULOC_KEYWORDS_CAPACITY)
+            return nullptr;
         // A `co` of `standard` or `search` is not a collation type that a sort collator takes.
         if (!strcmp(keyword, "collation") && (!strcmp(value, "standard") || !strcmp(value, "search")))
             continue;
         status = U_ZERO_ERROR;
-        uloc_setKeywordValue(keyword, value, locale, ULOC_FULLNAME_CAPACITY, &status);
-        if (U_FAILURE(status))
+        localeLength = uloc_setKeywordValue(keyword, value, locale, ULOC_FULLNAME_CAPACITY, &status);
+        if (U_FAILURE(status) || localeLength < 0 || localeLength >= ULOC_FULLNAME_CAPACITY)
             return nullptr;
     }
     const UCollator* collator = open(locale, false);
     if (!collator)
         return nullptr;
 
-    std::lock_guard<std::mutex> guard(mutex);
-    auto [entry, inserted] = byTag.try_emplace(std::move(key), collator);
-    if (!inserted) {
+    WTF::Locker locker { lock };
+    auto result = byTag->add(key, collator);
+    if (!result.isNewEntry) {
         // Another thread opened the same tag meanwhile: theirs is the one every caller shares.
         ucol_close(const_cast<UCollator*>(collator));
     }
-    return entry->second;
+    return result.iterator->value;
 }
 
 } // namespace ICUCollate

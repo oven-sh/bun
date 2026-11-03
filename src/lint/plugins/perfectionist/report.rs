@@ -36,6 +36,7 @@ pub(crate) fn is_in_order_without_groups<'a, N: Iterator<Item = SortingNode<'a>>
         || can_have_dependencies
         || !disabled_lines.is_empty()
         || newlines_between_option(config, 0, 0) != Newlines::Ignore
+        || config.has_invalid_pattern()
     {
         return false;
     }

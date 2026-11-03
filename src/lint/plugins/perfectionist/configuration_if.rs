@@ -161,22 +161,8 @@ fn matches_selector(selector: &Selector, subject: Subject<'_>) -> Result<bool, s
     listened.map_or(Ok(false), |es_node| selector.test(es_node))
 }
 
-/// `matches(value, regexOption)`: any of the patterns matches. A pattern that is not a regular expression throws
-/// when it is reached, so the patterns before it are tested first.
 fn patterns_match<'c>(patterns: &'c Patterns, value: &[u8]) -> Result<bool, Rejected<'c>> {
-    for pattern in &patterns.0 {
-        if pattern_matches(pattern, value)? {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-fn pattern_matches<'c>(pattern: &'c Pattern, value: &[u8]) -> Result<bool, Rejected<'c>> {
-    match pattern {
-        Pattern::Valid(regex) => Ok(regex.test(value)),
-        Pattern::Invalid(message) => Err(Rejected::Pattern(message)),
-    }
+    patterns.first_match(value).map_err(Rejected::Pattern)
 }
 
 /// Which scoped option is tested, which decides the parents it allows and the values it reads from one.
@@ -245,11 +231,13 @@ fn matches_parent<'a, 'c>(
             let before = comment_anchor(parent, is_object_rule);
             for pattern in &patterns.0 {
                 for comment in file.comments_before(before) {
-                    if pattern_matches(
-                        pattern,
-                        strings::trim_js_whitespace(comment.comment_value()),
-                    )? {
-                        return Ok(true);
+                    match pattern {
+                        Pattern::Valid(regex) => {
+                            if regex.test(strings::trim_js_whitespace(comment.comment_value())) {
+                                return Ok(true);
+                            }
+                        }
+                        Pattern::Invalid(message) => return Err(Rejected::Pattern(message)),
                     }
                 }
             }

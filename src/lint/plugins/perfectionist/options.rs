@@ -177,6 +177,25 @@ pub(crate) enum Pattern {
     Invalid(String),
 }
 
+impl Patterns {
+    /// `matches(value, regexOption)`: the first pattern that matches ends it, so one that `new RegExp` rejects is
+    /// only the `Err` when none before it matched.
+    pub(crate) fn first_match(&self, value: &[u8]) -> Result<bool, &str> {
+        for pattern in &self.0 {
+            match pattern {
+                Pattern::Valid(regex) if regex.test(value) => return Ok(true),
+                Pattern::Valid(_) => {}
+                Pattern::Invalid(message) => return Err(message),
+            }
+        }
+        Ok(false)
+    }
+
+    pub(crate) fn has_invalid(&self) -> bool {
+        self.0.iter().any(|it| matches!(it, Pattern::Invalid(_)))
+    }
+}
+
 /// `partitionByComment` (`types/common-partition-options.ts`), as `is-partition-comment.ts` reads it.
 #[derive(Debug)]
 pub(crate) enum PartitionByComment {
@@ -429,6 +448,40 @@ impl<'o> Merged<'o> {
 }
 
 impl Configuration {
+    /// Whether a pattern of `partitionByComment` or `customGroups` is one `new RegExp` rejects, which the first node
+    /// that tests it throws for.
+    pub(crate) fn has_invalid_pattern(&self) -> bool {
+        let matcher_has_invalid = |matcher: &CommentMatcher| match matcher {
+            CommentMatcher::Patterns(patterns) => patterns.has_invalid(),
+            CommentMatcher::Never | CommentMatcher::Always => false,
+        };
+        let comment_has_invalid = match &self.partition_by_comment {
+            PartitionByComment::Off => false,
+            PartitionByComment::Any(matcher) => matcher_has_invalid(matcher),
+            PartitionByComment::ByKind { block, line } => {
+                matcher_has_invalid(block) || matcher_has_invalid(line)
+            }
+        };
+        let match_has_invalid = |single: &CustomGroupMatch| {
+            single
+                .element_name_pattern
+                .as_ref()
+                .is_some_and(Patterns::has_invalid)
+                || single
+                    .element_value_pattern
+                    .as_ref()
+                    .is_some_and(Patterns::has_invalid)
+        };
+        comment_has_invalid
+            || self
+                .custom_groups
+                .iter()
+                .any(|custom| match &custom.matcher {
+                    CustomGroupMatcher::AnyOf(subgroups) => subgroups.iter().any(match_has_invalid),
+                    CustomGroupMatcher::Single(single) => match_has_invalid(single),
+                })
+    }
+
     /// `complete()` followed by the `validate*` calls, whose first error is [`Configuration::error`].
     fn complete(rule: RuleKind, options: Object<'_>, settings: Object<'_>) -> Configuration {
         let mut configuration = Configuration::parse(rule, options, settings);

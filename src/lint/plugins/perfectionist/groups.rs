@@ -3,7 +3,7 @@
 
 use super::options::{
     Configuration, CustomGroup, CustomGroupMatch, CustomGroupMatcher, FallbackSort, GroupEntry,
-    GroupNames, Order, Pattern, Patterns, SortBy, SortOptions, SortType,
+    GroupNames, Order, SortBy, SortOptions, SortType,
 };
 use smallvec::SmallVec;
 
@@ -87,32 +87,16 @@ fn does_single_custom_group_match<'c>(
         }
     }
     if let Some(patterns) = &custom.element_name_pattern
-        && !matches(patterns, name)?
+        && !patterns.first_match(name)?
     {
         return Ok(false);
     }
     if let Some(patterns) = &custom.element_value_pattern
-        && !matches(patterns, value)?
+        && !patterns.first_match(value)?
     {
         return Ok(false);
     }
     Ok(true)
-}
-
-/// Upstream's `matches`: whether any of the patterns tests true. The patterns are tried in order and the first that
-/// matches ends it, so a later pattern that does not compile is only an `Err` when no earlier one matched.
-pub(crate) fn matches<'p>(patterns: &'p Patterns, text: &[u8]) -> Result<bool, &'p str> {
-    for pattern in &patterns.0 {
-        match pattern {
-            Pattern::Valid(regex) => {
-                if regex.test(text) {
-                    return Ok(true);
-                }
-            }
-            Pattern::Invalid(message) => return Err(message),
-        }
-    }
-    Ok(false)
 }
 
 /// `generatePredefinedGroups` followed by `predefinedGroups.find(group => groupsSet.has(group))`, without building

@@ -89,7 +89,12 @@ while (at < bundle.length) {
   }
   at = end + 1 + Number(length) + 1;
 }
-for (const [id, meta] of Object.entries(pluginRules)) add(id, { meta });
+// eslint-plugin-perfectionist builds its rules with typescript-eslint's `RuleCreator`, so its defaults are the rule's,
+// not `meta`'s, and ESLint validates the options as written.
+for (const [id, meta] of Object.entries(pluginRules)) {
+  if (id.startsWith("perfectionist/")) add(id, { meta: { schema: meta.schema }, defaultOptions: meta.defaultOptions });
+  else add(id, { meta });
+}
 // Bun's own rules don't come from a package, so their schemas are in `own.json`. So is the schema of
 // `prettier/prettier`, which has no fixtures.
 for (const [id, schema] of Object.entries(JSON.parse(readFileSync(join(import.meta.dirname, "own.json"), "utf8"))))

@@ -58,6 +58,7 @@ pub(crate) struct JsFormatContext<'a> {
     pub(crate) parse_javascript: Option<JavaScriptParser<'a>>,
     /// See `flat.rs`.
     pub(crate) short_cuts: super::flat::ShortCuts,
+    pub(crate) line_buffers: super::flat::Buffers<'a>,
 }
 
 impl<'a> JsFormatContext<'a> {
@@ -99,6 +100,7 @@ impl<'a> JsFormatContext<'a> {
             is_vue_filter_sequence: Cell::new(false),
             parse_javascript: None,
             short_cuts: Default::default(),
+            line_buffers: Default::default(),
         }
     }
 

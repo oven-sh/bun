@@ -315,18 +315,29 @@ enum Width {
     Unknown,
 }
 
-/// Writes nodes to the end of the formatter's text buffer.
+/// What a [`Line`] writes to, kept from one to the next.
+#[derive(Default)]
+pub(crate) struct Buffers<'a> {
+    /// Its length stays, and what's in it means nothing.
+    text: Vec<u8>,
+    /// Empty lists. A part can write lines of its own while the list that it's in is read.
+    parts: Vec<Vec<Part<'a>>>,
+}
+
+/// Writes nodes to a buffer, which goes to the end of the formatter's text buffer if the short cut is taken.
 struct Line<'f, 'a> {
     f: &'f mut Formatter<'a>,
+    /// Longer than what's written to it, so that a short text can be copied as a block.
+    text: Vec<u8>,
     source: &'a [u8],
     /// The source, or nothing if the line is careful.
     plain_source: &'a [u8],
     /// How many columns there are between the indentation and the end of the line.
     room: usize,
     indent_width: usize,
-    /// Where the text of the current line starts in the text buffer.
+    /// Where the text of the current line starts in `text`.
     start: usize,
-    /// Where the text buffer ends. The vector is longer, so that a short text can be copied as a block.
+    /// Where what's written to `text` ends.
     len: usize,
     /// The `len` at which the line is full.
     limit: usize,
@@ -361,7 +372,7 @@ struct Line<'f, 'a> {
     /// Up to here the source is known to be plain and without comments.
     checked_to: u32,
     nesting: u32,
-    parts: SmallVec<[Part<'a>; 6]>,
+    parts: Vec<Part<'a>>,
 }
 
 /// True if `text` has a line with nothing but white space on it, or nothing but a comma: oxfmt counts the line breaks
@@ -433,7 +444,7 @@ fn is_after_block_comment(source: &[u8], start: u32) -> bool {
     before.ends_with(b"*/")
 }
 
-/// By how much the text buffer is longer than what's written to it while a [`Line`] writes.
+/// By how much the text buffer of a [`Line`] is longer than what's written to it.
 const SLACK: usize = 256;
 
 impl<'a> Formatter<'a> {
@@ -472,14 +483,19 @@ impl<'a> Formatter<'a> {
         {
             return false;
         }
-        let start = self.storage.text.len();
-        self.storage.text.resize(start + SLACK, 0);
+        let buffers = &mut self.context_mut().line_buffers;
+        let mut text = std::mem::take(&mut buffers.text);
+        let parts = buffers.parts.pop().unwrap_or_default();
+        if text.len() < SLACK {
+            text.resize(4 * SLACK, 0);
+        }
         let mut line = Line {
+            text,
             room,
             indent_width,
-            start,
-            len: start,
-            limit: start + room,
+            start: 0,
+            len: 0,
+            limit: room,
             taken: 0,
             extra: 0,
             width: Width::Known,
@@ -501,7 +517,7 @@ impl<'a> Formatter<'a> {
             plain_source: source,
             checked_to: span.start,
             nesting: 0,
-            parts: SmallVec::new(),
+            parts,
         };
         let mut written = line.finish(&write, span.end, after);
         let mut is_last = false;
@@ -520,20 +536,30 @@ impl<'a> Formatter<'a> {
                 break;
             }
             line.parts.clear();
-            (line.room, line.start, line.len, line.limit) = (room, start, start, start + room);
+            (line.room, line.start, line.len, line.limit) = (room, 0, 0, room);
             (line.taken, line.extra, line.checked_to, line.nesting) = (0, 0, span.start, 0);
             (line.is_too_wide, line.is_odd) = (false, false);
             (line.width, line.must_fit, line.has_measured) =
                 (Width::Known, usize::MAX, line.breaks);
             written = line.finish(&write, span.end, after);
         }
-        let (parts, len) = (line.parts, line.len);
+        let Line {
+            text,
+            mut parts,
+            len,
+            ..
+        } = line;
+        let base = self.storage.text.len() as u32;
+        if written.is_ok() {
+            (self.storage.text).extend_from_slice(text.get(..len).unwrap_or_default());
+        }
+        self.context_mut().line_buffers.text = text;
         if written.is_err() {
-            self.storage.text.truncate(start);
+            parts.clear();
+            self.context_mut().line_buffers.parts.push(parts);
             return false;
         }
-        self.storage.text.truncate(len);
-        for part in parts {
+        for &part in &parts {
             match part {
                 Part::Text {
                     start,
@@ -542,7 +568,7 @@ impl<'a> Formatter<'a> {
                     after,
                 } => {
                     self.write_element(FormatElement::OwnedText(Text {
-                        start,
+                        start: base + start,
                         len,
                         width: match after {
                             Some(after) => TextWidth::short_cut(width, after),
@@ -595,6 +621,8 @@ impl<'a> Formatter<'a> {
                 }
             }
         }
+        parts.clear();
+        self.context_mut().line_buffers.parts.push(parts);
         true
     }
 
@@ -705,7 +733,7 @@ impl<'a> Line<'_, 'a> {
             return Err(Refused);
         }
         loop {
-            if let Some(next) = (self.f.storage.text)
+            if let Some(next) = (self.text)
                 .get_mut(self.len..)
                 .and_then(|rest| rest.first_chunk_mut())
             {
@@ -720,8 +748,8 @@ impl<'a> Line<'_, 'a> {
     #[cold]
     #[inline(never)]
     fn grow(&mut self) {
-        let len = self.f.storage.text.len();
-        self.f.storage.text.resize(len + 4 * SLACK, 0);
+        let len = self.text.len();
+        self.text.resize(len + 4 * SLACK, 0);
     }
 
     /// Text that's printed as it is.
@@ -735,10 +763,10 @@ impl<'a> Line<'_, 'a> {
             self.is_too_wide = true;
             return Err(Refused);
         }
-        if self.f.storage.text.len() < end + SLACK {
-            self.f.storage.text.resize(end + SLACK, 0);
+        if self.text.len() < end + SLACK {
+            self.text.resize(end + SLACK, 0);
         }
-        if let Some(next) = self.f.storage.text.get_mut(self.len..end) {
+        if let Some(next) = self.text.get_mut(self.len..end) {
             next.copy_from_slice(text);
         }
         self.len = end;

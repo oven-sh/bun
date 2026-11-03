@@ -182,6 +182,7 @@
 #include "JSDOMFormData.h"
 #include "GeneratedBlob.h"
 #include "GeneratedExpect.h"
+#include "GeneratedExpectDeferred.h"
 #include "JavaScriptCore/JSMapInlines.h"
 
 #include <JavaScriptCore/JSWeakMap.h>
@@ -268,6 +269,7 @@ template bool Bun__deepMatch<true>(JSValue objValue, JSValue subsetValue, JSGlob
 template bool Bun__deepMatch<false>(JSValue objValue, JSValue subsetValue, JSGlobalObject* globalObject, ThrowScope& throwScope, Bun::DeepMatchState& state, bool isMatchingObjectContaining);
 
 extern "C" bool Expect_readFlagsAndProcessPromise(JSC::EncodedJSValue instanceValue, JSC::JSGlobalObject* globalObject, ExpectFlags* flags, JSC::EncodedJSValue* value, AsymmetricMatcherConstructorType* constructorType);
+extern "C" bool Expect_matcherReadsPromise(JSC::EncodedJSValue instanceValue);
 
 extern "C" int8_t AsymmetricMatcherConstructorType__fromJS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
 {
@@ -618,6 +620,8 @@ AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSV
     ExpectFlags flags = ExpectFlags();
     AsymmetricMatcherResult result = matchAsymmetricMatcherAndGetFlags(globalObject, matcherProp, otherProp, throwScope, flags);
     if (result != AsymmetricMatcherResult::NOT_MATCHER && (flags & FLAG_NOT)) {
+        // A matcher that threw did not pass.
+        RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
         result = (result == AsymmetricMatcherResult::PASS) ? AsymmetricMatcherResult::FAIL : AsymmetricMatcherResult::PASS;
     }
     return result;
@@ -2452,10 +2456,27 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
 // only reached from `Bun.deepEquals(a, b, true, true)` in BunObject.cpp.
 template bool Bun__deepEquals<true, false, false, true>(JSC::JSGlobalObject*, JSValue, JSValue, MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>&, ThrowScope&, bool);
 
+// After a mismatch a `walkPastMismatch` walk only collects the matchers that passed, and it leaves promises alone.
+// `expect.resolvesTo` and `expect.rejectsTo` mark the promise that they read as handled, so it does not ask them.
+static bool readsPromiseAfterMismatch(const Bun::DeepMatchState& state, JSValue matcher)
+{
+    return state.mismatched && Expect_matcherReadsPromise(JSValue::encode(matcher));
+}
+
+// A matcher that has to wait for a promise throws an ExpectDeferred. After a mismatch the walk does not wait:
+// it drops that and leaves the property out of `recorded`. Returns whether it dropped one.
+static bool dropWaitAfterMismatch(ThrowScope& scope, const Bun::DeepMatchState& state)
+{
+    if (!state.mismatched)
+        return false;
+    auto* exception = scope.exception();
+    return exception && dynamicDowncast<Bun::Bindgen::Generated::JSExpectDeferred>(exception->value()) && scope.tryClearException();
+}
+
 /**
  * @brief `Bun.deepMatch(a, b)`
  */
-template<bool enableAsymmetricMatchers>
+template<bool enableAsymmetricMatchers, bool walkPastMismatch>
 bool Bun__deepMatch(
     JSValue objValue,
     JSValue subsetValue,
@@ -2477,8 +2498,12 @@ bool Bun__deepMatch(
     if constexpr (enableAsymmetricMatchers) {
         // expect.objectContaining()'s argument is a pattern, so the testers don't see it.
         if (!isMatchingObjectContaining && hasEqualityTesters(globalObject)) [[unlikely]] {
-            if (auto verdict = runEqualityTesters(globalObject, throwScope, objValue, subsetValue))
-                return *verdict;
+            if (auto verdict = runEqualityTesters(globalObject, throwScope, objValue, subsetValue)) {
+                if constexpr (!walkPastMismatch) return *verdict;
+                RETURN_IF_EXCEPTION(throwScope, false);
+                state.mismatched |= !*verdict;
+                return true;
+            }
         }
     }
 
@@ -2491,8 +2516,11 @@ bool Bun__deepMatch(
         if (mayBeDOMNode(globalObject, obj) && mayBeDOMNode(globalObject, subsetObj)) {
             auto nodesEqual = domNodesDequal(globalObject, throwScope, obj, subsetObj, DOMNodeComparison::Match);
             RETURN_IF_EXCEPTION(throwScope, false);
-            if (nodesEqual)
-                return *nodesEqual;
+            if (nodesEqual) {
+                if constexpr (!walkPastMismatch) return *nodesEqual;
+                state.mismatched |= !*nodesEqual;
+                return true;
+            }
         }
     }
 
@@ -2512,13 +2540,16 @@ bool Bun__deepMatch(
     RETURN_IF_EXCEPTION(throwScope, false);
     if (subsetIsArray) {
         if (obj->getArrayLength() != subsetObj->getArrayLength()) {
-            return false;
-        }
-        PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
-        obj->getPropertyNames(globalObject, objProps, DontEnumPropertiesMode::Exclude);
-        RETURN_IF_EXCEPTION(throwScope, false);
-        if (objProps.size() != subsetProps.size()) {
-            return false;
+            if constexpr (!walkPastMismatch) return false;
+            state.mismatched = true;
+        } else {
+            PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
+            obj->getPropertyNames(globalObject, objProps, DontEnumPropertiesMode::Exclude);
+            RETURN_IF_EXCEPTION(throwScope, false);
+            if (objProps.size() != subsetProps.size()) {
+                if constexpr (!walkPastMismatch) return false;
+                state.mismatched = true;
+            }
         }
     }
 
@@ -2526,7 +2557,9 @@ bool Bun__deepMatch(
         JSValue prop = obj->getIfPropertyExists(globalObject, property);
         RETURN_IF_EXCEPTION(throwScope, false);
         if (prop.isEmpty()) {
-            return false;
+            if constexpr (!walkPastMismatch) return false;
+            state.mismatched = true;
+            continue;
         }
 
         JSValue subsetProp = subsetObj->get(globalObject, property);
@@ -2537,9 +2570,16 @@ bool Bun__deepMatch(
 
         if constexpr (enableAsymmetricMatchers) {
             if (subsetPropCell && subsetPropCell->type() == JSC::JSType(JSDOMWrapperType)) {
+                if constexpr (walkPastMismatch) {
+                    if (readsPromiseAfterMismatch(state, subsetProp)) continue;
+                }
                 switch (matchAsymmetricMatcher(globalObject, subsetProp, prop, throwScope)) {
                 case AsymmetricMatcherResult::FAIL:
-                    return false;
+                    if constexpr (!walkPastMismatch) return false;
+                    if (dropWaitAfterMismatch(throwScope, state)) continue;
+                    RETURN_IF_EXCEPTION(throwScope, false);
+                    state.mismatched = true;
+                    continue;
                 case AsymmetricMatcherResult::PASS:
                     state.recordIfAsked(obj, subsetObj, property, subsetProp, jsUndefined());
                     // continue to next subset prop
@@ -2548,9 +2588,16 @@ bool Bun__deepMatch(
                     break;
                 }
             } else if (propCell && propCell->type() == JSC::JSType(JSDOMWrapperType)) {
+                if constexpr (walkPastMismatch) {
+                    if (readsPromiseAfterMismatch(state, prop)) continue;
+                }
                 switch (matchAsymmetricMatcher(globalObject, prop, subsetProp, throwScope)) {
                 case AsymmetricMatcherResult::FAIL:
-                    return false;
+                    if constexpr (!walkPastMismatch) return false;
+                    if (dropWaitAfterMismatch(throwScope, state)) continue;
+                    RETURN_IF_EXCEPTION(throwScope, false);
+                    state.mismatched = true;
+                    continue;
                 case AsymmetricMatcherResult::PASS:
                     // continue to next subset prop
                     continue;
@@ -2559,8 +2606,11 @@ bool Bun__deepMatch(
                 }
             } else if (oneMayHaveAsymmetricMatchMethod(globalObject, prop, subsetProp)) {
                 if (auto matched = matchUserAsymmetricMatcher(globalObject, throwScope, prop, subsetProp)) [[unlikely]] {
-                    if (!*matched)
-                        return false;
+                    if (!*matched) {
+                        if constexpr (!walkPastMismatch) return false;
+                        RETURN_IF_EXCEPTION(throwScope, false);
+                        state.mismatched = true;
+                    }
                     continue;
                 }
             }
@@ -2580,24 +2630,36 @@ bool Bun__deepMatch(
                 state.gcBuffer.append(prop);
                 state.gcBuffer.append(subsetProp);
                 state.recordIfAsked(obj, subsetObj, property, prop, subsetProp);
-                // This (value, pattern) pair already matched, or is still being compared (a cycle).
+                // This (value, pattern) pair was compared before, or is still being compared (a cycle). In a
+                // `walkPastMismatch` walk it can be one that did not match: `state.mismatched` is set then.
                 if (!state.seen.insert({ JSC::JSValue::encode(prop), JSC::JSValue::encode(subsetProp) }).second) continue;
-                bool matched = Bun__deepMatch<enableAsymmetricMatchers>(prop, subsetProp, globalObject, throwScope, state, isMatchingObjectContaining);
+                bool matched = Bun__deepMatch<enableAsymmetricMatchers, walkPastMismatch>(prop, subsetProp, globalObject, throwScope, state, isMatchingObjectContaining);
                 RETURN_IF_EXCEPTION(throwScope, false);
                 if (!matched) return false;
             }
         } else {
             if constexpr (enableAsymmetricMatchers) {
                 if (hasEqualityTesters(globalObject)) [[unlikely]] {
+                    if constexpr (walkPastMismatch) {
+                        // After a mismatch the answer of a tester for this pair changes nothing, so the walk does not ask.
+                        if (state.mismatched) continue;
+                    }
                     if (auto verdict = runEqualityTesters(globalObject, throwScope, prop, subsetProp)) {
-                        if (!*verdict) return false;
+                        if (!*verdict) {
+                            if constexpr (!walkPastMismatch) return false;
+                            RETURN_IF_EXCEPTION(throwScope, false);
+                            state.mismatched = true;
+                        }
                         continue;
                     }
                 }
             }
             auto same = JSC::sameValue(globalObject, prop, subsetProp);
             RETURN_IF_EXCEPTION(throwScope, false);
-            if (!same) return false;
+            if (!same) {
+                if constexpr (!walkPastMismatch) return false;
+                state.mismatched = true;
+            }
         }
     }
 
@@ -3657,8 +3719,18 @@ bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSVal
 
     Bun::DeepMatchState state;
     state.records = !!replaced;
-    bool matched = Bun__deepMatch<true>(obj, subset, globalObject, scope, state, false);
-    RETURN_IF_EXCEPTION(scope, false);
+    bool matched;
+    if (replaced && !replaceWhen) {
+        // A failed match that is shown with its matchers needs every matcher that passed, also after the first mismatch.
+        bool walked = Bun__deepMatch<true, true>(obj, subset, globalObject, scope, state, false);
+        RETURN_IF_EXCEPTION(scope, false);
+        // An exit of the walk that does not set `mismatched` returns false, and that is a mismatch too.
+        ASSERT(walked);
+        matched = walked && !state.mismatched;
+    } else {
+        matched = Bun__deepMatch<true>(obj, subset, globalObject, scope, state, false);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
     if (replaced) {
         JSValue shown = matched == replaceWhen ? replaceMatchedProperties(globalObject, scope, state, obj, subset) : obj;
         RETURN_IF_EXCEPTION(scope, false);

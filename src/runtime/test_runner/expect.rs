@@ -620,16 +620,10 @@ impl Expect {
         false
     }
 
-    /// Called by C++ when matching with asymmetric matchers
-    #[unsafe(no_mangle)]
-    pub(crate) extern "C" fn Expect_readFlagsAndProcessPromise(
-        instance_value: JSValue,
-        global_this: &JSGlobalObject,
-        out_flags: &mut FlagsCppType,
-        value: &mut JSValue,
-        any_constructor_type: &mut u8,
-    ) -> bool {
-        let flags: Flags = if let Some(instance) = instance_value.as_class_ref::<ExpectCustomAsymmetricMatcher>() {
+    /// The flags of an asymmetric matcher. For `expect.any()` it also sets the type of its constructor.
+    #[inline]
+    fn asymmetric_matcher_flags(instance_value: JSValue, any_constructor_type: &mut u8) -> Flags {
+        if let Some(instance) = instance_value.as_class_ref::<ExpectCustomAsymmetricMatcher>() {
             instance.flags
         } else if let Some(instance) = instance_value.as_class_ref::<ExpectAny>() {
             *any_constructor_type = instance.flags.asymmetric_matcher_constructor_type() as u8;
@@ -648,7 +642,25 @@ impl Expect {
             instance.flags
         } else {
             Flags::default()
-        };
+        }
+    }
+
+    /// Called by C++. Whether `instance_value` is an `expect.resolvesTo` or `expect.rejectsTo` matcher.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Expect_matcherReadsPromise(instance_value: JSValue) -> bool {
+        Self::asymmetric_matcher_flags(instance_value, &mut 0).promise() != Promise::None
+    }
+
+    /// Called by C++ when matching with asymmetric matchers
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Expect_readFlagsAndProcessPromise(
+        instance_value: JSValue,
+        global_this: &JSGlobalObject,
+        out_flags: &mut FlagsCppType,
+        value: &mut JSValue,
+        any_constructor_type: &mut u8,
+    ) -> bool {
+        let flags = Self::asymmetric_matcher_flags(instance_value, any_constructor_type);
 
         *out_flags = flags.encode();
 
@@ -3428,7 +3440,8 @@ unsafe extern "C" {
 }
 
 // Exports: handled by #[unsafe(no_mangle)] on:
-//   ExpectMatcherUtils_createSigleton, Expect_readFlagsAndProcessPromise, ExpectCustomAsymmetricMatcher__execute
+//   ExpectMatcherUtils_createSigleton, Expect_readFlagsAndProcessPromise, Expect_matcherReadsPromise,
+//   ExpectCustomAsymmetricMatcher__execute
 
 #[cfg(test)]
 mod tests {

@@ -1088,6 +1088,102 @@ describe("expect.addEqualityTesters", () => {
     expect(() => expect({ deep: "vitest-apis-throw" }).toMatchObject({ deep: "x" })).toThrow(
       new RangeError("the tester threw"),
     );
+    // Reading `last` from the revoked Proxy throws a TypeError, which must not replace the tester's error.
+    const revocable = Proxy.revocable({ deep: "vitest-apis-revoke", last: 1 }, {});
+    expect.addEqualityTesters([
+      a => {
+        if (a !== "vitest-apis-revoke") return undefined;
+        revocable.revoke();
+        throw new RangeError("the tester threw");
+      },
+    ]);
+    expect(() => expect(revocable.proxy).toMatchObject({ deep: "x", last: 1 })).toThrow(
+      new RangeError("the tester threw"),
+    );
+  });
+
+  // https://github.com/oven-sh/bun/issues/9089
+  describe("a toMatchObject that fails", () => {
+    const flaggedLines = (received: object, expected: object) =>
+      messageOf(() => expect(received).toMatchObject(expected))
+        .split("\n")
+        .filter(line => /^[-+] {3}/.test(line));
+
+    test("does not flag a matcher that passed after a tester said no", () => {
+      class Part {
+        constructor(public id: number) {}
+      }
+      expect.addEqualityTesters([
+        (a, b) => {
+          if (a === "vitest-apis-walk-past") return false;
+          if (a instanceof Part && b instanceof Part) return false;
+          return undefined;
+        },
+      ]);
+      const matcher = { b: expect.any(Date) };
+      // The tester rejects `a`, which prints the same on both sides. So the match fails and the diff flags no line.
+      expect(
+        flaggedLines({ a: "vitest-apis-walk-past", b: new Date(0) }, { a: "vitest-apis-walk-past", ...matcher }),
+      ).toEqual([]);
+      expect(flaggedLines({ a: new Part(1), b: new Date(0) }, { a: new Part(1), ...matcher })).toEqual([]);
+      expect({ a: new Part(1), b: new Date(0) }).not.toMatchObject({ a: new Part(1), ...matcher });
+    });
+
+    test("flags a matcher in two objects that a tester accepted, in each key order", () => {
+      class Box {
+        constructor(
+          public id: number,
+          public when: unknown,
+        ) {}
+      }
+      expect.addEqualityTesters([(a, b) => (a instanceof Box && b instanceof Box ? a.id === b.id : undefined)]);
+      // The tester decides for all that the two objects hold, so the walk does not go into them.
+      const flagged = [
+        '-   "a": 2,',
+        '+   "a": 1,',
+        '-     "when": Any<Date>,',
+        '+     "when": 1970-01-01T00:00:00.000Z,',
+      ];
+      expect(flaggedLines({ a: 1, box: new Box(1, new Date(0)) }, { a: 2, box: new Box(1, expect.any(Date)) })).toEqual(
+        flagged,
+      );
+      expect(flaggedLines({ box: new Box(1, new Date(0)), a: 1 }, { box: new Box(1, expect.any(Date)), a: 2 })).toEqual(
+        flagged,
+      );
+    });
+
+    test("after the first mismatch asks the testers only about two objects", () => {
+      class Whole {
+        constructor(public id: number) {}
+      }
+      const asked: string[] = [];
+      expect.addEqualityTesters([
+        a => {
+          if (a === "vitest-apis-asked") asked.push("string");
+          if (a instanceof Whole) asked.push("object");
+          if (a === "vitest-apis-throw-late" || (a instanceof Whole && a.id < 0))
+            throw new RangeError("the tester threw");
+          return undefined;
+        },
+      ]);
+      const askedBy = (received: object, expected: object) => {
+        asked.length = 0;
+        flaggedLines(received, expected);
+        return [...asked];
+      };
+      const rest = () => ({ text: "vitest-apis-asked", whole: new Whole(1) });
+      expect(askedBy({ ...rest(), a: 1 }, { ...rest(), a: 2 })).toEqual(["string", "object"]);
+      // What a tester says about `text` can no longer change the result or the diff, so the walk does not ask.
+      expect(askedBy({ a: 1, ...rest() }, { a: 2, ...rest() })).toEqual(["object"]);
+      expect(flaggedLines({ a: 1, text: "vitest-apis-throw-late" }, { a: 2, text: "vitest-apis-throw-late" })).toEqual([
+        '-   "a": 2,',
+        '+   "a": 1,',
+      ]);
+      // About two objects it asks, as Jest does: the answer decides if the walk goes into them.
+      expect(() => expect({ a: 1, whole: new Whole(-1) }).toMatchObject({ a: 2, whole: new Whole(-1) })).toThrow(
+        new RangeError("the tester threw"),
+      );
+    });
   });
 
   test("this.equals uses only the testers it is given", () => {

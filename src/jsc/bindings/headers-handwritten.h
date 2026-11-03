@@ -452,11 +452,14 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JS
 
 namespace Bun {
 struct DeepMatchState {
+    // The (value, pattern) pairs that the walk has entered. It skips a pair that it meets again and does not judge it.
     std::set<std::pair<JSC::EncodedJSValue, JSC::EncodedJSValue>> seen;
     JSC::MarkedArgumentBuffer gcBuffer;
     // If `records`, `recorded` gets 4 values per compared property (see recordIfAsked).
     // An undefined patternOfValue means `value` is the asymmetric matcher the property matched.
     bool records { false };
+    // The result of a `walkPastMismatch` walk, which returns true after a mismatch too.
+    bool mismatched { false };
     JSC::MarkedArgumentBuffer recorded;
     WTF::Vector<JSC::Identifier> recordedNames;
 
@@ -477,8 +480,11 @@ struct DeepMatchState {
  * @brief `Bun.deepMatch(a, b)`
  *
  * `object` and `subset` must be objects. Neither is changed.
+ *
+ * With `walkPastMismatch` the walk does not stop at a mismatch: it sets `state.mismatched` and goes on, so
+ * `state.recorded` also gets the matchers that passed after it. For a caller that prints a failed match.
  */
-template<bool enableAsymmetricMatchers>
+template<bool enableAsymmetricMatchers, bool walkPastMismatch = false>
 bool Bun__deepMatch(
     JSC::JSValue object,
     JSC::JSValue subset,

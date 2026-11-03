@@ -16,6 +16,22 @@ if (typeof Bun === "undefined")
       },
     }),
   ];
+/** `expect(b).toMatchObject(a)` and `expect(b).not.toMatchObject(a)` give the answer of `Bun.deepMatch(a, b)`. */
+function expectToMatchObjectToAgree(a: unknown, b: unknown, matches: boolean) {
+  const passes = (assert: () => void) => {
+    try {
+      assert();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  expect({
+    toMatchObject: passes(() => expect(b).toMatchObject(a as object)),
+    notToMatchObject: passes(() => expect(b).not.toMatchObject(a as object)),
+  }).toEqual({ toMatchObject: matches, notToMatchObject: !matches });
+}
+
 describe("Bun.deepMatch", () => {
   it.each<TestCase>([
     // force line break
@@ -79,6 +95,7 @@ describe("Bun.deepMatch", () => {
     ],
   ])("Bun.deepMatch(%p, %p) === true", (a, b) => {
     expect(Bun.deepMatch(a, b)).toBe(true);
+    expectToMatchObjectToAgree(a, b, true);
   });
 
   // prettier-ignore
@@ -135,6 +152,21 @@ describe("Bun.deepMatch", () => {
     // ],
   ])("Bun.deepMatch(%p, %p) === false", (a, b) => {
     expect(Bun.deepMatch(a, b)).toBe(false);
+    expectToMatchObjectToAgree(a, b, false);
+  });
+
+  // prettier-ignore
+  it.each<TestCase>([
+    [new Date(5), new Date(6)],
+    [{ when: new Date(5) }, { when: new Date(6) }],
+    [new Error("a"), new Error("b")],
+    [[new Error("a")], [new Error("b")]],
+    [new Set([1]), new Set([2])],
+    [{ set: new Set([1]) }, { set: new Set([1, 2]) }],
+    [new Map([[1, 2]]), new Map([[1, 3]])],
+    [{ map: new Map([[1, 2]]) }, { map: new Map() }],
+  ])("toMatchObject agrees with Bun.deepMatch(%p, %p)", (a, b) => {
+    expectToMatchObjectToAgree(a, b, Bun.deepMatch(a, b));
   });
 
   it("When comparing same-shape objects with different constructors, returns true", () => {

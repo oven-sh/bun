@@ -36,8 +36,7 @@ pub(crate) enum State {
 
 pub(crate) struct ExecState {
     pub(crate) err: Option<bun_sys::Error>,
-    /// Tasks that have a section. Their slots are `0..task_count`: slot 0 is the task that lists
-    /// the one path or that orders the operands, and each subtask takes the next slot.
+    /// Tasks that have a section. Slot 0 lists the one path or orders the operands.
     pub(crate) task_count: AtomicUsize,
     /// Tasks whose section is written.
     pub(crate) tasks_done: usize,
@@ -48,9 +47,7 @@ pub(crate) struct ExecState {
     /// What each task that runs `stat` on a part of the operands found, until the last is done.
     parts: Vec<Option<Classified>>,
     parts_left: usize,
-    /// The slot whose section is written next. The order is depth first: the section of a task,
-    /// then the sections of its subtasks, each with its own subtasks. The pool completes the tasks
-    /// in any order.
+    /// The slot whose section is written next: depth first, a task before its subtasks.
     turn: Option<u32>,
     /// The slots after `turn`, the next one last.
     after: Vec<u32>,
@@ -58,13 +55,10 @@ pub(crate) struct ExecState {
     parked: Vec<Option<Section>>,
     /// The section of `turn`, while a part of it is still to write.
     writing: Option<Section>,
-    /// Bytes of `batch_stream` that are ready for its `IOWriter`. Small sections are joined in
-    /// it, so that a listing of many directories is not one write for each of them.
+    /// Bytes ready for the `IOWriter` of `batch_stream`. Small sections are joined in it.
     batch: Vec<u8>,
     batch_stream: IoKind,
-    /// Whether stdout and stderr are two `IOWriter`s on one file (a terminal, or one pipe), where
-    /// the order of the writes shows. A chunk of one stream then waits until the chunks of the
-    /// other are written. `None` until the two streams first meet ([`Ls::one_destination`]).
+    /// Whether stdout and stderr are two `IOWriter`s on one file. `None` until they first meet.
     one_destination: Option<bool>,
     /// The stream of the chunks that are queued and not written yet.
     in_flight: IoKind,
@@ -72,8 +66,7 @@ pub(crate) struct ExecState {
     draining: bool,
 }
 
-/// Sections are joined into chunks of at most this size. A pipe that is writable takes one
-/// page without waiting.
+/// Sections are joined into chunks of at most one page, which a writable pipe takes at once.
 const CHUNK: usize = 4096;
 
 /// A part has at least this many operands. Below that, a pool task costs more than it saves.
@@ -269,8 +262,7 @@ impl Ls {
 
     /// Creates a task on the pool: it lists `path`, or it works on operands.
     fn schedule(interp: &Interpreter, cmd: NodeId, path: ZBox, operands: Option<Box<Operands>>) {
-        // Stable address: `Ls` lives in `Box<Ls>` (Builtin::Impl::Ls),
-        // and the `Exec` variant is held until all tasks finish.
+        // Stable address: `Ls` is in a `Box`, and `Exec` is held until all tasks finish.
         let task_count: *const AtomicUsize = {
             let State::Exec(exec) = &Self::state_mut(interp, cmd).state else {
                 unreachable!()
@@ -293,8 +285,7 @@ impl Ls {
         }
     }
 
-    /// A task that ran `stat` on one part of the operands is done. After the last of them, one
-    /// more task puts what they found in order.
+    /// A task that ran `stat` on one part is done. After the last, one task orders the results.
     fn on_operands_classified(
         interp: &Interpreter,
         cmd: NodeId,
@@ -317,8 +308,7 @@ impl Ls {
         Self::schedule(interp, cmd, ZBox::default(), Some(Box::new(order)));
     }
 
-    /// A task with a section is done. The section is written now if it is next, with each
-    /// waiting section whose turn that makes it.
+    /// A task with a section is done. The section is written now if its turn has come.
     fn on_shell_ls_task_done(interp: &Interpreter, cmd: NodeId, slot: u32, section: Section) {
         let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
             return;
@@ -336,9 +326,7 @@ impl Ls {
         Self::next(interp, cmd).run(interp);
     }
 
-    /// Writes, in order, each section whose turn it is. It stops where a section is not there
-    /// yet, or where a stream has to wait for the other one ([`Self::flush`]). Then
-    /// `on_io_writer_chunk` calls it again.
+    /// Writes each section whose turn it is, until one is missing or a stream has to wait.
     fn drain(interp: &Interpreter, cmd: NodeId) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.draining = true;
@@ -405,8 +393,7 @@ impl Ls {
         }
     }
 
-    /// Whether `len` more bytes of `stream` can go in the batch. A batch of the other stream, or
-    /// a batch that is full, is written first, and that write can have to wait.
+    /// Whether `len` more bytes of `stream` fit in the batch, after a flush if one is needed.
     fn make_room(interp: &Interpreter, cmd: NodeId, stream: IoKind, len: usize) -> bool {
         let needs_io = Self::stream(Builtin::of_mut(interp, cmd), stream)
             .needs_io()
@@ -423,8 +410,7 @@ impl Ls {
         Self::flush(interp, cmd)
     }
 
-    /// Takes the bytes that come next on `stream`, after [`Self::make_room`] for them. A stream
-    /// with no `IOWriter` gets them now. The other kind gets them with the batch.
+    /// Takes the next bytes of `stream`: into the batch, or at once with no `IOWriter`.
     fn emit(interp: &Interpreter, cmd: NodeId, stream: IoKind, bytes: Vec<u8>) {
         if bytes.is_empty() {
             return;
@@ -447,9 +433,7 @@ impl Ls {
         }
     }
 
-    /// Queues the batch on its `IOWriter`. False if it has to wait, because chunks of the other
-    /// stream are not written yet and go to the same file. A chunk is counted in
-    /// `output_waiting`, and `on_io_writer_chunk` runs once for it, now or later.
+    /// Queues the batch. False while chunks of the other stream wait on the same file.
     fn flush(interp: &Interpreter, cmd: NodeId) -> bool {
         let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
             return false;
@@ -479,8 +463,7 @@ impl Ls {
         true
     }
 
-    /// See [`ExecState::one_destination`]. Two pipes, or a pipe and a terminal, are two
-    /// destinations: a reader that does not drain one of them must not stop the other.
+    /// Two pipes, or a pipe and a terminal, are two destinations: neither waits for the other.
     fn one_destination(interp: &Interpreter, cmd: NodeId) -> bool {
         let State::Exec(exec) = &Self::state_mut(interp, cmd).state else {
             return false;
@@ -581,11 +564,9 @@ enum Operand {
     Entry(Option<bun_sys::Stat>),
 }
 
-/// What a task does with operands (`ls` with two or more). Many operands are split between
-/// several tasks, because one `stat` call can be slow (a network file system).
+/// What a task does with two or more operands. Tasks share them: one `stat` can be slow.
 enum Operands {
-    /// Run `stat` on these operands, each followed by a NUL. `alone`: no other task has
-    /// operands, so this one also puts them in order.
+    /// Run `stat` on these NUL-terminated operands. `alone`: this task also orders them.
     Stat {
         bytes: Vec<u8>,
         part: usize,
@@ -660,8 +641,7 @@ impl ShellLsTask {
         bun_core::heap::into_raw(task)
     }
 
-    /// Schedules a subtask that lists `path`: a directory operand, or a subdirectory under
-    /// `-R`. Returns its slot.
+    /// Schedules a subtask that lists `path` (a directory operand or a `-R` subdirectory).
     fn schedule_subtask(&mut self, path: ZBox) -> u32 {
         // Pool thread: the subtask inherits our poster rather than deriving
         // one from the VM (`ShellTask::new` is JS-thread only).
@@ -796,9 +776,7 @@ impl ShellLsTask {
         this.output.push(b'\n');
     }
 
-    /// Runs `stat` on each operand in `operands` (each followed by a NUL). An operand that is not
-    /// a directory gets its entry. A directory gets a subtask that lists it, or with `-d` an
-    /// entry too.
+    /// Runs `stat` on each NUL-terminated operand: an entry, or a subtask for a directory.
     fn classify(&mut self, operands: Vec<u8>) -> Classified {
         let mut found = Vec::with_capacity(strings::count_char(&operands, 0));
         let mut rest = &operands[..];
@@ -859,11 +837,7 @@ impl ShellLsTask {
         }
     }
 
-    /// Puts what the `stat` passes found in the coreutils order. The operands that are not
-    /// directories come first, as the entries of this task's section. Then comes the section of
-    /// each directory. Each of the two groups is sorted by name, or by what `-t` or `-S` names.
-    /// `-U` and `-f` keep the order of the command line in each group, and `-r` reverses the
-    /// sort. The errors are in the order of the command line.
+    /// The coreutils order: entries first, then each directory, each group sorted by the flags.
     fn order(&mut self, mut parts: Vec<Classified>) {
         struct Item<'a> {
             name: &'a [u8],
@@ -1267,9 +1241,7 @@ pub(crate) struct Opts {
     pub(crate) sort: Sort,
 }
 
-/// How the operands are sorted inside each of their two groups (the ones that are not
-/// directories, then the directories). The last of these flags on the command line wins (GNU
-/// coreutils). The entries of a directory are not sorted.
+/// How each group of operands is sorted. The last flag wins. A directory's entries stay unsorted.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum Sort {
     /// By name.

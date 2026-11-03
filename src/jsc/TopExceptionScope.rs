@@ -402,47 +402,14 @@ impl Drop for ExceptionValidationScopeGuard<'_> {
 }
 
 impl ExceptionValidationScope {
-    /// See [`TopExceptionScope::init_guard_at`] for the storage-passing rationale.
-    #[track_caller]
-    fn init<'a>(
-        storage: &'a mut core::mem::MaybeUninit<Self>,
-        global: &JSGlobalObject,
-    ) -> &'a mut Self {
-        Self::init_at(storage, global, SourceLocation::from_caller())
-    }
-
-    #[inline]
-    fn init_at<'a>(
-        storage: &'a mut core::mem::MaybeUninit<Self>,
-        global: &JSGlobalObject,
-        src: SourceLocation,
-    ) -> &'a mut Self {
-        #[cfg(any(debug_assertions, bun_asan))]
-        {
-            let this = storage.write(Self {
-                scope: TopExceptionScope {
-                    bytes: [0u8; SIZE],
-                    location: core::ptr::null(),
-                },
-            });
-            this.scope.init_in_place(global, src);
-            this
-        }
-        #[cfg(not(any(debug_assertions, bun_asan)))]
-        {
-            let _ = (global, src);
-            storage.write(Self {})
-        }
-    }
-
-    /// RAII constructor — see [`TopExceptionScope::init_guard`].
+    /// RAII constructor — see [`TopExceptionScope::init_guard_at`].
     #[track_caller]
     #[inline]
     pub(crate) fn init_guard<'a>(
         storage: &'a mut core::mem::MaybeUninit<Self>,
         global: &JSGlobalObject,
     ) -> ExceptionValidationScopeGuard<'a> {
-        ExceptionValidationScopeGuard(Self::init(storage, global))
+        Self::init_guard_at(storage, global, SourceLocation::from_caller())
     }
 
     /// RAII constructor with explicit [`SourceLocation`].
@@ -452,7 +419,22 @@ impl ExceptionValidationScope {
         global: &JSGlobalObject,
         src: SourceLocation,
     ) -> ExceptionValidationScopeGuard<'a> {
-        ExceptionValidationScopeGuard(Self::init_at(storage, global, src))
+        #[cfg(any(debug_assertions, bun_asan))]
+        {
+            let this = storage.write(Self {
+                scope: TopExceptionScope {
+                    bytes: [0u8; SIZE],
+                    location: core::ptr::null(),
+                },
+            });
+            this.scope.init_in_place(global, src);
+            ExceptionValidationScopeGuard(this)
+        }
+        #[cfg(not(any(debug_assertions, bun_asan)))]
+        {
+            let _ = (global, src);
+            ExceptionValidationScopeGuard(storage.write(Self {}))
+        }
     }
 
     /// Asserts there has not been any exception thrown.

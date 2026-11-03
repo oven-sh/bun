@@ -277,10 +277,9 @@ impl FSWatchTaskPosix {
 #[cfg(not(windows))]
 impl FSWatchTaskPosix {
     /// `FSWatchTaskPosix.deinit`. **Not** `impl Drop`:
-    /// this is only ever called on heap clones produced by `enqueue()` (via the
-    /// task dispatcher), never on the embedded `current_task`. A `Drop` impl would also fire on
-    /// `*self = Self{..}` in `append()` and on `heap::take` in `finalize`,
-    /// where `self` *is* `current_task`.
+    /// this is only ever called on heap clones produced by `enqueue()`, never on the embedded
+    /// `current_task`. A `Drop` impl would also fire on `*self = Self{..}` in `append()` and when
+    /// the `FSWatcher` is dropped, where `self` *is* `current_task`.
     #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
     pub(crate) fn deinit(mut self: Box<Self>) {
         self.clean_entries();

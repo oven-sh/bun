@@ -712,7 +712,8 @@ scopes."@other" = "https://registry.other.com/"
   // order is refused.
   test(`the order of [table] blocks does not change the outcome (seed=${fuzzSeed}, iters=${fuzzIters})`, () => {
     // A count below 1, or one that is not a number, would check no document and still pass.
-    expect(fuzzIters).toBeGreaterThanOrEqual(1);
+    // An infinite count would not end.
+    expect(fuzzIters).toBeWithin(1, Infinity);
     let state = fuzzSeed;
     const next = () => {
       state = (state + 0x6d2b79f5) | 0;

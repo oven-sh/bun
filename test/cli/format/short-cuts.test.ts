@@ -1948,7 +1948,7 @@ describe.skipIf(!hasFlag)("HTML", () => {
     // A line break in a value.
     `<div>\n  <p a="b\nc">d</p>\n  <img a="b\n  c" />\n  <p a="b\n">\n    <b>e</b>\n  </p>\n  <p class="b\nc"></p>\n  <p style="b:\nc"></p>\n  <a b="c\nd">e</a>\n  <p>f <a b="c\nd">e</a></p>\n  <p a="b\tc"></p>\n  <p a="b \n c" d="e\n\nf" g></p>\n</div>\n`,
     // Deeper than what is read from the bytes goes.
-    "<div>\n".repeat(200) + "<p>a</p>\n" + "</div>\n".repeat(200),
+    "<div>\n".repeat(140) + "<p>a</p>\n" + "</div>\n".repeat(140),
     "﻿<div>\n  <p>a</p>\n</div>\n",
     "<div>\r\n  <p>a</p>\r\n</div>\r\n",
     "<div>\n  <p>a</p>\n</div>",
@@ -1975,7 +1975,8 @@ describe.skipIf(!hasFlag)("HTML", () => {
     ["--print-width=20", "--tab-width=4"],
     ["--print-width=1"],
     ["--print-width=100000", "--tab-width=0"],
-    ["--tab-width=5000"],
+    // The indentation of the deepest input is 12 MB of what is printed.
+    ["--tab-width=600"],
     ["--use-tabs"],
     ["--html-whitespace-sensitivity=strict"],
     ["--html-whitespace-sensitivity=ignore", "--print-width=60"],

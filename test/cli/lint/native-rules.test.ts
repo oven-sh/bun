@@ -2,6 +2,7 @@
 // `[lint.rules]`, with `--rule`, and in comments, under any of its names. An unknown rule name is an error.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { endChildren, spawn } from "../children";
 
@@ -550,6 +551,164 @@ describe.concurrent("core rules and their typescript-eslint versions never both 
     const config = `export default [{ files: ["**/*.ts"], extends: ["typescript-eslint/recommended"], rules: { "no-unused-vars": "error" } }];\n`;
     const { stdout } = await lint({ "b.ts": unused["b.ts"], "eslint.config.mjs": config }, ["-f", "json", "b.ts"]);
     expect(problems(stdout)).toEqual(["b.ts:1 @typescript-eslint/no-unused-vars", "b.ts:1 no-unused-vars"]);
+  });
+});
+
+// The expected reports and fixed code were recorded from ESLint 10.14.0 with eslint-plugin-perfectionist 5.13.0.
+describe.concurrent("the perfectionist rules run without eslint-plugin-perfectionist installed", () => {
+  // `sizes` is in natural order, which is why "35T" is never reported, while alphabetical order puts "100T" first.
+  const code = `export const sizes = { "35T": 1, "100T": 2 };
+export const chips = { "35T": 1, "100T": 2, b: 3, a: 4 };
+export type Size = "small" | "large" | "medium";
+export type Point = { y: number; x: number };
+export interface Box {
+  z: number;
+  a: number;
+}
+`;
+  const fixed = `export const sizes = { "35T": 1, "100T": 2 };
+export const chips = { "35T": 1, "100T": 2, a: 4, b: 3 };
+export type Size = "large" | "medium" | "small";
+export type Point = { x: number; y: number; };
+export interface Box {
+  a: number;
+  z: number;
+}
+`;
+  // The plugin is named the way ESLint sees it, but no package exists in node_modules: the built-in rules run.
+  const config = (type: string) => `const perfectionist = { meta: { name: "eslint-plugin-perfectionist" }, rules: {} };
+const options = { type: ${JSON.stringify(type)}, order: "asc" };
+export default [
+  {
+    files: ["**/*.ts"],
+    plugins: { perfectionist },
+    rules: {
+      "perfectionist/sort-objects": ["error", options],
+      "perfectionist/sort-union-types": ["error", options],
+      "perfectionist/sort-object-types": ["error", options],
+      "perfectionist/sort-interfaces": ["error", options],
+    },
+  },
+];
+`;
+  type Message = {
+    line: number;
+    column: number;
+    endLine: number;
+    endColumn: number;
+    ruleId: string;
+    message: string;
+    fix?: { range: [number, number]; text: string };
+  };
+  const reported = async (type: string) => {
+    const files = { "a.ts": code, "eslint.config.js": config(type) };
+    const { stdout, stderr, exitCode } = await lint(files, ["-f", "json", "a.ts"]);
+    expect(stderr).not.toContain("error:");
+    const [{ messages }] = JSON.parse(stdout) as { messages: Message[] }[];
+    const found = messages.map(({ line, column, endLine, endColumn, ruleId, message, fix }) => ({
+      line,
+      column,
+      endLine,
+      endColumn,
+      ruleId,
+      message,
+      fix,
+    }));
+    return { found, exitCode };
+  };
+
+  test("natural order reports the same problems and fixes as ESLint", async () => {
+    const { found, exitCode } = await reported("natural");
+    expect(found).toEqual([
+      {
+        line: 2,
+        column: 51,
+        endLine: 2,
+        endColumn: 55,
+        ruleId: "perfectionist/sort-objects",
+        message: 'Expected "a" to come before "b".',
+        fix: { range: [90, 100], text: "a: 4, b: 3" },
+      },
+      {
+        line: 3,
+        column: 30,
+        endLine: 3,
+        endColumn: 37,
+        ruleId: "perfectionist/sort-union-types",
+        message: 'Expected ""large"" to come before ""small"".',
+        fix: { range: [123, 151], text: '"large" | "medium" | "small"' },
+      },
+      {
+        line: 4,
+        column: 34,
+        endLine: 4,
+        endColumn: 43,
+        ruleId: "perfectionist/sort-object-types",
+        message: 'Expected "x" to come before "y".',
+        fix: { range: [175, 195], text: "x: number; y: number;" },
+      },
+      {
+        line: 7,
+        column: 3,
+        endLine: 7,
+        endColumn: 13,
+        ruleId: "perfectionist/sort-interfaces",
+        message: 'Expected "a" to come before "z".',
+        fix: { range: [224, 247], text: "a: number;\n  z: number;" },
+      },
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test('alphabetical order, the default, puts "100T" before "35T"', async () => {
+    const { found, exitCode } = await reported("alphabetical");
+    expect(found.slice(0, 3)).toEqual([
+      {
+        line: 1,
+        column: 34,
+        endLine: 1,
+        endColumn: 43,
+        ruleId: "perfectionist/sort-objects",
+        message: 'Expected "100T" to come before "35T".',
+        fix: { range: [23, 42], text: '"100T": 2, "35T": 1' },
+      },
+      {
+        line: 2,
+        column: 34,
+        endLine: 2,
+        endColumn: 43,
+        ruleId: "perfectionist/sort-objects",
+        message: 'Expected "100T" to come before "35T".',
+        fix: { range: [69, 100], text: '"100T": 2, "35T": 1, a: 4, b: 3' },
+      },
+      {
+        line: 2,
+        column: 51,
+        endLine: 2,
+        endColumn: 55,
+        ruleId: "perfectionist/sort-objects",
+        message: 'Expected "a" to come before "b".',
+        fix: { range: [69, 100], text: '"100T": 2, "35T": 1, a: 4, b: 3' },
+      },
+    ]);
+    expect(found.length).toBe(6);
+    expect(exitCode).toBe(1);
+  });
+
+  test("--fix sorts the file the way ESLint does", async () => {
+    using dir = tempDir("bun-lint-native", { "a.ts": code, "eslint.config.js": config("natural") });
+    await using proc = spawn({
+      cmd: [bunExe(), "lint", "--fix", "-f", "json", "a.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(readFileSync(join(String(dir), "a.ts"), "utf8")).toBe(fixed);
+    expect(stderr).toContain("Fixed 4 problems in 1 file");
+    expect(problems(stdout)).toEqual([]);
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -1457,10 +1616,7 @@ export default { meta: { name: "demo" }, rules: { one: rule, two: rule } };\n`;
     [`"nextj/*" = "off"`, `Unknown plugin "nextj"\n  Did you mean "nextjs/*"?`],
     [`"jsx-ally/*" = "off"`, `Unknown plugin "jsx-ally"\n  Did you mean "jsx-a11y/*"?`],
     [`"m/*" = "off"`, `Unknown plugin "m"\n  Did you mean "n/*"?`],
-    [
-      `"perfectionist/*" = "off"`,
-      `Unknown rule "perfectionist/*"\n  To use a rule from an ESLint plugin, add the plugin`,
-    ],
+    [`"sonarjs/*" = "off"`, `Unknown rule "sonarjs/*"\n  To use a rule from an ESLint plugin, add the plugin`],
     [`"/*" = "off"`, `Unknown rule "/*"`],
     [`"nextjs/*" = "always"`, `"nextjs/*" can only be "off"\n`],
     [`"nextjs/*" = "warn"`, `"nextjs/*" can only be "off"\n  To turn rules on, name them or use [lint.categories]`],

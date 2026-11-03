@@ -36,6 +36,9 @@ impl<'a> Line<'_, 'a> {
         if params.is_empty() {
             return Ok(());
         }
+        if self.is_flow {
+            return self.flow_type_parameters(params);
+        }
         self.byte(b'<')?;
         self.list(params.iter(), |line, param| line.type_parameter(param))?;
         self.byte(b'>')
@@ -73,6 +76,9 @@ impl<'a> Line<'_, 'a> {
     }
 
     pub(super) fn ty(&mut self, ty: TypeNode<'a>) -> Written {
+        if self.is_flow {
+            return self.flow_type(ty);
+        }
         match ty.tag() {
             TypeTag::Keyword | TypeTag::BoolLit => return self.source(ty.span()),
             TypeTag::Union

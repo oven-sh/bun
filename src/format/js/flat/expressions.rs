@@ -55,6 +55,7 @@ impl<'a> Line<'_, 'a> {
 
     pub(super) fn new_expression(&mut self, e: Expr<'a>, is_last: bool) -> Written {
         let call = e.as_new().ok_or(Refused)?;
+        self.check_flow_new(e, call.callee())?;
         self.token("new ")?;
         self.expr(call.callee(), Place::Other)?;
         self.type_arguments(call.type_args())?;
@@ -277,7 +278,10 @@ impl<'a> Line<'_, 'a> {
             }
             ExprKind::As { expr, ty } | ExprKind::Satisfies { expr, ty } => {
                 if e.is_angle_bracket_assertion() {
-                    return Err(Refused);
+                    return match self.is_flow {
+                        true => self.flow_type_cast(expr, ty),
+                        false => Err(Refused),
+                    };
                 }
                 self.expr(expr, Place::Other)?;
                 self.token(match e.tag() {

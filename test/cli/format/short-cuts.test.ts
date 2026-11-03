@@ -1409,3 +1409,50 @@ describe.skipIf(!hasFlag)("Vue", () => {
     expect(short).toEqual(long);
   });
 });
+
+describe.skipIf(!hasFlag)("where lines are written without a document", () => {
+  /** Formats `files` with `flags`, and returns what they are afterwards. */
+  async function format(files: Record<string, string>, flags: string[]) {
+    using dir = tempDir("format-short-cuts", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fmt", "--write", "--no-config", "--no-editorconfig", "--log-level=silent", ...flags, "."],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const texts = Object.fromEntries(
+      Object.keys(files).map(name => [name, readFileSync(join(String(dir), name), "utf8")]),
+    );
+    return { texts, stderr, exitCode };
+  }
+
+  const files: Record<string, string> = {
+    // A block comment that is printed on the line of what is before it counts for the width, wherever it is written.
+    "comment-after-stray-semicolon.js": `import { aaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbb } from "./cccccccccccccc";\n;/** The comment is on that line */\nd();\n`,
+    "comment-after-comma-on-next-line.js": `a = {\n  bbbbbbbbbbb: cccccccccccccc.dddddddddddd(eeeeeeeeeeeeeeee.ffffffffff).ggggggggg\n,/* istanbul ignore next */\n  h: 1,\n};\n`,
+    "comment-after-statement.js": `aaaaaaaaaaaaaaaaaaaaaaaaaaa(bbbbbbbbbbbbbbbbbbbbbbbbbbbbb, ccccccccccccccccccc); /* d */\ne(); /* f */ g();\n`,
+    // What is printed to a text of its own does not start where the file says.
+    "each-table.js":
+      "test.each`\na | \n${[{ start: 1, end: 3 },{  // c\nstart: 15, end: 20 }]}| \n`('example test', ({a, b, c}) => {})\n",
+    // Flow: the nodes of TypeScript stand for something else.
+    "flow-types.js": `// @flow\nfunction f<T: Object = {}>(a: ?string, b: Array<number>, c: A.B<C> | 'd', ...e?: bool[]): boolean {\n  return (a: any);\n}\nconst x: ?Foo = ((y: any): ?(Bar[]));\nclass A<+T> extends B<T> implements C {\n  +a: number;\n  static b: ?T = null;\n  c(d: A<>): (?T)[] {\n    return [];\n  }\n}\n`,
+    "flow-declarations.js": `// @flow\nimport typeof A from "a";\nimport { typeof B, type C } from "b";\nimport type D from "d";\ndeclare var z: number;\ndeclare function g(number): string;\ndeclare export default T;\ndeclare module.exports: { a: 1 };\ndeclare export { a };\nopaque type E = string;\nhook useF() {\n  return 1;\n}\ncomponent G(a: T) {\n  return a;\n}\n`,
+    "flow-declare-module.js": `// @flow\ndeclare module 'a' {\n  class B extends C {\n    constructor(d?: E): void;\n    f(): void;\n  }\n  function g(): void;\n  export default class H<I> {\n    j: I;\n  }\n}\n`,
+    "flow-match.js": `// @flow\nconst m = match (a) {\n  1 => 2,\n  {b: const c} => c,\n  _ => 3,\n};\nmatch (a) {\n  1 | 2 => {\n    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, cccccccccccccc);\n  }\n}\nconst r = R { a: 1 };\nconst s = new S();\n`,
+  };
+
+  test.concurrent.each([
+    [[]],
+    [["--print-width=24"]],
+    [["--print-width=60", "--use-tabs"]],
+    [["--tab-width=8", "--single-quote", "--no-bracket-spacing"]],
+  ])("the same with %j", async flags => {
+    const [short, long] = await Promise.all([format(files, flags), format(files, [...flags, "--no-short-cuts"])]);
+    expect(short).toEqual(long);
+    expect(long.stderr).toBe("");
+    expect(long.texts).not.toEqual(files);
+    expect(long.exitCode).toBe(0);
+  });
+});

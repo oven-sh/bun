@@ -26,6 +26,7 @@
 
 mod classes;
 mod expressions;
+mod flow;
 mod functions;
 mod holes;
 mod signatures;
@@ -76,10 +77,12 @@ pub(crate) struct ShortCuts {
     pub(crate) follows_line: bool,
     /// The properties of the object that's being written are each on a line.
     pub(crate) properties_start_lines: bool,
+    /// The file has a block comment with something before it on its line.
+    has_block_comment_after_code: bool,
 }
 
 impl ShortCuts {
-    pub(crate) fn for_file(file: &File<'_>, options: &FormatOptions) -> ShortCuts {
+    pub(crate) fn for_file<'a>(file: &'a File<'a>, options: &FormatOptions) -> ShortCuts {
         let is_plain_run = !options.no_short_cuts
             && !options.flavor.is_oxfmt()
             && options.semicolons.is_always()
@@ -95,7 +98,6 @@ impl ShortCuts {
             && options.sort_imports.is_none()
             && options.tailwind.is_none()
             && options.debug_comments == DebugComments::Off
-            && !file.is_flow()
             // Every check for a line break below looks for `\n`.
             && !strings::contains_char(file.text(), b'\r');
         ShortCuts {
@@ -105,6 +107,9 @@ impl ShortCuts {
             next_in_list: 0,
             follows_line: false,
             properties_start_lines: false,
+            has_block_comment_after_code: is_plain_run
+                && (file.comments_by_id())
+                    .any(|comment| comment.is_block() && !comment.has_newline_before()),
         }
     }
 }
@@ -131,6 +136,18 @@ impl<'a, C: Format<'a>> Format<'a> for CertainIf<'_, C> {
         f.context_mut().short_cuts.is_certain = outer && self.0;
         self.1.fmt(f);
         f.context_mut().short_cuts.is_certain = outer;
+    }
+}
+
+/// Content that isn't printed as part of the file, so that nothing is known about where its lines start, and nobody
+/// formats it again if a guess is wrong.
+pub(crate) struct LongWay<'c, C: ?Sized>(pub(crate) &'c C);
+
+impl<'a, C: Format<'a> + ?Sized> Format<'a> for LongWay<'_, C> {
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        let outer = std::mem::replace(&mut f.context_mut().short_cuts.mode, Mode::Off);
+        self.0.fmt(f);
+        f.context_mut().short_cuts.mode = outer;
     }
 }
 
@@ -201,6 +218,7 @@ struct Line<'f, 'a> {
     breaks: bool,
     /// There's no comment anywhere in the source of what's written.
     is_quiet: bool,
+    is_flow: bool,
     /// Up to here the source is known to be plain and without comments.
     checked_to: u32,
     nesting: u32,
@@ -221,6 +239,28 @@ fn has_empty_line(text: &[u8]) -> bool {
         }
     }
     false
+}
+
+/// True if a block comment follows what ends at `end` and is printed on its line: nothing but commas and semicolons is
+/// between the two, and the comment doesn't start a line.
+#[inline(never)]
+fn is_before_block_comment(source: &[u8], end: u32) -> bool {
+    let mut rest = source.get(end as usize..).unwrap_or_default();
+    let mut starts_line = false;
+    loop {
+        rest = match rest {
+            [b' ' | b'\t', tail @ ..] => tail,
+            [b',' | b';', tail @ ..] => {
+                starts_line = false;
+                tail
+            }
+            [b'\n', tail @ ..] => {
+                starts_line = true;
+                tail
+            }
+            _ => return !starts_line && rest.starts_with(b"/*"),
+        };
+    }
 }
 
 /// By how much the text buffer is longer than what's written to it while a [`Line`] writes.
@@ -256,12 +296,7 @@ impl<'a> Formatter<'a> {
             return false;
         };
         let source = self.source_text().as_bytes();
-        // A block comment after it is printed on its line.
-        let mut rest = source.get(span.end as usize..).unwrap_or_default();
-        while let [b' ' | b'\t' | b',' | b';', tail @ ..] = rest {
-            rest = tail;
-        }
-        if rest.starts_with(b"/*") {
+        if state.has_block_comment_after_code && is_before_block_comment(source, span.end) {
             return false;
         }
         // So is one before it, with a blank after it, and the line doesn't start where the indentation ends.
@@ -280,6 +315,7 @@ impl<'a> Formatter<'a> {
             is_too_wide: false,
             breaks: false,
             is_quiet: self.is_quiet(),
+            is_flow: self.file().is_flow(),
             f: self,
             source,
             checked_to: span.start,
@@ -365,7 +401,12 @@ impl<'a> Formatter<'a> {
 /// Writes `statement`, which a list of statements is about to write on a line of its own. Returns false if it has to go
 /// the long way.
 pub(crate) fn write_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) -> bool {
-    f.write_line(statement.span(), 0, |line| line.statement(statement))
+    f.write_line(statement.span(), 0, |line| {
+        if line.is_flow {
+            line.check_flow_statement(statement)?;
+        }
+        line.statement(statement)
+    })
 }
 
 /// Writes `property` of an object whose properties are each on a line. A comma can follow it.
@@ -376,7 +417,12 @@ pub(crate) fn write_property<'a>(property: Prop<'a>, f: &mut Formatter<'a>) -> b
 /// Writes `member` of a class. The caller writes the `;` of a property.
 pub(crate) fn write_class_member<'a>(member: Member<'a>, f: &mut Formatter<'a>) -> bool {
     let after = u32::from(member.kind() == MemberKind::Property);
-    f.write_line(member.span(), after, |line| line.class_member(member))
+    f.write_line(member.span(), after, |line| {
+        if line.is_flow {
+            line.check_flow_member(member)?;
+        }
+        line.class_member(member)
+    })
 }
 
 impl<'a> Line<'_, 'a> {

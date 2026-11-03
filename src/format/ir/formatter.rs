@@ -1140,7 +1140,7 @@ impl<'a> Formatter<'a> {
     /// Prints `content` by itself, starting at column 0 with no indentation, and returns the text. For the rare case
     /// where layout depends on the printed text of a part.
     pub(crate) fn print_to_text(&mut self, content: &(impl Format<'a> + ?Sized)) -> Vec<u8> {
-        let document = self.capture(content);
+        let document = self.capture(&crate::js::flat::LongWay(content));
         self.print_document(document)
     }
 

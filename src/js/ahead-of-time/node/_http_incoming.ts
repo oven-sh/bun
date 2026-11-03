@@ -68,12 +68,7 @@ const emitReadableNow = internals.emitReadableNow!;
 const finishEnd = internals.finishEnd!;
 const { read, push, resume, removeAllListeners } = internals.readableMethods!;
 const { destroy, closeAfterThrow } = internals.destroyMethods!;
-const {
-  emit,
-  storeEmitWithRejectionCapture,
-  listenerCount,
-  removeAllListeners: eventEmitterRemoveAllListeners,
-} = shared.originals.eventEmitter!;
+const { emit, listenerCount, removeAllListeners: eventEmitterRemoveAllListeners } = shared.originals.eventEmitter!;
 const ReadablePrototype: object = Readable.prototype;
 // A call that the other text does not make while it loads goes to the function under its private name: a test may have replaced
 // the one under the public name, and sees every call of it.
@@ -248,10 +243,7 @@ function IncomingMessage(
       this._readableState = createUnreadByteState(nativeHighWaterMark);
       this[kShapeMode] = true;
       this._maxListeners = undefined;
-      if ((this[kCapture] = EventEmitterPrototype[kCapture])) {
-        ("unlikely");
-        storeEmitWithRejectionCapture(this);
-      }
+      this[kCapture] = EventEmitterPrototype[kCapture];
       return;
     }
     this.upgrade = null;

@@ -456,10 +456,10 @@ declare global {
 // Filled by the module that writes the functions. What lies in a public prototype object when another module loads may be a program's patch.
 const originals: {
   eventEmitter:
-    | (Pick<
+    | Pick<
         $Node.EventEmitter,
         "emit" | "addListener" | "once" | "removeListener" | "removeAllListeners" | "listenerCount"
-      > & { storeEmitWithRejectionCapture(emitter: $Node.EventEmitter): void })
+      >
     | undefined;
 } = { eventEmitter: undefined };
 

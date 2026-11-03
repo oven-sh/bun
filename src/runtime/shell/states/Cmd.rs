@@ -717,9 +717,12 @@ impl Cmd {
         this: NodeId,
         argv0: &[u8],
     ) -> Option<bun_sys::Error> {
-        // A bare name is a `$PATH` search: a file that is not executable is no match (POSIX 2.9.1.1).
         // Windows: `which()` decides by existence and extension, so a path it refuses cannot run.
-        if !cfg!(unix) || !bun_core::strings::contains_char(argv0, b'/') {
+        if !cfg!(unix) {
+            return None;
+        }
+        // A bare name is a `$PATH` search: a file that is not executable is no match (POSIX 2.9.1.1).
+        if !bun_core::strings::contains_char(argv0, b'/') {
             return None;
         }
         // `which()` resolves a relative name against the cwd string, not `cwd_fd`.

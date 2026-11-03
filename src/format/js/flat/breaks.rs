@@ -22,6 +22,8 @@
 //!    line break, that much has to have been written here ([`Line::must_fit`]).
 //! 8. A first line that's too wide is too wide up to the first possible line break only if the line has been broken
 //!    there. What says where that is (`breaks_first_at_end_of_line`) takes nothing that its writer keeps on one line.
+//! 9. Where the printer chooses among variants in an argument that's hugged, it measures the widest of them. So the line
+//!    that a hugged function starts on has no such choice in it ([`Line::check_parameters_of_hugged`]).
 
 use super::*;
 

@@ -787,6 +787,9 @@ impl<'a> Line<'_, 'a> {
         args: List<'a, Expr<'a>>,
         last: Expr<'a>,
     ) -> Written {
+        if let Some(function) = last.as_fn() {
+            self.check_parameters_of_hugged(function)?;
+        }
         for argument in args.iter().take(args.len().saturating_sub(1)) {
             self.expr(argument, Place::Free)?;
             self.token(", ")?;
@@ -895,6 +898,7 @@ impl<'a> Line<'_, 'a> {
         ) {
             return Err(Refused);
         }
+        self.check_parameters_of_hugged(function.as_fn().ok_or(Refused)?)?;
         self.list(args.iter(), |line, argument| match argument == function {
             true => line.function(function.as_fn().ok_or(Refused)?, true),
             false => line.expr(argument, Place::Free),

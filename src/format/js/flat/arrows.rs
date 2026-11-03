@@ -73,6 +73,32 @@ impl<'a> Line<'_, 'a> {
         })
     }
 
+    /// True if there can be a line break before the body of `func`, which is hugged. Its parameters don't break. Its type
+    /// parameters, its return type and a chain in a default value can.
+    pub(super) fn hugged_head_can_break(&self, func: Func<'a>) -> bool {
+        !func.type_params().is_empty()
+            || (func.return_type()).is_some_and(|ty| !is_type_without_line_breaks(ty, self.f))
+            || func.params().iter().any(|param| {
+                param.pat().tag() != PatTag::Ident
+                    || param.default().is_some_and(|it| !is_unbreakable(it.tag()))
+            })
+    }
+
+    /// Refuses `func`, which is hugged, if there can be a call in a default value among its parameters. The printer
+    /// chooses among variants for the arguments of a call, and of one in the head of a function that's hugged it measures
+    /// the widest. A chain of calls breaks there.
+    pub(super) fn check_parameters_of_hugged(&self, func: Func<'a>) -> Written {
+        let can_have_call = func.params().iter().any(|param| {
+            (param.pat().tag() != PatTag::Ident
+                || param.default().is_some_and(|it| !is_unbreakable(it.tag())))
+                && strings::contains_char(self.text_of(param.span()), b'(')
+        });
+        match can_have_call {
+            true => Err(Refused),
+            false => Ok(()),
+        }
+    }
+
     /// A function expression or an arrow function that's too wide for the line, with nothing but closing brackets after
     /// it. `is_hugged`: it's the last argument of a call, and the other arguments are on the line.
     pub(super) fn function_too_wide(&mut self, func: Func<'a>, is_hugged: bool) -> Written {
@@ -87,17 +113,8 @@ impl<'a> Line<'_, 'a> {
             .and_then(|()| self.check_room_for(after));
         let is_signature_on_one_line = written.is_ok();
         if !is_signature_on_one_line {
-            // The parameters of a function that's hugged don't break. Its type parameters, its return type and a chain
-            // in a default value can, and then it stays hugged.
-            if is_hugged
-                && (!func.type_params().is_empty()
-                    || (func.return_type())
-                        .is_some_and(|ty| !is_type_without_line_breaks(ty, self.f))
-                    || func.params().iter().any(|param| {
-                        param.pat().tag() != PatTag::Ident
-                            || param.default().is_some_and(|it| !is_unbreakable(it.tag()))
-                    }))
-            {
+            // It stays hugged if its head can break.
+            if is_hugged && self.hugged_head_can_break(func) {
                 self.is_too_wide = false;
             }
             if is_hugged || !self.is_first_line_too_wide(mark) {

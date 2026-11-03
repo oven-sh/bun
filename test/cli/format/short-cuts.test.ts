@@ -1576,6 +1576,20 @@ describe.skipIf(!hasFlag)("what breaks whether it fits or not, and what only loo
       'x = <a><b>t<c/><d/></b>{{eeee: ffff}}{" "}e</a>;\ne = <><b>ae<c/></b>{e} e</>;\ne = <><b>ae<c/></b><d>e</d> e</>;\n',
     "optional-targets.ts":
       "a?.bbbbbbbb.cccc = `/${dddd.eeeee}/`;\na?.b = c(dddddddd, eeeeeeee);\nf = a?.b.c = `${dddddddddd}`;\n",
+    // A chain is on one line if it fits up to its first line break, which can be in the head of the function.
+    "chains-before-functions.ts": `
+      d = d.h().i(function <x>(y): z { x; });
+      d = d.h().i(function (y): { a } { x; });
+      dd = dd.hh().ii(function (yy): { aa: bb } { x; });
+      d = d.h().i((y = a.b().c()) => { x; });
+    `,
+    // Of the arguments of a call in the head of a function that's hugged, the widest variant is measured.
+    "calls-in-default-values.ts": `
+      a(({ e = a({ n }) }) => f(() => { x; }));
+      a((e = a([n])) => { x; });
+      a((e = a({ n })) => f(x, y));
+      new A((e = a([n])) => { x; }, b);
+    `,
     // It stays on the line of the \`=\` if that fits up to the \`(\`.
     "this-called.ts":
       "a = this(bcd, efg);\nconst b = this(bcd) as E;\nclass A { a = this(bcd); }\na = this({ b: c });\na = new this(bcd, efg);\n",

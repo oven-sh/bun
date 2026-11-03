@@ -44,16 +44,20 @@ impl<'a> Line<'_, 'a> {
                 return self.arguments(e, args, true, false);
             }
             // It's on one line if it fits up to the first line break in its last call. That's the one after the `{` of
-            // a function, unless its parameters can break.
+            // a function, unless its head can break.
             let parent = AstNodes::CallExpression(e);
+            if let Some(function) = args.last().and_then(Expr::as_fn) {
+                self.check_parameters_of_hugged(function)?;
+            }
             if (args.last().and_then(Expr::as_fn)).is_some_and(|function| {
                 !function.is_arrow()
-                    && !hugged_function_keeps_parameters_on_one_line(
-                        function,
-                        args.len(),
-                        parent,
-                        self.f,
-                    )
+                    && (self.hugged_head_can_break(function)
+                        || !hugged_function_keeps_parameters_on_one_line(
+                            function,
+                            args.len(),
+                            parent,
+                            self.f,
+                        ))
             }) {
                 return Err(Refused);
             }

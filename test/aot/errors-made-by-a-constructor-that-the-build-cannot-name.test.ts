@@ -128,6 +128,8 @@ beforeAll(async () => {
 afterAll(() => dir?.[Symbol.dispose]());
 
 test("plain Bun says where the engine's own constructor made an error", () => {
+  // Two of these lines say `undefined` where Node has a stack: the error that `Reflect.construct` makes for another `new.target`, and the one made under
+  // `Error.stackTraceLimit = 0`. That is what plain Bun does today, and nothing that a compiled run owes: when plain Bun changes, this text changes with it.
   expect(plain).toMatchInlineSnapshot(`
     {
       "built": undefined,

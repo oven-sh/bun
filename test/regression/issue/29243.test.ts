@@ -689,6 +689,9 @@ module.exports = 1;`,
     expect(stderr).toBe("");
 
     expect(stdout).not.toContain("await");
+    expect(stdout).not.toContain("a()");
+    expect(stdout).not.toContain("b()");
+    expect(stdout).not.toContain("c()");
     expect(stdout).toContain("var fromIf");
     expect(stdout).toContain("var fromWhile");
     expect(stdout).toContain("var fromDo");

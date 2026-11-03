@@ -12,6 +12,7 @@ use bun_jsc::{
 
 use super::bun_test::{self, DescribeScope};
 use super::jest::Jest;
+use super::pretty_format;
 use super::test_context::TestContext;
 use super::test_context_parameter::ContextParameter;
 use crate::generated_bindgen::test_context as generated;
@@ -299,7 +300,7 @@ impl TestFixtures {
             while let Some((name, value)) = entries.next()? {
                 let mut options = JSValue::UNDEFINED;
                 let mut value = value;
-                if value.is_array() && value.get_length(global)? >= 2 {
+                if pretty_format::is_array(global, value)? && value.get_length(global)? >= 2 {
                     let candidate = value.get_index(global, 1)?;
                     if Self::is_options(global, candidate)? {
                         options = candidate;
@@ -390,6 +391,10 @@ impl TestFixtures {
     #[optimize(size)]
     fn is_options(global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
         if !value.is_object() || value.is_array() || value.is_callable() {
+            return Ok(false);
+        }
+        // Vitest's `isObject()` asks `typeof` before `Array.isArray()`, which throws for a revoked Proxy.
+        if pretty_format::is_array(global, value)? {
             return Ok(false);
         }
         for option in ["auto", "scope", "injected"] {

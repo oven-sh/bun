@@ -3128,12 +3128,27 @@ pub(crate) fn to_number(global: &JSGlobalObject, value: JSValue) -> JsResult<f64
     jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__toNumber(global, value))
 }
 
-/// `Array.isArray(value)`, which sees through a Proxy.
-fn is_array(global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
+/// `Array.isArray(value)`, which sees through a Proxy. The tag test is inlined, and only a Proxy makes a call.
+#[inline(always)]
+pub(crate) fn is_array(global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
+    let js_type = value.js_type();
+    if js_type.is_array() {
+        return Ok(true);
+    }
+    if js_type != JSType::ProxyObject {
+        return Ok(false);
+    }
+    is_proxy_of_array(global, value)
+}
+
+/// Throws a TypeError for a revoked Proxy.
+#[cold]
+#[inline(never)]
+fn is_proxy_of_array(global: &JSGlobalObject, proxy: JSValue) -> JsResult<bool> {
     unsafe extern "C" {
         safe fn SnapshotFormat__isArray(global: &JSGlobalObject, value: JSValue) -> bool;
     }
-    jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__isArray(global, value))
+    jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__isArray(global, proxy))
 }
 
 /// `value[name]` as JS does it: primitives work, null and undefined throw, `Object.prototype` is searched.
@@ -4766,9 +4781,12 @@ impl JestPrettyFormat {
             if first_truthy(global, config, &["printShadowRoot"])?.is_some() {
                 formatter.snapshot_format = SnapshotFormat::Vitest;
             }
-            formatter.serializers = config.get(global, "plugins")?.filter(|plugins| plugins.is_array());
+            formatter.serializers = match config.get(global, "plugins")? {
+                Some(plugins) if is_array(global, plugins)? => Some(plugins),
+                _ => None,
+            };
         }
-        if refs.is_array() {
+        if is_array(global, refs)? {
             let mut iter = refs.array_iterator(global)?;
             while let Some(ancestor) = iter.next()? {
                 formatter.ancestors.push(global, ancestor)?;

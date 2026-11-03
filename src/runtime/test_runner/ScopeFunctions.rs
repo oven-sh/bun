@@ -16,6 +16,7 @@ use crate::test_runner::test_context;
 use crate::test_runner::test_context_fixtures::TestFixtures;
 use crate::test_runner::test_context_parameter::{ContextParameter, SharedContextParameter};
 use crate::test_runner::jest;
+use crate::test_runner::pretty_format;
 
 // `group_log` wraps `test_runner::debug::group` (a begin/end/log tracer) as an RAII guard
 // so call sites read `let _g = group_log::begin();` and drop calls `end()`. The underlying
@@ -249,7 +250,7 @@ impl ScopeFunctions {
     ) -> JsResult<JSValue> {
         let _g = group_log::begin();
 
-        if array.is_undefined_or_null() || !array.is_array() {
+        if !pretty_format::is_array(global, array)? {
             let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global).with_quote_strings(false);
             return Err(global.throw(format_args!("Expected array, got {}", array.to_fmt(&mut formatter))));
         }
@@ -320,6 +321,17 @@ fn vitest_template_rows(global: &JSGlobalObject, strings: JSValue, values: &[JSV
     table_rows(global, &headings, values).map(Some)
 }
 
+/// `table.every(Array.isArray)`
+fn every_row_is_array(global: &JSGlobalObject, table: JSValue) -> JsResult<bool> {
+    let mut rows = table.array_iterator(global)?;
+    while let Some(row) = rows.next()? {
+        if !pretty_format::is_array(global, row)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 #[optimize(size)]
 pub(crate) fn call_as_function<'a>(
     cx: &mut JsScope<'a>,
@@ -377,18 +389,14 @@ pub(crate) fn call_as_function<'a>(
     };
 
     if !this.each.is_empty() {
-        if this.each.is_undefined_or_null() || !this.each.is_array() {
-            let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global).with_quote_strings(false);
-            return Err(global.throw(format_args!("Expected array, got {}", this.each.to_fmt(&mut formatter))));
-        }
         // Vitest only spreads the rows if every row is an array.
         let mut spread_rows = this.rows == Rows::Each;
         if spread_rows && is_vitest {
-            let mut rows = this.each.array_iterator(global)?;
-            while let Some(row) = rows.next()? {
-                spread_rows &= row.is_array();
-            }
+            spread_rows = every_row_is_array(global, this.each)?;
         }
+        // jest-each unpacks the rows only if every row is an array, and it asks the rows in order until one is not.
+        // "bun:test" has always unpacked an array whatever the other rows are, so only a Proxy row asks the table.
+        let mut is_table_of_arrays: Option<bool> = None;
         let mut iter = this.each.array_iterator(global)?;
         let mut test_idx: usize = 0;
         while let Some(item) = iter.next()? {
@@ -405,7 +413,17 @@ pub(crate) fn call_as_function<'a>(
                 rooted.append(item);
                 let mut args_list: Vec<JSValue> = Vec::new();
 
-                if item.is_array() {
+                let unpack_row = if is_vitest {
+                    pretty_format::is_array(global, item)?
+                } else {
+                    item.is_array()
+                        || (item.js_type() == bun_jsc::JSType::ProxyObject
+                            && match is_table_of_arrays {
+                                Some(known) => known,
+                                None => *is_table_of_arrays.insert(every_row_is_array(global, this.each)?),
+                            })
+                };
+                if unpack_row {
                     // Spread array as args_list (matching Jest & Vitest)
                     let mut item_iter = item.array_iterator(global)?;
                     while let Some(array_item) = item_iter.next()? {

@@ -1023,6 +1023,63 @@ describe.concurrent("each and for", () => {
     });
   });
 
+  // Vitest tests the rows with Array.isArray(), which is true for a Proxy of an array.
+  test("each and for: a Proxy of an array is a table, and a row", async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, describe } from "vitest";
+        const P = (target, handler = {}) => new Proxy(target, handler);
+        const show = (name, args) => console.log(name, args.length, JSON.stringify([...args]));
+        test.each(P([[1, 2], [3, 4]]))("table %i %i", function (a, b) { show("table", arguments); }, 500);
+        test.each([P([1, 2]), [3, 4]])("rows %i %i", function (a, b) { show("rows", arguments); }, 500);
+        test.each([P([1, 2]), 3])("mixed %s", function (a, b) { show("mixed", arguments); }, 500);
+        test.each(P([1, 2]))("scalar %i", function (a, b) { show("scalar", arguments); }, 500);
+        test.each([P(P([1, 2]))])("nested %i %i", function (a, b) { show("nested", arguments); }, 500);
+        test.each([P([])])("empty", function (a) { show("empty", arguments); }, 500);
+        const served = P([1, 2], { get: (target, key, receiver) => (key === "0" ? 9 : Reflect.get(target, key, receiver)) });
+        test.each([served])("served %i %i", function () { show("served", arguments); }, 500);
+        test.for(P([P([1, 2])]))("for %i %i", function (row) { console.log("for", arguments.length, Array.isArray(row), JSON.stringify(row)); });
+        describe.each(P([P([1, 2])]))("describe %i %i", function (a, b) { show("describe", arguments); test("test", () => {}); });
+        describe.for([P([1, 2])])("describe for %i %i", function (row) { console.log("describe for", arguments.length, JSON.stringify(row)); test("test", () => {}); });
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: [
+        "describe 2 [1,2]",
+        "describe for 1 [1,2]",
+        "table 2 [1,2]",
+        "table 2 [3,4]",
+        "rows 2 [1,2]",
+        "rows 2 [3,4]",
+        "mixed 1 [[1,2]]",
+        "mixed 1 [3]",
+        "scalar 1 [1]",
+        "scalar 1 [2]",
+        "nested 2 [1,2]",
+        "empty 0 []",
+        "served 2 [9,2]",
+        "for 2 true [1,2]",
+      ],
+      results: [
+        "(pass) table 1 2",
+        "(pass) table 3 4",
+        "(pass) rows 1 2",
+        "(pass) rows 3 4",
+        "(pass) mixed 1",
+        "(pass) mixed 3",
+        "(pass) scalar 1",
+        "(pass) scalar 2",
+        "(pass) nested 1 2",
+        "(pass) empty",
+        "(pass) served 9 2",
+        "(pass) for 1 2",
+        "(pass) describe 1 2 > test",
+        "(pass) describe for 1 2 > test",
+      ],
+      exitCode: 0,
+    });
+  });
+
   for (const module of ["vitest", "bun:test"]) {
     test(`test.for from "${module}" passes the row as one argument, then the context`, async () => {
       const { log, results, exitCode } = await runTests({
@@ -4308,6 +4365,45 @@ describe.concurrent("test.extend()", () => {
       });
     });
   }
+
+  // Vitest finds a [value, options] tuple with Array.isArray(), which is true for a Proxy of an array.
+  test("a Proxy of an array is a [value, options] tuple, and is not the options of one", async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test as base } from "vitest";
+        const P = (target) => new Proxy(target, {});
+        const attempt = (name, fn) => { try { fn(); console.log(name + ": accepted"); } catch (error) { console.log(name + ": " + error.name + ": " + error.message); } };
+        const revoked = (target) => { const { proxy, revoke } = Proxy.revocable(target, {}); revoke(); return proxy; };
+        const test = base.extend({
+          tuple: P([async ({}, use) => { console.log("tuple setup"); await use("tuple"); }, { auto: true }]),
+          list: [5, P(Object.assign([], { auto: true }))],
+          pair: P([1, 2]),
+          options: [6, P({ injected: true })],
+        });
+        const built = base.extend("grid", P(Object.assign([7], { scope: "file" })));
+        test("fixtures", ({ list, pair, options }) => { console.log(JSON.stringify({ list, pair, options }), Array.isArray(list[1])); });
+        built("builder", ({ grid }) => { console.log("builder", Array.isArray(grid), JSON.stringify(grid)); });
+        attempt("revoked tuple", () => base.extend({ x: revoked([1, { auto: true }]) }));
+        attempt("revoked options", () => base.extend({ x: [1, revoked({ auto: true })] }));
+        attempt("revoked function as options", () => base.extend({ x: [1, revoked(function () {})] }));
+        attempt("revoked options of the builder", () => base.extend("x", revoked({ auto: true })));
+      `,
+    });
+    const isRevoked = "TypeError: Array.isArray cannot be called on a Proxy that has been revoked";
+    expect({ log, results, exitCode }).toEqual({
+      log: [
+        "revoked tuple: " + isRevoked,
+        "revoked options: " + isRevoked,
+        "revoked function as options: accepted",
+        "revoked options of the builder: " + isRevoked,
+        "tuple setup",
+        `{"list":[5,[]],"pair":[1,2],"options":6} true`,
+        "builder true [7]",
+      ],
+      results: ["(pass) fixtures", "(pass) builder"],
+      exitCode: 0,
+    });
+  });
 
   test("hooks get the fixtures of the test they run for", async () => {
     const { log, results, exitCode } = await runTests({

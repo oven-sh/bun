@@ -20,7 +20,7 @@ use super::diff_format::DiffFormatter;
 use self::expect_deferred::{Asked, ExpectDeferred, MatcherCall, Pass, Question};
 use super::execution::ExpectAssertions;
 use super::jest::Jest;
-use super::pretty_format::JestPrettyFormat;
+use super::pretty_format::{self, JestPrettyFormat};
 use super::snapshot::{Format as SnapshotFormat, Outcome as SnapshotOutcome};
 use super::expect::{JSValueTestExt, FormatterTestExt, make_formatter};
 use crate::expect_throw as throw;
@@ -2209,7 +2209,7 @@ impl Expect {
 // differs. Sibling to `run_unary_predicate` / `run_string_affix_matcher`.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Where `expected.is_array()` runs relative to `get_value` — observable when
+/// Where `Array.isArray(expected)` runs relative to `get_value` — observable when
 /// both would throw (Keys-family validates *after*, Values-family *before*).
 #[derive(Clone, Copy)]
 pub(crate) enum ExpectedArray {
@@ -2253,7 +2253,7 @@ impl Expect {
     /// Shared body for the eight `toContain{Key,Keys,AllKeys,AnyKeys,Value,
     /// Values,AllValues,AnyValues}` matchers. Handles the common envelope —
     /// `post_match` guard, counter bump, `get_value`,
-    /// optional `expected.is_array()` validation (positioned per
+    /// optional `Array.isArray(expected)` validation (positioned per
     /// [`ExpectedArray`]), `.not` flip, and the dual-formatter failure throw —
     /// and delegates only the per-matcher pass-loop to `body`.
     ///
@@ -2272,12 +2272,12 @@ impl Expect {
 
         this.increment_expect_call_counter();
 
-        if matches!(expected_array, ExpectedArray::BeforeValue) && !expected.js_type().is_array() {
+        if matches!(expected_array, ExpectedArray::BeforeValue) && !pretty_format::is_array(global, expected)? {
             return Err(global.throw_invalid_argument_type(matcher_name, "expected", "array"));
         }
 
         let value = this.get_value(global, this_value, matcher_name, "<green>expected<r>")?;
-        if matches!(expected_array, ExpectedArray::AfterValue) && !expected.js_type().is_array() {
+        if matches!(expected_array, ExpectedArray::AfterValue) && !pretty_format::is_array(global, expected)? {
             return Err(global.throw_invalid_argument_type(matcher_name, "expected", "array"));
         }
 
@@ -2742,7 +2742,7 @@ impl ExpectMatcherContext {
         let global_this = cx.global();
         let (a, b, custom_testers) = (a.to_js(), b.to_js(), custom_testers.to_js());
         // Only an array has testers: `null` is an empty list in Jest and Vitest, and Bun used to ignore this argument.
-        let custom_testers = if !custom_testers.js_type().is_array() || custom_testers.get_length(global_this)? == 0 {
+        let custom_testers = if !pretty_format::is_array(global_this, custom_testers)? || custom_testers.get_length(global_this)? == 0 {
             JSValue::ZERO
         } else {
             custom_testers

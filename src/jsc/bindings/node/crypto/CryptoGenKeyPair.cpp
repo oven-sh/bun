@@ -106,6 +106,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPair, (JSC::JSGlobalObject * globalObject,
 {
     VM& vm = globalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
 
     JSValue typeValue = callFrame->argument(0);
     JSValue optionsValue = callFrame->argument(1);
@@ -179,6 +180,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPairSync, (JSGlobalObject * globalObject, 
 {
     VM& vm = globalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
 
     JSValue typeValue = callFrame->argument(0);
     JSValue optionsValue = callFrame->argument(1);

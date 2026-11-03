@@ -599,8 +599,8 @@ function f52 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f53 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f52]
 function f54 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f52]
 function f55 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] builtinMembers=[Number]
-function f56 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f57 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f56 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f57 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     v3 = Undefined
     v4 = ToObject v0 message="Array.prototype.map requires that |this| not be null or undefined"
@@ -627,38 +627,38 @@ function f57 name="map" module=m2 position=5210 kind=Method role=Library flags=[
     v25 = Convert v24 declared={type=undefined|number site=w143}
     Jump -> next b1(v25, v22)
 }
-function f58 name="apply" module=m3 position=1161 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=4 thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f58 name="apply" module=m3 position=1161 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=FunctionPrototypeApply thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|function, v1: anything, v2: anything):
     v3 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder]
-    v4 = Call v3, v0, v1, v2
+    v4 = Call v3, v0, v1, v2 [isDoneInPlace]
     Return v4
 }
-function f59 name="next" module=m4 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=69 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f59 name="next" module=m4 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=GeneratorPrototypeNext thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f60 name="clampToLength" module=m5 position=720 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w144}, {type=number site=w145}] results=[{type=number site=w146}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f61 name="storeInNewArray" module=m5 position=955 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w147 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w148}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f62 name="appendParts" module=m5 position=1242 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w149 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w150}, {type=anything}] results=[{type=number site=w151}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f63 name="joinedText" module=m5 position=1819 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string site=w152 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f64 name="finishJoin" module=m5 position=1934 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|string site=w153 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w154 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w155}, {type=number site=w156}] results=[{type=undefined|null|string site=w157 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f65 name="finishReduce" module=m5 position=2116 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean site=w158}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f66 name="traverseArray" module=m5 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=131091 thisType={type=anything} parameters=[{type=undefined|null|Array site=w159 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w160}, {type=undefined|number site=w161}, {type=number site=w162}, {type=undefined|null|Array site=w163 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-runtimefunction id=4 function=f58
-runtimefunction id=64 function=f57
-runtimefunction id=68 function=f56
-runtimefunction id=69 function=f59 visibility=Private
-runtimefunction id=131091 function=f66 visibility=Private
+function f66 name="traverseArray" module=m5 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=ArrayTraversalTraverseArray thisType={type=anything} parameters=[{type=undefined|null|Array site=w159 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w160}, {type=undefined|number site=w161}, {type=number site=w162}, {type=undefined|null|Array site=w163 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+runtimefunction id=FunctionPrototypeApply function=f58
+runtimefunction id=ArrayPrototypeMap function=f57
+runtimefunction id=ArrayIteratorPrototypeNext function=f56
+runtimefunction id=GeneratorPrototypeNext function=f59 visibility=Private
+runtimefunction id=ArrayTraversalTraverseArray function=f66 visibility=Private
 # -- generated: join3 spreadIntoSum downBySpread upBySpread selfBySpread downByApply upByApply viaForwarder spreadIntoThrower spreadIntoJoin spreadIntoPair throughTwo viaClosure f23 f25 f26
 # CHECK-LABEL: function {{*}}name="join3"
-# CHECK: module=m0 position=534 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|string site=w4 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|string site=w5 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|string site=w6 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=w7 flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|string @JSValue, v1: undefined|string @JSValue, v2: undefined|string @JSValue):
+# CHECK: module=m0 position=534 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|"x"|"y"|"z" site=w4 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|"x"|"y"|"z" site=w5 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|"x"|"y"|"z" site=w6 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=w7 flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|"x"|"y"|"z" @LiteralString, v1: undefined|"x"|"y"|"z" @LiteralString, v2: undefined|"x"|"y"|"z" @LiteralString):
 # CHECK-NEXT: v3: number|string|bigint @JSValue = Add v0, v1 form=Generic
 # CHECK-NEXT: v4: number|string|bigint @JSValue = Add v3, v2 form=Generic
 # CHECK-NEXT: v5: number|string|bigint @JSValue = Expect v4 expectedType=undefined|null|string
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="spreadIntoSum"
-# CHECK: module=m0 position=699 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> site=w11 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w12}] functionTypes=[f32] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> @JSValue):
-# CHECK-NEXT: v1: number @JSValue = CallDirect function=f115
+# CHECK: module=m0 position=699 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|Array<"x"|"y"|"z", proven, Contiguous, pristine[Storage, Names, Dense]> site=w11 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w12}] functionTypes=[f32] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|Array<"x"|"y"|"z", proven, Contiguous, pristine[Storage, Names, Dense]> @JSValue):
+# CHECK-NEXT: v1: number @JSValue = CallDirect function=f119
 # CHECK-NEXT: ReturnCall v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="downBySpread"
@@ -667,7 +667,7 @@ runtimefunction id=131091 function=f66 visibility=Private
 # CHECK-NEXT: v2: boolean @Boolean = TypeTest v1 testedType=number
 # CHECK-NEXT: TestAndBranch v2 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v3: number @Double):
-# CHECK-NEXT: v4: number @JSValue = CallDirect v3 function=f119
+# CHECK-NEXT: v4: number @JSValue = CallDirect v3 function=f123
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: b2() frequency=Unlikely:
 # CHECK-NEXT: v5: anything @JSValue = CallDirect v0, v1 function=f77
@@ -679,7 +679,7 @@ runtimefunction id=131091 function=f66 visibility=Private
 # CHECK-NEXT: v2: boolean @Boolean = TypeTest v1 testedType=number
 # CHECK-NEXT: TestAndBranch v2 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v3: number @Double):
-# CHECK-NEXT: v4: number @JSValue = CallDirect v3 function=f120
+# CHECK-NEXT: v4: number @JSValue = CallDirect v3 function=f124
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: b2() frequency=Unlikely:
 # CHECK-NEXT: v5: number @JSValue = CallDirect v0, v1 function=f78
@@ -691,7 +691,7 @@ runtimefunction id=131091 function=f66 visibility=Private
 # CHECK-NEXT: v2: boolean @Boolean = TypeTest v1 testedType=number
 # CHECK-NEXT: TestAndBranch v2 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v3: number @Double):
-# CHECK-NEXT: v4: number @JSValue = CallDirect v3 function=f121
+# CHECK-NEXT: v4: number @JSValue = CallDirect v3 function=f125
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: b2() frequency=Unlikely:
 # CHECK-NEXT: v5: anything @JSValue = CallDirect v0, v1 function=f79
@@ -701,63 +701,60 @@ runtimefunction id=131091 function=f66 visibility=Private
 # CHECK: module=m0 position=2927 role=EntryChecks flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w23}, {type=undefined|null|string site=w24 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=string site=w25 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f46] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f71 fallback=f80} {
 # CHECK-NEXT: b0(v0: number @Double, v1: anything @JSValue):
 # CHECK-NEXT: v2: boolean @Boolean = TypeTest v1 testedType=undefined|null|string
-# CHECK-NEXT: TestAndBranch v2 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v3: undefined|null|string @JSValue):
-# CHECK-NEXT: v4: string @JSValue = CallDirect v3 function=f122
-# CHECK-NEXT: ReturnCall v4 requirement=Allowed
+# CHECK-NEXT: TestAndBranch v2 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v3: string @JSValue = CallDirect function=f126
+# CHECK-NEXT: ReturnCall v3 requirement=Allowed
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v5: string @JSValue = CallDirect v0, v1 function=f80
-# CHECK-NEXT: ReturnCall v5 requirement=Allowed
+# CHECK-NEXT: v4: string @JSValue = CallDirect v0, v1 function=f80
+# CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="upByApply"
 # CHECK: module=m0 position=3099 role=EntryChecks flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w26}, {type=undefined|null|string site=w27 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=string site=w28 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f47] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f72 fallback=f81} {
 # CHECK-NEXT: b0(v0: number @Double, v1: anything @JSValue):
 # CHECK-NEXT: v2: boolean @Boolean = TypeTest v1 testedType=undefined|null|string
-# CHECK-NEXT: TestAndBranch v2 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v3: undefined|null|string @JSValue):
-# CHECK-NEXT: v4: string @JSValue = CallDirect v3 function=f123
-# CHECK-NEXT: ReturnCall v4 requirement=Allowed
+# CHECK-NEXT: TestAndBranch v2 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v3: string @JSValue = CallDirect function=f127
+# CHECK-NEXT: ReturnCall v3 requirement=Allowed
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v5: string @JSValue = CallDirect v0, v1 function=f81
-# CHECK-NEXT: ReturnCall v5 requirement=Allowed
+# CHECK-NEXT: v4: string @JSValue = CallDirect v0, v1 function=f81
+# CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="viaForwarder"
 # CHECK: module=m0 position=3271 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w29}, {type=number site=w30 flags=[IsExpected]}] results=[{type=number site=w31}] functionTypes=[f48] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: number @Double, v1: anything @JSValue):
-# CHECK-NEXT: v2: number @JSValue = CallDirect function=f116 @3271 tail
+# CHECK-NEXT: v2: number @JSValue = CallDirect function=f120 @3271 tail
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="spreadIntoThrower"
 # CHECK: module=m0 position=3998 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<int[1, 2], proven, Int32, pristine[Storage, Names, Dense]> site=w38 flags=[OmitsNull, OmitsUndefined]}] results=[{type=int|whole site=w39}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: Array<int[1, 2], proven, Int32, pristine[Storage, Names, Dense]> @Cell):
-# CHECK-NEXT: v1: f13 @Cell = GetModuleVariable variable=g12
-# CHECK-NEXT: v2: anything @JSValue = CallList v1, -, v0 calleeName="thrower" accessSite=15 callees=[f13]
-# CHECK-NEXT: ReturnCall v2 casts=[{declared={type=number site=w120 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w39 flags=[IsExpected]} resolution=Nothing}, {declared={type=int|whole} resolution=Assume}]
+# CHECK-NEXT: v1: anything @JSValue = CallDirect v0 function=f99 accessSite=15 [isNeverInlined]
+# CHECK-NEXT: ReturnCall v1 casts=[{declared={type=number site=w120 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w39 flags=[IsExpected]} resolution=Nothing}, {declared={type=int|whole} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="spreadIntoJoin"
-# CHECK: module=m0 position=792 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> site=w44 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=w45 flags=[IsExpected, OmitsNull, OmitsUndefined]}] functionTypes=[f33] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell):
-# CHECK-NEXT: v1: f2 @Cell = GetModuleVariable variable=g1
-# CHECK-NEXT: v2: anything @JSValue = CallList v1, -, v0 calleeName="join3" accessSite=16 callees=[f2]
-# CHECK-NEXT: ReturnCall v2 casts=[{declared={type=undefined|null|string site=w124 flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w45 flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}]
+# CHECK: module=m0 position=792 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<"x"|"y"|"z", proven, Contiguous, pristine[Storage, Names, Dense]> site=w44 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=w45 flags=[IsExpected, OmitsNull, OmitsUndefined]}] functionTypes=[f33] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<"x"|"y"|"z", proven, Contiguous, pristine[Storage, Names, Dense]> @Cell):
+# CHECK-NEXT: v1: anything @JSValue = CallDirect v0 function=f97 accessSite=16 [isNeverInlined]
+# CHECK-NEXT: ReturnCall v1 casts=[{declared={type=undefined|null|string site=w124 flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w45 flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="spreadIntoPair"
-# CHECK: module=m0 position=887 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> site=w46 flags=[OmitsNull, OmitsUndefined]}] results=[{type=L0 site=w47 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f34] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell):
-# CHECK-NEXT: v1: f3 @Cell = GetModuleVariable variable=g2
-# CHECK-NEXT: v2: anything @JSValue = CallList v1, -, v0 calleeName="pair" accessSite=17 callees=[f3]
-# CHECK-NEXT: ReturnCall v2 casts=[{declared={type=undefined|null|L0 site=w125 flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|L0 site=w47 flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=L0} resolution=Assume}]
+# CHECK: module=m0 position=887 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<"x"|"y"|"z", proven, Contiguous, pristine[Storage, Names, Dense]> site=w46 flags=[OmitsNull, OmitsUndefined]}] results=[{type=L0 site=w47 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f34] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<"x"|"y"|"z", proven, Contiguous, pristine[Storage, Names, Dense]> @Cell):
+# CHECK-NEXT: v1: anything @JSValue = CallDirect v0 function=f98 accessSite=17 [isNeverInlined]
+# CHECK-NEXT: ReturnCall v1 casts=[{declared={type=undefined|null|L0 site=w125 flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|L0 site=w47 flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=L0} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="throughTwo"
-# CHECK: module=m0 position=1257 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> site=w54 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w55}] functionTypes=[f38] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell):
-# CHECK-NEXT: v1: number @JSValue = CallDirect function=f117
+# CHECK: module=m0 position=1257 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<"x"|"y"|"z", proven, Contiguous, pristine[Storage, Names, Dense]> site=w54 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w55}] functionTypes=[f38] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<"x"|"y"|"z", proven, Contiguous, pristine[Storage, Names, Dense]> @Cell):
+# CHECK-NEXT: v1: number @JSValue = CallDirect function=f121
 # CHECK-NEXT: ReturnCall v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="viaClosure"
-# CHECK: module=m0 position=1390 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> site=w56 flags=[OmitsNull, OmitsUndefined]}, {type=2 site=w57}] results=[{type=number site=w58}] functionTypes=[f40] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell, v1: 2 @Int32):
-# CHECK-NEXT: v2: number @JSValue = CallDirect v1 function=f118
+# CHECK: module=m0 position=1390 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<"x"|"y"|"z", proven, Contiguous, pristine[Storage, Names, Dense]> site=w56 flags=[OmitsNull, OmitsUndefined]}, {type=2 site=w57}] results=[{type=number site=w58}] functionTypes=[f40] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<"x"|"y"|"z", proven, Contiguous, pristine[Storage, Names, Dense]> @Cell, v1: 2 @Int32):
+# CHECK-NEXT: v2: number @JSValue = CallDirect v1 function=f122
 # CHECK-NEXT: ReturnCall v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function f23 module=
@@ -766,7 +763,7 @@ runtimefunction id=131091 function=f66 visibility=Private
 # CHECK-NEXT: v2: boolean @Boolean = TypeTest v1 testedType=number
 # CHECK-NEXT: TestAndBranch v2 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v3: int|whole|string|L0 @JSValue = CallDirect v0 function=f125
+# CHECK-NEXT: v3: int|whole|string|L0 @JSValue = CallDirect v0 function=f129
 # CHECK-NEXT: ReturnCall v3
 # CHECK-NEXT: b2() frequency=Unlikely:
 # CHECK-NEXT: v4: int|whole|string|L0 @JSValue = CallDirect v0, v1 function=f84
@@ -829,7 +826,7 @@ runtimefunction id=131091 function=f66 visibility=Private
 # CHECK-LABEL: function {{*}}name="downByApply"
 # CHECK: module=m0 position=2927 role=GenericVersion flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w23}, {type=undefined|null|string site=w24 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=string site=w25 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f46] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f9 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f71} {
 # CHECK-NEXT: b0(v0: number @Double, v1: anything @JSValue) frequency=Unlikely:
-# CHECK-NEXT: v2: anything @JSValue = Expect v1 expectedType=string
+# CHECK-NEXT: v2: anything @JSValue = Expect v1 expectedType=""
 # CHECK-NEXT: v3: "!" @JSValue = String string="!"
 # CHECK-NEXT: v4: string @JSValue = Add v2, v3 form=Generic
 # CHECK-NEXT: Return v4
@@ -837,7 +834,7 @@ runtimefunction id=131091 function=f66 visibility=Private
 # CHECK-LABEL: function {{*}}name="upByApply"
 # CHECK: module=m0 position=3099 role=GenericVersion flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w26}, {type=undefined|null|string site=w27 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=string site=w28 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f47] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f10 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f72} {
 # CHECK-NEXT: b0(v0: number @Double, v1: anything @JSValue) frequency=Unlikely:
-# CHECK-NEXT: v2: anything @JSValue = Expect v1 expectedType=string
+# CHECK-NEXT: v2: anything @JSValue = Expect v1 expectedType=""
 # CHECK-NEXT: v3: "?" @JSValue = String string="?"
 # CHECK-NEXT: v4: string @JSValue = Add v2, v3 form=Generic
 # CHECK-NEXT: Return v4
@@ -845,7 +842,7 @@ runtimefunction id=131091 function=f66 visibility=Private
 # CHECK-LABEL: function {{*}}name="spreadIntoSum"
 # CHECK: module=m0 position=699 role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f4}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f4 @Cell, v1: anything @JSValue, v2: anything @JSValue):
-# CHECK-NEXT: v3: number @JSValue = CallDirect function=f115
+# CHECK-NEXT: v3: number @JSValue = CallDirect function=f119
 # CHECK-NEXT: ReturnCall v3 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="downBySpread"
@@ -884,7 +881,7 @@ runtimefunction id=131091 function=f66 visibility=Private
 # CHECK-NEXT: ReturnCall v5 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="viaForwarder"
-# CHECK: module=m0 position=3271 role=GenericEntrypoint flags=[HasThis, IsChecked] length=2 captures=[{type=f11}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f11} creator=Entrypoint{target=f11 arguments=Registers} inlineFrames=[{}, {callee=f116 callPosition=3271 isTailCall=true module=m0}] {
+# CHECK: module=m0 position=3271 role=GenericEntrypoint flags=[HasThis, IsChecked] length=2 captures=[{type=f11}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f11} creator=Entrypoint{target=f11 arguments=Registers} inlineFrames=[{}, {callee=f120 callPosition=3271 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f11 @Cell, v1: anything @JSValue, v2: anything @JSValue, v3: anything @JSValue):
 # CHECK-NEXT: v4: undefined @JSValue = Undefined
 # CHECK-NEXT: v5: undefined @JSValue = Undefined
@@ -894,37 +891,37 @@ runtimefunction id=131091 function=f66 visibility=Private
 # CHECK-LABEL: function {{*}}name="join3"
 # CHECK: module=m0 position=534 role=GenericEntrypoint flags=[HasThis, IsChecked] length=3 captures=[{type=f2}] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2} creator=Entrypoint{target=f2 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f2 @Cell, v1: anything @JSValue, v2: anything @JSValue, v3: anything @JSValue, v4: anything @JSValue):
-# CHECK-NEXT: v5: undefined|string @JSValue = AssumeType v2 provenType=undefined|string
-# CHECK-NEXT: v6: undefined|string @JSValue = AssumeType v3 provenType=undefined|string
-# CHECK-NEXT: v7: undefined|string @JSValue = AssumeType v4 provenType=undefined|string
+# CHECK-NEXT: v5: undefined|"x"|"y"|"z" @JSValue = AssumeType v2 provenType=undefined|"x"|"y"|"z"
+# CHECK-NEXT: v6: undefined|"x"|"y"|"z" @JSValue = AssumeType v3 provenType=undefined|"x"|"y"|"z"
+# CHECK-NEXT: v7: undefined|"x"|"y"|"z" @JSValue = AssumeType v4 provenType=undefined|"x"|"y"|"z"
 # CHECK-NEXT: v8: anything @JSValue = CallDirect v5, v6, v7 function=f2
 # CHECK-NEXT: ReturnCall v8 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="spreadIntoJoin"
 # CHECK: module=m0 position=792 role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f16}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f16} creator=Entrypoint{target=f16 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f16 @Cell, v1: anything @JSValue, v2: anything @JSValue):
-# CHECK-NEXT: v3: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> @JSValue = AssumeType v2 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v3: Array<"x"|"y"|"z", proven, Contiguous, pristine[Storage, Names, Dense]> @JSValue = AssumeType v2 provenType=Array<"x"|"y"|"z", proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v4: anything @JSValue = CallDirect v3 function=f16
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="spreadIntoPair"
 # CHECK: module=m0 position=887 role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f17}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f17} creator=Entrypoint{target=f17 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f17 @Cell, v1: anything @JSValue, v2: anything @JSValue):
-# CHECK-NEXT: v3: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> @JSValue = AssumeType v2 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v3: Array<"x"|"y"|"z", proven, Contiguous, pristine[Storage, Names, Dense]> @JSValue = AssumeType v2 provenType=Array<"x"|"y"|"z", proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v4: L0 @JSValue = CallDirect v3 function=f17
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="throughTwo"
 # CHECK: module=m0 position=1257 role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f21}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f21} creator=Entrypoint{target=f21 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f21 @Cell, v1: anything @JSValue, v2: anything @JSValue):
-# CHECK-NEXT: v3: number @JSValue = CallDirect function=f117
+# CHECK-NEXT: v3: number @JSValue = CallDirect function=f121
 # CHECK-NEXT: ReturnCall v3 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="viaClosure"
 # CHECK: module=m0 position=1390 role=GenericEntrypoint flags=[HasThis, IsChecked] length=2 captures=[{type=f22}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f22} creator=Entrypoint{target=f22 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f22 @Cell, v1: anything @JSValue, v2: anything @JSValue, v3: anything @JSValue):
 # CHECK-NEXT: v4: 2 @JSValue = AssumeType v3 provenType=2
-# CHECK-NEXT: v5: number @JSValue = CallDirect v4 function=f118
+# CHECK-NEXT: v5: number @JSValue = CallDirect v4 function=f122
 # CHECK-NEXT: ReturnCall v5 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="spreadIntoSum"
@@ -943,7 +940,7 @@ runtimefunction id=131091 function=f66 visibility=Private
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="throughTwo"
-# CHECK: module=m0 position=1257 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} results=[{type=number site=w55}] functionTypes=[f38] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f21} inlineFrames=[{}, {callee=f115 callPosition=4294967295 isTailCall=true module=m0}] {
+# CHECK: module=m0 position=1257 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} results=[{type=number site=w55}] functionTypes=[f38] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f21} inlineFrames=[{}, {callee=f119 callPosition=4294967295 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v1: f1 @Cell = GetModuleVariable variable=g0
 # CHECK-NEXT: v2: number @JSValue = Call v1 calleeName="sum3" accessSite=9 callees=[f1]
@@ -981,18 +978,14 @@ runtimefunction id=131091 function=f66 visibility=Private
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="downByApply"
-# CHECK: module=m0 position=2927 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string site=w24}] results=[{type=string site=w25 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f46] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f9 parameterMap=[{original=1}]} {
-# CHECK-NEXT: b0(v1: undefined|null|string @JSValue):
-# CHECK-NEXT: v2: string @JSValue = AssumeType v1 provenType=string
-# CHECK-NEXT: v3: "!" @Cell = String string="!"
-# CHECK-NEXT: v4: string @Cell = Add v2, v3 form=Strings
-# CHECK-NEXT: Return v4
+# CHECK: module=m0 position=2927 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} results=[{type=string site=w25 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f46] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f9} {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v2: "!" @JSValue = String string="!"
+# CHECK-NEXT: Return v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="upByApply"
-# CHECK: module=m0 position=3099 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string site=w27}] results=[{type=string site=w28 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f47] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f10 parameterMap=[{original=1}]} {
-# CHECK-NEXT: b0(v1: undefined|null|string @JSValue):
-# CHECK-NEXT: v2: string @JSValue = AssumeType v1 provenType=string
-# CHECK-NEXT: v3: "?" @Cell = String string="?"
-# CHECK-NEXT: v4: string @Cell = Add v2, v3 form=Strings
-# CHECK-NEXT: Return v4
+# CHECK: module=m0 position=3099 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} results=[{type=string site=w28 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f47] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f10} {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v2: "?" @JSValue = String string="?"
+# CHECK-NEXT: Return v2
 # CHECK-NEXT: }

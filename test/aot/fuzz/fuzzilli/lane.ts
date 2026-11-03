@@ -14,9 +14,10 @@
 // The programs are drawn here, so nothing is needed but Bun. Where `unshare` can make a network of its own, the drivers run in one that reaches nothing: a drawn program may name any host.
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { writeProgram, type Program } from "../beds";
+import { writeProgram, type Program } from "../runners";
 
-const drawn = "--group 1 --ordinary-scenes 100 --milliseconds 1000 --ends-early 100";
+const drawn =
+  "--group 1 --ordinary-scenes 100 --milliseconds 1000 --ends-early 100 --minifies 25 --checks-proofs 25 --checks-the-run-time 100";
 const rewritten =
   "--hands-over-built-ins 50 --prints-into-a-text 60 --prints-members 70 --one-scene 25 --hooks-fail 30 --names-of-globals 15 --unwraps-try-blocks 35";
 /** What a build proves of a small program it doesn't prove beside many others, and a build of many judges four times as many programs in the same time. Each kind has found what the others missed. */

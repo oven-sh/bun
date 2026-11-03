@@ -119,8 +119,14 @@
     "HTTPThread::schedule": 1
   },
   "src/runtime/cli/run_compiled.rs": {
+    "thread spawn": 1,
     "unsafe impl Send": [
       "SharedWatcher"
+    ]
+  },
+  "src/runtime/crypto/PBKDF2.rs": {
+    "unsafe impl Send": [
+      "Digest"
     ]
   },
   "src/runtime/dns_jsc/dns.rs": {

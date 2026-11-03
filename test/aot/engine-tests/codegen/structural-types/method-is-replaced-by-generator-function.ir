@@ -385,17 +385,17 @@ function f13 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f12]
 function f15 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f12]
 function f16 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f12]
-function f17 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f18 name="call" module=m2 kind=Method role=Library flags=[HasThis, HasArgumentCount, HasHiddenRest, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=12 thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f19 name="apply" module=m2 position=1161 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=4 thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f20 name="next" module=m3 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=69 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f17 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f18 name="call" module=m2 kind=Method role=Library flags=[HasThis, HasArgumentCount, HasHiddenRest, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=FunctionPrototypeCall thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f19 name="apply" module=m2 position=1161 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=FunctionPrototypeApply thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f20 name="next" module=m3 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=GeneratorPrototypeNext thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything):
     v2 = StepGenerator v0, v1 check=IsGenerator
     v3 = ResultAt v2 index=1
     v4 = ResumeGenerator v0, v1
     Return v4
 }
-function f21 name="return" module=m3 position=548 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=85 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f21 name="return" module=m3 position=548 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=GeneratorPrototypeReturn thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything):
     v2 = StepGenerator v0, v1 resumeMode=Return check=IsGenerator
     v3 = ResultAt v2
@@ -406,36 +406,36 @@ function f21 name="return" module=m3 position=548 kind=Method role=Library flags
     v8 = CreateIteratorResult v3, v7
     Return v8
 }
-runtimefunction id=4 function=f19
-runtimefunction id=12 function=f18
-runtimefunction id=68 function=f17
-runtimefunction id=69 function=f20 visibility=Private
-runtimefunction id=85 function=f21 visibility=Private
-# -- generated: f0 sum firstTwo kind round Range values f7 f8 f9 f10 return
+runtimefunction id=FunctionPrototypeApply function=f19
+runtimefunction id=FunctionPrototypeCall function=f18
+runtimefunction id=ArrayIteratorPrototypeNext function=f17
+runtimefunction id=GeneratorPrototypeNext function=f20 visibility=Private
+runtimefunction id=GeneratorPrototypeReturn function=f21 visibility=Private
+# -- generated: f0 sum firstTwo kind round Range values f7 f8 f9 f10
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 198, patchpoints: 25, rare instructions: 673, polls: 1
+# CHECK-NEXT: instructions: 96, patchpoints: 19, rare instructions: 37, polls: 1
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="sum"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 136, patchpoints: 11, rare instructions: 166, polls: 2
+# CHECK-NEXT: instructions: 134, patchpoints: 11, rare instructions: 173, polls: 2
 # CHECK-NEXT: end of function f1
 # CHECK-LABEL: function {{*}}name="sum"
 # CHECK: role=GenericEntrypoint
-# CHECK-NEXT: instructions: 136, patchpoints: 11, rare instructions: 166, polls: 2
+# CHECK-NEXT: instructions: 134, patchpoints: 11, rare instructions: 173, polls: 2
 # CHECK-NEXT: end of function f26
 # CHECK-LABEL: function {{*}}name="firstTwo"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 160, patchpoints: 18, rare instructions: 97
+# CHECK-NEXT: instructions: 158, patchpoints: 18, rare instructions: 96
 # CHECK-NEXT: end of function f2
 # CHECK-LABEL: function {{*}}name="kind"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 47, patchpoints: 9, rare instructions: 16
+# CHECK-NEXT: instructions: 47, patchpoints: 9, rare instructions: 15
 # CHECK-NEXT: end of function f3
 # CHECK-LABEL: function {{*}}name="round"
 # CHECK: role=Source
 # CHECK-NEXT: instructions: 4, patchpoints: 2
-# CHECK-NEXT: end of function f37
+# CHECK-NEXT: end of function f40
 # CHECK-LABEL: function {{*}}name="Range"
 # CHECK: role=Source
 # CHECK-NEXT: instructions: 10, patchpoints: 1, rare instructions: 37
@@ -443,18 +443,18 @@ runtimefunction id=85 function=f21 visibility=Private
 # CHECK-LABEL: function {{*}}name="Range"
 # CHECK: role=GenericEntrypoint
 # CHECK-NEXT: instructions: 2, patchpoints: 1, rare instructions: 8
-# CHECK-NEXT: end of function f30
+# CHECK-NEXT: end of function f31
 # CHECK-LABEL: function {{*}}name="values"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 26, patchpoints: 1, rare instructions: 46
+# CHECK-NEXT: instructions: 28, patchpoints: 1, rare instructions: 95
 # CHECK-NEXT: end of function f6
 # CHECK-LABEL: function {{*}}name="values"
 # CHECK: role=GenericEntrypoint
 # CHECK-NEXT: instructions: 1, patchpoints: 1
-# CHECK-NEXT: end of function f32
+# CHECK-NEXT: end of function f33
 # CHECK-LABEL: function f7 role=
 # CHECK: CoroutineRamp
-# CHECK-NEXT: instructions: 7, patchpoints: 2
+# CHECK-NEXT: instructions: 17, patchpoints: 5
 # CHECK-NEXT: end of function f7
 # CHECK-LABEL: function f8 role=
 # CHECK: Source
@@ -466,17 +466,5 @@ runtimefunction id=85 function=f21 visibility=Private
 # CHECK-NEXT: end of function f9
 # CHECK-LABEL: function f10 role=
 # CHECK: CoroutineRamp
-# CHECK-NEXT: instructions: 7, patchpoints: 2
+# CHECK-NEXT: instructions: 17, patchpoints: 5
 # CHECK-NEXT: end of function f10
-# CHECK-LABEL: function {{*}}name="return"
-# CHECK: role=ResultWrapper
-# CHECK-NEXT: instructions: 10, patchpoints: 2
-# CHECK-NEXT: end of function f21
-# CHECK-LABEL: function {{*}}name="return"
-# CHECK: role=GenericEntrypoint
-# CHECK-NEXT: instructions: 14, patchpoints: 2
-# CHECK-NEXT: end of function f28
-# CHECK-LABEL: function {{*}}name="return"
-# CHECK: role=ResultWorker
-# CHECK-NEXT: instructions: 6, patchpoints: 2
-# CHECK-NEXT: end of function f38

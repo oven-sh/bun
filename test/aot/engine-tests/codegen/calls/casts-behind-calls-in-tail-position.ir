@@ -313,8 +313,8 @@ function f38 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f39 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f28, f40]
 function f40 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f28]
 function f41 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f42 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f43 name="find" module=m2 position=6413 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=34 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f42 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f43 name="find" module=m2 position=6413 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeFind thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     v3 = Undefined
     v4 = ToObject v0 message="Array.prototype.find requires that |this| not be null or undefined"
@@ -334,19 +334,19 @@ function f43 name="find" module=m2 position=6413 kind=Method role=Library flags=
     v18 = Call v16, v2, v15, v17, v4
     Return v15
 }
-runtimefunction id=34 function=f43
-runtimefunction id=68 function=f42
+runtimefunction id=ArrayPrototypeFind function=f43
+runtimefunction id=ArrayIteratorPrototypeNext function=f42
 # -- generated: f17
 # CHECK-LABEL: function f17 role=
 # CHECK: Source
 # CHECK-NEXT: BB#0: ; frequency = 1.000000
-# CHECK-NEXT: Int64 b@19 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v0:NewArray)
-# CHECK-NEXT: Int64 b@20 = Load(b@19, offset = 8, ControlDependent|Reads:JSObject_butterfly)
+# CHECK-NEXT: Int64 b@19 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v0:NewArray)
+# CHECK-NEXT: Int64 b@20 = Load(b@19, offset = 8, ControlDependent|Reads:JSArray_butterfly)
 # CHECK-NEXT: Int32 b@21 = Load(b@20, offset = -8, ControlDependent|Reads:Butterfly_publicLength)
 # CHECK-NEXT: Int64 b@22 = ZExt32(b@21)
 # CHECK-NEXT: Int64 b@70 = Const64(-1)
 # CHECK-NEXT: Int64 b@69 = Add(b@22, $-1(b@70))
-# CHECK-NEXT: Int32 b@25 = Load8Z(b@19, offset = 4, ControlDependent|Reads:JSCell_indexingTypeAndMisc)
+# CHECK-NEXT: Int32 b@25 = Load8Z(b@19, offset = 4, ControlDependent|Reads:JSArray_indexingTypeAndMisc)
 # CHECK-NEXT: Int32 b@48 = Const32(5)
 # CHECK-NEXT: Int32 b@28 = Equal(b@25, $5(b@48))
 # CHECK-NEXT: Int32 b@27 = Const32(3)
@@ -361,17 +361,16 @@ runtimefunction id=68 function=f42
 # CHECK-NEXT: Predecessors: #11
 # CHECK-NEXT: Int64 b@63 = Shl(b@22, $3(b@27))
 # CHECK-NEXT: Int64 b@49 = Add(b@63, b@20)
-# CHECK-NEXT: Int64 b@32 = Const64(0)
-# CHECK-NEXT: Void b@59 = Store($0(b@32), b@49, offset = -8, ControlDependent|Writes:indexedInt32Properties)
+# CHECK-NEXT: Int64 b@58 = Const64(0)
+# CHECK-NEXT: Void b@59 = Store($0(b@58), b@49, offset = -8, ControlDependent|Writes:indexedInt32Properties)
 # CHECK-NEXT: Int32 b@60 = Trunc(b@69)
 # CHECK-NEXT: Void b@61 = Store(b@60, b@20, offset = -8, ControlDependent|Writes:Butterfly_publicLength)
-# CHECK-NEXT: Void b@62 = Jump(Terminal)
-# CHECK-NEXT: Successors: #8
-# CHECK-NEXT: BB#8: ; frequency = 1.000000
-# CHECK-NEXT: Predecessors: #4, #9, #10, #13, #14, #11, #12
-# CHECK-NEXT: Double b@75 = Load(b@16, offset = -80, ReadsImmutable)
-# CHECK-NEXT: Int64 b@91 = Patchpoint(b@75:Register(%xmm0), runsWithoutFrame, resultConstraints = Register(%rax), pureFunction = 0xb00000000(children), ControlDependent)
-# CHECK-NEXT: Void b@92 = Return(b@91, Terminal)
+# CHECK-NEXT: Double b@32 = Load(b@16, offset = -48, ReadsImmutable)
+# CHECK-NEXT: Void b@62 = Return(b@32, Terminal)
+# CHECK-NEXT: BB#8: ; frequency = 0.001220
+# CHECK-NEXT: Predecessors: #4, #9, #13, #11
+# CHECK-NEXT: Double b@75 = Load(b@16, offset = -48, ReadsImmutable)
+# CHECK-NEXT: Void b@104 = Return(b@75, Terminal)
 # CHECK-NEXT: BB#1: ; frequency = 0.500000
 # CHECK-NEXT: Predecessors: #0
 # CHECK-NEXT: Int32 b@64 = Const32(7)
@@ -386,37 +385,37 @@ runtimefunction id=68 function=f42
 # CHECK-NEXT: Predecessors: #13
 # CHECK-NEXT: Int64 b@65 = Shl(b@22, $3(b@27))
 # CHECK-NEXT: Int64 b@38 = Add(b@65, b@20)
-# CHECK-NEXT: Int64 b@17 = Load(b@16, offset = -48, ReadsImmutable)
-# CHECK-NEXT: Void b@76 = Store(b@17, b@38, offset = -8, ControlDependent|Writes:indexedDoubleProperties)
+# CHECK-NEXT: Int64 b@41 = Load(b@16, offset = -48, ReadsImmutable)
+# CHECK-NEXT: Void b@76 = Store(b@41, b@38, offset = -8, ControlDependent|Writes:indexedDoubleProperties)
 # CHECK-NEXT: Int32 b@77 = Trunc(b@69)
 # CHECK-NEXT: Void b@78 = Store(b@77, b@20, offset = -8, ControlDependent|Writes:Butterfly_publicLength)
-# CHECK-NEXT: Void b@79 = Jump(Terminal)
-# CHECK-NEXT: Successors: #8
+# CHECK-NEXT: Double b@84 = Load(b@16, offset = -48, ReadsImmutable)
+# CHECK-NEXT: Void b@79 = Return(b@84, Terminal)
 # CHECK-NEXT: BB#2: ; frequency = 0.250000
 # CHECK-NEXT: Predecessors: #1
 # CHECK-NEXT: Int32 b@29 = Const32(9)
 # CHECK-NEXT: Int32 b@52 = Equal(b@25, $9(b@29))
 # CHECK-NEXT: Void b@50 = Branch(b@52, Terminal)
-# CHECK-NEXT: Successors: Then:#9, Else:#4
-# CHECK-NEXT: BB#9: ; frequency = 0.125000
+# CHECK-NEXT: Successors: Then:#9, Else:Rare:#4
+# CHECK-NEXT: BB#9: ; frequency = 0.249756
 # CHECK-NEXT: Predecessors: #2
 # CHECK-NEXT: Void b@30 = Branch(b@22, Terminal)
 # CHECK-NEXT: Successors: Then:#10, Else:Rare:#8
-# CHECK-NEXT: BB#10: ; frequency = 0.124878
+# CHECK-NEXT: BB#10: ; frequency = 0.249512
 # CHECK-NEXT: Predecessors: #9
 # CHECK-NEXT: Void b@35 = Patchpoint(b@19:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top)
-# CHECK-NEXT: Int64 b@90 = Shl(b@22, $3(b@27))
-# CHECK-NEXT: Int64 b@24 = Add(b@90, b@20)
+# CHECK-NEXT: Int64 b@103 = Shl(b@22, $3(b@27))
+# CHECK-NEXT: Int64 b@8 = Add(b@103, b@20)
 # CHECK-NEXT: Int64 b@2 = Const64(0)
-# CHECK-NEXT: Void b@43 = Store($0(b@2), b@24, offset = -8, ControlDependent|Writes:indexedContiguousProperties)
+# CHECK-NEXT: Void b@43 = Store($0(b@2), b@8, offset = -8, ControlDependent|Writes:indexedContiguousProperties)
 # CHECK-NEXT: Int32 b@44 = Trunc(b@69)
 # CHECK-NEXT: Void b@45 = Store(b@44, b@20, offset = -8, ControlDependent|Writes:Butterfly_publicLength)
-# CHECK-NEXT: Void b@46 = Jump(Terminal)
-# CHECK-NEXT: Successors: #8
-# CHECK-NEXT: BB#4: ; frequency = 0.125000
+# CHECK-NEXT: Double b@17 = Load(b@16, offset = -48, ReadsImmutable)
+# CHECK-NEXT: Void b@46 = Return(b@17, Terminal)
+# CHECK-NEXT: BB#4: ; frequency = 0.000244
 # CHECK-NEXT: Predecessors: #2
 # CHECK-NEXT: Int64 b@83 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x300000011, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState, RuntimeState}, v7:CallBuiltin)
-# CHECK-NEXT: Int64 b@85 = Patchpoint(b@83:Register(%r8), b@19:Register(%rax), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, Elements, ArrayStorage, weakTableStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v7:CallBuiltin)
+# CHECK-NEXT: Int64 b@85 = Patchpoint(b@83:Register(%r8), b@19:Register(%rax), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v7:CallBuiltin)
 # CHECK-NEXT: Void b@86 = Jump(Terminal)
 # CHECK-NEXT: Successors: #8
 # CHECK-NEXT: Known properties:

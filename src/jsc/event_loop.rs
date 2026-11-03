@@ -216,6 +216,14 @@ impl Stopped {
     }
 }
 
+#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TopLevelWaitError {
+    #[error("Stopped")]
+    Stopped,
+    #[error("the event loop is empty, so nothing can settle it anymore")]
+    NothingLeft,
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // §Dispatch hot-path — `tick_queue_with_count` is the per-tick dispatch over
 // `Task { tag, ptr }`. Per PORTING.md, the *high tier owns the match loop*:
@@ -436,6 +444,20 @@ impl EventLoop {
         }
 
         jsc::mark_binding();
+        if self.drain_microtasks_once(vm, global_object, jsc_vm)? {
+            return self.run_pending_test_steps();
+        }
+        Ok(())
+    }
+
+    /// Returns whether `bun test` has a test or hook to run next.
+    #[inline(always)]
+    fn drain_microtasks_once(
+        &mut self,
+        vm: &VirtualMachine,
+        global_object: &JSGlobalObject,
+        jsc_vm: &jsc::VM,
+    ) -> Result<bool, Stopped> {
         jsc_vm.release_weak_refs();
 
         match JSC__JSGlobalObject__drainMicrotasks(global_object) {
@@ -443,7 +465,7 @@ impl EventLoop {
             drain_result::STOPPED => return Err(Stopped),
             // The exception is on its way to a fold, which drains after taking
             // it; the deferred tasks wait for that checkpoint too.
-            drain_result::PENDING_EXCEPTION => return Ok(()),
+            drain_result::PENDING_EXCEPTION => return Ok(false),
             _ => unreachable!(),
         }
 
@@ -460,7 +482,36 @@ impl EventLoop {
             vm.uws_loop_mut().drain_quic_if_necessary();
         }
 
-        Ok(())
+        // Through `self`: `vm` would need one more saved register to outlive the calls above.
+        Ok(self.vm_ref().has_pending_test_step.get())
+    }
+
+    /// Runs the next test or hook before any other timer or I/O callback.
+    /// Jest and Vitest chain them with promises, so nothing runs in between.
+    /// Out of line, so that `drain_microtasks_with_global` needs no larger frame for it in programs that are not `bun test`.
+    #[cold]
+    #[inline(never)]
+    fn run_pending_test_steps(&mut self) -> Result<(), Stopped> {
+        let vm = self.vm_ref();
+        let global_object = self.global_ref();
+        let jsc_vm = vm.jsc_vm();
+        loop {
+            if self.entered_event_loop_count > 1 || jsc_vm.is_entered() {
+                return Ok(());
+            }
+            vm.has_pending_test_step.set(false);
+            let Some(hooks) = crate::virtual_machine::runtime_hooks() else {
+                return Ok(());
+            };
+            // `exit()` drains before it decrements the count. Reset it so each test callback still drains its microtasks.
+            let entered = core::mem::replace(&mut self.entered_event_loop_count, 0);
+            // SAFETY: the live per-thread VM that owns this loop (hook contract).
+            unsafe { (hooks.run_pending_test_step)(self.vm()) };
+            self.entered_event_loop_count = entered;
+            if !self.drain_microtasks_once(vm, global_object, jsc_vm)? {
+                return Ok(());
+            }
+        }
     }
 
     #[inline(always)]
@@ -1231,6 +1282,43 @@ impl EventLoop {
         Ok(())
     }
 
+    /// With nothing keeping the loop alive, `auto_tick` only polls, so a caller that keeps waiting would spin. This sleeps.
+    pub fn auto_tick_asleep(&mut self) {
+        if self.vm_ref().is_event_loop_alive_despite_errors() {
+            return self.auto_tick();
+        }
+        self.ref_keep_alive();
+        self.auto_tick();
+        self.unref_keep_alive();
+    }
+
+    /// Ticks until `is_done`, and gives up once nothing is left that could run JS again.
+    /// Only valid with no JS on the stack: a suspended caller could still make `is_done` true.
+    pub fn wait_at_top_level(
+        &mut self,
+        mut is_done: impl FnMut() -> bool,
+    ) -> Result<(), TopLevelWaitError> {
+        let jsc_vm = self.vm_ref().jsc_vm();
+        debug_assert!(!jsc_vm.is_entered());
+        while !is_done() {
+            if jsc_vm.execution_forbidden()
+                || !self.vm_ref().script_allowed()
+                || self.global_ref().has_pending_termination_exception()
+            {
+                return Err(TopLevelWaitError::Stopped);
+            }
+            self.tick();
+            if is_done() {
+                break;
+            }
+            if !self.vm_ref().has_work_left() {
+                return Err(TopLevelWaitError::NothingLeft);
+            }
+            self.auto_tick_asleep();
+        }
+        Ok(())
+    }
+
     pub fn wakeup(&self) {
         if let Some(loop_) = self.uws_loop {
             // SAFETY: uws_loop is a valid live uws::Loop handle
@@ -1337,6 +1425,7 @@ impl EventLoop {
 
     /// Prefer `runCallbackWithResult` unless you really need to make sure that microtasks are drained.
     /// `context`: as for [`run_callback`](Self::run_callback).
+    /// `after_call` runs after `callback` returns and before microtasks drain.
     pub fn run_callback_with_result_and_forcefully_drain_microtasks(
         &mut self,
         context: crate::ContextId,
@@ -1344,11 +1433,22 @@ impl EventLoop {
         global_object: &JSGlobalObject,
         this_value: JSValue,
         arguments: &[JSValue],
+        after_call: impl FnOnce(),
     ) -> JsResult<JSValue> {
         let EnterJs::Entered(_context) = Self::enter_js(context, global_object) else {
-            return Ok(JSValue::UNDEFINED);
+            // An exception is already pending and `callback` never ran, so don't pretend it returned undefined.
+            return Err(crate::JsError::Thrown);
         };
-        let result = callback.call(global_object, this_value, arguments)?;
+        // R-2 noalias mitigation — see `run_callback` above.
+        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
+        // SAFETY: `this` is the unique live `EventLoop`; short-lived `&mut`.
+        unsafe { (*this).enter() };
+        let result = callback.call(global_object, this_value, arguments);
+        let this: *mut Self = core::hint::black_box(this);
+        // SAFETY: as above.
+        unsafe { (*this).exit_without_checkpoint() };
+        after_call();
+        let result = result?;
         result.ensure_still_alive();
         let jsc_vm = global_object.bun_vm().jsc_vm();
         self.drain_microtasks_with_global(global_object, jsc_vm)

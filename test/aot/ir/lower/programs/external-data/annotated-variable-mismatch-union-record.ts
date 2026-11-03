@@ -77,7 +77,7 @@ for (const text of ['{"id":"y"}', '{"id":"z","ctx":{"cwd":"/"}}']) {
 // CHECK-NEXT: ReturnCall v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="give"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|string site=[[w_6]] flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined|null|number|[[L_1]] site=[[w_7]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_8]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|string site=[[w_6]] flags=[OmitsNull, OmitsUndefined] variableName="text"}] thisType={type=anything} results=[{type=undefined|null|number|[[L_1]] site=[[w_7]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_8]]] {
 // CHECK-NEXT: b0(v0: undefined|null|string):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

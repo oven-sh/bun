@@ -85,27 +85,23 @@ function f5 name="keepsConversion" module=m0 position=1021 flags=[HasExplicitNam
 # CHECK-NEXT: PutModuleVariable v0 variable=g3
 # CHECK-NEXT: v2: f3 = GetModuleVariable variable=g2
 # CHECK-NEXT: v3: f1 = GetModuleVariable variable=g0
-# CHECK-NEXT: Jump -> next b1()
-# CHECK-NEXT: b1():
+# CHECK-NEXT: Jump -> next b1(v0)
+# CHECK-NEXT: b1(v4: int|whole):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v5: fact = Entered function=f4
-# CHECK-NEXT: v6: fact = Entered function=f2
-# CHECK-NEXT: v7: int|whole = GetModuleVariable fact=v6 variable=g3
-# CHECK-NEXT: v8: int|whole = Increment v7
-# CHECK-NEXT: PutModuleVariable v8 variable=g3
-# CHECK-NEXT: v10: anything ~ undefined|null|Error = Call v3 calleeName="keepsResult" accessSite=3 callees=[f1] @0:3 tail
-# CHECK-NEXT: v11: int|whole = GetModuleVariable fact=v5 variable=g3
-# CHECK-NEXT: v12: int|whole = Increment v11
-# CHECK-NEXT: PutModuleVariable v12 variable=g3
-# CHECK-NEXT: v14: symbol = CallBuiltin overload=Symbol/0 accessSite=1
+# CHECK-NEXT: v6: int|whole = Increment v4
+# CHECK-NEXT: PutModuleVariable v6 variable=g3
+# CHECK-NEXT: v8: anything ~ undefined|null|Error = Call v3 calleeName="keepsResult" accessSite=3 callees=[f1] @0:3 tail
+# CHECK-NEXT: v9: int|whole = Increment v6
+# CHECK-NEXT: PutModuleVariable v9 variable=g3
+# CHECK-NEXT: v11: symbol = CallBuiltin overload=Symbol/0 accessSite=1
 # CHECK-NEXT: Jump -> next b2()
 # CHECK-NEXT: b2() handler=b3():
-# CHECK-NEXT: v15: anything ~ number = Call v2, -, v14 calleeName="endsInConversion" accessSite=5 callees=[f3]
+# CHECK-NEXT: v12: anything ~ number = Call v2, -, v11 calleeName="endsInConversion" accessSite=5 callees=[f3]
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b3() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b4():
-# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: Jump -> next b1(v9)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="endsInKeeper"
 # CHECK: module=m0 position=790 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Error flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

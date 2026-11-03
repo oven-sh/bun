@@ -37,12 +37,21 @@ fn is_about_dependency(record: &UserDiagnosticRecord) -> bool {
     record.kind == UserDiagnosticKind::Int32OfDependencyNotProven
 }
 
+fn is_about_load_by_unknown_name(record: &UserDiagnosticRecord) -> bool {
+    matches!(
+        record.kind,
+        UserDiagnosticKind::CodeOutsideImageIsRefused
+            | UserDiagnosticKind::ModuleNamedAtRunTimeIsRefused
+    )
+}
+
 impl Diagnostics {
     pub(crate) fn add_engine_records(
         &mut self,
         result: &EngineResult,
         names: &ProgramNames,
         texts: &SourceTexts,
+        runs_tests: bool,
     ) {
         let mut locator = ModuleLocator::new(texts);
         for path in find_dependencies_with_unproven_int32(result, names) {
@@ -61,13 +70,39 @@ impl Diagnostics {
             .user_diagnostics()
             .iter()
             .filter(|record| !is_about_dependency(record))
+            // A suite has many such loads, and most find a file that was compiled. The test whose load is refused fails with an error that says so.
+            .filter(|record| !(runs_tests && is_about_load_by_unknown_name(record)))
         {
             self.add_user_diagnostic(record, result.text(record.message), names, &mut locator);
         }
         for record in result.internal_errors() {
-            let text = result.text(record.message);
-            let message = internal_error_text(record, text, names, &mut locator);
-            self.report_internal_error(record.kind.stage(), message);
+            self.add_internal_error_record(
+                record,
+                result.text(record.message),
+                names,
+                &mut locator,
+            );
+        }
+    }
+
+    pub(super) fn add_internal_error_record(
+        &mut self,
+        record: &InternalErrorRecord,
+        text: &[u8],
+        names: &ProgramNames,
+        locator: &mut ModuleLocator<'_>,
+    ) {
+        let message = internal_error_text(record, text, names, locator);
+        let stage = record.kind.stage();
+        let start_of_function_module = || {
+            let module = names.function_module(record.function_id()?)?;
+            Some(Position { module, offset: 0 })
+        };
+        let position = position_of(record.location).or_else(start_of_function_module);
+        // The path that the messages of users' errors have. `ProgramNames::module_path` may be relative.
+        match position.and_then(|position| locator.position_of(position)) {
+            Some(position) => self.report_internal_error_in_file(stage, message, position.path),
+            None => self.report_internal_error(stage, message),
         }
     }
 

@@ -41,20 +41,22 @@ aot: trim: removed bun:sqlite and node:sqlite (sqlite): unused
 
 If the report starts with `blocked by`, your program or a dependency could reach APIs that the compiler can't see, so `--trim` keeps more. The line says where. With the first three reasons, unused Bun and Node.js APIs are still removed. With the last three, `--trim` keeps every API.
 
-| `blocked by`      | Your program                                              |
-| ----------------- | --------------------------------------------------------- |
-| `eval`            | Calls `eval` or `new Function` on a computed string       |
-| `runtime-code`    | Uses `node:vm`, `bun:ffi`, a native addon or `Bun.plugin` |
-| `dynamic-import`  | Imports a computed path, or starts a `Worker`             |
-| `external-import` | Imports an `--external` package or a URL                  |
-| `build-option`    | Is built with `--compile-inspector`                       |
-| `no-aot`          | Is built without `--aot`                                  |
+| `blocked by`      | Your program                                                      |
+| ----------------- | ----------------------------------------------------------------- |
+| `eval`            | Calls `eval` or `new Function` on a computed string               |
+| `runtime-code`    | Uses `node:vm`, `bun:ffi`, a native addon or `Bun.plugin`         |
+| `dynamic-import`  | Imports a computed path, or starts a `Worker` from a computed one |
+| `external-import` | Imports an `--external` package or a URL                          |
+| `build-option`    | Is built with `--compile-inspector`                               |
+| `no-aot`          | Is built without `--aot`                                          |
+
+A `Worker` started from a constant path, URL or string is compiled with your program and blocks nothing. One started from a computed string (a `blob:` or `data:` URL, or `eval: true` in `node:worker_threads`) keeps the interpreter and the transpiler, about 7 MB, and so does a computed path.
 
 ## Make it smaller
 
 - `--disallow-code-generation-from-strings` removes the parser and the interpreter. `eval` and `new Function` then throw.
 - `--trim-locales en,de` removes the `Intl` data for every other locale. Using another locale exits the process.
-- `--no-compile-function-source` removes the source text of functions. `fn.toString()` then returns `[native code]`.
+- `--no-compile-function-source` removes the source text of functions. `fn.toString()` then returns `[native code]`, and an error message [quotes less](/compiler/compatibility#error-messages) of the code that failed.
 
 Without `--trim-locales`, Bun keeps the locales that your code passes as constants, as in `toLocaleString("de")`. One call with a computed locale, or with none, keeps them all. The flag has no effect on macOS, where Bun uses the system's ICU library.
 
@@ -62,13 +64,15 @@ Without `--trim-locales`, Bun keeps the locales that your code passes as constan
 
 A dependency that calls `new Function` is the most common reason `--trim` is blocked. With [`--disallow-code-generation-from-strings`](/runtime/code-generation-from-strings), those calls throw an `EvalError`, so they block nothing. A library that tries `new Function` in a `try` block falls back to plain code, and one that needs generated code throws at startup. `bun` takes the flag too, so you can find out which before you build.
 
+`node:vm` and `module._compile` still run code from strings with that flag, as in Node.js. With `=strict` they throw the `EvalError` too, and block nothing.
+
 ## Using a removed feature
 
 Bun removes code, not names. `typeof HTMLRewriter` and `typeof Bun.sql` give the same result as before. A call throws an `Error` with the code `ERR_FEATURE_REMOVED` and a message that says how to keep the feature.
 
-Your own code only runs into this through a name that isn't known until run time. Members of `Bun`, `Intl`, `Temporal` and `WebAssembly` count as used where your code names them, as in `Bun.file(path)` or `value.toLocaleString()`. `Bun[name]()` doesn't count. `bun test` runs your source files, so it can't find these errors. Test the executable itself.
+Your own code only runs into this through a name that isn't known until run time. Code that the compiler never sees, like a string passed to `eval` or to a `Worker`, finds the APIs that the rest of your program uses and no others. Members of `Bun`, `Intl`, `Temporal` and `WebAssembly` count as used where your code names them, as in `Bun.file(path)` or `value.toLocaleString()`. `Bun[name]()` doesn't count. Neither does a call on a copy of a `Bun` that your code found without naming it, like `const copy = { ...Object.values(globalThis)[i] }; copy.build()`. A copy of the `Bun` you name, like `{ ...Bun }`, does count. `bun test` runs your source files, so it can't find these errors. Test the executable itself.
 
-In `Bun.build`, `trim: { allow: ["color"] }` keeps a feature that only a string passed to `eval`, a computed name or a native addon uses. `trim: { remove: ["sqlite"] }` takes a feature out even if your code uses it. Neither has a command-line flag.
+In `Bun.build`, `trim: { allow: ["color"] }` keeps a feature that only a string passed to `eval` or to a `Worker`, a computed name or a native addon uses. `trim: { remove: ["sqlite"] }` takes a feature out even if your code uses it. Neither has a command-line flag.
 
 ### Feature names
 

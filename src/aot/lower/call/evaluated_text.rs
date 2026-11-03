@@ -74,6 +74,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     // A stack trace lists the built-in function between the compiled text and the function that wrote the call.
+    // The built-in stays on the stack while the text runs, so this call is not a tail call. In tail position only its caller has left.
     fn emit_call_by_builtin(
         &mut self,
         compiled: ValueId,
@@ -81,6 +82,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         tail: Tail<'_>,
     ) -> ValueId {
         let (is_annotated_pure, is_never_inlined, is_done_in_place) = (false, true, false);
+        let is_in_tail_position = matches!(tail, Tail::Yes { .. });
+        let outer = self.builder.set_tail_position(is_in_tail_position);
         let called = self.builder.call(
             compiled,
             None,
@@ -94,7 +97,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             is_never_inlined,
             is_done_in_place,
         );
-        self.return_call_in_tail_position(called, tail)
+        self.builder.set_tail_position(outer);
+        called
     }
 
     fn emit_ordinary(

@@ -380,5 +380,5 @@ function f11 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # -- generated: f0
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 152, patchpoints: 33, rare instructions: 17, polls: 2
+# CHECK-NEXT: instructions: 159, patchpoints: 33, rare instructions: 17, polls: 2
 # CHECK-NEXT: end of function f0

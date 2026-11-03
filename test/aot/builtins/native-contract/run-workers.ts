@@ -33,6 +33,8 @@ export const settingsOfEngine = {
 
 const maxAttempts = 60;
 const secondsWithoutProgress = 45;
+// A worker names each step of its set-up as it names each target, so a starved machine has to stall one step and not their sum.
+export const setUpPrefix = "set-up: ";
 
 function readReports(path: string, reports: Map<string, Report>): void {
   if (!existsSync(path)) return;
@@ -68,7 +70,7 @@ async function waitFor(worker: Bun.Subprocess, currentPath: string): Promise<voi
 }
 
 // A target that twice ends its process or does not come back is left out of the next attempt, which goes on behind it. Once can be the
-// machine: under load a call may starve.
+// machine: under load a call may starve. So may a step of the set-up, and no attempt can go on behind one of those.
 async function runWorker(options: RunOptions, index: number, results: Results): Promise<void> {
   const { executable, environment, folder, filter, workerCount } = options;
   const requestPath = join(folder, `request.${index}.json`);
@@ -95,13 +97,15 @@ async function runWorker(options: RunOptions, index: number, results: Results): 
     await waitFor(worker, currentPath);
     const current = readCurrent(currentPath);
     if (current === null) break;
-    if (current && !endedOnce.has(current)) {
-      endedOnce.add(current);
+    const place = current || `${setUpPrefix}start`;
+    if (!endedOnce.has(place)) {
+      endedOnce.add(place);
       continue;
     }
-    ended.push(current || `worker ${index} before its first target`);
+    const isSetUp = place.startsWith(setUpPrefix);
+    ended.push(isSetUp ? `worker ${index}, ${place}` : place);
     results.howEnded.push(`${ended.at(-1)}: ${worker.signalCode ?? `exit ${worker.exitCode}`}`);
-    if (!current) break;
+    if (isSetUp) break;
   }
   readReports(reportsPath, results.reports);
   results.ended.push(...ended);

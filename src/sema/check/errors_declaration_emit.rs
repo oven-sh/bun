@@ -2234,7 +2234,20 @@ impl<'p, 's> Checker<'p, 's> {
         modules
     }
 
+    /// True if `exporting_modules` resolves the exports of `file`.
+    pub(super) fn is_searched_for_exports(&self, file: FileId) -> bool {
+        let module = self.files().module(file);
+        // A leaf file doesn't export aliases. The task that checks it frees its HIR (`Files::free_tree`). Test
+        // `is_leaf`, which is immutable after loading, before reading `hir`.
+        !module.is_leaf && module.hir.has_module_syntax
+    }
+
     /// The first call for the program builds the index.
+    ///
+    /// Resolving an export can close a cycle, and what the index says of that export depends on where the cycle was
+    /// entered. So the index of a task that was discarded isn't kept. The recheck builds it again and enters the same
+    /// cycles, this time from the first file that leads there. What a discarded task prints is dropped, so it gets an
+    /// empty index.
     fn exporting_modules(&mut self) -> &'p ExportingModules {
         let program = self.p;
         if let Some(index) = program.exporting_modules.get() {
@@ -2243,10 +2256,10 @@ impl<'p, 's> Checker<'p, 's> {
         let files = self.files();
         let mut index = ExportingModules::default();
         for (position, &file) in (0..).zip(files.order) {
-            let module = files.module(file);
-            // A leaf file doesn't export aliases. The task that checks it frees its HIR (`Files::free_tree`). Test
-            // `is_leaf`, which is immutable after loading, before reading `hir`.
-            if module.is_leaf || !module.hir.has_module_syntax {
+            if self.was_discarded() {
+                return &program.no_exporting_modules;
+            }
+            if !self.is_searched_for_exports(file) {
                 continue;
             }
             index.positions.insert(file, position);
@@ -2261,6 +2274,9 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                 }
             }
+        }
+        if self.was_discarded() {
+            return &program.no_exporting_modules;
         }
         program.exporting_modules.get_or_init(|| index)
     }

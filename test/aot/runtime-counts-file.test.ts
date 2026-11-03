@@ -2,8 +2,10 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { readBuildReport } from "./harness/build-report";
 import { built, spawned } from "./harness/commands";
-import { runtimeEnvironment } from "./harness/flags";
+import { withoutCollections } from "./harness/counted-run";
+import { runtimeEnvironment, withReport } from "./harness/flags";
 import { registry } from "./harness/registry";
 import { beforeAll, describe, test } from "./supported";
 
@@ -72,7 +74,8 @@ describe("compile/aot/runtime-counts-file", () => {
 
     const lines = text.split("\n");
     expect(lines.pop()).toBe("");
-    const isCount = (line: string) => /^\d+\t(counter|exit|limit|operation|refilled|branch):\S+$/.test(line);
+    const isCount = (line: string) =>
+      /^\d+\t(counter|exit|limit|operation|refilled|made|branch|flattened|hashed|decoded):\S+$/.test(line);
     // Behind the counts: what was made and learned, by its description, and the places that allocate.
     const isDescribed = (line: string) =>
       /^\d+\t(structures|plans dropped by collections|keys of plans|pairs of layouts|named):\S.*$/.test(line);
@@ -105,6 +108,97 @@ describe("compile/aot/runtime-counts-file", () => {
     expect(counts.get("counter:InterpretedEvalCode")).toBeGreaterThanOrEqual(1);
     expect(counts.get("limit:PromisesWalkedPerImport")).toBe(0);
   });
+
+  test("the lines of the free lists add up to the cells that were handed out", async () => {
+    using dir = tempDir("aot-runtime-counts-file-cells", {
+      "cells.ts": `
+        declare const process: { argv: string[] };
+        declare const console: { log(...values: unknown[]): void };
+        const kept: ({ a: number; b: number } | undefined)[] = new Array(4096).fill(undefined);
+        const count = Number(process.argv[2]);
+        for (let i = 0; i < count; i++) kept[i] = { a: i, b: -i };
+        console.log(kept[count - 1]!.a === count - 1);
+        export {};
+      `,
+    });
+    const cwd = String(dir);
+    const executable = join(cwd, "cells" + (isWindows ? ".exe" : ""));
+    built(await spawned([bunExe(), "build", "--compile", "--aot", "cells.ts", "--outfile", executable], cwd, bunEnv));
+    // Destroying the VM at exit collects first, and a collection takes the lists from their allocators.
+    for (const BUN_DESTRUCT_VM_ON_EXIT of [undefined, "1"]) {
+      const cellsHandedOut = async (count: number) => {
+        const path = join(cwd, `counts-of-${count}`);
+        const env = {
+          ...bunEnv,
+          ...withoutCollections,
+          BUN_DESTRUCT_VM_ON_EXIT,
+          [runtimeEnvironment.countsPath]: path,
+        };
+        expect(await spawned([executable, String(count)], cwd, env)).toMatchObject({ stdout: "true\n", exitCode: 0 });
+        return readFileSync(path, "utf8")
+          .split("\n")
+          .reduce((sum, line) => sum + Number(/^refill \S+ \S+ \S+ (\d+) \d+$/.exec(line)?.[1] ?? 0), 0);
+      };
+      // A list is counted when it is used up, and what is used of the lists at hand when the process ends: one object more is one cell more.
+      const few = await cellsHandedOut(1000);
+      expect([
+        (await cellsHandedOut(1001)) - few,
+        (await cellsHandedOut(1007)) - few,
+        (await cellsHandedOut(3000)) - few,
+      ]).toEqual([1, 7, 2000]);
+    }
+  }, 240_000);
+
+  test("Workers that end one after the other are counted, each for itself", async () => {
+    using dir = tempDir("aot-runtime-counts-file-workers", {
+      "program.ts": `
+        import { Worker } from "node:worker_threads";
+        let sum = 0;
+        for (let i = 0; i < 6; i++) {
+          const worker = new Worker("./worker.ts", { argv: [process.argv[2]] });
+          worker.on("message", value => (sum += value));
+          await new Promise(resolve => worker.on("exit", resolve));
+        }
+        console.log(sum);
+      `,
+      "worker.ts": `
+        import { parentPort } from "node:worker_threads";
+        const kept: ({ a: number; b: number } | undefined)[] = new Array(4096).fill(undefined);
+        const count = Number(process.argv[2]);
+        for (let i = 0; i < count; i++) kept[i] = { a: i, b: -i };
+        parentPort!.postMessage(kept[count - 1]!.a);
+      `,
+    });
+    const cwd = String(dir);
+    const executable = join(cwd, "program" + (isWindows ? ".exe" : ""));
+    built(
+      await spawned(
+        [
+          ...[bunExe(), "build", "--compile", "--aot", "program.ts", "worker.ts", "--outfile", executable],
+          ...withReport(join(cwd, "report.json"), "summary"),
+        ],
+        cwd,
+        bunEnv,
+      ),
+    );
+    // Both files hold node:worker_threads and all that is behind it. They are one program, so that is compiled once.
+    expect(readBuildReport(join(cwd, "report.json")).statistics.EngineRuns).toBe(1);
+    const cellsHandedOut = async (count: number) => {
+      const path = join(cwd, `counts-of-${count}`);
+      const env = { ...bunEnv, ...withoutCollections, [runtimeEnvironment.countsPath]: path };
+      expect(await spawned([executable, String(count)], cwd, env)).toMatchObject({
+        stdout: 6 * (count - 1) + "\n",
+        exitCode: 0,
+      });
+      return readFileSync(path, "utf8")
+        .split("\n")
+        .reduce((sum, line) => sum + Number(/^refill \S+ \S+ \S+ (\d+) \d+$/.exec(line)?.[1] ?? 0), 0);
+    };
+    // A Worker collects when it ends, so of its lists those count that were used up: 2,000 objects more in each of six, to a list more or less.
+    const more = (await cellsHandedOut(3000)) - (await cellsHandedOut(1000));
+    expect(more).toBeGreaterThan(6 * 1400);
+    expect(more).toBeLessThan(6 * 2600);
+  }, 240_000);
 
   test("nothing is written without the option", () => {
     expect(runs.notCounting.written).toEqual([]);

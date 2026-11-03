@@ -100,13 +100,19 @@ console.log(total);
     for (let index = 0; index < 60; index++) once += `console.log(cold.field${index});\n`;
     const { causes, exitCode } = await explain({
       "main.ts": `const cold: any = JSON.parse(process.argv[2] ?? "{}");
-const hot: any = JSON.parse(process.argv[3] ?? '{ "x": 1, "y": 2 }');
+let hot: any = JSON.parse(process.argv[3] ?? '{ "x": 1, "y": 2, "next": null }');
 ${once}
+hot.next = hot;
 function step(point: any) {
   return point.x + point.y;
 }
 let total = 0;
-for (let i = 0; i < 1000; i++) for (let j = 0; j < 1000; j++) total += step(hot);
+for (let i = 0; i < 1000; i++) {
+  for (let j = 0; j < 1000; j++) {
+    total += step(hot);
+    hot = hot.next;
+  }
+}
 console.log(total);
 `,
     });

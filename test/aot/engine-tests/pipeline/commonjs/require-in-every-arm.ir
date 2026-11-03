@@ -160,22 +160,21 @@ function f8 module=m4 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v5: boolean ~ true = TypeTest v3 testedType=i32
 # CHECK-NEXT: Branch v5 -> taken b3(| 0), notTaken b4(v3)
 # CHECK-NEXT: b3(v6: int[0, 2147483647]):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v8: undefined = CallDirect function=f2 calledBuiltin=PrivateGlobalsRequireCommonJS
-# CHECK-NEXT: v9: int[1, 2147483648] = Increment v6
-# CHECK-NEXT: v10: int[1, 2147483648] ~ int[1, 2147483647] = Upcast v9 castType=int|whole
-# CHECK-NEXT: Jump -> next b2(v10)
-# CHECK-NEXT: b4(v11: int|whole ~ int[0, 2147483647]) frequency=Unlikely:
-# CHECK-NEXT: v12: int|whole = CallDirect function=f15 accessSite=4
-# CHECK-NEXT: v13: int|whole ~ int[1, 2147483648] = Increment v11
-# CHECK-NEXT: v14: int|whole ~ int[1, 2147483647] = Upcast v13 castType=int|whole
-# CHECK-NEXT: v15: boolean ~ true = TypeTest v14 testedType=int[0, 2147483647]
-# CHECK-NEXT: Branch v15 -> taken b5(| 0), notTaken b6()
-# CHECK-NEXT: b5(v16: int[0, 2147483647] ~ int[1, 2147483647]) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b1(v16)
+# CHECK-NEXT: v7: undefined = CallDirect function=f2 calledBuiltin=PrivateGlobalsRequireCommonJS
+# CHECK-NEXT: v8: int[1, 2147483648] = Increment v6
+# CHECK-NEXT: v9: int[1, 2147483648] ~ int[1, 2147483647] = Upcast v8 castType=int|whole
+# CHECK-NEXT: Jump -> next b2(v9)
+# CHECK-NEXT: b4(v10: int|whole ~ int[0, 2147483647]) frequency=Unlikely:
+# CHECK-NEXT: v11: int|whole = CallDirect function=f15 accessSite=4
+# CHECK-NEXT: v12: int|whole ~ int[1, 2147483648] = Increment v10
+# CHECK-NEXT: v13: int|whole ~ int[1, 2147483647] = Upcast v12 castType=int|whole
+# CHECK-NEXT: v14: boolean ~ true = TypeTest v13 testedType=int[0, 2147483647]
+# CHECK-NEXT: Branch v14 -> taken b5(| 0), notTaken b6()
+# CHECK-NEXT: b5(v15: int[0, 2147483647] ~ int[1, 2147483647]) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b1(v15)
 # CHECK-NEXT: b6() frequency=Unlikely:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: Jump -> next b4(v14)
+# CHECK-NEXT: Jump -> next b4(v13)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="arms"
 # CHECK: module=m4 position=318 kind=Arrow flags=[IsSloppy] length=1 thisType={type=anything} parameters=[{type=int[0, 1]}] results=[{type=int|whole}] functionTypes=[f7] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]

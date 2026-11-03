@@ -269,7 +269,7 @@ function f7 module=m0 role=Signature thisType={type=anything} results=[{type=any
 function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f11 name="map" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f11 name="map" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     Jump -> next b1()
   b1():
@@ -332,7 +332,7 @@ function f11 name="map" module=m1 kind=Method role=Library flags=[HasThis, IsChe
     v43 = ThrowNewError errorKind=TypeError message="Array.prototype.map callback must be a function"
     Unreachable
 }
-function f12 name="iteratorGenericNext" module=m2 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 enclosingRuntimeFunction=131073 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=undefined|null|object site=w23 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f12 name="iteratorGenericNext" module=m2 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 enclosingRuntimeFunction=IteratorOperationsIteratorGenericNext thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=undefined|null|object site=w23 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
@@ -353,7 +353,7 @@ function f12 name="iteratorGenericNext" module=m2 kind=Method role=Library flags
     v10 = ThrowNewError errorKind=TypeError message="Iterator result interface is not an object."
     Unreachable
 }
-function f13 name="iteratorGenericClose" module=m2 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=131072 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f13 name="iteratorGenericClose" module=m2 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=IteratorOperationsIteratorGenericClose thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
@@ -386,7 +386,7 @@ function f13 name="iteratorGenericClose" module=m2 kind=Method role=Library flag
     v15 = ThrowNewError errorKind=TypeError message="Iterator result interface is not an object."
     Unreachable
 }
-function f14 name="map" module=m3 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f14 name="map" module=m3 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=JSIteratorPrototypeMap thisType={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|number|string|symbol|bigint|object, v1: anything):
     Jump -> next b1()
   b1():
@@ -435,7 +435,7 @@ function f14 name="map" module=m3 kind=Method role=Library flags=[HasThis, IsChe
     v26 = ThrowNewError errorKind=TypeError message="Iterator.prototype.map requires that |this| be an Object."
     Unreachable
 }
-function f15 module=m3 role=Library flags=[IsGenerator, HasThis, TakesCallee, IsChecked] enclosingRuntimeFunction=65 captures=[{type=anything}, {type=anything}, {type=anything}] thisType={type=anything} results=[{type=undefined|null|Generator flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned] {
+function f15 module=m3 role=Library flags=[IsGenerator, HasThis, TakesCallee, IsChecked] enclosingRuntimeFunction=JSIteratorPrototypeMap captures=[{type=anything}, {type=anything}, {type=anything}] thisType={type=anything} results=[{type=undefined|null|Generator flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned] {
   b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: function):
     Jump -> next b1()
   b1():
@@ -521,7 +521,7 @@ function f15 module=m3 role=Library flags=[IsGenerator, HasThis, TakesCallee, Is
   b26():
     Rethrow v38
 }
-function f16 name="map" module=m4 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=3 enclosingRuntimeFunction=131114 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=undefined|null|Array site=w25 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f16 name="map" module=m4 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=3 enclosingRuntimeFunction=WrittenListsMappedFilledArray thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=undefined|null|Array site=w25 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     Jump -> next b1()
   b1():
@@ -698,6 +698,6 @@ function f16 name="map" module=m4 kind=Method role=Library flags=[IsChecked, Has
 }
 data d0 root=Array{contents=undefined|null|L0|L1} module=m0
 data d1 root=Array{contents=undefined|null|L1} module=m0
-runtimefunction id=64 function=f11
-runtimefunction id=65 function=f14
-runtimefunction id=131114 function=f16
+runtimefunction id=ArrayPrototypeMap function=f11
+runtimefunction id=JSIteratorPrototypeMap function=f14
+runtimefunction id=WrittenListsMappedFilledArray function=f16

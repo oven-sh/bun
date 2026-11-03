@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""many-structures-many-names.py <names>: MANY STRUCTURES x MANY NAMES: thousands of objects, each with its own random subset of <names> names in a random order; every name is read from every object through one site a name; the value says which object and which name it belongs to, so the program checks itself (a read that answers for another name or another Structure is counted), and prints a digest. Then most objects are dropped, garbage is made so that their Structures die, new ones are made, and all is read again: five rounds. With <names> above 65,536 the sites are many and the objects few: a name's number no longer fits 16 bits."""
+"""many-structures-many-names.py <names>: Thousands of objects, each with its own random subset of <names> property
+names in random order. Every name is read from every object through one site per name, and the value says whether the
+read was right.
+"""
 import sys
 N = int(sys.argv[1])
 big = N > 2000

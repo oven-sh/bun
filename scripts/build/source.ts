@@ -474,7 +474,6 @@ export type DepName =
   | "highway"
   | "libdeflate"
   | "libjpeg-turbo"
-  | "libspng"
   | "libuv"
   | "libwebp"
   | "lolhtml"

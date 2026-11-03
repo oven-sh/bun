@@ -474,8 +474,9 @@ enum Evaluating {
         text: Vec<u8>,
         result: Evaluated,
     },
-    /// A constant's initializer is being evaluated, for a use of the constant at this location.
-    Initializer(Location),
+    /// A constant's initializer is being evaluated, for a use of the constant at this location. The
+    /// number is `evaluations_of_the_moment` from before.
+    Initializer(Location, u32),
     /// A build leaves the entity name that is being evaluated to the run time.
     LeftToRunTime,
 }
@@ -495,6 +496,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn evaluate(&mut self, file: FileId, e: ExprId, location: Location) -> Evaluated {
         if self.is_stack_low() {
             self.bailed_out();
+            self.evaluations_of_the_moment += 1;
             return Evaluated::default();
         }
         let is_for_build = match location {
@@ -503,6 +505,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let (mut file, mut e, mut location) = (file, e, location);
         let mut begun: SmallVec<[Evaluating; 4]> = SmallVec::new();
+        let mut begun_constants: SmallVec<[(FileId, VarDeclId); 4]> = SmallVec::new();
         'operand: loop {
             let hir = self.hir(file);
             let mut result = match hir.checked_kind(e) {
@@ -569,11 +572,19 @@ impl<'p, 's> Checker<'p, 's> {
                     match self.evaluate_entity(file, e, location) {
                         Entity::Result(result) => result,
                         Entity::Constant(of, d) => {
-                            self.constants_in_evaluation.push((of, d));
-                            begun.push(Evaluating::Initializer(location));
-                            (file, e) = (of, self.hir(of)[d].init);
-                            location = Location::Variable(of, d);
-                            continue;
+                            self.constants_in_evaluation.insert((of, d));
+                            let before = self.evaluations_of_the_moment;
+                            begun.push(Evaluating::Initializer(location, before));
+                            begun_constants.push((of, d));
+                            file = of;
+                            match self.evaluated_initializers.get(&(of, d, is_for_build)) {
+                                Some(&known) => known,
+                                None => {
+                                    e = self.hir(of)[d].init;
+                                    location = Location::Variable(of, d);
+                                    continue;
+                                }
+                            }
                         }
                     }
                 }
@@ -624,8 +635,16 @@ impl<'p, 's> Checker<'p, 's> {
                         template_result.value = Some(EnumValue::String(self.atoms().intern(&text)));
                         result = template_result;
                     }
-                    Evaluating::Initializer(used_at) => {
-                        let constant = self.constants_in_evaluation.pop();
+                    Evaluating::Initializer(used_at, before) => {
+                        let constant = begun_constants.pop();
+                        if let Some((of, d)) = constant {
+                            self.constants_in_evaluation.remove(&(of, d));
+                            // The same at every use, unless it was cut short by what else was in progress.
+                            if before == self.evaluations_of_the_moment {
+                                let key = (of, d, is_for_build);
+                                self.evaluated_initializers.insert(key, result);
+                            }
+                        }
                         if is_for_build
                             && !self.is_const_inlined_by_transpiler(constant, used_at, result)
                         {
@@ -725,7 +744,11 @@ impl<'p, 's> Checker<'p, 's> {
             Some((of, d)) if !self.constants_in_evaluation.contains(&(of, d)) => {
                 Entity::Constant(of, d)
             }
-            _ => no_value,
+            Some(_) => {
+                self.evaluations_of_the_moment += 1;
+                no_value
+            }
+            None => no_value,
         }
     }
 
@@ -743,11 +766,13 @@ impl<'p, 's> Checker<'p, 's> {
         let Some((declaration, declared @ (of, _))) = declaration.filter(|it| it.1 != used) else {
             let at = self.span_of_expr(file, e);
             self.error_at(at, 2565, &[Arg::Sym(symbol)]);
+            self.evaluations_of_the_moment += 1;
             return Evaluated::default();
         };
         if !is_declared_before_use(self, declared, location) {
             let at = self.span_of_expr(file, e);
             self.error_at(at, 2651, &[]);
+            self.evaluations_of_the_moment += 1;
             return Evaluated {
                 run_time_inputs: ALL_RUN_TIME_INPUTS,
                 ..Evaluated::number(0.0)
@@ -788,8 +813,13 @@ impl<'p, 's> Checker<'p, 's> {
             && member.0 > using.0
             && owner[using.idx()] == owner[member.idx()]
         {
+            self.evaluations_of_the_moment += 1;
             return Evaluated::default();
         }
+        if let Some(known) = self.p.enum_values.get(&self.task, &(file, member)) {
+            return known;
+        }
+        self.evaluations_of_the_moment += 1;
         self.get_enum_member_value(file, member)
     }
 }

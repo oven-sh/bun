@@ -16,7 +16,7 @@ fn entry_parameters_follow_function() {
         | FunctionFlags::HAS_HIDDEN_REST;
     let mut function = function_with_parameters(flags, &[TypeTable::NUMBER, TypeTable::STRING]);
     let captures = [TypeTable::BOOLEAN, TypeTable::SYMBOL];
-    function.captures = captures.map(DeclaredType::from_compiler).to_vec();
+    function.captures = (captures.map(|ty| DeclaredType::from_compiler(ty).into())).to_vec();
     function.this_type = DeclaredType::from_compiler(TypeTable::OBJECT);
 
     let builder = FunctionBuilder::new(function, BuilderScratch::default());

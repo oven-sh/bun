@@ -1,4 +1,4 @@
-use bun_aot::statistics::can_be_lowered;
+use bun_aot::statistics::is_lowered_by_all;
 use bun_ast::{Ref, Source};
 use bun_core::strings::contains;
 use bun_parsers::json::{parse_json_into_arena, parse_utf8};
@@ -592,7 +592,7 @@ fn limit_counts_values_and_not_keys() {
 #[test]
 fn limit_is_equal_in_every_build() {
     let limit = LimitId::MaxDataNodes;
-    assert!(!can_be_lowered(limit));
+    assert!(!is_lowered_by_all(limit));
     assert_eq!(limit.value_on_arm64(), limit.value_on_x86_64());
     assert_eq!(max_data_nodes() as u64, limit.value_on_arm64());
 }

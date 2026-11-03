@@ -231,5 +231,5 @@ function f2 name="byTwo" module=m0 position=1266 flags=[HasExplicitName] length=
 # -- generated: byTwo
 # CHECK-LABEL: function {{*}}name="byTwo"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 523, patchpoints: 86, rare instructions: 85
+# CHECK-NEXT: instructions: 485, patchpoints: 86, rare instructions: 85
 # CHECK-NEXT: end of function f2

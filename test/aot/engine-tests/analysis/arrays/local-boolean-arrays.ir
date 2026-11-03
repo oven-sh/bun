@@ -563,16 +563,16 @@ function f55 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f56 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f48]
 function f57 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f58 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f59 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f60 name="filter" module=m2 position=4475 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=32 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f59 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f60 name="filter" module=m2 position=4475 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeFilter thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f61 name="clampToLength" module=m3 position=720 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w227}, {type=number site=w228}] results=[{type=number site=w229}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f62 name="storeInNewArray" module=m3 position=955 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w230 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w231}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f63 name="appendParts" module=m3 position=1242 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w232 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w233}, {type=anything}] results=[{type=number site=w234}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f64 name="joinedText" module=m3 position=1819 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string site=w235 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f65 name="finishJoin" module=m3 position=1934 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|string site=w236 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w237 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w238}, {type=number site=w239}] results=[{type=undefined|null|string site=w240 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f66 name="finishReduce" module=m3 position=2116 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean site=w241}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f67 name="traverseArray" module=m3 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=131091 thisType={type=anything} parameters=[{type=undefined|null|Array site=w242 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w243}, {type=undefined|number site=w244}, {type=number site=w245}, {type=undefined|null|Array site=w246 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f68 name="filledArray" module=m4 position=2241 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 enclosingRuntimeFunction=131113 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=undefined|null|Array site=w302 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f67 name="traverseArray" module=m3 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=ArrayTraversalTraverseArray thisType={type=anything} parameters=[{type=undefined|null|Array site=w242 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w243}, {type=undefined|number site=w244}, {type=number site=w245}, {type=undefined|null|Array site=w246 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f68 name="filledArray" module=m4 position=2241 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 enclosingRuntimeFunction=WrittenListsFilledArray thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=undefined|null|Array site=w302 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything):
     v2 = Convert v0 declared={type=number} illTypedCause=Assertion
     v3 = Integer
@@ -588,16 +588,16 @@ function f68 name="filledArray" module=m4 position=2241 kind=Method role=Library
     v13 = Convert v8 declared={type=undefined|null|Array site=w302 flags=[OmitsNull, OmitsUndefined]}
     Return v13
 }
-runtimefunction id=32 function=f60
-runtimefunction id=68 function=f59
-runtimefunction id=131091 function=f67 visibility=Private
-runtimefunction id=131113 function=f68 visibility=Private
+runtimefunction id=ArrayPrototypeFilter function=f60
+runtimefunction id=ArrayIteratorPrototypeNext function=f59
+runtimefunction id=ArrayTraversalTraverseArray function=f67 visibility=Private
+runtimefunction id=WrittenListsFilledArray function=f68 visibility=Private
 # -- generated: twoAtOnce
 # CHECK-LABEL: function {{*}}name="twoAtOnce"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 113, patchpoints: 10, rare instructions: 87, polls: 3
+# CHECK-NEXT: instructions: 112, patchpoints: 9, rare instructions: 101, polls: 2
 # CHECK-NEXT: end of function f8
 # CHECK-LABEL: function {{*}}name="twoAtOnce"
 # CHECK: role=GenericEntrypoint
 # CHECK-NEXT: instructions: 2, patchpoints: 2
-# CHECK-NEXT: end of function f76
+# CHECK-NEXT: end of function f77

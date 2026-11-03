@@ -10,6 +10,7 @@ namespace v8 {
 class BigInt : public Primitive {
 public:
     BUN_EXPORT static Local<BigInt> New(Isolate* isolate, int64_t value);
+    BUN_EXPORT static Local<BigInt> NewFromUnsigned(Isolate* isolate, uint64_t value);
 };
 
 } // namespace v8

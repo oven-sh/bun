@@ -115,6 +115,9 @@ public:
 
     Isolate* isolate() { return &m_isolate; }
 
+    // True once per realm: v8::ArrayBuffer::Detach() then warns that it left a buffer attached.
+    bool shouldWarnThatDetachLeftBufferAttached() { return !std::exchange(m_warnedThatDetachLeftBufferAttached, true); }
+
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE);
 
@@ -136,6 +139,7 @@ private:
     WTF::Vector<std::pair<Isolate::GCCallbackWithData, void*>> m_gcEpilogueCallbacks;
     WTF::Vector<std::pair<NearHeapLimitCallback, void*>> m_nearHeapLimitCallbacks;
     WTF::HashMap<uintptr_t*, void*> m_weakHandleParameters;
+    bool m_warnedThatDetachLeftBufferAttached { false };
 
     Oddball m_undefinedValue;
     Oddball m_nullValue;

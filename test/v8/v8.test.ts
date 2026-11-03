@@ -7,14 +7,18 @@ import {
   canBuildNodeAddons,
   expectRssDeltaBelow,
   isASAN,
+  isGlibc,
   isWindows,
   nodeExeMatchingAbi,
   tempDir,
   tmpdirSync,
 } from "harness";
 import assert from "node:assert";
+import { existsSync, readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import { basename, join } from "path";
+import { unsupported } from "../aot/harness/compiler";
+import { withoutCoreDump } from "../aot/harness/without-core-dump";
 
 enum Runtime {
   node,
@@ -180,6 +184,22 @@ describe.skipIf(!canBuildNodeAddons())("node:v8", () => {
       "[(() => { const { proxy, revoke } = Proxy.revocable([], {}); revoke(); return proxy; })()]",
     ])("matches Node for IsMap/IsArray/IsInt32/IsBigInt on %s", async args => {
       await checkSameOutput("test_v8_value_type_checks", args);
+    });
+
+    it("matches Node for IsExternal/IsArrayBuffer/IsArrayBufferView/IsSharedArrayBuffer on a matrix of values", async () => {
+      const lines = (await checkSameOutput("test_v8_value_external_and_buffer_type_checks")).split(/\r?\n/);
+      const answers = Object.fromEntries(lines.map(line => line.split(": ")));
+      const none = "IsExternal=0 IsArrayBuffer=0 IsArrayBufferView=0 IsSharedArrayBuffer=0";
+      expect(answers).toMatchObject({
+        "ArrayBuffer": "IsExternal=0 IsArrayBuffer=1 IsArrayBufferView=0 IsSharedArrayBuffer=0",
+        "SharedArrayBuffer": "IsExternal=0 IsArrayBuffer=0 IsArrayBufferView=0 IsSharedArrayBuffer=1",
+        "Uint8Array": "IsExternal=0 IsArrayBuffer=0 IsArrayBufferView=1 IsSharedArrayBuffer=0",
+        "DataView over an ArrayBuffer": "IsExternal=0 IsArrayBuffer=0 IsArrayBufferView=1 IsSharedArrayBuffer=0",
+        "External": "IsExternal=1 IsArrayBuffer=0 IsArrayBufferView=0 IsSharedArrayBuffer=0",
+        "ObjectTemplate instance with internal fields": none,
+        "Proxy of an ArrayBuffer": none,
+        "Proxy of an External": none,
+      });
     });
   });
   describe("Number", () => {
@@ -392,6 +412,14 @@ describe.skipIf(!canBuildNodeAddons())("node:v8", () => {
     it("BigInt::New creates a JS bigint with the given int64 value", async () => {
       await checkSameOutput("test_v8_bigint");
     });
+    it("BigInt::NewFromUnsigned creates a JS bigint with the given uint64 value", async () => {
+      const output = await checkSameOutput("test_v8_bigint_new_from_unsigned");
+      const values = [0n, 1n, 2n ** 32n, 2n ** 53n + 1n, 2n ** 63n, 2n ** 64n - 1n];
+      const native = values.map(value => `NewFromUnsigned(${value}): IsBigInt() = 1, IsNumber() = 0`);
+      const js = values.map(value => `typeof = bigint value = ${value}`);
+      // Called as a function, as a constructor, and with an exception pending.
+      expect(output.split(/\r?\n/)).toEqual([...native, ...js, ...native, ...js, ...native, "caught pending"]);
+    });
   });
 
   describe("String::NewFromUtf8Literal", () => {
@@ -442,6 +470,61 @@ describe.skipIf(!canBuildNodeAddons())("node:v8", () => {
     });
     it("can create Uint8Array/Uint32Array views with offset and length", async () => {
       await checkSameOutput("test_v8_typedarray");
+    });
+    it("ArrayBuffer and SharedArrayBuffer report ByteLength() and Data() like V8", async () => {
+      await checkSameOutput("test_v8_arraybuffer_accessors");
+    });
+    it("ArrayBuffer::Detach() detaches the buffer and its views", async () => {
+      const output = await checkSameOutput("test_v8_arraybuffer_detach");
+      expect(output).toContain("ByteLength() after Detach() = 0");
+      expect(output).toContain("bytes read through the store = 1 2 3 4 5 6 7 8");
+    });
+    // V8 aborts when an addon detaches a buffer that is not detachable, so this cannot be compared against Node.
+    it("ArrayBuffer::Detach() leaves a buffer attached when it cannot be detached, and warns once", async () => {
+      const expected = [
+        "====== WebAssembly.Memory buffer",
+        "ByteLength() before Detach() = 65536",
+        "ByteLength() after Detach() = 65536",
+        "Data() != nullptr after Detach() = 1",
+        "byteLength = 65536 detached = false",
+        "still the memory's buffer = true",
+        "ByteLength() = 65536",
+        "Data() != nullptr = 1",
+        "Data()[0] = 42",
+        "Data()[1] = 0",
+        "Data()[2] = 0",
+        "Data()[3] = 0",
+        "Data() == GetBackingStore()->Data() = 1",
+        "====== SharedArrayBuffer",
+        "ByteLength() before Detach() = 8",
+        "ByteLength() after Detach() = 8",
+        "Data() != nullptr after Detach() = 1",
+        "byteLength = 8 bytes = 1,2,3,4,5,6,7,8",
+        "====== ArrayBuffer whose store the addon holds while it calls Detach()",
+        "the store has the same memory after Detach() = 1",
+        "bytes read through the store = 1 2 3 4 5 6 7 8",
+        "byteLength = 8 detached = false",
+        "====== the same ArrayBuffer once the addon dropped the store",
+        "ByteLength() before Detach() = 8",
+        "ByteLength() after Detach() = 0",
+        "Data() != nullptr after Detach() = 0",
+        "byteLength = 0 detached = true",
+        "====== ArrayBuffer that a threadpool job is reading",
+        "ByteLength() before Detach() = 8",
+        "ByteLength() after Detach() = 8",
+        "Data() != nullptr after Detach() = 1",
+        "byteLength = 8 detached = false",
+        "bytes = 1,2,3,4,5,6,7,8",
+        "====== the same ArrayBuffer after the job",
+        "ByteLength() before Detach() = 8",
+        "ByteLength() after Detach() = 0",
+        "Data() != nullptr after Detach() = 0",
+        "byteLength = 0 detached = true",
+      ];
+      // One warning for the three buffers that Detach() left attached.
+      await expectOnBunOnly("test_v8_arraybuffer_detach_undetachable", expected, undefined, [
+        detachLeftBufferAttachedWarning,
+      ]);
     });
   });
 
@@ -520,7 +603,558 @@ describe.skipIf(!canBuildNodeAddons())("node:v8", () => {
       await checkSameOutput("test_uv_queue_work_on_current_event_loop");
     });
   });
+
+  describe("Value::Int32Value", () => {
+    it("converts values like the JS ToInt32 operation", async () => {
+      const out = await checkSameOutput("test_v8_value_int32_value");
+      // uWebSockets.js: the numbers in the options of app.ws()
+      expect(out).toContain("maybe.FromJust() = -1");
+    });
+
+    it("converts a number while an exception is pending", async () => {
+      const out = await checkSameOutput("test_v8_value_int32_value_with_pending_exception");
+      expect(sectionsOf(out)).toEqual([
+        "1.5 | maybe.IsNothing() = 0 | maybe.FromJust() = 1 | caught pending",
+        "7 | maybe.IsNothing() = 0 | maybe.FromJust() = 7 | caught pending",
+        "-1 | maybe.IsNothing() = 0 | maybe.FromJust() = -1 | caught pending",
+      ]);
+    });
+  });
+
+  describe("Value::NumberValue", () => {
+    it("converts values like the JS ToNumber operation", async () => {
+      const out = await checkSameOutput("test_v8_value_number_value");
+      // every digit of the double that valueOf returned
+      expect(out).toContain("maybe.FromJust() = 77.900000000000006");
+    });
+
+    it("converts a number while an exception is pending", async () => {
+      const out = await checkSameOutput("test_v8_value_number_value_with_pending_exception");
+      expect(sectionsOf(out)).toEqual([
+        "1.5 | maybe.IsNothing() = 0 | maybe.FromJust() = 1.5 | caught pending",
+        "7 | maybe.IsNothing() = 0 | maybe.FromJust() = 7 | caught pending",
+        "-1 | maybe.IsNothing() = 0 | maybe.FromJust() = -1 | caught pending",
+      ]);
+    });
+  });
+
+  describe("Value::BooleanValue", () => {
+    it("converts values like the JS ToBoolean operation", async () => {
+      const out = await checkSameOutput("test_v8_value_boolean_value");
+      // the truthy ones: "0", "false", [], {}, 1n and a Symbol
+      expect(out.match(/ = 1$/gm)).toHaveLength(6);
+    });
+  });
+
+  describe("CFunctionInfo / CFunction", () => {
+    it("constructors store V8's fields inside the addon's object and FunctionTemplate::New takes the CFunction", async () => {
+      const output = await checkSameOutput("test_v8_function_template_c_function");
+      // the addon prints through the C runtime, which ends lines with \r\n on Windows
+      expect(output.split(/\r?\n/)).toEqual([
+        "type_info->return_info_.type_ == CTypeInfo::Type::kInt32 = 1",
+        "type_info->return_info_.flags_ == CTypeInfo::Flags::kClampBit = 1",
+        "type_info->repr_ == CFunctionInfo::Int64Representation::kBigInt = 1",
+        "type_info->arg_count_ = 3",
+        "type_info->arg_info_ == arg_info = 1",
+        "type_info_storage.guards_intact() = 1",
+        "c_function->address_ == address = 1",
+        "c_function->type_info_ == type_info = 1",
+        "c_function_storage.guards_intact() = 1",
+        "slow callback called with 40 and 2",
+        "add(40, 2) = 42",
+      ]);
+    });
+  });
+
+  describe("Object::GetOwnPropertyNames", () => {
+    it("returns the keys V8 returns for every PropertyFilter and KeyConversionMode", async () => {
+      const out = await checkSameOutput("test_v8_object_get_own_property_names");
+      // The two calls uWebSockets.js makes.
+      expect(out).toContain('object with a prototype, one-argument overload: 2 [number 8, string "own"]');
+      expect(out).toContain(
+        "mixed, SKIP_STRINGS: 4 [symbol(enumerable), symbol(hidden), symbol(readOnly), symbol(nonConfigurable)]",
+      );
+    });
+  });
+
+  describe("ArrayBuffer::NewBackingStore", () => {
+    it("calls the deleter once, when the addon destroys the store", async () => {
+      const output = await checkSameOutput("test_v8_new_backing_store");
+      // the addon prints through the C runtime, which ends lines with \r\n on Windows
+      expect(output.split(/\r?\n/)).toEqual([
+        "store->Data() == unique_owned.bytes = 1",
+        "unique_owned.deleter_calls = 0",
+        "unique_owned.deleter_calls = 1",
+        "copy->Data() == shared_owned.bytes = 1",
+        "shared_owned.deleter_calls = 0",
+        "shared_owned.deleter_calls = 1",
+        "store->Data() == zero_length.bytes = 1",
+        "zero_length.deleter_calls = 1",
+        "store->Data() == nullptr = 1",
+        "no_memory.deleter_calls + no_memory.unexpected_deleter_calls = 0",
+        "unexpected_deleter_calls = 0",
+      ]);
+    });
+
+    it("ArrayBuffer::New shares the store's memory and keeps the store until the buffer is detached or collected", async () => {
+      const output = await checkSameOutput("test_v8_array_buffer_from_backing_store");
+      expect(output.split(/\r?\n/)).toEqual([
+        "====== the addon drops its std::shared_ptr, JS holds 1 of 65 buffers",
+        "deleters of the 64 buffers that nothing refers to: 64 of 64 ran, 0 more than once",
+        "deleter calls for the buffer that JS holds = 0",
+        "the addon reads what JS wrote = 77",
+        "JS reads what the addon wrote = 200",
+        "GetBackingStore() has the addon's memory = true",
+        "byteLength = 8, detached = false",
+        "deleter calls after Detach() = 1",
+        "byteLength = 0, detached = true view length = 0",
+        "deleter calls after a second Detach() = 1",
+        "deleters after JS dropped the detached buffer and a collection ran: 65 of 65 ran, 0 more than once",
+        "====== the addon keeps its std::shared_ptr past Detach()",
+        "byteLength = 0, detached = true",
+        "deleter calls after Detach() and a collection = 0",
+        "the store still has the addon's memory = true",
+        "the addon reads what JS wrote = 42",
+        "deleter calls after the addon released the store = 1",
+        "====== two ArrayBuffers from one store",
+        "two objects = true",
+        "the second reads what JS wrote to the first = 11",
+        "deleter calls after Detach() of the first = 0",
+        "second: byteLength = 8, detached = false first byte = 11",
+        "deleter calls after Detach() of the second = 1",
+        "====== JS keeps a view and not the buffer",
+        "deleter calls while JS holds the view = 0",
+        "the view reads what the addon wrote = 123",
+        "deleter calls after Detach() of the view's buffer = 1",
+        "view length = 0",
+        "====== a store over zero bytes of the addon's memory",
+        "byteLength = 0, detached = false view length = 0",
+        "deleter calls while JS holds the buffer = 0",
+        "byteLength = 0, detached = true",
+        "deleter calls after Detach() = 1",
+        "====== a store over no memory",
+        "byteLength = 0, detached = false view length = 0",
+        "byteLength = 0, detached = true",
+        "====== once nothing refers to a buffer and a collection ran",
+        "deleters of the 69 stores with memory: 69 of 69 ran, 0 more than once",
+        "deleter calls for the store over no memory = 0",
+        "deleter calls without the store's data and length = 0",
+      ]);
+    });
+
+    it("ArrayBuffer::Detach() detaches a buffer over the addon's memory that a handler only read", async () => {
+      const output = await checkSameOutput("test_v8_array_buffer_from_backing_store_lent_to_handler");
+      expect(output.split(/\r?\n/)).toEqual([
+        "====== a handler that only reads the buffer",
+        "the handler reads what the addon wrote = 17",
+        "after Detach(): byteLength = 0, detached = true view length = 0",
+        "deleter calls after Detach() = 1",
+        "after the handler's job: byteLength = 0, detached = true",
+      ]);
+    });
+
+    // V8 detaches the buffer under the job, so this cannot be compared against Node.
+    it("ArrayBuffer::Detach() leaves a buffer over the addon's memory attached while a threadpool job has it, and warns once", async () => {
+      const whileTheJobHasItAndAfter = [
+        "after Detach(): byteLength = 8, detached = false view length = 8",
+        "deleter calls after Detach() = 0",
+        // The addon filled its memory with 0x77 for its next use, and JS wrote 0x99 through the view.
+        "JS reads what the addon wrote to its memory after Detach() = 119",
+        "the addon reads what JS wrote through the view = 153",
+        "after the handler's job: byteLength = 8, detached = false",
+        "after Detach() once the job is done: byteLength = 0, detached = true view length = 0",
+        "deleter calls after that Detach() = 1",
+      ];
+      const expected = [
+        "====== a handler that gives the buffer to zlib.deflate()",
+        ...whileTheJobHasItAndAfter,
+        "====== a handler that adds a property to the buffer and gives it to zlib.deflate()",
+        ...whileTheJobHasItAndAfter,
+        "====== a handler that gives the buffer to fs.write()",
+        ...whileTheJobHasItAndAfter,
+      ];
+      // One warning for the three buffers that Detach() left attached.
+      await expectOnBunOnly("test_v8_array_buffer_from_backing_store_lent_to_job", expected, undefined, [
+        detachLeftBufferAttachedWarning,
+      ]);
+    });
+
+    // V8 makes a buffer from the first and the third of these stores, so this cannot be compared against Node.
+    it.each([
+      ["a store from GetBackingStore()", 0, "a BackingStore from GetBackingStore() is not supported"],
+      ["a store with a length and no memory", 1, "the BackingStore has a length but no data"],
+      [
+        "a store over more than 4 GiB",
+        2,
+        "the BackingStore has 4294967297 bytes, and the largest ArrayBuffer that Bun supports has 4294967296",
+      ],
+    ])("ArrayBuffer::New ends with a panic that says why it refuses %s", async (_, which, why) => {
+      const { reason, exitCode } = await panicOnBun("new_array_buffer_from_refused_store", `[${which}]`);
+      expect(reason).toBe(`v8::ArrayBuffer::New: ${why}`);
+      expect(exitCode).not.toBe(0);
+    });
+
+    it("destroys the store of a buffer that was transferred to a Worker once, in the Worker", async () => {
+      const output = await checkSameOutput("test_v8_array_buffer_from_backing_store_transferred_to_worker");
+      expect(output.split(/\r?\n/)).toEqual([
+        "detached by the transfer = true, true, true, true",
+        "byteLength and first byte of each buffer in the worker = 8:100, 8:101, 8:102, 8:103",
+        "deleters while the worker holds the buffers: 0 of 4 ran, 0 more than once",
+        "deleters after the worker exited: 4 of 4 ran, 0 more than once",
+        "deleters that ran on the thread that made the stores: 0",
+        "deleter calls without the store's data and length = 0",
+      ]);
+    });
+
+    // glibc 2.34 and later install their malloc checker beside libc.so.6.
+    const libc = isGlibc ? / (\/\S*\/)libc\.so\.6$/m.exec(readFileSync("/proc/self/maps", "utf8")) : null;
+    const mallocChecker = libc ? join(libc[1], "libc_malloc_debug.so.0") : "";
+
+    // With MALLOC_CHECK_ set, the checker's free(), which an addon's free() binds to, aborts on a foreign block.
+    it.skipIf(!existsSync(mallocChecker))(
+      "makes a store that the addon's operator delete frees while glibc's malloc checker is preloaded",
+      async () => {
+        const env = {
+          ...bunEnv,
+          LD_PRELOAD: bunEnv.LD_PRELOAD ? `${mallocChecker}:${bunEnv.LD_PRELOAD}` : mallocChecker,
+          MALLOC_CHECK_: "3",
+        };
+        await expectOnBunOnly(
+          "test_v8_backing_store_deleted_by_addon",
+          ["made.stores = 480", "deleted.stores = 480", "made.bytes = 6000", "deleted.bytes = 6000", "frames = 5520"],
+          env,
+        );
+      },
+    );
+  });
+
+  describe("BackingStore", () => {
+    it("ByteLength() is the length of the addon's memory, or the current length of the buffer that GetBackingStore() was called on", async () => {
+      const output = await checkSameOutput("test_v8_backing_store_byte_length");
+      expect(output.split(/\r?\n/)).toEqual([
+        "====== stores from NewBackingStore()",
+        "store over 8 bytes: ByteLength() = 8",
+        "store over 0 bytes of memory: ByteLength() = 0",
+        "store over no memory: ByteLength() = 0",
+        "store that an ArrayBuffer has: ByteLength() = 8",
+        "the same store after Detach(): ByteLength() = 8",
+        "====== the store of an ArrayBuffer(8)",
+        "store->ByteLength() = 8",
+        "store->ByteLength() == ByteLength() = 1",
+        "store->Data() == Data() = 1",
+        "====== the store of a resizable ArrayBuffer, 4 of 16 bytes",
+        "store->ByteLength() = 4",
+        "store->ByteLength() == ByteLength() = 1",
+        "store->Data() == Data() = 1",
+        "====== the same store after resize(12)",
+        "store->ByteLength() = 12",
+        "store->ByteLength() == ByteLength() = 1",
+        "store->Data() == Data() = 1",
+        "====== the same store after resize(2)",
+        "store->ByteLength() = 2",
+        "store->ByteLength() == ByteLength() = 1",
+        "store->Data() == Data() = 1",
+        "====== the store of a detached ArrayBuffer",
+        "store->ByteLength() = 0",
+        "store->ByteLength() == ByteLength() = 1",
+        "store->Data() == Data() = 1",
+      ]);
+    });
+
+    it("SharedArrayBuffer::GetBackingStore() returns a store over the buffer's memory", async () => {
+      const output = await checkSameOutput("test_v8_shared_array_buffer_get_backing_store");
+      expect(output.split(/\r?\n/)).toEqual([
+        "====== SharedArrayBuffer(8)",
+        "store->ByteLength() = 8",
+        "store->ByteLength() == ByteLength() = 1",
+        "store->Data() == Data() = 1",
+        "store->Data()[0] = 1",
+        "store->Data()[1] = 2",
+        "store->Data()[2] = 3",
+        "store->Data()[3] = 4",
+        "last byte seen from JS = 204",
+        "====== SharedArrayBuffer(0)",
+        "store->ByteLength() = 0",
+        "store->ByteLength() == ByteLength() = 1",
+        "store->Data() == Data() = 1",
+        "====== growable SharedArrayBuffer, 4 of 16 bytes",
+        "store->ByteLength() = 4",
+        "store->ByteLength() == ByteLength() = 1",
+        "store->Data() == Data() = 1",
+        "store->Data()[0] = 1",
+        "store->Data()[1] = 2",
+        "store->Data()[2] = 3",
+        "store->Data()[3] = 4",
+        "last byte seen from JS = 204",
+        "====== the same buffer grown to 8 bytes",
+        "store->ByteLength() = 8",
+        "store->ByteLength() == ByteLength() = 1",
+        "store->Data() == Data() = 1",
+        "store->Data()[0] = 1",
+        "store->Data()[1] = 2",
+        "store->Data()[2] = 3",
+        "store->Data()[3] = 204",
+        "last byte seen from JS = 204",
+        "====== the store that the addon took before grow(8)",
+        "store->ByteLength() = 8",
+        "store->ByteLength() == ByteLength() = 1",
+        "store->Data() == Data() = 1",
+        "====== shared WebAssembly.Memory buffer",
+        "store->ByteLength() = 65536",
+        "store->ByteLength() == ByteLength() = 1",
+        "store->Data() == Data() = 1",
+        "store->Data()[0] = 0",
+        "store->Data()[1] = 0",
+        "store->Data()[2] = 0",
+        "store->Data()[3] = 0",
+        "last byte seen from JS = 204",
+      ]);
+    });
+
+    it("is deleted by the addon that owns it", async () => {
+      // On Windows the addon built with `node-gyp --debug` imports BackingStore::operator delete from the host.
+      const output = await checkSameOutput("test_v8_backing_store_deleted_by_addon");
+      expect(output.split(/\r?\n/)).toEqual([
+        "made.stores = 480",
+        "deleted.stores = 480",
+        "made.bytes = 6000",
+        "deleted.bytes = 6000",
+        "frames = 5520",
+      ]);
+    });
+
+    // In V8 the store has the memory itself, and each of these transfers detaches the buffer at once.
+    it("a transfer copies a buffer while the addon holds its GetBackingStore() store, and detaches it once the store is dropped", async () => {
+      const whileHeldAndAfter = [
+        "while the addon holds the store: byteLength = 8, detached = false",
+        "what the transfer gave: byteLength = 8, detached = false bytes = 1,2,3,4,5,6,7,8",
+        "the buffer's first byte after a write to that copy = 1",
+        "store->ByteLength() = 8",
+        "store->ByteLength() == ByteLength() = 1",
+        "store->Data() == Data() = 1",
+        "after the addon dropped the store: byteLength = 0, detached = true",
+        "what the transfer gave: byteLength = 8, detached = false bytes = 1,2,3,4,5,6,7,8",
+      ];
+      await expectOnBunOnly("test_v8_backing_store_held_across_transfers", [
+        "====== transfer()",
+        ...whileHeldAndAfter,
+        "====== structuredClone() with a transfer list",
+        ...whileHeldAndAfter,
+        "====== postMessage() with a transfer list",
+        ...whileHeldAndAfter,
+        "====== a resizable buffer",
+        "transfer(): threw RangeError",
+        "structuredClone() of a length-tracking view with the buffer in the transfer list: threw TypeError",
+        "while the addon holds the store: byteLength = 8, detached = false",
+        "after the addon dropped the store: byteLength = 0, detached = true",
+        "what the transfer gave: byteLength = 8, detached = false resizable = true",
+      ]);
+    });
+
+    // In V8 nothing is left of the store once its last owner dropped it, on whichever thread.
+    it("a store that another thread drops is released on the JS thread that took it", async () => {
+      await expectOnBunOnly("test_v8_backing_store_dropped_on_another_thread", [
+        "transfer() right after another thread dropped the store: byteLength = 8, detached = false",
+        "transfer() one turn of the event loop later: byteLength = 0, detached = true",
+        "transfer() of a buffer with a second store that the addon holds: byteLength = 8, detached = false",
+        "transfer() once the addon dropped that store too: byteLength = 0, detached = true",
+      ]);
+    });
+
+    it("a store that another thread drops is released when its Worker exits without another turn of its event loop", async () => {
+      const output = await checkSameOutput("test_v8_backing_store_dropped_on_another_thread_before_worker_exit");
+      expect(output).toBe("deleter calls after the worker exited = 1");
+    });
+
+    // Bun posts the release to the JS thread that took the store, and refuses the post once that thread is in its teardown or gone.
+    it.todo("a store that another thread drops while its Worker is in its teardown is released", async () => {
+      const output = await checkSameOutput("test_v8_backing_store_dropped_during_worker_teardown");
+      expect(output).toBe("deleter calls after the worker exited = 1");
+    });
+    it.todo("a store that another thread drops after its Worker exited is released", async () => {
+      const output = await checkSameOutput("test_v8_backing_store_dropped_after_worker_exit");
+      expect(output.split(/\r?\n/)).toEqual([
+        "deleter calls while the addon holds the store = 0",
+        "deleter calls after this thread dropped the store = 1",
+      ]);
+    });
+
+    // 8 buffers of 32 MiB. A job thread that deleted its store itself would corrupt the buffer's reference count. The
+    // driver starts 5,760 threads, and waits up to 10 seconds for memory that does not come back.
+    it("frees a SharedArrayBuffer after job threads dropped stores of it", async () => {
+      await expectRssDeltaBelow(
+        [
+          "--smol",
+          join(directories.bunRelease, "main.js"),
+          "test_v8_shared_backing_store_dropped_by_job_threads_leak",
+          "[]",
+          "null",
+        ],
+        { release: 64, debug: 64 },
+      );
+    }, 30_000);
+  });
+
+  describe("Object::Clone", () => {
+    it("copies the prototype and the own properties of a plain object", async () => {
+      const out = await checkSameOutput("test_v8_object_clone");
+      // every object, the two frozen ones, and the two accessor properties without running their getter
+      expect(out.match(/same as the original's: true/g)).toHaveLength(12);
+      expect(out.match(/extensible, sealed, frozen: false true true/g)).toHaveLength(2);
+      expect(out.match(/getter calls during Clone\(\): 0/g)).toHaveLength(2);
+      // a change to one of the original and its two copies does not reach the other two
+      for (const unchanged of [
+        "original is unchanged",
+        "second copy is unchanged",
+        "copy is unchanged by writing to the original",
+        "second copy is unchanged by writing to the original",
+      ]) {
+        expect(out.match(new RegExp(`^${unchanged}: true$`, "gm"))).toHaveLength(12);
+      }
+    });
+    it("copies the private names of an object", async () => {
+      const out = await checkSameOutput("test_v8_object_clone_private_names");
+      // a field, a method, an accessor, an inherited field, a field that another class's constructor added, and a
+      // field of an object that Bun copies by definition
+      expect(out.match(/^the copy has the private name: true$/gm)).toHaveLength(6);
+      expect(out.match(/^read from the copy: (\d+)$/gm)).toEqual(
+        [42, 7, 9, 42, 42, 42].map(n => `read from the copy: ${n}`),
+      );
+    });
+    it("copies process.versions and process.release", async () => {
+      const out = await checkSameOutput("test_v8_object_clone_process_versions_and_release");
+      expect(out.match(/^own properties as the original's: true$/gm)).toHaveLength(2);
+    });
+    it("gives the copy of a template instance internal fields of its own", async () => {
+      const out = await checkSameOutput("test_v8_object_clone_template_instance");
+      // once for ObjectTemplate::NewInstance() and once for FunctionTemplate::GetFunction()->NewInstance()
+      expect(
+        out.match(/copy after writing the original's fields: 2 internal fields: &b, "set on the copy"/g),
+      ).toHaveLength(2);
+      expect(out.match(/copies intact after collecting their originals: 100 of 100/g)).toHaveLength(2);
+      // the instance and the copy of it that JS gave properties, of both kinds
+      expect(
+        out.match(/copy made while an exception is pending: 2 internal fields, same aligned pointer: 1/g),
+      ).toHaveLength(4);
+      // each of those and a plain object per kind left the exception pending
+      expect(out.match(/: caught pending/g)).toHaveLength(6);
+    });
+
+    // There an object literal with properties and a class instance are no JSFinalObject: Clone() copies them by
+    // definition, and ends with a panic for one that has private names.
+    it.skipIf(!!unsupported)(
+      "copies the objects of a `bun build --compile --aot` executable",
+      async () => {
+        const compiledDrivers = ["object-clone.js", "object-get-own-property-names.js"];
+        using dir = tempDir("v8-object-clone-aot", {
+          ...Object.fromEntries(compiledDrivers.map(file => [file, readFileSync(join(srcDir, file), "utf8")])),
+          "main.js": `const addon = { exports: {} };
+process.dlopen(addon, process.argv[3]);
+const drivers = Object.assign({}, ${compiledDrivers.map(file => `require("./${file}")(addon.exports)`).join(", ")});
+drivers[process.argv[2]](...JSON.parse(process.argv[4] ?? "[]"));
+`,
+        });
+        const executable = join(String(dir), isWindows ? "main.exe" : "main");
+        {
+          await using build = spawn({
+            // The drivers need no built-in module, and a build without them is several times shorter. Windows keeps
+            // them, as in test/aot/native-addons.test.ts: there the library makes a part of `process`.
+            cmd: [
+              bunExe(),
+              "build",
+              "--compile",
+              "--aot",
+              ...(isWindows ? [] : ["--no-builtin-modules"]),
+              "main.js",
+              "--outfile",
+              executable,
+            ],
+            cwd: String(dir),
+            env: bunEnv,
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+          const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+          expect({ stderr, exitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
+        }
+        const addon = join(directories.bunRelease, "build", "Release", "v8tests.node");
+        for (const testName of [
+          "test_v8_object_clone",
+          "test_v8_object_clone_template_instance",
+          "test_v8_object_clone_process_versions_and_release",
+          "test_v8_object_get_own_property_names",
+        ]) {
+          await using proc = spawn({
+            cmd: [executable, testName, addon],
+            cwd: String(dir),
+            env: bunEnv,
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          const printed = stdout.replaceAll(/^\[\w+\].+$/gm, "").trim();
+          expect(printed, stderr).toBe(await runOn(Runtime.node, BuildMode.release, testName));
+          expect(exitCode).toBe(0);
+        }
+
+        // Node and a Bun that runs the same driver from source copy each of these.
+        const withPrivateNames = [
+          "a private field",
+          "a private method",
+          "a private accessor",
+          "an inherited private field",
+          "a private field that a constructor gave an object literal",
+          "a private field and an index key",
+        ];
+        const panics = await Promise.all(
+          withPrivateNames.map(which =>
+            panicOf([executable, "test_v8_object_clone_private_names", addon, JSON.stringify([which])], String(dir)),
+          ),
+        );
+        expect(panics.map(({ reason }, i) => [withPrivateNames[i], reason])).toEqual(
+          withPrivateNames.map(which => [
+            which,
+            "v8::Object::Clone does not copy an object with private fields, methods or accessors that `bun build --compile --aot` code made",
+          ]),
+        );
+        expect(panics.map(panic => panic.stdout)).not.toContainEqual(expect.stringContaining("Clone() returned"));
+        expect(panics.map(panic => panic.exitCode)).not.toContain(0);
+      },
+      // The build is the work of a compiler: 8 seconds in a debug build of Bun.
+      120_000,
+    );
+
+    // V8 copies each of these objects but the Map, so this cannot be compared against Node.
+    it("ends with a panic that says why it does not copy an object", async () => {
+      const whyRefused = {
+        "a Map": "only copies a plain object or a template instance. This object's class is Map",
+        "a template instance with an index key": "does not copy a template instance that has index keys",
+        "a template instance that was used as a prototype":
+          "does not copy a template instance that is or was a prototype",
+        "a template instance with 200 properties added in a loop":
+          "does not copy a template instance that is or was a dictionary",
+        "an object with a private method and an index key":
+          "does not copy an object with private methods or accessors that has index keys or immutable properties, or that is or was a prototype or a dictionary",
+      };
+      const panics = await Promise.all(
+        Object.keys(whyRefused).map(async which => ({
+          which,
+          ...(await panicOnBun("test_v8_object_clone_refused", JSON.stringify([which]))),
+        })),
+      );
+      expect(panics.map(({ which, reason }) => [which, reason])).toEqual(
+        Object.entries(whyRefused).map(([which, why]) => [which, `v8::Object::Clone ${why}`]),
+      );
+      expect(panics.map(panic => panic.exitCode)).not.toContain(0);
+    });
+  });
 });
+
+/** One "title | line | ..." per "====== title" section that a driver printed. */
+function sectionsOf(out: string) {
+  return out
+    .split("====== ")
+    .slice(1)
+    .map(section => section.trim().split(/\r?\n/).join(" | "));
+}
 
 async function checkSameOutput(testName: string, args?: string, thisValue?: any) {
   const [nodeResultResolution, bunReleaseResultResolution, bunDebugResultResolution] = await Promise.allSettled([
@@ -554,7 +1188,25 @@ async function checkSameOutput(testName: string, args?: string, thisValue?: any)
  * @param jsArgs should eval() to an array
  * @param thisValue will be JSON stringified
  */
-async function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, jsArgs?: string, thisValue?: any) {
+async function runOn(
+  runtime: Runtime,
+  buildMode: BuildMode,
+  testName: string,
+  jsArgs?: string,
+  thisValue?: any,
+  env: NodeJS.Dict<string> = bunEnv,
+) {
+  return (await runOnWithStderr(runtime, buildMode, testName, jsArgs, thisValue, env)).out;
+}
+
+async function runOnWithStderr(
+  runtime: Runtime,
+  buildMode: BuildMode,
+  testName: string,
+  jsArgs?: string,
+  thisValue?: any,
+  env: NodeJS.Dict<string> = bunEnv,
+) {
   if (runtime == Runtime.node) {
     assert(buildMode == BuildMode.release);
   }
@@ -581,7 +1233,7 @@ async function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, j
   const proc = spawn({
     cmd,
     cwd: baseDir,
-    env: bunEnv,
+    env,
     stdio: ["inherit", "pipe", "pipe"],
   });
   const [exitCode, out, err] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
@@ -590,7 +1242,60 @@ async function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, j
     throw new Error(`${crashMsg}: ${err}\n${out}`.trim());
   }
   expect(exitCode, crashMsg).toBe(0);
-  return out.trim();
+  return { out: out.trim(), err };
+}
+
+/**
+ * For a driver that cannot be compared against Node: Bun prints `expected` with the addon built in either mode, and
+ * emits the process warnings `warnings` and no other.
+ */
+async function expectOnBunOnly(
+  testName: string,
+  expected: string[],
+  env?: NodeJS.Dict<string>,
+  warnings: string[] = [],
+) {
+  const buildModes = [BuildMode.release, BuildMode.debug];
+  const outputs = await Promise.all(
+    buildModes.map(buildMode => runOnWithStderr(Runtime.bun, buildMode, testName, undefined, undefined, env)),
+  );
+  for (const [i, { out, err }] of outputs.entries()) {
+    // remove all debug logs
+    const lines = out
+      .replaceAll(/^\[\w+\].+$/gm, "")
+      .trim()
+      .split(/\r?\n/);
+    expect(lines, `addon built in ${BuildMode[buildModes[i]]} mode`).toEqual(expected);
+    // As the default listener of `process` prints them: "(node:<pid>) <name>: <message>".
+    const emitted = Array.from(err.matchAll(/^\(node:\d+\) (.*)$/gm), match => match[1]);
+    expect(emitted, `addon built in ${BuildMode[buildModes[i]]} mode`).toEqual(warnings);
+  }
+}
+
+const detachLeftBufferAttachedWarning =
+  "Warning: v8::ArrayBuffer::Detach() left an ArrayBuffer attached, because an asynchronous operation or a v8::BackingStore still uses its memory, or because it is the buffer of a WebAssembly.Memory. JavaScript can still read and write that memory. Copy the data before it goes to an asynchronous API.";
+
+/** For a driver that Bun ends with a panic of its own: the reason that the panic gave on stderr. */
+function panicOnBun(testName: string, jsArgs: string) {
+  return panicOf(
+    [bunExe(), "--smol", join(directories.bunRelease, "main.js"), testName, jsArgs, "null"],
+    directories.bunRelease,
+  );
+}
+
+/** The same for any command that runs Bun, such as an executable that `bun build --compile` made. */
+async function panicOf(cmd: string[], cwd: string) {
+  await using proc = spawn({
+    // A debug build prints the trace as a string instead of starting a symbolizer, which takes tens of seconds.
+    cmd: withoutCoreDump([...cmd, "--debug-crash-handler-use-trace-string"]),
+    cwd,
+    // CI's runner would book the report of this crash on the next file that fails.
+    env: { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const reason = /^panic(?:\([^)]*\))?: (.*)$/m.exec(stderr)?.[1];
+  return { reason: reason ?? `no panic on stderr:\n${stderr}\nstdout:\n${stdout}`, stdout, exitCode };
 }
 
 function standaloneAddonFiles(targetName: string, addonCpp: string, runJs: string) {
@@ -1077,6 +1782,82 @@ console.log("global handle:", addon.readStashedArray());`,
         "per-iteration napi_handle_scope: released before the callback returned",
         "no scope: released when the callback returned",
         "global handle: stashed array of length 5, 5000 in total over 1000 inline scopes",
+      ]);
+      expect(exitCode).toBe(0);
+    },
+    10 * 60 * 1000,
+  );
+
+  // In Node both calls return napi_ok: V8's store keeps the memory of a buffer that is detached. Bun's store reads the
+  // buffer's memory, so it pins the buffer, and napi_detach_arraybuffer refuses a pinned buffer.
+  it(
+    "napi_detach_arraybuffer returns napi_detachable_arraybuffer_expected while the addon holds a v8::BackingStore of the buffer",
+    async () => {
+      using dir = tempDir(
+        "v8-store-held-across-napi-detach",
+        standaloneAddonFiles(
+          "heldstore",
+          `#include <node.h>
+#include <node_api.h>
+#include <cstdio>
+#include <memory>
+
+namespace held_store_test {
+
+using namespace v8;
+
+// detachWhileStoreIsHeld(buffer): the same buffer is globalThis.buffer, which is how the V8 API gets at it.
+napi_value detach_while_store_is_held(napi_env env, napi_callback_info info) {
+  Isolate* isolate = Isolate::GetCurrent();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<ArrayBuffer> buffer = context->Global()
+                                  ->Get(context, String::NewFromUtf8Literal(isolate, "buffer"))
+                                  .ToLocalChecked()
+                                  .As<ArrayBuffer>();
+  std::shared_ptr<BackingStore> store = buffer->GetBackingStore();
+
+  size_t argc = 1;
+  napi_value argument;
+  napi_get_cb_info(env, info, &argc, &argument, nullptr, nullptr);
+  napi_status while_held = napi_detach_arraybuffer(env, argument);
+  bool detached_while_held = false;
+  napi_is_detached_arraybuffer(env, argument, &detached_while_held);
+  store.reset();
+  napi_status after_drop = napi_detach_arraybuffer(env, argument);
+  bool detached_after_drop = false;
+  napi_is_detached_arraybuffer(env, argument, &detached_after_drop);
+
+  char text[160];
+  snprintf(text, sizeof text,
+           "while the store is held: status = %d, detached = %d; after it is dropped: status = %d, detached = %d",
+           static_cast<int>(while_held), detached_while_held, static_cast<int>(after_drop), detached_after_drop);
+  napi_value result;
+  napi_create_string_utf8(env, text, NAPI_AUTO_LENGTH, &result);
+  return result;
+}
+
+napi_value init(napi_env env, napi_value exports) {
+  napi_value function;
+  napi_create_function(env, "detachWhileStoreIsHeld", NAPI_AUTO_LENGTH, detach_while_store_is_held, nullptr,
+                       &function);
+  napi_set_named_property(env, exports, "detachWhileStoreIsHeld", function);
+  return exports;
+}
+
+}  // namespace held_store_test
+
+NAPI_MODULE(NODE_GYP_MODULE_NAME, held_store_test::init)`,
+          `const addon = require("./build/Release/heldstore");
+globalThis.buffer = new ArrayBuffer(8);
+console.log(addon.detachWhileStoreIsHeld(globalThis.buffer));`,
+        ),
+      );
+      const cwd = String(dir);
+      await buildStandaloneAddon(cwd);
+      const { lines, err, exitCode } = await runStandaloneAddon(cwd);
+      // 20 is napi_detachable_arraybuffer_expected.
+      expect(lines, `stderr:\n${err}`).toEqual([
+        "while the store is held: status = 20, detached = 0; after it is dropped: status = 0, detached = 1",
       ]);
       expect(exitCode).toBe(0);
     },

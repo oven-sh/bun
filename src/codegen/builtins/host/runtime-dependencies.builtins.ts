@@ -618,6 +618,11 @@ const nativeCalls = [
         onBehalfOf: nodeCryptoBinding,
       },
       {
+        file: inBindings("v8/V8ArrayBuffer.cpp"),
+        caller: "warnThatDetachLeftBufferAttached",
+        onBehalfOf: ["process.dlopen"],
+      },
+      {
         file: inBindings("webcore/JSEventTarget.cpp"),
         caller: "jsEventTargetPrototypeFunction_addEventListenerBody",
         onBehalfOf: eventTargetSources,

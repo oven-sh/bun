@@ -16,4 +16,15 @@ Local<BigInt> BigInt::New(Isolate* isolate, int64_t value)
     return isolate->currentHandleScope()->createLocal<BigInt>(isolate->vm(), bigint);
 }
 
+Local<BigInt> BigInt::NewFromUnsigned(Isolate* isolate, uint64_t value)
+{
+    auto* globalObject = isolate->globalObject();
+    auto& vm = isolate->vm();
+    NapiUngatedScope ungated { vm };
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSC::JSBigInt* bigint = JSC::JSBigInt::createFrom(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, Local<BigInt>());
+    return isolate->currentHandleScope()->createLocal<BigInt>(vm, bigint);
+}
+
 } // namespace v8

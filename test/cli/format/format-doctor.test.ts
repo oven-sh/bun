@@ -367,6 +367,7 @@ Not installed: @prettier/plugin-pug
 
 Still needed:   @prettier/plugin-pug, prettier (some files go to them)
 `);
+    expect(skipped.isUntouched).toBe(true);
     expect(skipped.exitCode).toBe(0);
   });
 

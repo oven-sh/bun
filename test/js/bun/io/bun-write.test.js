@@ -464,7 +464,7 @@ const IS_COPYFILEW_DISABLED = process.platform === "win32" && process.env.BUN_FE
     expect(await Bun.write(Bun.stderr, new TextEncoder().encode("\nBun.write STDERR TEST\n\n"))).toBe(24);
   });
 
-  // Short data is written before Bun.write() returns.
+  // Short data is written before Bun.write() returns. On Windows process.exit() waits for the rest, as Node.js does for fs.write().
   describe.concurrent.each(["stdout", "stderr"])("Bun.write(Bun.%s, data) that nothing waits for", stream => {
     const kinds = [
       ["a string", `"written"`],
@@ -479,20 +479,36 @@ const IS_COPYFILEW_DISABLED = process.platform === "win32" && process.env.BUN_FE
     ];
     const script = data => `Bun.write(Bun.${stream}, ${data}); process.exit(0);`;
 
-    it.skipIf(!isWindows)("writes more than a pipe holds before process.exit()", async () => {
+    it.skipIf(!isWindows).each([256 * 1024 - 1, 256 * 1024, 1_000_000])(
+      "writes %d bytes, more than a pipe holds, before process.exit()",
+      async size => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", script(`Buffer.alloc(${size}, "w").toString()`)],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout: stdout.length, stderr: stderr.length, exitCode }).toEqual({
+          stdout: 0,
+          stderr: 0,
+          exitCode: 0,
+          [stream]: size,
+        });
+      },
+    );
+
+    it.skipIf(!isWindows)("writes a file to a pipe before process.exit()", async () => {
+      using dir = tempDir("bun-write-file-then-exit", { "in.txt": "written" });
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", script(`Buffer.alloc(300_000, "w").toString()`)],
+        cmd: [bunExe(), "-e", script(`Bun.file("in.txt")`)],
         env: bunEnv,
+        cwd: String(dir),
         stdout: "pipe",
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout: stdout.length, stderr: stderr.length, exitCode }).toEqual({
-        stdout: 0,
-        stderr: 0,
-        exitCode: 0,
-        [stream]: 300_000,
-      });
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0, [stream]: "written" });
     });
 
     it.each(kinds)("writes %s to a pipe before process.exit()", async (_, data) => {

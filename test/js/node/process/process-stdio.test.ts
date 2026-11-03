@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from "bun";
+import { $, spawn, spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { release } from "node:os";
@@ -199,6 +199,37 @@ describe.concurrent("process-stdio", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr }).toEqual({ stdout: "written\n", stderr: "callback null\n" });
     expect(exitCode).toBe(0);
+  });
+
+  // The reader takes nothing from the pipe until the writer's event loop has shown that it runs.
+  test.each([
+    ["fs.write(1, data, callback)", `fs.write(1, data, () => {});`],
+    ["fs.writev(1, [data], callback)", `fs.writev(1, [data], () => {});`],
+    ["Bun.write(Bun.stdout, data)", `Bun.write(Bun.stdout, data);`],
+  ])("%s with more than the pipe holds leaves the event loop running", async (_, write) => {
+    using dir = tempDir("stdout-write-leaves-the-loop", {
+      "writer.js": `
+        const fs = require("node:fs");
+        const data = Buffer.alloc(1024 * 1024, "x");
+        ${write}
+        setImmediate(() => fs.writeFileSync("loop-runs", ""));
+      `,
+      "reader.js": `
+        const fs = require("node:fs");
+        const deadline = Date.now() + 30_000;
+        while (!fs.existsSync("loop-runs") && Date.now() < deadline) Bun.sleepSync(5);
+        const loopRan = fs.existsSync("loop-runs");
+        let total = 0;
+        for await (const chunk of Bun.stdin.stream()) total += chunk.length;
+        console.log(JSON.stringify({ loopRan, total }));
+      `,
+    });
+    const { stdout, exitCode } = await $`${bunExe()} writer.js | ${bunExe()} reader.js`
+      .cwd(String(dir))
+      .env(bunEnv)
+      .quiet()
+      .nothrow();
+    expect({ ...JSON.parse(stdout.toString()), exitCode }).toEqual({ loopRan: true, total: 1024 * 1024, exitCode: 0 });
   });
 });
 

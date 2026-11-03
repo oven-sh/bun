@@ -6045,12 +6045,14 @@ describe("fs.write", () => {
     fs.closeSync(fd);
   });
 
-  // Elsewhere the write is left to another thread, which process.exit() does not wait for.
+  // Another thread writes, and process.exit() waits for it as in Node.js. Elsewhere it does not.
   it.concurrent.skipIf(!isWindows).each([
-    ["fs.write(1, string)", `fs.write(1, "written", () => {})`, "stdout"],
-    ["fs.write(2, buffer)", `fs.write(2, Buffer.from("written"), () => {})`, "stderr"],
-    ["fs.writev(1, buffers)", `fs.writev(1, [Buffer.from("writ"), Buffer.from("ten")], () => {})`, "stdout"],
-  ])("%s has written when process.exit() follows it", async (_, call, stream) => {
+    ["fs.write(1, string)", `fs.write(1, "written", () => {})`, "stdout", 7],
+    ["fs.write(2, buffer)", `fs.write(2, Buffer.from("written"), () => {})`, "stderr", 7],
+    ["fs.writev(1, buffers)", `fs.writev(1, [Buffer.from("writ"), Buffer.from("ten")], () => {})`, "stdout", 7],
+    ["fs.write(1, more than a pipe holds)", `fs.write(1, Buffer.alloc(1_000_000, "w"), () => {})`, "stdout", 1_000_000],
+    ["several calls of fs.write(1, string)", `for (const c of "written") fs.write(1, c, () => {})`, "stdout", 7],
+  ])("%s has written when process.exit() follows it", async (_, call, stream, length) => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", `const fs = require("fs"); ${call}; process.exit(0);`],
       env: bunEnv,
@@ -6058,7 +6060,12 @@ describe("fs.write", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0, [stream]: "written" });
+    expect({ stdout: stdout.length, stderr: stderr.length, exitCode }).toEqual({
+      stdout: 0,
+      stderr: 0,
+      exitCode: 0,
+      [stream]: length,
+    });
   });
 });
 

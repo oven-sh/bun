@@ -2508,6 +2508,7 @@ impl VirtualMachine {
         } else {
             self.close_sqlite_databases_for_exit();
         }
+        crate::job::wait_for_jobs_that_hold_exit();
         bun_core::Global::exit(u32::from(self.exit_handler.exit_code))
     }
 

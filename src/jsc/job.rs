@@ -21,6 +21,7 @@
 use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_io::KeepAlive;
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
@@ -235,6 +236,8 @@ pub enum RunsOn {
     WorkPool,
     /// [`WorkPool::schedule_waiting`]
     WaitingPool,
+    /// As `WaitingPool`, and `run` is over before the process exits: see [`wait_for_jobs_that_hold_exit`].
+    WaitingPoolHoldsExit,
     /// `run` is over when [`Job::schedule_on`] returns. `then` still comes from the event loop.
     JsThread,
 }
@@ -247,10 +250,24 @@ impl RunsOn {
             return RunsOn::WorkPool;
         }
         match writes_to {
-            // Written before the call returns, as in any Windows process: `process.exit()` loses nothing and the order is kept.
-            Some(fd) if fd.is_stdout_or_stderr() => RunsOn::JsThread,
+            // A `process.exit()` right after the call loses nothing, as in Node.js.
+            Some(fd) if fd.is_stdout_or_stderr() => RunsOn::WaitingPoolHoldsExit,
             _ => RunsOn::WaitingPool,
         }
+    }
+}
+
+/// How many [`RunsOn::WaitingPoolHoldsExit`] jobs are yet to end their `run`.
+static JOBS_THAT_HOLD_EXIT: AtomicU32 = AtomicU32::new(0);
+
+/// For the thread that is about to end the process.
+pub fn wait_for_jobs_that_hold_exit() {
+    loop {
+        let jobs = JOBS_THAT_HOLD_EXIT.load(Ordering::Acquire);
+        if jobs == 0 {
+            return;
+        }
+        bun_threading::Futex::wait_forever(&JOBS_THAT_HOLD_EXIT, jobs);
     }
 }
 
@@ -406,12 +423,28 @@ impl<C: JobContext> Job<C> {
             match runs_on {
                 RunsOn::WorkPool => WorkPool::schedule(task),
                 RunsOn::WaitingPool => WorkPool::schedule_waiting(task),
+                RunsOn::WaitingPoolHoldsExit => {
+                    JOBS_THAT_HOLD_EXIT.fetch_add(1, Ordering::Relaxed);
+                    (*task).callback = Self::run_task_that_holds_exit;
+                    WorkPool::schedule_waiting(task)
+                }
                 RunsOn::JsThread => Self::run_task(task),
             }
         }
     }
 
     fn run_task(task: *mut WorkPoolTask) {
+        Self::run::<true>(task)
+    }
+
+    fn run_task_that_holds_exit(task: *mut WorkPoolTask) {
+        Self::run::<false>(task);
+        if JOBS_THAT_HOLD_EXIT.fetch_sub(1, Ordering::Release) == 1 {
+            bun_threading::Futex::wake(&JOBS_THAT_HOLD_EXIT, u32::MAX);
+        }
+    }
+
+    fn run<const SKIPPED_ONCE_CANCELLED: bool>(task: *mut WorkPoolTask) {
         // SAFETY: only reachable through the `task.callback` slot wired in
         // `schedule`; the pool calls back with exactly that field of a live job.
         let this: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, task) };
@@ -422,7 +455,7 @@ impl<C: JobContext> Job<C> {
             job: NonNull::new(this).expect("job"),
             ticket,
         };
-        if done.ticket().cancelled() {
+        if SKIPPED_ONCE_CANCELLED && done.ticket().cancelled() {
             return done.finish();
         }
         if let Some(done) = C::run(off, done) {

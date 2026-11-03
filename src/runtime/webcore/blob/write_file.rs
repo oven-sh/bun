@@ -78,7 +78,15 @@ impl WriteFile {
             PathOrFileDescriptor::Fd(fd) => Some(*fd),
             PathOrFileDescriptor::Path(_) => None,
         };
-        bun_jsc::Job::<WriteFile>::schedule_on(bun_jsc::RunsOn::for_io(fd), cx, this, promise);
+        let is_short = this.bytes_blob.shared_view().len() < 256 * 1024;
+        let runs_on = match fd {
+            // In order with `console.log`, as the fast path for short data in `Bun.write` is elsewhere.
+            Some(fd) if cfg!(windows) && is_short && fd.is_stdout_or_stderr() => {
+                bun_jsc::RunsOn::JsThread
+            }
+            _ => bun_jsc::RunsOn::for_io(fd),
+        };
+        bun_jsc::Job::<WriteFile>::schedule_on(runs_on, cx, this, promise);
     }
 }
 

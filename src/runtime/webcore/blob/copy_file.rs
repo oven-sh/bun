@@ -99,12 +99,13 @@ impl CopyFile {
         };
         let promise = jsc::JSPromiseStrong::init(cx.global());
         let value = promise.value();
-        let has_descriptor =
-            copy.source_file_store.pathlike.is_fd() || copy.destination_file_store.pathlike.is_fd();
-        let runs_on = if has_descriptor {
-            jsc::RunsOn::for_io(None)
-        } else {
-            jsc::RunsOn::WorkPool
+        let runs_on = match (
+            &copy.source_file_store.pathlike,
+            &copy.destination_file_store.pathlike,
+        ) {
+            (_, PathOrFileDescriptor::Fd(destination)) => jsc::RunsOn::for_io(Some(*destination)),
+            (PathOrFileDescriptor::Fd(_), _) => jsc::RunsOn::for_io(None),
+            _ => jsc::RunsOn::WorkPool,
         };
         jsc::Job::<CopyFile>::schedule_on(runs_on, cx, copy, promise);
         value

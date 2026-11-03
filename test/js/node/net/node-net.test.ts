@@ -1182,6 +1182,59 @@ it.if(isWindows)(
   20_000,
 );
 
+it.if(isWindows).each(["\\\\.\\PIPE\\", "\\\\.\\Pipe\\", "//?/PIPE/"])(
+  "the case of the pipe prefix does not matter: %s",
+  async prefix => {
+    for (const [listenAt, connectTo] of [
+      ["\\\\.\\pipe\\", prefix],
+      [prefix, "\\\\.\\pipe\\"],
+    ]) {
+      const name = `bun-test-prefix-${randomUUID()}`;
+      const server = createServer(socket => socket.end("hello"));
+      try {
+        await once(server.listen(listenAt + name), "listening");
+        const client = connect(connectTo + name);
+        const [data] = await once(client, "data");
+        expect(data.toString()).toBe("hello");
+        client.destroy();
+      } finally {
+        server.close();
+      }
+    }
+  },
+);
+
+// Closing a pipe throws away what its peer has not read yet.
+it.if(isWindows)("a named pipe that was ended stays open until its peer has read everything", async () => {
+  const server = createServer({ allowHalfOpen: true, pauseOnConnect: true });
+  await once(server.listen(`\\\\.\\pipe\\bun-test-flush-${randomUUID()}`), "listening");
+  const sockets: Socket[] = [];
+  async function connection() {
+    const client = connect(server.address() as string);
+    const [peer] = await once(server, "connection");
+    sockets.push(client, peer);
+    return [client, peer];
+  }
+  try {
+    const [unread, unreadPeer] = await connection();
+    const [read, readPeer] = await connection();
+    let unreadIsClosed = false;
+    unread.on("close", () => (unreadIsClosed = true));
+    unread.resume().end("unread");
+    readPeer.resume();
+    read.resume().end("read");
+    // This one closes when its peer has been silent for a while, which the other's peer has been for longer.
+    await once(read, "close");
+    expect(unreadIsClosed).toBe(false);
+    const [data] = await once(unreadPeer.resume(), "data");
+    expect(data.toString()).toBe("unread");
+    await once(unread, "close");
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    server.close();
+  }
+});
+
 // The Windows counterpart of the synchronous-failure test below: a client
 // that polls for a daemon's pipe gets one ENOENT per attempt, and no failed
 // attempt may keep its native socket alive. Runs in a child so the socket

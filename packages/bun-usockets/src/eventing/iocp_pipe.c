@@ -408,7 +408,7 @@ static struct us_internal_pipe_thread_t *us_internal_pipe_thread_create(HANDLE p
     if (thread->wake && thread->io_event &&
         DuplicateHandle(GetCurrentProcess(), read_done, GetCurrentProcess(), &thread->read_done, 0, FALSE, DUPLICATE_SAME_ACCESS) &&
         DuplicateHandle(GetCurrentProcess(), write_done, GetCurrentProcess(), &thread->write_done, 0, FALSE, DUPLICATE_SAME_ACCESS)) {
-        handle = CreateThread(NULL, LIBUS_HELPER_STACK_SIZE, us_internal_pipe_thread_main, thread, STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
+        handle = CreateThread(NULL, LIBUS_HELPER_STACK_COMMIT, us_internal_pipe_thread_main, thread, 0, NULL);
     }
     if (!handle) {
         thread->refs = 1;
@@ -516,9 +516,8 @@ struct us_internal_pipe_req_t {
      * counts them, whether or not it counts the owner: libuv counts a write like that. */
     unsigned char holds_loop;
 
+    /* Signaled once the peer has been silent for long enough. */
     HANDLE eof_timer;
-    /* us_internal_monotonic_ns() at which the peer has been silent for long enough. */
-    uint64_t eof_deadline_ns;
 
     /* LIBUS_PIPE_CONNECTING */
     WCHAR *name;
@@ -555,7 +554,6 @@ static int us_internal_pipe_is_hung_up(struct us_internal_pipe_req_t *pipe) {
 /* The silence starts now. */
 static void us_internal_pipe_start_eof_timer(struct us_internal_pipe_req_t *pipe) {
     LARGE_INTEGER due = { .QuadPart = -LIBUS_PIPE_EOF_TIMEOUT_MS * LIBUS_100NS_PER_MS };
-    pipe->eof_deadline_ns = us_internal_monotonic_ns() + LIBUS_PIPE_EOF_TIMEOUT_MS * LIBUS_NS_PER_MS;
     SetWaitableTimer(pipe->eof_timer, &due, 0, NULL, NULL, FALSE);
     if (!pipe->write.is_armed) {
         us_internal_pipe_op_arm(&pipe->req, &pipe->write, pipe->eof_timer);
@@ -1081,7 +1079,7 @@ static const WCHAR us_internal_pipe_prefix[] = L"\\\\.\\pipe\\";
 int us_internal_is_pipe_name(const char *path, size_t length) {
 #define IS_SEPARATOR(c) ((c) == '\\' || (c) == '/')
     return length > LIBUS_PIPE_PREFIX_LENGTH && IS_SEPARATOR(path[0]) && IS_SEPARATOR(path[1]) && (path[2] == '.' || path[2] == '?') && IS_SEPARATOR(path[3]) &&
-        memcmp(path + 4, "pipe", 4) == 0 && IS_SEPARATOR(path[8]) && !IS_SEPARATOR(path[LIBUS_PIPE_PREFIX_LENGTH]);
+        (path[4] | 0x20) == 'p' && (path[5] | 0x20) == 'i' && (path[6] | 0x20) == 'p' && (path[7] | 0x20) == 'e' && IS_SEPARATOR(path[8]) && !IS_SEPARATOR(path[LIBUS_PIPE_PREFIX_LENGTH]);
 #undef IS_SEPARATOR
 }
 
@@ -1249,15 +1247,15 @@ static void us_internal_pipe_on_write_complete(struct us_loop_t *loop, struct us
         us_internal_pipe_continue_shutdown(pipe);
         return;
     case LIBUS_PIPE_LINGERING:
+        if (WaitForSingleObject(pipe->eof_timer, 0) != WAIT_OBJECT_0) {
+            /* This expiry was on its way when the timer was set anew. */
+            us_internal_pipe_op_arm(&pipe->req, &pipe->write, pipe->eof_timer);
+            return;
+        }
         /* Nothing is timed while the owner does not read. A read that has completed broke the silence: its packet
          * is behind this one if the loop was kept from running, and reading on sets the timer anew. */
         if (pipe->read.is_armed && (pipe->thread ? __atomic_load_n(&pipe->thread->owes_read, __ATOMIC_SEQ_CST) : us_internal_pipe_op_iosb(&pipe->read)->Status == (NTSTATUS) STATUS_PENDING)) {
-            if (us_internal_monotonic_ns() + LIBUS_NS_PER_MS >= pipe->eof_deadline_ns) {
-                us_internal_pipe_end_of_stream(pipe);
-            } else {
-                /* This expiry was on its way when the timer was set anew. */
-                us_internal_pipe_op_arm(&pipe->req, &pipe->write, pipe->eof_timer);
-            }
+            us_internal_pipe_end_of_stream(pipe);
         }
         return;
     default:

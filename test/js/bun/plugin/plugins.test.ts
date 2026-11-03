@@ -2960,34 +2960,92 @@ describe.concurrent("a file without an extension", () => {
     });
   });
 
-  // Bun reads the file as TSX. Contents that an onLoad returns have the loader that the end of the key names, as before:
-  // none for a key without an extension, and none for a key that ends in a query.
-  it("is read as JavaScript when its onLoad returns contents and no loader", async () => {
+  // Bun reads a file without an extension as TSX. An onLoad that gives back the text of the file must not change that.
+  it.each([
+    ["import()", ["-e", `console.log((await import("./bin/cli")).default);`]],
+    ["require()", ["-e", `console.log(require("./bin/cli").default);`]],
+    ["the entry point", ["./bin/cli"]],
+  ])("is read as TSX when its onLoad returns its text and no loader, for %s", async (_, args) => {
+    const files = {
+      "tsconfig.json": `{ "compilerOptions": { "jsx": "react", "jsxFactory": "h" } }`,
+      "bin/cli": [
+        `#!/usr/bin/env bun`,
+        `const h = (tag: string) => "TSX " + tag;`,
+        `export default <element />;`,
+        `if (import.meta.main) console.log(<element />);`,
+      ].join("\n"),
+      "plugin.ts": `
+        import { readFileSync } from "node:fs";
+        Bun.plugin({
+          name: "returns the text of the file",
+          setup(build) {
+            build.onLoad({ filter: /[\\\\/]cli$/ }, ({ path }) => (console.log("onLoad"), { contents: readFileSync(path, "utf8") }));
+          },
+        });
+      `,
+    };
+    expect(await run(files, ["--no-install", "--preload", "./plugin.ts", ...args])).toEqual({
+      stdout: ["onLoad", "TSX element"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Only what an onLoad returns for the file itself is read as the file. The loader of any other contents does not change.
+  it("is the only key whose contents without a loader are read as TSX", async () => {
     // In JavaScript, (a < b) > c is false. In TypeScript, a<b>(c) is a call.
     const text = `const a = x => "TypeScript", b = 1, c = 2; export default a < b > (c);`;
     const source = `
       import { readFileSync } from "node:fs";
       const read = path => readFileSync(path.split("?")[0], "utf8");
+      const contents = read(import.meta.dir + "/bin/cli");
       Bun.plugin({
         name: "returns the text of the file",
         setup(build) {
-          build.onLoad({ filter: /[\\\\/]no-loader$|x\\.ts\\?/ }, ({ path }) => ({ contents: read(path) }));
-          build.onLoad({ filter: /[\\\\/]loader$/ }, ({ path }) => ({ contents: read(path), loader: "tsx" }));
+          build.onLoad({ filter: /[\\\\/](cli|typed)(\\?|$)|x\\.(ts|weird)/ }, ({ path }) => ({ contents: read(path) }));
+          build.onLoad({ filter: /[\\\\/]text$/ }, ({ path }) => ({ contents: read(path), loader: "text" }));
+          build.module(import.meta.dir + "/a/module", () => ({ contents }));
+          build.module("a-module", () => ({ contents }));
+          build.onResolve({ filter: /^in-a-namespace$/ }, () => ({ path: "thing", namespace: "ns" }));
+          build.onLoad({ filter: /.*/, namespace: "ns" }, () => ({ contents }));
         },
       });
-      for (const name of ["bin/no-loader", "x.ts?v=1", "x.ts?v=1.2", "bin/loader", "bin/disk"]) {
-        console.log(name, (await import("./" + name)).default);
+      const show = loaded => (loaded === contents ? "the text" : loaded);
+      for (const name of process.argv.slice(2)) {
+        console.log(name, show((await import(name.replace(/^\\/a\\//, import.meta.dir + "/a/"))).default));
       }
+      console.log("typed", show((await import("./bin/typed", { with: { type: "text" } })).default));
     `;
-    const files = { "bin/no-loader": text, "bin/loader": text, "bin/disk": text, "x.ts": text, "entry.mjs": source };
-    expect(await run(files, ["entry.mjs"])).toEqual({
+    const files = {
+      "bin/cli": text,
+      "bin/text": text,
+      "bin/typed": text,
+      "x.ts": text,
+      "x.weird": text,
+      "entry.mjs": source,
+    };
+    const names = ["./bin/cli", "./bin/cli?v=1.2", "./x.ts?v=1", "./x.ts?v=1.2", "./x.weird", "/a/module"];
+    expect(await run(files, ["entry.mjs", ...names, "a-module", "in-a-namespace", "./bin/text"])).toEqual({
       stdout: [
-        "bin/no-loader false",
-        "x.ts?v=1 false",
-        "x.ts?v=1.2 false",
-        "bin/loader TypeScript",
-        "bin/disk TypeScript",
+        "./bin/cli TypeScript",
+        "./bin/cli?v=1.2 TypeScript",
+        // As "x.ts?v=1": the extension is read at the end of the key.
+        "./x.ts?v=1 false",
+        "./x.ts?v=1.2 false",
+        "./x.weird false",
+        // build.module() is no onLoad.
+        "/a/module false",
+        "a-module false",
+        "in-a-namespace false",
+        "./bin/text the text",
+        "typed the text",
       ],
+      stderr: "",
+      exitCode: 0,
+    });
+    // A loader that is set for files without an extension is the loader of the file.
+    expect(await run(files, ["--loader", ":text", "entry.mjs", "./bin/cli", "./bin/cli?v=1.2"])).toEqual({
+      stdout: ["./bin/cli the text", "./bin/cli?v=1.2 the text", "typed the text"],
       stderr: "",
       exitCode: 0,
     });

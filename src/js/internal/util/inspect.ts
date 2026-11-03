@@ -2670,6 +2670,15 @@ function returnFalse() {
   return false;
 }
 
+// A mocked module reports the `toString` that the object of its factory inherits as its own. It is no export.
+function isToStringThatAMockInherits(value, toString) {
+  return (
+    (toString === ObjectPrototypeToString || toString === FunctionPrototypeToString) &&
+    isModuleNamespaceObject(value) &&
+    !ArrayPrototypeIncludes.$call(ObjectGetOwnPropertyNames(value), "toString")
+  );
+}
+
 function hasBuiltInToString(value) {
   // Prevent triggering proxy traps.
   const getFullProxy = false;
@@ -2701,12 +2710,7 @@ function hasBuiltInToString(value) {
     }
     hasOwnToString = returnFalse;
   } else if (ObjectPrototypeHasOwnProperty.$call(value, "toString")) {
-    // A mocked module reports the `toString` that the object of its factory inherits as its own. It is no export.
-    return (
-      (toString === ObjectPrototypeToString || toString === FunctionPrototypeToString) &&
-      isModuleNamespaceObject(value) &&
-      !ArrayPrototypeIncludes.$call(ObjectGetOwnPropertyNames(value), "toString")
-    );
+    return isToStringThatAMockInherits(value, toString);
   } else if (typeof value[SymbolToPrimitive] !== "function") {
     hasOwnToPrimitive = returnFalse;
   } else if (ObjectPrototypeHasOwnProperty.$call(value, SymbolToPrimitive)) {

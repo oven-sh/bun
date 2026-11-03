@@ -432,9 +432,8 @@ pub mod ast {
             const STDOUT        = 1 << 1;
             const STDERR        = 1 << 2;
             const APPEND        = 1 << 3;
-            /// The other flag names the fd that is copied:
-            /// `1>&2` (or `>&2`) === stderr=true and duplicate_out=true (stdout := stderr)
-            /// `2>&1` === stdout=true and duplicate_out=true (stderr := stdout)
+            /// `1>&2` is STDERR | DUPLICATE_OUT (stdout := stderr).
+            /// `2>&1` is STDOUT | DUPLICATE_OUT (stderr := stdout).
             const DUPLICATE_OUT = 1 << 4;
         }
     }
@@ -2713,8 +2712,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             return Ok(());
                         }
                         c if (u32::from(b'0')..=u32::from(b'9')).contains(&c) => {
-                            // An fd number starts a word: `abc3>out` writes `abc3`. A tab does
-                            // not end a word, so `a<TAB>2>f` still redirects fd 2.
+                            // An fd number starts a word. A tab does not end one: `a<TAB>2>f`.
                             let after_whitespace = self.chars.prev.is_some_and(|prev| {
                                 !prev.escaped && ShellCharIter::<ENCODING>::is_whitespace(prev)
                             });
@@ -3025,14 +3023,8 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         Ok(())
     }
 
-    /// Lexes the rest of a redirect operator. The caller ate the `>` or `<`
-    /// and passes the fd number that came before it, if any.
-    ///
-    /// Grammar: `[n]>[>][&m]` and `[n]<[<][&m]`. `n` defaults to 1 for `>`
-    /// and 0 for `<`. `&m` duplicates fd `m` onto `n`: `1>&2` sends stdout
-    /// to stderr, `>&2` is the same thing, `2>&1` sends stderr to stdout.
-    /// The runtime has no fd above 2, so only those pairs, and `n>&n` as a
-    /// no-op, are accepted. Every other form gets an error that names it.
+    /// Lexes `[n]>[>][&m]` or `[n]<[<][&m]` after the caller ate the `>` or `<`.
+    /// `src_fd` is the `n` that came before it. It defaults to 1 for `>` and 0 for `<`.
     fn eat_redirect_operator(&mut self, src_fd: Option<u8>, dir: RedirectDirection) -> RedirectLex {
         let is_double = self.eat_simple_redirect_operator(dir);
         // The operator as typed, for error messages: `1>`, `>>`, `0<`.

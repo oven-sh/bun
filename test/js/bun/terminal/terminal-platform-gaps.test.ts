@@ -22,7 +22,12 @@ async function runInTerminal(
     cols?: number;
     rows?: number;
     done: (output: string) => boolean;
-    afterReady?: (terminal: Bun.Terminal, output: () => string) => void | Promise<void>;
+    afterReady?: (
+      terminal: Bun.Terminal,
+      output: () => string,
+      /** Resolves when the output has `marker`, or when the terminal ends. */
+      seen: (marker: string) => Promise<void>,
+    ) => void | Promise<void>;
     readyMarker?: string;
   },
 ): Promise<{ output: string; exitCode: number | null }> {
@@ -32,6 +37,13 @@ async function runInTerminal(
   const eof = Promise.withResolvers<void>();
   const readyMarker = opts.readyMarker ?? "READY";
   const decoder = new TextDecoder();
+  const waiters: { marker: string; resolve: () => void }[] = [];
+  const seen = (marker: string) => {
+    if (output.includes(marker)) return Promise.resolve();
+    const found = Promise.withResolvers<void>();
+    waiters.push({ marker, resolve: found.resolve });
+    return Promise.race([found.promise, eof.promise]);
+  };
 
   // Use an inline terminal so the child becomes the session leader on POSIX
   // (setsid + TIOCSCTTY), which is required for SIGINT/SIGWINCH delivery.
@@ -44,6 +56,9 @@ async function runInTerminal(
       data(_t, chunk: Uint8Array) {
         output += decoder.decode(chunk, { stream: true });
         if (output.includes(readyMarker)) ready.resolve();
+        for (let i = waiters.length - 1; i >= 0; i--) {
+          if (output.includes(waiters[i].marker)) waiters.splice(i, 1)[0].resolve();
+        }
         if (opts.done(output)) finished.resolve();
       },
       exit() {
@@ -54,7 +69,7 @@ async function runInTerminal(
 
   if (opts.afterReady) {
     await Promise.race([ready.promise, eof.promise]);
-    if (!proc.terminal!.closed) await opts.afterReady(proc.terminal!, () => output);
+    if (!proc.terminal!.closed) await opts.afterReady(proc.terminal!, () => output, seen);
   }
 
   // Wait for the data condition or for the terminal to receive EOF (which
@@ -165,6 +180,91 @@ describe("Bun.Terminal platform behaviour", () => {
       },
     );
     expect(output).toContain("GOT:hello");
+  });
+
+  // Each tty.ReadStream has a handle of its own, as in Node: one that closes leaves the others reading.
+  test("SAME: process.stdin keeps reading after another ReadStream on fd 0 is destroyed", async () => {
+    const { output } = await runInTerminal(
+      `const tty = require('node:tty');
+       process.stdin.setEncoding('utf8');
+       process.stdin.on('data', d => process.stdout.write('GOT:' + d));
+       const other = new tty.ReadStream(0);
+       other.on('close', () => process.stdout.write('READY'));
+       other.destroy();`,
+      {
+        done: o => o.includes("GOT:hello"),
+        afterReady: t => void t.write("hello\r"),
+      },
+    );
+    expect(output).toContain("GOT:hello");
+  });
+
+  // process.stdin of a terminal is a tty.ReadStream, and its write goes to the native handle.
+  test("GAP: process.stdin.write() in the child", async () => {
+    const { output } = await runInTerminal(
+      `process.stdin.on('error', () => {});
+       process.stdin.write('hello', err => {
+         const result = { code: err ? err.code : null, bytesWritten: process.stdin.bytesWritten };
+         process.stdout.write('RESULT ' + JSON.stringify(result));
+       });`,
+      // Wide enough that ConPTY does not wrap the RESULT line.
+      { cols: 200, done: o => /RESULT \{[^}]*\}/.test(Bun.stripANSI(o)) },
+    );
+    const match = Bun.stripANSI(output).match(/RESULT (\{[^}]*\})/);
+    if (!match) throw new Error("the child did not print RESULT. The terminal showed: " + JSON.stringify(output));
+    if (isWindows) {
+      // A console input handle takes no write. Node reports EPIPE for it.
+      expect(JSON.parse(match[1])).toEqual({ code: "EBADF", bytesWritten: 0 });
+    } else {
+      // The terminal is open for reading and writing, so the write goes to it.
+      expect(JSON.parse(match[1])).toEqual({ code: null, bytesWritten: 5 });
+      expect(output).toContain("hello");
+    }
+  });
+
+  // On a terminal the console iterator and process.stdin read through a reader each.
+  // The one that is let go leaves what is typed next to the other.
+  test("SAME: a line typed after a break out of the console iterator reaches process.stdin", async () => {
+    const { output } = await runInTerminal(
+      `process.stdout.write('READY');
+       for await (const line of console) { process.stdout.write('FIRST:' + line + ';'); break; }
+       process.stdin.setEncoding('utf8');
+       process.stdin.on('data', d => process.stdout.write('SECOND:' + d));
+       process.stdout.write('NEXT');`,
+      {
+        done: o => o.includes("SECOND:two"),
+        afterReady: async (t, _output, seen) => {
+          t.write("one\r");
+          // The child says when its second reader is there. A child that ends first fails the checks below with its output.
+          await seen("NEXT");
+          if (!t.closed) t.write("two\r");
+        },
+      },
+    );
+    expect(output).toContain("FIRST:one;");
+    expect(output).toContain("SECOND:two");
+  });
+
+  test("SAME: a line typed after process.stdin is paused reaches the console iterator", async () => {
+    const { output } = await runInTerminal(
+      `process.stdout.write('READY');
+       process.stdin.setEncoding('utf8');
+       process.stdin.once('data', async d => {
+         process.stdin.pause();
+         process.stdout.write('FIRST:' + d.trim() + ';NEXT');
+         for await (const line of console) { process.stdout.write('SECOND:' + line); break; }
+       });`,
+      {
+        done: o => o.includes("SECOND:two"),
+        afterReady: async (t, _output, seen) => {
+          t.write("one\r");
+          await seen("NEXT");
+          if (!t.closed) t.write("two\r");
+        },
+      },
+    );
+    expect(output).toContain("FIRST:one;");
+    expect(output).toContain("SECOND:two");
   });
 
   test("GAP: input CR/LF translation", async () => {

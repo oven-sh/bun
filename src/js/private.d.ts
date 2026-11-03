@@ -1068,8 +1068,6 @@ declare namespace $Bindgen {
   interface FileInternalReadableStreamSource {
     updateRef(ref: boolean): void;
     setFlowing(flowing: boolean): void;
-    /** `undefined`, or the system error. */
-    setRawMode(enabled: boolean): Error | undefined;
   }
 
   // src/runtime/api/bun/subprocess.rs. What `Bun.spawn` answers; native code hands it to builtins as an opaque owner.
@@ -1563,6 +1561,7 @@ interface $BunModules {
   "internal/trace_event_recorder": $ModuleValue<typeof import("./internal/trace_event_recorder")>;
   "internal/trace_events": $ModuleValue<typeof import("./internal/trace_events")>;
   "internal/tty": $ModuleValue<typeof import("./internal/tty")>;
+  "internal/tty/read_stream": $ModuleValue<typeof import("./internal/tty/read_stream")>;
   "internal/url": $ModuleValue<typeof import("./internal/url")>;
   "internal/util/colors": $ModuleValue<typeof import("./internal/util/colors")>;
   "internal/util/comparisons": $ModuleValue<typeof import("./internal/util/comparisons")>;

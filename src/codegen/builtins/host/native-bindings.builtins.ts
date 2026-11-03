@@ -3,7 +3,6 @@ import * as b from "bun-builtins-table";
 import { handedOver } from "./native-code.ts";
 
 const externalState = ["ExternalState"];
-const viewHeaps = ["TypedArrayStorage", "TypedArrayElements"];
 const operandCodeOnly = { capability: "js", throws: true, runsOnlyOperandCode: true } as const;
 const converted = [b.runs("ToPrimitive")];
 
@@ -54,16 +53,6 @@ export default b.declarations(
       reads: externalState,
       implementation: b.generic,
     },
-    // On Windows it takes a flag alone. Elsewhere the bytes hold the mode the terminal had before.
-    setRawMode: {
-      ...operandCodeOnly,
-      args: { fd: b.any.optional, mode: b.any.optional, state: b.any.optional },
-      returns: b.f64,
-      uses: { fd: b.inspected, mode: converted, state: [b.readsContents(), b.writesContents()] },
-      reads: [...viewHeaps, ...externalState],
-      writes: ["TypedArrayElements", ...externalState],
-      implementation: b.generic,
-    },
     // It defines the columns and the rows as the first two elements of the array, which it refuses if it is shorter. Given a descriptor it reads the array without asking whether one was passed.
     getWindowSize: {
       ...operandCodeOnly,
@@ -73,12 +62,6 @@ export default b.declarations(
       reads: externalState,
       implementation: b.generic,
     },
-    rawModeStateSize: b.property(b.f64),
-  }),
-  // The function is called ttySetMode, so only its native code tells that it is this one.
-  b.extend(`${ttyFunctions}.setRawMode`, {
-    functionObjectCode: { symbol: "Bun::jsTTYSetMode", header: "ProcessBindingTTYWrap.h" },
-    length: 0,
   }),
   bagOfFunctions(httpFunctions, {
     // The two callbacks are called for each client error and each connection.

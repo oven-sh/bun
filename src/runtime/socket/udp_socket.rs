@@ -2106,6 +2106,11 @@ pub(crate) fn dgram_get_sock_name_fd<'a>(
 /// `(fd)` → "UDP" | "TCP" | "PIPE" | "TTY" | "FILE" | "UNKNOWN", like Node's
 /// `guessHandleType`. Never throws.
 pub(crate) fn dgram_guess_handle_type(fd: i32) -> BunString {
+    BunString::static_(guess_handle_kind(fd).as_bytes())
+}
+
+/// libuv's `uv_guess_handle` for POSIX, by the names of Node's `guessHandleType`.
+pub(crate) fn guess_handle_kind(fd: i32) -> &'static str {
     #[cfg(windows)]
     let kind: &'static str = {
         let _ = fd;
@@ -2173,7 +2178,7 @@ pub(crate) fn dgram_guess_handle_type(fd: i32) -> BunString {
         }
         "UNKNOWN"
     };
-    BunString::static_(kind.as_bytes())
+    kind
 }
 
 /// `(fd)` → puts a stream descriptor created by `dgram_new_socket_fd` into

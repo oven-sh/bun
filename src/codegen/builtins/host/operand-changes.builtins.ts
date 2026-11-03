@@ -301,6 +301,13 @@ export default b.declarations(
   // js_valkey.rs: a job calls onconnect with the client and what the server has answered to HELLO. onclose gets the error that native code has made.
   handlerOf("Bun.RedisClient.prototype.onconnect", { this: b.undefined, args: [b.operand("this"), b.any] }),
   handlerOf("Bun.RedisClient.prototype.onclose", { this: b.operand("this"), args: [b.any] }),
+  // tty_wrap.rs call_onread: the count of a read or a negative libuv errno, and the bytes of a read.
+  handlerOf("%TTY%.prototype.onread", {
+    this: b.operand("this"),
+    args: [b.i32, b.union(b.instance("Buffer").fresh, b.undefined)],
+  }),
+  // tty_wrap.rs call_onwritecomplete: 0 or a negative libuv errno, for a write that the loop finished or that close() cancelled.
+  handlerOf("%TTY%.prototype.onwritecomplete", { this: b.operand("this"), args: [b.i32] }),
   // It also answers the callback of a write that has not gone out whole, which was handed over like any operand.
   responseHandler("onwritable", { this: b.undefined, args: [b.f64] }),
   // What the callback writes goes out in one piece when it returns.

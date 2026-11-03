@@ -13,7 +13,6 @@ use bun_sys::{self as sys, Fd, FdExt};
 
 use crate::webcore::SinkHandle;
 use crate::webcore::blob;
-use crate::webcore::jsc::SysErrorJsc as _;
 use crate::webcore::jsc::bindgen::{JsLocal, JsScope};
 use crate::webcore::jsc::{self as jsc, EventLoopHandle, JSValue};
 use crate::webcore::jsc::{EnsureStillAlive, strong::Optional as Strong};
@@ -55,6 +54,8 @@ pub struct FileReader {
     /// Read-only after construction.
     pub(crate) highwater_mark: usize,
     pub(crate) flowing: Cell<bool>,
+    /// A terminal: it is read for a pull that waits, never ahead of one. What it has belongs to whoever reads it next.
+    pub(crate) reads_on_demand: Cell<bool>,
     /// Native sink attached by a hookup site (e.g. fetch request body). When
     /// set, `on_read_chunk` writes directly to it instead of the JS `pending`
     /// path; `pull_into_sink` is the drain-ack resume.
@@ -81,6 +82,7 @@ impl Default for FileReader {
             read_error: JsCell::new(None),
             highwater_mark: 16384,
             flowing: Cell::new(true),
+            reads_on_demand: Cell::new(false),
             sink: JsCell::new(SinkHandle::None),
             sink_paused: Cell::new(false),
         }
@@ -319,6 +321,7 @@ impl FileReader {
                 }
                 blob::store::Data::File(file) => {
                     let open_result = Lazy::open_file_blob(file);
+                    self.reads_on_demand.set(file.is_atty.unwrap_or(false));
                     // drop the RefPtr<Store>; `lazy` was already cleared above
                     drop(store);
                     match open_result {
@@ -341,6 +344,10 @@ impl FileReader {
                                     .flags
                                     .set(PosixFlags::NONBLOCKING, opened.nonblocking);
                                 self.reader().flags.set(PosixFlags::POLLABLE, pollable);
+                                self.reader().flags.set(
+                                    PosixFlags::ONE_READ_PER_WAKEUP,
+                                    self.reads_on_demand.get(),
+                                );
                             }
                             #[cfg(windows)]
                             {
@@ -458,6 +465,10 @@ impl FileReader {
                 if r.flags.contains(PosixFlags::NONBLOCKING) {
                     poll.set_flag(bun_io::FilePollFlag::Nonblocking);
                 }
+            }
+            // The first pull arms the poll, not the start.
+            if was_lazy && self.reads_on_demand.get() {
+                r.pause();
             }
         }
 
@@ -635,7 +646,16 @@ impl FileReader {
             if chunk.is_empty() && state == ReadState::Drained {
                 true
             } else {
-                self.resolve_pending_read(chunk, has_more)
+                let keep_going = self.resolve_pending_read(chunk, has_more);
+                // A pull made while the chunk was delivered keeps the reader armed.
+                if keep_going
+                    && self.reads_on_demand.get()
+                    && self.pending.get().state != streams::PendingState::Pending
+                {
+                    self.reader().pause();
+                    return false;
+                }
+                keep_going
             }
         } else {
             if self.buffered.get().is_empty() && chunk.is_owned() {
@@ -644,8 +664,9 @@ impl FileReader {
                 self.buffered.with_mut(|b| b.extend_from_slice(&chunk));
             }
             // No JS read is waiting; stop at the highwater mark and let onPull restart. `started` gates it: a non-lazy `Bun.spawn` pipe is already reading before any consumer attaches, and throttling then deadlocks a child alternating stdout/stderr writes.
-            let keep_going = !self.started.get()
-                || (self.flowing.get() && self.buffered.get().len() < self.highwater_mark);
+            let keep_going = !self.reads_on_demand.get()
+                && (!self.started.get()
+                    || (self.flowing.get() && self.buffered.get().len() < self.highwater_mark));
             // `false` only ends this read loop; `pause()` stops the reader and releases its hold on the event loop until `on_pull`.
             if !keep_going {
                 self.reader().pause();
@@ -877,20 +898,6 @@ impl FileReader {
         }
     }
 
-    pub(crate) fn set_raw_mode(&self, _flag: bool) -> sys::Result<()> {
-        #[cfg(not(windows))]
-        {
-            panic!(
-                "FileReader.setRawMode must not be called on {}",
-                std::env::consts::OS
-            );
-        }
-        #[cfg(windows)]
-        {
-            self.reader().set_raw_mode(_flag)
-        }
-    }
-
     pub(crate) fn set_flowing(&self, flag: bool) {
         bun_core::scoped_log!(
             FileReader,
@@ -904,6 +911,14 @@ impl FileReader {
         }
 
         self.flowing.set(flag);
+
+        // A terminal is read for a pull that waits, never because a stream began to flow.
+        if flag
+            && self.reads_on_demand.get()
+            && self.pending.get().state != streams::PendingState::Pending
+        {
+            return;
+        }
 
         if flag {
             self.reader().unpause();
@@ -920,6 +935,12 @@ impl FileReader {
 }
 
 pub(crate) type Source = readable_stream::NewSource<FileReader>;
+
+/// Whether the stream is to pull for a read that waits and not to fill its queue. Answered once the source has started.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__FileReader__readsOnDemand(source: &Source) -> bool {
+    source.context.reads_on_demand.get()
+}
 
 // SAFETY: `FileReader` is always the `context` field of a heap-allocated
 // `Source`. `parent` is the `raw` arm for releasing a ref, which can free it.
@@ -1059,15 +1080,6 @@ impl readable_stream::SourceContext for FileReader {
 }
 
 impl Source {
-    pub fn set_raw_mode(&self, cx: &mut JsScope<'_>, flag: JsLocal<'_>) -> JSValue {
-        let flag = flag.to_js();
-        debug_assert!(flag.is_boolean());
-        match self.context.set_raw_mode(flag == JSValue::TRUE) {
-            Ok(()) => JSValue::UNDEFINED,
-            Err(e) => e.to_js(cx.global()),
-        }
-    }
-
     pub fn set_flowing(&self, _: &mut JsScope<'_>, flag: JsLocal<'_>) {
         let flag = flag.to_js();
         debug_assert!(flag.is_boolean());

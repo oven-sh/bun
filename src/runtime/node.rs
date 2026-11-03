@@ -97,6 +97,8 @@ pub(crate) mod node_fs_binding;
 pub(crate) mod node_fs_stat_watcher;
 #[path = "node/node_fs_watcher.rs"]
 pub(crate) mod node_fs_watcher;
+#[path = "node/tty_wrap.rs"]
+pub(crate) mod tty_wrap;
 #[cfg(windows)]
 #[path = "node/uv_signal_handle_windows.rs"]
 pub(crate) mod uv_signal_handle_windows;

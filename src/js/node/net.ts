@@ -172,9 +172,40 @@ interface NativeConnectOptions {
 
 declare global {
   namespace $Node {
+    /** A handle with Node's LibuvStreamWrap surface, given as `handle`: `process.binding("tty_wrap").TTY`. */
+    interface StreamWrapHandle {
+      /** `node:net` keeps it, as node does. */
+      reading?: boolean;
+      onread?: (this: StreamWrapHandle, nread: number, buffer?: Buffer) => void;
+      readonly fd: number;
+      readonly bytesRead: number;
+      readonly bytesWritten: number;
+      /** 0, or a negative libuv errno. */
+      readStart(): number;
+      readStop(): number;
+      /** Node's `writeBuffer(req, data)`. 0: the write is complete. Negative: a libuv errno. 1: the handle finishes the write from the loop and then calls `onwritecomplete(status)`, where Node answers a `WriteWrap` and calls its `oncomplete(status)`. */
+      writeBuffer(req: null, data: Uint8Array): number;
+      /** Called once for each `writeBuffer()` that answered 1, in the order of the calls, and never inside that call. */
+      onwritecomplete?: (this: StreamWrapHandle, status: number) => void;
+      /** libuv's `write_queue_size`: the bytes that wait for the loop. */
+      readonly writeQueueSize?: number;
+      [kWriteReqs]?: { callback: WriteCallback; frame: unknown }[];
+      /** `mode` is a `uv_tty_mode_t`. 0, or a negative libuv errno. */
+      setRawMode(mode: number): number;
+      /** Fills `size` with [columns, rows]. 0, or a negative libuv errno. */
+      getWindowSize(size: number[]): number;
+      ref(): void;
+      unref(): void;
+      close(callback?: () => void): void;
+    }
+
     interface SocketOptions extends DuplexOptions {
       fd?: number;
-      handle?: SocketHandle<Socket | ConnectData>;
+      handle?: SocketHandle<Socket | ConnectData> | StreamWrapHandle;
+      /** With a stream-wrap `handle`: do not start reading in the constructor. */
+      manualStart?: boolean;
+      /** With a stream-wrap `handle`: stop the handle and start paused. */
+      pauseOnCreate?: boolean;
       socket?: Socket;
       onread?: OnReadOptions | null;
       noDelay?: boolean;
@@ -284,6 +315,7 @@ declare global {
       [kclosed]: boolean;
       [kended]: boolean;
       [kwriteCallback]: WriteCallback | null | undefined;
+      [kLastWriteQueueSize]?: number;
       [kRejectedWrite]?: Error;
       [ksocket]: Socket | undefined;
       [kSyncWriteFd]?: number;
@@ -504,6 +536,7 @@ interface InternalServerHandler<Data> extends InternalSocketHandler<Data> {
 const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
+const ArrayPrototypeShift = Array.prototype.shift;
 const MathMax = Math.max;
 const MathMin = Math.min;
 const reportError = globalThis.reportError;
@@ -794,7 +827,8 @@ function endNT(self: $Node.Socket, socket: SocketHandle | null, callback: WriteC
   // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L500
   // A TLS wrap made since _final attached this socket's handle, or left the fd to the raw half of `socket`.
   const current = self._handle;
-  (!socket || current?.[kAdoptedTLSRaw] ? current : socket)?.shutdown();
+  // A stream-wrap handle has no shutdown.
+  (!socket || current?.[kAdoptedTLSRaw] ? current : socket)?.shutdown?.();
   callback();
 }
 function emitCloseNT(self: $Node.Socket, hasError: boolean) {
@@ -1332,9 +1366,91 @@ const SocketHandlers = {
   binaryType: "buffer",
 } as const satisfies InternalSocketHandler<$Node.Socket>;
 
+// A stream-wrap handle (`tty_wrap.TTY`) has the names of Node's LibuvStreamWrap: readStart() and readStop() answer a libuv errno. Reads arrive as onread(nread, buffer), where Node passes an ArrayBuffer and leaves nread in streamBaseState.
+const UV_EOF = -4095;
+function isStreamWrapHandle(handle: object): handle is $Node.StreamWrapHandle {
+  return $isCallable((handle as $Node.StreamWrapHandle).readStart);
+}
+function tryReadStart(self: $Node.Socket, handle: $Node.StreamWrapHandle) {
+  if (handle.reading) return;
+  handle.reading = true;
+  const err = handle.readStart();
+  if (err) self.destroy(new ErrnoException(err, "read"));
+}
+function tryReadStop(self: $Node.Socket, handle: $Node.StreamWrapHandle) {
+  if (!handle.reading) return;
+  handle.reading = false;
+  if (self.destroyed) return;
+  const err = handle.readStop();
+  if (err) self.destroy(new ErrnoException(err, "read"));
+}
+function handleReadStart(self: $Node.Socket, handle: SocketHandle) {
+  if (isStreamWrapHandle(handle)) tryReadStart(self, handle);
+  else handle.resume?.();
+}
+// read() and resume() start a stream-wrap handle for an onread socket alone, as in Node: _read() starts the others.
+function handleReadStartAhead(self: $Node.Socket, handle: SocketHandle) {
+  if (!isStreamWrapHandle(handle)) handle.resume?.();
+  else if (self[kOnreadBuffer] !== undefined) tryReadStart(self, handle);
+}
+function onStreamRead(this: $Node.StreamWrapHandle, nread: number, buffer?: Buffer) {
+  const self: $Node.Socket | undefined = this[owner_symbol];
+  if (!self) return;
+  // Node restarts the idle timer for every call, the end of input and an error too.
+  self._unrefTimer();
+  if (self.destroyed) return;
+  if (nread > 0) {
+    self.bytesRead += nread;
+    // A socket built with the `onread` option hands chunks to that callback.
+    const deliver = self[kOnreadDeliver];
+    if (deliver !== undefined) {
+      const tail = self[kOnreadTail];
+      if (tail !== undefined) {
+        self[kOnreadTail] = Buffer.concat([tail, buffer!]);
+        return;
+      }
+      deliver(buffer!);
+      return;
+    }
+    if (!self.push(buffer)) readStop(self, self._handle);
+    return;
+  }
+  if (nread === 0) return;
+  if (nread !== UV_EOF) {
+    self.destroy(new ErrnoException(nread, "read"));
+    return;
+  }
+  if (!deferEndForOnreadTail(self)) finishSocketEnd(self);
+}
+// What writeBuffer() of a stream-wrap handle answers for a write that it finishes from the loop.
+const kStreamWritePending = 1;
+// The writes of a stream-wrap handle that wait for the loop, oldest first, on the handle: { callback, frame }. Node keeps the two in the WriteWrap of each write.
+const kWriteReqs = Symbol("kWriteReqs");
+// Socket.prototype._onTimeout reads it, as in Node: the size of the write that waits, then what the handle had queued at the last timeout.
+const kLastWriteQueueSize = Symbol("kLastWriteQueueSize");
+// After Node's onWriteComplete: the handle calls it with a status alone, and the stream callback and its async context come from kWriteReqs. https://github.com/nodejs/node/blob/v26.12.1/lib/internal/stream_base_commons.js#L45-L70
+function onStreamWriteComplete(this: $Node.StreamWrapHandle, status: number) {
+  const reqs = this[kWriteReqs];
+  const req = reqs && ArrayPrototypeShift.$call(reqs);
+  if (!req) return;
+  let err: Error | null = null;
+  if (status < 0) {
+    err = new ErrnoException(status, "write");
+  } else {
+    const self: $Node.Socket | undefined = this[owner_symbol];
+    if (self && !self.destroyed) {
+      self._unrefTimer();
+      self[kLastWriteQueueSize] = 0;
+    }
+  }
+  require("internal/async_context_frame").run(req.frame, req.callback, undefined, err);
+}
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L191-L198; a stopped handle does not hold the loop, a pending write still does.
 function readStop(self: $Node.Socket, handle: SocketHandle | null) {
-  handle?.pause?.();
+  if (handle) {
+    if (isStreamWrapHandle(handle)) tryReadStop(self, handle);
+    else handle.pause?.();
+  }
   // A socket over a generic duplex has no fd and never held the loop.
   if (self[kupgraded] && !(self[kupgraded] instanceof Socket)) return;
   self[kPausedUnref] = true;
@@ -2398,7 +2514,13 @@ function Socket(this: $Node.Socket, options?: $Node.SocketOptions): void {
   this._pendingEncoding = undefined; // for compatibility
   this._hadError = false;
   this.isServer = false;
-  this._handle = options?.handle || null;
+  const handle = options?.handle || null;
+  // Any object is kept: see the note on `_handle`.
+  this._handle = handle as SocketHandle | null;
+  if (handle && isStreamWrapHandle(handle)) {
+    handle[owner_symbol] = this;
+    handle.onread = onStreamRead;
+  }
   this[ksocket] = undefined;
   this.server = undefined;
   this._server = undefined;
@@ -2560,6 +2682,16 @@ function Socket(this: $Node.Socket, options?: $Node.SocketOptions): void {
       },
     };
   }
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L493-L502
+  if (handle && isStreamWrapHandle(handle) && opts.readable !== false) {
+    if (opts.pauseOnCreate) {
+      handle.reading = false;
+      handle.readStop();
+      this.readableFlowing = false;
+    } else if (!opts.manualStart) {
+      this.read(0);
+    }
+  }
   if (signal) {
     if (signal.aborted) {
       process.nextTick(destroyNT, this, $makeAbortError(undefined, { cause: signal.reason }));
@@ -2598,6 +2730,16 @@ Socket.prototype._onTimeout = function (this: $Node.Socket) {
   }
 
   const handle = this._handle;
+  // A write queue of a stream-wrap handle that moved since the last timeout is still going out. https://github.com/nodejs/node/blob/v26.12.1/lib/net.js#L872-L887
+  const lastWriteQueueSize = this[kLastWriteQueueSize];
+  if (lastWriteQueueSize && handle && isStreamWrapHandle(handle)) {
+    const { writeQueueSize } = handle;
+    if (lastWriteQueueSize !== writeQueueSize) {
+      this[kLastWriteQueueSize] = writeQueueSize;
+      this._unrefTimer();
+      return;
+    }
+  }
   // if there is a handle, and it has pending data,
   // we suppress the timeout because a write is in progress
   if (handle && getBufferedAmount(handle) > 0) {
@@ -3032,8 +3174,9 @@ function drainOnreadTailNT(socket: $Node.Socket) {
     socket[kOnreadPendingEnd] = false;
     finishSocketEnd(socket);
   } else if (fromRead || !socket.isPaused()) {
-    socket._handle?.resume?.();
-    restorePausedHold(socket, socket._handle);
+    const handle = socket._handle;
+    if (handle) handleReadStartAhead(socket, handle);
+    restorePausedHold(socket, handle);
   }
 }
 
@@ -3046,7 +3189,8 @@ Socket.prototype.resume = function resume(this: $Node.Socket) {
   // An onread socket is the exception: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L830-L845
   if (this.readableEnded && this[kOnreadBuffer] === undefined) return ret;
   if (!this.connecting && !drainOnreadTail(this)) {
-    this._handle?.resume?.();
+    const handle = this._handle;
+    if (handle) handleReadStartAhead(this, handle);
   }
   // Even while still connecting, so pause-then-resume stays symmetric.
   restorePausedHold(this, this._handle);
@@ -3105,8 +3249,9 @@ Socket.prototype[kUpgradeClientTLS] = function (
 Socket.prototype.read = function read(this: $Node.Socket, size?: number) {
   // See resume(): an ended readable side never restarts the handle.
   if ((!this.readableEnded || this[kOnreadBuffer] !== undefined) && !this.connecting && !drainOnreadTail(this, true)) {
-    this._handle?.resume?.();
-    restorePausedHold(this, this._handle);
+    const handle = this._handle;
+    if (handle) handleReadStartAhead(this, handle);
+    restorePausedHold(this, handle);
   }
   return Duplex.prototype.read.$call(this, size);
 };
@@ -3116,7 +3261,7 @@ Socket.prototype._read = function _read(this: $Node.Socket, size: number) {
   if (this.connecting || !socket) {
     this.once("connect", () => this._read(size));
   } else if (!drainOnreadTail(this, true)) {
-    socket?.resume?.();
+    handleReadStart(this, socket);
     restorePausedHold(this, socket);
   }
 };
@@ -3242,7 +3387,10 @@ function fdSyncWritev(this: $Node.Socket, data: { chunk: Chunk; encoding: Buffer
 }
 
 Socket.prototype.resetAndDestroy = function resetAndDestroy(this: $Node.Socket) {
-  if (this._handle) {
+  const handle = this._handle;
+  if (handle) {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L803-L804: only a TCP handle sends a RST.
+    if (isStreamWrapHandle(handle)) throw $ERR_INVALID_HANDLE_TYPE();
     if (this.connecting) {
       this.once("connect", () => this._reset());
     } else {
@@ -3478,6 +3626,24 @@ Socket.prototype._write = function _write(
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L158-L159
     callback(er);
     return false;
+  }
+  // After Node's writeGeneric and afterWriteDispatched: 0 or a negative libuv errno from writeBuffer() completes the write here. For 1 the handle finishes it from the loop and calls onStreamWriteComplete, where Node gets a WriteWrap. https://github.com/nodejs/node/blob/v26.12.1/lib/internal/stream_base_commons.js#L93-L152
+  if (isStreamWrapHandle(socket)) {
+    const data = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
+    const err = socket.writeBuffer(null, data);
+    this[kBytesWritten] = socket.bytesWritten;
+    if (err !== kStreamWritePending) {
+      callback(err ? new ErrnoException(err, "write") : null);
+      return;
+    }
+    // Node's WriteWrap is an AsyncResource that the write creates.
+    const req = { callback, frame: require("internal/async_context_frame").current() };
+    const reqs = socket[kWriteReqs];
+    if (reqs) ArrayPrototypePush.$call(reqs, req);
+    else socket[kWriteReqs] = [req];
+    socket.onwritecomplete = onStreamWriteComplete;
+    this[kLastWriteQueueSize] = data.byteLength;
+    return;
   }
   const res = socket.$write(chunk, encoding);
   this[kBytesWritten] = socket.bytesWritten;

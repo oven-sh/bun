@@ -323,6 +323,14 @@ static void nativeAdjustChunkSize(JSNativeStreamSourceAdapter* adapter, size_t r
 }
 
 extern "C" size_t Bun__ByteBlobLoader__remaining(void* source);
+extern "C" bool Bun__FileReader__readsOnDemand(void* source);
+
+// A terminal is pulled for a read that waits, not to fill the queue: what it has belongs to whoever reads it next.
+static double nativeSourceHighWaterMark(JSObject* handle)
+{
+    auto* file = dynamicDowncast<JSFileInternalReadableStreamSource>(handle);
+    return file && Bun__FileReader__readsOnDemand(file->wrapped()) ? 0 : 1;
+}
 
 // A slab the size of what a blob has left is filled whole and handed over uncopied; one byte finds out that nothing is left.
 static size_t nativeSlabSize(JSNativeStreamSourceAdapter* adapter)
@@ -492,7 +500,7 @@ void materializeNativeSource(JSGlobalObject* globalObject, JSReadableStream* str
     auto* controller = WebCore::JSReadableStreamDefaultController::create(vm, WebCore::getDOMStructure<WebCore::JSReadableStreamDefaultController>(vm, *domGlobalObject));
     controller->m_algorithms.kind = SourceKind::Native;
     controller->m_algorithms.algorithmContext.set(vm, controller, adapter);
-    setUpReadableStreamDefaultController(globalObject, stream, controller, jsUndefined(), 1);
+    setUpReadableStreamDefaultController(globalObject, stream, controller, jsUndefined(), nativeSourceHighWaterMark(handle));
     RETURN_IF_EXCEPTION(scope, );
     nativeSourceStart(globalObject, controller);
     RETURN_IF_EXCEPTION(scope, );

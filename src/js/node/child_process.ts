@@ -1781,7 +1781,8 @@ function streamFdOf(item): number | undefined {
 
   const handle = item._handle;
   const handleFd = handle ? handle.fd : undefined;
-  if (typeof handleFd === "number") return handleFd;
+  // A handle that is closed answers a negative number.
+  if (typeof handleFd === "number" && handleFd >= 0) return handleFd;
 
   if (item.destroyed) return undefined;
 

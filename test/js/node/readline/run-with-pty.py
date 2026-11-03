@@ -50,7 +50,7 @@ if pid == 0:
 else:
     os.close(slave_fd)
     signal.signal(signal.SIGALRM, timeout_handler)
-    signal.alarm(3)  # 3 second timeout
+    signal.alarm(5)  # a debug build of Bun needs about 3 seconds for the three processes that this script waits for
 
     # Send to parent
     waitAndWrite(b'1')

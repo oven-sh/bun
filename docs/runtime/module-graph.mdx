@@ -32,6 +32,7 @@ A graph has a context of its own for timers and I/O. Everything its code opens b
 - `Bun.serve` and `Bun.listen` servers, sockets, `fetch()` requests, WebSockets
 - watchers
 - child processes, including `Bun.$`, and `Bun.Terminal` terminals
+- streams it makes with `new tty.ReadStream(fd)`. `process.stdin` is the host's (see [What is shared](#what-is-shared)). A stream closes as with `destroy()`: the terminal leaves raw mode only if that stream was the first of the process to enter it.
 - workers
 - database connections
 - files opened through `Bun.file().writer()`, `bun:sqlite` and `node:sqlite`

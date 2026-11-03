@@ -720,10 +720,12 @@ const files = {
 
       async steady() {
         // The test wrote these files before this process started, and nothing
-        // changes on disk here. So no miss may drop a directory: a directory that
-        // is dropped is read again, and its package.json parsed again, into memory
-        // that is never freed. No miss may run its lookup again either.
-        const { resolverDirInfoSlotsUsed, resolverLookupsRunAgain } = require("bun:internal-for-testing");
+        // changes on disk here. Each miss runs its lookup once more, and that run
+        // asks the disk about each directory and config file that it takes from
+        // the caches. None of them changed. So no directory gets a new record or a
+        // new listing: those take memory that is never freed. And no listing is
+        // read again, except on Windows: see keepsListings.
+        const { resolverCounters } = require("bun:internal-for-testing");
         // The working directory can be another one: see the test.
         const here = path.dirname(fileURLToPath(import.meta.url));
         const s1 = requireFrom(path.join(here, "s1"));
@@ -752,17 +754,82 @@ const files = {
           ["Z10", () => require.resolve("./s7.cjs")],
         ];
         for (const [label, miss] of misses) res(label, miss);
-        const slots = resolverDirInfoSlotsUsed();
-        const lookups = resolverLookupsRunAgain();
-        for (let round = 0; round < 20; round++) {
+        // What one more round of the misses adds to each counter of the resolver.
+        const round = () => {
+          const before = resolverCounters();
           for (const [, miss] of misses) {
             try {
               miss();
             } catch {}
           }
-        }
-        console.log("directories read again by 200 more misses:", resolverDirInfoSlotsUsed() - slots);
-        console.log("lookups run again by 200 more misses:", resolverLookupsRunAgain() - lookups);
+          const after = resolverCounters();
+          const added = {};
+          for (const name of Object.keys(after)) added[name] = after[name] - before[name];
+          return added;
+        };
+        // The directories above the fixture are every test's: the temporary directory changes
+        // with each test that starts or ends, and a miss reads again a directory that changed.
+        // This tells when one of them did: each directory above, and the node_modules in it,
+        // which the lookup of a package reads.
+        const above = [];
+        for (let dir = path.dirname(here); dir !== above.at(-1); dir = path.dirname(dir)) above.push(dir);
+        const stamp = dir => {
+          try {
+            const { ino, mtimeNs, ctimeNs } = fs.statSync(dir, { bigint: true });
+            return [ino, mtimeNs, ctimeNs].join(" ");
+          } catch {
+            return "none";
+          }
+        };
+        // The directories above as they were last seen, and when they were first seen so.
+        let seen;
+        let since;
+        const look = () => {
+          const now = above.flatMap(dir => [stamp(dir), stamp(path.join(dir, "node_modules"))]).join();
+          if (now !== seen) [seen, since] = [now, performance.now()];
+          return now;
+        };
+        look();
+        // Windows lists a directory without its identity, and reads each listing again.
+        const keepsListings = process.platform !== "win32";
+        // A listing that was read right after its directory changed is read once more: the times
+        // of a directory cannot tell a later change from that one. So a round can read a listing
+        // again for two reasons that are not the resolver's doing: the test has just written the
+        // fixture, and a directory above changed. A round is charged with the listings that it
+        // read again when no directory above changed during it, and none since a round that read
+        // no listing again, or since a round that began a tenth of a second after the last
+        // change, which is five times the margin of that rule.
+        const more = { lookupsRunAgain: 0, dirInfoSlots: 0, newListings: 0, refills: 0 };
+        // The directories above, as they were around the last round that read no listing again,
+        // and around the last round that began that long after they changed.
+        let kept;
+        let settled;
+        let charged = false;
+        const run = counted => {
+          const before = look();
+          const late = performance.now() - since >= 100;
+          const added = round();
+          const calm = look() === before;
+          const chargeable = calm && (before === kept || before === settled);
+          settled = calm && late ? before : undefined;
+          if (added.refills === 0) {
+            if (calm) kept = before;
+          } else if (chargeable) {
+            charged = true;
+            more.refills += added.refills;
+          }
+          if (counted) for (const name of ["lookupsRunAgain", "dirInfoSlots", "newListings"]) more[name] += added[name];
+        };
+        // Rounds until one reads no listing again, or is charged. The deadline is for directories
+        // above that keep changing.
+        const deadline = performance.now() + 1000;
+        while (keepsListings && kept === undefined && !charged && performance.now() < deadline) run(false);
+        for (let i = 0; i < 20; i++) run(true);
+        const count = "by " + 20 * misses.length + " more misses:";
+        console.log("lookups run again", count, more.lookupsRunAgain);
+        console.log("new directory records", count, more.dirInfoSlots);
+        console.log("new listings", count, more.newListings);
+        if (keepsListings) console.log("listings read again", count, more.refills);
       },
 
       async build() {
@@ -1164,13 +1231,13 @@ describe.concurrent("a failed resolution checks again what else it read from the
     `);
   });
 
-  // From the root of the file system too: the root used to get two cache entries when it was the
-  // directory asked for, the second linked to the first. That link looked stale to each miss.
+  // From the root of the file system too: the root used to get two cache records when it was the
+  // directory asked for, the second linked to the first.
   test.each([
     ["the project", (dir: string) => ({ cwd: dir, flags: [] })],
     // No package is installed for a miss where no node_modules is above the working directory.
     ["the root of the file system", (dir: string) => ({ cwd: parse(dir).root, flags: ["--no-install"] })],
-  ])("a miss drops no directory when nothing changed on disk, started in %s", async (_, start) => {
+  ])("an unchanged miss runs its lookup again once and makes no record or listing, started in %s", async (_, start) => {
     const steadyFiles = (dir: string) => {
       const write = (file: string, contents: string | Buffer) => {
         mkdirSync(dirname(join(dir, file)), { recursive: true });
@@ -1205,8 +1272,11 @@ describe.concurrent("a failed resolution checks again what else it read from the
         "Z8 ERR MODULE_NOT_FOUND",
         "Z9 ERR MODULE_NOT_FOUND",
         "Z10 ERR MODULE_NOT_FOUND",
-        "directories read again by 200 more misses: 0",
-        "lookups run again by 200 more misses: 0",
+        "lookups run again by 200 more misses: 200",
+        "new directory records by 200 more misses: 0",
+        "new listings by 200 more misses: 0",
+        // Windows lists a directory without its identity, and reads each listing again.
+        ...(isWindows ? [] : ["listings read again by 200 more misses: 0"]),
       ].join("\n"),
     });
   });

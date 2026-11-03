@@ -259,6 +259,7 @@ const PLUGINS: Record<string, string> = {
   "unicorn": "unicorn",
   "promise": "promise",
   "node": "Node.js (n)",
+  "perfectionist": "perfectionist",
   "oxc": "oxc",
   "bun": "Bun",
   "bun-test": "bun:test",

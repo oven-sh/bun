@@ -32,6 +32,7 @@ const FormData: typeof globalThis.FormData = bindings[4];
 const File: typeof globalThis.File = bindings[5];
 const nativeFetch = Bun.fetch;
 const JSONParse = JSON.parse;
+const StringPrototypeToUpperCase = String.prototype.toUpperCase;
 
 // node-fetch extends from URLSearchParams in their implementation...
 // https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/headers.js#L44
@@ -80,16 +81,36 @@ function readableFromOldStyleStream(source: $Node.Stream) {
   return passthrough;
 }
 
+// A setEncoding() source emits strings, which the default ByteLengthQueuingStrategy cannot size.
+function chunkByteLength(chunk: string | ArrayBufferView) {
+  return typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.byteLength;
+}
+
+function isNodeStream(body): body is $Node.Stream | $Node.Readable {
+  if (!body || typeof body !== "object" || typeof body.pipe !== "function") return false;
+  const { Readable, Stream } = require("node:stream");
+  return body instanceof Stream || body instanceof Readable;
+}
+
+/** Subscribes to the stream at once: every chunk goes to the web stream and to any later "data" listener. */
+function webStreamFromNodeStream(source: $Node.Stream | $Node.Readable) {
+  const { Readable } = require("node:stream");
+  const readable = source instanceof Readable ? source : readableFromOldStyleStream(source);
+  return Readable.toWeb(
+    readable,
+    readable.readableObjectMode
+      ? undefined
+      : { strategy: { highWaterMark: readable.readableHighWaterMark, size: chunkByteLength } },
+  );
+}
+
 class Response extends WebResponse {
   [kBody]: any;
   [kHeaders];
   [kFetched]: boolean | undefined;
 
   constructor(body, init) {
-    const { Readable, Stream } = require("node:stream");
-    if (body && typeof body === "object" && (body instanceof Stream || body instanceof Readable)) {
-      body = Readable.toWeb(body instanceof Readable ? body : readableFromOldStyleStream(body));
-    }
+    if (isNodeStream(body)) body = webStreamFromNodeStream(body);
 
     super(body, init);
   }
@@ -144,6 +165,8 @@ class Response extends WebResponse {
 var ResponsePrototype = Response.prototype;
 
 const kUrl = Symbol("kUrl");
+// The Node stream given as the body of a Request. fetch(request) subscribes to it, as node-fetch does.
+const kNodeBody = Symbol("kNodeBody");
 const ObjectHasOwn = Object.hasOwn;
 
 // https.Agent applies `agent.options` to every tls.connect() it makes.
@@ -159,6 +182,7 @@ function tlsFromAgent(agent, url) {
 
 class Request extends WebRequest {
   [kUrl]?: string;
+  [kNodeBody]?: $Node.Stream | $Node.Readable;
 
   constructor(input, init) {
     // node-fetch is relaxed with the URL, for example, it allows "/" as a valid URL.
@@ -170,6 +194,8 @@ class Request extends WebRequest {
     } else {
       super(input, init);
     }
+    const body = init?.body;
+    if (isNodeStream(body)) this[kNodeBody] = body;
   }
 
   get url() {
@@ -192,16 +218,16 @@ async function fetch(
   // eslint-disable-next-line no-unused-vars
   init?: RequestInit & { body?: any },
 ) {
-  // Convert Node.js streams to Web ReadableStream if they don't have Symbol.asyncIterator.
-  // This is needed for libraries like `form-data` that use CombinedStream which extends
-  // Node.js Stream but doesn't implement Symbol.asyncIterator.
+  // node-fetch subscribes to a stream body inside fetch() (body.pipe(req)), so a "data" listener that the
+  // caller attaches after the call cannot drain the stream first. The native fetch reads an async iterable
+  // only once the connection is ready, which is too late: https://github.com/oven-sh/bun/issues/47865
   const initBody = init?.body;
-  if (initBody && typeof initBody === "object" && !initBody[Symbol.asyncIterator]) {
-    const { Readable, Stream } = require("node:stream");
-    if (initBody instanceof Stream || initBody instanceof Readable) {
-      const readable = initBody instanceof Readable ? initBody : readableFromOldStyleStream(initBody);
-      init = { ...init, body: Readable.toWeb(readable) };
-    }
+  const body = initBody !== undefined ? initBody : $isObject(url) ? url[kNodeBody] : undefined;
+  if (isNodeStream(body)) {
+    // The native fetch rejects a GET or HEAD request (the default) with a body, so that stream stays untouched.
+    let method = init?.method ?? ($isObject(url) ? url.method : undefined);
+    method = method === undefined ? "GET" : StringPrototypeToUpperCase.$call(`${method}`);
+    if (method !== "GET" && method !== "HEAD") init = { ...init, body: webStreamFromNodeStream(body) };
   }
   if (init && ObjectHasOwn(init, "agent") && (init as any).agent && (init as any).tls === undefined) {
     const tls = tlsFromAgent((init as any).agent, url);

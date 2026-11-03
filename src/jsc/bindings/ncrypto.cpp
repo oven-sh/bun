@@ -969,17 +969,20 @@ BIOPointer X509View::getInfoAccess() const
     return bio;
 }
 
-// Not upstream: the X509 parser accepts a UTCTime "YYMMDDHHMMSS+hhmm" that ASN1_TIME_print and ASN1_TIME_to_posix refuse. OpenSSL applies the offset.
+// Not upstream: the X509 parser accepts a UTCTime with a timezone offset that ASN1_TIME_print and ASN1_TIME_to_posix refuse. OpenSSL applies the offset.
 static bool offsetValidityToPosix(const ASN1_TIME* time, int64_t* seconds)
 {
+    static constexpr std::string_view form { "YYMMDDHHMMSS+hhmm" };
+    static constexpr size_t offsetHour = form.find("hh");
+    if (static_cast<size_t>(ASN1_STRING_length(time)) != form.size() || !ASN1_TIME_to_posix_nonstandard(time, seconds)) return false;
     const unsigned char* text = ASN1_STRING_get0_data(time);
     // OpenSSL refuses an hh above 12: https://github.com/openssl/openssl/blob/openssl-3.5.9/crypto/asn1/a_time.c#L79
-    return ASN1_STRING_length(time) == 17 && ASN1_TIME_to_posix_nonstandard(time, seconds) && (text[13] - '0') * 10 + (text[14] - '0') <= 12;
+    return (text[offsetHour] - '0') * 10 + (text[offsetHour + 1] - '0') <= 12;
 }
 
 static void printValidityTime(BIO* bio, const ASN1_TIME* time)
 {
-    int64_t seconds;
+    int64_t seconds {};
     if (offsetValidityToPosix(time, &seconds)) {
         if (DeleteFnPtr<ASN1_TIME, ASN1_TIME_free> utc { ASN1_TIME_set_posix(nullptr, seconds) }) {
             ASN1_TIME_print(bio, utc.get());

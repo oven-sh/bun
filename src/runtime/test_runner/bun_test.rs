@@ -986,22 +986,27 @@ impl BunTest {
         Self::bun_test_then_or_catch(cx.global(), value.to_js(), context, true)
     }
 
-    /// Whether the error failed the running test.
+    /// Whether the error failed the running test after the deadline of that test.
     fn on_done_error(global_this: &JSGlobalObject, entry: &RefDataValue, error: JSValue) -> bool {
         if let Some(strong) = clone_active_strong() {
             let this = strong.get();
-            let is_running_test = this
+            // `Some` if `entry` is the running test, with whether its deadline has passed.
+            let running_test_is_late = this
                 .execution
                 .get_current_and_valid_execution_sequence(entry)
-                .is_some_and(|(sequence, _)| sequence.active_entry == sequence.test_entry);
-            if is_running_test {
+                .filter(|(sequence, _)| sequence.active_entry == sequence.test_entry)
+                .map(|(sequence, _)| {
+                    // SAFETY: arena-owned entry, alive for the lifetime of BunTest
+                    sequence.active_entry.is_some_and(|test| unsafe { test.as_ref() }.is_past_deadline(&Timespec::now_force_real_time()))
+                });
+            if let Some(is_late) = running_test_is_late {
                 this.on_uncaught_exception(global_this, Some(error), false, entry);
                 // As for any other uncaught exception: the test is over whatever its callback returns,
                 // and `on_before_exit()` doesn't drain the event loop of a file that failed.
                 this.add_result(*entry);
                 Self::run_next_tick(&Rc::downgrade(&strong), global_this, *entry);
                 global_this.bun_vm().as_mut().unhandled_error_counter += 1;
-                return true;
+                return is_late;
             }
         }
         let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, error, false);
@@ -1030,7 +1035,7 @@ impl BunTest {
         } else {
             // error is only reported for the first done() call
             if was_error {
-                this.failed_test.set(Self::on_done_error(global_this, &this.entry, value));
+                this.failed_late.set(Self::on_done_error(global_this, &this.entry, value));
             }
         }
         this.called.set(true);
@@ -1439,7 +1444,7 @@ impl BunTest {
             if let Some(dcb_data) = done_callback.as_class_ref::<DoneCallback>() {
                 if dcb_data.called.get() {
                     // done callback already called or the callback errored; add result immediately
-                    if dcb_data.failed_test.get() {
+                    if dcb_data.failed_late.get() {
                         end = CallbackEnd::Failed;
                     }
                 } else {
@@ -1932,7 +1937,7 @@ pub(crate) enum CallbackEnd {
     /// Its promise or its `done` is still pending.
     Running,
     Returned,
-    /// It threw, its promise rejected, or its `done(error)` failed the test.
+    /// It threw, its promise rejected, or its `done(error)` failed the test after the deadline of the test.
     Failed,
 }
 
@@ -2434,12 +2439,17 @@ impl ExecutionEntry {
         entry
     }
 
+    /// An entry without a timeout has no deadline.
+    pub(crate) fn is_past_deadline(&self, now: &Timespec) -> bool {
+        !self.timespec.eql(&Timespec::EPOCH) && self.timespec.order(now) == core::cmp::Ordering::Less
+    }
+
     pub(crate) fn evaluate_timeout(
         &self,
         sequence: &mut Execution::ExecutionSequence,
         now: &Timespec,
     ) -> bool {
-        if !self.timespec.eql(&Timespec::EPOCH) && self.timespec.order(now) == core::cmp::Ordering::Less {
+        if self.is_past_deadline(now) {
             // timed out
             // SAFETY: pointer-identity comparison only — no deref, no provenance laundering.
             let is_test_entry = sequence

@@ -632,10 +632,6 @@ describe("a callback that ends after its timeout without a yield", () => {
           Bun.sleepSync(30);
           done(new Error("passed to done by an async callback"));
         }, 10);
-        test("calls done(error) in time and returns late", done => {
-          done(new Error("passed to done in time"));
-          Bun.sleepSync(30);
-        }, 10);
         test("calls done(error) and returns a thenable", done => {
           Bun.sleepSync(30);
           done(new Error("passed to done before the thenable"));
@@ -661,10 +657,6 @@ describe("a callback that ends after its timeout without a yield", () => {
               reject(new Error("the expected failure"));
             },
           };
-        }, 10);
-        test.failing("test.failing calls done(error) in time and returns late", done => {
-          done(new Error("the expected failure"));
-          Bun.sleepSync(30);
         }, 10);
         test.failing("test.failing with retry throws", () => {
           Bun.sleepSync(30);
@@ -760,15 +752,12 @@ describe("a callback that ends after its timeout without a yield", () => {
       (fail) calls done(error) from a microtask
       error: passed to done by an async callback
       (fail) calls done(error) from an async callback
-      error: passed to done in time
-      (fail) calls done(error) in time and returns late
       error: passed to done before the thenable
       (fail) calls done(error) and returns a thenable
       error: thrown after done()
       (fail) throws after done()
       (pass) test.failing throws
       (pass) test.failing returns a thenable that rejects
-      (pass) test.failing calls done(error) in time and returns late
       (pass) test.failing with retry throws
       error: thrown by the todo test
       (todo) test.todo throws
@@ -796,9 +785,9 @@ describe("a callback that ends after its timeout without a yield", () => {
       (todo) a hook throws in time after the body failed as expected late > test.todo
       error: thrown after the timer ran
       (fail) throws after the timeout timer ran under it
-       7 pass
+       6 pass
        2 todo
-       20 fail"
+       19 fail"
     `);
     expect(junit).toContain('<failure type="Error" message="thrown by the test">');
     expect(junit).not.toContain("TimeoutError");
@@ -834,8 +823,17 @@ describe("a callback that ends after its timeout without a yield", () => {
           Bun.sleepSync(30);
         }, 10);
 
-        // The matcher waits for the promise, fails in a microtask, and the test does not await it. The timeout is
-        // longer here because the matcher has to fail before the timeout.
+        // The timeout is longer in the next four, because their failure has to come before the timeout.
+        test("calls done(error) in time and returns late", done => {
+          done(new Error("passed to done in time"));
+          Bun.sleepSync(300);
+        }, 250);
+        test.failing("test.failing calls done(error) in time and returns late", done => {
+          done(new Error("the expected failure"));
+          Bun.sleepSync(300);
+        }, 250);
+
+        // The matcher waits for the promise, fails in a microtask, and the test does not await it.
         function failsUnawaited() {
           const { promise, resolve } = Promise.withResolvers();
           expect(promise).resolves.toBe(2);
@@ -917,6 +915,11 @@ describe("a callback that ends after its timeout without a yield", () => {
       error: stray rejection
       (fail) returns after a stray rejection
         ^ this test timed out after 10ms.
+      error: passed to done in time
+      (fail) calls done(error) in time and returns late
+        ^ this test timed out after 250ms, before its done callback was called. If a done callback was not intended, remove the last parameter from the test callback function
+      (fail) test.failing calls done(error) in time and returns late
+        ^ this test timed out after 250ms, before its done callback was called. If a done callback was not intended, remove the last parameter from the test callback function
       error: expect(received).toBe(expected)
       (fail) returns after a matcher it did not await failed
         ^ this test timed out after 250ms.
@@ -941,7 +944,7 @@ describe("a callback that ends after its timeout without a yield", () => {
       (fail) a hook throws after the body failed as expected in time > onTestFinished, test.failing
         ^ a beforeEach/afterEach hook timed out for this test.
        0 pass
-       14 fail"
+       16 fail"
     `);
     expect(exitCode).toBe(1);
   });

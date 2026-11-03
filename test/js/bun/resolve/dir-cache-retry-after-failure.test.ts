@@ -898,6 +898,44 @@ const files = {
         console.log("RM1 to RM4 lookups run again:", resolverCounters().lookupsRunAgain - ranAgain);
       },
 
+      async spelling() {
+        // A name asked for in another case than it has on disk, and a name whose case changed on
+        // disk. The old retry answered these as a new process does: it dropped the importer's
+        // directory. Now the run after a miss reads the listing again in place, and that keeps an
+        // entry only under the spelling that the directory has.
+        const { resolverCounters } = require("bun:internal-for-testing");
+        // Prints how many lookups ran again since the last call: each one that missed at first, once.
+        let ranAgain = resolverCounters().lookupsRunAgain;
+        const counted = rows => {
+          const now = resolverCounters().lookupsRunAgain;
+          console.log(rows, "lookups run again:", now - ranAgain);
+          ranAgain = now;
+        };
+        // foo.js is written after ./Foo.js missed. A listing folds the case of a name.
+        fs.mkdirSync("spell");
+        const spell = requireFrom("spell");
+        res("FO1", () => spell.resolve("./Foo.js"));
+        write(path.join("spell", "foo.js"), "");
+        res("FO2", () => spell.resolve("./Foo.js"));
+        counted("FO1 and FO2");
+
+        // bar.js is renamed to Bar.js after its directory was listed. The next miss in that
+        // directory reads the name again.
+        write(path.join("rename", "bar.js"), "module.exports = { v: 'bar' };");
+        const rename = requireFrom("rename");
+        res("CR1", () => rename.resolve("./bar.js"));
+        fs.renameSync(path.join("rename", "bar.js"), path.join("rename", "Bar.js"));
+        res("CR2", () => rename.resolve("./nope.js"));
+        res("CR3", () => rename.resolve("./Bar.js"));
+        res("CR4", () => rename.resolve("./bar.js"));
+        try {
+          console.log("CR5 OK", rename("./Bar.js").v);
+        } catch (e) {
+          console.log("CR5 ERR", e.code);
+        }
+        counted("CR1 to CR5");
+      },
+
       async edits() {
         // An alias is added to a config file after a lookup of it missed. The file is next to
         // the importer (N) or two directories above it (A). The old retry read again the
@@ -1206,6 +1244,26 @@ describe.concurrent("a failed resolution answers as a new process does", () => {
         "RM4 OK r2/node_modules/pkg/index.js",
         // The old retry answered the four lines above too. It has no such count.
         "RM1 to RM4 lookups run again: 4",
+      ].join("\n"),
+    });
+  });
+
+  test("a name asked for in another case, and a file renamed to another case of its name", async () => {
+    expect(await runGroup("spelling")).toEqual({
+      exitCode: 0,
+      stderr: "",
+      stdout: [
+        "FO1 ERR MODULE_NOT_FOUND",
+        "FO2 OK spell/foo.js",
+        // The old retry answered each line but the two counts. It has no such count.
+        "FO1 and FO2 lookups run again: 2",
+        "CR1 OK rename/bar.js",
+        "CR2 ERR MODULE_NOT_FOUND",
+        "CR3 OK rename/Bar.js",
+        "CR4 OK rename/Bar.js",
+        "CR5 OK bar",
+        // CR2 alone: it listed the directory again, so the lookups after it found the new name at once.
+        "CR1 to CR5 lookups run again: 1",
       ].join("\n"),
     });
   });

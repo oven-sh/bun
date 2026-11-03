@@ -114,6 +114,9 @@ const SHARED_TAIL_PARAMS: &[ParamType] = &[
     clap::param!("--dry-run                             Perform a dry run without making changes"),
     clap::param!("--frozen-lockfile                     Disallow changes to lockfile"),
     clap::param!(
+        "--allow-unused-patches                Warn instead of failing when a configured patch matches no package"
+    ),
+    clap::param!(
         "-f, --force                           Always request the latest versions from the registry & reinstall all dependencies"
     ),
     clap::param!(
@@ -832,6 +835,7 @@ pub struct CommandLineArguments {
     pub(crate) offline: bool,
     pub(crate) prefer_offline: bool,
     pub(crate) ignore_scripts: bool,
+    pub(crate) allow_unused_patches: bool,
     pub(crate) trusted: bool,
     pub(crate) no_summary: bool,
     pub(crate) latest: bool,
@@ -1586,6 +1590,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             Options::LogLevel::Default
         };
         cli.ignore_scripts = args.flag(b"--ignore-scripts");
+        cli.allow_unused_patches = args.flag(b"--allow-unused-patches");
         cli.trusted = args.flag(b"--trust");
         cli.no_summary = args.flag(b"--no-summary");
         cli.ca = args.options(b"--ca");

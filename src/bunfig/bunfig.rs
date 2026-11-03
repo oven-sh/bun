@@ -1573,6 +1573,12 @@ impl<'a> Parser<'a, '_> {
                 install.concurrent_scripts = if n == 0 { None } else { Some(n) };
             }
         }
+        if let Some(v) = install_obj
+            .get(b"allowUnusedPatches")
+            .and_then(|e| e.as_bool())
+        {
+            install.allow_unused_patches = Some(v);
+        }
         if let Some(v) = install_obj.get(b"ignoreScripts").and_then(|e| e.as_bool()) {
             install.ignore_scripts = Some(v);
         }

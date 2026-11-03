@@ -7496,8 +7496,9 @@ try {
       ["component.html", "{a, plural, ", "=0 {b} ", "}"],
     ];
     const texts = shapes.map(([, before, unit, after]) => before + unit.repeat(count) + after);
+    // Too long for a line, so that it is parsed and laid out.
     const ordinary =
-      '<div class="a b">\n  <p>The quick brown fox <b>jumps</b> over the <a href="c">lazy dog</a>.</p>\n  <img src="d" alt="e" />\n</div>\n';
+      '<div class="a b">\n  <p>The quick brown fox <b>jumps</b> over the <a href="c">lazy dog</a>, and then <i>once more</i> for good measure.</p>\n  <img src="d" alt="e" style="f:g" />\n</div>\n';
     const length = Math.ceil(texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length);
     const run = (text: (index: number) => string) =>
       format(Object.fromEntries(shapes.map(([ending], index) => [`${index}.${ending}`, text(index)])), ["--check"]);
@@ -7565,6 +7566,26 @@ try {
         await run(() => ordinary.repeat(length / ordinary.length)),
       ];
       expect(slowdown(odd, plain)).toBeLessThan(6);
+    },
+    120_000,
+  );
+
+  // A search for two bytes is so fast that it takes a long text to tell, and a text of its own.
+  test.each<[string, string, string[]]>([
+    ["vue", "<p>{{ a</p>\n", ["--embedded-language-formatting=off"]],
+    ["vue", "<p>{{ a</p>\n", []],
+    ["vue", "<p>{{ 'a</p>\n", []],
+    ["html", "<p>{{ a</p>\n", []],
+    ["html", "<title>a\n", []],
+  ])(
+    "the end of what is opened on every line is not looked for in all of the text: .%s %j %j",
+    async (ending, unit, flags) => {
+      const count = isDebug || isASAN ? 500 : 40_000;
+      const run = (times: number) =>
+        format({ [`a.${ending}`]: `<template>\n${unit.repeat(times)}</template>\n` }, ["--check", ...flags]);
+      const [long, short] = [await run(4 * count), await run(count)];
+      // 4 when all is well, 12 when it is not.
+      expect(slowdown(long, short)).toBeLessThan(7);
     },
     120_000,
   );

@@ -524,6 +524,13 @@ static JSValue handleVirtualModuleResult(
             if (scope.exception()) [[unlikely]] {
                 return rejectOrResolve({});
             }
+            if (exports == exportsObject) {
+                JSC::JSModuleLoader* loader = Bun::moduleLoaderOf(globalObject, scope, commonJSModule->moduleGraph());
+                RETURN_IF_EXCEPTION(scope, {});
+                // Like import(), require() then returns the namespace object of the loaded module, not the factory's object.
+                if (Bun::isESModulePatchedByMockModule(loader, specifier->toWTFString(BunString::ZeroCopy), object))
+                    return jsNumber(-1);
+            }
             if (exports) {
                 commonJSModule->setExportsObject(exports);
                 commonJSModule->hasEvaluated = true;
@@ -844,7 +851,7 @@ static JSValue requireVirtualModule(
     JSValue promiseOrCommonJSModule = handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, specifier, referrer, fetch, wasModuleMock, target);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // If we assigned module.exports to the virtual module, or gave the loader its source, we're done here.
+    // If we assigned module.exports to the virtual module, or the loader has the module or its source, we're done here.
     if (promiseOrCommonJSModule == target || promiseOrCommonJSModule.isNumber()) {
         RELEASE_AND_RETURN(scope, promiseOrCommonJSModule);
     }

@@ -620,6 +620,11 @@ pub struct ByteRangeMapping {
     pub source_url: Utf8Bytes<'static>,
     /// `bun test --aot --coverage`: JSC has compiled no text of the file, or not every time it was loaded.
     compiled: Option<CompiledCounts>,
+    /// Of the text. `SavedSourceMap` holds a map as long as a `SourceProvider` of the text lives, and the report
+    /// is made when many are gone.
+    source_map: Option<std::sync::Arc<ParsedSourceMap>>,
+    /// A text whose provider reads the map when it is asked (a `// @bun` file). The report asks if it needs the map.
+    unread_source_map: Option<bun_jsc::saved_source_map::SavedText>,
 }
 
 /// How often the parts of a file ran as compiled code. The offsets count code units of the file as it is written, which is what the
@@ -836,10 +841,12 @@ impl ByteRangeMapping {
     ) -> Result<Report<'_>, bun_alloc::AllocError> {
         let source_url = self.source_url.slice();
         let saved_source_map = || {
-            bun_jsc::VirtualMachine::VirtualMachine::get()
-                .as_mut()
-                .source_mappings()
-                .get(source_url)
+            self.source_map.clone().or_else(|| {
+                bun_jsc::VirtualMachine::VirtualMachine::get()
+                    .as_mut()
+                    .source_mappings()
+                    .read(self.unread_source_map?)
+            })
         };
         let source_map: Option<std::sync::Arc<ParsedSourceMap>> = if ignore_sourcemap {
             None
@@ -1063,15 +1070,18 @@ impl ByteRangeMapping {
             source_hash,
             source_url,
             compiled: None,
+            source_map: None,
+            unread_source_map: None,
         }
     }
 
-    /// For a file that ran as compiled code. `transpiled` is what JSC would have compiled of `text`, and its source map is saved.
+    /// For a file that ran as compiled code. `transpiled` is what JSC would have compiled of `text`, and `source_map` its source map.
     /// `ranges` and `counts`: `CompiledCounts::parse`.
     pub fn add_compiled_file(
         path: &[u8],
         text: &[u8],
         transpiled: &bun_core::String,
+        source_map: Option<std::sync::Arc<ParsedSourceMap>>,
         already_bundled: bool,
         ranges: &[u8],
         counts: &[u64],
@@ -1083,6 +1093,8 @@ impl ByteRangeMapping {
             &bun_core::StringView::from_bytes(path),
             transpiled,
             None,
+            core::ptr::null(),
+            source_map,
             already_bundled,
         );
         this.compiled = Some(compiled);
@@ -1098,11 +1110,7 @@ impl ByteRangeMapping {
                 }
                 .for_each_object_brace(|brace| self.set_executable(brace.original));
             }
-        } else if let Some(source_map) = bun_jsc::VirtualMachine::VirtualMachine::get()
-            .as_mut()
-            .source_mappings()
-            .get(self.source_url.slice())
-        {
+        } else if let Some(source_map) = self.source_map.clone() {
             source_map.for_each_object_brace(|brace| self.set_executable(brace.generated));
         }
     }
@@ -1287,16 +1295,27 @@ extern "C" fn ByteRangeMapping__generate(
     str_: &bun_core::String,
     source_contents_str: &bun_core::String,
     source_id: i32,
+    source_provider: bun_jsc::saved_source_map::Provider,
     already_bundled: bool,
 ) {
-    find_or_insert(str_, source_contents_str, Some(source_id), already_bundled);
+    find_or_insert(
+        str_,
+        source_contents_str,
+        Some(source_id),
+        source_provider,
+        None,
+        already_bundled,
+    );
 }
 
-/// The entry of the file with that text, which JSC knows under `source_id` too.
+/// The entry of the file with that text, which JSC knows under `source_id` too. The map of the text is the one
+/// that `source_provider` registered, or `source_map` when no provider holds the text.
 fn find_or_insert(
     str_: &bun_core::String,
     source_contents_str: &bun_core::String,
     source_id: Option<i32>,
+    source_provider: bun_jsc::saved_source_map::Provider,
+    source_map: Option<std::sync::Arc<ParsedSourceMap>>,
     already_bundled: bool,
 ) -> &'static mut ByteRangeMapping {
     // SAFETY: thread_map() returns a pointer into this thread's owned Box<HashMap>;
@@ -1308,6 +1327,24 @@ fn find_or_insert(
     let hash = bun_wyhash::hash(source_url.slice());
     let source_contents = source_contents_str.to_utf8();
     let source_hash = bun_wyhash::hash(source_contents.slice());
+    // Taken now: the provider can be gone when the report is made. What a provider has to read (a `// @bun` file
+    // reads the map it links to) waits until the report asks.
+    let mut unread_source_map = None;
+    let source_map = source_map.or_else(|| {
+        use bun_jsc::saved_source_map::Saved;
+        let saved = bun_jsc::VirtualMachine::VirtualMachine::get()
+            .as_mut()
+            .source_mappings()
+            .peek(source_provider);
+        match saved {
+            Saved::Map(map) => Some(map),
+            Saved::NotRead(text) => {
+                unread_source_map = Some(text);
+                None
+            }
+            Saved::None => None,
+        }
+    });
 
     // Another text replaces the entry: the line table and the saved source map describe one text.
     if map
@@ -1316,12 +1353,19 @@ fn find_or_insert(
     {
         let existing = map.get_mut(&hash).unwrap();
         existing.source_ids.extend(source_id);
+        // The same text again, of a file that may have other comments now.
+        if source_map.is_some() || unread_source_map.is_some() {
+            existing.source_map = source_map;
+            existing.unread_source_map = unread_source_map;
+        }
         return existing;
     }
 
     let mut new_value = ByteRangeMapping::compute(source_contents_str, source_hash, 0, source_url);
     new_value.source_ids.clear();
     new_value.source_ids.extend(source_id);
+    new_value.source_map = source_map;
+    new_value.unread_source_map = unread_source_map;
     // `node:inspector` turns the profiler on too. Nothing is marked for it.
     if bun_jsc::VirtualMachine::VirtualMachine::get()
         .as_mut()

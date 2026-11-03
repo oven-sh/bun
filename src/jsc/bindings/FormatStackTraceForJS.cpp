@@ -272,7 +272,7 @@ WTF::String formatStackTrace(
                 if (globalObject && !sourceURLForFrame.isEmpty()) {
                     // https://github.com/oven-sh/bun/issues/3595
                     if (!sourceURLForFrame.isEmpty()) {
-                        remappedFrame.source_url = Bun::toStringRef(sourceURLForFrame);
+                        Zig::setSourceOfParserError(remappedFrame, vm, sourceURLForFrame);
                         remappedFrames.remap(getBunVM());
 
                         sourceURLForFrame = remappedFrame.source_url.toWTFString();
@@ -367,7 +367,8 @@ WTF::String formatStackTrace(
             }
         }
 
-        sourceURLs[i] = Zig::sourceURL(vm, frame);
+        auto source = Zig::sourceOf(vm, frame);
+        sourceURLs[i] = source.url;
 
         bool isDefinitelyNotRunninginNodeVMGlobalObject = globalObject == globalObjectForFrame;
         bool isDefaultGlobalObjectInAFinalizer = (globalObject && !lexicalGlobalObject && !errorInstance);
@@ -376,7 +377,7 @@ WTF::String formatStackTrace(
             if (!sourceURLs[i].isEmpty()) {
                 remappedFrame.position.line_zero_based = OrdinalNumber::fromOneBasedInt(originalLineColumns[i].line).zeroBasedInt();
                 remappedFrame.position.column_zero_based = OrdinalNumber::fromOneBasedInt(originalLineColumns[i].column).zeroBasedInt();
-                remappedFrame.source_url = Bun::toStringRef(sourceURLs[i]);
+                Zig::setSource(remappedFrame, source);
                 anyRemap = true;
             }
         }
@@ -534,7 +535,8 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
         ZigStackFrame& frame = remappedFrames[i];
         JSCStackFrame& visibleFrame = stackTrace.at(i);
         const JSC::StackFrame& stackFrame = visibleFrame.stackFrame();
-        sourceURLs[i] = Zig::sourceURL(vm, stackFrame);
+        auto source = Zig::sourceOf(vm, stackFrame);
+        sourceURLs[i] = source.url;
         didRemap[i] = false;
         frame.position.line_zero_based = -1;
         frame.position.column_zero_based = -1;
@@ -566,7 +568,7 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
             }
 
             if (!sourceURLs[i].isEmpty()) {
-                frame.source_url = Bun::toStringRef(sourceURLs[i]);
+                Zig::setSource(frame, source);
                 didRemap[i] = true;
                 anyRemap = true;
             }
@@ -703,7 +705,7 @@ void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull s
     ZigStackFrame& frame = frames[0];
     frame.position.line_zero_based = line.zeroBasedInt();
     frame.position.column_zero_based = column.zeroBasedInt();
-    frame.source_url = Bun::toStringRef(sourceURL);
+    Zig::setSource(frame, Zig::sourceOf(*sourceProvider));
 
     frames.remap(Bun::vm(vm));
 

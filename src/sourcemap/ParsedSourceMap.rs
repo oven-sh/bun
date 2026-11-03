@@ -1,11 +1,9 @@
 use core::ffi::c_void;
-use core::fmt;
 
 use crate::Ordinal;
 use crate::internal_source_map::ObjectBrace;
 
 use crate::mapping;
-use crate::vlq::VLQ;
 use crate::{
     InternalSourceMap, Mapping, ParseUrl, ParseUrlResultHint, SourceMapLoadHint, SourceProvider,
     SourceProviderMap,
@@ -43,13 +41,11 @@ pub struct ParsedSourceMap {
 impl Drop for ParsedSourceMap {
     fn drop(&mut self) {
         // When the mappings are backed
-        // by an `InternalSourceMap` blob the blob is *owned* (allocated by
-        // `SavedSourceMap::put_mappings`) unless this is the
+        // by an `InternalSourceMap` blob the blob is *owned* (what the printer
+        // made, see `SourceMapBlob::into_parsed`) unless this is the
         // standalone-module-graph case where the bytes live in the embedded
         // section. The doc on the `internal` field only describes that latter
-        // borrowed case; the owned case is the runtime-transpiler upgrade in
-        // `SavedSourceMap::get_with_content`, which previously stranded the
-        // blob and showed up as the `print_ast` LSan suppression.
+        // borrowed case.
         //
         // `mappings`/`external_source_names` free via their own `Drop`.
         if let Some(ism) = self.internal.take() {
@@ -76,7 +72,7 @@ impl Default for ParsedSourceMap {
 /// [`SourceContentPtr`]: one monomorphization of [`erased_get_source_map`]
 /// per [`SourceProvider`] impl. The handle round-trips as a plain pointer
 /// without this module naming any concrete provider type.
-type ErasedGetSourceMap = unsafe fn(
+pub type ErasedGetSourceMap = unsafe fn(
     provider: *mut c_void,
     source_filename: &[u8],
     load_hint: SourceMapLoadHint,
@@ -120,6 +116,15 @@ impl AnySourceProvider {
         }
     }
 
+    /// A map that `get_source_map` reads for `ptr` without a [`SourceProvider`] impl (one that is embedded in the
+    /// executable).
+    pub fn from_fn(ptr: *mut c_void, get_source_map: ErasedGetSourceMap) -> AnySourceProvider {
+        AnySourceProvider {
+            ptr,
+            get_source_map,
+        }
+    }
+
     pub fn ptr(&self) -> *mut c_void {
         self.ptr
     }
@@ -130,10 +135,10 @@ impl AnySourceProvider {
         load_hint: SourceMapLoadHint,
         result: ParseUrlResultHint,
     ) -> Option<ParseUrl> {
-        // SAFETY: `ptr` and `get_source_map` were packed together by
-        // `SourceContentPtr::from_source_provider`; the provider FFI handle
-        // outlives any `ParsedSourceMap` that stores it, so it is valid for
-        // the duration of this call.
+        // SAFETY: `ptr` and `get_source_map` were packed together by a constructor of this type or by
+        // `SourceContentPtr::from_source_provider`. The provider is live: `bun_jsc::SavedSourceMap` gives this out
+        // for a provider that is registered there, to a caller that asks before the JS thread can destroy one. A
+        // `ParsedSourceMap` that outlives its provider (a coverage row holds one) is never asked.
         unsafe { (self.get_source_map)(self.ptr, source_filename, load_hint, result) }
     }
 }
@@ -196,28 +201,6 @@ impl SourceContentPtr {
 }
 
 impl ParsedSourceMap {
-    /// Thread-safe ref-count helper.
-    ///
-    /// Every
-    /// table-stored `ParsedSourceMap` is allocated via `Arc::into_raw` (see
-    /// `SavedSourceMap::get_with_content` and `ParseUrl.map:
-    /// Option<Arc<ParsedSourceMap>>`), so the strong count lives in the `Arc`
-    /// header *before* the data pointer. Reconstituting that pointer with
-    /// `heap::take` would free an interior offset and trips
-    /// `mi_validate_block_from_ptr` (mimalloc free.c:123). Route through
-    /// `Arc::decrement_strong_count` instead — same observable
-    /// `deref()` semantics, with the allocator that
-    /// actually owns the bytes.
-    ///
-    /// # Safety
-    /// `this` must come from `Arc::<Self>::into_raw` and must still have at
-    /// least one strong ref. Drops the allocation when the count reaches 0.
-    #[inline]
-    pub unsafe fn deref(this: *mut Self) {
-        // SAFETY: caller contract — `this` is a live `Arc::into_raw` pointer.
-        unsafe { std::sync::Arc::decrement_strong_count(this.cast_const()) };
-    }
-
     /// Construct a `ParsedSourceMap` whose mappings are backed by an
     /// `InternalSourceMap` blob (e.g. one embedded in a `bun build --compile`
     /// executable's standalone module graph) instead of a materialized
@@ -286,70 +269,5 @@ impl ParsedSourceMap {
         core::mem::size_of::<ParsedSourceMap>()
             + mappings_cost
             + self.external_source_names.len() * core::mem::size_of::<Box<[u8]>>()
-    }
-
-    pub(crate) fn write_vlqs<W: bun_io::Write + ?Sized>(
-        &self,
-        writer: &mut W,
-    ) -> bun_io::Result<()> {
-        if let Some(ism) = &self.internal {
-            let mut buf = bun_core::MutableString::init_empty();
-            ism.append_vlq_to(&mut buf);
-            writer.write_all(buf.list.as_slice())?;
-            return Ok(());
-        }
-        let mut last_col: i32 = 0;
-        let mut last_src: i32 = 0;
-        let mut last_ol: i32 = 0;
-        let mut last_oc: i32 = 0;
-        let mut current_line: i32 = 0;
-        debug_assert_eq!(
-            self.mappings.generated().len(),
-            self.mappings.original().len()
-        );
-        debug_assert_eq!(
-            self.mappings.generated().len(),
-            self.mappings.source_index().len()
-        );
-        for (i, ((gn, orig), source_index)) in self
-            .mappings
-            .generated()
-            .iter()
-            .zip(self.mappings.original())
-            .zip(self.mappings.source_index())
-            .enumerate()
-        {
-            if current_line != gn.lines.zero_based() {
-                debug_assert!(gn.lines.zero_based() > current_line);
-                let inc = gn.lines.zero_based() - current_line;
-                writer.splat_byte_all(b';', usize::try_from(inc).expect("int cast"))?;
-                current_line = gn.lines.zero_based();
-                last_col = 0;
-            } else if i != 0 {
-                writer.write_byte(b',')?;
-            }
-            writer.write_all(VLQ::encode(gn.columns.zero_based() - last_col).slice())?;
-            last_col = gn.columns.zero_based();
-            writer.write_all(VLQ::encode(*source_index - last_src).slice())?;
-            last_src = *source_index;
-            writer.write_all(VLQ::encode(orig.lines.zero_based() - last_ol).slice())?;
-            last_ol = orig.lines.zero_based();
-            writer.write_all(VLQ::encode(orig.columns.zero_based() - last_oc).slice())?;
-            last_oc = orig.columns.zero_based();
-        }
-        Ok(())
-    }
-
-    pub fn format_vlqs(&self) -> VlqsFmt<'_> {
-        VlqsFmt(self)
-    }
-}
-
-pub struct VlqsFmt<'a>(&'a ParsedSourceMap);
-
-impl<'a> fmt::Display for VlqsFmt<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut adapter = bun_io::FmtAdapter::new(f);
-        self.0.write_vlqs(&mut adapter).map_err(|_| fmt::Error)
     }
 }

@@ -11,7 +11,6 @@ class DevServerSourceProvider;
 
 // Implemented on the Rust side to register the source provider.
 extern "C" void Bun__addDevServerSourceProvider(void* bun_vm, DevServerSourceProvider* opaque_source_provider, const BunString* specifier);
-extern "C" void Bun__removeDevServerSourceProvider(void* bun_vm, DevServerSourceProvider* opaque_source_provider, const BunString* specifier);
 
 class DevServerSourceProvider final : public JSC::StringSourceProvider {
 public:
@@ -27,10 +26,7 @@ public:
     {
         auto provider = adoptRef(*new DevServerSourceProvider(source, sourceMapJSONPtr, sourceMapJSONLength, sourceOrigin, WTF::move(sourceURL), startPosition, sourceType));
         auto* zigGlobalObject = uncheckedDowncast<::Zig::GlobalObject>(globalObject);
-        auto specifier = Bun::toString(provider->sourceURL());
-        provider->m_bunVM = zigGlobalObject->bunVM();
-        provider->m_specifier = specifier;
-        Bun__addDevServerSourceProvider(provider->m_bunVM, provider.ptr(), &specifier);
+        provider->m_sourceMap = Bun::SourceMapRegistration::lazy(Bun__addDevServerSourceProvider, zigGlobalObject->bunVM(), provider.get());
         return provider;
     }
 
@@ -59,19 +55,10 @@ private:
     {
     }
 
-    ~DevServerSourceProvider()
-    {
-        if (m_bunVM) {
-            Bun__removeDevServerSourceProvider(m_bunVM, this, &m_specifier);
-        }
-    }
-
     MiString m_sourceMapJSON;
-    // The Rust VirtualMachine, captured at creation. Not the GC-allocated
-    // Zig::GlobalObject: this destructor runs from JSC sweep, by which point
-    // the global object cell may already have been swept.
-    void* m_bunVM { nullptr };
-    BunString m_specifier;
+    // Holds the Rust VirtualMachine, not the GC-allocated Zig::GlobalObject: it is destroyed from JSC's sweep, by
+    // which point the global object cell may already have been swept.
+    Bun::SourceMapRegistration m_sourceMap;
 };
 
 } // namespace Bake

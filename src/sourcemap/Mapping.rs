@@ -303,6 +303,9 @@ pub struct Lookup {
     /// Owned by default_allocator always
     /// use `get_source_code` to access this as a Slice
     pub prefetched_source_code: Option<Box<[u8]>>,
+    /// Where the code that `source_map` maps is, when `source_map` names its sources: a name is a path from there.
+    /// Not the URL that a frame shows, which a `//# sourceURL` in the code changes.
+    pub generated_url: Utf8Bytes<'static>,
 }
 
 impl Lookup {
@@ -311,7 +314,8 @@ impl Lookup {
     ///
     /// - `bun build --sourcemap`, it is another file on disk
     /// - `bun build --compile --sourcemap`, it is an embedded file.
-    pub fn display_source_url_if_needed(&self, base_filename: &[u8]) -> Option<bun_core::String> {
+    pub fn display_source_url_if_needed(&self) -> Option<bun_core::String> {
+        let base_filename: &[u8] = &self.generated_url;
         let source_map = self.source_map.as_deref()?;
         // See doc comment on `external_source_names`
         if source_map.external_source_names.len() == 0 {
@@ -343,7 +347,8 @@ impl Lookup {
     ///
     /// This data is freed after printed on the assumption that printing
     /// errors to the console are rare (this isnt used for error.stack)
-    pub fn get_source_code(self, base_filename: &[u8]) -> Option<Utf8Bytes<'static>> {
+    pub fn get_source_code(self) -> Option<Utf8Bytes<'static>> {
+        let base_filename: &[u8] = &self.generated_url;
         let bytes: Vec<u8> = 'bytes: {
             if let Some(code) = self.prefetched_source_code {
                 break 'bytes code.into_vec();

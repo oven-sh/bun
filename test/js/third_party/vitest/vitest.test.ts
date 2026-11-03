@@ -141,4 +141,69 @@ describe.concurrent("vitest", () => {
     // classify() are covered, the negative branch and neverCalled() are not.
     expect(stdout).toMatch(/math\.ts\s*\|\s*50\s*\|\s*75\s*\|\s*66\.66\s*\|\s*55\.55\s*\|\s*7,15-18/);
   }, 120_000);
+
+  // vitest runs a module of the project with vm.runInThisContext(code, { filename }), and a require() from another
+  // module of the project loads the same file natively. A frame of the first is a position in vitest's code, and Bun
+  // has a source map for what it loaded under that name.
+  test("reports the line of a module that is also loaded with require()", async () => {
+    const price = [
+      '"use strict";',
+      "",
+      "const TAX = 0.2;",
+      "",
+      "/** Adds tax to a net price. */",
+      "function withTax(net) {",
+      "  // reject bad input",
+      '  if (typeof net !== "number" || Number.isNaN(net)) {',
+      '    throw new TypeError("net must be a number, got " + typeof net);',
+      "  }",
+      "",
+      "  return net * (1 + TAX);",
+      "}",
+      "",
+      "/** Sums a list of net prices, tax included. */",
+      "function total(items) {",
+      "  let sum = 0;",
+      "",
+      "  for (const item of items) {",
+      "    sum += withTax(item);",
+      "  }",
+      "",
+      "  return sum;",
+      "}",
+      "",
+      "module.exports = { withTax, total };",
+      "",
+    ].join("\n");
+    using dir = tempDir("vitest-line", {
+      "package.json": JSON.stringify({ name: "vitest-fixture", private: true, type: "module" }),
+      "src/price.cjs": price,
+      "src/index.cjs": [
+        '"use strict";',
+        'const { total } = require("./price.cjs");',
+        "module.exports = { checkout: cart => ({ total: total(cart.items) }) };",
+        "",
+      ].join("\n"),
+      "test/app.test.ts": [
+        'import { test, expect } from "vitest";',
+        'import { checkout } from "../src/index.cjs";',
+        'import { withTax } from "../src/price.cjs";',
+        "",
+        'test("checkout", () => {',
+        "  expect(checkout({ items: [10] }).total).toBe(12);",
+        "});",
+        "",
+        'test("withTax rejects a string", () => {',
+        '  expect(withTax("12")).toBe(14.4);',
+        "});",
+        "",
+      ].join("\n"),
+    });
+    mkdirSync(join(String(dir), "node_modules"), { recursive: true });
+    symlinkSync(join(testNodeModules, "vitest"), join(String(dir), "node_modules", "vitest"), "junction");
+    const { stdout, stderr, exitCode } = await runVitest(String(dir), []);
+    const frame = (stdout + stderr).split("\n").find(line => line.includes("src/price.cjs"));
+    expect(frame?.trim()).toBe("❯ withTax src/price.cjs:9:11");
+    expect(exitCode).toBe(1);
+  }, 90_000);
 });

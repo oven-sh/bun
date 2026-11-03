@@ -1,89 +1,151 @@
 #![warn(unused_must_use)]
 
 use core::ffi::c_void;
+use core::hash::{BuildHasherDefault, Hasher};
 use std::sync::Arc;
 
-use bun_collections::{HashMap, IdentityContext, TaggedPtrUnion};
-use bun_core::MutableString;
 use bun_core::Ordinal;
-use bun_ptr::tagged_pointer::TagType;
 use bun_sourcemap::parsed_source_map::AnySourceProvider;
-use bun_sourcemap::{self as SourceMap, InternalSourceMap, ParsedSourceMap};
-use bun_threading::Mutex;
-use bun_wyhash::hash;
+use bun_sourcemap::{self as SourceMap, ParsedSourceMap};
+use bun_threading::guarded::GuardedLock;
+use bun_threading::{Guarded, Mutex};
 
+use crate::resolved_source::SourceMapBlob;
+
+/// A `JSC::SourceProvider`: the object that holds a text JavaScriptCore runs. A frame names the provider of its
+/// code, and that is how its source map is found, never by the name of the file.
+pub type Provider = *const c_void;
+
+/// The source maps of the code of one VM.
+///
+/// A provider registers the map of its text when it is made, and leaves when its `Bun::SourceMapRegistration` is
+/// destroyed with it. Text that a caller names after a loaded file (`module._compile`, `node:vm`, `//# sourceURL`)
+/// is in a provider of its own, which has no map here.
+///
+/// Providers with one source URL and one text share a map: that of the one that registered last. JavaScriptCore
+/// runs a module that is loaded again on the code of an earlier load when URL and text are the same
+/// (`JSModuleRecord::getOrMakeExecutable`), whatever was loaded under the URL in between, and a save that adds a
+/// comment or a type changes the map and not the text: the frames of the new load then name the provider of the
+/// old one.
 #[derive(Default)]
 pub struct SavedSourceMap {
-    /// Only accessed between [`Self::lock`] and [`Self::unlock`].
-    map: HashTable,
-    mutex: Mutex,
+    inner: Guarded<Inner>,
 }
 
-impl SavedSourceMap {
+#[derive(Default)]
+struct Inner {
+    /// By address. Each is the address of a live provider: a provider is destroyed by the JS thread, and its
+    /// registration takes it out of here first.
+    providers: Table<Entry>,
+    /// By `Entry::text`.
+    texts: Table<Text>,
+    /// By the hash of a source URL: the first of the list of its texts (`Text::older`).
+    urls: Table<u64>,
+    /// How many texts there were. A text has the number it was counted with, and none has 0.
+    texts_made: u64,
+}
+
+struct Entry {
+    /// The number of the text in `Inner::texts`.
+    text: u64,
+    /// The providers of a text are a ring. `older` registered before this one, and `older` of the first is the
+    /// last. Those that only share the map (`SavedSourceMap::alias`) come after all that registered one.
+    older: usize,
+    newer: usize,
+    /// Reads the map of the text through this provider, if it registered as one that does.
+    loader: Option<AnySourceProvider>,
+}
+
+struct Text {
+    map: Map,
+    /// The provider that registered last. One that only shares the map when no other is left.
+    head: usize,
+    /// `Bun__SourceProvider__hash`: two texts with different ones are different.
+    hash: u32,
+    /// Another text registered under the URL after this one did. The file under the URL is that text now.
+    superseded: bool,
+    /// The hash of the source URL.
+    url: u64,
+    /// The texts of a URL are a list. The one that registered last is the first, and 0 ends the list.
+    older: u64,
+    newer: u64,
+}
+
+enum Map {
+    /// What the printer made with the text.
+    Printed(SourceMapBlob),
+    /// `Printed`, in the refcounted shell that readers hold.
+    Parsed(Arc<ParsedSourceMap>),
+    /// `Entry::loader` of the head reads it when a position is first asked for.
+    NotRead,
+    /// What the head read. It refers to the head. When another text registers under the URL next, this goes back
+    /// to `NotRead`: a position in the earlier text is rare, and the head reads again for one. A `.map` file beside
+    /// a file that was replaced is then read as it is on disk.
+    Read(Arc<ParsedSourceMap>),
+    /// There is none: do not look again.
+    Missing,
+}
+
+impl Map {
+    /// `Printed` becomes `Parsed`. No VLQ decode: the blob moves into a refcounted shell, so that callers can hold it
+    /// while the table changes.
+    fn parse_printed(&mut self) -> Option<Arc<ParsedSourceMap>> {
+        let Map::Printed(blob) = core::mem::replace(self, Map::Missing) else {
+            unreachable!()
+        };
+        let map = blob.into_parsed()?;
+        *self = Map::Parsed(Arc::clone(&map));
+        Some(map)
+    }
+}
+
+/// `SavedSourceMap::peek`.
+pub enum Saved {
+    Map(Arc<ParsedSourceMap>),
+    /// A provider reads it when `SavedSourceMap::read` asks.
+    NotRead(SavedText),
+    None,
+}
+
+/// A text that has a map, for `SavedSourceMap::read`: the text can be gone by then.
+#[derive(Clone, Copy)]
+pub struct SavedText(u64);
+
+unsafe extern "C" {
+    /// `provider->sourceURL() == url`.
+    fn Bun__SourceProvider__hasSourceURL(provider: Provider, url: &bun_core::String) -> bool;
+    /// The source URL and the text of both are the same.
+    fn Bun__SourceProvider__hasSameSource(a: Provider, b: Provider) -> bool;
+    /// `provider->hash()`, of the text. JavaScriptCore asks for the same when it compiles the text.
+    fn Bun__SourceProvider__hash(provider: Provider) -> u32;
+    /// `provider->sourceURL()`.
+    fn Bun__SourceProvider__sourceURL(provider: Provider) -> bun_core::String;
+}
+
+/// The keys are addresses, hashes and counts. hashbrown takes the bucket from the low bits and the tag from the
+/// high ones.
+#[derive(Default)]
+struct KeyHasher(u64);
+
+impl Hasher for KeyHasher {
     #[inline]
-    pub(crate) fn lock(&mut self) {
-        self.mutex.lock();
-        self.map.unlock_pointers();
+    fn write(&mut self, _: &[u8]) {
+        unreachable!()
     }
-
     #[inline]
-    pub(crate) fn unlock(&mut self) {
-        self.map.lock_pointers();
-        self.mutex.unlock();
+    fn write_u64(&mut self, key: u64) {
+        let hash = key.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        self.0 = hash ^ (hash >> 32);
+    }
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
     }
 }
 
-/// `InternalSourceMap` is the storage for runtime-transpiled modules.
-/// `AnySourceProvider` (boxed — the box is table-owned, the provider FFI
-/// handle inside it borrowed) is a registered lazy external source provider.
-/// `ParsedSourceMap` is materialized lazily from such a provider for sources
-/// that ship their own external `.map`.
-pub(crate) type Value = TaggedPtrUnion<ValueTypes>;
-
-/// Local type-list marker so `TypeList`/`UnionMember` impls satisfy orphan
-/// rules — `bun_ptr::impl_tagged_ptr_union!` would impl on a tuple of foreign
-/// types (all three members live in `bun_sourcemap`), which the coherence
-/// checker rejects from this crate. Tags are `1024 - i`.
-pub(crate) struct ValueTypes;
-
-impl bun_ptr::tagged_pointer::TypeList for ValueTypes {}
-impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for ParsedSourceMap {
-    const TAG: TagType = 1024;
-}
-impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for AnySourceProvider {
-    const TAG: TagType = 1023;
-}
-impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for InternalSourceMap {
-    const TAG: TagType = 1022;
-}
-
-impl SavedSourceMap {
-    /// Releases whatever ownership a table value carries: the table's strong
-    /// ref for a `ParsedSourceMap`, the blob for an `InternalSourceMap`, or
-    /// the box for an `AnySourceProvider` (whose provider FFI handle is
-    /// borrowed and stays with its owner; see [`Self::put_source_provider`]).
-    ///
-    /// # Safety
-    /// `value` must have been stored in the table by us, be live, and not be
-    /// released again.
-    unsafe fn release_value(value: Value) {
-        if let Some(parsed) = value.get::<ParsedSourceMap>() {
-            // SAFETY: per fn contract — the table held one strong ref.
-            unsafe { ParsedSourceMap::deref(parsed) };
-        } else if let Some(ism) = value.get::<InternalSourceMap>() {
-            // The blob was heap-allocated via `put_mappings`
-            // (`Box<[u8]>::into_raw`); the tagged pointer's address IS the
-            // blob's data pointer (InternalSourceMap is a thin view).
-            (InternalSourceMap {
-                data: ism as *const u8,
-            })
-            .free_owned();
-        } else if let Some(provider) = value.get::<AnySourceProvider>() {
-            // SAFETY: the box was allocated by `put_source_provider`.
-            unsafe { bun_core::heap::destroy(provider) };
-        }
-    }
-}
+/// Entries leave with their providers, and hashbrown reclaims the slots of removed ones
+/// (`bun_collections::HashMap` only does when it grows).
+type Table<V> = bun_collections::hashbrown::HashMap<u64, V, BuildHasherDefault<KeyHasher>>;
 
 /// Thin forwarder to the leaf-crate state in
 /// `bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo` so the path
@@ -95,272 +157,434 @@ pub(crate) mod missing_source_map_note_info {
     }
 }
 
-impl SavedSourceMap {
-    /// Registers a lazy external source provider for `path`, replacing any
-    /// existing entry. The provider FFI handle is borrowed — its owner
-    /// unregisters it via [`Self::remove_source_provider`] before freeing it —
-    /// while the box holding the erased pair is owned by the table and freed
-    /// by [`Self::release_value`] on replace / remove / drop.
-    pub fn put_source_provider(&mut self, provider: AnySourceProvider, path: &[u8]) {
-        let boxed = bun_core::heap::into_raw(Box::new(provider));
-        // bun.handleOom → drop wrapper; Rust HashMap insert aborts on OOM.
-        if self.put_value(path, Value::init(boxed)).is_err() {
-            // SAFETY: the failed insert did not consume `boxed`.
-            unsafe { bun_core::heap::destroy(boxed) };
+/// Of the characters of the URL, as UTF-8: one URL is an 8-bit string in one place and a 16-bit one in another.
+fn url_key(url: &bun_core::String) -> u64 {
+    if url.is_8bit() {
+        let latin1 = url.latin1();
+        if bun_core::strings::first_non_ascii(latin1).is_none() {
+            return bun_wyhash::hash(latin1);
         }
     }
+    bun_wyhash::hash(&url.to_utf8())
+}
 
-    /// Drops the entry for `path` if it still refers to
-    /// `opaque_source_provider` — either as a registered provider entry, or
-    /// as a `ParsedSourceMap` materialized from that provider.
-    pub fn remove_source_provider(&mut self, opaque_source_provider: *mut c_void, path: &[u8]) {
-        self.lock();
-        // Note: reshaped for borrowck — explicit unlock paired manually.
-        // `get`+`remove(&key)`: the std
-        // backing has no key-slot pointer to hand out, and the key is a u64 hash
-        // we already have in hand.
-        let key = hash(path);
-        let Some(&ptr) = self.map.get(&key) else {
-            self.unlock();
-            return;
+/// What `Inner::register` finds the text of `provider` by. `url` is its source URL.
+fn text_key(provider: Provider, url: &bun_core::String) -> (u64, u32) {
+    // SAFETY: `provider` registers, so it is live.
+    (url_key(url), unsafe { Bun__SourceProvider__hash(provider) })
+}
+
+fn member(providers: &mut Table<Entry>, provider: usize) -> &mut Entry {
+    providers
+        .get_mut(&(provider as u64))
+        .expect("every provider of a ring is in the table")
+}
+
+/// Makes room for `provider` in the ring between `head` and the provider before it, which is returned.
+fn link(providers: &mut Table<Entry>, head: usize, provider: usize) -> usize {
+    let last = core::mem::replace(&mut member(providers, head).newer, provider);
+    member(providers, last).older = provider;
+    last
+}
+
+/// What a registration took out of the table, to be dropped when the lock is released.
+#[derive(Default)]
+struct Replaced(Option<Map>, Option<Map>);
+
+impl Inner {
+    /// `provider` holds a text under the source URL with the hash `url`, and `hash` is
+    /// `Bun__SourceProvider__hash` of it. `map` is its map, which `loader` reads if it is `Map::NotRead`.
+    fn register(
+        &mut self,
+        provider: Provider,
+        (url, hash): (u64, u32),
+        map: Map,
+        loader: Option<AnySourceProvider>,
+    ) -> Replaced {
+        use bun_collections::hashbrown::hash_map::Entry as Slot;
+        const LISTED: &str = "every text of a list is in the table";
+
+        let address = provider as usize;
+        debug_assert!(address != 0);
+        debug_assert!(!self.providers.contains_key(&(address as u64)));
+
+        let first = self.urls.entry(url);
+        let newest = match &first {
+            Slot::Occupied(slot) => *slot.get(),
+            Slot::Vacant(_) => 0,
         };
-        let old_value = Value::from(Some(ptr));
-        let refers_to_provider = if let Some(provider) = old_value.get::<AnySourceProvider>() {
-            // SAFETY: the box was stored by `put_source_provider` and is live
-            // while in the table.
-            core::ptr::eq(unsafe { (*provider).ptr() }, opaque_source_provider)
-        } else if let Some(parsed) = old_value.get::<ParsedSourceMap>() {
-            // SAFETY: `parsed` was stored by us and is live while in the table.
-            unsafe { (*parsed).underlying_provider }
-                .provider()
-                .is_some_and(|prov| core::ptr::eq(prov.ptr(), opaque_source_provider))
+        // The text of `provider`, if a provider of it is here.
+        let mut number = newest;
+        while number != 0 {
+            let text = self.texts.get(&number).expect(LISTED);
+            let head = text.head as Provider;
+            // SAFETY: both are live: `head` is in the table, and `provider` registers.
+            let same =
+                text.hash == hash && unsafe { Bun__SourceProvider__hasSameSource(head, provider) };
+            if same {
+                break;
+            }
+            // A hash that is not a hash of the text keeps the providers of one text apart.
+            // SAFETY: as above.
+            debug_assert!(!unsafe { Bun__SourceProvider__hasSameSource(head, provider) });
+            number = text.older;
+        }
+
+        let mut replaced = Replaced::default();
+        let mut ring = (address, address);
+        if number == 0 {
+            self.texts_made += 1;
+            number = self.texts_made;
+            self.texts.insert(
+                number,
+                Text {
+                    map,
+                    head: address,
+                    hash,
+                    superseded: false,
+                    url,
+                    older: newest,
+                    newer: 0,
+                },
+            );
         } else {
-            false
-        };
-        if refers_to_provider {
-            self.map.remove(&key);
-            // SAFETY: `old_value` was stored by us; the table's ownership of
-            // it ends here.
-            unsafe { Self::release_value(old_value) };
-        }
-        self.unlock();
-    }
-}
-
-// Keys are
-// already wyhash u64s, so use the passthrough hasher; `bun_collections`'
-// zig_hash_map uses an 80% max load factor.
-type HashTable = HashMap<u64, *mut c_void, IdentityContext<u64>>;
-
-impl bun_js_printer::OnSourceMapChunk for SavedSourceMap {
-    fn on_source_map_chunk(
-        &mut self,
-        chunk: SourceMap::Chunk,
-        source: &bun_ast::Source,
-    ) -> bun_js_printer::Result<()> {
-        self.put_mappings(source, chunk.buffer)
-    }
-}
-
-impl Drop for SavedSourceMap {
-    fn drop(&mut self) {
-        self.lock();
-        for val in self.map.values() {
-            let value = Value::from(Some(*val));
-            // SAFETY: values were stored by us and are live until table
-            // teardown.
-            unsafe { Self::release_value(value) };
-        }
-        self.unlock();
-    }
-}
-
-impl SavedSourceMap {
-    pub fn put_mappings(
-        &mut self,
-        source: &bun_ast::Source,
-        mut mappings: MutableString,
-    ) -> bun_js_printer::Result<()> {
-        // Readers trust a stored blob's header, so validate it here.
-        if !InternalSourceMap::is_valid_blob(mappings.list.as_slice()) {
-            return Ok(());
-        }
-
-        // --hot can re-read a file mid-rewrite (truncate + write) and transpile
-        // a comment-only prefix into a 0-mapping map. Overwriting a real map
-        // with that would make any still-unreported error from the previous
-        // transpile remap against nothing and leak transpiled coords. A map
-        // with no mappings can never answer a lookup, so dropping it is never
-        // worse than installing it.
-        let incoming = InternalSourceMap {
-            data: mappings.list.as_ptr(),
-        };
-        if incoming.mapping_count() == 0 {
-            self.lock();
-            let contains = self.map.contains_key(&hash(source.path.text));
-            self.unlock();
-            if contains {
-                return Ok(());
-            }
-        }
-
-        // Note: every caller MOVES an owned
-        // `Vec<u8>` here (printer chunk by value, cache hit via `mem::take`),
-        // so `into_boxed_slice()` transfers the existing allocation without
-        // re-alloc+memcpy (1.38 MB for `_tsc.js`'s cached map). `heap::alloc`
-        // is NOT a leak: ownership transfers to the table via `put_value`, and
-        // is reclaimed by `InternalSourceMap::free_owned` (see `put_value` /
-        // `Drop`). On the error path the Box is reconstituted and dropped.
-        let blob: Box<[u8]> = core::mem::take(&mut mappings.list).into_boxed_slice();
-        let blob_ptr: *mut [u8] = bun_core::heap::into_raw(blob);
-        // errdefer: on error, reconstitute and drop the Box.
-        match self.put_value(
-            source.path.text,
-            Value::init(blob_ptr.cast::<c_void>().cast::<InternalSourceMap>()),
-        ) {
-            Ok(()) => Ok(()),
-            Err(e) => {
-                // SAFETY: `blob_ptr` came from `heap::alloc` just above and was not consumed.
-                drop(unsafe { Box::<[u8]>::from_raw(blob_ptr) });
-                Err(e)
-            }
-        }
-    }
-
-    pub(crate) fn put_value(&mut self, path: &[u8], value: Value) -> bun_js_printer::Result<()> {
-        use bun_collections::zig_hash_map::MapEntry as Entry;
-
-        self.lock();
-        // Note: reshaped for borrowck — explicit unlock paired manually.
-
-        // `bun_collections::HashMap` derefs to `std::collections::HashMap`, so
-        // the std `entry()` API is used directly.
-        match self.map.entry(hash(path)) {
-            Entry::Occupied(mut o) => {
-                let old_value = Value::from(Some(*o.get()));
-                // SAFETY: `old_value` was stored by us and is live until
-                // replaced here.
-                unsafe { Self::release_value(old_value) };
-                *o.get_mut() = value.ptr();
-            }
-            Entry::Vacant(v) => {
-                v.insert(value.ptr());
-            }
-        }
-        self.unlock();
-        Ok(())
-    }
-
-    /// You must call `sourcemap.map.deref()` or you will leak memory
-    fn get_with_content(
-        &mut self,
-        path: &[u8],
-        hint: SourceMap::ParseUrlResultHint,
-    ) -> SourceMap::ParseUrl {
-        let h = hash(path);
-
-        // This lock is for the hash table
-        self.lock();
-
-        // This mapping entry is only valid while the mutex is locked
-        let Some(mapping) = self.map.get_mut(&h) else {
-            self.unlock();
-            return SourceMap::ParseUrl::default();
-        };
-
-        let tagged = Value::from(Some(*mapping));
-        let tag = tagged.tag();
-        if tag == Value::case::<InternalSourceMap>() {
-            // Runtime-transpiled module. Wrap the blob in a refcounted
-            // ParsedSourceMap shell (no VLQ decode, no Mapping.List) so callers
-            // can hold a ref while the table mutates. The shell takes ownership
-            // of the blob.
-            let ism = InternalSourceMap {
-                data: tagged.as_unchecked::<InternalSourceMap>() as *const u8,
-            };
-            // Table holds one strong ref (leaked via `into_raw`); caller gets
-            // the returned `Arc`.
-            let result = Arc::new(ParsedSourceMap::from_internal(ism));
-            *mapping = Value::init(Arc::into_raw(Arc::clone(&result))).ptr();
-            self.unlock();
-            return SourceMap::ParseUrl {
-                map: Some(result),
-                ..Default::default()
-            };
-        } else if tag == Value::case::<ParsedSourceMap>() {
-            let parsed = tagged.as_unchecked::<ParsedSourceMap>();
-            // SAFETY: pointer was stored by us via `Arc::into_raw` and is live
-            // while locked. Bump the strong count for the caller's handle.
-            let result = unsafe {
-                Arc::increment_strong_count(parsed.cast_const());
-                Arc::from_raw(parsed.cast_const())
-            };
-            self.unlock();
-            return SourceMap::ParseUrl {
-                map: Some(result),
-                ..Default::default()
-            };
-        } else if let Some(provider) = tagged.get::<AnySourceProvider>() {
-            // Copy the erased pair out while the lock is held: once unlocked,
-            // a concurrent put/remove may free the box.
-            // SAFETY: the box was stored by `put_source_provider` and is live
-            // while in the table.
-            let provider = unsafe { *provider };
-            self.unlock();
-
-            // Do not lock the mutex while we're parsing JSON!
-            // The provider FFI handle is kept alive by its owner (JSC / the
-            // registrar), which unregisters it before freeing; we did not
-            // hold a ref.
-            if let Some(parse) = provider.get_source_map(path, Default::default(), hint) {
-                if let Some(ref parsed_map) = parse.map {
-                    // The mutex is not locked. We have to check the hash table again.
-                    // Leak one strong ref into the table; `put_value` releases
-                    // the replaced provider box.
-                    let _ =
-                        self.put_value(path, Value::init(Arc::into_raw(Arc::clone(parsed_map))));
-
-                    return parse;
+            let text = self.texts.get_mut(&number).expect(LISTED);
+            text.superseded = false;
+            let head = core::mem::replace(&mut text.head, address);
+            replaced.0 = Some(core::mem::replace(&mut text.map, map));
+            ring = (head, link(&mut self.providers, head, address));
+            if number != newest {
+                // Out of its place in the list: it goes to the front.
+                let (older, newer) = (text.older, text.newer);
+                (text.older, text.newer) = (newest, 0);
+                self.texts.get_mut(&newer).expect(LISTED).older = older;
+                if older != 0 {
+                    self.texts.get_mut(&older).expect(LISTED).newer = newer;
                 }
             }
+        }
+        self.providers.insert(
+            address as u64,
+            Entry {
+                text: number,
+                older: ring.0,
+                newer: ring.1,
+                loader,
+            },
+        );
 
-            self.lock();
-            // does not have a valid source map. let's not try again
-            if let Some(removed) = self.map.remove(&h) {
-                // SAFETY: whatever occupies the slot now was stored by us;
-                // the table's ownership of it ends here.
-                unsafe { Self::release_value(Value::from(Some(removed))) };
+        // It is the text that registered last under the URL now.
+        if number != newest {
+            if newest != 0 {
+                let previous = self.texts.get_mut(&newest).expect(LISTED);
+                previous.newer = number;
+                previous.superseded = true;
+                if matches!(previous.map, Map::Read(_)) {
+                    replaced.1 = Some(core::mem::replace(&mut previous.map, Map::NotRead));
+                }
             }
-
-            // Store path for a user note.
-            missing_source_map_note_info::record(path);
-            self.unlock();
-            return SourceMap::ParseUrl::default();
-        } else {
-            if cfg!(debug_assertions) {
-                panic!("Corrupt pointer tag");
+            match first {
+                Slot::Occupied(mut slot) => {
+                    slot.insert(number);
+                }
+                Slot::Vacant(slot) => {
+                    slot.insert(number);
+                }
             }
-            self.unlock();
+        }
+        replaced
+    }
 
-            return SourceMap::ParseUrl::default();
+    fn text(&mut self, number: u64) -> &mut Text {
+        self.texts
+            .get_mut(&number)
+            .expect("the text of a provider is in the table")
+    }
+
+    /// Takes a text out of the list of its URL.
+    fn unlist(&mut self, number: u64) {
+        let text = self.text(number);
+        let (url, older, newer) = (text.url, text.older, text.newer);
+        (text.older, text.newer) = (0, 0);
+        if older != 0 {
+            self.text(older).newer = newer;
+        }
+        if newer != 0 {
+            self.text(newer).older = older;
+        } else if self.urls.get(&url) == Some(&number) {
+            if older != 0 {
+                self.urls.insert(url, older);
+            } else {
+                self.urls.remove(&url);
+            }
         }
     }
 
-    /// You must `deref()` the returned value or you will leak memory
-    pub fn get(&mut self, path: &[u8]) -> Option<std::sync::Arc<ParsedSourceMap>> {
-        self.get_with_content(path, SourceMap::ParseUrlResultHint::MappingsOnly)
+    fn alias(&mut self, provider: Provider, existing: Provider) -> bool {
+        let address = provider as usize;
+        debug_assert!(address != 0 && provider != existing);
+        debug_assert!(!self.providers.contains_key(&(address as u64)));
+        let Some(text) = self.providers.get(&(existing as u64)).map(|e| e.text) else {
+            return false;
+        };
+        let head = self.text(text).head;
+        // Before `head` in the ring is after every other one.
+        let last = link(&mut self.providers, head, address);
+        self.providers.insert(
+            address as u64,
+            Entry {
+                text,
+                older: head,
+                newer: last,
+                loader: None,
+            },
+        );
+        true
+    }
+
+    /// Returns the map that nothing refers to any more.
+    fn remove(&mut self, provider: Provider) -> Option<Map> {
+        let address = provider as usize;
+        let entry = self.providers.remove(&(address as u64))?;
+        if entry.older == address {
+            self.unlist(entry.text);
+            return self.texts.remove(&entry.text).map(|text| text.map);
+        }
+        member(&mut self.providers, entry.newer).older = entry.older;
+        let next = member(&mut self.providers, entry.older);
+        next.newer = entry.newer;
+        let next_reads = next.loader.is_some();
+        let text = self.text(entry.text);
+        if text.head != address {
+            return None;
+        }
+        text.head = entry.older;
+        // What the provider that is gone read, or was to read, is for the next one to read.
+        if matches!(text.map, Map::Printed(_) | Map::Parsed(_)) {
+            return None;
+        }
+        Some(core::mem::replace(
+            &mut text.map,
+            if next_reads {
+                Map::NotRead
+            } else {
+                Map::Missing
+            },
+        ))
+    }
+}
+
+impl SavedSourceMap {
+    /// `provider` holds the text that the printer made `blob` with, and `url` is its source URL.
+    pub fn register_mappings(
+        &self,
+        provider: Provider,
+        url: &bun_core::String,
+        blob: SourceMapBlob,
+    ) {
+        let key = text_key(provider, url);
+        let replaced = (self.inner.lock()).register(provider, key, Map::Printed(blob), None);
+        drop(replaced);
+    }
+
+    /// `provider` reads the map of its text itself, when a position in it is first asked for: the text ends with a
+    /// `//# sourceMappingURL`, or the map is in the executable. `provider.ptr()` is the `JSC::SourceProvider`, and
+    /// `url` its source URL.
+    pub fn register_source_provider(&self, provider: AnySourceProvider, url: &bun_core::String) {
+        let key = text_key(provider.ptr(), url);
+        let replaced =
+            (self.inner.lock()).register(provider.ptr(), key, Map::NotRead, Some(provider));
+        drop(replaced);
+    }
+
+    /// `provider` holds the text of `existing`, which it wraps: a position in it is mapped like one in
+    /// `existing`. False when `existing` has no map.
+    pub fn alias(&self, provider: Provider, existing: Provider) -> bool {
+        self.inner.lock().alias(provider, existing)
+    }
+
+    /// `provider` holds another text that the printed map of `existing` is the map of too: what a compile hook
+    /// compiles again of the file that Bun's loader handed to it. `url` is its source URL. False when `existing`
+    /// has no such map.
+    pub fn share(&self, provider: Provider, url: &bun_core::String, existing: Provider) -> bool {
+        let key = text_key(provider, url);
+        let mut inner = self.inner.lock();
+        let Some(number) = inner.providers.get(&(existing as u64)).map(|e| e.text) else {
+            return false;
+        };
+        let text = inner.text(number);
+        let map = match &text.map {
+            Map::Parsed(map) => Some(Arc::clone(map)),
+            Map::Printed(_) => text.map.parse_printed(),
+            Map::NotRead | Map::Read(_) | Map::Missing => None,
+        };
+        let Some(map) = map else {
+            return false;
+        };
+        let replaced = inner.register(provider, key, Map::Parsed(map), None);
+        drop(inner);
+        drop(replaced);
+        true
+    }
+
+    /// `provider` is being destroyed.
+    pub fn remove(&self, provider: Provider) {
+        let unused = self.inner.lock().remove(provider);
+        drop(unused);
+    }
+
+    /// The provider that registered last under the source URL `url`, if its text is still there. Only for a
+    /// position that arrives with a URL and no provider (a parser error raised inside JSC's module loader): it can
+    /// name a provider that Bun registered, and nothing else.
+    pub fn newest_for_url(&self, url: &bun_core::String) -> Option<Provider> {
+        let inner = self.inner.lock();
+        let text = inner.texts.get(inner.urls.get(&url_key(url))?)?;
+        let head = text.head as Provider;
+        // SAFETY: `head` is in the table, so it is live.
+        (!text.superseded && unsafe { Bun__SourceProvider__hasSourceURL(head, url) })
+            .then_some(head)
+    }
+
+    /// Whether the file that a frame names can hold the text of the frame. `provider` holds the code of the frame:
+    /// no other text registered under its source URL after its text did. Without a provider, `url` is all the
+    /// frame has: a text is registered under it.
+    pub(crate) fn names_file_text(&self, provider: Provider, url: &bun_core::String) -> bool {
+        if provider.is_null() {
+            return self.newest_for_url(url).is_some();
+        }
+        let inner = self.inner.lock();
+        inner
+            .providers
+            .get(&(provider as u64))
+            .and_then(|entry| inner.texts.get(&entry.text))
+            .is_some_and(|text| !text.superseded)
+    }
+
+    /// How many providers have a map.
+    pub fn len(&self) -> usize {
+        self.inner.lock().providers.len()
+    }
+
+    fn get_with_content(
+        &self,
+        provider: Provider,
+        hint: SourceMap::ParseUrlResultHint,
+    ) -> SourceMap::ParseUrl {
+        // Code without a provider: a position parsed back out of a stack string.
+        if provider.is_null() {
+            return SourceMap::ParseUrl::default();
+        }
+        let guard = self.inner.lock();
+        match guard.providers.get(&(provider as u64)).map(|e| e.text) {
+            Some(text) => self.text_with_content(guard, text, hint),
+            None => SourceMap::ParseUrl::default(),
+        }
+    }
+
+    /// The map of the text with that number, which the head of the text reads if nothing did.
+    fn text_with_content(
+        &self,
+        mut guard: GuardedLock<'_, Inner, Mutex>,
+        number: u64,
+        hint: SourceMap::ParseUrlResultHint,
+    ) -> SourceMap::ParseUrl {
+        let found = |map: &Arc<ParsedSourceMap>| SourceMap::ParseUrl {
+            map: Some(Arc::clone(map)),
+            ..Default::default()
+        };
+        let inner = &mut *guard;
+        // A text that `SavedSourceMap::read` asks for can be gone.
+        let Some(text) = inner.texts.get_mut(&number) else {
+            return SourceMap::ParseUrl::default();
+        };
+        let head = text.head;
+        let loader = match &text.map {
+            Map::Parsed(map) | Map::Read(map) => return found(map),
+            Map::Missing => return SourceMap::ParseUrl::default(),
+            Map::Printed(_) => {
+                return match text.map.parse_printed() {
+                    Some(map) => found(&map),
+                    None => SourceMap::ParseUrl::default(),
+                };
+            }
+            Map::NotRead => match member(&mut inner.providers, head).loader {
+                Some(loader) => loader,
+                None => return SourceMap::ParseUrl::default(),
+            },
+        };
+        // Not the URL of the frame: a `//# sourceURL` in the text changes that one, and the map is beside the file.
+        // SAFETY: `head` is in the table, so it is live.
+        let url = unsafe { Bun__SourceProvider__sourceURL(head as Provider) };
+        // Not with the lock held: this reads a file and parses JSON. `head` stays live (see `Inner::providers`):
+        // the JS thread is the one that runs this, or it waits for the collector that does.
+        drop(guard);
+        let url = url.to_utf8();
+        let parse = loader.get_source_map(&url, Default::default(), hint);
+        let map = parse.as_ref().and_then(|parse| parse.map.as_ref());
+
+        let mut guard = self.inner.lock();
+        if let Some(text) = guard.texts.get_mut(&number)
+            && text.head == head
+            && matches!(text.map, Map::NotRead)
+        {
+            text.map = match map {
+                Some(map) => Map::Read(Arc::clone(map)),
+                None => Map::Missing,
+            };
+        }
+        drop(guard);
+        if map.is_none() {
+            // Store path for a user note.
+            missing_source_map_note_info::record(&url);
+        }
+
+        match parse {
+            Some(parse) if parse.map.is_some() => parse,
+            _ => SourceMap::ParseUrl::default(),
+        }
+    }
+
+    /// The map of the text that `provider` holds.
+    pub fn get(&self, provider: Provider) -> Option<Arc<ParsedSourceMap>> {
+        self.get_with_content(provider, SourceMap::ParseUrlResultHint::MappingsOnly)
             .map
     }
 
+    /// `get` for a reader that can wait: nothing is read here.
+    pub fn peek(&self, provider: Provider) -> Saved {
+        let mut inner = self.inner.lock();
+        let Some(number) = inner.providers.get(&(provider as u64)).map(|e| e.text) else {
+            return Saved::None;
+        };
+        let text = inner.text(number);
+        match &text.map {
+            Map::Parsed(map) | Map::Read(map) => Saved::Map(Arc::clone(map)),
+            Map::NotRead => Saved::NotRead(SavedText(number)),
+            Map::Missing => Saved::None,
+            Map::Printed(_) => match text.map.parse_printed() {
+                Some(map) => Saved::Map(map),
+                None => Saved::None,
+            },
+        }
+    }
+
+    /// The map of `text`, if a provider of it is still there.
+    pub fn read(&self, text: SavedText) -> Option<Arc<ParsedSourceMap>> {
+        let guard = self.inner.lock();
+        self.text_with_content(guard, text.0, SourceMap::ParseUrlResultHint::MappingsOnly)
+            .map
+    }
+
+    /// `line` and `column` are a position in the text that `provider` holds.
     pub(crate) fn resolve_mapping(
-        &mut self,
-        path: &[u8],
+        &self,
+        provider: Provider,
         line: Ordinal,
         column: Ordinal,
         source_handling: SourceMap::SourceContentHandling,
     ) -> Option<SourceMap::mapping::Lookup> {
         let parse = self.get_with_content(
-            path,
+            provider,
             match source_handling {
                 SourceMap::SourceContentHandling::NoSourceContents => {
                     SourceMap::ParseUrlResultHint::MappingsOnly
@@ -385,10 +609,18 @@ impl SavedSourceMap {
             None => map.find_mapping(line, column)?,
         };
 
+        // The names of a map in the executable are not paths from the text.
+        let generated_url = if map.is_external() && !map.is_standalone_module_graph {
+            // SAFETY: the frame that names `provider` holds a ref on it, or the table just gave it out.
+            unsafe { Bun__SourceProvider__sourceURL(provider) }.into_utf8()
+        } else {
+            bun_core::Utf8Bytes::EMPTY
+        };
         Some(SourceMap::mapping::Lookup {
             mapping,
             source_map: Some(map),
             prefetched_source_code: parse.source_contents,
+            generated_url,
         })
     }
 }

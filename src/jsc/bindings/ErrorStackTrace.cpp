@@ -444,6 +444,103 @@ bool JSCStackFrame::calculateSourcePositions()
     return true;
 }
 
+static JSC::SourceProvider* sourceProviderOf(JSC::CodeBlock* codeBlock)
+{
+    if (!codeBlock || !codeBlock->ownerExecutable())
+        return nullptr;
+    return codeBlock->source().provider();
+}
+
+static JSC::SourceProvider* sourceProviderOf(const JSC::StackFrame& frame)
+{
+    if (frame.isWasmFrame() || !frame.hasLineAndColumnInfo())
+        return nullptr;
+#if ENABLE(AOT)
+    if (frame.isCompiledFrame()) [[unlikely]]
+        return nullptr;
+#endif
+    return sourceProviderOf(frame.codeBlock());
+}
+
+static JSC::SourceProvider* sourceProviderOf(JSC::StackVisitor& visitor)
+{
+    switch (visitor->codeType()) {
+    case JSC::StackVisitor::Frame::Eval:
+    case JSC::StackVisitor::Frame::Module:
+    case JSC::StackVisitor::Frame::Function:
+    case JSC::StackVisitor::Frame::Global:
+#if ENABLE(AOT)
+        if (visitor->isCompiledFrame())
+            return nullptr;
+#endif
+        return sourceProviderOf(visitor->codeBlock());
+    case JSC::StackVisitor::Frame::Native:
+    case JSC::StackVisitor::Frame::Wasm:
+        return nullptr;
+    }
+
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+FrameSource sourceOf(JSC::VM& vm, const JSC::StackFrame& frame)
+{
+    return { sourceURL(vm, frame), sourceProviderOf(frame) };
+}
+
+FrameSource sourceOf(JSC::StackVisitor& visitor)
+{
+    return { sourceURL(visitor), sourceProviderOf(visitor) };
+}
+
+FrameSource sourceOf(JSC::SourceProvider& provider)
+{
+    return { provider.sourceURL(), &provider };
+}
+
+static void setSourceURL(ZigStackFrame& frame, const String& sourceURL)
+{
+    frame.source_url.deref();
+    frame.source_url = Bun::toStringRef(sourceURL);
+    if (auto* previous = std::exchange(frame.source_provider, nullptr))
+        previous->deref();
+    frame.source_flags = 0;
+}
+
+void setSource(ZigStackFrame& frame, const FrameSource& source)
+{
+    setSourceURL(frame, source.url);
+    if (source.provider)
+        source.provider->ref();
+    frame.source_provider = source.provider;
+}
+
+void setSourceOfParserError(ZigStackFrame& frame, JSC::VM& vm, const String& sourceURL)
+{
+    // JSC::addErrorInfo() gives the error the provider's own URL, not its `//# sourceURL`.
+    if (auto* parsing = WebCore::clientData(vm)->sourceBeingParsed; parsing && parsing->sourceURL() == sourceURL) {
+        setSource(frame, { sourceURL, parsing });
+        return;
+    }
+    setSourceByURL(frame, sourceURL);
+}
+
+void setSourceByURL(ZigStackFrame& frame, const String& sourceURL)
+{
+    setSourceURL(frame, sourceURL);
+    frame.source_flags = ZigStackFrameSourceByURL;
+}
+
+void setSourceWithoutMap(ZigStackFrame& frame, const String& sourceURL)
+{
+    setSourceURL(frame, sourceURL);
+}
+
+void setSourceOfCopiedStack(ZigStackFrame& frame, const String& sourceURL)
+{
+    setSourceURL(frame, sourceURL);
+    frame.source_flags = ZigStackFrameSourceIfRegistered;
+}
+
 String sourceURL(const JSC::SourceOrigin& origin)
 {
     if (origin.isNull()) {

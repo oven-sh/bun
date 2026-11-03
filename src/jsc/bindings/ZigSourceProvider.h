@@ -56,7 +56,7 @@ public:
     uint64_t m_madeFromHash { 0 };
 
 private:
-    SourceProvider(void* bunVM, ResolvedSource& resolvedSource, Ref<WTF::StringImpl>&& sourceImpl,
+    SourceProvider(ResolvedSource& resolvedSource, Ref<WTF::StringImpl>&& sourceImpl,
         JSC::SourceTaintedOrigin taintedness,
         const SourceOrigin& sourceOrigin, WTF::String&& sourceURL,
         const TextPosition& startPosition, JSC::SourceProviderSourceType sourceType)
@@ -65,22 +65,55 @@ private:
         , m_tag(resolvedSource.tag)
         , m_alreadyBundled(resolvedSource.already_bundled)
         , m_dependsOnMoreThanSource(resolvedSource.depends_on_more_than_source)
-        , m_bunVM(bunVM)
         , m_source(WTF::move(sourceImpl))
     {
     }
 
-    // Stored directly (not via the creating global) so the destructor stays
-    // valid when the provider outlives its global under --isolate caching.
-    void* m_bunVM;
     RefPtr<JSC::CachedBytecode> m_cachedBytecode;
     Ref<WTF::StringImpl> m_source;
     unsigned m_hash = 0;
+    // The source map of this text, when it has one. Last: it leaves the table before m_source goes. It holds the Bun
+    // VM itself (not the creating global), so that this stays valid when the provider outlives its global under
+    // --isolate caching.
+    Bun::SourceMapRegistration m_sourceMap;
 };
 
 } // namespace Zig
 
 namespace Bun {
+
+// While Bun's loader hands a file that it transpiled to an overridden module._compile (JSCommonJSModule::
+// evaluateWithPotentiallyOverriddenCompile). Node hands such a hook the text of the file. Bun hands it what the
+// transpiler printed, and no Zig::SourceProvider holds that text, so its map goes to the provider of what the override
+// compiles for the module under the name of the file (providerOfCompiledText). A hook that keeps every line where it
+// is gets the positions of the file that way.
+class SourceMapHandoff {
+    WTF_MAKE_NONCOPYABLE(SourceMapHandoff);
+
+public:
+    // `module` is the JSCommonJSModule that is being loaded, and `filename` what the override is called with. Takes
+    // `sourceMap` (ResolvedSource::source_map).
+    SourceMapHandoff(JSC::VM&, JSC::JSCell* module, const String& filename, void* sourceMap);
+    ~SourceMapHandoff();
+
+private:
+    friend Ref<JSC::SourceProvider> providerOfCompiledText(JSC::VM&, JSC::JSCell*, const String&, const JSC::SourceOrigin&, String, JSC::SourceTaintedness);
+
+    SourceMapHandoff*& m_slot;
+    SourceMapHandoff* m_previous;
+    JSC::JSCell* m_module;
+    String m_filename;
+    // Until a provider takes it.
+    void* m_sourceMap;
+    // The provider that took it. What the module compiles after it under the name of the file has that map too: a hook
+    // that compiles again after a SyntaxError.
+    RefPtr<JSC::SourceProvider> m_first;
+};
+
+// The provider of the text that module._compile(text, filename) is called with on `module`. The name says nothing of
+// the text: a file of that name may be loaded, and its source map maps another text. So the provider has no source map,
+// unless Bun's loader is handing `module` to the module._compile that makes this call.
+Ref<JSC::SourceProvider> providerOfCompiledText(JSC::VM&, JSC::JSCell* module, const String& text, const JSC::SourceOrigin&, String filename, JSC::SourceTaintedness);
 
 // JSC's bytecode encoder aborts on a string of 2^27 or more characters unless it encodes against a string table.
 // Call this after `source`'s unlinked code is generated.

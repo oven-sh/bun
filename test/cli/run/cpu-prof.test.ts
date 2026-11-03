@@ -532,4 +532,52 @@ describe.concurrent("--cpu-prof", () => {
     expect({ exitCode, profiles: mdFiles.length }).toEqual({ exitCode: 0, profiles: 1 });
     expect(readFileSync(join(String(dir), mdFiles[0]), "utf-8")).toContain("| `loop` | `file:///%80.js");
   });
+
+  // The source map of a file maps what Bun transpiled of it. `f` is vm code on line 5 of its source, under the name of
+  // the profiled file ("own") or under a name that no file has ("other"): both report the position in the vm code.
+  test("vm code that has the filename of the profiled file keeps its own positions", async () => {
+    // The transpiler removes the comment, so every line that the source map of the fixture itself can answer with
+    // is below it.
+    const padding = ["/*", ...Array.from({ length: 18 }, () => " *"), " */"].join("\n") + "\n";
+    const body = String.raw`
+      const vm = require("node:vm");
+      const name = process.argv[2] === "own" ? __filename : "not-a-file.js";
+      const source = "\n\n\n\n(function f() { for (const end = performance.now() + 100; performance.now() < end; ) {} })";
+      vm.runInThisContext(source, { filename: name })();
+      console.log(name);
+    `;
+    using dir = tempDir("cpu-prof-vm-filename", { "fixture.js": padding + body });
+
+    const profileFor = async (kind: string) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--cpu-prof", `--cpu-prof-name=${kind}.cpuprofile`, "fixture.js", kind],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const profile = JSON.parse(readFileSync(join(String(dir), `${kind}.cpuprofile`), "utf8"));
+      const fNodes = profile.nodes.filter((n: any) => n.callFrame.functionName === "f");
+      expect(fNodes.length).toBeGreaterThan(0);
+      return {
+        name: stdout.trim(),
+        positions: [
+          ...new Set(fNodes.map((n: any) => JSON.stringify([n.callFrame.lineNumber, n.callFrame.columnNumber]))),
+        ],
+        tickLines: [...new Set(fNodes.flatMap((n: any) => (n.positionTicks ?? []).map((t: any) => t.line)))],
+      };
+    };
+    const [own, other] = await Promise.all([profileFor("own"), profileFor("other")]);
+
+    // callFrame.lineNumber is 0-based; positionTicks.line is 1-based.
+    expect(other.positions).toHaveLength(1);
+    expect(JSON.parse(other.positions[0] as string)[0]).toBe(4);
+    expect(other.tickLines).toEqual([5]);
+    expect({ positions: own.positions, tickLines: own.tickLines }).toEqual({
+      positions: other.positions,
+      tickLines: other.tickLines,
+    });
+  });
 });

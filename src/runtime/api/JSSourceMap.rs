@@ -76,7 +76,11 @@ pub(crate) fn find_source_map<'a>(
 
     // SAFETY: `bun_vm()` returns the live per-thread VM for a Bun-owned global.
     let vm = global.bun_vm().as_mut();
-    let Some(source_map) = vm.source_mappings().get(source_url) else {
+    let source_mappings = vm.source_mappings();
+    let Some(source_map) = source_mappings
+        .newest_for_url(&bun_core::StringView::from_bytes(source_url))
+        .and_then(|provider| source_mappings.get(provider))
+    else {
         return Ok(None);
     };
     drop(source_url_slice);
@@ -90,6 +94,13 @@ pub(crate) fn find_source_map<'a>(
         names: Box::default(),
     };
     Ok(Some(this.into_js(&cx.heap)))
+}
+
+pub(crate) fn saved_source_map_count_for_testing() -> usize {
+    bun_jsc::virtual_machine::VirtualMachine::get()
+        .as_mut()
+        .source_mappings()
+        .len()
 }
 
 impl JSSourceMap {

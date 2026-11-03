@@ -124,54 +124,32 @@ impl SourceProvider for DevServerSourceProvider {
 pub(crate) fn add_bake_source_provider_source_map(
     vm: &mut VirtualMachine,
     opaque_source_provider: *mut c_void,
-    specifier: &BunString,
+    url: &BunString,
 ) {
-    let slice = specifier.to_utf8();
-    vm.source_mappings.put_source_provider(
+    vm.source_mappings.register_source_provider(
         AnySourceProvider::new(
             opaque_source_provider
                 .cast::<BakeSourceProvider>()
                 .cast_const(),
         ),
-        slice.slice(),
+        url,
     );
 }
 
-// HOST_EXPORT(Bun__removeBakeSourceProviderSourceMap, c)
-pub(crate) fn remove_bake_source_provider_source_map(
-    vm: &mut VirtualMachine,
-    opaque_source_provider: *mut c_void,
-    specifier: &BunString,
-) {
-    let slice = specifier.to_utf8();
-    vm.source_mappings
-        .remove_source_provider(opaque_source_provider, slice.slice());
-}
-
 // HOST_EXPORT(Bun__addDevServerSourceProvider, c)
+/// Every server patch has one URL: what was read of the patch before this one is dropped here, and read again if a
+/// position in that patch is asked for.
 pub(crate) fn add_dev_server_source_provider(
     vm: &mut VirtualMachine,
     opaque_source_provider: *mut c_void,
-    specifier: &BunString,
+    url: &BunString,
 ) {
-    let slice = specifier.to_utf8();
-    vm.source_mappings.put_source_provider(
+    vm.source_mappings.register_source_provider(
         AnySourceProvider::new(
             opaque_source_provider
                 .cast::<DevServerSourceProvider>()
                 .cast_const(),
         ),
-        slice.slice(),
+        url,
     );
-}
-
-// HOST_EXPORT(Bun__removeDevServerSourceProvider, c)
-pub(crate) fn remove_dev_server_source_provider(
-    vm: &mut VirtualMachine,
-    opaque_source_provider: *mut c_void,
-    specifier: &BunString,
-) {
-    let slice = specifier.to_utf8();
-    vm.source_mappings
-        .remove_source_provider(opaque_source_provider, slice.slice());
 }

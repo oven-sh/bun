@@ -77,13 +77,12 @@ static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame& stack
         if (sourceURL != "[wasm code]"_s) {
             // [wasm code] is a useless source URL, so we don't bother to set it.
             // It is the default value JSC returns.
-            frame.source_url = Bun::toStringRef(sourceURL);
+            Zig::setSourceWithoutMap(frame, sourceURL);
         }
         return;
     }
 
-    auto sourceURL = Zig::sourceURL(vm, stackFrame);
-    frame.source_url = Bun::toStringRef(sourceURL);
+    Zig::setSource(frame, Zig::sourceOf(vm, stackFrame));
     auto m_codeBlock = stackFrame.codeBlock();
     if (m_codeBlock) {
         switch (m_codeBlock->codeType()) {
@@ -637,12 +636,14 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
                     iterator.forEachFrame([&](const V8StackTraceIterator::StackFrame& frame, bool& stop) -> void {
                         ASSERT(except.stack.frames_len < frame_count);
                         auto& current = except.stack.frames_ptr[except.stack.frames_len];
+                        current.function_name.deref();
+                        Zig::setSourceWithoutMap(current, String());
                         current = {};
 
                         String functionName = frame.functionName.toString();
                         String sourceURL = frame.sourceURL.toString();
                         current.function_name = Bun::toStringRef(functionName);
-                        current.source_url = Bun::toStringRef(sourceURL);
+                        Zig::setSourceWithoutMap(current, sourceURL);
                         current.position.line_zero_based = frame.lineNumber.zeroBasedInt();
                         current.position.column_zero_based = frame.columnNumber.zeroBasedInt();
 
@@ -670,15 +671,30 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
     }
 
     if (except.stack.frames_len == 0 && getFromSourceURL) {
+        bool positionIsInCode = false;
         JSC::JSValue sourceURL = getNonObservable(vm, global, obj, vm.propertyNames->sourceURL);
         if (!scope.clearExceptionExceptTermination()) [[unlikely]]
             return;
         if (sourceURL) {
+            PropertySlot originalLineSlot = PropertySlot(obj, PropertySlot::InternalMethodType::VMInquiry, &vm);
+            bool hasOriginalLine = obj->getNonIndexPropertySlot(global, names.originalLinePublicName(), originalLineSlot);
+            if (!scope.clearExceptionExceptTermination()) [[unlikely]]
+                return;
             if (sourceURL.isString()) {
-                except.stack.frames_ptr[0].source_url.deref();
-                except.stack.frames_ptr[0].source_url = Bun::toStringRef(global, sourceURL);
+                String url = sourceURL.toWTFString(global);
                 if (!scope.clearExceptionExceptTermination()) [[unlikely]]
                     return;
+                // An error gets here when no frame can be read back out of its stack: the stack is empty, or its first
+                // line has no function name. Its position is one in the text that JavaScriptCore ran or parsed in two
+                // cases: a parser gave it to a SyntaxError, or nothing in this VM maps a stack when it is made (the VM
+                // that `bun build --app` renders in). Every other position is final (see `remapped` below).
+                positionIsInCode = err->isParseError() || !vm.onComputeErrorInfo();
+                if (positionIsInCode)
+                    Zig::setSourceByURL(except.stack.frames_ptr[0], url);
+                else if (!hasOriginalLine && err->globalObject() == global)
+                    Zig::setSourceOfCopiedStack(except.stack.frames_ptr[0], url);
+                else
+                    Zig::setSourceWithoutMap(except.stack.frames_ptr[0], url);
 
                 // Take care not to make these getter calls observable.
 
@@ -715,13 +731,11 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
                 }
             }
 
-            {
-                except.stack.frames_len = 1;
-                PropertySlot slot = PropertySlot(obj, PropertySlot::InternalMethodType::VMInquiry, &vm);
-                except.stack.frames_ptr[0].remapped = obj->getNonIndexPropertySlot(global, names.originalLinePublicName(), slot);
-                if (!scope.clearExceptionExceptTermination()) [[unlikely]]
-                    return;
-            }
+            except.stack.frames_len = 1;
+            // The line and column of an error of this realm were mapped when its stack was made: by a collection, or
+            // before structuredClone() or postMessage() copied them. An error of another realm (node:vm) names a
+            // place in a text that can have the name of any file.
+            except.stack.frames_ptr[0].remapped = hasOriginalLine || (!positionIsInCode && err->globalObject() == global);
         }
     }
 }
@@ -785,7 +799,7 @@ void exceptionFromString(ZigException& except, JSC::JSValue value, JSC::JSGlobal
             }
             if (sourceURL) {
                 if (sourceURL.isString()) {
-                    except.stack.frames_ptr[0].source_url = Bun::toStringRef(sourceURL.toWTFString(global));
+                    Zig::setSourceWithoutMap(except.stack.frames_ptr[0], sourceURL.toWTFString(global));
                     except.stack.frames_len = 1;
                 }
             }

@@ -1064,6 +1064,17 @@ test("changed.ts", async () => {
   const after = await import("./changed.ts?after");
   expect(after.covered(1)).toBe(2);
 });
+
+test("commented.ts", async () => {
+  if (!oneLoad) {
+    writeFileSync(here("commented.ts"), ${JSON.stringify(esm)});
+    const before = await import("./commented.ts?before");
+    expect(before.covered(1)).toBe(2);
+  }
+  writeFileSync(here("commented.ts"), ${JSON.stringify("// one\n// two\n// three\n" + esm)});
+  const after = await import("./commented.ts?after");
+  expect(after.covered(1)).toBe(2);
+});
 `,
   };
 
@@ -1193,6 +1204,13 @@ test("b", () => {
     expect(loaded.rows["changed.ts"]).toEqual(oneLoad.rows["changed.ts"]);
   });
 
+  // A comment moves the lines of a file and not the text that runs. Both loads are loads of one text, and the
+  // report is in the lines of the file as it was loaded last.
+  test("a file that got comments between two loads reports the lines it has now", () => {
+    expect(oneLoad.rows["commented.ts"].uncovered).toBe("6");
+    expect(loaded.rows["commented.ts"]).toEqual(oneLoad.rows["commented.ts"]);
+  });
+
   test("bun:jsc codeCoverageForFile()", () => {
     expect(JSON.parse(loaded.stdout.split("\n").find(line => line.startsWith("{"))!)).toEqual({
       hostAlone: expect.stringMatching(/host-and-graph\.ts \| +100\.00 \| +\d+\.\d+ \| \d/),
@@ -1223,6 +1241,33 @@ test("imports a data: URL", async () => {
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
   expect(stderr).toContain(" 1 pass");
   expect(readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8")).toContain("SF:data.test.ts\n");
+  expect(exitCode).toBe(0);
+});
+
+test("does not read the source map of a // @bun file that the report leaves out", async () => {
+  using dir = tempDir("cov-unread-map", {
+    "bunfig.toml": `[test]\ncoveragePathIgnorePatterns = ["dist/**"]\n`,
+    "dist/prebuilt.js":
+      "// @bun\nexport function add(a, b) {\n  return a + b;\n}\n//# sourceMappingURL=prebuilt.js.map\n",
+    "dist/prebuilt.js.map": "not a source map",
+    "a.test.ts": `
+      import { expect, test } from "bun:test";
+      test("adds", async () => {
+        const { add } = await import("./dist/prebuilt.js");
+        expect(add(1, 2)).toBe(3);
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout + stderr).not.toContain("Could not decode sourcemap");
+  expect(stderr).toContain(" 1 pass");
   expect(exitCode).toBe(0);
 });
 

@@ -704,6 +704,8 @@ export const decodeURIComponentSIMD = $newCppFunction(
 );
 
 export const getDevServerDeinitCount = $bindgen("DevServer.bind.ts", "getDeinitCountForTesting");
+/** How many source providers of this thread's VM have a source map. A provider leaves when it is collected. */
+export const savedSourceMapCount: () => number = $bindgen("sourcemap.bind.ts", "savedSourceMapCountForTesting");
 export const getCounters = $bindgen("Counters.bind.ts", "createCountersObject");
 export const linearFifoOrderedRemoveProbe = $bindgen("linear_fifo_testing.bind.ts", "orderedRemoveProbe") as (
   scenario: number,

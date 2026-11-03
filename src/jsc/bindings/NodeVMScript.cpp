@@ -1,6 +1,7 @@
 #include "NodeVMScript.h"
 #include "CodeGenerationFromStrings.h"
 #include "BunClientData.h"
+#include <wtf/SetForScope.h>
 
 #include "ErrorCode.h"
 
@@ -151,6 +152,8 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     // recoverable-error flow (and user code) relies on that.
     JSC::ParserError parseError;
     if (!script->unlinkedCodeBlockFor(globalObject, parseError)) {
+        // The error's position is one in this script's text, whatever `filename` names.
+        SetForScope parsing(WebCore::clientData(vm)->sourceBeingParsed, script->source().provider());
         auto exception = parseError.toErrorObject(globalObject, script->source(), -1);
         // Building the error materializes its stack, running a user
         // Error.prepareStackTrace that may throw; Node throws the SyntaxError

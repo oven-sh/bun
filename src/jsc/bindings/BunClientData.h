@@ -85,6 +85,7 @@ class VersionSqlite3;
 
 namespace Bun {
 class StrongRootBlock;
+class SourceMapHandoff;
 struct IsolatedInternalModule;
 
 // JSC measures the live size of the heap at the end of each collection, but only
@@ -270,6 +271,13 @@ public:
     std::atomic<unsigned> idleCollectionsPending { 0 };
     // Their GCRequest::didFinishEndPhase, made once (JSC__VM__collectAsyncIdle).
     RefPtr<WTF::SharedTask<void()>> idleCollectionDidFinish;
+
+    // Set while Bun has the parser read a text. A SyntaxError of the parser says which URL and line it is about and not
+    // which text, and a text can be named after a file whose source map maps another text (Zig::setSourceOfParserError).
+    JSC::SourceProvider* sourceBeingParsed { nullptr };
+    // The innermost Bun::SourceMapHandoff (ZigSourceProvider.h), for the length of one call of an overridden
+    // module._compile.
+    Bun::SourceMapHandoff* sourceMapHandoff { nullptr };
 
     void* bunVM;
     // Opaque box of the Rust VmHandle for this VM: what any *other* thread uses

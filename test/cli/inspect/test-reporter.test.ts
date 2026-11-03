@@ -455,4 +455,69 @@ afterAll(async () => {
     }
     expect(exitCode).toBe(0);
   });
+
+  test("reports the line of a test() call in the text that makes the call", async () => {
+    // The transpiler removes the type, so the first call is not on the line where it is printed. The second call is
+    // in code that is not the file and has its name: it is on line 3 of that code.
+    using dir = tempDir("test-reporter-lines", {
+      "lines.test.ts": `
+import { afterAll, test, expect } from "bun:test";
+import { existsSync } from "node:fs";
+import vm from "node:vm";
+
+type Removed = number;
+test("in the file", () => {
+  expect(1).toBe(1);
+});
+vm.runInThisContext("\\n\\n(test) => test('in vm code', () => {})", { filename: import.meta.path })(test);
+
+afterAll(async () => {
+  while (!existsSync("done-gate")) await Bun.sleep(10);
+});
+`,
+    });
+
+    const socketPath = join(String(dir), `inspector-${Math.random().toString(36).substring(2)}.sock`);
+    const session = new TestReporterSession();
+    const framer = new SocketFramer((message: string) => {
+      session.onMessage(message);
+    });
+    const socketPromise = connect(`unix://${socketPath}`).then(s => {
+      socket = s;
+      session.socket = s;
+      session.framer = framer;
+      s.data = {
+        onData: framer.onData.bind(framer),
+      };
+      return s;
+    });
+
+    proc = spawn({
+      cmd: [bunExe(), `--inspect-wait=unix:${socketPath}`, "test", "--timeout", "30000", "lines.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await socketPromise;
+
+    // The agent is on before the file is collected, so each test is reported as its test() call runs.
+    session.enableInspector();
+    session.enableTestReporter();
+    session.initialize();
+
+    const foundTests = await session.waitForFoundTests(2, 15000);
+    expect(Object.fromEntries([...foundTests.values()].map(found => [found.name, found.line]))).toEqual({
+      "in the file": 7,
+      "in vm code": 3,
+    });
+
+    // Both events are here: let the afterAll hook return so the subprocess can exit.
+    await write(join(String(dir), "done-gate"), "go");
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) {
+      expect(stderr).toBe("");
+    }
+    expect(exitCode).toBe(0);
+  });
 });

@@ -912,6 +912,42 @@ describe("junit reporter", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The line of a test is where its test() call is, in the text that makes the call. The transpiler removes the
+  // types, and code that node:vm runs under the name of the test file is not the file.
+  it("reports the line of a test() call in the text that makes the call", async () => {
+    await using tmpDir = tempDir("junit-line-of-call", {
+      "package.json": "{}",
+      "lines.test.ts": [
+        'import { test } from "bun:test";',
+        'import vm from "node:vm";',
+        "type Removed = number;",
+        "interface AlsoRemoved {",
+        "  a: number;",
+        "}",
+        'test("in the file", () => {});',
+        `vm.runInThisContext("\\n\\n(test) => test('in vm code', () => {})", { filename: import.meta.path })(test);`,
+        "",
+      ].join("\n"),
+    });
+    const junitPath = join(tmpDir, "junit.xml");
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: tmpDir,
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const xmlContent = await file(junitPath).text();
+    const result = await new Promise((resolve, reject) => {
+      xml2js.parseString(xmlContent, { strict: true }, (err, r) => (err ? reject(err) : resolve(r)));
+    });
+    expect(result.testsuites.testsuite[0].testcase.map(testcase => [testcase.$.name, testcase.$.line])).toEqual([
+      ["in the file", "7"],
+      ["in vm code", "3"],
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   it("prints a stack frame whose source is not a file path as-is in <failure>", async () => {
     // Longer than a path buffer on every platform (98302 bytes on Windows).
     const padding = 100_000;

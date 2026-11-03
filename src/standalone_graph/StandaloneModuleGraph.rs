@@ -907,6 +907,9 @@ pub struct File {
     pub loader: Loader,
     pub contents: &'static ZStr,
     pub sourcemap: LazySourceMap,
+    /// Whether the executable has a source map of this file. Unlike `sourcemap`, never written after the graph is
+    /// made, so any thread reads it.
+    pub has_sourcemap: bool,
     /// VM-independent `webcore::Blob` template (store, content type, shared name); see
     /// `standalone_graph_jsc::file_blob`.
     pub cached_blob: std::sync::OnceLock<NonNull<Blob>>,
@@ -1463,6 +1466,7 @@ impl StandaloneModuleGraph {
                     } else {
                         LazySourceMap::None
                     },
+                    has_sourcemap: module.sourcemap.length > 0,
                     bytecode: if module.bytecode.length > 0
                         && (linked_entry_offset.is_some() || !has_linked_bytecode_payload)
                     {

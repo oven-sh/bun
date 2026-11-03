@@ -129,6 +129,8 @@ typedef struct ResolvedSource {
     BunString source_code;
     BunString source_url;
     bool isCommonJSModule;
+    // `bun build --compile --sourcemap`: the executable embeds the source map of source_code.
+    bool has_embedded_source_map;
     // `bun build --compile`: StringImpl::hash() of source_code computed at build time (0 = unknown).
     uint32_t source_code_hash;
     JSC::EncodedJSValue cjsCustomExtension;
@@ -154,11 +156,14 @@ typedef struct ResolvedSource {
     uint32_t bytecode_cache_entry_offset;
     // Owned; Zig::SourceProvider takes it (nulling the field).
     bun_ModuleInfoDeserialized* module_info;
+    // Owned: the map from source_code back to the file, when Bun printed source_code. Zig::SourceProvider::create takes it
+    // (nulling the field) and registers it as the map of its text (Bun__registerSourceMap).
+    void* source_map;
     // File path whose file:// URL is the source origin (what import() resolves against, what a bytecode cache is
     // validated against). If empty, origin is derived from source_url.
     BunString origin_path;
 } ResolvedSource;
-static_assert(sizeof(ResolvedSource) == 136 && offsetof(ResolvedSource, is_prelinked_module) == 77 && offsetof(ResolvedSource, depends_on_more_than_source) == 78 && offsetof(ResolvedSource, is_static) == 79 && offsetof(ResolvedSource, bytecode_cache) == 80 && offsetof(ResolvedSource, bytecode_cache_persistent) == 97 && offsetof(ResolvedSource, bytecode_cache_entry_offset) == 100 && offsetof(ResolvedSource, module_info) == 104, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
+static_assert(sizeof(ResolvedSource) == 144 && offsetof(ResolvedSource, has_embedded_source_map) == 49 && offsetof(ResolvedSource, source_code_hash) == 52 && offsetof(ResolvedSource, is_prelinked_module) == 77 && offsetof(ResolvedSource, depends_on_more_than_source) == 78 && offsetof(ResolvedSource, is_static) == 79 && offsetof(ResolvedSource, bytecode_cache) == 80 && offsetof(ResolvedSource, bytecode_cache_persistent) == 97 && offsetof(ResolvedSource, bytecode_cache_entry_offset) == 100 && offsetof(ResolvedSource, module_info) == 104 && offsetof(ResolvedSource, source_map) == 112 && offsetof(ResolvedSource, origin_path) == 120, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
     ResolvedSource value;
@@ -166,6 +171,7 @@ typedef union ErrorableResolvedSourceResult {
 } ErrorableResolvedSourceResult;
 extern "C" void zig__ModuleInfoDeserialized__deinit(bun_ModuleInfoDeserialized* info);
 extern "C" void ResolvedSource__freeBytecode(uint8_t* bytecode);
+extern "C" void ResolvedSource__freeSourceMap(void* sourceMap);
 struct ErrorableResolvedSource {
     WTF_MAKE_NONCOPYABLE(ErrorableResolvedSource);
 
@@ -185,9 +191,11 @@ public:
             ResolvedSource__freeBytecode(result.value.bytecode_cache);
         if (result.value.module_info)
             zig__ModuleInfoDeserialized__deinit(result.value.module_info);
+        if (result.value.source_map)
+            ResolvedSource__freeSourceMap(result.value.source_map);
     }
 };
-static_assert(sizeof(ErrorableResolvedSource) == 144 && alignof(ErrorableResolvedSource) == 8, "ErrorableResolvedSource layout is mirrored in src/jsc/Errorable.rs");
+static_assert(sizeof(ErrorableResolvedSource) == 152 && alignof(ErrorableResolvedSource) == 8, "ErrorableResolvedSource layout is mirrored in src/jsc/Errorable.rs");
 static_assert(JSC::CompiledEnvironmentType == 33 && JSC::ObjectType == 34 && JSC::JSFunctionType == 37 && JSC::CompiledClosureType == 38 && JSC::InternalFunctionType == 39 && JSC::Int8ArrayType == 51 && JSC::DataViewType == 63 && JSC::WebAssemblyGCObjectType == 96 && JSC::CompiledObjectType == 97 && JSC::SlimClosureType == 98 && JSC::SlimClosureWithPropertiesType == 99 && JSC::StringObjectType == 100 && JSC::DerivedStringObjectType == 101, "JSType numbers are mirrored in src/jsc/JSType.rs");
 
 typedef struct SystemError {
@@ -235,6 +243,16 @@ typedef struct ZigStackFramePosition {
     }
 } ZigStackFramePosition;
 
+// How the text that ZigStackFrame::position is a position in is found. SourceFlags in src/jsc/ZigStackFrame.rs.
+enum ZigStackFrameSource : uint8_t {
+    // A position the parser reported: it comes with a source URL and no provider. The text is that of the provider
+    // with a source map that registered last among those that have the URL.
+    ZigStackFrameSourceByURL = 1 << 0,
+    // A position that was mapped when its error's stack became a string, and no frame says from which text. The file
+    // under the source URL holds that text if a text is registered under the URL.
+    ZigStackFrameSourceIfRegistered = 1 << 1,
+};
+
 typedef struct ZigStackFrame {
     BunString function_name;
     BunString source_url;
@@ -242,7 +260,13 @@ typedef struct ZigStackFrame {
     ZigStackFrameCode code_type;
     bool is_async;
     bool remapped;
+    // ZigStackFrameSource bits.
+    uint8_t source_flags;
     int32_t jsc_stack_frame_index;
+    // The provider that holds the frame's code: what its source map is registered under. Ref'd (Zig::setSource): the
+    // code can be collected before the position is mapped, and the address of a provider that is gone can be that of
+    // another one. Null: no provider is known, and the position is not mapped.
+    JSC::SourceProvider* source_provider;
 
     ZigStackFrame()
         : function_name {}
@@ -251,10 +275,13 @@ typedef struct ZigStackFrame {
         , code_type {}
         , is_async(false)
         , remapped(false)
+        , source_flags(0)
         , jsc_stack_frame_index(-1)
+        , source_provider(nullptr)
     {
     }
 } ZigStackFrame;
+static_assert(sizeof(ZigStackFrame) == 80 && offsetof(ZigStackFrame, remapped) == 62 && offsetof(ZigStackFrame, source_flags) == 63 && offsetof(ZigStackFrame, jsc_stack_frame_index) == 64 && offsetof(ZigStackFrame, source_provider) == 72, "ZigStackFrame layout is mirrored in src/jsc/ZigStackFrame.rs");
 
 typedef struct ZigStackTrace {
     BunString* source_lines_ptr;
@@ -489,6 +516,16 @@ bool Bun__deepMatch(
 
 extern "C" void Bun__remapStackFramePositions(void*, ZigStackFrame*, size_t);
 
+// SavedSourceMap (src/jsc/SavedSourceMap.rs): the source maps of a VM, each under the provider that holds the mapped
+// text. Only Bun::SourceMapRegistration calls these. `url` is the provider's source URL.
+extern "C" void Bun__registerSourceMap(void* bunVM, const JSC::SourceProvider*, const BunString* url, void* sourceMap);
+extern "C" void Bun__removeSourceMap(void* bunVM, const JSC::SourceProvider*);
+// The provider holds the text of `existing`. False: that one has no map.
+extern "C" bool Bun__aliasSourceMap(void* bunVM, const JSC::SourceProvider*, const JSC::SourceProvider* existing);
+// The provider holds another text that the map of `existing` maps too. False: that one has no map.
+extern "C" bool Bun__shareSourceMap(void* bunVM, const JSC::SourceProvider*, const BunString* url, const JSC::SourceProvider* existing);
+extern "C" void JSC__SourceProvider__deref(JSC::SourceProvider*);
+
 namespace Inspector {
 class ScriptArguments;
 }
@@ -525,6 +562,8 @@ public:
         for (ZigStackFrame& frame : m_frames) {
             frame.function_name.deref();
             frame.source_url.deref();
+            if (frame.source_provider)
+                JSC__SourceProvider__deref(frame.source_provider);
         }
     }
 
@@ -537,6 +576,78 @@ public:
 
 private:
     WTF::Vector<ZigStackFrame, 8> m_frames;
+};
+
+// A provider's entry in SavedSourceMap. The entry leaves the table when this is destroyed, so a provider holds it as
+// its last member: the entry is gone before anything that the table reads of the provider is.
+class [[nodiscard]] SourceMapRegistration {
+    WTF_MAKE_NONCOPYABLE(SourceMapRegistration);
+
+public:
+    SourceMapRegistration() = default;
+    SourceMapRegistration(SourceMapRegistration&& other)
+        : m_bunVM(std::exchange(other.m_bunVM, nullptr))
+        , m_provider(other.m_provider)
+    {
+    }
+    SourceMapRegistration& operator=(SourceMapRegistration&& other)
+    {
+        std::swap(m_bunVM, other.m_bunVM);
+        std::swap(m_provider, other.m_provider);
+        return *this;
+    }
+    ~SourceMapRegistration()
+    {
+        if (m_bunVM)
+            Bun__removeSourceMap(m_bunVM, m_provider);
+    }
+
+    // `sourceMap`: what the caller took out of ResolvedSource::source_map, the map of the text that `provider` holds.
+    template<typename Provider>
+    static SourceMapRegistration printed(void* bunVM, Provider& provider, void* sourceMap)
+    {
+        BunString url = Bun::toString(provider.sourceURL());
+        Bun__registerSourceMap(bunVM, &provider, &url, sourceMap);
+        return SourceMapRegistration(bunVM, &provider);
+    }
+
+    // `add`: the Bun__add* function of a provider that reads the map of its text itself, when a position is first
+    // asked for.
+    template<typename Provider>
+    static SourceMapRegistration lazy(void (*add)(void*, Provider*, const BunString*), void* bunVM, std::type_identity_t<Provider>& provider)
+    {
+        BunString url = Bun::toString(provider.sourceURL());
+        add(bunVM, &provider, &url);
+        return SourceMapRegistration(bunVM, &provider);
+    }
+
+    // `provider` holds the text of `existing`, and shares its map. Empty when `existing` has no map.
+    static SourceMapRegistration alias(void* bunVM, const JSC::SourceProvider& provider, const JSC::SourceProvider& existing)
+    {
+        if (!Bun__aliasSourceMap(bunVM, &provider, &existing))
+            return {};
+        return SourceMapRegistration(bunVM, &provider);
+    }
+
+    // `provider` holds another text, which the map of `existing` maps too. Empty when `existing` has no map.
+    static SourceMapRegistration shared(void* bunVM, const JSC::SourceProvider& provider, const JSC::SourceProvider& existing)
+    {
+        BunString url = Bun::toString(provider.sourceURL());
+        if (!Bun__shareSourceMap(bunVM, &provider, &url, &existing))
+            return {};
+        return SourceMapRegistration(bunVM, &provider);
+    }
+
+private:
+    template<typename Provider>
+    SourceMapRegistration(void* bunVM, Provider* provider)
+        : m_bunVM(bunVM)
+        , m_provider(provider)
+    {
+    }
+
+    void* m_bunVM { nullptr };
+    const JSC::SourceProvider* m_provider { nullptr };
 };
 
 } // namespace Bun

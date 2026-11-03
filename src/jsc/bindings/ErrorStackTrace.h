@@ -223,6 +223,37 @@ inline bool hasOriginalSourcePosition(const JSC::StackFrame& frame)
     return false;
 }
 
+// The URL that a frame shows and the provider that holds its code, read out of the same frame. `provider` is null for
+// a frame that has none: host and WebAssembly code, and code that was compiled ahead of time
+// (hasOriginalSourcePosition()).
+struct FrameSource {
+    String url;
+    JSC::SourceProvider* provider { nullptr };
+};
+FrameSource sourceOf(JSC::VM&, const JSC::StackFrame&);
+FrameSource sourceOf(JSC::StackVisitor&);
+FrameSource sourceOf(JSC::SourceProvider&);
+
+// The only writers of ZigStackFrame::source_url in C++. Each says which text `frame.position` is a position in, and
+// Bun__remapStackFramePositions maps the position through the source map of that text and of no other, whatever the
+// URL names.
+//
+// The text that `source.provider` holds. The frame takes a ref on the provider, which whoever releases the frame
+// gives back (Bun::OwnedZigStackFrames, or Rust for a frame behind ZigStackTrace::frames_ptr).
+void setSource(ZigStackFrame& frame, const FrameSource& source);
+// For the position of a parser's SyntaxError, which has the source URL of the text that did not parse and no frame in it:
+// the text Bun is having parsed (JSVMClientData::sourceBeingParsed) if it has that URL, and otherwise the text that was
+// registered last with a source map under that URL (JSC's module loader parses a module Bun gave it).
+void setSourceOfParserError(ZigStackFrame& frame, JSC::VM&, const String& sourceURL);
+// The same, for a SyntaxError that is read when no text is being parsed.
+void setSourceByURL(ZigStackFrame& frame, const String& sourceURL);
+// A position that is final: WebAssembly, a position read back out of a stack string (it was mapped when the string
+// was made), what an object that is not an Error says of itself.
+void setSourceWithoutMap(ZigStackFrame& frame, const String& sourceURL);
+// A position that is final, of an error with no frame to read back: a collection or structuredClone() made its stack
+// a string. The text it was mapped from can be any text with that URL (ZigStackFrameSourceIfRegistered).
+void setSourceOfCopiedStack(ZigStackFrame& frame, const String& sourceURL);
+
 String sourceURL(const JSC::SourceOrigin& origin);
 String sourceURL(JSC::SourceProvider* sourceProvider);
 String sourceURL(const JSC::SourceCode& sourceCode);

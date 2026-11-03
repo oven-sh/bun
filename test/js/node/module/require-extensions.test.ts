@@ -350,3 +350,288 @@ describe.concurrent("handler that calls the loader it replaced, for a module tha
     });
   });
 });
+
+// Bun keeps a source map for each text it transpiles. Text that a program hands to module._compile() is not
+// transpiled. It runs under a file name the program chooses, and that name can be the name of a file Bun has transpiled.
+describe.concurrent("positions in text that module._compile() was given", () => {
+  // The transpiler removes the comment, so every line that the source map of the fixture itself can answer with is
+  // below it, and a position in `text` that went through that map cannot be taken for the right one.
+  const padding = ["/*", ...Array.from({ length: 18 }, () => " *"), " */"].join("\n") + "\n";
+  const typescript = [
+    "type A = { a: number };",
+    "type B = { b: number };",
+    "type C = { c: number };",
+    'export function make(): Error { try { throw new Error("x"); } catch (e) { return e as Error; } }',
+    "",
+  ].join("\n");
+  const prelude = String.raw`
+    const Module = require("module");
+    const path = require("path");
+    const vm = require("vm");
+    const dirname = __dirname + path.sep;
+    const at = e => e.stack.split("\n")[1].trim().replaceAll(dirname, "");
+    const position = e => ({ at: at(e), line: e.line, column: e.column });
+    const callSite = make => {
+      const prepare = Error.prepareStackTrace;
+      Error.prepareStackTrace = (_, sites) => sites;
+      try {
+        const site = make().stack[0];
+        return { file: path.basename(site.getFileName()), line: site.getLineNumber(), column: site.getColumnNumber() };
+      } finally {
+        Error.prepareStackTrace = prepare;
+      }
+    };
+    // What Bun.inspect() prints down to the first frame: the code frame, the message and where it was thrown.
+    const inspect = e => {
+      const lines = Bun.inspect(e).replaceAll(dirname, "").split("\n");
+      return lines.slice(0, lines.findIndex(line => line.trim().startsWith("at ")) + 1).join("\n");
+    };
+    const compile = (text, filename) => {
+      const module_ = new Module(filename, module);
+      module_.filename = filename;
+      module_.paths = module.paths;
+      module_._compile(text, filename);
+      return module_.exports;
+    };
+  `;
+  const files = {
+    "mod.ts": typescript,
+    "lib.ts": typescript,
+    "positions.js":
+      padding +
+      prelude +
+      String.raw`
+        // Line 7 throws. Line 9 asks where it is.
+        const text = [
+          "// one", "// two", "// three", "// four", "// five", "// six",
+          "exports.make = function make() { try { throw new Error('y'); } catch (e) { return e; } };",
+          "// eight",
+          "exports.where = function where() { return require('util').getCallSites()[0]; };",
+          "",
+        ].join("\n");
+        const describe = exports => ({
+          ...position(exports.make()),
+          callSite: callSite(exports.make),
+          getCallSites: (site => ({ file: path.basename(site.scriptName), line: site.lineNumber }))(exports.where()),
+          inspect: inspect(exports.make()),
+        });
+        const out = {};
+
+        // A file that Bun loads, then a handler that compiles its own text under the name of that file.
+        const mod = require.resolve("./mod.ts");
+        const loaded = require(mod);
+        out.loaded = at(loaded.make());
+        require.extensions[".ts"] = (module, filename) => module._compile(text, filename);
+        delete require.cache[mod];
+        out.handler = describe(require(mod));
+        out.loadedAfterTheHandler = at(loaded.make());
+
+        // The other order: the handler's text first, and the file itself after it.
+        const lib = require.resolve("./lib.ts");
+        const fromHandler = require(lib);
+        delete require.extensions[".ts"];
+        delete require.cache[lib];
+        out.loadedSecond = at(require(lib).make());
+        out.handlerFirst = describe(fromHandler);
+
+        // No handler: text under the name of the file that calls module._compile().
+        out.direct = describe(compile(text, __filename));
+
+        // The same text under a name that no file has.
+        out.control = describe(compile(text, path.join(__dirname, "control.js")));
+
+        console.log(JSON.stringify(out));
+      `,
+    "syntax-error.js":
+      padding +
+      prelude +
+      String.raw`
+        // Bun's parser accepts a regular expression that JavaScriptCore rejects.
+        const text = '\n\n\n"".test(/[a-0]/);';
+        const thrown = fn => {
+          try {
+            fn();
+          } catch (e) {
+            const parse = String(e.stack).split("\n").find(line => line.includes("<parse>")) ?? "";
+            return { name: e.name, line: e.line, parse: parse.trim().replaceAll(dirname, "") };
+          }
+        };
+        console.log(
+          JSON.stringify({
+            own: thrown(() => compile(text, __filename)),
+            control: thrown(() => compile(text, path.join(__dirname, "control.js"))),
+          }),
+        );
+      `,
+    // pirates, @babel/register, ts-node and nyc: a handler replaces module._compile and calls the loader it replaced.
+    // Bun's loader transpiles the file and hands the result to that module._compile, so what the hook compiles for
+    // that module is mapped back to the file.
+    "hook.cjs":
+      prelude +
+      String.raw`
+        const [, , hook, fixture] = process.argv;
+        const original = Module._extensions[".ts"];
+        const hooks = {
+          native: (module, code, filename) => module._compile(code, filename),
+          // A hook that compiles a second time after what it made first did not parse.
+          nativeAgain: (module, code, filename) => {
+            try {
+              module._compile("}", filename);
+            } catch {}
+            return module._compile(code, filename);
+          },
+          // A hook that loads another hooked file before it compiles this one.
+          requiresFirst: (module, code, filename) => {
+            if (path.basename(filename) !== "helper.ts") require("./helper.ts");
+            return module._compile(code, filename);
+          },
+          // A hook that compiles a text of its own for the module, under another name, before the file.
+          compilesHelper: (module, code, filename) => {
+            const text = "\n\n\nexports.ofTheHook = function ofTheHook() { try { throw new Error('h'); } catch (e) { return e; } };";
+            module._compile(text, filename + ".of-the-hook.js");
+            return module._compile(code, filename);
+          },
+        };
+        if (hook !== "none") {
+          Module._extensions[".ts"] = function (module, filename) {
+            const compile = module._compile;
+            module._compile = function (code) {
+              module._compile = compile;
+              return hooks[hook](module, code, filename);
+            };
+            return original.call(this, module, filename);
+          };
+        }
+        const file = require.resolve(fixture);
+        const describe = ({ make, helper, inner, innerVm, ofTheHook }) => ({
+          make: { ...position(make()), callSite: callSite(make).line },
+          helper: helper && at(helper()),
+          inner: inner && at(inner()),
+          innerVm: innerVm && at(innerVm()),
+          ofTheHook: ofTheHook && at(ofTheHook()),
+        });
+        const first = require(file);
+        // The file again, through the hook again. The first load is still there.
+        delete require.cache[file];
+        const second = require(file);
+        console.log(JSON.stringify({ first: describe(first), second: describe(second), firstAfterSecond: describe(first) }));
+      `,
+    "hooked.ts": typescript.replace("export function make", "exports.make = function make"),
+    "helper.ts": typescript.replace("export function make", "exports.make = function make"),
+    // A hooked file that loads a hooked file while it is loaded.
+    "requires-helper.ts": [
+      "type A = { a: number };",
+      'const helper = require("./helper.ts");',
+      "type B = { b: number };",
+      "exports.helper = helper.make;",
+      'exports.make = function make(): Error { try { throw new Error("x"); } catch (e) { return e as Error; } };',
+      "",
+    ].join("\n"),
+    // Each inner text has make() on its line 9.
+    "compiles.ts": [
+      "type A = { a: number };",
+      `const text = "\\n\\n\\n\\n\\n\\n\\n\\nexports.make = function make() { try { throw new Error('inner'); } catch (e) { return e; } };";`,
+      'const inner = new (require("module"))(__filename, module);',
+      "inner._compile(text, __filename);",
+      "exports.inner = inner.exports.make;",
+      "const innerVm = { exports: {} as any };",
+      'require("vm").runInThisContext("(function (exports) {" + text + "\\n})", { filename: __filename })(innerVm.exports);',
+      "exports.innerVm = innerVm.exports.make;",
+      'exports.make = function make(): Error { try { throw new Error("x"); } catch (e) { return e as Error; } };',
+      "",
+    ].join("\n"),
+  };
+
+  async function run(fixture: string, ...args: string[]) {
+    using dir = tempDir("module-compile-positions", files);
+    const { stdout, stderr, exitCode } = await bunRun([path.join(String(dir), fixture), ...args]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    return JSON.parse(stdout);
+  }
+
+  test("are positions in that text, whatever file it is named after", async () => {
+    const out = await run("positions.js");
+    const control = JSON.stringify(out.control);
+    const named = (name: string) => JSON.parse(control.replaceAll("control.js", name));
+
+    expect(out.control.at).toMatch(/^at make \(control\.js:7:\d+\)$/);
+    expect(out.control).toMatchObject({
+      line: 7,
+      callSite: { file: "control.js", line: 7 },
+      getCallSites: { file: "control.js", line: 9 },
+    });
+    expect(out.control.inspect).toContain("7 | exports.make = function make() { try { throw new Error('y'); }");
+    expect({
+      handler: out.handler,
+      handlerFirst: out.handlerFirst,
+      direct: out.direct,
+    }).toEqual({
+      handler: named("mod.ts"),
+      handlerFirst: named("lib.ts"),
+      direct: named("positions.js"),
+    });
+    // What Bun transpiled keeps its map when other text is compiled under its name, before or after.
+    expect({
+      loaded: out.loaded,
+      loadedAfterTheHandler: out.loadedAfterTheHandler,
+      loadedSecond: out.loadedSecond,
+    }).toEqual({
+      loaded: "at make (mod.ts:4:49)",
+      loadedAfterTheHandler: "at make (mod.ts:4:49)",
+      loadedSecond: "at make (lib.ts:4:49)",
+    });
+  });
+
+  test("a SyntaxError is at its line of that text", async () => {
+    expect(await run("syntax-error.js")).toEqual({
+      own: { name: "SyntaxError", line: 4, parse: "at <parse> (syntax-error.js:4)" },
+      control: { name: "SyntaxError", line: 4, parse: "at <parse> (control.js:4)" },
+    });
+  });
+
+  // Each hook in a process of its own: a handler that is assigned again does not replace the first one.
+  const hooks = ["none", "native", "nativeAgain", "requiresFirst"];
+  const hooked = async (fixture: string) => {
+    const out = await Promise.all(hooks.map(hook => run("hook.cjs", hook, fixture)));
+    return Object.fromEntries(hooks.map((hook, i) => [hook, out[i]]));
+  };
+  const everyHook = (load: object) =>
+    Object.fromEntries(hooks.map(hook => [hook, { first: load, second: load, firstAfterSecond: load }]));
+
+  test("what a hook compiles of the file that Bun's loader hands to it is mapped back to the file", async () => {
+    expect(await hooked("./hooked.ts")).toEqual(
+      everyHook({ make: { at: "at make (hooked.ts:4:57)", line: 4, column: 57, callSite: 4 } }),
+    );
+  });
+
+  test("what a hook compiles for the module under another name is a text of its own", async () => {
+    const load = {
+      make: { at: "at make (hooked.ts:4:57)", line: 4, column: 57, callSite: 4 },
+      ofTheHook: expect.stringMatching(/^at ofTheHook \(hooked\.ts\.of-the-hook\.js:4:\d+\)$/),
+    };
+    expect(await run("hook.cjs", "compilesHelper", "./hooked.ts")).toEqual({
+      first: load,
+      second: load,
+      firstAfterSecond: load,
+    });
+  });
+
+  test("a hooked file that loads a hooked file keeps the positions of both", async () => {
+    expect(await hooked("./requires-helper.ts")).toEqual(
+      everyHook({
+        make: { at: "at make (requires-helper.ts:5:57)", line: 5, column: 57, callSite: 5 },
+        helper: "at make (helper.ts:4:57)",
+      }),
+    );
+  });
+
+  test("what a file compiles under its own name while a hook loads it is not mapped back to the file", async () => {
+    expect(await hooked("./compiles.ts")).toEqual(
+      everyHook({
+        make: expect.objectContaining({ line: 9, callSite: 9 }),
+        inner: expect.stringMatching(/^at make \(compiles\.ts:9:\d+\)$/),
+        innerVm: expect.stringMatching(/^at make \(compiles\.ts:9:\d+\)$/),
+      }),
+    );
+  });
+});

@@ -83,6 +83,7 @@
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include "PathInlines.h"
 #include "wtf/NakedPtr.h"
+#include "wtf/SetForScope.h"
 #include "wtf/URL.h"
 #include "wtf/text/StringImpl.h"
 #include "JSCommonJSExtensions.h"
@@ -185,9 +186,12 @@ static void putModuleGraphRequireMain(VM& vm, JSFunction* requireFunction, JSCom
 // module scope (ModuleProgramExecutable). CommonJS wrappers should be compiled the same way.
 class GraphCommonJSSourceProvider final : public JSC::SourceProvider {
 public:
-    static Ref<GraphCommonJSSourceProvider> create(Ref<JSC::SourceProvider>&& source, unsigned overlayShape)
+    static Ref<GraphCommonJSSourceProvider> create(void* bunVM, Ref<JSC::SourceProvider>&& source, unsigned overlayShape)
     {
-        return adoptRef(*new GraphCommonJSSourceProvider(WTF::move(source), overlayShape));
+        Ref provider = adoptRef(*new GraphCommonJSSourceProvider(WTF::move(source), overlayShape));
+        // A frame of the wrapper's code names this provider: the text, and so the source map, is the wrapped one's.
+        provider->m_sourceMap = Bun::SourceMapRegistration::alias(bunVM, provider.get(), provider->m_source.get());
+        return provider;
     }
 
     unsigned hash() const final { return m_source->hash() ^ m_overlayShape; }
@@ -204,6 +208,8 @@ private:
 
     const Ref<JSC::SourceProvider> m_source;
     const unsigned m_overlayShape;
+    // Last: the entry leaves the table before m_source, which source() reads, goes.
+    Bun::SourceMapRegistration m_sourceMap;
 };
 
 static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename)
@@ -225,7 +231,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
             }
         }
         if (!sharedWrapper) {
-            RefPtr<JSC::SourceProvider> provider = GraphCommonJSSourceProvider::create(*code.provider(), graph->overlayShape());
+            RefPtr<JSC::SourceProvider> provider = GraphCommonJSSourceProvider::create(globalObject->bunVM(), *code.provider(), graph->overlayShape());
             Zig::addCodeCoverageSourceID(vm, *provider);
             code = SourceCode(WTF::move(provider), code.startOffset(), code.endOffset());
         }
@@ -308,7 +314,14 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     // overload would swallow the exception, leaving the misleading
     // "function wrapper" TypeError below instead of the real error.
     WTF::NakedPtr<JSC::Exception> wrapperException;
-    JSValue fnValue = sharedWrapper ? JSValue(JSFunction::create(vm, globalObject, sharedWrapper, moduleObject->moduleGraph()->overlay())) : JSC::evaluate(globalObject, code, jsUndefined(), wrapperException);
+    JSValue fnValue;
+    if (sharedWrapper) {
+        fnValue = JSFunction::create(vm, globalObject, sharedWrapper, moduleObject->moduleGraph()->overlay());
+    } else {
+        // Evaluating the wrapper parses the module. A SyntaxError is a position in this text, whatever file it names.
+        SetForScope parsing(WebCore::clientData(vm)->sourceBeingParsed, code.provider());
+        fnValue = JSC::evaluate(globalObject, code, jsUndefined(), wrapperException);
+    }
     if (wrapperException) [[unlikely]] {
         scope.throwException(globalObject, wrapperException.get());
         return false;
@@ -952,13 +965,13 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
         wrappedString = makeString(commonJSDefaultWrapperStart, sourceString, "\n"_s, commonJSDefaultWrapperEnd);
     }
 
-    moduleObject->sourceCode = makeSource(
-        WTF::move(wrappedString),
+    moduleObject->sourceCode = SourceCode(Bun::providerOfCompiledText(
+        vm,
+        moduleObject,
+        wrappedString,
         SourceOrigin(URL::fileURLWithFileSystemPath(filenameString)),
-        JSC::SourceTaintedOrigin::Untainted,
         filenameString,
-        WTF::TextPosition(),
-        JSC::SourceProviderSourceType::Program);
+        JSC::SourceTaintedOrigin::Untainted));
 
     JSValue dirnameValue = Bun::pathDirname(globalObject, filenameValue);
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -1674,6 +1687,8 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
         MarkedArgumentBuffer arguments;
         arguments.append(jsString(vm, sourceStringWithoutWrapper));
         arguments.append(keyJSString);
+        // No Zig::SourceProvider is made of this text. Its map goes to the provider of what the override compiles.
+        Bun::SourceMapHandoff handoff(vm, this, key, std::exchange(source.source_map, nullptr));
         JSC::profiledCall(globalObject, ProfilingReason::API, compileFunction, callData, this, arguments);
         RETURN_IF_EXCEPTION(scope, );
         return;

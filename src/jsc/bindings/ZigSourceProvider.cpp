@@ -41,7 +41,7 @@ SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
     return SourceOrigin(WTF::URL::fileURLWithFileSystemPath(sourceURL));
 }
 
-extern "C" void ByteRangeMapping__generate(const BunString* sourceURL, const BunString* code, int sourceID, bool alreadyBundled);
+extern "C" void ByteRangeMapping__generate(const BunString* sourceURL, const BunString* code, int sourceID, const JSC::SourceProvider*, bool alreadyBundled);
 extern "C" void ByteRangeMapping__addSourceID(const BunString* sourceURL, const BunString* code, int sourceID);
 
 void addCodeCoverageSourceID(JSC::VM& vm, JSC::SourceProvider& provider)
@@ -55,8 +55,10 @@ void addCodeCoverageSourceID(JSC::VM& vm, JSC::SourceProvider& provider)
 }
 
 extern "C" bool BunTest__shouldGenerateCodeCoverage(const BunString* sourceURL);
-extern "C" void Bun__addSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, const BunString* specifier);
-extern "C" void Bun__removeSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, const BunString* specifier);
+// A `// @bun` file: the map its text links to is read when a position in it is first asked for.
+extern "C" void Bun__addSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, const BunString* url);
+// A file of a standalone executable: the map that the executable embeds is read when a position in it is first asked for.
+extern "C" void Bun__addEmbeddedSourceMap(void* bun_vm, const JSC::SourceProvider*, const BunString* url);
 
 Ref<SourceProvider> SourceProvider::create(
     Zig::GlobalObject* globalObject,
@@ -106,7 +108,6 @@ Ref<SourceProvider> SourceProvider::create(
                 bytecode->setPayloadIsPersistent();
             bytecode->setEntryOffset(resolvedSource.bytecode_cache_entry_offset);
             auto provider = adoptRef(*new SourceProvider(
-                globalObject->bunVM(),
                 resolvedSource,
                 string.isNull() ? Ref { *StringImpl::empty() } : Ref { *string.impl() },
                 JSC::SourceTaintedOrigin::Untainted,
@@ -119,7 +120,6 @@ Ref<SourceProvider> SourceProvider::create(
         }
 
         return adoptRef(*new SourceProvider(
-            globalObject->bunVM(),
             resolvedSource,
             string.isNull() ? Ref { *StringImpl::empty() } : Ref { *string.impl() },
             JSC::SourceTaintedOrigin::Untainted,
@@ -130,16 +130,21 @@ Ref<SourceProvider> SourceProvider::create(
 
     auto provider = getProvider();
 
+    // The map of this text belongs to this provider: a frame finds it by the provider of its code, never by the name of
+    // the file. Coverage takes it below.
+    void* bunVM = globalObject->bunVM();
+    if (void* sourceMap = std::exchange(resolvedSource.source_map, nullptr))
+        provider->m_sourceMap = Bun::SourceMapRegistration::printed(bunVM, provider.get(), sourceMap);
+    else if (provider->m_alreadyBundled)
+        provider->m_sourceMap = Bun::SourceMapRegistration::lazy(Bun__addSourceProviderSourceMap, bunVM, provider.get());
+    else if (resolvedSource.has_embedded_source_map)
+        provider->m_sourceMap = Bun::SourceMapRegistration::lazy(Bun__addEmbeddedSourceMap, bunVM, provider.get());
+
     if (shouldGenerateCodeCoverage) {
         BunString providerURL = Bun::toString(provider->sourceURL());
         WTF::String providerSourceString = provider->source().toStringWithoutCopying();
         BunString providerSource = Bun::toString(providerSourceString);
-        ByteRangeMapping__generate(&providerURL, &providerSource, provider->asID(), provider->m_alreadyBundled);
-    }
-
-    if (provider->m_alreadyBundled) {
-        BunString str = Bun::toString(provider->sourceURL());
-        Bun__addSourceProviderSourceMap(globalObject->bunVM(), provider.ptr(), &str);
+        ByteRangeMapping__generate(&providerURL, &providerSource, provider->asID(), provider.ptr(), provider->m_alreadyBundled);
     }
 
     return provider;
@@ -152,14 +157,101 @@ StringView SourceProvider::source() const
 
 SourceProvider::~SourceProvider()
 {
-    if (m_alreadyBundled) {
-        BunString str = Bun::toString(sourceURL());
-        Bun__removeSourceProviderSourceMap(m_bunVM, this, &str);
-    }
     if (m_moduleInfo) {
         zig__ModuleInfoDeserialized__deinit(m_moduleInfo);
     }
 }
+
+} // namespace Zig
+
+// SavedSourceMap::newest_for_url, of each provider that has a source map.
+extern "C" bool Bun__SourceProvider__hasSourceURL(const JSC::SourceProvider* provider, const BunString* url)
+{
+    return provider->sourceURL() == url->toWTFString(BunString::ZeroCopy);
+}
+
+// SavedSourceMap: a provider that registers a source map holds the text of one that has the same key.
+extern "C" bool Bun__SourceProvider__hasSameSource(const JSC::SourceProvider* a, const JSC::SourceProvider* b)
+{
+    return a->sourceURL() == b->sourceURL() && a->source() == b->source();
+}
+
+// SavedSourceMap: part of the key of a text. JavaScriptCore asks for the same hash when it compiles the text.
+extern "C" uint32_t Bun__SourceProvider__hash(const JSC::SourceProvider* provider)
+{
+    return provider->hash();
+}
+
+// SavedSourceMap: where a provider that reads its own source map looks for it.
+extern "C" BunString Bun__SourceProvider__sourceURL(const JSC::SourceProvider* provider)
+{
+    return Bun::toStringRef(provider->sourceURL());
+}
+
+namespace Bun {
+
+SourceMapHandoff::SourceMapHandoff(JSC::VM& vm, JSC::JSCell* module, const String& filename, void* sourceMap)
+    : m_slot(WebCore::clientData(vm)->sourceMapHandoff)
+    , m_previous(std::exchange(m_slot, this))
+    , m_module(module)
+    , m_filename(filename)
+    , m_sourceMap(sourceMap)
+{
+}
+
+SourceMapHandoff::~SourceMapHandoff()
+{
+    m_slot = m_previous;
+    if (m_sourceMap)
+        ResolvedSource__freeSourceMap(m_sourceMap);
+}
+
+namespace {
+
+// A text that an overridden module._compile compiles of the file Bun's loader handed to it. It has the map of what
+// was handed over, as a Zig::SourceProvider has the map of its text.
+class HandedOffSourceProvider final : public JSC::StringSourceProvider {
+public:
+    static Ref<HandedOffSourceProvider> create(const String& text, const JSC::SourceOrigin& origin, String&& url, JSC::SourceTaintedness taintedness, const TextPosition& position, JSC::SourceProviderSourceType type)
+    {
+        return adoptRef(*new HandedOffSourceProvider(text, origin, taintedness, WTF::move(url), position, type));
+    }
+
+    SourceMapRegistration m_sourceMap;
+
+private:
+    HandedOffSourceProvider(const String& text, const JSC::SourceOrigin& origin, JSC::SourceTaintedness taintedness, String&& url, const TextPosition& position, JSC::SourceProviderSourceType type)
+        : JSC::StringSourceProvider(text, origin, taintedness, WTF::move(url), position, type)
+    {
+    }
+};
+
+} // namespace
+
+Ref<JSC::SourceProvider> providerOfCompiledText(JSC::VM& vm, JSC::JSCell* module, const String& text, const JSC::SourceOrigin& origin, String filename, JSC::SourceTaintedness taintedness)
+{
+    auto* clientData = WebCore::clientData(vm);
+    for (SourceMapHandoff* handoff = clientData->sourceMapHandoff; handoff; handoff = handoff->m_previous) {
+        if (handoff->m_module != module)
+            continue;
+        // Another name is another text: a helper that the hook compiles on the module, or what the file compiles itself.
+        if (handoff->m_filename != filename)
+            break;
+        Ref provider = HandedOffSourceProvider::create(text, origin, WTF::move(filename), taintedness, TextPosition(), JSC::SourceProviderSourceType::Program);
+        if (void* sourceMap = std::exchange(handoff->m_sourceMap, nullptr)) {
+            provider->m_sourceMap = SourceMapRegistration::printed(clientData->bunVM, provider.get(), sourceMap);
+            handoff->m_first = provider.copyRef();
+        } else if (handoff->m_first) {
+            provider->m_sourceMap = SourceMapRegistration::shared(clientData->bunVM, provider.get(), *handoff->m_first);
+        }
+        return provider;
+    }
+    return JSC::StringSourceProvider::create(text, origin, WTF::move(filename), taintedness, TextPosition(), JSC::SourceProviderSourceType::Program);
+}
+
+} // namespace Bun
+
+namespace Zig {
 
 extern "C" void CachedBytecode__deref(JSC::CachedBytecode* cachedBytecode)
 {

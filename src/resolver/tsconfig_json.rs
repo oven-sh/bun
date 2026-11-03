@@ -132,10 +132,22 @@ pub(crate) enum JsxField {
 
 pub(crate) type JsxFieldSet = EnumSet<JsxField>;
 
-/// A file that a `TSConfigJSON` was read from, with a hash of its bytes then (`None`: not read).
+/// A config file that was read, with a hash of its bytes then (`None`: not read): each file of a `TSConfigJSON`, or one that gave no parsed value.
 pub(crate) struct ConfigSource {
     pub(crate) path: Box<[u8]>,
     pub(crate) hash: Option<u64>,
+    /// What `stat()` said of the file when a lookup last found these bytes in it. 0: not known, or the file was too new.
+    pub(crate) disk_key: core::sync::atomic::AtomicU64,
+}
+
+impl ConfigSource {
+    pub(crate) fn new(path: &[u8], hash: Option<u64>) -> ConfigSource {
+        ConfigSource {
+            path: Box::from(path),
+            hash,
+            disk_key: core::sync::atomic::AtomicU64::new(0),
+        }
+    }
 }
 
 pub struct TSConfigJSON {

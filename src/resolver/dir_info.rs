@@ -1,4 +1,5 @@
 use core::ptr::NonNull;
+use core::sync::atomic::{AtomicU32, AtomicU64};
 
 use bun_alloc as allocators;
 use bun_core::Generation;
@@ -7,7 +8,7 @@ use bun_sys::Fd;
 
 use crate::fs;
 use crate::package_json::PackageJSON;
-use crate::tsconfig_json::TSConfigJSON;
+use crate::tsconfig_json::{ConfigSource, TSConfigJSON};
 
 pub use allocators::IndexType;
 use allocators::{NOT_FOUND, UNASSIGNED};
@@ -75,6 +76,7 @@ pub(crate) use dispatch_asker;
 // only inside `dir_info_uncached` while filling a freshly-`put` slot, before
 // any handle to that slot escapes. All access is additionally serialized under
 // the resolver mutex.
+// `stamp` and the two listing versions are atomics: a lookup that checks a slot stores them through `&DirInfo`.
 //
 // `as_ptr()` exposes the raw `*mut` for the few callers that still need it
 // (the `dir_info_uncached` fill path and `MatchResult.dir_info` round-trip).
@@ -147,8 +149,7 @@ impl core::fmt::Debug for DirInfoRef {
 }
 
 pub struct DirInfo {
-    // These objects are immutable, so we can just point to the parent directory
-    // and avoid having to lock the cache again
+    // A slot is filled once and a directory that changed gets a new one, so this index is read without locking the cache.
     pub(crate) parent: Index,
 
     // A pointer to the enclosing dirInfo with a valid "browser" field in
@@ -201,6 +202,35 @@ pub struct DirInfo {
     pub abs_real_path: &'static [u8],
 
     pub(crate) flags: Flags,
+
+    /// The generation of the lookup that last read these facts from disk or found them unchanged. 0: one that checks nothing.
+    pub(crate) stamp: AtomicU64,
+    /// `DirEntry::version` of the listing when the facts that come from it were last derived.
+    pub(crate) listing_version: AtomicU32,
+    /// The same for the listing of the parent, which gives `abs_real_path`.
+    pub(crate) parent_listing_version: AtomicU32,
+    pub(crate) rare: Option<Box<RareFacts>>,
+}
+
+/// What few directories have: a config file that gave no parsed value, and what reading the config files logged.
+#[derive(Default)]
+pub(crate) struct RareFacts {
+    /// `package.json` was listed as a file and gave no `PackageJSON`.
+    pub(crate) unparsed_package_json: Option<ConfigSource>,
+    /// `tsconfig.json` or `jsconfig.json` was listed as a file and gave no `TSConfigJSON`.
+    pub(crate) unparsed_tsconfig: Option<ConfigSource>,
+    /// A lookup that checks the slot and keeps it writes these again: the readers logged them only when they filled it.
+    pub(crate) package_json_msgs: Vec<bun_ast::Msg>,
+    pub(crate) tsconfig_msgs: Vec<bun_ast::Msg>,
+}
+
+impl RareFacts {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.unparsed_package_json.is_none()
+            && self.unparsed_tsconfig.is_none()
+            && self.package_json_msgs.is_empty()
+            && self.tsconfig_msgs.is_empty()
+    }
 }
 
 impl Default for DirInfo {
@@ -219,6 +249,10 @@ impl Default for DirInfo {
             tsconfig_json: None,
             abs_real_path: b"",
             flags: Flags::empty(),
+            stamp: AtomicU64::new(0),
+            listing_version: AtomicU32::new(0),
+            parent_listing_version: AtomicU32::new(0),
+            rare: None,
         }
     }
 }
@@ -474,6 +508,10 @@ bitflags::bitflags! {
         /// This directory has a node_modules subdirectory
         const HasNodeModules    = 1 << 1;
         const InsideNodeModules = 1 << 2;
+        /// A `package.json` file was listed, whether or not it parsed.
+        const HasPackageJsonFile = 1 << 3;
+        /// A `tsconfig.json` or `jsconfig.json` file was listed, whether or not it loaded.
+        const HasTsconfigFile   = 1 << 4;
     }
 }
 impl Flags {

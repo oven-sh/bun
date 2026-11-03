@@ -2087,7 +2087,7 @@ fn is_pollable(fd: Fd) -> bool {
     let Ok(st) = bun_sys::fstat(fd) else {
         return false;
     };
-    // A write to a Windows console waits for nothing.
+    // A write to a Windows console is over when it returns.
     is_pollable_from_mode(st.st_mode as bun_sys::Mode) || (cfg!(unix) && bun_sys::isatty(fd))
 }
 

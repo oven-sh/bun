@@ -657,6 +657,8 @@ impl BufferedReader {
 
     /// A pipe may block. In turns, all that is left is read once the other end is gone (on Windows one chunk has all that a pipe holds). A used-up limit is reported without reading.
     fn asks_before_reading(&self, file_type: FileType) -> bool {
+        #[cfg(windows)]
+        const _: () = assert!(bun_sys::windows::pipe::BUFFER_SIZE <= 128 * 1024);
         let in_turns = cfg!(not(windows)) && self.flags.contains(ReaderFlags::IN_TURNS);
         (file_type == FileType::Pipe || in_turns) && !self.limit.reached()
     }

@@ -28,7 +28,7 @@ const WRITE_DAC: ULONG = 0x40000;
 const DUPLEX: ULONG = GENERIC_READ | GENERIC_WRITE | SYNCHRONIZE | WRITE_DAC;
 
 /// How much either side can write before the other has read any of it.
-const BUFFER_SIZE: ULONG = 65536;
+pub const BUFFER_SIZE: ULONG = 65536;
 
 #[link(name = "ntdll")]
 #[link(name = "kernel32")]

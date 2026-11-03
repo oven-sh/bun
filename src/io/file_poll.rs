@@ -1172,7 +1172,13 @@ impl FilePoll {
     /// The mode of the console changed while this poll was waiting for input.
     pub(crate) fn restart_console(&mut self) {
         let loop_ = get_vm_ctx(self.allocator_type).loop_mut();
-        let _ = self.set_native_events(loop_, Flags::Readable, READABLE);
+        // What can fail here is making the object that waits.
+        if self
+            .set_native_events(loop_, Flags::Readable, READABLE)
+            .is_err()
+        {
+            bun_core::out_of_memory();
+        }
     }
 
     fn release_native(&mut self) {

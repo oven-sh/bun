@@ -1204,7 +1204,7 @@ it.if(isWindows).each(["\\\\.\\PIPE\\", "\\\\.\\Pipe\\", "//?/PIPE/"])(
   },
 );
 
-// Closing a pipe throws away what its peer has not read yet.
+// A pipe cannot be half closed, and an end that is closed does not get the answer to what its peer has yet to read.
 it.if(isWindows)("a named pipe that was ended stays open until its peer has read everything", async () => {
   const server = createServer({ allowHalfOpen: true, pauseOnConnect: true });
   await once(server.listen(`\\\\.\\pipe\\bun-test-flush-${randomUUID()}`), "listening");

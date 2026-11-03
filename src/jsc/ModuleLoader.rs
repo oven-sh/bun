@@ -375,9 +375,20 @@ fn is_eval_entry(key: &[u8]) -> bool {
     eval_source.is_some_and(|source| source.path.text == key)
 }
 
+/// `None` if no `onLoad` runs for `key`.
 pub(crate) fn on_load_namespace_and_path(key: &[u8]) -> Option<(&[u8], &[u8])> {
-    // The eval entry is no file. A dot in the name of the working directory reads as its extension.
-    (has_extension_or_namespace(key) && !is_eval_entry(key)).then(|| namespace_and_path(key))
+    if bun_paths::is_absolute(key) {
+        // The eval entry is no file.
+        if is_eval_entry(key) {
+            return None;
+        }
+        // The key of a file that the resolver found is an absolute path. It is asked about whatever its name is.
+        let (namespace, path) = namespace_and_path(key);
+        if namespace.is_empty() {
+            return Some((namespace, path));
+        }
+    }
+    has_extension_or_namespace(key).then(|| namespace_and_path(key))
 }
 
 /// C++ entry point: length of `key`'s `onLoad` namespace (0 for `file`), or -1 if no `onLoad` runs for it.

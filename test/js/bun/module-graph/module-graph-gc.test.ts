@@ -52,7 +52,7 @@ const dir = String(
       export function dgramSocketInStoreOfTheGraph(storage) { return storage.run({ log() {} }, dgramSocket); }
       // Calls the listeners of the host's target while the graph's script is on the stack.
       export function dispatch(target) { target.dispatchEvent(new Event("call")); }
-      export function dgramSend(socket) { socket.send("from the graph"); }
+      export function dgramSend(socket, callback) { socket.send("from the graph", callback); }
       export function serve() {
         const server = Bun.serve({ port: 0, fetch: () => new Response("graph " + TAG) });
         control.httpPort = server.port;
@@ -410,14 +410,13 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
     expect(await accepts(state.httpPort)).toBe(false);
   });
 
-  // node:dgram keeps the AsyncLocalStorage stores of createSocket() for the bind() that opens the socket, and no frame
-  // of a graph. So a socket that the host holds does not keep the graph that made it through such a frame. Nor does
+  // node:dgram keeps the async context of createSocket() for the bind() that opens the socket, but not a context
+  // that has a frame of a graph in it. So a socket that the host holds does not keep the graph that made it. Nor does
   // a socket of the host's keep a graph whose script was on the stack when the host made or bound it: the frame that
   // leaves a graph links to the frame of the graph, and what else the host opens over it (Bun.udpSocket() with a
   // handler, a timer) does keep the graph. A socket the graph bound is the graph's: its handlers hold the graph
-  // until the host closes the socket. The socket has the stores until close(), and dispose() does not clear them: a
-  // store value that holds a function of the graph holds the graph.
-  test("of the node:dgram sockets the host holds, one that the graph bound keeps the graph, and one whose store value is the graph's", async () => {
+  // until the host closes the socket.
+  test("of the node:dgram sockets the host holds, only one that the graph bound keeps the graph", async () => {
     const lifetimes = new Lifetimes();
     const storage = new AsyncLocalStorage<unknown>();
     const sockets: Record<string, dgram.Socket> = {};
@@ -443,7 +442,6 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
     };
     const rows = [
       "made in the graph, never bound",
-      "made in the graph in no store, never bound",
       "made in the graph, a bind by the host failed",
       "made in the graph, never bound, and the graph is dropped with no dispose()",
       "made in the graph, bound by the host",
@@ -460,8 +458,6 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
           const io = await graph.import(file("io.mjs"));
           if (row.startsWith("made in the graph in a store")) {
             sockets[row] = graph.run(() => io.dgramSocketInStoreOfTheGraph(storage));
-          } else if (row.startsWith("made in the graph in no store")) {
-            sockets[row] = graph.run(() => io.dgramSocket());
           } else if (row.startsWith("made in the graph")) {
             const socket = (sockets[row] = graph.run(() => storage.run("createSocket()", () => io.dgramSocket())));
             if (row.endsWith("a bind by the host failed")) expect(await bind(socket, holder.port)).toBe("EADDRINUSE");
@@ -480,15 +476,43 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
           if (!row.endsWith("with no dispose()")) graph.dispose();
         }
       })();
-      const kept = [
-        "made in the graph, bound by the graph",
-        "made in the graph in a store whose value holds a function of the graph, never bound",
-      ];
-      expect(await lifetimes.stillAlive(...rows.filter(row => !kept.includes(row)))).toEqual([]);
-      for (const row of kept) expect([row, await lifetimes.survives(row)]).toEqual([row, true]);
+      const boundByTheGraph = "made in the graph, bound by the graph";
+      expect(await lifetimes.stillAlive(...rows.filter(row => row !== boundByTheGraph))).toEqual([]);
+      expect(await lifetimes.survives(boundByTheGraph)).toBe(true);
     } finally {
       for (const socket of Object.values(sockets)) socket.close();
       holder.close();
+    }
+    expect(await lifetimes.stillAlive(...rows)).toEqual([]);
+  });
+
+  // A bind by the host opens the socket in the async context of createSocket(), so the open socket keeps the store
+  // of createSocket(), as in Node.js. A bind by a graph's script opens it in the context of bind(): nothing needs
+  // the context of createSocket() after that, and the handle lets it go when the bind succeeds.
+  test("an open node:dgram socket keeps the store of createSocket() only when it opened in it", async () => {
+    const lifetimes = new Lifetimes();
+    const storage = new AsyncLocalStorage<object>();
+    const sockets: dgram.Socket[] = [];
+    const graph = new ModuleGraph({ globals: {} });
+    const bind = (socket: dgram.Socket) =>
+      new Promise<string>(resolve => {
+        socket.once("error", (error: NodeJS.ErrnoException) => resolve(String(error.code)));
+        socket.bind(0, "127.0.0.1", () => resolve("listening"));
+      });
+    const rows = ["bound by the host", "bound by a graph's script"];
+    try {
+      await (async () => {
+        for (const row of rows) {
+          const socket = storage.run(lifetimes.track(row, { row }), () => dgram.createSocket("udp4"));
+          sockets.push(socket);
+          expect(await (row === "bound by the host" ? bind(socket) : graph.run(() => bind(socket)))).toBe("listening");
+        }
+      })();
+      expect(await lifetimes.stillAlive("bound by a graph's script")).toEqual([]);
+      expect(await lifetimes.survives("bound by the host")).toBe(true);
+    } finally {
+      for (const socket of sockets) socket.close();
+      graph.dispose();
     }
     expect(await lifetimes.stillAlive(...rows)).toEqual([]);
   });
@@ -523,6 +547,51 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
       }
     } finally {
       socket.close();
+    }
+  });
+
+  // With a callback it keeps the async context of its call until the callback has run, as a queued send() of a
+  // WebSocket does. A frame of a graph in that context keeps the graph for that time: until the drain, or close().
+  test("a queued node:dgram send() with a callback keeps the graph that sent it until it completes", async () => {
+    const lifetimes = new Lifetimes();
+    const socket = dgram.createSocket("udp4");
+    const takesEverySend = { send: () => true };
+    const refusesEverySend = { send: () => false };
+    let closed = false;
+    try {
+      socket.bind(0, "127.0.0.1");
+      await once(socket, "listening");
+      socket.connect(socket.address().port, "127.0.0.1");
+      await once(socket, "connect");
+      const handle = socket[kStateSymbol].handle;
+      const realSocket = handle.socket;
+      try {
+        await (async () => {
+          for (const row of ["completed by a drain", "still queued"]) {
+            const graph = lifetimes.track(row, new ModuleGraph({ globals: { TAG: row, control: control() } }));
+            const io = await graph.import(file("io.mjs"));
+            const completed = Promise.withResolvers<void>();
+            // With a queue, every send() waits behind it. The callback is the host's: only the context is the graph's.
+            handle.sendQueue = [];
+            handle.socket = row === "completed by a drain" ? takesEverySend : refusesEverySend;
+            graph.run(() => io.dgramSend(socket, completed.resolve));
+            handle.drain();
+            if (row === "completed by a drain") await completed.promise;
+            graph.dispose();
+          }
+        })();
+        expect(await lifetimes.stillAlive("completed by a drain")).toEqual([]);
+        expect(await lifetimes.survives("still queued")).toBe(true);
+      } finally {
+        handle.socket = realSocket;
+      }
+      closed = true;
+      const done = once(socket, "close");
+      socket.close();
+      await done;
+      expect(await lifetimes.stillAlive("still queued")).toEqual([]);
+    } finally {
+      if (!closed) socket.close();
     }
   });
 

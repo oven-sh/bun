@@ -12,9 +12,6 @@
 // ModuleGraph.cpp walks the chain (AsyncLocalStorage's frames say nothing about graphs).
 const moduleGraphOfFrame = $newCppFunction("ModuleGraph.cpp", "jsFunctionModuleGraphOfFrame", 1);
 const moduleGraphFrameOfFrame = $newCppFunction("ModuleGraph.cpp", "jsFunctionModuleGraphFrameOfFrame", 1);
-// Bound at the first call: most programs that load this module call neither.
-let asyncContextWithoutModuleGraphs: ((frame: unknown) => unknown) | undefined;
-let asyncContextInCurrentModuleGraph: ((stores: unknown) => unknown) | undefined;
 
 const AsyncContextFrame = {
   enabled: true,
@@ -36,24 +33,6 @@ const AsyncContextFrame = {
   /** The Bun.ModuleGraph whose context `frame` (a current() or currentGraphFrame() of earlier) is inside of. */
   graphOf(frame) {
     return moduleGraphOfFrame(frame);
-  },
-  /** `frame` without the frames of a Bun.ModuleGraph: what something long-lived keeps, so that it keeps the AsyncLocalStorage stores and no graph. `frame` itself where it has none. */
-  withoutModuleGraphs(frame) {
-    asyncContextWithoutModuleGraphs ??= $newCppFunction(
-      "ModuleGraph.cpp",
-      "jsFunctionAsyncContextWithoutModuleGraphs",
-      1,
-    );
-    return asyncContextWithoutModuleGraphs!(frame);
-  },
-  /** The frame that enters the Bun.ModuleGraph of the running script over `stores`, an answer of withoutModuleGraphs(). `stores` itself outside a graph. */
-  inCurrentModuleGraph(stores) {
-    asyncContextInCurrentModuleGraph ??= $newCppFunction(
-      "ModuleGraph.cpp",
-      "jsFunctionAsyncContextInCurrentModuleGraph",
-      1,
-    );
-    return asyncContextInCurrentModuleGraph!(stores);
   },
   /** Install `frame` as the active async-context frame; returns the previous one. */
   exchange(frame) {

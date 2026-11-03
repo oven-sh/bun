@@ -330,16 +330,29 @@ interface UDPHandle {
   [kOwnerSymbol]?: $Node.DgramSocket;
 }
 
-// The AsyncLocalStorage stores of createSocket() without the frames of a Bun.ModuleGraph, for a handle whose native socket is not open yet. node makes the UDP handle there, and what that handle delivers ('message', a receive error) runs in them: https://github.com/nodejs/node/blob/v26.3.0/lib/dgram.js#L143
-const handleFrames = new WeakMap<UDPHandle, object>();
-// The async context of a queued send() that has a callback, where node makes the request that it completes (https://github.com/nodejs/node/blob/v26.3.0/lib/dgram.js#L738). Not a field of the queue entry: with a frame in one, an ahead-of-time build of a program that can reach send() loses the types of its AsyncLocalStorage stores.
+// The async context of createSocket(), for a handle whose native socket is not open yet. node makes the UDP handle there, and what that handle delivers ('message', a receive error) runs in it: https://github.com/nodejs/node/blob/v26.3.0/lib/dgram.js#L143
+const handleFrames = new WeakMap<UDPHandle, object | null>();
+// The async context of a queued send() that has a callback, where node makes the request that it completes (https://github.com/nodejs/node/blob/v26.3.0/lib/dgram.js#L738). Not a field of the queue entry: with a frame in one, an ahead-of-time build of a program that can reach send() loses the types of its AsyncLocalStorage stores (test/aot/a-saved-async-context-keeps-no-method-of-a-store-that-nothing-calls.test.ts).
 const queuedSendFrames = new WeakMap<SendRequest, object>();
 
-// Bun.udpSocket() takes the socket's Bun.ModuleGraph from the async context: the socket opens in the graph of the caller, entered over the stores of createSocket().
-function openInStoresOfHandle(stores: unknown, udpOptions: any) {
+// Whether a frame of a Bun.ModuleGraph is in the async context `frame`, under a frame that leaves a graph too. A handle that kept such a context would keep the graph: it keeps null, and bind() opens its socket in the context of bind().
+function hasFrameOfModuleGraph(frame: any) {
   const AsyncContextFrame = require("internal/async_context_frame");
-  // Not through AsyncContextFrame.run(), here and in completeQueuedSend(): with it an ahead-of-time executable compiles more of a program's functions to other bytes than its test run does, and test/aot/servers has a floor for that.
-  const previous = AsyncContextFrame.exchange(AsyncContextFrame.inCurrentModuleGraph(stores));
+  // graphOf() walks down from the frame it gets, so it gets each frame alone, with no `prev`: one pass over the context.
+  const alone: { storage: unknown } = { storage: undefined };
+  for (; frame !== undefined; frame = frame.prev) {
+    alone.storage = frame.storage;
+    if (AsyncContextFrame.graphOf(alone) !== undefined) return true;
+  }
+  return false;
+}
+
+// Bun.udpSocket() takes the socket's Bun.ModuleGraph from the async context, so a socket that a graph binds opens in the context of bind(): it stays the binder's.
+function openInFrameOfHandle(frame: unknown, udpOptions: any) {
+  const AsyncContextFrame = require("internal/async_context_frame");
+  if (AsyncContextFrame.currentGraph() !== undefined) return Bun.udpSocket(udpOptions);
+  // Not through AsyncContextFrame.run(), here and in completeQueuedSend(): with it the share of functions that an ahead-of-time executable and its test run compile to the same bytes falls from 65% to 55% for a fastify server that imports node:child_process (test/aot/servers measures that share).
+  const previous = AsyncContextFrame.exchange(frame);
   try {
     return Bun.udpSocket(udpOptions);
   } finally {
@@ -384,9 +397,7 @@ function newHandle(type: string, lookup: LookupFunction | undefined) {
   handle.onmessage = onMessage;
 
   const frame = $getInternalField($asyncContext, 0);
-  // A handle that kept a frame of a graph would keep the graph.
-  const stores = frame === undefined ? undefined : require("internal/async_context_frame").withoutModuleGraphs(frame);
-  if (stores !== undefined) WeakMapPrototypeSet.$call(handleFrames, handle, stores);
+  if (frame !== undefined) WeakMapPrototypeSet.$call(handleFrames, handle, hasFrameOfModuleGraph(frame) ? null : frame);
 
   return handle;
 }
@@ -537,7 +548,9 @@ function completeQueuedSend(handle: UDPHandle, entry: QueuedSend, err: unknown) 
   const req = entry.req;
   if (req && typeof req.oncomplete === "function") {
     const sent = err === undefined ? entry.length : 0;
-    const frame = req.callback && WeakMapPrototypeGet.$call(queuedSendFrames, req);
+    const frame = req.callback ? WeakMapPrototypeGet.$call(queuedSendFrames, req) : undefined;
+    // A request completes once: its entry would hold the frame for as long as something holds the request.
+    if (frame !== undefined) WeakMapPrototypeDelete.$call(queuedSendFrames, req);
     // Queued inside the frame of the send(), so that what the callback throws is reported in it too. The frames are equal in every program without AsyncLocalStorage and Bun.ModuleGraph, which never loads the helper.
     if (!req.callback || frame === $getInternalField($asyncContext, 0))
       process.nextTick(runQueuedSendComplete, req, err, sent);
@@ -953,14 +966,14 @@ function startBunSocket(
     if (sharedHandle) $putByIdDirectPrivate(udpOptions, "sharedFd", true);
     // Not for a shared bind: its handle is the one the cluster primary sent (node's replaceHandle(): https://github.com/nodejs/node/blob/v26.3.0/lib/dgram.js#L213).
     const handle = state.handle!;
-    const stores = WeakMapPrototypeGet.$call(handleFrames, handle);
+    const frame = WeakMapPrototypeGet.$call(handleFrames, handle);
     const opened =
-      sharedHandle !== undefined || stores === $getInternalField($asyncContext, 0)
+      sharedHandle !== undefined || frame === null || frame === $getInternalField($asyncContext, 0)
         ? Bun.udpSocket(udpOptions)
-        : openInStoresOfHandle(stores, udpOptions);
+        : openInFrameOfHandle(frame, udpOptions);
     (opened as Promise<$Node.UDPSocketHandle>).$then(
       (socket: $Node.UDPSocketHandle) => {
-        // The native socket holds the stores now. Until a bind succeeds, the handle keeps them.
+        // The native socket has the context it runs in, so a bound handle needs its frame no more. Until a bind succeeds, the handle keeps it.
         WeakMapPrototypeDelete.$call(handleFrames, handle);
         if (!state.handle) {
           // Closed while the bind was in flight.

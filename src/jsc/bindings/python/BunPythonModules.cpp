@@ -44,6 +44,9 @@ static constexpr JSC::Python::NativeModuleDef pythonModules[] = {
     { "_sha2"_s, initializeSHA2Module },
     { "_sha3"_s, initializeSHA3Module },
     { "_sqlite3"_s, initializeSqlite3Module },
+#if !OS(WINDOWS)
+    { "_ssl"_s, initializeSslModule },
+#endif
     { "_zstd"_s, initializeZstdModule },
     { "zlib"_s, initializeZlibModule },
 };

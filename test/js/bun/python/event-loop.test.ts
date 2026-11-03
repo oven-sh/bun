@@ -93,15 +93,18 @@ import asyncio, js, os, select, time
 ticks = []
 interval = js.setInterval(lambda: ticks.append(1), 5)
 async def main():
-    await asyncio.sleep(0.1)
-    seen = len(ticks)
+    # Only timers of JS end these loops.
+    while len(ticks) < 4:
+        await asyncio.sleep(0.01)
     value = await js.Promise.new(lambda resolve, reject: js.setTimeout(lambda: resolve("a JS timer inside asyncio.run()"), 10))
-    return seen > 3, value, type(asyncio.get_running_loop()).__name__
+    return value, type(asyncio.get_running_loop()).__name__
 print(asyncio.run(main()))
 
 ticks.clear()
 t = time.monotonic()
-print(select.select([], [], [], 0.06), time.monotonic() - t >= 0.06, len(ticks) > 3)
+print(select.select([], [], [], 0.06), time.monotonic() - t >= 0.06)
+while len(ticks) < 4:
+    select.select([], [], [], 0.01)
 
 r, w = os.pipe()
 poll = select.poll()
@@ -113,7 +116,7 @@ js.clearInterval(interval)
   });
   expect(stderr).toBe("");
   expect(stdout).toBe(
-    lines("(True, 'a JS timer inside asyncio.run()', '_UnixSelectorEventLoop')", "([], [], []) True True", "True b'x'"),
+    lines("('a JS timer inside asyncio.run()', '_UnixSelectorEventLoop')", "([], [], []) True", "True b'x'"),
   );
   expect(exitCode).toBe(0);
 });
@@ -285,4 +288,53 @@ server.stop()
     ),
   );
   expect(exitCode).toBe(0);
+});
+
+test.concurrent("tasks and futures are the native ones, which resume a coroutine outside any handler", async () => {
+  const { stdout, stderr, exitCode } = await run({
+    "main.py": `
+import asyncio, sys, js, _asyncio
+print(asyncio.Task is _asyncio.Task, asyncio.Future is _asyncio.Future, type(asyncio.current_task()) is _asyncio.Task)
+try:
+    await js.Promise.reject(ValueError("awaited"))
+except ValueError as e:
+    print(repr(e), e.__context__)
+print(sys.exception())
+try:
+    1 / 0
+except ZeroDivisionError as e:
+    print(e.__context__)
+`,
+  });
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: lines("True True True", "ValueError('awaited') None", "None", "None"),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test.skipIf(isWindows).concurrent("tasks on Bun's loop go on while a task of another loop waits", async () => {
+  const { stdout, stderr, exitCode } = await run({
+    "main.py": `
+import asyncio, os, select, _bun_asyncio
+done = []
+async def background():
+    done.append(asyncio.current_task().get_name())
+    await asyncio.sleep(0.01)
+    done.append(type(asyncio.get_running_loop()).__name__)
+_bun_asyncio.loop().create_task(background(), name="background")
+async def main():
+    me = asyncio.current_task()
+    r, w = os.pipe()
+    while len(done) < 2:
+        select.select([r], [], [], 0.01)
+    return asyncio.current_task() is me, type(asyncio.get_running_loop()).__name__
+print(asyncio.run(main()), done)
+`,
+  });
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: lines("(True, '_UnixSelectorEventLoop') ['background', 'BunEventLoop']"),
+    stderr: "",
+    exitCode: 0,
+  });
 });

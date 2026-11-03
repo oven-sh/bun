@@ -37,6 +37,7 @@ void initializeHashlibModule(JSGlobalObject*, PyModule*);
 void initializeHmacModule(JSGlobalObject*, PyModule*);
 void initializeZstdModule(JSGlobalObject*, PyModule*);
 void initializeSqlite3Module(JSGlobalObject*, PyModule*);
+void initializeSslModule(JSGlobalObject*, PyModule*);
 void initializeBunLoopModule(JSGlobalObject*, PyModule*);
 
 // BunPythonEventLoop.cpp

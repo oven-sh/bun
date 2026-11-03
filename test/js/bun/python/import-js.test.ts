@@ -189,3 +189,118 @@ for attempt in (
     requests: [],
   });
 });
+
+test.concurrent("calling a class of JavaScript makes an instance", async () => {
+  const result = await run({
+    "helper.js": `
+      export class Point { constructor(x, y) { this.x = x; this.y = y; this.target = new.target === Point; } }
+      export class Point3 extends Point { constructor(x, y, z) { super(x, y); this.z = z; } }
+      export function plain(v) { return new.target ? "constructed" : "called with " + v; }
+      export const bound = Point.bind(null, 1);
+      export const boundPlain = plain.bind(undefined, 7);
+    `,
+    "main.py": `
+import js
+from helper import Point, Point3, plain, bound, boundPlain
+p = Point(3, 4)
+print(p.x, p.y, p.target, Point3(1, 2, 3).z, bound(2).y, Point.new(5, 6).x)
+print(plain(1), boundPlain(), plain.new(1) is not None)
+print(js.Map([[1, 2]]).get(1), js.URL("http://example.com/a").pathname, js.Date(0).getTime(), js.Response("x").status)
+print(repr(js.String(12)), js.Number("3"), js.Boolean(0), type(js.Symbol("s")).__name__, js.BigInt(5), len(js.Array(3)))
+print([url.host for url in map(js.URL, ["http://a.example/x"])], js.Error("message").message)
+try:
+    Point3()
+    js.URL("nonsense")
+except Exception as e:
+    print(type(e).__name__)
+`,
+  });
+  expect(result).toEqual({
+    stdout: lines(
+      "3 4 True 3 2 5",
+      "called with 1 called with 7 True",
+      "2 /a 0 200",
+      "'12' 3 False JSSymbol 5 3",
+      "['a.example'] message",
+      "JSError",
+    ),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test.concurrent("iterators, async iterators and plain objects of JavaScript", async () => {
+  const result = await run({
+    "helper.js": `
+      export function* naturals() { for (let i = 0; ; i++) yield i; }
+      export async function* ticks(n) { for (let i = 0; i < n; i++) { await Bun.sleep(1); yield i * 10; } }
+      export async function* failing() { yield 1; throw new RangeError("no more"); }
+      export const config = { port: 3000, tags: ["a"], keys: undefined };
+      delete config.keys;
+      export const stream = () => new Response("streamed").body;
+      export class Animal {}
+      export class Cat extends Animal {}
+    `,
+    "main.py": `
+import itertools, js
+from helper import naturals, ticks, failing, config, stream, Animal, Cat
+print(list(itertools.islice(naturals(), 3)), next(iter(naturals())), [x for x, _ in zip(naturals(), "ab")])
+it = iter(js.Map([[1, 2]])); print(list(next(it)), next(it, "end"), next(it, "still the end"))
+print([x async for x in ticks(3)])
+try:
+    async for x in failing(): print(x)
+except Exception as e:
+    print(type(e).__name__, e)
+print(b"".join([bytes(chunk) async for chunk in stream()]))
+print([x async for x in js.Set([1, js.Promise.resolve(2)])])
+print(config.keys(), config.values(), config.items(), dict(config), {**config})
+print(isinstance(Cat(), Animal), isinstance(Animal(), Cat), isinstance(1, Animal), isinstance(js.Map(), (int, js.Map)))
+`,
+  });
+  expect(result).toEqual({
+    stdout: lines(
+      "[0, 1, 2] 0 [0, 1]",
+      "[1, 2] end still the end",
+      "[0, 10, 20]",
+      "1",
+      "JSError RangeError: no more",
+      "b'streamed'",
+      "[1, 2]",
+      "['port', 'tags'] [3000, ['a']] [('port', 3000), ('tags', ['a'])] {'port': 3000, 'tags': ['a']} {'port': 3000, 'tags': ['a']}",
+      "True False False True",
+    ),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test.concurrent("what JavaScript throws has a traceback of the Python frames it passed", async () => {
+  const result = await run({
+    "helper.js": `export function thrower() { throw new RangeError("out of range"); }`,
+    "main.py": `
+import traceback
+from helper import thrower
+def inner(): thrower()
+def outer(): inner()
+try:
+    outer()
+except Exception as e:
+    print([(f.name, f.lineno) for f in traceback.extract_tb(e.__traceback__)], e.value.name, e.value.message)
+outer()
+`,
+  });
+  expect({ ...result, stderr: result.stderr.replace(/File ".*\//g, 'File "') }).toEqual({
+    stdout: lines("[('<module>', 7), ('outer', 5), ('inner', 4)] RangeError out of range"),
+    stderr: lines(
+      "Traceback (most recent call last):",
+      '  File "main.py", line 10, in <module>',
+      "    outer()",
+      '  File "main.py", line 5, in outer',
+      "    def outer(): inner()",
+      '  File "main.py", line 4, in inner',
+      "    def inner(): thrower()",
+      "_js.JSError: RangeError: out of range",
+    ),
+    exitCode: 1,
+  });
+});

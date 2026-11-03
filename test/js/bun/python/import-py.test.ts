@@ -132,3 +132,88 @@ test.concurrent.skipIf(!isLinux)("a JavaScript program named python is JavaScrip
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "JavaScript\n", stderr: "", exitCode: 0 });
 });
+
+test.concurrent("JavaScript may pass a Python function more than it takes", async () => {
+  const result = await run({
+    "m.py": `
+def one(v): return v * 2
+class C:
+    def __init__(self, k): self.k = k
+    def add(self, v): return v + self.k
+def star(*a): return len(a)
+def two(a, b): return a + b
+def strict():
+    try: one(1, 2, 3)
+    except TypeError as e: return str(e)
+`,
+    "main.js": `
+      import { one, C, star, two, strict } from "./m.py";
+      console.log([1, 2, 3].map(one), [1, 2].map(new C(10).add), star(1, 2, 3), two(1, 2, 3));
+      try { two(1); } catch (e) { console.log(String(e)); }
+      console.log(strict());
+    `,
+  });
+  expect(result).toEqual({
+    stdout:
+      "[ 2, 4, 6 ] [ 11, 12 ] 3 3\n" +
+      "TypeError: two() missing 1 required positional argument: 'b'\n" +
+      "one() takes 1 positional argument but 3 were given\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test.concurrent("the traceback of a module that has awaited shows the program's frames only", async () => {
+  using dir = tempDir("python-tla-traceback", {
+    "main.py": `import asyncio\nawait asyncio.sleep(0)\ndef f(): return 1 / 0\nf()\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.py"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr: stderr.replaceAll(String(dir), "<dir>"), exitCode }).toEqual({
+    stdout: "",
+    stderr:
+      "Traceback (most recent call last):\n" +
+      '  File "<dir>/main.py", line 4, in <module>\n' +
+      "    f()\n" +
+      '  File "<dir>/main.py", line 3, in f\n' +
+      "    def f(): return 1 / 0\n" +
+      "ZeroDivisionError: division by zero\n",
+    exitCode: 1,
+  });
+});
+
+test.concurrent("print() and console.log() to a pipe come out in the order they were called", async () => {
+  const result = await run({
+    "m.py": `
+import js, sys
+def say(text): print(text)
+def both():
+    print("3 python")
+    js.console.log("4 javascript, called by python")
+    sys.stdout.write("5 python, no newline; ")
+    js.console.log("javascript")
+    sys.stdout.buffer.write(b"6 python, bytes\\n")
+`,
+    "main.js": `
+      import { say, both } from "./m.py";
+      console.log("1 javascript");
+      say("2 python");
+      both();
+      console.log("7 javascript");
+      say("8 python");
+    `,
+  });
+  expect(result).toEqual({
+    stdout:
+      "1 javascript\n2 python\n3 python\n4 javascript, called by python\n" +
+      "5 python, no newline; javascript\n6 python, bytes\n7 javascript\n8 python\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});

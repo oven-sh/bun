@@ -493,3 +493,123 @@ print(got)
   expect(stdout).toBe("[b'data']\n");
   expect(exitCode).toBe(0);
 });
+
+it("JS cannot take away memory that a thread is using", async () => {
+  const { stdout, stderr, exitCode } = await run({
+    "main.py": `
+import js, os, threading
+
+class Buffers:
+    # os.readv() takes the buffer of each item in turn: while it asks for the second, it holds the first.
+    def __init__(self, first, between):
+        self.items, self.between = [first, bytearray(1)], between
+    def __len__(self): return 2
+    def __getitem__(self, i):
+        if i == 1: self.between()
+        return self.items[i]
+
+def read_into(target, meanwhile):
+    r, w = os.pipe()
+    held, go_on, out = threading.Event(), threading.Event(), []
+    def between(): held.set(); go_on.wait()
+    t = threading.Thread(target=lambda: out.append(os.readv(r, Buffers(target, between))))
+    t.start(); held.wait()
+    result = meanwhile()
+    go_on.set(); os.write(w, b"abcdefghi"); t.join()
+    os.close(r); os.close(w)
+    return out, result
+
+small = js.Uint8Array.new(8)
+out, copy = read_into(small, lambda: small.buffer.transfer())
+print(out, bytes(small), small.buffer.detached, copy.byteLength)
+
+resizable = js.eval("new ArrayBuffer(8, { maxByteLength: 16 })")
+def shrink():
+    try:
+        resizable.resize(4)
+    except Exception as e:
+        return str(e)
+out, error = read_into(resizable, shrink)
+print(out, bytes(resizable), error)
+
+resizable.resize(4); print(resizable.byteLength)
+moved = small.buffer.transfer(); print(small.buffer.detached, len(bytes(moved)))
+`,
+  });
+  expect(stderr).toBe("");
+  expect(stdout).toBe(
+    [
+      "[9] b'abcdefgh' False 8",
+      "[9] b'abcdefgh' RangeError: ArrayBuffer resize failed with new byte length 4",
+      "4",
+      "True 8",
+      "",
+    ].join("\n"),
+  );
+  expect(exitCode).toBe(0);
+});
+
+it("a time limit of node:vm ends what the main thread is doing, not another thread", async () => {
+  const { stdout, stderr, exitCode } = await run(
+    {
+      "worker.py": `
+import threading
+
+state = []
+stop = threading.Event()
+def spin():
+    def work():
+        while not stop.is_set(): pass
+        state.append("worker finished")
+    t = threading.Thread(target=work); t.start(); t.join()
+    state.append("joined")
+def finish():
+    stop.set()
+    for t in threading.enumerate():
+        if t is not threading.current_thread(): t.join()
+    return state
+`,
+      "main.js": `
+import vm from "node:vm";
+import { spin, finish } from "./worker.py";
+try {
+  vm.runInContext("spin(); for (;;) {}", vm.createContext({ spin }), { timeout: 100 });
+  console.log("returned");
+} catch (e) {
+  console.log(e.code);
+}
+console.log(finish().join());
+`,
+    },
+    "main.js",
+  );
+  expect(stderr).toBe("");
+  expect(stdout).toBe("ERR_SCRIPT_EXECUTION_TIMEOUT\nworker finished\n");
+  expect(exitCode).toBe(0);
+});
+
+it("an interrupt ends the wait for the other threads at exit", async () => {
+  using dir = tempDir("python-threads", {
+    "main.py": `
+import threading
+
+threading.Thread(target=threading.Event().wait).start()
+threading._register_atexit(lambda: print("shutting down", flush=True))
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.py"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const reader = proc.stdout.getReader();
+  const { value } = await reader.read();
+  expect(new TextDecoder().decode(value)).toBe("shutting down\n");
+  proc.kill("SIGINT");
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toStartWith("Exception ignored on threading shutdown:");
+  expect(stderr.trimEnd()).toEndWith("KeyboardInterrupt");
+  expect(exitCode).toBe(0);
+});

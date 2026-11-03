@@ -10,7 +10,7 @@ awaits. They are tasks of one more loop, which never sleeps. Bun's event loop ca
 import asyncio
 import heapq
 import selectors
-from asyncio import events
+from asyncio import events, tasks
 
 import _bun_loop
 import _js
@@ -48,6 +48,8 @@ class BunEventLoop(asyncio.SelectorEventLoop):
         self._bun_asked = False
         # A loop that sleeps in select() while Bun's loop turns counts as running.
         sleeping = events._get_running_loop()
+        # If it is not the loop that sleeps but a task of its, in a call that waits: a thread has one current task.
+        waiting = tasks._swap_current_task(sleeping, None) if sleeping is not None else None
         events._set_running_loop(None)
         self._bun_turning = True
         try:
@@ -65,6 +67,8 @@ class BunEventLoop(asyncio.SelectorEventLoop):
         finally:
             self._bun_turning = False
             events._set_running_loop(sleeping)
+            if waiting is not None:
+                tasks._swap_current_task(sleeping, waiting)
             self._bun_plan()
 
     def _bun_plan(self):
@@ -154,7 +158,11 @@ def run(awaitable):
         if task.cancelled():
             resolvers.reject(asyncio.CancelledError())
         elif (exception := task.exception()) is not None:
-            resolvers.reject(exception)
+            # The traceback begins with the task stepping the coroutine, which is nothing the program wrote.
+            traceback = exception.__traceback__
+            while traceback is not None and traceback.tb_frame.f_globals.get("__name__") in ("asyncio.tasks", __name__):
+                traceback = traceback.tb_next
+            resolvers.reject(exception.with_traceback(traceback))
         else:
             resolvers.resolve(task.result())
 

@@ -6,6 +6,7 @@
 #include <JavaScriptCore/PyIO.h>
 #include <JavaScriptCore/PyRange.h>
 #include <wtf/RefCounted.h>
+#include <wtf/Scope.h>
 
 // The module _sqlite3, under sqlite3. (Modules/_sqlite/ in CPython is the reference.) It uses the SQLite that bun:sqlite and
 // node:sqlite use: the one in the executable, or on macOS the system's, loaded when first needed.
@@ -41,7 +42,8 @@
     v(result_error_toobig) \
     v(result_text) \
     v(threadsafe) \
-    v(trace_v2)
+    v(trace_v2) \
+    v(txn_state)
 
 #define DECLARE_POINTER(name) static decltype(&sqlite3_##name) loadedHere_sqlite3_##name;
 FOR_EACH_SQLITE_FUNCTION_LOADED_HERE(DECLARE_POINTER)
@@ -77,6 +79,7 @@ static bool loadTheRestOfSQLite()
 #define sqlite3_result_text loadedHere_sqlite3_result_text
 #define sqlite3_threadsafe loadedHere_sqlite3_threadsafe
 #define sqlite3_trace_v2 loadedHere_sqlite3_trace_v2
+#define sqlite3_txn_state loadedHere_sqlite3_txn_state
 #else
 #include "sqlite3_local.h"
 #endif
@@ -407,13 +410,15 @@ static bool int64ForSQLite(JSGlobalObject* globalObject, JSValue value, int64_t&
 // SQLite runs some when a statement that is in the middle of an aggregate is reset or finalized: see Unfinished, finalCallback().
 
 struct Blob;
+class Database;
 class Statement;
 
 // What SQLite calls back with. The Connection keeps the callable alive: see ConnectionField, CursorCallables.
 struct CallbackContext {
     WTF_MAKE_STRUCT_TZONE_ALLOCATED(CallbackContext);
-    JSGlobalObject* globalObject;
+    JSGlobalObject* globalObject { nullptr };
     JSValue callable;
+    Database* database { nullptr }; // For a collation: see OffLimits.
 };
 
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(CallbackContext);
@@ -430,6 +435,8 @@ public:
     // Null once the program has closed it.
     sqlite3* handle() const { return m_isClosed ? nullptr : m_handle; }
     bool isClosed() const { return m_isClosed; }
+    // Not null: why the program cannot use it just now. See OffLimits.
+    ASCIILiteral whyOffLimits() const { return m_whyOffLimits; }
 
     // Nothing is left open. In CPython, cursors that nobody holds any more have let go of their statements by the time a
     // connection is closed; here they may still be waiting to be collected, and a connection with statements left would only
@@ -445,15 +452,25 @@ public:
 
     Vector<Blob*> openBlobs;
     UncheckedKeyHashSet<Statement*> statements;
-    // SQLite does not destroy these itself, as it does those of functions and collations.
-    std::unique_ptr<CallbackContext> traceContext;
-    std::unique_ptr<CallbackContext> progressContext;
-    std::unique_ptr<CallbackContext> authorizerContext;
+    unsigned backupsUnderWay { 0 }; // Of it, not into it.
+
+    // The callbacks that go by no name. Without a callable: none.
+    enum class Hook : uint8_t { Trace = 1 << 0,
+        Progress = 1 << 1,
+        Authorizer = 1 << 2 };
+    CallbackContext trace;
+    CallbackContext progress;
+    int progressInterval { 0 };
+    CallbackContext authorizer;
+    // Tells SQLite.
+    void didChange(OptionSet<Hook>);
 
 private:
     friend class DatabaseUse;
+    friend class OffLimits;
 
     Database(VM&, sqlite3*);
+    void didEndLastUse();
     void closeForSQLite();
 
     // All there are, of all VMs.
@@ -463,6 +480,8 @@ private:
     VM& m_vm;
     sqlite3* m_handle;
     unsigned m_useCount { 0 };
+    ASCIILiteral m_whyOffLimits;
+    OptionSet<Hook> m_hooksToSettle;
     bool m_isClosed { false };
     Statements m_statementsAtClose { Statements::AreFinalized };
 };
@@ -484,8 +503,8 @@ public:
 
     ~DatabaseUse()
     {
-        if (!--m_database->m_useCount && m_database->m_isClosed)
-            m_database->closeForSQLite();
+        if (!--m_database->m_useCount)
+            m_database->didEndLastUse();
     }
 
     Database& database() const { return m_database.get(); }
@@ -495,6 +514,28 @@ public:
 
 private:
     Ref<Database> m_database;
+};
+
+// When SQLite calls the authorizer, the progress handler or a collation, it may be in the middle of compiling a statement, or of
+// finding its way through a tree, with pointers to what another statement, deserialize() or a backup would take away. Its
+// documentation forbids these callbacks to use the connection, as it forbids all use of the target of a backup that is under
+// way, and CPython leaves it at that. Here checkConnection() sees to it. (Functions, aggregates and the trace callback are
+// called between two steps of a statement, and may use the connection.)
+class OffLimits {
+    WTF_MAKE_NONCOPYABLE(OffLimits);
+
+public:
+    OffLimits(Database& database, ASCIILiteral why)
+        : m_database(database)
+        , m_before(std::exchange(database.m_whyOffLimits, why))
+    {
+    }
+
+    ~OffLimits() { m_database->m_whyOffLimits = m_before; }
+
+private:
+    Ref<Database> m_database;
+    ASCIILiteral m_before;
 };
 
 class Statement : public RefCounted<Statement> {
@@ -643,7 +684,8 @@ static JSValue raiseClosedDatabase(JSGlobalObject* globalObject)
     return raiseOf(globalObject, ProgrammingError(globalObject), "Cannot operate on a closed database."_s);
 }
 
-static bool checkConnection(JSGlobalObject* globalObject, PyRecord* self)
+// Enough for what asks SQLite nothing, or only to take note of something.
+static bool checkConnectionIsOpen(JSGlobalObject* globalObject, PyRecord* self)
 {
     Connection& connection = connectionOf(self);
     if (!connection.isInitialized) {
@@ -652,6 +694,17 @@ static bool checkConnection(JSGlobalObject* globalObject, PyRecord* self)
     }
     if (!connection.db()) {
         raiseClosedDatabase(globalObject);
+        return false;
+    }
+    return true;
+}
+
+static bool checkConnection(JSGlobalObject* globalObject, PyRecord* self)
+{
+    if (!checkConnectionIsOpen(globalObject, self))
+        return false;
+    if (ASCIILiteral why = connectionOf(self).database->whyOffLimits(); !why.isNull()) {
+        raiseOf(globalObject, ProgrammingError(globalObject), why);
         return false;
     }
     return true;
@@ -746,7 +799,8 @@ static bool closeConnection(JSGlobalObject* globalObject, PyRecord* self, Databa
         return true;
     Ref<Database> database = *connection.database;
     bool succeeded = true;
-    if (connection.autocommit == Autocommit::Disabled && !sqlite3_get_autocommit(database->handle()))
+    // Where no statement can be run, it is left to SQLite, which rolls back what it closes.
+    if (connection.autocommit == Autocommit::Disabled && !sqlite3_get_autocommit(database->handle()) && database->whyOffLimits().isNull())
         succeeded = executeSimply(globalObject, database.get(), "ROLLBACK");
     database->close(statements);
     // The callbacks that the rollback ran may have opened the connection anew. Then the rest is the new database's.
@@ -1355,8 +1409,12 @@ static void valueCallback(sqlite3_context* sqliteContext)
 
 static int authorizerCallback(void* data, int action, const char* first, const char* second, const char* databaseName, const char* source)
 {
-    // A copy: what it calls may set another callback, which does away with the context.
-    CallbackContext context = *static_cast<CallbackContext*>(data);
+    auto& database = *static_cast<Database*>(data);
+    // A copy: what it calls may set another callback.
+    CallbackContext context = database.authorizer;
+    if (!context.callable)
+        return SQLITE_OK;
+    OffLimits offLimits(database, "The authorizer callback cannot use the connection that calls it."_s);
     JSGlobalObject* globalObject = context.globalObject;
     JSValue arguments[5] = { jsNumber(action) };
     const char* texts[] = { first, second, databaseName, source };
@@ -1387,8 +1445,12 @@ static int authorizerCallback(void* data, int action, const char* first, const c
 
 static int progressCallback(void* data)
 {
-    // A copy: what it calls may set another callback, which does away with the context.
-    CallbackContext context = *static_cast<CallbackContext*>(data);
+    auto& database = *static_cast<Database*>(data);
+    // A copy: what it calls may set another callback.
+    CallbackContext context = database.progress;
+    if (!context.callable)
+        return 0;
+    OffLimits offLimits(database, "The progress handler cannot use the connection that calls it."_s);
     JSGlobalObject* globalObject = context.globalObject;
     VM& vm = getVM(globalObject);
     JSValue result = call(globalObject, context.callable);
@@ -1406,8 +1468,10 @@ static int traceCallback(unsigned type, void* data, void* statement, void* sql)
 {
     if (type != SQLITE_TRACE_STMT)
         return 0;
-    // A copy: what it calls may set another callback, which does away with the context.
-    CallbackContext context = *static_cast<CallbackContext*>(data);
+    // A copy: what it calls may set another callback.
+    CallbackContext context = static_cast<Database*>(data)->trace;
+    if (!context.callable)
+        return 0;
     JSGlobalObject* globalObject = context.globalObject;
     VM& vm = getVM(globalObject);
     JSValue text;
@@ -1435,6 +1499,7 @@ static int collationCallback(void* data, int firstLength, const void* first, int
     // exception.
     if (vm.exceptionForInspection())
         return 0;
+    OffLimits offLimits(*context.database, "A collation cannot use the connection that calls it."_s);
     JSValue left = decodeUTF8(globalObject, { static_cast<const uint8_t*>(first), static_cast<size_t>(firstLength) });
     if (!left)
         return 0;
@@ -1580,13 +1645,13 @@ static JSValue connectionCreateCollation(JSGlobalObject* globalObject, JSValue s
     } else {
         if (!isCallable(globalObject, callable))
             return raiseTypeError(globalObject, scope, "parameter must be callable"_s);
-        auto* context = new CallbackContext { globalObject, callable };
+        auto* context = new CallbackContext { globalObject, callable, connection.database.get() };
         rc = sqlite3_create_collation_v2(connection.db(), cString(name), SQLITE_UTF8, context, collationCallback, destroyCallbackContext);
         // Here, unlike elsewhere, a failed call leaves the context to the caller.
         if (rc != SQLITE_OK)
             delete context;
     }
-    if (rc != SQLITE_OK) 
+    if (rc != SQLITE_OK)
         return failFromDatabase(globalObject, connection.db());
     rememberCallable(globalObject, self, key, callable);
     return jsUndefined();
@@ -1599,20 +1664,12 @@ static JSValue connectionSetAuthorizer(JSGlobalObject* globalObject, JSValue sel
     if (!unpackArguments(globalObject, { "set_authorizer"_s, 1, 1, 1, {} }, args, &callable))
         return {};
     PyRecord* self = asRecord(selfValue);
-    if (!checkConnection(globalObject, self))
+    if (!checkConnectionIsOpen(globalObject, self))
         return {};
-    Connection& connection = connectionOf(self);
-    std::unique_ptr<CallbackContext> context;
-    if (!isNone(callable))
-        context = std::unique_ptr<CallbackContext>(new CallbackContext { globalObject, callable });
-    int rc = sqlite3_set_authorizer(connection.db(), context ? authorizerCallback : nullptr, context.get());
-    if (rc != SQLITE_OK) {
-        connection.database->authorizerContext = nullptr;
-        self->set(vm, Authorizer, JSValue());
-        return raiseOf(globalObject, OperationalError(globalObject), "Error setting authorizer callback"_s);
-    }
+    Database& database = *connectionOf(self).database;
     self->set(vm, Authorizer, callable);
-    connection.database->authorizerContext = WTF::move(context);
+    database.authorizer = { globalObject, isNone(callable) ? JSValue() : callable };
+    database.didChange(Database::Hook::Authorizer);
     return jsUndefined();
 }
 
@@ -1627,15 +1684,13 @@ static JSValue connectionSetProgressHandler(JSGlobalObject* globalObject, JSValu
     if (!intArgument(globalObject, values[1], 0, interval))
         return {};
     PyRecord* self = asRecord(selfValue);
-    if (!checkConnection(globalObject, self))
+    if (!checkConnectionIsOpen(globalObject, self))
         return {};
-    Connection& connection = connectionOf(self);
-    std::unique_ptr<CallbackContext> context;
-    if (!isNone(values[0]))
-        context = std::unique_ptr<CallbackContext>(new CallbackContext { globalObject, values[0] });
-    sqlite3_progress_handler(connection.db(), context ? interval : 0, context ? progressCallback : nullptr, context.get());
+    Database& database = *connectionOf(self).database;
     self->set(vm, ProgressHandler, values[0]);
-    connection.database->progressContext = WTF::move(context);
+    database.progress = { globalObject, isNone(values[0]) ? JSValue() : values[0] };
+    database.progressInterval = interval;
+    database.didChange(Database::Hook::Progress);
     return jsUndefined();
 }
 
@@ -1646,16 +1701,38 @@ static JSValue connectionSetTraceCallback(JSGlobalObject* globalObject, JSValue 
     if (!unpackArguments(globalObject, { "set_trace_callback"_s, 1, 1, 1, {} }, args, &callable))
         return {};
     PyRecord* self = asRecord(selfValue);
-    if (!checkConnection(globalObject, self))
+    if (!checkConnectionIsOpen(globalObject, self))
         return {};
-    Connection& connection = connectionOf(self);
-    std::unique_ptr<CallbackContext> context;
-    if (!isNone(callable))
-        context = std::unique_ptr<CallbackContext>(new CallbackContext { globalObject, callable });
-    sqlite3_trace_v2(connection.db(), SQLITE_TRACE_STMT, context ? traceCallback : nullptr, context.get());
+    Database& database = *connectionOf(self).database;
     self->set(vm, TraceCallback, callable);
-    connection.database->traceContext = WTF::move(context);
+    database.trace = { globalObject, isNone(callable) ? JSValue() : callable };
+    database.didChange(Database::Hook::Trace);
     return jsUndefined();
+}
+
+// SQLite is given the Database to call them with, and they look there for what to call: one that finds nothing does nothing. So
+// SQLite need not be told at once to forget one, and while anything is under way it is not. Around some of its work (VACUUM, ALTER
+// TABLE, reading the schema) it puts part of these settings aside and then back, and would be left with a function and no
+// argument, or a mask and no function. For the same reason, what it is told meanwhile it is told again afterwards.
+void Database::didChange(OptionSet<Hook> hooks)
+{
+    bool canForget = !m_useCount;
+    if (!canForget)
+        m_hooksToSettle.add(hooks);
+    if (hooks.contains(Hook::Trace) && (trace.callable || canForget))
+        sqlite3_trace_v2(m_handle, SQLITE_TRACE_STMT, trace.callable ? traceCallback : nullptr, this);
+    if (hooks.contains(Hook::Progress) && (progress.callable || canForget))
+        sqlite3_progress_handler(m_handle, progress.callable ? progressInterval : 0, progress.callable ? progressCallback : nullptr, this);
+    if (hooks.contains(Hook::Authorizer) && (authorizer.callable || canForget))
+        sqlite3_set_authorizer(m_handle, authorizer.callable ? authorizerCallback : nullptr, this);
+}
+
+void Database::didEndLastUse()
+{
+    if (m_isClosed)
+        closeForSQLite();
+    else if (m_hooksToSettle)
+        didChange(std::exchange(m_hooksToSettle, {}));
 }
 
 // ---- Cursor ----
@@ -2606,7 +2683,7 @@ static JSValue connectionExecuteScript(JSGlobalObject* globalObject, JSValue sel
 
 static JSValue connectionInterrupt(JSGlobalObject* globalObject, JSValue self)
 {
-    if (!checkConnection(globalObject, asRecord(self)))
+    if (!checkConnectionIsOpen(globalObject, asRecord(self)))
         return {};
     sqlite3_interrupt(connectionOf(asRecord(self)).db());
     return jsUndefined();
@@ -2661,6 +2738,9 @@ static JSValue connectionBackup(JSGlobalObject* globalObject, JSValue selfValue,
     sqlite3_backup* backup = sqlite3_backup_init(destination.handle(), "main", source.handle(), cString(name));
     if (!backup)
         return failFromDatabase(globalObject, destination.handle());
+    OffLimits offLimits(destination.database(), "The target of a backup cannot be used while the backup is under way."_s);
+    ++source.database().backupsUnderWay;
+    auto countDown = makeScopeExit([&] { --source.database().backupsUnderWay; });
     int rc;
     do {
         rc = sqlite3_backup_step(backup, pages);
@@ -2738,6 +2818,9 @@ static JSValue connectionDeserialize(JSGlobalObject* globalObject, JSValue self,
     // SQLite runs a statement of its own for this, and with it the callbacks.
     DatabaseUse use(*connectionOf(asRecord(self)).database);
     sqlite3* db = use.handle();
+    // SQLite has not always looked, and then takes the database away from the statements that are reading it, or from the backup.
+    if (sqlite3_txn_state(db, cString(name)) > SQLITE_TXN_NONE || use.database().backupsUnderWay)
+        return raiseFromCode(globalObject, SQLITE_BUSY);
     // SQLite takes the memory over, so it has to be of its own making.
     auto* copy = static_cast<unsigned char*>(sqlite3_malloc64(bytes.size()));
     if (!copy)
@@ -2843,7 +2926,7 @@ static JSValue connectionGetConfig(JSGlobalObject* globalObject, JSValue self, J
 
 static JSValue connectionIsolationLevel(JSGlobalObject* globalObject, JSValue self)
 {
-    if (!checkConnection(globalObject, asRecord(self)))
+    if (!checkConnectionIsOpen(globalObject, asRecord(self)))
         return {};
     ASCIILiteral level = connectionOf(asRecord(self)).isolationLevel;
     return level.isNull() ? jsUndefined() : JSValue(makeStr(getVM(globalObject), level));
@@ -2868,21 +2951,21 @@ static void connectionSetIsolationLevel(JSGlobalObject* globalObject, JSValue se
 
 static JSValue connectionTotalChanges(JSGlobalObject* globalObject, JSValue self)
 {
-    if (!checkConnection(globalObject, asRecord(self)))
+    if (!checkConnectionIsOpen(globalObject, asRecord(self)))
         return {};
     return jsNumber(sqlite3_total_changes(connectionOf(asRecord(self)).db()));
 }
 
 static JSValue connectionInTransaction(JSGlobalObject* globalObject, JSValue self)
 {
-    if (!checkConnection(globalObject, asRecord(self)))
+    if (!checkConnectionIsOpen(globalObject, asRecord(self)))
         return {};
     return jsBoolean(!sqlite3_get_autocommit(connectionOf(asRecord(self)).db()));
 }
 
 static JSValue connectionAutocommit(JSGlobalObject* globalObject, JSValue self)
 {
-    if (!checkConnection(globalObject, asRecord(self)))
+    if (!checkConnectionIsOpen(globalObject, asRecord(self)))
         return {};
     Autocommit mode = connectionOf(asRecord(self)).autocommit;
     return mode == Autocommit::Legacy ? jsNumber(legacyTransactionControl) : jsBoolean(mode == Autocommit::Enabled);
@@ -2967,13 +3050,8 @@ void Database::close(Statements statementsToo)
     m_statementsAtClose = statementsToo;
     while (!openBlobs.isEmpty())
         openBlobs.last()->close();
-    // The Connection no longer keeps alive what these call.
-    sqlite3_trace_v2(m_handle, SQLITE_TRACE_STMT, nullptr, nullptr);
-    sqlite3_progress_handler(m_handle, 0, nullptr, nullptr);
-    sqlite3_set_authorizer(m_handle, nullptr, nullptr);
-    traceContext = nullptr;
-    progressContext = nullptr;
-    authorizerContext = nullptr;
+    // The Connection no longer keeps them alive.
+    trace = progress = authorizer = {};
     if (!m_useCount)
         closeForSQLite();
 }
@@ -2990,6 +3068,8 @@ void Database::closeForSQLite()
             statement->finalize();
         --m_useCount;
     }
+    // Statements that are left go on running.
+    didChange({ Hook::Trace, Hook::Progress, Hook::Authorizer });
     sqlite3_close_v2(std::exchange(m_handle, nullptr));
 }
 

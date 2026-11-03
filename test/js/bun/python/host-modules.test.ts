@@ -333,6 +333,156 @@ for method, args in ("close", ()), ("fetchone", ()), ("execute", ("select 1",)),
   expect(result).toEqual(printed(recursive, rows, recursive, rows, recursive, rows, recursive, rows));
 });
 
+test.concurrent("sqlite3: callbacks that SQLite cannot be entered again from cannot use the connection", async () => {
+  const result = await run({
+    "common.py": common,
+    "main.py": `
+from common import *
+
+def attempt():
+    global attempts
+    attempts += 1
+    if attempts > 1:
+        return
+    # Any of these would pull the schema, or a page, from under what SQLite is doing.
+    show(con.deserialize, data)
+    show(con.execute, "drop table t")
+    show(con.executescript, "detach main")
+    show(other.backup, con)
+    show(cursor.fetchone)
+    show(con.commit)
+    # These leave SQLite alone.
+    show(lambda: con.in_transaction)
+    show(con.set_trace_callback, None)
+
+other = fresh()
+def authorizer(*args):
+    attempt()
+    return sqlite3.SQLITE_OK
+def progress():
+    attempt()
+    return 0
+def collation(a, b):
+    attempt()
+    return (a > b) - (a < b)
+for install, order in (
+    (lambda: con.set_authorizer(authorizer), "y"),
+    (lambda: con.set_progress_handler(progress, 1), "y"),
+    (lambda: con.create_collation("c", collation), "y collate c"),
+):
+    con = fresh()
+    data = con.serialize()
+    cursor = con.execute("select x from t")
+    attempts = 0
+    install()
+    show(con.execute("select y from t order by " + order + " limit 2").fetchall)
+    print(attempts > 1)
+
+con = fresh()
+con.set_progress_handler(con.interrupt, 1)
+show(lambda: con.execute("select y from t order by y").fetchall())
+
+# While a backup is under way, its target is SQLite's alone, and its source stays what it is.
+source, target = fresh(), sqlite3.connect(":memory:")
+data = source.serialize()
+def progress(status, remaining, total):
+    if remaining:
+        show(target.execute, "select 1")
+        show(source.deserialize, data)
+        show(source.execute("select count(*) from t").fetchall)
+show(source.backup, target, pages=1, progress=progress)
+show(target.execute("select count(*) from t").fetchall)
+`,
+  });
+  const each = (who: string) => [
+    ...Array(6).fill(`ProgrammingError: ${who} cannot use the connection that calls it.`),
+    "False",
+    "None",
+    "[('0',), ('1',)]",
+    "True",
+  ];
+  expect(result).toEqual(
+    printed(
+      ...each("The authorizer callback"),
+      ...each("The progress handler"),
+      ...each("A collation"),
+      "OperationalError: interrupted",
+      "ProgrammingError: The target of a backup cannot be used while the backup is under way.",
+      "OperationalError: database is locked",
+      "[(5,)]",
+      "None",
+      "[(5,)]",
+    ),
+  );
+});
+
+test.concurrent("sqlite3: callbacks are changed while SQLite has put them aside", async () => {
+  const result = await run({
+    "main.py": `
+import sqlite3
+
+def fresh():
+    con = sqlite3.connect(":memory:", autocommit=True)
+    con.execute("create table t(x, y)")
+    con.execute("create index i on t(x)")
+    con.execute("create view v as select x, y from t")
+    con.executemany("insert into t values(?, ?)", [(i, str(i)) for i in range(6)])
+    return con
+
+# The progress handler does it at its first call, at its second, and so on, until the statement takes fewer calls than that.
+def sweep(statement, change):
+    at = 0
+    while True:
+        at += 1
+        con = fresh()
+        calls = 0
+        def progress():
+            nonlocal calls
+            calls += 1
+            if calls == at:
+                change(con)
+            return 0
+        con.set_authorizer(lambda *args: sqlite3.SQLITE_OK)
+        con.set_trace_callback(lambda statement: None)
+        con.set_progress_handler(progress, 1)
+        con.execute(statement)
+        con.set_progress_handler(None, 0)
+        assert len(con.execute("select y from t").fetchall()) == 6
+        if calls < at:
+            return at > 100
+
+print(sweep("alter table t rename column x to z", lambda con: con.set_authorizer(None)))
+print(sweep("vacuum", lambda con: con.set_trace_callback(None)))
+
+# One that is set meanwhile is there afterwards.
+seen = []
+def install(con):
+    con.set_authorizer(lambda *args: seen.append(args[0]) or sqlite3.SQLITE_OK)
+at = 0
+while True:
+    at += 1
+    con = fresh()
+    calls = 0
+    def progress():
+        global calls
+        calls += 1
+        if calls == at:
+            install(con)
+        return 0
+    con.set_progress_handler(progress, 1)
+    con.execute("alter table t rename column x to z")
+    con.set_progress_handler(None, 0)
+    if calls < at:
+        break
+    seen.clear()
+    con.execute("select 1")
+    assert seen == [sqlite3.SQLITE_SELECT], (at, seen)
+print("set")
+`,
+  });
+  expect(result).toEqual(printed("True", "True", "set"));
+});
+
 test.concurrent("an object is what its class says it is", async () => {
   const result = await run({
     "common.py": common,

@@ -14,7 +14,6 @@ const skippedAnywhere = new Set(["__pycache__", "test", "tests"]);
 const skippedPaths = new Set([
   ...["idlelib", "tkinter", "turtledemo", "turtle.py"], // need Tk
   "profiling/sampling", // reads the memory of a CPython process
-  "ensurepip/_bundled", // a wheel of pip
   "site-packages",
 ]);
 

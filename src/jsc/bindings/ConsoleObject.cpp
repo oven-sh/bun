@@ -18,6 +18,7 @@
 #include <JavaScriptCore/InspectorScriptProfilerAgent.h>
 #include <JavaScriptCore/InspectorDebuggerAgent.h>
 #include <JavaScriptCore/InspectorConsoleAgent.h>
+#include <JavaScriptCore/PyExec.h>
 
 namespace Bun {
 using namespace JSC;
@@ -55,6 +56,10 @@ void ConsoleObject::messageWithTypeAndLevel(MessageType type, MessageLevel level
         JSC::throwTypeError(globalObject, scope, "The \"properties\" argument must be an instance of Array."_s);
         return;
     }
+
+    // So that print() in Python and console.log() come out in the order they were called, also when stdout is a pipe.
+    if (!vm.heap.pythonRuntimes().isEmpty()) [[unlikely]]
+        JSC::Python::flushStandardStreams(vm);
 
     RELEASE_AND_RETURN(scope, Bun__ConsoleObject__messageWithTypeAndLevel(this->m_client, static_cast<uint32_t>(type), static_cast<uint32_t>(level), globalObject, jsArgs, count));
 }

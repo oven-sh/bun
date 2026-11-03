@@ -5175,9 +5175,16 @@ impl<'a> Resolver<'a> {
                     return SlotCheck::Changed;
                 }
             }
-            slot.listing_version.store(entries.version, Relaxed);
-            if let Some(it) = parent_entries {
-                slot.parent_listing_version.store(it.version, Relaxed);
+            // An asker whose options leave out a comparison above leaves the versions: the next asker makes it.
+            if self.opts.load_package_json
+                && self.opts.load_tsconfig_json
+                && self.opts.tsconfig_override.is_none()
+                && !self.opts.preserve_symlinks
+            {
+                slot.listing_version.store(entries.version, Relaxed);
+                if let Some(it) = parent_entries {
+                    slot.parent_listing_version.store(it.version, Relaxed);
+                }
             }
         }
         // 4. One `stat()` for each config file.

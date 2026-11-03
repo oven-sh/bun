@@ -470,11 +470,13 @@ Vector<uint8_t> CryptoKeyEC::platformExportPkcs8() const
         return {};
 
     // A key that came without its optional public key has a flag that leaves it out again. As in ncrypto's
-    // Ec::ExportPrivatePkcs8, a copy without the flag is what is encoded.
+    // Ec::ExportPrivatePkcs8, a copy without the flag is what is encoded. One that came with a compressed point
+    // would keep that form too.
     auto ecKey = ECKeyPtr(EC_KEY_dup(EVP_PKEY_get0_EC_KEY(platformKey())));
     if (!ecKey)
         return {};
     EC_KEY_set_enc_flags(ecKey.get(), EC_KEY_get_enc_flags(ecKey.get()) & ~EC_PKEY_NO_PUBKEY);
+    EC_KEY_set_conv_form(ecKey.get(), POINT_CONVERSION_UNCOMPRESSED);
     auto pkey = EvpPKeyPtr(EVP_PKEY_new());
     if (!pkey || EVP_PKEY_set1_EC_KEY(pkey.get(), ecKey.get()) != 1)
         return {};

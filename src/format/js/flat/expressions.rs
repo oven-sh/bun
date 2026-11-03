@@ -605,6 +605,10 @@ impl<'a> Line<'_, 'a> {
         if !self.text_of(e.span()).iter().all(|byte| *byte >= b' ') {
             return Err(Refused);
         }
+        // `/* GraphQL */` can be on a line before the statement.
+        if crate::graphql::embed::may_have_language_comment(e, self.f) {
+            return Err(Refused);
+        }
         let expressions = template.exprs();
         self.byte(b'`')?;
         for i in 0..template.quasi_count() {

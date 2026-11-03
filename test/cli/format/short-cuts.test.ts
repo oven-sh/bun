@@ -1557,7 +1557,14 @@ describe.skipIf(!hasFlag)("what breaks whether it fits or not, and what only loo
       var [g], h = 1;
       var { i }, j;
       let { k };
+      const { l }: {
+       m: n };
+      declare const { o }: {
+       p: q };
     `,
+    "language-comments.js": "/* GraphQL */\n`{a}`;\n/* HTML */\n`<a>b</a>`;\n/* c */\n`{a}`;\nx =\n  /* GraphQL */\n  `{a}`;\n",
+    // A comment before the \`{\` is printed before the first statement, which starts after it.
+    "static-blocks.ts": "class A { static /*\nd*/ { f(aaaaaaaaaa, bbbbbbbbbb); } }\nclass B { static /* c */ { f(aaaaaa, bbbbbb); } }\n",
     // Where the column is a guess, the printer has to know of the \`;\` or the \`,\` after a chain that always breaks.
     "chains.ts": `
       x = a || class d { a = l().p().t(b + c); };

@@ -6,7 +6,7 @@ use super::program::FormatStatements;
 use super::semicolon::OptionalSemicolon;
 use super::type_parameters::{FormatTSTypeParametersOptions, type_arguments, type_parameters};
 use crate::js::attach::Marker;
-use crate::js::flat::{CertainIf, Deeper, Mode, write_class_member, write_signature};
+use crate::js::flat::{CertainIf, Deeper, LongWay, Mode, write_class_member, write_signature};
 use crate::js::format::{
     FormatTypeAnnotation, format_name, format_node, identifier,
     ignored_node_terminator_follows_semi, name_without_comments,
@@ -278,6 +278,15 @@ fn write_static_block<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
                     FormatTrailingComments::Comments(comments)
                 ]
             );
+        }
+        // A comment before the `{` is printed before the first statement, which then starts after it.
+        Some(body)
+            if body.first().is_some_and(|first| {
+                let head = Span::new(member.span().start, first.span().start);
+                f.comments().has_comment_or_owner_in(head)
+            }) =>
+        {
+            write!(f, block_indent(&LongWay(&FormatStatements(body))))
         }
         Some(body) => write!(f, block_indent(&Deeper(&FormatStatements(body)))),
         None => write!(

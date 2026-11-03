@@ -751,6 +751,18 @@ impl<'a> Formatter<'a> {
         self.write_owned_text_from(start);
     }
 
+    /// Same, for a caller that only appends printable ASCII characters, so the width doesn't have to be measured.
+    pub(crate) fn write_built_printable_ascii(&mut self, build: impl FnOnce(&mut Vec<u8>)) {
+        let start = self.storage.text.len();
+        build(&mut self.storage.text);
+        let len = self.storage.text.len().saturating_sub(start) as u32;
+        self.write_element(FormatElement::OwnedText(Text {
+            start: start as u32,
+            len,
+            width: TextWidth::single(len),
+        }));
+    }
+
     /// Writes `storage.text[start..]` as one text.
     fn write_owned_text_from(&mut self, start: usize) {
         let text = self.storage.text.get(start..).unwrap_or_default();

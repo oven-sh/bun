@@ -483,6 +483,8 @@ struct us_internal_pipe_req_t {
 
     /* A read of zero bytes completed, and nothing was read since. */
     unsigned char has_data;
+    /* The owner wants no more: it reads the end of the stream, whatever the peer sends. */
+    unsigned char read_is_shut_down;
     /* The handle was opened for one direction only. */
     unsigned char cannot_read, cannot_write;
     /* LIBUS_PIPE_TYPE_UNKNOWN before the first write. */
@@ -535,7 +537,7 @@ static struct us_internal_pipe_req_t *us_internal_pipe_create(struct us_loop_t *
 }
 
 static int us_internal_pipe_is_readable(struct us_internal_pipe_req_t *pipe) {
-    return pipe->has_data || pipe->read_status != STATUS_SUCCESS || pipe->buffer_offset < pipe->buffer_length;
+    return pipe->has_data || pipe->read_is_shut_down || pipe->read_status != STATUS_SUCCESS || pipe->buffer_offset < pipe->buffer_length;
 }
 
 static int us_internal_pipe_is_writable(struct us_internal_pipe_req_t *pipe) {
@@ -682,6 +684,9 @@ int us_internal_pipe_read(struct us_loop_t *loop, struct us_poll_t *p, void *buf
     }
     struct us_internal_pipe_req_t *pipe = (struct us_internal_pipe_req_t *) p->state.req;
 
+    if (pipe->read_is_shut_down) {
+        return 0;
+    }
     if (pipe->buffer_offset < pipe->buffer_length) {
         ULONG available = pipe->buffer_length - pipe->buffer_offset;
         if ((ULONG) length > available) {
@@ -1016,7 +1021,7 @@ static void us_internal_pipe_continue_shutdown(struct us_internal_pipe_req_t *pi
         }
     }
     if (pipe->phase == LIBUS_PIPE_FLUSHING) {
-        if (!pipe->cannot_read && pipe->read_status == STATUS_SUCCESS && pipe->write.packet &&
+        if (!pipe->cannot_read && !pipe->read_is_shut_down && pipe->read_status == STATUS_SUCCESS && pipe->write.packet &&
             (pipe->eof_timer = CreateWaitableTimerW(NULL, TRUE, NULL))) {
             pipe->phase = LIBUS_PIPE_LINGERING;
             if (pipe->read.is_armed) {
@@ -1025,6 +1030,14 @@ static void us_internal_pipe_continue_shutdown(struct us_internal_pipe_req_t *pi
             return;
         }
         us_internal_pipe_end_of_stream(pipe);
+    }
+}
+
+void us_internal_pipe_shutdown_read(struct us_poll_t *p) {
+    struct us_internal_pipe_req_t *pipe = (struct us_internal_pipe_req_t *) p->state.req;
+    if (pipe) {
+        pipe->read_is_shut_down = 1;
+        us_internal_iocp_queue_update(&pipe->req);
     }
 }
 

@@ -174,6 +174,10 @@ struct us_internal_afd_req_t {
     /* What the request in the kernel asks about. */
     ULONG armed_events;
     unsigned char state;
+    /* The kernel would not take the request. */
+    unsigned char was_refused;
+    /* See us_internal_poll_read_was_shut_down. */
+    unsigned char read_is_shut_down;
 };
 
 static struct us_internal_afd_group_t *us_internal_afd_group_acquire(struct us_loop_t *loop) {
@@ -355,6 +359,9 @@ static void us_internal_afd_cancel(struct us_internal_afd_req_t *afd) {
 }
 
 static void us_internal_afd_update(struct us_internal_afd_req_t *afd) {
+    if (afd->read_is_shut_down && (us_poll_events(afd->req.owner) & LIBUS_SOCKET_READABLE)) {
+        us_internal_iocp_queue_ready(&afd->req);
+    }
     const ULONG wanted = us_internal_afd_wanted_events(afd, afd->req.owner);
     if (afd->state == LIBUS_AFD_IN_KERNEL) {
         /* A request that asks about too much is left alone: dispatch drops what is not polled for. */
@@ -384,7 +391,33 @@ static void us_internal_afd_update(struct us_internal_afd_req_t *afd) {
         afd->state = LIBUS_AFD_IN_KERNEL;
         afd->armed_events = wanted;
     } else {
+        afd->was_refused = 1;
         us_internal_iocp_queue_ready(&afd->req);
+    }
+}
+
+static void us_internal_afd_ready(struct us_internal_afd_req_t *afd) {
+    if (afd->was_refused) {
+        afd->was_refused = 0;
+        us_internal_iocp_dispatch(afd->req.loop, afd->req.owner, 1, 0, 0);
+        return;
+    }
+    /* Asked again after the handler: readiness is level-triggered. */
+    us_internal_iocp_queue_update(&afd->req);
+    us_internal_iocp_dispatch(afd->req.loop, afd->req.owner, 0, 0, LIBUS_SOCKET_READABLE);
+}
+
+/* After shutdown(SD_RECEIVE). The driver reports nothing for it, where epoll reports a socket that can be read to its end.
+ * There is no such call for a pipe. */
+void us_internal_poll_read_was_shut_down(struct us_poll_t *p) {
+    if (us_internal_poll_is_pipe(p)) {
+        us_internal_pipe_shutdown_read(p);
+        return;
+    }
+    struct us_internal_afd_req_t *afd = (struct us_internal_afd_req_t *) p->state.req;
+    if (afd) {
+        afd->read_is_shut_down = 1;
+        us_internal_iocp_queue_update(&afd->req);
     }
 }
 
@@ -546,8 +579,10 @@ static void us_internal_iocp_dispatch_ready_queue(struct us_loop_t *loop) {
         }
         switch (req->kind) {
         case LIBUS_POLL_KIND_SOCKET:
+            us_internal_afd_ready((struct us_internal_afd_req_t *) req);
+            break;
         case LIBUS_POLL_KIND_WAITABLE:
-            /* These are only queued when the kernel has refused their request. */
+            /* Only queued when the kernel has refused its request. */
             us_internal_iocp_dispatch(loop, req->owner, 1, 0, 0);
             break;
         default:

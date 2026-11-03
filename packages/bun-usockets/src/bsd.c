@@ -934,6 +934,13 @@ ssize_t bsd_recv(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags) {
             continue;
         }
 
+#ifdef _WIN32
+        /* After shutdown(SD_RECEIVE), where POSIX reads the end of the stream. */
+        if (ret == SOCKET_ERROR && WSAGetLastError() == WSAESHUTDOWN) {
+            return 0;
+        }
+#endif
+
 #if BUN_DEBUG
         // Debug logging for received data
         if (ret > 0) {

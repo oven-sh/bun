@@ -5092,7 +5092,6 @@ Reo=
   });
 });
 
-// What a TLS socket does on Windows is not measured.
 describe("shutdown(true)", () => {
   // A connection that the peer answers: the events that were due before it
   // have run by the time it resolves.
@@ -5196,29 +5195,90 @@ describe("shutdown(true)", () => {
       for (const allowHalfOpen of [false, true]) {
         const socket = `${role === "accepted" ? "an accepted" : "a connected"}${secure ? " TLS" : ""} socket`;
 
-        it.skipIf(secure && isWindows)(`${socket} with allowHalfOpen: ${allowHalfOpen}`, async () => {
+        it(`${socket} with allowHalfOpen: ${allowHalfOpen}`, async () => {
           expect(await callsAfterShutdown({ role, allowHalfOpen, secure, handshakeDone: true })).toEqual(
-            isWindows
-              ? { calls: ["write 2", "write 2", "close"], peerGot: "W1W2" }
-              : allowHalfOpen
-                ? { calls: ["write 2", "end", "write 2", "close"], peerGot: "W1W2" }
-                : { calls: ["write 2", "end", "close", "write -1"], peerGot: "W1" },
+            allowHalfOpen
+              ? { calls: ["write 2", "end", "write 2", "close"], peerGot: "W1W2" }
+              : { calls: ["write 2", "end", "close", "write -1"], peerGot: "W1" },
           );
         });
 
         if (!secure) continue;
-        it.skipIf(isWindows)(
-          `${socket} with allowHalfOpen: ${allowHalfOpen}, before its handshake completes`,
-          async () => {
-            expect(await callsAfterShutdown({ role, allowHalfOpen, secure, handshakeDone: false })).toEqual({
-              calls: ["write 0", "handshake false ECONNRESET", "close"],
-              peerGot: "",
-            });
-          },
-        );
+        it(`${socket} with allowHalfOpen: ${allowHalfOpen}, before its handshake completes`, async () => {
+          const { calls, peerGot } = await callsAfterShutdown({ role, allowHalfOpen, secure, handshakeDone: false });
+          // Winsock resets a connection that gets data once its read side is shut down, here the ClientHello,
+          // and a reset is not reported as a handshake that failed.
+          const wasReset = isWindows && role === "accepted" && calls.length === 2;
+          expect({ calls, peerGot }).toEqual({
+            calls: wasReset ? ["write 0", "close"] : ["write 0", "handshake false ECONNRESET", "close"],
+            peerGot: "",
+          });
+        });
       }
     }
   }
+
+  describe.concurrent.each(["TCP", "a named pipe"])("outside of a handler, on %s", transport => {
+    const isPipe = transport === "a named pipe";
+
+    async function connect(allowHalfOpen: boolean) {
+      const events = { client: [] as string[], server: [] as string[] };
+      const accepted = Promise.withResolvers<Socket>();
+      const ended = Promise.withResolvers<void>();
+      const closed = { client: Promise.withResolvers<void>(), server: Promise.withResolvers<void>() };
+      const handlers = (name: "client" | "server"): SocketHandler => ({
+        open(socket) {
+          if (name === "server") accepted.resolve(socket);
+        },
+        data(socket, chunk) {
+          events[name].push(`data ${chunk.length}`);
+        },
+        end() {
+          events[name].push("end");
+          if (name === "client") ended.resolve();
+        },
+        close() {
+          events[name].push("close");
+          closed[name].resolve();
+        },
+      });
+      const listener = Bun.listen({
+        ...(isPipe
+          ? { unix: "\\\\.\\pipe\\bun-test-shutdown-read-" + Math.random().toString(36).slice(2) }
+          : { hostname: "127.0.0.1", port: 0 }),
+        socket: handlers("server"),
+      });
+      const client = await Bun.connect({
+        ...(isPipe ? { unix: listener.unix } : { hostname: "127.0.0.1", port: listener.port }),
+        allowHalfOpen,
+        socket: handlers("client"),
+      });
+      await accepted.promise;
+      // Neither socket is being read from when the test goes on.
+      await new Promise(resolve => setImmediate(resolve));
+      const bothClosed = Promise.all([closed.client.promise, closed.server.promise]);
+      return { events, listener, client, ended: ended.promise, bothClosed };
+    }
+
+    it.skipIf(isPipe && !isWindows)("ends the stream and closes the socket", async () => {
+      const { events, listener, client, bothClosed } = await connect(false);
+      using _ = listener;
+      client.shutdown(true);
+      await bothClosed;
+      expect(events).toEqual({ client: ["end", "close"], server: ["end", "close"] });
+    });
+
+    it.skipIf(isPipe && !isWindows)("ends the stream and leaves a socket with allowHalfOpen writable", async () => {
+      const { events, listener, client, ended, bothClosed } = await connect(true);
+      using _ = listener;
+      client.shutdown(true);
+      await ended;
+      expect(client.write("still writable")).toBe(14);
+      client.end();
+      await bothClosed;
+      expect(events).toEqual({ client: ["end", "close"], server: ["data 14", "end", "close"] });
+    });
+  });
 });
 
 // Linux-only: uses /proc/self/fd to find and close the connected socket's fd

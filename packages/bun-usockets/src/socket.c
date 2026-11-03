@@ -73,13 +73,13 @@ int us_socket_remote_port(struct us_socket_t *s) {
 }
 
 void us_socket_shutdown_read(struct us_socket_t *s) {
-    if (us_internal_poll_is_pipe(&s->p)) {
-        /* There is no such thing for a pipe. libuv stops reading. */
-        us_socket_pause(s);
-        return;
+    if (!us_internal_poll_is_pipe(&s->p)) {
+        /* This syscall is idempotent so no extra check is needed */
+        bsd_shutdown_socket_read(us_poll_fd((struct us_poll_t *) s));
     }
-    /* This syscall is idempotent so no extra check is needed */
-    bsd_shutdown_socket_read(us_poll_fd((struct us_poll_t *) s));
+#ifdef LIBUS_USE_IOCP
+    us_internal_poll_read_was_shut_down(&s->p);
+#endif
 }
 
 void us_connecting_socket_shutdown_read(struct us_connecting_socket_t *c) {

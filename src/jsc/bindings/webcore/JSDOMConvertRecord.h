@@ -66,11 +66,6 @@ template<typename K, typename V> struct Converter<IDLRecord<K, V>> : DefaultConv
     using KeyType = typename K::ImplementationType;
     using ValueType = typename V::ImplementationType;
 
-    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSDOMGlobalObject& globalObject)
-    {
-        return convertRecord<JSDOMGlobalObject&>(lexicalGlobalObject, value, globalObject);
-    }
-
     static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
     {
         return convertRecord(lexicalGlobalObject, value);

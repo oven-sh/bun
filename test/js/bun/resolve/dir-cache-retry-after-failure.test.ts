@@ -1188,6 +1188,24 @@ const files = {
         await run("ID1", { handled: true, probe: false, made: "gen/b.js", asked: "./gen/b.js", before: early });
         await run("ID2", { handled: true, probe: false, made: "gen/index.js", asked: "./gen", before: early });
         await run("ID3", { handled: false, probe: false, made: "gen/index.js", asked: "./gen", before: early });
+        // A loader of optional modules, as a package with a native binding has one. It has each
+        // form of an import whose miss the program handles, and only its last module is there:
+        // the build misses the five others and looks none of them up again.
+        const loader = path.join(root, "inflight", "HD", "loader.js");
+        write(path.join(path.dirname(loader), "node_modules", "real", "index.js"), "exports.real = true;");
+        const imports = [
+          'try { exports.a = require("./binding.linux-x64.node"); } catch {}',
+          'try { exports.b = require("@never-installed/binding-linux-x64"); } catch {}',
+          'try { exports.c = require.resolve("never-installed"); } catch {}',
+          'exports.d = (async () => { try { return await import("./late.mjs"); } catch {} })();',
+          'exports.e = import("./later.mjs").catch(() => null);',
+          'exports.real = require("real");',
+        ];
+        write(loader, imports.join("\\n"));
+        const ranAgain = resolverCounters().lookupsRunAgain;
+        const built = await Bun.build({ entrypoints: [loader], target: "bun", throw: false });
+        const answer = built.success ? "built" : "ERR " + built.logs.map(log => log.message).join("|");
+        console.log("HD", answer + ", lookups run again", resolverCounters().lookupsRunAgain - ranAgain);
       },
 
       async build() {
@@ -1471,6 +1489,8 @@ describe.concurrent("a failed resolution sees them from each way to ask the reso
         // The build listed the directory above without the new one, and takes its own listing as it is.
         "ID2 left for the run time, lookups run again 0",
         "ID3 bundled, lookups run again 1",
+        // Each form of an import whose miss the program handles: five misses, and no lookup runs again.
+        "HD built, lookups run again 0",
       ].join("\n"),
     });
   });

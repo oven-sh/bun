@@ -226,6 +226,11 @@ void updateWithBufferView(JSGlobalObject* globalObject, JSSign* sign, JSC::JSArr
         .len = byteLength,
     };
 
+    if (!sign->m_mdCtx) {
+        ERR::CRYPTO_INVALID_STATE(scope, globalObject, "Not initialised"_s);
+        return;
+    }
+
     ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     if (!sign->m_mdCtx.digestUpdate(buffer)) {
         throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to update digest");
@@ -301,7 +306,7 @@ JSUint8Array* signWithKey(JSC::JSGlobalObject* lexicalGlobalObject, JSSign* this
 
     // Check if the context is initialized
     if (!thisObject->m_mdCtx) {
-        throwTypeError(lexicalGlobalObject, scope, "Sign.prototype.sign cannot be called before Sign.prototype.init"_s);
+        ERR::CRYPTO_INVALID_STATE(scope, lexicalGlobalObject, "Not initialised"_s);
         return nullptr;
     }
 
@@ -366,7 +371,7 @@ JSUint8Array* signWithKey(JSC::JSGlobalObject* lexicalGlobalObject, JSSign* this
     };
 
     if (!pkctx.signInto(data, &sigBuf)) {
-        throwTypeError(lexicalGlobalObject, scope, "Failed to create signature"_s);
+        throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to create signature"_s);
         return nullptr;
     }
 
@@ -430,10 +435,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
         return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key"_s, "ArrayBuffer, Buffer, TypedArray, DataView, string, KeyObject, or CryptoKey"_s, options);
     }
 
-    JSValue outputEncodingValue = callFrame->argument(1);
-    auto outputEncoding = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, outputEncodingValue).value_or(BufferEncodingType::buffer);
-    RETURN_IF_EXCEPTION(scope, {});
-
     // Get RSA padding mode and salt length if applicable
     int32_t padding = getPadding(lexicalGlobalObject, scope, options, {});
     RETURN_IF_EXCEPTION(scope, {});
@@ -466,9 +467,16 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
 
     const ncrypto::EVPKeyPointer& keyPtr = keyObject.asymmetricKey();
 
+    if (keyPtr.isOneShotVariant()) {
+        return ERR::CRYPTO_UNSUPPORTED_OPERATION(scope, lexicalGlobalObject);
+    }
+
     // Use the signWithKey function to perform the signing operation
     JSUint8Array* signature = signWithKey(lexicalGlobalObject, thisObject, keyPtr, dsaSigEnc, padding, saltLen);
     EXCEPTION_ASSERT(!!signature == !scope.exception());
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto outputEncoding = getEncodingDefaultBuffer(lexicalGlobalObject, scope, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
 
     // If output encoding is not buffer, convert the signature to the requested encoding

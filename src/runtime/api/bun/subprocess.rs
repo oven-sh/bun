@@ -710,7 +710,7 @@ impl Subprocess<'_> {
                 callback.to_js(),
             ],
             context,
-            self.pid() as u32,
+            Some(self.pid() as u32),
         )
     }
 

@@ -600,6 +600,23 @@ pub fn parent_pid() -> DWORD {
     unsafe { info.assume_init() }.InheritedFromUniqueProcessId as DWORD
 }
 
+/// The id of the process that made the other end of `pipe`, which need not be the one that created this process.
+pub fn pipe_peer_pid(pipe: HANDLE) -> Option<DWORD> {
+    unsafe extern "system" {
+        fn GetNamedPipeClientProcessId(pipe: HANDLE, pid: *mut ULONG) -> BOOL;
+        fn GetNamedPipeServerProcessId(pipe: HANDLE, pid: *mut ULONG) -> BOOL;
+    }
+    let own = GetCurrentProcessId();
+    // A handle does not say which end it is.
+    [GetNamedPipeClientProcessId, GetNamedPipeServerProcessId]
+        .into_iter()
+        .find_map(|get_pid| {
+            let mut pid: ULONG = 0;
+            // SAFETY: `pid` is a valid out-param, and a handle that is no pipe fails the call.
+            (unsafe { get_pid(pipe, &raw mut pid) } != 0 && pid != own).then_some(pid)
+        })
+}
+
 /// Ends the read or write that holds thread `thread_id`. `ERROR_NOT_FOUND`: none does, or it waits for its turn on a synchronous handle.
 pub fn cancel_blocking_io(thread_id: DWORD) -> Result<(), Win32Error> {
     const THREAD_TERMINATE: DWORD = 0x0001;

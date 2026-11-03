@@ -1427,7 +1427,7 @@ impl SendQueue {
                         if let Some(handle) = &mut item.handle
                             && handle.close_on_complete
                         {
-                            // A socket that stays with its owner may be closed by now. Without a new export the peer gets the last one again, and refuses it if it has opened it.
+                            // A socket that stays with its owner may be closed by now, so the peer gets its last export again.
                             let _ = handle.export();
                         }
                         item
@@ -1738,6 +1738,21 @@ impl SendQueue {
             SocketUnion::Open(s) => Some(s),
             _ => None,
         }
+    }
+
+    /// The process that a handle is exported to, for the end of the channel that did not start it.
+    pub(crate) fn peer_pid(&self) -> u32 {
+        #[cfg(windows)]
+        {
+            use bun_sys::windows::{parent_pid, pipe_peer_pid};
+            self.get_socket()
+                .map(|socket| socket.fd())
+                .filter(|pipe| pipe.is_valid())
+                .and_then(|pipe| pipe_peer_pid(pipe.native()))
+                .unwrap_or_else(parent_pid)
+        }
+        #[cfg(not(windows))]
+        0
     }
 
     /// The outbound bytes are read from `queue[0]` *inside* this method.

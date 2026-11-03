@@ -64,7 +64,7 @@ pub(crate) fn do_send(
     global_object: &JSGlobalObject,
     [mut message, mut handle, options_, mut callback]: [JSValue; 4],
     from: FromEnum,
-    peer_pid: u32,
+    peer_pid: Option<u32>,
 ) -> JsResult<bool> {
     let mut is_internal = IsInternal::External;
     if handle.is_callable() {
@@ -140,7 +140,7 @@ pub(crate) fn do_send(
         handle,
         kind,
         close_on_complete,
-        peer_pid,
+        peer_pid.unwrap_or_else(|| ipc_data.peer_pid()),
     ) {
         Ok(h) => zig_handle = Some(h),
         Err(e) => dup_err = Some(e),
@@ -304,10 +304,6 @@ pub(crate) fn send<'a>(
     // SAFETY: `get_ipc_instance` returns the live boxed `IPCInstance` (or
     // `None`); the instance is heap-allocated, not embedded in `vm`.
     let ipc = get_ipc_instance(vm).map(|i| unsafe { (*i).data() });
-    #[cfg(windows)]
-    let peer_pid = bun_sys::windows::parent_pid();
-    #[cfg(not(windows))]
-    let peer_pid = 0;
     do_send(
         ipc,
         global,
@@ -318,7 +314,7 @@ pub(crate) fn send<'a>(
             callback.to_js(),
         ],
         FromEnum::Process,
-        peer_pid,
+        None,
     )
 }
 

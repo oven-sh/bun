@@ -1002,47 +1002,38 @@ process.on('message', (message, handle) => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent.skipIf(!isWindows)("a received socket is not inheritable", async () => {
-    using dir = tempDir("ipc-handle-not-inheritable", {
+  test.concurrent("the other end of the channel is not the process that started the sender", async () => {
+    using dir = tempDir("ipc-handle-launcher", {
       "parent.js": `
-const { fork } = require('node:child_process');
-const net = require('node:net');
-const child = fork('child.js');
-child.on('message', inheritable => {
-  console.log(JSON.stringify(inheritable));
-  child.kill();
-  process.exit(0);
+const { spawn } = require('node:child_process');
+const launcher = spawn(process.execPath, ['launcher.js'], { stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
+launcher.on('message', (message, socket) => {
+  socket.setEncoding('utf8');
+  socket.on('data', data => {
+    console.log('parent got', message, 'and read', data);
+    socket.end('from the parent');
+  });
 });
-const server = net.createServer(connection => {
-  child.send('connection', connection);
-  child.send('server', server);
+`,
+      "launcher.js": `
+const { spawn } = require('node:child_process');
+spawn(process.execPath, ['child.js'], {
+  stdio: ['ignore', 'inherit', 'inherit', 3],
+  env: { ...process.env, NODE_CHANNEL_FD: '3', NODE_CHANNEL_SERIALIZATION_MODE: 'json' },
 });
-server.listen(0, '127.0.0.1', () => net.connect(server.address().port, '127.0.0.1'));
 `,
       "child.js": `
-const { dlopen, ptr } = require('bun:ffi');
-const { GetHandleInformation } = dlopen('kernel32.dll', {
-  GetHandleInformation: { args: ['u64', 'ptr'], returns: 'i32' },
-}).symbols;
-const { getsockopt } = dlopen('ws2_32.dll', {
-  getsockopt: { args: ['u64', 'i32', 'i32', 'ptr', 'ptr'], returns: 'i32' },
-}).symbols;
-const received = [];
-process.on('message', (message, handle) => {
-  received.push(handle);
-  if (received.length < 2) return;
-  const flags = new Uint32Array(1);
-  const type = new Int32Array(1);
-  const length = new Int32Array(1);
-  const inheritable = [];
-  for (let handle = 4; handle < 0x4000; handle += 4) {
-    if (!GetHandleInformation(handle, ptr(flags))) continue;
-    length[0] = 4;
-    // SOL_SOCKET, SO_TYPE: only a socket has an answer.
-    if (getsockopt(handle, 0xffff, 0x1008, ptr(type), ptr(length)) !== 0) continue;
-    inheritable.push((flags[0] & 1) !== 0);
-  }
-  process.send(inheritable);
+const net = require('node:net');
+const server = net.createServer(socket => {
+  process.send('a socket', socket);
+  server.close();
+});
+server.listen(0, '127.0.0.1', () => {
+  const client = net.connect(server.address().port, '127.0.0.1');
+  client.setEncoding('utf8');
+  client.write('from the child');
+  client.on('data', data => console.log('child read', data));
+  client.on('close', () => process.disconnect());
 });
 `,
     });
@@ -1054,7 +1045,10 @@ process.on('message', (message, handle) => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr }).toEqual({ stdout: "[false,false]\n", stderr: "" });
+    expect({ stdout, stderr }).toEqual({
+      stdout: "parent got a socket and read from the child\nchild read from the parent\n",
+      stderr: "",
+    });
     expect(exitCode).toBe(0);
   });
 });

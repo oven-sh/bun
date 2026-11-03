@@ -441,6 +441,12 @@ test("getter", () => {
 });
 ```
 
+Only a read calls the getter. `console.log()`, `Bun.inspect()` and `util.inspect()` print a mocked module's getter as `[Getter]`, and `Object.getOwnPropertyDescriptor()` returns the getter itself, as they do for the object the factory returned. The message of a failed matcher prints the value, so it calls the getter once.
+
+That's for a module that is mocked before it loads. A module that's already loaded is updated in place, and each getter is read once, when you mock the module.
+
+A module that re-exports from the mocked one, with `export * from` or `export { name } from`, describes such an export by its value. On its namespace object, `Object.getOwnPropertyDescriptor()`, `Object.hasOwn()`, `for...in` and `util.inspect()` call the getter each time. If the getter throws, the first three throw its error. `console.log()` and `Bun.inspect()` still print `[Getter]`.
+
 You can also write to the mocked module, whether you got it from `import * as`, `import()` or `vi.importMock()`. The write changes the object the factory returned, so every importer sees it.
 
 ```ts
@@ -806,6 +812,7 @@ test("lazy import", async () => {
 - If two factories import each other's modules, the one that asks last gets the original. Vitest calls one of the two factories a second time instead.
 - A factory that uses `importOriginal` is called after the original module is evaluated, not before, so after the factories that don't use it. A factory that declares the parameter counts as using it, so the original is evaluated even if the factory never calls it.
 - `export * from` a mocked module re-exports the original's export names if the factory uses `importOriginal`. Names the factory adds aren't re-exported, and names it leaves out are re-exported as `undefined`.
+- The namespace object of a module that re-exports from a mocked one calls a getter of the mock when you describe the export, with `Object.getOwnPropertyDescriptor()`, `Object.hasOwn()`, `for...in` or `util.inspect()`. Vitest calls it only when you read the export.
 - If two files import each other and both have hoisted calls, they wait on each other and the run fails with an error that names both files. Keep the hoisted calls in only one of them.
 
 ## Implementation Details

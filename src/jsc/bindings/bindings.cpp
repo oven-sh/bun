@@ -6321,8 +6321,9 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
             continue;
 
         JSC::JSValue propertyValue = jsUndefined();
+        // getPureResult() is null for an accessor that cannot be cached: an index key, or an export of a mocked module.
         auto pureResult = [&] {
-            return !slot.isCacheableGetter() && object->structure()->isCompiledStructure() ? JSValue(slot.getterSetter()) : slot.getPureResult();
+            return slot.isAccessor() ? JSValue(slot.getterSetter()) : slot.getPureResult();
         };
         if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
             if (callGetters) {

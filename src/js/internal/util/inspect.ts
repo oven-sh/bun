@@ -2214,6 +2214,11 @@ function formatNamespaceObject(keys: Key[], ctx: Context, value, recurseTimes: n
     try {
       const desc = ObjectGetOwnPropertyDescriptor(value, keys[i]);
       described = true;
+      // formatProperty() calls `desc.get` on the namespace object. A read calls it on the object the mock's factory returned.
+      if (ctx.getters && desc?.get !== undefined) {
+        const key = keys[i];
+        desc.get = () => value[key];
+      }
       output[i] = formatProperty(ctx, value, recurseTimes, keys[i], kObjectType, desc);
     } catch (err) {
       const uninitialized = isNativeError(err) && err.name === "ReferenceError";

@@ -1788,3 +1788,17 @@ it.skipIf(!isASAN)("prints a substring-rope jsx type after a prop's inspect.cust
   expect(stdout).toEndWith("</div-abcdefghijklmnopqrstuvwxyz>\n");
   expect(exitCode).toBe(0);
 });
+
+it("sorted prints a getter under an index key as a getter", () => {
+  const obj = {
+    get 0() {
+      return 42;
+    },
+    get foo() {
+      return 42;
+    },
+  };
+
+  expect(Bun.inspect(obj, { sorted: true })).toBe(Bun.inspect(obj));
+  expect(Bun.inspect(obj)).toBe('{\n  "0": [Getter],\n  foo: [Getter],\n}');
+});

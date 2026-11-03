@@ -1969,12 +1969,20 @@ bool JSModuleMock::getOwnPropertySlot(JSObject* object, JSC::JSGlobalObject* glo
     bool hasExport = exports->getPropertySlot(globalObject, propertyName, exportSlot);
     RETURN_IF_EXCEPTION(scope, false);
     if (hasExport) {
+        unsigned attributes = exportSlot.attributes() & JSC::PropertyAttribute::DontEnum;
+        // A getter stays one: a read of the slot calls it on the object the factory returned, and a descriptor or a print calls nothing.
+        if (exportSlot.isAccessor()) {
+            slot.disableCaching();
+            slot.setGetterSlot(mock, attributes | JSC::PropertyAttribute::Accessor, exportSlot.getterSetter());
+            slot.setThisValue(exportSlot.thisValue());
+            return true;
+        }
         JSValue value = jsUndefined();
         if (slot.internalMethodType() != JSC::PropertySlot::InternalMethodType::HasProperty) {
             value = exportSlot.getValue(globalObject, propertyName);
             RETURN_IF_EXCEPTION(scope, false);
         }
-        slot.setValue(mock, static_cast<unsigned>(JSC::PropertyAttribute::None), value);
+        slot.setValue(mock, attributes, value);
         return true;
     }
 

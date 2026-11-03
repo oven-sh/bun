@@ -2706,29 +2706,468 @@ describe("bundler", () => {
     });
   }
 
-  // Here the reader is the file with `export * from <CommonJS>`. It reads a
-  // lazily loaded ES module through a barrel of ES modules only, and the
-  // barrel still calls `init_lazy()` before that read. The barrel stays live
-  // because step 6 of `scan_imports_and_exports` makes each import statement
-  // of a file with `export * from <CommonJS>` depend on the exports object of
-  // the imported file.
-  itBundled("barrel/ExportStarOfCommonJSInReaderOfLazyModule", {
+  // --- The reader is itself a file with a run-time `export *` ---
+  // Such a reader is linked like any other: it keeps the exports object of
+  // a file only where it reads it. The `export *` is of a CommonJS file or of
+  // a module that is not in the bundle, in a file that the entry point
+  // imports or in the entry point itself.
+  for (const format of ["esm", "cjs", "iife"] as const) {
+    for (const [who, star, isEntry] of [
+      ["Reader", "./other.cjs", false],
+      ["ReaderWithExternalStar", "node:path", false],
+      ["EntryWithExternalStar", "node:path", true],
+    ] as const) {
+      // ES module output keeps an external `export *` of an entry point as a statement.
+      if (format === "esm" && isEntry) continue;
+      const suffix = { esm: "", cjs: "FormatCjs", iife: "FormatIife" }[format];
+      const readerFiles = (body: string) => {
+        const reader = `export * from '${star}';\n${body}`;
+        return {
+          ...(isEntry ? { "/entry.js": reader } : { "/entry.js": `import './reader.js';`, "/reader.js": reader }),
+          "/other.cjs": /* js */ `module.exports = { z: 1 };`,
+          "/lib/package.json": sideEffectFree,
+        };
+      };
+      const common = { format, target: star === "node:path" ? "bun" : undefined } as const;
+      const reExport = `__reExport(exports_${isEntry ? "entry" : "reader"}, `;
+
+      // It reads a lazily loaded ES module through a barrel of ES modules
+      // only. The binding keeps the `export *` statement of the barrel, which
+      // calls `init_lazy()` before that read.
+      itBundled(`barrel/ExportStarOfCommonJSIn${who}OfLazyModule${suffix}`, {
+        files: {
+          ...readerFiles(
+            format === "esm"
+              ? /* js */ `
+                import { x } from './lib/barrel.js';
+                console.log("x", x);
+                const lazy = await import('./lib/lazy.js');
+                console.log("lazy.x", lazy.x);
+              `
+              : /* js */ `
+                import { x } from './lib/barrel.js';
+                console.log("x", x);
+                import('./lib/lazy.js').then(lazy => console.log("lazy.x", lazy.x));
+              `,
+          ),
+          "/lib/barrel.js": /* js */ `export * from './lazy.js';`,
+          "/lib/lazy.js": /* js */ `export const x = Math.max(42, 1);`,
+        },
+        ...common,
+        run: { stdout: "x 42\nlazy.x 42" },
+      });
+
+      // A name that binds statically keeps neither the barrel nor the other
+      // files that the barrel re-exports.
+      itBundled(`barrel/ExportStarOfCommonJSIn${who}StaticNameDropsBarrel${suffix}`, {
+        files: {
+          ...readerFiles(/* js */ `
+            import { a } from './lib/barrel.js';
+            console.log(a);
+          `),
+          "/lib/barrel.js": /* js */ `
+            export * from './a.js';
+            export * from '../heavy.js';
+          `,
+          "/lib/a.js": /* js */ `export const a = "a";`,
+          "/heavy.js": /* js */ `
+            console.log("heavy.js ran");
+            export const heavy = "heavy";
+          `,
+        },
+        ...common,
+        run: { stdout: "a" },
+        onAfterBundle(api) {
+          api.expectFile("/out.js").toContain(reExport);
+          api.expectFile("/out.js").not.toContain("exports_barrel");
+          api.expectFile("/out.js").not.toContain("heavy.js ran");
+        },
+      });
+
+      // A run-time name keeps the barrel, as for any reader.
+      itBundled(`barrel/ExportStarOfCommonJSIn${who}RunTimeName${suffix}`, {
+        files: {
+          ...readerFiles(/* js */ `
+            import { movable, computed, get } from './lib/barrel.js';
+            console.log(movable, computed, get());
+          `),
+          "/lib/barrel.js": /* js */ `export * from './impl.cjs';`,
+          "/lib/impl.cjs": commonJSLib,
+        },
+        ...common,
+        run: { stdout: "200 500 500" },
+        onAfterBundle(api) {
+          api.expectFile("/out.js").toContain(reExport);
+          api.expectFile("/out.js").toContain("exports_barrel.movable");
+        },
+      });
+    }
+  }
+
+  // A name that binds statically does not keep a barrel that has an
+  // `export * from <CommonJS>` of its own.
+  itBundled("barrel/ExportStarOfCommonJSInReaderStaticNameDropsRunTimeBarrel", {
     files: {
       "/entry.js": /* js */ `import './reader.js';`,
       "/reader.js": /* js */ `
         export * from './other.cjs';
-        import { x } from './lib/barrel.js';
-        console.log("x", x);
-        const lazy = await import('./lib/lazy.js');
-        console.log("lazy.x", lazy.x);
+        import { fromEsm } from './lib/barrel.js';
+        console.log(fromEsm);
       `,
       "/other.cjs": /* js */ `module.exports = { z: 1 };`,
       "/lib/package.json": sideEffectFree,
-      "/lib/barrel.js": /* js */ `export * from './lazy.js';`,
-      "/lib/lazy.js": /* js */ `export const x = Math.max(42, 1);`,
+      "/lib/barrel.js": /* js */ `
+        export * from './impl.cjs';
+        export * from './esm.js';
+      `,
+      "/lib/impl.cjs": /* js */ `
+        console.log("impl.cjs ran");
+        module.exports = { movable: 200 };
+      `,
+      "/lib/esm.js": /* js */ `export const fromEsm = "esm";`,
     },
-    run: { stdout: "x 42\nlazy.x 42" },
+    run: { stdout: "esm" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("exports_barrel");
+      api.expectFile("/out.js").not.toContain("impl.cjs ran");
+    },
   });
+
+  // With `--splitting`, the chunk that both entry points load does not export
+  // an exports object for `d.js`.
+  itBundled("barrel/ExportStarOfCommonJSInReaderSplittingExportsNoExportsObject", {
+    files: {
+      "/a.js": /* js */ `
+        export * from './other.cjs';
+        import { used } from './d.js';
+        console.log("a", used);
+      `,
+      "/b.js": /* js */ `
+        import { used } from './d.js';
+        console.log("b", used);
+      `,
+      "/other.cjs": /* js */ `module.exports = { z: 1 };`,
+      "/d.js": /* js */ `export const used = Math.max(1, 2);`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    format: "esm",
+    outdir: "/out",
+    run: [
+      { file: "/out/a.js", stdout: "a 2" },
+      { file: "/out/b.js", stdout: "b 2" },
+    ],
+    onAfterBundle(api) {
+      for (const name of readdirSync(api.outdir)) {
+        expect(api.readFile("/out/" + name)).not.toContain("exports_d");
+      }
+    },
+  });
+
+  // An import cycle in a chunk of two entry points. `r.js` has the
+  // `export *`, and it is no reader of `gv`: the chunk keeps `r.js` ahead of
+  // `g.js`.
+  itBundled("barrel/ExportStarOfCommonJSInReaderSplittingImportCycle", {
+    files: {
+      "/e1.js": /* js */ `
+        import { rv } from './r.js';
+        import { gv } from './g.js';
+        import * as ns from './lib/barrel.js';
+        const captured = ns;
+        console.log("e1", rv, gv, captured.gv);
+      `,
+      "/e2.js": /* js */ `
+        import { gv } from './g.js';
+        import { rv } from './r.js';
+        import * as ns from './lib/barrel.js';
+        const captured = ns;
+        console.log("e2", rv, gv, captured.gv);
+      `,
+      "/g.js": /* js */ `
+        import { rv } from './r.js';
+        export const gv = rv + 1;
+      `,
+      "/r.js": /* js */ `
+        export * from './other.cjs';
+        import { x } from './lib/barrel.js';
+        export const rv = x * 2;
+      `,
+      "/other.cjs": /* js */ `module.exports = { z: 1 };`,
+      "/lib/package.json": JSON.stringify({ name: "lib" }),
+      "/lib/barrel.js": /* js */ `
+        export * from './impl.cjs';
+        export * from '../g.js';
+      `,
+      "/lib/impl.cjs": /* js */ `module.exports = { x: 200 };`,
+    },
+    entryPoints: ["/e1.js", "/e2.js"],
+    splitting: true,
+    format: "esm",
+    outdir: "/out",
+    run: [
+      { file: "/out/e1.js", stdout: "e1 400 401 401" },
+      { file: "/out/e2.js", stdout: "e2 400 401 401" },
+    ],
+  });
+
+  // The same with a cycle that a lazily loaded chunk enters: `m6.js` has the
+  // `export *`, and it is no reader of `w5`.
+  itBundled("barrel/ExportStarOfCommonJSInReaderSplittingImportCycleWithLazyChunk", {
+    files: {
+      "/index.js": /* js */ `import("./m5.js").then(m => console.log("ok", m.w5));`,
+      "/worker.js": /* js */ `
+        import "./flag.js";
+        import "./m6.js";
+        console.log("worker");
+      `,
+      "/flag.js": /* js */ `globalThis.IS_WORKER = true;`,
+      "/m5.js": /* js */ `
+        import { v6 } from "./m6.js";
+        export const w5 = globalThis.IS_WORKER ? null : v6.toUpperCase();
+      `,
+      "/m6.js": /* js */ `
+        export * from "./impl.cjs";
+        import { y, w5 } from "./barrel.js";
+        export const w6 = y + 1;
+        export let v6 = "six";
+        export function getW5() { return w5; }
+      `,
+      "/barrel.js": /* js */ `
+        export const y = 1;
+        export * from "./m5.js";
+      `,
+      "/impl.cjs": /* js */ `module.exports = { z: 1 };`,
+    },
+    entryPoints: ["/index.js", "/worker.js"],
+    splitting: true,
+    format: "esm",
+    outdir: "/out",
+    run: [
+      { file: "/out/index.js", stdout: "ok SIX" },
+      { file: "/out/worker.js", stdout: "worker" },
+    ],
+  });
+
+  // Two shapes that were right only through the dependency that such a reader
+  // had on the exports object of each file that it imports. Both are wrong for
+  // a reader without an `export *` of its own, before and after.
+  //
+  // `lib/m1.js` imports `lib/m3.js` through a barrel that tree shaking drops.
+  // The walk of `e0.js` does not see the cycle between the two, so the chunk
+  // keeps its order, and `e2.js` throws `TypeError` on `m3_o.v`.
+  itBundled("barrel/ExportStarOfCommonJSInReaderSplittingImportCycleThroughDroppedBarrel", {
+    todo: true,
+    files: {
+      "/e0.js": /* js */ `
+        import { m3_s0 } from "./lib/index.js";
+        import { m1_s0 } from "./lib/m1.js";
+        console.log("e0", m3_s0(), m1_s0);
+      `,
+      "/e2.js": /* js */ `
+        import { m1_s0 } from "./lib/m1.js";
+        import { m3_s0 } from "./lib/index.js";
+        console.log("e2", m1_s0, m3_s0());
+      `,
+      "/lib/package.json": sideEffectFree,
+      "/lib/index.js": /* js */ `export * from "./m3.js";`,
+      "/lib/m1.js": /* js */ `
+        export * from "./c1.cjs";
+        import { m3_o } from "./index.js";
+        export function helper() { return 0; }
+        export const m1_s0 = process.argv[1].includes("e0") ? null : [m3_o.v];
+      `,
+      "/lib/m3.js": /* js */ `
+        import { helper } from "./m1.js";
+        export const m3_o = { v: 401 };
+        export function m3_s0() { return helper() + 503; }
+      `,
+      "/lib/c1.cjs": /* js */ `module.exports = { c1_a: 1002 };`,
+    },
+    entryPoints: ["/e0.js", "/e2.js"],
+    splitting: true,
+    format: "esm",
+    target: "bun",
+    outdir: "/out",
+    run: [
+      { file: "/out/e0.js", stdout: "e0 503 null" },
+      { file: "/out/e2.js", stdout: "e2 [ 401 ] 503" },
+    ],
+  });
+
+  // `lib/m8.js` reads `exports_m7.c0_a` at load. The chunk that the entry
+  // point shares with its `import()` takes the order of the `import()`, which
+  // runs that read ahead of `__reExport(exports_m7, ...)`: `e1 NaN`.
+  itBundled("barrel/ExportStarOfCommonJSInReaderSplittingReadAheadOfReExport", {
+    todo: true,
+    files: {
+      "/e1.js": /* js */ `
+        import { m9_s0 } from "./m9.js";
+        console.log("e1", m9_s0);
+        import("./m5.js").then(ns => console.log("e1 late", ns.m5_s2));
+      `,
+      "/m5.js": /* js */ `
+        import { m2_o } from "./lib/m2.js";
+        import { m6_a } from "./lib/m6.js";
+        export const m5_s2 = m6_a + m2_o.v;
+      `,
+      "/m7.js": /* js */ `
+        export * from "./m9.js";
+        export * from "./c0.cjs";
+      `,
+      "/m9.js": /* js */ `
+        export { m6_s1 } from "./lib/m6.js";
+        import { m8_s0 } from "./lib/m8.js";
+        export const m9_s0 = m8_s0 + 1;
+      `,
+      "/c0.cjs": /* js */ `
+        const c0_a = 1001;
+        module.exports = { c0_a };
+      `,
+      "/lib/package.json": sideEffectFree,
+      "/lib/c3.cjs": /* js */ `
+        const c3_a = 1004;
+        module.exports = { c3_a };
+      `,
+      "/lib/m1.js": /* js */ `
+        export * from "./m6.js";
+        export const m1_o = { v: 201 };
+      `,
+      "/lib/m2.js": /* js */ `
+        import { c3_a as c3_a_i0 } from "./m1.js";
+        import { c0_a as c0_a_i2 } from "../m7.js";
+        export const m2_o = { v: 301 };
+      `,
+      "/lib/m6.js": /* js */ `
+        export * from "./c3.cjs";
+        import * as ns1 from "./m1.js";
+        export const m6_a = Math.max(702, 0);
+        export function m6_s1() { return ns1.c3_a + 2; }
+      `,
+      "/lib/m8.js": /* js */ `
+        import { c0_a as c0_a_i0, m6_s1 as unused_0 } from "../m7.js";
+        export const m8_s0 = c0_a_i0 + 1;
+      `,
+    },
+    entryPoints: ["/e1.js"],
+    splitting: true,
+    format: "esm",
+    outdir: "/out",
+    run: { file: "/out/e1.js", stdout: "e1 1003\ne1 late 1003" },
+  });
+
+  // --- A barrel with a run-time `export *` that stays live ---
+  // The barrel has its own `export * from './big.js'`. A reader of one name
+  // keeps that name, not an exports object of `big.js` with every export.
+  {
+    const siblings = {
+      "/lib/big.js": /* js */ `
+        export function bigA() { return "BIG_A_BODY"; }
+        export function bigB() { return "BIG_B_BODY"; }
+        export const bigC = () => "BIG_C_BODY";
+      `,
+      "/lib/other.js": /* js */ `
+        export function otherA() { return "OTHER_A_BODY"; }
+        export const otherB = () => "OTHER_B_BODY";
+      `,
+    };
+    const keepsOnlyTheReadExport = (api: BundlerTestBundleAPI, files: string[]) => {
+      for (const file of files) {
+        const out = api.readFile(file);
+        for (const dropped of ["exports_big", "exports_other", "BIG_B_BODY", "BIG_C_BODY", "OTHER_A_BODY"]) {
+          expect(out).not.toContain(dropped);
+        }
+      }
+    };
+    for (const [name, star, sideEffects] of [
+      ["", "./impl.cjs", undefined],
+      ["External", "node:path", undefined],
+      ["SideEffectsFalse", "./impl.cjs", false],
+    ] as const) {
+      itBundled(`barrel/ExportStarOfCommonJSLiveBarrelKeepsOnlyTheReadExport${name}`, {
+        files: {
+          "/entry.js":
+            sideEffects === false
+              ? /* js */ `
+                  import { movable, bigA } from './lib/barrel.js';
+                  console.log(movable, bigA());
+                `
+              : /* js */ `
+                  import { bigA } from './lib/barrel.js';
+                  console.log(bigA());
+                `,
+          "/lib/package.json": JSON.stringify({ name: "lib", sideEffects }),
+          "/lib/barrel.js": /* js */ `
+            export * from '${star}';
+            export * from './big.js';
+            export * from './other.js';
+          `,
+          "/lib/impl.cjs": /* js */ `module.exports = { movable: 200 };`,
+          ...siblings,
+        },
+        target: star === "node:path" ? "bun" : undefined,
+        run: { stdout: sideEffects === false ? "200 BIG_A_BODY" : "BIG_A_BODY" },
+        onAfterBundle(api) {
+          api.expectFile("/out.js").toContain("__reExport(exports_barrel");
+          keepsOnlyTheReadExport(api, ["/out.js"]);
+        },
+      });
+    }
+
+    itBundled("barrel/ExportStarOfCommonJSLiveBarrelKeepsOnlyTheReadExportSplitting", {
+      files: {
+        "/a.js": /* js */ `
+          import { bigA } from './lib/barrel.js';
+          console.log("a", bigA());
+        `,
+        "/b.js": /* js */ `
+          import { bigA } from './lib/big.js';
+          console.log("b", bigA());
+        `,
+        "/lib/package.json": JSON.stringify({ name: "lib" }),
+        "/lib/barrel.js": /* js */ `
+          export * from './impl.cjs';
+          export * from './big.js';
+          export * from './other.js';
+        `,
+        "/lib/impl.cjs": /* js */ `module.exports = { movable: 200 };`,
+        ...siblings,
+      },
+      entryPoints: ["/a.js", "/b.js"],
+      splitting: true,
+      format: "esm",
+      outdir: "/out",
+      run: [
+        { file: "/out/a.js", stdout: "a BIG_A_BODY" },
+        { file: "/out/b.js", stdout: "b BIG_A_BODY" },
+      ],
+      onAfterBundle(api) {
+        keepsOnlyTheReadExport(
+          api,
+          readdirSync(api.outdir).map(name => "/out/" + name),
+        );
+      },
+    });
+
+    // The namespace of the barrel as a value still has every export.
+    itBundled("barrel/ExportStarOfCommonJSLiveBarrelNamespaceKeepsEveryExport", {
+      files: {
+        "/entry.js": /* js */ `
+          import * as ns from './lib/barrel.js';
+          const captured = ns;
+          console.log(Object.keys(captured).sort().join(","), captured.bigB(), captured.movable);
+        `,
+        "/lib/package.json": JSON.stringify({ name: "lib" }),
+        "/lib/barrel.js": /* js */ `
+          export * from './impl.cjs';
+          export * from './big.js';
+          export * from './other.js';
+        `,
+        "/lib/impl.cjs": /* js */ `module.exports = { movable: 200 };`,
+        ...siblings,
+      },
+      run: { stdout: "bigA,bigB,bigC,movable,otherA,otherB BIG_B_BODY 200" },
+    });
+  }
 
   // --- Entry points are never barrels ---
   // An entry point's exports are the public interface of the build. Nothing

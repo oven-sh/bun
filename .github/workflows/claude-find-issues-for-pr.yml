@@ -14,6 +14,7 @@ on:
 
 jobs:
   claude-find-issues:
+    if: github.repository == 'oven-sh/bun'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     concurrency:
@@ -31,20 +32,30 @@ jobs:
           persist-credentials: false
 
       - name: Find issues this PR may fix
-        uses: anthropics/claude-code-action/base-action@2261fcfc88e7de1b55f179edd588805e12de71f2 # v1.0.228
+        uses: anthropics/claude-code-action@2261fcfc88e7de1b55f179edd588805e12de71f2 # v1.0.228
         env:
           ANTHROPIC_MODEL: claude-opus-5
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CLAUDE_CODE_SCRIPT_CAPS: '{"comment-on-pr.sh":1}'
+          COMMENT_MODE: --related-issues
         with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          allowed_non_write_users: "*"
           prompt: "/find-issues ${{ github.repository }}/pull/${{ github.event.pull_request.number || inputs.pr_number }}"
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: '--disallowedTools "WebFetch,WebSearch,Write,Edit,MultiEdit,NotebookEdit,mcp__github,mcp__github_comment,mcp__github_inline_comment,mcp__github_file_ops,mcp__github_ci"'
 
       - name: Find duplicate PRs
         if: always()
-        uses: anthropics/claude-code-action/base-action@2261fcfc88e7de1b55f179edd588805e12de71f2 # v1.0.228
+        uses: anthropics/claude-code-action@2261fcfc88e7de1b55f179edd588805e12de71f2 # v1.0.228
         env:
           ANTHROPIC_MODEL: claude-opus-5
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CLAUDE_CODE_SCRIPT_CAPS: '{"comment-on-pr.sh":1}'
+          COMMENT_MODE: --duplicate-prs
         with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          allowed_non_write_users: "*"
           prompt: "/find-duplicate-prs ${{ github.repository }}/pull/${{ github.event.pull_request.number || inputs.pr_number }}"
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: '--disallowedTools "WebFetch,WebSearch,Write,Edit,MultiEdit,NotebookEdit,mcp__github,mcp__github_comment,mcp__github_inline_comment,mcp__github_file_ops,mcp__github_ci"'

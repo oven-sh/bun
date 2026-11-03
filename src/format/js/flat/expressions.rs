@@ -543,6 +543,9 @@ impl<'a> Line<'_, 'a> {
                 }
             }
             ExprKind::ImportCall { args } if e.import_call_phase().is_none() => {
+                if is_composition(args) {
+                    return Err(Refused);
+                }
                 self.token("import(")?;
                 self.list(args.iter(), |line, argument| {
                     line.expr(argument, Place::Free)

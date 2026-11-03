@@ -246,8 +246,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncSetPublicKey, (JSC::JSGlobalObject * glo
         .len = keySpan.size()
     };
 
-    // No size check: Node's SetPublicKey() replaces BufferToPoint()'s ERR_OUT_OF_RANGE with this error.
-    // https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_ec.cc#L325-L329
+    // No size check: Node replaces BufferToPoint()'s ERR_OUT_OF_RANGE with this error, https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_ec.cc#L325-L329
     if (!pubPoint.setFromBuffer(buffer, ecdh->m_group)) {
         throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to convert Buffer to EC_POINT"_s);
         return {};

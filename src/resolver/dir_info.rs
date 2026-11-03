@@ -7,7 +7,7 @@ use bun_core::feature_flags as FeatureFlags;
 use bun_sys::Fd;
 
 use crate::fs;
-use crate::package_json::PackageJSON;
+use crate::package_json::{PackageID, PackageJSON};
 use crate::tsconfig_json::{ConfigSource, TSConfigJSON};
 
 pub use allocators::IndexType;
@@ -212,7 +212,7 @@ pub struct DirInfo {
     pub(crate) rare: Option<Box<RareFacts>>,
 }
 
-/// What few directories have: a config file that gave no parsed value, and what reading the config files logged.
+/// What few directories have: a config file that gave no parsed value, what reading the config files logged, a package id.
 #[derive(Default)]
 pub(crate) struct RareFacts {
     /// `package.json` was listed as a file and gave no `PackageJSON`.
@@ -222,6 +222,8 @@ pub(crate) struct RareFacts {
     /// A lookup that checks the slot and keeps it writes these again: the readers logged them only when they filled it.
     pub(crate) package_json_msgs: Vec<bun_ast::Msg>,
     pub(crate) tsconfig_msgs: Vec<bun_ast::Msg>,
+    /// Set for a package of the global cache, which has no parent: `Resolver::dir_info_for_resolution` filled the slot.
+    pub(crate) package_id: Option<PackageID>,
 }
 
 impl RareFacts {
@@ -230,6 +232,7 @@ impl RareFacts {
             && self.unparsed_tsconfig.is_none()
             && self.package_json_msgs.is_empty()
             && self.tsconfig_msgs.is_empty()
+            && self.package_id.is_none()
     }
 }
 
@@ -288,6 +291,12 @@ impl DirInfo {
     #[inline]
     pub(crate) fn is_inside_node_modules(&self) -> bool {
         self.flags.contains(Flags::InsideNodeModules)
+    }
+
+    /// The id that the package manager gave this directory, if it is a package of the global cache.
+    #[inline]
+    pub(crate) fn package_id(&self) -> Option<PackageID> {
+        self.rare.as_deref().and_then(|rare| rare.package_id)
     }
 
     /// Read-only view of `package_json`. The field stores `NonNull` to preserve

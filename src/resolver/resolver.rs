@@ -3988,15 +3988,68 @@ impl<'a> Resolver<'a> {
         let dir_path = strings::without_trailing_slash_windows_path(dir_path_maybe_trail_slash);
 
         Self::assert_valid_cache_key(dir_path);
-        let mut dir_cache_info_result = self.dir_cache_mut().get_or_put(dir_path)?;
-        if dir_cache_info_result.status == allocators::ItemStatus::Exists {
-            // we've already looked up this package before
-            // SAFETY: `Exists` index was assigned by `put`; resolver mutex held.
-            // The slot pointer is rooted at the singleton, so the returned ref
-            // survives the caller's later map reborrows.
-            return Ok(unsafe { DirInfo::slot_ptr_at(dir_cache_info_result.index) }
-                .map(|p| unsafe { DirInfoRef::from_raw(p) }));
+        if !A::CHECKS {
+            let dir_cache_info_result = self.dir_cache_mut().get_or_put(dir_path)?;
+            if dir_cache_info_result.status == allocators::ItemStatus::Exists {
+                // we've already looked up this package before
+                // SAFETY: `Exists` index was assigned by `put`.
+                // The slot pointer is rooted at the singleton, so the returned ref
+                // survives the caller's later map reborrows.
+                return Ok(unsafe { DirInfo::slot_ptr_at(dir_cache_info_result.index) }
+                    .map(|p| unsafe { DirInfoRef::from_raw(p) }));
+            }
         }
+        self.package_dir_info_miss(asker.generation(), dir_path, package_id)
+    }
+
+    /// The rest of `dir_info_for_resolution`: the check of an asker that checks, then the fill. It takes the resolver mutex.
+    #[cold]
+    #[inline(never)]
+    fn package_dir_info_miss(
+        &mut self,
+        generation: Generation,
+        dir_path: &[u8],
+        package_id: Install::PackageID,
+    ) -> crate::CrateResult<Option<DirInfoRef>> {
+        let mutex = self.mutex;
+        let _unlock = mutex.lock_guard();
+        let mut result = self.dir_cache_mut().get_or_put(dir_path)?;
+        let cached = self
+            .dir_cache_mut()
+            .at_index(result.index)
+            .map(DirInfoRef::from_slot);
+        if let Some(slot) = cached {
+            // Another thread filled it while this one waited, or this generation checked it.
+            if generation == 0
+                || slot.stamp.load(core::sync::atomic::Ordering::Relaxed) == generation
+            {
+                return Ok(cached);
+            }
+            // A lookup read it by path before the package manager named it: it is checked as any directory.
+            if slot.package_id().is_none() {
+                return self.dir_info_checked(generation, false, dir_path);
+            }
+            if self.check_dir_info(generation, slot, dir_path) == SlotCheck::Holds {
+                self.log_config_msgs_again(slot);
+                slot.stamp
+                    .store(generation, core::sync::atomic::Ordering::Relaxed);
+                return Ok(cached);
+            }
+            self.dir_cache_mut().remove(dir_path);
+            result = self.dir_cache_mut().get_or_put(dir_path)?;
+        }
+        self.package_dir_info_fill(generation, dir_path, package_id, result)
+    }
+
+    /// Reads the directory of a package of the global cache into a new slot that has no parent. The caller holds the resolver mutex.
+    fn package_dir_info_fill(
+        &mut self,
+        generation: Generation,
+        dir_path: &[u8],
+        package_id: Install::PackageID,
+        mut dir_cache_info_result: allocators::Result,
+    ) -> crate::CrateResult<Option<DirInfoRef>> {
+        debug_assert!(dir_cache_info_result.status != allocators::ItemStatus::Exists);
         // SAFETY: PORT (Stacked Borrows) — derive `rfs` from the raw `*mut FileSystem`
         // field via `addr_of_mut!` so later `&mut *self.log()` / `&mut *self.dir_cache()`
         // retags below don't pop its provenance. Re-borrow `&mut *rfs` per use.
@@ -4032,8 +4085,14 @@ impl<'a> Resolver<'a> {
             name: dir_path,
         };
         let listing_slot = Fs::ListingSlot::Keyed(&mut cached_dir_entry_result);
-        let dir_entries_option: *mut Fs::file_system::real_fs::EntriesOption =
-            rfs!().listing_locked(asker, listing_slot, listing_read, &mut ())??;
+        let listed = if generation == 0 {
+            let asker = crate::dir_info::Trusting;
+            rfs!().listing_locked(asker, listing_slot, listing_read, &mut ())
+        } else {
+            let asker = crate::dir_info::Checked(generation);
+            rfs!().listing_locked(asker, listing_slot, listing_read, &mut ())
+        };
+        let dir_entries_option: *mut Fs::file_system::real_fs::EntriesOption = listed??;
 
         // We must initialize it as empty so that the result index is correct.
         // This is important so that browser_scope has a valid index.
@@ -4057,7 +4116,7 @@ impl<'a> Resolver<'a> {
         // retag that would pop the shared tag mid-argument-list under Stacked Borrows).
         let dir_entries_dir = unsafe { &*dir_entries_option }.entries().dir;
         self.dir_info_uncached(
-            asker.generation(),
+            generation,
             dir_info_ptr,
             dir_entries_dir,
             // already `*mut EntriesOption` — pass raw, no intermediate `&mut` retag

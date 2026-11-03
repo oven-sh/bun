@@ -369,8 +369,15 @@ pub(crate) fn namespace_and_path(specifier: &[u8]) -> (&[u8], &[u8]) {
     }
 }
 
+/// Whether `key` is the module that `-e`, `-p`, stdin or cron mode runs: "[eval]" or "[stdin]" in the working directory.
+fn is_eval_entry(key: &[u8]) -> bool {
+    let eval_source = VirtualMachine::get().module_loader.eval_source.as_deref();
+    eval_source.is_some_and(|source| source.path.text == key)
+}
+
 pub(crate) fn on_load_namespace_and_path(key: &[u8]) -> Option<(&[u8], &[u8])> {
-    has_extension_or_namespace(key).then(|| namespace_and_path(key))
+    // The eval entry is no file. A dot in the name of the working directory reads as its extension.
+    (has_extension_or_namespace(key) && !is_eval_entry(key)).then(|| namespace_and_path(key))
 }
 
 /// C++ entry point: length of `key`'s `onLoad` namespace (0 for `file`), or -1 if no `onLoad` runs for it.

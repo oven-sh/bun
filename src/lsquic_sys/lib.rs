@@ -104,7 +104,6 @@ unsafe extern "C" {
     fn lsquic_conn_get_sni(c: *mut lsquic_conn) -> *const c_char;
     fn lsquic_conn_want_datagram_write(c: *mut lsquic_conn, is_want: c_int) -> c_int;
     fn lsquic_conn_crypto_cipher(c: *const lsquic_conn) -> *const c_char;
-    fn lsquic_conn_get_server_cert_chain(c: *mut lsquic_conn) -> *mut c_void;
     pub fn lsquic_conn_get_ssl(c: *const lsquic_conn) -> *mut c_void;
     pub fn lsquic_ssl_to_conn(ssl: *const c_void) -> *mut lsquic_conn;
     fn lsquic_conn_abort_error(
@@ -416,10 +415,6 @@ impl Conn {
         let p = unsafe { lsquic_conn_crypto_cipher(self.0.as_ptr()) };
         // SAFETY: as above.
         (!p.is_null()).then(|| unsafe { core::ffi::CStr::from_ptr(p) })
-    }
-    pub fn server_cert_chain(&self) -> *mut c_void {
-        // SAFETY: as above.
-        unsafe { lsquic_conn_get_server_cert_chain(self.0.as_ptr()) }
     }
     pub fn ssl(&self) -> *mut c_void {
         // SAFETY: as above.

@@ -208,6 +208,19 @@ describe("hash", () => {
         );
       });
 
+      test("a password that is neither a string nor bytes throws", () => {
+        for (const value of [null, 5, true, 1n, {}, [], () => {}, new Blob(["abc"]), { toString: () => "abc" }]) {
+          // @ts-expect-error
+          expect(() => hash(value, { algorithm: "bcrypt", cost: 4 })).toThrow(
+            expect.objectContaining({
+              name: "TypeError",
+              code: "ERR_INVALID_ARG_TYPE",
+              message: "password must be a string, ArrayBuffer or ArrayBufferView",
+            }),
+          );
+        }
+      });
+
       test("coercion throwing doesn't crash", () => {
         // @ts-expect-error
         expect(() => hash(Symbol())).toThrow();
@@ -274,6 +287,21 @@ describe("verify", () => {
             },
           }),
         ).toThrow();
+      });
+
+      test("a password or a hash that is neither a string nor bytes throws", () => {
+        const invalid = (name: string) =>
+          expect.objectContaining({
+            name: "TypeError",
+            code: "ERR_INVALID_ARG_TYPE",
+            message: `${name} must be a string, ArrayBuffer or ArrayBufferView`,
+          });
+        for (const value of [null, 5, true, 1n, {}, [], () => {}, new Blob(["abc"]), { toString: () => "abc" }]) {
+          // @ts-expect-error
+          expect(() => verify(value, "$")).toThrow(invalid("password"));
+          // @ts-expect-error
+          expect(() => verify("$", value)).toThrow(invalid("hash"));
+        }
       });
 
       test("coercion throwing doesn't crash", () => {

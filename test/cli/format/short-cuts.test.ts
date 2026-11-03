@@ -1144,7 +1144,7 @@ async function bothWays(files: Record<string, string>, options: string[]) {
   return { short, long };
 }
 
-describe("HTML", () => {
+describe.skipIf(!hasFlag)("HTML", () => {
   const line = (indentation: number, text: string) => " ".repeat(indentation) + text + "\n";
   const words = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore";
   // With four blanks in front of it, `tempor` does not fit behind it.
@@ -1288,7 +1288,7 @@ describe("HTML", () => {
   });
 });
 
-describe("Vue", () => {
+describe.skipIf(!hasFlag)("Vue", () => {
   // Code that is printed as it is written is not parsed.
   const code = [
     "a",

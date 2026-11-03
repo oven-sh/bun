@@ -1063,8 +1063,7 @@ fn connect_finish<const IS_SSL: bool>(
             let os_errno = {
                 let mut e = bun_sys::last_error() as c_int;
                 // Node reports ENOENT for a missing pipe path; Winsock's AF_UNIX
-                // connect error does not, so probe. A path with a NUL in it is not
-                // missing but invalid.
+                // connect error does not, so probe.
                 if port.is_none() {
                     if let Some(UnixOrHost::Unix(path)) = socket_ref.connection.get() {
                         if !bun_core::strings::contains_char(path, 0) && !bun_sys::exists(path) {

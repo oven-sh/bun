@@ -465,8 +465,7 @@ test("dns.lookup (localhost)", () => {
   return promise;
 });
 
-// Windows looks a name up as it is given, so Bun gives it the ASCII form (UTS #46), as Node.js does. No server has to
-// be asked for these.
+// Bun looks up the ASCII form of a name, as Node.js does. No server has to be asked for these.
 test.skipIf(!isWindows).each([
   ["full-width letters", "ｌｏｃａｌｈｏｓｔ"],
   ["an ideographic full stop behind it", "localhost。"],

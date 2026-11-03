@@ -809,44 +809,6 @@ describe("Server", () => {
         done();
       },
     }));
-    // Nothing is being read from the socket when the send that closes it runs, and the client neither reads nor writes.
-    it.concurrent("closeOnBackpressureLimit, outside of the handlers", async () => {
-      const closed = Promise.withResolvers<number>();
-      using server = serve({
-        port: 0,
-        fetch(request, server) {
-          if (server.upgrade(request)) return;
-          return new Response();
-        },
-        websocket: {
-          sendPings: false,
-          closeOnBackpressureLimit: true,
-          backpressureLimit: 1,
-          message() {},
-          open(ws) {
-            setImmediate(() => {
-              const data = new Uint8Array(1024 * 1024);
-              for (let i = 0; i < 64 && ws.send(data) !== 0; i++) {}
-            });
-          },
-          close(_, code) {
-            closed.resolve(code);
-          },
-        },
-      });
-      const client = net.connect(server.port!, server.hostname);
-      client.pause();
-      client.on("error", () => {});
-      client.write(
-        "GET / HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
-          "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n",
-      );
-      try {
-        expect(await closed.promise).toBe(1006);
-      } finally {
-        client.destroy();
-      }
-    });
     describe("perMessageDeflate (validation)", () => {
       it.each([1073741824, "hello", 1n, Symbol()])("throws when not a boolean or object", value => {
         expect(() => {

@@ -50,7 +50,7 @@ mod sock {
             }
             // SAFETY: fn contract: not null, so a NUL-terminated string.
             let bytes = unsafe { core::ffi::CStr::from_ptr(s) }.to_bytes();
-            // GetAddrInfoW is documented to look up the ASCII form of a name, but it asks for the name as it is.
+            // The name goes out in its ASCII form.
             let ascii = bun_core::strings::first_non_ascii(bytes)
                 .map(|_| Bun__idnaToASCII(&bun_core::StringView::borrow_utf8(bytes)))
                 .filter(|ascii| !ascii.is_dead())

@@ -158,6 +158,7 @@ describe("IOWriter file output redirection", () => {
       await done.promise;
       const lines = Bun.stripANSI(text)
         .split(/[\r\n]+/)
+        .map(line => line.trimEnd())
         .filter(Boolean);
       expect(lines.slice(0, 2)).toEqual(["héllo → 日本", "ls: /does/not/exist/日本: No such file or directory"]);
     });

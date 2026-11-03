@@ -37,6 +37,15 @@ number of section 2 is as on 2026-10-30, except the curl row, which is a range o
 base loses 15 of 24 in 10 of 10 runs and 81 of 100 in 6 of 6. The 235 vendored files give the same
 exit code on both builds (the same 3 fail).
 
+Main after the merge into #46528 (checked 2026-11-03T19:55Z, main 675ee5b97b): #47836 is the one
+commit that touches a file of the cut. It deletes `lsquic_conn_get_server_cert_chain` and
+`Conn::server_cert_chain` from src/lsquic_sys/lib.rs (lines 140 and 491 of the cut's file; the
+cut's hunks are at 40 and 611, and #47836's hunk applies cleanly on top of the cut). It also
+changes session.rs and tls.rs (session.peerCertificate reads SSL_get_peer_certificate()). Main
+also has a BoringSSL bump (41bf9b59c2 -> 89a2ff2be7). Both are in the handshake that every QUIC
+test runs through, so the rerun after the next main merge is a real check. #46528 and #46522 are
+CONFLICTING with main since then.
+
 NOT run again on edb9ce8f7a: the release builds and the gdb counts of section 3. Their numbers
 below are of 2026-10-30 on 001958b155. Section 1 to 3 run in full on main after the merge.
 

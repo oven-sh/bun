@@ -106,6 +106,36 @@ it.if(isWindows)("a write larger than 64 KiB round-trips over a TLS named pipe",
   }
 });
 
+it.if(isWindows)("what only the TLS layer still holds fails as a write if the reader leaves", async () => {
+  const path = `\\\\.\\pipe\\${randomUUID()}`;
+  const accepted = Promise.withResolvers<Bun.Socket>();
+  using listener = Bun.listen({
+    unix: path,
+    tls,
+    socket: {
+      handshake(socket) {
+        socket.pause();
+        accepted.resolve(socket);
+      },
+      data() {},
+    },
+  });
+  const client = connect({ path, ca: tls.cert });
+  await once(client, "secureConnect");
+  const reader = await accepted.promise;
+  const chunk = Buffer.alloc(40_000, "x");
+  const results = await Promise.all(
+    [1, 2, 3].map(() => new Promise(resolve => client.write(chunk, error => resolve(error?.code)))),
+  );
+  reader.terminate();
+  const [error] = await once(client, "error");
+  expect({ results, code: error.code, syscall: error.syscall }).toEqual({
+    results: [undefined, undefined, undefined],
+    code: "EPIPE",
+    syscall: "write",
+  });
+});
+
 describe.each(["TLSv1.2", "TLSv1.3"] as const)(
   "%s over a named pipe: write() issued before the handshake completes",
   version => {

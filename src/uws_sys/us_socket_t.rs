@@ -120,6 +120,11 @@ impl us_socket_t {
         c::us_socket_is_pipe(self) > 0
     }
 
+    /// The TLS layer has reported bytes as written that the kernel did not take.
+    pub(crate) fn tls_has_unsent(&self) -> bool {
+        c::us_socket_ssl_spill_pending(self) > 0 || c::us_socket_ssl_spill_dropped(self) > 0
+    }
+
     /// The descriptor that an end of a pipe was adopted with and owns.
     #[cfg(windows)]
     pub(crate) fn crt_descriptor(&self) -> Fd {
@@ -308,6 +313,14 @@ impl us_socket_t {
                 old_ext,
                 new_ext,
             ))
+        }
+    }
+
+    /// Plain bytes that the socket's owner accepted before `adopt_tls` and has not sent. They leave ahead of the handshake.
+    pub fn tls_send_ahead(&mut self, data: &[u8]) {
+        for chunk in data.chunks(MAX_I32) {
+            // SAFETY: `self` is a live `us_socket_t`; `chunk` is valid for its length, which fits in an i32.
+            unsafe { c::us_socket_tls_send_ahead(self, chunk.as_ptr().cast(), chunk.len() as i32) };
         }
     }
 
@@ -593,6 +606,8 @@ mod c {
         pub(super) safe fn us_socket_shutdown(s: &mut us_socket_t);
         pub(super) safe fn us_socket_is_closed(s: &us_socket_t) -> i32;
         pub(super) safe fn us_socket_is_pipe(s: &us_socket_t) -> i32;
+        pub(super) safe fn us_socket_ssl_spill_pending(s: &us_socket_t) -> u32;
+        pub(super) safe fn us_socket_ssl_spill_dropped(s: &us_socket_t) -> i32;
         #[cfg(windows)]
         pub(super) safe fn us_socket_get_crt_descriptor(s: &us_socket_t) -> i32;
         pub(super) fn us_socket_write_check_error(
@@ -636,6 +651,11 @@ mod c {
             data: *const c_char,
             length: i32,
         ) -> *mut us_socket_t;
+        pub(super) fn us_socket_tls_send_ahead(
+            s: *mut us_socket_t,
+            data: *const c_char,
+            length: i32,
+        );
         pub(super) safe fn us_socket_start_tls_handshake(s: &mut us_socket_t);
         pub(super) safe fn us_socket_set_inline_reject(s: &mut us_socket_t);
         pub(super) safe fn us_socket_release_held_flight(s: &mut us_socket_t);

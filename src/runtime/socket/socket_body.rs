@@ -72,6 +72,14 @@ fn read_error_from_close_code(code: c_int) -> sys::Error {
     }
 }
 
+/// The same for a `send()` that `write_check_error` calls fatal.
+fn write_error_from_fatal_send(code: c_int) -> sys::Error {
+    sys::Error {
+        syscall: sys::Tag::write,
+        ..read_error_from_close_code(code)
+    }
+}
+
 /// WSAECONNABORTED and codes without a name are ECONNRESET, as on libuv's read path (uv__process_tcp_read_req).
 #[cfg(windows)]
 fn errno_from_windows_code(code: c_int) -> sys::SystemErrno {
@@ -894,16 +902,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Hold the socket alive for the rest of the dispatch: `internal_flush`
         // and the drain callback can both re-enter JS and close it.
         let _guard = RefPtr::from_this(this);
-        // NOTE (Windows): the drain dispatch deliberately does not depend on
-        // whether the flush hit a fatal send error. Skipping it on fatal
-        // (tried in f0325bddf2) made Windows servers reset FIN-terminated
-        // responses: write_check_error's fatal detection interacts with
-        // Windows would-block semantics, and a skipped drain stalls the
-        // response teardown into an RST. Until that detection is verified on
-        // Windows, keep the legacy contract there (the close path still fails
-        // the pending write callback when the socket is torn down).
+        let is_shutting_down = this.flags.get().contains(Flags::SHUTDOWN_AFTER_FLUSH);
         let fatal_send_errno = this.internal_flush();
-        // On POSIX the fatal signal is trustworthy: us_socket_write_check_error
+        // The fatal signal is trustworthy: POSIX's us_socket_write_check_error
         // only reports an errno that is either known peer-gone or persisted
         // across its bounded unclassified-errno retry window. internal_flush
         // already dropped the undeliverable buffer and the writable poll is no
@@ -912,7 +913,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         // clean FIN, and the peer saw a silently truncated stream. Deliver it
         // like a failed write (syscall "write", same shape as net.ts
         // failWrite) and close the socket so 'error' is followed by 'close'.
-        #[cfg(not(windows))]
         if !SSL && fatal_send_errno != 0 {
             let global = handlers.global_object;
             let _scope = ScopeExit {
@@ -921,7 +921,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             };
             let this_value = this.get_this_value(&global);
             let err_value = <sys::Error as jsc::SysErrorJsc>::to_js(
-                &sys::Error::from_code_int(fatal_send_errno, sys::Tag::write),
+                &write_error_from_fatal_send(fatal_send_errno),
                 &global,
             );
             handlers.call_error_handler(this_value, &[this_value, err_value])?;
@@ -940,6 +940,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // is not writable if we have buffered data or if we are already detached
         if this.buffered_data_for_node_net.get().len() > 0
             || this.socket.get().is_detached()
+            || is_shutting_down
             || callback.is_empty()
         {
             return Ok(());
@@ -2220,8 +2221,14 @@ impl<const SSL: bool> NewSocket<SSL> {
         // that must not surface as a JS read error (matching Node's
         // onStreamRead, which only sees errors that came from uv_read_cb).
         if err > 2 {
-            js_error =
-                <sys::Error as jsc::SysErrorJsc>::to_js(&read_error_from_close_code(err), &global);
+            let mut error = read_error_from_close_code(err);
+            // A broken pipe fails the write that is under way, and that is the failure Node reports.
+            let has_unsent =
+                this.buffered_data_for_node_net.get().len() > 0 || socket.tls_has_unsent();
+            if error.get_errno() == sys::E::EPIPE && has_unsent {
+                error.syscall = sys::Tag::write;
+            }
+            js_error = <sys::Error as jsc::SysErrorJsc>::to_js(&error, &global);
         }
 
         if let Err(e) = callback.call(&global, this_value, &[this_value, js_error]) {
@@ -2415,7 +2422,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         // A Windows pipe has queued what it did not take and wants it offered again, which a caller cannot be held to.
-        let keeps_the_rest = self.socket.get().is_pipe();
+        let keeps_the_rest = self.socket.get().is_pipe()
+            && self.buffered_data_for_node_net.get().len() < PIPE_SEND_BUFFER;
         let result = self.write_or_end::<false>(
             global,
             data.to_js(),
@@ -3058,11 +3066,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// Flushes the node:net buffered tail. Returns 0, or the positive errno of
     /// a fatal send error (buffer dropped, writable not re-armed).
     /// `on_writable` consumes the errno. It hands a TLS socket's to the drain
-    /// callback. For plain TCP on POSIX it dispatches the error
-    /// handler and closes the socket. On Windows the errno is still ignored
-    /// (the drain callback is dispatched regardless) - skipping the drain on
-    /// fatal made Windows servers reset FIN-terminated responses (see
-    /// a5e7ba5905) - until the Windows fatal-write detection is verified.
+    /// callback. For plain TCP it dispatches the error handler and closes the socket.
     fn internal_flush(&self) -> i32 {
         // A TLS socket whose handshake was rejected has no usable transport:
         // never push the buffered tail at it, and report no error (the
@@ -3605,6 +3609,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         tls.socket
             .set(SocketHandler::<true>::from(new_raw.as_ptr()));
         tls.ref_();
+        // `write()` answered that these are taken.
+        let kept = self.buffered_data_for_node_net.take();
+        self.bytes_written
+            .set(self.bytes_written.get() + kept.len() as u64);
+        bun_opaque::opaque_deref_mut(new_raw.as_ptr()).tls_send_ahead(kept.as_slice());
 
         // The `raw` half — same `us_socket_t*`, ORIGINAL pre-upgrade
         // *Handlers, writes bypass SSL. Dispatch reaches it via the
@@ -3815,6 +3824,9 @@ enum WriteResult {
     Fail,
     Success { wrote: i32, total: usize },
 }
+
+/// `write()` on a Windows pipe takes a chunk whole while less than this is waiting: the size of the pipe's own buffer.
+const PIPE_SEND_BUFFER: usize = 64 * 1024;
 
 /// What `write()` and `end()` return: how much of the data the caller is rid of.
 fn taken(wrote: i32, total: usize, keeps_the_rest: bool) -> JSValue {

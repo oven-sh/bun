@@ -622,6 +622,11 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         matches!(self.socket, InternalSocket::Connected(s) if sock(s).is_pipe())
     }
 
+    /// The TLS layer has reported bytes as written that the kernel did not take.
+    pub fn tls_has_unsent(&self) -> bool {
+        matches!(self.socket, InternalSocket::Connected(s) if sock(s).tls_has_unsent())
+    }
+
     /// Underlying fd. Same fd regardless of TLS — read directly off the poll.
     #[inline]
     pub fn fd(&self) -> Fd {

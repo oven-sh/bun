@@ -53,7 +53,7 @@ const { addServerAbortSignalOption } = require("internal/net/server_abort_signal
 
 type SocketHandle = $Node.SocketHandle<$Node.Socket | ConnectData>;
 type ListenerHandle = $Node.ListenerHandle;
-type NativeSocketError = Error & { errno?: number };
+type NativeSocketError = Error & { errno?: number; syscall?: string };
 type NativeConnectError = Error & { errno: number };
 type ConnectException = InstanceType<typeof ExceptionWithHostPort> & { localAddress?: string; localPort?: number };
 type SystemError = Error & { errno?: number; syscall?: string };
@@ -1443,6 +1443,8 @@ function SocketEmitEndNT(self: $Node.Socket, _err?: NativeSocketError) {
       er.errno = _err.errno ?? (process.platform === "win32" ? -4077 : process.platform === "linux" ? -104 : -54);
       er.syscall = "read";
       self.destroy(er);
+    } else if (_err.syscall === "write") {
+      failWriteWith(self, _err, self[kwriteCallback]);
     } else {
       // Any other coded error (ETIMEDOUT, EPIPE, ...) keeps its identity.
       self.destroy(_err);
@@ -2136,6 +2138,8 @@ const SocketHandlers2 = {
         er.errno = err.errno;
         er.syscall = "read";
         self.destroy(er);
+      } else if (err.syscall === "write") {
+        failWriteWith(self, err, self[kwriteCallback]);
       } else {
         // Any other recv errno (ETIMEDOUT, EHOSTUNREACH, ENETUNREACH, ...)
         // keeps its identity — Node's onStreamRead does

@@ -368,6 +368,9 @@ struct us_socket_t *us_socket_adopt_tls(us_socket_r s, us_socket_group_r group,
  * by the plain-TCP layer before the socket was adopted into TLS) through the
  * same decrypt path as bytes arriving from the kernel. */
 struct us_socket_t *us_socket_tls_feed(us_socket_r s, const char *data, int length) __attribute__((nonnull(1)));
+/* What the owner of the plain socket had accepted and not sent when it called adopt_tls. It leaves as it is, ahead of
+ * everything the TLS layer sends. */
+void us_socket_tls_send_ahead(us_socket_r s, const char *data, int length) nonnull_fn_decl;
 /* Send ClientHello after adopt_tls. Separate so the caller can repoint the
  * ext slot before any dispatch can fire. */
 void us_socket_start_tls_handshake(us_socket_r s) nonnull_fn_decl;

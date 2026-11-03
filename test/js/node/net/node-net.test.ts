@@ -11,6 +11,7 @@ import {
   isIPv6 as hasIPv6,
   isASAN,
   isDebug,
+  isLinux,
   isMusl,
   isWindows,
   tempDir,
@@ -1432,6 +1433,35 @@ it.if(isWindows)("what is about TCP does not wait for the read on a named pipe o
   }
 });
 
+// Linux reports a reset as EPIPE if the peer has sent FIN before.
+it.skipIf(!isLinux)("a broken pipe fails the write that is under way", async () => {
+  const events: string[] = [];
+  const accepted = Promise.withResolvers<Socket>();
+  const server = createServer({ allowHalfOpen: true }, socket => {
+    socket.pause();
+    socket.on("error", () => {});
+    socket.end();
+    accepted.resolve(socket);
+  }).listen(0, "127.0.0.1");
+  try {
+    await once(server, "listening");
+    const client = connect({ port: (server.address() as AddressInfo).port, host: "127.0.0.1", allowHalfOpen: true });
+    const closed = new Promise(resolve => client.on("close", resolve));
+    client.on("error", (error: NodeJS.ErrnoException) => events.push(`error ${error.code} ${error.syscall}`));
+    client.write(Buffer.alloc(32 << 20, "x"), (error?: NodeJS.ErrnoException | null) =>
+      events.push(`callback ${error?.code} ${error?.syscall}`),
+    );
+    client.resume();
+    await once(client, "end");
+    // Closing with data unread sends the reset.
+    (await accepted.promise).destroy();
+    await closed;
+    expect(events).toEqual(["callback EPIPE write", "error EPIPE write"]);
+  } finally {
+    server.close();
+  }
+});
+
 describe.concurrent.skipIf(!isWindows)("a named pipe that another program made", () => {
   const fixture = JSON.stringify(join(import.meta.dir, "windows-foreign-pipe-fixture.js"));
 
@@ -1510,6 +1540,69 @@ describe.concurrent.skipIf(!isWindows)("a named pipe that another program made",
     `);
     expect(result).toEqual({ stdout: "1 4096 4097 65536 65537 1048576 1048577 3000000 1\n", exitCode: 0 });
   });
+
+  const watch = `
+    const events = [];
+    socket.on("error", error => events.push("error " + error.code + " " + error.syscall));
+    socket.on("end", () => events.push("end"));
+    const closed = new Promise(done => socket.on("close", done));
+  `;
+  const writeMuch = `
+    socket.write(Buffer.alloc(3_000_000, "x"), error => events.push("callback " + error?.code));
+    while (peer.available() < 1_048_576) await new Promise(setImmediate);
+  `;
+
+  // A large buffer goes to the pipe in parts. The reader is gone while the first is on its way, or when the second is due.
+  describe.each([
+    [
+      "net.connect(path)",
+      [0, 1_048_576],
+      `const peer = fixture.createServer({ quota: 4096 }), socket = net.connect(peer.name);`,
+    ],
+    // The thread that writes to an end that may be synchronous gets the buffer whole.
+    [
+      "net.connect({ fd })",
+      [0],
+      `const peer = fixture.createServer({ quota: 4096 }), socket = net.connect({ fd: fixture.openClient(peer.name, "r+").fd });`,
+    ],
+    [
+      "a socket of net.createServer()",
+      [0, 1_048_576],
+      `const listener = net.createServer().listen(fixture.pipeName());
+       await new Promise(done => listener.on("listening", done));
+       const peer = fixture.connect(listener.address());
+       const socket = await new Promise(done => listener.on("connection", done));
+       listener.close();`,
+    ],
+  ] as const)("%s", (_, parts, connect) => {
+    it.each(parts)("a write fails if the reader leaves with %d bytes of it", async part => {
+      const result = await run(`
+        ${connect}
+        ${watch}
+        ${writeMuch}
+        const taken = ${part} ? peer.text().length : 0;
+        peer.close();
+        console.log(taken, await closed, events.join(", "));
+      `);
+      expect(result).toEqual({ stdout: `${part} true callback EPIPE, error EPIPE write\n`, exitCode: 0 });
+    });
+  });
+
+  it.each([
+    ["only reads", "", "error EPIPE read"],
+    ["has a write under way", writeMuch, "callback EPIPE, error EPIPE write"],
+  ])("a server disconnects a client that %s", async (_, write, events) => {
+    const result = await run(`
+      const peer = fixture.createServer({ quota: 4096 }), socket = net.connect(peer.name);
+      ${watch}
+      await new Promise(done => socket.on("connect", done));
+      socket.resume();
+      ${write}
+      peer.disconnect();
+      console.log(await closed, events.join(", "));
+    `);
+    expect(result).toEqual({ stdout: `true ${events}\n`, exitCode: 0 });
+  });
 });
 
 describe.if(isWindows)("a write to a named pipe whose peer is gone fails with EPIPE", () => {
@@ -1573,6 +1666,64 @@ it.if(isWindows).each(["write", "end"])(
     expect({ received, stderr, exitCode }).toEqual({ received: 3_000_000, stderr: "", exitCode: 0 });
   },
 );
+
+// The end of the process takes along what a named pipe has taken and not passed on.
+it("what the callback of write() reported as written is not lost by process.exit()", async () => {
+  using dir = tempDir("net-exit-in-write-callback", {});
+  const server = createServer({ pauseOnConnect: true });
+  server.listen(isWindows ? `\\\\.\\pipe\\bun-test-exit-${randomUUID()}` : join(String(dir), "s.sock"));
+  await once(server, "listening");
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const client = require("node:net").connect(process.env.SOCKET_PATH, () => {
+          client.write(Buffer.alloc(500_000, "x"), () => process.exit(0));
+          console.log("issued");
+        });
+      `,
+    ],
+    env: { ...bunEnv, SOCKET_PATH: server.address() as string },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [peer] = await once(server, "connection");
+  server.close();
+  await proc.stdout.getReader().read();
+  let received = 0;
+  peer.on("data", (chunk: Buffer) => (received += chunk.length)).resume();
+  const [exitCode] = await Promise.all([proc.exited, once(peer, "close")]);
+  expect({ received, exitCode }).toEqual({ received: 500_000, exitCode: 0 });
+});
+
+it("destroy() does not wait for a peer that does not read", async () => {
+  using dir = tempDir("net-destroy-with-unread", {});
+  const server = createServer({ pauseOnConnect: true });
+  server.listen(isWindows ? `\\\\.\\pipe\\bun-test-destroy-${randomUUID()}` : join(String(dir), "s.sock"));
+  await once(server, "listening");
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const client = require("node:net").connect(process.env.SOCKET_PATH, () => {
+          client.write(Buffer.alloc(3_000_000, "x"), error => console.log(error ? "failed" : "written"));
+          client.destroy();
+        });
+        client.on("close", hadError => console.log("close", hadError));
+      `,
+    ],
+    env: { ...bunEnv, SOCKET_PATH: server.address() as string },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [peer] = await once(server, "connection");
+  server.close();
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect({ stdout, exitCode }).toEqual({ stdout: "failed\nclose false\n", exitCode: 0 });
+  peer.destroy();
+});
 
 it.if(isWindows)("the fd of a named pipe is the descriptor it was opened from, or none", async () => {
   const server = createServer();

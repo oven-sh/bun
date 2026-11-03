@@ -2029,6 +2029,12 @@ describe.skipIf(!hasFlag)("HTML", () => {
     '<a href="#"><svg class="bi"><use xlink:href="#x"/></svg></a>\n<a href="#"> <svg class="bi"><use xlink:href="#x"/></svg> </a>\n<p><b>x\ny</b></p>\n',
     // Without white space, an inline element and its child print parts of each other's tags.
     '<h2><button></button> </h2>\n<span><img a=""> </span>\n<span> <img a=""></span>\n',
+    // In `{{ }}` the character behind `//` or a backslash is text, be it the `<` of a tag or the quote of a value.
+    "<p>{{//</p>\n",
+    '<a b="{{//"></a>\n',
+    "\n<span>{{\\</span>\n<e>",
+    // There are no references in it, and a `<` that starts no tag is text anywhere.
+    '<div>\n  {{< placeholder width="200" height="250" background="#55595c" color="#eceeef" text="Thumbnail" >}}\n  <p>{{ a && b ? "c" : "d" }} e &amp; f < g</p>\n  {{ a \\}} &bogus; }} h\n  <b></b>\n</div>\n',
     // A text over several lines in front of an element.
     `<p>\n  ${full}\n  tempor ${full}\n  tempor <b>a</b> ut\n</p>\n`,
   ];

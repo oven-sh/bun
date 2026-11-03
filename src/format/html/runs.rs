@@ -696,6 +696,7 @@ impl Runs {
             looked_to: 0,
             parent_of_only_child: None,
             only_children: 0,
+            literal: (0, 0),
             starts_text: start == 0,
             is_in_root: parent.element.is_none(),
             has_single_blanks_in_tag: false,
@@ -796,6 +797,8 @@ struct Scanner<'s, 'a> {
     parent_of_only_child: Option<(usize, usize, u128)>,
     /// How many such elements are in each other.
     only_children: usize,
+    /// Where the last `{{ }}` in a text that has been looked at starts and ends.
+    literal: (usize, usize),
     /// The first child that is read is the first of the text.
     starts_text: bool,
     /// The children that are read while no element is open are those of the root.
@@ -1755,7 +1758,7 @@ impl<'a> Scanner<'_, 'a> {
         self.pieces.clear();
         (self.has_odd_pieces, self.has_interpolation) = (false, false);
         let mut has_line_break = starts_line;
-        let (mut at, mut has_space, mut has_braces) = (start, false, false);
+        let (mut at, mut has_space) = (start, false);
         let mut has_block = false;
         // Whether there is a line break in front of the node in front of the one at `at`, and of the one in front of that.
         let mut started_line = (false, false);
@@ -1800,7 +1803,7 @@ impl<'a> Scanner<'_, 'a> {
             } else {
                 loop {
                     let written_from = self.out.len();
-                    let (end, excess) = self.word(at, &mut has_braces, true)?;
+                    let (end, excess) = self.word(at, true)?;
                     self.pieces.push(Piece {
                         start: at,
                         end,
@@ -2032,12 +2035,7 @@ impl<'a> Scanner<'_, 'a> {
 
     /// The word that starts at `start`: writes it. Returns where it ends, and how many bytes it is longer than it is
     /// wide.
-    fn word(
-        &mut self,
-        start: usize,
-        has_braces: &mut bool,
-        can_have_interpolations: bool,
-    ) -> Option<(usize, usize)> {
+    fn word(&mut self, start: usize, can_have_interpolations: bool) -> Option<(usize, usize)> {
         let (mut at, mut is_wide) = (start, false);
         // What is in front of this has been written.
         let mut from = start;
@@ -2053,8 +2051,11 @@ impl<'a> Scanner<'_, 'a> {
                     from = at;
                     continue;
                 }
-                ODD => at = self.odd_in_text(at, has_braces, &mut is_wide)?,
-                _ => break,
+                SPACE => break,
+                _ => match self.odd_in_words(at, &mut is_wide)? {
+                    Some(last) => at = last,
+                    None => break,
+                },
             }
             at += 1;
         }
@@ -2173,7 +2174,7 @@ impl<'a> Scanner<'_, 'a> {
         self.out.push(b'>');
         let mut excess = self.out.len() - written_from - (width + 1);
         at += 1;
-        let (is_inline, mut is_first, mut has_braces) = (display == Display::Inline, true, false);
+        let (is_inline, mut is_first) = (display == Display::Inline, true);
         let (mut words, mut has_inner_space) = (0, false);
         loop {
             let space_start = at;
@@ -2209,7 +2210,7 @@ impl<'a> Scanner<'_, 'a> {
             }
             is_first = false;
             // With more than a text in it, its parent would be broken.
-            let (end, word_excess) = self.word(at, &mut has_braces, false)?;
+            let (end, word_excess) = self.word(at, false)?;
             (at, excess) = (end, excess + word_excess);
             self.ends_in_text = true;
             words += 1;
@@ -2332,6 +2333,10 @@ impl<'a> Scanner<'_, 'a> {
             }
         }
         let value = self.text.get(value_start..end)?;
+        // In `{{ }}` the character behind `//` is a part of the value, whatever it is.
+        if has_braces && value.ends_with(b"//") {
+            return None;
+        }
         // `unescapeQuoteEntities`
         if has_reference
             && (bun_core::strings::contains(value, b"&quot;")
@@ -2430,6 +2435,63 @@ impl<'a> Scanner<'_, 'a> {
             }
             _ => Some(at),
         }
+    }
+
+    /// `_isTagStart`
+    fn is_tag_start(&self, at: usize) -> bool {
+        self.at(at) == b'<'
+            && matches!(self.at(at + 1), b'a'..=b'z' | b'A'..=b'Z' | b'/' | b'!' | b'?')
+    }
+
+    /// `_consumeInterpolation`: returns where what the `{{` at `start` starts ends, in a text. `None` if nothing ends it.
+    fn interpolation_end(&self, start: usize) -> Option<usize> {
+        let (mut at, mut quote, mut is_in_comment) = (start + 2, 0, false);
+        loop {
+            if self.is_tag_start(at) {
+                return Some(at);
+            }
+            if quote == 0 {
+                match (self.at(at), self.at(at + 1)) {
+                    (b'}', b'}') => return Some(at + 2),
+                    (b'/', b'/') => (at, is_in_comment) = (at + 2, true),
+                    _ => {}
+                }
+            }
+            match self.at(at) {
+                0 => return None,
+                b'\\' => at += 1,
+                byte if byte == quote => quote = 0,
+                byte @ (b'"' | b'\'' | b'`') if !is_in_comment && quote == 0 => quote = byte,
+                _ => {}
+            }
+            at += 1;
+        }
+    }
+
+    /// Looks at the byte at `at` in a text, which is no white space and no plain character. Returns the last byte of what
+    /// it is the first byte of, `Some(None)` if the text ends in front of it, or `None` if the text goes the long way.
+    #[inline(never)]
+    fn odd_in_words(&mut self, at: usize, is_wide: &mut bool) -> Option<Option<usize>> {
+        // In `{{ }}` the lexer reads no references.
+        let is_literal = self.literal.0 <= at && at < self.literal.1;
+        Some(Some(match self.at(at) {
+            128.. => {
+                *is_wide = true;
+                at
+            }
+            0..=31 | 127 if is_literal => return None,
+            0..=31 | 127 => return Some(None),
+            b'<' if !is_literal && self.is_tag_start(at) => return Some(None),
+            b'{' if !is_literal && self.at(at + 1) == b'{' => {
+                if !self.has_plain_braces() {
+                    return None;
+                }
+                self.literal = (at, self.interpolation_end(at)?);
+                at
+            }
+            b'&' if !is_literal => self.reference_end(at)? - 1,
+            _ => at,
+        }))
     }
 
     /// `_consumeEntity`, where it makes no error. Returns where what `&` starts ends: a reference, or `&` alone, which
@@ -2556,14 +2618,18 @@ impl<'a> Scanner<'_, 'a> {
                 stops |= self.marks.braces.window(at);
             }
             let len = (stops.trailing_zeros() as usize).min(WINDOW);
-            let blanks = self.marks.blanks.window(at) & !stops;
-            twice |= blanks & (blanks >> 1) & low_bits(len);
+            // `{{` is looked at below: what is behind `//` and `\` in it is text, whatever it is.
+            let (blanks, braces) = (
+                self.marks.blanks.window(at) & !stops,
+                self.marks.braces.window(at),
+            );
+            twice |= ((blanks & (blanks >> 1)) | (braces & (braces >> 1))) & low_bits(len);
             at += len;
             if len < WINDOW {
                 break at - start;
             }
         };
-        if self.at(start + plain) == b'<' && twice == 0 {
+        if self.at(start + plain) == b'<' && twice == 0 && self.is_tag_start(start + plain) {
             let close = start + plain;
             let end = close - usize::from(self.at(close.wrapping_sub(1)) == b' ');
             if !self.ends_text(close) || end <= start {
@@ -2603,17 +2669,16 @@ impl<'a> Scanner<'_, 'a> {
         }
         let mut at = start;
         let (mut before, mut count, mut bytes, mut end) = (SPACE, 0usize, 0usize, start);
-        let (mut has_braces, mut is_wide) = (false, false);
+        let mut is_wide = false;
         // Set for a tab or a line break.
         let mut odd_space = 0;
         loop {
             let byte = self.at(at);
             let mut kind = TEXT_KINDS[byte as usize];
             if kind >= END {
-                if kind == END {
+                let Some(last) = self.odd_in_words(at, &mut is_wide)? else {
                     break;
-                }
-                let last = self.odd_in_text(at, &mut has_braces, &mut is_wide)?;
+                };
                 bytes += last - at;
                 at = last;
                 kind = WORD;

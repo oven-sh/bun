@@ -758,9 +758,7 @@ impl Builtin {
         None
     }
 
-    /// Writes the message to the *Cmd's* `io.stderr` (not the builtin's,
-    /// which may already have been redirected) and ends the Cmd with the
-    /// status of `why`.
+    /// Writes to the *Cmd's* `io.stderr`: the builtin's may already be redirected.
     pub(crate) fn cmd_write_failing_error(
         interp: &Interpreter,
         cmd: NodeId,
@@ -771,8 +769,7 @@ impl Builtin {
         let mut buf = Vec::new();
         let _ = buf.write_fmt(args);
         if let Some(_safeguard) = interp.as_cmd(cmd).io.stderr.needs_io() {
-            // `Cmd::on_io_writer_chunk` ends the Cmd with this status after
-            // the write. It replaces the status a sole `$(...)` word left here.
+            // `Cmd::on_io_writer_chunk` finishes the Cmd with this status.
             let me = interp.as_cmd_mut(cmd);
             me.exit_code = Some(why.exit_code());
             me.state = CmdState::WaitingWriteErr;
@@ -783,8 +780,7 @@ impl Builtin {
             }
             unreachable!()
         }
-        // No-IO path: append to the shell env's captured stderr and finish
-        // in this turn.
+        // No-IO path: append to the shell env's captured stderr and finish.
         if let OutKind::Pipe = &interp.as_cmd(cmd).io.stderr {
             // SAFETY: single trampoline frame; no other borrow of the env's
             // (or its parent's) stderr buffer is live.

@@ -45,12 +45,10 @@ pub enum CmdState {
     Done,
 }
 
-/// Why a Cmd ends before its command ran. `exit_code` is the only place that
-/// gives a reason its status.
+/// Why a Cmd ends before its command ran.
 #[derive(Clone, Copy)]
 pub(crate) enum CmdFailure {
-    /// The command line could not be set up: an expansion, a redirect or the
-    /// stdio of the command failed, or the shell refused an argument.
+    /// An expansion, a redirect or the stdio setup failed, or the shell refused an argument.
     Setup,
     /// No command of that name exists. POSIX 2.8.2 and sh: 127.
     NotFound,

@@ -295,9 +295,22 @@ impl DirInfo {
     /// `unsafe` here. The `.data` map must only be probed/iterated while the
     /// lock is held; use [`get_entry`](Self::get_entry) for one-shot lookups.
     pub fn get_entries_ref_locked(&self, generation: Generation) -> Option<&'static fs::DirEntry> {
+        if generation == 0 {
+            self.entries_ref_locked_as(Trusting)
+        } else {
+            self.entries_ref_locked_as(Checked(generation))
+        }
+    }
+
+    /// The listing as `asker` may use it. Caller holds `entries_mutex`.
+    #[inline]
+    pub(crate) fn entries_ref_locked_as<A: Asker>(
+        &self,
+        asker: A,
+    ) -> Option<&'static fs::DirEntry> {
         fs::FileSystem::instance()
             .fs
-            .entries_at_locked(self.entries, generation)?
+            .entries_at_locked(self.entries, asker)?
             .as_entries()
     }
 
@@ -314,11 +327,25 @@ impl DirInfo {
         generation: Generation,
         query: &[u8],
     ) -> Option<fs::EntryLookup<'static>> {
+        if generation == 0 {
+            self.get_entry_as(Trusting, query)
+        } else {
+            self.get_entry_as(Checked(generation), query)
+        }
+    }
+
+    /// One name of the listing as `asker` may use it, in a single `entries_mutex` critical section.
+    #[inline]
+    pub(crate) fn get_entry_as<A: Asker>(
+        &self,
+        asker: A,
+        query: &[u8],
+    ) -> Option<fs::EntryLookup<'static>> {
         let rfs = &mut fs::FileSystem::instance().fs;
         // `MutexGuard` stores the mutex by raw pointer, so holding it does not
         // keep `rfs` borrowed.
         let _lock = rfs.entries_mutex.lock_guard();
-        rfs.entries_at_locked(self.entries, generation)?
+        rfs.entries_at_locked(self.entries, asker)?
             .as_entries()?
             .get(query)
     }

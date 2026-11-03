@@ -7,8 +7,8 @@ use bun_lint::rule::Plugin;
 /// regular `<script>` tags.
 pub struct NextScriptForGa;
 
-const NEXT_SCRIPT_FOR_GA: Message =
-    Message::new("", "Prefer `next/script` component when using the inline script for Google Analytics.");
+const NEXT_SCRIPT_FOR_GA: &Message =
+    &Message::new("", "Prefer `next/script` component when using the inline script for Google Analytics.");
 
 const SUPPORTED_SRCS: [&[u8]; 2] = [b"www.google-analytics.com/analytics.js", b"www.googletagmanager.com/gtag/js"];
 const SUPPORTED_HTML_CONTENT_URLS: [&[u8]; 2] = [b"www.google-analytics.com/analytics.js", b"www.googletagmanager.com/gtm.js"];

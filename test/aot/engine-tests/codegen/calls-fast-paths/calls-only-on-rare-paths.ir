@@ -162,9 +162,9 @@ function f1 name="measure" module=m0 position=317 flags=[IsChecked, HasExplicitN
 # -- generated: f0 measure
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 55, patchpoints: 7, rare instructions: 50, polls: 2
+# CHECK-NEXT: instructions: 59, patchpoints: 7, rare instructions: 48, polls: 2
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="measure"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 22, patchpoints: 0
-# CHECK-NEXT: end of function f1
+# CHECK-NEXT: instructions: 21, patchpoints: 0
+# CHECK-NEXT: end of function f4

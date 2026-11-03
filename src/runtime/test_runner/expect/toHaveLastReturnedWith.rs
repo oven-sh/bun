@@ -8,6 +8,7 @@ use super::Expect;
 use super::throw;
 
 impl Expect {
+    #[optimize(size)]
     pub(crate) fn to_have_last_returned_with(
         &self,
         this_value: JsWrapper<'_, Self>,

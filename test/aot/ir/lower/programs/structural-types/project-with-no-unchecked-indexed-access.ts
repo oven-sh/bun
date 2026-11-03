@@ -245,7 +245,7 @@ attempt("honest again", () => [firstPlusOne([1]), checkedInPlace([1]), total([1,
 // CHECK-NEXT: Return v14
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="drop"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|object site=[[w_14]] flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_15]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|object site=[[w_14]] flags=[OmitsNull, OmitsUndefined] variableName="scores"}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_15]]] {
 // CHECK-NEXT: b0(v0: undefined|null|object):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

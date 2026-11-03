@@ -13,36 +13,36 @@ pub struct NoConfusingVoidExpression {
     ignore_void_returning_functions: bool,
 }
 
-const INVALID_VOID_EXPR: Message = Message::new(
+const INVALID_VOID_EXPR: &Message = &Message::new(
     "invalidVoidExpr",
     "Placing a void expression inside another expression is forbidden. Move it to its own statement instead.",
 );
-const INVALID_VOID_EXPR_ARROW: Message = Message::new(
+const INVALID_VOID_EXPR_ARROW: &Message = &Message::new(
     "invalidVoidExprArrow",
     "Returning a void expression from an arrow function shorthand is forbidden. Please add braces to the arrow function.",
 );
-const INVALID_VOID_EXPR_ARROW_WRAP_VOID: Message = Message::new(
+const INVALID_VOID_EXPR_ARROW_WRAP_VOID: &Message = &Message::new(
     "invalidVoidExprArrowWrapVoid",
     "Void expressions returned from an arrow function shorthand must be marked explicitly with the `void` operator.",
 );
-const INVALID_VOID_EXPR_RETURN: Message = Message::new(
+const INVALID_VOID_EXPR_RETURN: &Message = &Message::new(
     "invalidVoidExprReturn",
     "Returning a void expression from a function is forbidden. Please move it before the `return` statement.",
 );
-const INVALID_VOID_EXPR_RETURN_LAST: Message = Message::new(
+const INVALID_VOID_EXPR_RETURN_LAST: &Message = &Message::new(
     "invalidVoidExprReturnLast",
     "Returning a void expression from a function is forbidden. Please remove the `return` statement.",
 );
-const INVALID_VOID_EXPR_RETURN_WRAP_VOID: Message = Message::new(
+const INVALID_VOID_EXPR_RETURN_WRAP_VOID: &Message = &Message::new(
     "invalidVoidExprReturnWrapVoid",
     "Void expressions returned from a function must be marked explicitly with the `void` operator.",
 );
-const INVALID_VOID_EXPR_WRAP_VOID: Message = Message::new(
+const INVALID_VOID_EXPR_WRAP_VOID: &Message = &Message::new(
     "invalidVoidExprWrapVoid",
     "Void expressions used inside another expression must be moved to its own statement or marked explicitly with the `void` operator.",
 );
-const VOID_EXPR_WRAP_VOID: Message =
-    Message::new("voidExprWrapVoid", "Mark with an explicit `void` operator.");
+const VOID_EXPR_WRAP_VOID: &Message =
+    &Message::new("voidExprWrapVoid", "Mark with an explicit `void` operator.");
 
 #[derive(Copy, Clone)]
 enum InvalidAncestor<'a> {

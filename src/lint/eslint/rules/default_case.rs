@@ -9,7 +9,7 @@ pub struct DefaultCase {
     oxlint_comment_pattern: Option<Regex>,
 }
 
-const MISSING_DEFAULT_CASE: Message = Message::new("missingDefaultCase", "Expected a default case.");
+const MISSING_DEFAULT_CASE: &Message = &Message::new("missingDefaultCase", "Expected a default case.");
 
 impl Rule for DefaultCase {
     const META: Meta = Meta::eslint("default-case", Kind::Suggestion);

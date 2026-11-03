@@ -1,5 +1,6 @@
 use bun_sema::bind::{ScopeId, SymbolId};
 use bun_sema::hir::FnId;
+use bun_sema::util::SharedSort;
 
 use super::sharing::is_immutable;
 use super::{BindingSharing, Context, Placements};
@@ -61,7 +62,7 @@ pub(super) fn place_bindings(
         BindingRef::Slot(scope, slot) => Some(((scope, slot), place(binding))),
     });
     let mut slots: Vec<(SlotKey, Placement)> = slots.collect();
-    slots.sort_unstable_by_key(|slot| slot.0);
+    slots.shared_sort_unstable_by_key(|slot| slot.0);
     Placements {
         symbols,
         slots,

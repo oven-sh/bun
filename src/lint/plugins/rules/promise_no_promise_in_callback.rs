@@ -9,7 +9,7 @@ pub struct NoPromiseInCallback {
     exempt_declarations: bool,
 }
 
-const NO_PROMISE_IN_CALLBACK: Message = Message::new("", "Avoid using promises inside of callbacks.");
+const NO_PROMISE_IN_CALLBACK: &Message = &Message::new("", "Avoid using promises inside of callbacks.");
 
 impl Rule for NoPromiseInCallback {
     const META: Meta = Meta::oxlint(Plugin::Promise, "no-promise-in-callback", Kind::Problem);

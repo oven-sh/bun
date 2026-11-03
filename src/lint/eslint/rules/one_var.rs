@@ -25,31 +25,31 @@ struct KindOptions {
     initialized: Option<Mode>,
 }
 
-const COMBINE_UNINITIALIZED: Message = Message::new(
+const COMBINE_UNINITIALIZED: &Message = &Message::new(
     "combineUninitialized",
     "Combine this with the previous '{{type}}' statement with uninitialized variables.",
 );
-const COMBINE_INITIALIZED: Message = Message::new(
+const COMBINE_INITIALIZED: &Message = &Message::new(
     "combineInitialized",
     "Combine this with the previous '{{type}}' statement with initialized variables.",
 );
-const SPLIT_UNINITIALIZED: Message = Message::new(
+const SPLIT_UNINITIALIZED: &Message = &Message::new(
     "splitUninitialized",
     "Split uninitialized '{{type}}' declarations into multiple statements.",
 );
-const SPLIT_INITIALIZED: Message = Message::new(
+const SPLIT_INITIALIZED: &Message = &Message::new(
     "splitInitialized",
     "Split initialized '{{type}}' declarations into multiple statements.",
 );
-const SPLIT_REQUIRES: Message = Message::new(
+const SPLIT_REQUIRES: &Message = &Message::new(
     "splitRequires",
     "Split requires to be separated into a single block.",
 );
-const COMBINE: Message = Message::new(
+const COMBINE: &Message = &Message::new(
     "combine",
     "Combine this with the previous '{{type}}' statement.",
 );
-const SPLIT: Message = Message::new(
+const SPLIT: &Message = &Message::new(
     "split",
     "Split '{{type}}' declarations into multiple statements.",
 );
@@ -339,7 +339,7 @@ fn split_declarations<'a>(
     Some(fixes)
 }
 
-fn report_combine<'a>(cx: &Cx<'a, OneVar>, statement: Stmt<'a>, kind: VarKind, message: Message) {
+fn report_combine<'a>(cx: &Cx<'a, OneVar>, statement: Stmt<'a>, kind: VarKind, message: &'static Message) {
     let previous = OnceCell::new();
     let previous = || *previous.get_or_init(|| joined_with(statement, kind));
     cx.report(statement.span_without_export(), message)

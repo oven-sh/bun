@@ -16,8 +16,8 @@ pub struct StylePropObject {
     allow: Vec<Box<[u8]>>,
 }
 
-const STYLE_PROP_NOT_OBJECT: Message = Message::new("stylePropNotObject", "Style prop value must be an object");
-const STYLE_PROP_OBJECT: Message = Message::new("", "`style` prop value must be an object.");
+const STYLE_PROP_NOT_OBJECT: &Message = &Message::new("stylePropNotObject", "Style prop value must be an object");
+const STYLE_PROP_OBJECT: &Message = &Message::new("", "`style` prop value must be an object.");
 
 #[derive(Default)]
 pub struct State<'a> {
@@ -151,7 +151,7 @@ impl StylePropObject {
     }
 }
 
-fn message(is_oxlint: bool) -> Message {
+fn message(is_oxlint: bool) -> &'static Message {
     if is_oxlint { STYLE_PROP_OBJECT } else { STYLE_PROP_NOT_OBJECT }
 }
 

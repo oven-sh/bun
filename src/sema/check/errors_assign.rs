@@ -908,14 +908,28 @@ impl Checker<'_, '_> {
         let hir = self.hir(file);
         let is_variable = self.is_type_variable(ty);
         let mut constraints: Vec<TypeId> = Vec::new();
-        let (mut above, mut covariant) = (hir.parent(hir.node(node)), true);
+        let (mut below, mut covariant) = (hir.node(node), true);
+        let mut steps = 0;
         loop {
+            // Few nodes are nested this deeply. In a chain of `A extends B ? C : ...` every node is, and walking from
+            // each of them to the statement takes quadratic time.
+            if steps == Self::MAX_FLOW_TYPE_STEPS {
+                let skip = self.skip_ancestors_without_flow_constraint(file, below, node);
+                below = skip.below;
+                covariant ^= skip.flips_variance;
+                if skip.node.is_some() {
+                    node = skip.node;
+                }
+            } else {
+                steps += 1;
+            }
+            let above = hir.parent(below);
             let parent = match hir.data(above) {
                 NodeData::Type(parent) => parent,
                 NodeData::Stmt(_) | NodeData::File | NodeData::None => break,
                 data => {
                     covariant ^= matches!(data, NodeData::Param(_));
-                    above = hir.parent(above);
+                    below = above;
                     continue;
                 }
             };
@@ -938,13 +952,67 @@ impl Checker<'_, '_> {
             {
                 constraints.push(constraint);
             }
-            (node, above) = (parent, hir.parent(above));
+            (node, below) = (parent, above);
         }
         if constraints.is_empty() {
             return ty;
         }
         let constraint = self.intersection(&constraints);
         self.substitution_type(ty, constraint)
+    }
+
+    /// How many ancestors `conditional_flow_type_of_type` visits before it starts to skip.
+    const MAX_FLOW_TYPE_STEPS: u32 = 16;
+
+    /// Follows the ancestors of `start` for as long as `conditional_flow_type_of_type` has nothing to do at them but
+    /// to go on: up to the true branch of a conditional type, a child of a mapped type, or a child of the statement.
+    /// `node` is the type node that `start` is or that the walk passed last. The result is remembered for every node on
+    /// the way.
+    fn skip_ancestors_without_flow_constraint(
+        &mut self,
+        file: FileId,
+        start: Node,
+        mut node: TypeNodeId,
+    ) -> FlowTypeSkip {
+        let hir = self.hir(file);
+        let mut passed: Vec<Node> = Vec::new();
+        let mut below = start;
+        let mut skip = loop {
+            if let Some(&known) = self.flow_type_skips.get(&(file, below)) {
+                break known;
+            }
+            let above = hir.parent(below);
+            let is_passed = match hir.data(above) {
+                NodeData::Stmt(_) | NodeData::File | NodeData::None => false,
+                NodeData::Type(parent) => {
+                    let child = std::mem::replace(&mut node, parent);
+                    match hir[parent].kind {
+                        TypeNodeKind::Cond { yes, .. } => yes != child,
+                        TypeNodeKind::Mapped(_) => false,
+                        _ => true,
+                    }
+                }
+                _ => true,
+            };
+            if !is_passed {
+                break FlowTypeSkip {
+                    below,
+                    node: TypeNodeId::NONE,
+                    flips_variance: false,
+                };
+            }
+            passed.push(below);
+            below = above;
+        };
+        for &below in passed.iter().rev() {
+            match hir.data(hir.parent(below)) {
+                NodeData::Type(parent) if skip.node.is_none() => skip.node = parent,
+                NodeData::Param(_) => skip.flips_variance ^= true,
+                _ => {}
+            }
+            self.flow_type_skips.insert((file, below), skip);
+        }
+        skip
     }
 
     /// The mapped type arm of `getConditionalFlowTypeOfType`. If `node` is the template `X` of the mapped type

@@ -103,7 +103,7 @@ export interface Shape {
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK: function {{*}}
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=2 captures=[{type=undefined|null|string site=[[w_8]] flags=[OmitsNull, OmitsUndefined]}, {type=anything}] thisType={type=anything} parameters=[{type=undefined|null|object site=[[w_13]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=[[w_14]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] functionTypes={{*}}[[f_9]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=2 captures=[{type=undefined|null|string site=[[w_8]] flags=[OmitsNull, OmitsUndefined] variableName="about"}, {type=anything variableName="value"}] thisType={type=anything} parameters=[{type=undefined|null|object site=[[w_13]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=[[w_14]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] functionTypes={{*}}[[f_9]]] {
 // CHECK-NEXT: b0(v0: undefined|null|string, v1: anything, v2: undefined|null|object, v3: undefined|null|string):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

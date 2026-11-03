@@ -342,78 +342,47 @@ function f32 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v61: f16 = FinishClass v60 layout=L15
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v62: L7 = NewObject layout=L7 allocationClass=4
-# CHECK-NEXT: v63: anything ~ object = Construct v28 calleeName="HeirOfStoresOne" accessSite=1 callees=[f9]
-# CHECK-NEXT: v64: anything ~ L8 = Expect v63 expectedType=undefined|null|L8
-# CHECK-NEXT: v65: anything ~ object = Construct v33 calleeName="HeirOfCallsInit" accessSite=2 callees=[f10]
-# CHECK-NEXT: v66: anything ~ L9 = Expect v65 expectedType=undefined|null|L9
-# CHECK-NEXT: v67: anything ~ object = Construct v38 calleeName="BackToFront" accessSite=3 callees=[f11]
-# CHECK-NEXT: v68: anything ~ L10 = Expect v67 expectedType=undefined|null|L10
-# CHECK-NEXT: v69: 7 = Integer integer=7
-# CHECK-NEXT: v70: 1 = Integer integer=1
-# CHECK-NEXT: v71: L17 = NewObject -, v69, v70 layout=L17 fields=[0, 1] allocationSite=16 allocationClass=14
-# CHECK-NEXT: v72: anything ~ object = Construct v43, -, v71 calleeName="HeirOfAssigns" accessSite=4 callees=[f12]
-# CHECK-NEXT: v73: anything ~ L11 = Expect v72 expectedType=undefined|null|L11
-# CHECK-NEXT: v74: "n" = String string="n"
-# CHECK-NEXT: v75: 5 = Integer integer=5
-# CHECK-NEXT: v76: L16 = NewObject -, v74, v75 layout=L16 fields=[1, 0] allocationSite=17 allocationClass=13
-# CHECK-NEXT: v77: L12 = NewObject layout=L12 allocationClass=9
+# CHECK-NEXT: v62: anything ~ object = Construct v28 calleeName="HeirOfStoresOne" accessSite=1 callees=[f9]
+# CHECK-NEXT: v63: anything ~ object = Construct v33 calleeName="HeirOfCallsInit" accessSite=2 callees=[f10]
+# CHECK-NEXT: v64: anything ~ object = Construct v38 calleeName="BackToFront" accessSite=3 callees=[f11]
+# CHECK-NEXT: v65: 7 = Integer integer=7
+# CHECK-NEXT: v66: 1 = Integer integer=1
+# CHECK-NEXT: v67: L17 = NewObject -, v65, v66 layout=L17 fields=[0, 1] allocationSite=16 allocationClass=8
+# CHECK-NEXT: v68: anything ~ object = Construct v43, -, v67 calleeName="HeirOfAssigns" accessSite=4 callees=[f12]
+# CHECK-NEXT: v69: "n" = String string="n"
+# CHECK-NEXT: v70: 5 = Integer integer=5
+# CHECK-NEXT: v71: L16 = NewObject -, v69, v70 layout=L16 fields=[1, 0] allocationSite=17 allocationClass=7
+# CHECK-NEXT: v72: L12 = NewObject layout=L12 allocationClass=5
+# CHECK-NEXT: v73: L12 = CallBuiltin -, v72, v71 overload=ObjectAssign/0 accessSite=18
+# CHECK-NEXT: v74: 5 = Integer integer=5
+# CHECK-NEXT: v75: "n" = String string="n"
+# CHECK-NEXT: v76: L16 = NewObject -, v74, v75 layout=L16 fields=[0, 1] allocationSite=18 allocationClass=7
+# CHECK-NEXT: v77: L12 = NewObject layout=L12 allocationClass=5
 # CHECK-NEXT: v78: L12 = CallBuiltin -, v77, v76 overload=ObjectAssign/0 accessSite=18
-# CHECK-NEXT: v79: 5 = Integer integer=5
-# CHECK-NEXT: v80: "n" = String string="n"
-# CHECK-NEXT: v81: L16 = NewObject -, v79, v80 layout=L16 fields=[0, 1] allocationSite=18 allocationClass=13
-# CHECK-NEXT: v82: L12 = NewObject layout=L12 allocationClass=9
-# CHECK-NEXT: v83: L12 = CallBuiltin -, v82, v81 overload=ObjectAssign/0 accessSite=18
-# CHECK-NEXT: v84: L12 = NewObject layout=L12 allocationClass=9
-# CHECK-NEXT: v85: undefined = Undefined
-# CHECK-NEXT: v86: L12 = CallBuiltin -, v84, v85 overload=ObjectAssign/0 accessSite=18
-# CHECK-NEXT: v87: "s" = String string="s"
-# CHECK-NEXT: v88: L13 = NewObject -, v87 layout=L13 fields=[3] allocationClass=10 [listsOnlyStoredValues]
-# CHECK-NEXT: v89: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: v90: i32 = StringBuilderCheckpoint v89
-# CHECK-NEXT: v91: int[0, 2] = CallDirect v88, v89 function=f36 calledBuiltin=JSONStringify
-# CHECK-NEXT: Switch v91 cases=[1] -> case b2(), otherwise b3()
+# CHECK-NEXT: v79: L12 = NewObject layout=L12 allocationClass=5
+# CHECK-NEXT: v80: undefined = Undefined
+# CHECK-NEXT: v81: L12 = CallBuiltin -, v79, v80 overload=ObjectAssign/0 accessSite=18
+# CHECK-NEXT: v82: "s" = String string="s"
+# CHECK-NEXT: v83: L13 = NewObject -, v82 layout=L13 fields=[3] allocationClass=6 [listsOnlyStoredValues]
+# CHECK-NEXT: v84: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: v85: 0 = Integer
+# CHECK-NEXT: v86: int[0, 2] = CallDirect v83, v84, v85 function=f36 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v86 cases=[1] -> case b2(), otherwise b3()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v92: buildercursor = StringBuilderReserve v89 size=128
-# CHECK-NEXT: Jump -> next b4(v92)
+# CHECK-NEXT: v87: string = StringBuilderFinish v84
+# CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b3() frequency=Rare:
-# CHECK-NEXT: v93: buildercursor = StringBuilderReserve v89 size=128
-# CHECK-NEXT: Jump -> next b4(v93)
-# CHECK-NEXT: b4(v94: buildercursor):
-# CHECK-NEXT: StringBuilderCommit v89, v94
-# CHECK-NEXT: v96: i32 = StringBuilderCheckpoint v89
-# CHECK-NEXT: v97: boolean = StrictEq v90, v96
-# CHECK-NEXT: Branch v97 -> taken b5(), notTaken b6()
-# CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: StringBuilderDiscard v89
-# CHECK-NEXT: v99: undefined = Undefined
-# CHECK-NEXT: v100: undefined|string = CallBuiltin -, v88, v99 overload=JSONStringify/0 accessSite=15
-# CHECK-NEXT: Jump -> next b7()
-# CHECK-NEXT: b6():
-# CHECK-NEXT: v101: string = StringBuilderFinish v89
-# CHECK-NEXT: Jump -> next b7()
-# CHECK-NEXT: b7():
-# CHECK-NEXT: v102: L6 = NewObject layout=L6 allocationClass=3
-# CHECK-NEXT: v103: anything ~ object = Construct v56 calleeName="RunsCode" accessSite=10 callees=[f15]
-# CHECK-NEXT: v104: anything ~ L14 = Expect v103 expectedType=undefined|null|L14
-# CHECK-NEXT: v105: anything ~ object = Construct v61 calleeName="StoresUndefined" accessSite=11 callees=[f16]
-# CHECK-NEXT: v106: anything ~ L15 = Expect v105 expectedType=undefined|null|L15
-# CHECK-NEXT: v107: Array<L6|L7|L12, Contiguous> = NewArray v62, v64, v66, v68, v73, v77, v82, v84, v88, v102, v104, v106 contents=L6|L7|L12 allocationSite=19 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v108: Array<L6|L7|L12, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v107 provenType=Array<L6|L7|L12, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v109: 0 = Integer
-# CHECK-NEXT: Jump -> next b8(v109)
-# CHECK-NEXT: b8(v110: int[0, 4294967295]):
+# CHECK-NEXT: StringBuilderDiscard v84
+# CHECK-NEXT: v89: undefined = Undefined
+# CHECK-NEXT: v90: undefined|string = CallBuiltin -, v83, v89 overload=JSONStringify/0 accessSite=15
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v91: anything ~ object = Construct v56 calleeName="RunsCode" accessSite=10 callees=[f15]
+# CHECK-NEXT: v92: anything ~ object = Construct v61 calleeName="StoresUndefined" accessSite=11 callees=[f16]
+# CHECK-NEXT: v93: 0 = Integer
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b5():
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v112: int[0, 4294967295] = CallBuiltin v108 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v113: boolean = Less v110, v112
-# CHECK-NEXT: Branch v113 -> taken b9(| 0), notTaken b10()
-# CHECK-NEXT: b9(v114: int[0, 4294967294]):
-# CHECK-NEXT: v115: undefined|L6|L7|L12 = GetArrayElement v108, v114 arrayStorage=Contiguous level=Proven [keyIsIntegral]
-# CHECK-NEXT: v116: 1 = Integer integer=1
-# CHECK-NEXT: v117: int[1, 4294967295] = Add v114, v116
-# CHECK-NEXT: v118: L6|L7|L12 = RequireObjectCoercible v115 name="constructor"
-# CHECK-NEXT: Jump -> next b8(v117)
-# CHECK-NEXT: b10():
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="StoresTwo"
@@ -421,45 +390,45 @@ function f32 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f8 = AssumeType v0 provenType=f8
 # CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L0
-# CHECK-NEXT: v3: object ~ L0|L7 = NewObject v2 layout=L0 allocationSite=20 allocationClass=0
+# CHECK-NEXT: v3: object ~ L7 = NewObject v2 layout=L0 allocationSite=20 allocationClass=0
 # CHECK-NEXT: v4: L7 = AssumeType v3 provenType=L7
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Hooked"
-# CHECK: module=m0 position=1394 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler, IsExpected]}] functionTypes=[f24] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L5 inlineFrames=[{}, {callee=f17 callPosition=4294967295 module=m0}] {
+# CHECK: module=m0 position=1394 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler, IsExpected]}] functionTypes=[f24] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L5 inlineFrames=[{}, {callee=f36 callPosition=4294967295}, {callee=f17 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f14 = AssumeType v0 provenType=f14
 # CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L5
-# CHECK-NEXT: v3: object ~ L5|L13 = NewObject v2 layout=L5 allocationSite=22 allocationClass=2
+# CHECK-NEXT: v3: object ~ L13 = NewObject v2 layout=L5 allocationSite=22 allocationClass=2
 # CHECK-NEXT: v4: L13 = AssumeType v3 provenType=L13
 # CHECK-NEXT: v5: "s" = String string="s"
 # CHECK-NEXT: PutSlotOrAdd v4, -, v5 key="s" receivers=[L13] level=Proven accessSite=20
 # CHECK-NEXT: v7: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: v8: i32 = StringBuilderCheckpoint v7
-# CHECK-NEXT: v9: int[0, 2] = CallDirect v4, v7 function=f36 calledBuiltin=JSONStringify
-# CHECK-NEXT: Switch v9 cases=[1] -> case b1(), otherwise b2()
+# CHECK-NEXT: v8: boolean = JSONHasStackSpace
+# CHECK-NEXT: Branch v8 -> taken b1(), notTaken b4()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v10: buildercursor = StringBuilderReserve v7 size=128
-# CHECK-NEXT: Jump -> next b3(v10)
-# CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: v11: buildercursor = StringBuilderReserve v7 size=128
-# CHECK-NEXT: Jump -> next b3(v11)
-# CHECK-NEXT: b3(v12: buildercursor):
-# CHECK-NEXT: StringBuilderCommit v7, v12
-# CHECK-NEXT: v14: i32 = StringBuilderCheckpoint v7
-# CHECK-NEXT: v15: boolean = StrictEq v8, v14
-# CHECK-NEXT: Branch v15 -> taken b4(), notTaken b5()
+# CHECK-NEXT: v9: boolean = ShapeTest v4 layouts=[L13]
+# CHECK-NEXT: Branch v9 -> taken b2(| 0), notTaken b4()
+# CHECK-NEXT: b2(v10: guard):
+# CHECK-NEXT: v11: boolean = HasKeyOrder v4, v10 layout=L13 fields=[3]
+# CHECK-NEXT: Branch v11 -> taken b3(), notTaken b4()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v12: "s" = String string="s"
+# CHECK-NEXT: v13: buildercursor = StringBuilderReserve v7 size=128
+# CHECK-NEXT: v14: buildercursor = JSONAppendKey v7, v13 string="s" [opensObject]
+# CHECK-NEXT: v15: buildercursor = JSONAppendString v7, v14, v12
+# CHECK-NEXT: v16: buildercursor = JSONAppendToken v7, v15 jsonToken=CloseObject
+# CHECK-NEXT: StringBuilderCommit v7, v16
+# CHECK-NEXT: v18: string = StringBuilderFinish v7
+# CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: b4() frequency=Rare:
 # CHECK-NEXT: StringBuilderDiscard v7
-# CHECK-NEXT: v17: undefined = Undefined
-# CHECK-NEXT: v18: undefined|string = CallBuiltin -, v4, v17 overload=JSONStringify/0 accessSite=15
-# CHECK-NEXT: Jump -> next b6()
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v19: string = StringBuilderFinish v7
-# CHECK-NEXT: Jump -> next b6()
-# CHECK-NEXT: b6():
 # CHECK-NEXT: v20: undefined = Undefined
-# CHECK-NEXT: Return v20
+# CHECK-NEXT: v21: undefined|string = CallBuiltin -, v4, v20 overload=JSONStringify/0 accessSite=15
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v22: undefined = Undefined
+# CHECK-NEXT: Return v22
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="ByItsOwnInitializer"
 # CHECK: module=m0 position=1796 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L6 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L6 {

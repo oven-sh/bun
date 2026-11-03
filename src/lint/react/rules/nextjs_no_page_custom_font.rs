@@ -8,11 +8,11 @@ use rustc_hash::FxHashSet;
 /// Prevent page-only custom fonts.
 pub struct NoPageCustomFont;
 
-const NOT_ADDED_IN_DOCUMENT: Message = Message::new(
+const NOT_ADDED_IN_DOCUMENT: &Message = &Message::new(
     "",
     "Custom fonts not added in `pages/_document.js` will only load for a single page. This is discouraged.",
 );
-const LINK_OUTSIDE_OF_HEAD: Message = Message::new(
+const LINK_OUTSIDE_OF_HEAD: &Message = &Message::new(
     "",
     "Using `<link />` outside of `<Head>` will disable automatic font optimization. This is discouraged.",
 );

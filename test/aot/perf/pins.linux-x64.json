@@ -1,12 +1,12 @@
 {
   "accessor/inherited-method-in-function": {
-    "typed": 50,
-    "untyped": 23,
+    "typed": 4,
+    "untyped": 4,
     "jit": 6.6
   },
   "accessor/inherited-value-in-function": {
-    "typed": 50,
-    "untyped": 24.9,
+    "typed": 4,
+    "untyped": 4,
     "jit": 4
   },
   "array/push-in-loop-in-function": {
@@ -30,8 +30,8 @@
     "jit": 320.3
   },
   "array/spread-of-set": {
-    "typed": 250.9,
-    "untyped": 257.1,
+    "typed": 86.4,
+    "untyped": 86.5,
     "jit": 85.7
   },
   "array/two-spread-in-function": {
@@ -44,26 +44,22 @@
     }
   },
   "baseline/nothing": {
-    "typed": 4,
+    "typed": 0,
     "untyped": 0,
-    "jit": 3,
-    "best": {
-      "typed": 3,
-      "untyped": 0
-    }
+    "jit": 3
   },
   "baseline/nothing-in-function": {
-    "typed": 4,
+    "typed": 0,
     "untyped": 0,
     "jit": 3
   },
   "baseline/counter": {
-    "typed": 5,
+    "typed": 3.1,
     "untyped": 7,
     "jit": 6.6
   },
   "baseline/counter-in-function": {
-    "typed": 5,
+    "typed": 3.1,
     "untyped": 7,
     "jit": 6.5
   },
@@ -85,14 +81,19 @@
       "untyped": 73.5
     }
   },
+  "class/default-on-the-prototype-read-in-a-loop-to-an-integer": {
+    "typed": 17,
+    "untyped": 17,
+    "jit": 28.2
+  },
   "class/default-on-the-prototype-read-in-function": {
-    "typed": 142.3,
-    "untyped": 142.2,
+    "typed": 17,
+    "untyped": 17,
     "jit": 28.2
   },
   "class/instanceof-a-function-that-stands-under-another": {
-    "typed": 280.1,
-    "untyped": 323.6,
+    "typed": 5,
+    "untyped": 5,
     "jit": 56.5
   },
   "class/instanceof-false-in-function": {
@@ -101,13 +102,13 @@
     "jit": 2.9
   },
   "class/method-given-parsed-data-for-a-class-nothing-makes": {
-    "typed": 30,
-    "untyped": 42,
+    "typed": 5,
+    "untyped": 5,
     "jit": 11
   },
   "class/method-given-parsed-data-for-a-class-that-was-handed-out": {
-    "typed": 72,
-    "untyped": 70,
+    "typed": 5,
+    "untyped": 5,
     "jit": 16
   },
   "class/new-extends-in-function": {
@@ -159,8 +160,8 @@
     }
   },
   "collection/map-get-or-default-in-function": {
-    "typed": 113,
-    "untyped": 107,
+    "typed": 5,
+    "untyped": 5.5,
     "jit": 7
   },
   "collection/weak-map-cache-in-function": {
@@ -224,8 +225,8 @@
     "jit": 423.3
   },
   "fill/for-in-copy-has-own-property-in-function": {
-    "typed": 258.1,
-    "untyped": 256.8,
+    "typed": 114.8,
+    "untyped": 113.7,
     "jit": 374.7
   },
   "fill/for-in-copy-in-function": {
@@ -234,8 +235,8 @@
     "jit": 319.7
   },
   "fill/for-in-copy-one-name-skipped-in-function": {
-    "typed": 231.9,
-    "untyped": 222.1,
+    "typed": 111.3,
+    "untyped": 110.4,
     "jit": 306.1
   },
   "fill/for-in-map-in-function": {
@@ -264,7 +265,7 @@
     "jit": 309.7
   },
   "fill/then-enumerated-in-function": {
-    "typed": 522.9,
+    "typed": 500.4,
     "untyped": 479.1,
     "jit": 481.8
   },
@@ -279,18 +280,18 @@
     "jit": 543.1
   },
   "for-of/Map": {
-    "typed": 286,
-    "untyped": 288.1,
+    "typed": 125,
+    "untyped": 131,
     "jit": 355.4
   },
   "for-of/map-values-in-function": {
-    "typed": 174,
-    "untyped": 189,
+    "typed": 125,
+    "untyped": 127,
     "jit": 190.9
   },
   "for-of/set-in-function": {
-    "typed": 154,
-    "untyped": 150,
+    "typed": 80,
+    "untyped": 80,
     "jit": 181.6
   },
   "for-of/generator-in-function": {
@@ -300,12 +301,12 @@
   },
   "for-of/custom-iterator": {
     "typed": 5,
-    "untyped": 336.7,
+    "untyped": 9,
     "jit": 246.2
   },
   "for-of/array-entries": {
-    "typed": 87.2,
-    "untyped": 93.1,
+    "typed": 72,
+    "untyped": 76,
     "jit": 731.6
   },
   "for-of/records-destructured-in-function": {
@@ -349,8 +350,8 @@
     "jit": 116
   },
   "generator/spread-in-function": {
-    "typed": 135.1,
-    "untyped": 135.6,
+    "typed": 129.8,
+    "untyped": 131.1,
     "jit": 800.3
   },
   "host-classes/request-headers-read-again": {
@@ -422,18 +423,23 @@
     "jit": 6802.7
   },
   "keyed/symbol": {
-    "typed": 104.1,
-    "untyped": 93,
+    "typed": 3.1,
+    "untyped": 3.1,
     "jit": 27
   },
   "keyed/read-by-concatenated-key": {
-    "typed": 184,
-    "untyped": 184,
-    "jit": 20.8
+    "typed": 0.5,
+    "untyped": 4,
+    "jit": 20.6
+  },
+  "keyed/read-by-key-joined-at-run-time": {
+    "typed": 42,
+    "untyped": 43,
+    "jit": 42
   },
   "keyed/store-through-global-this": {
-    "typed": 39,
-    "untyped": 39,
+    "typed": 36,
+    "untyped": 36,
     "jit": 9.6
   },
   "literal/computed-name-in-function": {
@@ -470,33 +476,33 @@
     "jit": 39.2
   },
   "react/create-element-key-in-props": {
-    "typed": 231.7,
-    "untyped": 218.6,
+    "typed": 107.6,
+    "untyped": 110.6,
     "jit": 335.5
   },
   "react/create-element-key-in-props-in-function": {
-    "typed": 232.2,
-    "untyped": 213.8,
+    "typed": 113.5,
+    "untyped": 113.4,
     "jit": 349.9
   },
   "react/create-element-no-key": {
-    "typed": 271.7,
-    "untyped": 256.7,
+    "typed": 106.6,
+    "untyped": 109.6,
     "jit": 390.5
   },
   "react/create-element-no-key-in-function": {
-    "typed": 271.1,
-    "untyped": 250.5,
+    "typed": 112,
+    "untyped": 112.3,
     "jit": 394.5
   },
   "react/jsx-key-in-props": {
-    "typed": 241.3,
-    "untyped": 223.2,
+    "typed": 111.8,
+    "untyped": 114.6,
     "jit": 277.5
   },
   "react/jsx-key-in-props-in-function": {
-    "typed": 241.3,
-    "untyped": 218.4,
+    "typed": 110.6,
+    "untyped": 109.7,
     "jit": 285
   },
   "react/jsx-no-key": {
@@ -583,13 +589,13 @@
     "jit": 31.5
   },
   "built-in/events-beside-an-heir-that-came-late": {
-    "typed": 492.5,
-    "untyped": 493.9,
+    "typed": 469.4,
+    "untyped": 469.6,
     "jit": 212.5
   },
   "built-in/events-emit": {
-    "typed": 83,
-    "untyped": 81,
+    "typed": 40,
+    "untyped": 40,
     "jit": 15
   },
   "built-in/events-on-off": {
@@ -681,13 +687,13 @@
     }
   },
   "built-in/process-argv": {
-    "typed": 32,
-    "untyped": 32,
+    "typed": 10,
+    "untyped": 10,
     "jit": 10
   },
   "built-in/process-argv-includes": {
-    "typed": 156,
-    "untyped": 156,
+    "typed": 52.5,
+    "untyped": 52.5,
     "jit": 57
   },
   "built-in/process-env-by-key": {
@@ -711,13 +717,13 @@
     "jit": 109.1
   },
   "built-in/stream-new-readable": {
-    "typed": 3277.4,
-    "untyped": 3285.2,
-    "jit": 1185.9
+    "typed": 1969.4,
+    "untyped": 1981.4,
+    "jit": 1148.3
   },
   "built-in/events-once": {
-    "typed": 674.3,
-    "untyped": 675.6,
+    "typed": 648.8,
+    "untyped": 648.2,
     "jit": 465.9
   },
   "built-in/process-next-tick": {
@@ -751,8 +757,8 @@
     "jit": 870.3
   },
   "array/index-of-a-text-from-a-start": {
-    "typed": 211,
-    "untyped": 211,
+    "typed": 82.5,
+    "untyped": 82.5,
     "jit": 87.4
   },
   "built-in/object-to-string-of-a-payload": {
@@ -781,8 +787,8 @@
     "jit": 1297.5
   },
   "bytes/buffer-copy": {
-    "typed": 319,
-    "untyped": 319.1,
+    "typed": 51,
+    "untyped": 51,
     "jit": 307
   },
   "bytes/buffer-from-a-short-text": {
@@ -890,13 +896,13 @@
     "jit": 640.2
   },
   "bytes/set-a-chunk-at-an-offset": {
-    "typed": 128,
-    "untyped": 127,
+    "typed": 50.7,
+    "untyped": 50.7,
     "jit": 327.9
   },
   "bytes/set-a-chunk-of-four-thousand": {
-    "typed": 311.7,
-    "untyped": 312,
+    "typed": 246.9,
+    "untyped": 247,
     "jit": 508.8
   },
   "bytes/subarray-from-an-offset": {
@@ -935,8 +941,8 @@
     "jit": 406.7
   },
   "bytes/set-floats-at-an-offset": {
-    "typed": 126.1,
-    "untyped": 124,
+    "typed": 52.5,
+    "untyped": 52.5,
     "jit": 313.8
   },
   "bytes/store-parsed-numbers-through-a-data-view": {
@@ -1026,7 +1032,7 @@
   },
   "built-in/create-an-object-below-an-object-nobody-knows": {
     "typed": 34.3,
-    "untyped": 35.2,
+    "untyped": 34.2,
     "jit": 227
   },
   "built-in/number-of-a-header": {
@@ -1190,8 +1196,8 @@
     "jit": 269.7
   },
   "built-in/byte-length-of-chunks-written-to-a-view": {
-    "typed": 62.5,
-    "untyped": 60.4,
+    "typed": 58.4,
+    "untyped": 57.3,
     "jit": 143
   },
   "built-in/length-of-six-kinds-behind-an-interface": {
@@ -1200,8 +1206,8 @@
     "jit": 88.5
   },
   "bytes/byte-length-of-views-and-buffers": {
-    "typed": 19.5,
-    "untyped": 19.5,
+    "typed": 14,
+    "untyped": 14,
     "jit": 21
   },
   "bytes/byte-length-of-array-buffers": {
@@ -1210,8 +1216,8 @@
     "jit": 96.8
   },
   "bytes/views-and-buffers-set-into-a-view": {
-    "typed": 147.9,
-    "untyped": 149.9,
+    "typed": 63.4,
+    "untyped": 65.4,
     "jit": 74.7
   },
   "function/names-put-on-a-closure-just-made": {
@@ -1220,8 +1226,8 @@
     "jit": 109.4
   },
   "generator/a-generator-function-made-for-each-call": {
-    "typed": 3236.7,
-    "untyped": 3226.9,
+    "typed": 785,
+    "untyped": 754.6,
     "jit": 3682.4
   },
   "class/instanceof-a-class-of-another-commonjs-module": {
@@ -1240,18 +1246,18 @@
     "jit": 1445.1
   },
   "guess/bound-is-the-length-of-what-is-no-array-wrong": {
-    "typed": 74,
-    "untyped": 51,
+    "typed": 4,
+    "untyped": 5,
     "jit": 6
   },
   "guess/callee-is-another-function-right": {
-    "typed": 52,
-    "untyped": 40,
+    "typed": 9,
+    "untyped": 9,
     "jit": 10
   },
   "guess/callee-is-another-function-wrong": {
-    "typed": 10,
-    "untyped": 10,
+    "typed": 9,
+    "untyped": 9,
     "jit": 116.3
   },
   "guess/method-of-one-receiver-right": {
@@ -1260,8 +1266,8 @@
     "jit": 10
   },
   "guess/method-of-one-receiver-wrong": {
-    "typed": 75,
-    "untyped": 75,
+    "typed": 9,
+    "untyped": 9,
     "jit": 10
   },
   "guess/options-are-another-literal-of-the-program": {
@@ -1270,48 +1276,48 @@
     "jit": 48
   },
   "guess/read-of-one-receiver-right": {
-    "typed": 5,
-    "untyped": 5,
+    "typed": 0.5,
+    "untyped": 4,
     "jit": 7
   },
   "guess/read-of-one-receiver-wrong": {
-    "typed": 91,
-    "untyped": 120,
+    "typed": 5,
+    "untyped": 4,
     "jit": 7.2
   },
   "guess/reads-of-each-element-right": {
-    "typed": 53,
-    "untyped": 63,
+    "typed": 19,
+    "untyped": 19,
     "jit": 39
   },
   "guess/reads-of-each-element-wrong": {
-    "typed": 113,
-    "untyped": 119,
+    "typed": 68,
+    "untyped": 69,
     "jit": 43
   },
   "guess/reads-of-elements-of-two-kinds-wrong": {
-    "typed": 111,
-    "untyped": 115.5,
+    "typed": 52,
+    "untyped": 51.5,
     "jit": 34.5
   },
   "guess/reads-of-two-receivers-right": {
-    "typed": 12,
-    "untyped": 5,
+    "typed": 4,
+    "untyped": 4,
     "jit": 6.2
   },
   "guess/reads-of-two-receivers-wrong": {
-    "typed": 39,
-    "untyped": 42,
+    "typed": 6,
+    "untyped": 4,
     "jit": 5.9
   },
   "guess/store-to-one-receiver-right": {
-    "typed": 8,
-    "untyped": 8,
+    "typed": 3.5,
+    "untyped": 4,
     "jit": 10.1
   },
   "guess/store-to-one-receiver-wrong": {
-    "typed": 37,
-    "untyped": 37,
+    "typed": 11,
+    "untyped": 11,
     "jit": 10
   },
   "bytes/fill-a-buffer-by-index": {
@@ -1350,8 +1356,8 @@
     "jit": 375
   },
   "bytes/the-three-lengths-of-a-buffer": {
-    "typed": 25,
-    "untyped": 280,
+    "typed": 22,
+    "untyped": 48,
     "jit": 25
   },
   "bytes/write-words-into-a-buffer": {
@@ -1422,8 +1428,8 @@
     "jit": 75
   },
   "closure/accessors-a-helper-defines-under-its-parameter": {
-    "typed": 1119.6,
-    "untyped": 1119.2,
+    "typed": 23,
+    "untyped": 21,
     "jit": 182
   },
   "closure/methods-a-loop-over-written-names-defines": {
@@ -1432,8 +1438,8 @@
     "jit": 63.1
   },
   "closure/properties-defined-by-a-loop-over-written-names": {
-    "typed": 806.5,
-    "untyped": 785.4,
+    "typed": 17.3,
+    "untyped": 17.3,
     "jit": 12
   },
   "function/makers-made-by-one-function-each-with-its-own-prototype": {
@@ -1451,43 +1457,48 @@
     }
   },
   "array/includes-long-string": {
-    "typed": 382.6,
-    "untyped": 377.5,
+    "typed": 355.8,
+    "untyped": 361.8,
     "jit": 377.3
   },
   "array/index-of-utf16-string": {
-    "typed": 256.5,
-    "untyped": 256.5,
+    "typed": 249,
+    "untyped": 250,
     "jit": 633.4
   },
   "array/index-of-string-or-undefined": {
-    "typed": 479.5,
-    "untyped": 479.5,
+    "typed": 477.3,
+    "untyped": 476.8,
     "jit": 1510.6
   },
   "array/index-of-string-in-mixed-array": {
-    "typed": 477.3,
-    "untyped": 479.3,
+    "typed": 460.6,
+    "untyped": 460.6,
     "jit": 465.6
   },
   "array/index-of-string-among-latin1-and-utf16": {
     "typed": 572.5,
-    "untyped": 574.5,
+    "untyped": 573.5,
     "jit": 1782.3
   },
   "array/index-of-string": {
-    "typed": 694.9,
-    "untyped": 696.9,
+    "typed": 690.1,
+    "untyped": 691.1,
     "jit": 746.1
   },
   "array/index-of-sliced-string": {
-    "typed": 574.5,
-    "untyped": 574.5,
+    "typed": 572.5,
+    "untyped": 572.5,
     "jit": 2007.9
   },
   "spread/an-object-filled-by-name-once-then-one-in-function": {
-    "typed": 1005.1,
+    "typed": 235,
     "untyped": 196.7,
     "jit": 258.8
+  },
+  "text/two-texts-joined-and-read-at-once": {
+    "typed": 527.1,
+    "untyped": 547.1,
+    "jit": 686.6
   }
 }

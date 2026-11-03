@@ -12,8 +12,8 @@ use bun_lint::utils::visible::is_visibly_string;
 /// Prefer `String#startsWith()` and `String#endsWith()` over `RegExp#test()`.
 pub struct PreferStringStartsEndsWith;
 
-const STARTS_WITH: Message = Message::new("", "Prefer String#startsWith over a regex with a caret.");
-const ENDS_WITH: Message = Message::new("", "Prefer String#endsWith over a regex with a dollar sign.");
+const STARTS_WITH: &Message = &Message::new("", "Prefer String#startsWith over a regex with a caret.");
+const ENDS_WITH: &Message = &Message::new("", "Prefer String#endsWith over a regex with a dollar sign.");
 
 impl Rule for PreferStringStartsEndsWith {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-string-starts-ends-with", Kind::Problem)

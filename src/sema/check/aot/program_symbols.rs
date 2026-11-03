@@ -9,6 +9,7 @@ pub const COMPILER_DECLARATIONS_PATH: &[u8] = b"/$bun/types/compiler.d.ts";
 
 pub(in crate::check) struct ProgramSymbols {
     compiler_declarations: Option<FileId>,
+    bun_module_without_values: Option<Sym>,
     int32: Option<Sym>,
     int32_tag: Option<(FileId, TypeNodeId)>,
 }
@@ -18,6 +19,7 @@ impl ProgramSymbols {
         let declared_in = files.by_path.get(COMPILER_DECLARATIONS_PATH);
         let mut symbols = ProgramSymbols {
             compiler_declarations: declared_in,
+            bun_module_without_values: None,
             int32: None,
             int32_tag: None,
         };
@@ -28,11 +30,20 @@ impl ProgramSymbols {
         let Some(bun_module) = bun_module else {
             return symbols;
         };
+        let parts = files.parts(bun_module);
+        if parts.iter().all(|part| Some(part.file) == declared_in) {
+            symbols.bun_module_without_values = Some(bun_module);
+        }
         symbols.int32 = find_type_alias(files, bun_module, b"int32", declared_in);
         symbols.int32_tag = symbols
             .int32
             .and_then(|int32| find_tag_literal(files, int32));
         symbols
+    }
+
+    /// The compiler declares a few types in the module "bun". Where no other file declares the module, nothing is known about its values.
+    pub(in crate::check) fn is_bun_module_without_values(&self, module: Sym) -> bool {
+        self.bun_module_without_values == Some(module)
     }
 
     pub(super) fn int32_alias(&self) -> Option<Sym> {

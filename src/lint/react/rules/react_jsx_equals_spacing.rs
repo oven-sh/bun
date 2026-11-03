@@ -8,10 +8,10 @@ pub struct JsxEqualsSpacing {
     always: bool,
 }
 
-const NO_SPACE_BEFORE: Message = Message::new("noSpaceBefore", "There should be no space before '='");
-const NO_SPACE_AFTER: Message = Message::new("noSpaceAfter", "There should be no space after '='");
-const NEED_SPACE_BEFORE: Message = Message::new("needSpaceBefore", "A space is required before '='");
-const NEED_SPACE_AFTER: Message = Message::new("needSpaceAfter", "A space is required after '='");
+const NO_SPACE_BEFORE: &Message = &Message::new("noSpaceBefore", "There should be no space before '='");
+const NO_SPACE_AFTER: &Message = &Message::new("noSpaceAfter", "There should be no space after '='");
+const NEED_SPACE_BEFORE: &Message = &Message::new("needSpaceBefore", "A space is required before '='");
+const NEED_SPACE_AFTER: &Message = &Message::new("needSpaceAfter", "A space is required after '='");
 
 impl Rule for JsxEqualsSpacing {
     const META: Meta = Meta::plugin(Plugin::React, "jsx-equals-spacing", Kind::None).fixable(Fixable::Code);

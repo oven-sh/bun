@@ -1,0 +1,36 @@
+# main.cjs: const Outer = require("node:events"); unknown(Outer); function mine() {}  ({}).Other = mine; new Outer.Other()        node:events: function Outer() {}  export default Outer
+# The library wrote nothing on the function under the name. What the program stored under that name on an object of its own is not expected there.
+# RUN: valueflow-apply
+# CHECK-LABEL: function f3 name="main"
+# CHECK-NOT: callees=[f2
+# CHECK: = Construct v{{*}}
+
+variable g0 name="default" module=m0 declared={type=anything}
+module m0 path="node:events" displayPath="node:events" kind=RuntimeSource flags=[IsLoadedByImportOnly] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeEvents body=f0 syntheticExports=[{name="default" variable=g0 isKnownMember=true}]
+module m1 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f3
+entry module=m1
+layout L0 fields=[{key="Other" declared={type=anything}}]
+function f0 module=m0 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    Return v0
+}
+function f1 name="Outer" module=m0 role=Library flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f2 name="mine" module=m1 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f3 name="main" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="unknown" [isFreeName]
+    v2 = RequireModule module=m0 referrer=m1 specifier="node:events"
+    v3 = Call v1, -, v2
+    v4 = NewClosure function=f2
+    v5 = NewObject layout=L0
+    PropDefine v5, v4 key="Other"
+    v7 = FinishObject v5
+    v8 = Call v1, -, v7
+    v9 = PropGet v2 key="Other"
+    v10 = Construct v9
+    Return
+}

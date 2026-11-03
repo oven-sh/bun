@@ -3,8 +3,8 @@ use bun_lint::prelude::*;
 /// Disallow `new` operators with the `Symbol` object.
 pub struct NoNewSymbol;
 
-const NO_NEW_SYMBOL: Message =
-    Message::new("noNewSymbol", "`Symbol` cannot be called as a constructor.");
+const NO_NEW_SYMBOL: &Message =
+    &Message::new("noNewSymbol", "`Symbol` cannot be called as a constructor.");
 
 impl Rule for NoNewSymbol {
     const META: Meta = Meta::eslint("no-new-symbol", Kind::Problem).deprecated().reports_at_the_end();

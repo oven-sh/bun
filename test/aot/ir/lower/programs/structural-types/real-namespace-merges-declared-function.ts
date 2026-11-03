@@ -154,11 +154,10 @@ show("2000 calls", () => failures);
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v0 = GetModuleVariable variable=[[g_15]]
 // CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[f_16]]} illTypedCause=Assertion
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_15]]
-// CHECK-NEXT: v3 = PropGet v2 key="defaultSize"
-// CHECK-NEXT: v4 = Construct v1, -, v3 calleeName="Widget"
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|[[L_12]] site=[[w_17]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: Return v5
+// CHECK-NEXT: v2 = Integer integer=3
+// CHECK-NEXT: v3 = Construct v1, -, v2 calleeName="Widget"
+// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[L_12]] site=[[w_17]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: Return v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Bigger"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {

@@ -125,7 +125,7 @@ function f3 name="toString" module=m0 position=1541 kind=Arrow flags=[IsChecked]
 function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 # -- generated: worth
 # CHECK-LABEL: function {{*}}name="worth"
-# CHECK: module=m0 position=144 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|"high"|"low"|"mid" flags=[OmitsNull, OmitsUndefined]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=144 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|"high"|"low"|"mid" flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|int[10, 30]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: undefined|null|"high"|"low"|"mid"):
 # CHECK-NEXT: SwitchString v0 strings=["low", "mid", "high"] -> case b1(), case b2(), case b3(), otherwise b4()
 # CHECK-NEXT: b1():

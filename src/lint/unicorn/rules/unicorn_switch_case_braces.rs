@@ -9,9 +9,9 @@ pub struct SwitchCaseBraces {
     avoids: bool,
 }
 
-const EMPTY_CLAUSE: Message = Message::new("", "Unexpected braces in empty case clause.");
-const MISSING_BRACES: Message = Message::new("", "Missing braces in case clause.");
-const UNNECESSARY_BRACES: Message = Message::new("", "Unnecessary braces in case clause.");
+const EMPTY_CLAUSE: &Message = &Message::new("", "Unexpected braces in empty case clause.");
+const MISSING_BRACES: &Message = &Message::new("", "Missing braces in case clause.");
+const UNNECESSARY_BRACES: &Message = &Message::new("", "Unnecessary braces in case clause.");
 
 impl Rule for SwitchCaseBraces {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "switch-case-braces", Kind::Suggestion)

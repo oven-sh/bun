@@ -2,7 +2,8 @@ use bun_sema::atom::{Atom, written_name};
 use bun_sema::bind::{Decl, FnOwner, Parent, PatParent, SymbolId};
 use bun_sema::check::aot::{AnythingReason, ClassRef, FunctionRef, ShapeKind};
 use bun_sema::hir::{
-    BinOp, ExprId, ExprKind, FnKind, MemberId, MemberKey, ParamId, PatKind, PropKey, UnOp,
+    BinOp, ExprId, ExprKind, FnKind, MemberId, MemberKey, ParamId, PatKind, PropKey, StmtKind,
+    UnOp, is_parenthesized,
 };
 use bun_sema::node::NodeData;
 
@@ -222,9 +223,66 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn step_advice(&self, operand: ExprId, step: &[u8]) -> Vec<u8> {
+    /// `back`: how to get from the new value to the one that `top++` and `top--` answer with.
+    fn step_advice(
+        &self,
+        step: ExprId,
+        operand: ExprId,
+        sign: &[u8],
+        back: Option<&[u8]>,
+    ) -> Vec<u8> {
         let target = self.tight_text(operand);
-        concat(&[&target, b" = (", &target, b" ", step, b" 1) | 0"])
+        let stored = concat(&[&target, b" = (", &target, b" ", sign, b" 1) | 0"]);
+        let advice = match back.filter(|_| !self.is_value_dropped(step)) {
+            Some(back) => concat(&[b"((", &stored, b") ", back, b" 1) | 0"]),
+            None => stored,
+        };
+        match self.stands_where_any_expression_may(step) {
+            true => advice,
+            false => parenthesized(&advice),
+        }
+    }
+
+    fn is_value_dropped(&self, expression: ExprId) -> bool {
+        match self.bound.parent_of_expr(expression) {
+            Parent::Stmt(statement) => match self.hir[statement].kind {
+                StmtKind::Expr(_) => true,
+                StmtKind::For { update, .. } => update == expression,
+                _ => false,
+            },
+            Parent::Expr(parent) => match self.hir[parent].kind {
+                ExprKind::Binary {
+                    op: BinOp::Comma,
+                    left,
+                    ..
+                } => left == expression || self.is_value_dropped(parent),
+                ExprKind::Unary { op: UnOp::Void, .. } => true,
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    /// A step binds tighter than what is written in its place: `++i * 3` is not `i = (i + 1) | 0 * 3`.
+    fn stands_where_any_expression_may(&self, expression: ExprId) -> bool {
+        if is_parenthesized(self.hir, expression) {
+            return true;
+        }
+        let Parent::Expr(parent) = self.bound.parent_of_expr(expression) else {
+            return true;
+        };
+        match self.hir[parent].kind {
+            ExprKind::Index { index, .. } => index == expression,
+            ExprKind::Assign { value, .. } => value == expression,
+            ExprKind::Cond { test, .. } => test != expression,
+            ExprKind::Call(call) | ExprKind::New(call) => self.hir[call].callee != expression,
+            ExprKind::Binary {
+                op: BinOp::Comma, ..
+            }
+            | ExprKind::Array(_)
+            | ExprKind::Template { .. } => true,
+            _ => false,
+        }
     }
 
     fn describe_value(&mut self, subject: Subject, value: FlowingValue) -> Option<Int32FlowValue> {
@@ -355,13 +413,23 @@ fn advice_text(file: &FileLowering<'_, '_, '_, '_>, stored: ExprId) -> Vec<u8> {
             ])
         }
         ExprKind::Unary {
-            op: UnOp::PreInc | UnOp::PostInc,
+            op: op @ (UnOp::PreInc | UnOp::PostInc),
             operand,
-        } => file.step_advice(operand, b"+"),
+        } => file.step_advice(
+            stored,
+            operand,
+            b"+",
+            (op == UnOp::PostInc).then_some(b"-".as_slice()),
+        ),
         ExprKind::Unary {
-            op: UnOp::PreDec | UnOp::PostDec,
+            op: op @ (UnOp::PreDec | UnOp::PostDec),
             operand,
-        } => file.step_advice(operand, b"-"),
+        } => file.step_advice(
+            stored,
+            operand,
+            b"-",
+            (op == UnOp::PostDec).then_some(b"+".as_slice()),
+        ),
         ExprKind::Binary {
             op: BinOp::Mul,
             left,

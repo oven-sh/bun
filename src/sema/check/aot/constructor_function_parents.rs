@@ -15,7 +15,7 @@ use crate::node::NodeData;
 use crate::program::{FileId, Sym};
 use crate::session::Arena;
 use crate::types::{TypeData, TypeId};
-use crate::util::{FxHashMap, FxHashSet};
+use crate::util::{FxHashMap, FxHashSet, SharedSort};
 use smallvec::{SmallVec, smallvec};
 use std::rc::Rc;
 
@@ -53,7 +53,7 @@ impl<'s> LinkedFunctions<'s> {
             let parent = link.parent.and_then(LinkEnd::as_parent);
             of_functions.push(FunctionLink { child, parent });
         }
-        of_functions.sort_by_key(|link| link.child);
+        of_functions.shared_sort_by_key(|link| link.child);
         ends.sort_unstable();
         ends.dedup();
         LinkedFunctions {
@@ -221,6 +221,13 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         !shape.names_stored_in_prototype.is_empty() || self.is_end_of_prototype_link(function)
     }
 
+    pub fn stores_into_instances_or_prototype_object(&mut self, function: FunctionRef) -> bool {
+        let has_members = self
+            .constructor_function_shape(function)
+            .is_some_and(|shape| !shape.members.is_empty());
+        has_members || self.is_prototype_object_used(function)
+    }
+
     pub(super) fn is_end_of_prototype_link(&mut self, function: FunctionRef) -> bool {
         self.linked_functions(function.file)
             .is_end(function.function)
@@ -329,9 +336,16 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
         let hir = self.c.hir(function.file);
         if own.is_none() {
+            if !can_be_constructor_function(&hir[function.function]) {
+                return None;
+            }
             let is_prototype_object_used =
                 !literals.is_empty() || self.is_end_of_prototype_link(function);
-            if !is_prototype_object_used || !can_be_constructor_function(&hir[function.function]) {
+            if !is_prototype_object_used
+                && !(self.hands_this_on(function)
+                    && self.is_held_by_name_or_returned(function)
+                    && self.is_used_like_constructor(function))
+            {
                 return None;
             }
         }
@@ -366,7 +380,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         for &(_, literal) in literals {
             self.add_copied_members(function.file, literal, &mut members);
         }
-        members.by_position.sort_by_key(|&(position, _)| position);
+        members
+            .by_position
+            .shared_sort_by_key(|&(position, _)| position);
         let names_stored_in_prototype = self.list(&members.names_stored_in_prototype);
         let members = Vec::from_iter(members.by_position.into_iter().map(|(_, member)| member));
         let shape: &'c ClassShape<'c> = self.arena.alloc(ClassShape {

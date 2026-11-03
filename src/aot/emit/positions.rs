@@ -1,4 +1,5 @@
 use crate::ir::generated::{ColumnAdjustment, SourcePositions};
+use bun_builtin_sources::PlaceInOtherFile;
 use bun_core::strings::{contains, contains_char, index_of, index_of_char_pos, last_index_of};
 
 pub fn source_positions(source: &[u8], line_starts: Vec<u32>) -> SourcePositions {
@@ -6,24 +7,36 @@ pub fn source_positions(source: &[u8], line_starts: Vec<u32>) -> SourcePositions
     SourcePositions {
         line_starts,
         column_adjustments,
+        text_printed_in_place: Vec::new(),
+        text_of_body: Vec::new(),
+        where_this_is_made: Vec::new(),
     }
 }
 
 // A stack trace shows lines and columns of `evaluated`, which a bundler made of `source`. `corrections`: the words that reading the two texts side by side gets wrong (src/codegen/bundled-positions.ts).
+// `places_in_other_files`: the words that it shows where another text has them.
 pub fn source_positions_in_bundle(
     source: &[u8],
     evaluated: &[u8],
     corrections: &[u8],
+    places_in_other_files: &[PlaceInOtherFile],
 ) -> SourcePositions {
     let aligner = Aligner::read(Words::of(source), Words::of(evaluated), corrections);
     let mut places = Places::new(source, evaluated);
+    let mut places_in_other_files = places_in_other_files.iter().peekable();
     for (number, &partner) in aligner.partners.iter().enumerate() {
+        let (start, end) = aligner.written.ranges[number];
+        while (places_in_other_files.next_if(|place| place.offset < start)).is_some() {}
+        if let Some(place) = places_in_other_files.next_if(|place| place.offset == start) {
+            places.add_outside_of_evaluated(start, place.line, place.column);
+            places.add_outside_of_evaluated(end, place.line, place.end_column);
+            continue;
+        }
         let Some(&(evaluated_start, evaluated_end)) =
             aligner.evaluated.ranges.get(partner as usize)
         else {
             continue;
         };
-        let (start, end) = aligner.written.ranges[number];
         // `@name` stands for `$name`, `!0` for `true`.
         let mark_of = |text: &[u8], start: u32| text.get((start as usize).wrapping_sub(1)).copied();
         let mark = mark_of(evaluated, evaluated_start);
@@ -44,6 +57,9 @@ pub fn source_positions_in_bundle(
     SourcePositions {
         line_starts: Vec::new(),
         column_adjustments: places.finish(),
+        text_printed_in_place: Vec::new(),
+        text_of_body: Vec::new(),
+        where_this_is_made: Vec::new(),
     }
 }
 
@@ -376,6 +392,23 @@ impl<'a> Places<'a> {
         self.adjustments
             .pop_if(|previous| previous.offset == place.offset);
         self.adjustments.push(place);
+    }
+
+    // What follows has this place too, up to the next word that has one.
+    fn add_outside_of_evaluated(&mut self, offset: u32, line: u32, column: u32) {
+        if let Some((end, evaluated_end)) = self.end.take().filter(|end| end.0 < offset as usize) {
+            self.adjust(end, evaluated_end);
+        }
+        self.scan_to(offset as usize);
+        self.last = ColumnAdjustment {
+            offset,
+            line,
+            column,
+        };
+        self.end_of_line = 0;
+        self.adjustments
+            .pop_if(|previous| previous.offset == offset);
+        self.adjustments.push(self.last);
     }
 
     fn add(&mut self, offset: usize, evaluated_index: usize) {

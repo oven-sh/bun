@@ -153,5 +153,5 @@ function f3 name="inLoop" module=m0 position=591 flags=[IsChecked, HasExplicitNa
 # -- generated: aroundKept
 # CHECK-LABEL: function {{*}}name="aroundKept"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 276, patchpoints: 41, rare instructions: 484
-# CHECK-NEXT: end of function f2
+# CHECK-NEXT: instructions: 218, patchpoints: 78, rare instructions: 452
+# CHECK-NEXT: end of function f8

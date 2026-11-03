@@ -1,8 +1,9 @@
 use bun_sema::bind::{Binding, CodeUnit, Decl, FnOwner};
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::file_analysis::has_live_await;
-use bun_sema::hir::{self, Flags, FnId, FnKind};
+use bun_sema::hir::{self, ExprKind, Flags, FnBody, FnId, FnKind, StmtKind};
 
+use crate::builtins::SourceDialect;
 use crate::builtins::id::BuiltinClass;
 use crate::ir::generated::{
     Function, FunctionFlags, FunctionKind, FunctionSyntax, LimitId, SourceRange,
@@ -130,6 +131,22 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    // A stub makes `this` for a plain function before the function has a frame. Bytecode makes it in the frame of the function, so a stack trace lists the function there.
+    // JSC records no position for it. Its lookup falls on the first position that the function records, and on the parameters where there is none.
+    fn position_of_making_this_in(&self, function: FnId, header: &Function) -> u32 {
+        let parameters = self.parameters_position(function);
+        // JSC records no positions in a function that is written inside a built-in function.
+        let records_positions = header.enclosing_runtime_function.is_none();
+        self.transpiled
+            .as_ref()
+            .filter(|_| records_positions && !self.is_shown_without_source_map())
+            .and_then(|transpiled| {
+                let is_strict = self.hir[function].is_strict;
+                transpiled.find_first_recorded_position_of_function(parameters, is_strict)
+            })
+            .unwrap_or(parameters)
+    }
+
     fn compute_text_range(&self, function: FnId) -> SourceRange {
         let Some(end) = self.find_end_of_function(function) else {
             return SourceRange::default();
@@ -147,6 +164,10 @@ pub(crate) fn create_header(
     kind: FunctionKind,
     position: u32,
 ) -> Function {
+    let mut syntax = match file.is_evaluated_script(key) {
+        true => FunctionSyntax::IS_EVALUATED_SCRIPT,
+        false => FunctionSyntax::default(),
+    };
     let (enclosing_runtime_function, inherited_flags) = match file.find_enclosing_key(key) {
         Some(enclosing) => {
             let enclosing = file.reference_function(enclosing);
@@ -155,6 +176,7 @@ pub(crate) fn create_header(
                 true => FunctionFlags::default(),
                 false => header.flags & FunctionFlags::IS_HIDDEN_IN_STACK_TRACES,
             };
+            syntax |= header.syntax & FunctionSyntax::IS_SHOWN_AS_NATIVE_CODE;
             (header.enclosing_runtime_function, hidden)
         }
         None => (None, FunctionFlags::default()),
@@ -178,10 +200,7 @@ pub(crate) fn create_header(
         role: file.source.function_role(),
         flags,
         length: 0,
-        syntax: match file.is_evaluated_script(key) {
-            true => FunctionSyntax::IS_EVALUATED_SCRIPT,
-            false => FunctionSyntax::default(),
-        },
+        syntax,
         enclosing_runtime_function,
         captures: file.capture_positions(key),
         this_type: DeclaredType::untyped(),
@@ -231,6 +250,31 @@ fn declare(
     id
 }
 
+// JSC runs the body of a generator as a function of its own, which starts at the `{`.
+fn find_generator_body(hir: &hir::File<'_>, function: FnId) -> Option<u32> {
+    let node = hir[function];
+    if !node.flags.contains(Flags::GENERATOR) || node.flags.contains(Flags::ASYNC) {
+        return None;
+    }
+    let text: &[u8] = &hir.text;
+    let mut depth = 0u32;
+    let mut position = node.anchor as usize;
+    loop {
+        match *text.get(position)? {
+            b'(' => depth += 1,
+            b')' => depth = depth.checked_sub(1)?,
+            _ => {}
+        }
+        position += 1;
+        if depth == 0 {
+            break;
+        }
+    }
+    let rest = text.get(position..)?;
+    let brace = position + rest.iter().position(|byte| !byte.is_ascii_whitespace())?;
+    (text[brace] == b'{').then_some(brace as u32)
+}
+
 fn create_source_header(
     file: &mut FileLowering<'_, '_, '_, '_>,
     function: FnId,
@@ -245,7 +289,7 @@ fn create_source_header(
     let key = FunctionKey::Source(source);
     let declared = file.function_positions(function);
     let kind = file.compute_function_kind(function);
-    // JSC reports what has no position of its own in a constructor where the parameters start.
+    // A constructor begins where its parameters start: JSC shows the frame of a class that is called without `new` there.
     let position = match kind {
         FunctionKind::BaseConstructor | FunctionKind::DerivedConstructor => {
             file.parameters_position(function)
@@ -253,12 +297,32 @@ fn create_source_header(
         _ => func.start,
     };
     let mut header = create_header(file, key, kind, position);
+    match find_frames_mark(file, function) {
+        Some(FramesMark::NativeCode) => header.syntax |= FunctionSyntax::IS_SHOWN_AS_NATIVE_CODE,
+        Some(FramesMark::ModuleOfHelpers) => {
+            header.syntax |= FunctionSyntax::IS_SHOWN_IN_MODULE_OF_HELPERS
+        }
+        Some(FramesMark::Hidden) => header.flags |= FunctionFlags::IS_HIDDEN_IN_STACK_TRACES,
+        None => {}
+    }
     // JSC records no positions in a function that is written inside a built-in function.
-    if header.enclosing_runtime_function.is_some() {
-        header.position = file.parameters_position(function);
+    if header.enclosing_runtime_function.is_some()
+        || header
+            .syntax
+            .contains(FunctionSyntax::IS_SHOWN_AS_NATIVE_CODE)
+    {
+        let body = find_generator_body(hir, function);
+        header.position = body.unwrap_or_else(|| file.parameters_position(function));
     }
     header.flags |= compute_source_flags(hir, function);
-    if file.is_anonymous_in_bundle(func.name_pos) {
+    let is_coroutine = header
+        .flags
+        .intersects(FunctionFlags::IS_ASYNC | FunctionFlags::IS_GENERATOR);
+    if kind == FunctionKind::Plain && !is_coroutine {
+        let position = file.position_of_making_this_in(function, &header);
+        file.where_this_is_made.push((header.position, position));
+    }
+    if file.is_anonymous_in_bundle(func.name_pos) || file.is_printed_without_name(function) {
         header.flags = header.flags.without(FunctionFlags::HAS_EXPLICIT_NAME);
     }
     if file.inputs.library_functions.is_left_out(source) {
@@ -313,6 +377,33 @@ fn create_source_header(
         file.finish_constructor_header(class, name, &mut header);
     }
     header
+}
+
+enum FramesMark {
+    NativeCode,
+    Hidden,
+    /// `bun run` has the function in bun:wrap.
+    ModuleOfHelpers,
+}
+
+/// `bun run` has some functions of the library inside a built-in function, whose frames are native code, where an executable has them in a module.
+/// The first statement of such a function says how a stack trace lists it.
+fn find_frames_mark(file: &FileLowering<'_, '_, '_, '_>, function: FnId) -> Option<FramesMark> {
+    let hir = file.hir;
+    if file.source.dialect() == SourceDialect::Runtime
+        && let FnBody::Block(statements) = hir[function].body
+        && statements.len != 0
+        && let StmtKind::Expr(first) = hir[hir.id_at(statements, 0)].kind
+        && let ExprKind::String(text) = hir[first].kind
+    {
+        return match file.queries.atom_bytes(text) {
+            b"frames are native code" => Some(FramesMark::NativeCode),
+            b"has no frames" => Some(FramesMark::Hidden),
+            b"frames are of bun:wrap" => Some(FramesMark::ModuleOfHelpers),
+            _ => None,
+        };
+    }
+    None
 }
 
 fn compute_source_flags(hir: &hir::File<'_>, function: FnId) -> FunctionFlags {

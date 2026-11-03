@@ -2745,8 +2745,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                     break 'escaped;
                                 }
                             };
-                            // fd 0 is read and fd 1 and 2 are written. In `0>f`,
-                            // `1<f` and `2<f` the digit is a word.
+                            // In `0>f`, `1<f` and `2<f` the digit is a word.
                             let src_fd = match (fd, dir) {
                                 (0, RedirectDirection::In) => StdFd::Stdin,
                                 (1, RedirectDirection::Out) => StdFd::Stdout,

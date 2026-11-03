@@ -388,7 +388,7 @@ impl CryptoHasher {
         finish(
             heap,
             output,
-            EVP_MAX_MD_SIZE_USIZE,
+            self.get_byte_length(heap)? as usize,
             JsHeap::create_buffer,
             |out| {
                 Ok(match self {

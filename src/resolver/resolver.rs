@@ -573,16 +573,13 @@ pub struct Resolver<'a> {
     /// Why "exports" or "imports" led to no file: the first time since this was last `None`.
     pub esm_failure: Option<crate::package_json::Status>,
 
-    /// Set for the length of a call by `with_trusted_cache` and `with_deferred_miss_check`.
-    after_miss: AfterMiss,
-
     /// Set once by `trust_cached_misses`, and inherited by `for_worker`.
     trusts_cached_misses: bool,
 }
 
-/// What a lookup does after it misses.
+/// What a lookup does after it misses. An argument of the lookup and no field: a `Resolver` is copied bytewise while it runs.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-enum AfterMiss {
+pub enum AfterMiss {
     /// Check on disk what the miss read from the caches. Look up again if a directory was stale.
     #[default]
     Recheck,
@@ -943,8 +940,6 @@ impl<'a> Resolver<'a> {
             mutex: from.mutex,
             dir_cache: from.dir_cache,
             prefer_module_field: from.prefer_module_field,
-            // Scoped to a call of `from`: not inherited.
-            after_miss: AfterMiss::Recheck,
             trusts_cached_misses: from.trusts_cached_misses,
             // Transient per-resolve scratch (only set for `require(..., {paths})`);
             // never carried across worker init.
@@ -1305,7 +1300,6 @@ impl<'a> Resolver<'a> {
             prefer_module_field: true,
             custom_dir_paths: None,
             esm_failure: None,
-            after_miss: AfterMiss::Recheck,
             trusts_cached_misses: false,
         }
     }
@@ -1558,12 +1552,31 @@ impl<'a> Resolver<'a> {
             .or_else(|| graph.file_at_source_path(path))
     }
 
+    #[inline]
     pub fn resolve_and_auto_install<'r>(
         &mut self,
         source_dir: &[u8],
         import_path: &'r [u8],
         kind: ast::ImportKind,
         global_cache: GlobalCache,
+    ) -> ResultUnion<'r> {
+        self.resolve_and_auto_install_as(
+            source_dir,
+            import_path,
+            kind,
+            global_cache,
+            AfterMiss::Recheck,
+        )
+    }
+
+    /// `resolve_and_auto_install`, with what to do after a miss.
+    pub fn resolve_and_auto_install_as<'r>(
+        &mut self,
+        source_dir: &[u8],
+        import_path: &'r [u8],
+        kind: ast::ImportKind,
+        global_cache: GlobalCache,
+        how: AfterMiss,
     ) -> ResultUnion<'r> {
         let _tracer = ::bun_perf::trace(::bun_perf::PerfEvent::ModuleResolverResolve);
 
@@ -1940,6 +1953,7 @@ impl<'a> Resolver<'a> {
                 (source_dir_normalized, import_path),
                 (kind, global_cache),
                 css_suffix,
+                how,
             )
         } else {
             (as_written, false)
@@ -2044,13 +2058,32 @@ impl<'a> Resolver<'a> {
         ret
     }
 
+    #[inline]
     pub fn resolve<'r>(
         &mut self,
         source_dir: &[u8],
         import_path: &'r [u8],
         kind: ast::ImportKind,
     ) -> crate::CrateResult<Result<'r>> {
-        match self.resolve_and_auto_install(source_dir, import_path, kind, GlobalCache::disable) {
+        self.resolve_as(source_dir, import_path, kind, AfterMiss::Recheck)
+    }
+
+    /// `resolve`, with what to do after a miss.
+    pub fn resolve_as<'r>(
+        &mut self,
+        source_dir: &[u8],
+        import_path: &'r [u8],
+        kind: ast::ImportKind,
+        how: AfterMiss,
+    ) -> crate::CrateResult<Result<'r>> {
+        let found = self.resolve_and_auto_install_as(
+            source_dir,
+            import_path,
+            kind,
+            GlobalCache::disable,
+            how,
+        );
+        match found {
             ResultUnion::Success(result) => Ok(result),
             ResultUnion::Pending(_) | ResultUnion::NotFound => Err(crate::Error::ModuleNotFound),
             ResultUnion::Failure(e) => Err(e),
@@ -2059,11 +2092,23 @@ impl<'a> Resolver<'a> {
 
     /// Runs a resolution but also checking if a Bun Bake framework has an
     /// override. This is used in one place in the bundler.
+    #[inline]
     pub fn resolve_with_framework<'r>(
         &mut self,
         source_dir: &[u8],
         import_path: &'r [u8],
         kind: ast::ImportKind,
+    ) -> crate::CrateResult<Result<'r>> {
+        self.resolve_with_framework_as(source_dir, import_path, kind, AfterMiss::Recheck)
+    }
+
+    /// `resolve_with_framework`, with what to do after a miss.
+    pub fn resolve_with_framework_as<'r>(
+        &mut self,
+        source_dir: &[u8],
+        import_path: &'r [u8],
+        kind: ast::ImportKind,
+        how: AfterMiss,
     ) -> crate::CrateResult<Result<'r>> {
         if let Some(f) = self.opts.framework.as_ref() {
             if let Some(mod_) = f.built_in_modules.get(import_path) {
@@ -2090,12 +2135,12 @@ impl<'a> Resolver<'a> {
                         let path: &'static [u8] =
                             unsafe { &*std::ptr::from_ref::<[u8]>(path.as_ref()) };
                         let top = self.fs_ref().top_level_dir();
-                        return self.resolve(top, path, ast::ImportKind::EntryPointBuild);
+                        return self.resolve_as(top, path, ast::ImportKind::EntryPointBuild, how);
                     }
                 }
             }
         }
-        self.resolve(source_dir, import_path, kind)
+        self.resolve_as(source_dir, import_path, kind, how)
     }
 
     pub(crate) fn finalize_result(
@@ -2297,6 +2342,7 @@ impl<'a> Resolver<'a> {
         (source_dir, import_path): (&[u8], &'r [u8]),
         (kind, global_cache): (ast::ImportKind, GlobalCache),
         css_suffix: Option<usize>,
+        how: AfterMiss,
     ) -> (ResultUnion<'r>, bool) {
         let missed = |(result, _): &(ResultUnion, bool)| matches!(result, ResultUnion::NotFound);
         let first = self.lookups_after_as_written(
@@ -2305,7 +2351,7 @@ impl<'a> Resolver<'a> {
             (kind, global_cache),
             css_suffix,
         );
-        if !missed(&first) || self.after_miss() == AfterMiss::TrustCache || replaying() {
+        if !missed(&first) || !self.reruns_after_miss(how) || replaying() {
             return first;
         }
         self.retry_after_miss(
@@ -2363,33 +2409,7 @@ impl<'a> Resolver<'a> {
         (without_suffix, false)
     }
 
-    /// Runs `attempt`. While it misses: check on disk what the miss read, and run it again if that was stale.
-    #[inline(always)]
-    fn retry_while_stale<T>(
-        &mut self,
-        after_miss: AfterMiss,
-        source_dir: &[u8],
-        import_path: &[u8],
-        mut attempt: impl FnMut(&mut Self) -> T,
-        missed: impl Fn(&T) -> bool,
-    ) -> T {
-        let log_mark = self.log_mark();
-        let esm_failure = self.esm_failure;
-        let result = attempt(self);
-        if !missed(&result) || after_miss == AfterMiss::TrustCache || replaying() {
-            return result;
-        }
-        self.retry_after_miss(
-            result,
-            (log_mark, esm_failure),
-            source_dir,
-            import_path,
-            attempt,
-            missed,
-        )
-    }
-
-    /// The part of `retry_while_stale` that a lookup which finds its module never runs.
+    /// While `attempt` misses: checks on disk what the miss read, and runs it again if that was stale. A lookup that finds its module never runs this.
     #[cold]
     #[inline(never)]
     fn retry_after_miss<T>(
@@ -2430,37 +2450,44 @@ impl<'a> Resolver<'a> {
     /// A run after a drop can reach a cached directory that the run before could not, and miss there.
     const MAX_RECHECKS: u32 = 3;
 
-    /// Runs `lookup` and takes a cached miss as it is: for a probe that is expected to miss.
-    pub fn with_trusted_cache<T>(&mut self, lookup: impl FnOnce(&mut Self) -> T) -> T {
-        let saved = core::mem::replace(&mut self.after_miss, AfterMiss::TrustCache);
-        let result = lookup(self);
-        self.after_miss = saved;
+    /// For a caller's own lookups that fall back one to the next, each made with the `AfterMiss` that `sequence` gets. One pass takes every miss as it is. If `missed` says that all of it missed, one more pass checks every miss, unless the resolver trusts cached misses.
+    pub fn with_miss_recheck<T>(
+        &mut self,
+        mut sequence: impl FnMut(&mut Self, AfterMiss) -> T,
+        missed: impl Fn(&T) -> bool,
+    ) -> T {
+        let marks = (self.log_mark(), self.esm_failure);
+        let first = sequence(self, AfterMiss::TrustCache);
+        if !missed(&first) || self.trusts_cached_misses {
+            return first;
+        }
+        drop(first);
+        self.recheck_sequence(marks, sequence, missed)
+    }
+
+    /// The pass of `with_miss_recheck` that a sequence which finds its module never runs.
+    #[cold]
+    #[inline(never)]
+    fn recheck_sequence<T>(
+        &mut self,
+        (log_mark, esm_failure): ((usize, u32, u32), Option<crate::package_json::Status>),
+        mut sequence: impl FnMut(&mut Self, AfterMiss) -> T,
+        missed: impl Fn(&T) -> bool,
+    ) -> T {
+        let mut earlier_msgs: Vec<bun_ast::Msg> = Vec::new();
+        self.take_log(log_mark, &mut earlier_msgs);
+        self.esm_failure = esm_failure;
+        let result = sequence(self, AfterMiss::Recheck);
+        if !earlier_msgs.is_empty() && missed(&result) {
+            self.put_back_log(log_mark.0, earlier_msgs);
+        }
         result
     }
 
-    /// For a caller's own lookups that fall back one to the next: one check on disk when all of them miss, also in a resolver that trusts cached misses.
-    pub fn with_deferred_miss_check<T, E>(
-        &mut self,
-        source_dir: &[u8],
-        import_path: &[u8],
-        mut sequence: impl FnMut(&mut Self) -> core::result::Result<T, E>,
-    ) -> core::result::Result<T, E> {
-        self.retry_while_stale(
-            self.after_miss,
-            source_dir,
-            import_path,
-            |this| this.with_trusted_cache(&mut sequence),
-            |result| result.is_err(),
-        )
-    }
-
-    /// What a lookup of this resolver does after a miss, outside `with_deferred_miss_check`.
-    fn after_miss(&self) -> AfterMiss {
-        if self.trusts_cached_misses {
-            AfterMiss::TrustCache
-        } else {
-            self.after_miss
-        }
+    /// Whether a miss of a lookup made with `how` is checked on disk. Never in a resolver that trusts cached misses.
+    #[inline]
+    fn reruns_after_miss(&self, how: AfterMiss) -> bool {
+        how == AfterMiss::Recheck && !self.trusts_cached_misses
     }
 
     #[inline]

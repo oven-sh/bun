@@ -277,17 +277,60 @@ fn the_root_of_the_file_system_has_no_parent() {
 }
 
 #[test]
-fn a_derived_resolver_inherits_the_miss_policy_but_not_a_call_in_progress() {
+fn a_derived_resolver_inherits_the_miss_policy() {
     let mut parent = resolver();
     let derive = |from: &Resolver<'_>| -> Resolver<'static> {
         // SAFETY: `from` has no module graph and no loader of the environment.
         unsafe { Resolver::for_worker(from, from.log, options()) }
     };
-    assert!(derive(&parent).after_miss() == AfterMiss::Recheck);
-    let scoped = parent.with_trusted_cache(|parent| derive(&*parent));
-    assert!(scoped.after_miss() == AfterMiss::Recheck);
+    assert!(derive(&parent).reruns_after_miss(AfterMiss::Recheck));
+    assert!(!derive(&parent).reruns_after_miss(AfterMiss::TrustCache));
     parent.trust_cached_misses();
     let child = derive(&parent);
-    assert!(child.after_miss() == AfterMiss::TrustCache);
-    assert!(derive(&child).after_miss() == AfterMiss::TrustCache);
+    assert!(!child.reruns_after_miss(AfterMiss::Recheck));
+    assert!(!derive(&child).reruns_after_miss(AfterMiss::Recheck));
+}
+
+#[test]
+fn a_sequence_that_misses_runs_once_more_unless_its_resolver_trusts_cached_misses() {
+    // What each pass is told to do after a miss, for a sequence that finds its module in the pass `found_in`.
+    let passes_of = |resolver: &mut Resolver<'_>, found_in: usize| {
+        let mut passes: Vec<AfterMiss> = Vec::new();
+        let found = resolver.with_miss_recheck(
+            |_, how| {
+                passes.push(how);
+                passes.len() == found_in
+            },
+            |found| !*found,
+        );
+        (passes, found)
+    };
+    let once = vec![AfterMiss::TrustCache];
+    let again = vec![AfterMiss::TrustCache, AfterMiss::Recheck];
+    let mut resolver = resolver();
+    assert!(passes_of(&mut resolver, 1) == (once.clone(), true));
+    assert!(passes_of(&mut resolver, 2) == (again.clone(), true));
+    assert!(passes_of(&mut resolver, 3) == (again, false));
+    resolver.trust_cached_misses();
+    assert!(passes_of(&mut resolver, 1) == (once.clone(), true));
+    assert!(passes_of(&mut resolver, 2) == (once, false));
+}
+
+#[test]
+fn a_sequence_that_misses_in_both_passes_logs_each_message_once() {
+    let mut resolver = resolver();
+    let mut pass = 0;
+    resolver.with_miss_recheck(
+        |resolver, _| {
+            pass += 1;
+            let log = resolver.log_mut();
+            log.add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!("in both passes"));
+            if pass == 1 {
+                log.add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!("in the first pass"));
+            }
+        },
+        |_| true,
+    );
+    let log = resolver.log_ref();
+    assert_eq!((log.msgs.len(), log.errors, pass), (2, 2, 2));
 }

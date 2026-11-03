@@ -142,7 +142,7 @@ impl Collator {
         let mut is_well_formed = false;
         // SAFETY: a live slice, which is read and not kept; `is_well_formed` is a live local.
         let collator = unsafe {
-            Bun__collatorForLanguageTag(locale.as_ptr(), locale.len(), &mut is_well_formed)
+            Bun__collatorForLanguageTag(locale.as_ptr(), locale.len(), &raw mut is_well_formed)
         };
         match NonNull::new(collator.cast_mut()) {
             Some(collator) => Ok(Collator(collator)),

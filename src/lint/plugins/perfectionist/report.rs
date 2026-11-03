@@ -3,6 +3,7 @@
 
 use super::compare::compare;
 use super::disabled::DisabledLines;
+use super::fixes::{FixOptions, make_fixes};
 use super::groups;
 use super::newlines::{newlines_between_errors, newlines_between_option};
 use super::options::{Configuration, Newlines, SortType};
@@ -58,15 +59,14 @@ pub(crate) fn is_in_order_without_groups<'a, N: Iterator<Item = SortingNode<'a>>
     true
 }
 
-/// Upstream's `reportAllErrors`. `fixes` makes the fixes of the whole list (`makeFixes`); it runs at most once, on
-/// the first report that wants one, and its merged result is every report's fix.
+/// Upstream's `reportAllErrors`. Every report in the list gets the same fix, `makeFixes` of the whole list.
 pub(crate) fn report_all_errors<'a, R: Rule>(
     cx: &Cx<'a, R>,
     messages: &Messages,
     nodes: &[SortingNode<'a>],
     sorted: &Sorted,
     config: &Configuration,
-    fixes: impl FnOnce(Fixer<'a>) -> Vec<Fix>,
+    fix_options: FixOptions,
 ) {
     let file = cx.file();
     let index_in_all = inverse(&sorted.all, nodes.len());
@@ -80,11 +80,13 @@ pub(crate) fn report_all_errors<'a, R: Rule>(
         nodes_in_circular_dependencies(nodes, &source_order)
     });
 
-    let mut fixes = Some(fixes);
-    let mut cached_fix: Option<Option<Fix>> = None;
+    let mut cached_fix = None;
     let mut fix = |fixer: Fixer<'a>| -> Option<Fix> {
         cached_fix
-            .get_or_insert_with(|| fixes.take().and_then(|make| make(fixer).into_fix(file)))
+            .get_or_insert_with(|| {
+                make_fixes(fixer, nodes, &sorted.without_disabled, config, fix_options)?
+                    .into_fix(file)
+            })
             .clone()
     };
 
@@ -106,7 +108,7 @@ pub(crate) fn report_all_errors<'a, R: Rule>(
                     .as_ref()
                     .and_then(|it| it.get(i))
                     .is_some_and(|&right_without_disabled| left_index >= right_without_disabled));
-        let order_message = is_out_of_order.then(|| {
+        let order_message = is_out_of_order.then_some(
             match (
                 first_unordered_dependent,
                 messages.unexpected_dependency_order,
@@ -114,8 +116,8 @@ pub(crate) fn report_all_errors<'a, R: Rule>(
                 (Some(_), Some(message)) => message,
                 _ if left.group_index == right.group_index => messages.unexpected_order,
                 _ => messages.unexpected_group_order,
-            }
-        });
+            },
+        );
         let spacing_message = newlines_between_errors(file, config, messages, left, right);
 
         for message in [order_message, spacing_message].into_iter().flatten() {
@@ -125,8 +127,8 @@ pub(crate) fn report_all_errors<'a, R: Rule>(
                 .data("right", single_line_name(right));
             if std::ptr::eq(message, messages.unexpected_group_order) {
                 report = report
-                    .data("rightGroup", config.group_name(right.group).to_owned())
-                    .data("leftGroup", config.group_name(left.group).to_owned());
+                    .data("rightGroup", config.group_name(right.group).to_vec())
+                    .data("leftGroup", config.group_name(left.group).to_vec());
             }
             if let Some(dependent) = first_unordered_dependent
                 && messages

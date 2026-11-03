@@ -72,22 +72,23 @@ fn is_eslint_block_directive(comment: Token<'_>) -> bool {
 }
 
 /// `makeFixes` without `missedCommentAbove`, which none of these rules has. `sorted[i]` is the index into `nodes`
-/// of the node that belongs at position `i`.
+/// of the node that belongs at position `i`. `None` for a `newlinesBetween` no fix can hold (see [`Fixer::repeat`]).
 pub(crate) fn make_fixes<'a>(
-    file: &'a File<'a>,
+    fixer: Fixer<'a>,
     nodes: &[SortingNode<'a>],
     sorted: &[u32],
     config: &Configuration,
     options: FixOptions,
-) -> Vec<Fix> {
+) -> Option<Vec<Fix>> {
+    let file = fixer.file();
     let mut fixes = Vec::new();
     order_fixes(file, nodes, sorted, config, options, &mut fixes);
     let order_fixes_len = fixes.len();
     comment_after_fixes(file, nodes, sorted, &mut fixes);
     if fixes.len() == order_fixes_len {
-        newlines::newlines_between_fixes(file, nodes, sorted, config, &mut fixes);
+        newlines::newlines_between_fixes(fixer, nodes, sorted, config, &mut fixes)?;
     }
-    fixes
+    Some(fixes)
 }
 
 /// `makeOrderFixes` without `doesNodeEndWithExpression`, which is never true of a member of these rules' lists.

@@ -437,8 +437,10 @@ pub(crate) fn load(
         }
         LegacyKind::Plugin => {
             let directory = modules.plugins_from(entry).to_vec();
-            let is_built_in = bun_lint::rule::Plugin::is_native_under_eslint(short)
-                && modules.registry.replaces_plugin(short);
+            let is_built_in = matches!(
+                short,
+                b"@typescript-eslint" | b"react-hooks" | b"import" | b"n" | b"perfectionist"
+            ) && modules.registry.replaces_plugin(short);
             match modules.loaded([b"plugins", &directory, request], from, entry) {
                 // An installed package takes precedence over the built-in implementation, because it also has configs.
                 Err(failure) if failure.is_missing && is_built_in => Ok(built_in(request)),

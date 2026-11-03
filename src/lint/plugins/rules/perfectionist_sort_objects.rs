@@ -2,7 +2,7 @@
 //! `crate::perfectionist` sorts and reports.
 
 use crate::perfectionist::configuration_if::{Subject, key_name};
-use crate::perfectionist::fixes::{FixOptions, make_fixes, range_to_diff};
+use crate::perfectionist::fixes::{FixOptions, range_to_diff};
 use crate::perfectionist::options::{Patterns, RuleKind, RuleOptions, SortObjectsOptions};
 use crate::perfectionist::sort::{IgnoredForGroup, Sorted};
 use crate::perfectionist::{
@@ -13,6 +13,11 @@ use bun_lint::rule::Plugin;
 use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::cell::Cell;
+
+/// `addSafetySemicolonWhenInline: false` on every sorting node.
+const FIX_OPTIONS: FixOptions = FixOptions {
+    add_safety_semicolon_when_inline: false,
+};
 
 /// Enforce sorted objects.
 pub struct SortObjects {
@@ -346,7 +351,7 @@ impl SortObjects {
             is_destructured,
         };
         let names = object.members().filter_map(Member::key).map(|key| key_name(file, key));
-        let Some((config, index)) = state.pick(&self.options, subject, names, cx, object.span()) else {
+        let Some((config, index)) = state.pick(&self.options, subject, &names, cx, object.span()) else {
             return;
         };
         let Some(own) = self.own.get(index) else {
@@ -467,17 +472,7 @@ impl SortObjects {
             cx.throw(object.span(), "RangeError", message.clone());
             return;
         }
-        report::report_all_errors(cx, &MESSAGES, &nodes, &sorted, config, |_| {
-            make_fixes(
-                file,
-                &nodes,
-                &sorted.without_disabled,
-                config,
-                FixOptions {
-                    add_safety_semicolon_when_inline: false,
-                },
-            )
-        });
+        report::report_all_errors(cx, &MESSAGES, &nodes, &sorted, config, FIX_OPTIONS);
     }
 }
 

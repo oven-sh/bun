@@ -121,14 +121,16 @@ pub(crate) fn newlines_between_errors<'a>(
     }
 }
 
-/// `makeNewlinesBetweenFixes`
+/// `makeNewlinesBetweenFixes`. `None` for a `newlinesBetween` that [`Fixer::repeat`] refuses: upstream adds the
+/// newlines one at a time and never finishes for such a number.
 pub(crate) fn newlines_between_fixes<'a>(
-    file: &'a File<'a>,
+    fixer: Fixer<'a>,
     nodes: &[SortingNode<'a>],
     sorted: &[u32],
     config: &Configuration,
     fixes: &mut Vec<Fix>,
-) {
+) -> Option<()> {
+    let file = fixer.file();
     let sorted_at = |i: usize| nodes.get(*sorted.get(i)? as usize);
     for i in 0..sorted.len().saturating_sub(1) {
         let (Some(node), Some(next_node)) = (nodes.get(i), nodes.get(i + 1)) else {
@@ -159,26 +161,29 @@ pub(crate) fn newlines_between_fixes<'a>(
         let is_on_same_line = file.line_of(node.span.end) == file.line_of(next_node.span.start);
         fixes.push(Fix {
             span: gap,
-            text: range_replacement(file.slice(gap), expected, is_on_same_line),
+            text: range_replacement(fixer, file.slice(gap), expected, is_on_same_line)?,
         });
     }
+    Some(())
 }
 
 /// `computeRangeReplacement`
-fn range_replacement(text: &[u8], newlines_between: f64, is_on_same_line: bool) -> Vec<u8> {
+fn range_replacement(
+    fixer: Fixer<'_>,
+    text: &[u8],
+    newlines_between: f64,
+    is_on_same_line: bool,
+) -> Option<Vec<u8>> {
     let mut replacement = without_invalid_newlines(text);
     if newlines_between == 0.0 {
-        return replacement;
+        return Some(replacement);
     }
-    let count = newlines_between.ceil() as usize + usize::from(is_on_same_line);
-    add_newlines_before_first_newline(&mut replacement, count);
-    replacement
-}
-
-/// Upstream's `addNewlineBeforeFirstNewline`, `count` times at once.
-fn add_newlines_before_first_newline(value: &mut Vec<u8>, count: usize) {
-    let at = strings::index_of_char_usize(value, b'\n').unwrap_or(value.len());
-    value.splice(at..at, std::iter::repeat_n(b'\n', count));
+    let count = (newlines_between.ceil() as u64).saturating_add(u64::from(is_on_same_line));
+    let newlines = fixer.repeat(b'\n', count)?;
+    // Upstream's `addNewlineBeforeFirstNewline`, `count` times at once.
+    let at = strings::index_of_char_usize(&replacement, b'\n').unwrap_or(replacement.len());
+    replacement.splice(at..at, newlines);
+    Some(replacement)
 }
 
 /// `getStringWithoutInvalidNewlines`: `value.replaceAll(/\n\s*\n/gu, '\n')`. Upstream's second `replaceAll(/\n+/gu,

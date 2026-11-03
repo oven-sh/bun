@@ -10,6 +10,10 @@
 #include <wtf/NeverDestroyed.h>
 #include <wtf/text/StringHash.h>
 
+#if ASAN_ENABLED
+#include <sanitizer/lsan_interface.h>
+#endif
+
 #if __has_include(<unicode/ucol.h>)
 #include <unicode/ucol.h>
 #include <unicode/uloc.h>
@@ -144,8 +148,13 @@ static const UCollator* forLanguageTag(const char* tag, size_t tagLength, bool* 
     if (!result.isNewEntry) {
         // Another thread opened the same tag meanwhile: theirs is the one every caller shares.
         ucol_close(const_cast<UCollator*>(collator));
+        return result.iterator->value;
     }
-    return result.iterator->value;
+#if ASAN_ENABLED
+    // The map's table is in fastMalloc memory, which LeakSanitizer does not scan, so the collator looks unreachable.
+    __lsan_ignore_object(collator);
+#endif
+    return collator;
 }
 
 } // namespace ICUCollate

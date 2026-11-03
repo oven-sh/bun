@@ -79,7 +79,7 @@ impl Rejected<'_> {
 pub(crate) fn matching_configuration<'c, 'n>(
     configurations: &'c [Configuration],
     subject: Subject<'_>,
-    names: impl Iterator<Item = &'n [u8]> + Clone,
+    names: &(impl Iterator<Item = &'n [u8]> + Clone),
 ) -> Result<usize, Rejected<'c>> {
     for (i, configuration) in configurations.iter().enumerate() {
         if configuration

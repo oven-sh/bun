@@ -2,7 +2,7 @@
 //! eslint-plugin-perfectionist. `crate::perfectionist` sorts and reports.
 
 use crate::perfectionist::configuration_if::Subject;
-use crate::perfectionist::fixes::{FixOptions, make_fixes, range_to_diff};
+use crate::perfectionist::fixes::{FixOptions, range_to_diff};
 use crate::perfectionist::options::{RuleKind, RuleOptions};
 use crate::perfectionist::sort::{IgnoredForGroup, Sorted};
 use crate::perfectionist::{FileState, Messages, SortingNode, groups, partition, report, sort};
@@ -12,6 +12,11 @@ use bun_lint::rule::Plugin;
 use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::cell::Cell;
+
+/// `addSafetySemicolonWhenInline: false` on every sorting node.
+const FIX_OPTIONS: FixOptions = FixOptions {
+    add_safety_semicolon_when_inline: false,
+};
 
 /// Enforce sorted union types.
 pub struct SortUnionTypes {
@@ -137,7 +142,7 @@ impl SortUnionTypes {
         let Some((config, _)) = state.pick(
             &self.options,
             Subject::Union(ty),
-            names.iter().copied(),
+            &names.iter().copied(),
             cx,
             ty.span(),
         ) else {
@@ -236,17 +241,7 @@ impl SortUnionTypes {
                 cx.throw(ty, "RangeError", message.clone());
                 return;
             }
-            report::report_all_errors(cx, &MESSAGES, partition, &sorted, config, |_| {
-                make_fixes(
-                    file,
-                    partition,
-                    &sorted.without_disabled,
-                    config,
-                    FixOptions {
-                        add_safety_semicolon_when_inline: false,
-                    },
-                )
-            });
+            report::report_all_errors(cx, &MESSAGES, partition, &sorted, config, FIX_OPTIONS);
         }
     }
 }

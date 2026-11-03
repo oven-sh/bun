@@ -110,7 +110,7 @@ impl FileState {
         &'s self,
         rule: &'s RuleOptions,
         subject: Subject<'_>,
-        names: impl Iterator<Item = &'n [u8]> + Clone,
+        names: &(impl Iterator<Item = &'n [u8]> + Clone),
         cx: &Cx<'_, R>,
         at: Span,
     ) -> Option<(&'s Configuration, usize)> {

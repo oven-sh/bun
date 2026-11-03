@@ -77,12 +77,12 @@ fn does_single_custom_group_match<'c>(
     value: &[u8],
 ) -> Result<bool, &'c str> {
     if let Some(selector) = &custom.selector
-        && !selectors.iter().any(|it| *it == &**selector)
+        && !selectors.contains(&selector.as_ref())
     {
         return Ok(false);
     }
     for modifier in &custom.modifiers {
-        if !modifiers.iter().any(|it| *it == &**modifier) {
+        if !modifiers.contains(&modifier.as_ref()) {
             return Ok(false);
         }
     }
@@ -182,18 +182,18 @@ fn find_group_named(config: &Configuration, modifiers: &[&str], selector: &str) 
 }
 
 /// Whether `name` is `modifiers` and `selector` joined with `-`, compared without building the joined text.
-fn is_joined_name(name: &str, modifiers: &[&str], selector: &str) -> bool {
+fn is_joined_name(name: &[u8], modifiers: &[&str], selector: &str) -> bool {
     let mut rest = name;
     for modifier in modifiers {
         let Some(after) = rest
-            .strip_prefix(modifier)
-            .and_then(|it| it.strip_prefix('-'))
+            .strip_prefix(modifier.as_bytes())
+            .and_then(|it| it.strip_prefix(b"-"))
         else {
             return false;
         };
         rest = after;
     }
-    rest == selector
+    rest == selector.as_bytes()
 }
 
 /// Upstream's `computeGroupName`: the name of a `groups` entry that is a single name. An array of names and a

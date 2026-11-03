@@ -296,7 +296,7 @@ pub(crate) struct Configuration {
     pub(crate) use_configuration_if: ConfigurationIf,
     /// Indexed by [`GroupId`]: `computeGroupsNames` in order, then the custom group names not in `groups`, then
     /// `"unknown"` if it was not in `groups`.
-    pub(crate) group_names: Vec<Box<str>>,
+    pub(crate) group_names: Vec<Box<[u8]>>,
     /// For each [`GroupId`], `getGroupIndex`: the index of the `groups` entry that names it, or `groups.len()`.
     pub(crate) groups_index: Vec<u32>,
     /// The [`GroupId`] of `"unknown"`.
@@ -581,8 +581,10 @@ impl Configuration {
     }
 
     /// The text of a group name, for a message.
-    pub(crate) fn group_name(&self, id: GroupId) -> &str {
-        self.group_names.get(id as usize).map_or("", |name| &**name)
+    pub(crate) fn group_name(&self, id: GroupId) -> &[u8] {
+        self.group_names
+            .get(id as usize)
+            .map_or(b"", |name| &**name)
     }
 
     /// `validateCustomSortConfig`
@@ -601,7 +603,7 @@ impl Configuration {
     /// `validateGroupsConfig`, with `validateNoDuplicatedGroups` and `validateObjectsInsideGroups`.
     fn validate_groups(&self, rule: RuleKind) -> Result<(), Vec<u8>> {
         let is_custom = |id: GroupId| self.custom_groups.iter().any(|group| group.name == id);
-        let mut invalid: Vec<&str> = Vec::new();
+        let mut invalid: Vec<&[u8]> = Vec::new();
         for &id in self.groups.iter().flat_map(GroupEntry::ids) {
             let name = self.group_name(id);
             if !is_custom(id) && !is_predefined_group(rule.selectors(), rule.modifiers(), name) {
@@ -622,7 +624,7 @@ impl Configuration {
             }
         }
         if !duplicated.is_empty() {
-            let names: Vec<&str> = duplicated.iter().map(|&id| self.group_name(id)).collect();
+            let names: Vec<&[u8]> = duplicated.iter().map(|&id| self.group_name(id)).collect();
             return Err(list_error("Duplicated group(s): ", &names));
         }
 
@@ -712,16 +714,15 @@ impl GroupNames {
 /// Gives every distinct group name one [`GroupId`], in the order the names are first seen.
 #[derive(Default)]
 struct Interner {
-    names: Vec<Box<str>>,
+    names: Vec<Box<[u8]>>,
 }
 
 impl Interner {
     fn id(&mut self, name: &[u8]) -> GroupId {
-        if let Some(id) = self.names.iter().position(|known| known.as_bytes() == name) {
+        if let Some(id) = self.names.iter().position(|known| &**known == name) {
             return id as GroupId;
         }
-        self.names
-            .push(String::from_utf8_lossy(name).into_owned().into_boxed_str());
+        self.names.push(Box::from(name));
         (self.names.len() - 1) as GroupId
     }
 }
@@ -785,8 +786,8 @@ fn newlines_of(value: Option<&Json>) -> Option<Newlines> {
 fn alphabet_of(value: Option<&Json>) -> Alphabet {
     let mut index_of = FxHashMap::default();
     if let Some(text) = value.and_then(Json::as_str) {
-        for (index, character) in String::from_utf8_lossy(text).chars().enumerate() {
-            index_of.insert(character as u32, index as u32);
+        for (index, (_, code_point)) in strings::wtf8_codepoints(text).enumerate() {
+            index_of.insert(code_point, index as u32);
         }
     }
     Alphabet { index_of }
@@ -1016,11 +1017,11 @@ fn configuration_if_of(rule: RuleKind, value: Option<&Json>) -> ConfigurationIf 
 
 /// Upstream's `isPredefinedGroup`: `modifier(-modifier)*-selector` or a selector alone, read from the end, where a
 /// selector or a modifier is up to three dash-separated words and no modifier repeats.
-fn is_predefined_group(selectors: &[&str], modifiers: &[&str], input: &str) -> bool {
-    if input == "unknown" {
+fn is_predefined_group(selectors: &[&str], modifiers: &[&str], input: &[u8]) -> bool {
+    if input == b"unknown" {
         return true;
     }
-    let words: Vec<&[u8]> = strings::split(input.as_bytes(), b"-").collect();
+    let words: Vec<&[u8]> = strings::split(input, b"-").collect();
     let Some(selector_words) = longest_allowed_word(&words, selectors) else {
         return false;
     };
@@ -1074,13 +1075,13 @@ fn joined_eq(words: &[&[u8]], value: &[u8]) -> bool {
 }
 
 /// `prefix` + `names.join(', ')`
-fn list_error(prefix: &str, names: &[&str]) -> Vec<u8> {
+fn list_error(prefix: &str, names: &[&[u8]]) -> Vec<u8> {
     let mut error = prefix.as_bytes().to_vec();
     for (index, name) in names.iter().enumerate() {
         if index > 0 {
             error.extend_from_slice(b", ");
         }
-        error.extend_from_slice(name.as_bytes());
+        error.extend_from_slice(name);
     }
     error
 }
@@ -1107,25 +1108,22 @@ fn settings_of(value: &Json) -> Result<Object<'_>, Vec<u8>> {
     const PREFIX: &str = "Invalid Perfectionist setting(s): ";
     let index_count = match value {
         Json::Object(entries) => {
-            let invalid: Vec<&str> = entries
+            let invalid: Vec<&[u8]> = entries
                 .iter()
                 .map(|(key, _)| key.as_slice())
                 .filter(|key| !SETTINGS_KEYS.contains(key))
-                .map(|key| std::str::from_utf8(key).unwrap_or_default())
                 .collect();
             if !invalid.is_empty() {
                 return Err(list_error(PREFIX, &invalid));
             }
             return Ok(Object::of(Some(value)));
         }
-        Json::String(text) if !text.is_empty() => {
-            String::from_utf8_lossy(text).encode_utf16().count()
-        }
+        Json::String(text) if !text.is_empty() => strings::wtf8_len_utf16(text) as usize,
         Json::Array(items) if !items.is_empty() => items.len(),
         _ => return Ok(Object::default()),
     };
     let indices: Vec<String> = (0..index_count).map(|index| index.to_string()).collect();
-    let names: Vec<&str> = indices.iter().map(String::as_str).collect();
+    let names: Vec<&[u8]> = indices.iter().map(String::as_bytes).collect();
     Err(list_error(PREFIX, &names))
 }
 
@@ -1136,13 +1134,13 @@ fn validate_settings_values(
     settings: Object<'_>,
     options: Object<'_>,
 ) -> Result<(), Vec<u8>> {
-    let mut invalid: Vec<&str> = Vec::new();
+    let mut invalid: Vec<&[u8]> = Vec::new();
     for (key, value) in settings.entries() {
         if key == b"tsconfig" || options.entries().iter().any(|(own, _)| own == key) {
             continue;
         }
         if !matches_setting_schema(rule, key, value) {
-            invalid.push(std::str::from_utf8(key).unwrap_or_default());
+            invalid.push(key);
         }
     }
     if invalid.is_empty() {

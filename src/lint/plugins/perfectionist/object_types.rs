@@ -205,7 +205,7 @@ pub(crate) fn sort_object_type_elements<'a, R>(
         .map(|member| Element::new(member, file))
         .collect();
     let names = elements.iter().map(|element| element.name);
-    let Some((config, _)) = state.pick(rule, listened.subject(), names, cx, node.span()) else {
+    let Some((config, _)) = state.pick(rule, listened.subject(), &names, cx, node.span()) else {
         return;
     };
     if !report::can_report_errors(config, false) {
@@ -303,7 +303,5 @@ pub(crate) fn sort_object_type_elements<'a, R>(
         cx.throw(node, "RangeError", message.clone());
         return;
     }
-    report::report_all_errors(cx, messages, &nodes, &sorted, config, |_| {
-        fixes::make_fixes(file, &nodes, &sorted.without_disabled, config, FIX_OPTIONS)
-    });
+    report::report_all_errors(cx, messages, &nodes, &sorted, config, FIX_OPTIONS);
 }

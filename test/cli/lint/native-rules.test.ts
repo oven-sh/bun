@@ -743,6 +743,8 @@ export default [
       ],
       [{ groups: ["nope"] }, "Invalid group(s): nope"],
       [{ groups: ["unknown", "unknown"] }, "Duplicated group(s): unknown"],
+      // The name is kept as it is. Half of a surrogate pair is three bytes, which the text of stderr shows as U+FFFD each.
+      [{ groups: ["\uD800", "\uD800"] }, "Invalid group(s): \uFFFD\uFFFD\uFFFD, \uFFFD\uFFFD\uFFFD"],
       [
         { groups: [{ newlinesBetween: 1 }, { newlinesBetween: 1 }] },
         "Consecutive `newlinesBetween` objects are not allowed",
@@ -817,6 +819,55 @@ export default [
           text: '"é": 3,\n  // eslint-disable-next-line perfectionist/sort-objects\n  "~": 2,\n  z: 1',
         },
       },
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  // A legacy config names the plugin in `plugins`, and the package is not installed.
+  test("an .eslintrc.json turns the rules on without the package", async () => {
+    const legacy = {
+      root: true,
+      plugins: ["perfectionist"],
+      parserOptions: { sourceType: "module", ecmaVersion: 2022 },
+      rules: { "perfectionist/sort-objects": "error" },
+    };
+    const files = { "a.js": "export const o = { b: 1, a: 2 };\n", ".eslintrc.json": JSON.stringify(legacy) };
+    const { stdout, stderr, exitCode } = await lint(files, ["-f", "json", "a.js"]);
+    expect(stderr).not.toContain("error:");
+    expect(problems(stdout)).toEqual(["a.js:1 perfectionist/sort-objects"]);
+    expect(exitCode).toBe(1);
+  });
+
+  // The schema allows any `newlinesBetween`. The report is the same as ESLint's. A fix would be longer than a string
+  // can be, so there is none, where ESLint builds the fix one newline at a time and never finishes.
+  test("a huge newlinesBetween reports the missing spacing without a fix", async () => {
+    const options = { groups: ["property", "method"], newlinesBetween: 1e300 };
+    const files = { ...oneRule("sort-objects", options), "a.ts": "const o = { a: 1, b() {} };\n" };
+    const { stdout, stderr, exitCode } = await lint(files, ["-f", "json", "a.ts"]);
+    expect(stderr).not.toContain("error:");
+    expect(ruleMessages(stdout)).toEqual([
+      {
+        line: 1,
+        column: 19,
+        endLine: 1,
+        endColumn: 25,
+        ruleId: "perfectionist/sort-objects",
+        message: 'Missed spacing between "a" and "b".',
+        fix: undefined,
+      },
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  // `[...alphabet]` makes half of a surrogate pair one character, and `a[i]` indexes a name by UTF-16 unit, so the
+  // first unit of a key outside the BMP finds it. Recorded from ESLint.
+  test("a custom alphabet with half of a surrogate pair orders the keys that start with it", async () => {
+    const options = { type: "custom", alphabet: "\uD83Db" };
+    const files = { ...oneRule("sort-objects", options), "a.ts": 'export const o = { b: 1, "😀": 2 };\n' };
+    const { stdout, stderr, exitCode } = await lint(files, ["-f", "json", "a.ts"]);
+    expect(stderr).not.toContain("error:");
+    expect(located(stdout)).toEqual([
+      { line: 1, column: 26, endLine: 1, endColumn: 33, message: 'Expected "😀" to come before "b".' },
     ]);
     expect(exitCode).toBe(1);
   });

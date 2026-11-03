@@ -200,6 +200,35 @@ body {
 `);
   },
 });
+devTest("css file imported twice keeps the place of its last import when its own import fails to parse", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+      body: `hello world`,
+    }),
+    "styles.css": `
+      @import "./b.css";
+      @import "./x.css";
+      @import "./b.css";
+      .e { width: 1px; }
+    `,
+    "b.css": `
+      @import "./c.css";
+      .b { width: 1px; }
+    `,
+    "x.css": `.x { width: 1px; }`,
+    "c.css": `.c { width: 1px; }`,
+  },
+  async test(dev) {
+    const stylesheetHref = (await (await dev.fetch("/")).text()).match(/<link rel="stylesheet"[^>]*href="([^"]+)"/)![1];
+    const printedFiles = async () =>
+      Array.from((await (await dev.fetch(stylesheetHref)).text()).matchAll(/^\/\* (\S+) \*\/$/gm), m => m[1]);
+    expect(await printedFiles()).toEqual(["x.css", "c.css", "b.css", "styles.css"]);
+    // c.css no longer parses, so the chunk prints without it.
+    await dev.write("c.css", `.c { width: 1px; }}}`, { errors: null });
+    expect(await printedFiles()).toEqual(["x.css", "b.css", "styles.css"]);
+  },
+});
 devTest("asset referenced in css", {
   files: {
     "index.html": emptyHtmlFile({

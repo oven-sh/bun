@@ -3806,16 +3806,19 @@ describe.concurrent("the _final callback runs a loop turn after the shutdown", (
     expect(seen).toEqual(["callback end", "finish end"]);
   });
 
+  // The server and its socket hold nothing, and the client's handle lets go at the peer's FIN:
+  // the queued completion is the one hold left.
   it("the queued completion keeps the process alive until 'close'", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `const net = require("net");
-         const server = net.createServer(peer => peer.end()).listen(0, "127.0.0.1", () => {
+         const server = net.createServer(peer => { peer.unref(); peer.end(); }).listen(0, "127.0.0.1", () => {
+           server.unref();
            const socket = net.connect(server.address().port, "127.0.0.1");
            socket.on("finish", () => console.log("finish"));
-           socket.on("close", () => { console.log("close"); server.close(); });
+           socket.on("close", () => console.log("close"));
          });`,
       ],
       env: bunEnv,

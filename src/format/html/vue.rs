@@ -1,6 +1,7 @@
 //! Formats Vue attributes. A port of Prettier's `language-html/embed/vue-*.js`.
 
-use super::ast::{Attribute, Id, Kind};
+use super::ast::{Attribute, Flags, Id, Kind};
+use super::canonical::{self, Spelling};
 use super::js::{self, Binding, Hug, Syntax};
 use super::printer::Printer;
 use crate::options::{HtmlRoot, InHtml};
@@ -140,6 +141,27 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                 .foreign(|f| js::write_expression(f, right, is_typescript, in_html, Hug::Always))
     }
 
+    /// True if the code in `value` is printed as it is written, so that nobody has to parse it. The start tag is either
+    /// on one line, with all that is in it, or the attribute is on a line of its own.
+    fn is_printed_as_written(&self, element: Id, name: &[u8], value: &[u8]) -> bool {
+        let format = self.options.format;
+        // The end of the tag can be on the line of the last attribute.
+        let ends_on_line_of_its_own = !format.bracket_same_line.value()
+            && !(self.tree[element].has(Flags::IS_SELF_CLOSING)
+                && self.tree.parent(element).is_some_and(|parent| {
+                    self.tags()
+                        .needs_to_borrow_last_child_closing_tag_end_marker(parent)
+                }));
+        !format.no_short_cuts
+            && ends_on_line_of_its_own
+            && !self.options.script_flavor.is_oxfmt()
+            && !self.tree.is_vue_sfc_block(element, self.options)
+            && self.out.indentation_width().is_some_and(|indentation| {
+                indentation + name.len() + value.len() + 3 <= format.line_width.value() as usize
+            })
+            && canonical::is_vue_attribute(name, value, Spelling::new(format)) == Some(true)
+    }
+
     /// The printers in `embed/vue-attributes.js`. `value` has its quote entities already decoded. Returns true if it
     /// printed the attribute.
     pub(crate) fn embed_vue_attribute(
@@ -150,6 +172,9 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
     ) -> bool {
         let name = attr.full_name();
         let name = &name[..];
+        if self.is_printed_as_written(element, name, value) {
+            return false;
+        }
         let is_typescript = self.is_vue_sfc_with_typescript_script();
         let flavor = self.options.script_flavor;
         let in_html = |root: HtmlRoot| InHtml {

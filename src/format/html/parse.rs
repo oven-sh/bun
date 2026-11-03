@@ -175,6 +175,24 @@ impl<'a> Context<'a, '_> {
         if is_html {
             return self.parse_html(range, parse_options(Parser::Html));
         }
+        // Without `getTagContentType` a `<script>` and a `<style>` are raw text all the same, and a `<template>` of HTML is
+        // not. With nothing else at the top the second result is the first.
+        let is_second_result_the_same = errors.is_empty()
+            && self.tree.children(root).all(|id| {
+                let node = &self.tree[id];
+                node.kind != Kind::Element
+                    || (node.namespace.is_empty()
+                        && match &node.name[..] {
+                            b"script" | b"style" => true,
+                            b"template" => {
+                                !(self.tree.attrs(id).iter()).any(|attr| &attr.name[..] == b"lang")
+                            }
+                            _ => false,
+                        })
+            });
+        if is_second_result_the_same {
+            return Ok((options, root));
+        }
         let mut second: Option<parser::ParseResult<'a>> = None;
         // The second result's first error, before the errors are sorted.
         let mut second_result_first_error = None;

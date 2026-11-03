@@ -1262,3 +1262,123 @@ describe("HTML", () => {
     expect(short.exitCode).toBe(0);
   });
 });
+
+describe("Vue", () => {
+  // Code that is printed as it is written is not parsed.
+  const code = [
+    "a",
+    "a.b.c",
+    "!a",
+    "-a",
+    "--a",
+    "a.b(c, 'd')",
+    "a(b)(c)(d)",
+    "a?.b",
+    "a[b]",
+    "a[0]",
+    "1",
+    "1.50",
+    "01",
+    "1e3",
+    "12345678901234567890",
+    "'a'",
+    '"a"',
+    "'a\\'b'",
+    "'é'",
+    "a === b",
+    "a  === b",
+    "a===b",
+    "a + b * c",
+    "a && b && c",
+    "a && b || c",
+    "a ?? b",
+    "a ? b : c",
+    "a ?? b ? c : d",
+    "a ? b : c ? d : e",
+    "[a, b]",
+    "[[a]]",
+    "[{ a: b }, { c: d }]",
+    "[a,b]",
+    "{ a: b }",
+    "{a: b}",
+    "{ a }",
+    "{ false }",
+    "{ 'a-b': c }",
+    "{ 'a': b }",
+    "{ a: b, }",
+    "`a ${b} c`",
+    "`a\\n`",
+    "() => a",
+    "(a) => b",
+    "a => b",
+    "(a, b) => c",
+    "(a) => (b = c)",
+    "(a) => ({ b })",
+    "(a) => a ? b : c",
+    "a = b",
+    "a.b = c",
+    "a() = b",
+    "a = b = c",
+    "this.a",
+    "new A()",
+    "typeof a",
+    "await a",
+    "a as B",
+    "true",
+    "undefined",
+    "(a)",
+    "a, b",
+    "a; b",
+    "a // b",
+    "a /* b */",
+    "aVeryLongNameThatTakesRoom.anotherVeryLongNameThatTakesRoom(yetAnotherLongName, andOneMore)",
+    "f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(a))))))))))))))))))))",
+  ];
+  const escaped = (text: string) => text.replaceAll('"', "&quot;");
+  const inputs = code.flatMap(it => [
+    `<template>\n  <div :a="${escaped(it)}" @b="${escaped(it)}" v-c="${escaped(it)}"></div>\n</template>\n`,
+    `<template>\n  <div>\n    <p :a="${escaped(it)}">b</p>\n    <img v-if="${escaped(it)}" />\n    {{ ${it} }}\n    <b style="c:d"></b>\n  </div>\n</template>\n`,
+    `<template>\n  <div>{{ ${it} }}</div>\n  <div>a {{${it}}} b</div>\n  <p>a <b>{{ ${it} }}</b></p>\n  <span>{{ ${it} }}é</span>\n</template>\n`,
+    `<template>\n  <span>x</span><b :a="${escaped(it)}">y</b>\n  <span><img :a="${escaped(it)}" /></span>\n</template>\n`,
+  ]);
+  inputs.push(
+    ...[
+      "a in b",
+      "(a, b) in c",
+      "(a, b, c) of d",
+      "(a) in b",
+      "{ a, b } in c",
+      "({ a }, b) in c",
+      "a  in b",
+      "a in b.c(d)",
+      "true in a",
+    ].map(it => `<template>\n  <div v-for="${it}">a</div>\n</template>\n`),
+    ...["a", "{ a }", "{ a, b }", "{a}", "{ a: b }", "{ a = 1 }", "a, b", "", "true"].map(
+      it =>
+        `<template>\n  <a>\n    <template #b="${it}">c</template>\n    <template v-slot:d="${it}">e</template>\n  </a>\n</template>\n`,
+    ),
+    "<template>\n  <ElButton>\n    <Foo />\n    <Li>a</Li>\n    <Button>b</Button>\n  </ElButton>\n</template>\n",
+    '<template>\n  <div v-pre>\n    <p :a="b   +c">{{d   +e}}</p>\n  </div>\n</template>\n',
+    "<template>\n  <div>{{  }}</div>\n  <div>{{}}</div>\n</template>\n",
+    "<template>\n  <p>a</p>\n</template>\n\n<script>\nlet a\n</script>\n\n<style>\na{b:c}\n</style>\n",
+    '<template lang="pug">\np a\n</template>\n\n<template>\n  <p>a</p>\n</template>\n',
+    "<custom>\n  <p>\n</custom>\n\n<template>\n  <p>a</p>\n</template>\n",
+    "<template>\n  <p>a</p>\n</template>\n<br>\n",
+    '<!doctype html>\n<html>\n  <body>\n    <p A="b">c</p>\n  </body>\n</html>\n',
+  );
+  const files = Object.fromEntries(inputs.map((input, index) => [`${index}.vue`, input]));
+
+  test.concurrent.each([
+    [],
+    ["--print-width=40"],
+    ["--print-width=20", "--tab-width=4"],
+    ["--single-quote", "--no-bracket-spacing", "--arrow-parens=avoid"],
+    ["--quote-props=consistent"],
+    ["--quote-props=preserve", "--use-tabs"],
+    ["--bracket-same-line", "--print-width=30"],
+    ["--embedded-language-formatting=off"],
+  ])("the same with and without short cuts: %j", async (...options: string[]) => {
+    const { short, long } = await bothWays(files, options);
+    expect(short).toEqual(long);
+  });
+});

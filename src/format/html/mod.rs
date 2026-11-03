@@ -12,6 +12,7 @@
 mod angular;
 mod angular_print;
 mod ast;
+mod canonical;
 mod cursor;
 mod data;
 pub(crate) mod embed;
@@ -368,6 +369,10 @@ fn write_document_with_cursor(
     let mut tree = ast::Tree::default();
     // Only where lines start at a known column, and nobody asks where a node has gone.
     let reads_runs = !is_embedded && indent_level == Some(0) && cursor_offset.is_none();
+    // Vue compiles nothing under `v-pre`.
+    let reads_runs = reads_runs
+        && (parser != Parser::Vue
+            || (!strings::contains(text, b"v-pre") && !script_flavor.is_oxfmt()));
     let runs = runs::Settings::new(parser, options).filter(|_| reads_runs);
     parse::parse_with_runs(&content, front_matter_len, parser, runs, &mut tree).map_err(
         |error| match error {

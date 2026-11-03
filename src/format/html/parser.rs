@@ -100,6 +100,8 @@ impl<'a> TreeBuilder<'a, '_, '_, '_> {
     fn parent_of_run(&self) -> Option<Parent<'a>> {
         let mut is_in_svg = false;
         let (element, container) = match self.container() {
+            // The blocks of a Vue file.
+            None if self.is_tag_name_case_sensitive => return None,
             None => (None, self.root),
             Some(id) => {
                 let (node, name) = (&self.tree[id], self.full_name_of(id).name);
@@ -120,8 +122,11 @@ impl<'a> TreeBuilder<'a, '_, '_, '_> {
                         }),
                         false => {
                             node.namespace.is_empty()
-                                && (name.iter())
-                                    .all(|byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'-'))
+                                && name.iter().all(|byte| match byte {
+                                    b'a'..=b'z' | b'0'..=b'9' | b'-' => true,
+                                    b'A'..=b'Z' => self.is_tag_name_case_sensitive,
+                                    _ => false,
+                                })
                         }
                     };
                 if !is_plain {

@@ -1,6 +1,7 @@
 //! Prettier's `language-html/embed.js` and `embed/*.js`: code in other languages.
 
 use super::ast::{Attribute, Flags, Id, Kind};
+use super::canonical::{self, Spelling};
 use super::js::{self, Hug, SourceType, Syntax};
 use super::map_strings::ends_with_line_suffix;
 use super::printer::Printer;
@@ -505,11 +506,20 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             is_in_interpolation: true,
             ..InHtml::default()
         };
+        let lends_closing_braces = tree
+            .next(parent)
+            .is_some_and(|next| tags.needs_to_borrow_prev_closing_tag_end_marker(next));
         let attempt = self.out.start_attempt();
         self.out.start_indent();
         self.out.line();
         let is_written = match self.options.parser {
             Parser::Angular => self.write_angular_expression(value, in_html, Hug::Bare),
+            Parser::Vue
+                if !lends_closing_braces && self.is_printed_as_written_between_braces(value) =>
+            {
+                self.out.text(value.trim_ascii());
+                true
+            }
             _ => {
                 let is_typescript =
                     self.options.parser == Parser::Vue && self.is_vue_sfc_with_typescript_script();
@@ -518,14 +528,22 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             }
         };
         self.out.end_indent();
-        match tree
-            .next(parent)
-            .is_some_and(|next| tags.needs_to_borrow_prev_closing_tag_end_marker(next))
-        {
+        match lends_closing_braces {
             true => self.out.token(" "),
             false => self.out.line(),
         }
         self.out.end_attempt(attempt, is_written)
+    }
+
+    /// True if the expression `code` is printed as it is written, so that nobody has to parse it. It is either on one
+    /// line with its braces, or on a line of its own at the current indentation, given that a `line` follows it.
+    fn is_printed_as_written_between_braces(&self, code: &[u8]) -> bool {
+        let (format, code) = (self.options.format, code.trim_ascii());
+        !format.no_short_cuts
+            && self.out.indentation_width().is_some_and(|indentation| {
+                indentation + code.len() <= format.line_width.value() as usize
+            })
+            && canonical::expression_end(code, 0, Spelling::new(format)) == Some(code.len())
     }
 
     // ───────────────────────────── `embed/attribute.js` ─────────────────────────────

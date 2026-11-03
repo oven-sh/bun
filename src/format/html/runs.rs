@@ -19,6 +19,7 @@
 //! again without short cuts if they differ.
 
 use super::Parser;
+use super::canonical::{self, Spelling};
 use super::data::{self, Display, TagDefinition};
 use super::lexer::{ContentType, Span};
 use crate::FormatOptions;
@@ -33,13 +34,14 @@ pub(crate) struct Settings {
     uses_tabs: bool,
     sensitivity: HtmlWhitespaceSensitivity,
     formats_embedded: bool,
+    spelling: Spelling,
 }
 
 impl Settings {
     /// Returns `None` if nothing is read here with `options`.
     pub(crate) fn new(parser: Parser, options: &FormatOptions) -> Option<Settings> {
         let is_read = !options.no_short_cuts
-            && parser == Parser::Html
+            && matches!(parser, Parser::Html | Parser::Vue)
             && !options.bracket_same_line.value()
             && !matches!(options.attribute_position, AttributePosition::Multiline)
             && !options.is_in_markdown
@@ -54,6 +56,7 @@ impl Settings {
                 options.embedded_language_formatting,
                 EmbeddedLanguageFormatting::Auto
             ),
+            spelling: Spelling::new(options),
         })
     }
 }
@@ -200,6 +203,14 @@ struct Element<'a> {
     is_in_svg: bool,
     /// `<textarea>`, `<pre>`, `<title>`: what is in it is not read here.
     must_be_empty: bool,
+}
+
+/// How the value of an attribute is printed.
+enum Printed {
+    AsWritten,
+    /// It is code, which is laid out in another way if it does not fit on the line.
+    AsWrittenOnOneLine,
+    Otherwise,
 }
 
 /// What has been made of a child.
@@ -582,12 +593,13 @@ impl<'a> Scanner<'_, 'a> {
         start: usize,
         (parent_definition, parent_is_in_svg): (&'static TagDefinition, bool),
     ) -> Option<Element<'a>> {
+        let is_case_sensitive = self.settings.parser == Parser::Vue;
         let mut name_end = start + 1;
         let mut has_capital = false;
         loop {
             match self.at(name_end) {
                 b'a'..=b'z' | b'0'..=b'9' | b'-' => {}
-                b'A'..=b'Z' if parent_is_in_svg => has_capital = true,
+                b'A'..=b'Z' if parent_is_in_svg || is_case_sensitive => has_capital = true,
                 _ => break,
             }
             name_end += 1;
@@ -622,6 +634,14 @@ impl<'a> Scanner<'_, 'a> {
             });
         }
         if parent_definition.is_closed_by_child(name) {
+            return None;
+        }
+        // `<ElButton>` is a name like any other, unless it is the name of a tag but for its capital letters.
+        if has_capital
+            && (data::has_tag_definition(&name.to_ascii_lowercase())
+                || data::css_display_of_tag(&name.to_ascii_lowercase()).is_some()
+                || data::is_pre_tag(&name.to_ascii_lowercase()))
+        {
             return None;
         }
         if definition.implicit_namespace_prefix.is_some() {
@@ -676,9 +696,12 @@ impl<'a> Scanner<'_, 'a> {
                 return at;
             }
             let (item, is_text) = match (self.at(at), self.at(at + 1)) {
-                (b'<', b'a'..=b'z') => (self.element(at), false),
+                (b'<', b'a'..=b'z' | b'A'..=b'Z') => (self.element(at), false),
                 (b'<', b'!') => (self.comment(at), false),
                 (b'<', _) => (Item::No, false),
+                (b'{', b'{') if self.reads_interpolations() => {
+                    (self.interpolation_on_line(at), false)
+                }
                 _ => (self.text_on_lines(at), true),
             };
             is_sole_text = false;
@@ -846,11 +869,15 @@ impl<'a> Scanner<'_, 'a> {
             return Item::No;
         }
         if self.at(first) != b'<' {
-            let Some(words) = self.words(first) else {
-                return Item::No;
-            };
-            if let Some(end) = self.end_tag(words.close, name) {
-                return self.element_with_words(start, element, width, open_end, words, end);
+            match self.words(first) {
+                Some(words) => {
+                    if let Some(end) = self.end_tag(words.close, name) {
+                        return self
+                            .element_with_words(start, element, width, open_end, words, end);
+                    }
+                }
+                None if line_breaks == 0 && self.reads_interpolations() => {}
+                None => return Item::No,
             }
         }
         if line_breaks == 0 {
@@ -1061,7 +1088,7 @@ impl<'a> Scanner<'_, 'a> {
                 }
                 continue;
             }
-            let Some((end, word_excess)) = self.word(at, &mut has_braces) else {
+            let Some((end, word_excess)) = self.word(at, &mut has_braces, true) else {
                 return Item::No;
             };
             (at, excess) = (end, excess + word_excess);
@@ -1077,26 +1104,96 @@ impl<'a> Scanner<'_, 'a> {
 
     /// The word that starts at `start`: writes it. Returns where it ends, and how many bytes it is longer than it is
     /// wide.
-    fn word(&mut self, start: usize, has_braces: &mut bool) -> Option<(usize, usize)> {
+    fn word(
+        &mut self,
+        start: usize,
+        has_braces: &mut bool,
+        can_have_interpolations: bool,
+    ) -> Option<(usize, usize)> {
         let (mut at, mut is_wide) = (start, false);
+        // What is in front of this has been written.
+        let mut from = start;
         loop {
             match TEXT_KINDS[self.at(at) as usize] {
                 WORD => {}
+                ODD if self.reads_interpolations() && self.text.get(at..at + 2) == Some(b"{{") => {
+                    if !can_have_interpolations {
+                        return None;
+                    }
+                    self.out.source(from, at);
+                    at = self.interpolation(at)?;
+                    from = at;
+                    continue;
+                }
                 ODD => at = self.odd_in_text(at, has_braces, &mut is_wide)?,
                 _ => break,
             }
             at += 1;
         }
-        if at == start || (self.at(at) == b'<' && !self.ends_text(at)) {
+        if at == start || (self.at(at) == b'<' && !self.ends_text(at)) || (is_wide && from != start)
+        {
             return None;
         }
-        self.out.source(start, at);
+        self.out.source(from, at);
         let word = self.text.get(start..at)?;
         let excess = match is_wide {
             true => word.len() - width_of_word(word).min(word.len()),
             false => 0,
         };
         Some((at, excess))
+    }
+
+    /// True if `{{ }}` in a text is a node of its own, with code in it.
+    fn reads_interpolations(&self) -> bool {
+        self.settings.parser == Parser::Vue
+    }
+
+    /// `{{`, an expression that is printed as it is written, and `}}`, from `start` on: writes it on one line. Returns
+    /// where it ends.
+    fn interpolation(&mut self, start: usize) -> Option<usize> {
+        if !self.settings.formats_embedded {
+            // It is printed as it is written, whatever it is.
+            let rest = self.text.get(start + 3..)?;
+            let end = start + 3 + bun_core::strings::index_of(rest, b"}}")? + 2;
+            // But for white space alone.
+            let is_plain = (self.text.get(start..end)?.iter())
+                .all(|byte| matches!(byte, b' '..=b'~') && !matches!(byte, b'<' | b'\\' | b'&'))
+                && !self.text.get(start + 2..end - 2)?.trim_ascii().is_empty();
+            return is_plain.then(|| {
+                self.out.source(start, end);
+                end
+            });
+        }
+        let mut from = start + 2;
+        while self.at(from) == b' ' {
+            from += 1;
+        }
+        let to = canonical::expression_end(self.text, from, self.settings.spelling)?;
+        let mut close = to;
+        while self.at(close) == b' ' {
+            close += 1;
+        }
+        if self.text.get(close..close + 2) != Some(b"}}") {
+            return None;
+        }
+        self.out.put(b"{{ ");
+        self.out.source(from, to);
+        self.out.put(b" }}");
+        Some(close + 2)
+    }
+
+    /// The same on a line of its own, if it fits.
+    fn interpolation_on_line(&mut self, start: usize) -> Item {
+        let written_from = self.out.len();
+        let Some(end) = self.interpolation(start).filter(|end| self.ends_line(*end)) else {
+            return Item::No;
+        };
+        let indentation = self.siblings.level * self.settings.indent_width;
+        if indentation + (self.out.len() - written_from) > self.settings.line_width {
+            return Item::No;
+        }
+        self.ends_in_text = true;
+        Item::Ends(end)
     }
 
     /// The element that starts at `start`, in a line with its siblings in `parent`, if it has nothing or words in it, all
@@ -1153,7 +1250,8 @@ impl<'a> Scanner<'_, 'a> {
                 self.out.push(b' ');
             }
             is_first = false;
-            let (end, word_excess) = self.word(at, &mut has_braces)?;
+            // With more than a text in it, its parent would be broken.
+            let (end, word_excess) = self.word(at, &mut has_braces, false)?;
             (at, excess) = (end, excess + word_excess);
             self.ends_in_text = true;
         }
@@ -1223,34 +1321,37 @@ impl<'a> Scanner<'_, 'a> {
         {
             return None;
         }
-        if self.settings.formats_embedded
-            && !self.is_printed_as_written(element, name, value, has_braces)
-        {
-            return None;
-        }
         end += 1;
         let width = match is_wide {
             true => at + 3 - from + crate::ir::width::string_width(value) as usize,
             false => end - from,
         };
+        if self.settings.formats_embedded {
+            match self.how_value_is_printed(element, name, value, has_braces) {
+                Printed::AsWritten => {}
+                // On a line of its own it is a level further in than the tag. Where the tag is on one line, so is all
+                // of it.
+                Printed::AsWrittenOnOneLine
+                    if (self.siblings.level + 1) * self.settings.indent_width + width
+                        <= self.settings.line_width => {}
+                _ => return None,
+            }
+        }
         Some((end, width))
     }
 
-    /// True if `embed` leaves the attribute alone, or prints its value as it is.
-    fn is_printed_as_written(
+    /// What `embed` makes of the value of an attribute.
+    fn how_value_is_printed(
         &self,
         element: &[u8],
         name: &[u8],
         value: &[u8],
         has_braces: bool,
-    ) -> bool {
+    ) -> Printed {
         if value.is_empty() {
-            return true;
+            return Printed::AsWritten;
         }
-        if self.settings.parser != Parser::Html {
-            return false;
-        }
-        match name {
+        let is_as_written = match name {
             b"srcset" => !matches!(element, b"img" | b"source"),
             _ if has_braces => true,
             // Names with one blank between them.
@@ -1262,6 +1363,17 @@ impl<'a> Scanner<'_, 'a> {
             b"style" => false,
             b"allow" => element != b"iframe",
             _ => !data::is_event_attribute(name),
+        };
+        match (is_as_written, self.settings.parser) {
+            (false, _) => Printed::Otherwise,
+            (true, Parser::Vue) => {
+                match canonical::is_vue_attribute(name, value, self.settings.spelling) {
+                    None => Printed::AsWritten,
+                    Some(true) => Printed::AsWrittenOnOneLine,
+                    Some(false) => Printed::Otherwise,
+                }
+            }
+            (true, _) => Printed::AsWritten,
         }
     }
 

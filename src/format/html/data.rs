@@ -373,6 +373,11 @@ pub(crate) fn tag_definition(name: &[u8]) -> &'static TagDefinition {
     lookup(TAG_DEFINITIONS, &TAG_DEFINITION_INDEX, name).unwrap_or(&DEFAULT_TAG_DEFINITION)
 }
 
+/// True if `getHtmlTagDefinition` has an entry for `name`.
+pub(crate) fn has_tag_definition(name: &[u8]) -> bool {
+    lookup(TAG_DEFINITIONS, &TAG_DEFINITION_INDEX, name).is_some()
+}
+
 /// `HTML_TAGS.has(name)`
 pub(crate) fn is_html_tag(name: &[u8]) -> bool {
     HTML_TAGS.binary_search(&name).is_ok()

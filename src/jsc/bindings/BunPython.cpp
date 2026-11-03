@@ -224,8 +224,20 @@ extern "C" EncodedJSValue Bun__Python__importFile(Zig::GlobalObject* globalObjec
 // `bun:python` (src/js/bun/python.ts)
 JSValue createPythonNamespace(Zig::GlobalObject* globalObject)
 {
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     preparePython();
-    return Python::importModuleFromJS(globalObject, "__python__"_s);
+    JSValue python = Python::importModuleFromJS(globalObject, "__python__"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    // src/python/_bun_python.py
+    JSValue own = Python::importModuleFromJS(globalObject, "_bun_python"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    for (auto [name, nameInPython] : { std::pair { "with"_s, "with_"_s }, std::pair { "asyncWith"_s, "async_with"_s } }) {
+        JSValue function = own.get(globalObject, Identifier::fromString(vm, nameInPython));
+        RETURN_IF_EXCEPTION(scope, {});
+        asObject(python)->putDirect(vm, Identifier::fromString(vm, name), function);
+    }
+    return python;
 }
 
 StringView pythonModuleNameOfSpecifier(StringView specifier)

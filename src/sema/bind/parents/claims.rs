@@ -67,43 +67,46 @@ pub struct Claims {
 const NO_CLASS_OWNER: ClassOwner = ClassOwner::Stmt(StmtId::NONE);
 const NO_TYPE_PARENT: PackedTypeParent = PackedTypeParent::NONE;
 
-/// `list[at] = value`, where `list` ends before `at`. There are `nodes` nodes, so an `at` beyond that is `NONE`.
 #[cold]
 #[inline(never)]
-fn put_beyond_end<T: Copy>(list: &mut Vec<T>, nodes: usize, at: usize, value: T, empty: T) {
-    if at < nodes {
-        list.resize((2 * list.len()).max(at + 1).max(64), empty);
-        if let Some(slot) = list.get_mut(at) {
-            *slot = value;
+fn grow<T: Copy>(list: &mut Vec<T>, nodes: usize, empty: T) {
+    list.resize((2 * list.len()).max(nodes).max(64), empty);
+}
+
+/// One of the lists, with room for every node that the file has so far, and what is in an empty entry.
+struct Slots<'c, T>(&'c mut [T], T);
+
+impl<T: Copy + PartialEq> Slots<'_, T> {
+    /// `list[at] = value`, unless `at` is `NONE`. With `UNDO`, takes that back.
+    #[inline(always)]
+    fn put<const UNDO: bool>(&mut self, at: usize, value: T) {
+        if let Some(slot) = self.0.get_mut(at) {
+            match UNDO {
+                false => *slot = value,
+                true if *slot == value => *slot = self.1,
+                true => {}
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn put_all<const UNDO: bool, I>(&mut self, f: &FileBuilder, list: IdList<I>, value: T) {
+        for &at in f.ids.get(list.range()).unwrap_or_default() {
+            self.put::<UNDO>(at as usize, value);
         }
     }
 }
 
-/// `list[at] = value`. With `UNDO`, takes that back.
-#[inline(always)]
-fn put<const UNDO: bool, T: Copy + PartialEq>(
-    list: &mut Vec<T>,
-    nodes: usize,
-    at: usize,
-    value: T,
-    empty: T,
-) {
-    match list.get_mut(at) {
-        Some(slot) if !UNDO => *slot = value,
-        Some(slot) if *slot == value => *slot = empty,
-        Some(_) => {}
-        None if !UNDO => put_beyond_end(list, nodes, at, value, empty),
-        None => {}
-    }
-}
-
-/// Defines `fn $name(&mut self, f, child, value)`, which is `self.$list[child] = value`.
+/// Defines `fn $name(&mut self, f) -> Slots`, for `self.$list`.
 macro_rules! lists {
-    ($($name:ident: $list:ident[$id:ty] = $value:ty, $nodes:ident, $empty:expr;)*) => {
+    ($($name:ident: $list:ident = $value:ty, $nodes:ident, $empty:expr;)*) => {
         $(
             #[inline(always)]
-            fn $name<const UNDO: bool>(&mut self, f: &FileBuilder, child: $id, value: $value) {
-                put::<UNDO, $value>(&mut self.$list, f.$nodes.len(), child.idx(), value, $empty);
+            fn $name<'c, const UNDO: bool>(list: &'c mut Vec<$value>, f: &FileBuilder) -> Slots<'c, $value> {
+                if !UNDO && list.len() < f.$nodes.len() {
+                    grow(list, f.$nodes.len(), $empty);
+                }
+                Slots(list, $empty)
             }
         )*
 
@@ -123,18 +126,18 @@ macro_rules! lists {
 
 impl Claims {
     lists! {
-        expr_of: expr_parent[ExprId] = PackedParent, exprs, PackedParent::default();
-        stmt_of: stmt_parent[StmtId] = PackedParent, stmts, PackedParent::default();
-        type_of: type_parent[TypeNodeId] = PackedTypeParent, types, NO_TYPE_PARENT;
-        type_param_of: type_param_parent[TypeParamId] = PackedTypeParent, type_params, NO_TYPE_PARENT;
-        tuple_elem_of: tuple_elem_parent[TupleElemId] = PackedTypeParent, tuple_elems, NO_TYPE_PARENT;
-        prop_of: prop_owner[PropId] = ExprId, props, ExprId::NONE;
-        member_of: member_owner[MemberId] = MemberOwner, members, MemberOwner::None;
-        var_decl_of: var_stmt[VarDeclId] = StmtId, var_decls, StmtId::NONE;
-        case_of: case_stmt[CaseId] = StmtId, cases, StmtId::NONE;
-        class_of: class_owner[ClassId] = ClassOwner, classes, NO_CLASS_OWNER;
-        class_is: class_scope[ClassId] = ScopeId, classes, ScopeId::NONE;
-        fn_of: fn_owner[FnId] = FnOwner, fns, FnOwner::None;
+        exprs: expr_parent = PackedParent, exprs, PackedParent::NONE;
+        stmts: stmt_parent = PackedParent, stmts, PackedParent::NONE;
+        types: type_parent = PackedTypeParent, types, NO_TYPE_PARENT;
+        type_params: type_param_parent = PackedTypeParent, type_params, NO_TYPE_PARENT;
+        tuple_elems: tuple_elem_parent = PackedTypeParent, tuple_elems, NO_TYPE_PARENT;
+        props: prop_owner = ExprId, props, ExprId::NONE;
+        members: member_owner = MemberOwner, members, MemberOwner::None;
+        var_decls: var_stmt = StmtId, var_decls, StmtId::NONE;
+        cases: case_stmt = StmtId, cases, StmtId::NONE;
+        classes: class_owner = ClassOwner, classes, NO_CLASS_OWNER;
+        reached_classes: class_scope = ScopeId, classes, ScopeId::NONE;
+        fns: fn_owner = FnOwner, fns, FnOwner::None;
     }
 
     /// `None` until [`try_bind_for_format_with`] has used the claims, and if it couldn't.
@@ -186,7 +189,7 @@ impl Claims {
         if let Some((last, before)) = f.exprs.split_last() {
             let id = ExprId(before.len() as u32);
             if let Some(slot) = self.expr_parent.get_mut(id.idx()) {
-                *slot = PackedParent::default();
+                *slot = PackedParent::NONE;
             }
             self.children_of_expr::<true>(f, id, &last.kind);
         }
@@ -205,49 +208,15 @@ impl Claims {
     }
 
     #[inline(always)]
-    fn exprs_of<const UNDO: bool>(
-        &mut self,
-        f: &FileBuilder,
-        list: IdList<ExprId>,
-        parent: PackedParent,
-    ) {
-        for &child in f.ids.get(list.range()).unwrap_or_default() {
-            self.expr_of::<UNDO>(f, ExprId(child), parent);
-        }
-    }
-
-    #[inline(always)]
-    fn stmts_of<const UNDO: bool>(
-        &mut self,
-        f: &FileBuilder,
-        list: IdList<StmtId>,
-        parent: PackedParent,
-    ) {
-        for &child in f.ids.get(list.range()).unwrap_or_default() {
-            self.stmt_of::<UNDO>(f, StmtId(child), parent);
-        }
-    }
-
-    #[inline(always)]
-    fn types_of<const UNDO: bool>(
-        &mut self,
-        f: &FileBuilder,
-        list: IdList<TypeNodeId>,
-        parent: PackedTypeParent,
-    ) {
-        for &ty in f.ids.get(list.range()).unwrap_or_default() {
-            self.type_of::<UNDO>(f, TypeNodeId(ty), parent);
-        }
-    }
-
-    #[inline(always)]
     fn props_of<const UNDO: bool>(&mut self, f: &FileBuilder, props: Span<PropId>, owner: ExprId) {
+        let mut owners = Self::props::<UNDO>(&mut self.prop_owner, f);
+        let mut exprs = Self::exprs::<UNDO>(&mut self.expr_parent, f);
         for p in props.iter() {
             let Some(prop) = f.props.get(p.idx()) else {
                 continue;
             };
-            self.prop_of::<UNDO>(f, p, owner);
-            self.expr_of::<UNDO>(f, prop.value, Parent::Prop(p).into());
+            owners.put::<UNDO>(p.idx(), owner);
+            exprs.put::<UNDO>(prop.value.idx(), Parent::Prop(p).into());
             if let PropKey::Computed(key) = prop.key {
                 let names_a_function = !matches!(
                     prop.kind,
@@ -257,7 +226,7 @@ impl Claims {
                     true => Parent::MethodKey(p),
                     false => Parent::PropKey(p),
                 };
-                self.expr_of::<UNDO>(f, key, parent.into());
+                exprs.put::<UNDO>(key.idx(), parent.into());
             }
         }
     }
@@ -269,8 +238,33 @@ impl Claims {
         members: Span<MemberId>,
         literal: TypeNodeId,
     ) {
+        let mut owners = Self::members::<UNDO>(&mut self.member_owner, f);
         for m in members.iter() {
-            self.member_of::<UNDO>(f, m, MemberOwner::TypeLiteral(literal));
+            owners.put::<UNDO>(m.idx(), MemberOwner::TypeLiteral(literal));
+        }
+    }
+
+    #[inline(always)]
+    fn class_of<const UNDO: bool>(&mut self, f: &FileBuilder, class: ClassId, owner: ClassOwner) {
+        Self::classes::<UNDO>(&mut self.class_owner, f).put::<UNDO>(class.idx(), owner);
+        Self::reached_classes::<UNDO>(&mut self.class_scope, f).put::<UNDO>(class.idx(), REACHED);
+    }
+
+    #[inline(always)]
+    fn fn_of<const UNDO: bool>(&mut self, f: &FileBuilder, func: FnId, owner: FnOwner) {
+        Self::fns::<UNDO>(&mut self.fn_owner, f).put::<UNDO>(func.idx(), owner);
+    }
+
+    /// The types in `list`, which is usually empty.
+    #[inline(always)]
+    fn types_of<const UNDO: bool>(
+        &mut self,
+        f: &FileBuilder,
+        list: IdList<TypeNodeId>,
+        parent: PackedTypeParent,
+    ) {
+        if !list.is_empty() {
+            Self::types::<UNDO>(&mut self.type_parent, f).put_all::<UNDO, _>(f, list, parent);
         }
     }
 
@@ -280,7 +274,15 @@ impl Claims {
         let me: PackedParent = Parent::Expr(id).into();
         let of_types: PackedTypeParent = TypeParent::Expr(id).into();
         macro_rules! operands {
-            ($($operand:expr),*) => {{ $(self.expr_of::<UNDO>(f, $operand, me);)* }};
+            ($($operand:expr),*) => {{
+                let mut exprs = Self::exprs::<UNDO>(&mut self.expr_parent, f);
+                $(exprs.put::<UNDO>($operand.idx(), me);)*
+            }};
+        }
+        macro_rules! list {
+            ($list:expr) => {
+                Self::exprs::<UNDO>(&mut self.expr_parent, f).put_all::<UNDO, _>(f, $list, me)
+            };
         }
         match *kind {
             ExprKind::Missing
@@ -302,18 +304,19 @@ impl Claims {
             ExprKind::Index { obj, index, .. } => operands!(obj, index),
             ExprKind::Call(c) | ExprKind::New(c) | ExprKind::TaggedTemplate(c) => {
                 if let Some(call) = f.calls.get(c.idx()) {
-                    operands!(call.callee);
+                    let mut exprs = Self::exprs::<UNDO>(&mut self.expr_parent, f);
+                    exprs.put::<UNDO>(call.callee.idx(), me);
                     if let ExprKind::TaggedTemplate(_) = *kind {
-                        operands!(f.template_of(c));
+                        exprs.put::<UNDO>(f.template_of(c).idx(), me);
                     }
-                    self.exprs_of::<UNDO>(f, call.args, me);
+                    exprs.put_all::<UNDO, _>(f, call.args, me);
                     self.types_of::<UNDO>(f, f.list_at(call.type_args), of_types);
                 }
             }
-            ExprKind::Template { exprs, .. } => self.exprs_of::<UNDO>(f, exprs, me),
-            ExprKind::Array(items) => self.exprs_of::<UNDO>(f, items, me),
+            ExprKind::Template { exprs, .. } => list!(exprs),
+            ExprKind::Array(items) => list!(items),
             ExprKind::ImportCall { args } => {
-                self.exprs_of::<UNDO>(f, args, me);
+                list!(args);
                 if !f.import_call_type_args.is_empty() {
                     let type_args = f.type_args_of_import_call(args);
                     self.types_of::<UNDO>(f, type_args, TypeParent::File.into());
@@ -321,10 +324,7 @@ impl Claims {
             }
             ExprKind::Object(props) => self.props_of::<UNDO>(f, props, id),
             ExprKind::Fn(func) => self.fn_of::<UNDO>(f, func, FnOwner::Expr(id)),
-            ExprKind::Class(class) => {
-                self.class_of::<UNDO>(f, class, ClassOwner::Expr(id));
-                self.class_is::<UNDO>(f, class, REACHED);
-            }
+            ExprKind::Class(class) => self.class_of::<UNDO>(f, class, ClassOwner::Expr(id)),
             ExprKind::Binary { left, right, .. } => operands!(left, right),
             ExprKind::Assign { target, value, .. } => operands!(target, value),
             ExprKind::Cond { test, branches } => {
@@ -339,7 +339,7 @@ impl Claims {
             | ExprKind::Yield { value: operand, .. } => operands!(operand),
             ExprKind::As { expr, ty } | ExprKind::Satisfies { expr, ty } => {
                 operands!(expr);
-                self.type_of::<UNDO>(f, ty, of_types);
+                Self::types::<UNDO>(&mut self.type_parent, f).put::<UNDO>(ty.idx(), of_types);
             }
             ExprKind::Instantiation { expr, type_args } => {
                 operands!(expr);
@@ -350,7 +350,7 @@ impl Claims {
                     operands!(jsx.tag, jsx.close_tag);
                     self.types_of::<UNDO>(f, jsx.type_args, of_types);
                     self.props_of::<UNDO>(f, jsx.attrs, id);
-                    self.exprs_of::<UNDO>(f, jsx.children, me);
+                    list!(jsx.children);
                 }
             }
         }
@@ -361,10 +361,16 @@ impl Claims {
     fn children_of_stmt<const UNDO: bool>(&mut self, f: &FileBuilder, id: StmtId, kind: &StmtKind) {
         let me: PackedParent = Parent::Stmt(id).into();
         macro_rules! exprs {
-            ($($e:expr),*) => {{ $(self.expr_of::<UNDO>(f, $e, me);)* }};
+            ($($e:expr),*) => {{
+                let mut exprs = Self::exprs::<UNDO>(&mut self.expr_parent, f);
+                $(exprs.put::<UNDO>($e.idx(), me);)*
+            }};
         }
         macro_rules! stmts {
-            ($($s:expr),*) => {{ $(self.stmt_of::<UNDO>(f, $s, me);)* }};
+            ($($s:expr),*) => {{
+                let mut stmts = Self::stmts::<UNDO>(&mut self.stmt_parent, f);
+                $(stmts.put::<UNDO>($s.idx(), me);)*
+            }};
         }
         match *kind {
             StmtKind::Return(e)
@@ -374,15 +380,13 @@ impl Claims {
             | StmtKind::ExportAssign(e)
             | StmtKind::Directive { expr: e, .. } => exprs!(e),
             StmtKind::Var(declarations) => {
+                let mut var_decls = Self::var_decls::<UNDO>(&mut self.var_stmt, f);
                 for d in declarations.iter() {
-                    self.var_decl_of::<UNDO>(f, d, id);
+                    var_decls.put::<UNDO>(d.idx(), id);
                 }
             }
             StmtKind::Fn(func) => self.fn_of::<UNDO>(f, func, FnOwner::Stmt(id)),
-            StmtKind::Class(class) => {
-                self.class_of::<UNDO>(f, class, ClassOwner::Stmt(id));
-                self.class_is::<UNDO>(f, class, REACHED);
-            }
+            StmtKind::Class(class) => self.class_of::<UNDO>(f, class, ClassOwner::Stmt(id)),
             StmtKind::If { test, yes, no } => {
                 exprs!(test);
                 stmts!(yes, no);
@@ -411,16 +415,21 @@ impl Claims {
                 exprs!(expr);
                 stmts!(left, body);
             }
-            StmtKind::Block(list) => self.stmts_of::<UNDO>(f, list, me),
+            StmtKind::Block(list) => {
+                Self::stmts::<UNDO>(&mut self.stmt_parent, f).put_all::<UNDO, _>(f, list, me)
+            }
             StmtKind::Switch { expr, cases } => {
-                exprs!(expr);
+                let mut exprs = Self::exprs::<UNDO>(&mut self.expr_parent, f);
+                let mut stmts = Self::stmts::<UNDO>(&mut self.stmt_parent, f);
+                let mut owners = Self::cases::<UNDO>(&mut self.case_stmt, f);
+                exprs.put::<UNDO>(expr.idx(), me);
                 for c in cases.iter() {
-                    self.case_of::<UNDO>(f, c, id);
+                    owners.put::<UNDO>(c.idx(), id);
                     let Some(case) = f.cases.get(c.idx()) else {
                         continue;
                     };
-                    self.expr_of::<UNDO>(f, case.test, Parent::Case(c).into());
-                    self.stmts_of::<UNDO>(f, case.body, me);
+                    exprs.put::<UNDO>(case.test.idx(), Parent::Case(c).into());
+                    stmts.put_all::<UNDO, _>(f, case.body, me);
                 }
             }
             StmtKind::Try {
@@ -429,7 +438,7 @@ impl Claims {
                 handler,
                 finalizer,
             } => {
-                self.var_decl_of::<UNDO>(f, param, id);
+                Self::var_decls::<UNDO>(&mut self.var_stmt, f).put::<UNDO>(param.idx(), id);
                 stmts!(block, handler, finalizer);
             }
             StmtKind::Labeled { body, .. } => stmts!(body),
@@ -463,25 +472,35 @@ impl Claims {
     ) {
         let me: PackedTypeParent = TypeParent::Type(id).into();
         macro_rules! ty {
-            ($($ty:expr),*) => {{ $(self.type_of::<UNDO>(f, $ty, me);)* }};
+            ($($ty:expr),*) => {{
+                let mut types = Self::types::<UNDO>(&mut self.type_parent, f);
+                $(types.put::<UNDO>($ty.idx(), me);)*
+            }};
+        }
+        // The parameter of a mapped type or of an `infer`.
+        macro_rules! type_param {
+            ($param:expr, $($ty:ident),*) => {{
+                let param: TypeParamId = $param;
+                Self::type_params::<UNDO>(&mut self.type_param_parent, f).put::<UNDO>(param.idx(), me);
+                if let Some(it) = f.type_params.get(param.idx()) {
+                    let mut types = Self::types::<UNDO>(&mut self.type_parent, f);
+                    $(types.put::<UNDO>(it.$ty.idx(), TypeParent::TypeParam(param).into());)*
+                }
+            }};
         }
         match *kind {
             TypeNodeKind::Heritage { .. } => self.is_complete = false,
             TypeNodeKind::Typeof { expr, args, .. } => {
                 self.types_of::<UNDO>(f, args, me);
-                self.expr_of::<UNDO>(f, expr, Parent::File.into());
+                Self::exprs::<UNDO>(&mut self.expr_parent, f)
+                    .put::<UNDO>(expr.idx(), Parent::File.into());
                 self.has_type_queries = true;
             }
             TypeNodeKind::Fn(func) => self.fn_of::<UNDO>(f, func, FnOwner::Type(id)),
             TypeNodeKind::Object(members) => self.members_of::<UNDO>(f, members, id),
             TypeNodeKind::Mapped(mapped) => {
                 if let Some(mapped) = f.mapped.get(mapped.idx()) {
-                    self.type_param_of::<UNDO>(f, mapped.param, me);
-                    if let Some(param) = f.type_params.get(mapped.param.idx()) {
-                        let of_param = TypeParent::TypeParam(mapped.param).into();
-                        self.type_of::<UNDO>(f, param.constraint, of_param);
-                        self.type_of::<UNDO>(f, param.default, of_param);
-                    }
+                    type_param!(mapped.param, constraint, default);
                     ty!(mapped.name_ty, mapped.ty);
                     self.members_of::<UNDO>(f, mapped.members, id);
                 }
@@ -499,13 +518,15 @@ impl Claims {
             | TypeNodeKind::JSDoc { ty: operand, .. }
             | TypeNodeKind::Predicate { ty: operand, .. } => ty!(operand),
             TypeNodeKind::Tuple(elements) => {
+                let mut owners = Self::tuple_elems::<UNDO>(&mut self.tuple_elem_parent, f);
+                let mut types = Self::types::<UNDO>(&mut self.type_parent, f);
                 for e in elements.iter() {
-                    self.tuple_elem_of::<UNDO>(f, e, me);
+                    owners.put::<UNDO>(e.idx(), me);
                     // One of the two can contain the other, which it has claimed. The element is the parent of both.
                     if let Some(element) = f.tuple_elems.get(e.idx()) {
                         let of_element = TypeParent::TupleElem(e).into();
-                        self.type_of::<UNDO>(f, element.ty, of_element);
-                        self.type_of::<UNDO>(f, element.written, of_element);
+                        types.put::<UNDO>(element.ty.idx(), of_element);
+                        types.put::<UNDO>(element.written.idx(), of_element);
                     }
                 }
             }
@@ -516,12 +537,8 @@ impl Claims {
                 no,
             } => ty!(check, extends, yes, no),
             TypeNodeKind::IndexedAccess { obj, index } => ty!(obj, index),
-            TypeNodeKind::Infer(param) => {
-                self.type_param_of::<UNDO>(f, param, me);
-                let constraint = f.type_params.get(param.idx()).map(|it| it.constraint);
-                let of_param = TypeParent::TypeParam(param).into();
-                self.type_of::<UNDO>(f, constraint.unwrap_or(TypeNodeId::NONE), of_param);
-            }
+            // Only its constraint, not its default.
+            TypeNodeKind::Infer(param) => type_param!(param, constraint),
             TypeNodeKind::Error
             | TypeNodeKind::Keyword(_)
             | TypeNodeKind::StringLit(_)
@@ -543,8 +560,8 @@ impl Claims {
             };
         }
         hand_over! {
-            expr_parent: exprs, PackedParent::default();
-            stmt_parent: stmts, PackedParent::default();
+            expr_parent: exprs, PackedParent::NONE;
+            stmt_parent: stmts, PackedParent::NONE;
             prop_owner: props, ExprId::NONE;
             member_owner: members, MemberOwner::None;
             var_stmt: var_decls, StmtId::NONE;

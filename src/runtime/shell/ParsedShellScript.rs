@@ -189,10 +189,7 @@ fn create_parsed_shell_script_impl(
     )?;
     let jsobjs_len = u32::try_from(marked_argument_buffer.size()).expect("int cast");
 
-    // The parse result borrows `shargs.__arena`, so it is scoped to a block that
-    // ends before `shargs.set_script_ast` below. The arena reference is taken
-    // via raw pointer so the `&shargs` borrow doesn't outlive the call (the
-    // returned `ast::Script` is lifetime-erased).
+    // The parse result borrows `shargs.__arena` until `set_script_ast` takes it.
     let arena_ptr: *const bun_alloc::Arena = shargs.arena();
     let script_ast = {
         // SAFETY: `shargs` lives on this stack frame for the whole block; arena

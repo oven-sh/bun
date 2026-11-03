@@ -404,22 +404,15 @@ impl ShellArgs {
 /// Only used by the construction path (`Interpreter::init`).
 pub(crate) type ShellResult<T> = Result<T, ShellErr>;
 
-/// A script that does not lex or parse. `msg` is the combined diagnostic text,
-/// one line per lexer or parser error, allocated in the parse arena.
-///
-/// Every entry point (`$`, the `shellParse` test API, `bun exec`,
-/// `bun run --shell=bun`, `bun <file>.sh`) gets this one value.
-/// [`ParseFailure::throw`] builds the JS error. [`ParseFailure::EXIT_CODE`] is
-/// the process status of the CLI entry points.
+/// A script that does not lex or parse. `msg` is one line per lexer or parser
+/// error, allocated in the parse arena.
 #[derive(Clone, Copy)]
 pub(crate) struct ParseFailure<'a> {
     pub(crate) msg: &'a [u8],
 }
 
 impl ParseFailure<'_> {
-    /// The status a CLI shell reports for a script it cannot parse. `sh` and
-    /// `bash` use 2, so `bun run` exits the same whichever shell runs the
-    /// script. `bun run` already skips its "exited with code" line for 2.
+    /// The CLI exit status for a script that does not parse, the same as `sh` and `bash`.
     pub(crate) const EXIT_CODE: ExitCode = 2;
 
     /// Throw a `SyntaxError` with `code: "ERR_SHELL_PARSE"`.
@@ -452,8 +445,7 @@ impl Interpreter {
             let lexed = lexer.lex();
             (lexed, lexer.get_result())
         };
-        // The lexer records a fatal error with `add_error` before it returns
-        // `Err`, so one report carries it and every diagnostic before it.
+        // A fatal lexer error is also recorded in `errors`.
         debug_assert!(lexed.is_ok() || !lex_result.errors.is_empty());
         if lexed.is_err() || !lex_result.errors.is_empty() {
             return Err(ParseFailure {
@@ -640,8 +632,7 @@ impl Interpreter {
     /// `MiniEventLoop`, drive it to completion via `mini.tick()`, and return
     /// the script's exit code. `path_for_errors` is only used in diagnostics.
     ///
-    /// A script that does not parse prints the diagnostic and exits with
-    /// [`ParseFailure::EXIT_CODE`]. Any init/run error prints and `exit(1)`s.
+    /// A parse failure exits with [`ParseFailure::EXIT_CODE`], an init or run error with 1.
     pub(crate) fn init_and_run_from_source(
         ctx: &mut bun_options_types::context::ContextData,
         mini: &'static mut bun_event_loop::MiniEventLoop::MiniEventLoop,
@@ -673,8 +664,7 @@ impl Interpreter {
         let mut shargs = ShellArgs::init();
 
         // ── parse ──────────────────────────────────────────────────────────
-        // The parse result borrows `shargs.__arena`, so it is scoped to a
-        // block that ends before `shargs.set_script_ast` below.
+        // The parse result borrows `shargs.__arena` until `set_script_ast` takes it.
         let arena_ptr: *const bun_alloc::Arena = shargs.arena();
         let script = {
             // SAFETY: `shargs` lives on this stack frame for the whole block;

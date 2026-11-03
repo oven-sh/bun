@@ -209,11 +209,16 @@ impl Lazy {
             file.is_atty = Some(true);
         }
 
+        // There is no opening a device so that a read of it does not wait.
+        let waits_like_a_pipe =
+            cfg!(windows) && sys::S::ISCHR(mode) && !file.is_atty.unwrap_or(false);
+
         // pollable: `S.ISFIFO(mode) or S.ISSOCK(mode)`
         this.pollable = (sys::S::ISFIFO(mode) || sys::S::ISSOCK(mode))
             || is_nonblocking
-            || file.is_atty.unwrap_or(false);
-        this.file_type = if sys::S::ISFIFO(mode) {
+            || file.is_atty.unwrap_or(false)
+            || waits_like_a_pipe;
+        this.file_type = if sys::S::ISFIFO(mode) || waits_like_a_pipe {
             FileType::Pipe
         } else if sys::S::ISSOCK(mode) {
             FileType::Socket

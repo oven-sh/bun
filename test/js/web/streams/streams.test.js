@@ -21,6 +21,7 @@ import {
 } from "harness";
 import { mkfifo } from "mkfifo";
 import { closeSync, createReadStream, openSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { devNull } from "node:os";
 import { join } from "node:path";
 import { Duplex, PassThrough, Readable, Writable, finished, pipeline } from "node:stream";
 import {
@@ -2814,6 +2815,16 @@ it("Bun.file().stream() read text from large file", async () => {
     expect(output).toBe(hugely);
   } finally {
     unlinkSync(tmpfile);
+  }
+});
+
+it("Bun.file().stream() of the null device ends without a chunk", async () => {
+  expect(await Array.fromAsync(Bun.file(devNull).stream())).toEqual([]);
+  const fd = openSync(devNull, "r");
+  try {
+    expect(await Array.fromAsync(Bun.file(fd).stream())).toEqual([]);
+  } finally {
+    closeSync(fd);
   }
 });
 

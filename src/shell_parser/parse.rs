@@ -3150,8 +3150,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             }
         };
 
-        // The number must end the word. An escaped newline is whitespace. A JS
-        // value can follow it directly: `2>&1${buf}`.
+        // The number must end the word: whitespace, an operator, or a JS value (`2>&1${buf}`).
         let at_word_end = match self.peek() {
             None => true,
             Some(next) if next.escaped => next.char == u32::from(b'\n'),

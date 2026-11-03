@@ -1120,15 +1120,23 @@ pub mod fs {
                         original_err: err,
                         canonical_error: err,
                         generation,
+                        version: 0,
                     },
                 )));
             }
+            // A `DirInfo` may hold this slot by index: the listing that takes it next does not count from 0 again.
+            let version = match self.entries.at_index(get_or_put_result.index) {
+                Some(EntriesOption::Entries(listing)) => listing.version.wrapping_add(1),
+                Some(EntriesOption::Err(failed)) => failed.version,
+                None => 0,
+            };
             let opt = self.entries.put(
                 &mut get_or_put_result,
                 EntriesOption::Err(dir_entry::Err {
                     original_err: err,
                     canonical_error: err,
                     generation,
+                    version,
                 }),
             )?;
             // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
@@ -1151,6 +1159,7 @@ pub mod fs {
                     original_err: err,
                     canonical_error: err,
                     generation,
+                    version: 0,
                 },
             )))
         }
@@ -1223,6 +1232,7 @@ pub mod fs {
                         original_err: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
                         canonical_error: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
                         generation: asker.generation(),
+                        version: 0,
                     },
                 )));
             }
@@ -1407,6 +1417,9 @@ pub mod fs {
                 }
                 ListingTarget::New(result) => {
                     crate::resolver::test_hooks::count_new_listing();
+                    if let Some(EntriesOption::Err(failed)) = self.entries.at_index(result.index) {
+                        entries.version = failed.version;
+                    }
                     // The slot holds an unbounded `&mut DirEntry`: a leaked `Box` that lives as long as the `entries_option_map()` singleton.
                     let listing: *mut DirEntry = bun_core::heap::into_raw(Box::new(entries));
                     // SAFETY: a fresh leaked Box, exclusively owned here under `entries_mutex`.

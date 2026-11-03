@@ -389,6 +389,8 @@ pub mod dir_entry {
         pub canonical_error: crate::Error,
         /// The asker that met the failure. One that checks at another generation opens the directory again.
         pub(crate) generation: bun_core::Generation,
+        /// `DirEntry::version` for the listing that takes this slot next: one above that of the listing the failure replaced.
+        pub(crate) version: u32,
     }
 }
 

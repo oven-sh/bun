@@ -42,6 +42,8 @@ type Row = {
   probes: [from: string, specifier: string, fresh: string, stale?: string][];
   // Bun.build() starts from a file in the importing directory. A directory that a link names later gets one too.
   entriesAlso?: [from: string, dir: string][];
+  // The prime lookups run until one reads no listing again, so the change meets listings that are kept.
+  keptFirst?: true;
 };
 
 const json = (value: unknown) => JSON.stringify(value);
@@ -312,6 +314,19 @@ const rows: Row[] = [
     ],
     probes: [["app", "r2", "OK alt/r2/index.js"]],
   },
+  {
+    // The directory that holds the link does not change: only what the link names does.
+    id: "nm/link-gets-target",
+    keptFirst: true,
+    change: "created",
+    setup: [
+      ["mkdir", "app"],
+      ["link", "../alt", "app/node_modules"],
+    ],
+    prime: [["app", "r", "MISS"]],
+    apply: [["write", "alt/r/index.js"]],
+    probes: [["app", "r", "OK alt/r/index.js"]],
+  },
   // ---- pkgjson: the package.json of a directory
   {
     id: "pkgjson/created-in-named-dir",
@@ -418,6 +433,18 @@ const rows: Row[] = [
     apply: [["write", "node_modules/p/package.json", json({ name: "p", main: "./i.js" })]],
     probes: [["src", "p", "OK node_modules/p/i.js"]],
   },
+  {
+    id: "pkgjson/link-gets-target",
+    keptFirst: true,
+    change: "created",
+    setup: [
+      ["write", "app/impl.cjs"],
+      ["filelink", "../cfg/package.json", "app/package.json"],
+    ],
+    prime: [["app", "#alias", "MISS"]],
+    apply: [["write", "cfg/package.json", json({ name: "s", imports: { "#alias": "./impl.cjs" } })]],
+    probes: [["app", "#alias", "OK app/impl.cjs"]],
+  },
   // ---- tsconfig: the tsconfig.json of a directory and the files that it extends
   {
     id: "tsconfig/created-next-to-importer",
@@ -488,6 +515,18 @@ const rows: Row[] = [
     // Stale: the directory remembers the tsconfig.json that it parsed.
     probes: [["src", "t", "OK node_modules/t/index.js", "OK src/a.cjs"]],
   },
+  {
+    id: "tsconfig/link-gets-target",
+    keptFirst: true,
+    change: "created",
+    setup: [
+      ["write", "app/lib/utils.cjs"],
+      ["filelink", "../cfg/tsconfig.json", "app/tsconfig.json"],
+    ],
+    prime: [["app", "utils-alias", "MISS"]],
+    apply: [["write", "cfg/tsconfig.json", tsconfig({ "utils-alias": ["../app/lib/utils.cjs"] })]],
+    probes: [["app", "utils-alias", "OK app/lib/utils.cjs"]],
+  },
   // ---- realpath: the real path of a directory below a link
   {
     id: "realpath/ancestor-link-switched",
@@ -512,6 +551,26 @@ const rows: Row[] = [
       ["current/src", "./new.cjs", "OK releases/2/src/new.cjs"],
       ["current/src", "./a.cjs", "OK releases/2/src/a.cjs"],
     ],
+  },
+  {
+    // The package link names its target through a second link, and only that second link changes.
+    id: "realpath/link-through-a-switched-link",
+    keptFirst: true,
+    change: "replaced",
+    setup: [
+      ["write", "store/v1/p/index.js"],
+      ["write", "store/v2/p/index.js"],
+      ["write", "store/v2/p/feature.js"],
+      ["link", "v1", "store/current"],
+      ["mkdir", "src"],
+      ["link", "../store/current/p", "node_modules/p"],
+    ],
+    prime: [["src", "p/feature.js", "MISS"]],
+    apply: [
+      ["rm", "store/current"],
+      ["link", "v2", "store/current"],
+    ],
+    probes: [["src", "p/feature.js", "OK store/v2/p/feature.js"]],
   },
   // ---- parentlink: a directory whose record points at the record of the directory above it
   {
@@ -633,6 +692,18 @@ const fixture = /* js */ `
   const lookup = (row, [from, specifier]) =>
     surface === "build" ? buildLookup(row, from, specifier) : resolveLookup(row, from, specifier);
 
+  // A listing that was read right after its directory was made is read once more. Windows keeps none.
+  async function untilListingsAreKept(row) {
+    if (process.platform === "win32") return;
+    const { resolverCounters } = require("bun:internal-for-testing");
+    const deadline = performance.now() + 2000;
+    while (performance.now() < deadline) {
+      const before = resolverCounters().refills;
+      for (const l of row.prime) await lookup(row, l);
+      if (resolverCounters().refills === before) return;
+    }
+  }
+
   (async () => {
     const answers = {};
     try {
@@ -644,6 +715,7 @@ const fixture = /* js */ `
         const answer = (answers[row.id] = { before: [], after: [] });
         if (phase === "warm") {
           for (const l of row.prime) answer.before.push(await lookup(row, l));
+          if (row.keptFirst) await untilListingsAreKept(row);
           run(rootOf(row), row.apply);
         }
         for (const l of row.probes) answer.after.push(await lookup(row, l));

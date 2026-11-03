@@ -4816,7 +4816,6 @@ impl<'a> Resolver<'a> {
     /// `unparsed` gets a hash of the bytes that were read, when they give no `PackageJSON`.
     pub(crate) fn parse_package_json<const ALLOW_DEPENDENCIES: bool>(
         &mut self,
-        _generation: Generation,
         file: &[u8],
         dirname_fd: FD,
         package_id: Option<Install::PackageID>,
@@ -5143,13 +5142,13 @@ impl<'a> Resolver<'a> {
             };
             let parent = slot.get_parent();
             let parent_entries = parent.and_then(|it| it.get_entries_ref_locked(generation));
-            // 3. What the slot took from a listing that was read again since.
+            // 3. What the slot took from its listing. A kept listing is asked too: what a link names changes with no change of the directory.
+            if self.listing_facts_changed(generation, slot, entries) {
+                return SlotCheck::Changed;
+            }
             let own_moved = entries.version != slot.listing_version.load(Relaxed);
             let parent_moved = parent_entries
                 .is_some_and(|it| it.version != slot.parent_listing_version.load(Relaxed));
-            if own_moved && self.listing_facts_changed(generation, slot, entries) {
-                return SlotCheck::Changed;
-            }
             if (own_moved || parent_moved)
                 && !self.opts.preserve_symlinks
                 && let Some(parent) = parent
@@ -7573,7 +7572,6 @@ impl<'a> Resolver<'a> {
                         && !info.is_node_modules()
                     {
                         self.parse_package_json::<true>(
-                            generation,
                             path,
                             if FeatureFlags::STORE_FILE_DESCRIPTORS {
                                 fd
@@ -7587,7 +7585,6 @@ impl<'a> Resolver<'a> {
                         .flatten()
                     } else {
                         self.parse_package_json::<false>(
-                            generation,
                             path,
                             if FeatureFlags::STORE_FILE_DESCRIPTORS {
                                 fd
@@ -7666,7 +7663,7 @@ impl<'a> Resolver<'a> {
                 }
                 let logged = self.log_ref().msgs.len();
                 let loaded =
-                    self.load_tsconfig(generation, tsconfigpath, fd, &mut rare.unparsed_tsconfig);
+                    self.load_tsconfig(tsconfigpath, fd, &mut rare.unparsed_tsconfig);
                 rare.tsconfig_msgs = self.log_ref().msgs[logged..].to_vec();
                 self.log = log;
                 match loaded {
@@ -7710,7 +7707,6 @@ impl<'a> Resolver<'a> {
     /// The configuration file at `tsconfigpath`, with what it inherits from those that it extends. When it gives nothing, `unparsed` gets each file that was read with a hash of its bytes, the one at `tsconfigpath` first.
     fn load_tsconfig(
         &mut self,
-        _generation: Generation,
         tsconfigpath: &[u8],
         fd: FD,
         unparsed: &mut Vec<ConfigSource>,
@@ -7897,7 +7893,7 @@ impl<'a> Resolver<'a> {
             {
                 path = joined.to_vec();
             }
-            let loaded = self.load_tsconfig(self.generation, &path, FD::INVALID, &mut Vec::new());
+            let loaded = self.load_tsconfig(&path, FD::INVALID, &mut Vec::new());
             let loaded = loaded.ok().flatten();
             self.opts.tsconfig_override_json = Some(loaded.map(Arc::from));
         }

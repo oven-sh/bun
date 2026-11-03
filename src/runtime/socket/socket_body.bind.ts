@@ -117,6 +117,8 @@ export const releaseHeldFlight = b.fn({ args: { socket: SocketHandle } });
 export const checkServerIdentityInHandshake = b.fn({ args: { socket: SocketHandle, inHandshake: b.bool } });
 export const firstFlightBeforeFin = b.fn({ args: { socket: SocketHandle } });
 export const getBufferedAmount = b.fn({ args: { socket: SocketHandle }, returns: b.usize });
+/** Node's `handle.hasPendingRead()`: data, a FIN or an error that the loop has not polled for yet. */
+export const hasPendingRead = b.fn({ args: { socket: SocketHandle }, returns: b.bool });
 /** `tls` is `true` or what `SSLConfig` takes, and can hold the `secureContext`. */
 export const DuplexTLSOptions = b.dictionary({
   socket: SocketHandler,

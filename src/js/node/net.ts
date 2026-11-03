@@ -271,6 +271,7 @@ declare global {
       [kerrorEmitted]?: boolean;
 
       [kTimeout]: Timer | null;
+      [kLastWriteQueueSize]: number;
       [kDestroyOnRead]: boolean;
       [kupgraded]: Socket | null;
       [kOnUpgradedClose]: (() => void) | undefined;
@@ -696,6 +697,7 @@ const kOnreadPendingEnd = Symbol("kOnreadPendingEnd");
 const kOnreadReadRequested = Symbol("kOnreadReadRequested");
 const kOnreadEmptyTail = Buffer.alloc(0);
 const kwriteCallback = Symbol("writeCallback");
+const kLastWriteQueueSize = Symbol("lastWriteQueueSize");
 const kRejectedWrite = Symbol("kRejectedWrite");
 const kSocketClass = Symbol("kSocketClass");
 
@@ -1219,6 +1221,8 @@ const SocketHandlers = {
         if (!holdRejectedWrite(self, socket, res, callback)) failWrite(self, res, callback);
       } else if (res) {
         self._pendingData = self[kwriteCallback] = null;
+        self._unrefTimer();
+        self[kLastWriteQueueSize] = 0;
         unrefAfterDrain(self, socket);
         callback(null);
       } else {
@@ -2081,6 +2085,8 @@ const SocketHandlers2 = {
       } else if (res) {
         self[kBytesWritten] = socket.bytesWritten;
         self._pendingData = self[kwriteCallback] = null;
+        self._unrefTimer();
+        self[kLastWriteQueueSize] = 0;
         unrefAfterDrain(self, socket);
         callback(null);
       } else {
@@ -2390,6 +2396,7 @@ function Socket(this: $Node.Socket, options?: $Node.SocketOptions): void {
   this._port = undefined;
   this[bunTLSConnectOptions] = null;
   this.timeout = 0;
+  this[kLastWriteQueueSize] = 0;
   // node initializes the timer slot to null so it is observable before setTimeout() is called.
   // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L401
   this[kTimeout] = null;
@@ -2591,17 +2598,16 @@ Socket.prototype.address = function address(this: $Node.Socket) {
 };
 
 Socket.prototype._onTimeout = function (this: $Node.Socket) {
-  // if there is pending data, write is in progress
-  // so we suppress the timeout
-  if (this._pendingData) {
-    return;
-  }
-
   const handle = this._handle;
-  // if there is a handle, and it has pending data,
-  // we suppress the timeout because a write is in progress
-  if (handle && getBufferedAmount(handle) > 0) {
-    return;
+  if (handle) {
+    // As in Node, a write that moved since the last look puts the timeout off. Its first look is at the size of the write, this one at 0.
+    // https://github.com/nodejs/node/blob/v26.12.1/lib/net.js#L872-L887
+    const writeQueueSize = getBufferedAmount(handle);
+    if (writeQueueSize !== this[kLastWriteQueueSize]) {
+      this[kLastWriteQueueSize] = writeQueueSize;
+      this._unrefTimer();
+      return;
+    }
   }
   this.emit("timeout");
 };
@@ -3464,6 +3470,7 @@ Socket.prototype._write = function _write(
     return false;
   }
   this._unrefTimer();
+  this[kLastWriteQueueSize] = 0;
   if (this.secureConnecting) this[kPreHandshakeWrite] = true;
   if (socket.readyState < 0) {
     // The handle's native socket was already closed (e.g. handle.close() was

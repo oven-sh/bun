@@ -2,7 +2,6 @@
 
 use core::cell::Cell;
 use core::fmt::{self, Display, Formatter, Write as _};
-use core::ptr::NonNull;
 
 use crate::output as Output;
 // `strings` is the canonical `crate::strings` (lib.rs); `js_printer`/`js_lexer`
@@ -505,70 +504,19 @@ pub fn substitute_named(template: &[u8], args: &[(&[u8], &[u8])]) -> Vec<u8> {
 
 type SharedTempBuffer = [u8; 32 * 1024];
 
-struct SharedTempBufferSlot(Cell<Option<NonNull<SharedTempBuffer>>>);
-impl Drop for SharedTempBufferSlot {
-    fn drop(&mut self) {
-        if let Some(p) = self.0.take() {
-            // SAFETY: produced by `heap::alloc_nn` in `SharedTempBufferBorrow::
-            // new` and parked here on borrow drop; the thread is exiting so no
-            // outstanding borrow holds it.
-            unsafe { crate::heap::destroy(p.as_ptr()) };
-        }
-    }
-}
-impl core::ops::Deref for SharedTempBufferSlot {
-    type Target = Cell<Option<NonNull<SharedTempBuffer>>>;
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
 thread_local! {
-    static SHARED_TEMP_BUFFER_PTR: SharedTempBufferSlot =
-        const { SharedTempBufferSlot(Cell::new(None)) };
+    static SHARED_TEMP_BUFFER: Cell<Option<Box<SharedTempBuffer>>> = const { Cell::new(None) };
 }
 
-/// RAII borrow of the thread-local shared temp buffer.
-///
-/// On construction: takes (or allocates) the buffer and nulls the thread-local
-/// cell so any recursive borrow allocates a fresh one instead of aliasing this
-/// one. On drop: restores the buffer to the cell, or frees it if recursion has
-/// already restored a different buffer.
-struct SharedTempBufferBorrow {
-    ptr: NonNull<SharedTempBuffer>,
-}
-
-impl SharedTempBufferBorrow {
-    fn new() -> Self {
-        let ptr = SHARED_TEMP_BUFFER_PTR.with(|cell| {
-            cell.take()
-                .unwrap_or_else(|| crate::heap::alloc_nn([0u8; 32 * 1024]))
-        });
-        Self { ptr }
-    }
-
-    #[inline]
-    fn chunk(&mut self) -> &mut SharedTempBuffer {
-        // SAFETY: this borrow uniquely owns the buffer for its lifetime; the
-        // thread-local cell was nulled on construction so recursion cannot alias it.
-        unsafe { self.ptr.as_mut() }
-    }
-}
-
-impl Drop for SharedTempBufferBorrow {
-    fn drop(&mut self) {
-        SHARED_TEMP_BUFFER_PTR.with(|c| {
-            if let Some(existing) = c.get() {
-                if existing != self.ptr {
-                    // Recursion restored a different buffer; free ours.
-                    // SAFETY: ptr was allocated via heap::alloc_nn and is uniquely owned by self.
-                    unsafe { crate::heap::destroy(self.ptr.as_ptr()) };
-                }
-            } else {
-                c.set(Some(self.ptr));
-            }
-        });
-    }
+/// Lends `f` the thread's temp buffer. The cell is empty meanwhile, so a recursive call allocates its own.
+fn with_shared_temp_buffer(f: impl FnOnce(&mut SharedTempBuffer) -> fmt::Result) -> fmt::Result {
+    let mut buffer = SHARED_TEMP_BUFFER
+        .with(|cell| cell.take())
+        .unwrap_or_else(crate::boxed_zeroed);
+    let result = f(&mut buffer);
+    // Frees the buffer that a recursive call has put back.
+    SHARED_TEMP_BUFFER.with(|cell| cell.set(Some(buffer)));
+    result
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -576,20 +524,19 @@ impl Drop for SharedTempBufferBorrow {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub fn format_utf16_type(slice_: &[u16], writer: &mut impl fmt::Write) -> fmt::Result {
-    let mut borrow = SharedTempBufferBorrow::new();
-    let chunk = borrow.chunk();
+    with_shared_temp_buffer(|chunk| {
+        let mut slice = slice_;
 
-    let mut slice = slice_;
-
-    while !slice.is_empty() {
-        let result = strings::copy_utf16_into_utf8(chunk, slice);
-        if result.read == 0 || result.written == 0 {
-            break;
+        while !slice.is_empty() {
+            let result = strings::copy_utf16_into_utf8(chunk, slice);
+            if result.read == 0 || result.written == 0 {
+                break;
+            }
+            write_bytes(writer, &chunk[..result.written])?;
+            slice = &slice[result.read..];
         }
-        write_bytes(writer, &chunk[..result.written])?;
-        slice = &slice[result.read..];
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 pub(crate) fn format_utf16_type_with_path_options(
@@ -597,37 +544,36 @@ pub(crate) fn format_utf16_type_with_path_options(
     writer: &mut impl fmt::Write,
     opts: PathFormatOptions,
 ) -> fmt::Result {
-    let mut borrow = SharedTempBufferBorrow::new();
-    let chunk = borrow.chunk();
+    with_shared_temp_buffer(|chunk| {
+        let mut slice = slice_;
 
-    let mut slice = slice_;
-
-    while !slice.is_empty() {
-        let result = strings::copy_utf16_into_utf8(chunk, slice);
-        if result.read == 0 || result.written == 0 {
-            break;
-        }
-
-        let to_write = &chunk[..result.written];
-        if !opts.escape_backslashes && opts.path_sep == PathSep::Any {
-            write_bytes(writer, to_write)?;
-        } else {
-            let mut ptr = to_write;
-            while let Some(i) = crate::strings::index_of_any(ptr, b"\\/") {
-                let sep = opts.path_sep.apply(ptr[i]);
-                write_bytes(writer, &ptr[..i])?;
-                writer.write_char(sep as char)?;
-                if opts.escape_backslashes && sep == b'\\' {
-                    writer.write_char(sep as char)?;
-                }
-
-                ptr = &ptr[i + 1..];
+        while !slice.is_empty() {
+            let result = strings::copy_utf16_into_utf8(chunk, slice);
+            if result.read == 0 || result.written == 0 {
+                break;
             }
-            write_bytes(writer, ptr)?;
+
+            let to_write = &chunk[..result.written];
+            if !opts.escape_backslashes && opts.path_sep == PathSep::Any {
+                write_bytes(writer, to_write)?;
+            } else {
+                let mut ptr = to_write;
+                while let Some(i) = crate::strings::index_of_any(ptr, b"\\/") {
+                    let sep = opts.path_sep.apply(ptr[i]);
+                    write_bytes(writer, &ptr[..i])?;
+                    writer.write_char(sep as char)?;
+                    if opts.escape_backslashes && sep == b'\\' {
+                        writer.write_char(sep as char)?;
+                    }
+
+                    ptr = &ptr[i + 1..];
+                }
+                write_bytes(writer, ptr)?;
+            }
+            slice = &slice[result.read..];
         }
-        slice = &slice[result.read..];
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 #[inline]
@@ -1253,28 +1199,28 @@ pub fn parse_ascii<T: core::str::FromStr>(s: &[u8]) -> Option<T> {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub fn format_latin1(slice_: &[u8], writer: &mut impl fmt::Write) -> fmt::Result {
-    let mut borrow = SharedTempBufferBorrow::new();
-    let chunk = borrow.chunk();
-    let mut slice = slice_;
+    with_shared_temp_buffer(|chunk| {
+        let mut slice = slice_;
 
-    while let Some(i) = crate::strings::first_non_ascii_usize(slice) {
-        if i > 0 {
-            write_bytes(writer, &slice[..i])?;
-            slice = &slice[i..];
+        while let Some(i) = crate::strings::first_non_ascii_usize(slice) {
+            if i > 0 {
+                write_bytes(writer, &slice[..i])?;
+                slice = &slice[i..];
+            }
+            let take = chunk.len().min(slice.len());
+            let result = strings::copy_latin1_into_utf8(chunk, &slice[..take]);
+            if result.read == 0 || result.written == 0 {
+                break;
+            }
+            write_bytes(writer, &chunk[..result.written])?;
+            slice = &slice[result.read..];
         }
-        let take = chunk.len().min(slice.len());
-        let result = strings::copy_latin1_into_utf8(chunk, &slice[..take]);
-        if result.read == 0 || result.written == 0 {
-            break;
-        }
-        write_bytes(writer, &chunk[..result.written])?;
-        slice = &slice[result.read..];
-    }
 
-    if !slice.is_empty() {
-        write_bytes(writer, slice)?; // write the remaining bytes
-    }
-    Ok(())
+        if !slice.is_empty() {
+            write_bytes(writer, slice)?; // write the remaining bytes
+        }
+        Ok(())
+    })
 }
 
 // ───────────────────────────────────────────────────────────────────────────

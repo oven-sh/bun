@@ -85,11 +85,9 @@ const KINDS: [Kind; 256] = {
 #[derive(Copy, Clone)]
 pub(super) struct Token {
     pub(super) kind: Kind,
-    /// The number of line feeds between the token before it, or the start of the text, and this one. 255 stands for
-    /// more.
-    pub(super) line_feeds_before: u8,
-    /// They come first, and only spaces and tabs follow them.
-    pub(super) is_after_tidy_gap: bool,
+    /// How many bytes between the token before it, or the start of the text, and this one are neither spaces nor tabs.
+    /// 255 stands for more.
+    pub(super) ignored_before: u8,
     pub(super) start: u32,
     pub(super) end: u32,
 }
@@ -98,8 +96,7 @@ impl Token {
     pub(super) fn end_of(text: &[u8]) -> Token {
         Token {
             kind: Kind::End,
-            line_feeds_before: 255,
-            is_after_tidy_gap: false,
+            ignored_before: 255,
             start: text.len() as u32,
             end: text.len() as u32,
         }
@@ -201,15 +198,6 @@ fn long_token(
     }
 }
 
-/// What's known about the gap before the next token, for [`Token::line_feeds_before`] and [`Token::is_after_tidy_gap`].
-#[derive(Copy, Clone)]
-struct Gap {
-    line_feeds: u32,
-    is_tidy: bool,
-    /// Where the next line feed has to be for the gap to stay tidy.
-    next_line_feed: u32,
-}
-
 /// The number of bytes that a word of a bitmap stands for.
 const WORD: usize = 64;
 
@@ -236,11 +224,8 @@ pub(super) fn scan(text: &[u8], stops: ScannerStops<'_>, tokens: &mut Vec<Token>
     let mut follows_name = 0;
     // The end of the last token that's more than a short name or a byte.
     let mut resume_at = 0;
-    let mut gap = Gap {
-        line_feeds: 0,
-        is_tidy: true,
-        next_line_feed: 0,
-    };
+    // For `Token::ignored_before`.
+    let mut ignored = 0;
     'words: for index in 0..text.len().div_ceil(WORD) {
         let not_name = next_not_name;
         next_not_name = not_name_at(index + 1);
@@ -272,14 +257,14 @@ pub(super) fn scan(text: &[u8], stops: ScannerStops<'_>, tokens: &mut Vec<Token>
                 return 0;
             };
             let written;
-            (starts, written, gap) = short_tokens(
+            (starts, written, ignored) = short_tokens(
                 bytes,
                 starts,
                 not_name,
                 next_not_name,
                 first as u32,
                 slots,
-                gap,
+                ignored,
             );
             count += written;
             if starts == 0 {
@@ -303,22 +288,17 @@ pub(super) fn scan(text: &[u8], stops: ScannerStops<'_>, tokens: &mut Vec<Token>
                 _ => 0,
             };
             if kind == Kind::Ignored {
-                gap.is_tidy = false;
+                ignored = 255;
                 continue;
             }
             tokens[count] = Token {
                 kind,
-                line_feeds_before: gap.line_feeds as u8,
-                is_after_tidy_gap: gap.is_tidy,
+                ignored_before: ignored as u8,
                 start: start as u32,
                 end: end as u32,
             };
             count += 1;
-            gap = Gap {
-                line_feeds: 0,
-                is_tidy: true,
-                next_line_feed: end as u32,
-            };
+            ignored = 0;
             if kind == Kind::Invalid {
                 break 'words;
             }
@@ -332,8 +312,9 @@ pub(super) fn scan(text: &[u8], stops: ScannerStops<'_>, tokens: &mut Vec<Token>
 }
 
 /// Writes the tokens that start at the bits of `starts`, up to the first one that takes more than its first byte and
-/// the bitmaps of two words to read. Returns the bits that are left, and the number of tokens written. `bytes` are the
-/// bytes of the word, the first of which is at `first` in the text.
+/// the bitmaps of two words to read. Returns the bits that are left, the number of tokens written, and `ignored`, which
+/// is [`Token::ignored_before`] of the next token. `bytes` are the bytes of the word, the first of which is at `first`
+/// in the text.
 #[inline(always)]
 fn short_tokens(
     bytes: &[u8; WORD],
@@ -342,8 +323,8 @@ fn short_tokens(
     next_not_name: u64,
     first: u32,
     slots: &mut [Token; WORD],
-    mut gap: Gap,
-) -> (u64, usize, Gap) {
+    mut ignored: u32,
+) -> (u64, usize, u32) {
     let mut count = 0;
     while starts != 0 {
         let offset = starts.trailing_zeros();
@@ -359,22 +340,13 @@ fn short_tokens(
         let end = start + run.max(1);
         slots[count % WORD] = Token {
             kind,
-            line_feeds_before: gap.line_feeds as u8,
-            is_after_tidy_gap: gap.is_tidy,
+            ignored_before: ignored as u8,
             start,
             end,
         };
         let is_token = kind != Kind::Ignored;
-        let is_line_feed = byte == b'\n';
         count += usize::from(is_token);
-        gap = Gap {
-            line_feeds: match is_token {
-                true => 0,
-                false => (gap.line_feeds + u32::from(is_line_feed)).min(255),
-            },
-            is_tidy: is_token | (gap.is_tidy & is_line_feed & (start == gap.next_line_feed)),
-            next_line_feed: if is_token { end } else { start + 1 },
-        };
+        ignored = (ignored + 1).min(255) * u32::from(!is_token);
     }
-    (starts, count, gap)
+    (starts, count, ignored)
 }

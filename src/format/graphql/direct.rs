@@ -317,10 +317,13 @@ impl<'t> Direct<'t, '_> {
             && !self.is_document
             && self.has_only_spaces
             && self.run_end == self.last_end as usize
-            && self.token.is_after_tidy_gap
-            && u32::from(self.token.line_feeds_before) == self.gap_lines
+            && u32::from(self.token.ignored_before) == self.gap_lines
             && start - self.run_end
                 == self.gap_lines as usize + self.indentation_len(self.gap_level)
+            && (self
+                .text
+                .get(self.run_end..self.run_end + self.gap_lines as usize))
+            .is_some_and(|it| it.iter().all(|byte| *byte == b'\n'))
         {
             self.gap = Gap::Nothing;
             self.line_indent = self.gap_level as usize * self.tab_width;
@@ -480,10 +483,13 @@ impl<'t> Direct<'t, '_> {
     /// `is_next_line_empty(text, last_end)`
     #[inline]
     fn is_next_line_empty(&self) -> bool {
-        let line_feeds = self.token.line_feeds_before;
-        match (self.token.is_after_tidy_gap || line_feeds == 0) && self.comment == NO_COMMENT {
-            true => line_feeds >= 2,
-            false => is_next_line_empty(self.text, self.last_end as usize),
+        let at = self.last_end as usize;
+        match (self.token.ignored_before, self.text.get(at..at + 2)) {
+            _ if self.comment != NO_COMMENT => is_next_line_empty(self.text, at),
+            // Nothing but spaces and tabs is before the next token, or behind the line feed.
+            (0, _) | (1, Some([b'\n', _])) => false,
+            (_, Some(b"\n\n")) => true,
+            _ => is_next_line_empty(self.text, at),
         }
     }
 
@@ -707,7 +713,7 @@ impl<'t> Direct<'t, '_> {
         crate::ir::run::print(root, source, self.options, self.document, self.printer.out)
             .map_err(|_| Refusal::Text)?;
         let rest = self.tokens.get(self.index..).unwrap_or_default();
-        self.index += rest.partition_point(|token| token.start < end);
+        self.index += rest.iter().take_while(|token| token.start < end).count();
         (self.last_end, self.comment) = (end, NO_COMMENT);
         self.load_token();
         self.resume();

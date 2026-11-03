@@ -79,6 +79,20 @@ With `proseWrap: "preserve"` nothing in a block mapping or sequence of one-line 
 
 `json/writer.rs` writes a document without comments from the tree. Before it copies anything it looks whether the source goes on with the same bytes (`Writer::goes_on_with`, `put_source`), and only moves the end of the stretch that is still to be copied. A document that is formatted is copied once, at the end. One that is indented differently costs two copies per line. `no_short_cuts` makes every comparison fail.
 
+## GraphQL
+
+```
+text ─ parser.rs ─→ Tree ─ comments.rs ─→ who owns each comment ─ printer.rs ─→ the document of ir/        the long way, and templates
+text ─ tokens.rs ─→ [Token] ─ direct.rs ─→ bytes                                                           a file
+```
+
+The tokens of a text are printed in their order, nearly all as they are written, and what is between two of them follows from the grammar. So `direct.rs` has the grammar and the rules of the printer in one: it looks at a token, decides what goes before it, and writes both. **It is a second implementation of `parser.rs` and `printer.rs`: whoever changes a rule there changes it here, or makes `direct.rs` refuse.** It accepts nothing that `parser.rs` refuses. `--no-short-cuts` turns it off, `test/cli/format/short-cuts.test.ts` compares.
+
+- **Three ways to write**, and what one is not sure about goes to the next. Straight to the output with every group on one line. If that does not fit, or a line break is forced in a group: a list in brackets is written on lines (whatever follows the group, it breaks), anything else is a `unit` that is read again and written to the `Elements` of `css/doc.rs`. A definition with anything else in it (a comment that is not between two items, a syntax error, a string that is not printed as Prettier prints it) is parsed by `parser::parse_definition` and printed from its tree. `# prettier-ignore`, what is nested more than 64 deep and every error of the long way give up the text.
+- **Nothing is copied token by token.** As long as the text between two tokens is what would be written there, they join a run of the source, which is copied in one piece. A formatted file is one run.
+- **No token waits for another.** `tokens::scan` finds all tokens first, from the bitmaps of `bun_highway::ScannerStops`. Reading a token where the last one ends is a chain of loads that took 40 % of the time.
+- **Comments** between two items of a block, of a list in brackets that is on lines, and between definitions are written where `comments::attach` and `Builder::print` put them: `Direct::end_item`. A token that is taken with a comment before it refuses the definition, so an item that goes on behind a comment is never taken for two.
+
 ## Syntax errors
 
 `[error] a.css: SyntaxError: Unclosed string (3:6)`, and under it the lines around the place as Prettier shows them. `syntax_error.rs`:

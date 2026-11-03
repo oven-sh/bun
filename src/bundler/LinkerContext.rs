@@ -1042,10 +1042,8 @@ impl<'a> LinkerContext<'a> {
     // CONCURRENCY: `each_ptr` callback — runs on worker threads, one task per
     // `chunk_index`. Writes: `chunk.intermediate_output`, `chunk.isolated_hash`,
     // `chunk.output_source_map` (per-chunk, disjoint by `&mut Chunk`). Reads
-    // `ctx.c`/`ctx.chunks` shared. Never forms `&mut LinkerContext` — the
-    // `post_process_*` callees take `GenerateChunkCtx` by value and deref
-    // `ctx.c` to `&LinkerContext` for read-only graph access plus per-chunk
-    // raw-ptr writes (see `postProcessJSChunk.rs`).
+    // `ctx.chunks` shared. The `post_process_*` callees take `GenerateChunkCtx`
+    // by value and get `&mut LinkerContext` from `ctx.c()`.
     pub(crate) fn generate_chunk(ctx: &GenerateChunkCtx, chunk: &mut Chunk, chunk_index: usize) {
         let worker = crate::thread_pool::Worker::get(&ctx.c.pool);
         let mut worker = scopeguard::guard(worker, |w| w.unget());

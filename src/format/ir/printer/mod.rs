@@ -309,7 +309,7 @@ pub(crate) fn print(
 impl<'d> Printer<'d> {
     fn print_all(&mut self) -> PrintResult<()> {
         loop {
-            self.print_elements::<false>(PrintMode::Expanded)?;
+            self.print_elements(None)?;
             if self.buffers.line_suffixes.is_empty() {
                 return Ok(());
             }
@@ -432,16 +432,16 @@ impl<'d> Printer<'d> {
 
     /// Prints the queue.
     ///
-    /// With `ENTRY`, it only prints from the [`Tag::StartEntry`] that's next in the queue to its [`Tag::EndEntry`], in
-    /// `entry_mode`.
-    fn print_elements<const ENTRY: bool>(&mut self, entry_mode: PrintMode) -> PrintResult<()> {
+    /// With `entry_mode`, it only prints from the [`Tag::StartEntry`] that's next in the queue to its
+    /// [`Tag::EndEntry`], in that mode.
+    #[inline(never)]
+    fn print_elements(&mut self, entry_mode: Option<PrintMode>) -> PrintResult<()> {
         let mut depth = 0usize;
         loop {
             let Some(element) = self.next() else {
-                return if ENTRY {
-                    Err(PrintError::InvalidDocument)
-                } else {
-                    Ok(())
+                return match entry_mode {
+                    Some(_) => Err(PrintError::InvalidDocument),
+                    None => Ok(()),
                 };
             };
             match element {
@@ -552,7 +552,7 @@ impl<'d> Printer<'d> {
                     Tag::StartFill => self.print_fill_entries()?,
                     Tag::EndFill => self.pop(FrameKind::Fill)?,
                     Tag::StartEntry => {
-                        if ENTRY {
+                        if let Some(entry_mode) = entry_mode {
                             depth += 1;
                             if depth == 1 {
                                 self.push(FrameKind::Entry, entry_mode);
@@ -563,7 +563,7 @@ impl<'d> Printer<'d> {
                     }
                     Tag::EndEntry => {
                         self.pop(FrameKind::Entry)?;
-                        if ENTRY {
+                        if entry_mode.is_some() {
                             depth = depth.saturating_sub(1);
                             if depth == 0 {
                                 return Ok(());
@@ -684,7 +684,7 @@ impl<'d> Printer<'d> {
             return Err(PrintError::NestedTooDeeply);
         }
         match self.is_at_start_entry() {
-            true => self.print_elements::<true>(mode),
+            true => self.print_elements(Some(mode)),
             false => Err(PrintError::InvalidDocument),
         }
     }

@@ -61,7 +61,7 @@ static const HashTableValue JSX509CertificatePrototypeTableValues[] = {
     { "ca"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_ca, 0 } },
     { "checkEmail"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsX509CertificateProtoFuncCheckEmail, 2 } },
     { "checkHost"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsX509CertificateProtoFuncCheckHost, 2 } },
-    { "checkIP"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsX509CertificateProtoFuncCheckIP, 1 } },
+    { "checkIP"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsX509CertificateProtoFuncCheckIP, 2 } },
     { "checkIssued"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsX509CertificateProtoFuncCheckIssued, 1 } },
     { "checkPrivateKey"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsX509CertificateProtoFuncCheckPrivateKey, 1 } },
     { "fingerprint"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_fingerprint, 0 } },
@@ -113,6 +113,17 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncToString, (JSGlobalObject * g
     return JSValue::encode(jsString(vm, pemString));
 }
 
+// What `{ ...options }` has under `name`: an own enumerable property, or undefined.
+static JSValue getOwnOption(JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSObject* options, const Identifier& name)
+{
+    PropertyDescriptor descriptor;
+    bool isOwn = options->getOwnPropertyDescriptor(globalObject, name, descriptor);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!isOwn || !descriptor.enumerable())
+        return jsUndefined();
+    return options->get(globalObject, name);
+}
+
 // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/x509.js#L59-L86
 static uint32_t getFlags(JSC::VM& vm, JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSValue options)
 {
@@ -123,19 +134,19 @@ static uint32_t getFlags(JSC::VM& vm, JSGlobalObject* globalObject, JSC::ThrowSc
     RETURN_IF_EXCEPTION(scope, {});
     JSObject* object = options.getObject();
 
-    JSValue subject = object->get(globalObject, Identifier::fromString(vm, "subject"_s));
+    JSValue subject = getOwnOption(globalObject, scope, object, Identifier::fromString(vm, "subject"_s));
     RETURN_IF_EXCEPTION(scope, {});
 
-    JSValue wildcards = object->get(globalObject, Identifier::fromString(vm, "wildcards"_s));
+    JSValue wildcards = getOwnOption(globalObject, scope, object, Identifier::fromString(vm, "wildcards"_s));
     RETURN_IF_EXCEPTION(scope, {});
 
-    JSValue partialWildcards = object->get(globalObject, Identifier::fromString(vm, "partialWildcards"_s));
+    JSValue partialWildcards = getOwnOption(globalObject, scope, object, Identifier::fromString(vm, "partialWildcards"_s));
     RETURN_IF_EXCEPTION(scope, {});
 
-    JSValue multiLabelWildcards = object->get(globalObject, Identifier::fromString(vm, "multiLabelWildcards"_s));
+    JSValue multiLabelWildcards = getOwnOption(globalObject, scope, object, Identifier::fromString(vm, "multiLabelWildcards"_s));
     RETURN_IF_EXCEPTION(scope, {});
 
-    JSValue singleLabelSubdomains = object->get(globalObject, Identifier::fromString(vm, "singleLabelSubdomains"_s));
+    JSValue singleLabelSubdomains = getOwnOption(globalObject, scope, object, Identifier::fromString(vm, "singleLabelSubdomains"_s));
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!subject.isUndefined()) {
@@ -143,28 +154,20 @@ static uint32_t getFlags(JSC::VM& vm, JSGlobalObject* globalObject, JSC::ThrowSc
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    auto isSet = [&](JSValue value, ASCIILiteral name, bool defaultValue) -> bool {
+    const std::pair<JSValue, ASCIILiteral> booleans[] = {
+        { wildcards, "options.wildcards"_s },
+        { partialWildcards, "options.partialWildcards"_s },
+        { multiLabelWildcards, "options.multiLabelWildcards"_s },
+        { singleLabelSubdomains, "options.singleLabelSubdomains"_s },
+    };
+    for (auto& [value, name] : booleans) {
         if (value.isUndefined())
-            return defaultValue;
+            continue;
         V::validateBoolean(scope, globalObject, value, name);
         RETURN_IF_EXCEPTION(scope, {});
-        return value.asBoolean();
-    };
+    }
 
     uint32_t flags = 0;
-
-    if (!isSet(wildcards, "options.wildcards"_s, true))
-        flags |= ncrypto::X509View::CheckFlags::NO_WILDCARDS;
-    RETURN_IF_EXCEPTION(scope, {});
-    if (!isSet(partialWildcards, "options.partialWildcards"_s, true))
-        flags |= ncrypto::X509View::CheckFlags::NO_PARTIAL_WILDCARDS;
-    RETURN_IF_EXCEPTION(scope, {});
-    if (isSet(multiLabelWildcards, "options.multiLabelWildcards"_s, false))
-        flags |= ncrypto::X509View::CheckFlags::MULTI_LABEL_WILDCARDS;
-    RETURN_IF_EXCEPTION(scope, {});
-    if (isSet(singleLabelSubdomains, "options.singleLabelSubdomains"_s, false))
-        flags |= ncrypto::X509View::CheckFlags::SINGLE_LABEL_SUBDOMAINS;
-    RETURN_IF_EXCEPTION(scope, {});
 
     if (!subject.isUndefined()) {
         auto view = asString(subject)->view(globalObject);
@@ -178,6 +181,15 @@ static uint32_t getFlags(JSC::VM& vm, JSGlobalObject* globalObject, JSC::ThrowSc
             return 0;
         }
     }
+
+    if (wildcards.isFalse())
+        flags |= ncrypto::X509View::CheckFlags::NO_WILDCARDS;
+    if (partialWildcards.isFalse())
+        flags |= ncrypto::X509View::CheckFlags::NO_PARTIAL_WILDCARDS;
+    if (multiLabelWildcards.isTrue())
+        flags |= ncrypto::X509View::CheckFlags::MULTI_LABEL_WILDCARDS;
+    if (singleLabelSubdomains.isTrue())
+        flags |= ncrypto::X509View::CheckFlags::SINGLE_LABEL_SUBDOMAINS;
 
     return flags;
 }
@@ -197,11 +209,11 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckEmail, (JSGlobalObject *
     V::validateString(scope, globalObject, arg0, "email"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto* emailString = asString(arg0);
-    auto view = emailString->view(globalObject);
+    uint32_t flags = getFlags(vm, globalObject, scope, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
 
-    uint32_t flags = getFlags(vm, globalObject, scope, callFrame->argument(1));
+    auto* emailString = asString(arg0);
+    auto view = emailString->view(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
     // A string too long to convert is not a name in the certificate.
@@ -268,12 +280,12 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckIP, (JSGlobalObject * gl
     V::validateString(scope, globalObject, arg0, "ip"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto* ipString = asString(arg0);
-    auto view = ipString->view(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
     // None of the options changes the result. They are still validated.
     getFlags(vm, globalObject, scope, callFrame->argument(1));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto* ipString = asString(arg0);
+    auto view = ipString->view(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
     auto check = thisObject->checkIP(globalObject, view);

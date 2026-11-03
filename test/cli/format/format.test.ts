@@ -7313,7 +7313,7 @@ try {
     ],
     [
       "graphql",
-      "type User {\n  id: ID!\n  name(first: Int = 1): [String!]\n}\n\nquery {\n  user(id: 1) {\n    name\n  }\n}\n\n",
+      "type User {\n  id: ID!\n  name(first: Int = 1): [String!]\n  friends(first: Int = 10, after: String, orderBy: [Order!] = [{ field: NAME }]): [User!]! @cost(value: 5)\n}\n\nquery {\n  user(id: 1) {\n    name\n  }\n}\n\n",
       [
         ...'{a}\n¦{¦}¦a ¦query{a}\n¦type A{b:C}\n¦type A{¦b:C ¦# a\n¦"a" ¦"""a""" ¦"¦"""¦(¦)¦[¦]¦$a '.split("¦"),
         ..."@a ¦...¦...a ¦...on A{b} ¦a:b ¦a(b:1) ¦{a{¦!¦|¦&¦=¦:¦,¦\n¦ ¦1 ¦1.5 ¦enum A{B}\n¦union A=B|C\n¦union A=B".split(
@@ -7323,6 +7323,17 @@ try {
           "¦",
         ),
         ..."interface A{b:C}\n¦type A implements B&C{d:E}\n¦&B¦{a(b:[¦{a(b:{c:¦é¦\\".split("¦"),
+        ..."{a # b\n(c:1)}\n¦{a(b:1 # c\n)}\n¦{a(\n# b\nc:1\n# d\ne:2)}\n¦{a}# b\n¦{\n# a\nb\n# c\n}\n¦# prettier-ignore\n{a}\n".split(
+          "¦",
+        ),
+        ...'"""a\n¦"""\\¦"a\\¦{a(b:"""\n¦{a(b:"¦type A{\n"""a\n¦{a}/*¦{a}\n/*¦{a}//¦$a$b¦{a(b:$c$d)}\n¦{a},,,,\n¦{a}﻿\n'.split(
+          "¦",
+        ),
+        // A name that's longer than a word of the scanner's bitmaps, and what can end it.
+        ...[" ", "$", "}\n{", '"'].map(end => "a".repeat(100) + end),
+        `{a(b:[[[[["${"a".repeat(30)}","${"a".repeat(30)}","${"a".repeat(30)}"]]]]])}\n`,
+        `type A{b(c:D=[${"a".repeat(30)},${"a".repeat(30)},${"a".repeat(30)}] @f(g:"${"a".repeat(90)}")):E}\n`,
+        `union A=${"a".repeat(30)}|${"a".repeat(30)}|${"a".repeat(30)}\n`,
       ],
     ],
     [

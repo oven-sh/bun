@@ -146,6 +146,21 @@ fn end_of_number(text: &[u8], start: usize) -> Option<usize> {
     }
 }
 
+/// Returns the end of the name at `start`.
+fn end_of_long_name(stops: ScannerStops<'_>, start: usize) -> usize {
+    let end = stops.after_name.next(start);
+    // A `$` ends it earlier. The next stop of `in_string` can be as far away as the end of the text, so it's only
+    // looked for in the name.
+    let mut at = start;
+    while at < end {
+        match stops.in_string.run(at) as usize {
+            run @ ..57 => return end.min(at + run),
+            _ => at += 56,
+        }
+    }
+    end
+}
+
 /// Returns the kind and the end of the token at `start`, whose first byte starts a `kind`. `Ignored` is a byte order
 /// mark.
 #[inline(never)]
@@ -276,10 +291,7 @@ pub(super) fn scan(text: &[u8], stops: ScannerStops<'_>, tokens: &mut Vec<Token>
                 break 'words;
             };
             let (kind, end) = match KINDS[byte as usize] {
-                Kind::Name => (
-                    Kind::Name,
-                    (stops.after_name.next(start)).min(stops.in_string.next(start)),
-                ),
+                Kind::Name => (Kind::Name, end_of_long_name(stops, start)),
                 kind => long_token(text, stops, kind, start).unwrap_or((Kind::Invalid, start + 1)),
             };
             resume_at = end;

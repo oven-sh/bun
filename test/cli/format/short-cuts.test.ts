@@ -366,6 +366,7 @@ describe("GraphQL", () => {
     "{ a }\r\n{ b(c: 1\r\n\r\nd: 2) }\r\n",
     "{ a }\r{ b }\r",
     `{ ${"a".repeat(70)} ${"b".repeat(200)}(c: 1) }\n`,
+    `{ a(b: [$${"a".repeat(70)}$${"b".repeat(130)}$c]) }\n`,
     `{ ${"a { ".repeat(70)}b${" }".repeat(70)} }\n`,
     `{ a(b: ${"[".repeat(70)}1${"]".repeat(70)}) }\n`,
     `type A { b: ${"[".repeat(70)}C${"]".repeat(70)} }\n`,

@@ -1589,6 +1589,8 @@ describe.skipIf(!hasFlag)("what breaks whether it fits or not, and what only loo
       a((e = a([n])) => { x; });
       a((e = a({ n })) => f(x, y));
       new A((e = a([n])) => { x; }, b);
+      abc(({ e = a({ n }) }) => { x; });
+      abcde(({ e = { l: a(b, { n }) } }) => { x; });
     `,
     // It stays on the line of the \`=\` if that fits up to the \`(\`.
     "this-called.ts":

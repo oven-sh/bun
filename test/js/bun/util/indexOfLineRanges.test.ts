@@ -20,6 +20,7 @@ const CR = 13;
 function allRanges(text: Uint8Array): [start: number, end: number][] {
   const first = text.indexOf(LF);
   if (first < 0) return [[0, text.length]];
+  // Only a `\n` ends the first line: the `\r` of a `\r\n` is in its range, and in the range of no later line.
   const ranges: [number, number][] = [[0, first]];
   let prevEnd = first;
   let at = first + 1;
@@ -68,13 +69,10 @@ function targetLines(lines: number, random: () => number): number[] {
 
 function mismatches(text: Uint8Array, random: () => number): string[] {
   const all = allRanges(text);
-  const firstLineFeed = text.indexOf(LF);
   const found: string[] = [];
   for (const targetLine of targetLines(all.length, random)) {
     for (const count of [1, 6] as const) {
       const actual = indexOfLineRanges(text, targetLine, count);
-      // The first line keeps the `\r` of a `\r\n` today, and no later line does. Both pass here.
-      if (text[firstLineFeed - 1] === CR && actual[0] === 0 && actual[1] === firstLineFeed - 1) actual[1]++;
       const wanted = expected(text, all, targetLine, count);
       if (actual.length !== wanted.length || actual.some((offset, i) => offset !== wanted[i])) {
         found.push(`line ${targetLine}, ${count} ranges: [${actual}] and not [${wanted}]`);

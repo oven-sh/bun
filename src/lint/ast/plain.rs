@@ -12,12 +12,6 @@ impl<'a> File<'a> {
         self.plain_exprs.get(id.idx())
     }
 
-    /// The same for the statement `id`.
-    #[inline]
-    pub fn plain_stmt(&self, id: hir::StmtId) -> Option<&'a hir::Stmt> {
-        self.plain_stmts.get(id.idx())
-    }
-
     #[inline]
     pub fn plain_call(&self, id: hir::CallId) -> Option<&'a hir::Call> {
         self.hir.calls.get(id.idx())

@@ -5074,7 +5074,7 @@ pub(crate) fn transpile_as_loaded(
         loader: Cell::new(loader),
         module_type: Cell::new(ModuleType::Unknown),
         source_code_printer: printer_ptr,
-        promise_ptr: ptr::null_mut(),
+        promise_ptr: None,
     };
     let specifier = bun_core::StringView::from_bytes(path);
     let args = TranspileArgs {

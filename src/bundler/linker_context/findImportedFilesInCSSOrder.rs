@@ -214,11 +214,8 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
 
             // Any pre-import layers come first.
             if !repr.layers_pre_import.is_empty() {
-                // See the `LayerName` note where the duplicate pass borrows `layer_names`.
-                let layers =
-                    core::ptr::NonNull::from(&repr.layers_pre_import).cast::<Vec<LayerName>>();
                 self.push_entry(
-                    CssImportOrderKind::Layers(Layers::borrow(layers)),
+                    CssImportOrderKind::Layers(Layers::borrow(&repr.layers_pre_import)),
                     wrapping_conditions,
                 );
             }

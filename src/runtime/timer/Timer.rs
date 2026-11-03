@@ -11,7 +11,7 @@ use bun_core::String as BunString;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::bindgen::{self, JsHeap};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
+use bun_jsc::{JSGlobalObject, JSValue, JsClass as _, JsResult, StringJsc as _};
 use bun_uws::Loop as UwsLoop;
 
 use super::{

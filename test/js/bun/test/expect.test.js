@@ -1092,6 +1092,11 @@ describe("expect()", () => {
           function: printed(new Proxy(function foo() {}, {})),
           arrow: printed(new Proxy(() => {}, {})),
           class: printed(new Proxy(Foo, {})),
+          "element of a component": printed({
+            $$typeof: Symbol.for("react.element"),
+            type: new Proxy(function Button() {}, {}),
+            props: {},
+          }),
           Date: printed(new Proxy(new Date(0), {})),
           Error: printed(new Proxy(new TypeError("boom"), {})),
           "typed array": printed(new Proxy(new Uint8Array([1, 2]), {}))
@@ -1111,6 +1116,7 @@ describe("expect()", () => {
           function: "[Function: foo]",
           arrow: "[Function]",
           class: "[class Foo]",
+          "element of a component": "<Button />",
           Date: "Date {}",
           Error: "[TypeError: boom]",
           "typed array": ['  "0": 1,', '  "1": 2,', "}"],

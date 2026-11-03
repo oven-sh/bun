@@ -87,3 +87,15 @@ Arguments [
   Money<2>,
 ]
 `;
+
+exports[`a snapshot serializer prints the values inside a Proxy and an arguments object 3`] = `
+Map {
+  "price" => Money<3>,
+}
+`;
+
+exports[`a snapshot serializer prints the values inside a Proxy and an arguments object 4`] = `
+{
+  "proxyOfMap": the Proxy of a Map,
+}
+`;

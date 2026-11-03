@@ -1776,6 +1776,8 @@ impl<'a> Formatter<'a> {
                     );
                 }
                 Tag::Map => {
+                    // No trap gives the entries of a Map, so a Proxy of one prints those of its target.
+                    let value = target_of_proxy(value);
                     let length_value = value
                         .get(self.global_this, "size")?
                         .unwrap_or_else(|| JSValue::js_number_from_int32(0));
@@ -1824,6 +1826,7 @@ impl<'a> Formatter<'a> {
                     writer.write_all(b"\n");
                 }
                 Tag::Set => {
+                    let value = target_of_proxy(value);
                     let length_value = value
                         .get(self.global_this, "size")?
                         .unwrap_or_else(|| JSValue::js_number_from_int32(0));
@@ -2052,7 +2055,7 @@ impl<'a> Formatter<'a> {
                             tag_name_slice = tag_name_view.to_utf8();
                             is_tag_kind_primitive = true;
                         } else if _tag.cell.is_object() || type_value.is_callable() {
-                            let name = type_value.get_name_property(self.global_this)?;
+                            let name = self.named(type_value).get_name_property(self.global_this)?;
                             tag_name_slice = if name.is_empty() {
                                 Utf8Bytes::Borrowed(b"NoName")
                             } else {
@@ -2558,9 +2561,9 @@ impl<'a> Formatter<'a> {
     ) -> JsResult<()> {
         // `Tag::get` also classifies for the replay of older versions, so the tag changes here and not there.
         if self.like_older_bun.is_none() && (result.cell == JSType::ProxyObject || result.tag == Tag::JSON) {
-            let (retagged, printed) = self.unclassified(result, value, global_this);
-            if retagged.tag != result.tag {
-                return self.format::<W, ENABLE_ANSI_COLORS>(retagged, writer, printed, global_this);
+            let tag = self.tag_of_unclassified(result, value, global_this);
+            if tag != result.tag {
+                return self.format::<W, ENABLE_ANSI_COLORS>(TagResult { tag, cell: result.cell }, writer, value, global_this);
             }
         }
         // Vitest's `maxOutputLength`. A React fiber or `window` would print hundreds of megabytes.
@@ -2683,32 +2686,30 @@ impl<'a> Formatter<'a> {
         r
     }
 
-    /// The tag and the value to print for a Proxy, and for a kind that `Tag::get` leaves to `JSON.stringify()`, which throws on a cycle or a BigInt.
+    /// The tag for a Proxy, and for a kind that `Tag::get` leaves to `JSON.stringify()`, which throws on a cycle or a BigInt.
     #[cold]
     #[inline(never)]
-    fn unclassified(&mut self, result: TagResult, value: JSValue, global: &JSGlobalObject) -> (TagResult, JSValue) {
-        let tagged = |tag| (TagResult { tag, cell: result.cell }, value);
+    fn tag_of_unclassified(&mut self, result: TagResult, value: JSValue, global: &JSGlobalObject) -> Tag {
         if result.cell == JSType::ProxyObject {
             self.same_as_older_bun = false;
             let target = target_of_proxy(value);
             return if value.is_callable() {
-                tagged(if target.is_class(global) { Tag::Class } else { Tag::Function })
+                if target.is_class(global) { Tag::Class } else { Tag::Function }
             } else {
                 match target.js_type() {
-                    JSType::Array | JSType::DerivedArray => tagged(Tag::Array),
-                    JSType::ErrorInstance => tagged(Tag::Error),
-                    // No trap gives the entries of a Map or Set, so its printer gets the target.
-                    cell @ (JSType::Map | JSType::WeakMap) => (TagResult { tag: Tag::Map, cell }, target),
-                    cell @ (JSType::Set | JSType::WeakSet) => (TagResult { tag: Tag::Set, cell }, target),
-                    _ => tagged(Tag::Object),
+                    JSType::Array | JSType::DerivedArray => Tag::Array,
+                    JSType::ErrorInstance => Tag::Error,
+                    JSType::Map | JSType::WeakMap => Tag::Map,
+                    JSType::Set | JSType::WeakSet => Tag::Set,
+                    _ => Tag::Object,
                 }
             };
         }
         if !result.cell.is_object() || matches!(result.cell, JSType::JSDate | JSType::JSAsJSONType) {
-            return (result, value);
+            return Tag::JSON;
         }
         self.same_as_older_bun = false;
-        tagged(if result.cell.is_arguments() { Tag::Array } else { Tag::Object })
+        if result.cell.is_arguments() { Tag::Array } else { Tag::Object }
     }
 
     /// The value that a header names: the target of a Proxy, so no trap runs. Older versions printed `ProxyObject`.

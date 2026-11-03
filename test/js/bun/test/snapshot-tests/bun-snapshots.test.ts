@@ -81,6 +81,12 @@ test("a snapshot serializer prints the values inside a Proxy and an arguments ob
   (function (..._: unknown[]) {
     expect(arguments).toMatchSnapshot();
   })(new Money(2));
+  expect(new Proxy(new Map([["price", new Money(3)]]), {})).toMatchSnapshot();
+
+  // A serializer gets the Proxy, not its target.
+  const proxyOfMap = new Proxy(new Map([["k", 1]]), {});
+  expect.addSnapshotSerializer({ test: value => value === proxyOfMap, serialize: () => "the Proxy of a Map" });
+  expect({ proxyOfMap }).toMatchSnapshot();
 });
 
 // Bun 1.4.4 wrote formats/bun-1.4.4, both the .snap file and the inline snapshots. It printed these values with JSON.stringify().

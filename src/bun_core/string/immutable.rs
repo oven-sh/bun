@@ -1735,10 +1735,7 @@ pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
 
     let mut ranges = BoundedArray::<LineRange, LINE_RANGE_COUNT>::default();
 
-    let mut current_line: u32 = 0;
-    let Some(first_newline_or_nonascii_i) =
-        index_of_newline_or_non_ascii_check_start::<true>(text, 0)
-    else {
+    let Some(first_stop) = index_of_newline_or_non_ascii_check_start::<true>(text, 0) else {
         if target_line == 0 {
             let _ = ranges.push(LineRange {
                 start: 0,
@@ -1749,35 +1746,14 @@ pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
         return ranges;
     };
 
-    let iter = CodepointIterator::init(text);
-    let mut cursor = unicode::Cursor {
-        i: first_newline_or_nonascii_i,
-        ..Default::default()
+    // Only a `\n` ends the first line. Most often the first stop is that `\n`, or the `\r` before it.
+    let first_stop = first_stop as usize;
+    let first_line_feed = match text[first_stop] {
+        b'\n' => Some(first_stop),
+        b'\r' if text.get(first_stop + 1) == Some(&b'\n') => Some(first_stop + 1),
+        _ => index_of_char_usize(&text[first_stop..], b'\n').map(|i| first_stop + i),
     };
-    const NL: i32 = b'\n' as i32;
-    const CR: i32 = b'\r' as i32;
-    let first_newline_range: LineRange = 'brk: {
-        while iter.next(&mut cursor) {
-            match cursor.c {
-                NL => {
-                    current_line += 1;
-                    break 'brk LineRange {
-                        start: 0,
-                        end: cursor.i,
-                    };
-                }
-                CR => {
-                    if iter.next(&mut cursor) && cursor.c == NL {
-                        current_line += 1;
-                        break 'brk LineRange {
-                            start: 0,
-                            end: cursor.i,
-                        };
-                    }
-                }
-                _ => {}
-            }
-        }
+    let Some(first_line_feed) = first_line_feed else {
         let _ = ranges.push(LineRange {
             start: 0,
             // Wrapping cast.
@@ -1785,6 +1761,11 @@ pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
         });
         return ranges;
     };
+    let first_newline_range = LineRange {
+        start: 0,
+        end: first_line_feed as u32,
+    };
+    let mut current_line: u32 = 1;
 
     let _ = ranges.push(first_newline_range); // OOM/capacity: fire-and-forget
 
@@ -1792,6 +1773,14 @@ pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
         return ranges;
     }
 
+    const NL: i32 = b'\n' as i32;
+    const CR: i32 = b'\r' as i32;
+    let iter = CodepointIterator::init(text);
+    let mut cursor = unicode::Cursor {
+        i: first_newline_range.end,
+        width: 1,
+        c: NL,
+    };
     let mut prev_end = first_newline_range.end;
     while let Some(current_i) =
         index_of_newline_or_non_ascii_check_start::<true>(text, cursor.i + u32::from(cursor.width))

@@ -316,8 +316,7 @@ pub(crate) struct Formatter<'a> {
     pub global_this: &'a JSGlobalObject,
     pub(crate) indent: u32,
     pub(crate) quote_strings: bool,
-    /// jest-snapshot's `normalizeNewlines`: `\r\n` and `\r` in a string or in DOM text print as `\n`.
-    /// Set only for the text that a Bun-format snapshot stores. A failure message keeps each `\r`, so its diff shows a line-ending difference.
+    /// jest-snapshot's `normalizeNewlines`: `\r\n` and `\r` print as `\n`. Only the text that a Bun-format snapshot stores sets it.
     pub(crate) normalize_newlines: bool,
     pub(crate) failed: bool,
     pub(crate) estimated_line_length: usize,

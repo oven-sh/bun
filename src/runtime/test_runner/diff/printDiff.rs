@@ -82,9 +82,7 @@ pub(crate) fn print_diff_main(
     p.result
 }
 
-/// Appends `text` with every `\r` as `␍` (U+240D). A terminal draws what follows a raw `\r` over the start
-/// of the row, and a GitHub Actions annotation drops it. The value printer writes a backslash as it is, so
-/// the two characters `\r` could also be a backslash and an `r`.
+/// `␍` and not the two characters `\r`: the value printer writes a backslash as it is, so those could be a backslash and an `r`.
 #[optimize(size)]
 fn push_with_visible_carriage_returns(out: &mut Vec<u8>, text: &[u8]) {
     let mut rest = text;

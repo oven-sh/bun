@@ -262,11 +262,12 @@ hasher.digest("hex");
 // => "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
 ```
 
-Alternatively, `.digest()` can write the hash into an existing `TypedArray` instead of allocating a new one.
+Alternatively, `.digest()` can write the hash into an existing `TypedArray` instead of allocating a new one. Pass a `TypedArray` of at least `hasher.byteLength` bytes.
 
 ```ts
 const arr = new Uint8Array(32);
 
+hasher.update("hello world");
 hasher.digest(arr);
 
 console.log(arr);

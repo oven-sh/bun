@@ -800,29 +800,22 @@ function endNT(self: $Node.Socket, socket: SocketHandle | null, callback: WriteC
   // A TLS wrap made since _final attached this socket's handle, or left the fd to the raw half of `socket`.
   const current = self._handle;
   const handle = !socket || current?.[kAdoptedTLSRaw] ? current : socket;
-  // Destroyed since _final: node's shutdown() reports the closed handle and _final calls back at
-  // once. A callback parked here would reach the next life of a socket that connect() reuses.
+  // Destroyed since _final: node's shutdown() reports the closed handle and _final calls back at once.
   if (!handle || self.destroyed) return callback();
   handle.shutdown();
-  // Node completes the shutdown request from libuv's pending phase, after this nextTick drain
-  // and its microtasks, and calls back from there (afterShutdown). Until then the socket is
-  // ended but not finished, so a write after the peer's FIN still reaches destroy(err) and
-  // emits 'error'.
+  // Node completes the request from libuv's pending phase, after this nextTick drain and its microtasks:
   // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L560-L566
   self[kShutdownCallback] = callback;
   (queueLoopTask ??= $newCppFunction("BunProcess.cpp", "jsFunctionQueueLoopTask", 2))(completeShutdownNT, self);
 }
-// Runs the parked _final callback once: from the loop task, or from _destroy() when the socket
-// closes first (libuv completes the request with ECANCELED ahead of the close callback).
+// Runs the parked _final callback once: from the loop task, or from _destroy() when that comes first.
 function completeShutdownNT(self: $Node.Socket) {
   const callback = self[kShutdownCallback];
   if (callback === null) return;
   self[kShutdownCallback] = null;
   callback();
 }
-// The shutdown request of end() waits for its loop turn: this side sent its FIN and nothing is
-// left to write, as after 'finish'. A close that lands in that window reports nothing node's
-// stream would see (its read side stopped at EOF, and afterShutdown ignores the request's status).
+// The shutdown request of end() waits for its loop turn: this side sent its FIN, as after 'finish'.
 function shutdownQueued(self: $Node.Socket) {
   return self[kShutdownCallback] !== null;
 }
@@ -1489,8 +1482,7 @@ function SocketEmitEndNT(self: $Node.Socket, _err?: NativeSocketError) {
     // listener attached): nothing more is coming, but the socket still has to
     // finish its lifecycle - close it quietly instead of leaving it open with
     // no further events. What a finished exchange left unread is still the
-    // reader's: its 'end' closes the socket. A queued shutdown request closes
-    // it too: its completion emits 'finish', and the Duplex destroys after it.
+    // reader's: its 'end' closes the socket. So does a queued shutdown request.
     self.destroy();
   }
   // A write that was waiting on the native drain can never complete once the
@@ -2158,8 +2150,7 @@ const SocketHandlers2 = {
     // family-autoselection race and raw sockets handed off during a TLS
     // upgrade also report errors on close, and those must keep ending
     // cleanly.
-    // After the peer's FIN (kended) the destroy followed end() at once before the shutdown request
-    // waited for its loop turn; a reset that lands in that window is teardown noise, as in SocketEmitEndNT.
+    // A reset behind the peer's FIN while the shutdown request is queued: teardown noise, as in SocketEmitEndNT.
     const teardownNoise = self[kended] && shutdownQueued(self);
     if (
       !leftToTLSSocket &&
@@ -2903,9 +2894,7 @@ Socket.prototype._destroy = function _destroy(this: $Node.Socket, err: Error | n
 
   this.connecting = false;
   const upgraded = this[kupgraded];
-  // A shutdown request still queued completes now, as libuv cancels it ahead of the close.
-  // The destroyed stream emits no 'finish' for it, and a connect() that reuses this socket
-  // cannot receive it later.
+  // libuv cancels a queued shutdown request ahead of the close: complete it before a connect() reuses this socket.
   completeShutdownNT(this);
 
   // Close an fd adopted for synchronous writes (node closes the wrapping

@@ -1040,8 +1040,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     unsafe { (*el).tick_immediate_tasks(vm) };
     // SAFETY: as above.
     let has_yielded_tasks = unsafe { (*el).promote_yield_tasks() };
-    // A task the immediates queued (`postTask` from JS) is drained by the next `tick()`, after this
-    // poll: wake the poll for it as for an immediate.
+    // A task the immediates queued waits for the next `tick()`: wake the poll for it as for an immediate.
     #[cfg(windows)]
     if has_yielded_tasks
         || !unsafe { &*el }.immediate_tasks.is_empty()
@@ -1214,8 +1213,7 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     unsafe { (*el).tick_immediate_tasks(vm) };
     // SAFETY: as above.
     let has_yielded_tasks = unsafe { (*el).promote_yield_tasks() };
-    // A task the immediates queued (`postTask` from JS) is drained by the next `tick()`, after this
-    // poll: wake the poll for it as for an immediate.
+    // A task the immediates queued waits for the next `tick()`: wake the poll for it as for an immediate.
     #[cfg(windows)]
     if has_yielded_tasks
         || !unsafe { &*el }.immediate_tasks.is_empty()

@@ -625,8 +625,10 @@ static HMACState& hmacStateOf(JSValue self) { return *stateOf<HMACState>(self); 
 
 JSValue hmacUpdate(JSGlobalObject* globalObject, JSValue self, JSValue message)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     BufferHolder input(globalObject);
-    if (!getDataToHash(globalObject, message, input))
+    if (failed(scope, getDataToHash(globalObject, message, input)))
         return {};
     hmacStateOf(self).update(input.buffer.span());
     return jsUndefined();

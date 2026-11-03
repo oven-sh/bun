@@ -624,7 +624,7 @@ static JSValue subjectAltNames(JSGlobalObject* globalObject, X509* certificate)
             char buffer[2048];
             int length = i2t_ASN1_OBJECT(buffer, sizeof(buffer) - 1, name->d.rid);
             if (length < 0)
-                return LIBRARY_ERROR(globalObject);
+                RELEASE_AND_RETURN(scope, LIBRARY_ERROR(globalObject));
             item = pairOf(globalObject, "Registered ID"_s, static_cast<size_t>(length) >= sizeof(buffer) ? makeStr(vm, "<INVALID>"_s) : makeStr(vm, String(byteCast<Latin1Character>(std::span { buffer, static_cast<size_t>(length) }))));
             break;
         }
@@ -649,7 +649,7 @@ static JSValue subjectAltNames(JSGlobalObject* globalObject, X509* certificate)
             }
             bssl::UniquePtr<BIO> bio(BIO_new(BIO_s_mem()));
             if (!bio)
-                return raisePlainError(globalObject, "failed to allocate BIO"_s);
+                RELEASE_AND_RETURN(scope, raisePlainError(globalObject, "failed to allocate BIO"_s));
             GENERAL_NAME_print(bio.get(), name);
             auto printed = contentsOf(bio.get());
             if (size_t newline = find(printed, '\n'); newline != notFound)
@@ -669,7 +669,7 @@ static JSValue subjectAltNames(JSGlobalObject* globalObject, X509* certificate)
             return {};
         listAppend(globalObject, result, item);
     }
-    return tupleFromList(globalObject, result);
+    RELEASE_AND_RETURN(scope, tupleFromList(globalObject, result));
 }
 
 // The URIs of authority information access of one kind. None: there are none.
@@ -787,11 +787,11 @@ static JSValue certificatePublicBytes(JSGlobalObject* globalObject, JSValue self
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int format;
-    if (!intArgument(globalObject, formatValue, EncodingPEM, format))
+    if (failed(scope, intArgument(globalObject, formatValue, EncodingPEM, format)))
         return {};
     bssl::UniquePtr<BIO> bio(BIO_new(BIO_s_mem()));
     if (!bio)
-        return raisePlainError(globalObject, "failed to allocate BIO"_s);
+        RELEASE_AND_RETURN(scope, raisePlainError(globalObject, "failed to allocate BIO"_s));
     int succeeded;
     switch (format) {
     case EncodingPEM:
@@ -807,9 +807,9 @@ static JSValue certificatePublicBytes(JSGlobalObject* globalObject, JSValue self
         return raiseValueError(globalObject, scope, "Unsupported format"_s);
     }
     if (succeeded != 1)
-        return LIBRARY_ERROR(globalObject);
+        RELEASE_AND_RETURN(scope, LIBRARY_ERROR(globalObject));
     if (format == EncodingDER)
-        return bytesFrom(globalObject, contentsOf(bio.get()));
+        RELEASE_AND_RETURN(scope, bytesFrom(globalObject, contentsOf(bio.get())));
     RELEASE_AND_RETURN(scope, strFromUTF8(globalObject, contentsOf(bio.get())));
 }
 
@@ -823,10 +823,10 @@ static JSValue certificateRepr(JSGlobalObject* globalObject, JSValue self)
     if (!bio)
         return raiseMemoryError(globalObject, scope, "failed to allocate BIO"_s);
     if (X509_NAME_print_ex(bio.get(), X509_get_subject_name(x509Of(self)), 0, XN_FLAG_RFC2253) <= 0)
-        return LIBRARY_ERROR(globalObject);
+        RELEASE_AND_RETURN(scope, LIBRARY_ERROR(globalObject));
     JSValue subject = strFromUTF8(globalObject, contentsOf(bio.get()));
     RETURN_IF_EXCEPTION(scope, {});
-    return makeStr(vm, makeString("<_ssl.Certificate '"_s, asString(subject)->value(globalObject).data, "'>"_s));
+    RELEASE_AND_RETURN(scope, makeStr(vm, makeString("<_ssl.Certificate '"_s, asString(subject)->value(globalObject).data, "'>"_s)));
 }
 
 static JSValue certificateHash(JSGlobalObject* globalObject, JSValue self) { return makeInt(globalObject, static_cast<uint64_t>(X509_subject_name_hash(x509Of(self)))); }
@@ -875,7 +875,7 @@ static JSValue memoryBIONew(JSGlobalObject* globalObject, JSValue type, const Ca
     // That there is nothing to read does not mean that it is over, only that there is nothing yet.
     BIO_set_retry_read(state->bio.get());
     BIO_set_mem_eof_return(state->bio.get(), -1);
-    return createRecordWithState(globalObject, PyType::from(type), 0, WTF::move(state));
+    RELEASE_AND_RETURN(scope, createRecordWithState(globalObject, PyType::from(type), 0, WTF::move(state)));
 }
 
 static JSValue memoryBIOPending(JSGlobalObject* globalObject, JSValue self) { return makeInt(globalObject, static_cast<uint64_t>(BIO_ctrl_pending(memoryBIOOf(self).bio.get()))); }
@@ -883,8 +883,10 @@ static JSValue memoryBIOEOF(JSGlobalObject*, JSValue self) { return jsBoolean(!B
 
 static JSValue memoryBIORead(JSGlobalObject* globalObject, JSValue self, JSValue size)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int length;
-    if (!intArgument(globalObject, size, -1, length))
+    if (failed(scope, intArgument(globalObject, size, -1, length)))
         return {};
     BIO* bio = memoryBIOOf(self).bio.get();
     int available = static_cast<int>(std::min<size_t>(BIO_ctrl_pending(bio), INT_MAX));
@@ -895,7 +897,7 @@ static JSValue memoryBIORead(JSGlobalObject* globalObject, JSValue self, JSValue
         return result;
     // As much as is asked for is there.
     if (BIO_read(bio, result->mutableData(), length) != length)
-        return LIBRARY_ERROR(globalObject);
+        RELEASE_AND_RETURN(scope, LIBRARY_ERROR(globalObject));
     return result;
 }
 
@@ -909,10 +911,10 @@ static JSValue memoryBIOWrite(JSGlobalObject* globalObject, JSValue self, JSValu
     if (input.buffer.length > INT_MAX)
         return raiseOverflowError(globalObject, scope, "string longer than "_s, INT_MAX, " bytes"_s);
     if (memoryBIOOf(self).hasEOF)
-        return raisePlainError(globalObject, "cannot write() after write_eof()"_s);
+        RELEASE_AND_RETURN(scope, raisePlainError(globalObject, "cannot write() after write_eof()"_s));
     int written = BIO_write(memoryBIOOf(self).bio.get(), input.buffer.data, static_cast<int>(input.buffer.length));
     if (written < 0)
-        return LIBRARY_ERROR(globalObject);
+        RELEASE_AND_RETURN(scope, LIBRARY_ERROR(globalObject));
     return jsNumber(written);
 }
 
@@ -1610,15 +1612,15 @@ static JSValue createConnection(JSGlobalObject* globalObject, PyRecord* contextR
     }
 
     if (isServer && context.protocol == ProtocolTLSClient)
-        return OWN_ERROR(globalObject, "Cannot create a server socket with a PROTOCOL_TLS_CLIENT context");
+        RELEASE_AND_RETURN(scope, OWN_ERROR(globalObject, "Cannot create a server socket with a PROTOCOL_TLS_CLIENT context"));
     if (!isServer && context.protocol == ProtocolTLSServer)
-        return OWN_ERROR(globalObject, "Cannot create a client socket with a PROTOCOL_TLS_SERVER context");
+        RELEASE_AND_RETURN(scope, OWN_ERROR(globalObject, "Cannot create a client socket with a PROTOCOL_TLS_SERVER context"));
 
     ERR_clear_error();
     auto state = makeUnique<Connection>();
     state->ssl.reset(SSL_new(context.ctx.get()));
     if (!state->ssl)
-        return LIBRARY_ERROR(globalObject);
+        RELEASE_AND_RETURN(scope, LIBRARY_ERROR(globalObject));
     state->isServer = isServer;
     SSL* ssl = state->ssl.get();
     Connection* connection = state.get();
@@ -1636,7 +1638,7 @@ static JSValue createConnection(JSGlobalObject* globalObject, PyRecord* contextR
     if (socket) {
         BIO* bio = BIO_new(socketBIOMethod());
         if (!bio)
-            return LIBRARY_ERROR(globalObject);
+            RELEASE_AND_RETURN(scope, LIBRARY_ERROR(globalObject));
         BIO_set_data(bio, connection);
         BIO_set_init(bio, 1);
         SSL_set_bio(ssl, bio, bio);
@@ -1695,14 +1697,16 @@ static void countHandshake(PyRecord* self, bool isOver)
 
 static JSValue connectionDoHandshake(JSGlobalObject* globalObject, JSValue selfValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* self = PyRecord::from(selfValue);
     Connection& connection = connectionOf(self);
     SSL* ssl = connection.ssl.get();
     PyRecord* socket;
-    if (!getSocket(globalObject, self, socket, __LINE__))
+    if (failed(scope, getSocket(globalObject, self, socket, __LINE__)))
         return {};
     if (connection.hasSeenEOF)
-        return raiseEOF(globalObject, self, __LINE__);
+        RELEASE_AND_RETURN(scope, raiseEOF(globalObject, self, __LINE__));
     Deadline deadline(socket);
     countHandshake(self, false);
 
@@ -1721,16 +1725,16 @@ static JSValue connectionDoHandshake(JSGlobalObject* globalObject, JSValue selfV
         if (state == SocketState::HasRaised)
             return {};
         if (state == SocketState::HasTimedOut)
-            return raiseTimeout(globalObject, TEXT_WITH_LINE("The handshake operation timed out"));
+            RELEASE_AND_RETURN(scope, raiseTimeout(globalObject, TEXT_WITH_LINE("The handshake operation timed out")));
         if (state == SocketState::HasBeenClosed)
-            return raisePlainError(globalObject, TEXT_WITH_LINE("Underlying socket has been closed."));
+            RELEASE_AND_RETURN(scope, raisePlainError(globalObject, TEXT_WITH_LINE("Underlying socket has been closed.")));
         if (state == SocketState::IsNonBlocking)
             break;
         connection.descriptor = socketDescriptor(socket);
     }
     JSValue exception = takeExceptionSetAside(globalObject, self);
     if (result < 1)
-        return raiseConnectionError(globalObject, self, error, exception, __LINE__);
+        RELEASE_AND_RETURN(scope, raiseConnectionError(globalObject, self, error, exception, __LINE__));
     countHandshake(self, true);
     if (exception) {
         chainException(globalObject, exception);
@@ -1741,6 +1745,8 @@ static JSValue connectionDoHandshake(JSGlobalObject* globalObject, JSValue selfV
 
 static JSValue connectionWrite(JSGlobalObject* globalObject, JSValue selfValue, JSValue data)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* self = PyRecord::from(selfValue);
     Connection& connection = connectionOf(self);
     SSL* ssl = connection.ssl.get();
@@ -1748,10 +1754,10 @@ static JSValue connectionWrite(JSGlobalObject* globalObject, JSValue selfValue, 
     if (!input.acquire(globalObject, data))
         return {};
     PyRecord* socket;
-    if (!getSocket(globalObject, self, socket, __LINE__))
+    if (failed(scope, getSocket(globalObject, self, socket, __LINE__)))
         return {};
     if (connection.hasSeenEOF)
-        return raiseEOF(globalObject, self, __LINE__);
+        RELEASE_AND_RETURN(scope, raiseEOF(globalObject, self, __LINE__));
     Deadline deadline(socket);
 
     auto check = [&](SocketState state) {
@@ -1791,7 +1797,7 @@ static JSValue connectionWrite(JSGlobalObject* globalObject, JSValue selfValue, 
     }
     JSValue exception = takeExceptionSetAside(globalObject, self);
     if (result <= 0)
-        return raiseConnectionError(globalObject, self, error, exception, __LINE__);
+        RELEASE_AND_RETURN(scope, raiseConnectionError(globalObject, self, error, exception, __LINE__));
     if (exception) {
         chainException(globalObject, exception);
         return {};
@@ -1815,20 +1821,20 @@ static JSValue connectionRead(JSGlobalObject* globalObject, JSValue selfValue, c
     if (args.size() < 1 || args.size() > 2)
         return raiseTypeError(globalObject, scope, "_ssl._SSLSocket.read requires 1 to 2 arguments"_s);
     int64_t length;
-    if (!ssizeArgument(globalObject, args[0], length))
+    if (failed(scope, ssizeArgument(globalObject, args[0], length)))
         return {};
     bool hasBuffer = args.size() == 2;
     IOBuffer output;
-    if (hasBuffer && !output.acquireWritable(globalObject, "read"_s, args[1], "argument 2"_s))
+    if (hasBuffer && failed(scope, output.acquireWritable(globalObject, "read"_s, args[1], "argument 2"_s)))
         return {};
     if (!hasBuffer && length < 0)
         return raiseValueError(globalObject, scope, "size should not be negative"_s);
 
     PyRecord* socket;
-    if (!getSocket(globalObject, self, socket, __LINE__))
+    if (failed(scope, getSocket(globalObject, self, socket, __LINE__)))
         return {};
     if (connection.hasSeenEOF)
-        return raiseEOF(globalObject, self, __LINE__);
+        RELEASE_AND_RETURN(scope, raiseEOF(globalObject, self, __LINE__));
 
     // One call gives what is left of one record, which has no more than this.
     constexpr int64_t mostAtOnce = SSL3_RT_MAX_PLAIN_LENGTH;
@@ -1843,7 +1849,7 @@ static JSValue connectionRead(JSGlobalObject* globalObject, JSValue selfValue, c
             return jsNumber(0);
     } else {
         if (!length)
-            return runtime(globalObject).emptyBytes();
+            RELEASE_AND_RETURN(scope, runtime(globalObject).emptyBytes());
         length = std::min(length, mostAtOnce);
         if (!memory.tryGrow(length))
             return raiseMemoryError(globalObject, scope, String());
@@ -1875,7 +1881,7 @@ static JSValue connectionRead(JSGlobalObject* globalObject, JSValue selfValue, c
         if (state == SocketState::HasRaised)
             return {};
         if (state == SocketState::HasTimedOut)
-            return raiseTimeout(globalObject, "The read operation timed out"_s);
+            RELEASE_AND_RETURN(scope, raiseTimeout(globalObject, "The read operation timed out"_s));
         if (state == SocketState::IsNonBlocking || state == SocketState::HasBeenClosed)
             break;
     }
@@ -1889,16 +1895,18 @@ static JSValue connectionRead(JSGlobalObject* globalObject, JSValue selfValue, c
     }
     if (hasBuffer)
         return jsNumber(result);
-    return bytesFrom(globalObject, memory.span().first(result));
+    RELEASE_AND_RETURN(scope, bytesFrom(globalObject, memory.span().first(result)));
 }
 
 static JSValue connectionShutdown(JSGlobalObject* globalObject, JSValue selfValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* self = PyRecord::from(selfValue);
     Connection& connection = connectionOf(self);
     SSL* ssl = connection.ssl.get();
     PyRecord* socket;
-    if (!getSocket(globalObject, self, socket, __LINE__))
+    if (failed(scope, getSocket(globalObject, self, socket, __LINE__)))
         return {};
     Deadline deadline(socket);
 
@@ -1924,13 +1932,13 @@ static JSValue connectionShutdown(JSGlobalObject* globalObject, JSValue selfValu
         if (state == SocketState::HasRaised)
             return {};
         if (state == SocketState::HasTimedOut)
-            return raiseTimeout(globalObject, error == SSL_ERROR_WANT_READ ? "The read operation timed out"_s : "The write operation timed out"_s);
+            RELEASE_AND_RETURN(scope, raiseTimeout(globalObject, error == SSL_ERROR_WANT_READ ? "The read operation timed out"_s : "The write operation timed out"_s));
         if (state != SocketState::IsReady)
             break;
     }
     JSValue exception = takeExceptionSetAside(globalObject, self);
     if (result < 0)
-        return raiseConnectionError(globalObject, self, error, exception, __LINE__);
+        RELEASE_AND_RETURN(scope, raiseConnectionError(globalObject, self, error, exception, __LINE__));
     if (exception) {
         chainException(globalObject, exception);
         return {};
@@ -1943,7 +1951,7 @@ static JSValue connectionGetPeerCert(JSGlobalObject* globalObject, JSValue self,
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     bool isBinary;
-    if (!boolArgument(globalObject, binary, false, isBinary))
+    if (failed(scope, boolArgument(globalObject, binary, false, isBinary)))
         return {};
     SSL* ssl = connectionOf(self).ssl.get();
     if (!SSL_is_init_finished(ssl))
@@ -1953,11 +1961,11 @@ static JSValue connectionGetPeerCert(JSGlobalObject* globalObject, JSValue self,
         return jsUndefined();
     scope.release();
     if (isBinary)
-        return certificateToDER(globalObject, certificate.get());
+        RELEASE_AND_RETURN(scope, certificateToDER(globalObject, certificate.get()));
     // What has not been verified is not worth telling.
     if (!(SSL_CTX_get_verify_mode(SSL_get_SSL_CTX(ssl)) & SSL_VERIFY_PEER))
-        return PyDict::create(globalObject);
-    return decodeCertificate(globalObject, certificate.get());
+        RELEASE_AND_RETURN(scope, PyDict::create(globalObject));
+    RELEASE_AND_RETURN(scope, decodeCertificate(globalObject, certificate.get()));
 }
 
 static JSValue connectionGetVerifiedChain(JSGlobalObject* globalObject, JSValue self)
@@ -2070,7 +2078,7 @@ static JSValue connectionGetChannelBinding(JSGlobalObject* globalObject, JSValue
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     CText kind;
-    if (kindValue && !textArgument(globalObject, "get_channel_binding"_s, "cb_type"_s, kindValue, kind))
+    if (kindValue && failed(scope, textArgument(globalObject, "get_channel_binding"_s, "cb_type"_s, kindValue, kind)))
         return {};
     if (kindValue && strcmp(kind.data(), "tls-unique"))
         return raiseValueError(globalObject, scope, '\'', String::fromUTF8(kind.span()), "' channel binding type not implemented"_s);
@@ -2079,7 +2087,7 @@ static JSValue connectionGetChannelBinding(JSGlobalObject* globalObject, JSValue
     uint8_t buffer[128];
     bool isOurs = !!SSL_session_reused(connection.ssl.get()) != !connection.isServer;
     size_t length = isOurs ? SSL_get_finished(connection.ssl.get(), buffer, sizeof(buffer)) : SSL_get_peer_finished(connection.ssl.get(), buffer, sizeof(buffer));
-    return length ? bytesFrom(globalObject, { buffer, length }) : jsUndefined();
+    RELEASE_AND_RETURN(scope, length ? bytesFrom(globalObject, { buffer, length }) : jsUndefined());
 }
 
 static JSValue connectionVerifyClientPostHandshake(JSGlobalObject* globalObject, JSValue)
@@ -2096,7 +2104,7 @@ static void connectionSetContext(JSGlobalObject* globalObject, JSValue self, JSV
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!value)
-        return raiseCannotDelete(globalObject);
+        RELEASE_AND_RETURN(scope, raiseCannotDelete(globalObject));
     PyRecord* contextRecord = PyRecord::tryFrom(value, contextType(globalObject));
     if (!contextRecord) {
         raiseTypeError(globalObject, scope, "The value must be a SSLContext"_s);
@@ -2142,7 +2150,7 @@ static void connectionSetSession(JSGlobalObject* globalObject, JSValue self, JSV
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!value)
-        return raiseCannotDelete(globalObject);
+        RELEASE_AND_RETURN(scope, raiseCannotDelete(globalObject));
     if (typeOf(globalObject, value) != sessionType(globalObject)) {
         raiseTypeError(globalObject, scope, "Value is not a SSLSession."_s);
         return;
@@ -2263,7 +2271,7 @@ static JSValue contextNew(JSGlobalObject* globalObject, JSValue type, JSValue pr
     auto state = makeUnique<Context>();
     state->ctx.reset(SSL_CTX_new(method));
     if (!state->ctx)
-        return LIBRARY_ERROR(globalObject);
+        RELEASE_AND_RETURN(scope, LIBRARY_ERROR(globalObject));
     SSL_CTX* ctx = state->ctx.get();
     state->protocol = protocol;
     state->checksHostname = protocol == ProtocolTLSClient;
@@ -2273,7 +2281,7 @@ static JSValue contextNew(JSGlobalObject* globalObject, JSValue type, JSValue pr
     SSL_CTX_set_options(ctx, SSL_OP_ALL | SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_COMPRESSION | SSL_OP_CIPHER_SERVER_PREFERENCE | SSL_OP_SINGLE_DH_USE | SSL_OP_SINGLE_ECDH_USE);
     if (!SSL_CTX_set_cipher_list(ctx, DEFAULT_CIPHERS)) {
         ERR_clear_error();
-        return raisePlainError(globalObject, "No cipher can be selected."_s);
+        RELEASE_AND_RETURN(scope, raisePlainError(globalObject, "No cipher can be selected."_s));
     }
     if (protocol == ProtocolTLS || protocol == ProtocolTLSClient || protocol == ProtocolTLSServer) {
         if (!SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION))
@@ -2292,17 +2300,19 @@ static JSValue contextNew(JSGlobalObject* globalObject, JSValue type, JSValue pr
     SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_BOTH);
     SSL_CTX_sess_set_new_cb(ctx, newSessionCallback);
 
-    return createRecordWithState(globalObject, PyType::from(type), ContextFieldCount, WTF::move(state), 8 * KB);
+    RELEASE_AND_RETURN(scope, createRecordWithState(globalObject, PyType::from(type), ContextFieldCount, WTF::move(state), 8 * KB));
 }
 
 static JSValue contextSetCiphers(JSGlobalObject* globalObject, JSValue self, JSValue list)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     CText ciphers;
-    if (!textArgument(globalObject, "set_ciphers"_s, {}, list, ciphers))
+    if (failed(scope, textArgument(globalObject, "set_ciphers"_s, {}, list, ciphers)))
         return {};
     if (!SSL_CTX_set_cipher_list(contextOf(self).ctx.get(), ciphers.data())) {
         ERR_clear_error();
-        return raisePlainError(globalObject, "No cipher can be selected."_s);
+        RELEASE_AND_RETURN(scope, raisePlainError(globalObject, "No cipher can be selected."_s));
     }
     return jsUndefined();
 }
@@ -2312,7 +2322,7 @@ static JSValue contextSetCiphersuites(JSGlobalObject* globalObject, JSValue, JSV
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     CText ciphers;
-    if (!textArgument(globalObject, "set_ciphersuites"_s, {}, list, ciphers))
+    if (failed(scope, textArgument(globalObject, "set_ciphersuites"_s, {}, list, ciphers)))
         return {};
     return raiseNotImplementedError(globalObject, scope, "The cipher suites of TLS 1.3 cannot be configured in BoringSSL."_s);
 }
@@ -2352,11 +2362,13 @@ static JSValue contextGetCiphers(JSGlobalObject* globalObject, JSValue self)
 
 static JSValue contextSetGroups(JSGlobalObject* globalObject, JSValue self, JSValue list)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     CText groups;
-    if (!textArgument(globalObject, "set_groups"_s, {}, list, groups))
+    if (failed(scope, textArgument(globalObject, "set_groups"_s, {}, list, groups)))
         return {};
     if (!SSL_CTX_set1_groups_list(contextOf(self).ctx.get(), groups.data()))
-        return OWN_ERROR(globalObject, "unrecognized group");
+        RELEASE_AND_RETURN(scope, OWN_ERROR(globalObject, "unrecognized group"));
     return jsUndefined();
 }
 
@@ -2374,11 +2386,13 @@ static JSValue listOfNames(JSGlobalObject* globalObject)
 
 static JSValue contextGetGroups(JSGlobalObject* globalObject, JSValue, JSValue includeAliases)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     // The library lists each group under all its names and does not say which is which.
     bool ignored;
-    if (!boolArgument(globalObject, includeAliases, false, ignored))
+    if (failed(scope, boolArgument(globalObject, includeAliases, false, ignored)))
         return {};
-    return listOfNames<SSL_get_all_group_names>(globalObject);
+    RELEASE_AND_RETURN(scope, listOfNames<SSL_get_all_group_names>(globalObject));
 }
 
 // "rsa_pss_rsae_sha256:ECDSA+SHA384": the names of TLS 1.3, or a kind of key and a hash, as OpenSSL takes them. The library parses
@@ -2422,12 +2436,14 @@ static bool parseSignatureAlgorithms(const CText& list, Vector<uint16_t>& result
 template<bool ofServers>
 static JSValue contextSetSigalgs(JSGlobalObject* globalObject, JSValue self, JSValue list)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     CText algorithms;
-    if (!textArgument(globalObject, ofServers ? "set_server_sigalgs"_s : "set_client_sigalgs"_s, {}, list, algorithms))
+    if (failed(scope, textArgument(globalObject, ofServers ? "set_server_sigalgs"_s : "set_client_sigalgs"_s, {}, list, algorithms)))
         return {};
     Vector<uint16_t> parsed;
     if (!parseSignatureAlgorithms(algorithms, parsed))
-        return OWN_ERROR(globalObject, "unrecognized signature algorithm");
+        RELEASE_AND_RETURN(scope, OWN_ERROR(globalObject, "unrecognized signature algorithm"));
     Context& context = contextOf(self);
     (ofServers ? context.signatureAlgorithmsOfServers : context.signatureAlgorithmsOfClients) = WTF::move(parsed);
     return jsUndefined();
@@ -2471,7 +2487,7 @@ static void contextSetVerifyMode(JSGlobalObject* globalObject, JSValue self, JSV
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!value)
-        return raiseCannotDelete(globalObject);
+        RELEASE_AND_RETURN(scope, raiseCannotDelete(globalObject));
     int mode = toCInt(globalObject, value);
     RETURN_IF_EXCEPTION(scope, void());
     Context& context = contextOf(self);
@@ -2489,10 +2505,12 @@ static JSValue contextGetVerifyFlags(JSGlobalObject* globalObject, JSValue self)
 
 static void contextSetVerifyFlags(JSGlobalObject* globalObject, JSValue self, JSValue value)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (!value)
-        return raiseCannotDelete(globalObject);
+        RELEASE_AND_RETURN(scope, raiseCannotDelete(globalObject));
     uint64_t wanted;
-    if (!unsignedArgument(globalObject, value, "unsigned long"_s, 0, wanted))
+    if (failed(scope, unsignedArgument(globalObject, value, "unsigned long"_s, 0, wanted)))
         return;
     X509_VERIFY_PARAM* parameters = SSL_CTX_get0_param(contextOf(self).ctx.get());
     unsigned long flags = X509_VERIFY_PARAM_get_flags(parameters);
@@ -2520,7 +2538,7 @@ static void contextSetVersion(JSGlobalObject* globalObject, JSValue self, JSValu
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!value)
-        return raiseCannotDelete(globalObject);
+        RELEASE_AND_RETURN(scope, raiseCannotDelete(globalObject));
     int version = toCInt(globalObject, value);
     RETURN_IF_EXCEPTION(scope, void());
     Context& context = contextOf(self);
@@ -2576,7 +2594,7 @@ static void contextSetNumTickets(JSGlobalObject* globalObject, JSValue self, JSV
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!value)
-        return raiseCannotDelete(globalObject);
+        RELEASE_AND_RETURN(scope, raiseCannotDelete(globalObject));
     int64_t count = toInt64(globalObject, value);
     RETURN_IF_EXCEPTION(scope, void());
     Context& context = contextOf(self);
@@ -2596,7 +2614,7 @@ static void contextSetOptions(JSGlobalObject* globalObject, JSValue self, JSValu
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!value)
-        return raiseCannotDelete(globalObject);
+        RELEASE_AND_RETURN(scope, raiseCannotDelete(globalObject));
     JSValue index = toIndex(globalObject, value);
     RETURN_IF_EXCEPTION(scope, void());
     if (intSign(index) < 0) {
@@ -2625,10 +2643,12 @@ static JSValue contextGetHostFlags(JSGlobalObject* globalObject, JSValue self) {
 
 static void contextSetHostFlags(JSGlobalObject* globalObject, JSValue self, JSValue value)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (!value)
-        return raiseCannotDelete(globalObject);
+        RELEASE_AND_RETURN(scope, raiseCannotDelete(globalObject));
     uint32_t flags;
-    if (!bitwiseUnsignedArgument(globalObject, value, 0, flags))
+    if (failed(scope, bitwiseUnsignedArgument(globalObject, value, 0, flags)))
         return;
     Context& context = contextOf(self);
     context.hostFlags = flags;
@@ -2639,10 +2659,12 @@ static JSValue contextGetCheckHostname(JSGlobalObject*, JSValue self) { return j
 
 static void contextSetCheckHostname(JSGlobalObject* globalObject, JSValue self, JSValue value)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (!value)
-        return raiseCannotDelete(globalObject);
+        RELEASE_AND_RETURN(scope, raiseCannotDelete(globalObject));
     bool checks;
-    if (!boolArgument(globalObject, value, false, checks))
+    if (failed(scope, boolArgument(globalObject, value, false, checks)))
         return;
     Context& context = contextOf(self);
     // There is nothing to check the name against in a certificate that is not verified.
@@ -2750,11 +2772,11 @@ static JSValue contextLoadCertChain(JSGlobalObject* globalObject, JSValue self, 
     auto scope = DECLARE_THROW_SCOPE(vm);
     SSL_CTX* ctx = contextOf(self).ctx.get();
     CText certificatePath, keyPath;
-    if (!pathArgument(globalObject, certfile, "certfile should be a valid filesystem path"_s, certificatePath))
+    if (failed(scope, pathArgument(globalObject, certfile, "certfile should be a valid filesystem path"_s, certificatePath)))
         return {};
     JSValue keyPathObject = certfile;
     if (keyfile && !isNone(keyfile)) {
-        if (!pathArgument(globalObject, keyfile, "keyfile should be a valid filesystem path"_s, keyPath))
+        if (failed(scope, pathArgument(globalObject, keyfile, "keyfile should be a valid filesystem path"_s, keyPath)))
             return {};
         keyPathObject = keyfile;
     } else
@@ -2806,7 +2828,7 @@ static JSValue contextLoadCertChain(JSGlobalObject* globalObject, JSValue self, 
     if (SSL_CTX_use_PrivateKey_file(ctx, keyPath.data(), SSL_FILETYPE_PEM) != 1)
         return fail(keyPathObject, __LINE__);
     if (SSL_CTX_check_private_key(ctx) != 1)
-        return LIBRARY_ERROR(globalObject);
+        RELEASE_AND_RETURN(scope, LIBRARY_ERROR(globalObject));
     return jsUndefined();
 }
 
@@ -2874,9 +2896,9 @@ static JSValue contextLoadVerifyLocations(JSGlobalObject* globalObject, JSValue 
     if (!hasFile && !hasPath && !hasData)
         return raiseTypeError(globalObject, scope, "cafile, capath and cadata cannot be all omitted"_s);
     CText file, path;
-    if (hasFile && !pathArgument(globalObject, cafile, "cafile should be a valid filesystem path"_s, file))
+    if (hasFile && failed(scope, pathArgument(globalObject, cafile, "cafile should be a valid filesystem path"_s, file)))
         return {};
-    if (hasPath && !pathArgument(globalObject, capath, "capath should be a valid filesystem path"_s, path))
+    if (hasPath && failed(scope, pathArgument(globalObject, capath, "capath should be a valid filesystem path"_s, path)))
         return {};
 
     if (hasData) {
@@ -2908,7 +2930,7 @@ static JSValue contextLoadVerifyLocations(JSGlobalObject* globalObject, JSValue 
                 ERR_clear_error();
                 return raiseOSError(globalObject, scope, error);
             }
-            return LIBRARY_ERROR(globalObject);
+            RELEASE_AND_RETURN(scope, LIBRARY_ERROR(globalObject));
         }
     }
     return jsUndefined();
@@ -2919,9 +2941,9 @@ static JSValue contextLoadDHParams(JSGlobalObject* globalObject, JSValue self, J
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     CText path;
-    if (!pathArgument(globalObject, pathValue, {}, path))
+    if (failed(scope, pathArgument(globalObject, pathValue, {}, path)))
         return {};
-    if (!audit(globalObject, "open"_s, pathValue, makeStr(vm, "rb"_s), jsNumber(0)))
+    if (failed(scope, audit(globalObject, "open"_s, pathValue, makeStr(vm, "rb"_s), jsNumber(0))))
         return {};
     ERR_clear_error();
     errno = 0;
@@ -2933,11 +2955,11 @@ static JSValue contextLoadDHParams(JSGlobalObject* globalObject, JSValue self, J
             ERR_clear_error();
             return raiseOSError(globalObject, scope, error, pathValue);
         }
-        return LIBRARY_ERROR(globalObject);
+        RELEASE_AND_RETURN(scope, LIBRARY_ERROR(globalObject));
     }
     // Which does nothing: the library has no cipher that would use them.
     if (!SSL_CTX_set_tmp_dh(contextOf(self).ctx.get(), parameters.get()))
-        return LIBRARY_ERROR(globalObject);
+        RELEASE_AND_RETURN(scope, LIBRARY_ERROR(globalObject));
     return jsUndefined();
 }
 
@@ -2949,7 +2971,7 @@ static JSValue contextWrapSocket(JSGlobalObject* globalObject, JSValue self, JSV
     if (!socket)
         return raiseTypeError(globalObject, scope, "_wrap_socket() argument 'sock' must be _socket.socket, not "_s, typeNameOfArgument(globalObject, socketValue));
     bool isServer;
-    if (!boolArgument(globalObject, serverSide, false, isServer))
+    if (failed(scope, boolArgument(globalObject, serverSide, false, isServer)))
         return {};
     RELEASE_AND_RETURN(scope, createConnection(globalObject, PyRecord::from(self), socket, isServer, hostname, owner, session, nullptr, nullptr));
 }
@@ -2965,7 +2987,7 @@ static JSValue contextWrapBIO(JSGlobalObject* globalObject, JSValue self, JSValu
     if (!outgoing)
         return raiseTypeError(globalObject, scope, "_wrap_bio() argument 'outgoing' must be _ssl.MemoryBIO, not "_s, typeNameOfArgument(globalObject, outgoingValue));
     bool isServer;
-    if (!boolArgument(globalObject, serverSide, false, isServer))
+    if (failed(scope, boolArgument(globalObject, serverSide, false, isServer)))
         return {};
     RELEASE_AND_RETURN(scope, createConnection(globalObject, PyRecord::from(self), nullptr, isServer, hostname, owner, session, incoming, outgoing));
 }
@@ -3039,13 +3061,13 @@ static JSValue contextSetECDHCurve(JSGlobalObject* globalObject, JSValue self, J
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     CText name;
-    if (!pathArgument(globalObject, nameValue, {}, name))
+    if (failed(scope, pathArgument(globalObject, nameValue, {}, name)))
         return {};
     int nid = OBJ_sn2nid(name.data());
     if (!nid)
         return raiseValueError(globalObject, scope, "unknown elliptic curve name "_s, reprForMessage(globalObject, nameValue));
     if (!SSL_CTX_set1_groups(contextOf(self).ctx.get(), &nid, 1))
-        return LIBRARY_ERROR(globalObject);
+        RELEASE_AND_RETURN(scope, LIBRARY_ERROR(globalObject));
     return jsUndefined();
 }
 
@@ -3056,7 +3078,7 @@ static void contextSetSNICallback(JSGlobalObject* globalObject, JSValue self, JS
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!value)
-        return raiseCannotDelete(globalObject);
+        RELEASE_AND_RETURN(scope, raiseCannotDelete(globalObject));
     Context& context = contextOf(self);
     if (context.protocol == ProtocolTLSClient) {
         raiseValueError(globalObject, scope, "sni_callback cannot be set on TLS_CLIENT context"_s);
@@ -3087,7 +3109,7 @@ static void contextSetMessageCallback(JSGlobalObject* globalObject, JSValue self
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!value)
-        return raiseCannotDeleteNamed(globalObject, "_msg_callback"_s, self);
+        RELEASE_AND_RETURN(scope, raiseCannotDeleteNamed(globalObject, "_msg_callback"_s, self));
     bool isSet = !isNone(value);
     if (isSet && !isCallable(globalObject, value)) {
         raiseTypeError(globalObject, scope, "not a callable object"_s);
@@ -3104,7 +3126,7 @@ static void contextSetKeylogFilename(JSGlobalObject* globalObject, JSValue self,
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!value)
-        return raiseCannotDeleteNamed(globalObject, "keylog_filename"_s, self);
+        RELEASE_AND_RETURN(scope, raiseCannotDeleteNamed(globalObject, "keylog_filename"_s, self));
     Context& context = contextOf(self);
     SSL_CTX_set_keylog_callback(context.ctx.get(), nullptr);
     PyRecord::from(self)->set(vm, ContextKeylogFilename, JSValue());
@@ -3114,9 +3136,9 @@ static void contextSetKeylogFilename(JSGlobalObject* globalObject, JSValue self,
         return;
 
     CText path;
-    if (!pathArgument(globalObject, value, {}, path))
+    if (failed(scope, pathArgument(globalObject, value, {}, path)))
         return;
-    if (!audit(globalObject, "open"_s, value, makeStr(vm, "ab"_s), jsNumber(0)))
+    if (failed(scope, audit(globalObject, "open"_s, value, makeStr(vm, "ab"_s), jsNumber(0))))
         return;
     FILE* file = fopen(path.data(), "ae");
     if (!file) {
@@ -3178,8 +3200,10 @@ static JSValue contextCertStoreStats(JSGlobalObject* globalObject, JSValue self)
 
 static JSValue contextGetCACerts(JSGlobalObject* globalObject, JSValue self, JSValue binaryForm)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     bool isBinary;
-    if (!boolArgument(globalObject, binaryForm, false, isBinary))
+    if (failed(scope, boolArgument(globalObject, binaryForm, false, isBinary)))
         return {};
     JSArray* result = newList(globalObject);
     bool succeeded = forEachObjectInStore(globalObject, self, [&](const X509_OBJECT* object) {
@@ -3203,7 +3227,7 @@ static JSValue contextSetPSKClientCallback(JSGlobalObject* globalObject, JSValue
     auto scope = DECLARE_THROW_SCOPE(vm);
     Context& context = contextOf(self);
     if (context.protocol == ProtocolTLSServer)
-        return OWN_ERROR(globalObject, "Cannot add PSK client callback to a PROTOCOL_TLS_SERVER context");
+        RELEASE_AND_RETURN(scope, OWN_ERROR(globalObject, "Cannot add PSK client callback to a PROTOCOL_TLS_SERVER context"));
     bool isSet = !isNone(callback);
     if (isSet && !isCallable(globalObject, callback))
         return raiseTypeError(globalObject, scope, "callback must be callable"_s);
@@ -3219,10 +3243,10 @@ static JSValue contextSetPSKServerCallback(JSGlobalObject* globalObject, JSValue
     Context& context = contextOf(self);
     CText hint;
     bool hasHint = hintValue && !isNone(hintValue);
-    if (hasHint && !textArgument(globalObject, "set_psk_server_callback"_s, "identity_hint"_s, hintValue, hint))
+    if (hasHint && failed(scope, textArgument(globalObject, "set_psk_server_callback"_s, "identity_hint"_s, hintValue, hint)))
         return {};
     if (context.protocol == ProtocolTLSClient)
-        return OWN_ERROR(globalObject, "Cannot add PSK server callback to a PROTOCOL_TLS_CLIENT context");
+        RELEASE_AND_RETURN(scope, OWN_ERROR(globalObject, "Cannot add PSK server callback to a PROTOCOL_TLS_CLIENT context"));
     bool isSet = !isNone(callback);
     if (isSet && !isCallable(globalObject, callback))
         return raiseTypeError(globalObject, scope, "callback must be callable"_s);
@@ -3284,20 +3308,22 @@ static PyType* contextType(JSGlobalObject* globalObject) { return runtime(global
 
 static JSValue testDecodeCert(JSGlobalObject* globalObject, JSValue pathValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     CText path;
-    if (!pathArgument(globalObject, pathValue, {}, path))
+    if (failed(scope, pathArgument(globalObject, pathValue, {}, path)))
         return {};
     bssl::UniquePtr<BIO> bio(BIO_new_file(path.data(), "rb"));
     if (!bio) {
         ERR_clear_error();
-        return raisePlainError(globalObject, "Can't open file"_s);
+        RELEASE_AND_RETURN(scope, raisePlainError(globalObject, "Can't open file"_s));
     }
     bssl::UniquePtr<X509> certificate(PEM_read_bio_X509(bio.get(), nullptr, nullptr, nullptr));
     if (!certificate) {
         ERR_clear_error();
-        return raisePlainError(globalObject, "Error decoding PEM-encoded file"_s);
+        RELEASE_AND_RETURN(scope, raisePlainError(globalObject, "Error decoding PEM-encoded file"_s));
     }
-    return decodeCertificate(globalObject, certificate.get());
+    RELEASE_AND_RETURN(scope, decodeCertificate(globalObject, certificate.get()));
 }
 
 static JSValue randAdd(JSGlobalObject* globalObject, JSValue data, JSValue entropyValue)
@@ -3354,7 +3380,7 @@ static JSValue describeObject(JSGlobalObject* globalObject, const ASN1_OBJECT* o
         return raiseValueError(globalObject, scope, "Unknown object"_s);
     JSValue identifier = objectIdentifierText(globalObject, object, true);
     RETURN_IF_EXCEPTION(scope, {});
-    return PyTuple::create(globalObject, { jsNumber(nid), strOrNone(vm, OBJ_nid2sn(nid)), strOrNone(vm, OBJ_nid2ln(nid)), identifier });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { jsNumber(nid), strOrNone(vm, OBJ_nid2sn(nid)), strOrNone(vm, OBJ_nid2ln(nid)), identifier }));
 }
 
 static JSValue txt2obj(JSGlobalObject* globalObject, JSValue textValue, JSValue byName)
@@ -3362,10 +3388,10 @@ static JSValue txt2obj(JSGlobalObject* globalObject, JSValue textValue, JSValue 
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     CText text;
-    if (!textArgument(globalObject, "txt2obj"_s, "txt"_s, textValue, text))
+    if (failed(scope, textArgument(globalObject, "txt2obj"_s, "txt"_s, textValue, text)))
         return {};
     bool allowsNames;
-    if (!boolArgument(globalObject, byName, false, allowsNames))
+    if (failed(scope, boolArgument(globalObject, byName, false, allowsNames)))
         return {};
     bssl::UniquePtr<ASN1_OBJECT> object(OBJ_txt2obj(text.data(), !allowsNames));
     if (!object) {
@@ -3552,7 +3578,7 @@ static void initialize(JSGlobalObject* globalObject, PyModule* module)
     session->didChange(vm);
     module->add(globalObject, "SSLSession"_s, session);
 
-    if (!makeDerivedErrors(globalObject))
+    if (failed(scope, makeDerivedErrors(globalObject)))
         return;
     module->add(globalObject, "SSLError"_s, sslError(globalObject));
     for (unsigned i = 0; i < DerivedErrorCount; ++i)

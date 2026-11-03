@@ -107,7 +107,7 @@ static bool unsignedValue(JSGlobalObject* globalObject, JSValue value, ASCIILite
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     uint64_t wide;
-    if (!unsignedArgument(globalObject, value, cType, 0, wide))
+    if (failed(scope, unsignedArgument(globalObject, value, cType, 0, wide)))
         return false;
     if (wide > std::numeric_limits<T>::max()) {
         raiseOverflowError(globalObject, scope, "Python int too large for C "_s, cType);
@@ -200,13 +200,15 @@ static bool parseOptions(JSGlobalObject* globalObject, JSValue specifier, const 
 
 static bool parseLzmaOptions(JSGlobalObject* globalObject, JSValue specifier, lzma_options_lzma& options)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     // A preset gives all the options a value. Then come those that the caller gives.
     uint32_t preset = LZMA_PRESET_DEFAULT;
     bool isMissing;
     JSValue presetValue = optionalItem(globalObject, specifier, "preset"_s, isMissing);
     if (!presetValue && !isMissing)
         return false;
-    if (presetValue && !uint32Value(globalObject, presetValue, preset))
+    if (presetValue && failed(scope, uint32Value(globalObject, presetValue, preset)))
         return false;
     memset(&options, 0, sizeof(options));
     if (lzma_lzma_preset(&options, preset)) {
@@ -230,14 +232,14 @@ static bool parseLzmaOptions(JSGlobalObject* globalObject, JSValue specifier, lz
         case 5:
             return uint32Value(globalObject, value, options.pb);
         case 6:
-            if (!uint32Value(globalObject, value, number))
+            if (failed(scope, uint32Value(globalObject, value, number)))
                 return false;
             options.mode = static_cast<lzma_mode>(number);
             return true;
         case 7:
             return uint32Value(globalObject, value, options.nice_len);
         case 8:
-            if (!uint32Value(globalObject, value, number))
+            if (failed(scope, uint32Value(globalObject, value, number)))
                 return false;
             options.mf = static_cast<lzma_match_finder>(number);
             return true;
@@ -263,7 +265,7 @@ static bool parseFilter(JSGlobalObject* globalObject, JSValue specifier, Filter&
         return false;
     }
     lzma_vli id;
-    if (!unsignedValue(globalObject, idValue, "lzma_vli"_s, id))
+    if (failed(scope, unsignedValue(globalObject, idValue, "lzma_vli"_s, id)))
         return false;
 
     switch (id) {
@@ -473,11 +475,11 @@ static JSValue compressorNew(JSGlobalObject* globalObject, JSValue cls, const Ca
     auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral names[] = { "format"_s, "check"_s, "preset"_s, "filters"_s };
     JSValue values[4];
-    if (!unpackArguments(globalObject, { "LZMACompressor"_s, 0, 0, 4, names }, args, values))
+    if (failed(scope, unpackArguments(globalObject, { "LZMACompressor"_s, 0, 0, 4, names }, args, values)))
         return {};
     int format = FormatXZ;
     int check = -1;
-    if ((values[0] && !parsedInt(globalObject, values[0], format)) || (values[1] && !parsedInt(globalObject, values[1], check)))
+    if ((values[0] && failed(scope, parsedInt(globalObject, values[0], format))) || (values[1] && failed(scope, parsedInt(globalObject, values[1], check))))
         return {};
     JSValue presetValue = values[2] ? values[2] : jsUndefined();
     JSValue filters = values[3] ? values[3] : jsUndefined();
@@ -487,7 +489,7 @@ static JSValue compressorNew(JSGlobalObject* globalObject, JSValue cls, const Ca
     if (!isNone(presetValue) && !isNone(filters))
         return raiseValueError(globalObject, scope, "Cannot specify both preset and filter chain"_s);
     uint32_t preset = LZMA_PRESET_DEFAULT;
-    if (!isNone(presetValue) && !uint32Value(globalObject, presetValue, preset))
+    if (!isNone(presetValue) && failed(scope, uint32Value(globalObject, presetValue, preset)))
         return {};
 
     auto state = makeUnique<Compressor>();
@@ -596,10 +598,10 @@ static JSValue decompressorNew(JSGlobalObject* globalObject, JSValue cls, const 
     auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral names[] = { "format"_s, "memlimit"_s, "filters"_s };
     JSValue values[3];
-    if (!unpackArguments(globalObject, { "LZMADecompressor"_s, 0, 0, 3, names }, args, values))
+    if (failed(scope, unpackArguments(globalObject, { "LZMADecompressor"_s, 0, 0, 3, names }, args, values)))
         return {};
     int format;
-    if (!intArgument(globalObject, values[0], FormatAuto, format))
+    if (failed(scope, intArgument(globalObject, values[0], FormatAuto, format)))
         return {};
     JSValue memoryLimitValue = values[1] ? values[1] : jsUndefined();
     JSValue filters = values[2] ? values[2] : jsUndefined();
@@ -608,7 +610,7 @@ static JSValue decompressorNew(JSGlobalObject* globalObject, JSValue cls, const 
     if (!isNone(memoryLimitValue)) {
         if (format == FormatRaw)
             return raiseValueError(globalObject, scope, "Cannot specify memory limit with FORMAT_RAW"_s);
-        if (!unsignedValue(globalObject, memoryLimitValue, "uint64_t"_s, memoryLimit))
+        if (failed(scope, unsignedValue(globalObject, memoryLimitValue, "uint64_t"_s, memoryLimit)))
             return {};
     }
     if (format == FormatRaw && isNone(filters))
@@ -656,13 +658,13 @@ static JSValue decompressorDecompress(JSGlobalObject* globalObject, JSValue self
     auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral names[] = { "data"_s, "max_length"_s };
     JSValue values[2];
-    if (!unpackArguments(globalObject, { "decompress"_s, 0, 1, 2, names }, args, values))
+    if (failed(scope, unpackArguments(globalObject, { "decompress"_s, 0, 1, 2, names }, args, values)))
         return {};
     BufferHolder input(globalObject);
     if (!input.get(values[0]))
         return {};
     int64_t maxLength = -1;
-    if (values[1] && !ssizeArgument(globalObject, values[1], maxLength))
+    if (values[1] && failed(scope, ssizeArgument(globalObject, values[1], maxLength)))
         return {};
     auto* self = uncheckedDowncast<PyRecord>(selfValue.asCell());
     auto& state = *stateOf<Decompressor>(self);
@@ -740,8 +742,10 @@ static constexpr TypeDef decompressorTypeDef { "_lzma.LZMADecompressor"_s, { Typ
 
 static JSValue isCheckSupported(JSGlobalObject* globalObject, JSValue checkValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int check;
-    if (!intArgument(globalObject, checkValue, 0, check))
+    if (failed(scope, intArgument(globalObject, checkValue, 0, check)))
         return {};
     return jsBoolean(lzma_check_is_supported(static_cast<lzma_check>(check)));
 }
@@ -768,8 +772,10 @@ static JSValue encodeFilterProperties(JSGlobalObject* globalObject, JSValue spec
 
 static JSValue decodeFilterProperties(JSGlobalObject* globalObject, JSValue idValue, JSValue properties)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     lzma_filter filter { LZMA_VLI_UNKNOWN, nullptr };
-    if (!unsignedValue(globalObject, idValue, "lzma_vli"_s, filter.id))
+    if (failed(scope, unsignedValue(globalObject, idValue, "lzma_vli"_s, filter.id)))
         return {};
     BufferHolder input(globalObject);
     if (!input.get(properties))
@@ -778,7 +784,7 @@ static JSValue decodeFilterProperties(JSGlobalObject* globalObject, JSValue idVa
     lzma_allocator allocator { allocate, release, &memory };
     lzma_ret status = lzma_properties_decode(&filter, &allocator, input.buffer.data, static_cast<size_t>(input.buffer.length));
     if (isError(status))
-        return raiseError(globalObject, status);
+        RELEASE_AND_RETURN(scope, raiseError(globalObject, status));
     JSValue result = buildFilterSpecifier(globalObject, filter);
     LibraryMemory::free(filter.options);
     return result;
@@ -794,6 +800,8 @@ static constexpr NativeDef functions[] = {
 
 void initializeLzmaModule(JSGlobalObject* globalObject, PyModule* module)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     using namespace Lzma;
     Runtime& rt = runtime(globalObject);
 
@@ -834,8 +842,10 @@ void initializeLzmaModule(JSGlobalObject* globalObject, PyModule* module)
         { "PRESET_DEFAULT"_s, LZMA_PRESET_DEFAULT },
         { "PRESET_EXTREME"_s, static_cast<int64_t>(LZMA_PRESET_EXTREME) },
     };
-    for (auto& [name, value] : constants)
+    for (auto& [name, value] : constants) {
         module->add(globalObject, name, makeInt(globalObject, value));
+        RETURN_IF_EXCEPTION(scope, void());
+    }
 
     module->add(globalObject, "LZMAError"_s, errorType(globalObject));
     module->add(globalObject, "LZMACompressor"_s, rt.typeFor(compressorTypeDef));

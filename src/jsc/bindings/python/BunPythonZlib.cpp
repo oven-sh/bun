@@ -103,12 +103,12 @@ static JSValue compress(JSGlobalObject* globalObject, JSValue data, JSValue leve
     if (!input.get(data))
         return {};
     int level, wbits;
-    if (!intArgument(globalObject, levelValue, Z_DEFAULT_COMPRESSION, level) || !intArgument(globalObject, wbitsValue, MAX_WBITS, wbits) || !refreshBuffers(globalObject, input))
+    if (failed(scope, intArgument(globalObject, levelValue, Z_DEFAULT_COMPRESSION, level)) || failed(scope, intArgument(globalObject, wbitsValue, MAX_WBITS, wbits)) || !refreshBuffers(globalObject, input))
         return {};
 
     Output output(defaultBufferSize);
     if (!output.isValid())
-        return raiseNoMemory(globalObject, "Out of memory while compressing data"_s);
+        RELEASE_AND_RETURN(scope, raiseNoMemory(globalObject, "Out of memory while compressing data"_s));
 
     z_stream stream {};
     stream.next_in = input.buffer.data;
@@ -118,7 +118,7 @@ static JSValue compress(JSGlobalObject* globalObject, JSValue data, JSValue leve
     case Z_OK:
         break;
     case Z_MEM_ERROR:
-        return raiseNoMemory(globalObject, "Out of memory while compressing data"_s);
+        RELEASE_AND_RETURN(scope, raiseNoMemory(globalObject, "Out of memory while compressing data"_s));
     case Z_STREAM_ERROR:
         return raise(globalObject, scope, errorType(globalObject), "Bad compression level"_s);
     default:
@@ -134,7 +134,7 @@ static JSValue compress(JSGlobalObject* globalObject, JSValue data, JSValue leve
         do {
             if (!stream.avail_out && !output.grow(stream)) {
                 deflateEnd(&stream);
-                return raiseNoMemory(globalObject, "Out of memory while compressing data"_s);
+                RELEASE_AND_RETURN(scope, raiseNoMemory(globalObject, "Out of memory while compressing data"_s));
             }
             error = deflate(&stream, flush);
             if (error == Z_STREAM_ERROR) {
@@ -159,12 +159,12 @@ static JSValue decompress(JSGlobalObject* globalObject, JSValue data, JSValue wb
         return {};
     int wbits;
     int64_t bufferSize;
-    if (!intArgument(globalObject, wbitsValue, MAX_WBITS, wbits) || !nonNegativeSsizeArgument(globalObject, bufsizeValue, "bufsize"_s, defaultBufferSize, bufferSize) || !refreshBuffers(globalObject, input))
+    if (failed(scope, intArgument(globalObject, wbitsValue, MAX_WBITS, wbits)) || failed(scope, nonNegativeSsizeArgument(globalObject, bufsizeValue, "bufsize"_s, defaultBufferSize, bufferSize)) || !refreshBuffers(globalObject, input))
         return {};
 
     Output output(bufferSize);
     if (!output.isValid())
-        return raiseNoMemory(globalObject, "Out of memory while decompressing data"_s);
+        RELEASE_AND_RETURN(scope, raiseNoMemory(globalObject, "Out of memory while decompressing data"_s));
 
     z_stream stream {};
     stream.next_in = input.buffer.data;
@@ -174,7 +174,7 @@ static JSValue decompress(JSGlobalObject* globalObject, JSValue data, JSValue wb
     case Z_OK:
         break;
     case Z_MEM_ERROR:
-        return raiseNoMemory(globalObject, "Out of memory while decompressing data"_s);
+        RELEASE_AND_RETURN(scope, raiseNoMemory(globalObject, "Out of memory while decompressing data"_s));
     default:
         inflateEnd(&stream);
         RELEASE_AND_RETURN(scope, raiseZlibError(globalObject, stream, error, "while preparing to decompress data"_s));
@@ -187,7 +187,7 @@ static JSValue decompress(JSGlobalObject* globalObject, JSValue data, JSValue wb
         do {
             if (!stream.avail_out && !output.grow(stream)) {
                 inflateEnd(&stream);
-                return raiseNoMemory(globalObject, "Out of memory while decompressing data"_s);
+                RELEASE_AND_RETURN(scope, raiseNoMemory(globalObject, "Out of memory while decompressing data"_s));
             }
             error = inflate(&stream, flush);
             switch (error) {
@@ -197,7 +197,7 @@ static JSValue decompress(JSGlobalObject* globalObject, JSValue data, JSValue wb
                 break;
             case Z_MEM_ERROR:
                 inflateEnd(&stream);
-                return raiseNoMemory(globalObject, "Out of memory while decompressing data"_s);
+                RELEASE_AND_RETURN(scope, raiseNoMemory(globalObject, "Out of memory while decompressing data"_s));
             default: {
                 raiseZlibError(globalObject, stream, error, "while decompressing data"_s);
                 inflateEnd(&stream);
@@ -241,11 +241,11 @@ static JSValue compressobj(JSGlobalObject* globalObject, JSValue levelValue, JSV
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int level, method, wbits, memLevel, strategy;
-    if (!intArgument(globalObject, levelValue, Z_DEFAULT_COMPRESSION, level)
-        || !intArgument(globalObject, methodValue, Z_DEFLATED, method)
-        || !intArgument(globalObject, wbitsValue, MAX_WBITS, wbits)
-        || !intArgument(globalObject, memLevelValue, defaultMemLevel, memLevel)
-        || !intArgument(globalObject, strategyValue, Z_DEFAULT_STRATEGY, strategy))
+    if (failed(scope, intArgument(globalObject, levelValue, Z_DEFAULT_COMPRESSION, level))
+        || failed(scope, intArgument(globalObject, methodValue, Z_DEFLATED, method))
+        || failed(scope, intArgument(globalObject, wbitsValue, MAX_WBITS, wbits))
+        || failed(scope, intArgument(globalObject, memLevelValue, defaultMemLevel, memLevel))
+        || failed(scope, intArgument(globalObject, strategyValue, Z_DEFAULT_STRATEGY, strategy)))
         return {};
     BufferHolder dictionary(globalObject);
     if (zdict) {
@@ -262,7 +262,7 @@ static JSValue compressobj(JSGlobalObject* globalObject, JSValue levelValue, JSV
         state->isInitialized = true;
         break;
     case Z_MEM_ERROR:
-        return raiseNoMemory(globalObject, "Can't allocate memory for compression object"_s);
+        RELEASE_AND_RETURN(scope, raiseNoMemory(globalObject, "Can't allocate memory for compression object"_s));
     case Z_STREAM_ERROR:
         return raiseValueError(globalObject, scope, "Invalid initialization option"_s);
     default:
@@ -275,7 +275,7 @@ static JSValue compressobj(JSGlobalObject* globalObject, JSValue levelValue, JSV
         if (error != Z_OK)
             return raiseValueError(globalObject, scope, "deflateSetDictionary()"_s);
     }
-    return createRecordWithState(globalObject, compressType(globalObject), 0, WTF::move(state), sizeOfDeflateState);
+    RELEASE_AND_RETURN(scope, createRecordWithState(globalObject, compressType(globalObject), 0, WTF::move(state), sizeOfDeflateState));
 }
 
 static JSValue compressorCompress(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
@@ -283,7 +283,7 @@ static JSValue compressorCompress(JSGlobalObject* globalObject, JSValue self, co
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue data;
-    if (!unpackArguments(globalObject, { "compress"_s, 1, 1, 1, {} }, args, &data))
+    if (failed(scope, unpackArguments(globalObject, { "compress"_s, 1, 1, 1, {} }, args, &data)))
         return {};
     BufferHolder input(globalObject);
     if (!input.get(data))
@@ -292,7 +292,7 @@ static JSValue compressorCompress(JSGlobalObject* globalObject, JSValue self, co
 
     Output output(defaultBufferSize);
     if (!output.isValid())
-        return raiseNoMemory(globalObject, {});
+        RELEASE_AND_RETURN(scope, raiseNoMemory(globalObject, {}));
     stream.next_in = input.buffer.data;
     size_t remaining = static_cast<size_t>(input.buffer.length);
     output.attach(stream);
@@ -300,7 +300,7 @@ static JSValue compressorCompress(JSGlobalObject* globalObject, JSValue self, co
         arrangeInput(stream, remaining);
         do {
             if (!stream.avail_out && !output.grow(stream))
-                return raiseNoMemory(globalObject, {});
+                RELEASE_AND_RETURN(scope, raiseNoMemory(globalObject, {}));
             int error = deflate(&stream, Z_NO_FLUSH);
             if (error == Z_STREAM_ERROR)
                 RELEASE_AND_RETURN(scope, raiseZlibError(globalObject, stream, error, "while compressing data"_s));
@@ -315,25 +315,25 @@ static JSValue compressorFlush(JSGlobalObject* globalObject, JSValue self, const
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue modeValue;
-    if (!unpackArguments(globalObject, { "flush"_s, 1, 0, 1, {} }, args, &modeValue))
+    if (failed(scope, unpackArguments(globalObject, { "flush"_s, 1, 0, 1, {} }, args, &modeValue)))
         return {};
     int mode;
-    if (!intArgument(globalObject, modeValue, Z_FINISH, mode))
+    if (failed(scope, intArgument(globalObject, modeValue, Z_FINISH, mode)))
         return {};
     if (mode == Z_NO_FLUSH)
-        return runtime(globalObject).emptyBytes();
+        RELEASE_AND_RETURN(scope, runtime(globalObject).emptyBytes());
     auto* state = stateOf<Compressor>(self);
     z_stream& stream = state->stream;
 
     Output output(defaultBufferSize);
     if (!output.isValid())
-        return raiseNoMemory(globalObject, {});
+        RELEASE_AND_RETURN(scope, raiseNoMemory(globalObject, {}));
     stream.avail_in = 0;
     output.attach(stream);
     int error;
     do {
         if (!stream.avail_out && !output.grow(stream))
-            return raiseNoMemory(globalObject, {});
+            RELEASE_AND_RETURN(scope, raiseNoMemory(globalObject, {}));
         error = deflate(&stream, mode);
         if (error == Z_STREAM_ERROR)
             RELEASE_AND_RETURN(scope, raiseZlibError(globalObject, stream, error, "while flushing"_s));
@@ -364,12 +364,12 @@ static JSValue copyCompressor(JSGlobalObject* globalObject, JSValue self)
     case Z_STREAM_ERROR:
         return raiseValueError(globalObject, scope, "Inconsistent stream state"_s);
     case Z_MEM_ERROR:
-        return raiseNoMemory(globalObject, "Can't allocate memory for compression object"_s);
+        RELEASE_AND_RETURN(scope, raiseNoMemory(globalObject, "Can't allocate memory for compression object"_s));
     default:
         RELEASE_AND_RETURN(scope, raiseZlibError(globalObject, state->stream, error, "while copying compression object"_s));
     }
     copy->isInitialized = true;
-    return createRecordWithState(globalObject, compressType(globalObject), 0, WTF::move(copy), sizeOfDeflateState);
+    RELEASE_AND_RETURN(scope, createRecordWithState(globalObject, compressType(globalObject), 0, WTF::move(copy), sizeOfDeflateState));
 }
 
 template<JSValue (*copy)(JSGlobalObject*, JSValue)>
@@ -469,7 +469,7 @@ static JSValue createDecompressor(JSGlobalObject* globalObject, PyType* type, JS
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     int wbits;
-    if (!intArgument(globalObject, wbitsValue, MAX_WBITS, wbits))
+    if (failed(scope, intArgument(globalObject, wbitsValue, MAX_WBITS, wbits)))
         return {};
     if (checksDictionary && zdict && !hasBuffer(zdict))
         return raiseTypeError(globalObject, scope, "zdict argument must support the buffer protocol"_s);
@@ -483,7 +483,7 @@ static JSValue createDecompressor(JSGlobalObject* globalObject, PyType* type, JS
     case Z_STREAM_ERROR:
         return raiseValueError(globalObject, scope, "Invalid initialization option"_s);
     case Z_MEM_ERROR:
-        return raiseNoMemory(globalObject, "Can't allocate memory for decompression object"_s);
+        RELEASE_AND_RETURN(scope, raiseNoMemory(globalObject, "Can't allocate memory for decompression object"_s));
     default:
         RELEASE_AND_RETURN(scope, raiseZlibError(globalObject, state->stream, error, "while creating decompression object"_s));
     }
@@ -492,7 +492,7 @@ static JSValue createDecompressor(JSGlobalObject* globalObject, PyType* type, JS
     self->set(vm, UnconsumedTail, rt.emptyBytes());
     self->set(vm, Dictionary, zdict);
     // A raw stream does not say that it needs a dictionary.
-    if (zdict && wbits < 0 && !setInflateDictionary(globalObject, self))
+    if (zdict && wbits < 0 && failed(scope, setInflateDictionary(globalObject, self)))
         return {};
     return self;
 }
@@ -536,7 +536,7 @@ static JSValue decompressorDecompress(JSGlobalObject* globalObject, JSValue self
     auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral names[] = { "max_length"_s };
     JSValue values[2];
-    if (!unpackArguments(globalObject, { "decompress"_s, 1, 1, 2, names }, args, values))
+    if (failed(scope, unpackArguments(globalObject, { "decompress"_s, 1, 1, 2, names }, args, values)))
         return {};
     JSValue data = values[0];
     JSValue maxLengthValue = values[1];
@@ -544,19 +544,19 @@ static JSValue decompressorDecompress(JSGlobalObject* globalObject, JSValue self
     if (!input.get(data))
         return {};
     int64_t maxLength;
-    if (!nonNegativeSsizeArgument(globalObject, maxLengthValue, "max_length"_s, 0, maxLength) || !refreshBuffers(globalObject, input))
+    if (failed(scope, nonNegativeSsizeArgument(globalObject, maxLengthValue, "max_length"_s, 0, maxLength)) || !refreshBuffers(globalObject, input))
         return {};
     if (!maxLength)
         maxLength = -1;
     auto* self = uncheckedDowncast<PyRecord>(selfValue.asCell());
-    if (!checkIsNotInUse(globalObject, self))
+    if (failed(scope, checkIsNotInUse(globalObject, self)))
         return {};
     auto* state = stateOf<Decompressor>(self);
     z_stream& stream = state->stream;
 
     Output output(defaultBufferSize, maxLength);
     if (!output.isValid())
-        return raiseNoMemory(globalObject, {});
+        RELEASE_AND_RETURN(scope, raiseNoMemory(globalObject, {}));
     stream.next_in = input.buffer.data;
     size_t remaining = static_cast<size_t>(input.buffer.length);
     output.attach(stream);
@@ -571,12 +571,12 @@ static JSValue decompressorDecompress(JSGlobalObject* globalObject, JSValue self
                     break;
                 }
                 if (!output.grow(stream))
-                    return raiseNoMemory(globalObject, {});
+                    RELEASE_AND_RETURN(scope, raiseNoMemory(globalObject, {}));
             }
             error = inflate(&stream, Z_SYNC_FLUSH);
             if (error == Z_NEED_DICT && self->get(Dictionary)) {
                 size_t consumed = stream.next_in - input.buffer.data;
-                if (!setInflateDictionary(globalObject, self) || !refreshBuffers(globalObject, input))
+                if (failed(scope, setInflateDictionary(globalObject, self)) || !refreshBuffers(globalObject, input))
                     return {};
                 stream.next_in = input.buffer.data + consumed;
             } else if (error != Z_OK && error != Z_BUF_ERROR && error != Z_STREAM_END) {
@@ -604,26 +604,26 @@ static JSValue decompressorFlush(JSGlobalObject* globalObject, JSValue selfValue
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue lengthValue;
-    if (!unpackArguments(globalObject, { "flush"_s, 1, 0, 1, {} }, args, &lengthValue))
+    if (failed(scope, unpackArguments(globalObject, { "flush"_s, 1, 0, 1, {} }, args, &lengthValue)))
         return {};
     int64_t length = defaultBufferSize;
-    if (lengthValue && !ssizeArgument(globalObject, lengthValue, length))
+    if (lengthValue && failed(scope, ssizeArgument(globalObject, lengthValue, length)))
         return {};
     if (length <= 0)
         return raiseValueError(globalObject, scope, "length must be greater than zero"_s);
     auto* self = uncheckedDowncast<PyRecord>(selfValue.asCell());
-    if (!checkIsNotInUse(globalObject, self))
+    if (failed(scope, checkIsNotInUse(globalObject, self)))
         return {};
     auto* state = stateOf<Decompressor>(self);
     if (!state->isInitialized)
-        return runtime(globalObject).emptyBytes();
+        RELEASE_AND_RETURN(scope, runtime(globalObject).emptyBytes());
     z_stream& stream = state->stream;
 
     // Kept alive by this variable while the field is replaced.
     PyBytes* tail = PyBytes::from(self->get(UnconsumedTail));
     Output output(length);
     if (!output.isValid())
-        return raiseNoMemory(globalObject, {});
+        RELEASE_AND_RETURN(scope, raiseNoMemory(globalObject, {}));
     stream.next_in = const_cast<uint8_t*>(tail->data());
     size_t remaining = tail->length();
     output.attach(stream);
@@ -634,7 +634,7 @@ static JSValue decompressorFlush(JSGlobalObject* globalObject, JSValue selfValue
         int flush = remaining ? Z_NO_FLUSH : Z_FINISH;
         do {
             if (!stream.avail_out && !output.grow(stream))
-                return raiseNoMemory(globalObject, {});
+                RELEASE_AND_RETURN(scope, raiseNoMemory(globalObject, {}));
             error = inflate(&stream, flush);
             if (error != Z_OK && error != Z_BUF_ERROR && error != Z_STREAM_END) {
                 isDone = true;
@@ -665,7 +665,7 @@ static JSValue copyDecompressor(JSGlobalObject* globalObject, JSValue selfValue)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* self = uncheckedDowncast<PyRecord>(selfValue.asCell());
-    if (!checkIsNotInUse(globalObject, self))
+    if (failed(scope, checkIsNotInUse(globalObject, self)))
         return {};
     auto* state = stateOf<Decompressor>(self);
     auto copy = makeUnique<Decompressor>();
@@ -676,7 +676,7 @@ static JSValue copyDecompressor(JSGlobalObject* globalObject, JSValue selfValue)
     case Z_STREAM_ERROR:
         return raiseValueError(globalObject, scope, "Inconsistent stream state"_s);
     case Z_MEM_ERROR:
-        return raiseNoMemory(globalObject, "Can't allocate memory for decompression object"_s);
+        RELEASE_AND_RETURN(scope, raiseNoMemory(globalObject, "Can't allocate memory for decompression object"_s));
     default:
         RELEASE_AND_RETURN(scope, raiseZlibError(globalObject, state->stream, error, "while copying decompression object"_s));
     }
@@ -726,7 +726,7 @@ static JSValue zlibDecompressorDecompress(JSGlobalObject* globalObject, JSValue 
     if (!input.get(data))
         return {};
     int64_t maxLength = -1;
-    if ((maxLengthValue && !ssizeArgument(globalObject, maxLengthValue, maxLength)) || !refreshBuffers(globalObject, input))
+    if ((maxLengthValue && failed(scope, ssizeArgument(globalObject, maxLengthValue, maxLength))) || !refreshBuffers(globalObject, input))
         return {};
     auto* self = uncheckedDowncast<PyRecord>(selfValue.asCell());
     auto* state = stateOf<Decompressor>(self);
@@ -740,7 +740,7 @@ static JSValue zlibDecompressorDecompress(JSGlobalObject* globalObject, JSValue 
     if (!state->pendingInput.isEmpty()) {
         joined = std::exchange(state->pendingInput, {});
         if (!joined.tryAppend(source))
-            return raiseNoMemory(globalObject, {});
+            RELEASE_AND_RETURN(scope, raiseNoMemory(globalObject, {}));
         source = joined.span();
     }
 
@@ -748,7 +748,7 @@ static JSValue zlibDecompressorDecompress(JSGlobalObject* globalObject, JSValue 
         maxLength = -1;
     Output output(maxLength < 0 ? defaultBufferSize : std::min<int64_t>(maxLength, 16 * 1024 * 1024), maxLength);
     if (!output.isValid())
-        return raiseNoMemory(globalObject, "Insufficient memory for buffer allocation"_s);
+        RELEASE_AND_RETURN(scope, raiseNoMemory(globalObject, "Insufficient memory for buffer allocation"_s));
     stream.next_in = const_cast<uint8_t*>(source.data());
     size_t remaining = source.size();
     output.attach(stream);
@@ -763,7 +763,7 @@ static JSValue zlibDecompressorDecompress(JSGlobalObject* globalObject, JSValue 
                     break;
                 }
                 if (!output.grow(stream))
-                    return raiseNoMemory(globalObject, "Insufficient memory for buffer allocation"_s);
+                    RELEASE_AND_RETURN(scope, raiseNoMemory(globalObject, "Insufficient memory for buffer allocation"_s));
             }
             error = inflate(&stream, Z_SYNC_FLUSH);
             if (error == Z_NEED_DICT) {
@@ -804,7 +804,7 @@ static JSValue zlibDecompressorDecompress(JSGlobalObject* globalObject, JSValue 
         state->needsInput = false;
         Vector<uint8_t> pending;
         if (!pending.tryAppend(left))
-            return raiseNoMemory(globalObject, {});
+            RELEASE_AND_RETURN(scope, raiseNoMemory(globalObject, {}));
         state->pendingInput = WTF::move(pending);
     }
     stream.next_in = nullptr;
@@ -830,11 +830,13 @@ static constexpr TypeDef zlibDecompressorTypeDef { "zlib._ZlibDecompressor"_s, {
 template<uLong (*update)(uLong, const Bytef*, uInt)>
 static JSValue checksum(JSGlobalObject* globalObject, JSValue data, JSValue valueArgument, uint32_t start)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     BufferHolder input(globalObject);
     if (!input.get(data))
         return {};
     uint32_t value;
-    if (!bitwiseUnsignedArgument(globalObject, valueArgument, start, value) || !refreshBuffers(globalObject, input))
+    if (failed(scope, bitwiseUnsignedArgument(globalObject, valueArgument, start, value)) || !refreshBuffers(globalObject, input))
         return {};
     uLong sum = value;
     auto span = input.buffer.span();
@@ -855,12 +857,12 @@ static JSValue combineChecksums(JSGlobalObject* globalObject, ASCIILiteral name,
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     uint32_t sum1, sum2;
-    if (!bitwiseUnsignedArgument(globalObject, first, 0, sum1) || !bitwiseUnsignedArgument(globalObject, second, 0, sum2))
+    if (failed(scope, bitwiseUnsignedArgument(globalObject, first, 0, sum1)) || failed(scope, bitwiseUnsignedArgument(globalObject, second, 0, sum2)))
         return {};
     if (!isInt(length))
         return raiseTypeError(globalObject, scope, name, "() argument 3 must be int, not "_s, typeNameOfArgument(globalObject, length));
     int64_t count;
-    if (!ssizeArgument(globalObject, length, count))
+    if (failed(scope, ssizeArgument(globalObject, length, count)))
         return {};
     if (count < 0)
         return raiseValueError(globalObject, scope, "len2 must be non-negative"_s);

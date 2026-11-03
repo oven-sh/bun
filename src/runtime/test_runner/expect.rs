@@ -924,7 +924,7 @@ impl Expect {
         // SAFETY: bun_vm() returns the live thread-local VirtualMachine; valid for this call.
         let vm = global_this.bun_vm().as_mut();
 
-        if !value.js_type().is_function() {
+        if !value.is_callable() {
             if self.flags.get().promise() != Promise::None {
                 return Ok((Some(value), JSValue::ZERO));
             }

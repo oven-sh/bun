@@ -6391,20 +6391,23 @@ impl VirtualMachine {
     }
 
     pub fn set_process_cwd(&mut self, to: &bun_core::ZStr) -> bun_sys::Result<()> {
-        let fs = self.fs();
         bun_sys::chdir(to)?;
+        if let bun_sys::Result::Err(err) = self.process_cwd_changed() {
+            let mut rollback = bun_paths::path_buffer_pool::get();
+            let _ = bun_sys::chdir(bun_paths::resolve_path::z(
+                self.fs().top_level_dir(),
+                &mut rollback,
+            ));
+            return bun_sys::Result::Err(err);
+        }
+        Ok(())
+    }
+
+    /// The process has another working directory than it had. The resolver keeps its name, as the system spells it.
+    pub fn process_cwd_changed(&mut self) -> bun_sys::Result<()> {
+        let fs = self.fs();
         let mut buf = bun_paths::path_buffer_pool::get();
-        let mut len = match bun_sys::getcwd(&mut buf[..]) {
-            bun_sys::Result::Ok(r) => r,
-            bun_sys::Result::Err(err) => {
-                let mut rollback = bun_paths::path_buffer_pool::get();
-                let _ = bun_sys::chdir(bun_paths::resolve_path::z(
-                    fs.top_level_dir(),
-                    &mut rollback,
-                ));
-                return bun_sys::Result::Err(err);
-            }
-        };
+        let mut len = bun_sys::getcwd(&mut buf[..])?;
         if len > 0 && buf[len - 1] != bun_paths::SEP && len < buf.len() {
             buf[len] = bun_paths::SEP;
             len += 1;

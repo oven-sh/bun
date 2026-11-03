@@ -1083,9 +1083,7 @@ describe("TestRecursion", () => {
     // test that loading highly-nested objects doesn't segfault when C
     // accelerations are used. See #12017
     expect(() => infinite_recursion(20_000, () => loads(times('{"a":') + "1" + times("}")))).toThrow(RecursionError);
-    expect(() => infinite_recursion(20_000, () => loads(times('{"a":') + "[1]" + times("}")))).toThrow(
-      RecursionError,
-    );
+    expect(() => infinite_recursion(20_000, () => loads(times('{"a":') + "[1]" + times("}")))).toThrow(RecursionError);
     expect(() => infinite_recursion(20_000, () => loads(times("[") + "1" + times("]")))).toThrow(RecursionError);
   });
 

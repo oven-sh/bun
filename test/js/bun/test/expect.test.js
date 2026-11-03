@@ -5633,6 +5633,26 @@ describe("expect()", () => {
   test("toBeGreaterThanOrEqual to return undefined", () => {
     expect(expect(1).toBeGreaterThanOrEqual(0)).toBeUndefined();
   });
+  test("toThrow calls whatever can be called", () => {
+    const proxy = new Proxy(() => {
+      throw new RangeError("from behind a proxy");
+    }, {});
+    expect(proxy).toThrow(RangeError);
+    expect(() => expect({}).toThrow()).toThrow("Expected value must be a function");
+  });
+
+  test("toBeInstanceOf asks [Symbol.hasInstance] about primitive values too", () => {
+    class Even {
+      static [Symbol.hasInstance](value) {
+        return typeof value === "number" && value % 2 === 0;
+      }
+    }
+    expect(2).toBeInstanceOf(Even);
+    expect(3).not.toBeInstanceOf(Even);
+    expect(2).not.toBeInstanceOf(Number);
+    expect(() => expect(3).toBeInstanceOf(Even)).toThrow("Received value: 3");
+  });
+
   test("toBeInstanceOf to return undefined", () => {
     expect(expect(new String()).toBeInstanceOf(String)).toBeUndefined();
   });

@@ -261,7 +261,8 @@ describe("TestBisect", () => {
   test("test_insort_keynotNone", () => {
     const x: any[] = [];
     const y = py({ a: 2, b: 1 });
-    for (const f of [bisect.insort_left, bisect.insort_right]) expect(() => f(x, y, kwargs({ key: "b" }))).toThrow(PyTypeError);
+    for (const f of [bisect.insort_left, bisect.insort_right])
+      expect(() => f(x, y, kwargs({ key: "b" }))).toThrow(PyTypeError);
   });
 
   test("test_lt_returns_non_bool", () => {

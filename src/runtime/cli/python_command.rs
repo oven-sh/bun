@@ -79,6 +79,24 @@ extern "C" fn Bun__Python__originalArgument(index: usize) -> *const c_char {
         .map_or(core::ptr::null(), |argument| argument.as_ptr().cast())
 }
 
+/// `os.chdir()` has changed the working directory. What `process.chdir()` does besides that. Not by way of the name, which need
+/// not be text: JavaScript could not spell it.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__Python__didChangeDirectory(global_object: &bun_jsc::JSGlobalObject) {
+    let vm = global_object.bun_vm().as_mut();
+    let previous: Box<[u8]> = Box::from(
+        bun_core::working_directory_in_executable().unwrap_or_else(|| vm.top_level_dir()),
+    );
+    // It may have no name any more, or none that this process may read.
+    if vm.process_cwd_changed().is_err() {
+        return;
+    }
+    bun_core::set_working_directory_in_executable(None);
+    vm.test_isolation_scope(|state| {
+        state.saved_cwd.get_or_insert(previous);
+    });
+}
+
 /// `sys.executable`: a link named `python3` to this executable, in a directory of this user and this executable. Empty: none.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__Python__linkToSelf() -> bun_core::String {

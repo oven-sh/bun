@@ -42,7 +42,7 @@ def _resolve(specifier, importer):
 
 
 def _importer():
-    """The file whose import statement is being carried out, or the working directory."""
+    """The file whose import statement is being carried out, or the working directory. None: that is gone."""
     frame = sys._getframe(1)
     while frame is not None:
         if frame.f_globals.get("__name__", "").partition(".")[0] not in _IMPORT_SYSTEM:
@@ -51,7 +51,10 @@ def _importer():
                 return file
             break
         frame = frame.f_back
-    return js.process.cwd() + "/"
+    try:
+        return _external._os.getcwd() + "/"
+    except OSError:
+        return None
 
 
 def _is_installed(specifier, importer):
@@ -94,7 +97,7 @@ class JSFileLoader(JSLoader):
 
 def _require_from_importer(specifier):
     """bun.require(specifier): any specifier at all, as JavaScript's require() in the calling file takes it."""
-    importer = _importer()
+    importer = _importer() or "/"
     if not specifier.startswith(("/", "./", "../", "node:", "bun:", "#")) and not _is_installed(specifier, importer):
         raise ModuleNotFoundError(f"No package named {specifier!r} in node_modules", name=specifier)
     return _require(specifier, importer)
@@ -137,6 +140,8 @@ class JSFinder:
         if not verbatim and (fullname.startswith("_") or fullname in sys.stdlib_module_names):
             return None
         importer = _importer()
+        if importer is None:
+            return None
         for specifier in (fullname,) if verbatim or "_" not in fullname else (fullname, fullname.replace("_", "-")):
             if not specifier.startswith(("/", "node:", "bun:")) and not _is_installed(specifier, importer):
                 continue

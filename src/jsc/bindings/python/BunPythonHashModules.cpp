@@ -12,19 +12,23 @@ static Hasher& hasherOf(JSValue self) { return *stateOf<Hasher>(self); }
 
 static JSValue createHashObject(JSGlobalObject* globalObject, PyType* type, std::unique_ptr<Hasher>&& hasher, JSValue data)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (data) {
         BufferHolder input(globalObject);
-        if (!getDataToHash(globalObject, data, input))
+        if (failed(scope, getDataToHash(globalObject, data, input)))
             return {};
         hasher->update(input.buffer.span());
     }
-    return createRecordWithState(globalObject, type, 0, WTF::move(hasher));
+    RELEASE_AND_RETURN(scope, createRecordWithState(globalObject, type, 0, WTF::move(hasher)));
 }
 
 static JSValue update(JSGlobalObject* globalObject, JSValue self, JSValue data)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     BufferHolder input(globalObject);
-    if (!getDataToHash(globalObject, data, input))
+    if (failed(scope, getDataToHash(globalObject, data, input)))
         return {};
     hasherOf(self).update(input.buffer.span());
     return jsUndefined();
@@ -48,9 +52,11 @@ static JSValue hexdigest(JSGlobalObject* globalObject, JSValue self)
 
 static JSValue copy(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
-    if (!takesNoArguments(globalObject, "copy"_s, args))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, takesNoArguments(globalObject, "copy"_s, args)))
         return {};
-    return createRecordWithState(globalObject, typeOf(globalObject, self), 0, makeUnique<Hasher>(hasherOf(self)));
+    RELEASE_AND_RETURN(scope, createRecordWithState(globalObject, typeOf(globalObject, self), 0, makeUnique<Hasher>(hasherOf(self))));
 }
 
 static JSValue name(JSGlobalObject* globalObject, JSValue self) { return makeStr(getVM(globalObject), String(infoFor(hasherOf(self).kind).name)); }
@@ -123,7 +129,7 @@ static JSValue sha3New(JSGlobalObject* globalObject, JSValue cls, const CallArgs
     // In CPython one function serves all six, which is why it gives this name whichever it is.
     static constexpr ASCIILiteral names[] = { "data"_s, "usedforsecurity"_s, "string"_s };
     JSValue values[3];
-    if (!unpackArguments(globalObject, { "sha3_224"_s, 0, 0, 1, names }, args, values))
+    if (failed(scope, unpackArguments(globalObject, { "sha3_224"_s, 0, 0, 1, names }, args, values)))
         return {};
     if (values[1]) {
         isTrue(globalObject, values[1]);
@@ -145,9 +151,9 @@ static bool shakeLength(JSGlobalObject* globalObject, ASCIILiteral function, con
     auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral names[] = { "length"_s };
     JSValue value;
-    if (!unpackArguments(globalObject, { function, 0, 1, 1, names }, args, &value))
+    if (failed(scope, unpackArguments(globalObject, { function, 0, 1, 1, names }, args, &value)))
         return false;
-    if (!nonNegativeSsizeArgument(globalObject, value, "length"_s, 0, length))
+    if (failed(scope, nonNegativeSsizeArgument(globalObject, value, "length"_s, 0, length)))
         return false;
     if (length >= (1 << 29)) {
         raiseOverflowError(globalObject, scope, "digest length is too large"_s);
@@ -158,8 +164,10 @@ static bool shakeLength(JSGlobalObject* globalObject, ASCIILiteral function, con
 
 static JSValue shakeDigest(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t length;
-    if (!shakeLength(globalObject, "digest"_s, args, length))
+    if (failed(scope, shakeLength(globalObject, "digest"_s, args, length)))
         return {};
     PyBytes* result = newBytes(globalObject, length);
     if (!result)
@@ -174,7 +182,7 @@ static JSValue shakeHexdigest(JSGlobalObject* globalObject, JSValue self, const 
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t length;
-    if (!shakeLength(globalObject, "hexdigest"_s, args, length))
+    if (failed(scope, shakeLength(globalObject, "hexdigest"_s, args, length)))
         return {};
     Vector<uint8_t> result;
     if (!result.tryGrow(length))
@@ -229,7 +237,7 @@ static JSValue blake2New(JSGlobalObject* globalObject, JSValue cls, const CallAr
     enum { Data, DigestSize, Key, Salt, Person, Fanout, Depth, LeafSize, NodeOffset, NodeDepth, InnerSize, LastNode, UsedForSecurity, StringData, Count };
     static constexpr ASCIILiteral names[] = { "data"_s, "digest_size"_s, "key"_s, "salt"_s, "person"_s, "fanout"_s, "depth"_s, "leaf_size"_s, "node_offset"_s, "node_depth"_s, "inner_size"_s, "last_node"_s, "usedforsecurity"_s, "string"_s };
     JSValue values[Count];
-    if (!unpackArguments(globalObject, { function, 0, 0, 1, names }, args, values))
+    if (failed(scope, unpackArguments(globalObject, { function, 0, 0, 1, names }, args, values)))
         return {};
 
     int digestSize, fanout, depth, nodeDepth, innerSize;
@@ -237,16 +245,16 @@ static JSValue blake2New(JSGlobalObject* globalObject, JSValue cls, const CallAr
     BufferHolder key(globalObject);
     BufferHolder salt(globalObject);
     BufferHolder person(globalObject);
-    if (!intArgument(globalObject, values[DigestSize], State::maxDigestSize, digestSize)
+    if (failed(scope, intArgument(globalObject, values[DigestSize], State::maxDigestSize, digestSize))
         || (values[Key] && !key.get(values[Key]))
         || (values[Salt] && !salt.get(values[Salt]))
         || (values[Person] && !person.get(values[Person]))
-        || !intArgument(globalObject, values[Fanout], 1, fanout)
-        || !intArgument(globalObject, values[Depth], 1, depth)
-        || !unsignedArgument(globalObject, values[LeafSize], "unsigned long"_s, 0, leafSize)
-        || !unsignedArgument(globalObject, values[NodeOffset], "unsigned long long"_s, 0, nodeOffset)
-        || !intArgument(globalObject, values[NodeDepth], 0, nodeDepth)
-        || !intArgument(globalObject, values[InnerSize], 0, innerSize))
+        || failed(scope, intArgument(globalObject, values[Fanout], 1, fanout))
+        || failed(scope, intArgument(globalObject, values[Depth], 1, depth))
+        || failed(scope, unsignedArgument(globalObject, values[LeafSize], "unsigned long"_s, 0, leafSize))
+        || failed(scope, unsignedArgument(globalObject, values[NodeOffset], "unsigned long long"_s, 0, nodeOffset))
+        || failed(scope, intArgument(globalObject, values[NodeDepth], 0, nodeDepth))
+        || failed(scope, intArgument(globalObject, values[InnerSize], 0, innerSize)))
         return {};
     bool isLastNode = false;
     if (values[LastNode]) {

@@ -210,7 +210,7 @@ static JSValue dictionaryNew(JSGlobalObject* globalObject, JSValue cls, JSValue 
     Ref<Dictionary> dictionary = Dictionary::create(WTF::move(copy));
     if (!isRaw && !dictionary->id())
         return raiseValueError(globalObject, scope, "invalid Zstandard dictionary"_s);
-    return createRecordWithState(globalObject, PyType::from(cls), 0, std::unique_ptr<DictionaryHolder>(new DictionaryHolder { WTF::move(dictionary) }), size);
+    RELEASE_AND_RETURN(scope, createRecordWithState(globalObject, PyType::from(cls), 0, std::unique_ptr<DictionaryHolder>(new DictionaryHolder { WTF::move(dictionary) }), size));
 }
 
 static JSValue dictionaryRepr(JSGlobalObject* globalObject, JSValue self)
@@ -346,7 +346,7 @@ static JSValue compressorNew(JSGlobalObject* globalObject, JSValue cls, JSValue 
         auto wide = tryInt64(intValue(level));
         if (!wide || *wide < std::numeric_limits<int>::min() || *wide > std::numeric_limits<int>::max())
             return raiseValueError(globalObject, scope, "illegal compression level; the valid range is ["_s, ZSTD_minCLevel(), ", "_s, ZSTD_maxCLevel(), ']');
-        if (!setLevel(globalObject, *compressor, static_cast<int>(*wide)))
+        if (failed(scope, setLevel(globalObject, *compressor, static_cast<int>(*wide))))
             return {};
     }
     if (isGiven(options)) {
@@ -385,7 +385,7 @@ static JSValue compressorNew(JSGlobalObject* globalObject, JSValue cls, JSValue 
             RELEASE_AND_RETURN(scope, raiseZstdError(globalObject, "Unable to load Zstandard dictionary or prefix for compression"_s, result));
     }
     size_t size = ZSTD_sizeof_CCtx(compressor->context);
-    return createRecordWithState(globalObject, PyType::from(cls), 0, WTF::move(compressor), size);
+    RELEASE_AND_RETURN(scope, createRecordWithState(globalObject, PyType::from(cls), 0, WTF::move(compressor), size));
 }
 
 static JSValue compressWith(JSGlobalObject* globalObject, Compressor& compressor, std::span<const uint8_t> data, ZSTD_EndDirective mode)
@@ -426,7 +426,7 @@ static JSValue compressorCompress(JSGlobalObject* globalObject, JSValue self, JS
     auto scope = DECLARE_THROW_SCOPE(vm);
     BufferHolder input(globalObject);
     int mode;
-    if (!input.get(data) || !intArgument(globalObject, modeValue, ZSTD_e_continue, mode) || !refreshBuffers(globalObject, input))
+    if (!input.get(data) || failed(scope, intArgument(globalObject, modeValue, ZSTD_e_continue, mode)) || !refreshBuffers(globalObject, input))
         return {};
     if (mode != ZSTD_e_continue && mode != ZSTD_e_flush && mode != ZSTD_e_end)
         return raiseValueError(globalObject, scope, "mode argument wrong value, it should be one of ZstdCompressor.CONTINUE, ZstdCompressor.FLUSH_BLOCK, ZstdCompressor.FLUSH_FRAME."_s);
@@ -438,7 +438,7 @@ static JSValue compressorFlush(JSGlobalObject* globalObject, JSValue self, JSVal
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int mode;
-    if (!intArgument(globalObject, modeValue, ZSTD_e_end, mode))
+    if (failed(scope, intArgument(globalObject, modeValue, ZSTD_e_end, mode)))
         return {};
     if (mode != ZSTD_e_end && mode != ZSTD_e_flush)
         return raiseValueError(globalObject, scope, "mode argument wrong value, it should be ZstdCompressor.FLUSH_FRAME or ZstdCompressor.FLUSH_BLOCK."_s);
@@ -553,7 +553,7 @@ static JSValue decompressorNew(JSGlobalObject* globalObject, JSValue cls, JSValu
             return {};
     }
     size_t size = ZSTD_sizeof_DCtx(decompressor->context);
-    return createRecordWithState(globalObject, PyType::from(cls), DecompressorFieldCount, WTF::move(decompressor), size);
+    RELEASE_AND_RETURN(scope, createRecordWithState(globalObject, PyType::from(cls), DecompressorFieldCount, WTF::move(decompressor), size));
 }
 
 static JSValue decompressFrom(JSGlobalObject* globalObject, Decompressor& decompressor, ZSTD_inBuffer& input, int64_t maxLength)
@@ -589,7 +589,7 @@ static JSValue decompressorDecompress(JSGlobalObject* globalObject, JSValue self
     if (!holder.get(data))
         return {};
     int64_t maxLength = -1;
-    if ((maxLengthValue && !ssizeArgument(globalObject, maxLengthValue, maxLength)) || !refreshBuffers(globalObject, holder))
+    if ((maxLengthValue && failed(scope, ssizeArgument(globalObject, maxLengthValue, maxLength))) || !refreshBuffers(globalObject, holder))
         return {};
     if (maxLength < 0)
         maxLength = -1;
@@ -724,10 +724,10 @@ static JSValue trainDict(JSGlobalObject* globalObject, JSValue samples, JSValue 
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!checkArgumentType(globalObject, "train_dict"_s, 1, "bytes"_s, PyBytes::is(samples), samples) || !checkArgumentType(globalObject, "train_dict"_s, 2, "tuple"_s, !!PyTuple::tryFrom(sizes), sizes))
+    if (failed(scope, checkArgumentType(globalObject, "train_dict"_s, 1, "bytes"_s, PyBytes::is(samples), samples)) || failed(scope, checkArgumentType(globalObject, "train_dict"_s, 2, "tuple"_s, !!PyTuple::tryFrom(sizes), sizes)))
         return {};
     int64_t dictSize;
-    if (!ssizeArgument(globalObject, dictSizeValue, dictSize))
+    if (failed(scope, ssizeArgument(globalObject, dictSizeValue, dictSize)))
         return {};
     if (dictSize <= 0)
         return raiseValueError(globalObject, scope, "dict_size argument should be positive number."_s);
@@ -747,13 +747,13 @@ static JSValue finalizeDict(JSGlobalObject* globalObject, JSValue custom, JSValu
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!checkArgumentType(globalObject, "finalize_dict"_s, 1, "bytes"_s, PyBytes::is(custom), custom)
-        || !checkArgumentType(globalObject, "finalize_dict"_s, 2, "bytes"_s, PyBytes::is(samples), samples)
-        || !checkArgumentType(globalObject, "finalize_dict"_s, 3, "tuple"_s, !!PyTuple::tryFrom(sizes), sizes))
+    if (failed(scope, checkArgumentType(globalObject, "finalize_dict"_s, 1, "bytes"_s, PyBytes::is(custom), custom))
+        || failed(scope, checkArgumentType(globalObject, "finalize_dict"_s, 2, "bytes"_s, PyBytes::is(samples), samples))
+        || failed(scope, checkArgumentType(globalObject, "finalize_dict"_s, 3, "tuple"_s, !!PyTuple::tryFrom(sizes), sizes)))
         return {};
     int64_t dictSize;
     int level;
-    if (!ssizeArgument(globalObject, dictSizeValue, dictSize) || !intArgument(globalObject, levelValue, 0, level))
+    if (failed(scope, ssizeArgument(globalObject, dictSizeValue, dictSize)) || failed(scope, intArgument(globalObject, levelValue, 0, level)))
         return {};
     if (dictSize <= 0)
         return raiseValueError(globalObject, scope, "dict_size argument should be positive number."_s);
@@ -775,14 +775,14 @@ static JSValue getParamBounds(JSGlobalObject* globalObject, JSValue parameterVal
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int parameter;
-    if (!intArgument(globalObject, parameterValue, 0, parameter))
+    if (failed(scope, intArgument(globalObject, parameterValue, 0, parameter)))
         return {};
     bool isCompression = isTrue(globalObject, isCompressValue);
     RETURN_IF_EXCEPTION(scope, {});
     ZSTD_bounds bounds = isCompression ? ZSTD_cParam_getBounds(static_cast<ZSTD_cParameter>(parameter)) : ZSTD_dParam_getBounds(static_cast<ZSTD_dParameter>(parameter));
     if (ZSTD_isError(bounds.error))
         RELEASE_AND_RETURN(scope, raiseZstdError(globalObject, isCompression ? "Unable to get zstd compression parameter bounds"_s : "Unable to get zstd decompression parameter bounds"_s, bounds.error));
-    return PyTuple::create(globalObject, { jsNumber(bounds.lowerBound), jsNumber(bounds.upperBound) });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { jsNumber(bounds.lowerBound), jsNumber(bounds.upperBound) }));
 }
 
 static JSValue getFrameSize(JSGlobalObject* globalObject, JSValue frame)

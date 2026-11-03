@@ -1010,12 +1010,27 @@ static std::optional<bool> pythonObjectsDequal(JSC::JSGlobalObject* globalObject
     bool isPython2 = isPythonObject(v2);
     if (!isPython1 && !isPython2) [[likely]]
         return std::nullopt;
+    // Where neither class has an answer, == in Python is identity. In JS it would compare str(object) with a string.
+    auto equalInPython = [&]() -> bool {
+        if (v1 == v2)
+            return true;
+        if (v1.isUndefinedOrNull() || v2.isUndefinedOrNull())
+            return false;
+        return JSC::Python::equalForJS(globalObject, v1, v2).value_or(false);
+    };
     if ((!isPython1 && !v1.isPrimitive()) || (!isPython2 && !v2.isPrimitive())) {
         if constexpr (comparesTypes)
             return false;
         VM& vm = globalObject->vm();
         JSObject* python = asObject(isPython1 ? v1 : v2);
         JSObject* other = asObject(isPython1 ? v2 : v1);
+        // An array is a list, which a class of Python's may have something to say about: UserList([1]) == [1].
+        if (isJSArray(other)) {
+            bool equal = equalInPython();
+            RETURN_IF_EXCEPTION(scope, false);
+            if (equal)
+                return true;
+        }
         switch (python->type()) {
         case PyTupleType:
         case PyInstanceType:
@@ -1066,7 +1081,7 @@ static std::optional<bool> pythonObjectsDequal(JSC::JSGlobalObject* globalObject
                 return false;
         }
     }
-    bool equal = JSValue::equal(globalObject, v1, v2);
+    bool equal = equalInPython();
     RETURN_IF_EXCEPTION(scope, false);
     return equal;
 }

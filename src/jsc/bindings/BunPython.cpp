@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include "BunClientData.h"
+#include "BunProcess.h"
 #include "BunPython.h"
 #include "python/BunPythonModule.h"
 #include "BunString.h"
@@ -23,6 +24,7 @@ extern "C" void Bun__setExitCode(void* bunVM, uint8_t);
 // src/runtime/cli/python_command.rs
 extern "C" BunString Bun__Python__linkToSelf();
 extern "C" const char* Bun__Python__originalArgument(size_t index);
+extern "C" void Bun__Python__didChangeDirectory(JSC::JSGlobalObject*);
 extern "C" int32_t bun_is_stdio_null[3];
 
 namespace Bun {
@@ -64,6 +66,13 @@ extern "C" int Bun__Python__readCommandLine(size_t argc, const char* const* argv
     return Python::readCommandLine(Python::configuration(), std::span { argv, argc }).value_or(-1);
 }
 
+// os.chdir(). What process.chdir() does besides: the resolver and process.cwd() keep the name of the directory.
+static void didChangeDirectory(JSGlobalObject* globalObject)
+{
+    Bun__Python__didChangeDirectory(globalObject);
+    defaultGlobalObject(globalObject)->processObject()->clearCachedCwd();
+}
+
 // Before anything that may start Python.
 static void preparePython()
 {
@@ -71,6 +80,7 @@ static void preparePython()
     registerPythonModules();
     static std::once_flag once;
     std::call_once(once, [] {
+        Python::setDidChangeDirectoryFunction(didChangeDirectory);
         auto& configuration = Python::configuration();
         if (!s_isPythonCommand) {
             for (size_t i = 0; const char* argument = Bun__Python__originalArgument(i); ++i)

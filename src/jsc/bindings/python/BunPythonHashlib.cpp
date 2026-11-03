@@ -74,17 +74,19 @@ static JSValue createHash(JSGlobalObject* globalObject, HashKind kind, JSValue d
     auto hasher = makeUnique<Hasher>(kind);
     if (toHash) {
         BufferHolder input(globalObject);
-        if (!getDataToHash(globalObject, toHash, input))
+        if (failed(scope, getDataToHash(globalObject, toHash, input)))
             return {};
         hasher->update(input.buffer.span());
     }
-    return createRecordWithState(globalObject, isExtendable(kind) ? extendableHashType(globalObject) : hashType(globalObject), 0, WTF::move(hasher));
+    RELEASE_AND_RETURN(scope, createRecordWithState(globalObject, isExtendable(kind) ? extendableHashType(globalObject) : hashType(globalObject), 0, WTF::move(hasher)));
 }
 
 static JSValue hashUpdate(JSGlobalObject* globalObject, JSValue self, JSValue data)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     BufferHolder input(globalObject);
-    if (!getDataToHash(globalObject, data, input))
+    if (failed(scope, getDataToHash(globalObject, data, input)))
         return {};
     hasherOf(self).update(input.buffer.span());
     return jsUndefined();
@@ -155,8 +157,10 @@ static PyType* hashType(JSGlobalObject* globalObject) { return runtime(globalObj
 
 static JSValue extendableDigest(JSGlobalObject* globalObject, JSValue self, JSValue lengthValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t length;
-    if (!nonNegativeSsizeArgument(globalObject, lengthValue, "length"_s, 0, length))
+    if (failed(scope, nonNegativeSsizeArgument(globalObject, lengthValue, "length"_s, 0, length)))
         return {};
     PyBytes* result = newBytes(globalObject, length);
     if (!result)
@@ -171,7 +175,7 @@ static JSValue extendableHexdigest(JSGlobalObject* globalObject, JSValue self, J
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t length;
-    if (!nonNegativeSsizeArgument(globalObject, lengthValue, "length"_s, 0, length))
+    if (failed(scope, nonNegativeSsizeArgument(globalObject, lengthValue, "length"_s, 0, length)))
         return {};
     Vector<uint8_t> result;
     if (!result.tryGrow(length))
@@ -197,17 +201,19 @@ static PyType* extendableHashType(JSGlobalObject* globalObject) { return runtime
 
 static JSValue newHash(JSGlobalObject* globalObject, JSValue nameValue, JSValue data, JSValue usedForSecurity, JSValue string)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     String name;
-    if (!stringArgument(globalObject, "new"_s, "name"_s, nameValue, name))
+    if (failed(scope, stringArgument(globalObject, "new"_s, "name"_s, nameValue, name)))
         return {};
     // CPython looks at the data first.
     JSValue toHash;
     if (data && string)
-        return dataArgument(globalObject, data, string, toHash), JSValue();
+        RELEASE_AND_RETURN(scope, (dataArgument(globalObject, data, string, toHash), JSValue()));
     auto kind = kindNamed(globalObject, name);
     if (!kind)
         return {};
-    return createHash(globalObject, *kind, data, usedForSecurity, string);
+    RELEASE_AND_RETURN(scope, createHash(globalObject, *kind, data, usedForSecurity, string));
 }
 
 template<HashKind kind>
@@ -299,11 +305,11 @@ static JSValue hmacNew(JSGlobalObject* globalObject, JSValue keyValue, JSValue m
     state->initialize(*kind, key.buffer.span());
     if (message && !message.isUndefined()) {
         BufferHolder input(globalObject);
-        if (!getDataToHash(globalObject, message, input))
+        if (failed(scope, getDataToHash(globalObject, message, input)))
             return {};
         state->update(input.buffer.span());
     }
-    return createRecordWithState(globalObject, runtime(globalObject).typeFor(hmacTypeDef), 0, WTF::move(state));
+    RELEASE_AND_RETURN(scope, createRecordWithState(globalObject, runtime(globalObject).typeFor(hmacTypeDef), 0, WTF::move(state)));
 }
 
 static JSValue hmacDigestFunction(JSGlobalObject* globalObject, JSValue keyValue, JSValue messageValue, JSValue digest)
@@ -391,7 +397,7 @@ static JSValue pbkdf2HMAC(JSGlobalObject* globalObject, JSValue hashName, JSValu
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     String name;
-    if (!stringArgument(globalObject, "pbkdf2_hmac"_s, "hash_name"_s, hashName, name))
+    if (failed(scope, stringArgument(globalObject, "pbkdf2_hmac"_s, "hash_name"_s, hashName, name)))
         return {};
     BufferHolder password(globalObject);
     BufferHolder salt(globalObject);
@@ -448,9 +454,9 @@ static JSValue scrypt(JSGlobalObject* globalObject, JSValue passwordValue, JSVal
     BufferHolder salt(globalObject);
     uint64_t n, r, p;
     if (!password.get(passwordValue) || !salt.get(saltValue)
-        || !unsignedArgument(globalObject, nValue, "unsigned long"_s, 0, n)
-        || !unsignedArgument(globalObject, rValue, "unsigned long"_s, 0, r)
-        || !unsignedArgument(globalObject, pValue, "unsigned long"_s, 0, p))
+        || failed(scope, unsignedArgument(globalObject, nValue, "unsigned long"_s, 0, n))
+        || failed(scope, unsignedArgument(globalObject, rValue, "unsigned long"_s, 0, r))
+        || failed(scope, unsignedArgument(globalObject, pValue, "unsigned long"_s, 0, p)))
         return {};
     int64_t maxMemory = 0;
     if (maxMemoryValue) {
@@ -550,6 +556,7 @@ void initializeHashlibModule(JSGlobalObject* globalObject, PyModule* module)
     using namespace Hashlib;
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     module->addFunctions(globalObject, functions);
     module->addFunctions(globalObject, constructors);
     module->add(globalObject, "HASH"_s, hashType(globalObject));
@@ -559,8 +566,10 @@ void initializeHashlibModule(JSGlobalObject* globalObject, PyModule* module)
     module->add(globalObject, "_GIL_MINSIZE"_s, jsNumber(2048));
 
     PySet* names = PySet::createFrozen(globalObject);
-    for (unsigned i = 0; i < numberOfHashKinds; ++i)
+    for (unsigned i = 0; i < numberOfHashKinds; ++i) {
         names->add(globalObject, makeStr(vm, String(infoFor(static_cast<HashKind>(i)).name)));
+        RETURN_IF_EXCEPTION(scope, void());
+    }
     module->add(globalObject, "openssl_md_meth_names"_s, names);
 
     // The functions above, to the names of what they make.
@@ -568,6 +577,7 @@ void initializeHashlibModule(JSGlobalObject* globalObject, PyModule* module)
     for (auto& def : constructors) {
         JSValue function = module->dict()->get(internString(vm, def.name));
         byFunction->set(globalObject, function, makeStr(vm, String(def.name).substring(lengthOfConstructorPrefix)));
+        RETURN_IF_EXCEPTION(scope, void());
     }
     module->add(globalObject, "_constructors"_s, makeMappingProxy(globalObject, byFunction));
 }

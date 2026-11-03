@@ -54,9 +54,11 @@ static std::optional<HashKind> kindFor(JSGlobalObject* globalObject, JSValue dig
 
 static JSValue copy(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
-    if (!takesNoArguments(globalObject, "copy"_s, args))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, takesNoArguments(globalObject, "copy"_s, args)))
         return {};
-    return hmacCopy(globalObject, self);
+    RELEASE_AND_RETURN(scope, hmacCopy(globalObject, self));
 }
 
 static constexpr NativeDef methods[] = {
@@ -85,26 +87,28 @@ static JSValue newHMAC(JSGlobalObject* globalObject, JSValue keyValue, JSValue m
     if (!kind)
         return {};
     BufferHolder key(globalObject);
-    if (!getDataToHash(globalObject, keyValue, key))
+    if (failed(scope, getDataToHash(globalObject, keyValue, key)))
         return {};
     auto state = makeUnique<HMACState>();
     state->initialize(*kind, key.buffer.span());
     if (message && !isNone(message)) {
         BufferHolder input(globalObject);
-        if (!getDataToHash(globalObject, message, input))
+        if (failed(scope, getDataToHash(globalObject, message, input)))
             return {};
         state->update(input.buffer.span());
     }
-    return createRecordWithState(globalObject, runtime(globalObject).typeFor(hmacTypeDef), 0, WTF::move(state));
+    RELEASE_AND_RETURN(scope, createRecordWithState(globalObject, runtime(globalObject).typeFor(hmacTypeDef), 0, WTF::move(state)));
 }
 
 static JSValue compute(JSGlobalObject* globalObject, HashKind kind, JSValue keyValue, JSValue messageValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     BufferHolder key(globalObject);
     BufferHolder message(globalObject);
-    if (!getDataToHash(globalObject, keyValue, key) || !getDataToHash(globalObject, messageValue, message))
+    if (failed(scope, getDataToHash(globalObject, keyValue, key)) || failed(scope, getDataToHash(globalObject, messageValue, message)))
         return {};
-    return hmacOf(globalObject, kind, key, message);
+    RELEASE_AND_RETURN(scope, hmacOf(globalObject, kind, key, message));
 }
 
 static JSValue computeDigest(JSGlobalObject* globalObject, JSValue key, JSValue message, JSValue digestmod)

@@ -309,11 +309,13 @@ struct WatcherState final : CallbackListener {
 
 static JSValue timerNew(JSGlobalObject* globalObject, JSValue cls, JSValue callback)
 {
-    if (!ensureMainThreadForJS(globalObject))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, ensureMainThreadForJS(globalObject)))
         return { };
     auto state = makeUniqueWithoutFastMallocCheck<TimerState>(globalObject, callback);
     state->timer = Bun__Python__Timer__create(static_cast<Listener*>(state.get()));
-    return createRecordWithState(globalObject, PyType::from(cls), 0, WTF::move(state));
+    RELEASE_AND_RETURN(scope, createRecordWithState(globalObject, PyType::from(cls), 0, WTF::move(state)));
 }
 
 static JSValue timerSet(JSGlobalObject* globalObject, JSValue self, JSValue seconds)
@@ -333,7 +335,9 @@ static JSValue timerSet(JSGlobalObject* globalObject, JSValue self, JSValue seco
 
 static JSValue timerCancel(JSGlobalObject* globalObject, JSValue self)
 {
-    if (!ensureMainThreadForJS(globalObject))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, ensureMainThreadForJS(globalObject)))
         return { };
     if (auto* timer = stateOf<TimerState>(self)->timer)
         Bun__Python__Timer__cancel(timer, globalObject);
@@ -342,7 +346,9 @@ static JSValue timerCancel(JSGlobalObject* globalObject, JSValue self)
 
 static JSValue timerClose(JSGlobalObject* globalObject, JSValue self)
 {
-    if (!ensureMainThreadForJS(globalObject))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, ensureMainThreadForJS(globalObject)))
         return { };
     stateOf<TimerState>(self)->close();
     return jsUndefined();
@@ -370,7 +376,7 @@ static JSValue watcherNew(JSGlobalObject* globalObject, JSValue cls, JSValue des
     state->watcher = Bun__Python__FdWatcher__create(globalObject, fd, static_cast<Listener*>(state.get()), false, &error);
     if (!state->watcher)
         return raiseOSError(globalObject, scope, error);
-    return createRecordWithState(globalObject, PyType::from(cls), 0, WTF::move(state));
+    RELEASE_AND_RETURN(scope, createRecordWithState(globalObject, PyType::from(cls), 0, WTF::move(state)));
 }
 
 static JSValue watcherKeepAlive(JSGlobalObject* globalObject, JSValue self, JSValue keepsAlive)
@@ -388,7 +394,9 @@ static JSValue watcherKeepAlive(JSGlobalObject* globalObject, JSValue self, JSVa
 
 static JSValue watcherClose(JSGlobalObject* globalObject, JSValue self)
 {
-    if (!ensureMainThreadForJS(globalObject))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, ensureMainThreadForJS(globalObject)))
         return { };
     stateOf<WatcherState>(self)->close();
     return jsUndefined();

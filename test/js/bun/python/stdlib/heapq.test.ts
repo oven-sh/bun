@@ -14,6 +14,7 @@ import {
   ZeroDivisionError,
   float as pyfloat,
   int,
+  iter,
   len,
   list,
   map,
@@ -31,21 +32,12 @@ const times = <T>(n: number, make: (i: number) => T): T[] => Array.from({ length
 
 describe("TestHeap", () => {
   function check_invariant(heap: any[]) {
-    // Check the heap invariant.
-    for (const [pos, item] of heap.entries()) {
-      if (pos) {
-        // pos 0 has no parent
-        const parentpos = (pos - 1) >> 1;
-        expect(heap[parentpos] <= item).toBe(true);
-      }
-    }
+    // Check the heap invariant. (pos 0 has no parent)
+    expect(heap.every((item, pos) => !pos || heap[(pos - 1) >> 1] <= item)).toBe(true);
   }
 
   function check_max_invariant(heap: any[]) {
-    for (let pos = 1; pos < heap.length; pos++) {
-      const parentpos = (pos - 1) >> 1;
-      expect(heap[parentpos]).toBeGreaterThanOrEqual(heap[pos]);
-    }
+    expect(heap.every((item, pos) => !pos || heap[(pos - 1) >> 1] >= item)).toBe(true);
   }
 
   test("test_push_pop", () => {
@@ -394,7 +386,9 @@ describe("TestHeap", () => {
     for (const f of [undefined, (x: any) => (x[0] * 547) % 2000]) {
       for (const n of [0, 1, 2, 10, 100, 400, 999, 1000, 1100]) {
         expect(list(heapq.nsmallest(n, data))).toEqual(sorted(data).slice(0, n));
-        expect(list(heapq.nsmallest(n, data, kwargs({ key: f })))).toEqual(sorted(data, kwargs({ key: f })).slice(0, n));
+        expect(list(heapq.nsmallest(n, data, kwargs({ key: f })))).toEqual(
+          sorted(data, kwargs({ key: f })).slice(0, n),
+        );
       }
     }
   });
@@ -501,8 +495,9 @@ const I = makeClass("I", [], { __init__: init, __iter__: self, __next__: next })
 /** Sequence using iterator protocol defined with a generator */
 const Ig = makeClass("Ig", [], {
   __init__: init,
-  *__iter__() {
-    for (const val of this.seqn) yield val;
+  // A generator of JavaScript can be iterated over in Python, but is no iterator there: iter() makes one of it.
+  __iter__() {
+    return iter(R(this.seqn));
   },
 });
 

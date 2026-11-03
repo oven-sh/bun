@@ -146,6 +146,14 @@ async def _await(awaitable):
     return await awaitable
 
 
+# The task behind each promise that run() has made
+_task_of = js.WeakMap()
+
+
+def _ignore(reason=None):
+    pass
+
+
 def run(awaitable):
     """A JavaScript promise of what `await awaitable` gives."""
     resolvers = js.Promise.withResolvers()
@@ -167,6 +175,7 @@ def run(awaitable):
             resolvers.resolve(task.result())
 
     task.add_done_callback(done)
+    _task_of.set(resolvers.promise, task)
     return resolvers.promise
 
 
@@ -182,6 +191,13 @@ def _settle(future, value, thrown):
 def wait(promise):
     """The iterator that `await promise` runs, for a JavaScript promise."""
     loop = events.get_running_loop()
+
+    # A coroutine that has been to JavaScript and back is awaited as the task it is, so that cancelling who waits cancels it.
+    task = _task_of.get(promise)
+    if task is not None and task.get_loop() is loop:
+        promise.catch(_ignore)
+        return task.__await__()
+
     future = loop.create_future()
 
     def settled(thrown):

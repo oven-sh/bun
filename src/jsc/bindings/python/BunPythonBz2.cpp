@@ -126,7 +126,7 @@ static JSValue compressorNew(JSGlobalObject* globalObject, JSValue cls, const Ca
     if (args.size() > 1)
         return raiseTypeError(globalObject, scope, "BZ2Compressor expected at most 1 argument, got "_s, args.size());
     int level;
-    if (!intArgument(globalObject, args.size() ? args[0] : JSValue(), 9, level))
+    if (failed(scope, intArgument(globalObject, args.size() ? args[0] : JSValue(), 9, level)))
         return {};
     if (level < 1 || level > 9)
         return raiseValueError(globalObject, scope, "compresslevel must be between 1 and 9"_s);
@@ -276,13 +276,13 @@ static JSValue decompressorDecompress(JSGlobalObject* globalObject, JSValue self
     auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral names[] = { "data"_s, "max_length"_s };
     JSValue values[2];
-    if (!unpackArguments(globalObject, { "decompress"_s, 0, 1, 2, names }, args, values))
+    if (failed(scope, unpackArguments(globalObject, { "decompress"_s, 0, 1, 2, names }, args, values)))
         return {};
     BufferHolder input(globalObject);
     if (!input.get(values[0]))
         return {};
     int64_t maxLength = -1;
-    if (values[1] && !ssizeArgument(globalObject, values[1], maxLength))
+    if (values[1] && failed(scope, ssizeArgument(globalObject, values[1], maxLength)))
         return {};
     auto* self = uncheckedDowncast<PyRecord>(selfValue.asCell());
     auto& state = *stateOf<Decompressor>(self);

@@ -14,6 +14,8 @@ export const makeClass: (name: string, bases: any[], namespace: Record<string, a
 export const method: (body: (this: any, ...args: any[]) => any) => any = helpers.method;
 /** The warnings of the category that `body()` gave. */
 export const warns: (category: any, body: () => void) => any[] = helpers.warns;
+/** `owner.create_task(coroutine)`, for a promise: JavaScript never holds a coroutine. */
+export const createTask: (owner: any, awaitable: any, keywords?: any) => any = helpers.create_task;
 /** `function(*args, **kwargs)` */
 export const call: (callee: any, args?: any, kwargs?: any) => any = helpers.call;
 
@@ -49,6 +51,23 @@ export function raises(type: any, body: () => unknown, pattern?: RegExp | string
     thrown = error;
     hasThrown = true;
   }
+  return checkRaised(type, hasThrown, thrown, pattern);
+}
+
+/** The same, where the body awaits. */
+export async function raisesAsync(type: any, body: () => unknown, pattern?: RegExp | string): Promise<any> {
+  let thrown: any;
+  let hasThrown = false;
+  try {
+    await body();
+  } catch (error) {
+    thrown = error;
+    hasThrown = true;
+  }
+  return checkRaised(type, hasThrown, thrown, pattern);
+}
+
+function checkRaised(type: any, hasThrown: boolean, thrown: any, pattern?: RegExp | string) {
   const types: any[] = Array.isArray(type) ? type : [type];
   if (!hasThrown) throw new Error(`${types.map(type => type.__name__ ?? type.name).join(" or ")} was not raised`);
   if (!types.some(type => thrown instanceof type)) expect(thrown).toBeInstanceOf(types[0]);

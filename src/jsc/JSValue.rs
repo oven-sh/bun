@@ -2832,7 +2832,8 @@ impl JSValue {
     // ── instanceof / constructor. ─────────────────
     /// `JSValue.isInstanceOf` — `self instanceof constructor`.
     pub fn is_instance_of(self, global: &JSGlobalObject, constructor: JSValue) -> JsResult<bool> {
-        if !self.is_cell() {
+        // A number may be an instance too: `[Symbol.hasInstance]` decides.
+        if self.is_empty() {
             return Ok(false);
         }
         host_fn::from_js_host_call_generic(global, || {

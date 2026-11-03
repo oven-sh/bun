@@ -9239,6 +9239,87 @@ try {
       expect(result.exitCode).toBe(0);
     });
   });
+
+  describe("many files", () => {
+    const files: Record<string, string> = { ".prettierrc": "{}", "notes.xyz": "?" };
+    for (let i = 0; i < 240; i++) {
+      const directory = ["", "a/", "a-b/", "a.b/", "A/", "a/b/c/d/", "z/y/"][i % 7];
+      const text = [ugly, formatted, "const = ;\n", ugly.repeat(1 + (i % 40))][i % 4];
+      files[`${directory}f${i}.ts`] = text;
+    }
+    const named = Object.keys(files).filter(name => name.endsWith(".ts"));
+
+    test.each([
+      ["a search", ["."]],
+      ["names", named],
+      ["names in another order, some of them twice", [...named.toReversed(), ...named.slice(0, 50), "./f0.ts"]],
+      ["a search and names that it finds too", ["a/f1.ts", ".", "z/y/f6.ts", "a", "missing.ts"]],
+    ])("%s says the same on any number of threads", async (_, paths) => {
+      const [one, ...others] = await Promise.all(
+        [["--threads=1"], ["--threads=2"], ["--threads=13"], []].map(threads =>
+          format(files, ["--check", ...threads, ...paths]),
+        ),
+      );
+      expect(one.stderr).toContain("[warn] f0.ts");
+      expect(one.stderr).toMatch(syntaxErrorIn("a-b/f2.ts"));
+      for (const other of others) {
+        expect({ ...other, cpu: 0 }).toEqual({ ...one, cpu: 0 });
+      }
+    });
+
+    test("files of one directory get the options of the overrides and sections that match each of them", async () => {
+      const text = `function f() {\n  return "a";\n}\n`;
+      const names = ["a.ts", "b.ts", "a.test.ts", "b.test.ts", "a.spec.ts", "b.spec.ts", "a.test.mts", "b.test.mts"];
+      const result = await format(
+        {
+          ".prettierrc": JSON.stringify({
+            overrides: [
+              { files: "*.test.*", options: { singleQuote: true } },
+              { files: "src/*.spec.ts", options: { semi: false } },
+            ],
+          }),
+          ".editorconfig": "[*.mts]\nindent_style = tab\n[*.spec.ts]\nindent_size = 4\n",
+          ...Object.fromEntries(names.map(name => [`src/${name}`, text])),
+        },
+        // One thread, so that it has resolved the options of a file before it comes to the next one.
+        ["--threads=1", "."],
+        { reads: names.map(name => `src/${name}`) },
+      );
+      const expected = {
+        "ts": text,
+        "test.ts": `function f() {\n  return 'a';\n}\n`,
+        "spec.ts": `function f() {\n    return "a"\n}\n`,
+        "test.mts": `function f() {\n\treturn 'a';\n}\n`,
+      };
+      expect(result.files).toEqual(
+        Object.fromEntries(names.map(name => [`src/${name}`, expected[name.slice(2) as keyof typeof expected]])),
+      );
+    });
+
+    test("what is only true of one file's name is not true of the next file", async () => {
+      const json = `{ "version": "1.0.0", "name": "a" }\n`;
+      const result = await format(
+        {
+          ".prettierrc": JSON.stringify({ plugins: ["prettier-plugin-packagejson"] }),
+          "a.json": json,
+          "package.json": json,
+          "z.json": json,
+          "script": "#!/usr/bin/env node\nlet  a\n",
+          "text": "let  a\n",
+        },
+        ["--threads=1", "a.json", "package.json", "z.json", "script", "text"],
+        { reads: ["a.json", "package.json", "z.json", "script", "text"] },
+      );
+      expect(result.files).toEqual({
+        "a.json": json,
+        "package.json": `{\n  "name": "a",\n  "version": "1.0.0"\n}\n`,
+        "z.json": json,
+        "script": "#!/usr/bin/env node\nlet a;\n",
+        "text": "let  a\n",
+      });
+      expect(result.exitCode).toBe(2);
+    });
+  });
 });
 
 /** Returns the unformatted files that `-l` lists in an existing directory. */

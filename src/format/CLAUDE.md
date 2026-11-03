@@ -331,6 +331,20 @@ The goal is to be faster per core than oxfmt and Biome.
 - Decide from the syntax first, look at the source text or the comments last.
 - Sort with `crate::sort` (`bun_collections::index_sort`), not with `slice::sort*`: each `sort_by` with a closure of its own is 4 to 30 KB of code in the binary. The standard sorts are for a sort that a profile shows to be hot, and only by a key that is `Ord`: they may panic on a comparison that is not a total order, which `crate::sort::sort_by` takes.
 
+## The command line: `src/lint/driver/fmt`
+
+A run over a few files is over in milliseconds, so what is around the formatter counts: system calls, threads, memory.
+
+- **How many threads**: `Pool::threads_for(nanoseconds)`, 1.5 times the square root of the milliseconds of work, which `files::time_to_format` estimates from the sizes of the files. A thread takes 0.1 ms to start, one after the other whoever starts them, and what it touches (4 MB on large files) is given back page by page when the process ends. `--threads` is taken as it is. `Pool::threads()` is still what oxfmt's summary names.
+- **`bun_sema_driver::StandingThreads`** are started when the arguments are known (`Pool::call_up`), and more of them as a search finds more. They wait for one region after the other, and one call wakes all of them. The main thread looks at arguments and directories with them (`Meanwhile::Helps`), and puts the files in order while they format (`Meanwhile::Does`). It formats nothing: its stack is smaller.
+- **No lock that all threads take at the same time, or for each file.** `bun_threading::Mutex` does not spin: threads that meet at one are let through one by one, 50 µs each. So a thread has a `Worker` with its buffers, its results and the options it has resolved, its caches stay with it, and a search shares a directory only with a thread that has nothing to do.
+- **The order of files is the order of messages, nothing else.** `files::Expansion` keeps what a search has found as it was found. `Expansion::order` is asked for while the files are formatted, `Expansion::sort` before that by what prints a list. Whatever is collected file by file and printed (names of plugins, of packages) is collected in order: see the loop in `format_files`.
+- **Options are resolved once for the files that share them**: `Configs::options_for_one_of_many`. **`OptionsKey` has to hold everything that the options of a file depend on**, but for `filepath`: the scope (directories with nothing of their own share their parent's), which overrides and which sections of `.editorconfig` match, and whether it is a `package.json`. Whoever makes `options_of` look at one more thing about the path adds it to the key, sets `Resolved::depends_on_directory`, or makes `options_key` return `None`.
+- **A file is four system calls**: `lstat` or `fstatat` when it is found, then `open`, `read`, `close`. A read that asks for more than the size and gets the size has all of it (`fs::read_file_of_size`). Anything else goes the long way.
+- **Directories are listed for what is looked for in them.** With `--no-config --no-editorconfig` none is. Those above files that are named are listed on all threads (`Configs::list_ahead`), and what is found in them is read in the order of the arguments.
+- Nothing is freed at the end (`ManuallyDrop` in `format_files`). To give memory back from all threads at once takes as long as the end of the process does: each call interrupts every other thread.
+- `bun fmt --timing` has the phases. `--bench=<rounds>` (canary, debug) is the formatter alone.
+
 ## Conventions
 
 Those of `src/CLAUDE.md` and `src/lint/CLAUDE.md`: no `unsafe`, nothing that can panic on any input (`.get()`, `let .. else`, `saturating_sub`), byte searches through `bun_core::strings`, no `std::fs`/`println!`, `pub(crate)`, no warnings. Comments say what the reader cannot see, in the present tense, and never narrate the port. Naming Prettier's function that something corresponds to is good: ``/// Prettier's `shouldHugTheOnlyFunctionParameter`.``

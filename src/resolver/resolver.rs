@@ -5336,9 +5336,17 @@ impl<'a> Resolver<'a> {
             };
             stamp < clock - i128::from(Fs::file_system::DirEntry::KEEP_MARGIN_NS) - coarse
         };
+        // A file system that stamps with another clock, as a network mount does, gives no key: its file is read at each check.
+        let path_z = bun_core::ZStr::from_buf(&buf[..], path.len());
         disk_key.store(
             match key_now {
-                Some((key, mtime, ctime)) if settled(mtime) && settled(ctime) => key,
+                Some((key, mtime, ctime))
+                    if settled(mtime)
+                        && settled(ctime)
+                        && bun_sys::stamps_with_local_clock(path_z) =>
+                {
+                    key
+                }
                 _ => 0,
             },
             Relaxed,

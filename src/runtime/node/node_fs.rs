@@ -8263,9 +8263,15 @@ impl NodeFS {
                     return Err(sys::Error::from_code(E::ENOENT, sys::Tag::lstat)
                         .with_path(args.path.slice()));
                 }
-                // `err.path` names the entry that failed, not the root.
-                return Err(sys::Error::from_code(err.get_errno(), sys::Tag::rm)
-                    .with_path(without_nt_prefix::<u8>(&err.path)));
+                // `err.path` names the entry that failed, not the root. It starts with
+                // `resolved`, which on Windows can differ from the caller's spelling
+                // of the root (a drive added to `\tree`, a `\\?\UNC\` prefix), so the
+                // caller's spelling replaces it.
+                let path = match err.path.strip_prefix(resolved) {
+                    Some(below_root) => [args.path.slice(), below_root].concat(),
+                    None => without_nt_prefix::<u8>(&err.path).to_vec(),
+                };
+                return Err(sys::Error::from_code(err.get_errno(), sys::Tag::rm).with_path(&path));
             }
             return Ok(());
         }
@@ -10084,6 +10090,20 @@ fn dt_entry_path(sub_path: &[u8], stack: &[DeleteTreeStackItem], name: Option<&[
     path
 }
 
+/// `base` followed by `name`, with a separator between them unless `base` ends in one.
+fn dt_join(base: &[u8], name: &[u8]) -> Vec<u8> {
+    let mut path = Vec::with_capacity(base.len() + name.len() + 1);
+    path.extend_from_slice(base);
+    if !path
+        .last()
+        .is_some_and(|&c| bun_paths::Platform::AUTO.is_separator(c))
+    {
+        path.push(bun_paths::SEP);
+    }
+    path.extend_from_slice(name);
+    path
+}
+
 #[inline]
 fn dt_err(errno: E, tag: sys::Tag, path: &[u8]) -> sys::Error {
     sys::Error::from_code(errno, tag).with_path(path)
@@ -10307,11 +10327,10 @@ pub(crate) fn zig_delete_tree(
                                 if e.get_errno() == E::ENOENT {
                                     break 'handle_entry;
                                 }
-                                return Err(e.with_path(&dt_entry_path(
-                                    sub_path,
-                                    stack,
-                                    Some(&entry_name),
-                                )));
+                                // `e.path` is `entry_name` and what the callee entered below it.
+                                let mut path = dt_entry_path(sub_path, stack, Some(&entry_name));
+                                path.extend_from_slice(e.path.get(entry_name.len()..).unwrap_or(&[]));
+                                return Err(e.with_path(&path));
                             }
                         }
                     }
@@ -10407,11 +10426,11 @@ pub(crate) fn zig_delete_tree(
             }
             Err(E::ENOENT) => {}
             // Some OSes report EEXIST instead of ENOTEMPTY for a non-empty
-            // directory; treat it the same.
-            Err(e @ (E::ENOTEMPTY | E::EEXIST)) => {
+            // directory; it is reported as ENOTEMPTY, which the retries cover.
+            Err(E::ENOTEMPTY | E::EEXIST) => {
                 // What a listing could not remove, the next one cannot either.
                 if !top.removed {
-                    return Err(dt_err(e, sys::Tag::rmdir, &top_path(stack)));
+                    return Err(dt_err(E::ENOTEMPTY, sys::Tag::rmdir, &top_path(stack)));
                 }
                 need_to_retry = true;
             }
@@ -10464,7 +10483,12 @@ pub(crate) fn zig_delete_tree(
                     }
                 } else {
                     match dt_delete_file(sys::Dir::borrow(&parent_dir), name) {
-                        Ok(()) => continue 'process_stack,
+                        Ok(()) => {
+                            if let Some(parent) = stack.last_mut() {
+                                parent.removed = true;
+                            }
+                            continue 'process_stack;
+                        }
                         Err(E::ENOENT) => continue 'process_stack,
                         Err(E::EISDIR) => {
                             treat_as_dir = true;
@@ -10547,6 +10571,8 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
         // open it, and close the original directory. Repeat. Then start the entire operation over.
         // The listing of `dir` removed at least one entry.
         let mut removed = false;
+        // The path of `dir` as the caller of this function names it: `sub_path`, then each directory entered.
+        let mut dir_path: Vec<u8> = sub_path.to_vec();
         let result: sys::Maybe<()> = 'scan_dir: loop {
             let mut dir_it = DirIterator::WrappedIterator::init(dir.fd);
             'dir_it: loop {
@@ -10555,7 +10581,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
                     Ok(None) => break 'dir_it,
                     // The directory was removed while open: nothing left.
                     Err(err) if err.get_errno() == E::ENOENT => break 'dir_it,
-                    Err(err) => break 'scan_dir Err(err.with_path(sub_path)),
+                    Err(err) => break 'scan_dir Err(err.with_path(&dir_path)),
                 };
                 let entry_name: Vec<u8> = entry.name.slice().to_vec();
                 let mut treat_as_dir = entry.kind == sys::FileKind::Directory;
@@ -10569,6 +10595,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
                                 dir_name_buf[..n].copy_from_slice(&entry_name[..n]);
                                 dir_name_len = n;
                                 dir_name_is_sub_path = false;
+                                dir_path = dt_join(&dir_path, &entry_name);
                                 removed = false;
                                 continue 'scan_dir;
                             }
@@ -10580,7 +10607,13 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
                                 // That's fine, we were trying to remove this directory anyway.
                                 continue 'dir_it;
                             }
-                            Err(e) => break 'scan_dir Err(dt_err(e, sys::Tag::open, sub_path)),
+                            Err(e) => {
+                                break 'scan_dir Err(dt_err(
+                                    e,
+                                    sys::Tag::open,
+                                    &dt_join(&dir_path, &entry_name),
+                                ));
+                            }
                         }
                     } else {
                         match dt_delete_file(&dir, &entry_name) {
@@ -10593,7 +10626,13 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
                                 treat_as_dir = true;
                                 continue 'handle_entry;
                             }
-                            Err(e) => break 'scan_dir Err(dt_err(e, sys::Tag::unlink, sub_path)),
+                            Err(e) => {
+                                break 'scan_dir Err(dt_err(
+                                    e,
+                                    sys::Tag::unlink,
+                                    &dt_join(&dir_path, &entry_name),
+                                ));
+                            }
                         }
                     }
                 }
@@ -10609,25 +10648,25 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
             };
             if let Some(d) = cleanup_dir_parent {
                 match dt_delete_dir(&d, dir_name) {
-                    Err(e @ (E::ENOTEMPTY | E::EEXIST)) if !removed => {
-                        return Err(dt_err(e, sys::Tag::rmdir, sub_path));
+                    Err(E::ENOTEMPTY | E::EEXIST) if !removed => {
+                        return Err(dt_err(E::ENOTEMPTY, sys::Tag::rmdir, &dir_path));
                     }
                     Ok(()) | Err(E::ENOENT) | Err(E::ENOTEMPTY) | Err(E::EEXIST) => {
                         // These two things can happen due to file system race conditions.
                         continue 'start_over;
                     }
                     Err(e) => {
-                        return Err(dt_err(e, sys::Tag::rmdir, sub_path));
+                        return Err(dt_err(e, sys::Tag::rmdir, &dir_path));
                     }
                 }
             } else {
                 match dt_delete_dir(self_, sub_path) {
                     Ok(()) | Err(E::ENOENT) => return Ok(()),
-                    Err(e @ (E::ENOTEMPTY | E::EEXIST)) if !removed => {
-                        return Err(dt_err(e, sys::Tag::rmdir, sub_path));
+                    Err(E::ENOTEMPTY | E::EEXIST) if !removed => {
+                        return Err(dt_err(E::ENOTEMPTY, sys::Tag::rmdir, &dir_path));
                     }
                     Err(E::ENOTEMPTY) | Err(E::EEXIST) => continue 'start_over,
-                    Err(e) => return Err(dt_err(e, sys::Tag::rmdir, sub_path)),
+                    Err(e) => return Err(dt_err(e, sys::Tag::rmdir, &dir_path)),
                 }
             }
         };

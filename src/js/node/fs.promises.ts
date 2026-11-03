@@ -435,9 +435,14 @@ const exports = {
           throw err;
         }
         retries++;
-        const { promise, resolve } = Promise.withResolvers();
-        setTimeout(resolve, retries * (options.retryDelay ?? 100));
-        await promise;
+        // A timer fires after 1 ms when its delay does not fit in an int32, so a long wait is split.
+        for (let wait = retries * (options.retryDelay ?? 100); wait > 0; ) {
+          const step = Math.min(wait, 2147483647);
+          wait -= step;
+          const { promise, resolve } = Promise.withResolvers<void>();
+          setTimeout(resolve, step);
+          await promise;
+        }
       }
     }
   },

@@ -300,6 +300,67 @@ describe.skipIf(isWindows)("fs.rm recursive under EMFILE", () => {
     expect(result).toEqual({ ok: true, failedAttempt: true, exists: false });
   });
 
+  // The callback fs.rm goes through fs.promises.rm; the same setup as above.
+  test.concurrent("callback fs.rm with maxRetries tries again after a failed attempt", async () => {
+    using dir = tempDir("rm-emfile-retry-callback", {});
+    const result = await runWithFewDescriptors(
+      String(dir),
+      `
+      const { root, marker, leaf } = makeMarkedTree("retry");
+      exhaustDescriptors();
+      let settled = false;
+      const rm = new Promise((resolve, reject) =>
+        fs.rm(root, { recursive: true, maxRetries: 50, retryDelay: 10 }, err => ((settled = true), err ? reject(err) : resolve())),
+      );
+      rm.catch(() => {});
+      const tick = () => new Promise(resolve => setImmediate(resolve));
+      while (fs.existsSync(marker) && !settled) await tick();
+      for (;;) {
+        try {
+          fs.closeSync(fs.openSync(__filename, "r"));
+          break;
+        } catch (e) {
+          if (e.code !== "EMFILE") throw e;
+          await tick();
+        }
+      }
+      const failedAttempt = fs.existsSync(leaf);
+      for (const fd of fds.splice(0, 8)) fs.closeSync(fd);
+      try {
+        await rm;
+        console.log(JSON.stringify({ ok: true, failedAttempt, exists: fs.existsSync(root) }));
+      } catch (e) {
+        console.log(JSON.stringify({ code: e.code, path: e.path, failedAttempt }));
+      }
+      `,
+    );
+    expect(result).toEqual({ ok: true, failedAttempt: true, exists: false });
+  });
+
+  // A timer whose delay does not fit in an int32 fires after 1 ms. The wait
+  // before the retry is 2^31 ms here, so the call must still be pending
+  // half a second later; with a timer that fired at once, the second attempt
+  // would have failed and settled it by then.
+  test.concurrent("a retry delay past the largest timer delay is waited out", async () => {
+    using dir = tempDir("rm-emfile-long-delay", {});
+    const result = await runWithFewDescriptors(
+      String(dir),
+      `
+      const root = makeTree("root");
+      exhaustDescriptors();
+      let settled = false;
+      fs.promises.rm(root, { recursive: true, maxRetries: 1, retryDelay: 2 ** 31 }).then(
+        () => (settled = true),
+        () => (settled = true),
+      );
+      await new Promise(resolve => setTimeout(resolve, 500));
+      console.log(JSON.stringify({ settled }));
+      process.exit(0);
+      `,
+    );
+    expect(result).toEqual({ settled: false });
+  });
+
   // More retrying calls than the work pool has threads. Their delays run on
   // timers, so an unrelated call still gets a thread at once: it settles
   // before any of them gives up.
@@ -341,6 +402,8 @@ test.skipIf(!isGlibc || !cc)("fs.rm recursive on an entry that its listed name d
     "shim.c": `
 #define _GNU_SOURCE
 #include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -362,7 +425,7 @@ static int hides_entry(int fd) {
   target[n] = 0;
   const char *base = strrchr(target, '/');
   base = base ? base + 1 : target;
-  if (strcmp(base, "ghost") == 0) return 1;
+  if (strcmp(base, "ghost") == 0 || strcmp(base, "ghost-eexist") == 0) return 1;
   if (strcmp(base, "flaky") != 0) return 0;
   struct stat st;
   if (fstat(fd, &st) != 0) return 0;
@@ -381,6 +444,12 @@ long syscall(long nr, ...) {
   va_end(ap);
   if (!next_syscall) next_syscall = dlsym(RTLD_NEXT, "syscall");
   long rc = next_syscall(nr, a1, a2, a3, a4, a5, a6);
+  // Some systems report EEXIST for the rmdir of a directory that is not empty.
+  if (nr == SYS_unlinkat && rc == -1 && errno == ENOTEMPTY && (a3 & AT_REMOVEDIR)) {
+    const char *name = strrchr((const char *)a2, '/');
+    name = name ? name + 1 : (const char *)a2;
+    if (strcmp(name, "ghost-eexist") == 0) errno = EEXIST;
+  }
   if (nr == SYS_getdents64 && rc > 0 && hides_entry((int)a1)) {
     // struct linux_dirent64 { u64 d_ino; s64 d_off; u16 d_reclen; u8 d_type; char d_name[]; }
     char *buf = (char *)a2;
@@ -421,8 +490,12 @@ async function attempt(fn) {
   const out = {
     sync: await attempt(() => fs.rmSync(makeTree("sync", "ghost"), { recursive: true })),
     async: await attempt(() => fs.promises.rm(makeTree("async", "ghost"), { recursive: true, force: true })),
-    // Past 16 levels a second walker takes over. It names the directory where it started.
+    // Past 16 levels a second walker takes over. It names the directory that failed, not where it started.
     deep: await attempt(() => fs.rmSync(makeTree("deep", "ghost", 20), { recursive: true })),
+    eexist: await attempt(() => fs.rmSync(makeTree("eexist", "ghost-eexist"), { recursive: true })),
+    eexistRetried: await attempt(() =>
+      fs.rmSync(makeTree("eexist-retried", "ghost-eexist"), { recursive: true, maxRetries: 2, retryDelay: 10 }),
+    ),
     noRetry: await attempt(() => fs.rmSync(makeTree("no-retry", "flaky"), { recursive: true })),
     retrySync: await attempt(() =>
       fs.rmSync(makeTree("retry-sync", "flaky"), { recursive: true, maxRetries: 2, retryDelay: 10 }),
@@ -461,11 +534,69 @@ async function attempt(fn) {
   expect(JSON.parse(stdout)).toEqual({
     sync: notEmpty("sync", "ghost"),
     async: notEmpty("async", "ghost"),
-    deep: notEmpty("deep", ...Array.from({ length: 16 }, (_, i) => "d" + (i + 1))),
+    deep: notEmpty("deep", ...Array.from({ length: 20 }, (_, i) => "d" + (i + 1)), "ghost"),
+    eexist: notEmpty("eexist", "ghost-eexist"),
+    eexistRetried: notEmpty("eexist-retried", "ghost-eexist"),
     noRetry: notEmpty("no-retry", "flaky"),
     retrySync: "removed",
     retryAsync: "removed",
-    left: ["async", "deep", "no-retry", "sync"],
+    left: ["async", "deep", "eexist", "eexist-retried", "no-retry", "sync"],
   });
   expect(exitCode).toBe(0);
+});
+
+// A directory that another process has as its working directory cannot be
+// removed (EBUSY), at any depth, so the failing entry is known in advance.
+describe.skipIf(!isWindows)("fs.rm recursive names the failing entry on Windows", () => {
+  async function holdAsCwd(dir: string) {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `process.stderr.write("ready\\n"); setTimeout(() => {}, 60000);`],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const { value } = await proc.stderr.getReader().read();
+    expect(new TextDecoder().decode(value)).toStartWith("ready");
+    return proc;
+  }
+
+  async function failedPath(root: string, held: string, spelling: string) {
+    const proc = await holdAsCwd(held);
+    try {
+      fs.rmSync(spelling, { recursive: true });
+      return "removed";
+    } catch (e: any) {
+      return { code: e.code, path: e.path };
+    } finally {
+      proc.kill();
+      await proc.exited;
+    }
+  }
+
+  // The path of the entry that failed starts with the root as the caller spelled it.
+  test.each([
+    ["a rooted path without a drive", (root: string) => root.slice(2)],
+    ["a path with forward slashes", (root: string) => root.replaceAll("\\", "/")],
+    ["a path with the \\\\?\\ prefix", (root: string) => "\\\\?\\" + root],
+  ])("%s", async (_name, spell) => {
+    using dir = tempDir("rm-win-spelling", { "held/file.txt": "x" });
+    const root = String(dir);
+    const spelling = spell(root);
+    const separator = spelling.endsWith("\\") || spelling.endsWith("/") ? "" : "\\";
+    expect(await failedPath(root, path.join(root, "held"), spelling)).toEqual({
+      code: "EBUSY",
+      path: spelling + separator + "held",
+    });
+  });
+
+  // Past 16 levels a second walker takes over, which must still name the entry that failed.
+  test("the entry that failed is named below the depth of the first walker", async () => {
+    const levels = Array.from({ length: 20 }, (_, i) => "d" + (i + 1));
+    using dir = tempDir("rm-win-deep", {});
+    const root = String(dir);
+    const deepest = path.join(root, ...levels);
+    fs.mkdirSync(deepest, { recursive: true });
+    expect(await failedPath(root, deepest, root)).toEqual({ code: "EBUSY", path: deepest });
+  });
 });

@@ -4082,15 +4082,29 @@ mod windows_impl {
             Ok(value) => return Ok(value),
             Err(err) => err,
         };
-        let bytes = path.as_bytes();
-        if err.get_errno() != E::ENOENT
-            || bytes.len() < 248
+        if err.get_errno() != E::ENOENT {
+            return Err(err);
+        }
+        match long_path(path.as_bytes()) {
+            Some((long, len)) => call(ZStr::from_buf(&long[..], len)),
+            None => Err(err),
+        }
+    }
+    /// A long drive-absolute path with the `\\?\` prefix, and its length. `None` for any other path.
+    #[inline(never)]
+    fn long_path(
+        bytes: &[u8],
+    ) -> Option<(
+        bun_paths::path_buffer_pool::PoolGuard<bun_paths::PathBuffer>,
+        usize,
+    )> {
+        if bytes.len() < 248
             || bytes.len() + 5 > bun_paths::MAX_PATH_BYTES
             || !bun_paths::is_drive_letter(bytes[0])
             || bytes[1] != b':'
             || !bun_paths::is_sep_any(bytes[2])
         {
-            return Err(err);
+            return None;
         }
         let mut long = bun_paths::path_buffer_pool::get();
         long[..4].copy_from_slice(&w::LONG_PATH_PREFIX_U8);
@@ -4100,7 +4114,7 @@ mod windows_impl {
         );
         let len = 4 + normalized.len();
         long[len] = 0;
-        call(ZStr::from_buf(&long[..], len))
+        Some((long, len))
     }
     pub fn fchmod(fd: Fd, mode: Mode) -> Maybe<()> {
         sys_uv::fchmod(fd, mode)

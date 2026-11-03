@@ -6819,7 +6819,7 @@ pub mod bv2_impl {
                 let after_miss = self.after_miss(handles_import_errors);
                 let resolve_result: _resolver::Result<'a> = match transpiler
                     .resolver
-                    .resolve_with_framework_as(
+                    .resolve_with_framework(
                         source_dir,
                         import_record.path.text,
                         import_record.kind,

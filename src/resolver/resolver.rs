@@ -1938,18 +1938,7 @@ impl<'a> Resolver<'a> {
 
     /// Runs a resolution but also checking if a Bun Bake framework has an
     /// override. This is used in one place in the bundler.
-    #[inline]
     pub fn resolve_with_framework<'r>(
-        &mut self,
-        source_dir: &[u8],
-        import_path: &'r [u8],
-        kind: ast::ImportKind,
-    ) -> crate::CrateResult<Result<'r>> {
-        self.resolve_with_framework_as(source_dir, import_path, kind, AfterMiss::Recheck)
-    }
-
-    /// `resolve_with_framework`, with what to do after a miss.
-    pub fn resolve_with_framework_as<'r>(
         &mut self,
         source_dir: &[u8],
         import_path: &'r [u8],

@@ -321,7 +321,7 @@ impl<'a> Transpiler<'a> {
         entry_point: &'e [u8],
         dot_slash: &'e OnceCell<Vec<u8>>,
     ) -> crate::Result<resolver::Result<'e>> {
-        let first = match resolver.resolve_with_framework_as(
+        let first = match resolver.resolve_with_framework(
             top_level_dir,
             entry_point,
             bun_ast::ImportKind::EntryPointBuild,

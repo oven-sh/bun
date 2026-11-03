@@ -537,13 +537,18 @@ fn is_expression(value: &[u8], is_handler: bool, spelling: Spelling) -> bool {
 /// `embed/vue-attributes.js`: whether `value`, which is not empty, is printed as it is written on one line. `None` if it
 /// is no code. `name` is the `fullName` of an attribute of an element that is no block of the file.
 pub(crate) fn is_vue_attribute(name: &[u8], value: &[u8], spelling: Spelling) -> Option<bool> {
+    // Most names are none of these, which their first bytes say.
     Some(match name {
-        b"v-for" => is_v_for(value, spelling),
-        [b'#', ..] | b"slot-scope" | b"v-slot" => is_binding(value, spelling),
-        _ if name.starts_with(b"v-slot:") => is_binding(value, spelling),
+        [b'#', ..] => is_binding(value, spelling),
         [b'@', ..] => is_expression(value, true, spelling),
-        _ if name.starts_with(b"v-on:") => is_expression(value, true, spelling),
-        [b':' | b'.', ..] | [b'v', b'-', ..] => is_expression(value, false, spelling),
+        [b':' | b'.', ..] => is_expression(value, false, spelling),
+        [b'v', b'-', rest @ ..] => match rest {
+            b"for" => is_v_for(value, spelling),
+            b"slot" | [b's', b'l', b'o', b't', b':', ..] => is_binding(value, spelling),
+            [b'o', b'n', b':', ..] => is_expression(value, true, spelling),
+            _ => is_expression(value, false, spelling),
+        },
+        [b's', b'l', ..] if name == b"slot-scope" => is_binding(value, spelling),
         _ => return None,
     })
 }

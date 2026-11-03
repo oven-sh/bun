@@ -301,6 +301,17 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
                 false => {
                     let value = html_trim_preserve_indentation(value);
                     let dedent = min_indentation(value);
+                    // Where lines start at the margin and none ends in white space, which a line break removes, the
+                    // lines are printed as they are written.
+                    if dedent == 0
+                        && self.out.indent_level() == Some(0)
+                        && !self.options.format.no_short_cuts
+                        && !strings::contains(value, b" \n")
+                        && !strings::contains(value, b"\t\n")
+                    {
+                        self.out.lines(value);
+                        return self.out.built_text(|out| tags.closing_tag_suffix(id, out));
+                    }
                     for (index, line) in strings::split(value, b"\n").enumerate() {
                         if index > 0 {
                             self.out.hardline();

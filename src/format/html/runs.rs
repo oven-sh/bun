@@ -134,6 +134,8 @@ struct Siblings {
     /// One of them ends with `/>` on a line of its own. `printAttributes` leaves out that line break if the parent
     /// prints the end of its last child, whichever child it is asked about.
     has_broken_void_tag: bool,
+    /// `forceBreakChildren`, or it may be: there is no group around a child.
+    are_in_no_groups: bool,
 }
 
 impl Siblings {
@@ -152,6 +154,7 @@ impl Siblings {
             previous: End::default(),
             count,
             has_broken_void_tag: false,
+            are_in_no_groups: false,
         }
     }
 
@@ -537,6 +540,10 @@ impl Runs {
             measured: None,
             is_indented_too_far: false,
         };
+        scanner.siblings.are_in_no_groups = (parent.element).is_some_and(|(name, _)| {
+            let display = data::css_display_of_tag(name).unwrap_or(Display::Inline);
+            breaks_its_content(name, display)
+        });
         self.scanned_to = scanner.run(start, &parent);
         if scanner.is_indented_too_far {
             self.scanned_to = usize::MAX;
@@ -1010,6 +1017,7 @@ impl<'a> Scanner<'_, 'a> {
         self.put_line(level + 1);
         let inner = (definition, element.is_in_svg);
         self.siblings = Siblings::new(level + 1, inner, (first, self.out.len()), 0);
+        self.siblings.are_in_no_groups = breaks_its_content(name, display);
         Item::Open(first)
     }
 
@@ -1304,6 +1312,10 @@ impl<'a> Scanner<'_, 'a> {
 
     /// The same on a line of its own, if it fits.
     fn interpolation_on_line(&mut self, start: usize) -> Item {
+        // The group around a child is what keeps it on one line.
+        if self.siblings.are_in_no_groups {
+            return Item::No;
+        }
         let written_from = self.out.len();
         let Some(end) = self.interpolation(start).filter(|end| self.ends_line(*end)) else {
             return Item::No;
@@ -1489,10 +1501,11 @@ impl<'a> Scanner<'_, 'a> {
             _ if has_braces => true,
             // Names with one blank between them.
             b"class" => {
-                value[0] != b' '
-                    && value[value.len() - 1] != b' '
-                    && !bun_core::strings::contains(value, b"  ")
-                    && !bun_core::strings::contains_char(value, b'\n')
+                is_plain_line(value)
+                    || value[0] != b' '
+                        && value[value.len() - 1] != b' '
+                        && !bun_core::strings::contains(value, b"  ")
+                        && !bun_core::strings::contains_char(value, b'\n')
             }
             b"style" => {
                 return match canonical::is_style(value) {

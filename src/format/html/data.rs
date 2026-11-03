@@ -385,7 +385,7 @@ pub(crate) fn is_html_tag(name: &[u8]) -> bool {
 
 /// `htmlEventAttributes.has(name)`
 pub(crate) fn is_event_attribute(name: &[u8]) -> bool {
-    name.starts_with(b"on") && HTML_EVENT_ATTRIBUTES.binary_search(&name).is_ok()
+    matches!(name, [b'o', b'n', ..]) && HTML_EVENT_ATTRIBUTES.binary_search(&name).is_ok()
 }
 
 /// True if `element` is a known element that has an attribute named `attribute`.

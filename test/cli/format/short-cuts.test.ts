@@ -1385,6 +1385,8 @@ describe("Vue", () => {
     "<template>\n  <ElButton>\n    <Foo />\n    <Li>a</Li>\n    <Button>b</Button>\n  </ElButton>\n</template>\n",
     '<template>\n  <div v-pre>\n    <p :a="b   +c">{{d   +e}}</p>\n  </div>\n</template>\n',
     "<template>\n  <div>{{  }}</div>\n  <div>{{}}</div>\n</template>\n",
+    "<template>\n  <ul>\n    <li></li>\n    {{ a }}\n    b\n  </ul>\n  <ol>\n    {{ a }}\n  </ol>\n  <table>\n    {{ a }}\n    <tr></tr>\n  </table>\n  <select>\n    <option>a</option>\n    {{ a }}\n  </select>\n</template>\n",
+    "<template>\n  <div>\n    {{ a }}\n  </div>\n  <span>\n    {{ a }}\n    <b></b>\n  </span>\n  <p>\n    {{ a }}\n    b\n  </p>\n  <p>\n    {{ a }} b\n  </p>\n</template>\n",
     "<template>\n  <p>a</p>\n</template>\n\n<script>\nlet a\n</script>\n\n<style>\na{b:c}\n</style>\n",
     '<template lang="pug">\np a\n</template>\n\n<template>\n  <p>a</p>\n</template>\n',
     "<custom>\n  <p>\n</custom>\n\n<template>\n  <p>a</p>\n</template>\n",

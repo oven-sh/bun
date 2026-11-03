@@ -458,14 +458,20 @@ fn a_link_that_is_statted_again_keeps_the_path_that_was_interned_for_it() {
         let dir = made.path("src");
         let link = listed(&dir, next_generation(), b"link").expect("listed");
         let first = link.symlink_for(next_generation(), real_fs(), false);
-        assert_eq!(bstr::BStr::new(first), bstr::BStr::new(&made.path("src/a.txt")));
+        assert_eq!(
+            bstr::BStr::new(first),
+            bstr::BStr::new(&made.path("src/a.txt"))
+        );
         let again = link.symlink_for(next_generation(), real_fs(), false);
         assert!(std::ptr::eq(first, again));
         // A link that names another file now gets that path.
         made.remove("src/link");
         made.link("b.txt", "src/link");
         let other = link.symlink_for(next_generation(), real_fs(), false);
-        assert_eq!(bstr::BStr::new(other), bstr::BStr::new(&made.path("src/b.txt")));
+        assert_eq!(
+            bstr::BStr::new(other),
+            bstr::BStr::new(&made.path("src/b.txt"))
+        );
     });
 }
 

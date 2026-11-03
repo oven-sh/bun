@@ -1792,7 +1792,9 @@ impl<'a> Resolver<'a> {
         // A package that the executable holds answers the miss below with no second run, as on a lookup that never had one.
         if matches!(tmp, ResultUnion::NotFound)
             && self.reruns_after_miss(how)
-            && (self.resolve_package_of_program_for_code_from_disk(import_path, kind)).is_none()
+            && self
+                .resolve_package_of_program_for_code_from_disk(import_path, kind)
+                .is_none()
         {
             (tmp, is_at_source_path, answered_at) = self.rerun_after_miss(
                 marks,
@@ -7666,8 +7668,7 @@ impl<'a> Resolver<'a> {
                     self.log = NonNull::from(&mut ignored);
                 }
                 let logged = self.log_ref().msgs.len();
-                let loaded =
-                    self.load_tsconfig(tsconfigpath, fd, &mut rare.unparsed_tsconfig);
+                let loaded = self.load_tsconfig(tsconfigpath, fd, &mut rare.unparsed_tsconfig);
                 rare.tsconfig_msgs = self.log_ref().msgs[logged..].to_vec();
                 self.log = log;
                 match loaded {

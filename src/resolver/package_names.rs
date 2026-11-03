@@ -193,7 +193,9 @@ impl Resolver<'_> {
         entry_points: &[BuildPaths<'_>],
     ) -> Option<u32> {
         // A name that leads nowhere is expected here: the build has checked what this lookup reads.
-        let found = (self.resolve_as(folder, specifier, kind, AfterMiss::TrustCache)).ok()?;
+        let found = self
+            .resolve_as(folder, specifier, kind, AfterMiss::TrustCache)
+            .ok()?;
         let path = found.path_pair.primary.text();
         let position = entry_points
             .iter()
@@ -252,7 +254,9 @@ impl Resolver<'_> {
                 return;
             };
             let mut find = |kind: ImportKind| {
-                let found = (resolver.resolve_as(folder, specifier, kind, AfterMiss::TrustCache)).ok()?;
+                let found = resolver
+                    .resolve_as(folder, specifier, kind, AfterMiss::TrustCache)
+                    .ok()?;
                 let path = found.path_pair.primary.text();
                 let position = public_paths
                     .binary_search_by(|file| compare_source_paths(file.0, path))

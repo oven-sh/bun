@@ -4,6 +4,16 @@ import fs from "fs";
 import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
+import storesThatEndInADefinition from "../../bun/jsc/stores-that-end-in-a-definition-fixture.js";
+
+const storesFixture = path.join(
+  import.meta.dir,
+  "..",
+  "..",
+  "bun",
+  "jsc",
+  "stores-that-end-in-a-definition-fixture.js",
+);
 
 describe.concurrent("node-module-module", () => {
   test("builtinModules exists", () => {
@@ -1066,6 +1076,61 @@ console.log("survived", require("./late.js"));`,
     const stdout = await proc.stdout.text();
     expect(stdout.trim().endsWith("--pass--")).toBe(true);
     expect(await proc.exited).toBe(0);
+  });
+
+  // Module.prototype.require is a data property to a script, and native code keeps the function that require() calls.
+  // Each store of the fixture ends in a definition of the value on Module.prototype, and that definition has to reach
+  // the native side. The last one is how shimmer and require-in-the-middle install their hook.
+  test("Module.prototype.require: every store that ends in a definition installs the function", async () => {
+    using dir = tempDir("module-prototype-require-stores", {
+      "dep.cjs": `module.exports = "dep";`,
+      "main.cjs": `
+        const stores = require(${JSON.stringify(storesFixture)});
+        const Module = require("node:module");
+        const original = Module.prototype.require;
+        const results = {};
+        for (const [what, store] of Object.entries(stores)) {
+          const seen = [];
+          const hook = who =>
+            function (id) {
+              seen.push(who + " " + id);
+              return original.apply(this, arguments);
+            };
+          const first = hook("the first");
+          store(Module.prototype, "require", first);
+          const readBack = Module.prototype.require === first;
+          require("./dep.cjs");
+          Module.prototype.require = hook("the second");
+          require("./dep.cjs");
+          new Proxy(Module.prototype, {}).require = original;
+          require("./dep.cjs");
+          results[what] = [readBack, seen, JSON.stringify(Object.getOwnPropertyDescriptor(Module.prototype, "require"))];
+        }
+        console.log(JSON.stringify(results));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({
+      stdout: Object.fromEntries(
+        Object.keys(storesThatEndInADefinition).map(what => [
+          what,
+          [
+            true,
+            ["the first ./dep.cjs", "the second ./dep.cjs"],
+            `{"writable":true,"enumerable":true,"configurable":true}`,
+          ],
+        ]),
+      ),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
   });
 
   // Node's Module.prototype.require is `Module._load(id, this, false)`, so `this` is only used as the parent.

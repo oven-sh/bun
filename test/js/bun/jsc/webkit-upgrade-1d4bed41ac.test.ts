@@ -6,8 +6,9 @@ import vm from "node:vm";
 
 // Coverage for the WebKit 1d4bed41ac sync. The first three cases pin an observable difference between the old and the
 // new JavaScriptCore. The others pin what had to stay the same in code that the sync rewrote: the microtask
-// dispatcher, the cache of proxy traps, Object.freeze() and Object.seal() of arrays, the string cache of JSON.parse,
-// calls with a spread argument, and what `bun build --bytecode` makes of such a call.
+// dispatcher, the cache of proxy traps, a store through a proxy onto a property with a native setter, Object.freeze()
+// and Object.seal() of arrays, the string cache of JSON.parse, calls with a spread argument, and what
+// `bun build --bytecode` makes of such a call.
 // The sources that depend on how JavaScriptCore compiles run in a process of their own, so that Bun's transpiler and
 // the other tests leave them alone.
 
@@ -662,6 +663,65 @@ describe.concurrent("WebKit 1d4bed41ac upgrade", () => {
     const { proxy: revoked, revoke } = Proxy.revocable({}, {});
     revoke();
     expect(() => Reflect.set({}, "k", 1, revoked)).toThrow(TypeError);
+  });
+
+  // A store through a proxy without a set trap ends in a definition on the target (23777f3b79), and a definition puts
+  // a plain value in the place of a property that native code stands behind. Bun has such properties that a script sees
+  // as data properties: Error.prepareStackTrace here, and onmessage, onerror and Module.prototype.require in the tests
+  // of those. Bun's JavaScriptCore gives the value of the definition to the native setter, as it did with the store.
+  // The proxy's handler is asked the same three things for every store.
+  test("a store through a proxy reaches the native setter behind a data property", async () => {
+    const source = `
+      const formatter = who => error => who + " formats " + error.message;
+
+      const asked = [];
+      const handler = new Proxy({}, { get: (_, trap) => (asked.push(trap), undefined) });
+      const proxy = new Proxy(Error, handler);
+      const stores = [];
+      for (const who of ["a", "b", "c"]) {
+        asked.length = 0;
+        proxy.prepareStackTrace = formatter(who);
+        stores.push([asked.join(), new Error(who).stack]);
+      }
+
+      // The same store from one place in the code, often enough for that place to remember what it found.
+      function store(proxy, value) {
+        proxy.prepareStackTrace = value;
+      }
+      const plain = new Proxy(Error, {});
+      const formatters = [formatter("x"), formatter("y"), formatter("z")];
+      let notInstalled = 0;
+      for (let i = 0; i < 3000; i++) {
+        store(plain, formatters[i % 3]);
+        if (Error.prepareStackTrace !== formatters[i % 3] || new Error(i).stack !== "xyz"[i % 3] + " formats " + i)
+          notInstalled++;
+      }
+
+      let defined = 0;
+      const forwarding = new Proxy(Error, {
+        defineProperty: (target, key, descriptor) => (defined++, Reflect.defineProperty(target, key, descriptor)),
+      });
+      for (const who of ["d", "e"]) forwarding.prepareStackTrace = formatter(who);
+      const forwarded = new Error("forwarded").stack;
+
+      console.log(JSON.stringify({ stores, notInstalled, defined, forwarded }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", source], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({
+      stdout: {
+        stores: [
+          ["set,getOwnPropertyDescriptor,defineProperty", "a formats a"],
+          ["set,getOwnPropertyDescriptor,defineProperty", "b formats b"],
+          ["set,getOwnPropertyDescriptor,defineProperty", "c formats c"],
+        ],
+        notInstalled: 0,
+        defined: 2,
+        forwarded: "e formats forwarded",
+      },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
   });
 
   // Object.freeze() and Object.seal() change the elements of an array in one step (7e80df541f), and

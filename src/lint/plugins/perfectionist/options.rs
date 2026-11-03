@@ -126,7 +126,8 @@ pub(crate) struct SortOptions {
     pub(crate) fallback_sort: FallbackSort,
     pub(crate) sort_by: SortBy,
     /// `locales`: the collator of `a.localeCompare(b, locales)` and of natural-orderby's `compare({ locale })`.
-    /// `None` is the root collation, which the default `'en-US'` is too. No group overrides it.
+    /// `None` is the root collation, which the default `'en-US'` is too. No group overrides it. A tag that is not
+    /// well-formed leaves this `None` and sets [`Configuration::invalid_locale`].
     pub(crate) locale: Option<strings::Collator>,
 }
 
@@ -276,6 +277,15 @@ pub(crate) struct Configuration {
     pub(crate) groups_index: Vec<u32>,
     /// The [`GroupId`] of `"unknown"`.
     pub(crate) unknown: GroupId,
+    /// What upstream throws at the first node that picks this configuration, in its order: `validateSettingsValues`
+    /// for the keys the element leaves to the file's settings, then `validateCustomSortConfig` and
+    /// `validateNewlinesAndPartitionConfig` on the merged options. A rule throws it (`cx.throw(node, "Error", ..)`)
+    /// once `matching_configuration` has picked the slot, not before: an element no node picks throws nothing.
+    pub(crate) error: Option<Vec<u8>>,
+    /// The message of the `RangeError` that `localeCompare` throws for a `locales` tag that is not well-formed,
+    /// `Invalid language tag: <tag>`, at the first comparison that reaches it: one by `alphabetical`, or one by
+    /// `natural` of two chunks with a character outside ASCII.
+    pub(crate) invalid_locale: Option<Vec<u8>>,
 }
 
 /// A rule's options: every element of the options array as a [`Configuration`], and the array itself, to complete
@@ -284,7 +294,7 @@ pub(crate) struct RuleOptions {
     pub(crate) rule: RuleKind,
     /// `context.options`, kept for [`FileState::with_settings`](super::FileState::with_settings): a file with
     /// settings parses each element again as `{..settings, ..element}`, and validates the settings' values for the
-    /// keys the element does not have (`validateSettingsValues`).
+    /// keys the element does not have (`validateSettingsValues`) into that slot's [`Configuration::error`].
     pub(crate) raw: Vec<Json>,
     /// One per element of `raw`, in order, then one of the defaults alone, whose `useConfigurationIf` is empty: the
     /// first whose `useConfigurationIf` matches a node is the node's, so the last is what upstream uses when
@@ -297,7 +307,7 @@ impl RuleOptions {
     pub(crate) fn new(options: &Options, rule: RuleKind) -> RuleOptions {
         let raw: Vec<Json> = options.all().to_vec();
         let configurations = elements(&raw)
-            .map(|element| Configuration::parse(rule, Object::of(element), Object::default()))
+            .map(|element| Configuration::complete(rule, Object::of(element), Object::default()))
             .collect();
         RuleOptions {
             rule,
@@ -306,23 +316,26 @@ impl RuleOptions {
         }
     }
 
-    /// What upstream throws for the options alone: an `esquery` error for `matchesAstSelector` in `create`, then
-    /// `validateCustomSortConfig`, `validateGroupsConfig` and `validateNewlinesAndPartitionConfig` for every element.
-    /// Upstream runs the last three on the element a node picks, so an element no node ever picks is checked here
-    /// and not there.
+    /// What upstream throws for the options alone, whatever a file's settings add: an `esquery` error for
+    /// `matchesAstSelector` in `create`, and `validateGroupsConfig` for every element, since `groups` and
+    /// `customGroups` are no settings. Upstream runs the latter on the element a node picks, so an element no node
+    /// ever picks is checked here and not there. `validateCustomSortConfig` and `validateNewlinesAndPartitionConfig`
+    /// read `alphabet`, `partitionByNewLine`, `newlinesBetween` and `newlinesInside`, which the settings can supply
+    /// or break, so they are [`Configuration::error`] of the merged slot.
     pub(crate) fn validate(options: &Options, rule: RuleKind) -> Result<(), Vec<u8>> {
         for element in options.all() {
             let object = Object::of(Some(element));
             if let Some(source) = selector_source(object.object("useConfigurationIf")) {
                 Selector::parse(source.as_bytes()).map_err(|error| error.message().to_vec())?;
             }
-            Configuration::parse(rule, object, Object::default()).validate(rule)?;
+            Configuration::parse(rule, object, Object::default()).validate_groups(rule)?;
         }
         Ok(())
     }
 
-    /// The state of one file: `getSettings(context.settings)` and `complete()` of every element under them, or the
-    /// error one of them throws. A file without `settings.perfectionist` keeps [`RuleOptions::configurations`].
+    /// The state of one file: `getSettings(context.settings)`, which is the one error that is the file's, and
+    /// `complete()` of every element under the settings, each with the error of its own. A file without
+    /// `settings.perfectionist` keeps [`RuleOptions::configurations`].
     pub(crate) fn file_state(&self, settings: &Json) -> FileState {
         let Some(value) = settings.get(b"perfectionist") else {
             return FileState::default();
@@ -338,21 +351,17 @@ impl RuleOptions {
         }
     }
 
-    /// `{..defaults, ..settings, ..element}` for every element and for the defaults alone, each validated as upstream
-    /// validates the one a node picks. `None` when the settings have nothing to merge.
+    /// `{..defaults, ..settings, ..element}` for every element and for the defaults alone. Upstream validates the
+    /// settings' values and the merged options against the one element a node picks, so each slot keeps its own
+    /// error and only `getSettings` fails the file. `None` when the settings have nothing to merge.
     fn configurations_with(&self, value: &Json) -> Result<Option<Vec<Configuration>>, Vec<u8>> {
         let settings = settings_of(value)?;
         if settings.entries().is_empty() {
             return Ok(None);
         }
-        let mut configurations = Vec::with_capacity(self.raw.len() + 1);
-        for element in elements(&self.raw) {
-            let options = Object::of(element);
-            validate_settings_values(self.rule, settings, options)?;
-            let configuration = Configuration::parse(self.rule, options, settings);
-            configuration.validate(self.rule)?;
-            configurations.push(configuration);
-        }
+        let configurations = elements(&self.raw)
+            .map(|element| Configuration::complete(self.rule, Object::of(element), settings))
+            .collect();
         Ok(Some(configurations))
     }
 }
@@ -416,10 +425,26 @@ impl<'o> Merged<'o> {
 }
 
 impl Configuration {
+    /// [`Configuration::parse`], then what upstream throws at the first node that picks the result, as
+    /// [`Configuration::error`]: `validateSettingsValues` for these settings and this element, then
+    /// `validateCustomSortConfig` and `validateNewlinesAndPartitionConfig` on the merged options.
+    fn complete(rule: RuleKind, options: Object<'_>, settings: Object<'_>) -> Configuration {
+        let mut configuration = Configuration::parse(rule, options, settings);
+        configuration.error = validate_settings_values(rule, settings, options)
+            .and_then(|()| configuration.validate_custom_sort())
+            .and_then(|()| configuration.validate_newlines_and_partition())
+            .err();
+        configuration
+    }
+
     /// `complete()` of one element of the options array (or of nothing, for the defaults alone) under a file's
-    /// settings, with the regexes compiled and the group names interned.
+    /// settings, with the regexes compiled and the group names interned. Nothing is validated yet.
     fn parse(rule: RuleKind, options: Object<'_>, settings: Object<'_>) -> Configuration {
         let merged = Merged { options, settings };
+        let (locale, invalid_locale) = match locale_of(merged.get("locales")) {
+            Ok(locale) => (locale, None),
+            Err(message) => (None, Some(message)),
+        };
         let sort = SortOptions {
             type_: sort_type_of(merged.get("type")).unwrap_or(SortType::Alphabetical),
             order: order_of(merged.get("order")).unwrap_or(Order::Asc),
@@ -434,7 +459,7 @@ impl Configuration {
                 |value| fallback_sort_of(Object::of(Some(value))),
             ),
             sort_by: sort_by_of(merged.get("sortBy")).unwrap_or(SortBy::Name),
-            locale: locale_of(merged.get("locales")),
+            locale,
         };
         let newlines_between =
             newlines_of(merged.get("newlinesBetween")).unwrap_or(Newlines::Ignore);
@@ -493,20 +518,14 @@ impl Configuration {
             group_names: names.names,
             groups_index,
             unknown,
+            error: None,
+            invalid_locale,
         }
     }
 
     /// The text of a group name, for a message.
     pub(crate) fn group_name(&self, id: GroupId) -> &str {
         self.group_names.get(id as usize).map_or("", |name| &**name)
-    }
-
-    /// What upstream throws for these options at the first sortable node, in its order: `validateCustomSortConfig`,
-    /// `validateGroupsConfig`, `validateNewlinesAndPartitionConfig`.
-    fn validate(&self, rule: RuleKind) -> Result<(), Vec<u8>> {
-        self.validate_custom_sort()?;
-        self.validate_groups(rule)?;
-        self.validate_newlines_and_partition()
     }
 
     /// `validateCustomSortConfig`
@@ -1165,12 +1184,28 @@ fn matches_single_regex_schema(value: &Json) -> bool {
     }
 }
 
-/// `locales`, as `Intl.Collator` reads it: the first of a list, a string on its own. A tag that is not well-formed
-/// makes `localeCompare` throw a `RangeError`; here it collates as the root does.
-fn locale_of(value: Option<&Json>) -> Option<strings::Collator> {
-    let locales: &[Json] = match value? {
+/// `locales`, as `Intl.Collator` reads it: a string on its own, or a list whose first tag decides (ICU opens a
+/// well-formed tag it has no data for as the root collation, so which tag of a list is the first *supported* one
+/// cannot be told here). Every tag has to be well-formed, wherever it is in the list: `Err` is the message of the
+/// `RangeError` that `localeCompare` throws for the first one that is not.
+fn locale_of(value: Option<&Json>) -> Result<Option<strings::Collator>, Vec<u8>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let locales: &[Json] = match value {
         Json::Array(items) => items.as_slice(),
         single => std::slice::from_ref(single),
     };
-    strings::Collator::open(locales.iter().find_map(Json::as_str)?)
+    let mut first = None;
+    for tag in locales.iter().filter_map(Json::as_str) {
+        let Some(collator) = strings::Collator::open(tag) else {
+            let mut message = b"Invalid language tag: ".to_vec();
+            message.extend_from_slice(tag);
+            return Err(message);
+        };
+        if first.is_none() {
+            first = Some(collator);
+        }
+    }
+    Ok(first)
 }

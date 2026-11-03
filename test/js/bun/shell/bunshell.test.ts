@@ -2057,9 +2057,8 @@ describe("deno_task", () => {
 
       test("a JS buffer directly after 2>&1 is its target", async () => {
         const buffer = new Uint8Array(16);
-        await $`${BUN} -e ${"console.log('out'); console.error('err')"} 2>&1${buffer}`.env(bunEnv).quiet();
-        // Both streams share the buffer. How they interleave is the runtime's business, not the lexer's.
-        expect(new TextDecoder().decode(buffer)).toContain("err\n");
+        await $`${BUN} -e ${"console.error('err')"} 2>&1${buffer}`.env(bunEnv).quiet();
+        expect(new TextDecoder().decode(buffer.subarray(0, 4))).toBe("err\n");
       });
 
       TestBuilder.command`echo $(echo hi 2>&1)`
@@ -2073,17 +2072,6 @@ describe("deno_task", () => {
       TestBuilder.command`echo hi 2>&1${{ raw: "\\\n" }}&& echo cont`
         .stdout("hi\ncont\n")
         .runAsTest("2>&1 before an escaped newline");
-
-      TestBuilder.command`echo z 1<f`
-        .ensureTempDir()
-        .file("f", "F\n")
-        .stdout("z 1\n")
-        .fileEquals("f", "F\n")
-        .runAsTest("1< is a word and a stdin redirect");
-      TestBuilder.command`echo hi 0>f; cat f`
-        .ensureTempDir()
-        .stdout("hi 0\n")
-        .runAsTest("0> is a word and a stdout redirect");
 
       TestBuilder.command`echo hi ">&2"`.stdout("hi >&2\n").runAsTest("quoted >&2 is a word");
 
@@ -2113,6 +2101,9 @@ describe("deno_task", () => {
         ["echo hi 3> out", onlyStdFds],
         ["echo hi 10>&1", onlyStdFds.replace("`3>`", "`10>`")],
         ["echo hi 12>out", onlyStdFds.replace("`3>`", "`12>`")],
+        ["echo hi 0>f", "`0>`: file descriptor 0 is read, not written. Use `<` to read from a file."],
+        ["echo hi 1<f", "`1<`: file descriptor 1 is written, not read. Use `1>` to write to a file."],
+        ["echo hi 2<<f", "`2<`: file descriptor 2 is written, not read. Use `2>` to write to a file."],
         ["echo hi >&3", onlyStdPairs(">&3")],
         ["echo hi >&12", onlyStdPairs(">&12")],
         ["echo hi 1>&0", onlyStdPairs("1>&0")],

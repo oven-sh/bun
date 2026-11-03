@@ -2753,20 +2753,29 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             let is_dup = self
                                 .peek()
                                 .is_some_and(|next| !next.escaped && next.char == u32::from(b'&'));
-                            // In `0>f`, `1<f` and `2<f` the digit is a word.
+                            let op = match dir {
+                                RedirectDirection::Out => '>',
+                                RedirectDirection::In => '<',
+                            };
+                            // fd 0 is only read and fd 1 and 2 are only written. A
+                            // duplication (`0>&0`) has no direction.
                             let src_fd = match (fd, dir, is_dup) {
                                 (0, RedirectDirection::In, _) | (0, _, true) => StdFd::Stdin,
                                 (1, RedirectDirection::Out, _) | (1, _, true) => StdFd::Stdout,
                                 (2, RedirectDirection::Out, _) | (2, _, true) => StdFd::Stderr,
-                                (0..=2, _, false) => {
-                                    self.backtrack(&snapshot);
-                                    break 'escaped;
+                                (0, _, false) => {
+                                    self.add_error_fmt(format_args!(
+                                        "`{fd}{op}`: file descriptor 0 is read, not written. Use `<` to read from a file."
+                                    ));
+                                    return Ok(());
+                                }
+                                (1 | 2, _, false) => {
+                                    self.add_error_fmt(format_args!(
+                                        "`{fd}{op}`: file descriptor {fd} is written, not read. Use `{fd}>` to write to a file."
+                                    ));
+                                    return Ok(());
                                 }
                                 _ => {
-                                    let op = match dir {
-                                        RedirectDirection::Out => '>',
-                                        RedirectDirection::In => '<',
-                                    };
                                     self.add_error_fmt(format_args!(
                                         "`{fd}{op}`: Bun Shell only redirects file descriptors 0, 1 and 2 (`<`, `>`, `2>`, `1>&2`, `2>&1`)."
                                     ));

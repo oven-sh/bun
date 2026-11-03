@@ -1984,6 +1984,38 @@ impl Run<'_> {
             results.lock()[index] = Some(result.unwrap_or_else(Done::Failed));
         };
         pool.for_each(work.len(), 1, &format_at);
+        // A file with code in a plugin's language goes to Prettier too, now that it's known to have some. If Prettier
+        // or the plugin isn't installed, `--allow-unsupported` formats it without them instead.
+        let mut needs_plugins: (Vec<(&[u8], usize)>, Vec<&[u8]>) = (Vec::new(), Vec::new());
+        let mut without_plugins: Vec<usize> = Vec::new();
+        let handed_over_by_name = routing.handed_over.len();
+        for (at, &(index, target)) in work.iter().enumerate() {
+            let plugin = match &results.lock()[index] {
+                Some(Done::NeedsPrettier(plugin)) => *plugin,
+                _ => continue,
+            };
+            if routing.route(configs, (index, target)) {
+                // The pass through the bridge has the result.
+                results.lock()[index] = None;
+                continue;
+            }
+            count_extension(&mut needs_plugins.0, &target.path);
+            let name = LANGUAGE_PLUGINS[plugin].package;
+            if !needs_plugins.1.contains(&name) {
+                needs_plugins.1.push(name);
+            }
+            match options.allow_unsupported {
+                true => without_plugins.push(at),
+                false => results.lock()[index] = None,
+            }
+        }
+        // Before Tailwind is asked: a file that is formatted again here can have classes to ask about.
+        if !without_plugins.is_empty() && !is_doctor {
+            skips_plugin_languages.store(true, Ordering::Relaxed);
+            pool.for_each(without_plugins.len(), 1, &|at| {
+                format_at(without_plugins[at])
+            });
+        }
         let deferred: Vec<usize> = (0..work.len())
             .filter(|&at| matches!(results.lock()[work[at].0], Some(Done::Deferred)))
             .collect();
@@ -2010,37 +2042,6 @@ impl Run<'_> {
                     pool.for_each(still_deferred.len(), 1, &|at| format_at(still_deferred[at]));
                 }
             }
-        }
-        // A file with code in a plugin's language goes to Prettier too, now that it's known to have some. If Prettier
-        // or the plugin isn't installed, `--allow-unsupported` formats it without them instead.
-        let mut needs_plugins: (Vec<(&[u8], usize)>, Vec<&[u8]>) = (Vec::new(), Vec::new());
-        let mut without_plugins: Vec<usize> = Vec::new();
-        let handed_over_by_name = routing.handed_over.len();
-        for (at, &(index, target)) in work.iter().enumerate() {
-            let plugin = match &results.lock()[index] {
-                Some(Done::NeedsPrettier(plugin)) => *plugin,
-                _ => continue,
-            };
-            if routing.route(configs, (index, target)) {
-                // The pass through the bridge has the result.
-                results.lock()[index] = None;
-                continue;
-            }
-            count_extension(&mut needs_plugins.0, &target.path);
-            let name = LANGUAGE_PLUGINS[plugin].package;
-            if !needs_plugins.1.contains(&name) {
-                needs_plugins.1.push(name);
-            }
-            match options.allow_unsupported {
-                true => without_plugins.push(at),
-                false => results.lock()[index] = None,
-            }
-        }
-        if !without_plugins.is_empty() && !is_doctor {
-            skips_plugin_languages.store(true, Ordering::Relaxed);
-            pool.for_each(without_plugins.len(), 1, &|at| {
-                format_at(without_plugins[at])
-            });
         }
         let Routing {
             handed_over,

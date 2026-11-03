@@ -4880,6 +4880,28 @@ exports.format = async (text, options) => {
       expect(allowedStdin.exitCode).toBe(0);
     });
 
+    // The file is formatted again without the plugin, and that run is the one that finds the classes to ask about.
+    test("--allow-unsupported with --sort-tailwindcss asks Tailwind about the file it formats without the plugin", async () => {
+      const tailwind = {
+        "node_modules/tailwindcss/package.json": '{ "name": "tailwindcss", "version": "4.0.0", "main": "index.js" }',
+        "node_modules/tailwindcss/theme.css": "",
+        "node_modules/tailwindcss/index.js": `const order = ["m-2", "flex", "p-4"];
+exports.__unstable__loadDesignSystem = async () => ({
+  getClassOrder: classes => classes.map(name => [name, order.includes(name) ? BigInt(order.indexOf(name)) : null]),
+});
+`,
+      };
+      const classes = vue.replace(
+        "<script setup>",
+        '<template>\n  <a class="p-4 flex m-2"></a>\n</template>\n\n<script setup>',
+      );
+      const project = { ...tailwind, ".prettierrc": files[".prettierrc"], "App.vue": classes };
+      const result = await format(project, ["--allow-unsupported", "--sort-tailwindcss"], { reads: ["App.vue"] });
+      expect(result.files["App.vue"]).toBe(classes.replace("p-4 flex m-2", "m-2 flex p-4"));
+      expect(result.stderr).not.toContain("not formatted");
+      expect(result.exitCode).toBe(0);
+    });
+
     test("--allow-unsupported still uses the plugins that are installed", async () => {
       const result = await format(files, ["--allow-unsupported"], { reads });
       expect(calls(result)).toEqual(["App.vue", "README.md"]);

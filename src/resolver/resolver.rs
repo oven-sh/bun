@@ -591,7 +591,7 @@ enum SlotCheck {
 /// What a lookup does after it misses. An argument of the lookup and no field: a `Resolver` is copied bytewise while it runs.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum AfterMiss {
-    /// Run the lookup once more.
+    /// Run the lookup once more, by an asker of a new generation.
     #[default]
     Recheck,
     /// Return the miss.
@@ -2229,7 +2229,7 @@ impl<'a> Resolver<'a> {
         (without_suffix, false)
     }
 
-    /// A lookup that missed runs the same lookups once more. A lookup that finds its module never runs this.
+    /// A lookup that missed runs the same lookups once more, by an asker of a new generation. A lookup that finds its module never runs this.
     #[cold]
     #[inline(never)]
     fn rerun_after_miss<'r>(
@@ -2239,15 +2239,12 @@ impl<'a> Resolver<'a> {
         (kind, global_cache): (ast::ImportKind, GlobalCache),
     ) -> (ResultUnion<'r>, bool) {
         test_hooks::hold_before_rerun();
+        let asker = DirInfo::Checked(bun_core::next_generation());
         test_hooks::count_rerun();
         let mut earlier_msgs: Vec<bun_ast::Msg> = Vec::new();
         self.take_log(log_mark, &mut earlier_msgs);
         self.esm_failure = esm_failure;
-        let again = DirInfo::dispatch_asker!(self.generation, |asker| self.lookup_sequence(
-            asker,
-            (source_dir, import_path),
-            (kind, global_cache)
-        ));
+        let again = self.lookup_sequence(asker, (source_dir, import_path), (kind, global_cache));
         if !earlier_msgs.is_empty() && matches!(again.0, ResultUnion::NotFound) {
             self.put_back_log(log_mark.0, earlier_msgs);
         }
@@ -5212,6 +5209,46 @@ impl<'a> Resolver<'a> {
         })
     }
 
+    /// `not_found_still_holds_locked` for a caller that does not hold `entries_mutex`.
+    fn not_found_still_holds(&mut self, generation: Generation, path: &[u8]) -> bool {
+        let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
+        // SAFETY: `rfs` points at the process-global RealFS singleton.
+        let _entries_unlock = unsafe { &*rfs }.entries_mutex.lock_guard();
+        self.not_found_still_holds_locked(generation, path)
+    }
+
+    /// A cached "no such directory" holds while the listing of the nearest cached directory above it lacks the name below it. The caller holds the resolver mutex and `entries_mutex`.
+    fn not_found_still_holds_locked(&mut self, generation: Generation, path: &[u8]) -> bool {
+        let mut child = strings::without_trailing_slash_windows_path(path);
+        loop {
+            let parent = strings::without_trailing_slash_windows_path(Dirname::dirname(child));
+            if parent.len() >= child.len() {
+                return true;
+            }
+            let Ok(result) = self.dir_cache_mut().get_or_put(parent) else {
+                return true;
+            };
+            match result.status {
+                allocators::ItemStatus::Exists => {
+                    let Some(parent_info) = self
+                        .dir_cache_mut()
+                        .at_index(result.index)
+                        .map(DirInfoRef::from_slot)
+                    else {
+                        return true;
+                    };
+                    let base = bun_paths::basename(child);
+                    return parent_info
+                        .get_entries_ref_locked(generation)
+                        .is_some_and(|entries| entries.get(base).is_none());
+                }
+                // The mark of the child holds for as long as the mark of its parent does.
+                allocators::ItemStatus::NotFound => child = parent,
+                allocators::ItemStatus::Unknown => return false,
+            }
+        }
+    }
+
     /// Cold tail of [`dir_info_cached_maybe_log`]: the directory walk +
     /// `readdir` + `dir_info_uncached` fill that runs only on a cache miss.
     /// Split out so the hot cache-hit path above doesn't pay the ~8.6 KB stack
@@ -6999,7 +7036,10 @@ impl<'a> Resolver<'a> {
             listing_version: core::sync::atomic::AtomicU32::new(entries!().version),
             ..Default::default()
         };
-        let mut rare = DirInfo::RareFacts::default();
+        let mut rare = DirInfo::RareFacts {
+            package_id,
+            ..Default::default()
+        };
 
         // A "node_modules" directory isn't allowed to directly contain another "node_modules" directory
         let mut base = bun_paths::basename(path);

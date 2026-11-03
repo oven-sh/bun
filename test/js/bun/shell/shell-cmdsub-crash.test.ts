@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { join } from "node:path";
 
-// Regression test for use-after-poison in builtin OutputTask callbacks
+// Regression test for use-after-poison in builtin output callbacks
 // inside command substitution $().
 //
 // The bug: output_waiting was only incremented for async writes but
@@ -10,9 +11,9 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 // prematurely, calling done() and freeing the builtin while IOWriter
 // callbacks are still pending.
 //
-// Repro requires many ls tasks with errors — listing many entries
-// alongside non-existent paths reliably triggers the ASAN
-// use-after-poison.
+// Repro requires many pool tasks with errors. `mkdir` and `touch` write
+// each result through an OutputTask, the path that had the bug. `ls` keeps
+// the same two counters and writes through its own cursor.
 
 describe.skipIf(isWindows)("builtins in command substitution with errors should not crash", () => {
   test("ls with errors in command substitution", async () => {
@@ -76,6 +77,39 @@ describe.skipIf(isWindows)("builtins in command substitution with errors should 
       "ls: nonexistent_path_1: No such file or directory\nls: nonexistent_path_2: No such file or directory\n",
     );
     expect(stdout).toBe(names.map(name => `${name}: f`).join(" ") + "\ndone\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // One pool task and one OutputTask for each operand. Each fails, so each writes one line to the IOWriter of stderr
+  // and nothing to the buffer of `$(...)`. The lines come in the order the tasks complete.
+  test.each(["mkdir", "touch"])("%s with errors in command substitution", async builtin => {
+    const operands = Array.from({ length: 50 }, (_, i) => `missing-${String(i).padStart(2, "0")}/x`);
+    using dir = tempDir("shell-cmdsub-output-task", {});
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { $ } from "bun";
+        $.throws(false);
+        await $\`echo $(\${{ raw: process.env.COMMAND }})\`;
+        console.log("done");
+      `,
+      ],
+      env: { ...bunEnv, COMMAND: `${builtin} ${operands.join(" ")}` },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr.split("\n").sort()).toEqual([
+      "",
+      ...operands.map(operand => `${builtin}: ${join(String(dir), operand)}: No such file or directory`),
+    ]);
+    expect(stdout).toBe("\ndone\n");
     expect(exitCode).toBe(0);
   });
 });

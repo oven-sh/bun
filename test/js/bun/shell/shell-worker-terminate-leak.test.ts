@@ -152,7 +152,7 @@ test.skipIf(!isASAN || isWindows)(
 );
 
 test.skipIf(!isASAN || isWindows)(
-  "worker.terminate() with a builtin's output still queued does not leak the output task",
+  "worker.terminate() with a builtin's output still queued does not leak the output",
   async () => {
     // `ls` prints more than the pipe holds and the reader stops after one byte, so the write never finishes.
     await runTerminateScenario(`
@@ -160,6 +160,26 @@ test.skipIf(!isASAN || isWindows)(
       mkdirSync("big");
       for (let i = 0; i < 6000; i++) writeFileSync("big/" + String(i).padStart(240, "x"), "");
       const running = Bun.$\`ls big | sh -c "head -c 1 > /dev/null && echo ok > flag.txt && exec sleep 100"\`.nothrow();
+      (async () => {
+        await running;
+      })();
+      while (!(await Bun.file("flag.txt").exists())) {
+        await Bun.sleep(5);
+      }
+      postMessage("ok");
+    `);
+  },
+  LEAK_TEST_TIMEOUT,
+);
+
+test.skipIf(!isASAN || isWindows)(
+  "worker.terminate() with a builtin's output tasks still queued does not leak them",
+  async () => {
+    // `mkdir -v` writes one line for each operand through an output task. The lines are more than the pipe holds
+    // and the reader stops after one byte, so most of the tasks wait for their chunk.
+    await runTerminateScenario(`
+      const names = Array.from({ length: 6000 }, (_, i) => String(i).padStart(240, "x"));
+      const running = Bun.$\`mkdir -v \${names} | sh -c "head -c 1 > /dev/null && echo ok > flag.txt && exec sleep 100"\`.nothrow();
       (async () => {
         await running;
       })();

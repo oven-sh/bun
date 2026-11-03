@@ -12,5 +12,16 @@
       "target_name": "initializer_only",
       "sources": ["initializer_only.cpp"],
     }
+  ],
+  "conditions": [
+    # Its sockets are those of Linux: accept4() and MSG_NOSIGNAL.
+    ["OS=='linux'", {
+      "targets": [
+        {
+          "target_name": "uws_shaped",
+          "sources": ["uws_shaped.cpp"],
+        }
+      ],
+    }],
   ]
 }

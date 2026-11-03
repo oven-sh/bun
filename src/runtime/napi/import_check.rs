@@ -36,7 +36,7 @@ pub(crate) unsafe extern "C" fn Bun__addonUnresolvedImport(
     let is_defined = |name: &CStr, version: Option<&CStr>| {
         defines(libc::RTLD_DEFAULT, name, version) || defines(handle, name, version)
     };
-    // musl leaves a `GLOB_DAT` import that nothing defines unbound as it does a jump slot. glibc and FreeBSD bind it in dlopen().
+    // musl leaves a `GLOB_DAT` import that nothing defines unbound as it does a jump slot, and both slots as the file has them. glibc and FreeBSD bind a `GLOB_DAT` import in dlopen() and add the base to an unbound jump slot.
     let defers_got = cfg!(target_env = "musl");
     // SAFETY: `headers` are those of a loaded library, and `base_address` is where the loader mapped it.
     match unsafe { unresolved_lazy_import(headers, module.base_address, defers_got, is_defined) } {

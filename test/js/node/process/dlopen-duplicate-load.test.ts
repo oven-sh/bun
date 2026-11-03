@@ -1,7 +1,17 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { copyFileSync, readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, canBuildNodeAddons, isLinux, isMacOS, isMusl, isWindows, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  canBuildNodeAddons,
+  isGlibc,
+  isLinux,
+  isMacOS,
+  isMusl,
+  isWindows,
+  tempDirWithFiles,
+} from "harness";
 import { join } from "path";
 
 // These tests share one node-gyp build of their addons (the compile
@@ -206,6 +216,12 @@ NODE_MODULE(non_context_aware, demo::Initialize)
         {
           "target_name": "initializer_bind_now",
           "sources": [ "initializer_bind_now.cpp" ],
+          "ldflags": [ "-Wl,-z,now" ]
+        },
+        {
+          "target_name": "initializer_bind_now_missing_import",
+          "sources": [ "initializer_missing_import.cpp" ],
+          "defines": [ "MISSING_FUNCTION=bun_test_symbol_that_nothing_defines" ],
           "ldflags": [ "-Wl,-z,now" ]
         },
         {
@@ -716,10 +732,10 @@ if (!isMainThread) {
     const callsTheSymbol = !isMacOS && !isWindows;
     const built = (addon: string) => join(addonPath, "..", addon);
 
-    async function run(args: string[], addon: string) {
+    async function run(args: string[], addon: string, env: Record<string, string> = {}) {
       await using proc = Bun.spawn({
         cmd: [bunExe(), ...args],
-        env: { ...bunEnv, ADDON_PATH: built(addon) },
+        env: { ...bunEnv, ADDON_PATH: built(addon), ...env },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -728,7 +744,7 @@ if (!isMainThread) {
     }
 
     // Prints the exports of the addon, or the error of process.dlopen() once the script has caught it.
-    const load = (addon: string) =>
+    const load = (addon: string, env?: Record<string, string>) =>
       run(
         [
           "-e",
@@ -743,6 +759,7 @@ if (!isMainThread) {
           `,
         ],
         addon,
+        env,
       );
     const loaded = (exports: object) => ({ stdout: JSON.stringify({ exports }), stderr: "", exitCode: 0 });
     const refused = (message: string) => ({
@@ -821,6 +838,8 @@ if (!isMainThread) {
       ["initializer_zlib_import.node", "deflateInit_"],
       // Compiled with -fno-plt: the call goes through the global offset table.
       ["initializer_got_import.node", "bun_test_symbol_that_nothing_defines"],
+      // Linked with -z now.
+      ["initializer_bind_now_missing_import.node", "bun_test_symbol_that_nothing_defines"],
     ])("%s is refused, because nothing defines its import %s", async (addon, symbol) => {
       const { bindNow, relocations } = elfImports(built(addon));
       const relocation = relocations.get(symbol);
@@ -850,14 +869,32 @@ if (!isMainThread) {
       },
     );
 
-    // The loader has bound every import of this addon when dlopen() returns. Bun has none to check and reads none of
-    // the addon's tables, so the copy that Bun could not read loads too.
+    // The loader has bound every import of this addon when dlopen() returns. Bun finds the address of a definition in
+    // each import's slot and asks nothing about it. It reads no name for such an import, so the copy whose names Bun
+    // could not read loads too.
     test.skipIf(!isLinux)("an addon with only this entry loads when it is linked with -z now", async () => {
       expect(elfImports(built("initializer_bind_now.node")).bindNow).toBe(true);
       expect(await load("initializer_bind_now.node")).toEqual(loaded({ loaded: "initializer_bind_now" }));
       writeWithoutStringTableSize("initializer_bind_now.node", "initializer_bind_now_unreadable.node");
       expect(await load("initializer_bind_now_unreadable.node")).toEqual(loaded({ loaded: "initializer_bind_now" }));
     });
+
+    // A glibc that profiles calls binds every object at the first call, also one that is linked with -z now. So
+    // dlopen() passes for the addon that it refuses in the test above, and its import is left for Bun to find.
+    test.skipIf(!isGlibc)(
+      "an addon that is linked with -z now is refused when the loader has left its import unbound all the same",
+      async () => {
+        const addon = "initializer_bind_now_missing_import.node";
+        expect(elfImports(built(addon)).bindNow).toBe(true);
+        // LD_PROFILE names the object to profile. No object has this name, so nothing is written to the directory.
+        const profiling = { LD_PROFILE: "bun_test_object_that_nothing_loads", LD_PROFILE_OUTPUT: built("") };
+        expect(await load(addon, profiling)).toEqual(
+          refused(
+            `Cannot load native addon ${built(addon)}: it imports 'bun_test_symbol_that_nothing_defines', which Bun does not provide`,
+          ),
+        );
+      },
+    );
 
     test.skipIf(!isLinux).each([
       ["a weak import that nothing defines", "initializer_weak_import.node", { loaded: "initializer_weak_import" }],
@@ -876,7 +913,8 @@ if (!isMainThread) {
     });
 
     test.skipIf(!isLinux)("an addon with only this entry is refused when Bun cannot read its imports", async () => {
-      // The addon is linked with -z lazy, so that Bun has imports to check in it. Linked with BIND_NOW it would load.
+      // The addon is linked with -z lazy, so that the loader leaves Bun imports to check in it. Linked with BIND_NOW it
+      // would load.
       writeWithoutStringTableSize("initializer_lazy.node", "initializer_unreadable.node");
       const unreadable = built("initializer_unreadable.node");
       expect(await load("initializer_unreadable.node")).toEqual(

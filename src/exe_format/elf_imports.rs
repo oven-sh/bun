@@ -1,8 +1,9 @@
 //! The imports that the dynamic loader has left unbound in an ELF object that it has mapped into this process.
 
 use core::ffi::CStr;
-use core::mem::size_of;
+use core::mem::{align_of, size_of};
 use core::slice;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_core::AnyBitPattern;
 use bun_sys::elf::PT_LOAD;
@@ -19,14 +20,9 @@ const DT_RELAENT: i64 = 9;
 const DT_STRSZ: i64 = 10;
 const DT_PLTREL: i64 = 20;
 const DT_JMPREL: i64 = 23;
-const DT_BIND_NOW: i64 = 24;
-const DT_FLAGS: i64 = 30;
 const DT_VERSYM: i64 = 0x6fff_fff0;
-const DT_FLAGS_1: i64 = 0x6fff_fffb;
 const DT_VERNEED: i64 = 0x6fff_fffe;
 const DT_VERNEEDNUM: i64 = 0x6fff_ffff;
-const DF_BIND_NOW: u64 = 8;
-const DF_1_NOW: u64 = 1;
 const RELA_SIZE: u64 = size_of::<Elf64_Rela>() as u64;
 const SHN_UNDEF: u16 = 0;
 const STB_GLOBAL: u8 = 1;
@@ -51,7 +47,7 @@ struct Elf64_Dyn {
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct Elf64_Rela {
-    _r_offset: u64,
+    r_offset: u64,
     r_info: u64,
     _r_addend: i64,
 }
@@ -108,6 +104,8 @@ pub enum Unreadable {
     SymbolIndex,
     /// The name of a symbol does not end inside `DT_STRSZ`.
     SymbolName,
+    /// The slot of an import is not an aligned pointer inside the readable `PT_LOAD` ranges.
+    Slot,
 }
 
 /// A table of the object: `room` is the bytes from `address` to the end of the table, or of the `PT_LOAD` range around it.
@@ -147,10 +145,11 @@ struct Image<'a> {
 }
 
 impl Image<'_> {
-    fn room(&self, address: usize) -> usize {
+    /// The bytes from `address` to the end of the `PT_LOAD` range around it, of the ranges that have `flags`.
+    fn room(&self, flags: u32, address: usize) -> usize {
         self.headers
             .iter()
-            .filter(|header| header.p_type == PT_LOAD && header.p_flags & PF_R != 0)
+            .filter(|header| header.p_type == PT_LOAD && header.p_flags & flags == flags)
             .find_map(|header| {
                 let start = self.base.wrapping_add(header.p_vaddr as usize);
                 (header.p_memsz as usize)
@@ -166,9 +165,29 @@ impl Image<'_> {
             .into_iter()
             .map(|address| Table {
                 address,
-                room: self.room(address),
+                room: self.room(PF_R, address),
             })
             .find(|table| table.room != 0)
+    }
+
+    /// What the slot of an import holds, if it is an aligned pointer inside a readable `PT_LOAD` range.
+    fn slot(&self, address: usize) -> Option<usize> {
+        let aligned = address.is_multiple_of(align_of::<AtomicUsize>());
+        if !aligned || self.room(PF_R, address) < size_of::<usize>() {
+            return None;
+        }
+        // SAFETY: the slot is aligned and inside a range that the loader mapped readable, and the caller of the walk keeps the object loaded.
+        let slot = unsafe { AtomicUsize::from_ptr(address as *mut usize) };
+        // The loader stores to a slot at the first call through it on any thread. Relaxed is the ordering that may load from a page that is read-only.
+        Some(slot.load(Ordering::Relaxed))
+    }
+
+    /// Whether a slot that holds `value` has the address of a definition. An unbound slot holds 0 or points into the object, at its stub for the import, and musl (`unrelocated`) leaves there what the file has: the stub's offset from the base.
+    fn is_bound(&self, value: usize, unrelocated: bool) -> bool {
+        let in_object = |address| self.room(0, address) != 0;
+        value != 0
+            && !in_object(value)
+            && !(unrelocated && in_object(self.base.wrapping_add(value)))
     }
 
     /// The version that the object names for its import `symbol`. A version table that is missing or malformed names none.
@@ -213,7 +232,7 @@ struct Versions {
     needed_count: u64,
 }
 
-/// The first import that the loader has left unbound and that `is_defined` rejects by its name and then by the version that the object names for it, of an object whose loader keeps `headers` mapped at `base`. `defers_got` is for musl, which leaves a `GLOB_DAT` import unbound too.
+/// The first import that the loader has left unbound and that `is_defined` rejects by its name and then by the version that the object names for it, of an object whose loader keeps `headers` mapped at `base`. `defers_got` is for musl, which leaves a `GLOB_DAT` import unbound too, and an unbound slot as the file has it.
 pub unsafe fn unresolved_lazy_import<'a>(
     headers: &'a [libc::Elf64_Phdr],
     base: usize,
@@ -228,44 +247,36 @@ pub unsafe fn unresolved_lazy_import<'a>(
     let address = base.wrapping_add(dynamic.p_vaddr as usize);
     let entries = Table {
         address,
-        room: image.room(address).min(dynamic.p_memsz as usize),
+        room: image.room(PF_R, address).min(dynamic.p_memsz as usize),
     };
 
     // `rela_plt` is the table of `DT_JMPREL`, and `rela_dyn` that of `DT_RELA`, which is read only for musl.
     let (mut rela_plt, mut rela_dyn, mut symbols, mut strings) = (None, None, None, None);
     let (mut rela_plt_size, mut rela_dyn_size, mut strings_size) = (0, 0, 0);
-    let (mut bound, mut other_format, mut versions) = (false, false, Versions::default());
+    let mut versions = Versions::default();
     for index in 0.. {
         let entry: Elf64_Dyn = entries.element(index).ok_or(Unreadable::Dynamic)?;
-        let table = || Some(image.table(entry.d_val).ok_or(Unreadable::Table));
+        let table = || image.table(entry.d_val).ok_or(Unreadable::Table);
         match entry.d_tag {
             DT_NULL => break,
-            DT_JMPREL => rela_plt = table(),
-            DT_RELA if defers_got => rela_dyn = table(),
-            DT_SYMTAB => symbols = table(),
-            DT_STRTAB => strings = table(),
+            DT_JMPREL => rela_plt = Some(table()?),
+            DT_RELA if defers_got => rela_dyn = Some(table()?),
+            DT_SYMTAB => symbols = Some(table()?),
+            DT_STRTAB => strings = Some(table()?),
             DT_PLTRELSZ => rela_plt_size = entry.d_val as usize,
             DT_RELASZ => rela_dyn_size = entry.d_val as usize,
             DT_STRSZ => strings_size = entry.d_val as usize,
-            DT_PLTREL => other_format |= entry.d_val != DT_RELA as u64,
-            DT_RELAENT if defers_got => other_format |= entry.d_val != RELA_SIZE,
-            DT_BIND_NOW => bound = true,
-            DT_FLAGS => bound |= entry.d_val & DF_BIND_NOW != 0,
-            DT_FLAGS_1 => bound |= entry.d_val & DF_1_NOW != 0,
+            DT_PLTREL if entry.d_val != DT_RELA as u64 => return Err(Unreadable::Relocations),
+            DT_RELAENT if defers_got && entry.d_val != RELA_SIZE => {
+                return Err(Unreadable::Relocations);
+            }
             DT_VERSYM => versions.symbols = Some(entry.d_val),
             DT_VERNEED => versions.needed = Some(entry.d_val),
             DT_VERNEEDNUM => versions.needed_count = entry.d_val,
             _ => {}
         }
     }
-    // The loader bound every import of such an object inside dlopen(), which fails when nothing defines one. Only a glibc that profiles or audits calls (LD_PROFILE, LD_AUDIT) does not.
-    if bound {
-        return Ok(None);
-    }
-    if other_format {
-        return Err(Unreadable::Relocations);
-    }
-    let sized = |table: Option<Result<Table, Unreadable>>, size| match table.transpose()? {
+    let sized = |table: Option<Table>, size| match table {
         Some(table) if size > table.room => Err(Unreadable::Relocations),
         table => Ok(table.map(|table| Table {
             room: size,
@@ -276,7 +287,6 @@ pub unsafe fn unresolved_lazy_import<'a>(
         sized(rela_plt, rela_plt_size)?,
         sized(rela_dyn, rela_dyn_size)?,
     );
-    let (symbols, strings) = (symbols.transpose()?, strings.transpose()?);
     if rela_plt.is_none() && rela_dyn.is_none() {
         return Ok(None);
     }
@@ -303,6 +313,11 @@ pub unsafe fn unresolved_lazy_import<'a>(
         if symbol.st_info >> 4 != STB_GLOBAL || symbol.st_shndx != SHN_UNDEF {
             continue;
         }
+        let slot = base.wrapping_add(relocation.r_offset as usize);
+        // The loader has bound such a slot, so a definition exists and there is nothing to ask.
+        if image.is_bound(image.slot(slot).ok_or(Unreadable::Slot)?, defers_got) {
+            continue;
+        }
         let name = strings
             .string(symbol.st_name as usize)
             .ok_or(Unreadable::SymbolName)?;
@@ -322,15 +337,25 @@ pub unsafe fn unresolved_lazy_import<'a>(
 mod tests {
     use super::*;
 
+    const PF_X: u32 = 1;
     const PF_W: u32 = 2;
     const DT_REL: u64 = 17;
     const DT_DEBUG: i64 = 21;
+    const DT_BIND_NOW: i64 = 24;
+    const DT_FLAGS: i64 = 30;
+    const DT_FLAGS_1: i64 = 0x6fff_fffb;
+    const DF_BIND_NOW: u64 = 8;
+    const DF_1_NOW: u64 = 1;
     const STB_WEAK: u8 = 2;
     const DYNAMIC_ENTRY: usize = 16;
     const SYMBOL: usize = 24;
     const RELOCATION: usize = 24;
     const VERSION_ENTRY: usize = 16;
+    const SLOT: usize = size_of::<usize>();
+    const STUB: usize = 16;
     const GAP: usize = 11 * SYMBOL;
+    /// What a slot holds once the loader has bound it: an address in another object. This one is no address of a process, so no `Object` is around it.
+    const ELSEWHERE: usize = 0xdef1_0000_0000_0000;
     /// The last but one is a spare entry, which `add_dynamic` replaces.
     const DYNAMIC_TAGS: [i64; 14] = [
         DT_JMPREL,
@@ -422,7 +447,7 @@ mod tests {
         AboveItsMapping,
     }
 
-    /// An object in this process's memory: the symbols, strings and relocations of `DT_JMPREL` in one segment, and after gaps the dynamic section in another, and the version tables and the relocations of `DT_RELA` in a third.
+    /// An object in this process's memory: the symbols, strings and relocations of `DT_JMPREL` in one segment, and after gaps the dynamic section in another, the version tables and the relocations of `DT_RELA` in a third, the slots of the imports in a fourth, and their stubs in a fifth, which is not readable.
     struct Object {
         memory: Vec<u8>,
         link_address: u64,
@@ -442,6 +467,12 @@ mod tests {
         data_relocations: usize,
         /// Whether the walk is that of musl.
         defers_got: bool,
+        /// A slot for each import. That of a jump slot points at its stub, as glibc and FreeBSD leave it, and that of a `GLOB_DAT` holds 0.
+        slots: usize,
+        slots_flags: u32,
+        slots_size: usize,
+        stubs: usize,
+        stubs_size: usize,
     }
 
     impl Object {
@@ -477,9 +508,15 @@ mod tests {
             let version_needs = versions + (2 * (1 + imports.len())).next_multiple_of(8);
             let data_relocations = version_needs + version_needs_room;
             let versions_size = data_relocations + imports.len() * RELOCATION - versions;
+            let (slots_size, stubs_size) = (imports.len() * SLOT, imports.len() * STUB);
+            let slots = versions + versions_size + GAP;
+            let memory = vec![0; slots + SLOT + slots_size + GAP + stubs_size + GAP];
+            let slots = (memory.as_ptr() as usize + slots).next_multiple_of(SLOT)
+                - memory.as_ptr() as usize;
+            let stubs = slots + slots_size + GAP;
 
             let mut object = Object {
-                memory: vec![0; versions + versions_size + GAP],
+                memory,
                 link_address: 0,
                 tables_flags: PF_R,
                 tables_size,
@@ -493,6 +530,11 @@ mod tests {
                 version_needs,
                 data_relocations,
                 defers_got: false,
+                slots,
+                slots_flags: PF_R | PF_W,
+                slots_size,
+                stubs,
+                stubs_size,
             };
             if linked == Linked::AboveItsMapping {
                 object.link_address = (object.memory.as_ptr() as u64).wrapping_add(0x1000_0000);
@@ -511,6 +553,10 @@ mod tests {
                     Section::RelaDyn => {
                         object.set_data_relocation(index, 1 + index, import.relocation_type)
                     }
+                }
+                object.set_relocation_offset(index, slots + index * SLOT);
+                if import.relocation_type != R_GLOB_DAT {
+                    object.set_slot(index, object.stub(index));
                 }
             }
             let values = [
@@ -567,6 +613,32 @@ mod tests {
         fn set_data_relocation(&mut self, index: usize, symbol: usize, relocation_type: u32) {
             let info = (symbol as u64) << 32 | u64::from(relocation_type);
             self.write_u64(self.data_relocations + index * RELOCATION + 8, info);
+        }
+
+        /// Makes the relocation of an import, in either table, name the slot at `offset`.
+        fn set_relocation_offset(&mut self, index: usize, offset: usize) {
+            let offset = self.link_address.wrapping_add(offset as u64);
+            self.write_u64(self.relocations + index * RELOCATION, offset);
+            self.write_u64(self.data_relocations + index * RELOCATION, offset);
+        }
+
+        fn set_slot(&mut self, import: usize, value: usize) {
+            self.write_u64(self.slots + import * SLOT, value as u64);
+        }
+
+        /// The address of `offset` in the memory of the object.
+        fn address(&self, offset: usize) -> usize {
+            self.memory.as_ptr() as usize + offset
+        }
+
+        /// The address of the stub of an import, where its slot points until the loader binds it.
+        fn stub(&self, import: usize) -> usize {
+            self.address(self.stubs + import * STUB)
+        }
+
+        /// The same as the file has it: the loader has not added the base.
+        fn stub_as_linked(&self, import: usize) -> usize {
+            (self.link_address as usize).wrapping_add(self.stubs + import * STUB)
         }
 
         /// Writes the `DT_VERNEED` table: an `Elf64_Verneed` for each of `needs`, each before an `Elf64_Vernaux` for each of its version indexes.
@@ -631,6 +703,8 @@ mod tests {
                 header(PT_LOAD, self.tables_flags, 0, self.tables_size),
                 header(PT_LOAD, PF_R | PF_W, self.dynamic, self.dynamic_load_size),
                 header(PT_LOAD, PF_R, self.versions, self.versions_size),
+                header(PT_LOAD, self.slots_flags, self.slots, self.slots_size),
+                header(PT_LOAD, PF_X, self.stubs, self.stubs_size),
             ];
             if let Some(size) = self.dynamic_size {
                 headers.push(header(PT_DYNAMIC, PF_R | PF_W, self.dynamic, size));
@@ -857,7 +931,171 @@ mod tests {
             .collect()
     }
 
-    /// The three ways in which a dynamic section says that the loader binds every import when it loads the object.
+    #[test]
+    fn skips_an_import_whose_slot_is_bound() {
+        for defers_got in [false, true] {
+            for linked in [Linked::AtZero, Linked::AboveItsMapping] {
+                let mut object = Object::new(linked, Pointers::Offsets, &IMPORTS);
+                object.defers_got = defers_got;
+                object.set_slot(0, ELSEWHERE);
+                object.set_slot(2, ELSEWHERE);
+                // Nothing that the walk can ask defines `first` and `third`: their slots say that the loader found them.
+                assert_eq!(object.walk(&[]), (unresolved("second"), asked(&["second"])));
+                assert_eq!(object.walk(&["second"]), (Ok(None), asked(&["second"])));
+                object.set_slot(1, ELSEWHERE);
+                assert_eq!(object.walk(&[]), (Ok(None), vec![]));
+            }
+        }
+    }
+
+    #[test]
+    fn skips_a_got_import_whose_slot_is_bound() {
+        let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &MUSL_IMPORTS);
+        object.defers_got = true;
+        assert_eq!(
+            object.walk(&["first"]),
+            (unresolved("second"), asked(&["first", "second"]))
+        );
+        object.set_slot(1, ELSEWHERE);
+        assert_eq!(
+            object.walk(&["first"]),
+            (unresolved("third"), asked(&["first", "third"]))
+        );
+        object.set_slot(2, ELSEWHERE);
+        assert_eq!(object.walk(&["first"]), (Ok(None), asked(&["first"])));
+    }
+
+    #[test]
+    fn asks_about_an_import_whose_slot_points_into_the_object() {
+        let walk = |value: fn(&Object) -> usize| {
+            let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &IMPORTS[..1]);
+            object.set_slot(0, value(&object));
+            object.walk(&[])
+        };
+        // The ends of the first and the last segment, and the start of each of the others, whatever its flags are.
+        let inside: [fn(&Object) -> usize; 7] = [
+            |object| object.address(0),
+            |object| object.address(object.tables_size - 1),
+            |object| object.address(object.dynamic),
+            |object| object.address(object.versions),
+            |object| object.address(object.slots),
+            |object| object.address(object.stubs),
+            |object| object.address(object.stubs + object.stubs_size - 1),
+        ];
+        for (case, value) in inside.into_iter().enumerate() {
+            assert_eq!(
+                walk(value),
+                (unresolved("first"), asked(&["first"])),
+                "{case}"
+            );
+        }
+        let outside: [fn(&Object) -> usize; 3] = [
+            |object| object.address(0) - 1,
+            |object| object.address(object.tables_size),
+            |object| object.address(object.stubs + object.stubs_size),
+        ];
+        for (case, value) in outside.into_iter().enumerate() {
+            assert_eq!(walk(value), (Ok(None), vec![]), "{case}");
+        }
+    }
+
+    #[test]
+    fn asks_about_an_import_whose_slot_holds_no_address() {
+        for defers_got in [false, true] {
+            let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &IMPORTS);
+            object.defers_got = defers_got;
+            object.set_slot(0, ELSEWHERE);
+            object.set_slot(1, 0);
+            object.set_slot(2, ELSEWHERE);
+            assert_eq!(object.walk(&[]), (unresolved("second"), asked(&["second"])));
+        }
+    }
+
+    #[test]
+    fn asks_about_a_slot_that_is_as_the_file_has_it_only_for_a_loader_that_leaves_it_so() {
+        for linked in [Linked::AtZero, Linked::AboveItsMapping] {
+            let mut object = Object::new(linked, Pointers::Offsets, &IMPORTS);
+            for import in 0..IMPORTS.len() {
+                object.set_slot(import, object.stub_as_linked(import));
+            }
+            // glibc and FreeBSD add the base to a slot that they do not bind: to them this value is an address outside the object.
+            assert_eq!(object.walk(&[]), (Ok(None), vec![]));
+            object.defers_got = true;
+            assert_eq!(
+                object.walk(&["first"]),
+                (unresolved("second"), asked(&["first", "second"]))
+            );
+            object.set_slot(1, ELSEWHERE);
+            assert_eq!(
+                object.walk(&["first"]),
+                (unresolved("third"), asked(&["first", "third"]))
+            );
+        }
+    }
+
+    #[test]
+    fn refuses_a_slot_that_is_not_a_readable_pointer() {
+        let cases: [(&str, &[&str], fn(&mut Object)); 4] = [
+            ("outside the segments", &["first"], |object| {
+                object.set_relocation_offset(1, object.slots + object.slots_size)
+            }),
+            ("in a segment that is not readable", &[], |object| {
+                object.slots_flags = PF_W
+            }),
+            (
+                "without room for a pointer",
+                &["first", "second"],
+                |object| object.slots_size -= SLOT / 2,
+            ),
+            ("not aligned", &["first"], |object| {
+                object.set_relocation_offset(1, object.slots + SLOT + SLOT / 2)
+            }),
+        ];
+        for (case, questions, change) in cases {
+            for defers_got in [false, true] {
+                let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &IMPORTS);
+                object.defers_got = defers_got;
+                change(&mut object);
+                assert_eq!(
+                    object.walk(&["first", "second", "third"]),
+                    (Err(Unreadable::Slot), asked(questions)),
+                    "{case}"
+                );
+            }
+        }
+
+        // The walk reads the slot of no other relocation: a weak import, a symbol that the object defines, another type.
+        let imports = [
+            Import {
+                binding: STB_WEAK,
+                ..import("weak")
+            },
+            Import {
+                section: 1,
+                ..import("own")
+            },
+            Import {
+                relocation_type: R_JUMP_SLOT ^ 1,
+                ..import("data")
+            },
+        ];
+        let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &imports);
+        object.slots_flags = PF_W;
+        assert_eq!(object.walk(&[]), (Ok(None), vec![]));
+    }
+
+    #[test]
+    fn reads_no_name_of_an_import_whose_slot_is_bound() {
+        let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &IMPORTS);
+        object.set_dynamic(DT_STRSZ, 0);
+        assert_eq!(object.walk(&[]), (Err(Unreadable::SymbolName), vec![]));
+        for import in 0..IMPORTS.len() {
+            object.set_slot(import, ELSEWHERE);
+        }
+        assert_eq!(object.walk(&[]), (Ok(None), vec![]));
+    }
+
+    /// The three ways in which a dynamic section asks the loader to bind every import when it loads the object.
     const BOUND_AT_LOAD: [(i64, u64); 4] = [
         (DT_BIND_NOW, 0),
         (DT_FLAGS, DF_BIND_NOW),
@@ -866,65 +1104,20 @@ mod tests {
     ];
 
     #[test]
-    fn an_object_that_is_bound_at_load_has_no_unresolved_import() {
+    fn asks_about_an_unbound_slot_of_an_object_that_asks_to_be_bound_at_load() {
         for (tag, value) in BOUND_AT_LOAD {
             for defers_got in [false, true] {
-                let imports = [import("first"), got_import("second")];
+                let imports = [import("first"), got_import("second"), import("third")];
                 let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &imports);
                 object.defers_got = defers_got;
-                assert_eq!(object.walk(&[]).0, unresolved("first"));
+                object.set_slot(2, ELSEWHERE);
+                let unflagged = [object.walk(&[]), object.walk(&["first"])];
+                assert_eq!(unflagged[0], (unresolved("first"), asked(&["first"])));
+                // A glibc that profiles or audits calls (LD_PROFILE, LD_AUDIT) binds such an object at the first call all the same.
                 object.add_dynamic(tag, value);
-                assert_eq!(object.walk(&[]), (Ok(None), vec![]), "{tag} {value}");
+                let flagged = [object.walk(&[]), object.walk(&["first"])];
+                assert_eq!(flagged, unflagged, "{tag} {value}");
             }
-        }
-    }
-
-    #[test]
-    fn other_flags_do_not_say_that_an_object_is_bound_at_load() {
-        for (tag, value) in [(DT_FLAGS, !DF_BIND_NOW), (DT_FLAGS_1, !DF_1_NOW)] {
-            let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &IMPORTS);
-            object.add_dynamic(tag, value);
-            assert_eq!(
-                object.walk(&[]),
-                (unresolved("first"), asked(&["first"])),
-                "{tag}"
-            );
-        }
-    }
-
-    #[test]
-    fn reads_no_table_of_an_object_that_is_bound_at_load() {
-        let changes: [fn(&mut Object); 5] = [
-            |object| object.tables_flags = 0,
-            |object| object.set_dynamic(DT_PLTREL, DT_REL),
-            |object| object.set_dynamic(DT_PLTRELSZ, u64::MAX),
-            |object| object.set_dynamic(DT_RELAENT, 1),
-            |object| {
-                object.set_dynamic(
-                    DT_RELA,
-                    object.pointer(Pointers::Addresses, object.tables_size),
-                )
-            },
-        ];
-        for (tag, value) in BOUND_AT_LOAD {
-            for change in changes {
-                let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &IMPORTS);
-                object.defers_got = true;
-                change(&mut object);
-                assert!(object.walk(&[]).0.is_err());
-                object.add_dynamic(tag, value);
-                assert_eq!(object.walk(&[]), (Ok(None), vec![]), "{tag} {value}");
-            }
-        }
-    }
-
-    #[test]
-    fn refuses_a_dynamic_section_without_an_end_that_says_bound_at_load() {
-        for (tag, value) in BOUND_AT_LOAD {
-            let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &IMPORTS);
-            object.add_dynamic(tag, value);
-            object.dynamic_size = Some(object.dynamic_load_size - DYNAMIC_ENTRY / 2);
-            assert_eq!(object.walk(&[]), (Err(Unreadable::Dynamic), vec![]));
         }
     }
 

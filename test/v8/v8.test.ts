@@ -8,6 +8,7 @@ import {
   expectRssDeltaBelow,
   isASAN,
   isBroken,
+  isLinux,
   isMacOS,
   isMusl,
   isWindows,
@@ -320,25 +321,44 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
 
   // https://github.com/oven-sh/bun/issues/9785
   describe("an addon whose only entry is the symbol node_register_module_v<ABI>", () => {
+    const run = async (exe: string, fixture: string) => {
+      await using proc = spawn({
+        cmd: [exe, join(directories.badModules, fixture)],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr, exitCode };
+    };
+    const runInBunAndNode = async (fixture: string) =>
+      await Promise.all([run(bunExe(), fixture), run(await nodeExeMatchingAbi(), fixture)]);
+
     // Bun calls this symbol only where it can check the addon's imports before. macOS and Windows also bind an
     // import at its first call, and a call of one that nothing defines ends the process.
     it.skipIf(isMacOS || isWindows)(
       "loads with require(), with process.dlopen() and in a Worker, like in Node",
       async () => {
-        const run = async (exe: string) => {
-          const fixture = join(directories.badModules, "initializer-only-fixture.js");
-          await using proc = spawn({ cmd: [exe, fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-          return { stdout: stdout.trim(), stderr, exitCode };
-        };
         const loaded = {
           stdout: JSON.stringify({ require: "world", dlopen: "world", worker: "world", workerExitCode: 0 }),
           stderr: "",
           exitCode: 0,
         };
-        const [bun, node] = await Promise.all([run(bunExe()), run(await nodeExeMatchingAbi())]);
+        const [bun, node] = await runInBunAndNode("initializer-only-fixture.js");
         expect(node).toEqual(loaded);
         expect(bun).toEqual(loaded);
+      },
+    );
+
+    // uws_shaped.node is built on Linux only.
+    it.skipIf(!isLinux)(
+      "serves a request with Node's loop, uv_poll_t and node::MakeCallback, like in Node",
+      async () => {
+        const body = Array(20).fill("Hello /uWS").join(", ");
+        const served = { stdout: JSON.stringify({ status: 200, encoding: null, body }), stderr: "", exitCode: 0 };
+        const [bun, node] = await runInBunAndNode("uws-shaped-fixture.js");
+        expect(node).toEqual(served);
+        expect(bun).toEqual(served);
       },
     );
   });

@@ -252,12 +252,10 @@ fn listing(dir: &[u8], generation: Generation) -> Option<Listing> {
     })
 }
 
-/// The failure that an asker of `generation` gets for `dir`, and the stamp of that failure.
-fn listing_error(dir: &[u8], generation: Generation) -> Option<(crate::Error, Generation)> {
+/// The failure that an asker of `generation` gets for `dir`.
+fn listing_error(dir: &[u8], generation: Generation) -> Option<crate::Error> {
     match read_directory(dir, generation) {
-        Fs::file_system::real_fs::EntriesOption::Err(err) => {
-            Some((err.canonical_error, err.generation))
-        }
+        Fs::file_system::real_fs::EntriesOption::Err(err) => Some(err.canonical_error),
         Fs::file_system::real_fs::EntriesOption::Entries(_) => None,
     }
 }
@@ -481,10 +479,9 @@ fn a_directory_behind_a_link_that_leads_elsewhere_now_is_read_again() {
 fn a_directory_that_was_not_there_is_opened_again_by_an_asker_that_checks() {
     with_project("not-there", |made| {
         let dir = made.path("late");
-        let failure = |generation| listing_error(&dir, generation).map(|failed| failed.0);
-        assert_eq!(failure(0), Some(ENOENT));
+        assert_eq!(listing_error(&dir, 0), Some(ENOENT));
         made.write("late/a.js", "");
-        assert_eq!(failure(0), Some(ENOENT));
+        assert_eq!(listing_error(&dir, 0), Some(ENOENT));
         assert!(listed(&dir, next_generation(), b"a.js").is_some());
         assert!(listed(&dir, 0, b"a.js").is_some());
     });
@@ -496,12 +493,14 @@ fn a_path_that_could_not_be_listed_is_opened_again_once_for_each_generation() {
         made.write("thing", "");
         let dir = made.path("thing");
         let own = next_generation();
-        assert_eq!(listing_error(&dir, own), Some((ENOTDIR, own)));
+        assert_eq!(listing_error(&dir, own), Some(ENOTDIR));
         made.remove("thing");
         made.write("thing/a.js", "");
-        assert_eq!(listing_error(&dir, own), Some((ENOTDIR, own)));
-        assert_eq!(listing_error(&dir, 0), Some((ENOTDIR, own)));
+        // The failure has the stamp of the asker that met it: that asker takes it as it is, and so does one that trusts what is cached.
+        assert_eq!(listing_error(&dir, own), Some(ENOTDIR));
+        assert_eq!(listing_error(&dir, 0), Some(ENOTDIR));
         assert!(listed(&dir, next_generation(), b"a.js").is_some());
+        assert_eq!(listing_error(&dir, 0), None);
     });
 }
 

@@ -2273,7 +2273,8 @@ describe("bundler", () => {
   });
 
   // A read that does not run at load keeps the barrel too. The CommonJS file
-  // then runs at load, as it does in Node.
+  // then runs at load, as it does in Node, and a call after the load reads
+  // the name.
   itBundled("barrel/ExportStarOfCommonJSReadInUncalledFunction", {
     files: {
       "/entry.js": /* js */ `
@@ -2288,11 +2289,14 @@ describe("bundler", () => {
         module.exports = { movable: 200 };
       `,
     },
-    run: { stdout: "impl.cjs ran\nloaded" },
-    onAfterBundle(api) {
-      api.expectFile("/out.js").toContain("exports_barrel.movable");
-      api.expectFile("/out.js").toContain("var exports_barrel = {}");
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import { later } from './out.js';
+        console.log(later());
+      `,
     },
+    run: { file: "/test.js", stdout: "impl.cjs ran\nloaded\n200" },
+    ...printsRead("exports_barrel.movable"),
   });
 
   // Another file re-exports the names by name.

@@ -1,0 +1,31 @@
+status: 0
+script: df1a6d9b0cac771c
+---
+== literal 0
+False
+'\xad' True
+== no names needed 0
+False
+== unicode_escape 0
+'\xad' True
+== namereplace 0
+b'\\N{SOFT HYPHEN}' True
+== blocked, literal 0
+SyntaxError (unicode error) \N escapes not supported (can't load unicodedata module) 1 1 18
+SyntaxError (unicode error) \N escapes not supported (can't load unicodedata module) 1 10 25
+b'\\N{SOFT HYPHEN}' \N{SOFT HYPHEN}
+<string>:1: SyntaxWarning: "\N" is an invalid escape sequence. Such sequences will not work in the future. Did you mean "\\N"? A raw string is also an option.
+== blocked, unicode_escape 0
+UnicodeError \N escapes not supported (can't load unicodedata module) NoneType
+UnicodeError \N escapes not supported (can't load unicodedata module) NoneType
+UnicodeError \N escapes not supported (can't load unicodedata module) NoneType
+== blocked, namereplace 0
+ImportError PyCapsule_Import could not import module "unicodedata"
+== blocked later 0
+'\xad'
+'1' 2 b'\\N{SOFT HYPHEN}'
+== dropped 0
+False
+== unblocked 0
+(unicode error) \N escapes not supported (can't load unicodedata module)
+'\xad' True

@@ -5,7 +5,9 @@ import sys, os, random, signal, types, io, gc
 MODULES = """builtins math cmath itertools functools operator collections _collections heapq _heapq bisect _bisect struct _struct binascii zlib _json json _pickle pickle marshal re _sre unicodedata array
 time _io io codecs _codecs _csv csv pyexpat _sqlite3 gc sys _abc abc _weakref weakref _functools _operator _random random _string string _stat stat errno copy copyreg types _types typing _typing
 _contextvars contextvars _warnings warnings _tokenize tokenize _ast ast _symtable symtable _opcode _locale locale _md5 _sha1 _sha2 _sha3 _blake2 _hashlib hashlib _hmac hmac _zstd atexit _imp _queue _statistics _datetime
-_decimal _bz2 _lzma _uuid _interpolation string.templatelib _suggestions _colorize mmap _thread _tracemalloc _lsprof _asyncio _elementtree _heapq _struct annotationlib reprlib keyword enum dataclasses numbers fractions""".split()
+_decimal _bz2 _lzma _uuid _interpolation string.templatelib _suggestions _colorize mmap _thread _tracemalloc _lsprof _asyncio _elementtree _heapq _struct annotationlib reprlib keyword enum dataclasses numbers fractions
+_multibytecodec _codecs_cn _codecs_hk _codecs_iso2022 _codecs_jp _codecs_kr _codecs_tw _ssl _missing_stdlib_info datetime bz2 lzma _frozen_importlib _frozen_importlib_external _zoneinfo zoneinfo _signal _posixsubprocess select
+@cjk @ordereddict @asyncio @datetime @generators @ssl @compress @gc @frames @types""".split()
 
 SKIP_NAMES = set("""exit quit _exit abort kill killpg fork forkpty system popen input breakpoint sleep pause sigwait sigwaitinfo sigtimedwait pthread_kill raise_signal alarm setitimer
 _sigsegv _sigabrt _sigfpe _fatal_error _stack_overflow _read_null _fatal_error_c_thread remove unlink rmdir rename truncate chmod chown mkdir makedirs setrlimit chdir chroot close closerange dup2 dup
@@ -14,7 +16,7 @@ settrace setprofile _settraceallthreads _setprofileallthreads set_asyncgen_hooks
 freeze unfreeze set_debug set_threshold disable help license credits copyright exec_dynamic create_dynamic load_dynamic acquire_lock release_lock lock_held stack_size register unregister _run_exitfuncs _clear
 displayhook excepthook unraisablehook __interactivehook__ __import__ compile_command setlocale bindtextdomain textdomain getpass print pprint pp _set_sentinel get wait acquire join acquire_lock put
 mmap flush tzset perf_counter process_time thread_time clock_settime clock_settime_ns remote_exec _dump_tracelets call_tracing _debugmallocstats getobjects gettotalrefcount dump_stats start stop enable
-run_in_subinterp main _main _test test""".split())
+run_in_subinterp main _main _test test get_data set_data _cache_bytecode""".split())
 
 def names_of(group):
     return group
@@ -122,7 +124,131 @@ def use(rng, label, value, depth, trials):
                 if ok and depth > 1 and rng.random() < 0.2:
                     use(rng, "%s.%s()" % (label, name), result, depth - 1, 1)
 
+# Groups of objects that junk arguments would never make.
+def extra_cjk():
+    import codecs, io
+    for module, names in (("_codecs_cn", "gb2312 gbk gb18030 hz"), ("_codecs_hk", "big5hkscs"), ("_codecs_tw", "big5 cp950"), ("_codecs_kr", "euc_kr cp949 johab"),
+                          ("_codecs_jp", "shift_jis cp932 euc_jp shift_jis_2004 euc_jis_2004 euc_jisx0213 shift_jisx0213"),
+                          ("_codecs_iso2022", "iso2022_kr iso2022_jp iso2022_jp_1 iso2022_jp_2 iso2022_jp_2004 iso2022_jp_3 iso2022_jp_ext")):
+        for name in names.split():
+            yield name, __import__(module).getcodec(name)
+            info = codecs.lookup(name)
+            yield name + ".ie", info.incrementalencoder()
+            yield name + ".id", info.incrementaldecoder()
+            yield name + ".sr", info.streamreader(io.BytesIO(b"abc\x81\x40\x1b$B"))
+            yield name + ".sw", info.streamwriter(io.BytesIO())
+def extra_ordereddict():
+    from collections import OrderedDict
+    class Sub(OrderedDict): pass
+    for label, od in (("od0", OrderedDict()), ("od3", OrderedDict(a=1, b=2, c=3)), ("odsub", Sub(x=1)), ("odnew", OrderedDict.__new__(OrderedDict))):
+        yield label, od
+        yield label + ".keys", od.keys(); yield label + ".values", od.values(); yield label + ".items", od.items()
+        yield label + ".iter", iter(od); yield label + ".rev", reversed(od); yield label + ".iitems", iter(od.items()); yield label + ".rvalues", reversed(od.values())
+def extra_asyncio():
+    import asyncio, _asyncio
+    loop = asyncio.new_event_loop()
+    async def c(): return 1
+    async def w(f): return await f
+    class T(_asyncio.Task): pass
+    class TS(_asyncio.Task): __slots__ = ("a", "b")
+    class F(_asyncio.Future): pass
+    f = _asyncio.Future(loop=loop)
+    yield "loop", loop
+    yield "future", f; yield "future.done", (lambda x: (x.set_result(1), x)[1])(_asyncio.Future(loop=loop)); yield "future.iter", iter(_asyncio.Future(loop=loop)); yield "F", F(loop=loop)
+    yield "future.new", _asyncio.Future.__new__(_asyncio.Future); yield "task.new", _asyncio.Task.__new__(_asyncio.Task); yield "T.new", T.__new__(T)
+    for cls in (_asyncio.Task, T, TS):
+        yield cls.__name__, cls(c(), loop=loop); yield cls.__name__ + ".waiting", cls(w(f), loop=loop)
+    t = T(w(_asyncio.Future(loop=loop)), loop=loop); loop.run_until_complete(asyncio.sleep(0)); yield "T.started", t
+def extra_datetime():
+    import datetime as d
+    class TZ(d.tzinfo):
+        def utcoffset(self, t): return d.timedelta(hours=1)
+        def dst(self, t): return None
+        def tzname(self, t): return "x"
+    class Bad(d.tzinfo):
+        def utcoffset(self, t): return "x"
+        def dst(self, t): raise ZeroDivisionError
+        def tzname(self, t): return 5
+    class D(d.datetime): pass
+    yield "date", d.date(2020, 2, 29); yield "time", d.time(1, 2, 3, 4, TZ()); yield "datetime", d.datetime(2020, 2, 29, 1, 2, 3, 4, d.timezone.utc); yield "naive", d.datetime(1, 1, 1); yield "max", d.datetime.max
+    yield "bad", d.datetime(2020, 1, 1, tzinfo=Bad()); yield "badtime", d.time(tzinfo=Bad()); yield "delta", d.timedelta(1, 2, 3); yield "deltamax", d.timedelta.max; yield "tz", d.timezone(d.timedelta(hours=-5), "n"); yield "D", D(2020, 1, 1)
+    yield "iso", d.date(2020, 1, 1).isocalendar(); yield "tzinfo", d.tzinfo()
+def extra_generators():
+    def g(a=1, *b, **c):
+        try:
+            x = yield a
+            with open(os.devnull) as f:
+                y = yield x
+            yield from (i for i in range(3))
+        finally:
+            z = 1
+    async def co(): await asy()
+    class Aw:
+        def __await__(self): yield 1
+    async def asy(): return await Aw()
+    async def ag():
+        try:
+            yield 1
+            yield 2
+        finally:
+            pass
+    fresh = g(); started = g(); next(started); deep = g(); next(deep); deep.send(1); done = g(); list(done)
+    yield "gen.fresh", fresh; yield "gen.started", started; yield "gen.deep", deep; yield "gen.done", done
+    yield "gen.frame", started.gi_frame; yield "gen.freshframe", fresh.gi_frame; yield "gen.locals", started.gi_frame.f_locals; yield "gen.code", started.gi_code
+    c = co(); yield "coro.fresh", c; c2 = co(); c2.send(None); yield "coro.started", c2; yield "coro.frame", c2.cr_frame; yield "coro.await", c2.cr_await; yield "coro.wrapper", co().__await__()
+    a = ag(); yield "agen", a; yield "agen.anext", a.__anext__(); yield "agen.asend", ag().asend(None); yield "agen.athrow", ag().athrow(ValueError); yield "agen.aclose", ag().aclose()
+    yield "genexpr", (i for i in [1, 2, 3])
+def extra_ssl():
+    import ssl, _ssl
+    for p in (ssl.PROTOCOL_TLS_CLIENT, ssl.PROTOCOL_TLS_SERVER):
+        ctx = ssl.SSLContext(p); yield "ctx%d" % p, ctx
+        i, o = ssl.MemoryBIO(), ssl.MemoryBIO(); yield "bio", i
+        obj = ctx.wrap_bio(i, o, server_side=p == ssl.PROTOCOL_TLS_SERVER, server_hostname=None if p == ssl.PROTOCOL_TLS_SERVER else "localhost"); yield "sslobject", obj; yield "_sslobj", obj._sslobj
+    yield "_ctx", _ssl._SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+def extra_compress():
+    import bz2, lzma, zlib
+    yield "bz2c", bz2.BZ2Compressor(); yield "bz2d", bz2.BZ2Decompressor(); yield "lzmac", lzma.LZMACompressor(); yield "lzmad", lzma.LZMADecompressor(); yield "raw", lzma.LZMADecompressor(lzma.FORMAT_RAW, filters=[{"id": lzma.FILTER_LZMA2}])
+    yield "zc", zlib.compressobj(); yield "zd", zlib.decompressobj()
+    d = bz2.BZ2Decompressor(); d.decompress(bz2.compress(b"x" * 1000), 10); yield "bz2d.mid", d
+    d = lzma.LZMADecompressor(); d.decompress(lzma.compress(b"x" * 1000), 10); yield "lzmad.mid", d
+def extra_gc():
+    class G: pass
+    yield "gc", types.SimpleNamespace(**{n: getattr(gc, n) for n in ("get_referrers", "get_referents", "is_tracked", "is_finalized", "get_objects", "get_stats", "get_count", "get_threshold", "get_freeze_count", "collect", "isenabled", "get_debug")})
+def extra_frames():
+    def f(a, b=2):
+        c = 3
+        return sys._getframe()
+    fr = f(1); yield "frame.ended", fr; yield "frame.locals", fr.f_locals; yield "frame.live", sys._getframe(); yield "frame.livelocals", sys._getframe().f_locals; yield "code", f.__code__
+    try: 1 / 0
+    except ZeroDivisionError as e: yield "tb", e.__traceback__; yield "tb.frame", e.__traceback__.tb_frame
+    yield "lines", f.__code__.co_lines(); yield "positions", f.__code__.co_positions(); yield "function", f; yield "cell", (lambda: fr).__closure__[0]
+def extra_types():
+    class M(type): pass
+    class A(metaclass=M): pass
+    class B(A): __slots__ = ("x",)
+    class C: 
+        def __del__(self): pass
+    yield "M", M; yield "A", A; yield "B", B; yield "B()", B(); yield "C", C; yield "slot", B.x; yield "super", super(B, B()); yield "mro", A.__mro__; yield "dict", A.__dict__
+    yield "getset", type.__dict__["__dict__"]; yield "wrapper", int.__add__; yield "method-wrapper", (1).__add__; yield "classmethod_descriptor", dict.__dict__["fromkeys"]; yield "method_descriptor", str.upper; yield "member", types.FunctionType.__dict__["__globals__"]
+    yield "union", int | str; yield "alias", list[int]; yield "typevar", __import__("typing").TypeVar("T"); yield "property", property(lambda s: 1); yield "staticmethod", staticmethod(len); yield "classmethod", classmethod(len)
+
+def fuzz_extra(name, seed, trials):
+    rng = random.Random(seed)
+    try:
+        objects = list(globals()["extra_" + name[1:]]())
+    except ImportError as e:
+        print("cannot import", name, type(e).__name__)
+        return
+    rng.shuffle(objects)
+    for label, value in objects:
+        use(rng, name + "." + label, value, 2, trials)
+    del objects
+    gc.collect()
+    print("done", name)
+
 def fuzz_module(name, seed, trials):
+    if name.startswith("@"):
+        return fuzz_extra(name, seed, trials)
     rng = random.Random(seed)
     try:
         module = __import__(name, fromlist=["x"])

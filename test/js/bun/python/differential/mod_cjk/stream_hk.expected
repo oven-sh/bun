@@ -1,0 +1,27 @@
+status: 0
+script: 4d3461a550c13c9c
+---
+big5hkscs 120 168
+  read None 47215b7b
+  read -1 47215b7b
+  read 1 1413cb44
+  read 2 ed12d552
+  read 3 7222db08
+  read 5 a555819b
+  read 8 b7e6b50f
+  read 100 14494ea3
+  read 10000 ed53d35c
+  whole True True True 26892e4b
+  cut strict 5eb8daea
+  cut ignore 0af5854a
+  cut replace e897c35e
+  cut backslashreplace 8d12267d
+  reset 8d36640b
+  write ef15e9db fe204d54 fe204d54 True True
+  writelines fe204d54
+  write reset ad5231ba
+  write strict [None, 'UnicodeEncodeError big5hkscs 0 1 illegal multibyte sequence', None, 'UnicodeEncodeError big5hkscs 0 1 illegal multibyte sequence', None, 'UnicodeEncodeError big5hkscs 2 3 illegal multibyte sequence', 'UnicodeEncodeError big5hkscs 2 3 illegal multibyte sequence', 'UnicodeEncodeError big5hkscs 1 2 illegal multibyte sequence', None] b'a\xc6\xf1\x88f'
+  write ignore [None, None, None, None, None, None, None, None, None] b'a\xc6\xf1\x88fbc\xc6\xe8\xc6\xe8'
+  write replace [None, None, None, None, None, None, None, None, None] b'a?\xc6\xf1?\x88fb?c\xc6\xe8?\xc6\xe8?'
+  write xmlcharrefreplace [None, None, None, None, None, None, None, None, None] b'a&#55296;\xc6\xf1&#55296;\x88fb&#55296;c\xc6\xe8&#55296;\xc6\xe8&#230;'
+  write backslashreplace [None, None, None, None, None, None, None, None, None] b'a\\ud800\xc6\xf1\\ud800\x88fb\\ud800c\xc6\xe8\\ud800\xc6\xe8\\xe6'

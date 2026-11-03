@@ -198,6 +198,23 @@ sys.exit(subprocess.run(["<stdin>", "-c", "import sys; print(sys.orig_argv[0])"]
       expect(await python(["-c", program])).toEqual({ stdout: "<stdin>\n", stderr: "", exitCode: 0 });
     });
 
+    test.skipIf(!isLinux)("a link of another name that leads here by way of python3 is Python", async () => {
+      const program = `
+import os, subprocess, sys
+os.mkdir("links")
+os.symlink(sys.executable, "links/first")
+os.symlink("first", "links/second")
+for link in "links/first", "links/second", os.path.abspath("links/second"):
+    subprocess.run([link, "-c", "print('ran')"], check=True)
+subprocess.run(["second", "-c", "print('found on PATH')"], check=True, env={**os.environ, "PATH": os.path.abspath("links")})
+`;
+      expect(await python(["-c", program])).toEqual({
+        stdout: lines("ran", "ran", "ran", "found on PATH"),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     test("python2 is not", async () => {
       const result = await python(["-p", "1 + 1"], { name: "python2" });
       expect(result).toEqual({ stdout: "2\n", stderr: "", exitCode: 0 });

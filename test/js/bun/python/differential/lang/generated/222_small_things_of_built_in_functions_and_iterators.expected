@@ -1,0 +1,198 @@
+status: 0
+script: 6f93496135539353
+source: 7f472d5c8801fa27
+---
+name [name='len', function=builtin_function_or_method] => len
+| function.__self__ if not isinstance(function.__self__, type(sys)) els... [name='len', function=builtin_function_or_method] => builtins
+| plain(repr(function)) [name='len', function=builtin_function_or_method] => <built-in function len>
+| function.__qualname__ [name='len', function=builtin_function_or_method] => len
+| function.__reduce__() if function.__self__ is None or isinstance(func... [name='len', function=builtin_function_or_method] => -
+name [name='time.sleep', function=builtin_function_or_method] => time.sleep
+| function.__self__ if not isinstance(function.__self__, type(sys)) els... [name='time.sleep', function=builtin_function_or_method] => time
+| plain(repr(function)) [name='time.sleep', function=builtin_function_or_method] => <built-in function sleep>
+| function.__qualname__ [name='time.sleep', function=builtin_function_or_method] => sleep
+| function.__reduce__() if function.__self__ is None or isinstance(func... [name='time.sleep', function=builtin_function_or_method] => -
+name [name='dict.fromkeys', function=builtin_function_or_method] => dict.fromkeys
+| function.__self__ if not isinstance(function.__self__, type(sys)) els... [name='dict.fromkeys', function=builtin_function_or_method] => <class 'dict'>
+| plain(repr(function)) [name='dict.fromkeys', function=builtin_function_or_method] => <built-in method fromkeys of type object at 0x>
+| function.__qualname__ [name='dict.fromkeys', function=builtin_function_or_method] => dict.fromkeys
+| function.__reduce__() if function.__self__ is None or isinstance(func... [name='dict.fromkeys', function=builtin_function_or_method] => (<built-in function getattr>, (<class 'dict'>, 'fromkeys'))
+name [name='float.fromhex', function=builtin_function_or_method] => float.fromhex
+| function.__self__ if not isinstance(function.__self__, type(sys)) els... [name='float.fromhex', function=builtin_function_or_method] => <class 'float'>
+| plain(repr(function)) [name='float.fromhex', function=builtin_function_or_method] => <built-in method fromhex of type object at 0x>
+| function.__qualname__ [name='float.fromhex', function=builtin_function_or_method] => float.fromhex
+| function.__reduce__() if function.__self__ is None or isinstance(func... [name='float.fromhex', function=builtin_function_or_method] => (<built-in function getattr>, (<class 'float'>, 'fromhex'))
+name [name='str.maketrans', function=builtin_function_or_method] => str.maketrans
+| function.__self__ if not isinstance(function.__self__, type(sys)) els... [name='str.maketrans', function=builtin_function_or_method] => None
+| plain(repr(function)) [name='str.maketrans', function=builtin_function_or_method] => <built-in method maketrans of type object at 0x>
+| function.__qualname__ [name='str.maketrans', function=builtin_function_or_method] => str.maketrans
+| function.__reduce__() if function.__self__ is None or isinstance(func... [name='str.maketrans', function=builtin_function_or_method] => (<built-in function getattr>, (<class 'str'>, 'maketrans'))
+name [name='bytes.maketrans', function=builtin_function_or_method] => bytes.maketrans
+| function.__self__ if not isinstance(function.__self__, type(sys)) els... [name='bytes.maketrans', function=builtin_function_or_method] => None
+| plain(repr(function)) [name='bytes.maketrans', function=builtin_function_or_method] => <built-in method maketrans of type object at 0x>
+| function.__qualname__ [name='bytes.maketrans', function=builtin_function_or_method] => bytes.maketrans
+| function.__reduce__() if function.__self__ is None or isinstance(func... [name='bytes.maketrans', function=builtin_function_or_method] => (<built-in function getattr>, (<class 'bytes'>, 'maketrans'))
+name [name='bytearray.maketrans', function=builtin_function_or_method] => bytearray.maketrans
+| function.__self__ if not isinstance(function.__self__, type(sys)) els... [name='bytearray.maketrans', function=builtin_function_or_method] => None
+| plain(repr(function)) [name='bytearray.maketrans', function=builtin_function_or_method] => <built-in method maketrans of type object at 0x>
+| function.__qualname__ [name='bytearray.maketrans', function=builtin_function_or_method] => bytearray.maketrans
+| function.__reduce__() if function.__self__ is None or isinstance(func... [name='bytearray.maketrans', function=builtin_function_or_method] => (<built-in function getattr>, (<class 'bytearray'>, 'maketrans'))
+name [name='int.__new__', function=builtin_function_or_method] => int.__new__
+| function.__self__ if not isinstance(function.__self__, type(sys)) els... [name='int.__new__', function=builtin_function_or_method] => <class 'int'>
+| plain(repr(function)) [name='int.__new__', function=builtin_function_or_method] => <built-in method __new__ of type object at 0x>
+| function.__qualname__ [name='int.__new__', function=builtin_function_or_method] => int.__new__
+| function.__reduce__() if function.__self__ is None or isinstance(func... [name='int.__new__', function=builtin_function_or_method] => (<built-in function getattr>, (<class 'int'>, '__new__'))
+name [name='object.__new__', function=builtin_function_or_method] => object.__new__
+| function.__self__ if not isinstance(function.__self__, type(sys)) els... [name='object.__new__', function=builtin_function_or_method] => <class 'object'>
+| plain(repr(function)) [name='object.__new__', function=builtin_function_or_method] => <built-in method __new__ of type object at 0x>
+| function.__qualname__ [name='object.__new__', function=builtin_function_or_method] => object.__new__
+| function.__reduce__() if function.__self__ is None or isinstance(func... [name='object.__new__', function=builtin_function_or_method] => (<built-in function getattr>, (<class 'object'>, '__new__'))
+name [name='[].append', function=builtin_function_or_method] => [].append
+| function.__self__ if not isinstance(function.__self__, type(sys)) els... [name='[].append', function=builtin_function_or_method] => []
+| plain(repr(function)) [name='[].append', function=builtin_function_or_method] => <built-in method append of list object at 0x>
+| function.__qualname__ [name='[].append', function=builtin_function_or_method] => list.append
+| function.__reduce__() if function.__self__ is None or isinstance(func... [name='[].append', function=builtin_function_or_method] => -
+name [name="''.join", function=builtin_function_or_method] => ''.join
+| function.__self__ if not isinstance(function.__self__, type(sys)) els... [name="''.join", function=builtin_function_or_method] => 
+| plain(repr(function)) [name="''.join", function=builtin_function_or_method] => <built-in method join of str object at 0x>
+| function.__qualname__ [name="''.join", function=builtin_function_or_method] => str.join
+| function.__reduce__() if function.__self__ is None or isinstance(func... [name="''.join", function=builtin_function_or_method] => -
+name [name='object.__init_subclass__', function=builtin_function_or_method] => object.__init_subclass__
+| function.__self__ if not isinstance(function.__self__, type(sys)) els... [name='object.__init_subclass__', function=builtin_function_or_method] => <class 'object'>
+| plain(repr(function)) [name='object.__init_subclass__', function=builtin_function_or_method] => <built-in method __init_subclass__ of type object at 0x>
+| function.__qualname__ [name='object.__init_subclass__', function=builtin_function_or_method] => object.__init_subclass__
+| function.__reduce__() if function.__self__ is None or isinstance(func... [name='object.__init_subclass__', function=builtin_function_or_method] => (<built-in function getattr>, (<class 'object'>, '__init_subclass__'))
+name [name='dict.__class_getitem__', function=builtin_function_or_method] => dict.__class_getitem__
+| function.__self__ if not isinstance(function.__self__, type(sys)) els... [name='dict.__class_getitem__', function=builtin_function_or_method] => <class 'dict'>
+| plain(repr(function)) [name='dict.__class_getitem__', function=builtin_function_or_method] => <built-in method __class_getitem__ of type object at 0x>
+| function.__qualname__ [name='dict.__class_getitem__', function=builtin_function_or_method] => dict.__class_getitem__
+| function.__reduce__() if function.__self__ is None or isinstance(func... [name='dict.__class_getitem__', function=builtin_function_or_method] => (<built-in function getattr>, (<class 'dict'>, '__class_getitem__'))
+type(str.__dict__["maketrans"]).__name__ => staticmethod
+str.__dict__["maketrans"].__func__ is str.maketrans => True
+"x".maketrans.__self__ => None
+next(it) [_=0] => 9223372036854775805
+next(it) [_=1] => 9223372036854775806
+type(e).__name__ [_=2] => OverflowError
+e [_=2] => iter index too large
+type(e).__name__ [_=3] => OverflowError
+e [_=3] => iter index too large
+type(e).__name__ [_=4] => OverflowError
+e [_=4] => iter index too large
+9223372036854775807
+next(it) => 0
+it.__reduce__()[2] => 1
+type(e).__name__ => OverflowError
+e => iter index too large
+type(e).__name__ => OverflowError
+e => Python int too large to convert to C ssize_t
+sys._clear_type_cache() => None
+sys._clear_internal_caches() => None
+[('sys._clear_type_cache() is deprecated and scheduled for removal in a future version. Use sys._clear_internal_caches() instead.', 'DeprecationWarning', 92)]
+f.__qualname__ [f=builtin_function_or_method] => object.__new__
+type(f).__name__ [f=builtin_function_or_method] => builtin_function_or_method
+bound if bound is None or isinstance(bound, type) else type(bound).__... [f=builtin_function_or_method] => <class 'object'>
+repr(f).split(" at 0x")[0] [f=builtin_function_or_method] => <built-in method __new__ of type object
+    inspect.signature(f) [f=builtin_function_or_method] => (*args, **kwargs)
+f.__qualname__ [f=builtin_function_or_method] => int.__new__
+type(f).__name__ [f=builtin_function_or_method] => builtin_function_or_method
+bound if bound is None or isinstance(bound, type) else type(bound).__... [f=builtin_function_or_method] => <class 'int'>
+repr(f).split(" at 0x")[0] [f=builtin_function_or_method] => <built-in method __new__ of type object
+    inspect.signature(f) [f=builtin_function_or_method] => (*args, **kwargs)
+f.__qualname__ [f=builtin_function_or_method] => str.__new__
+type(f).__name__ [f=builtin_function_or_method] => builtin_function_or_method
+bound if bound is None or isinstance(bound, type) else type(bound).__... [f=builtin_function_or_method] => <class 'str'>
+repr(f).split(" at 0x")[0] [f=builtin_function_or_method] => <built-in method __new__ of type object
+    inspect.signature(f) [f=builtin_function_or_method] => (*args, **kwargs)
+f.__qualname__ [f=builtin_function_or_method] => dict.__new__
+type(f).__name__ [f=builtin_function_or_method] => builtin_function_or_method
+bound if bound is None or isinstance(bound, type) else type(bound).__... [f=builtin_function_or_method] => <class 'dict'>
+repr(f).split(" at 0x")[0] [f=builtin_function_or_method] => <built-in method __new__ of type object
+    inspect.signature(f) [f=builtin_function_or_method] => (*args, **kwargs)
+f.__qualname__ [f=builtin_function_or_method] => BytesIO.__new__
+type(f).__name__ [f=builtin_function_or_method] => builtin_function_or_method
+bound if bound is None or isinstance(bound, type) else type(bound).__... [f=builtin_function_or_method] => <class '_io.BytesIO'>
+repr(f).split(" at 0x")[0] [f=builtin_function_or_method] => <built-in method __new__ of type object
+    inspect.signature(f) [f=builtin_function_or_method] => (*args, **kwargs)
+f.__qualname__ [f=builtin_function_or_method] => type.__new__
+type(f).__name__ [f=builtin_function_or_method] => builtin_function_or_method
+bound if bound is None or isinstance(bound, type) else type(bound).__... [f=builtin_function_or_method] => <class 'type'>
+repr(f).split(" at 0x")[0] [f=builtin_function_or_method] => <built-in method __new__ of type object
+    inspect.signature(f) [f=builtin_function_or_method] => (*args, **kwargs)
+f.__qualname__ [f=builtin_function_or_method] => tuple.__new__
+type(f).__name__ [f=builtin_function_or_method] => builtin_function_or_method
+bound if bound is None or isinstance(bound, type) else type(bound).__... [f=builtin_function_or_method] => <class 'tuple'>
+repr(f).split(" at 0x")[0] [f=builtin_function_or_method] => <built-in method __new__ of type object
+    inspect.signature(f) [f=builtin_function_or_method] => (*args, **kwargs)
+f.__qualname__ [f=builtin_function_or_method] => str.maketrans
+type(f).__name__ [f=builtin_function_or_method] => builtin_function_or_method
+bound if bound is None or isinstance(bound, type) else type(bound).__... [f=builtin_function_or_method] => None
+repr(f).split(" at 0x")[0] [f=builtin_function_or_method] => <built-in method maketrans of type object
+    type(e).__name__ [f=builtin_function_or_method] => ValueError
+f.__qualname__ [f=builtin_function_or_method] => bytes.maketrans
+type(f).__name__ [f=builtin_function_or_method] => builtin_function_or_method
+bound if bound is None or isinstance(bound, type) else type(bound).__... [f=builtin_function_or_method] => None
+repr(f).split(" at 0x")[0] [f=builtin_function_or_method] => <built-in method maketrans of type object
+    inspect.signature(f) [f=builtin_function_or_method] => (frm, to, /)
+f.__qualname__ [f=builtin_function_or_method] => bytearray.maketrans
+type(f).__name__ [f=builtin_function_or_method] => builtin_function_or_method
+bound if bound is None or isinstance(bound, type) else type(bound).__... [f=builtin_function_or_method] => None
+repr(f).split(" at 0x")[0] [f=builtin_function_or_method] => <built-in method maketrans of type object
+    inspect.signature(f) [f=builtin_function_or_method] => (frm, to, /)
+f.__qualname__ [f=builtin_function_or_method] => dict.fromkeys
+type(f).__name__ [f=builtin_function_or_method] => builtin_function_or_method
+bound if bound is None or isinstance(bound, type) else type(bound).__... [f=builtin_function_or_method] => <class 'dict'>
+repr(f).split(" at 0x")[0] [f=builtin_function_or_method] => <built-in method fromkeys of type object
+    inspect.signature(f) [f=builtin_function_or_method] => (iterable, value=None, /)
+f.__qualname__ [f=builtin_function_or_method] => int.from_bytes
+type(f).__name__ [f=builtin_function_or_method] => builtin_function_or_method
+bound if bound is None or isinstance(bound, type) else type(bound).__... [f=builtin_function_or_method] => <class 'int'>
+repr(f).split(" at 0x")[0] [f=builtin_function_or_method] => <built-in method from_bytes of type object
+    inspect.signature(f) [f=builtin_function_or_method] => (bytes, byteorder='big', *, signed=False)
+f.__qualname__ [f=builtin_function_or_method] => float.fromhex
+type(f).__name__ [f=builtin_function_or_method] => builtin_function_or_method
+bound if bound is None or isinstance(bound, type) else type(bound).__... [f=builtin_function_or_method] => <class 'float'>
+repr(f).split(" at 0x")[0] [f=builtin_function_or_method] => <built-in method fromhex of type object
+    inspect.signature(f) [f=builtin_function_or_method] => (string, /)
+f.__qualname__ [f=builtin_function_or_method] => bytes.fromhex
+type(f).__name__ [f=builtin_function_or_method] => builtin_function_or_method
+bound if bound is None or isinstance(bound, type) else type(bound).__... [f=builtin_function_or_method] => <class 'bytes'>
+repr(f).split(" at 0x")[0] [f=builtin_function_or_method] => <built-in method fromhex of type object
+    inspect.signature(f) [f=builtin_function_or_method] => (string, /)
+f.__qualname__ [f=builtin_function_or_method] => object.__init_subclass__
+type(f).__name__ [f=builtin_function_or_method] => builtin_function_or_method
+bound if bound is None or isinstance(bound, type) else type(bound).__... [f=builtin_function_or_method] => <class 'object'>
+repr(f).split(" at 0x")[0] [f=builtin_function_or_method] => <built-in method __init_subclass__ of type object
+    inspect.signature(f) [f=builtin_function_or_method] => ()
+f.__qualname__ [f=builtin_function_or_method] => object.__subclasshook__
+type(f).__name__ [f=builtin_function_or_method] => builtin_function_or_method
+bound if bound is None or isinstance(bound, type) else type(bound).__... [f=builtin_function_or_method] => <class 'object'>
+repr(f).split(" at 0x")[0] [f=builtin_function_or_method] => <built-in method __subclasshook__ of type object
+    inspect.signature(f) [f=builtin_function_or_method] => (object, /)
+f.__qualname__ [f=builtin_function_or_method] => type.__prepare__
+type(f).__name__ [f=builtin_function_or_method] => builtin_function_or_method
+bound if bound is None or isinstance(bound, type) else type(bound).__... [f=builtin_function_or_method] => <class 'type'>
+repr(f).split(" at 0x")[0] [f=builtin_function_or_method] => <built-in method __prepare__ of type object
+    inspect.signature(f) [f=builtin_function_or_method] => (name, bases, /, **kwds)
+f.__qualname__ [f=builtin_function_or_method] => len
+type(f).__name__ [f=builtin_function_or_method] => builtin_function_or_method
+bound if bound is None or isinstance(bound, type) else type(bound).__... [f=builtin_function_or_method] => module
+repr(f).split(" at 0x")[0] [f=builtin_function_or_method] => <built-in function len>
+    inspect.signature(f) [f=builtin_function_or_method] => (obj, /)
+f.__qualname__ [f=builtin_function_or_method] => list.append
+type(f).__name__ [f=builtin_function_or_method] => builtin_function_or_method
+bound if bound is None or isinstance(bound, type) else type(bound).__... [f=builtin_function_or_method] => list
+repr(f).split(" at 0x")[0] [f=builtin_function_or_method] => <built-in method append of list object
+    inspect.signature(f) [f=builtin_function_or_method] => (object, /)
+f.__qualname__ [f=builtin_function_or_method] => str.join
+type(f).__name__ [f=builtin_function_or_method] => builtin_function_or_method
+bound if bound is None or isinstance(bound, type) else type(bound).__... [f=builtin_function_or_method] => str
+repr(f).split(" at 0x")[0] [f=builtin_function_or_method] => <built-in method join of str object
+    inspect.signature(f) [f=builtin_function_or_method] => (iterable, /)
+maketrans(x, y=<unrepresentable>, z=<unrepresentable>, /)
+fromkeys(iterable, value=None, /) class method of builtins.dict
+DerivedStr.maketrans.__self__ => None
+DerivedStr.maketrans is str.maketrans => True
+DerivedStr().maketrans.__self__ => None
+DerivedStr.__new__.__self__ => <class 'str'>
+copy.copy(DerivedList([1])) => [1]
+[pickle.loads(pickle.dumps(DerivedList([2]), protocol)) for protocol ... => [[2], [2], [2], [2], [2], [2]]

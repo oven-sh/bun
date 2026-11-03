@@ -1,0 +1,361 @@
+status: 0
+script: 756340217be10e84
+source: 060e7db000494d6e
+---
+Traceback (most recent call last):
+  File "FILE", line 28, in binary
+    def binary(a, b): return a + b * (a / b)
+                                      ~~^~~
+ZeroDivisionError: division by zero
+----
+Traceback (most recent call last):
+  File "FILE", line 31, in attribute
+    def attribute(x): return x.real.imag.nothing.more
+                             ^^^^^^^^^^^^^^^^^^^
+AttributeError: 'int' object has no attribute 'nothing'
+----
+Traceback (most recent call last):
+  File "FILE", line 34, in subscript
+    def subscript(d): return d["a"]["b"]["c"]
+                             ~~~~~~~~~~~^^^^^
+TypeError: 'NoneType' object is not subscriptable
+----
+Traceback (most recent call last):
+  File "FILE", line 37, in call
+    def call(f): return f(1)(2)(
+                        ~~~~~~~^
+        3)
+        ^^
+TypeError: 'NoneType' object is not callable
+----
+Traceback (most recent call last):
+  File "FILE", line 43, in multiline
+    b /
+    ~~^
+    0)
+    ~
+ZeroDivisionError: division by zero
+----
+Traceback (most recent call last):
+  File "FILE", line 47, in unicode_before
+    def unicode_before(d): return "äöü" + d["ключ"]["значение"] + "ß"
+                                          ~~~~~~~~~^^^^^^^^^^^^
+KeyError: 'значение'
+----
+Traceback (most recent call last):
+  File "FILE", line 50, in wide
+    def wide(d): return "ｗｉｄｅ" + d["ｋ"]["ｖ"]
+                                     ~~~~~~~^^^^^^
+KeyError: 'ｖ'
+----
+Traceback (most recent call last):
+  File "FILE", line 53, in whole_line
+    def whole_line(): raise ValueError("all of it")
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: all of it
+----
+Traceback (most recent call last):
+  File "FILE", line 78, in wrong_attribute
+    def wrong_attribute(): Thing().color
+                           ^^^^^^^^^^^^^
+AttributeError: 'Thing' object has no attribute 'color'. Did you mean '.colour' instead of '.color'?
+----
+Traceback (most recent call last):
+  File "FILE", line 83, in wrong_name
+    return somethin
+           ^^^^^^^^
+NameError: name 'somethin' is not defined. Did you mean: 'something'?
+----
+Traceback (most recent call last):
+  File "FILE", line 86, in wrong_import
+    def wrong_import(): from sys import exi
+                        ^^^^^^^^^^^^^^^^^^^
+ImportError: cannot import name 'exi' from 'sys' (unknown location). Did you mean: 'exit'?
+----
+Traceback (most recent call last):
+  File "FILE", line 93, in missing_self
+    C().m()
+    ~~~~~^^
+  File "FILE", line 92, in m
+    def m(self): return value
+                        ^^^^^
+NameError: name 'value' is not defined. Did you mean: 'self.value'?
+----
+Traceback (most recent call last):
+  File "FILE", line 96, in stdlib_name
+    def stdlib_name(): return itertools.count()
+                              ^^^^^^^^^
+NameError: name 'itertools' is not defined. Did you forget to import 'itertools'?
+----
+Traceback (most recent call last):
+  File "FILE", line 99, in wrong_method
+    def wrong_method(): [].add(1)
+                        ^^^^^^
+AttributeError: 'list' object has no attribute 'add'. Did you mean to use a 'set' object?
+----
+Traceback (most recent call last):
+  File "FILE", line 118, in chained
+    1 / 0
+    ~~^~~
+ZeroDivisionError: division by zero
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "FILE", line 120, in chained
+    raise ValueError("second") from e
+ValueError: second
+----
+Traceback (most recent call last):
+  File "FILE", line 125, in in_context
+    {}["k"]
+    ~~^^^^^
+KeyError: 'k'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "FILE", line 127, in in_context
+    raise TypeError("while handling")
+TypeError: while handling
+----
+Traceback (most recent call last):
+  File "FILE", line 134, in suppressed
+    raise TypeError("alone") from None
+TypeError: alone
+----
+Traceback (most recent call last):
+  File "FILE", line 141, in noted
+    raise e
+RuntimeError: with notes
+first note
+second
+over two lines
+----
+  + Exception Group Traceback (most recent call last):
+  |   File "FILE", line 152, in group
+  |     raise ExceptionGroup("outer", [errors[0], inner, KeyError("k")])
+  | ExceptionGroup: outer (3 sub-exceptions)
+  +-+---------------- 1 ----------------
+    | Traceback (most recent call last):
+    |   File "FILE", line 148, in group
+    |     try: fail(n)
+    |          ~~~~^^^
+    |   File "FILE", line 145, in fail
+    |     def fail(n): raise ValueError(n)
+    |                  ^^^^^^^^^^^^^^^^^^^
+    | ValueError: 0
+    +---------------- 2 ----------------
+    | ExceptionGroup: inner (2 sub-exceptions)
+    | a note on the inner group
+    +-+---------------- 1 ----------------
+      | TypeError: t
+      +---------------- 2 ----------------
+      | Traceback (most recent call last):
+      |   File "FILE", line 148, in group
+      |     try: fail(n)
+      |          ~~~~^^^
+      |   File "FILE", line 145, in fail
+      |     def fail(n): raise ValueError(n)
+      |                  ^^^^^^^^^^^^^^^^^^^
+      | ValueError: 1
+      +------------------------------------
+    +---------------- 3 ----------------
+    | KeyError: 'k'
+    +------------------------------------
+----
+Traceback (most recent call last):
+  File "FILE", line 155, in recursion
+    def recursion(n=0): return recursion(n + 1) if n < 30 else 1 / 0
+                               ~~~~~~~~~^^^^^^^
+  File "FILE", line 155, in recursion
+    def recursion(n=0): return recursion(n + 1) if n < 30 else 1 / 0
+                               ~~~~~~~~~^^^^^^^
+  File "FILE", line 155, in recursion
+    def recursion(n=0): return recursion(n + 1) if n < 30 else 1 / 0
+                               ~~~~~~~~~^^^^^^^
+  [Previous line repeated 28 more times]
+ZeroDivisionError: division by zero
+----
+  File "<source>", line 2
+    2 3)
+    ^^^
+SyntaxError: invalid syntax. Perhaps you forgot a comma?
+----
+  File "<source>", line 1
+    def f(:
+          ^
+SyntaxError: invalid syntax
+----
+  File "<source>", line 1
+    if x
+        ^
+SyntaxError: expected ':'
+----
+  File "<source>", line 1
+    indented
+IndentationError: unexpected indent
+----
+  File "<source>", line 1
+    f(a for a in b, c)
+      ^^^^^^^^^^^^
+SyntaxError: Generator expression must be parenthesized
+----
+  File "<source>", line 1
+    x = 'ä' 'ö' +* 1
+                 ^
+SyntaxError: invalid syntax
+----
+  File "<source>", line 1
+    whille x:
+    ^^^^^^
+SyntaxError: invalid syntax. Did you mean 'while'?
+----
+  File "<source>", line 4
+    elsee:
+    ^^^^^
+SyntaxError: invalid syntax. Did you mean 'else'?
+----
+  File "<source>", line 1
+    print 'hello'
+    ^^^^^^^^^^^^^
+SyntaxError: Missing parentheses in call to 'print'. Did you mean print(...)?
+----
+  File "<source>", line 1
+    'unterminated
+    ^
+SyntaxError: unterminated string literal (detected at line 1)
+----
+  File "<source>", line 1
+    x = 1 +
+           ^
+SyntaxError: invalid syntax
+----
+  File "<source>", line 1
+    	x
+    ^
+IndentationError: unexpected indent
+----
+  File "<source>", line 2
+    x = [1, 2
+        ^
+SyntaxError: '[' was never closed
+----
+Traceback (most recent call last):
+  File "FILE", line 194, in raises
+    def raises(e): raise e
+                   ^^^^^^^
+BadStr: <exception str() failed>
+----
+Traceback (most recent call last):
+  File "FILE", line 194, in raises
+    def raises(e): raise e
+                   ^^^^^^^
+<unknown>.NoModule: x
+----
+Traceback (most recent call last):
+  File "FILE", line 194, in raises
+    def raises(e): raise e
+                   ^^^^^^^
+some.package.Qualified: y
+----
+Traceback (most recent call last):
+  File "FILE", line 194, in raises
+    def raises(e): raise e
+                   ^^^^^^^
+KeyboardInterrupt
+----
+Traceback (most recent call last):
+  File "FILE", line 194, in raises
+    def raises(e): raise e
+                   ^^^^^^^
+SystemExit: 3
+----
+Traceback (most recent call last):
+  File "FILE", line 194, in raises
+    def raises(e): raise e
+                   ^^^^^^^
+Exception
+----
+Traceback (most recent call last):
+  File "FILE", line 194, in raises
+    def raises(e): raise e
+                   ^^^^^^^
+Exception
+----
+Traceback (most recent call last):
+  File "FILE", line 194, in raises
+    def raises(e): raise e
+                   ^^^^^^^
+Exception: two
+lines
+----
+Traceback (most recent call last):
+  File "FILE", line 194, in raises
+    def raises(e): raise e
+                   ^^^^^^^
+FileNotFoundError: [Errno 2] No such file: 'name'
+----
+Traceback (most recent call last):
+  File "FILE", line 194, in raises
+    def raises(e): raise e
+                   ^^^^^^^
+KeyError: 'quoted'
+----
+Traceback (most recent call last):
+  File "FILE", line 194, in raises
+    def raises(e): raise e
+                   ^^^^^^^
+UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: bad
+----
+TypeError: print_exception(): Exception expected for value, int found
+----
+NoneType: None
+----
+Args.__name__ => UnraisableHookArgs
+Args.__module__ => builtins
+caught[0].exc_type.__name__ => ValueError
+caught[0].exc_value => in __del__
+re.sub(r" at 0x[0-9a-f]+", "", caught[0].err_msg) => Exception ignored while calling deallocator <function Dies.__del__>
+caught[0].object => None
+sys.unraisablehook argument type must be UnraisableHookArgs
+Traceback (most recent call last):
+  File "FILE", line 261, in unraisable
+    1 / 0
+    ~~^~~
+ZeroDivisionError: division by zero
+----
+Exception ignored in: 42
+Traceback (most recent call last):
+  File "FILE", line 261, in unraisable
+    1 / 0
+    ~~^~~
+ZeroDivisionError: division by zero
+----
+Exception ignored while doing things:
+Traceback (most recent call last):
+  File "FILE", line 261, in unraisable
+    1 / 0
+    ~~^~~
+ZeroDivisionError: division by zero
+----
+Exception ignored while doing things: 'an object'
+Traceback (most recent call last):
+  File "FILE", line 261, in unraisable
+    1 / 0
+    ~~^~~
+ZeroDivisionError: division by zero
+----
+Exception in thread worker:
+Traceback (most recent call last):
+  File "threading.py", line N, in _bootstrap_inner
+    self._context.run(self.run)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "threading.py", line N, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "FILE", line 283, in work
+    def work(): raise LookupError("in a thread")
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+LookupError: in a thread
+done

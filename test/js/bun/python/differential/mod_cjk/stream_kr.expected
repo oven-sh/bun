@@ -1,0 +1,75 @@
+status: 0
+script: bb30639a23497024
+---
+euc_kr 122 208
+  read None 80851bf1
+  read -1 80851bf1
+  read 1 25838da2
+  read 2 86a7de1a
+  read 3 e25111d6
+  read 5 b9048fa0
+  read 8 7033431d
+  read 100 ebbde886
+  read 10000 fdfaa765
+  whole True True True 26892e4b
+  cut strict 03f6b3d5
+  cut ignore d369d8d8
+  cut replace caf6b053
+  cut backslashreplace 7d29ca33
+  reset d5400b72
+  write 273eea60 57ea1014 57ea1014 True True
+  writelines 57ea1014
+  write reset 0400a3a0
+  write strict [None, 'UnicodeEncodeError euc_kr 0 1 illegal multibyte sequence', None, 'UnicodeEncodeError euc_kr 0 1 illegal multibyte sequence', 'UnicodeEncodeError euc_kr 0 1 illegal multibyte sequence', 'UnicodeEncodeError euc_kr 1 2 illegal multibyte sequence', 'UnicodeEncodeError euc_kr 1 2 illegal multibyte sequence', None, None] b'a\xaa\xab\xa9\xa1'
+  write ignore [None, None, None, None, None, None, None, None, None] b'a\xaa\xabbc\xaa\xa2\xaa\xa2\xa9\xa1'
+  write replace [None, None, None, None, None, None, None, None, None] b'a?\xaa\xab??b?c\xaa\xa2?\xaa\xa2\xa9\xa1'
+  write xmlcharrefreplace [None, None, None, None, None, None, None, None, None] b'a&#55296;\xaa\xab&#55296;&#202;b&#55296;c\xaa\xa2&#55296;\xaa\xa2\xa9\xa1'
+  write backslashreplace [None, None, None, None, None, None, None, None, None] b'a\\ud800\xaa\xab\\ud800\\xcab\\ud800c\xaa\xa2\\ud800\xaa\xa2\xa9\xa1'
+cp949 122 172
+  read None 952952d2
+  read -1 952952d2
+  read 1 28ec53c7
+  read 2 f412f7f0
+  read 3 248bdd19
+  read 5 7fb26d73
+  read 8 a3d02c7c
+  read 100 f9bbd074
+  read 10000 4261ce36
+  whole True True True 26892e4b
+  cut strict 795c8a5c
+  cut ignore 23f7c058
+  cut replace 708e960b
+  cut backslashreplace e6621ac5
+  reset 741e09a2
+  write 8d6893ae e79086f2 e79086f2 True True
+  writelines e79086f2
+  write reset 2c7f6c2e
+  write strict [None, 'UnicodeEncodeError cp949 0 1 illegal multibyte sequence', None, 'UnicodeEncodeError cp949 0 1 illegal multibyte sequence', 'UnicodeEncodeError cp949 0 1 illegal multibyte sequence', 'UnicodeEncodeError cp949 1 2 illegal multibyte sequence', 'UnicodeEncodeError cp949 1 2 illegal multibyte sequence', None, None] b'a\xaa\xab\xa9\xa1'
+  write ignore [None, None, None, None, None, None, None, None, None] b'a\xaa\xabbc\xaa\xa2\xaa\xa2\xa9\xa1'
+  write replace [None, None, None, None, None, None, None, None, None] b'a?\xaa\xab??b?c\xaa\xa2?\xaa\xa2\xa9\xa1'
+  write xmlcharrefreplace [None, None, None, None, None, None, None, None, None] b'a&#55296;\xaa\xab&#55296;&#202;b&#55296;c\xaa\xa2&#55296;\xaa\xa2\xa9\xa1'
+  write backslashreplace [None, None, None, None, None, None, None, None, None] b'a\\ud800\xaa\xab\\ud800\\xcab\\ud800c\xaa\xa2\\ud800\xaa\xa2\xa9\xa1'
+johab 122 172
+  read None 96c94791
+  read -1 96c94791
+  read 1 28ec53c7
+  read 2 f412f7f0
+  read 3 248bdd19
+  read 5 7fb26d73
+  read 8 a3d02c7c
+  read 100 f9bbd074
+  read 10000 4261ce36
+  whole True True True 26892e4b
+  cut strict 4fc3f059
+  cut ignore 23f7c058
+  cut replace 708e960b
+  cut backslashreplace af00aa18
+  reset 14037dd1
+  write 8d6893ae 0b22888c 0b22888c True True
+  writelines 0b22888c
+  write reset 751ef707
+  write strict [None, 'UnicodeEncodeError johab 0 1 illegal multibyte sequence', None, 'UnicodeEncodeError johab 0 1 illegal multibyte sequence', 'UnicodeEncodeError johab 0 1 illegal multibyte sequence', 'UnicodeEncodeError johab 1 2 illegal multibyte sequence', 'UnicodeEncodeError johab 1 2 illegal multibyte sequence', None, None] b'a\xdd\xab\xdd1'
+  write ignore [None, None, None, None, None, None, None, None, None] b'a\xdd\xabbc\xdd\xa2\xdd\xa2\xdd1'
+  write replace [None, None, None, None, None, None, None, None, None] b'a?\xdd\xab??b?c\xdd\xa2?\xdd\xa2\xdd1'
+  write xmlcharrefreplace [None, None, None, None, None, None, None, None, None] b'a&#55296;\xdd\xab&#55296;&#202;b&#55296;c\xdd\xa2&#55296;\xdd\xa2\xdd1'
+  write backslashreplace [None, None, None, None, None, None, None, None, None] b'a\\ud800\xdd\xab\\ud800\\xcab\\ud800c\xdd\xa2\\ud800\xdd\xa2\xdd1'

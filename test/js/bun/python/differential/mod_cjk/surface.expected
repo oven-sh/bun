@@ -1,0 +1,504 @@
+status: 0
+script: f4a0c49c0ebb0a29
+---
+_multibytecodec None ['MultibyteIncrementalDecoder', 'MultibyteIncrementalEncoder', 'MultibyteStreamReader', 'MultibyteStreamWriter', '__create_codec', '__doc__', '__name__']
+_codecs_cn None ['__doc__', '__map_gb18030ext', '__map_gb2312', '__map_gbcommon', '__map_gbkext', '__name__', 'getcodec']
+<class 'PyCapsule'>
+'<capsule object "multibytecodec.map" at 0x>'
+_codecs_hk None ['__doc__', '__map_big5hkscs', '__map_big5hkscs_bmp', '__map_big5hkscs_nonbmp', '__name__', 'getcodec']
+<class 'PyCapsule'>
+'<capsule object "multibytecodec.map" at 0x>'
+_codecs_iso2022 None ['__doc__', '__name__', 'getcodec']
+_codecs_jp None ['__doc__', '__map_cp932ext', '__map_jisx0208', '__map_jisx0212', '__map_jisx0213_1_bmp', '__map_jisx0213_1_emp', '__map_jisx0213_2_bmp', '__map_jisx0213_2_emp', '__map_jisx0213_bmp', '__map_jisx0213_emp', '__map_jisx0213_pair', '__map_jisxcommon', '__name__', 'getcodec']
+<class 'PyCapsule'>
+'<capsule object "multibytecodec.map" at 0x>'
+_codecs_kr None ['__doc__', '__map_cp949', '__map_cp949ext', '__map_ksx1001', '__name__', 'getcodec']
+<class 'PyCapsule'>
+'<capsule object "multibytecodec.map" at 0x>'
+_codecs_tw None ['__doc__', '__map_big5', '__map_cp950ext', '__name__', 'getcodec']
+<class 'PyCapsule'>
+'<capsule object "multibytecodec.map" at 0x>'
+True
+<class '_multibytecodec.MultibyteCodec'> MultibyteCodec MultibyteCodec _multibytecodec (<class 'object'>,) None None ['__doc__', '__getattribute__', '__module__', 'decode', 'encode']
+384 0 0
+  __getattribute__ wrapper_descriptor ($self, name, /) 'Return getattr(self, name).'
+  decode method_descriptor ($self, /, input, errors=None) 'Decodes \'input\'.\n\n\'errors\' may be given to set a diff
+  encode method_descriptor ($self, /, input, errors=None) "Return an encoded string version of 'input'.\n\n'errors' ma
+TypeError cannot set 'x' attribute of immutable type '_multibytecodec.MultibyteCodec'
+<class '_multibytecodec.MultibyteIncrementalEncoder'> MultibyteIncrementalEncoder MultibyteIncrementalEncoder _multibytecodec (<class 'object'>,) None None ['__doc__', '__getattribute__', '__init__', '__module__', '__new__', 'encode', 'errors', 'getstate', 'reset', 'setstate']
+1280 0 0
+  __getattribute__ wrapper_descriptor ($self, name, /) 'Return getattr(self, name).'
+  __init__ wrapper_descriptor ($self, /, *args, **kwargs) 'Initialize self.  See help(type(self)) for accurate signatu
+  __new__ builtin_function_or_method ($type, *args, **kwargs) 'Create and return a new object.  See help(type) for accurat
+  encode method_descriptor ($self, /, input, final=False) None
+  errors getset_descriptor None 'how to treat errors'
+  getstate method_descriptor ($self, /) None
+  reset method_descriptor ($self, /) None
+  setstate method_descriptor ($self, state, /) None
+TypeError cannot set 'x' attribute of immutable type '_multibytecodec.MultibyteIncrementalEncoder'
+<class '_multibytecodec.MultibyteIncrementalDecoder'> MultibyteIncrementalDecoder MultibyteIncrementalDecoder _multibytecodec (<class 'object'>,) None None ['__doc__', '__getattribute__', '__init__', '__module__', '__new__', 'decode', 'errors', 'getstate', 'reset', 'setstate']
+1280 0 0
+  __getattribute__ wrapper_descriptor ($self, name, /) 'Return getattr(self, name).'
+  __init__ wrapper_descriptor ($self, /, *args, **kwargs) 'Initialize self.  See help(type(self)) for accurate signatu
+  __new__ builtin_function_or_method ($type, *args, **kwargs) 'Create and return a new object.  See help(type) for accurat
+  decode method_descriptor ($self, /, input, final=False) None
+  errors getset_descriptor None 'how to treat errors'
+  getstate method_descriptor ($self, /) None
+  reset method_descriptor ($self, /) None
+  setstate method_descriptor ($self, state, /) None
+TypeError cannot set 'x' attribute of immutable type '_multibytecodec.MultibyteIncrementalDecoder'
+<class '_multibytecodec.MultibyteStreamReader'> MultibyteStreamReader MultibyteStreamReader _multibytecodec (<class 'object'>,) None None ['__doc__', '__getattribute__', '__init__', '__module__', '__new__', 'errors', 'read', 'readline', 'readlines', 'reset', 'stream']
+1280 0 0
+  __getattribute__ wrapper_descriptor ($self, name, /) 'Return getattr(self, name).'
+  __init__ wrapper_descriptor ($self, /, *args, **kwargs) 'Initialize self.  See help(type(self)) for accurate signatu
+  __new__ builtin_function_or_method ($type, *args, **kwargs) 'Create and return a new object.  See help(type) for accurat
+  errors getset_descriptor None 'how to treat errors'
+  read method_descriptor ($self, sizeobj=None, /) None
+  readline method_descriptor ($self, sizeobj=None, /) None
+  readlines method_descriptor ($self, sizehintobj=None, /) None
+  reset method_descriptor ($self, /) None
+  stream member_descriptor None None
+TypeError cannot set 'x' attribute of immutable type '_multibytecodec.MultibyteStreamReader'
+<class '_multibytecodec.MultibyteStreamWriter'> MultibyteStreamWriter MultibyteStreamWriter _multibytecodec (<class 'object'>,) None None ['__doc__', '__getattribute__', '__init__', '__module__', '__new__', 'errors', 'reset', 'stream', 'write', 'writelines']
+1280 0 0
+  __getattribute__ wrapper_descriptor ($self, name, /) 'Return getattr(self, name).'
+  __init__ wrapper_descriptor ($self, /, *args, **kwargs) 'Initialize self.  See help(type(self)) for accurate signatu
+  __new__ builtin_function_or_method ($type, *args, **kwargs) 'Create and return a new object.  See help(type) for accurat
+  errors getset_descriptor None 'how to treat errors'
+  reset method_descriptor ($self, /) None
+  stream member_descriptor None None
+  write method_descriptor ($self, strobj, /) None
+  writelines method_descriptor ($self, lines, /) None
+TypeError cannot set 'x' attribute of immutable type '_multibytecodec.MultibyteStreamWriter'
+__create_codec __create_codec _multibytecodec ($module, arg, /) None True
+getcodec getcodec _codecs_jp ($self, object, /) None True
+-- constructors
+TypeError IncrementalEncoder() argument 1 must be str, not None
+TypeError IncrementalEncoder() argument 1 must be str, not int
+TypeError IncrementalEncoder() takes at most 1 argument (2 given)
+TypeError IncrementalEncoder() got an unexpected keyword argument 'x'
+ValueError embedded null character
+TypeError IncrementalEncoder() argument 1 must be str, not None
+TypeError IncrementalEncoder() takes at most 1 argument (2 given)
+TypeError IncrementalEncoder() got an unexpected keyword argument 'error'. Did you mean 'errors'?
+TypeError IncrementalEncoder() takes at most 1 keyword argument (2 given)
+UnicodeEncodeError 'utf-8' codec can't encode character '\udc80' in position 0: surrogates not allowed
+UnicodeEncodeError 'utf-8' codec can't encode character '\udc80' in position 0: surrogates not allowed
+<__main__.E object at 0x>
+<__main__.E object at 0x>
+TypeError IncrementalDecoder() argument 1 must be str, not None
+TypeError IncrementalDecoder() argument 1 must be str, not int
+TypeError IncrementalDecoder() takes at most 1 argument (2 given)
+TypeError IncrementalDecoder() got an unexpected keyword argument 'x'
+ValueError embedded null character
+TypeError IncrementalDecoder() argument 1 must be str, not None
+TypeError IncrementalDecoder() takes at most 1 argument (2 given)
+TypeError IncrementalDecoder() got an unexpected keyword argument 'error'. Did you mean 'errors'?
+TypeError IncrementalDecoder() takes at most 1 keyword argument (2 given)
+UnicodeEncodeError 'utf-8' codec can't encode character '\udc80' in position 0: surrogates not allowed
+UnicodeEncodeError 'utf-8' codec can't encode character '\udc80' in position 0: surrogates not allowed
+<__main__.D object at 0x>
+<__main__.D object at 0x>
+TypeError StreamReader() missing required argument 'stream' (pos 1)
+TypeError StreamReader() argument 2 must be str, not None
+TypeError StreamReader() takes at most 2 arguments (3 given)
+TypeError StreamReader() missing required argument 'stream' (pos 1)
+TypeError StreamReader() takes at most 2 keyword arguments (3 given)
+TypeError StreamReader() missing required argument 'stream' (pos 1)
+TypeError argument for StreamReader() given by name ('stream') and position (1)
+TypeError StreamReader() got an unexpected keyword argument 'x'
+TypeError StreamReader() got an unexpected keyword argument 'error'. Did you mean 'errors'?
+UnicodeEncodeError 'utf-8' codec can't encode character '\udc80' in position 0: surrogates not allowed
+<__main__.R object at 0x>
+<__main__.R object at 0x>
+TypeError StreamWriter() missing required argument 'stream' (pos 1)
+TypeError StreamWriter() argument 2 must be str, not None
+TypeError StreamWriter() takes at most 2 arguments (3 given)
+TypeError StreamWriter() missing required argument 'stream' (pos 1)
+TypeError StreamWriter() takes at most 2 keyword arguments (3 given)
+TypeError StreamWriter() missing required argument 'stream' (pos 1)
+TypeError argument for StreamWriter() given by name ('stream') and position (1)
+TypeError StreamWriter() got an unexpected keyword argument 'x'
+TypeError StreamWriter() got an unexpected keyword argument 'error'. Did you mean 'errors'?
+UnicodeEncodeError 'utf-8' codec can't encode character '\udc80' in position 0: surrogates not allowed
+<__main__.W object at 0x>
+<__main__.W object at 0x>
+AttributeError type object '_multibytecodec.MultibyteIncrementalEncoder' has no attribute 'codec'
+TypeError IncrementalEncoder() argument 1 must be str, not None
+AttributeError type object '_multibytecodec.MultibyteIncrementalDecoder' has no attribute 'codec'
+TypeError IncrementalDecoder() argument 1 must be str, not None
+TypeError StreamReader() missing required argument 'stream' (pos 1)
+AttributeError type object '_multibytecodec.MultibyteStreamReader' has no attribute 'codec'
+TypeError StreamWriter() missing required argument 'stream' (pos 1)
+AttributeError type object '_multibytecodec.MultibyteStreamWriter' has no attribute 'codec'
+TypeError codec is unexpected type
+TypeError codec is unexpected type
+TypeError codec is unexpected type
+TypeError cannot create '_multibytecodec.MultibyteCodec' instances
+TypeError cannot create '_multibytecodec.MultibyteCodec' instances
+None
+None
+<__main__.E object at 0x>
+TypeError _multibytecodec.MultibyteIncrementalEncoder.__new__(D): D is not a subtype of _multibytecodec.MultibyteIncrementalEncoder
+TypeError _multibytecodec.MultibyteIncrementalEncoder.__new__(int): int is not a subtype of _multibytecodec.MultibyteIncrementalEncoder
+TypeError _multibytecodec.MultibyteIncrementalEncoder.__new__(D): D is not a subtype of _multibytecodec.MultibyteIncrementalEncoder
+TypeError _multibytecodec.MultibyteIncrementalEncoder.__new__(): not enough arguments
+multiple bases have instance lay-out conflict
+type '_multibytecodec.MultibyteCodec' is not an acceptable base type
+-- getcodec
+ValueError argument type invalid
+TypeError _multibytecodec.__create_codec() takes exactly one argument (0 given)
+ValueError argument type invalid
+ValueError argument type invalid
+TypeError _multibytecodec.__create_codec() takes no keyword arguments
+TypeError encoding name must be a string.
+LookupError no such codec is supported.
+TypeError _codecs_jp.getcodec() takes exactly one argument (0 given)
+<_multibytecodec.MultibyteCodec object at 0x>
+<_multibytecodec.MultibyteCodec object at 0x>
+LookupError no such codec is supported.
+TypeError encoding name must be a string.
+LookupError no such codec is supported.
+LookupError no such codec is supported.
+UnicodeEncodeError 'utf-8' codec can't encode character '\udc80' in position 0: surrogates not allowed
+TypeError _codecs_jp.getcodec() takes exactly one argument (2 given)
+TypeError _codecs_jp.getcodec() takes no keyword arguments
+False False
+-- MultibyteCodec
+TypeError encode() missing required argument 'input' (pos 1)
+(b'1', 1)
+TypeError encode() argument 'errors' must be str or None, not int
+(b'a', 1)
+ValueError embedded null character
+TypeError encode() takes at most 2 arguments (3 given)
+(b'a', 1)
+TypeError encode() takes at most 2 arguments (3 given)
+UnicodeEncodeError 'utf-8' codec can't encode character '\udc80' in position 0: surrogates not allowed
+LookupError unknown error handler name ''
+(b'a', 1)
+LookupError unknown error handler name 'nosuch'
+TypeError encode() missing required argument 'input' (pos 1)
+TypeError encode() got an unexpected keyword argument 'error'. Did you mean 'errors'?
+(b'', 0)
+TypeError decode() missing required argument 'input' (pos 1)
+TypeError a bytes-like object is required, not 'str'
+TypeError decode() argument 'errors' must be str or None, not int
+TypeError a bytes-like object is required, not 'int'
+BufferError memoryview: underlying buffer is not C-contiguous
+('a', 1)
+('a', 1)
+LookupError unknown error handler name 'x'
+TypeError a bytes-like object is required, not 'str'
+('', 0)
+('', 0)
+('あ', 2)
+ValueError embedded null character
+TypeError a bytes-like object is required, not 'NoneType'
+('AABB', 4)
+('abcd', 4)
+(b'xyz', 3)
+(b'None', 4)
+(b"b'a'", 4)
+(b'abc', 3)
+TypeError Y.__str__() must return a str, not int
+KeyError 'z'
+(b'1.5', 3)
+(b'\x82\xa0', 1)
+TypeError descriptor 'encode' for '_multibytecodec.MultibyteCodec' objects doesn't apply to a 'int' object
+TypeError unbound method MultibyteCodec.encode() needs an argument
+TypeError descriptor 'decode' for '_multibytecodec.MultibyteCodec' objects doesn't apply to a 'E' object
+TypeError cannot pickle '_multibytecodec.MultibyteCodec' object
+TypeError cannot pickle '_multibytecodec.MultibyteCodec' object
+TypeError cannot create weak reference to '_multibytecodec.MultibyteCodec' object
+AttributeError '_multibytecodec.MultibyteCodec' object has no attribute 'x' and no __dict__ for setting new attributes
+AttributeError '_multibytecodec.MultibyteCodec' object has no attribute '__dict__'
+True
+-- MultibyteIncrementalEncoder
+TypeError encode() missing required argument 'input' (pos 1)
+b'1'
+b'a'
+b'a'
+b'a'
+b'xyz'
+TypeError Y.__str__() must return a str, not int
+b'a'
+TypeError encode() takes at most 2 arguments (3 given)
+TypeError encode() got an unexpected keyword argument 'x'
+TypeError setstate() argument must be int, not str
+OverflowError can't convert negative int to unsigned
+OverflowError int too big to convert
+UnicodeError pending buffer too large
+0
+TypeError MultibyteIncrementalEncoder.setstate() takes exactly one argument (0 given)
+TypeError MultibyteIncrementalEncoder.reset() takes no arguments (1 given)
+None
+1
+TypeError setstate() argument must be int, not None
+TypeError setstate() argument must be int, not float
+TypeError MultibyteIncrementalEncoder.getstate() takes no arguments (1 given)
+TypeError MultibyteIncrementalEncoder.setstate() takes no keyword arguments
+UnicodeError pending buffer too large
+OverflowError int too big to convert
+UnicodeError pending buffer too large
+None
+8
+None
+None
+TypeError descriptor 'encode' for '_multibytecodec.MultibyteIncrementalEncoder' objects doesn't apply to a 'int' object
+TypeError unbound method MultibyteIncrementalEncoder.encode() needs an argument
+TypeError descriptor 'encode' for '_multibytecodec.MultibyteIncrementalEncoder' objects doesn't apply to a 'D' object
+KeyError 'f'
+b'a'
+TypeError cannot pickle 'E' object
+TypeError cannot pickle 'E' object
+None
+1
+<class 'weakref.ReferenceType'>
+-- errors
+'strict'
+TypeError errors must be a string
+AttributeError cannot delete attribute
+None
+'x'
+None
+'foo'
+UnicodeEncodeError 'utf-8' codec can't encode character '\udc80' in position 0: surrogates not allowed
+None
+'strict'
+None
+''
+TypeError errors must be a string
+None
+<class 'str'>
+None
+<class 'str'>
+'bar'
+None
+'あ'
+'strict'
+TypeError errors must be a string
+AttributeError cannot delete attribute
+None
+'x'
+None
+'foo'
+UnicodeEncodeError 'utf-8' codec can't encode character '\udc80' in position 0: surrogates not allowed
+None
+'strict'
+None
+''
+TypeError errors must be a string
+None
+<class 'str'>
+None
+<class 'str'>
+'bar'
+None
+'あ'
+'strict'
+TypeError errors must be a string
+AttributeError cannot delete attribute
+None
+'x'
+None
+'foo'
+UnicodeEncodeError 'utf-8' codec can't encode character '\udc80' in position 0: surrogates not allowed
+None
+'strict'
+None
+''
+TypeError errors must be a string
+None
+<class 'str'>
+None
+<class 'str'>
+'bar'
+None
+'あ'
+'strict'
+TypeError errors must be a string
+AttributeError cannot delete attribute
+None
+'x'
+None
+'foo'
+UnicodeEncodeError 'utf-8' codec can't encode character '\udc80' in position 0: surrogates not allowed
+None
+'strict'
+None
+''
+TypeError errors must be a string
+None
+<class 'str'>
+None
+<class 'str'>
+'bar'
+None
+'あ'
+b'a'
+LookupError unknown error handler name 'foo'
+LookupError unknown error handler name ''
+b'ab'
+b'a?b'
+UnicodeEncodeError 'shift_jis' codec can't encode character '\xff' in position 1: illegal multibyte sequence
+<class 'str'>
+<class 'str'>
+-- MultibyteIncrementalDecoder
+TypeError decode() missing required argument 'input' (pos 1)
+TypeError a bytes-like object is required, not 'str'
+'a'
+KeyError 'f'
+TypeError a bytes-like object is required, not 'str'
+'a'
+TypeError decode() takes at most 2 arguments (3 given)
+'ab'
+BufferError memoryview: underlying buffer is not C-contiguous
+TypeError setstate() argument must be tuple, not int
+TypeError setstate(): illegal state argument
+TypeError setstate(): illegal state argument
+TypeError setstate(): illegal state argument
+TypeError setstate(): illegal state argument
+UnicodeDecodeError 'shift_jis' codec can't decode bytes in position 0-8: pending buffer too large
+OverflowError can't convert negative int to unsigned
+OverflowError int too big to convert
+(b'', 0)
+TypeError setstate(): illegal state argument
+TypeError setstate() argument must be tuple, not list
+None
+(b'12345678', 18446744073709551615)
+OverflowError can't convert negative int to unsigned
+None
+(b'', 1)
+TypeError MultibyteIncrementalDecoder.setstate() takes exactly one argument (0 given)
+TypeError MultibyteIncrementalDecoder.reset() takes no arguments (1 given)
+None
+(b'', 1)
+None
+(b'\x82', 0)
+<class 'bytes'>
+'あ'
+-- MultibyteStreamReader
+TypeError arg 1 must be an integer
+TypeError arg 1 must be an integer
+'abc'
+OverflowError Python int too large to convert to C ssize_t
+TypeError read expected at most 1 argument, got 2
+TypeError arg 1 must be an integer
+TypeError arg 1 must be an integer
+<class '_io.BytesIO'>
+AttributeError readonly attribute
+AttributeError readonly attribute
+TypeError MultibyteStreamReader.read() takes no keyword arguments
+''
+OverflowError Python int too large to convert to C ssize_t
+OverflowError Python int too large to convert to C ssize_t
+OverflowError Python int too large to convert to C ssize_t
+TypeError MultibyteStreamReader.reset() takes no arguments (1 given)
+None
+TypeError readline expected at most 1 argument, got 2
+TypeError readlines expected at most 1 argument, got 2
+TypeError MultibyteStreamReader.readline() takes no keyword arguments
+TypeError stream function returned a non-bytes object (str)
+''
+TypeError stream function returned a non-bytes object (str)
+TypeError stream function returned a non-bytes object (str)
+AttributeError 'NoneType' object has no attribute 'read'
+''
+''
+[]
+AttributeError 'NoneType' object has no attribute 'readline'
+AttributeError 'NoneType' object has no attribute 'read'
+read ()
+'ab'
+read ()
+'ab'
+read ()
+'ab'
+read ()
+'ab'
+read (7,)
+'ab'
+read (3,)
+'ab'
+read (-2147483648,)
+'ab'
+read (1,)
+'ab'
+read ()
+TypeError stream function returned a non-bytes object (bytearray)
+read ()
+TypeError stream function returned a non-bytes object (NoneType)
+read ()
+'ab'
+readline ()
+TypeError stream function returned a non-bytes object (memoryview)
+read ()
+IndexError pop from empty list
+read ()
+['a\n', 'b\r\n', 'c']
+read (3,)
+['a\n', 'b\r\n', 'c']
+readline ()
+'a\nb'
+readline (2,)
+'a\nb'
+read ()
+[]
+-- MultibyteStreamWriter
+TypeError write() takes exactly 1 positional argument (0 given)
+None
+TypeError arg must be a sequence object
+None
+None
+b'1ab12'
+TypeError reset() takes no arguments
+TypeError write() takes exactly 1 positional argument (0 given)
+TypeError write() takes at most 1 argument (2 given)
+TypeError write() takes at most 1 argument (2 given)
+TypeError write() takes exactly 1 positional argument (0 given)
+TypeError writelines() takes exactly 1 positional argument (0 given)
+TypeError writelines() takes at most 1 argument (2 given)
+TypeError writelines() takes at most 1 argument (2 given)
+TypeError reset() takes no arguments
+TypeError write() takes at most 1 argument (4 given)
+TypeError write() takes at most 1 keyword argument (2 given)
+TypeError writelines() takes at most 1 keyword argument (2 given)
+TypeError arg must be a sequence object
+TypeError arg must be a sequence object
+None
+TypeError arg must be a sequence object
+TypeError arg must be a sequence object
+TypeError arg must be a sequence object
+None
+None
+b'1ab12ab9798012'
+TypeError object of type 'Seq' has no len()
+getitem 0
+getitem 1
+None
+b'1ab12ab9798012xy'
+write b'a'
+write b'b'
+None
+AttributeError 'NoneType' object has no attribute 'write'
+AttributeError 'NoneType' object has no attribute 'write'
+None
+None
+write b'a'
+None
+write b''
+None
+UnicodeEncodeError 'shift_jis' codec can't encode character '\xff' in position 0: illegal multibyte sequence
+write b'?'
+None
+write b'xyz'
+None
+-- getcodec goes through _multibytecodec
+('mine', 'PyCapsule')
+'<capsule object "multibytecodec.codec" at 0x>'
+LookupError no such codec is supported.
+AttributeError module '_multibytecodec' has no attribute '__create_codec'
+(b'\xb1', 1)
+<class '_multibytecodec.MultibyteCodec'>
+ModuleNotFoundError import of _multibytecodec halted; None in sys.modules
+LookupError no such codec is supported.

@@ -1,0 +1,11 @@
+status: 0
+script: c92cac79bdeb1129
+---
+end
+del x
+del y
+del in list 2
+del in list 1
+del in dict 1
+del in dict 2
+del _private

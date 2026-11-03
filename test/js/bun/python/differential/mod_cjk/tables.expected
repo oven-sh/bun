@@ -1,0 +1,47 @@
+status: 0
+script: c64ebeeff702bbb4
+---
+gb2312 decode 02a6fbbc encode 5d282eab
+gbk decode d2488405 encode 53b9d349
+gb18030 decode b292df5c encode ee9cd464
+hz decode e60d32c3 encode 13ebde49
+hz b'~{' 5cfc7985
+big5hkscs decode e332606e encode 23f43136
+big5 decode efd8aee6 encode b8161595
+cp950 decode 20f363ae encode ce6775e2
+euc_kr decode 99848870 encode 057bcf3d
+cp949 decode a6a1c2ff encode d22d7222
+johab decode beade75e encode b5d9cd25
+shift_jis decode 0c1383f5 encode b9e4cbdf
+cp932 decode e84e6bc8 encode 4d34db09
+euc_jp decode dd63861b encode d0e5d6ac
+shift_jis_2004 decode 6c9879f4 encode 2ddbf51b
+shift_jisx0213 decode bd8b5adf encode c3e284e6
+euc_jis_2004 decode 6c287bc8 encode cc5324e2
+euc_jisx0213 decode 9e0c0200 encode 8997e213
+iso2022_jp decode db0e2dc3 encode a1572e05
+iso2022_jp b'\x1b$B' 6eb550af
+iso2022_jp b'\x1b$@' 6eb550af
+iso2022_jp b'\x1b(J' 42cf1340
+iso2022_jp_1 decode db0e2dc3 encode 0b7e0c19
+iso2022_jp_1 b'\x1b$(D' 6dd6673a
+iso2022_jp_2 decode 741776b1 encode 23389fef
+iso2022_jp_2 b'\x1b$A' 592ed59a
+iso2022_jp_2 b'\x1b$(C' e5c4d76a
+iso2022_jp_2 b'\x1b$(D' 6dd6673a
+iso2022_jp_2004 decode db0e2dc3 encode dbd054d3
+iso2022_jp_2004 b'\x1b$(Q' 48c658ef
+iso2022_jp_2004 b'\x1b$(P' 77f30926
+iso2022_jp_2004 b'\x1b$B' 6eb550af
+iso2022_jp_3 decode db0e2dc3 encode a52dd633
+iso2022_jp_3 b'\x1b$(O' 6c737d4f
+iso2022_jp_3 b'\x1b$(P' 77f30926
+iso2022_jp_ext decode db0e2dc3 encode 3b1586c9
+iso2022_jp_ext b'\x1b(I' a2e9222f
+iso2022_jp_ext b'\x1b$(D' 6dd6673a
+iso2022_kr decode bd8d1a9e encode 1cba6f05
+iso2022_kr b'\x1b$)C\x0e' e5c4d76a
+euc_jp 8F 561941c3
+euc_jis_2004 8F 4cb48995
+euc_jisx0213 8F 40390bc6
+gb18030 four 90406731

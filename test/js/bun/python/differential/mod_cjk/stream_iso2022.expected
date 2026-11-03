@@ -1,0 +1,171 @@
+status: 0
+script: dd7104d9db55ecac
+---
+iso2022_jp 108 224
+  read None f4dc660a
+  read -1 f4dc660a
+  read 1 953cb500
+  read 2 5ccdb345
+  read 3 dd1f6869
+  read 5 31e23547
+  read 8 65576a90
+  read 100 f33704a2
+  read 10000 de7a3f6f
+  whole True True True 26892e4b
+  cut strict d62f2d75
+  cut ignore ed613167
+  cut replace cd78f4da
+  cut backslashreplace d4cb14aa
+  reset 1a64a2b5
+  write 92c8402d df223e7d df223e7d True True
+  writelines df223e7d
+  write reset 127a987d
+  write strict [None, 'UnicodeEncodeError iso2022_jp 0 1 illegal multibyte sequence', None, 'UnicodeEncodeError iso2022_jp 0 1 illegal multibyte sequence', 'UnicodeEncodeError iso2022_jp 0 1 illegal multibyte sequence', 'UnicodeEncodeError iso2022_jp 1 2 illegal multibyte sequence', 'UnicodeEncodeError iso2022_jp 1 2 illegal multibyte sequence', 'UnicodeEncodeError iso2022_jp 0 1 illegal multibyte sequence', None] b'a\x1b$B$+'
+  write ignore [None, None, None, None, None, None, None, None, None] b'a\x1b$B$+\x1b(Bbc\x1b$B$"$"'
+  write replace [None, None, None, None, None, None, None, None, None] b'a?\x1b$B$+\x1b(B??b?c\x1b$B$"\x1b(B?\x1b$B$"\x1b(B?'
+  write xmlcharrefreplace [None, None, None, None, None, None, None, None, None] b'a&#55296;\x1b$B$+\x1b(B&#55296;&#202;b&#55296;c\x1b$B$"\x1b(B&#55296;\x1b$B$"\x1b(B&#230;'
+  write backslashreplace [None, None, None, None, None, None, None, None, None] b'a\\ud800\x1b$B$+\x1b(B\\ud800\\xcab\\ud800c\x1b$B$"\x1b(B\\ud800\x1b$B$"\x1b(B\\xe6'
+iso2022_jp_1 128 342
+  read None 67ef3926
+  read -1 67ef3926
+  read 1 e9a11282
+  read 2 beac9ca7
+  read 3 d41b68b1
+  read 5 dd7aa3e0
+  read 8 1f3556f4
+  read 100 61a8cd15
+  read 10000 9e25f6c6
+  whole True True True 26892e4b
+  cut strict 68e70a2a
+  cut ignore a9ff1fbd
+  cut replace 8e3393c8
+  cut backslashreplace 3b673d37
+  reset 370f8dbc
+  write d4dd279e 11cebece 11cebece True True
+  writelines 11cebece
+  write reset 6f5f77c6
+  write strict [None, 'UnicodeEncodeError iso2022_jp_1 0 1 illegal multibyte sequence', None, 'UnicodeEncodeError iso2022_jp_1 0 1 illegal multibyte sequence', None, 'UnicodeEncodeError iso2022_jp_1 1 2 illegal multibyte sequence', 'UnicodeEncodeError iso2022_jp_1 1 2 illegal multibyte sequence', None, None] b'a\x1b$B$+\x1b$(D*4\x1b$(D)A'
+  write ignore [None, None, None, None, None, None, None, None, None] b'a\x1b$B$+\x1b$(D*4\x1b(Bbc\x1b$B$"$"\x1b$(D)A'
+  write replace [None, None, None, None, None, None, None, None, None] b'a?\x1b$B$+\x1b(B?\x1b$(D*4\x1b(Bb?c\x1b$B$"\x1b(B?\x1b$B$"\x1b$(D)A'
+  write xmlcharrefreplace [None, None, None, None, None, None, None, None, None] b'a&#55296;\x1b$B$+\x1b(B&#55296;\x1b$(D*4\x1b(Bb&#55296;c\x1b$B$"\x1b(B&#55296;\x1b$B$"\x1b$(D)A'
+  write backslashreplace [None, None, None, None, None, None, None, None, None] b'a\\ud800\x1b$B$+\x1b(B\\ud800\x1b$(D*4\x1b(Bb\\ud800c\x1b$B$"\x1b(B\\ud800\x1b$B$"\x1b$(D)A'
+iso2022_jp_2 144 440
+  read None 8e1a73be
+  read -1 8e1a73be
+  read 1 70554dc8
+  read 2 9d2bc3d8
+  read 3 fdaadd74
+  read 5 779fee6a
+  read 8 0f194f44
+  read 100 c3a8f33f
+  read 10000 e0e941a8
+  whole True True True 26892e4b
+  cut strict 339bea6a
+  cut ignore 24531461
+  cut replace ac61f299
+  cut backslashreplace 2793d43f
+  reset e5d7efeb
+  write 8b92f361 b5a58110 b5a58110 True True
+  writelines b5a58110
+  write reset 6929f45f
+  write strict [None, 'UnicodeEncodeError iso2022_jp_2 0 1 illegal multibyte sequence', None, 'UnicodeEncodeError iso2022_jp_2 0 1 illegal multibyte sequence', None, 'UnicodeEncodeError iso2022_jp_2 1 2 illegal multibyte sequence', 'UnicodeEncodeError iso2022_jp_2 1 2 illegal multibyte sequence', None, None] b'a\x1b$B$+\x1b$(D*4\x1b$(D)A'
+  write ignore [None, None, None, None, None, None, None, None, None] b'a\x1b$B$+\x1b$(D*4\x1b(Bbc\x1b$B$"$"\x1b$(D)A'
+  write replace [None, None, None, None, None, None, None, None, None] b'a?\x1b$B$+\x1b(B?\x1b$(D*4\x1b(Bb?c\x1b$B$"\x1b(B?\x1b$B$"\x1b$(D)A'
+  write xmlcharrefreplace [None, None, None, None, None, None, None, None, None] b'a&#55296;\x1b$B$+\x1b(B&#55296;\x1b$(D*4\x1b(Bb&#55296;c\x1b$B$"\x1b(B&#55296;\x1b$B$"\x1b$(D)A'
+  write backslashreplace [None, None, None, None, None, None, None, None, None] b'a\\ud800\x1b$B$+\x1b(B\\ud800\x1b$(D*4\x1b(Bb\\ud800c\x1b$B$"\x1b(B\\ud800\x1b$B$"\x1b$(D)A'
+iso2022_jp_2004 154 452
+  read None 003547b3
+  read -1 003547b3
+  read 1 cfaab0eb
+  read 2 622cb5bd
+  read 3 a13bb04c
+  read 5 f5b71c35
+  read 8 aa8c18a1
+  read 100 4840882b
+  read 10000 07827b22
+  whole True True True 26892e4b
+  cut strict c7c60042
+  cut ignore f93bf870
+  cut replace 695ed4c5
+  cut backslashreplace 702aebed
+  reset 7bb933e9
+  write b939d2e9 c4a5bfd8 c4a5bfd8 True True
+  writelines c4a5bfd8
+  write reset 5017621f
+  write strict [None, 'UnicodeEncodeError iso2022_jp_2004 0 1 illegal multibyte sequence', None, 'UnicodeEncodeError iso2022_jp_2004 1 2 illegal multibyte sequence', None, 'UnicodeEncodeError iso2022_jp_2004 1 2 illegal multibyte sequence', 'UnicodeEncodeError iso2022_jp_2004 1 2 illegal multibyte sequence', None, None] b'a$+\x1b$(Q)A\x1b$(Q)\\\x1b(B'
+  write ignore [None, None, None, None, None, None, None, None, None] b'a\x1b$B$+\x1b$(Q)A\x1b(Bbc\x1b$B$"$"\x1b$(Q)\\\x1b(B'
+  write replace [None, None, None, None, None, None, None, None, None] b'a?\x1b$B$+\x1b(B?\x1b$(Q)A\x1b(Bb?c\x1b$B$"\x1b(B?\x1b$B$"\x1b$(Q)\\\x1b(B'
+  write xmlcharrefreplace [None, None, None, None, None, None, None, None, None] b'a&#55296;\x1b$B$+\x1b(B&#55296;\x1b$(Q)A\x1b(Bb&#55296;c\x1b$B$"\x1b(B&#55296;\x1b$B$"\x1b$(Q)\\\x1b(B'
+  write backslashreplace [None, None, None, None, None, None, None, None, None] b'a\\ud800\x1b$B$+\x1b(B\\ud800\x1b$(Q)A\x1b(Bb\\ud800c\x1b$B$"\x1b(B\\ud800\x1b$B$"\x1b$(Q)\\\x1b(B'
+iso2022_jp_3 150 422
+  read None 8ade83ff
+  read -1 8ade83ff
+  read 1 da6d2caa
+  read 2 ae917502
+  read 3 bcf1fc90
+  read 5 07bafa64
+  read 8 75687bc7
+  read 100 3b7beb03
+  read 10000 6363c65d
+  whole True True True 26892e4b
+  cut strict 9b7a02e7
+  cut ignore 4be3264a
+  cut replace 27e2bd30
+  cut backslashreplace 6e2b02ca
+  reset f45d5a25
+  write 919cd186 f77b429d f77b429d True True
+  writelines f77b429d
+  write reset 6276ddc4
+  write strict [None, 'UnicodeEncodeError iso2022_jp_3 0 1 illegal multibyte sequence', None, 'UnicodeEncodeError iso2022_jp_3 1 2 illegal multibyte sequence', None, 'UnicodeEncodeError iso2022_jp_3 1 2 illegal multibyte sequence', 'UnicodeEncodeError iso2022_jp_3 1 2 illegal multibyte sequence', None, None] b'a$+\x1b$(O)A\x1b$(O)\\\x1b(B'
+  write ignore [None, None, None, None, None, None, None, None, None] b'a\x1b$B$+\x1b$(O)A\x1b(Bbc\x1b$B$"$"\x1b$(O)\\\x1b(B'
+  write replace [None, None, None, None, None, None, None, None, None] b'a?\x1b$B$+\x1b(B?\x1b$(O)A\x1b(Bb?c\x1b$B$"\x1b(B?\x1b$B$"\x1b$(O)\\\x1b(B'
+  write xmlcharrefreplace [None, None, None, None, None, None, None, None, None] b'a&#55296;\x1b$B$+\x1b(B&#55296;\x1b$(O)A\x1b(Bb&#55296;c\x1b$B$"\x1b(B&#55296;\x1b$B$"\x1b$(O)\\\x1b(B'
+  write backslashreplace [None, None, None, None, None, None, None, None, None] b'a\\ud800\x1b$B$+\x1b(B\\ud800\x1b$(O)A\x1b(Bb\\ud800c\x1b$B$"\x1b(B\\ud800\x1b$B$"\x1b$(O)\\\x1b(B'
+iso2022_jp_ext 132 358
+  read None 44039aa4
+  read -1 44039aa4
+  read 1 d30a039b
+  read 2 15781354
+  read 3 04f828ff
+  read 5 ae9da8e1
+  read 8 d66b823f
+  read 100 c1f848c7
+  read 10000 93becbda
+  whole True True True 26892e4b
+  cut strict bf2acadd
+  cut ignore 12b9c2ec
+  cut replace 612326f6
+  cut backslashreplace f5f4ee78
+  reset 89742bf8
+  write 9549d01a 4d4e68f3 4d4e68f3 True True
+  writelines 4d4e68f3
+  write reset 57f999de
+  write strict [None, 'UnicodeEncodeError iso2022_jp_ext 0 1 illegal multibyte sequence', None, 'UnicodeEncodeError iso2022_jp_ext 0 1 illegal multibyte sequence', None, 'UnicodeEncodeError iso2022_jp_ext 1 2 illegal multibyte sequence', 'UnicodeEncodeError iso2022_jp_ext 1 2 illegal multibyte sequence', None, None] b'a\x1b$B$+\x1b$(D*4\x1b$(D)A'
+  write ignore [None, None, None, None, None, None, None, None, None] b'a\x1b$B$+\x1b$(D*4\x1b(Bbc\x1b$B$"$"\x1b$(D)A'
+  write replace [None, None, None, None, None, None, None, None, None] b'a?\x1b$B$+\x1b(B?\x1b$(D*4\x1b(Bb?c\x1b$B$"\x1b(B?\x1b$B$"\x1b$(D)A'
+  write xmlcharrefreplace [None, None, None, None, None, None, None, None, None] b'a&#55296;\x1b$B$+\x1b(B&#55296;\x1b$(D*4\x1b(Bb&#55296;c\x1b$B$"\x1b(B&#55296;\x1b$B$"\x1b$(D)A'
+  write backslashreplace [None, None, None, None, None, None, None, None, None] b'a\\ud800\x1b$B$+\x1b(B\\ud800\x1b$(D*4\x1b(Bb\\ud800c\x1b$B$"\x1b(B\\ud800\x1b$B$"\x1b$(D)A'
+iso2022_kr 116 204
+  read None da4862d8
+  read -1 da4862d8
+  read 1 bad41f66
+  read 2 630fb7c1
+  read 3 b5993909
+  read 5 00442b55
+  read 8 d6bbe1b0
+  read 100 1debc4b0
+  read 10000 464df5e0
+  whole True True True 26892e4b
+  cut strict 8fb199cc
+  cut ignore d68968fe
+  cut replace 871f9569
+  cut backslashreplace 1daa6d8e
+  reset e0c8492e
+  write ae5c6a2b e5384b1b e5384b1b True True
+  writelines e5384b1b
+  write reset 9c404c08
+  write strict [None, 'UnicodeEncodeError iso2022_kr 0 1 illegal multibyte sequence', None, 'UnicodeEncodeError iso2022_kr 0 1 illegal multibyte sequence', 'UnicodeEncodeError iso2022_kr 0 1 illegal multibyte sequence', 'UnicodeEncodeError iso2022_kr 1 2 illegal multibyte sequence', 'UnicodeEncodeError iso2022_kr 1 2 illegal multibyte sequence', None, None] b'a\x1b$)C\x0e*+)!'
+  write ignore [None, None, None, None, None, None, None, None, None] b'a\x1b$)C\x0e*+\x0fbc\x0e*"*")!'
+  write replace [None, None, None, None, None, None, None, None, None] b'a?\x1b$)C\x0e*+\x0f??b?c\x0e*"\x0f?\x0e*")!'
+  write xmlcharrefreplace [None, None, None, None, None, None, None, None, None] b'a&#55296;\x1b$)C\x0e*+\x0f&#55296;&#202;b&#55296;c\x0e*"\x0f&#55296;\x0e*")!'
+  write backslashreplace [None, None, None, None, None, None, None, None, None] b'a\\ud800\x1b$)C\x0e*+\x0f\\ud800\\xcab\\ud800c\x0e*"\x0f\\ud800\x0e*")!'

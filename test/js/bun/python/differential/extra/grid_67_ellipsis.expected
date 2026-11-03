@@ -1,0 +1,13 @@
+status: 0
+script: 55f6bd3a44852eb9
+---
+ellipsis __eq__ 163 2eb41bf8cc1d
+ellipsis __format__ 163 f2db0dc49723
+ellipsis __ge__ 163 92193426a0d5
+ellipsis __gt__ 163 f7cb2d00bc7b
+ellipsis __init__ 1602 5e8c984a58df
+ellipsis __le__ 163 785bcc0e2ee6
+ellipsis __lt__ 163 61b8871f2cf4
+ellipsis __ne__ 163 6ce4bd4665c8
+ellipsis __repr__ 19 ebe13b82c822
+ellipsis __str__ 19 d2c6490ff08b

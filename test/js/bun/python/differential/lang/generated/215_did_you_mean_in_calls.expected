@@ -1,0 +1,65 @@
+status: 0
+script: c0c95298efb37256
+source: 4393b6f9706d8b7b
+---
+pprint TypeError 'module' object is not callable. Did you mean: 'pprint.pprint(...)'?
+json TypeError 'module' object is not callable
+os TypeError 'module' object is not callable
+empty TypeError 'module' object is not callable
+not callable TypeError 'module' object is not callable
+callable TypeError 'module' object is not callable. Did you mean: 'mod.mod(...)'?
+with arguments TypeError 'module' object is not callable. Did you mean: 'mod.mod(...)'?
+renamed TypeError 'module' object is not callable
+no name TypeError 'module' object is not callable
+no name TypeError 'module' object is not callable
+subclass TypeError 'Sub' object is not callable
+module __getattr__ raises TypeError 'module' object is not callable
+map TypeError 'module' object is not callable
+int TypeError 'int' object is not callable
+None TypeError 'NoneType' object is not callable
+ImportError TypeError ImportError() got an unexpected keyword argument 'namez'. Did you mean 'name'?
+ImportError TypeError ImportError() got an unexpected keyword argument 'pat'. Did you mean 'path'?
+ImportError TypeError ImportError() got an unexpected keyword argument 'zzz'
+ImportError ok f
+min TypeError min() got an unexpected keyword argument 'kee'. Did you mean 'key'?
+max TypeError max() got an unexpected keyword argument 'defaul'. Did you mean 'default'?
+min TypeError min() got an unexpected keyword argument 'zzz'
+print TypeError print() got an unexpected keyword argument 'sepp'. Did you mean 'sep'?
+print TypeError print() got an unexpected keyword argument 'fil'. Did you mean 'file'?
+sorted TypeError sort() got an unexpected keyword argument 'kez'. Did you mean 'key'?
+sort TypeError sort() got an unexpected keyword argument 'revers'. Did you mean 'reverse'?
+open TypeError open() got an unexpected keyword argument 'modee'. Did you mean 'mode'?
+int TypeError int() got an unexpected keyword argument 'bas'. Did you mean 'base'?
+enumerate TypeError 'strt' is an invalid keyword argument for enumerate()
+dict.pop TypeError dict.pop() takes no keyword arguments
+str.split TypeError split() got an unexpected keyword argument 'seperator'
+str.encode TypeError encode() got an unexpected keyword argument 'encodin'. Did you mean 'encoding'?
+bytes TypeError bytes() got an unexpected keyword argument 'encodin'. Did you mean 'encoding'?
+compile TypeError compile() got an unexpected keyword argument 'flag'. Did you mean 'flags'?
+round TypeError round() got an unexpected keyword argument 'ndigit'. Did you mean 'ndigits'?
+sum TypeError sum() got an unexpected keyword argument 'strt'. Did you mean 'start'?
+pow TypeError pow() got an unexpected keyword argument 'modd'. Did you mean 'mod'?
+zip TypeError zip() got an unexpected keyword argument 'strct'. Did you mean 'strict'?
+map TypeError map() got an unexpected keyword argument 'strct'. Did you mean 'strict'?
+complex TypeError complex() got an unexpected keyword argument 'rea'. Did you mean 'real'?
+str TypeError str() got an unexpected keyword argument 'encodin'. Did you mean 'encoding'?
+min TypeError min() takes at most 2 keyword arguments (3 given)
+max TypeError max() takes at most 2 keyword arguments (3 given)
+print TypeError print() got an unexpected keyword argument 'foo'
+ImportError TypeError ImportError() takes at most 3 keyword arguments (4 given)
+NameError TypeError NameError() takes at most 1 keyword argument (2 given)
+AttributeError TypeError AttributeError() takes at most 2 keyword arguments (3 given)
+AttributeError TypeError AttributeError() got an unexpected keyword argument 'a'
+sorted TypeError sort() takes at most 2 keyword arguments (3 given)
+sort TypeError sort() takes at most 2 keyword arguments (3 given)
+sum TypeError sum() takes at most 2 arguments (3 given)
+int TypeError int expected at most 2 arguments, got 3
+int TypeError int() takes at most 2 arguments (3 given)
+int TypeError int() takes at most 2 arguments (3 given)
+int TypeError int() takes at most 2 keyword arguments (3 given)
+zip TypeError zip() takes at most 1 keyword argument (2 given)
+map TypeError map() takes at most 1 keyword argument (2 given)
+str TypeError str() takes at most 3 keyword arguments (4 given)
+complex TypeError complex() takes at most 2 keyword arguments (3 given)
+complex TypeError complex() takes at most 2 arguments (3 given)
+complex TypeError complex() takes at most 2 arguments (3 given)

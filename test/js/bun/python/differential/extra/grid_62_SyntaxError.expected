@@ -1,0 +1,29 @@
+status: 0
+script: 41b6f0afdf2405eb
+---
+SyntaxError __cause__ 4 c7480ba65109
+SyntaxError __context__ 4 e07fc5fee6e1
+SyntaxError __eq__ 138 c03cd1a4cb2b
+SyntaxError __format__ 138 af3e27986e48
+SyntaxError __ge__ 137 4f802f09ec2b
+SyntaxError __gt__ 138 4d58ad7cb60d
+SyntaxError __init__ 919 ff2547ab1440
+SyntaxError __le__ 138 198871a0fcab
+SyntaxError __lt__ 137 417626bbc47c
+SyntaxError __ne__ 138 d8c413ce9899
+SyntaxError __repr__ 76 223227387680
+SyntaxError __setstate__ 137 f657e70c89ce
+SyntaxError __str__ 76 acc7985175ef
+SyntaxError __suppress_context__ 4 3ee6173ef5f6
+SyntaxError _metadata 4 6b8f3f62853a
+SyntaxError add_note 138 5093993c6390
+SyntaxError args 4 8f7586ca9479
+SyntaxError end_lineno 4 3d70c0f914b7
+SyntaxError end_offset 4 0e6c71f813c3
+SyntaxError filename 4 0b5fab1b8431
+SyntaxError lineno 4 fe2e7edd33ad
+SyntaxError msg 4 7e70c0f6c4b6
+SyntaxError offset 4 1a2cbaae71f1
+SyntaxError print_file_and_line 4 942e471528ba
+SyntaxError text 4 9e2da63e3210
+SyntaxError with_traceback 138 119945ab1ae9

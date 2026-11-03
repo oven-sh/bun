@@ -1,0 +1,24 @@
+status: 0
+script: 6a1b216bb7fdc323
+---
+tuple __add__ 80 108946e15df9
+tuple __class_getitem__ 80 1e3cd89b7086
+tuple __contains__ 80 7fa6f469eb22
+tuple __eq__ 80 7336860bd579
+tuple __format__ 79 4c6eded5d981
+tuple __ge__ 80 6144b15b3c6e
+tuple __getitem__ 81 d117dbe0a61d
+tuple __getnewargs__ 57 c95a4413f767
+tuple __gt__ 79 c935d0b9657d
+tuple __init__ 440 2c0a3e4a8b76
+tuple __iter__ 57 67edb485684c
+tuple __le__ 80 a8db40418856
+tuple __len__ 57 99dc5550b092
+tuple __lt__ 80 f288c18950ec
+tuple __mul__ 78 c7df1f852f5d
+tuple __ne__ 79 4ffb08f2fe9b
+tuple __repr__ 57 3a240c9f3a12
+tuple __rmul__ 78 3be84817804d
+tuple __str__ 57 6d34bd262c1b
+tuple count 79 11af26664c0c
+tuple index 442 15b0ed5296b0

@@ -1,0 +1,7 @@
+status: 0
+script: e2f9fe6ddc5fd49b
+---
+end
+modules False meta_path False os True print True
+import fails: ImportError sys.meta_path is None, Python is likely shutting down
+True

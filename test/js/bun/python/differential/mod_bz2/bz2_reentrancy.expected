@@ -1,0 +1,33 @@
+status: 0
+script: 48248d254e2ab637
+---
+BufferError: Existing exports of data: object cannot be re-sized
+BufferError: Existing exports of data: object cannot be re-sized
+True
+753
+BufferError: Existing exports of data: object cannot be re-sized
+BufferError: Existing exports of data: object cannot be re-sized
+True
+inner 50 False
+70 True False False
+inner 0 True
+70
+False False
+inner True True
+EOFError: End of stream already reached
+True b''
+__buffer__ 0
+__release_buffer__
+True
+__buffer__ 0
+__release_buffer__
+True
+KeyError: 'no buffer'
+KeyError: 'no buffer'
+KeyError: 'no buffer'
+b'ok'
+flushed 14
+ValueError: Compressor has been flushed
+ValueError: Repeated call to flush()
+True True
+True b'tail'

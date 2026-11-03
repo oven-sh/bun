@@ -1,0 +1,47 @@
+status: 0
+script: 5d123c2a46837c57
+source: 1fb45415238020e7
+---
+"class C:\n __classdict__: int\nr = C.__annotations__"() => 'class C:\n    __classdict__: int\nr = C.__annotations__' -> {'__classdict__': <class 'int'>}
+"class C:\n __classdict__ = 1\n y = 2\n x: y\nr = C.__annotations__"() => 'class C:\n    __classdict__ = 1\n    y = 2\n    x: y\nr = C.__annotations__' -> {'x': 2}
+"class C:\n __classdict__: int = 3\n z: __classdict__\nr = C.__annota...() => 'class C:\n    __classdict__: int = 3\n    z: __classdict__\nr = C.__annotations__' -> {'__classdict__': <class 'int'>, 'z': 3}
+"class C:\n x: __classdict__\nr = C.__annotations__"() => 'class C:\n    x: __classdict__\nr = C.__annotations__' -> {'x': {'__module__': 'builtins', '__firstlineno__': 1, '__annotate_func__': <function C.__annotate__>, '__static_attributes__': (), '__dict__': <attribute '__dict__'>, '__weakref__': <attribute '__weakref__'>, '__doc__': None, '__annotations_cache__': {...}}}
+"class C:\n type X = __classdict__\nr = C.X.__value__"() => 'class C:\n    type X = __classdict__\nr = C.X.__value__' -> {'__module__': 'builtins', '__firstlineno__': 1, 'X': C.X, '__static_attributes__': (), '__dict__': <attribute '__dict__'>, '__weakref__': <attribute '__weakref__'>, '__doc__': None}
+"__classdict__ = 'global'\nclass C:\n x: __classdict__\nr = C.__annot...() => "__classdict__ = 'global'\nclass C:\n    x: __classdict__\nr = C.__annotations__" -> {'x': {'__module__': 'builtins', '__firstlineno__': 2, '__annotate_func__': <function C.__annotate__>, '__static_attributes__': (), '__dict__': <attribute '__dict__'>, '__weakref__': <attribute '__weakref__'>, '__doc__': None, '__annotations_cache__': {...}}}
+"__classdict__ = 'global'\nclass C:\n type X = __classdict__\nr = C.X...() => "__classdict__ = 'global'\nclass C:\n    type X = __classdict__\nr = C.X.__value__" -> {'__module__': 'builtins', '__firstlineno__': 2, 'X': C.X, '__static_attributes__': (), '__dict__': <attribute '__dict__'>, '__weakref__': <attribute '__weakref__'>, '__doc__': None}
+"__classdict__ = 'global'\nclass C:\n y = 1\n type X = (__classdict__...() => "__classdict__ = 'global'\nclass C:\n    y = 1\n    type X = (__classdict__, y)\nr = C.X.__value__" -> ({'__module__': 'builtins', '__firstlineno__': 2, 'y': 1, 'X': C.X, '__static_attributes__': (), '__dict__': <attribute '__dict__'>, '__weakref__': <attribute '__weakref__'>, '__doc__': None}, 1)
+"class C:\n def f(self): return __classdict__\nr = C().f()"() => 'class C:\n    def f(self): return __classdict__\nr = C().f()' -> {'__module__': 'builtins', '__firstlineno__': 1, 'f': <function C.f>, '__static_attributes__': (), '__dict__': <attribute '__dict__'>, '__weakref__': <attribute '__weakref__'>, '__doc__': None}
+"class C:\n __classdict__ = 5\n def f(self): return __classdict__\nr ...() => 'class C:\n    __classdict__ = 5\n    def f(self): return __classdict__\nr = C().f()' -> {'__module__': 'builtins', '__firstlineno__': 1, '__classdict__': 5, 'f': <function C.f>, '__static_attributes__': (), '__dict__': <attribute '__dict__'>, '__weakref__': <attribute '__weakref__'>, '__doc__': None}
+"class C:\n r = __classdict__"() => 'class C:\n    r = __classdict__' -> NameError name '__classdict__' is not defined
+"def f():\n __classdict__ = 1\n class C:\n x: __classdict__\n return ...() => 'def f():\n    __classdict__ = 1\n    class C:\n        x: __classdict__\n    return C.__annotations__\nr = f()' -> {'x': {'__module__': 'builtins', '__firstlineno__': 3, '__annotate_func__': <function f.<locals>.C.__annotate__>, '__static_attributes__': (), '__dict__': <attribute '__dict__'>, '__weakref__': <attribute '__weakref__'>, '__doc__': None, '__annotations_cache__': {...}}}
+"def f():\n __classdict__ = 1\n class C:\n y = 2\n type X = (__classd...() => 'def f():\n    __classdict__ = 1\n    class C:\n        y = 2\n        type X = (__classdict__, y)\n    return C.X.__value__\nr = f()' -> ({'__module__': 'builtins', '__firstlineno__': 3, 'y': 2, 'X': f.<locals>.C.X, '__static_attributes__': (), '__dict__': <attribute '__dict__'>, '__weakref__': <attribute '__weakref__'>, '__doc__': None}, 2)
+"class C:\n __class__: int\nr = C.__annotations__"() => 'class C:\n    __class__: int\nr = C.__annotations__' -> {'__class__': <class 'int'>}
+"class C:\n __class__ = 1\n def f(self): return __class__\nr = (C().f...() => "class C:\n    __class__ = 1\n    def f(self): return __class__\nr = (C().f() is C, C.__dict__['__class__'])" -> (True, 1)
+"class C:\n x: __class__\nr = C.__annotations__['x'] is C"() => "class C:\n    x: __class__\nr = C.__annotations__['x'] is C" -> True
+"class C:\n type X = __class__\nr = C.X.__value__ is C"() => 'class C:\n    type X = __class__\nr = C.X.__value__ is C' -> True
+"class C:\n def f(self): return super().__repr__()[:3]\n __class__ = ...() => 'class C:\n    def f(self): return super().__repr__()[:3]\n    __class__ = 3\nr = C().f()' -> '<C '
+"class C:\n __conditional_annotations__: int\nr = C.__annotations__"() => 'class C:\n    __conditional_annotations__: int\nr = C.__annotations__' -> {'__conditional_annotations__': <class 'int'>}
+"class C:\n if 1:\n __conditional_annotations__: int\nr = C.__annotat...() => 'class C:\n    if 1:\n        __conditional_annotations__: int\nr = C.__annotations__' -> {'__conditional_annotations__': <class 'int'>}
+"class C:\n __conditional_annotations__ = 3\n if 1:\n x: int\nr = C._...() => 'class C:\n    __conditional_annotations__ = 3\n    if 1:\n        x: int\nr = C.__annotations__' -> {'x': <class 'int'>}
+"__conditional_annotations__ = 3\nif 1:\n x: int\nr = __annotations__"() => '__conditional_annotations__ = 3\nif 1:\n    x: int\nr = __annotations__' -> TypeError 'int' object is not a set
+"class C:\n __classcell__ = 1"() => 'class C:\n    __classcell__ = 1' -> TypeError __classcell__ must be a nonlocal cell, not <class 'int'>
+"class C:\n __classdictcell__ = 1\nr = C.__dict__.get('__classdictcel...() => "class C:\n    __classdictcell__ = 1\nr = C.__dict__.get('__classdictcell__')" -> TypeError __classdictcell__ must be a nonlocal cell, not <class 'int'>
+"class C:\n __static_attributes__ = 1\nr = C.__static_attributes__"() => 'class C:\n    __static_attributes__ = 1\nr = C.__static_attributes__' -> ()
+"class C:\n __firstlineno__ = 'x'\nr = C.__firstlineno__"() => "class C:\n    __firstlineno__ = 'x'\nr = C.__firstlineno__" -> 'x'
+"class C:\n __annotate__ = 3\nr = C.__annotate__"() => 'class C:\n    __annotate__ = 3\nr = C.__annotate__' -> 3
+"class C:\n x: int\n __annotate__ = None\nr = C.__annotations__"() => 'class C:\n    x: int\n    __annotate__ = None\nr = C.__annotations__' -> {}
+"class C:\n x: int\n def __annotate__(format): return {'y': str}\nr =...() => "class C:\n    x: int\n    def __annotate__(format): return {'y': str}\nr = C.__annotations__" -> {'y': <class 'str'>}
+"class C:\n x: int\n __annotate_func__ = None\nr = C.__annotations__"() => 'class C:\n    x: int\n    __annotate_func__ = None\nr = C.__annotations__' -> {'x': <class 'int'>}
+"class C:\n __annotations__ = {'a': 1}\n x: int\nr = C.__annotations__"() => "class C:\n    __annotations__ = {'a': 1}\n    x: int\nr = C.__annotations__" -> {'a': 1}
+"from __future__ import annotations\nclass C:\n __classdict__: int\n ...() => 'from __future__ import annotations\nclass C:\n    __classdict__: int\n    def f(self, a: int) -> str: pass\nr = (C.__annotations__, C.f.__annotations__)' -> ({'__classdict__': 'int'}, {'a': 'int', 'return': 'str'})
+"from __future__ import annotations\nclass P(Exception):\n def __str_...() => "from __future__ import annotations\nclass P(Exception):\n    def __str__(self) -> str:\n        return 'x'\nr = P.__str__.__annotations__" -> {'return': 'str'}
+"from __future__ import annotations\nclass C:\n y = 1\n def f[T: y](s...() => 'from __future__ import annotations\nclass C:\n    y = 1\n    def f[T: y](self, a: y) -> T: pass\nr = (C.f.__annotations__, C.f.__type_params__[0].__bound__)' -> ({'a': 'y', 'return': 'T'}, 1)
+"class C[T]:\n __classdict__ = 1\n x: T\nr = str(C.__annotations__)"() => 'class C[T]:\n    __classdict__ = 1\n    x: T\nr = str(C.__annotations__)' -> "{'x': T}"
+"class C[T]:\n y = 1\n type X[U] = (T, U, y)\nr = str(C.X.__value__)"() => 'class C[T]:\n    y = 1\n    type X[U] = (T, U, y)\nr = str(C.X.__value__)' -> '(T, U, 1)'
+"class C:\n y = 1\n class D:\n x: y\ntry:\n r = C.D.__annotations__\n...() => 'class C:\n    y = 1\n    class D:\n        x: y\ntry:\n    r = C.D.__annotations__\nexcept NameError as e:\n    r = str(e)' -> "name 'y' is not defined"
+"class C:\n y = 1\n x = [y for _ in range(1)]"() => 'class C:\n    y = 1\n    x = [y for _ in range(1)]' -> NameError name 'y' is not defined
+"class C:\n y = 1\n x = (lambda: y)()"() => 'class C:\n    y = 1\n    x = (lambda: y)()' -> NameError name 'y' is not defined
+"class C:\n y = 1\n type X = [y for _ in range(1)]\nr = C.X.__value__"() => 'class C:\n    y = 1\n    type X = [y for _ in range(1)]\nr = C.X.__value__' -> NameError name 'y' is not defined
+"class C:\n y = 1\n type X = (lambda: y)()\nr = C.X.__value__"() => 'class C:\n    y = 1\n    type X = (lambda: y)()\nr = C.X.__value__' -> NameError name 'y' is not defined
+"class C:\n y = 1\n x: [y for _ in range(1)]\nr = C.__annotations__"() => 'class C:\n    y = 1\n    x: [y for _ in range(1)]\nr = C.__annotations__' -> NameError name 'y' is not defined
+"class C:\n y = 1\n x: (lambda: y)()\nr = C.__annotations__"() => 'class C:\n    y = 1\n    x: (lambda: y)()\nr = C.__annotations__' -> NameError name 'y' is not defined

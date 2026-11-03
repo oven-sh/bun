@@ -1,0 +1,79 @@
+status: 0
+script: 658273f85d1e7f15
+---
+== printed: parser.py 1
+err:   File "<tmp>/parser.py", line 2
+    y = (2 3)
+         ^^^
+SyntaxError: invalid syntax. Perhaps you forgot a comma?
+== printed: compiler.py 1
+err:   File "<tmp>/compiler.py", line 5
+    nonlocal zzz
+    ^^^^^^^^^^^^
+SyntaxError: no binding for nonlocal 'zzz' found
+== printed: latin1.py 1
+err:   File "<tmp>/latin1.py", line 2
+    x = 'éè' ; return
+                 ^^^^
+SyntaxError: 'return' outside function
+== printed: latin1_parser.py 1
+err:   File "<tmp>/latin1_parser.py", line 2
+    x = 'éè' 3
+             ^
+SyntaxError: invalid syntax
+== printed: utf8.py 1
+err:   File "<tmp>/utf8.py", line 1
+    x = 'é€😀' ; return
+                       ^
+SyntaxError: 'return' outside function
+== printed: utf8_parser.py 1
+err:   File "<tmp>/utf8_parser.py", line 1
+    x = 'é€😀' 3
+               ^
+SyntaxError: invalid syntax
+== printed: bom.py 1
+err:   File "<tmp>/bom.py", line 1
+    return 1
+    ^^^^^^^^
+SyntaxError: 'return' outside function
+== printed: tabs.py 1
+err:   File "<tmp>/tabs.py", line 2
+    		return 2
+      ^^^^^^^^
+SyntaxError: 'return' outside function
+== printed: nul.py 1
+err:   File "<tmp>/nul.py", line 1
+    x = '
+SyntaxError: source code cannot contain null bytes
+== printed: crlf.py 1
+err:   File "<tmp>/crlf.py", line 2
+    return 2
+    ^^^^^^^^
+SyntaxError: 'return' outside function
+== printed: long.py 1
+err:   File "<tmp>/long.py", line 1
+    x = 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 +
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           ^
+SyntaxError: 'return' outside function
+== printed: eof.py 1
+err:   File "<tmp>/eof.py", line 1
+    x = (1,
+        ^
+SyntaxError: '(' was never closed
+== printed: indent.py 1
+err:   File "<tmp>/indent.py", line 3
+    y
+     ^
+IndentationError: unindent does not match any outer indentation level
+== -W error 1
+out: SyntaxError "is" with 'int' literal. Did you mean "=="? (2, 5, 'y = 1 is 1\n', 2, 11) None
+== -W error, printed 1
+err:   File "<tmp>/warning_as_error.py", line 2
+    y = 1 is 1
+        ^^^^^^
+SyntaxError: "is" with 'int' literal. Did you mean "=="?
+== -W error: escape 1
+out: SyntaxError "\q" is an invalid escape sequence. Did you mean "\\q"? A raw string is also an option. (2, 6, "y = '\\q'\n", 2, 8) (0, 0, None)
+== warnings 0
+err: <tmp>/warning_as_error.py:2: SyntaxWarning: "is" with 'int' literal. Did you mean "=="?
+  y = 1 is 1

@@ -1,0 +1,38 @@
+status: 0
+script: a2e7351bef43a75b
+source: 19226fda1f298aa0
+---
+Class.attribute => True
+Class.method => True
+Class.mro => True
+Class.__name__ => True
+Class.__mro__ => True
+type.__getattribute__(Class, "attribute") => False
+type.__getattribute__(Class, "__mro__")[1:] => (<class 'object'>,)
+class []
+subclass []
+call []
+isinstance(instance, Base) => True
+issubclass(Derived, Base) => True
+isinstance(1, Base) => False
+isinstance []
+repr(Base).split(".")[-1] => Base'>
+str(Derived).split(".")[-1] => Derived'>
+repr []
+Base.x => 1
+Derived.x => 1
+instance.x => 1
+instance.method() => 2
+attributes ['x', 'x']
+bases []
+hash(Base) == hash(Base) => True
+Base == Base => True
+Base != Derived => True
+bool(Base) => True
+operators []
+['method', 'x']
+dir ['__dict__', '__bases__', '__dict__', '__bases__']
+own mro ['__name__', ('mro', 'A')]
+TypeError e => 'NoneType' object is not callable
+descriptor [('__get__', 'C', 'DescriptorMRO')]
+True

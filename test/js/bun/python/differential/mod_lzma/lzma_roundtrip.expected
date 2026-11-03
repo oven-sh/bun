@@ -1,0 +1,285 @@
+status: 0
+script: c8893a53a39d1d24
+---
+empty 0 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+empty 0 b']\x00\x00\x04\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+empty 1 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+empty 1 b']\x00\x00\x10\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+empty 2 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+empty 2 b']\x00\x00 \x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+empty 3 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+empty 3 b']\x00\x00@\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+empty 4 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+empty 4 b']\x00\x00@\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+empty 5 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+empty 5 b']\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+empty 6 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+empty 6 b']\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+empty 2147483648 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+empty 2147483648 b']\x00\x00\x04\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+empty 2147483651 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+empty 2147483651 b']\x00\x00@\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+empty 2147483654 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+empty 2147483654 b']\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+empty 0 b'\x00\x00\xff\x12\xd9A' (True, True, False, b'', 0)
+empty 1 b'\x00\x01i"\xde6' (True, True, False, b'', 1)
+empty 4 b'\x00\x04\xe6\xd6\xb4F' (True, True, False, b'', 4)
+empty 10 b'\x00\n\xe1\xfb\x0c\xa1' (True, True, False, b'', 10)
+empty -1 b'\x00\x04\xe6\xd6\xb4F' (True, True, False, b'', 4)
+one 0 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+one 0 b']\x00\x00\x04\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+one 1 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+one 1 b']\x00\x00\x10\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+one 2 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+one 2 b']\x00\x00 \x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+one 3 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+one 3 b']\x00\x00@\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+one 4 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+one 4 b']\x00\x00@\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+one 5 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+one 5 b']\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+one 6 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+one 6 b']\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+one 2147483648 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+one 2147483648 b']\x00\x00\x04\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+one 2147483651 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+one 2147483651 b']\x00\x00@\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+one 2147483654 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+one 2147483654 b']\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+one 0 b'\x00\x00\xff\x12\xd9A' (True, True, False, b'', 0)
+one 1 b'\x00\x01i"\xde6' (True, True, False, b'', 1)
+one 4 b'\x00\x04\xe6\xd6\xb4F' (True, True, False, b'', 4)
+one 10 b'\x00\n\xe1\xfb\x0c\xa1' (True, True, False, b'', 10)
+one -1 b'\x00\x04\xe6\xd6\xb4F' (True, True, False, b'', 4)
+run 0 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+run 0 b']\x00\x00\x04\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+run 1 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+run 1 b']\x00\x00\x10\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+run 2 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+run 2 b']\x00\x00 \x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+run 3 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+run 3 b']\x00\x00@\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+run 4 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+run 4 b']\x00\x00@\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+run 5 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+run 5 b']\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+run 6 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+run 6 b']\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+run 2147483648 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+run 2147483648 b']\x00\x00\x04\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+run 2147483651 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+run 2147483651 b']\x00\x00@\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+run 2147483654 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+run 2147483654 b']\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+run 0 b'\x00\x00\xff\x12\xd9A' (True, True, False, b'', 0)
+run 1 b'\x00\x01i"\xde6' (True, True, False, b'', 1)
+run 4 b'\x00\x04\xe6\xd6\xb4F' (True, True, False, b'', 4)
+run 10 b'\x00\n\xe1\xfb\x0c\xa1' (True, True, False, b'', 10)
+run -1 b'\x00\x04\xe6\xd6\xb4F' (True, True, False, b'', 4)
+text 0 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+text 0 b']\x00\x00\x04\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+text 1 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+text 1 b']\x00\x00\x10\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+text 2 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+text 2 b']\x00\x00 \x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+text 3 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+text 3 b']\x00\x00@\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+text 4 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+text 4 b']\x00\x00@\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+text 5 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+text 5 b']\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+text 6 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+text 6 b']\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+text 7 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+text 7 b']\x00\x00\x00\x01\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+text 8 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+text 8 b']\x00\x00\x00\x02\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+text 9 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+text 9 b']\x00\x00\x00\x04\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+text 2147483648 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+text 2147483648 b']\x00\x00\x04\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+text 2147483651 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+text 2147483651 b']\x00\x00@\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+text 2147483654 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+text 2147483654 b']\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+text 2147483657 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+text 2147483657 b']\x00\x00\x00\x04\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+text 0 b'\x00\x00\xff\x12\xd9A' (True, True, False, b'', 0)
+text 1 b'\x00\x01i"\xde6' (True, True, False, b'', 1)
+text 4 b'\x00\x04\xe6\xd6\xb4F' (True, True, False, b'', 4)
+text 10 b'\x00\n\xe1\xfb\x0c\xa1' (True, True, False, b'', 10)
+text -1 b'\x00\x04\xe6\xd6\xb4F' (True, True, False, b'', 4)
+noise 0 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+noise 0 b']\x00\x00\x04\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+noise 1 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+noise 1 b']\x00\x00\x10\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+noise 2 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+noise 2 b']\x00\x00 \x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+noise 3 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+noise 3 b']\x00\x00@\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+noise 4 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+noise 4 b']\x00\x00@\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+noise 5 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+noise 5 b']\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+noise 6 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+noise 6 b']\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+noise 2147483648 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+noise 2147483648 b']\x00\x00\x04\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+noise 2147483651 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+noise 2147483651 b']\x00\x00@\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+noise 2147483654 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+noise 2147483654 b']\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+noise 0 b'\x00\x00\xff\x12\xd9A' (True, True, False, b'', 0)
+noise 1 b'\x00\x01i"\xde6' (True, True, False, b'', 1)
+noise 4 b'\x00\x04\xe6\xd6\xb4F' (True, True, False, b'', 4)
+noise 10 b'\x00\n\xe1\xfb\x0c\xa1' (True, True, False, b'', 10)
+noise -1 b'\x00\x04\xe6\xd6\xb4F' (True, True, False, b'', 4)
+ramp 0 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+ramp 0 b']\x00\x00\x04\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+ramp 1 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+ramp 1 b']\x00\x00\x10\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+ramp 2 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+ramp 2 b']\x00\x00 \x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+ramp 3 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+ramp 3 b']\x00\x00@\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+ramp 4 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+ramp 4 b']\x00\x00@\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+ramp 5 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+ramp 5 b']\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+ramp 6 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+ramp 6 b']\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+ramp 2147483648 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+ramp 2147483648 b']\x00\x00\x04\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+ramp 2147483651 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+ramp 2147483651 b']\x00\x00@\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+ramp 2147483654 b'\xfd7zXZ\x00' b'YZ' 0 (True, True, False, b'', 4) (True, True, False, b'', 4)
+ramp 2147483654 b']\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'', 0)
+ramp 0 b'\x00\x00\xff\x12\xd9A' (True, True, False, b'', 0)
+ramp 1 b'\x00\x01i"\xde6' (True, True, False, b'', 1)
+ramp 4 b'\x00\x04\xe6\xd6\xb4F' (True, True, False, b'', 4)
+ramp 10 b'\x00\n\xe1\xfb\x0c\xa1' (True, True, False, b'', 10)
+ramp -1 b'\x00\x04\xe6\xd6\xb4F' (True, True, False, b'', 4)
+[[('id', 33)]] text (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 33)]] code (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 33)]] empty (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 33), ('preset', 1)]] text (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 33), ('preset', 1)]] code (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 33), ('preset', 1)]] empty (True, True, False, b'', 4) (True, True, False, b'') True
+[[('dict_size', 65536), ('id', 33), ('preset', 2147483657)]] text (True, True, False, b'', 4) (True, True, False, b'') True
+[[('dict_size', 65536), ('id', 33), ('preset', 2147483657)]] code (True, True, False, b'', 4) (True, True, False, b'') True
+[[('dict_size', 65536), ('id', 33), ('preset', 2147483657)]] empty (True, True, False, b'', 4) (True, True, False, b'') True
+[[('dict_size', 4096), ('id', 33), ('lc', 0), ('lp', 4), ('pb', 0)]] text (True, True, False, b'', 4) (True, True, False, b'') True
+[[('dict_size', 4096), ('id', 33), ('lc', 0), ('lp', 4), ('pb', 0)]] code (True, True, False, b'', 4) (True, True, False, b'') True
+[[('dict_size', 4096), ('id', 33), ('lc', 0), ('lp', 4), ('pb', 0)]] empty (True, True, False, b'', 4) (True, True, False, b'') True
+[[('depth', 3), ('id', 33), ('lc', 4), ('lp', 0), ('mf', 3), ('mode', 1), ('nice_len', 5), ('pb', 4)]] text (True, True, False, b'', 4) (True, True, False, b'') True
+[[('depth', 3), ('id', 33), ('lc', 4), ('lp', 0), ('mf', 3), ('mode', 1), ('nice_len', 5), ('pb', 4)]] code (True, True, False, b'', 4) (True, True, False, b'') True
+[[('depth', 3), ('id', 33), ('lc', 4), ('lp', 0), ('mf', 3), ('mode', 1), ('nice_len', 5), ('pb', 4)]] empty (True, True, False, b'', 4) (True, True, False, b'') True
+[[('depth', 0), ('id', 33), ('mf', 18), ('mode', 2), ('nice_len', 273)]] text (True, True, False, b'', 4) (True, True, False, b'') True
+[[('depth', 0), ('id', 33), ('mf', 18), ('mode', 2), ('nice_len', 273)]] code (True, True, False, b'', 4) (True, True, False, b'') True
+[[('depth', 0), ('id', 33), ('mf', 18), ('mode', 2), ('nice_len', 273)]] empty (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 33), ('mf', 19)]] text (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 33), ('mf', 19)]] code (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 33), ('mf', 19)]] empty (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 33), ('mf', 20)]] text (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 33), ('mf', 20)]] code (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 33), ('mf', 20)]] empty (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 33), ('mf', 4), ('mode', 1)]] text (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 33), ('mf', 4), ('mode', 1)]] code (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 33), ('mf', 4), ('mode', 1)]] empty (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 3)], [('id', 33)]] text (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 3)], [('id', 33)]] code (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 3)], [('id', 33)]] empty (True, True, False, b'', 4) (True, True, False, b'') True
+[[('dist', 1), ('id', 3)], [('id', 33), ('preset', 0)]] text (True, True, False, b'', 4) (True, True, False, b'') True
+[[('dist', 1), ('id', 3)], [('id', 33), ('preset', 0)]] code (True, True, False, b'', 4) (True, True, False, b'') True
+[[('dist', 1), ('id', 3)], [('id', 33), ('preset', 0)]] empty (True, True, False, b'', 4) (True, True, False, b'') True
+[[('dist', 256), ('id', 3)], [('id', 33), ('preset', 0)]] text (True, True, False, b'', 4) (True, True, False, b'') True
+[[('dist', 256), ('id', 3)], [('id', 33), ('preset', 0)]] code (True, True, False, b'', 4) (True, True, False, b'') True
+[[('dist', 256), ('id', 3)], [('id', 33), ('preset', 0)]] empty (True, True, False, b'', 4) (True, True, False, b'') True
+[[('dist', 3), ('id', 3)], [('dist', 5), ('id', 3)], [('dist', 7), ('id', 3)], [('id', 33), ('preset', 0)]] text (True, True, False, b'', 4) (True, True, False, b'') True
+[[('dist', 3), ('id', 3)], [('dist', 5), ('id', 3)], [('dist', 7), ('id', 3)], [('id', 33), ('preset', 0)]] code (True, True, False, b'', 4) (True, True, False, b'') True
+[[('dist', 3), ('id', 3)], [('dist', 5), ('id', 3)], [('dist', 7), ('id', 3)], [('id', 33), ('preset', 0)]] empty (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 4)], [('id', 33), ('preset', 0)]] text (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 4)], [('id', 33), ('preset', 0)]] code (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 4)], [('id', 33), ('preset', 0)]] empty (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 5)], [('id', 33), ('preset', 0)]] text (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 5)], [('id', 33), ('preset', 0)]] code (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 5)], [('id', 33), ('preset', 0)]] empty (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 6)], [('id', 33), ('preset', 0)]] text (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 6)], [('id', 33), ('preset', 0)]] code (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 6)], [('id', 33), ('preset', 0)]] empty (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 7)], [('id', 33), ('preset', 0)]] text (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 7)], [('id', 33), ('preset', 0)]] code (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 7)], [('id', 33), ('preset', 0)]] empty (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 8)], [('id', 33), ('preset', 0)]] text (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 8)], [('id', 33), ('preset', 0)]] code (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 8)], [('id', 33), ('preset', 0)]] empty (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 9)], [('id', 33), ('preset', 0)]] text (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 9)], [('id', 33), ('preset', 0)]] code (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 9)], [('id', 33), ('preset', 0)]] empty (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 4), ('start_offset', 4096)], [('id', 33), ('preset', 0)]] text (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 4), ('start_offset', 4096)], [('id', 33), ('preset', 0)]] code (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 4), ('start_offset', 4096)], [('id', 33), ('preset', 0)]] empty (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 7), ('start_offset', 4)], [('dist', 4), ('id', 3)], [('id', 33), ('preset', 0)]] text (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 7), ('start_offset', 4)], [('dist', 4), ('id', 3)], [('id', 33), ('preset', 0)]] code (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 7), ('start_offset', 4)], [('dist', 4), ('id', 3)], [('id', 33), ('preset', 0)]] empty (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 4)], [('id', 7)], [('id', 9)], [('id', 33), ('preset', 0)]] text (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 4)], [('id', 7)], [('id', 9)], [('id', 33), ('preset', 0)]] code (True, True, False, b'', 4) (True, True, False, b'') True
+[[('id', 4)], [('id', 7)], [('id', 9)], [('id', 33), ('preset', 0)]] empty (True, True, False, b'', 4) (True, True, False, b'') True
+[] empty b']\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'')
+[] one b']\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'')
+[] run b']\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'')
+[] text b']\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'')
+[] noise b']\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'')
+[] ramp b']\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'')
+[('preset', 2)] empty b']\x00\x00 \x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'')
+[('preset', 2)] one b']\x00\x00 \x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'')
+[('preset', 2)] run b']\x00\x00 \x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'')
+[('preset', 2)] text b']\x00\x00 \x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'')
+[('preset', 2)] noise b']\x00\x00 \x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'')
+[('preset', 2)] ramp b']\x00\x00 \x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'')
+[('dict_size', 8192), ('lc', 1), ('lp', 2), ('pb', 1)] empty b'@\x00 \x00\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'')
+[('dict_size', 8192), ('lc', 1), ('lp', 2), ('pb', 1)] one b'@\x00 \x00\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'')
+[('dict_size', 8192), ('lc', 1), ('lp', 2), ('pb', 1)] run b'@\x00 \x00\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'')
+[('dict_size', 8192), ('lc', 1), ('lp', 2), ('pb', 1)] text b'@\x00 \x00\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'')
+[('dict_size', 8192), ('lc', 1), ('lp', 2), ('pb', 1)] noise b'@\x00 \x00\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'')
+[('dict_size', 8192), ('lc', 1), ('lp', 2), ('pb', 1)] ramp b'@\x00 \x00\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'')
+[('depth', 8), ('mf', 4), ('mode', 1), ('nice_len', 32)] empty b']\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'')
+[('depth', 8), ('mf', 4), ('mode', 1), ('nice_len', 32)] one b']\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'')
+[('depth', 8), ('mf', 4), ('mode', 1), ('nice_len', 32)] run b']\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'')
+[('depth', 8), ('mf', 4), ('mode', 1), ('nice_len', 32)] text b']\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'')
+[('depth', 8), ('mf', 4), ('mode', 1), ('nice_len', 32)] noise b']\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'')
+[('depth', 8), ('mf', 4), ('mode', 1), ('nice_len', 32)] ramp b']\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff' (True, True, False, b'', 0) (True, True, False, b'')
+1 1 True True False b'' 4
+1 13 True True False b'' 4
+1 4096 True True False b'' 4
+1 100000 True True False b'' 4
+2 1 True True False b'' 0
+2 13 True True False b'' 0
+2 4096 True True False b'' 0
+2 100000 True True False b'' 0
+3 1 True True False b'' 0
+3 13 True True False b'' 0
+3 4096 True True False b'' 0
+3 100000 True True False b'' 0
+12 b'hello world\n' 4 True
+12 b'hello world\n' 0 True
+600 b'hello world\nhello world\n' 10 True
+empty (True, True, False, b'', 1) (True, True, False, b'tail', 1)
+LZMAError Input format not supported by decoder
+LZMAError Input format not supported by decoder
+one (True, True, False, b'', 1) (True, True, False, b'tail', 1)
+LZMAError Input format not supported by decoder
+LZMAError Input format not supported by decoder
+run (True, True, False, b'', 1) (True, True, False, b'tail', 1)
+LZMAError Input format not supported by decoder
+LZMAError Input format not supported by decoder
+text (True, True, False, b'', 1) (True, True, False, b'tail', 1)
+LZMAError Input format not supported by decoder
+LZMAError Input format not supported by decoder
+noise (True, True, False, b'', 1) (True, True, False, b'tail', 1)
+LZMAError Input format not supported by decoder
+LZMAError Input format not supported by decoder
+ramp (True, True, False, b'', 1) (True, True, False, b'tail', 1)
+LZMAError Input format not supported by decoder
+LZMAError Input format not supported by decoder
+LZMAError Corrupt input data

@@ -1,0 +1,11 @@
+status: 0
+script: cc209a1eb6d18c1b
+---
+iterators rest 84 0a35e0287dc9
+iterators hint 84 f89c33147ead
+iterators reduce 84 e77bc9c4bc99
+iterators copy 84 d778c1a5a7fe
+iterators deepcopy 84 d22047e51ed2
+iterators pickle 84 73e5c8fb2de3
+iterators self 84 9811f46000e3
+iterators setstate 756 4772c94dbf76

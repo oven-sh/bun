@@ -1,0 +1,9 @@
+status: 0
+script: f51085bf2beb95a4
+---
+nested text 594 f3e454813d37
+copies copy 49 8e70a5a87119
+copies deepcopy 49 b2031251cf7a
+copies pickle 294 f4f214b5bdd9
+copies pickled 294 4ad4d76d19cf
+copies reduce 49 fd96499d70e1

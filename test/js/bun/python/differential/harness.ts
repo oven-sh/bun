@@ -56,6 +56,13 @@ const all = [...new Glob("**/*.expected").scanSync({ cwd: root })].sort();
 // are in them. FIXME: Find out which of the scripts print the same on macOS and with musl.
 const isWhereTheExpectationsAreFrom = isLinux && !isMusl;
 
+// Seconds in a release build, and minutes in these.
+const isTooSlowHere = (name: string) =>
+  (name.startsWith("slow/") && (isDebug || isASAN)) || (name === "interop/015_operators_jit" && isDebug);
+
+// The scripts of a directory that import a module of another one.
+const alsoNeeds: Record<string, string[]> = { slow: ["mod_cjk"] };
+
 /** Declares a test for each script whose name (as "mod_io/io_misc") the function accepts. */
 export function differential(accepts: (name: string) => boolean) {
   // Each test is a program, some of them seconds of work, and many run at a time. These builds take seconds to start Python.
@@ -69,7 +76,7 @@ export function differential(accepts: (name: string) => boolean) {
   let env: Record<string, string | undefined>;
   beforeAll(() => {
     copy = tempDir("python-differential", {});
-    for (const directory of directories)
+    for (const directory of new Set(directories.flatMap(directory => [directory, ...(alsoNeeds[directory] ?? [])])))
       cpSync(join(root, directory), join(String(copy), "tests", directory), {
         recursive: true,
         filter: source => !source.endsWith(".expected"),
@@ -95,7 +102,7 @@ export function differential(accepts: (name: string) => boolean) {
     describe.skipIf(!isWhereTheExpectationsAreFrom).concurrent(directory, () => {
       for (const expected of chosen.filter(expected => expected.startsWith(directory + "/"))) {
         const name = nameOf(expected);
-        test(name, async () => {
+        test.skipIf(isTooSlowHere(name))(name, async () => {
           const want = readExpectation(join(root, expected));
           const stem = expected.slice(0, -".expected".length);
           const program = existsSync(join(root, stem + ".js")) ? stem + ".js" : stem + ".py";

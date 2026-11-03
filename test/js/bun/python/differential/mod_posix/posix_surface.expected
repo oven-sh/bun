@@ -1,5 +1,5 @@
 status: 0
-script: e597c079a837e1db
+script: 11ddb62df9b11ece
 ---
 == posix
 AT_NO_AUTOMOUNT 2048
@@ -145,11 +145,8 @@ STATX_BASIC_STATS 2047
 STATX_BLOCKS 1024
 STATX_BTIME 2048
 STATX_CTIME 128
-STATX_DIOALIGN 8192
 STATX_GID 16
 STATX_INO 256
-STATX_MNT_ID 4096
-STATX_MNT_ID_UNIQUE 16384
 STATX_MODE 2
 STATX_MTIME 64
 STATX_NLINK 4
@@ -584,3 +581,13 @@ setlocale setlocale _locale builtin_function_or_method
 getrusage getrusage resource builtin_function_or_method
 <built-in function stat> <method 'stat' of 'posix.DirEntry' objects>
 posix module
+STATX_MNT_ID stx_mnt_id False
+STATX_DIOALIGN stx_dio_mem_align False
+STATX_DIOALIGN stx_dio_offset_align False
+STATX_MNT_ID_UNIQUE stx_mnt_id True
+STATX_SUBVOL stx_subvol False
+STATX_WRITE_ATOMIC stx_atomic_write_unit_min False
+STATX_WRITE_ATOMIC stx_atomic_write_unit_max False
+STATX_WRITE_ATOMIC stx_atomic_write_segments_max False
+STATX_WRITE_ATOMIC stx_atomic_write_unit_max_opt False
+STATX_DIO_READ_ALIGN stx_dio_read_offset_align False

@@ -1,0 +1,1174 @@
+status: 0
+script: 4f523a81fc7fec83
+source: c9e3390a19bd861b
+---
+text [text='a and b or c or d', values=(False, False, False, False)] => a and b or c or d
+"".join("FT"[v] for v in values) [text='a and b or c or d', values=(False, False, False, False)] => FFFF
+result [text='a and b or c or d', values=(False, False, False, False)] => d
+[names[n].calls for n in "abcd"] [text='a and b or c or d', values=(False, False, False, False)] => [1, 0, 1, 0]
+text [text='a and b or c or d', values=(False, False, False, True)] => a and b or c or d
+"".join("FT"[v] for v in values) [text='a and b or c or d', values=(False, False, False, True)] => FFFT
+result [text='a and b or c or d', values=(False, False, False, True)] => d
+[names[n].calls for n in "abcd"] [text='a and b or c or d', values=(False, False, False, True)] => [1, 0, 1, 0]
+text [text='a and b or c or d', values=(False, False, True, False)] => a and b or c or d
+"".join("FT"[v] for v in values) [text='a and b or c or d', values=(False, False, True, False)] => FFTF
+result [text='a and b or c or d', values=(False, False, True, False)] => c
+[names[n].calls for n in "abcd"] [text='a and b or c or d', values=(False, False, True, False)] => [1, 0, 1, 0]
+text [text='a and b or c or d', values=(False, False, True, True)] => a and b or c or d
+"".join("FT"[v] for v in values) [text='a and b or c or d', values=(False, False, True, True)] => FFTT
+result [text='a and b or c or d', values=(False, False, True, True)] => c
+[names[n].calls for n in "abcd"] [text='a and b or c or d', values=(False, False, True, True)] => [1, 0, 1, 0]
+text [text='a and b or c or d', values=(False, True, False, False)] => a and b or c or d
+"".join("FT"[v] for v in values) [text='a and b or c or d', values=(False, True, False, False)] => FTFF
+result [text='a and b or c or d', values=(False, True, False, False)] => d
+[names[n].calls for n in "abcd"] [text='a and b or c or d', values=(False, True, False, False)] => [1, 0, 1, 0]
+text [text='a and b or c or d', values=(False, True, False, True)] => a and b or c or d
+"".join("FT"[v] for v in values) [text='a and b or c or d', values=(False, True, False, True)] => FTFT
+result [text='a and b or c or d', values=(False, True, False, True)] => d
+[names[n].calls for n in "abcd"] [text='a and b or c or d', values=(False, True, False, True)] => [1, 0, 1, 0]
+text [text='a and b or c or d', values=(False, True, True, False)] => a and b or c or d
+"".join("FT"[v] for v in values) [text='a and b or c or d', values=(False, True, True, False)] => FTTF
+result [text='a and b or c or d', values=(False, True, True, False)] => c
+[names[n].calls for n in "abcd"] [text='a and b or c or d', values=(False, True, True, False)] => [1, 0, 1, 0]
+text [text='a and b or c or d', values=(False, True, True, True)] => a and b or c or d
+"".join("FT"[v] for v in values) [text='a and b or c or d', values=(False, True, True, True)] => FTTT
+result [text='a and b or c or d', values=(False, True, True, True)] => c
+[names[n].calls for n in "abcd"] [text='a and b or c or d', values=(False, True, True, True)] => [1, 0, 1, 0]
+text [text='a and b or c or d', values=(True, False, False, False)] => a and b or c or d
+"".join("FT"[v] for v in values) [text='a and b or c or d', values=(True, False, False, False)] => TFFF
+result [text='a and b or c or d', values=(True, False, False, False)] => d
+[names[n].calls for n in "abcd"] [text='a and b or c or d', values=(True, False, False, False)] => [1, 1, 1, 0]
+text [text='a and b or c or d', values=(True, False, False, True)] => a and b or c or d
+"".join("FT"[v] for v in values) [text='a and b or c or d', values=(True, False, False, True)] => TFFT
+result [text='a and b or c or d', values=(True, False, False, True)] => d
+[names[n].calls for n in "abcd"] [text='a and b or c or d', values=(True, False, False, True)] => [1, 1, 1, 0]
+text [text='a and b or c or d', values=(True, False, True, False)] => a and b or c or d
+"".join("FT"[v] for v in values) [text='a and b or c or d', values=(True, False, True, False)] => TFTF
+result [text='a and b or c or d', values=(True, False, True, False)] => c
+[names[n].calls for n in "abcd"] [text='a and b or c or d', values=(True, False, True, False)] => [1, 1, 1, 0]
+text [text='a and b or c or d', values=(True, False, True, True)] => a and b or c or d
+"".join("FT"[v] for v in values) [text='a and b or c or d', values=(True, False, True, True)] => TFTT
+result [text='a and b or c or d', values=(True, False, True, True)] => c
+[names[n].calls for n in "abcd"] [text='a and b or c or d', values=(True, False, True, True)] => [1, 1, 1, 0]
+text [text='a and b or c or d', values=(True, True, False, False)] => a and b or c or d
+"".join("FT"[v] for v in values) [text='a and b or c or d', values=(True, True, False, False)] => TTFF
+result [text='a and b or c or d', values=(True, True, False, False)] => b
+[names[n].calls for n in "abcd"] [text='a and b or c or d', values=(True, True, False, False)] => [1, 1, 0, 0]
+text [text='a and b or c or d', values=(True, True, False, True)] => a and b or c or d
+"".join("FT"[v] for v in values) [text='a and b or c or d', values=(True, True, False, True)] => TTFT
+result [text='a and b or c or d', values=(True, True, False, True)] => b
+[names[n].calls for n in "abcd"] [text='a and b or c or d', values=(True, True, False, True)] => [1, 1, 0, 0]
+text [text='a and b or c or d', values=(True, True, True, False)] => a and b or c or d
+"".join("FT"[v] for v in values) [text='a and b or c or d', values=(True, True, True, False)] => TTTF
+result [text='a and b or c or d', values=(True, True, True, False)] => b
+[names[n].calls for n in "abcd"] [text='a and b or c or d', values=(True, True, True, False)] => [1, 1, 0, 0]
+text [text='a and b or c or d', values=(True, True, True, True)] => a and b or c or d
+"".join("FT"[v] for v in values) [text='a and b or c or d', values=(True, True, True, True)] => TTTT
+result [text='a and b or c or d', values=(True, True, True, True)] => b
+[names[n].calls for n in "abcd"] [text='a and b or c or d', values=(True, True, True, True)] => [1, 1, 0, 0]
+text [text='a or b and c or d', values=(False, False, False, False)] => a or b and c or d
+"".join("FT"[v] for v in values) [text='a or b and c or d', values=(False, False, False, False)] => FFFF
+result [text='a or b and c or d', values=(False, False, False, False)] => d
+[names[n].calls for n in "abcd"] [text='a or b and c or d', values=(False, False, False, False)] => [1, 1, 0, 0]
+text [text='a or b and c or d', values=(False, False, False, True)] => a or b and c or d
+"".join("FT"[v] for v in values) [text='a or b and c or d', values=(False, False, False, True)] => FFFT
+result [text='a or b and c or d', values=(False, False, False, True)] => d
+[names[n].calls for n in "abcd"] [text='a or b and c or d', values=(False, False, False, True)] => [1, 1, 0, 0]
+text [text='a or b and c or d', values=(False, False, True, False)] => a or b and c or d
+"".join("FT"[v] for v in values) [text='a or b and c or d', values=(False, False, True, False)] => FFTF
+result [text='a or b and c or d', values=(False, False, True, False)] => d
+[names[n].calls for n in "abcd"] [text='a or b and c or d', values=(False, False, True, False)] => [1, 1, 0, 0]
+text [text='a or b and c or d', values=(False, False, True, True)] => a or b and c or d
+"".join("FT"[v] for v in values) [text='a or b and c or d', values=(False, False, True, True)] => FFTT
+result [text='a or b and c or d', values=(False, False, True, True)] => d
+[names[n].calls for n in "abcd"] [text='a or b and c or d', values=(False, False, True, True)] => [1, 1, 0, 0]
+text [text='a or b and c or d', values=(False, True, False, False)] => a or b and c or d
+"".join("FT"[v] for v in values) [text='a or b and c or d', values=(False, True, False, False)] => FTFF
+result [text='a or b and c or d', values=(False, True, False, False)] => d
+[names[n].calls for n in "abcd"] [text='a or b and c or d', values=(False, True, False, False)] => [1, 1, 1, 0]
+text [text='a or b and c or d', values=(False, True, False, True)] => a or b and c or d
+"".join("FT"[v] for v in values) [text='a or b and c or d', values=(False, True, False, True)] => FTFT
+result [text='a or b and c or d', values=(False, True, False, True)] => d
+[names[n].calls for n in "abcd"] [text='a or b and c or d', values=(False, True, False, True)] => [1, 1, 1, 0]
+text [text='a or b and c or d', values=(False, True, True, False)] => a or b and c or d
+"".join("FT"[v] for v in values) [text='a or b and c or d', values=(False, True, True, False)] => FTTF
+result [text='a or b and c or d', values=(False, True, True, False)] => c
+[names[n].calls for n in "abcd"] [text='a or b and c or d', values=(False, True, True, False)] => [1, 1, 1, 0]
+text [text='a or b and c or d', values=(False, True, True, True)] => a or b and c or d
+"".join("FT"[v] for v in values) [text='a or b and c or d', values=(False, True, True, True)] => FTTT
+result [text='a or b and c or d', values=(False, True, True, True)] => c
+[names[n].calls for n in "abcd"] [text='a or b and c or d', values=(False, True, True, True)] => [1, 1, 1, 0]
+text [text='a or b and c or d', values=(True, False, False, False)] => a or b and c or d
+"".join("FT"[v] for v in values) [text='a or b and c or d', values=(True, False, False, False)] => TFFF
+result [text='a or b and c or d', values=(True, False, False, False)] => a
+[names[n].calls for n in "abcd"] [text='a or b and c or d', values=(True, False, False, False)] => [1, 0, 0, 0]
+text [text='a or b and c or d', values=(True, False, False, True)] => a or b and c or d
+"".join("FT"[v] for v in values) [text='a or b and c or d', values=(True, False, False, True)] => TFFT
+result [text='a or b and c or d', values=(True, False, False, True)] => a
+[names[n].calls for n in "abcd"] [text='a or b and c or d', values=(True, False, False, True)] => [1, 0, 0, 0]
+text [text='a or b and c or d', values=(True, False, True, False)] => a or b and c or d
+"".join("FT"[v] for v in values) [text='a or b and c or d', values=(True, False, True, False)] => TFTF
+result [text='a or b and c or d', values=(True, False, True, False)] => a
+[names[n].calls for n in "abcd"] [text='a or b and c or d', values=(True, False, True, False)] => [1, 0, 0, 0]
+text [text='a or b and c or d', values=(True, False, True, True)] => a or b and c or d
+"".join("FT"[v] for v in values) [text='a or b and c or d', values=(True, False, True, True)] => TFTT
+result [text='a or b and c or d', values=(True, False, True, True)] => a
+[names[n].calls for n in "abcd"] [text='a or b and c or d', values=(True, False, True, True)] => [1, 0, 0, 0]
+text [text='a or b and c or d', values=(True, True, False, False)] => a or b and c or d
+"".join("FT"[v] for v in values) [text='a or b and c or d', values=(True, True, False, False)] => TTFF
+result [text='a or b and c or d', values=(True, True, False, False)] => a
+[names[n].calls for n in "abcd"] [text='a or b and c or d', values=(True, True, False, False)] => [1, 0, 0, 0]
+text [text='a or b and c or d', values=(True, True, False, True)] => a or b and c or d
+"".join("FT"[v] for v in values) [text='a or b and c or d', values=(True, True, False, True)] => TTFT
+result [text='a or b and c or d', values=(True, True, False, True)] => a
+[names[n].calls for n in "abcd"] [text='a or b and c or d', values=(True, True, False, True)] => [1, 0, 0, 0]
+text [text='a or b and c or d', values=(True, True, True, False)] => a or b and c or d
+"".join("FT"[v] for v in values) [text='a or b and c or d', values=(True, True, True, False)] => TTTF
+result [text='a or b and c or d', values=(True, True, True, False)] => a
+[names[n].calls for n in "abcd"] [text='a or b and c or d', values=(True, True, True, False)] => [1, 0, 0, 0]
+text [text='a or b and c or d', values=(True, True, True, True)] => a or b and c or d
+"".join("FT"[v] for v in values) [text='a or b and c or d', values=(True, True, True, True)] => TTTT
+result [text='a or b and c or d', values=(True, True, True, True)] => a
+[names[n].calls for n in "abcd"] [text='a or b and c or d', values=(True, True, True, True)] => [1, 0, 0, 0]
+text [text='(a or b) and (c or d)', values=(False, False, False, False)] => (a or b) and (c or d)
+"".join("FT"[v] for v in values) [text='(a or b) and (c or d)', values=(False, False, False, False)] => FFFF
+result [text='(a or b) and (c or d)', values=(False, False, False, False)] => b
+[names[n].calls for n in "abcd"] [text='(a or b) and (c or d)', values=(False, False, False, False)] => [1, 1, 0, 0]
+text [text='(a or b) and (c or d)', values=(False, False, False, True)] => (a or b) and (c or d)
+"".join("FT"[v] for v in values) [text='(a or b) and (c or d)', values=(False, False, False, True)] => FFFT
+result [text='(a or b) and (c or d)', values=(False, False, False, True)] => b
+[names[n].calls for n in "abcd"] [text='(a or b) and (c or d)', values=(False, False, False, True)] => [1, 1, 0, 0]
+text [text='(a or b) and (c or d)', values=(False, False, True, False)] => (a or b) and (c or d)
+"".join("FT"[v] for v in values) [text='(a or b) and (c or d)', values=(False, False, True, False)] => FFTF
+result [text='(a or b) and (c or d)', values=(False, False, True, False)] => b
+[names[n].calls for n in "abcd"] [text='(a or b) and (c or d)', values=(False, False, True, False)] => [1, 1, 0, 0]
+text [text='(a or b) and (c or d)', values=(False, False, True, True)] => (a or b) and (c or d)
+"".join("FT"[v] for v in values) [text='(a or b) and (c or d)', values=(False, False, True, True)] => FFTT
+result [text='(a or b) and (c or d)', values=(False, False, True, True)] => b
+[names[n].calls for n in "abcd"] [text='(a or b) and (c or d)', values=(False, False, True, True)] => [1, 1, 0, 0]
+text [text='(a or b) and (c or d)', values=(False, True, False, False)] => (a or b) and (c or d)
+"".join("FT"[v] for v in values) [text='(a or b) and (c or d)', values=(False, True, False, False)] => FTFF
+result [text='(a or b) and (c or d)', values=(False, True, False, False)] => d
+[names[n].calls for n in "abcd"] [text='(a or b) and (c or d)', values=(False, True, False, False)] => [1, 1, 1, 0]
+text [text='(a or b) and (c or d)', values=(False, True, False, True)] => (a or b) and (c or d)
+"".join("FT"[v] for v in values) [text='(a or b) and (c or d)', values=(False, True, False, True)] => FTFT
+result [text='(a or b) and (c or d)', values=(False, True, False, True)] => d
+[names[n].calls for n in "abcd"] [text='(a or b) and (c or d)', values=(False, True, False, True)] => [1, 1, 1, 0]
+text [text='(a or b) and (c or d)', values=(False, True, True, False)] => (a or b) and (c or d)
+"".join("FT"[v] for v in values) [text='(a or b) and (c or d)', values=(False, True, True, False)] => FTTF
+result [text='(a or b) and (c or d)', values=(False, True, True, False)] => c
+[names[n].calls for n in "abcd"] [text='(a or b) and (c or d)', values=(False, True, True, False)] => [1, 1, 1, 0]
+text [text='(a or b) and (c or d)', values=(False, True, True, True)] => (a or b) and (c or d)
+"".join("FT"[v] for v in values) [text='(a or b) and (c or d)', values=(False, True, True, True)] => FTTT
+result [text='(a or b) and (c or d)', values=(False, True, True, True)] => c
+[names[n].calls for n in "abcd"] [text='(a or b) and (c or d)', values=(False, True, True, True)] => [1, 1, 1, 0]
+text [text='(a or b) and (c or d)', values=(True, False, False, False)] => (a or b) and (c or d)
+"".join("FT"[v] for v in values) [text='(a or b) and (c or d)', values=(True, False, False, False)] => TFFF
+result [text='(a or b) and (c or d)', values=(True, False, False, False)] => d
+[names[n].calls for n in "abcd"] [text='(a or b) and (c or d)', values=(True, False, False, False)] => [1, 0, 1, 0]
+text [text='(a or b) and (c or d)', values=(True, False, False, True)] => (a or b) and (c or d)
+"".join("FT"[v] for v in values) [text='(a or b) and (c or d)', values=(True, False, False, True)] => TFFT
+result [text='(a or b) and (c or d)', values=(True, False, False, True)] => d
+[names[n].calls for n in "abcd"] [text='(a or b) and (c or d)', values=(True, False, False, True)] => [1, 0, 1, 0]
+text [text='(a or b) and (c or d)', values=(True, False, True, False)] => (a or b) and (c or d)
+"".join("FT"[v] for v in values) [text='(a or b) and (c or d)', values=(True, False, True, False)] => TFTF
+result [text='(a or b) and (c or d)', values=(True, False, True, False)] => c
+[names[n].calls for n in "abcd"] [text='(a or b) and (c or d)', values=(True, False, True, False)] => [1, 0, 1, 0]
+text [text='(a or b) and (c or d)', values=(True, False, True, True)] => (a or b) and (c or d)
+"".join("FT"[v] for v in values) [text='(a or b) and (c or d)', values=(True, False, True, True)] => TFTT
+result [text='(a or b) and (c or d)', values=(True, False, True, True)] => c
+[names[n].calls for n in "abcd"] [text='(a or b) and (c or d)', values=(True, False, True, True)] => [1, 0, 1, 0]
+text [text='(a or b) and (c or d)', values=(True, True, False, False)] => (a or b) and (c or d)
+"".join("FT"[v] for v in values) [text='(a or b) and (c or d)', values=(True, True, False, False)] => TTFF
+result [text='(a or b) and (c or d)', values=(True, True, False, False)] => d
+[names[n].calls for n in "abcd"] [text='(a or b) and (c or d)', values=(True, True, False, False)] => [1, 0, 1, 0]
+text [text='(a or b) and (c or d)', values=(True, True, False, True)] => (a or b) and (c or d)
+"".join("FT"[v] for v in values) [text='(a or b) and (c or d)', values=(True, True, False, True)] => TTFT
+result [text='(a or b) and (c or d)', values=(True, True, False, True)] => d
+[names[n].calls for n in "abcd"] [text='(a or b) and (c or d)', values=(True, True, False, True)] => [1, 0, 1, 0]
+text [text='(a or b) and (c or d)', values=(True, True, True, False)] => (a or b) and (c or d)
+"".join("FT"[v] for v in values) [text='(a or b) and (c or d)', values=(True, True, True, False)] => TTTF
+result [text='(a or b) and (c or d)', values=(True, True, True, False)] => c
+[names[n].calls for n in "abcd"] [text='(a or b) and (c or d)', values=(True, True, True, False)] => [1, 0, 1, 0]
+text [text='(a or b) and (c or d)', values=(True, True, True, True)] => (a or b) and (c or d)
+"".join("FT"[v] for v in values) [text='(a or b) and (c or d)', values=(True, True, True, True)] => TTTT
+result [text='(a or b) and (c or d)', values=(True, True, True, True)] => c
+[names[n].calls for n in "abcd"] [text='(a or b) and (c or d)', values=(True, True, True, True)] => [1, 0, 1, 0]
+text [text='a and (b or c) and d', values=(False, False, False, False)] => a and (b or c) and d
+"".join("FT"[v] for v in values) [text='a and (b or c) and d', values=(False, False, False, False)] => FFFF
+result [text='a and (b or c) and d', values=(False, False, False, False)] => a
+[names[n].calls for n in "abcd"] [text='a and (b or c) and d', values=(False, False, False, False)] => [1, 0, 0, 0]
+text [text='a and (b or c) and d', values=(False, False, False, True)] => a and (b or c) and d
+"".join("FT"[v] for v in values) [text='a and (b or c) and d', values=(False, False, False, True)] => FFFT
+result [text='a and (b or c) and d', values=(False, False, False, True)] => a
+[names[n].calls for n in "abcd"] [text='a and (b or c) and d', values=(False, False, False, True)] => [1, 0, 0, 0]
+text [text='a and (b or c) and d', values=(False, False, True, False)] => a and (b or c) and d
+"".join("FT"[v] for v in values) [text='a and (b or c) and d', values=(False, False, True, False)] => FFTF
+result [text='a and (b or c) and d', values=(False, False, True, False)] => a
+[names[n].calls for n in "abcd"] [text='a and (b or c) and d', values=(False, False, True, False)] => [1, 0, 0, 0]
+text [text='a and (b or c) and d', values=(False, False, True, True)] => a and (b or c) and d
+"".join("FT"[v] for v in values) [text='a and (b or c) and d', values=(False, False, True, True)] => FFTT
+result [text='a and (b or c) and d', values=(False, False, True, True)] => a
+[names[n].calls for n in "abcd"] [text='a and (b or c) and d', values=(False, False, True, True)] => [1, 0, 0, 0]
+text [text='a and (b or c) and d', values=(False, True, False, False)] => a and (b or c) and d
+"".join("FT"[v] for v in values) [text='a and (b or c) and d', values=(False, True, False, False)] => FTFF
+result [text='a and (b or c) and d', values=(False, True, False, False)] => a
+[names[n].calls for n in "abcd"] [text='a and (b or c) and d', values=(False, True, False, False)] => [1, 0, 0, 0]
+text [text='a and (b or c) and d', values=(False, True, False, True)] => a and (b or c) and d
+"".join("FT"[v] for v in values) [text='a and (b or c) and d', values=(False, True, False, True)] => FTFT
+result [text='a and (b or c) and d', values=(False, True, False, True)] => a
+[names[n].calls for n in "abcd"] [text='a and (b or c) and d', values=(False, True, False, True)] => [1, 0, 0, 0]
+text [text='a and (b or c) and d', values=(False, True, True, False)] => a and (b or c) and d
+"".join("FT"[v] for v in values) [text='a and (b or c) and d', values=(False, True, True, False)] => FTTF
+result [text='a and (b or c) and d', values=(False, True, True, False)] => a
+[names[n].calls for n in "abcd"] [text='a and (b or c) and d', values=(False, True, True, False)] => [1, 0, 0, 0]
+text [text='a and (b or c) and d', values=(False, True, True, True)] => a and (b or c) and d
+"".join("FT"[v] for v in values) [text='a and (b or c) and d', values=(False, True, True, True)] => FTTT
+result [text='a and (b or c) and d', values=(False, True, True, True)] => a
+[names[n].calls for n in "abcd"] [text='a and (b or c) and d', values=(False, True, True, True)] => [1, 0, 0, 0]
+text [text='a and (b or c) and d', values=(True, False, False, False)] => a and (b or c) and d
+"".join("FT"[v] for v in values) [text='a and (b or c) and d', values=(True, False, False, False)] => TFFF
+result [text='a and (b or c) and d', values=(True, False, False, False)] => c
+[names[n].calls for n in "abcd"] [text='a and (b or c) and d', values=(True, False, False, False)] => [1, 1, 1, 0]
+text [text='a and (b or c) and d', values=(True, False, False, True)] => a and (b or c) and d
+"".join("FT"[v] for v in values) [text='a and (b or c) and d', values=(True, False, False, True)] => TFFT
+result [text='a and (b or c) and d', values=(True, False, False, True)] => c
+[names[n].calls for n in "abcd"] [text='a and (b or c) and d', values=(True, False, False, True)] => [1, 1, 1, 0]
+text [text='a and (b or c) and d', values=(True, False, True, False)] => a and (b or c) and d
+"".join("FT"[v] for v in values) [text='a and (b or c) and d', values=(True, False, True, False)] => TFTF
+result [text='a and (b or c) and d', values=(True, False, True, False)] => d
+[names[n].calls for n in "abcd"] [text='a and (b or c) and d', values=(True, False, True, False)] => [1, 1, 1, 0]
+text [text='a and (b or c) and d', values=(True, False, True, True)] => a and (b or c) and d
+"".join("FT"[v] for v in values) [text='a and (b or c) and d', values=(True, False, True, True)] => TFTT
+result [text='a and (b or c) and d', values=(True, False, True, True)] => d
+[names[n].calls for n in "abcd"] [text='a and (b or c) and d', values=(True, False, True, True)] => [1, 1, 1, 0]
+text [text='a and (b or c) and d', values=(True, True, False, False)] => a and (b or c) and d
+"".join("FT"[v] for v in values) [text='a and (b or c) and d', values=(True, True, False, False)] => TTFF
+result [text='a and (b or c) and d', values=(True, True, False, False)] => d
+[names[n].calls for n in "abcd"] [text='a and (b or c) and d', values=(True, True, False, False)] => [1, 1, 0, 0]
+text [text='a and (b or c) and d', values=(True, True, False, True)] => a and (b or c) and d
+"".join("FT"[v] for v in values) [text='a and (b or c) and d', values=(True, True, False, True)] => TTFT
+result [text='a and (b or c) and d', values=(True, True, False, True)] => d
+[names[n].calls for n in "abcd"] [text='a and (b or c) and d', values=(True, True, False, True)] => [1, 1, 0, 0]
+text [text='a and (b or c) and d', values=(True, True, True, False)] => a and (b or c) and d
+"".join("FT"[v] for v in values) [text='a and (b or c) and d', values=(True, True, True, False)] => TTTF
+result [text='a and (b or c) and d', values=(True, True, True, False)] => d
+[names[n].calls for n in "abcd"] [text='a and (b or c) and d', values=(True, True, True, False)] => [1, 1, 0, 0]
+text [text='a and (b or c) and d', values=(True, True, True, True)] => a and (b or c) and d
+"".join("FT"[v] for v in values) [text='a and (b or c) and d', values=(True, True, True, True)] => TTTT
+result [text='a and (b or c) and d', values=(True, True, True, True)] => d
+[names[n].calls for n in "abcd"] [text='a and (b or c) and d', values=(True, True, True, True)] => [1, 1, 0, 0]
+text [text='(a and b) or (c and d)', values=(False, False, False, False)] => (a and b) or (c and d)
+"".join("FT"[v] for v in values) [text='(a and b) or (c and d)', values=(False, False, False, False)] => FFFF
+result [text='(a and b) or (c and d)', values=(False, False, False, False)] => c
+[names[n].calls for n in "abcd"] [text='(a and b) or (c and d)', values=(False, False, False, False)] => [1, 0, 1, 0]
+text [text='(a and b) or (c and d)', values=(False, False, False, True)] => (a and b) or (c and d)
+"".join("FT"[v] for v in values) [text='(a and b) or (c and d)', values=(False, False, False, True)] => FFFT
+result [text='(a and b) or (c and d)', values=(False, False, False, True)] => c
+[names[n].calls for n in "abcd"] [text='(a and b) or (c and d)', values=(False, False, False, True)] => [1, 0, 1, 0]
+text [text='(a and b) or (c and d)', values=(False, False, True, False)] => (a and b) or (c and d)
+"".join("FT"[v] for v in values) [text='(a and b) or (c and d)', values=(False, False, True, False)] => FFTF
+result [text='(a and b) or (c and d)', values=(False, False, True, False)] => d
+[names[n].calls for n in "abcd"] [text='(a and b) or (c and d)', values=(False, False, True, False)] => [1, 0, 1, 0]
+text [text='(a and b) or (c and d)', values=(False, False, True, True)] => (a and b) or (c and d)
+"".join("FT"[v] for v in values) [text='(a and b) or (c and d)', values=(False, False, True, True)] => FFTT
+result [text='(a and b) or (c and d)', values=(False, False, True, True)] => d
+[names[n].calls for n in "abcd"] [text='(a and b) or (c and d)', values=(False, False, True, True)] => [1, 0, 1, 0]
+text [text='(a and b) or (c and d)', values=(False, True, False, False)] => (a and b) or (c and d)
+"".join("FT"[v] for v in values) [text='(a and b) or (c and d)', values=(False, True, False, False)] => FTFF
+result [text='(a and b) or (c and d)', values=(False, True, False, False)] => c
+[names[n].calls for n in "abcd"] [text='(a and b) or (c and d)', values=(False, True, False, False)] => [1, 0, 1, 0]
+text [text='(a and b) or (c and d)', values=(False, True, False, True)] => (a and b) or (c and d)
+"".join("FT"[v] for v in values) [text='(a and b) or (c and d)', values=(False, True, False, True)] => FTFT
+result [text='(a and b) or (c and d)', values=(False, True, False, True)] => c
+[names[n].calls for n in "abcd"] [text='(a and b) or (c and d)', values=(False, True, False, True)] => [1, 0, 1, 0]
+text [text='(a and b) or (c and d)', values=(False, True, True, False)] => (a and b) or (c and d)
+"".join("FT"[v] for v in values) [text='(a and b) or (c and d)', values=(False, True, True, False)] => FTTF
+result [text='(a and b) or (c and d)', values=(False, True, True, False)] => d
+[names[n].calls for n in "abcd"] [text='(a and b) or (c and d)', values=(False, True, True, False)] => [1, 0, 1, 0]
+text [text='(a and b) or (c and d)', values=(False, True, True, True)] => (a and b) or (c and d)
+"".join("FT"[v] for v in values) [text='(a and b) or (c and d)', values=(False, True, True, True)] => FTTT
+result [text='(a and b) or (c and d)', values=(False, True, True, True)] => d
+[names[n].calls for n in "abcd"] [text='(a and b) or (c and d)', values=(False, True, True, True)] => [1, 0, 1, 0]
+text [text='(a and b) or (c and d)', values=(True, False, False, False)] => (a and b) or (c and d)
+"".join("FT"[v] for v in values) [text='(a and b) or (c and d)', values=(True, False, False, False)] => TFFF
+result [text='(a and b) or (c and d)', values=(True, False, False, False)] => c
+[names[n].calls for n in "abcd"] [text='(a and b) or (c and d)', values=(True, False, False, False)] => [1, 1, 1, 0]
+text [text='(a and b) or (c and d)', values=(True, False, False, True)] => (a and b) or (c and d)
+"".join("FT"[v] for v in values) [text='(a and b) or (c and d)', values=(True, False, False, True)] => TFFT
+result [text='(a and b) or (c and d)', values=(True, False, False, True)] => c
+[names[n].calls for n in "abcd"] [text='(a and b) or (c and d)', values=(True, False, False, True)] => [1, 1, 1, 0]
+text [text='(a and b) or (c and d)', values=(True, False, True, False)] => (a and b) or (c and d)
+"".join("FT"[v] for v in values) [text='(a and b) or (c and d)', values=(True, False, True, False)] => TFTF
+result [text='(a and b) or (c and d)', values=(True, False, True, False)] => d
+[names[n].calls for n in "abcd"] [text='(a and b) or (c and d)', values=(True, False, True, False)] => [1, 1, 1, 0]
+text [text='(a and b) or (c and d)', values=(True, False, True, True)] => (a and b) or (c and d)
+"".join("FT"[v] for v in values) [text='(a and b) or (c and d)', values=(True, False, True, True)] => TFTT
+result [text='(a and b) or (c and d)', values=(True, False, True, True)] => d
+[names[n].calls for n in "abcd"] [text='(a and b) or (c and d)', values=(True, False, True, True)] => [1, 1, 1, 0]
+text [text='(a and b) or (c and d)', values=(True, True, False, False)] => (a and b) or (c and d)
+"".join("FT"[v] for v in values) [text='(a and b) or (c and d)', values=(True, True, False, False)] => TTFF
+result [text='(a and b) or (c and d)', values=(True, True, False, False)] => b
+[names[n].calls for n in "abcd"] [text='(a and b) or (c and d)', values=(True, True, False, False)] => [1, 1, 0, 0]
+text [text='(a and b) or (c and d)', values=(True, True, False, True)] => (a and b) or (c and d)
+"".join("FT"[v] for v in values) [text='(a and b) or (c and d)', values=(True, True, False, True)] => TTFT
+result [text='(a and b) or (c and d)', values=(True, True, False, True)] => b
+[names[n].calls for n in "abcd"] [text='(a and b) or (c and d)', values=(True, True, False, True)] => [1, 1, 0, 0]
+text [text='(a and b) or (c and d)', values=(True, True, True, False)] => (a and b) or (c and d)
+"".join("FT"[v] for v in values) [text='(a and b) or (c and d)', values=(True, True, True, False)] => TTTF
+result [text='(a and b) or (c and d)', values=(True, True, True, False)] => b
+[names[n].calls for n in "abcd"] [text='(a and b) or (c and d)', values=(True, True, True, False)] => [1, 1, 0, 0]
+text [text='(a and b) or (c and d)', values=(True, True, True, True)] => (a and b) or (c and d)
+"".join("FT"[v] for v in values) [text='(a and b) or (c and d)', values=(True, True, True, True)] => TTTT
+result [text='(a and b) or (c and d)', values=(True, True, True, True)] => b
+[names[n].calls for n in "abcd"] [text='(a and b) or (c and d)', values=(True, True, True, True)] => [1, 1, 0, 0]
+text [text='a or (b and (c or d))', values=(False, False, False, False)] => a or (b and (c or d))
+"".join("FT"[v] for v in values) [text='a or (b and (c or d))', values=(False, False, False, False)] => FFFF
+result [text='a or (b and (c or d))', values=(False, False, False, False)] => b
+[names[n].calls for n in "abcd"] [text='a or (b and (c or d))', values=(False, False, False, False)] => [1, 1, 0, 0]
+text [text='a or (b and (c or d))', values=(False, False, False, True)] => a or (b and (c or d))
+"".join("FT"[v] for v in values) [text='a or (b and (c or d))', values=(False, False, False, True)] => FFFT
+result [text='a or (b and (c or d))', values=(False, False, False, True)] => b
+[names[n].calls for n in "abcd"] [text='a or (b and (c or d))', values=(False, False, False, True)] => [1, 1, 0, 0]
+text [text='a or (b and (c or d))', values=(False, False, True, False)] => a or (b and (c or d))
+"".join("FT"[v] for v in values) [text='a or (b and (c or d))', values=(False, False, True, False)] => FFTF
+result [text='a or (b and (c or d))', values=(False, False, True, False)] => b
+[names[n].calls for n in "abcd"] [text='a or (b and (c or d))', values=(False, False, True, False)] => [1, 1, 0, 0]
+text [text='a or (b and (c or d))', values=(False, False, True, True)] => a or (b and (c or d))
+"".join("FT"[v] for v in values) [text='a or (b and (c or d))', values=(False, False, True, True)] => FFTT
+result [text='a or (b and (c or d))', values=(False, False, True, True)] => b
+[names[n].calls for n in "abcd"] [text='a or (b and (c or d))', values=(False, False, True, True)] => [1, 1, 0, 0]
+text [text='a or (b and (c or d))', values=(False, True, False, False)] => a or (b and (c or d))
+"".join("FT"[v] for v in values) [text='a or (b and (c or d))', values=(False, True, False, False)] => FTFF
+result [text='a or (b and (c or d))', values=(False, True, False, False)] => d
+[names[n].calls for n in "abcd"] [text='a or (b and (c or d))', values=(False, True, False, False)] => [1, 1, 1, 0]
+text [text='a or (b and (c or d))', values=(False, True, False, True)] => a or (b and (c or d))
+"".join("FT"[v] for v in values) [text='a or (b and (c or d))', values=(False, True, False, True)] => FTFT
+result [text='a or (b and (c or d))', values=(False, True, False, True)] => d
+[names[n].calls for n in "abcd"] [text='a or (b and (c or d))', values=(False, True, False, True)] => [1, 1, 1, 0]
+text [text='a or (b and (c or d))', values=(False, True, True, False)] => a or (b and (c or d))
+"".join("FT"[v] for v in values) [text='a or (b and (c or d))', values=(False, True, True, False)] => FTTF
+result [text='a or (b and (c or d))', values=(False, True, True, False)] => c
+[names[n].calls for n in "abcd"] [text='a or (b and (c or d))', values=(False, True, True, False)] => [1, 1, 1, 0]
+text [text='a or (b and (c or d))', values=(False, True, True, True)] => a or (b and (c or d))
+"".join("FT"[v] for v in values) [text='a or (b and (c or d))', values=(False, True, True, True)] => FTTT
+result [text='a or (b and (c or d))', values=(False, True, True, True)] => c
+[names[n].calls for n in "abcd"] [text='a or (b and (c or d))', values=(False, True, True, True)] => [1, 1, 1, 0]
+text [text='a or (b and (c or d))', values=(True, False, False, False)] => a or (b and (c or d))
+"".join("FT"[v] for v in values) [text='a or (b and (c or d))', values=(True, False, False, False)] => TFFF
+result [text='a or (b and (c or d))', values=(True, False, False, False)] => a
+[names[n].calls for n in "abcd"] [text='a or (b and (c or d))', values=(True, False, False, False)] => [1, 0, 0, 0]
+text [text='a or (b and (c or d))', values=(True, False, False, True)] => a or (b and (c or d))
+"".join("FT"[v] for v in values) [text='a or (b and (c or d))', values=(True, False, False, True)] => TFFT
+result [text='a or (b and (c or d))', values=(True, False, False, True)] => a
+[names[n].calls for n in "abcd"] [text='a or (b and (c or d))', values=(True, False, False, True)] => [1, 0, 0, 0]
+text [text='a or (b and (c or d))', values=(True, False, True, False)] => a or (b and (c or d))
+"".join("FT"[v] for v in values) [text='a or (b and (c or d))', values=(True, False, True, False)] => TFTF
+result [text='a or (b and (c or d))', values=(True, False, True, False)] => a
+[names[n].calls for n in "abcd"] [text='a or (b and (c or d))', values=(True, False, True, False)] => [1, 0, 0, 0]
+text [text='a or (b and (c or d))', values=(True, False, True, True)] => a or (b and (c or d))
+"".join("FT"[v] for v in values) [text='a or (b and (c or d))', values=(True, False, True, True)] => TFTT
+result [text='a or (b and (c or d))', values=(True, False, True, True)] => a
+[names[n].calls for n in "abcd"] [text='a or (b and (c or d))', values=(True, False, True, True)] => [1, 0, 0, 0]
+text [text='a or (b and (c or d))', values=(True, True, False, False)] => a or (b and (c or d))
+"".join("FT"[v] for v in values) [text='a or (b and (c or d))', values=(True, True, False, False)] => TTFF
+result [text='a or (b and (c or d))', values=(True, True, False, False)] => a
+[names[n].calls for n in "abcd"] [text='a or (b and (c or d))', values=(True, True, False, False)] => [1, 0, 0, 0]
+text [text='a or (b and (c or d))', values=(True, True, False, True)] => a or (b and (c or d))
+"".join("FT"[v] for v in values) [text='a or (b and (c or d))', values=(True, True, False, True)] => TTFT
+result [text='a or (b and (c or d))', values=(True, True, False, True)] => a
+[names[n].calls for n in "abcd"] [text='a or (b and (c or d))', values=(True, True, False, True)] => [1, 0, 0, 0]
+text [text='a or (b and (c or d))', values=(True, True, True, False)] => a or (b and (c or d))
+"".join("FT"[v] for v in values) [text='a or (b and (c or d))', values=(True, True, True, False)] => TTTF
+result [text='a or (b and (c or d))', values=(True, True, True, False)] => a
+[names[n].calls for n in "abcd"] [text='a or (b and (c or d))', values=(True, True, True, False)] => [1, 0, 0, 0]
+text [text='a or (b and (c or d))', values=(True, True, True, True)] => a or (b and (c or d))
+"".join("FT"[v] for v in values) [text='a or (b and (c or d))', values=(True, True, True, True)] => TTTT
+result [text='a or (b and (c or d))', values=(True, True, True, True)] => a
+[names[n].calls for n in "abcd"] [text='a or (b and (c or d))', values=(True, True, True, True)] => [1, 0, 0, 0]
+text [text='((a or b) and c) or d', values=(False, False, False, False)] => ((a or b) and c) or d
+"".join("FT"[v] for v in values) [text='((a or b) and c) or d', values=(False, False, False, False)] => FFFF
+result [text='((a or b) and c) or d', values=(False, False, False, False)] => d
+[names[n].calls for n in "abcd"] [text='((a or b) and c) or d', values=(False, False, False, False)] => [1, 1, 0, 0]
+text [text='((a or b) and c) or d', values=(False, False, False, True)] => ((a or b) and c) or d
+"".join("FT"[v] for v in values) [text='((a or b) and c) or d', values=(False, False, False, True)] => FFFT
+result [text='((a or b) and c) or d', values=(False, False, False, True)] => d
+[names[n].calls for n in "abcd"] [text='((a or b) and c) or d', values=(False, False, False, True)] => [1, 1, 0, 0]
+text [text='((a or b) and c) or d', values=(False, False, True, False)] => ((a or b) and c) or d
+"".join("FT"[v] for v in values) [text='((a or b) and c) or d', values=(False, False, True, False)] => FFTF
+result [text='((a or b) and c) or d', values=(False, False, True, False)] => d
+[names[n].calls for n in "abcd"] [text='((a or b) and c) or d', values=(False, False, True, False)] => [1, 1, 0, 0]
+text [text='((a or b) and c) or d', values=(False, False, True, True)] => ((a or b) and c) or d
+"".join("FT"[v] for v in values) [text='((a or b) and c) or d', values=(False, False, True, True)] => FFTT
+result [text='((a or b) and c) or d', values=(False, False, True, True)] => d
+[names[n].calls for n in "abcd"] [text='((a or b) and c) or d', values=(False, False, True, True)] => [1, 1, 0, 0]
+text [text='((a or b) and c) or d', values=(False, True, False, False)] => ((a or b) and c) or d
+"".join("FT"[v] for v in values) [text='((a or b) and c) or d', values=(False, True, False, False)] => FTFF
+result [text='((a or b) and c) or d', values=(False, True, False, False)] => d
+[names[n].calls for n in "abcd"] [text='((a or b) and c) or d', values=(False, True, False, False)] => [1, 1, 1, 0]
+text [text='((a or b) and c) or d', values=(False, True, False, True)] => ((a or b) and c) or d
+"".join("FT"[v] for v in values) [text='((a or b) and c) or d', values=(False, True, False, True)] => FTFT
+result [text='((a or b) and c) or d', values=(False, True, False, True)] => d
+[names[n].calls for n in "abcd"] [text='((a or b) and c) or d', values=(False, True, False, True)] => [1, 1, 1, 0]
+text [text='((a or b) and c) or d', values=(False, True, True, False)] => ((a or b) and c) or d
+"".join("FT"[v] for v in values) [text='((a or b) and c) or d', values=(False, True, True, False)] => FTTF
+result [text='((a or b) and c) or d', values=(False, True, True, False)] => c
+[names[n].calls for n in "abcd"] [text='((a or b) and c) or d', values=(False, True, True, False)] => [1, 1, 1, 0]
+text [text='((a or b) and c) or d', values=(False, True, True, True)] => ((a or b) and c) or d
+"".join("FT"[v] for v in values) [text='((a or b) and c) or d', values=(False, True, True, True)] => FTTT
+result [text='((a or b) and c) or d', values=(False, True, True, True)] => c
+[names[n].calls for n in "abcd"] [text='((a or b) and c) or d', values=(False, True, True, True)] => [1, 1, 1, 0]
+text [text='((a or b) and c) or d', values=(True, False, False, False)] => ((a or b) and c) or d
+"".join("FT"[v] for v in values) [text='((a or b) and c) or d', values=(True, False, False, False)] => TFFF
+result [text='((a or b) and c) or d', values=(True, False, False, False)] => d
+[names[n].calls for n in "abcd"] [text='((a or b) and c) or d', values=(True, False, False, False)] => [1, 0, 1, 0]
+text [text='((a or b) and c) or d', values=(True, False, False, True)] => ((a or b) and c) or d
+"".join("FT"[v] for v in values) [text='((a or b) and c) or d', values=(True, False, False, True)] => TFFT
+result [text='((a or b) and c) or d', values=(True, False, False, True)] => d
+[names[n].calls for n in "abcd"] [text='((a or b) and c) or d', values=(True, False, False, True)] => [1, 0, 1, 0]
+text [text='((a or b) and c) or d', values=(True, False, True, False)] => ((a or b) and c) or d
+"".join("FT"[v] for v in values) [text='((a or b) and c) or d', values=(True, False, True, False)] => TFTF
+result [text='((a or b) and c) or d', values=(True, False, True, False)] => c
+[names[n].calls for n in "abcd"] [text='((a or b) and c) or d', values=(True, False, True, False)] => [1, 0, 1, 0]
+text [text='((a or b) and c) or d', values=(True, False, True, True)] => ((a or b) and c) or d
+"".join("FT"[v] for v in values) [text='((a or b) and c) or d', values=(True, False, True, True)] => TFTT
+result [text='((a or b) and c) or d', values=(True, False, True, True)] => c
+[names[n].calls for n in "abcd"] [text='((a or b) and c) or d', values=(True, False, True, True)] => [1, 0, 1, 0]
+text [text='((a or b) and c) or d', values=(True, True, False, False)] => ((a or b) and c) or d
+"".join("FT"[v] for v in values) [text='((a or b) and c) or d', values=(True, True, False, False)] => TTFF
+result [text='((a or b) and c) or d', values=(True, True, False, False)] => d
+[names[n].calls for n in "abcd"] [text='((a or b) and c) or d', values=(True, True, False, False)] => [1, 0, 1, 0]
+text [text='((a or b) and c) or d', values=(True, True, False, True)] => ((a or b) and c) or d
+"".join("FT"[v] for v in values) [text='((a or b) and c) or d', values=(True, True, False, True)] => TTFT
+result [text='((a or b) and c) or d', values=(True, True, False, True)] => d
+[names[n].calls for n in "abcd"] [text='((a or b) and c) or d', values=(True, True, False, True)] => [1, 0, 1, 0]
+text [text='((a or b) and c) or d', values=(True, True, True, False)] => ((a or b) and c) or d
+"".join("FT"[v] for v in values) [text='((a or b) and c) or d', values=(True, True, True, False)] => TTTF
+result [text='((a or b) and c) or d', values=(True, True, True, False)] => c
+[names[n].calls for n in "abcd"] [text='((a or b) and c) or d', values=(True, True, True, False)] => [1, 0, 1, 0]
+text [text='((a or b) and c) or d', values=(True, True, True, True)] => ((a or b) and c) or d
+"".join("FT"[v] for v in values) [text='((a or b) and c) or d', values=(True, True, True, True)] => TTTT
+result [text='((a or b) and c) or d', values=(True, True, True, True)] => c
+[names[n].calls for n in "abcd"] [text='((a or b) and c) or d', values=(True, True, True, True)] => [1, 0, 1, 0]
+text [text='not (a and b) or c', values=(False, False, False, False)] => not (a and b) or c
+"".join("FT"[v] for v in values) [text='not (a and b) or c', values=(False, False, False, False)] => FFFF
+result [text='not (a and b) or c', values=(False, False, False, False)] => True
+[names[n].calls for n in "abcd"] [text='not (a and b) or c', values=(False, False, False, False)] => [2, 0, 0, 0]
+text [text='not (a and b) or c', values=(False, False, False, True)] => not (a and b) or c
+"".join("FT"[v] for v in values) [text='not (a and b) or c', values=(False, False, False, True)] => FFFT
+result [text='not (a and b) or c', values=(False, False, False, True)] => True
+[names[n].calls for n in "abcd"] [text='not (a and b) or c', values=(False, False, False, True)] => [2, 0, 0, 0]
+text [text='not (a and b) or c', values=(False, False, True, False)] => not (a and b) or c
+"".join("FT"[v] for v in values) [text='not (a and b) or c', values=(False, False, True, False)] => FFTF
+result [text='not (a and b) or c', values=(False, False, True, False)] => True
+[names[n].calls for n in "abcd"] [text='not (a and b) or c', values=(False, False, True, False)] => [2, 0, 0, 0]
+text [text='not (a and b) or c', values=(False, False, True, True)] => not (a and b) or c
+"".join("FT"[v] for v in values) [text='not (a and b) or c', values=(False, False, True, True)] => FFTT
+result [text='not (a and b) or c', values=(False, False, True, True)] => True
+[names[n].calls for n in "abcd"] [text='not (a and b) or c', values=(False, False, True, True)] => [2, 0, 0, 0]
+text [text='not (a and b) or c', values=(False, True, False, False)] => not (a and b) or c
+"".join("FT"[v] for v in values) [text='not (a and b) or c', values=(False, True, False, False)] => FTFF
+result [text='not (a and b) or c', values=(False, True, False, False)] => True
+[names[n].calls for n in "abcd"] [text='not (a and b) or c', values=(False, True, False, False)] => [2, 0, 0, 0]
+text [text='not (a and b) or c', values=(False, True, False, True)] => not (a and b) or c
+"".join("FT"[v] for v in values) [text='not (a and b) or c', values=(False, True, False, True)] => FTFT
+result [text='not (a and b) or c', values=(False, True, False, True)] => True
+[names[n].calls for n in "abcd"] [text='not (a and b) or c', values=(False, True, False, True)] => [2, 0, 0, 0]
+text [text='not (a and b) or c', values=(False, True, True, False)] => not (a and b) or c
+"".join("FT"[v] for v in values) [text='not (a and b) or c', values=(False, True, True, False)] => FTTF
+result [text='not (a and b) or c', values=(False, True, True, False)] => True
+[names[n].calls for n in "abcd"] [text='not (a and b) or c', values=(False, True, True, False)] => [2, 0, 0, 0]
+text [text='not (a and b) or c', values=(False, True, True, True)] => not (a and b) or c
+"".join("FT"[v] for v in values) [text='not (a and b) or c', values=(False, True, True, True)] => FTTT
+result [text='not (a and b) or c', values=(False, True, True, True)] => True
+[names[n].calls for n in "abcd"] [text='not (a and b) or c', values=(False, True, True, True)] => [2, 0, 0, 0]
+text [text='not (a and b) or c', values=(True, False, False, False)] => not (a and b) or c
+"".join("FT"[v] for v in values) [text='not (a and b) or c', values=(True, False, False, False)] => TFFF
+result [text='not (a and b) or c', values=(True, False, False, False)] => True
+[names[n].calls for n in "abcd"] [text='not (a and b) or c', values=(True, False, False, False)] => [1, 1, 0, 0]
+text [text='not (a and b) or c', values=(True, False, False, True)] => not (a and b) or c
+"".join("FT"[v] for v in values) [text='not (a and b) or c', values=(True, False, False, True)] => TFFT
+result [text='not (a and b) or c', values=(True, False, False, True)] => True
+[names[n].calls for n in "abcd"] [text='not (a and b) or c', values=(True, False, False, True)] => [1, 1, 0, 0]
+text [text='not (a and b) or c', values=(True, False, True, False)] => not (a and b) or c
+"".join("FT"[v] for v in values) [text='not (a and b) or c', values=(True, False, True, False)] => TFTF
+result [text='not (a and b) or c', values=(True, False, True, False)] => True
+[names[n].calls for n in "abcd"] [text='not (a and b) or c', values=(True, False, True, False)] => [1, 1, 0, 0]
+text [text='not (a and b) or c', values=(True, False, True, True)] => not (a and b) or c
+"".join("FT"[v] for v in values) [text='not (a and b) or c', values=(True, False, True, True)] => TFTT
+result [text='not (a and b) or c', values=(True, False, True, True)] => True
+[names[n].calls for n in "abcd"] [text='not (a and b) or c', values=(True, False, True, True)] => [1, 1, 0, 0]
+text [text='not (a and b) or c', values=(True, True, False, False)] => not (a and b) or c
+"".join("FT"[v] for v in values) [text='not (a and b) or c', values=(True, True, False, False)] => TTFF
+result [text='not (a and b) or c', values=(True, True, False, False)] => c
+[names[n].calls for n in "abcd"] [text='not (a and b) or c', values=(True, True, False, False)] => [1, 1, 0, 0]
+text [text='not (a and b) or c', values=(True, True, False, True)] => not (a and b) or c
+"".join("FT"[v] for v in values) [text='not (a and b) or c', values=(True, True, False, True)] => TTFT
+result [text='not (a and b) or c', values=(True, True, False, True)] => c
+[names[n].calls for n in "abcd"] [text='not (a and b) or c', values=(True, True, False, True)] => [1, 1, 0, 0]
+text [text='not (a and b) or c', values=(True, True, True, False)] => not (a and b) or c
+"".join("FT"[v] for v in values) [text='not (a and b) or c', values=(True, True, True, False)] => TTTF
+result [text='not (a and b) or c', values=(True, True, True, False)] => c
+[names[n].calls for n in "abcd"] [text='not (a and b) or c', values=(True, True, True, False)] => [1, 1, 0, 0]
+text [text='not (a and b) or c', values=(True, True, True, True)] => not (a and b) or c
+"".join("FT"[v] for v in values) [text='not (a and b) or c', values=(True, True, True, True)] => TTTT
+result [text='not (a and b) or c', values=(True, True, True, True)] => c
+[names[n].calls for n in "abcd"] [text='not (a and b) or c', values=(True, True, True, True)] => [1, 1, 0, 0]
+text [text='(a and b or c) and d', values=(False, False, False, False)] => (a and b or c) and d
+"".join("FT"[v] for v in values) [text='(a and b or c) and d', values=(False, False, False, False)] => FFFF
+result [text='(a and b or c) and d', values=(False, False, False, False)] => c
+[names[n].calls for n in "abcd"] [text='(a and b or c) and d', values=(False, False, False, False)] => [1, 0, 1, 0]
+text [text='(a and b or c) and d', values=(False, False, False, True)] => (a and b or c) and d
+"".join("FT"[v] for v in values) [text='(a and b or c) and d', values=(False, False, False, True)] => FFFT
+result [text='(a and b or c) and d', values=(False, False, False, True)] => c
+[names[n].calls for n in "abcd"] [text='(a and b or c) and d', values=(False, False, False, True)] => [1, 0, 1, 0]
+text [text='(a and b or c) and d', values=(False, False, True, False)] => (a and b or c) and d
+"".join("FT"[v] for v in values) [text='(a and b or c) and d', values=(False, False, True, False)] => FFTF
+result [text='(a and b or c) and d', values=(False, False, True, False)] => d
+[names[n].calls for n in "abcd"] [text='(a and b or c) and d', values=(False, False, True, False)] => [1, 0, 1, 0]
+text [text='(a and b or c) and d', values=(False, False, True, True)] => (a and b or c) and d
+"".join("FT"[v] for v in values) [text='(a and b or c) and d', values=(False, False, True, True)] => FFTT
+result [text='(a and b or c) and d', values=(False, False, True, True)] => d
+[names[n].calls for n in "abcd"] [text='(a and b or c) and d', values=(False, False, True, True)] => [1, 0, 1, 0]
+text [text='(a and b or c) and d', values=(False, True, False, False)] => (a and b or c) and d
+"".join("FT"[v] for v in values) [text='(a and b or c) and d', values=(False, True, False, False)] => FTFF
+result [text='(a and b or c) and d', values=(False, True, False, False)] => c
+[names[n].calls for n in "abcd"] [text='(a and b or c) and d', values=(False, True, False, False)] => [1, 0, 1, 0]
+text [text='(a and b or c) and d', values=(False, True, False, True)] => (a and b or c) and d
+"".join("FT"[v] for v in values) [text='(a and b or c) and d', values=(False, True, False, True)] => FTFT
+result [text='(a and b or c) and d', values=(False, True, False, True)] => c
+[names[n].calls for n in "abcd"] [text='(a and b or c) and d', values=(False, True, False, True)] => [1, 0, 1, 0]
+text [text='(a and b or c) and d', values=(False, True, True, False)] => (a and b or c) and d
+"".join("FT"[v] for v in values) [text='(a and b or c) and d', values=(False, True, True, False)] => FTTF
+result [text='(a and b or c) and d', values=(False, True, True, False)] => d
+[names[n].calls for n in "abcd"] [text='(a and b or c) and d', values=(False, True, True, False)] => [1, 0, 1, 0]
+text [text='(a and b or c) and d', values=(False, True, True, True)] => (a and b or c) and d
+"".join("FT"[v] for v in values) [text='(a and b or c) and d', values=(False, True, True, True)] => FTTT
+result [text='(a and b or c) and d', values=(False, True, True, True)] => d
+[names[n].calls for n in "abcd"] [text='(a and b or c) and d', values=(False, True, True, True)] => [1, 0, 1, 0]
+text [text='(a and b or c) and d', values=(True, False, False, False)] => (a and b or c) and d
+"".join("FT"[v] for v in values) [text='(a and b or c) and d', values=(True, False, False, False)] => TFFF
+result [text='(a and b or c) and d', values=(True, False, False, False)] => c
+[names[n].calls for n in "abcd"] [text='(a and b or c) and d', values=(True, False, False, False)] => [1, 1, 1, 0]
+text [text='(a and b or c) and d', values=(True, False, False, True)] => (a and b or c) and d
+"".join("FT"[v] for v in values) [text='(a and b or c) and d', values=(True, False, False, True)] => TFFT
+result [text='(a and b or c) and d', values=(True, False, False, True)] => c
+[names[n].calls for n in "abcd"] [text='(a and b or c) and d', values=(True, False, False, True)] => [1, 1, 1, 0]
+text [text='(a and b or c) and d', values=(True, False, True, False)] => (a and b or c) and d
+"".join("FT"[v] for v in values) [text='(a and b or c) and d', values=(True, False, True, False)] => TFTF
+result [text='(a and b or c) and d', values=(True, False, True, False)] => d
+[names[n].calls for n in "abcd"] [text='(a and b or c) and d', values=(True, False, True, False)] => [1, 1, 1, 0]
+text [text='(a and b or c) and d', values=(True, False, True, True)] => (a and b or c) and d
+"".join("FT"[v] for v in values) [text='(a and b or c) and d', values=(True, False, True, True)] => TFTT
+result [text='(a and b or c) and d', values=(True, False, True, True)] => d
+[names[n].calls for n in "abcd"] [text='(a and b or c) and d', values=(True, False, True, True)] => [1, 1, 1, 0]
+text [text='(a and b or c) and d', values=(True, True, False, False)] => (a and b or c) and d
+"".join("FT"[v] for v in values) [text='(a and b or c) and d', values=(True, True, False, False)] => TTFF
+result [text='(a and b or c) and d', values=(True, True, False, False)] => d
+[names[n].calls for n in "abcd"] [text='(a and b or c) and d', values=(True, True, False, False)] => [1, 1, 0, 0]
+text [text='(a and b or c) and d', values=(True, True, False, True)] => (a and b or c) and d
+"".join("FT"[v] for v in values) [text='(a and b or c) and d', values=(True, True, False, True)] => TTFT
+result [text='(a and b or c) and d', values=(True, True, False, True)] => d
+[names[n].calls for n in "abcd"] [text='(a and b or c) and d', values=(True, True, False, True)] => [1, 1, 0, 0]
+text [text='(a and b or c) and d', values=(True, True, True, False)] => (a and b or c) and d
+"".join("FT"[v] for v in values) [text='(a and b or c) and d', values=(True, True, True, False)] => TTTF
+result [text='(a and b or c) and d', values=(True, True, True, False)] => d
+[names[n].calls for n in "abcd"] [text='(a and b or c) and d', values=(True, True, True, False)] => [1, 1, 0, 0]
+text [text='(a and b or c) and d', values=(True, True, True, True)] => (a and b or c) and d
+"".join("FT"[v] for v in values) [text='(a and b or c) and d', values=(True, True, True, True)] => TTTT
+result [text='(a and b or c) and d', values=(True, True, True, True)] => d
+[names[n].calls for n in "abcd"] [text='(a and b or c) and d', values=(True, True, True, True)] => [1, 1, 0, 0]
+text [text='a and b and c and d', values=(False, False, False, False)] => a and b and c and d
+"".join("FT"[v] for v in values) [text='a and b and c and d', values=(False, False, False, False)] => FFFF
+result [text='a and b and c and d', values=(False, False, False, False)] => a
+[names[n].calls for n in "abcd"] [text='a and b and c and d', values=(False, False, False, False)] => [1, 0, 0, 0]
+text [text='a and b and c and d', values=(False, False, False, True)] => a and b and c and d
+"".join("FT"[v] for v in values) [text='a and b and c and d', values=(False, False, False, True)] => FFFT
+result [text='a and b and c and d', values=(False, False, False, True)] => a
+[names[n].calls for n in "abcd"] [text='a and b and c and d', values=(False, False, False, True)] => [1, 0, 0, 0]
+text [text='a and b and c and d', values=(False, False, True, False)] => a and b and c and d
+"".join("FT"[v] for v in values) [text='a and b and c and d', values=(False, False, True, False)] => FFTF
+result [text='a and b and c and d', values=(False, False, True, False)] => a
+[names[n].calls for n in "abcd"] [text='a and b and c and d', values=(False, False, True, False)] => [1, 0, 0, 0]
+text [text='a and b and c and d', values=(False, False, True, True)] => a and b and c and d
+"".join("FT"[v] for v in values) [text='a and b and c and d', values=(False, False, True, True)] => FFTT
+result [text='a and b and c and d', values=(False, False, True, True)] => a
+[names[n].calls for n in "abcd"] [text='a and b and c and d', values=(False, False, True, True)] => [1, 0, 0, 0]
+text [text='a and b and c and d', values=(False, True, False, False)] => a and b and c and d
+"".join("FT"[v] for v in values) [text='a and b and c and d', values=(False, True, False, False)] => FTFF
+result [text='a and b and c and d', values=(False, True, False, False)] => a
+[names[n].calls for n in "abcd"] [text='a and b and c and d', values=(False, True, False, False)] => [1, 0, 0, 0]
+text [text='a and b and c and d', values=(False, True, False, True)] => a and b and c and d
+"".join("FT"[v] for v in values) [text='a and b and c and d', values=(False, True, False, True)] => FTFT
+result [text='a and b and c and d', values=(False, True, False, True)] => a
+[names[n].calls for n in "abcd"] [text='a and b and c and d', values=(False, True, False, True)] => [1, 0, 0, 0]
+text [text='a and b and c and d', values=(False, True, True, False)] => a and b and c and d
+"".join("FT"[v] for v in values) [text='a and b and c and d', values=(False, True, True, False)] => FTTF
+result [text='a and b and c and d', values=(False, True, True, False)] => a
+[names[n].calls for n in "abcd"] [text='a and b and c and d', values=(False, True, True, False)] => [1, 0, 0, 0]
+text [text='a and b and c and d', values=(False, True, True, True)] => a and b and c and d
+"".join("FT"[v] for v in values) [text='a and b and c and d', values=(False, True, True, True)] => FTTT
+result [text='a and b and c and d', values=(False, True, True, True)] => a
+[names[n].calls for n in "abcd"] [text='a and b and c and d', values=(False, True, True, True)] => [1, 0, 0, 0]
+text [text='a and b and c and d', values=(True, False, False, False)] => a and b and c and d
+"".join("FT"[v] for v in values) [text='a and b and c and d', values=(True, False, False, False)] => TFFF
+result [text='a and b and c and d', values=(True, False, False, False)] => b
+[names[n].calls for n in "abcd"] [text='a and b and c and d', values=(True, False, False, False)] => [1, 1, 0, 0]
+text [text='a and b and c and d', values=(True, False, False, True)] => a and b and c and d
+"".join("FT"[v] for v in values) [text='a and b and c and d', values=(True, False, False, True)] => TFFT
+result [text='a and b and c and d', values=(True, False, False, True)] => b
+[names[n].calls for n in "abcd"] [text='a and b and c and d', values=(True, False, False, True)] => [1, 1, 0, 0]
+text [text='a and b and c and d', values=(True, False, True, False)] => a and b and c and d
+"".join("FT"[v] for v in values) [text='a and b and c and d', values=(True, False, True, False)] => TFTF
+result [text='a and b and c and d', values=(True, False, True, False)] => b
+[names[n].calls for n in "abcd"] [text='a and b and c and d', values=(True, False, True, False)] => [1, 1, 0, 0]
+text [text='a and b and c and d', values=(True, False, True, True)] => a and b and c and d
+"".join("FT"[v] for v in values) [text='a and b and c and d', values=(True, False, True, True)] => TFTT
+result [text='a and b and c and d', values=(True, False, True, True)] => b
+[names[n].calls for n in "abcd"] [text='a and b and c and d', values=(True, False, True, True)] => [1, 1, 0, 0]
+text [text='a and b and c and d', values=(True, True, False, False)] => a and b and c and d
+"".join("FT"[v] for v in values) [text='a and b and c and d', values=(True, True, False, False)] => TTFF
+result [text='a and b and c and d', values=(True, True, False, False)] => c
+[names[n].calls for n in "abcd"] [text='a and b and c and d', values=(True, True, False, False)] => [1, 1, 1, 0]
+text [text='a and b and c and d', values=(True, True, False, True)] => a and b and c and d
+"".join("FT"[v] for v in values) [text='a and b and c and d', values=(True, True, False, True)] => TTFT
+result [text='a and b and c and d', values=(True, True, False, True)] => c
+[names[n].calls for n in "abcd"] [text='a and b and c and d', values=(True, True, False, True)] => [1, 1, 1, 0]
+text [text='a and b and c and d', values=(True, True, True, False)] => a and b and c and d
+"".join("FT"[v] for v in values) [text='a and b and c and d', values=(True, True, True, False)] => TTTF
+result [text='a and b and c and d', values=(True, True, True, False)] => d
+[names[n].calls for n in "abcd"] [text='a and b and c and d', values=(True, True, True, False)] => [1, 1, 1, 0]
+text [text='a and b and c and d', values=(True, True, True, True)] => a and b and c and d
+"".join("FT"[v] for v in values) [text='a and b and c and d', values=(True, True, True, True)] => TTTT
+result [text='a and b and c and d', values=(True, True, True, True)] => d
+[names[n].calls for n in "abcd"] [text='a and b and c and d', values=(True, True, True, True)] => [1, 1, 1, 0]
+text [text='a or b or c or d', values=(False, False, False, False)] => a or b or c or d
+"".join("FT"[v] for v in values) [text='a or b or c or d', values=(False, False, False, False)] => FFFF
+result [text='a or b or c or d', values=(False, False, False, False)] => d
+[names[n].calls for n in "abcd"] [text='a or b or c or d', values=(False, False, False, False)] => [1, 1, 1, 0]
+text [text='a or b or c or d', values=(False, False, False, True)] => a or b or c or d
+"".join("FT"[v] for v in values) [text='a or b or c or d', values=(False, False, False, True)] => FFFT
+result [text='a or b or c or d', values=(False, False, False, True)] => d
+[names[n].calls for n in "abcd"] [text='a or b or c or d', values=(False, False, False, True)] => [1, 1, 1, 0]
+text [text='a or b or c or d', values=(False, False, True, False)] => a or b or c or d
+"".join("FT"[v] for v in values) [text='a or b or c or d', values=(False, False, True, False)] => FFTF
+result [text='a or b or c or d', values=(False, False, True, False)] => c
+[names[n].calls for n in "abcd"] [text='a or b or c or d', values=(False, False, True, False)] => [1, 1, 1, 0]
+text [text='a or b or c or d', values=(False, False, True, True)] => a or b or c or d
+"".join("FT"[v] for v in values) [text='a or b or c or d', values=(False, False, True, True)] => FFTT
+result [text='a or b or c or d', values=(False, False, True, True)] => c
+[names[n].calls for n in "abcd"] [text='a or b or c or d', values=(False, False, True, True)] => [1, 1, 1, 0]
+text [text='a or b or c or d', values=(False, True, False, False)] => a or b or c or d
+"".join("FT"[v] for v in values) [text='a or b or c or d', values=(False, True, False, False)] => FTFF
+result [text='a or b or c or d', values=(False, True, False, False)] => b
+[names[n].calls for n in "abcd"] [text='a or b or c or d', values=(False, True, False, False)] => [1, 1, 0, 0]
+text [text='a or b or c or d', values=(False, True, False, True)] => a or b or c or d
+"".join("FT"[v] for v in values) [text='a or b or c or d', values=(False, True, False, True)] => FTFT
+result [text='a or b or c or d', values=(False, True, False, True)] => b
+[names[n].calls for n in "abcd"] [text='a or b or c or d', values=(False, True, False, True)] => [1, 1, 0, 0]
+text [text='a or b or c or d', values=(False, True, True, False)] => a or b or c or d
+"".join("FT"[v] for v in values) [text='a or b or c or d', values=(False, True, True, False)] => FTTF
+result [text='a or b or c or d', values=(False, True, True, False)] => b
+[names[n].calls for n in "abcd"] [text='a or b or c or d', values=(False, True, True, False)] => [1, 1, 0, 0]
+text [text='a or b or c or d', values=(False, True, True, True)] => a or b or c or d
+"".join("FT"[v] for v in values) [text='a or b or c or d', values=(False, True, True, True)] => FTTT
+result [text='a or b or c or d', values=(False, True, True, True)] => b
+[names[n].calls for n in "abcd"] [text='a or b or c or d', values=(False, True, True, True)] => [1, 1, 0, 0]
+text [text='a or b or c or d', values=(True, False, False, False)] => a or b or c or d
+"".join("FT"[v] for v in values) [text='a or b or c or d', values=(True, False, False, False)] => TFFF
+result [text='a or b or c or d', values=(True, False, False, False)] => a
+[names[n].calls for n in "abcd"] [text='a or b or c or d', values=(True, False, False, False)] => [1, 0, 0, 0]
+text [text='a or b or c or d', values=(True, False, False, True)] => a or b or c or d
+"".join("FT"[v] for v in values) [text='a or b or c or d', values=(True, False, False, True)] => TFFT
+result [text='a or b or c or d', values=(True, False, False, True)] => a
+[names[n].calls for n in "abcd"] [text='a or b or c or d', values=(True, False, False, True)] => [1, 0, 0, 0]
+text [text='a or b or c or d', values=(True, False, True, False)] => a or b or c or d
+"".join("FT"[v] for v in values) [text='a or b or c or d', values=(True, False, True, False)] => TFTF
+result [text='a or b or c or d', values=(True, False, True, False)] => a
+[names[n].calls for n in "abcd"] [text='a or b or c or d', values=(True, False, True, False)] => [1, 0, 0, 0]
+text [text='a or b or c or d', values=(True, False, True, True)] => a or b or c or d
+"".join("FT"[v] for v in values) [text='a or b or c or d', values=(True, False, True, True)] => TFTT
+result [text='a or b or c or d', values=(True, False, True, True)] => a
+[names[n].calls for n in "abcd"] [text='a or b or c or d', values=(True, False, True, True)] => [1, 0, 0, 0]
+text [text='a or b or c or d', values=(True, True, False, False)] => a or b or c or d
+"".join("FT"[v] for v in values) [text='a or b or c or d', values=(True, True, False, False)] => TTFF
+result [text='a or b or c or d', values=(True, True, False, False)] => a
+[names[n].calls for n in "abcd"] [text='a or b or c or d', values=(True, True, False, False)] => [1, 0, 0, 0]
+text [text='a or b or c or d', values=(True, True, False, True)] => a or b or c or d
+"".join("FT"[v] for v in values) [text='a or b or c or d', values=(True, True, False, True)] => TTFT
+result [text='a or b or c or d', values=(True, True, False, True)] => a
+[names[n].calls for n in "abcd"] [text='a or b or c or d', values=(True, True, False, True)] => [1, 0, 0, 0]
+text [text='a or b or c or d', values=(True, True, True, False)] => a or b or c or d
+"".join("FT"[v] for v in values) [text='a or b or c or d', values=(True, True, True, False)] => TTTF
+result [text='a or b or c or d', values=(True, True, True, False)] => a
+[names[n].calls for n in "abcd"] [text='a or b or c or d', values=(True, True, True, False)] => [1, 0, 0, 0]
+text [text='a or b or c or d', values=(True, True, True, True)] => a or b or c or d
+"".join("FT"[v] for v in values) [text='a or b or c or d', values=(True, True, True, True)] => TTTT
+result [text='a or b or c or d', values=(True, True, True, True)] => a
+[names[n].calls for n in "abcd"] [text='a or b or c or d', values=(True, True, True, True)] => [1, 0, 0, 0]
+text [text='(a or b or c) and d', values=(False, False, False, False)] => (a or b or c) and d
+"".join("FT"[v] for v in values) [text='(a or b or c) and d', values=(False, False, False, False)] => FFFF
+result [text='(a or b or c) and d', values=(False, False, False, False)] => c
+[names[n].calls for n in "abcd"] [text='(a or b or c) and d', values=(False, False, False, False)] => [1, 1, 1, 0]
+text [text='(a or b or c) and d', values=(False, False, False, True)] => (a or b or c) and d
+"".join("FT"[v] for v in values) [text='(a or b or c) and d', values=(False, False, False, True)] => FFFT
+result [text='(a or b or c) and d', values=(False, False, False, True)] => c
+[names[n].calls for n in "abcd"] [text='(a or b or c) and d', values=(False, False, False, True)] => [1, 1, 1, 0]
+text [text='(a or b or c) and d', values=(False, False, True, False)] => (a or b or c) and d
+"".join("FT"[v] for v in values) [text='(a or b or c) and d', values=(False, False, True, False)] => FFTF
+result [text='(a or b or c) and d', values=(False, False, True, False)] => d
+[names[n].calls for n in "abcd"] [text='(a or b or c) and d', values=(False, False, True, False)] => [1, 1, 1, 0]
+text [text='(a or b or c) and d', values=(False, False, True, True)] => (a or b or c) and d
+"".join("FT"[v] for v in values) [text='(a or b or c) and d', values=(False, False, True, True)] => FFTT
+result [text='(a or b or c) and d', values=(False, False, True, True)] => d
+[names[n].calls for n in "abcd"] [text='(a or b or c) and d', values=(False, False, True, True)] => [1, 1, 1, 0]
+text [text='(a or b or c) and d', values=(False, True, False, False)] => (a or b or c) and d
+"".join("FT"[v] for v in values) [text='(a or b or c) and d', values=(False, True, False, False)] => FTFF
+result [text='(a or b or c) and d', values=(False, True, False, False)] => d
+[names[n].calls for n in "abcd"] [text='(a or b or c) and d', values=(False, True, False, False)] => [1, 1, 0, 0]
+text [text='(a or b or c) and d', values=(False, True, False, True)] => (a or b or c) and d
+"".join("FT"[v] for v in values) [text='(a or b or c) and d', values=(False, True, False, True)] => FTFT
+result [text='(a or b or c) and d', values=(False, True, False, True)] => d
+[names[n].calls for n in "abcd"] [text='(a or b or c) and d', values=(False, True, False, True)] => [1, 1, 0, 0]
+text [text='(a or b or c) and d', values=(False, True, True, False)] => (a or b or c) and d
+"".join("FT"[v] for v in values) [text='(a or b or c) and d', values=(False, True, True, False)] => FTTF
+result [text='(a or b or c) and d', values=(False, True, True, False)] => d
+[names[n].calls for n in "abcd"] [text='(a or b or c) and d', values=(False, True, True, False)] => [1, 1, 0, 0]
+text [text='(a or b or c) and d', values=(False, True, True, True)] => (a or b or c) and d
+"".join("FT"[v] for v in values) [text='(a or b or c) and d', values=(False, True, True, True)] => FTTT
+result [text='(a or b or c) and d', values=(False, True, True, True)] => d
+[names[n].calls for n in "abcd"] [text='(a or b or c) and d', values=(False, True, True, True)] => [1, 1, 0, 0]
+text [text='(a or b or c) and d', values=(True, False, False, False)] => (a or b or c) and d
+"".join("FT"[v] for v in values) [text='(a or b or c) and d', values=(True, False, False, False)] => TFFF
+result [text='(a or b or c) and d', values=(True, False, False, False)] => d
+[names[n].calls for n in "abcd"] [text='(a or b or c) and d', values=(True, False, False, False)] => [1, 0, 0, 0]
+text [text='(a or b or c) and d', values=(True, False, False, True)] => (a or b or c) and d
+"".join("FT"[v] for v in values) [text='(a or b or c) and d', values=(True, False, False, True)] => TFFT
+result [text='(a or b or c) and d', values=(True, False, False, True)] => d
+[names[n].calls for n in "abcd"] [text='(a or b or c) and d', values=(True, False, False, True)] => [1, 0, 0, 0]
+text [text='(a or b or c) and d', values=(True, False, True, False)] => (a or b or c) and d
+"".join("FT"[v] for v in values) [text='(a or b or c) and d', values=(True, False, True, False)] => TFTF
+result [text='(a or b or c) and d', values=(True, False, True, False)] => d
+[names[n].calls for n in "abcd"] [text='(a or b or c) and d', values=(True, False, True, False)] => [1, 0, 0, 0]
+text [text='(a or b or c) and d', values=(True, False, True, True)] => (a or b or c) and d
+"".join("FT"[v] for v in values) [text='(a or b or c) and d', values=(True, False, True, True)] => TFTT
+result [text='(a or b or c) and d', values=(True, False, True, True)] => d
+[names[n].calls for n in "abcd"] [text='(a or b or c) and d', values=(True, False, True, True)] => [1, 0, 0, 0]
+text [text='(a or b or c) and d', values=(True, True, False, False)] => (a or b or c) and d
+"".join("FT"[v] for v in values) [text='(a or b or c) and d', values=(True, True, False, False)] => TTFF
+result [text='(a or b or c) and d', values=(True, True, False, False)] => d
+[names[n].calls for n in "abcd"] [text='(a or b or c) and d', values=(True, True, False, False)] => [1, 0, 0, 0]
+text [text='(a or b or c) and d', values=(True, True, False, True)] => (a or b or c) and d
+"".join("FT"[v] for v in values) [text='(a or b or c) and d', values=(True, True, False, True)] => TTFT
+result [text='(a or b or c) and d', values=(True, True, False, True)] => d
+[names[n].calls for n in "abcd"] [text='(a or b or c) and d', values=(True, True, False, True)] => [1, 0, 0, 0]
+text [text='(a or b or c) and d', values=(True, True, True, False)] => (a or b or c) and d
+"".join("FT"[v] for v in values) [text='(a or b or c) and d', values=(True, True, True, False)] => TTTF
+result [text='(a or b or c) and d', values=(True, True, True, False)] => d
+[names[n].calls for n in "abcd"] [text='(a or b or c) and d', values=(True, True, True, False)] => [1, 0, 0, 0]
+text [text='(a or b or c) and d', values=(True, True, True, True)] => (a or b or c) and d
+"".join("FT"[v] for v in values) [text='(a or b or c) and d', values=(True, True, True, True)] => TTTT
+result [text='(a or b or c) and d', values=(True, True, True, True)] => d
+[names[n].calls for n in "abcd"] [text='(a or b or c) and d', values=(True, True, True, True)] => [1, 0, 0, 0]
+text [text='a and (b and c or d)', values=(False, False, False, False)] => a and (b and c or d)
+"".join("FT"[v] for v in values) [text='a and (b and c or d)', values=(False, False, False, False)] => FFFF
+result [text='a and (b and c or d)', values=(False, False, False, False)] => a
+[names[n].calls for n in "abcd"] [text='a and (b and c or d)', values=(False, False, False, False)] => [1, 0, 0, 0]
+text [text='a and (b and c or d)', values=(False, False, False, True)] => a and (b and c or d)
+"".join("FT"[v] for v in values) [text='a and (b and c or d)', values=(False, False, False, True)] => FFFT
+result [text='a and (b and c or d)', values=(False, False, False, True)] => a
+[names[n].calls for n in "abcd"] [text='a and (b and c or d)', values=(False, False, False, True)] => [1, 0, 0, 0]
+text [text='a and (b and c or d)', values=(False, False, True, False)] => a and (b and c or d)
+"".join("FT"[v] for v in values) [text='a and (b and c or d)', values=(False, False, True, False)] => FFTF
+result [text='a and (b and c or d)', values=(False, False, True, False)] => a
+[names[n].calls for n in "abcd"] [text='a and (b and c or d)', values=(False, False, True, False)] => [1, 0, 0, 0]
+text [text='a and (b and c or d)', values=(False, False, True, True)] => a and (b and c or d)
+"".join("FT"[v] for v in values) [text='a and (b and c or d)', values=(False, False, True, True)] => FFTT
+result [text='a and (b and c or d)', values=(False, False, True, True)] => a
+[names[n].calls for n in "abcd"] [text='a and (b and c or d)', values=(False, False, True, True)] => [1, 0, 0, 0]
+text [text='a and (b and c or d)', values=(False, True, False, False)] => a and (b and c or d)
+"".join("FT"[v] for v in values) [text='a and (b and c or d)', values=(False, True, False, False)] => FTFF
+result [text='a and (b and c or d)', values=(False, True, False, False)] => a
+[names[n].calls for n in "abcd"] [text='a and (b and c or d)', values=(False, True, False, False)] => [1, 0, 0, 0]
+text [text='a and (b and c or d)', values=(False, True, False, True)] => a and (b and c or d)
+"".join("FT"[v] for v in values) [text='a and (b and c or d)', values=(False, True, False, True)] => FTFT
+result [text='a and (b and c or d)', values=(False, True, False, True)] => a
+[names[n].calls for n in "abcd"] [text='a and (b and c or d)', values=(False, True, False, True)] => [1, 0, 0, 0]
+text [text='a and (b and c or d)', values=(False, True, True, False)] => a and (b and c or d)
+"".join("FT"[v] for v in values) [text='a and (b and c or d)', values=(False, True, True, False)] => FTTF
+result [text='a and (b and c or d)', values=(False, True, True, False)] => a
+[names[n].calls for n in "abcd"] [text='a and (b and c or d)', values=(False, True, True, False)] => [1, 0, 0, 0]
+text [text='a and (b and c or d)', values=(False, True, True, True)] => a and (b and c or d)
+"".join("FT"[v] for v in values) [text='a and (b and c or d)', values=(False, True, True, True)] => FTTT
+result [text='a and (b and c or d)', values=(False, True, True, True)] => a
+[names[n].calls for n in "abcd"] [text='a and (b and c or d)', values=(False, True, True, True)] => [1, 0, 0, 0]
+text [text='a and (b and c or d)', values=(True, False, False, False)] => a and (b and c or d)
+"".join("FT"[v] for v in values) [text='a and (b and c or d)', values=(True, False, False, False)] => TFFF
+result [text='a and (b and c or d)', values=(True, False, False, False)] => d
+[names[n].calls for n in "abcd"] [text='a and (b and c or d)', values=(True, False, False, False)] => [1, 1, 0, 0]
+text [text='a and (b and c or d)', values=(True, False, False, True)] => a and (b and c or d)
+"".join("FT"[v] for v in values) [text='a and (b and c or d)', values=(True, False, False, True)] => TFFT
+result [text='a and (b and c or d)', values=(True, False, False, True)] => d
+[names[n].calls for n in "abcd"] [text='a and (b and c or d)', values=(True, False, False, True)] => [1, 1, 0, 0]
+text [text='a and (b and c or d)', values=(True, False, True, False)] => a and (b and c or d)
+"".join("FT"[v] for v in values) [text='a and (b and c or d)', values=(True, False, True, False)] => TFTF
+result [text='a and (b and c or d)', values=(True, False, True, False)] => d
+[names[n].calls for n in "abcd"] [text='a and (b and c or d)', values=(True, False, True, False)] => [1, 1, 0, 0]
+text [text='a and (b and c or d)', values=(True, False, True, True)] => a and (b and c or d)
+"".join("FT"[v] for v in values) [text='a and (b and c or d)', values=(True, False, True, True)] => TFTT
+result [text='a and (b and c or d)', values=(True, False, True, True)] => d
+[names[n].calls for n in "abcd"] [text='a and (b and c or d)', values=(True, False, True, True)] => [1, 1, 0, 0]
+text [text='a and (b and c or d)', values=(True, True, False, False)] => a and (b and c or d)
+"".join("FT"[v] for v in values) [text='a and (b and c or d)', values=(True, True, False, False)] => TTFF
+result [text='a and (b and c or d)', values=(True, True, False, False)] => d
+[names[n].calls for n in "abcd"] [text='a and (b and c or d)', values=(True, True, False, False)] => [1, 1, 1, 0]
+text [text='a and (b and c or d)', values=(True, True, False, True)] => a and (b and c or d)
+"".join("FT"[v] for v in values) [text='a and (b and c or d)', values=(True, True, False, True)] => TTFT
+result [text='a and (b and c or d)', values=(True, True, False, True)] => d
+[names[n].calls for n in "abcd"] [text='a and (b and c or d)', values=(True, True, False, True)] => [1, 1, 1, 0]
+text [text='a and (b and c or d)', values=(True, True, True, False)] => a and (b and c or d)
+"".join("FT"[v] for v in values) [text='a and (b and c or d)', values=(True, True, True, False)] => TTTF
+result [text='a and (b and c or d)', values=(True, True, True, False)] => c
+[names[n].calls for n in "abcd"] [text='a and (b and c or d)', values=(True, True, True, False)] => [1, 1, 1, 0]
+text [text='a and (b and c or d)', values=(True, True, True, True)] => a and (b and c or d)
+"".join("FT"[v] for v in values) [text='a and (b and c or d)', values=(True, True, True, True)] => TTTT
+result [text='a and (b and c or d)', values=(True, True, True, True)] => c
+[names[n].calls for n in "abcd"] [text='a and (b and c or d)', values=(True, True, True, True)] => [1, 1, 1, 0]
+text [text='(a if b else c) or d', values=(False, False, False, False)] => (a if b else c) or d
+"".join("FT"[v] for v in values) [text='(a if b else c) or d', values=(False, False, False, False)] => FFFF
+result [text='(a if b else c) or d', values=(False, False, False, False)] => d
+[names[n].calls for n in "abcd"] [text='(a if b else c) or d', values=(False, False, False, False)] => [0, 1, 1, 0]
+text [text='(a if b else c) or d', values=(False, False, False, True)] => (a if b else c) or d
+"".join("FT"[v] for v in values) [text='(a if b else c) or d', values=(False, False, False, True)] => FFFT
+result [text='(a if b else c) or d', values=(False, False, False, True)] => d
+[names[n].calls for n in "abcd"] [text='(a if b else c) or d', values=(False, False, False, True)] => [0, 1, 1, 0]
+text [text='(a if b else c) or d', values=(False, False, True, False)] => (a if b else c) or d
+"".join("FT"[v] for v in values) [text='(a if b else c) or d', values=(False, False, True, False)] => FFTF
+result [text='(a if b else c) or d', values=(False, False, True, False)] => c
+[names[n].calls for n in "abcd"] [text='(a if b else c) or d', values=(False, False, True, False)] => [0, 1, 1, 0]
+text [text='(a if b else c) or d', values=(False, False, True, True)] => (a if b else c) or d
+"".join("FT"[v] for v in values) [text='(a if b else c) or d', values=(False, False, True, True)] => FFTT
+result [text='(a if b else c) or d', values=(False, False, True, True)] => c
+[names[n].calls for n in "abcd"] [text='(a if b else c) or d', values=(False, False, True, True)] => [0, 1, 1, 0]
+text [text='(a if b else c) or d', values=(False, True, False, False)] => (a if b else c) or d
+"".join("FT"[v] for v in values) [text='(a if b else c) or d', values=(False, True, False, False)] => FTFF
+result [text='(a if b else c) or d', values=(False, True, False, False)] => d
+[names[n].calls for n in "abcd"] [text='(a if b else c) or d', values=(False, True, False, False)] => [1, 1, 0, 0]
+text [text='(a if b else c) or d', values=(False, True, False, True)] => (a if b else c) or d
+"".join("FT"[v] for v in values) [text='(a if b else c) or d', values=(False, True, False, True)] => FTFT
+result [text='(a if b else c) or d', values=(False, True, False, True)] => d
+[names[n].calls for n in "abcd"] [text='(a if b else c) or d', values=(False, True, False, True)] => [1, 1, 0, 0]
+text [text='(a if b else c) or d', values=(False, True, True, False)] => (a if b else c) or d
+"".join("FT"[v] for v in values) [text='(a if b else c) or d', values=(False, True, True, False)] => FTTF
+result [text='(a if b else c) or d', values=(False, True, True, False)] => d
+[names[n].calls for n in "abcd"] [text='(a if b else c) or d', values=(False, True, True, False)] => [1, 1, 0, 0]
+text [text='(a if b else c) or d', values=(False, True, True, True)] => (a if b else c) or d
+"".join("FT"[v] for v in values) [text='(a if b else c) or d', values=(False, True, True, True)] => FTTT
+result [text='(a if b else c) or d', values=(False, True, True, True)] => d
+[names[n].calls for n in "abcd"] [text='(a if b else c) or d', values=(False, True, True, True)] => [1, 1, 0, 0]
+text [text='(a if b else c) or d', values=(True, False, False, False)] => (a if b else c) or d
+"".join("FT"[v] for v in values) [text='(a if b else c) or d', values=(True, False, False, False)] => TFFF
+result [text='(a if b else c) or d', values=(True, False, False, False)] => d
+[names[n].calls for n in "abcd"] [text='(a if b else c) or d', values=(True, False, False, False)] => [0, 1, 1, 0]
+text [text='(a if b else c) or d', values=(True, False, False, True)] => (a if b else c) or d
+"".join("FT"[v] for v in values) [text='(a if b else c) or d', values=(True, False, False, True)] => TFFT
+result [text='(a if b else c) or d', values=(True, False, False, True)] => d
+[names[n].calls for n in "abcd"] [text='(a if b else c) or d', values=(True, False, False, True)] => [0, 1, 1, 0]
+text [text='(a if b else c) or d', values=(True, False, True, False)] => (a if b else c) or d
+"".join("FT"[v] for v in values) [text='(a if b else c) or d', values=(True, False, True, False)] => TFTF
+result [text='(a if b else c) or d', values=(True, False, True, False)] => c
+[names[n].calls for n in "abcd"] [text='(a if b else c) or d', values=(True, False, True, False)] => [0, 1, 1, 0]
+text [text='(a if b else c) or d', values=(True, False, True, True)] => (a if b else c) or d
+"".join("FT"[v] for v in values) [text='(a if b else c) or d', values=(True, False, True, True)] => TFTT
+result [text='(a if b else c) or d', values=(True, False, True, True)] => c
+[names[n].calls for n in "abcd"] [text='(a if b else c) or d', values=(True, False, True, True)] => [0, 1, 1, 0]
+text [text='(a if b else c) or d', values=(True, True, False, False)] => (a if b else c) or d
+"".join("FT"[v] for v in values) [text='(a if b else c) or d', values=(True, True, False, False)] => TTFF
+result [text='(a if b else c) or d', values=(True, True, False, False)] => a
+[names[n].calls for n in "abcd"] [text='(a if b else c) or d', values=(True, True, False, False)] => [1, 1, 0, 0]
+text [text='(a if b else c) or d', values=(True, True, False, True)] => (a if b else c) or d
+"".join("FT"[v] for v in values) [text='(a if b else c) or d', values=(True, True, False, True)] => TTFT
+result [text='(a if b else c) or d', values=(True, True, False, True)] => a
+[names[n].calls for n in "abcd"] [text='(a if b else c) or d', values=(True, True, False, True)] => [1, 1, 0, 0]
+text [text='(a if b else c) or d', values=(True, True, True, False)] => (a if b else c) or d
+"".join("FT"[v] for v in values) [text='(a if b else c) or d', values=(True, True, True, False)] => TTTF
+result [text='(a if b else c) or d', values=(True, True, True, False)] => a
+[names[n].calls for n in "abcd"] [text='(a if b else c) or d', values=(True, True, True, False)] => [1, 1, 0, 0]
+text [text='(a if b else c) or d', values=(True, True, True, True)] => (a if b else c) or d
+"".join("FT"[v] for v in values) [text='(a if b else c) or d', values=(True, True, True, True)] => TTTT
+result [text='(a if b else c) or d', values=(True, True, True, True)] => a
+[names[n].calls for n in "abcd"] [text='(a if b else c) or d', values=(True, True, True, True)] => [1, 1, 0, 0]
+text [text='a or (b if c else d)', values=(False, False, False, False)] => a or (b if c else d)
+"".join("FT"[v] for v in values) [text='a or (b if c else d)', values=(False, False, False, False)] => FFFF
+result [text='a or (b if c else d)', values=(False, False, False, False)] => d
+[names[n].calls for n in "abcd"] [text='a or (b if c else d)', values=(False, False, False, False)] => [1, 0, 1, 0]
+text [text='a or (b if c else d)', values=(False, False, False, True)] => a or (b if c else d)
+"".join("FT"[v] for v in values) [text='a or (b if c else d)', values=(False, False, False, True)] => FFFT
+result [text='a or (b if c else d)', values=(False, False, False, True)] => d
+[names[n].calls for n in "abcd"] [text='a or (b if c else d)', values=(False, False, False, True)] => [1, 0, 1, 0]
+text [text='a or (b if c else d)', values=(False, False, True, False)] => a or (b if c else d)
+"".join("FT"[v] for v in values) [text='a or (b if c else d)', values=(False, False, True, False)] => FFTF
+result [text='a or (b if c else d)', values=(False, False, True, False)] => b
+[names[n].calls for n in "abcd"] [text='a or (b if c else d)', values=(False, False, True, False)] => [1, 0, 1, 0]
+text [text='a or (b if c else d)', values=(False, False, True, True)] => a or (b if c else d)
+"".join("FT"[v] for v in values) [text='a or (b if c else d)', values=(False, False, True, True)] => FFTT
+result [text='a or (b if c else d)', values=(False, False, True, True)] => b
+[names[n].calls for n in "abcd"] [text='a or (b if c else d)', values=(False, False, True, True)] => [1, 0, 1, 0]
+text [text='a or (b if c else d)', values=(False, True, False, False)] => a or (b if c else d)
+"".join("FT"[v] for v in values) [text='a or (b if c else d)', values=(False, True, False, False)] => FTFF
+result [text='a or (b if c else d)', values=(False, True, False, False)] => d
+[names[n].calls for n in "abcd"] [text='a or (b if c else d)', values=(False, True, False, False)] => [1, 0, 1, 0]
+text [text='a or (b if c else d)', values=(False, True, False, True)] => a or (b if c else d)
+"".join("FT"[v] for v in values) [text='a or (b if c else d)', values=(False, True, False, True)] => FTFT
+result [text='a or (b if c else d)', values=(False, True, False, True)] => d
+[names[n].calls for n in "abcd"] [text='a or (b if c else d)', values=(False, True, False, True)] => [1, 0, 1, 0]
+text [text='a or (b if c else d)', values=(False, True, True, False)] => a or (b if c else d)
+"".join("FT"[v] for v in values) [text='a or (b if c else d)', values=(False, True, True, False)] => FTTF
+result [text='a or (b if c else d)', values=(False, True, True, False)] => b
+[names[n].calls for n in "abcd"] [text='a or (b if c else d)', values=(False, True, True, False)] => [1, 0, 1, 0]
+text [text='a or (b if c else d)', values=(False, True, True, True)] => a or (b if c else d)
+"".join("FT"[v] for v in values) [text='a or (b if c else d)', values=(False, True, True, True)] => FTTT
+result [text='a or (b if c else d)', values=(False, True, True, True)] => b
+[names[n].calls for n in "abcd"] [text='a or (b if c else d)', values=(False, True, True, True)] => [1, 0, 1, 0]
+text [text='a or (b if c else d)', values=(True, False, False, False)] => a or (b if c else d)
+"".join("FT"[v] for v in values) [text='a or (b if c else d)', values=(True, False, False, False)] => TFFF
+result [text='a or (b if c else d)', values=(True, False, False, False)] => a
+[names[n].calls for n in "abcd"] [text='a or (b if c else d)', values=(True, False, False, False)] => [1, 0, 0, 0]
+text [text='a or (b if c else d)', values=(True, False, False, True)] => a or (b if c else d)
+"".join("FT"[v] for v in values) [text='a or (b if c else d)', values=(True, False, False, True)] => TFFT
+result [text='a or (b if c else d)', values=(True, False, False, True)] => a
+[names[n].calls for n in "abcd"] [text='a or (b if c else d)', values=(True, False, False, True)] => [1, 0, 0, 0]
+text [text='a or (b if c else d)', values=(True, False, True, False)] => a or (b if c else d)
+"".join("FT"[v] for v in values) [text='a or (b if c else d)', values=(True, False, True, False)] => TFTF
+result [text='a or (b if c else d)', values=(True, False, True, False)] => a
+[names[n].calls for n in "abcd"] [text='a or (b if c else d)', values=(True, False, True, False)] => [1, 0, 0, 0]
+text [text='a or (b if c else d)', values=(True, False, True, True)] => a or (b if c else d)
+"".join("FT"[v] for v in values) [text='a or (b if c else d)', values=(True, False, True, True)] => TFTT
+result [text='a or (b if c else d)', values=(True, False, True, True)] => a
+[names[n].calls for n in "abcd"] [text='a or (b if c else d)', values=(True, False, True, True)] => [1, 0, 0, 0]
+text [text='a or (b if c else d)', values=(True, True, False, False)] => a or (b if c else d)
+"".join("FT"[v] for v in values) [text='a or (b if c else d)', values=(True, True, False, False)] => TTFF
+result [text='a or (b if c else d)', values=(True, True, False, False)] => a
+[names[n].calls for n in "abcd"] [text='a or (b if c else d)', values=(True, True, False, False)] => [1, 0, 0, 0]
+text [text='a or (b if c else d)', values=(True, True, False, True)] => a or (b if c else d)
+"".join("FT"[v] for v in values) [text='a or (b if c else d)', values=(True, True, False, True)] => TTFT
+result [text='a or (b if c else d)', values=(True, True, False, True)] => a
+[names[n].calls for n in "abcd"] [text='a or (b if c else d)', values=(True, True, False, True)] => [1, 0, 0, 0]
+text [text='a or (b if c else d)', values=(True, True, True, False)] => a or (b if c else d)
+"".join("FT"[v] for v in values) [text='a or (b if c else d)', values=(True, True, True, False)] => TTTF
+result [text='a or (b if c else d)', values=(True, True, True, False)] => a
+[names[n].calls for n in "abcd"] [text='a or (b if c else d)', values=(True, True, True, False)] => [1, 0, 0, 0]
+text [text='a or (b if c else d)', values=(True, True, True, True)] => a or (b if c else d)
+"".join("FT"[v] for v in values) [text='a or (b if c else d)', values=(True, True, True, True)] => TTTT
+result [text='a or (b if c else d)', values=(True, True, True, True)] => a
+[names[n].calls for n in "abcd"] [text='a or (b if c else d)', values=(True, True, True, True)] => [1, 0, 0, 0]
+text [text='[a and b or c][0] or d', values=(False, False, False, False)] => [a and b or c][0] or d
+"".join("FT"[v] for v in values) [text='[a and b or c][0] or d', values=(False, False, False, False)] => FFFF
+result [text='[a and b or c][0] or d', values=(False, False, False, False)] => d
+[names[n].calls for n in "abcd"] [text='[a and b or c][0] or d', values=(False, False, False, False)] => [1, 0, 1, 0]
+text [text='[a and b or c][0] or d', values=(False, False, False, True)] => [a and b or c][0] or d
+"".join("FT"[v] for v in values) [text='[a and b or c][0] or d', values=(False, False, False, True)] => FFFT
+result [text='[a and b or c][0] or d', values=(False, False, False, True)] => d
+[names[n].calls for n in "abcd"] [text='[a and b or c][0] or d', values=(False, False, False, True)] => [1, 0, 1, 0]
+text [text='[a and b or c][0] or d', values=(False, False, True, False)] => [a and b or c][0] or d
+"".join("FT"[v] for v in values) [text='[a and b or c][0] or d', values=(False, False, True, False)] => FFTF
+result [text='[a and b or c][0] or d', values=(False, False, True, False)] => c
+[names[n].calls for n in "abcd"] [text='[a and b or c][0] or d', values=(False, False, True, False)] => [1, 0, 1, 0]
+text [text='[a and b or c][0] or d', values=(False, False, True, True)] => [a and b or c][0] or d
+"".join("FT"[v] for v in values) [text='[a and b or c][0] or d', values=(False, False, True, True)] => FFTT
+result [text='[a and b or c][0] or d', values=(False, False, True, True)] => c
+[names[n].calls for n in "abcd"] [text='[a and b or c][0] or d', values=(False, False, True, True)] => [1, 0, 1, 0]
+text [text='[a and b or c][0] or d', values=(False, True, False, False)] => [a and b or c][0] or d
+"".join("FT"[v] for v in values) [text='[a and b or c][0] or d', values=(False, True, False, False)] => FTFF
+result [text='[a and b or c][0] or d', values=(False, True, False, False)] => d
+[names[n].calls for n in "abcd"] [text='[a and b or c][0] or d', values=(False, True, False, False)] => [1, 0, 1, 0]
+text [text='[a and b or c][0] or d', values=(False, True, False, True)] => [a and b or c][0] or d
+"".join("FT"[v] for v in values) [text='[a and b or c][0] or d', values=(False, True, False, True)] => FTFT
+result [text='[a and b or c][0] or d', values=(False, True, False, True)] => d
+[names[n].calls for n in "abcd"] [text='[a and b or c][0] or d', values=(False, True, False, True)] => [1, 0, 1, 0]
+text [text='[a and b or c][0] or d', values=(False, True, True, False)] => [a and b or c][0] or d
+"".join("FT"[v] for v in values) [text='[a and b or c][0] or d', values=(False, True, True, False)] => FTTF
+result [text='[a and b or c][0] or d', values=(False, True, True, False)] => c
+[names[n].calls for n in "abcd"] [text='[a and b or c][0] or d', values=(False, True, True, False)] => [1, 0, 1, 0]
+text [text='[a and b or c][0] or d', values=(False, True, True, True)] => [a and b or c][0] or d
+"".join("FT"[v] for v in values) [text='[a and b or c][0] or d', values=(False, True, True, True)] => FTTT
+result [text='[a and b or c][0] or d', values=(False, True, True, True)] => c
+[names[n].calls for n in "abcd"] [text='[a and b or c][0] or d', values=(False, True, True, True)] => [1, 0, 1, 0]
+text [text='[a and b or c][0] or d', values=(True, False, False, False)] => [a and b or c][0] or d
+"".join("FT"[v] for v in values) [text='[a and b or c][0] or d', values=(True, False, False, False)] => TFFF
+result [text='[a and b or c][0] or d', values=(True, False, False, False)] => d
+[names[n].calls for n in "abcd"] [text='[a and b or c][0] or d', values=(True, False, False, False)] => [1, 1, 1, 0]
+text [text='[a and b or c][0] or d', values=(True, False, False, True)] => [a and b or c][0] or d
+"".join("FT"[v] for v in values) [text='[a and b or c][0] or d', values=(True, False, False, True)] => TFFT
+result [text='[a and b or c][0] or d', values=(True, False, False, True)] => d
+[names[n].calls for n in "abcd"] [text='[a and b or c][0] or d', values=(True, False, False, True)] => [1, 1, 1, 0]
+text [text='[a and b or c][0] or d', values=(True, False, True, False)] => [a and b or c][0] or d
+"".join("FT"[v] for v in values) [text='[a and b or c][0] or d', values=(True, False, True, False)] => TFTF
+result [text='[a and b or c][0] or d', values=(True, False, True, False)] => c
+[names[n].calls for n in "abcd"] [text='[a and b or c][0] or d', values=(True, False, True, False)] => [1, 1, 1, 0]
+text [text='[a and b or c][0] or d', values=(True, False, True, True)] => [a and b or c][0] or d
+"".join("FT"[v] for v in values) [text='[a and b or c][0] or d', values=(True, False, True, True)] => TFTT
+result [text='[a and b or c][0] or d', values=(True, False, True, True)] => c
+[names[n].calls for n in "abcd"] [text='[a and b or c][0] or d', values=(True, False, True, True)] => [1, 1, 1, 0]
+text [text='[a and b or c][0] or d', values=(True, True, False, False)] => [a and b or c][0] or d
+"".join("FT"[v] for v in values) [text='[a and b or c][0] or d', values=(True, True, False, False)] => TTFF
+result [text='[a and b or c][0] or d', values=(True, True, False, False)] => b
+[names[n].calls for n in "abcd"] [text='[a and b or c][0] or d', values=(True, True, False, False)] => [1, 2, 0, 0]
+text [text='[a and b or c][0] or d', values=(True, True, False, True)] => [a and b or c][0] or d
+"".join("FT"[v] for v in values) [text='[a and b or c][0] or d', values=(True, True, False, True)] => TTFT
+result [text='[a and b or c][0] or d', values=(True, True, False, True)] => b
+[names[n].calls for n in "abcd"] [text='[a and b or c][0] or d', values=(True, True, False, True)] => [1, 2, 0, 0]
+text [text='[a and b or c][0] or d', values=(True, True, True, False)] => [a and b or c][0] or d
+"".join("FT"[v] for v in values) [text='[a and b or c][0] or d', values=(True, True, True, False)] => TTTF
+result [text='[a and b or c][0] or d', values=(True, True, True, False)] => b
+[names[n].calls for n in "abcd"] [text='[a and b or c][0] or d', values=(True, True, True, False)] => [1, 2, 0, 0]
+text [text='[a and b or c][0] or d', values=(True, True, True, True)] => [a and b or c][0] or d
+"".join("FT"[v] for v in values) [text='[a and b or c][0] or d', values=(True, True, True, True)] => TTTT
+result [text='[a and b or c][0] or d', values=(True, True, True, True)] => b
+[names[n].calls for n in "abcd"] [text='[a and b or c][0] or d', values=(True, True, True, True)] => [1, 2, 0, 0]
+text [text='(a and b or c, d)[0]', values=(False, False, False, False)] => (a and b or c, d)[0]
+"".join("FT"[v] for v in values) [text='(a and b or c, d)[0]', values=(False, False, False, False)] => FFFF
+result [text='(a and b or c, d)[0]', values=(False, False, False, False)] => c
+[names[n].calls for n in "abcd"] [text='(a and b or c, d)[0]', values=(False, False, False, False)] => [1, 0, 0, 0]
+text [text='(a and b or c, d)[0]', values=(False, False, False, True)] => (a and b or c, d)[0]
+"".join("FT"[v] for v in values) [text='(a and b or c, d)[0]', values=(False, False, False, True)] => FFFT
+result [text='(a and b or c, d)[0]', values=(False, False, False, True)] => c
+[names[n].calls for n in "abcd"] [text='(a and b or c, d)[0]', values=(False, False, False, True)] => [1, 0, 0, 0]
+text [text='(a and b or c, d)[0]', values=(False, False, True, False)] => (a and b or c, d)[0]
+"".join("FT"[v] for v in values) [text='(a and b or c, d)[0]', values=(False, False, True, False)] => FFTF
+result [text='(a and b or c, d)[0]', values=(False, False, True, False)] => c
+[names[n].calls for n in "abcd"] [text='(a and b or c, d)[0]', values=(False, False, True, False)] => [1, 0, 0, 0]
+text [text='(a and b or c, d)[0]', values=(False, False, True, True)] => (a and b or c, d)[0]
+"".join("FT"[v] for v in values) [text='(a and b or c, d)[0]', values=(False, False, True, True)] => FFTT
+result [text='(a and b or c, d)[0]', values=(False, False, True, True)] => c
+[names[n].calls for n in "abcd"] [text='(a and b or c, d)[0]', values=(False, False, True, True)] => [1, 0, 0, 0]
+text [text='(a and b or c, d)[0]', values=(False, True, False, False)] => (a and b or c, d)[0]
+"".join("FT"[v] for v in values) [text='(a and b or c, d)[0]', values=(False, True, False, False)] => FTFF
+result [text='(a and b or c, d)[0]', values=(False, True, False, False)] => c
+[names[n].calls for n in "abcd"] [text='(a and b or c, d)[0]', values=(False, True, False, False)] => [1, 0, 0, 0]
+text [text='(a and b or c, d)[0]', values=(False, True, False, True)] => (a and b or c, d)[0]
+"".join("FT"[v] for v in values) [text='(a and b or c, d)[0]', values=(False, True, False, True)] => FTFT
+result [text='(a and b or c, d)[0]', values=(False, True, False, True)] => c
+[names[n].calls for n in "abcd"] [text='(a and b or c, d)[0]', values=(False, True, False, True)] => [1, 0, 0, 0]
+text [text='(a and b or c, d)[0]', values=(False, True, True, False)] => (a and b or c, d)[0]
+"".join("FT"[v] for v in values) [text='(a and b or c, d)[0]', values=(False, True, True, False)] => FTTF
+result [text='(a and b or c, d)[0]', values=(False, True, True, False)] => c
+[names[n].calls for n in "abcd"] [text='(a and b or c, d)[0]', values=(False, True, True, False)] => [1, 0, 0, 0]
+text [text='(a and b or c, d)[0]', values=(False, True, True, True)] => (a and b or c, d)[0]
+"".join("FT"[v] for v in values) [text='(a and b or c, d)[0]', values=(False, True, True, True)] => FTTT
+result [text='(a and b or c, d)[0]', values=(False, True, True, True)] => c
+[names[n].calls for n in "abcd"] [text='(a and b or c, d)[0]', values=(False, True, True, True)] => [1, 0, 0, 0]
+text [text='(a and b or c, d)[0]', values=(True, False, False, False)] => (a and b or c, d)[0]
+"".join("FT"[v] for v in values) [text='(a and b or c, d)[0]', values=(True, False, False, False)] => TFFF
+result [text='(a and b or c, d)[0]', values=(True, False, False, False)] => c
+[names[n].calls for n in "abcd"] [text='(a and b or c, d)[0]', values=(True, False, False, False)] => [1, 1, 0, 0]
+text [text='(a and b or c, d)[0]', values=(True, False, False, True)] => (a and b or c, d)[0]
+"".join("FT"[v] for v in values) [text='(a and b or c, d)[0]', values=(True, False, False, True)] => TFFT
+result [text='(a and b or c, d)[0]', values=(True, False, False, True)] => c
+[names[n].calls for n in "abcd"] [text='(a and b or c, d)[0]', values=(True, False, False, True)] => [1, 1, 0, 0]
+text [text='(a and b or c, d)[0]', values=(True, False, True, False)] => (a and b or c, d)[0]
+"".join("FT"[v] for v in values) [text='(a and b or c, d)[0]', values=(True, False, True, False)] => TFTF
+result [text='(a and b or c, d)[0]', values=(True, False, True, False)] => c
+[names[n].calls for n in "abcd"] [text='(a and b or c, d)[0]', values=(True, False, True, False)] => [1, 1, 0, 0]
+text [text='(a and b or c, d)[0]', values=(True, False, True, True)] => (a and b or c, d)[0]
+"".join("FT"[v] for v in values) [text='(a and b or c, d)[0]', values=(True, False, True, True)] => TFTT
+result [text='(a and b or c, d)[0]', values=(True, False, True, True)] => c
+[names[n].calls for n in "abcd"] [text='(a and b or c, d)[0]', values=(True, False, True, True)] => [1, 1, 0, 0]
+text [text='(a and b or c, d)[0]', values=(True, True, False, False)] => (a and b or c, d)[0]
+"".join("FT"[v] for v in values) [text='(a and b or c, d)[0]', values=(True, True, False, False)] => TTFF
+result [text='(a and b or c, d)[0]', values=(True, True, False, False)] => b
+[names[n].calls for n in "abcd"] [text='(a and b or c, d)[0]', values=(True, True, False, False)] => [1, 1, 0, 0]
+text [text='(a and b or c, d)[0]', values=(True, True, False, True)] => (a and b or c, d)[0]
+"".join("FT"[v] for v in values) [text='(a and b or c, d)[0]', values=(True, True, False, True)] => TTFT
+result [text='(a and b or c, d)[0]', values=(True, True, False, True)] => b
+[names[n].calls for n in "abcd"] [text='(a and b or c, d)[0]', values=(True, True, False, True)] => [1, 1, 0, 0]
+text [text='(a and b or c, d)[0]', values=(True, True, True, False)] => (a and b or c, d)[0]
+"".join("FT"[v] for v in values) [text='(a and b or c, d)[0]', values=(True, True, True, False)] => TTTF
+result [text='(a and b or c, d)[0]', values=(True, True, True, False)] => b
+[names[n].calls for n in "abcd"] [text='(a and b or c, d)[0]', values=(True, True, True, False)] => [1, 1, 0, 0]
+text [text='(a and b or c, d)[0]', values=(True, True, True, True)] => (a and b or c, d)[0]
+"".join("FT"[v] for v in values) [text='(a and b or c, d)[0]', values=(True, True, True, True)] => TTTT
+result [text='(a and b or c, d)[0]', values=(True, True, True, True)] => b
+[names[n].calls for n in "abcd"] [text='(a and b or c, d)[0]', values=(True, True, True, True)] => [1, 1, 0, 0]
+text [text='x if (a and b or c) else d', values=(False, False, False, False)] => x if (a and b or c) else d
+"".join("FT"[v] for v in values) [text='x if (a and b or c) else d', values=(False, False, False, False)] => FFFF
+result [text='x if (a and b or c) else d', values=(False, False, False, False)] => d
+[names[n].calls for n in "abcd"] [text='x if (a and b or c) else d', values=(False, False, False, False)] => [1, 0, 1, 0]
+text [text='x if (a and b or c) else d', values=(False, False, False, True)] => x if (a and b or c) else d
+"".join("FT"[v] for v in values) [text='x if (a and b or c) else d', values=(False, False, False, True)] => FFFT
+result [text='x if (a and b or c) else d', values=(False, False, False, True)] => d
+[names[n].calls for n in "abcd"] [text='x if (a and b or c) else d', values=(False, False, False, True)] => [1, 0, 1, 0]
+text [text='x if (a and b or c) else d', values=(False, False, True, False)] => x if (a and b or c) else d
+"".join("FT"[v] for v in values) [text='x if (a and b or c) else d', values=(False, False, True, False)] => FFTF
+result [text='x if (a and b or c) else d', values=(False, False, True, False)] => x
+[names[n].calls for n in "abcd"] [text='x if (a and b or c) else d', values=(False, False, True, False)] => [1, 0, 1, 0]
+text [text='x if (a and b or c) else d', values=(False, False, True, True)] => x if (a and b or c) else d
+"".join("FT"[v] for v in values) [text='x if (a and b or c) else d', values=(False, False, True, True)] => FFTT
+result [text='x if (a and b or c) else d', values=(False, False, True, True)] => x
+[names[n].calls for n in "abcd"] [text='x if (a and b or c) else d', values=(False, False, True, True)] => [1, 0, 1, 0]
+text [text='x if (a and b or c) else d', values=(False, True, False, False)] => x if (a and b or c) else d
+"".join("FT"[v] for v in values) [text='x if (a and b or c) else d', values=(False, True, False, False)] => FTFF
+result [text='x if (a and b or c) else d', values=(False, True, False, False)] => d
+[names[n].calls for n in "abcd"] [text='x if (a and b or c) else d', values=(False, True, False, False)] => [1, 0, 1, 0]
+text [text='x if (a and b or c) else d', values=(False, True, False, True)] => x if (a and b or c) else d
+"".join("FT"[v] for v in values) [text='x if (a and b or c) else d', values=(False, True, False, True)] => FTFT
+result [text='x if (a and b or c) else d', values=(False, True, False, True)] => d
+[names[n].calls for n in "abcd"] [text='x if (a and b or c) else d', values=(False, True, False, True)] => [1, 0, 1, 0]
+text [text='x if (a and b or c) else d', values=(False, True, True, False)] => x if (a and b or c) else d
+"".join("FT"[v] for v in values) [text='x if (a and b or c) else d', values=(False, True, True, False)] => FTTF
+result [text='x if (a and b or c) else d', values=(False, True, True, False)] => x
+[names[n].calls for n in "abcd"] [text='x if (a and b or c) else d', values=(False, True, True, False)] => [1, 0, 1, 0]
+text [text='x if (a and b or c) else d', values=(False, True, True, True)] => x if (a and b or c) else d
+"".join("FT"[v] for v in values) [text='x if (a and b or c) else d', values=(False, True, True, True)] => FTTT
+result [text='x if (a and b or c) else d', values=(False, True, True, True)] => x
+[names[n].calls for n in "abcd"] [text='x if (a and b or c) else d', values=(False, True, True, True)] => [1, 0, 1, 0]
+text [text='x if (a and b or c) else d', values=(True, False, False, False)] => x if (a and b or c) else d
+"".join("FT"[v] for v in values) [text='x if (a and b or c) else d', values=(True, False, False, False)] => TFFF
+result [text='x if (a and b or c) else d', values=(True, False, False, False)] => d
+[names[n].calls for n in "abcd"] [text='x if (a and b or c) else d', values=(True, False, False, False)] => [1, 1, 1, 0]
+text [text='x if (a and b or c) else d', values=(True, False, False, True)] => x if (a and b or c) else d
+"".join("FT"[v] for v in values) [text='x if (a and b or c) else d', values=(True, False, False, True)] => TFFT
+result [text='x if (a and b or c) else d', values=(True, False, False, True)] => d
+[names[n].calls for n in "abcd"] [text='x if (a and b or c) else d', values=(True, False, False, True)] => [1, 1, 1, 0]
+text [text='x if (a and b or c) else d', values=(True, False, True, False)] => x if (a and b or c) else d
+"".join("FT"[v] for v in values) [text='x if (a and b or c) else d', values=(True, False, True, False)] => TFTF
+result [text='x if (a and b or c) else d', values=(True, False, True, False)] => x
+[names[n].calls for n in "abcd"] [text='x if (a and b or c) else d', values=(True, False, True, False)] => [1, 1, 1, 0]
+text [text='x if (a and b or c) else d', values=(True, False, True, True)] => x if (a and b or c) else d
+"".join("FT"[v] for v in values) [text='x if (a and b or c) else d', values=(True, False, True, True)] => TFTT
+result [text='x if (a and b or c) else d', values=(True, False, True, True)] => x
+[names[n].calls for n in "abcd"] [text='x if (a and b or c) else d', values=(True, False, True, True)] => [1, 1, 1, 0]
+text [text='x if (a and b or c) else d', values=(True, True, False, False)] => x if (a and b or c) else d
+"".join("FT"[v] for v in values) [text='x if (a and b or c) else d', values=(True, True, False, False)] => TTFF
+result [text='x if (a and b or c) else d', values=(True, True, False, False)] => x
+[names[n].calls for n in "abcd"] [text='x if (a and b or c) else d', values=(True, True, False, False)] => [1, 1, 0, 0]
+text [text='x if (a and b or c) else d', values=(True, True, False, True)] => x if (a and b or c) else d
+"".join("FT"[v] for v in values) [text='x if (a and b or c) else d', values=(True, True, False, True)] => TTFT
+result [text='x if (a and b or c) else d', values=(True, True, False, True)] => x
+[names[n].calls for n in "abcd"] [text='x if (a and b or c) else d', values=(True, True, False, True)] => [1, 1, 0, 0]
+text [text='x if (a and b or c) else d', values=(True, True, True, False)] => x if (a and b or c) else d
+"".join("FT"[v] for v in values) [text='x if (a and b or c) else d', values=(True, True, True, False)] => TTTF
+result [text='x if (a and b or c) else d', values=(True, True, True, False)] => x
+[names[n].calls for n in "abcd"] [text='x if (a and b or c) else d', values=(True, True, True, False)] => [1, 1, 0, 0]
+text [text='x if (a and b or c) else d', values=(True, True, True, True)] => x if (a and b or c) else d
+"".join("FT"[v] for v in values) [text='x if (a and b or c) else d', values=(True, True, True, True)] => TTTT
+result [text='x if (a and b or c) else d', values=(True, True, True, True)] => x
+[names[n].calls for n in "abcd"] [text='x if (a and b or c) else d', values=(True, True, True, True)] => [1, 1, 0, 0]
+f(*vs) [values=(False, False, False)] => [[], 0]
+[v.calls for v in vs] [values=(False, False, False)] => [4, 2, 3]
+f(*vs) [values=(False, False, True)] => ['if', [], 1]
+[v.calls for v in vs] [values=(False, False, True)] => [5, 2, 4]
+f(*vs) [values=(False, True, False)] => [[], 0]
+[v.calls for v in vs] [values=(False, True, False)] => [4, 2, 3]
+f(*vs) [values=(False, True, True)] => ['if', [1], 1]
+[v.calls for v in vs] [values=(False, True, True)] => [5, 2, 4]
+f(*vs) [values=(True, False, False)] => [[], 0]
+[v.calls for v in vs] [values=(True, False, False)] => [4, 2, 3]
+f(*vs) [values=(True, False, True)] => ['if', [1], 1]
+[v.calls for v in vs] [values=(True, False, True)] => [5, 3, 4]
+f(*vs) [values=(True, True, False)] => ['if', [], 1]
+[v.calls for v in vs] [values=(True, True, False)] => [5, 3, 1]
+f(*vs) [values=(True, True, True)] => ['if', [1], 1]
+[v.calls for v in vs] [values=(True, True, True)] => [5, 3, 1]
+tb.tb_lineno - 1 > 0 => True
+e => no truth

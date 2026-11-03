@@ -1,0 +1,19 @@
+status: 0
+script: 0e662f6c4148a79f
+---
+slice __class_getitem__ 138 0ab8f5b6f417
+slice __eq__ 138 35f9d57e0458
+slice __format__ 137 a5b83d6c9ecf
+slice __ge__ 138 da74a3236b81
+slice __gt__ 138 0441e0b3f27a
+slice __hash__ 76 c64b76a3b803
+slice __init__ 919 e55cb75e13db
+slice __le__ 138 83cc02873b41
+slice __lt__ 138 a1a790a75eb0
+slice __ne__ 137 e67ae7cb30b9
+slice __repr__ 76 a9f8e8d29479
+slice __str__ 76 8bbac1befbfe
+slice indices 138 1cfd6c81405c
+slice start 4 ad8ba21a5abe
+slice step 4 9f56e2be9f0f
+slice stop 4 a12c9617963a

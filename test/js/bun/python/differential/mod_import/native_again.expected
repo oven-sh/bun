@@ -1,0 +1,63 @@
+status: 0
+script: ad49198d9d14a7fd
+---
+time False True module True time time False True True
+math False True module True math math False True True
+_json False True module True _json _json False True True
+_collections False True module True _collections _collections False True True
+_thread False True module True _thread _thread False True True
+_io False True module True _io _io False True True
+_functools False True module True _functools _functools False True True
+itertools False True module True itertools itertools False True True
+_struct False True module True _struct _struct False True True
+_operator False True module True _operator _operator False True True
+marshal False True module True marshal marshal False True True
+posix False True module True posix posix False True True
+errno False True module True errno errno False True True
+_signal False True module True _signal _signal False True True
+_weakref False True module True _weakref _weakref False True True
+_abc False True module True _abc _abc False True True
+_codecs False True module True _codecs _codecs False True True
+_sre False True module True _sre _sre False True True
+_stat False True module True _stat _stat False True True
+atexit False True module True atexit atexit False True True
+_string False True module True _string _string False True True
+_random False True module True _random _random False True True
+_datetime False True module True _datetime _datetime False True True
+_pickle False True module True _pickle _pickle False True True
+_socket False True module True _socket _socket False True True
+select False True module True select select False True True
+zlib False True module True zlib zlib False True True
+binascii False True module True binascii binascii False True True
+_heapq False True module True _heapq _heapq False True True
+_bisect False True module True _bisect _bisect False True True
+_contextvars False True module True _contextvars _contextvars False True True
+_asyncio False True module True _asyncio _asyncio False True True
+array False True module True array array False True True
+_csv False True module True _csv _csv False True True
+unicodedata False True module True unicodedata unicodedata False True True
+_warnings False True module True _warnings _warnings False True True
+gc False True module True gc gc False True True
+_imp False True module True _imp _imp False True True
+_locale False True module True _locale _locale False True True
+_opcode False True module True _opcode _opcode False True True
+3 True False True False 0.0 1.0
+False
+False True
+b'\x02\x01' b'\x02\x01' (7,)
+"a\n" "a\n"
+[1, 2] [1, 2] [0, 1, 2]
+utf-8 utf-8 b'x'
+True True True
+True True True
+True True True
+True
+XYZ -10800 False
+UTC 0
+False False _operator module 0 0 3 3
+True True False
+6
+True
+False False _operator function True
+registered with the old one
+registered with the new one

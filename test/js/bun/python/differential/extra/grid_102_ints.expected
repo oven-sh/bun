@@ -1,0 +1,64 @@
+status: 0
+script: a0b92b7c92117a0b
+---
+ints str 1 43fb5f5d934d
+ints repr int 1 8bf341dafe3f
+ints hash 1 b9b42bdb0a39
+ints float 1 66832c65f727
+ints int float 1 8919de972fb4
+ints bit_length 1 a38eac26050b
+ints bit_count 1 c0df90277c0d
+ints neg 1 875b24eafc2b
+ints abs 1 b510c9f1cfc0
+ints invert 1 c1bf26eb7206
+ints isqrt 1 9e3f2f8364d1
+ints hex 1 d77c58220b05
+ints oct 1 cb64d401d981
+ints bin 1 20763ff8f98d
+ints bool 1 cc2f7e7d44f1
+ints as_integer_ratio 1 ebc4bc8fd5c8
+ints sqrt 1 a005a9ff8de5
+ints log 1 f28ed58b18b0
+ints bytes 1 5d8fc59937ae
+ints pickle 1 5e04d4991a73
+ints struct 1 5e90a6c12c11
+ints array 1 62942db49827
+ints index 1 8190175e8032
+ints chr 1 795ff35771ec
+ints sum 1 f6ab17e82f8c
+ints json 1 eacf31e8daa2
+ints is_integer 1 045a26e52d23
+ints key 1 75533130e425
+ints sorted 1 1652a0290ce9
+ints cube 1 5e7599ae95c4
+ints square 1 5dadc2055d4e
+ints divide 1 24010710dba6
+ints shift 1 24c0f7c9e418
+ints decimal 1 381b2a7ccd3e
+ints + 102 0b16de96b1f3
+ints - 102 8505da2c6438
+ints * 102 ca4cbe5e23d1
+ints // 102 22eb80dbd35b
+ints % 102 93678fa2f869
+ints / 102 f1effe28ac21
+ints divmod 102 9e857299f0b2
+ints & 102 f7766c2f68d9
+ints | 102 4adb1ff53bff
+ints ^ 102 b4bcf0d4c612
+ints < 102 cd0b0761a27e
+ints == 102 a8c901feb512
+ints >> 102 e60378efd1ca
+ints << 102 0e55d41dfda6
+ints ** 102 7909908c6c70
+ints pow3 102 d4d7f3f818af
+ints inverse 102 e6a328e7c06c
+ints gcd 102 dea1b09a0725
+ints lcm 102 953d6ea42e14
+ints float op 102 30e09faf2a99
+ints round 102 a2da80df171a
+ints to_bytes 102 26e4481833a5
+ints range 102 bae86dd5beb7
+ints in-place 102 e4481aa644b9
+ints complex 102 956f38fbb496
+ints Fraction 102 069d60c00ce0
+ints format 102 31279ed1b92a

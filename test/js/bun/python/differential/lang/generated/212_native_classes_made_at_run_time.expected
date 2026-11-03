@@ -1,0 +1,439 @@
+status: 0
+script: 26bb40f1c59fab23
+source: 91c50504036ebb78
+---
+t.__module__ [t=error] => struct
+t.__qualname__ [t=error] => error
+sorted(k for k in vars(t) if k in ('__weakref__', '__module__', '__di... [t=error] => ['__doc__', '__module__', '__weakref__']
+mutable [t=error] => True
+weak [t=error] => True
+t.__weakrefoffset__ != 0 [t=error] => True
+bool(t.__flags__ & (1 << 9)) [t=error] => True
+t.__base__.__name__ [t=error] => Exception
+t.__module__ [t=Error] => binascii
+t.__qualname__ [t=Error] => Error
+sorted(k for k in vars(t) if k in ('__weakref__', '__module__', '__di... [t=Error] => ['__doc__', '__module__', '__weakref__']
+mutable [t=Error] => True
+weak [t=Error] => True
+t.__weakrefoffset__ != 0 [t=Error] => True
+bool(t.__flags__ & (1 << 9)) [t=Error] => True
+t.__base__.__name__ [t=Error] => ValueError
+t.__module__ [t=Incomplete] => binascii
+t.__qualname__ [t=Incomplete] => Incomplete
+sorted(k for k in vars(t) if k in ('__weakref__', '__module__', '__di... [t=Incomplete] => ['__doc__', '__module__', '__weakref__']
+mutable [t=Incomplete] => True
+weak [t=Incomplete] => True
+t.__weakrefoffset__ != 0 [t=Incomplete] => True
+bool(t.__flags__ & (1 << 9)) [t=Incomplete] => True
+t.__base__.__name__ [t=Incomplete] => Exception
+t.__module__ [t=Error] => _csv
+t.__qualname__ [t=Error] => Error
+sorted(k for k in vars(t) if k in ('__weakref__', '__module__', '__di... [t=Error] => ['__doc__', '__module__']
+mutable [t=Error] => True
+weak [t=Error] => False
+t.__weakrefoffset__ != 0 [t=Error] => False
+bool(t.__flags__ & (1 << 9)) [t=Error] => True
+t.__base__.__name__ [t=Error] => Exception
+t.__module__ [t=PickleError] => _pickle
+t.__qualname__ [t=PickleError] => PickleError
+sorted(k for k in vars(t) if k in ('__weakref__', '__module__', '__di... [t=PickleError] => ['__doc__', '__module__', '__weakref__']
+mutable [t=PickleError] => True
+weak [t=PickleError] => True
+t.__weakrefoffset__ != 0 [t=PickleError] => True
+bool(t.__flags__ & (1 << 9)) [t=PickleError] => True
+t.__base__.__name__ [t=PickleError] => Exception
+t.__module__ [t=PicklingError] => _pickle
+t.__qualname__ [t=PicklingError] => PicklingError
+sorted(k for k in vars(t) if k in ('__weakref__', '__module__', '__di... [t=PicklingError] => ['__doc__', '__module__']
+mutable [t=PicklingError] => True
+weak [t=PicklingError] => True
+t.__weakrefoffset__ != 0 [t=PicklingError] => True
+bool(t.__flags__ & (1 << 9)) [t=PicklingError] => True
+t.__base__.__name__ [t=PicklingError] => PickleError
+t.__module__ [t=UnpicklingError] => _pickle
+t.__qualname__ [t=UnpicklingError] => UnpicklingError
+sorted(k for k in vars(t) if k in ('__weakref__', '__module__', '__di... [t=UnpicklingError] => ['__doc__', '__module__']
+mutable [t=UnpicklingError] => True
+weak [t=UnpicklingError] => True
+t.__weakrefoffset__ != 0 [t=UnpicklingError] => True
+bool(t.__flags__ & (1 << 9)) [t=UnpicklingError] => True
+t.__base__.__name__ [t=UnpicklingError] => PickleError
+t.__module__ [t=Empty] => _queue
+t.__qualname__ [t=Empty] => Empty
+sorted(k for k in vars(t) if k in ('__weakref__', '__module__', '__di... [t=Empty] => ['__doc__', '__module__', '__weakref__']
+mutable [t=Empty] => True
+weak [t=Empty] => True
+t.__weakrefoffset__ != 0 [t=Empty] => True
+bool(t.__flags__ & (1 << 9)) [t=Empty] => True
+t.__base__.__name__ [t=Empty] => Exception
+t.__module__ [t=ItimerError] => signal
+t.__qualname__ [t=ItimerError] => ItimerError
+sorted(k for k in vars(t) if k in ('__weakref__', '__module__', '__di... [t=ItimerError] => ['__doc__', '__module__', '__weakref__']
+mutable [t=ItimerError] => True
+weak [t=ItimerError] => True
+t.__weakrefoffset__ != 0 [t=ItimerError] => True
+bool(t.__flags__ & (1 << 9)) [t=ItimerError] => True
+t.__base__.__name__ [t=ItimerError] => OSError
+t.__module__ [t=herror] => socket
+t.__qualname__ [t=herror] => herror
+sorted(k for k in vars(t) if k in ('__weakref__', '__module__', '__di... [t=herror] => ['__doc__', '__module__', '__weakref__']
+mutable [t=herror] => True
+weak [t=herror] => True
+t.__weakrefoffset__ != 0 [t=herror] => True
+bool(t.__flags__ & (1 << 9)) [t=herror] => True
+t.__base__.__name__ [t=herror] => OSError
+t.__module__ [t=gaierror] => socket
+t.__qualname__ [t=gaierror] => gaierror
+sorted(k for k in vars(t) if k in ('__weakref__', '__module__', '__di... [t=gaierror] => ['__doc__', '__module__', '__weakref__']
+mutable [t=gaierror] => True
+weak [t=gaierror] => True
+t.__weakrefoffset__ != 0 [t=gaierror] => True
+bool(t.__flags__ & (1 << 9)) [t=gaierror] => True
+t.__base__.__name__ [t=gaierror] => OSError
+t.__module__ [t=error] => termios
+t.__qualname__ [t=error] => error
+sorted(k for k in vars(t) if k in ('__weakref__', '__module__', '__di... [t=error] => ['__doc__', '__module__', '__weakref__']
+mutable [t=error] => True
+weak [t=error] => True
+t.__weakrefoffset__ != 0 [t=error] => True
+bool(t.__flags__ & (1 << 9)) [t=error] => True
+t.__base__.__name__ [t=error] => Exception
+t.__module__ [t=error] => zlib
+t.__qualname__ [t=error] => error
+sorted(k for k in vars(t) if k in ('__weakref__', '__module__', '__di... [t=error] => ['__doc__', '__module__', '__weakref__']
+mutable [t=error] => True
+weak [t=error] => True
+t.__weakrefoffset__ != 0 [t=error] => True
+bool(t.__flags__ & (1 << 9)) [t=error] => True
+t.__base__.__name__ [t=error] => Exception
+t.__module__ [t=Error] => sqlite3
+t.__qualname__ [t=Error] => Error
+sorted(k for k in vars(t) if k in ('__weakref__', '__module__', '__di... [t=Error] => ['__doc__', '__module__', '__weakref__']
+mutable [t=Error] => True
+weak [t=Error] => True
+t.__weakrefoffset__ != 0 [t=Error] => True
+bool(t.__flags__ & (1 << 9)) [t=Error] => True
+t.__base__.__name__ [t=Error] => Exception
+t.__module__ [t=Warning] => sqlite3
+t.__qualname__ [t=Warning] => Warning
+sorted(k for k in vars(t) if k in ('__weakref__', '__module__', '__di... [t=Warning] => ['__doc__', '__module__', '__weakref__']
+mutable [t=Warning] => True
+weak [t=Warning] => True
+t.__weakrefoffset__ != 0 [t=Warning] => True
+bool(t.__flags__ & (1 << 9)) [t=Warning] => True
+t.__base__.__name__ [t=Warning] => Exception
+t.__module__ [t=DatabaseError] => sqlite3
+t.__qualname__ [t=DatabaseError] => DatabaseError
+sorted(k for k in vars(t) if k in ('__weakref__', '__module__', '__di... [t=DatabaseError] => ['__doc__', '__module__']
+mutable [t=DatabaseError] => True
+weak [t=DatabaseError] => True
+t.__weakrefoffset__ != 0 [t=DatabaseError] => True
+bool(t.__flags__ & (1 << 9)) [t=DatabaseError] => True
+t.__base__.__name__ [t=DatabaseError] => Error
+t.__module__ [t=IntegrityError] => sqlite3
+t.__qualname__ [t=IntegrityError] => IntegrityError
+sorted(k for k in vars(t) if k in ('__weakref__', '__module__', '__di... [t=IntegrityError] => ['__doc__', '__module__']
+mutable [t=IntegrityError] => True
+weak [t=IntegrityError] => True
+t.__weakrefoffset__ != 0 [t=IntegrityError] => True
+bool(t.__flags__ & (1 << 9)) [t=IntegrityError] => True
+t.__base__.__name__ [t=IntegrityError] => DatabaseError
+t.__module__ [t=UnsupportedDigestmodError] => _hashlib
+t.__qualname__ [t=UnsupportedDigestmodError] => UnsupportedDigestmodError
+sorted(k for k in vars(t) if k in ('__weakref__', '__module__', '__di... [t=UnsupportedDigestmodError] => ['__doc__', '__module__', '__weakref__']
+mutable [t=UnsupportedDigestmodError] => True
+weak [t=UnsupportedDigestmodError] => True
+t.__weakrefoffset__ != 0 [t=UnsupportedDigestmodError] => True
+bool(t.__flags__ & (1 << 9)) [t=UnsupportedDigestmodError] => True
+t.__base__.__name__ [t=UnsupportedDigestmodError] => ValueError
+t.__module__ [t=ExpatError] => xml.parsers.expat
+t.__qualname__ [t=ExpatError] => ExpatError
+sorted(k for k in vars(t) if k in ('__weakref__', '__module__', '__di... [t=ExpatError] => ['__doc__', '__module__', '__weakref__']
+mutable [t=ExpatError] => True
+weak [t=ExpatError] => True
+t.__weakrefoffset__ != 0 [t=ExpatError] => True
+bool(t.__flags__ & (1 << 9)) [t=ExpatError] => True
+t.__base__.__name__ [t=ExpatError] => Exception
+t.__module__ [t=ZstdError] => compression.zstd
+t.__qualname__ [t=ZstdError] => ZstdError
+sorted(k for k in vars(t) if k in ('__weakref__', '__module__', '__di... [t=ZstdError] => ['__doc__', '__module__', '__weakref__']
+mutable [t=ZstdError] => True
+weak [t=ZstdError] => True
+t.__weakrefoffset__ != 0 [t=ZstdError] => True
+bool(t.__flags__ & (1 << 9)) [t=ZstdError] => True
+t.__base__.__name__ [t=ZstdError] => Exception
+t.__module__ [t=ExceptionGroup] => builtins
+t.__qualname__ [t=ExceptionGroup] => ExceptionGroup
+sorted(k for k in vars(t) if k in ('__weakref__', '__module__', '__di... [t=ExceptionGroup] => ['__doc__', '__module__', '__weakref__']
+mutable [t=ExceptionGroup] => True
+weak [t=ExceptionGroup] => True
+t.__weakrefoffset__ != 0 [t=ExceptionGroup] => True
+bool(t.__flags__ & (1 << 9)) [t=ExceptionGroup] => True
+t.__base__.__name__ [t=ExceptionGroup] => BaseExceptionGroup
+t.__module__ [t=BaseExceptionGroup] => builtins
+t.__qualname__ [t=BaseExceptionGroup] => BaseExceptionGroup
+sorted(k for k in vars(t) if k in ('__weakref__', '__module__', '__di... [t=BaseExceptionGroup] => ['__doc__']
+mutable [t=BaseExceptionGroup] => False
+weak [t=BaseExceptionGroup] => True
+t.__weakrefoffset__ != 0 [t=BaseExceptionGroup] => False
+bool(t.__flags__ & (1 << 9)) [t=BaseExceptionGroup] => False
+t.__base__.__name__ [t=BaseExceptionGroup] => BaseException
+t.__module__ [t=struct_time] => time
+t.__qualname__ [t=struct_time] => struct_time
+sorted(k for k in vars(t) if k in ('__weakref__', '__module__', '__di... [t=struct_time] => ['__doc__', '__module__']
+mutable [t=struct_time] => True
+weak [t=struct_time] => False
+t.__weakrefoffset__ != 0 [t=struct_time] => False
+bool(t.__flags__ & (1 << 9)) [t=struct_time] => True
+t.__base__.__name__ [t=struct_time] => tuple
+t.__module__ [t=stat_result] => os
+t.__qualname__ [t=stat_result] => stat_result
+sorted(k for k in vars(t) if k in ('__weakref__', '__module__', '__di... [t=stat_result] => ['__doc__', '__module__']
+mutable [t=stat_result] => True
+weak [t=stat_result] => False
+t.__weakrefoffset__ != 0 [t=stat_result] => False
+bool(t.__flags__ & (1 << 9)) [t=stat_result] => True
+t.__base__.__name__ [t=stat_result] => tuple
+t.__module__ [t=terminal_size] => os
+t.__qualname__ [t=terminal_size] => terminal_size
+sorted(k for k in vars(t) if k in ('__weakref__', '__module__', '__di... [t=terminal_size] => ['__doc__', '__module__']
+mutable [t=terminal_size] => True
+weak [t=terminal_size] => False
+t.__weakrefoffset__ != 0 [t=terminal_size] => False
+bool(t.__flags__ & (1 << 9)) [t=terminal_size] => True
+t.__base__.__name__ [t=terminal_size] => tuple
+cls.__module__ [obj=deque] => collections
+cls.__qualname__ [obj=deque] => deque
+getattr(obj, '__module__', None) [obj=deque] => collections
+'__module__' in vars(cls) [obj=deque] => True
+bool(cls.__flags__ & (1 << 9)) [obj=deque] => True
+bool(cls.__flags__ & (1 << 8)) [obj=deque] => True
+cls.__module__ [obj=partial] => functools
+cls.__qualname__ [obj=partial] => partial
+getattr(obj, '__module__', None) [obj=partial] => functools
+'__module__' in vars(cls) [obj=partial] => True
+bool(cls.__flags__ & (1 << 9)) [obj=partial] => True
+bool(cls.__flags__ & (1 << 8)) [obj=partial] => True
+cls.__module__ [obj=count] => itertools
+cls.__qualname__ [obj=count] => count
+getattr(obj, '__module__', None) [obj=count] => itertools
+'__module__' in vars(cls) [obj=count] => True
+bool(cls.__flags__ & (1 << 9)) [obj=count] => True
+bool(cls.__flags__ & (1 << 8)) [obj=count] => True
+cls.__module__ [obj=Pattern] => re
+cls.__qualname__ [obj=Pattern] => Pattern
+getattr(obj, '__module__', None) [obj=Pattern] => re
+'__module__' in vars(cls) [obj=Pattern] => True
+bool(cls.__flags__ & (1 << 9)) [obj=Pattern] => True
+bool(cls.__flags__ & (1 << 8)) [obj=Pattern] => True
+cls.__module__ [obj=array] => array
+cls.__qualname__ [obj=array] => array
+getattr(obj, '__module__', None) [obj=array] => array
+'__module__' in vars(cls) [obj=array] => True
+bool(cls.__flags__ & (1 << 9)) [obj=array] => True
+bool(cls.__flags__ & (1 << 8)) [obj=array] => True
+cls.__module__ [obj=Struct] => _struct
+cls.__qualname__ [obj=Struct] => Struct
+getattr(obj, '__module__', None) [obj=Struct] => _struct
+'__module__' in vars(cls) [obj=Struct] => True
+bool(cls.__flags__ & (1 << 9)) [obj=Struct] => True
+bool(cls.__flags__ & (1 << 8)) [obj=Struct] => True
+cls.__module__ [obj=struct_time] => time
+cls.__qualname__ [obj=struct_time] => struct_time
+getattr(obj, '__module__', None) [obj=struct_time] => time
+'__module__' in vars(cls) [obj=struct_time] => True
+bool(cls.__flags__ & (1 << 9)) [obj=struct_time] => True
+bool(cls.__flags__ & (1 << 8)) [obj=struct_time] => False
+cls.__module__ [obj=error] => struct
+cls.__qualname__ [obj=error] => error
+getattr(obj, '__module__', None) [obj=error] => struct
+'__module__' in vars(cls) [obj=error] => True
+bool(cls.__flags__ & (1 << 9)) [obj=error] => True
+bool(cls.__flags__ & (1 << 8)) [obj=error] => False
+cls.__module__ [obj=1] => builtins
+cls.__qualname__ [obj=1] => int
+getattr(obj, '__module__', None) [obj=1] => None
+'__module__' in vars(cls) [obj=1] => False
+bool(cls.__flags__ & (1 << 9)) [obj=1] => False
+bool(cls.__flags__ & (1 << 8)) [obj=1] => True
+cls.__module__ [obj='x'] => builtins
+cls.__qualname__ [obj='x'] => str
+getattr(obj, '__module__', None) [obj='x'] => None
+'__module__' in vars(cls) [obj='x'] => False
+bool(cls.__flags__ & (1 << 9)) [obj='x'] => False
+bool(cls.__flags__ & (1 << 8)) [obj='x'] => True
+cls.__module__ [obj=list] => builtins
+cls.__qualname__ [obj=list] => list
+getattr(obj, '__module__', None) [obj=list] => None
+'__module__' in vars(cls) [obj=list] => False
+bool(cls.__flags__ & (1 << 9)) [obj=list] => False
+bool(cls.__flags__ & (1 << 8)) [obj=list] => True
+cls.__module__ [obj=dict] => builtins
+cls.__qualname__ [obj=dict] => dict
+getattr(obj, '__module__', None) [obj=dict] => None
+'__module__' in vars(cls) [obj=dict] => False
+bool(cls.__flags__ & (1 << 9)) [obj=dict] => False
+bool(cls.__flags__ & (1 << 8)) [obj=dict] => True
+cls.__module__ [obj=1.5] => builtins
+cls.__qualname__ [obj=1.5] => float
+getattr(obj, '__module__', None) [obj=1.5] => None
+'__module__' in vars(cls) [obj=1.5] => False
+bool(cls.__flags__ & (1 << 9)) [obj=1.5] => False
+bool(cls.__flags__ & (1 << 8)) [obj=1.5] => True
+cls.__module__ [obj=OrderedDict] => collections
+cls.__qualname__ [obj=OrderedDict] => OrderedDict
+getattr(obj, '__module__', None) [obj=OrderedDict] => None
+'__module__' in vars(cls) [obj=OrderedDict] => False
+bool(cls.__flags__ & (1 << 9)) [obj=OrderedDict] => False
+bool(cls.__flags__ & (1 << 8)) [obj=OrderedDict] => True
+cls.__module__ [obj=date] => datetime
+cls.__qualname__ [obj=date] => date
+getattr(obj, '__module__', None) [obj=date] => None
+'__module__' in vars(cls) [obj=date] => False
+bool(cls.__flags__ & (1 << 9)) [obj=date] => False
+bool(cls.__flags__ & (1 << 8)) [obj=date] => True
+cls.__module__ [obj=SimpleNamespace] => types
+cls.__qualname__ [obj=SimpleNamespace] => SimpleNamespace
+getattr(obj, '__module__', None) [obj=SimpleNamespace] => None
+'__module__' in vars(cls) [obj=SimpleNamespace] => False
+bool(cls.__flags__ & (1 << 9)) [obj=SimpleNamespace] => False
+bool(cls.__flags__ & (1 << 8)) [obj=SimpleNamespace] => True
+cls.__module__ [obj=version_info] => sys
+cls.__qualname__ [obj=version_info] => version_info
+getattr(obj, '__module__', None) [obj=version_info] => None
+'__module__' in vars(cls) [obj=version_info] => False
+bool(cls.__flags__ & (1 << 9)) [obj=version_info] => False
+bool(cls.__flags__ & (1 << 8)) [obj=version_info] => True
+cls.__module__ [obj=flags] => sys
+cls.__qualname__ [obj=flags] => flags
+getattr(obj, '__module__', None) [obj=flags] => None
+'__module__' in vars(cls) [obj=flags] => False
+bool(cls.__flags__ & (1 << 9)) [obj=flags] => False
+bool(cls.__flags__ & (1 << 8)) [obj=flags] => True
+cls.__module__ [obj=ValueError] => builtins
+cls.__qualname__ [obj=ValueError] => ValueError
+getattr(obj, '__module__', None) [obj=ValueError] => None
+'__module__' in vars(cls) [obj=ValueError] => False
+bool(cls.__flags__ & (1 << 9)) [obj=ValueError] => False
+bool(cls.__flags__ & (1 << 8)) [obj=ValueError] => True
+functools
+struct.error.__module__ => elsewhere
+repr(struct.error) => <class 'elsewhere.error'>
+name [name='version_info'] => version_info
+name [name='version_info'] => version_info
+e [name='version_info'] => cannot create 'sys.version_info' instances
+    e [name='version_info'] => cannot set 'x' attribute of immutable type 'sys.version_info'
+name [name='flags'] => flags
+name [name='flags'] => flags
+e [name='flags'] => cannot create 'sys.flags' instances
+    e [name='flags'] => cannot set 'x' attribute of immutable type 'sys.flags'
+name [name='float_info'] => float_info
+type(value)(tuple(value)) == value [name='float_info'] => True
+    e [name='float_info'] => cannot set 'x' attribute of immutable type 'sys.float_info'
+name [name='int_info'] => int_info
+type(value)(tuple(value)) == value [name='int_info'] => True
+    e [name='int_info'] => cannot set 'x' attribute of immutable type 'sys.int_info'
+name [name='hash_info'] => hash_info
+type(value)(tuple(value)) == value [name='hash_info'] => True
+    e [name='hash_info'] => cannot set 'x' attribute of immutable type 'sys.hash_info'
+name [name='thread_info'] => thread_info
+type(value)(tuple(value)) == value [name='thread_info'] => True
+    e [name='thread_info'] => cannot set 'x' attribute of immutable type 'sys.thread_info'
+cls.__name__ [cls=dict] => dict
+[name for name in ('__eq__', '__ne__', '__lt__', '__le__', '__gt__', ... [cls=dict] => ['__eq__', '__ne__', '__lt__', '__le__', '__gt__', '__ge__', '__hash__']
+cls.__name__ [cls=frozendict] => frozendict
+[name for name in ('__eq__', '__ne__', '__lt__', '__le__', '__gt__', ... [cls=frozendict] => ['__eq__', '__ne__', '__lt__', '__le__', '__gt__', '__ge__', '__hash__']
+cls.__name__ [cls=complex] => complex
+[name for name in ('__eq__', '__ne__', '__lt__', '__le__', '__gt__', ... [cls=complex] => ['__eq__', '__ne__', '__lt__', '__le__', '__gt__', '__ge__', '__hash__']
+cls.__name__ [cls=range] => range
+[name for name in ('__eq__', '__ne__', '__lt__', '__le__', '__gt__', ... [cls=range] => ['__eq__', '__ne__', '__lt__', '__le__', '__gt__', '__ge__', '__hash__']
+cls.__name__ [cls=NoneType] => NoneType
+[name for name in ('__eq__', '__ne__', '__lt__', '__le__', '__gt__', ... [cls=NoneType] => ['__eq__', '__ne__', '__lt__', '__le__', '__gt__', '__ge__', '__hash__']
+cls.__name__ [cls=sentinel] => sentinel
+[name for name in ('__eq__', '__ne__', '__lt__', '__le__', '__gt__', ... [cls=sentinel] => ['__eq__', '__ne__', '__lt__', '__le__', '__gt__', '__ge__', '__hash__']
+cls.__name__ [cls=SimpleNamespace] => SimpleNamespace
+[name for name in ('__eq__', '__ne__', '__lt__', '__le__', '__gt__', ... [cls=SimpleNamespace] => ['__eq__', '__ne__', '__lt__', '__le__', '__gt__', '__ge__', '__hash__']
+cls.__name__ [cls=GenericAlias] => GenericAlias
+[name for name in ('__eq__', '__ne__', '__lt__', '__le__', '__gt__', ... [cls=GenericAlias] => ['__eq__', '__ne__', '__lt__', '__le__', '__gt__', '__ge__', '__hash__']
+cls.__name__ [cls=builtin_function_or_method] => builtin_function_or_method
+[name for name in ('__eq__', '__ne__', '__lt__', '__le__', '__gt__', ... [cls=builtin_function_or_method] => ['__eq__', '__ne__', '__lt__', '__le__', '__gt__', '__ge__', '__hash__']
+cls.__name__ [cls=code] => code
+[name for name in ('__eq__', '__ne__', '__lt__', '__le__', '__gt__', ... [cls=code] => ['__eq__', '__ne__', '__lt__', '__le__', '__gt__', '__ge__', '__hash__']
+cls.__name__ [cls=Pattern] => Pattern
+[name for name in ('__eq__', '__ne__', '__lt__', '__le__', '__gt__', ... [cls=Pattern] => ['__eq__', '__ne__', '__lt__', '__le__', '__gt__', '__ge__', '__hash__']
+cls.__name__ [cls=slice] => slice
+[name for name in ('__eq__', '__ne__', '__lt__', '__le__', '__gt__', ... [cls=slice] => ['__eq__', '__ne__', '__lt__', '__le__', '__gt__', '__ge__', '__hash__']
+cls.__name__ [cls=set] => set
+[name for name in ('__eq__', '__ne__', '__lt__', '__le__', '__gt__', ... [cls=set] => ['__eq__', '__ne__', '__lt__', '__le__', '__gt__', '__ge__', '__hash__']
+cls.__name__ [cls=int] => int
+[name for name in ('__eq__', '__ne__', '__lt__', '__le__', '__gt__', ... [cls=int] => ['__eq__', '__ne__', '__lt__', '__le__', '__gt__', '__ge__', '__hash__']
+cls.__name__ [cls=str] => str
+[name for name in ('__eq__', '__ne__', '__lt__', '__le__', '__gt__', ... [cls=str] => ['__eq__', '__ne__', '__lt__', '__le__', '__gt__', '__ge__', '__hash__']
+cls.__name__ [cls=list] => list
+[name for name in ('__eq__', '__ne__', '__lt__', '__le__', '__gt__', ... [cls=list] => ['__eq__', '__ne__', '__lt__', '__le__', '__gt__', '__ge__', '__hash__']
+cls.__name__ [cls=tuple] => tuple
+[name for name in ('__eq__', '__ne__', '__lt__', '__le__', '__gt__', ... [cls=tuple] => ['__eq__', '__ne__', '__lt__', '__le__', '__gt__', '__ge__', '__hash__']
+cls.__name__ [cls=object] => object
+[name for name in ('__eq__', '__ne__', '__lt__', '__le__', '__gt__', ... [cls=object] => ['__eq__', '__ne__', '__lt__', '__le__', '__gt__', '__ge__', '__hash__']
+cls.__name__ [cls=deque] => deque
+[name for name in ('__eq__', '__ne__', '__lt__', '__le__', '__gt__', ... [cls=deque] => ['__eq__', '__ne__', '__lt__', '__le__', '__gt__', '__ge__', '__hash__']
+cls.__name__ [cls=OrderedDict] => OrderedDict
+[name for name in ('__eq__', '__ne__', '__lt__', '__le__', '__gt__', ... [cls=OrderedDict] => ['__eq__', '__ne__', '__lt__', '__le__', '__gt__', '__ge__', '__hash__']
+cls.__name__ [cls=date] => date
+[name for name in ('__eq__', '__ne__', '__lt__', '__le__', '__gt__', ... [cls=date] => ['__eq__', '__ne__', '__lt__', '__le__', '__gt__', '__ge__', '__hash__']
+cls.__name__ [cls=mappingproxy] => mappingproxy
+[name for name in ('__eq__', '__ne__', '__lt__', '__le__', '__gt__', ... [cls=mappingproxy] => ['__eq__', '__ne__', '__lt__', '__le__', '__gt__', '__ge__', '__hash__']
+cls.__name__ [cls=type] => type
+[name for name in ('__eq__', '__ne__', '__lt__', '__le__', '__gt__', ... [cls=type] => []
+cls.__name__ [cls=function] => function
+[name for name in ('__eq__', '__ne__', '__lt__', '__le__', '__gt__', ... [cls=function] => []
+cls.__name__ [cls=BaseException] => BaseException
+[name for name in ('__eq__', '__ne__', '__lt__', '__le__', '__gt__', ... [cls=BaseException] => []
+cls.__name__ [cls=memoryview] => memoryview
+[name for name in ('__eq__', '__ne__', '__lt__', '__le__', '__gt__', ... [cls=memoryview] => ['__eq__', '__ne__', '__lt__', '__le__', '__gt__', '__ge__', '__hash__']
+cls.__name__ [cls=bytes] => bytes
+[name for name in ('__eq__', '__ne__', '__lt__', '__le__', '__gt__', ... [cls=bytes] => ['__eq__', '__ne__', '__lt__', '__le__', '__gt__', '__ge__', '__hash__']
+dict.__lt__({}, {}) => NotImplemented
+complex.__ge__(1j, 1j) => NotImplemented
+range.__le__(range(1), range(1)) => NotImplemented
+repr(dict.__lt__) => <slot wrapper '__lt__' of 'dict' objects>
+dict.__lt__.__doc__ => Return self<value.
+dict.__lt__.__objclass__.__name__ => dict
+op(OrderedByLength(), OrderedByLength(a=1)) [op=function] => True
+e [op=function] => '<=' not supported between instances of 'OrderedByLength' and 'OrderedByLength'
+op(OrderedByLength(), OrderedByLength(a=1)) [op=function] => False
+e [op=function] => '>=' not supported between instances of 'OrderedByLength' and 'OrderedByLength'
+cls.__name__ [cls=deque] => deque
+[name for name in ('__getattribute__', '__setattr__', '__delattr__') ... [cls=deque] => ['__getattribute__']
+cls.__name__ [cls=defaultdict] => defaultdict
+[name for name in ('__getattribute__', '__setattr__', '__delattr__') ... [cls=defaultdict] => ['__getattribute__']
+cls.__name__ [cls=partial] => partial
+[name for name in ('__getattribute__', '__setattr__', '__delattr__') ... [cls=partial] => ['__getattribute__', '__setattr__', '__delattr__']
+cls.__name__ [cls=chain] => chain
+[name for name in ('__getattribute__', '__setattr__', '__delattr__') ... [cls=chain] => ['__getattribute__']
+cls.__name__ [cls=array] => array
+[name for name in ('__getattribute__', '__setattr__', '__delattr__') ... [cls=array] => ['__getattribute__']
+cls.__name__ [cls=Struct] => Struct
+[name for name in ('__getattribute__', '__setattr__', '__delattr__') ... [cls=Struct] => ['__getattribute__', '__setattr__', '__delattr__']
+cls.__name__ [cls=dict] => dict
+[name for name in ('__getattribute__', '__setattr__', '__delattr__') ... [cls=dict] => []
+cls.__name__ [cls=list] => list
+[name for name in ('__getattribute__', '__setattr__', '__delattr__') ... [cls=list] => []
+cls.__name__ [cls=int] => int
+[name for name in ('__getattribute__', '__setattr__', '__delattr__') ... [cls=int] => []
+cls.__name__ [cls=type] => type
+[name for name in ('__getattribute__', '__setattr__', '__delattr__') ... [cls=type] => ['__getattribute__', '__setattr__', '__delattr__']
+cls.__name__ [cls=module] => module
+[name for name in ('__getattribute__', '__setattr__', '__delattr__') ... [cls=module] => ['__getattribute__']
+cls.__name__ [cls=OrderedDict] => OrderedDict
+[name for name in ('__getattribute__', '__setattr__', '__delattr__') ... [cls=OrderedDict] => []
+repr(collections.deque.__getattribute__) => <slot wrapper '__getattribute__' of 'collections.deque' objects>
+collections.deque.__getattribute__(collections.deque([1]), 'maxlen') => None
+type(collections.deque.__dict__.get('__dict__')).__name__ => NoneType
+BaseException.__dict__['__dict__'].__doc__ => None
+type(g).__dict__['__dict__'].__doc__ => None
+builtins_doc := __import__('builtins').__doc__.splitlines()[0] => Built-in functions, types, exceptions, and other objects.
+| sys.__doc__.splitlines()[0] => This module provides access to some objects used or maintained by the
+_IncompleteInputError.__doc__ => incomplete input.
+_IncompleteInputError.__name__ => _IncompleteInputError
+__import__('math').comb.__doc__.splitlines()[0] => Number of ways to choose k items from n items without repetition and without order.

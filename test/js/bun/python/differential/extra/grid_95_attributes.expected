@@ -1,0 +1,7 @@
+status: 0
+script: 67189ca0210e1874
+---
+attributes get 103 4255e7e4435f
+attributes del 103 f620289931d2
+attributes set 1236 1b45ae943304
+attributes names 1314 eeadaf8b53ce

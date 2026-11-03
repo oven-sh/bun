@@ -1,0 +1,213 @@
+status: 0
+script: 4d1d4512daa0a7de
+---
+gb2312 38f33556
+'\u4e2d\u6587' [20013, 25991] '\u4e2d\u6587' 2
+  detect gb2312
+  tokens 6ec97d2c
+  ast 3ce5847a
+'\u4e2d\u6587' [20013, 25991] '\u4e2d\u6587' 2
+  module '\u4e2d\u6587'
+  open gb2312 e9ef4657
+  run 0 b"'\\u4e2d\\u6587' [20013, 25991] '\\u4e2d\\u6587' 2\n" []
+gbk 9ccda76e
+'\u4e2d\u6587' [20013, 25991] '\u4e2d\u6587' 2
+  detect gbk
+  tokens c66eba44
+  ast 3ce5847a
+'\u4e2d\u6587' [20013, 25991] '\u4e2d\u6587' 2
+  module '\u4e2d\u6587'
+  open gbk 550b5811
+gb18030 987e96aa
+'\u4e2d\u6587' [20013, 25991] '\u4e2d\u6587' 2
+  detect gb18030
+  tokens ce74c142
+  ast 3ce5847a
+'\u4e2d\u6587' [20013, 25991] '\u4e2d\u6587' 2
+  module '\u4e2d\u6587'
+  open gb18030 b123d70c
+hz d7c29235
+'\u4e2d\u6587' [20013, 25991] '\u4e2d\u6587' 2
+  detect hz
+  tokens f3274703
+  ast 3ce5847a
+'\u4e2d\u6587' [20013, 25991] '\u4e2d\u6587' 2
+  module '\u4e2d\u6587'
+  open hz 4906e77b
+big5hkscs 08d54afe
+'\u4e2d\u6587\u5afa' [20013, 25991, 23290] '\u4e2d\u6587\u5afa' 3
+  detect big5hkscs
+  tokens 1812399e
+  ast 309d5fe3
+'\u4e2d\u6587\u5afa' [20013, 25991, 23290] '\u4e2d\u6587\u5afa' 3
+  module '\u4e2d\u6587\u5afa'
+  open big5hkscs 01d8405d
+  run 0 b"'\\u4e2d\\u6587\\u5afa' [20013, 25991, 23290] '\\u4e2d\\u6587\\u5afa' 3\n" []
+big5 f4586c8e
+'\u4e2d\u6587' [20013, 25991] '\u4e2d\u6587' 2
+  detect big5
+  tokens 6ebbb629
+  ast 3ce5847a
+'\u4e2d\u6587' [20013, 25991] '\u4e2d\u6587' 2
+  module '\u4e2d\u6587'
+  open big5 b6878c2e
+  run 0 b"'\\u4e2d\\u6587' [20013, 25991] '\\u4e2d\\u6587' 2\n" []
+cp950 f17e8c2b
+'\u4e2d\u6587' [20013, 25991] '\u4e2d\u6587' 2
+  detect cp950
+  tokens 44876c2f
+  ast 3ce5847a
+'\u4e2d\u6587' [20013, 25991] '\u4e2d\u6587' 2
+  module '\u4e2d\u6587'
+  open cp950 aee18826
+euc_kr 90ffea9f
+'\ud55c\uae00' [54620, 44544] '\ud55c\uae00' 2
+  detect euc_kr
+  tokens c6eb9897
+  ast 03fa6ec5
+'\ud55c\uae00' [54620, 44544] '\ud55c\uae00' 2
+  module '\ud55c\uae00'
+  open euc_kr d83a316e
+  run 0 b"'\\ud55c\\uae00' [54620, 44544] '\\ud55c\\uae00' 2\n" []
+cp949 091bca6f
+'\ud55c\uae00' [54620, 44544] '\ud55c\uae00' 2
+  detect cp949
+  tokens aaaff26d
+  ast 03fa6ec5
+'\ud55c\uae00' [54620, 44544] '\ud55c\uae00' 2
+  module '\ud55c\uae00'
+  open cp949 374d2720
+johab eb0898d3
+'\ud55c\uae00' [54620, 44544] '\ud55c\uae00' 2
+  detect johab
+  tokens 7e5035a4
+  ast 03fa6ec5
+'\ud55c\uae00' [54620, 44544] '\ud55c\uae00' 2
+  module '\ud55c\uae00'
+  open johab 4b970997
+shift_jis 1400b2c8
+'\u65e5\u672c\u8a9e\u8868' [26085, 26412, 35486, 34920] '\u65e5\u672c\u8a9e\u8868' 4
+  detect shift_jis
+  tokens 96b31d32
+  ast 990d43af
+'\u65e5\u672c\u8a9e\u8868' [26085, 26412, 35486, 34920] '\u65e5\u672c\u8a9e\u8868' 4
+  module '\u65e5\u672c\u8a9e\u8868'
+  open shift_jis 44c0867e
+  run 0 b"'\\u65e5\\u672c\\u8a9e\\u8868' [26085, 26412, 35486, 34920] '\\u65e5\\u672c\\u8a9e\\u8868' 4\n" []
+cp932 5b116b30
+'\u65e5\u672c\u8a9e\u8868' [26085, 26412, 35486, 34920] '\u65e5\u672c\u8a9e\u8868' 4
+  detect cp932
+  tokens 1aea87de
+  ast 990d43af
+'\u65e5\u672c\u8a9e\u8868' [26085, 26412, 35486, 34920] '\u65e5\u672c\u8a9e\u8868' 4
+  module '\u65e5\u672c\u8a9e\u8868'
+  open cp932 3d0565af
+euc_jp a3075f82
+'\u65e5\u672c\u8a9e\u8868' [26085, 26412, 35486, 34920] '\u65e5\u672c\u8a9e\u8868' 4
+  detect euc_jp
+  tokens 25134429
+  ast 990d43af
+'\u65e5\u672c\u8a9e\u8868' [26085, 26412, 35486, 34920] '\u65e5\u672c\u8a9e\u8868' 4
+  module '\u65e5\u672c\u8a9e\u8868'
+  open euc_jp cf7f706e
+shift_jis_2004 6e727f70
+'\u65e5\u672c\u8a9e\u304b\u309a' [26085, 26412, 35486, 12363, 12442] '\u65e5\u672c\u8a9e\u304b\u309a' 5
+  detect shift_jis_2004
+  tokens c3ffd7d8
+  ast 6de438b4
+'\u65e5\u672c\u8a9e\u304b\u309a' [26085, 26412, 35486, 12363, 12442] '\u65e5\u672c\u8a9e\u304b\u309a' 5
+  module '\u65e5\u672c\u8a9e\u304b\u309a'
+  open shift_jis_2004 2c75fc73
+  run 0 b"'\\u65e5\\u672c\\u8a9e\\u304b\\u309a' [26085, 26412, 35486, 12363, 12442] '\\u65e5\\u672c\\u8a9e\\u304b\\u309a' 5\n" []
+shift_jisx0213 58637f5d
+'\u65e5\u672c\u8a9e\u304b\u309a' [26085, 26412, 35486, 12363, 12442] '\u65e5\u672c\u8a9e\u304b\u309a' 5
+  detect shift_jisx0213
+  tokens 6e68b951
+  ast 6de438b4
+'\u65e5\u672c\u8a9e\u304b\u309a' [26085, 26412, 35486, 12363, 12442] '\u65e5\u672c\u8a9e\u304b\u309a' 5
+  module '\u65e5\u672c\u8a9e\u304b\u309a'
+  open shift_jisx0213 bf5da6cf
+euc_jis_2004 97e59d34
+'\u65e5\u672c\u8a9e\u304b\u309a' [26085, 26412, 35486, 12363, 12442] '\u65e5\u672c\u8a9e\u304b\u309a' 5
+  detect euc_jis_2004
+  tokens 1914e0f0
+  ast 6de438b4
+'\u65e5\u672c\u8a9e\u304b\u309a' [26085, 26412, 35486, 12363, 12442] '\u65e5\u672c\u8a9e\u304b\u309a' 5
+  module '\u65e5\u672c\u8a9e\u304b\u309a'
+  open euc_jis_2004 c09688b7
+euc_jisx0213 a1f49d19
+'\u65e5\u672c\u8a9e\u304b\u309a' [26085, 26412, 35486, 12363, 12442] '\u65e5\u672c\u8a9e\u304b\u309a' 5
+  detect euc_jisx0213
+  tokens e7f006b5
+  ast 6de438b4
+'\u65e5\u672c\u8a9e\u304b\u309a' [26085, 26412, 35486, 12363, 12442] '\u65e5\u672c\u8a9e\u304b\u309a' 5
+  module '\u65e5\u672c\u8a9e\u304b\u309a'
+  open euc_jisx0213 53bed20b
+iso2022_jp c75eb83a
+'\u65e5\u672c\u8a9e' [26085, 26412, 35486] '\u65e5\u672c\u8a9e' 3
+  detect iso2022_jp
+  tokens 468b8189
+  ast cf0a906f
+'\u65e5\u672c\u8a9e' [26085, 26412, 35486] '\u65e5\u672c\u8a9e' 3
+  module '\u65e5\u672c\u8a9e'
+  open iso2022_jp e7b530c1
+  run 0 b"'\\u65e5\\u672c\\u8a9e' [26085, 26412, 35486] '\\u65e5\\u672c\\u8a9e' 3\n" []
+iso2022_jp_1 71746ff3
+'\u65e5\u672c\u8a9e' [26085, 26412, 35486] '\u65e5\u672c\u8a9e' 3
+  detect iso2022_jp_1
+  tokens 47d5d10b
+  ast cf0a906f
+'\u65e5\u672c\u8a9e' [26085, 26412, 35486] '\u65e5\u672c\u8a9e' 3
+  module '\u65e5\u672c\u8a9e'
+  open iso2022_jp_1 1ac3d167
+iso2022_jp_2 cad4d336
+'\u65e5\u672c\u8a9e' [26085, 26412, 35486] '\u65e5\u672c\u8a9e' 3
+  detect iso2022_jp_2
+  tokens 8863a9a2
+  ast cf0a906f
+'\u65e5\u672c\u8a9e' [26085, 26412, 35486] '\u65e5\u672c\u8a9e' 3
+  module '\u65e5\u672c\u8a9e'
+  open iso2022_jp_2 f4ef0180
+iso2022_jp_2004 d44374cf
+'\u65e5\u672c\u8a9e' [26085, 26412, 35486] '\u65e5\u672c\u8a9e' 3
+  detect iso2022_jp_2004
+  tokens 234113dc
+  ast cf0a906f
+'\u65e5\u672c\u8a9e' [26085, 26412, 35486] '\u65e5\u672c\u8a9e' 3
+  module '\u65e5\u672c\u8a9e'
+  open iso2022_jp_2004 dc2dea41
+iso2022_jp_3 1564454a
+'\u65e5\u672c\u8a9e' [26085, 26412, 35486] '\u65e5\u672c\u8a9e' 3
+  detect iso2022_jp_3
+  tokens 7bde83fa
+  ast cf0a906f
+'\u65e5\u672c\u8a9e' [26085, 26412, 35486] '\u65e5\u672c\u8a9e' 3
+  module '\u65e5\u672c\u8a9e'
+  open iso2022_jp_3 aef4b1dd
+iso2022_jp_ext 8de3a506
+'\u65e5\u672c\u8a9e' [26085, 26412, 35486] '\u65e5\u672c\u8a9e' 3
+  detect iso2022_jp_ext
+  tokens af3141b4
+  ast cf0a906f
+'\u65e5\u672c\u8a9e' [26085, 26412, 35486] '\u65e5\u672c\u8a9e' 3
+  module '\u65e5\u672c\u8a9e'
+  open iso2022_jp_ext a67b6fd4
+iso2022_kr faba9896
+'\ud55c\uae00' [54620, 44544] '\ud55c\uae00' 2
+  detect iso2022_kr
+  tokens TokenError: ('unexpected EOF in multi-line statement', (8, 0))
+  ast 03fa6ec5
+'\ud55c\uae00' [54620, 44544] '\ud55c\uae00' 2
+  module '\ud55c\uae00'
+  open iso2022_kr 8fe97322
+  run 0 b"'\\ud55c\\uae00' [54620, 44544] '\\ud55c\\uae00' 2\n" []
+shift_jis SyntaxError 'shift_jis' codec can't decode byte 0x81 in position 31: illegal multibyte sequence 0 -1
+  run 1 b'' [b'  File "DIR/bad_shift_jis.py", line 0', b"SyntaxError: 'shift_jis' codec can't decode byte 0x81 in position N: illegal multibyte sequence"]
+euc_jp SyntaxError 'euc_jp' codec can't decode byte 0xa4 in position 28: illegal multibyte sequence 0 -1
+gbk SyntaxError 'gbk' codec can't decode byte 0xff in position 25: illegal multibyte sequence 0 -1
+  run 1 b'' [b'  File "DIR/bad_gbk.py", line 0', b"SyntaxError: 'gbk' codec can't decode byte 0xff in position N: illegal multibyte sequence"]
+big5 SyntaxError 'big5' codec can't decode byte 0xa4 in position 26: illegal multibyte sequence 0 -1
+euc_kr SyntaxError 'euc_kr' codec can't decode byte 0xc7 in position 28: illegal multibyte sequence 0 -1
+iso2022_jp SyntaxError unterminated string literal (detected at line 3) 3 5
+cp932 SyntaxError 'cp932' codec can't decode byte 0xfc in position 27: illegal multibyte sequence 0 -1
+1 [b'Traceback (most recent call last):', b'  File "DIR/failing.py", line 5, in <module>', b'    f()', b'    ~^^', b'  File "DIR/failing.py", line 3, in f', b'    return "\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e" + 1  # \xe8\xa1\xa8', b'           ~~~~~~~~~^~~', b'TypeError: can only concatenate str (not "int") to str']

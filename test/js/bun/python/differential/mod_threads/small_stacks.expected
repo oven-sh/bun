@@ -1,0 +1,12 @@
+status: 0
+script: 98fd668e18fa6416
+---
+65536 0 [[(45, 'a-1', [1, 3], [1, {'a': 2}])], ['RecursionError'], ['RecursionError'], ['RecursionError'], ['RecursionError'], [(3, 45)]]
+98304 0 [[(45, 'a-1', [1, 3], [1, {'a': 2}])], ['RecursionError'], ['RecursionError'], ['RecursionError'], ['RecursionError'], [(3, 45)]]
+131072 0 [[(45, 'a-1', [1, 3], [1, {'a': 2}])], ['RecursionError'], ['RecursionError'], ['RecursionError'], ['RecursionError'], [(3, 45)]]
+262144 0 [[(45, 'a-1', [1, 3], [1, {'a': 2}])], ['RecursionError'], ['RecursionError'], ['RecursionError'], ['RecursionError'], [(3, 45)]]
+1048576 0 [[(45, 'a-1', [1, 3], [1, {'a': 2}])], ['RecursionError'], ['RecursionError'], ['RecursionError'], ['RecursionError'], [(3, 45)]]
+1 ValueError
+4096 ValueError
+-1 ValueError
+0 65536 0

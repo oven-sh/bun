@@ -1,0 +1,99 @@
+status: 0
+script: e2cdd90b08437ae5
+---
+shift_jis_2004 160 236
+  read None f22346cf
+  read -1 f22346cf
+  read 1 3bafea83
+  read 2 40ce5104
+  read 3 7e438d34
+  read 5 ab7ca4f1
+  read 8 cdc557fa
+  read 100 2937cd79
+  read 10000 0388f7fd
+  whole True True True c3732cce
+  cut strict 917812b0
+  cut ignore e8b5e523
+  cut replace 4c2d1c34
+  cut backslashreplace 35b1382e
+  reset 4583f55e
+  write 169c4edd c8750d1e c8750d1e True True
+  writelines c8750d1e
+  write reset cf14b4ea
+  write strict [None, 'UnicodeEncodeError shift_jis_2004 0 1 illegal multibyte sequence', None, 'UnicodeEncodeError shift_jis_2004 1 2 illegal multibyte sequence', None, 'UnicodeEncodeError shift_jis_2004 1 2 illegal multibyte sequence', 'UnicodeEncodeError shift_jis_2004 1 2 illegal multibyte sequence', None, None] b'a\x82\xa9\x85`\x85{'
+  write ignore [None, None, None, None, None, None, None, None, None] b'a\x82\xa9\x85`bc\x82\xa0\x82\xa0\x85{'
+  write replace [None, None, None, None, None, None, None, None, None] b'a?\x82\xa9?\x85`b?c\x82\xa0?\x82\xa0\x85{'
+  write xmlcharrefreplace [None, None, None, None, None, None, None, None, None] b'a&#55296;\x82\xa9&#55296;\x85`b&#55296;c\x82\xa0&#55296;\x82\xa0\x85{'
+  write backslashreplace [None, None, None, None, None, None, None, None, None] b'a\x81_ud800\x82\xa9\x81_ud800\x85`b\x81_ud800c\x82\xa0\x81_ud800\x82\xa0\x85{'
+shift_jisx0213 158 232
+  read None 6e6c07b9
+  read -1 6e6c07b9
+  read 1 f7c4c425
+  read 2 b834808c
+  read 3 d2b1810c
+  read 5 d1e487d4
+  read 8 504867e3
+  read 100 1f654e6e
+  read 10000 dddd862a
+  whole True True True c3732cce
+  cut strict 122f33d4
+  cut ignore e6bdb8ce
+  cut replace 3474ed09
+  cut backslashreplace dedd9ae6
+  reset 9a173918
+  write 88f2c44b 8e6a7d73 8e6a7d73 True True
+  writelines 8e6a7d73
+  write reset 1872f061
+  write strict [None, 'UnicodeEncodeError shift_jisx0213 0 1 illegal multibyte sequence', None, 'UnicodeEncodeError shift_jisx0213 1 2 illegal multibyte sequence', None, 'UnicodeEncodeError shift_jisx0213 1 2 illegal multibyte sequence', 'UnicodeEncodeError shift_jisx0213 1 2 illegal multibyte sequence', None, None] b'a\x82\xa9\x85`\x85{'
+  write ignore [None, None, None, None, None, None, None, None, None] b'a\x82\xa9\x85`bc\x82\xa0\x82\xa0\x85{'
+  write replace [None, None, None, None, None, None, None, None, None] b'a?\x82\xa9?\x85`b?c\x82\xa0?\x82\xa0\x85{'
+  write xmlcharrefreplace [None, None, None, None, None, None, None, None, None] b'a&#55296;\x82\xa9&#55296;\x85`b&#55296;c\x82\xa0&#55296;\x82\xa0\x85{'
+  write backslashreplace [None, None, None, None, None, None, None, None, None] b'a\x81_ud800\x82\xa9\x81_ud800\x85`b\x81_ud800c\x82\xa0\x81_ud800\x82\xa0\x85{'
+euc_jis_2004 160 244
+  read None e0a8ed1d
+  read -1 e0a8ed1d
+  read 1 006fc132
+  read 2 7613bf31
+  read 3 1962412d
+  read 5 cbb3b5fc
+  read 8 38d136dd
+  read 100 324ceaf2
+  read 10000 24b020d9
+  whole True True True 26892e4b
+  cut strict 66cb79b2
+  cut ignore 86503233
+  cut replace 49051b4f
+  cut backslashreplace 96eb0011
+  reset 87be6851
+  write 54694a75 b1786ec6 b1786ec6 True True
+  writelines b1786ec6
+  write reset ce318305
+  write strict [None, 'UnicodeEncodeError euc_jis_2004 0 1 illegal multibyte sequence', None, 'UnicodeEncodeError euc_jis_2004 1 2 illegal multibyte sequence', None, 'UnicodeEncodeError euc_jis_2004 1 2 illegal multibyte sequence', 'UnicodeEncodeError euc_jis_2004 1 2 illegal multibyte sequence', None, None] b'a\xa4\xab\xa9\xc1\xa9\xdc'
+  write ignore [None, None, None, None, None, None, None, None, None] b'a\xa4\xab\xa9\xc1bc\xa4\xa2\xa4\xa2\xa9\xdc'
+  write replace [None, None, None, None, None, None, None, None, None] b'a?\xa4\xab?\xa9\xc1b?c\xa4\xa2?\xa4\xa2\xa9\xdc'
+  write xmlcharrefreplace [None, None, None, None, None, None, None, None, None] b'a&#55296;\xa4\xab&#55296;\xa9\xc1b&#55296;c\xa4\xa2&#55296;\xa4\xa2\xa9\xdc'
+  write backslashreplace [None, None, None, None, None, None, None, None, None] b'a\\ud800\xa4\xab\\ud800\xa9\xc1b\\ud800c\xa4\xa2\\ud800\xa4\xa2\xa9\xdc'
+euc_jisx0213 158 240
+  read None d26d8f83
+  read -1 d26d8f83
+  read 1 10efa3d8
+  read 2 01dcb28f
+  read 3 e18d0bca
+  read 5 742f0cd8
+  read 8 ce145d94
+  read 100 d7256f7b
+  read 10000 f229e875
+  whole True True True 26892e4b
+  cut strict 8950ee75
+  cut ignore f88dbef5
+  cut replace e9f36c88
+  cut backslashreplace fe0fee3e
+  reset 688debe1
+  write 622b1ead 71c04582 71c04582 True True
+  writelines 71c04582
+  write reset 374321fe
+  write strict [None, 'UnicodeEncodeError euc_jisx0213 0 1 illegal multibyte sequence', None, 'UnicodeEncodeError euc_jisx0213 1 2 illegal multibyte sequence', None, 'UnicodeEncodeError euc_jisx0213 1 2 illegal multibyte sequence', 'UnicodeEncodeError euc_jisx0213 1 2 illegal multibyte sequence', None, None] b'a\xa4\xab\xa9\xc1\xa9\xdc'
+  write ignore [None, None, None, None, None, None, None, None, None] b'a\xa4\xab\xa9\xc1bc\xa4\xa2\xa4\xa2\xa9\xdc'
+  write replace [None, None, None, None, None, None, None, None, None] b'a?\xa4\xab?\xa9\xc1b?c\xa4\xa2?\xa4\xa2\xa9\xdc'
+  write xmlcharrefreplace [None, None, None, None, None, None, None, None, None] b'a&#55296;\xa4\xab&#55296;\xa9\xc1b&#55296;c\xa4\xa2&#55296;\xa4\xa2\xa9\xdc'
+  write backslashreplace [None, None, None, None, None, None, None, None, None] b'a\\ud800\xa4\xab\\ud800\xa9\xc1b\\ud800c\xa4\xa2\\ud800\xa4\xa2\xa9\xdc'

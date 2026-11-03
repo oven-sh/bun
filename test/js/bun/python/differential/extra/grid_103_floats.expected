@@ -1,0 +1,67 @@
+status: 0
+script: 7990b4a501ca8820
+---
+floats repr 36 ff7f5afdc1bb
+floats round trip 36 dafdc915176c
+floats hash 36 24d5549557e9
+floats int 36 5a1cc0dbec12
+floats hex 36 3735cf6cc0e6
+floats fromhex 36 bcf81d885ceb
+floats ratio 36 0c2336e647ff
+floats round 36 4cad8a65a148
+floats round 2 36 235be83e0b49
+floats round -2 36 e72046e29edb
+floats round 15 36 bec129107459
+floats %f 36 29f20098860f
+floats %g 36 89aa70a19edf
+floats %e 36 d73e81f8dfd7
+floats .0f 36 9a0f225daa9e
+floats , 36 bbca949d0b6e
+floats % 72 422081c5d6b0
+floats n 36 d8489edf6e6f
+floats format 36 21be02a29de3
+floats floor 36 5cb0fba07e64
+floats ceil 36 9a87a1c8d1fe
+floats trunc 36 eaec8001ef38
+floats frexp 36 f67a1ef533b4
+floats modf 36 69ab2dfee0ee
+floats is_integer 36 c9ddffd15c50
+floats // 1 36 31a48055215d
+floats % 1 36 a7bb1d97c7a6
+floats divmod 72 91c9100db9de
+floats sqrt 36 7d5274e322a4
+floats functions 36 3e1981e29367
+floats ulp 36 7d545e32a5f3
+floats nextafter 72 ddedfa574da2
+floats compare 36 98db01f82b54
+floats struct 36 5c223da8c854
+floats str complex 36 c72f79ab6f99
+floats pickle 36 b2ed3223a1af
+floats json 36 ca1aa5d8dc34
+floats Fraction 36 ad3db9b6faa7
+floats ** 2 36 5471604f482c
+floats ** .5 36 d1ffb1cc3f40
+floats ** -1 36 b732e9dac9b0
+floats sum 36 758f9d8a65bf
+floats gamma 36 1aa5465133d7
+floats + 36 49ee3ad7e882
+floats - 36 8d99e3d1b905
+floats * 36 9934a75afd2a
+floats / 36 450a9697d90c
+floats // 36 27e61f81d73e
+floats < 36 f1bb68fb5619
+floats == 36 60fb35525303
+floats ** 36 a5cd5e0793e0
+floats atan2 36 e1213e749439
+floats hypot 36 e8686ec3a28e
+floats fmod 36 705181f577fc
+floats remainder 36 3af769188b93
+floats copysign 36 5766df8b0d54
+floats pow 36 0b94570ea869
+floats fma 36 edfe5bbc669d
+floats isclose 36 849cd3d47f4d
+floats ldexp 36 02c04caec5da
+floats complex * 36 d2772c74a558
+floats complex / 36 b63071c739f0
+floats max 36 7c62cb32a6e6
+floats dist 36 0e8ef71bc1b6

@@ -1,0 +1,105 @@
+status: 0
+script: 3333e2fa64e836b8
+---
+exceptions ArithmeticError 11 276bdef1472d
+exceptions set strerror 11 d846983b76b4
+exceptions del strerror 1 d7cfaa588ef4
+exceptions AssertionError 11 368ebaa63b12
+exceptions set filename2 11 37b6cb2a0970
+exceptions del filename2 1 c21c8975b735
+exceptions AttributeError 11 08cd27b2ec71
+exceptions set msg 11 1c55cb1abfe1
+exceptions del msg 1 d8bf70ba2424
+exceptions BaseException 11 3f7b0d7ab545
+exceptions set offset 11 49e5e2d83d23
+exceptions del offset 1 731d2f7e1ac4
+exceptions BaseExceptionGroup 11 e1cfad91a15e
+exceptions set end_lineno 11 ceda0083e24f
+exceptions del end_lineno 1 73fc96a6cd90
+exceptions BlockingIOError 11 d14cf61cb2d7
+exceptions set print_file_and_line 11 86f90fb6927b
+exceptions del print_file_and_line 1 4599946f5232
+exceptions BrokenPipeError 11 c3dff612ba4b
+exceptions set value 11 c7a4d87042e1
+exceptions del value 1 f653710d71fe
+exceptions BufferError 11 14624c675a74
+exceptions set path 11 81f43f3aef88
+exceptions del path 1 755b72acc875
+exceptions BytesWarning 11 637345c38e04
+exceptions set obj 11 6cf4831df1d7
+exceptions del obj 1 a7c4eac01bdf
+exceptions ChildProcessError 11 605a988123f4
+exceptions set object 11 32daa8b61a3f
+exceptions del object 1 a928c8733284
+exceptions ConnectionAbortedError 11 f9454ec95b5e
+exceptions set end 11 5abcfc1aad2e
+exceptions del end 1 aa068fbb5954
+exceptions ConnectionError 11 9c3ca6ec8578
+exceptions set message 11 4633e4b39477
+exceptions del message 1 7ad5afa391cd
+exceptions ConnectionRefusedError 11 ea80cd553663
+exceptions set __cause__ 11 26a7edd91b61
+exceptions del __cause__ 1 244479c7438b
+exceptions ConnectionResetError 11 8e5f0afb452a
+exceptions set __suppress_context__ 11 9c1855acf426
+exceptions del __suppress_context__ 1 e5002b5109fb
+exceptions DeprecationWarning 11 f68f8f493ee0
+exceptions set __notes__ 11 b962505feba0
+exceptions del __notes__ 1 0ed04e34390d
+exceptions EOFError 11 e3a45d0f5de2
+exceptions EncodingWarning 11 415c65adfe23
+exceptions EnvironmentError 11 78963d808025
+exceptions Exception 11 0e73ee16146c
+exceptions ExceptionGroup 11 846e8bee3636
+exceptions FileExistsError 11 1e82ba0bc580
+exceptions FileNotFoundError 11 42258aa24e96
+exceptions FloatingPointError 11 75a60aba7223
+exceptions FutureWarning 11 a3f2c586e6dd
+exceptions GeneratorExit 11 165eb5204726
+exceptions IOError 11 99875637015d
+exceptions ImportCycleError 11 a71692f12075
+exceptions ImportError 11 11998d39a8e8
+exceptions ImportWarning 10 8eddc4360ab8
+exceptions IndentationError 10 d4a3699ea526
+exceptions IndexError 10 711fbdcea800
+exceptions InterruptedError 10 7b6b439e09a6
+exceptions IsADirectoryError 10 a18f629b7659
+exceptions KeyError 10 fbd4374b1bd4
+exceptions KeyboardInterrupt 10 0c65dc2dd429
+exceptions LookupError 10 75bc9bdcefb3
+exceptions MemoryError 10 1cfe092ee336
+exceptions ModuleNotFoundError 10 80279b8ccae4
+exceptions NameError 10 bed7419c6d36
+exceptions NotADirectoryError 10 0a97dd323ba8
+exceptions NotImplementedError 10 bd487f553ecd
+exceptions OSError 10 7ac878aac3f4
+exceptions OverflowError 10 d21e8c7004cc
+exceptions PendingDeprecationWarning 10 44069848c354
+exceptions PermissionError 10 c3160bd57d66
+exceptions ProcessLookupError 10 e92cf8729e22
+exceptions PythonFinalizationError 10 c1a90a5923df
+exceptions RecursionError 10 cfcb4a55a0c9
+exceptions ReferenceError 10 d5d1539f5cfc
+exceptions ResourceWarning 10 da799fba97d6
+exceptions RuntimeError 10 d5d663262c3b
+exceptions RuntimeWarning 10 c795a2943c25
+exceptions StopAsyncIteration 10 abad030f8656
+exceptions StopIteration 10 3696003e8572
+exceptions SyntaxError 10 30a710e679a6
+exceptions SyntaxWarning 10 2dd6dae5f2b4
+exceptions SystemError 10 92b5130bd786
+exceptions SystemExit 10 d43af8ac73fa
+exceptions TabError 10 5909523dd23c
+exceptions TimeoutError 10 c8b8300fa98c
+exceptions TypeError 10 eb026e170e08
+exceptions UnboundLocalError 10 5fca108b7862
+exceptions UnicodeDecodeError 10 500e0fbe6b43
+exceptions UnicodeEncodeError 10 f61eb5b41669
+exceptions UnicodeError 10 7322dfb112e3
+exceptions UnicodeTranslateError 10 4607264059a0
+exceptions UnicodeWarning 10 e03fc73b3f10
+exceptions UserWarning 10 75c2a7de6abd
+exceptions ValueError 10 a8c740c3c98f
+exceptions Warning 10 2049058789cf
+exceptions ZeroDivisionError 10 83f3882c9f6c
+exceptions _IncompleteInputError 10 67565d7c3013

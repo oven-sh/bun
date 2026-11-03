@@ -1,0 +1,104 @@
+status: 0
+script: 9323da653de39c21
+---
+ValueError: compresslevel must be between 1 and 9 ('compresslevel must be between 1 and 9',) Exception
+ValueError: compresslevel must be between 1 and 9 ('compresslevel must be between 1 and 9',) Exception
+ValueError: compresslevel must be between 1 and 9 ('compresslevel must be between 1 and 9',) Exception
+OverflowError: Python int too large to convert to C int ('Python int too large to convert to C int',) ArithmeticError
+OverflowError: Python int too large to convert to C int ('Python int too large to convert to C int',) ArithmeticError
+OverflowError: Python int too large to convert to C int ('Python int too large to convert to C int',) ArithmeticError
+TypeError: 'str' object cannot be interpreted as an integer ("'str' object cannot be interpreted as an integer",) Exception
+TypeError: 'NoneType' object cannot be interpreted as an integer ("'NoneType' object cannot be interpreted as an integer",) Exception
+TypeError: 'float' object cannot be interpreted as an integer ("'float' object cannot be interpreted as an integer",) Exception
+TypeError: 'bytes' object cannot be interpreted as an integer ("'bytes' object cannot be interpreted as an integer",) Exception
+<_bz2.BZ2Compressor object>
+TypeError: 'list' object cannot be interpreted as an integer ("'list' object cannot be interpreted as an integer",) Exception
+TypeError: 'float' object cannot be interpreted as an integer ("'float' object cannot be interpreted as an integer",) Exception
+TypeError: BZ2Compressor expected at most 1 argument, got 2 ('BZ2Compressor expected at most 1 argument, got 2',) Exception
+TypeError: BZ2Compressor() takes no keyword arguments ('BZ2Compressor() takes no keyword arguments',) Exception
+TypeError: BZ2Compressor() takes no keyword arguments ('BZ2Compressor() takes no keyword arguments',) Exception
+TypeError: BZ2Compressor expected at most 1 argument, got 3 ('BZ2Compressor expected at most 1 argument, got 3',) Exception
+TypeError: BZ2Compressor() takes no keyword arguments ('BZ2Compressor() takes no keyword arguments',) Exception
+b'' 14
+TypeError: BZ2Compressor.compress() takes exactly one argument (0 given) ('BZ2Compressor.compress() takes exactly one argument (0 given)',) Exception
+TypeError: BZ2Compressor.compress() takes exactly one argument (2 given) ('BZ2Compressor.compress() takes exactly one argument (2 given)',) Exception
+TypeError: BZ2Compressor.compress() takes no keyword arguments ('BZ2Compressor.compress() takes no keyword arguments',) Exception
+TypeError: BZ2Compressor.flush() takes no arguments (1 given) ('BZ2Compressor.flush() takes no arguments (1 given)',) Exception
+TypeError: BZ2Compressor.flush() takes no keyword arguments ('BZ2Compressor.flush() takes no keyword arguments',) Exception
+b'' b'' 38
+ValueError: Compressor has been flushed ('Compressor has been flushed',) Exception
+ValueError: Compressor has been flushed ('Compressor has been flushed',) Exception
+ValueError: Repeated call to flush() ('Repeated call to flush()',) Exception
+ValueError: Repeated call to flush() ('Repeated call to flush()',) Exception
+TypeError: a bytes-like object is required, not 'str' ("a bytes-like object is required, not 'str'",) Exception
+TypeError: BZ2Compressor.compress() takes exactly one argument (0 given) ('BZ2Compressor.compress() takes exactly one argument (0 given)',) Exception
+True
+ValueError: Repeated call to flush() ('Repeated call to flush()',) Exception
+OSError: Invalid data stream ('Invalid data stream',) Exception
+False False b''
+ValueError: Decompressor is unusable after a previous error ('Decompressor is unusable after a previous error',) Exception
+ValueError: Decompressor is unusable after a previous error ('Decompressor is unusable after a previous error',) Exception
+False False b''
+b''
+False True b''
+OSError: Invalid data stream ('Invalid data stream',) Exception
+ValueError: Decompressor is unusable after a previous error ('Decompressor is unusable after a previous error',) Exception
+False False b''
+b''
+False True b''
+OSError: Invalid data stream ('Invalid data stream',) Exception
+ValueError: Decompressor is unusable after a previous error ('Decompressor is unusable after a previous error',) Exception
+False False b''
+b''
+False True b''
+OSError: Invalid data stream ('Invalid data stream',) Exception
+ValueError: Decompressor is unusable after a previous error ('Decompressor is unusable after a previous error',) Exception
+False False b''
+OSError: Invalid data stream ('Invalid data stream',) Exception
+False False b''
+ValueError: Decompressor is unusable after a previous error ('Decompressor is unusable after a previous error',) Exception
+ValueError: Decompressor is unusable after a previous error ('Decompressor is unusable after a previous error',) Exception
+False False b''
+OSError: Invalid data stream ('Invalid data stream',) Exception
+False False b''
+ValueError: Decompressor is unusable after a previous error ('Decompressor is unusable after a previous error',) Exception
+ValueError: Decompressor is unusable after a previous error ('Decompressor is unusable after a previous error',) Exception
+False False b''
+OSError: Invalid data stream ('Invalid data stream',) Exception
+False False b''
+ValueError: Decompressor is unusable after a previous error ('Decompressor is unusable after a previous error',) Exception
+ValueError: Decompressor is unusable after a previous error ('Decompressor is unusable after a previous error',) Exception
+False False b''
+OSError: Invalid data stream ('Invalid data stream',) Exception
+False False b''
+ValueError: Decompressor is unusable after a previous error ('Decompressor is unusable after a previous error',) Exception
+ValueError: Decompressor is unusable after a previous error ('Decompressor is unusable after a previous error',) Exception
+False False b''
+OSError: Invalid data stream ('Invalid data stream',) Exception
+False False b''
+ValueError: Decompressor is unusable after a previous error ('Decompressor is unusable after a previous error',) Exception
+ValueError: Decompressor is unusable after a previous error ('Decompressor is unusable after a previous error',) Exception
+False False b''
+OSError: Invalid data stream ('Invalid data stream',) Exception
+False False b''
+ValueError: Decompressor is unusable after a previous error ('Decompressor is unusable after a previous error',) Exception
+ValueError: Decompressor is unusable after a previous error ('Decompressor is unusable after a previous error',) Exception
+False False b''
+OSError: Invalid data stream ('Invalid data stream',) Exception
+False False b''
+ValueError: Decompressor is unusable after a previous error ('Decompressor is unusable after a previous error',) Exception
+ValueError: Decompressor is unusable after a previous error ('Decompressor is unusable after a previous error',) Exception
+False False b''
+('OSError', 'Invalid data stream', False) 288
+('ok', True, True) 6
+[((0, False, True, b''), 88), ((180, False, True, b''), 10)]
+10
+OSError: Invalid data stream ('Invalid data stream',) Exception
+False False b''
+ValueError: Decompressor is unusable after a previous error ('Decompressor is unusable after a previous error',) Exception
+ValueError: Decompressor is unusable after a previous error ('Decompressor is unusable after a previous error',) Exception
+OSError: Invalid data stream ('Invalid data stream',) Exception
+False False
+115885 False False
+OSError: Invalid data stream ('Invalid data stream',) Exception
+ValueError: Decompressor is unusable after a previous error ('Decompressor is unusable after a previous error',) Exception

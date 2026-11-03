@@ -12,21 +12,22 @@ with that, which is also what ../*.test.ts do.
     --live          compare with CPython now, not with the .expected files; writes nothing
     --raw           lang/ and slow/ as they are written, not their split versions (implies --live)
     -j N            how many at a time (default 8)        --timeout S   seconds for one script under Bun (default 120)
+    --oracle-timeout S   the same for CPython (default 120)
     -v              show the differences                  --passed      also list what passes
-    --all           also what not-in-ci.json leaves out
+    --all           also what not-in-ci.json leaves out (much of it prints something else on each machine: --update leaves it alone too)
+    --times         at the end, how long each script took under Bun, and each directory
 
 Compared: stdout (exactly), the exit status and, when CPython's status is not 0, the last line of stderr that is not empty.
 Every script runs in a copy of its directory, in the same small environment on both sides; the path of that copy is shown
 as <dir>. A failure that expected-failures.json lists does not count, and a listed test that passes does.
 """
-import argparse, difflib, fnmatch, hashlib, json, os, re, shlex, shutil, signal, subprocess, sys, tempfile
+import argparse, difflib, fnmatch, hashlib, json, os, re, shlex, shutil, signal, subprocess, sys, tempfile, time
 from concurrent.futures import ThreadPoolExecutor
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(TOOLS)
 SPLITTER = os.path.join(TOOLS, 'split.py')
 SPLIT_DIRECTORIES = ('lang', 'slow')
-ORACLE_TIMEOUT = 120
 # Directories that hold no tests of this kind.
 NOT_TESTS = ('tools', 'crashers', 'command-line', '__pycache__')
 
@@ -309,8 +310,8 @@ def refresh_split(test, oracle):
     os.replace(temporary, destination)
 
 
-def ask_oracle(test, oracle, copy):
-    result = run(oracle, copy, test.program, ORACLE_TIMEOUT, False)
+def ask_oracle(test, oracle, copy, timeout):
+    result = run(oracle, copy, test.program, timeout, False)
     if result['timeout']:
         return None
     fields = {'status': result['status'], 'stdout': result['stdout'], 'script': digest(os.path.join(ROOT, test.program))}
@@ -354,7 +355,9 @@ def main():
     ap.add_argument('--raw', action='store_true')
     ap.add_argument('--all', action='store_true')
     ap.add_argument('--passed', action='store_true')
+    ap.add_argument('--times', action='store_true')
     ap.add_argument('--timeout', type=int, default=120)
+    ap.add_argument('--oracle-timeout', type=int, default=120)
     ap.add_argument('tests', nargs='*')
     args = ap.parse_args()
     args.live = args.live or args.raw
@@ -363,7 +366,7 @@ def main():
     expected_failures, not_in_ci = load('expected-failures.json'), load('not-in-ci.json')
 
     names = select(args.tests, all_tests())
-    if not args.all and not args.tests and not args.update:
+    if not args.all and not args.tests:
         names = [n for n in names if n not in not_in_ci]
     tests = [Test(n, args.raw) for n in names]
 
@@ -375,9 +378,9 @@ def main():
         try:
             written = 0
             with ThreadPoolExecutor(args.j) as pool:
-                for test, fields in zip(tests, pool.map(lambda t: ask_oracle(t, oracle, copy), tests)):
+                for test, fields in zip(tests, pool.map(lambda t: ask_oracle(t, oracle, copy, args.oracle_timeout), tests)):
                     if fields is None:
-                        print('CPython took more than %d s: %s' % (ORACLE_TIMEOUT, test.name))
+                        print('CPython took more than %d s: %s' % (args.oracle_timeout, test.name))
                     elif write_expected(test.expected, fields):
                         written += 1
                         print('wrote', os.path.relpath(test.expected, ROOT))
@@ -387,10 +390,11 @@ def main():
         return 0
 
     copy = make_copy()
+    seconds = {}
 
     def check(test):
         if args.live and not is_hand_written(test):
-            want = ask_oracle(test, oracle, copy)
+            want = ask_oracle(test, oracle, copy, args.oracle_timeout)
             if want is None:
                 return 'CPython timed out', None, None
         else:
@@ -401,7 +405,9 @@ def main():
             problem = stale(test, want)
             if problem:
                 return problem, None, None
+        begun = time.monotonic()
         have = run(ours, copy, test.program, args.timeout, True)
+        seconds[test.name] = time.monotonic() - begun
         return compare(want, have), want, have
 
     passed = failed = known = good_lines = all_lines = 0
@@ -436,6 +442,15 @@ def main():
                         print('    stderr: ' + clip(line, 200))
     finally:
         shutil.rmtree(copy, ignore_errors=True)
+    if args.times:
+        for name in sorted(seconds, key=seconds.get):
+            print('%7.1f s  %s' % (seconds[name], name))
+        directories = {}
+        for name in seconds:
+            directory = name.split(os.sep)[0]
+            directories[directory] = directories.get(directory, 0) + seconds[name]
+        for directory in sorted(directories):
+            print('%7.1f s  %s/' % (directories[directory], directory))
     print('passed %d, failed as expected %d, FAILED %d, of %d   (lines of output that match: %d/%d)' % (passed, known, failed, len(tests), good_lines, all_lines))
     return 1 if failed else 0
 

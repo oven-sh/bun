@@ -1,0 +1,18 @@
+status: 0
+script: 1b58fed51971d7ca
+---
+member_descriptor __delete__ 86 9959d591d196
+member_descriptor __eq__ 86 aa6c0263673b
+member_descriptor __format__ 86 3f2840e74bf8
+member_descriptor __ge__ 86 e78ce17a233f
+member_descriptor __get__ 365 a8b456e0180f
+member_descriptor __gt__ 86 7caa949bb03a
+member_descriptor __init__ 642 3a5f2a16c289
+member_descriptor __le__ 86 f9336776245f
+member_descriptor __lt__ 86 b689866748fc
+member_descriptor __name__ 2 4b5d004d8858
+member_descriptor __ne__ 86 620060ecc7b3
+member_descriptor __qualname__ 2 aecf0732d2b3
+member_descriptor __repr__ 38 117489db84b6
+member_descriptor __set__ 318 9fdb800db49c
+member_descriptor __str__ 38 4c5031fcf950

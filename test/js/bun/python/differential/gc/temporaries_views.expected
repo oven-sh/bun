@@ -1,0 +1,86 @@
+status: 0
+script: 9d2759f12412c0fb
+---
+--- released at once
+tobytes b'0123456789' ['export', 'release']
+slice, tobytes b'012' ['export', 'release']
+slice, slice, tobytes b'34' ['export', 'release']
+bytes() b'0123456789' ['export', 'release']
+bytes() of a slice b'0123' ['export', 'release']
+bytearray() bytearray(b'456789') ['export', 'release']
+tolist [48, 49, 50, 51, 52, 53, 54, 55, 56, 57] ['export', 'release']
+hex 3132 ['export', 'release']
+cast b'01' ['export', 'release']
+cast to H [12592, 13106, 13620, 14134, 14648] ['export', 'release']
+toreadonly b'0123456789' ['export', 'release']
+a view of a view b'23456789' ['export', 'release']
+an item 51 ['export', 'release']
+an item from the end 57 ['export', 'release']
+keyword argument b'0123456789' ['export', 'release']
+two in a row b'0189' ['export', 'release', 'export', 'release']
+in a comprehension [b'01', b'23', b'45'] ['export', 'release', 'export', 'release', 'export', 'release']
+in a function b'56789' ['export', 'release']
+stored in a slice of a bytearray bytearray(b'0123') ['export', 'release']
+stored in a part bytearray(b'0893') ['export', 'release']
+stored from a variable on bytearray(b'0856') ['export', 'release']
+stored in a list: kept ['export']
+release() ['release']
+the same store list ['export']
+release() ['release']
+the same store bytearray ['export', 'release', 'TypeError']
+the same store list ['export']
+release() ['release']
+--- also when it fails
+IndexError index out of bounds on dimension 1 ['export', 'release']
+ValueError order must be 'C', 'F' or 'A' ['export', 'release']
+TypeError memoryview: invalid slice key ['export', 'release']
+cast memoryview: length is not a multiple of itemsize ['export', 'release']
+bytes() encoding without a string argument ['export', 'release']
+--- what programs do
+b'abc' bytearray(b'defghij')
+b'de' bytearray(b'fghij')
+b'h' bytearray(b'ijzzzzzzzzz')
+--- not released: something else refers to it
+a variable b'0123456789' ['export']
+release() ['release']
+a slice of a variable b'01' ['export']
+release() ['release']
+in a list b'0123456789' ['export']
+release() ['release']
+kept by a function b'kept' ['export']
+b'0123456789'
+release() ['release']
+with ['export']
+after with ['release']
+a closure b'0123456789' ['export']
+release() ['release']
+a generator b'0' ['export']
+again b'1' []
+release() ['release']
+a call site: makes and uses up b'0123456789' ['export', 'release']
+the same site: the view is kept b'kept' ['export']
+the same site: somebody else's view b'0123456789' []
+b'0123456789'
+still good []
+release() ['release']
+the same site: makes and uses up again b'0123456789' ['export', 'release']
+a method site b'0123456789' ['export', 'release']
+made ['export']
+the same site: somebody else's view b'0123456789' []
+b'0123456789'
+release() ['release']
+gc.get_objects() 1 b'abc'
+BufferError: Existing exports of data: object cannot be re-sized
+bytearray(b'bc')
+--- still refused
+BufferError: Existing exports of data: object cannot be re-sized
+BufferError: Existing exports of data: object cannot be re-sized
+BufferError: Existing exports of data: object cannot be re-sized
+BufferError: Existing exports of data: object cannot be re-sized
+BufferError: Existing exports of data: object cannot be re-sized
+BufferError: Existing exports of data: object cannot be re-sized
+BufferError: Existing exports of data: object cannot be re-sized
+b'ab' bytearray(b'cdef')
+a profiler kept it. BufferError: Existing exports of data: object cannot be re-sized
+b'ab'
+bytearray(b'cdef')

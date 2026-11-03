@@ -1,0 +1,75 @@
+status: 0
+script: bf30392b5417990b
+---
+shift_jis 108 140
+  read None 5c67e1d6
+  read -1 5c67e1d6
+  read 1 77846c00
+  read 2 97986002
+  read 3 45539099
+  read 5 a69b308f
+  read 8 d12f7606
+  read 100 ac429784
+  read 10000 4a2b43bd
+  whole True True True 26892e4b
+  cut strict 380bc4ac
+  cut ignore a3c7e388
+  cut replace eaa9d571
+  cut backslashreplace 01187e87
+  reset 8316f667
+  write 4420ca93 dd121681 dd121681 True True
+  writelines dd121681
+  write reset 0d09dc4f
+  write strict [None, 'UnicodeEncodeError shift_jis 0 1 illegal multibyte sequence', None, 'UnicodeEncodeError shift_jis 0 1 illegal multibyte sequence', 'UnicodeEncodeError shift_jis 0 1 illegal multibyte sequence', 'UnicodeEncodeError shift_jis 1 2 illegal multibyte sequence', 'UnicodeEncodeError shift_jis 1 2 illegal multibyte sequence', 'UnicodeEncodeError shift_jis 0 1 illegal multibyte sequence', None] b'a\x82\xa9'
+  write ignore [None, None, None, None, None, None, None, None, None] b'a\x82\xa9bc\x82\xa0\x82\xa0'
+  write replace [None, None, None, None, None, None, None, None, None] b'a?\x82\xa9??b?c\x82\xa0?\x82\xa0?'
+  write xmlcharrefreplace [None, None, None, None, None, None, None, None, None] b'a&#55296;\x82\xa9&#55296;&#202;b&#55296;c\x82\xa0&#55296;\x82\xa0&#230;'
+  write backslashreplace [None, None, None, None, None, None, None, None, None] b'a\\ud800\x82\xa9\\ud800\\xcab\\ud800c\x82\xa0\\ud800\x82\xa0\\xe6'
+cp932 118 156
+  read None fa55c55c
+  read -1 fa55c55c
+  read 1 2d68e692
+  read 2 6fc5e47d
+  read 3 868209c2
+  read 5 d6c6a466
+  read 8 7bc9e876
+  read 100 873e04af
+  read 10000 9af118c8
+  whole True True True 26892e4b
+  cut strict 44329198
+  cut ignore 583a6fb7
+  cut replace b4826dff
+  cut backslashreplace 4808c2c0
+  reset 09331b58
+  write 6c30972b c58ed7eb c58ed7eb True True
+  writelines c58ed7eb
+  write reset e09f610a
+  write strict [None, 'UnicodeEncodeError cp932 0 1 illegal multibyte sequence', None, 'UnicodeEncodeError cp932 0 1 illegal multibyte sequence', 'UnicodeEncodeError cp932 0 1 illegal multibyte sequence', 'UnicodeEncodeError cp932 1 2 illegal multibyte sequence', 'UnicodeEncodeError cp932 1 2 illegal multibyte sequence', 'UnicodeEncodeError cp932 0 1 illegal multibyte sequence', None] b'a\x82\xa9'
+  write ignore [None, None, None, None, None, None, None, None, None] b'a\x82\xa9bc\x82\xa0\x82\xa0'
+  write replace [None, None, None, None, None, None, None, None, None] b'a?\x82\xa9??b?c\x82\xa0?\x82\xa0?'
+  write xmlcharrefreplace [None, None, None, None, None, None, None, None, None] b'a&#55296;\x82\xa9&#55296;&#202;b&#55296;c\x82\xa0&#55296;\x82\xa0&#230;'
+  write backslashreplace [None, None, None, None, None, None, None, None, None] b'a\\ud800\x82\xa9\\ud800\\xcab\\ud800c\x82\xa0\\ud800\x82\xa0\\xe6'
+euc_jp 128 204
+  read None 5573ed68
+  read -1 5573ed68
+  read 1 d0fae372
+  read 2 2a819f27
+  read 3 fa4f6361
+  read 5 6af7ff55
+  read 8 9ba9a0fe
+  read 100 c92096ff
+  read 10000 9161155f
+  whole True True True 26892e4b
+  cut strict 0e11b35b
+  cut ignore 25e364e1
+  cut replace 55416c51
+  cut backslashreplace a337eb52
+  reset 7385b581
+  write 1f3b11cd 00bb458a 00bb458a True True
+  writelines 00bb458a
+  write reset 85ee420e
+  write strict [None, 'UnicodeEncodeError euc_jp 0 1 illegal multibyte sequence', None, 'UnicodeEncodeError euc_jp 0 1 illegal multibyte sequence', None, 'UnicodeEncodeError euc_jp 1 2 illegal multibyte sequence', 'UnicodeEncodeError euc_jp 1 2 illegal multibyte sequence', None, None] b'a\xa4\xab\x8f\xaa\xb4\x8f\xa9\xc1'
+  write ignore [None, None, None, None, None, None, None, None, None] b'a\xa4\xab\x8f\xaa\xb4bc\xa4\xa2\xa4\xa2\x8f\xa9\xc1'
+  write replace [None, None, None, None, None, None, None, None, None] b'a?\xa4\xab?\x8f\xaa\xb4b?c\xa4\xa2?\xa4\xa2\x8f\xa9\xc1'
+  write xmlcharrefreplace [None, None, None, None, None, None, None, None, None] b'a&#55296;\xa4\xab&#55296;\x8f\xaa\xb4b&#55296;c\xa4\xa2&#55296;\xa4\xa2\x8f\xa9\xc1'
+  write backslashreplace [None, None, None, None, None, None, None, None, None] b'a\\ud800\xa4\xab\\ud800\x8f\xaa\xb4b\\ud800c\xa4\xa2\\ud800\xa4\xa2\x8f\xa9\xc1'

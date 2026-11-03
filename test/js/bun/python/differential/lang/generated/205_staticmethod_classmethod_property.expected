@@ -1,0 +1,121 @@
+status: 0
+script: 020f20a25ef3698a
+source: f47175a3d78c79ae
+---
+kind.__name__ [kind=staticmethod] => staticmethod
+w.__name__ [kind=staticmethod] => f
+w.__qualname__ [kind=staticmethod] => f
+w.__doc__ [kind=staticmethod] => the docstring of f
+w.__module__ [kind=staticmethod] => __main__
+w.__wrapped__ is f [kind=staticmethod] => True
+w.__func__ is f [kind=staticmethod] => True
+w.__isabstractmethod__ [kind=staticmethod] => False
+sorted(w.__dict__) [kind=staticmethod] => ['__doc__', '__module__', '__name__', '__qualname__']
+w.__annotations__ == f.__annotations__ [kind=staticmethod] => True
+hasattr(w, 'extra') [kind=staticmethod] => False
+sorted(w.__dict__) [kind=staticmethod] => ['__annotations__', '__doc__', '__module__', '__name__', '__qualname__']
+no argument TypeError staticmethod expected 1 argument, got 0
+two TypeError staticmethod expected 1 argument, got 2
+keyword TypeError staticmethod() takes no keyword arguments
+not callable ok 1
+__new__ alone TypeError staticmethod expected 1 argument, got 0
+__new__ with one ok True
+__init__ again ok (<built-in function len>, 'len')
+__init__ none TypeError staticmethod expected 1 argument, got 0
+__init__ keyword TypeError staticmethod() takes no keyword arguments
+set ok 1
+del annotations AttributeError 'staticmethod' object has no attribute '__annotations__'
+del annotations ok None
+annotate ok True
+repr ok <staticmethod(F)>
+Sub(f).__name__ [kind=staticmethod] => f
+type(Sub(f).__get__(None, int)).__name__ [kind=staticmethod] => function
+of a partial AttributeError 'staticmethod' object has no attribute '__name__'
+of a partial ok ['__doc__', '__module__']
+kind.__name__ [kind=classmethod] => classmethod
+w.__name__ [kind=classmethod] => f
+w.__qualname__ [kind=classmethod] => f
+w.__doc__ [kind=classmethod] => the docstring of f
+w.__module__ [kind=classmethod] => __main__
+w.__wrapped__ is f [kind=classmethod] => True
+w.__func__ is f [kind=classmethod] => True
+w.__isabstractmethod__ [kind=classmethod] => False
+sorted(w.__dict__) [kind=classmethod] => ['__doc__', '__module__', '__name__', '__qualname__']
+w.__annotations__ == f.__annotations__ [kind=classmethod] => True
+hasattr(w, 'extra') [kind=classmethod] => False
+sorted(w.__dict__) [kind=classmethod] => ['__annotations__', '__doc__', '__module__', '__name__', '__qualname__']
+no argument TypeError classmethod expected 1 argument, got 0
+two TypeError classmethod expected 1 argument, got 2
+keyword TypeError classmethod() takes no keyword arguments
+not callable ok 1
+__new__ alone TypeError classmethod expected 1 argument, got 0
+__new__ with one ok True
+__init__ again ok (<built-in function len>, 'len')
+__init__ none TypeError classmethod expected 1 argument, got 0
+__init__ keyword TypeError classmethod() takes no keyword arguments
+set ok 1
+del annotations AttributeError 'classmethod' object has no attribute '__annotations__'
+del annotations ok None
+annotate ok True
+repr ok <classmethod(F)>
+Sub(f).__name__ [kind=classmethod] => f
+type(Sub(f).__get__(None, int)).__name__ [kind=classmethod] => method
+of a partial AttributeError 'classmethod' object has no attribute '__name__'
+of a partial ok ['__doc__', '__module__']
+str.__dict__['maketrans'].__name__ => maketrans
+str.__dict__['maketrans'].__qualname__ => str.maketrans
+type(str.__dict__['maketrans']).__name__ => staticmethod
+bytes.__dict__['maketrans'].__name__ => maketrans
+dict.__dict__['fromkeys'].__name__ => fromkeys
+type(dict.__dict__['fromkeys']).__name__ => classmethod_descriptor
+str.__dict__['maketrans'].__doc__ == str.maketrans.__doc__ => True
+str.__dict__['maketrans'].__wrapped__ is str.maketrans => True
+name [name='__new__'] => __new__
+type(w).__name__ [name='__new__'] => staticmethod
+w.__name__ [name='__new__'] => __new__
+w.__qualname__ [name='__new__'] => C.__new__
+sorted(w.__dict__) [name='__new__'] => ['__doc__', '__module__', '__name__', '__qualname__']
+name [name='__init_subclass__'] => __init_subclass__
+type(w).__name__ [name='__init_subclass__'] => classmethod
+w.__name__ [name='__init_subclass__'] => __init_subclass__
+w.__qualname__ [name='__init_subclass__'] => C.__init_subclass__
+sorted(w.__dict__) [name='__init_subclass__'] => ['__doc__', '__module__', '__name__', '__qualname__']
+name [name='__class_getitem__'] => __class_getitem__
+type(w).__name__ [name='__class_getitem__'] => classmethod
+w.__name__ [name='__class_getitem__'] => __class_getitem__
+w.__qualname__ [name='__class_getitem__'] => C.__class_getitem__
+sorted(w.__dict__) [name='__class_getitem__'] => ['__doc__', '__module__', '__name__', '__qualname__']
+p.__doc__ => from the getter
+p.__name__ => getter
+p.fget is getter => True
+p.fset => None
+p.fdel => None
+property(getter, doc='given').__doc__ => given
+property(doc='only').__doc__ => only
+property().__doc__ => None
+name AttributeError 'property' object has no attribute '__name__'
+name AttributeError 'property' object has no attribute '__name__'
+set name ok other
+__set_name__ TypeError __set_name__() takes 2 positional arguments but 0 were given
+__set_name__ TypeError __set_name__() takes 2 positional arguments but 1 were given
+__set_name__ TypeError __set_name__() takes 2 positional arguments but 3 were given
+__set_name__ ok None
+__set_name__ TypeError property.__set_name__() takes no keyword arguments
+slots, getter doc AttributeError 'Slotted' object attribute '__doc__' is read-only
+slots, doc given ok None
+slots, doc None AttributeError 'Slotted' object attribute '__doc__' is read-only
+a slot for it ok from the getter
+a slot for it ok given
+class doc ok None
+class doc ok from the getter
+class doc ok None
+copies ok ['from the getter', 'from the getter', 'from the getter', 'kept']
+no accessor AttributeError property 'x' of 'D' object has no getter
+no accessor AttributeError property 'x' of 'D' object has no setter
+no accessor AttributeError property 'x' of 'D' object has no deleter
+no accessor AttributeError property 'y' of 'D' object has no setter
+no accessor AttributeError property 'y' of 'D' object has no deleter
+unnamed AttributeError property of 'D' object has no getter
+property.__doc__[:19] => Property attribute.
+type(property.__dict__['__doc__']).__name__ => member_descriptor
+type(lambda: 0).__doc__[:24] => Create a function object

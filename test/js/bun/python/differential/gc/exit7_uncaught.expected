@@ -1,0 +1,6 @@
+status: 1
+stderr: ValueError: boom
+script: fe64c87932b3248e
+---
+del local
+del global

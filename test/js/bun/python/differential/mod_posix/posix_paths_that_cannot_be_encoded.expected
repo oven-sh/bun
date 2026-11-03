@@ -1,0 +1,281 @@
+status: 0
+script: d794d7c24382038b
+---
+'a/\udfff/../b'
+   normpath 'a/b'
+   splitroot ('', '', 'a/\udfff/../b')
+   split ('a/\udfff/..', 'b')
+   splitext ('a/\udfff/../b', '')
+   basename 'b'
+   dirname 'a/\udfff/..'
+   isabs False
+   normcase 'a/\udfff/../b'
+   splitdrive ('', 'a/\udfff/../b')
+   exists False
+   lexists False
+   isfile False
+   isdir False
+   islink False
+   ismount False
+   isjunction False
+   isdevdrive False
+   abspath '/a/b'
+   realpath UnicodeEncodeError 'utf-8' codec can't encode character '\udfff' in position 52
+   getsize UnicodeEncodeError 'utf-8' codec can't encode character '\udfff' in position 2:
+   expanduser 'a/\udfff/../b'
+   expandvars 'a/\udfff/../b'
+   pure 'a/\udfff/../b' ('a', '\udfff', '..', 'b') 'b' ''
+   exists False
+   is_file False
+   is_dir False
+   is_symlink False
+   is_mount False
+   is_junction False
+   is_socket False
+   is_fifo False
+   is_block_device False
+   is_char_device False
+   info.exists False
+   info.is_file False
+   info.is_dir False
+   info.is_symlink False
+'\ud800'
+   normpath '\ud800'
+   splitroot ('', '', '\ud800')
+   split ('', '\ud800')
+   splitext ('\ud800', '')
+   basename '\ud800'
+   dirname ''
+   isabs False
+   normcase '\ud800'
+   splitdrive ('', '\ud800')
+   exists False
+   lexists False
+   isfile False
+   isdir False
+   islink False
+   ismount False
+   isjunction False
+   isdevdrive False
+   abspath '/\ud800'
+   realpath UnicodeEncodeError 'utf-8' codec can't encode character '\ud800' in position 50
+   getsize UnicodeEncodeError 'utf-8' codec can't encode character '\ud800' in position 0:
+   expanduser '\ud800'
+   expandvars '\ud800'
+   pure '\ud800' ('\ud800',) '\ud800' ''
+   exists False
+   is_file False
+   is_dir False
+   is_symlink False
+   is_mount False
+   is_junction False
+   is_socket False
+   is_fifo False
+   is_block_device False
+   is_char_device False
+   info.exists False
+   info.is_file False
+   info.is_dir False
+   info.is_symlink False
+'/x//\udc80/./y/'
+   normpath '/x/\udc80/y'
+   splitroot ('', '/', 'x//\udc80/./y/')
+   split ('/x//\udc80/./y', '')
+   splitext ('/x//\udc80/./y/', '')
+   basename ''
+   dirname '/x//\udc80/./y'
+   isabs True
+   normcase '/x//\udc80/./y/'
+   splitdrive ('', '/x//\udc80/./y/')
+   exists False
+   lexists False
+   isfile False
+   isdir False
+   islink False
+   ismount False
+   isjunction False
+   isdevdrive False
+   abspath '/x/\udc80/y'
+   realpath '/x/\udc80/y'
+   getsize FileNotFoundError [Errno 2] No such file or directory: '/x//\udc80/./y/'
+   expanduser '/x//\udc80/./y/'
+   expandvars '/x//\udc80/./y/'
+   pure '/x/\udc80/y' ('/', 'x', '\udc80', 'y') 'y' '/'
+   exists False
+   is_file False
+   is_dir False
+   is_symlink False
+   is_mount False
+   is_junction False
+   is_socket False
+   is_fifo False
+   is_block_device False
+   is_char_device False
+   info.exists False
+   info.is_file False
+   info.is_dir False
+   info.is_symlink False
+'//\udcff'
+   normpath '//\udcff'
+   splitroot ('', '//', '\udcff')
+   split ('//', '\udcff')
+   splitext ('//\udcff', '')
+   basename '\udcff'
+   dirname '//'
+   isabs True
+   normcase '//\udcff'
+   splitdrive ('', '//\udcff')
+   exists False
+   lexists False
+   isfile False
+   isdir False
+   islink False
+   ismount False
+   isjunction False
+   isdevdrive False
+   abspath '//\udcff'
+   realpath '/\udcff'
+   getsize FileNotFoundError [Errno 2] No such file or directory: '//\udcff'
+   expanduser '//\udcff'
+   expandvars '//\udcff'
+   pure '//\udcff' ('//', '\udcff') '\udcff' '//'
+   exists False
+   is_file False
+   is_dir False
+   is_symlink False
+   is_mount False
+   is_junction False
+   is_socket False
+   is_fifo False
+   is_block_device False
+   is_char_device False
+   info.exists False
+   info.is_file False
+   info.is_dir False
+   info.is_symlink False
+'Am\xe9rica/\ud800York'
+   normpath 'Am\xe9rica/\ud800York'
+   splitroot ('', '', 'Am\xe9rica/\ud800York')
+   split ('Am\xe9rica', '\ud800York')
+   splitext ('Am\xe9rica/\ud800York', '')
+   basename '\ud800York'
+   dirname 'Am\xe9rica'
+   isabs False
+   normcase 'Am\xe9rica/\ud800York'
+   splitdrive ('', 'Am\xe9rica/\ud800York')
+   exists False
+   lexists False
+   isfile False
+   isdir False
+   islink False
+   ismount False
+   isjunction False
+   isdevdrive False
+   abspath '/Am\xe9rica/\ud800York'
+   realpath UnicodeEncodeError 'utf-8' codec can't encode character '\ud800' in position 58
+   getsize UnicodeEncodeError 'utf-8' codec can't encode character '\ud800' in position 8:
+   expanduser 'Am\xe9rica/\ud800York'
+   expandvars 'Am\xe9rica/\ud800York'
+   pure 'Am\xe9rica/\ud800York' ('Am\xe9rica', '\ud800York') '\ud800York' ''
+   exists False
+   is_file False
+   is_dir False
+   is_symlink False
+   is_mount False
+   is_junction False
+   is_socket False
+   is_fifo False
+   is_block_device False
+   is_char_device False
+   info.exists False
+   info.is_file False
+   info.is_dir False
+   info.is_symlink False
+'a\x00b/../c'
+   normpath 'c'
+   splitroot ('', '', 'a\x00b/../c')
+   split ('a\x00b/..', 'c')
+   splitext ('a\x00b/../c', '')
+   basename 'c'
+   dirname 'a\x00b/..'
+   isabs False
+   normcase 'a\x00b/../c'
+   splitdrive ('', 'a\x00b/../c')
+   exists False
+   lexists False
+   isfile False
+   isdir False
+   islink False
+   ismount False
+   isjunction False
+   isdevdrive False
+   abspath '/c'
+   realpath ValueError lstat: embedded null character in path
+   getsize ValueError stat: embedded null character in path
+   expanduser 'a\x00b/../c'
+   expandvars 'a\x00b/../c'
+   pure 'a\x00b/../c' ('a\x00b', '..', 'c') 'c' ''
+   exists False
+   is_file False
+   is_dir False
+   is_symlink False
+   is_mount False
+   is_junction False
+   is_socket False
+   is_fifo False
+   is_block_device False
+   is_char_device False
+   info.exists False
+   info.is_file False
+   info.is_dir False
+   info.is_symlink False
+'\udfff\ud800/..'
+   normpath '.'
+   splitroot ('', '', '\udfff\ud800/..')
+   split ('\udfff\ud800', '..')
+   splitext ('\udfff\ud800/..', '')
+   basename '..'
+   dirname '\udfff\ud800'
+   isabs False
+   normcase '\udfff\ud800/..'
+   splitdrive ('', '\udfff\ud800/..')
+   exists False
+   lexists False
+   isfile False
+   isdir False
+   islink False
+   ismount False
+   isjunction False
+   isdevdrive False
+   abspath ''
+   realpath UnicodeEncodeError 'utf-8' codec can't encode characters in position 50-51: sur
+   getsize UnicodeEncodeError 'utf-8' codec can't encode characters in position 0-1: surro
+   expanduser '\udfff\ud800/..'
+   expandvars '\udfff\ud800/..'
+   pure '\udfff\ud800/..' ('\udfff\ud800', '..') '..' ''
+   exists False
+   is_file False
+   is_dir False
+   is_symlink False
+   is_mount False
+   is_junction False
+   is_socket False
+   is_fifo False
+   is_block_device False
+   is_char_device False
+   info.exists False
+   info.is_file False
+   info.is_dir False
+   info.is_symlink False
+b'a/\xff/../b' b'a/b' (b'', b'', b'a/\xff/../b')
+b'//\x80' b'//\x80' (b'', b'//', b'\x80')
+b'a\x00b/../c' b'c' (b'', b'', b'a\x00b/../c')
+normpath TypeError _path_normpath: path should be string, bytes or os.PathLike, not int
+splitroot TypeError _path_splitroot_ex: path should be string, bytes or os.PathLike, not int
+normpath TypeError _path_normpath: path should be string, bytes or os.PathLike, not NoneType
+splitroot TypeError _path_splitroot_ex: path should be string, bytes or os.PathLike, not NoneType
+normpath TypeError _path_normpath: path should be string, bytes or os.PathLike, not list
+splitroot TypeError _path_splitroot_ex: path should be string, bytes or os.PathLike, not list
+normpath TypeError _path_normpath: path should be string, bytes or os.PathLike, not bytearray
+splitroot TypeError _path_splitroot_ex: path should be string, bytes or os.PathLike, not bytearray
+'a' b'a/b' ('', '/', '\ud800')

@@ -1,0 +1,24 @@
+status: 0
+script: 8dfc43c2958ed3aa
+---
+0 ran other True 
+0 ran python3 True 
+0 ran a name with spaces True 
+0 ran bun True 
+0 ran x.py True 
+0 ran hops True 
+0 ran relative target True 
+0 ran relative path True 
+0 ran relative path with a directory True 
+0 ran a path that is not normal <d>/sub/../sub/relative 
+0 ran on PATH True 
+0 ran up beyond the root <d>/sub/../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../..<d>/sub/relative 
+0 ran absolute and not normal True 
+7
+8
+0 ran something 
+0 ran something 
+0 ran bun 
+0 ran bun 
+0 ran /nowhere/python3 
+0 ran /nowhere/python3 

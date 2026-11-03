@@ -1,0 +1,137 @@
+status: 0
+script: 85e2282db3e9061f
+source: f8cab863f4940c89
+---
+4 arguments TypeError str expected at most 3 arguments, got 4
+4 arguments TypeError str() takes at most 3 arguments (4 given)
+3 + keyword TypeError str() takes at most 3 arguments (4 given)
+4 keywords TypeError str() takes at most 3 keyword arguments (4 given)
+unknown keyword TypeError str() got an unexpected keyword argument 'x'
+twice TypeError argument for str() given by name ('encoding') and position (2)
+encoding of a str TypeError decoding str is not supported
+errors of a str TypeError decoding str is not supported
+encoding not a str TypeError str() argument 'encoding' must be str, not int
+errors not a str TypeError str() argument 'errors' must be str, not int
+int with encoding TypeError decoding to str: need a bytes-like object, int found
+keywords only ok ''
+keywords only ok ''
+object keyword ok '1'
+bytes ok 'a'
+args => ('some text',)
+args[0] == s => True
+args[0] is s => False
+type(S('x').__getnewargs__()[0]).__name__ => str
+ascii(text[:4]) [text=''] => ''
+len(text) [text=''] => 0
+sys.getsizeof(text) [text=''] => 41
+text.__sizeof__() [text=''] => 41
+ascii(text[:4]) [text='a'] => 'a'
+len(text) [text='a'] => 1
+sys.getsizeof(text) [text='a'] => 42
+text.__sizeof__() [text='a'] => 42
+ascii(text[:4]) [text='abc'] => 'abc'
+len(text) [text='abc'] => 3
+sys.getsizeof(text) [text='abc'] => 44
+text.__sizeof__() [text='abc'] => 44
+ascii(text[:4]) [text='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'] => 'aaaa'
+len(text) [text='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'] => 100
+sys.getsizeof(text) [text='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'] => 141
+text.__sizeof__() [text='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'] => 141
+ascii(text[:4]) [text='abcé'] => 'abc\xe9'
+len(text) [text='abcé'] => 4
+sys.getsizeof(text) [text='abcé'] => 61
+text.__sizeof__() [text='abcé'] => 61
+ascii(text[:4]) [text='€'] => '\u20ac'
+len(text) [text='€'] => 1
+sys.getsizeof(text) [text='€'] => 60
+text.__sizeof__() [text='€'] => 60
+ascii(text[:4]) [text='ab€'] => 'ab\u20ac'
+len(text) [text='ab€'] => 3
+sys.getsizeof(text) [text='ab€'] => 64
+text.__sizeof__() [text='ab€'] => 64
+ascii(text[:4]) [text='😀'] => '\U0001f600'
+len(text) [text='😀'] => 1
+sys.getsizeof(text) [text='😀'] => 64
+text.__sizeof__() [text='😀'] => 64
+ascii(text[:4]) [text='ab😀'] => 'ab\U0001f600'
+len(text) [text='ab😀'] => 3
+sys.getsizeof(text) [text='ab😀'] => 72
+text.__sizeof__() [text='ab😀'] => 72
+%d C TypeError format argument 1: %d requires a real number, not C
+%d Inner TypeError format argument 1: %d requires a real number, not N.Inner
+%d str TypeError format argument 1: %d requires a real number, not str
+%d NoneType TypeError format argument 1: %d requires a real number, not NoneType
+%d complex TypeError format argument 1: %d requires a real number, not complex
+%d list TypeError format argument 1: %d requires a real number, not list
+%d bytes TypeError format argument 1: %d requires a real number, not bytes
+%i C TypeError format argument 1: %i requires a real number, not C
+%i Inner TypeError format argument 1: %i requires a real number, not N.Inner
+%i str TypeError format argument 1: %i requires a real number, not str
+%i NoneType TypeError format argument 1: %i requires a real number, not NoneType
+%i complex TypeError format argument 1: %i requires a real number, not complex
+%i list TypeError format argument 1: %i requires a real number, not list
+%i bytes TypeError format argument 1: %i requires a real number, not bytes
+%x C TypeError format argument 1: %x requires an integer, not C
+%x Inner TypeError format argument 1: %x requires an integer, not N.Inner
+%x str TypeError format argument 1: %x requires an integer, not str
+%x NoneType TypeError format argument 1: %x requires an integer, not NoneType
+%x complex TypeError format argument 1: %x requires an integer, not complex
+%x list TypeError format argument 1: %x requires an integer, not list
+%x bytes TypeError format argument 1: %x requires an integer, not bytes
+%o C TypeError format argument 1: %o requires an integer, not C
+%o Inner TypeError format argument 1: %o requires an integer, not N.Inner
+%o str TypeError format argument 1: %o requires an integer, not str
+%o NoneType TypeError format argument 1: %o requires an integer, not NoneType
+%o complex TypeError format argument 1: %o requires an integer, not complex
+%o list TypeError format argument 1: %o requires an integer, not list
+%o bytes TypeError format argument 1: %o requires an integer, not bytes
+%c C TypeError format argument 1: %c requires an integer or a unicode character, not C
+%c Inner TypeError format argument 1: %c requires an integer or a unicode character, not N.Inner
+%c str TypeError format argument 1: %c requires an integer or a unicode character, not a string of length 4
+%c NoneType TypeError format argument 1: %c requires an integer or a unicode character, not NoneType
+%c complex TypeError format argument 1: %c requires an integer or a unicode character, not complex
+%c list TypeError format argument 1: %c requires an integer or a unicode character, not list
+%c bytes TypeError format argument 1: %c requires an integer or a unicode character, not bytes
+%f C TypeError format argument 1: %f requires a real number, not C
+%f Inner TypeError format argument 1: %f requires a real number, not N.Inner
+%f str TypeError format argument 1: %f requires a real number, not str
+%f NoneType TypeError format argument 1: %f requires a real number, not NoneType
+%f complex TypeError format argument 1: %f requires a real number, not complex
+%f list TypeError format argument 1: %f requires a real number, not list
+%f bytes TypeError format argument 1: %f requires a real number, not bytes
+%e C TypeError format argument 1: %e requires a real number, not C
+%e Inner TypeError format argument 1: %e requires a real number, not N.Inner
+%e str TypeError format argument 1: %e requires a real number, not str
+%e NoneType TypeError format argument 1: %e requires a real number, not NoneType
+%e complex TypeError format argument 1: %e requires a real number, not complex
+%e list TypeError format argument 1: %e requires a real number, not list
+%e bytes TypeError format argument 1: %e requires a real number, not bytes
+%g C TypeError format argument 1: %g requires a real number, not C
+%g Inner TypeError format argument 1: %g requires a real number, not N.Inner
+%g str TypeError format argument 1: %g requires a real number, not str
+%g NoneType TypeError format argument 1: %g requires a real number, not NoneType
+%g complex TypeError format argument 1: %g requires a real number, not complex
+%g list TypeError format argument 1: %g requires a real number, not list
+%g bytes TypeError format argument 1: %g requires a real number, not bytes
+%c big OverflowError format argument: %c argument not in range(0x110000)
+%c negative OverflowError format argument: %c argument not in range(0x110000)
+%c str TypeError format argument: %c requires an integer or a unicode character, not a string of length 2
+* not int TypeError format argument 1: * requires int, not str
+.* not int TypeError format argument 1: * requires int, not C
+mapping TypeError format requires a mapping, not C
+not all TypeError not all arguments converted during string formatting (required 1, got 2)
+not enough TypeError not enough arguments for format string (got 1)
+unsupported ValueError unsupported format %y at position 0
+incomplete ValueError stray % at position 0
+type(result).__name__ [value=R] => str
+result [value=R] => plain
+type(result).__name__ [value=R] => T
+result [value=R] => a subclass
+type(result).__name__ [value=R] => str
+result [value=R] => \xe9
+type(result).__name__ [value=R] => str
+result [value=R] => \xe9
+type(result).__name__ [value=R] => str
+result [value=R] => \U0001f600
+
+not a str TypeError R.__repr__() must return a str, not int

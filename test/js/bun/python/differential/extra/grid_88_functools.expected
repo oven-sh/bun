@@ -1,0 +1,6 @@
+status: 0
+script: af7616b4a8c4198c
+---
+functools reduce 972 895292e9daf9
+functools partial 979 508e465d91be
+functools cmp_to_key 26 eea0c3d59c51

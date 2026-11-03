@@ -25,6 +25,8 @@ kept from the last run.
     --idle S        seconds without any output after which a run counts as hung (default 75)
     --rounds N      how many times a module is run again without the test that crashed or hung (default 12)
     --tag NAME      write score-NAME.md, score-NAME.json and logs-NAME/ instead (a run with another build, say)
+    --impl-detail   run the tests marked @cpython_only as well (shims/_impl_detail); implies --tag impl-detail. Not the scoreboard:
+                    a way to see which of them pass.
     --list          print the names and exit
 """
 
@@ -93,6 +95,7 @@ SHIMS = {
     "_testinternalcapi": ["test_class", "test_with"],
     "_testlimitedcapi": ["test_bytes", "test_class"],
     "_testcapi": ["test_traceback", "test_zipimport"],
+    "_interpreters": ["test_concurrent_futures"],
 }
 
 
@@ -100,6 +103,11 @@ SHIMS = {
 IGNORED = {
     # Runs a script in a child that imports test_importlib/util.py, without the shim.
     "test_importlib.extension.test_loader": ["test.test_importlib.extension.test_loader.NonModuleExtensionTests.test_nonmodule_cases"],
+    # The same: a child with -I imports test_concurrent_futures/util.py.
+    "test_concurrent_futures.test_shutdown": [
+        "test.test_concurrent_futures.test_shutdown.*.test_interpreter_shutdown",
+        "test.test_concurrent_futures.test_shutdown.ThreadPoolShutdownTest.test_cancel_futures_wait_false",
+    ],
 }
 
 
@@ -107,6 +115,13 @@ IGNORED = {
 # back, which is not run for a test that setUp() skips: every test after them in the module would fail. Not run.
 SPOILERS = {
     "test_monitoring": ["test.test_monitoring.TestCApiEventGeneration.*"],
+}
+
+
+# Files that cannot be run one at a time, under CPython either: they use what only another file of the package has imported
+# (test_importlib/resources/util.py: importlib.abc). They are run as one module, picked out of a run of the package named.
+TOGETHER = {
+    "test_importlib.resources": "test_importlib",
 }
 
 
@@ -132,6 +147,11 @@ def find_tests():
                         names.append(prefix + entry)
 
     walk(root, "")
+    for together in TOGETHER:
+        parts = [n for n in names if n.startswith(together + ".")]
+        if parts:
+            names[names.index(parts[0])] = together
+            names = [n for n in names if n not in parts]
     return names
 
 
@@ -226,7 +246,10 @@ def run_once(name, python, limits, extra_env, ignored):
     command = python + ["-m", "test", "--junit-xml", xml_path, "--tempdir", work, "-v"]
     for test in ignored:
         command += ["--ignore", test]
-    command.append(name)
+    if name in TOGETHER:
+        command += ["--match", "test.%s.*" % name, TOGETHER[name]]
+    else:
+        command.append(name)
     started = time.monotonic()
     result = {"name": name}
     process = subprocess.Popen(command, cwd=work, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True,
@@ -266,6 +289,15 @@ def run_once(name, python, limits, extra_env, ignored):
                 continue
             outcome = {"ok": "passed", "expected failure": "passed", "FAIL": "failed", "unexpected success": "failed", "ERROR": "error", "skipped": "skipped"}[match.group(2)]
             cases.append((match.group(1), outcome, ""))
+    # A test of which only subtests failed is in the XML as an element that says nothing, not even its name.
+    named = {case[0] for case in cases}
+    nameless = [i for i, case in enumerate(cases) if case[0] == "?"]
+    for match in re.finditer(r"^(FAIL|ERROR): \w+ \(([\w.<>]+)\) (.+)$", output, re.M):
+        if nameless and match.group(2) not in named:
+            named.add(match.group(2))
+            cases[nameless.pop(0)] = (match.group(2), "failed" if match.group(1) == "FAIL" else "error", "subtest " + match.group(3)[:120])
+    for i in nameless:
+        cases[i] = ("?", "failed", "subtests")
     counts = collections.Counter(outcome for _, outcome, _ in cases)
     result.update(ran=len(cases), passed=counts["passed"], failed=counts["failed"], errors=counts["error"], skipped=counts["skipped"])
     result["problems"] = [[case, outcome, detail] for case, outcome, detail in cases if outcome in ("failed", "error")]
@@ -473,10 +505,12 @@ def main():
     parser.add_argument("--rounds", type=int, default=12)
     parser.add_argument("--list", action="store_true")
     parser.add_argument("--tag")
+    parser.add_argument("--impl-detail", action="store_true")
     options = parser.parse_args()
     LIB = os.path.realpath(options.lib)
 
     names = [n for n in find_tests() if not excluded_reason(n)]
+    all_names = set(names)
     if options.names:
         names = [n for n in names if any(n == w or n.startswith(w + ".") for w in options.names)]
     if options.list:
@@ -489,6 +523,8 @@ def main():
     else:
         python = options.python.split() if options.python else [python_link(os.path.realpath(options.bun))]
         extra_env["BUN_PYTHON_STDLIB"] = LIB
+        if options.impl_detail:
+            options.tag = options.tag or "impl-detail"
         target = "score-%s.json" % options.tag if options.tag else "score.json"
 
     path = os.path.join(HERE, target)
@@ -496,7 +532,7 @@ def main():
     if os.path.exists(path):
         with open(path) as f:
             previous = json.load(f)["modules"]
-    results = dict(previous) if options.names else {}
+    results = {n: r for n, r in previous.items() if n in all_names} if options.names else {}
 
     logs = os.path.join(HERE, "oracle-logs" if options.oracle else "logs-" + options.tag if options.tag else "logs")
     os.makedirs(logs, exist_ok=True)
@@ -505,6 +541,8 @@ def main():
     with concurrent.futures.ThreadPoolExecutor(options.j) as pool:
         def environment(name):
             path = "" if options.oracle else shim_path(name)
+            if options.impl_detail and not options.oracle:
+                path = os.pathsep.join(filter(None, [os.path.join(HERE, "shims", "_impl_detail"), path]))
             return dict(extra_env, PYTHONPATH=path) if path else extra_env
 
         futures = {pool.submit(run_one, n, python, (options.timeout, options.idle), environment(n), options.rounds): n for n in names}

@@ -1,0 +1,274 @@
+status: 0
+script: ecc8cb03e2d84570
+---
+_lzma None
+CHECK_CRC32 1 True
+CHECK_CRC64 4 True
+CHECK_ID_MAX 15 True
+CHECK_NONE 0 True
+CHECK_SHA256 10 True
+CHECK_UNKNOWN 16 True
+FILTER_ARM 7 True
+FILTER_ARMTHUMB 8 True
+FILTER_DELTA 3 True
+FILTER_IA64 6 True
+FILTER_LZMA1 4611686018427387905 True
+FILTER_LZMA2 33 True
+FILTER_POWERPC 5 True
+FILTER_SPARC 9 True
+FILTER_X86 4 True
+FORMAT_ALONE 2 True
+FORMAT_AUTO 0 True
+FORMAT_RAW 3 True
+FORMAT_XZ 1 True
+LZMACompressor type False
+LZMADecompressor type False
+LZMAError type False
+MF_BT2 18 True
+MF_BT3 19 True
+MF_BT4 20 True
+MF_HC3 3 True
+MF_HC4 4 True
+MODE_FAST 1 True
+MODE_NORMAL 2 True
+PRESET_DEFAULT 6 True
+PRESET_EXTREME 2147483648 True
+_decode_filter_properties builtin_function_or_method False
+_encode_filter_properties builtin_function_or_method False
+is_check_supported builtin_function_or_method False
+['CHECK_CRC32', 'CHECK_CRC64', 'CHECK_ID_MAX', 'CHECK_NONE', 'CHECK_SHA256', 'CHECK_UNKNOWN', 'FILTER_ARM', 'FILTER_ARMTHUMB', 'FILTER_DELTA', 'FILTER_IA64', 'FILTER_LZMA1', 'FILTER_LZMA2', 'FILTER_POWERPC', 'FILTER_SPARC', 'FILTER_X86', 'FORMAT_ALONE', 'FORMAT_AUTO', 'FORMAT_RAW', 'FORMAT_XZ', 'LZMACompressor', 'LZMADecompressor', 'LZMAError', 'LZMAFile', 'MF_BT2', 'MF_BT3', 'MF_BT4', 'MF_HC3', 'MF_HC4', 'MODE_FAST', 'MODE_NORMAL', 'PRESET_DEFAULT', 'PRESET_EXTREME', 'compress', 'decompress', 'is_check_supported', 'open']
+True True True
+<class '_lzma.LZMAError'> LZMAError LZMAError _lzma (<class '_lzma.LZMAError'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>) Call to liblzma failed. (<class 'Exception'>,)
+LZMAError('a', 1) ('a', 1) ('a', 1)
+LZMAError('a', 1)
+{'x': 1}
+x True True
+<class '_lzma.LZMACompressor'> LZMACompressor LZMACompressor _lzma (<class '_lzma.LZMACompressor'>, <class 'object'>) <class 'type'> <class 'object'>
+['__doc__', '__new__', 'compress', 'flush']
+LZMACompressor(format=FORMAT_XZ, check=-1, preset=None, filters=None)
+
+Create a compressor object for compressing data incrementally.
+
+format specifies the container format to use for the output. This can
+be FORMAT_XZ (default), FORMAT_ALONE, or FORMAT_RAW.
+
+check specifies the integrity check to use. For FORMAT_XZ, the default
+is CHECK_CRC64. FORMAT_ALONE and FORMAT_RAW do not support integrity
+checks; for these formats, check must be omitted, or be CHECK_NONE.
+
+The settings used by the compressor can be specified either as a
+preset compression level (with the 'preset' argument), or in detail
+as a custom filter chain (with the 'filters' argument). For FORMAT_XZ
+and FORMAT_ALONE, the default is to use the PRESET_DEFAULT preset
+level. For FORMAT_RAW, the caller must always specify a filter chain;
+the raw compressor does not support preset compression levels.
+
+preset (if provided) should be an integer in the range 0-9, optionally
+OR-ed with the constant PRESET_EXTREME.
+
+filters (if provided) should be a sequence of dicts. Each dict should
+have an entry for "id" indicating the ID of the filter, plus
+additional entries for options to the filter.
+
+For one-shot compression, use the compress() function instead.
+
+False True
+0 0 0
+None
+ValueError: no signature found for builtin type <class '_lzma.LZMACompressor'>
+__new__ builtin_function_or_method __new__ LZMACompressor.__new__ None
+  ($type, *args, **kwargs)
+  Create and return a new object.  See help(type) for accurate signature.
+<Signature (*args, **kwargs)>
+compress method_descriptor compress LZMACompressor.compress <class '_lzma.LZMACompressor'>
+  ($self, data, /)
+  Provide data to the compressor object.
+
+Returns a chunk of compressed data if possible, or b'' otherwise.
+
+When you have finished providing data to the compressor, call the
+flush() method to finish the compression process.
+<Signature (self, data, /)>
+flush method_descriptor flush LZMACompressor.flush <class '_lzma.LZMACompressor'>
+  ($self, /)
+  Finish the compression process.
+
+Returns the compressed data left in internal buffers.
+
+The compressor object may not be used after this method is called.
+<Signature (self, /)>
+TypeError: type '_lzma.LZMACompressor' is not an acceptable base type
+TypeError: cannot set 'x' attribute of immutable type '_lzma.LZMACompressor'
+TypeError: cannot set '__doc__' attribute of immutable type '_lzma.LZMACompressor'
+TypeError: cannot set 'compress' attribute of immutable type '_lzma.LZMACompressor'
+'<_lzma.LZMACompressor object>
+True False False True
+AttributeError: '_lzma.LZMACompressor' object has no attribute 'x' and no __dict__ for setting new attributes
+AttributeError: '_lzma.LZMACompressor' object has no attribute '__dict__'
+TypeError: cannot create weak reference to '_lzma.LZMACompressor' object
+TypeError: cannot pickle '_lzma.LZMACompressor' object
+TypeError: cannot pickle '_lzma.LZMACompressor' object
+TypeError: cannot pickle 'LZMACompressor' object
+TypeError: cannot pickle 'LZMACompressor' object
+TypeError: cannot pickle '_lzma.LZMACompressor' object
+TypeError: cannot pickle '_lzma.LZMACompressor' object
+TypeError: cannot pickle '_lzma.LZMACompressor' object
+TypeError: cannot pickle '_lzma.LZMACompressor' object
+TypeError: cannot pickle 'LZMACompressor' object
+TypeError: cannot pickle '_lzma.LZMACompressor' object
+None
+TypeError: object of type '_lzma.LZMACompressor' has no len()
+TypeError: '_lzma.LZMACompressor' object is not iterable
+TypeError: '<' not supported between instances of '_lzma.LZMACompressor' and '_lzma.LZMACompressor'
+TypeError: unsupported operand type(s) for +: '_lzma.LZMACompressor' and '_lzma.LZMACompressor'
+<_lzma.LZMACompressor object>
+TypeError: _lzma.LZMACompressor.__new__(object): object is not a subtype of _lzma.LZMACompressor
+TypeError: _lzma.LZMACompressor.__new__(int): int is not a subtype of _lzma.LZMACompressor
+TypeError: object.__new__(_lzma.LZMACompressor) is not safe, use _lzma.LZMACompressor.__new__()
+TypeError: _lzma.LZMACompressor.__new__(): not enough arguments
+None
+None
+<class '_lzma.LZMADecompressor'> LZMADecompressor LZMADecompressor _lzma (<class '_lzma.LZMADecompressor'>, <class 'object'>) <class 'type'> <class 'object'>
+['__doc__', '__new__', 'check', 'decompress', 'eof', 'needs_input', 'unused_data']
+Create a decompressor object for decompressing data incrementally.
+
+  format
+    Specifies the container format of the input stream.  If this is
+    FORMAT_AUTO (the default), the decompressor will automatically detect
+    whether the input is FORMAT_XZ or FORMAT_ALONE.  Streams created with
+    FORMAT_RAW cannot be autodetected.
+  memlimit
+    Limit the amount of memory used by the decompressor.  This will cause
+    decompression to fail if the input cannot be decompressed within the
+    given limit.
+  filters
+    A custom filter chain.  This argument is required for FORMAT_RAW, and
+    not accepted with any other format.  When provided, this should be a
+    sequence of dicts, each indicating the ID and options for a single
+    filter.
+
+For one-shot decompression, use the decompress() function instead.
+False True
+0 0 0
+'(format=FORMAT_AUTO, memlimit=None, filters=None)'
+<Signature (format=0, memlimit=None, filters=None)>
+__new__ builtin_function_or_method __new__ LZMADecompressor.__new__ None
+  ($type, *args, **kwargs)
+  Create and return a new object.  See help(type) for accurate signature.
+<Signature (*args, **kwargs)>
+check member_descriptor check LZMADecompressor.check <class '_lzma.LZMADecompressor'>
+  None
+  ID of the integrity check used by the input stream.
+decompress method_descriptor decompress LZMADecompressor.decompress <class '_lzma.LZMADecompressor'>
+  ($self, /, data, max_length=-1)
+  Decompress *data*, returning uncompressed data as bytes.
+
+If *max_length* is nonnegative, returns at most *max_length* bytes
+of decompressed data. If this limit is reached and further output
+can be produced, *self.needs_input* will be set to ``False``.  In
+this case, the next call to *decompress()* may provide *data* as b''
+to obtain more of the output.
+
+If all of the input data was decompressed and returned (either
+because this was less than *max_length* bytes, or because
+*max_length* was negative), *self.needs_input* will be set to True.
+
+Attempting to decompress data after the end of stream is reached
+raises an EOFError.  Any data found after the end of the stream is
+ignored and saved in the unused_data attribute.
+<Signature (self, /, data, max_length=-1)>
+eof member_descriptor eof LZMADecompressor.eof <class '_lzma.LZMADecompressor'>
+  None
+  True if the end-of-stream marker has been reached.
+needs_input member_descriptor needs_input LZMADecompressor.needs_input <class '_lzma.LZMADecompressor'>
+  None
+  True if more input is needed before more decompressed data can be produced.
+unused_data getset_descriptor unused_data LZMADecompressor.unused_data <class '_lzma.LZMADecompressor'>
+  None
+  Data found after the end of the compressed stream.
+TypeError: type '_lzma.LZMADecompressor' is not an acceptable base type
+TypeError: cannot set 'x' attribute of immutable type '_lzma.LZMADecompressor'
+TypeError: cannot set '__doc__' attribute of immutable type '_lzma.LZMADecompressor'
+TypeError: cannot set 'compress' attribute of immutable type '_lzma.LZMADecompressor'
+'<_lzma.LZMADecompressor object>
+True False False True
+AttributeError: '_lzma.LZMADecompressor' object has no attribute 'x' and no __dict__ for setting new attributes
+AttributeError: '_lzma.LZMADecompressor' object has no attribute '__dict__'
+TypeError: cannot create weak reference to '_lzma.LZMADecompressor' object
+TypeError: cannot pickle '_lzma.LZMADecompressor' object
+TypeError: cannot pickle '_lzma.LZMADecompressor' object
+TypeError: cannot pickle 'LZMADecompressor' object
+TypeError: cannot pickle 'LZMADecompressor' object
+TypeError: cannot pickle '_lzma.LZMADecompressor' object
+TypeError: cannot pickle '_lzma.LZMADecompressor' object
+TypeError: cannot pickle '_lzma.LZMADecompressor' object
+TypeError: cannot pickle '_lzma.LZMADecompressor' object
+TypeError: cannot pickle 'LZMADecompressor' object
+TypeError: cannot pickle '_lzma.LZMADecompressor' object
+None
+TypeError: object of type '_lzma.LZMADecompressor' has no len()
+TypeError: '_lzma.LZMADecompressor' object is not iterable
+TypeError: '<' not supported between instances of '_lzma.LZMADecompressor' and '_lzma.LZMADecompressor'
+TypeError: unsupported operand type(s) for +: '_lzma.LZMADecompressor' and '_lzma.LZMADecompressor'
+<_lzma.LZMADecompressor object>
+TypeError: _lzma.LZMADecompressor.__new__(object): object is not a subtype of _lzma.LZMADecompressor
+TypeError: _lzma.LZMADecompressor.__new__(int): int is not a subtype of _lzma.LZMADecompressor
+TypeError: object.__new__(_lzma.LZMADecompressor) is not safe, use _lzma.LZMADecompressor.__new__()
+TypeError: _lzma.LZMADecompressor.__new__(): not enough arguments
+None
+None
+check 16
+AttributeError: readonly attribute
+AttributeError: readonly attribute
+<member 'check' of '_lzma.LZMADecompressor' objects>
+TypeError: descriptor 'check' for '_lzma.LZMADecompressor' objects doesn't apply to a 'int' object
+TypeError: descriptor 'check' for '_lzma.LZMADecompressor' objects doesn't apply to a '_lzma.LZMACompressor' object
+eof False
+AttributeError: readonly attribute
+AttributeError: readonly attribute
+<member 'eof' of '_lzma.LZMADecompressor' objects>
+TypeError: descriptor 'eof' for '_lzma.LZMADecompressor' objects doesn't apply to a 'int' object
+TypeError: descriptor 'eof' for '_lzma.LZMADecompressor' objects doesn't apply to a '_lzma.LZMACompressor' object
+needs_input True
+AttributeError: readonly attribute
+AttributeError: readonly attribute
+<member 'needs_input' of '_lzma.LZMADecompressor' objects>
+TypeError: descriptor 'needs_input' for '_lzma.LZMADecompressor' objects doesn't apply to a 'int' object
+TypeError: descriptor 'needs_input' for '_lzma.LZMADecompressor' objects doesn't apply to a '_lzma.LZMACompressor' object
+unused_data b''
+AttributeError: attribute 'unused_data' of '_lzma.LZMADecompressor' objects is not writable
+AttributeError: attribute 'unused_data' of '_lzma.LZMADecompressor' objects is not writable
+<attribute 'unused_data' of '_lzma.LZMADecompressor' objects>
+TypeError: descriptor 'unused_data' for '_lzma.LZMADecompressor' objects doesn't apply to a 'int' object
+TypeError: descriptor 'unused_data' for '_lzma.LZMADecompressor' objects doesn't apply to a '_lzma.LZMACompressor' object
+TypeError: descriptor 'compress' for '_lzma.LZMACompressor' objects doesn't apply to a '_lzma.LZMADecompressor' object
+TypeError: descriptor 'flush' for '_lzma.LZMACompressor' objects doesn't apply to a '_lzma.LZMADecompressor' object
+TypeError: descriptor 'decompress' for '_lzma.LZMADecompressor' objects doesn't apply to a '_lzma.LZMACompressor' object
+TypeError: descriptor 'compress' for '_lzma.LZMACompressor' objects doesn't apply to a 'int' object
+TypeError: descriptor 'decompress' for '_lzma.LZMADecompressor' objects doesn't apply to a 'NoneType' object
+<built-in function is_check_supported> builtin_function_or_method is_check_supported is_check_supported _lzma True ($module, check_id, /)
+Test whether the given integrity check is supported.
+
+Always returns True for CHECK_NONE and CHECK_CRC32.
+<Signature (check_id, /)>
+<built-in function _encode_filter_properties> builtin_function_or_method _encode_filter_properties _encode_filter_properties _lzma True ($module, filter, /)
+Return a bytes object encoding the options (properties) of the filter specified by *filter* (a dict).
+
+The result does not include the filter ID itself, only the options.
+<Signature (filter, /)>
+<built-in function _decode_filter_properties> builtin_function_or_method _decode_filter_properties _decode_filter_properties _lzma True ($module, filter_id, encoded_props, /)
+Return a bytes object encoding the options (properties) of the filter specified by *filter* (a dict).
+
+The result does not include the filter ID itself, only the options.
+<Signature (filter_id, encoded_props, /)>
+-2 False; -1 False; 0 True; 1 True; 2 False; 3 False; 4 True; 5 False; 6 False; 7 False; 8 False; 9 False; 10 True; 11 False; 12 False; 13 False; 14 False; 15 False; 16 False; 17 False; 2147483647 False; -2147483648 False; 
+TypeError: _lzma.is_check_supported() takes exactly one argument (0 given)
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+OverflowError: Python int too large to convert to C int
+OverflowError: Python int too large to convert to C int
+OverflowError: Python int too large to convert to C int
+TypeError: _lzma.is_check_supported() takes exactly one argument (2 given)
+TypeError: _lzma.is_check_supported() takes no keyword arguments
+TypeError: 'NoneType' object cannot be interpreted as an integer
+True

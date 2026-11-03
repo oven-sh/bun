@@ -23,6 +23,7 @@ extern "C" JSC::EncodedJSValue Bun__Process__createArgv(JSC::JSGlobalObject*);
 extern "C" void Bun__setExitCode(void* bunVM, uint8_t);
 // src/runtime/cli/python_command.rs
 extern "C" BunString Bun__Python__linkToSelf();
+extern "C" BunString Bun__Python__executedPath();
 extern "C" const char* Bun__Python__originalArgument(size_t index);
 extern "C" void Bun__Python__didChangeDirectory(JSC::JSGlobalObject*);
 extern "C" int32_t bun_is_stdio_null[3];
@@ -37,6 +38,35 @@ static_assert(PyObjectType == 103 && PyExceptionType == 121 && pyObjectTypes.fir
 
 static bool s_isPythonCommand;
 
+// As CPython makes the path of the program absolute: the path is made normal, then put behind the working directory. So the `..` it
+// begins with stay.
+static String absolutePathOfProgram(const String& path)
+{
+    if (path.startsWith('/'))
+        return Python::absolutePath(path);
+    unsigned levelsUp = 0;
+    Vector<StringView> parts;
+    for (auto part : StringView(path).split('/')) {
+        if (part == "."_s)
+            continue;
+        if (part != ".."_s)
+            parts.append(part);
+        else if (parts.isEmpty())
+            ++levelsUp;
+        else
+            parts.removeLast();
+    }
+    if (!levelsUp)
+        return Python::absolutePath(path);
+    StringBuilder result;
+    result.append(Python::absolutePath("."_s));
+    for (unsigned i = 0; i < levelsUp; ++i)
+        result.append("/.."_s);
+    for (auto part : parts)
+        result.append('/', part);
+    return result.toString();
+}
+
 // Where a shell finds the program of that name. No link is followed: a virtual environment is known by where its link is.
 static String findProgram(const String& name)
 {
@@ -47,12 +77,12 @@ static String findProgram(const String& name)
         return !stat(file, &info) && S_ISREG(info.st_mode) && !access(file, X_OK);
     };
     if (name.contains('/'))
-        return Python::absolutePath(name);
+        return absolutePathOfProgram(name);
     const char* searchPath = getenv("PATH");
     if (!searchPath)
         return {};
     for (auto& directory : String::fromUTF8(searchPath).splitAllowingEmptyEntries(':')) {
-        String candidate = Python::absolutePath(directory.isEmpty() ? name : makeString(directory, '/', name));
+        String candidate = absolutePathOfProgram(directory.isEmpty() ? name : makeString(directory, '/', name));
         if (isProgram(candidate))
             return candidate;
     }
@@ -88,8 +118,12 @@ static void preparePython()
             if (auto status = Python::readEnvironment(configuration))
                 _exit(*status);
         }
-        // Started as `python3`, the interpreter is the file of that name, which stays where it is: virtual environments link to it.
-        configuration.executable = s_isPythonCommand ? findProgram(configuration.programName) : String();
+        // Started as `python3`, the interpreter is the file that was executed, which stays where it is: virtual environments link to it.
+        if (s_isPythonCommand) {
+            BunString executed = Bun__Python__executedPath();
+            configuration.executable = executed.transferToWTFString();
+            configuration.executable = configuration.executable.isEmpty() ? findProgram(configuration.programName) : absolutePathOfProgram(configuration.executable);
+        }
         if (configuration.executable.isEmpty()) {
             BunString link = Bun__Python__linkToSelf();
             configuration.baseExecutable = link.transferToWTFString();

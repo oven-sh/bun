@@ -1,0 +1,31 @@
+status: 0
+script: 78ab690947fde085
+---
+no cycle: ['del 1', 'callback 1, dead: True']
+cycle: ['callback 2, dead: True', 'del 2']
+several: ['del 3', 'callback 3c, dead: True', 'callback 3b, dead: True', 'callback 3a, dead: True']
+several, cycle: ['callback 4b, dead: True', 'callback 4a, dead: True', 'del 4']
+the reference goes first: ['del 5']
+the reference goes with it, cycle: ['del 7']
+seen from __del__: ['in del: without callback True, with callback True', 'callback b, dead: True']
+seen from __del__, cycle: ['callback b, dead: True', 'in del: without callback True, with callback False']
+back: ['del C']
+True True
+gone again: ['callback c, dead: True']
+None None
+back, cycle: ['callback c, dead: True', 'del C']
+True None
+gone again: []
+None None
+1
+0 []
+1
+0
+1
+0
+finalize: ['del 11', 'finalize']
+False
+12
+ReferenceError weakly-referenced object no longer exists
+['del 12', 'callback']
+below a cycle: ['callback 13, dead: True', 'del 13']

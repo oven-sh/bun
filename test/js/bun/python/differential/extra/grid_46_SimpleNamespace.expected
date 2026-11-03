@@ -1,0 +1,15 @@
+status: 0
+script: e2ad7f1ef11cce68
+---
+SimpleNamespace __eq__ 326 0f5cf4a0aa32
+SimpleNamespace __format__ 326 e4df92de04c7
+SimpleNamespace __ge__ 326 82cc58e0975d
+SimpleNamespace __gt__ 326 80399465371f
+SimpleNamespace __hash__ 2 9bedc5545871
+SimpleNamespace __init__ 312 a464b09db1f1
+SimpleNamespace __le__ 326 5856599e95ff
+SimpleNamespace __lt__ 326 af4b08924671
+SimpleNamespace __ne__ 326 c8566319b193
+SimpleNamespace __replace__ 38 882d37094dae
+SimpleNamespace __repr__ 38 3fcfc1bd12e9
+SimpleNamespace __str__ 38 51039a176813

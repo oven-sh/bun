@@ -1,0 +1,599 @@
+status: 0
+script: ff5e2e8e5153b203
+source: 4db6f05ea8644da1
+---
+list[9007199254740992] IndexError list index out of range
+list[9007199254740992] = 0 IndexError list assignment index out of range
+del list[9007199254740992] IndexError list assignment index out of range
+list.pop(9007199254740992) IndexError pop index out of range
+list.insert(9007199254740992) ok (None, [1, 2, 3, 0])
+list.index(1, 9007199254740992) ValueError list.index(x): x not in list
+tuple.index(1, 0, 9007199254740992) ok 0
+str[9007199254740992] = 0 TypeError 'str' object does not support item assignment
+del tuple[9007199254740992] TypeError 'tuple' object doesn't support item deletion
+str.center(9007199254740992) ok None
+bytes.zfill(9007199254740992) ok None
+str * 9007199254740992 ok None
+bytes(9007199254740992) ok None
+b"a" * 9007199254740992 ok None
+to_bytes(9007199254740992) ok None
+deque[9007199254740992] IndexError deque index out of range
+deque.__getitem__(9007199254740992) IndexError deque index out of range
+list[9007199254740993] IndexError list index out of range
+list[9007199254740993] = 0 IndexError list assignment index out of range
+del list[9007199254740993] IndexError list assignment index out of range
+list.pop(9007199254740993) IndexError pop index out of range
+list.insert(9007199254740993) ok (None, [1, 2, 3, 0])
+list.index(1, 9007199254740993) ValueError list.index(x): x not in list
+tuple.index(1, 0, 9007199254740993) ok 0
+str[9007199254740993] = 0 TypeError 'str' object does not support item assignment
+del tuple[9007199254740993] TypeError 'tuple' object doesn't support item deletion
+str.center(9007199254740993) ok None
+bytes.zfill(9007199254740993) ok None
+str * 9007199254740993 ok None
+bytes(9007199254740993) ok None
+b"a" * 9007199254740993 ok None
+to_bytes(9007199254740993) ok None
+deque[9007199254740993] IndexError deque index out of range
+deque.__getitem__(9007199254740993) IndexError deque index out of range
+list[4611686018427387904] IndexError list index out of range
+list[4611686018427387904] = 0 IndexError list assignment index out of range
+del list[4611686018427387904] IndexError list assignment index out of range
+list.pop(4611686018427387904) IndexError pop index out of range
+list.insert(4611686018427387904) ok (None, [1, 2, 3, 0])
+list.index(1, 4611686018427387904) ValueError list.index(x): x not in list
+tuple.index(1, 0, 4611686018427387904) ok 0
+str[4611686018427387904] = 0 TypeError 'str' object does not support item assignment
+del tuple[4611686018427387904] TypeError 'tuple' object doesn't support item deletion
+str.center(4611686018427387904) MemoryError 
+bytes.zfill(4611686018427387904) MemoryError 
+str * 4611686018427387904 OverflowError repeated string is too long
+bytes(4611686018427387904) MemoryError 
+b"a" * 4611686018427387904 MemoryError 
+to_bytes(4611686018427387904) MemoryError 
+deque[4611686018427387904] IndexError deque index out of range
+deque.__getitem__(4611686018427387904) IndexError deque index out of range
+list[9223372036854775807] IndexError list index out of range
+list[9223372036854775807] = 0 IndexError list assignment index out of range
+del list[9223372036854775807] IndexError list assignment index out of range
+list.pop(9223372036854775807) IndexError pop index out of range
+list.insert(9223372036854775807) ok (None, [1, 2, 3, 0])
+list.index(1, 9223372036854775807) ValueError list.index(x): x not in list
+tuple.index(1, 0, 9223372036854775807) ok 0
+str[9223372036854775807] = 0 TypeError 'str' object does not support item assignment
+del tuple[9223372036854775807] TypeError 'tuple' object doesn't support item deletion
+str.center(9223372036854775807) MemoryError 
+bytes.zfill(9223372036854775807) OverflowError byte string is too large
+str * 9223372036854775807 OverflowError repeated string is too long
+bytes(9223372036854775807) OverflowError byte string is too large
+b"a" * 9223372036854775807 MemoryError 
+to_bytes(9223372036854775807) OverflowError byte string is too large
+deque[9223372036854775807] IndexError deque index out of range
+deque.__getitem__(9223372036854775807) IndexError deque index out of range
+list[-9007199254740993] IndexError list index out of range
+list[-9007199254740993] = 0 IndexError list assignment index out of range
+del list[-9007199254740993] IndexError list assignment index out of range
+list.pop(-9007199254740993) IndexError pop index out of range
+list.insert(-9007199254740993) ok (None, [0, 1, 2, 3])
+list.index(1, -9007199254740993) ok 0
+tuple.index(1, 0, -9007199254740993) ValueError tuple.index(x): x not in tuple
+str[-9007199254740993] = 0 TypeError 'str' object does not support item assignment
+del tuple[-9007199254740993] TypeError 'tuple' object doesn't support item deletion
+str.center(-9007199254740993) ok 'abc'
+bytes.zfill(-9007199254740993) ok b'abc'
+str * -9007199254740993 ok ''
+bytes(-9007199254740993) ValueError negative count
+b"a" * -9007199254740993 ok b''
+to_bytes(-9007199254740993) ValueError length cannot be negative
+deque[-9007199254740993] IndexError deque index out of range
+deque.__getitem__(-9007199254740993) IndexError deque index out of range
+list[-9223372036854775808] IndexError list index out of range
+list[-9223372036854775808] = 0 IndexError list assignment index out of range
+del list[-9223372036854775808] IndexError list assignment index out of range
+list.pop(-9223372036854775808) IndexError pop index out of range
+list.insert(-9223372036854775808) ok (None, [0, 1, 2, 3])
+list.index(1, -9223372036854775808) ok 0
+tuple.index(1, 0, -9223372036854775808) ValueError tuple.index(x): x not in tuple
+str[-9223372036854775808] = 0 TypeError 'str' object does not support item assignment
+del tuple[-9223372036854775808] TypeError 'tuple' object doesn't support item deletion
+str.center(-9223372036854775808) ok 'abc'
+bytes.zfill(-9223372036854775808) ok b'abc'
+str * -9223372036854775808 ok ''
+bytes(-9223372036854775808) ValueError negative count
+b"a" * -9223372036854775808 ok b''
+to_bytes(-9223372036854775808) ValueError length cannot be negative
+deque[-9223372036854775808] IndexError deque index out of range
+deque.__getitem__(-9223372036854775808) IndexError deque index out of range
+list[9223372036854775808] IndexError cannot fit 'int' into an index-sized integer
+list[9223372036854775808] = 0 IndexError cannot fit 'int' into an index-sized integer
+del list[9223372036854775808] IndexError cannot fit 'int' into an index-sized integer
+list.pop(9223372036854775808) OverflowError Python int too large to convert to C ssize_t
+list.insert(9223372036854775808) OverflowError Python int too large to convert to C ssize_t
+list.index(1, 9223372036854775808) ValueError list.index(x): x not in list
+tuple.index(1, 0, 9223372036854775808) ok 0
+str[9223372036854775808] = 0 IndexError cannot fit 'int' into an index-sized integer
+del tuple[9223372036854775808] IndexError cannot fit 'int' into an index-sized integer
+str.center(9223372036854775808) OverflowError Python int too large to convert to C ssize_t
+bytes.zfill(9223372036854775808) OverflowError Python int too large to convert to C ssize_t
+str * 9223372036854775808 OverflowError cannot fit 'int' into an index-sized integer
+bytes(9223372036854775808) OverflowError cannot fit 'int' into an index-sized integer
+b"a" * 9223372036854775808 OverflowError cannot fit 'int' into an index-sized integer
+to_bytes(9223372036854775808) OverflowError Python int too large to convert to C ssize_t
+deque[9223372036854775808] IndexError cannot fit 'int' into an index-sized integer
+deque.__getitem__(9223372036854775808) OverflowError cannot fit 'int' into an index-sized integer
+list[-9223372036854775809] IndexError cannot fit 'int' into an index-sized integer
+list[-9223372036854775809] = 0 IndexError cannot fit 'int' into an index-sized integer
+del list[-9223372036854775809] IndexError cannot fit 'int' into an index-sized integer
+list.pop(-9223372036854775809) OverflowError Python int too large to convert to C ssize_t
+list.insert(-9223372036854775809) OverflowError Python int too large to convert to C ssize_t
+list.index(1, -9223372036854775809) ok 0
+tuple.index(1, 0, -9223372036854775809) ValueError tuple.index(x): x not in tuple
+str[-9223372036854775809] = 0 IndexError cannot fit 'int' into an index-sized integer
+del tuple[-9223372036854775809] IndexError cannot fit 'int' into an index-sized integer
+str.center(-9223372036854775809) OverflowError Python int too large to convert to C ssize_t
+bytes.zfill(-9223372036854775809) OverflowError Python int too large to convert to C ssize_t
+str * -9223372036854775809 OverflowError cannot fit 'int' into an index-sized integer
+bytes(-9223372036854775809) OverflowError cannot fit 'int' into an index-sized integer
+b"a" * -9223372036854775809 OverflowError cannot fit 'int' into an index-sized integer
+to_bytes(-9223372036854775809) OverflowError Python int too large to convert to C ssize_t
+deque[-9223372036854775809] IndexError cannot fit 'int' into an index-sized integer
+deque.__getitem__(-9223372036854775809) OverflowError cannot fit 'int' into an index-sized integer
+list.index(1, None) TypeError slice indices must be integers or have an __index__ method
+tuple.index(1, None) TypeError slice indices must be integers or have an __index__ method
+l[::0] = 1 ValueError slice step cannot be zero
+l[::2] = 1 TypeError must assign iterable to extended slice
+to_bytes OverflowError byte string is too large
+to_bytes ValueError byteorder must be either 'little' or 'big'
+to_bytes ValueError length cannot be negative
+from_bytes TypeError from_bytes() argument 'byteorder' must be str, not int
+from_bytes TypeError from_bytes() argument 'byteorder' must be str, not None
+str TypeError str() argument 'encoding' must be str, not NoneType
+str TypeError str() argument 'encoding' must be str, not None
+str TypeError str() argument 'encoding' must be str, not None
+str ValueError embedded null character
+bytes ValueError embedded null character
+int ValueError invalid literal for int() with base 10: b'x'
+int ValueError invalid literal for int() with base 10: b'1x'
+int TypeError int() takes at most 2 arguments (3 given)
+fromhex TypeError bad argument type for built-in operation
+fromhex ValueError invalid hexadecimal floating-point string
+fromhex ok 1.0
+2 *= 'ab' ok 'abab'
+2 *= [1] ok [1, 1]
+2 *= (1,) ok (1, 1)
+2 *= b'ab' ok b'abab'
+2.0 *= 'ab' TypeError can't multiply sequence by non-int of type 'float'
+2.0 *= [1] TypeError can't multiply sequence by non-int of type 'float'
+2.0 *= (1,) TypeError can't multiply sequence by non-int of type 'float'
+2.0 *= b'ab' TypeError can't multiply sequence by non-int of type 'float'
+None *= 'ab' TypeError can't multiply sequence by non-int of type 'NoneType'
+None *= [1] TypeError can't multiply sequence by non-int of type 'NoneType'
+None *= (1,) TypeError can't multiply sequence by non-int of type 'NoneType'
+None *= b'ab' TypeError can't multiply sequence by non-int of type 'NoneType'
+{} *= 'ab' TypeError unsupported operand type(s) for *=: 'dict' and 'str'
+{} *= [1] TypeError unsupported operand type(s) for *=: 'dict' and 'list'
+{} *= (1,) TypeError unsupported operand type(s) for *=: 'dict' and 'tuple'
+{} *= b'ab' TypeError unsupported operand type(s) for *=: 'dict' and 'bytes'
+{1} *= 'ab' TypeError unsupported operand type(s) for *=: 'set' and 'str'
+{1} *= [1] TypeError unsupported operand type(s) for *=: 'set' and 'list'
+{1} *= (1,) TypeError unsupported operand type(s) for *=: 'set' and 'tuple'
+{1} *= b'ab' TypeError unsupported operand type(s) for *=: 'set' and 'bytes'
+'ab' *= 'ab' TypeError can't multiply sequence by non-int of type 'str'
+'ab' *= [1] TypeError can't multiply sequence by non-int of type 'list'
+'ab' *= (1,) TypeError can't multiply sequence by non-int of type 'tuple'
+'ab' *= b'ab' TypeError can't multiply sequence by non-int of type 'bytes'
+[1] *= 'ab' TypeError can't multiply sequence by non-int of type 'str'
+[1] *= [1] TypeError can't multiply sequence by non-int of type 'list'
+[1] *= (1,) TypeError can't multiply sequence by non-int of type 'tuple'
+[1] *= b'ab' TypeError can't multiply sequence by non-int of type 'bytes'
+'object' *= 'ab' TypeError can't multiply sequence by non-int of type 'object'
+'object' *= [1] TypeError can't multiply sequence by non-int of type 'object'
+'object' *= (1,) TypeError can't multiply sequence by non-int of type 'object'
+'object' *= b'ab' TypeError can't multiply sequence by non-int of type 'object'
+2 *= 'ab' TypeError unsupported operand type(s) for *=: 'IntSub' and 'str'
+2 *= [1] TypeError unsupported operand type(s) for *=: 'IntSub' and 'list'
+2 *= (1,) TypeError unsupported operand type(s) for *=: 'IntSub' and 'tuple'
+2 *= b'ab' TypeError unsupported operand type(s) for *=: 'IntSub' and 'bytes'
+array *= str TypeError can't multiply sequence by non-int of type 'str'
+array.__imul__(str) TypeError 'str' object cannot be interpreted as an integer
+deque *= str TypeError can't multiply sequence by non-int of type 'str'
+deque.__imul__(str) TypeError 'str' object cannot be interpreted as an integer
+deque[1.5] TypeError sequence index must be integer, not 'float'
+deque.__getitem__(1.5) TypeError 'float' object cannot be interpreted as an integer
+del deque["a"] TypeError sequence index must be integer, not 'str'
+deque.__setitem__("a") TypeError 'str' object cannot be interpreted as an integer
+bool TypeError bool.bit_length() takes no arguments (1 given)
+bool TypeError int.bit_length() takes no arguments (1 given)
+list TypeError object.__format__() takes exactly one argument (0 given)
+module TypeError __format__() takes exactly one argument (0 given)
+__init__ ok None
+__init__ ok None
+__init__ ok None
+__init__ TypeError object.__init__() takes exactly one argument (the instance to initialize)
+__eq__ ok (NotImplemented, True, NotImplemented, NotImplemented)
+inf ** 1j ZeroDivisionError zero to a negative or complex power
+(1+2j) ** inf ZeroDivisionError zero to a negative or complex power
+2j ** (inf+1j) ZeroDivisionError zero to a negative or complex power
+0j ** 1j ZeroDivisionError zero to a negative or complex power
+0j ** -1 ZeroDivisionError zero to a negative or complex power
+(1e+200+1e+200j) ** 2 OverflowError complex exponentiation
+1e+200j ** 2.5 OverflowError complex exponentiation
+(inf+nanj) ** 2 OverflowError complex exponentiation
+1j ** nan ok (nan+nanj)
+-inf ** 0.5j ZeroDivisionError zero to a negative or complex power
+["'a\\udc00'", "'a\\U00010000'", "'\\ud7ff'", "'\\ud800'", "'\\ud800a'", "'\\ud800\\ue000'", "'\\udbff'", "'\\udc00'", "'\\udfff'", "'\\ue000'", "'\\uffff'", "'\\U00010000'", "'\\U00010000\\ud800'", "'\\U00010000\\U00010000'", "'\\U0010ffff'"]
+["'\\U0010ffff'", "'\\U00010000\\U00010000'", "'\\U00010000\\ud800'", "'\\U00010000'", "'\\uffff'", "'\\ue000'", "'\\udfff'", "'\\udc00'", "'\\udbff'", "'\\ud800\\ue000'", "'\\ud800a'", "'\\ud800'", "'\\ud7ff'", "'a\\U00010000'", "'a\\udc00'"]
+[[0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1, -1, 1, 1], [-1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1, -1, 1, 1], [-1, -1, 0, 1, 1, 1, 1, 1, 1, -1, -1, -1, -1, 1, 1], [-1, -1, -1, 0, 1, 1, 1, 1, 1, -1, -1, -1, -1, 1, 1], [-1, -1, -1, -1, 0, 1, 1, 1, 1, -1, -1, -1, -1, 1, 1], [-1, -1, -1, -1, -1, 0, 1, 1, 1, -1, -1, -1, -1, 1, 1], [-1, -1, -1, -1, -1, -1, 0, 1, 1, -1, -1, -1, -1, 1, 1], [-1, -1, -1, -1, -1, -1, -1, 0, 1, -1, -1, -1, -1, 1, 1], [-1, -1, -1, -1, -1, -1, -1, -1, 0, -1, -1, -1, -1, -1, -1], [-1, -1, 1, 1, 1, 1, 1, 1, 1, 0, 1, -1, -1, 1, 1], [-1, -1, 1, 1, 1, 1, 1, 1, 1, -1, 0, -1, -1, 1, 1], [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1], [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1, 0, 1, 1], [-1, -1, -1, -1, -1, -1, -1, -1, 1, -1, -1, -1, -1, 0, 1], [-1, -1, -1, -1, -1, -1, -1, -1, 1, -1, -1, -1, -1, -1, 0]]
+max(texts) == '\U0010ffff' => True
+min(texts) == 'a\udc00' => True
+sorted((x,) for x in texts) == [(x,) for x in sorted(texts)] => True
+map ok [1]
+filter ok [1]
+map ok [1]
+map ok (1,)
+map ok 1
+map ok [(1, 'a')]
+map ok ([1], [3])
+next StopIteration stop
+map next ok ['a']
+starmap ok [1]
+expandtabs OverflowError raised
+expandtabs OverflowError Python int too large to convert to C int
+%c TypeError format argument: %c requires an integer or a unicode character, not Index
+%c TypeError format argument: %c requires an integer or a unicode character, not Index
+%c ValueError raised
+pack b error 'b' format requires -128 <= number <= 127
+pack <H error 'H' format requires 0 <= number <= 65535
+pack i error 'i' format requires -2147483648 <= number <= 2147483647
+pack <q error 'q' format requires -9223372036854775808 <= number <= 9223372036854775807
+pack >q OverflowError raised
+pack >Q OverflowError raised
+pack N error 'N' format requires 0 <= number <= 18446744073709551615
+pack 0s error argument for 's' must be a bytes object
+pack 0s ok b''
+join TypeError can only join an iterable
+join TypeError can only join an iterable
+l[:1] = x TypeError must assign iterable to extended slice
+l[::2] = x TypeError must assign iterable to extended slice
+join TypeError can only join an iterable
+join TypeError can only join an iterable
+l[:1] = x TypeError must assign iterable to extended slice
+l[::2] = x TypeError must assign iterable to extended slice
+join ValueError raised
+join ValueError raised
+l[:1] = x ValueError raised
+l[::2] = x ValueError raised
+join TypeError can only join an iterable
+join TypeError can only join an iterable
+l[:1] = x TypeError must assign iterable to extended slice
+l[::2] = x TypeError must assign iterable to extended slice
+hint 0 ok [1, 2]
+hint 0 ok (1, 2)
+hint 0 ok b'\x01\x02'
+hint 0 ok bytearray(b'\x01\x02')
+hint 0 ok [1, 2]
+hint 0 ok {1, 2}
+hint 0 ok deque([1, 2])
+hint 0 ok [0, 1, 2]
+hint 0 ok [0, 1, 2]
+hint 5 ok [1, 2]
+hint 5 ok (1, 2)
+hint 5 ok b'\x01\x02'
+hint 5 ok bytearray(b'\x01\x02')
+hint 5 ok [1, 2]
+hint 5 ok {1, 2}
+hint 5 ok deque([1, 2])
+hint 5 ok [0, 1, 2]
+hint 5 ok [0, 1, 2]
+hint -1 ValueError Hint.__length_hint__() must return a non-negative int
+hint -1 ok (1, 2)
+hint -1 ValueError Hint.__length_hint__() must return a non-negative int
+hint -1 ok bytearray(b'\x01\x02')
+hint -1 ValueError Hint.__length_hint__() must return a non-negative int
+hint -1 ok {1, 2}
+hint -1 ok deque([1, 2])
+hint -1 ValueError Hint.__length_hint__() must return a non-negative int
+hint -1 ValueError Hint.__length_hint__() must return a non-negative int
+hint 1.5 TypeError Hint.__length_hint__() must return an int, not float
+hint 1.5 ok (1, 2)
+hint 1.5 TypeError Hint.__length_hint__() must return an int, not float
+hint 1.5 ok bytearray(b'\x01\x02')
+hint 1.5 TypeError Hint.__length_hint__() must return an int, not float
+hint 1.5 ok {1, 2}
+hint 1.5 ok deque([1, 2])
+hint 1.5 TypeError Hint.__length_hint__() must return an int, not float
+hint 1.5 TypeError Hint.__length_hint__() must return an int, not float
+hint None TypeError Hint.__length_hint__() must return an int, not NoneType
+hint None ok (1, 2)
+hint None TypeError Hint.__length_hint__() must return an int, not NoneType
+hint None ok bytearray(b'\x01\x02')
+hint None TypeError Hint.__length_hint__() must return an int, not NoneType
+hint None ok {1, 2}
+hint None ok deque([1, 2])
+hint None TypeError Hint.__length_hint__() must return an int, not NoneType
+hint None TypeError Hint.__length_hint__() must return an int, not NoneType
+hint NotImplemented ok [1, 2]
+hint NotImplemented ok (1, 2)
+hint NotImplemented ok b'\x01\x02'
+hint NotImplemented ok bytearray(b'\x01\x02')
+hint NotImplemented ok [1, 2]
+hint NotImplemented ok {1, 2}
+hint NotImplemented ok deque([1, 2])
+hint NotImplemented ok [0, 1, 2]
+hint NotImplemented ok [0, 1, 2]
+hint 9223372036854775807 MemoryError 
+hint 9223372036854775807 ok (1, 2)
+hint 9223372036854775807 OverflowError byte string is too large
+hint 9223372036854775807 ok bytearray(b'\x01\x02')
+hint 9223372036854775807 MemoryError 
+hint 9223372036854775807 ok {1, 2}
+hint 9223372036854775807 ok deque([1, 2])
+hint 9223372036854775807 MemoryError 
+hint 9223372036854775807 ok [0, 1, 2]
+hint 9223372036854775808 OverflowError Python int too large to convert to C ssize_t
+hint 9223372036854775808 ok (1, 2)
+hint 9223372036854775808 OverflowError Python int too large to convert to C ssize_t
+hint 9223372036854775808 ok bytearray(b'\x01\x02')
+hint 9223372036854775808 OverflowError Python int too large to convert to C ssize_t
+hint 9223372036854775808 ok {1, 2}
+hint 9223372036854775808 ok deque([1, 2])
+hint 9223372036854775808 OverflowError Python int too large to convert to C ssize_t
+hint 9223372036854775808 OverflowError Python int too large to convert to C ssize_t
+hint <class 'TypeError'> ok [1, 2]
+hint <class 'TypeError'> ok (1, 2)
+hint <class 'TypeError'> ok b'\x01\x02'
+hint <class 'TypeError'> ok bytearray(b'\x01\x02')
+hint <class 'TypeError'> ok [1, 2]
+hint <class 'TypeError'> ok {1, 2}
+hint <class 'TypeError'> ok deque([1, 2])
+hint <class 'TypeError'> ok [0, 1, 2]
+hint <class 'TypeError'> ok [0, 1, 2]
+hint <class 'ValueError'> ValueError raised
+hint <class 'ValueError'> ok (1, 2)
+hint <class 'ValueError'> ValueError raised
+hint <class 'ValueError'> ok bytearray(b'\x01\x02')
+hint <class 'ValueError'> ValueError raised
+hint <class 'ValueError'> ok {1, 2}
+hint <class 'ValueError'> ok deque([1, 2])
+hint <class 'ValueError'> ValueError raised
+hint <class 'ValueError'> ValueError raised
+label [label='format', f=function] => format
+type(f()).__name__ [label='format', f=function] => StrSub
+f() if not label == 'iter' else '' [label='format', f=function] => sub
+label [label='format', f=function] => format
+type(f()).__name__ [label='format', f=function] => str
+f() if not label == 'iter' else '' [label='format', f=function] => sub
+label [label='format', f=function] => format
+type(f()).__name__ [label='format', f=function] => str
+f() if not label == 'iter' else '' [label='format', f=function] => sub  
+label [label='format', f=function] => format
+type(f()).__name__ [label='format', f=function] => str
+f() if not label == 'iter' else '' [label='format', f=function] => su
+label [label='f', f=function] => f
+type(f()).__name__ [label='f', f=function] => StrSub
+f() if not label == 'iter' else '' [label='f', f=function] => sub
+label [label='f', f=function] => f
+type(f()).__name__ [label='f', f=function] => str
+f() if not label == 'iter' else '' [label='f', f=function] => sub
+label [label='f', f=function] => f
+type(f()).__name__ [label='f', f=function] => str
+f() if not label == 'iter' else '' [label='f', f=function] => sub!
+label [label='str.format', f=function] => str.format
+type(f()).__name__ [label='str.format', f=function] => StrSub
+f() if not label == 'iter' else '' [label='str.format', f=function] => sub
+label [label='str.format', f=function] => str.format
+type(f()).__name__ [label='str.format', f=function] => str
+f() if not label == 'iter' else '' [label='str.format', f=function] => sub
+label [label='str.format', f=function] => str.format
+type(f()).__name__ [label='str.format', f=function] => str
+f() if not label == 'iter' else '' [label='str.format', f=function] => sub
+label [label='str.format', f=function] => str.format
+type(f()).__name__ [label='str.format', f=function] => StrSub
+f() if not label == 'iter' else '' [label='str.format', f=function] => sub
+label [label='str.format', f=function] => str.format
+type(f()).__name__ [label='str.format', f=function] => StrSub
+f() if not label == 'iter' else '' [label='str.format', f=function] => sub
+label [label='format', f=function] => format
+type(f()).__name__ [label='format', f=function] => StrSub
+f() if not label == 'iter' else '' [label='format', f=function] => f
+label [label='f', f=function] => f
+type(f()).__name__ [label='f', f=function] => StrSub
+f() if not label == 'iter' else '' [label='f', f=function] => f
+label [label='f', f=function] => f
+type(f()).__name__ [label='f', f=function] => str
+f() if not label == 'iter' else '' [label='f', f=function] => r
+label [label='f', f=function] => f
+type(f()).__name__ [label='f', f=function] => str
+f() if not label == 'iter' else '' [label='f', f=function] => s
+label [label='f', f=function] => f
+type(f()).__name__ [label='f', f=function] => StrSub
+f() if not label == 'iter' else '' [label='f', f=function] => f
+label [label='str.format', f=function] => str.format
+type(f()).__name__ [label='str.format', f=function] => StrSub
+f() if not label == 'iter' else '' [label='str.format', f=function] => f
+label [label='str.format', f=function] => str.format
+type(f()).__name__ [label='str.format', f=function] => str
+f() if not label == 'iter' else '' [label='str.format', f=function] => r
+label [label='str.format', f=function] => str.format
+type(f()).__name__ [label='str.format', f=function] => str
+f() if not label == 'iter' else '' [label='str.format', f=function] => af
+label [label='%', f=function] => %
+type(f()).__name__ [label='%', f=function] => StrSub
+f() if not label == 'iter' else '' [label='%', f=function] => s
+label [label='%', f=function] => %
+type(f()).__name__ [label='%', f=function] => StrSub
+f() if not label == 'iter' else '' [label='%', f=function] => r
+label [label='%', f=function] => %
+type(f()).__name__ [label='%', f=function] => StrSub
+f() if not label == 'iter' else '' [label='%', f=function] => r
+label [label='%', f=function] => %
+type(f()).__name__ [label='%', f=function] => StrSub
+f() if not label == 'iter' else '' [label='%', f=function] => s
+label [label='%', f=function] => %
+type(f()).__name__ [label='%', f=function] => str
+f() if not label == 'iter' else '' [label='%', f=function] =>     s
+label [label='%', f=function] => %
+type(f()).__name__ [label='%', f=function] => str
+f() if not label == 'iter' else '' [label='%', f=function] => 
+label [label='%', f=function] => %
+type(f()).__name__ [label='%', f=function] => str
+f() if not label == 'iter' else '' [label='%', f=function] => s 
+label [label='%', f=function] => %
+type(f()).__name__ [label='%', f=function] => StrSub
+f() if not label == 'iter' else '' [label='%', f=function] => s
+label [label='%', f=function] => %
+type(f()).__name__ [label='%', f=function] => str
+f() if not label == 'iter' else '' [label='%', f=function] => s
+label [label='str', f=function] => str
+type(f()).__name__ [label='str', f=function] => StrSub
+f() if not label == 'iter' else '' [label='str', f=function] => s
+label [label='repr', f=function] => repr
+type(f()).__name__ [label='repr', f=function] => StrSub
+f() if not label == 'iter' else '' [label='repr', f=function] => r
+label [label='ascii', f=function] => ascii
+type(f()).__name__ [label='ascii', f=function] => StrSub
+f() if not label == 'iter' else '' [label='ascii', f=function] => r
+label [label='exception', f=function] => exception
+type(f()).__name__ [label='exception', f=function] => StrSub
+f() if not label == 'iter' else '' [label='exception', f=function] => s
+label [label='exception', f=function] => exception
+type(f()).__name__ [label='exception', f=function] => StrSub
+f() if not label == 'iter' else '' [label='exception', f=function] => r
+label [label='exception', f=function] => exception
+type(f()).__name__ [label='exception', f=function] => str
+f() if not label == 'iter' else '' [label='exception', f=function] => (r, 1)
+label [label='split', f=function] => split
+type(f()).__name__ [label='split', f=function] => StrSub
+f() if not label == 'iter' else '' [label='split', f=function] => sub
+label [label='split', f=function] => split
+type(f()).__name__ [label='split', f=function] => StrSub
+f() if not label == 'iter' else '' [label='split', f=function] => sub
+label [label='split', f=function] => split
+type(f()).__name__ [label='split', f=function] => str
+f() if not label == 'iter' else '' [label='split', f=function] => sub
+label [label='rsplit', f=function] => rsplit
+type(f()).__name__ [label='rsplit', f=function] => StrSub
+f() if not label == 'iter' else '' [label='rsplit', f=function] => sub
+label [label='rsplit', f=function] => rsplit
+type(f()).__name__ [label='rsplit', f=function] => str
+f() if not label == 'iter' else '' [label='rsplit', f=function] => sub
+label [label='split', f=function] => split
+type(f()).__name__ [label='split', f=function] => str
+f() if not label == 'iter' else '' [label='split', f=function] => sub
+label [label='partition', f=function] => partition
+type(f()).__name__ [label='partition', f=function] => StrSub
+f() if not label == 'iter' else '' [label='partition', f=function] => sub
+label [label='rpartition', f=function] => rpartition
+type(f()).__name__ [label='rpartition', f=function] => StrSub
+f() if not label == 'iter' else '' [label='rpartition', f=function] => sub
+label [label='partition', f=function] => partition
+type(f()).__name__ [label='partition', f=function] => str
+f() if not label == 'iter' else '' [label='partition', f=function] => s
+label [label='partition', f=function] => partition
+type(f()).__name__ [label='partition', f=function] => StrSub
+f() if not label == 'iter' else '' [label='partition', f=function] => -
+label [label='iter', f=function] => iter
+type(f()).__name__ [label='iter', f=function] => str_iterator
+f() if not label == 'iter' else '' [label='iter', f=function] => 
+label [label='iter', f=function] => iter
+type(f()).__name__ [label='iter', f=function] => str_ascii_iterator
+f() if not label == 'iter' else '' [label='iter', f=function] => 
+slice hash ok (True, True, True)
+slice hash TypeError unhashable type: 'list'
+move_to_end None KeyError 
+move_to_end None KeyError 
+pop None KeyError 
+move_to_end () KeyError 
+move_to_end () KeyError 
+pop () KeyError 
+move_to_end (1,) KeyError 1
+move_to_end (1,) KeyError 1
+pop (1,) KeyError 1
+move_to_end (1, 2) KeyError (1, 2)
+move_to_end (1, 2) KeyError (1, 2)
+pop (1, 2) KeyError (1, 2)
+move_to_end 'k' KeyError 'k'
+move_to_end 'k' KeyError 'k'
+pop 'k' KeyError 'k'
+move_to_end [] KeyError []
+move_to_end [] TypeError unhashable type: 'list'
+pop [] TypeError unhashable type: 'list'
+setstate OverflowError Python int too large to convert to C ssize_t
+setstate OverflowError Python int too large to convert to C ssize_t
+setstate OverflowError Python int too large to convert to C ssize_t
+setstate OverflowError Python int too large to convert to C ssize_t
+setstate OverflowError Python int too large to convert to C ssize_t
+setstate OverflowError Python int too large to convert to C long
+setstate OverflowError Python int too large to convert to C ssize_t
+setstate OverflowError Python int too large to convert to C ssize_t
+setstate OverflowError Python int too large to convert to C ssize_t
+setstate OverflowError Python int too large to convert to C ssize_t
+setstate OverflowError Python int too large to convert to C ssize_t
+setstate OverflowError Python int too large to convert to C long
+setstate TypeError an integer is required
+setstate TypeError an integer is required
+setstate TypeError an integer is required
+setstate TypeError an integer is required
+setstate TypeError an integer is required
+setstate TypeError 'float' object cannot be interpreted as an integer
+setstate TypeError an integer is required
+setstate TypeError an integer is required
+setstate TypeError an integer is required
+setstate TypeError an integer is required
+setstate TypeError an integer is required
+setstate ok (None, [1, 2])
+setstate ok (None, [])
+setstate ok (None, [])
+setstate ok (None, [1, 2, 3])
+setstate ok (None, ['a', 'b', 'c'])
+setstate ok (None, [])
+setstate ok (None, [0, 1, 2])
+setstate ok (None, [2, 3])
+setstate ok (None, [2, 1])
+setstate ok (None, [2, 3])
+setstate ok (None, ['b', 'c'])
+setstate ok (None, [98, 99])
+setstate ok (None, [1, 2])
+revived ok ([3, 2, 1], None, [2, 1])
+not revived ok ([1, 2, 3], None, [])
+set TypeError SetSub expected at most 1 argument, got 2
+set TypeError set expected at most 1 argument, got 2
+frozenset TypeError FrozensetSub expected at most 1 argument, got 2
+frozenset TypeError frozenset expected at most 1 argument, got 2
+getsizeof OverflowError Python int too large to convert to C ssize_t
+read-only AttributeError 'array.array' object attribute '__doc__' is read-only
+__module__ ok (None, None, 'm', None, None)
+OSError ok 'PermissionError'
+OSError ok 'PermissionError'
+OSError ok 'OSError'
+OSError ok 'FileNotFoundError'
+OSError ok 'OSError'
+BlockingIOError ok ((1, 'm', 5), None, None, 5, '[Errno 1] m')
+BlockingIOError ok ((1, 'm', 5, 6), None, None, 5, '[Errno 1] m')
+BlockingIOError ok ((1, 'm', 5, 6, 'f'), None, None, 5, '[Errno 1] m')
+BlockingIOError ok ((1, 'm'), 'f', 'g', '-', "[Errno 1] m: 'f' -> 'g'")
+BlockingIOError ValueError cannot fit 'int' into an index-sized integer
+BlockingIOError TypeError 'float' object cannot be interpreted as an integer
+BlockingIOError ok ((1, 'm', None, 6, 'g'), None, None, '-', '[Errno 1] m')
+UnboundLocalError TypeError NameError() got an unexpected keyword argument 'nope'
+ModuleNotFoundError TypeError ImportError() got an unexpected keyword argument 'nope'
+NameError TypeError NameError() got an unexpected keyword argument 'nope'
+ImportError TypeError ImportError() got an unexpected keyword argument 'nope'
+AttributeError TypeError AttributeError() got an unexpected keyword argument 'nope'
+UnicodeEncodeError ok ''
+UnicodeEncodeError TypeError UnicodeError 'object' attribute must be a string
+UnicodeEncodeError ok "'<NULL>' codec can't encode characters in position 0--1: <NULL>"
+UnicodeEncodeError TypeError UnicodeError 'object' attribute must be a string
+UnicodeEncodeError OverflowError Python int too large to convert to C ssize_t
+UnicodeDecodeError ok ''
+UnicodeDecodeError TypeError UnicodeError 'object' attribute must be a bytes
+UnicodeDecodeError TypeError UnicodeError 'object' attribute must be a bytes
+UnicodeDecodeError ok "'<NULL>' codec can't decode bytes in position 0--1: <NULL>"
+UnicodeDecodeError OverflowError Python int too large to convert to C ssize_t
+UnicodeTranslateError ok ''
+UnicodeTranslateError TypeError UnicodeError 'object' attribute must be a string
+UnicodeTranslateError ok "can't translate characters in position 0--1: <NULL>"
+UnicodeTranslateError TypeError UnicodeError 'object' attribute must be a string
+UnicodeTranslateError OverflowError Python int too large to convert to C ssize_t
+UnicodeDecodeError OverflowError Python int too large to convert to C ssize_t
+SyntaxError ok 'm (line -1)'

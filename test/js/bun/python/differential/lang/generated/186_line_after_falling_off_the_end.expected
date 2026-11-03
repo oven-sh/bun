@@ -1,0 +1,144 @@
+status: 0
+script: 45a003caccf472a3
+source: a53df31f768942db
+---
+f.__name__ [f=function] => if1
+after [f=function] => 3
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('return', 3)]
+f.__name__ [f=function] => if2
+after [f=function] => 3
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('return', 3)]
+f.__name__ [f=function] => if3
+after [f=function] => 3
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('return', 3)]
+f.__name__ [f=function] => if4
+after [f=function] => 2
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('return', 2)]
+f.__name__ [f=function] => loop1
+after [f=function] => 2
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('line', 2), ('line', 3), ('line', 2), ('return', 2)]
+f.__name__ [f=function] => loop2
+after [f=function] => 4
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('line', 2), ('line', 3), ('line', 4), ('return', 4)]
+f.__name__ [f=function] => try1
+after [f=function] => 3
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('return', 3)]
+f.__name__ [f=function] => try2
+after [f=function] => 5
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('exception', 3), ('line', 4), ('line', 5), ('return', 5)]
+f.__name__ [f=function] => with1
+after [f=function] => 2
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('line', 2), ('return', 2)]
+f.__name__ [f=function] => while1
+after [f=function] => 3
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('line', 4), ('line', 3), ('line', 4), ('line', 3), ('return', 3)]
+f.__name__ [f=function] => match1
+after [f=function] => 6
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('line', 5), ('line', 6), ('return', 6)]
+f.__name__ [f=function] => nested
+after [f=function] => 4
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('line', 4), ('return', 4)]
+f.__name__ [f=function] => cond1
+after [f=function] => 3
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('return', 3)]
+f.__name__ [f=function] => cond2
+after [f=function] => 4
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('line', 4), ('return', 4)]
+f.__name__ [f=function] => cond3
+after [f=function] => 3
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('return', 3)]
+f.__name__ [f=function] => elif1
+after [f=function] => 5
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 4), ('line', 5), ('return', 5)]
+f.__name__ [f=function] => elif2
+after [f=function] => 4
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 4), ('return', 4)]
+f.__name__ [f=function] => fin1
+after [f=function] => 5
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('line', 5), ('return', 5)]
+f.__name__ [f=function] => fin2
+after [f=function] => 8
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('line', 4), ('exception', 4), ('line', 6), ('line', 7), ('line', 8), ('return', 8)]
+f.__name__ [f=function] => fin3
+after [f=function] => 2
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('line', 4), ('line', 6), ('line', 2), ('line', 3), ('line', 4), ('line', 6), ('line', 2), ('return', 2)]
+f.__name__ [f=function] => with2
+after [f=function] => 2
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('exception', 3), ('line', 2), ('return', 2)]
+f.__name__ [f=function] => with3
+after [f=function] => 2
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('line', 2), ('return', 2)]
+f.__name__ [f=function] => with4
+after [f=function] => 2
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('line', 4), ('line', 3), ('line', 2), ('return', 2)]
+f.__name__ [f=function] => loop3
+after [f=function] => 4
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('line', 2), ('line', 3), ('line', 4), ('return', 4)]
+f.__name__ [f=function] => loop4
+after [f=function] => 6
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('line', 4), ('line', 5), ('line', 3), ('line', 4), ('line', 5), ('line', 6), ('return', 6)]
+f.__name__ [f=function] => loop5
+after [f=function] => 2
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('line', 4), ('line', 3), ('line', 4), ('line', 3), ('line', 2), ('line', 3), ('line', 4), ('line', 3), ('line', 4), ('line', 3), ('line', 2), ('return', 2)]
+f.__name__ [f=function] => loop6
+after [f=function] => 2
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('line', 5), ('line', 2), ('line', 3), ('line', 4), ('line', 2), ('return', 2)]
+f.__name__ [f=function] => loop7
+after [f=function] => 6
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('line', 4), ('line', 3), ('line', 4), ('line', 3), ('line', 6), ('return', 6)]
+f.__name__ [f=function] => match2
+after [f=function] => 3
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('return', 3)]
+f.__name__ [f=function] => match4
+after [f=function] => 5
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('line', 5), ('return', 5)]
+f.__name__ [f=function] => tryelse
+after [f=function] => 8
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('line', 7), ('line', 8), ('return', 8)]
+f.__name__ [f=function] => tryname
+after [f=function] => 5
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('exception', 3), ('line', 4), ('line', 5), ('return', 5)]
+f.__name__ [f=function] => assert1
+after [f=function] => 2
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('return', 2)]
+f.__name__ [f=function] => del1
+after [f=function] => 3
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('return', 3)]
+f.__name__ [f=function] => call1
+after [f=function] => 2
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('line', 2), ('return', 2)]
+f.__name__ [f=function] => doc
+after [f=function] => 2
+events [f=function] => [('call', 0), ('line', 2), ('return', 2)]
+f.__name__ [f=function] => ann
+after [f=function] => 1
+events [f=function] => [('call', 0), ('line', 1), ('return', 1)]
+f.__name__ [f=function] => pass1
+after [f=function] => 2
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('return', 2)]
+f.__name__ [f=function] => glob
+after [f=function] => 1
+events [f=function] => [('call', 0), ('line', 1), ('return', 1)]
+f.__name__ [f=function] => ifconst
+after [f=function] => 2
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('return', 2)]
+f.__name__ [f=function] => ifconst2
+after [f=function] => 3
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('return', 3)]
+f.__name__ [f=function] => whileconst
+after [f=function] => 2
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('return', 2)]
+f.__name__ [f=function] => nestedfn
+after [f=function] => 2
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('return', 2)]
+f.__name__ [f=function] => nestedcls
+after [f=function] => 2
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('return', 2)]
+f.__name__ [f=function] => deco
+after [f=function] => 3
+events [f=function] => [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('line', 2), ('line', 3), ('return', 3)]
+f.__name__ [f=function] => afor
+frame.f_lineno - frame.f_code.co_firstlineno if frame.f_lineno else None [f=function] => 2
+f.__name__ [f=function] => awith
+frame.f_lineno - frame.f_code.co_firstlineno if frame.f_lineno else None [f=function] => 2
+gen1 frame.f_lineno - frame.f_code.co_firstlineno if frame.f_lineno else None => 4

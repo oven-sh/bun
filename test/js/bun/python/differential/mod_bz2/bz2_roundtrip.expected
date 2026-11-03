@@ -1,0 +1,150 @@
+status: 0
+script: 9bdd3394f46c7a7c
+---
+empty 1 14 c82685296a2d914c b'BZh1' True
+empty 2 14 b9fb4c98c8b9fe5f b'BZh2' True
+empty 3 14 8e82a986c60ed805 b'BZh3' True
+empty 4 14 06b194dc7a53155f b'BZh4' True
+empty 5 14 4755d72e05f47024 b'BZh5' True
+empty 6 14 bfadeac655992411 b'BZh6' True
+empty 7 14 c43e7f7211d58037 b'BZh7' True
+empty 8 14 5b5fffad5d41bdba b'BZh8' True
+empty 9 14 d3dda84eb03b9738 b'BZh9' True
+one 1 37 b669cce2c3a7a5b4 b'BZh1' True
+one 2 37 ae86999bbf13496d b'BZh2' True
+one 3 37 fcca4e5c3cf32311 b'BZh3' True
+one 4 37 3e3c7b82f40302c3 b'BZh4' True
+one 5 37 8cb7d7c8e7bda907 b'BZh5' True
+one 6 37 e305686e28e5c2ec b'BZh6' True
+one 7 37 4af9b81d8beaf2ac b'BZh7' True
+one 8 37 d6caeab021ff9984 b'BZh8' True
+one 9 37 f8ea353d2321ffb9 b'BZh9' True
+run 1 47 3e8ee4ae11cb083c b'BZh1' True
+run 2 47 dcd98fd6066d6097 b'BZh2' True
+run 3 47 77384705aa4e1ca5 b'BZh3' True
+run 4 47 ab934f0b1c4d02ce b'BZh4' True
+run 5 47 69789114caa3c600 b'BZh5' True
+run 6 47 c6bb490296432e3f b'BZh6' True
+run 7 47 a5e97247c54b13d4 b'BZh7' True
+run 8 47 215f35c27757edf2 b'BZh8' True
+run 9 47 3dd2e4b9b0195dbc b'BZh9' True
+text 1 6793 065ff94b5729b031 b'BZh1' True
+text 2 7174 a1a843010881498b b'BZh2' True
+text 3 7174 9b71b974e4107669 b'BZh3' True
+text 4 7174 6a60c34ecd379f25 b'BZh4' True
+text 5 7174 036464af019efebc b'BZh5' True
+text 6 7174 b2ac61b6504d8562 b'BZh6' True
+text 7 7174 85e3e460dd8395e0 b'BZh7' True
+text 8 7174 5d7a4e9eaea2d4cf b'BZh8' True
+text 9 7174 63d0715c97f36323 b'BZh9' True
+noise 1 50565 b6f667d0af33c1da b'BZh1' True
+noise 2 50565 531df4fd80d9c1e4 b'BZh2' True
+noise 3 50565 9e613d2a0b39090a b'BZh3' True
+noise 4 50565 4dd28e10d56927e5 b'BZh4' True
+noise 5 50565 c2097ee445833994 b'BZh5' True
+noise 6 50565 655657834197f2e2 b'BZh6' True
+noise 7 50565 8afdd8701ced5307 b'BZh7' True
+noise 8 50565 ea2a486e78e3d7d0 b'BZh8' True
+noise 9 50565 e1441c4375c385fc b'BZh9' True
+bytes 1 915 d48059aa40979131 b'BZh1' True
+bytes 2 915 d38fbed63b3a3357 b'BZh2' True
+bytes 3 915 d4e02c9495545362 b'BZh3' True
+bytes 4 915 c68f32a13a8019e7 b'BZh4' True
+bytes 5 915 4fd738f9f4437d0e b'BZh5' True
+bytes 6 915 c6bced2a9ace7888 b'BZh6' True
+bytes 7 915 d258b632856bb11b b'BZh7' True
+bytes 8 915 60dff104f4ed1ab4 b'BZh8' True
+bytes 9 915 dd6cdb2b519f18f6 b'BZh9' True
+runs 1 802 98e209f42d759533 b'BZh1' True
+runs 2 802 0b879bed64becbf3 b'BZh2' True
+runs 3 802 a33db65bc42be77c b'BZh3' True
+runs 4 802 81afc793430c4689 b'BZh4' True
+runs 5 802 c17c3796a9c73a15 b'BZh5' True
+runs 6 802 2c424f6ba40b0764 b'BZh6' True
+runs 7 802 7f4d6c538155d985 b'BZh7' True
+runs 8 802 3704babcedb2586c b'BZh8' True
+runs 9 802 cbc39a6de3606627 b'BZh9' True
+empty 1 1 True
+True True False b''
+empty 7 1 True
+True True False b''
+empty 1000 1 True
+True True False b''
+empty 65536 1 True
+True True False b''
+one 1 1 True
+True True False b''
+one 7 1 True
+True True False b''
+one 1000 1 True
+True True False b''
+one 65536 1 True
+True True False b''
+run 7 1 True
+True True False b''
+run 1000 1 True
+True True False b''
+run 65536 1 True
+True True False b''
+text 7 1 True
+True True False b''
+text 1000 1 True
+True True False b''
+text 65536 1 True
+True True False b''
+noise 1 1 True
+True True False b''
+noise 7 1 True
+True True False b''
+noise 1000 1 True
+True True False b''
+noise 65536 1 True
+True True False b''
+bytes 7 1 True
+True True False b''
+bytes 1000 1 True
+True True False b''
+bytes 65536 1 True
+True True False b''
+runs 7 1 True
+True True False b''
+runs 1000 1 True
+True True False b''
+runs 65536 1 True
+True True False b''
+bytes 63d0715c97f36323 True
+bytearray 63d0715c97f36323 True
+memoryview 63d0715c97f36323 True
+array 63d0715c97f36323 True
+memoryview 63d0715c97f36323 True
+array 63d0715c97f36323 7174
+TypeError a bytes-like object is required, not 'str'
+TypeError a bytes-like object is required, not 'str'
+TypeError a bytes-like object is required, not 'str'
+TypeError a bytes-like object is required, not 'str'
+TypeError a bytes-like object is required, not 'int'
+TypeError a bytes-like object is required, not 'int'
+TypeError a bytes-like object is required, not 'int'
+TypeError a bytes-like object is required, not 'int'
+TypeError a bytes-like object is required, not 'NoneType'
+b''
+TypeError a bytes-like object is required, not 'NoneType'
+TypeError a bytes-like object is required, not 'NoneType'
+TypeError a bytes-like object is required, not 'list'
+TypeError a bytes-like object is required, not 'list'
+TypeError a bytes-like object is required, not 'list'
+TypeError a bytes-like object is required, not 'list'
+BufferError memoryview: underlying buffer is not C-contiguous
+BufferError memoryview: underlying buffer is not C-contiguous
+BufferError memoryview: underlying buffer is not C-contiguous
+BufferError memoryview: underlying buffer is not C-contiguous
+TypeError a bytes-like object is required, not 'float'
+TypeError a bytes-like object is required, not 'float'
+TypeError a bytes-like object is required, not 'float'
+TypeError a bytes-like object is required, not 'float'
+TypeError a bytes-like object is required, not 'object'
+TypeError a bytes-like object is required, not 'object'
+TypeError a bytes-like object is required, not 'object'
+TypeError a bytes-like object is required, not 'object'
+352976 9d4a884e131dd5fd True
+[0, 100785, 0, 100777, 0, 100800, 0] 50614

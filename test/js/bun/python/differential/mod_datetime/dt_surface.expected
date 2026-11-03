@@ -1,0 +1,403 @@
+status: 0
+script: 655f0aeb61a687d2
+---
+--- the module
+sorted(n for n in dir(_datetime) if n != 'datetime_CAPI') => ['MAXYEAR', 'MINYEAR', 'UTC', '__doc__', '__loader__', '__name__', '__package__', '__spec__', 'date', 'datetime', 'time', 'timedelta', 'timezone', 'tzinfo']
+sorted(datetime.__all__) => ['MAXYEAR', 'MINYEAR', 'UTC', 'date', 'datetime', 'time', 'timedelta', 'timezone', 'tzinfo']
+_datetime.__name__, _datetime.__doc__ => ('_datetime', 'Fast implementation of the datetime module.')
+datetime.date is _datetime.date, datetime.datetime is _datetime.datetime, datetime.time is _datetime.time, datetime.timedelta is _datetime.timedelta, datetime.tzinfo is _datetime.tzinfo, datetime.timezone is _datetime.timezone, datetime.UTC is _datetime.UTC => (True, True, True, True, True, True, True)
+_datetime.MINYEAR, _datetime.MAXYEAR => (1, 9999)
+'_pydatetime' in sys.modules => False
+type(_datetime).__name__ => 'module'
+--- <class 'datetime.timedelta'>
+timedelta timedelta datetime (<class 'object'>,) (<class 'datetime.timedelta'>, <class 'object'>) <class 'type'> True True 0
+'Difference between two datetime values.\n\nAll arguments are optional and default to 0.\nArguments may be integers or floats, and may be positive or negative.'
+'(days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0,\n          hours=0, weeks=0)'
+    IMMUTABLETYPE True
+    BASETYPE True
+    DISALLOW_INSTANTIATION False
+    __abs__ wrapper_descriptor 'abs(self)' '($self, /)' 'timedelta.__abs__' <class 'datetime.timedelta'>
+    __add__ wrapper_descriptor 'Return self+value.' '($self, value, /)' 'timedelta.__add__' <class 'datetime.timedelta'>
+    __bool__ wrapper_descriptor 'True if self else False' '($self, /)' 'timedelta.__bool__' <class 'datetime.timedelta'>
+    __divmod__ wrapper_descriptor 'Return divmod(self, value).' '($self, value, /)' 'timedelta.__divmod__' <class 'datetime.timedelta'>
+    __doc__ str
+    __eq__ wrapper_descriptor 'Return self==value.' '($self, value, /)' 'timedelta.__eq__' <class 'datetime.timedelta'>
+    __floordiv__ wrapper_descriptor 'Return self//value.' '($self, value, /)' 'timedelta.__floordiv__' <class 'datetime.timedelta'>
+    __ge__ wrapper_descriptor 'Return self>=value.' '($self, value, /)' 'timedelta.__ge__' <class 'datetime.timedelta'>
+    __gt__ wrapper_descriptor 'Return self>value.' '($self, value, /)' 'timedelta.__gt__' <class 'datetime.timedelta'>
+    __hash__ wrapper_descriptor 'Return hash(self).' '($self, /)' 'timedelta.__hash__' <class 'datetime.timedelta'>
+    __le__ wrapper_descriptor 'Return self<=value.' '($self, value, /)' 'timedelta.__le__' <class 'datetime.timedelta'>
+    __lt__ wrapper_descriptor 'Return self<value.' '($self, value, /)' 'timedelta.__lt__' <class 'datetime.timedelta'>
+    __mod__ wrapper_descriptor 'Return self%value.' '($self, value, /)' 'timedelta.__mod__' <class 'datetime.timedelta'>
+    __mul__ wrapper_descriptor 'Return self*value.' '($self, value, /)' 'timedelta.__mul__' <class 'datetime.timedelta'>
+    __ne__ wrapper_descriptor 'Return self!=value.' '($self, value, /)' 'timedelta.__ne__' <class 'datetime.timedelta'>
+    __neg__ wrapper_descriptor '-self' '($self, /)' 'timedelta.__neg__' <class 'datetime.timedelta'>
+    __new__ builtin_function_or_method 'Create and return a new object.  See help(type) for accurate signature.' '($type, *args, **kwargs)' 'timedelta.__new__' None
+    __pos__ wrapper_descriptor '+self' '($self, /)' 'timedelta.__pos__' <class 'datetime.timedelta'>
+    __radd__ wrapper_descriptor 'Return value+self.' '($self, value, /)' 'timedelta.__radd__' <class 'datetime.timedelta'>
+    __rdivmod__ wrapper_descriptor 'Return divmod(value, self).' '($self, value, /)' 'timedelta.__rdivmod__' <class 'datetime.timedelta'>
+    __reduce__ method_descriptor '__reduce__() -> (cls, state)' '($self, /)' 'timedelta.__reduce__' <class 'datetime.timedelta'>
+    __repr__ wrapper_descriptor 'Return repr(self).' '($self, /)' 'timedelta.__repr__' <class 'datetime.timedelta'>
+    __rfloordiv__ wrapper_descriptor 'Return value//self.' '($self, value, /)' 'timedelta.__rfloordiv__' <class 'datetime.timedelta'>
+    __rmod__ wrapper_descriptor 'Return value%self.' '($self, value, /)' 'timedelta.__rmod__' <class 'datetime.timedelta'>
+    __rmul__ wrapper_descriptor 'Return value*self.' '($self, value, /)' 'timedelta.__rmul__' <class 'datetime.timedelta'>
+    __rsub__ wrapper_descriptor 'Return value-self.' '($self, value, /)' 'timedelta.__rsub__' <class 'datetime.timedelta'>
+    __rtruediv__ wrapper_descriptor 'Return value/self.' '($self, value, /)' 'timedelta.__rtruediv__' <class 'datetime.timedelta'>
+    __str__ wrapper_descriptor 'Return str(self).' '($self, /)' 'timedelta.__str__' <class 'datetime.timedelta'>
+    __sub__ wrapper_descriptor 'Return self-value.' '($self, value, /)' 'timedelta.__sub__' <class 'datetime.timedelta'>
+    __truediv__ wrapper_descriptor 'Return self/value.' '($self, value, /)' 'timedelta.__truediv__' <class 'datetime.timedelta'>
+    days member_descriptor 'Number of days.'  'timedelta.days' <class 'datetime.timedelta'>
+    max timedelta datetime.timedelta(days=999999999, seconds=86399, microseconds=999999)  None None
+    microseconds member_descriptor 'Number of microseconds (>= 0 and less than 1 second).'  'timedelta.microseconds' <class 'datetime.timedelta'>
+    min timedelta datetime.timedelta(days=-999999999)  None None
+    resolution timedelta datetime.timedelta(microseconds=1)  None None
+    seconds member_descriptor 'Number of seconds (>= 0 and less than 1 day).'  'timedelta.seconds' <class 'datetime.timedelta'>
+    total_seconds method_descriptor 'Total seconds in the duration.' '($self, /)' 'timedelta.total_seconds' <class 'datetime.timedelta'>
+    signature (days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0, hours=0, weeks=0)
+    TypeError cannot set 'foo' attribute of immutable type 'datetime.timedelta'
+    TypeError cannot set '__repr__' attribute of immutable type 'datetime.timedelta'
+--- <class 'datetime.date'>
+date date datetime (<class 'object'>,) (<class 'datetime.date'>, <class 'object'>) <class 'type'> True True 0
+'Concrete date type.'
+'(year, month, day)'
+    IMMUTABLETYPE True
+    BASETYPE True
+    DISALLOW_INSTANTIATION False
+    __add__ wrapper_descriptor 'Return self+value.' '($self, value, /)' 'date.__add__' <class 'datetime.date'>
+    __doc__ str
+    __eq__ wrapper_descriptor 'Return self==value.' '($self, value, /)' 'date.__eq__' <class 'datetime.date'>
+    __format__ method_descriptor 'Formats self with strftime.' '($self, format, /)' 'date.__format__' <class 'datetime.date'>
+    __ge__ wrapper_descriptor 'Return self>=value.' '($self, value, /)' 'date.__ge__' <class 'datetime.date'>
+    __gt__ wrapper_descriptor 'Return self>value.' '($self, value, /)' 'date.__gt__' <class 'datetime.date'>
+    __hash__ wrapper_descriptor 'Return hash(self).' '($self, /)' 'date.__hash__' <class 'datetime.date'>
+    __le__ wrapper_descriptor 'Return self<=value.' '($self, value, /)' 'date.__le__' <class 'datetime.date'>
+    __lt__ wrapper_descriptor 'Return self<value.' '($self, value, /)' 'date.__lt__' <class 'datetime.date'>
+    __ne__ wrapper_descriptor 'Return self!=value.' '($self, value, /)' 'date.__ne__' <class 'datetime.date'>
+    __new__ builtin_function_or_method 'Create and return a new object.  See help(type) for accurate signature.' '($type, *args, **kwargs)' 'date.__new__' None
+    __radd__ wrapper_descriptor 'Return value+self.' '($self, value, /)' 'date.__radd__' <class 'datetime.date'>
+    __reduce__ method_descriptor '__reduce__() -> (cls, state)' '($self, /)' 'date.__reduce__' <class 'datetime.date'>
+    __replace__ method_descriptor 'The same as replace().' '($self, /, **changes)' 'date.__replace__' <class 'datetime.date'>
+    __repr__ wrapper_descriptor 'Return repr(self).' '($self, /)' 'date.__repr__' <class 'datetime.date'>
+    __rsub__ wrapper_descriptor 'Return value-self.' '($self, value, /)' 'date.__rsub__' <class 'datetime.date'>
+    __str__ wrapper_descriptor 'Return str(self).' '($self, /)' 'date.__str__' <class 'datetime.date'>
+    __sub__ wrapper_descriptor 'Return self-value.' '($self, value, /)' 'date.__sub__' <class 'datetime.date'>
+    ctime method_descriptor 'Return ctime() style string.' '($self, /)' 'date.ctime' <class 'datetime.date'>
+    day getset_descriptor None  'date.day' <class 'datetime.date'>
+    fromisocalendar classmethod_descriptor 'Construct a date from the ISO year, week number and weekday.\n\nThis is the inverse of the date.isocalendar() function.' '($type, /, year, week, day)' 'date.fromisocalendar' <class 'datetime.date'>
+    fromisoformat classmethod_descriptor 'Construct a date from a string in ISO 8601 format.' '($type, string, /)' 'date.fromisoformat' <class 'datetime.date'>
+    fromordinal classmethod_descriptor 'Construct a date from a proleptic Gregorian ordinal.\n\nJanuary 1 of year 1 is day 1.  Only the year, month and day are\nnon-zero in the result.' '($type, ordinal, /)' 'date.fromordinal' <class 'datetime.date'>
+    fromtimestamp classmethod_descriptor 'Create a date from a POSIX timestamp.\n\nThe timestamp is a number, e.g. created via time.time(), that is\ninterpreted as local time.' '($type, timestamp, /)' 'date.fromtimestamp' <class 'datetime.date'>
+    isocalendar method_descriptor 'Return a named tuple containing ISO year, week number, and weekday.' '($self, /)' 'date.isocalendar' <class 'datetime.date'>
+    isoformat method_descriptor 'Return string in ISO 8601 format, YYYY-MM-DD.' '($self, /)' 'date.isoformat' <class 'datetime.date'>
+    isoweekday method_descriptor 'Return the day of the week represented by the date.\nMonday == 1 ... Sunday == 7' '($self, /)' 'date.isoweekday' <class 'datetime.date'>
+    max date datetime.date(9999, 12, 31)  None None
+    min date datetime.date(1, 1, 1)  None None
+    month getset_descriptor None  'date.month' <class 'datetime.date'>
+    replace method_descriptor 'Return date with new specified fields.' '($self, /, year=unchanged, month=unchanged, day=unchanged)' 'date.replace' <class 'datetime.date'>
+    resolution timedelta datetime.timedelta(days=1)  None None
+    strftime method_descriptor 'Format using strftime().\n\nExample: "%d/%m/%Y, %H:%M:%S".\n\nFor a list of supported format codes, see the documentation:\n    https://docs.python.org/3/library/datetime.html#format-codes' '($self, /, format)' 'date.strftime' <class 'datetime.date'>
+    strptime classmethod_descriptor 'Parse string according to the given date format (like time.strptime()).\n\nFor a list of supported format codes, see the documentation:\n    https://docs.python.org/3/library/datetime.html#format-codes' '($type, string, format, /)' 'date.strptime' <class 'datetime.date'>
+    timetuple method_descriptor 'Return time tuple, compatible with time.localtime().' '($self, /)' 'date.timetuple' <class 'datetime.date'>
+    today classmethod_descriptor 'Current date or datetime.\n\nEquivalent to fromtimestamp(time.time()).' '($type, /)' 'date.today' <class 'datetime.date'>
+    toordinal method_descriptor 'Return proleptic Gregorian ordinal.  January 1 of year 1 is day 1.' '($self, /)' 'date.toordinal' <class 'datetime.date'>
+    weekday method_descriptor 'Return the day of the week represented by the date.\nMonday == 0 ... Sunday == 6' '($self, /)' 'date.weekday' <class 'datetime.date'>
+    year getset_descriptor None  'date.year' <class 'datetime.date'>
+    signature (year, month, day)
+    TypeError cannot set 'foo' attribute of immutable type 'datetime.date'
+    TypeError cannot set '__repr__' attribute of immutable type 'datetime.date'
+--- <class 'datetime.datetime'>
+datetime datetime datetime (<class 'datetime.date'>,) (<class 'datetime.datetime'>, <class 'datetime.date'>, <class 'object'>) <class 'type'> True True 0
+'A combination of a date and a time.\n\nThe year, month and day arguments are required. tzinfo may be None, or\nan instance of a tzinfo subclass. The remaining arguments may be ints.'
+'(year, month, day, hour=0, minute=0, second=0, microsecond=0,\n         tzinfo=None, *, fold=0)'
+    IMMUTABLETYPE True
+    BASETYPE True
+    DISALLOW_INSTANTIATION False
+    __add__ wrapper_descriptor 'Return self+value.' '($self, value, /)' 'datetime.__add__' <class 'datetime.datetime'>
+    __doc__ str
+    __eq__ wrapper_descriptor 'Return self==value.' '($self, value, /)' 'datetime.__eq__' <class 'datetime.datetime'>
+    __ge__ wrapper_descriptor 'Return self>=value.' '($self, value, /)' 'datetime.__ge__' <class 'datetime.datetime'>
+    __gt__ wrapper_descriptor 'Return self>value.' '($self, value, /)' 'datetime.__gt__' <class 'datetime.datetime'>
+    __hash__ wrapper_descriptor 'Return hash(self).' '($self, /)' 'datetime.__hash__' <class 'datetime.datetime'>
+    __le__ wrapper_descriptor 'Return self<=value.' '($self, value, /)' 'datetime.__le__' <class 'datetime.datetime'>
+    __lt__ wrapper_descriptor 'Return self<value.' '($self, value, /)' 'datetime.__lt__' <class 'datetime.datetime'>
+    __ne__ wrapper_descriptor 'Return self!=value.' '($self, value, /)' 'datetime.__ne__' <class 'datetime.datetime'>
+    __new__ builtin_function_or_method 'Create and return a new object.  See help(type) for accurate signature.' '($type, *args, **kwargs)' 'datetime.__new__' None
+    __radd__ wrapper_descriptor 'Return value+self.' '($self, value, /)' 'datetime.__radd__' <class 'datetime.datetime'>
+    __reduce__ method_descriptor None '($self, /)' 'datetime.__reduce__' <class 'datetime.datetime'>
+    __reduce_ex__ method_descriptor None '($self, proto, /)' 'datetime.__reduce_ex__' <class 'datetime.datetime'>
+    __replace__ method_descriptor 'The same as replace().' '($self, /, **changes)' 'datetime.__replace__' <class 'datetime.datetime'>
+    __repr__ wrapper_descriptor 'Return repr(self).' '($self, /)' 'datetime.__repr__' <class 'datetime.datetime'>
+    __rsub__ wrapper_descriptor 'Return value-self.' '($self, value, /)' 'datetime.__rsub__' <class 'datetime.datetime'>
+    __str__ wrapper_descriptor 'Return str(self).' '($self, /)' 'datetime.__str__' <class 'datetime.datetime'>
+    __sub__ wrapper_descriptor 'Return self-value.' '($self, value, /)' 'datetime.__sub__' <class 'datetime.datetime'>
+    astimezone method_descriptor 'Convert to local time in new timezone tz.' '($self, /, tz=None)' 'datetime.astimezone' <class 'datetime.datetime'>
+    combine classmethod_descriptor 'Construct a datetime from a given date and a given time.' '($type, /, date, time, tzinfo=<unrepresentable>)' 'datetime.combine' <class 'datetime.datetime'>
+    ctime method_descriptor 'Return ctime() style string.' '($self, /)' 'datetime.ctime' <class 'datetime.datetime'>
+    date method_descriptor 'Return date object with same year, month and day.' '($self, /)' 'datetime.date' <class 'datetime.datetime'>
+    dst method_descriptor 'Return self.tzinfo.dst(self).' '($self, /)' 'datetime.dst' <class 'datetime.datetime'>
+    fold getset_descriptor None  'datetime.fold' <class 'datetime.datetime'>
+    fromisoformat classmethod_descriptor 'Construct a date from a string in ISO 8601 format.' '($type, string, /)' 'datetime.fromisoformat' <class 'datetime.datetime'>
+    fromtimestamp classmethod_descriptor 'Create a datetime from a POSIX timestamp.\n\nThe timestamp is a number, e.g. created via time.time(), that is\ninterpreted as local time.' '($type, /, timestamp, tz=None)' 'datetime.fromtimestamp' <class 'datetime.datetime'>
+    hour getset_descriptor None  'datetime.hour' <class 'datetime.datetime'>
+    isoformat method_descriptor "Return the time formatted according to ISO.\n\nThe full format looks like 'YYYY-MM-DD HH:MM:SS.mmmmmm'.\nBy default, the fractional part is omitted if self.microsecond == 0.\n\nIf self.tzinfo is not None, the UTC offset is also attached, giving\na full format of 'YYYY-MM-DD HH:MM:SS.mmmmmm+HH:MM'.\n\nOptional argument sep specifies the separator between date and\ntime, default 'T'.\n\nThe optional argument timespec specifies the number of additional\nterms of the time to include. Valid options are 'auto', 'hours',\n'minutes', 'seconds', 'milliseconds' and 'microseconds'." "($self, /, sep='T', timespec='auto')" 'datetime.isoformat' <class 'datetime.datetime'>
+    max datetime datetime.datetime(9999, 12, 31, 23, 59, 59, 999999)  None None
+    microsecond getset_descriptor None  'datetime.microsecond' <class 'datetime.datetime'>
+    min datetime datetime.datetime(1, 1, 1, 0, 0)  None None
+    minute getset_descriptor None  'datetime.minute' <class 'datetime.datetime'>
+    now classmethod_descriptor 'Returns new datetime object representing current time local to tz.\n\n  tz\n    Timezone object.\n\nIf no tz is specified, uses local timezone.' '($type, /, tz=None)' 'datetime.now' <class 'datetime.datetime'>
+    replace method_descriptor 'Return datetime with new specified fields.' '($self, /, year=unchanged, month=unchanged, day=unchanged,\n        hour=unchanged, minute=unchanged, second=unchanged,\n        microsecond=unchanged, tzinfo=unchanged, *, fold=unchanged)' 'datetime.replace' <class 'datetime.datetime'>
+    resolution timedelta datetime.timedelta(microseconds=1)  None None
+    second getset_descriptor None  'datetime.second' <class 'datetime.datetime'>
+    strptime classmethod_descriptor 'Parse string according to the given date and time format (like time.strptime()).\n\nFor a list of supported format codes, see the documentation:\n    https://docs.python.org/3/library/datetime.html#format-codes' '($type, string, format, /)' 'datetime.strptime' <class 'datetime.datetime'>
+    time method_descriptor 'Return time object with same time but with tzinfo=None.' '($self, /)' 'datetime.time' <class 'datetime.datetime'>
+    timestamp method_descriptor 'Return POSIX timestamp as float.' '($self, /)' 'datetime.timestamp' <class 'datetime.datetime'>
+    timetuple method_descriptor 'Return time tuple, compatible with time.localtime().' '($self, /)' 'datetime.timetuple' <class 'datetime.datetime'>
+    timetz method_descriptor 'Return time object with same time and tzinfo.' '($self, /)' 'datetime.timetz' <class 'datetime.datetime'>
+    tzinfo getset_descriptor None  'datetime.tzinfo' <class 'datetime.datetime'>
+    tzname method_descriptor 'Return self.tzinfo.tzname(self).' '($self, /)' 'datetime.tzname' <class 'datetime.datetime'>
+    utcfromtimestamp classmethod_descriptor 'Create a naive UTC datetime from a POSIX timestamp.' '($type, timestamp, /)' 'datetime.utcfromtimestamp' <class 'datetime.datetime'>
+    utcnow classmethod_descriptor 'Return a new datetime representing UTC day and time.' '($type, /)' 'datetime.utcnow' <class 'datetime.datetime'>
+    utcoffset method_descriptor 'Return self.tzinfo.utcoffset(self).' '($self, /)' 'datetime.utcoffset' <class 'datetime.datetime'>
+    utctimetuple method_descriptor 'Return UTC time tuple, compatible with time.localtime().' '($self, /)' 'datetime.utctimetuple' <class 'datetime.datetime'>
+    signature (year, month, day, hour=0, minute=0, second=0, microsecond=0, tzinfo=None, *, fold=0)
+    TypeError cannot set 'foo' attribute of immutable type 'datetime.datetime'
+    TypeError cannot set '__repr__' attribute of immutable type 'datetime.datetime'
+--- <class 'datetime.time'>
+time time datetime (<class 'object'>,) (<class 'datetime.time'>, <class 'object'>) <class 'type'> True True 0
+'Time with time zone.\n\nAll arguments are optional. tzinfo may be None, or an instance of\na tzinfo subclass. The remaining arguments may be ints.'
+'(hour=0, minute=0, second=0, microsecond=0, tzinfo=None, *, fold=0)'
+    IMMUTABLETYPE True
+    BASETYPE True
+    DISALLOW_INSTANTIATION False
+    __doc__ str
+    __eq__ wrapper_descriptor 'Return self==value.' '($self, value, /)' 'time.__eq__' <class 'datetime.time'>
+    __format__ method_descriptor 'Formats self with strftime.' '($self, format, /)' 'time.__format__' <class 'datetime.time'>
+    __ge__ wrapper_descriptor 'Return self>=value.' '($self, value, /)' 'time.__ge__' <class 'datetime.time'>
+    __gt__ wrapper_descriptor 'Return self>value.' '($self, value, /)' 'time.__gt__' <class 'datetime.time'>
+    __hash__ wrapper_descriptor 'Return hash(self).' '($self, /)' 'time.__hash__' <class 'datetime.time'>
+    __le__ wrapper_descriptor 'Return self<=value.' '($self, value, /)' 'time.__le__' <class 'datetime.time'>
+    __lt__ wrapper_descriptor 'Return self<value.' '($self, value, /)' 'time.__lt__' <class 'datetime.time'>
+    __ne__ wrapper_descriptor 'Return self!=value.' '($self, value, /)' 'time.__ne__' <class 'datetime.time'>
+    __new__ builtin_function_or_method 'Create and return a new object.  See help(type) for accurate signature.' '($type, *args, **kwargs)' 'time.__new__' None
+    __reduce__ method_descriptor None '($self, /)' 'time.__reduce__' <class 'datetime.time'>
+    __reduce_ex__ method_descriptor None '($self, proto, /)' 'time.__reduce_ex__' <class 'datetime.time'>
+    __replace__ method_descriptor 'The same as replace().' '($self, /, **changes)' 'time.__replace__' <class 'datetime.time'>
+    __repr__ wrapper_descriptor 'Return repr(self).' '($self, /)' 'time.__repr__' <class 'datetime.time'>
+    __str__ wrapper_descriptor 'Return str(self).' '($self, /)' 'time.__str__' <class 'datetime.time'>
+    dst method_descriptor 'Return self.tzinfo.dst(self).' '($self, /)' 'time.dst' <class 'datetime.time'>
+    fold getset_descriptor None  'time.fold' <class 'datetime.time'>
+    fromisoformat classmethod_descriptor 'Construct a time from a string in ISO 8601 format.' '($type, string, /)' 'time.fromisoformat' <class 'datetime.time'>
+    hour getset_descriptor None  'time.hour' <class 'datetime.time'>
+    isoformat method_descriptor "Return the time formatted according to ISO.\n\nThe full format is 'HH:MM:SS.mmmmmm+zz:zz'. By default, the\nfractional part is omitted if self.microsecond == 0.\n\nThe optional argument timespec specifies the number of additional\nterms of the time to include. Valid options are 'auto', 'hours',\n'minutes', 'seconds', 'milliseconds' and 'microseconds'." "($self, /, timespec='auto')" 'time.isoformat' <class 'datetime.time'>
+    max time datetime.time(23, 59, 59, 999999)  None None
+    microsecond getset_descriptor None  'time.microsecond' <class 'datetime.time'>
+    min time datetime.time(0, 0)  None None
+    minute getset_descriptor None  'time.minute' <class 'datetime.time'>
+    replace method_descriptor 'Return time with new specified fields.' '($self, /, hour=unchanged, minute=unchanged, second=unchanged,\n        microsecond=unchanged, tzinfo=unchanged, *, fold=unchanged)' 'time.replace' <class 'datetime.time'>
+    resolution timedelta datetime.timedelta(microseconds=1)  None None
+    second getset_descriptor None  'time.second' <class 'datetime.time'>
+    strftime method_descriptor 'Format using strftime().\n\nThe date part of the timestamp passed to underlying strftime should\nnot be used.\n\nFor a list of supported format codes, see the documentation:\n    https://docs.python.org/3/library/datetime.html#format-codes' '($self, /, format)' 'time.strftime' <class 'datetime.time'>
+    strptime classmethod_descriptor 'Parse string according to the given time format (like time.strptime()).\n\nFor a list of supported format codes, see the documentation:\n    https://docs.python.org/3/library/datetime.html#format-codes' '($type, string, format, /)' 'time.strptime' <class 'datetime.time'>
+    tzinfo getset_descriptor None  'time.tzinfo' <class 'datetime.time'>
+    tzname method_descriptor 'Return self.tzinfo.tzname(self).' '($self, /)' 'time.tzname' <class 'datetime.time'>
+    utcoffset method_descriptor 'Return self.tzinfo.utcoffset(self).' '($self, /)' 'time.utcoffset' <class 'datetime.time'>
+    signature (hour=0, minute=0, second=0, microsecond=0, tzinfo=None, *, fold=0)
+    TypeError cannot set 'foo' attribute of immutable type 'datetime.time'
+    TypeError cannot set '__repr__' attribute of immutable type 'datetime.time'
+--- <class 'datetime.tzinfo'>
+tzinfo tzinfo datetime (<class 'object'>,) (<class 'datetime.tzinfo'>, <class 'object'>) <class 'type'> True True 0
+'Abstract base class for time zone info objects.\n\nSubclasses must override the tzname(), utcoffset() and dst() methods.'
+None
+    IMMUTABLETYPE True
+    BASETYPE True
+    DISALLOW_INSTANTIATION False
+    __doc__ str
+    __new__ builtin_function_or_method 'Create and return a new object.  See help(type) for accurate signature.' '($type, *args, **kwargs)' 'tzinfo.__new__' None
+    __reduce__ method_descriptor '-> (cls, state)' '($self, /)' 'tzinfo.__reduce__' <class 'datetime.tzinfo'>
+    dst method_descriptor 'datetime -> DST offset as timedelta positive east of UTC.' '($self, object, /)' 'tzinfo.dst' <class 'datetime.tzinfo'>
+    fromutc method_descriptor 'datetime in UTC -> datetime in local time.' '($self, object, /)' 'tzinfo.fromutc' <class 'datetime.tzinfo'>
+    tzname method_descriptor 'datetime -> string name of time zone.' '($self, object, /)' 'tzinfo.tzname' <class 'datetime.tzinfo'>
+    utcoffset method_descriptor 'datetime -> timedelta showing offset from UTC, negative values indicating West of UTC' '($self, object, /)' 'tzinfo.utcoffset' <class 'datetime.tzinfo'>
+    signature ValueError no signature found for builtin type <class 'datetime.tzinfo'>
+    TypeError cannot set 'foo' attribute of immutable type 'datetime.tzinfo'
+    TypeError cannot set '__repr__' attribute of immutable type 'datetime.tzinfo'
+--- <class 'datetime.timezone'>
+timezone timezone datetime (<class 'datetime.tzinfo'>,) (<class 'datetime.timezone'>, <class 'datetime.tzinfo'>, <class 'object'>) <class 'type'> True True 0
+'Fixed offset from UTC implementation of tzinfo.'
+'(offset, name=<unrepresentable>)'
+    IMMUTABLETYPE True
+    BASETYPE False
+    DISALLOW_INSTANTIATION False
+    __doc__ str
+    __eq__ wrapper_descriptor 'Return self==value.' '($self, value, /)' 'timezone.__eq__' <class 'datetime.timezone'>
+    __ge__ wrapper_descriptor 'Return self>=value.' '($self, value, /)' 'timezone.__ge__' <class 'datetime.timezone'>
+    __getinitargs__ method_descriptor 'pickle support' '($self, /)' 'timezone.__getinitargs__' <class 'datetime.timezone'>
+    __gt__ wrapper_descriptor 'Return self>value.' '($self, value, /)' 'timezone.__gt__' <class 'datetime.timezone'>
+    __hash__ wrapper_descriptor 'Return hash(self).' '($self, /)' 'timezone.__hash__' <class 'datetime.timezone'>
+    __le__ wrapper_descriptor 'Return self<=value.' '($self, value, /)' 'timezone.__le__' <class 'datetime.timezone'>
+    __lt__ wrapper_descriptor 'Return self<value.' '($self, value, /)' 'timezone.__lt__' <class 'datetime.timezone'>
+    __ne__ wrapper_descriptor 'Return self!=value.' '($self, value, /)' 'timezone.__ne__' <class 'datetime.timezone'>
+    __new__ builtin_function_or_method 'Create and return a new object.  See help(type) for accurate signature.' '($type, *args, **kwargs)' 'timezone.__new__' None
+    __repr__ wrapper_descriptor 'Return repr(self).' '($self, /)' 'timezone.__repr__' <class 'datetime.timezone'>
+    __str__ wrapper_descriptor 'Return str(self).' '($self, /)' 'timezone.__str__' <class 'datetime.timezone'>
+    dst method_descriptor 'Return None.' '($self, object, /)' 'timezone.dst' <class 'datetime.timezone'>
+    fromutc method_descriptor 'datetime in UTC -> datetime in local time.' '($self, object, /)' 'timezone.fromutc' <class 'datetime.timezone'>
+    max timezone datetime.timezone(datetime.timedelta(seconds=86340))  None None
+    min timezone datetime.timezone(datetime.timedelta(days=-1, seconds=60))  None None
+    tzname method_descriptor "If name is specified when timezone is created, returns the name.  Otherwise returns offset as 'UTC(+|-)HH:MM'." '($self, object, /)' 'timezone.tzname' <class 'datetime.timezone'>
+    utc timezone datetime.timezone.utc  None None
+    utcoffset method_descriptor 'Return fixed offset.' '($self, object, /)' 'timezone.utcoffset' <class 'datetime.timezone'>
+    signature ValueError <class 'datetime.timezone'> builtin has invalid signature
+    TypeError cannot set 'foo' attribute of immutable type 'datetime.timezone'
+    TypeError cannot set '__repr__' attribute of immutable type 'datetime.timezone'
+--- <class 'datetime.IsoCalendarDate'>
+IsoCalendarDate IsoCalendarDate datetime (<class 'tuple'>,) (<class 'datetime.IsoCalendarDate'>, <class 'tuple'>, <class 'object'>) <class 'type'> True True 8
+'The result of date.isocalendar() or datetime.isocalendar()\n\nThis object may be accessed either as a tuple of\n  ((year, week, weekday)\nor via the object attributes as named in the above tuple.'
+None
+    IMMUTABLETYPE True
+    BASETYPE False
+    DISALLOW_INSTANTIATION False
+    __doc__ str
+    __module__ str 'datetime'  None None
+    __new__ builtin_function_or_method 'Create and return a new object.  See help(type) for accurate signature.' '($type, *args, **kwargs)' 'IsoCalendarDate.__new__' None
+    __reduce__ method_descriptor '__reduce__() -> (cls, state)' '($self, /)' 'IsoCalendarDate.__reduce__' <class 'datetime.IsoCalendarDate'>
+    __repr__ wrapper_descriptor 'Return repr(self).' '($self, /)' 'IsoCalendarDate.__repr__' <class 'datetime.IsoCalendarDate'>
+    week getset_descriptor None  'IsoCalendarDate.week' <class 'datetime.IsoCalendarDate'>
+    weekday getset_descriptor None  'IsoCalendarDate.weekday' <class 'datetime.IsoCalendarDate'>
+    year getset_descriptor None  'IsoCalendarDate.year' <class 'datetime.IsoCalendarDate'>
+    signature (iterable=(), /)
+    TypeError cannot set 'foo' attribute of immutable type 'datetime.IsoCalendarDate'
+    TypeError cannot set '__repr__' attribute of immutable type 'datetime.IsoCalendarDate'
+--- signatures of the methods
+timedelta __format__ (self, format_spec, /)
+timedelta __reduce__ (self, /)
+timedelta __reduce_ex__ (self, protocol, /)
+timedelta total_seconds (self, /)
+date __format__ (self, format, /)
+date __reduce__ (self, /)
+date __reduce_ex__ (self, protocol, /)
+date __replace__ (self, /, **changes)
+date ctime (self, /)
+date fromisocalendar (year, week, day)
+date fromisoformat (string, /)
+date fromordinal (ordinal, /)
+date fromtimestamp (timestamp, /)
+date isocalendar (self, /)
+date isoformat (self, /)
+date isoweekday (self, /)
+date replace ValueError
+date strftime (self, /, format)
+date strptime (string, format, /)
+date timetuple (self, /)
+date today ()
+date toordinal (self, /)
+date weekday (self, /)
+datetime __format__ (self, format, /)
+datetime __reduce__ (self, /)
+datetime __reduce_ex__ (self, proto, /)
+datetime __replace__ (self, /, **changes)
+datetime astimezone (self, /, tz=None)
+datetime combine ValueError
+datetime ctime (self, /)
+datetime date (self, /)
+datetime dst (self, /)
+datetime fromisocalendar (year, week, day)
+datetime fromisoformat (string, /)
+datetime fromordinal (ordinal, /)
+datetime fromtimestamp (timestamp, tz=None)
+datetime isocalendar (self, /)
+datetime isoformat (self, /, sep='T', timespec='auto')
+datetime isoweekday (self, /)
+datetime now (tz=None)
+datetime replace ValueError
+datetime strftime (self, /, format)
+datetime strptime (string, format, /)
+datetime time (self, /)
+datetime timestamp (self, /)
+datetime timetuple (self, /)
+datetime timetz (self, /)
+datetime today ()
+datetime toordinal (self, /)
+datetime tzname (self, /)
+datetime utcfromtimestamp (timestamp, /)
+datetime utcnow ()
+datetime utcoffset (self, /)
+datetime utctimetuple (self, /)
+datetime weekday (self, /)
+time __format__ (self, format, /)
+time __reduce__ (self, /)
+time __reduce_ex__ (self, proto, /)
+time __replace__ (self, /, **changes)
+time dst (self, /)
+time fromisoformat (string, /)
+time isoformat (self, /, timespec='auto')
+time replace ValueError
+time strftime (self, /, format)
+time strptime (string, format, /)
+time tzname (self, /)
+time utcoffset (self, /)
+tzinfo __format__ (self, format_spec, /)
+tzinfo __reduce__ (self, /)
+tzinfo __reduce_ex__ (self, protocol, /)
+tzinfo dst (self, object, /)
+tzinfo fromutc (self, object, /)
+tzinfo tzname (self, object, /)
+tzinfo utcoffset (self, object, /)
+timezone __format__ (self, format_spec, /)
+timezone __getinitargs__ (self, /)
+timezone __reduce__ (self, /)
+timezone __reduce_ex__ (self, protocol, /)
+timezone dst (self, object, /)
+timezone fromutc (self, object, /)
+timezone tzname (self, object, /)
+timezone utcoffset (self, object, /)
+--- bound and unbound
+repr(d.isoformat)[:45] => '<built-in method isoformat of datetime.date o'
+repr(date.isoformat) => "<method 'isoformat' of 'datetime.date' objects>"
+repr(date.today)[:40] => '<built-in method today of type object at'
+repr(date.__add__) => "<slot wrapper '__add__' of 'datetime.date' objects>"
+repr(d.__add__)[:40] => "<method-wrapper '__add__' of datetime.da"
+repr(date.__new__)[:40] => '<built-in method __new__ of type object '
+repr(date.year) => "<attribute 'year' of 'datetime.date' objects>"
+repr(timedelta.days) => "<member 'days' of 'datetime.timedelta' objects>"
+date.isoformat.__name__, date.isoformat.__qualname__, date.isoformat.__objclass__ => ('isoformat', 'date.isoformat', <class 'datetime.date'>)
+date.today.__name__, date.today.__qualname__, date.today.__self__ => ('today', 'date.today', <class 'datetime.date'>)
+d.isoformat.__self__ is d, d.isoformat.__name__, d.isoformat.__qualname__ => (True, 'isoformat', 'date.isoformat')
+date.__dict__['today'].__objclass__ => <class 'datetime.date'>
+dt.now.__self__, dt.fromtimestamp.__qualname__ => (<class 'datetime.datetime'>, 'datetime.fromtimestamp')
+isinstance(date.isoformat, types.MethodDescriptorType), isinstance(date.__dict__['today'], types.ClassMethodDescriptorType), isinstance(date.year, types.GetSetDescriptorType), isinstance(timedelta.days, types.MemberDescriptorType), isinstance(date.__add__, types.WrapperDescriptorType) => (True, True, True, True, True)
+date.isoformat.__get__(d)() => '2020-01-02'
+date.isoformat.__get__(1) !! TypeError descriptor 'isoformat' for 'datetime.date' objects doesn't apply to a 'int' object
+date.isoformat.__get__(None, date) is date.isoformat => True
+date.__dict__['today'].__get__(None, date)().__class__ => <class 'datetime.date'>
+date.__dict__['today'].__get__(None, int) !! TypeError descriptor 'today' requires a subtype of 'datetime.date' but received 'int'
+date.__dict__['today'].__get__(d)().__class__ => <class 'datetime.date'>
+date.__hash__ is not None, timedelta.__hash__ is not None, tzinfo.__hash__ is object.__hash__ => (True, True, True)
+dt.__hash__ is date.__hash__, dt.__eq__ is date.__eq__, dt.strftime is date.strftime, dt.__format__ is date.__format__, dt.weekday is date.weekday => (False, False, True, True, True)
+timezone.__reduce__ is tzinfo.__reduce__, 'fromutc' in vars(timezone) => (True, True)
+date.__init__ is object.__init__, date.__getattribute__ is object.__getattribute__ => (True, True)
+date.__new__ is dt.__new__ => False
+sys.getsizeof(d) > 0 => True
+isinstance(d, object), type(d) is date => (True, True)
+dir(d) == dir(date) => True
+d.__class__ => <class 'datetime.date'>
+d.__doc__ == date.__doc__ => True
+d.__init__(), d.__init__(1, 2, 3) => (None, None)
+d.__sizeof__() > 0 => True
+d.__dir__() is not None => True
+d.__reduce_ex__(2) => (<class 'datetime.date'>, (b'\x07\xe4\x01\x02',))
+d.__getstate__() => None
+d.__ne__(d), d.__eq__(d) => (False, True)
+TypeError __class__ assignment only supported for mutable types or ModuleType subclasses
+D2 2020-01-02
+TypeError __class__ assignment only supported for mutable types or ModuleType subclasses
+['date', 'time'] TypeError multiple bases have instance lay-out conflict
+['date', 'timedelta'] TypeError multiple bases have instance lay-out conflict
+['datetime', 'date'] ok ['M', 'datetime', 'date', 'object']
+['date', 'datetime'] TypeError Cannot create a consistent method resolution order (MRO) for bases date, datetime
+['tzinfo', 'date'] ok ['M', 'tzinfo', 'date', 'object']
+['date', 'int'] TypeError multiple bases have instance lay-out conflict
+['date', 'dict'] TypeError multiple bases have instance lay-out conflict
+['timedelta', 'tuple'] TypeError multiple bases have instance lay-out conflict
+['tzinfo', 'dict'] ok ['M', 'tzinfo', 'dict', 'object']
+['date', 'object'] ok ['M', 'date', 'object']

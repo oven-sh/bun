@@ -1,0 +1,24 @@
+status: 0
+script: d242b7cf806f24d9
+---
+TupleSub __add__ 86 a1c4504e75cd
+TupleSub __class_getitem__ 86 9dc861c2f57a
+TupleSub __contains__ 86 36291c20d115
+TupleSub __eq__ 86 22cc2a9c215b
+TupleSub __format__ 86 684bdc941689
+TupleSub __ge__ 86 837fcbb2cef7
+TupleSub __getitem__ 86 2ac60721b7f1
+TupleSub __getnewargs__ 38 15c4bb225c07
+TupleSub __gt__ 86 9dab2d82be64
+TupleSub __init__ 643 7fcb1ead8a64
+TupleSub __iter__ 38 7e0247461a1f
+TupleSub __le__ 86 617f04eafc98
+TupleSub __len__ 38 9452fc859a82
+TupleSub __lt__ 86 0ec158ed1e0e
+TupleSub __mul__ 84 bbf18cfd3f20
+TupleSub __ne__ 86 29752fd2e056
+TupleSub __repr__ 38 b65329e96201
+TupleSub __rmul__ 83 5e47f98fa4dd
+TupleSub __str__ 38 8703aa68d50f
+TupleSub count 86 125ec937592d
+TupleSub index 646 b14aed652fbb

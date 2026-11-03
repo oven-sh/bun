@@ -1,0 +1,150 @@
+status: 0
+script: 007bbaf62579e298
+source: cc5520e478d23b33
+---
+'1+1j' ok (1+1j)
+' 1+1j ' ok (1+1j)
+'(1+1j)' ok (1+1j)
+' ( 1+1j ) ' ok (1+1j)
+'\u2003(\u20021+1j\u2002)\u2003' ok (1+1j)
+'\xa01j' ok 1j
+'( 1+1j' ValueError complex() arg is a malformed string
+'1+1j )' ValueError complex() arg is a malformed string
+'(1 + 1j)' ValueError complex() arg is a malformed string
+'1\u20031j' ValueError complex() arg is a malformed string
+'\u0661+\u0662j' ok (1+2j)
+'1_0+2_0j' ok (10+20j)
+'1__0j' ValueError could not convert string to complex: '1__0j'
+'_1j' ValueError could not convert string to complex: '_1j'
+'(1+1j)x' ValueError complex() arg is a malformed string
+'()' ValueError complex() arg is a malformed string
+'' ValueError complex() arg is a malformed string
+' ' ValueError complex() arg is a malformed string
+'j' ok 1j
+'+j' ok 1j
+'nan+infj' ok (nan+infj)
+'1e5j' ok 100000j
+'1e+j' ValueError complex() arg is a malformed string
+complex, complex ok (-2+1j)
+    DeprecationWarning complex() argument 'real' must be a real number, not complex
+    DeprecationWarning complex() argument 'imag' must be a real number, not complex
+real, complex ok (-1+0j)
+    DeprecationWarning complex() argument 'imag' must be a real number, not complex
+complex, real ok 3j
+    DeprecationWarning complex() argument 'real' must be a real number, not complex
+__complex__ ok (1+2j)
+__complex__, real ok (1+3j)
+    DeprecationWarning complex() argument 'real' must be a real number, not C0
+real, __complex__ TypeError complex() argument 'imag' must be a real number, not C0
+a subclass ok (1+2j)
+    DeprecationWarning C1.__complex__() must return a complex, not CS.  The ability to return an instance of a strict subclass of complex is deprecated, and may be removed in a future version of Python.
+not a complex TypeError C2.__complex__() must return a complex, not int
+__float__ ok (1.5+1.5j)
+__index__ ok (3+3j)
+str, real TypeError complex() argument 'real' must be a real number, not str
+real, str TypeError complex() argument 'imag' must be a real number, not str
+None TypeError complex() argument must be a string or a number, not NoneType
+None, 1 TypeError complex() argument 'real' must be a real number, not NoneType
+keywords ok (-1+1j)
+    DeprecationWarning complex() argument 'real' must be a real number, not complex
+    DeprecationWarning complex() argument 'imag' must be a real number, not complex
+imag only ok 2j
+imag complex only ok (-2+0j)
+    DeprecationWarning complex() argument 'imag' must be a real number, not complex
+subclass ok 'CS'
+three TypeError complex() takes at most 2 arguments (3 given)
+from_number ok ((1+0j), (1+2j), (1.5+0j))
+from_number str TypeError must be real number, not str
+float ok (1.5, 1.5, 1.5)
+float inner space ValueError could not convert string to float: '1\u20035'
+n.bit_length() [n=0] => 0
+n.__sizeof__() [n=0] => 28
+MyInt(n).__sizeof__() [n=0] => 28
+sys.getsizeof(n) [n=0] => 28
+n.bit_length() [n=1] => 1
+n.__sizeof__() [n=1] => 28
+MyInt(n).__sizeof__() [n=1] => 28
+sys.getsizeof(n) [n=1] => 28
+n.bit_length() [n=-1] => 1
+n.__sizeof__() [n=-1] => 28
+MyInt(n).__sizeof__() [n=-1] => 28
+sys.getsizeof(n) [n=-1] => 28
+n.bit_length() [n=1073741823] => 30
+n.__sizeof__() [n=1073741823] => 28
+MyInt(n).__sizeof__() [n=1073741823] => 28
+sys.getsizeof(n) [n=1073741823] => 28
+n.bit_length() [n=1073741824] => 31
+n.__sizeof__() [n=1073741824] => 32
+MyInt(n).__sizeof__() [n=1073741824] => 32
+sys.getsizeof(n) [n=1073741824] => 32
+n.bit_length() [n=-1073741824] => 31
+n.__sizeof__() [n=-1073741824] => 32
+MyInt(n).__sizeof__() [n=-1073741824] => 32
+sys.getsizeof(n) [n=-1073741824] => 32
+n.bit_length() [n=1152921504606846975] => 60
+n.__sizeof__() [n=1152921504606846975] => 32
+MyInt(n).__sizeof__() [n=1152921504606846975] => 32
+sys.getsizeof(n) [n=1152921504606846975] => 32
+n.bit_length() [n=1152921504606846976] => 61
+n.__sizeof__() [n=1152921504606846976] => 36
+MyInt(n).__sizeof__() [n=1152921504606846976] => 36
+sys.getsizeof(n) [n=1152921504606846976] => 36
+n.bit_length() [n=1237940039285380274899124224] => 91
+n.__sizeof__() [n=1237940039285380274899124224] => 40
+MyInt(n).__sizeof__() [n=1237940039285380274899124224] => 40
+sys.getsizeof(n) [n=1237940039285380274899124224] => 40
+n.bit_length() [n=10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000] => 333
+n.__sizeof__() [n=10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000] => 72
+MyInt(n).__sizeof__() [n=10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000] => 72
+sys.getsizeof(n) [n=10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000] => 72
+True.__sizeof__() => 28
+int.__basicsize__ => 24
+int.__itemsize__ => 4
+bool.__basicsize__ => 24
+MyInt.__basicsize__ => 24
+MyInt.__itemsize__ => 4
+[16, 16, 32, 40, 24, 32, 64, 33, 64, 32, 32, 40, 48, 200, 200, 944, 72, 72]
+[0, 0, 0, 0, 1, 8, 8, 0, 40]
+type.__sizeof__(int) => 424
+type.__sizeof__(Slots) => 944
+type.__sizeof__(type) => 424
+ContextVar() TypeError ContextVar() takes exactly 1 positional argument (0 given)
+ContextVar(1) TypeError context variable name must be a str
+two TypeError ContextVar() takes at most 1 positional argument (2 given)
+three TypeError ContextVar() takes at most 2 arguments (3 given)
+name= TypeError ContextVar() takes exactly 1 positional argument (0 given)
+x= TypeError ContextVar() got an unexpected keyword argument 'x'
+default ok 5
+unhashable name TypeError unhashable type: 'Unhashable'
+subclass of str ok 'Named'
+list that shrinks IndexError list index out of range
+list ok 'int[[int, str], ...]'
+slice[int] ok (slice[int], slice[int, str, None], 'GenericAlias', True)
+characters_written 0 AttributeError characters_written
+characters_written 1 AttributeError characters_written
+characters_written 2 AttributeError characters_written
+characters_written 3 AttributeError characters_written
+characters_written 4 AttributeError characters_written
+characters_written 5 AttributeError characters_written
+given ok 3
+5 ok 5
+index ok 3
+str TypeError 'str' object cannot be interpreted as an integer
+float TypeError 'float' object cannot be interpreted as an integer
+huge ValueError cannot fit 'int' into an index-sized integer
+-1 AttributeError characters_written
+-2 ok -2
+del ok None
+del again AttributeError characters_written
+gone AttributeError characters_written
+OSError AttributeError characters_written
+a is b => False
+sys.intern(a) is a => True
+sys._is_interned(a) => True
+sys._is_interned(b) => False
+sys.intern(b) is a => True
+sys.intern(b) is b => False
+sys._is_interned(b) => False
+a is b => False
+subclass TypeError can't intern Named
+bytes TypeError intern() argument must be str, not bytes

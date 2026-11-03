@@ -1,0 +1,271 @@
+status: 0
+script: 82bc822c032600f2
+---
+64 2305843009213693951 314159 0 1000003 siphash13 64 128 0
+200000 True True True False
+200000 True
+True
+'' True True True
+'a' True True True
+'abc' True True True
+'xxxxxxxxxxxxxxxxxxx True True True
+'\xe9' True True True
+'caf\xe9caf\xe9caf\x True True True
+'\u20ac' True True True
+'a\u20aca\u20aca\u20 True True True
+'\U0001f600' True True True
+'a\U0001f600\u20aca\ True True True
+'\ud800' True True True
+'a\udc80' True True True
+True True
+[True, True, True, True, True]
+True True
+True True
+True True
+True True
+True True 1 1 True True
+1 True 1 True True True False
+1 True True 1 1 1 1 2
+2 5 str 5 1 False
+7 2
+1 True 1 True True True False
+1 True True 1 1 1 1 2
+2 5 str 5 1 False
+7 2
+1 True 1 True True True False
+1 True True 1 1 1 1 2
+2 5 str 5 1 False
+7 2
+1 True 1 True True True False
+1 True True 1 1 1 1 2
+2 5 str 5 1 False
+7 2
+1 True 1 True True True False
+1 True True 1 1 1 1 2
+2 5 str 5 1 False
+7 2
+1 True 1 True True True False
+1 True True 1 1 1 1 2
+2 5 str 5 1 False
+7 2
+1 True
+True 1 True
+1 True True
+(1, True)
+True False False
+True five tuple float none bytes 5 1005
+505 True False five ['1', '3', '5'] [5, (1, 'a'), 2.5, None, b'5']
+506 0 five False True True
+505 True True True False True True True True
+['1', '3', 5] ['1', '3', 5] ['zz'] 506 505
+['c', 'd', 'y', 'z']
+['a', 'c']
+['c']
+[('a', 0), ('b', 0), ('c', 0)] ['x', 'y', 'z'] {'k': 0, 'l': 0}
+['7', '1', '2', '4', '5', '6', '8', '9', '3', 1, '0'] ('0', 0) ('7', 7) 5 True [1, '3', '9', '8', '6', '4', '2', '1']
+[('a', 5), ('b', 2), ('r', 2)] 2 2
+{'a': ['apple', 'avocado'], 'b': ['banana', 'blueberry'], 'c': ['cherry']}
+1 3 ['a', 'b']
+['axy', 'axy', 'aby', 'aby', 'axz', 'qxy', 'axy'] CacheInfo(hits=1, misses=6, maxsize=4, currsize=4)
+abab abab ('ab', 1, 'ab', 1) CacheInfo(hits=1, misses=2, maxsize=None, currsize=2)
+50 0 0 0 0 2000
+0 [True, True, True, True, True]
+1 [True, True, True, True, True]
+-2 [True, True, True, True, True]
+2 [True, True, True, True, True]
+-2 [True, True, True, True, True]
+10 [True, True, True, True, True]
+255 [True, True, True, True, True]
+1073741824 [True, True, True, True, True]
+2147483648 [True, True, True, True, True]
+4294967296 [True, True, True, True, True]
+9007199254740992 [True, True, True, True, True]
+9007199254740993 [True, True, True, True, True]
+1152921504606846976 [True, True, True, True, True]
+2305843009213693950 [True, True, True, True, True]
+0 [True, True, True, True, True]
+1 [True, True, True, True, True]
+2 [True, True, True, True, True]
+2 [True, True, True, True, True]
+3 [True, True, True, True, True]
+4 [True, True, True, True, True]
+8 [True, True, True, True, True]
+9 [True, True, True, True, True]
+2305843009213693950 [True, True, True, True, True]
+0 [True, True, True, True, True]
+1000000000000000000 [True, True, True, True, True]
+776627963145224196 [True, True, True, True, True]
+465258685558744706 [True, True, True, True, True]
+910685213754167845 [True, True, True, True, True]
+424410663027747676 [True, True, True, True, True]
+16777216 [True, True, True, None, None]
+16777215 [True, True, True, True, True]
+0 [True, True, True, True, True]
+-2 [True, True, True, True, True]
+1 [True, True, True, True, True]
+-2 [True, True, True, True, True]
+2 [True, True, True, True, True]
+-10 [True, True, True, True, True]
+-255 [True, True, True, True, True]
+-1073741824 [True, True, True, True, True]
+-2147483648 [True, True, True, True, True]
+-4294967296 [True, True, True, True, True]
+-9007199254740992 [True, True, True, True, True]
+-9007199254740993 [True, True, True, True, True]
+-1152921504606846976 [True, True, True, True, True]
+-2305843009213693950 [True, True, True, True, True]
+0 [True, True, True, True, True]
+-2 [True, True, True, True, True]
+-2 [True, True, True, True, True]
+-2 [True, True, True, True, True]
+-3 [True, True, True, True, True]
+-4 [True, True, True, True, True]
+-8 [True, True, True, True, True]
+-9 [True, True, True, True, True]
+-2305843009213693950 [True, True, True, True, True]
+0 [True, True, True, True, True]
+-1000000000000000000 [True, True, True, True, True]
+-776627963145224196 [True, True, True, True, True]
+-465258685558744706 [True, True, True, True, True]
+-910685213754167845 [True, True, True, True, True]
+-424410663027747676 [True, True, True, True, True]
+-16777216 [True, True, True, None, None]
+-16777215 [True, True, True, True, True]
+0.0 0 True True
+-0.0 0 True True
+1.0 1 True True
+-1.0 -2 True True
+0.5 1152921504606846976 True None
+-0.5 -1152921504606846976 True None
+0.1 230584300921369408 True None
+1.5 1152921504606846977 True None
+2.5 1152921504606846978 True None
+10000000000.0 10000000000 True True
+1000000000000000.0 1000000000000000 True True
+1e+16 10000000000000000 True True
+1e+22 1864712049423028464 True True
+1e+100 1822893315824342674 True True
+1e+308 156575653125701 True True
+5e-324 16777216 True None
+2.2250738585072014e-308 32768 True None
+3.141592653589793 326490430436040707 True None
+-2.718281828459045 -1656245132797518850 True None
+0.3333333333333333 768614336404564608 True None
+123456789.125 288230376275168533 True None
+2.305843009213694e+18 1 True True
+2.3058430092136934e+18 2305843009213693440 True True
+4.611686018427388e+18 2 True True
+9.223372036854776e+18 4 True True
+1.8446744073709552e+19 8 True True
+1.0715086071862673e+301 16777216 True True
+2.305843009213694e+18 1 True True
+314159 -314159 314159 -314159 314159 314159942477 1 0
+0j 0 True
+1j 1000003 True
+(-0-1j) -2000006 True
+(1+1j) 1000004 True
+(1.5-2.5j) -2305843009215693957 True
+(2.305843009213694e+18+1j) 1000004 True
+(-1+0j) -2 True
+-1j -2000006 True
+(1e+100+1e-100j) 31488001660547717 True
+(-2+1000003j) 1000006000007 True
+1/3 1537228672809129301 True
+-1/3 -1537228672809129301 True
+22/7 1976436865040309104 True
+... 314159 True
+... 0 True
+... 314159 True
+... -314159 True
+... 1025576195178044966 True
+... 4194304 True
+... 768614519656502613 True
+0 0 True True
+-0 0 True True
+1 1 True True
+1.0 1 True True
+1.00 1 True True
+1e2 100 True True
+100 100 True True
+0.1 2075258708292324556 True None
+-0.1 -2075258708292324556 True None
+1.5 1152921504606846977 True True
+1e-5 379288116585560518 True None
+1e30 465258685558744706 True None
+1e-30 1318993825257351686 True None
+123.456 1715547198854988423 True None
+9.99e99 2281751119022561578 True None
+1e400 477640439047194790 True None
+1e-400 653934426191853120 True None
+-1e400 -477640439047194790 True None
+{1: 'f'} 1 None None
+True True False 1 2
+5740354900026072187
+-6644214454873602895
+-3550055125485641917
+529344067295497451
+-5486347211504344842
+2441169688291153174
+-7222447081605638768
+4479737025582696436
+9181102132670838864
+8339407666115719588
+-5164621852614943976
+-5999874571060843017
+8078679518589016365
+8078679518589016365
+-1478119408119447681
+135294473449115980
+True True True
+133146708735736
+-558064481276695278
+-272375401224217160
+4411996150312757951
+-67101846648477850
+-5789899079068153026
+6776983852052281967
+6776983852052281967
+True True
+2676694398852732306 5795932985296280846 -1469834585040929973 6253859903769791411 False True -9201871056951508602 True
+4032618106351268893 -344020932372729183 -2178470213028018262 -2340833382717974474 2930195492269446394 -9161236107217153782 True
+4238894112 True 5740354900026072187
+TypeError unhashable type: 'list'
+TypeError unhashable type: 'dict'
+TypeError unhashable type: 'set'
+TypeError unhashable type: 'bytearray'
+TypeError unhashable type: 'list'
+TypeError unhashable type: 'list'
+TypeError unhashable type: 'list'
+ValueError cannot hash writable memoryview object
+TypeError unhashable type: 'collections.deque'
+TypeError unhashable type: 'collections.OrderedDict'
+TypeError unhashable type: 'Counter'
+True True True
+None
+unhashable type: 'OnlyEq'
+0 0 True
+1 1 True
+-1 -2 True
+-2 -2 True
+2305843009213693951 2305843009213693951 True
+2305843009213693952 2305843009213693952 True
+9223372036854775807 9223372036854775807 True
+9223372036854775808 4 True
+18446744073709551616 8 True
+-9223372036854775808 -9223372036854775808 True
+-9223372036854775809 -5 True
+1267650600228229401496703205376 549755813888 True
+-1267650600228229401496703205376 -549755813888 True
+True 1 True
+__hash__ method should return an integer
+__hash__ method should return an integer
+__hash__ method should return an integer
+__hash__ method should return an integer
+5 int 7 -2 1
+True 1 1
+True 1
+True
+True True True True True True
+True True same True True
+True True True True
+True True True

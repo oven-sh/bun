@@ -1,0 +1,9 @@
+status: 0
+script: 13e09bb85221cb16
+---
+abcs isinstance 219 8c134ee75556
+abcs callable 219 20b2fbb964b3
+types names 91 6e0ebce9cb84
+types bases 91 f98cf499be77
+types kinds 732 be65b4f65aa3
+types docs 689 3f6e761e8f52

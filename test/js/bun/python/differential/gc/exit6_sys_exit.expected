@@ -1,0 +1,7 @@
+status: 3
+stderr: 
+script: 0689995ca389aa99
+---
+del inner local
+del outer local
+del global

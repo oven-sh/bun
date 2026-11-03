@@ -1,0 +1,134 @@
+status: 0
+script: c648e96e4a5e4499
+source: a8fdd81532858f40
+---
+P P ok ('P.__pow__', 'P', 5)
+P Q ok ('Q.__rpow__', 'P', 5)
+Q P ok ('P.__pow__', 'P', 5)
+2 P ok ('P.__rpow__', 'int', 5)
+P 2 ok ('P.__pow__', 'int', 5)
+N R ok ('R.__rpow__', 'N', 5)
+N N TypeError unsupported operand type(s) for ** or pow(): 'N', 'N', 'int'
+2 R ok ('R.__rpow__', 'int', 5)
+2 2 P TypeError unsupported operand type(s) for ** or pow(): 'int', 'int', 'P'
+2 2 M TypeError unsupported operand type(s) for ** or pow(): 'int', 'int', 'M'
+M M M TypeError unsupported operand type(s) for ** or pow(): 'M', 'M', 'M'
+2 R ok ('R.__rpow__', 'int', None)
+N R ok ('R.__rpow__', 'N', None)
+2.0 2 3 TypeError pow() 3rd argument not allowed unless all arguments are integers
+2 -1 5 ok 3
+2 -1 4 ValueError base is not invertible for the given modulus
+2 2 0 ValueError pow() 3rd argument cannot be 0
+**= ok ('I.__ipow__', 3)
+Missing + TypeError unsupported operand type(s) for +: 'Missing' and 'int'
+Missing r+ TypeError unsupported operand type(s) for +: 'int' and 'Missing'
+Missing == ok False
+Missing != ok True
+Missing < TypeError '<' not supported between instances of 'Missing' and 'int'
+Missing > TypeError '>' not supported between instances of 'int' and 'Missing'
+Missing ** TypeError unsupported operand type(s) for ** or pow(): 'Missing' and 'int'
+Missing pow TypeError unsupported operand type(s) for ** or pow(): 'Missing', 'int', 'int'
+Missing - AttributeError no such thing
+Missing len AttributeError no such thing
+Missing iter TypeError 'Missing' object is not iterable
+Missing in TypeError argument of type 'Missing' is not a container or iterable
+Missing [] AttributeError no such thing
+Missing () AttributeError no such thing
+Missing hash TypeError unhashable type: 'Missing'
+Missing bool ok True
+Missing += AttributeError no such thing
+Other + ValueError something else
+Other r+ ValueError something else
+Other == ValueError something else
+Other < ValueError something else
+Other ** ValueError something else
+Bound + ok ('bound', 1)
+Bound == ok equal?
+cls.__name__ [cls=ABCMeta] => S
+kind(obj) [cls=ABCMeta] => sequence
+bool(cls.__flags__ & 32) [cls=ABCMeta] => True
+bool(cls.__flags__ & 64) [cls=ABCMeta] => False
+cls.__name__ [cls=ABCMeta] => Mp
+kind(obj) [cls=ABCMeta] => mapping
+bool(cls.__flags__ & 32) [cls=ABCMeta] => False
+bool(cls.__flags__ & 64) [cls=ABCMeta] => True
+cls.__name__ [cls=ABCMeta] => SM
+kind(obj) [cls=ABCMeta] => sequence
+bool(cls.__flags__ & 32) [cls=ABCMeta] => True
+bool(cls.__flags__ & 64) [cls=ABCMeta] => False
+cls.__name__ [cls=ABCMeta] => MS
+kind(obj) [cls=ABCMeta] => mapping
+bool(cls.__flags__ & 32) [cls=ABCMeta] => False
+bool(cls.__flags__ & 64) [cls=ABCMeta] => True
+cls.__name__ [cls=ABCMeta] => LD
+kind(obj) [cls=ABCMeta] => sequence
+bool(cls.__flags__ & 32) [cls=ABCMeta] => True
+bool(cls.__flags__ & 64) [cls=ABCMeta] => False
+cls.__name__ [cls=ABCMeta] => DL
+kind(obj) [cls=ABCMeta] => mapping
+bool(cls.__flags__ & 32) [cls=ABCMeta] => False
+bool(cls.__flags__ & 64) [cls=ABCMeta] => True
+cls.__name__ [cls=Plain] => Plain
+kind(obj) [cls=Plain] => neither
+bool(cls.__flags__ & 32) [cls=Plain] => False
+bool(cls.__flags__ & 64) [cls=Plain] => False
+cls.__name__ [cls=ABCMeta] => PS
+kind(obj) [cls=ABCMeta] => sequence
+bool(cls.__flags__ & 32) [cls=ABCMeta] => True
+bool(cls.__flags__ & 64) [cls=ABCMeta] => False
+cls.__name__ [cls=Reg] => Reg
+kind(obj) [cls=Reg] => sequence
+bool(cls.__flags__ & 32) [cls=Reg] => True
+bool(cls.__flags__ & 64) [cls=Reg] => False
+cls.__name__ [cls=SubReg] => SubReg
+kind(obj) [cls=SubReg] => sequence
+bool(cls.__flags__ & 32) [cls=SubReg] => True
+bool(cls.__flags__ & 64) [cls=SubReg] => False
+cls.__name__ [cls=Both] => Both
+kind(obj) [cls=Both] => mapping
+bool(cls.__flags__ & 32) [cls=Both] => False
+bool(cls.__flags__ & 64) [cls=Both] => True
+cls.__name__ [cls=list] => list
+kind(obj) [cls=list] => sequence
+bool(cls.__flags__ & 32) [cls=list] => True
+bool(cls.__flags__ & 64) [cls=list] => False
+cls.__name__ [cls=tuple] => tuple
+kind(obj) [cls=tuple] => sequence
+bool(cls.__flags__ & 32) [cls=tuple] => True
+bool(cls.__flags__ & 64) [cls=tuple] => False
+cls.__name__ [cls=dict] => dict
+kind(obj) [cls=dict] => mapping
+bool(cls.__flags__ & 32) [cls=dict] => False
+bool(cls.__flags__ & 64) [cls=dict] => True
+cls.__name__ [cls=str] => str
+kind(obj) [cls=str] => neither
+bool(cls.__flags__ & 32) [cls=str] => False
+bool(cls.__flags__ & 64) [cls=str] => False
+cls.__name__ [cls=bytes] => bytes
+kind(obj) [cls=bytes] => neither
+bool(cls.__flags__ & 32) [cls=bytes] => False
+bool(cls.__flags__ & 64) [cls=bytes] => False
+cls.__name__ [cls=range] => range
+kind(obj) [cls=range] => sequence
+bool(cls.__flags__ & 32) [cls=range] => True
+bool(cls.__flags__ & 64) [cls=range] => False
+cls.__name__ [cls=set] => set
+kind(obj) [cls=set] => neither
+bool(cls.__flags__ & 32) [cls=set] => False
+bool(cls.__flags__ & 64) [cls=set] => False
+cls.__name__ [cls=deque] => deque
+kind(obj) [cls=deque] => sequence
+bool(cls.__flags__ & 32) [cls=deque] => True
+bool(cls.__flags__ & 64) [cls=deque] => False
+cls.__name__ [cls=OrderedDict] => OrderedDict
+kind(obj) [cls=OrderedDict] => mapping
+bool(cls.__flags__ & 32) [cls=OrderedDict] => False
+bool(cls.__flags__ & 64) [cls=OrderedDict] => True
+cls.__name__ [cls=memoryview] => memoryview
+kind(obj) [cls=memoryview] => sequence
+bool(cls.__flags__ & 32) [cls=memoryview] => True
+bool(cls.__flags__ & 64) [cls=memoryview] => False
+iter ok iterator
+next ZeroDivisionError division by zero
+for ZeroDivisionError division by zero
+in ZeroDivisionError division by zero

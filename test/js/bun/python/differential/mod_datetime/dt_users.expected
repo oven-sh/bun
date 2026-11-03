@@ -1,0 +1,107 @@
+status: 0
+script: d8bec6ba123e3f52
+---
+--- struct_time
+datetime(*_time.gmtime(0)[:6]) => datetime.datetime(1970, 1, 1, 0, 0)
+datetime(*_time.localtime(86400)[:6]) => datetime.datetime(1970, 1, 2, 0, 0)
+datetime.fromtimestamp(_time.mktime(datetime(2020, 1, 2, 3, 4, 5).timetuple())) => datetime.datetime(2020, 1, 2, 3, 4, 5)
+_time.strftime('%Y-%m-%d %H:%M:%S', datetime(2020, 1, 2, 3, 4, 5).timetuple()) => '2020-01-02 03:04:05'
+_time.asctime(datetime(2020, 1, 2, 3, 4, 5).timetuple()) => 'Thu Jan  2 03:04:05 2020'
+datetime(2020, 1, 2, 3, 4, 5).timetuple() == _time.struct_time((2020, 1, 2, 3, 4, 5, 3, 2, -1)) => True
+tuple(date(2020, 1, 2).timetuple()) => (2020, 1, 2, 0, 0, 0, 3, 2, -1)
+datetime(*_time.strptime('2020-01-02', '%Y-%m-%d')[:3]) => datetime.datetime(2020, 1, 2, 0, 0)
+--- zoneinfo, from a file made here
+Test/Eastern Test/Eastern
+2020-01-01 00:00:00-05:00 0 EST -1 day, 19:00:00 0:00:00 2020-01-01 05:00:00+00:00 1577854800.0 2020-01-01 00:00:00-05:00 0
+2020-01-01 00:00:00-05:00 1 EST -1 day, 19:00:00 0:00:00 2020-01-01 05:00:00+00:00 1577854800.0 2020-01-01 00:00:00-05:00 0
+2020-03-08 01:59:00-05:00 0 EST -1 day, 19:00:00 0:00:00 2020-03-08 06:59:00+00:00 1583650740.0 2020-03-08 01:59:00-05:00 0
+2020-03-08 01:59:00-05:00 1 EST -1 day, 19:00:00 0:00:00 2020-03-08 06:59:00+00:00 1583650740.0 2020-03-08 01:59:00-05:00 0
+2020-03-08 02:30:00-05:00 0 EST -1 day, 19:00:00 0:00:00 2020-03-08 07:30:00+00:00 1583652600.0 2020-03-08 03:30:00-04:00 0
+2020-03-08 02:30:00-04:00 1 EDT -1 day, 20:00:00 1:00:00 2020-03-08 06:30:00+00:00 1583649000.0 2020-03-08 01:30:00-05:00 0
+2020-03-08 03:00:00-04:00 0 EDT -1 day, 20:00:00 1:00:00 2020-03-08 07:00:00+00:00 1583650800.0 2020-03-08 03:00:00-04:00 0
+2020-03-08 03:00:00-04:00 1 EDT -1 day, 20:00:00 1:00:00 2020-03-08 07:00:00+00:00 1583650800.0 2020-03-08 03:00:00-04:00 0
+2020-07-01 12:00:00-04:00 0 EDT -1 day, 20:00:00 1:00:00 2020-07-01 16:00:00+00:00 1593619200.0 2020-07-01 12:00:00-04:00 0
+2020-07-01 12:00:00-04:00 1 EDT -1 day, 20:00:00 1:00:00 2020-07-01 16:00:00+00:00 1593619200.0 2020-07-01 12:00:00-04:00 0
+2020-11-01 00:59:00-04:00 0 EDT -1 day, 20:00:00 1:00:00 2020-11-01 04:59:00+00:00 1604206740.0 2020-11-01 00:59:00-04:00 0
+2020-11-01 00:59:00-04:00 1 EDT -1 day, 20:00:00 1:00:00 2020-11-01 04:59:00+00:00 1604206740.0 2020-11-01 00:59:00-04:00 0
+2020-11-01 01:30:00-04:00 0 EDT -1 day, 20:00:00 1:00:00 2020-11-01 05:30:00+00:00 1604208600.0 2020-11-01 01:30:00-04:00 0
+2020-11-01 01:30:00-05:00 1 EST -1 day, 19:00:00 0:00:00 2020-11-01 06:30:00+00:00 1604212200.0 2020-11-01 01:30:00-05:00 1
+2020-11-01 02:00:00-05:00 0 EST -1 day, 19:00:00 0:00:00 2020-11-01 07:00:00+00:00 1604214000.0 2020-11-01 02:00:00-05:00 0
+2020-11-01 02:00:00-05:00 1 EST -1 day, 19:00:00 0:00:00 2020-11-01 07:00:00+00:00 1604214000.0 2020-11-01 02:00:00-05:00 0
+2021-03-14 02:30:00-05:00 0 EST -1 day, 19:00:00 0:00:00 2021-03-14 07:30:00+00:00 1615707000.0 2021-03-14 03:30:00-04:00 0
+2021-03-14 02:30:00-04:00 1 EDT -1 day, 20:00:00 1:00:00 2021-03-14 06:30:00+00:00 1615703400.0 2021-03-14 01:30:00-05:00 0
+2030-07-01 00:00:00-04:00 0 EDT -1 day, 20:00:00 1:00:00 2030-07-01 04:00:00+00:00 1909108800.0 2030-07-01 00:00:00-04:00 0
+2030-07-01 00:00:00-04:00 1 EDT -1 day, 20:00:00 1:00:00 2030-07-01 04:00:00+00:00 1909108800.0 2030-07-01 00:00:00-04:00 0
+2030-11-03 01:30:00-04:00 0 EDT -1 day, 20:00:00 1:00:00 2030-11-03 05:30:00+00:00 1919914200.0 2030-11-03 01:30:00-04:00 0
+2030-11-03 01:30:00-05:00 1 EST -1 day, 19:00:00 0:00:00 2030-11-03 06:30:00+00:00 1919917800.0 2030-11-03 01:30:00-05:00 1
+1960-01-01 00:00:00-05:00 0 EST -1 day, 19:00:00 0:00:00 1960-01-01 05:00:00+00:00 -315601200.0 1960-01-01 00:00:00-05:00 0
+1960-01-01 00:00:00-05:00 1 EST -1 day, 19:00:00 0:00:00 1960-01-01 05:00:00+00:00 -315601200.0 1960-01-01 00:00:00-05:00 0
+1583650799 2020-03-08 01:59:59-05:00 0 EST
+1583650800 2020-03-08 03:00:00-04:00 0 EDT
+1604210399 2020-11-01 01:59:59-04:00 0 EDT
+1604210400 2020-11-01 01:00:00-05:00 1 EST
+1604206800 2020-11-01 01:00:00-04:00 0 EDT
+0 1969-12-31 19:00:00-05:00 0 EST
+1900000000 2030-03-17 13:46:40-04:00 0 EDT
+datetime(2020, 11, 1, 1, 30, tzinfo=Z) == datetime(2020, 11, 1, 1, 30, tzinfo=Z, fold=1) => True
+datetime(2020, 11, 1, 1, 30, tzinfo=Z) == datetime(2020, 11, 1, 5, 30, tzinfo=UTC) => False
+datetime(2020, 7, 1, 1, 30, tzinfo=Z) == datetime(2020, 7, 1, 5, 30, tzinfo=UTC) => True
+datetime(2020, 7, 1, tzinfo=Z) - datetime(2020, 1, 1, tzinfo=Z) => datetime.timedelta(days=182)
+datetime(2020, 7, 1, tzinfo=Z) - datetime(2020, 1, 1, tzinfo=UTC) => datetime.timedelta(days=182, seconds=14400)
+str(datetime(2020, 3, 8, 1, tzinfo=Z) + td(hours=1)) => '2020-03-08 02:00:00-05:00'
+time(12, tzinfo=Z).utcoffset(), time(12, tzinfo=Z).tzname() => (None, None)
+datetime.now(Z).tzinfo is Z => True
+isinstance(Z, tzinfo) => True
+zoneinfo.ZoneInfo('Nowhere/Nothing') !! ZoneInfoNotFoundError 'No time zone found with key Nowhere/Nothing'
+--- email.utils
+email.utils.format_datetime(datetime(2020, 1, 2, 3, 4, 5)) => 'Thu, 02 Jan 2020 03:04:05 -0000'
+email.utils.format_datetime(datetime(2020, 1, 2, 3, 4, 5, tzinfo=UTC)) => 'Thu, 02 Jan 2020 03:04:05 +0000'
+email.utils.format_datetime(datetime(2020, 1, 2, 3, 4, 5, tzinfo=UTC), usegmt=True) => 'Thu, 02 Jan 2020 03:04:05 GMT'
+email.utils.format_datetime(datetime(2020, 1, 2, 3, 4, 5, tzinfo=timezone(td(hours=-5)))) => 'Thu, 02 Jan 2020 03:04:05 -0500'
+email.utils.parsedate_to_datetime('Thu, 02 Jan 2020 03:04:05 -0500') => datetime.datetime(2020, 1, 2, 3, 4, 5, tzinfo=datetime.timezone(datetime.timedelta(days=-1, seconds=68400)))
+email.utils.parsedate_to_datetime('Thu, 02 Jan 2020 03:04:05 -0000') => datetime.datetime(2020, 1, 2, 3, 4, 5)
+email.utils.parsedate_to_datetime('Thu, 02 Jan 2020 03:04:05 +0000') => datetime.datetime(2020, 1, 2, 3, 4, 5, tzinfo=datetime.timezone.utc)
+email.utils.localtime(datetime(2020, 1, 2, 3, 4, 5)) => datetime.datetime(2020, 1, 2, 3, 4, 5, tzinfo=datetime.timezone(datetime.timedelta(0), 'UTC'))
+email.utils.formatdate(0), email.utils.formatdate(0, localtime=True), email.utils.formatdate(0, usegmt=True) => ('Thu, 01 Jan 1970 00:00:00 -0000', 'Thu, 01 Jan 1970 00:00:00 +0000', 'Thu, 01 Jan 1970 00:00:00 GMT')
+--- calendar, json, csv, repr in containers
+calendar.timegm(datetime(2020, 1, 2, 3, 4, 5).utctimetuple()) => 1577934245
+calendar.weekday(2020, 1, 2), calendar.monthrange(2020, 2) => (calendar.THURSDAY, (calendar.SATURDAY, 29))
+list(calendar.Calendar().itermonthdates(2020, 2))[:3] => [datetime.date(2020, 1, 27), datetime.date(2020, 1, 28), datetime.date(2020, 1, 29)]
+calendar.month_name[1], calendar.day_name[0] => ('January', 'Monday')
+json.dumps({'d': date(2020, 1, 2)}, default=str) => '{"d": "2020-01-02"}'
+json.dumps(date(2020, 1, 2)) !! TypeError Object of type date is not JSON serializable
+json.dumps({'d': datetime(2020, 1, 2)}, default=datetime.isoformat) => '{"d": "2020-01-02T00:00:00"}'
+[date(2020, 1, 2), td(1)], {date(2020, 1, 2): time(1)}, (datetime(2020, 1, 2),) => ([datetime.date(2020, 1, 2), datetime.timedelta(days=1)], {datetime.date(2020, 1, 2): datetime.time(1, 0)}, (datetime.datetime(2020, 1, 2, 0, 0),))
+str([date(2020, 1, 2)]) => '[datetime.date(2020, 1, 2)]'
+'%s|%r|%10s' % (date(2020, 1, 2), td(1), time(1)) => '2020-01-02|datetime.timedelta(days=1)|  01:00:00'
+'{0:%Y} {0.year} {1.days}'.format(date(2020, 1, 2), td(5)) => '2020 2020 5'
+--- plistlib, xmlrpc, http, logging
+plistlib.dumps({'d': datetime(2020, 1, 2, 3, 4, 5)}) => b'<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n\t<key>d</key>\n\t<date>2020-01-02T03:04:05Z</date>\n</dict>\n</plist>\n'
+plistlib.loads(plistlib.dumps({'d': datetime(2020, 1, 2, 3, 4, 5)})) => {'d': datetime.datetime(2020, 1, 2, 3, 4, 5)}
+plistlib.loads(plistlib.dumps({'d': datetime(2020, 1, 2, 3, 4, 5)}, fmt=plistlib.FMT_BINARY)) => {'d': datetime.datetime(2020, 1, 2, 3, 4, 5)}
+plistlib.loads(plistlib.dumps({'d': datetime(2020, 1, 2, 3, 4, 5, tzinfo=UTC)}, aware_datetime=True), aware_datetime=True) => {'d': datetime.datetime(2020, 1, 2, 3, 4, 5, tzinfo=datetime.timezone.utc)}
+xmlrpc.client.dumps((datetime(2020, 1, 2, 3, 4, 5),)) => '<params>\n<param>\n<value><dateTime.iso8601>20200102T03:04:05</dateTime.iso8601></value>\n</param>\n</params>\n'
+xmlrpc.client.loads(xmlrpc.client.dumps((datetime(2020, 1, 2, 3, 4, 5),)), use_builtin_types=True) => ((datetime.datetime(2020, 1, 2, 3, 4, 5),), None)
+str(xmlrpc.client.DateTime(datetime(2020, 1, 2, 3, 4, 5))) => '20200102T03:04:05'
+xmlrpc.client.DateTime(datetime(2020, 1, 2, 3, 4, 5)) == datetime(2020, 1, 2, 3, 4, 5) => True
+http.cookiejar.http2time('Thu, 02 Jan 2020 03:04:05 GMT'), http.cookiejar.time2isoz(0) => (1577934245.0, '1970-01-01 00:00:00Z')
+logging.Formatter().formatTime(logging.makeLogRecord({'created': 0, 'msecs': 1})) => '1970-01-01 00:00:00,001'
+--- dataclasses, enum, typing, statistics, sorting
+Event(datetime(2020, 1, 2)), Event(datetime(2020, 1, 2)) == Event(datetime(2020, 1, 2)), hash(Event(datetime(2020, 1, 2))) == hash(Event(datetime(2020, 1, 2))) => (Event(when=datetime.datetime(2020, 1, 2, 0, 0), length=datetime.timedelta(0)), True, True)
+sorted([Event(datetime(2020, 1, 3)), Event(datetime(2020, 1, 2), td(1)), Event(datetime(2020, 1, 2))]) => [Event(when=datetime.datetime(2020, 1, 2, 0, 0), length=datetime.timedelta(0)), Event(when=datetime.datetime(2020, 1, 2, 0, 0), length=datetime.timedelta(days=1)), Event(when=datetime.datetime(2020, 1, 3, 0, 0), length=datetime.timedelta(0))]
+dataclasses.asdict(Event(datetime(2020, 1, 2))) => {'when': datetime.datetime(2020, 1, 2, 0, 0), 'length': datetime.timedelta(0)}
+dataclasses.replace(Event(datetime(2020, 1, 2)), length=td(2)) => Event(when=datetime.datetime(2020, 1, 2, 0, 0), length=datetime.timedelta(days=2))
+copy.deepcopy(Event(datetime(2020, 1, 2, tzinfo=UTC))) => Event(when=datetime.datetime(2020, 1, 2, 0, 0, tzinfo=datetime.timezone.utc), length=datetime.timedelta(0))
+pickle.loads(pickle.dumps(Event(datetime(2020, 1, 2, tzinfo=UTC)))) => Event(when=datetime.datetime(2020, 1, 2, 0, 0, tzinfo=datetime.timezone.utc), length=datetime.timedelta(0))
+statistics.mean([td(1), td(3)]) !! TypeError can't convert type 'timedelta' to numerator/denominator
+sum([td(1), td(3)], td()) / 2 => datetime.timedelta(days=2)
+bisect.bisect([date(2020, 1, 1), date(2020, 1, 3)], date(2020, 1, 2)) => 1
+heapq.nsmallest(2, [date(2020, 1, 3), date(2020, 1, 1), date(2020, 1, 2)]) => [datetime.date(2020, 1, 1), datetime.date(2020, 1, 2)]
+max([td(1), td(3), td(2)], key=abs) => datetime.timedelta(days=3)
+list(map(date.fromordinal, range(737425, 737428))) => [datetime.date(2020, 1, 1), datetime.date(2020, 1, 2), datetime.date(2020, 1, 3)]
+[d.isoformat() for d in (date(2020, 1, 1) + td(i) for i in range(3))] => ['2020-01-01', '2020-01-02', '2020-01-03']
+Day(date(2020, 1, 2)), Day.FIRST.value => (<Day.SECOND: datetime.date(2020, 1, 2)>, datetime.date(2020, 1, 1))
+matched 1
+matched 3
+matched 2
+date.__match_args__ !! AttributeError type object 'datetime.date' has no attribute '__match_args__'

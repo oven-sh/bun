@@ -1,0 +1,166 @@
+status: 0
+script: 6a791094b883c87a
+---
+wal True [(1,)]
+[(1,), (2,)]
+[(1,), (2,), (3,)]
+[(12,), (13,)]
+(4,) [(4,), (12,), (13,)]
+<sqlite3.Cursor object
+<sqlite3.Cursor object
+[(4,), (12,), (13,)]
+delete True [(1,)]
+[(1,), (2,)]
+[(1,), (2,), (3,)]
+[(12,), (13,)]
+(4,) [(4,), (12,), (13,)]
+<sqlite3.Cursor object
+<sqlite3.Cursor object
+[(4,), (12,), (13,)]
+truncate True [(1,)]
+[(1,), (2,)]
+[(1,), (2,), (3,)]
+[(12,), (13,)]
+(4,) [(4,), (12,), (13,)]
+<sqlite3.Cursor object
+<sqlite3.Cursor object
+[(4,), (12,), (13,)]
+wal -1 [(1,)]
+[(1,), (2,)]
+[(1,), (2,), (3,)]
+[(12,), (13,)]
+(4,) [(4,), (12,), (13,)]
+<sqlite3.Cursor object
+<sqlite3.Cursor object
+[(4,), (12,), (13,)]
+delete -1 [(1,)]
+[(1,), (2,)]
+[(1,), (2,), (3,)]
+[(12,), (13,)]
+(4,) [(4,), (12,), (13,)]
+<sqlite3.Cursor object
+<sqlite3.Cursor object
+[(4,), (12,), (13,)]
+truncate -1 [(1,)]
+[(1,), (2,)]
+[(1,), (2,), (3,)]
+[(12,), (13,)]
+(4,) [(4,), (12,), (13,)]
+<sqlite3.Cursor object
+<sqlite3.Cursor object
+[(4,), (12,), (13,)]
+(1,)
+OperationalError: cannot VACUUM - SQL statements in progress
+<sqlite3.Cursor object
+True True
+(('a', None, None, None, None, None, None), ('b', None, None, None, None, None, None), ('c', None, None, None, None, None, None)) 0 3 False
+(1, 'x', 1.5) 0
+(2, None, b'\x00y') 0
+(3, 4611686018427387904, '') 3
+None 3 [] [] 3
+StopIteration: 
+[(2,), (3,)] 2
+[(1, 'v'), (2, 'v')] 0 [(3, 'v')] 3
+[(2, 'v', b'\x00y')] 1
+[] 0 (('a', None, None, None, None, None, None), ('b', None, None, None, None, None, None), ('c', None, None, None, None, None, None))
+0 [(3,)] -1
+(5,)
+[(5,)]
+ProgrammingError: Cannot operate on a closed cursor.
+[(7,)]
+(6,) (6,) [(7,)] [(7,)] 2 2
+Row ['b', 'c', 'yes'] (b'text', b'\x00\xff', 1)
+[(True, ['b'], ('w',))]
+OperationalError: Could not decode to UTF-8 column 'name' with text '�A'
+OperationalError: Could not decode to UTF-8 column 'name' with text '�A'
+[(b'\xffA',), (b'good',)]
+IntegrityError: UNIQUE constraint failed: t.a
+[] -1
+<sqlite3.Cursor object
+[(1,)] 1
+InterfaceError: bad parameter or other API misuse
+[] -1
+<sqlite3.Cursor object
+[] 0
+(8,)
+ProgrammingError: Cannot operate on a closed database.
+False True
+(('a', None, None, None, None, None, None), ('b', None, None, None, None, None, None), ('c', None, None, None, None, None, None)) 0 3 True
+(1, 'x', 1.5) 0
+(2, None, b'\x00y') 0
+(3, 4611686018427387904, '') 3
+None 3 [] [] 3
+StopIteration: 
+[(2,), (3,)] 2
+[(1, 'v'), (2, 'v')] 0 [(3, 'v')] 3
+[(2, 'v', b'\x00y')] 1
+[] 0 (('a', None, None, None, None, None, None), ('b', None, None, None, None, None, None), ('c', None, None, None, None, None, None))
+0 [(3,)] -1
+(5,)
+[(5,)]
+ProgrammingError: Cannot operate on a closed cursor.
+[(7,)]
+(6,) (6,) [(7,)] [(7,)] 2 2
+Row ['b', 'c', 'yes'] (b'text', b'\x00\xff', 1)
+[(True, ['b'], ('w',))]
+OperationalError: Could not decode to UTF-8 column 'name' with text '�A'
+OperationalError: Could not decode to UTF-8 column 'name' with text '�A'
+[(b'\xffA',), (b'good',)]
+IntegrityError: UNIQUE constraint failed: t.a
+[] -1
+<sqlite3.Cursor object
+[(1,)] 1
+InterfaceError: bad parameter or other API misuse
+[] -1
+<sqlite3.Cursor object
+[] 0
+(8,)
+ProgrammingError: Cannot operate on a closed database.
+-1 True
+(('a', None, None, None, None, None, None), ('b', None, None, None, None, None, None), ('c', None, None, None, None, None, None)) 0 3 True
+(1, 'x', 1.5) 0
+(2, None, b'\x00y') 0
+(3, 4611686018427387904, '') 3
+None 3 [] [] 3
+StopIteration: 
+[(2,), (3,)] 2
+[(1, 'v'), (2, 'v')] 0 [(3, 'v')] 3
+[(2, 'v', b'\x00y')] 1
+[] 0 (('a', None, None, None, None, None, None), ('b', None, None, None, None, None, None), ('c', None, None, None, None, None, None))
+0 [(3,)] -1
+(5,)
+[(5,)]
+ProgrammingError: Cannot operate on a closed cursor.
+[(7,)]
+(6,) (6,) [(7,)] [(7,)] 2 2
+Row ['b', 'c', 'yes'] (b'text', b'\x00\xff', 1)
+[(True, ['b'], ('w',))]
+OperationalError: Could not decode to UTF-8 column 'name' with text '�A'
+OperationalError: Could not decode to UTF-8 column 'name' with text '�A'
+[(b'\xffA',), (b'good',)]
+IntegrityError: UNIQUE constraint failed: t.a
+[] -1
+<sqlite3.Cursor object
+[(1,)] 1
+InterfaceError: bad parameter or other API misuse
+[] -1
+<sqlite3.Cursor object
+[] 0
+(8,)
+ProgrammingError: Cannot operate on a closed database.
+[('QUIET!', 5, '5!'), ('7!', 8, '8!'), (None, 2.5, '2.5!')]
+pragma journal_mode = wal | ['journal_mode'] -1 [('wal',)] -1
+pragma journal_mode | ['journal_mode'] -1 [('wal',)] -1
+pragma wal_checkpoint | ['busy', 'log', 'checkpointed'] -1 [(0, 0, 0)] -1
+pragma user_version = 5 | None -1 [] -1
+pragma user_version | ['user_version'] -1 [(5,)] -1
+pragma journal_mode = delete | ['journal_mode'] -1 [('delete',)] -1
+pragma incremental_vacuum | None -1 [] -1
+pragma optimize | ['optimize'] -1 [] -1
+pragma integrity_check | ['integrity_check'] -1 [('ok',)] -1
+explain insert into x values (1) | OperationalError no such table: x
+[(b'key', b'other')]
+b'other'
+[(b'key',)]
+None
+[b'key']

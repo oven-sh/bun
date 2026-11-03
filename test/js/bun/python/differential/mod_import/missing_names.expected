@@ -1,0 +1,175 @@
+status: 0
+script: e59920cae0dcfc65
+---
+== a script hides the standard library ('fractions.py',) 1
+Traceback (most recent call last):
+  File "<tmp>/fractions.py", line 1, in <module>
+    import fractions
+  File "<tmp>/fractions.py", line 2, in <module>
+    fractions.Fraction
+AttributeError: module 'fractions' has no attribute 'Fraction' (consider renaming '<tmp>/fractions.py' since it has the same name as the standard library module named 'fractions' and prevents importing that standard library module). Did you mean '.fractions' instead of '.Fraction'?
+== a module beside the script ('main.py',) 1
+Traceback (most recent call last):
+  File "<tmp>/main.py", line 2, in <module>
+    fractions.Fraction
+AttributeError: module 'fractions' has no attribute 'Fraction' (consider renaming '<tmp>/fractions.py' since it has the same name as the standard library module named 'fractions' and prevents importing that standard library module)
+== with -c ('-c', 'import fractions\nfractions.Fraction') 1
+Traceback (most recent call last):
+  File "<string>", line 2, in <module>
+    fractions.Fraction
+AttributeError: module 'fractions' has no attribute 'Fraction' (consider renaming '<tmp>/fractions.py' since it has the same name as the standard library module named 'fractions' and prevents importing that standard library module)
+== with -m ('-m', 'main') 1
+Traceback (most recent call last):
+  File "<frozen runpy>", line 201, in _run_module_as_main
+  File "<frozen runpy>", line 87, in _run_code
+  File "<tmp>/main.py", line 2, in <module>
+    fractions.Fraction
+AttributeError: module 'fractions' has no attribute 'Fraction' (consider renaming '<tmp>/fractions.py' since it has the same name as the standard library module named 'fractions' and prevents importing that standard library module)
+== a package ('main.py',) 1
+Traceback (most recent call last):
+  File "<tmp>/main.py", line 2, in <module>
+    fractions.Fraction
+AttributeError: module 'fractions' has no attribute 'Fraction' (consider renaming '<tmp>/fractions/__init__.py' since it has the same name as the standard library module named 'fractions' and prevents importing that standard library module)
+== safe path ('-P', 'main.py') 1
+Traceback (most recent call last):
+  File "<tmp>/main.py", line 3, in <module>
+    fractions.Fraction
+AttributeError: module 'fractions' has no attribute 'Fraction'
+== isolated ('-I', 'main.py') 1
+Traceback (most recent call last):
+  File "<tmp>/main.py", line 3, in <module>
+    fractions.Fraction
+AttributeError: module 'fractions' has no attribute 'Fraction'
+== elsewhere on the path ('main.py',) 1
+Traceback (most recent call last):
+  File "<tmp>/main.py", line 3, in <module>
+    fractions.Fraction
+AttributeError: module 'fractions' has no attribute 'Fraction'
+== the path has changed since ('main.py',) 1
+Traceback (most recent call last):
+  File "<tmp>/main.py", line 3, in <module>
+    fractions.Fraction
+AttributeError: module 'fractions' has no attribute 'Fraction' (consider renaming '<tmp>/fractions.py' since it has the same name as the standard library module named 'fractions' and prevents importing that standard library module)
+== a script hides the standard library ('fractions.py',) 1
+Traceback (most recent call last):
+  File "<tmp>/fractions.py", line 1, in <module>
+    from fractions import Fraction
+  File "<tmp>/fractions.py", line 1, in <module>
+    from fractions import Fraction
+ImportError: cannot import name 'Fraction' from 'fractions' (consider renaming '<tmp>/fractions.py' since it has the same name as the standard library module named 'fractions' and prevents importing that standard library module)
+== a module beside the script ('main.py',) 1
+Traceback (most recent call last):
+  File "<tmp>/main.py", line 1, in <module>
+    from fractions import Fraction
+ImportError: cannot import name 'Fraction' from 'fractions' (consider renaming '<tmp>/fractions.py' since it has the same name as the standard library module named 'fractions' and prevents importing that standard library module)
+== with -c ('-c', 'from fractions import Fraction') 1
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    from fractions import Fraction
+ImportError: cannot import name 'Fraction' from 'fractions' (consider renaming '<tmp>/fractions.py' since it has the same name as the standard library module named 'fractions' and prevents importing that standard library module)
+== with -m ('-m', 'main') 1
+Traceback (most recent call last):
+  File "<frozen runpy>", line 201, in _run_module_as_main
+  File "<frozen runpy>", line 87, in _run_code
+  File "<tmp>/main.py", line 1, in <module>
+    from fractions import Fraction
+ImportError: cannot import name 'Fraction' from 'fractions' (consider renaming '<tmp>/fractions.py' since it has the same name as the standard library module named 'fractions' and prevents importing that standard library module)
+== a package ('main.py',) 1
+Traceback (most recent call last):
+  File "<tmp>/main.py", line 1, in <module>
+    from fractions import Fraction
+ImportError: cannot import name 'Fraction' from 'fractions' (consider renaming '<tmp>/fractions/__init__.py' since it has the same name as the standard library module named 'fractions' and prevents importing that standard library module)
+== safe path ('-P', 'main.py') 1
+Traceback (most recent call last):
+  File "<tmp>/main.py", line 2, in <module>
+    from fractions import Fraction
+ImportError: cannot import name 'Fraction' from 'fractions' (<tmp>/fractions.py)
+== isolated ('-I', 'main.py') 1
+Traceback (most recent call last):
+  File "<tmp>/main.py", line 2, in <module>
+    from fractions import Fraction
+ImportError: cannot import name 'Fraction' from 'fractions' (<tmp>/fractions.py)
+== elsewhere on the path ('main.py',) 1
+Traceback (most recent call last):
+  File "<tmp>/main.py", line 2, in <module>
+    from fractions import Fraction
+ImportError: cannot import name 'Fraction' from 'fractions' (<tmp>/lib/fractions.py)
+== the path has changed since ('main.py',) 1
+Traceback (most recent call last):
+  File "<tmp>/main.py", line 2, in <module>
+    from fractions import Fraction
+ImportError: cannot import name 'Fraction' from 'fractions' (consider renaming '<tmp>/fractions.py' since it has the same name as the standard library module named 'fractions' and prevents importing that standard library module)
+== a script hides a library ('numpy.py',) 1
+Traceback (most recent call last):
+  File "<tmp>/numpy.py", line 1, in <module>
+    import numpy
+  File "<tmp>/numpy.py", line 2, in <module>
+    numpy.array
+AttributeError: module 'numpy' has no attribute 'array' (consider renaming '<tmp>/numpy.py' if it has the same name as a library you intended to import)
+== a module that is done ('main.py',) 1
+Traceback (most recent call last):
+  File "<tmp>/main.py", line 2, in <module>
+    numpy.array
+AttributeError: module 'numpy' has no attribute 'array'
+== a package that is not done ('main.py',) 1
+Traceback (most recent call last):
+  File "<tmp>/main.py", line 1, in <module>
+    import numpy
+  File "<tmp>/numpy/__init__.py", line 2, in <module>
+    numpy.array
+AttributeError: module 'numpy' has no attribute 'array' (consider renaming '<tmp>/numpy/__init__.py' if it has the same name as a library you intended to import)
+== a script hides a library ('numpy.py',) 1
+Traceback (most recent call last):
+  File "<tmp>/numpy.py", line 1, in <module>
+    from numpy import array
+  File "<tmp>/numpy.py", line 1, in <module>
+    from numpy import array
+ImportError: cannot import name 'array' from 'numpy' (consider renaming '<tmp>/numpy.py' if it has the same name as a library you intended to import)
+== a module that is done ('main.py',) 1
+Traceback (most recent call last):
+  File "<tmp>/main.py", line 1, in <module>
+    from numpy import array
+ImportError: cannot import name 'array' from 'numpy' (<tmp>/numpy.py)
+== a package that is not done ('main.py',) 1
+Traceback (most recent call last):
+  File "<tmp>/main.py", line 1, in <module>
+    import numpy
+  File "<tmp>/numpy/__init__.py", line 1, in <module>
+    from numpy import array
+ImportError: cannot import name 'array' from 'numpy' (consider renaming '<tmp>/numpy/__init__.py' if it has the same name as a library you intended to import)
+== circular ('lib/main.py',) 0
+AttributeError partially initialized module 'a' from '<tmp>/a.py' has no attribute 'x' (most likely due to a circular import) | x None None True
+ImportError cannot import name 'x' from partially initialized module 'a' (most likely due to a circular import) (<tmp>/a.py) | a <tmp>/a.py x False
+AttributeError partially initialized module 'pkg.c' from '<tmp>/pkg/c.py' has no attribute 'y' (most likely due to a circular import) | y None None True
+ImportError cannot import name 'y' from partially initialized module 'pkg.c' (most likely due to a circular import) (<tmp>/pkg/c.py) | pkg.c <tmp>/pkg/c.py y False
+ImportError cannot import name 'nothing' from 'pkg' (<tmp>/pkg/__init__.py) | pkg <tmp>/pkg/__init__.py nothing False
+AttributeError partially initialized module 'sub' from '<tmp>/sub/__init__.py' has no attribute 'child' (most likely due to a circular import) | child None None True
+== odd modules ('main.py',) 0
+AttributeError module 'm' has no attribute 'x' | x None None True
+ImportError cannot import name 'x' from 'm' (unknown location) | m None x False
+AttributeError module 'm' has no attribute 'x' | x None None True
+ImportError cannot import name 'x' from 'm' (/somewhere/m.py) | m /somewhere/m.py x False
+AttributeError module 'm' has no attribute 'x' | x None None True
+ImportError cannot import name 'x' from 'm' (/somewhere/m.py) | m /somewhere/m.py x False
+AttributeError module 'm' has no attribute 'x' | x None None True
+ImportError cannot import name 'x' from 'm' (/elsewhere/m.py) | m /elsewhere/m.py x False
+AttributeError partially initialized module 'm' from '/elsewhere/m.py' has no attribute 'x' (most likely due to a circular import) | x None None True
+ImportError cannot import name 'x' from partially initialized module 'm' (most likely due to a circular import) (/elsewhere/m.py) | m /elsewhere/m.py x False
+AttributeError partially initialized module 'm' has no attribute 'x' (most likely due to a circular import) | x None None True
+ImportError cannot import name 'x' from partially initialized module 'm' (most likely due to a circular import) (/somewhere/m.py) | m /somewhere/m.py x False
+AttributeError partially initialized module 'm' has no attribute 'x' (most likely due to a circular import) | x None None True
+ImportError cannot import name 'x' from partially initialized module 'm' (most likely due to a circular import) | m None x False
+AttributeError cannot access submodule 'x' of module 'm' (most likely due to a circular import) | x None None True
+ImportError cannot import name 'x' from 'm' (unknown location) | m None x False
+AttributeError module 'm' has no attribute 'x' | x None None True
+ImportError cannot import name 'x' from 'm' (unknown location) | m None x False
+AttributeError module 'm' has no attribute 'x' | x None None True
+ImportError cannot import name 'x' from 'm' (unknown location) | m None x False
+AttributeError module has no attribute 'x' | x None None True
+ImportError cannot import name 'x' from '<unknown module name>' (unknown location) | None None x False
+AttributeError module has no attribute 'x' | x None None True
+ImportError cannot import name 'x' from '<unknown module name>' (unknown location) | None None x False
+TypeError asked for has_location | None None None False
+TypeError asked for has_location | None None None False
+ImportError cannot import name 'x' from 'n' (unknown location) | n None x False
+<module 'm'> <module 'q'>

@@ -1,0 +1,82 @@
+status: 0
+script: d67d28deefc090a6
+source: dac05321a760e789
+---
+dict ok (True, False, True, False)
+dict < TypeError '<' not supported between instances of 'mappingproxy' and 'dict'
+dict <= TypeError '<=' not supported between instances of 'mappingproxy' and 'dict'
+dict > TypeError '>' not supported between instances of 'mappingproxy' and 'dict'
+dict >= TypeError '>=' not supported between instances of 'mappingproxy' and 'dict'
+other dict ok (False, True, False, True)
+other dict < TypeError '<' not supported between instances of 'mappingproxy' and 'dict'
+other dict <= TypeError '<=' not supported between instances of 'mappingproxy' and 'dict'
+other dict > TypeError '>' not supported between instances of 'mappingproxy' and 'dict'
+other dict >= TypeError '>=' not supported between instances of 'mappingproxy' and 'dict'
+proxy ok (True, False, True, False)
+proxy < TypeError '<' not supported between instances of 'mappingproxy' and 'mappingproxy'
+proxy <= TypeError '<=' not supported between instances of 'mappingproxy' and 'mappingproxy'
+proxy > TypeError '>' not supported between instances of 'mappingproxy' and 'mappingproxy'
+proxy >= TypeError '>=' not supported between instances of 'mappingproxy' and 'mappingproxy'
+frozendict ok (True, False, True, False)
+frozendict < TypeError '<' not supported between instances of 'mappingproxy' and 'frozendict'
+frozendict <= TypeError '<=' not supported between instances of 'mappingproxy' and 'frozendict'
+frozendict > TypeError '>' not supported between instances of 'mappingproxy' and 'frozendict'
+frozendict >= TypeError '>=' not supported between instances of 'mappingproxy' and 'frozendict'
+OrderedDict ok (True, False, True, False)
+OrderedDict < TypeError '<' not supported between instances of 'mappingproxy' and 'collections.OrderedDict'
+OrderedDict <= TypeError '<=' not supported between instances of 'mappingproxy' and 'collections.OrderedDict'
+OrderedDict > TypeError '>' not supported between instances of 'mappingproxy' and 'collections.OrderedDict'
+OrderedDict >= TypeError '>=' not supported between instances of 'mappingproxy' and 'collections.OrderedDict'
+UserDict ok (True, False, True, False)
+UserDict < TypeError '<' not supported between instances of 'mappingproxy' and 'UserDict'
+UserDict <= TypeError '<=' not supported between instances of 'mappingproxy' and 'UserDict'
+UserDict > TypeError '>' not supported between instances of 'mappingproxy' and 'UserDict'
+UserDict >= TypeError '>=' not supported between instances of 'mappingproxy' and 'UserDict'
+ChainMap ok (True, False, True, False)
+ChainMap < TypeError '<' not supported between instances of 'mappingproxy' and 'ChainMap'
+ChainMap <= TypeError '<=' not supported between instances of 'mappingproxy' and 'ChainMap'
+ChainMap > TypeError '>' not supported between instances of 'mappingproxy' and 'ChainMap'
+ChainMap >= TypeError '>=' not supported between instances of 'mappingproxy' and 'ChainMap'
+list ok (False, True, False, True)
+list < TypeError '<' not supported between instances of 'mappingproxy' and 'list'
+list <= TypeError '<=' not supported between instances of 'mappingproxy' and 'list'
+list > TypeError '>' not supported between instances of 'mappingproxy' and 'list'
+list >= TypeError '>=' not supported between instances of 'mappingproxy' and 'list'
+int ok (False, True, False, True)
+int < TypeError '<' not supported between instances of 'mappingproxy' and 'int'
+int <= TypeError '<=' not supported between instances of 'mappingproxy' and 'int'
+int > TypeError '>' not supported between instances of 'mappingproxy' and 'int'
+int >= TypeError '>=' not supported between instances of 'mappingproxy' and 'int'
+None ok (False, True, False, True)
+None < TypeError '<' not supported between instances of 'mappingproxy' and 'NoneType'
+None <= TypeError '<=' not supported between instances of 'mappingproxy' and 'NoneType'
+None > TypeError '>' not supported between instances of 'mappingproxy' and 'NoneType'
+None >= TypeError '>=' not supported between instances of 'mappingproxy' and 'NoneType'
+p.__eq__(d) => True
+p.__ne__(d) => False
+p.__eq__(1) => False
+p.__lt__(d) => NotImplemented
+p.__le__(p) => NotImplemented
+p.__gt__(1) => NotImplemented
+p.__ge__(d) => NotImplemented
+op(p, thief) [op=function] => True
+type(thief.got).__name__ [op=function] => dict
+thief.got == d [op=function] => True
+thief.got is d [op=function] => False
+d [op=function] => {'a': 1}
+op(p, thief) [op=function] => True
+type(thief.got).__name__ [op=function] => dict
+thief.got == d [op=function] => True
+thief.got is d [op=function] => False
+d [op=function] => {'a': 1}
+p == sub => False
+type(sub.got).__name__ => dict
+sub.got is d => False
+types.MappingProxyType(user) == thief => True
+thief.got is user => True
+types.MappingProxyType(sub) == thief => True
+thief.got is sub => True
+hash TypeError unhashable type: 'dict'
+hash of a proxy of a frozendict ok True
+| ok ({'a': 1, 'b': 2}, {'b': 2, 'a': 1}, 'dict')
+|= TypeError '|=' is not supported by mappingproxy; use '|' instead

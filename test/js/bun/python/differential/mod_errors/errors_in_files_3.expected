@@ -1,0 +1,33 @@
+status: 0
+script: 25bfc5d8537a2584
+---
+== nul.py 1
+out: SyntaxError source code cannot contain null bytes (1, 0, "x = '", 1, 0) (0, 0, None)
+== nul2.py 1
+out: SyntaxError source code cannot contain null bytes (3, 0, 'text', 3, 0) (0, 0, None)
+== nul3.py 1
+out: SyntaxError source code cannot contain null bytes (2, 0, '  ', 2, 0) (0, 0, None)
+== eof.py 1
+out: SyntaxError '(' was never closed (1, 5, 'x = (1,\n', 1, 0) (0, 0, None)
+== eof_string.py 1
+out: SyntaxError unterminated triple-quoted string literal (detected at line 1) (1, 5, "x = '''abc", 1, 5) (0, 0, None)
+== backslash.py 1
+out: SyntaxError unexpected EOF while parsing (1, 10, 'x = 1 + \\\n', 1, -1) (0, 0, None)
+== backslash2.py 1
+out: SyntaxError unexpected character after line continuation character (1, 10, 'x = 1 + \\ \n', 1, 0) (0, 0, None)
+== backslash3.py 1
+out: SyntaxError unexpected character after line continuation character (2, 12, '    2 + \\ \n', 2, 0) (0, 0, None)
+== indent.py 1
+out: IndentationError unindent does not match any outer indentation level (3, 4, '  y\n', 3, -1) (0, 0, None)
+== indent2.py 1
+out: IndentationError unexpected indent (2, 4, '    y\n', 2, -1) (0, 0, None)
+== tabspace.py 1
+out: TabError inconsistent use of tabs and spaces in indentation (3, 1, '\ty\n', 3, 0) (0, 0, None)
+== empty_block.py 1
+out: IndentationError expected an indented block after function definition on line 1 (2, 1, 'x = 1\n', 2, 2) (0, 0, None)
+== warning_as_error.py 0
+err: <tmp>/warning_as_error.py:2: SyntaxWarning: "is" with 'int' literal. Did you mean "=="?
+  y = 1 is 1
+== escape.py 0
+err: <tmp>/escape.py:2: SyntaxWarning: "\q" is an invalid escape sequence. Such sequences will not work in the future. Did you mean "\\q"? A raw string is also an option.
+  y = '\q'

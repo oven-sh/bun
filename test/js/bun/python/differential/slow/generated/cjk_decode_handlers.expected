@@ -1,0 +1,1060 @@
+status: 0
+script: 2189bb97ee106fe2
+source: bbb78ca2355042f5
+---
+name [name='gb2312', errors='strict'] => gb2312
+errors [name='gb2312', errors='strict'] => strict
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gb2312', errors='strict'] => ec1e894c
+crc(seen) [name='gb2312', errors='strict'] => c90e064d
+name [name='gb2312', errors='ignore'] => gb2312
+errors [name='gb2312', errors='ignore'] => ignore
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gb2312', errors='ignore'] => 4d5e5238
+crc(seen) [name='gb2312', errors='ignore'] => c90e064d
+name [name='gb2312', errors='replace'] => gb2312
+errors [name='gb2312', errors='replace'] => replace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gb2312', errors='replace'] => 7d676c3b
+crc(seen) [name='gb2312', errors='replace'] => c90e064d
+name [name='gb2312', errors='backslashreplace'] => gb2312
+errors [name='gb2312', errors='backslashreplace'] => backslashreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gb2312', errors='backslashreplace'] => 459e7d67
+crc(seen) [name='gb2312', errors='backslashreplace'] => c90e064d
+name [name='gb2312', errors='surrogateescape'] => gb2312
+errors [name='gb2312', errors='surrogateescape'] => surrogateescape
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gb2312', errors='surrogateescape'] => a8d67358
+crc(seen) [name='gb2312', errors='surrogateescape'] => c90e064d
+name [name='gb2312', errors='surrogatepass'] => gb2312
+errors [name='gb2312', errors='surrogatepass'] => surrogatepass
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gb2312', errors='surrogatepass'] => ec1e894c
+crc(seen) [name='gb2312', errors='surrogatepass'] => c90e064d
+name [name='gb2312', errors='xmlcharrefreplace'] => gb2312
+errors [name='gb2312', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gb2312', errors='xmlcharrefreplace'] => 96750e2a
+crc(seen) [name='gb2312', errors='xmlcharrefreplace'] => c90e064d
+name [name='gb2312', errors='namereplace'] => gb2312
+errors [name='gb2312', errors='namereplace'] => namereplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gb2312', errors='namereplace'] => 96750e2a
+crc(seen) [name='gb2312', errors='namereplace'] => c90e064d
+name [name='gb2312', errors='test.note'] => gb2312
+errors [name='gb2312', errors='test.note'] => test.note
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gb2312', errors='test.note'] => b5c948de
+crc(seen) [name='gb2312', errors='test.note'] => 4ad70d95
+name [name='gb2312', errors='test.back'] => gb2312
+errors [name='gb2312', errors='test.back'] => test.back
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gb2312', errors='test.back'] => 9c0767f7
+crc(seen) [name='gb2312', errors='test.back'] => c90e064d
+name [name='gb2312', errors='test.skip'] => gb2312
+errors [name='gb2312', errors='test.skip'] => test.skip
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gb2312', errors='test.skip'] => 3a5fcbcd
+crc(seen) [name='gb2312', errors='test.skip'] => c90e064d
+name [name='gbk', errors='strict'] => gbk
+errors [name='gbk', errors='strict'] => strict
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gbk', errors='strict'] => e36b0f03
+crc(seen) [name='gbk', errors='strict'] => c90e064d
+name [name='gbk', errors='ignore'] => gbk
+errors [name='gbk', errors='ignore'] => ignore
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gbk', errors='ignore'] => 865082f7
+crc(seen) [name='gbk', errors='ignore'] => c90e064d
+name [name='gbk', errors='replace'] => gbk
+errors [name='gbk', errors='replace'] => replace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gbk', errors='replace'] => a87da1e4
+crc(seen) [name='gbk', errors='replace'] => c90e064d
+name [name='gbk', errors='backslashreplace'] => gbk
+errors [name='gbk', errors='backslashreplace'] => backslashreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gbk', errors='backslashreplace'] => 2e24da39
+crc(seen) [name='gbk', errors='backslashreplace'] => c90e064d
+name [name='gbk', errors='surrogateescape'] => gbk
+errors [name='gbk', errors='surrogateescape'] => surrogateescape
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gbk', errors='surrogateescape'] => 99916ee1
+crc(seen) [name='gbk', errors='surrogateescape'] => c90e064d
+name [name='gbk', errors='surrogatepass'] => gbk
+errors [name='gbk', errors='surrogatepass'] => surrogatepass
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gbk', errors='surrogatepass'] => e36b0f03
+crc(seen) [name='gbk', errors='surrogatepass'] => c90e064d
+name [name='gbk', errors='xmlcharrefreplace'] => gbk
+errors [name='gbk', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gbk', errors='xmlcharrefreplace'] => 96750e2a
+crc(seen) [name='gbk', errors='xmlcharrefreplace'] => c90e064d
+name [name='gbk', errors='namereplace'] => gbk
+errors [name='gbk', errors='namereplace'] => namereplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gbk', errors='namereplace'] => 96750e2a
+crc(seen) [name='gbk', errors='namereplace'] => c90e064d
+name [name='gbk', errors='test.note'] => gbk
+errors [name='gbk', errors='test.note'] => test.note
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gbk', errors='test.note'] => 6007642e
+crc(seen) [name='gbk', errors='test.note'] => 5710b6df
+name [name='gbk', errors='test.back'] => gbk
+errors [name='gbk', errors='test.back'] => test.back
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gbk', errors='test.back'] => 6e03a980
+crc(seen) [name='gbk', errors='test.back'] => c90e064d
+name [name='gbk', errors='test.skip'] => gbk
+errors [name='gbk', errors='test.skip'] => test.skip
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gbk', errors='test.skip'] => 68acf003
+crc(seen) [name='gbk', errors='test.skip'] => c90e064d
+name [name='gb18030', errors='strict'] => gb18030
+errors [name='gb18030', errors='strict'] => strict
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gb18030', errors='strict'] => e89e96bf
+crc(seen) [name='gb18030', errors='strict'] => c90e064d
+name [name='gb18030', errors='ignore'] => gb18030
+errors [name='gb18030', errors='ignore'] => ignore
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gb18030', errors='ignore'] => 9976676b
+crc(seen) [name='gb18030', errors='ignore'] => c90e064d
+name [name='gb18030', errors='replace'] => gb18030
+errors [name='gb18030', errors='replace'] => replace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gb18030', errors='replace'] => 3d2edeb2
+crc(seen) [name='gb18030', errors='replace'] => c90e064d
+name [name='gb18030', errors='backslashreplace'] => gb18030
+errors [name='gb18030', errors='backslashreplace'] => backslashreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gb18030', errors='backslashreplace'] => 05a2d23c
+crc(seen) [name='gb18030', errors='backslashreplace'] => c90e064d
+name [name='gb18030', errors='surrogateescape'] => gb18030
+errors [name='gb18030', errors='surrogateescape'] => surrogateescape
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gb18030', errors='surrogateescape'] => e8bf71bf
+crc(seen) [name='gb18030', errors='surrogateescape'] => c90e064d
+name [name='gb18030', errors='surrogatepass'] => gb18030
+errors [name='gb18030', errors='surrogatepass'] => surrogatepass
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gb18030', errors='surrogatepass'] => e89e96bf
+crc(seen) [name='gb18030', errors='surrogatepass'] => c90e064d
+name [name='gb18030', errors='xmlcharrefreplace'] => gb18030
+errors [name='gb18030', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gb18030', errors='xmlcharrefreplace'] => 96750e2a
+crc(seen) [name='gb18030', errors='xmlcharrefreplace'] => c90e064d
+name [name='gb18030', errors='namereplace'] => gb18030
+errors [name='gb18030', errors='namereplace'] => namereplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gb18030', errors='namereplace'] => 96750e2a
+crc(seen) [name='gb18030', errors='namereplace'] => c90e064d
+name [name='gb18030', errors='test.note'] => gb18030
+errors [name='gb18030', errors='test.note'] => test.note
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gb18030', errors='test.note'] => 3c127092
+crc(seen) [name='gb18030', errors='test.note'] => 5ba8a24a
+name [name='gb18030', errors='test.back'] => gb18030
+errors [name='gb18030', errors='test.back'] => test.back
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gb18030', errors='test.back'] => 4364fce5
+crc(seen) [name='gb18030', errors='test.back'] => c90e064d
+name [name='gb18030', errors='test.skip'] => gb18030
+errors [name='gb18030', errors='test.skip'] => test.skip
+crc(*[outcome(decode, row, errors) for row in rows]) [name='gb18030', errors='test.skip'] => 4efd00ae
+crc(seen) [name='gb18030', errors='test.skip'] => c90e064d
+name [name='hz', errors='strict'] => hz
+errors [name='hz', errors='strict'] => strict
+crc(*[outcome(decode, row, errors) for row in rows]) [name='hz', errors='strict'] => 7a2f3f34
+crc(seen) [name='hz', errors='strict'] => c90e064d
+name [name='hz', errors='ignore'] => hz
+errors [name='hz', errors='ignore'] => ignore
+crc(*[outcome(decode, row, errors) for row in rows]) [name='hz', errors='ignore'] => 42445536
+crc(seen) [name='hz', errors='ignore'] => c90e064d
+name [name='hz', errors='replace'] => hz
+errors [name='hz', errors='replace'] => replace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='hz', errors='replace'] => 04b6e9b6
+crc(seen) [name='hz', errors='replace'] => c90e064d
+name [name='hz', errors='backslashreplace'] => hz
+errors [name='hz', errors='backslashreplace'] => backslashreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='hz', errors='backslashreplace'] => adf07f16
+crc(seen) [name='hz', errors='backslashreplace'] => c90e064d
+name [name='hz', errors='surrogateescape'] => hz
+errors [name='hz', errors='surrogateescape'] => surrogateescape
+crc(*[outcome(decode, row, errors) for row in rows]) [name='hz', errors='surrogateescape'] => ac04f7f4
+crc(seen) [name='hz', errors='surrogateescape'] => c90e064d
+name [name='hz', errors='surrogatepass'] => hz
+errors [name='hz', errors='surrogatepass'] => surrogatepass
+crc(*[outcome(decode, row, errors) for row in rows]) [name='hz', errors='surrogatepass'] => 7a2f3f34
+crc(seen) [name='hz', errors='surrogatepass'] => c90e064d
+name [name='hz', errors='xmlcharrefreplace'] => hz
+errors [name='hz', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='hz', errors='xmlcharrefreplace'] => 96750e2a
+crc(seen) [name='hz', errors='xmlcharrefreplace'] => c90e064d
+name [name='hz', errors='namereplace'] => hz
+errors [name='hz', errors='namereplace'] => namereplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='hz', errors='namereplace'] => 96750e2a
+crc(seen) [name='hz', errors='namereplace'] => c90e064d
+name [name='hz', errors='test.note'] => hz
+errors [name='hz', errors='test.note'] => test.note
+crc(*[outcome(decode, row, errors) for row in rows]) [name='hz', errors='test.note'] => b09b951b
+crc(seen) [name='hz', errors='test.note'] => 6d8c8ef0
+name [name='hz', errors='test.back'] => hz
+errors [name='hz', errors='test.back'] => test.back
+crc(*[outcome(decode, row, errors) for row in rows]) [name='hz', errors='test.back'] => 2209d550
+crc(seen) [name='hz', errors='test.back'] => c90e064d
+name [name='hz', errors='test.skip'] => hz
+errors [name='hz', errors='test.skip'] => test.skip
+crc(*[outcome(decode, row, errors) for row in rows]) [name='hz', errors='test.skip'] => 67139105
+crc(seen) [name='hz', errors='test.skip'] => c90e064d
+name [name='big5hkscs', errors='strict'] => big5hkscs
+errors [name='big5hkscs', errors='strict'] => strict
+crc(*[outcome(decode, row, errors) for row in rows]) [name='big5hkscs', errors='strict'] => 94027287
+crc(seen) [name='big5hkscs', errors='strict'] => c90e064d
+name [name='big5hkscs', errors='ignore'] => big5hkscs
+errors [name='big5hkscs', errors='ignore'] => ignore
+crc(*[outcome(decode, row, errors) for row in rows]) [name='big5hkscs', errors='ignore'] => 3c50bb7b
+crc(seen) [name='big5hkscs', errors='ignore'] => c90e064d
+name [name='big5hkscs', errors='replace'] => big5hkscs
+errors [name='big5hkscs', errors='replace'] => replace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='big5hkscs', errors='replace'] => 42cbc85c
+crc(seen) [name='big5hkscs', errors='replace'] => c90e064d
+name [name='big5hkscs', errors='backslashreplace'] => big5hkscs
+errors [name='big5hkscs', errors='backslashreplace'] => backslashreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='big5hkscs', errors='backslashreplace'] => c8728d3a
+crc(seen) [name='big5hkscs', errors='backslashreplace'] => c90e064d
+name [name='big5hkscs', errors='surrogateescape'] => big5hkscs
+errors [name='big5hkscs', errors='surrogateescape'] => surrogateescape
+crc(*[outcome(decode, row, errors) for row in rows]) [name='big5hkscs', errors='surrogateescape'] => f3c26280
+crc(seen) [name='big5hkscs', errors='surrogateescape'] => c90e064d
+name [name='big5hkscs', errors='surrogatepass'] => big5hkscs
+errors [name='big5hkscs', errors='surrogatepass'] => surrogatepass
+crc(*[outcome(decode, row, errors) for row in rows]) [name='big5hkscs', errors='surrogatepass'] => 94027287
+crc(seen) [name='big5hkscs', errors='surrogatepass'] => c90e064d
+name [name='big5hkscs', errors='xmlcharrefreplace'] => big5hkscs
+errors [name='big5hkscs', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='big5hkscs', errors='xmlcharrefreplace'] => 96750e2a
+crc(seen) [name='big5hkscs', errors='xmlcharrefreplace'] => c90e064d
+name [name='big5hkscs', errors='namereplace'] => big5hkscs
+errors [name='big5hkscs', errors='namereplace'] => namereplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='big5hkscs', errors='namereplace'] => 96750e2a
+crc(seen) [name='big5hkscs', errors='namereplace'] => c90e064d
+name [name='big5hkscs', errors='test.note'] => big5hkscs
+errors [name='big5hkscs', errors='test.note'] => test.note
+crc(*[outcome(decode, row, errors) for row in rows]) [name='big5hkscs', errors='test.note'] => 908e7373
+crc(seen) [name='big5hkscs', errors='test.note'] => 52f319e1
+name [name='big5hkscs', errors='test.back'] => big5hkscs
+errors [name='big5hkscs', errors='test.back'] => test.back
+crc(*[outcome(decode, row, errors) for row in rows]) [name='big5hkscs', errors='test.back'] => c64292ba
+crc(seen) [name='big5hkscs', errors='test.back'] => c90e064d
+name [name='big5hkscs', errors='test.skip'] => big5hkscs
+errors [name='big5hkscs', errors='test.skip'] => test.skip
+crc(*[outcome(decode, row, errors) for row in rows]) [name='big5hkscs', errors='test.skip'] => dc5396fd
+crc(seen) [name='big5hkscs', errors='test.skip'] => c90e064d
+name [name='big5', errors='strict'] => big5
+errors [name='big5', errors='strict'] => strict
+crc(*[outcome(decode, row, errors) for row in rows]) [name='big5', errors='strict'] => 8e6c1e41
+crc(seen) [name='big5', errors='strict'] => c90e064d
+name [name='big5', errors='ignore'] => big5
+errors [name='big5', errors='ignore'] => ignore
+crc(*[outcome(decode, row, errors) for row in rows]) [name='big5', errors='ignore'] => dcb4be03
+crc(seen) [name='big5', errors='ignore'] => c90e064d
+name [name='big5', errors='replace'] => big5
+errors [name='big5', errors='replace'] => replace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='big5', errors='replace'] => a3786dfb
+crc(seen) [name='big5', errors='replace'] => c90e064d
+name [name='big5', errors='backslashreplace'] => big5
+errors [name='big5', errors='backslashreplace'] => backslashreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='big5', errors='backslashreplace'] => 79a3c8f8
+crc(seen) [name='big5', errors='backslashreplace'] => c90e064d
+name [name='big5', errors='surrogateescape'] => big5
+errors [name='big5', errors='surrogateescape'] => surrogateescape
+crc(*[outcome(decode, row, errors) for row in rows]) [name='big5', errors='surrogateescape'] => 2c8c017c
+crc(seen) [name='big5', errors='surrogateescape'] => c90e064d
+name [name='big5', errors='surrogatepass'] => big5
+errors [name='big5', errors='surrogatepass'] => surrogatepass
+crc(*[outcome(decode, row, errors) for row in rows]) [name='big5', errors='surrogatepass'] => 8e6c1e41
+crc(seen) [name='big5', errors='surrogatepass'] => c90e064d
+name [name='big5', errors='xmlcharrefreplace'] => big5
+errors [name='big5', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='big5', errors='xmlcharrefreplace'] => 96750e2a
+crc(seen) [name='big5', errors='xmlcharrefreplace'] => c90e064d
+name [name='big5', errors='namereplace'] => big5
+errors [name='big5', errors='namereplace'] => namereplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='big5', errors='namereplace'] => 96750e2a
+crc(seen) [name='big5', errors='namereplace'] => c90e064d
+name [name='big5', errors='test.note'] => big5
+errors [name='big5', errors='test.note'] => test.note
+crc(*[outcome(decode, row, errors) for row in rows]) [name='big5', errors='test.note'] => 960256fb
+crc(seen) [name='big5', errors='test.note'] => 6636bbdc
+name [name='big5', errors='test.back'] => big5
+errors [name='big5', errors='test.back'] => test.back
+crc(*[outcome(decode, row, errors) for row in rows]) [name='big5', errors='test.back'] => c644a564
+crc(seen) [name='big5', errors='test.back'] => c90e064d
+name [name='big5', errors='test.skip'] => big5
+errors [name='big5', errors='test.skip'] => test.skip
+crc(*[outcome(decode, row, errors) for row in rows]) [name='big5', errors='test.skip'] => cbf5ccbc
+crc(seen) [name='big5', errors='test.skip'] => c90e064d
+name [name='cp950', errors='strict'] => cp950
+errors [name='cp950', errors='strict'] => strict
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp950', errors='strict'] => c4896583
+crc(seen) [name='cp950', errors='strict'] => c90e064d
+name [name='cp950', errors='ignore'] => cp950
+errors [name='cp950', errors='ignore'] => ignore
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp950', errors='ignore'] => c50ee433
+crc(seen) [name='cp950', errors='ignore'] => c90e064d
+name [name='cp950', errors='replace'] => cp950
+errors [name='cp950', errors='replace'] => replace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp950', errors='replace'] => c26fc9af
+crc(seen) [name='cp950', errors='replace'] => c90e064d
+name [name='cp950', errors='backslashreplace'] => cp950
+errors [name='cp950', errors='backslashreplace'] => backslashreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp950', errors='backslashreplace'] => 3e66f028
+crc(seen) [name='cp950', errors='backslashreplace'] => c90e064d
+name [name='cp950', errors='surrogateescape'] => cp950
+errors [name='cp950', errors='surrogateescape'] => surrogateescape
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp950', errors='surrogateescape'] => c26ca10d
+crc(seen) [name='cp950', errors='surrogateescape'] => c90e064d
+name [name='cp950', errors='surrogatepass'] => cp950
+errors [name='cp950', errors='surrogatepass'] => surrogatepass
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp950', errors='surrogatepass'] => c4896583
+crc(seen) [name='cp950', errors='surrogatepass'] => c90e064d
+name [name='cp950', errors='xmlcharrefreplace'] => cp950
+errors [name='cp950', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp950', errors='xmlcharrefreplace'] => 96750e2a
+crc(seen) [name='cp950', errors='xmlcharrefreplace'] => c90e064d
+name [name='cp950', errors='namereplace'] => cp950
+errors [name='cp950', errors='namereplace'] => namereplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp950', errors='namereplace'] => 96750e2a
+crc(seen) [name='cp950', errors='namereplace'] => c90e064d
+name [name='cp950', errors='test.note'] => cp950
+errors [name='cp950', errors='test.note'] => test.note
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp950', errors='test.note'] => 634d7342
+crc(seen) [name='cp950', errors='test.note'] => 8f1d60cf
+name [name='cp950', errors='test.back'] => cp950
+errors [name='cp950', errors='test.back'] => test.back
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp950', errors='test.back'] => 66e4c32f
+crc(seen) [name='cp950', errors='test.back'] => c90e064d
+name [name='cp950', errors='test.skip'] => cp950
+errors [name='cp950', errors='test.skip'] => test.skip
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp950', errors='test.skip'] => 27d182cd
+crc(seen) [name='cp950', errors='test.skip'] => c90e064d
+name [name='euc_kr', errors='strict'] => euc_kr
+errors [name='euc_kr', errors='strict'] => strict
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_kr', errors='strict'] => aa049f93
+crc(seen) [name='euc_kr', errors='strict'] => c90e064d
+name [name='euc_kr', errors='ignore'] => euc_kr
+errors [name='euc_kr', errors='ignore'] => ignore
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_kr', errors='ignore'] => 93ab866f
+crc(seen) [name='euc_kr', errors='ignore'] => c90e064d
+name [name='euc_kr', errors='replace'] => euc_kr
+errors [name='euc_kr', errors='replace'] => replace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_kr', errors='replace'] => 9d66aeb4
+crc(seen) [name='euc_kr', errors='replace'] => c90e064d
+name [name='euc_kr', errors='backslashreplace'] => euc_kr
+errors [name='euc_kr', errors='backslashreplace'] => backslashreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_kr', errors='backslashreplace'] => b6355a94
+crc(seen) [name='euc_kr', errors='backslashreplace'] => c90e064d
+name [name='euc_kr', errors='surrogateescape'] => euc_kr
+errors [name='euc_kr', errors='surrogateescape'] => surrogateescape
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_kr', errors='surrogateescape'] => cdbd28c9
+crc(seen) [name='euc_kr', errors='surrogateescape'] => c90e064d
+name [name='euc_kr', errors='surrogatepass'] => euc_kr
+errors [name='euc_kr', errors='surrogatepass'] => surrogatepass
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_kr', errors='surrogatepass'] => aa049f93
+crc(seen) [name='euc_kr', errors='surrogatepass'] => c90e064d
+name [name='euc_kr', errors='xmlcharrefreplace'] => euc_kr
+errors [name='euc_kr', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_kr', errors='xmlcharrefreplace'] => 96750e2a
+crc(seen) [name='euc_kr', errors='xmlcharrefreplace'] => c90e064d
+name [name='euc_kr', errors='namereplace'] => euc_kr
+errors [name='euc_kr', errors='namereplace'] => namereplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_kr', errors='namereplace'] => 96750e2a
+crc(seen) [name='euc_kr', errors='namereplace'] => c90e064d
+name [name='euc_kr', errors='test.note'] => euc_kr
+errors [name='euc_kr', errors='test.note'] => test.note
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_kr', errors='test.note'] => a7f5515b
+crc(seen) [name='euc_kr', errors='test.note'] => 44e9c905
+name [name='euc_kr', errors='test.back'] => euc_kr
+errors [name='euc_kr', errors='test.back'] => test.back
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_kr', errors='test.back'] => 702deb93
+crc(seen) [name='euc_kr', errors='test.back'] => c90e064d
+name [name='euc_kr', errors='test.skip'] => euc_kr
+errors [name='euc_kr', errors='test.skip'] => test.skip
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_kr', errors='test.skip'] => 26cb83a1
+crc(seen) [name='euc_kr', errors='test.skip'] => c90e064d
+name [name='cp949', errors='strict'] => cp949
+errors [name='cp949', errors='strict'] => strict
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp949', errors='strict'] => d5fdb30d
+crc(seen) [name='cp949', errors='strict'] => c90e064d
+name [name='cp949', errors='ignore'] => cp949
+errors [name='cp949', errors='ignore'] => ignore
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp949', errors='ignore'] => c310c5c4
+crc(seen) [name='cp949', errors='ignore'] => c90e064d
+name [name='cp949', errors='replace'] => cp949
+errors [name='cp949', errors='replace'] => replace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp949', errors='replace'] => 341b163e
+crc(seen) [name='cp949', errors='replace'] => c90e064d
+name [name='cp949', errors='backslashreplace'] => cp949
+errors [name='cp949', errors='backslashreplace'] => backslashreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp949', errors='backslashreplace'] => 4c484c9c
+crc(seen) [name='cp949', errors='backslashreplace'] => c90e064d
+name [name='cp949', errors='surrogateescape'] => cp949
+errors [name='cp949', errors='surrogateescape'] => surrogateescape
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp949', errors='surrogateescape'] => 262779f0
+crc(seen) [name='cp949', errors='surrogateescape'] => c90e064d
+name [name='cp949', errors='surrogatepass'] => cp949
+errors [name='cp949', errors='surrogatepass'] => surrogatepass
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp949', errors='surrogatepass'] => d5fdb30d
+crc(seen) [name='cp949', errors='surrogatepass'] => c90e064d
+name [name='cp949', errors='xmlcharrefreplace'] => cp949
+errors [name='cp949', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp949', errors='xmlcharrefreplace'] => 96750e2a
+crc(seen) [name='cp949', errors='xmlcharrefreplace'] => c90e064d
+name [name='cp949', errors='namereplace'] => cp949
+errors [name='cp949', errors='namereplace'] => namereplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp949', errors='namereplace'] => 96750e2a
+crc(seen) [name='cp949', errors='namereplace'] => c90e064d
+name [name='cp949', errors='test.note'] => cp949
+errors [name='cp949', errors='test.note'] => test.note
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp949', errors='test.note'] => f7249d0a
+crc(seen) [name='cp949', errors='test.note'] => ce95d14d
+name [name='cp949', errors='test.back'] => cp949
+errors [name='cp949', errors='test.back'] => test.back
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp949', errors='test.back'] => b9f0ec7a
+crc(seen) [name='cp949', errors='test.back'] => c90e064d
+name [name='cp949', errors='test.skip'] => cp949
+errors [name='cp949', errors='test.skip'] => test.skip
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp949', errors='test.skip'] => 2ad10fdc
+crc(seen) [name='cp949', errors='test.skip'] => c90e064d
+name [name='johab', errors='strict'] => johab
+errors [name='johab', errors='strict'] => strict
+crc(*[outcome(decode, row, errors) for row in rows]) [name='johab', errors='strict'] => fef26060
+crc(seen) [name='johab', errors='strict'] => c90e064d
+name [name='johab', errors='ignore'] => johab
+errors [name='johab', errors='ignore'] => ignore
+crc(*[outcome(decode, row, errors) for row in rows]) [name='johab', errors='ignore'] => afda0af9
+crc(seen) [name='johab', errors='ignore'] => c90e064d
+name [name='johab', errors='replace'] => johab
+errors [name='johab', errors='replace'] => replace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='johab', errors='replace'] => 4a151e5f
+crc(seen) [name='johab', errors='replace'] => c90e064d
+name [name='johab', errors='backslashreplace'] => johab
+errors [name='johab', errors='backslashreplace'] => backslashreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='johab', errors='backslashreplace'] => b22bcb47
+crc(seen) [name='johab', errors='backslashreplace'] => c90e064d
+name [name='johab', errors='surrogateescape'] => johab
+errors [name='johab', errors='surrogateescape'] => surrogateescape
+crc(*[outcome(decode, row, errors) for row in rows]) [name='johab', errors='surrogateescape'] => 061440eb
+crc(seen) [name='johab', errors='surrogateescape'] => c90e064d
+name [name='johab', errors='surrogatepass'] => johab
+errors [name='johab', errors='surrogatepass'] => surrogatepass
+crc(*[outcome(decode, row, errors) for row in rows]) [name='johab', errors='surrogatepass'] => fef26060
+crc(seen) [name='johab', errors='surrogatepass'] => c90e064d
+name [name='johab', errors='xmlcharrefreplace'] => johab
+errors [name='johab', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='johab', errors='xmlcharrefreplace'] => 96750e2a
+crc(seen) [name='johab', errors='xmlcharrefreplace'] => c90e064d
+name [name='johab', errors='namereplace'] => johab
+errors [name='johab', errors='namereplace'] => namereplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='johab', errors='namereplace'] => 96750e2a
+crc(seen) [name='johab', errors='namereplace'] => c90e064d
+name [name='johab', errors='test.note'] => johab
+errors [name='johab', errors='test.note'] => test.note
+crc(*[outcome(decode, row, errors) for row in rows]) [name='johab', errors='test.note'] => c3d09dff
+crc(seen) [name='johab', errors='test.note'] => f6891ed1
+name [name='johab', errors='test.back'] => johab
+errors [name='johab', errors='test.back'] => test.back
+crc(*[outcome(decode, row, errors) for row in rows]) [name='johab', errors='test.back'] => d2927222
+crc(seen) [name='johab', errors='test.back'] => c90e064d
+name [name='johab', errors='test.skip'] => johab
+errors [name='johab', errors='test.skip'] => test.skip
+crc(*[outcome(decode, row, errors) for row in rows]) [name='johab', errors='test.skip'] => a2eb9ea2
+crc(seen) [name='johab', errors='test.skip'] => c90e064d
+name [name='shift_jis', errors='strict'] => shift_jis
+errors [name='shift_jis', errors='strict'] => strict
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jis', errors='strict'] => 910dbcb1
+crc(seen) [name='shift_jis', errors='strict'] => c90e064d
+name [name='shift_jis', errors='ignore'] => shift_jis
+errors [name='shift_jis', errors='ignore'] => ignore
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jis', errors='ignore'] => 99067015
+crc(seen) [name='shift_jis', errors='ignore'] => c90e064d
+name [name='shift_jis', errors='replace'] => shift_jis
+errors [name='shift_jis', errors='replace'] => replace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jis', errors='replace'] => a0324d27
+crc(seen) [name='shift_jis', errors='replace'] => c90e064d
+name [name='shift_jis', errors='backslashreplace'] => shift_jis
+errors [name='shift_jis', errors='backslashreplace'] => backslashreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jis', errors='backslashreplace'] => 2384d70a
+crc(seen) [name='shift_jis', errors='backslashreplace'] => c90e064d
+name [name='shift_jis', errors='surrogateescape'] => shift_jis
+errors [name='shift_jis', errors='surrogateescape'] => surrogateescape
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jis', errors='surrogateescape'] => a69cce9f
+crc(seen) [name='shift_jis', errors='surrogateescape'] => c90e064d
+name [name='shift_jis', errors='surrogatepass'] => shift_jis
+errors [name='shift_jis', errors='surrogatepass'] => surrogatepass
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jis', errors='surrogatepass'] => 910dbcb1
+crc(seen) [name='shift_jis', errors='surrogatepass'] => c90e064d
+name [name='shift_jis', errors='xmlcharrefreplace'] => shift_jis
+errors [name='shift_jis', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jis', errors='xmlcharrefreplace'] => 96750e2a
+crc(seen) [name='shift_jis', errors='xmlcharrefreplace'] => c90e064d
+name [name='shift_jis', errors='namereplace'] => shift_jis
+errors [name='shift_jis', errors='namereplace'] => namereplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jis', errors='namereplace'] => 96750e2a
+crc(seen) [name='shift_jis', errors='namereplace'] => c90e064d
+name [name='shift_jis', errors='test.note'] => shift_jis
+errors [name='shift_jis', errors='test.note'] => test.note
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jis', errors='test.note'] => 620881f4
+crc(seen) [name='shift_jis', errors='test.note'] => d01a6949
+name [name='shift_jis', errors='test.back'] => shift_jis
+errors [name='shift_jis', errors='test.back'] => test.back
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jis', errors='test.back'] => e0c2dcb9
+crc(seen) [name='shift_jis', errors='test.back'] => c90e064d
+name [name='shift_jis', errors='test.skip'] => shift_jis
+errors [name='shift_jis', errors='test.skip'] => test.skip
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jis', errors='test.skip'] => eeea3d8e
+crc(seen) [name='shift_jis', errors='test.skip'] => c90e064d
+name [name='cp932', errors='strict'] => cp932
+errors [name='cp932', errors='strict'] => strict
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp932', errors='strict'] => 8a0c4aa4
+crc(seen) [name='cp932', errors='strict'] => c90e064d
+name [name='cp932', errors='ignore'] => cp932
+errors [name='cp932', errors='ignore'] => ignore
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp932', errors='ignore'] => 989e9c97
+crc(seen) [name='cp932', errors='ignore'] => c90e064d
+name [name='cp932', errors='replace'] => cp932
+errors [name='cp932', errors='replace'] => replace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp932', errors='replace'] => 5ca4456e
+crc(seen) [name='cp932', errors='replace'] => c90e064d
+name [name='cp932', errors='backslashreplace'] => cp932
+errors [name='cp932', errors='backslashreplace'] => backslashreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp932', errors='backslashreplace'] => 0540ad57
+crc(seen) [name='cp932', errors='backslashreplace'] => c90e064d
+name [name='cp932', errors='surrogateescape'] => cp932
+errors [name='cp932', errors='surrogateescape'] => surrogateescape
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp932', errors='surrogateescape'] => d52a6bb0
+crc(seen) [name='cp932', errors='surrogateescape'] => c90e064d
+name [name='cp932', errors='surrogatepass'] => cp932
+errors [name='cp932', errors='surrogatepass'] => surrogatepass
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp932', errors='surrogatepass'] => 8a0c4aa4
+crc(seen) [name='cp932', errors='surrogatepass'] => c90e064d
+name [name='cp932', errors='xmlcharrefreplace'] => cp932
+errors [name='cp932', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp932', errors='xmlcharrefreplace'] => 96750e2a
+crc(seen) [name='cp932', errors='xmlcharrefreplace'] => c90e064d
+name [name='cp932', errors='namereplace'] => cp932
+errors [name='cp932', errors='namereplace'] => namereplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp932', errors='namereplace'] => 96750e2a
+crc(seen) [name='cp932', errors='namereplace'] => c90e064d
+name [name='cp932', errors='test.note'] => cp932
+errors [name='cp932', errors='test.note'] => test.note
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp932', errors='test.note'] => a0b8332c
+crc(seen) [name='cp932', errors='test.note'] => 95ee60f5
+name [name='cp932', errors='test.back'] => cp932
+errors [name='cp932', errors='test.back'] => test.back
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp932', errors='test.back'] => 79785145
+crc(seen) [name='cp932', errors='test.back'] => c90e064d
+name [name='cp932', errors='test.skip'] => cp932
+errors [name='cp932', errors='test.skip'] => test.skip
+crc(*[outcome(decode, row, errors) for row in rows]) [name='cp932', errors='test.skip'] => 16384e44
+crc(seen) [name='cp932', errors='test.skip'] => c90e064d
+name [name='euc_jp', errors='strict'] => euc_jp
+errors [name='euc_jp', errors='strict'] => strict
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jp', errors='strict'] => 2e7f0afc
+crc(seen) [name='euc_jp', errors='strict'] => c90e064d
+name [name='euc_jp', errors='ignore'] => euc_jp
+errors [name='euc_jp', errors='ignore'] => ignore
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jp', errors='ignore'] => fdd78366
+crc(seen) [name='euc_jp', errors='ignore'] => c90e064d
+name [name='euc_jp', errors='replace'] => euc_jp
+errors [name='euc_jp', errors='replace'] => replace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jp', errors='replace'] => 57c5e80b
+crc(seen) [name='euc_jp', errors='replace'] => c90e064d
+name [name='euc_jp', errors='backslashreplace'] => euc_jp
+errors [name='euc_jp', errors='backslashreplace'] => backslashreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jp', errors='backslashreplace'] => 9f2305e3
+crc(seen) [name='euc_jp', errors='backslashreplace'] => c90e064d
+name [name='euc_jp', errors='surrogateescape'] => euc_jp
+errors [name='euc_jp', errors='surrogateescape'] => surrogateescape
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jp', errors='surrogateescape'] => dcb07543
+crc(seen) [name='euc_jp', errors='surrogateescape'] => c90e064d
+name [name='euc_jp', errors='surrogatepass'] => euc_jp
+errors [name='euc_jp', errors='surrogatepass'] => surrogatepass
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jp', errors='surrogatepass'] => 2e7f0afc
+crc(seen) [name='euc_jp', errors='surrogatepass'] => c90e064d
+name [name='euc_jp', errors='xmlcharrefreplace'] => euc_jp
+errors [name='euc_jp', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jp', errors='xmlcharrefreplace'] => 96750e2a
+crc(seen) [name='euc_jp', errors='xmlcharrefreplace'] => c90e064d
+name [name='euc_jp', errors='namereplace'] => euc_jp
+errors [name='euc_jp', errors='namereplace'] => namereplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jp', errors='namereplace'] => 96750e2a
+crc(seen) [name='euc_jp', errors='namereplace'] => c90e064d
+name [name='euc_jp', errors='test.note'] => euc_jp
+errors [name='euc_jp', errors='test.note'] => test.note
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jp', errors='test.note'] => c58cc138
+crc(seen) [name='euc_jp', errors='test.note'] => 7d8cfd2d
+name [name='euc_jp', errors='test.back'] => euc_jp
+errors [name='euc_jp', errors='test.back'] => test.back
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jp', errors='test.back'] => 9d58d1d8
+crc(seen) [name='euc_jp', errors='test.back'] => c90e064d
+name [name='euc_jp', errors='test.skip'] => euc_jp
+errors [name='euc_jp', errors='test.skip'] => test.skip
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jp', errors='test.skip'] => 7be57f58
+crc(seen) [name='euc_jp', errors='test.skip'] => c90e064d
+name [name='shift_jis_2004', errors='strict'] => shift_jis_2004
+errors [name='shift_jis_2004', errors='strict'] => strict
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jis_2004', errors='strict'] => 00cab6ce
+crc(seen) [name='shift_jis_2004', errors='strict'] => c90e064d
+name [name='shift_jis_2004', errors='ignore'] => shift_jis_2004
+errors [name='shift_jis_2004', errors='ignore'] => ignore
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jis_2004', errors='ignore'] => 9df14d9b
+crc(seen) [name='shift_jis_2004', errors='ignore'] => c90e064d
+name [name='shift_jis_2004', errors='replace'] => shift_jis_2004
+errors [name='shift_jis_2004', errors='replace'] => replace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jis_2004', errors='replace'] => a663aa18
+crc(seen) [name='shift_jis_2004', errors='replace'] => c90e064d
+name [name='shift_jis_2004', errors='backslashreplace'] => shift_jis_2004
+errors [name='shift_jis_2004', errors='backslashreplace'] => backslashreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jis_2004', errors='backslashreplace'] => 3a643118
+crc(seen) [name='shift_jis_2004', errors='backslashreplace'] => c90e064d
+name [name='shift_jis_2004', errors='surrogateescape'] => shift_jis_2004
+errors [name='shift_jis_2004', errors='surrogateescape'] => surrogateescape
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jis_2004', errors='surrogateescape'] => b1943280
+crc(seen) [name='shift_jis_2004', errors='surrogateescape'] => c90e064d
+name [name='shift_jis_2004', errors='surrogatepass'] => shift_jis_2004
+errors [name='shift_jis_2004', errors='surrogatepass'] => surrogatepass
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jis_2004', errors='surrogatepass'] => 00cab6ce
+crc(seen) [name='shift_jis_2004', errors='surrogatepass'] => c90e064d
+name [name='shift_jis_2004', errors='xmlcharrefreplace'] => shift_jis_2004
+errors [name='shift_jis_2004', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jis_2004', errors='xmlcharrefreplace'] => 96750e2a
+crc(seen) [name='shift_jis_2004', errors='xmlcharrefreplace'] => c90e064d
+name [name='shift_jis_2004', errors='namereplace'] => shift_jis_2004
+errors [name='shift_jis_2004', errors='namereplace'] => namereplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jis_2004', errors='namereplace'] => 96750e2a
+crc(seen) [name='shift_jis_2004', errors='namereplace'] => c90e064d
+name [name='shift_jis_2004', errors='test.note'] => shift_jis_2004
+errors [name='shift_jis_2004', errors='test.note'] => test.note
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jis_2004', errors='test.note'] => 7fd0940a
+crc(seen) [name='shift_jis_2004', errors='test.note'] => 27925b5f
+name [name='shift_jis_2004', errors='test.back'] => shift_jis_2004
+errors [name='shift_jis_2004', errors='test.back'] => test.back
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jis_2004', errors='test.back'] => 1bf478da
+crc(seen) [name='shift_jis_2004', errors='test.back'] => c90e064d
+name [name='shift_jis_2004', errors='test.skip'] => shift_jis_2004
+errors [name='shift_jis_2004', errors='test.skip'] => test.skip
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jis_2004', errors='test.skip'] => f912ea58
+crc(seen) [name='shift_jis_2004', errors='test.skip'] => c90e064d
+name [name='shift_jisx0213', errors='strict'] => shift_jisx0213
+errors [name='shift_jisx0213', errors='strict'] => strict
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jisx0213', errors='strict'] => 807fc425
+crc(seen) [name='shift_jisx0213', errors='strict'] => c90e064d
+name [name='shift_jisx0213', errors='ignore'] => shift_jisx0213
+errors [name='shift_jisx0213', errors='ignore'] => ignore
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jisx0213', errors='ignore'] => ae592c53
+crc(seen) [name='shift_jisx0213', errors='ignore'] => c90e064d
+name [name='shift_jisx0213', errors='replace'] => shift_jisx0213
+errors [name='shift_jisx0213', errors='replace'] => replace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jisx0213', errors='replace'] => a03c495b
+crc(seen) [name='shift_jisx0213', errors='replace'] => c90e064d
+name [name='shift_jisx0213', errors='backslashreplace'] => shift_jisx0213
+errors [name='shift_jisx0213', errors='backslashreplace'] => backslashreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jisx0213', errors='backslashreplace'] => a20f1abf
+crc(seen) [name='shift_jisx0213', errors='backslashreplace'] => c90e064d
+name [name='shift_jisx0213', errors='surrogateescape'] => shift_jisx0213
+errors [name='shift_jisx0213', errors='surrogateescape'] => surrogateescape
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jisx0213', errors='surrogateescape'] => d357aa11
+crc(seen) [name='shift_jisx0213', errors='surrogateescape'] => c90e064d
+name [name='shift_jisx0213', errors='surrogatepass'] => shift_jisx0213
+errors [name='shift_jisx0213', errors='surrogatepass'] => surrogatepass
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jisx0213', errors='surrogatepass'] => 807fc425
+crc(seen) [name='shift_jisx0213', errors='surrogatepass'] => c90e064d
+name [name='shift_jisx0213', errors='xmlcharrefreplace'] => shift_jisx0213
+errors [name='shift_jisx0213', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jisx0213', errors='xmlcharrefreplace'] => 96750e2a
+crc(seen) [name='shift_jisx0213', errors='xmlcharrefreplace'] => c90e064d
+name [name='shift_jisx0213', errors='namereplace'] => shift_jisx0213
+errors [name='shift_jisx0213', errors='namereplace'] => namereplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jisx0213', errors='namereplace'] => 96750e2a
+crc(seen) [name='shift_jisx0213', errors='namereplace'] => c90e064d
+name [name='shift_jisx0213', errors='test.note'] => shift_jisx0213
+errors [name='shift_jisx0213', errors='test.note'] => test.note
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jisx0213', errors='test.note'] => d5b293a3
+crc(seen) [name='shift_jisx0213', errors='test.note'] => 84ab485e
+name [name='shift_jisx0213', errors='test.back'] => shift_jisx0213
+errors [name='shift_jisx0213', errors='test.back'] => test.back
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jisx0213', errors='test.back'] => 4453808d
+crc(seen) [name='shift_jisx0213', errors='test.back'] => c90e064d
+name [name='shift_jisx0213', errors='test.skip'] => shift_jisx0213
+errors [name='shift_jisx0213', errors='test.skip'] => test.skip
+crc(*[outcome(decode, row, errors) for row in rows]) [name='shift_jisx0213', errors='test.skip'] => 515a1ca0
+crc(seen) [name='shift_jisx0213', errors='test.skip'] => c90e064d
+name [name='euc_jis_2004', errors='strict'] => euc_jis_2004
+errors [name='euc_jis_2004', errors='strict'] => strict
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jis_2004', errors='strict'] => 81cf461a
+crc(seen) [name='euc_jis_2004', errors='strict'] => c90e064d
+name [name='euc_jis_2004', errors='ignore'] => euc_jis_2004
+errors [name='euc_jis_2004', errors='ignore'] => ignore
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jis_2004', errors='ignore'] => 7c5648ac
+crc(seen) [name='euc_jis_2004', errors='ignore'] => c90e064d
+name [name='euc_jis_2004', errors='replace'] => euc_jis_2004
+errors [name='euc_jis_2004', errors='replace'] => replace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jis_2004', errors='replace'] => 528728fc
+crc(seen) [name='euc_jis_2004', errors='replace'] => c90e064d
+name [name='euc_jis_2004', errors='backslashreplace'] => euc_jis_2004
+errors [name='euc_jis_2004', errors='backslashreplace'] => backslashreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jis_2004', errors='backslashreplace'] => 25327e02
+crc(seen) [name='euc_jis_2004', errors='backslashreplace'] => c90e064d
+name [name='euc_jis_2004', errors='surrogateescape'] => euc_jis_2004
+errors [name='euc_jis_2004', errors='surrogateescape'] => surrogateescape
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jis_2004', errors='surrogateescape'] => 10d3a6c7
+crc(seen) [name='euc_jis_2004', errors='surrogateescape'] => c90e064d
+name [name='euc_jis_2004', errors='surrogatepass'] => euc_jis_2004
+errors [name='euc_jis_2004', errors='surrogatepass'] => surrogatepass
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jis_2004', errors='surrogatepass'] => 81cf461a
+crc(seen) [name='euc_jis_2004', errors='surrogatepass'] => c90e064d
+name [name='euc_jis_2004', errors='xmlcharrefreplace'] => euc_jis_2004
+errors [name='euc_jis_2004', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jis_2004', errors='xmlcharrefreplace'] => 96750e2a
+crc(seen) [name='euc_jis_2004', errors='xmlcharrefreplace'] => c90e064d
+name [name='euc_jis_2004', errors='namereplace'] => euc_jis_2004
+errors [name='euc_jis_2004', errors='namereplace'] => namereplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jis_2004', errors='namereplace'] => 96750e2a
+crc(seen) [name='euc_jis_2004', errors='namereplace'] => c90e064d
+name [name='euc_jis_2004', errors='test.note'] => euc_jis_2004
+errors [name='euc_jis_2004', errors='test.note'] => test.note
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jis_2004', errors='test.note'] => 92d7a381
+crc(seen) [name='euc_jis_2004', errors='test.note'] => 7dc7b62b
+name [name='euc_jis_2004', errors='test.back'] => euc_jis_2004
+errors [name='euc_jis_2004', errors='test.back'] => test.back
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jis_2004', errors='test.back'] => 201b3e3a
+crc(seen) [name='euc_jis_2004', errors='test.back'] => c90e064d
+name [name='euc_jis_2004', errors='test.skip'] => euc_jis_2004
+errors [name='euc_jis_2004', errors='test.skip'] => test.skip
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jis_2004', errors='test.skip'] => dde7f148
+crc(seen) [name='euc_jis_2004', errors='test.skip'] => c90e064d
+name [name='euc_jisx0213', errors='strict'] => euc_jisx0213
+errors [name='euc_jisx0213', errors='strict'] => strict
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jisx0213', errors='strict'] => d1838d57
+crc(seen) [name='euc_jisx0213', errors='strict'] => c90e064d
+name [name='euc_jisx0213', errors='ignore'] => euc_jisx0213
+errors [name='euc_jisx0213', errors='ignore'] => ignore
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jisx0213', errors='ignore'] => 21109a0d
+crc(seen) [name='euc_jisx0213', errors='ignore'] => c90e064d
+name [name='euc_jisx0213', errors='replace'] => euc_jisx0213
+errors [name='euc_jisx0213', errors='replace'] => replace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jisx0213', errors='replace'] => cb092c72
+crc(seen) [name='euc_jisx0213', errors='replace'] => c90e064d
+name [name='euc_jisx0213', errors='backslashreplace'] => euc_jisx0213
+errors [name='euc_jisx0213', errors='backslashreplace'] => backslashreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jisx0213', errors='backslashreplace'] => 1e801dcc
+crc(seen) [name='euc_jisx0213', errors='backslashreplace'] => c90e064d
+name [name='euc_jisx0213', errors='surrogateescape'] => euc_jisx0213
+errors [name='euc_jisx0213', errors='surrogateescape'] => surrogateescape
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jisx0213', errors='surrogateescape'] => 7c390759
+crc(seen) [name='euc_jisx0213', errors='surrogateescape'] => c90e064d
+name [name='euc_jisx0213', errors='surrogatepass'] => euc_jisx0213
+errors [name='euc_jisx0213', errors='surrogatepass'] => surrogatepass
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jisx0213', errors='surrogatepass'] => d1838d57
+crc(seen) [name='euc_jisx0213', errors='surrogatepass'] => c90e064d
+name [name='euc_jisx0213', errors='xmlcharrefreplace'] => euc_jisx0213
+errors [name='euc_jisx0213', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jisx0213', errors='xmlcharrefreplace'] => 96750e2a
+crc(seen) [name='euc_jisx0213', errors='xmlcharrefreplace'] => c90e064d
+name [name='euc_jisx0213', errors='namereplace'] => euc_jisx0213
+errors [name='euc_jisx0213', errors='namereplace'] => namereplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jisx0213', errors='namereplace'] => 96750e2a
+crc(seen) [name='euc_jisx0213', errors='namereplace'] => c90e064d
+name [name='euc_jisx0213', errors='test.note'] => euc_jisx0213
+errors [name='euc_jisx0213', errors='test.note'] => test.note
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jisx0213', errors='test.note'] => 50fefc48
+crc(seen) [name='euc_jisx0213', errors='test.note'] => 9067df5a
+name [name='euc_jisx0213', errors='test.back'] => euc_jisx0213
+errors [name='euc_jisx0213', errors='test.back'] => test.back
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jisx0213', errors='test.back'] => 49d86f47
+crc(seen) [name='euc_jisx0213', errors='test.back'] => c90e064d
+name [name='euc_jisx0213', errors='test.skip'] => euc_jisx0213
+errors [name='euc_jisx0213', errors='test.skip'] => test.skip
+crc(*[outcome(decode, row, errors) for row in rows]) [name='euc_jisx0213', errors='test.skip'] => 00d7c5d0
+crc(seen) [name='euc_jisx0213', errors='test.skip'] => c90e064d
+name [name='iso2022_jp', errors='strict'] => iso2022_jp
+errors [name='iso2022_jp', errors='strict'] => strict
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp', errors='strict'] => 62cadb5e
+crc(seen) [name='iso2022_jp', errors='strict'] => c90e064d
+name [name='iso2022_jp', errors='ignore'] => iso2022_jp
+errors [name='iso2022_jp', errors='ignore'] => ignore
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp', errors='ignore'] => c99017dd
+crc(seen) [name='iso2022_jp', errors='ignore'] => c90e064d
+name [name='iso2022_jp', errors='replace'] => iso2022_jp
+errors [name='iso2022_jp', errors='replace'] => replace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp', errors='replace'] => 3ed5a1cc
+crc(seen) [name='iso2022_jp', errors='replace'] => c90e064d
+name [name='iso2022_jp', errors='backslashreplace'] => iso2022_jp
+errors [name='iso2022_jp', errors='backslashreplace'] => backslashreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp', errors='backslashreplace'] => ec2b151a
+crc(seen) [name='iso2022_jp', errors='backslashreplace'] => c90e064d
+name [name='iso2022_jp', errors='surrogateescape'] => iso2022_jp
+errors [name='iso2022_jp', errors='surrogateescape'] => surrogateescape
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp', errors='surrogateescape'] => f9e92358
+crc(seen) [name='iso2022_jp', errors='surrogateescape'] => c90e064d
+name [name='iso2022_jp', errors='surrogatepass'] => iso2022_jp
+errors [name='iso2022_jp', errors='surrogatepass'] => surrogatepass
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp', errors='surrogatepass'] => 62cadb5e
+crc(seen) [name='iso2022_jp', errors='surrogatepass'] => c90e064d
+name [name='iso2022_jp', errors='xmlcharrefreplace'] => iso2022_jp
+errors [name='iso2022_jp', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp', errors='xmlcharrefreplace'] => 525144b8
+crc(seen) [name='iso2022_jp', errors='xmlcharrefreplace'] => c90e064d
+name [name='iso2022_jp', errors='namereplace'] => iso2022_jp
+errors [name='iso2022_jp', errors='namereplace'] => namereplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp', errors='namereplace'] => 525144b8
+crc(seen) [name='iso2022_jp', errors='namereplace'] => c90e064d
+name [name='iso2022_jp', errors='test.note'] => iso2022_jp
+errors [name='iso2022_jp', errors='test.note'] => test.note
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp', errors='test.note'] => 285840be
+crc(seen) [name='iso2022_jp', errors='test.note'] => b9c4c41a
+name [name='iso2022_jp', errors='test.back'] => iso2022_jp
+errors [name='iso2022_jp', errors='test.back'] => test.back
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp', errors='test.back'] => ce0e3483
+crc(seen) [name='iso2022_jp', errors='test.back'] => c90e064d
+name [name='iso2022_jp', errors='test.skip'] => iso2022_jp
+errors [name='iso2022_jp', errors='test.skip'] => test.skip
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp', errors='test.skip'] => ed30a0a7
+crc(seen) [name='iso2022_jp', errors='test.skip'] => c90e064d
+name [name='iso2022_jp_1', errors='strict'] => iso2022_jp_1
+errors [name='iso2022_jp_1', errors='strict'] => strict
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_1', errors='strict'] => 7703e288
+crc(seen) [name='iso2022_jp_1', errors='strict'] => c90e064d
+name [name='iso2022_jp_1', errors='ignore'] => iso2022_jp_1
+errors [name='iso2022_jp_1', errors='ignore'] => ignore
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_1', errors='ignore'] => c99017dd
+crc(seen) [name='iso2022_jp_1', errors='ignore'] => c90e064d
+name [name='iso2022_jp_1', errors='replace'] => iso2022_jp_1
+errors [name='iso2022_jp_1', errors='replace'] => replace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_1', errors='replace'] => 3ed5a1cc
+crc(seen) [name='iso2022_jp_1', errors='replace'] => c90e064d
+name [name='iso2022_jp_1', errors='backslashreplace'] => iso2022_jp_1
+errors [name='iso2022_jp_1', errors='backslashreplace'] => backslashreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_1', errors='backslashreplace'] => ec2b151a
+crc(seen) [name='iso2022_jp_1', errors='backslashreplace'] => c90e064d
+name [name='iso2022_jp_1', errors='surrogateescape'] => iso2022_jp_1
+errors [name='iso2022_jp_1', errors='surrogateescape'] => surrogateescape
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_1', errors='surrogateescape'] => f9e92358
+crc(seen) [name='iso2022_jp_1', errors='surrogateescape'] => c90e064d
+name [name='iso2022_jp_1', errors='surrogatepass'] => iso2022_jp_1
+errors [name='iso2022_jp_1', errors='surrogatepass'] => surrogatepass
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_1', errors='surrogatepass'] => 7703e288
+crc(seen) [name='iso2022_jp_1', errors='surrogatepass'] => c90e064d
+name [name='iso2022_jp_1', errors='xmlcharrefreplace'] => iso2022_jp_1
+errors [name='iso2022_jp_1', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_1', errors='xmlcharrefreplace'] => 525144b8
+crc(seen) [name='iso2022_jp_1', errors='xmlcharrefreplace'] => c90e064d
+name [name='iso2022_jp_1', errors='namereplace'] => iso2022_jp_1
+errors [name='iso2022_jp_1', errors='namereplace'] => namereplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_1', errors='namereplace'] => 525144b8
+crc(seen) [name='iso2022_jp_1', errors='namereplace'] => c90e064d
+name [name='iso2022_jp_1', errors='test.note'] => iso2022_jp_1
+errors [name='iso2022_jp_1', errors='test.note'] => test.note
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_1', errors='test.note'] => 285840be
+crc(seen) [name='iso2022_jp_1', errors='test.note'] => 4c177766
+name [name='iso2022_jp_1', errors='test.back'] => iso2022_jp_1
+errors [name='iso2022_jp_1', errors='test.back'] => test.back
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_1', errors='test.back'] => ce0e3483
+crc(seen) [name='iso2022_jp_1', errors='test.back'] => c90e064d
+name [name='iso2022_jp_1', errors='test.skip'] => iso2022_jp_1
+errors [name='iso2022_jp_1', errors='test.skip'] => test.skip
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_1', errors='test.skip'] => ed30a0a7
+crc(seen) [name='iso2022_jp_1', errors='test.skip'] => c90e064d
+name [name='iso2022_jp_2', errors='strict'] => iso2022_jp_2
+errors [name='iso2022_jp_2', errors='strict'] => strict
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_2', errors='strict'] => 99750ee1
+crc(seen) [name='iso2022_jp_2', errors='strict'] => c90e064d
+name [name='iso2022_jp_2', errors='ignore'] => iso2022_jp_2
+errors [name='iso2022_jp_2', errors='ignore'] => ignore
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_2', errors='ignore'] => 61585938
+crc(seen) [name='iso2022_jp_2', errors='ignore'] => c90e064d
+name [name='iso2022_jp_2', errors='replace'] => iso2022_jp_2
+errors [name='iso2022_jp_2', errors='replace'] => replace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_2', errors='replace'] => 399662ac
+crc(seen) [name='iso2022_jp_2', errors='replace'] => c90e064d
+name [name='iso2022_jp_2', errors='backslashreplace'] => iso2022_jp_2
+errors [name='iso2022_jp_2', errors='backslashreplace'] => backslashreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_2', errors='backslashreplace'] => dfd1c9d8
+crc(seen) [name='iso2022_jp_2', errors='backslashreplace'] => c90e064d
+name [name='iso2022_jp_2', errors='surrogateescape'] => iso2022_jp_2
+errors [name='iso2022_jp_2', errors='surrogateescape'] => surrogateescape
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_2', errors='surrogateescape'] => 38477e20
+crc(seen) [name='iso2022_jp_2', errors='surrogateescape'] => c90e064d
+name [name='iso2022_jp_2', errors='surrogatepass'] => iso2022_jp_2
+errors [name='iso2022_jp_2', errors='surrogatepass'] => surrogatepass
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_2', errors='surrogatepass'] => 99750ee1
+crc(seen) [name='iso2022_jp_2', errors='surrogatepass'] => c90e064d
+name [name='iso2022_jp_2', errors='xmlcharrefreplace'] => iso2022_jp_2
+errors [name='iso2022_jp_2', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_2', errors='xmlcharrefreplace'] => e2f28fa3
+crc(seen) [name='iso2022_jp_2', errors='xmlcharrefreplace'] => c90e064d
+name [name='iso2022_jp_2', errors='namereplace'] => iso2022_jp_2
+errors [name='iso2022_jp_2', errors='namereplace'] => namereplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_2', errors='namereplace'] => e2f28fa3
+crc(seen) [name='iso2022_jp_2', errors='namereplace'] => c90e064d
+name [name='iso2022_jp_2', errors='test.note'] => iso2022_jp_2
+errors [name='iso2022_jp_2', errors='test.note'] => test.note
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_2', errors='test.note'] => d63ab96a
+crc(seen) [name='iso2022_jp_2', errors='test.note'] => 02d97952
+name [name='iso2022_jp_2', errors='test.back'] => iso2022_jp_2
+errors [name='iso2022_jp_2', errors='test.back'] => test.back
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_2', errors='test.back'] => 19ae3ca4
+crc(seen) [name='iso2022_jp_2', errors='test.back'] => c90e064d
+name [name='iso2022_jp_2', errors='test.skip'] => iso2022_jp_2
+errors [name='iso2022_jp_2', errors='test.skip'] => test.skip
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_2', errors='test.skip'] => 896ce957
+crc(seen) [name='iso2022_jp_2', errors='test.skip'] => c90e064d
+name [name='iso2022_jp_2004', errors='strict'] => iso2022_jp_2004
+errors [name='iso2022_jp_2004', errors='strict'] => strict
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_2004', errors='strict'] => d1a73ebb
+crc(seen) [name='iso2022_jp_2004', errors='strict'] => c90e064d
+name [name='iso2022_jp_2004', errors='ignore'] => iso2022_jp_2004
+errors [name='iso2022_jp_2004', errors='ignore'] => ignore
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_2004', errors='ignore'] => c99017dd
+crc(seen) [name='iso2022_jp_2004', errors='ignore'] => c90e064d
+name [name='iso2022_jp_2004', errors='replace'] => iso2022_jp_2004
+errors [name='iso2022_jp_2004', errors='replace'] => replace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_2004', errors='replace'] => 3ed5a1cc
+crc(seen) [name='iso2022_jp_2004', errors='replace'] => c90e064d
+name [name='iso2022_jp_2004', errors='backslashreplace'] => iso2022_jp_2004
+errors [name='iso2022_jp_2004', errors='backslashreplace'] => backslashreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_2004', errors='backslashreplace'] => ec2b151a
+crc(seen) [name='iso2022_jp_2004', errors='backslashreplace'] => c90e064d
+name [name='iso2022_jp_2004', errors='surrogateescape'] => iso2022_jp_2004
+errors [name='iso2022_jp_2004', errors='surrogateescape'] => surrogateescape
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_2004', errors='surrogateescape'] => f9e92358
+crc(seen) [name='iso2022_jp_2004', errors='surrogateescape'] => c90e064d
+name [name='iso2022_jp_2004', errors='surrogatepass'] => iso2022_jp_2004
+errors [name='iso2022_jp_2004', errors='surrogatepass'] => surrogatepass
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_2004', errors='surrogatepass'] => d1a73ebb
+crc(seen) [name='iso2022_jp_2004', errors='surrogatepass'] => c90e064d
+name [name='iso2022_jp_2004', errors='xmlcharrefreplace'] => iso2022_jp_2004
+errors [name='iso2022_jp_2004', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_2004', errors='xmlcharrefreplace'] => 525144b8
+crc(seen) [name='iso2022_jp_2004', errors='xmlcharrefreplace'] => c90e064d
+name [name='iso2022_jp_2004', errors='namereplace'] => iso2022_jp_2004
+errors [name='iso2022_jp_2004', errors='namereplace'] => namereplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_2004', errors='namereplace'] => 525144b8
+crc(seen) [name='iso2022_jp_2004', errors='namereplace'] => c90e064d
+name [name='iso2022_jp_2004', errors='test.note'] => iso2022_jp_2004
+errors [name='iso2022_jp_2004', errors='test.note'] => test.note
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_2004', errors='test.note'] => 285840be
+crc(seen) [name='iso2022_jp_2004', errors='test.note'] => b2b2c6f1
+name [name='iso2022_jp_2004', errors='test.back'] => iso2022_jp_2004
+errors [name='iso2022_jp_2004', errors='test.back'] => test.back
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_2004', errors='test.back'] => ce0e3483
+crc(seen) [name='iso2022_jp_2004', errors='test.back'] => c90e064d
+name [name='iso2022_jp_2004', errors='test.skip'] => iso2022_jp_2004
+errors [name='iso2022_jp_2004', errors='test.skip'] => test.skip
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_2004', errors='test.skip'] => ed30a0a7
+crc(seen) [name='iso2022_jp_2004', errors='test.skip'] => c90e064d
+name [name='iso2022_jp_3', errors='strict'] => iso2022_jp_3
+errors [name='iso2022_jp_3', errors='strict'] => strict
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_3', errors='strict'] => 555d1643
+crc(seen) [name='iso2022_jp_3', errors='strict'] => c90e064d
+name [name='iso2022_jp_3', errors='ignore'] => iso2022_jp_3
+errors [name='iso2022_jp_3', errors='ignore'] => ignore
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_3', errors='ignore'] => c99017dd
+crc(seen) [name='iso2022_jp_3', errors='ignore'] => c90e064d
+name [name='iso2022_jp_3', errors='replace'] => iso2022_jp_3
+errors [name='iso2022_jp_3', errors='replace'] => replace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_3', errors='replace'] => 3ed5a1cc
+crc(seen) [name='iso2022_jp_3', errors='replace'] => c90e064d
+name [name='iso2022_jp_3', errors='backslashreplace'] => iso2022_jp_3
+errors [name='iso2022_jp_3', errors='backslashreplace'] => backslashreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_3', errors='backslashreplace'] => ec2b151a
+crc(seen) [name='iso2022_jp_3', errors='backslashreplace'] => c90e064d
+name [name='iso2022_jp_3', errors='surrogateescape'] => iso2022_jp_3
+errors [name='iso2022_jp_3', errors='surrogateescape'] => surrogateescape
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_3', errors='surrogateescape'] => f9e92358
+crc(seen) [name='iso2022_jp_3', errors='surrogateescape'] => c90e064d
+name [name='iso2022_jp_3', errors='surrogatepass'] => iso2022_jp_3
+errors [name='iso2022_jp_3', errors='surrogatepass'] => surrogatepass
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_3', errors='surrogatepass'] => 555d1643
+crc(seen) [name='iso2022_jp_3', errors='surrogatepass'] => c90e064d
+name [name='iso2022_jp_3', errors='xmlcharrefreplace'] => iso2022_jp_3
+errors [name='iso2022_jp_3', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_3', errors='xmlcharrefreplace'] => 525144b8
+crc(seen) [name='iso2022_jp_3', errors='xmlcharrefreplace'] => c90e064d
+name [name='iso2022_jp_3', errors='namereplace'] => iso2022_jp_3
+errors [name='iso2022_jp_3', errors='namereplace'] => namereplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_3', errors='namereplace'] => 525144b8
+crc(seen) [name='iso2022_jp_3', errors='namereplace'] => c90e064d
+name [name='iso2022_jp_3', errors='test.note'] => iso2022_jp_3
+errors [name='iso2022_jp_3', errors='test.note'] => test.note
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_3', errors='test.note'] => 285840be
+crc(seen) [name='iso2022_jp_3', errors='test.note'] => 8e4c7e81
+name [name='iso2022_jp_3', errors='test.back'] => iso2022_jp_3
+errors [name='iso2022_jp_3', errors='test.back'] => test.back
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_3', errors='test.back'] => ce0e3483
+crc(seen) [name='iso2022_jp_3', errors='test.back'] => c90e064d
+name [name='iso2022_jp_3', errors='test.skip'] => iso2022_jp_3
+errors [name='iso2022_jp_3', errors='test.skip'] => test.skip
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_3', errors='test.skip'] => ed30a0a7
+crc(seen) [name='iso2022_jp_3', errors='test.skip'] => c90e064d
+name [name='iso2022_jp_ext', errors='strict'] => iso2022_jp_ext
+errors [name='iso2022_jp_ext', errors='strict'] => strict
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_ext', errors='strict'] => f3038014
+crc(seen) [name='iso2022_jp_ext', errors='strict'] => c90e064d
+name [name='iso2022_jp_ext', errors='ignore'] => iso2022_jp_ext
+errors [name='iso2022_jp_ext', errors='ignore'] => ignore
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_ext', errors='ignore'] => c99017dd
+crc(seen) [name='iso2022_jp_ext', errors='ignore'] => c90e064d
+name [name='iso2022_jp_ext', errors='replace'] => iso2022_jp_ext
+errors [name='iso2022_jp_ext', errors='replace'] => replace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_ext', errors='replace'] => 3ed5a1cc
+crc(seen) [name='iso2022_jp_ext', errors='replace'] => c90e064d
+name [name='iso2022_jp_ext', errors='backslashreplace'] => iso2022_jp_ext
+errors [name='iso2022_jp_ext', errors='backslashreplace'] => backslashreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_ext', errors='backslashreplace'] => ec2b151a
+crc(seen) [name='iso2022_jp_ext', errors='backslashreplace'] => c90e064d
+name [name='iso2022_jp_ext', errors='surrogateescape'] => iso2022_jp_ext
+errors [name='iso2022_jp_ext', errors='surrogateescape'] => surrogateescape
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_ext', errors='surrogateescape'] => f9e92358
+crc(seen) [name='iso2022_jp_ext', errors='surrogateescape'] => c90e064d
+name [name='iso2022_jp_ext', errors='surrogatepass'] => iso2022_jp_ext
+errors [name='iso2022_jp_ext', errors='surrogatepass'] => surrogatepass
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_ext', errors='surrogatepass'] => f3038014
+crc(seen) [name='iso2022_jp_ext', errors='surrogatepass'] => c90e064d
+name [name='iso2022_jp_ext', errors='xmlcharrefreplace'] => iso2022_jp_ext
+errors [name='iso2022_jp_ext', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_ext', errors='xmlcharrefreplace'] => 525144b8
+crc(seen) [name='iso2022_jp_ext', errors='xmlcharrefreplace'] => c90e064d
+name [name='iso2022_jp_ext', errors='namereplace'] => iso2022_jp_ext
+errors [name='iso2022_jp_ext', errors='namereplace'] => namereplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_ext', errors='namereplace'] => 525144b8
+crc(seen) [name='iso2022_jp_ext', errors='namereplace'] => c90e064d
+name [name='iso2022_jp_ext', errors='test.note'] => iso2022_jp_ext
+errors [name='iso2022_jp_ext', errors='test.note'] => test.note
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_ext', errors='test.note'] => 285840be
+crc(seen) [name='iso2022_jp_ext', errors='test.note'] => 9a9b1a11
+name [name='iso2022_jp_ext', errors='test.back'] => iso2022_jp_ext
+errors [name='iso2022_jp_ext', errors='test.back'] => test.back
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_ext', errors='test.back'] => ce0e3483
+crc(seen) [name='iso2022_jp_ext', errors='test.back'] => c90e064d
+name [name='iso2022_jp_ext', errors='test.skip'] => iso2022_jp_ext
+errors [name='iso2022_jp_ext', errors='test.skip'] => test.skip
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_jp_ext', errors='test.skip'] => ed30a0a7
+crc(seen) [name='iso2022_jp_ext', errors='test.skip'] => c90e064d
+name [name='iso2022_kr', errors='strict'] => iso2022_kr
+errors [name='iso2022_kr', errors='strict'] => strict
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_kr', errors='strict'] => cf15c1ad
+crc(seen) [name='iso2022_kr', errors='strict'] => c90e064d
+name [name='iso2022_kr', errors='ignore'] => iso2022_kr
+errors [name='iso2022_kr', errors='ignore'] => ignore
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_kr', errors='ignore'] => 6bf0a7e2
+crc(seen) [name='iso2022_kr', errors='ignore'] => c90e064d
+name [name='iso2022_kr', errors='replace'] => iso2022_kr
+errors [name='iso2022_kr', errors='replace'] => replace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_kr', errors='replace'] => 701df6fc
+crc(seen) [name='iso2022_kr', errors='replace'] => c90e064d
+name [name='iso2022_kr', errors='backslashreplace'] => iso2022_kr
+errors [name='iso2022_kr', errors='backslashreplace'] => backslashreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_kr', errors='backslashreplace'] => b8766da7
+crc(seen) [name='iso2022_kr', errors='backslashreplace'] => c90e064d
+name [name='iso2022_kr', errors='surrogateescape'] => iso2022_kr
+errors [name='iso2022_kr', errors='surrogateescape'] => surrogateescape
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_kr', errors='surrogateescape'] => d55b2f67
+crc(seen) [name='iso2022_kr', errors='surrogateescape'] => c90e064d
+name [name='iso2022_kr', errors='surrogatepass'] => iso2022_kr
+errors [name='iso2022_kr', errors='surrogatepass'] => surrogatepass
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_kr', errors='surrogatepass'] => cf15c1ad
+crc(seen) [name='iso2022_kr', errors='surrogatepass'] => c90e064d
+name [name='iso2022_kr', errors='xmlcharrefreplace'] => iso2022_kr
+errors [name='iso2022_kr', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_kr', errors='xmlcharrefreplace'] => 525144b8
+crc(seen) [name='iso2022_kr', errors='xmlcharrefreplace'] => c90e064d
+name [name='iso2022_kr', errors='namereplace'] => iso2022_kr
+errors [name='iso2022_kr', errors='namereplace'] => namereplace
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_kr', errors='namereplace'] => 525144b8
+crc(seen) [name='iso2022_kr', errors='namereplace'] => c90e064d
+name [name='iso2022_kr', errors='test.note'] => iso2022_kr
+errors [name='iso2022_kr', errors='test.note'] => test.note
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_kr', errors='test.note'] => 8a35dc83
+crc(seen) [name='iso2022_kr', errors='test.note'] => 0044e9a8
+name [name='iso2022_kr', errors='test.back'] => iso2022_kr
+errors [name='iso2022_kr', errors='test.back'] => test.back
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_kr', errors='test.back'] => 902cb49f
+crc(seen) [name='iso2022_kr', errors='test.back'] => c90e064d
+name [name='iso2022_kr', errors='test.skip'] => iso2022_kr
+errors [name='iso2022_kr', errors='test.skip'] => test.skip
+crc(*[outcome(decode, row, errors) for row in rows]) [name='iso2022_kr', errors='test.skip'] => 8f3d73a3
+crc(seen) [name='iso2022_kr', errors='test.skip'] => c90e064d

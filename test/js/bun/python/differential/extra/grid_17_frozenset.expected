@@ -1,0 +1,33 @@
+status: 0
+script: 36245d6c980d8b38
+---
+frozenset __and__ 43 867cdfbdd1ee
+frozenset __class_getitem__ 43 cbe52e1e6bc5
+frozenset __contains__ 43 38a1de6dbf41
+frozenset __eq__ 43 586465a52c75
+frozenset __format__ 43 00604310f7ba
+frozenset __ge__ 43 f91cdf4dac8f
+frozenset __gt__ 43 a7753a486ec8
+frozenset __init__ 320 bbe2b2f3bb70
+frozenset __iter__ 19 0e15fa9954ac
+frozenset __le__ 43 3bd37ac2695a
+frozenset __len__ 19 f81e99c01755
+frozenset __lt__ 43 a4c84238c3e0
+frozenset __ne__ 43 7a7174b6f607
+frozenset __or__ 43 aa62d99c26bb
+frozenset __rand__ 43 1a156b663104
+frozenset __repr__ 19 5982ca94433e
+frozenset __ror__ 43 8051e4d13fc0
+frozenset __rsub__ 43 846422d2642a
+frozenset __rxor__ 43 99a8ff8ee270
+frozenset __str__ 19 69a4682f0a88
+frozenset __sub__ 43 e109324f5eb5
+frozenset __xor__ 43 51f35a518630
+frozenset copy 19 01b3e2ce7561
+frozenset difference 323 6da6044b3b9a
+frozenset intersection 322 eb1231918d57
+frozenset isdisjoint 43 f8731ddc5ef1
+frozenset issubset 43 8660e889a6e3
+frozenset issuperset 43 8648d74715ab
+frozenset symmetric_difference 43 2df8042ef68f
+frozenset union 322 ef1fa201e3ab

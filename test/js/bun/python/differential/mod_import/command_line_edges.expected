@@ -1,0 +1,79 @@
+status: 0
+script: c6b5ddfd1b93a8a7
+---
+== arguments 0
+out: ['e:\xe9, euro:\u20ac, non-bmp:\U0010ffff', '\udcff\udcc3\udcff\xe9\udced\udca0\udc80\udcfd\udcbf\udcbf\udcbb\udcba\udcba', '', '\udc80'] [b'e:\xc3\xa9, euro:\xe2\x82\xac, non-bmp:\xf4\x8f\xbf\xbf', b'\xff\xc3\xff\xc3\xa9\xed\xa0\x80\xfd\xbf\xbf\xbb\xba\xba', b'', b'\x80']
+== orig_argv 0
+out: ['-c', 'import sys; print(ascii(sys.orig_argv[1:]))', '\udcff\udcc3\udcff\xe9\udced\udca0\udc80\udcfd\udcbf\udcbf\udcbb\udcba\udcba']
+== -c 1
+err: Unable to decode the command from the command line:
+UnicodeEncodeError: 'utf-8' codec can't encode character '\udcff' in position 13: surrogates not allowed
+== -c with a valid character 0
+out: '\xe9\u20ac'
+== -m 1
+err: <python>: No module named nothing\udcff
+== -W 0
+out: ['error::\udcff']
+err: Invalid -W option ignored: unknown warning category: '\udcff'
+== -X 0
+out: {'a': '\udcff'}
+== a script 1
+out: 's\udce7w\udcf0.py' 's\udce7w\udcf0.py' None
+err: Traceback (most recent call last):
+  File "<tmp>/s\udce7w\udcf0.py", line 3, in <module>
+    1/0
+    ~^~
+ZeroDivisionError: division by zero
+== a script that is not there 2
+err: <python>: can't open file '<tmp>/no\udcff.py': [Errno 2] No such file or directory
+== a directory 0
+out: 'd\udcff' 'd\udcff'
+'/d\udcff/other.py'
+== in such a directory 0 '/d\udcff/other.py'
+'d\udcff' '' 
+== -m in such a directory 0 '/d\udcff/other.py' 
+== PYTHONPATH 0
+out: ['', '/a', '<tmp>/rel', '<above>/up', '<tmp>', '/b\udcff']
+== importtime 0 'nonexistent\ud800' [b'mod\\ud800', b'nonexistent\\ud800']
+== displayhook 0
+out: 'a=\xe9 b=\udc80 c=\U00010000 d=\U0010ffff'
+err: >>> >>>
+== displayhook ascii 0
+out: 'a=\xe9'
+['a=\xe9']
+err: >>> >>> >>>
+== closed: 0 0 x y [None, ('<stdout>', 'w'), ('<stderr>', 'w'), None, ('<stdout>', 'w'), ('<stderr>', 'w')]
+== closed: 1 0  y [('<stdin>', 'r'), None, ('<stderr>', 'w'), ('<stdin>', 'r'), None, ('<stderr>', 'w')]
+== closed: 2 0 x
+y  [('<stdin>', 'r'), ('<stdout>', 'w'), None, ('<stdin>', 'r'), ('<stdout>', 'w'), None]
+== closed: 0 1 0  y [None, None, ('<stderr>', 'w'), None, None, ('<stderr>', 'w')]
+== closed: 1 2 0   [('<stdin>', 'r'), None, None, ('<stdin>', 'r'), None, None]
+== closed: 0 1 2 0   [None, None, None, None, None, None]
+== an exception and no stderr 1
+== input() and no stdin 1 RuntimeError: lost sys.stdin
+== ._pth plain 0
+out: ['<lib>', '<tmp>/pth-plain', '<tmp>', '<tmp>/pth-plain/sub/dir', '/abs'] 1 1 1 1 True False <tmp>/pth-plain <tmp>/pth-plain <tmp>/pth-plain
+== ._pth with site 0
+out: ['<lib>', '<tmp>/pth-with-site/x'] 1 1 0 1 True True <tmp>/pth-with-site <tmp>/pth-with-site <tmp>/pth-with-site
+== ._pth another import 0
+out: ['<lib>'] 1 1 1 1 True False <tmp>/pth-another-import <tmp>/pth-another-import <tmp>/pth-another-import
+err: unsupported 'import' line in ._pth file
+== no library 1
+WARN: Could not find the standard library directory! The Python 'home' directory was set to '/nonexistent-python-path', is this correct?
+Python path configuration:
+  PYTHONHOME = '/nonexistent-python-path'
+  PYTHONPATH = '/p'
+  isolated = 0
+  environment = 1
+  user site = 1
+  safe_path = 0
+  import site = 1
+  is in build tree = 0
+  stdlib dir = '/nonexistent-python-path/lib/python3.15'
+  sys.path[0] = (not set)
+  sys.base_prefix = '/nonexistent-python-path'
+  sys.platlibdir = 'lib'
+  sys.prefix = '/nonexistent-python-path'
+Fatal Python error: Failed to import encodings module
+Python runtime state: core initialized
+ModuleNotFoundError: No module named 'encodings'

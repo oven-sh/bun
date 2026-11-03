@@ -1,0 +1,45 @@
+status: 0
+script: 87dc57f82055277b
+---
+object 0 0
+plain with __dict__ 0 0
+list 0 0
+set 0 0
+tuple subclass 0 0
+bytes 0 0
+memoryview slice 0 0
+complex 0 0
+closure 0 0
+builtin method 0 0
+property 0 0
+cell 0 0
+generator started 0 0
+generator expression 0 0
+list iterator 0 0
+itertools 0 0
+exception raised deep 0 0
+traceback 0 0
+current frame 0 0
+weakref with callback 0 0
+weak method 0 0
+defaultdict 0 0
+ChainMap 0 0
+mappingproxy 0 0
+union 0 0
+BytesIO 0 0
+temporary file 0 0
+pattern 0 0
+lock 0 0
+thread object 0 0
+Struct 0 0
+decimal 0 0
+dataclass instance 0 0
+exit stack 0 0
+pickler 0 0
+copies 0 0
+cycle: instance 1 0
+cycle: hanging 5 0
+cycle: generator 0 0
+class 4 0
+type() 4 0
+abc class whatever 0

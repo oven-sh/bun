@@ -1,0 +1,25 @@
+status: 0
+script: c8471f0a127fa32c
+---
+for_loop True True
+for_loop True True
+for_loop_over_the_call True True
+for_loop_over_the_call True True
+made_elsewhere True True
+made_elsewhere True True
+with_next True True
+with_next True True
+with_list True True
+with_list True True
+yield_from True True
+yield_from True True
+send True True
+send True True
+keyword True True
+keyword True True
+unpacked True True
+unpacked True True
+in_a_comprehension True True
+in_a_comprehension True True
+coroutine True True
+coroutine True True

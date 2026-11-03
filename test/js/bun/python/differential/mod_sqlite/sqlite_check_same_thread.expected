@@ -1,0 +1,247 @@
+status: 0
+script: e28e296a6eba100a
+---
+check_same_thread = True
+   backup ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   cursor ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   commit ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   rollback ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   set_trace_callback ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   set_authorizer ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   set_progress_handler ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   create_collation ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   create_function ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   create_aggregate ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   create_window_function ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   setlimit ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   getlimit ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   getconfig ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   setconfig ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   blobopen ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   serialize ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   execute ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   executemany ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   executescript ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   iterdump ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   interrupt returned NoneType
+   in_transaction returned bool
+   total_changes returned int
+   isolation_level returned str
+   set_isolation_level_none ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   set_isolation_level returned NoneType
+   autocommit ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   set_autocommit ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   enter returned Connection
+   exit ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   call ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   row_factory returned NoneType
+   text_factory returned type
+   cur_execute ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   cur_executemany ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   cur_executescript ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   fetchone ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   fetchmany ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   fetchall ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   next ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   iter returned Cursor
+   setinputsizes returned NoneType
+   setoutputsize returned NoneType
+   rowcount returned int
+   description returned tuple
+   lastrowid returned int
+   connection returned Connection
+   arraysize returned int
+   blob_read ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   blob_write ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   blob_seek ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   blob_tell ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   blob_len ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   blob_item ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   blob_enter ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   blob_close ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   cur_close ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   close ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+closed
+check_same_thread = False
+   cursor returned Cursor
+   commit returned NoneType
+   rollback returned NoneType
+   set_trace_callback returned NoneType
+   set_authorizer returned NoneType
+   set_progress_handler returned NoneType
+   create_collation returned NoneType
+   create_function returned NoneType
+   create_aggregate returned NoneType
+   create_window_function returned NoneType
+   setlimit returned int
+   getlimit returned int
+   getconfig returned bool
+   setconfig returned NoneType
+   blobopen returned Blob
+   serialize returned bytes
+   execute returned Cursor
+   executemany returned Cursor
+   executescript OperationalError cannot commit transaction - SQL statements in progress
+   iterdump returned list
+   interrupt returned NoneType
+   in_transaction returned bool
+   total_changes returned int
+   isolation_level returned str
+   set_isolation_level_none OperationalError interrupted
+   set_isolation_level returned NoneType
+   autocommit returned int
+   set_autocommit returned NoneType
+   enter returned Connection
+   exit OperationalError interrupted
+   call OperationalError interrupted
+   row_factory returned NoneType
+   text_factory returned type
+   cur_execute OperationalError interrupted
+   cur_executemany returned Cursor
+   cur_executescript OperationalError interrupted
+   fetchone returned NoneType
+   fetchmany returned list
+   fetchall returned list
+   next StopIteration 
+   iter returned Cursor
+   setinputsizes returned NoneType
+   setoutputsize returned NoneType
+   rowcount returned int
+   description returned NoneType
+   lastrowid returned int
+   connection returned Connection
+   arraysize returned int
+   blob_read returned bytes
+   blob_write ValueError data longer than blob length
+   blob_seek returned NoneType
+   blob_tell returned int
+   blob_len returned int
+   blob_item returned int
+   blob_enter returned Blob
+   blob_close returned NoneType
+   cur_close returned NoneType
+   close returned NoneType
+ProgrammingError Cannot operate on a closed database.
+check_same_thread = 1
+   backup ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   cursor ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   commit ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   rollback ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   set_trace_callback ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   set_authorizer ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   set_progress_handler ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   create_collation ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   create_function ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   create_aggregate ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   create_window_function ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   setlimit ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   getlimit ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   getconfig ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   setconfig ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   blobopen ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   serialize ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   execute ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   executemany ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   executescript ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   iterdump ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   interrupt returned NoneType
+   in_transaction returned bool
+   total_changes returned int
+   isolation_level returned str
+   set_isolation_level_none ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   set_isolation_level returned NoneType
+   autocommit ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   set_autocommit ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   enter returned Connection
+   exit ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   call ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   row_factory returned NoneType
+   text_factory returned type
+   cur_execute ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   cur_executemany ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   cur_executescript ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   fetchone ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   fetchmany ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   fetchall ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   next ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   iter returned Cursor
+   setinputsizes returned NoneType
+   setoutputsize returned NoneType
+   rowcount returned int
+   description returned tuple
+   lastrowid returned int
+   connection returned Connection
+   arraysize returned int
+   blob_read ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   blob_write ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   blob_seek ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   blob_tell ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   blob_len ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   blob_item ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   blob_enter ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   blob_close ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   cur_close ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+   close ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+closed
+check_same_thread = 0
+   cursor returned Cursor
+   commit returned NoneType
+   rollback returned NoneType
+   set_trace_callback returned NoneType
+   set_authorizer returned NoneType
+   set_progress_handler returned NoneType
+   create_collation returned NoneType
+   create_function returned NoneType
+   create_aggregate returned NoneType
+   create_window_function returned NoneType
+   setlimit returned int
+   getlimit returned int
+   getconfig returned bool
+   setconfig returned NoneType
+   blobopen returned Blob
+   serialize returned bytes
+   execute returned Cursor
+   executemany returned Cursor
+   executescript OperationalError cannot commit transaction - SQL statements in progress
+   iterdump returned list
+   interrupt returned NoneType
+   in_transaction returned bool
+   total_changes returned int
+   isolation_level returned str
+   set_isolation_level_none OperationalError interrupted
+   set_isolation_level returned NoneType
+   autocommit returned int
+   set_autocommit returned NoneType
+   enter returned Connection
+   exit OperationalError interrupted
+   call OperationalError interrupted
+   row_factory returned NoneType
+   text_factory returned type
+   cur_execute OperationalError interrupted
+   cur_executemany returned Cursor
+   cur_executescript OperationalError interrupted
+   fetchone returned NoneType
+   fetchmany returned list
+   fetchall returned list
+   next StopIteration 
+   iter returned Cursor
+   setinputsizes returned NoneType
+   setoutputsize returned NoneType
+   rowcount returned int
+   description returned NoneType
+   lastrowid returned int
+   connection returned Connection
+   arraysize returned int
+   blob_read returned bytes
+   blob_write ValueError data longer than blob length
+   blob_seek returned NoneType
+   blob_tell returned int
+   blob_len returned int
+   blob_item returned int
+   blob_enter returned Blob
+   blob_close returned NoneType
+   cur_close returned NoneType
+   close returned NoneType
+ProgrammingError Cannot operate on a closed database.
+ProgrammingError SQLite objects created in a thread can only be used in that same thread. The object was created in thread id N and this is thread id N.
+[(1,)]

@@ -1,0 +1,53 @@
+status: 0
+script: 95649b5bf28815fa
+---
+create_builtin ! TypeError name must be string, not int | - -
+create_builtin ! TypeError name must be string, not NoneType | - -
+create_builtin ! TypeError name must be string, not bytes | - -
+create_builtin ! ValueError name must not be empty | - -
+create_builtin ! ModuleNotFoundError nothing module not found | nothing None
+create_builtin ! ValueError embedded null character | - -
+create_builtin ! ModuleNotFoundError os module not found | os None
+create_builtin ! ModuleNotFoundError a.b module not found | a.b None
+create_builtin ! UnicodeEncodeError 'ascii' codec can't encode character '\xe9' in position 0: ordinal not in range(128) | - -
+create_builtin ! UnicodeEncodeError 'ascii' codec can't encode character '\xe9' in position 0: ordinal not in range(128) | - -
+create_builtin ! UnicodeEncodeError 'ascii' codec can't encode character '\udc80' in position 0: ordinal not in range(128) | - -
+create_builtin ! AttributeError 'object' object has no attribute 'name' | name -
+create_builtin ! TypeError _imp.create_builtin() takes exactly one argument (0 given) | - -
+-1 0 1 0
+is_builtin ! TypeError is_builtin() argument must be str, not int | - -
+exec_builtin -> 0
+exec_builtin -> 0
+create_dynamic ! ValueError embedded null character | - -
+create_dynamic ! ValueError embedded null character | - -
+create_dynamic ! TypeError module name must be a string | - -
+create_dynamic ! TypeError module filename must be a string | - -
+create_dynamic ! TypeError create_dynamic expected at least 1 argument, got 0 | - -
+True False bytes 8 default
+blocked ! ModuleNotFoundError import of pkg.sub halted; None in sys.modules | pkg.sub None
+blocked_star ! ModuleNotFoundError import of pkg.sub halted; None in sys.modules | pkg.sub None
+not_blocked ! ImportError cannot import name 'nothing' from 'pkg' (<tmp>/pkg/__init__.py) | pkg <tmp>/pkg/__init__.py
+import_module ! ModuleNotFoundError import of pkg.sub halted; None in sys.modules | pkg.sub None
+__import__ ! ModuleNotFoundError import of pkg.sub halted; None in sys.modules | pkg.sub None
+__import__ -> <module 'pkg' from '<tmp>/pkg/__init__.py'>
+__import__ ! TypeError Item in ``from list'' must be str, not int | - -
+__import__ ! ModuleNotFoundError import of pkg.sub halted; None in sys.modules | pkg.sub None
+blocked -> <module 'pkg.sub' from '<tmp>/pkg/sub.py'>
+<module 'space' (namespace) from ['<tmp>/space']> ModuleSpec(name='space', loader=<_frozen_importlib_external.NamespaceLoader object>, submodule_search_locations=NamespacePath(['<tmp>/space']))
+<module 'space.inner' (namespace) from ['<tmp>/space/inner']> ModuleSpec(name='space.inner', loader=<_frozen_importlib_external.NamespaceLoader object>, submodule_search_locations=NamespacePath(['<tmp>/space/inner']))
+<module 'pkg' from '<tmp>/pkg/__init__.py'> ModuleSpec(name='pkg', loader=<_frozen_importlib_external.SourceFileLoader object>, origin='<tmp>/pkg/__init__.py', submodule_search_locations=['<tmp>/pkg'])
+<module 'pkg.other' from '<tmp>/pkg/other.py'> ModuleSpec(name='pkg.other', loader=<_frozen_importlib_external.SourceFileLoader object>, origin='<tmp>/pkg/other.py')
+<module 'sys' (built-in)> ModuleSpec(name='sys', loader=<class '_frozen_importlib.BuiltinImporter'>, origin='built-in')
+<module 'made'> None
+<module 'specified' (somewhere)> ModuleSpec(name='specified', loader=None, origin='somewhere')
+<module 'made' from '/f.py'>
+<module 'made' from '/f.py'>
+<module 'made' (<class '_frozen_importlib.BuiltinImporter'>)>
+<module 5 (<class '_frozen_importlib.BuiltinImporter'>)>
+<module '?' (<class '_frozen_importlib.BuiltinImporter'>)>
+<module 's'> <module 's'>
+False True
+['loaded', 'loaded', 'loaded', 'loaded', 'loaded', 'loaded'] [] 1
+import_module -> <module 'selfish' from '<tmp>/selfish.py'>
+asked
+3

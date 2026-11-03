@@ -1,0 +1,522 @@
+status: 0
+script: f2e3f2a87122c9ee
+---
+xz []
+False True b'' 16
+True True False b'' 4
+EOFError: Already at end of stream
+EOFError: Already at end of stream
+EOFError: Already at end of stream
+True False b''
+True True False b'junk' True
+0 0 False False b'' 4
+True 20 True False b''
+1 1 False False b'' 4
+True 20 True False b''
+2 2 False False b'' 4
+True 20 True False b''
+100 100 False False b'' 4
+True 20 True False b''
+4096 4096 False False b'' 4
+True 19 True False b''
+32768 32768 False False b'' 4
+True 2 True False b''
+32769 32769 False False b'' 4
+True 2 True False b''
+65536 65536 False False b'' 4
+True 1 True False b''
+96389 96389 False False b'' 4
+True 1 True False b''
+96390 96390 True False b'' 4
+True 0 True False b''
+96391 96390 True False b'' 4
+True 0 True False b''
+1099511627776 96390 True False b'' 4
+True 0 True False b''
+9223372036854775807 96390 True False b'' 4
+True 0 True False b''
+-1 96390 True False b'' 4
+True 0 True False b''
+-2 96390 True False b'' 4
+True 0 True False b''
+-9223372036854775808 96390 True False b'' 4
+True 0 True False b''
+100 100 50 False True True b'' False
+100 100 50 True True True b'' False
+1 1 40 False True True b'' False
+1 1 40 True True True b'' False
+500 3 1000 False True True b'' False
+500 3 1000 True True True b'' False
+1188 10 77 False True True b'' False
+1188 10 77 True True True b'' False
+1187 1 100000 False True True b'' False
+1187 1 100000 True True True b'' False
+b'' False
+True b'TAILTAILTAIL' False
+True b'moreeven more' True
+b''
+False False
+b''
+False False
+b''
+False False
+True
+False True
+0
+False False
+0
+True False
+0
+True False
+LZMAError: Insufficient buffer space
+True False
+LZMAError: Insufficient buffer space
+True False
+0
+False False
+0
+False False
+96390
+False True
+xz ['format']
+False True b'' 16
+True True False b'' 4
+EOFError: Already at end of stream
+EOFError: Already at end of stream
+EOFError: Already at end of stream
+True False b''
+True True False b'junk' True
+0 0 False False b'' 4
+True 20 True False b''
+1 1 False False b'' 4
+True 20 True False b''
+2 2 False False b'' 4
+True 20 True False b''
+100 100 False False b'' 4
+True 20 True False b''
+4096 4096 False False b'' 4
+True 19 True False b''
+32768 32768 False False b'' 4
+True 2 True False b''
+32769 32769 False False b'' 4
+True 2 True False b''
+65536 65536 False False b'' 4
+True 1 True False b''
+96389 96389 False False b'' 4
+True 1 True False b''
+96390 96390 True False b'' 4
+True 0 True False b''
+96391 96390 True False b'' 4
+True 0 True False b''
+1099511627776 96390 True False b'' 4
+True 0 True False b''
+9223372036854775807 96390 True False b'' 4
+True 0 True False b''
+-1 96390 True False b'' 4
+True 0 True False b''
+-2 96390 True False b'' 4
+True 0 True False b''
+-9223372036854775808 96390 True False b'' 4
+True 0 True False b''
+100 100 50 False True True b'' False
+100 100 50 True True True b'' False
+1 1 40 False True True b'' False
+1 1 40 True True True b'' False
+500 3 1000 False True True b'' False
+500 3 1000 True True True b'' False
+1188 10 77 False True True b'' False
+1188 10 77 True True True b'' False
+1187 1 100000 False True True b'' False
+1187 1 100000 True True True b'' False
+b'' False
+True b'TAILTAILTAIL' False
+True b'moreeven more' True
+b''
+False False
+b''
+False False
+b''
+False False
+True
+False True
+0
+False False
+0
+True False
+0
+True False
+LZMAError: Insufficient buffer space
+True False
+LZMAError: Insufficient buffer space
+True False
+0
+False False
+0
+False False
+96390
+False True
+alone []
+False True b'' 16
+True True False b'' 0
+EOFError: Already at end of stream
+EOFError: Already at end of stream
+EOFError: Already at end of stream
+True False b''
+True True False b'junk' True
+0 0 False False b'' 0
+True 20 True False b''
+1 1 False False b'' 0
+True 20 True False b''
+2 2 False False b'' 0
+True 20 True False b''
+100 100 False False b'' 0
+True 20 True False b''
+4096 4096 False False b'' 0
+True 19 True False b''
+32768 32768 False False b'' 0
+True 2 True False b''
+32769 32769 False False b'' 0
+True 2 True False b''
+65536 65536 False False b'' 0
+True 1 True False b''
+96389 96389 False False b'' 0
+True 1 True False b''
+96390 96390 True False b'' 0
+True 0 True False b''
+96391 96390 True False b'' 0
+True 0 True False b''
+1099511627776 96390 True False b'' 0
+True 0 True False b''
+9223372036854775807 96390 True False b'' 0
+True 0 True False b''
+-1 96390 True False b'' 0
+True 0 True False b''
+-2 96390 True False b'' 0
+True 0 True False b''
+-9223372036854775808 96390 True False b'' 0
+True 0 True False b''
+100 100 50 False True True b'' False
+100 100 50 True True True b'' False
+1 1 40 False True True b'' False
+1 1 40 True True True b'' False
+500 3 1000 False True True b'' False
+500 3 1000 True True True b'' False
+1142 10 77 False True True b'' False
+1142 10 77 True True True b'' False
+1141 1 100000 False True True b'' False
+1141 1 100000 True True True b'' False
+b'' False
+True b'TAILTAILTAIL' False
+True b'moreeven more' True
+b''
+False False
+b''
+False False
+LZMAError: Insufficient buffer space
+False False
+False
+True False
+0
+False False
+0
+True False
+0
+True False
+LZMAError: Insufficient buffer space
+True False
+LZMAError: Insufficient buffer space
+True False
+0
+False False
+0
+False False
+96390
+False True
+alone ['format']
+False True b'' 0
+True True False b'' 0
+EOFError: Already at end of stream
+EOFError: Already at end of stream
+EOFError: Already at end of stream
+True False b''
+True True False b'junk' True
+0 0 False False b'' 0
+True 20 True False b''
+1 1 False False b'' 0
+True 20 True False b''
+2 2 False False b'' 0
+True 20 True False b''
+100 100 False False b'' 0
+True 20 True False b''
+4096 4096 False False b'' 0
+True 19 True False b''
+32768 32768 False False b'' 0
+True 2 True False b''
+32769 32769 False False b'' 0
+True 2 True False b''
+65536 65536 False False b'' 0
+True 1 True False b''
+96389 96389 False False b'' 0
+True 1 True False b''
+96390 96390 True False b'' 0
+True 0 True False b''
+96391 96390 True False b'' 0
+True 0 True False b''
+1099511627776 96390 True False b'' 0
+True 0 True False b''
+9223372036854775807 96390 True False b'' 0
+True 0 True False b''
+-1 96390 True False b'' 0
+True 0 True False b''
+-2 96390 True False b'' 0
+True 0 True False b''
+-9223372036854775808 96390 True False b'' 0
+True 0 True False b''
+100 100 50 False True True b'' False
+100 100 50 True True True b'' False
+1 1 40 False True True b'' False
+1 1 40 True True True b'' False
+500 3 1000 False True True b'' False
+500 3 1000 True True True b'' False
+1142 10 77 False True True b'' False
+1142 10 77 True True True b'' False
+1141 1 100000 False True True b'' False
+1141 1 100000 True True True b'' False
+b'' False
+True b'TAILTAILTAIL' False
+True b'moreeven more' True
+b''
+False False
+LZMAError: Insufficient buffer space
+False False
+LZMAError: Insufficient buffer space
+False False
+False
+True False
+0
+False False
+0
+True False
+0
+True False
+LZMAError: Insufficient buffer space
+True False
+LZMAError: Insufficient buffer space
+True False
+LZMAError: Insufficient buffer space
+True False
+LZMAError: Insufficient buffer space
+True False
+LZMAError: Input format not supported by decoder
+True False
+raw ['filters', 'format']
+False True b'' 0
+True True False b'' 0
+EOFError: Already at end of stream
+EOFError: Already at end of stream
+EOFError: Already at end of stream
+True False b''
+True True False b'junk' True
+0 0 False False b'' 0
+True 20 True False b''
+1 1 False False b'' 0
+True 20 True False b''
+2 2 False False b'' 0
+True 20 True False b''
+100 100 False False b'' 0
+True 20 True False b''
+4096 4096 False False b'' 0
+True 19 True False b''
+32768 32768 False False b'' 0
+True 2 True False b''
+32769 32769 False False b'' 0
+True 2 True False b''
+65536 65536 False False b'' 0
+True 1 True False b''
+96389 96389 False False b'' 0
+True 1 True False b''
+96390 96390 True False b'' 0
+True 0 True False b''
+96391 96390 True False b'' 0
+True 0 True False b''
+1099511627776 96390 True False b'' 0
+True 0 True False b''
+9223372036854775807 96390 True False b'' 0
+True 0 True False b''
+-1 96390 True False b'' 0
+True 0 True False b''
+-2 96390 True False b'' 0
+True 0 True False b''
+-9223372036854775808 96390 True False b'' 0
+True 0 True False b''
+100 100 50 False True True b'' False
+100 100 50 True True True b'' False
+1 1 40 False True True b'' False
+1 1 40 True True True b'' False
+500 3 1000 False True True b'' False
+500 3 1000 True True True b'' False
+3129 10 77 False True True b'' False
+3129 10 77 True True True b'' False
+3128 1 100000 False True True b'' False
+3128 1 100000 True True True b'' False
+b'' False
+True b'TAILTAILTAIL' False
+True b'moreeven more' True
+b''
+False False
+b''
+False False
+b''
+False False
+True
+False True
+0
+False False
+0
+True False
+0
+True False
+LZMAError: Insufficient buffer space
+True False
+LZMAError: Insufficient buffer space
+True False
+0
+False False
+0
+False False
+96390
+False True
+10 False False
+78898 True False
+100000 False True
+0 [16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 0, 0, 0, 0, 0]
+1 [16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 1, 1, 1, 1, 1]
+4 [16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 4, 4, 4, 4, 4]
+10 [16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 10, 10, 10, 10, 10]
+LZMAError: Memory usage limit exceeded
+False True 4
+LZMAError: Memory usage limit exceeded
+LZMAError: Memory usage limit exceeded
+False True 4
+LZMAError: Memory usage limit exceeded
+LZMAError: Memory usage limit exceeded
+False True 4
+LZMAError: Memory usage limit exceeded
+LZMAError: Memory usage limit exceeded
+False True 4
+LZMAError: Memory usage limit exceeded
+LZMAError: Memory usage limit exceeded
+False True 4
+LZMAError: Memory usage limit exceeded
+LZMAError: Memory usage limit exceeded
+False True 4
+LZMAError: Memory usage limit exceeded
+LZMAError: Memory usage limit exceeded
+False True 4
+LZMAError: Memory usage limit exceeded
+LZMAError: Memory usage limit exceeded
+False True 4
+LZMAError: Memory usage limit exceeded
+LZMAError: Memory usage limit exceeded
+False True 4
+LZMAError: Memory usage limit exceeded
+LZMAError: Memory usage limit exceeded
+False True 4
+LZMAError: Memory usage limit exceeded
+True
+True False 4
+EOFError: Already at end of stream
+True
+True False 4
+EOFError: Already at end of stream
+True
+True False 4
+EOFError: Already at end of stream
+True
+True False 4
+EOFError: Already at end of stream
+True
+True False 4
+EOFError: Already at end of stream
+True
+True False 4
+EOFError: Already at end of stream
+True
+True False 4
+EOFError: Already at end of stream
+True
+True False 4
+EOFError: Already at end of stream
+LZMAError: Memory usage limit exceeded
+LZMAError: Memory usage limit exceeded
+True
+ValueError: Cannot convert negative int
+OverflowError: Python int too large for C uint64_t
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+TypeError: 'bytes' object cannot be interpreted as an integer
+TypeError: 'list' object cannot be interpreted as an integer
+ValueError: Cannot convert negative int
+OverflowError: Python int too large for C uint64_t
+LZMAError: Memory usage limit exceeded
+True
+TypeError: decompress() missing required argument 'data' (pos 1)
+TypeError: a bytes-like object is required, not 'str'
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+OverflowError: Python int too large to convert to C ssize_t
+OverflowError: Python int too large to convert to C ssize_t
+TypeError: 'NoneType' object cannot be interpreted as an integer
+TypeError: decompress() takes at most 2 arguments (3 given)
+b''
+TypeError: decompress() missing required argument 'data' (pos 1)
+TypeError: argument for decompress() given by name ('data') and position (1)
+TypeError: decompress() got an unexpected keyword argument 'foo'
+<_lzma.LZMADecompressor object>
+TypeError: LZMADecompressor() takes at most 3 arguments (4 given)
+<_lzma.LZMADecompressor object>
+TypeError: LZMADecompressor() got an unexpected keyword argument 'foo'
+TypeError: argument for LZMADecompressor() given by name ('format') and position (1)
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+TypeError: 'NoneType' object cannot be interpreted as an integer
+OverflowError: Python int too large to convert to C int
+OverflowError: Python int too large to convert to C int
+OverflowError: Python int too large to convert to C int
+ValueError: Invalid container format: -1
+ValueError: Invalid container format: -1
+ValueError: Invalid container format: 4
+ValueError: Invalid container format: 4
+ValueError: Invalid container format: 5
+ValueError: Invalid container format: 5
+ValueError: Invalid container format: 100
+ValueError: Invalid container format: 100
+ValueError: Invalid container format: 2147483647
+ValueError: Invalid container format: 2147483647
+ValueError: Invalid container format: -2147483648
+ValueError: Invalid container format: -2147483648
+ValueError: Must specify filters for FORMAT_RAW
+ValueError: Cannot specify memory limit with FORMAT_RAW
+ValueError: Cannot specify memory limit with FORMAT_RAW
+<_lzma.LZMADecompressor object>
+ValueError: Cannot specify memory limit with FORMAT_RAW
+ValueError: Cannot specify filters except with FORMAT_RAW
+ValueError: Cannot specify filters except with FORMAT_RAW
+ValueError: Cannot specify filters except with FORMAT_RAW
+ValueError: Cannot specify filters except with FORMAT_RAW
+TypeError: 'str' object cannot be interpreted as an integer
+<_lzma.LZMADecompressor object>
+LZMAError: Internal error
+LZMAError: Internal error
+TypeError: object of type 'int' has no len()
+TypeError: dict is not a sequence
+TypeError: string indices must be integers, not 'str'
+True True b''
+LZMAError: Compressed data ended before the end-of-stream marker was reached
+False
+True
+LZMAError: Input format not supported by decoder
+LZMAError: Compressed data ended before the end-of-stream marker was reached
+LZMAError: Compressed data ended before the end-of-stream marker was reached
+LZMAError: Compressed data ended before the end-of-stream marker was reached
+LZMAError: Compressed data ended before the end-of-stream marker was reached

@@ -1,0 +1,93 @@
+status: 0
+script: 5a8e1c976a9e9c76
+---
+True False False 64890 64890 wb a.bz2
+3589 19e8c15b4bab21e693a006aaea89453b7d4b08fb
+True True b'line 0 of ' 10 b'the file\n' b'line ' b'line 1 ' 3002 b'' 64947
+100 b'5 of the file\nline 6' 64917 b'f the file\nline 2 of the file\n' 5 10 b'the '
+9 bytearray(b'file\nline')
+UnsupportedOperation: File not open for writing
+ValueError: whence value 9 unsupported
+True False
+ValueError: I/O operation on closed file
+True
+64956 b'f the file\nappended\n'
+FileExistsError: [Errno 17] File exists: 'a.bz2'
+ValueError: Invalid mode: 'rw'
+ValueError: compresslevel must be between 1 and 9
+TypeError: filename must be a str, bytes, file or PathLike object
+FileNotFoundError: [Errno 2] No such file or directory: 'missing.bz2'
+12
+['héllo\n', 'wörld\n']
+ValueError: Invalid mode: 'rbt'
+ValueError: Argument 'encoding' not supported in binary mode
+ValueError: Argument 'errors' not supported in binary mode
+ValueError: Argument 'newline' not supported in binary mode
+True False
+True
+True
+EOFError: Compressed file ended before the end-of-stream marker was reached
+OSError: Invalid data stream
+3000 64890
+w:bz2 r [('tree', 0, b'5'), ('tree/a.txt', 64890, b'0'), ('tree/empty', 0, b'0'), ('tree/sub', 0, b'5'), ('tree/sub/b.bin', 25600, b'0')] 0cf50658 da39a3ee bee4c060 
+w:bz2 r:* [('tree', 0, b'5'), ('tree/a.txt', 64890, b'0'), ('tree/empty', 0, b'0'), ('tree/sub', 0, b'5'), ('tree/sub/b.bin', 25600, b'0')] 0cf50658 da39a3ee bee4c060 
+w:bz2 r:bz2 [('tree', 0, b'5'), ('tree/a.txt', 64890, b'0'), ('tree/empty', 0, b'0'), ('tree/sub', 0, b'5'), ('tree/sub/b.bin', 25600, b'0')] 0cf50658 da39a3ee bee4c060 
+w:bz2 r|* [('tree', 0, b'5'), ('tree/a.txt', 64890, b'0'), ('tree/empty', 0, b'0'), ('tree/sub', 0, b'5'), ('tree/sub/b.bin', 25600, b'0')] 0cf50658 da39a3ee bee4c060 
+w:bz2 r|bz2 [('tree', 0, b'5'), ('tree/a.txt', 64890, b'0'), ('tree/empty', 0, b'0'), ('tree/sub', 0, b'5'), ('tree/sub/b.bin', 25600, b'0')] 0cf50658 da39a3ee bee4c060 
+ReadError: not a gzip file
+ReadError: not an lzma file
+ReadError: invalid header
+ReadError: not a gzip file
+ReadError: invalid compressed data
+ReadError: not a zstd file
+True
+w|bz2 r [('tree', 0, b'5'), ('tree/a.txt', 64890, b'0'), ('tree/empty', 0, b'0'), ('tree/sub', 0, b'5'), ('tree/sub/b.bin', 25600, b'0')] 0cf50658 da39a3ee bee4c060 
+w|bz2 r:* [('tree', 0, b'5'), ('tree/a.txt', 64890, b'0'), ('tree/empty', 0, b'0'), ('tree/sub', 0, b'5'), ('tree/sub/b.bin', 25600, b'0')] 0cf50658 da39a3ee bee4c060 
+w|bz2 r:bz2 [('tree', 0, b'5'), ('tree/a.txt', 64890, b'0'), ('tree/empty', 0, b'0'), ('tree/sub', 0, b'5'), ('tree/sub/b.bin', 25600, b'0')] 0cf50658 da39a3ee bee4c060 
+w|bz2 r|* [('tree', 0, b'5'), ('tree/a.txt', 64890, b'0'), ('tree/empty', 0, b'0'), ('tree/sub', 0, b'5'), ('tree/sub/b.bin', 25600, b'0')] 0cf50658 da39a3ee bee4c060 
+w|bz2 r|bz2 [('tree', 0, b'5'), ('tree/a.txt', 64890, b'0'), ('tree/empty', 0, b'0'), ('tree/sub', 0, b'5'), ('tree/sub/b.bin', 25600, b'0')] 0cf50658 da39a3ee bee4c060 
+ReadError: not a gzip file
+ReadError: not an lzma file
+ReadError: invalid header
+ReadError: not a gzip file
+ReadError: invalid compressed data
+ReadError: not a zstd file
+True
+x:bz2 r [('tree', 0, b'5'), ('tree/a.txt', 64890, b'0'), ('tree/empty', 0, b'0'), ('tree/sub', 0, b'5'), ('tree/sub/b.bin', 25600, b'0')] 0cf50658 da39a3ee bee4c060 
+x:bz2 r:* [('tree', 0, b'5'), ('tree/a.txt', 64890, b'0'), ('tree/empty', 0, b'0'), ('tree/sub', 0, b'5'), ('tree/sub/b.bin', 25600, b'0')] 0cf50658 da39a3ee bee4c060 
+x:bz2 r:bz2 [('tree', 0, b'5'), ('tree/a.txt', 64890, b'0'), ('tree/empty', 0, b'0'), ('tree/sub', 0, b'5'), ('tree/sub/b.bin', 25600, b'0')] 0cf50658 da39a3ee bee4c060 
+x:bz2 r|* [('tree', 0, b'5'), ('tree/a.txt', 64890, b'0'), ('tree/empty', 0, b'0'), ('tree/sub', 0, b'5'), ('tree/sub/b.bin', 25600, b'0')] 0cf50658 da39a3ee bee4c060 
+x:bz2 r|bz2 [('tree', 0, b'5'), ('tree/a.txt', 64890, b'0'), ('tree/empty', 0, b'0'), ('tree/sub', 0, b'5'), ('tree/sub/b.bin', 25600, b'0')] 0cf50658 da39a3ee bee4c060 
+ReadError: not a gzip file
+ReadError: not an lzma file
+ReadError: invalid header
+ReadError: not a gzip file
+ReadError: invalid compressed data
+ReadError: not a zstd file
+True
+b'BZh1'
+ValueError: compresslevel must be between 1 and 9
+['tree', 'tree/a.txt', 'tree/empty', 'tree/sub', 'tree/sub/b.bin'] True
+6517f0812e83a882693e31f1cc51de25b8f661d2
+[('a.txt', 0, 64890, 64890, 20, 20), ('b.bin', 0, 1000, 1000, 20, 20), ('e', 0, 0, 0, 20, 20), ('s.txt', 0, 64890, 64890, 20, 20)] None
+True True True b''
+b'line 0 of ' b'the file\n' 500 b' the file\n' 0 b'line' True
+BadZipFile: Bad CRC-32 for file 'a.txt'
+'a.txt'
+['bztar', 'gztar', 'tar', 'xztar', 'zip', 'zstdtar'] [('bztar', ['.tar.bz2', '.tbz2']), ('gztar', ['.tar.gz', '.tgz']), ('tar', ['.tar']), ('xztar', ['.tar.xz', '.txz']), ('zip', ['.zip']), ('zstdtar', ['.tar.zst', '.tzst'])]
+made.tar.bz2
+['a.txt', 'empty', 'sub'] True
+['b.bin']
+True True bz2 False
+LookupError: 'bz2' is not a text encoding; use codecs.decode() to handle arbitrary codecs
+LookupError: 'bz2' is not a text encoding; use codecs.encode() to handle arbitrary codecs
+OSError: Invalid data stream
+TypeError: a bytes-like object is required, not 'str'
+AssertionError: 
+True
+True
+''
+True
+None
+6004 
+b'line 0 of the file\n' 1

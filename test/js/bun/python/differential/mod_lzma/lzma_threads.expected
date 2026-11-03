@@ -1,0 +1,13 @@
+status: 0
+script: e5f0ab3f20aa8652
+---
+[(0, (True, b'\xfd7zXZ\x00')), (1, (True, b'\xfd7zXZ\x00')), (2, (True, b'\xfd7zXZ\x00')), (3, (True, b'\xfd7zXZ\x00')), (4, (True, b'\xfd7zXZ\x00')), (5, (True, b'\xfd7zXZ\x00')), (6, (True, b'\xfd7zXZ\x00')), (7, (True, b'\xfd7zXZ\x00'))]
+True True
+[] 24 b'YZ'
+True True {'Already at end of stream'} True False
+['Repeated call to flush()', 'Repeated call to flush()', 'Repeated call to flush()', 'True']
+['Repeated call to flush()', 'Repeated call to flush()', 'Repeated call to flush()', 'True']
+['Repeated call to flush()', 'Repeated call to flush()', 'Repeated call to flush()', 'True']
+['Repeated call to flush()', 'Repeated call to flush()', 'Repeated call to flush()', 'True']
+['Repeated call to flush()', 'Repeated call to flush()', 'Repeated call to flush()', 'True']
+True

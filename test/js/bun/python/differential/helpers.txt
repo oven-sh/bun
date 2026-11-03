@@ -1,5 +1,7 @@
 # What tests import, and so is no test itself: a file (without its extension) or a directory.
+extra/grid
 extra/lazy_imports/lz
+mod_cjk/common
 mod_expat/expat_common
 mod_memoryview/js/holders_helper
 mod_memoryview/js/typed_arrays_helper

@@ -1,4 +1,5 @@
 {
+  "gc/wait_in_the_kernel_for_finalizer": "FIXME: a thread that waits in a system call for what a finalizer would do: waits for ever in a release build",
   "interop/015_operators_jit": "loops that are long enough for the optimizing compilers: ten minutes in a debug build, a second in a release build",
   "mod_faulthandler/faulthandler_basic": "what the watchdog thread finds the main thread doing depends on timing, under CPython too",
   "mod_math/math_cbrt": "the last digit is the C library's: glibc's cbrt(2.0) is off by one unit in the last place, Bun's is not",
@@ -8,6 +9,5 @@
   "mod_socket/socket_functions": "asks the resolver, and the machine's tables of hosts, services and protocols",
   "mod_socket/socket_inet6": "needs IPv6 on the loopback interface",
   "mod_threads/t03_blocking": "whether other threads ran during a blocking call of a tenth of a second: fails on a busy machine, under CPython too",
-  "mod_time/time_zones": "needs the system's time zone files",
-  "slow/unicode_sweep": "eight minutes in a debug build"
+  "mod_time/time_zones": "needs the system's time zone files"
 }

@@ -1,0 +1,28 @@
+status: 0
+script: 9eb47298c1dd7cf8
+---
+dict_items __and__ 104 4755d117fcc0
+dict_items __contains__ 103 bbac54a504c3
+dict_items __eq__ 103 c52a0ddc9ef8
+dict_items __format__ 103 ed3029af5953
+dict_items __ge__ 104 443b6f847453
+dict_items __gt__ 103 784a866e55cc
+dict_items __hash__ 3 504548ee87a9
+dict_items __init__ 690 4960e089f806
+dict_items __iter__ 57 8348891e812c
+dict_items __le__ 103 3a362b8d7514
+dict_items __len__ 57 e76f49378d55
+dict_items __lt__ 103 a3db431ee162
+dict_items __ne__ 104 90be9f213b7b
+dict_items __or__ 103 5bc580f4f38a
+dict_items __rand__ 103 03bbcc041c90
+dict_items __repr__ 57 a707241f541e
+dict_items __reversed__ 57 f8dee7c67a18
+dict_items __ror__ 103 0757f92ded18
+dict_items __rsub__ 103 0f1e69a61c08
+dict_items __rxor__ 104 9c86cd232ef9
+dict_items __str__ 57 1746a215e57a
+dict_items __sub__ 103 1713a9e53ef2
+dict_items __xor__ 104 a6bb3a0233c8
+dict_items isdisjoint 103 651eecc0b57c
+dict_items mapping 3 b40ed797c585

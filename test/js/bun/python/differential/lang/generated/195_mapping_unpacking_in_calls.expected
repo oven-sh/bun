@@ -1,0 +1,166 @@
+status: 0
+script: e12dc1ba6a732b9c
+source: 590cf308a6ec3653
+---
+-> ((), [('a', 1), ('b', 2)])
+['keys', 'get a', 'get b']
+TypeError: __main__.f() got multiple values for keyword argument 'a' | cause: None | context: NoneType
+['keys', 'get b']
+TypeError: __main__.f() got multiple values for keyword argument 'a' | cause: None | context: NoneType
+['keys', 'get a', 'keys', 'get b']
+TypeError: __main__.f() got multiple values for keyword argument 'a' | cause: None | context: NoneType
+['keys']
+TypeError: __main__.f() got multiple values for keyword argument 'a' | cause: None | context: NoneType
+TypeError: __main__.f() got multiple values for keyword argument 'a' | cause: None | context: NoneType
+TypeError: Value after ** must be a mapping, not NoneType | cause: None | context: NoneType
+TypeError: Value after ** must be a mapping, not NoneType | cause: None | context: NoneType
+TypeError: 'NoneType' object is not a mapping | cause: None | context: NoneType
+TypeError: Value after ** must be a mapping, not NoneType | cause: None | context: NoneType
+TypeError: 'NoneType' object is not iterable | cause: None | context: NoneType
+TypeError: Value after ** must be a mapping, not int | cause: None | context: NoneType
+TypeError: Value after ** must be a mapping, not int | cause: None | context: NoneType
+TypeError: 'int' object is not a mapping | cause: None | context: NoneType
+TypeError: Value after ** must be a mapping, not int | cause: None | context: NoneType
+TypeError: 'int' object is not iterable | cause: None | context: NoneType
+TypeError: Value after ** must be a mapping, not str | cause: None | context: NoneType
+TypeError: Value after ** must be a mapping, not str | cause: None | context: NoneType
+TypeError: 'str' object is not a mapping | cause: None | context: NoneType
+TypeError: Value after ** must be a mapping, not str | cause: None | context: NoneType
+-> None
+TypeError: Value after ** must be a mapping, not list | cause: None | context: NoneType
+TypeError: Value after ** must be a mapping, not list | cause: None | context: NoneType
+TypeError: 'list' object is not a mapping | cause: None | context: NoneType
+TypeError: Value after ** must be a mapping, not list | cause: None | context: NoneType
+-> None
+TypeError: Value after ** must be a mapping, not tuple | cause: None | context: NoneType
+TypeError: Value after ** must be a mapping, not tuple | cause: None | context: NoneType
+TypeError: 'tuple' object is not a mapping | cause: None | context: NoneType
+TypeError: Value after ** must be a mapping, not tuple | cause: None | context: NoneType
+-> None
+TypeError: Value after ** must be a mapping, not set | cause: None | context: NoneType
+TypeError: Value after ** must be a mapping, not set | cause: None | context: NoneType
+TypeError: 'set' object is not a mapping | cause: None | context: NoneType
+TypeError: Value after ** must be a mapping, not set | cause: None | context: NoneType
+-> None
+TypeError: Value after ** must be a mapping, not NoKeys | cause: None | context: NoneType
+TypeError: Value after ** must be a mapping, not NoKeys | cause: None | context: NoneType
+TypeError: 'NoKeys' object is not a mapping | cause: None | context: NoneType
+TypeError: Value after ** must be a mapping, not NoKeys | cause: None | context: NoneType
+TypeError: 'NoKeys' object is not iterable | cause: None | context: NoneType
+TypeError: 'int' object is not callable | cause: None | context: NoneType
+TypeError: 'int' object is not callable | cause: None | context: NoneType
+TypeError: 'int' object is not callable | cause: None | context: NoneType
+TypeError: 'int' object is not callable | cause: None | context: NoneType
+TypeError: 'int' object is not callable | cause: None | context: NoneType
+RuntimeError: from keys | cause: None | context: NoneType
+RuntimeError: from keys | cause: None | context: NoneType
+RuntimeError: from keys | cause: None | context: NoneType
+RuntimeError: from keys | cause: None | context: NoneType
+RuntimeError: from keys | cause: None | context: NoneType
+AttributeError: inside keys | cause: None | context: NoneType
+AttributeError: inside keys | cause: None | context: NoneType
+AttributeError: inside keys | cause: None | context: NoneType
+AttributeError: inside keys | cause: None | context: NoneType
+AttributeError: inside keys | cause: None | context: NoneType
+TypeError: Value after ** must be a mapping, not KeysProperty | cause: None | context: NoneType
+TypeError: Value after ** must be a mapping, not KeysProperty | cause: None | context: NoneType
+TypeError: 'KeysProperty' object is not a mapping | cause: None | context: NoneType
+TypeError: Value after ** must be a mapping, not KeysProperty | cause: None | context: NoneType
+TypeError: 'KeysProperty' object is not iterable | cause: None | context: NoneType
+TypeError: KeysNotIterable.keys() must return an iterable, not int | cause: None | context: NoneType
+TypeError: KeysNotIterable.keys() must return an iterable, not int | cause: None | context: NoneType
+TypeError: KeysNotIterable.keys() must return an iterable, not int | cause: None | context: NoneType
+TypeError: KeysNotIterable.keys() must return an iterable, not int | cause: None | context: NoneType
+TypeError: KeysNotIterable.keys() must return an iterable, not int | cause: None | context: NoneType
+TypeError: 'NoGetItem' object is not subscriptable | cause: None | context: NoneType
+TypeError: __main__.f() got multiple values for keyword argument 'a' | cause: None | context: NoneType
+TypeError: 'NoGetItem' object is not subscriptable | cause: None | context: NoneType
+TypeError: 'NoGetItem' object is not subscriptable | cause: None | context: NoneType
+TypeError: 'NoGetItem' object is not subscriptable | cause: None | context: NoneType
+KeyError: 'a' | cause: None | context: NoneType
+TypeError: __main__.f() got multiple values for keyword argument 'a' | cause: None | context: NoneType
+KeyError: 'a' | cause: None | context: NoneType
+KeyError: 'a' | cause: None | context: NoneType
+KeyError: 'a' | cause: None | context: NoneType
+AttributeError: inside getitem | cause: None | context: NoneType
+TypeError: __main__.f() got multiple values for keyword argument 'a' | cause: None | context: NoneType
+AttributeError: inside getitem | cause: None | context: NoneType
+AttributeError: inside getitem | cause: None | context: NoneType
+AttributeError: inside getitem | cause: None | context: NoneType
+ValueError: while listing the keys | cause: None | context: NoneType
+ValueError: while listing the keys | cause: None | context: NoneType
+ValueError: while listing the keys | cause: None | context: NoneType
+ValueError: while listing the keys | cause: None | context: NoneType
+ValueError: while listing the keys | cause: None | context: NoneType
+TypeError: keywords must be strings | cause: None | context: NoneType
+TypeError: keywords must be strings | cause: None | context: NoneType
+TypeError: keywords must be strings | cause: None | context: NoneType
+TypeError: keywords must be strings | cause: None | context: NoneType
+TypeError: keywords must be strings | cause: None | context: NoneType
+-> {1: 1, None: None, b'a': b'a'}
+-> ((), [('a', 1)])
+TypeError: __main__.f() got multiple values for keyword argument 'a' | cause: None | context: NoneType
+TypeError: __main__.f() got multiple values for keyword argument 'a' | cause: None | context: NoneType
+TypeError: Value after ** must be a mapping, not int | cause: None | context: NoneType
+TypeError: __main__.g() got multiple values for keyword argument 'a' | cause: None | context: NoneType
+TypeError: Value after * must be an iterable, not int | cause: None | context: NoneType
+TypeError: Value after ** must be a mapping, not int | cause: None | context: NoneType
+TypeError: __main__.C.m() got multiple values for keyword argument 'a' | cause: None | context: NoneType
+TypeError: Value after * must be an iterable, not int | cause: None | context: NoneType
+TypeError: Value after ** must be a mapping, not int | cause: None | context: NoneType
+TypeError: __main__.C.m() got multiple values for keyword argument 'a' | cause: None | context: NoneType
+TypeError: Value after * must be an iterable, not int | cause: None | context: NoneType
+TypeError: Value after ** must be a mapping, not int | cause: None | context: NoneType
+TypeError: <__main__.C object> got multiple values for keyword argument 'a' | cause: None | context: NoneType
+TypeError: Value after * must be an iterable, not int | cause: None | context: NoneType
+TypeError: Value after ** must be a mapping, not int | cause: None | context: NoneType
+TypeError: __main__.C() got multiple values for keyword argument 'a' | cause: None | context: NoneType
+TypeError: Value after * must be an iterable, not int | cause: None | context: NoneType
+TypeError: Value after ** must be a mapping, not int | cause: None | context: NoneType
+TypeError: len() got multiple values for keyword argument 'a' | cause: None | context: NoneType
+TypeError: Value after * must be an iterable, not int | cause: None | context: NoneType
+TypeError: Value after ** must be a mapping, not int | cause: None | context: NoneType
+TypeError: print() got multiple values for keyword argument 'a' | cause: None | context: NoneType
+TypeError: Value after * must be an iterable, not int | cause: None | context: NoneType
+TypeError: Value after ** must be a mapping, not int | cause: None | context: NoneType
+TypeError: dict() got multiple values for keyword argument 'a' | cause: None | context: NoneType
+TypeError: Value after * must be an iterable, not int | cause: None | context: NoneType
+TypeError: Value after ** must be a mapping, not int | cause: None | context: NoneType
+TypeError: functools.partial(<function g>) got multiple values for keyword argument 'a' | cause: None | context: NoneType
+TypeError: Value after * must be an iterable, not int | cause: None | context: NoneType
+TypeError: Value after ** must be a mapping, not int | cause: None | context: NoneType
+TypeError: __main__.<lambda>() got multiple values for keyword argument 'a' | cause: None | context: NoneType
+TypeError: Value after * must be an iterable, not int | cause: None | context: NoneType
+TypeError: Value after ** must be a mapping, not int | cause: None | context: NoneType
+TypeError: not callable got multiple values for keyword argument 'a' | cause: None | context: NoneType
+TypeError: Value after * must be an iterable, not int | cause: None | context: NoneType
+TypeError: Value after ** must be a mapping, not int | cause: None | context: NoneType
+TypeError: None got multiple values for keyword argument 'a' | cause: None | context: NoneType
+TypeError: Value after * must be an iterable, not int | cause: None | context: NoneType
+TypeError: Value after * must be an iterable, not NoneType | cause: None | context: NoneType
+TypeError: Value after * must be an iterable, not NoneType | cause: None | context: NoneType
+TypeError: Value after * must be an iterable, not NoneType | cause: None | context: NoneType
+TypeError: Value after * must be an iterable, not NoneType | cause: None | context: NoneType
+TypeError: 'NoneType' object is not iterable | cause: None | context: NoneType
+TypeError: Value after * must be an iterable, not int | cause: None | context: NoneType
+TypeError: Value after * must be an iterable, not int | cause: None | context: NoneType
+TypeError: Value after * must be an iterable, not int | cause: None | context: NoneType
+TypeError: Value after * must be an iterable, not int | cause: None | context: NoneType
+TypeError: 'int' object is not iterable | cause: None | context: NoneType
+TypeError: from iter | cause: None | context: NoneType
+TypeError: from iter | cause: None | context: NoneType
+TypeError: from iter | cause: None | context: NoneType
+TypeError: from iter | cause: None | context: NoneType
+TypeError: from iter | cause: None | context: NoneType
+ValueError: from next | cause: None | context: NoneType
+ValueError: from next | cause: None | context: NoneType
+ValueError: from next | cause: None | context: NoneType
+ValueError: from next | cause: None | context: NoneType
+ValueError: from next | cause: None | context: NoneType
+TypeError: Value after * must be an iterable, not NoKeys | cause: None | context: NoneType
+TypeError: Value after * must be an iterable, not NoKeys | cause: None | context: NoneType
+TypeError: Value after * must be an iterable, not NoKeys | cause: None | context: NoneType
+TypeError: Value after * must be an iterable, not NoKeys | cause: None | context: NoneType
+TypeError: 'NoKeys' object is not iterable | cause: None | context: NoneType
+-> ((1, 2, 3, 4), [('a', 5), ('b', 6), ('c', 7), ('d', 8)])
+[1, [2], 3, [4], 5, {'b': 6}, 7, {'d': 8}]

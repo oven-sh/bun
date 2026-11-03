@@ -1,0 +1,78 @@
+status: 0
+script: 816f840ac6f464d8
+---
+== SystemExit with a message 1
+err: bye
+== SystemExit in a chain 3
+== KeyboardInterrupt -2
+err: Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    raise KeyboardInterrupt
+KeyboardInterrupt
+== excepthook raises 1
+err: Error in sys.excepthook:
+Traceback (most recent call last):
+  File "<string>", line 2, in h
+    def h(*a): raise ValueError('in hook')
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: in hook
+
+Original exception was:
+Traceback (most recent call last):
+  File "<string>", line 4, in <module>
+    1 / 0
+    ~~^~~
+ZeroDivisionError: division by zero
+== excepthook is gone 1
+err: sys.excepthook is missing
+Traceback (most recent call last):
+  File "<string>", line 3, in <module>
+    1 / 0
+    ~~^~~
+ZeroDivisionError: division by zero
+== stderr is None 1
+== traceback cannot be imported 1
+err: Traceback (most recent call last):
+  File "<tmp>/no_traceback.py", line 7, in g
+    f()
+  File "<tmp>/no_traceback.py", line 4, in f
+    1 / 0
+ZeroDivisionError: division by zero
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "<tmp>/no_traceback.py", line 10, in <module>
+    g()
+  File "<tmp>/no_traceback.py", line 9, in g
+    raise ValueError('second') from e
+ValueError: second
+== tracebacklimit 1
+err: Traceback (most recent call last):
+  File "<string>", line 4, in f
+    1 / 0
+    ~~^~~
+ZeroDivisionError: division by zero
+== tracebacklimit 0 1
+err: ZeroDivisionError: division by zero
+== at exit 0
+err: Traceback (most recent call last):
+  File "<string>", line 5, in __init__
+    1 / 0
+ZeroDivisionError: division by zero
+== colours 1
+err: Traceback (most recent call last):
+  File "<tmp>/raises.py", line 4, in <module>
+    f(1,
+    ~^^^
+      2)
+      ^^
+  File "<tmp>/raises.py", line 3, in f
+    b / 0)
+    ~~^~~
+ZeroDivisionError: division by zero
+== colours: syntax 1
+err:   File "<tmp>/parser.py", line 2
+    y = (2 3)
+         ^^^
+SyntaxError: invalid syntax. Perhaps you forgot a comma?

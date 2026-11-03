@@ -1,0 +1,332 @@
+status: 0
+script: ef4191d76b5e8d70
+---
+gb2312 6f677a15 True True True True True True
+  read True
+  seek 40c2644c True []
+  lines cfd0c21d True
+  seek 5
+  changed 4100ee35
+  codecs.open TypeError: readline expected at most 1 argument, got 2 d46f9321 ec0e840b
+  iter True True
+  EncodedFile True
+  errors b'a?b' a��b
+gbk 0b6c982d True True True True True True
+  read True
+  seek 8af9827b True []
+  lines 21a87882 True
+  seek 5
+  changed c7d9197d
+  codecs.open TypeError: readline expected at most 1 argument, got 2 d46f9321 aaccdb4c
+  iter True True
+  EncodedFile True
+  errors b'a?b' a��b
+gb18030 ed1df516 True True True True True True
+  read True
+  seek 0b9a3c17 True []
+  lines 98bb6a48 True
+  seek 5
+  changed d9c60f40
+  codecs.open TypeError: readline expected at most 1 argument, got 2 d46f9321 26c3f298
+  iter True True
+  EncodedFile True
+  errors b'a?b' a��b
+hz 0023e29b True True True True True True
+  read True
+  seek 6bcdc76f True []
+  lines 5c2faf59 True
+  seek 5
+  changed 3f2c1c20
+  codecs.open TypeError: readline expected at most 1 argument, got 2 d46f9321 ec0e840b
+  iter True True
+  EncodedFile True
+  errors b'a?b' a��b
+big5hkscs bbfa75ff True True True True True True
+  read True
+  seek 0bed5ec1 True []
+  lines 200cdc95 True
+  seek 5
+  changed 2d2f12d6
+  codecs.open TypeError: readline expected at most 1 argument, got 2 d46f9321 1eef5b67
+  iter True True
+  EncodedFile True
+  errors b'a?b' a��b
+big5 3d7102a4 True True True True True True
+  read True
+  seek 7b54b192 True []
+  lines dda04eb4 True
+  seek 5
+  changed a2cd7fd7
+  codecs.open TypeError: readline expected at most 1 argument, got 2 d46f9321 b55c9711
+  iter True True
+  EncodedFile True
+  errors b'a?b' a��b
+cp950 5aa3f2d6 True True True True True True
+  read True
+  seek 5b4474f6 True []
+  lines b598375e True
+  seek 5
+  changed 2104fa6f
+  codecs.open TypeError: readline expected at most 1 argument, got 2 d46f9321 d236a084
+  iter True True
+  EncodedFile True
+  errors b'a?b' a��b
+euc_kr 5d70a587 True True True True True True
+  read True
+  seek 6e541cec True []
+  lines 16efc97e True
+  seek 5
+  changed e823fab3
+  codecs.open TypeError: readline expected at most 1 argument, got 2 d46f9321 a2a2937e
+  iter True True
+  EncodedFile True
+  errors b'a?b' a��b
+cp949 f414db0a True True True True True True
+  read True
+  seek 2934d995 True []
+  lines e33705a2 True
+  seek 5
+  changed ce3c6e1e
+  codecs.open TypeError: readline expected at most 1 argument, got 2 d46f9321 a2a2937e
+  iter True True
+  EncodedFile True
+  errors b'a?b' a��b
+johab fd042f66 True True True True True True
+  read True
+  seek 2934d995 True []
+  lines e33705a2 True
+  seek 5
+  changed 85b08cda
+  codecs.open TypeError: readline expected at most 1 argument, got 2 d46f9321 a2a2937e
+  iter True True
+  EncodedFile True
+  errors b'a?b' a��b
+shift_jis 77615cbe True True True True True True
+  read True
+  seek 693ae370 True []
+  lines d92066ad True
+  seek 5
+  changed c58c99ff
+  codecs.open TypeError: readline expected at most 1 argument, got 2 d46f9321 54bbfef3
+  iter True True
+  EncodedFile True
+  errors b'a?b' a��b
+cp932 e9e0292c True True True True True True
+  read True
+  seek 371f5e73 True []
+  lines 8b96a71c True
+  seek 5
+  changed d58bc045
+  codecs.open TypeError: readline expected at most 1 argument, got 2 d46f9321 4c2be14f
+  iter True True
+  EncodedFile True
+  errors b'a?b' ab
+euc_jp 00566d0a True True True True True True
+  read True
+  seek 8fd5e9b0 True []
+  lines e46ffb3c True
+  seek 5
+  changed 7a07feae
+  codecs.open TypeError: readline expected at most 1 argument, got 2 d46f9321 6dc65bb5
+  iter True True
+  EncodedFile True
+  errors b'a?b' a��b
+shift_jis_2004 519b17e9 True True True True True True
+  read True
+  seek 4db56603 True []
+  lines 656f3ea2 True
+  seek 5
+  changed 0acdf829
+  codecs.open TypeError: readline expected at most 1 argument, got 2 d46f9321 7e32f0ce
+  iter True True
+  EncodedFile True
+  errors b'a?b' a��b
+shift_jisx0213 7b3cb268 True True True True True True
+  read True
+  seek 32ee2c4e True []
+  lines 39bc742a True
+  seek 5
+  changed 1a64b6c2
+  codecs.open TypeError: readline expected at most 1 argument, got 2 d46f9321 8c2953e3
+  iter True True
+  EncodedFile True
+  errors b'a?b' a��b
+euc_jis_2004 98811bb7 True True True True True True
+  read True
+  seek a02cd5dc True []
+  lines 0a9b1f01 True
+  seek 5
+  changed 4f087dc0
+  codecs.open TypeError: readline expected at most 1 argument, got 2 d46f9321 041f591f
+  iter True True
+  EncodedFile True
+  errors b'a?b' a��b
+euc_jisx0213 1edeebdf True True True True True True
+  read True
+  seek b68236ad True []
+  lines 95522a77 True
+  seek 5
+  changed 0d277dcb
+  codecs.open TypeError: readline expected at most 1 argument, got 2 d46f9321 0b6b1f0d
+  iter True True
+  EncodedFile True
+  errors b'a?b' a��b
+iso2022_jp 959aa5e5 True True True True True True
+  read True
+  seek 43281b08 True []
+  lines 9d56150b True
+  seek 80101997767543786945118213
+  changed 3aab0c66
+  codecs.open TypeError: readline expected at most 1 argument, got 2 d46f9321 89bf6947
+  iter True True
+  EncodedFile True
+  errors b'a?b' a��b
+iso2022_jp_1 3ec69e56 True True True True True True
+  read True
+  seek 1588e45b True []
+  lines 44d4554c True
+  seek 80101997767543786945118213
+  changed f3507789
+  codecs.open TypeError: readline expected at most 1 argument, got 2 d46f9321 10b66594
+  iter True True
+  EncodedFile True
+  errors b'a?b' a��b
+iso2022_jp_2 ef1a240a True True True True True True
+  read True
+  seek fae422ef True []
+  lines 98c452dd True
+  seek 80101997767543786945118213
+  changed 997455fb
+  codecs.open TypeError: readline expected at most 1 argument, got 2 d46f9321 b85568b1
+  iter True True
+  EncodedFile True
+  errors b'a?b' a��b
+iso2022_jp_2004 cc1a41f3 True True True True True True
+  read True
+  seek 885be859 True []
+  lines 332278d1 True
+  seek 80101997767543786945118213
+  changed 30f4cdb3
+  codecs.open TypeError: readline expected at most 1 argument, got 2 d46f9321 37bb1a7f
+  iter True True
+  EncodedFile True
+  errors b'a?b' a��b
+iso2022_jp_3 125d5830 True True True True True True
+  read True
+  seek d8885f0b True []
+  lines 3dd991dd True
+  seek 80101997767543786945118213
+  changed 1497048f
+  codecs.open TypeError: readline expected at most 1 argument, got 2 d46f9321 dc1675f5
+  iter True True
+  EncodedFile True
+  errors b'a?b' a��b
+iso2022_jp_ext fc8a0127 True True True True True True
+  read True
+  seek 9ff5018c True []
+  lines 528691e5 True
+  seek 80101997767543786945118213
+  changed 5112cde3
+  codecs.open TypeError: readline expected at most 1 argument, got 2 d46f9321 2656e622
+  iter True True
+  EncodedFile True
+  errors b'a?b' a��b
+iso2022_kr 354cf6b5 True True True True True True
+  read True
+  seek 66630bba True ['OverflowError: signed integer is greater than maximum']
+  lines da508e3c True
+  seek 80101997767543786945118213
+  changed 26a12481
+  codecs.open TypeError: readline expected at most 1 argument, got 2 d46f9321 e07b1856
+  iter True True
+  EncodedFile True
+  errors b'a?b' a��b
+sjis shift_jis
+s_jis shift_jis
+shiftjis shift_jis
+csShiftJIS shift_jis
+ms932 cp932
+windows-31j cp932
+mskanji cp932
+ms-kanji cp932
+eucjp euc_jp
+ujis euc_jp
+u-jis euc_jp
+EUC-JP euc_jp
+euc_jis2004 euc_jis_2004
+jisx0213 euc_jis_2004
+eucjisx0213 euc_jisx0213
+sjis_2004 shift_jis_2004
+shiftjis2004 shift_jis_2004
+s_jisx0213 shift_jisx0213
+iso-2022-jp iso2022_jp
+csiso2022jp iso2022_jp
+iso2022jp iso2022_jp
+iso-2022-jp-1 iso2022_jp_1
+iso-2022-jp-2 iso2022_jp_2
+iso-2022-jp-2004 iso2022_jp_2004
+iso-2022-jp-3 iso2022_jp_3
+iso-2022-jp-ext iso2022_jp_ext
+iso-2022-kr iso2022_kr
+csiso2022kr iso2022_kr
+euckr euc_kr
+korean cp949
+ksc5601 cp949
+ks_c-5601 cp949
+ks_x-1001 cp949
+ksx1001 cp949
+uhc cp949
+949 cp949
+ms949 cp949
+cp1361 johab
+ms1361 johab
+chinese gb2312
+csiso58gb231280 gb2312
+euc-cn gb2312
+euccn gb2312
+eucgb2312-cn gb2312
+gb2312-1980 gb2312
+gb2312-80 gb2312
+iso-ir-58 gb2312
+936 gbk
+cp936 gbk
+ms936 gbk
+gb18030-2000 gb18030
+hzgb hz
+hz-gb hz
+hz-gb-2312 hz
+big5-tw big5
+csbig5 big5
+950 cp950
+ms950 cp950
+big5-hkscs big5hkscs
+hkscs big5hkscs
+SHIFT_JIS shift_jis
+Big5 big5
+GBK gbk
+cp-949 LookupError: unknown encoding: cp-949
+x-sjis LookupError: unknown encoding: x-sjis
+gb2312 True ['MultibyteIncrementalEncoder', 'MultibyteIncrementalDecoder'] ['MultibyteStreamReader', 'MultibyteStreamWriter'] builtin_function_or_method encode MultibyteCodec.encode
+gbk True ['MultibyteIncrementalEncoder', 'MultibyteIncrementalDecoder'] ['MultibyteStreamReader', 'MultibyteStreamWriter'] builtin_function_or_method encode MultibyteCodec.encode
+gb18030 True ['MultibyteIncrementalEncoder', 'MultibyteIncrementalDecoder'] ['MultibyteStreamReader', 'MultibyteStreamWriter'] builtin_function_or_method encode MultibyteCodec.encode
+hz True ['MultibyteIncrementalEncoder', 'MultibyteIncrementalDecoder'] ['MultibyteStreamReader', 'MultibyteStreamWriter'] builtin_function_or_method encode MultibyteCodec.encode
+big5hkscs True ['MultibyteIncrementalEncoder', 'MultibyteIncrementalDecoder'] ['MultibyteStreamReader', 'MultibyteStreamWriter'] builtin_function_or_method encode MultibyteCodec.encode
+big5 True ['MultibyteIncrementalEncoder', 'MultibyteIncrementalDecoder'] ['MultibyteStreamReader', 'MultibyteStreamWriter'] builtin_function_or_method encode MultibyteCodec.encode
+cp950 True ['MultibyteIncrementalEncoder', 'MultibyteIncrementalDecoder'] ['MultibyteStreamReader', 'MultibyteStreamWriter'] builtin_function_or_method encode MultibyteCodec.encode
+euc_kr True ['MultibyteIncrementalEncoder', 'MultibyteIncrementalDecoder'] ['MultibyteStreamReader', 'MultibyteStreamWriter'] builtin_function_or_method encode MultibyteCodec.encode
+cp949 True ['MultibyteIncrementalEncoder', 'MultibyteIncrementalDecoder'] ['MultibyteStreamReader', 'MultibyteStreamWriter'] builtin_function_or_method encode MultibyteCodec.encode
+johab True ['MultibyteIncrementalEncoder', 'MultibyteIncrementalDecoder'] ['MultibyteStreamReader', 'MultibyteStreamWriter'] builtin_function_or_method encode MultibyteCodec.encode
+shift_jis True ['MultibyteIncrementalEncoder', 'MultibyteIncrementalDecoder'] ['MultibyteStreamReader', 'MultibyteStreamWriter'] builtin_function_or_method encode MultibyteCodec.encode
+cp932 True ['MultibyteIncrementalEncoder', 'MultibyteIncrementalDecoder'] ['MultibyteStreamReader', 'MultibyteStreamWriter'] builtin_function_or_method encode MultibyteCodec.encode
+euc_jp True ['MultibyteIncrementalEncoder', 'MultibyteIncrementalDecoder'] ['MultibyteStreamReader', 'MultibyteStreamWriter'] builtin_function_or_method encode MultibyteCodec.encode
+shift_jis_2004 True ['MultibyteIncrementalEncoder', 'MultibyteIncrementalDecoder'] ['MultibyteStreamReader', 'MultibyteStreamWriter'] builtin_function_or_method encode MultibyteCodec.encode
+shift_jisx0213 True ['MultibyteIncrementalEncoder', 'MultibyteIncrementalDecoder'] ['MultibyteStreamReader', 'MultibyteStreamWriter'] builtin_function_or_method encode MultibyteCodec.encode
+euc_jis_2004 True ['MultibyteIncrementalEncoder', 'MultibyteIncrementalDecoder'] ['MultibyteStreamReader', 'MultibyteStreamWriter'] builtin_function_or_method encode MultibyteCodec.encode
+euc_jisx0213 True ['MultibyteIncrementalEncoder', 'MultibyteIncrementalDecoder'] ['MultibyteStreamReader', 'MultibyteStreamWriter'] builtin_function_or_method encode MultibyteCodec.encode
+iso2022_jp True ['MultibyteIncrementalEncoder', 'MultibyteIncrementalDecoder'] ['MultibyteStreamReader', 'MultibyteStreamWriter'] builtin_function_or_method encode MultibyteCodec.encode
+iso2022_jp_1 True ['MultibyteIncrementalEncoder', 'MultibyteIncrementalDecoder'] ['MultibyteStreamReader', 'MultibyteStreamWriter'] builtin_function_or_method encode MultibyteCodec.encode
+iso2022_jp_2 True ['MultibyteIncrementalEncoder', 'MultibyteIncrementalDecoder'] ['MultibyteStreamReader', 'MultibyteStreamWriter'] builtin_function_or_method encode MultibyteCodec.encode
+iso2022_jp_2004 True ['MultibyteIncrementalEncoder', 'MultibyteIncrementalDecoder'] ['MultibyteStreamReader', 'MultibyteStreamWriter'] builtin_function_or_method encode MultibyteCodec.encode
+iso2022_jp_3 True ['MultibyteIncrementalEncoder', 'MultibyteIncrementalDecoder'] ['MultibyteStreamReader', 'MultibyteStreamWriter'] builtin_function_or_method encode MultibyteCodec.encode
+iso2022_jp_ext True ['MultibyteIncrementalEncoder', 'MultibyteIncrementalDecoder'] ['MultibyteStreamReader', 'MultibyteStreamWriter'] builtin_function_or_method encode MultibyteCodec.encode
+iso2022_kr True ['MultibyteIncrementalEncoder', 'MultibyteIncrementalDecoder'] ['MultibyteStreamReader', 'MultibyteStreamWriter'] builtin_function_or_method encode MultibyteCodec.encode

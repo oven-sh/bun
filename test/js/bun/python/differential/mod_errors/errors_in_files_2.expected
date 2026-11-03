@@ -1,0 +1,33 @@
+status: 0
+script: c8fbbff44d462f21
+---
+== bom_parser.py 1
+out: SyntaxError invalid syntax (1, 3, 'x y\n', 1, 4) (0, 0, None)
+== bom2.py 1
+out: SyntaxError 'return' outside function (2, 1, 'return 1\n', 2, 9) None
+== long.py 1
+out: SyntaxError 'return' outside function (1, 1608, 'x = 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 +', 1, 1614) None
+== long_parser.py 1
+out: SyntaxError invalid syntax (1, 1000, 'x = 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 +', 1, 1000) (0, 0, None)
+== crlf.py 1
+out: SyntaxError 'return' outside function (2, 1, 'return 2\n', 2, 9) None
+== crlf_parser.py 1
+out: SyntaxError invalid syntax (2, 3, 'y z\n', 2, 4) (0, 0, None)
+== cr.py 1
+out: SyntaxError 'return' outside function (2, 1, 'return 2\n', 2, 9) None
+== noeol.py 1
+out: SyntaxError 'return' outside function (2, 1, 'return 2', 2, 9) None
+== noeol_parser.py 1
+out: SyntaxError invalid syntax (2, 3, 'y z', 2, 4) (0, 0, None)
+== tabs.py 1
+out: SyntaxError 'return' outside function (2, 3, '\t\treturn 2\n', 2, 11) None
+== formfeed.py 1
+out: SyntaxError 'return' outside function (1, 2, '\x0creturn 2\n', 1, 10) None
+== badutf8.py 1
+out: SyntaxError Non-UTF-8 code starting with '\xff' in file <tmp>/badutf8.py on line 2, but no encoding declared; see https://peps.python.org/pep-0263/ for details (2, 6, "y = '�'", 2, 6) (0, 0, None)
+== badutf8_comment.py 1
+out: SyntaxError Non-UTF-8 code starting with '\xff' in file <tmp>/badutf8_comment.py on line 3, but no encoding declared; see https://peps.python.org/pep-0263/ for details (3, 3, '# �', 3, 3) (0, 0, None)
+== badcoding.py 1
+out: SyntaxError unknown encoding: no-such-codec (0, -1, None) (0, 0, None)
+== badlatin.py 1
+out: SyntaxError 'ascii' codec can't decode byte 0xe9 in position 6: ordinal not in range(128) (0, -1, None) (0, 0, None)

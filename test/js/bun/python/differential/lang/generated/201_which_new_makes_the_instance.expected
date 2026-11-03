@@ -1,0 +1,41 @@
+status: 0
+script: 7f913e46248c7ad2
+source: 6817a7eddfcce65d
+---
+object.__new__(int) TypeError object.__new__(int) is not safe, use int.__new__()
+object.__new__(dict) TypeError object.__new__(dict) is not safe, use dict.__new__()
+int.__new__(str) TypeError int.__new__(str): str is not a subtype of int
+int.__new__(1) TypeError int.__new__(X): X is not a type object (int)
+int.__new__() TypeError int.__new__(): not enough arguments
+dict.__new__(OrderedDict) ok OrderedDict dict
+tuple.__new__(time.struct_time) TypeError tuple.__new__(time.struct_time) is not safe, use time.struct_time.__new__()
+object.__new__(A) TypeError object.__new__(A) is not safe, use A.__new__()
+dict.__new__(A) ok A dict
+B() ok B tzinfo
+B.__new__(B) TypeError datetime.tzinfo.__new__(B) is not safe, use B.__new__()
+tzinfo.__new__(B) TypeError datetime.tzinfo.__new__(B) is not safe, use B.__new__()
+dict.__new__(B) ok B tzinfo
+b => {1: 2}
+isinstance(b, datetime.tzinfo) => True
+B.__base__ => <class 'dict'>
+C() ok C tzinfo
+C(5) ok C tzinfo
+6
+D() ok D tzinfo
+(1, 2)
+E() ok E tzinfo
+P.__new__
+F() TypeError datetime.tzinfo.__new__(F) is not safe, use dict.__new__()
+G() ok G Generic
+ast TypeError multiple bases have instance lay-out conflict
+H() ok H AST
+object.__new__(H) TypeError object.__new__(H) is not safe, use H.__new__()
+object.__new__(ast.Name) TypeError object.__new__(Name) is not safe, use Name.__new__()
+ast.AST.__new__(ast.Name) ok Name expr
+object.__new__(tzinfo) TypeError object.__new__(datetime.tzinfo) is not safe, use datetime.tzinfo.__new__()
+I.__base__.__name__ => OSError
+i.errno => 2
+i.strerror => message
+i.args => (2, 'message')
+J() ok J dict
+K() ok K object

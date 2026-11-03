@@ -1,0 +1,11 @@
+status: 0
+script: 73a72157d96d12c8
+---
+end
+atexit 2
+finalize b
+finalize a
+atexit 1
+del 1
+del 2
+del 3

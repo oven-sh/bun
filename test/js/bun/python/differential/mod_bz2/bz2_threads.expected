@@ -1,0 +1,13 @@
+status: 0
+script: c93494fde4da4d81
+---
+[(0, (True, '690bcb717bf9')), (1, (True, '1c3aac8cc9df')), (2, (True, 'fffebd36ec73')), (3, (True, '4b909bd4a505')), (4, (True, 'b210e74ec669')), (5, (True, 'e919134cab64')), (6, (True, 'caec11d98079')), (7, (True, '7f186d2b2c07'))]
+True True
+[] True True
+True True {'End of stream already reached'} True False
+['Repeated call to flush()', 'Repeated call to flush()', 'Repeated call to flush()', 'True']
+['Repeated call to flush()', 'Repeated call to flush()', 'Repeated call to flush()', 'True']
+['Repeated call to flush()', 'Repeated call to flush()', 'Repeated call to flush()', 'True']
+['Repeated call to flush()', 'Repeated call to flush()', 'Repeated call to flush()', 'True']
+['Repeated call to flush()', 'Repeated call to flush()', 'Repeated call to flush()', 'True']
+True

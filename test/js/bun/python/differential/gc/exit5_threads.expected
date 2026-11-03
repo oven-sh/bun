@@ -1,0 +1,9 @@
+status: 0
+script: 471aecc1495a71a4
+---
+end
+threading atexit
+thread ends
+del local of a thread
+atexit
+del global

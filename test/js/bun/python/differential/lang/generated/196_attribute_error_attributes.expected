@@ -1,0 +1,91 @@
+status: 0
+script: 2b839ed41bfd5798
+source: 188d00c6d467d1a9
+---
+AttributeError | 'Plain' object has no attribute 'x' | name: 'x' | obj: Plain
+AttributeError | type object 'Plain' has no attribute 'x' | name: 'x' | obj: type
+AttributeError | custom message for x | name: 'x' | obj: WithGetattr
+AttributeError |  | name: 'x' | obj: WithGetattrBare
+AttributeError | named | name: 'other' | obj: int
+AttributeError | only name | name: 'other' | obj: None
+AttributeError | from getattribute | name: 'x' | obj: WithGetattribute
+AttributeError | inside the property | name: 'prop' | obj: WithProperty
+AttributeError | 'Plain' object has no attribute 'missing' | name: 'missing' | obj: Plain
+AttributeError | 'WithSlots' object has no attribute 'a' | name: 'a' | obj: WithSlots
+AttributeError | 'WithSlots' object has no attribute 'b' | name: 'b' | obj: WithSlots
+AttributeError | from the metaclass | name: 'x' | obj: Meta
+Sub | a subclass | name: 'x' | obj: RaisesSub
+AttributeError | 'Plain' object has no attribute 'x' | name: 'x' | obj: Plain
+AttributeError | custom message for x | name: 'x' | obj: WithGetattr
+AttributeError | 'int' object has no attribute 'x' | name: 'x' | obj: int
+AttributeError | 'str' object has no attribute 'x' | name: 'x' | obj: str
+AttributeError | 'NoneType' object has no attribute 'x' | name: 'x' | obj: None
+AttributeError | 'list' object has no attribute 'x' | name: 'x' | obj: list
+AttributeError | module 'sys' has no attribute 'nothing_here' | name: 'nothing_here' | obj: module
+AttributeError | module 'm' has no attribute 'x' | name: 'x' | obj: module
+AttributeError | 'builtin_function_or_method' object has no attribute 'x' | name: 'x' | obj: builtin_function_or_method
+AttributeError | 'function' object has no attribute 'x' | name: 'x' | obj: function
+AttributeError | 'super' object has no attribute 'x' | name: 'x' | obj: super
+AttributeError | 'object' object has no attribute 'x' | name: 'x' | obj: object
+AttributeError | type object 'type' has no attribute 'x' | name: 'x' | obj: type
+getattr(WithGetattr(), "x", "default") => default
+hasattr(WithGetattr(), "x") => False
+hasattr(WithProperty(), "prop") => False
+AttributeError | 'object' object has no attribute 'x' and no __dict__ for setting new attributes | name: 'x' | obj: object
+AttributeError | 'WithSlots' object has no attribute 'b' and no __dict__ for setting new attributes | name: 'b' | obj: WithSlots
+AttributeError | 'int' object has no attribute 'x' and no __dict__ for setting new attributes | name: 'x' | obj: int
+AttributeError | 'str' object attribute 'upper' is read-only | name: None | obj: None
+AttributeError | 'Plain' object has no attribute 'x' | name: 'x' | obj: Plain
+AttributeError | a | name: None | obj: None
+AttributeError | 'WithSlots' object has no attribute 'b' and no __dict__ for setting new attributes | name: 'b' | obj: WithSlots
+AttributeError | 'object' object has no attribute 'x' and no __dict__ for setting new attributes | name: 'x' | obj: object
+AttributeError | 'builtin_function_or_method' object has no attribute 'x' and no __dict__ for setting new attributes | name: 'x' | obj: builtin_function_or_method
+TypeError | cannot set 'x' attribute of immutable type 'int'
+TypeError | cannot set 'real' attribute of immutable type 'int'
+repr(e) [e=AttributeError] => AttributeError()
+e.args [e=AttributeError] => ()
+e.name [e=AttributeError] => None
+getattr(e, "obj", "-") [e=AttributeError] => None
+repr(e) [e=AttributeError] => AttributeError('m')
+e.args [e=AttributeError] => ('m',)
+e.name [e=AttributeError] => None
+getattr(e, "obj", "-") [e=AttributeError] => None
+repr(e) [e=AttributeError] => AttributeError('m')
+e.args [e=AttributeError] => ('m',)
+e.name [e=AttributeError] => n
+getattr(e, "obj", "-") [e=AttributeError] => None
+repr(e) [e=AttributeError] => AttributeError('m')
+e.args [e=AttributeError] => ('m',)
+e.name [e=AttributeError] => None
+getattr(e, "obj", "-") [e=AttributeError] => 1
+repr(e) [e=AttributeError] => AttributeError('m')
+e.args [e=AttributeError] => ('m',)
+e.name [e=AttributeError] => n
+getattr(e, "obj", "-") [e=AttributeError] => 1
+repr(e) [e=NameError] => NameError('m')
+e.args [e=NameError] => ('m',)
+e.name [e=NameError] => n
+getattr(e, "obj", "-") [e=NameError] => -
+repr(e) [e=NameError] => NameError()
+e.args [e=NameError] => ()
+e.name [e=NameError] => None
+getattr(e, "obj", "-") [e=NameError] => -
+TypeError: e [bad=function] => AttributeError() got an unexpected keyword argument 'other'
+TypeError: e [bad=function] => NameError() got an unexpected keyword argument 'obj'
+TypeError: e [bad=function] => AttributeError() takes at most 2 keyword arguments (3 given)
+repr(other) [other=AttributeError] => AttributeError('m')
+other.name [other=AttributeError] => n
+other.obj [other=AttributeError] => None
+repr(other) [other=AttributeError] => AttributeError('m')
+other.name [other=AttributeError] => n
+other.obj [other=AttributeError] => None
+e.name => 3
+e.obj => None
+None
+NameError | name 'undefined_name' is not defined | name: 'undefined_name' | obj: str
+UnboundLocalError | cannot access local variable 'v' where it is not associated with a value | name: None | obj: str
+NameError | cannot access free variable 'w' where it is not associated with a value in enclosing scope | name: 'w' | obj: str
+UnboundLocalError | cannot access local variable 'v' where it is not associated with a value | name: None | obj: str
+NameError | name 'undefined_in_eval' is not defined | name: 'undefined_in_eval' | obj: str
+UnboundLocalError | cannot access local variable 'never_defined_global' where it is not associated with a value | name: None | obj: str
+NameError name 'undefined_in_class' is not defined undefined_in_class

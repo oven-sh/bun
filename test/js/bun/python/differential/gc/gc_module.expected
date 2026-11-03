@@ -1,0 +1,47 @@
+status: 0
+script: c6f5dcb8d705cf89
+---
+list 1
+dict 1
+tuple 2
+class True
+instance 1
+function 2
+nothing 0
+acyclic 0
+[1, 3, 5] [1, 3, 5] [1, 3, 5, 7] [0, 0, 0, 1, 2, 3, 4] []
+start ['candidates', 'collected', 'duration', 'generation', 'uncollectable'] 2 0
+stop ['candidates', 'collected', 'duration', 'generation', 'uncollectable'] 2 1
+1
+True ['candidates', 'collected', 'collections', 'duration', 'uncollectable']
+1 True
+False
+True False
+[False, False, False, False, False, False, False, False, False, False, False, False]
+[True, True, True, True, True, True, False, False, True, True]
+(2000, 10, 10)
+(5, 6, 10)
+['Holder', 'dict', 'list', 'set', 'tuple'] True
+True True True True
+['Holder', 'type'] True True True
+True True True True True
+1 [('start', 0), 'del', ('stop', 1)]
+[('collect in del', 0)]
+DEBUG_STATS 1
+DEBUG_COLLECTABLE 2
+DEBUG_UNCOLLECTABLE 4
+DEBUG_SAVEALL 32
+DEBUG_LEAK 38
+ValueError invalid generation
+ValueError invalid generation
+TypeError 'str' object cannot be interpreted as an integer
+ValueError generation parameter must be less than the number of available generations (3)
+ValueError generation parameter cannot be negative
+TypeError argument should be integer or None, not 'str'
+TypeError gc.set_threshold requires 1 to 3 arguments
+TypeError gc.is_tracked() takes exactly one argument (0 given)
+TypeError 'str' object cannot be interpreted as an integer
+True
+False
+True
+list [] list [] 0

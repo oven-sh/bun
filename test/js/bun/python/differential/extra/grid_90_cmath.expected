@@ -1,0 +1,26 @@
+status: 0
+script: e263d5153cef9975
+---
+cmath acos 63 0d66f4935936
+cmath acosh 63 5def9783c23b
+cmath asin 63 a4a7eb29660c
+cmath asinh 63 17cdae3e7904
+cmath atan 63 b63d17aec8f9
+cmath atanh 63 88e23410b232
+cmath cos 63 6b41c70b7d99
+cmath cosh 63 67e5d3cf82cd
+cmath exp 63 2abbbfd4a996
+cmath isclose 497 1fa8c72f845f
+cmath isfinite 63 8d4b61cac4bc
+cmath isinf 63 e00296ff7e59
+cmath isnan 63 72e1b7b03e17
+cmath log 497 62d16a09d753
+cmath log10 63 9a16179c63ac
+cmath phase 63 19308a762ff5
+cmath polar 63 b0982ab8f126
+cmath rect 453 5f29b5b22f75
+cmath sin 63 bcaa370c3269
+cmath sinh 63 0606b0cc9a9f
+cmath sqrt 63 f353266bf579
+cmath tan 63 9d14b80fc8f0
+cmath tanh 63 394766a580a3

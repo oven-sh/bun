@@ -10,7 +10,7 @@ unsafe extern "C" {
 }
 
 pub(crate) fn is_python(argv0: &[u8]) -> bool {
-    is_name_of_python(argv0) || executed_path().is_some_and(is_name_of_python)
+    is_name_of_python(argv0) || executed_as_python().is_some()
 }
 
 fn is_name_of_python(path: &[u8]) -> bool {
@@ -20,29 +20,55 @@ fn is_name_of_python(path: &[u8]) -> bool {
     matches!(name, b"python" | b"python3" | b"python3.15")
 }
 
-/// What was given to `execve()`, links not followed. A parent may put anything in argv[0] (`subprocess.Popen(executable=)`).
-/// For a script that names Bun in its `#!` line that is the script, whose name says nothing.
+/// What was given to `execve()`, if that makes this Python: a parent may put anything in argv[0] (`subprocess.Popen(executable=)`).
+/// The path has the name of Python, or is a symbolic link, of whatever name, that leads here by way of one that has.
+/// For a script that names Bun in its `#!` line it is the script, whose name says nothing.
 #[cfg(any(target_os = "linux", target_os = "android"))]
-fn executed_path() -> Option<&'static [u8]> {
+fn executed_as_python() -> Option<&'static [u8]> {
+    static ANSWER: std::sync::OnceLock<Option<&'static [u8]>> = std::sync::OnceLock::new();
+    *ANSWER.get_or_init(find_executed_as_python)
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn find_executed_as_python() -> Option<&'static [u8]> {
+    use bun_core::ZBox;
+
     // SAFETY: `getauxval` only reads the vector the kernel gave the process, and the string lives as long as the process.
-    let path = unsafe {
+    let executed = unsafe {
         let path = libc::getauxval(libc::AT_EXECFN) as *const c_char;
         if path.is_null() {
             return None;
         }
-        core::ffi::CStr::from_ptr(path)
+        core::ffi::CStr::from_ptr(path).to_bytes()
     };
-    if !is_name_of_python(path.to_bytes()) {
-        return None;
+    let mut path = ZBox::from_bytes(executed);
+    for _ in 0..8 {
+        if is_name_of_python(path.as_bytes()) {
+            let named = bun_sys::stat(&path).ok()?;
+            let this = bun_sys::stat(bun_core::zstr!("/proc/self/exe")).ok()?;
+            return (named.st_dev == this.st_dev && named.st_ino == this.st_ino).then_some(executed);
+        }
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let length = bun_sys::readlink(&path, &mut buf).ok()?;
+        let target = &buf[..length];
+        path = if target.first() == Some(&b'/') || !path.as_bytes().contains(&b'/') {
+            ZBox::from_bytes(target)
+        } else {
+            ZBox::from_vec([bun_paths::dirname_simple(path.as_bytes()), b"/", target].concat())
+        };
     }
-    let executed = bun_sys::stat(bun_core::ZStr::from_cstr(path)).ok()?;
-    let this = bun_sys::stat(bun_core::zstr!("/proc/self/exe")).ok()?;
-    (executed.st_dev == this.st_dev && executed.st_ino == this.st_ino).then(|| path.to_bytes())
+    None
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
-fn executed_path() -> Option<&'static [u8]> {
+fn executed_as_python() -> Option<&'static [u8]> {
     None
+}
+
+/// `sys.executable` of `python3`, where the system tells. Empty: it does not, so argv[0] has to do.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__Python__executedPath() -> bun_core::String {
+    executed_as_python().map_or(bun_core::String::EMPTY, bun_core::String::clone_utf8)
 }
 
 /// Before there is a VM: some of the options decide how it starts.

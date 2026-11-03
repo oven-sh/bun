@@ -1,0 +1,15 @@
+status: 0
+script: 425fdd5e755f4685
+source: 5753a28e3af90dc1
+---
+inspect.getgeneratorstate(g) => GEN_CREATED
+inspect.getgeneratorlocals(g) => {'a': 1, 'b': 2, 'shared': 'from outer'}
+sorted(g.gi_frame.f_locals) => ['a', 'b', 'shared']
+next(g) => ('changed through the frame', 1)
+inspect.getgeneratorlocals(g) => {'a': 1, 'b': 2, 'local': 1, 'shared': 'changed through the frame'}
+{}
+inspect.getcoroutinestate(c) => CORO_CREATED
+inspect.getcoroutinelocals(c) => {'a': None, 'shared': 'changed through the frame'}
+gen(5).gi_frame.f_locals['shared'] => changed through the frame
+'unset_yet' in gen(5).gi_frame.f_locals => False
+gen.__code__.co_freevars => ('shared', 'unset_yet')

@@ -1,0 +1,24 @@
+status: 0
+script: f27307b9e0fc8461
+---
+itertools accumulate 110 92d96ed0469c
+itertools batched 106 87811b7d4cbe
+itertools chain 264 d6aa2f0fd9e4
+itertools chain.from_iterable 17 0c829e3974f0
+itertools combinations 104 ae4f94544b16
+itertools combinations_with_replacement 104 6fc2cf14c34c
+itertools compress 110 edeb1bfd89fa
+itertools count 110 91a6b58a4126
+itertools cycle 17 487ddd31696c
+itertools dropwhile 109 54ac2e28ff03
+itertools filterfalse 108 c79fc2e0d376
+itertools groupby 108 146902b220ac
+itertools islice 262 dc2e774bb069
+itertools pairwise 16 2aabc5d4330b
+itertools permutations 106 a65deff09784
+itertools product 260 754859aa7d2e
+itertools repeat 110 c96361957d51
+itertools starmap 110 0d8714f1af6b
+itertools takewhile 110 5357465dcc25
+itertools tee 104 50dd27915b31
+itertools zip_longest 264 2219bbb06d37

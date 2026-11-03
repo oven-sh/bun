@@ -1,0 +1,21 @@
+status: 0
+script: 18d9b475e564884b
+---
+StopIteration __cause__ 2 70802fad51dc
+StopIteration __context__ 2 a1e2a85de48c
+StopIteration __eq__ 126 f51abcb85b99
+StopIteration __format__ 126 90e13eee7250
+StopIteration __ge__ 126 cf0abc2e7549
+StopIteration __gt__ 126 5c8ca9fefe36
+StopIteration __init__ 1070 6aa0b999923a
+StopIteration __le__ 126 6637a237db1e
+StopIteration __lt__ 126 1645805f4bcf
+StopIteration __ne__ 126 920b99834465
+StopIteration __repr__ 38 41876b4deeb7
+StopIteration __setstate__ 126 268c79983aea
+StopIteration __str__ 38 828c41ad7807
+StopIteration __suppress_context__ 2 2da756bd9713
+StopIteration add_note 126 dc71e75f3e70
+StopIteration args 2 09f1a3feaa15
+StopIteration value 2 224a4a12f54f
+StopIteration with_traceback 126 b4ea2612a3c1

@@ -1,0 +1,18 @@
+status: 0
+script: ef30496c56f86386
+---
+getset_descriptor __delete__ 86 6efca9e60834
+getset_descriptor __eq__ 86 63260291c611
+getset_descriptor __format__ 86 d3d838aebcec
+getset_descriptor __ge__ 86 2c36adb02e0a
+getset_descriptor __get__ 365 be70b0e64ad2
+getset_descriptor __gt__ 86 b4f3fd7316d3
+getset_descriptor __init__ 642 429b632174aa
+getset_descriptor __le__ 86 1e42bc0b8ce6
+getset_descriptor __lt__ 86 577231dbcbab
+getset_descriptor __name__ 2 a55cb0263185
+getset_descriptor __ne__ 86 8ba85c5a8dc6
+getset_descriptor __qualname__ 2 ffd49c932eba
+getset_descriptor __repr__ 38 2575d3615fd8
+getset_descriptor __set__ 318 8fc01953e530
+getset_descriptor __str__ 38 cd401d84030d

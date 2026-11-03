@@ -1,0 +1,13 @@
+status: 0
+script: 7e68d572fc536998
+---
+os.read b'x'
+nothing to read b''
+not open for reading 9
+select True b'x'
+poll True b'x'
+poll with a long timeout True b'x'
+epoll True b'x'
+recv b'y'
+recv with a timeout b'y'
+waitpid True

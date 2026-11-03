@@ -1,0 +1,173 @@
+status: 0
+script: b77556c84fad7168
+source: 380de3b22c0a66a7
+---
+base.__name__ [base=int] => int
+base.__itemsize__ [base=int] => 4
+cls.__itemsize__ [base=int] => 4
+'__weakref__' in vars(cls) [base=int] => False
+'__dict__' in vars(cls) [base=int] => True
+cls.__weakrefoffset__ != 0 [base=int] => False
+cls.__dictoffset__ != 0 [base=int] => True
+weak [base=int] => cannot create weak reference to 'X' object
+base.__name__ [base=tuple] => tuple
+base.__itemsize__ [base=tuple] => 8
+cls.__itemsize__ [base=tuple] => 8
+'__weakref__' in vars(cls) [base=tuple] => False
+'__dict__' in vars(cls) [base=tuple] => True
+cls.__weakrefoffset__ != 0 [base=tuple] => False
+cls.__dictoffset__ != 0 [base=tuple] => True
+weak [base=tuple] => cannot create weak reference to 'X' object
+base.__name__ [base=bytes] => bytes
+base.__itemsize__ [base=bytes] => 1
+cls.__itemsize__ [base=bytes] => 1
+'__weakref__' in vars(cls) [base=bytes] => False
+'__dict__' in vars(cls) [base=bytes] => True
+cls.__weakrefoffset__ != 0 [base=bytes] => False
+cls.__dictoffset__ != 0 [base=bytes] => True
+weak [base=bytes] => cannot create weak reference to 'X' object
+base.__name__ [base=str] => str
+base.__itemsize__ [base=str] => 0
+cls.__itemsize__ [base=str] => 0
+'__weakref__' in vars(cls) [base=str] => True
+'__dict__' in vars(cls) [base=str] => True
+cls.__weakrefoffset__ != 0 [base=str] => True
+cls.__dictoffset__ != 0 [base=str] => True
+weak [base=str] => True
+base.__name__ [base=float] => float
+base.__itemsize__ [base=float] => 0
+cls.__itemsize__ [base=float] => 0
+'__weakref__' in vars(cls) [base=float] => True
+'__dict__' in vars(cls) [base=float] => True
+cls.__weakrefoffset__ != 0 [base=float] => True
+cls.__dictoffset__ != 0 [base=float] => True
+weak [base=float] => True
+base.__name__ [base=list] => list
+base.__itemsize__ [base=list] => 0
+cls.__itemsize__ [base=list] => 0
+'__weakref__' in vars(cls) [base=list] => True
+'__dict__' in vars(cls) [base=list] => True
+cls.__weakrefoffset__ != 0 [base=list] => True
+cls.__dictoffset__ != 0 [base=list] => True
+weak [base=list] => True
+base.__name__ [base=dict] => dict
+base.__itemsize__ [base=dict] => 0
+cls.__itemsize__ [base=dict] => 0
+'__weakref__' in vars(cls) [base=dict] => True
+'__dict__' in vars(cls) [base=dict] => True
+cls.__weakrefoffset__ != 0 [base=dict] => True
+cls.__dictoffset__ != 0 [base=dict] => True
+weak [base=dict] => True
+base.__name__ [base=type] => type
+base.__itemsize__ [base=type] => 40
+cls.__itemsize__ [base=type] => 40
+'__weakref__' in vars(cls) [base=type] => False
+'__dict__' in vars(cls) [base=type] => False
+cls.__weakrefoffset__ != 0 [base=type] => True
+cls.__dictoffset__ != 0 [base=type] => True
+weak [base=type] => True
+base.__name__ [base=object] => object
+base.__itemsize__ [base=object] => 0
+cls.__itemsize__ [base=object] => 0
+'__weakref__' in vars(cls) [base=object] => True
+'__dict__' in vars(cls) [base=object] => True
+cls.__weakrefoffset__ != 0 [base=object] => True
+cls.__dictoffset__ != 0 [base=object] => True
+weak [base=object] => True
+base.__name__ [base=frozenset] => frozenset
+base.__itemsize__ [base=frozenset] => 0
+cls.__itemsize__ [base=frozenset] => 0
+'__weakref__' in vars(cls) [base=frozenset] => False
+'__dict__' in vars(cls) [base=frozenset] => True
+cls.__weakrefoffset__ != 0 [base=frozenset] => True
+cls.__dictoffset__ != 0 [base=frozenset] => True
+weak [base=frozenset] => True
+base.__name__ [base=complex] => complex
+base.__itemsize__ [base=complex] => 0
+cls.__itemsize__ [base=complex] => 0
+'__weakref__' in vars(cls) [base=complex] => True
+'__dict__' in vars(cls) [base=complex] => True
+cls.__weakrefoffset__ != 0 [base=complex] => True
+cls.__dictoffset__ != 0 [base=complex] => True
+weak [base=complex] => True
+base.__name__ [base=bytearray] => bytearray
+base.__itemsize__ [base=bytearray] => 0
+cls.__itemsize__ [base=bytearray] => 0
+'__weakref__' in vars(cls) [base=bytearray] => True
+'__dict__' in vars(cls) [base=bytearray] => True
+cls.__weakrefoffset__ != 0 [base=bytearray] => True
+cls.__dictoffset__ != 0 [base=bytearray] => True
+weak [base=bytearray] => True
+int a TypeError arbitrary __slots__ not supported for subtype of 'int'
+int __weakref__ ok ['__weakref__']
+int __dict__ ok ['__dict__']
+int () ok []
+tuple a ok ['a']
+tuple __weakref__ ok ['__weakref__']
+tuple __dict__ ok ['__dict__']
+tuple () ok []
+bytes a TypeError arbitrary __slots__ not supported for subtype of 'bytes'
+bytes __weakref__ ok ['__weakref__']
+bytes __dict__ ok ['__dict__']
+bytes () ok []
+str a ok ['a']
+str __weakref__ ok ['__weakref__']
+str __dict__ ok ['__dict__']
+str () ok []
+float a ok ['a']
+float __weakref__ ok ['__weakref__']
+float __dict__ ok ['__dict__']
+float () ok []
+list a ok ['a']
+list __weakref__ ok ['__weakref__']
+list __dict__ ok ['__dict__']
+list () ok []
+object a ok ['a']
+object __weakref__ ok ['__weakref__']
+object __dict__ ok ['__dict__']
+object () ok []
+twice TypeError __dict__ slot disallowed: we already got one
+twice TypeError __weakref__ slot disallowed: we already got one
+has one TypeError __dict__ slot disallowed: we already got one
+has one TypeError __weakref__ slot disallowed: we already got one
+not an identifier TypeError __slots__ must be identifiers
+not a str TypeError __slots__ items must be strings, not 'int'
+conflict ValueError 'a' in __slots__ conflicts with class variable
+WithCell().f().__name__ => WithCell
+sorted(k for k in vars(WithCell) if 'cell' in k) => ['__classcell__']
+type(C.__dict__).__name__ => mappingproxy
+type(Meta.__dict__['__dict__']).__name__ if '__dict__' in vars(Meta) ... => None
+sorted(k for k in m.__dict__ if not k.startswith('__')) => ['x']
+'__dict__' in vars(Mod) => False
+module AttributeError readonly attribute
+class AttributeError attribute '__dict__' of 'type' objects is not writable
+plain ok {'b': 2}
+plain TypeError __dict__ must be set to a dictionary, not a 'int'
+plain TypeError __dict__ must be set to a dictionary, not a 'mappingproxy'
+del ok {}
+exception ok {'b': 2}
+exception TypeError cannot delete __dict__
+function ok {'b': 2}
+function TypeError cannot delete __dict__
+function TypeError __dict__ must be set to a dictionary, not a 'int'
+foreign AttributeError This object has no __dict__
+foreign ok {'b': 2}
+foreign ok {}
+foreign AttributeError This object has no __dict__
+descriptor.__name__ => __dict__
+descriptor.__objclass__.__name__ => object
+descriptor.__doc__ => dictionary for instance variables
+Plain.__dict__['__weakref__'].__doc__ => list of weak references to the object
+[('RuntimeWarning', 'non-string key in the __dict__ of class K')]
+["'__dict__'", "'__doc__'", "'__module__'"]
+[('RuntimeWarning', 'non-string key in the __dict__ of class K2')]
+class attribute ok ('found', ['attr'])
+class attribute ok found
+instance attribute ok ('in the instance', ['attr'])
+missing AttributeError 'Plain' object has no attribute 'other'
+set ok ([('Key', 'replaced')], ['attr'])
+del ok ({}, ['attr'])
+raises RuntimeError compared
+raises RuntimeError compared
+raises RuntimeError compared
+raises RuntimeError compared

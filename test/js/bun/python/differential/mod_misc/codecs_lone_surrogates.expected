@@ -1,0 +1,431 @@
+status: 0
+script: f623f566e619cc42
+---
+== utf-8
+UnicodeEncodeError "'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed" 0 1
+b'[\\udc80]'
+b'[\\udc80\\ud800]'
+b'[\\ud800]\\udc80'
+b'\\ud800'
+b'[\\udc80]'
+b'[\\udc80\\ud800]'
+b'[\\ud800]\\udc80'
+b'\\ud800'
+b'[&#56448;]'
+b'[&#56448;&#55296;]'
+b'[&#55296;]&#56448;'
+b'&#55296;'
+b'[]'
+b'[]'
+b'[]'
+b''
+b'[?]'
+b'[??]'
+b'[?]?'
+b'?'
+b'[\xed\xb2\x80]'
+b'[\xed\xb2\x80\xed\xa0\x80]'
+b'[\xed\xa0\x80]\xed\xb2\x80'
+b'\xed\xa0\x80'
+b'[\x80]'
+UnicodeEncodeError "'utf-8' codec can't encode character '\\ud800' in position 2: surrogates not allowed" 2 3
+UnicodeEncodeError "'utf-8' codec can't encode character '\\ud800' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed" 0 1
+UnicodeEncodeError "'utf-8' codec can't encode character '\\udc80' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-8' codec can't encode characters in position 1-2: surrogates not allowed" 1 3
+UnicodeEncodeError "'utf-8' codec can't encode character '\\ud800' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed" 0 1
+UnicodeDecodeError "'utf-8' codec can't decode byte 0xed in position 4: invalid continuation byte" 4 5
+True
+True
+'\U00010fffA'
+'\U00010fff\ufffd\ufffd\ufffdA'
+'\U00010fff\\xed\\xb2\\x80A'
+UnicodeDecodeError "'utf-8' codec can't decode byte 0xed in position 1: invalid continuation byte" 1 2
+True
+True
+'[]'
+'[\ufffd\ufffd\ufffd]'
+'[\\xed\\xb2\\x80]'
+UnicodeDecodeError "'utf-8' codec can't decode byte 0xed in position 1: invalid continuation byte" 1 2
+True
+True
+'A\U00010fff'
+'A\ufffd\ufffd\ufffd\U00010fff'
+'A\\xed\\xb2\\x80\U00010fff'
+== utf-8-sig
+UnicodeEncodeError "'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed" 0 1
+b'\xef\xbb\xbf[\\udc80]'
+b'\xef\xbb\xbf[\\udc80\\ud800]'
+b'\xef\xbb\xbf[\\ud800]\\udc80'
+b'\xef\xbb\xbf\\ud800'
+b'\xef\xbb\xbf[\\udc80]'
+b'\xef\xbb\xbf[\\udc80\\ud800]'
+b'\xef\xbb\xbf[\\ud800]\\udc80'
+b'\xef\xbb\xbf\\ud800'
+b'\xef\xbb\xbf[&#56448;]'
+b'\xef\xbb\xbf[&#56448;&#55296;]'
+b'\xef\xbb\xbf[&#55296;]&#56448;'
+b'\xef\xbb\xbf&#55296;'
+b'\xef\xbb\xbf[]'
+b'\xef\xbb\xbf[]'
+b'\xef\xbb\xbf[]'
+b'\xef\xbb\xbf'
+b'\xef\xbb\xbf[?]'
+b'\xef\xbb\xbf[??]'
+b'\xef\xbb\xbf[?]?'
+b'\xef\xbb\xbf?'
+b'\xef\xbb\xbf[\xed\xb2\x80]'
+b'\xef\xbb\xbf[\xed\xb2\x80\xed\xa0\x80]'
+b'\xef\xbb\xbf[\xed\xa0\x80]\xed\xb2\x80'
+b'\xef\xbb\xbf\xed\xa0\x80'
+b'\xef\xbb\xbf[\x80]'
+UnicodeEncodeError "'utf-8' codec can't encode character '\\ud800' in position 2: surrogates not allowed" 2 3
+UnicodeEncodeError "'utf-8' codec can't encode character '\\ud800' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed" 0 1
+UnicodeEncodeError "'utf-8' codec can't encode character '\\udc80' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-8' codec can't encode characters in position 1-2: surrogates not allowed" 1 3
+UnicodeEncodeError "'utf-8' codec can't encode character '\\ud800' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed" 0 1
+UnicodeDecodeError "'utf-8' codec can't decode byte 0xed in position 4: invalid continuation byte" 4 5
+True
+True
+'\U00010fffA'
+'\U00010fff\ufffd\ufffd\ufffdA'
+'\U00010fff\\xed\\xb2\\x80A'
+UnicodeDecodeError "'utf-8' codec can't decode byte 0xed in position 1: invalid continuation byte" 1 2
+True
+True
+'[]'
+'[\ufffd\ufffd\ufffd]'
+'[\\xed\\xb2\\x80]'
+UnicodeDecodeError "'utf-8' codec can't decode byte 0xed in position 1: invalid continuation byte" 1 2
+True
+True
+'A\U00010fff'
+'A\ufffd\ufffd\ufffd\U00010fff'
+'A\\xed\\xb2\\x80\U00010fff'
+== utf-16
+UnicodeEncodeError "'utf-16' codec can't encode character '\\ud800' in position 0: surrogates not allowed" 0 1
+b'\xff\xfe[\x00\\\x00u\x00d\x00c\x008\x000\x00]\x00'
+b'\xff\xfe[\x00\\\x00u\x00d\x00c\x008\x000\x00\\\x00u\x00d\x008\x000\x000\x00]\x00'
+b'\xff\xfe[\x00\\\x00u\x00d\x008\x000\x000\x00]\x00\\\x00u\x00d\x00c\x008\x000\x00'
+b'\xff\xfe\\\x00u\x00d\x008\x000\x000\x00'
+b'\xff\xfe[\x00\\\x00u\x00d\x00c\x008\x000\x00]\x00'
+b'\xff\xfe[\x00\\\x00u\x00d\x00c\x008\x000\x00\\\x00u\x00d\x008\x000\x000\x00]\x00'
+b'\xff\xfe[\x00\\\x00u\x00d\x008\x000\x000\x00]\x00\\\x00u\x00d\x00c\x008\x000\x00'
+b'\xff\xfe\\\x00u\x00d\x008\x000\x000\x00'
+b'\xff\xfe[\x00&\x00#\x005\x006\x004\x004\x008\x00;\x00]\x00'
+b'\xff\xfe[\x00&\x00#\x005\x006\x004\x004\x008\x00;\x00&\x00#\x005\x005\x002\x009\x006\x00;\x00]\x00'
+b'\xff\xfe[\x00&\x00#\x005\x005\x002\x009\x006\x00;\x00]\x00&\x00#\x005\x006\x004\x004\x008\x00;\x00'
+b'\xff\xfe&\x00#\x005\x005\x002\x009\x006\x00;\x00'
+b'\xff\xfe[\x00]\x00'
+b'\xff\xfe[\x00]\x00'
+b'\xff\xfe[\x00]\x00'
+b'\xff\xfe'
+b'\xff\xfe[\x00?\x00]\x00'
+b'\xff\xfe[\x00?\x00?\x00]\x00'
+b'\xff\xfe[\x00?\x00]\x00?\x00'
+b'\xff\xfe?\x00'
+b'\xff\xfe[\x00\x80\xdc]\x00'
+b'\xff\xfe[\x00\x80\xdc\x00\xd8]\x00'
+b'\xff\xfe[\x00\x00\xd8]\x00\x80\xdc'
+b'\xff\xfe\x00\xd8'
+UnicodeEncodeError "'utf-16' codec can't encode character '\\udc80' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-16' codec can't encode character '\\udc80' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-16' codec can't encode character '\\ud800' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-16' codec can't encode character '\\ud800' in position 0: surrogates not allowed" 0 1
+UnicodeEncodeError "'utf-16' codec can't encode character '\\udc80' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-16' codec can't encode character '\\udc80' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-16' codec can't encode character '\\ud800' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-16' codec can't encode character '\\ud800' in position 0: surrogates not allowed" 0 1
+UnicodeDecodeError "'utf-16-le' codec can't decode bytes in position 6-7: illegal encoding" 6 8
+True
+True
+'\U00010fffA'
+'\U00010fff\ufffdA'
+'\U00010fff\\x80\\xdcA'
+UnicodeDecodeError "'utf-16-le' codec can't decode bytes in position 4-5: illegal encoding" 4 6
+True
+True
+'[]'
+'[\ufffd]'
+'[\\x80\\xdc]'
+UnicodeDecodeError "'utf-16-le' codec can't decode bytes in position 4-5: illegal encoding" 4 6
+True
+True
+'A\U00010fff'
+'A\ufffd\U00010fff'
+'A\\x80\\xdc\U00010fff'
+== utf-16-le
+UnicodeEncodeError "'utf-16-le' codec can't encode character '\\ud800' in position 0: surrogates not allowed" 0 1
+b'[\x00\\\x00u\x00d\x00c\x008\x000\x00]\x00'
+b'[\x00\\\x00u\x00d\x00c\x008\x000\x00\\\x00u\x00d\x008\x000\x000\x00]\x00'
+b'[\x00\\\x00u\x00d\x008\x000\x000\x00]\x00\\\x00u\x00d\x00c\x008\x000\x00'
+b'\\\x00u\x00d\x008\x000\x000\x00'
+b'[\x00\\\x00u\x00d\x00c\x008\x000\x00]\x00'
+b'[\x00\\\x00u\x00d\x00c\x008\x000\x00\\\x00u\x00d\x008\x000\x000\x00]\x00'
+b'[\x00\\\x00u\x00d\x008\x000\x000\x00]\x00\\\x00u\x00d\x00c\x008\x000\x00'
+b'\\\x00u\x00d\x008\x000\x000\x00'
+b'[\x00&\x00#\x005\x006\x004\x004\x008\x00;\x00]\x00'
+b'[\x00&\x00#\x005\x006\x004\x004\x008\x00;\x00&\x00#\x005\x005\x002\x009\x006\x00;\x00]\x00'
+b'[\x00&\x00#\x005\x005\x002\x009\x006\x00;\x00]\x00&\x00#\x005\x006\x004\x004\x008\x00;\x00'
+b'&\x00#\x005\x005\x002\x009\x006\x00;\x00'
+b'[\x00]\x00'
+b'[\x00]\x00'
+b'[\x00]\x00'
+b''
+b'[\x00?\x00]\x00'
+b'[\x00?\x00?\x00]\x00'
+b'[\x00?\x00]\x00?\x00'
+b'?\x00'
+b'[\x00\x80\xdc]\x00'
+b'[\x00\x80\xdc\x00\xd8]\x00'
+b'[\x00\x00\xd8]\x00\x80\xdc'
+b'\x00\xd8'
+UnicodeEncodeError "'utf-16-le' codec can't encode character '\\udc80' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-16-le' codec can't encode character '\\udc80' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-16-le' codec can't encode character '\\ud800' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-16-le' codec can't encode character '\\ud800' in position 0: surrogates not allowed" 0 1
+UnicodeEncodeError "'utf-16-le' codec can't encode character '\\udc80' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-16-le' codec can't encode character '\\udc80' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-16-le' codec can't encode character '\\ud800' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-16-le' codec can't encode character '\\ud800' in position 0: surrogates not allowed" 0 1
+UnicodeDecodeError "'utf-16-le' codec can't decode bytes in position 4-5: illegal encoding" 4 6
+True
+True
+'\U00010fffA'
+'\U00010fff\ufffdA'
+'\U00010fff\\x80\\xdcA'
+UnicodeDecodeError "'utf-16-le' codec can't decode bytes in position 2-3: illegal encoding" 2 4
+True
+True
+'[]'
+'[\ufffd]'
+'[\\x80\\xdc]'
+UnicodeDecodeError "'utf-16-le' codec can't decode bytes in position 2-3: illegal encoding" 2 4
+True
+True
+'A\U00010fff'
+'A\ufffd\U00010fff'
+'A\\x80\\xdc\U00010fff'
+== utf-16-be
+UnicodeEncodeError "'utf-16-be' codec can't encode character '\\ud800' in position 0: surrogates not allowed" 0 1
+b'\x00[\x00\\\x00u\x00d\x00c\x008\x000\x00]'
+b'\x00[\x00\\\x00u\x00d\x00c\x008\x000\x00\\\x00u\x00d\x008\x000\x000\x00]'
+b'\x00[\x00\\\x00u\x00d\x008\x000\x000\x00]\x00\\\x00u\x00d\x00c\x008\x000'
+b'\x00\\\x00u\x00d\x008\x000\x000'
+b'\x00[\x00\\\x00u\x00d\x00c\x008\x000\x00]'
+b'\x00[\x00\\\x00u\x00d\x00c\x008\x000\x00\\\x00u\x00d\x008\x000\x000\x00]'
+b'\x00[\x00\\\x00u\x00d\x008\x000\x000\x00]\x00\\\x00u\x00d\x00c\x008\x000'
+b'\x00\\\x00u\x00d\x008\x000\x000'
+b'\x00[\x00&\x00#\x005\x006\x004\x004\x008\x00;\x00]'
+b'\x00[\x00&\x00#\x005\x006\x004\x004\x008\x00;\x00&\x00#\x005\x005\x002\x009\x006\x00;\x00]'
+b'\x00[\x00&\x00#\x005\x005\x002\x009\x006\x00;\x00]\x00&\x00#\x005\x006\x004\x004\x008\x00;'
+b'\x00&\x00#\x005\x005\x002\x009\x006\x00;'
+b'\x00[\x00]'
+b'\x00[\x00]'
+b'\x00[\x00]'
+b''
+b'\x00[\x00?\x00]'
+b'\x00[\x00?\x00?\x00]'
+b'\x00[\x00?\x00]\x00?'
+b'\x00?'
+b'\x00[\xdc\x80\x00]'
+b'\x00[\xdc\x80\xd8\x00\x00]'
+b'\x00[\xd8\x00\x00]\xdc\x80'
+b'\xd8\x00'
+UnicodeEncodeError "'utf-16-be' codec can't encode character '\\udc80' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-16-be' codec can't encode character '\\udc80' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-16-be' codec can't encode character '\\ud800' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-16-be' codec can't encode character '\\ud800' in position 0: surrogates not allowed" 0 1
+UnicodeEncodeError "'utf-16-be' codec can't encode character '\\udc80' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-16-be' codec can't encode character '\\udc80' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-16-be' codec can't encode character '\\ud800' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-16-be' codec can't encode character '\\ud800' in position 0: surrogates not allowed" 0 1
+UnicodeDecodeError "'utf-16-be' codec can't decode bytes in position 4-5: illegal encoding" 4 6
+True
+True
+'\U00010fffA'
+'\U00010fff\ufffdA'
+'\U00010fff\\xdc\\x80A'
+UnicodeDecodeError "'utf-16-be' codec can't decode bytes in position 2-3: illegal encoding" 2 4
+True
+True
+'[]'
+'[\ufffd]'
+'[\\xdc\\x80]'
+UnicodeDecodeError "'utf-16-be' codec can't decode bytes in position 2-3: illegal encoding" 2 4
+True
+True
+'A\U00010fff'
+'A\ufffd\U00010fff'
+'A\\xdc\\x80\U00010fff'
+== utf-32
+UnicodeEncodeError "'utf-32' codec can't encode character '\\ud800' in position 0: surrogates not allowed" 0 1
+b'\xff\xfe\x00\x00[\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x00c\x00\x00\x008\x00\x00\x000\x00\x00\x00]\x00\x00\x00'
+b'\xff\xfe\x00\x00[\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x00c\x00\x00\x008\x00\x00\x000\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x008\x00\x00\x000\x00\x00\x000\x00\x00\x00]\x00\x00\x00'
+b'\xff\xfe\x00\x00[\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x008\x00\x00\x000\x00\x00\x000\x00\x00\x00]\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x00c\x00\x00\x008\x00\x00\x000\x00\x00\x00'
+b'\xff\xfe\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x008\x00\x00\x000\x00\x00\x000\x00\x00\x00'
+b'\xff\xfe\x00\x00[\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x00c\x00\x00\x008\x00\x00\x000\x00\x00\x00]\x00\x00\x00'
+b'\xff\xfe\x00\x00[\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x00c\x00\x00\x008\x00\x00\x000\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x008\x00\x00\x000\x00\x00\x000\x00\x00\x00]\x00\x00\x00'
+b'\xff\xfe\x00\x00[\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x008\x00\x00\x000\x00\x00\x000\x00\x00\x00]\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x00c\x00\x00\x008\x00\x00\x000\x00\x00\x00'
+b'\xff\xfe\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x008\x00\x00\x000\x00\x00\x000\x00\x00\x00'
+b'\xff\xfe\x00\x00[\x00\x00\x00&\x00\x00\x00#\x00\x00\x005\x00\x00\x006\x00\x00\x004\x00\x00\x004\x00\x00\x008\x00\x00\x00;\x00\x00\x00]\x00\x00\x00'
+b'\xff\xfe\x00\x00[\x00\x00\x00&\x00\x00\x00#\x00\x00\x005\x00\x00\x006\x00\x00\x004\x00\x00\x004\x00\x00\x008\x00\x00\x00;\x00\x00\x00&\x00\x00\x00#\x00\x00\x005\x00\x00\x005\x00\x00\x002\x00\x00\x009\x00\x00\x006\x00\x00\x00;\x00\x00\x00]\x00\x00\x00'
+b'\xff\xfe\x00\x00[\x00\x00\x00&\x00\x00\x00#\x00\x00\x005\x00\x00\x005\x00\x00\x002\x00\x00\x009\x00\x00\x006\x00\x00\x00;\x00\x00\x00]\x00\x00\x00&\x00\x00\x00#\x00\x00\x005\x00\x00\x006\x00\x00\x004\x00\x00\x004\x00\x00\x008\x00\x00\x00;\x00\x00\x00'
+b'\xff\xfe\x00\x00&\x00\x00\x00#\x00\x00\x005\x00\x00\x005\x00\x00\x002\x00\x00\x009\x00\x00\x006\x00\x00\x00;\x00\x00\x00'
+b'\xff\xfe\x00\x00[\x00\x00\x00]\x00\x00\x00'
+b'\xff\xfe\x00\x00[\x00\x00\x00]\x00\x00\x00'
+b'\xff\xfe\x00\x00[\x00\x00\x00]\x00\x00\x00'
+b'\xff\xfe\x00\x00'
+b'\xff\xfe\x00\x00[\x00\x00\x00?\x00\x00\x00]\x00\x00\x00'
+b'\xff\xfe\x00\x00[\x00\x00\x00?\x00\x00\x00?\x00\x00\x00]\x00\x00\x00'
+b'\xff\xfe\x00\x00[\x00\x00\x00?\x00\x00\x00]\x00\x00\x00?\x00\x00\x00'
+b'\xff\xfe\x00\x00?\x00\x00\x00'
+b'\xff\xfe\x00\x00[\x00\x00\x00\x80\xdc\x00\x00]\x00\x00\x00'
+b'\xff\xfe\x00\x00[\x00\x00\x00\x80\xdc\x00\x00\x00\xd8\x00\x00]\x00\x00\x00'
+b'\xff\xfe\x00\x00[\x00\x00\x00\x00\xd8\x00\x00]\x00\x00\x00\x80\xdc\x00\x00'
+b'\xff\xfe\x00\x00\x00\xd8\x00\x00'
+UnicodeEncodeError "'utf-32' codec can't encode character '\\udc80' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-32' codec can't encode character '\\udc80' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-32' codec can't encode character '\\ud800' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-32' codec can't encode character '\\ud800' in position 0: surrogates not allowed" 0 1
+UnicodeEncodeError "'utf-32' codec can't encode character '\\udc80' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-32' codec can't encode character '\\udc80' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-32' codec can't encode character '\\ud800' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-32' codec can't encode character '\\ud800' in position 0: surrogates not allowed" 0 1
+UnicodeDecodeError "'utf-32-le' codec can't decode bytes in position 8-11: code point in surrogate code point range(0xd800, 0xe000)" 8 12
+True
+True
+'\U00010fffA'
+'\U00010fff\ufffdA'
+'\U00010fff\\x80\\xdc\\x00\\x00A'
+UnicodeDecodeError "'utf-32-le' codec can't decode bytes in position 8-11: code point in surrogate code point range(0xd800, 0xe000)" 8 12
+True
+True
+'[]'
+'[\ufffd]'
+'[\\x80\\xdc\\x00\\x00]'
+UnicodeDecodeError "'utf-32-le' codec can't decode bytes in position 8-11: code point in surrogate code point range(0xd800, 0xe000)" 8 12
+True
+True
+'A\U00010fff'
+'A\ufffd\U00010fff'
+'A\\x80\\xdc\\x00\\x00\U00010fff'
+== utf-32-le
+UnicodeEncodeError "'utf-32-le' codec can't encode character '\\ud800' in position 0: surrogates not allowed" 0 1
+b'[\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x00c\x00\x00\x008\x00\x00\x000\x00\x00\x00]\x00\x00\x00'
+b'[\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x00c\x00\x00\x008\x00\x00\x000\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x008\x00\x00\x000\x00\x00\x000\x00\x00\x00]\x00\x00\x00'
+b'[\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x008\x00\x00\x000\x00\x00\x000\x00\x00\x00]\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x00c\x00\x00\x008\x00\x00\x000\x00\x00\x00'
+b'\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x008\x00\x00\x000\x00\x00\x000\x00\x00\x00'
+b'[\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x00c\x00\x00\x008\x00\x00\x000\x00\x00\x00]\x00\x00\x00'
+b'[\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x00c\x00\x00\x008\x00\x00\x000\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x008\x00\x00\x000\x00\x00\x000\x00\x00\x00]\x00\x00\x00'
+b'[\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x008\x00\x00\x000\x00\x00\x000\x00\x00\x00]\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x00c\x00\x00\x008\x00\x00\x000\x00\x00\x00'
+b'\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x008\x00\x00\x000\x00\x00\x000\x00\x00\x00'
+b'[\x00\x00\x00&\x00\x00\x00#\x00\x00\x005\x00\x00\x006\x00\x00\x004\x00\x00\x004\x00\x00\x008\x00\x00\x00;\x00\x00\x00]\x00\x00\x00'
+b'[\x00\x00\x00&\x00\x00\x00#\x00\x00\x005\x00\x00\x006\x00\x00\x004\x00\x00\x004\x00\x00\x008\x00\x00\x00;\x00\x00\x00&\x00\x00\x00#\x00\x00\x005\x00\x00\x005\x00\x00\x002\x00\x00\x009\x00\x00\x006\x00\x00\x00;\x00\x00\x00]\x00\x00\x00'
+b'[\x00\x00\x00&\x00\x00\x00#\x00\x00\x005\x00\x00\x005\x00\x00\x002\x00\x00\x009\x00\x00\x006\x00\x00\x00;\x00\x00\x00]\x00\x00\x00&\x00\x00\x00#\x00\x00\x005\x00\x00\x006\x00\x00\x004\x00\x00\x004\x00\x00\x008\x00\x00\x00;\x00\x00\x00'
+b'&\x00\x00\x00#\x00\x00\x005\x00\x00\x005\x00\x00\x002\x00\x00\x009\x00\x00\x006\x00\x00\x00;\x00\x00\x00'
+b'[\x00\x00\x00]\x00\x00\x00'
+b'[\x00\x00\x00]\x00\x00\x00'
+b'[\x00\x00\x00]\x00\x00\x00'
+b''
+b'[\x00\x00\x00?\x00\x00\x00]\x00\x00\x00'
+b'[\x00\x00\x00?\x00\x00\x00?\x00\x00\x00]\x00\x00\x00'
+b'[\x00\x00\x00?\x00\x00\x00]\x00\x00\x00?\x00\x00\x00'
+b'?\x00\x00\x00'
+b'[\x00\x00\x00\x80\xdc\x00\x00]\x00\x00\x00'
+b'[\x00\x00\x00\x80\xdc\x00\x00\x00\xd8\x00\x00]\x00\x00\x00'
+b'[\x00\x00\x00\x00\xd8\x00\x00]\x00\x00\x00\x80\xdc\x00\x00'
+b'\x00\xd8\x00\x00'
+UnicodeEncodeError "'utf-32-le' codec can't encode character '\\udc80' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-32-le' codec can't encode character '\\udc80' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-32-le' codec can't encode character '\\ud800' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-32-le' codec can't encode character '\\ud800' in position 0: surrogates not allowed" 0 1
+UnicodeEncodeError "'utf-32-le' codec can't encode character '\\udc80' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-32-le' codec can't encode character '\\udc80' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-32-le' codec can't encode character '\\ud800' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-32-le' codec can't encode character '\\ud800' in position 0: surrogates not allowed" 0 1
+UnicodeDecodeError "'utf-32-le' codec can't decode bytes in position 4-7: code point in surrogate code point range(0xd800, 0xe000)" 4 8
+True
+True
+'\U00010fffA'
+'\U00010fff\ufffdA'
+'\U00010fff\\x80\\xdc\\x00\\x00A'
+UnicodeDecodeError "'utf-32-le' codec can't decode bytes in position 4-7: code point in surrogate code point range(0xd800, 0xe000)" 4 8
+True
+True
+'[]'
+'[\ufffd]'
+'[\\x80\\xdc\\x00\\x00]'
+UnicodeDecodeError "'utf-32-le' codec can't decode bytes in position 4-7: code point in surrogate code point range(0xd800, 0xe000)" 4 8
+True
+True
+'A\U00010fff'
+'A\ufffd\U00010fff'
+'A\\x80\\xdc\\x00\\x00\U00010fff'
+== utf-32-be
+UnicodeEncodeError "'utf-32-be' codec can't encode character '\\ud800' in position 0: surrogates not allowed" 0 1
+b'\x00\x00\x00[\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x00c\x00\x00\x008\x00\x00\x000\x00\x00\x00]'
+b'\x00\x00\x00[\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x00c\x00\x00\x008\x00\x00\x000\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x008\x00\x00\x000\x00\x00\x000\x00\x00\x00]'
+b'\x00\x00\x00[\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x008\x00\x00\x000\x00\x00\x000\x00\x00\x00]\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x00c\x00\x00\x008\x00\x00\x000'
+b'\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x008\x00\x00\x000\x00\x00\x000'
+b'\x00\x00\x00[\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x00c\x00\x00\x008\x00\x00\x000\x00\x00\x00]'
+b'\x00\x00\x00[\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x00c\x00\x00\x008\x00\x00\x000\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x008\x00\x00\x000\x00\x00\x000\x00\x00\x00]'
+b'\x00\x00\x00[\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x008\x00\x00\x000\x00\x00\x000\x00\x00\x00]\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x00c\x00\x00\x008\x00\x00\x000'
+b'\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x008\x00\x00\x000\x00\x00\x000'
+b'\x00\x00\x00[\x00\x00\x00&\x00\x00\x00#\x00\x00\x005\x00\x00\x006\x00\x00\x004\x00\x00\x004\x00\x00\x008\x00\x00\x00;\x00\x00\x00]'
+b'\x00\x00\x00[\x00\x00\x00&\x00\x00\x00#\x00\x00\x005\x00\x00\x006\x00\x00\x004\x00\x00\x004\x00\x00\x008\x00\x00\x00;\x00\x00\x00&\x00\x00\x00#\x00\x00\x005\x00\x00\x005\x00\x00\x002\x00\x00\x009\x00\x00\x006\x00\x00\x00;\x00\x00\x00]'
+b'\x00\x00\x00[\x00\x00\x00&\x00\x00\x00#\x00\x00\x005\x00\x00\x005\x00\x00\x002\x00\x00\x009\x00\x00\x006\x00\x00\x00;\x00\x00\x00]\x00\x00\x00&\x00\x00\x00#\x00\x00\x005\x00\x00\x006\x00\x00\x004\x00\x00\x004\x00\x00\x008\x00\x00\x00;'
+b'\x00\x00\x00&\x00\x00\x00#\x00\x00\x005\x00\x00\x005\x00\x00\x002\x00\x00\x009\x00\x00\x006\x00\x00\x00;'
+b'\x00\x00\x00[\x00\x00\x00]'
+b'\x00\x00\x00[\x00\x00\x00]'
+b'\x00\x00\x00[\x00\x00\x00]'
+b''
+b'\x00\x00\x00[\x00\x00\x00?\x00\x00\x00]'
+b'\x00\x00\x00[\x00\x00\x00?\x00\x00\x00?\x00\x00\x00]'
+b'\x00\x00\x00[\x00\x00\x00?\x00\x00\x00]\x00\x00\x00?'
+b'\x00\x00\x00?'
+b'\x00\x00\x00[\x00\x00\xdc\x80\x00\x00\x00]'
+b'\x00\x00\x00[\x00\x00\xdc\x80\x00\x00\xd8\x00\x00\x00\x00]'
+b'\x00\x00\x00[\x00\x00\xd8\x00\x00\x00\x00]\x00\x00\xdc\x80'
+b'\x00\x00\xd8\x00'
+UnicodeEncodeError "'utf-32-be' codec can't encode character '\\udc80' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-32-be' codec can't encode character '\\udc80' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-32-be' codec can't encode character '\\ud800' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-32-be' codec can't encode character '\\ud800' in position 0: surrogates not allowed" 0 1
+UnicodeEncodeError "'utf-32-be' codec can't encode character '\\udc80' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-32-be' codec can't encode character '\\udc80' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-32-be' codec can't encode character '\\ud800' in position 1: surrogates not allowed" 1 2
+UnicodeEncodeError "'utf-32-be' codec can't encode character '\\ud800' in position 0: surrogates not allowed" 0 1
+UnicodeDecodeError "'utf-32-be' codec can't decode bytes in position 4-7: code point in surrogate code point range(0xd800, 0xe000)" 4 8
+True
+True
+'\U00010fffA'
+'\U00010fff\ufffdA'
+'\U00010fff\\x00\\x00\\xdc\\x80A'
+UnicodeDecodeError "'utf-32-be' codec can't decode bytes in position 4-7: code point in surrogate code point range(0xd800, 0xe000)" 4 8
+True
+True
+'[]'
+'[\ufffd]'
+'[\\x00\\x00\\xdc\\x80]'
+UnicodeDecodeError "'utf-32-be' codec can't decode bytes in position 4-7: code point in surrogate code point range(0xd800, 0xe000)" 4 8
+True
+True
+'A\U00010fff'
+'A\ufffd\U00010fff'
+'A\\x00\\x00\\xdc\\x80\U00010fff'
+b'abc\xed\xa0\x80def'
+b'\xf0\x90\xbf\xbf\xed\xa0\x80'
+'abc\ud800def'
+'\U00010fff\ud800'
+UnicodeDecodeError "'utf-8' codec can't decode byte 0xed in position 3: invalid continuation byte" 3 4
+UnicodeDecodeError "'utf-8' codec can't decode byte 0xed in position 3: invalid continuation byte" 3 4
+b'\xef\xbb\xbfabc\xed\xa0\x80def'
+b'\xef\xbb\xbf\xf0\x90\xbf\xbf\xed\xa0\x80'
+'abc\ud800def'
+'\U00010fff\ud800'
+UnicodeDecodeError "'utf-8' codec can't decode byte 0xed in position 3: invalid continuation byte" 3 4
+UnicodeDecodeError "'utf-8' codec can't decode byte 0xed in position 3: invalid continuation byte" 3 4

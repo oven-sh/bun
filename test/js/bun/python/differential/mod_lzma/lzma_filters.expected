@@ -1,0 +1,1043 @@
+status: 0
+script: 04ebf819e57f7328
+---
+TypeError: Filter specifier must be a dict or dict-like object
+TypeError: Filter specifier must be a dict or dict-like object
+TypeError: Filter specifier must be a dict or dict-like object
+TypeError: Filter specifier must be a dict or dict-like object
+TypeError: Filter specifier must be a dict or dict-like object
+TypeError: Filter specifier must be a dict or dict-like object
+TypeError: string indices must be integers, not 'str'
+TypeError: byte indices must be integers or slices, not str
+TypeError: list indices must be integers or slices, not str
+TypeError: tuple indices must be integers or slices, not str
+TypeError: list indices must be integers or slices, not str
+TypeError: range indices must be integers or slices, not str
+TypeError: Filter specifier must be a dict or dict-like object
+TypeError: memoryview: invalid slice key
+ValueError: Filter specifier must have an "id" entry
+ValueError: Filter specifier must have an "id" entry
+ValueError: Filter specifier must have an "id" entry
+TypeError: 'NoneType' object cannot be interpreted as an integer
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+ValueError: Cannot convert negative int
+ValueError: Cannot convert negative int
+OverflowError: Python int too large for C lzma_vli
+ValueError: Invalid filter ID: 18446744073709551615
+ValueError: Invalid filter ID: 9223372036854775808
+ValueError: Invalid filter ID: 0
+ValueError: Invalid filter ID: 1
+ValueError: Invalid filter ID: 2
+ValueError: Invalid filter ID: 10
+ValueError: Invalid filter ID: 12
+ValueError: Invalid filter ID: 32
+ValueError: Invalid filter ID: 34
+ValueError: Invalid filter ID: 1
+ValueError: Invalid filter ID: 4611686018427387906
+ValueError: Invalid filter ID: 4611686018427387904
+TypeError: _lzma._encode_filter_properties() takes exactly one argument (0 given)
+TypeError: _lzma._encode_filter_properties() takes exactly one argument (2 given)
+TypeError: _lzma._encode_filter_properties() takes no keyword arguments
+b']\x00\x00\x80\x00'
+0 b']\x00\x00\x04\x00' 1 b']\x00\x00\x10\x00' 2 b']\x00\x00 \x00' 3 b']\x00\x00@\x00' 4 b']\x00\x00@\x00' 5 b']\x00\x00\x80\x00' 6 b']\x00\x00\x80\x00' 7 b']\x00\x00\x00\x01' 8 b']\x00\x00\x00\x02' 9 b']\x00\x00\x00\x04' 2147483648 b']\x00\x00\x04\x00' 2147483649 b']\x00\x00\x10\x00' 2147483650 b']\x00\x00 \x00' 2147483651 b']\x00\x00@\x00' 2147483652 b']\x00\x00@\x00' 2147483653 b']\x00\x00\x80\x00' 2147483654 b']\x00\x00\x80\x00' 2147483655 b']\x00\x00\x00\x01' 2147483656 b']\x00\x00\x00\x02' 2147483657 b']\x00\x00\x00\x04' 
+LZMAError: Invalid compression preset: 10
+LZMAError: Invalid compression preset: 15
+LZMAError: Invalid compression preset: 31
+LZMAError: Invalid compression preset: 32
+LZMAError: Invalid compression preset: 64
+LZMAError: Invalid compression preset: 2147483658
+LZMAError: Invalid compression preset: 1073741824
+LZMAError: Invalid compression preset: 4294967295
+OverflowError: Python int too large for C uint32_t
+OverflowError: Python int too large for C uint32_t
+ValueError: Cannot convert negative int
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'NoneType' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+TypeError: 'bytes' object cannot be interpreted as an integer
+TypeError: 'list' object cannot be interpreted as an integer
+b']\x00\x00\x10\x00'
+b']\x00\x00\x00\x00'
+b']\x01\x00\x00\x00'
+b']\xff\x0f\x00\x00'
+b']\x00\x10\x00\x00'
+b']\x01\x10\x00\x00'
+b']\x00\x18\x00\x00'
+b']\x00\x00\x01\x00'
+b']\x01\x00\x01\x00'
+b']\x00\x000\x00'
+b']\x00\x00\x00\x04'
+b']\x00\x00\x00@'
+b']\x00\x00\x00`'
+b']\x01\x00\x00`'
+b']\x00\x00\x00\x80'
+b']\xff\xff\xff\xff'
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+b'\x00\x00\x00\x80\x00'
+b'\x04\x00\x00\x80\x00'
+b'$\x00\x00\x80\x00'
+b'\xb4\x00\x00\x80\x00'
+b'f\x00\x00\x80\x00'
+b'\xc8\x00\x00\x80\x00'
+LZMAError: Internal error
+LZMAError: Internal error
+LZMAError: Internal error
+LZMAError: Internal error
+LZMAError: Internal error
+LZMAError: Internal error
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+b']\x00\x00\x80\x00'
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+b']\x00\x00\x80\x00'
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+b'8\x00\x00\x10\x00'
+ValueError: Invalid filter specifier for LZMA filter
+LZMAError: Invalid compression preset: 99
+TypeError: 'str' object cannot be interpreted as an integer
+ValueError: Invalid filter specifier for LZMA filter
+b'\x16'
+0 b'\x0c' 1 b'\x10' 2 b'\x12' 3 b'\x14' 4 b'\x14' 5 b'\x16' 6 b'\x16' 7 b'\x18' 8 b'\x1a' 9 b'\x1c' 2147483648 b'\x0c' 2147483649 b'\x10' 2147483650 b'\x12' 2147483651 b'\x14' 2147483652 b'\x14' 2147483653 b'\x16' 2147483654 b'\x16' 2147483655 b'\x18' 2147483656 b'\x1a' 2147483657 b'\x1c' 
+LZMAError: Invalid compression preset: 10
+LZMAError: Invalid compression preset: 15
+LZMAError: Invalid compression preset: 31
+LZMAError: Invalid compression preset: 32
+LZMAError: Invalid compression preset: 64
+LZMAError: Invalid compression preset: 2147483658
+LZMAError: Invalid compression preset: 1073741824
+LZMAError: Invalid compression preset: 4294967295
+OverflowError: Python int too large for C uint32_t
+OverflowError: Python int too large for C uint32_t
+ValueError: Cannot convert negative int
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'NoneType' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+TypeError: 'bytes' object cannot be interpreted as an integer
+TypeError: 'list' object cannot be interpreted as an integer
+b'\x10'
+b'\x00'
+b'\x00'
+b'\x00'
+b'\x00'
+b'\x01'
+b'\x01'
+b'\x08'
+b'\t'
+b'\x13'
+b'\x1c'
+b'$'
+b'%'
+b'&'
+b'&'
+b'('
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+b'\x16'
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+b'\x16'
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for LZMA filter
+b'\x10'
+ValueError: Invalid filter specifier for LZMA filter
+LZMAError: Invalid compression preset: 99
+TypeError: 'str' object cannot be interpreted as an integer
+ValueError: Invalid filter specifier for LZMA filter
+LZMAError: Internal error
+b'\x00'
+b'\x01'
+b'\xfe'
+b'\xff'
+LZMAError: Internal error
+LZMAError: Internal error
+ValueError: Invalid filter specifier for delta filter
+ValueError: Invalid filter specifier for delta filter
+ValueError: Invalid filter specifier for delta filter
+ValueError: Invalid filter specifier for delta filter
+ValueError: Invalid filter specifier for delta filter
+b'\x00'
+b'\x00'
+ValueError: Invalid filter specifier for delta filter
+ValueError: Invalid filter specifier for delta filter
+ValueError: Invalid filter specifier for delta filter
+ValueError: Invalid filter specifier for delta filter
+b''
+b''
+b'\x01\x00\x00\x00'
+b'\x02\x00\x00\x00'
+b'\x04\x00\x00\x00'
+b'\x10\x00\x00\x00'
+b'\x00\x10\x00\x00'
+b'\xf0\xff\xff\xff'
+b'\xff\xff\xff\xff'
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+b''
+b''
+b'\x01\x00\x00\x00'
+b'\x02\x00\x00\x00'
+b'\x04\x00\x00\x00'
+b'\x10\x00\x00\x00'
+b'\x00\x10\x00\x00'
+b'\xf0\xff\xff\xff'
+b'\xff\xff\xff\xff'
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+b''
+b''
+b'\x01\x00\x00\x00'
+b'\x02\x00\x00\x00'
+b'\x04\x00\x00\x00'
+b'\x10\x00\x00\x00'
+b'\x00\x10\x00\x00'
+b'\xf0\xff\xff\xff'
+b'\xff\xff\xff\xff'
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+b''
+b''
+b'\x01\x00\x00\x00'
+b'\x02\x00\x00\x00'
+b'\x04\x00\x00\x00'
+b'\x10\x00\x00\x00'
+b'\x00\x10\x00\x00'
+b'\xf0\xff\xff\xff'
+b'\xff\xff\xff\xff'
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+b''
+b''
+b'\x01\x00\x00\x00'
+b'\x02\x00\x00\x00'
+b'\x04\x00\x00\x00'
+b'\x10\x00\x00\x00'
+b'\x00\x10\x00\x00'
+b'\xf0\xff\xff\xff'
+b'\xff\xff\xff\xff'
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+b''
+b''
+b'\x01\x00\x00\x00'
+b'\x02\x00\x00\x00'
+b'\x04\x00\x00\x00'
+b'\x10\x00\x00\x00'
+b'\x00\x10\x00\x00'
+b'\xf0\xff\xff\xff'
+b'\xff\xff\xff\xff'
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+ValueError: Invalid filter specifier for BCJ filter
+33 M
+get id
+get preset
+ValueError: Invalid filter specifier for LZMA filter
+33 G
+get id
+get preset
+ValueError: Invalid filter specifier for LZMA filter
+33 Sub
+b'\x16'
+33 Loud
+get id
+get preset
+b'\x16'
+33 UserDict
+ValueError: Invalid filter specifier for LZMA filter
+33 OrderedDict
+b'\x16'
+33 mappingproxy
+ValueError: Invalid filter specifier for LZMA filter
+33 ChainMap
+ValueError: Invalid filter specifier for LZMA filter
+33 defaultdict
+b'\x16'
+33 frozendict
+ValueError: Invalid filter specifier for LZMA filter
+33 Raises
+ZeroDivisionError: id
+33 Look
+LookupError: id
+33 Index
+IndexError: id
+4611686018427387905 M
+get id
+get preset
+ValueError: Invalid filter specifier for LZMA filter
+4611686018427387905 G
+get id
+get preset
+ValueError: Invalid filter specifier for LZMA filter
+4611686018427387905 Sub
+b']\x00\x00\x80\x00'
+4611686018427387905 Loud
+get id
+get preset
+b']\x00\x00\x80\x00'
+4611686018427387905 UserDict
+ValueError: Invalid filter specifier for LZMA filter
+4611686018427387905 OrderedDict
+b']\x00\x00\x80\x00'
+4611686018427387905 mappingproxy
+ValueError: Invalid filter specifier for LZMA filter
+4611686018427387905 ChainMap
+ValueError: Invalid filter specifier for LZMA filter
+4611686018427387905 defaultdict
+b']\x00\x00\x80\x00'
+4611686018427387905 frozendict
+ValueError: Invalid filter specifier for LZMA filter
+4611686018427387905 Raises
+ZeroDivisionError: id
+4611686018427387905 Look
+LookupError: id
+4611686018427387905 Index
+IndexError: id
+3 M
+get id
+ValueError: Invalid filter specifier for delta filter
+3 G
+get id
+ValueError: Invalid filter specifier for delta filter
+3 Sub
+b'\x00'
+3 Loud
+get id
+b'\x00'
+3 UserDict
+ValueError: Invalid filter specifier for delta filter
+3 OrderedDict
+b'\x00'
+3 mappingproxy
+ValueError: Invalid filter specifier for delta filter
+3 ChainMap
+ValueError: Invalid filter specifier for delta filter
+3 defaultdict
+b'\x00'
+3 frozendict
+ValueError: Invalid filter specifier for delta filter
+3 Raises
+ZeroDivisionError: id
+3 Look
+LookupError: id
+3 Index
+IndexError: id
+4 M
+get id
+ValueError: Invalid filter specifier for BCJ filter
+4 G
+get id
+ValueError: Invalid filter specifier for BCJ filter
+4 Sub
+b''
+4 Loud
+get id
+b''
+4 UserDict
+ValueError: Invalid filter specifier for BCJ filter
+4 OrderedDict
+b''
+4 mappingproxy
+ValueError: Invalid filter specifier for BCJ filter
+4 ChainMap
+ValueError: Invalid filter specifier for BCJ filter
+4 defaultdict
+b''
+4 frozendict
+ValueError: Invalid filter specifier for BCJ filter
+4 Raises
+ZeroDivisionError: id
+4 Look
+LookupError: id
+4 Index
+IndexError: id
+77 M
+get id
+ValueError: Invalid filter ID: 77
+77 G
+get id
+ValueError: Invalid filter ID: 77
+77 Sub
+ValueError: Invalid filter ID: 77
+77 Loud
+get id
+ValueError: Invalid filter ID: 77
+77 UserDict
+ValueError: Invalid filter ID: 77
+77 OrderedDict
+ValueError: Invalid filter ID: 77
+77 mappingproxy
+ValueError: Invalid filter ID: 77
+77 ChainMap
+ValueError: Invalid filter ID: 77
+77 defaultdict
+ValueError: Invalid filter ID: 77
+77 frozendict
+ValueError: Invalid filter ID: 77
+77 Raises
+ZeroDivisionError: id
+77 Look
+LookupError: id
+77 Index
+IndexError: id
+missing id
+missing preset
+b'\x12'
+missing preset
+b'\x12'
+LZMAError: Invalid compression preset: 33
+ValueError: Invalid filter ID: 0
+b'\x0c'
+get id
+get preset
+LZMAError: Invalid compression preset: 99
+get id
+get preset
+TypeError: 'str' object cannot be interpreted as an integer
+get id
+ValueError: Filter specifier must have an "id" entry
+index id
+index preset
+index dict_size
+index lc
+index lp
+index pb
+index mode
+index nice_len
+index mf
+index depth
+b']\x00\x10\x00\x00'
+index id
+index lc
+ValueError: Invalid filter specifier for LZMA filter
+index id
+index pb
+ValueError: Invalid filter specifier for LZMA filter
+index id
+ValueError: Invalid filter specifier for LZMA filter
+index id
+index dist
+b'\x08'
+index id
+index start_offset
+b' \x00\x00\x00'
+KeyError: 'from __index__'
+KeyError: 'from __index__'
+ValueError: Invalid filter specifier for LZMA filter
+ValueError: Invalid filter specifier for delta filter
+b'\x16'
+b'\x16'
+ValueError: Invalid filter specifier for LZMA filter
+{'id': 4611686018427387905, 'lc': 3, 'lp': 0, 'pb': 2, 'dict_size': 8388608}
+{'id': 4611686018427387905, 'lc': 0, 'lp': 0, 'pb': 0, 'dict_size': 4096}
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+{'id': 33, 'dict_size': 4096}
+{'id': 33, 'dict_size': 8388608}
+{'id': 33, 'dict_size': 3221225472}
+{'id': 33, 'dict_size': 4294967295}
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+{'id': 3, 'dist': 1}
+{'id': 3, 'dist': 256}
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+{'id': 4}
+{'id': 4}
+{'id': 4, 'start_offset': 16}
+{'id': 4, 'start_offset': 1}
+{'id': 4, 'start_offset': 4294967280}
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+{'id': 5}
+{'id': 5}
+{'id': 5, 'start_offset': 16}
+{'id': 5, 'start_offset': 1}
+{'id': 5, 'start_offset': 4294967280}
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+{'id': 6}
+{'id': 6}
+{'id': 6, 'start_offset': 16}
+{'id': 6, 'start_offset': 1}
+{'id': 6, 'start_offset': 4294967280}
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+{'id': 7}
+{'id': 7}
+{'id': 7, 'start_offset': 16}
+{'id': 7, 'start_offset': 1}
+{'id': 7, 'start_offset': 4294967280}
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+{'id': 8}
+{'id': 8}
+{'id': 8, 'start_offset': 16}
+{'id': 8, 'start_offset': 1}
+{'id': 8, 'start_offset': 4294967280}
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+{'id': 9}
+{'id': 9}
+{'id': 9, 'start_offset': 16}
+{'id': 9, 'start_offset': 1}
+{'id': 9, 'start_offset': 4294967280}
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+ValueError: Invalid filter ID: 10
+ValueError: Invalid filter ID: 10
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+TypeError: _decode_filter_properties expected 2 arguments, got 0
+TypeError: _decode_filter_properties expected 2 arguments, got 1
+TypeError: _decode_filter_properties expected 2 arguments, got 3
+TypeError: _lzma._decode_filter_properties() takes no keyword arguments
+TypeError: 'str' object cannot be interpreted as an integer
+ValueError: Cannot convert negative int
+OverflowError: Python int too large for C lzma_vli
+TypeError: 'float' object cannot be interpreted as an integer
+TypeError: 'NoneType' object cannot be interpreted as an integer
+TypeError: a bytes-like object is required, not 'str'
+TypeError: a bytes-like object is required, not 'NoneType'
+TypeError: a bytes-like object is required, not 'int'
+TypeError: a bytes-like object is required, not 'list'
+{'id': 33, 'dict_size': 8388608}
+{'id': 33, 'dict_size': 8388608}
+{'id': 33, 'dict_size': 8388608}
+TypeError: 'str' object cannot be interpreted as an integer
+index id
+{'id': 33, 'dict_size': 8388608}
+<class 'dict'> ['id', 'lc', 'lp', 'pb', 'dict_size'] [<class 'int'>, <class 'int'>, <class 'int'>, <class 'int'>, <class 'int'>]
+{'id': 4611686018427387905, 'lc': 3, 'lp': 0, 'pb': 2, 'dict_size': 4194304}
+{'id': 33, 'dict_size': 12582912}
+{'id': 3, 'dist': 77}
+{'id': 4, 'start_offset': 64}
+{'id': 7}
+[]
+LZMAError: Internal error
+ValueError: Invalid filter chain for FORMAT_ALONE - must be a single LZMA1 filter
+LZMAError: Internal error
+LZMAError: Internal error
+()
+LZMAError: Internal error
+ValueError: Invalid filter chain for FORMAT_ALONE - must be a single LZMA1 filter
+LZMAError: Internal error
+LZMAError: Internal error
+[{'id': 33, 'preset': 0}]
+<_lzma.LZMACompressor object>
+ValueError: Invalid filter chain for FORMAT_ALONE - must be a single LZMA1 filter
+<_lzma.LZMACompressor object>
+<_lzma.LZMADecompressor object>
+({'id': 33, 'preset': 0},)
+<_lzma.LZMACompressor object>
+ValueError: Invalid filter chain for FORMAT_ALONE - must be a single LZMA1 filter
+<_lzma.LZMACompressor object>
+<_lzma.LZMADecompressor object>
+[{'id': 3}, {'id': 33, 'preset': 0}]
+<_lzma.LZMACompressor object>
+ValueError: Invalid filter chain for FORMAT_ALONE - must be a single LZMA1 filter
+<_lzma.LZMACompressor object>
+<_lzma.LZMADecompressor object>
+[{'id': 3}, {'id': 3}, {'id': 3}, {'id': 33, 'preset': 0}]
+<_lzma.LZMACompressor object>
+ValueError: Invalid filter chain for FORMAT_ALONE - must be a single LZMA1 filter
+<_lzma.LZMACompressor object>
+<_lzma.LZMADecompressor object>
+[{'id': 3}, {'id': 3}, {'id': 3}, {'id': 3}, {'id': 33, 'preset': 0}]
+ValueError: Too many filters - liblzma supports a maximum of 4
+ValueError: Too many filters - liblzma supports a maximum of 4
+ValueError: Too many filters - liblzma supports a maximum of 4
+ValueError: Too many filters - liblzma supports a maximum of 4
+[{'id': 3}, {'id': 3}, {'id': 3}, {'id': 3}, {'id': 3}]
+ValueError: Too many filters - liblzma supports a maximum of 4
+ValueError: Too many filters - liblzma supports a maximum of 4
+ValueError: Too many filters - liblzma supports a maximum of 4
+ValueError: Too many filters - liblzma supports a maximum of 4
+[{'id': 3}, {'id': 3}, {'id': 3}, {'id': 3}, {'id': 3}, {'id': 3}, {'i
+ValueError: Too many filters - liblzma supports a maximum of 4
+ValueError: Too many filters - liblzma supports a maximum of 4
+ValueError: Too many filters - liblzma supports a maximum of 4
+ValueError: Too many filters - liblzma supports a maximum of 4
+[{'id': 33, 'preset': 0}, {'id': 33, 'preset': 0}]
+LZMAError: Invalid or unsupported options
+ValueError: Invalid filter chain for FORMAT_ALONE - must be a single LZMA1 filter
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+[{'id': 33, 'preset': 0}, {'id': 3}]
+LZMAError: Invalid or unsupported options
+ValueError: Invalid filter chain for FORMAT_ALONE - must be a single LZMA1 filter
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+[{'id': 3}]
+LZMAError: Invalid or unsupported options
+ValueError: Invalid filter chain for FORMAT_ALONE - must be a single LZMA1 filter
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+[{'id': 4}]
+LZMAError: Invalid or unsupported options
+ValueError: Invalid filter chain for FORMAT_ALONE - must be a single LZMA1 filter
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+[{'id': 4}, {'id': 4}, {'id': 4}, {'id': 4}]
+LZMAError: Invalid or unsupported options
+ValueError: Invalid filter chain for FORMAT_ALONE - must be a single LZMA1 filter
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+[{'id': 4611686018427387905, 'preset': 0}]
+LZMAError: Internal error
+<_lzma.LZMACompressor object>
+<_lzma.LZMACompressor object>
+<_lzma.LZMADecompressor object>
+[{'id': 3}, {'id': 4611686018427387905, 'preset': 0}]
+LZMAError: Internal error
+ValueError: Invalid filter chain for FORMAT_ALONE - must be a single LZMA1 filter
+<_lzma.LZMACompressor object>
+<_lzma.LZMADecompressor object>
+[{'id': 4611686018427387905, 'preset': 0}, {'id': 33, 'preset': 0}]
+LZMAError: Internal error
+ValueError: Invalid filter chain for FORMAT_ALONE - must be a single LZMA1 filter
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+[{'id': 33, 'preset': 0}, {'id': 4611686018427387905, 'preset': 0}]
+LZMAError: Internal error
+ValueError: Invalid filter chain for FORMAT_ALONE - must be a single LZMA1 filter
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+[5]
+TypeError: Filter specifier must be a dict or dict-like object
+TypeError: Filter specifier must be a dict or dict-like object
+TypeError: Filter specifier must be a dict or dict-like object
+TypeError: Filter specifier must be a dict or dict-like object
+[None]
+TypeError: Filter specifier must be a dict or dict-like object
+TypeError: Filter specifier must be a dict or dict-like object
+TypeError: Filter specifier must be a dict or dict-like object
+TypeError: Filter specifier must be a dict or dict-like object
+[[]]
+TypeError: list indices must be integers or slices, not str
+TypeError: list indices must be integers or slices, not str
+TypeError: list indices must be integers or slices, not str
+TypeError: list indices must be integers or slices, not str
+[{}]
+ValueError: Filter specifier must have an "id" entry
+ValueError: Filter specifier must have an "id" entry
+ValueError: Filter specifier must have an "id" entry
+ValueError: Filter specifier must have an "id" entry
+[{'id': 33, 'preset': 0}, 5]
+TypeError: Filter specifier must be a dict or dict-like object
+TypeError: Filter specifier must be a dict or dict-like object
+TypeError: Filter specifier must be a dict or dict-like object
+TypeError: Filter specifier must be a dict or dict-like object
+[5, {'id': 33, 'preset': 0}]
+TypeError: Filter specifier must be a dict or dict-like object
+TypeError: Filter specifier must be a dict or dict-like object
+TypeError: Filter specifier must be a dict or dict-like object
+TypeError: Filter specifier must be a dict or dict-like object
+'ab'
+TypeError: string indices must be integers, not 'str'
+TypeError: string indices must be integers, not 'str'
+TypeError: string indices must be integers, not 'str'
+TypeError: string indices must be integers, not 'str'
+b'ab'
+TypeError: Filter specifier must be a dict or dict-like object
+TypeError: Filter specifier must be a dict or dict-like object
+TypeError: Filter specifier must be a dict or dict-like object
+TypeError: Filter specifier must be a dict or dict-like object
+5
+TypeError: object of type 'int' has no len()
+TypeError: object of type 'int' has no len()
+TypeError: object of type 'int' has no len()
+TypeError: object of type 'int' has no len()
+None
+<_lzma.LZMACompressor object>
+<_lzma.LZMACompressor object>
+ValueError: Must specify filters for FORMAT_RAW
+ValueError: Must specify filters for FORMAT_RAW
+{}
+TypeError: dict is not a sequence
+TypeError: dict is not a sequence
+TypeError: dict is not a sequence
+TypeError: dict is not a sequence
+{'id': 33}
+TypeError: dict is not a sequence
+TypeError: dict is not a sequence
+TypeError: dict is not a sequence
+TypeError: dict is not a sequence
+{1: {'id': 33, 'preset': 0}}
+TypeError: dict is not a sequence
+TypeError: dict is not a sequence
+TypeError: dict is not a sequence
+TypeError: dict is not a sequence
+{0: {'id': 33, 'preset': 0}}
+TypeError: dict is not a sequence
+TypeError: dict is not a sequence
+TypeError: dict is not a sequence
+TypeError: dict is not a sequence
+set()
+LZMAError: Internal error
+ValueError: Invalid filter chain for FORMAT_ALONE - must be a single LZMA1 filter
+LZMAError: Internal error
+LZMAError: Internal error
+{1}
+TypeError: 'set' object does not support indexing
+TypeError: 'set' object does not support indexing
+TypeError: 'set' object does not support indexing
+TypeError: 'set' object does not support indexing
+frozenset({1})
+TypeError: 'frozenset' object does not support indexing
+TypeError: 'frozenset' object does not support indexing
+TypeError: 'frozenset' object does not support indexing
+TypeError: 'frozenset' object does not support indexing
+<list_iterator object
+TypeError: object of type 'list_iterator' has no len()
+TypeError: object of type 'list_iterator' has no len()
+TypeError: object of type 'list_iterator' has no len()
+TypeError: object of type 'list_iterator' has no len()
+<generator object <genexpr>
+TypeError: object of type 'generator' has no len()
+TypeError: object of type 'generator' has no len()
+TypeError: object of type 'generator' has no len()
+TypeError: object of type 'generator' has no len()
+range(0, 1)
+TypeError: Filter specifier must be a dict or dict-like object
+TypeError: Filter specifier must be a dict or dict-like object
+TypeError: Filter specifier must be a dict or dict-like object
+TypeError: Filter specifier must be a dict or dict-like object
+range(0, 0)
+LZMAError: Internal error
+ValueError: Invalid filter chain for FORMAT_ALONE - must be a single LZMA1 filter
+LZMAError: Internal error
+LZMAError: Internal error
+deque([{'id': 33, 'preset': 0}])
+<_lzma.LZMACompressor object>
+ValueError: Invalid filter chain for FORMAT_ALONE - must be a single LZMA1 filter
+<_lzma.LZMACompressor object>
+<_lzma.LZMADecompressor object>
+[{'id': 33, 'preset': 0}]
+<_lzma.LZMACompressor object>
+ValueError: Invalid filter chain for FORMAT_ALONE - must be a single LZMA1 filter
+<_lzma.LZMACompressor object>
+<_lzma.LZMADecompressor object>
+OrderedDict()
+TypeError: collections.OrderedDict is not a sequence
+TypeError: collections.OrderedDict is not a sequence
+TypeError: collections.OrderedDict is not a sequence
+TypeError: collections.OrderedDict is not a sequence
+mappingproxy({})
+TypeError: mappingproxy is not a sequence
+TypeError: mappingproxy is not a sequence
+TypeError: mappingproxy is not a sequence
+TypeError: mappingproxy is not a sequence
+[{'id': 33, 'preset': 0}, {'id': 33, 'preset': 0}, {'id': 33, 'preset'
+LZMAError: Invalid or unsupported options
+ValueError: Invalid filter chain for FORMAT_ALONE - must be a single LZMA1 filter
+LZMAError: Invalid or unsupported options
+LZMAError: Invalid or unsupported options
+[{'id': 33, 'preset': 0}, {'id': 33, 'preset': 0}, {'id': 33, 'preset'
+ValueError: Too many filters - liblzma supports a maximum of 4
+ValueError: Too many filters - liblzma supports a maximum of 4
+ValueError: Too many filters - liblzma supports a maximum of 4
+ValueError: Too many filters - liblzma supports a maximum of 4
+<memory
+LZMAError: Internal error
+ValueError: Invalid filter chain for FORMAT_ALONE - must be a single LZMA1 filter
+LZMAError: Internal error
+LZMAError: Internal error
+<memory
+TypeError: Filter specifier must be a dict or dict-like object
+TypeError: Filter specifier must be a dict or dict-like object
+TypeError: Filter specifier must be a dict or dict-like object
+TypeError: Filter specifier must be a dict or dict-like object
+bytearray(b'')
+LZMAError: Internal error
+ValueError: Invalid filter chain for FORMAT_ALONE - must be a single LZMA1 filter
+LZMAError: Internal error
+LZMAError: Internal error
+''
+LZMAError: Internal error
+ValueError: Invalid filter chain for FORMAT_ALONE - must be a single LZMA1 filter
+LZMAError: Internal error
+LZMAError: Internal error
+len
+item 0
+item 1
+<_lzma.LZMACompressor object>
+len
+item 0
+LZMAError: Invalid or unsupported options
+len
+item 0
+item 1
+item 2
+IndexError: list index out of range
+len
+ValueError: Too many filters - liblzma supports a maximum of 4
+len
+ValueError: __len__() should return >= 0
+len
+OverflowError: cannot fit 'int' into an index-sized integer
+len
+TypeError: 'str' object cannot be interpreted as an integer
+LZMAError: Internal error
+<_lzma.LZMACompressor object>
+KeyError: 0
+<_lzma.LZMACompressor object>
+<_lzma.LZMACompressor object>
+<_lzma.LZMACompressor object>
+LZMAError: Internal error
+<_lzma.LZMACompressor object>
+TypeError: 'NoItem' object does not support indexing
+TypeError: object of type 'NoLen' has no len()
+TypeError: 'NoItem' object does not support indexing
+TypeError: object of type 'NoLen' has no len()

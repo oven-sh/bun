@@ -1,0 +1,33 @@
+status: 0
+script: 7a251334ed428369
+---
+== parser.py 1
+out: SyntaxError invalid syntax. Perhaps you forgot a comma? (2, 6, 'y = (2 3)\n', 2, 9) (0, 0, None)
+== compiler.py 1
+out: SyntaxError no binding for nonlocal 'zzz' found None None
+== symtable.py 1
+out: SyntaxError duplicate parameter 'a' in function definition None None
+== return.py 1
+out: SyntaxError 'return' outside function (3, 1, 'return 3  # here\n', 3, 9) None
+== await.py 1
+out: SyntaxError 'await' outside async function None None
+== break.py 1
+out: SyntaxError 'break' outside loop (2, 2, '\tbreak\n', 2, 7) None
+== future.py 1
+out: SyntaxError from __future__ imports must occur at the beginning of the file None None
+== future2.py 1
+out: SyntaxError future feature nothing_like_it is not defined None None
+== star.py 1
+out: SyntaxError import * only allowed at module level None None
+== global.py 1
+out: SyntaxError name 'x' is assigned to before global declaration None None
+== latin1.py 1
+out: SyntaxError 'return' outside function (2, 14, "x = 'éè' ; return\n", 2, 20) None
+== latin1_parser.py 1
+out: SyntaxError invalid syntax (2, 10, "x = 'éè' 3\n", 2, 11) (0, 0, None)
+== utf8.py 1
+out: SyntaxError 'return' outside function (1, 19, "x = 'é€😀' ; return\n", 1, 25) None
+== utf8_parser.py 1
+out: SyntaxError invalid syntax (1, 11, "x = 'é€😀' 3\n", 1, 12) (0, 0, None)
+== bom.py 1
+out: SyntaxError 'return' outside function (1, 1, 'return 1\n', 1, 9) None

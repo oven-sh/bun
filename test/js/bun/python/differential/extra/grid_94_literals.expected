@@ -1,0 +1,10 @@
+status: 0
+script: 81773d9ffdaf843a
+---
+literals int 168 9d85970898c4
+literals float 168 28243c2a12d4
+literals complex 56 352a78a582c5
+literals Fraction 56 f5827ef01343
+literals int base 1008 46c43c255ee1
+literals fromhex 82 1ecd8c2545d7
+literals of numbers 495 04dfc8740148

@@ -1,0 +1,34 @@
+status: 0
+script: 8155ce979d3e9de1
+source: 942dfa16aabcc785
+---
+<module> 26 28 []
+outer 22 22 [('p', '10'), ('q', '20')]
+inner 16 16 [('a', '20'), ('args', '(6, 7)'), ('c', '8'), ('kw', "{'d': 9}"), ('x', '25'), ('y', '[25]')]
+<module> 26 31 []
+outer 22 22 [('p', '10'), ('q', '20')]
+inner 16 16 [('a', '20'), ('args', '(6, 7)'), ('c', '8'), ('kw', "{'d': 9}"), ('x', '25'), ('y', '[25]')]
+<module> 46 48 []
+cellfn 42 42 [('add', 'cellfn.<locals>.add'), ('n', '1'), ('total', '6')]
+add 41 41 [('loc', '6'), ('m', '5'), ('total', '6')]
+tb.tb_frame.f_code.co_name => C
+sorted(k for k in tb.tb_frame.f_locals) => ['__firstlineno__', '__module__', '__qualname__', 'attr', 'other']
+<module> 76 78 []
+gen 68 68 [('i', '3'), ('j', '4'), ('n', '3')]
+None
+<module> 90 92 []
+comp 86 86 [('n', '5'), ('pre', '5')]
+sorted((k, v) for k, v in fr.f_locals.items() if k != 'fr') => [('a', 1), ('b', 2), ('c', 3)]
+fr.f_lineno => 100
+fr.f_back is sys._getframe() => True
+<module> 126 128 []
+withfn 122 122 [('v1', '5'), ('w', '6')]
+frame.name [frame=FrameSummary] => outer
+frame.lineno [frame=FrameSummary] => 22
+sorted(frame.locals.items()) [frame=FrameSummary] => [('p', '1'), ('q', '2')]
+frame.name [frame=FrameSummary] => inner
+frame.lineno [frame=FrameSummary] => 16
+sorted(frame.locals.items()) [frame=FrameSummary] => [('a', '2'), ('args', '(6, 7)'), ('c', '8'), ('kw', "{'d': 9}"), ('x', '7'), ('y', '[7]')]
+[('a', 100), ('b', 2), ('c', 3), ('new', 7)]
+[]
+[('a', 1), ('b', 2), ('c', 3)]

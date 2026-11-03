@@ -1,0 +1,45 @@
+status: 0
+script: a5c5c798ea2b71c3
+---
+plain 0 0
+slotted 0 0
+tuple 0 0
+list subclass 0 0
+int subclass 0 0
+bytearray 0 0
+range 0 0
+big int 0 0
+bound method 0 0
+partial 0 0
+staticmethod 0 0
+code 0 0
+generator with frame 0 0
+coroutine closed 0 0
+dict views 0 0
+exception 0 0
+exception chained 0 0
+frame 0 0
+traceback exception 0 0
+proxy 0 0
+weakly referenced 0 0
+OrderedDict 0 0
+namedtuple instance 0 0
+module 0 0
+type var 0 0
+StringIO 0 0
+text wrapper 0 0
+match 0 0
+condition event 0 0
+queue 0 0
+json 0 0
+random 0 0
+enum member 0 0
+context manager 0 0
+csv 0 0
+future 0 0
+cycle: list 1 0
+cycle: closure 3 0
+cycle: exception 3 0
+class with methods 7 0
+namedtuple class whatever 0
+dataclass class whatever 0

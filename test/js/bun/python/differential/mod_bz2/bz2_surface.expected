@@ -1,0 +1,166 @@
+status: 0
+script: d908c89dee9f8094
+---
+_bz2 None ['BZ2Compressor', 'BZ2Decompressor']
+True True
+<class '_bz2.BZ2Compressor'> BZ2Compressor BZ2Compressor _bz2 (<class '_bz2.BZ2Compressor'>, <class 'object'>) <class 'type'> <class 'object'>
+['__doc__', '__new__', 'compress', 'flush']
+Create a compressor object for compressing data incrementally.
+
+  compresslevel
+    Compression level, as a number between 1 and 9.
+
+For one-shot compression, use the compress() function instead.
+False True
+0 0 0
+'(compresslevel=9, /)'
+<Signature (compresslevel=9, /)>
+__new__ builtin_function_or_method __new__ BZ2Compressor.__new__ None
+  ($type, *args, **kwargs)
+  Create and return a new object.  See help(type) for accurate signature.
+<Signature (*args, **kwargs)>
+compress method_descriptor compress BZ2Compressor.compress <class '_bz2.BZ2Compressor'>
+  ($self, data, /)
+  Provide data to the compressor object.
+
+Returns a chunk of compressed data if possible, or b'' otherwise.
+
+When you have finished providing data to the compressor, call the
+flush() method to finish the compression process.
+<Signature (self, data, /)>
+flush method_descriptor flush BZ2Compressor.flush <class '_bz2.BZ2Compressor'>
+  ($self, /)
+  Finish the compression process.
+
+Returns the compressed data left in internal buffers.
+
+The compressor object may not be used after this method is called.
+<Signature (self, /)>
+TypeError: type '_bz2.BZ2Compressor' is not an acceptable base type
+TypeError: cannot set 'x' attribute of immutable type '_bz2.BZ2Compressor'
+TypeError: cannot set '__doc__' attribute of immutable type '_bz2.BZ2Compressor'
+TypeError: cannot set 'compress' attribute of immutable type '_bz2.BZ2Compressor'
+'<_bz2.BZ2Compressor object>
+True False False True
+AttributeError: '_bz2.BZ2Compressor' object has no attribute 'x' and no __dict__ for setting new attributes
+AttributeError: '_bz2.BZ2Compressor' object has no attribute '__dict__'
+TypeError: cannot create weak reference to '_bz2.BZ2Compressor' object
+TypeError: cannot pickle '_bz2.BZ2Compressor' object
+TypeError: cannot pickle '_bz2.BZ2Compressor' object
+TypeError: cannot pickle 'BZ2Compressor' object
+TypeError: cannot pickle 'BZ2Compressor' object
+TypeError: cannot pickle '_bz2.BZ2Compressor' object
+TypeError: cannot pickle '_bz2.BZ2Compressor' object
+TypeError: cannot pickle '_bz2.BZ2Compressor' object
+TypeError: cannot pickle '_bz2.BZ2Compressor' object
+TypeError: cannot pickle 'BZ2Compressor' object
+TypeError: cannot pickle '_bz2.BZ2Compressor' object
+None
+TypeError: object of type '_bz2.BZ2Compressor' has no len()
+TypeError: '_bz2.BZ2Compressor' object is not iterable
+TypeError: '<' not supported between instances of '_bz2.BZ2Compressor' and '_bz2.BZ2Compressor'
+TypeError: unsupported operand type(s) for +: '_bz2.BZ2Compressor' and '_bz2.BZ2Compressor'
+<_bz2.BZ2Compressor object>
+TypeError: _bz2.BZ2Compressor.__new__(object): object is not a subtype of _bz2.BZ2Compressor
+TypeError: _bz2.BZ2Compressor.__new__(int): int is not a subtype of _bz2.BZ2Compressor
+TypeError: object.__new__(_bz2.BZ2Compressor) is not safe, use _bz2.BZ2Compressor.__new__()
+TypeError: _bz2.BZ2Compressor.__new__(): not enough arguments
+None
+None
+<class '_bz2.BZ2Decompressor'> BZ2Decompressor BZ2Decompressor _bz2 (<class '_bz2.BZ2Decompressor'>, <class 'object'>) <class 'type'> <class 'object'>
+['__doc__', '__new__', 'decompress', 'eof', 'needs_input', 'unused_data']
+Create a decompressor object for decompressing data incrementally.
+
+For one-shot decompression, use the decompress() function instead.
+False True
+0 0 0
+'()'
+<Signature ()>
+__new__ builtin_function_or_method __new__ BZ2Decompressor.__new__ None
+  ($type, *args, **kwargs)
+  Create and return a new object.  See help(type) for accurate signature.
+<Signature (*args, **kwargs)>
+decompress method_descriptor decompress BZ2Decompressor.decompress <class '_bz2.BZ2Decompressor'>
+  ($self, /, data, max_length=-1)
+  Decompress *data*, returning uncompressed data as bytes.
+
+If *max_length* is nonnegative, returns at most *max_length* bytes
+of decompressed data.  If this limit is reached and further output
+can be produced, *self.needs_input* will be set to ``False``.  In
+this case, the next call to *decompress()* may provide *data* as b''
+to obtain more of the output.
+
+If all of the input data was decompressed and returned (either
+because this was less than *max_length* bytes, or because
+*max_length* was negative), *self.needs_input* will be set to True.
+
+Attempting to decompress data after the end of stream is reached
+raises an EOFError.  Any data found after the end of the stream is
+ignored and saved in the unused_data attribute.
+<Signature (self, /, data, max_length=-1)>
+eof member_descriptor eof BZ2Decompressor.eof <class '_bz2.BZ2Decompressor'>
+  None
+  True if the end-of-stream marker has been reached.
+needs_input member_descriptor needs_input BZ2Decompressor.needs_input <class '_bz2.BZ2Decompressor'>
+  None
+  True if more input is needed before more decompressed data can be produced.
+unused_data getset_descriptor unused_data BZ2Decompressor.unused_data <class '_bz2.BZ2Decompressor'>
+  None
+  Data found after the end of the compressed stream.
+TypeError: type '_bz2.BZ2Decompressor' is not an acceptable base type
+TypeError: cannot set 'x' attribute of immutable type '_bz2.BZ2Decompressor'
+TypeError: cannot set '__doc__' attribute of immutable type '_bz2.BZ2Decompressor'
+TypeError: cannot set 'compress' attribute of immutable type '_bz2.BZ2Decompressor'
+'<_bz2.BZ2Decompressor object>
+True False False True
+AttributeError: '_bz2.BZ2Decompressor' object has no attribute 'x' and no __dict__ for setting new attributes
+AttributeError: '_bz2.BZ2Decompressor' object has no attribute '__dict__'
+TypeError: cannot create weak reference to '_bz2.BZ2Decompressor' object
+TypeError: cannot pickle '_bz2.BZ2Decompressor' object
+TypeError: cannot pickle '_bz2.BZ2Decompressor' object
+TypeError: cannot pickle 'BZ2Decompressor' object
+TypeError: cannot pickle 'BZ2Decompressor' object
+TypeError: cannot pickle '_bz2.BZ2Decompressor' object
+TypeError: cannot pickle '_bz2.BZ2Decompressor' object
+TypeError: cannot pickle '_bz2.BZ2Decompressor' object
+TypeError: cannot pickle '_bz2.BZ2Decompressor' object
+TypeError: cannot pickle 'BZ2Decompressor' object
+TypeError: cannot pickle '_bz2.BZ2Decompressor' object
+None
+TypeError: object of type '_bz2.BZ2Decompressor' has no len()
+TypeError: '_bz2.BZ2Decompressor' object is not iterable
+TypeError: '<' not supported between instances of '_bz2.BZ2Decompressor' and '_bz2.BZ2Decompressor'
+TypeError: unsupported operand type(s) for +: '_bz2.BZ2Decompressor' and '_bz2.BZ2Decompressor'
+<_bz2.BZ2Decompressor object>
+TypeError: _bz2.BZ2Decompressor.__new__(object): object is not a subtype of _bz2.BZ2Decompressor
+TypeError: _bz2.BZ2Decompressor.__new__(int): int is not a subtype of _bz2.BZ2Decompressor
+TypeError: object.__new__(_bz2.BZ2Decompressor) is not safe, use _bz2.BZ2Decompressor.__new__()
+TypeError: _bz2.BZ2Decompressor.__new__(): not enough arguments
+None
+None
+eof False
+AttributeError: readonly attribute
+AttributeError: readonly attribute
+<member 'eof' of '_bz2.BZ2Decompressor' objects>
+TypeError: descriptor 'eof' for '_bz2.BZ2Decompressor' objects doesn't apply to a 'int' object
+TypeError: descriptor 'eof' for '_bz2.BZ2Decompressor' objects doesn't apply to a '_bz2.BZ2Compressor' object
+needs_input True
+AttributeError: readonly attribute
+AttributeError: readonly attribute
+<member 'needs_input' of '_bz2.BZ2Decompressor' objects>
+TypeError: descriptor 'needs_input' for '_bz2.BZ2Decompressor' objects doesn't apply to a 'int' object
+TypeError: descriptor 'needs_input' for '_bz2.BZ2Decompressor' objects doesn't apply to a '_bz2.BZ2Compressor' object
+unused_data b''
+AttributeError: attribute 'unused_data' of '_bz2.BZ2Decompressor' objects is not writable
+AttributeError: attribute 'unused_data' of '_bz2.BZ2Decompressor' objects is not writable
+<attribute 'unused_data' of '_bz2.BZ2Decompressor' objects>
+TypeError: descriptor 'unused_data' for '_bz2.BZ2Decompressor' objects doesn't apply to a 'int' object
+TypeError: descriptor 'unused_data' for '_bz2.BZ2Decompressor' objects doesn't apply to a '_bz2.BZ2Compressor' object
+TypeError: descriptor 'compress' for '_bz2.BZ2Compressor' objects doesn't apply to a '_bz2.BZ2Decompressor' object
+TypeError: descriptor 'flush' for '_bz2.BZ2Compressor' objects doesn't apply to a '_bz2.BZ2Decompressor' object
+TypeError: descriptor 'decompress' for '_bz2.BZ2Decompressor' objects doesn't apply to a '_bz2.BZ2Compressor' object
+TypeError: descriptor 'compress' for '_bz2.BZ2Compressor' objects doesn't apply to a 'int' object
+TypeError: descriptor 'decompress' for '_bz2.BZ2Decompressor' objects doesn't apply to a 'NoneType' object
+<class 'builtin_function_or_method'> compress BZ2Compressor.compress <class '_bz2.BZ2Compressor'>
+($self, data, /) ($self, /, data, max_length=-1)
+['BZ2File', 'BZ2Compressor', 'BZ2Decompressor', 'open', 'compress', 'decompress']

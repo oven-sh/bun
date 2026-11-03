@@ -1,0 +1,1252 @@
+status: 0
+script: e5808e7769243f12
+source: 0cd7ed71a3075642
+---
+name [name='gb2312', errors='strict'] => gb2312
+decode errors [name='gb2312', errors='strict'] => strict
+crc(whole) [name='gb2312', errors='strict'] => 313a997c
+crc(pieces) [name='gb2312', errors='strict'] => 664e7e6d
+name [name='gb2312', errors='ignore'] => gb2312
+decode errors [name='gb2312', errors='ignore'] => ignore
+crc(whole) [name='gb2312', errors='ignore'] => a3284ef3
+crc(pieces) [name='gb2312', errors='ignore'] => 53d191ef
+name [name='gb2312', errors='replace'] => gb2312
+decode errors [name='gb2312', errors='replace'] => replace
+crc(whole) [name='gb2312', errors='replace'] => 63c5f6f9
+crc(pieces) [name='gb2312', errors='replace'] => b8e4a4bc
+name [name='gb2312', errors='backslashreplace'] => gb2312
+decode errors [name='gb2312', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='gb2312', errors='backslashreplace'] => 3386ce12
+crc(pieces) [name='gb2312', errors='backslashreplace'] => fac84833
+name [name='gb2312', errors='surrogateescape'] => gb2312
+decode errors [name='gb2312', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='gb2312', errors='surrogateescape'] => d744d77b
+crc(pieces) [name='gb2312', errors='surrogateescape'] => 4ccc1efa
+name [name='gb2312', errors='test.shift'] => gb2312
+decode errors [name='gb2312', errors='test.shift'] => test.shift
+crc(whole) [name='gb2312', errors='test.shift'] => 887a2c9a
+crc(pieces) [name='gb2312', errors='test.shift'] => 25239962
+name [name='gb2312', errors='strict'] => gb2312
+encode errors [name='gb2312', errors='strict'] => strict
+crc(whole) [name='gb2312', errors='strict'] => d882d6c9
+crc(pieces) [name='gb2312', errors='strict'] => 832d40ae
+name [name='gb2312', errors='ignore'] => gb2312
+encode errors [name='gb2312', errors='ignore'] => ignore
+crc(whole) [name='gb2312', errors='ignore'] => deacc0a4
+crc(pieces) [name='gb2312', errors='ignore'] => 5596c162
+name [name='gb2312', errors='replace'] => gb2312
+encode errors [name='gb2312', errors='replace'] => replace
+crc(whole) [name='gb2312', errors='replace'] => 48a27627
+crc(pieces) [name='gb2312', errors='replace'] => c560d19c
+name [name='gb2312', errors='backslashreplace'] => gb2312
+encode errors [name='gb2312', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='gb2312', errors='backslashreplace'] => de870c85
+crc(pieces) [name='gb2312', errors='backslashreplace'] => d899716a
+name [name='gb2312', errors='xmlcharrefreplace'] => gb2312
+encode errors [name='gb2312', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(whole) [name='gb2312', errors='xmlcharrefreplace'] => 0228454e
+crc(pieces) [name='gb2312', errors='xmlcharrefreplace'] => 340a4bfd
+name [name='gb2312', errors='surrogateescape'] => gb2312
+encode errors [name='gb2312', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='gb2312', errors='surrogateescape'] => 7dfb5297
+crc(pieces) [name='gb2312', errors='surrogateescape'] => 9b242888
+name [name='gb2312', errors='test.shift'] => gb2312
+encode errors [name='gb2312', errors='test.shift'] => test.shift
+crc(whole) [name='gb2312', errors='test.shift'] => d4c80288
+crc(pieces) [name='gb2312', errors='test.shift'] => ec5f56b8
+name [name='gbk', errors='strict'] => gbk
+decode errors [name='gbk', errors='strict'] => strict
+crc(whole) [name='gbk', errors='strict'] => dae63e17
+crc(pieces) [name='gbk', errors='strict'] => 7cdd5da0
+name [name='gbk', errors='ignore'] => gbk
+decode errors [name='gbk', errors='ignore'] => ignore
+crc(whole) [name='gbk', errors='ignore'] => 1eda5860
+crc(pieces) [name='gbk', errors='ignore'] => 291790b8
+name [name='gbk', errors='replace'] => gbk
+decode errors [name='gbk', errors='replace'] => replace
+crc(whole) [name='gbk', errors='replace'] => 19ff8204
+crc(pieces) [name='gbk', errors='replace'] => 4f943b10
+name [name='gbk', errors='backslashreplace'] => gbk
+decode errors [name='gbk', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='gbk', errors='backslashreplace'] => 1de068f5
+crc(pieces) [name='gbk', errors='backslashreplace'] => 12ac0ede
+name [name='gbk', errors='surrogateescape'] => gbk
+decode errors [name='gbk', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='gbk', errors='surrogateescape'] => 36749c61
+crc(pieces) [name='gbk', errors='surrogateescape'] => a194a6a9
+name [name='gbk', errors='test.shift'] => gbk
+decode errors [name='gbk', errors='test.shift'] => test.shift
+crc(whole) [name='gbk', errors='test.shift'] => 55c18d60
+crc(pieces) [name='gbk', errors='test.shift'] => cb6fb6ac
+name [name='gbk', errors='strict'] => gbk
+encode errors [name='gbk', errors='strict'] => strict
+crc(whole) [name='gbk', errors='strict'] => 685abf09
+crc(pieces) [name='gbk', errors='strict'] => 2002817e
+name [name='gbk', errors='ignore'] => gbk
+encode errors [name='gbk', errors='ignore'] => ignore
+crc(whole) [name='gbk', errors='ignore'] => 1ee72f8d
+crc(pieces) [name='gbk', errors='ignore'] => 84e31e10
+name [name='gbk', errors='replace'] => gbk
+encode errors [name='gbk', errors='replace'] => replace
+crc(whole) [name='gbk', errors='replace'] => d9e79a0b
+crc(pieces) [name='gbk', errors='replace'] => 5668c9a1
+name [name='gbk', errors='backslashreplace'] => gbk
+encode errors [name='gbk', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='gbk', errors='backslashreplace'] => 8ceb06a1
+crc(pieces) [name='gbk', errors='backslashreplace'] => 099014ae
+name [name='gbk', errors='xmlcharrefreplace'] => gbk
+encode errors [name='gbk', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(whole) [name='gbk', errors='xmlcharrefreplace'] => 4405b67d
+crc(pieces) [name='gbk', errors='xmlcharrefreplace'] => 9e196151
+name [name='gbk', errors='surrogateescape'] => gbk
+encode errors [name='gbk', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='gbk', errors='surrogateescape'] => a9f8de6b
+crc(pieces) [name='gbk', errors='surrogateescape'] => cdaeae61
+name [name='gbk', errors='test.shift'] => gbk
+encode errors [name='gbk', errors='test.shift'] => test.shift
+crc(whole) [name='gbk', errors='test.shift'] => e75a4412
+crc(pieces) [name='gbk', errors='test.shift'] => 5f1b26aa
+name [name='gb18030', errors='strict'] => gb18030
+decode errors [name='gb18030', errors='strict'] => strict
+crc(whole) [name='gb18030', errors='strict'] => 3f6c1e09
+crc(pieces) [name='gb18030', errors='strict'] => ab18a9c7
+name [name='gb18030', errors='ignore'] => gb18030
+decode errors [name='gb18030', errors='ignore'] => ignore
+crc(whole) [name='gb18030', errors='ignore'] => ba193f64
+crc(pieces) [name='gb18030', errors='ignore'] => bd5d1398
+name [name='gb18030', errors='replace'] => gb18030
+decode errors [name='gb18030', errors='replace'] => replace
+crc(whole) [name='gb18030', errors='replace'] => aae89fcf
+crc(pieces) [name='gb18030', errors='replace'] => 2fb0c740
+name [name='gb18030', errors='backslashreplace'] => gb18030
+decode errors [name='gb18030', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='gb18030', errors='backslashreplace'] => ec103916
+crc(pieces) [name='gb18030', errors='backslashreplace'] => 68773a84
+name [name='gb18030', errors='surrogateescape'] => gb18030
+decode errors [name='gb18030', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='gb18030', errors='surrogateescape'] => 41b0e822
+crc(pieces) [name='gb18030', errors='surrogateescape'] => 4c2eafdb
+name [name='gb18030', errors='test.shift'] => gb18030
+decode errors [name='gb18030', errors='test.shift'] => test.shift
+crc(whole) [name='gb18030', errors='test.shift'] => 48c60ccb
+crc(pieces) [name='gb18030', errors='test.shift'] => d20db885
+name [name='gb18030', errors='strict'] => gb18030
+encode errors [name='gb18030', errors='strict'] => strict
+crc(whole) [name='gb18030', errors='strict'] => 04c8c8c8
+crc(pieces) [name='gb18030', errors='strict'] => e5b302b4
+name [name='gb18030', errors='ignore'] => gb18030
+encode errors [name='gb18030', errors='ignore'] => ignore
+crc(whole) [name='gb18030', errors='ignore'] => d7bb6c73
+crc(pieces) [name='gb18030', errors='ignore'] => de804fd8
+name [name='gb18030', errors='replace'] => gb18030
+encode errors [name='gb18030', errors='replace'] => replace
+crc(whole) [name='gb18030', errors='replace'] => 8711635d
+crc(pieces) [name='gb18030', errors='replace'] => 011097ae
+name [name='gb18030', errors='backslashreplace'] => gb18030
+encode errors [name='gb18030', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='gb18030', errors='backslashreplace'] => 25adb43d
+crc(pieces) [name='gb18030', errors='backslashreplace'] => c532459d
+name [name='gb18030', errors='xmlcharrefreplace'] => gb18030
+encode errors [name='gb18030', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(whole) [name='gb18030', errors='xmlcharrefreplace'] => 13b82fef
+crc(pieces) [name='gb18030', errors='xmlcharrefreplace'] => 4539241e
+name [name='gb18030', errors='surrogateescape'] => gb18030
+encode errors [name='gb18030', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='gb18030', errors='surrogateescape'] => 1f40d90c
+crc(pieces) [name='gb18030', errors='surrogateescape'] => 645a2329
+name [name='gb18030', errors='test.shift'] => gb18030
+encode errors [name='gb18030', errors='test.shift'] => test.shift
+crc(whole) [name='gb18030', errors='test.shift'] => b4495420
+crc(pieces) [name='gb18030', errors='test.shift'] => adce6a22
+name [name='hz', errors='strict'] => hz
+decode errors [name='hz', errors='strict'] => strict
+crc(whole) [name='hz', errors='strict'] => 76efa53a
+crc(pieces) [name='hz', errors='strict'] => 790e0d94
+name [name='hz', errors='ignore'] => hz
+decode errors [name='hz', errors='ignore'] => ignore
+crc(whole) [name='hz', errors='ignore'] => 34d09136
+crc(pieces) [name='hz', errors='ignore'] => dcc90602
+name [name='hz', errors='replace'] => hz
+decode errors [name='hz', errors='replace'] => replace
+crc(whole) [name='hz', errors='replace'] => 7026ac8e
+crc(pieces) [name='hz', errors='replace'] => 6c587b81
+name [name='hz', errors='backslashreplace'] => hz
+decode errors [name='hz', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='hz', errors='backslashreplace'] => ed4e8286
+crc(pieces) [name='hz', errors='backslashreplace'] => 3b435e71
+name [name='hz', errors='surrogateescape'] => hz
+decode errors [name='hz', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='hz', errors='surrogateescape'] => 55c92fdd
+crc(pieces) [name='hz', errors='surrogateescape'] => b39c950f
+name [name='hz', errors='test.shift'] => hz
+decode errors [name='hz', errors='test.shift'] => test.shift
+crc(whole) [name='hz', errors='test.shift'] => 561b6e8c
+crc(pieces) [name='hz', errors='test.shift'] => efb3a9ed
+name [name='hz', errors='strict'] => hz
+encode errors [name='hz', errors='strict'] => strict
+crc(whole) [name='hz', errors='strict'] => 671425c8
+crc(pieces) [name='hz', errors='strict'] => 0e1dd807
+name [name='hz', errors='ignore'] => hz
+encode errors [name='hz', errors='ignore'] => ignore
+crc(whole) [name='hz', errors='ignore'] => 61d8c51e
+crc(pieces) [name='hz', errors='ignore'] => b6207d22
+name [name='hz', errors='replace'] => hz
+encode errors [name='hz', errors='replace'] => replace
+crc(whole) [name='hz', errors='replace'] => 4f903d15
+crc(pieces) [name='hz', errors='replace'] => 971baed7
+name [name='hz', errors='backslashreplace'] => hz
+encode errors [name='hz', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='hz', errors='backslashreplace'] => e1f07185
+crc(pieces) [name='hz', errors='backslashreplace'] => 59849c45
+name [name='hz', errors='xmlcharrefreplace'] => hz
+encode errors [name='hz', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(whole) [name='hz', errors='xmlcharrefreplace'] => cc562987
+crc(pieces) [name='hz', errors='xmlcharrefreplace'] => 00d463ad
+name [name='hz', errors='surrogateescape'] => hz
+encode errors [name='hz', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='hz', errors='surrogateescape'] => d2179e88
+crc(pieces) [name='hz', errors='surrogateescape'] => a49273d7
+name [name='hz', errors='test.shift'] => hz
+encode errors [name='hz', errors='test.shift'] => test.shift
+crc(whole) [name='hz', errors='test.shift'] => 5c0f33e0
+crc(pieces) [name='hz', errors='test.shift'] => 0689e520
+name [name='big5hkscs', errors='strict'] => big5hkscs
+decode errors [name='big5hkscs', errors='strict'] => strict
+crc(whole) [name='big5hkscs', errors='strict'] => 5f0a2196
+crc(pieces) [name='big5hkscs', errors='strict'] => bb947cfd
+name [name='big5hkscs', errors='ignore'] => big5hkscs
+decode errors [name='big5hkscs', errors='ignore'] => ignore
+crc(whole) [name='big5hkscs', errors='ignore'] => 72d6cadf
+crc(pieces) [name='big5hkscs', errors='ignore'] => 2f037f36
+name [name='big5hkscs', errors='replace'] => big5hkscs
+decode errors [name='big5hkscs', errors='replace'] => replace
+crc(whole) [name='big5hkscs', errors='replace'] => 1d8f3cfa
+crc(pieces) [name='big5hkscs', errors='replace'] => 6697bf80
+name [name='big5hkscs', errors='backslashreplace'] => big5hkscs
+decode errors [name='big5hkscs', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='big5hkscs', errors='backslashreplace'] => 10d0b384
+crc(pieces) [name='big5hkscs', errors='backslashreplace'] => 21bd47ff
+name [name='big5hkscs', errors='surrogateescape'] => big5hkscs
+decode errors [name='big5hkscs', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='big5hkscs', errors='surrogateescape'] => 3b8d0b25
+crc(pieces) [name='big5hkscs', errors='surrogateescape'] => 42f5de35
+name [name='big5hkscs', errors='test.shift'] => big5hkscs
+decode errors [name='big5hkscs', errors='test.shift'] => test.shift
+crc(whole) [name='big5hkscs', errors='test.shift'] => 66356712
+crc(pieces) [name='big5hkscs', errors='test.shift'] => 5f4a884c
+name [name='big5hkscs', errors='strict'] => big5hkscs
+encode errors [name='big5hkscs', errors='strict'] => strict
+crc(whole) [name='big5hkscs', errors='strict'] => cbf32555
+crc(pieces) [name='big5hkscs', errors='strict'] => cad4cd98
+name [name='big5hkscs', errors='ignore'] => big5hkscs
+encode errors [name='big5hkscs', errors='ignore'] => ignore
+crc(whole) [name='big5hkscs', errors='ignore'] => 17db5e8c
+crc(pieces) [name='big5hkscs', errors='ignore'] => 038974fb
+name [name='big5hkscs', errors='replace'] => big5hkscs
+encode errors [name='big5hkscs', errors='replace'] => replace
+crc(whole) [name='big5hkscs', errors='replace'] => 44cb9f9a
+crc(pieces) [name='big5hkscs', errors='replace'] => 22fd1fa3
+name [name='big5hkscs', errors='backslashreplace'] => big5hkscs
+encode errors [name='big5hkscs', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='big5hkscs', errors='backslashreplace'] => 1b36b0c3
+crc(pieces) [name='big5hkscs', errors='backslashreplace'] => cacbe525
+name [name='big5hkscs', errors='xmlcharrefreplace'] => big5hkscs
+encode errors [name='big5hkscs', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(whole) [name='big5hkscs', errors='xmlcharrefreplace'] => 4f00fbb0
+crc(pieces) [name='big5hkscs', errors='xmlcharrefreplace'] => c1ce5a33
+name [name='big5hkscs', errors='surrogateescape'] => big5hkscs
+encode errors [name='big5hkscs', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='big5hkscs', errors='surrogateescape'] => e32102bd
+crc(pieces) [name='big5hkscs', errors='surrogateescape'] => 95800f79
+name [name='big5hkscs', errors='test.shift'] => big5hkscs
+encode errors [name='big5hkscs', errors='test.shift'] => test.shift
+crc(whole) [name='big5hkscs', errors='test.shift'] => 415db2dc
+crc(pieces) [name='big5hkscs', errors='test.shift'] => e120315d
+name [name='big5', errors='strict'] => big5
+decode errors [name='big5', errors='strict'] => strict
+crc(whole) [name='big5', errors='strict'] => e41ddb87
+crc(pieces) [name='big5', errors='strict'] => cfdd70d6
+name [name='big5', errors='ignore'] => big5
+decode errors [name='big5', errors='ignore'] => ignore
+crc(whole) [name='big5', errors='ignore'] => df70bfc1
+crc(pieces) [name='big5', errors='ignore'] => 5aee8d8c
+name [name='big5', errors='replace'] => big5
+decode errors [name='big5', errors='replace'] => replace
+crc(whole) [name='big5', errors='replace'] => cb0bc045
+crc(pieces) [name='big5', errors='replace'] => fb4e3fd8
+name [name='big5', errors='backslashreplace'] => big5
+decode errors [name='big5', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='big5', errors='backslashreplace'] => 64436fb3
+crc(pieces) [name='big5', errors='backslashreplace'] => aa775453
+name [name='big5', errors='surrogateescape'] => big5
+decode errors [name='big5', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='big5', errors='surrogateescape'] => 7d8f6aed
+crc(pieces) [name='big5', errors='surrogateescape'] => 0fe82eb7
+name [name='big5', errors='test.shift'] => big5
+decode errors [name='big5', errors='test.shift'] => test.shift
+crc(whole) [name='big5', errors='test.shift'] => 1959d187
+crc(pieces) [name='big5', errors='test.shift'] => d17f1a27
+name [name='big5', errors='strict'] => big5
+encode errors [name='big5', errors='strict'] => strict
+crc(whole) [name='big5', errors='strict'] => 548ac19d
+crc(pieces) [name='big5', errors='strict'] => 07221b0e
+name [name='big5', errors='ignore'] => big5
+encode errors [name='big5', errors='ignore'] => ignore
+crc(whole) [name='big5', errors='ignore'] => 59515a42
+crc(pieces) [name='big5', errors='ignore'] => 78cbd679
+name [name='big5', errors='replace'] => big5
+encode errors [name='big5', errors='replace'] => replace
+crc(whole) [name='big5', errors='replace'] => 1b23d570
+crc(pieces) [name='big5', errors='replace'] => 6fb0ba28
+name [name='big5', errors='backslashreplace'] => big5
+encode errors [name='big5', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='big5', errors='backslashreplace'] => 1f3f3429
+crc(pieces) [name='big5', errors='backslashreplace'] => ad69bfb1
+name [name='big5', errors='xmlcharrefreplace'] => big5
+encode errors [name='big5', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(whole) [name='big5', errors='xmlcharrefreplace'] => 44ac034b
+crc(pieces) [name='big5', errors='xmlcharrefreplace'] => 5ffb658f
+name [name='big5', errors='surrogateescape'] => big5
+encode errors [name='big5', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='big5', errors='surrogateescape'] => fcfb6ddb
+crc(pieces) [name='big5', errors='surrogateescape'] => e71bcc5d
+name [name='big5', errors='test.shift'] => big5
+encode errors [name='big5', errors='test.shift'] => test.shift
+crc(whole) [name='big5', errors='test.shift'] => 8cff7dd8
+crc(pieces) [name='big5', errors='test.shift'] => 44e1f68a
+name [name='cp950', errors='strict'] => cp950
+decode errors [name='cp950', errors='strict'] => strict
+crc(whole) [name='cp950', errors='strict'] => ce92d865
+crc(pieces) [name='cp950', errors='strict'] => 081f830f
+name [name='cp950', errors='ignore'] => cp950
+decode errors [name='cp950', errors='ignore'] => ignore
+crc(whole) [name='cp950', errors='ignore'] => 43da5233
+crc(pieces) [name='cp950', errors='ignore'] => 09c505d5
+name [name='cp950', errors='replace'] => cp950
+decode errors [name='cp950', errors='replace'] => replace
+crc(whole) [name='cp950', errors='replace'] => fcc3bde9
+crc(pieces) [name='cp950', errors='replace'] => 0d6a834f
+name [name='cp950', errors='backslashreplace'] => cp950
+decode errors [name='cp950', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='cp950', errors='backslashreplace'] => 8e5d605d
+crc(pieces) [name='cp950', errors='backslashreplace'] => 6d148227
+name [name='cp950', errors='surrogateescape'] => cp950
+decode errors [name='cp950', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='cp950', errors='surrogateescape'] => bc95cbad
+crc(pieces) [name='cp950', errors='surrogateescape'] => 7d507b9c
+name [name='cp950', errors='test.shift'] => cp950
+decode errors [name='cp950', errors='test.shift'] => test.shift
+crc(whole) [name='cp950', errors='test.shift'] => 2776e9b9
+crc(pieces) [name='cp950', errors='test.shift'] => 53a86f9d
+name [name='cp950', errors='strict'] => cp950
+encode errors [name='cp950', errors='strict'] => strict
+crc(whole) [name='cp950', errors='strict'] => 0a62c1cc
+crc(pieces) [name='cp950', errors='strict'] => 8d58fdac
+name [name='cp950', errors='ignore'] => cp950
+encode errors [name='cp950', errors='ignore'] => ignore
+crc(whole) [name='cp950', errors='ignore'] => 0409a457
+crc(pieces) [name='cp950', errors='ignore'] => b5e861cd
+name [name='cp950', errors='replace'] => cp950
+encode errors [name='cp950', errors='replace'] => replace
+crc(whole) [name='cp950', errors='replace'] => ad9f48bb
+crc(pieces) [name='cp950', errors='replace'] => 8a76aec6
+name [name='cp950', errors='backslashreplace'] => cp950
+encode errors [name='cp950', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='cp950', errors='backslashreplace'] => 485141f7
+crc(pieces) [name='cp950', errors='backslashreplace'] => dae79861
+name [name='cp950', errors='xmlcharrefreplace'] => cp950
+encode errors [name='cp950', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(whole) [name='cp950', errors='xmlcharrefreplace'] => 09b7e8af
+crc(pieces) [name='cp950', errors='xmlcharrefreplace'] => a42adeb5
+name [name='cp950', errors='surrogateescape'] => cp950
+encode errors [name='cp950', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='cp950', errors='surrogateescape'] => ae0c2e48
+crc(pieces) [name='cp950', errors='surrogateescape'] => 399182d6
+name [name='cp950', errors='test.shift'] => cp950
+encode errors [name='cp950', errors='test.shift'] => test.shift
+crc(whole) [name='cp950', errors='test.shift'] => 2a1418d5
+crc(pieces) [name='cp950', errors='test.shift'] => 8dca8324
+name [name='euc_kr', errors='strict'] => euc_kr
+decode errors [name='euc_kr', errors='strict'] => strict
+crc(whole) [name='euc_kr', errors='strict'] => 14a7a33d
+crc(pieces) [name='euc_kr', errors='strict'] => 8bb869a9
+name [name='euc_kr', errors='ignore'] => euc_kr
+decode errors [name='euc_kr', errors='ignore'] => ignore
+crc(whole) [name='euc_kr', errors='ignore'] => 348939a3
+crc(pieces) [name='euc_kr', errors='ignore'] => ceb75b85
+name [name='euc_kr', errors='replace'] => euc_kr
+decode errors [name='euc_kr', errors='replace'] => replace
+crc(whole) [name='euc_kr', errors='replace'] => bedd4696
+crc(pieces) [name='euc_kr', errors='replace'] => 001a3d69
+name [name='euc_kr', errors='backslashreplace'] => euc_kr
+decode errors [name='euc_kr', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='euc_kr', errors='backslashreplace'] => c89def9b
+crc(pieces) [name='euc_kr', errors='backslashreplace'] => 82d3b8e7
+name [name='euc_kr', errors='surrogateescape'] => euc_kr
+decode errors [name='euc_kr', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='euc_kr', errors='surrogateescape'] => 5fc392de
+crc(pieces) [name='euc_kr', errors='surrogateescape'] => 73f4d86a
+name [name='euc_kr', errors='test.shift'] => euc_kr
+decode errors [name='euc_kr', errors='test.shift'] => test.shift
+crc(whole) [name='euc_kr', errors='test.shift'] => e0234932
+crc(pieces) [name='euc_kr', errors='test.shift'] => 7ffe28f0
+name [name='euc_kr', errors='strict'] => euc_kr
+encode errors [name='euc_kr', errors='strict'] => strict
+crc(whole) [name='euc_kr', errors='strict'] => c24d2fcc
+crc(pieces) [name='euc_kr', errors='strict'] => de1017c5
+name [name='euc_kr', errors='ignore'] => euc_kr
+encode errors [name='euc_kr', errors='ignore'] => ignore
+crc(whole) [name='euc_kr', errors='ignore'] => df895074
+crc(pieces) [name='euc_kr', errors='ignore'] => fcc13552
+name [name='euc_kr', errors='replace'] => euc_kr
+encode errors [name='euc_kr', errors='replace'] => replace
+crc(whole) [name='euc_kr', errors='replace'] => 5590c73c
+crc(pieces) [name='euc_kr', errors='replace'] => 886bc356
+name [name='euc_kr', errors='backslashreplace'] => euc_kr
+encode errors [name='euc_kr', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='euc_kr', errors='backslashreplace'] => 49f6e816
+crc(pieces) [name='euc_kr', errors='backslashreplace'] => 8876eabb
+name [name='euc_kr', errors='xmlcharrefreplace'] => euc_kr
+encode errors [name='euc_kr', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(whole) [name='euc_kr', errors='xmlcharrefreplace'] => 9e1b32a5
+crc(pieces) [name='euc_kr', errors='xmlcharrefreplace'] => 5e5943e8
+name [name='euc_kr', errors='surrogateescape'] => euc_kr
+encode errors [name='euc_kr', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='euc_kr', errors='surrogateescape'] => 04661670
+crc(pieces) [name='euc_kr', errors='surrogateescape'] => 208f493f
+name [name='euc_kr', errors='test.shift'] => euc_kr
+encode errors [name='euc_kr', errors='test.shift'] => test.shift
+crc(whole) [name='euc_kr', errors='test.shift'] => 09540fa8
+crc(pieces) [name='euc_kr', errors='test.shift'] => 5408c593
+name [name='cp949', errors='strict'] => cp949
+decode errors [name='cp949', errors='strict'] => strict
+crc(whole) [name='cp949', errors='strict'] => 0ae01581
+crc(pieces) [name='cp949', errors='strict'] => 8ff79d7f
+name [name='cp949', errors='ignore'] => cp949
+decode errors [name='cp949', errors='ignore'] => ignore
+crc(whole) [name='cp949', errors='ignore'] => ed0b9130
+crc(pieces) [name='cp949', errors='ignore'] => 9bbcf1f7
+name [name='cp949', errors='replace'] => cp949
+decode errors [name='cp949', errors='replace'] => replace
+crc(whole) [name='cp949', errors='replace'] => dca6f515
+crc(pieces) [name='cp949', errors='replace'] => 7290fc59
+name [name='cp949', errors='backslashreplace'] => cp949
+decode errors [name='cp949', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='cp949', errors='backslashreplace'] => 25c66a5c
+crc(pieces) [name='cp949', errors='backslashreplace'] => ca675771
+name [name='cp949', errors='surrogateescape'] => cp949
+decode errors [name='cp949', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='cp949', errors='surrogateescape'] => da653586
+crc(pieces) [name='cp949', errors='surrogateescape'] => 4347dedb
+name [name='cp949', errors='test.shift'] => cp949
+decode errors [name='cp949', errors='test.shift'] => test.shift
+crc(whole) [name='cp949', errors='test.shift'] => 6fc2eaeb
+crc(pieces) [name='cp949', errors='test.shift'] => 0d2c45da
+name [name='cp949', errors='strict'] => cp949
+encode errors [name='cp949', errors='strict'] => strict
+crc(whole) [name='cp949', errors='strict'] => 5887ff72
+crc(pieces) [name='cp949', errors='strict'] => f539799a
+name [name='cp949', errors='ignore'] => cp949
+encode errors [name='cp949', errors='ignore'] => ignore
+crc(whole) [name='cp949', errors='ignore'] => 009fc16e
+crc(pieces) [name='cp949', errors='ignore'] => 213e4c23
+name [name='cp949', errors='replace'] => cp949
+encode errors [name='cp949', errors='replace'] => replace
+crc(whole) [name='cp949', errors='replace'] => ec4b4688
+crc(pieces) [name='cp949', errors='replace'] => 58798a4d
+name [name='cp949', errors='backslashreplace'] => cp949
+encode errors [name='cp949', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='cp949', errors='backslashreplace'] => 6400388b
+crc(pieces) [name='cp949', errors='backslashreplace'] => af655694
+name [name='cp949', errors='xmlcharrefreplace'] => cp949
+encode errors [name='cp949', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(whole) [name='cp949', errors='xmlcharrefreplace'] => a713e8d6
+crc(pieces) [name='cp949', errors='xmlcharrefreplace'] => 87d5f963
+name [name='cp949', errors='surrogateescape'] => cp949
+encode errors [name='cp949', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='cp949', errors='surrogateescape'] => af0c5aa3
+crc(pieces) [name='cp949', errors='surrogateescape'] => 43727ff1
+name [name='cp949', errors='test.shift'] => cp949
+encode errors [name='cp949', errors='test.shift'] => test.shift
+crc(whole) [name='cp949', errors='test.shift'] => 4728510b
+crc(pieces) [name='cp949', errors='test.shift'] => 706b6ef0
+name [name='johab', errors='strict'] => johab
+decode errors [name='johab', errors='strict'] => strict
+crc(whole) [name='johab', errors='strict'] => 667bfdc2
+crc(pieces) [name='johab', errors='strict'] => 825d1f0a
+name [name='johab', errors='ignore'] => johab
+decode errors [name='johab', errors='ignore'] => ignore
+crc(whole) [name='johab', errors='ignore'] => abcf6f0a
+crc(pieces) [name='johab', errors='ignore'] => f8ace40a
+name [name='johab', errors='replace'] => johab
+decode errors [name='johab', errors='replace'] => replace
+crc(whole) [name='johab', errors='replace'] => 4f7905f0
+crc(pieces) [name='johab', errors='replace'] => ac0de290
+name [name='johab', errors='backslashreplace'] => johab
+decode errors [name='johab', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='johab', errors='backslashreplace'] => 8155d9d0
+crc(pieces) [name='johab', errors='backslashreplace'] => fa9a605a
+name [name='johab', errors='surrogateescape'] => johab
+decode errors [name='johab', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='johab', errors='surrogateescape'] => df1bb743
+crc(pieces) [name='johab', errors='surrogateescape'] => 92bb6eae
+name [name='johab', errors='test.shift'] => johab
+decode errors [name='johab', errors='test.shift'] => test.shift
+crc(whole) [name='johab', errors='test.shift'] => d60cd146
+crc(pieces) [name='johab', errors='test.shift'] => b2338df8
+name [name='johab', errors='strict'] => johab
+encode errors [name='johab', errors='strict'] => strict
+crc(whole) [name='johab', errors='strict'] => 587226a4
+crc(pieces) [name='johab', errors='strict'] => 05161af8
+name [name='johab', errors='ignore'] => johab
+encode errors [name='johab', errors='ignore'] => ignore
+crc(whole) [name='johab', errors='ignore'] => a895cf3a
+crc(pieces) [name='johab', errors='ignore'] => 4260b71f
+name [name='johab', errors='replace'] => johab
+encode errors [name='johab', errors='replace'] => replace
+crc(whole) [name='johab', errors='replace'] => 60db0407
+crc(pieces) [name='johab', errors='replace'] => e0571f5d
+name [name='johab', errors='backslashreplace'] => johab
+encode errors [name='johab', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='johab', errors='backslashreplace'] => 4bb8b4e2
+crc(pieces) [name='johab', errors='backslashreplace'] => a84a95ee
+name [name='johab', errors='xmlcharrefreplace'] => johab
+encode errors [name='johab', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(whole) [name='johab', errors='xmlcharrefreplace'] => 6643a0ba
+crc(pieces) [name='johab', errors='xmlcharrefreplace'] => 65a27dcf
+name [name='johab', errors='surrogateescape'] => johab
+encode errors [name='johab', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='johab', errors='surrogateescape'] => 381101b1
+crc(pieces) [name='johab', errors='surrogateescape'] => 41df7a2c
+name [name='johab', errors='test.shift'] => johab
+encode errors [name='johab', errors='test.shift'] => test.shift
+crc(whole) [name='johab', errors='test.shift'] => be9895d9
+crc(pieces) [name='johab', errors='test.shift'] => ec83bb68
+name [name='shift_jis', errors='strict'] => shift_jis
+decode errors [name='shift_jis', errors='strict'] => strict
+crc(whole) [name='shift_jis', errors='strict'] => f13270b8
+crc(pieces) [name='shift_jis', errors='strict'] => cf6ab591
+name [name='shift_jis', errors='ignore'] => shift_jis
+decode errors [name='shift_jis', errors='ignore'] => ignore
+crc(whole) [name='shift_jis', errors='ignore'] => fb947ac5
+crc(pieces) [name='shift_jis', errors='ignore'] => 81be2c7d
+name [name='shift_jis', errors='replace'] => shift_jis
+decode errors [name='shift_jis', errors='replace'] => replace
+crc(whole) [name='shift_jis', errors='replace'] => 5aec9b14
+crc(pieces) [name='shift_jis', errors='replace'] => 5a88d863
+name [name='shift_jis', errors='backslashreplace'] => shift_jis
+decode errors [name='shift_jis', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='shift_jis', errors='backslashreplace'] => 347b24b4
+crc(pieces) [name='shift_jis', errors='backslashreplace'] => 6fc6e114
+name [name='shift_jis', errors='surrogateescape'] => shift_jis
+decode errors [name='shift_jis', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='shift_jis', errors='surrogateescape'] => 31a8aed2
+crc(pieces) [name='shift_jis', errors='surrogateescape'] => 5b8b08df
+name [name='shift_jis', errors='test.shift'] => shift_jis
+decode errors [name='shift_jis', errors='test.shift'] => test.shift
+crc(whole) [name='shift_jis', errors='test.shift'] => 64546736
+crc(pieces) [name='shift_jis', errors='test.shift'] => 96f1db15
+name [name='shift_jis', errors='strict'] => shift_jis
+encode errors [name='shift_jis', errors='strict'] => strict
+crc(whole) [name='shift_jis', errors='strict'] => d892cd23
+crc(pieces) [name='shift_jis', errors='strict'] => 640035dd
+name [name='shift_jis', errors='ignore'] => shift_jis
+encode errors [name='shift_jis', errors='ignore'] => ignore
+crc(whole) [name='shift_jis', errors='ignore'] => 8182de98
+crc(pieces) [name='shift_jis', errors='ignore'] => 5e034e92
+name [name='shift_jis', errors='replace'] => shift_jis
+encode errors [name='shift_jis', errors='replace'] => replace
+crc(whole) [name='shift_jis', errors='replace'] => f898f3d9
+crc(pieces) [name='shift_jis', errors='replace'] => c2c2dc38
+name [name='shift_jis', errors='backslashreplace'] => shift_jis
+encode errors [name='shift_jis', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='shift_jis', errors='backslashreplace'] => 4e80ec91
+crc(pieces) [name='shift_jis', errors='backslashreplace'] => 83e41650
+name [name='shift_jis', errors='xmlcharrefreplace'] => shift_jis
+encode errors [name='shift_jis', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(whole) [name='shift_jis', errors='xmlcharrefreplace'] => c441c96a
+crc(pieces) [name='shift_jis', errors='xmlcharrefreplace'] => 9fb59efe
+name [name='shift_jis', errors='surrogateescape'] => shift_jis
+encode errors [name='shift_jis', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='shift_jis', errors='surrogateescape'] => 2e67da8f
+crc(pieces) [name='shift_jis', errors='surrogateescape'] => 72beca8e
+name [name='shift_jis', errors='test.shift'] => shift_jis
+encode errors [name='shift_jis', errors='test.shift'] => test.shift
+crc(whole) [name='shift_jis', errors='test.shift'] => 8258ac44
+crc(pieces) [name='shift_jis', errors='test.shift'] => e1902e7e
+name [name='cp932', errors='strict'] => cp932
+decode errors [name='cp932', errors='strict'] => strict
+crc(whole) [name='cp932', errors='strict'] => 84253e02
+crc(pieces) [name='cp932', errors='strict'] => d41ef3eb
+name [name='cp932', errors='ignore'] => cp932
+decode errors [name='cp932', errors='ignore'] => ignore
+crc(whole) [name='cp932', errors='ignore'] => e86ab378
+crc(pieces) [name='cp932', errors='ignore'] => 51041534
+name [name='cp932', errors='replace'] => cp932
+decode errors [name='cp932', errors='replace'] => replace
+crc(whole) [name='cp932', errors='replace'] => d105ce8a
+crc(pieces) [name='cp932', errors='replace'] => 6f1111c6
+name [name='cp932', errors='backslashreplace'] => cp932
+decode errors [name='cp932', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='cp932', errors='backslashreplace'] => 5c7630f3
+crc(pieces) [name='cp932', errors='backslashreplace'] => 86844e68
+name [name='cp932', errors='surrogateescape'] => cp932
+decode errors [name='cp932', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='cp932', errors='surrogateescape'] => a9b795b3
+crc(pieces) [name='cp932', errors='surrogateescape'] => a6eea9d8
+name [name='cp932', errors='test.shift'] => cp932
+decode errors [name='cp932', errors='test.shift'] => test.shift
+crc(whole) [name='cp932', errors='test.shift'] => 87b845ab
+crc(pieces) [name='cp932', errors='test.shift'] => 453ac290
+name [name='cp932', errors='strict'] => cp932
+encode errors [name='cp932', errors='strict'] => strict
+crc(whole) [name='cp932', errors='strict'] => a47aeb24
+crc(pieces) [name='cp932', errors='strict'] => eacda1f4
+name [name='cp932', errors='ignore'] => cp932
+encode errors [name='cp932', errors='ignore'] => ignore
+crc(whole) [name='cp932', errors='ignore'] => d15bf008
+crc(pieces) [name='cp932', errors='ignore'] => fa3044a8
+name [name='cp932', errors='replace'] => cp932
+encode errors [name='cp932', errors='replace'] => replace
+crc(whole) [name='cp932', errors='replace'] => 70bd1835
+crc(pieces) [name='cp932', errors='replace'] => 3a73b80d
+name [name='cp932', errors='backslashreplace'] => cp932
+encode errors [name='cp932', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='cp932', errors='backslashreplace'] => fbb83b0c
+crc(pieces) [name='cp932', errors='backslashreplace'] => d5f2417c
+name [name='cp932', errors='xmlcharrefreplace'] => cp932
+encode errors [name='cp932', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(whole) [name='cp932', errors='xmlcharrefreplace'] => 4696ca3a
+crc(pieces) [name='cp932', errors='xmlcharrefreplace'] => cfc2ec56
+name [name='cp932', errors='surrogateescape'] => cp932
+encode errors [name='cp932', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='cp932', errors='surrogateescape'] => d1a672b2
+crc(pieces) [name='cp932', errors='surrogateescape'] => 635e2949
+name [name='cp932', errors='test.shift'] => cp932
+encode errors [name='cp932', errors='test.shift'] => test.shift
+crc(whole) [name='cp932', errors='test.shift'] => 5f748ea3
+crc(pieces) [name='cp932', errors='test.shift'] => 1ad54944
+name [name='euc_jp', errors='strict'] => euc_jp
+decode errors [name='euc_jp', errors='strict'] => strict
+crc(whole) [name='euc_jp', errors='strict'] => 361dbffc
+crc(pieces) [name='euc_jp', errors='strict'] => 29f423c3
+name [name='euc_jp', errors='ignore'] => euc_jp
+decode errors [name='euc_jp', errors='ignore'] => ignore
+crc(whole) [name='euc_jp', errors='ignore'] => a4a2ce9e
+crc(pieces) [name='euc_jp', errors='ignore'] => 9f2132f3
+name [name='euc_jp', errors='replace'] => euc_jp
+decode errors [name='euc_jp', errors='replace'] => replace
+crc(whole) [name='euc_jp', errors='replace'] => e63fd58c
+crc(pieces) [name='euc_jp', errors='replace'] => f191ebdc
+name [name='euc_jp', errors='backslashreplace'] => euc_jp
+decode errors [name='euc_jp', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='euc_jp', errors='backslashreplace'] => 7848a0d2
+crc(pieces) [name='euc_jp', errors='backslashreplace'] => 1a510ce4
+name [name='euc_jp', errors='surrogateescape'] => euc_jp
+decode errors [name='euc_jp', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='euc_jp', errors='surrogateescape'] => c867d4fa
+crc(pieces) [name='euc_jp', errors='surrogateescape'] => 629e05ae
+name [name='euc_jp', errors='test.shift'] => euc_jp
+decode errors [name='euc_jp', errors='test.shift'] => test.shift
+crc(whole) [name='euc_jp', errors='test.shift'] => 11fe2a37
+crc(pieces) [name='euc_jp', errors='test.shift'] => dc4f7c4a
+name [name='euc_jp', errors='strict'] => euc_jp
+encode errors [name='euc_jp', errors='strict'] => strict
+crc(whole) [name='euc_jp', errors='strict'] => 70b19abd
+crc(pieces) [name='euc_jp', errors='strict'] => 424ab7bd
+name [name='euc_jp', errors='ignore'] => euc_jp
+encode errors [name='euc_jp', errors='ignore'] => ignore
+crc(whole) [name='euc_jp', errors='ignore'] => a84e7f00
+crc(pieces) [name='euc_jp', errors='ignore'] => 7b377269
+name [name='euc_jp', errors='replace'] => euc_jp
+encode errors [name='euc_jp', errors='replace'] => replace
+crc(whole) [name='euc_jp', errors='replace'] => 66c3ae1f
+crc(pieces) [name='euc_jp', errors='replace'] => 204b09f8
+name [name='euc_jp', errors='backslashreplace'] => euc_jp
+encode errors [name='euc_jp', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='euc_jp', errors='backslashreplace'] => fe592169
+crc(pieces) [name='euc_jp', errors='backslashreplace'] => c170b389
+name [name='euc_jp', errors='xmlcharrefreplace'] => euc_jp
+encode errors [name='euc_jp', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(whole) [name='euc_jp', errors='xmlcharrefreplace'] => e1a956c4
+crc(pieces) [name='euc_jp', errors='xmlcharrefreplace'] => 1c8ce7c8
+name [name='euc_jp', errors='surrogateescape'] => euc_jp
+encode errors [name='euc_jp', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='euc_jp', errors='surrogateescape'] => aa8c19b3
+crc(pieces) [name='euc_jp', errors='surrogateescape'] => 762c3662
+name [name='euc_jp', errors='test.shift'] => euc_jp
+encode errors [name='euc_jp', errors='test.shift'] => test.shift
+crc(whole) [name='euc_jp', errors='test.shift'] => 988f7a2c
+crc(pieces) [name='euc_jp', errors='test.shift'] => d2678838
+name [name='shift_jis_2004', errors='strict'] => shift_jis_2004
+decode errors [name='shift_jis_2004', errors='strict'] => strict
+crc(whole) [name='shift_jis_2004', errors='strict'] => ae476145
+crc(pieces) [name='shift_jis_2004', errors='strict'] => c5c1be9f
+name [name='shift_jis_2004', errors='ignore'] => shift_jis_2004
+decode errors [name='shift_jis_2004', errors='ignore'] => ignore
+crc(whole) [name='shift_jis_2004', errors='ignore'] => 0010c266
+crc(pieces) [name='shift_jis_2004', errors='ignore'] => 24b09cb7
+name [name='shift_jis_2004', errors='replace'] => shift_jis_2004
+decode errors [name='shift_jis_2004', errors='replace'] => replace
+crc(whole) [name='shift_jis_2004', errors='replace'] => 360dfd22
+crc(pieces) [name='shift_jis_2004', errors='replace'] => c66b4b14
+name [name='shift_jis_2004', errors='backslashreplace'] => shift_jis_2004
+decode errors [name='shift_jis_2004', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='shift_jis_2004', errors='backslashreplace'] => 54f26b70
+crc(pieces) [name='shift_jis_2004', errors='backslashreplace'] => 2294f1e5
+name [name='shift_jis_2004', errors='surrogateescape'] => shift_jis_2004
+decode errors [name='shift_jis_2004', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='shift_jis_2004', errors='surrogateescape'] => bdec8970
+crc(pieces) [name='shift_jis_2004', errors='surrogateescape'] => a6462f12
+name [name='shift_jis_2004', errors='test.shift'] => shift_jis_2004
+decode errors [name='shift_jis_2004', errors='test.shift'] => test.shift
+crc(whole) [name='shift_jis_2004', errors='test.shift'] => 47b208de
+crc(pieces) [name='shift_jis_2004', errors='test.shift'] => 461f632d
+name [name='shift_jis_2004', errors='strict'] => shift_jis_2004
+encode errors [name='shift_jis_2004', errors='strict'] => strict
+crc(whole) [name='shift_jis_2004', errors='strict'] => eb00c081
+crc(pieces) [name='shift_jis_2004', errors='strict'] => 559113dc
+name [name='shift_jis_2004', errors='ignore'] => shift_jis_2004
+encode errors [name='shift_jis_2004', errors='ignore'] => ignore
+crc(whole) [name='shift_jis_2004', errors='ignore'] => 33a06749
+crc(pieces) [name='shift_jis_2004', errors='ignore'] => 607c676d
+name [name='shift_jis_2004', errors='replace'] => shift_jis_2004
+encode errors [name='shift_jis_2004', errors='replace'] => replace
+crc(whole) [name='shift_jis_2004', errors='replace'] => 1438ee71
+crc(pieces) [name='shift_jis_2004', errors='replace'] => 9e499548
+name [name='shift_jis_2004', errors='backslashreplace'] => shift_jis_2004
+encode errors [name='shift_jis_2004', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='shift_jis_2004', errors='backslashreplace'] => fa9122ae
+crc(pieces) [name='shift_jis_2004', errors='backslashreplace'] => aba278ce
+name [name='shift_jis_2004', errors='xmlcharrefreplace'] => shift_jis_2004
+encode errors [name='shift_jis_2004', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(whole) [name='shift_jis_2004', errors='xmlcharrefreplace'] => cae00154
+crc(pieces) [name='shift_jis_2004', errors='xmlcharrefreplace'] => 8adceaf7
+name [name='shift_jis_2004', errors='surrogateescape'] => shift_jis_2004
+encode errors [name='shift_jis_2004', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='shift_jis_2004', errors='surrogateescape'] => dbddaebe
+crc(pieces) [name='shift_jis_2004', errors='surrogateescape'] => da018a81
+name [name='shift_jis_2004', errors='test.shift'] => shift_jis_2004
+encode errors [name='shift_jis_2004', errors='test.shift'] => test.shift
+crc(whole) [name='shift_jis_2004', errors='test.shift'] => dce94172
+crc(pieces) [name='shift_jis_2004', errors='test.shift'] => c96157e0
+name [name='shift_jisx0213', errors='strict'] => shift_jisx0213
+decode errors [name='shift_jisx0213', errors='strict'] => strict
+crc(whole) [name='shift_jisx0213', errors='strict'] => 3d1bf12b
+crc(pieces) [name='shift_jisx0213', errors='strict'] => 065ab883
+name [name='shift_jisx0213', errors='ignore'] => shift_jisx0213
+decode errors [name='shift_jisx0213', errors='ignore'] => ignore
+crc(whole) [name='shift_jisx0213', errors='ignore'] => ea181687
+crc(pieces) [name='shift_jisx0213', errors='ignore'] => b063c3c1
+name [name='shift_jisx0213', errors='replace'] => shift_jisx0213
+decode errors [name='shift_jisx0213', errors='replace'] => replace
+crc(whole) [name='shift_jisx0213', errors='replace'] => 5b9406e7
+crc(pieces) [name='shift_jisx0213', errors='replace'] => 32b9c159
+name [name='shift_jisx0213', errors='backslashreplace'] => shift_jisx0213
+decode errors [name='shift_jisx0213', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='shift_jisx0213', errors='backslashreplace'] => 0d03d393
+crc(pieces) [name='shift_jisx0213', errors='backslashreplace'] => 1bb00d8f
+name [name='shift_jisx0213', errors='surrogateescape'] => shift_jisx0213
+decode errors [name='shift_jisx0213', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='shift_jisx0213', errors='surrogateescape'] => f2bd636c
+crc(pieces) [name='shift_jisx0213', errors='surrogateescape'] => 304df5da
+name [name='shift_jisx0213', errors='test.shift'] => shift_jisx0213
+decode errors [name='shift_jisx0213', errors='test.shift'] => test.shift
+crc(whole) [name='shift_jisx0213', errors='test.shift'] => fc7b60f7
+crc(pieces) [name='shift_jisx0213', errors='test.shift'] => fb4c6a41
+name [name='shift_jisx0213', errors='strict'] => shift_jisx0213
+encode errors [name='shift_jisx0213', errors='strict'] => strict
+crc(whole) [name='shift_jisx0213', errors='strict'] => ea7581f5
+crc(pieces) [name='shift_jisx0213', errors='strict'] => 6db0e2e0
+name [name='shift_jisx0213', errors='ignore'] => shift_jisx0213
+encode errors [name='shift_jisx0213', errors='ignore'] => ignore
+crc(whole) [name='shift_jisx0213', errors='ignore'] => 490fb277
+crc(pieces) [name='shift_jisx0213', errors='ignore'] => 98cdda69
+name [name='shift_jisx0213', errors='replace'] => shift_jisx0213
+encode errors [name='shift_jisx0213', errors='replace'] => replace
+crc(whole) [name='shift_jisx0213', errors='replace'] => ffa7a398
+crc(pieces) [name='shift_jisx0213', errors='replace'] => 2a9166bc
+name [name='shift_jisx0213', errors='backslashreplace'] => shift_jisx0213
+encode errors [name='shift_jisx0213', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='shift_jisx0213', errors='backslashreplace'] => d8701464
+crc(pieces) [name='shift_jisx0213', errors='backslashreplace'] => e99064d2
+name [name='shift_jisx0213', errors='xmlcharrefreplace'] => shift_jisx0213
+encode errors [name='shift_jisx0213', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(whole) [name='shift_jisx0213', errors='xmlcharrefreplace'] => c1230afb
+crc(pieces) [name='shift_jisx0213', errors='xmlcharrefreplace'] => 19a4bfed
+name [name='shift_jisx0213', errors='surrogateescape'] => shift_jisx0213
+encode errors [name='shift_jisx0213', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='shift_jisx0213', errors='surrogateescape'] => daa8efca
+crc(pieces) [name='shift_jisx0213', errors='surrogateescape'] => e2207bbd
+name [name='shift_jisx0213', errors='test.shift'] => shift_jisx0213
+encode errors [name='shift_jisx0213', errors='test.shift'] => test.shift
+crc(whole) [name='shift_jisx0213', errors='test.shift'] => 33916b21
+crc(pieces) [name='shift_jisx0213', errors='test.shift'] => e25e16a9
+name [name='euc_jis_2004', errors='strict'] => euc_jis_2004
+decode errors [name='euc_jis_2004', errors='strict'] => strict
+crc(whole) [name='euc_jis_2004', errors='strict'] => 4173fbdb
+crc(pieces) [name='euc_jis_2004', errors='strict'] => 9bdc162c
+name [name='euc_jis_2004', errors='ignore'] => euc_jis_2004
+decode errors [name='euc_jis_2004', errors='ignore'] => ignore
+crc(whole) [name='euc_jis_2004', errors='ignore'] => 2196ded5
+crc(pieces) [name='euc_jis_2004', errors='ignore'] => e58ce18f
+name [name='euc_jis_2004', errors='replace'] => euc_jis_2004
+decode errors [name='euc_jis_2004', errors='replace'] => replace
+crc(whole) [name='euc_jis_2004', errors='replace'] => aa1a0e8b
+crc(pieces) [name='euc_jis_2004', errors='replace'] => b5b33a44
+name [name='euc_jis_2004', errors='backslashreplace'] => euc_jis_2004
+decode errors [name='euc_jis_2004', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='euc_jis_2004', errors='backslashreplace'] => 498c8669
+crc(pieces) [name='euc_jis_2004', errors='backslashreplace'] => 348040b1
+name [name='euc_jis_2004', errors='surrogateescape'] => euc_jis_2004
+decode errors [name='euc_jis_2004', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='euc_jis_2004', errors='surrogateescape'] => eeb6ae89
+crc(pieces) [name='euc_jis_2004', errors='surrogateescape'] => 43739797
+name [name='euc_jis_2004', errors='test.shift'] => euc_jis_2004
+decode errors [name='euc_jis_2004', errors='test.shift'] => test.shift
+crc(whole) [name='euc_jis_2004', errors='test.shift'] => 1425eb57
+crc(pieces) [name='euc_jis_2004', errors='test.shift'] => ffc828d9
+name [name='euc_jis_2004', errors='strict'] => euc_jis_2004
+encode errors [name='euc_jis_2004', errors='strict'] => strict
+crc(whole) [name='euc_jis_2004', errors='strict'] => d059a982
+crc(pieces) [name='euc_jis_2004', errors='strict'] => 23dbf724
+name [name='euc_jis_2004', errors='ignore'] => euc_jis_2004
+encode errors [name='euc_jis_2004', errors='ignore'] => ignore
+crc(whole) [name='euc_jis_2004', errors='ignore'] => 266e084b
+crc(pieces) [name='euc_jis_2004', errors='ignore'] => 267440c2
+name [name='euc_jis_2004', errors='replace'] => euc_jis_2004
+encode errors [name='euc_jis_2004', errors='replace'] => replace
+crc(whole) [name='euc_jis_2004', errors='replace'] => 0f033766
+crc(pieces) [name='euc_jis_2004', errors='replace'] => d898d5ee
+name [name='euc_jis_2004', errors='backslashreplace'] => euc_jis_2004
+encode errors [name='euc_jis_2004', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='euc_jis_2004', errors='backslashreplace'] => e48ca8e5
+crc(pieces) [name='euc_jis_2004', errors='backslashreplace'] => 94c0a758
+name [name='euc_jis_2004', errors='xmlcharrefreplace'] => euc_jis_2004
+encode errors [name='euc_jis_2004', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(whole) [name='euc_jis_2004', errors='xmlcharrefreplace'] => 30fac637
+crc(pieces) [name='euc_jis_2004', errors='xmlcharrefreplace'] => fe886456
+name [name='euc_jis_2004', errors='surrogateescape'] => euc_jis_2004
+encode errors [name='euc_jis_2004', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='euc_jis_2004', errors='surrogateescape'] => 5bee4a75
+crc(pieces) [name='euc_jis_2004', errors='surrogateescape'] => 3e5c3f31
+name [name='euc_jis_2004', errors='test.shift'] => euc_jis_2004
+encode errors [name='euc_jis_2004', errors='test.shift'] => test.shift
+crc(whole) [name='euc_jis_2004', errors='test.shift'] => 2de67b37
+crc(pieces) [name='euc_jis_2004', errors='test.shift'] => 62144815
+name [name='euc_jisx0213', errors='strict'] => euc_jisx0213
+decode errors [name='euc_jisx0213', errors='strict'] => strict
+crc(whole) [name='euc_jisx0213', errors='strict'] => 0b4031c8
+crc(pieces) [name='euc_jisx0213', errors='strict'] => 32ffd5e4
+name [name='euc_jisx0213', errors='ignore'] => euc_jisx0213
+decode errors [name='euc_jisx0213', errors='ignore'] => ignore
+crc(whole) [name='euc_jisx0213', errors='ignore'] => a7ffc974
+crc(pieces) [name='euc_jisx0213', errors='ignore'] => b8c9a877
+name [name='euc_jisx0213', errors='replace'] => euc_jisx0213
+decode errors [name='euc_jisx0213', errors='replace'] => replace
+crc(whole) [name='euc_jisx0213', errors='replace'] => 9aa64ad8
+crc(pieces) [name='euc_jisx0213', errors='replace'] => 1f7ec3bf
+name [name='euc_jisx0213', errors='backslashreplace'] => euc_jisx0213
+decode errors [name='euc_jisx0213', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='euc_jisx0213', errors='backslashreplace'] => 3cb5c38e
+crc(pieces) [name='euc_jisx0213', errors='backslashreplace'] => 58fc5513
+name [name='euc_jisx0213', errors='surrogateescape'] => euc_jisx0213
+decode errors [name='euc_jisx0213', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='euc_jisx0213', errors='surrogateescape'] => 0e6f413b
+crc(pieces) [name='euc_jisx0213', errors='surrogateescape'] => 3852a274
+name [name='euc_jisx0213', errors='test.shift'] => euc_jisx0213
+decode errors [name='euc_jisx0213', errors='test.shift'] => test.shift
+crc(whole) [name='euc_jisx0213', errors='test.shift'] => 5fb86bfd
+crc(pieces) [name='euc_jisx0213', errors='test.shift'] => 6b3234c1
+name [name='euc_jisx0213', errors='strict'] => euc_jisx0213
+encode errors [name='euc_jisx0213', errors='strict'] => strict
+crc(whole) [name='euc_jisx0213', errors='strict'] => 10755757
+crc(pieces) [name='euc_jisx0213', errors='strict'] => 621f6234
+name [name='euc_jisx0213', errors='ignore'] => euc_jisx0213
+encode errors [name='euc_jisx0213', errors='ignore'] => ignore
+crc(whole) [name='euc_jisx0213', errors='ignore'] => 3cd1863b
+crc(pieces) [name='euc_jisx0213', errors='ignore'] => 27db0799
+name [name='euc_jisx0213', errors='replace'] => euc_jisx0213
+encode errors [name='euc_jisx0213', errors='replace'] => replace
+crc(whole) [name='euc_jisx0213', errors='replace'] => a7fb0637
+crc(pieces) [name='euc_jisx0213', errors='replace'] => d4b27fea
+name [name='euc_jisx0213', errors='backslashreplace'] => euc_jisx0213
+encode errors [name='euc_jisx0213', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='euc_jisx0213', errors='backslashreplace'] => 3844bc2c
+crc(pieces) [name='euc_jisx0213', errors='backslashreplace'] => 0bc7abc4
+name [name='euc_jisx0213', errors='xmlcharrefreplace'] => euc_jisx0213
+encode errors [name='euc_jisx0213', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(whole) [name='euc_jisx0213', errors='xmlcharrefreplace'] => 0dae678f
+crc(pieces) [name='euc_jisx0213', errors='xmlcharrefreplace'] => 2084fc96
+name [name='euc_jisx0213', errors='surrogateescape'] => euc_jisx0213
+encode errors [name='euc_jisx0213', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='euc_jisx0213', errors='surrogateescape'] => 9bc2b4a0
+crc(pieces) [name='euc_jisx0213', errors='surrogateescape'] => 5e2d3fd1
+name [name='euc_jisx0213', errors='test.shift'] => euc_jisx0213
+encode errors [name='euc_jisx0213', errors='test.shift'] => test.shift
+crc(whole) [name='euc_jisx0213', errors='test.shift'] => a5c5435d
+crc(pieces) [name='euc_jisx0213', errors='test.shift'] => 70dc9752
+name [name='iso2022_jp', errors='strict'] => iso2022_jp
+decode errors [name='iso2022_jp', errors='strict'] => strict
+crc(whole) [name='iso2022_jp', errors='strict'] => adf64240
+crc(pieces) [name='iso2022_jp', errors='strict'] => 6c60beee
+name [name='iso2022_jp', errors='ignore'] => iso2022_jp
+decode errors [name='iso2022_jp', errors='ignore'] => ignore
+crc(whole) [name='iso2022_jp', errors='ignore'] => 4b42f9af
+crc(pieces) [name='iso2022_jp', errors='ignore'] => e0fb2186
+name [name='iso2022_jp', errors='replace'] => iso2022_jp
+decode errors [name='iso2022_jp', errors='replace'] => replace
+crc(whole) [name='iso2022_jp', errors='replace'] => 2c41df0a
+crc(pieces) [name='iso2022_jp', errors='replace'] => 18b047b8
+name [name='iso2022_jp', errors='backslashreplace'] => iso2022_jp
+decode errors [name='iso2022_jp', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='iso2022_jp', errors='backslashreplace'] => 3fa47c41
+crc(pieces) [name='iso2022_jp', errors='backslashreplace'] => 5b191f09
+name [name='iso2022_jp', errors='surrogateescape'] => iso2022_jp
+decode errors [name='iso2022_jp', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='iso2022_jp', errors='surrogateescape'] => d6ef7e7d
+crc(pieces) [name='iso2022_jp', errors='surrogateescape'] => 331070b3
+name [name='iso2022_jp', errors='test.shift'] => iso2022_jp
+decode errors [name='iso2022_jp', errors='test.shift'] => test.shift
+crc(whole) [name='iso2022_jp', errors='test.shift'] => 563c9741
+crc(pieces) [name='iso2022_jp', errors='test.shift'] => 96be15c2
+name [name='iso2022_jp', errors='strict'] => iso2022_jp
+encode errors [name='iso2022_jp', errors='strict'] => strict
+crc(whole) [name='iso2022_jp', errors='strict'] => b68a88e1
+crc(pieces) [name='iso2022_jp', errors='strict'] => db1cf17e
+name [name='iso2022_jp', errors='ignore'] => iso2022_jp
+encode errors [name='iso2022_jp', errors='ignore'] => ignore
+crc(whole) [name='iso2022_jp', errors='ignore'] => b54cd1b2
+crc(pieces) [name='iso2022_jp', errors='ignore'] => 08c32694
+name [name='iso2022_jp', errors='replace'] => iso2022_jp
+encode errors [name='iso2022_jp', errors='replace'] => replace
+crc(whole) [name='iso2022_jp', errors='replace'] => 683f21a9
+crc(pieces) [name='iso2022_jp', errors='replace'] => 4c3ee6ad
+name [name='iso2022_jp', errors='backslashreplace'] => iso2022_jp
+encode errors [name='iso2022_jp', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='iso2022_jp', errors='backslashreplace'] => 789c71b5
+crc(pieces) [name='iso2022_jp', errors='backslashreplace'] => a02bab9f
+name [name='iso2022_jp', errors='xmlcharrefreplace'] => iso2022_jp
+encode errors [name='iso2022_jp', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(whole) [name='iso2022_jp', errors='xmlcharrefreplace'] => c0e6ac2f
+crc(pieces) [name='iso2022_jp', errors='xmlcharrefreplace'] => 9a77fb35
+name [name='iso2022_jp', errors='surrogateescape'] => iso2022_jp
+encode errors [name='iso2022_jp', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='iso2022_jp', errors='surrogateescape'] => 1b001f27
+crc(pieces) [name='iso2022_jp', errors='surrogateescape'] => d9a570ee
+name [name='iso2022_jp', errors='test.shift'] => iso2022_jp
+encode errors [name='iso2022_jp', errors='test.shift'] => test.shift
+crc(whole) [name='iso2022_jp', errors='test.shift'] => 589c43d3
+crc(pieces) [name='iso2022_jp', errors='test.shift'] => 1517b444
+name [name='iso2022_jp_1', errors='strict'] => iso2022_jp_1
+decode errors [name='iso2022_jp_1', errors='strict'] => strict
+crc(whole) [name='iso2022_jp_1', errors='strict'] => f3535e12
+crc(pieces) [name='iso2022_jp_1', errors='strict'] => da1f84e3
+name [name='iso2022_jp_1', errors='ignore'] => iso2022_jp_1
+decode errors [name='iso2022_jp_1', errors='ignore'] => ignore
+crc(whole) [name='iso2022_jp_1', errors='ignore'] => 4b42f9af
+crc(pieces) [name='iso2022_jp_1', errors='ignore'] => e0fb2186
+name [name='iso2022_jp_1', errors='replace'] => iso2022_jp_1
+decode errors [name='iso2022_jp_1', errors='replace'] => replace
+crc(whole) [name='iso2022_jp_1', errors='replace'] => 2c41df0a
+crc(pieces) [name='iso2022_jp_1', errors='replace'] => 18b047b8
+name [name='iso2022_jp_1', errors='backslashreplace'] => iso2022_jp_1
+decode errors [name='iso2022_jp_1', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='iso2022_jp_1', errors='backslashreplace'] => 3fa47c41
+crc(pieces) [name='iso2022_jp_1', errors='backslashreplace'] => 5b191f09
+name [name='iso2022_jp_1', errors='surrogateescape'] => iso2022_jp_1
+decode errors [name='iso2022_jp_1', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='iso2022_jp_1', errors='surrogateescape'] => 50859db9
+crc(pieces) [name='iso2022_jp_1', errors='surrogateescape'] => 308a704a
+name [name='iso2022_jp_1', errors='test.shift'] => iso2022_jp_1
+decode errors [name='iso2022_jp_1', errors='test.shift'] => test.shift
+crc(whole) [name='iso2022_jp_1', errors='test.shift'] => 563c9741
+crc(pieces) [name='iso2022_jp_1', errors='test.shift'] => 96be15c2
+name [name='iso2022_jp_1', errors='strict'] => iso2022_jp_1
+encode errors [name='iso2022_jp_1', errors='strict'] => strict
+crc(whole) [name='iso2022_jp_1', errors='strict'] => b8bbe43a
+crc(pieces) [name='iso2022_jp_1', errors='strict'] => 21966f50
+name [name='iso2022_jp_1', errors='ignore'] => iso2022_jp_1
+encode errors [name='iso2022_jp_1', errors='ignore'] => ignore
+crc(whole) [name='iso2022_jp_1', errors='ignore'] => f9bcd6e6
+crc(pieces) [name='iso2022_jp_1', errors='ignore'] => 4e04c90d
+name [name='iso2022_jp_1', errors='replace'] => iso2022_jp_1
+encode errors [name='iso2022_jp_1', errors='replace'] => replace
+crc(whole) [name='iso2022_jp_1', errors='replace'] => 0d804b0f
+crc(pieces) [name='iso2022_jp_1', errors='replace'] => e71ea9cb
+name [name='iso2022_jp_1', errors='backslashreplace'] => iso2022_jp_1
+encode errors [name='iso2022_jp_1', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='iso2022_jp_1', errors='backslashreplace'] => 968ff988
+crc(pieces) [name='iso2022_jp_1', errors='backslashreplace'] => 15565e82
+name [name='iso2022_jp_1', errors='xmlcharrefreplace'] => iso2022_jp_1
+encode errors [name='iso2022_jp_1', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(whole) [name='iso2022_jp_1', errors='xmlcharrefreplace'] => 9352d83a
+crc(pieces) [name='iso2022_jp_1', errors='xmlcharrefreplace'] => 31874707
+name [name='iso2022_jp_1', errors='surrogateescape'] => iso2022_jp_1
+encode errors [name='iso2022_jp_1', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='iso2022_jp_1', errors='surrogateescape'] => a9aae311
+crc(pieces) [name='iso2022_jp_1', errors='surrogateescape'] => e289667a
+name [name='iso2022_jp_1', errors='test.shift'] => iso2022_jp_1
+encode errors [name='iso2022_jp_1', errors='test.shift'] => test.shift
+crc(whole) [name='iso2022_jp_1', errors='test.shift'] => 040ed96f
+crc(pieces) [name='iso2022_jp_1', errors='test.shift'] => 44f98de8
+name [name='iso2022_jp_2', errors='strict'] => iso2022_jp_2
+decode errors [name='iso2022_jp_2', errors='strict'] => strict
+crc(whole) [name='iso2022_jp_2', errors='strict'] => 6289505e
+crc(pieces) [name='iso2022_jp_2', errors='strict'] => 11ad4fa2
+name [name='iso2022_jp_2', errors='ignore'] => iso2022_jp_2
+decode errors [name='iso2022_jp_2', errors='ignore'] => ignore
+crc(whole) [name='iso2022_jp_2', errors='ignore'] => 24548f50
+crc(pieces) [name='iso2022_jp_2', errors='ignore'] => 550221e9
+name [name='iso2022_jp_2', errors='replace'] => iso2022_jp_2
+decode errors [name='iso2022_jp_2', errors='replace'] => replace
+crc(whole) [name='iso2022_jp_2', errors='replace'] => 128d2022
+crc(pieces) [name='iso2022_jp_2', errors='replace'] => 5f8f4216
+name [name='iso2022_jp_2', errors='backslashreplace'] => iso2022_jp_2
+decode errors [name='iso2022_jp_2', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='iso2022_jp_2', errors='backslashreplace'] => 982c9b48
+crc(pieces) [name='iso2022_jp_2', errors='backslashreplace'] => 38cb0a35
+name [name='iso2022_jp_2', errors='surrogateescape'] => iso2022_jp_2
+decode errors [name='iso2022_jp_2', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='iso2022_jp_2', errors='surrogateescape'] => 483974ac
+crc(pieces) [name='iso2022_jp_2', errors='surrogateescape'] => 5067171e
+name [name='iso2022_jp_2', errors='test.shift'] => iso2022_jp_2
+decode errors [name='iso2022_jp_2', errors='test.shift'] => test.shift
+crc(whole) [name='iso2022_jp_2', errors='test.shift'] => 5c5ab9bc
+crc(pieces) [name='iso2022_jp_2', errors='test.shift'] => 81d84bd2
+name [name='iso2022_jp_2', errors='strict'] => iso2022_jp_2
+encode errors [name='iso2022_jp_2', errors='strict'] => strict
+crc(whole) [name='iso2022_jp_2', errors='strict'] => 22660f39
+crc(pieces) [name='iso2022_jp_2', errors='strict'] => 436f1f16
+name [name='iso2022_jp_2', errors='ignore'] => iso2022_jp_2
+encode errors [name='iso2022_jp_2', errors='ignore'] => ignore
+crc(whole) [name='iso2022_jp_2', errors='ignore'] => 438cb70b
+crc(pieces) [name='iso2022_jp_2', errors='ignore'] => 5e758bfe
+name [name='iso2022_jp_2', errors='replace'] => iso2022_jp_2
+encode errors [name='iso2022_jp_2', errors='replace'] => replace
+crc(whole) [name='iso2022_jp_2', errors='replace'] => 56d14cde
+crc(pieces) [name='iso2022_jp_2', errors='replace'] => b9b809ea
+name [name='iso2022_jp_2', errors='backslashreplace'] => iso2022_jp_2
+encode errors [name='iso2022_jp_2', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='iso2022_jp_2', errors='backslashreplace'] => 7cd265f1
+crc(pieces) [name='iso2022_jp_2', errors='backslashreplace'] => 80496609
+name [name='iso2022_jp_2', errors='xmlcharrefreplace'] => iso2022_jp_2
+encode errors [name='iso2022_jp_2', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(whole) [name='iso2022_jp_2', errors='xmlcharrefreplace'] => ea928685
+crc(pieces) [name='iso2022_jp_2', errors='xmlcharrefreplace'] => 80a4a104
+name [name='iso2022_jp_2', errors='surrogateescape'] => iso2022_jp_2
+encode errors [name='iso2022_jp_2', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='iso2022_jp_2', errors='surrogateescape'] => c1d378b1
+crc(pieces) [name='iso2022_jp_2', errors='surrogateescape'] => 46bfe98b
+name [name='iso2022_jp_2', errors='test.shift'] => iso2022_jp_2
+encode errors [name='iso2022_jp_2', errors='test.shift'] => test.shift
+crc(whole) [name='iso2022_jp_2', errors='test.shift'] => 4ecc35a9
+crc(pieces) [name='iso2022_jp_2', errors='test.shift'] => d16f52cf
+name [name='iso2022_jp_2004', errors='strict'] => iso2022_jp_2004
+decode errors [name='iso2022_jp_2004', errors='strict'] => strict
+crc(whole) [name='iso2022_jp_2004', errors='strict'] => e832ce4f
+crc(pieces) [name='iso2022_jp_2004', errors='strict'] => 7db9dafa
+name [name='iso2022_jp_2004', errors='ignore'] => iso2022_jp_2004
+decode errors [name='iso2022_jp_2004', errors='ignore'] => ignore
+crc(whole) [name='iso2022_jp_2004', errors='ignore'] => 4b42f9af
+crc(pieces) [name='iso2022_jp_2004', errors='ignore'] => e0fb2186
+name [name='iso2022_jp_2004', errors='replace'] => iso2022_jp_2004
+decode errors [name='iso2022_jp_2004', errors='replace'] => replace
+crc(whole) [name='iso2022_jp_2004', errors='replace'] => 2c41df0a
+crc(pieces) [name='iso2022_jp_2004', errors='replace'] => 18b047b8
+name [name='iso2022_jp_2004', errors='backslashreplace'] => iso2022_jp_2004
+decode errors [name='iso2022_jp_2004', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='iso2022_jp_2004', errors='backslashreplace'] => 3fa47c41
+crc(pieces) [name='iso2022_jp_2004', errors='backslashreplace'] => 5b191f09
+name [name='iso2022_jp_2004', errors='surrogateescape'] => iso2022_jp_2004
+decode errors [name='iso2022_jp_2004', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='iso2022_jp_2004', errors='surrogateescape'] => 109651c9
+crc(pieces) [name='iso2022_jp_2004', errors='surrogateescape'] => ae5aef03
+name [name='iso2022_jp_2004', errors='test.shift'] => iso2022_jp_2004
+decode errors [name='iso2022_jp_2004', errors='test.shift'] => test.shift
+crc(whole) [name='iso2022_jp_2004', errors='test.shift'] => 563c9741
+crc(pieces) [name='iso2022_jp_2004', errors='test.shift'] => 96be15c2
+name [name='iso2022_jp_2004', errors='strict'] => iso2022_jp_2004
+encode errors [name='iso2022_jp_2004', errors='strict'] => strict
+crc(whole) [name='iso2022_jp_2004', errors='strict'] => e70ffc9c
+crc(pieces) [name='iso2022_jp_2004', errors='strict'] => 08932ebe
+name [name='iso2022_jp_2004', errors='ignore'] => iso2022_jp_2004
+encode errors [name='iso2022_jp_2004', errors='ignore'] => ignore
+crc(whole) [name='iso2022_jp_2004', errors='ignore'] => fcf42a71
+crc(pieces) [name='iso2022_jp_2004', errors='ignore'] => fcbc0a9b
+name [name='iso2022_jp_2004', errors='replace'] => iso2022_jp_2004
+encode errors [name='iso2022_jp_2004', errors='replace'] => replace
+crc(whole) [name='iso2022_jp_2004', errors='replace'] => b5040155
+crc(pieces) [name='iso2022_jp_2004', errors='replace'] => 6e13305f
+name [name='iso2022_jp_2004', errors='backslashreplace'] => iso2022_jp_2004
+encode errors [name='iso2022_jp_2004', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='iso2022_jp_2004', errors='backslashreplace'] => 93c37021
+crc(pieces) [name='iso2022_jp_2004', errors='backslashreplace'] => 13c2004b
+name [name='iso2022_jp_2004', errors='xmlcharrefreplace'] => iso2022_jp_2004
+encode errors [name='iso2022_jp_2004', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(whole) [name='iso2022_jp_2004', errors='xmlcharrefreplace'] => 08ad79d9
+crc(pieces) [name='iso2022_jp_2004', errors='xmlcharrefreplace'] => 680a86b9
+name [name='iso2022_jp_2004', errors='surrogateescape'] => iso2022_jp_2004
+encode errors [name='iso2022_jp_2004', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='iso2022_jp_2004', errors='surrogateescape'] => 1fe49fbf
+crc(pieces) [name='iso2022_jp_2004', errors='surrogateescape'] => 4f805526
+name [name='iso2022_jp_2004', errors='test.shift'] => iso2022_jp_2004
+encode errors [name='iso2022_jp_2004', errors='test.shift'] => test.shift
+crc(whole) [name='iso2022_jp_2004', errors='test.shift'] => 1e34319a
+crc(pieces) [name='iso2022_jp_2004', errors='test.shift'] => 851343a6
+name [name='iso2022_jp_3', errors='strict'] => iso2022_jp_3
+decode errors [name='iso2022_jp_3', errors='strict'] => strict
+crc(whole) [name='iso2022_jp_3', errors='strict'] => 123f559a
+crc(pieces) [name='iso2022_jp_3', errors='strict'] => 8a09525a
+name [name='iso2022_jp_3', errors='ignore'] => iso2022_jp_3
+decode errors [name='iso2022_jp_3', errors='ignore'] => ignore
+crc(whole) [name='iso2022_jp_3', errors='ignore'] => 4b42f9af
+crc(pieces) [name='iso2022_jp_3', errors='ignore'] => e0fb2186
+name [name='iso2022_jp_3', errors='replace'] => iso2022_jp_3
+decode errors [name='iso2022_jp_3', errors='replace'] => replace
+crc(whole) [name='iso2022_jp_3', errors='replace'] => 2c41df0a
+crc(pieces) [name='iso2022_jp_3', errors='replace'] => 18b047b8
+name [name='iso2022_jp_3', errors='backslashreplace'] => iso2022_jp_3
+decode errors [name='iso2022_jp_3', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='iso2022_jp_3', errors='backslashreplace'] => 3fa47c41
+crc(pieces) [name='iso2022_jp_3', errors='backslashreplace'] => 5b191f09
+name [name='iso2022_jp_3', errors='surrogateescape'] => iso2022_jp_3
+decode errors [name='iso2022_jp_3', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='iso2022_jp_3', errors='surrogateescape'] => 29a95812
+crc(pieces) [name='iso2022_jp_3', errors='surrogateescape'] => 16286d6c
+name [name='iso2022_jp_3', errors='test.shift'] => iso2022_jp_3
+decode errors [name='iso2022_jp_3', errors='test.shift'] => test.shift
+crc(whole) [name='iso2022_jp_3', errors='test.shift'] => 563c9741
+crc(pieces) [name='iso2022_jp_3', errors='test.shift'] => 96be15c2
+name [name='iso2022_jp_3', errors='strict'] => iso2022_jp_3
+encode errors [name='iso2022_jp_3', errors='strict'] => strict
+crc(whole) [name='iso2022_jp_3', errors='strict'] => b20bd816
+crc(pieces) [name='iso2022_jp_3', errors='strict'] => c59889cb
+name [name='iso2022_jp_3', errors='ignore'] => iso2022_jp_3
+encode errors [name='iso2022_jp_3', errors='ignore'] => ignore
+crc(whole) [name='iso2022_jp_3', errors='ignore'] => 3052810d
+crc(pieces) [name='iso2022_jp_3', errors='ignore'] => 74a0e748
+name [name='iso2022_jp_3', errors='replace'] => iso2022_jp_3
+encode errors [name='iso2022_jp_3', errors='replace'] => replace
+crc(whole) [name='iso2022_jp_3', errors='replace'] => 309c2418
+crc(pieces) [name='iso2022_jp_3', errors='replace'] => 984e8316
+name [name='iso2022_jp_3', errors='backslashreplace'] => iso2022_jp_3
+encode errors [name='iso2022_jp_3', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='iso2022_jp_3', errors='backslashreplace'] => 466d627a
+crc(pieces) [name='iso2022_jp_3', errors='backslashreplace'] => 92595cb9
+name [name='iso2022_jp_3', errors='xmlcharrefreplace'] => iso2022_jp_3
+encode errors [name='iso2022_jp_3', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(whole) [name='iso2022_jp_3', errors='xmlcharrefreplace'] => e5e2e3f5
+crc(pieces) [name='iso2022_jp_3', errors='xmlcharrefreplace'] => a43de69d
+name [name='iso2022_jp_3', errors='surrogateescape'] => iso2022_jp_3
+encode errors [name='iso2022_jp_3', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='iso2022_jp_3', errors='surrogateescape'] => 4f47d3a7
+crc(pieces) [name='iso2022_jp_3', errors='surrogateescape'] => 4f3c7d2f
+name [name='iso2022_jp_3', errors='test.shift'] => iso2022_jp_3
+encode errors [name='iso2022_jp_3', errors='test.shift'] => test.shift
+crc(whole) [name='iso2022_jp_3', errors='test.shift'] => 00b8f977
+crc(pieces) [name='iso2022_jp_3', errors='test.shift'] => 4110f126
+name [name='iso2022_jp_ext', errors='strict'] => iso2022_jp_ext
+decode errors [name='iso2022_jp_ext', errors='strict'] => strict
+crc(whole) [name='iso2022_jp_ext', errors='strict'] => 9d2b283b
+crc(pieces) [name='iso2022_jp_ext', errors='strict'] => 73768712
+name [name='iso2022_jp_ext', errors='ignore'] => iso2022_jp_ext
+decode errors [name='iso2022_jp_ext', errors='ignore'] => ignore
+crc(whole) [name='iso2022_jp_ext', errors='ignore'] => 4b42f9af
+crc(pieces) [name='iso2022_jp_ext', errors='ignore'] => fe0e8680
+name [name='iso2022_jp_ext', errors='replace'] => iso2022_jp_ext
+decode errors [name='iso2022_jp_ext', errors='replace'] => replace
+crc(whole) [name='iso2022_jp_ext', errors='replace'] => ad5af22a
+crc(pieces) [name='iso2022_jp_ext', errors='replace'] => aa61ad76
+name [name='iso2022_jp_ext', errors='backslashreplace'] => iso2022_jp_ext
+decode errors [name='iso2022_jp_ext', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='iso2022_jp_ext', errors='backslashreplace'] => 8471ed37
+crc(pieces) [name='iso2022_jp_ext', errors='backslashreplace'] => bddaa9f4
+name [name='iso2022_jp_ext', errors='surrogateescape'] => iso2022_jp_ext
+decode errors [name='iso2022_jp_ext', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='iso2022_jp_ext', errors='surrogateescape'] => 9dda6517
+crc(pieces) [name='iso2022_jp_ext', errors='surrogateescape'] => e5f23428
+name [name='iso2022_jp_ext', errors='test.shift'] => iso2022_jp_ext
+decode errors [name='iso2022_jp_ext', errors='test.shift'] => test.shift
+crc(whole) [name='iso2022_jp_ext', errors='test.shift'] => 370fe9c7
+crc(pieces) [name='iso2022_jp_ext', errors='test.shift'] => 96be15c2
+name [name='iso2022_jp_ext', errors='strict'] => iso2022_jp_ext
+encode errors [name='iso2022_jp_ext', errors='strict'] => strict
+crc(whole) [name='iso2022_jp_ext', errors='strict'] => 877aad17
+crc(pieces) [name='iso2022_jp_ext', errors='strict'] => 6eac2792
+name [name='iso2022_jp_ext', errors='ignore'] => iso2022_jp_ext
+encode errors [name='iso2022_jp_ext', errors='ignore'] => ignore
+crc(whole) [name='iso2022_jp_ext', errors='ignore'] => 19115b45
+crc(pieces) [name='iso2022_jp_ext', errors='ignore'] => 9c6dff51
+name [name='iso2022_jp_ext', errors='replace'] => iso2022_jp_ext
+encode errors [name='iso2022_jp_ext', errors='replace'] => replace
+crc(whole) [name='iso2022_jp_ext', errors='replace'] => 709d2857
+crc(pieces) [name='iso2022_jp_ext', errors='replace'] => 92aafb47
+name [name='iso2022_jp_ext', errors='backslashreplace'] => iso2022_jp_ext
+encode errors [name='iso2022_jp_ext', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='iso2022_jp_ext', errors='backslashreplace'] => 983104a9
+crc(pieces) [name='iso2022_jp_ext', errors='backslashreplace'] => 3527fd19
+name [name='iso2022_jp_ext', errors='xmlcharrefreplace'] => iso2022_jp_ext
+encode errors [name='iso2022_jp_ext', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(whole) [name='iso2022_jp_ext', errors='xmlcharrefreplace'] => 09952785
+crc(pieces) [name='iso2022_jp_ext', errors='xmlcharrefreplace'] => 45eb0c3b
+name [name='iso2022_jp_ext', errors='surrogateescape'] => iso2022_jp_ext
+encode errors [name='iso2022_jp_ext', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='iso2022_jp_ext', errors='surrogateescape'] => 3f7eb652
+crc(pieces) [name='iso2022_jp_ext', errors='surrogateescape'] => cf503ecd
+name [name='iso2022_jp_ext', errors='test.shift'] => iso2022_jp_ext
+encode errors [name='iso2022_jp_ext', errors='test.shift'] => test.shift
+crc(whole) [name='iso2022_jp_ext', errors='test.shift'] => 9de672a3
+crc(pieces) [name='iso2022_jp_ext', errors='test.shift'] => 69be8199
+name [name='iso2022_kr', errors='strict'] => iso2022_kr
+decode errors [name='iso2022_kr', errors='strict'] => strict
+crc(whole) [name='iso2022_kr', errors='strict'] => 043c7fc8
+crc(pieces) [name='iso2022_kr', errors='strict'] => 2bffba9b
+name [name='iso2022_kr', errors='ignore'] => iso2022_kr
+decode errors [name='iso2022_kr', errors='ignore'] => ignore
+crc(whole) [name='iso2022_kr', errors='ignore'] => 4de1a51f
+crc(pieces) [name='iso2022_kr', errors='ignore'] => c114e4f4
+name [name='iso2022_kr', errors='replace'] => iso2022_kr
+decode errors [name='iso2022_kr', errors='replace'] => replace
+crc(whole) [name='iso2022_kr', errors='replace'] => e3ac9e52
+crc(pieces) [name='iso2022_kr', errors='replace'] => 1d04a9cf
+name [name='iso2022_kr', errors='backslashreplace'] => iso2022_kr
+decode errors [name='iso2022_kr', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='iso2022_kr', errors='backslashreplace'] => 70f58cea
+crc(pieces) [name='iso2022_kr', errors='backslashreplace'] => a1814d00
+name [name='iso2022_kr', errors='surrogateescape'] => iso2022_kr
+decode errors [name='iso2022_kr', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='iso2022_kr', errors='surrogateescape'] => ab298049
+crc(pieces) [name='iso2022_kr', errors='surrogateescape'] => 0b2a5012
+name [name='iso2022_kr', errors='test.shift'] => iso2022_kr
+decode errors [name='iso2022_kr', errors='test.shift'] => test.shift
+crc(whole) [name='iso2022_kr', errors='test.shift'] => ac8babcf
+crc(pieces) [name='iso2022_kr', errors='test.shift'] => a69b5ebf
+name [name='iso2022_kr', errors='strict'] => iso2022_kr
+encode errors [name='iso2022_kr', errors='strict'] => strict
+crc(whole) [name='iso2022_kr', errors='strict'] => 9ec07ee2
+crc(pieces) [name='iso2022_kr', errors='strict'] => 427ea4e6
+name [name='iso2022_kr', errors='ignore'] => iso2022_kr
+encode errors [name='iso2022_kr', errors='ignore'] => ignore
+crc(whole) [name='iso2022_kr', errors='ignore'] => a8826124
+crc(pieces) [name='iso2022_kr', errors='ignore'] => 08a458d9
+name [name='iso2022_kr', errors='replace'] => iso2022_kr
+encode errors [name='iso2022_kr', errors='replace'] => replace
+crc(whole) [name='iso2022_kr', errors='replace'] => 825f18ed
+crc(pieces) [name='iso2022_kr', errors='replace'] => aa3da1b4
+name [name='iso2022_kr', errors='backslashreplace'] => iso2022_kr
+encode errors [name='iso2022_kr', errors='backslashreplace'] => backslashreplace
+crc(whole) [name='iso2022_kr', errors='backslashreplace'] => 3c8c9a43
+crc(pieces) [name='iso2022_kr', errors='backslashreplace'] => 086786b8
+name [name='iso2022_kr', errors='xmlcharrefreplace'] => iso2022_kr
+encode errors [name='iso2022_kr', errors='xmlcharrefreplace'] => xmlcharrefreplace
+crc(whole) [name='iso2022_kr', errors='xmlcharrefreplace'] => 8164db48
+crc(pieces) [name='iso2022_kr', errors='xmlcharrefreplace'] => 91474e2a
+name [name='iso2022_kr', errors='surrogateescape'] => iso2022_kr
+encode errors [name='iso2022_kr', errors='surrogateescape'] => surrogateescape
+crc(whole) [name='iso2022_kr', errors='surrogateescape'] => d13093fe
+crc(pieces) [name='iso2022_kr', errors='surrogateescape'] => 01eee66d
+name [name='iso2022_kr', errors='test.shift'] => iso2022_kr
+encode errors [name='iso2022_kr', errors='test.shift'] => test.shift
+crc(whole) [name='iso2022_kr', errors='test.shift'] => 4241903b
+crc(pieces) [name='iso2022_kr', errors='test.shift'] => abc152ed

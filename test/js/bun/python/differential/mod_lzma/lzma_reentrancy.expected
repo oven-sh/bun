@@ -1,0 +1,64 @@
+status: 0
+script: 6a97e8b0a4b2b958
+---
+BufferError: Existing exports of data: object cannot be re-sized
+BufferError: Existing exports of data: object cannot be re-sized
+True
+340
+BufferError: Existing exports of data: object cannot be re-sized
+BufferError: Existing exports of data: object cannot be re-sized
+True
+inner 50 False
+70 True False False
+inner 0 True
+70
+False False
+inner True True
+EOFError: Already at end of stream
+True b''
+TypeError: B.__init__() got an unexpected keyword argument 'preset'
+__buffer__ 0
+__release_buffer__
+True
+KeyError: 'no buffer'
+KeyError: 'no buffer'
+KeyError: 'no buffer'
+b'ok'
+flushed 32
+ValueError: Compressor has been flushed
+ValueError: Repeated call to flush()
+True True
+True b'tail'
+clearing
+IndexError: list index out of range
+[]
+<_lzma.LZMACompressor object>
+52
+ValueError: Invalid filter specifier for LZMA filter
+{'zz': 1}
+b'\x16'
+{'zz': 1}
+__buffer__ 0
+{'id': 33, 'dict_size': 8388608}
+id
+__buffer__ 0
+{'id': 33, 'dict_size': 8388608}
+id
+TypeError: a bytes-like object is required, not 'int'
+TypeError: 'str' object cannot be interpreted as an integer
+b'[\x00\x00\x80\x00'
+['id', 'lc', 'pb']
+b'\x01\x00\x00\x80\x00'
+['depth', 'id', 'lc', 'pb']
+b'[\x00\x00\x80\x00'
+['id', 'lc', 'pb']
+ValueError: Invalid filter specifier for LZMA filter
+['depth', 'id', 'lc', 'pb']
+b'[\x00\x00\x80\x00'
+['id', 'lc', 'pb', 'zz']
+b'\x01\x00\x00\x80\x00'
+['depth', 'id', 'lc', 'pb', 'zz']
+b'[\x00\x00\x80\x00'
+['dict_size', 'id', 'lc']
+b'[\x00\x00\x80\x00'
+['depth', 'dict_size', 'id', 'lc']

@@ -1,0 +1,92 @@
+status: 0
+script: d8ebc2510f593019
+source: f3108c40c7e6e181
+---
+A->B ok B
+S1->S2 ok S2
+S1->S3 TypeError __class__ assignment: 'S3' object layout differs from 'S1'
+S1->S4 TypeError __class__ assignment: 'S4' object layout differs from 'S1'
+S1->A TypeError __class__ assignment: 'A' object layout differs from 'S1'
+A->S1 TypeError __class__ assignment: 'S1' object layout differs from 'A'
+SD1->SD2 ok SD2
+SD1->S1 TypeError __class__ assignment: 'S1' object layout differs from 'SD1'
+SW->S1 TypeError __class__ assignment: 'S1' object layout differs from 'SW'
+I1->I2 ok I2
+I1->IS TypeError __class__ assignment: 'IS' object layout differs from 'I1'
+I1->int TypeError __class__ assignment only supported for mutable types or ModuleType subclasses
+int->I1 TypeError __class__ assignment only supported for mutable types or ModuleType subclasses
+L1->L2 ok L2
+L1->D1 TypeError __class__ assignment: 'D1' object layout differs from 'L1'
+L1->A TypeError __class__ assignment: 'A' object layout differs from 'L1'
+AS1->AS2 ok AS2
+AS1->BS1 TypeError __class__ assignment: 'BS1' object layout differs from 'AS1'
+A->1 TypeError __class__ must be set to a class, not 'int' object
+object->A TypeError __class__ assignment only supported for mutable types or ModuleType subclasses
+del TypeError can't delete __class__ attribute
+s.x => 5
+type(s).__name__ => S2
+module->M1 ok M1
+M1->module ok module
+module->M2 ok M2
+R(Q) ok ['R', 'Q', 'object']
+[c.__name__ for c in T.__mro__] => ['T', 'R', 'Q', 'object']
+[c.__name__ for c in P.__subclasses__()] => []
+[c.__name__ for c in Q.__subclasses__()] => ['R']
+R(P, Q) ok ['R', 'P', 'Q', 'object']
+R() TypeError can only assign non-empty tuple to R.__bases__, not ()
+R(R) TypeError a __bases__ item causes an inheritance cycle
+R(T) TypeError a __bases__ item causes an inheritance cycle
+R(int) TypeError __bases__ assignment: 'int' object layout differs from 'P'
+R(S1) TypeError __bases__ assignment: 'S1' object layout differs from 'P'
+R(object) ok ['R', 'object']
+R(1) TypeError R.__bases__ must be tuple of classes, not 'int'
+R(P, P) TypeError duplicate base class P
+R(bool) TypeError type 'bool' is not an acceptable base type
+list TypeError can only assign tuple to R.__bases__, not list
+del TypeError cannot delete '__bases__' attribute of type 'R'
+int TypeError cannot set '__bases__' attribute of immutable type 'int'
+[c.__name__ for c in R.__mro__] => ['R', 'object']
+[c.__name__ for c in T.__mro__] => ['T', 'R', 'object']
+Y(X2, X1) TypeError Cannot create a consistent method resolution order (MRO) for bases X2, X1
+[c.__name__ for c in Y.__mro__] => ['Y', 'X1', 'X2', 'object']
+[c.__name__ for c in Z.__mro__] => ['Z', 'Y', 'X1', 'X2', 'object']
+[c.__name__ for c in Y.__bases__] => ['X1', 'X2']
+W1(V2) RuntimeError no MRO for W2
+[c.__name__ for c in W1.__mro__] => ['W1', 'V1', 'object']
+[c.__name__ for c in W2.__mro__] => ['W2', 'W1', 'V1', 'object']
+[c.__name__ for c in W1.__bases__] => ['V1']
+[c.__name__ for c in V1.__subclasses__()] => ['W1']
+[c.__name__ for c in V2.__subclasses__()] => []
+W1(V2) ok ['W1', 'V2', 'object']
+[c.__name__ for c in W2.__mro__] => ['W2', 'W1', 'V2', 'object']
+[c.__name__ for c in V1.__subclasses__()] => []
+[c.__name__ for c in V2.__subclasses__()] => ['W1']
+N(N2) ok ['N', 'N3', 'object']
+[c.__name__ for c in N.__bases__] => ['N3']
+[c.__name__ for c in N.__mro__] => ['N', 'N3', 'object']
+[['N'], [], ['N']]
+mro 1 TypeError 'int' object is not iterable
+mro [1] TypeError C.mro() returned a non-class ('int')
+mro [int] TypeError C.mro() returned base with unsuitable layout ('int')
+mro [object] TypeError super(type, obj): obj (type C) is not an instance or subtype of type (C).
+mro [] TypeError type MRO must not be empty
+mro (A, object) TypeError super(type, obj): obj (type C) is not an instance or subtype of type (C).
+Borrower.value => 1
+SubBorrower.value => 1
+Borrower().value => 1
+Borrower.value => 2
+SubBorrower.value => 2
+Borrower().value => 2
+Borrower.other => new
+SubBorrower().other => new
+hasattr(Borrower, 'other') => False
+[c.__name__ for c in Lender.__subclasses__()] => []
+[c.__name__ for c in Borrower.__subclasses__()] => ['SubBorrower']
+issubclass(Borrower, Lender) => True
+isinstance(Borrower(), Lender) => True
+[c.__name__ for c in Left.__mro__] => ['Left', 'Right', 'object']
+[c.__name__ for c in Right.__mro__] => ['Right', 'Left', 'object']
+Left.right => 1
+Right.left => 1
+Left.right => 3
+Right.left => 2

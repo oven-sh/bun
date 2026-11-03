@@ -1,0 +1,81 @@
+status: 0
+script: 3ad259d81f07573c
+---
+3 True False
+7 8 9
+True 50
+k0 ('k0', 0) 0 k49
+True True True False
+k1 ('k1', 1) 1 k48 48 48 48 48
+['k2', Like('k1')] ['k48', 'k49']
+RuntimeError dictionary changed size during iteration
+{'k0': 0, 'k1': 2, 'k2': 4, 'k3': 6, 'k4': 8}
+Like 3 True 3 3 3 False gone new Like 8
+replaced str 8
+False 7
+updated 1 8 True 1
+{Like('a'): 2, 'b': 3} 2 Like 3 None
+{'k0': 0, 'k1': 'x', 'k2': 2} {'k0': 0, 'k1': 'y', 'k2': 2} {'k0': 0, 'k1': 1, 'k2': 'z'} True True
+S 3 True 3 3 3 False gone new S 8
+replaced str 8
+False 7
+updated 1 8 True 1
+{'a': 2, 'b': 3} 2 S 3 None
+{'k0': 0, 'k1': 'x', 'k2': 2} {'k0': 0, 'k1': 'y', 'k2': 2} {'k0': 0, 'k1': 1, 'k2': 'z'} True True
+SH 3 True 3 3 3 False gone new SH 8
+replaced str 8
+False 7
+updated 1 8 True 1
+{'a': 2, 'b': 3} 2 SH 3 None
+{'k0': 0, 'k1': 'x', 'k2': 2} {'k0': 0, 'k1': 'y', 'k2': 2} {'k0': 0, 'k1': 1, 'k2': 'z'} True True
+SE 3 True 3 3 3 False gone new SE 8
+replaced str 8
+False 7
+updated 1 8 True 1
+{'a': 2, 'b': 3} 2 SE 3 None
+{'k0': 0, 'k1': 'x', 'k2': 2} {'k0': 0, 'k1': 'y', 'k2': 2} {'k0': 0, 'k1': 1, 'k2': 'z'} True True
+str 3 True 3 3 3 False gone new str 8
+replaced str 8
+False 7
+updated 1 8 True 1
+{'a': 2, 'b': 3} 2 str 3 None
+{'k0': 0, 'k1': 'x', 'k2': 2} {'k0': 0, 'k1': 'y', 'k2': 2} {'k0': 0, 'k1': 1, 'k2': 'z'} True True
+TypeError cannot use 'SN' as a dict key (unhashable type: 'SN')
+None 1 1 None 1
+tuple None [(7, True)] 7 9 51
+frozenset [(7, True)] plain tuple 1
+[2] 51 2 None
+1 250 199 49
+KeyError
+0
+{'a': 1} 1
+2 1
+1 1 True 2
+1 1 1
+1 None False
+1
+None
+1 1 2
+3 3 ['alpha', 'beta', 'gamma']
+1 True 2 2 1 1
+3 4 3 4 3 4
+1 3 True
+3 3 3
+True False collections
+(1, 2, ['p', 'q']) (3, None, ['p', 'q'])
+True True True
+True
+2
+['k4', 'k0', 'k2', 'k3', 'k5', 'k1'] 0 ('k1', 1) ['k5', 'k3', 'k2', 'k4']
+{'a': 2, Like('b'): 1} 1
+[('a', 7), ('b', 3), ('c', 2)] 7
+1 True
+2 True
+1 1 True True 1
+True True False True
+50 50 51 1 49 50 True True False
+48 False False 1 str
+True True 2 True
+2705 2001 like 2999 -2996 2992 ['like', 'like', 'like'] False False
+['s0', 0, ('t', 0), 's1', 's3', 's4'] [2996, 's2997', 's2998', 's2999']
+True 199999 200000 0 ('199999', 199999)

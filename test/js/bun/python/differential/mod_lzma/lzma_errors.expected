@@ -1,0 +1,368 @@
+status: 0
+script: 0dd905dd8580e1b7
+---
+LZMAError: Input format not supported by decoder ('Input format not supported by decoder',) Exception
+False True b'' 0
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 0
+LZMAError: Input format not supported by decoder ('Input format not supported by decoder',) Exception
+False True b'' 16
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 16
+LZMAError: Input format not supported by decoder ('Input format not supported by decoder',) Exception
+False True b'' 0
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 0
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+False True b'' 0
+LZMAError: Internal error ('Internal error',) Exception
+b''
+False True b'' 16
+b''
+b''
+False True b'' 16
+b''
+False True b'' 16
+b''
+b''
+False True b'' 16
+LZMAError: Input format not supported by decoder ('Input format not supported by decoder',) Exception
+False True b'' 0
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 0
+b''
+False True b'' 0
+b''
+b''
+False True b'' 16
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 16
+b''
+False True b'' 16
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 16
+LZMAError: Input format not supported by decoder ('Input format not supported by decoder',) Exception
+False True b'' 0
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 0
+b''
+False True b'' 0
+b''
+b''
+False True b'' 16
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 16
+b''
+False True b'' 16
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 16
+LZMAError: Input format not supported by decoder ('Input format not supported by decoder',) Exception
+False True b'' 0
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 0
+b''
+False True b'' 0
+b''
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+False True b'' 16
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 16
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+False True b'' 16
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 16
+LZMAError: Input format not supported by decoder ('Input format not supported by decoder',) Exception
+False True b'' 0
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 0
+b'\x08'
+False True b'' 0
+b''
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+False True b'' 16
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 16
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+False True b'' 16
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 16
+LZMAError: Input format not supported by decoder ('Input format not supported by decoder',) Exception
+False True b'' 0
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 0
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+False True b'' 0
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+False True b'' 16
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 16
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+False True b'' 16
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 16
+LZMAError: Input format not supported by decoder ('Input format not supported by decoder',) Exception
+False True b'' 0
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 0
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+False True b'' 0
+LZMAError: Internal error ('Internal error',) Exception
+b''
+True False b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' 0
+EOFError: Already at end of stream ('Already at end of stream',) Exception
+EOFError: Already at end of stream ('Already at end of stream',) Exception
+True False b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' 0
+LZMAError: Input format not supported by decoder ('Input format not supported by decoder',) Exception
+False True b'' 16
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 16
+b''
+True False b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' 0
+EOFError: Already at end of stream ('Already at end of stream',) Exception
+EOFError: Already at end of stream ('Already at end of stream',) Exception
+True False b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' 0
+b''
+True False b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' 0
+EOFError: Already at end of stream ('Already at end of stream',) Exception
+LZMAError: Input format not supported by decoder ('Input format not supported by decoder',) Exception
+False True b'' 0
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 0
+LZMAError: Input format not supported by decoder ('Input format not supported by decoder',) Exception
+False True b'' 16
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 16
+LZMAError: Input format not supported by decoder ('Input format not supported by decoder',) Exception
+False True b'' 0
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 0
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+False True b'' 0
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+False True b'' 0
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 0
+LZMAError: Input format not supported by decoder ('Input format not supported by decoder',) Exception
+False True b'' 16
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 16
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+False True b'' 0
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 0
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+False True b'' 0
+LZMAError: Internal error ('Internal error',) Exception
+b''
+False True b'' 0
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 0
+LZMAError: Input format not supported by decoder ('Input format not supported by decoder',) Exception
+False True b'' 16
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 16
+b''
+False True b'' 0
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 0
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+False True b'' 0
+LZMAError: Internal error ('Internal error',) Exception
+b'\x00\x00\x00\x00\x00'
+True False b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' 0
+EOFError: Already at end of stream ('Already at end of stream',) Exception
+EOFError: Already at end of stream ('Already at end of stream',) Exception
+True False b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' 0
+LZMAError: Input format not supported by decoder ('Input format not supported by decoder',) Exception
+False True b'' 16
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 16
+b'\x00\x00\x00\x00\x00'
+True False b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' 0
+EOFError: Already at end of stream ('Already at end of stream',) Exception
+EOFError: Already at end of stream ('Already at end of stream',) Exception
+True False b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' 0
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+False True b'' 0
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Input format not supported by decoder ('Input format not supported by decoder',) Exception
+False True b'' 0
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 0
+LZMAError: Input format not supported by decoder ('Input format not supported by decoder',) Exception
+False True b'' 16
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 16
+LZMAError: Input format not supported by decoder ('Input format not supported by decoder',) Exception
+False True b'' 0
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 0
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+False True b'' 0
+LZMAError: Internal error ('Internal error',) Exception
+b''
+False True b'' 16
+LZMAError: Invalid or unsupported options ('Invalid or unsupported options',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 16
+b''
+False True b'' 16
+b''
+b''
+False True b'' 16
+LZMAError: Input format not supported by decoder ('Input format not supported by decoder',) Exception
+False True b'' 0
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 0
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+False True b'' 0
+LZMAError: Internal error ('Internal error',) Exception
+b''
+False True b'' 1
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 1
+b''
+False True b'' 16
+b''
+b''
+False True b'' 16
+LZMAError: Input format not supported by decoder ('Input format not supported by decoder',) Exception
+False True b'' 0
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 0
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+False True b'' 0
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Invalid or unsupported options ('Invalid or unsupported options',) Exception
+False True b'' 16
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 16
+LZMAError: Input format not supported by decoder ('Input format not supported by decoder',) Exception
+False True b'' 16
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 16
+LZMAError: Input format not supported by decoder ('Input format not supported by decoder',) Exception
+False True b'' 0
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 0
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+False True b'' 0
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+False True b'' 1
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 1
+LZMAError: Input format not supported by decoder ('Input format not supported by decoder',) Exception
+False True b'' 16
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 16
+LZMAError: Input format not supported by decoder ('Input format not supported by decoder',) Exception
+False True b'' 0
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 0
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+False True b'' 0
+LZMAError: Internal error ('Internal error',) Exception
+b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x
+False True b'' 1
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 1
+LZMAError: Input format not supported by decoder ('Input format not supported by decoder',) Exception
+False True b'' 16
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 16
+LZMAError: Input format not supported by decoder ('Input format not supported by decoder',) Exception
+False True b'' 0
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+False True b'' 0
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+False True b'' 0
+LZMAError: Internal error ('Internal error',) Exception
+0 96 fd377a585a000000ff12d941020021010c0000008f98419c01002c54686520717569636b2062726f776e20666f78206a756d7073206f76657220746865206c617a7920646f672e200000000000013d2de0a1b10f06729e7a010000000000595a
+('LZMAError', 'Corrupt input data', True, False) 126
+('LZMAError', 'Input format not supported by decoder', True, False) 18
+('ok', False, False, True) 7
+('ok', False, True, False) 135
+('ok', True, False, True) 2
+[((0, False, True, b'', 0), 16), ((0, False, True, b'', 16), 12), ((1, False, True, b'', 0), 1), ((2, False, True, b'', 0), 1), ((3, False, True, b'', 0), 1), ((4, False, True, b'', 0), 1), ((5, False, True, b'', 0), 1), ((6, False, True, b'', 0), 1), ((7, False, True, b'', 0), 1), ((8, False, True, b'', 0), 1), ((9, False, True, b'', 0), 1), ((10, False, True, b'', 0), 1), ((11, False, True, b'', 0), 1), ((12, False, True, b'', 0), 1), ((13, False, True, b'', 0), 1), ((14, False, True, b'', 0), 1), ((15, False, True, b'', 0), 1), ((16, False, True, b'', 0), 1), ((17, False, True, b'', 0), 1), ((18, False, True, b'', 0), 1), ((19, False, True, b'', 0), 1), ((20, False, True, b'', 0), 1), ((21, False, True, b'', 0), 1), ((22, False, True, b'', 0), 1), ((23, False, True, b'', 0), 1), ((24, False, True, b'', 0), 1), ((25, False, True, b'', 0), 1), ((26, False, True, b'', 0), 1), ((27, False, True, b'', 0), 1), ((28, False, True, b'', 0), 1), ((29, False, True, b'', 0), 1), ((30, False, True, b'', 0), 1), ((31, False, True, b'', 0), 1), ((32, False, True, b'', 0), 1), ((33, False, True, b'', 0), 1), ((34, False, True, b'', 0), 1), ((35, False, True, b'', 0), 1), ((36, False, True, b'', 0), 1), ((37, False, True, b'', 0), 1), ((38, False, True, b'', 0), 1), ((39, False, True, b'', 0), 1), ((40, False, True, b'', 0), 1), ((41, False, True, b'', 0), 1), ((42, False, True, b'', 0), 1), ((43, False, True, b'', 0), 1), ((44, False, True, b'', 0), 1), ((45, False, True, b'', 0), 24)]
+1 100 fd377a585a0000016922de36020021010c0000008f98419c01002c54686520717569636b2062726f776e20666f78206a756d7073206f76657220746865206c617a7920646f672e2000000000bc05eb300001412d1a973b8c9042990d010000000001595a
+('LZMAError', 'Corrupt input data', True, False) 273
+('LZMAError', 'Input format not supported by decoder', True, False) 18
+('ok', False, False, True) 7
+('ok', True, False, True) 2
+[((0, False, True, b'', 1), 16), ((0, False, True, b'', 16), 12), ((1, False, True, b'', 1), 1), ((2, False, True, b'', 1), 1), ((3, False, True, b'', 1), 1), ((4, False, True, b'', 1), 1), ((5, False, True, b'', 1), 1), ((6, False, True, b'', 1), 1), ((7, False, True, b'', 1), 1), ((8, False, True, b'', 1), 1), ((9, False, True, b'', 1), 1), ((10, False, True, b'', 1), 1), ((11, False, True, b'', 1), 1), ((12, False, True, b'', 1), 1), ((13, False, True, b'', 1), 1), ((14, False, True, b'', 1), 1), ((15, False, True, b'', 1), 1), ((16, False, True, b'', 1), 1), ((17, False, True, b'', 1), 1), ((18, False, True, b'', 1), 1), ((19, False, True, b'', 1), 1), ((20, False, True, b'', 1), 1), ((21, False, True, b'', 1), 1), ((22, False, True, b'', 1), 1), ((23, False, True, b'', 1), 1), ((24, False, True, b'', 1), 1), ((25, False, True, b'', 1), 1), ((26, False, True, b'', 1), 1), ((27, False, True, b'', 1), 1), ((28, False, True, b'', 1), 1), ((29, False, True, b'', 1), 1), ((30, False, True, b'', 1), 1), ((31, False, True, b'', 1), 1), ((32, False, True, b'', 1), 1), ((33, False, True, b'', 1), 1), ((34, False, True, b'', 1), 1), ((35, False, True, b'', 1), 1), ((36, False, True, b'', 1), 1), ((37, False, True, b'', 1), 1), ((38, False, True, b'', 1), 1), ((39, False, True, b'', 1), 1), ((40, False, True, b'', 1), 1), ((41, False, True, b'', 1), 1), ((42, False, True, b'', 1), 1), ((43, False, True, b'', 1), 1), ((44, False, True, b'', 1), 1), ((45, False, True, b'', 1), 28)]
+4 104 fd377a585a000004e6d6b446020021010c0000008f98419c01002c54686520717569636b2062726f776e20666f78206a756d7073206f76657220746865206c617a7920646f672e20000000004cf633a72aaac0d00001452d1e5257e81fb6f37d010000000004595a
+('LZMAError', 'Corrupt input data', True, False) 285
+('LZMAError', 'Input format not supported by decoder', True, False) 18
+('ok', False, False, True) 7
+('ok', True, False, True) 2
+[((0, False, True, b'', 4), 16), ((0, False, True, b'', 16), 12), ((1, False, True, b'', 4), 1), ((2, False, True, b'', 4), 1), ((3, False, True, b'', 4), 1), ((4, False, True, b'', 4), 1), ((5, False, True, b'', 4), 1), ((6, False, True, b'', 4), 1), ((7, False, True, b'', 4), 1), ((8, False, True, b'', 4), 1), ((9, False, True, b'', 4), 1), ((10, False, True, b'', 4), 1), ((11, False, True, b'', 4), 1), ((12, False, True, b'', 4), 1), ((13, False, True, b'', 4), 1), ((14, False, True, b'', 4), 1), ((15, False, True, b'', 4), 1), ((16, False, True, b'', 4), 1), ((17, False, True, b'', 4), 1), ((18, False, True, b'', 4), 1), ((19, False, True, b'', 4), 1), ((20, False, True, b'', 4), 1), ((21, False, True, b'', 4), 1), ((22, False, True, b'', 4), 1), ((23, False, True, b'', 4), 1), ((24, False, True, b'', 4), 1), ((25, False, True, b'', 4), 1), ((26, False, True, b'', 4), 1), ((27, False, True, b'', 4), 1), ((28, False, True, b'', 4), 1), ((29, False, True, b'', 4), 1), ((30, False, True, b'', 4), 1), ((31, False, True, b'', 4), 1), ((32, False, True, b'', 4), 1), ((33, False, True, b'', 4), 1), ((34, False, True, b'', 4), 1), ((35, False, True, b'', 4), 1), ((36, False, True, b'', 4), 1), ((37, False, True, b'', 4), 1), ((38, False, True, b'', 4), 1), ((39, False, True, b'', 4), 1), ((40, False, True, b'', 4), 1), ((41, False, True, b'', 4), 1), ((42, False, True, b'', 4), 1), ((43, False, True, b'', 4), 1), ((44, False, True, b'', 4), 1), ((45, False, True, b'', 4), 32)]
+10 128 fd377a585a00000ae1fb0ca1020021010c0000008f98419c01002c54686520717569636b2062726f776e20666f78206a756d7073206f76657220746865206c617a7920646f672e200000000088e197dce3e2562b9fb62bfdfb92c525328742af370fa2cd7c7bafaefb38f09c00015d2d47ca4c6a189b4b9a01000000000a595a
+('LZMAError', 'Corrupt input data', True, False) 357
+('LZMAError', 'Input format not supported by decoder', True, False) 18
+('ok', False, False, True) 7
+('ok', True, False, True) 2
+[((0, False, True, b'', 10), 16), ((0, False, True, b'', 16), 12), ((1, False, True, b'', 10), 1), ((2, False, True, b'', 10), 1), ((3, False, True, b'', 10), 1), ((4, False, True, b'', 10), 1), ((5, False, True, b'', 10), 1), ((6, False, True, b'', 10), 1), ((7, False, True, b'', 10), 1), ((8, False, True, b'', 10), 1), ((9, False, True, b'', 10), 1), ((10, False, True, b'', 10), 1), ((11, False, True, b'', 10), 1), ((12, False, True, b'', 10), 1), ((13, False, True, b'', 10), 1), ((14, False, True, b'', 10), 1), ((15, False, True, b'', 10), 1), ((16, False, True, b'', 10), 1), ((17, False, True, b'', 10), 1), ((18, False, True, b'', 10), 1), ((19, False, True, b'', 10), 1), ((20, False, True, b'', 10), 1), ((21, False, True, b'', 10), 1), ((22, False, True, b'', 10), 1), ((23, False, True, b'', 10), 1), ((24, False, True, b'', 10), 1), ((25, False, True, b'', 10), 1), ((26, False, True, b'', 10), 1), ((27, False, True, b'', 10), 1), ((28, False, True, b'', 10), 1), ((29, False, True, b'', 10), 1), ((30, False, True, b'', 10), 1), ((31, False, True, b'', 10), 1), ((32, False, True, b'', 10), 1), ((33, False, True, b'', 10), 1), ((34, False, True, b'', 10), 1), ((35, False, True, b'', 10), 1), ((36, False, True, b'', 10), 1), ((37, False, True, b'', 10), 1), ((38, False, True, b'', 10), 1), ((39, False, True, b'', 10), 1), ((40, False, True, b'', 10), 1), ((41, False, True, b'', 10), 1), ((42, False, True, b'', 10), 1), ((43, False, True, b'', 10), 1), ((44, False, True, b'', 10), 1), ((45, False, True, b'', 10), 56)]
+20060 10
+7963
+False True b''
+b''
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+LZMAError: Internal error ('Internal error',) Exception
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+False True
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+2 False
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+3 False
+LZMAError: Corrupt input data ('Corrupt input data',) Exception
+5 False
+b'The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps ov
+15 False

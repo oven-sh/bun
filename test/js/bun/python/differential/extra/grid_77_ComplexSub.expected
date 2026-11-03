@@ -1,0 +1,34 @@
+status: 0
+script: 9997d85037d979cc
+---
+ComplexSub __abs__ 19 7f25f5b1f2db
+ComplexSub __add__ 63 ad4d72669503
+ComplexSub __bool__ 19 ddcd2208a383
+ComplexSub __complex__ 19 cf9c657d179e
+ComplexSub __eq__ 63 71196e259048
+ComplexSub __format__ 63 d841f2b94bbf
+ComplexSub __ge__ 63 c88668e0634b
+ComplexSub __getnewargs__ 19 e885fa28805e
+ComplexSub __gt__ 63 cdcca15e8c1b
+ComplexSub __hash__ 19 bb2efff1c346
+ComplexSub __init__ 535 53b184419e1c
+ComplexSub __le__ 63 892b5f678d49
+ComplexSub __lt__ 63 2ca53c33b19a
+ComplexSub __mul__ 63 eac4f23c3b09
+ComplexSub __ne__ 63 0bb7754b632b
+ComplexSub __neg__ 19 e7c286f122eb
+ComplexSub __pos__ 19 2b6b2f4dcbd3
+ComplexSub __pow__ 300 6f4309baf459
+ComplexSub __radd__ 63 2543048eabe1
+ComplexSub __repr__ 19 960cd5c9b62e
+ComplexSub __rmul__ 63 97436c5b20bd
+ComplexSub __rpow__ 300 469c589c2ec5
+ComplexSub __rsub__ 63 b03bedc1f69b
+ComplexSub __rtruediv__ 63 720aea9f8061
+ComplexSub __str__ 19 6fcae7aaca69
+ComplexSub __sub__ 63 c414d6c36ad1
+ComplexSub __truediv__ 63 591d7af1c928
+ComplexSub conjugate 19 04cc40c06ec9
+ComplexSub from_number 63 915e4c93c640
+ComplexSub imag 1 78145bb4802c
+ComplexSub real 1 bd9b56a3d798

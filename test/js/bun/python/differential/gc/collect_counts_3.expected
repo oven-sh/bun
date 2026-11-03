@@ -1,0 +1,44 @@
+status: 0
+script: 9ee48a770c52273f
+---
+plain with attributes 0 0
+with __del__ 0 0
+dict 0 0
+dict subclass 0 0
+str subclass 0 0
+memoryview 0 0
+slice 0 0
+lambda 0 0
+bound python method 0 0
+cached whatever 0
+classmethod 0 0
+generator 0 0
+generator started with frame 0 0
+async generator 0 0
+enumerate zip map filter 0 0
+exception raised 0 0
+exception group 0 0
+frame locals 0 0
+weakref 0 0
+weak dicts 0 0
+deque 0 0
+Counter 0 0
+SimpleNamespace 0 0
+generic alias 0 0
+itemgetter 0 0
+BytesIO buffer 0 0
+buffered 0 0
+scanner 0 0
+thread local 0 0
+array 0 0
+datetime 0 0
+hash 0 0
+context var 0 0
+signature 0 0
+formatter template 0 0
+event loop run 0 0
+cycle: two 2 0
+cycle: method 2 0
+cycle: __del__ 1 0
+class instance and class 4 0
+enum class whatever 0

@@ -1,0 +1,122 @@
+status: 0
+script: 4b8d76f4bc34e439
+---
+list
+  del 3
+  del 2
+  del 1
+tuple
+  del 3
+  del 2
+  del 1
+dict values
+  del 1
+  del 2
+  del 3
+dict keys and values
+  del 1
+  del 2
+  del 3
+  del 4
+nested
+  del 6
+  del 5
+  del 4
+  del 3
+  del 2
+  del 1
+attributes
+  del owner
+  del x
+  del y
+  del z
+slots
+  del owner
+  del a
+  del b
+  del c
+deque
+  del 1
+  del 2
+  del 3
+list subclass
+  del L
+  del 2
+  del 1
+dict subclass
+  del D
+  del 1
+  del 2
+tuple subclass
+  del T
+  del 2
+  del 1
+namespace
+  del 1
+  del 2
+partial
+  del 2
+  del 1
+  del 3
+closure
+  del b
+  del a
+defaults
+  del 2
+  del 1
+  del 3
+shared
+  del 2
+  del shared
+  del 1
+diamond
+  del top
+  del left
+  del right
+  del bottom
+chain of 3
+  del 2
+  del 1
+  del 0
+chain of 8
+  del 7
+  del 6
+  del 5
+  del 4
+  del 3
+  del 2
+  del 1
+  del 0
+cycle
+  del 1
+  del 2
+  del 3
+cycle made backwards
+  del made first
+  del made second
+  del made third
+cycle with a tail
+  del in cycle 1
+  del in cycle 2
+  del tail 2
+  del tail 1
+plain cycle above
+  del below a plain cycle 1
+  del below a plain cycle 2
+owner above a cycle
+  del owner
+  del in cycle 1
+  del in cycle 2
+frames of a traceback
+  del local of inner
+  del local of outer
+locals of a frame
+  del third local
+  del second local
+  del first local
+locals of a generator
+  del second local
+  del first local
+two roots
+  del root 1
+  del root 2

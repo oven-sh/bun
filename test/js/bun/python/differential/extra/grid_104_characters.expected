@@ -1,0 +1,40 @@
+status: 0
+script: 8cf8f324355d351d
+---
+characters isalpha 3 bbfd1763e754
+characters isdigit 3 7a5b9a4b5908
+characters isdecimal 3 73ac032e7926
+characters isnumeric 3 183c3c26c67e
+characters isalnum 3 451d686cdfb6
+characters isspace 2 72a99765d4da
+characters isupper 2 fd3b133b1467
+characters islower 2 52adaec40cfd
+characters istitle 2 9c0fb46c437b
+characters isprintable 2 5fb930c60c18
+characters isidentifier 2 bd415b1daedf
+characters upper 2 28eb68a3cfb0
+characters lower 2 39a0e983f2b5
+characters title 2 6abef5752ae0
+characters capitalize 2 4cb523b022fd
+characters casefold 2 1f79c5460f9a
+characters swapcase 2 dc16571754cf
+characters repr 2 c2179270585f
+characters ascii 2 011e47215310
+characters split 2 b6be06d07922
+characters splitlines 2 905594ef939d
+characters strip 2 e16adc6f5ee0
+characters int 2 8a5c62905845
+characters float 2 a60c539086e2
+characters utf-8 2 a7b2bbc9e72f
+characters utf-16 2 c98dea64ff3b
+characters identifier 2 4eda4001ceb6
+characters width 2 14d5a3907d73
+characters title word 2 2d16bd4c2310
+characters lower sigma 2 d891a3c8c176
+characters format 2 5c473bb0833c
+characters compare 2 2be192e87753
+characters escape 2 6f994d7bf79f
+characters hash equal 2 95037f355493
+characters find 2 4c841036f290
+characters translate 2 bc23d8bd1884
+characters ord 2 01c656e02d7c

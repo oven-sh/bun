@@ -1,0 +1,799 @@
+status: 0
+script: 60dec8e58ff95d69
+---
+=== PYTHONHASHSEED 0 status 0
+0 sys.hash_info(width=64, modulus=2305843009213693951, inf=314159, nan=0, imag=1000003, algorithm='siphash13', hash_bits=64, seed_bits=128, cutoff=0)
+'' 0 0 True True
+'a' 1 4644417185603328019 True True
+'b' 1 -8420940591063670578 True True
+'ab' 2 6148830537548944441 True True
+'abc' 3 -4594863902769663758 True True
+'abcd' 4 -2030606670787596663 True True
+'abcdefg' 7 7904145750247929094 True True
+'abcdefgh' 8 4574395652268504554 True True
+'abcdefghi' 9 -532774252720507163 True True
+'xxxxxxxxxxxxxxx' 15 -2782592963448337589 True True
+'xxxxxxxxxxxxxxxx' 16 7026689402995178403 True True
+'xxxxxxxxxxxxxxxxx' 17 4771951516191823429 True True
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 63 2031275847745709890 True True
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 64 5471797116534828707 True True
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 65 -1540644991285378284 True True
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 1000 1965751746081988357 True True
+'hello world' 11 -5642461784034726774 True True
+'\xe9' 1 6047309291227476195 True True
+'caf\xe9' 4 137524001917817222 True True
+'\xff\xff\xff\xff\xff\xff\xff\xff\xff' 9 -2129700217430894956 True True
+'\u0100' 1 75343234424780393 True True
+'\u20ac' 1 -5529981157763016009 True True
+'a\u20ac' 2 5181483246891551849 True True
+'\u20ac\u20ac\u20ac' 3 -850563272605570423 True True
+'\u20ac\u20ac\u20ac\u20ac' 4 -3890046959673196273 True True
+'\u20ac\u20ac\u20ac\u20ac\u20ac' 5 5627357888335991562 True True
+'\u20ac\u20ac\u20ac\u20ac\u20ac\u20ac\u2 100 -6003170774650350761 True True
+'\uffff' 1 2147057924765956750 True True
+'\U00010000' 1 8244560961346649228 True True
+'\U0001f600' 1 -3536540696076613844 True True
+'a\U0001f600' 2 -6970120874385731343 True True
+'\U0001f600\U0001f600' 2 3533687109701847103 True True
+'\U0001f600\U0001f600\U0001f600' 3 -2277969972149498111 True True
+'\U0010ffff' 1 4658154726633327932 True True
+'a\U0001f600b\u20acc' 5 6771967526862769363 True True
+'\ud800' 1 5926611903945376553 True True
+'\udc00' 1 -7085056360539523717 True True
+'a\udc80b' 3 -8433413711979397542 True True
+'\ud800a' 2 -4216950212714613154 True True
+'\udc00\ud800' 2 3073720764516076154 True True
+'\x00' 1 7541581120933061747 True True
+'\x00\x00\x00\x00\x00\x00\x00\x00' 8 -4800647303603446203 True True
+'a\x00b' 3 -2562947060344435835 True True
+'abc' 3 -4594863902769663758 True True
+'abc\xe9' 4 -2884356235179635801 True True
+'\xe9' 1 6047309291227476195 True True
+'abc' 3 -4594863902769663758 True True
+'abc\u20ac' 4 5162694928242942139 True True
+'\u20ac\xe9' 2 -2307329178107998592 True True
+'\xe9' 1 6047309291227476195 True True
+'abc' 3 -4594863902769663758 True True
+'abc' 3 -4594863902769663758 True True
+'abc' 3 -4594863902769663758 True True
+'abc' 3 -4594863902769663758 True True
+'abc' 3 -4594863902769663758 True True
+'abc' 3 -4594863902769663758 True True
+'\u20ac' 1 -5529981157763016009 True True
+'abc' 3 -4594863902769663758 True True
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 100 1359644457043326220 True True
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 100 1359644457043326220 True True
+'\u20ac\u20ac\u20ac\u20ac\u20ac\u20ac\u2 100 -6003170774650350761 True True
+True True
+b'' 0 0 True True
+b'a' 1 4644417185603328019 True True
+b'abc' 3 -4594863902769663758 True True
+b'abcdefg' 7 7904145750247929094 True True
+b'abcdefgh' 8 4574395652268504554 True True
+b'abcdefghi' 9 -532774252720507163 True True
+b'\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\x0c\r\x0e\x0f\x10\x11\x12\x13' 256 3579909164457460488 True True
+b'xxxxxxxxxxxxxxxxxxxx' 1000 1965751746081988357 True True
+b'\x00' 1 7541581120933061747 True True
+b'\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff' 17 -8486152757025292860 True True
+True True True True
+('a',) 7319529274390396360
+('a', 'b') 7372137184884179083
+('a', ('b', 'c')) 8140828750163134911
+('abc', 1, 2.5, None) -903557403322158593
+(b'a', 'a') -1925711893275472944
+["'a'"] -7857795138424989601
+["'a'", "'b'", "'c'"] 8636088911049444515
+["'c'", "('a', 'b')", '1'] 1614905204622982123
+(frozenset({'y', 'x'}), 'z') -8506306808310360110
+['chi', 'beta', 'kappa', 'psi', 'omega', 'pi', 'tau', 'xi', 'omicron', 'iota', 'zeta', 'gamma', 'alpha', 'rho', 'phi', 'lambda', 'nu', 'eta', 'delta', 'mu', 'upsilon', 'sigma', 'theta', 'epsilon']
+['alpha', 'beta', 'zeta', 'eta', 'gamma', 'delta', 'epsilon']
+['upsilon14', 'mu6', 'nu2', 'beta3', 'eta10', 'mu16', 'kappa4', 'alpha11', 'chi17', 'delta18', 'epsilon2', 'rho10', 'nu17', 'omega0', 'omicron8', 'iota5', 'mu8', 'nu3', 'sigma5', 'beta15', 'alpha0', 'psi8', 'delta16', 'beta16', 'rho19', 'phi18', 'pi4', 'phi7', 'eta13', 'phi0', 'chi8', 'psi14', 'mu15', 'pi7', 'epsilon0', 'epsilon4', 'zeta4', 'phi10', 'alpha12', 'omicron17', 'omega15', 'beta13', 'eta9', 'eta18', 'chi15', 'eta1', 'sigma14', 'omega18', 'rho1', 'kappa2', 'theta3', 'lambda4', 'theta8', 'rho3', 'pi14', 'beta2', 'psi15', 'rho8', 'phi5', 'eta15']
+[b'chi', b'beta', b'kappa', b'psi', b'omega', b'pi', b'tau', b'xi', b'omicron', b'iota', b'zeta', b'gamma', b'alpha', b'rho', b'phi', b'lambda', b'nu', b'eta', b'delta', b'mu', b'upsilon', b'sigma', b'theta', b'epsilon']
+[('beta', 4), ('kappa', 5), ('alpha', 5), ('chi', 3), ('upsilon', 7), ('delta', 5), ('gamma', 5), ('omega', 5), ('nu', 2), ('epsilon', 7), ('tau', 3), ('phi', 3), ('omicron', 7), ('sigma', 5), ('xi', 2), ('psi', 3), ('theta', 5), ('rho', 3), ('pi', 2), ('lambda', 6), ('zeta', 4), ('eta', 3), ('iota', 4), ('mu', 2)]
+['chi', 'beta', 'kappa', 'omega', 'pi', 'xi', 'zeta', 'delta', 'mu', 'gammagamma', 'upsilon', 'alphaalpha', 'epsilonepsilon', 'betabeta', 'sigma', 'deltadelta', 'theta'] chi beta
+['kappa', 'omicron', 'lambda', 'iota', 'nu', 'zeta', 'eta', 'xi', 'theta', 'mu'] ['alpha', 'beta', 'kappa', 'lambda', 'nu', 'eta', 'xi', 'delta', 'mu', 'omicron', 'iota', 'zeta', 'gamma', 'theta', 'epsilon'] ['alpha', 'beta', 'epsilon', 'omicron', 'lambda', 'nu', 'gamma', 'xi', 'delta', 'mu'] ['psi', 'beta', 'epsilon', 'omicron', 'omega', 'rho', 'phi', 'upsilon', 'iota', 'lambda', 'zeta', 'sigma', 'gamma', 'xi', 'theta', 'mu']
+[' ', 'z', 'r', 'a', 'v', 'o', 'j', 'f', 'x', 'g', 'k', 'p', 'd', 'y', 'n', 'b', 'm', 'q', 'u', 's', 'h', 't', 'i', 'c', 'e', 'w', 'l']
+['chi', 'beta', 'kappa', 'psi', 'omega', 'pi', 'tau', 'xi', 'omicron', 'iota', 'zeta', 'gamma', 'alpha', 'rho', 'phi', 'lambda', 'nu', 'eta', 'delta', 'mu', 'upsilon', 'sigma', 'theta', 'epsilon'] True
+datetime.date(1066, 10, 14) -3429871475103553577
+datetime.date(1, 1, 1) 147488056507855700
+datetime.date(9999, 12, 31) 5156612193925128348
+datetime.time(1, 2, 3, 4) -9219788893830229495
+datetime.time(0, 0) 4324160482624193219
+datetime.time(1, 2, 3, 4, fold=1) -9219788893830229495
+datetime.datetime(1, 2, 3, 4, 5, 6, 7) -2822031551812406966
+datetime.datetime(2024, 2, 29, 0, 0) -463799847674029456
+datetime.datetime(2024, 2, 29, 0, 0, fold=1) -463799847674029456
+datetime.timedelta(0) 3010437511937009226
+datetime.timedelta(days=1, seconds=2, microseconds=3) 529344067295497451
+datetime.timedelta(days=-1) -8550113241796947342
+datetime.timedelta(days=-1, seconds=5) -4478800971006269103
+datetime.timedelta(days=999999999, seconds=86399, microseconds=999999) -632435857830950997
+datetime.timedelta(days=-999999999) -5548498233047506374
+datetime.timezone.utc 3010437511937009226
+datetime.timezone(datetime.timedelta(days=-1, seconds=68400)) -5817660035457781109
+datetime.datetime(2024, 2, 29, 12, 0, tzinfo=datetime.timezone.utc) -6034608188192826118
+datetime.datetime(2024, 2, 29, 12, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=19800))) 3821008241006488984
+datetime.datetime(1, 1, 1, 0, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=36000))) -3497794311165505528
+datetime.time(12, 0, tzinfo=datetime.timezone.utc) 7042526932204271663
+datetime.time(1, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=18000))) 1658566024029534516
+datetime.time(23, 0, 0, 5, tzinfo=datetime.timezone(datetime.timedelta(days=-1, seconds=68400, microseconds=7))) -3964455642260884712
+[datetime.date(2020, 1, 6), datetime.date(2020, 1, 12), datetime.date(2020, 1, 1), datetime.date(2020, 1, 17), datetime.date(2020, 1, 5), datetime.date(2020, 1, 9), datetime.date(2020, 1, 7), datetime.date(2020, 1, 4), datetime.date(2020, 1, 10), datetime.date(2020, 1, 3), datetime.date(2020, 1, 14), datetime.date(2020, 1, 2), datetime.date(2020, 1, 19), datetime.date(2020, 1, 8), datetime.date(2020, 1, 13), datetime.date(2020, 1, 11), datetime.date(2020, 1, 16), datetime.date(2020, 1, 15), datetime.date(2020, 1, 18)]
+None 4238894112
+() 5740354900026072187
+0 0
+1 1
+-1 -2
+-2 -2
+2305843009213693951 0
+2305843009213693952 1
+18446744073709551616 8
+-18446744073709551616 -8
+1000000000000000000000000000000 465258685558744706
+1.0 1
+1.5 1152921504606846977
+-1.5 -1152921504606846977
+0.1 230584300921369408
+1e+300 1224995262755759164
+inf 314159
+-inf -314159
+1j 1000003
+(1+2j) 2000007
+(-0-1j) -2000006
+True 1
+False 0
+Fraction(1, 3) 1537228672809129301
+Fraction(3, 1) 3
+Fraction(-7, 2305843009213693951) -314159
+Decimal('1.5') 1152921504606846977
+Decimal('1E+100') 910685213754167845
+Decimal('-0.1') -2075258708292324556
+Decimal('Infinity') 314159
+range(0, 10) -7546101314042312252
+range(0, 0) 2676694398852732306
+range(1, 10, 3) -9160968616009628824
+slice(1, 2, 3) -2340833382717974474
+True
+True
+True -8805567604891339677 2445501190058381984
+=== PYTHONHASHSEED 1 status 0
+1 sys.hash_info(width=64, modulus=2305843009213693951, inf=314159, nan=0, imag=1000003, algorithm='siphash13', hash_bits=64, seed_bits=128, cutoff=0)
+'' 0 0 True True
+'a' 1 -3012895188637184397 True True
+'b' 1 8280038809915344019 True True
+'ab' 2 -5163905947448004250 True True
+'abc' 3 -4667308735975688587 True True
+'abcd' 4 -558410499034126547 True True
+'abcdefg' 7 3226643804905820176 True True
+'abcdefgh' 8 -202642195356325900 True True
+'abcdefghi' 9 7871229953815684364 True True
+'xxxxxxxxxxxxxxx' 15 -3726225509375811091 True True
+'xxxxxxxxxxxxxxxx' 16 -8471171479625078515 True True
+'xxxxxxxxxxxxxxxxx' 17 922339776648693488 True True
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 63 3918760288189830759 True True
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 64 -5482537903529168283 True True
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 65 3704376280282684451 True True
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 1000 6726838983539171191 True True
+'hello world' 11 4697380503286254714 True True
+'\xe9' 1 8133168473585362875 True True
+'caf\xe9' 4 2420579699203294547 True True
+'\xff\xff\xff\xff\xff\xff\xff\xff\xff' 9 -5360950263664754266 True True
+'\u0100' 1 -4668527339490748059 True True
+'\u20ac' 1 4443362316794630049 True True
+'a\u20ac' 2 1300646809561335195 True True
+'\u20ac\u20ac\u20ac' 3 -6150367793467775819 True True
+'\u20ac\u20ac\u20ac\u20ac' 4 -6900160512095913710 True True
+'\u20ac\u20ac\u20ac\u20ac\u20ac' 5 -2001936053036086847 True True
+'\u20ac\u20ac\u20ac\u20ac\u20ac\u20ac\u2 100 -3706517499932417674 True True
+'\uffff' 1 6490729428330989170 True True
+'\U00010000' 1 7270719504548690164 True True
+'\U0001f600' 1 7663130467274561019 True True
+'a\U0001f600' 2 7860550542609649698 True True
+'\U0001f600\U0001f600' 2 6162275293204731889 True True
+'\U0001f600\U0001f600\U0001f600' 3 6712714799167682547 True True
+'\U0010ffff' 1 -4602386238022292772 True True
+'a\U0001f600b\u20acc' 5 2866676436535373089 True True
+'\ud800' 1 3047174455005046515 True True
+'\udc00' 1 7820934242808560022 True True
+'a\udc80b' 3 -3274610696592221659 True True
+'\ud800a' 2 5631249998665303233 True True
+'\udc00\ud800' 2 7404138252180543101 True True
+'\x00' 1 -1381508117420989255 True True
+'\x00\x00\x00\x00\x00\x00\x00\x00' 8 -7538414426597368708 True True
+'a\x00b' 3 6936258155602524666 True True
+'abc' 3 -4667308735975688587 True True
+'abc\xe9' 4 -47039957769049682 True True
+'\xe9' 1 8133168473585362875 True True
+'abc' 3 -4667308735975688587 True True
+'abc\u20ac' 4 6290782166701189346 True True
+'\u20ac\xe9' 2 -5750210490640630183 True True
+'\xe9' 1 8133168473585362875 True True
+'abc' 3 -4667308735975688587 True True
+'abc' 3 -4667308735975688587 True True
+'abc' 3 -4667308735975688587 True True
+'abc' 3 -4667308735975688587 True True
+'abc' 3 -4667308735975688587 True True
+'abc' 3 -4667308735975688587 True True
+'\u20ac' 1 4443362316794630049 True True
+'abc' 3 -4667308735975688587 True True
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 100 8959034462456271562 True True
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 100 8959034462456271562 True True
+'\u20ac\u20ac\u20ac\u20ac\u20ac\u20ac\u2 100 -3706517499932417674 True True
+True True
+b'' 0 0 True True
+b'a' 1 -3012895188637184397 True True
+b'abc' 3 -4667308735975688587 True True
+b'abcdefg' 7 3226643804905820176 True True
+b'abcdefgh' 8 -202642195356325900 True True
+b'abcdefghi' 9 7871229953815684364 True True
+b'\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\x0c\r\x0e\x0f\x10\x11\x12\x13' 256 3004724726907416612 True True
+b'xxxxxxxxxxxxxxxxxxxx' 1000 6726838983539171191 True True
+b'\x00' 1 -1381508117420989255 True True
+b'\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff' 17 -282884035349200494 True True
+True True True True
+('a',) -8297804901917923025
+('a', 'b') -575594374366640032
+('a', ('b', 'c')) -7196545609725067047
+('abc', 1, 2.5, None) -4535755796134308445
+(b'a', 'a') -2650140875229141553
+["'a'"] -335427894972453432
+["'a'", "'b'", "'c'"] -3296998194916637134
+["'c'", "('a', 'b')", '1'] 4121361359551351271
+(frozenset({'x', 'y'}), 'z') 4841815965436422261
+['psi', 'delta', 'xi', 'alpha', 'omega', 'beta', 'zeta', 'pi', 'epsilon', 'mu', 'nu', 'kappa', 'rho', 'chi', 'upsilon', 'gamma', 'theta', 'sigma', 'eta', 'lambda', 'tau', 'phi', 'iota', 'omicron']
+['alpha', 'epsilon', 'beta', 'zeta', 'eta', 'delta', 'gamma']
+['mu0', 'mu1', 'psi5', 'zeta13', 'epsilon12', 'alpha17', 'alpha12', 'chi15', 'zeta14', 'kappa8', 'mu11', 'sigma3', 'sigma14', 'beta19', 'zeta18', 'omicron1', 'zeta19', 'upsilon6', 'epsilon4', 'psi2', 'delta11', 'iota12', 'delta17', 'pi4', 'xi15', 'omicron14', 'delta13', 'nu6', 'eta11', 'beta4', 'omega3', 'lambda11', 'epsilon18', 'zeta15', 'phi9', 'lambda15', 'alpha16', 'psi13', 'delta2', 'beta5', 'theta10', 'alpha1', 'pi5', 'kappa19', 'psi18', 'psi10', 'beta6', 'phi6', 'chi3', 'delta14', 'alpha6', 'xi9', 'tau9', 'chi8', 'nu0', 'omicron10', 'tau18', 'kappa6', 'gamma9', 'rho18']
+[b'psi', b'delta', b'xi', b'alpha', b'omega', b'beta', b'zeta', b'pi', b'epsilon', b'mu', b'nu', b'kappa', b'rho', b'chi', b'upsilon', b'gamma', b'theta', b'sigma', b'eta', b'lambda', b'tau', b'phi', b'iota', b'omicron']
+[('beta', 4), ('omicron', 7), ('gamma', 5), ('phi', 3), ('psi', 3), ('nu', 2), ('iota', 4), ('chi', 3), ('tau', 3), ('alpha', 5), ('xi', 2), ('pi', 2), ('upsilon', 7), ('omega', 5), ('zeta', 4), ('epsilon', 7), ('rho', 3), ('sigma', 5), ('lambda', 6), ('eta', 3), ('delta', 5), ('mu', 2), ('theta', 5), ('kappa', 5)]
+['epsilonepsilon', 'delta', 'xi', 'omega', 'beta', 'zeta', 'gammagamma', 'betabeta', 'pi', 'mu', 'kappa', 'chi', 'upsilon', 'theta', 'deltadelta', 'sigma', 'alphaalpha'] epsilonepsilon delta
+['theta', 'mu', 'nu', 'zeta', 'eta', 'kappa', 'lambda', 'xi', 'iota', 'omicron'] ['epsilon', 'mu', 'nu', 'kappa', 'delta', 'xi', 'alpha', 'gamma', 'theta', 'beta', 'zeta', 'eta', 'lambda', 'iota', 'omicron'] ['epsilon', 'gamma', 'mu', 'nu', 'beta', 'lambda', 'delta', 'xi', 'alpha', 'omicron'] ['omega', 'theta', 'epsilon', 'mu', 'sigma', 'beta', 'zeta', 'phi', 'psi', 'lambda', 'upsilon', 'rho', 'xi', 'gamma', 'iota', 'omicron']
+['t', 'k', 'b', 'y', 'o', 'q', 'd', 'g', 'z', 'e', 'j', 'p', 'u', 'r', 'n', 'x', 'l', 'w', ' ', 's', 'm', 'v', 'a', 'h', 'c', 'f', 'i']
+['psi', 'delta', 'xi', 'alpha', 'omega', 'beta', 'zeta', 'pi', 'epsilon', 'mu', 'nu', 'kappa', 'rho', 'chi', 'upsilon', 'gamma', 'theta', 'sigma', 'eta', 'lambda', 'tau', 'phi', 'iota', 'omicron'] True
+datetime.date(1066, 10, 14) -9098978876385038548
+datetime.date(1, 1, 1) 6220825726843643640
+datetime.date(9999, 12, 31) -6766541565052450589
+datetime.time(1, 2, 3, 4) -2836384951475564780
+datetime.time(0, 0) 639578729646712433
+datetime.time(1, 2, 3, 4, fold=1) -2836384951475564780
+datetime.datetime(1, 2, 3, 4, 5, 6, 7) 7943886079343618331
+datetime.datetime(2024, 2, 29, 0, 0) -2981015222355803620
+datetime.datetime(2024, 2, 29, 0, 0, fold=1) -2981015222355803620
+datetime.timedelta(0) 3010437511937009226
+datetime.timedelta(days=1, seconds=2, microseconds=3) 529344067295497451
+datetime.timedelta(days=-1) -8550113241796947342
+datetime.timedelta(days=-1, seconds=5) -4478800971006269103
+datetime.timedelta(days=999999999, seconds=86399, microseconds=999999) -632435857830950997
+datetime.timedelta(days=-999999999) -5548498233047506374
+datetime.timezone.utc 3010437511937009226
+datetime.timezone(datetime.timedelta(days=-1, seconds=68400)) -5817660035457781109
+datetime.datetime(2024, 2, 29, 12, 0, tzinfo=datetime.timezone.utc) -6034608188192826118
+datetime.datetime(2024, 2, 29, 12, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=19800))) 3821008241006488984
+datetime.datetime(1, 1, 1, 0, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=36000))) -3497794311165505528
+datetime.time(12, 0, tzinfo=datetime.timezone.utc) 7042526932204271663
+datetime.time(1, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=18000))) 1658566024029534516
+datetime.time(23, 0, 0, 5, tzinfo=datetime.timezone(datetime.timedelta(days=-1, seconds=68400, microseconds=7))) -3964455642260884712
+[datetime.date(2020, 1, 4), datetime.date(2020, 1, 1), datetime.date(2020, 1, 10), datetime.date(2020, 1, 7), datetime.date(2020, 1, 12), datetime.date(2020, 1, 9), datetime.date(2020, 1, 2), datetime.date(2020, 1, 14), datetime.date(2020, 1, 18), datetime.date(2020, 1, 3), datetime.date(2020, 1, 17), datetime.date(2020, 1, 15), datetime.date(2020, 1, 6), datetime.date(2020, 1, 16), datetime.date(2020, 1, 19), datetime.date(2020, 1, 13), datetime.date(2020, 1, 5), datetime.date(2020, 1, 11), datetime.date(2020, 1, 8)]
+None 4238894112
+() 5740354900026072187
+0 0
+1 1
+-1 -2
+-2 -2
+2305843009213693951 0
+2305843009213693952 1
+18446744073709551616 8
+-18446744073709551616 -8
+1000000000000000000000000000000 465258685558744706
+1.0 1
+1.5 1152921504606846977
+-1.5 -1152921504606846977
+0.1 230584300921369408
+1e+300 1224995262755759164
+inf 314159
+-inf -314159
+1j 1000003
+(1+2j) 2000007
+(-0-1j) -2000006
+True 1
+False 0
+Fraction(1, 3) 1537228672809129301
+Fraction(3, 1) 3
+Fraction(-7, 2305843009213693951) -314159
+Decimal('1.5') 1152921504606846977
+Decimal('1E+100') 910685213754167845
+Decimal('-0.1') -2075258708292324556
+Decimal('Infinity') 314159
+range(0, 10) -7546101314042312252
+range(0, 0) 2676694398852732306
+range(1, 10, 3) -9160968616009628824
+slice(1, 2, 3) -2340833382717974474
+True
+True
+True 7397464257279437326 6150189501879270893
+=== PYTHONHASHSEED 42 status 0
+1 sys.hash_info(width=64, modulus=2305843009213693951, inf=314159, nan=0, imag=1000003, algorithm='siphash13', hash_bits=64, seed_bits=128, cutoff=0)
+'' 0 0 True True
+'a' 1 -123207753977932514 True True
+'b' 1 -1567221752198808185 True True
+'ab' 2 -8834603240454725574 True True
+'abc' 3 3869580338025362921 True True
+'abcd' 4 -4689723836515493960 True True
+'abcdefg' 7 1375323160596907757 True True
+'abcdefgh' 8 -5457871895989710762 True True
+'abcdefghi' 9 -5970266004662334337 True True
+'xxxxxxxxxxxxxxx' 15 -941056122281522699 True True
+'xxxxxxxxxxxxxxxx' 16 5583311531320275737 True True
+'xxxxxxxxxxxxxxxxx' 17 -7053035877312762067 True True
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 63 -274902830455614905 True True
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 64 52856742679609905 True True
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 65 3436240073261968327 True True
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 1000 -3532814163081449951 True True
+'hello world' 11 -3893157060480277979 True True
+'\xe9' 1 5653850369683463245 True True
+'caf\xe9' 4 6223193746424771551 True True
+'\xff\xff\xff\xff\xff\xff\xff\xff\xff' 9 9107322900498779704 True True
+'\u0100' 1 -1210628546572122282 True True
+'\u20ac' 1 -9193319877017669544 True True
+'a\u20ac' 2 329774080364429319 True True
+'\u20ac\u20ac\u20ac' 3 -604266868904603628 True True
+'\u20ac\u20ac\u20ac\u20ac' 4 -4943204094302160186 True True
+'\u20ac\u20ac\u20ac\u20ac\u20ac' 5 4166650062843312688 True True
+'\u20ac\u20ac\u20ac\u20ac\u20ac\u20ac\u2 100 8653914309811002042 True True
+'\uffff' 1 853879074117269396 True True
+'\U00010000' 1 -8941308103258486376 True True
+'\U0001f600' 1 6601963133753205906 True True
+'a\U0001f600' 2 3739657454509745579 True True
+'\U0001f600\U0001f600' 2 6955142503158928443 True True
+'\U0001f600\U0001f600\U0001f600' 3 1076830159072638996 True True
+'\U0010ffff' 1 -4908190882330894266 True True
+'a\U0001f600b\u20acc' 5 -120448124988758991 True True
+'\ud800' 1 3727559787064597055 True True
+'\udc00' 1 -2458650008424888759 True True
+'a\udc80b' 3 3803615372934232649 True True
+'\ud800a' 2 -2562337560958626878 True True
+'\udc00\ud800' 2 -546248588818744185 True True
+'\x00' 1 -3564585677187238775 True True
+'\x00\x00\x00\x00\x00\x00\x00\x00' 8 -35990544404223871 True True
+'a\x00b' 3 -5772590125550595663 True True
+'abc' 3 3869580338025362921 True True
+'abc\xe9' 4 -6750864806684974193 True True
+'\xe9' 1 5653850369683463245 True True
+'abc' 3 3869580338025362921 True True
+'abc\u20ac' 4 951207745150298854 True True
+'\u20ac\xe9' 2 -3459429695619165047 True True
+'\xe9' 1 5653850369683463245 True True
+'abc' 3 3869580338025362921 True True
+'abc' 3 3869580338025362921 True True
+'abc' 3 3869580338025362921 True True
+'abc' 3 3869580338025362921 True True
+'abc' 3 3869580338025362921 True True
+'abc' 3 3869580338025362921 True True
+'\u20ac' 1 -9193319877017669544 True True
+'abc' 3 3869580338025362921 True True
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 100 -1345814288082900963 True True
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 100 -1345814288082900963 True True
+'\u20ac\u20ac\u20ac\u20ac\u20ac\u20ac\u2 100 8653914309811002042 True True
+True True
+b'' 0 0 True True
+b'a' 1 -123207753977932514 True True
+b'abc' 3 3869580338025362921 True True
+b'abcdefg' 7 1375323160596907757 True True
+b'abcdefgh' 8 -5457871895989710762 True True
+b'abcdefghi' 9 -5970266004662334337 True True
+b'\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\x0c\r\x0e\x0f\x10\x11\x12\x13' 256 938477193647182425 True True
+b'xxxxxxxxxxxxxxxxxxxx' 1000 -3532814163081449951 True True
+b'\x00' 1 -3564585677187238775 True True
+b'\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff' 17 7999764133805996134 True True
+True True True True
+('a',) -3070493986912897542
+('a', 'b') 5160517251406314159
+('a', ('b', 'c')) 8110918773349430531
+('abc', 1, 2.5, None) -3330015576730162476
+(b'a', 'a') -6366685811940378592
+["'a'"] 1627519248918248211
+["'a'", "'b'", "'c'"] -5392004521483502374
+["'c'", "('a', 'b')", '1'] -8538889072073456968
+(frozenset({'x', 'y'}), 'z') -1141810944558351812
+['mu', 'tau', 'upsilon', 'zeta', 'phi', 'rho', 'epsilon', 'chi', 'kappa', 'theta', 'pi', 'omicron', 'omega', 'eta', 'psi', 'delta', 'gamma', 'beta', 'sigma', 'iota', 'xi', 'alpha', 'nu', 'lambda']
+['eta', 'delta', 'zeta', 'gamma', 'epsilon', 'beta', 'alpha']
+['lambda12', 'lambda1', 'tau1', 'chi8', 'omicron0', 'psi11', 'phi4', 'pi15', 'kappa10', 'mu12', 'lambda14', 'alpha1', 'tau4', 'alpha18', 'sigma2', 'theta3', 'lambda4', 'iota8', 'eta9', 'zeta10', 'psi8', 'delta18', 'gamma12', 'theta8', 'tau3', 'chi5', 'beta5', 'lambda9', 'iota19', 'epsilon10', 'eta13', 'kappa0', 'zeta9', 'delta4', 'zeta17', 'alpha4', 'eta16', 'chi0', 'omega19', 'iota6', 'upsilon17', 'theta2', 'zeta8', 'epsilon3', 'zeta19', 'xi14', 'psi10', 'phi19', 'pi16', 'eta0', 'beta16', 'epsilon16', 'tau6', 'psi18', 'iota15', 'omicron13', 'kappa2', 'sigma9', 'omega11', 'pi3']
+[b'mu', b'tau', b'upsilon', b'zeta', b'phi', b'rho', b'epsilon', b'chi', b'kappa', b'theta', b'pi', b'omicron', b'omega', b'eta', b'psi', b'delta', b'gamma', b'beta', b'sigma', b'iota', b'xi', b'alpha', b'nu', b'lambda']
+[('epsilon', 7), ('iota', 4), ('kappa', 5), ('rho', 3), ('alpha', 5), ('sigma', 5), ('mu', 2), ('psi', 3), ('omega', 5), ('tau', 3), ('delta', 5), ('phi', 3), ('beta', 4), ('xi', 2), ('chi', 3), ('gamma', 5), ('upsilon', 7), ('nu', 2), ('omicron', 7), ('pi', 2), ('zeta', 4), ('theta', 5), ('lambda', 6), ('eta', 3)]
+['mu', 'upsilon', 'zeta', 'chi', 'kappa', 'gammagamma', 'theta', 'pi', 'omega', 'betabeta', 'delta', 'alphaalpha', 'deltadelta', 'beta', 'sigma', 'xi', 'epsilonepsilon'] mu upsilon
+['eta', 'kappa', 'mu', 'nu', 'iota', 'lambda', 'omicron', 'zeta', 'theta', 'xi'] ['eta', 'mu', 'delta', 'lambda', 'zeta', 'gamma', 'epsilon', 'beta', 'iota', 'xi', 'alpha', 'nu', 'kappa', 'omicron', 'theta'] ['mu', 'nu', 'delta', 'lambda', 'omicron', 'gamma', 'epsilon', 'beta', 'xi', 'alpha'] ['psi', 'mu', 'iota', 'lambda', 'omicron', 'upsilon', 'zeta', 'phi', 'rho', 'gamma', 'epsilon', 'beta', 'sigma', 'theta', 'xi', 'omega']
+['c', 's', 'y', 'b', 'x', 'f', 'a', 'h', 'd', 'r', 'z', ' ', 'u', 'n', 'j', 'l', 'g', 'p', 'e', 'q', 'm', 'w', 'i', 'v', 'o', 't', 'k']
+['mu', 'tau', 'upsilon', 'zeta', 'phi', 'rho', 'epsilon', 'chi', 'kappa', 'theta', 'pi', 'omicron', 'omega', 'eta', 'psi', 'delta', 'gamma', 'beta', 'sigma', 'iota', 'xi', 'alpha', 'nu', 'lambda'] True
+datetime.date(1066, 10, 14) -1048779253372691583
+datetime.date(1, 1, 1) -8584660979275270970
+datetime.date(9999, 12, 31) -7436999124805946128
+datetime.time(1, 2, 3, 4) 5606508452859683388
+datetime.time(0, 0) -6865049584116825870
+datetime.time(1, 2, 3, 4, fold=1) 5606508452859683388
+datetime.datetime(1, 2, 3, 4, 5, 6, 7) -7594607483519198265
+datetime.datetime(2024, 2, 29, 0, 0) 8679608779738957401
+datetime.datetime(2024, 2, 29, 0, 0, fold=1) 8679608779738957401
+datetime.timedelta(0) 3010437511937009226
+datetime.timedelta(days=1, seconds=2, microseconds=3) 529344067295497451
+datetime.timedelta(days=-1) -8550113241796947342
+datetime.timedelta(days=-1, seconds=5) -4478800971006269103
+datetime.timedelta(days=999999999, seconds=86399, microseconds=999999) -632435857830950997
+datetime.timedelta(days=-999999999) -5548498233047506374
+datetime.timezone.utc 3010437511937009226
+datetime.timezone(datetime.timedelta(days=-1, seconds=68400)) -5817660035457781109
+datetime.datetime(2024, 2, 29, 12, 0, tzinfo=datetime.timezone.utc) -6034608188192826118
+datetime.datetime(2024, 2, 29, 12, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=19800))) 3821008241006488984
+datetime.datetime(1, 1, 1, 0, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=36000))) -3497794311165505528
+datetime.time(12, 0, tzinfo=datetime.timezone.utc) 7042526932204271663
+datetime.time(1, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=18000))) 1658566024029534516
+datetime.time(23, 0, 0, 5, tzinfo=datetime.timezone(datetime.timedelta(days=-1, seconds=68400, microseconds=7))) -3964455642260884712
+[datetime.date(2020, 1, 16), datetime.date(2020, 1, 1), datetime.date(2020, 1, 11), datetime.date(2020, 1, 9), datetime.date(2020, 1, 18), datetime.date(2020, 1, 4), datetime.date(2020, 1, 13), datetime.date(2020, 1, 15), datetime.date(2020, 1, 2), datetime.date(2020, 1, 8), datetime.date(2020, 1, 14), datetime.date(2020, 1, 17), datetime.date(2020, 1, 19), datetime.date(2020, 1, 10), datetime.date(2020, 1, 7), datetime.date(2020, 1, 3), datetime.date(2020, 1, 5), datetime.date(2020, 1, 6), datetime.date(2020, 1, 12)]
+None 4238894112
+() 5740354900026072187
+0 0
+1 1
+-1 -2
+-2 -2
+2305843009213693951 0
+2305843009213693952 1
+18446744073709551616 8
+-18446744073709551616 -8
+1000000000000000000000000000000 465258685558744706
+1.0 1
+1.5 1152921504606846977
+-1.5 -1152921504606846977
+0.1 230584300921369408
+1e+300 1224995262755759164
+inf 314159
+-inf -314159
+1j 1000003
+(1+2j) 2000007
+(-0-1j) -2000006
+True 1
+False 0
+Fraction(1, 3) 1537228672809129301
+Fraction(3, 1) 3
+Fraction(-7, 2305843009213693951) -314159
+Decimal('1.5') 1152921504606846977
+Decimal('1E+100') 910685213754167845
+Decimal('-0.1') -2075258708292324556
+Decimal('Infinity') 314159
+range(0, 10) -7546101314042312252
+range(0, 0) 2676694398852732306
+range(1, 10, 3) -9160968616009628824
+slice(1, 2, 3) -2340833382717974474
+True
+True
+True -8625390657004324152 -1405247635636447896
+=== PYTHONHASHSEED 123456789 status 0
+1 sys.hash_info(width=64, modulus=2305843009213693951, inf=314159, nan=0, imag=1000003, algorithm='siphash13', hash_bits=64, seed_bits=128, cutoff=0)
+'' 0 0 True True
+'a' 1 -2771344550508810466 True True
+'b' 1 -8887043392257049133 True True
+'ab' 2 3841945266183231888 True True
+'abc' 3 -9014179971215494434 True True
+'abcd' 4 -8927889627995118103 True True
+'abcdefg' 7 -8084018970775347847 True True
+'abcdefgh' 8 8935538293506355082 True True
+'abcdefghi' 9 337412557029741824 True True
+'xxxxxxxxxxxxxxx' 15 639644088196755964 True True
+'xxxxxxxxxxxxxxxx' 16 6060548498040409965 True True
+'xxxxxxxxxxxxxxxxx' 17 6848434995952920292 True True
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 63 -5385980402407332199 True True
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 64 -5547767405749831138 True True
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 65 -4074672442957733004 True True
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 1000 8374643066187801455 True True
+'hello world' 11 -5964522467691826448 True True
+'\xe9' 1 -4054954770247389335 True True
+'caf\xe9' 4 -1605746985323511246 True True
+'\xff\xff\xff\xff\xff\xff\xff\xff\xff' 9 -3109440548435185335 True True
+'\u0100' 1 -7882733735905140661 True True
+'\u20ac' 1 1772529084443542064 True True
+'a\u20ac' 2 5051096909417359528 True True
+'\u20ac\u20ac\u20ac' 3 5318806780059001101 True True
+'\u20ac\u20ac\u20ac\u20ac' 4 -2425541487084018479 True True
+'\u20ac\u20ac\u20ac\u20ac\u20ac' 5 -8863150008119215887 True True
+'\u20ac\u20ac\u20ac\u20ac\u20ac\u20ac\u2 100 -6735234667069571277 True True
+'\uffff' 1 7648192488922004372 True True
+'\U00010000' 1 -1084322815510896822 True True
+'\U0001f600' 1 8484188810336477138 True True
+'a\U0001f600' 2 8051112386770311820 True True
+'\U0001f600\U0001f600' 2 -940332468740787838 True True
+'\U0001f600\U0001f600\U0001f600' 3 -5907875236477710649 True True
+'\U0010ffff' 1 -3334952366264149725 True True
+'a\U0001f600b\u20acc' 5 5573856938035081149 True True
+'\ud800' 1 -190019289847658853 True True
+'\udc00' 1 6697719649456832175 True True
+'a\udc80b' 3 7194296250554336548 True True
+'\ud800a' 2 1470090507903488838 True True
+'\udc00\ud800' 2 -3901047371160964712 True True
+'\x00' 1 -1497365330529075120 True True
+'\x00\x00\x00\x00\x00\x00\x00\x00' 8 3426480604543502371 True True
+'a\x00b' 3 7897644089762550197 True True
+'abc' 3 -9014179971215494434 True True
+'abc\xe9' 4 -8524883596966079526 True True
+'\xe9' 1 -4054954770247389335 True True
+'abc' 3 -9014179971215494434 True True
+'abc\u20ac' 4 -9007975161404925456 True True
+'\u20ac\xe9' 2 -336063880356458672 True True
+'\xe9' 1 -4054954770247389335 True True
+'abc' 3 -9014179971215494434 True True
+'abc' 3 -9014179971215494434 True True
+'abc' 3 -9014179971215494434 True True
+'abc' 3 -9014179971215494434 True True
+'abc' 3 -9014179971215494434 True True
+'abc' 3 -9014179971215494434 True True
+'\u20ac' 1 1772529084443542064 True True
+'abc' 3 -9014179971215494434 True True
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 100 -7221762481232886274 True True
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 100 -7221762481232886274 True True
+'\u20ac\u20ac\u20ac\u20ac\u20ac\u20ac\u2 100 -6735234667069571277 True True
+True True
+b'' 0 0 True True
+b'a' 1 -2771344550508810466 True True
+b'abc' 3 -9014179971215494434 True True
+b'abcdefg' 7 -8084018970775347847 True True
+b'abcdefgh' 8 8935538293506355082 True True
+b'abcdefghi' 9 337412557029741824 True True
+b'\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\x0c\r\x0e\x0f\x10\x11\x12\x13' 256 1984876096227203883 True True
+b'xxxxxxxxxxxxxxxxxxxx' 1000 8374643066187801455 True True
+b'\x00' 1 -1497365330529075120 True True
+b'\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff' 17 2677215559166876707 True True
+True True True True
+('a',) 8719315666980624827
+('a', 'b') -5939433515207517264
+('a', ('b', 'c')) 3802692116669972801
+('abc', 1, 2.5, None) 689595237380907010
+(b'a', 'a') -3091256902056401580
+["'a'"] 7518978699129697273
+["'a'", "'b'", "'c'"] 3188171314696083143
+["'c'", "('a', 'b')", '1'] -479889178374278945
+(frozenset({'y', 'x'}), 'z') 8660063820572456480
+['delta', 'omega', 'chi', 'iota', 'lambda', 'upsilon', 'alpha', 'gamma', 'kappa', 'phi', 'zeta', 'pi', 'theta', 'beta', 'sigma', 'epsilon', 'xi', 'omicron', 'tau', 'rho', 'nu', 'eta', 'psi', 'mu']
+['epsilon', 'alpha', 'gamma', 'delta', 'zeta', 'eta', 'beta']
+['xi18', 'psi19', 'alpha17', 'upsilon13', 'gamma19', 'rho6', 'nu9', 'sigma19', 'sigma17', 'omicron5', 'phi7', 'mu15', 'psi7', 'chi10', 'xi7', 'phi8', 'omicron0', 'tau13', 'gamma18', 'lambda0', 'tau15', 'tau5', 'nu2', 'theta18', 'iota17', 'theta11', 'pi1', 'psi10', 'phi0', 'zeta12', 'phi19', 'phi18', 'upsilon18', 'rho13', 'lambda18', 'phi5', 'zeta14', 'nu3', 'iota12', 'mu13', 'zeta8', 'theta7', 'iota7', 'delta2', 'iota10', 'tau14', 'phi3', 'pi10', 'iota6', 'chi1', 'chi4', 'epsilon6', 'xi5', 'chi14', 'xi9', 'omega7', 'epsilon13', 'zeta9', 'delta7', 'tau2']
+[b'delta', b'omega', b'chi', b'iota', b'lambda', b'upsilon', b'alpha', b'gamma', b'kappa', b'phi', b'zeta', b'pi', b'theta', b'beta', b'sigma', b'epsilon', b'xi', b'omicron', b'tau', b'rho', b'nu', b'eta', b'psi', b'mu']
+[('pi', 2), ('mu', 2), ('epsilon', 7), ('eta', 3), ('iota', 4), ('psi', 3), ('rho', 3), ('tau', 3), ('nu', 2), ('omega', 5), ('phi', 3), ('beta', 4), ('kappa', 5), ('omicron', 7), ('chi', 3), ('xi', 2), ('alpha', 5), ('theta', 5), ('zeta', 4), ('upsilon', 7), ('sigma', 5), ('gamma', 5), ('delta', 5), ('lambda', 6)]
+['delta', 'omega', 'deltadelta', 'chi', 'epsilonepsilon', 'betabeta', 'gammagamma', 'upsilon', 'kappa', 'zeta', 'pi', 'theta', 'beta', 'sigma', 'xi', 'alphaalpha', 'mu'] delta omega
+['xi', 'omicron', 'kappa', 'zeta', 'nu', 'eta', 'theta', 'iota', 'lambda', 'mu'] ['alpha', 'gamma', 'kappa', 'delta', 'zeta', 'theta', 'iota', 'beta', 'epsilon', 'xi', 'omicron', 'nu', 'eta', 'lambda', 'mu'] ['xi', 'omicron', 'epsilon', 'alpha', 'gamma', 'delta', 'nu', 'beta', 'lambda', 'mu'] ['epsilon', 'gamma', 'xi', 'omicron', 'rho', 'omega', 'phi', 'zeta', 'psi', 'theta', 'iota', 'lambda', 'mu', 'beta', 'sigma', 'upsilon']
+['k', 't', 'h', 's', 'f', 'n', 'l', 'a', 'r', 'j', 'q', 'o', 'd', 'u', 'm', 'b', 'w', 'e', 'v', 'p', 'x', 'c', 'z', 'y', 'i', 'g', ' ']
+['delta', 'omega', 'chi', 'iota', 'lambda', 'upsilon', 'alpha', 'gamma', 'kappa', 'phi', 'zeta', 'pi', 'theta', 'beta', 'sigma', 'epsilon', 'xi', 'omicron', 'tau', 'rho', 'nu', 'eta', 'psi', 'mu'] True
+datetime.date(1066, 10, 14) -4377279140602937316
+datetime.date(1, 1, 1) -3341222030053462406
+datetime.date(9999, 12, 31) 4766899046139961355
+datetime.time(1, 2, 3, 4) -7827876262334164294
+datetime.time(0, 0) -6400410570255366358
+datetime.time(1, 2, 3, 4, fold=1) -7827876262334164294
+datetime.datetime(1, 2, 3, 4, 5, 6, 7) 7073220059713253414
+datetime.datetime(2024, 2, 29, 0, 0) 3256659149181574204
+datetime.datetime(2024, 2, 29, 0, 0, fold=1) 3256659149181574204
+datetime.timedelta(0) 3010437511937009226
+datetime.timedelta(days=1, seconds=2, microseconds=3) 529344067295497451
+datetime.timedelta(days=-1) -8550113241796947342
+datetime.timedelta(days=-1, seconds=5) -4478800971006269103
+datetime.timedelta(days=999999999, seconds=86399, microseconds=999999) -632435857830950997
+datetime.timedelta(days=-999999999) -5548498233047506374
+datetime.timezone.utc 3010437511937009226
+datetime.timezone(datetime.timedelta(days=-1, seconds=68400)) -5817660035457781109
+datetime.datetime(2024, 2, 29, 12, 0, tzinfo=datetime.timezone.utc) -6034608188192826118
+datetime.datetime(2024, 2, 29, 12, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=19800))) 3821008241006488984
+datetime.datetime(1, 1, 1, 0, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=36000))) -3497794311165505528
+datetime.time(12, 0, tzinfo=datetime.timezone.utc) 7042526932204271663
+datetime.time(1, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=18000))) 1658566024029534516
+datetime.time(23, 0, 0, 5, tzinfo=datetime.timezone(datetime.timedelta(days=-1, seconds=68400, microseconds=7))) -3964455642260884712
+[datetime.date(2020, 1, 12), datetime.date(2020, 1, 10), datetime.date(2020, 1, 5), datetime.date(2020, 1, 9), datetime.date(2020, 1, 16), datetime.date(2020, 1, 2), datetime.date(2020, 1, 8), datetime.date(2020, 1, 11), datetime.date(2020, 1, 3), datetime.date(2020, 1, 13), datetime.date(2020, 1, 14), datetime.date(2020, 1, 19), datetime.date(2020, 1, 6), datetime.date(2020, 1, 17), datetime.date(2020, 1, 7), datetime.date(2020, 1, 15), datetime.date(2020, 1, 4), datetime.date(2020, 1, 18), datetime.date(2020, 1, 1)]
+None 4238894112
+() 5740354900026072187
+0 0
+1 1
+-1 -2
+-2 -2
+2305843009213693951 0
+2305843009213693952 1
+18446744073709551616 8
+-18446744073709551616 -8
+1000000000000000000000000000000 465258685558744706
+1.0 1
+1.5 1152921504606846977
+-1.5 -1152921504606846977
+0.1 230584300921369408
+1e+300 1224995262755759164
+inf 314159
+-inf -314159
+1j 1000003
+(1+2j) 2000007
+(-0-1j) -2000006
+True 1
+False 0
+Fraction(1, 3) 1537228672809129301
+Fraction(3, 1) 3
+Fraction(-7, 2305843009213693951) -314159
+Decimal('1.5') 1152921504606846977
+Decimal('1E+100') 910685213754167845
+Decimal('-0.1') -2075258708292324556
+Decimal('Infinity') 314159
+range(0, 10) -7546101314042312252
+range(0, 0) 2676694398852732306
+range(1, 10, 3) -9160968616009628824
+slice(1, 2, 3) -2340833382717974474
+True
+True
+True -2738134842453236862 -958201614539462507
+=== PYTHONHASHSEED 4294967295 status 0
+1 sys.hash_info(width=64, modulus=2305843009213693951, inf=314159, nan=0, imag=1000003, algorithm='siphash13', hash_bits=64, seed_bits=128, cutoff=0)
+'' 0 0 True True
+'a' 1 -5989683813037840249 True True
+'b' 1 -4085668551238807055 True True
+'ab' 2 8710342733626678031 True True
+'abc' 3 -6122489556238538401 True True
+'abcd' 4 -2975018177931727368 True True
+'abcdefg' 7 233998310040276482 True True
+'abcdefgh' 8 3424456984880118976 True True
+'abcdefghi' 9 6340115119033867570 True True
+'xxxxxxxxxxxxxxx' 15 -6617131957827077958 True True
+'xxxxxxxxxxxxxxxx' 16 8250250097291254345 True True
+'xxxxxxxxxxxxxxxxx' 17 -2924226780619306408 True True
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 63 1918718223417869797 True True
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 64 243771268054043608 True True
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 65 3102002495813519955 True True
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 1000 -4977940461965940875 True True
+'hello world' 11 6208778848576073069 True True
+'\xe9' 1 -5741392403324874290 True True
+'caf\xe9' 4 -8755507911872275758 True True
+'\xff\xff\xff\xff\xff\xff\xff\xff\xff' 9 6233299344981918504 True True
+'\u0100' 1 453928087612411842 True True
+'\u20ac' 1 1723250505947338019 True True
+'a\u20ac' 2 -294540855805456916 True True
+'\u20ac\u20ac\u20ac' 3 -7729134603489836837 True True
+'\u20ac\u20ac\u20ac\u20ac' 4 1012668308797674755 True True
+'\u20ac\u20ac\u20ac\u20ac\u20ac' 5 7335630428837662842 True True
+'\u20ac\u20ac\u20ac\u20ac\u20ac\u20ac\u2 100 5864247123964124556 True True
+'\uffff' 1 8016840146114284580 True True
+'\U00010000' 1 -432402442314235003 True True
+'\U0001f600' 1 -5273353973323107289 True True
+'a\U0001f600' 2 15917687635634242 True True
+'\U0001f600\U0001f600' 2 5163541276224382716 True True
+'\U0001f600\U0001f600\U0001f600' 3 3514272685390375052 True True
+'\U0010ffff' 1 4437661684122220847 True True
+'a\U0001f600b\u20acc' 5 -8837472127035206114 True True
+'\ud800' 1 -7343857683946629238 True True
+'\udc00' 1 5344893642410415117 True True
+'a\udc80b' 3 2700488022139065162 True True
+'\ud800a' 2 -1332340589662691245 True True
+'\udc00\ud800' 2 4235682055778732093 True True
+'\x00' 1 -889612793812661694 True True
+'\x00\x00\x00\x00\x00\x00\x00\x00' 8 1715767735013568818 True True
+'a\x00b' 3 2948989824507028403 True True
+'abc' 3 -6122489556238538401 True True
+'abc\xe9' 4 8929451348688190022 True True
+'\xe9' 1 -5741392403324874290 True True
+'abc' 3 -6122489556238538401 True True
+'abc\u20ac' 4 -6980228025504281455 True True
+'\u20ac\xe9' 2 6745705789825303197 True True
+'\xe9' 1 -5741392403324874290 True True
+'abc' 3 -6122489556238538401 True True
+'abc' 3 -6122489556238538401 True True
+'abc' 3 -6122489556238538401 True True
+'abc' 3 -6122489556238538401 True True
+'abc' 3 -6122489556238538401 True True
+'abc' 3 -6122489556238538401 True True
+'\u20ac' 1 1723250505947338019 True True
+'abc' 3 -6122489556238538401 True True
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 100 2424569201148640282 True True
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 100 2424569201148640282 True True
+'\u20ac\u20ac\u20ac\u20ac\u20ac\u20ac\u2 100 5864247123964124556 True True
+True True
+b'' 0 0 True True
+b'a' 1 -5989683813037840249 True True
+b'abc' 3 -6122489556238538401 True True
+b'abcdefg' 7 233998310040276482 True True
+b'abcdefgh' 8 3424456984880118976 True True
+b'abcdefghi' 9 6340115119033867570 True True
+b'\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\x0c\r\x0e\x0f\x10\x11\x12\x13' 256 -7168183994577827003 True True
+b'xxxxxxxxxxxxxxxxxxxx' 1000 -4977940461965940875 True True
+b'\x00' 1 -889612793812661694 True True
+b'\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff' 17 -8555706833438053090 True True
+True True True True
+('a',) 5397285671144324947
+('a', 'b') 6981999532238184839
+('a', ('b', 'c')) -6177478408486763003
+('abc', 1, 2.5, None) 3541555609724330443
+(b'a', 'a') -3218822225577856245
+["'a'"] -4526665978004286147
+["'a'", "'b'", "'c'"] 4682091084532050091
+["'c'", "('a', 'b')", '1'] 825808164031707497
+(frozenset({'y', 'x'}), 'z') -393780350157774817
+['iota', 'psi', 'omicron', 'sigma', 'theta', 'rho', 'chi', 'beta', 'epsilon', 'delta', 'alpha', 'nu', 'upsilon', 'eta', 'zeta', 'gamma', 'pi', 'xi', 'phi', 'lambda', 'omega', 'tau', 'mu', 'kappa']
+['gamma', 'beta', 'epsilon', 'delta', 'alpha', 'eta', 'zeta']
+['rho2', 'tau12', 'pi1', 'nu11', 'theta8', 'eta17', 'epsilon13', 'omicron8', 'chi7', 'delta9', 'gamma16', 'phi7', 'epsilon8', 'theta9', 'iota17', 'zeta11', 'omega18', 'alpha11', 'gamma8', 'lambda17', 'kappa16', 'upsilon18', 'mu19', 'chi9', 'xi11', 'theta11', 'delta16', 'mu15', 'gamma14', 'iota14', 'phi9', 'pi13', 'sigma15', 'rho17', 'chi18', 'rho11', 'omega8', 'xi5', 'iota4', 'phi14', 'sigma7', 'eta6', 'lambda3', 'alpha15', 'tau18', 'beta9', 'omicron0', 'sigma5', 'beta2', 'omicron9', 'alpha0', 'rho7', 'delta3', 'zeta14', 'upsilon7', 'iota11', 'chi19', 'omicron1', 'iota15', 'theta7']
+[b'iota', b'psi', b'omicron', b'sigma', b'theta', b'rho', b'chi', b'beta', b'epsilon', b'delta', b'alpha', b'nu', b'upsilon', b'eta', b'zeta', b'gamma', b'pi', b'xi', b'phi', b'lambda', b'omega', b'tau', b'mu', b'kappa']
+[('delta', 5), ('eta', 3), ('alpha', 5), ('upsilon', 7), ('sigma', 5), ('nu', 2), ('chi', 3), ('pi', 2), ('lambda', 6), ('omicron', 7), ('mu', 2), ('epsilon', 7), ('rho', 3), ('zeta', 4), ('psi', 3), ('theta', 5), ('omega', 5), ('beta', 4), ('kappa', 5), ('xi', 2), ('tau', 3), ('phi', 3), ('iota', 4), ('gamma', 5)]
+['sigma', 'theta', 'alphaalpha', 'chi', 'beta', 'delta', 'deltadelta', 'upsilon', 'epsilonepsilon', 'zeta', 'pi', 'xi', 'betabeta', 'omega', 'gammagamma', 'mu', 'kappa'] sigma theta
+['lambda', 'nu', 'iota', 'omicron', 'xi', 'theta', 'mu', 'kappa', 'eta', 'zeta'] ['gamma', 'iota', 'omicron', 'xi', 'theta', 'lambda', 'beta', 'epsilon', 'delta', 'alpha', 'nu', 'mu', 'kappa', 'eta', 'zeta'] ['lambda', 'gamma', 'nu', 'omicron', 'beta', 'xi', 'epsilon', 'delta', 'mu', 'alpha'] ['lambda', 'gamma', 'omega', 'iota', 'psi', 'omicron', 'beta', 'sigma', 'theta', 'epsilon', 'xi', 'rho', 'mu', 'upsilon', 'phi', 'zeta']
+['o', 'a', 'p', ' ', 'k', 't', 'g', 'i', 'z', 's', 'l', 'x', 'y', 'q', 'r', 'c', 'j', 'm', 'w', 'f', 'h', 'v', 'u', 'e', 'n', 'd', 'b']
+['iota', 'psi', 'omicron', 'sigma', 'theta', 'rho', 'chi', 'beta', 'epsilon', 'delta', 'alpha', 'nu', 'upsilon', 'eta', 'zeta', 'gamma', 'pi', 'xi', 'phi', 'lambda', 'omega', 'tau', 'mu', 'kappa'] True
+datetime.date(1066, 10, 14) -2068993947303617650
+datetime.date(1, 1, 1) 1376437097438726836
+datetime.date(9999, 12, 31) -6256594518314103704
+datetime.time(1, 2, 3, 4) -4155687913020849792
+datetime.time(0, 0) -11304850112429853
+datetime.time(1, 2, 3, 4, fold=1) -4155687913020849792
+datetime.datetime(1, 2, 3, 4, 5, 6, 7) 808019301983246677
+datetime.datetime(2024, 2, 29, 0, 0) -1750024170426546921
+datetime.datetime(2024, 2, 29, 0, 0, fold=1) -1750024170426546921
+datetime.timedelta(0) 3010437511937009226
+datetime.timedelta(days=1, seconds=2, microseconds=3) 529344067295497451
+datetime.timedelta(days=-1) -8550113241796947342
+datetime.timedelta(days=-1, seconds=5) -4478800971006269103
+datetime.timedelta(days=999999999, seconds=86399, microseconds=999999) -632435857830950997
+datetime.timedelta(days=-999999999) -5548498233047506374
+datetime.timezone.utc 3010437511937009226
+datetime.timezone(datetime.timedelta(days=-1, seconds=68400)) -5817660035457781109
+datetime.datetime(2024, 2, 29, 12, 0, tzinfo=datetime.timezone.utc) -6034608188192826118
+datetime.datetime(2024, 2, 29, 12, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=19800))) 3821008241006488984
+datetime.datetime(1, 1, 1, 0, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=36000))) -3497794311165505528
+datetime.time(12, 0, tzinfo=datetime.timezone.utc) 7042526932204271663
+datetime.time(1, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=18000))) 1658566024029534516
+datetime.time(23, 0, 0, 5, tzinfo=datetime.timezone(datetime.timedelta(days=-1, seconds=68400, microseconds=7))) -3964455642260884712
+[datetime.date(2020, 1, 5), datetime.date(2020, 1, 15), datetime.date(2020, 1, 3), datetime.date(2020, 1, 4), datetime.date(2020, 1, 7), datetime.date(2020, 1, 2), datetime.date(2020, 1, 16), datetime.date(2020, 1, 10), datetime.date(2020, 1, 6), datetime.date(2020, 1, 17), datetime.date(2020, 1, 14), datetime.date(2020, 1, 11), datetime.date(2020, 1, 9), datetime.date(2020, 1, 8), datetime.date(2020, 1, 13), datetime.date(2020, 1, 1), datetime.date(2020, 1, 19), datetime.date(2020, 1, 18), datetime.date(2020, 1, 12)]
+None 4238894112
+() 5740354900026072187
+0 0
+1 1
+-1 -2
+-2 -2
+2305843009213693951 0
+2305843009213693952 1
+18446744073709551616 8
+-18446744073709551616 -8
+1000000000000000000000000000000 465258685558744706
+1.0 1
+1.5 1152921504606846977
+-1.5 -1152921504606846977
+0.1 230584300921369408
+1e+300 1224995262755759164
+inf 314159
+-inf -314159
+1j 1000003
+(1+2j) 2000007
+(-0-1j) -2000006
+True 1
+False 0
+Fraction(1, 3) 1537228672809129301
+Fraction(3, 1) 3
+Fraction(-7, 2305843009213693951) -314159
+Decimal('1.5') 1152921504606846977
+Decimal('1E+100') 910685213754167845
+Decimal('-0.1') -2075258708292324556
+Decimal('Infinity') 314159
+range(0, 10) -7546101314042312252
+range(0, 0) 2676694398852732306
+range(1, 10, 3) -9160968616009628824
+slice(1, 2, 3) -2340833382717974474
+True
+True
+True 7049603938851897931 2238320797005189311
+=== random
+None () 0 0 1 different 
+random () 0 0 1 different 
+0 ('-R',) 0 0 1 different 
+5 ('-R',) 0 0 1 different 
+0 ('-E',) 0 0 1 different 
+0 ('-I',) 0 0 1 different 
+ () 0 0 1 different 
+=== fixed
+'0' () 0 0 -4594863902769663758 -4594863902769663758 ['d', 'f', 'g', 'h', 'b', 'c', 'a', 'e'] same 
+'00' () 0 0 -4594863902769663758 -4594863902769663758 ['d', 'f', 'g', 'h', 'b', 'c', 'a', 'e'] same 
+'+1' () 0 1 -4667308735975688587 -4667308735975688587 ['d', 'g', 'e', 'a', 'b', 'h', 'c', 'f'] same 
+' 1' () 0 1 -4667308735975688587 -4667308735975688587 ['d', 'g', 'e', 'a', 'b', 'h', 'c', 'f'] same 
+'1' () 0 1 -4667308735975688587 -4667308735975688587 ['d', 'g', 'e', 'a', 'b', 'h', 'c', 'f'] same 
+'01' () 0 1 -4667308735975688587 -4667308735975688587 ['d', 'g', 'e', 'a', 'b', 'h', 'c', 'f'] same 
+'1' ('-B',) 0 1 -4667308735975688587 -4667308735975688587 ['d', 'g', 'e', 'a', 'b', 'h', 'c', 'f'] same 
+=== mistakes
+'-1' 1  ['Fatal Python error: config_init_hash_seed: PYTHONHASHSEED must be "random" or an integer in range [0; 4294967295]', 'Python runtime state: preinitialized']
+'4294967296' 1  ['Fatal Python error: config_init_hash_seed: PYTHONHASHSEED must be "random" or an integer in range [0; 4294967295]', 'Python runtime state: preinitialized']
+'x' 1  ['Fatal Python error: config_init_hash_seed: PYTHONHASHSEED must be "random" or an integer in range [0; 4294967295]', 'Python runtime state: preinitialized']
+'1x' 1  ['Fatal Python error: config_init_hash_seed: PYTHONHASHSEED must be "random" or an integer in range [0; 4294967295]', 'Python runtime state: preinitialized']
+'1.0' 1  ['Fatal Python error: config_init_hash_seed: PYTHONHASHSEED must be "random" or an integer in range [0; 4294967295]', 'Python runtime state: preinitialized']
+'0x10' 1  ['Fatal Python error: config_init_hash_seed: PYTHONHASHSEED must be "random" or an integer in range [0; 4294967295]', 'Python runtime state: preinitialized']
+'Random' 1  ['Fatal Python error: config_init_hash_seed: PYTHONHASHSEED must be "random" or an integer in range [0; 4294967295]', 'Python runtime state: preinitialized']
+'99999999999999999999999' 1  ['Fatal Python error: config_init_hash_seed: PYTHONHASHSEED must be "random" or an integer in range [0; 4294967295]', 'Python runtime state: preinitialized']
+'1 ' 1  ['Fatal Python error: config_init_hash_seed: PYTHONHASHSEED must be "random" or an integer in range [0; 4294967295]', 'Python runtime state: preinitialized']

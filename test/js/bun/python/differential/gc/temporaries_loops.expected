@@ -1,0 +1,67 @@
+status: 0
+script: 90a35bdbca76f634
+---
+--- closed at once
+break ['closed break']
+return ['closed return']
+in the handler ['closed raise']
+after the handler []
+in the caller's handler ['closed leaves the frame']
+two frames ['closed leaves the frame', 'closed raised by a callee']
+return through two loops ['closed inner', 'closed outer']
+inner left ['closed inner']
+outer left ['closed outer']
+round 0 ['closed inner 0']
+round 1 ['closed inner 1']
+exhausted ['closed exhausted', 'else']
+finally first ['finally in the body', 'closed order']
+return, loop, finally ['value of return', 'closed order', 'finally around the loop']
+with in the body ['__exit__ None', 'closed with']
+with around the loop ['closed with around', '__exit__ OSError']
+method ['closed method']
+method of a temporary ['closed method of a temporary']
+*args ['closed star']
+keyword ['closed keyword']
+**kwargs ['closed star star']
+name like a class ['closed name like a class']
+the loop is in a generator that is closed ['closed in a generator']
+... that is thrown into ['closed in a generator']
+a finally that raises ['unraisable RuntimeError Exception ignored while closing generator <generator object raising_finally']
+a generator that ignores GeneratorExit ['ignored', 'unraisable RuntimeError Exception ignored while closing generator <generator object ignores_exit']
+the exception on its way is not being handled ['GeneratorExit() in the context of None']
+the one being handled is ["GeneratorExit() in the context of KeyError('handled')"]
+the same loop three times ['closed again 0', 'closed again 1', 'closed again 2']
+recursion ['closed depth 0', 'closed depth 1', 'closed depth 2', 'closed depth 3']
+--- not closed: something else refers to it
+a variable []
+1
+walrus []
+1
+kept by its maker []
+1
+through a function []
+1
+iter() []
+3
+conditional expression []
+1
+a call site: its own generator ['closed site']
+the same site: the generator of somebody else []
+1
+the same site: its own again ['closed site']
+the same site: a function that keeps what it makes []
+2
+it leaked itself through its frame []
+2
+gc.get_objects() []
+1 1
+gc.get_referrers() []
+1 2
+a trace function saw its frame ['closed traced']
+None
+... and the generator was taken from it []
+1
+--- nobody is shown the generator when it is made
+trace function 0 ['closed return event']
+profile function 0 ['closed profile']
+sys.monitoring 0 ['closed monitored']

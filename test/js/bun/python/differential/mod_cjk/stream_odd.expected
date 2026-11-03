@@ -1,0 +1,6 @@
+status: 0
+script: 783cd20a0e2aa8ef
+---
+OSError: no read OSError: no read KeyError: 'no readline' OSError: no read ValueError: no write b'a' ValueError: no write b'' ValueError: no write b'\xa4\xab' None ValueError: no write b'a'
+inner '\u3044'
+'\u3042' ''

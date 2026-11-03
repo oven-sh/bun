@@ -1,0 +1,51 @@
+status: 0
+script: b2b293bb7c98a0eb
+---
+big5 106 140
+  read None b2a38e7e
+  read -1 b2a38e7e
+  read 1 f055c7fe
+  read 2 f4a47f63
+  read 3 ad822edc
+  read 5 752c3e08
+  read 8 36a8153e
+  read 100 914a7dd9
+  read 10000 59607617
+  whole True True True 26892e4b
+  cut strict 593ac448
+  cut ignore 2e9cf4d8
+  cut replace b5ae4c00
+  cut backslashreplace 025786cd
+  reset f3ae793b
+  write 1614aee3 c47ead9c c47ead9c True True
+  writelines c47ead9c
+  write reset fd473253
+  write strict [None, 'UnicodeEncodeError big5 0 1 illegal multibyte sequence', None, 'UnicodeEncodeError big5 0 1 illegal multibyte sequence', 'UnicodeEncodeError big5 0 1 illegal multibyte sequence', 'UnicodeEncodeError big5 1 2 illegal multibyte sequence', 'UnicodeEncodeError big5 1 2 illegal multibyte sequence', 'UnicodeEncodeError big5 0 1 illegal multibyte sequence', None] b'a\xc6\xaf'
+  write ignore [None, None, None, None, None, None, None, None, None] b'a\xc6\xafbc\xc6\xa6\xc6\xa6'
+  write replace [None, None, None, None, None, None, None, None, None] b'a?\xc6\xaf??b?c\xc6\xa6?\xc6\xa6?'
+  write xmlcharrefreplace [None, None, None, None, None, None, None, None, None] b'a&#55296;\xc6\xaf&#55296;&#202;b&#55296;c\xc6\xa6&#55296;\xc6\xa6&#230;'
+  write backslashreplace [None, None, None, None, None, None, None, None, None] b'a\\ud800\xc6\xaf\\ud800\\xcab\\ud800c\xc6\xa6\\ud800\xc6\xa6\\xe6'
+cp950 106 140
+  read None 25c3ce2c
+  read -1 25c3ce2c
+  read 1 b1887151
+  read 2 39118de4
+  read 3 0a075b1f
+  read 5 8f7821a7
+  read 8 56b44429
+  read 100 b9143d69
+  read 10000 b0ddd23c
+  whole True True True 26892e4b
+  cut strict 2fb6b867
+  cut ignore 86806fc7
+  cut replace a98179d0
+  cut backslashreplace 76a792c0
+  reset 8790b078
+  write b64697f0 b6b6f7d1 b6b6f7d1 True True
+  writelines b6b6f7d1
+  write reset 6e08c2fe
+  write strict [None, 'UnicodeEncodeError cp950 0 1 illegal multibyte sequence', None, 'UnicodeEncodeError cp950 0 1 illegal multibyte sequence', 'UnicodeEncodeError cp950 0 1 illegal multibyte sequence', 'UnicodeEncodeError cp950 1 2 illegal multibyte sequence', 'UnicodeEncodeError cp950 1 2 illegal multibyte sequence', 'UnicodeEncodeError cp950 0 1 illegal multibyte sequence', None] b'a\xc6\xaf'
+  write ignore [None, None, None, None, None, None, None, None, None] b'a\xc6\xafbc\xc6\xa6\xc6\xa6'
+  write replace [None, None, None, None, None, None, None, None, None] b'a?\xc6\xaf??b?c\xc6\xa6?\xc6\xa6?'
+  write xmlcharrefreplace [None, None, None, None, None, None, None, None, None] b'a&#55296;\xc6\xaf&#55296;&#202;b&#55296;c\xc6\xa6&#55296;\xc6\xa6&#230;'
+  write backslashreplace [None, None, None, None, None, None, None, None, None] b'a\\ud800\xc6\xaf\\ud800\\xcab\\ud800c\xc6\xa6\\ud800\xc6\xa6\\xe6'

@@ -1,0 +1,14 @@
+status: 0
+script: 5d3f7ca927c70a1f
+source: 581cf8f1dc0a7431
+---
+a dropped: [('C', 'a')]
+d dropped: [('D', 'd')]
+made afterwards: [('C', 'c')]
+no __del__ any more: []
+list and exception: [('E', 'an exception'), ('L', 'a list')]
+__bases__: [('F', 'f')]
+__class__: [('H', 'h')]
+metaclass: [('class', 'K')]
+first: ['resurrected']
+second: []

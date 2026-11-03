@@ -1,0 +1,20 @@
+status: 0
+script: 23ac94bdcfd534ad
+---
+young garbage, generation 0 -> 3
+young garbage, generation 1 -> 3
+young garbage, generation 2 -> 3
+nothing to find -> 0
+what has come through a collection, generation 0 -> 0
+generation 2 -> 1
+finalizer, generation 0 -> 1 ['cycle 0']
+finalizer, generation 1 -> 1 ['cycle 0', 'cycle 1']
+finalizer, generation 2 -> 1 ['cycle 0', 'cycle 1', 'cycle 2']
+weak references, generation 0 -> True True ['callback']
+weak references, generation 1 -> True True ['callback']
+weak references, generation 2 -> True True ['callback']
+[('start', 0, 0), ('stop', 0, 1), ('start', 1, 0), ('stop', 1, 1), ('start', 2, 0), ('stop', 2, 1)]
+[1, 1, 1]
+ValueError invalid generation
+ValueError invalid generation
+0 0

@@ -1,0 +1,149 @@
+status: 0
+script: a19415b9f79d8a1e
+source: 065eba73272b946d
+---
+a == b [source='x = 5'] => True
+a == c [source='x = 5'] => True
+a != b [source='x = 5'] => False
+hash(a) == hash(b) [source='x = 5'] => True
+hash(a) == hash(c) [source='x = 5'] => True
+list(a.co_positions()) == list(b.co_positions()) [source='x = 5'] => True
+a.co_consts == b.co_consts [source='x = 5'] => True
+a.co_names == b.co_names [source='x = 5'] => True
+list(a.co_lines()) == list(b.co_lines()) [source='x = 5'] => True
+a == b [source='if True:\n    pass\n'] => True
+a == c [source='if True:\n    pass\n'] => True
+a != b [source='if True:\n    pass\n'] => False
+hash(a) == hash(b) [source='if True:\n    pass\n'] => True
+hash(a) == hash(c) [source='if True:\n    pass\n'] => True
+list(a.co_positions()) == list(b.co_positions()) [source='if True:\n    pass\n'] => True
+a.co_consts == b.co_consts [source='if True:\n    pass\n'] => True
+a.co_names == b.co_names [source='if True:\n    pass\n'] => True
+list(a.co_lines()) == list(b.co_lines()) [source='if True:\n    pass\n'] => True
+a == b [source='for n in [1, 2, 3]:\n    print(n)\n'] => True
+a == c [source='for n in [1, 2, 3]:\n    print(n)\n'] => True
+a != b [source='for n in [1, 2, 3]:\n    print(n)\n'] => False
+hash(a) == hash(b) [source='for n in [1, 2, 3]:\n    print(n)\n'] => True
+hash(a) == hash(c) [source='for n in [1, 2, 3]:\n    print(n)\n'] => True
+list(a.co_positions()) == list(b.co_positions()) [source='for n in [1, 2, 3]:\n    print(n)\n'] => True
+a.co_consts == b.co_consts [source='for n in [1, 2, 3]:\n    print(n)\n'] => True
+a.co_names == b.co_names [source='for n in [1, 2, 3]:\n    print(n)\n'] => True
+list(a.co_lines()) == list(b.co_lines()) [source='for n in [1, 2, 3]:\n    print(n)\n'] => True
+a == b [source='def foo():\n    pass\nfoo()\n'] => True
+a == c [source='def foo():\n    pass\nfoo()\n'] => True
+a != b [source='def foo():\n    pass\nfoo()\n'] => False
+hash(a) == hash(b) [source='def foo():\n    pass\nfoo()\n'] => True
+hash(a) == hash(c) [source='def foo():\n    pass\nfoo()\n'] => True
+list(a.co_positions()) == list(b.co_positions()) [source='def foo():\n    pass\nfoo()\n'] => True
+a.co_consts == b.co_consts [source='def foo():\n    pass\nfoo()\n'] => True
+a.co_names == b.co_names [source='def foo():\n    pass\nfoo()\n'] => True
+list(a.co_lines()) == list(b.co_lines()) [source='def foo():\n    pass\nfoo()\n'] => True
+a == b [source="x = 'ä' + f(1.5, b'x', (1, 2))\n"] => True
+a == c [source="x = 'ä' + f(1.5, b'x', (1, 2))\n"] => True
+a != b [source="x = 'ä' + f(1.5, b'x', (1, 2))\n"] => False
+hash(a) == hash(b) [source="x = 'ä' + f(1.5, b'x', (1, 2))\n"] => True
+hash(a) == hash(c) [source="x = 'ä' + f(1.5, b'x', (1, 2))\n"] => True
+list(a.co_positions()) == list(b.co_positions()) [source="x = 'ä' + f(1.5, b'x', (1, 2))\n"] => True
+a.co_consts == b.co_consts [source="x = 'ä' + f(1.5, b'x', (1, 2))\n"] => True
+a.co_names == b.co_names [source="x = 'ä' + f(1.5, b'x', (1, 2))\n"] => True
+list(a.co_lines()) == list(b.co_lines()) [source="x = 'ä' + f(1.5, b'x', (1, 2))\n"] => True
+a == b [source="class C:\n  '''doc'''\n  def m(self): return [y for y in z]\n"] => True
+a == c [source="class C:\n  '''doc'''\n  def m(self): return [y for y in z]\n"] => True
+a != b [source="class C:\n  '''doc'''\n  def m(self): return [y for y in z]\n"] => False
+hash(a) == hash(b) [source="class C:\n  '''doc'''\n  def m(self): return [y for y in z]\n"] => True
+hash(a) == hash(c) [source="class C:\n  '''doc'''\n  def m(self): return [y for y in z]\n"] => True
+list(a.co_positions()) == list(b.co_positions()) [source="class C:\n  '''doc'''\n  def m(self): return [y for y in z]\n"] => True
+a.co_consts == b.co_consts [source="class C:\n  '''doc'''\n  def m(self): return [y for y in z]\n"] => True
+a.co_names == b.co_names [source="class C:\n  '''doc'''\n  def m(self): return [y for y in z]\n"] => True
+list(a.co_lines()) == list(b.co_lines()) [source="class C:\n  '''doc'''\n  def m(self): return [y for y in z]\n"] => True
+a == b [source='def f():\n        class M:\n            "doc"\n            x = 1\n        g = lambda: 1\n        return M, g\n'] => True
+a == c [source='def f():\n        class M:\n            "doc"\n            x = 1\n        g = lambda: 1\n        return M, g\n'] => True
+a != b [source='def f():\n        class M:\n            "doc"\n            x = 1\n        g = lambda: 1\n        return M, g\n'] => False
+hash(a) == hash(b) [source='def f():\n        class M:\n            "doc"\n            x = 1\n        g = lambda: 1\n        return M, g\n'] => True
+hash(a) == hash(c) [source='def f():\n        class M:\n            "doc"\n            x = 1\n        g = lambda: 1\n        return M, g\n'] => True
+list(a.co_positions()) == list(b.co_positions()) [source='def f():\n        class M:\n            "doc"\n            x = 1\n        g = lambda: 1\n        return M, g\n'] => True
+a.co_consts == b.co_consts [source='def f():\n        class M:\n            "doc"\n            x = 1\n        g = lambda: 1\n        return M, g\n'] => True
+a.co_names == b.co_names [source='def f():\n        class M:\n            "doc"\n            x = 1\n        g = lambda: 1\n        return M, g\n'] => True
+list(a.co_lines()) == list(b.co_lines()) [source='def f():\n        class M:\n            "doc"\n            x = 1\n        g = lambda: 1\n        return M, g\n'] => True
+a == b [source='async def f():\n    async with a as b:\n        async for c in d:\n            yield c\n'] => True
+a == c [source='async def f():\n    async with a as b:\n        async for c in d:\n            yield c\n'] => True
+a != b [source='async def f():\n    async with a as b:\n        async for c in d:\n            yield c\n'] => False
+hash(a) == hash(b) [source='async def f():\n    async with a as b:\n        async for c in d:\n            yield c\n'] => True
+hash(a) == hash(c) [source='async def f():\n    async with a as b:\n        async for c in d:\n            yield c\n'] => True
+list(a.co_positions()) == list(b.co_positions()) [source='async def f():\n    async with a as b:\n        async for c in d:\n            yield c\n'] => True
+a.co_consts == b.co_consts [source='async def f():\n    async with a as b:\n        async for c in d:\n            yield c\n'] => True
+a.co_names == b.co_names [source='async def f():\n    async with a as b:\n        async for c in d:\n            yield c\n'] => True
+list(a.co_lines()) == list(b.co_lines()) [source='async def f():\n    async with a as b:\n        async for c in d:\n            yield c\n'] => True
+a == b [source='try:\n    a\nexcept* E as e:\n    b\nfinally:\n    c\n'] => True
+a == c [source='try:\n    a\nexcept* E as e:\n    b\nfinally:\n    c\n'] => True
+a != b [source='try:\n    a\nexcept* E as e:\n    b\nfinally:\n    c\n'] => False
+hash(a) == hash(b) [source='try:\n    a\nexcept* E as e:\n    b\nfinally:\n    c\n'] => True
+hash(a) == hash(c) [source='try:\n    a\nexcept* E as e:\n    b\nfinally:\n    c\n'] => True
+list(a.co_positions()) == list(b.co_positions()) [source='try:\n    a\nexcept* E as e:\n    b\nfinally:\n    c\n'] => True
+a.co_consts == b.co_consts [source='try:\n    a\nexcept* E as e:\n    b\nfinally:\n    c\n'] => True
+a.co_names == b.co_names [source='try:\n    a\nexcept* E as e:\n    b\nfinally:\n    c\n'] => True
+list(a.co_lines()) == list(b.co_lines()) [source='try:\n    a\nexcept* E as e:\n    b\nfinally:\n    c\n'] => True
+a == b [source='match a:\n    case [1, *b] if c:\n        d\n    case {"k": v}:\n        e\n'] => True
+a == c [source='match a:\n    case [1, *b] if c:\n        d\n    case {"k": v}:\n        e\n'] => True
+a != b [source='match a:\n    case [1, *b] if c:\n        d\n    case {"k": v}:\n        e\n'] => False
+hash(a) == hash(b) [source='match a:\n    case [1, *b] if c:\n        d\n    case {"k": v}:\n        e\n'] => True
+hash(a) == hash(c) [source='match a:\n    case [1, *b] if c:\n        d\n    case {"k": v}:\n        e\n'] => True
+list(a.co_positions()) == list(b.co_positions()) [source='match a:\n    case [1, *b] if c:\n        d\n    case {"k": v}:\n        e\n'] => True
+a.co_consts == b.co_consts [source='match a:\n    case [1, *b] if c:\n        d\n    case {"k": v}:\n        e\n'] => True
+a.co_names == b.co_names [source='match a:\n    case [1, *b] if c:\n        d\n    case {"k": v}:\n        e\n'] => True
+list(a.co_lines()) == list(b.co_lines()) [source='match a:\n    case [1, *b] if c:\n        d\n    case {"k": v}:\n        e\n'] => True
+constants same('1', '1.0') => False
+same('1', 'True') => False
+same('0.0', '-0.0') => False
+same("'a'", "b'a'") => False
+same('(1, 2)', '(1, 2.0)') => False
+same('(0.0,)', '(-0.0,)') => False
+same('1j', '1j') => True
+same('0j', '-0j') => False
+same('...', 'None') => False
+same('(1, (2, 3))', '(1, (2, 3))') => True
+names same('x', 'y') => False
+same('x.a', 'x.b') => False
+same('x', 'x') => True
+places same('x', 'x ') => True
+same('x', 'x#c') => True
+same('(x)', ' x '.strip()) => False
+same('x+1', 'x +1') => False
+same('x', 'x\n', 'exec') => True
+same('x', 'x\n\n#c\n', 'exec') => True
+same('x', '\nx', 'exec') => False
+same('f(x)', 'f( x)') => False
+kinds compile('x', 'a', 'exec') == compile('x', 'a', 'eval') => False
+compile('x', 'a', 'exec') == compile('x', 'a', 'single') => False
+files compile('x', 'a', 'eval') == compile('x', 'b', 'eval') => True
+two on a line g1.__code__ == g2.__code__ => False
+one, twice h[0].__code__ == h[1].__code__ => True
+h[0].__code__ is h[1].__code__ => True
+others g1.__code__ == 1 => False
+g1.__code__ != 1 => True
+g1.__code__ == None => False
+g1.__code__.__eq__(1) => NotImplemented
+g1.__code__.__ne__(1) => NotImplemented
+operator [operator='__lt__'] => __lt__
+getattr(g1.__code__, operator)(g2.__code__) [operator='__lt__'] => NotImplemented
+operator [operator='__le__'] => __le__
+getattr(g1.__code__, operator)(g2.__code__) [operator='__le__'] => NotImplemented
+operator [operator='__gt__'] => __gt__
+getattr(g1.__code__, operator)(g2.__code__) [operator='__gt__'] => NotImplemented
+operator [operator='__ge__'] => __ge__
+getattr(g1.__code__, operator)(g2.__code__) [operator='__ge__'] => NotImplemented
+replace replaced() == g1.__code__ => True
+hash(replaced()) == hash(g1.__code__) => True
+replaced(co_name='n') == g1.__code__ => False
+replaced(co_firstlineno=1) == g1.__code__ => False
+replaced(co_filename='f') == g1.__code__ => True
+type(e).__name__ [changes=dict] => ValueError
+e [changes=dict] => code: co_nlocals != len(co_varnames)
+type(e).__name__ [changes=dict] => ValueError
+e [changes=dict] => co_nlocals must be a positive integer
+len(seen) => 10
+set(seen) == {(event, 'kept', 'weakly', True) for event in ('call', '... => True
+[('kept', 'weakly', True, True, True), ('kept', 'weakly', True, True, True), ('kept', 'weakly', True, True, True), ('kept', 'weakly', True, True, True), ('kept', 'weakly', True, True, True)]
+hash(code) == before => True
+kept[code] => kept
+weakly[code] => weakly

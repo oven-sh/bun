@@ -1,0 +1,1117 @@
+status: 0
+script: 097fd3d0f0de2248
+source: af540d630d919379
+---
+len(TYPES) => 170
+types
+label(a) [a=bool] => bool
+classify(str(e)) [a=bool] => N
+label(a) [a=memoryview] => memoryview
+classify(str(e)) [a=memoryview] => N
+label(a) [a=range] => range
+classify(str(e)) [a=range] => N
+label(a) [a=sentinel] => sentinel
+classify(str(e)) [a=sentinel] => N
+label(a) [a=slice] => slice
+classify(str(e)) [a=slice] => N
+label(a) [a=async_generator] => async_generator
+classify(str(e)) [a=async_generator] => N
+label(a) [a=builtin_function_or_method] => builtin_function_or_method
+classify(str(e)) [a=builtin_function_or_method] => N
+label(a) [a=PyCapsule] => PyCapsule
+classify(str(e)) [a=PyCapsule] => N
+label(a) [a=cell] => cell
+classify(str(e)) [a=cell] => N
+label(a) [a=classmethod_descriptor] => classmethod_descriptor
+classify(str(e)) [a=classmethod_descriptor] => N
+label(a) [a=code] => code
+classify(str(e)) [a=code] => N
+label(a) [a=coroutine] => coroutine
+classify(str(e)) [a=coroutine] => N
+label(a) [a=ellipsis] => ellipsis
+classify(str(e)) [a=ellipsis] => N
+label(a) [a=FrameLocalsProxy] => FrameLocalsProxy
+classify(str(e)) [a=FrameLocalsProxy] => N
+label(a) [a=frame] => frame
+classify(str(e)) [a=frame] => N
+label(a) [a=function] => function
+classify(str(e)) [a=function] => N
+label(a) [a=generator] => generator
+classify(str(e)) [a=generator] => N
+label(a) [a=getset_descriptor] => getset_descriptor
+classify(str(e)) [a=getset_descriptor] => N
+label(a) [a=lazy_import] => lazy_import
+classify(str(e)) [a=lazy_import] => N
+label(a) [a=mappingproxy] => mappingproxy
+classify(str(e)) [a=mappingproxy] => N
+label(a) [a=member_descriptor] => member_descriptor
+classify(str(e)) [a=member_descriptor] => N
+label(a) [a=method_descriptor] => method_descriptor
+classify(str(e)) [a=method_descriptor] => N
+label(a) [a=method] => method
+classify(str(e)) [a=method] => N
+label(a) [a=method-wrapper] => method-wrapper
+classify(str(e)) [a=method-wrapper] => N
+label(a) [a=NoneType] => NoneType
+classify(str(e)) [a=NoneType] => N
+label(a) [a=NotImplementedType] => NotImplementedType
+classify(str(e)) [a=NotImplementedType] => N
+label(a) [a=traceback] => traceback
+classify(str(e)) [a=traceback] => N
+label(a) [a=Union] => typing.Union
+classify(str(e)) [a=Union] => N
+label(a) [a=wrapper_descriptor] => wrapper_descriptor
+classify(str(e)) [a=wrapper_descriptor] => N
+label(a) [a=itemgetter] => operator.itemgetter
+classify(str(e)) [a=itemgetter] => N
+label(a) [a=CallableProxyType] => weakref.CallableProxyType
+classify(str(e)) [a=CallableProxyType] => N
+label(a) [a=ProxyType] => weakref.ProxyType
+classify(str(e)) [a=ProxyType] => N
+label(a) [a=Match] => re.Match
+classify(str(e)) [a=Match] => N
+label(a) [a=Pattern] => re.Pattern
+classify(str(e)) [a=Pattern] => N
+len(BASES) => 84
+to pair: ' '.join(map(label, BASES)) => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map object property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+label(a) [a=ArithmeticError] => ArithmeticError
+    code [a=ArithmeticError, code='D'] => D
+len(row[code]) [a=ArithmeticError, code='D'] => 1
+' '.join(row[code]) [a=ArithmeticError, code='D'] => ArithmeticError
+    code [a=ArithmeticError, code='L'] => L
+len(row[code]) [a=ArithmeticError, code='L'] => 64
+' '.join(row[code]) [a=ArithmeticError, code='L'] => bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct
+    code [a=ArithmeticError, code='ok:ArithmeticError'] => ok:ArithmeticError
+len(row[code]) [a=ArithmeticError, code='ok:ArithmeticError'] => 6
+' '.join(row[code]) [a=ArithmeticError, code='ok:ArithmeticError'] => BaseException KeyError ValueError Warning object struct.error
+    code [a=ArithmeticError, code='ok:AttributeError'] => ok:AttributeError
+len(row[code]) [a=ArithmeticError, code='ok:AttributeError'] => 1
+' '.join(row[code]) [a=ArithmeticError, code='ok:AttributeError'] => AttributeError
+    code [a=ArithmeticError, code='ok:BaseExceptionGroup'] => ok:BaseExceptionGroup
+len(row[code]) [a=ArithmeticError, code='ok:BaseExceptionGroup'] => 1
+' '.join(row[code]) [a=ArithmeticError, code='ok:BaseExceptionGroup'] => BaseExceptionGroup
+    code [a=ArithmeticError, code='ok:ExceptionGroup'] => ok:ExceptionGroup
+len(row[code]) [a=ArithmeticError, code='ok:ExceptionGroup'] => 1
+' '.join(row[code]) [a=ArithmeticError, code='ok:ExceptionGroup'] => ExceptionGroup
+    code [a=ArithmeticError, code='ok:ImportError'] => ok:ImportError
+len(row[code]) [a=ArithmeticError, code='ok:ImportError'] => 1
+' '.join(row[code]) [a=ArithmeticError, code='ok:ImportError'] => ImportError
+    code [a=ArithmeticError, code='ok:NameError'] => ok:NameError
+len(row[code]) [a=ArithmeticError, code='ok:NameError'] => 1
+' '.join(row[code]) [a=ArithmeticError, code='ok:NameError'] => NameError
+    code [a=ArithmeticError, code='ok:OSError'] => ok:OSError
+len(row[code]) [a=ArithmeticError, code='ok:OSError'] => 1
+' '.join(row[code]) [a=ArithmeticError, code='ok:OSError'] => OSError
+    code [a=ArithmeticError, code='ok:StopIteration'] => ok:StopIteration
+len(row[code]) [a=ArithmeticError, code='ok:StopIteration'] => 1
+' '.join(row[code]) [a=ArithmeticError, code='ok:StopIteration'] => StopIteration
+    code [a=ArithmeticError, code='ok:SyntaxError'] => ok:SyntaxError
+len(row[code]) [a=ArithmeticError, code='ok:SyntaxError'] => 1
+' '.join(row[code]) [a=ArithmeticError, code='ok:SyntaxError'] => SyntaxError
+    code [a=ArithmeticError, code='ok:SystemExit'] => ok:SystemExit
+len(row[code]) [a=ArithmeticError, code='ok:SystemExit'] => 1
+' '.join(row[code]) [a=ArithmeticError, code='ok:SystemExit'] => SystemExit
+    code [a=ArithmeticError, code='ok:UnicodeDecodeError'] => ok:UnicodeDecodeError
+len(row[code]) [a=ArithmeticError, code='ok:UnicodeDecodeError'] => 1
+' '.join(row[code]) [a=ArithmeticError, code='ok:UnicodeDecodeError'] => UnicodeDecodeError
+    code [a=ArithmeticError, code='ok:UnicodeEncodeError'] => ok:UnicodeEncodeError
+len(row[code]) [a=ArithmeticError, code='ok:UnicodeEncodeError'] => 1
+' '.join(row[code]) [a=ArithmeticError, code='ok:UnicodeEncodeError'] => UnicodeEncodeError
+    code [a=ArithmeticError, code='ok:UnicodeTranslateError'] => ok:UnicodeTranslateError
+len(row[code]) [a=ArithmeticError, code='ok:UnicodeTranslateError'] => 1
+' '.join(row[code]) [a=ArithmeticError, code='ok:UnicodeTranslateError'] => UnicodeTranslateError
+    code [a=ArithmeticError, code='ok:io.UnsupportedOperation'] => ok:io.UnsupportedOperation
+len(row[code]) [a=ArithmeticError, code='ok:io.UnsupportedOperation'] => 1
+' '.join(row[code]) [a=ArithmeticError, code='ok:io.UnsupportedOperation'] => io.UnsupportedOperation
+label(a) [a=AttributeError] => AttributeError
+    code [a=AttributeError, code='D'] => D
+len(row[code]) [a=AttributeError, code='D'] => 1
+' '.join(row[code]) [a=AttributeError, code='D'] => AttributeError
+    code [a=AttributeError, code='L'] => L
+len(row[code]) [a=AttributeError, code='L'] => 76
+' '.join(row[code]) [a=AttributeError, code='L'] => BaseExceptionGroup OSError ExceptionGroup ImportError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct
+    code [a=AttributeError, code='ok:AttributeError'] => ok:AttributeError
+len(row[code]) [a=AttributeError, code='ok:AttributeError'] => 7
+' '.join(row[code]) [a=AttributeError, code='ok:AttributeError'] => ArithmeticError BaseException KeyError ValueError Warning object struct.error
+label(a) [a=BaseException] => BaseException
+    code [a=BaseException, code='D'] => D
+len(row[code]) [a=BaseException, code='D'] => 1
+' '.join(row[code]) [a=BaseException, code='D'] => BaseException
+    code [a=BaseException, code='L'] => L
+len(row[code]) [a=BaseException, code='L'] => 64
+' '.join(row[code]) [a=BaseException, code='L'] => bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct
+    code [a=BaseException, code='M'] => M
+len(row[code]) [a=BaseException, code='M'] => 18
+' '.join(row[code]) [a=BaseException, code='M'] => ArithmeticError AttributeError BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning io.UnsupportedOperation struct.error
+    code [a=BaseException, code='ok:BaseException'] => ok:BaseException
+len(row[code]) [a=BaseException, code='ok:BaseException'] => 1
+' '.join(row[code]) [a=BaseException, code='ok:BaseException'] => object
+label(a) [a=BaseExceptionGroup] => BaseExceptionGroup
+    code [a=BaseExceptionGroup, code='D'] => D
+len(row[code]) [a=BaseExceptionGroup, code='D'] => 1
+' '.join(row[code]) [a=BaseExceptionGroup, code='D'] => BaseExceptionGroup
+    code [a=BaseExceptionGroup, code='L'] => L
+len(row[code]) [a=BaseExceptionGroup, code='L'] => 75
+' '.join(row[code]) [a=BaseExceptionGroup, code='L'] => AttributeError OSError ImportError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct
+    code [a=BaseExceptionGroup, code='M'] => M
+len(row[code]) [a=BaseExceptionGroup, code='M'] => 1
+' '.join(row[code]) [a=BaseExceptionGroup, code='M'] => ExceptionGroup
+    code [a=BaseExceptionGroup, code='ok:BaseExceptionGroup'] => ok:BaseExceptionGroup
+len(row[code]) [a=BaseExceptionGroup, code='ok:BaseExceptionGroup'] => 7
+' '.join(row[code]) [a=BaseExceptionGroup, code='ok:BaseExceptionGroup'] => ArithmeticError BaseException KeyError ValueError Warning object struct.error
+label(a) [a=OSError] => OSError
+    code [a=OSError, code='D'] => D
+len(row[code]) [a=OSError, code='D'] => 1
+' '.join(row[code]) [a=OSError, code='D'] => OSError
+    code [a=OSError, code='L'] => L
+len(row[code]) [a=OSError, code='L'] => 75
+' '.join(row[code]) [a=OSError, code='L'] => AttributeError BaseExceptionGroup ExceptionGroup ImportError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct
+    code [a=OSError, code='M'] => M
+len(row[code]) [a=OSError, code='M'] => 1
+' '.join(row[code]) [a=OSError, code='M'] => io.UnsupportedOperation
+    code [a=OSError, code='ok:OSError'] => ok:OSError
+len(row[code]) [a=OSError, code='ok:OSError'] => 7
+' '.join(row[code]) [a=OSError, code='ok:OSError'] => ArithmeticError BaseException KeyError ValueError Warning object struct.error
+label(a) [a=ExceptionGroup] => ExceptionGroup
+    code [a=ExceptionGroup, code='D'] => D
+len(row[code]) [a=ExceptionGroup, code='D'] => 1
+' '.join(row[code]) [a=ExceptionGroup, code='D'] => ExceptionGroup
+    code [a=ExceptionGroup, code='L'] => L
+len(row[code]) [a=ExceptionGroup, code='L'] => 75
+' '.join(row[code]) [a=ExceptionGroup, code='L'] => AttributeError OSError ImportError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct
+    code [a=ExceptionGroup, code='ok:ExceptionGroup'] => ok:ExceptionGroup
+len(row[code]) [a=ExceptionGroup, code='ok:ExceptionGroup'] => 8
+' '.join(row[code]) [a=ExceptionGroup, code='ok:ExceptionGroup'] => ArithmeticError BaseException BaseExceptionGroup KeyError ValueError Warning object struct.error
+label(a) [a=ImportError] => ImportError
+    code [a=ImportError, code='D'] => D
+len(row[code]) [a=ImportError, code='D'] => 1
+' '.join(row[code]) [a=ImportError, code='D'] => ImportError
+    code [a=ImportError, code='L'] => L
+len(row[code]) [a=ImportError, code='L'] => 76
+' '.join(row[code]) [a=ImportError, code='L'] => AttributeError BaseExceptionGroup OSError ExceptionGroup NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct
+    code [a=ImportError, code='ok:ImportError'] => ok:ImportError
+len(row[code]) [a=ImportError, code='ok:ImportError'] => 7
+' '.join(row[code]) [a=ImportError, code='ok:ImportError'] => ArithmeticError BaseException KeyError ValueError Warning object struct.error
+label(a) [a=KeyError] => KeyError
+    code [a=KeyError, code='D'] => D
+len(row[code]) [a=KeyError, code='D'] => 1
+' '.join(row[code]) [a=KeyError, code='D'] => KeyError
+    code [a=KeyError, code='L'] => L
+len(row[code]) [a=KeyError, code='L'] => 64
+' '.join(row[code]) [a=KeyError, code='L'] => bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct
+    code [a=KeyError, code='ok:AttributeError'] => ok:AttributeError
+len(row[code]) [a=KeyError, code='ok:AttributeError'] => 1
+' '.join(row[code]) [a=KeyError, code='ok:AttributeError'] => AttributeError
+    code [a=KeyError, code='ok:BaseExceptionGroup'] => ok:BaseExceptionGroup
+len(row[code]) [a=KeyError, code='ok:BaseExceptionGroup'] => 1
+' '.join(row[code]) [a=KeyError, code='ok:BaseExceptionGroup'] => BaseExceptionGroup
+    code [a=KeyError, code='ok:ExceptionGroup'] => ok:ExceptionGroup
+len(row[code]) [a=KeyError, code='ok:ExceptionGroup'] => 1
+' '.join(row[code]) [a=KeyError, code='ok:ExceptionGroup'] => ExceptionGroup
+    code [a=KeyError, code='ok:ImportError'] => ok:ImportError
+len(row[code]) [a=KeyError, code='ok:ImportError'] => 1
+' '.join(row[code]) [a=KeyError, code='ok:ImportError'] => ImportError
+    code [a=KeyError, code='ok:KeyError'] => ok:KeyError
+len(row[code]) [a=KeyError, code='ok:KeyError'] => 6
+' '.join(row[code]) [a=KeyError, code='ok:KeyError'] => ArithmeticError BaseException ValueError Warning object struct.error
+    code [a=KeyError, code='ok:NameError'] => ok:NameError
+len(row[code]) [a=KeyError, code='ok:NameError'] => 1
+' '.join(row[code]) [a=KeyError, code='ok:NameError'] => NameError
+    code [a=KeyError, code='ok:OSError'] => ok:OSError
+len(row[code]) [a=KeyError, code='ok:OSError'] => 1
+' '.join(row[code]) [a=KeyError, code='ok:OSError'] => OSError
+    code [a=KeyError, code='ok:StopIteration'] => ok:StopIteration
+len(row[code]) [a=KeyError, code='ok:StopIteration'] => 1
+' '.join(row[code]) [a=KeyError, code='ok:StopIteration'] => StopIteration
+    code [a=KeyError, code='ok:SyntaxError'] => ok:SyntaxError
+len(row[code]) [a=KeyError, code='ok:SyntaxError'] => 1
+' '.join(row[code]) [a=KeyError, code='ok:SyntaxError'] => SyntaxError
+    code [a=KeyError, code='ok:SystemExit'] => ok:SystemExit
+len(row[code]) [a=KeyError, code='ok:SystemExit'] => 1
+' '.join(row[code]) [a=KeyError, code='ok:SystemExit'] => SystemExit
+    code [a=KeyError, code='ok:UnicodeDecodeError'] => ok:UnicodeDecodeError
+len(row[code]) [a=KeyError, code='ok:UnicodeDecodeError'] => 1
+' '.join(row[code]) [a=KeyError, code='ok:UnicodeDecodeError'] => UnicodeDecodeError
+    code [a=KeyError, code='ok:UnicodeEncodeError'] => ok:UnicodeEncodeError
+len(row[code]) [a=KeyError, code='ok:UnicodeEncodeError'] => 1
+' '.join(row[code]) [a=KeyError, code='ok:UnicodeEncodeError'] => UnicodeEncodeError
+    code [a=KeyError, code='ok:UnicodeTranslateError'] => ok:UnicodeTranslateError
+len(row[code]) [a=KeyError, code='ok:UnicodeTranslateError'] => 1
+' '.join(row[code]) [a=KeyError, code='ok:UnicodeTranslateError'] => UnicodeTranslateError
+    code [a=KeyError, code='ok:io.UnsupportedOperation'] => ok:io.UnsupportedOperation
+len(row[code]) [a=KeyError, code='ok:io.UnsupportedOperation'] => 1
+' '.join(row[code]) [a=KeyError, code='ok:io.UnsupportedOperation'] => io.UnsupportedOperation
+label(a) [a=NameError] => NameError
+    code [a=NameError, code='D'] => D
+len(row[code]) [a=NameError, code='D'] => 1
+' '.join(row[code]) [a=NameError, code='D'] => NameError
+    code [a=NameError, code='L'] => L
+len(row[code]) [a=NameError, code='L'] => 76
+' '.join(row[code]) [a=NameError, code='L'] => AttributeError BaseExceptionGroup OSError ExceptionGroup ImportError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct
+    code [a=NameError, code='ok:NameError'] => ok:NameError
+len(row[code]) [a=NameError, code='ok:NameError'] => 7
+' '.join(row[code]) [a=NameError, code='ok:NameError'] => ArithmeticError BaseException KeyError ValueError Warning object struct.error
+label(a) [a=StopIteration] => StopIteration
+    code [a=StopIteration, code='D'] => D
+len(row[code]) [a=StopIteration, code='D'] => 1
+' '.join(row[code]) [a=StopIteration, code='D'] => StopIteration
+    code [a=StopIteration, code='L'] => L
+len(row[code]) [a=StopIteration, code='L'] => 76
+' '.join(row[code]) [a=StopIteration, code='L'] => AttributeError BaseExceptionGroup OSError ExceptionGroup ImportError NameError SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct
+    code [a=StopIteration, code='ok:StopIteration'] => ok:StopIteration
+len(row[code]) [a=StopIteration, code='ok:StopIteration'] => 7
+' '.join(row[code]) [a=StopIteration, code='ok:StopIteration'] => ArithmeticError BaseException KeyError ValueError Warning object struct.error
+label(a) [a=SyntaxError] => SyntaxError
+    code [a=SyntaxError, code='D'] => D
+len(row[code]) [a=SyntaxError, code='D'] => 1
+' '.join(row[code]) [a=SyntaxError, code='D'] => SyntaxError
+    code [a=SyntaxError, code='L'] => L
+len(row[code]) [a=SyntaxError, code='L'] => 76
+' '.join(row[code]) [a=SyntaxError, code='L'] => AttributeError BaseExceptionGroup OSError ExceptionGroup ImportError NameError StopIteration SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct
+    code [a=SyntaxError, code='ok:SyntaxError'] => ok:SyntaxError
+len(row[code]) [a=SyntaxError, code='ok:SyntaxError'] => 7
+' '.join(row[code]) [a=SyntaxError, code='ok:SyntaxError'] => ArithmeticError BaseException KeyError ValueError Warning object struct.error
+label(a) [a=SystemExit] => SystemExit
+    code [a=SystemExit, code='D'] => D
+len(row[code]) [a=SystemExit, code='D'] => 1
+' '.join(row[code]) [a=SystemExit, code='D'] => SystemExit
+    code [a=SystemExit, code='L'] => L
+len(row[code]) [a=SystemExit, code='L'] => 76
+' '.join(row[code]) [a=SystemExit, code='L'] => AttributeError BaseExceptionGroup OSError ExceptionGroup ImportError NameError StopIteration SyntaxError UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct
+    code [a=SystemExit, code='ok:SystemExit'] => ok:SystemExit
+len(row[code]) [a=SystemExit, code='ok:SystemExit'] => 7
+' '.join(row[code]) [a=SystemExit, code='ok:SystemExit'] => ArithmeticError BaseException KeyError ValueError Warning object struct.error
+label(a) [a=UnicodeDecodeError] => UnicodeDecodeError
+    code [a=UnicodeDecodeError, code='D'] => D
+len(row[code]) [a=UnicodeDecodeError, code='D'] => 1
+' '.join(row[code]) [a=UnicodeDecodeError, code='D'] => UnicodeDecodeError
+    code [a=UnicodeDecodeError, code='L'] => L
+len(row[code]) [a=UnicodeDecodeError, code='L'] => 76
+' '.join(row[code]) [a=UnicodeDecodeError, code='L'] => AttributeError BaseExceptionGroup OSError ExceptionGroup ImportError NameError StopIteration SyntaxError SystemExit UnicodeEncodeError UnicodeTranslateError bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct
+    code [a=UnicodeDecodeError, code='ok:UnicodeDecodeError'] => ok:UnicodeDecodeError
+len(row[code]) [a=UnicodeDecodeError, code='ok:UnicodeDecodeError'] => 7
+' '.join(row[code]) [a=UnicodeDecodeError, code='ok:UnicodeDecodeError'] => ArithmeticError BaseException KeyError ValueError Warning object struct.error
+label(a) [a=UnicodeEncodeError] => UnicodeEncodeError
+    code [a=UnicodeEncodeError, code='D'] => D
+len(row[code]) [a=UnicodeEncodeError, code='D'] => 1
+' '.join(row[code]) [a=UnicodeEncodeError, code='D'] => UnicodeEncodeError
+    code [a=UnicodeEncodeError, code='L'] => L
+len(row[code]) [a=UnicodeEncodeError, code='L'] => 76
+' '.join(row[code]) [a=UnicodeEncodeError, code='L'] => AttributeError BaseExceptionGroup OSError ExceptionGroup ImportError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeTranslateError bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct
+    code [a=UnicodeEncodeError, code='ok:UnicodeEncodeError'] => ok:UnicodeEncodeError
+len(row[code]) [a=UnicodeEncodeError, code='ok:UnicodeEncodeError'] => 7
+' '.join(row[code]) [a=UnicodeEncodeError, code='ok:UnicodeEncodeError'] => ArithmeticError BaseException KeyError ValueError Warning object struct.error
+label(a) [a=UnicodeTranslateError] => UnicodeTranslateError
+    code [a=UnicodeTranslateError, code='D'] => D
+len(row[code]) [a=UnicodeTranslateError, code='D'] => 1
+' '.join(row[code]) [a=UnicodeTranslateError, code='D'] => UnicodeTranslateError
+    code [a=UnicodeTranslateError, code='L'] => L
+len(row[code]) [a=UnicodeTranslateError, code='L'] => 76
+' '.join(row[code]) [a=UnicodeTranslateError, code='L'] => AttributeError BaseExceptionGroup OSError ExceptionGroup ImportError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct
+    code [a=UnicodeTranslateError, code='ok:UnicodeTranslateError'] => ok:UnicodeTranslateError
+len(row[code]) [a=UnicodeTranslateError, code='ok:UnicodeTranslateError'] => 7
+' '.join(row[code]) [a=UnicodeTranslateError, code='ok:UnicodeTranslateError'] => ArithmeticError BaseException KeyError ValueError Warning object struct.error
+label(a) [a=ValueError] => ValueError
+    code [a=ValueError, code='D'] => D
+len(row[code]) [a=ValueError, code='D'] => 1
+' '.join(row[code]) [a=ValueError, code='D'] => ValueError
+    code [a=ValueError, code='L'] => L
+len(row[code]) [a=ValueError, code='L'] => 64
+' '.join(row[code]) [a=ValueError, code='L'] => bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct
+    code [a=ValueError, code='M'] => M
+len(row[code]) [a=ValueError, code='M'] => 4
+' '.join(row[code]) [a=ValueError, code='M'] => UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError io.UnsupportedOperation
+    code [a=ValueError, code='ok:AttributeError'] => ok:AttributeError
+len(row[code]) [a=ValueError, code='ok:AttributeError'] => 1
+' '.join(row[code]) [a=ValueError, code='ok:AttributeError'] => AttributeError
+    code [a=ValueError, code='ok:BaseExceptionGroup'] => ok:BaseExceptionGroup
+len(row[code]) [a=ValueError, code='ok:BaseExceptionGroup'] => 1
+' '.join(row[code]) [a=ValueError, code='ok:BaseExceptionGroup'] => BaseExceptionGroup
+    code [a=ValueError, code='ok:ExceptionGroup'] => ok:ExceptionGroup
+len(row[code]) [a=ValueError, code='ok:ExceptionGroup'] => 1
+' '.join(row[code]) [a=ValueError, code='ok:ExceptionGroup'] => ExceptionGroup
+    code [a=ValueError, code='ok:ImportError'] => ok:ImportError
+len(row[code]) [a=ValueError, code='ok:ImportError'] => 1
+' '.join(row[code]) [a=ValueError, code='ok:ImportError'] => ImportError
+    code [a=ValueError, code='ok:NameError'] => ok:NameError
+len(row[code]) [a=ValueError, code='ok:NameError'] => 1
+' '.join(row[code]) [a=ValueError, code='ok:NameError'] => NameError
+    code [a=ValueError, code='ok:OSError'] => ok:OSError
+len(row[code]) [a=ValueError, code='ok:OSError'] => 1
+' '.join(row[code]) [a=ValueError, code='ok:OSError'] => OSError
+    code [a=ValueError, code='ok:StopIteration'] => ok:StopIteration
+len(row[code]) [a=ValueError, code='ok:StopIteration'] => 1
+' '.join(row[code]) [a=ValueError, code='ok:StopIteration'] => StopIteration
+    code [a=ValueError, code='ok:SyntaxError'] => ok:SyntaxError
+len(row[code]) [a=ValueError, code='ok:SyntaxError'] => 1
+' '.join(row[code]) [a=ValueError, code='ok:SyntaxError'] => SyntaxError
+    code [a=ValueError, code='ok:SystemExit'] => ok:SystemExit
+len(row[code]) [a=ValueError, code='ok:SystemExit'] => 1
+' '.join(row[code]) [a=ValueError, code='ok:SystemExit'] => SystemExit
+    code [a=ValueError, code='ok:ValueError'] => ok:ValueError
+len(row[code]) [a=ValueError, code='ok:ValueError'] => 6
+' '.join(row[code]) [a=ValueError, code='ok:ValueError'] => ArithmeticError BaseException KeyError Warning object struct.error
+label(a) [a=Warning] => Warning
+    code [a=Warning, code='D'] => D
+len(row[code]) [a=Warning, code='D'] => 1
+' '.join(row[code]) [a=Warning, code='D'] => Warning
+    code [a=Warning, code='L'] => L
+len(row[code]) [a=Warning, code='L'] => 64
+' '.join(row[code]) [a=Warning, code='L'] => bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct
+    code [a=Warning, code='ok:AttributeError'] => ok:AttributeError
+len(row[code]) [a=Warning, code='ok:AttributeError'] => 1
+' '.join(row[code]) [a=Warning, code='ok:AttributeError'] => AttributeError
+    code [a=Warning, code='ok:BaseExceptionGroup'] => ok:BaseExceptionGroup
+len(row[code]) [a=Warning, code='ok:BaseExceptionGroup'] => 1
+' '.join(row[code]) [a=Warning, code='ok:BaseExceptionGroup'] => BaseExceptionGroup
+    code [a=Warning, code='ok:ExceptionGroup'] => ok:ExceptionGroup
+len(row[code]) [a=Warning, code='ok:ExceptionGroup'] => 1
+' '.join(row[code]) [a=Warning, code='ok:ExceptionGroup'] => ExceptionGroup
+    code [a=Warning, code='ok:ImportError'] => ok:ImportError
+len(row[code]) [a=Warning, code='ok:ImportError'] => 1
+' '.join(row[code]) [a=Warning, code='ok:ImportError'] => ImportError
+    code [a=Warning, code='ok:NameError'] => ok:NameError
+len(row[code]) [a=Warning, code='ok:NameError'] => 1
+' '.join(row[code]) [a=Warning, code='ok:NameError'] => NameError
+    code [a=Warning, code='ok:OSError'] => ok:OSError
+len(row[code]) [a=Warning, code='ok:OSError'] => 1
+' '.join(row[code]) [a=Warning, code='ok:OSError'] => OSError
+    code [a=Warning, code='ok:StopIteration'] => ok:StopIteration
+len(row[code]) [a=Warning, code='ok:StopIteration'] => 1
+' '.join(row[code]) [a=Warning, code='ok:StopIteration'] => StopIteration
+    code [a=Warning, code='ok:SyntaxError'] => ok:SyntaxError
+len(row[code]) [a=Warning, code='ok:SyntaxError'] => 1
+' '.join(row[code]) [a=Warning, code='ok:SyntaxError'] => SyntaxError
+    code [a=Warning, code='ok:SystemExit'] => ok:SystemExit
+len(row[code]) [a=Warning, code='ok:SystemExit'] => 1
+' '.join(row[code]) [a=Warning, code='ok:SystemExit'] => SystemExit
+    code [a=Warning, code='ok:UnicodeDecodeError'] => ok:UnicodeDecodeError
+len(row[code]) [a=Warning, code='ok:UnicodeDecodeError'] => 1
+' '.join(row[code]) [a=Warning, code='ok:UnicodeDecodeError'] => UnicodeDecodeError
+    code [a=Warning, code='ok:UnicodeEncodeError'] => ok:UnicodeEncodeError
+len(row[code]) [a=Warning, code='ok:UnicodeEncodeError'] => 1
+' '.join(row[code]) [a=Warning, code='ok:UnicodeEncodeError'] => UnicodeEncodeError
+    code [a=Warning, code='ok:UnicodeTranslateError'] => ok:UnicodeTranslateError
+len(row[code]) [a=Warning, code='ok:UnicodeTranslateError'] => 1
+' '.join(row[code]) [a=Warning, code='ok:UnicodeTranslateError'] => UnicodeTranslateError
+    code [a=Warning, code='ok:Warning'] => ok:Warning
+len(row[code]) [a=Warning, code='ok:Warning'] => 6
+' '.join(row[code]) [a=Warning, code='ok:Warning'] => ArithmeticError BaseException KeyError ValueError object struct.error
+    code [a=Warning, code='ok:io.UnsupportedOperation'] => ok:io.UnsupportedOperation
+len(row[code]) [a=Warning, code='ok:io.UnsupportedOperation'] => 1
+' '.join(row[code]) [a=Warning, code='ok:io.UnsupportedOperation'] => io.UnsupportedOperation
+label(a) [a=bytearray] => bytearray
+    code [a=bytearray, code='D'] => D
+len(row[code]) [a=bytearray, code='D'] => 1
+' '.join(row[code]) [a=bytearray, code='D'] => bytearray
+    code [a=bytearray, code='L'] => L
+len(row[code]) [a=bytearray, code='L'] => 82
+' '.join(row[code]) [a=bytearray, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=bytearray, code='ok:bytearray'] => ok:bytearray
+len(row[code]) [a=bytearray, code='ok:bytearray'] => 1
+' '.join(row[code]) [a=bytearray, code='ok:bytearray'] => object
+label(a) [a=bytes] => bytes
+    code [a=bytes, code='D'] => D
+len(row[code]) [a=bytes, code='D'] => 1
+' '.join(row[code]) [a=bytes, code='D'] => bytes
+    code [a=bytes, code='L'] => L
+len(row[code]) [a=bytes, code='L'] => 82
+' '.join(row[code]) [a=bytes, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=bytes, code='ok:bytes'] => ok:bytes
+len(row[code]) [a=bytes, code='ok:bytes'] => 1
+' '.join(row[code]) [a=bytes, code='ok:bytes'] => object
+label(a) [a=classmethod] => classmethod
+    code [a=classmethod, code='D'] => D
+len(row[code]) [a=classmethod, code='D'] => 1
+' '.join(row[code]) [a=classmethod, code='D'] => classmethod
+    code [a=classmethod, code='L'] => L
+len(row[code]) [a=classmethod, code='L'] => 82
+' '.join(row[code]) [a=classmethod, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=classmethod, code='ok:classmethod'] => ok:classmethod
+len(row[code]) [a=classmethod, code='ok:classmethod'] => 1
+' '.join(row[code]) [a=classmethod, code='ok:classmethod'] => object
+label(a) [a=complex] => complex
+    code [a=complex, code='D'] => D
+len(row[code]) [a=complex, code='D'] => 1
+' '.join(row[code]) [a=complex, code='D'] => complex
+    code [a=complex, code='L'] => L
+len(row[code]) [a=complex, code='L'] => 82
+' '.join(row[code]) [a=complex, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=complex, code='ok:complex'] => ok:complex
+len(row[code]) [a=complex, code='ok:complex'] => 1
+' '.join(row[code]) [a=complex, code='ok:complex'] => object
+label(a) [a=dict] => dict
+    code [a=dict, code='D'] => D
+len(row[code]) [a=dict, code='D'] => 1
+' '.join(row[code]) [a=dict, code='D'] => dict
+    code [a=dict, code='L'] => L
+len(row[code]) [a=dict, code='L'] => 80
+' '.join(row[code]) [a=dict, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=dict, code='M'] => M
+len(row[code]) [a=dict, code='M'] => 2
+' '.join(row[code]) [a=dict, code='M'] => collections.OrderedDict collections.defaultdict
+    code [a=dict, code='ok:dict'] => ok:dict
+len(row[code]) [a=dict, code='ok:dict'] => 1
+' '.join(row[code]) [a=dict, code='ok:dict'] => object
+label(a) [a=enumerate] => enumerate
+    code [a=enumerate, code='D'] => D
+len(row[code]) [a=enumerate, code='D'] => 1
+' '.join(row[code]) [a=enumerate, code='D'] => enumerate
+    code [a=enumerate, code='L'] => L
+len(row[code]) [a=enumerate, code='L'] => 82
+' '.join(row[code]) [a=enumerate, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=enumerate, code='ok:enumerate'] => ok:enumerate
+len(row[code]) [a=enumerate, code='ok:enumerate'] => 1
+' '.join(row[code]) [a=enumerate, code='ok:enumerate'] => object
+label(a) [a=filter] => filter
+    code [a=filter, code='D'] => D
+len(row[code]) [a=filter, code='D'] => 1
+' '.join(row[code]) [a=filter, code='D'] => filter
+    code [a=filter, code='L'] => L
+len(row[code]) [a=filter, code='L'] => 82
+' '.join(row[code]) [a=filter, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=filter, code='ok:filter'] => ok:filter
+len(row[code]) [a=filter, code='ok:filter'] => 1
+' '.join(row[code]) [a=filter, code='ok:filter'] => object
+label(a) [a=float] => float
+    code [a=float, code='D'] => D
+len(row[code]) [a=float, code='D'] => 1
+' '.join(row[code]) [a=float, code='D'] => float
+    code [a=float, code='L'] => L
+len(row[code]) [a=float, code='L'] => 82
+' '.join(row[code]) [a=float, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=float, code='ok:float'] => ok:float
+len(row[code]) [a=float, code='ok:float'] => 1
+' '.join(row[code]) [a=float, code='ok:float'] => object
+label(a) [a=frozendict] => frozendict
+    code [a=frozendict, code='D'] => D
+len(row[code]) [a=frozendict, code='D'] => 1
+' '.join(row[code]) [a=frozendict, code='D'] => frozendict
+    code [a=frozendict, code='L'] => L
+len(row[code]) [a=frozendict, code='L'] => 82
+' '.join(row[code]) [a=frozendict, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=frozendict, code='ok:frozendict'] => ok:frozendict
+len(row[code]) [a=frozendict, code='ok:frozendict'] => 1
+' '.join(row[code]) [a=frozendict, code='ok:frozendict'] => object
+label(a) [a=frozenset] => frozenset
+    code [a=frozenset, code='D'] => D
+len(row[code]) [a=frozenset, code='D'] => 1
+' '.join(row[code]) [a=frozenset, code='D'] => frozenset
+    code [a=frozenset, code='L'] => L
+len(row[code]) [a=frozenset, code='L'] => 82
+' '.join(row[code]) [a=frozenset, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=frozenset, code='ok:frozenset'] => ok:frozenset
+len(row[code]) [a=frozenset, code='ok:frozenset'] => 1
+' '.join(row[code]) [a=frozenset, code='ok:frozenset'] => object
+label(a) [a=int] => int
+    code [a=int, code='D'] => D
+len(row[code]) [a=int, code='D'] => 1
+' '.join(row[code]) [a=int, code='D'] => int
+    code [a=int, code='L'] => L
+len(row[code]) [a=int, code='L'] => 82
+' '.join(row[code]) [a=int, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=int, code='ok:int'] => ok:int
+len(row[code]) [a=int, code='ok:int'] => 1
+' '.join(row[code]) [a=int, code='ok:int'] => object
+label(a) [a=list] => list
+    code [a=list, code='D'] => D
+len(row[code]) [a=list, code='D'] => 1
+' '.join(row[code]) [a=list, code='D'] => list
+    code [a=list, code='L'] => L
+len(row[code]) [a=list, code='L'] => 82
+' '.join(row[code]) [a=list, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=list, code='ok:list'] => ok:list
+len(row[code]) [a=list, code='ok:list'] => 1
+' '.join(row[code]) [a=list, code='ok:list'] => object
+label(a) [a=map] => map
+    code [a=map, code='D'] => D
+len(row[code]) [a=map, code='D'] => 1
+' '.join(row[code]) [a=map, code='D'] => map
+    code [a=map, code='L'] => L
+len(row[code]) [a=map, code='L'] => 82
+' '.join(row[code]) [a=map, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=map, code='ok:map'] => ok:map
+len(row[code]) [a=map, code='ok:map'] => 1
+' '.join(row[code]) [a=map, code='ok:map'] => object
+label(a) [a=object] => object
+    code [a=object, code='D'] => D
+len(row[code]) [a=object, code='D'] => 1
+' '.join(row[code]) [a=object, code='D'] => object
+    code [a=object, code='M'] => M
+len(row[code]) [a=object, code='M'] => 83
+' '.join(row[code]) [a=object, code='M'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+label(a) [a=property] => property
+    code [a=property, code='D'] => D
+len(row[code]) [a=property, code='D'] => 1
+' '.join(row[code]) [a=property, code='D'] => property
+    code [a=property, code='L'] => L
+len(row[code]) [a=property, code='L'] => 82
+' '.join(row[code]) [a=property, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=property, code='ok:property'] => ok:property
+len(row[code]) [a=property, code='ok:property'] => 1
+' '.join(row[code]) [a=property, code='ok:property'] => object
+label(a) [a=reversed] => reversed
+    code [a=reversed, code='D'] => D
+len(row[code]) [a=reversed, code='D'] => 1
+' '.join(row[code]) [a=reversed, code='D'] => reversed
+    code [a=reversed, code='L'] => L
+len(row[code]) [a=reversed, code='L'] => 82
+' '.join(row[code]) [a=reversed, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=reversed, code='ok:reversed'] => ok:reversed
+len(row[code]) [a=reversed, code='ok:reversed'] => 1
+' '.join(row[code]) [a=reversed, code='ok:reversed'] => object
+label(a) [a=set] => set
+    code [a=set, code='D'] => D
+len(row[code]) [a=set, code='D'] => 1
+' '.join(row[code]) [a=set, code='D'] => set
+    code [a=set, code='L'] => L
+len(row[code]) [a=set, code='L'] => 82
+' '.join(row[code]) [a=set, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=set, code='ok:set'] => ok:set
+len(row[code]) [a=set, code='ok:set'] => 1
+' '.join(row[code]) [a=set, code='ok:set'] => object
+label(a) [a=staticmethod] => staticmethod
+    code [a=staticmethod, code='D'] => D
+len(row[code]) [a=staticmethod, code='D'] => 1
+' '.join(row[code]) [a=staticmethod, code='D'] => staticmethod
+    code [a=staticmethod, code='L'] => L
+len(row[code]) [a=staticmethod, code='L'] => 82
+' '.join(row[code]) [a=staticmethod, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=staticmethod, code='ok:staticmethod'] => ok:staticmethod
+len(row[code]) [a=staticmethod, code='ok:staticmethod'] => 1
+' '.join(row[code]) [a=staticmethod, code='ok:staticmethod'] => object
+label(a) [a=str] => str
+    code [a=str, code='D'] => D
+len(row[code]) [a=str, code='D'] => 1
+' '.join(row[code]) [a=str, code='D'] => str
+    code [a=str, code='L'] => L
+len(row[code]) [a=str, code='L'] => 82
+' '.join(row[code]) [a=str, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=str, code='ok:str'] => ok:str
+len(row[code]) [a=str, code='ok:str'] => 1
+' '.join(row[code]) [a=str, code='ok:str'] => object
+label(a) [a=super] => super
+    code [a=super, code='D'] => D
+len(row[code]) [a=super, code='D'] => 1
+' '.join(row[code]) [a=super, code='D'] => super
+    code [a=super, code='L'] => L
+len(row[code]) [a=super, code='L'] => 82
+' '.join(row[code]) [a=super, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=super, code='ok:super'] => ok:super
+len(row[code]) [a=super, code='ok:super'] => 1
+' '.join(row[code]) [a=super, code='ok:super'] => object
+label(a) [a=tuple] => tuple
+    code [a=tuple, code='D'] => D
+len(row[code]) [a=tuple, code='D'] => 1
+' '.join(row[code]) [a=tuple, code='D'] => tuple
+    code [a=tuple, code='L'] => L
+len(row[code]) [a=tuple, code='L'] => 82
+' '.join(row[code]) [a=tuple, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=tuple, code='ok:tuple'] => ok:tuple
+len(row[code]) [a=tuple, code='ok:tuple'] => 1
+' '.join(row[code]) [a=tuple, code='ok:tuple'] => object
+label(a) [a=type] => type
+    code [a=type, code='D'] => D
+len(row[code]) [a=type, code='D'] => 1
+' '.join(row[code]) [a=type, code='D'] => type
+    code [a=type, code='L'] => L
+len(row[code]) [a=type, code='L'] => 82
+' '.join(row[code]) [a=type, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=type, code='ok:type'] => ok:type
+len(row[code]) [a=type, code='ok:type'] => 1
+' '.join(row[code]) [a=type, code='ok:type'] => object
+label(a) [a=zip] => zip
+    code [a=zip, code='D'] => D
+len(row[code]) [a=zip, code='D'] => 1
+' '.join(row[code]) [a=zip, code='D'] => zip
+    code [a=zip, code='L'] => L
+len(row[code]) [a=zip, code='L'] => 82
+' '.join(row[code]) [a=zip, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=zip, code='ok:zip'] => ok:zip
+len(row[code]) [a=zip, code='ok:zip'] => 1
+' '.join(row[code]) [a=zip, code='ok:zip'] => object
+label(a) [a=GenericAlias] => types.GenericAlias
+    code [a=GenericAlias, code='D'] => D
+len(row[code]) [a=GenericAlias, code='D'] => 1
+' '.join(row[code]) [a=GenericAlias, code='D'] => types.GenericAlias
+    code [a=GenericAlias, code='L'] => L
+len(row[code]) [a=GenericAlias, code='L'] => 82
+' '.join(row[code]) [a=GenericAlias, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=GenericAlias, code='ok:types.GenericAlias'] => ok:types.GenericAlias
+len(row[code]) [a=GenericAlias, code='ok:types.GenericAlias'] => 1
+' '.join(row[code]) [a=GenericAlias, code='ok:types.GenericAlias'] => object
+label(a) [a=module] => module
+    code [a=module, code='D'] => D
+len(row[code]) [a=module, code='D'] => 1
+' '.join(row[code]) [a=module, code='D'] => module
+    code [a=module, code='L'] => L
+len(row[code]) [a=module, code='L'] => 82
+' '.join(row[code]) [a=module, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=module, code='ok:module'] => ok:module
+len(row[code]) [a=module, code='ok:module'] => 1
+' '.join(row[code]) [a=module, code='ok:module'] => object
+label(a) [a=SimpleNamespace] => types.SimpleNamespace
+    code [a=SimpleNamespace, code='D'] => D
+len(row[code]) [a=SimpleNamespace, code='D'] => 1
+' '.join(row[code]) [a=SimpleNamespace, code='D'] => types.SimpleNamespace
+    code [a=SimpleNamespace, code='L'] => L
+len(row[code]) [a=SimpleNamespace, code='L'] => 82
+' '.join(row[code]) [a=SimpleNamespace, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=SimpleNamespace, code='ok:types.SimpleNamespace'] => ok:types.SimpleNamespace
+len(row[code]) [a=SimpleNamespace, code='ok:types.SimpleNamespace'] => 1
+' '.join(row[code]) [a=SimpleNamespace, code='ok:types.SimpleNamespace'] => object
+label(a) [a=OrderedDict] => collections.OrderedDict
+    code [a=OrderedDict, code='D'] => D
+len(row[code]) [a=OrderedDict, code='D'] => 1
+' '.join(row[code]) [a=OrderedDict, code='D'] => collections.OrderedDict
+    code [a=OrderedDict, code='L'] => L
+len(row[code]) [a=OrderedDict, code='L'] => 81
+' '.join(row[code]) [a=OrderedDict, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=OrderedDict, code='ok:collections.OrderedDict'] => ok:collections.OrderedDict
+len(row[code]) [a=OrderedDict, code='ok:collections.OrderedDict'] => 2
+' '.join(row[code]) [a=OrderedDict, code='ok:collections.OrderedDict'] => dict object
+label(a) [a=defaultdict] => collections.defaultdict
+    code [a=defaultdict, code='D'] => D
+len(row[code]) [a=defaultdict, code='D'] => 1
+' '.join(row[code]) [a=defaultdict, code='D'] => collections.defaultdict
+    code [a=defaultdict, code='L'] => L
+len(row[code]) [a=defaultdict, code='L'] => 81
+' '.join(row[code]) [a=defaultdict, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=defaultdict, code='ok:collections.defaultdict'] => ok:collections.defaultdict
+len(row[code]) [a=defaultdict, code='ok:collections.defaultdict'] => 2
+' '.join(row[code]) [a=defaultdict, code='ok:collections.defaultdict'] => dict object
+label(a) [a=deque] => collections.deque
+    code [a=deque, code='D'] => D
+len(row[code]) [a=deque, code='D'] => 1
+' '.join(row[code]) [a=deque, code='D'] => collections.deque
+    code [a=deque, code='L'] => L
+len(row[code]) [a=deque, code='L'] => 82
+' '.join(row[code]) [a=deque, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=deque, code='ok:collections.deque'] => ok:collections.deque
+len(row[code]) [a=deque, code='ok:collections.deque'] => 1
+' '.join(row[code]) [a=deque, code='ok:collections.deque'] => object
+label(a) [a=RLock] => _thread.RLock
+    code [a=RLock, code='D'] => D
+len(row[code]) [a=RLock, code='D'] => 1
+' '.join(row[code]) [a=RLock, code='D'] => _thread.RLock
+    code [a=RLock, code='L'] => L
+len(row[code]) [a=RLock, code='L'] => 82
+' '.join(row[code]) [a=RLock, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=RLock, code='ok:_thread.RLock'] => ok:_thread.RLock
+len(row[code]) [a=RLock, code='ok:_thread.RLock'] => 1
+' '.join(row[code]) [a=RLock, code='ok:_thread.RLock'] => object
+label(a) [a=partial] => functools.partial
+    code [a=partial, code='D'] => D
+len(row[code]) [a=partial, code='D'] => 1
+' '.join(row[code]) [a=partial, code='D'] => functools.partial
+    code [a=partial, code='L'] => L
+len(row[code]) [a=partial, code='L'] => 82
+' '.join(row[code]) [a=partial, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=partial, code='ok:functools.partial'] => ok:functools.partial
+len(row[code]) [a=partial, code='ok:functools.partial'] => 1
+' '.join(row[code]) [a=partial, code='ok:functools.partial'] => object
+label(a) [a=accumulate] => itertools.accumulate
+    code [a=accumulate, code='D'] => D
+len(row[code]) [a=accumulate, code='D'] => 1
+' '.join(row[code]) [a=accumulate, code='D'] => itertools.accumulate
+    code [a=accumulate, code='L'] => L
+len(row[code]) [a=accumulate, code='L'] => 82
+' '.join(row[code]) [a=accumulate, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=accumulate, code='ok:itertools.accumulate'] => ok:itertools.accumulate
+len(row[code]) [a=accumulate, code='ok:itertools.accumulate'] => 1
+' '.join(row[code]) [a=accumulate, code='ok:itertools.accumulate'] => object
+label(a) [a=batched] => itertools.batched
+    code [a=batched, code='D'] => D
+len(row[code]) [a=batched, code='D'] => 1
+' '.join(row[code]) [a=batched, code='D'] => itertools.batched
+    code [a=batched, code='L'] => L
+len(row[code]) [a=batched, code='L'] => 82
+' '.join(row[code]) [a=batched, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=batched, code='ok:itertools.batched'] => ok:itertools.batched
+len(row[code]) [a=batched, code='ok:itertools.batched'] => 1
+' '.join(row[code]) [a=batched, code='ok:itertools.batched'] => object
+label(a) [a=chain] => itertools.chain
+    code [a=chain, code='D'] => D
+len(row[code]) [a=chain, code='D'] => 1
+' '.join(row[code]) [a=chain, code='D'] => itertools.chain
+    code [a=chain, code='L'] => L
+len(row[code]) [a=chain, code='L'] => 82
+' '.join(row[code]) [a=chain, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=chain, code='ok:itertools.chain'] => ok:itertools.chain
+len(row[code]) [a=chain, code='ok:itertools.chain'] => 1
+' '.join(row[code]) [a=chain, code='ok:itertools.chain'] => object
+label(a) [a=combinations] => itertools.combinations
+    code [a=combinations, code='D'] => D
+len(row[code]) [a=combinations, code='D'] => 1
+' '.join(row[code]) [a=combinations, code='D'] => itertools.combinations
+    code [a=combinations, code='L'] => L
+len(row[code]) [a=combinations, code='L'] => 82
+' '.join(row[code]) [a=combinations, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=combinations, code='ok:itertools.combinations'] => ok:itertools.combinations
+len(row[code]) [a=combinations, code='ok:itertools.combinations'] => 1
+' '.join(row[code]) [a=combinations, code='ok:itertools.combinations'] => object
+label(a) [a=combinations_with_replacement] => itertools.combinations_with_replacement
+    code [a=combinations_with_replacement, code='D'] => D
+len(row[code]) [a=combinations_with_replacement, code='D'] => 1
+' '.join(row[code]) [a=combinations_with_replacement, code='D'] => itertools.combinations_with_replacement
+    code [a=combinations_with_replacement, code='L'] => L
+len(row[code]) [a=combinations_with_replacement, code='L'] => 82
+' '.join(row[code]) [a=combinations_with_replacement, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=combinations_with_replacement, code='ok:itertools.combinations_with_replacement'] => ok:itertools.combinations_with_replacement
+len(row[code]) [a=combinations_with_replacement, code='ok:itertools.combinations_with_replacement'] => 1
+' '.join(row[code]) [a=combinations_with_replacement, code='ok:itertools.combinations_with_replacement'] => object
+label(a) [a=compress] => itertools.compress
+    code [a=compress, code='D'] => D
+len(row[code]) [a=compress, code='D'] => 1
+' '.join(row[code]) [a=compress, code='D'] => itertools.compress
+    code [a=compress, code='L'] => L
+len(row[code]) [a=compress, code='L'] => 82
+' '.join(row[code]) [a=compress, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=compress, code='ok:itertools.compress'] => ok:itertools.compress
+len(row[code]) [a=compress, code='ok:itertools.compress'] => 1
+' '.join(row[code]) [a=compress, code='ok:itertools.compress'] => object
+label(a) [a=count] => itertools.count
+    code [a=count, code='D'] => D
+len(row[code]) [a=count, code='D'] => 1
+' '.join(row[code]) [a=count, code='D'] => itertools.count
+    code [a=count, code='L'] => L
+len(row[code]) [a=count, code='L'] => 82
+' '.join(row[code]) [a=count, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=count, code='ok:itertools.count'] => ok:itertools.count
+len(row[code]) [a=count, code='ok:itertools.count'] => 1
+' '.join(row[code]) [a=count, code='ok:itertools.count'] => object
+label(a) [a=cycle] => itertools.cycle
+    code [a=cycle, code='D'] => D
+len(row[code]) [a=cycle, code='D'] => 1
+' '.join(row[code]) [a=cycle, code='D'] => itertools.cycle
+    code [a=cycle, code='L'] => L
+len(row[code]) [a=cycle, code='L'] => 82
+' '.join(row[code]) [a=cycle, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=cycle, code='ok:itertools.cycle'] => ok:itertools.cycle
+len(row[code]) [a=cycle, code='ok:itertools.cycle'] => 1
+' '.join(row[code]) [a=cycle, code='ok:itertools.cycle'] => object
+label(a) [a=dropwhile] => itertools.dropwhile
+    code [a=dropwhile, code='D'] => D
+len(row[code]) [a=dropwhile, code='D'] => 1
+' '.join(row[code]) [a=dropwhile, code='D'] => itertools.dropwhile
+    code [a=dropwhile, code='L'] => L
+len(row[code]) [a=dropwhile, code='L'] => 82
+' '.join(row[code]) [a=dropwhile, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=dropwhile, code='ok:itertools.dropwhile'] => ok:itertools.dropwhile
+len(row[code]) [a=dropwhile, code='ok:itertools.dropwhile'] => 1
+' '.join(row[code]) [a=dropwhile, code='ok:itertools.dropwhile'] => object
+label(a) [a=filterfalse] => itertools.filterfalse
+    code [a=filterfalse, code='D'] => D
+len(row[code]) [a=filterfalse, code='D'] => 1
+' '.join(row[code]) [a=filterfalse, code='D'] => itertools.filterfalse
+    code [a=filterfalse, code='L'] => L
+len(row[code]) [a=filterfalse, code='L'] => 82
+' '.join(row[code]) [a=filterfalse, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=filterfalse, code='ok:itertools.filterfalse'] => ok:itertools.filterfalse
+len(row[code]) [a=filterfalse, code='ok:itertools.filterfalse'] => 1
+' '.join(row[code]) [a=filterfalse, code='ok:itertools.filterfalse'] => object
+label(a) [a=groupby] => itertools.groupby
+    code [a=groupby, code='D'] => D
+len(row[code]) [a=groupby, code='D'] => 1
+' '.join(row[code]) [a=groupby, code='D'] => itertools.groupby
+    code [a=groupby, code='L'] => L
+len(row[code]) [a=groupby, code='L'] => 82
+' '.join(row[code]) [a=groupby, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=groupby, code='ok:itertools.groupby'] => ok:itertools.groupby
+len(row[code]) [a=groupby, code='ok:itertools.groupby'] => 1
+' '.join(row[code]) [a=groupby, code='ok:itertools.groupby'] => object
+label(a) [a=islice] => itertools.islice
+    code [a=islice, code='D'] => D
+len(row[code]) [a=islice, code='D'] => 1
+' '.join(row[code]) [a=islice, code='D'] => itertools.islice
+    code [a=islice, code='L'] => L
+len(row[code]) [a=islice, code='L'] => 82
+' '.join(row[code]) [a=islice, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=islice, code='ok:itertools.islice'] => ok:itertools.islice
+len(row[code]) [a=islice, code='ok:itertools.islice'] => 1
+' '.join(row[code]) [a=islice, code='ok:itertools.islice'] => object
+label(a) [a=pairwise] => itertools.pairwise
+    code [a=pairwise, code='D'] => D
+len(row[code]) [a=pairwise, code='D'] => 1
+' '.join(row[code]) [a=pairwise, code='D'] => itertools.pairwise
+    code [a=pairwise, code='L'] => L
+len(row[code]) [a=pairwise, code='L'] => 82
+' '.join(row[code]) [a=pairwise, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=pairwise, code='ok:itertools.pairwise'] => ok:itertools.pairwise
+len(row[code]) [a=pairwise, code='ok:itertools.pairwise'] => 1
+' '.join(row[code]) [a=pairwise, code='ok:itertools.pairwise'] => object
+label(a) [a=permutations] => itertools.permutations
+    code [a=permutations, code='D'] => D
+len(row[code]) [a=permutations, code='D'] => 1
+' '.join(row[code]) [a=permutations, code='D'] => itertools.permutations
+    code [a=permutations, code='L'] => L
+len(row[code]) [a=permutations, code='L'] => 82
+' '.join(row[code]) [a=permutations, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=permutations, code='ok:itertools.permutations'] => ok:itertools.permutations
+len(row[code]) [a=permutations, code='ok:itertools.permutations'] => 1
+' '.join(row[code]) [a=permutations, code='ok:itertools.permutations'] => object
+label(a) [a=product] => itertools.product
+    code [a=product, code='D'] => D
+len(row[code]) [a=product, code='D'] => 1
+' '.join(row[code]) [a=product, code='D'] => itertools.product
+    code [a=product, code='L'] => L
+len(row[code]) [a=product, code='L'] => 82
+' '.join(row[code]) [a=product, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=product, code='ok:itertools.product'] => ok:itertools.product
+len(row[code]) [a=product, code='ok:itertools.product'] => 1
+' '.join(row[code]) [a=product, code='ok:itertools.product'] => object
+label(a) [a=repeat] => itertools.repeat
+    code [a=repeat, code='D'] => D
+len(row[code]) [a=repeat, code='D'] => 1
+' '.join(row[code]) [a=repeat, code='D'] => itertools.repeat
+    code [a=repeat, code='L'] => L
+len(row[code]) [a=repeat, code='L'] => 82
+' '.join(row[code]) [a=repeat, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=repeat, code='ok:itertools.repeat'] => ok:itertools.repeat
+len(row[code]) [a=repeat, code='ok:itertools.repeat'] => 1
+' '.join(row[code]) [a=repeat, code='ok:itertools.repeat'] => object
+label(a) [a=starmap] => itertools.starmap
+    code [a=starmap, code='D'] => D
+len(row[code]) [a=starmap, code='D'] => 1
+' '.join(row[code]) [a=starmap, code='D'] => itertools.starmap
+    code [a=starmap, code='L'] => L
+len(row[code]) [a=starmap, code='L'] => 82
+' '.join(row[code]) [a=starmap, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=starmap, code='ok:itertools.starmap'] => ok:itertools.starmap
+len(row[code]) [a=starmap, code='ok:itertools.starmap'] => 1
+' '.join(row[code]) [a=starmap, code='ok:itertools.starmap'] => object
+label(a) [a=takewhile] => itertools.takewhile
+    code [a=takewhile, code='D'] => D
+len(row[code]) [a=takewhile, code='D'] => 1
+' '.join(row[code]) [a=takewhile, code='D'] => itertools.takewhile
+    code [a=takewhile, code='L'] => L
+len(row[code]) [a=takewhile, code='L'] => 82
+' '.join(row[code]) [a=takewhile, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=takewhile, code='ok:itertools.takewhile'] => ok:itertools.takewhile
+len(row[code]) [a=takewhile, code='ok:itertools.takewhile'] => 1
+' '.join(row[code]) [a=takewhile, code='ok:itertools.takewhile'] => object
+label(a) [a=zip_longest] => itertools.zip_longest
+    code [a=zip_longest, code='D'] => D
+len(row[code]) [a=zip_longest, code='D'] => 1
+' '.join(row[code]) [a=zip_longest, code='D'] => itertools.zip_longest
+    code [a=zip_longest, code='L'] => L
+len(row[code]) [a=zip_longest, code='L'] => 82
+' '.join(row[code]) [a=zip_longest, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=zip_longest, code='ok:itertools.zip_longest'] => ok:itertools.zip_longest
+len(row[code]) [a=zip_longest, code='ok:itertools.zip_longest'] => 1
+' '.join(row[code]) [a=zip_longest, code='ok:itertools.zip_longest'] => object
+label(a) [a=BufferedRWPair] => _io.BufferedRWPair
+    code [a=BufferedRWPair, code='D'] => D
+len(row[code]) [a=BufferedRWPair, code='D'] => 1
+' '.join(row[code]) [a=BufferedRWPair, code='D'] => _io.BufferedRWPair
+    code [a=BufferedRWPair, code='L'] => L
+len(row[code]) [a=BufferedRWPair, code='L'] => 82
+' '.join(row[code]) [a=BufferedRWPair, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=BufferedRWPair, code='ok:_io.BufferedRWPair'] => ok:_io.BufferedRWPair
+len(row[code]) [a=BufferedRWPair, code='ok:_io.BufferedRWPair'] => 1
+' '.join(row[code]) [a=BufferedRWPair, code='ok:_io.BufferedRWPair'] => object
+label(a) [a=BufferedRandom] => _io.BufferedRandom
+    code [a=BufferedRandom, code='D'] => D
+len(row[code]) [a=BufferedRandom, code='D'] => 1
+' '.join(row[code]) [a=BufferedRandom, code='D'] => _io.BufferedRandom
+    code [a=BufferedRandom, code='L'] => L
+len(row[code]) [a=BufferedRandom, code='L'] => 82
+' '.join(row[code]) [a=BufferedRandom, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=BufferedRandom, code='ok:_io.BufferedRandom'] => ok:_io.BufferedRandom
+len(row[code]) [a=BufferedRandom, code='ok:_io.BufferedRandom'] => 1
+' '.join(row[code]) [a=BufferedRandom, code='ok:_io.BufferedRandom'] => object
+label(a) [a=BufferedReader] => _io.BufferedReader
+    code [a=BufferedReader, code='D'] => D
+len(row[code]) [a=BufferedReader, code='D'] => 1
+' '.join(row[code]) [a=BufferedReader, code='D'] => _io.BufferedReader
+    code [a=BufferedReader, code='L'] => L
+len(row[code]) [a=BufferedReader, code='L'] => 82
+' '.join(row[code]) [a=BufferedReader, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=BufferedReader, code='ok:_io.BufferedReader'] => ok:_io.BufferedReader
+len(row[code]) [a=BufferedReader, code='ok:_io.BufferedReader'] => 1
+' '.join(row[code]) [a=BufferedReader, code='ok:_io.BufferedReader'] => object
+label(a) [a=BufferedWriter] => _io.BufferedWriter
+    code [a=BufferedWriter, code='D'] => D
+len(row[code]) [a=BufferedWriter, code='D'] => 1
+' '.join(row[code]) [a=BufferedWriter, code='D'] => _io.BufferedWriter
+    code [a=BufferedWriter, code='L'] => L
+len(row[code]) [a=BufferedWriter, code='L'] => 82
+' '.join(row[code]) [a=BufferedWriter, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=BufferedWriter, code='ok:_io.BufferedWriter'] => ok:_io.BufferedWriter
+len(row[code]) [a=BufferedWriter, code='ok:_io.BufferedWriter'] => 1
+' '.join(row[code]) [a=BufferedWriter, code='ok:_io.BufferedWriter'] => object
+label(a) [a=BytesIO] => _io.BytesIO
+    code [a=BytesIO, code='D'] => D
+len(row[code]) [a=BytesIO, code='D'] => 1
+' '.join(row[code]) [a=BytesIO, code='D'] => _io.BytesIO
+    code [a=BytesIO, code='L'] => L
+len(row[code]) [a=BytesIO, code='L'] => 82
+' '.join(row[code]) [a=BytesIO, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=BytesIO, code='ok:_io.BytesIO'] => ok:_io.BytesIO
+len(row[code]) [a=BytesIO, code='ok:_io.BytesIO'] => 1
+' '.join(row[code]) [a=BytesIO, code='ok:_io.BytesIO'] => object
+label(a) [a=FileIO] => _io.FileIO
+    code [a=FileIO, code='D'] => D
+len(row[code]) [a=FileIO, code='D'] => 1
+' '.join(row[code]) [a=FileIO, code='D'] => _io.FileIO
+    code [a=FileIO, code='L'] => L
+len(row[code]) [a=FileIO, code='L'] => 82
+' '.join(row[code]) [a=FileIO, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=FileIO, code='ok:_io.FileIO'] => ok:_io.FileIO
+len(row[code]) [a=FileIO, code='ok:_io.FileIO'] => 1
+' '.join(row[code]) [a=FileIO, code='ok:_io.FileIO'] => object
+label(a) [a=IncrementalNewlineDecoder] => _io.IncrementalNewlineDecoder
+    code [a=IncrementalNewlineDecoder, code='D'] => D
+len(row[code]) [a=IncrementalNewlineDecoder, code='D'] => 1
+' '.join(row[code]) [a=IncrementalNewlineDecoder, code='D'] => _io.IncrementalNewlineDecoder
+    code [a=IncrementalNewlineDecoder, code='L'] => L
+len(row[code]) [a=IncrementalNewlineDecoder, code='L'] => 82
+' '.join(row[code]) [a=IncrementalNewlineDecoder, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=IncrementalNewlineDecoder, code='ok:_io.IncrementalNewlineDecoder'] => ok:_io.IncrementalNewlineDecoder
+len(row[code]) [a=IncrementalNewlineDecoder, code='ok:_io.IncrementalNewlineDecoder'] => 1
+' '.join(row[code]) [a=IncrementalNewlineDecoder, code='ok:_io.IncrementalNewlineDecoder'] => object
+label(a) [a=StringIO] => _io.StringIO
+    code [a=StringIO, code='D'] => D
+len(row[code]) [a=StringIO, code='D'] => 1
+' '.join(row[code]) [a=StringIO, code='D'] => _io.StringIO
+    code [a=StringIO, code='L'] => L
+len(row[code]) [a=StringIO, code='L'] => 82
+' '.join(row[code]) [a=StringIO, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=StringIO, code='ok:_io.StringIO'] => ok:_io.StringIO
+len(row[code]) [a=StringIO, code='ok:_io.StringIO'] => 1
+' '.join(row[code]) [a=StringIO, code='ok:_io.StringIO'] => object
+label(a) [a=TextIOWrapper] => _io.TextIOWrapper
+    code [a=TextIOWrapper, code='D'] => D
+len(row[code]) [a=TextIOWrapper, code='D'] => 1
+' '.join(row[code]) [a=TextIOWrapper, code='D'] => _io.TextIOWrapper
+    code [a=TextIOWrapper, code='L'] => L
+len(row[code]) [a=TextIOWrapper, code='L'] => 82
+' '.join(row[code]) [a=TextIOWrapper, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=TextIOWrapper, code='ok:_io.TextIOWrapper'] => ok:_io.TextIOWrapper
+len(row[code]) [a=TextIOWrapper, code='ok:_io.TextIOWrapper'] => 1
+' '.join(row[code]) [a=TextIOWrapper, code='ok:_io.TextIOWrapper'] => object
+label(a) [a=UnsupportedOperation] => io.UnsupportedOperation
+    code [a=UnsupportedOperation, code='D'] => D
+len(row[code]) [a=UnsupportedOperation, code='D'] => 1
+' '.join(row[code]) [a=UnsupportedOperation, code='D'] => io.UnsupportedOperation
+    code [a=UnsupportedOperation, code='L'] => L
+len(row[code]) [a=UnsupportedOperation, code='L'] => 75
+' '.join(row[code]) [a=UnsupportedOperation, code='L'] => AttributeError BaseExceptionGroup ExceptionGroup ImportError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct
+    code [a=UnsupportedOperation, code='ok:io.UnsupportedOperation'] => ok:io.UnsupportedOperation
+len(row[code]) [a=UnsupportedOperation, code='ok:io.UnsupportedOperation'] => 8
+' '.join(row[code]) [a=UnsupportedOperation, code='ok:io.UnsupportedOperation'] => ArithmeticError BaseException OSError KeyError ValueError Warning object struct.error
+label(a) [a=ReferenceType] => weakref.ReferenceType
+    code [a=ReferenceType, code='D'] => D
+len(row[code]) [a=ReferenceType, code='D'] => 1
+' '.join(row[code]) [a=ReferenceType, code='D'] => weakref.ReferenceType
+    code [a=ReferenceType, code='L'] => L
+len(row[code]) [a=ReferenceType, code='L'] => 82
+' '.join(row[code]) [a=ReferenceType, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation array.array ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=ReferenceType, code='ok:weakref.ReferenceType'] => ok:weakref.ReferenceType
+len(row[code]) [a=ReferenceType, code='ok:weakref.ReferenceType'] => 1
+' '.join(row[code]) [a=ReferenceType, code='ok:weakref.ReferenceType'] => object
+label(a) [a=array] => array.array
+    code [a=array, code='D'] => D
+len(row[code]) [a=array, code='D'] => 1
+' '.join(row[code]) [a=array, code='D'] => array.array
+    code [a=array, code='L'] => L
+len(row[code]) [a=array, code='L'] => 82
+' '.join(row[code]) [a=array, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType ast.AST ast.Name ast.expr _struct.Struct struct.error
+    code [a=array, code='ok:array.array'] => ok:array.array
+len(row[code]) [a=array, code='ok:array.array'] => 1
+' '.join(row[code]) [a=array, code='ok:array.array'] => object
+label(a) [a=AST] => ast.AST
+    code [a=AST, code='D'] => D
+len(row[code]) [a=AST, code='D'] => 1
+' '.join(row[code]) [a=AST, code='D'] => ast.AST
+    code [a=AST, code='L'] => L
+len(row[code]) [a=AST, code='L'] => 80
+' '.join(row[code]) [a=AST, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array _struct.Struct struct.error
+    code [a=AST, code='M'] => M
+len(row[code]) [a=AST, code='M'] => 2
+' '.join(row[code]) [a=AST, code='M'] => ast.Name ast.expr
+    code [a=AST, code='ok:ast.AST'] => ok:ast.AST
+len(row[code]) [a=AST, code='ok:ast.AST'] => 1
+' '.join(row[code]) [a=AST, code='ok:ast.AST'] => object
+label(a) [a=Name] => ast.Name
+    code [a=Name, code='D'] => D
+len(row[code]) [a=Name, code='D'] => 1
+' '.join(row[code]) [a=Name, code='D'] => ast.Name
+    code [a=Name, code='L'] => L
+len(row[code]) [a=Name, code='L'] => 80
+' '.join(row[code]) [a=Name, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array _struct.Struct struct.error
+    code [a=Name, code='ok:ast.Name'] => ok:ast.Name
+len(row[code]) [a=Name, code='ok:ast.Name'] => 3
+' '.join(row[code]) [a=Name, code='ok:ast.Name'] => object ast.AST ast.expr
+label(a) [a=expr] => ast.expr
+    code [a=expr, code='D'] => D
+len(row[code]) [a=expr, code='D'] => 1
+' '.join(row[code]) [a=expr, code='D'] => ast.expr
+    code [a=expr, code='L'] => L
+len(row[code]) [a=expr, code='L'] => 80
+' '.join(row[code]) [a=expr, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array _struct.Struct struct.error
+    code [a=expr, code='M'] => M
+len(row[code]) [a=expr, code='M'] => 1
+' '.join(row[code]) [a=expr, code='M'] => ast.Name
+    code [a=expr, code='ok:ast.expr'] => ok:ast.expr
+len(row[code]) [a=expr, code='ok:ast.expr'] => 2
+' '.join(row[code]) [a=expr, code='ok:ast.expr'] => object ast.AST
+label(a) [a=Struct] => _struct.Struct
+    code [a=Struct, code='D'] => D
+len(row[code]) [a=Struct, code='D'] => 1
+' '.join(row[code]) [a=Struct, code='D'] => _struct.Struct
+    code [a=Struct, code='L'] => L
+len(row[code]) [a=Struct, code='L'] => 82
+' '.join(row[code]) [a=Struct, code='L'] => ArithmeticError AttributeError BaseException BaseExceptionGroup OSError ExceptionGroup ImportError KeyError NameError StopIteration SyntaxError SystemExit UnicodeDecodeError UnicodeEncodeError UnicodeTranslateError ValueError Warning bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper io.UnsupportedOperation weakref.ReferenceType array.array ast.AST ast.Name ast.expr struct.error
+    code [a=Struct, code='ok:_struct.Struct'] => ok:_struct.Struct
+len(row[code]) [a=Struct, code='ok:_struct.Struct'] => 1
+' '.join(row[code]) [a=Struct, code='ok:_struct.Struct'] => object
+label(a) [a=error] => struct.error
+    code [a=error, code='D'] => D
+len(row[code]) [a=error, code='D'] => 1
+' '.join(row[code]) [a=error, code='D'] => struct.error
+    code [a=error, code='L'] => L
+len(row[code]) [a=error, code='L'] => 64
+' '.join(row[code]) [a=error, code='L'] => bytearray bytes classmethod complex dict enumerate filter float frozendict frozenset int list map property reversed set staticmethod str super tuple type zip types.GenericAlias module types.SimpleNamespace collections.OrderedDict collections.defaultdict collections.deque _thread.RLock functools.partial itertools.accumulate itertools.batched itertools.chain itertools.combinations itertools.combinations_with_replacement itertools.compress itertools.count itertools.cycle itertools.dropwhile itertools.filterfalse itertools.groupby itertools.islice itertools.pairwise itertools.permutations itertools.product itertools.repeat itertools.starmap itertools.takewhile itertools.zip_longest _io.BufferedRWPair _io.BufferedRandom _io.BufferedReader _io.BufferedWriter _io.BytesIO _io.FileIO _io.IncrementalNewlineDecoder _io.StringIO _io.TextIOWrapper weakref.ReferenceType array.array ast.AST ast.Name ast.expr _struct.Struct
+    code [a=error, code='ok:AttributeError'] => ok:AttributeError
+len(row[code]) [a=error, code='ok:AttributeError'] => 1
+' '.join(row[code]) [a=error, code='ok:AttributeError'] => AttributeError
+    code [a=error, code='ok:BaseExceptionGroup'] => ok:BaseExceptionGroup
+len(row[code]) [a=error, code='ok:BaseExceptionGroup'] => 1
+' '.join(row[code]) [a=error, code='ok:BaseExceptionGroup'] => BaseExceptionGroup
+    code [a=error, code='ok:ExceptionGroup'] => ok:ExceptionGroup
+len(row[code]) [a=error, code='ok:ExceptionGroup'] => 1
+' '.join(row[code]) [a=error, code='ok:ExceptionGroup'] => ExceptionGroup
+    code [a=error, code='ok:ImportError'] => ok:ImportError
+len(row[code]) [a=error, code='ok:ImportError'] => 1
+' '.join(row[code]) [a=error, code='ok:ImportError'] => ImportError
+    code [a=error, code='ok:NameError'] => ok:NameError
+len(row[code]) [a=error, code='ok:NameError'] => 1
+' '.join(row[code]) [a=error, code='ok:NameError'] => NameError
+    code [a=error, code='ok:OSError'] => ok:OSError
+len(row[code]) [a=error, code='ok:OSError'] => 1
+' '.join(row[code]) [a=error, code='ok:OSError'] => OSError
+    code [a=error, code='ok:StopIteration'] => ok:StopIteration
+len(row[code]) [a=error, code='ok:StopIteration'] => 1
+' '.join(row[code]) [a=error, code='ok:StopIteration'] => StopIteration
+    code [a=error, code='ok:SyntaxError'] => ok:SyntaxError
+len(row[code]) [a=error, code='ok:SyntaxError'] => 1
+' '.join(row[code]) [a=error, code='ok:SyntaxError'] => SyntaxError
+    code [a=error, code='ok:SystemExit'] => ok:SystemExit
+len(row[code]) [a=error, code='ok:SystemExit'] => 1
+' '.join(row[code]) [a=error, code='ok:SystemExit'] => SystemExit
+    code [a=error, code='ok:UnicodeDecodeError'] => ok:UnicodeDecodeError
+len(row[code]) [a=error, code='ok:UnicodeDecodeError'] => 1
+' '.join(row[code]) [a=error, code='ok:UnicodeDecodeError'] => UnicodeDecodeError
+    code [a=error, code='ok:UnicodeEncodeError'] => ok:UnicodeEncodeError
+len(row[code]) [a=error, code='ok:UnicodeEncodeError'] => 1
+' '.join(row[code]) [a=error, code='ok:UnicodeEncodeError'] => UnicodeEncodeError
+    code [a=error, code='ok:UnicodeTranslateError'] => ok:UnicodeTranslateError
+len(row[code]) [a=error, code='ok:UnicodeTranslateError'] => 1
+' '.join(row[code]) [a=error, code='ok:UnicodeTranslateError'] => UnicodeTranslateError
+    code [a=error, code='ok:io.UnsupportedOperation'] => ok:io.UnsupportedOperation
+len(row[code]) [a=error, code='ok:io.UnsupportedOperation'] => 1
+' '.join(row[code]) [a=error, code='ok:io.UnsupportedOperation'] => io.UnsupportedOperation
+    code [a=error, code='ok:struct.error'] => ok:struct.error
+len(row[code]) [a=error, code='ok:struct.error'] => 6
+' '.join(row[code]) [a=error, code='ok:struct.error'] => ArithmeticError BaseException KeyError ValueError Warning object

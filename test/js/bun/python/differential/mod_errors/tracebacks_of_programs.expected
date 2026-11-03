@@ -1,0 +1,111 @@
+status: 0
+script: 197eb22e459fa241
+---
+== imported 1
+err: Traceback (most recent call last):
+  File "<tmp>/importer.py", line 1, in <module>
+    import compiler
+  File "<tmp>/compiler.py", line 5
+    nonlocal zzz
+    ^^^^^^^^^^^^
+SyntaxError: no binding for nonlocal 'zzz' found
+== compile() with the name of a file 0
+out: 'other.py' ("'return' outside function", ('other.py', 2, 1, 'second line\n', 2, 7))
+'missing.py' ("'return' outside function", ('missing.py', 2, 1, None, 2, 7))
+'<other.py>' ("'return' outside function", ('<other.py>', 2, 1, None, 2, 7))
+'' ("'return' outside function", ('', 2, 1, None, 2, 7))
+'other.py' ('invalid syntax', ('other.py', 2, 3, 'second line\n', 2, 4))
+'missing.py' ('invalid syntax', ('missing.py', 2, 3, 'y z\n', 2, 4))
+'<other.py>' ('invalid syntax', ('<other.py>', 2, 3, 'y z\n', 2, 4))
+'' ('invalid syntax', ('', 2, 3, 'y z\n', 2, 4))
+'other.py' ("'return' outside function", ('other.py', 6, 1, None, 6, 7))
+'missing.py' ("'return' outside function", ('missing.py', 6, 1, None, 6, 7))
+'<other.py>' ("'return' outside function", ('<other.py>', 6, 1, None, 6, 7))
+'' ("'return' outside function", ('', 6, 1, None, 6, 7))
+== carets 1
+err: Traceback (most recent call last):
+  File "<tmp>/raises.py", line 4, in <module>
+    f(1,
+    ~^^^
+      2)
+      ^^
+  File "<tmp>/raises.py", line 3, in f
+    b / 0)
+    ~~^~~
+ZeroDivisionError: division by zero
+== -X no_debug_ranges 1
+err: Traceback (most recent call last):
+  File "<tmp>/raises.py", line 4, in <module>
+    f(1,
+  File "<tmp>/raises.py", line 3, in f
+    b / 0)
+ZeroDivisionError: division by zero
+== PYTHONNODEBUGRANGES 1
+err: Traceback (most recent call last):
+  File "<tmp>/raises.py", line 4, in <module>
+    f(1,
+  File "<tmp>/raises.py", line 3, in f
+    b / 0)
+ZeroDivisionError: division by zero
+== co_positions 0
+out: [(1, 1, None, None)]
+== the file is gone 1
+err: Traceback (most recent call last):
+  File "<tmp>/vanishes.py", line 5, in <module>
+  File "<tmp>/vanishes.py", line 4, in f
+ZeroDivisionError: division by zero
+== the file has changed 1
+err: Traceback (most recent call last):
+  File "<tmp>/changes.py", line 4, in <module>
+    # at all
+  File "<tmp>/changes.py", line 3, in f
+    # now
+ZeroDivisionError: division by zero
+== -c 1
+err: Traceback (most recent call last):
+  File "<string>", line 3, in <module>
+    f()
+    ~^^
+  File "<string>", line 2, in f
+    1 / 0
+    ~~^~~
+ZeroDivisionError: division by zero
+== -c: syntax 1
+err:   File "<string>", line 2
+    y z
+      ^
+SyntaxError: invalid syntax
+== stdin 1
+err: Traceback (most recent call last):
+  File "<stdin>", line 3, in <module>
+  File "<stdin>", line 2, in f
+ZeroDivisionError: division by zero
+== stdin: syntax 1
+err:   File "<stdin>", line 2
+    y z
+      ^
+SyntaxError: invalid syntax
+== -m 1
+err: Traceback (most recent call last):
+  File "<frozen runpy>", line 201, in _run_module_as_main
+  File "<frozen runpy>", line 87, in _run_code
+  File "<tmp>/raises.py", line 4, in <module>
+    f(1,
+    ~^^^
+      2)
+      ^^
+  File "<tmp>/raises.py", line 3, in f
+    b / 0)
+    ~~^~~
+ZeroDivisionError: division by zero
+== -m: syntax 1
+err: Traceback (most recent call last):
+  File "<frozen runpy>", line 192, in _run_module_as_main
+  File "<frozen runpy>", line 163, in _get_module_details
+  File "<frozen importlib._bootstrap_external>", line 881, in get_code
+  File "<frozen importlib._bootstrap_external>", line 810, in source_to_code
+  File "<frozen importlib._bootstrap>", line 491, in _call_with_frames_removed
+  File "<tmp>/parser.py", line 2
+    y = (2 3)
+         ^^^
+SyntaxError: invalid syntax. Perhaps you forgot a comma?

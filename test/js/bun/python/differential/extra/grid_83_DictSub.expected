@@ -1,0 +1,36 @@
+status: 0
+script: 3629f183a6420c72
+---
+DictSub __class_getitem__ 69 aa055d88cc1e
+DictSub __contains__ 69 81853f836d7e
+DictSub __delitem__ 69 6e366e70ddb6
+DictSub __eq__ 69 dbe404301dad
+DictSub __format__ 69 440b7b51a19a
+DictSub __ge__ 68 84d02449c002
+DictSub __getitem__ 69 db229f4827ed
+DictSub __gt__ 69 eb52040ed5df
+DictSub __hash__ 2 63943a3474c4
+DictSub __init__ 67 caa3755233be
+DictSub __ior__ 69 e082edcb07e8
+DictSub __iter__ 38 491dd3aa5566
+DictSub __le__ 69 25d7e46f2e89
+DictSub __len__ 38 ce9a73c64001
+DictSub __lt__ 69 386d4540515e
+DictSub __ne__ 69 330d0a36bd17
+DictSub __or__ 69 b648ed39da75
+DictSub __repr__ 38 d19c719afb5b
+DictSub __reversed__ 38 8d7c084b3957
+DictSub __ror__ 69 b7c83ba27f31
+DictSub __setitem__ 235 ac1bd712d541
+DictSub __str__ 38 eb1f91acc1fd
+DictSub clear 38 3cd14d782f40
+DictSub copy 38 a58094b7fbb9
+DictSub fromkeys 266 abea9fbb679e
+DictSub get 265 67903f265a19
+DictSub items 38 26c4f5869822
+DictSub keys 38 ab0857efe89e
+DictSub pop 265 86bcc5fefe94
+DictSub popitem 38 36df96092781
+DictSub setdefault 265 e43de686c05f
+DictSub update 69 897dec217229
+DictSub values 38 e82936fe9d95

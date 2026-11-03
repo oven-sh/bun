@@ -1,0 +1,20 @@
+status: 0
+script: 9b54087e1933cee7
+---
+partial __call__ 646 c9b49530e33b
+partial __class_getitem__ 86 6bc846a50756
+partial __eq__ 86 63194babf898
+partial __format__ 86 5a68de9f6a61
+partial __ge__ 86 9251248ccf2c
+partial __get__ 366 713889cd30da
+partial __gt__ 86 8ebb91acb607
+partial __init__ 642 c89d8b37d5a1
+partial __le__ 86 e5c2bf9aefae
+partial __lt__ 86 ff6507dd973e
+partial __ne__ 86 3b74d84c807a
+partial __repr__ 38 f650b8e2b980
+partial __setstate__ 86 d3880d89f788
+partial __str__ 38 6cdf8bb0f46e
+partial args 2 b37964ed1ecf
+partial func 2 703aa14517ba
+partial keywords 2 cfc592cbdf0a

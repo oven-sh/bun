@@ -1,0 +1,106 @@
+status: 0
+script: e95f212157ec29df
+---
+bytes ("'plain'", b'plain')
+    colorsys: the library | quopri: the library | here_only: 'plain' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+str ("'plain'", b'plain')
+    stringprep: the library | this_is_nowhere: ModuleNotFoundError "No module named 'this_is_nowhere'" | here_only: 'plain' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+fchdir ("'plain'", b'plain')
+    nturl2path: the library | netrc: the library | here_only: 'plain' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+chdir(fd) ("'plain'", b'plain')
+    tabnanny: the library | sched: the library | here_only: 'plain' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+True
+bytes ("'\\xe6'", b'\xc3\xa6')
+    colorsys: the library | quopri: the library | here_only: '\xe6' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+str ("'\\xe6'", b'\xc3\xa6')
+    stringprep: the library | this_is_nowhere: ModuleNotFoundError "No module named 'this_is_nowhere'" | here_only: '\xe6' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+fchdir ("'\\xe6'", b'\xc3\xa6')
+    nturl2path: the library | netrc: the library | here_only: '\xe6' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+chdir(fd) ("'\\xe6'", b'\xc3\xa6')
+    tabnanny: the library | sched: the library | here_only: '\xe6' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+True
+bytes ("'\\u20ac\\U0001f600'", b'\xe2\x82\xac\xf0\x9f\x98\x80')
+    colorsys: the library | quopri: the library | here_only: '\u20ac\U0001f600' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+str ("'\\u20ac\\U0001f600'", b'\xe2\x82\xac\xf0\x9f\x98\x80')
+    stringprep: the library | this_is_nowhere: ModuleNotFoundError "No module named 'this_is_nowhere'" | here_only: '\u20ac\U0001f600' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+fchdir ("'\\u20ac\\U0001f600'", b'\xe2\x82\xac\xf0\x9f\x98\x80')
+    nturl2path: the library | netrc: the library | here_only: '\u20ac\U0001f600' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+chdir(fd) ("'\\u20ac\\U0001f600'", b'\xe2\x82\xac\xf0\x9f\x98\x80')
+    tabnanny: the library | sched: the library | here_only: '\u20ac\U0001f600' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+True
+bytes ("'\\udce7w\\udcf0'", b'\xe7w\xf0')
+    colorsys: the library | quopri: the library | here_only: '\udce7w\udcf0' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+str ("'\\udce7w\\udcf0'", b'\xe7w\xf0')
+    stringprep: the library | this_is_nowhere: ModuleNotFoundError "No module named 'this_is_nowhere'" | here_only: '\udce7w\udcf0' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+fchdir ("'\\udce7w\\udcf0'", b'\xe7w\xf0')
+    nturl2path: the library | netrc: the library | here_only: '\udce7w\udcf0' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+chdir(fd) ("'\\udce7w\\udcf0'", b'\xe7w\xf0')
+    tabnanny: the library | sched: the library | here_only: '\udce7w\udcf0' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+True
+bytes ("'\\udcff'", b'\xff')
+    colorsys: the library | quopri: the library | here_only: '\udcff' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+str ("'\\udcff'", b'\xff')
+    stringprep: the library | this_is_nowhere: ModuleNotFoundError "No module named 'this_is_nowhere'" | here_only: '\udcff' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+fchdir ("'\\udcff'", b'\xff')
+    nturl2path: the library | netrc: the library | here_only: '\udcff' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+chdir(fd) ("'\\udcff'", b'\xff')
+    tabnanny: the library | sched: the library | here_only: '\udcff' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+True
+bytes ("'a\\udcc3'", b'a\xc3')
+    colorsys: the library | quopri: the library | here_only: 'a\udcc3' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+str ("'a\\udcc3'", b'a\xc3')
+    stringprep: the library | this_is_nowhere: ModuleNotFoundError "No module named 'this_is_nowhere'" | here_only: 'a\udcc3' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+fchdir ("'a\\udcc3'", b'a\xc3')
+    nturl2path: the library | netrc: the library | here_only: 'a\udcc3' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+chdir(fd) ("'a\\udcc3'", b'a\xc3')
+    tabnanny: the library | sched: the library | here_only: 'a\udcc3' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+True
+bytes ("'e\\u0301'", b'e\xcc\x81')
+    colorsys: the library | quopri: the library | here_only: 'e\u0301' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+str ("'e\\u0301'", b'e\xcc\x81')
+    stringprep: the library | this_is_nowhere: ModuleNotFoundError "No module named 'this_is_nowhere'" | here_only: 'e\u0301' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+fchdir ("'e\\u0301'", b'e\xcc\x81')
+    nturl2path: the library | netrc: the library | here_only: 'e\u0301' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+chdir(fd) ("'e\\u0301'", b'e\xcc\x81')
+    tabnanny: the library | sched: the library | here_only: 'e\u0301' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+True
+bytes ("' '", b' ')
+    colorsys: the library | quopri: the library | here_only: ' ' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+str ("' '", b' ')
+    stringprep: the library | this_is_nowhere: ModuleNotFoundError "No module named 'this_is_nowhere'" | here_only: ' ' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+fchdir ("' '", b' ')
+    nturl2path: the library | netrc: the library | here_only: ' ' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+chdir(fd) ("' '", b' ')
+    tabnanny: the library | sched: the library | here_only: ' ' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+True
+bytes ("'%41'", b'%41')
+    colorsys: the library | quopri: the library | here_only: '%41' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+str ("'%41'", b'%41')
+    stringprep: the library | this_is_nowhere: ModuleNotFoundError "No module named 'this_is_nowhere'" | here_only: '%41' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+fchdir ("'%41'", b'%41')
+    nturl2path: the library | netrc: the library | here_only: '%41' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+chdir(fd) ("'%41'", b'%41')
+    tabnanny: the library | sched: the library | here_only: '%41' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+True
+bytes ("'node_modules'", b'node_modules')
+    colorsys: the library | quopri: the library | here_only: 'node_modules' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+str ("'node_modules'", b'node_modules')
+    stringprep: the library | this_is_nowhere: ModuleNotFoundError "No module named 'this_is_nowhere'" | here_only: 'node_modules' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+fchdir ("'node_modules'", b'node_modules')
+    nturl2path: the library | netrc: the library | here_only: 'node_modules' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+chdir(fd) ("'node_modules'", b'node_modules')
+    tabnanny: the library | sched: the library | here_only: 'node_modules' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+True
+nested ("'in\\udcfe'", b'in\xfe')
+    colorsys: the library | quopri: the library | here_only: ModuleNotFoundError "No module named 'here_only'" | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+up ("'\\udce7w\\udcf0'", b'\xe7w\xf0')
+    stringprep: the library | this_is_nowhere: ModuleNotFoundError "No module named 'this_is_nowhere'" | here_only: '\udce7w\udcf0' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+gone FileNotFoundError
+    nturl2path: the library | netrc: the library | here_only: ModuleNotFoundError "No module named 'here_only'" | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+FileNotFoundError 2 'nothing'
+FileNotFoundError 2 b'\xfe\xfe'
+FileNotFoundError 2 ''
+still gone FileNotFoundError
+    tabnanny: the library | sched: the library | here_only: ModuleNotFoundError "No module named 'here_only'" | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"
+back ("'plain'", b'plain')
+    colorsys: the library | quopri: the library | here_only: 'plain' | no_such_module: ModuleNotFoundError "No module named 'no_such_module'" | no.such.package: ModuleNotFoundError "No module named 'no'"

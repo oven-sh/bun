@@ -1,0 +1,26 @@
+status: 0
+script: 5df87d107fa5aeaa
+source: 924a1b80d9c11772
+---
+a.__name__ => Outer
+b.__name__ => X
+method.__name__ [method=method] => assigned
+method() [method=method] => ('X', 413, 413)
+method.__name__ [method=method] => with_super
+method() [method=method] => ('Outer', 'X over Base')
+method.__name__ [method=method] => nested
+method.__name__ [method=method] => nested
+type(e).__name__ [method=method] => NameError
+e [method=method] => cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+method.__name__ [method=method] => comprehension
+method.__name__ [method=method] => comprehension
+type(e).__name__ [method=method] => NameError
+e [method=method] => name '__class__' is not defined
+body.co_cellvars => ('__class__', '__classdict__')
+body.co_freevars => ('__class__',)
+Outer.code.__code__.co_freevars => ('__class__',)
+(42, 'X', False)
+type(e).__name__ => NameError
+e => name '__class__' is not defined
+namespace['result'] => ('X', False)
+namespace['__class__'] => 42

@@ -1,0 +1,25 @@
+status: 0
+script: c95824efd9cf5c63
+---
+property __delete__ 86 65317b21cdbc
+property __eq__ 86 2eafa5356571
+property __format__ 86 a7581df18c80
+property __ge__ 86 cd540b3b640e
+property __get__ 365 19554c8aff97
+property __gt__ 86 92d1dcff2b77
+property __init__ 642 6960c36ed015
+property __isabstractmethod__ 2 fc897146bb09
+property __le__ 86 fd308fd8e208
+property __lt__ 86 b210d933bc00
+property __name__ 2 f68c51b7d89e
+property __ne__ 86 da9239e48232
+property __repr__ 38 6fc183c46afb
+property __set__ 318 509fbc22400b
+property __set_name__ 317 d57c80c3110b
+property __str__ 38 44db58d4fdca
+property deleter 86 20edd35f44df
+property fdel 2 9d88079559de
+property fget 2 0765afa2dc4f
+property fset 2 7169a8a66c32
+property getter 86 7c7a6161ef10
+property setter 86 afdc900d34b2

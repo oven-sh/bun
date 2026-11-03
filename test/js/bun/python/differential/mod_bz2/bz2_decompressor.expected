@@ -1,0 +1,89 @@
+status: 0
+script: 23228778a42dc4d5
+---
+False True b''
+True True False b''
+EOFError: End of stream already reached
+EOFError: End of stream already reached
+EOFError: End of stream already reached
+True False b''
+True True False b'junk' True
+0 0 False False b''
+True 20 True False b''
+1 1 False False b''
+True 20 True False b''
+2 2 False False b''
+True 20 True False b''
+100 100 False False b''
+True 20 True False b''
+4096 4096 False False b''
+True 19 True False b''
+32768 32768 False False b''
+True 2 True False b''
+32769 32769 False False b''
+True 2 True False b''
+65536 65536 False False b''
+True 1 True False b''
+100000 96390 True False b''
+True 0 True False b''
+96389 96389 False False b''
+True 1 True False b''
+96390 96390 True False b''
+True 0 True False b''
+96391 96390 True False b''
+True 0 True False b''
+1099511627776 96390 True False b''
+True 0 True False b''
+9223372036854775807 96390 True False b''
+True 0 True False b''
+-1 96390 True False b''
+True 0 True False b''
+-2 96390 True False b''
+True 0 True False b''
+-9223372036854775808 96390 True False b''
+True 0 True False b''
+100 100 50 True [(False, False), (False, True), (True, False)] 50 b''
+1 1 40 True [(False, False), (False, True), (True, False)] 40 b''
+5000 3 1000 True [(False, False), (False, True)] 1000 b''
+3002 10 77 True [(False, False), (False, True)] 77 b''
+3001 1 100000 True [(False, True), (True, False)] 96390 b''
+b'' False
+True b'TAILTAILTAIL' False
+True b'moreeven more' True
+b'' False False
+b'' False
+True True
+b'' True b'' True b'' True
+b'' True b'' b'' True False
+b'BZh9\x17rE8P\x90\x00\x00\x00\x00'
+b'' True False b''
+b'' True False
+b'' True True
+TypeError: decompress() missing required argument 'data' (pos 1)
+TypeError: a bytes-like object is required, not 'str'
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+OverflowError: Python int too large to convert to C ssize_t
+OverflowError: Python int too large to convert to C ssize_t
+TypeError: 'NoneType' object cannot be interpreted as an integer
+TypeError: decompress() takes at most 2 arguments (3 given)
+b''
+TypeError: decompress() missing required argument 'data' (pos 1)
+TypeError: argument for decompress() given by name ('data') and position (1)
+TypeError: decompress() got an unexpected keyword argument 'foo'
+b''
+TypeError: decompress() takes at most 2 keyword arguments (3 given)
+TypeError: decompress() takes at most 2 arguments (3 given)
+12
+KeyError: 'index'
+TypeError: BZ2Decompressor() takes no positional arguments
+TypeError: BZ2Decompressor() takes no keyword arguments
+<_bz2.BZ2Decompressor object>
+TypeError: BZ2Decompressor() takes no positional arguments
+True True b'' b''
+b'0 green bottles hanging on the wall\n1 green bottles hanging on the wall\n2 green bottles hanging on the wall\n3 green bottles hanging on the wall\n4 green bottles hanging on the wall\n5 green bottl
+True
+OSError: Invalid data stream
+ValueError: Compressed data ended before the end-of-stream marker was reached
+ValueError: Compressed data ended before the end-of-stream marker was reached
+ValueError: Compressed data ended before the end-of-stream marker was reached

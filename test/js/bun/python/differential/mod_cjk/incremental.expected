@@ -1,0 +1,363 @@
+status: 0
+script: 2120a29afc9cc0dd
+---
+gb2312 55 74 77698f04 True
+  encode 0c6f9874
+  encode by one 5ba2ab83 True
+  encode final 3767508a
+  encode reset bec9efaa
+  decode 70c0fa9d
+  decode by one 372ad478 True
+  decode cut strict abda2f35
+  decode cut ignore 4b06ed6f
+  decode cut replace 8ae2ce07
+  decode cut backslashreplace e6d7f8a1
+  decode cut surrogateescape 5a49cdbd
+  decode reset c788402e
+  decode error c3f15561
+  encode error 242984b1
+gbk 60 84 172a6e62 True
+  encode d216832f
+  encode by one e1352195 True
+  encode final f4576403
+  encode reset 5cd3c5f5
+  decode 35a0441b
+  decode by one 8329ef85 True
+  decode cut strict 960ffadc
+  decode cut ignore 53722da8
+  decode cut replace 8060bba3
+  decode cut backslashreplace b258a8e5
+  decode cut surrogateescape b9e86370
+  decode reset cf67d17b
+  decode error 90c5d0c9
+  encode error 036e3638
+gb18030 99 234 ba3914f5 True
+  encode f5fb864c
+  encode by one 0c10e1d9 True
+  encode final 7d218434
+  encode reset ff11c77e
+  decode f4eac216
+  decode by one 372924c3 True
+  decode cut strict 3cd61069
+  decode cut ignore 6a4d0501
+  decode cut replace 26f22c78
+  decode cut backslashreplace afa6ebe6
+  decode cut surrogateescape e6beb65a
+  decode reset 952e4e9e
+  decode error 8a3f03aa
+  encode error f1649d50
+hz 55 107 fcd0fb6d True
+  encode d6070865
+  encode by one 81ddaa30 True
+  encode final 003c2dd0
+  encode reset 44d12837
+  decode a0ec98b7
+  decode by one 32af276d True
+  decode cut strict e7e1f11a
+  decode cut ignore 7a7f1510
+  decode cut replace f10f4558
+  decode cut backslashreplace 062824f3
+  decode cut surrogateescape e7e1f11a
+  decode reset 4a386e63
+  decode error 2136c86c
+  encode error 0d5bb97e
+big5hkscs 60 84 d6ab6eb9 True
+  encode cb2cdc4d
+  encode by one 5cfad84a True
+  encode final 8911374f
+  encode reset 7adce171
+  decode 5f176f1a
+  decode by one 964861c3 True
+  decode cut strict e6999171
+  decode cut ignore bd42e735
+  decode cut replace 5a6df998
+  decode cut backslashreplace 34564c10
+  decode cut surrogateescape 14854db3
+  decode reset 307a95a6
+  decode error 5a414bb1
+  encode error 7d13ff96
+big5 53 70 768dddcb True
+  encode 71b1e5b3
+  encode by one 1757dc35 True
+  encode final 1e8945db
+  encode reset 9b3ba668
+  decode a3802aef
+  decode by one 8f150547 True
+  decode cut strict 9a99bd05
+  decode cut ignore 3ddcbb0a
+  decode cut replace b249d3a9
+  decode cut backslashreplace 6a505674
+  decode cut surrogateescape 3382c209
+  decode reset 22e6b65b
+  decode error ec491d5c
+  encode error eaadab33
+cp950 53 70 611ae47d True
+  encode b410234a
+  encode by one e2109b0b True
+  encode final f8ddfec6
+  encode reset d963bff5
+  decode 14683dcd
+  decode by one e9cb34ca True
+  decode cut strict 0ac7bff4
+  decode cut ignore 63931aaf
+  decode cut replace 8b7bf7c9
+  decode cut backslashreplace bbc9cc3b
+  decode cut surrogateescape d317801b
+  decode reset 0a274e0e
+  decode error 7612ac08
+  encode error ce851e4b
+euc_kr 61 104 a6ade4f5 True
+  encode 75f0acd2
+  encode by one 3a5077cc True
+  encode final d59e42f1
+  encode reset 935f825b
+  decode 09034eb3
+  decode by one 37a3b9c6 True
+  decode cut strict d98cadf6
+  decode cut ignore aaf7a66f
+  decode cut replace b832e22a
+  decode cut backslashreplace edf9c314
+  decode cut surrogateescape 39bb2592
+  decode reset ceb12aa4
+  decode error 58f561ec
+  encode error 97ed5d97
+cp949 61 86 dbcfc75d True
+  encode a3b3ef00
+  encode by one 424a6e9f True
+  encode final 7ffb4ddf
+  encode reset a72300cc
+  decode da965039
+  decode by one de8dc233 True
+  decode cut strict 10582346
+  decode cut ignore 49456f5f
+  decode cut replace f5afe18c
+  decode cut backslashreplace a9e289a6
+  decode cut surrogateescape 99d4114e
+  decode reset 1ddaae41
+  decode error ebeb129e
+  encode error 342deb50
+johab 61 86 a7acb621 True
+  encode dfc18111
+  encode by one 9abfea05 True
+  encode final 9e57e81e
+  encode reset 7ac885ff
+  decode c0529485
+  decode by one 50131127 True
+  decode cut strict 0dd37707
+  decode cut ignore b037e880
+  decode cut replace 66a99107
+  decode cut backslashreplace 375203cb
+  decode cut surrogateescape 267064e7
+  decode reset bfe7c82b
+  decode error 6da246cb
+  encode error b8c7c91a
+shift_jis 54 70 4386ec01 True
+  encode 70c9b58e
+  encode by one a7493d20 True
+  encode final 842cce79
+  encode reset a427fa98
+  decode 50719f42
+  decode by one 196edcf8 True
+  decode cut strict 735548b9
+  decode cut ignore 022cba15
+  decode cut replace 03b6f922
+  decode cut backslashreplace 40c1db30
+  decode cut surrogateescape 85c60de7
+  decode reset 74ec619a
+  decode error df1bf991
+  encode error 33288da9
+cp932 59 78 f957eb78 True
+  encode 7560b954
+  encode by one 3eda60d1 True
+  encode final f7de2dc4
+  encode reset 334efcde
+  decode 0567aa69
+  decode by one 6bcf9243 True
+  decode cut strict 8511a9f9
+  decode cut ignore d3d99fbe
+  decode cut replace 759714c3
+  decode cut backslashreplace 2caac4d9
+  decode cut surrogateescape e48e4a1e
+  decode reset 9e02d658
+  decode error a374d5d8
+  encode error 383c1c13
+euc_jp 64 102 c816f8fe True
+  encode ba8bdb28
+  encode by one 29da82ce True
+  encode final 14f9cd81
+  encode reset 1fed182c
+  decode 16866b60
+  decode by one 33090e8c True
+  decode cut strict f3bcedaa
+  decode cut ignore 6fd8a7bc
+  decode cut replace f4880450
+  decode cut backslashreplace a8786af6
+  decode cut surrogateescape 5a5d20a4
+  decode reset fab980e8
+  decode error 14ea0c44
+  encode error a12c600c
+shift_jis_2004 80 118 ec22e9ea True
+  encode 57cd9314
+  encode by one 345fd8ac True
+  encode final cc447762
+  encode reset 753e876c
+  decode bb15790d
+  decode by one d4fa635c True
+  decode cut strict 35beec84
+  decode cut ignore 395ab3c4
+  decode cut replace e57449b3
+  decode cut backslashreplace 0896d1c3
+  decode cut surrogateescape 3c9f19c8
+  decode reset 5a309391
+  decode error d43e7bcc
+  encode error 8ee4b7a2
+shift_jisx0213 79 116 fe444c31 True
+  encode 6118011f
+  encode by one 6d8cf5dd True
+  encode final 943a3a86
+  encode reset ec98eceb
+  decode 0f841fb4
+  decode by one a29473ed True
+  decode cut strict 330b59b5
+  decode cut ignore fc232a34
+  decode cut replace e09103a8
+  decode cut backslashreplace 6881ed7b
+  decode cut surrogateescape 02564b31
+  decode reset cceb7762
+  decode error 361717f6
+  encode error 65df0ba6
+euc_jis_2004 80 122 86c833b3 True
+  encode 938ce2e1
+  encode by one 1038f771 True
+  encode final 5c4db36a
+  encode reset d0145144
+  decode f3ffbd14
+  decode by one 93b36ce1 True
+  decode cut strict 5f9fa964
+  decode cut ignore 761a13bf
+  decode cut replace bd18d066
+  decode cut backslashreplace 69296d21
+  decode cut surrogateescape 27f91224
+  decode reset 16d3c53a
+  decode error 1907ebca
+  encode error 7176f818
+euc_jisx0213 79 120 1198b661 True
+  encode 89229656
+  encode by one ba1fd015 True
+  encode final 9e40f79d
+  encode reset d1e60064
+  decode d5125b3f
+  decode by one 09072b22 True
+  decode cut strict 514d3f40
+  decode cut ignore e01b293b
+  decode cut replace 0e6f212c
+  decode cut backslashreplace e2f320c7
+  decode cut surrogateescape 8b7574e1
+  decode reset 8f545fe4
+  decode error ef76ee36
+  encode error 4261f264
+iso2022_jp 54 112 48431743 True
+  encode 65ba9ba1
+  encode by one 033e7ad9 True
+  encode final f6fd487c
+  encode reset 15805ee3
+  decode 481c4ffe
+  decode by one 19cdc5ef True
+  decode cut strict 9b6690c5
+  decode cut ignore 88038767
+  decode cut replace f2409e30
+  decode cut backslashreplace e9aeaa13
+  decode cut surrogateescape 9b6690c5
+  decode reset 7d3a8b0e
+  decode error 6d03f78f
+  encode error 5849bc47
+iso2022_jp_1 64 171 62996f52 True
+  encode e7c27c8b
+  encode by one e515a0f3 True
+  encode final aea2958b
+  encode reset ff6c7f23
+  decode 5933b96d
+  decode by one 2b321d79 True
+  decode cut strict 4c26dc0c
+  decode cut ignore 48ea5a93
+  decode cut replace 9f77d2ca
+  decode cut backslashreplace b53e664f
+  decode cut surrogateescape 4c26dc0c
+  decode reset f8865a8f
+  decode error d46e8456
+  encode error 21900275
+iso2022_jp_2 72 220 8d43d404 True
+  encode 40063b16
+  encode by one f4d55b39 True
+  encode final 86bd8a79
+  encode reset e2ca55e7
+  decode d267fd2d
+  decode by one 3b3177ba True
+  decode cut strict 751f3696
+  decode cut ignore 80310564
+  decode cut replace 461ad1a4
+  decode cut backslashreplace 761a0e38
+  decode cut surrogateescape 751f3696
+  decode reset 99ffebd1
+  decode error 1ffa4a44
+  encode error 36f30b0a
+iso2022_jp_2004 77 226 1c7d7c76 True
+  encode 9a644c4c
+  encode by one 92280892 True
+  encode final 442f6408
+  encode reset 4d3d9546
+  decode a5793045
+  decode by one bb6b5639 True
+  decode cut strict 78e8e016
+  decode cut ignore 129044d3
+  decode cut replace b8b0d026
+  decode cut backslashreplace 3a1c9260
+  decode cut surrogateescape 78e8e016
+  decode reset cf68fa61
+  decode error ae058151
+  encode error 7077e3b1
+iso2022_jp_3 75 211 40565713 True
+  encode 16ae8868
+  encode by one d227a542 True
+  encode final 6cd0d106
+  encode reset ae339ee5
+  decode 9d452314
+  decode by one 4f25a04a True
+  decode cut strict e8dc1512
+  decode cut ignore fc579b9c
+  decode cut replace 5120de64
+  decode cut backslashreplace 1677b4d5
+  decode cut surrogateescape e8dc1512
+  decode reset 97af731b
+  decode error 23aae944
+  encode error d6c2e4e7
+iso2022_jp_ext 66 179 cd2d2116 True
+  encode 0285bce0
+  encode by one 0f67a10e True
+  encode final 7ae5e9e6
+  encode reset de137c14
+  decode 101f520a
+  decode by one ce70e09d True
+  decode cut strict 7a55df2d
+  decode cut ignore 0d9f6443
+  decode cut replace baca7893
+  decode cut backslashreplace 7948a19f
+  decode cut surrogateescape 7a55df2d
+  decode reset d5059815
+  decode error 5dd5e81f
+  encode error 920b111f
+iso2022_kr 58 104 e4f1c8d3 True
+  encode 6008dc33
+  encode by one 1bf94349 True
+  encode final 844deeb6
+  encode reset 5ce89aef
+  decode aa7ed2ac
+  decode by one a86ada69 True
+  decode cut strict e130f71c
+  decode cut ignore 44c15e3c
+  decode cut replace da3dad39
+  decode cut backslashreplace 0883d057
+  decode cut surrogateescape e130f71c
+  decode reset 4c707253
+  decode error 54145115
+  encode error 8aad3bf1

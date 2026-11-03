@@ -1,0 +1,90 @@
+status: 0
+script: 8da9f97d38621294
+source: a7c401934ea6fce6
+---
+name [name='plain', function=function] => plain
+in_thread(function) [name='plain', function=function] => [('RecursionError', True, True, True, 50)]
+countdown(900) [name='plain', function=function] => 900
+len([x for x in range(5)]) [name='plain', function=function] => 5
+sys.getrecursionlimit() [name='plain', function=function] => 200000
+name [name='with_arguments', function=function] => with_arguments
+in_thread(function) [name='with_arguments', function=function] => [('RecursionError', True, True, True, 50)]
+countdown(900) [name='with_arguments', function=function] => 900
+len([x for x in range(5)]) [name='with_arguments', function=function] => 5
+sys.getrecursionlimit() [name='with_arguments', function=function] => 200000
+name [name='not_a_tail_call', function=function] => not_a_tail_call
+in_thread(function) [name='not_a_tail_call', function=function] => [('RecursionError', True, True, True, 50)]
+countdown(900) [name='not_a_tail_call', function=function] => 900
+len([x for x in range(5)]) [name='not_a_tail_call', function=function] => 5
+sys.getrecursionlimit() [name='not_a_tail_call', function=function] => 200000
+name [name='method', function=method] => method
+in_thread(function) [name='method', function=method] => [('RecursionError', True, True, True, 50)]
+countdown(900) [name='method', function=method] => 900
+len([x for x in range(5)]) [name='method', function=method] => 5
+sys.getrecursionlimit() [name='method', function=method] => 200000
+name [name='__call__', function=C] => __call__
+in_thread(function) [name='__call__', function=C] => [('RecursionError', True, True, True, 50)]
+countdown(900) [name='__call__', function=C] => 900
+len([x for x in range(5)]) [name='__call__', function=C] => 5
+sys.getrecursionlimit() [name='__call__', function=C] => 200000
+name [name='property', function=function] => property
+in_thread(function) [name='property', function=function] => [('RecursionError', True, True, True, 50)]
+countdown(900) [name='property', function=function] => 900
+len([x for x in range(5)]) [name='property', function=function] => 5
+sys.getrecursionlimit() [name='property', function=function] => 200000
+name [name='__getitem__', function=function] => __getitem__
+in_thread(function) [name='__getitem__', function=function] => [('RecursionError', True, True, True, 50)]
+countdown(900) [name='__getitem__', function=function] => 900
+len([x for x in range(5)]) [name='__getitem__', function=function] => 5
+sys.getrecursionlimit() [name='__getitem__', function=function] => 200000
+name [name='__add__', function=function] => __add__
+in_thread(function) [name='__add__', function=function] => [('RecursionError', True, True, True, 50)]
+countdown(900) [name='__add__', function=function] => 900
+len([x for x in range(5)]) [name='__add__', function=function] => 5
+sys.getrecursionlimit() [name='__add__', function=function] => 200000
+name [name='__repr__', function=function] => __repr__
+in_thread(function) [name='__repr__', function=function] => [('RecursionError', True, True, True, 50)]
+countdown(900) [name='__repr__', function=function] => 900
+len([x for x in range(5)]) [name='__repr__', function=function] => 5
+sys.getrecursionlimit() [name='__repr__', function=function] => 200000
+name [name='__eq__', function=function] => __eq__
+in_thread(function) [name='__eq__', function=function] => [('RecursionError', True, True, True, 50)]
+countdown(900) [name='__eq__', function=function] => 900
+len([x for x in range(5)]) [name='__eq__', function=function] => 5
+sys.getrecursionlimit() [name='__eq__', function=function] => 200000
+name [name='generator', function=function] => generator
+in_thread(function) [name='generator', function=function] => [('RecursionError', True, True, True, 50)]
+countdown(900) [name='generator', function=function] => 900
+len([x for x in range(5)]) [name='generator', function=function] => 5
+sys.getrecursionlimit() [name='generator', function=function] => 200000
+name [name='comprehension', function=function] => comprehension
+in_thread(function) [name='comprehension', function=function] => [('RecursionError', True, True, True, 50)]
+countdown(900) [name='comprehension', function=function] => 900
+len([x for x in range(5)]) [name='comprehension', function=function] => 5
+sys.getrecursionlimit() [name='comprehension', function=function] => 200000
+name [name='with_handler', function=function] => with_handler
+in_thread(function) [name='with_handler', function=function] => [('RecursionError', True, True, True, 50)]
+countdown(900) [name='with_handler', function=function] => 900
+len([x for x in range(5)]) [name='with_handler', function=function] => 5
+sys.getrecursionlimit() [name='with_handler', function=function] => 200000
+name [name='with_locals', function=function] => with_locals
+in_thread(function) [name='with_locals', function=function] => [('RecursionError', True, True, True, 50)]
+countdown(900) [name='with_locals', function=function] => 900
+len([x for x in range(5)]) [name='with_locals', function=function] => 5
+sys.getrecursionlimit() [name='with_locals', function=function] => 200000
+name [name='mutual', function=function] => mutual
+in_thread(function) [name='mutual', function=function] => [('RecursionError', True, True, True, 50)]
+countdown(900) [name='mutual', function=function] => 900
+len([x for x in range(5)]) [name='mutual', function=function] => 5
+sys.getrecursionlimit() [name='mutual', function=function] => 200000
+name [name='lambda', function=function] => lambda
+in_thread(function) [name='lambda', function=function] => [('RecursionError', True, True, True, 50)]
+countdown(900) [name='lambda', function=function] => 900
+len([x for x in range(5)]) [name='lambda', function=function] => 5
+sys.getrecursionlimit() [name='lambda', function=function] => 200000
+again and again in_thread(plain, 3) => [('RecursionError', True, True, True, 50), ('RecursionError', True, True, True, 50), ('RecursionError', True, True, True, 50)]
+in the main thread outcome(plain) => ('RecursionError', True, True, True, 50)
+countdown(900) => 900
+['caught']
+maximum recursion depth exceeded
+900

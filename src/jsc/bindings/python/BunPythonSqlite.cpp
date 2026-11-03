@@ -29,6 +29,7 @@
     v(blob_open) \
     v(blob_read) \
     v(blob_write) \
+    v(column_value) \
     v(complete) \
     v(create_collation_v2) \
     v(data_count) \
@@ -43,7 +44,9 @@
     v(result_text) \
     v(threadsafe) \
     v(trace_v2) \
-    v(txn_state)
+    v(txn_state) \
+    v(value_dup) \
+    v(value_free)
 
 #define DECLARE_POINTER(name) static decltype(&sqlite3_##name) loadedHere_sqlite3_##name;
 FOR_EACH_SQLITE_FUNCTION_LOADED_HERE(DECLARE_POINTER)
@@ -65,6 +68,7 @@ static bool loadTheRestOfSQLite()
 #define sqlite3_blob_open loadedHere_sqlite3_blob_open
 #define sqlite3_blob_read loadedHere_sqlite3_blob_read
 #define sqlite3_blob_write loadedHere_sqlite3_blob_write
+#define sqlite3_column_value loadedHere_sqlite3_column_value
 #define sqlite3_complete loadedHere_sqlite3_complete
 #define sqlite3_create_collation_v2 loadedHere_sqlite3_create_collation_v2
 #define sqlite3_data_count loadedHere_sqlite3_data_count
@@ -80,6 +84,8 @@ static bool loadTheRestOfSQLite()
 #define sqlite3_threadsafe loadedHere_sqlite3_threadsafe
 #define sqlite3_trace_v2 loadedHere_sqlite3_trace_v2
 #define sqlite3_txn_state loadedHere_sqlite3_txn_state
+#define sqlite3_value_dup loadedHere_sqlite3_value_dup
+#define sqlite3_value_free loadedHere_sqlite3_value_free
 #else
 #include "sqlite3_local.h"
 #endif
@@ -583,6 +589,8 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(Statement);
 // "database is locked" is taken for an answer, the cursors that are only waiting for that are collected. (A connection that
 // nobody holds any more waits for a collection in CPython too: it is in a cycle with its cache of statements.)
 static bool isLockError(int rc) { return (rc & 0xff) == SQLITE_BUSY || (rc & 0xff) == SQLITE_LOCKED; }
+// The same for what SQLite refuses to do at all while a statement of the connection has rows left: VACUUM.
+static bool isRefusedForStatementsInProgress(int rc, sqlite3* db) { return rc == SQLITE_ERROR && strstr(sqlite3_errmsg(db), "SQL statements in progress"); }
 
 Lock Database::s_lock;
 
@@ -655,6 +663,8 @@ struct Connection {
 
     RefPtr<Database> database;
     bool isInitialized { false };
+    bool checksThread { false }; // check_same_thread
+    uint64_t thread { 0 }; // threading.get_ident() of the one that opened it.
     int detectTypes { 0 };
     ASCIILiteral isolationLevel; // Null: None.
     Autocommit autocommit { Autocommit::Legacy };
@@ -699,7 +709,16 @@ static bool checkConnectionIsOpen(JSGlobalObject* globalObject, PyRecord* self)
     return true;
 }
 
-static bool checkConnection(JSGlobalObject* globalObject, PyRecord* self)
+static bool checkThread(JSGlobalObject* globalObject, PyRecord* self)
+{
+    Connection& connection = connectionOf(self);
+    if (!connection.checksThread || connection.thread == currentThreadIdent()) [[likely]]
+        return true;
+    raiseOf(globalObject, ProgrammingError(globalObject), makeString("SQLite objects created in a thread can only be used in that same thread. The object was created in thread id "_s, connection.thread, " and this is thread id "_s, currentThreadIdent(), '.'));
+    return false;
+}
+
+static bool checkConnectionOnAnyThread(JSGlobalObject* globalObject, PyRecord* self)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -710,6 +729,11 @@ static bool checkConnection(JSGlobalObject* globalObject, PyRecord* self)
         return false;
     }
     return true;
+}
+
+static bool checkConnection(JSGlobalObject* globalObject, PyRecord* self)
+{
+    return checkThread(globalObject, self) && checkConnectionOnAnyThread(globalObject, self);
 }
 
 static bool executeSimply(JSGlobalObject* globalObject, Database& database, const char* sql)
@@ -850,8 +874,9 @@ static JSValue connectionInit(JSGlobalObject* globalObject, JSValue selfValue, c
     ASCIILiteral isolationLevel = ""_s;
     if (values[IsolationLevel] && failed(scope, isolationLevelArgument(globalObject, values[IsolationLevel], isolationLevel)))
         return {};
+    bool checksThread = true;
     if (values[CheckSameThread]) {
-        isTrue(globalObject, values[CheckSameThread]);
+        checksThread = isTrue(globalObject, values[CheckSameThread]);
         RETURN_IF_EXCEPTION(scope, {});
     }
     if (failed(scope, intArgument(globalObject, values[CachedStatements], 128, cacheSize)))
@@ -899,6 +924,8 @@ static JSValue connectionInit(JSGlobalObject* globalObject, JSValue selfValue, c
     sqlite3_busy_timeout(db, static_cast<int>(timeout * 1000));
 
     connection.database = Database::create(vm, db);
+    connection.checksThread = checksThread;
+    connection.thread = currentThreadIdent();
     connection.detectTypes = detectTypes;
     connection.isolationLevel = isolationLevel;
     connection.autocommit = autocommit;
@@ -946,6 +973,8 @@ static JSValue connectionClose(JSGlobalObject* globalObject, JSValue selfValue)
 {
     PyRecord* self = asRecord(selfValue);
     Connection& connection = connectionOf(self);
+    if (!checkThread(globalObject, self))
+        return {};
     if (!connection.isInitialized)
         return raiseOf(globalObject, ProgrammingError(globalObject), "Base Connection.__init__ not called."_s);
     connection.statementCache.clear();
@@ -985,7 +1014,7 @@ static bool rollback(JSGlobalObject* globalObject, PyRecord* self)
 static JSValue connectionCommit(JSGlobalObject* globalObject, JSValue self) { return commit(globalObject, asRecord(self)) ? jsUndefined() : JSValue(); }
 static JSValue connectionRollback(JSGlobalObject* globalObject, JSValue self) { return rollback(globalObject, asRecord(self)) ? jsUndefined() : JSValue(); }
 
-static JSValue connectionEnter(JSGlobalObject* globalObject, JSValue self) { return checkConnection(globalObject, asRecord(self)) ? self : JSValue(); }
+static JSValue connectionEnter(JSGlobalObject* globalObject, JSValue self) { return checkConnectionOnAnyThread(globalObject, asRecord(self)) ? self : JSValue(); }
 
 static JSValue connectionExit(JSGlobalObject* globalObject, JSValue selfValue, JSValue type, JSValue value, JSValue traceback)
 {
@@ -1675,7 +1704,7 @@ static JSValue connectionSetAuthorizer(JSGlobalObject* globalObject, JSValue sel
     if (failed(scope, unpackArguments(globalObject, { "set_authorizer"_s, 1, 1, 1, {} }, args, &callable)))
         return {};
     PyRecord* self = asRecord(selfValue);
-    if (failed(scope, checkConnectionIsOpen(globalObject, self)))
+    if (failed(scope, checkThread(globalObject, self)) || failed(scope, checkConnectionIsOpen(globalObject, self)))
         return {};
     Database& database = *connectionOf(self).database;
     self->set(vm, Authorizer, callable);
@@ -1696,7 +1725,7 @@ static JSValue connectionSetProgressHandler(JSGlobalObject* globalObject, JSValu
     if (failed(scope, intArgument(globalObject, values[1], 0, interval)))
         return {};
     PyRecord* self = asRecord(selfValue);
-    if (failed(scope, checkConnectionIsOpen(globalObject, self)))
+    if (failed(scope, checkThread(globalObject, self)) || failed(scope, checkConnectionIsOpen(globalObject, self)))
         return {};
     Database& database = *connectionOf(self).database;
     self->set(vm, ProgressHandler, values[0]);
@@ -1714,7 +1743,7 @@ static JSValue connectionSetTraceCallback(JSGlobalObject* globalObject, JSValue 
     if (failed(scope, unpackArguments(globalObject, { "set_trace_callback"_s, 1, 1, 1, {} }, args, &callable)))
         return {};
     PyRecord* self = asRecord(selfValue);
-    if (failed(scope, checkConnectionIsOpen(globalObject, self)))
+    if (failed(scope, checkThread(globalObject, self)) || failed(scope, checkConnectionIsOpen(globalObject, self)))
         return {};
     Database& database = *connectionOf(self).database;
     self->set(vm, TraceCallback, callable);
@@ -1750,10 +1779,70 @@ void Database::didEndLastUse()
 
 // ---- Cursor ----
 
+// The rows of a statement that writes: INSERT ... RETURNING, PRAGMA journal_mode = wal. execute() runs such a statement to its end
+// and keeps the rows. While it is unfinished, nothing that the connection writes outside a transaction is committed, and other
+// connections find the database locked: under CPython until the cursor is dropped at the latest, which nobody sees happen here.
+// (SQLite has made all the changes, and all the rows, when it gives the first.)
+class StoredRows {
+    WTF_MAKE_TZONE_ALLOCATED(StoredRows);
+    WTF_MAKE_NONCOPYABLE(StoredRows);
+
+public:
+    StoredRows(Statement& statement)
+        : m_statement(statement)
+    {
+    }
+
+    ~StoredRows()
+    {
+        for (auto* value : m_values.span().subspan(m_first))
+            sqlite3_value_free(value);
+    }
+
+    // The row the statement is at. False: no memory.
+    bool append()
+    {
+        m_columnCount = sqlite3_data_count(m_statement->handle());
+        for (unsigned i = 0; i < m_columnCount; ++i) {
+            auto* value = sqlite3_value_dup(sqlite3_column_value(m_statement->handle(), i));
+            if (!value)
+                return false;
+            m_values.append(value);
+        }
+        ++m_rowCount;
+        return true;
+    }
+
+    // For the names of the columns. It has no handle any more once the connection has been closed, which takes the rows away.
+    Statement& statement() const { return m_statement.get(); }
+    bool isEmpty() const { return !m_rowCount; }
+    std::span<sqlite3_value* const> first() const { return m_values.span().subspan(m_first, m_columnCount); }
+
+    void removeFirst()
+    {
+        for (auto* value : first())
+            sqlite3_value_free(value);
+        m_first += m_columnCount;
+        --m_rowCount;
+    }
+
+    int64_t changes { -1 }; // Cursor::rowCount once the last row is fetched, if not negative.
+
+private:
+    Ref<Statement> m_statement;
+    Vector<sqlite3_value*> m_values; // Row after row.
+    size_t m_first { 0 };
+    size_t m_rowCount { 0 };
+    unsigned m_columnCount { 0 };
+};
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(StoredRows);
+
 struct Cursor {
     WTF_MAKE_STRUCT_TZONE_ALLOCATED(Cursor);
 
     RefPtr<Statement> statement; // While it has rows to give.
+    std::unique_ptr<StoredRows> storedRows; // Or these.
     bool isInitialized { false };
     bool isClosed { false };
     bool isLocked { false };
@@ -1834,6 +1923,7 @@ static void didChangeStatement(JSGlobalObject* globalObject, PyRecord* self)
 // What sqlite3_reset() says.
 static int resetAndDropStatement(JSGlobalObject* globalObject, PyRecord* self)
 {
+    cursorOf(self).storedRows = nullptr;
     auto statement = std::exchange(cursorOf(self).statement, nullptr);
     if (!statement)
         return SQLITE_OK;
@@ -1973,6 +2063,20 @@ static JSValue columnName(JSGlobalObject* globalObject, Connection& connection, 
     return decodeUTF8(globalObject, { byteCast<uint8_t>(name), length });
 }
 
+// The row a statement is at, or a stored one.
+struct CurrentRow {
+    sqlite3_stmt* statement;
+    std::span<sqlite3_value* const> stored; // If not empty.
+
+    int count() const { return stored.empty() ? sqlite3_data_count(statement) : static_cast<int>(stored.size()); }
+    int type(int i) const { return stored.empty() ? sqlite3_column_type(statement, i) : sqlite3_value_type(stored[i]); }
+    int64_t integer(int i) const { return stored.empty() ? sqlite3_column_int64(statement, i) : sqlite3_value_int64(stored[i]); }
+    double real(int i) const { return stored.empty() ? sqlite3_column_double(statement, i) : sqlite3_value_double(stored[i]); }
+    const unsigned char* text(int i) const { return stored.empty() ? sqlite3_column_text(statement, i) : sqlite3_value_text(stored[i]); }
+    const void* blob(int i) const { return stored.empty() ? sqlite3_column_blob(statement, i) : sqlite3_value_blob(stored[i]); }
+    int bytes(int i) const { return stored.empty() ? sqlite3_column_bytes(statement, i) : sqlite3_value_bytes(stored[i]); }
+};
+
 // The caller has a DatabaseUse, and the cursor is locked: what the converters and the factory run can take neither handle away.
 static JSValue fetchOneRow(JSGlobalObject* globalObject, PyRecord* self, PyRecord* connectionRecord, sqlite3* db)
 {
@@ -1980,20 +2084,21 @@ static JSValue fetchOneRow(JSGlobalObject* globalObject, PyRecord* self, PyRecor
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Connection& connection = connectionOf(connectionRecord);
-    sqlite3_stmt* statement = cursorOf(self).statement->handle();
-    int count = sqlite3_data_count(statement);
+    Cursor& cursor = cursorOf(self);
+    CurrentRow current = cursor.storedRows ? CurrentRow { cursor.storedRows->statement().handle(), cursor.storedRows->first() } : CurrentRow { cursor.statement->handle(), {} };
+    int count = current.count();
     MarkedArgumentBuffer row;
     JSArray* castMap = tryAsList(self->get(RowCastMap));
 
     auto bytesOfColumn = [&](const void* data, int column) {
-        return std::span<const uint8_t> { static_cast<const uint8_t*>(data), static_cast<size_t>(sqlite3_column_bytes(statement, column)) };
+        return std::span<const uint8_t> { static_cast<const uint8_t*>(data), static_cast<size_t>(current.bytes(column)) };
     };
     for (int i = 0; i < count; ++i) {
         // Asked for each column: a converter may open the connection anew, with other settings.
         JSValue converter = connection.detectTypes && castMap && static_cast<unsigned>(i) < listLength(castMap) ? listGet(castMap, i) : jsUndefined();
         JSValue converted;
         if (!isNone(converter)) {
-            const void* blob = sqlite3_column_blob(statement, i);
+            const void* blob = current.blob(i);
             if (!blob) {
                 if (sqlite3_errcode(db) == SQLITE_NOMEM)
                     return raiseMemoryError(globalObject, scope, String());
@@ -2004,18 +2109,18 @@ static JSValue fetchOneRow(JSGlobalObject* globalObject, PyRecord* self, PyRecor
                 converted = call(globalObject, converter, item);
             }
         } else {
-            switch (sqlite3_column_type(statement, i)) {
+            switch (current.type(i)) {
             case SQLITE_NULL:
                 converted = jsUndefined();
                 break;
             case SQLITE_INTEGER:
-                converted = makeInt(globalObject, static_cast<int64_t>(sqlite3_column_int64(statement, i)));
+                converted = makeInt(globalObject, current.integer(i));
                 break;
             case SQLITE_FLOAT:
-                converted = makeFloat(globalObject, sqlite3_column_double(statement, i));
+                converted = makeFloat(globalObject, current.real(i));
                 break;
             case SQLITE_TEXT: {
-                const unsigned char* text = sqlite3_column_text(statement, i);
+                const unsigned char* text = current.text(i);
                 if (!text && sqlite3_errcode(db) == SQLITE_NOMEM)
                     return raiseMemoryError(globalObject, scope, String());
                 auto bytes = bytesOfColumn(text, i);
@@ -2023,7 +2128,7 @@ static JSValue fetchOneRow(JSGlobalObject* globalObject, PyRecord* self, PyRecor
                 if (factory == JSValue(rt.strType())) {
                     converted = decodeUTF8(globalObject, bytes);
                     if (!converted && clearPendingExceptionIfMatches(globalObject, rt.UnicodeDecodeError())) {
-                        const char* name = sqlite3_column_name(statement, i);
+                        const char* name = sqlite3_column_name(current.statement, i);
                         if (!name)
                             return raiseMemoryError(globalObject, scope, String());
                         // What is not ASCII shows as U+FFFD, and the whole is cut as CPython's buffer cuts it.
@@ -2051,7 +2156,7 @@ static JSValue fetchOneRow(JSGlobalObject* globalObject, PyRecord* self, PyRecor
                 break;
             }
             default: {
-                const void* blob = sqlite3_column_blob(statement, i);
+                const void* blob = current.blob(i);
                 if (!blob && sqlite3_errcode(db) == SQLITE_NOMEM)
                     return raiseMemoryError(globalObject, scope, String());
                 converted = bytesFrom(globalObject, bytesOfColumn(blob, i));
@@ -2247,6 +2352,7 @@ static JSValue executeQuery(JSGlobalObject* globalObject, PyRecord* self, bool i
     }
 
     self->set(vm, Description, jsUndefined());
+    cursor.storedRows = nullptr;
     if (cursor.statement && cursor.statement->reset() != SQLITE_OK)
         return failToReset();
     if (failIfClosed())
@@ -2277,6 +2383,16 @@ static JSValue executeQuery(JSGlobalObject* globalObject, PyRecord* self, bool i
             return finish();
     }
 
+    auto failFromStep = [&]() -> JSValue {
+        // A callback may have left one.
+        if (JSValue raised = takePendingException(globalObject)) {
+            if (moduleFlag(globalObject, ModuleValue::ShowsCallbackTracebacks))
+                printException(globalObject, raised);
+        }
+        raiseFromDatabase(globalObject, db);
+        return finish();
+    };
+
     // The cursor is locked, so this stays its statement.
     Statement& statement = *cursor.statement;
     bool isDone = false;
@@ -2300,7 +2416,7 @@ static JSValue executeQuery(JSGlobalObject* globalObject, PyRecord* self, bool i
         int rc;
         for (bool hasCollected = false;; hasCollected = true) {
             rc = sqlite3_step(statement.handle());
-            if (!connection.db() || !isLockError(rc) || hasCollected || scope.exception() || !Database::anotherStatementHasRowsLeft(vm, statement.handle()))
+            if (!connection.db() || !(isLockError(rc) || isRefusedForStatementsInProgress(rc, db)) || hasCollected || scope.exception() || !Database::anotherStatementHasRowsLeft(vm, statement.handle()))
                 break;
             sqlite3_reset(statement.handle());
             if (failed(scope, collectAbandonedCursors(globalObject)))
@@ -2308,15 +2424,8 @@ static JSValue executeQuery(JSGlobalObject* globalObject, PyRecord* self, bool i
         }
         if (failIfClosed())
             return finish();
-        if (rc != SQLITE_DONE && rc != SQLITE_ROW) {
-            // A callback may have left one.
-            if (JSValue raised = takePendingException(globalObject)) {
-                if (moduleFlag(globalObject, ModuleValue::ShowsCallbackTracebacks))
-                    printException(globalObject, raised);
-            }
-            raiseFromDatabase(globalObject, db);
-            return finish();
-        }
+        if (rc != SQLITE_DONE && rc != SQLITE_ROW)
+            return failFromStep();
         if (scope.exception())
             return finish();
         if (failed(scope, buildRowCastMap(globalObject, self, connection))) {
@@ -2356,6 +2465,28 @@ static JSValue executeQuery(JSGlobalObject* globalObject, PyRecord* self, bool i
 
     if (failIfClosed())
         return finish();
+    if (sqlite3_stmt_busy(statement.handle()) && !sqlite3_stmt_readonly(statement.handle())) {
+        auto rows = makeUnique<StoredRows>(statement);
+        int rc;
+        do {
+            if (!rows->append()) {
+                raiseMemoryError(globalObject, scope, String());
+                return finish();
+            }
+            rc = sqlite3_step(statement.handle());
+        } while (rc == SQLITE_ROW);
+        if (failIfClosed())
+            return finish();
+        if (rc != SQLITE_DONE)
+            return failFromStep();
+        if (scope.exception())
+            return finish();
+        if (statement.isDML())
+            rows->changes = sqlite3_changes(db);
+        if (statement.reset() != SQLITE_OK)
+            return failToReset();
+        cursor.storedRows = WTF::move(rows);
+    }
     if (!isMultiple)
         self->set(vm, LastRowID, makeInt(globalObject, static_cast<int64_t>(sqlite3_last_insert_rowid(db))));
     return finish();
@@ -2448,12 +2579,12 @@ static JSValue nextRow(JSGlobalObject* globalObject, PyRecord* self)
     if (failed(scope, checkCursor(globalObject, self)))
         return {};
     Cursor& cursor = cursorOf(self);
-    if (!cursor.statement)
+    if (!cursor.statement && !cursor.storedRows)
         return {};
     PyRecord* connectionRecord = asRecord(self->get(CursorConnection));
     Connection& connection = connectionOf(connectionRecord);
     // Those of the statement, which are not those of the connection if that has been opened anew since.
-    RefPtr<Statement> statement = cursor.statement;
+    RefPtr<Statement> statement = cursor.storedRows ? &cursor.storedRows->statement() : cursor.statement.get();
     DatabaseUse use(statement->database());
     sqlite3* db = sqlite3_db_handle(statement->handle());
     // The connection has been closed, which took the rows away, and opened again.
@@ -2474,7 +2605,12 @@ static JSValue nextRow(JSGlobalObject* globalObject, PyRecord* self)
         resetAndDropStatement(globalObject, self);
         RELEASE_AND_RETURN(scope, raiseClosedDatabase(globalObject));
     }
-    int rc = sqlite3_step(statement->handle());
+    int rc;
+    if (cursor.storedRows) {
+        cursor.storedRows->removeFirst();
+        rc = cursor.storedRows->isEmpty() ? SQLITE_DONE : SQLITE_ROW;
+    } else
+        rc = sqlite3_step(statement->handle());
     cursor.isLocked = false;
     if (!connection.db()) {
         // The row that was there before is still the answer.
@@ -2484,7 +2620,7 @@ static JSValue nextRow(JSGlobalObject* globalObject, PyRecord* self)
             RELEASE_AND_RETURN(scope, raiseClosedDatabase(globalObject));
     } else if (rc == SQLITE_DONE) {
         if (statement->isDML())
-            cursor.rowCount = sqlite3_changes(db);
+            cursor.rowCount = cursor.storedRows ? cursor.storedRows->changes : sqlite3_changes(db);
         if (resetAndDropStatement(globalObject, self) != SQLITE_OK)
             RELEASE_AND_RETURN(scope, raiseCannotReset(globalObject));
     } else if (rc != SQLITE_ROW) {
@@ -2752,7 +2888,7 @@ static JSValue connectionBackup(JSGlobalObject* globalObject, JSValue selfValue,
         RETURN_IF_EXCEPTION(scope, {});
     }
     PyRecord* self = asRecord(selfValue);
-    if (failed(scope, checkConnection(globalObject, self)) || failed(scope, checkConnection(globalObject, target)))
+    if (failed(scope, checkConnection(globalObject, self)) || failed(scope, checkConnectionOnAnyThread(globalObject, target)))
         return {};
     if (target == self)
         return raiseValueError(globalObject, scope, "target cannot be the same connection instance"_s);
@@ -3006,7 +3142,7 @@ static JSValue connectionAutocommit(JSGlobalObject* globalObject, JSValue self)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (failed(scope, checkConnectionIsOpen(globalObject, asRecord(self))))
+    if (failed(scope, checkThread(globalObject, asRecord(self))) || failed(scope, checkConnectionIsOpen(globalObject, asRecord(self))))
         return {};
     Autocommit mode = connectionOf(asRecord(self)).autocommit;
     return mode == Autocommit::Legacy ? jsNumber(legacyTransactionControl) : jsBoolean(mode == Autocommit::Enabled);

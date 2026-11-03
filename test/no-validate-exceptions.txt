@@ -55,9 +55,15 @@ test/napi/addon-allocations.test.ts
 # Python: the C++ of its runtime has not been gone through yet (Source/JavaScriptCore/python/DEFERRED.md in WebKit).
 test/js/bun/python/bytecode-cache.test.ts
 test/js/bun/python/cli.test.ts
+test/js/bun/python/compression.test.ts
 test/js/bun/python/differential/command-line.test.ts
+test/js/bun/python/differential/grid-1.test.ts
+test/js/bun/python/differential/grid-2.test.ts
 test/js/bun/python/differential/lang.test.ts
-test/js/bun/python/differential/modules-a-i.test.ts
+test/js/bun/python/differential/modules-a-b.test.ts
+test/js/bun/python/differential/modules-c.test.ts
+test/js/bun/python/differential/modules-d-h.test.ts
+test/js/bun/python/differential/modules-i.test.ts
 test/js/bun/python/differential/modules-j-r.test.ts
 test/js/bun/python/differential/modules-s.test.ts
 test/js/bun/python/differential/modules-t.test.ts

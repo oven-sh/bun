@@ -1,0 +1,17 @@
+status: 0
+script: 5f163aee3bb90cb5
+---
+dict_values __eq__ 126 5077f215556d
+dict_values __format__ 126 2fa1682ecca0
+dict_values __ge__ 126 d17a2bc383e2
+dict_values __gt__ 126 7bad8b5f5600
+dict_values __init__ 1070 a818477ed204
+dict_values __iter__ 38 f54d4d9ec726
+dict_values __le__ 126 a6d26a01e216
+dict_values __len__ 38 34f0295e4fe1
+dict_values __lt__ 126 c5c397d49038
+dict_values __ne__ 126 9e8033fb37b0
+dict_values __repr__ 38 214c884f4bd8
+dict_values __reversed__ 38 a9c0ffaa6744
+dict_values __str__ 38 d2c244ccb96c
+dict_values mapping 2 aceb7d5086ae

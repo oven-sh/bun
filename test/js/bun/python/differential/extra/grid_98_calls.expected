@@ -1,0 +1,35 @@
+status: 0
+script: 24f6a9408272402f
+---
+calls () 48 25679ede0f26
+calls (a) 48 2851784c1100
+calls (a, b) 48 35e4d4bec2c0
+calls (a, b=2) 48 8834ebab7ec7
+calls (a=1, b=2) 48 5a16c270c0fc
+calls (*a) 48 988e635c0d02
+calls (**k) 36 cea7734c504b
+calls (a, *b) 36 b07517b72a36
+calls (a, **k) 36 f8fd6f8017a2
+calls (*a, **k) 36 d373bccccb4c
+calls (a, /) 36 8dff83aeeb84
+calls (a, /, b) 36 3967ae318c2d
+calls (a, /, b=2) 36 3c0da8ac715d
+calls (a=1, /) 36 e2da4dac34bc
+calls (a, /, **k) 36 53a62f06a12d
+calls (*, a) 36 2c73ecd71229
+calls (*, a=1) 48 a5190976fc51
+calls (*, a, b) 48 1611f0ae2750
+calls (*, a, b=2) 48 dd02b1b356a6
+calls (a, *, b) 48 5bdfac1f72f7
+calls (a, *, b=2) 48 1c0356377717
+calls (a, b, c) 48 e3ec36e5cf86
+calls (a, b, c, d, e) 48 2596ceafcdd4
+calls (a, /, b, *, c) 36 7e0debf67a73
+calls (a, /, b=2, *c, d, e=5, **k) 36 6f0d7950fd5f
+calls (a, *b, c) 36 bafbcd9de114
+calls (a, *b, c=3) 36 0e21feb52d7a
+calls (a, b=2, *c, d=4, **e) 36 66a8ac0d41fd
+calls (self) 36 8c151d9b2b6b
+calls (self, a) 36 a7fa468e3408
+calls (a, b, /, c, d, *, e, f) 36 614d4631a053
+calls (a=1, *b, c=3, **d) 36 a338d68c81c2

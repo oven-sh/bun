@@ -17,6 +17,8 @@ def write_file(path, text):
 print(os.name, os.sep, os.pathsep, os.linesep == '\n', os.curdir, os.pardir, os.extsep, os.altsep, os.devnull, os.defpath)
 print(os.path.__name__, os.error is OSError, os.stat_result.__name__, os.terminal_size.__name__)
 ABSENT = {'fork', 'forkpty', 'spawnl', 'spawnle', 'spawnlp', 'spawnlpe', 'spawnv', 'spawnve', 'spawnvp', 'spawnvpe', 'P_WAIT', 'P_NOWAIT', 'P_NOWAITO'}
+# CPython has those that the headers knew which it was built with.
+ABSENT |= {'STATX_MNT_ID', 'STATX_DIOALIGN', 'STATX_MNT_ID_UNIQUE', 'STATX_SUBVOL', 'STATX_WRITE_ATOMIC', 'STATX_DIO_READ_ALIGN'}
 print(sorted(n for n in os.__all__ if n not in ABSENT))
 print(sorted(f.__name__ for f in os.supports_dir_fd))
 print(sorted(f.__name__ for f in os.supports_fd))

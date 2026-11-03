@@ -1,0 +1,6 @@
+status: 0
+script: 7fd81f1a17dbc24c
+---
+True 90
+[] [1000]
+[1000, 'maximum recursion depth exceeded']

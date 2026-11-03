@@ -1,0 +1,9 @@
+status: 0
+script: acdb9938d2c67e69
+---
+found True True
+told True start True
+True ['candidates', 'collected', 'duration', 'generation', 'uncollectable']
+True
+disabled [] False
+True [('start', 2), ('stop', 2)]

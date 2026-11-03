@@ -1,0 +1,116 @@
+status: 0
+script: 2ccdd0cec94e6b48
+source: 0db8ffa2ae9bd725
+---
+dict 5 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+set(list) 5 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+set(dict) 0 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+frozenset(dict) 0 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+dict.fromkeys(dict) 0 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+update dict 0 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+union dict 0 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+difference dict 0 []
+difference_update dict 5 []
+intersection dict 5 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+symmetric_difference dict 0 []
+symmetric_difference_update dict 0 []
+isdisjoint dict 1 ['False']
+issuperset dict 5 ['True']
+set(frozendict) 0 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+frozenset(frozendict) 0 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+dict.fromkeys(frozendict) 0 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+update frozendict 0 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+union frozendict 0 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+difference frozendict 0 []
+difference_update frozendict 5 []
+intersection frozendict 5 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+symmetric_difference frozendict 0 []
+symmetric_difference_update frozendict 0 []
+isdisjoint frozendict 1 ['False']
+issuperset frozendict 5 ['True']
+set(set) 0 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+frozenset(set) 0 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+dict.fromkeys(set) 0 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+update set 0 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+union set 0 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+difference set 0 []
+difference_update set 0 []
+intersection set 0 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+symmetric_difference set 0 []
+symmetric_difference_update set 0 []
+isdisjoint set 0 ['False']
+issuperset set 0 ['True']
+set(frozenset) 0 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+frozenset(frozenset) 0 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+dict.fromkeys(frozenset) 0 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+update frozenset 0 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+union frozenset 0 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+difference frozenset 0 []
+difference_update frozenset 0 []
+intersection frozenset 0 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+symmetric_difference frozenset 0 []
+symmetric_difference_update frozenset 0 []
+isdisjoint frozenset 0 ['False']
+issuperset frozenset 0 ['True']
+set(keys) 5 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+frozenset(keys) 5 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+dict.fromkeys(keys) 5 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+update keys 5 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+union keys 5 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+difference keys 5 []
+difference_update keys 5 []
+intersection keys 5 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+symmetric_difference keys 5 []
+symmetric_difference_update keys 5 []
+isdisjoint keys 1 ['False']
+issuperset keys 5 ['True']
+dict(dict) 0 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+d.copy() 0 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+d | d 0 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+{**d} 0 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+update 0 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+s.copy() 0 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+s | s 0 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+s & s 0 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+s - s 0 []
+s ^ s 0 []
+{*s} 0 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+set(subclass of dict) 5 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+set(subclass of set) 0 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+fromkeys of a subclass 5 ['K(0)', 'K(1)', 'K(2)', 'K(3)', 'K(4)']
+[wd[k] for k in wide] => [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+len(wd) => 16
+all(K(i, h) in wd for i, h in enumerate(values)) => True
+K(0, 1) in wd => False
+K(99, 2**32) in wd => False
+len(ws) => 16
+all(k in ws for k in wide) => True
+sorted(k.value for k in ws) => [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+[0, 1, -2, -2, 2147483647, 2147483648, 4294967295, 4294967296, 4294967297, -2147483648, -4294967296, 1152921504606846976, -1152921504606846976, 2305843009213693950, 9223372036854775807, -9223372036854775808]
+len({a: 1, b: 2}) => 2
+len({a, b}) => 2
+b in {a} => False
+b in {a: 1} => False
+  compared a c
+len({a: 1, c: 2}) => 2
+  compared a c
+c in {a} => False
+list(m.values()) => [1, 2, 3, 4, 5, 6, 7]
+m['a'] => 1
+m[K(1, 2**40)] => 3
+m[2**40] => 4
+m[-1] => 5
+m[1.5] => 6
+m[(1, 2)] => 7
+[('a', 1), ('b', 2), (-1, 5), (1.5, 6), ((1, 2), 7), ('c', 8)]
+len(big) => 1001
+big['999'] => 999
+big[K('x', -2**62)] => x
+sum(v for v in big.values() if isinstance(v, int)) => 499500
+list({3, 1, 2}) => [1, 2, 3]
+list({8, 16, 0}) => [8, 16, 0]
+list({2**32, 0, 1}) => [4294967296, 0, 1]
+list({-1, -2, 1}) => [1, -1, -2]
+list(set(range(20, 0, -3))) => [2, 5, 8, 11, 14, 17, 20]
+list({'a': 1, 1: 2, None: 3}) => ['a', 1, None]
+list(dict.fromkeys([1, 'a', 1.0, True, 'a'])) => [1, 'a']

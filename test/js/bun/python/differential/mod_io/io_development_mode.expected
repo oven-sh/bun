@@ -1,0 +1,55 @@
+status: 0
+script: 03aba6efdc7d30c6
+---
+== [] 0
+open encoding LookupError unknown encoding: invalid
+open errors fine
+open both fine fine
+wrapper encoding LookupError unknown encoding: invalid
+wrapper errors fine
+wrapper errors of the wrong type TypeError TextIOWrapper() argument 'errors' must be str or None, not int
+wrapper errors with a null ValueError embedded null character
+reconfigure errors fine
+reconfigure encoding LookupError unknown encoding: invalid
+open encoding LookupError unknown encoding: invalid
+open errors fine
+open both fine fine
+wrapper encoding LookupError unknown encoding: invalid
+wrapper errors fine
+wrapper errors of the wrong type ValueError invalid errors: 1
+wrapper errors with a null fine
+reconfigure errors fine
+reconfigure encoding fine
+str.encode LookupError unknown encoding: invalid
+str.encode errors fine
+bytes.decode fine
+bytes.decode errors fine
+bytearray.decode errors fine
+str() fine
+bytes() fine
+== ['-X', 'dev'] 0
+open encoding LookupError unknown encoding: invalid
+open errors LookupError unknown error handler name 'invalid'
+open both fine fine
+wrapper encoding LookupError unknown encoding: invalid
+wrapper errors LookupError unknown error handler name 'invalid'
+wrapper errors of the wrong type TypeError TextIOWrapper() argument 'errors' must be str or None, not int
+wrapper errors with a null ValueError embedded null character
+reconfigure errors fine
+reconfigure encoding LookupError unknown encoding: invalid
+open encoding LookupError unknown encoding: invalid
+open errors LookupError unknown error handler name 'invalid'
+open both fine fine
+wrapper encoding LookupError unknown encoding: invalid
+wrapper errors LookupError unknown error handler name 'invalid'
+wrapper errors of the wrong type ValueError invalid errors: 1
+wrapper errors with a null ValueError embedded null character
+reconfigure errors fine
+reconfigure encoding fine
+str.encode LookupError unknown encoding: invalid
+str.encode errors LookupError unknown error handler name 'invalid'
+bytes.decode LookupError unknown encoding: invalid
+bytes.decode errors LookupError unknown error handler name 'invalid'
+bytearray.decode errors LookupError unknown error handler name 'invalid'
+str() LookupError unknown error handler name 'invalid'
+bytes() LookupError unknown error handler name 'invalid'

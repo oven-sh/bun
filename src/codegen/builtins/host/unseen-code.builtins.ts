@@ -59,7 +59,6 @@ const seenCodeEntries = [
   "native:NewCppFunction:BunDebugger.cpp:jsFunction_openNodeInspector",
   "native:NewCppFunction:BunDebugger.cpp:jsFunction_postNodeInspectorControl",
   "native:NewCppFunction:BunDebugger.cpp:jsFunction_waitForNodeInspectorConnection",
-  "native:NewCppFunction:BunDebugger.cpp:jsFunction_writeNodeInspectorLine",
   "native:NewCppFunction:BunProcess.cpp:jsFunctionIsStandardOutputStream",
   "native:NewCppFunction:BunProcess.cpp:jsFunctionReportUncaughtException",
   "native:NewCppFunction:ModuleGraph.cpp:jsFunctionIsFrameOfStoppedModuleGraph",

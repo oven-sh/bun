@@ -626,7 +626,8 @@ type Inspected = Awaited<ReturnType<typeof spawnInspected>>;
 interface Frontend {
   /** Sends a command. The promise is its reply. */
   send(method: string, params?: unknown): Promise<any>;
-  notified(method: string): Promise<any>;
+  /** The params of the `nth` notification of `method`. */
+  notified(method: string, nth?: number): Promise<any>;
   close(): Promise<void>;
 }
 
@@ -707,6 +708,7 @@ async function spawnInspected(
   const frontends: Frontend[] = [];
   return {
     proc,
+    isNode: exe !== bunExe(),
     dir: String(dir),
     wsUrl,
     frontends,
@@ -743,24 +745,29 @@ async function attachFrontend(inspected: Inspected, url: string = inspected.wsUr
   const opened = Promise.withResolvers<void>();
   const closed = Promise.withResolvers<void>();
   const replies = new Map<number, PromiseWithResolvers<any>>();
-  const notifications = new Map<string, PromiseWithResolvers<any>>();
+  const notifications = new Map<string, PromiseWithResolvers<any>[]>();
+  const received = new Map<string, number>();
+  let lostError: Error | undefined;
   let nextId = 1;
 
   // A wait that nobody is in when the socket is lost must not fail the test.
   const watched = <T>(resolvers: PromiseWithResolvers<T>) => {
     resolvers.promise.catch(() => {});
+    if (lostError) resolvers.reject(lostError);
     return resolvers;
   };
-  const notification = (method: string) => {
-    let entry = notifications.get(method);
-    if (!entry) notifications.set(method, (entry = watched(Promise.withResolvers())));
-    return entry;
+  // The nth notification of a method. The first to ask for it makes it: a wait, or the message.
+  const notification = (method: string, nth: number) => {
+    let entries = notifications.get(method);
+    if (!entries) notifications.set(method, (entries = []));
+    while (entries.length < nth) entries.push(watched(Promise.withResolvers()));
+    return entries[nth - 1];
   };
   const lost = (why: string) => {
-    const error = new Error(`${why}; stderr: ${inspected.stderrEnd()}`);
+    const error = (lostError ??= new Error(`${why}; stderr: ${inspected.stderrEnd()}`));
     opened.reject(error);
     for (const reply of replies.values()) reply.reject(error);
-    for (const entry of notifications.values()) entry.reject(error);
+    for (const entries of notifications.values()) for (const entry of entries) entry.reject(error);
   };
 
   watched(opened);
@@ -772,8 +779,10 @@ async function attachFrontend(inspected: Inspected, url: string = inspected.wsUr
   };
   ws.onmessage = event => {
     const message = JSON.parse(String(event.data));
-    if (message.id != null) replies.get(message.id)?.resolve(message);
-    else notification(message.method).resolve(message.params);
+    if (message.id != null) return void replies.get(message.id)?.resolve(message);
+    const nth = (received.get(message.method) ?? 0) + 1;
+    received.set(message.method, nth);
+    notification(message.method, nth).resolve(message.params);
   };
   inspected.proc.exited.then(code => lost(`the child exited with code ${code}`));
   await opened.promise;
@@ -786,7 +795,7 @@ async function attachFrontend(inspected: Inspected, url: string = inspected.wsUr
       ws.send(JSON.stringify({ id, method, params }));
       return reply.promise;
     },
-    notified: (method: string) => notification(method).promise,
+    notified: (method: string, nth = 1) => notification(method, nth).promise,
     async close() {
       ws.close();
       await closed.promise;
@@ -797,6 +806,17 @@ async function attachFrontend(inspected: Inspected, url: string = inspected.wsUr
 }
 
 const evaluate = (expression: string) => ["Runtime.evaluate", { expression }] as const;
+
+// Node handles what a client sends before the call in an interrupt, and the
+// call then waits for a new resume. So a client of Node waits for the notice
+// that the program is in its nth wait before it sends anything for that wait:
+// https://github.com/nodejs/node/blob/v26.3.0/src/inspector/runtime_agent.cc#L25-L43
+// Bun keeps what the client sent (a case below pins that), and sends no notice.
+async function inTheWait(inspected: Inspected, frontend: Frontend, nth = 1) {
+  if (!inspected.isNode) return;
+  if (nth === 1) await frontend.send("NodeRuntime.enable");
+  await frontend.notified("NodeRuntime.waitingForDebugger", nth);
+}
 
 // Linux: "S" is a thread that sleeps. A wait that spins never shows it.
 async function sleeps(pid: number) {
@@ -836,6 +856,7 @@ finish({ evaluatedByClient: globalThis.evaluatedByClient });
       );
 
       const frontend = await attachFrontend(inspected);
+      await inTheWait(inspected, frontend);
       // The reply can only come from inside the call: the program is still in
       // it, and it stays there until the client resumes it below.
       await frontend.send(...evaluate("globalThis.evaluatedByClient = 'inside the call: ' + globalThis.insideTheCall"));
@@ -890,6 +911,7 @@ finish({ beforeItReturned: order.slice(0, returned), afterItReturned: order.slic
 `);
 
     const frontend = await attachFrontend(inspected);
+    await inTheWait(inspected, frontend);
     frontend.send("Runtime.runIfWaitingForDebugger");
 
     expect(await inspected.finished()).toEqual({
@@ -918,6 +940,7 @@ finish({ afterTheStatement });
     );
 
     const first = await attachFrontend(inspected);
+    await inTheWait(inspected, first);
     await first.send("Debugger.enable");
     if (isLinux) await sleeps(inspected.proc.pid);
     await first.close();
@@ -951,6 +974,7 @@ finish({ afterTheStatement });
     // One command at a time: the replies to commands that two frontends send
     // at the same moment are not told apart.
     const first = await attachFrontend(inspected);
+    await inTheWait(inspected, first);
     await first.send("Debugger.enable");
     const second = await attachFrontend(inspected);
     await second.send("Runtime.enable");
@@ -974,6 +998,7 @@ finish();
 `);
 
     const frontend = await attachFrontend(inspected);
+    await inTheWait(inspected, frontend);
     frontend.send("Runtime.runIfWaitingForDebugger");
     await frontend.close();
 
@@ -994,6 +1019,7 @@ finish({ evaluated: globalThis.evaluated });
     const gate = join(inspected.dir, "gate");
 
     const first = await attachFrontend(inspected);
+    await inTheWait(inspected, first);
     await first.send("Runtime.enable");
     const began = first.notified("Runtime.consoleAPICalled");
     first.send(
@@ -1027,6 +1053,7 @@ finish({ evaluated: globalThis.evaluated });
 `);
 
     const frontend = await attachFrontend(inspected);
+    await inTheWait(inspected, frontend);
     await frontend.send("Runtime.enable");
     const began = frontend.notified("Runtime.consoleAPICalled");
     frontend.send(
@@ -1057,6 +1084,7 @@ finish({ evaluatedByClient: globalThis.evaluatedByClient });
 `);
 
       const first = await attachFrontend(inspected);
+      await inTheWait(inspected, first);
       first.send(
         ...evaluate(
           "globalThis.inspectorOfTheProgram.close(); globalThis.inspectorOfTheProgram.open(0, '127.0.0.1', true)",
@@ -1089,6 +1117,7 @@ finish({ returned: withBreakpoint(), evaluatedByClient: globalThis.evaluatedByCl
     );
 
     const frontend = await attachFrontend(inspected);
+    await inTheWait(inspected, frontend);
     await frontend.send("Debugger.enable");
     await frontend.send("Debugger.setBreakpointByUrl", {
       urlRegex: "target\\.mjs$",
@@ -1099,6 +1128,7 @@ finish({ returned: withBreakpoint(), evaluatedByClient: globalThis.evaluatedByCl
     frontend.send("Runtime.runIfWaitingForDebugger");
 
     await inspected.marked(2);
+    await inTheWait(inspected, frontend, 2);
     await frontend.send(...evaluate("globalThis.evaluatedByClient = 'inside the call: ' + globalThis.insideTheCall"));
     frontend.send("Runtime.runIfWaitingForDebugger");
 
@@ -1135,6 +1165,7 @@ debugger;
     );
 
     const frontend = await attachFrontend(inspected);
+    await inTheWait(inspected, frontend);
     await frontend.send("Runtime.enable");
     await frontend.send("Debugger.enable");
     const paused = frontend.notified("Debugger.paused");
@@ -1182,6 +1213,7 @@ finish({ armedAtThePause: globalThis.armedAtThePause });
     );
 
     const first = await attachFrontend(inspected);
+    await inTheWait(inspected, first);
     await first.send("Debugger.enable");
     const paused = first.notified("Debugger.paused");
     await first.send("Runtime.runIfWaitingForDebugger");

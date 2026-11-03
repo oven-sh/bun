@@ -837,7 +837,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionReportNodeInspectorServerStarted, (JSGlobalOb
 
 extern "C" bool Debugger__startNodeInspectorServer(BunString* url, bool waitForConnection);
 extern "C" void Debugger__waitForNodeInspectorConnection();
-extern "C" bool Debugger__writeNodeInspectorLine(const BunString* line);
+extern "C" void Debugger__writeNodeInspectorLine(const BunString* line);
 extern "C" void Debugger__abandonNodeInspectorWait();
 
 // Posts a control message to the node-inspector server's debugger thread
@@ -957,6 +957,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_openNodeInspector, (JSGlobalObject * globalO
         return {};
     }
 
+#if !OS(WINDOWS)
+    // Not process.stderr: a wait that follows does not flush its queue. Node prints from native code too: https://github.com/nodejs/node/blob/v26.3.0/src/inspector_socket_server.cc#L233-L254
+    String listening = makeString("Debugger listening on "_s, resolvedUrl, '\n');
+    BunString listeningLine = Bun::toString(listening);
+    Debugger__writeNodeInspectorLine(&listeningLine);
+#endif
+
     return JSValue::encode(jsString(vm, resolvedUrl));
 }
 
@@ -964,19 +971,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_waitForNodeInspectorConnection, (JSGlobalObj
 {
     Debugger__waitForNodeInspectorConnection();
     return JSValue::encode(jsUndefined());
-}
-
-// Writes a line of inspector.open() to stderr. False: the caller writes it.
-JSC_DEFINE_HOST_FUNCTION(jsFunction_writeNodeInspectorLine, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    String line = callFrame->argument(0).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    BunString lineString = Bun::toString(line);
-    return JSValue::encode(jsBoolean(Debugger__writeNodeInspectorLine(&lineString)));
 }
 
 // Forwards a control message (close, breakpoint forwarded from the in-process

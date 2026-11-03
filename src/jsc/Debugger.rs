@@ -727,29 +727,21 @@ pub fn did_run_while_paused() {
 }
 
 // HOST_EXPORT(Debugger__writeNodeInspectorLine, c)
-pub fn write_node_inspector_line(line: &BunString) -> bool {
+pub fn write_node_inspector_line(line: &BunString) {
     #[cfg(windows)]
-    {
-        let _ = line;
-        false
-    }
+    let _ = line;
     #[cfg(not(windows))]
     {
         let bytes = line.to_owned_slice();
-        let written = match bun_sys::write(bun_core::Fd::stderr(), &bytes) {
-            Ok(written) => written,
-            Err(err) if err.is_retry() => 0,
-            Err(_) => return true,
-        };
+        let written = bun_sys::write(bun_core::Fd::stderr(), &bytes).unwrap_or(0);
         if written == bytes.len() {
-            return true;
+            return;
         }
         // fd 2 is full and a wait runs no event loop, so a thread writes the rest when the reader has made room.
         // SAFETY: the thread owns the bytes of the line and holds no state of a VM.
-        std::thread::Builder::new()
+        let _ = std::thread::Builder::new()
             .name("InspectorLine".to_owned())
-            .spawn(move || write_when_stderr_has_room(&bytes[written..]))
-            .is_ok()
+            .spawn(move || write_when_stderr_has_room(&bytes[written..]));
     }
 }
 
@@ -769,6 +761,7 @@ fn write_when_stderr_has_room(mut rest: &[u8]) {
         match bun_sys::write(fd, rest) {
             Ok(written) => rest = &rest[written..],
             Err(err) if err.is_retry() => {}
+            // Node ignores a failed write of this line.
             Err(_) => return,
         }
     }

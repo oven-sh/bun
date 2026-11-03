@@ -558,7 +558,6 @@ export default b.declarations(
       "jsFunction_closeNodeInspector",
       "jsFunction_postNodeInspectorControl",
       "jsFunction_waitForNodeInspectorConnection",
-      "jsFunction_writeNodeInspectorLine",
     ),
   ),
 

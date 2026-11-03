@@ -1598,15 +1598,135 @@ console.log("survived", require("./late.js"));`,
       expect(await run(preload, true, undefined, mainFile)).toEqual(expected);
     });
 
+    test.each([
+      ["its arguments", `original.apply(this, args)`],
+      ["process.argv[1]", `original.call(this, process.argv[1])`],
+    ])("to a wrapper that calls the original with %s, which starts the main module", async (_, call) => {
+      const preload = `
+        const Module = require("node:module");
+        const original = Module.runMain;
+        Object.defineProperty(Module, "runMain", {
+          value(...args) {
+            console.log("patch called");
+            return ${call};
+          },
+          ${data},
+        });
+      `;
+      const expected = { stdout: "patch called\nmain ran true\n", stderr: "", exitCode: 0 };
+      expect(await run(preload, false, `console.log("main ran", require.main === module);`)).toEqual(expected);
+      expect(await run(preload, false, `console.log("main ran", import.meta.main);`, "main.mjs")).toEqual(expected);
+    });
+
+    // Node.js reports what the main script throws. Bun takes the promise that the wrapper returns for the entry
+    // point's, and nothing looks at the load that the original starts later: https://github.com/oven-sh/bun/pull/45358
+    test.failing(
+      "to a wrapper that calls the original after an await, which reports what the main script throws",
+      async () => {
+        const preload = `
+          const Module = require("node:module");
+          const original = Module.runMain;
+          Object.defineProperty(Module, "runMain", {
+            async value(...args) {
+              await null;
+              return original.apply(this, args);
+            },
+            ${data},
+          });
+        `;
+        const { stdout, stderr, exitCode } = await run(preload, false, `throw new Error("from main");`);
+        expect(stderr).toContain("error: from main\n");
+        expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+      },
+    );
+
+    // Node.js reads Module.runMain right after the last --require module, in the same tick, and before it loads an
+    // --import module. Bun waits for each preload, of either kind, and then reads the property.
+    test.each([
+      [
+        "an --import preload with an assignment",
+        ["--import", "./preload.mjs"],
+        { "preload.mjs": `import Module from "node:module"; Module.runMain = () => console.log("patch called");` },
+      ],
+      [
+        "an --import preload with Object.defineProperty",
+        ["--import", "./preload.mjs"],
+        {
+          "preload.mjs": `import Module from "node:module";
+            Object.defineProperty(Module, "runMain", { value: () => console.log("patch called"), ${data} });`,
+        },
+      ],
+      [
+        "a preload in a later tick",
+        ["--require", "./preload.cjs"],
+        {
+          "preload.cjs": `${patch}
+            process.nextTick(() => Object.defineProperty(Module, "runMain", { value: patch, ${data} }));`,
+        },
+      ],
+    ])("by %s, where Node.js starts the main script", async (_, args, files) => {
+      expect(await spawnIn({ ...files, "main.cjs": `console.log("main ran");` }, [...args, "./main.cjs"])).toEqual({
+        stdout: "patch called\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // A Worker that is told to stop while its preloads run starts nothing, as in Node.js.
+    describe("is not called in a Worker", () => {
+      const main = { "main.cjs": `console.log("main ran");` };
+
+      test.each([
+        ["an assignment", `Module.runMain = patch;`],
+        ["Object.defineProperty and a value", `Object.defineProperty(Module, "runMain", { value: patch, ${data} });`],
+        [
+          "Object.defineProperty and a getter",
+          `Object.defineProperty(Module, "runMain", { get: () => (console.log("getter read"), patch) });`,
+        ],
+      ])("whose preload exits after %s", async (_, install) => {
+        const files = {
+          ...main,
+          "preload.cjs": `${patch} ${install} process.exit(7);`,
+          "worker.cjs": `
+            const { Worker } = require("node:worker_threads");
+            const worker = new Worker(__dirname + "/main.cjs", { preload: [__dirname + "/preload.cjs"] });
+            worker.on("exit", code => console.log("exit", code));
+          `,
+        };
+        expect(await spawnIn(files, ["./worker.cjs"])).toEqual({ stdout: "exit 7\n", stderr: "", exitCode: 0 });
+      });
+
+      test("that is terminated while its preload runs", async () => {
+        const files = {
+          ...main,
+          "preload.cjs": `${patch} Module.runMain = patch;
+            require("node:worker_threads").parentPort.postMessage("in the preload");
+            for (;;);`,
+          "worker.cjs": `
+            const { Worker } = require("node:worker_threads");
+            const worker = new Worker(__dirname + "/main.cjs", { preload: [__dirname + "/preload.cjs"] });
+            worker.on("message", () => worker.terminate());
+            worker.on("exit", code => console.log("exit", code));
+          `,
+        };
+        expect(await spawnIn(files, ["./worker.cjs"])).toEqual({ stdout: "exit 1\n", stderr: "", exitCode: 0 });
+      });
+    });
+
     // Node.js starts only a main script that is a file with Module.runMain.
     describe("is not called for text", () => {
-      const files = { "preload.cjs": `${patch} Module.runMain = patch;` };
+      const files = {
+        "preload.cjs": `${patch} Module.runMain = patch;`,
+        "job.cjs": `module.exports = { scheduled: () => console.log("text ran") };`,
+      };
       const expected = { stdout: "text ran\n", stderr: "", exitCode: 0 };
 
       test.each([
         ["--eval", ["--eval", `console.log("text ran")`], undefined],
         ["--print", ["--print", `"text ran"`], undefined],
         ["stdin", ["-"], Buffer.from(`console.log("text ran")`)],
+        // Bun writes the script of a cron run, which imports the file.
+        ["a cron run", ["--cron-title=job", "--cron-period=* * * * *", "./job.cjs"], undefined],
       ])("of %s", async (_, args, stdin) => {
         expect(await spawnIn(files, ["--require", "./preload.cjs", ...args], stdin)).toEqual(expected);
       });

@@ -203,6 +203,66 @@ it(
   timeout,
 );
 
+it(
+  "should call a preload's Module.runMain for the first load and not for a reload",
+  async () => {
+    const root = hotRunnerRoot;
+    const preload = join(cwd, "hot-run-main-preload.cjs");
+    writeFileSync(
+      preload,
+      `const Module = require("node:module");
+const original = Module.runMain;
+Object.defineProperty(Module, "runMain", {
+  value(...args) {
+    console.write("[#!runMain] called\\n");
+    return original.apply(this, args);
+  },
+  writable: true,
+  enumerable: true,
+  configurable: true,
+});
+`,
+    );
+    try {
+      var runner = spawn({
+        cmd: [bunExe(), `--preload=${preload}`, "--hot", "run", root],
+        env: bunEnv,
+        cwd,
+        stdout: "pipe",
+        stderr: "inherit",
+        stdin: "ignore",
+      });
+
+      let calls = 0;
+      let loads = 0;
+      let str = "";
+      for await (const chunk of runner.stdout) {
+        str += new TextDecoder().decode(chunk);
+        const lines = str.split("\n");
+        // A line that is not complete yet waits for the next chunk.
+        str = lines.pop()!;
+        let any = false;
+        for (const line of lines) {
+          if (line.includes("[#!runMain]")) calls++;
+          if (!line.includes("[#!root]")) continue;
+          expect(line).toContain(`[#!root] Reloaded: ${++loads}`);
+          any = true;
+        }
+        if (loads >= 3) break;
+        if (any) writeFileSync(root, readFileSync(root, "utf-8"));
+      }
+
+      expect({ calls, loads }).toEqual({ calls: 1, loads: 3 });
+    } finally {
+      // @ts-ignore
+      runner?.unref?.();
+      // @ts-ignore
+      runner?.kill?.(9);
+    }
+  },
+  timeout,
+);
+
 it.each(["hot-file-loader.file", "hot-file-loader.css"])(
   "should hot reload when `%s` is overwritten",
   async (targetFilename: string) => {

@@ -166,6 +166,31 @@ describe.skipIf(!supported)("bun run --aot", () => {
     expect(exitCode).toBe(1);
   });
 
+  test.concurrent("a preload's Module.runMain starts the entry point", async () => {
+    const { stdout, exitCode } = await expectSameAsBunRun(
+      {
+        "entry.ts": `console.log("the entry point runs");`,
+        "preload.ts": `
+          import Module from "node:module";
+          const original = Module.runMain;
+          Object.defineProperty(Module, "runMain", {
+            value(this: typeof Module, main?: string) {
+              console.log("the replacement runs", this === Module, arguments.length, typeof main);
+              return original.call(this, main);
+            },
+            writable: true,
+            enumerable: true,
+            configurable: true,
+          });
+        `,
+      },
+      "entry.ts",
+      { flags: ["--preload=./app/preload.ts"] },
+    );
+    expect(stdout).toBe("the replacement runs true 1 string\nthe entry point runs\n");
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent.each([
     [
       "the entry point",

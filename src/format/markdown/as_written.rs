@@ -134,9 +134,9 @@ const STOPS_CODE: [bool; 256] = table(b"`|", true);
 const STOPS_DESTINATION: [bool; 256] = table(b" ()\\&<|{", true);
 const ENDS_DESTINATION: [bool; 256] = table(b" ()", true);
 const STOPS_TITLE: [bool; 256] = table(b"\"'\\&|", true);
-/// In a label: what ends it, and what isn't printed as it's written.
+/// In a label: what ends it, what isn't printed as it's written, and what starts something if the label isn't defined.
 const STOPS_LABEL: [bool; 256] = {
-    let mut table = table(b"[]\\&", true);
+    let mut table = table(b"[]\\&`<{", true);
     let mut index = 128;
     while index < 256 {
         table[index] = true;

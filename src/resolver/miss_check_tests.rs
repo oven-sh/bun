@@ -1023,6 +1023,27 @@ fn an_asker_with_its_own_tsconfig_leaves_a_new_tsconfig_to_the_next_asker() {
 }
 
 #[test]
+fn a_slot_filled_without_config_files_is_kept_by_an_asker_that_reads_them() {
+    with_project("filled-without-config", |made| {
+        made.write("app/package.json", r#"{ "name": "app" }"#);
+        made.write("app/tsconfig.json", r#"{ "compilerOptions": {} }"#);
+        // As the resolver of an executable that does not load these files: it fills the slot first.
+        let mut runtime = resolver();
+        runtime.opts.load_package_json = false;
+        runtime.opts.load_tsconfig_json = false;
+        let filled = runtime
+            .read_dir_info(&made.path("app"))
+            .expect("readable")
+            .expect("a directory");
+        assert!(filled.package_json().is_none() && filled.tsconfig_json().is_none());
+        // A build that reads them checks the slot and takes it as it is.
+        let kept = made.checked_info("app");
+        assert_eq!(slot(kept), slot(filled));
+        assert!(kept.package_json().is_none() && kept.tsconfig_json().is_none());
+    });
+}
+
+#[test]
 fn an_asker_that_preserves_symlinks_leaves_a_new_real_path_to_the_next_asker() {
     with_project("preserved-links", |made| {
         made.write("releases/1/a.js", "");

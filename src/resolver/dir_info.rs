@@ -508,6 +508,10 @@ bitflags::bitflags! {
         const HasPackageJsonFile = 1 << 3;
         /// A `tsconfig.json` or `jsconfig.json` file was listed, whether or not it loaded.
         const HasTsconfigFile   = 1 << 4;
+        /// The resolver that filled the slot reads `package.json` files. One that does not leaves no fact about that file.
+        const ReadsPackageJson  = 1 << 5;
+        /// The same for `tsconfig.json` and `jsconfig.json`.
+        const ReadsTsconfig     = 1 << 6;
     }
 }
 impl Flags {

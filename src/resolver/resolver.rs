@@ -5255,13 +5255,18 @@ impl<'a> Resolver<'a> {
         {
             return true;
         }
+        // A slot that a resolver filled without reading config files stays as that resolver left it, also for one that reads them.
         if self.opts.load_package_json
+            && slot.flags.contains(DirInfo::Flag::ReadsPackageJson)
             && slot.flags.contains(DirInfo::Flag::HasPackageJsonFile)
                 != (kind_of(b"package.json") == Some(EntryKind::File))
         {
             return true;
         }
-        if self.opts.load_tsconfig_json && self.opts.tsconfig_override.is_none() {
+        if self.opts.load_tsconfig_json
+            && self.opts.tsconfig_override.is_none()
+            && slot.flags.contains(DirInfo::Flag::ReadsTsconfig)
+        {
             let listed = self.listed_tsconfig_name(generation, entries);
             if slot.flags.contains(DirInfo::Flag::HasTsconfigFile) != listed.is_some() {
                 return true;
@@ -7581,6 +7586,7 @@ impl<'a> Resolver<'a> {
 
         // Record if this directory has a package.json file
         if self.opts.load_package_json {
+            info.flags.insert(DirInfo::Flag::ReadsPackageJson);
             if let Some(lookup) = entries!().get_comptime_query(b"package.json") {
                 if lookup
                     .entry()
@@ -7666,6 +7672,8 @@ impl<'a> Resolver<'a> {
 
         // Record if this directory has a tsconfig.json or jsconfig.json file
         let mut tsconfig_error = None;
+        info.flags
+            .set(DirInfo::Flag::ReadsTsconfig, self.opts.load_tsconfig_json);
         if self.opts.load_tsconfig_json
             && let Some(name) = self.listed_tsconfig_name(generation, entries!())
         {

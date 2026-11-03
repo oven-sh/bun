@@ -419,7 +419,7 @@ struct LoadTimeReads {
     dependents: Vec<u32>,
     /// The live `export *` parts that print `__reExport(exports_file, ...)`, by file and part.
     re_exports: Vec<ReExport>,
-    /// `(file, part id)`, by file: the part prints `exports_file.name` for a name that only `__reExport` gives.
+    /// `(file, part id)`: the part prints `exports_file.name` for a name that only `__reExport` gives.
     run_time_reads: Vec<(IndexInt, u32)>,
     /// Scratch for `is_broken_by`. Per part of the chunk that is not hoisted: the index of its run.
     position: Vec<u32>,
@@ -427,7 +427,7 @@ struct LoadTimeReads {
 }
 
 /// `__reExport(exports_file, from)` copies the names that `from` has when the part runs.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy)]
 struct ReExport {
     file: IndexInt,
     /// The id of the part.
@@ -439,13 +439,45 @@ struct ReExport {
 impl LoadTimeReads {
     fn new(c: &LinkerContext) -> LoadTimeReads {
         let all_parts = c.graph.ast.items_parts();
+        let all_records = c.graph.ast.items_import_records();
+        let export_stars = c.graph.ast.items_export_star_import_records();
         let flags = c.graph.meta.items_flags();
         let css = c.graph.ast.items_css();
         let mut first_part_id: Vec<u32> = Vec::with_capacity(all_parts.len());
         let mut file_of_part: Vec<IndexInt> = Vec::new();
+        let mut re_exports: Vec<ReExport> = Vec::new();
         for (file, parts) in all_parts.iter().enumerate() {
-            first_part_id.push(file_of_part.len() as u32);
+            let first = file_of_part.len() as u32;
+            first_part_id.push(first);
             file_of_part.resize(file_of_part.len() + parts.len(), file as IndexInt);
+
+            let records = all_records[file].as_slice();
+            if !export_stars[file]
+                .iter()
+                .any(|&record| re_exports_at_run_time(&records[record as usize]))
+                || !c.graph.files_live.is_set(file)
+            {
+                continue;
+            }
+            for (part_index, part) in parts.as_slice().iter().enumerate() {
+                if !c.graph.parts_live[file].is_set(part_index) {
+                    continue;
+                }
+                for stmt in part.stmts.slice() {
+                    if let StmtData::SExportStar(star) = &stmt.data
+                        && star.alias.is_none()
+                        && re_exports_at_run_time(&records[star.import_record_index as usize])
+                    {
+                        re_exports.push(ReExport {
+                            file: file as IndexInt,
+                            part: first + part_index as u32,
+                            from: records[star.import_record_index as usize]
+                                .source_index
+                                .value(),
+                        });
+                    }
+                }
+            }
         }
         let parts_len = file_of_part.len();
 
@@ -462,42 +494,6 @@ impl LoadTimeReads {
                 }
             }
         };
-
-        let mut re_exports: Vec<ReExport> = Vec::new();
-        let all_records = c.graph.ast.items_import_records();
-        let export_stars = c.graph.ast.items_export_star_import_records();
-        for source_index in c.graph.reachable_files.iter() {
-            let file = source_index.get() as usize;
-            let records = all_records[file].as_slice();
-            if !c.graph.files_live.is_set(file)
-                || css[file].is_some()
-                || !export_stars[file]
-                    .iter()
-                    .any(|&record| re_exports_at_run_time(&records[record as usize]))
-            {
-                continue;
-            }
-            for (part_index, part) in all_parts[file].as_slice().iter().enumerate() {
-                if !c.graph.parts_live[file].is_set(part_index) {
-                    continue;
-                }
-                for stmt in part.stmts.slice() {
-                    if let StmtData::SExportStar(star) = &stmt.data
-                        && star.alias.is_none()
-                        && re_exports_at_run_time(&records[star.import_record_index as usize])
-                    {
-                        re_exports.push(ReExport {
-                            file: file as IndexInt,
-                            part: first_part_id[file] + part_index as u32,
-                            from: records[star.import_record_index as usize]
-                                .source_index
-                                .value(),
-                        });
-                    }
-                }
-            }
-        }
-        re_exports.sort_unstable();
 
         let exports_refs = c.graph.ast.items_exports_ref();
         let exports_kinds = c.graph.ast.items_exports_kind();
@@ -557,7 +553,6 @@ impl LoadTimeReads {
                 }
             }
         });
-        run_time_reads.sort_unstable();
 
         LoadTimeReads {
             first_part_id,
@@ -641,15 +636,12 @@ impl LoadTimeReads {
         });
         if !is_broken && !self.run_time_reads.is_empty() {
             visited.fill(false);
-            'files: for (file, run_index) in self.first_run_time_names(c, runs) {
-                let start = self
-                    .run_time_reads
-                    .partition_point(|&(other, _)| other < file);
-                for &(other, reader) in &self.run_time_reads[start..] {
-                    if other != file {
-                        break;
-                    }
-                    if reads_early(&mut visited, &[reader], run_index, file) {
+            let mut first = self.first_run_time_names(c, runs);
+            // The latest first, as above.
+            'files: while let Some(latest) = (0..first.len()).max_by_key(|&index| first[index].1) {
+                let (file, run_index) = first.swap_remove(latest);
+                for &(other, reader) in &self.run_time_reads {
+                    if other == file && reads_early(&mut visited, &[reader], run_index, file) {
                         is_broken = true;
                         break 'files;
                     }
@@ -668,7 +660,7 @@ impl LoadTimeReads {
     }
 
     /// Per file that prints a `__reExport(exports_file, ...)` in `runs`: the index of the run where `exports_file`
-    /// first has a run-time name, `u32::MAX` for never. The latest first.
+    /// first has a run-time name, `u32::MAX` for never.
     fn first_run_time_names(&self, c: &LinkerContext, runs: &[PartRun]) -> Vec<(IndexInt, u32)> {
         let flags = c.graph.meta.items_flags();
         // A wrapped file runs when it is called.
@@ -705,7 +697,6 @@ impl LoadTimeReads {
                 }
             }
         }
-        first.sort_unstable_by_key(|&(_, since)| core::cmp::Reverse(since));
         first
     }
 }

@@ -102,9 +102,9 @@ pub(crate) fn report_all_errors<'a, R: Rule>(
         let left_index = index_in_all.get(i - 1).copied().unwrap_or(0);
         let right_index = index_in_all.get(i).copied().unwrap_or(0);
 
-        let first_unordered_dependent = in_cycle.as_ref().and_then(|in_cycle| {
-            first_unordered_node_dependent_on(nodes, in_cycle, i)
-        });
+        let first_unordered_dependent = in_cycle
+            .as_ref()
+            .and_then(|in_cycle| first_unordered_node_dependent_on(nodes, in_cycle, i));
 
         let is_out_of_order = first_unordered_dependent.is_some()
             || left_index > right_index
@@ -114,7 +114,10 @@ pub(crate) fn report_all_errors<'a, R: Rule>(
                     .and_then(|it| it.get(i))
                     .is_some_and(|&right_without_disabled| left_index >= right_without_disabled));
         let order_message = is_out_of_order.then(|| {
-            match (first_unordered_dependent, messages.unexpected_dependency_order) {
+            match (
+                first_unordered_dependent,
+                messages.unexpected_dependency_order,
+            ) {
                 (Some(_), Some(message)) => message,
                 _ if left.group_index == right.group_index => messages.unexpected_order,
                 _ => messages.unexpected_group_order,
@@ -133,7 +136,9 @@ pub(crate) fn report_all_errors<'a, R: Rule>(
                     .data("leftGroup", config.group_name(left.group).to_owned());
             }
             if let Some(dependent) = first_unordered_dependent
-                && messages.unexpected_dependency_order.is_some_and(|it| std::ptr::eq(message, it))
+                && messages
+                    .unexpected_dependency_order
+                    .is_some_and(|it| std::ptr::eq(message, it))
             {
                 report = report.data("nodeDependentOnRight", dependent.name.clone());
             }

@@ -210,7 +210,10 @@ fn find_group_named(config: &Configuration, modifiers: &[&str], selector: &str) 
 fn is_joined_name(name: &str, modifiers: &[&str], selector: &str) -> bool {
     let mut rest = name;
     for modifier in modifiers {
-        let Some(after) = rest.strip_prefix(modifier).and_then(|it| it.strip_prefix('-')) else {
+        let Some(after) = rest
+            .strip_prefix(modifier)
+            .and_then(|it| it.strip_prefix('-'))
+        else {
             return false;
         };
         rest = after;

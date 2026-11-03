@@ -130,11 +130,18 @@ fn sort_partition_by_groups<'a>(
 ) {
     let is_excluded = |node: &SortingNode<'a>| ignore_eslint_disabled && node.is_eslint_disabled;
     sorted.clear();
-    sorted.extend(order.iter().copied().filter(|&i| !is_excluded(&nodes[i as usize])));
+    sorted.extend(
+        order
+            .iter()
+            .copied()
+            .filter(|&i| !is_excluded(&nodes[i as usize])),
+    );
     // `nodesByNonIgnoredGroupIndex` in the order of the group index: a stable sort by it keeps the nodes of a
     // group in their source order.
     sort_indices(sorted, &mut |a, b| {
-        nodes[a as usize].group_index.cmp(&nodes[b as usize].group_index)
+        nodes[a as usize]
+            .group_index
+            .cmp(&nodes[b as usize].group_index)
     });
     let mut start = 0;
     while start < sorted.len() {

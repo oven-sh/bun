@@ -21,7 +21,12 @@ pub(crate) fn should_partition<'a, 'c>(
     token_to_ignore_before: Option<&str>,
 ) -> Result<bool, &'c str> {
     if !matches!(options.partition_by_comment, PartitionByComment::Off)
-        && has_partition_comment(file, &options.partition_by_comment, node, token_to_ignore_before)?
+        && has_partition_comment(
+            file,
+            &options.partition_by_comment,
+            node,
+            token_to_ignore_before,
+        )?
     {
         return Ok(true);
     }
@@ -141,9 +146,10 @@ pub(crate) fn is_partition_comment<'c>(
     match matcher {
         CommentMatcher::Never => Ok(false),
         CommentMatcher::Always => Ok(true),
-        CommentMatcher::Patterns(patterns) => {
-            matches(strings::trim_js_whitespace(comment.comment_value()), patterns)
-        }
+        CommentMatcher::Patterns(patterns) => matches(
+            strings::trim_js_whitespace(comment.comment_value()),
+            patterns,
+        ),
     }
 }
 

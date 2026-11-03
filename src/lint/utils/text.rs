@@ -432,10 +432,15 @@ mod natural_orderby {
         let year = if month <= 2.0 { year - 1.0 } else { year };
         let era = (year / 400.0).floor();
         let year_of_era = year - era * 400.0;
-        let month_index = if month > 2.0 { month - 3.0 } else { month + 9.0 };
+        let month_index = if month > 2.0 {
+            month - 3.0
+        } else {
+            month + 9.0
+        };
         let day_of_year = (153.0 * month_index + 2.0).div_euclid(5.0) + day - 1.0;
-        let day_of_era =
-            year_of_era * 365.0 + (year_of_era / 4.0).floor() - (year_of_era / 100.0).floor() + day_of_year;
+        let day_of_era = year_of_era * 365.0 + (year_of_era / 4.0).floor()
+            - (year_of_era / 100.0).floor()
+            + day_of_year;
         era * 146_097.0 + day_of_era - 719_468.0
     }
 
@@ -448,7 +453,10 @@ mod natural_orderby {
         let mut chunks = Vec::with_capacity(pieces.len());
         for (index, piece) in pieces.iter().enumerate() {
             let previous = index.checked_sub(1).and_then(|i| pieces.get(i)).copied();
-            chunks.push(Chunk { text: normalize(piece), number: numeric_chunk(piece, previous) });
+            chunks.push(Chunk {
+                text: normalize(piece),
+                number: numeric_chunk(piece, previous),
+            });
         }
         chunks
     }
@@ -494,11 +502,17 @@ mod natural_orderby {
         {
             return Some(text.len());
         }
-        let digits = |from: usize| text.get(from..).map_or(0, |rest| rest.iter().take_while(|c| c.is_ascii_digit()).count());
+        let digits = |from: usize| {
+            text.get(from..).map_or(0, |rest| {
+                rest.iter().take_while(|c| c.is_ascii_digit()).count()
+            })
+        };
         let mut at = usize::from(matches!(text.first(), Some(b'+' | b'-')));
         let integer = digits(at);
         at += integer;
-        if text.get(at) == Some(&b'.') && (integer > 0 || text.get(at + 1).is_some_and(u8::is_ascii_digit)) {
+        if text.get(at) == Some(&b'.')
+            && (integer > 0 || text.get(at + 1).is_some_and(u8::is_ascii_digit))
+        {
             at += 1 + digits(at + 1);
         } else if integer == 0 {
             return None;
@@ -513,7 +527,8 @@ mod natural_orderby {
         }
         let allowed = |end: usize| {
             let next = text.get(end);
-            let fraction_follows = next == Some(&b'.') && text.get(end + 1).is_some_and(u8::is_ascii_digit);
+            let fraction_follows =
+                next == Some(&b'.') && text.get(end + 1).is_some_and(u8::is_ascii_digit);
             !fraction_follows && !next.is_some_and(u8::is_ascii_digit)
         };
         if allowed(at) {
@@ -542,7 +557,11 @@ mod natural_orderby {
 
     /// `/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/`
     fn is_int_or_float(text: &[u8]) -> bool {
-        let digits = |from: usize| text.get(from..).map_or(0, |rest| rest.iter().take_while(|c| c.is_ascii_digit()).count());
+        let digits = |from: usize| {
+            text.get(from..).map_or(0, |rest| {
+                rest.iter().take_while(|c| c.is_ascii_digit()).count()
+            })
+        };
         let mut at = usize::from(matches!(text.first(), Some(b'+' | b'-')));
         let integer = digits(at);
         at += integer;
@@ -602,7 +621,11 @@ mod natural_orderby {
                 continue;
             }
             if chunk_a.text.is_empty() != chunk_b.text.is_empty() {
-                return if chunk_a.text.is_empty() { Ordering::Less } else { Ordering::Greater };
+                return if chunk_a.text.is_empty() {
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                };
             }
             return match (chunk_a.number, chunk_b.number) {
                 (Some(number_a), Some(number_b)) => compare_numbers(number_a, number_b)

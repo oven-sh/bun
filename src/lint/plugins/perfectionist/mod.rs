@@ -80,7 +80,12 @@ pub(crate) struct SortingNode<'a> {
 impl<'a> SortingNode<'a> {
     /// A node of a list that [`report::is_in_order_without_groups`] looks at: only what the comparator reads is
     /// filled in.
-    pub(crate) fn for_comparison(span: Span, name: &'a [u8], value: &'a [u8], size: u32) -> SortingNode<'a> {
+    pub(crate) fn for_comparison(
+        span: Span,
+        name: &'a [u8],
+        value: &'a [u8],
+        size: u32,
+    ) -> SortingNode<'a> {
         SortingNode {
             span,
             outer_span: span,

@@ -50,7 +50,10 @@ pub(crate) struct ScopedPatterns {
 pub(crate) enum Subject<'a> {
     /// `sort-objects`: an `ObjectExpression`, or an `ObjectPattern` (`is_destructured`), which is a `Pat` in a
     /// declaration or a parameter and an `Expr` in an assignment target.
-    Object { node: Node<'a>, is_destructured: bool },
+    Object {
+        node: Node<'a>,
+        is_destructured: bool,
+    },
     /// `sort-object-types`: a `TSTypeLiteral`.
     TypeLiteral(TypeNode<'a>),
     /// `sort-interfaces`: a `TSInterfaceDeclaration`, which is its own only parent node.
@@ -87,7 +90,10 @@ pub(crate) fn matching_configuration<'c, 'n>(
     names: impl Iterator<Item = &'n [u8]> + Clone,
 ) -> Result<usize, Rejected<'c>> {
     for (i, configuration) in configurations.iter().enumerate() {
-        if configuration.use_configuration_if.holds(subject, names.clone())? {
+        if configuration
+            .use_configuration_if
+            .holds(subject, names.clone())?
+        {
             return Ok(i);
         }
     }
@@ -250,8 +256,10 @@ fn matches_parent<'a, 'c>(
             let before = comment_anchor(parent, is_object_rule);
             for pattern in &patterns.0 {
                 for comment in file.comments_before(before) {
-                    if pattern_matches(pattern, strings::trim_js_whitespace(comment.comment_value()))?
-                    {
+                    if pattern_matches(
+                        pattern,
+                        strings::trim_js_whitespace(comment.comment_value()),
+                    )? {
                         return Ok(true);
                     }
                 }
@@ -376,9 +384,7 @@ impl<'a> Subject<'a> {
                 ancestors: Node::Type(ty).ancestors(),
                 classify: object_type_parent,
             },
-            Subject::Interface(statement) => {
-                Parents::Only(Some(Parent::Declaration(statement)))
-            }
+            Subject::Interface(statement) => Parents::Only(Some(Parent::Declaration(statement))),
             Subject::Union(_) => Parents::Only(None),
         }
     }
@@ -448,9 +454,10 @@ fn declaration_name<'a>(file: &'a File<'a>, parent: Parent<'a>, is_object_rule: 
     match parent {
         Parent::VarDecl(decl) => match (decl.pat().as_ident(), decl.ty()) {
             (Some(name), _) if is_object_rule => name.bytes(),
-            (_, Some(ty)) if !is_object_rule => {
-                file.slice(Span::new(decl.pat().span().start, ty.annotation_span().start))
-            }
+            (_, Some(ty)) if !is_object_rule => file.slice(Span::new(
+                decl.pat().span().start,
+                ty.annotation_span().start,
+            )),
             _ => file.slice(decl.binding_span()),
         },
         Parent::Prop(prop) => prop.key().map_or(NONE, |key| key_name(file, key)),

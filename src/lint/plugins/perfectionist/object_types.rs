@@ -238,11 +238,18 @@ pub(crate) fn sort_object_type_elements<'a, R>(
         return;
     }
     let for_comparison = |with_size: bool| {
-        elements.iter().filter(|element| !element.is_signature).map(move |element| {
-            let span = element.member.span();
-            let size = if with_size { fixes::range_to_diff(file, span) } else { 0 };
-            SortingNode::for_comparison(span, element.name, element.value, size)
-        })
+        elements
+            .iter()
+            .filter(|element| !element.is_signature)
+            .map(move |element| {
+                let span = element.member.span();
+                let size = if with_size {
+                    fixes::range_to_diff(file, span)
+                } else {
+                    0
+                };
+                SortingNode::for_comparison(span, element.name, element.value, size)
+            })
     };
     if report::is_in_order_without_groups(config, false, for_comparison) {
         return;

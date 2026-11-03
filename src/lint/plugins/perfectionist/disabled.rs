@@ -46,11 +46,7 @@ impl DisabledLines {
 
     /// Upstream's `isNodeEslintDisabled`: the rule is disabled on the line `node` starts on.
     pub(crate) fn contains(&self, file: &File<'_>, node: Span) -> bool {
-        !self.lines.is_empty()
-            && self
-                .lines
-                .binary_search(&file.line_of(node.start))
-                .is_ok()
+        !self.lines.is_empty() && self.lines.binary_search(&file.line_of(node.start)).is_ok()
     }
 }
 

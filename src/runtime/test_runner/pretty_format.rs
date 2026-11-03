@@ -2393,7 +2393,7 @@ impl<'a> Formatter<'a> {
                     if iter_i == 0 {
                         let mut object_name = value.get_class_name(self.global_this)?;
                         if let Some(saved) = self.like_older_bun
-                            && let Some(older_name) = saved.name_of_context_global(value, &object_name)
+                            && let Some(older_name) = saved.name_of_context_global(self.global_this, value, &object_name)?
                         {
                             object_name = older_name;
                         }
@@ -3537,18 +3537,31 @@ impl ExpectedText<'_> {
     /// continues with it. 1.4.4 had the class `NodeVMGlobalProxy` for it. 1.4.0 to 1.4.3 did not take the name from a
     /// prototype that a script set, as jsdom does for its window.
     #[cold]
-    fn name_of_context_global(&self, value: JSValue, name: &bun_core::String) -> Option<bun_core::String> {
+    fn name_of_context_global(
+        &self,
+        global: &JSGlobalObject,
+        value: JSValue,
+        name: &bun_core::String,
+    ) -> JsResult<Option<bun_core::String>> {
+        unsafe extern "C" {
+            safe fn SnapshotFormat__hasOwnToStringTag(global: &JSGlobalObject, object: JSValue) -> bool;
+        }
         let is_context_global = value.js_type() == JSType::GlobalProxy
             && value.get_proxy_target().get_class_info_name().is_some_and(|class| class == b"NodeVMGlobalObject");
         if !is_context_global {
-            return None;
+            return Ok(None);
         }
-        let (older_name, printed): (&'static str, &[u8]) = if name.eq_ascii(b"JSGlobalProxy") {
-            ("NodeVMGlobalProxy", b"NodeVMGlobalProxy {}")
-        } else {
-            ("JSGlobalProxy", b"JSGlobalProxy {}")
-        };
-        self.rest.get().starts_with(printed).then(|| bun_core::String::static_(older_name))
+        let rest = self.rest.get();
+        if name.eq_ascii(b"JSGlobalProxy") {
+            return Ok(rest.starts_with(b"NodeVMGlobalProxy {}").then(|| bun_core::String::static_("NodeVMGlobalProxy")));
+        }
+        // `name` is a `Symbol.toStringTag`. Every version printed the one that the global itself has.
+        if !rest.starts_with(b"JSGlobalProxy {}")
+            || jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__hasOwnToStringTag(global, value))?
+        {
+            return Ok(None);
+        }
+        Ok(Some(bun_core::String::static_("JSGlobalProxy")))
     }
 }
 

@@ -2577,6 +2577,7 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
         ["sandbox", `\nNodeVMGlobalProxy {\n  "a": 1,\n  "b": 2,\n}\n`],
         ["window", "NodeVMGlobalProxy {}"],
         ["tagged", "NodeVMGlobalProxy {}"],
+        ["tagged", "JSGlobalProxy {}"],
         ["mainGlobal", "NodeVMGlobalProxy {}"],
         // Up to 1.4.3 vm.createContext(vm.constants.DONT_CONTEXTIFY) returned another object than the global. It no longer exists.
         ["notContextified", `\nNodeVMSpecialSandbox {\n  "a": 1,\n}\n`],

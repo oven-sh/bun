@@ -364,3 +364,15 @@ extern "C" bool SnapshotFormat__includes(EncodedJSValue encodedList, uint32_t le
     }
     return false;
 }
+
+// Whether the object itself has a `Symbol.toStringTag`. The lookup runs no getter and no Proxy trap.
+extern "C" bool SnapshotFormat__hasOwnToStringTag(JSGlobalObject* globalObject, EncodedJSValue encodedObject)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* object = JSValue::decode(encodedObject).getObject();
+    if (!object)
+        return false;
+    PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    RELEASE_AND_RETURN(scope, object->methodTable()->getOwnPropertySlot(object, globalObject, vm.propertyNames->toStringTagSymbol, slot));
+}

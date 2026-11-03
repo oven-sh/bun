@@ -1,3 +1,4 @@
+// Runs alone: under root it changes and restores the mode of TMPDIR, which the files of a parallel batch share.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir, unprivilegedSpawnOptions } from "harness";
 import { chmodSync, existsSync } from "node:fs";
@@ -747,7 +748,9 @@ async function answeredTable(surface: Surface) {
 
 // Each test compares the whole table of its surface: two processes answer every row, and the difference names each
 // cell that moved. Only the first test calls `unprivilegedSpawnOptions`, which may change and restore the modes of
-// directories above the test's own, so the two can run at once.
+// directories above the test's own, so the two tests of this file can run at once. A test of another file that calls
+// it under the same TMPDIR cannot: the caller that changed a mode restores it when it ends, while the processes of a
+// later caller still need it. The first line of this file keeps it out of such a batch.
 describe.concurrent("what the resolver cached, after it changed on disk", () => {
   test("require.resolve() looks up again what it missed, and keeps what it found", async () => {
     expect(await answeredTable("resolve")).toEqual(expectedTable("resolve"));

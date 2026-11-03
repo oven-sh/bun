@@ -38,7 +38,6 @@ const MESSAGES: Messages = Messages {
 impl Rule for SortInterfaces {
     const META: Meta = Meta::plugin(Plugin::Perfectionist, "sort-interfaces", Kind::Suggestion)
         .fixable(Fixable::Code)
-        .recommended()
         .reports_on_exit();
     const ON: On = On::new().stmts(&[StmtTag::Interface]);
     type State<'a> = State;
@@ -54,7 +53,7 @@ impl Rule for SortInterfaces {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State> {
-        Some(State(self.options.file_state(file)))
+        Some(State(self.options.file_state(file.settings())))
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {

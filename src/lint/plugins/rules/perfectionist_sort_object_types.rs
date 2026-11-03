@@ -38,7 +38,6 @@ const MESSAGES: Messages = Messages {
 impl Rule for SortObjectTypes {
     const META: Meta = Meta::plugin(Plugin::Perfectionist, "sort-object-types", Kind::Suggestion)
         .fixable(Fixable::Code)
-        .recommended()
         .reports_on_exit();
     const ON: On = On::new().types(&[TypeTag::Object]);
     type State<'a> = State;
@@ -54,7 +53,7 @@ impl Rule for SortObjectTypes {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State> {
-        Some(State(self.options.file_state(file)))
+        Some(State(self.options.file_state(file.settings())))
     }
 
     fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {

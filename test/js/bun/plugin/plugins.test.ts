@@ -1419,11 +1419,17 @@ describe.concurrent("what onResolve answers without a namespace", () => {
       try { require.resolve("bare.img"); } catch (error) { console.log("require.resolve()", error.message.split("\\n")[0]); }
       try { require("bare.img"); } catch (error) { console.log("require()", error.message.split("\\n")[0]); }
       try { require.resolve("dot.img"); } catch (error) { console.log("require.resolve()", error.message.split("\\n")[0]); }
-      import("bare.img").catch(error => console.log("import()", error.message.split(" imported")[0]));
+      try { require("dot.img"); } catch (error) { console.log("require()", error.message.split("\\n")[0]); }
+      import("bare.img")
+        .catch(error => console.log("import()", error.message.split(" imported")[0]))
+        .then(() => import("dot.img"))
+        .catch(error => console.log("import()", error.message.split(" imported")[0]));
     `;
     expect(await run("entry.cjs", source)).toEqual({
       stdout:
-        "require.resolve() Cannot find module 'bare'\nrequire() Cannot find module 'bare'\nrequire.resolve() Cannot find module './absent'\nimport() Cannot find package 'bare'\n",
+        "require.resolve() Cannot find module 'bare'\nrequire() Cannot find module 'bare'\n" +
+        "require.resolve() Cannot find module './absent'\nrequire() Cannot find module './absent'\n" +
+        "import() Cannot find package 'bare'\nimport() Cannot find module './absent'\n",
       stderr: "",
       exitCode: 0,
     });
@@ -2954,24 +2960,34 @@ describe.concurrent("a file without an extension", () => {
     });
   });
 
-  // Bun reads the file as TSX. Contents that an onLoad returns for it have no extension to name a loader, as before.
+  // Bun reads the file as TSX. Contents that an onLoad returns have the loader that the end of the key names, as before:
+  // none for a key without an extension, and none for a key that ends in a query.
   it("is read as JavaScript when its onLoad returns contents and no loader", async () => {
     // In JavaScript, (a < b) > c is false. In TypeScript, a<b>(c) is a call.
-    const text = `const a = x => "TSX", b = 1, c = 2; export default a < b > (c);`;
+    const text = `const a = x => "TypeScript", b = 1, c = 2; export default a < b > (c);`;
     const source = `
       import { readFileSync } from "node:fs";
+      const read = path => readFileSync(path.split("?")[0], "utf8");
       Bun.plugin({
         name: "returns the text of the file",
         setup(build) {
-          build.onLoad({ filter: /[\\\\/]no-loader$/ }, ({ path }) => ({ contents: readFileSync(path, "utf8") }));
-          build.onLoad({ filter: /[\\\\/]loader$/ }, ({ path }) => ({ contents: readFileSync(path, "utf8"), loader: "tsx" }));
+          build.onLoad({ filter: /[\\\\/]no-loader$|x\\.ts\\?/ }, ({ path }) => ({ contents: read(path) }));
+          build.onLoad({ filter: /[\\\\/]loader$/ }, ({ path }) => ({ contents: read(path), loader: "tsx" }));
         },
       });
-      for (const name of ["no-loader", "loader", "disk"]) console.log(name, (await import("./bin/" + name)).default);
+      for (const name of ["bin/no-loader", "x.ts?v=1", "x.ts?v=1.2", "bin/loader", "bin/disk"]) {
+        console.log(name, (await import("./" + name)).default);
+      }
     `;
-    const files = { "bin/no-loader": text, "bin/loader": text, "bin/disk": text, "entry.mjs": source };
+    const files = { "bin/no-loader": text, "bin/loader": text, "bin/disk": text, "x.ts": text, "entry.mjs": source };
     expect(await run(files, ["entry.mjs"])).toEqual({
-      stdout: ["no-loader false", "loader TSX", "disk TSX"],
+      stdout: [
+        "bin/no-loader false",
+        "x.ts?v=1 false",
+        "x.ts?v=1.2 false",
+        "bin/loader TypeScript",
+        "bin/disk TypeScript",
+      ],
       stderr: "",
       exitCode: 0,
     });

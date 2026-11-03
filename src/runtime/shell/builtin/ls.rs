@@ -2,9 +2,11 @@ use core::ops::Range;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::io::Write as _;
+use std::rc::Rc;
 
 use bun_collections::index_sort;
 use bun_core::{ZBox, ZStr, strings};
+use bun_resolver::compiled_program::compare_source_paths;
 use bun_sys::{E, FdExt, O, S, dir_iterator};
 
 use crate::shell::ExitCode;
@@ -21,6 +23,8 @@ pub(crate) struct Ls {
     pub(crate) state: State,
 }
 
+// `Ls` is in a `Box`, and a `Box` for `ExecState` would be one more allocation for each `ls`.
+#[allow(clippy::large_enum_variant)]
 #[derive(Default)]
 pub(crate) enum State {
     #[default]
@@ -32,8 +36,8 @@ pub(crate) enum State {
 
 pub(crate) struct ExecState {
     pub(crate) err: Option<bun_sys::Error>,
-    /// Tasks created. Their slots are `0..task_count`: the first task has slot 0, and a task takes
-    /// the next slots for its subtasks.
+    /// Tasks that have a section. Their slots are `0..task_count`: slot 0 is the task that lists
+    /// the one path or that orders the operands, and each subtask takes the next slot.
     pub(crate) task_count: AtomicUsize,
     /// Tasks whose section is written.
     pub(crate) tasks_done: usize,
@@ -41,39 +45,75 @@ pub(crate) struct ExecState {
     pub(crate) output_waiting: usize,
     /// Chunks whose `on_io_writer_chunk` ran.
     pub(crate) output_done: usize,
+    /// What each task that runs `stat` on a part of the operands found, until the last is done.
+    parts: Vec<Option<Classified>>,
+    parts_left: usize,
     /// The slot whose section is written next. The order is depth first: the section of a task,
     /// then the sections of its subtasks, each with its own subtasks. The pool completes the tasks
     /// in any order.
     turn: Option<u32>,
-    /// The slots after `turn`: the subtasks still to come of each written task, innermost last.
-    after: Vec<Range<u32>>,
+    /// The slots after `turn`, the next one last.
+    after: Vec<u32>,
     /// Results that arrived before their turn, by slot.
     parked: Vec<Option<Section>>,
+    /// The section of `turn`, while a part of it is still to write.
+    writing: Option<Section>,
+    /// Bytes of `batch_stream` that are ready for its `IOWriter`. Small sections are joined in
+    /// it, so that a listing of many directories is not one write for each of them.
+    batch: Vec<u8>,
+    batch_stream: IoKind,
+    /// Stdout and stderr are two `IOWriter`s. They can have one destination (a terminal), where
+    /// the order of the writes shows. So a chunk of one stream waits until the chunks of the
+    /// other are written.
+    two_writers: bool,
+    /// The stream of the chunks that are queued and not written yet.
+    in_flight: IoKind,
+    /// [`Ls::drain`] is running: a chunk that completes inside it is only counted.
+    draining: bool,
 }
+
+/// Sections are joined into chunks of at most this size. A pipe that is writable takes one
+/// page without waiting.
+const CHUNK: usize = 4096;
+
+/// A part has at least this many operands. Below that, a pool task costs more than it saves.
+const OPERANDS_PER_PART: usize = 8;
 
 /// What one task found, as the main thread writes it.
 struct Section {
     errs: Vec<bun_sys::Error>,
     output: Vec<u8>,
-    /// Slots of the subtasks.
-    children: Range<u32>,
+    /// Slots of the subtasks, in the order of their sections.
+    children: Vec<u32>,
+}
+
+/// What one pass of `stat` over operands found.
+struct Classified {
+    /// The operands, each followed by a NUL.
+    operands: Vec<u8>,
+    /// The entry of each operand that is not a directory to list.
+    entries: Vec<u8>,
+    /// In the order of the command line.
+    found: Vec<Found>,
+    errs: Vec<bun_sys::Error>,
+}
+
+struct Found {
+    /// In `operands`.
+    name: Range<usize>,
+    /// In `entries`. Empty for a directory to list.
+    entry: Range<usize>,
+    /// The slot of the subtask that lists it, for a directory.
+    directory: Option<u32>,
+    /// What `-t` or `-S` sorts by.
+    key: (i64, i64),
 }
 
 impl ExecState {
     /// Moves `turn` past a written section whose subtasks are `children`.
-    fn advance(&mut self, children: Range<u32>) {
-        if !children.is_empty() {
-            self.after.push(children);
-        }
-        self.turn = loop {
-            let Some(siblings) = self.after.last_mut() else {
-                break None;
-            };
-            if let Some(slot) = siblings.next() {
-                break Some(slot);
-            }
-            self.after.pop();
-        };
+    fn advance(&mut self, children: Vec<u32>) {
+        self.after.extend(children.into_iter().rev());
+        self.turn = self.after.pop();
     }
 }
 
@@ -123,52 +163,66 @@ impl Ls {
 
                 let argc = Builtin::of(interp, cmd).args_slice().len();
                 let operands = paths_start.unwrap_or(argc)..argc;
+                // Many operands: several tasks share the `stat` calls.
+                let parts = (operands.len() / OPERANDS_PER_PART)
+                    .clamp(1, usize::from(bun_core::get_thread_count()));
+                let builtin = Builtin::of(interp, cmd);
+                let two_writers = match (&builtin.stdout, &builtin.stderr) {
+                    (BuiltinIO::Fd(stdout), BuiltinIO::Fd(stderr)) => {
+                        !Rc::ptr_eq(&stdout.writer, &stderr.writer)
+                    }
+                    _ => false,
+                };
                 Self::state_mut(interp, cmd).state = State::Exec(ExecState {
                     err: None,
                     task_count: AtomicUsize::new(1),
                     tasks_done: 0,
                     output_waiting: 0,
                     output_done: 0,
+                    parts: Vec::new(),
+                    parts_left: 0,
                     turn: Some(0),
                     after: Vec::new(),
                     parked: Vec::new(),
+                    writing: None,
+                    batch: Vec::new(),
+                    batch_stream: IoKind::Stdout,
+                    two_writers,
+                    in_flight: IoKind::Stdout,
+                    draining: false,
                 });
 
-                // Stable address: `Ls` lives in `Box<Ls>` (Builtin::Impl::Ls),
-                // and the `Exec` variant is held until all tasks finish.
-                let task_count_ptr: *const AtomicUsize = {
-                    let State::Exec(exec) = &Self::state_mut(interp, cmd).state else {
-                        unreachable!()
+                // One task lists `.` or the one operand.
+                if operands.len() < 2 {
+                    let path = match operands.len() {
+                        0 => b".",
+                        _ => Builtin::of(interp, cmd).arg_bytes(operands.start),
                     };
-                    &raw const exec.task_count
-                };
-
-                let cwd = Builtin::cwd(interp, cmd);
-                let opts = Self::state_mut(interp, cmd).opts;
-                let evtloop = Builtin::event_loop(interp, cmd);
-                let interp_ptr = interp.as_ctx_ptr();
-                let builtin = Builtin::of(interp, cmd);
-                // One task: it lists `.`, the one operand, or all the operands.
-                let path = match operands.len() {
-                    0 => ZBox::from_bytes(b"."),
-                    1 => ZBox::from_bytes(builtin.arg_bytes(operands.start)),
-                    _ => ZBox::default(),
-                };
-                let mut all_operands = Vec::new();
-                if operands.len() > 1 {
-                    let len = |i| builtin.arg_bytes(i).len() + 1;
-                    all_operands.reserve_exact(operands.clone().map(len).sum());
-                    for i in operands {
-                        all_operands.extend_from_slice(builtin.arg_bytes(i));
-                        all_operands.push(0);
+                    Self::schedule(interp, cmd, ZBox::from_bytes(path), None);
+                    return Yield::suspended();
+                }
+                if parts > 1 {
+                    if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+                        exec.parts.resize_with(parts, || None);
+                        exec.parts_left = parts;
                     }
                 }
-                let task =
-                    ShellLsTask::create(cmd, opts, task_count_ptr, cwd, path, evtloop, interp_ptr);
-                // SAFETY: freshly heap-allocated.
-                unsafe {
-                    (*task).operands = all_operands;
-                    ShellTask::schedule_no_ref::<ShellLsTask>(task);
+                for part in 0..parts {
+                    let builtin = Builtin::of(interp, cmd);
+                    let first = operands.start + part * operands.len() / parts;
+                    let end = operands.start + (part + 1) * operands.len() / parts;
+                    let len = |operand| builtin.arg_bytes(operand).len() + 1;
+                    let mut bytes = Vec::with_capacity((first..end).map(len).sum());
+                    for operand in first..end {
+                        bytes.extend_from_slice(builtin.arg_bytes(operand));
+                        bytes.push(0);
+                    }
+                    let stat = Operands::Stat {
+                        bytes,
+                        part,
+                        alone: parts == 1,
+                    };
+                    Self::schedule(interp, cmd, ZBox::default(), Some(Box::new(stat)));
                 }
                 Yield::suspended()
             }
@@ -179,6 +233,7 @@ impl Ls {
                     };
                     exec.tasks_done >= exec.task_count.load(Ordering::Relaxed)
                         && exec.output_done >= exec.output_waiting
+                        && exec.batch.is_empty()
                 };
                 if done {
                     let exit_code: ExitCode = {
@@ -207,32 +262,115 @@ impl Ls {
     ) -> Yield {
         match &mut Self::state_mut(interp, cmd).state {
             State::WaitingWriteErr => return Builtin::done(interp, cmd, 1),
-            State::Exec(exec) => exec.output_done += 1,
+            State::Exec(exec) => {
+                exec.output_done += 1;
+                if exec.draining {
+                    return Yield::suspended();
+                }
+            }
             State::Idle | State::Done => {}
         }
+        Self::drain(interp, cmd);
         Self::next(interp, cmd)
     }
 
-    /// A pool task completed. Writes its section if it is next, and then each parked section
-    /// whose turn that makes it.
-    fn on_shell_ls_task_done(interp: &Interpreter, cmd: NodeId, slot: u32, mut section: Section) {
-        {
+    /// Creates a task on the pool: it lists `path`, or it works on operands.
+    fn schedule(interp: &Interpreter, cmd: NodeId, path: ZBox, operands: Option<Box<Operands>>) {
+        // Stable address: `Ls` lives in `Box<Ls>` (Builtin::Impl::Ls),
+        // and the `Exec` variant is held until all tasks finish.
+        let task_count: *const AtomicUsize = {
+            let State::Exec(exec) = &Self::state_mut(interp, cmd).state else {
+                unreachable!()
+            };
+            &raw const exec.task_count
+        };
+        let task = ShellLsTask::create(
+            cmd,
+            Self::state_mut(interp, cmd).opts,
+            task_count,
+            Builtin::cwd(interp, cmd),
+            path,
+            Builtin::event_loop(interp, cmd),
+            interp.as_ctx_ptr(),
+        );
+        // SAFETY: freshly heap-allocated.
+        unsafe {
+            (*task).operands = operands;
+            ShellTask::schedule_no_ref::<ShellLsTask>(task);
+        }
+    }
+
+    /// A task that ran `stat` on one part of the operands is done. After the last of them, one
+    /// more task puts what they found in order.
+    fn on_operands_classified(
+        interp: &Interpreter,
+        cmd: NodeId,
+        part: usize,
+        classified: Classified,
+    ) {
+        let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
+            return;
+        };
+        exec.parts[part] = Some(classified);
+        exec.parts_left -= 1;
+        if exec.parts_left > 0 {
+            return;
+        }
+        let parts = core::mem::take(&mut exec.parts)
+            .into_iter()
+            .flatten()
+            .collect();
+        let order = Operands::Order(parts);
+        Self::schedule(interp, cmd, ZBox::default(), Some(Box::new(order)));
+    }
+
+    /// A task with a section is done. The section is written now if it is next, with each
+    /// waiting section whose turn that makes it.
+    fn on_shell_ls_task_done(interp: &Interpreter, cmd: NodeId, slot: u32, section: Section) {
+        let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
+            return;
+        };
+        if exec.turn != Some(slot) {
+            let slot = slot as usize;
+            if exec.parked.len() <= slot {
+                exec.parked.resize_with(slot + 1, || None);
+            }
+            exec.parked[slot] = Some(section);
+            return;
+        }
+        exec.writing = Some(section);
+        Self::drain(interp, cmd);
+        Self::next(interp, cmd).run(interp);
+    }
+
+    /// Writes, in order, each section whose turn it is. It stops where a section is not there
+    /// yet, or where a stream has to wait for the other one ([`Self::flush`]). Then
+    /// `on_io_writer_chunk` calls it again.
+    fn drain(interp: &Interpreter, cmd: NodeId) {
+        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+            exec.draining = true;
+        }
+        loop {
             let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
                 return;
             };
-            if exec.turn != Some(slot) {
-                let slot = slot as usize;
-                if exec.parked.len() <= slot {
-                    exec.parked.resize_with(slot + 1, || None);
+            let mut section = match exec.writing.take() {
+                Some(section) => section,
+                None => {
+                    let parked = exec
+                        .turn
+                        .and_then(|turn| exec.parked.get_mut(turn as usize));
+                    match parked.and_then(Option::take) {
+                        Some(section) => section,
+                        None => break,
+                    }
                 }
-                exec.parked[slot] = Some(section);
-                return;
-            }
-        }
-        loop {
-            if !section.errs.is_empty() {
+            };
+            let errs_fit =
+                section.errs.is_empty() || Self::make_room(interp, cmd, IoKind::Stderr, 0);
+            if errs_fit && !section.errs.is_empty() {
                 let mut errstr = Vec::new();
-                for e in section.errs {
+                for e in core::mem::take(&mut section.errs) {
                     errstr.extend_from_slice(Builtin::task_error_to_string(
                         interp,
                         cmd,
@@ -245,49 +383,101 @@ impl Ls {
                         }
                     }
                 }
-                Self::write(interp, cmd, IoKind::Stderr, &errstr);
+                Self::emit(interp, cmd, IoKind::Stderr, errstr);
             }
-            Self::write(interp, cmd, IoKind::Stdout, &section.output);
+            let output_fits = errs_fit
+                && (section.output.is_empty()
+                    || Self::make_room(interp, cmd, IoKind::Stdout, section.output.len()));
             let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
                 return;
             };
-            // Counted only now: a chunk that completes inside `write` must not find every task
-            // done while a write of this one is still to come.
+            if !output_fits {
+                exec.writing = Some(section);
+                break;
+            }
             exec.tasks_done += 1;
             exec.advance(section.children);
-            let parked = exec
-                .turn
-                .and_then(|next| exec.parked.get_mut(next as usize));
-            match parked.and_then(Option::take) {
-                Some(next) => section = next,
-                None => break,
-            }
+            Self::emit(interp, cmd, IoKind::Stdout, section.output);
         }
-        Self::next(interp, cmd).run(interp);
+        Self::flush(interp, cmd);
+        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+            exec.draining = false;
+        }
     }
 
-    /// Writes `buf` to stdout or stderr. A chunk queued on an `IOWriter` is counted in
-    /// `output_waiting`; `on_io_writer_chunk` runs once for it, now or later.
-    fn write(interp: &Interpreter, cmd: NodeId, io_kind: IoKind, buf: &[u8]) {
-        if buf.is_empty() {
+    fn stream(builtin: &mut Builtin, io_kind: IoKind) -> &mut BuiltinIO {
+        match io_kind {
+            IoKind::Stdout => &mut builtin.stdout,
+            IoKind::Stderr => &mut builtin.stderr,
+        }
+    }
+
+    /// Whether `len` more bytes of `stream` can go in the batch. A batch of the other stream, or
+    /// a batch that is full, is written first, and that write can have to wait.
+    fn make_room(interp: &Interpreter, cmd: NodeId, stream: IoKind, len: usize) -> bool {
+        let needs_io = Self::stream(Builtin::of_mut(interp, cmd), stream)
+            .needs_io()
+            .is_some();
+        let State::Exec(exec) = &Self::state_mut(interp, cmd).state else {
+            return false;
+        };
+        if !needs_io
+            || exec.batch.is_empty()
+            || (exec.batch_stream == stream && exec.batch.len() + len <= CHUNK)
+        {
+            return true;
+        }
+        Self::flush(interp, cmd)
+    }
+
+    /// Takes the bytes that come next on `stream`, after [`Self::make_room`] for them. A stream
+    /// with no `IOWriter` gets them now. The other kind gets them with the batch.
+    fn emit(interp: &Interpreter, cmd: NodeId, stream: IoKind, bytes: Vec<u8>) {
+        if bytes.is_empty() {
             return;
         }
-        fn stream(builtin: &mut Builtin, io_kind: IoKind) -> &mut BuiltinIO {
-            match io_kind {
-                IoKind::Stdout => &mut builtin.stdout,
-                IoKind::Stderr => &mut builtin.stderr,
-            }
+        if Self::stream(Builtin::of_mut(interp, cmd), stream)
+            .needs_io()
+            .is_none()
+        {
+            let _ = Builtin::write_no_io(interp, cmd, stream, &bytes);
+            return;
         }
-        let Some(safeguard) = stream(Builtin::of_mut(interp, cmd), io_kind).needs_io() else {
-            let _ = Builtin::write_no_io(interp, cmd, io_kind, buf);
+        let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
             return;
         };
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_waiting += 1;
+        if exec.batch.is_empty() {
+            exec.batch = bytes;
+            exec.batch_stream = stream;
+        } else {
+            exec.batch.extend_from_slice(&bytes);
         }
-        stream(Builtin::of_mut(interp, cmd), io_kind)
-            .enqueue(ChildPtr::new(cmd, WriterTag::Builtin), buf, safeguard)
+    }
+
+    /// Queues the batch on its `IOWriter`. False if it has to wait, because chunks of the other
+    /// stream are not written yet. A chunk is counted in `output_waiting`, and
+    /// `on_io_writer_chunk` runs once for it, now or later.
+    fn flush(interp: &Interpreter, cmd: NodeId) -> bool {
+        let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
+            return false;
+        };
+        if exec.batch.is_empty() {
+            return true;
+        }
+        let stream = exec.batch_stream;
+        if exec.two_writers && exec.output_done < exec.output_waiting && exec.in_flight != stream {
+            return false;
+        }
+        let batch = core::mem::take(&mut exec.batch);
+        exec.in_flight = stream;
+        exec.output_waiting += 1;
+        let io = Self::stream(Builtin::of_mut(interp, cmd), stream);
+        let Some(safeguard) = io.needs_io() else {
+            unreachable!("only a stream with an IOWriter has a batch")
+        };
+        io.enqueue(ChildPtr::new(cmd, WriterTag::Builtin), &batch, safeguard)
             .run(interp);
+        true
     }
 
     /// Returns the index of the first non-flag arg, or `None` if there are no
@@ -326,11 +516,17 @@ impl Ls {
                 b'l' => opts.long_listing = true,
                 b'R' => opts.recursive = true,
                 b'r' => opts.reverse = true,
-                b'U' | b'f' => opts.unsorted = true,
+                b'U' => opts.sort = Sort::None,
+                b'f' => {
+                    opts.sort = Sort::None;
+                    opts.dotfiles = DotfileMode::All;
+                }
+                b't' => opts.sort = Sort::Time,
+                b'S' => opts.sort = Sort::Size,
                 // The remaining short flags are recognised but currently no-op.
                 b'1' | b'b' | b'B' | b'c' | b'C' | b'D' | b'F' | b'g' | b'G' | b'h' | b'H'
                 | b'i' | b'I' | b'k' | b'L' | b'm' | b'n' | b'N' | b'o' | b'p' | b'q' | b'Q'
-                | b's' | b'S' | b't' | b'T' | b'u' | b'v' | b'w' | b'x' | b'X' | b'Z' => {}
+                | b's' | b'T' | b'u' | b'v' | b'w' | b'x' | b'X' | b'Z' => {}
                 _ => return ParseFlag::IllegalOption(Box::from(&flag[1..2])),
             }
         }
@@ -347,18 +543,32 @@ impl Ls {
 }
 
 /// What an operand is.
-// Matched where it is returned, never stored: a `Box` for the `Stat` would be an allocation for each operand.
-#[allow(clippy::large_enum_variant)]
 enum Operand {
-    Directory,
-    /// Not a directory. With `-l`, its `lstat`.
+    /// A directory, with its `stat`.
+    Directory(bun_sys::Stat),
+    /// Not a directory. Its `lstat`, when `-l`, `-t` or `-S` needs it.
     Entry(Option<bun_sys::Stat>),
+}
+
+/// What a task does with operands (`ls` with two or more). Many operands are split between
+/// several tasks, because one `stat` call can be slow (a network file system).
+enum Operands {
+    /// Run `stat` on these operands, each followed by a NUL. `alone`: no other task has
+    /// operands, so this one also puts them in order.
+    Stat {
+        bytes: Vec<u8>,
+        part: usize,
+        alone: bool,
+    },
+    /// What a `Stat` task found, for the main thread.
+    Found { part: usize, classified: Classified },
+    /// Put in order what all the `Stat` tasks found.
+    Order(Vec<Classified>),
 }
 
 /// Opens the path, iterates its entries (or
 /// prints the path itself for files / `-d`), accumulating into `output`.
-/// With two or more operands, the first task lists the operands instead
-/// ([`Self::list_operands`]).
+/// With two or more operands, a task works on the operands instead ([`Operands`]).
 pub(crate) struct ShellLsTask {
     pub cmd: NodeId,
     pub opts: Opts,
@@ -368,8 +578,8 @@ pub(crate) struct ShellLsTask {
     pub task_count: *const AtomicUsize,
     pub cwd: bun_sys::Fd,
     pub path: ZBox,
-    /// Two or more operands, each followed by a NUL. `path` is then empty.
-    operands: Vec<u8>,
+    /// Set when the task works on operands. `path` is then empty.
+    operands: Option<Box<Operands>>,
     pub output: Vec<u8>,
     pub is_absolute: bool,
     pub errs: Vec<bun_sys::Error>,
@@ -382,8 +592,8 @@ pub(crate) struct ShellLsTask {
     pub interp: *mut Interpreter,
     /// Where this task's section goes in the output (see [`ExecState::turn`]).
     slot: u32,
-    /// Slots of the subtasks this task scheduled.
-    children: Range<u32>,
+    /// Slots of the subtasks of this task, in the order of their sections.
+    children: Vec<u32>,
     pub task: ShellTask,
 }
 
@@ -404,7 +614,7 @@ impl ShellLsTask {
             task_count,
             cwd,
             path,
-            operands: Vec::new(),
+            operands: None,
             output: Vec::new(),
             is_absolute: false,
             errs: Vec::new(),
@@ -412,15 +622,16 @@ impl ShellLsTask {
             event_loop,
             interp,
             slot: 0,
-            children: 0..0,
+            children: Vec::new(),
             task: ShellTask::new(event_loop),
         });
         task.task.interp = interp;
         bun_core::heap::into_raw(task)
     }
 
-    /// A subtask that lists `path`. [`Self::schedule_subtasks`] schedules it.
-    fn subtask(&self, path: ZBox) -> *mut ShellLsTask {
+    /// Schedules a subtask that lists `path`: a directory operand, or a subdirectory under
+    /// `-R`. Returns its slot.
+    fn schedule_subtask(&mut self, path: ZBox) -> u32 {
         // Pool thread: the subtask inherits our poster rather than deriving
         // one from the VM (`ShellTask::new` is JS-thread only).
         let mut subtask = Box::new(ShellLsTask {
@@ -430,7 +641,7 @@ impl ShellLsTask {
             task_count: self.task_count,
             cwd: self.cwd,
             path,
-            operands: Vec::new(),
+            operands: None,
             output: Vec::new(),
             is_absolute: false,
             errs: Vec::new(),
@@ -438,32 +649,20 @@ impl ShellLsTask {
             event_loop: self.event_loop,
             interp: self.interp,
             slot: 0,
-            children: 0..0,
+            children: Vec::new(),
             task: ShellTask::new_child(&self.task),
         });
         subtask.task.interp = self.interp;
-        bun_core::heap::into_raw(subtask)
-    }
-
-    /// Schedules the subtasks made by [`Self::subtask`]. Their sections are written in this order,
-    /// after the section of this task.
-    fn schedule_subtasks(&mut self, subtasks: &[*mut ShellLsTask]) {
-        if subtasks.is_empty() {
-            return;
-        }
         // SAFETY: `task_count` points into the `Box<Ls>` ExecState which
-        // outlives every in-flight task (see `next`).
-        let first =
-            unsafe { (*self.task_count).fetch_add(subtasks.len(), Ordering::Relaxed) } as u32;
-        self.children = first..first + subtasks.len() as u32;
-        for (slot, &subtask) in self.children.clone().zip(subtasks) {
-            // SAFETY: `subtask` is a fresh heap allocation that nothing else has seen. It is
-            // scheduled via raw `WorkPool::schedule` (no keep-alive ref) — it runs on a worker
-            // thread with no JS-VM thread-local.
-            unsafe {
-                (*subtask).slot = slot;
-                ShellTask::schedule_no_ref::<ShellLsTask>(subtask);
-            }
+        // outlives every in-flight task (see `next`). `subtask` is freshly
+        // heap-allocated and scheduled via raw `WorkPool::schedule` (no
+        // keep-alive ref) — it runs on a worker thread with no JS-VM
+        // thread-local.
+        unsafe {
+            subtask.slot = (*self.task_count).fetch_add(1, Ordering::Relaxed) as u32;
+            let slot = subtask.slot;
+            ShellTask::schedule_no_ref::<ShellLsTask>(bun_core::heap::into_raw(subtask));
+            slot
         }
     }
 
@@ -495,8 +694,20 @@ impl ShellLsTask {
             this.now_secs = bun_core::time::timestamp().max(0) as u64;
         }
 
-        if !this.operands.is_empty() {
-            return this.list_operands();
+        if let Some(operands) = this.operands.take() {
+            match *operands {
+                Operands::Stat { bytes, part, alone } => {
+                    let classified = this.classify(bytes);
+                    if alone {
+                        this.order(vec![classified]);
+                    } else {
+                        this.operands = Some(Box::new(Operands::Found { part, classified }));
+                    }
+                }
+                Operands::Order(parts) => this.order(parts),
+                Operands::Found { .. } => {}
+            }
+            return;
         }
 
         let fd = match shell_openat(this.cwd, this.path.as_zstr(), O::RDONLY | O::DIRECTORY, 0) {
@@ -528,25 +739,24 @@ impl ShellLsTask {
             // our `DirIterator` abstraction skips them, so add them now.
             this.add_dot_entries_if_needed(fd);
 
-            let mut subtasks = Vec::new();
-            let read = loop {
+            loop {
                 match iterator.next() {
-                    Err(e) => break Err(e),
-                    Ok(None) => break Ok(()),
+                    Err(e) => {
+                        this.errs.push(this.error_with_path(&e));
+                        return;
+                    }
+                    Ok(None) => break,
                     Ok(Some(current)) => {
                         let name = current.name.slice_u8();
                         this.add_entry(name, fd);
                         if matches!(current.kind, bun_sys::EntryKind::Directory)
                             && this.opts.recursive
                         {
-                            subtasks.push(this.subtask(this.join(name)));
+                            let slot = this.schedule_subtask(this.join(name));
+                            this.children.push(slot);
                         }
                     }
                 }
-            };
-            this.schedule_subtasks(&subtasks);
-            if let Err(e) = read {
-                this.errs.push(this.error_with_path(&e));
             }
             return;
         }
@@ -555,42 +765,38 @@ impl ShellLsTask {
         this.output.push(b'\n');
     }
 
-    /// Lists two or more operands in the coreutils order. The operands that are not directories
-    /// come first, as the entries of this task's section. Each directory is then a subtask. Each
-    /// of the two groups is sorted by name: `-U` and `-f` keep the order of the command line, and
-    /// `-r` reverses the sort. The errors are in the order of the command line.
-    fn list_operands(&mut self) {
-        struct Found<'a> {
-            name: &'a [u8],
-            directory: bool,
-            /// Its entry in `output`. Empty for a directory.
-            entry: Range<usize>,
-        }
-        let operands = core::mem::take(&mut self.operands);
-        let mut found: Vec<Found<'_>> = Vec::with_capacity(strings::count_char(&operands, 0));
+    /// Runs `stat` on each operand in `operands` (each followed by a NUL). An operand that is not
+    /// a directory gets its entry. A directory gets a subtask that lists it, or with `-d` an
+    /// entry too.
+    fn classify(&mut self, operands: Vec<u8>) -> Classified {
+        let mut found = Vec::with_capacity(strings::count_char(&operands, 0));
         let mut rest = &operands[..];
         while let Some(len) = strings::index_of_char_usize(rest, 0) {
             let path = ZStr::from_buf(rest, len);
+            let start = operands.len() - rest.len();
             rest = &rest[len + 1..];
             let name = path.as_bytes();
-            let start = self.output.len();
-            let directory = match self.stat_operand(path) {
+            let entry = self.output.len();
+            let (directory, stat) = match self.stat_operand(path) {
                 Err(e) => {
                     self.errs.push(e);
                     continue;
                 }
                 Ok(Operand::Entry(stat)) => {
                     self.add_operand(name, stat.as_ref());
-                    false
+                    (None, stat)
                 }
-                Ok(Operand::Directory) if !self.opts.list_directories => true,
+                Ok(Operand::Directory(stat)) if !self.opts.list_directories => {
+                    let slot = self.schedule_subtask(ZBox::from_bytes(name));
+                    (Some(slot), Some(stat))
+                }
                 // `-d`: the name alone, and the directory has to open.
-                Ok(Operand::Directory) => {
+                Ok(Operand::Directory(stat)) => {
                     match shell_openat(self.cwd, path, O::RDONLY | O::DIRECTORY, 0) {
                         Ok(fd) => {
                             fd.close();
                             self.add_entry_short(name);
-                            false
+                            (None, Some(stat))
                         }
                         Err(e) => {
                             self.errs.push(e.with_path(name));
@@ -599,40 +805,92 @@ impl ShellLsTask {
                     }
                 }
             };
+            let key = match (self.opts.sort, &stat) {
+                (Sort::Time, Some(stat)) => {
+                    let mtime = bun_sys::stat_mtime(stat);
+                    (mtime.sec as i64, mtime.nsec as i64)
+                }
+                (Sort::Size, Some(stat)) => (stat.st_size as i64, 0),
+                _ => (0, 0),
+            };
             found.push(Found {
-                name,
+                name: start..start + len,
+                entry: entry..self.output.len(),
                 directory,
-                entry: start..self.output.len(),
+                key,
             });
+        }
+        Classified {
+            entries: core::mem::take(&mut self.output),
+            errs: core::mem::take(&mut self.errs),
+            operands,
+            found,
+        }
+    }
+
+    /// Puts what the `stat` passes found in the coreutils order. The operands that are not
+    /// directories come first, as the entries of this task's section. Then comes the section of
+    /// each directory. Each of the two groups is sorted by name, or by what `-t` or `-S` names.
+    /// `-U` and `-f` keep the order of the command line in each group, and `-r` reverses the
+    /// sort. The errors are in the order of the command line.
+    fn order(&mut self, mut parts: Vec<Classified>) {
+        struct Item<'a> {
+            name: &'a [u8],
+            entry: &'a [u8],
+            directory: Option<u32>,
+            key: (i64, i64),
+        }
+        let mut items: Vec<Item<'_>> =
+            Vec::with_capacity(parts.iter().map(|part| part.found.len()).sum());
+        for part in &parts {
+            items.extend(part.found.iter().map(|found| Item {
+                name: &part.operands[found.name.clone()],
+                entry: &part.entries[found.entry.clone()],
+                directory: found.directory,
+                key: found.key,
+            }));
         }
 
         let opts = self.opts;
-        let order = |a: &Found<'_>, b: &Found<'_>| {
-            let by_name = || match (opts.unsorted, opts.reverse) {
-                (true, _) => core::cmp::Ordering::Equal,
-                (false, false) => a.name.cmp(b.name),
-                (false, true) => b.name.cmp(a.name),
-            };
-            a.directory.cmp(&b.directory).then_with(by_name)
-        };
-        if !found.is_sorted_by(|a, b| order(a, b).is_le()) {
-            index_sort::sort_slice_by(&mut found, order);
-        }
-        let (entries, directories) =
-            found.split_at(found.partition_point(|found| !found.directory));
-        if !entries.is_sorted_by_key(|found| found.entry.start) {
-            let mut sorted = Vec::with_capacity(self.output.len());
-            for found in entries {
-                sorted.extend_from_slice(&self.output[found.entry.clone()]);
+        let order = |a: &Item<'_>, b: &Item<'_>| {
+            let group = a.directory.is_some().cmp(&b.directory.is_some());
+            if opts.sort == Sort::None {
+                return group;
             }
-            self.output = sorted;
+            // The newest or the largest first, and then by name: the same on every platform.
+            let by_name = || compare_source_paths(a.name, b.name).then_with(|| a.name.cmp(b.name));
+            let sorted = b.key.cmp(&a.key).then_with(by_name);
+            group.then(if opts.reverse {
+                sorted.reverse()
+            } else {
+                sorted
+            })
+        };
+        if !items.is_sorted_by(|a, b| order(a, b).is_le()) {
+            index_sort::sort_slice_by(&mut items, order);
         }
 
-        let subtasks: Vec<*mut ShellLsTask> = directories
+        let (entries, directories) =
+            items.split_at(items.partition_point(|item| item.directory.is_none()));
+        self.children = directories
             .iter()
-            .map(|found| self.subtask(ZBox::from_bytes(found.name)))
+            .filter_map(|item| item.directory)
             .collect();
-        self.schedule_subtasks(&subtasks);
+        // The entries of one pass that are in order already: its buffer is the output.
+        let in_order = parts.len() == 1 && entries.is_sorted_by_key(|item| item.entry.as_ptr());
+        if !in_order {
+            self.output
+                .reserve_exact(entries.iter().map(|item| item.entry.len()).sum());
+            for item in entries {
+                self.output.extend_from_slice(item.entry);
+            }
+        }
+        for part in &mut parts {
+            self.errs.append(&mut part.errs);
+            if in_order {
+                self.output = core::mem::take(&mut part.entries);
+            }
+        }
     }
 
     /// An operand that did not open as a directory.
@@ -643,23 +901,25 @@ impl ShellLsTask {
                 self.add_operand(name.as_bytes(), stat.as_ref());
             }
             // A directory that would not open: report the open error.
-            Ok(Operand::Directory) => self.errs.push(self.error_with_path(open_err)),
+            Ok(Operand::Directory(_)) => self.errs.push(self.error_with_path(open_err)),
             Err(e) => self.errs.push(e),
         }
     }
 
     /// coreutils operand rule: `stat`, and on ENOENT or ELOOP `lstat` so a symlink is itself.
     fn stat_operand(&self, path: &ZStr) -> bun_sys::Result<Operand> {
+        let needs_lstat =
+            self.opts.long_listing || matches!(self.opts.sort, Sort::Time | Sort::Size);
         match shell_statat(self.cwd, path) {
-            Ok(stat) if S::ISDIR(stat.st_mode as _) => return Ok(Operand::Directory),
-            // Only the long format prints more than the name.
-            Ok(_) if !self.opts.long_listing => return Ok(Operand::Entry(None)),
+            Ok(stat) if S::ISDIR(stat.st_mode as _) => return Ok(Operand::Directory(stat)),
+            // The name alone is printed, and the sort is by name.
+            Ok(_) if !needs_lstat => return Ok(Operand::Entry(None)),
             Ok(_) => {}
             Err(e) if matches!(e.get_errno(), E::ENOENT | E::ELOOP) => {}
             Err(e) => return Err(e.with_path(path.as_bytes())),
         }
         match shell_lstatat(self.cwd, path) {
-            Ok(stat) => Ok(Operand::Entry(self.opts.long_listing.then_some(stat))),
+            Ok(stat) => Ok(Operand::Entry(needs_lstat.then_some(stat))),
             Err(e) => Err(e.with_path(path.as_bytes())),
         }
     }
@@ -667,8 +927,8 @@ impl ShellLsTask {
     /// An operand is never subject to the -a/-A filter.
     fn add_operand(&mut self, name: &[u8], stat: Option<&bun_sys::Stat>) {
         match stat {
-            Some(stat) => self.add_entry_long_from_stat(name, stat),
-            None => self.add_entry_short(name),
+            Some(stat) if self.opts.long_listing => self.add_entry_long_from_stat(name, stat),
+            _ => self.add_entry_short(name),
         }
     }
 
@@ -768,8 +1028,14 @@ impl ShellLsTask {
             errs,
             output,
             children,
+            operands,
             ..
         } = *task;
+        if let Some(operands) = operands {
+            if let Operands::Found { part, classified } = *operands {
+                return Ls::on_operands_classified(interp, cmd, part, classified);
+            }
+        }
         let section = Section {
             errs,
             output,
@@ -967,6 +1233,21 @@ pub(crate) struct Opts {
     pub(crate) recursive: bool,
     /// `-r` — reverse the sort of the operands
     pub(crate) reverse: bool,
-    /// `-U`, `-f` — keep the operands in the order of the command line
-    pub(crate) unsorted: bool,
+    pub(crate) sort: Sort,
+}
+
+/// How the operands are sorted inside each of their two groups (the ones that are not
+/// directories, then the directories). The last of these flags on the command line wins (GNU
+/// coreutils). The entries of a directory are not sorted.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum Sort {
+    /// By name.
+    #[default]
+    Name,
+    /// `-U`, `-f` — each group in the order of the command line.
+    None,
+    /// `-t` — by modification time, the newest first.
+    Time,
+    /// `-S` — by size, the largest first.
+    Size,
 }

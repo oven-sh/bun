@@ -219,6 +219,9 @@ export const calls: Record<string, string[]> = {
   "native:Bindgen:InternalSourceMap.bind.ts:find": [
     'import { internalSourceMap } from "bun:internal-for-testing";\ninternalSourceMap.find(internalSourceMap.fromVLQ("AAAA;AACA"), 1, 0)',
   ],
+  "native:Bindgen:bun_string_jsc.bind.ts:indexOfLineRanges": [
+    'import { stringsInternals } from "bun:internal-for-testing";\nstringsInternals.indexOfLineRanges(new TextEncoder().encode("a\\nb\\n"), 1, 6)',
+  ],
   "native:Bindgen:error_jsc.bind.ts:sigactionLayout": [
     'import { sigactionLayout } from "bun:internal-for-testing";\nsigactionLayout()',
   ],

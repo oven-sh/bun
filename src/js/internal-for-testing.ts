@@ -100,24 +100,18 @@ export const napiThreadsafeFunctionLiveCount = $bindgen("napi_body.bind.ts", "th
 
 export const bundlerWorkerLiveCount = $bindgen("JSBundler.bind.ts", "workerLiveCount");
 
-/** How many directory records the resolver has filled. None is freed, so a directory that is dropped from the cache and read again counts twice. */
-export const resolverDirInfoSlotsUsed = $bindgen(
-  "BunObjectInternals.bind.ts",
-  "resolverDirInfoSlotsUsed",
-) as () => number;
-
-/** How many times the resolver found its caches stale after a miss and ran the lookup again. */
-export const resolverLookupsRunAgain = $bindgen(
-  "BunObjectInternals.bind.ts",
-  "resolverLookupsRunAgain",
-) as () => number;
-
-/** For a test with two threads. After `hold`, the next lookup of this thread that misses waits before its verdict for `release`. `waitUntilHeld` answers false when it never waited. */
-export const resolverMissCheck = {
-  hold: $bindgen("BunObjectInternals.bind.ts", "resolverHoldNextMissCheck") as () => void,
-  waitUntilHeld: $bindgen("BunObjectInternals.bind.ts", "resolverWaitUntilMissCheckIsHeld") as () => boolean,
-  release: $bindgen("BunObjectInternals.bind.ts", "resolverReleaseMissCheck") as () => void,
+/** What the resolver's caches did in this process: lookups run again after a miss, directory records filled (none is freed), directory listings made, and listings read again in place. */
+export const resolverCounters = $bindgen("BunObjectInternals.bind.ts", "resolverCounters") as () => {
+  lookupsRunAgain: number;
+  dirInfoSlots: number;
+  newListings: number;
+  refills: number;
 };
+
+/** For a test with two threads. 0: the next lookup of this thread that misses waits before it runs again. 1: waits for that thread, and answers false when it was let go without a miss. 2: lets it go on. */
+export const resolverMissHold = $bindgen("BunObjectInternals.bind.ts", "resolverMissHold") as (
+  step: 0 | 1 | 2,
+) => boolean;
 
 export const semverIntersects = $bindgen("SemverObjectInternals.bind.ts", "intersects") as (
   left: string,

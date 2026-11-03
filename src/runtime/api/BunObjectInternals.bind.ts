@@ -10,12 +10,7 @@ export const registerMacro = b.fn({
 });
 
 /** `bun:internal-for-testing`. */
-export const resolverDirInfoSlotsUsed = b.fn({ returns: b.usize });
+export const resolverCounters = b.fn({ returns: b.record(b.usize) });
 
 /** `bun:internal-for-testing`. */
-export const resolverLookupsRunAgain = b.fn({ returns: b.usize });
-
-/** `bun:internal-for-testing`. */
-export const resolverHoldNextMissCheck = b.fn({});
-export const resolverWaitUntilMissCheckIsHeld = b.fn({ returns: b.bool });
-export const resolverReleaseMissCheck = b.fn({});
+export const resolverMissHold = b.fn({ args: { step: b.i32 }, returns: b.bool });

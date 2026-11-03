@@ -720,63 +720,102 @@ struct Verdict<'t> {
 /// How many replays collect now, on all threads. `Relaxed`: only a hint, a thread's own `REPLAY` is the gate.
 static ARMED_REPLAYS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
-static LOOKUPS_RUN_AGAIN: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
-
-/// `bun:internal-for-testing`: how many times the check after a miss found the caches stale and the lookup ran again.
-pub fn lookups_run_again() -> usize {
-    LOOKUPS_RUN_AGAIN.load(core::sync::atomic::Ordering::Relaxed)
-}
-
-/// `bun:internal-for-testing`: one thread waits between the replay of a miss and its verdict, while a test changes the caches from another thread.
-pub mod miss_check_hold {
+/// `bun:internal-for-testing`: what the caches did so far, and one point where a test holds a thread.
+pub mod test_hooks {
     use bun_threading::Futex;
-    use core::sync::atomic::{AtomicU32, Ordering};
+    use core::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
+
+    static RERUNS: AtomicUsize = AtomicUsize::new(0);
+    static NEW_LISTINGS: AtomicUsize = AtomicUsize::new(0);
+    static REFILLS: AtomicUsize = AtomicUsize::new(0);
+
+    /// Totals of the process, over every thread.
+    pub struct Counters {
+        /// Lookups that missed and ran again.
+        pub lookups_run_again: usize,
+        /// `DirInfo` slots given out. None is freed.
+        pub dir_info_slots: usize,
+        /// `DirEntry` boxes made. None is freed.
+        pub new_listings: usize,
+        /// Times the `DirEntry` of a directory was read again in place.
+        pub refills: usize,
+    }
+
+    pub fn counters() -> Counters {
+        Counters {
+            lookups_run_again: RERUNS.load(Ordering::Relaxed),
+            dir_info_slots: crate::dir_info::slots_used(),
+            new_listings: NEW_LISTINGS.load(Ordering::Relaxed),
+            refills: REFILLS.load(Ordering::Relaxed),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn count_rerun() {
+        RERUNS.fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[inline]
+    pub(crate) fn count_new_listing() {
+        NEW_LISTINGS.fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[inline]
+    pub(crate) fn count_refill() {
+        REFILLS.fetch_add(1, Ordering::Relaxed);
+    }
 
     const OFF: u32 = 0;
     const ARMED: u32 = 1;
     const HELD: u32 = 2;
-    static STATE: AtomicU32 = AtomicU32::new(OFF);
+    static HOLD: AtomicU32 = AtomicU32::new(OFF);
+    /// The thread that `arm` ran on.
+    static HOLD_THREAD: AtomicU64 = AtomicU64::new(0);
 
-    thread_local! {
-        static ARMED_HERE: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
-    }
-
-    /// The next check after a miss on this thread waits for `release`.
+    /// The next lookup of this thread that misses waits before it runs again, until `release`.
     pub fn arm() {
-        ARMED_HERE.set(true);
-        STATE.store(ARMED, Ordering::Release);
+        HOLD_THREAD.store(bun_threading::current_thread_id(), Ordering::SeqCst);
+        HOLD.store(ARMED, Ordering::SeqCst);
     }
 
-    /// Waits for the thread that called `arm`. False: it called `release` and never got to a check.
+    /// Waits for the thread that called `arm`. False: `release` came before that thread missed.
     pub fn wait_until_held() -> bool {
-        while STATE.load(Ordering::Acquire) == ARMED {
-            Futex::wait_forever(&STATE, ARMED);
+        loop {
+            match HOLD.load(Ordering::SeqCst) {
+                ARMED => Futex::wait_forever(&HOLD, ARMED),
+                state => return state == HELD,
+            }
         }
-        STATE.load(Ordering::Acquire) == HELD
     }
 
     pub fn release() {
-        ARMED_HERE.set(false);
-        STATE.store(OFF, Ordering::Release);
-        Futex::wake(&STATE, u32::MAX);
+        HOLD.store(OFF, Ordering::SeqCst);
+        Futex::wake(&HOLD, u32::MAX);
     }
 
+    /// Called between a miss and the run that follows it.
     #[inline]
-    pub(super) fn wait_if_armed() {
-        if STATE.load(Ordering::Relaxed) != OFF {
-            wait();
+    pub(crate) fn hold_before_rerun() {
+        if HOLD.load(Ordering::Relaxed) != OFF {
+            hold();
         }
     }
 
     #[cold]
-    fn wait() {
-        if !ARMED_HERE.replace(false) {
+    #[inline(never)]
+    fn hold() {
+        if HOLD_THREAD.load(Ordering::SeqCst) != bun_threading::current_thread_id() {
             return;
         }
-        STATE.store(HELD, Ordering::Release);
-        Futex::wake(&STATE, u32::MAX);
-        while STATE.load(Ordering::Acquire) == HELD {
-            Futex::wait_forever(&STATE, HELD);
+        if HOLD
+            .compare_exchange(ARMED, HELD, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return;
+        }
+        Futex::wake(&HOLD, u32::MAX);
+        while HOLD.load(Ordering::SeqCst) == HELD {
+            Futex::wait_forever(&HOLD, HELD);
         }
     }
 }
@@ -2430,7 +2469,7 @@ impl<'a> Resolver<'a> {
             if !stale {
                 break;
             }
-            LOOKUPS_RUN_AGAIN.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            test_hooks::count_rerun();
             if let Some(debug) = self.debug_logs.as_mut() {
                 debug.add_note(b"Retrying after dropping stale directory cache entries".to_vec());
             }
@@ -2565,7 +2604,7 @@ impl<'a> Resolver<'a> {
             bun_paths::Platform::AUTO,
         )
         .map(strings::without_trailing_slash_windows_path);
-        miss_check_hold::wait_if_armed();
+        test_hooks::hold_before_rerun();
         let stale = self.bust_touched_dirs(&touched, floor_dir, reread);
         // A replay that finds an answer read what the run before it put in the caches.
         stale || found
@@ -4738,11 +4777,15 @@ impl<'a> Resolver<'a> {
             // so a zeroed slot is UB; box `new_entry` directly for the fresh case.
             let dir_entries_ptr = match in_place {
                 Some(p) => {
+                    test_hooks::count_refill();
                     // SAFETY: dir_entries_ptr is a live BSSMap slot (`in_place`).
                     unsafe { *p = new_entry };
                     p
                 }
-                None => bun_core::heap::into_raw(Box::new(new_entry)),
+                None => {
+                    test_hooks::count_new_listing();
+                    bun_core::heap::into_raw(Box::new(new_entry))
+                }
             };
 
             bun_core::scoped_log!(
@@ -5984,11 +6027,15 @@ impl<'a> Resolver<'a> {
                 // Box `new_entry` directly for the fresh case; assign-into only for `in_place`.
                 let dir_entries_ptr = match in_place {
                     Some(p) => {
+                        test_hooks::count_refill();
                         // SAFETY: dir_entries_ptr is a live BSSMap slot (`in_place`).
                         unsafe { *p = new_entry };
                         p
                     }
-                    None => bun_core::heap::into_raw(Box::new(new_entry)),
+                    None => {
+                        test_hooks::count_new_listing();
+                        bun_core::heap::into_raw(Box::new(new_entry))
+                    }
                 };
                 // NOTE (Stacked Borrows): log BEFORE `entries.put` stores the
                 // `&'static mut DirEntry` — a later read through the parent raw

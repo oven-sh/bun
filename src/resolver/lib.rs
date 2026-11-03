@@ -1170,8 +1170,14 @@ pub mod fs {
             // pointer), so a fresh slot is a leaked `Box<DirEntry>` whose lifetime is the
             // `entries_option_map()` singleton (process-static).
             let entries_ptr: *mut DirEntry = match in_place {
-                Some(p) => p,
-                None => bun_core::heap::into_raw(Box::new(DirEntry::init(dir, generation))),
+                Some(p) => {
+                    crate::resolver::test_hooks::count_refill();
+                    p
+                }
+                None => {
+                    crate::resolver::test_hooks::count_new_listing();
+                    bun_core::heap::into_raw(Box::new(DirEntry::init(dir, generation)))
+                }
             };
             if let Some(original) = in_place {
                 // SAFETY: BSSMap-owned; entries_mutex held.
@@ -1493,6 +1499,7 @@ pub mod fs {
                     let prev = Some(unsafe { &mut (*e_ptr).data });
                     match self.readdir(false, prev, dir, generation, handle, &mut ()) {
                         Ok(new_entry) => {
+                            crate::resolver::test_hooks::count_refill();
                             // SAFETY: see above.
                             unsafe { (*e_ptr).data.clear() };
                             // SAFETY: see above — slot is exclusively owned here.

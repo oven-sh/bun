@@ -873,27 +873,26 @@ pub(crate) fn resolve_sync(
     do_resolve_with_args::<false>(global_this, &module_id, &parent, mode)
 }
 
-/// `bun:internal-for-testing`: see `bun_resolver::dir_info::slots_used`.
-pub(crate) fn resolver_dir_info_slots_used() -> usize {
-    bun_resolver::dir_info::slots_used()
+/// `bun:internal-for-testing`: see `bun_resolver::resolver::test_hooks::counters`.
+pub(crate) fn resolver_counters() -> [(&'static [u8], usize); 4] {
+    let counters = bun_resolver::resolver::test_hooks::counters();
+    [
+        (b"lookupsRunAgain", counters.lookups_run_again),
+        (b"dirInfoSlots", counters.dir_info_slots),
+        (b"newListings", counters.new_listings),
+        (b"refills", counters.refills),
+    ]
 }
 
-/// `bun:internal-for-testing`: see `bun_resolver::resolver::lookups_run_again`.
-pub(crate) fn resolver_lookups_run_again() -> usize {
-    bun_resolver::resolver::lookups_run_again()
-}
-
-/// `bun:internal-for-testing`: see `bun_resolver::resolver::miss_check_hold`.
-pub(crate) fn resolver_hold_next_miss_check() {
-    bun_resolver::resolver::miss_check_hold::arm();
-}
-
-pub(crate) fn resolver_wait_until_miss_check_is_held() -> bool {
-    bun_resolver::resolver::miss_check_hold::wait_until_held()
-}
-
-pub(crate) fn resolver_release_miss_check() {
-    bun_resolver::resolver::miss_check_hold::release();
+/// `bun:internal-for-testing`: 0 arms the hold of `bun_resolver::resolver::test_hooks`, 1 waits for it, 2 releases it.
+pub(crate) fn resolver_miss_hold(step: i32) -> bool {
+    use bun_resolver::resolver::test_hooks;
+    match step {
+        0 => test_hooks::arm(),
+        1 => return test_hooks::wait_until_held(),
+        _ => test_hooks::release(),
+    }
+    true
 }
 
 pub(crate) fn resolve(

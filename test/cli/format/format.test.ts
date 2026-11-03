@@ -7463,7 +7463,9 @@ try {
       // Ordinary text takes short cuts that most of the units can't take, and that one of the flavors may not have. The
       // units are compared with the long way.
       let plain = { cpu: 0 };
-      for (const configuration of configurations) {
+      // Handlebars has the same short cut in both flavors, but none where white space doesn't count.
+      const longWay = extension === "hbs" ? [{ ".prettierrc": '{ "htmlWhitespaceSensitivity": "ignore" }\n' }] : [];
+      for (const configuration of [...configurations, ...longWay]) {
         const result = await run(configuration, () => repeated(ordinary, length / ordinary.length));
         if (result.cpu > plain.cpu) plain = result;
       }

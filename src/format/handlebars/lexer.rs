@@ -95,7 +95,7 @@ fn is_literal_lookahead(rest: &[u8]) -> bool {
 
 /// Returns the length of the `open(\\close|[^close])*close` match, where `text` starts with the opening character. The
 /// match ends at the first `close` that has no backslash before it or, if there's none, at the last one that has.
-fn delimited_len(text: &[u8], close: u8) -> Option<usize> {
+pub(crate) fn delimited_len(text: &[u8], close: u8) -> Option<usize> {
     let mut at = 1;
     let mut last_escaped = None;
     while let Some(found) = text

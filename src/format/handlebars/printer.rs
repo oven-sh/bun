@@ -236,7 +236,7 @@ impl<'a> Printer<'a> {
     }
 
     /// `isPrettierIgnoreNode`
-    fn is_prettier_ignore(&self, node: NodeId) -> bool {
+    pub(crate) fn is_prettier_ignore(&self, node: NodeId) -> bool {
         matches!(self.tree.kind(node), Kind::MustacheComment { value } if strings::trim_js_whitespace(self.text(value)) == b"prettier-ignore")
     }
 
@@ -254,6 +254,18 @@ impl<'a> Printer<'a> {
     pub(crate) fn template(&mut self, template: NodeId) {
         if let Kind::Template { body } = self.tree.kind(template) {
             self.start_group();
+            self.children(self.list(body), Parent::Template, None);
+            self.out.end_group();
+        }
+    }
+
+    /// Prints the nodes of `template`, which is a part of a template: nodes among others that are on several lines.
+    pub(crate) fn part(&mut self, template: NodeId) {
+        if let Kind::Template { body } = self.tree.kind(template) {
+            self.out.start_group(doc::Group {
+                should_break: true,
+                ..doc::Group::default()
+            });
             self.children(self.list(body), Parent::Template, None);
             self.out.end_group();
         }
@@ -1226,7 +1238,7 @@ impl<'a> Printer<'a> {
 
 /// True if `chars`, the text of an attribute's value or of a string, has nothing in it that's printed differently or
 /// that decides on the quotes. With `is_class`, it's a list of classes.
-fn is_plain_value(chars: &[u8], is_class: bool) -> bool {
+pub(crate) fn is_plain_value(chars: &[u8], is_class: bool) -> bool {
     let mut follows_space = true;
     chars.iter().all(|&byte| {
         let is_space = byte.is_ascii_whitespace();

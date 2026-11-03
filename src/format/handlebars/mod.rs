@@ -12,6 +12,7 @@
 //! (`ast::Node::is_as_written`).
 
 mod ast;
+mod direct;
 mod lexer;
 mod parser;
 mod printer;
@@ -51,6 +52,8 @@ pub struct Scratch {
     statements: Vec<parser::Statement>,
     tree: ast::Tree,
     elements: Elements,
+    /// See `direct::Direct::line_start`.
+    line_start: Vec<u8>,
 }
 
 /// Prettier's `parse`. `content` has no `\r`, and its front matter, which ends at `front_matter_end`, has been replaced
@@ -169,6 +172,14 @@ pub fn format(
         return Ok(());
     }
     let (content, front_matter_end) = without_front_matter(text);
+    if !options.no_short_cuts && !is_range && front_matter_end == 0 {
+        let len = out.len();
+        out.extend_from_slice(&original[..first]);
+        if direct::format(text, original, options, scratch, out) {
+            return Ok(());
+        }
+        out.truncate(len);
+    }
     let rejection = Rejection::default();
     let template =
         parse(&content, front_matter_end, scratch, &rejection).map_err(|error| match error {

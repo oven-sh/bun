@@ -2393,3 +2393,246 @@ describe.skipIf(!hasFlag)("expressions that are too wide for their line", () => 
     expect(short.exitCode).toBe(0);
   });
 });
+
+describe("Handlebars", () => {
+  const texts = [
+    // The common shapes.
+    '<div class="a">\n  <p>Some text {{this.name}}</p>\n  {{#if this.b}}\n    <Foo @a={{this.c}} @d="e" />\n  {{else}}\n    {{yield (hash f=this.g)}}\n  {{/if}}\n</div>',
+    "<div   class='a'  id=b >\n<p>Some   text\n{{ this.name }}</p>\n\n\n\n{{#if  this.b}}<Foo  @a={{ this.c }}></Foo>{{else}}x{{/if}}</div>\n",
+    "a {{b}} c",
+    "a {{b}} c\n{{d}}",
+    "\n\n  a",
+    " a ",
+    "  <b>a</b>  \n\n",
+    "<div>a {{b}} c</div>\n<p> x </p>\n<p>\nx</p>\n<p>x\n</p>\n<p>\n\n\nx\n\n\n</p>",
+    "<div></div><div> </div><div>\n</div><div>\n\n</div>",
+    "<Foo></Foo><Foo> </Foo><Foo>\n</Foo><f.x>\n</f.x><:x>\n</:x><@x> </@x><this.x></this.x>",
+    "<br><br/><br /><img src='a'><input disabled>\n<hr\n>",
+    "<Textarea /><Pre /><Title></Title><Script />\n<pre>\n a\n</pre>\n<textarea>\n a\n</textarea>\n<script>\n a < b\n</script>\n<style>\n a { b: c }\n</style>\n<title> a </title>\n<script />\n<b>c</b>",
+    "some words that go on and on and on and on and on and on and on and on and on and on and on and on\nand on <b>and on</b> and on and on",
+    "<p>some words that go on and on and on and on and on and on and on and on and on and on and on and on</p>",
+    "<p>a<b>c</b>\nd</p>\n<p>a <b>c</b>\nd</p>\n<p>a <b>c</b> d</p>",
+    "<ul><li>a</li><li>b</li></ul>\n<ul><li>a</li> <li>b</li></ul>\n<ul><li>a</li>\n<li>b</li></ul>",
+    // Mustaches.
+    "{{a}}{{a.b}}{{@a.b}}{{this}}{{this.a}}{{a-b}}{{{a}}}{{~a~}}{{~{a}~}}{{ a }}{{\na\n}}",
+    '{{a b}}\n{{a "b" \'c\' 1 true null undefined d=e f="g" h=(i j)}}\n{{a\n  b\n}}\n{{a (b)}}\n{{a (b (c (d e)))}}',
+    "{{someHelper someArgument anotherArgument yetAnotherArgument andOneMoreArgument key=value other=another}}",
+    "{{someHelper (someOtherHelper someArgument anotherArgument yetAnotherArgument andOneMoreArgument) key=(a b)}}",
+    "{{someHelper key=(someOtherHelper someArgument anotherArgument yetAnotherArgument andOneMore key=(a b))}}",
+    "{{true}}{{false}}{{null}}{{undefined}}{{1}}{{\"a\"}}{{'a'}}{{\"...attributes\"}}\n{{true a}}\n{{1 a}}",
+    "{{a \"it's\"}}{{a 'say \"b\"'}}{{a \"\\\"\"}}{{a \"b\\\\\"}}{{a \"{{\"}}{{a \"}}\"}}{{a \"é\"}}{{a \"\n\"}}",
+    "{{a 0}}{{a 00}}{{a 1.5}}{{a -1}}{{a 123456789012345}}{{a 1234567890123456}}",
+    "{{a.true}}\n{{true.a}}\n{{a.this}}\n{{@this}}\n{{a.else}}\n{{elsewhere}}\n{{a/b}}\n{{../a}}\n{{a.[b]}}\n{{[a]}}\n{{a.1}}\n{{a.#b}}\n{{é}}",
+    "{{a b = c}}\n{{a b= c}}\n{{a b=c d}}\n{{a as |b|}}\n{{a (b as |c|)}}\n{{(a) b}}\n{{(a).b}}\n{{a (b).c}}",
+    "{{&a}}\n{{>a}}\n{{*a}}\n{{^}}\n{{a}}}\n{{{a}}\n{{{{a}}}} {{{{/a}}}}",
+    // Blocks.
+    "{{#if a}}{{/if}}{{#if a}} {{/if}}{{#if a}}\n{{/if}}{{#if a}}b{{/if}}{{#if a}} b {{/if}}{{#if a}}\nb\n{{/if}}",
+    "{{#if a}}b{{else}}c{{/if}}\n{{#if a}}b{{else}}{{/if}}\n{{#if a}}b{{else}} {{/if}}\n{{#if a}}b{{else}}\n{{/if}}\n{{#if a}} {{else}} {{/if}}",
+    "{{#if a}}\n  b\n{{else if c}}\n  d\n{{else if e}}\n{{else}}\n  f\n{{/if}}",
+    "{{#a b}}c{{else a d}}e{{/a}}\n{{#a b}}c{{else f d}}e{{/a}}\n{{#a b}}c{{else if d}}e{{else a f}}g{{/a}}\n{{#a.b c}}d{{else a.b e}}f{{/a.b}}",
+    '{{#this}}{{else this "" q}}{{/this}}',
+    "{{#if a}}b{{else}}{{#if c}}d{{/if}}{{/if}}\n{{#if a}}b{{else}} {{#if c}}d{{/if}}{{/if}}\n{{#if a}}b{{else if}}c{{/if}}\n{{#if a}}b{{else if as |c|}}d{{/if}}",
+    "{{~#if a~}}b{{~else~}}c{{~/if~}}\n{{~#if a~}} b {{~else if c~}} d {{~/if~}}",
+    "{{#each a as |b c|}}d{{/each}}\n{{#each a key=\"b\" as | c |}}d{{/each}}\n{{#a as |b|}}c{{/a}}\n{{#a}}b{{/a}}\n{{# a }}b{{/ a }}",
+    "{{#let (hash someKey=this.some.long.path.toSomething anotherKey=this.another.long.path) as |value|}}\n  {{value}}\n{{/let}}",
+    "{{#someBlock someArgument anotherArgument yetAnotherArgument andOneMoreArgument andYetAnotherOne key=value as |a|}}b{{/someBlock}}",
+    "{{#a as |true|}}{{/a}}",
+    "{{#a as |undefined |}}{{/a}}",
+    "{{#a as |as\n|}}{{/a}}",
+    "{{#a as |this|}}{{/a}}",
+    "<a as |true|></a>\n<a as |as |></a>",
+    "{{#if a}}b{{/unless}}",
+    "{{#if a}}<b>{{/if}}</b>",
+    "<b>{{#if a}}</b>{{/if}}",
+    "{{^a}}b{{/a}}\n{{#a}}b{{^}}c{{/a}}\n{{#>a}}b{{/a}}\n{{#*inline \"a\"}}b{{/inline}}",
+    // Attributes.
+    "<a b c=\"d\" e='f' g=h i={{j}} k=\"{{l}}\" m=\"n {{o}} p\" ...attributes {{on \"q\" r}} {{! s }} as |t u|>v</a>",
+    "<SomeComponent @someArgument={{this.someValue}} @anotherArgument=\"another value\" class=\"some classes\" as |value|>a</SomeComponent>",
+    "<SomeComponent @someArgument={{someHelper this.someValue this.anotherValue this.yetAnotherValue key=this.value}} />",
+    "<a\n  b\n>c</a>\n<a\n  b\n/>\n<a\n>c</a>\n<a b\n  c>d</a>",
+    "<a class=\"\"><a class=\" \"><a class=\" b  c \"><a class=\"b\n  c\"><a class='b'><a CLASS=\" b \"><a class=b></a></a></a></a></a></a></a>",
+    "<a class=\"b {{c}}\"><a class=\"{{c}} b\"><a class=\"{{c}} \"><a class=\" {{c}}\"><a class=\"{{c}}{{d}} {{e}}\"><a class=\"b{{c}}d\"></a></a></a></a></a></a>",
+    "<div class=\"some-class another-class yet-another-class {{if this.condition 'one-more-class'}} and-a-last-one\">a</div>",
+    "<div class=\"some-class another-class yet-another-class and-one-more-class\n  {{if this.condition 'one-more-class'}}\">a</div>",
+    "<div\n  class=\"some-class another-class yet-another-class and-one-more-class-here\n    {{if this.condition 'one-more-class'}}\"\n>a</div>",
+    "<b class=\"{{if this.someCondition (concat 'some-class-' this.someSuffix) (concat 'another-class-' this.anotherSuffix)}}\">a</b>",
+    "<a title=\"it's\"><a title='say \"b\"'><a title='c'><a title=\"&quot;\"><a title=\"é\"><a title=\"a\nb\"><a title=\"a\\\"></a></a></a></a></a></a></a>",
+    "<a title='\"\" {{b}}'><a title=\"'' {{b}}\"><a title=\"{{b \"c\"}}\"><a title='{{b \"c\"}}'><a title=\"{{b 'c' d=\"e\"}}\"></a></a></a></a></a>",
+    "<a href=\"some-very-long-address-that-does-not-fit-on-the-line-at-all/{{this.id}}/and-goes-on-and-on-behind-it\">b</a>",
+    "<a href=\"some-very-long-address-that-does-not-fit-on-the-line-at-all/{{if a b}}/and-goes-on-and-on-behind-it\">b</a>",
+    "<a b = \"c\"></a>\n<a b= \"c\"></a>\n<a b=\"c\"d=\"e\"></a>\n<a b=c/>\n<a b=/c></a>\n<a b={{c}}d></a>\n<a b={{c}}/>\n<a {{b}}c></a>",
+    "<a {{true}}></a>",
+    "<a {{~b}}></a>\n<a {{b~}}></a>\n<a {{{b}}}></a>\n<a {{! prettier-ignore }} b = c></a>\n<a {{#if b}}c{{/if}}></a>",
+    "<a as></a>\n<a as b></a>\n<a aspect=\"b\"></a>\n<a as |b| c></a>\n<a as|b|></a>\n<a |b|></a>",
+    "<iMg>\n<dIv></dIv>\n<BR>\n<a$b></a$b>\n<a.></a.>\n<x-></x->",
+    "</a>",
+    "<a></a >\n<a></a\n>\n<Foo></Foo >",
+    // A component is known to be empty before the white space in it counts as a line break.
+    " }<Foo::Bar>\n</Foo::Bar\n>",
+    ' (<Foo::Bar k="" as |f|>\n</Foo::Bar\n>',
+    // Comments.
+    "{{! a }}{{!a}}{{!}}{{! }}{{~! a ~}}{{!-- a --}}{{!-- a }} --}}{{!----}}{{!--}}{{!---}}{{!- a -}}{{! a --}}{{!-- a ~--}}{{! a~ }}",
+    "{{! a\n   b }}c\n<b>{{! a\n   b }}</b>\n{{!-- a\n   b --}} {{c d}}",
+    "<!-- a --><!--a--><!----><!--><!---><!-- a -- b --><!-- a ---><!-- {{a}} --><!-- \\{{a}} --><!-- é -->",
+    "<!-- a\n     b -->c\n<b><!-- a\n b --></b>",
+    "<!-->-->\nf",
+    "{{#a}}\n<!-->--> x{{/a}}",
+    "<!DOCTYPE html>\n<a>b</a>",
+    // `prettier-ignore` is about the next node but one.
+    "{{! prettier-ignore }}\n<a   b>c</a>\n<a   b>c</a>",
+    "{{! prettier-ignore }}<a   b>c</a>\n<a   b>c</a>\n<a   b>c</a>",
+    "{{! prettier-ignore }}{{  a}}\n\n{{! prettier-ignore }}\n   b\n\n{{! prettier-ignore }}     c\n\n{{  d}}",
+    "{{! prettier-ignore }}{{  a}}\n\n\n",
+    "{{! prettier-ignore }}{{  a}}   b   \n\n\n{{  c}}",
+    "<a>\n  {{! prettier-ignore }}\n  <b   c>d</b>\n</a>\n<a>{{! prettier-ignore }}</a>\n<a>\n{{! prettier-ignore }}\n</a>\n<a>\n{{! prettier-ignore }} <b   c></b></a>",
+    "{{!-- prettier-ignore --}}\n{{  a}}\n{{!prettier-ignore}}\n{{  a}}\n{{  a}}",
+    "{{! prettier-ignore }}",
+    "a\n{{! prettier-ignore }}\n",
+    // Backslashes. After an escaped mustache, those in front of the next one are a text of their own.
+    "\\{{a}}\n\\\\{{a}}\n\\\\\\{{a}}\na\\\n<b>\\</b>\n<b>a\\{{c}}</b>\na \\ b",
+    "\n\\{{",
+    "\n\\ a",
+    "<a ></a>\n\\{{<br> :\n\\\\{{o}}<b></b>",
+    '<a b="c \\{{"> \\{{ </a>\n<a class=" d \\{{">\\{{</a>\n\n<e>f</e>\n{{g}}',
+    "a \\{{b}} c\n{{d}}\n\\{{e}}\nf\n\\{{g}}",
+    // White space that isn't a blank, a tab or a line feed.
+    "\n\fa",
+    "{{a}}\n\fb",
+    "a\n\f\n{{b}}",
+    "<a>\n<b></b>c\n\f\n{{d}}</a>",
+    "<a><b>\nc\n</b> \f </a>",
+    "a\rb\n{{c}}\r{{d}}",
+    "<Foo>\f</Foo>\n{{#a}}\f{{/a}}",
+    "a\u00a0b \u00a0 c\n{{d}}\u00a0{{e}}",
+    "a\tb\n\t{{c}}\t{{d}}\n<e\tf\t>\tg\t</e>",
+    // Widths.
+    "日本語の文章 日本語の文章 日本語の文章 日本語の文章 日本語の文章 日本語の文章 日本語の文章 日本語の文章",
+    "<p>e\u0301e\u0301e\u0301 👍👍👍 {{a}} é</p>",
+    "a\u0001b\n{{c}}",
+    "a\u0000b",
+    // What loses text is printed as it is.
+    "a < b\n{{  c}}",
+    "<a>\n  b <\n{{  c}}</a>",
+    "<a b",
+    "{{a",
+    "{{#a}}",
+    "<a>",
+    "",
+    "\n",
+    "---\na: b\n---\n{{  c}}",
+  ];
+  const options = [
+    [],
+    ["--print-width=40"],
+    ["--print-width=20", "--single-quote"],
+    ["--print-width=1"],
+    ["--print-width=100000"],
+    ["--tab-width=4"],
+    ["--tab-width=0"],
+    ["--tab-width=5000", "--print-width=20"],
+    ["--use-tabs"],
+    ["--use-tabs", "--tab-width=8", "--print-width=30"],
+    ["--single-quote"],
+    ["--end-of-line=crlf"],
+    ["--end-of-line=cr"],
+    ["--end-of-line=auto"],
+    ["--html-whitespace-sensitivity=ignore"],
+    ["--html-whitespace-sensitivity=strict"],
+    ["--embedded-language-formatting=off"],
+  ];
+  expectSame("a.hbs", texts, options);
+
+  describe("with other line endings and a byte order mark", () => {
+    const others = texts
+      .slice(0, 40)
+      .flatMap(text => [text.replaceAll("\n", "\r\n"), text.replaceAll("\n", "\r"), `\uFEFF${text}`]);
+    expectSame("a.hbs", others, [[], ["--end-of-line=auto"], ["--end-of-line=crlf", "--print-width=30"]]);
+  });
+
+  // Every construct next to every neighbor in every place, at widths around those at which something in them breaks.
+  describe("in every place", () => {
+    const constructs = [
+      "word",
+      "some more words",
+      "{{a}}",
+      "{{a b c=d}}",
+      "{{a (b c d=e)}}",
+      "<b>x</b>",
+      "<b> x </b>",
+      "<b>\nx\n</b>",
+      '<b c="d" e={{f g}}>x</b>',
+      '<b class="x {{y z}} w">v</b>',
+      "<br>",
+      "<Foo> </Foo>",
+      "{{#if a}} {{/if}}",
+      "{{#if a}}x{{else}}y{{/if}}",
+      "{{#if a}}\nx\n{{else if b}}\ny\n{{/if}}",
+      "{{#foo a b=c as |d e|}}x{{/foo}}",
+      "{{! c }}",
+      "<!-- a\n  b -->",
+      "{{! prettier-ignore }}",
+      "<pre>\n x\n</pre>",
+      "\\{{a}}",
+    ];
+    const neighbors = ["", " ", "\n", "x", "{{n m}}", "<i>n</i> "];
+    const places = [
+      ["", ""],
+      ["<div>", "</div>"],
+      ["<div>\n", "\n</div>"],
+      ["{{#if c}} ", " {{/if}}"],
+      ["{{#if c}}\nq\n{{else}}\n", "\n{{/if}}"],
+      ['<div class="k"><p>', "</p></div>tail"],
+    ];
+    const all = constructs.flatMap(construct =>
+      neighbors.flatMap(before =>
+        neighbors.flatMap(after => places.map(([open, close]) => `${open}${before}${construct}${after}${close}`)),
+      ),
+    );
+    expectSame(
+      "a.hbs",
+      isDebug ? all.filter((_, index) => index % 16 === 0) : all,
+      [[], ["--print-width=30"], ["--print-width=16"], ["--print-width=8"]],
+    );
+  });
+
+  test.skipIf(!hasFlag)("what has been formatted", async () => {
+    const dir = tempDir("format-short-cuts", Object.fromEntries(texts.map((text, index) => [`${index}.hbs`, text])));
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fmt", "--write", "--no-config", "--no-editorconfig", "--log-level=silent", "."],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    await proc.exited;
+    const formatted = texts.map((_, index) => readFileSync(join(String(dir), `${index}.hbs`), "utf8"));
+    dir[Symbol.dispose]();
+    const { different, said, expected } = await differences("a.hbs", formatted, []);
+    expect(different).toEqual([]);
+    expect(said).toEqual(expected);
+  });
+
+  test("a text that is formatted stays as it is", async () => {
+    const formatted = [
+      '<div class="a">\n  <p>Some text {{this.name}}</p>\n  {{#if this.b}}\n    <Foo @a={{this.c}} @d="e" />\n  {{else}}\n    {{yield (hash f=this.g)}}\n  {{/if}}\n\n  {{! h }}\n  <!-- i -->\n</div>',
+      "<SomeComponent\n  @someArgument={{this.someValue}}\n  @anotherArgument={{someHelper\n    this.someValue\n    this.anotherValue\n    this.yetAnotherValue\n    key=this.value\n  }}\n  as |value|\n>\n  {{value}}\n</SomeComponent>",
+    ];
+    using dir = tempDir(
+      "format-short-cuts",
+      Object.fromEntries(formatted.map((text, index) => [`${index}.hbs`, text])),
+    );
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fmt", "--check", "--no-config", "--no-editorconfig", "."],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr: stderr.replace(/^.*\d+ files?.*$/gm, "").trim(), exitCode }).toEqual({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});

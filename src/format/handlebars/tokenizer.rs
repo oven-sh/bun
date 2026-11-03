@@ -1284,6 +1284,11 @@ pub(crate) fn build(
         room: Stack::for_tree(),
     };
     let mut body = builder.body((0, statements.len()))?;
+    builder.tree.ends_in_raw_text = !builder.is_tag_name_buffer_empty
+        && matches!(
+            builder.text(builder.tag.name),
+            b"title" | b"style" | b"script"
+        );
     if let Some(front_matter) = front_matter {
         let nodes: Vec<NodeId> = std::iter::once(front_matter)
             .chain(builder.tree.list(body).iter().copied())

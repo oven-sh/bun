@@ -499,6 +499,157 @@ pub(crate) fn is_pre_tag(name: &[u8]) -> bool {
     )
 }
 
+/// All that the tables above say about a name.
+#[derive(Copy, Clone)]
+pub(crate) struct Facts {
+    /// `tag_definition`
+    pub(crate) definition: &'static TagDefinition,
+    /// `css_display_of_tag`
+    pub(crate) display: Option<Display>,
+    /// `is_pre_tag`
+    pub(crate) is_pre: bool,
+}
+
+const NO_FACTS: Facts = Facts {
+    definition: &DEFAULT_TAG_DEFINITION,
+    display: None,
+    is_pre: false,
+};
+
+const PRE_TAGS: [u128; 5] = [
+    key(b"listing"),
+    key(b"plaintext"),
+    key(b"pre"),
+    key(b"textarea"),
+    key(b"xmp"),
+];
+
+const fn position_of<T: Copy>(table: &[(u128, T)], key: u128) -> Option<usize> {
+    let mut at = 0;
+    while at < table.len() {
+        if table[at].0 == key {
+            return Some(at);
+        }
+        at += 1;
+    }
+    None
+}
+
+/// The names of all tables, each once, and how many there are.
+const NAMES: ([u128; 256], usize) = {
+    let (mut names, mut len) = ([0; 256], 0);
+    let mut table = 0;
+    while table < 3 {
+        let table_len = match table {
+            0 => TAG_DEFINITIONS.len(),
+            1 => CSS_DISPLAY_TAGS.len(),
+            _ => PRE_TAGS.len(),
+        };
+        let mut at = 0;
+        while at < table_len {
+            let name = match table {
+                0 => TAG_DEFINITIONS[at].0,
+                1 => CSS_DISPLAY_TAGS[at].0,
+                _ => PRE_TAGS[at],
+            };
+            let (mut is_new, mut seen) = (true, 0);
+            while seen < len {
+                is_new &= names[seen] != name;
+                seen += 1;
+            }
+            if is_new {
+                names[len] = name;
+                len += 1;
+            }
+            at += 1;
+        }
+        table += 1;
+    }
+    (names, len)
+};
+
+static FACTS: [(u128, Facts); NAMES.1] = {
+    let mut facts = [(0, NO_FACTS); NAMES.1];
+    let mut at = 0;
+    while at < facts.len() {
+        let name = NAMES.0[at];
+        let mut is_pre = false;
+        let mut pre = 0;
+        while pre < PRE_TAGS.len() {
+            is_pre |= PRE_TAGS[pre] == name;
+            pre += 1;
+        }
+        facts[at] = (
+            name,
+            Facts {
+                definition: match position_of(TAG_DEFINITIONS, name) {
+                    Some(index) => TAG_DEFINITIONS[index].1,
+                    None => &DEFAULT_TAG_DEFINITION,
+                },
+                display: match position_of(CSS_DISPLAY_TAGS, name) {
+                    Some(index) => Some(CSS_DISPLAY_TAGS[index].1),
+                    None => None,
+                },
+                is_pre,
+            },
+        );
+        at += 1;
+    }
+    facts
+};
+static FACTS_INDEX: [u8; SLOTS] = index_of(&FACTS);
+
+/// The bytes of a name of `len` bytes in the sixteen bytes that start with it.
+const NAME_MASKS: [u128; 16] = {
+    let mut masks = [0; 16];
+    let mut len = 0;
+    while len < 16 {
+        masks[len] = (1 << (8 * len)) - 1;
+        len += 1;
+    }
+    masks
+};
+
+/// `key` for the first `len` of `bytes`, which are not 0. Returns 0 if `len` is 0 or more than 15.
+#[inline]
+pub(crate) fn key_of_start(bytes: &[u8; 16], len: usize) -> u128 {
+    match NAME_MASKS.get(len) {
+        Some(mask) if len > 0 => (u128::from_le_bytes(*bytes) & mask) | (len as u128) << 120,
+        _ => 0,
+    }
+}
+
+/// True if `bytes` start with the name that `key` has been made of, which is not 0.
+#[inline]
+pub(crate) fn starts_with_key(bytes: &[u8; 16], key: u128) -> bool {
+    let mask = NAME_MASKS[(key >> 120) as usize & 15];
+    (u128::from_le_bytes(*bytes) ^ key) & mask == 0
+}
+
+/// `key`
+#[inline]
+pub(crate) fn key_of_name(name: &[u8]) -> u128 {
+    key_of(name)
+}
+
+/// What is known about the name that `key` has been made of. A name of more than 15 bytes is in no table.
+#[inline]
+pub(crate) fn facts(key: u128) -> &'static Facts {
+    let mut slot = slot_of(key);
+    loop {
+        let Some((name, facts)) = (FACTS_INDEX[slot] as usize)
+            .checked_sub(1)
+            .and_then(|index| FACTS.get(index))
+        else {
+            return &NO_FACTS;
+        };
+        if *name == key {
+            return facts;
+        }
+        slot = (slot + 1) % SLOTS;
+    }
+}
+
 /// `@prettier/html-tags`, sorted.
 const HTML_TAGS: [&[u8]; 151] = [
     b"a",

@@ -4003,3 +4003,23 @@ it.each(Object.entries({ setDefaultAutoSelectFamily, setDefaultAutoSelectFamilyA
     expect(thrown).toEqual(thrownBy(() => set(undefined)));
   },
 );
+
+// A write that crosses the peer's FIN is answered with a reset, and Winsock then reports the reset alone.
+it.skipIf(!isWindows)("'end' comes with the last 'data', before anything else gets to write", async () => {
+  const server = createServer(socket => socket.once("data", () => socket.end("answer")));
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const events: string[] = [];
+    const client = connect((server.address() as AddressInfo).port, "127.0.0.1", () => client.write("question"));
+    client.on("data", () => {
+      events.push("data");
+      setImmediate(() => events.push("immediate"));
+    });
+    client.on("end", () => events.push("end"));
+    await once(client, "close");
+    await new Promise(setImmediate);
+    expect(events).toEqual(["data", "end", "immediate"]);
+  } finally {
+    server.close();
+  }
+});

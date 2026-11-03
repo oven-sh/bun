@@ -1055,8 +1055,15 @@ const files = {
       },
 
       async build() {
-        // Bun.build() shares the cache across calls. Five shapes of "installed
-        // after the first build failed".
+        // Bun.build() shares the cache across calls. Shapes of "installed after the
+        // first build failed", and one of "written while the build runs".
+        const { resolverCounters } = require("bun:internal-for-testing");
+        // build(), and how many lookups ran again after a miss meanwhile.
+        const buildCounted = async (label, entry, plugins) => {
+          const before = resolverCounters().lookupsRunAgain;
+          await build(label, entry, plugins);
+          console.log(label, "lookups run again:", resolverCounters().lookupsRunAgain - before);
+        };
         // node_modules did not exist.
         write(path.join("g1", "ent.ts"), 'import { v } from "dpk1"; console.log(v);');
         await build("G1a", path.join("g1", "ent.ts"));
@@ -1068,12 +1075,14 @@ const files = {
         await build("G2a", path.join("g2", "ent.ts"));
         installInto("g2", "dpk2");
         await build("G2b", path.join("g2", "ent.ts"));
-        // package.json existed, its main file did not.
+        // package.json existed, its main file did not. Bun found this one before it ran a
+        // lookup again after a miss: a build asks the disk again about each listing that an
+        // earlier build read. So G3b misses nothing, and no lookup runs again.
         write(path.join("g3", "ent.ts"), 'import { v } from "dpk3"; console.log(v);');
         write(path.join("g3", "node_modules", "dpk3", "package.json"), '{"name":"dpk3","main":"i.js"}');
         await build("G3a", path.join("g3", "ent.ts"));
         write(path.join("g3", "node_modules", "dpk3", "i.js"), "export const v = 42;");
-        await build("G3b", path.join("g3", "ent.ts"));
+        await buildCounted("G3b", path.join("g3", "ent.ts"));
         // An onResolve plugin that matches but declines routes the lookup
         // through the bundler's other resolver call.
         const declining = [{ name: "declining", setup: b => b.onResolve({ filter: /^dpk4$/ }, () => undefined) }];
@@ -1085,11 +1094,25 @@ const files = {
         await build("G5a", "dpk5");
         installInto(".", "dpk5");
         await build("G5b", "dpk5");
-        // A CSS url() with a fragment: looked up as written, then without the fragment.
+        // A CSS url() with a fragment: looked up as written, then without the fragment. Bun
+        // found this one before too, for the same reason: no lookup runs again in G6b.
+        const svg = "<svg xmlns='http://www.w3.org/2000/svg'/>";
         write(path.join("g6", "ent.css"), 'a { background: url("./late.svg#frag"); }');
         await build("G6a", path.join("g6", "ent.css"));
-        write(path.join("g6", "late.svg"), "<svg xmlns='http://www.w3.org/2000/svg'/>");
-        await build("G6b", path.join("g6", "ent.css"));
+        write(path.join("g6", "late.svg"), svg);
+        await buildCounted("G6b", path.join("g6", "ent.css"));
+        // The same within one build, which listed the directory for its entry point: a plugin
+        // writes the file when the build asks for it, and declines. The lookup misses as written
+        // and without the fragment, and the one run after the miss has to make both tries again:
+        // only the second one finds the file.
+        const writing = [
+          {
+            name: "writing",
+            setup: b => b.onResolve({ filter: /late[.]svg/ }, () => write(path.join("g7", "late.svg"), svg)),
+          },
+        ];
+        write(path.join("g7", "ent.css"), 'a { background: url("./late.svg#frag"); }');
+        await buildCounted("G7", path.join("g7", "ent.css"), writing);
       },
     };
 
@@ -1276,12 +1299,16 @@ describe.concurrent("a failed resolution sees them from each way to ask the reso
       G2b OK 1
       G3a ERR Could not resolve: "dpk3". Maybe you need to "bun install"?
       G3b OK 1
+      G3b lookups run again: 0
       G4a ERR Could not resolve: "dpk4". Maybe you need to "bun install"?
       G4b OK 1
       G5a ERR ModuleNotFound resolving "dpk5" (entry point)
       G5b OK 1
       G6a ERR Could not resolve: "./late.svg#frag"
-      G6b OK 1"
+      G6b OK 1
+      G6b lookups run again: 0
+      G7 OK 1
+      G7 lookups run again: 1"
       ,
       }
     `);

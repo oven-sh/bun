@@ -12,7 +12,7 @@ import {
   tempDir,
   tempDirWithFiles,
 } from "harness";
-import { existsSync, mkdirSync, symlinkSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, symlinkSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { constants } from "os";
 import { join } from "path";
@@ -1094,6 +1094,12 @@ describe("selectors", () => {
   });
 });
 
+/** The members that `bun install` writes to bun.lock. */
+async function installedMembers(cwd: string): Promise<string[]> {
+  await runBunInstall(bunEnv, cwd);
+  return Object.values<string>(parseLockfile(cwd).workspace_paths).sort();
+}
+
 describe.concurrent("a '!' entry in \"workspaces\"", () => {
   // Every script prints the directory of its package. `other/*` is outside every entry: the
   // paths equal those of members but for the first segment, and `!packages` is not a glob for
@@ -1153,11 +1159,6 @@ describe.concurrent("a '!' entry in \"workspaces\"", () => {
     expect(result).toMatchObject({ ran: [], exitCode: 1 });
   });
 
-  async function installedMembers(cwd: string): Promise<string[]> {
-    await runBunInstall(bunEnv, cwd);
-    return Object.values<string>(parseLockfile(cwd).workspace_paths).sort();
-  }
-
   const appAndLib = ["packages/app", "packages/lib"];
   const configs: { workspaces: string[] | { packages: string[] }; members: string[] }[] = [
     { workspaces: { packages: ["packages/*", "!packages/legacy"] }, members: appAndLib },
@@ -1190,6 +1191,121 @@ describe.concurrent("a '!' entry in \"workspaces\"", () => {
       expect(await installedMembers(String(dir))).toEqual(members);
     },
   );
+});
+
+// The walk that finds the packages of `bun run --filter` and `--workspaces` opens each directory
+// that a "workspaces" entry names. A symlink that doesn't open is not a package, as for
+// `bun install`. A directory that doesn't open ends the run.
+describe.concurrent('a "workspaces" entry whose directory does not open', () => {
+  function fixture(workspaces: string[]) {
+    return tempDir("filter-workspace-open", {
+      "package.json": JSON.stringify({ name: "ws", workspaces }),
+      "packages/lib/package.json": JSON.stringify({
+        name: "lib",
+        version: "1.0.0",
+        scripts: { present: "echo ran:packages/lib" },
+      }),
+    });
+  }
+
+  async function run(cwd: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--workspaces", "present"],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { ran: [...stdout.matchAll(/ran:(\S+)/g)].map(m => m[1]).sort(), stderr, exitCode };
+  }
+
+  const ranLib = { ran: ["packages/lib"], stderr: "", exitCode: 0 };
+
+  // A junction needs no privilege on Windows, and its target does not have to exist.
+  test("a symlink to nothing below a glob is skipped, as by bun install", async () => {
+    using dir = fixture(["broken/*", "packages/*"]);
+    symlinkSync(join(String(dir), "nowhere"), join(String(dir), "broken"), "junction");
+
+    const result = await run(String(dir));
+    expect(result).toEqual(ranLib);
+    expect(await installedMembers(String(dir))).toEqual(result.ran);
+  });
+
+  // `bun install` reports an entry without glob syntax that is not there.
+  test("a symlink to nothing that is the entry is skipped", async () => {
+    using dir = fixture(["broken", "packages/*"]);
+    symlinkSync(join(String(dir), "nowhere"), join(String(dir), "broken"), "junction");
+
+    expect(await run(String(dir))).toEqual(ranLib);
+  });
+
+  // Windows: what a junction to itself does when it is opened has not been checked.
+  describe.skipIf(isWindows)("a symlink to itself", () => {
+    test("below a glob is skipped, as by bun install", async () => {
+      using dir = fixture(["loop/*", "packages/*"]);
+      symlinkSync("loop", join(String(dir), "loop"));
+
+      const result = await run(String(dir));
+      expect(result).toEqual(ranLib);
+      expect(await installedMembers(String(dir))).toEqual(result.ran);
+    });
+
+    test("that is the entry is skipped", async () => {
+      using dir = fixture(["loop", "packages/*"]);
+      symlinkSync("loop", join(String(dir), "loop"));
+
+      expect(await run(String(dir))).toEqual(ranLib);
+    });
+
+    // The walk of an absolute entry starts with the open of that path. `bun install` fails for it too.
+    test.each([["<root>/loop/*"], ["<root>/loop"]])(
+      "that an absolute entry names ends the run, for %j",
+      async entry => {
+        using dir = fixture(["packages/*"]);
+        symlinkSync("loop", join(String(dir), "loop"));
+        const workspaces = [entry.replace("<root>", String(dir)), "packages/*"];
+        await Bun.write(join(String(dir), "package.json"), JSON.stringify({ name: "ws", workspaces }));
+
+        const { ran, stderr, exitCode } = await run(String(dir));
+        expect(stderr).toContain("error: ELOOP");
+        expect({ ran, exitCode }).toEqual({ ran: [], exitCode: 1 });
+      },
+    );
+  });
+
+  test("an absolute path without glob syntax is a package, and is skipped if it is missing", async () => {
+    using dir = tempDir("filter-workspace-absolute", {
+      "packages/lib/package.json": JSON.stringify({ name: "lib", scripts: { present: "echo ran:packages/lib" } }),
+      "elsewhere/package.json": JSON.stringify({ name: "elsewhere", scripts: { present: "echo ran:elsewhere" } }),
+    });
+    // The absolute paths exist only once the directory does.
+    const workspaces = ["packages/lib", join(String(dir), "elsewhere"), join(String(dir), "missing")];
+    await Bun.write(join(String(dir), "package.json"), JSON.stringify({ name: "ws", workspaces }));
+
+    expect(await run(String(dir))).toEqual({ ran: ["elsewhere", "packages/lib"], stderr: "", exitCode: 0 });
+  });
+
+  // Windows: a mode of 000 does not stop a directory from being read. root reads any directory.
+  describe.skipIf(isWindows || process.getuid?.() === 0)("a directory that cannot be read", () => {
+    // The walk of "secret/*" comes to the directory. The walk of the absolute entry starts in it.
+    test.each([["secret/*"], ["<root>/secret/*"]])("ends the run for %j", async entry => {
+      using dir = fixture(["packages/*"]);
+      const secret = join(String(dir), "secret");
+      mkdirSync(secret);
+      chmodSync(secret, 0o000);
+      const workspaces = [entry.replace("<root>", String(dir)), "packages/*"];
+      await Bun.write(join(String(dir), "package.json"), JSON.stringify({ name: "ws", workspaces }));
+      try {
+        const { ran, stderr, exitCode } = await run(String(dir));
+        expect(stderr).toContain("error: EACCES");
+        expect(stderr).toContain("secret");
+        expect({ ran, exitCode }).toEqual({ ran: [], exitCode: 1 });
+      } finally {
+        chmodSync(secret, 0o755);
+      }
+    });
+  });
 });
 
 // #20319: on Windows, `bun --filter` / `bun run --parallel` spawn each script
@@ -1661,6 +1777,24 @@ describe.concurrent.skipIf(isWindows)("workspace paths longer than the path buff
     expect(stderr).toContain("ENAMETOOLONG");
     expect(stdout).toContain("ok present: ok-ran");
     expect(exitCode).toBe(0);
+  });
+
+  test("reports a member whose directory path is too long and still runs the other members", async () => {
+    using base = tempDir("filter-long-member-dir", {});
+    const root = makeDirectoryOfLength(String(base), MAX_PATH_BYTES - 196);
+    makeTreeSync(root, workspace);
+    // 14 bytes more than the buffer holds. A path that long exists only relative to a directory inside it.
+    const name = Buffer.alloc(200, "x").toString();
+    const mkdir = (command: string) => Bun.spawnSync({ cmd: [command, name], cwd: join(root, "packages") });
+    expect(mkdir("mkdir").exitCode).toBe(0);
+    try {
+      const { stdout, stderr, exitCode } = await runFilter(root);
+      expect(stderr).toContain("ENAMETOOLONG");
+      expect(stdout).toContain("ok present: ok-ran");
+      expect(exitCode).toBe(0);
+    } finally {
+      mkdir("rmdir");
+    }
   });
 
   test("finds the workspace root above a cwd whose own package.json path is too long", async () => {

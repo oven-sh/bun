@@ -1,6 +1,8 @@
 //! Patterns and parameters.
 
 use super::*;
+use crate::js::print::parameters::{can_break_between_parameters, should_hug_function_parameters};
+use crate::js::utils::assignment_like::is_type_without_line_breaks;
 
 impl<'a> Line<'_, 'a> {
     pub(super) fn default_value(&mut self, default: Option<Expr<'a>>) -> Written {
@@ -17,31 +19,12 @@ impl<'a> Line<'_, 'a> {
         match pattern.kind() {
             PatKind::Ident(_) => self.source(pattern.span()),
             PatKind::Object(props) => {
-                let Some(first) = props.first() else {
+                if props.is_empty() {
                     return self.token("{}");
-                };
-                // Like an object, it stays broken if it's written that way.
-                if self.has_line_break_in(Span::new(pattern.span().start, first.span().start)) {
-                    return Err(Refused);
                 }
                 self.open_brace()?;
                 self.nested(|line| {
-                    line.list(props.iter(), |line, prop| {
-                        if prop.is_rest() {
-                            line.token("...")?;
-                            return line.pattern(prop.value());
-                        }
-                        // A pattern in a pattern can force a line break.
-                        if prop.value().tag() != PatTag::Ident {
-                            return Err(Refused);
-                        }
-                        if !prop.is_shorthand() {
-                            line.key(prop.key())?;
-                            line.token(": ")?;
-                        }
-                        line.source(prop.value().span())?;
-                        line.default_value(prop.default())
-                    })
+                    line.list(props.iter(), |line, prop| line.pattern_property(prop))
                 })?;
                 self.close_brace()
             }
@@ -63,29 +46,83 @@ impl<'a> Line<'_, 'a> {
         }
     }
 
-    /// `(a, b: T, c = 1, ...d)`
-    pub(super) fn parameters(&mut self, func: Func<'a>) -> Written {
-        if func.this_param().is_some() {
+    pub(super) fn pattern_property(&mut self, prop: PatProp<'a>) -> Written {
+        if prop.is_rest() {
+            self.token("...")?;
+            return self.pattern(prop.value());
+        }
+        // A pattern in a pattern can force a line break.
+        if prop.value().tag() != PatTag::Ident {
             return Err(Refused);
         }
+        if !prop.is_shorthand() {
+            self.key(prop.key())?;
+            self.token(": ")?;
+        }
+        self.source(prop.value().span())?;
+        self.default_value(prop.default())
+    }
+
+    /// `(a, b: T, c = 1, ...d)`
+    pub(super) fn parameters(&mut self, func: Func<'a>) -> Written {
         self.byte(b'(')?;
-        self.list(func.params().iter(), |line, param| {
-            // A decorator, or an accessibility modifier, which puts each parameter on a line.
-            if !param.modifiers().is_empty()
-                || (param.is_rest() && (param.default().is_some() || param.is_optional()))
+        self.list(func.params_with_this(), |line, param| {
+            line.parameter_without_modifiers(param)
+        })?;
+        self.byte(b')')
+    }
+
+    fn parameter_without_modifiers(&mut self, param: Param<'a>) -> Written {
+        // A decorator, or an accessibility modifier, which puts each parameter on a line.
+        match param.modifiers().is_empty() {
+            true => self.parameter(param),
+            false => Err(Refused),
+        }
+    }
+
+    /// The parameters of `func`, which are too wide for the line.
+    pub(super) fn parameters_each_on_a_line(&mut self, func: Func<'a>) -> Written {
+        let params = func.params();
+        // The only parameter is an object pattern, which breaks in place of the parentheses.
+        if let (1, Some(only), None) = (params.len(), params.first(), func.this_param())
+            && let PatKind::Object(props) = only.pat().kind()
+            && !props.is_empty()
+            && should_hug_function_parameters(func, false, self.f)
+        {
+            if !only.modifiers().is_empty()
+                || only.default().is_some()
+                || !(only.ty()).is_none_or(|ty| is_type_without_line_breaks(ty, self.f))
             {
                 return Err(Refused);
             }
-            if param.is_rest() {
-                line.token("...")?;
+            // Nothing can follow a rest element.
+            let has_last_comma =
+                self.has_trailing_comma(false) && !props.last().is_some_and(PatProp::is_rest);
+            self.token("({")?;
+            self.lines(props.len(), props.iter(), has_last_comma, |line, prop| {
+                line.pattern_property(prop)
+            })?;
+            self.byte(b'}')?;
+            if only.is_optional() {
+                self.byte(b'?')?;
             }
-            line.pattern(param.pat())?;
-            if param.is_optional() {
-                line.byte(b'?')?;
-            }
-            line.type_annotation(param.ty())?;
-            line.default_value(param.default())
-        })?;
+            self.type_annotation(only.ty())?;
+            return self.byte(b')');
+        }
+        if !can_break_between_parameters(func, self.f) {
+            return Err(Refused);
+        }
+        // Nothing can follow a rest parameter.
+        let has_last_comma =
+            self.has_trailing_comma(true) && !params.last().is_some_and(Param::is_rest);
+        let count = params.len() + usize::from(func.this_param().is_some());
+        self.byte(b'(')?;
+        self.lines(
+            count,
+            func.params_with_this(),
+            has_last_comma,
+            |line, param| line.parameter_without_modifiers(param),
+        )?;
         self.byte(b')')
     }
 }

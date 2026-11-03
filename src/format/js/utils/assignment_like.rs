@@ -3,7 +3,9 @@
 
 use super::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use super::member_chain::is_member_call_chain;
-use super::object::{FormatKey, KeyParent, format_computed_or_property_key, write_member_name};
+use super::object::{
+    FormatKey, KeyParent, format_computed_or_property_key, printed_key, write_member_name,
+};
 use super::string::{FormatLiteralStringToken, StringLiteralParentKind};
 use super::suppressed::FormatSuppressedNode;
 use super::typecast::{
@@ -66,7 +68,7 @@ fn comments_stay_around_operator(f: &Formatter<'_>) -> bool {
 
 /// A name is short if it's less than this much wider than the indentation. Breaking after the operator would then gain
 /// next to nothing.
-const MIN_OVERLAP_FOR_BREAK: u32 = 3;
+pub(crate) const MIN_OVERLAP_FOR_BREAK: u32 = 3;
 
 /// The printed width of the computed `key`, with its brackets, if it's a single piece of text, with no group in it and
 /// nothing that can break. Only such a key can be short. Prettier checks that `cleanDoc(keyDoc)` is a string.
@@ -91,6 +93,19 @@ fn computed_key_width<'a>(key: Key<'a>, f: &Formatter<'a>) -> Option<usize> {
         .get(1..)
         .is_some_and(|it| it.trim_ascii_start().starts_with(b"`"));
     (!is_template).then(|| f.source_text().span_width(span))
+}
+
+/// What [`AssignmentLike::write_left`] returns for `property` of an object, which has a key and no comments.
+pub(crate) fn has_short_key<'a>(property: Prop<'a>, f: &Formatter<'a>) -> bool {
+    let text_width_for_break =
+        f.options().indent_width.value() as usize + MIN_OVERLAP_FOR_BREAK as usize;
+    property.key().is_some_and(|key| match key.is_computed() {
+        true => computed_key_width(key, f).is_some_and(|width| width < text_width_for_break),
+        false => {
+            let printed = printed_key(key, key.inner_span(f.file()), property.as_ast_nodes(), f);
+            (f.string_width(&printed) as usize) < text_width_for_break
+        }
+    })
 }
 
 /// `{ a /* comment */: b }`: in Prettier a name with a comment is more than one piece of text, so it isn't short. oxfmt
@@ -190,6 +205,11 @@ fn plain_type_width<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> Option<usize> {
         }
     }
     Some(f.source_text().span_width(ty.span()))
+}
+
+/// True if `ty` is printed as one piece of text, with nothing in it that can break.
+pub(crate) fn is_type_without_line_breaks<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> bool {
+    plain_type_width(ty, f).is_some()
 }
 
 /// `<A>`: a single type argument that's a name, a keyword or a literal is printed without a group.
@@ -585,6 +605,21 @@ impl<'a> AssignmentLike<'a> {
             return AssignmentLikeLayout::NeverBreakAfterOperator;
         }
         AssignmentLikeLayout::Fluid
+    }
+
+    /// [`AssignmentLike::layout`], for a left side that hasn't been written.
+    pub(crate) fn layout_of(
+        &self,
+        is_left_short: bool,
+        left_may_break: bool,
+        f: &mut Formatter<'a>,
+    ) -> AssignmentLikeLayout {
+        self.layout(
+            self.get_right_expression(),
+            is_left_short,
+            left_may_break,
+            f,
+        )
     }
 
     fn get_right_expression(&self) -> Option<Expr<'a>> {

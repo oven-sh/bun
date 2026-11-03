@@ -305,7 +305,7 @@ fn group_parameters_if_object_type_breaks<'a>(
 }
 
 /// The conditions of `shouldGroupFunctionParameters` that don't depend on how the return type prints.
-fn can_group_function_parameters(func: Func<'_>) -> bool {
+pub(crate) fn can_group_function_parameters(func: Func<'_>) -> bool {
     let type_parameters = func.type_params();
     match type_parameters.len() {
         0 => {}

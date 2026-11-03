@@ -1,4 +1,5 @@
 use super::array_element_list::ArrayElementList;
+use crate::js::flat::{CertainIf, Deeper};
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -16,15 +17,20 @@ pub(crate) fn write_array_expression<'a>(
         let group_id = f.group_id("array");
         let has_dangling_line_comment = !f.is_quiet()
             && (f.comments().of_node(node).dangling.iter()).any(|comment| comment.is_line());
+        let should_expand = has_dangling_line_comment || should_break(elements);
+        // Then it's certain to break.
+        let follows_line = std::mem::take(&mut f.context_mut().short_cuts.follows_line);
         let content = format_args!(
-            ArrayElementList::new(elements, group_id),
+            ArrayElementList::new(elements, group_id, should_expand || follows_line),
             dangling_comments(node)
         );
+        let content = Deeper(&content);
+        let content = CertainIf(follows_line, &content);
         write!(
             f,
             group(&soft_block_indent(&content))
                 .with_group_id(Some(group_id))
-                .should_expand(has_dangling_line_comment || should_break(elements))
+                .should_expand(should_expand)
         );
     }
     write!(f, "]");
@@ -32,7 +38,7 @@ pub(crate) fn write_array_expression<'a>(
 
 /// Prettier's `shouldBreak` for an array: there are at least two elements, all are arrays or all are objects, and each
 /// has at least two elements.
-fn should_break<'a>(elements: List<'a, Expr<'a>>) -> bool {
+pub(crate) fn should_break<'a>(elements: List<'a, Expr<'a>>) -> bool {
     if elements.len() < 2 {
         return false;
     }

@@ -182,6 +182,57 @@ impl<'a> Format<'a> for FormatArguments<'a> {
     }
 }
 
+/// How arguments without comments and without an empty line between them are laid out.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum ArgumentsLayout {
+    /// `useEffect(() => {}, [a, b])`: there's no line break between them.
+    ReactHook,
+    /// Each is on a line, whether they fit or not.
+    AllBrokenOut,
+    /// The first or the last is hugged if the others fit on the line.
+    Grouped(GroupedCallArgumentLayout),
+    /// They break together with the arguments of the call that this one is the callee of.
+    Curried,
+    /// On one line, or each on a line.
+    Default,
+}
+
+/// The choice that [`FormatArguments::fmt`] makes for `args`, which aren't empty, of the call or `new` expression
+/// `parent`.
+pub(crate) fn arguments_layout<'a>(
+    args: List<'a, Expr<'a>>,
+    parent: AstNodes<'a>,
+    f: &Formatter<'a>,
+) -> ArgumentsLayout {
+    if is_react_hook_with_deps_array(&FormatArguments::new(args, parent), f) {
+        return ArgumentsLayout::ReactHook;
+    }
+    if is_function_composition_args(args, f) && !matches!(parent.parent(), AstNodes::Decorator(_)) {
+        return ArgumentsLayout::AllBrokenOut;
+    }
+    if let Some(layout) = arguments_grouped_layout(args, f) {
+        return ArgumentsLayout::Grouped(layout);
+    }
+    match parent {
+        AstNodes::CallExpression(call) if is_long_curried_call(call, f) => ArgumentsLayout::Curried,
+        _ => ArgumentsLayout::Default,
+    }
+}
+
+/// True if the parameters of `function`, a function expression that's hugged as the last of `count` arguments of
+/// `parent`, stay on one line.
+pub(crate) fn hugged_function_keeps_parameters_on_one_line<'a>(
+    function: Func<'a>,
+    count: usize,
+    parent: AstNodes<'a>,
+    f: &Formatter<'a>,
+) -> bool {
+    (matches!(parent, AstNodes::CallExpression(_))
+        || (matches!(parent, AstNodes::NewExpression(_)) && treats_new_like_call(f)))
+        && (count != 1 || has_only_simple_parameters(function, false))
+        && has_signature_without_soft_lines(function)
+}
+
 /// oxfmt counts the line breaks between two arguments, wherever the comma is. Prettier checks the line after the
 /// argument.
 fn counts_line_breaks_between_arguments(f: &Formatter<'_>) -> bool {
@@ -329,7 +380,7 @@ fn as_expression(argument: Expr<'_>) -> Option<Expr<'_>> {
 }
 
 /// True if `e` is a template that's formatted as its embedded language.
-pub(super) fn has_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+pub(crate) fn has_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     has_non_html_embed_label(e, f) || crate::html::in_js::label(e, f).is_some()
 }
 

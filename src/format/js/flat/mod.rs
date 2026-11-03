@@ -16,7 +16,7 @@
 //!    to break: the body of a function, a block, an object whose first key is on a new line. The printers in `print/`
 //!    write that ([`Part`]), and what follows it is the next line.
 //! 4. What is too wide is written once more ([`Line::breaks`]), with the line breaks that are certain then: the outermost
-//!    group breaks first.
+//!    group breaks first, and each group in it is tried on one line in turn. See `breaks.rs`.
 //! 5. Everything here is an "or else". What isn't known to be printed in exactly this way is [`Refused`], and the
 //!    printers in `print/` write it: comments, syntax that's missing below, and whatever breaks whether it fits or not
 //!    (an array of objects, a chain of three calls with a function among the arguments, two functions as arguments).
@@ -25,17 +25,27 @@
 //!
 //! `bun fmt --no-short-cuts` turns it off, and the tests compare.
 
+mod arrows;
+mod assignments;
+mod binary;
+mod breaks;
+mod chains;
 mod classes;
+mod conditionals;
 mod expressions;
 mod flow;
+mod forced;
 mod functions;
 mod holes;
 mod jsx;
 mod signatures;
 mod statements;
+mod suffixes;
 mod ts_declarations;
 mod types;
 
+use self::breaks::is_unbreakable;
+pub(crate) use self::forced::write_array_element;
 pub(crate) use jsx::write_jsx_child;
 pub(crate) use statements::write_case_head;
 pub(crate) use ts_declarations::{write_enum_member, write_signature};
@@ -243,6 +253,8 @@ enum Part<'a> {
     },
     /// A line break, after which the indentation is this many levels deeper.
     Break(i8),
+    /// The indentation is one level less deep from the next line break on.
+    Outdent,
     /// The `{ .. }` of a function, with statements in it.
     Body(Func<'a>),
     /// A block.
@@ -251,6 +263,8 @@ enum Part<'a> {
     Broken(Expr<'a>),
     /// Any expression, on a line of its own.
     Expr(Expr<'a>),
+    /// What follows the `?` or the `:` of a conditional expression that's broken.
+    Aligned(Expr<'a>),
     /// The `{ .. }` of a class, with members in it.
     ClassBody(Class<'a>),
     Hole(holes::Hole<'a>),
@@ -272,6 +286,17 @@ enum Place {
     Other,
 }
 
+/// What's known about how wide the current line is.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Width {
+    /// As wide as the text that has been written.
+    Known,
+    /// Something that can't break has gone past the end of the line, so nothing more fits.
+    TooWide,
+    /// It starts with the end of something that has gone the long way.
+    Unknown,
+}
+
 /// Writes nodes to the end of the formatter's text buffer.
 struct Line<'f, 'a> {
     f: &'f mut Formatter<'a>,
@@ -291,6 +316,9 @@ struct Line<'f, 'a> {
     taken: usize,
     /// By how many bytes the text of the current line is longer than it's wide. `limit` is later by as much.
     extra: usize,
+    width: Width,
+    /// While there are this many parts, the line that's being written has to fit: if it doesn't, it starts elsewhere.
+    must_fit: usize,
     /// The text went past `limit`.
     is_too_wide: bool,
     /// The source has something in it that isn't plain. For a careful line: a text has more bytes than columns.
@@ -299,6 +327,13 @@ struct Line<'f, 'a> {
     is_careful: bool,
     /// On one line it's too wide, so the outermost group breaks.
     breaks: bool,
+    /// The indentation is known, so that what's too wide can break.
+    is_certain: bool,
+    /// Something has been found too wide, by the number of its bytes and before all of it was looked at. So all of it
+    /// has to be plain and without comments, also what goes the long way.
+    has_measured: bool,
+    /// The width of what follows the expression that ends the line: closing brackets, a comma, a semicolon.
+    tail: usize,
     /// There's no comment anywhere in the source of what's written.
     is_quiet: bool,
     is_flow: bool,
@@ -426,10 +461,16 @@ impl<'a> Formatter<'a> {
             limit: start + room,
             taken: 0,
             extra: 0,
+            width: Width::Known,
+            must_fit: usize::MAX,
             is_too_wide: false,
             is_odd: false,
             is_careful: false,
             breaks: false,
+            // What's decided by a column needs to know what follows to the column.
+            is_certain: state.is_certain && after.0 == after.1,
+            has_measured: false,
+            tail: after.1 as usize,
             is_quiet: self.is_quiet(),
             is_flow: state.is_flow,
             has_semicolons: state.has_semicolons,
@@ -448,7 +489,8 @@ impl<'a> Formatter<'a> {
             {
                 // Bytes have been counted, which are more than columns in text that isn't plain.
                 (line.is_careful, line.plain_source) = (true, &[]);
-            } else if line.is_too_wide && !line.is_odd && state.is_certain {
+            } else if line.is_too_wide && !line.is_odd && state.is_certain && line.parts.is_empty()
+            {
                 // That it's too wide is only certain if the indentation is.
                 (line.is_careful, line.plain_source) = (false, source);
                 (line.breaks, is_last) = (true, true);
@@ -459,6 +501,8 @@ impl<'a> Formatter<'a> {
             (line.room, line.start, line.len, line.limit) = (room, start, start, start + room);
             (line.taken, line.extra, line.checked_to, line.nesting) = (0, 0, span.start, 0);
             (line.is_too_wide, line.is_odd) = (false, false);
+            (line.width, line.must_fit, line.has_measured) =
+                (Width::Known, usize::MAX, line.breaks);
             written = line.finish(&write, span.end, after);
         }
         let (parts, len) = (line.parts, line.len);
@@ -495,18 +539,25 @@ impl<'a> Formatter<'a> {
                     self.context_mut().short_cuts.depth -= 1;
                     self.write_element(FormatElement::Tag(Tag::EndIndentWithLine(LineMode::Hard)));
                 }
+                Part::Outdent => {
+                    self.context_mut().short_cuts.depth -= 1;
+                    self.write_element(FormatElement::Tag(Tag::EndIndent));
+                }
                 Part::Body(func) => {
                     self.context_mut().short_cuts.follows_line = true;
                     FormatFunctionBody(func).fmt(self);
                 }
                 Part::Block(block) => write!(self, [space(), block]),
                 Part::Broken(e) => {
-                    // What's in an array isn't counted as a level.
-                    self.context_mut().short_cuts.follows_line = e.tag() == ExprTag::Object;
+                    self.context_mut().short_cuts.follows_line = true;
                     e.fmt(self);
                     self.context_mut().short_cuts.follows_line = false;
                 }
                 Part::Expr(e) => CertainIf(false, &e).fmt(self),
+                Part::Aligned(e) => match self.options().indent_style.is_space() {
+                    true => write!(self, align(2, &CertainIf(false, &e))),
+                    false => write!(self, indent(&CertainIf(false, &e))),
+                },
                 Part::ClassBody(class) => write_class_body_after_head(class, self),
                 Part::Hole(hole) => hole.write(self),
                 Part::JsxChildren(element) => {
@@ -548,6 +599,7 @@ impl<'a> Formatter<'a> {
 /// the long way.
 pub(crate) fn write_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) -> bool {
     f.write_line(statement.span(), (0, 0), |line| {
+        line.tail = usize::from(line.has_semicolons);
         if !line.has_semicolons {
             line.semicolon_before(statement)?;
         }
@@ -555,10 +607,13 @@ pub(crate) fn write_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) ->
     })
 }
 
-/// Writes `property` of an object whose properties are each on a line. A comma can follow it.
+/// Writes `property` of an object whose properties are each on a line.
 pub(crate) fn write_property<'a>(property: Prop<'a>, f: &mut Formatter<'a>) -> bool {
-    let least = u32::from(!f.options().trailing_commas.is_none());
-    f.write_line(property.span(), (least, 1), |line| {
+    let has_comma = !f.options().trailing_commas.is_none()
+        || !matches!(property.parent(), Node::Expr(object)
+            if object.as_object().and_then(List::last) == Some(property));
+    let after = u32::from(has_comma);
+    f.write_line(property.span(), (after, after), |line| {
         line.property(property, true)
     })
 }
@@ -796,17 +851,18 @@ impl<'a> Line<'_, 'a> {
         self.taken = taken;
         (self.start, self.extra) = (self.len, 0);
         self.limit = self.start + self.room.saturating_sub(taken);
+        self.width = Width::Known;
     }
 
     /// Ends the line with `part`, whose source is at `span` and which starts with `after` columns of text on this line.
     /// What's written next follows its closing bracket, on a line that starts where this line starts.
     fn end_line_with(&mut self, part: Part<'a>, span: Span, after: u32) -> Written {
         self.check_source_up_to(span.start)?;
+        if matches!(part, Part::Broken(_)) {
+            self.check_measured(span)?;
+        }
         // That it's too wide on one line has been found by counting its bytes.
-        if self.breaks
-            && matches!(part, Part::Broken(_) | Part::Hole(_))
-            && !self.f.is_plain_source(span)
-        {
+        if self.breaks && matches!(part, Part::Hole(_)) && !self.f.is_plain_source(span) {
             return Err(Refused);
         }
         self.end_text(Some(after))?;
@@ -875,34 +931,6 @@ impl<'a> Line<'_, 'a> {
             }
         }
         self.break_line(-1)
-    }
-
-    /// Writes `e` on a line of its own, before a comma: on one line if that fits, else the long way.
-    fn expr_on_own_line(&mut self, e: Expr<'a>) -> Written {
-        let span = e.outer_span();
-        self.check_source_up_to(span.start)?;
-        let (len, parts) = (self.len, self.parts.len());
-        let (breaks, limit) = (self.breaks, self.limit);
-        (self.breaks, self.limit) = (false, limit.saturating_sub(1));
-        let written = self
-            .expr(e, Place::Free)
-            .and_then(|()| self.check_source_up_to(span.end));
-        (self.breaks, self.limit) = (breaks, limit);
-        if written.is_ok() {
-            return Ok(());
-        }
-        // Nothing of it has been handed to a part. That all of this is too wide has been found by counting its bytes.
-        if self.parts.len() != parts || !self.f.is_plain_source(span) {
-            return Err(Refused);
-        }
-        self.len = len;
-        self.end_text(None)?;
-        self.parts.push(Part::Expr(e));
-        self.checked_to = span.end;
-        // How wide its last line is isn't known, and nothing but a comma follows.
-        self.start_line(0);
-        self.limit = usize::MAX;
-        Ok(())
     }
 
     fn has_trailing_comma(&self, in_arguments: bool) -> bool {

@@ -668,7 +668,7 @@ pub(crate) fn left_edge_end<'a>(e: Expr<'a>, node: AstNodes<'a>) -> (Expr<'a>, A
 }
 
 #[inline]
-fn is_name_that_may_need_parentheses(name: &[u8]) -> bool {
+pub(crate) fn is_name_that_may_need_parentheses(name: &[u8]) -> bool {
     matches!(
         name,
         b"async"

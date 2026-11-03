@@ -281,6 +281,47 @@ impl<'a> BinaryLikeExpression<'a> {
     }
 }
 
+/// What [`BinaryLikeExpression::write`] puts around the operands of a chain without comments and without JSX.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum BinaryLayout {
+    /// Nothing: they break with the parentheses of the statement.
+    Condition,
+    /// A group, with indentation and a line break at both ends.
+    Parentheses,
+    /// A group.
+    Plain,
+    /// A group, with all but the first indented.
+    Indented,
+}
+
+impl<'a> BinaryLikeExpression<'a> {
+    pub(crate) fn layout(&self, f: &Formatter<'a>) -> BinaryLayout {
+        let parent = self.parent();
+        if self.is_inside_condition(parent) {
+            return BinaryLayout::Condition;
+        }
+        if matches!(
+            parent,
+            AstNodes::StaticMemberExpression(_)
+                | AstNodes::PrivateFieldExpression(_)
+                | AstNodes::UnaryExpression(_)
+        ) || parent.is_call_like_callee(self.expr)
+        {
+            return BinaryLayout::Parentheses;
+        }
+        if self.should_not_indent_if_parent_indents(parent, f) {
+            return BinaryLayout::Plain;
+        }
+        let is_flattened =
+            self.can_flatten(f).is_some() || self.right_with_same_operator(f).is_some();
+        match self.should_inline_logical_expression(f) {
+            true if !is_flattened => BinaryLayout::Plain,
+            false if should_indent_if_parent_inlines(parent, f) => BinaryLayout::Plain,
+            _ => BinaryLayout::Indented,
+        }
+    }
+}
+
 /// An operand of a chain of binary expressions.
 #[derive(Debug, Copy, Clone)]
 enum BinaryLeftOrRightSide<'a> {

@@ -48,7 +48,7 @@ impl<'a> Line<'_, 'a> {
                 if declarations.len() > 1 {
                     return self.declarators(declarations);
                 }
-                self.pattern(declarator.pat())?;
+                self.declared(declarator)?;
                 if declarator.is_definite() {
                     self.byte(b'!')?;
                 }
@@ -60,7 +60,7 @@ impl<'a> Line<'_, 'a> {
                         // A pattern breaks together with what it's assigned.
                         match declarator.pat().tag() {
                             PatTag::Ident => self.last_assigned(init)?,
-                            _ => self.assigned(init)?,
+                            _ => self.assigned_to_pattern(init)?,
                         }
                     }
                     (None, None) => {}
@@ -391,69 +391,13 @@ impl<'a> Line<'_, 'a> {
         if written.is_ok() {
             return self.byte(b')');
         }
-        if !is_too_wide || !self.is_certain() || self.has_parts_since(mark) {
+        if !is_too_wide || !self.is_certain() || self.is_careful || self.has_parts_since(mark) {
             self.is_too_wide |= is_too_wide;
             return Err(Refused);
         }
         self.go_back_to(mark);
-        self.condition_on_own_lines(test)?;
+        self.condition_too_wide(test)?;
         self.byte(b')')
-    }
-
-    /// A condition that's too wide for the line of its `(`: each operand of `&&` or `||` is on a line.
-    fn condition_on_own_lines(&mut self, test: Expr<'a>) -> Written {
-        if !self.f.options().experimental_operator_position.is_end()
-            || self.has_comments_in(test.outer_span())
-        {
-            return Err(Refused);
-        }
-        let mut operands: SmallVec<[Expr<'a>; 8]> = SmallVec::new();
-        let operator = match test.binary_op() {
-            Some(operator) if operator.is_logical() => {
-                let mut chain = test;
-                loop {
-                    let (_, left, right) = chain.as_binary().ok_or(Refused)?;
-                    // `a && (b && c)` is written like `a && b && c`. An object or an array stays on the operator's line.
-                    if right.binary_op() == Some(operator)
-                        || matches!(right.tag(), ExprTag::Object | ExprTag::Array | ExprTag::Jsx)
-                    {
-                        return Err(Refused);
-                    }
-                    operands.push(right);
-                    if left.binary_op() != Some(operator) {
-                        operands.push(left);
-                        break;
-                    }
-                    chain = left;
-                }
-                bin_op_text(operator)
-            }
-            // The operands of any other operator are in groups. `!(a && b)` is hugged.
-            Some(_) => return Err(Refused),
-            None if test.tag() == ExprTag::Unary => return Err(Refused),
-            None => {
-                operands.push(test);
-                ""
-            }
-        };
-        self.break_line(1)?;
-        let count = operands.len();
-        for (index, operand) in operands.into_iter().rev().enumerate() {
-            if index > 0 {
-                self.break_line(0)?;
-            }
-            let is_last = index + 1 == count;
-            let after = if is_last { 0 } else { 1 + operator.len() };
-            let hole = Hole::Expr(operand, index == 0 && count > 1);
-            self.on_own_line(operand.outer_span(), after, hole, |line| {
-                line.expr(operand, Place::Other)
-            })?;
-            if !is_last {
-                self.byte(b' ')?;
-                self.token(operator)?;
-            }
-        }
-        self.break_line(-1)
     }
 
     /// The body of another statement, which isn't a block.

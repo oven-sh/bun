@@ -102,6 +102,25 @@ fn write_formal_parameters<'a>(func: Func<'a>, f: &mut Formatter<'a>) {
     }
 }
 
+/// True if the parameters of `func`, which have no comments, are each on a line if they don't fit on one: there are
+/// some, they're in parentheses, and [`write_formal_parameters`] doesn't hug them.
+pub(crate) fn can_break_between_parameters<'a>(func: Func<'a>, f: &Formatter<'a>) -> bool {
+    let parentheses_not_needed = func.is_arrow() && can_avoid_parentheses(func, f);
+    func.params_with_this().next().is_some()
+        && !parentheses_not_needed
+        && !f.file().is_flow()
+        && !should_hug_function_parameters(func, parentheses_not_needed, f)
+        && !matches!(
+            func.owner(),
+            Node::Expr(function) if matches!(
+                function.parent(),
+                Node::Expr(call) if call.tag() == ExprTag::Call
+                    && is_test_call_expression_in_flavor(call, f)
+                    && !is_angular_test_wrapper(call)
+            )
+        )
+}
+
 /// The node whose parameters Prettier prints for `func`. It owns the comments in empty parentheses. Babel has no
 /// `FunctionExpression` in a method, so there it's the method.
 fn function_node<'a>(func: Func<'a>, f: &Formatter<'a>) -> AstNodes<'a> {

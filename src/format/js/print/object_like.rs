@@ -95,7 +95,8 @@ impl<'a> Format<'a> for ObjectLike<'a> {
             let members = format_with(|f| {
                 let outer = f.context().short_cuts.properties_start_lines;
                 // One that's hugged breaks with the parameters.
-                f.context_mut().short_cuts.properties_start_lines = should_expand && !should_hug;
+                f.context_mut().short_cuts.properties_start_lines =
+                    (should_expand || follows_line) && !should_hug;
                 self.write_members(f);
                 f.context_mut().short_cuts.properties_start_lines = outer;
             });

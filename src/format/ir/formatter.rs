@@ -900,14 +900,20 @@ impl<'a> Formatter<'a> {
     /// spaces, content that's only printed when a group breaks is removed, and a `BestFitting` is replaced by its
     /// flattest variant.
     pub(crate) fn write_without_soft_lines(&mut self, content: &(impl Format<'a> + ?Sized)) {
-        let captured = self.capture(content);
+        let captured = self.capture_without_short_cuts(content);
         self.remove_soft_lines(captured, &mut Vec::new(), Variants::Flattest);
+    }
+
+    /// [`Formatter::capture`] for content that isn't printed where it's written, or not with its line breaks: what
+    /// starts a line in a group that's broken need not start one there.
+    fn capture_without_short_cuts(&mut self, content: &(impl Format<'a> + ?Sized)) -> Interned {
+        self.capture(&crate::js::flat::LongWay(content))
     }
 
     /// Prettier's `removeLines`. Same, but the printer still chooses among the variants and falls back to the most
     /// expanded one if none fits.
     pub(crate) fn write_with_lines_removed(&mut self, content: &(impl Format<'a> + ?Sized)) {
-        let captured = self.capture(content);
+        let captured = self.capture_without_short_cuts(content);
         self.remove_soft_lines(captured, &mut Vec::new(), Variants::All);
     }
 
@@ -1140,7 +1146,7 @@ impl<'a> Formatter<'a> {
     /// Prints `content` by itself, starting at column 0 with no indentation, and returns the text. For the rare case
     /// where layout depends on the printed text of a part.
     pub(crate) fn print_to_text(&mut self, content: &(impl Format<'a> + ?Sized)) -> Vec<u8> {
-        let document = self.capture(&crate::js::flat::LongWay(content));
+        let document = self.capture_without_short_cuts(content);
         self.print_document(document)
     }
 

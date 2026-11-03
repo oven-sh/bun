@@ -702,21 +702,30 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     });
 
     // On a debug build the realm of the first file is never collected: a listener of its process object is a root.
-    // So the second file makes the Globals. Its marker, an instance of a function of the addon, lives as long as its realm.
+    // So the six files after it make the Globals. The marker of a file, an instance of a function of the addon, lives
+    // as long as its realm, and the last file counts the markers.
     const loadTheAddon = `import { test } from "bun:test";
         test("loads the addon", () => {});`;
-    const collect = `import { test } from "bun:test";
-        test("collects", () => {
-          Bun.gc(true);
-        });`;
+    const makers = [2, 3, 4, 5, 6, 7];
+    const makeGlobals = (hold: (file: number) => string) =>
+      makers.map(
+        file => `import { test } from "bun:test";
+        test("gives Globals their values", () => {
+          globalThis.marker = new addon.test_v8_native_call();
+          ${hold(file)}
+        });`,
+      );
     const markers = `const markers = () => (Bun.gc(true), heapStats().objectTypeCounts.InternalFieldObject ?? 0);`;
+    // A collection does not promise to free a realm that nothing refers to. Like "--isolate: collects globals pinned
+    // by leaked handles" (test/cli/test/isolation.test.ts), allow three realms that are not freed yet.
+    const lagging = 3;
 
     it.each([
       [
         "global_local_outlives_reset",
         [
-          "local after Reset = not an object: 1.500000",
-          "local after other Globals were created = not an object: 1.500000, its copy = not an object: 1.500000",
+          "local after Reset = not an object: 7.500000",
+          "local after other Globals were created = not an object: 7.500000, its copy = not an object: 7.500000",
         ],
       ],
       ["global_return_global_then_reset", []],
@@ -725,70 +734,68 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
       async (name, printed) => {
         const { lines, stderr, exitCode } = await runIsolatedFiles(
           loadTheAddon,
-          `import { test } from "bun:test";
-          test("gives Globals a string and a number", () => {
-            globalThis.marker = new addon.test_v8_native_call();
+          ...makeGlobals(
             // Only the Global refers to the string.
-            addon.global_hold(["a string", "of the second file"].join(" "));
-            addon.global_store(1.5);
-          });`,
-          collect,
+            file => `addon.global_hold(["a string", "of file ${file}"].join(" "));
+          addon.global_store(${file}.5);`,
+          ),
           `import { heapStats } from "bun:jsc";
           import { expect, test } from "bun:test";
           ${markers}
-          test("reads and resets the Globals of the second file", () => {
-            expect(markers()).toBe(0);
-            // Each of the four files made one when it loaded the addon.
-            expect(heapStats().objectTypeCounts.GlobalInternals).toBeLessThan(4);
-            expect(addon.global_held()).toEqual(["a string of the second file"]);
-            expect(addon.global_stored()).toBe(1.5);
+          test("reads and resets the Globals of the six files", () => {
+            // Six markers if the Globals kept the realms of their files.
+            expect(markers()).toBeLessThanOrEqual(${lagging});
+            // Each of the eight files made one when it loaded the addon. The first file and this one still have theirs.
+            expect(heapStats().objectTypeCounts.GlobalInternals).toBeLessThanOrEqual(${lagging + 2});
+            expect(addon.global_held()).toEqual(${JSON.stringify(makers.map(file => `a string of file ${file}`))});
+            expect(addon.global_stored()).toBe(7.5);
             addon.global_reset_held();
             // One of the Globals that the native function creates for these could take the handle that the stored Global gave back.
             const others = Array.from({ length: 200 }, (_, i) => ({ name: "other " + i }));
-            expect(addon.${name}(...others)).toBe(1.5);
+            expect(addon.${name}(...others)).toBe(7.5);
             addon.global_reset_held();
           });`,
         );
         expect(lines, stderr).toEqual(printed);
-        expect(exitCode).toBe(0);
+        expect(exitCode, stderr).toBe(0);
       },
     );
 
     it("keeps an object and the realm of its file for a later file of bun test --isolate until it is reset", async () => {
       const { lines, stderr, exitCode } = await runIsolatedFiles(
         loadTheAddon,
-        `import { test } from "bun:test";
-        test("gives a Global an object", () => {
-          globalThis.marker = new addon.test_v8_native_call();
-          addon.global_hold({ name: "an object of the second file" });
-        });`,
-        collect,
+        ...makeGlobals(file => `addon.global_hold({ name: "an object of file ${file}" });`),
         `import { heapStats } from "bun:jsc";
         import { expect, test } from "bun:test";
         ${markers}
-        test("reads and resets the Global of the second file", () => {
-          const before = markers();
-          // Returns before the next collection, so that only the Global refers to the object.
-          const nameOfHeld = () => addon.global_held()[0].name;
-          expect(nameOfHeld()).toBe("an object of the second file");
+        test("reads and resets the Globals of the six files", () => {
+          expect(markers()).toBe(${makers.length});
+          // Returns before the next collection, so that only the Globals refer to the objects.
+          const namesOfHeld = () => addon.global_held().map(object => object.name);
+          expect(namesOfHeld()).toEqual(${JSON.stringify(makers.map(file => `an object of file ${file}`))});
           addon.global_reset_held();
-          console.log("realms of the second file before and after its Global is reset:", before, markers());
+          expect(markers()).toBeLessThanOrEqual(${lagging});
         });`,
       );
-      expect(lines, stderr).toEqual(["realms of the second file before and after its Global is reset: 1 0"]);
-      expect(exitCode).toBe(0);
+      expect(lines, stderr).toEqual([]);
+      expect(exitCode, stderr).toBe(0);
     });
 
+    // The addon prints through the C runtime, which ends a line with \r\n on Windows.
+    const linesOf = (outputs: string[]) => outputs.map(output => output.split(/\r?\n/));
+
     it("can be reset when the thread of its Worker exits, after the Worker's VM is destroyed", async () => {
-      const expected = "a destructor reset its Globals\nthe thread of the Worker has exited";
-      expect(await runOnBun("test_v8_global_reset_by_destructor", "[true]", asanEnv)).toEqual([expected, expected]);
+      const expected = ["a destructor reset its Globals", "the thread of the Worker has exited"];
+      const outputs = await runOnBun("test_v8_global_reset_by_destructor", "[true]", asanEnv);
+      expect(linesOf(outputs)).toEqual([expected, expected]);
     });
 
     // Only an ASAN build on Linux runs the destructors of statics when it exits: a release build ends with quick_exit.
     it.skipIf(!isASAN)("can be reset when the process exits, after the main thread's VM is destroyed", async () => {
-      const expected = "the main thread is done\na destructor reset its Globals";
+      const expected = ["the main thread is done", "a destructor reset its Globals"];
       const env = { ...asanEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" };
-      expect(await runOnBun("test_v8_global_reset_by_destructor", "[false]", env)).toEqual([expected, expected]);
+      const outputs = await runOnBun("test_v8_global_reset_by_destructor", "[false]", env);
+      expect(linesOf(outputs)).toEqual([expected, expected]);
     });
   });
 

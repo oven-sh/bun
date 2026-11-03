@@ -29,8 +29,7 @@ bun_output::declare_scope!(UpgradedDuplex, visible);
 
 pub(crate) struct UpgradedDuplex {
     pub wrapper: JsCell<Option<WrapperType>>,
-    /// The owning `JSTLSSocket` wrapper. Its `duplexOrigin` internal field
-    /// roots `origin`; that field below is a read-side shadow of the slot.
+    /// The owning `JSTLSSocket` wrapper, whose `duplexOrigin` internal field roots `origin`.
     pub js_wrapper: JSValue,
     pub origin: Cell<JSValue>, // any duplex
     // JSC_BORROW per LIFETIMES.tsv.

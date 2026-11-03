@@ -4270,8 +4270,7 @@ impl DuplexUpgradeContext {
                 if wrapper_gone {
                     this.upgrade.abandon_js_side();
                 }
-                // The transport closed while this task was queued, or nothing can reach the
-                // engine: one started now could never handshake, and nothing would free it.
+                // The transport closed, or nothing can reach the engine: one started now could never handshake.
                 if this.upgrade.pending_close.replace(false) || wrapper_gone {
                     this.upgrade.finish_close();
                     return;

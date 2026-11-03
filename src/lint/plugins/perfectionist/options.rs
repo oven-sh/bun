@@ -284,8 +284,8 @@ pub(crate) struct Configuration {
     pub(crate) error: Option<Vec<u8>>,
     /// The message of the `RangeError` that `localeCompare` throws for a `locales` tag that is not well-formed,
     /// `Invalid language tag: <tag>`, at the first comparison that reaches it: one by `alphabetical`, or one by
-    /// `natural` of two chunks with a character outside ASCII. [`Configuration::complete`] puts it in `error` where
-    /// the first comparison is sure to reach it.
+    /// `natural` of two chunks with a character outside ASCII. [`Configuration::invalid_locale_error`] says whether
+    /// this configuration's comparators reach one.
     pub(crate) invalid_locale: Option<Vec<u8>>,
 }
 
@@ -428,20 +428,13 @@ impl<'o> Merged<'o> {
 impl Configuration {
     /// [`Configuration::parse`], then what upstream throws at the first node that picks the result, as
     /// [`Configuration::error`]: `validateSettingsValues` for these settings and this element, then
-    /// `validateCustomSortConfig` and `validateNewlinesAndPartitionConfig` on the merged options, then the
-    /// `Invalid language tag` of `type: "alphabetical"`, whose every comparison is a `localeCompare`. `natural`
-    /// reaches one only for a chunk outside ASCII, and the other types only through `fallbackSort`: those collate
-    /// as the root instead.
+    /// `validateCustomSortConfig` and `validateNewlinesAndPartitionConfig` on the merged options.
     fn complete(rule: RuleKind, options: Object<'_>, settings: Object<'_>) -> Configuration {
         let mut configuration = Configuration::parse(rule, options, settings);
         configuration.error = validate_settings_values(rule, settings, options)
             .and_then(|()| configuration.validate_custom_sort())
             .and_then(|()| configuration.validate_newlines_and_partition())
-            .err()
-            .or_else(|| match configuration.sort.type_ {
-                SortType::Alphabetical => configuration.invalid_locale.clone(),
-                _ => None,
-            });
+            .err();
         configuration
     }
 

@@ -605,8 +605,13 @@ impl<'a> Line<'_, 'a> {
         if !self.text_of(e.span()).iter().all(|byte| *byte >= b' ') {
             return Err(Refused);
         }
-        // `/* GraphQL */` can be on a line before the statement.
-        if crate::graphql::embed::may_have_language_comment(e, self.f) {
+        // `/* GraphQL */` can be on a line before the statement. Anywhere else it's in what's checked for comments.
+        let starts_statement = match e.parent() {
+            Node::Stmt(_) => true,
+            Node::Expr(parent) => matches!(parent.tag(), ExprTag::As | ExprTag::AsConst),
+            _ => false,
+        };
+        if starts_statement && crate::graphql::embed::may_have_language_comment(e, self.f) {
             return Err(Refused);
         }
         let expressions = template.exprs();

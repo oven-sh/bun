@@ -419,8 +419,7 @@ describe("snapshots", () => {
     `);
   });
 
-  // An inline snapshot also passes when it is what Jest stores, and Jest rewrites line ends in the whole text.
-  // A snapshot file that Bun wrote has no such second reading.
+  // Unlike an inline snapshot, a snapshot file that Bun wrote is not also read as Jest's format, which rewrites line ends.
   test("a snapshot file stores the same line ends", () => {
     expect(h("a", { title: "1\r\n2\r3" }, "1\r\n2\r3", comment("1\r\n2\r3"))).toMatchSnapshot();
   });

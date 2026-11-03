@@ -969,9 +969,7 @@ test("stops printing deeper once a value has printed 1,000,000 characters", () =
   expect(message.length).toBeWithin(1_000_000, 1_500_000);
 });
 
-// A failing matcher shows a line-ending difference. The value printer used to write "\r\n" and a lone "\r" as
-// "\n", which is for the text a snapshot stores, so two strings that differ only in line endings printed the
-// same. A message keeps each "\r", and the diff shows it as "␍".
+// A failure message keeps each "\r", and the diff draws it as "␍". Only the text that a snapshot stores has "\n" for it.
 describe("carriage returns", () => {
   const footer = (removed: number, inserted: number) => `\n\n- Expected  - ${removed}\n+ Received  + ${inserted}\n`;
   const oneRow = `- "a\n+ "a␍\n  b"` + footer(1, 1);
@@ -1018,7 +1016,7 @@ describe("carriage returns", () => {
       String.raw`expect([expect.stringContaining("a\r\nb")]).toEqual([expect.stringContaining("a\nb")])`,
       `  [\n    StringContaining \n- "a\n+ "a␍\n  b"\n  ,\n  ]` + footer(1, 1),
     ],
-    // Values that do not print as a string had the "\r" before, as the raw byte.
+    // Values that do not print as a string.
     [
       String.raw`expect([new Error("a\r\nb"), Symbol("a\r\nb")]).toEqual([new Error("a\nb"), Symbol("a\nb")])`,
       `  [\n-   [Error: a\n+   [Error: a␍\n  b],\n-   Symbol(a\n+   Symbol(a␍\n  b),\n  ]` + footer(2, 2),

@@ -2163,11 +2163,16 @@ test("Error.captureStackTrace rejects a WebAssembly GC object", () => {
 // Error.prepareStackTrace is a data property to a script, and native code keeps the function it calls. Each store of
 // the fixture ends in a definition of the value on Error, and that definition has to reach the native side: a
 // definition that puts a plain value in the property's place leaves every later store without effect.
+// A class field is left out. It says that the property is enumerable, and Error.prepareStackTrace is not: a definition
+// that changes an attribute puts a plain value in the property's place.
+const storesOnError = Object.keys(storesThatEndInADefinition).filter(what => !what.startsWith("a class field"));
+
 test.concurrent(
   "Error.prepareStackTrace: every store that ends in a definition on Error installs the function",
   async () => {
     const src = `
-    const stores = require(${JSON.stringify(storesFixture)});
+    const fixture = require(${JSON.stringify(storesFixture)});
+    const stores = Object.fromEntries(${JSON.stringify(storesOnError)}.map(what => [what, fixture[what]]));
     const { getCallSites } = require("node:util");
     // Code of a node:vm context reaches the property of this realm's Error too.
     const inContext = require("node:vm").runInNewContext;
@@ -2215,7 +2220,7 @@ test.concurrent(
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const names = [
-      ...Object.keys(storesThatEndInADefinition),
+      ...storesOnError,
       "a proxy made in a node:vm context",
       "a proxy, by code of a node:vm context",
       "Object.defineProperty with a value, by code of a node:vm context",

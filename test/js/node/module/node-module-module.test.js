@@ -1080,7 +1080,7 @@ console.log("survived", require("./late.js"));`,
 
   // Module.prototype.require is a data property to a script, and native code keeps the function that require() calls.
   // Each store of the fixture ends in a definition of the value on Module.prototype, and that definition has to reach
-  // the native side. The last one is how shimmer and require-in-the-middle install their hook.
+  // the native side. "Object.defineProperty that repeats the attributes" is what wrap() of shimmer does.
   test("Module.prototype.require: every store that ends in a definition installs the function", async () => {
     using dir = tempDir("module-prototype-require-stores", {
       "dep.cjs": `module.exports = "dep";`,
@@ -1132,6 +1132,48 @@ console.log("survived", require("./late.js"));`,
     });
     expect(exitCode).toBe(0);
   });
+
+  // Object.preventExtensions() defines nothing, and Object.seal() marks a plain object like Module.prototype as a whole
+  // and defines nothing either. After each of them the property is what it was, and a store reaches the native side.
+  test.each(["preventExtensions", "seal"])(
+    "Module.prototype.require: a store after Object.%s(Module.prototype) installs the function",
+    async level => {
+      using dir = tempDir("module-prototype-require-" + level, {
+        "dep.cjs": `module.exports = "dep";`,
+        "main.cjs": `
+          const Module = require("node:module");
+          const original = Module.prototype.require;
+          const seen = [];
+          const hook = who =>
+            function (id) {
+              seen.push(who + " " + id);
+              return original.apply(this, arguments);
+            };
+          Object.${level}(Module.prototype);
+          Object.defineProperty(Module.prototype, "require", { value: hook("a definition") });
+          require("./dep.cjs");
+          new Proxy(Module.prototype, {}).require = hook("a proxy");
+          require("./dep.cjs");
+          Module.prototype.require = hook("an assignment");
+          require("./dep.cjs");
+          console.log(JSON.stringify(seen));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({
+        stdout: ["a definition ./dep.cjs", "a proxy ./dep.cjs", "an assignment ./dep.cjs"],
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
 
   // Node's Module.prototype.require is `Module._load(id, this, false)`, so `this` is only used as the parent.
   test("Module.prototype.require accepts a `this` that isn't a module", async () => {

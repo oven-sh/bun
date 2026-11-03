@@ -29,5 +29,23 @@ Object.defineProperty(childModule, "exports", {
   configurable: true,
 });
 seen("a definition that repeats the attributes");
+// A class field defines its value on what the constructor of the base class returned.
+class ReturnsTheModule {
+  constructor() {
+    return childModule;
+  }
+}
+new (class extends ReturnsTheModule {
+  exports = { from: "a class field" };
+})();
+seen("a class field on the returned module object");
+// The same in code that the executable evaluates, which the interpreter runs.
+new Function(
+  "target",
+  "value",
+  `class Returns { constructor() { return target; } }
+   new (class extends Returns { exports = value; })();`,
+)(childModule, { from: "a class field in evaluated code" });
+seen("a class field in evaluated code");
 childModule.exports = { from: "an assignment" };
 seen("an assignment after them");

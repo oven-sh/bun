@@ -198,6 +198,14 @@ impl<'a> Line<'_, 'a> {
         (self.limit, self.width) = (usize::MAX, Width::Unknown);
     }
 
+    /// True if nothing breaks in `e`, however wide it is. What's in the `${}` of a template is printed on one line, but
+    /// for the line breaks that are forced: the body of a function.
+    pub(super) fn never_breaks(&mut self, e: Expr<'a>) -> bool {
+        is_unbreakable(e.tag())
+            && (e.tag() != ExprTag::Template
+                || self.can_be_on_one_line(|line| line.expr(e, Place::Free)))
+    }
+
     /// Writes `e`, in which nothing can break and which is too wide for the line.
     pub(super) fn unbreakable(&mut self, e: Expr<'a>, place: Place) -> Written {
         if self.parts.len() == self.must_fit {

@@ -77,3 +77,7 @@ Here's the full recommended `tsconfig.json` for a Bun project using TypeScript 6
 ## Does this apply to TypeScript 7?
 
 Yes. TypeScript 7 carries forward the same default. If you're upgrading directly from TypeScript 5 to 7, the same fix applies — add `"types": ["bun"]` to your `compilerOptions`.
+
+## Does this apply to `bun check`?
+
+Yes. [`bun check`](/runtime/check) behaves like TypeScript 7, whichever version of `typescript` you have installed. See [Coming from TypeScript 5](/runtime/check#coming-from-typescript-5) for the other defaults and options that changed.

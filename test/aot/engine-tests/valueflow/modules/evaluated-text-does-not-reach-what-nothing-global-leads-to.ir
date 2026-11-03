@@ -1,0 +1,63 @@
+# printed[Symbol.for("nodejs.util.inspect.custom")] = custom; console.log(printed); eval(String(Date.now())); holder = { kept: function () {} }
+# Evaluated text reaches the global scope and holds what the modules of the library export. A function that the program keeps in an object that nobody is handed is out of its reach:
+# it is not lost, it does not escape, and nothing enters it. Nor is the export entered that nobody else takes
+# RUN: valueflow-solve unreached
+# CHECK: unreached f4
+# CHECK-NEXT: unreached f5
+# RUN(WHY): valueflow-why lost=f5 escaped=f5
+# WHY: lost=f5
+# WHY-NEXT: not held
+# WHY-NEXT: escaped=f5
+# WHY-NEXT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="internal/util/inspect" displayPath="internal/util/inspect" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalUtilInspect body=f1
+entry module=m0
+layout L0 name="Exports" fields=[{key="inspect" declared={type=anything} flags=[IsRequired]}, {key="format" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Printed"
+layout L2 name="KeptToItself" fields=[{key="kept" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = NewObject layout=L1
+    v2 = Builtin builtin=SymbolFor
+    v3 = String string="nodejs.util.inspect.custom"
+    v4 = Call v2, -, v3
+    ElemSet v1, v4, v0
+    v6 = Builtin builtin=Console
+    v7 = Builtin builtin=ConsoleLog
+    v8 = Call v7, v6, v1
+    v9 = Builtin builtin=GlobalThis
+    v10 = Builtin builtin=DateNow
+    v11 = Call v10
+    v12 = ToString v11
+    v13 = PropGet v9 key="eval" [isFreeName]
+    v14 = Call v13, -, v12
+    v15 = NewClosure function=f5
+    v16 = NewObject -, v15 layout=L2 fields=[0]
+    Return
+}
+function f1 name="inspectModule" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewClosure function=f4
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Return v2
+}
+function f2 name="inspect" module=m1 role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="custom" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = String string="printed"
+    Return v2
+}
+function f4 name="format" module=m1 role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f5 name="keptInAnObjectNobodyIsHanded" results=[{type=anything}] {
+  b0():
+    Return
+}

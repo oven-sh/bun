@@ -61,7 +61,6 @@ public:
 
     NamedCurve namedCurve() const { return m_curve; }
 
-    static bool isValidOKPAlgorithm(CryptoAlgorithmIdentifier);
     static KeyMaterial ed25519PublicFromPrivate(const KeyMaterial& privateKey);
     static KeyMaterial x25519PublicFromPrivate(const KeyMaterial& privateKey);
     static KeyMaterial ed25519PrivateFromSeed(KeyMaterial&& seed);

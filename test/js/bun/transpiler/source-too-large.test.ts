@@ -1,7 +1,8 @@
 // Every parser records source positions as an i32 byte offset, so a source of
 // 2**31 bytes or more used to abort the process once the parser reached a
 // position past i32::MAX: `panic: int cast: TryFromIntError(PosOverflow)` from
-// the JS lexer, TOML and YAML, and a failed length assertion in the XML indexer.
+// the JS lexer, TOML, YAML and JSON5, and a failed length assertion in the XML
+// indexer.
 // `Bun.TOML.parse` and friends already rejected such inputs at the API boundary;
 // the parsers themselves did not, and they are what `bun build`, `bun run`,
 // `import` and `Bun.Transpiler` feed. They now reject the source by length
@@ -35,7 +36,7 @@ test("Bun.Transpiler reports the limit for every loader that records positions",
       input.set(Buffer.from(${JSON.stringify(FIRST_LINE)}));
       const transpiler = new Bun.Transpiler();
       const results = {};
-      for (const loader of ["js", "ts", "toml", "yaml", "xml", "json", "jsonc"]) {
+      for (const loader of ["js", "ts", "toml", "yaml", "xml", "json", "jsonc", "json5"]) {
         try {
           transpiler.transformSync(input, loader);
           results[loader] = "no error";
@@ -56,6 +57,7 @@ test("Bun.Transpiler reports the limit for every loader that records positions",
         xml: "BuildMessage: XML document is too large to parse (2 GiB maximum)",
         json: "BuildMessage: JSON document is too large to parse (2 GiB maximum)",
         jsonc: "BuildMessage: JSON document is too large to parse (2 GiB maximum)",
+        json5: "BuildMessage: JSON5 document is too large to parse (2 GiB maximum)",
       },
       null,
       2,

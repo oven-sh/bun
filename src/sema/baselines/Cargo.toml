@@ -1,0 +1,19 @@
+[package]
+name = "bun_sema_baselines"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+bun_sema = { workspace = true, features = ["baselines"] }
+bun_sema_driver.workspace = true
+bun_threading.workspace = true
+bun_core.workspace = true
+bun_sys.workspace = true
+bun_paths.workspace = true
+bstr.workspace = true
+
+[lints]
+workspace = true

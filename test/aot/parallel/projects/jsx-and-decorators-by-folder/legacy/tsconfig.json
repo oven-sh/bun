@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "Preserve",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "types": [],
+    "strict": true,
+    "experimentalDecorators": true
+  }
+}

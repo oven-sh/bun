@@ -1,0 +1,240 @@
+# const collect = { none() {}, eden: collectYoung, full: collectAll }[argv[2]];
+# function handle(url) {
+#   for (const name of ["first", "second", "third"]) {
+#     const bag = Object.create(null);
+#     bag[name + url.length] = 1;
+#     bag.other = 2;
+#     if (bag.other !== 2) throw new Error("the member is gone");
+#   }
+#   const events = JSON.parse("{}");
+#   events.close = undefined;
+#   events.error = undefined;
+#   events.data = url;
+#   return events.data.length;
+# }
+# function get(count) {
+#   let length = 0;
+#   for (let i = 0; i < count; i++) length += handle("/path");
+#   return length;
+# }
+# let total = get(60);
+# collectYoung();
+# total += get(20);
+# mark();
+# for (let round = 0; round < 30; round++) {
+#   collect();
+#   total += get(4);
+# }
+# report(total);
+# FORM: AsRead
+# RUN(NONE): run-in-shell --aotCountsPath=/dev/null globalThis.argv = ["", "", "none"]; const counters = () => { const all = {}; const lines = aotRuntimeCounters().split("\n"); for (let i = 0; i < lines.length; i++) { const parts = lines[i].split("\t"); if (parts.length > 1) all[parts[1]] = Number(parts[0]); } return all; }; let marked; globalThis.mark = () => { marked = counters(); }; const overwriteStack = depth => (depth ? overwriteStack(depth - 1) + 1 : 0); globalThis.collectYoung = () => { overwriteStack(200); edenGC(); }; globalThis.collectAll = () => { overwriteStack(200); fullGC(); }; globalThis.report = (...values) => { let text = ""; for (let i = 0; i < values.length; i++) text += (i ? " " : "") + values[i]; print(text); const last = counters(); for (const name of ["counter:CompiledStructuresMade", "operation:operationAOTPutByIdAndCache", "operation:operationAOTGetByIdAndCache", "operation:operationAOTFillSiteCache", "operation:operationAOTPutByValAndCache", "counter:PairsFiledAgain"]) { const more = (last[name] || 0) - (marked[name] || 0); print(name, more >= 30 ? "once a round or more" : more < 8 ? "next to nothing" : "now and then"); } };
+# RUN(EDEN): run-in-shell --aotCountsPath=/dev/null globalThis.argv = ["", "", "eden"]; const counters = () => { const all = {}; const lines = aotRuntimeCounters().split("\n"); for (let i = 0; i < lines.length; i++) { const parts = lines[i].split("\t"); if (parts.length > 1) all[parts[1]] = Number(parts[0]); } return all; }; let marked; globalThis.mark = () => { marked = counters(); }; const overwriteStack = depth => (depth ? overwriteStack(depth - 1) + 1 : 0); globalThis.collectYoung = () => { overwriteStack(200); edenGC(); }; globalThis.collectAll = () => { overwriteStack(200); fullGC(); }; globalThis.report = (...values) => { let text = ""; for (let i = 0; i < values.length; i++) text += (i ? " " : "") + values[i]; print(text); const last = counters(); for (const name of ["counter:CompiledStructuresMade", "operation:operationAOTPutByIdAndCache", "operation:operationAOTGetByIdAndCache", "operation:operationAOTFillSiteCache", "operation:operationAOTPutByValAndCache", "counter:PairsFiledAgain"]) { const more = (last[name] || 0) - (marked[name] || 0); print(name, more >= 30 ? "once a round or more" : more < 8 ? "next to nothing" : "now and then"); } };
+# RUN(FULL): run-in-shell --aotCountsPath=/dev/null globalThis.argv = ["", "", "full"]; const counters = () => { const all = {}; const lines = aotRuntimeCounters().split("\n"); for (let i = 0; i < lines.length; i++) { const parts = lines[i].split("\t"); if (parts.length > 1) all[parts[1]] = Number(parts[0]); } return all; }; let marked; globalThis.mark = () => { marked = counters(); }; const overwriteStack = depth => (depth ? overwriteStack(depth - 1) + 1 : 0); globalThis.collectYoung = () => { overwriteStack(200); edenGC(); }; globalThis.collectAll = () => { overwriteStack(200); fullGC(); }; globalThis.report = (...values) => { let text = ""; for (let i = 0; i < values.length; i++) text += (i ? " " : "") + values[i]; print(text); const last = counters(); for (const name of ["counter:CompiledStructuresMade", "counter:PairsFiledAgain"]) { const more = (last[name] || 0) - (marked[name] || 0); print(name, more >= 30 ? "once a round or more" : more < 8 ? "next to nothing" : "now and then"); } };
+# Each call makes short-lived ordinary objects and gives them their names, as a server does for each request. Between two rounds none of them is alive, and a collection comes just then.
+# A collection takes every word on the stack for a reference, so what the calls left there is overwritten first.
+# The Structure that an addition leads to outlives an Eden collection while the Structure it comes from is alive, so a round after one files nothing again. A full collection ends them, and they are filed again.
+# NONE: 1000
+# NONE-NEXT: counter:CompiledStructuresMade next to nothing
+# NONE-NEXT: operation:operationAOTPutByIdAndCache next to nothing
+# NONE-NEXT: operation:operationAOTGetByIdAndCache next to nothing
+# NONE-NEXT: operation:operationAOTFillSiteCache next to nothing
+# NONE-NEXT: operation:operationAOTPutByValAndCache next to nothing
+# NONE-NEXT: counter:PairsFiledAgain next to nothing
+# NONE-NEXT: exited with 0
+# EDEN: 1000
+# EDEN-NEXT: counter:CompiledStructuresMade next to nothing
+# EDEN-NEXT: operation:operationAOTPutByIdAndCache next to nothing
+# EDEN-NEXT: operation:operationAOTGetByIdAndCache next to nothing
+# EDEN-NEXT: operation:operationAOTFillSiteCache next to nothing
+# EDEN-NEXT: operation:operationAOTPutByValAndCache next to nothing
+# EDEN-NEXT: counter:PairsFiledAgain next to nothing
+# EDEN-NEXT: exited with 0
+# FULL: 1000
+# FULL-NEXT: counter:CompiledStructuresMade next to nothing
+# FULL-NEXT: counter:PairsFiledAgain once a round or more
+# FULL-NEXT: exited with 0
+
+module m0 path="main.mjs" displayPath="main.mjs" flags=[KeepsError] body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 fields=[{key="eden" declared={type=anything} flags=[IsRequired]}, {key="full" declared={type=anything} flags=[IsRequired]}, {key="none" declared={type=undefined|null|function|f3 flags=[IsExpected]} flags=[IsRequired, IsMethod]}] declaredOrder=[2, 0, 1] ownFieldCount=3
+variable g0 name="handle" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f3
+    v3 = Convert v2 declared={type=undefined|null|function|f3 flags=[IsExpected]}
+    v4 = NewObject layout=L0
+    PropDefine v4, v3 key="none"
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="collectYoung" [isFreeName]
+    PropDefine v4, v7 key="eden"
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="collectAll" [isFreeName]
+    PropDefine v4, v10 key="full"
+    v12 = FinishObject v4
+    v13 = Builtin builtin=GlobalThis
+    v14 = PropGet v13 key="argv" [isFreeName]
+    v15 = Integer integer=2
+    v16 = ElemGet v14, v15
+    v17 = ElemGet v12, v16
+    v18 = Convert v17 declared={type=undefined|null|function flags=[IsExpected]}
+    v19 = Integer integer=60
+    v20 = Call v1, -, v19 calleeName="get"
+    v21 = Convert v20 declared={type=number flags=[IsExpected]}
+    v22 = Builtin builtin=GlobalThis
+    v23 = PropGet v22 key="collectYoung" [isFreeName]
+    v24 = Call v23 calleeName="collectYoung"
+    v25 = Integer integer=20
+    v26 = Call v1, -, v25 calleeName="get"
+    v27 = Convert v26 declared={type=number flags=[IsExpected]}
+    v28 = Add v21, v27
+    v29 = Convert v28 declared={type=number flags=[IsExpected]}
+    v30 = Builtin builtin=GlobalThis
+    v31 = PropGet v30 key="mark" [isFreeName]
+    v32 = Call v31 calleeName="mark"
+    v33 = Integer
+    v34 = Convert v33 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v29, v34)
+  b2(v35, v36):
+    LoopHint
+    v38 = Integer integer=30
+    v39 = Less v36, v38
+    Branch v39 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v40):
+    Jump -> next b4()
+  b4():
+    v41 = Call v18 calleeName="collect"
+    v42 = Integer integer=4
+    v43 = Call v1, -, v42 calleeName="get"
+    v44 = Convert v43 declared={type=number flags=[IsExpected]}
+    v45 = Add v35, v44
+    v46 = Convert v45 declared={type=number flags=[IsExpected]}
+    Jump -> next b5()
+  b5():
+    v47 = Increment v40
+    v48 = Convert v47 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v46, v48)
+  b6(v49):
+    Jump -> next b7()
+  b7():
+    v50 = Builtin builtin=GlobalThis
+    v51 = PropGet v50 key="report" [isFreeName]
+    v52 = Call v51, -, v35 calleeName="report"
+    v53 = Undefined
+    Return v53
+}
+function f1 name="handle" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1()
+  b1():
+    v1 = Data data=d0
+    v2 = Convert v1 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v3 = IteratorOpen v2
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v5 = IteratorResume v3
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b3(), notTaken b4()
+  b3():
+    v8 = Builtin builtin=JSON
+    v9 = PropGet v8 key="parse"
+    v10 = Convert v9 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v11 = String string="{}"
+    v12 = Call v10, v8, v11 calleeKey="parse" calleeName="JSON.parse"
+    v13 = Convert v12 declared={type=undefined|null flags=[IsExpected]}
+    v14 = Undefined
+    PropSet v13, v14 key="close"
+    v16 = Undefined
+    PropSet v13, v16 key="error"
+    PropSet v13, v0 key="data"
+    v19 = PropGet v13 key="data"
+    v20 = PropGet v19 key="length"
+    Return v20
+  b4():
+    Jump -> next b5()
+  b5() handler=b10():
+    v21 = Convert v7 declared={type=undefined|null|string flags=[IsExpected]}
+    v22 = Builtin builtin=Object
+    v23 = Builtin builtin=ObjectCreate
+    v24 = Null
+    v25 = Call v23, v22, v24 calleeName="Object.create"
+    v26 = Convert v25 declared={type=undefined|null|object flags=[IsExpected]}
+    v27 = PropGet v0 key="length"
+    v28 = Convert v27 declared={type=number flags=[IsExpected]}
+    v29 = Add v21, v28
+    v30 = Integer integer=1
+    ElemSet v26, v29, v30
+    v32 = Integer integer=2
+    PropSet v26, v32 key="other"
+    v34 = PropGet v26 key="other"
+    v35 = Integer integer=2
+    v36 = StrictEq v34, v35
+    Branch v36 -> taken b6(| 0), notTaken b8(| 0)
+  b6(v37) handler=b10():
+    v38 = NarrowByField v26, v37 key="other"
+    Jump -> next b7()
+  b7() handler=b10():
+    Jump -> next b2()
+  b8(v39) handler=b10():
+    v40 = NarrowByField v26, v39 key="other"
+    Jump -> next b9()
+  b9() handler=b10():
+    v41 = Builtin builtin=GlobalThis
+    v42 = PropGet v41 key="Error" [isFreeName]
+    v43 = Convert v42 declared={type=builtin(Error) flags=[IsExpected]}
+    v44 = String string="the member is gone"
+    v45 = Construct v43, -, v44 calleeName="Error"
+    v46 = Convert v45 declared={type=undefined|null|Error flags=[IsExpected]}
+    Throw v46
+  b10() role=IterationCleanup subject=v3:
+    v47 = CatchException
+    IteratorClose v3 completion=Throw
+    Rethrow v47
+}
+function f2 name="get" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = Integer
+    v2 = Convert v1 declared={type=number flags=[IsExpected]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v2, v4)
+  b2(v5, v6):
+    LoopHint
+    v8 = Convert v0 declared={type=number flags=[IsExpected]}
+    v9 = Less v6, v8
+    Branch v9 -> taken b3(| 0, 1), notTaken b6(| 0, 1)
+  b3(v10, v11):
+    Jump -> next b4()
+  b4():
+    v12 = GetModuleVariable variable=g0
+    v13 = String string="/path"
+    v14 = Call v12, -, v13 calleeName="handle"
+    v15 = Add v5, v14
+    v16 = Convert v15 declared={type=number flags=[IsExpected]}
+    Jump -> next b5()
+  b5():
+    v17 = Increment v10
+    v18 = Convert v17 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v16, v18)
+  b6(v19, v20):
+    Jump -> next b7()
+  b7():
+    v21 = Convert v5 declared={type=number flags=[IsExpected]}
+    Return v21
+}
+function f3 name="none" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Undefined
+    Return v0
+}
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+data d0 root=Array{contents=undefined|null|string elements=[String{value="first"}, String{value="second"}, String{value="third"}]} module=m0

@@ -41,6 +41,10 @@ export const tinycc: Dependency = {
       ONE_SOURCE: 0,
       TCC_LIBTCC1: "",
       CONFIG_TCC_BACKTRACE: 0,
+      // TinyCC's own locks are created on first use with an unsynchronized
+      // check (wait_sem in tcc.h), so two threads can both get one. bun holds
+      // LIBTCC_LOCK (src/tcc_sys/tcc.rs) around every libtcc call instead.
+      CONFIG_TCC_SEMLOCK: 0,
       // TCC_VERSION only appears in CLI help (tcc.c, not built) and DWARF
       // producer string. Use the commit hash for both so bumping TINYCC_COMMIT
       // is the only thing to update.

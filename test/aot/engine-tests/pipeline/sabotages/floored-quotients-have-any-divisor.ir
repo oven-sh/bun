@@ -1,0 +1,6 @@
+# sabotage=FlooredQuotientsHaveAnyDivisor: the program answers something else
+# FORM: AsRead
+# RUN: run-in-shell
+# OPTIONS: sabotage=FlooredQuotientsHaveAnyDivisor
+# CHECK-NOT: one 7 6 5 4 3 2 1 -0 -1 -2 -3 -4 
+# PROGRAM-OF: floored-quotients-have-any-divisor-left-alone.ir

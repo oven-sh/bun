@@ -10,7 +10,7 @@
 
 import type { Dependency } from "../source.ts";
 
-const PICOHTTPPARSER_COMMIT = "066d2b1e9ab820703db0837a7255d92d30f0c9f5";
+const PICOHTTPPARSER_COMMIT = "f4d94b48b31e0abae029ebeafcfd9ca0680ede58";
 
 export const picohttpparser: Dependency = {
   name: "picohttpparser",
@@ -22,7 +22,13 @@ export const picohttpparser: Dependency = {
     commit: PICOHTTPPARSER_COMMIT,
   }),
 
-  patches: ["patches/picohttpparser/strict-chunk-size.patch"],
+  // phr_decode_chunked, as fetch's response decoder:
+  // - reject BWS after chunk-size, like llhttp;
+  // - drop the chunk-overhead limit, which protects a server from its
+  //   clients; a long response made of one-byte chunks is legitimate;
+  // - add phr_decode_chunked_is_in_trailers() so src/http does not mirror
+  //   the decoder's private state enum.
+  patches: ["patches/picohttpparser/chunked-decoder.patch"],
 
   build: () => ({ kind: "none" }),
 

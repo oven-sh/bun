@@ -237,6 +237,10 @@ void EventTarget::fireEventListeners(Event& event, EventInvokePhase phase)
     auto* data = eventTargetData();
     if (!data)
         return;
+    // The context the target was made in is gone (a Bun.ModuleGraph's that was collected while the
+    // host still held the target): its listeners go unheard.
+    if (!scriptExecutionContext())
+        return;
 
     SetForScope firingEventListenersScope(data->isFiringEventListeners, true);
 
@@ -253,7 +257,8 @@ void EventTarget::innerInvokeEventListeners(Event& event, EventListenerVector li
     ASSERT(!listeners.isEmpty());
     ASSERT(scriptExecutionContext());
 
-    auto& context = *scriptExecutionContext();
+    // A Bun.ModuleGraph's context is freed with the graph, which a listener can bring about.
+    Ref<ScriptExecutionContext> context(*scriptExecutionContext());
 
     for (auto& registeredListener : listeners) {
         if (registeredListener->wasRemoved()) [[unlikely]]

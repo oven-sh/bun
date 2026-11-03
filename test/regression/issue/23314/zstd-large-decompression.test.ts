@@ -7,7 +7,7 @@ test("should handle large data decompression safely", async () => {
 
   // Compress with pledgedSrcSize so the frame header includes the size
   const compressed = await new Promise<Buffer>((resolve, reject) => {
-    zlib.zstdCompress(input, { pledgedSrcSize: input.length }, (err, result) => {
+    zlib.zstdCompress(input, { pledgedSrcSize: input.length } as zlib.ZstdOptions, (err, result) => {
       if (err) reject(err);
       else resolve(result);
     });

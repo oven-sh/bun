@@ -1,0 +1,81 @@
+// What a web framework does for every request behind a few middlewares: it makes a request and a reply with constructor functions that it finds in a route's context, keeps its own state in them under symbols,
+// copies the application's decorations into them and runs a list of hooks. The context comes out of a router whose code is made at run time, so no build can follow the construction.
+//// a-constructor-found-in-a-context-keeps-state-under-symbols
+const symbols = { kHeaders: Symbol("reply.headers"), kSent: Symbol("reply.sent"), kIsError: Symbol("reply.isError"), kStatus: Symbol("reply.status") };
+const { kHeaders, kSent, kIsError, kStatus } = symbols;
+function Reply(this: any, raw: unknown, id: number) {
+  this.raw = raw;
+  this[kIsError] = false;
+  this[kSent] = false;
+  this.id = id;
+  this[kHeaders] = 0;
+  this[kStatus] = 200;
+}
+Reply.prototype.header = function (this: any, size: number) {
+  this[kHeaders] += size;
+  return this;
+};
+Reply.prototype.send = function (this: any): number {
+  if (this[kSent] || this[kIsError]) return 0;
+  this[kSent] = true;
+  return this[kHeaders] + this[kStatus] + this.id;
+};
+const context = new Function("context", "return context" + String(Date.now()).slice(99))({ Reply });
+const raw = { ended: false };
+function turn(i: number): number {
+  const reply = new context.Reply(raw, i & 7);
+  return reply.header(1).header(2).send();
+}
+//// a-constructor-made-by-a-factory-below-another-keeps-state-under-symbols
+const symbols = { kHeaders: Symbol("reply.headers"), kSent: Symbol("reply.sent"), kIsError: Symbol("reply.isError"), kStatus: Symbol("reply.status") };
+const { kHeaders, kSent, kIsError, kStatus } = symbols;
+function Reply(this: any, raw: unknown, id: number) {
+  this.raw = raw;
+  this[kIsError] = false;
+  this.id = id;
+  this[kHeaders] = 0;
+  this[kStatus] = 200;
+}
+Reply.props = [] as { key: string; value: unknown }[];
+Object.defineProperties(Reply.prototype, {
+  sent: {
+    enumerable: true,
+    get(this: any) {
+      return (this[kSent] || this.raw.ended) === true;
+    },
+  },
+});
+Reply.prototype.header = function (this: any, size: number) {
+  this[kHeaders] += size;
+  return this;
+};
+Reply.prototype.send = function (this: any): number {
+  if (this.sent || this[kIsError]) return 0;
+  return this[kHeaders] + this[kStatus] + this.id;
+};
+function buildReply(R: any) {
+  const props = R.props.slice();
+  function _Reply(this: any, raw: unknown, id: number) {
+    this.raw = raw;
+    this[kIsError] = false;
+    this[kSent] = false;
+    this.id = id;
+    this[kHeaders] = 0;
+    this[kStatus] = 200;
+    for (let i = 0; i < props.length; i++) {
+      const prop = props[i];
+      this[prop.key] = prop.value;
+    }
+  }
+  Object.setPrototypeOf(_Reply.prototype, R.prototype);
+  Object.setPrototypeOf(_Reply, R);
+  _Reply.props = props;
+  return _Reply;
+}
+Reply.props.push({ key: process.argv.length > 99 ? process.argv[9]! : "user", value: undefined });
+const context = new Function("context", "return context" + String(Date.now()).slice(99))({ Reply: buildReply(Reply) });
+const raw = { ended: false };
+function turn(i: number): number {
+  const reply = new context.Reply(raw, i & 7);
+  return reply.header(1).header(2).send();
+}

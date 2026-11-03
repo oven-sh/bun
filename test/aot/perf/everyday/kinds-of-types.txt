@@ -1,0 +1,1147 @@
+//// tuple.control-record
+interface Pair { n: number; s: string }
+const pairs: Pair[] = [{ n: 1, s: "a" }, { n: 2, s: "bb" }, { n: 3, s: "ccc" }, { n: 4, s: "dddd" }];
+function turn(i: number): number {
+  const p = pairs[i & 3];
+  return p.n + p.s.length;
+}
+//// tuple.read-by-index
+const pairs: [number, string][] = [[1, "a"], [2, "bb"], [3, "ccc"], [4, "dddd"]];
+function turn(i: number): number {
+  const p = pairs[i & 3];
+  return p[0] + p[1].length;
+}
+//// tuple.destructured
+const pairs: [number, string][] = [[1, "a"], [2, "bb"], [3, "ccc"], [4, "dddd"]];
+function turn(i: number): number {
+  const [n, s] = pairs[i & 3];
+  return n + s.length;
+}
+//// tuple.readonly
+const pairs: readonly (readonly [number, string])[] = [[1, "a"], [2, "bb"], [3, "ccc"], [4, "dddd"]];
+function turn(i: number): number {
+  const p = pairs[i & 3];
+  return p[0] + p[1].length;
+}
+//// tuple.of-numbers
+const pairs: [number, number][] = [[1, 5], [2, 6], [3, 7], [4, 8]];
+function turn(i: number): number {
+  const p = pairs[i & 3];
+  return p[0] + p[1];
+}
+//// tuple.of-numbers-as-a-parameter
+const pairs: [number, number][] = [[1, 5], [2, 6], [3, 7], [4, 8]];
+function add(p: [number, number]): number {
+  return p[0] + p[1];
+}
+function turn(i: number): number {
+  return add(pairs[i & 3]);
+}
+//// tuple.labeled-with-a-rest
+type Row = [id: number, ...names: string[]];
+const rows: Row[] = [[1, "a"], [2, "bb", "c"], [3, "ccc"], [4, "dddd", "e", "f"]];
+function turn(i: number): number {
+  const r = rows[i & 3];
+  return r[0] + r[1].length + r.length;
+}
+//// tuple.of-a-record-and-a-number
+interface P { x: number }
+const rows: [P, number][] = [[{ x: 1 }, 5], [{ x: 2 }, 6], [{ x: 3 }, 7], [{ x: 4 }, 8]];
+function turn(i: number): number {
+  const [p, n] = rows[i & 3];
+  return p.x + n;
+}
+//// union.control-number
+const values: number[] = [1, 22, 3, 44];
+function size(v: number): number {
+  return v;
+}
+function turn(i: number): number {
+  return size(values[i & 3]);
+}
+//// union.number-or-string
+const values: (number | string)[] = [1, "ab", 3, "abcd"];
+function size(v: number | string): number {
+  return typeof v === "number" ? v : v.length;
+}
+function turn(i: number): number {
+  return size(values[i & 3]);
+}
+//// union.three-primitives
+const values: (number | string | boolean)[] = [1, "ab", true, "abcd"];
+function size(v: number | string | boolean): number {
+  if (typeof v === "number") return v;
+  if (typeof v === "string") return v.length;
+  return v ? 1 : 0;
+}
+function turn(i: number): number {
+  return size(values[i & 3]);
+}
+//// union.number-or-null
+const values: (number | null)[] = [1, null, 3, null];
+function size(v: number | null): number {
+  return v === null ? 0 : v;
+}
+function turn(i: number): number {
+  return size(values[i & 3]);
+}
+//// union.number-or-undefined
+const values: (number | undefined)[] = [1, undefined, 3, undefined];
+function size(v: number | undefined): number {
+  return v === undefined ? 0 : v;
+}
+function turn(i: number): number {
+  return size(values[i & 3]);
+}
+//// union.record-or-number
+interface P { x: number }
+const values: (P | number)[] = [{ x: 1 }, 2, { x: 3 }, 4];
+function size(v: P | number): number {
+  return typeof v === "number" ? v : v.x;
+}
+function turn(i: number): number {
+  return size(values[i & 3]);
+}
+//// union.record-or-null
+interface P { x: number }
+const values: (P | null)[] = [{ x: 1 }, null, { x: 3 }, null];
+function size(v: P | null): number {
+  return v ? v.x : 0;
+}
+function turn(i: number): number {
+  return size(values[i & 3]);
+}
+//// union.two-classes
+class A { constructor(public a: number) {} }
+class B { constructor(public b: number) {} }
+const values: (A | B)[] = [new A(1), new B(2), new A(3), new B(4)];
+function size(v: A | B): number {
+  return v instanceof A ? v.a : v.b;
+}
+function turn(i: number): number {
+  return size(values[i & 3]);
+}
+//// union.two-interfaces-told-apart-by-in
+interface A { a: number }
+interface B { b: number }
+const values: (A | B)[] = [{ a: 1 }, { b: 2 }, { a: 3 }, { b: 4 }];
+function size(v: A | B): number {
+  return "a" in v ? v.a : v.b;
+}
+function turn(i: number): number {
+  return size(values[i & 3]);
+}
+//// union.one-or-a-list
+const values: (number | number[])[] = [1, [2, 3], 4, [5, 6, 7]];
+function size(v: number | number[]): number {
+  return Array.isArray(v) ? v.length : v;
+}
+function turn(i: number): number {
+  return size(values[i & 3]);
+}
+//// union.function-or-value
+const values: (number | (() => number))[] = [1, () => 2, 3, () => 4];
+function size(v: number | (() => number)): number {
+  return typeof v === "function" ? v() : v;
+}
+function turn(i: number): number {
+  return size(values[i & 3]);
+}
+//// union.a-field-all-members-share
+interface A { n: number; a: string }
+interface B { n: number; b: string }
+interface C { n: number; c: string }
+const values: (A | B | C)[] = [{ n: 1, a: "" }, { n: 2, b: "" }, { n: 3, c: "" }, { n: 4, a: "" }];
+function size(v: A | B | C): number {
+  return v.n;
+}
+function turn(i: number): number {
+  return size(values[i & 3]);
+}
+//// tagged.control-one-record
+interface S { kind: string; r: number }
+const shapes: S[] = [{ kind: "c", r: 1 }, { kind: "c", r: 2 }, { kind: "c", r: 3 }, { kind: "c", r: 4 }];
+function area(s: S): number {
+  return s.r;
+}
+function turn(i: number): number {
+  return area(shapes[i & 3]);
+}
+//// tagged.by-a-text
+type S = { kind: "c"; r: number } | { kind: "s"; w: number } | { kind: "t"; b: number; h: number };
+const shapes: S[] = [{ kind: "c", r: 1 }, { kind: "s", w: 2 }, { kind: "t", b: 3, h: 4 }, { kind: "c", r: 4 }];
+function area(s: S): number {
+  switch (s.kind) {
+    case "c": return s.r;
+    case "s": return s.w;
+    case "t": return s.b + s.h;
+  }
+}
+function turn(i: number): number {
+  return area(shapes[i & 3]);
+}
+//// tagged.by-a-number
+type S = { kind: 0; r: number } | { kind: 1; w: number } | { kind: 2; b: number; h: number };
+const shapes: S[] = [{ kind: 0, r: 1 }, { kind: 1, w: 2 }, { kind: 2, b: 3, h: 4 }, { kind: 0, r: 4 }];
+function area(s: S): number {
+  switch (s.kind) {
+    case 0: return s.r;
+    case 1: return s.w;
+    case 2: return s.b + s.h;
+  }
+}
+function turn(i: number): number {
+  return area(shapes[i & 3]);
+}
+//// tagged.by-a-boolean
+type R = { ok: true; value: number } | { ok: false; error: string };
+const results: R[] = [{ ok: true, value: 1 }, { ok: false, error: "ab" }, { ok: true, value: 3 }, { ok: false, error: "abcd" }];
+function read(r: R): number {
+  return r.ok ? r.value : r.error.length;
+}
+function turn(i: number): number {
+  return read(results[i & 3]);
+}
+//// tagged.by-an-enum
+enum Kind { Circle, Square, Triangle }
+type S = { kind: Kind.Circle; r: number } | { kind: Kind.Square; w: number } | { kind: Kind.Triangle; b: number; h: number };
+const shapes: S[] = [{ kind: Kind.Circle, r: 1 }, { kind: Kind.Square, w: 2 }, { kind: Kind.Triangle, b: 3, h: 4 }, { kind: Kind.Circle, r: 4 }];
+function area(s: S): number {
+  switch (s.kind) {
+    case Kind.Circle: return s.r;
+    case Kind.Square: return s.w;
+    case Kind.Triangle: return s.b + s.h;
+  }
+}
+function turn(i: number): number {
+  return area(shapes[i & 3]);
+}
+//// tagged.by-a-text-with-ifs
+type S = { kind: "c"; r: number } | { kind: "s"; w: number } | { kind: "t"; b: number; h: number };
+const shapes: S[] = [{ kind: "c", r: 1 }, { kind: "s", w: 2 }, { kind: "t", b: 3, h: 4 }, { kind: "c", r: 4 }];
+function area(s: S): number {
+  if (s.kind === "c") return s.r;
+  if (s.kind === "s") return s.w;
+  return s.b + s.h;
+}
+function turn(i: number): number {
+  return area(shapes[i & 3]);
+}
+//// generic.control
+const values: number[] = [1, 2, 3, 4];
+function same(x: number): number {
+  return x;
+}
+function turn(i: number): number {
+  return same(values[i & 3]) + 1;
+}
+//// generic.identity
+const values: number[] = [1, 2, 3, 4];
+function same<T>(x: T): T {
+  return x;
+}
+function turn(i: number): number {
+  return same(values[i & 3]) + 1;
+}
+//// generic.identity-used-at-two-types
+const values: number[] = [1, 2, 3, 4];
+const texts: string[] = ["a", "bb", "ccc", "dddd"];
+function same<T>(x: T): T {
+  return x;
+}
+function turn(i: number): number {
+  return same(values[i & 3]) + same(texts[i & 3]).length;
+}
+//// generic.first-of-a-list
+const lists: number[][] = [[1], [2, 3], [4, 5, 6], [7]];
+function first<T>(xs: T[]): T {
+  return xs[0];
+}
+function turn(i: number): number {
+  return first(lists[i & 3]) + 1;
+}
+//// generic.box-class-control
+class Box { constructor(public value: number) {} get(): number { return this.value; } }
+const boxes: Box[] = [new Box(1), new Box(2), new Box(3), new Box(4)];
+function turn(i: number): number {
+  return boxes[i & 3].get() + 1;
+}
+//// generic.box-class
+class Box<T> { constructor(public value: T) {} get(): T { return this.value; } }
+const boxes: Box<number>[] = [new Box(1), new Box(2), new Box(3), new Box(4)];
+function turn(i: number): number {
+  return boxes[i & 3].get() + 1;
+}
+//// generic.box-class-at-two-types
+class Box<T> { constructor(public value: T) {} get(): T { return this.value; } }
+const boxes: Box<number>[] = [new Box(1), new Box(2), new Box(3), new Box(4)];
+const names: Box<string>[] = [new Box("a"), new Box("bb"), new Box("ccc"), new Box("dddd")];
+function turn(i: number): number {
+  return boxes[i & 3].get() + names[i & 3].get().length;
+}
+//// generic.box-interface
+interface Box<T> { value: T }
+const boxes: Box<number>[] = [{ value: 1 }, { value: 2 }, { value: 3 }, { value: 4 }];
+function turn(i: number): number {
+  return boxes[i & 3].value + 1;
+}
+//// generic.box-interface-at-two-types
+interface Box<T> { value: T }
+const boxes: Box<number>[] = [{ value: 1 }, { value: 2 }, { value: 3 }, { value: 4 }];
+const names: Box<string>[] = [{ value: "a" }, { value: "bb" }, { value: "ccc" }, { value: "dddd" }];
+function turn(i: number): number {
+  return boxes[i & 3].value + names[i & 3].value.length;
+}
+//// generic.constraint
+interface N { n: number }
+const values: { n: number; s: string }[] = [{ n: 1, s: "" }, { n: 2, s: "" }, { n: 3, s: "" }, { n: 4, s: "" }];
+function read<T extends N>(x: T): number {
+  return x.n;
+}
+function turn(i: number): number {
+  return read(values[i & 3]);
+}
+//// generic.key-of
+interface P { x: number; y: number }
+const values: P[] = [{ x: 1, y: 5 }, { x: 2, y: 6 }, { x: 3, y: 7 }, { x: 4, y: 8 }];
+function get<T, K extends keyof T>(o: T, k: K): T[K] {
+  return o[k];
+}
+function turn(i: number): number {
+  return get(values[i & 3], "x") + get(values[i & 3], "y");
+}
+//// generic.callback
+const lists: number[][] = [[1], [2, 3], [4, 5, 6], [7]];
+function sumBy<T>(xs: T[], f: (x: T) => number): number {
+  let s = 0;
+  for (const x of xs) s += f(x);
+  return s;
+}
+function turn(i: number): number {
+  return sumBy(lists[i & 3], x => x + 1);
+}
+//// generic.default-argument
+class Stack<T = number> { items: T[] = []; push(x: T): void { this.items.push(x); } top(): T { return this.items[this.items.length - 1]; } }
+const stack = new Stack();
+stack.push(1);
+function turn(i: number): number {
+  stack.items[0] = i & 7;
+  return stack.top() + 1;
+}
+//// literal.control-number
+const values: number[] = [1, 2, 3, 1];
+function turn(i: number): number {
+  const v = values[i & 3];
+  return v === 1 ? 10 : v === 2 ? 20 : 30;
+}
+//// literal.numbers
+type Level = 1 | 2 | 3;
+const values: Level[] = [1, 2, 3, 1];
+function turn(i: number): number {
+  const v = values[i & 3];
+  return v === 1 ? 10 : v === 2 ? 20 : 30;
+}
+//// literal.numbers-added
+type Level = 1 | 2 | 3;
+const values: Level[] = [1, 2, 3, 1];
+function turn(i: number): number {
+  return values[i & 3] + values[(i + 1) & 3];
+}
+//// literal.texts
+type Level = "low" | "mid" | "high";
+const values: Level[] = ["low", "mid", "high", "low"];
+function turn(i: number): number {
+  const v = values[i & 3];
+  return v === "low" ? 10 : v === "mid" ? 20 : 30;
+}
+//// literal.texts-control-string
+const values: string[] = ["low", "mid", "high", "low"];
+function turn(i: number): number {
+  const v = values[i & 3];
+  return v === "low" ? 10 : v === "mid" ? 20 : 30;
+}
+//// literal.texts-as-keys
+type Level = "low" | "mid" | "high";
+const values: Level[] = ["low", "mid", "high", "low"];
+const worth: Record<Level, number> = { low: 10, mid: 20, high: 30 };
+function turn(i: number): number {
+  return worth[values[i & 3]];
+}
+//// literal.template
+type Id = `id-${number}`;
+const values: Id[] = ["id-1", "id-22", "id-333", "id-4"];
+function turn(i: number): number {
+  return values[i & 3].length;
+}
+//// as-const.record
+const K = { low: 10, mid: 20, high: 30 } as const;
+function turn(i: number): number {
+  return (i & 1 ? K.low : K.mid) + K.high;
+}
+//// as-const.list
+const xs = [10, 20, 30, 40] as const;
+function turn(i: number): number {
+  return xs[i & 3] + xs[0];
+}
+//// as-const.list-control
+const xs: number[] = [10, 20, 30, 40];
+function turn(i: number): number {
+  return xs[i & 3] + xs[0];
+}
+//// as-const.list-of-records
+const rows = [{ n: 1, s: "a" }, { n: 2, s: "bb" }, { n: 3, s: "ccc" }, { n: 4, s: "dddd" }] as const;
+function turn(i: number): number {
+  const r = rows[i & 3];
+  return r.n + r.s.length;
+}
+//// as-const.list-of-texts
+const names = ["low", "mid", "high", "top"] as const;
+type Name = (typeof names)[number];
+function worth(n: Name): number {
+  return n === "low" ? 1 : n === "mid" ? 2 : n === "high" ? 3 : 4;
+}
+function turn(i: number): number {
+  return worth(names[i & 3]);
+}
+//// as-const.nested
+const K = { size: { w: 3, h: 4 }, tags: ["a", "bb"] } as const;
+function turn(i: number): number {
+  return K.size.w + K.size.h + K.tags[i & 1].length;
+}
+//// enum.numeric
+enum Color { Red, Green, Blue }
+const values: Color[] = [Color.Red, Color.Green, Color.Blue, Color.Red];
+function turn(i: number): number {
+  const v = values[i & 3];
+  return v === Color.Red ? 10 : v === Color.Green ? 20 : 30;
+}
+//// enum.const
+const enum Color { Red, Green, Blue }
+const values: Color[] = [Color.Red, Color.Green, Color.Blue, Color.Red];
+function turn(i: number): number {
+  const v = values[i & 3];
+  return v === Color.Red ? 10 : v === Color.Green ? 20 : 30;
+}
+//// enum.text
+enum Color { Red = "red", Green = "green", Blue = "blue" }
+const values: Color[] = [Color.Red, Color.Green, Color.Blue, Color.Red];
+function turn(i: number): number {
+  const v = values[i & 3];
+  return v === Color.Red ? 10 : v === Color.Green ? 20 : 30;
+}
+//// enum.as-an-index
+enum Color { Red, Green, Blue }
+const values: Color[] = [Color.Red, Color.Green, Color.Blue, Color.Red];
+const worth: number[] = [10, 20, 30];
+function turn(i: number): number {
+  return worth[values[i & 3]];
+}
+//// enum.flags
+enum Flag { None = 0, A = 1, B = 2, C = 4 }
+const values: Flag[] = [Flag.A, Flag.A | Flag.B, Flag.C, Flag.None];
+function turn(i: number): number {
+  const v = values[i & 3];
+  return (v & Flag.A ? 1 : 0) + (v & Flag.C ? 2 : 0);
+}
+//// enum.name-of-a-member
+enum Color { Red, Green, Blue }
+const values: Color[] = [Color.Red, Color.Green, Color.Blue, Color.Red];
+function turn(i: number): number {
+  return Color[values[i & 3]].length;
+}
+//// enum.a-field
+enum Color { Red, Green, Blue }
+interface Pen { color: Color; width: number }
+const pens: Pen[] = [{ color: Color.Red, width: 1 }, { color: Color.Green, width: 2 }, { color: Color.Blue, width: 3 }, { color: Color.Red, width: 4 }];
+function turn(i: number): number {
+  const p = pens[i & 3];
+  return p.color * 4 + p.width;
+}
+//// index.control-record
+interface Counts { a: number; b: number; c: number; d: number }
+const counts: Counts = { a: 1, b: 2, c: 3, d: 4 };
+function turn(i: number): number {
+  return i & 1 ? counts.a + counts.b : counts.c + counts.d;
+}
+//// index.signature
+const counts: { [key: string]: number } = { a: 1, b: 2, c: 3, d: 4 };
+const keys: string[] = ["a", "b", "c", "d"];
+function turn(i: number): number {
+  return counts[keys[i & 3]] + 1;
+}
+//// index.record-of-string
+const counts: Record<string, number> = { a: 1, b: 2, c: 3, d: 4 };
+const keys: string[] = ["a", "b", "c", "d"];
+function turn(i: number): number {
+  return counts[keys[i & 3]] + 1;
+}
+//// index.record-of-written-names
+type Key = "a" | "b" | "c" | "d";
+const counts: Record<Key, number> = { a: 1, b: 2, c: 3, d: 4 };
+const keys: Key[] = ["a", "b", "c", "d"];
+function turn(i: number): number {
+  return counts[keys[i & 3]] + 1;
+}
+//// index.record-of-written-names-read-by-name
+type Key = "a" | "b" | "c" | "d";
+const counts: Record<Key, number> = { a: 1, b: 2, c: 3, d: 4 };
+function turn(i: number): number {
+  return i & 1 ? counts.a + counts.b : counts.c + counts.d;
+}
+//// index.signature-read-by-name
+const counts: { [key: string]: number } = { a: 1, b: 2, c: 3, d: 4 };
+function turn(i: number): number {
+  return i & 1 ? counts.a + counts.b : counts.c + counts.d;
+}
+//// index.signature-beside-fields
+interface Bag { size: number; [key: string]: number }
+const bag: Bag = { size: 4, a: 1, b: 2 };
+function turn(i: number): number {
+  return bag.size + (i & 1 ? bag.a : bag.b);
+}
+//// index.by-number
+const names: { [index: number]: string } = { 0: "a", 1: "bb", 2: "ccc", 3: "dddd" };
+function turn(i: number): number {
+  return names[i & 3].length;
+}
+//// index.of-records
+interface P { x: number }
+const table: Record<string, P> = { a: { x: 1 }, b: { x: 2 }, c: { x: 3 }, d: { x: 4 } };
+const keys: string[] = ["a", "b", "c", "d"];
+function turn(i: number): number {
+  return table[keys[i & 3]].x;
+}
+//// field.control-assigned-in-the-constructor
+class C { n: number; s: string; constructor() { this.n = 1; this.s = "ab"; } }
+const all: C[] = [new C(), new C(), new C(), new C()];
+function turn(i: number): number {
+  const c = all[i & 3];
+  c.n = i & 7;
+  return c.n + c.s.length;
+}
+//// field.initializers-with-types
+class C { n: number = 1; s: string = "ab"; }
+const all: C[] = [new C(), new C(), new C(), new C()];
+function turn(i: number): number {
+  const c = all[i & 3];
+  c.n = i & 7;
+  return c.n + c.s.length;
+}
+//// field.initializers-without-types
+class C { n = 1; s = "ab"; }
+const all: C[] = [new C(), new C(), new C(), new C()];
+function turn(i: number): number {
+  const c = all[i & 3];
+  c.n = i & 7;
+  return c.n + c.s.length;
+}
+//// field.parameter-properties
+class C { constructor(public n: number, public s: string) {} }
+const all: C[] = [new C(1, "ab"), new C(2, "ab"), new C(3, "ab"), new C(4, "ab")];
+function turn(i: number): number {
+  const c = all[i & 3];
+  c.n = i & 7;
+  return c.n + c.s.length;
+}
+//// field.readonly
+class C { readonly n: number = 1; readonly s: string = "ab"; }
+const all: C[] = [new C(), new C(), new C(), new C()];
+function turn(i: number): number {
+  const c = all[i & 3];
+  return c.n + c.s.length + (i & 7);
+}
+//// field.optional
+class C { n?: number; s: string = "ab"; }
+const all: C[] = [new C(), new C(), new C(), new C()];
+all[0].n = 1; all[2].n = 3;
+function turn(i: number): number {
+  const c = all[i & 3];
+  return (c.n ?? 0) + c.s.length;
+}
+//// field.definite
+class C { n!: number; s!: string; fill(): this { this.n = 1; this.s = "ab"; return this; } }
+const all: C[] = [new C().fill(), new C().fill(), new C().fill(), new C().fill()];
+function turn(i: number): number {
+  const c = all[i & 3];
+  c.n = i & 7;
+  return c.n + c.s.length;
+}
+//// field.a-list-initializer
+class C { xs: number[] = [1, 2, 3, 4]; }
+const all: C[] = [new C(), new C(), new C(), new C()];
+function turn(i: number): number {
+  return all[i & 3].xs[i & 3] + 1;
+}
+//// field.a-list-initializer-without-a-type
+class C { xs = [1, 2, 3, 4]; }
+const all: C[] = [new C(), new C(), new C(), new C()];
+function turn(i: number): number {
+  return all[i & 3].xs[i & 3] + 1;
+}
+//// field.a-record-initializer-without-a-type
+class C { p = { x: 1, y: 2 }; }
+const all: C[] = [new C(), new C(), new C(), new C()];
+function turn(i: number): number {
+  const p = all[i & 3].p;
+  return p.x + p.y;
+}
+//// field.null-then-a-record
+interface P { x: number }
+class C { p: P | null = null; }
+const all: C[] = [new C(), new C(), new C(), new C()];
+all[0].p = { x: 1 }; all[2].p = { x: 3 };
+function turn(i: number): number {
+  const p = all[i & 3].p;
+  return p ? p.x : 0;
+}
+//// field.static
+class C { static count = 0; static readonly step: number = 2; }
+function turn(i: number): number {
+  C.count = (C.count + C.step) & 1023;
+  return C.count;
+}
+//// overload.control
+function twice(x: number): number {
+  return x * 2;
+}
+function turn(i: number): number {
+  return twice(i & 7);
+}
+//// overload.by-type
+function twice(x: number): number;
+function twice(x: string): string;
+function twice(x: number | string): number | string {
+  return typeof x === "number" ? x * 2 : x + x;
+}
+function turn(i: number): number {
+  return twice(i & 7);
+}
+//// overload.by-type-both-used
+const texts: string[] = ["a", "bb", "ccc", "dddd"];
+function twice(x: number): number;
+function twice(x: string): string;
+function twice(x: number | string): number | string {
+  return typeof x === "number" ? x * 2 : x + x;
+}
+function turn(i: number): number {
+  return twice(i & 7) + twice(texts[i & 3]).length;
+}
+//// overload.by-count
+function sum(a: number): number;
+function sum(a: number, b: number): number;
+function sum(a: number, b?: number): number {
+  return b === undefined ? a : a + b;
+}
+function turn(i: number): number {
+  return sum(i & 7) + sum(i & 3, 1);
+}
+//// overload.method
+class M {
+  twice(x: number): number;
+  twice(x: string): string;
+  twice(x: number | string): number | string { return typeof x === "number" ? x * 2 : x + x; }
+}
+const m = new M();
+function turn(i: number): number {
+  return m.twice(i & 7);
+}
+//// this.control
+class Sum { total = 0; add(n: number): Sum { this.total += n; return this; } }
+const sum = new Sum();
+function turn(i: number): number {
+  sum.total = 0;
+  return sum.add(i & 7).add(1).total;
+}
+//// this.returned
+class Sum { total = 0; add(n: number): this { this.total += n; return this; } }
+const sum = new Sum();
+function turn(i: number): number {
+  sum.total = 0;
+  return sum.add(i & 7).add(1).total;
+}
+//// this.returned-below-a-parent
+class Sum { total = 0; add(n: number): this { this.total += n; return this; } }
+class More extends Sum { extra = 1; bump(): this { this.total += this.extra; return this; } }
+const sum = new More();
+function turn(i: number): number {
+  sum.total = 0;
+  return sum.add(i & 7).bump().add(1).total;
+}
+//// this.parameter
+interface P { x: number; y: number }
+function norm(this: P): number {
+  return this.x + this.y;
+}
+const ps: P[] = [{ x: 1, y: 5 }, { x: 2, y: 6 }, { x: 3, y: 7 }, { x: 4, y: 8 }];
+function turn(i: number): number {
+  return norm.call(ps[i & 3]);
+}
+//// this.in-an-interface
+interface Chain { n: number; next(): this }
+const chain: Chain = { n: 1, next() { this.n = (this.n + 1) & 7; return this; } };
+function turn(i: number): number {
+  return chain.next().next().n + (i & 1);
+}
+//// mapped.control
+interface P { x: number; y: number }
+const ps: P[] = [{ x: 1, y: 5 }, { x: 2, y: 6 }, { x: 3, y: 7 }, { x: 4, y: 8 }];
+function read(p: P): number {
+  return p.x + p.y;
+}
+function turn(i: number): number {
+  return read(ps[i & 3]);
+}
+//// mapped.readonly
+interface P { x: number; y: number }
+const ps: Readonly<P>[] = [{ x: 1, y: 5 }, { x: 2, y: 6 }, { x: 3, y: 7 }, { x: 4, y: 8 }];
+function read(p: Readonly<P>): number {
+  return p.x + p.y;
+}
+function turn(i: number): number {
+  return read(ps[i & 3]);
+}
+//// mapped.required
+interface P { x?: number; y?: number }
+const ps: Required<P>[] = [{ x: 1, y: 5 }, { x: 2, y: 6 }, { x: 3, y: 7 }, { x: 4, y: 8 }];
+function read(p: Required<P>): number {
+  return p.x + p.y;
+}
+function turn(i: number): number {
+  return read(ps[i & 3]);
+}
+//// mapped.partial
+interface P { x: number; y: number }
+const ps: Partial<P>[] = [{ x: 1, y: 5 }, { x: 2 }, { x: 3, y: 7 }, { y: 8 }];
+function read(p: Partial<P>): number {
+  return (p.x ?? 0) + (p.y ?? 0);
+}
+function turn(i: number): number {
+  return read(ps[i & 3]);
+}
+//// mapped.pick
+interface P { x: number; y: number; z: string }
+const ps: Pick<P, "x" | "y">[] = [{ x: 1, y: 5 }, { x: 2, y: 6 }, { x: 3, y: 7 }, { x: 4, y: 8 }];
+function read(p: Pick<P, "x" | "y">): number {
+  return p.x + p.y;
+}
+function turn(i: number): number {
+  return read(ps[i & 3]);
+}
+//// mapped.omit
+interface P { x: number; y: number; z: string }
+const ps: Omit<P, "z">[] = [{ x: 1, y: 5 }, { x: 2, y: 6 }, { x: 3, y: 7 }, { x: 4, y: 8 }];
+function read(p: Omit<P, "z">): number {
+  return p.x + p.y;
+}
+function turn(i: number): number {
+  return read(ps[i & 3]);
+}
+//// mapped.written-out
+interface P { x: number; y: number }
+type Same<T> = { [K in keyof T]: T[K] };
+const ps: Same<P>[] = [{ x: 1, y: 5 }, { x: 2, y: 6 }, { x: 3, y: 7 }, { x: 4, y: 8 }];
+function read(p: Same<P>): number {
+  return p.x + p.y;
+}
+function turn(i: number): number {
+  return read(ps[i & 3]);
+}
+//// mapped.every-member-another-type
+interface P { x: string; y: string }
+type Lengths<T> = { [K in keyof T]: number };
+const ps: Lengths<P>[] = [{ x: 1, y: 5 }, { x: 2, y: 6 }, { x: 3, y: 7 }, { x: 4, y: 8 }];
+function read(p: Lengths<P>): number {
+  return p.x + p.y;
+}
+function turn(i: number): number {
+  return read(ps[i & 3]);
+}
+//// mapped.intersection
+interface X { x: number }
+interface Y { y: number }
+const ps: (X & Y)[] = [{ x: 1, y: 5 }, { x: 2, y: 6 }, { x: 3, y: 7 }, { x: 4, y: 8 }];
+function read(p: X & Y): number {
+  return p.x + p.y;
+}
+function turn(i: number): number {
+  return read(ps[i & 3]);
+}
+//// mapped.interface-that-extends
+interface X { x: number }
+interface P extends X { y: number }
+const ps: P[] = [{ x: 1, y: 5 }, { x: 2, y: 6 }, { x: 3, y: 7 }, { x: 4, y: 8 }];
+function read(p: P): number {
+  return p.x + p.y;
+}
+function turn(i: number): number {
+  return read(ps[i & 3]);
+}
+//// mapped.type-of-a-value
+const origin = { x: 0, y: 0 };
+const ps: (typeof origin)[] = [{ x: 1, y: 5 }, { x: 2, y: 6 }, { x: 3, y: 7 }, { x: 4, y: 8 }];
+function read(p: typeof origin): number {
+  return p.x + p.y;
+}
+function turn(i: number): number {
+  return read(ps[i & 3]);
+}
+//// conditional.element-of-a-list
+type Element<T> = T extends (infer U)[] ? U : never;
+const values: Element<number[]>[] = [1, 2, 3, 4];
+function same(x: Element<number[]>): Element<number[]> {
+  return x;
+}
+function turn(i: number): number {
+  return same(values[i & 3]) + 1;
+}
+//// conditional.return-type
+function make(i: number) {
+  return { x: i, y: i + 1 };
+}
+const ps: ReturnType<typeof make>[] = [make(1), make(2), make(3), make(4)];
+function read(p: ReturnType<typeof make>): number {
+  return p.x + p.y;
+}
+function turn(i: number): number {
+  return read(ps[i & 3]);
+}
+//// conditional.non-nullable
+interface P { x: number; y: number }
+type Maybe = P | null | undefined;
+const ps: NonNullable<Maybe>[] = [{ x: 1, y: 5 }, { x: 2, y: 6 }, { x: 3, y: 7 }, { x: 4, y: 8 }];
+function read(p: NonNullable<Maybe>): number {
+  return p.x + p.y;
+}
+function turn(i: number): number {
+  return read(ps[i & 3]);
+}
+//// conditional.exclude
+type Any = number | string | boolean;
+const values: Exclude<Any, string | boolean>[] = [1, 2, 3, 4];
+function same(x: Exclude<Any, string | boolean>): number {
+  return x;
+}
+function turn(i: number): number {
+  return same(values[i & 3]) + 1;
+}
+//// conditional.indexed-access
+interface P { x: number; inner: { n: number } }
+const values: P["inner"][] = [{ n: 1 }, { n: 2 }, { n: 3 }, { n: 4 }];
+function read(v: P["inner"]): P["x"] {
+  return v.n;
+}
+function turn(i: number): number {
+  return read(values[i & 3]) + 1;
+}
+//// conditional.inside-a-generic
+type Unboxed<T> = T extends { value: infer V } ? V : T;
+function unbox<T extends { value: number }>(b: T): Unboxed<T> {
+  return b.value as Unboxed<T>;
+}
+const boxes: { value: number }[] = [{ value: 1 }, { value: 2 }, { value: 3 }, { value: 4 }];
+function turn(i: number): number {
+  return unbox(boxes[i & 3]) + 1;
+}
+//// conditional.satisfies
+interface P { x: number; y: number }
+const ps = [{ x: 1, y: 5 }, { x: 2, y: 6 }, { x: 3, y: 7 }, { x: 4, y: 8 }] satisfies P[];
+function turn(i: number): number {
+  const p = ps[i & 3];
+  return p.x + p.y;
+}
+//// predicate.control-typeof
+const values: (number | string)[] = [1, "ab", 3, "abcd"];
+function turn(i: number): number {
+  const v = values[i & 3];
+  return typeof v === "number" ? v : v.length;
+}
+//// predicate.is
+const values: (number | string)[] = [1, "ab", 3, "abcd"];
+function isNumber(v: number | string): v is number {
+  return typeof v === "number";
+}
+function turn(i: number): number {
+  const v = values[i & 3];
+  return isNumber(v) ? v : v.length;
+}
+//// predicate.is-of-unknown
+const values: unknown[] = [1, "ab", 3, "abcd"];
+function isNumber(v: unknown): v is number {
+  return typeof v === "number";
+}
+function turn(i: number): number {
+  const v = values[i & 3];
+  return isNumber(v) ? v : 0;
+}
+//// predicate.is-a-record
+interface A { kind: "a"; a: number }
+interface B { kind: "b"; b: number }
+const values: (A | B)[] = [{ kind: "a", a: 1 }, { kind: "b", b: 2 }, { kind: "a", a: 3 }, { kind: "b", b: 4 }];
+function isA(v: A | B): v is A {
+  return v.kind === "a";
+}
+function turn(i: number): number {
+  const v = values[i & 3];
+  return isA(v) ? v.a : v.b;
+}
+//// predicate.asserts
+const values: (number | string)[] = [1, 2, 3, 4];
+function mustBeNumber(v: number | string): asserts v is number {
+  if (typeof v !== "number") throw new TypeError("not a number");
+}
+function turn(i: number): number {
+  const v = values[i & 3];
+  mustBeNumber(v);
+  return v + 1;
+}
+//// predicate.filter
+const values: (number | null)[] = [1, null, 3, null];
+function turn(i: number): number {
+  const kept = values.filter((v): v is number => v !== null);
+  return kept[i & 1] + 1;
+}
+//// contents.map-get
+const map = new Map<string, number>([["a", 1], ["b", 2], ["c", 3], ["d", 4]]);
+const keys: string[] = ["a", "b", "c", "d"];
+function turn(i: number): number {
+  return map.get(keys[i & 3])! + 1;
+}
+//// contents.map-of-records
+interface P { x: number }
+const map = new Map<string, P>([["a", { x: 1 }], ["b", { x: 2 }], ["c", { x: 3 }], ["d", { x: 4 }]]);
+const keys: string[] = ["a", "b", "c", "d"];
+function turn(i: number): number {
+  return map.get(keys[i & 3])!.x;
+}
+//// contents.map-for-of
+const map = new Map<string, number>([["a", 1], ["bb", 2], ["ccc", 3], ["dddd", 4]]);
+function turn(i: number): number {
+  let s = i & 1;
+  for (const [k, v] of map) s += k.length + v;
+  return s;
+}
+//// contents.set-for-of
+const set = new Set<number>([1, 2, 3, 4]);
+function turn(i: number): number {
+  let s = i & 1;
+  for (const v of set) s += v;
+  return s;
+}
+//// contents.lists-of-lists
+const rows: number[][] = [[1, 2], [3, 4], [5, 6], [7, 8]];
+function turn(i: number): number {
+  return rows[i & 3][i & 1] + 1;
+}
+//// contents.object-entries
+const counts: Record<string, number> = { a: 1, bb: 2, ccc: 3, dddd: 4 };
+function turn(i: number): number {
+  let s = i & 1;
+  for (const [k, v] of Object.entries(counts)) s += k.length + v;
+  return s;
+}
+//// contents.object-values
+const counts: Record<string, number> = { a: 1, bb: 2, ccc: 3, dddd: 4 };
+function turn(i: number): number {
+  let s = i & 1;
+  for (const v of Object.values(counts)) s += v;
+  return s;
+}
+//// contents.callback-parameter
+interface P { x: number }
+const ps: P[] = [{ x: 1 }, { x: 2 }, { x: 3 }, { x: 4 }];
+function turn(i: number): number {
+  return ps.reduce((s, p) => s + p.x, i & 1);
+}
+//// contents.a-function-field
+interface Op { run: (a: number, b: number) => number }
+const ops: Op[] = [{ run: (a, b) => a + b }, { run: (a, b) => a - b }, { run: (a, b) => a * b }, { run: (a, b) => a | b }];
+function turn(i: number): number {
+  return ops[i & 3].run(i & 7, 3);
+}
+//// contents.a-list-of-functions
+const ops: ((a: number, b: number) => number)[] = [(a, b) => a + b, (a, b) => a - b, (a, b) => a * b, (a, b) => a | b];
+function turn(i: number): number {
+  return ops[i & 3](i & 7, 3);
+}
+//// parameter.control
+function add(a: number, b: number): number {
+  return a + b;
+}
+function turn(i: number): number {
+  return add(i & 7, 2);
+}
+//// parameter.optional
+function add(a: number, b?: number): number {
+  return a + (b ?? 2);
+}
+function turn(i: number): number {
+  return i & 1 ? add(i & 7) : add(i & 7, 2);
+}
+//// parameter.default
+function add(a: number, b: number = 2): number {
+  return a + b;
+}
+function turn(i: number): number {
+  return i & 1 ? add(i & 7) : add(i & 7, 2);
+}
+//// parameter.rest
+function add(...xs: number[]): number {
+  let s = 0;
+  for (const x of xs) s += x;
+  return s;
+}
+function turn(i: number): number {
+  return add(i & 7, 2, 3);
+}
+//// parameter.a-record-taken-apart
+interface P { x: number; y: number }
+const ps: P[] = [{ x: 1, y: 5 }, { x: 2, y: 6 }, { x: 3, y: 7 }, { x: 4, y: 8 }];
+function add({ x, y }: P): number {
+  return x + y;
+}
+function turn(i: number): number {
+  return add(ps[i & 3]);
+}
+//// parameter.options-with-defaults
+interface Options { step?: number; scale?: number }
+const all: Options[] = [{}, { step: 2 }, { scale: 3 }, { step: 2, scale: 3 }];
+function run(n: number, { step = 1, scale = 1 }: Options = {}): number {
+  return (n + step) * scale;
+}
+function turn(i: number): number {
+  return run(i & 7, all[i & 3]);
+}
+//// interface.two-classes-implement-it
+interface Shape { area(): number }
+class Circle implements Shape { constructor(public r: number) {} area(): number { return this.r * 3; } }
+class Square implements Shape { constructor(public w: number) {} area(): number { return this.w * this.w; } }
+const shapes: Shape[] = [new Circle(1), new Square(2), new Circle(3), new Square(4)];
+function turn(i: number): number {
+  return shapes[i & 3].area();
+}
+//// interface.abstract-class
+abstract class Shape { abstract area(): number; twice(): number { return this.area() * 2; } }
+class Circle extends Shape { constructor(public r: number) { super(); } area(): number { return this.r * 3; } }
+class Square extends Shape { constructor(public w: number) { super(); } area(): number { return this.w * this.w; } }
+const shapes: Shape[] = [new Circle(1), new Square(2), new Circle(3), new Square(4)];
+function turn(i: number): number {
+  return shapes[i & 3].twice();
+}
+//// interface.a-field-of-a-class-read-through-it
+interface Named { name: string }
+class User implements Named { constructor(public name: string, public age: number) {} }
+class Team implements Named { constructor(public size: number, public name: string) {} }
+const all: Named[] = [new User("a", 1), new Team(2, "bb"), new User("ccc", 3), new Team(4, "dddd")];
+function turn(i: number): number {
+  return all[i & 3].name.length;
+}
+//// interface.call-signature
+interface Adder { (a: number, b: number): number; calls: number }
+const adder: Adder = Object.assign((a: number, b: number) => a + b, { calls: 0 });
+function turn(i: number): number {
+  adder.calls = (adder.calls + 1) & 7;
+  return adder(i & 7, 2) + adder.calls;
+}
+//// cast.as-from-unknown
+interface P { x: number; y: number }
+const raw: unknown[] = [{ x: 1, y: 5 }, { x: 2, y: 6 }, { x: 3, y: 7 }, { x: 4, y: 8 }];
+function turn(i: number): number {
+  const p = raw[i & 3] as P;
+  return p.x + p.y;
+}
+//// cast.as-from-any
+interface P { x: number; y: number }
+const raw: any[] = [{ x: 1, y: 5 }, { x: 2, y: 6 }, { x: 3, y: 7 }, { x: 4, y: 8 }];
+function turn(i: number): number {
+  const p: P = raw[i & 3];
+  return p.x + p.y;
+}
+//// cast.non-null
+interface P { x: number; y: number }
+const ps: (P | undefined)[] = [{ x: 1, y: 5 }, { x: 2, y: 6 }, { x: 3, y: 7 }, { x: 4, y: 8 }];
+function turn(i: number): number {
+  const p = ps[i & 3]!;
+  return p.x + p.y;
+}
+//// cast.number-from-unknown
+const raw: unknown[] = [1, 2, 3, 4];
+function turn(i: number): number {
+  return (raw[i & 3] as number) + 1;
+}
+//// cast.parsed
+interface P { x: number; y: number }
+const ps: P[] = JSON.parse('[{"x":1,"y":5},{"x":2,"y":6},{"x":3,"y":7},{"x":4,"y":8}]');
+function turn(i: number): number {
+  const p = ps[i & 3];
+  return p.x + p.y;
+}
+//// texts.out-of-a-map
+type Level = "low" | "mid" | "high";
+const levels = new Map<number, Level>([[0, "low"], [1, "mid"], [2, "high"], [3, "low"]]);
+function turn(i: number): number {
+  const v = levels.get(i & 3)!;
+  return v === "low" ? 10 : v === "mid" ? 20 : 30;
+}
+//// texts.a-field-of-parsed-text
+type Level = "low" | "mid" | "high";
+interface Row { level: Level }
+const rows: Row[] = JSON.parse('[{"level":"low"},{"level":"mid"},{"level":"high"},{"level":"low"}]');
+function turn(i: number): number {
+  const v = rows[i & 3].level;
+  return v === "low" ? 10 : v === "mid" ? 20 : 30;
+}
+//// texts.a-field-of-parsed-text-in-a-switch
+type Level = "low" | "mid" | "high";
+interface Row { level: Level }
+const rows: Row[] = JSON.parse('[{"level":"low"},{"level":"mid"},{"level":"high"},{"level":"low"}]');
+function turn(i: number): number {
+  switch (rows[i & 3].level) {
+    case "low": return 10;
+    case "mid": return 20;
+    case "high": return 30;
+  }
+}
+//// texts.cast-from-a-string
+type Level = "low" | "mid" | "high";
+const names: string[] = ["low", "mid", "high", "low"];
+function turn(i: number): number {
+  const v = names[i & 3] as Level;
+  return v === "low" ? 10 : v === "mid" ? 20 : 30;
+}
+//// texts.made-at-run-time
+type Level = "low" | "mid" | "high";
+const values: Level[] = ["xlow", "xmid", "xhigh", "xlow"].map(s => s.slice(1) as Level);
+function turn(i: number): number {
+  const v = values[i & 3];
+  return v === "low" ? 10 : v === "mid" ? 20 : 30;
+}
+//// texts.a-result-of-a-function-in-a-field
+type Level = "low" | "mid" | "high";
+const values: Level[] = ["low", "mid", "high", "low"];
+const source: { pick(i: number): Level }[] = [{ pick: i => values[i & 3] }, { pick: i => values[(i + 1) & 3] }];
+function turn(i: number): number {
+  const v = source[i & 1].pick(i);
+  return v === "low" ? 10 : v === "mid" ? 20 : 30;
+}
+//// texts.a-field-of-a-record-written-from-a-list
+type Level = "low" | "mid" | "high";
+const values: Level[] = ["low", "mid", "high", "low"];
+const row: { level: Level; n: number } = { level: "low", n: 0 };
+function turn(i: number): number {
+  row.level = values[i & 3];
+  return row.level === "low" ? 10 : row.level === "mid" ? 20 : 30;
+}
+//// texts.an-optional-field
+type Level = "low" | "mid" | "high";
+interface Row { level?: Level; n: number }
+const rows: Row[] = [{ level: "low", n: 1 }, { n: 2 }, { level: "high", n: 3 }, { level: "mid", n: 4 }];
+function turn(i: number): number {
+  const v = rows[i & 3].level;
+  return v === "low" ? 10 : v === "mid" ? 20 : v === undefined ? 5 : 30;
+}
+//// texts.two-values-compared
+type Level = "low" | "mid" | "high";
+const values: Level[] = ["low", "mid", "high", "low"];
+function turn(i: number): number {
+  return values[i & 3] === values[(i >> 2) & 3] ? 1 : 2;
+}

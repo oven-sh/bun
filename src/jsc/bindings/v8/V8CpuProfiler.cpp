@@ -69,8 +69,8 @@ static void buildProfileTree(JSC::VM& vm, CpuProfileImpl& profile, int64_t start
     auto makeRoot = [&]() -> CpuProfileNodeImpl* {
         auto root = makeUnique<CpuProfileNodeImpl>();
         root->id = 1;
-        root->functionName = "(root)";
-        root->scriptResourceName = "";
+        root->functionName = "(root)"_s;
+        root->scriptResourceName = ""_s;
         CpuProfileNodeImpl* ptr = root.get();
         profile.m_nodes.append(WTF::move(root));
         profile.m_root = ptr;
@@ -326,7 +326,7 @@ Local<String> CpuProfileNode::GetFunctionName() const
 
 const char* CpuProfileNode::GetFunctionNameStr() const
 {
-    return toImpl(this)->functionName.data();
+    return toImpl(this)->functionName.legacyCStringPointer();
 }
 
 int CpuProfileNode::GetScriptId() const

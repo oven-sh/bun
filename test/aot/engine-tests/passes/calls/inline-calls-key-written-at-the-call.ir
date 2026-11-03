@@ -1,0 +1,35 @@
+# A callee that reads an object under a parameter, as `events[type]`, is worth more where the caller writes the key: `count(events, "tick")`.
+# In the caller the read is one under a name, which remembers where it found the name. A key that only arrives is looked up each time, wherever the read stands.
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# STATISTIC: InlineDecisionInline = 1
+# STATISTIC: InlineDecisionCostExceedsBenefit = 1
+# STATISTIC: InlineBenefitKnownKey = 1
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="readFour" parameters=[{type=object}, {type=string}, {type=object}] results=[{type=anything}] {
+    v3 = ElemGet v0, v1
+    PropSet v2, v3 key="a"
+    PropSet v2, v3 key="b"
+    PropSet v2, v3 key="c"
+    PropSet v2, v3 key="d"
+    PropSet v2, v3 key="e"
+    PropSet v2, v3 key="f"
+    Return v3
+}
+
+function f1 name="writesTheKey" parameters=[{type=object}, {type=object}] results=[{type=anything}] {
+    v2 = String string="tick"
+    v3 = CallDirect v0, v2, v1 function=f0
+    Return v3
+# CHECK-NOT: CallDirect
+# CHECK: = ElemGet
+}
+
+function f2 name="handsTheKeyOn" parameters=[{type=object}, {type=string}, {type=object}] results=[{type=anything}] {
+    v3 = CallDirect v0, v1, v2 function=f0
+    Return v3
+# CHECK: = CallDirect v0, v1, v2 function=f0
+}

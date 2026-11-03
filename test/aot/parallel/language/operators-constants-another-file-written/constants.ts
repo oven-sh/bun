@@ -1,0 +1,13 @@
+export const nothing = undefined;
+export const text = "x";
+export const zero = 0;
+export const minusZero = -0;
+export const infinity = Infinity;
+export const notANumber = NaN;
+export const minusEight = -8;
+export const third = 1 / 3;
+export const oneAndAHalf = 1.5;
+export const minusOne = -1;
+export const one = 1;
+export const none = null;
+export default undefined;

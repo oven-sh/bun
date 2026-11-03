@@ -129,6 +129,8 @@ pub struct If {
     pub test: ExprNodeIndex,
     pub yes: StmtNodeIndex,
     pub no: Option<StmtNodeIndex>,
+    /// Where the `else` of `no` is. `Loc::EMPTY` in an `if` that the parser did not make.
+    pub else_loc: crate::Loc,
 }
 
 pub struct For {

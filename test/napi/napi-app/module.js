@@ -405,7 +405,6 @@ nativeTests.test_get_all_property_names_throwing_proxy_traps = () => {
       napi_key_keep_numbers,
     ),
   );
-
 };
 
 nativeTests.test_get_all_property_names_get_prototype_throws_in_descriptor_walk = () => {
@@ -1650,8 +1649,8 @@ nativeTests.test_threadsafe_function_orphaned_by_worker = async () => {
   console.log(nativeTests.use_orphaned_threadsafe_functions());
 };
 
-// A finalizer that runs during a worker's env cleanup and registers another
-// finalizer (an external buffer's): the late one runs in that same cleanup.
+// A finalizer that runs during a worker's env cleanup tries to register another
+// finalizer (an external buffer's): the call is refused, so the late one never runs.
 nativeTests.test_finalizer_registered_during_env_cleanup = async () => {
   console.log("worker exited with", await runOrphanWorker({ lateFinalizer: true }));
   console.log("late=" + nativeTests.late_finalizer_run_count());
@@ -1736,6 +1735,29 @@ nativeTests.test_external_buffer_worker_exit = async () => {
   console.log("worker exited with", exitCode);
   console.log("messages:", JSON.stringify(messages));
   console.log("stats after exit:", JSON.stringify(nativeTests.external_for_transfer_stats()));
+};
+
+// Bun-only: an idle collection ends on the collector thread; every finalizer still runs on the JS thread.
+nativeTests.test_external_buffer_finalized_by_idle_collection = async () => {
+  const deferred = require("./build/Debug/external_buffer_finalizer_thread.node");
+  globalThis.live = new Map();
+  for (let i = 0; i < 400_000; i++) live.set(i, { id: i, name: "user-" + i, tags: ["a" + i, "b" + i] });
+  const count = 200;
+  globalThis.buffers = [];
+  for (let i = 0; i < count; i++) {
+    buffers.push(nativeTests.create_external_buffer_for_transfer(8), deferred.create());
+  }
+  // Old objects: only a full collection frees them, and the next one is the idle one.
+  Bun.gc(true);
+  await new Promise(resolve => setTimeout(resolve, 100));
+  globalThis.buffers = null;
+  await new Promise(resolve => setTimeout(resolve, 4000));
+  for (const [name, stats] of [
+    ["experimental", nativeTests.external_for_transfer_stats()],
+    ["deferred", deferred.stats()],
+  ]) {
+    console.log(`${name}: finalized=${stats.finalized === count} finalizedOffThread=${stats.finalizedOffThread}`);
+  }
 };
 
 // Bun-only: an orphaned threadsafe function is freed by whichever thread drops
@@ -1925,6 +1947,38 @@ nativeTests.test_ungated_calls_worker_terminate = async () => {
     });
     console.log("terminate() resolved with", await worker.terminate());
   }
+};
+
+nativeTests.test_async_work_worker_terminate = async () => {
+  const { Worker } = require("node:worker_threads");
+  const path = require("node:path");
+  const report = new Int32Array(new SharedArrayBuffer(8));
+  const worker = new Worker(
+    `globalThis.buffer = require(${JSON.stringify(path.join(__dirname, "build/Debug/napitests.node"))})
+      .async_work_with_external_buffer(require("node:worker_threads").workerData);`,
+    { eval: true, workerData: report },
+  );
+  const { promise: failed, reject } = Promise.withResolvers();
+  worker.once("error", reject);
+  while (Atomics.load(report, 0) === 0) await Promise.race([failed, new Promise(resolve => setImmediate(resolve))]);
+  console.log("terminate() resolved with", await worker.terminate());
+  console.log("finalized during execute():", report[1]);
+};
+
+nativeTests.test_gated_calls_worker_terminate = async () => {
+  const { Worker } = require("node:worker_threads");
+  const path = require("node:path");
+  const report = new Int32Array(new SharedArrayBuffer(12));
+  const worker = new Worker(
+    `require(${JSON.stringify(path.join(__dirname, "build/Debug/napitests.node"))})
+      .gated_calls_until_terminated(require("node:worker_threads").workerData);`,
+    { eval: true, workerData: report },
+  );
+  const { promise: failed, reject } = Promise.withResolvers();
+  worker.once("error", reject);
+  while (Atomics.load(report, 0) === 0) await Promise.race([failed, new Promise(resolve => setImmediate(resolve))]);
+  console.log("terminate() resolved with", await worker.terminate());
+  console.log("napi_throw:", report[1], "exception pending:", report[2]);
 };
 
 // See ungated_calls_through_timeout in standalone_tests.cpp: 600ms of ungated

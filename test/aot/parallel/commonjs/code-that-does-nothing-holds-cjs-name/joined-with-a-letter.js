@@ -1,0 +1,13 @@
+typeof module + "a";
+function typeOfThis() {
+  return typeof this;
+}
+function storeToUndeclaredName() {
+  try {
+    neverDeclared112 = 1;
+    return "stored";
+  } catch (error) {
+    return error.name;
+  }
+}
+console.log("joined-with-a-letter", typeOfThis(), storeToUndeclaredName());

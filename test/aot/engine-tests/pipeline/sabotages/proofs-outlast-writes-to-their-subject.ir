@@ -1,0 +1,6 @@
+# sabotage=ProofsOutlastWritesToTheirSubject: the program answers something else
+# FORM: AsRead
+# RUN: run-in-shell
+# OPTIONS: sabotage=ProofsOutlastWritesToTheirSubject
+# CHECK-NOT: one seen,quiet,seen,quiet,seen,quiet,seen,quiet,7
+# PROGRAM-OF: proofs-outlast-writes-to-their-subject-left-alone.ir

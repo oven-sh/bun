@@ -36,7 +36,7 @@ export function generate(list: string): string {
   // would otherwise drop a byte.
   const escaped = JSON.stringify(blob).slice(1, -1).replaceAll(" ", "\\x20");
   const lines: string[] = [];
-  for (let at = 0; at < escaped.length; ) {
+  for (let at = 0; at < escaped.length;) {
     let end = Math.min(at + 100, escaped.length);
     // don't split an escape sequence
     const lastBackslash = escaped.lastIndexOf("\\", end - 1);

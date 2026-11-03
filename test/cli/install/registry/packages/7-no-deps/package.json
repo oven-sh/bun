@@ -1,0 +1,38 @@
+{
+	"name": "7-no-deps",
+	"versions": {
+		"1.0.0": {
+			"name": "7-no-deps",
+			"version": "1.0.0",
+			"_id": "7-no-deps@1.0.0",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-Jp0jxzQINwmhLooy0eGZo79zwjx2z+oidV4BV4dIMla/BLAHz0yT7SdJO3PL9MLfKrZmMLRbgzA+rGs79dmQvw==",
+				"shasum": "0a98a2387fcd04356bc95ad28791e15db1d3e89a",
+				"tarball": "http://localhost:4873/7-no-deps/-/7-no-deps-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-01-01T00:00:00.000Z",
+		"created": "2024-01-01T00:00:00.000Z",
+		"1.0.0": "2024-01-01T00:00:00.000Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"7-no-deps-1.0.0.tgz": {
+			"shasum": "0a98a2387fcd04356bc95ad28791e15db1d3e89a",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "7-no-deps",
+	"readme": "ERROR: No README data found!"
+}

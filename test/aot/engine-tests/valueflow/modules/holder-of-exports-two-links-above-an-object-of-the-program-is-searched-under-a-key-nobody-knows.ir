@@ -1,0 +1,50 @@
+# path = require("node:path"); const answer = somethingThatNoTableLists(path); const either = answer || path; const below = Object.create(Object.create(either)); below[String(Date.now())]()
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f2
+# CHECK-NOT: unreached f3
+
+module m0 path="/app/main.js" displayPath="main.js" body=f0
+module m1 path="node:path" displayPath="node:path" kind=RuntimeSource flags=[IsLoadedByImportOnly] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodePath body=f1
+entry module=m0
+layout L0 module=m1 fields=[{key="open" declared={type=anything}}, {key="close" declared={type=anything}}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="node:path"
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="somethingThatNoTableLists" [isFreeName]
+    v3 = Call v2, -, v0
+    v4 = ToBoolean v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v3)
+  b2():
+    Jump -> next b3(v0)
+  b3(v5: anything):
+    v6 = Builtin builtin=DateNow
+    v7 = Call v6
+    v8 = ToString v7
+    v9 = Builtin builtin=Object
+    v10 = Builtin builtin=ObjectCreate
+    v11 = Call v10, v9, v5
+    v12 = Call v10, v9, v11
+    v13 = ElemGet v12, v8
+    v14 = Call v13, v12
+    Return v14
+}
+function f1 name="path" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewClosure function=f3
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Return v2
+}
+function f2 name="open" module=m1 role=Library results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f3 name="close" module=m1 role=Library results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}

@@ -153,6 +153,7 @@ test("cancelling the readable inside the chunk's toString() rejects the write in
   reader.read();
   (await null, await null, await null); // open the synchronous-transform window (backpressure cleared, write runs the transform inline)
 
+  // @ts-expect-error
   const writePromise = writer.write({
     toString() {
       reader.cancel();
@@ -164,9 +165,9 @@ test("cancelling the readable inside the chunk's toString() rejects the write in
   await writer.abort("bye"); // must settle
 });
 
-// Native-sink output path: when the readable is consumed by a native JSSink
+// Native-sink output path: when the readable is consumed by a native sink
 // (here HTTPResponseSink via Bun.serve), the encoder writes into a reusable
-// scratch buffer and straight to the sink's m_sinkPtr instead of wrapping each
+// scratch buffer and straight to the sink instead of wrapping each
 // chunk in a JSUint8Array.
 test("TextEncoderStream -> native HTTP response sink round-trips (incl. split surrogate)", async () => {
   await using server = Bun.serve({

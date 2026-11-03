@@ -2,14 +2,17 @@ import { file, spawn, version, type Socket } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, exampleSite, tempDir } from "harness";
 import net from "net";
-import { Readable } from "node:stream";
+import { join } from "node:path";
+// @ts-expect-error missing in @types/node
+import { isDisturbed, isErrored, isReadable, Readable } from "node:stream";
+import { finished } from "node:stream/promises";
 
 const exampleServer = exampleSite("http");
 
 const bodyTypes = [
   {
     body: Request,
-    fn: (body?: BodyInit | null, headers?: HeadersInit) =>
+    fn: (body?: Bun.BodyInit | null, headers?: Bun.HeadersInit) =>
       new Request("http://example.com/", {
         method: "POST",
         body,
@@ -18,7 +21,7 @@ const bodyTypes = [
   },
   {
     body: Response,
-    fn: (body?: BodyInit | null, headers?: HeadersInit) => new Response(body, { headers }),
+    fn: (body?: Bun.BodyInit | null, headers?: Bun.HeadersInit) => new Response(body, { headers } as ResponseInit),
   },
 ];
 
@@ -190,7 +193,7 @@ for (const { body, fn } of bodyTypes) {
             const actual = new FormData();
             formData(actual);
             expect(() => fn(actual)).not.toThrow();
-            expect(await fn(actual).formData()).toStrictEqual(actual);
+            expect((await fn(actual).formData()) as FormData).toStrictEqual(actual);
           });
         }
       });
@@ -213,11 +216,9 @@ for (const { body, fn } of bodyTypes) {
             label: "Bun.file() stream",
             stream: () => {
               const url = new URL("resources/index.html", import.meta.url);
-              const { readable } = file(url);
-              return readable;
+              return file(url).stream();
             },
             content: /Example Domain/,
-            skip: true, // fails, text is empty
           },
           {
             label: "Bun.spawn() stream",
@@ -843,7 +844,7 @@ for (const { body, fn } of bodyTypes) {
             },
           });
           const connected = Promise.withResolvers<void>();
-          const sock = net.connect(server.port, "127.0.0.1", () => connected.resolve());
+          const sock = net.connect(server.port!, "127.0.0.1", () => connected.resolve());
           sock.on("error", () => {});
           await connected.promise;
           try {
@@ -875,7 +876,7 @@ for (const { body, fn } of bodyTypes) {
             },
           });
           const connected = Promise.withResolvers<void>();
-          const sock = net.connect(server.port, "127.0.0.1", () => connected.resolve());
+          const sock = net.connect(server.port!, "127.0.0.1", () => connected.resolve());
           sock.on("error", () => {});
           await connected.promise;
           sock.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 1000\r\n\r\nhello");
@@ -932,7 +933,7 @@ for (const { body, fn } of bodyTypes) {
           expect(async () => await fn(actual).json()).toThrow(SyntaxError);
           // An empty body is rejected before the parser runs, with its own message.
           if (actual !== "") {
-            const error = await fn(actual)
+            const error: any = await fn(actual)
               .json()
               .catch(error => error);
             expect(error.message).toBe(jsonParseError(actual).message);
@@ -1060,7 +1061,7 @@ for (const { body, fn } of bodyTypes) {
         test(label, async () => {
           const expected = new FormData();
           formData(expected);
-          expect(await fn(body.join("\r\n"), headers).formData()).toStrictEqual(expected);
+          expect((await fn(body.join("\r\n"), headers).formData()) as FormData).toStrictEqual(expected);
         });
       }
       const invalidTests = [
@@ -1148,7 +1149,7 @@ for (const { body, fn } of bodyTypes) {
       }
     });
     describe("bodyUsed", () => {
-      const tests: Record<string, { label?: string; body?: BodyInit | null; bodyUsed: boolean }[]> = {
+      const tests: Record<string, { label?: string; body?: Bun.BodyInit | null; bodyUsed: boolean }[]> = {
         "text": [
           {
             body: undefined,
@@ -1231,7 +1232,6 @@ for (const { body, fn } of bodyTypes) {
             test(label || `${body}`, () => {
               const result = fn(body);
               expect(result).toHaveProperty("bodyUsed", false);
-              // @ts-expect-error
               expect(() => result[property]()).not.toThrow();
               expect(result).toHaveProperty("bodyUsed", bodyUsed);
             });
@@ -1246,7 +1246,6 @@ for (const { body, fn } of bodyTypes) {
           const result = new Response();
           expect(result).toHaveProperty("bodyUsed", false);
 
-          // @ts-expect-error
           await result[method]();
           expect(result).toHaveProperty("bodyUsed", false);
         });
@@ -1259,7 +1258,6 @@ for (const { body, fn } of bodyTypes) {
           const result = new Request("https://example.com", { method: "POST" });
           expect(result).toHaveProperty("bodyUsed", false);
 
-          // @ts-expect-error
           await result[method]();
           expect(result).toHaveProperty("bodyUsed", false);
         });
@@ -1272,7 +1270,6 @@ for (const { body, fn } of bodyTypes) {
           const result = new Request("https://example.com");
           expect(result).toHaveProperty("bodyUsed", false);
 
-          // @ts-expect-error
           await result[method]();
           expect(result).toHaveProperty("bodyUsed", false);
         });
@@ -1281,14 +1278,14 @@ for (const { body, fn } of bodyTypes) {
   });
 }
 
-function arrayBuffer(buffer: BufferSource) {
+function arrayBuffer(buffer: Bun.BufferSource) {
   if (buffer instanceof ArrayBuffer) {
     return buffer;
   }
   if (buffer instanceof SharedArrayBuffer) {
     return new Uint8Array(new Uint8Array(buffer)).buffer;
   }
-  return buffer.buffer;
+  return buffer.buffer as ArrayBuffer;
 }
 
 // Consuming a string body via .text()/.json()/.arrayBuffer()/.bytes() used to
@@ -1328,7 +1325,7 @@ describe.concurrent("string body consumption does not leak", () => {
           : `b => new Response(b)`;
       const src = `
         const SZ = 2_000_000, WARM = 50, BLOCK = 40;
-        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+        const rss = process.memoryUsage.rss;
         const mb = () => (rss() / 1048576) | 0;
         const body = ${makeBody};
         const make = ${make};
@@ -1548,7 +1545,7 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
         c.close();
       },
     });
-  const sources: [string, () => BodyInit, string][] = [
+  const sources: [string, () => Bun.BodyInit, string][] = [
     ["string", () => "payload", "payload"],
     ["Blob", () => new Blob(["payload"]), "payload"],
     ["Uint8Array", () => new TextEncoder().encode("payload"), "payload"],
@@ -1558,13 +1555,13 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
     ["Uint8Array(0)", () => new Uint8Array(0), ""],
     ["Blob([])", () => new Blob([]), ""],
   ];
-  const owners: [string, (body: BodyInit, headers?: HeadersInit) => Request | Response][] = [
+  const owners: [string, (body: Bun.BodyInit, headers?: Bun.HeadersInit) => Request | Response][] = [
     // `duplex` is what undici wants for a stream body; Bun accepts and ignores it.
     [
       "Request",
       (body, headers) => new Request("http://a/", { method: "POST", body, headers, duplex: "half" } as RequestInit),
     ],
-    ["Response", (body, headers) => new Response(body, { headers })],
+    ["Response", (body, headers) => new Response(body, { headers } as ResponseInit)],
   ];
   const errorName = (fn: () => unknown) => {
     try {
@@ -1575,6 +1572,13 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
     }
   };
   const settled = (p: Promise<unknown>) => p.then(String, e => (e as Error).constructor.name);
+  const streamState = (stream: ReadableStream) => ({
+    readable: isReadable(stream),
+    errored: isErrored(stream),
+    disturbed: isDisturbed(stream),
+    locked: stream.locked,
+  });
+  const consumedState = { readable: false, errored: false, disturbed: true, locked: true };
 
   for (const [ownerName, make] of owners) {
     describe(ownerName, () => {
@@ -1670,6 +1674,110 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
             getReader: errorName(() => stream.getReader()),
           }).toEqual({ locked: true, bodyUsed: true, getReader: "TypeError" });
         });
+      });
+
+      // That reader ran the stream to its end, so the stream is closed. node:stream's
+      // helpers read the stream's own state, and finished() waits for it to close.
+      describe("a consumed body's stream is closed", () => {
+        for (const [name, init] of sources) {
+          const methods = ["text", "json", "arrayBuffer", "bytes", "blob"] as const;
+          for (const method of name === "URLSearchParams" ? ([...methods, "formData"] as const) : methods) {
+            test(`${name} .body then ${method}()`, async () => {
+              const owner = make(init());
+              const stream = owner.body!;
+              await owner[method]().catch(() => {});
+              expect(streamState(stream)).toEqual(consumedState);
+              await finished(stream);
+            });
+          }
+        }
+        for (const method of ["text", "json", "arrayBuffer", "bytes", "blob"] as const) {
+          test(`${method}() then .body`, async () => {
+            const owner = make("[1]");
+            await owner[method]();
+            const stream = owner.body!;
+            expect(streamState(stream)).toEqual(consumedState);
+            await finished(stream);
+          });
+        }
+        test("clone() takes an unread native stream's content", async () => {
+          const owner = make("payload");
+          const stream = owner.body!;
+          const clone = owner.clone();
+          expect(owner.body).not.toBe(stream);
+          expect(streamState(stream)).toEqual(consumedState);
+          await finished(stream);
+          expect([await owner.text(), await clone.text()]).toEqual(["payload", "payload"]);
+        });
+      });
+
+      // Bun.serve(), fetch() and Bun.write() read a body in native code. They consume it like a
+      // mixin method does: the stream ends up used, closed and locked, whatever backs the body.
+      describe("a native consumer leaves a body's stream consumed and locked", () => {
+        const consumers: [string, (owner: Request | Response) => Promise<string>][] = [
+          ownerName === "Response"
+            ? [
+                "Bun.serve() sends it",
+                async owner => {
+                  await using server = Bun.serve({ port: 0, fetch: () => owner as Response });
+                  return await (await fetch(server.url)).text();
+                },
+              ]
+            : [
+                "fetch(url, request) uploads it",
+                async owner => {
+                  await using echo = Bun.serve({ port: 0, fetch: async req => new Response(await req.text()) });
+                  return await (await fetch(echo.url, owner as RequestInit)).text();
+                },
+              ],
+          [
+            "Bun.write() writes it",
+            async owner => {
+              using dir = tempDir("body-native-consumer", {});
+              await Bun.write(join(String(dir), "out"), owner);
+              return await file(join(String(dir), "out")).text();
+            },
+          ],
+        ];
+        // An async iterable body is a type: "direct" stream underneath, which the consumer's sink pumps itself.
+        const iterables: typeof sources = [
+          [
+            "async generator",
+            () =>
+              (async function* () {
+                yield new TextEncoder().encode("payload");
+              })() as unknown as Bun.BodyInit,
+            "payload",
+          ],
+          ["node:stream Readable", () => Readable.from([Buffer.from("payload")]) as unknown as Bun.BodyInit, "payload"],
+        ];
+        for (const [name, init, content] of [...sources, ...iterables]) {
+          for (const [consumer, consume] of consumers) {
+            test(`${name} .body then ${consumer}`, async () => {
+              const owner = make(init());
+              const stream = owner.body!;
+              expect(await consume(owner)).toBe(content);
+              expect({
+                same: owner.body === stream,
+                ...streamState(stream),
+                bodyUsed: owner.bodyUsed,
+                getReader: errorName(() => stream.getReader()),
+                rewrap: errorName(() => make(stream)),
+                again: await settled(owner.text()),
+                clone: errorName(() => owner.clone()),
+              }).toEqual({
+                same: true,
+                ...consumedState,
+                bodyUsed: true,
+                getReader: "TypeError",
+                rewrap: "TypeError",
+                again: "TypeError",
+                clone: "TypeError",
+              });
+              await finished(stream);
+            });
+          }
+        }
       });
 
       // A zero-length body is a body: reading it, through a mixin method or
@@ -1776,8 +1884,8 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
     await listening;
     try {
       const url = `http://127.0.0.1:${(server.address() as net.AddressInfo).port}/`;
-      const post = (body: BodyInit) => ({ method: "POST", body, duplex: "half" }) as RequestInit;
-      const touched = (body: BodyInit) => {
+      const post = (body: Bun.BodyInit) => ({ method: "POST", body, duplex: "half" }) as RequestInit;
+      const touched = (body: Bun.BodyInit) => {
         const request = new Request(url, post(body));
         request.body;
         return request;
@@ -1824,7 +1932,7 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
     for (const path of ["/string", "/blob", "/empty"]) {
       const { promise, resolve, reject } = Promise.withResolvers<string>();
       let raw = "";
-      const socket = net.connect(server.port, "127.0.0.1", () =>
+      const socket = net.connect(server.port!, "127.0.0.1", () =>
         socket.write(`GET ${path} HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n`),
       );
       socket.setEncoding("latin1");
@@ -1837,5 +1945,95 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
       expect(response.toLowerCase()).not.toContain("transfer-encoding");
       expect(response.endsWith(`\r\n\r\n${expected}`)).toBe(true);
     }
+  });
+
+  // Lifting the payload back out of an unread native stream is not a read through
+  // a reader, so the stream has nothing left to close it: whoever lifts it does.
+  describe("lifting the payload out of an unread native stream closes it", () => {
+    const expectClosed = async (stream: ReadableStream) => {
+      expect(streamState(stream)).toEqual(consumedState);
+      await finished(stream);
+    };
+
+    test("Blob.stream() behind a new Response", async () => {
+      const stream = new Blob(["payload"]).stream();
+      // Registered first, so the lift has a pending promise to settle.
+      const closed = finished(stream);
+      expect(await new Response(stream).bytes()).toEqual(new TextEncoder().encode("payload"));
+      expect(streamState(stream)).toEqual(consumedState);
+      await closed;
+    });
+
+    test("a Bun.file() stream", async () => {
+      using dir = tempDir("body-stream-closed", { "payload.txt": "payload" });
+      const path = join(String(dir), "payload.txt");
+
+      const stream = file(path).stream();
+      expect((await new Response(stream).arrayBuffer()).byteLength).toBe(7);
+      await expectClosed(stream);
+
+      const response = new Response(file(path));
+      const body = response.body!;
+      expect((await response.blob()).size).toBe(7);
+      await expectClosed(body);
+    });
+
+    test("Bun.serve sending a Response whose .body was accessed", async () => {
+      let body!: ReadableStream;
+      await using server = Bun.serve({
+        port: 0,
+        fetch() {
+          const response = new Response("payload");
+          body = response.body!;
+          return response;
+        },
+      });
+      expect(await (await fetch(server.url)).text()).toBe("payload");
+      await expectClosed(body);
+    });
+
+    test("fetch() uploading it and Bun.write() writing it", async () => {
+      using dir = tempDir("body-stream-closed", {});
+      await using server = Bun.serve({ port: 0, fetch: async req => new Response(await req.text()) });
+
+      const uploaded = new Blob(["payload"]).stream();
+      expect(await (await fetch(server.url, { method: "POST", body: uploaded })).text()).toBe("payload");
+      await expectClosed(uploaded);
+
+      const response = new Response("payload");
+      const written = response.body!;
+      expect(await Bun.write(join(String(dir), "out.txt"), response)).toBe(7);
+      await expectClosed(written);
+    });
+  });
+
+  // While a consumer still reads a body that never had a stream, .body is a locked
+  // stand-in that nothing updates. It must not report the end of a read that can still fail.
+  test(".body of a body that is still being read is not closed", async () => {
+    const { promise: released, resolve: release } = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            async pull(controller) {
+              controller.enqueue(new TextEncoder().encode("pay"));
+              await released;
+              controller.enqueue(new TextEncoder().encode("load"));
+              controller.close();
+            },
+          }),
+        ),
+    });
+    const response = await fetch(server.url);
+    const text = response.text();
+    const body = response.body!;
+    expect({ readable: isReadable(body), locked: body.locked, bodyUsed: response.bodyUsed }).toEqual({
+      readable: true,
+      locked: true,
+      bodyUsed: true,
+    });
+    release();
+    expect(await text).toBe("payload");
   });
 });

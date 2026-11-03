@@ -93,6 +93,8 @@ jobs:
         run: bun test
 ```
 
+To type check the tests in the same step, run `bun test --check`. See [Type check your tests](#type-check-your-tests).
+
 ### JUnit XML reports (GitLab, etc.)
 
 To write a JUnit XML report, pass `--reporter=junit` together with `--reporter-outfile`.
@@ -200,6 +202,8 @@ test.failing.each([1, 2, 3])("chained qualifiers %d", input => {
 });
 ```
 
+`test.sequential` is an alias for `test.serial`, for Vitest compatibility.
+
 ## Retry failed tests
 
 Use the `--retry` flag to automatically retry failed tests up to a given number of times. If a test fails and then passes on a subsequent attempt, Bun reports it as passing.
@@ -270,6 +274,20 @@ bun test --seed 123456
 
 The `--seed` flag implies `--randomize`, so you don't need to specify both. The same seed always produces the same test execution order.
 
+### Shuffle one block with `describe.shuffle`
+
+`describe.shuffle()` runs the tests in one block, including nested blocks, in random order. You don't need `--randomize`. The summary prints the seed, and running with that `--seed` reproduces the block's order.
+
+```ts title="cart.test.ts" icon="/icons/typescript.svg"
+import { describe, test } from "bun:test";
+
+describe.shuffle("cart", () => {
+  test("adds an item", () => {});
+  test("removes an item", () => {});
+  test("empties", () => {});
+});
+```
+
 ## Bail out with `--bail`
 
 Use the `--bail` flag to abort the test run after a given number of test failures. By default, Bun runs all tests and reports all failures, but in CI it can be preferable to stop early and reduce CPU usage.
@@ -290,6 +308,16 @@ Like `bun run`, `bun test` accepts the `--watch` flag to watch for changes and r
 bun test --watch
 ```
 
+## Type check your tests
+
+`bun test` runs TypeScript tests without checking their types. Use the `--check` flag to type check the test files, and everything they import, before any test runs.
+
+```bash terminal icon="terminal"
+bun test --check
+```
+
+If there is a type error, Bun prints it, exits with code `1`, and runs no tests. See [`bun check`](/runtime/check#check-before-you-run-build-or-test).
+
 ## Lifecycle hooks
 
 Bun supports the following lifecycle hooks:
@@ -300,6 +328,8 @@ Bun supports the following lifecycle hooks:
 | `beforeEach` | Runs before each test.      |
 | `afterEach`  | Runs after each test.       |
 | `afterAll`   | Runs once after all tests.  |
+| `aroundEach` | Wraps each test.            |
+| `aroundAll`  | Wraps all tests.            |
 
 Define hooks inside test files, or in a separate file preloaded with the `--preload` flag.
 

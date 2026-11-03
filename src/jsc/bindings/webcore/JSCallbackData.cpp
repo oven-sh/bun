@@ -50,7 +50,8 @@ JSValue JSCallbackData::invokeCallback(VM& vm, JSObject* callback, JSValue thisV
     JSGlobalObject* lexicalGlobalObject = callback->globalObject();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    ScriptExecutionContext* context = uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext();
+    // The callback's realm may be a node:vm context, which has no ScriptExecutionContext of its own.
+    ScriptExecutionContext* context = defaultGlobalObject(lexicalGlobalObject)->scriptExecutionContext();
     // We will fail to get the context if the frame has been detached. Once the VM's stop was
     // requested this is a silent no-op, as at the other native→JS boundaries
     // (JSEventListener::handleEvent, Bun__JSValue__call).

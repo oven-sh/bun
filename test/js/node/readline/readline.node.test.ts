@@ -2,7 +2,7 @@
 import { createTest } from "node-harness";
 import { EventEmitter } from "node:events";
 import readline from "node:readline";
-import { PassThrough, Writable } from "node:stream";
+import { PassThrough, Readable, Writable } from "node:stream";
 const { beforeEach, describe, it, createDoneDotAll, createCallCheckCtx, assert } = createTest(import.meta.path);
 
 var {
@@ -1926,6 +1926,20 @@ describe("readline.createInterface()", () => {
     const result = [];
     for await (const line of rl) result.push(line);
     expect(result).toEqual(["Line1", "Line2", "Line3", "Line4"]);
+  });
+
+  it("should yield every line via for await...of when the input ends while the iterator is paused", async () => {
+    // The line iterator pauses the interface once more than 1024 lines are queued.
+    // One chunk delivers all of these lines, then the input ends and closes the interface.
+    const lines = Array.from({ length: 1100 }, (_, i) => "line " + i);
+    const rl = readline.createInterface({
+      input: Readable.from([lines.join("\n") + "\n"]),
+      crlfDelay: Infinity,
+    });
+
+    const result = [];
+    for await (const line of rl) result.push(line);
+    expect(result).toEqual(lines);
   });
 
   it("should respond to home and end sequences for common pttys ", () => {

@@ -18,6 +18,10 @@ fn try_optimize_typeof_undefined<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bo
     p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,
     replacement_op: js_ast::op::Code,
 ) -> Option<Expr> {
+    if p.options.features.is_library {
+        return None;
+    }
+
     // Check if this is a typeof comparison with "undefined"
     let (typeof_expr, string_expr, flip_comparison) = 'exprs: {
         // Try left side as typeof, right side as string

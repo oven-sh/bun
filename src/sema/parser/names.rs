@@ -324,15 +324,27 @@ impl Names {
         let bits = (len / 8)
             .next_power_of_two()
             .trailing_zeros()
-            .clamp(8, SHORT_BITS);
+            .clamp(6, SHORT_BITS);
         self.short_mask = (1 << bits) - 1;
         self.long_mask = self.short_mask >> (SHORT_BITS - LONG_BITS);
         self.short[..=self.short_mask].fill(NO_SHORT);
         self.long[..=self.long_mask].fill(NO_LONG);
         self.of = bun_sema::atom::next_interner_number();
         self.is_own = true;
-        self.spans.clear();
-        self.spans.extend_from_slice(&KNOWN_SPANS.0);
+        // Of the known texts, only those that the last file had are somewhere else than at the start.
+        self.spans.truncate(KNOWN_SPANS.0.len());
+        for (index, &word) in self.known_in_file.iter().enumerate() {
+            let mut rest = word;
+            while rest != 0 {
+                let known = index * 64 + rest.trailing_zeros() as usize;
+                if let (Some(span), Some(at_start)) =
+                    (self.spans.get_mut(known), KNOWN_SPANS.0.get(known))
+                {
+                    *span = *at_start;
+                }
+                rest &= rest - 1;
+            }
+        }
         self.cooked.truncate(KNOWN_SPANS.1);
         self.other.clear();
         self.mentioned = [0; MENTIONED_WORDS];

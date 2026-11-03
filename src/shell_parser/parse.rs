@@ -2757,8 +2757,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 RedirectDirection::Out => '>',
                                 RedirectDirection::In => '<',
                             };
-                            // fd 0 is only read and fd 1 and 2 are only written. A
-                            // duplication (`0>&0`) has no direction.
+                            // A duplication (`0>&0`) has no direction.
                             let src_fd = match (fd, dir, is_dup) {
                                 (0, RedirectDirection::In, _) | (0, _, true) => StdFd::Stdin,
                                 (1, RedirectDirection::Out, _) | (1, _, true) => StdFd::Stdout,

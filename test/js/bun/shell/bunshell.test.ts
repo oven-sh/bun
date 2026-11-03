@@ -2055,6 +2055,13 @@ describe("deno_task", () => {
         .runAsTest("words after 1>&2 are arguments");
       TestBuilder.command`echo a 2>&1 b | cat`.stdout("a b\n").runAsTest("words after 2>&1 are arguments");
 
+      test("a JS buffer directly after 2>&1 is its target", async () => {
+        const buffer = new Uint8Array(16);
+        await $`${BUN} -e ${"console.log('out'); console.error('err')"} 2>&1${buffer}`.env(bunEnv).quiet();
+        // Both streams share the buffer. How they interleave is the runtime's business, not the lexer's.
+        expect(new TextDecoder().decode(buffer)).toContain("err\n");
+      });
+
       TestBuilder.command`echo $(echo hi 2>&1)`
         .stdout("hi\n")
         .runAsTest("2>&1 before the end of a command substitution");

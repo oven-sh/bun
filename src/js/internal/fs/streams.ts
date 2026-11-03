@@ -784,7 +784,7 @@ function afterChunksAhead(stream: $Node.WriteStream, unsent: Promise<unknown>, c
   return cb;
 }
 
-function callInOrder(callbacks: ErrorCallback[], err: Error | null, from: number) {
+function callInOrder(callbacks: ErrorCallback[], err: Error | null | undefined, from: number) {
   try {
     while (from < callbacks.length) callbacks[from++](err);
   } finally {

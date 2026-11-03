@@ -5,6 +5,7 @@ use std::io::Write as _;
 
 use bstr::BStr;
 use bun_alloc::Arena as Bump;
+use bun_archive::tar;
 use bun_collections::VecExt as _;
 use bun_core::MutableString;
 use bun_core::fmt as bun_fmt;
@@ -19,15 +20,12 @@ use bun_install::npm::{self, PackageManifest};
 use bun_install::package_manager::options::Do;
 use bun_install::package_manager::workspace_manifests::WorkspaceManifests;
 use bun_install::{PackageManager, resolution};
-use bun_libarchive::lib::{ArchiveIterator, IteratorResult as ArchiveIterResult};
 use bun_sys::{Fd, FdExt as _, dir_iterator as DirIterator};
 use bun_url::URL;
 
 use crate::cli::pm_diff_normalize as normalize;
 use crate::cli::pm_diff_semantic::Operation;
 use crate::cli::pm_diff_semantic::{self as semantic, Op};
-
-use bun_core::fmt::buf_print_infallible as buf_print;
 
 #[derive(Clone, Copy)]
 pub(crate) struct DiffFlags {
@@ -106,7 +104,8 @@ pub(crate) fn exec(
         .collect();
 
     let (mut left_spec, mut right_spec) = resolve_sides(pm, &args, original_cwd);
-    // Two folders compare as written: the patch between them has to apply to the files on disk.
+    // Two folders are compared as written, because the patch between them has to apply to the files
+    // on disk.
     let as_published = !matches!((&left_spec, &right_spec), (Spec::Dir(_), Spec::Dir(_)));
     // `bun pm diff ./pkg` / `./pkg 2.0.0`: a registry side without a name takes it from the local side's package.json.
     let mut left_early: Option<Tree> = None;
@@ -532,36 +531,27 @@ fn materialize(
 }
 
 fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> {
-    let mut iter = match ArchiveIterator::init(bytes) {
-        ArchiveIterResult::Result(it) => it,
-        ArchiveIterResult::Err { message, .. } => {
-            Status::clear();
-            Output::err_generic("{}: {}", (BStr::new(&tree.label), BStr::new(message)));
-            Global::exit(1);
+    let fail = |err: tar::Error, message: &str| -> crate::Error {
+        if let tar::Error::Alloc(err) = err {
+            return err.into();
         }
+        Status::clear();
+        Output::err_generic("{}: {}", (BStr::new(&tree.label), message));
+        Global::exit(1);
     };
-    loop {
-        let next = match iter.next() {
-            ArchiveIterResult::Result(Some(n)) => n,
-            ArchiveIterResult::Result(None) => break,
-            ArchiveIterResult::Err { message, .. } => {
-                Status::clear();
-                Output::err_generic("{}: {}", (BStr::new(&tree.label), BStr::new(message)));
-                Global::exit(1);
-            }
-        };
-        if next.kind != bun_sys::FileKind::File {
+    let mut reader = bun_archive::open_memory(bytes, tar::Dialect::General)
+        .map_err(|err| fail(err, "failed to read tarball"))?;
+    while let Some(entry) = reader
+        .next_entry()
+        .map_err(|err| fail(err, "failed to read archive header"))?
+    {
+        if entry.kind() != bun_sys::FileKind::File {
             continue;
         }
-        let perm = next.entry().perm() & 0o777;
-        // libarchive returns NULL from the narrow accessor for non-ASCII names on Windows; go through UTF-16 there.
-        #[cfg(windows)]
-        let wide_path =
-            strings::to_utf8_list_with_type(Vec::new(), next.entry().pathname_w().as_slice())?;
-        #[cfg(windows)]
-        let path = wide_path.as_slice();
-        #[cfg(not(windows))]
-        let path = next.entry().pathname().as_bytes();
+        let perm = (entry.perm() & 0o777) as bun_sys::Mode;
+        let size = usize::try_from(entry.size().max(0)).expect("int cast");
+        let path = bun_archive::display_path(entry)?;
+        let path: &[u8] = &path;
         // npm tarballs root everything under one folder (usually `package/`).
         let rel = match strings::index_of_char(path, b'/') {
             Some(i) => &path[i as usize + 1..],
@@ -570,21 +560,26 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
         if rel.is_empty() {
             continue;
         }
-        let data = match iter.read_entry_data(&next)? {
-            ArchiveIterResult::Result(d) => d,
-            ArchiveIterResult::Err { message, .. } => {
-                Status::clear();
-                Output::err_generic(
-                    "{}: {}: {}",
-                    (BStr::new(&tree.label), BStr::new(rel), BStr::new(message)),
-                );
-                Global::exit(1);
+        let rel = rel.to_vec();
+        let mut data = Vec::new();
+        if let Err(err) = reader.read_data(size, &mut data) {
+            if let tar::Error::Alloc(err) = err {
+                return Err(err.into());
             }
-        };
-        tree.modes.insert(rel.to_vec(), perm);
-        tree.files.insert(rel.to_vec(), data.into_vec());
+            Status::clear();
+            Output::err_generic(
+                "{}: {}: {}",
+                (
+                    BStr::new(&tree.label),
+                    BStr::new(&rel),
+                    "failed to read archive data",
+                ),
+            );
+            Global::exit(1);
+        }
+        tree.modes.insert(rel.clone(), perm);
+        tree.files.insert(rel, data);
     }
-    let _ = iter.close();
     Ok(())
 }
 
@@ -621,7 +616,7 @@ fn read_dir_tree(
     // bins — not the whole checkout with its vendor/ and build/.
     'package: {
         if let Ok(pkg) = bun_sys::File::read_from(root_fd, b"package.json") {
-            // Before the parse below: this one parses other package.json files.
+            // This has to come before the parse below, because it parses other package.json files.
             let manifests = as_published_by.and_then(|pm| manifests_for(pm, root, &pkg));
             let bump = Bump::new();
             let src: &[u8] = bump.alloc_slice_copy(&pkg);
@@ -753,7 +748,8 @@ fn read_dir_tree(
     Ok(tree)
 }
 
-/// What `bun pm pack` in `dir` resolves the `workspace:` and `catalog:` of `manifest` through.
+/// Returns the manifests that `bun pm pack` in `dir` would use to resolve the `workspace:` and
+/// `catalog:` specifiers in `manifest`.
 fn manifests_for(
     pm: &mut PackageManager,
     dir: &[u8],
@@ -791,7 +787,7 @@ fn with_published_versions(
         ) else {
             return;
         };
-        // A version that does not resolve stays as written: pack refuses to publish it.
+        // A version that doesn't resolve is left as written. pack would refuse to publish it.
         let Some(Ok(published)) =
             Substitution::for_spec(spec).map(|found| found.published(manifests, dir, name))
         else {
@@ -831,24 +827,15 @@ fn fetch_registry_tree(
     let bump = Bump::new();
     let scope = pm.scope_for_package_name(name);
 
-    let mut url_buf = bun_paths::path_buffer_pool::get();
-    let encoded_name = buf_print(
-        url_buf.0.as_mut_slice(),
-        format_args!("{}", bun_fmt::dependency_url(name)),
-    );
-    let mut path_buf = bun_paths::path_buffer_pool::get();
-    let manifest_url = buf_print(
-        path_buf.0.as_mut_slice(),
-        format_args!(
-            "{}/{}",
-            BStr::new(strings::without_trailing_slash(scope.url.href())),
-            BStr::new(encoded_name)
-        ),
+    let manifest_url = format!(
+        "{}/{}",
+        BStr::new(strings::without_trailing_slash(scope.url.href())),
+        bun_fmt::dependency_url(name),
     );
     let body = registry_get(
         pm,
         scope,
-        URL::parse(manifest_url),
+        URL::parse(manifest_url.as_bytes()),
         true,
         // The abbreviated packument has versions + dist, all this needs; full ones run to tens of MB.
         Some(b"application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*"),

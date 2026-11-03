@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Disallows anonymous functions and classes as default exports.
 pub struct NoAnonymousDefaultExport;
 
-const NO_ANONYMOUS_DEFAULT_EXPORT: Message = Message::new("", "This {{kind}} default export is missing a name");
+const NO_ANONYMOUS_DEFAULT_EXPORT: &Message = &Message::new("", "This {{kind}} default export is missing a name");
 
 impl Rule for NoAnonymousDefaultExport {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-anonymous-default-export", Kind::Suggestion);

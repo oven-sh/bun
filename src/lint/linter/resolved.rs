@@ -1,7 +1,8 @@
-//! What is configured for one file.
+//! The resolved config of one file.
 
 use super::instances::Instance;
 use super::registry::{Deprecated, Registry, formatting_rule, parse_rule_id};
+use crate::ast::File;
 use crate::context::Severity;
 use crate::js_plugin::{self, Route};
 use crate::language::{LanguageOptions, Parser};
@@ -16,14 +17,14 @@ use std::sync::{Arc, OnceLock};
 /// ESLint's `linterOptions`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct LinterOptions {
-    /// Comments do not configure, and each that would is reported.
+    /// Config comments are ignored, and each one is reported.
     pub no_inline_config: bool,
     pub report_unused_disable_directives: Severity,
     pub report_unused_inline_configs: Severity,
 }
 
 impl Default for LinterOptions {
-    /// As in ESLint's default configuration.
+    /// Matches ESLint's default config.
     fn default() -> Self {
         LinterOptions {
             no_inline_config: false,
@@ -54,17 +55,17 @@ pub fn severity_of(value: &Json) -> Option<Severity> {
 pub struct ConfiguredRule {
     pub entry: &'static RuleEntry,
     pub severity: Severity,
-    /// What follows the severity.
+    /// The array elements after the severity.
     pub options: Arc<[Json]>,
-    /// `RuleSetting::defaults`: what the options of a comment in a file are merged over. They are part of `options` already.
+    /// `RuleSetting::defaults`. A config comment's options are merged over these. `options` already includes them.
     pub(super) defaults: Vec<Json>,
-    /// The rule made from `options`, as soon as a linter has linted with it. It is in the table of that linter: a configuration is for
-    /// one.
+    /// The rule built from `options`, set the first time a linter runs it. It points into that linter's table, so a
+    /// config belongs to one linter.
     pub(super) instance: OnceLock<Instance>,
-    /// What ESLint's rule throws for these options, which its schema accepts: [`Rule::validate`](crate::rule::Rule::validate).
-    /// ESLint stops at the first file on which the rule runs: [`LintResult::thrown`](super::LintResult::thrown). A linter asks the
-    /// first time that it lints with it.
-    pub(super) refusal: OnceLock<Option<Arc<[u8]>>>,
+    /// The error ESLint's rule throws for these options even though its schema accepts them, from
+    /// [`Rule::validate`](crate::rule::Rule::validate). ESLint stops at the first file the rule runs on (see
+    /// [`LintResult::thrown`](super::LintResult::thrown)). Computed the first time a linter runs the rule.
+    pub(super) options_error: OnceLock<Option<Arc<[u8]>>>,
     /// See [`ConfiguredRule::reported_as`].
     reported_as: &'static Meta,
     /// See [`ConfiguredRule::name`].
@@ -81,15 +82,15 @@ impl ConfiguredRule {
             options,
             defaults: Vec::new(),
             instance: OnceLock::new(),
-            refusal: OnceLock::new(),
+            options_error: OnceLock::new(),
             reported_as: entry.meta,
             name: None,
             or_else: None,
         }
     }
 
-    /// The rule that its messages are of. oxlint has most of the rules that typescript-eslint extends under the names of ESLint,
-    /// and the extension runs in their place.
+    /// The rule that reports are attributed to. oxlint has most of the rules typescript-eslint extends under their
+    /// ESLint names, and we run the extension for those.
     pub fn reported_as(&self) -> &'static Meta {
         self.reported_as
     }
@@ -104,7 +105,7 @@ impl ConfiguredRule {
         self
     }
 
-    /// What the configuration calls it, if it is one more instance of the rule under a name:
+    /// The name the config gave it, if it's an extra named instance of the rule. See
     /// [`RuleId::Named`](super::RuleId::Named).
     pub fn name(&self) -> Option<&Arc<[u8]>> {
         self.name.as_ref()
@@ -115,8 +116,8 @@ impl ConfiguredRule {
         self
     }
 
-    /// The rule of the package in whose place this one answers, for the files that it
-    /// [hands back](crate::ast::File::hand_back).
+    /// The package's rule that this one replaces. It runs on the files this one [hands
+    /// back](crate::ast::File::hand_back).
     pub fn or_else(&self) -> Option<&ConfiguredJsRule> {
         self.or_else.as_deref()
     }
@@ -133,20 +134,20 @@ pub struct ConfiguredJsRule {
     /// The rule, with its default options merged into `options`.
     pub configured: Arc<js_plugin::Configured>,
     pub severity: Severity,
-    /// What follows the severity.
+    /// The array elements after the severity.
     pub options: Arc<[Json]>,
-    /// How many of [`ResolvedConfig::rules`] the configuration has before it.
+    /// How many of [`ResolvedConfig::rules`] come before it in the config.
     pub position: usize,
 }
 
-/// An entry of ESLint's `rules` for a [rule about layout](formatting_rule), which does not run.
+/// An entry of ESLint's `rules` for a [formatting rule](formatting_rule), which never runs.
 #[derive(Clone)]
 pub struct FormattingRule {
     pub rule: &'static Deprecated,
     pub severity: Severity,
-    /// What follows the severity. Nothing has looked at it.
+    /// The array elements after the severity. Not validated.
     pub options: Vec<Json>,
-    /// How many of [`ResolvedConfig::rules`], and of [`ResolvedConfig::js_rules`], the configuration has before it.
+    /// How many of [`ResolvedConfig::rules`] and of [`ResolvedConfig::js_rules`] come before it in the config.
     pub position: (usize, usize),
 }
 
@@ -158,8 +159,8 @@ pub enum Entry<'c> {
     Formatting(&'c FormattingRule),
 }
 
-/// [`formatting_rule`], unless `id` is the name of another rule: of a plugin that the rules here do not answer for, as all in
-/// `foreign`, or of `--rulesdir`.
+/// Like [`formatting_rule`], but returns `None` if `id` refers to some other rule: one from a plugin the built-in rules
+/// don't replace (which includes every plugin in `foreign`), or one from `--rulesdir`.
 pub(crate) fn find_formatting_rule(
     registry: &Registry,
     id: &[u8],
@@ -168,10 +169,10 @@ pub(crate) fn find_formatting_rule(
 ) -> Option<&'static Deprecated> {
     let rule = formatting_rule(id)?;
     let prefix = parse_rule_id(id).0;
-    let is_another = !registry.answers_for(prefix)
+    let is_other_rule = !registry.replaces_plugin(prefix)
         || foreign.iter().any(|it| **it == *prefix)
         || prefix.is_empty() && find_js_rule(js_plugins, id).is_some();
-    (!is_another).then_some(rule)
+    (!is_other_rule).then_some(rule)
 }
 
 pub(crate) fn find_js_rule<'p>(
@@ -181,44 +182,43 @@ pub(crate) fn find_js_rule<'p>(
     let (prefix, name) = parse_rule_id(id);
     let plugin = plugins.iter().find(|it| *it.name == *prefix)?;
     match plugin.rule(name) {
-        // Beside the rules of `--rulesdir`, which have no prefix, there are those of ESLint.
+        // `--rulesdir` rules have no prefix, and neither do ESLint's core rules.
         None if prefix.is_empty() => None,
         found => Some(found),
     }
 }
 
-/// What is the same for all files that have a configuration.
+/// State shared by every file that uses a config.
 #[derive(Clone)]
 pub(super) struct Prepared {
-    /// The rules that are on.
+    /// The enabled rules.
     pub(super) on: RuleBits,
-    /// They, in the order of the configuration. Those of a configuration of oxlint: by the numbers that oxlint gives
-    /// its rules.
+    /// The enabled rules in config order. With an oxlint config, they're sorted by oxlint's rule numbers instead.
     pub(super) order: Box<[Slot]>,
-    /// What each of them listens to, by its place in that order.
+    /// Each rule's listeners, indexed like `order`.
     pub(super) listeners: Listeners,
-    /// They, made from their options, in the same order: a list that the linter has made, which knows the type of its rules.
+    /// The rule instances, indexed like `order`. The linter builds this list and knows its concrete type.
     pub(super) rules: Arc<dyn std::any::Any + Send + Sync>,
-    /// What the first of them that refuses its options throws.
-    pub(super) refusal: Option<Arc<[u8]>>,
-    /// Those that need types.
+    /// The error thrown by the first rule that rejects its options.
+    pub(super) options_error: Option<Arc<[u8]>>,
+    /// The enabled rules that need types.
     pub(super) typed: Box<[&'static Meta]>,
-    /// One of them needs the modules, so that a file may be linted again.
+    /// True if an enabled rule needs the module graph, which means a file may be linted again.
     pub(super) needs_modules: bool,
 }
 
 #[derive(Copy, Clone)]
 pub(super) struct Slot {
-    /// Where it is in [`ResolvedConfig::rules`].
+    /// Index in [`ResolvedConfig::rules`].
     pub(super) at: u32,
-    /// In the set of the rules of the linter.
+    /// The rule's number in the linter's rule set.
     pub(super) number: u16,
-    /// With a configuration of oxlint: what it does with the rule. Otherwise only when the rule reports.
+    /// With an oxlint config, how oxlint runs the rule. Otherwise only `when` is meaningful.
     pub(super) in_oxlint: InOxlint,
     pub(super) severity: Severity,
 }
 
-/// Whether the rule finds the files that imports name as `settings["import/resolver"]` says.
+/// True if the rule resolves imports according to `settings["import/resolver"]`.
 pub(crate) fn needs_resolver(meta: &Meta) -> bool {
     meta.plugin == Plugin::Import && meta.needs_modules
 }
@@ -233,110 +233,113 @@ pub enum Skipped {
     Any,
 }
 
-/// The configuration of a file: what ESLint's `configs.getConfig(path)` returns.
+/// A file's config. Equivalent to what ESLint's `configs.getConfig(path)` returns.
 #[derive(Clone, Default)]
 pub struct ResolvedConfig {
     /// `languageOptions` and `settings`.
     pub language: LanguageOptions,
     pub linter: LinterOptions,
-    /// In the order of the configuration, which is the order the rules run in.
+    /// In config order, which is the order the rules run in.
     pub(super) rules: Vec<ConfiguredRule>,
-    /// What a linter has made of them, the first time that it has linted with the configuration, which is for one linter.
+    /// Built from `rules` the first time a linter uses this config. A config belongs to one linter.
     pub(super) prepared: OnceLock<Prepared>,
-    /// One of them has a [name](ConfiguredRule::name).
+    /// True if any of `rules` has a [name](ConfiguredRule::name).
     pub has_named_rules: bool,
     /// [`ResolvedConfig::may_hand_back`]
     pub(super) may_hand_back: bool,
-    /// The file that the plugin was loaded from whose rule one of them [stands in for](ConfiguredRule::or_else), if it is on and
-    /// the plugin is from a file of its own.
+    /// The file the plugin was loaded from, for the first enabled rule that [replaces a package's
+    /// rule](ConfiguredRule::or_else). `None` if the config didn't load the plugin from a module file.
     pub(super) package_module: Option<Arc<[u8]>>,
-    /// `settings["import/resolver"]` names a resolver that the rules here do not do the same as.
+    /// True if `settings["import/resolver"]` lists a resolver the built-in rules can't emulate.
     pub has_unknown_resolver: bool,
-    /// Those of JavaScript plugins, also the ones that are off. They run if [`LintOptions::js_plugins`](super::LintOptions) is
-    /// there, and are skipped otherwise.
+    /// JavaScript plugin rules, including disabled ones. They run only if
+    /// [`LintOptions::js_plugins`](super::LintOptions) is set.
     pub js_rules: Vec<ConfiguredJsRule>,
-    /// Those about layout, which are left to `bun fmt`, also the ones that are off.
+    /// Formatting rules, including disabled ones. `bun fmt` does their job.
     pub formatting_rules: Vec<FormattingRule>,
-    /// The plugins [none of whose rules is here](Plugin::has_no_rules), of which `categories` of oxlint turn rules on.
+    /// Plugins with [no built-in rules](Plugin::has_no_rules) whose rules oxlint's `categories` turn on.
     pub plugins_without_rules: Vec<Plugin>,
-    /// What the rules of JavaScript plugins see of `language`. It is there if `js_plugins` is not empty.
+    /// The parts of `language` that JavaScript plugin rules see. Set if `js_plugins` isn't empty.
     pub js_settings: Option<Arc<js_plugin::FileSettings>>,
-    /// The JavaScript plugins whose rules the configuration and the comments of the file can name. The name of one hides
-    /// the plugin of the same name that is implemented here.
+    /// Like `js_settings`, for [`LanguageOptions::without_module_syntax`].
+    pub js_settings_without_module_syntax: Option<Arc<js_plugin::FileSettings>>,
+    /// The JavaScript plugins whose rules the config and the file's comments can refer to. Each one shadows the
+    /// built-in plugin with the same name.
     pub js_plugins: Vec<Arc<js_plugin::Plugin>>,
-    /// The plugins that are configured and that are not implemented here, by the prefix of their
-    /// rules. Their rules are skipped.
+    /// Configured plugins that aren't built in, by rule prefix. Their rules are skipped.
     pub foreign_plugins: Vec<Box<[u8]>>,
-    /// The plugins of an `eslint.config.js` as `--print-config` has them, but for ESLint's own: `prefix:name@version`.
+    /// An `eslint.config.js`'s plugins as `--print-config` prints them (`prefix:name@version`), without ESLint's own.
     pub printed_plugins: Vec<Box<[u8]>>,
-    /// A rule that does not exist is skipped, whatever its name.
+    /// True if any rule that doesn't exist is skipped, whatever its name.
     pub skips_unknown_rules: bool,
-    /// Whether rules that are configured for the file, and not off, are skipped. Nobody can say then that an `eslint-disable`
-    /// without names is unused.
+    /// Tells whether any enabled rule is skipped for this file. If so, we can't know that an `eslint-disable` without
+    /// rule names is unused.
     pub skipped: Skipped,
-    /// With the configuration files of ESLint 8: the rules that are on and that it has no definition of, in the order of the
-    /// configuration. Each is a message at the start of the file.
+    /// With ESLint 8 config files: the enabled rules that have no definition, in config order. Each one is reported at
+    /// the start of the file.
     pub missing_rules: Vec<Box<[u8]>>,
-    /// A rule of ESLint that typescript-eslint extends stands for the extension, as in oxlint.
+    /// True if an ESLint rule that typescript-eslint extends resolves to the extension, as in oxlint.
     pub prefers_typescript_rules: bool,
-    /// There's no ESLint or oxlint config, so every built-in rule is available [under any of its names](Registry::find_by_any_name).
+    /// True if there's no ESLint or oxlint config, so every built-in rule is available [under any of its
+    /// names](Registry::find_by_any_name).
     pub has_every_rule: bool,
-    /// `oxlint-disable` and the like mean what `eslint-disable` means. ESLint ignores them, and so does a configuration of
-    /// ESLint.
+    /// True if `oxlint-disable` and the like work as `eslint-disable` does. ESLint ignores them, so they're ignored
+    /// with an ESLint config.
     pub understands_oxlint_comments: bool,
-    /// The plugins, of those that are implemented here, that the configuration objects for the file have. For ESLint the rules
-    /// of any other do not exist there, and a comment cannot name them. `None`: all of them, as with `.oxlintrc.json`.
+    /// The built-in plugins registered by the config objects that apply to the file. For ESLint, no other plugin's
+    /// rules exist there, so a comment can't refer to them. `None` means all plugins, as with `.oxlintrc.json`.
     pub plugins: Option<Vec<Plugin>>,
-    /// `language`, if it is configured: `js/js`, `json/json`, ..
+    /// `language`, if it's configured: `js/js`, `json/json`, ..
     pub language_name: Option<Box<[u8]>>,
-    /// `languageOptions`, if the language isn't JavaScript. What they mean is up to that language.
-    pub options_of_other_language: Option<Json>,
+    /// `languageOptions`, if the language isn't JavaScript. That language defines their meaning.
+    pub other_language_options: Option<Json>,
     /// The language that `language_name` refers to, if it isn't JavaScript and Bun lints the file itself:
     /// [`Route::Language`].
     pub dialect: Option<Dialect>,
-    /// The language's line breaks, whoever lints the file. Defaults to ECMAScript's if Bun doesn't know the language.
+    /// The language's line breaks, for every [`Route`]. Defaults to ECMAScript's if Bun doesn't know the language.
     pub line_breaks: LineBreaks,
     /// The name of the `processor`, if one is configured.
     pub processor: Option<Box<[u8]>>,
-    /// Where it is, if the configuration is an `eslint.config.js`.
+    /// Where to load the processor from, if the config is an `eslint.config.js`.
     pub processor_location: Option<Arc<js_plugin::Processor>>,
     /// The name of `languageOptions.parser`, if one is configured.
     pub parser_name: Option<Box<[u8]>>,
-    /// One of the plugins is eslint-plugin-html, which changes ESLint's `Linter` when the configuration file loads it: that then
-    /// finds the scripts in a file.
+    /// True if one of the plugins is eslint-plugin-html. Loading it patches ESLint's `Linter` to extract the scripts
+    /// from an HTML file.
     pub changes_linter: bool,
-    /// All of this for ESLint's own `Linter`, if that is what lints such a file ([`Route::Eslint`]) and if JSON can say it.
+    /// This whole config for ESLint's own `Linter`, if that's what lints the file ([`Route::Eslint`]) and the config
+    /// can be serialized as JSON.
     pub for_eslint: Option<Arc<js_plugin::Configuration>>,
-    /// The configuration is invalid, and ESLint would refuse to run: its message.
+    /// ESLint's error message, if the config is invalid and ESLint would refuse to run.
     pub error: Option<Vec<u8>>,
 }
 
 impl ResolvedConfig {
     pub fn rule(&self, entry: &RuleEntry) -> Option<&ConfiguredRule> {
         let (plugin, name) = (entry.meta.plugin, entry.meta.name);
-        let is_it = |it: &&ConfiguredRule| {
+        let is_match = |it: &&ConfiguredRule| {
             it.name.is_none() && it.entry.meta.plugin == plugin && it.entry.meta.name == name
         };
-        self.rules.iter().find(is_it)
+        self.rules.iter().find(is_match)
     }
 
-    /// What the configuration says about the rules that are built in, also about those that it turns off, in its order.
+    /// The config's entries for built-in rules, including disabled ones, in config order.
     pub fn configured(&self) -> std::slice::Iter<'_, ConfiguredRule> {
         self.rules.iter()
     }
 
-    /// All that it says about rules, in its order.
+    /// All of the config's rule entries, in config order.
     pub fn entries(&self) -> impl Iterator<Item = Entry<'_>> {
         let mut native = self.rules.iter().enumerate().peekable();
         let mut js = self.js_rules.iter().enumerate().peekable();
-        let mut about_layout = self.formatting_rules.iter().peekable();
+        let mut formatting = self.formatting_rules.iter().peekable();
         std::iter::from_fn(move || {
             let seen = (
                 native.peek().map_or(self.rules.len(), |it| it.0),
                 js.peek().map_or(self.js_rules.len(), |it| it.0),
             );
             let is_next = |it: &&FormattingRule| it.position.0 <= seen.0 && it.position.1 <= seen.1;
-            if let Some(rule) = about_layout.next_if(is_next) {
+            if let Some(rule) = formatting.next_if(is_next) {
                 return Some(Entry::Formatting(rule));
             }
             if let Some((_, rule)) = js.next_if(|it| it.1.position <= seen.0) {
@@ -346,21 +349,30 @@ impl ResolvedConfig {
         })
     }
 
-    /// Whether a rule is on of which `is_it` says so.
-    pub fn has_enabled(&self, is_it: impl Fn(&Meta) -> bool) -> bool {
+    /// True if any enabled rule satisfies `is_match`.
+    pub fn has_enabled(&self, is_match: impl Fn(&Meta) -> bool) -> bool {
         let mut on = self.rules.iter().filter(|it| it.severity != Severity::Off);
-        on.any(|it| is_it(it.entry.meta))
+        on.any(|it| is_match(it.entry.meta))
     }
 
-    /// Whether a rule is on that has the rule of its package beside it, to which it can hand a file back.
+    /// True if an enabled rule has its [package's rule](ConfiguredRule::or_else) to hand a file back to.
     pub fn may_hand_back(&self) -> bool {
         self.may_hand_back
     }
 
-    /// The instance of a rule that the configuration calls `id`: [`ConfiguredRule::name`]. Only the configuration gives names.
+    /// Returns the rule instance whose [`ConfiguredRule::name`] is `id`. Only the config can create named instances.
     pub fn named_rule(&self, id: &[u8]) -> Option<&ConfiguredRule> {
         let mut named = self.rules.iter().filter(|_| self.has_named_rules);
         named.find(|it| it.name.as_deref() == Some(id))
+    }
+
+    /// Returns `js_settings` or `js_settings_without_module_syntax`, whichever matches `file`'s source type. `file`
+    /// must use this config.
+    pub(crate) fn js_settings_of(&self, file: &File) -> Option<&Arc<js_plugin::FileSettings>> {
+        match file.language().source_type == self.language.source_type {
+            true => self.js_settings.as_ref(),
+            false => self.js_settings_without_module_syntax.as_ref(),
+        }
     }
 
     pub(crate) fn validate_language_options(&mut self, language_options: &Json) {
@@ -377,10 +389,10 @@ impl ResolvedConfig {
         severity: Severity,
         options: &[Json],
     ) {
-        // The schemas are those of the rules for ESLint, and a poor witness of what oxlint refuses: its rules take other values
-        // and other shapes (`"import/max-dependencies": ["error", 2]`, `"sort-keys": ["asc", { "minKeys": 1 }]`) and pass over
-        // what they do not know. To refuse what it takes ends a run that works with it: beside its configuration they refuse
-        // nothing, and the rule gets the options.
+        // The schemas come from ESLint's rules and don't predict what oxlint rejects. Its rules accept other values and
+        // shapes (`"import/max-dependencies": ["error", 2]`, `"sort-keys": ["asc", { "minKeys": 1 }]`) and ignore what
+        // they don't recognize. Rejecting options oxlint accepts would fail a run that works with oxlint, so with an
+        // oxlint config nothing is validated and the rule gets the options as they are.
         if severity == Severity::Off
             || self.error.is_some()
             || entry.meta.follows_oxlint
@@ -390,7 +402,7 @@ impl ResolvedConfig {
         {
             return;
         }
-        // No schema allows one, and `JSON.stringify` throws at it while ESLint makes the message.
+        // No schema allows a BigInt, and `JSON.stringify` throws on it while ESLint builds the error message.
         if options.iter().find_map(super::schema::placeholder) == Some(b"bigint") {
             self.error = Some(b"TypeError: Do not know how to serialize a BigInt".to_vec());
         } else if let Err(lines) = super::schema::validate(entry.meta, options, false) {
@@ -399,8 +411,8 @@ impl ResolvedConfig {
         }
     }
 
-    /// The rule of a JavaScript plugin that the configuration, or a comment of a file that it is for, calls `id`.
-    /// `Some(None)`: the plugin has no such rule.
+    /// Looks up the JavaScript plugin rule that the config, or a comment in one of its files, calls `id`. Returns
+    /// `Some(None)` if the plugin exists but has no such rule.
     pub fn find_js_rule(&self, id: &[u8]) -> Option<Option<&Arc<js_plugin::Rule>>> {
         find_js_rule(&self.js_plugins, id)
     }
@@ -409,9 +421,9 @@ impl ResolvedConfig {
         (self.js_rules.iter()).find(|it| Arc::ptr_eq(&it.configured.rule, rule))
     }
 
-    /// The rule that the configuration, or a comment of a file that it is for, calls `id`. Not one of a JavaScript plugin.
+    /// Looks up the built-in rule that the config, or a comment in one of its files, calls `id`.
     pub fn find_rule(&self, registry: &Registry, id: &[u8]) -> Option<&'static RuleEntry> {
-        // A plugin that is not the one which is implemented here under that name hides it.
+        // A foreign plugin shadows the built-in plugin with the same prefix.
         let prefix = parse_rule_id(id).0;
         if self.foreign_plugins.iter().any(|it| **it == *prefix) {
             return None;
@@ -423,13 +435,13 @@ impl ResolvedConfig {
             .find_preferring(id, self.prefers_typescript_rules)
             .filter(|it| !(self.has_unknown_resolver && needs_resolver(it.meta)));
         if let Some(plugins) = &self.plugins {
-            let has = |plugin: Plugin| plugin.is_always_there() || plugins.contains(&plugin);
+            let has = |plugin: Plugin| plugin.is_always_available() || plugins.contains(&plugin);
             return found.filter(|it| has(it.meta.plugin));
         }
         if found.is_some() || !self.prefers_typescript_rules {
             return found;
         }
-        // Between these two plugins oxlint goes by the name: `no-explicit-any` is
+        // For these two plugins oxlint ignores the prefix and looks the rule up by name: `no-explicit-any` is
         // `typescript/no-explicit-any`, and `@typescript-eslint/no-undef` is `no-undef`.
         let (plugin, name) = parse_rule_id(id);
         let is_known = matches!(
@@ -444,7 +456,7 @@ impl ResolvedConfig {
             .or_else(|| registry.get(Plugin::Eslint, name))
     }
 
-    /// `categories` turn on rules of `plugin`, which [has none here](Plugin::has_no_rules).
+    /// Records that `categories` turn on rules of `plugin`, which has [no built-in rules](Plugin::has_no_rules).
     pub(crate) fn skip_rules_of(&mut self, plugin: Plugin) {
         if !self.plugins_without_rules.contains(&plugin) {
             self.plugins_without_rules.push(plugin);
@@ -452,31 +464,31 @@ impl ResolvedConfig {
         self.skip(plugin == Plugin::Jsdoc);
     }
 
-    /// A rule that is on is skipped. `is_of_jsdoc`: it is one of oxlint's `jsdoc` plugin.
-    pub(crate) fn skip(&mut self, is_of_jsdoc: bool) {
-        self.skipped = self.skipped.max(match is_of_jsdoc {
+    /// Records that an enabled rule is skipped. `is_jsdoc_rule` is true for a rule of oxlint's `jsdoc` plugin.
+    pub(crate) fn skip(&mut self, is_jsdoc_rule: bool) {
+        self.skipped = self.skipped.max(match is_jsdoc_rule {
             true => Skipped::OnlyJsdoc,
             false => Skipped::Any,
         });
     }
 
-    /// The rule about layout that a comment of a file that the configuration is for calls `id`: [`find_formatting_rule`]. oxlint
-    /// has no such rules.
+    /// Looks up the formatting rule that a comment in one of the config's files calls `id`. See
+    /// [`find_formatting_rule`]. oxlint has no such rules.
     pub fn formatting_rule(&self, registry: &Registry, id: &[u8]) -> Option<&'static Deprecated> {
         let rule = find_formatting_rule(registry, id, &self.foreign_plugins, &self.js_plugins)?;
-        let plugin = Plugin::of_prefix(parse_rule_id(id).0)?;
-        let has_plugin = plugin.is_always_there()
+        let plugin = Plugin::from_prefix(parse_rule_id(id).0)?;
+        let has_plugin = plugin.is_always_available()
             || (self.plugins.as_ref()).is_none_or(|all| all.contains(&plugin));
         (has_plugin && !self.prefers_typescript_rules).then_some(rule)
     }
 
-    /// Whether the rule called `id`, which does not exist here, is skipped silently: it is of a
-    /// plugin that is configured, and that is not implemented here or only in part.
+    /// True if the rule `id`, which isn't built in, is skipped silently. That's the case if its plugin is configured
+    /// and is either not built in or only partly built in.
     pub fn is_foreign(&self, id: &[u8]) -> bool {
         let prefix = parse_rule_id(id).0;
         let is_implemented_in_part = match self.has_every_rule {
             true => Plugin::spelled(prefix).any(|plugin| !plugin.is_whole()),
-            false => Plugin::of_prefix(prefix).is_some_and(|plugin| {
+            false => Plugin::from_prefix(prefix).is_some_and(|plugin| {
                 !plugin.is_whole()
                     && (self.plugins.as_ref()).is_none_or(|all| all.contains(&plugin))
             }),
@@ -486,7 +498,7 @@ impl ResolvedConfig {
             || self.foreign_plugins.iter().any(|it| **it == *prefix)
     }
 
-    /// Whether `language` is that of ESLint itself.
+    /// True if `language` is ESLint's own JavaScript language.
     pub fn is_javascript(&self) -> bool {
         (self.language_name.as_deref()).is_none_or(|it| matches!(it, b"@/js" | b"js/js"))
     }
@@ -507,25 +519,27 @@ impl ResolvedConfig {
             || rule.languages.iter().any(|it| it.as_bytes() == name)
     }
 
-    /// Whether there are files that [`Route::Eslint`] is the way of.
-    pub(crate) fn is_for_eslint(&self) -> bool {
+    /// True if some files with this config may take [`Route::Eslint`].
+    pub(crate) fn may_route_to_eslint(&self) -> bool {
         !self.is_javascript() || self.language.parser == Parser::Other || self.changes_linter
     }
 
-    /// How the file at `path` is linted after a processor, or if there is none.
-    pub fn route_as_it_is(&self, path: &[u8]) -> Route {
-        let is_read_here = (self.language.parser != Parser::Other && !self.changes_linter)
+    /// Returns how the file at `path` is linted, ignoring any processor. This is also the route of a processor's
+    /// output.
+    pub fn route_without_processor(&self, path: &[u8]) -> Route {
+        let is_parsed_natively = (self.language.parser != Parser::Other && !self.changes_linter)
             || bun_sema::resolve::ScriptKind::from_file_name(path).is_some();
-        match self.is_javascript() && is_read_here {
+        match self.is_javascript() && is_parsed_natively {
             true => Route::Native,
             false if self.dialect.is_some() => Route::Language,
             false => Route::Eslint,
         }
     }
 
-    /// How the file at `path` is linted. With a processor neither the language nor the parser reads the file itself.
+    /// Returns how the file at `path` is linted. With a processor, neither the language nor the parser reads the file
+    /// itself.
     pub fn route(&self, path: &[u8]) -> Route {
-        match (self.route_as_it_is(path), &self.processor) {
+        match (self.route_without_processor(path), &self.processor) {
             (Route::Native | Route::Language | Route::Eslint, Some(_)) => Route::Processor,
             (route, _) => route,
         }
@@ -533,7 +547,7 @@ impl ResolvedConfig {
 }
 
 impl LinterOptions {
-    /// From ESLint's `linterOptions`. What is missing stays as it is in `self`.
+    /// Merges ESLint's `linterOptions` into `self`. Missing keys keep their current value.
     pub fn merge_json(&mut self, json: &Json) {
         if let Some(value) = json.get(b"noInlineConfig").and_then(Json::as_bool) {
             self.no_inline_config = value;
@@ -560,9 +574,9 @@ impl LinterOptions {
 }
 
 impl ResolvedConfig {
-    /// From one configuration object of ESLint that applies to the file as it is: `rules`,
-    /// `languageOptions`, `linterOptions`, `settings`, and `plugins` as an array of the prefixes of
-    /// the plugins that are not implemented here. Rules that do not exist are added to `unknown`.
+    /// Builds a config from a single ESLint config object, without matching `files` or `ignores`. Reads `rules`,
+    /// `languageOptions`, `linterOptions`, `settings`, and `plugins` as an array of the prefixes of plugins that aren't
+    /// built in. Rules that don't exist are added to `unknown`.
     pub fn from_json(
         registry: &Registry,
         json: &Json,
@@ -610,8 +624,8 @@ impl ResolvedConfig {
         config
     }
 
-    /// What an entry of `rules` does, for whoever has the rule and not its name: the test suites. It is
-    /// not a second way to read `rules`. `options`: what follows the severity.
+    /// Adds one `rules` entry for a caller that has the rule itself instead of its name. Only the test suites use it,
+    /// and it's not a second way to read `rules`. `options` are the array elements after the severity.
     pub fn configure(&mut self, entry: &'static RuleEntry, severity: Severity, options: &[Json]) {
         let options: Arc<[Json]> = options.into();
         self.validate(entry, None, severity, &options);

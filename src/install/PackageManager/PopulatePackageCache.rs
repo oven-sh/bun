@@ -1,4 +1,4 @@
-//! `bun pm fetch`: resolves like `bun install` and writes nothing but the cache.
+//! `bun pm fetch`: resolves like `bun install`, but only writes to the cache.
 
 use bun_core::{Output, ZBox};
 
@@ -21,7 +21,8 @@ pub struct Summary {
     pub already_cached: u32,
 }
 
-/// Failures are reported like `bun install`'s: in `manager.log` and `any_failed_to_install`.
+/// Failures are reported the same way as in `bun install`: in `manager.log` and
+/// `any_failed_to_install`.
 pub fn fetch(
     manager: &mut PackageManager,
     ctx: Command::Context,
@@ -70,7 +71,7 @@ pub(crate) fn download_pinned_packages(
     let _ = manager.get_cache_directory();
     let _ = manager.get_temporary_directory();
 
-    // Enqueueing is keyed by dependency edge; prefer a required one so failures are errors.
+    // Enqueueing is keyed by dependency. Prefer a required one, so that failures are errors.
     let dep_ids: Vec<DependencyID> = {
         let dependencies = manager.lockfile.buffers.dependencies.as_slice();
         let mut index = vec![invalid_dependency_id; manager.lockfile.packages.len()];
@@ -125,7 +126,8 @@ pub(crate) fn download_pinned_packages(
         };
         match state {
             PreinstallState::Extract => {}
-            // `ApplyPatch`: the unpatched tarball is cached, which is all this command promises.
+            // For `ApplyPatch`, the unpatched tarball is cached, which is all that this command
+            // promises.
             PreinstallState::Done | PreinstallState::ApplyPatch => {
                 summary.already_cached += 1;
                 continue;
@@ -157,8 +159,7 @@ pub(crate) fn download_pinned_packages(
                 enqueue_tarball_for_download(manager, dep_id, pkg_id, url, waiter)
             }
             ResolutionTag::LocalTarball => {
-                enqueue_tarball_for_reading(manager, dep_id, pkg_id, alias, &resolution, waiter);
-                Ok(())
+                enqueue_tarball_for_reading(manager, dep_id, pkg_id, alias, &resolution, waiter)
             }
             ResolutionTag::Git => enqueue_git_for_checkout(
                 manager,
@@ -176,7 +177,8 @@ pub(crate) fn download_pinned_packages(
         }
     }
 
-    // A `Dependency` callback would resolve its row again: `github:` downloads twice.
+    // A `Dependency` callback would resolve its dependency again, which would download a `github:`
+    // package twice.
     for waiters in manager.task_queue.values_mut() {
         waiters.retain(|waiter| matches!(waiter, TaskCallbackContext::GitCheckout { .. }));
     }

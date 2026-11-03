@@ -1,0 +1,262 @@
+# Two views of one buffer, the second a few elements above the first. A loop copies from the lower into the higher, one element after the other, so what a turn stores a later turn reads.
+# FORM: AsRead
+# RUN: run-in-shell
+# OPTIONS: check=MovedLoads
+# CHECK: 3 0 1000 2000 0 1000 2000 0 1000 2000 0 1000 2000 0 1000 2000 0 1000 2000 0 1000 2000 0 1000 2000 0 1000 2000 0 1000 2000 0 1000 2000 33000 34000 35000 36000 37000 38000 39000
+# CHECK-NOT: AOT claim check
+# CHECK: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+data d0 root=Array{contents=number elements=[Number{value=1}, Number{value=3}, Number{value=5}, Number{value=15}]} module=m0
+data d1 root=Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
+
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Data data=d0
+    v5 = IteratorOpen v4
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v7 = IteratorResume v5
+    v8 = ResultAt v7
+    v9 = ResultAt v7 index=1
+    Branch v8 -> taken b3(), notTaken b15()
+  b3():
+    v10 = Data data=d1
+    v11 = IteratorOpen v10
+    Jump -> next b4()
+  b4():
+    LoopHint
+    v13 = IteratorResume v11
+    v14 = ResultAt v13
+    v15 = ResultAt v13 index=1
+    Branch v14 -> taken b5(), notTaken b6()
+  b5():
+    v16 = Undefined
+    Return v16
+  b6():
+    Jump -> next b7()
+  b7() handler=b14():
+    v17 = Convert v15 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v18 = Builtin builtin=ArrayBuffer
+    v19 = Integer integer=160
+    v20 = Construct v18, -, v19 calleeName="ArrayBuffer"
+    v21 = Convert v20 declared={type=undefined|null|ArrayBuffer flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v22 = Builtin builtin=Int32Array
+    v23 = Construct v22, -, v21 calleeName="Int32Array"
+    v24 = Convert v23 declared={type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v25 = Integer
+    v26 = Convert v25 declared={type=number}
+    Jump -> next b8(v26)
+  b8(v27: number) handler=b14():
+    LoopHint
+    v29 = Convert v27 declared={type=i32 flags=[IsExpected]}
+    v30 = PropGet v24 key="length"
+    v31 = Convert v30 declared={type=number} illTypedCause=Assertion
+    v32 = Less v29, v31
+    Branch v32 -> taken b9(| 0), notTaken b12(| 0)
+  b9(v33) handler=b14():
+    Jump -> next b10()
+  b10() handler=b14():
+    v34 = Convert v33 declared={type=i32 flags=[IsExpected]}
+    v35 = Integer integer=1000
+    v36 = Mul v34, v35
+    ElemSet v24, v34, v36
+    Jump -> next b11()
+  b11() handler=b14():
+    v38 = Increment v34
+    v39 = Convert v38 declared={type=number}
+    Jump -> next b8(v39)
+  b12(v40) handler=b14():
+    Jump -> next b13()
+  b13() handler=b14():
+    v41 = Builtin builtin=Int32Array
+    v42 = Integer integer=4
+    v43 = Mul v17, v42
+    v44 = Integer integer=30
+    v45 = Construct v41, -, v21, v43, v44 calleeName="Int32Array"
+    v46 = Convert v45 declared={type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v47 = Builtin builtin=Int32Array
+    v48 = Integer
+    v49 = Integer integer=30
+    v50 = Construct v47, -, v21, v48, v49 calleeName="Int32Array"
+    v51 = Convert v50 declared={type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v52 = Integer integer=2
+    v53 = Call v3, -, v46, v51, v52 calleeName="spreadWords"
+    v54 = Builtin builtin=GlobalThis
+    v55 = PropGet v54 key="print" [isFreeName]
+    v56 = PropGet v24 key="join"
+    v57 = String string=" "
+    v58 = Call v56, v24, v57 calleeKey="join" calleeName="all.join"
+    v59 = Convert v58 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v60 = Call v55, -, v17, v59 calleeName="print"
+    Jump -> next b4()
+  b14() role=IterationCleanup subject=v11:
+    v61 = CatchException
+    IteratorClose v11 completion=Throw
+    Rethrow v61
+  b15():
+    Jump -> next b16()
+  b16() handler=b23():
+    v63 = Convert v9 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v64 = Builtin builtin=ArrayBuffer
+    v65 = Integer integer=96
+    v66 = Construct v64, -, v65 calleeName="ArrayBuffer"
+    v67 = Convert v66 declared={type=undefined|null|ArrayBuffer flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v68 = Builtin builtin=Uint8Array
+    v69 = Construct v68, -, v67 calleeName="Uint8Array"
+    v70 = Convert v69 declared={type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v71 = Integer
+    v72 = Convert v71 declared={type=number}
+    Jump -> next b17(v72)
+  b17(v73: number) handler=b23():
+    LoopHint
+    v75 = Convert v73 declared={type=i32 flags=[IsExpected]}
+    v76 = PropGet v70 key="length"
+    v77 = Convert v76 declared={type=number} illTypedCause=Assertion
+    v78 = Less v75, v77
+    Branch v78 -> taken b18(| 0), notTaken b21(| 0)
+  b18(v79) handler=b23():
+    Jump -> next b19()
+  b19() handler=b23():
+    v80 = Convert v79 declared={type=i32 flags=[IsExpected]}
+    ElemSet v70, v80, v80
+    Jump -> next b20()
+  b20() handler=b23():
+    v82 = Increment v80
+    v83 = Convert v82 declared={type=number}
+    Jump -> next b17(v83)
+  b21(v84) handler=b23():
+    Jump -> next b22()
+  b22() handler=b23():
+    v85 = Builtin builtin=Uint8Array
+    v86 = Integer integer=64
+    v87 = Construct v85, -, v67, v63, v86 calleeName="Uint8Array"
+    v88 = Convert v87 declared={type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v89 = Builtin builtin=Uint8Array
+    v90 = Integer
+    v91 = Integer integer=64
+    v92 = Construct v89, -, v67, v90, v91 calleeName="Uint8Array"
+    v93 = Convert v92 declared={type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v94 = Integer integer=2
+    v95 = Call v1, -, v88, v93, v94 calleeName="spread"
+    v96 = Builtin builtin=GlobalThis
+    v97 = PropGet v96 key="print" [isFreeName]
+    v98 = PropGet v70 key="join"
+    v99 = String string=" "
+    v100 = Call v98, v70, v99 calleeKey="join" calleeName="all.join"
+    v101 = Convert v100 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v102 = Call v97, -, v63, v101 calleeName="print"
+    Jump -> next b2()
+  b23() role=IterationCleanup subject=v5:
+    v103 = CatchException
+    IteratorClose v5 completion=Throw
+    Rethrow v103
+}
+
+function f1 name="spread" module=m0 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] {
+  b0(v0: undefined|null|Uint8Array, v1: undefined|null|Uint8Array, v2: number):
+    Jump -> next b1()
+  b1():
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    Jump -> next b2(v4)
+  b2(v5: number):
+    LoopHint
+    v7 = Less v5, v2
+    Branch v7 -> taken b3(| 0, 1), notTaken b12(| 0, 1)
+  b3(v8, v9):
+    Jump -> next b4()
+  b4():
+    v10 = Integer
+    v11 = Convert v10 declared={type=number}
+    Jump -> next b5(v11)
+  b5(v12: number):
+    LoopHint
+    v14 = Convert v12 declared={type=i32 flags=[IsExpected]}
+    v15 = PropGet v0 key="length"
+    v16 = Convert v15 declared={type=number} illTypedCause=Assertion
+    v17 = Less v14, v16
+    Branch v17 -> taken b6(| 0), notTaken b9(| 0)
+  b6(v18):
+    Jump -> next b7()
+  b7():
+    v19 = Convert v18 declared={type=i32 flags=[IsExpected]}
+    v20 = ElemGet v1, v19
+    ElemSet v0, v19, v20
+    Jump -> next b8()
+  b8():
+    v22 = Increment v19
+    v23 = Convert v22 declared={type=number}
+    Jump -> next b5(v23)
+  b9(v24):
+    Jump -> next b10()
+  b10():
+    Jump -> next b11()
+  b11():
+    v25 = Increment v8
+    v26 = Convert v25 declared={type=number}
+    Jump -> next b2(v26)
+  b12(v27, v28):
+    Jump -> next b13()
+  b13():
+    v29 = Undefined
+    Return v29
+}
+
+function f2 name="spreadWords" module=m0 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] {
+  b0(v0: undefined|null|Int32Array, v1: undefined|null|Int32Array, v2: number):
+    Jump -> next b1()
+  b1():
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    Jump -> next b2(v4)
+  b2(v5: number):
+    LoopHint
+    v7 = Less v5, v2
+    Branch v7 -> taken b3(| 0, 1), notTaken b12(| 0, 1)
+  b3(v8, v9):
+    Jump -> next b4()
+  b4():
+    v10 = Integer
+    v11 = Convert v10 declared={type=number}
+    Jump -> next b5(v11)
+  b5(v12: number):
+    LoopHint
+    v14 = Convert v12 declared={type=i32 flags=[IsExpected]}
+    v15 = PropGet v0 key="length"
+    v16 = Convert v15 declared={type=number} illTypedCause=Assertion
+    v17 = Less v14, v16
+    Branch v17 -> taken b6(| 0), notTaken b9(| 0)
+  b6(v18):
+    Jump -> next b7()
+  b7():
+    v19 = Convert v18 declared={type=i32 flags=[IsExpected]}
+    v20 = ElemGet v1, v19
+    ElemSet v0, v19, v20
+    Jump -> next b8()
+  b8():
+    v22 = Increment v19
+    v23 = Convert v22 declared={type=number}
+    Jump -> next b5(v23)
+  b9(v24):
+    Jump -> next b10()
+  b10():
+    Jump -> next b11()
+  b11():
+    v25 = Increment v8
+    v26 = Convert v25 declared={type=number}
+    Jump -> next b2(v26)
+  b12(v27, v28):
+    Jump -> next b13()
+  b13():
+    v29 = Undefined
+    Return v29
+}

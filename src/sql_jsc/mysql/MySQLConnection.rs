@@ -55,7 +55,7 @@ pub struct MySQLConnection {
 
     write_buffer: OffsetByteList,
     read_buffer: OffsetByteList,
-    last_message_start: u32,
+    last_message_start: usize,
     /// The one behind the last packet that was read.
     sequence_id: u8,
     /// The reply to the head of the queue has begun: its next packet has `sequence_id`. The first
@@ -171,7 +171,7 @@ impl MySQLConnection {
     pub(crate) fn is_able_to_write(&self) -> bool {
         self.status == ConnectionState::Connected
             && !self.flags.contains(ConnectionFlags::HAS_BACKPRESSURE)
-            && (self.write_buffer.len() as usize) < MAX_PIPELINE_SIZE
+            && self.write_buffer.len() < MAX_PIPELINE_SIZE
     }
 
     #[inline]
@@ -267,8 +267,7 @@ impl MySQLConnection {
         if wrote > 0 {
             let wrote_usize = usize::try_from(wrote).expect("int cast");
             SocketMonitor::write(&chunk[0..wrote_usize]);
-            self.write_buffer
-                .consume(u32::try_from(wrote_usize).expect("int cast"));
+            self.write_buffer.consume(wrote_usize);
         }
     }
 
@@ -551,6 +550,10 @@ impl MySQLConnection {
     }
 
     fn handle_handshake(&mut self, reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
+        // A server that takes no connection, or none from this host, says so in place of its greeting.
+        if reader.peek().first() == Some(&PacketType::ERROR.0) {
+            return self.handle_unasked(reader);
+        }
         let mut handshake = HandshakeV10::default();
         handshake.decode_internal(reader)?;
         self.server_version = handshake
@@ -1458,24 +1461,24 @@ impl WriterContext for Writer {
 
     fn pwrite(self, data: &[u8], index: usize) -> Result<(), AnyMySQLError> {
         let buffer = self.write_buffer();
-        let head = buffer.head as usize;
+        let head = buffer.head;
         buffer.byte_list[head + index..][..data.len()].copy_from_slice(data);
         Ok(())
     }
 
     fn offset(self) -> usize {
-        self.write_buffer().len() as usize
+        self.write_buffer().len()
     }
 
     fn truncate(self, offset: usize) {
         let buffer = self.write_buffer();
-        let head = buffer.head as usize;
+        let head = buffer.head;
         buffer.byte_list.truncate(head + offset);
     }
 
     fn copy_within(self, src: core::ops::Range<usize>, dest: usize) {
         let buffer = self.write_buffer();
-        let head = buffer.head as usize;
+        let head = buffer.head;
         buffer
             .byte_list
             .copy_within(head + src.start..head + src.end, head + dest);
@@ -1510,7 +1513,7 @@ impl Reader {
 
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    fn last_message_start(&self) -> &mut u32 {
+    fn last_message_start(&self) -> &mut usize {
         // SAFETY: same justification as `read_buffer()` — disjoint field
         // projection from a non-null connection pointer that outlives the
         // `Reader`; `process_packets` does not access `last_message_start`
@@ -1525,7 +1528,7 @@ impl ReaderContext for Reader {
     }
 
     fn set_offset_from_start(self, offset: usize) {
-        self.read_buffer().head = *self.last_message_start() + (offset as u32);
+        self.read_buffer().head = *self.last_message_start() + offset;
     }
 
     fn peek(&self) -> &[u8] {

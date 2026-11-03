@@ -25,8 +25,8 @@ macro_rules! pretty {
     };
 }
 
-/// Every page: a NUL, its [name](Meta::page), a newline, then its Markdown. That's the description on one line, an empty
-/// line, then the rest.
+/// Every page: a NUL, its [name](Meta::page), a newline, then its Markdown. That's the description on one line, an
+/// empty line, then the rest.
 fn pages() -> &'static [u8] {
     bun_zstd::embed_compressed!(codegen "lint-rule-pages.txt")
 }
@@ -42,15 +42,15 @@ fn descriptions() -> FxHashMap<&'static [u8], &'static [u8]> {
 }
 
 /// The rule's docs page in Markdown.
-fn page_of(meta: &Meta) -> Option<&'static [u8]> {
+fn docs_page(meta: &Meta) -> Option<&'static [u8]> {
     let pages = pages();
     let head = [b"\0", &meta.page()[..], b"\n"].concat();
     let page = &pages[strings::index_of(pages, &head)? + head.len()..];
     Some(&page[..strings::index_of_char_usize(page, 0).unwrap_or(page.len())])
 }
 
-/// Severity and options that the default config has for each rule it mentions. It sets options for some rules that are off,
-/// which apply once the user turns the rule on.
+/// Severity and options that the default config has for each rule it mentions. It sets options for some rules that are
+/// off, which apply once the user turns the rule on.
 struct Defaults(FxHashMap<(Plugin, &'static str), (Severity, Arc<[Json]>)>);
 
 impl Defaults {
@@ -59,12 +59,12 @@ impl Defaults {
         let mut on = FxHashMap::default();
         let config = configs::defaults(registry);
         for path in [&b"/a.js"[..], b"/a.jsx", b"/a.ts", b"/a.tsx"] {
-            let Some(FileConfig::Matched(of_file)) =
+            let Some(FileConfig::Matched(file_config)) =
                 config.as_ref().map(|it| it.get(registry, path))
             else {
                 continue;
             };
-            for rule in of_file.configured() {
+            for rule in file_config.configured() {
                 let meta = rule.entry.meta;
                 let (severity, _) = on
                     .entry((meta.plugin, meta.name))
@@ -223,11 +223,11 @@ pub(crate) fn write_rules(out: &mut Vec<u8>, registry: &Registry) {
 pub(crate) fn write_rules_by_plugin(out: &mut Vec<u8>, registry: &Registry, colors: bool) {
     let (descriptions, defaults) = (descriptions(), Defaults::new(registry));
     let all = listed(registry);
-    for of_plugin in all.chunk_by(|a, b| a.0 == b.0) {
-        let rows: Vec<_> = (of_plugin.iter())
+    for plugin_rules in all.chunk_by(|a, b| a.0 == b.0) {
+        let rows: Vec<_> = (plugin_rules.iter())
             .map(|(_, meta)| (registry.names_of(meta).id, *meta))
             .collect();
-        let directory = of_plugin[0].1.plugin.directory_of_docs();
+        let directory = plugin_rules[0].1.plugin.docs_directory();
         let noun = if rows.len() == 1 { "rule" } else { "rules" };
         pretty!(
             out,
@@ -237,6 +237,13 @@ pub(crate) fn write_rules_by_plugin(out: &mut Vec<u8>, registry: &Registry, colo
             rows.len(),
             noun
         );
+        if rows.iter().all(|it| !it.1.languages.is_empty()) {
+            pretty!(
+                out,
+                colors,
+                "<d>These need an ESLint config that says which files are in the language.<r>\n"
+            );
+        }
         let width = rows.iter().map(|it| it.0.len()).max().unwrap_or(0);
         for (id, meta) in rows {
             match defaults.get(in_native_mode(registry, meta, &id)) {
@@ -311,8 +318,8 @@ fn facts(
 /// matches, or more than one.
 fn find(registry: &Registry, name: &[u8]) -> Result<&'static Meta, Vec<u8>> {
     // A rule for another language can only be looked up by its ESLint name.
-    let of_language = |id: &[u8]| registry.find(id).filter(|it| !it.meta.languages.is_empty());
-    let by_name = |id: &[u8]| registry.find_by_any_name(id).or_else(|| of_language(id));
+    let language_rule = |id: &[u8]| registry.find(id).filter(|it| !it.meta.languages.is_empty());
+    let by_name = |id: &[u8]| registry.find_by_any_name(id).or_else(|| language_rule(id));
     if let Some(entry) = by_name(name) {
         return Ok(entry.meta);
     }
@@ -335,7 +342,7 @@ fn find(registry: &Registry, name: &[u8]) -> Result<&'static Meta, Vec<u8>> {
             .concat());
         }
     }
-    .ok_or_else(|| native::unknown_rule(registry, name, native::NamedBy::Explain))
+    .ok_or_else(|| native::unknown_rule(registry, name, native::NameSource::Explain))
 }
 
 /// `--explain <rule>`. Returns the rendered docs page for `name`, or the error message to print.
@@ -354,7 +361,7 @@ pub(crate) fn explain(
         .collect();
     let default = Defaults::new(registry).get(meta);
     let facts = facts(meta, &names.aliases, &namesakes, default);
-    let page = page_of(meta).unwrap_or(b"\n\nThis version of Bun has no page about this rule.");
+    let page = docs_page(meta).unwrap_or(b"\n\nThis version of Bun has no page about this rule.");
     let after_description = strings::index_of(page, b"\n\n").unwrap_or(page.len());
     let (description, rest) = page.split_at(after_description);
     let colors = colors.unwrap_or(environment.stdout.colors);

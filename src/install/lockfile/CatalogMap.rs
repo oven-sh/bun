@@ -141,7 +141,8 @@ impl CatalogMap {
         .cloned()
     }
 
-    /// `bun update --latest`. The map is cloned by re-parsing literals: the entry gets a real one.
+    /// For `bun update --latest`. The map is cloned by parsing the literals again, so the entry
+    /// gets a real literal.
     pub(crate) fn steer_to_latest(
         &mut self,
         string_buf: &mut StringBuf,
@@ -445,7 +446,8 @@ impl CatalogMap {
             let group_name = string_buf.append(group_name_str)?;
             let group =
                 Self::get_or_put_named_group(groups, string_buf.bytes.as_slice(), group_name)?;
-            // package.json's `catalogs.default` is a named group: `default`'s entries move there.
+            // `catalogs.default` in package.json is a named group, so the entries of `default` are
+            // moved there.
             let recorded = (group_name_str == b"default").then_some(&mut *default);
             put_declared_entries(group, recorded, &declared, string_buf)
         })
@@ -602,7 +604,7 @@ fn put_entries_from_pnpm_lockfile(
     Ok(())
 }
 
-/// Recorded entries stay as recorded. The next install reports an entry that does not parse.
+/// Recorded entries are kept as recorded. The next install reports an entry that doesn't parse.
 fn put_declared_entries(
     group: &mut Map,
     mut lockfile_default: Option<&mut Map>,
@@ -644,7 +646,7 @@ fn put_declared_entries(
     })
 }
 
-/// `dep_name` is already in `string_buf`; `None` means `specifier` is not a dependency version.
+/// `dep_name` is already in `string_buf`. Returns `None` if `specifier` isn't a dependency version.
 fn parse_entry(
     dep_name: String,
     dep_name_hash: PackageNameHash,

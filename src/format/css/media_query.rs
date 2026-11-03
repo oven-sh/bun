@@ -1,5 +1,4 @@
-//! `postcss-media-query-parser` 0.2.3 (`dist/parsers.js`), and Prettier's
-//! `parse/parse-media-query.js`.
+//! `postcss-media-query-parser` 0.2.3 (`dist/parsers.js`) and Prettier's `parse/parse-media-query.js`.
 
 use crate::text;
 
@@ -14,7 +13,7 @@ pub(crate) enum MediaKind {
     Value,
     Keyword,
     Url,
-    /// It has no type, which Prettier calls `media-unknown`.
+    /// The parser gave it no type. Prettier calls that `media-unknown`.
     Unknown,
 }
 
@@ -22,7 +21,7 @@ pub(crate) enum MediaKind {
 pub(crate) struct MediaNode<'a> {
     pub(crate) kind: MediaKind,
     pub(crate) value: &'a [u8],
-    /// `None`: it is not a container.
+    /// `None` if it isn't a container.
     pub(crate) nodes: Option<Vec<MediaNode<'a>>>,
 }
 
@@ -87,10 +86,10 @@ fn parse_media_feature(string: &[u8]) -> Result<Vec<MediaNode<'_>>, ParseError> 
 fn parse_media_query(string: &[u8]) -> Result<Vec<MediaNode<'_>>, ParseError> {
     let mut result: Vec<(Option<MediaKind>, MediaNode<'_>)> = Vec::new();
     let mut local_level = 0i32;
-    // Where the element starts that is being read, and whether it is an expression.
+    // Start of the element being read, and whether it's an expression.
     let mut element: Option<(usize, bool)> = None;
 
-    // The bytes of a character of white space that are still to be skipped.
+    // Remaining bytes of a multi-byte whitespace character to skip.
     let mut skip = 0;
     for (i, &character) in string.iter().enumerate() {
         if skip > 0 {
@@ -193,7 +192,7 @@ fn parse_media_query(string: &[u8]) -> Result<Vec<MediaNode<'_>>, ParseError> {
         .collect())
 }
 
-/// Prettier's `parseMediaQuery`. An error stands for `{ type: "selector-unknown", value: params }`.
+/// Prettier's `parseMediaQuery`. An error corresponds to `{ type: "selector-unknown", value: params }`.
 pub(crate) fn parse(string: &[u8]) -> Result<MediaNode<'_>, ParseError> {
     let mut result = Vec::new();
     let mut interim_index = 0;

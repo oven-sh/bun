@@ -34,9 +34,9 @@ pub struct UpdateRequest {
     pub(crate) is_aliased: bool,
     pub failed: bool,
     /// This must be cloned to handle when the AST store resets.
-    /// ARENA-owned (AST `Expr.Data` store) — raw pointer per LIFETIMES.tsv;
+    /// ARENA-owned (AST `Expr.Data` store);
     /// only valid while the store that allocated it is alive.
-    pub(crate) e_string: Option<*mut js_ast::E::String>,
+    pub(crate) e_string: Option<bun_ast::StoreRef<js_ast::E::String>>,
 }
 
 impl Default for UpdateRequest {
@@ -106,7 +106,8 @@ impl UpdateRequest {
             }
     }
 
-    /// `matches` compares hashes; this also the bytes, for a caller that replaces the row it finds.
+    /// `matches` only compares hashes. This also compares the bytes, for a caller that replaces the
+    /// dependency it finds.
     pub(crate) fn matches_exactly(&self, dependency: &Dependency, string_buf: &[u8]) -> bool {
         self.matches(dependency, string_buf)
             && if self.name.is_empty() {

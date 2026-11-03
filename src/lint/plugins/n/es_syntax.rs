@@ -1,4 +1,4 @@
-//! Which features of ECMAScript a range of versions of Node.js lacks.
+//! Determines which ECMAScript features a range of Node.js versions doesn't support.
 
 pub(crate) use super::es_syntax_data::FEATURES;
 use super::es_syntax_data::{
@@ -13,7 +13,7 @@ use super::table::{Member, Part};
 use bun_lint::ast::File;
 use bun_lint::source::mention_bit;
 
-/// A rule of eslint-plugin-es-x. All are parts of the table [`EsFeature`].
+/// An eslint-plugin-es-x rule. Every field is a [`Part`] of the [`EsFeature`] table.
 pub(crate) struct Feature {
     name: Part,
     supported: Part,
@@ -38,12 +38,12 @@ impl Feature {
         }
     }
 
-    /// The name of the rule without `no-`.
+    /// The rule's name without `no-`.
     pub(crate) fn name(&self) -> &'static str {
         self.name.text::<EsFeature>()
     }
 
-    /// The versions of Node.js that have it, if any has.
+    /// The Node.js versions that support it, if any do.
     pub(crate) fn supported(&self) -> Option<&'static str> {
         Some(self.supported.text::<EsFeature>()).filter(|it| !it.is_empty())
     }
@@ -53,23 +53,23 @@ impl Feature {
         self.supported().unwrap_or("<0")
     }
 
-    /// The versions that have it outside strict mode too, if these are fewer.
+    /// The versions that also support it outside strict mode, if that's a smaller range.
     pub(crate) fn strict_mode(&self) -> Option<&'static str> {
         Some(self.strict_mode.text::<EsFeature>()).filter(|it| !it.is_empty())
     }
 
-    /// The global variables and their properties that are the feature.
+    /// The global variables and properties that make up the feature.
     pub(crate) fn globals(&self) -> &'static [Member<EsFeature>] {
         self.globals.members::<EsFeature>()
     }
 
-    /// The classes, with the methods that are the feature as their members.
+    /// The classes whose methods make up the feature, with those methods as their members.
     fn prototype(&self) -> &'static [Member<EsFeature>] {
         self.prototype.members::<EsFeature>()
     }
 
-    /// Whether the option `ignores` can call it `ignored`: by the name of the rule, by its own name, by that in camel
-    /// case or by an alias.
+    /// True if the entry `ignored` of the `ignores` option refers to this feature: by the rule's name, the feature's
+    /// name, its camel-case form or an alias.
     fn is_called(&self, ignored: &[u8]) -> bool {
         let name = self.name().as_bytes();
         let mut aliases = self.aliases.members::<EsFeature>().iter();
@@ -114,14 +114,14 @@ const FLAGS: [usize; 5] = [
 /// The features that are reported.
 pub(crate) struct Active {
     pub(crate) version: Range,
-    /// A bit for each of [`FEATURES`].
+    /// One bit per entry of [`FEATURES`].
     bits: [u64; FEATURES.len().div_ceil(64)],
-    /// A method, the feature that it is, and the class that has it. Those of a feature follow each other.
+    /// Each method with its feature and its class. A feature's methods are contiguous.
     pub(crate) methods: Vec<(&'static str, usize, &'static str)>,
-    /// Each name of a method once, with its [`mention_bit`].
+    /// Each distinct method name with its [`mention_bit`].
     pub(crate) method_names: Vec<(&'static str, u32)>,
-    /// The features that are global variables or properties of them. For each variable [`mention_bit`] of its name and of the
-    /// names of its properties.
+    /// The features that are global variables or their properties. For each variable, the [`mention_bit`] of its name
+    /// and of its properties' names.
     globals: Vec<(usize, Vec<(u32, Vec<u32>)>)>,
 }
 
@@ -179,7 +179,8 @@ impl Active {
         self.bits.iter().any(|it| *it != 0)
     }
 
-    /// The feature whose rule has the listeners that report `feature`: the rules about patterns share those of the first.
+    /// The feature whose rule has the listeners that report `feature`. The rules about regular expression patterns
+    /// share the first one's listeners.
     pub(crate) fn listens_for(&self, feature: usize) -> usize {
         if !PATTERNS.contains(&feature) {
             return feature;
@@ -188,7 +189,7 @@ impl Active {
         patterns.min().unwrap_or(feature)
     }
 
-    /// The features that are global variables or properties of them which the file mentions.
+    /// The features that are global variables or their properties, limited to the ones the file mentions.
     pub(crate) fn globals_in<'s>(&'s self, file: &'s File) -> impl Iterator<Item = usize> + 's {
         let is_mentioned = |it: &(u32, Vec<u32>)| {
             file.mentions_bit(it.0)
@@ -200,12 +201,12 @@ impl Active {
             .map(|it| it.0)
     }
 
-    /// One that is about the pattern of a regular expression.
+    /// True if an active feature is about regular expression patterns.
     pub(crate) fn has_regexp_pattern(&self) -> bool {
         PATTERNS.iter().any(|&it| self.has(it))
     }
 
-    /// One that is about regular expressions.
+    /// True if an active feature is about regular expressions.
     pub(crate) fn has_regexp(&self) -> bool {
         self.has_regexp_pattern() || FLAGS.iter().any(|&it| self.has(it))
     }

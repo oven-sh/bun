@@ -802,6 +802,32 @@ describe("read edge cases", () => {
     expect(() => read.u8(-1n, 0)).toThrow("Expected a pointer");
     expect(() => CFunction({ ptr: -1n, args: [], returns: "void" })).toThrow(/out of range/);
   });
+
+  // Runs in a subprocess because a truncated offset reads unmapped memory.
+  it("doesn't truncate a byteOffset outside the int32 range", async () => {
+    const src = `
+      import { ptr, read } from "bun:ffi";
+      const buf = new Uint8Array(32).map((_, i) => 0x80 + i);
+      const p = ptr(buf);
+      const large = [2 ** 31, 2 ** 32 + 1];
+      console.log(JSON.stringify([...large, ...large.map(off => -off - 1)].map(off => read.u8(p + 8 - off, off))));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "[136,136,136,136]\n", exitCode: 0 });
+  });
+
+  it("reads at the pointer for an undefined or null byteOffset and throws for other non-numbers", () => {
+    const buf = new Uint8Array([0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc]);
+    const p = ptr(buf);
+    expect([read.u8(p), read.u8(p, undefined), read.u8(p, null)]).toEqual([buf[0], buf[0], buf[0]]);
+    for (const offset of ["1", 1n, {}]) {
+      expect(() => read.u8(p, offset)).toThrow("Expected number for byteOffset");
+    }
+    for (const offset of [Infinity, -Infinity, NaN]) {
+      expect(() => read.u8(p, offset)).toThrow("byteOffset must be a finite number");
+    }
+  });
 });
 
 describe("CString", () => {
@@ -1391,6 +1417,22 @@ describe.if(!!libPath)("can open more than 63 symbols via", () => {
       expect(lib.symbols.strcasecmp(Buffer.from("ciro\0"), Buffer.from("CIRO\0"))).toBe(0);
       expect(lib.symbols.strlen(Buffer.from("bunbun\0", "ascii"))).toBe(6n);
     });
+  }
+});
+
+it("linkSymbols() supports a symbol whose name is an array index", () => {
+  const callback = new JSCallback(() => 7, { args: [], returns: "int32_t" });
+  try {
+    const fn = { ptr: callback.ptr, args: [], returns: "int32_t" };
+    const lib = linkSymbols({ "0": fn, named: fn });
+    try {
+      expect(Object.keys(lib.symbols)).toEqual(["0", "named"]);
+      expect(lib.symbols[0]()).toBe(7);
+    } finally {
+      lib.close();
+    }
+  } finally {
+    callback.close();
   }
 });
 

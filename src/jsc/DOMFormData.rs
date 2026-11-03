@@ -17,9 +17,10 @@ unsafe extern "C" {
     safe fn WebCore__DOMFormData__fromJS(js_value0: JSValue) -> *mut DOMFormData;
     safe fn WebCore__DOMFormData__append(
         arg0: &mut DOMFormData,
-        arg1: &EncodedSlice,
+        arg1: &JSGlobalObject,
         arg2: &EncodedSlice,
-    );
+        arg3: &EncodedSlice,
+    ) -> bool;
     // safe: `DOMFormData`/`JSGlobalObject` are opaque `UnsafeCell`-backed ZST
     // handles; `&EncodedSlice` is ABI-identical to non-null `*const EncodedSlice` and
     // C++ only reads the named struct via `toStringCopy`. `arg3` is an opaque
@@ -31,7 +32,7 @@ unsafe extern "C" {
         arg2: &EncodedSlice,
         arg3: *mut c_void,
         arg4: &EncodedSlice,
-    );
+    ) -> bool;
     safe fn WebCore__DOMFormData__count(arg0: &mut DOMFormData) -> usize;
 }
 
@@ -64,18 +65,29 @@ impl DOMFormData {
         (!p.is_null()).then(|| DOMFormData::opaque_mut(p))
     }
 
-    pub fn append(&mut self, name_: &EncodedSlice, value_: &EncodedSlice) {
-        WebCore__DOMFormData__append(self, name_, value_)
+    #[track_caller]
+    pub fn append(
+        &mut self,
+        global: &JSGlobalObject,
+        name_: &EncodedSlice,
+        value_: &EncodedSlice,
+    ) -> JsResult<()> {
+        crate::call_false_is_throw(global, || {
+            WebCore__DOMFormData__append(self, global, name_, value_)
+        })
     }
 
+    #[track_caller]
     pub fn append_blob(
         &mut self,
         global: &JSGlobalObject,
         name_: &EncodedSlice,
         blob: *mut c_void,
         filename_: &EncodedSlice,
-    ) {
-        WebCore__DOMFormData__appendBlob(self, global, name_, blob, filename_);
+    ) -> JsResult<()> {
+        crate::call_false_is_throw(global, || {
+            WebCore__DOMFormData__appendBlob(self, global, name_, blob, filename_)
+        })
     }
 
     pub fn count(&mut self) -> usize {

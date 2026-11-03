@@ -642,8 +642,8 @@ describe.concurrent("otp", () => {
     expect(exitCode).toBe(0);
   });
 
-  // `--otp` is written into `npm-otp: <value>` as it is, so a CR or LF in it ends that header line and what follows
-  // goes out as more header lines.
+  // `--otp` is written into `npm-otp: <value>` as it is. A CR or LF in it would end that header line, and whatever
+  // follows would be sent as more header lines.
   test.each([
     ["CRLF", "abc\r\nX-Injected: 1"],
     ["a bare LF", "abc\ndef"],
@@ -749,7 +749,7 @@ describe.concurrent("the registry's npm-notice is printed", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("with the answer to --tolerate-republish", async () => {
+  test("with the response to the --tolerate-republish lookup", async () => {
     const { err, exitCode } = await publishTo(
       req => answer(200, req.method === "GET" ? { "npm-notice": notice } : {}),
       "--tolerate-republish",
@@ -820,9 +820,9 @@ test.concurrent("can publish a package then install it", async () => {
 });
 
 test.concurrent("the publish request has the Content-Type that verdaccio accepts", async () => {
-  // verdaccio compares the header with `application/json`, character for character, and answers 415 to
-  // `application/json; charset=utf-8`. The registry of these tests does the same, so every publish in this file
-  // fails if bun changes the header. This test says which header it is.
+  // verdaccio compares the header with `application/json`, character for character, and responds with 415 to
+  // `application/json; charset=utf-8`. The registry in these tests does the same, so every publish in this file fails
+  // if Bun changes the header. This test shows which header it is.
   using recording = new TestRegistry({ recordRequests: true }).start();
   const { packageDir, packageJson } = await recording.createTestDir();
   await Promise.all([
@@ -927,25 +927,28 @@ describe("relative tarball path", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("names the file `bun pm pack --filename` wrote for the same path from the same cwd", async () => {
-    using dir = tempDir("publish-tarball-round-trip", {
-      "package.json": JSON.stringify({
-        name: "publish-tarball-round-trip-root",
-        version: "0.0.0",
-        workspaces: ["packages/*"],
-      }),
-      "packages/member/package.json": JSON.stringify({ name: "publish-tarball-round-trip-member", version: "1.2.3" }),
-    });
-    const memberDir = join(String(dir), "packages", "member");
-    await pack(memberDir, env, "--filename", "./x.tgz");
-    expect(await exists(join(memberDir, "x.tgz"))).toBeTrue();
-    expect(await exists(join(String(dir), "x.tgz"))).toBeFalse();
+  test.concurrent(
+    "refers to the file that `bun pm pack --filename` wrote for the same path from the same cwd",
+    async () => {
+      using dir = tempDir("publish-tarball-round-trip", {
+        "package.json": JSON.stringify({
+          name: "publish-tarball-round-trip-root",
+          version: "0.0.0",
+          workspaces: ["packages/*"],
+        }),
+        "packages/member/package.json": JSON.stringify({ name: "publish-tarball-round-trip-member", version: "1.2.3" }),
+      });
+      const memberDir = join(String(dir), "packages", "member");
+      await pack(memberDir, env, "--filename", "./x.tgz");
+      expect(await exists(join(memberDir, "x.tgz"))).toBeTrue();
+      expect(await exists(join(String(dir), "x.tgz"))).toBeFalse();
 
-    const { out, err, exitCode } = await publish(dryRunEnv, memberDir, "./x.tgz", "--dry-run");
-    expect(err).not.toContain("error:");
-    expect(out).toContain(" + publish-tarball-round-trip-member@1.2.3");
-    expect(exitCode).toBe(0);
-  });
+      const { out, err, exitCode } = await publish(dryRunEnv, memberDir, "./x.tgz", "--dry-run");
+      expect(err).not.toContain("error:");
+      expect(out).toContain(" + publish-tarball-round-trip-member@1.2.3");
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 test.concurrent("can publish scoped packages", async () => {
@@ -1398,7 +1401,7 @@ test.concurrent("a published package can depend on another workspace through a w
   ).toEqual([corePkgJson, corePkgJson, corePkgJson]);
 });
 
-// One packer serves both commands; what differs is only where the tarball goes.
+// Both commands use the same packer. The only difference is where the tarball goes.
 test.concurrent("packs the same tarball as `bun pm pack`", async () => {
   const pkg = { name: "pack-and-publish-1", version: "1.2.3", bin: { tool: "bin/tool.js" } };
   using dir = await registryPackage(pkg, {
@@ -1489,7 +1492,7 @@ describe.concurrent("--dry-run", () => {
   // Publishing from a directory used to unlink `<name>-<version>.tgz` in the package directory
   // (where it packed to), also with --dry-run, where nothing had been packed and the file was
   // whatever the user had put there.
-  test("leaves a tarball that is already in the package directory alone", async () => {
+  test("doesn't touch a tarball that's already in the package directory", async () => {
     const { packageDir, packageJson } = await registry.createTestDir();
     const bunfig = await registry.authBunfig("dryrunexisting");
     await Promise.all([
@@ -1833,7 +1836,7 @@ describe.concurrent("tarball path", () => {
     ["as long as the path buffer once resolved", (dir: string) => nameResolvingTo(PATH_BUFFER_BYTES, dir)],
   ])("%s fails with ENAMETOOLONG", (_, tarballPathFor) => expectTooLong(tarballPathFor));
 
-  // What has to fit the buffer is the resolved path, not the argument as written.
+  // The resolved path has to fit in the buffer, not the argument as written.
   test("that only fits the path buffer once resolved is read", async () => {
     using dir = packageDir("publish-tarball-path-resolved", "publish-tarball-path-resolved");
     await pack(String(dir), env);
@@ -2027,8 +2030,8 @@ describe.concurrent("`private` that is not a boolean", () => {
   });
 });
 
-// As for `JSON.parse`, which is how everybody else reads the package.json in the tarball.
-describe.concurrent("of two equal keys in package.json the last one counts", () => {
+// Same as `JSON.parse`, which is how every other tool reads the package.json in the tarball.
+describe.concurrent("the last of two equal keys in package.json wins", () => {
   const equalKeys = `{
     "name": "first-name", "version": "1.0.0", "private": true, "publishConfig": { "tag": "first" },
     "name": "equal-keys", "version": "2.0.0", "private": false, "publishConfig": { "tag": "second", "tag": "last" }
@@ -2125,7 +2128,7 @@ describe.concurrent("package.json version", () => {
     }
   });
 
-  // The check is made on what the scripts leave behind, not on the placeholder they replace.
+  // The check applies to what the scripts leave behind, not to the placeholder that they replace.
   test.each([
     ["0.0.0-PLACEHOLDER_", "2.0.0", ""],
     ["1.0.0", "not-a-version", NOT_SEMVER],
@@ -2148,7 +2151,7 @@ describe.concurrent("package.json version", () => {
   });
 });
 
-// bun cannot sign a provenance statement. A publish that asks for one has to fail: one that goes through
+// Bun can't sign a provenance statement. A publish that asks for one has to fail, because a publish that succeeds
 // without it looks the same as one that has it.
 describe.concurrent("provenance", () => {
   const NOT_SUPPORTED = "is not supported yet: bun publish cannot generate provenance statements\n";
@@ -2267,7 +2270,7 @@ describe.concurrent("provenance", () => {
   type Settings = { args?: string[]; publishConfig?: object; vars?: object; npmrc?: string; fromTarball?: boolean };
 
   test.each<Settings>([
-    // What npm reads as false.
+    // Values that npm reads as false.
     { args: ["--provenance=false"] },
     { args: ["--no-provenance"] },
     { publishConfig: { provenance: null } },
@@ -2276,7 +2279,7 @@ describe.concurrent("provenance", () => {
     { vars: { NPM_CONFIG_PROVENANCE: "0" } },
     { vars: { NPM_CONFIG_PROVENANCE: "null" } },
     { npmrc: "provenance=0" },
-    // As in npm, the command line wins over publishConfig, that over the environment, that over .npmrc.
+    // Like in npm, the command line takes precedence over publishConfig, then the environment, then .npmrc.
     { args: ["--no-provenance"], publishConfig: { provenance: true } },
     { args: ["--no-provenance"], publishConfig: { provenance: true }, fromTarball: true },
     { args: ["--provenance=false"], vars: { NPM_CONFIG_PROVENANCE: "true" }, npmrc: "provenance=true" },
@@ -2419,7 +2422,8 @@ describe.concurrent("tag", () => {
     });
   }
 
-  // `bun add tag-pkg@1.2.3` asks for the version, so nobody could install by such a tag. `npm publish` refuses them too.
+  // `bun add tag-pkg@1.2.3` asks for the version, so nobody could install by such a tag. `npm publish` refuses them
+  // too.
   test.each(["1.2.3", "v1.2.3", "v1", "1.x", "x", "*", "^1.0.0", ">=2", "1.0.0-rc.1"])(
     "%j is refused as the tag before a request is sent",
     async tag => {
@@ -2442,7 +2446,7 @@ describe.concurrent("tag", () => {
     },
   );
 
-  test("a prerelease is not published as latest unless --tag latest says so", async () => {
+  test("a prerelease isn't published as latest without --tag latest", async () => {
     using mock = mockRegistry();
     using dir = tagPackage(mock, "2.0.0-beta.1");
     await pack(String(dir), env, "--filename", "pkg.tgz");
@@ -2501,7 +2505,7 @@ describe("publishConfig registry", () => {
     return {
       url: `${secure ? "https" : "http"}://127.0.0.1:${server.port}/`,
       host: `127.0.0.1:${server.port}`,
-      // What `//host/path/:_authToken=` lines in .npmrc key on.
+      // The key that `//host/path/:_authToken=` lines in .npmrc use.
       npmrcToken: `//127.0.0.1:${server.port}/:_authToken=token-for-${server.port}`,
       token: `token-for-${server.port}`,
       requests,
@@ -2591,7 +2595,7 @@ describe("publishConfig registry", () => {
       });
     }
 
-    test.concurrent.each(["prepublishOnly", "prepack", "prepare"])("one that %s writes counts", async script => {
+    test.concurrent.each(["prepublishOnly", "prepack", "prepare"])("one that %s writes is used", async script => {
       using configured = mockRegistry();
       using pinned = mockRegistry({ secure: true });
       using dir = scripted(
@@ -2610,7 +2614,7 @@ describe("publishConfig registry", () => {
       expect(exitCode).toBe(0);
     });
 
-    test.concurrent("one that a script takes out does not count", async () => {
+    test.concurrent("one that a script removes isn't used", async () => {
       using configured = mockRegistry();
       using pinned = mockRegistry({ secure: true });
       using dir = scripted(
@@ -2670,7 +2674,7 @@ describe("publishConfig registry", () => {
     expect(pinned.requests).toEqual([]);
   });
 
-  test.concurrent("without credentials of its own, nothing is sent to the configured registry", async () => {
+  test.concurrent("without its own credentials, nothing is sent to the configured registry", async () => {
     using configured = mockRegistry();
     using pinned = mockRegistry();
     using dir = tempDir("publish-config-registry-no-auth", {
@@ -3231,7 +3235,7 @@ describe.concurrent("bin in the published manifest", () => {
     expect(captured.versions["1.0.0"].bin).toEqual(expected);
   });
 
-  // Whatever folder the command is run in.
+  // No matter which folder the command runs in.
   test.each([
     [{ directories: { bin: "bin" } }, { "tool-cmd": "bin/tool-cmd", "other-cmd": "bin/more/other-cmd" }, ""],
     [{ directories: { bin: "scripts" } }, undefined, "warn: bin directory 'scripts' does not exist\n"],
@@ -3265,7 +3269,7 @@ describe.concurrent("bin in the published manifest", () => {
     expect(exitCode).toBe(0);
   });
 
-  // Neither is packed. Listing them would send the file names of a directory outside the package to the registry.
+  // Neither one is packed. Listing them would send the file names of a directory outside the package to the registry.
   test.each([
     ["linked", "warn: bin directory 'linked' is not a directory\n"],
     ["linked/nested", "warn: bin directory 'linked/nested' does not exist\n"],
@@ -3278,7 +3282,7 @@ describe.concurrent("bin in the published manifest", () => {
       "pkg/bunfig.toml": mockBunfig(mock),
       "pkg/index.js": "module.exports = 1;",
     });
-    // A junction on Windows; "junction" is ignored elsewhere and makes a plain symlink.
+    // A junction on Windows. Elsewhere, "junction" is ignored and a plain symlink is created.
     await symlink(join(dir, "outside"), join(dir, "pkg", "linked"), "junction");
 
     const { err, exitCode } = await publish(env, join(dir, "pkg"));
@@ -3515,7 +3519,8 @@ describe.concurrent("--tolerate-republish", () => {
     expect(exitCode).toBe(0);
   });
 
-  // Nothing was published, so nothing says so: no ` + name@version`, no `publish` and `postpublish` scripts.
+  // Nothing was published, so nothing says that it was: no ` + name@version`, and no `publish` and `postpublish`
+  // scripts.
   test("a skipped version runs the scripts of the pack only", async () => {
     using mock = mockRegistry(req =>
       req.method === "GET"
@@ -3652,7 +3657,7 @@ describe.concurrent("--recursive and --filter", () => {
     expect(registry.asked).toEqual(["GET rec-a", "GET rec-b", "GET rec-c", "PUT rec-a", "PUT rec-b", "PUT rec-c"]);
     expect(published(out)).toEqual([" + rec-a@1.0.0", " + rec-b@1.0.0", " + rec-c@1.0.0"]);
     expect(out.match(/^skipped .*$/gm)?.sort()).toEqual(["skipped rec-hidden: private", "skipped rec-root: private"]);
-    // each script sees its own package, not the one that was packed last
+    // Each script sees its own package, not the one that was packed last.
     expect(out.match(/^postpublish .*$/gm)).toEqual(["postpublish rec-a", "postpublish rec-b", "postpublish rec-c"]);
     expect(registry.manifests["rec-b"].versions["1.0.0"].dependencies).toEqual({ "rec-a": "1.0.0" });
     expect(registry.manifests["rec-c"].versions["1.0.0"].dependencies).toEqual({ "rec-b": "^1.0.0" });
@@ -3804,14 +3809,14 @@ describe.concurrent("--recursive and --filter", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("a rejected package ends the run, and the next run goes on from there", async () => {
+  test("a rejected package ends the run, and the next run continues from there", async () => {
     using registry = workspaceRegistry();
     registry.reject.push("rec-b");
     using dir = workspace(registry.mock);
 
     let { out, err, exitCode } = await publish(env, String(dir), "-r");
     expect(err).toContain("rec-b is not yours");
-    // `c` depends on `b`, so it stays off the registry too
+    // `c` depends on `b`, so it isn't published either.
     expect(registry.asked).toEqual(["GET rec-a", "GET rec-b", "GET rec-c", "PUT rec-a", "PUT rec-b"]);
     expect(published(out)).toEqual([" + rec-a@1.0.0"]);
     expect(exitCode).toBe(1);
@@ -3855,6 +3860,31 @@ describe.concurrent("--recursive and --filter", () => {
     expect(exitCode).toBe(1);
   });
 
+  test.each(["--filter=*", "-F=*", "-F*", "-r", "--recursive", "--filter publish"])(
+    "`bun %s publish` publishes nothing",
+    async flags => {
+      using registry = workspaceRegistry();
+      using dir = workspace(registry.mock, { named: { name: "publish", version: "1.0.0" } });
+
+      await using proc = spawn({
+        cmd: [bunExe(), ...flags.split(" "), "publish"],
+        cwd: String(dir),
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [flag] = flags.split(" ");
+      expect(err).toBe(
+        `error: refusing to publish: ${flag} must come after "publish"\n` +
+          `note: use bun publish ${flag}, or bun run --filter='*' publish to run "publish" scripts\n`,
+      );
+      expect(published(out)).toEqual([]);
+      expect(registry.asked).toEqual([]);
+      expect(exitCode).toBe(1);
+    },
+  );
+
   test("--filter publishes only the matching packages", async () => {
     using registry = workspaceRegistry();
     using dir = workspace(registry.mock);
@@ -3889,8 +3919,8 @@ describe.concurrent("--recursive and --filter", () => {
     expect(exitCode).toBe(0);
   });
 
-  // What one package.json pins must not reach the next package: not the tag, not the registry, and no registry gets
-  // the token of the other.
+  // What one package.json pins must not affect the next package: not the tag, not the registry, and no registry gets
+  // the other's token.
   test.each([
     {
       what: "registry and tag",
@@ -3912,7 +3942,7 @@ describe.concurrent("--recursive and --filter", () => {
       tag: "latest",
     },
   ])(
-    "the publishConfig of one package applies to it alone: $what",
+    "the publishConfig of one package only applies to that package: $what",
     async ({ members, filters, first, second, tag }) => {
       using configured = workspaceRegistry();
       // https: a `.npmrc` line does not follow a URL that a package.json names into cleartext.
@@ -3983,7 +4013,7 @@ describe.concurrent("--recursive and --filter", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("what was published installs", async () => {
+  test("the published packages can be installed", async () => {
     for (const name of ["publish-recursive-a", "publish-recursive-b"]) registry.packages.delete(name);
     using dir = tempDir("publish-recursive-install", {
       "bunfig.toml": registryBunfig,
@@ -4157,7 +4187,7 @@ describe.concurrent("NODE_TLS_REJECT_UNAUTHORIZED=0", () => {
   });
 });
 
-describe.concurrent.each(unprintable)("%s is printed spelled out", (_, raw, spelled) => {
+describe.concurrent.each(unprintable)("%s is printed escaped", (_, raw, spelled) => {
   const dryRunEnv = { ...env, npm_config_registry: "http://someuser:hunter2@127.0.0.1:1/" };
   const anyUnprintable = /[\x00-\x09\x0b-\x1f\x7f-\x9f]/;
 

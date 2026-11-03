@@ -4,10 +4,10 @@
 //   ESLINT_DIR=<eslint checkout> bun extract-eslint.ts [--jobs N] [rule...]
 //
 // Each test file is loaded with `lib/rule-tester/rule-tester.js` replaced by a
-// stub that only records what it is given. Every recorded case is then linted
-// by the checkout's real `Linter`, configured the way the real RuleTester
-// configures it, and what the Linter reports is the ground truth that is
-// written out. What the upstream test asserts is only used as a cross-check.
+// stub that only records its arguments. Every recorded case is then linted by
+// the checkout's real `Linter`, configured the way the real RuleTester
+// configures it. The fixture records what the Linter reports. The upstream
+// test's assertions are only used as a cross-check.
 
 import { readdirSync, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -39,8 +39,8 @@ const eslintDir = realpathSync(requiredEnv("ESLINT_DIR"));
 const require = createRequire(join(eslintDir, "package.json"));
 const builtinRules: Map<string, RuleModule> = require("./lib/rules");
 
-/** The deprecated rules about layout, which @stylistic/eslint-plugin has taken over. `bun lint` does not have them. */
-function isAboutLayout(rule: string) {
+/** True for the deprecated layout rules that moved to @stylistic/eslint-plugin. `bun lint` doesn't implement them. */
+function isLayoutRule(rule: string) {
   const replacedBy: { plugin?: { name?: string } }[] = builtinRules.get(rule)?.meta?.deprecated?.replacedBy ?? [];
   return replacedBy.length > 0 && replacedBy.every(it => it.plugin?.name === "@stylistic/eslint-plugin");
 }
@@ -48,7 +48,7 @@ function isAboutLayout(rule: string) {
 const allRules = readdirSync(join(eslintDir, "lib/rules"))
   .filter(file => file.endsWith(".js") && file !== "index.js")
   .map(file => basename(file, ".js"))
-  .filter(rule => !isAboutLayout(rule))
+  .filter(rule => !isLayoutRule(rule))
   .sort();
 
 if (!args.worker) {
@@ -114,7 +114,7 @@ require.cache[ruleTesterPath] = {
   exports: RecordingRuleTester,
 } as any;
 
-/** Test case properties that are not ESLint config (`RuleTesterParameters` upstream). */
+/** Test case properties that aren't ESLint config (`RuleTesterParameters` upstream). */
 const notConfig = ["name", "code", "filename", "options", "before", "after", "errors", "output", "only"];
 
 /**
@@ -146,7 +146,7 @@ function runCase(
   valid: boolean,
   report: RuleReport,
   index: number,
-  /** The parser to use instead of the one the test names. */
+  /** Overrides the test's parser. */
   realParser?: unknown,
 ) {
   const item: Config = typeof rawItem === "string" ? { code: rawItem } : { ...rawItem };
@@ -203,7 +203,7 @@ function runCase(
 
   const dropped: string[] = [];
   const parserOptions = jsonPart(languageOptions.parserOptions, dropped, "parserOptions") as Record<string, unknown>;
-  // ESLint copies `sourceType` in here for espree; it is not something the test set.
+  // ESLint copies `sourceType` in here for espree. The test didn't set it.
   if (parser === "espree") delete parserOptions.sourceType;
   const jsonOptions = jsonPart(options, dropped, "options") as unknown[];
   const settings = jsonPart(effective.settings, dropped, "settings") as Record<string, unknown>;
@@ -240,10 +240,11 @@ function runCase(
 }
 
 /**
- * A "parser" of `tests/fixtures/parsers` returns a hard-coded AST of the code: TypeScript, Flow or
- * proposals as some parser once read them. Where a real parser reads the code today, and ESLint then
- * reports what the test asserts, that is the case. Code that both refuse (`declare var a = 1`, which
- * typescript-estree throws on) stays a case for the parser "other": TypeScript, read leniently.
+ * A "parser" in `tests/fixtures/parsers` returns a hard-coded AST for the code: TypeScript, Flow or
+ * proposals, as some parser once parsed them. If a real parser accepts the code today and ESLint then
+ * reports what the test asserts, the case is recorded with that parser. Code that both real parsers
+ * reject (`declare var a = 1`, which typescript-estree throws on) is recorded with the parser "other",
+ * which means leniently parsed TypeScript.
  */
 function runCaseWithRealParser(...[ruleName, run, item, valid, report, index]: Parameters<typeof runCase>) {
   const scratch: RuleReport = { rule: ruleName, disagreements: [], notes: [] };

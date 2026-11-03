@@ -3,8 +3,8 @@ use crate::js::format::identifier;
 use crate::prelude::*;
 use crate::{format_args, write};
 
-/// `K in // comment` for oxfmt, `K in  // comment` for Prettier, before a union that has each type on a line of its own.
-fn one_blank_before_line_comment_behind_in(f: &Formatter<'_>) -> bool {
+/// Before a union with each type on its own line, oxfmt prints `K in // comment` and Prettier `K in  // comment`.
+fn one_space_before_line_comment_after_in(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
@@ -16,7 +16,7 @@ pub(crate) fn write_ts_mapped_type<'a>(
 ) {
     let param = mapped.param();
     let key = param.name();
-    // One that has a line break after its `{` in the source stays broken.
+    // A mapped type with a line break after its `{` in the source stays broken.
     let should_expand = f.options().expand == Expand::Auto
         && f.source_text()
             .has_line_terminator_after_skipping_comments(ty.span().start + 1);
@@ -40,8 +40,9 @@ pub(crate) fn write_ts_mapped_type<'a>(
         }
 
         let format_key = format_with(|f| {
-            // The blank after `in` stays if a comment that trails the key ends up behind it.
-            let comment_brings_its_blank = one_blank_before_line_comment_behind_in(f)
+            // A comment trailing the key ends up after `in` and brings its own space. Prettier keeps the space after
+            // `in` too.
+            let comment_brings_its_space = one_space_before_line_comment_after_in(f)
                 && !f.is_quiet()
                 && (param.constraint())
                     .is_some_and(|constraint| matches!(constraint.kind(), TypeKind::Union(_)))
@@ -51,7 +52,7 @@ pub(crate) fn write_ts_mapped_type<'a>(
                 f,
                 [
                     identifier(key),
-                    match comment_brings_its_blank {
+                    match comment_brings_its_space {
                         true => " in",
                         false => " in ",
                     },
@@ -75,7 +76,7 @@ pub(crate) fn write_ts_mapped_type<'a>(
         if let Some(type_annotation) = mapped.ty() {
             write!(f, [":", space(), type_annotation]);
         }
-        // In Flow, whose types those in a JavaScript file are, it is a property of an object type.
+        // Types in a JavaScript file are Flow's, where a mapped type is a property of an object type.
         match f.file().is_javascript() {
             true => write!(f, FormatTrailingCommas::ES5),
             false => write!(f, if_group_breaks(&OptionalSemicolon)),
@@ -97,8 +98,8 @@ pub(crate) fn write_ts_mapped_type<'a>(
     );
 }
 
-/// The comments between the `{` and the `[`, each on its own line. The last one stays on the line
-/// of the `[` if it is there in the source and fits.
+/// The comments between the `{` and the `[`, each on its own line. The last one stays on the `[`'s line if it's there
+/// in the source and fits.
 fn write_comments_before_bracket<'a>(comments: CommentList<'a>, f: &mut Formatter<'a>) {
     let mut comments = comments.iter().peekable();
     while let Some(comment) = comments.next() {

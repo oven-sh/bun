@@ -16,8 +16,6 @@ use bun_semver as Semver;
 use bun_sys::FdDirExt;
 use bun_sys::{self as sys, Dir, Fd, File};
 
-use crate::bun_progress::Node as ProgressNode;
-
 use super::options::{self, Enable, LogLevel};
 use super::{Command, PackageManager, ProgressStrings, Subcommand};
 
@@ -133,34 +131,12 @@ pub fn get_cache_directory(this: &mut PackageManager) -> Fd {
 /// first, because `get_cache_directory` cannot fail once the directory is open.
 #[inline]
 pub fn try_get_cache_directory(this: &mut PackageManager) -> Result<Fd, DirectoryError> {
-    // SAFETY: `&mut PackageManager` is exclusive over every field the raw
-    // path projects.
-    unsafe { get_cache_directory_raw(this) }.map_err(DirectoryError::OpenCache)
-}
-
-/// Raw-pointer entry for callers that hold a disjoint `&mut this.manifests`
-/// borrow (see `PackageManifestMap::by_name_hash_allow_expired`). Never
-/// materializes a `&mut PackageManager` covering the whole struct — only the
-/// disjoint `cache_directory`, `cache_directory_path`, `options.enable`, and
-/// `env` fields are projected, so an outstanding `&mut manifests` derived
-/// from the same provenance root stays valid under Stacked Borrows.
-///
-/// # Safety
-/// `this` must be valid for reads and writes for the call's duration, and the
-/// caller must hold no live borrow that overlaps the fields listed above.
-#[inline]
-pub(crate) unsafe fn get_cache_directory_raw(this: *mut PackageManager) -> sys::Maybe<Fd> {
-    // SAFETY: caller contract — `cache_directory` is disjoint from any
-    // borrow the caller holds.
-    if let Some(d) = unsafe { (*this).cache_directory.as_ref() } {
+    if let Some(d) = this.cache_directory.as_ref() {
         return Ok(d.fd());
     }
-    // SAFETY: caller contract — `this` is valid and no live borrow overlaps
-    // `options.enable`/`options.cache_directory`/`env`/`cache_directory_path`.
-    let d = unsafe { ensure_cache_directory(this) }?;
+    let d = ensure_cache_directory(this).map_err(DirectoryError::OpenCache)?;
     let fd = d.fd();
-    // SAFETY: as above; single writer.
-    unsafe { (*this).cache_directory = Some(d) };
+    this.cache_directory = Some(d);
     Ok(fd)
 }
 
@@ -362,7 +338,7 @@ fn get_temporary_directory_run(
             manager.cache_directory_path.as_bytes(),
             b".tmp",
         ]);
-        bun_core::handle_oom(FileSystem::instance().dirname_store().append(joined))
+        bun_core::handle_oom(FileSystem::get().dirname_store().append(joined))
     } else {
         temp_dir_name
     };
@@ -375,52 +351,34 @@ fn get_temporary_directory_run(
     })
 }
 
-/// # Safety
-/// See `get_cache_directory_raw` — only `options.enable`,
-/// `options.cache_directory` (read), `env`, and `cache_directory_path` are
-/// touched; caller must hold no overlapping borrow on those projections.
-/// Borrows into other `options` sub-fields (e.g. `options.registries` /
-/// `options.scope`) remain valid.
 #[cold]
 #[inline(never)]
-unsafe fn ensure_cache_directory(this: *mut PackageManager) -> sys::Maybe<Dir> {
+fn ensure_cache_directory(this: &mut PackageManager) -> sys::Maybe<Dir> {
     loop {
-        // SAFETY: field projections through the caller-provided provenance
-        // root; see fn safety contract. Project `enable` narrowly so callers
-        // may hold borrows into disjoint `options` sub-fields.
-        if unsafe { (*this).options.enable.contains(Enable::CACHE) } {
-            // SAFETY: caller-provided provenance root; `env_mut()` itself
-            // encapsulates the BackRef deref + singleton-liveness invariant.
-            let env = unsafe { &*this }.env_mut();
-            // SAFETY: shared read of `options`; disjoint from `cache_directory_path`.
-            let configured = unsafe { (*this).options.cache_directory };
-            let opened = fetch_cache_directory_path(env, Some(configured)).and_then(|cache_dir| {
-                // SAFETY: see fn safety contract.
-                unsafe { (*this).cache_directory_path = ZBox::from_bytes(&cache_dir.path) };
-                Dir::cwd().make_open_path(&cache_dir.path, Default::default())
-            });
+        if this.options.enable.contains(Enable::CACHE) {
+            let configured = this.options.cache_directory;
+            let opened = fetch_cache_directory_path(this.env_mut(), Some(configured)).and_then(
+                |cache_dir| {
+                    this.cache_directory_path = ZBox::from_bytes(&cache_dir.path);
+                    Dir::cwd().make_open_path(&cache_dir.path, Default::default())
+                },
+            );
 
             match opened {
                 Ok(d) => return Ok(d),
                 Err(_) => {
-                    // SAFETY: narrow `&mut enable` projection; disjoint from
-                    // any `&options.{registries,scope}` the caller may hold.
-                    unsafe { (*this).options.enable.set(Enable::CACHE, false) };
-                    // SAFETY: see fn safety contract.
-                    unsafe { (*this).cache_directory_path = ZBox::from_bytes(b"") };
+                    this.options.enable.set(Enable::CACHE, false);
+                    this.cache_directory_path = ZBox::from_bytes(b"");
                     continue;
                 }
             }
         }
 
-        // SAFETY: see fn safety contract.
-        unsafe {
-            (*this).cache_directory_path =
-                ZBox::from_bytes(path::resolve_path::join_abs_string::<path::platform::Auto>(
-                    FileSystem::instance().top_level_dir(),
-                    &[b"node_modules", b".cache"],
-                ))
-        };
+        this.cache_directory_path =
+            ZBox::from_bytes(path::resolve_path::join_abs_string::<path::platform::Auto>(
+                FileSystem::get().top_level_dir(),
+                &[b"node_modules", b".cache"],
+            ));
 
         return Dir::cwd().make_open_path(b"node_modules/.cache", Default::default());
     }
@@ -428,11 +386,12 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> sys::Maybe<Dir> {
 
 pub struct CacheDir {
     pub path: Vec<u8>,
-    /// Nothing names a cache directory: `path` is below the working directory, whoever owns that.
+    /// True if no cache directory is configured, so `path` is below the working directory, whoever
+    /// owns that.
     pub is_cwd_fallback: bool,
 }
 
-/// An empty variable counts as unset: `abs(&[b""])` is the project directory.
+/// An empty variable counts as unset, because `abs(&[b""])` would be the project directory.
 pub fn fetch_cache_directory_path(
     env: &mut DotEnvLoader,
     configured: Option<&[u8]>,
@@ -462,7 +421,7 @@ pub fn fetch_cache_directory_path(
     };
 
     let mut buf = path::path_buffer_pool::get();
-    let Some(abs) = FileSystem::instance().abs_buf_checked(parts, &mut buf[..]) else {
+    let Some(abs) = FileSystem::get().abs_buf_checked(parts, &mut buf[..]) else {
         return Err(sys::Error::from_code(sys::E::ENAMETOOLONG, sys::Tag::open).with_path(parts[0]));
     };
     Ok(CacheDir {
@@ -473,12 +432,13 @@ pub fn fetch_cache_directory_path(
 
 // ─────────────────────── cached folder name printers ──────────────────────────
 
-/// What an entry of the cache root is, by name. Every writer into it is listed at its variant.
+/// What kind of entry something in the cache root is, going by its name. Each variant lists the
+/// code that writes it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CacheEntryKind {
     /// `<name>@<version>...`, `@G@...`, `@GH@...`, `@T@...` (the printers below).
     Package,
-    /// `@<scope>`: holds scoped `Package` and `Index` entries.
+    /// `@<scope>`. Contains the scoped `Package` and `Index` entries.
     Scope,
     /// `<name>/<version>...` symlinks to `Package` directories (`ExtractTarball::extract`).
     Index,
@@ -750,7 +710,8 @@ pub fn cached_npm_package_folder_name_print<'a>(
     };
     w.put(b"@@");
     w.put(&scope_url.hostname[..visible_len]);
-    // The host alone names `https://host/`. A port, a path or http is another registry on it.
+    // The host alone stands for `https://host/`. With a port, a path or http, it's a different
+    // registry on that host.
     if visible_len < scope_url.hostname.len()
         || !scope_url.is_https()
         || !scope_url.port.is_empty()
@@ -831,7 +792,8 @@ pub fn cached_npm_package_folder_print_basename<'a>(
     w.finish_z()
 }
 
-/// `@T@sha512-<first 16 digest bytes as hex>@@@1`: a path or URL holds other bytes tomorrow.
+/// Prints `@T@sha512-<first 16 digest bytes as hex>@@@1`. The name uses the digest because a path
+/// or URL can serve different bytes tomorrow.
 pub fn cached_tarball_folder_name_print<'a>(
     buf: &'a mut [u8],
     integrity: &Integrity,
@@ -854,7 +816,7 @@ pub fn cached_tarball_folder_name_print<'a>(
         _ => {
             let mut hasher = bun_wyhash::Wyhash11::init(0);
             if tag == ResolutionTag::LocalTarball {
-                hasher.update(FileSystem::instance().top_level_dir());
+                hasher.update(FileSystem::get().top_level_dir());
             }
             hasher.update(url);
             hasher.update(integrity.slice());
@@ -866,7 +828,8 @@ pub fn cached_tarball_folder_name_print<'a>(
     w.finish_z()
 }
 
-/// Empty, which callers treat as a cache miss, for a row that this run gives its integrity.
+/// Returns an empty name, which callers treat as a cache miss, for a dependency that only gets its
+/// integrity during this run.
 pub fn cached_tarball_folder_name(
     this: &PackageManager,
     integrity: &Integrity,
@@ -900,7 +863,8 @@ pub fn cached_tarball_folder_name(
 }
 
 impl PackageManager {
-    /// Whether what this run reads from a `file:` path or URL can become the integrity in bun.lock.
+    /// Returns true if what this run reads from a `file:` path or URL can become the integrity in
+    /// bun.lock.
     pub(crate) fn pins_tarballs(&self) -> bool {
         self.options.do_.save_lockfile() && self.options.offline != options::OfflineMode::Offline
     }
@@ -911,7 +875,8 @@ impl PackageManager {
             && !self.options.do_.contains(options::Do::VERIFY_INTEGRITY)
     }
 
-    /// `named_here`: the names on the command line are about the package.json `dependency` is in.
+    /// `named_here` means the names on the command line refer to the package.json that `dependency`
+    /// is in.
     pub(crate) fn repins_tarball(
         &self,
         dependency: &Dependency,
@@ -981,7 +946,7 @@ pub fn setup_global_dir(manager: &mut PackageManager, ctx: &Command::Context) ->
     manager.options.global_bin_dir = options::open_global_bin_dir(ctx.install.as_deref())?;
     let mut out_buffer = bun_paths::path_buffer_pool::get();
     let result = sys::get_fd_path_z(manager.options.global_bin_dir, &mut out_buffer)?;
-    let path = FileSystem::instance()
+    let path = FileSystem::get()
         .dirname_store()
         .append(result.as_bytes_with_nul())?;
     // SAFETY: `path` includes the trailing NUL (we appended `as_bytes_with_nul`)
@@ -1027,17 +992,16 @@ pub fn try_global_link_dir(this: &mut PackageManager) -> Result<Fd, DirectoryErr
         Ok(p) => p,
         Err(err) => return Err(DirectoryError::GlobalLinkPath(err)),
     };
-    this.global_link_dir_path = Box::<[u8]>::from(bun_core::handle_oom(
-        FileSystem::instance().dirname_store().append(path_),
-    ));
+    this.global_link_dir_path =
+        bun_core::handle_oom(FileSystem::get().dirname_store().append(path_));
     this.global_dir = Some(global_dir);
     this.global_link_dir = Some(link_dir);
     Ok(link_fd)
 }
 
-pub fn global_link_dir_path(this: &mut PackageManager) -> &[u8] {
+pub fn global_link_dir_path(this: &mut PackageManager) -> &'static [u8] {
     let _ = global_link_dir(this);
-    &this.global_link_dir_path
+    this.global_link_dir_path
 }
 
 // ────────────────────────── cached path resolution ────────────────────────────
@@ -1162,7 +1126,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
             cache_dir = Fd::cwd();
         }
         ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
-            // Opened first: under `--no-verify` the name depends on what the cache holds.
+            // Open it first, because with `--no-verify` the name depends on what's in the cache.
             cache_dir = get_cache_directory(manager);
             cache_dir_subpath =
                 cached_tarball_folder_name(manager, integrity, resolution, patch_hash);
@@ -1340,17 +1304,9 @@ pub fn save_lockfile(
         return Ok(false);
     }
 
-    // `Progress::start`
-    // returns `&mut Node` borrowing `this.progress`, which would conflict with
-    // the `&mut this` reborrows below. Stash as a raw pointer
-    // (the node lives inside `this.progress.root`).
-    let mut save_node: *mut ProgressNode = core::ptr::null_mut();
-
     if log_level.show_progress() {
         this.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-        save_node = this.progress.start(ProgressStrings::save(), 0);
-        // SAFETY: `save_node` was just set by `progress.start()` and is non-null.
-        unsafe { (*save_node).activate() };
+        this.progress.start(ProgressStrings::save(), 0).activate();
 
         this.progress.refresh();
     }
@@ -1387,10 +1343,7 @@ pub fn save_lockfile(
     }
 
     if log_level.show_progress() {
-        // SAFETY: `save_node` was set to a non-null `&mut Node` in the
-        // matching `show_progress()` branch above and `this.progress` is
-        // unchanged in between.
-        unsafe { (*save_node).end() };
+        this.progress.root.end();
         this.progress.refresh();
         this.progress.root.end();
         this.progress = Default::default();

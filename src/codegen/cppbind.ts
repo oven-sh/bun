@@ -745,7 +745,11 @@ async function processFile(parser: CppParser, file: string, allFunctions: CppFn[
     }
   }
 
-  const tree = parser.parse(sourceCode);
+  // The parser expands no macros, and these two open and close a block. The replacements have the length of what they replace.
+  const parsedText = sourceCode
+    .replace(/BUN_BEGIN_REMOVABLE_ENTRY_POINT\([^)]*\)/g, macro => "{".padEnd(macro.length))
+    .replace(/BUN_END_REMOVABLE_ENTRY_POINT/g, macro => "}".padEnd(macro.length));
+  const tree = parser.parse(parsedText);
   const lineInfo = new LineInfo(sourceCode);
   const ctx: ParseContext = { file, sourceCode, lineInfo };
 

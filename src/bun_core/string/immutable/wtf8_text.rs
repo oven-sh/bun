@@ -206,6 +206,50 @@ pub fn wtf8_to_utf16(text: &[u8]) -> Vec<u16> {
     wtf8_to_utf16_alloc(text).unwrap_or_else(|| text.iter().map(|&byte| u16::from(byte)).collect())
 }
 
+/// The UTF-16 code units that JavaScript has for `text`, whatever bytes it is made of. What isn't a valid sequence has become U+FFFD when
+/// the file was read, as `TextDecoder` and Node read it: the start of a sequence that does not go on is one, however many bytes it
+/// has. [`wtf8_to_utf16`] has one for each byte.
+pub(super) fn wtf8_decoded_units(text: &[u8]) -> Wtf8DecodedUnits<'_> {
+    Wtf8DecodedUnits {
+        text,
+        at: 0,
+        trail: None,
+    }
+}
+
+pub(super) struct Wtf8DecodedUnits<'t> {
+    text: &'t [u8],
+    at: usize,
+    /// The second half of the pair whose first half was the last unit.
+    trail: Option<u16>,
+}
+
+impl Iterator for Wtf8DecodedUnits<'_> {
+    type Item = u16;
+
+    fn next(&mut self) -> Option<u16> {
+        if let Some(trail) = self.trail.take() {
+            return Some(trail);
+        }
+        let rest = self.text.get(self.at..)?;
+        let (cp, size) = match wtf8_codepoint_at(rest, 0) {
+            (_, 0) => return None,
+            // U+FFFD itself has three bytes.
+            (UNICODE_REPLACEMENT, 1) => {
+                let cut = rest.utf8_chunks().next().map_or(1, |it| it.invalid().len());
+                (UNICODE_REPLACEMENT, cut.max(1))
+            }
+            found => found,
+        };
+        self.at += size;
+        if cp > 0xFFFF {
+            self.trail = Some(0xDC00 | (cp & 0x3FF) as u16);
+            return Some((0xD7C0 + (cp >> 10)) as u16);
+        }
+        Some(cp as u16)
+    }
+}
+
 /// The text that has the UTF-16 code units `units`. Half of a surrogate pair stays what it is.
 pub fn wtf16_to_wtf8(units: &[u16]) -> Vec<u8> {
     let mut text = Vec::with_capacity(units.len());
@@ -289,6 +333,35 @@ mod tests {
         ] {
             assert_eq!(utf8_lossy_len_utf16(text), go);
             assert_eq!(utf8_decoded_len_utf16(text), node);
+        }
+    }
+
+    #[test]
+    fn decoded_units_are_those_of_a_file_that_javascript_has_read() {
+        let texts: &[(&[u8], &[u16])] = &[
+            (b"", &[]),
+            (b"ab", &[0x61, 0x62]),
+            (
+                "a😀é\u{FFFD}".as_bytes(),
+                &[0x61, 0xD83D, 0xDE00, 0xE9, 0xFFFD],
+            ),
+            (b"\xF4\x8F\xBF\xBF", &[0xDBFF, 0xDFFF]),
+            (b"a\xED\xA0\x80b", &[0x61, 0xD800, 0x62]),
+            (b"\xED\xA0\xBD\xED\xB8\x80", &[0xD83D, 0xDE00]),
+            (b"a\xF0\x9F\x98b", &[0x61, 0xFFFD, 0x62]),
+            (b"a\xF0\x9F\x98", &[0x61, 0xFFFD]),
+            (b"a\xF0\x9Fb", &[0x61, 0xFFFD, 0x62]),
+            (b"a\xE2\x82b", &[0x61, 0xFFFD, 0x62]),
+            (b"\xF0\x9F\xF0\x9F\x98\x80", &[0xFFFD, 0xD83D, 0xDE00]),
+            (b"\xED\xA0b", &[0xFFFD, 0xFFFD, 0x62]),
+            (b"a\xFF\xFFb", &[0x61, 0xFFFD, 0xFFFD, 0x62]),
+            (b"a\xC0\xAFb", &[0x61, 0xFFFD, 0xFFFD, 0x62]),
+            (b"\x80\x80", &[0xFFFD, 0xFFFD]),
+            (b"\xF4\x90\x80\x80", &[0xFFFD, 0xFFFD, 0xFFFD, 0xFFFD]),
+        ];
+        for (text, units) in texts {
+            let decoded: Vec<u16> = wtf8_decoded_units(text).collect();
+            assert_eq!(decoded, *units, "{text:x?}");
         }
     }
 

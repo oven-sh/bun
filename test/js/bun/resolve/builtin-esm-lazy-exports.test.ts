@@ -500,7 +500,7 @@ test.concurrent("node:process: linking constructs the linked bindings, not the s
       afterLink,
       release: release === process.release,
       // Inherited from the EventEmitter prototype, so it was never stored on process itself.
-      on: on === process.on && !Object.hasOwn(process, "on"),
+      on: on("x", print) === process && process.listeners("x")[0] === print && !Object.hasOwn(process, "on"),
       exportListMatches,
       afterListing,
       stdout: stdout === process.stdout && typeof stdout.write === "function",
@@ -585,7 +585,7 @@ test.concurrent("node:process: a user-defined accessor is read when the module l
       afterLoad: constructedOnProcess(),
       value: ns.userDefined,
       readsAfterRead: reads,
-      on: ns.on === process.on,
+      on: typeof ns.on === "function",
     });
   `);
   expect(result).toEqual({ readsAfterLoad: 1, afterLoad: [], value: 1, readsAfterRead: 1, on: true });

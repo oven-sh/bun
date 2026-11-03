@@ -89,6 +89,8 @@ console.log(`Open ${new URL("https://bun.com")}`);
 | `allowRegExp` | `true` | Allow `RegExp`. |
 | `allow` | `Error`, `URL`, `URLSearchParams` | Other types to allow. Your list replaces the default one. |
 
+The default list means the globals of those names, whether TypeScript's own `lib` declares them or `@types/node` or `bun-types` does. With an ESLint or oxlint config it only means the ones from `lib`, as in typescript-eslint.
+
 `null` and `undefined` print as the words "null" and "undefined", which is rarely what a user should see. Reported with `allowNullish: false`:
 
 {/* bad {"options": [{"allowNullish": false}]} */}

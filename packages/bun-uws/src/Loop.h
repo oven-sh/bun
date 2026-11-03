@@ -22,11 +22,15 @@
 /* The loop is lazily created per-thread and run with run() */
 
 #include "LoopData.h"
+#include <cerrno>
 #include <libusockets.h>
 #include "AsyncSocket.h"
 
 extern "C" int bun_is_exiting();
 extern "C" void __attribute__((__noreturn__)) Bun__panic(const char *message, size_t length);
+#ifndef _WIN32
+extern "C" void __attribute__((__noreturn__)) Bun__loopInitFailed(int err);
+#endif
 
 namespace uWS {
 struct Loop {
@@ -89,8 +93,12 @@ private:
             /* The per-thread loop is not recoverable; every caller of get()
              * dereferences it. Only Bun.spawnSync's isolated loop (created
              * through the Rust uws::Loop::create) surfaces this as an error. */
-            static const char msg[] = "failed to create the event loop (out of file descriptors?)";
+#ifndef _WIN32
+            Bun__loopInitFailed(errno);
+#else
+            static const char msg[] = "failed to create the event loop";
             Bun__panic(msg, sizeof(msg) - 1);
+#endif
         }
         return loop->init();
     }

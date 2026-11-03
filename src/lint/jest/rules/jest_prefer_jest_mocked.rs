@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 /// Prefer the `jest.mocked()` helper over type assertions for typing mocked functions.
 pub struct PreferJestMocked;
 
-const USE_JEST_MOCKED: Message = Message::new("", "Prefer `jest.mocked()` over `fn as jest.Mock`.");
+const USE_JEST_MOCKED: &Message = &Message::new("", "Prefer `jest.mocked()` over `fn as jest.Mock`.");
 
 const MOCK_TYPES: [&str; 4] = ["Mock", "MockedFunction", "MockedClass", "MockedObject"];
 
@@ -43,7 +43,7 @@ impl Rule for PreferJestMocked {
     }
 }
 
-/// `node as T`, without parentheses around `node`.
+/// True for the `node` in `node as T`, if `node` isn't parenthesized.
 fn is_operand_of_as(node: Expr) -> bool {
     !node.is_parenthesized()
         && node.parent().as_expr().is_some_and(|parent| {
@@ -51,7 +51,7 @@ fn is_operand_of_as(node: Expr) -> bool {
         })
 }
 
-/// Not what is assigned to, and not in `a[b]` or `a.#b`.
+/// False if `node` is an assignment target or part of `a[b]` or `a.#b`.
 fn can_fix(node: Expr) -> bool {
     match node.parent().as_expr().map(|parent| (parent, parent.kind())) {
         Some((_, ExprKind::Assign { target, .. })) => target != node,

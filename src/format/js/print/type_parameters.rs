@@ -41,8 +41,8 @@ pub(crate) fn write_ts_type_parameter<'a>(param: TypeParam<'a>, f: &mut Formatte
 /// ` extends T`, ` = T`
 fn write_type_parameter_bound<'a>(operator: &'static str, ty: TypeNode<'a>, f: &mut Formatter<'a>) {
     let group_id = f.group_id("bound");
-    // A union that breaks starts with a line break. If there is one after the operator as well,
-    // Prettier writes both. The empty text is what makes the second one count.
+    // A union that breaks starts with a line break. If there's also one after the operator, Prettier prints both. The
+    // empty text keeps the printer from merging them.
     let is_union = matches!(ty.kind(), TypeKind::Union(types) if types.len() > 1);
     write!(
         f,
@@ -56,8 +56,7 @@ fn write_type_parameter_bound<'a>(operator: &'static str, ty: TypeNode<'a>, f: &
     );
 }
 
-/// Prettier's `shouldForceTrailingComma`: `<T,>() => {}` in a `.tsx` file, where `<T>` would be
-/// the start of an element.
+/// Prettier's `shouldForceTrailingComma`: `<T,>() => {}` in a `.tsx` file, where `<T>` would start an element.
 fn should_force_trailing_comma_for_arrow_function<'a>(
     params: List<'a, TypeParam<'a>>,
     owner: Node<'a>,
@@ -78,7 +77,7 @@ pub(crate) struct FormatTSTypeParametersOptions {
     pub(crate) is_type_or_interface_decl: bool,
 }
 
-/// ESTree's `TSTypeParameterDeclaration`. Nothing is written if there are no type parameters.
+/// ESTree's `TSTypeParameterDeclaration`. Prints nothing if there are no type parameters.
 #[derive(Copy, Clone)]
 pub(crate) struct FormatTSTypeParameters<'a> {
     params: List<'a, TypeParam<'a>>,
@@ -86,8 +85,7 @@ pub(crate) struct FormatTSTypeParameters<'a> {
     options: FormatTSTypeParametersOptions,
 }
 
-/// The type parameters `params` of `owner`: a `Func`, a `Class`, or the `Stmt` of an interface or
-/// a type alias.
+/// `owner`'s type parameters `params`. `owner` is a `Func`, a `Class`, or the `Stmt` of an interface or type alias.
 pub(crate) fn type_parameters<'a>(
     params: List<'a, TypeParam<'a>>,
     owner: Node<'a>,
@@ -163,7 +161,7 @@ impl<'a> Format<'a> for FormatDanglingCommentsForInline<'a> {
     }
 }
 
-/// Whether a type parameter or type argument has a comment that does not fit between `<` and `>` on one line: a line
+/// True if a type parameter or type argument has a comment that doesn't fit between `<` and `>` on one line: a line
 /// comment, or a last comment that ends its line.
 fn has_comment_that_breaks<'a>(node: AstNodes<'a>, f: &Formatter<'a>) -> bool {
     if f.is_quiet() {
@@ -194,15 +192,15 @@ impl<'a> Format<'a> for FormatTSTypeParameters<'a> {
     }
 }
 
-/// ESTree's `TSTypeParameterInstantiation`. Nothing is written if there are no type arguments.
+/// ESTree's `TSTypeParameterInstantiation`. Prints nothing if there are no type arguments.
 #[derive(Copy, Clone)]
 pub(crate) struct FormatTypeArguments<'a> {
     params: List<'a, TypeNode<'a>>,
     owner: Node<'a>,
 }
 
-/// The type arguments `params` of `owner`: an `Expr`, a `TypeNode`, or the `Class` whose `extends`
-/// clause has them.
+/// `owner`'s type arguments `params`. `owner` is an `Expr`, a `TypeNode`, or the `Class` whose `extends` clause has
+/// them.
 pub(crate) fn type_arguments<'a>(
     params: List<'a, TypeNode<'a>>,
     owner: Node<'a>,
@@ -217,8 +215,8 @@ pub(crate) fn type_arguments<'a>(
 /// >();
 /// ```
 ///
-/// Prettier on the left, oxfmt on the right.
-fn only_comment_behind_type_argument_counts(f: &Formatter<'_>) -> bool {
+/// Prettier is on the left, oxfmt on the right.
+fn only_comment_after_type_argument_counts(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
@@ -232,8 +230,8 @@ impl<'a> FormatTypeArguments<'a> {
             })
             && !is_arrow_function_variable_type_argument(self);
 
-        // TypeScript has no `,` after the last type argument. Flow, whose types those in a JavaScript
-        // file are, has.
+        // TypeScript doesn't allow a `,` after the last type argument. Flow does, and types in a JavaScript file are
+        // Flow's.
         let trailing_separator = match f.file().is_javascript() && !should_inline {
             true => FormatTrailingCommas::ES5.trailing_separator(f.options()),
             false => TrailingSeparator::Disallowed,
@@ -254,10 +252,10 @@ impl<'a> FormatTypeArguments<'a> {
     }
 }
 
-/// Whether a comment of `only`, the only type argument, keeps it from being written directly between `<` and `>`.
+/// True if a comment on `only`, the only type argument, keeps it from being printed directly between `<` and `>`.
 fn has_comment_that_unhugs<'a>(only: TypeNode<'a>, f: &Formatter<'a>) -> bool {
     let node = without_lone_operator(only).as_ast_nodes();
-    match only_comment_behind_type_argument_counts(f) {
+    match only_comment_after_type_argument_counts(f) {
         true => !f.is_quiet() && !f.comments().of_node(node).trailing.is_empty(),
         false => has_comment_that_breaks(node, f),
     }

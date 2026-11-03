@@ -1,0 +1,61 @@
+feature NodeQuic "node:quic"
+  c-function us_nq_loop_flush_if_pending us_nq_loop_drain
+
+feature NodeHttp2 "node:http2"
+
+feature NodeAssert "the diffs in node:assert errors"
+
+feature NodeVm "node:vm"
+  minimum 15000
+
+feature NodeZlib "node:zlib"
+
+feature NodeZlibBrotli "Brotli streams in node:zlib"
+
+feature NodeZlibZstd "zstd streams in node:zlib"
+
+feature Histogram "perf_hooks.createHistogram and perf_hooks.monitorEventLoopDelay"
+
+feature NodeV8 "node:v8"
+
+feature ParseArgs "util.parseArgs"
+
+feature NodeCrypto "node:crypto"
+
+feature NodeOs "node:os"
+
+feature NodeFs "node:fs"
+
+feature HttpParser "HTTPParser and process.binding('http_parser')"
+
+feature StringDecoder "node:string_decoder"
+
+feature NodeCluster "node:cluster"
+
+feature NodeUrl "url.domainToASCII and url.domainToUnicode"
+
+feature NodeHttp "node:http and node:https servers"
+
+feature NetAddresses "net.BlockList and net.SocketAddress"
+
+feature NodePath "node:path"
+
+feature NodeValidators "argument validation in Node.js modules"
+
+feature NodeUtil "node:util, util.inspect and events.getEventListeners"
+
+feature NodeSmallModules "node:util/types and node:constants"
+
+feature FsStats "fs.Stats, BigIntStats, StatFs and Dirent"
+
+feature Buffer "Buffer"
+
+feature NodeBufferModule "node:buffer"
+
+feature NodeFetch "node-fetch"
+
+feature Undici "undici"
+
+feature NodeEvents "node:events"
+
+feature NodeRepl "node:repl"

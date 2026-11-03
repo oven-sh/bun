@@ -11,12 +11,12 @@ pub struct ConsistentVitestVi {
     opposite: &'static str,
 }
 
-const CONSISTENT_VITEST_VI: Message = Message::new("", "The vitest function accessor used is not allowed");
+const CONSISTENT_VITEST_VI: &Message = &Message::new("", "The vitest function accessor used is not allowed");
 
 impl Rule for ConsistentVitestVi {
     const META: Meta = Meta::oxlint(Plugin::Vitest, "consistent-vitest-vi", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Call]).stmts(&[StmtTag::Import]);
-    /// `opposite`
+    /// `opposite`, looked up in the file's names.
     type State<'a> = Name<'a>;
 
     fn new(options: &Options) -> Self {

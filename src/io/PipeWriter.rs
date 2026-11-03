@@ -1208,6 +1208,21 @@ pub trait BaseWindowsPipeWriter: Sized {
     fn closed_without_reporting(&self) -> bool;
     fn set_closed_without_reporting(&mut self, v: bool);
 
+    /// Moves out the payload of the last write passed to libuv. Returns an empty Vec if the parent owns it.
+    fn take_write_payload(&mut self) -> Vec<u8> {
+        Vec::new()
+    }
+
+    /// Returns true if a `uv_write` on the current pipe or tty source hasn't completed.
+    fn has_inflight_stream_write(&self) -> bool {
+        false
+    }
+
+    /// Returns true if chunks are queued behind the in-flight write.
+    fn has_queued_write(&self) -> bool {
+        false
+    }
+
     /// `uv::open_handles` closes this writer's stream through here at teardown.
     unsafe fn stop_for_vm_teardown(this: *mut c_void) {
         // SAFETY: recorded via `Source::set_owner` by this live writer; cleared
@@ -1235,6 +1250,11 @@ pub trait BaseWindowsPipeWriter: Sized {
     }
 
     fn close(&mut self) {
+        self.close_impl(true);
+    }
+
+    /// If `cancel_inflight_write` is set, cancels a `uv_fs_write` that hasn't started yet.
+    fn close_impl(&mut self, cancel_inflight_write: bool) {
         self.set_is_done(true);
         let Some(source) = self.source_mut().take() else {
             return;
@@ -1261,17 +1281,30 @@ pub trait BaseWindowsPipeWriter: Sized {
                 // SAFETY: raw is heap-allocated by Source::open_file; libuv holds
                 // the only remaining reference via the fs_t it points into.
                 unsafe {
+                    if has_inflight_write {
+                        // The threadpool write still reads the payload, so move it into the File.
+                        (*raw).orphaned_buf = self.take_write_payload();
+                    }
                     if self.owns_fd() {
                         // Use state machine to handle close after operation completes.
                         // detach() schedules start_close() (now or after the pending
                         // op completes); on_close_complete heap::take()s `raw`.
-                        (*raw).detach();
-                    } else if !(*raw).detach_borrowed_fd() {
-                        // Idle and the fd is parent-owned: nothing pending,
-                        // nothing to close. Reclaim and drop the Box.
-                        drop(bun_core::heap::take(raw));
+                        if cancel_inflight_write {
+                            (*raw).detach();
+                        } else {
+                            (*raw).detach_after_inflight();
+                        }
+                    } else {
+                        let pending = if cancel_inflight_write {
+                            (*raw).detach_borrowed_fd()
+                        } else {
+                            (*raw).detach_borrowed_fd_after_inflight()
+                        };
+                        // An idle file with a parent-owned fd has nothing to close.
+                        if !pending {
+                            drop(bun_core::heap::take(raw));
+                        }
                     }
-                    // else: on_fs_write_complete heap::take()s the detached Box.
                 }
             }
             Source::Pipe(pipe) => {
@@ -1342,8 +1375,30 @@ pub trait BaseWindowsPipeWriter: Sized {
         self.start_with_current_pipe()
     }
 
+    /// Closes the old source before a restart, like the POSIX writer.
+    fn close_current_source(&mut self) -> sys::Result<()> {
+        match self.source() {
+            None => {}
+            // `uv_close` would cancel the `uv_write`, and the write callback would then close the new source.
+            Some(Source::Pipe(_) | Source::Tty(_)) if self.has_inflight_stream_write() => {
+                return sys::Result::Err(sys::Error::from_code(sys::E::BUSY, sys::Tag::write));
+            }
+            // Canceling an in-flight write would drop its bytes, so let it finish writing to the old file.
+            Some(_) => self.close_impl(false),
+        }
+        // Free a failed write's payload. `close_impl` already moved out a payload that libuv still reads.
+        drop(self.take_write_payload());
+        // `set_parent` only records the new source's owner while `is_done` is false.
+        self.set_is_done(false);
+        sys::Result::Ok(())
+    }
+
     fn start_sync(&mut self, fd: Fd, _pollable: bool) -> sys::Result<()> {
-        debug_assert!(self.source().is_none());
+        // A `SyncFile` writes each chunk synchronously and can't drain a queue.
+        if self.has_queued_write() {
+            return sys::Result::Err(sys::Error::from_code(sys::E::BUSY, sys::Tag::write));
+        }
+        self.close_current_source()?;
         let mut source = Source::SyncFile(Source::open_file(fd));
         source.set_data(core::ptr::from_mut(self).cast::<c_void>());
         *self.source_mut() = Some(source);
@@ -1365,7 +1420,7 @@ pub trait BaseWindowsPipeWriter: Sized {
     // TODO: MovableIfWindowsFd overload — add a separate start_movable().
     fn start(&mut self, rawfd: Fd, _pollable: bool) -> sys::Result<()> {
         let fd = rawfd;
-        debug_assert!(self.source().is_none());
+        self.close_current_source()?;
         // Use the event loop from the parent, not the global one
         // This is critical for spawnSync to use its isolated loop
         // SAFETY: parent is BACKREF set via set_parent; valid while writer alive.
@@ -1544,6 +1599,10 @@ impl<Parent: WindowsBufferedWriterParent> BaseWindowsPipeWriter for WindowsBuffe
     }
     fn set_closed_without_reporting(&mut self, v: bool) {
         self.closed_without_reporting = v;
+    }
+
+    fn has_inflight_stream_write(&self) -> bool {
+        self.pending_payload_size > 0
     }
 
     fn start_with_current_pipe(&mut self) -> sys::Result<()> {
@@ -2095,9 +2154,28 @@ impl<Parent: WindowsStreamingWriterParent> BaseWindowsPipeWriter
         self.closed_without_reporting = v;
     }
 
+    fn take_write_payload(&mut self) -> Vec<u8> {
+        // Moving the Vec doesn't move its heap bytes, so libuv's copy of `write_buffer` still points to them.
+        self.current_payload.cursor = 0;
+        mem::take(&mut self.current_payload.list)
+    }
+
+    fn has_inflight_stream_write(&self) -> bool {
+        // `on_write_complete` resets it when the `uv_write` completes.
+        self.current_payload.is_not_empty()
+    }
+
+    fn has_queued_write(&self) -> bool {
+        self.outgoing.is_not_empty()
+    }
+
     fn start_with_current_pipe(&mut self) -> sys::Result<()> {
         debug_assert!(self.source.is_some());
         self.is_done = false;
+        // The old source's write never reports completion, so send the queued chunks here.
+        if self.outgoing.is_not_empty() && !matches!(self.source, Some(Source::SyncFile(_))) {
+            self.process_send();
+        }
         sys::Result::Ok(())
     }
 }

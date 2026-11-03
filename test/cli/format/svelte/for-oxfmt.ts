@@ -1,4 +1,4 @@
-/** The `.oxfmtrc.json` that says what these options of Prettier and of prettier-plugin-svelte say. */
+/** Converts Prettier and prettier-plugin-svelte options to the equivalent `.oxfmtrc.json`. */
 export function forOxfmt(options: Record<string, unknown>): Record<string, unknown> {
   const [result, svelte]: Record<string, unknown>[] = [{ printWidth: 80 }, {}];
   for (const [name, value] of Object.entries(options)) {

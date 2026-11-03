@@ -1,4 +1,5 @@
 // HTML tests are tests relating to HTML files themselves.
+import { expect } from "bun:test";
 import { devTest, emptyHtmlFile } from "../bake-harness";
 
 devTest("html file is watched", {
@@ -128,6 +129,37 @@ devTest("image import in JS", {
     // await dev.fetch(img1).expect404();
   },
 });
+devTest("html references a json file that is cached as a module", {
+  files: {
+    "index.html": `
+      <!DOCTYPE html><html><head></head><body>
+      <script type="module" src="script.ts"></script>
+      </body></html>
+    `,
+    "script.ts": `
+      import manifest from "./manifest.json";
+      console.log(manifest.name);
+    `,
+    "manifest.json": `{ "name": "app" }`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("app");
+
+    await c.expectReload(async () => {
+      await dev.patch("index.html", {
+        find: "<head></head>",
+        replace: '<head><link rel="manifest" href="./manifest.json"></head>',
+      });
+    });
+    await c.expectMessage("app");
+
+    // The dev server can only treat a file as one kind of module, so it serves the page without the link.
+    const html = await (await dev.fetch("/")).text();
+    expect(html).toInclude("<script");
+    expect(html).not.toInclude('rel="manifest"');
+  },
+});
 devTest("import then create", {
   files: {
     "index.html": `
@@ -187,6 +219,29 @@ devTest("a file whose import failed to resolve is imported by a second file", {
       await dev.write("broken.ts", `export const value = "value";`);
     });
     await c.expectMessage("value");
+  },
+});
+devTest("reports a bunBakeGraph import in a client script, then runs the script once it's fixed", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import value from "./other.ts" with { bunBakeGraph: "ssr" };
+      console.log(value);
+    `,
+    "other.ts": `
+      export default "other";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: ["index.ts:1:19: error: Framework does not have a separate SSR graph to put this import into"],
+    });
+    await c.expectReload(async () => {
+      await dev.write("index.ts", `console.log("repaired");`);
+    });
+    await c.expectMessage("repaired");
   },
 });
 devTest("external links", {
@@ -408,6 +463,23 @@ devTest("error report endpoint blanks stray non-text bytes in reported frames", 
     await dev.fetch("/").expect.toInclude("<h1>Frame Bytes</h1>");
   },
 });
+devTest("client script route returns 404 when the route bundle index is out of range", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["/script.ts"] }),
+    "script.ts": `console.log("client-script-marker");`,
+  },
+  async test(dev) {
+    // `/_bun/client/{name}-{index}{generation}.js`, where each hex group encodes a u32's four bytes.
+    const page = await dev.fetch("/").text();
+    const [script, generation] = page.match(/\/_bun\/client\/index-[0-9a-f]{8}([0-9a-f]{8})\.js/) ?? [];
+    await dev.fetch(script).expect.toInclude("client-script-marker");
+
+    await dev.fetch(`/_bun/client/index-ffffffff${generation}.js`).expect404();
+    await dev.fetch(`/_bun/client/index-feffffff${generation}.js`).expect404();
+    await dev.fetch(script).expect.toInclude("client-script-marker");
+  },
+});
+
 devTest("editing a file imported from outside the project root hot-reloads", {
   // The Windows watcher does not watch files outside the project directory.
   skip: ["win32"],

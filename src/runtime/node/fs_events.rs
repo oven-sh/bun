@@ -108,7 +108,7 @@ fn dlsym<T>(handle: *mut c_void, symbol: &core::ffi::CStr) -> Option<T> {
     // (or pointer-sized data symbol) declared by CoreFoundation/CoreServices; the const
     // assert above enforces size parity, and the null check rules out the absent-symbol
     // case so the resulting fn pointer is always non-null. Not expressible via
-    // bytemuck/as: fn pointers are not Pod and `as` can't cast data→fn pointers.
+    // `as`, which can't cast data→fn pointers.
     Some(unsafe { core::mem::transmute_copy::<*mut c_void, T>(&ptr) })
 }
 
@@ -335,17 +335,6 @@ unsafe impl bun_threading::Linked for ConcurrentTask {
     }
 }
 
-impl ConcurrentTask {
-    fn from(this: &mut ConcurrentTask, task: Task, auto_delete: bool) -> &mut ConcurrentTask {
-        *this = ConcurrentTask {
-            task,
-            next: bun_threading::Link::new(),
-            auto_delete,
-        };
-        this
-    }
-}
-
 impl FSEventsLoop {
     fn cf_thread_loop(&'static self) {
         bun_core::Output::Source::configure_named_thread(zstr!("CFThreadLoop"));
@@ -481,19 +470,11 @@ impl FSEventsLoop {
 
     fn enqueue_task_concurrent(&self, task: Task) {
         let cf = CoreFoundation::get();
-        let concurrent = bun_core::heap::into_raw(Box::new(ConcurrentTask {
-            task: Task {
-                ctx: ptr::null_mut(),
-                callback: |_| {},
-            },
+        self.tasks.push(bun_core::heap::alloc_nn(ConcurrentTask {
+            task,
             next: bun_threading::Link::new(),
-            auto_delete: false,
+            auto_delete: true,
         }));
-        // SAFETY: concurrent is a valid freshly-boxed non-null pointer
-        unsafe {
-            ConcurrentTask::from(&mut *concurrent, task, true);
-            self.tasks.push(NonNull::new_unchecked(concurrent));
-        }
         let signal_source = self.signal_source.load(Ordering::Relaxed);
         let loop_ = self.loop_.load(Ordering::Acquire);
         // SAFETY: CF fn pointers loaded via dlsym; handles valid per above.

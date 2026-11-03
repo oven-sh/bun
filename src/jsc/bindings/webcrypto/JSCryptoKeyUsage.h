@@ -30,6 +30,7 @@ namespace WebCore {
 String convertEnumerationToString(CryptoKeyUsage);
 template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, CryptoKeyUsage);
 
+template<> std::optional<CryptoKeyUsage> parseEnumerationFromString<CryptoKeyUsage>(const String&);
 template<> std::optional<CryptoKeyUsage> parseEnumeration<CryptoKeyUsage>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

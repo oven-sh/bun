@@ -1,4 +1,4 @@
-//! How a finished directory gets into the install cache.
+//! Moves a finished directory into the install cache.
 
 use core::fmt;
 
@@ -37,7 +37,7 @@ impl<'a> StagedEntry<'a> {
         }
     }
 
-    /// The first writer wins: a folder at `to` that passes `is_complete` is kept, and returned.
+    /// The first writer wins: if a folder at `to` passes `is_complete`, it's kept and returned.
     pub(crate) fn publish(
         mut self,
         cache_dir: Fd,
@@ -50,26 +50,27 @@ impl<'a> StagedEntry<'a> {
         let mut attempts = 0;
         let mut emptying_err: Option<sys::Error> = None;
         loop {
-            // `rename` replaces only an empty directory: never a published folder.
+            // `rename` only replaces an empty directory, so it never replaces a published folder.
             let Err(err) = retry.rename(self.parent, self.name, cache_dir, to) else {
                 self.renamed = true;
                 return Ok(None);
             };
             attempts += 1;
-            // Nothing below can remove a published folder, even one that appears meanwhile.
+            // Nothing below can remove a published folder, even one that appears in the meantime.
             match cache.open_at_with(to.as_bytes(), O::RDONLY | O::CLOEXEC | O::NOFOLLOW) {
                 Ok(published) if is_complete(&published) => return Ok(Some(published)),
-                // Prefer the error from emptying the folder: it says why the rename kept failing.
+                // Prefer the error from emptying the folder, because it explains why the rename
+                // kept failing.
                 _ if attempts == MAX_ATTEMPTS => {
                     return Err(emptying_err.map_or(err, RenameError::from));
                 }
-                // Emptied through its own handle; `rmdir` only removes an empty folder.
+                // Emptied through its own handle. `rmdir` only removes an empty folder.
                 Ok(incomplete) => {
                     emptying_err = incomplete.delete_children().err();
                     incomplete.close();
                     let _ = sys::rmdirat(cache_dir, to);
                 }
-                // Not a folder, or gone by now; `unlink` never removes a folder.
+                // It isn't a folder, or it's gone by now. `unlink` never removes a folder.
                 Err(_) => {
                     let _ = sys::unlinkat(cache_dir, to);
                 }
@@ -86,7 +87,8 @@ impl Drop for StagedEntry<'_> {
     }
 }
 
-/// Windows renames no directory in which a scanner has a new file open; one budget for all waits.
+/// Windows can't rename a directory while a virus scanner has one of its new files open. All the
+/// waits share one time budget.
 pub(crate) struct RenameRetry {
     #[cfg(windows)]
     started: Option<std::time::Instant>,

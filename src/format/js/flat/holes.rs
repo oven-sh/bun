@@ -145,8 +145,8 @@ impl<'a> Line<'_, 'a> {
             return Ok(());
         }
         self.go_back_to(mark);
-        // That all of this is too wide has been found by counting its bytes.
-        if !self.f.is_plain_source(span) {
+        // That all of this is too wide has been found by counting its bytes, before all of it was looked at.
+        if !self.f.is_plain_source(span) || self.has_comments_in(span) {
             return Err(Refused);
         }
         self.end_text(None)?;

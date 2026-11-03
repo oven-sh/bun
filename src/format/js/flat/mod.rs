@@ -102,6 +102,8 @@ pub(crate) struct ShortCuts {
     is_before_script: bool,
     /// The file has a block comment with something before or after it on its line.
     has_block_comment_in_line: bool,
+    /// The file has a comment that says to ignore something.
+    has_ignore_comment: bool,
     is_flow: bool,
     is_typescript: bool,
     /// Statements end with a `;`.
@@ -190,14 +192,30 @@ impl ShortCuts {
             depth: self.depth,
             is_certain: self.is_certain,
             has_block_comment_in_line: file.comments_by_id().any(|comment| {
-                comment.is_block() && !(comment.has_newline_before() && comment.has_newline_after())
+                comment.is_block() && !is_alone_on_its_lines(file.text(), comment.span())
             }),
+            has_ignore_comment: (file.comments_by_id())
+                .any(|comment| comment.is_ignore_comment(options.flavor)),
             is_flow: file.is_flow(),
             is_typescript: !file.is_flow() && !file.is_javascript(),
             has_semicolons: options.semicolons.is_always(),
             ..ShortCuts::default()
         }
     }
+}
+
+/// True if nothing but blanks and tabs is before and after `span` on its lines. Other white space counts as something:
+/// who asks whether a comment starts its line doesn't skip it everywhere.
+fn is_alone_on_its_lines(text: &[u8], span: Span) -> bool {
+    let mut before = text.get(..span.start as usize).unwrap_or_default();
+    while let [rest @ .., b' ' | b'\t'] = before {
+        before = rest;
+    }
+    let mut after = text.get(span.end as usize..).unwrap_or_default();
+    while let [b' ' | b'\t' | b'\r', rest @ ..] = after {
+        after = rest;
+    }
+    matches!(before, [] | [.., b'\n']) && matches!(after, [] | [b'\n', ..])
 }
 
 /// True if `text` has a `\r` that isn't part of `\r\n`. Every check for a line break below looks for `\n`.
@@ -422,9 +440,9 @@ fn is_before_block_comment(source: &[u8], end: u32) -> bool {
     let mut starts_line = false;
     loop {
         rest = match rest {
-            // White space that isn't ASCII too.
-            [b' ' | b'\t' | b'\r' | 0x80.., tail @ ..] => tail,
-            [b',' | b';', tail @ ..] => {
+            [b' ' | b'\t' | b'\r', tail @ ..] => tail,
+            // A comment after other white space, also what isn't ASCII, doesn't count as one that starts its line.
+            [b',' | b';' | 0x0B | 0x0C | 0x80.., tail @ ..] => {
                 starts_line = false;
                 tail
             }
@@ -440,7 +458,7 @@ fn is_before_block_comment(source: &[u8], end: u32) -> bool {
 /// True if a block comment is before what starts at `start` on its line, so that it doesn't start where its line does.
 fn is_after_block_comment(source: &[u8], start: u32) -> bool {
     let mut before = source.get(..start as usize).unwrap_or_default();
-    while let [rest @ .., b' ' | b'\t' | 0x80..] = before {
+    while let [rest @ .., b' ' | b'\t' | 0x0B | 0x0C | 0x80..] = before {
         before = rest;
     }
     before.ends_with(b"*/")
@@ -482,6 +500,13 @@ impl<'a> Formatter<'a> {
         if state.has_block_comment_in_line
             && (is_before_block_comment(source, span.end)
                 || is_after_block_comment(source, span.start))
+        {
+            return false;
+        }
+        // What's ignored is copied, so nothing that's known about where a node breaks holds for it.
+        if state.has_ignore_comment
+            && !self.is_quiet()
+            && self.comments().has_comment_or_owner_in(span)
         {
             return false;
         }

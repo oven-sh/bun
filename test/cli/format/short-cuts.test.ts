@@ -1483,6 +1483,66 @@ describe.skipIf(!hasFlag)("heads of functions", () => {
   );
 });
 
+describe.skipIf(!hasFlag)("what breaks whether it fits or not, and what only looks like it", () => {
+  const files = {
+    // Functions among the arguments are each on a line.
+    "import-calls.js": `
+      import(n, a(() => e));
+      import(() => k, () => g);
+      import(a, () => {});
+      x = import(n, a(() => e));
+      f(import(n, a(() => e)));
+      import(n, a(() => e)).then(b);
+      if (import(n, a(() => e))) {}
+      async function f() {
+        await import(n, a(() => e));
+      }
+    `,
+    // A template breaks where a function in it has statements.
+    "templates.js": `
+      const [b] = \`\${a(() => { a; })}\`;
+      const { o } = \`\${t("", () => { 5(); })}\`;
+      const { d } = \`\${async function () { x; } | l}\`;
+      const { e } = \`\${a(function () { x; })}\`;
+      const f = \`\${a(() => { a; })}\`;
+      g.h = \`\${a(() => { a; })}\`;
+      const [i] = \`\${a(b, c)} \${d}\`;
+      const [j] = \`\${a(() => { a; })}\` ? k : l;
+    `,
+    // What's ignored is copied, so nothing in it forces a line break.
+    "ignored.js": `
+      while (a) b = [/* prettier-ignore */ function () { x; }];
+      function f() {
+        for (;;) return [() => /* prettier-ignore */ (function () { x; })];
+      }
+      if (a) b(() => /* prettier-ignore */ (function () { x; }));
+      b = { c: /* prettier-ignore */ function () { x; } };
+      b(c, [/* prettier-ignore */ { d:  1 }, { e: 2 }]);
+    `,
+    "ignored.ts": `
+      e<e>(t("e", () => /* prettier-ignore */ { x; }));
+      e(t("e", () => /* prettier-ignore */ { x; }));
+    `,
+    // A comment after white space that isn't a blank or a tab doesn't start its line.
+    ...Object.fromEntries(
+      ["\u00a0", "\u2003", "\ufeff", "\f", "\v", " ", "\t"].flatMap((space, index) => [
+        [`after-line-break-${index}.js`, `[e];\n${space}/* c */\n`],
+        [`on-the-line-${index}.js`, `"".b${space}/**/\n`],
+        [`before-${index}.js`, `/* c */${space}[e, f];\n`],
+        [`property-${index}.js`, `a = {\n  b: [c],\n${space}/* c */\n  d,\n};\n`],
+      ]),
+    ),
+    "closing-tag.jsx": "function a(a = <a>a\nb</a\n/**/>) {}\n",
+  };
+
+  test.concurrent.each([5, 8, 10, 12, 18, 20, 24, 28, 40, 80])("--print-width=%d", async width => {
+    const [withShortCuts, without] = await difference(files, [`--print-width=${width}`]);
+    expect(withShortCuts).toEqual(without);
+    expect(without.stderr).toBe("");
+    expect(without.exitCode).toBe(0);
+  });
+});
+
 describe.skipIf(!hasFlag)("names, literals, member accesses, calls and operators", () => {
   const binary = "?? || && | ^ & == != === !== < <= > >= in instanceof << >> >>> + - * / % **".split(" ");
   const unary = ["!", "-", "+", "~", "typeof ", "void ", "delete ", "++", "--", "await "];

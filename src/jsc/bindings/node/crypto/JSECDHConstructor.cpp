@@ -121,7 +121,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalO
 
     auto point = ncrypto::ECPointPointer::New(group);
     if (!point)
-        return throwVMError(lexicalGlobalObject, scope, "Failed to create EC_POINT"_s);
+        return Bun::ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "Failed to create EC_POINT"_s);
 
     const unsigned char* key_data = buffer.data();
     size_t key_length = buffer.size();

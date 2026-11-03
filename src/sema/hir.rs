@@ -1635,6 +1635,8 @@ pub mod rare {
     pub const IMPORT_META: u32 = 1 << 28;
     /// `010`, `08`, `"\1"` or `"\8"`, which only sloppy code allows. Only set for text that is compiled.
     pub const LEGACY_OCTAL: u32 = 1 << 29;
+    /// A list of type parameters has nothing in it: `<>`.
+    pub const EMPTY_TYPE_PARAMETERS: u32 = 1 << 30;
     /// The bits that a file has because it has an expression of this kind.
     #[inline(always)]
     pub fn of_expression(kind: &super::ExprKind) -> u32 {

@@ -976,6 +976,17 @@ impl<'a> Checks<'a> {
     /// `convertTypeParameters`. The HIR doesn't distinguish an empty list from a missing one, so this looks at the
     /// text. For a class the parser has a diagnostic.
     fn functions(&mut self) {
+        let is_known_to_find_nothing =
+            self.for_prettier && !self.file.has_rare_syntax(rare::EMPTY_TYPE_PARAMETERS);
+        if is_known_to_find_nothing && !cfg!(debug_assertions) {
+            return;
+        }
+        let errors_before = self.errors.len();
+        self.empty_type_parameter_lists();
+        debug_assert!(!is_known_to_find_nothing || self.errors.len() == errors_before);
+    }
+
+    fn empty_type_parameter_lists(&mut self) {
         let (hir, bound, text) = (&self.file.hir, &self.file.bound, self.file.text());
         for (i, raw) in hir.fns.iter().enumerate() {
             let has_list = !matches!(

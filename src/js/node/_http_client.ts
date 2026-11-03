@@ -530,14 +530,6 @@ ClientRequest.prototype.destroy = function destroy(err) {
     res._dump();
   }
 
-  // Nothing left to cancel: the request was fully sent and the response was
-  // fully received. Destroying the socket here would emit an error on a
-  // socket that is already being released to the agent, at which point
-  // socketErrorListener has been removed and nothing would handle it.
-  if (this.writableFinished && res?.complete) {
-    return this;
-  }
-
   this[kError] = err;
   this.socket?.destroy(err);
 

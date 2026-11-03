@@ -81,6 +81,7 @@ test("bun run --debug-aot compiles for a read of module.constructor what it comp
     bytes: named.bytes,
     grows: false,
   });
+  expect({ stdout: named.stdout, exitCode: named.exitCode }).toEqual({ stdout: "run\n", exitCode: 0 });
   expect({ stdout: finds.stdout, exitCode: finds.exitCode, grows: grows(finds.bytes, plain.bytes) }).toEqual({
     stdout: "run\n",
     exitCode: 0,

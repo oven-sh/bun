@@ -1578,6 +1578,10 @@ console.log("survived", require("./late.js"));`,
               extensionHandler: handled,
               createRequire: [parents.map(isModule), isModule(created.module), isModule(created.module.parent)],
               made: [isModule(made), typeof made.require, attempt(() => made.require("./child.cjs") === child)],
+              // Code of a node:vm context reads require off a module object.
+              inAContext: attempt(() =>
+                require("node:vm").runInNewContext("typeof made.require('node:path').join", { made: new Module("made") }),
+              ),
               sub: [
                 sub instanceof Sub,
                 sub instanceof Module,
@@ -1606,6 +1610,7 @@ console.log("survived", require("./late.js"));`,
           extensionHandler: [true, "handled.js", "handled"],
           createRequire: [[true], true, true],
           made: [true, "function", true],
+          inAContext: "function",
           sub: [true, true, true, "sub", "sub"],
           initPaths: "function",
           statics: ["object", true, true, "function", "function"],

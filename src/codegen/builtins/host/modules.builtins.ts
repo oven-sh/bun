@@ -168,11 +168,9 @@ export default b.declarations(
   b.inherits("%ImportMeta%", "Object.prototype"),
   b.same("%ImportMeta%.require", "%ModuleRequire%"),
   b.same("%ModuleObject%.require", "%ModuleRequire%"),
-  // The table lists under the module object what a lookup finds on Module.prototype.
+  // Module.prototype stands above every module object. The table does not say so, as the engine's tests expect, and lists here what a lookup finds there.
   b.same("%ModuleObject%.constructor", "node:module"),
   b.same("%ModuleObject%._compile", "node:module.prototype._compile"),
-  // Object.getPrototypeOf(module) is Module.prototype.
-  b.inherits("%ModuleObject%", "node:module.prototype"),
   b.fn("process.getBuiltinModule", {
     args: { id: b.string },
     returns: b.any,
@@ -264,7 +262,7 @@ export default b.declarations(
       implementation: b.generic,
     },
   }),
-  // What stands above Module.prototype is not stated. Code that the build never saw can add a name to it or give it another prototype, and every module object then finds that name.
+  b.inherits("node:module.prototype", "Object.prototype"),
   objectsMadeByNativeModuleMacro.flatMap(path => b.inherits(path, "Object.prototype")),
   // It looks at a string. For anything else the answer is false.
   b.fn("node:module.isBuiltin", {

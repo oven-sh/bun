@@ -1714,9 +1714,13 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
     expect(exitCode).toBe(0);
   });
 
-  test("createRequire() and new Module() belong to the context they are called in", async () => {
+  test("createRequire(), new Module() and Module._load() belong to the context they are called in", async () => {
+    const who = `module.exports = typeof TENANT === "undefined" ? "the host's" : "the graph's";`;
     using d = tempDir("module-graph-node-module-context", {
-      "who.cjs": `module.exports = typeof TENANT === "undefined" ? "the host's" : "the graph's";`,
+      "who.cjs": who,
+      "loaded-for-nobody.cjs": who,
+      "loaded-for-null.cjs": who,
+      "loaded-for-an-object.cjs": who,
       "tenant.mjs": `
         import Module, { createRequire } from "node:module";
         export const viaCreateRequire = () => createRequire(import.meta.url)("./who.cjs");
@@ -1724,6 +1728,17 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
           const made = Object.assign(new Module(import.meta.dir + "/made.cjs"), { filename: import.meta.dir + "/made.cjs", paths: [] });
           made._compile("module.exports = typeof TENANT === 'undefined' ? \\"the host's\\" : \\"the graph's\\";", made.filename);
           return made.exports;
+        };
+        // A parent that is no module object. The file is then in the cache of the context, where a require() finds it.
+        export const viaLoad = () => {
+          const require = createRequire(import.meta.url);
+          const loaded = [
+            Module._load(import.meta.dir + "/loaded-for-nobody.cjs"),
+            Module._load(import.meta.dir + "/loaded-for-null.cjs", null),
+            Module._load("./loaded-for-an-object.cjs", { filename: import.meta.filename }),
+          ];
+          const cached = ["nobody", "null", "an-object"].map(name => import.meta.dir + "/loaded-for-" + name + ".cjs" in require.cache);
+          return [...new Set(loaded)].join() + (cached.every(Boolean) ? ", cached there" : ", not cached there");
         };
       `,
       "main.mjs": `
@@ -1734,6 +1749,8 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
           "createRequire, called by the host": tenant.viaCreateRequire(),
           "new Module, inside run()": graph.run(() => tenant.viaNewModule()),
           "new Module, called by the host": tenant.viaNewModule(),
+          "Module._load, inside run()": graph.run(() => tenant.viaLoad()),
+          "Module._load, called by the host": tenant.viaLoad(),
         }, null, 1));
       `,
     });
@@ -1743,6 +1760,8 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
       "createRequire, called by the host": "the host's",
       "new Module, inside run()": "the graph's",
       "new Module, called by the host": "the host's",
+      "Module._load, inside run()": "the graph's, cached there",
+      "Module._load, called by the host": "the host's, cached there",
     });
     expect(exitCode).toBe(0);
   });

@@ -589,19 +589,22 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPath, (JSGlobalObject * globalObject, JSC
 // work (they do Module.prototype.require = ...)
 
 JSC_DEFINE_CUSTOM_GETTER(getterRequireFunction,
-    (JSC::JSGlobalObject * globalObject,
+    (JSC::JSGlobalObject * lexicalGlobalObject,
         JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
+    // `lexicalGlobalObject` can be a node:vm context. See jsRequireCacheGetter.
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     return JSValue::encode(globalObject->getDirect(
         globalObject->vm(), WebCore::clientData(globalObject->vm())->builtinNames().overridableRequirePrivateName()));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(setterRequireFunction,
-    (JSC::JSGlobalObject * globalObject,
+    (JSC::JSGlobalObject * lexicalGlobalObject,
         JSC::EncodedJSValue thisValue,
         JSC::EncodedJSValue value,
         JSC::PropertyName propertyName))
 {
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     Bun::willChangeRequireOverride(globalObject, JSC::AOT::RequireOverride::RequireFunction, true);
     RETURN_IF_EXCEPTION(scope, false);
@@ -795,11 +798,26 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * lexicalGlobalObject, 
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    JSValue parent = callFrame->argument(1);
+    // The require of a parent that is no module object loads into the cache of the host. In a Bun.ModuleGraph
+    // a module object of the graph stands in for such a parent, as one does for createRequire().
+    if (!dynamicDowncast<Bun::JSCommonJSModule>(parent)) {
+        if (auto* graph = Bun::currentModuleGraph(globalObject)) {
+            JSValue filename = jsUndefined();
+            if (parent.isObject()) {
+                filename = parent.get(globalObject, WebCore::clientData(vm)->builtinNames().filenamePublicName());
+                RETURN_IF_EXCEPTION(scope, {});
+            }
+            JSString* id = filename.isString() ? asString(filename) : jsString(vm, String("."_s));
+            parent = Bun::JSCommonJSModule::create(vm, globalObject->CommonJSModuleObjectStructure(), id, filename, jsEmptyString(vm), SourceCode(), graph);
+        }
+    }
+
     JSC::JSFunction* defaultRequire = globalObject->commonJSDefaultRequireFunction();
     // The builtin reads its argument count: the request is the only argument, the parent is `this`.
     JSC::MarkedArgumentBuffer args;
     args.append(callFrame->argument(0));
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::profiledCall(globalObject, JSC::ProfilingReason::API, defaultRequire, JSC::getCallData(defaultRequire), callFrame->argument(1), args)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::profiledCall(globalObject, JSC::ProfilingReason::API, defaultRequire, JSC::getCallData(defaultRequire), parent, args)));
 }
 
 extern "C" void Bun__VirtualMachine__setOverrideModuleRunMainPromise(void* bunVM, JSPromise* promise);

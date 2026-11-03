@@ -1994,6 +1994,9 @@ describe.skipIf(!hasFlag)("HTML", () => {
     "---\na: {\n---\n\n\n<p>a</p>\n",
     "---\na: 1\n--- \n<p>a</p>\n",
     "---\na: 1\n---\n",
+    // A comment whose end is where an end tag would be: below the root, in front of a sibling, as the last child.
+    "<!--\n  a\n-->\n<p>b</p>\n<!--\n  c\n-->\n",
+    "<div>\n  <!--\n    a\n-->\n  <p>b</p>\n</div>\n<p>\n  <!--\n    a\n-->\n  <div>b</div>\n",
   ];
   const files = Object.fromEntries(inputs.map((input, index) => [`${index}.html`, input]));
 

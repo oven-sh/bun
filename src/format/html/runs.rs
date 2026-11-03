@@ -1009,6 +1009,22 @@ impl<'a> Scanner<'_, 'a> {
         scanned_to
     }
 
+    /// True if what starts at `next`, behind a child and white space, is another child of the same parent for sure.
+    fn is_followed_by_sibling(&self, next: usize) -> bool {
+        match (self.at(next), self.at(next + 1)) {
+            // A form feed and a carriage return are white space too, so what follows them is not known.
+            (0 | 0x0C | b'\r', _) | (b'<', b'/') => false,
+            (b'<', b'a'..=b'z' | b'A'..=b'Z') => {
+                let len = (self.text.get(next + 1..).unwrap_or_default().iter())
+                    .take_while(|byte| NAME_BITS[**byte as usize] < NAME_END)
+                    .count();
+                let sibling = self.text.get(next + 1..next + 1 + len).unwrap_or_default();
+                !self.siblings.parent_definition.is_closed_by_child(sibling)
+            }
+            _ => true,
+        }
+    }
+
     /// The last child that has been read is printed in front of a line break only if a sibling follows it, or the end
     /// tag of its parent of which no neighbor prints a part. Takes it back if that is not for sure.
     fn settle(&mut self, is_sole_text: bool, parent: &Parent<'_>) {
@@ -1022,8 +1038,6 @@ impl<'a> Scanner<'_, 'a> {
         };
         let is_followed = match (self.at(next), self.at(next + 1)) {
             (0, _) => name.is_none() && next >= self.text.len(),
-            // White space too, so what follows it is not known.
-            (0x0C | b'\r', _) => false,
             // With nothing but a text in it, the parent is only broken if it does not fit on a line.
             (b'<', b'/') => {
                 !is_sole_text
@@ -1032,14 +1046,7 @@ impl<'a> Scanner<'_, 'a> {
                             .is_some_and(|end| matches!(self.at(end), b' ' | b'\n' | b'\t'))
                     })
             }
-            (b'<', b'a'..=b'z' | b'A'..=b'Z') => {
-                let len = (self.text.get(next + 1..).unwrap_or_default().iter())
-                    .take_while(|byte| NAME_BITS[**byte as usize] < NAME_END)
-                    .count();
-                let sibling = self.text.get(next + 1..next + 1 + len).unwrap_or_default();
-                !self.siblings.parent_definition.is_closed_by_child(sibling)
-            }
-            _ => true,
+            _ => self.is_followed_by_sibling(next),
         };
         if !is_followed {
             self.siblings.remove_last();
@@ -2097,11 +2104,13 @@ impl<'a> Scanner<'_, 'a> {
             return Item::No;
         };
         let end = start + 4 + len + 3;
-        // Behind a comment as the last child whose `-->` is where the end tag of the parent will be, no line break is
-        // printed.
+        // Behind a comment as the last child of an element whose `-->` is where the end tag of the parent will be, no
+        // line break is printed.
         let value = &rest[..len];
         let blanks = value.len() - value.trim_ascii_end().len();
         let is_where_end_tag_will_be = blanks > 0
+            && self.siblings.level > 0
+            && !self.is_followed_by_sibling(self.skip_space(end).0)
             && (value[value.len() - blanks..].iter().rev())
                 .take_while(|byte| **byte != b'\n')
                 .count()

@@ -50,9 +50,7 @@ ALWAYS_INLINE bool isComparedWithItsOwnJSTypeOnly(JSC::JSType type)
     }
 }
 
-// The class step of toStrictEqual() and Bun.deepEquals(a, b, true) is Jest's typeEquality: two objects have one class when they
-// have one `constructor`, when both are arrays, or when their constructors are the same built-in of two realms. It runs no
-// script: where only a getter or a Proxy trap could answer, the class names decide.
+// Jest's typeEquality for toStrictEqual() and Bun.deepEquals(a, b, true): one `constructor`, two arrays, or one built-in of two realms. It runs no script.
 ALWAYS_INLINE bool haveSameClassForStrictEquality(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSCell* c1, JSC::JSCell* c2)
 {
     // Two objects with one prototype and no own "constructor" read it from one chain. One Structure can say both for all its objects.

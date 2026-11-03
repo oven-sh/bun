@@ -436,6 +436,10 @@ macro_rules! bufs {
 // (the resolver mutex is one of the two documented guards for the entries singleton).
 static RESOLVER_MUTEX: Mutex = Mutex::new();
 
+/// The generation of the asker whose open of a directory failed last, by the hash of its cache key. Only for a "no such directory" that no listing vouches for.
+static FAILED_OPENS: bun_threading::Guarded<Option<bun_collections::HashMap<u64, Generation>>> =
+    bun_threading::Guarded::new(None);
+
 type BinFolderArray = BoundedArray<&'static [u8], 128>;
 // `BoundedArray` has no const constructor; init lazily under
 // `BIN_FOLDERS_LOADED`.
@@ -5393,7 +5397,7 @@ impl<'a> Resolver<'a> {
         self.not_found_still_holds_locked(generation, path)
     }
 
-    /// A cached "no such directory" holds while the listing of the nearest cached directory above it lacks the name below it. The caller holds the resolver mutex and `entries_mutex`.
+    /// A cached "no such directory" holds while the listing of the nearest cached directory above it lacks the name below it, and for the asker whose open of it failed last. The caller holds the resolver mutex and `entries_mutex`.
     fn not_found_still_holds_locked(&mut self, generation: Generation, path: &[u8]) -> bool {
         let mut child = strings::without_trailing_slash_windows_path(path);
         loop {
@@ -5414,17 +5418,38 @@ impl<'a> Resolver<'a> {
                         return true;
                     };
                     let base = bun_paths::basename(child);
-                    return parent_info
-                        .get_entries_ref_locked(generation)
-                        .is_some_and(|entries| {
-                            entries.was_listed() && entries.get(base).is_none()
-                        });
+                    let listing = parent_info.get_entries_ref_locked(generation);
+                    let is_not_listed = listing
+                        .is_some_and(|entries| entries.was_listed() && entries.get(base).is_none());
+                    return is_not_listed || self.open_failed_at(generation, child);
                 }
                 // The mark of the child holds for as long as the mark of its parent does.
                 allocators::ItemStatus::NotFound => child = parent,
-                allocators::ItemStatus::Unknown => return false,
+                allocators::ItemStatus::Unknown => return self.open_failed_at(generation, child),
             }
         }
+    }
+
+    /// Whether the open of the marked directory `key` failed last for an asker of `generation`. The caller holds the resolver mutex.
+    fn open_failed_at(&mut self, generation: Generation, key: &[u8]) -> bool {
+        let Ok(marked) = self.dir_cache_mut().get_or_put(key) else {
+            return false;
+        };
+        let failed = FAILED_OPENS.lock();
+        let Some(failed_at) = &*failed else {
+            return false;
+        };
+        failed_at.get(&marked.hash) == Some(&generation)
+    }
+
+    /// Remembers that the open of the directory `key`, which was just marked, failed for an asker of `generation`, unless a listing vouches for the mark. The caller holds the resolver mutex and `entries_mutex`.
+    fn note_failed_open(&mut self, generation: Generation, key: &[u8], key_hash: u64) {
+        if generation == 0 || self.not_found_still_holds_locked(generation, key) {
+            return;
+        }
+        let mut failed = FAILED_OPENS.lock();
+        let failed_at = failed.get_or_insert_with(Default::default);
+        failed_at.insert(key_hash, generation);
     }
 
     /// Cold tail of [`dir_info_cached_maybe_log`]: the directory walk +
@@ -5726,6 +5751,12 @@ impl<'a> Resolver<'a> {
                             //   ...
                             self.dir_cache_mut().mark_not_found(queue_top.result);
                             rfs!().entries.mark_not_found(cached_dir_entry_result);
+                            // A build asks for an unreadable directory from many lookups: one open and one message for all of them.
+                            self.note_failed_open(
+                                generation,
+                                queue_top_unsafe_path,
+                                queue_top.result.hash,
+                            );
                             if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                                 if enable_logging {
                                     let pretty = queue_top_unsafe_path;

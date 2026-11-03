@@ -1070,6 +1070,7 @@ pub mod fs {
             }
             // A permission-denied ancestor has no fd to enumerate: its listing stays empty.
             if fill && !handle.is_valid() {
+                dir.read_clock_ns = DirEntry::NOT_LISTABLE;
                 return Ok(dir);
             }
 
@@ -1454,7 +1455,7 @@ pub mod fs {
             true
         }
 
-        /// A cached listing whose directory cannot be listed keeps its slot with no names. It has no identity, so each asker that checks tries the directory once.
+        /// A cached listing whose directory cannot be listed keeps its slot with no names, marked as never listed. It has no identity, so each asker that checks tries the directory once.
         #[cold]
         fn keep_not_listable_locked(listing: *mut DirEntry, generation: Generation) {
             // SAFETY: a `DirEntry` of the BSSMap singleton, exclusively held under `entries_mutex`.
@@ -1463,6 +1464,7 @@ pub mod fs {
                 listing.forget();
             }
             listing.generation = generation;
+            listing.read_clock_ns = DirEntry::NOT_LISTABLE;
         }
 
         fn dir_z<'buf>(buf: &'buf mut bun_paths::PathBuffer, dir: &[u8]) -> Option<&'buf ZStr> {

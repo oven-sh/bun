@@ -412,7 +412,7 @@ pub struct DirEntry {
     pub(crate) generation: Generation,
     /// Counts the times the names were replaced in place. A `DirInfo` keeps the count its facts came from.
     pub(crate) version: u32,
-    /// `bun_sys::file_stamp_clock_ns` just before the names were read. 0 when the read did not finish.
+    /// `bun_sys::file_stamp_clock_ns` just before the names were read. 0 when the read did not finish, `NOT_LISTABLE` when there was none.
     pub(crate) read_clock_ns: i64,
     /// The inode the directory listed for ".", 0 if it listed none: which directory the names came from.
     pub(crate) dot_ino: u64,
@@ -422,6 +422,8 @@ pub struct DirEntry {
 impl DirEntry {
     /// A stamp less than this before the read clock can be that of a change after the read: a stamping clock lags a fine one by up to a tick.
     pub(crate) const KEEP_MARGIN_NS: i64 = 20 * bun_core::time::NS_PER_MS as i64;
+    /// `read_clock_ns` of a listing whose directory can be entered and not listed: its names were never read.
+    pub(crate) const NOT_LISTABLE: i64 = i64::MIN;
 
     pub(crate) fn init(dir: &'static [u8], generation: Generation) -> DirEntry {
         DirEntry {
@@ -445,6 +447,11 @@ impl DirEntry {
             && now.ino == self.dot_ino
             && fine_stamps
             && mtime_ns.max(ctime_ns) < self.read_clock_ns.saturating_sub(Self::KEEP_MARGIN_NS)
+    }
+
+    /// False when the names were never read: the listing does not say that a name is missing.
+    pub(crate) fn was_listed(&self) -> bool {
+        self.read_clock_ns != Self::NOT_LISTABLE
     }
 
     /// After a read that failed: no names and no identity, so no asker keeps what is left.

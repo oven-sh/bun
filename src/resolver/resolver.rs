@@ -5395,7 +5395,9 @@ impl<'a> Resolver<'a> {
                     let base = bun_paths::basename(child);
                     return parent_info
                         .get_entries_ref_locked(generation)
-                        .is_some_and(|entries| entries.get(base).is_none());
+                        .is_some_and(|entries| {
+                            entries.was_listed() && entries.get(base).is_none()
+                        });
                 }
                 // The mark of the child holds for as long as the mark of its parent does.
                 allocators::ItemStatus::NotFound => child = parent,

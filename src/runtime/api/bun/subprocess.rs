@@ -751,21 +751,15 @@ impl Subprocess<'_> {
         // The raw fd numbers are now visible to JS and the caller owns them.
         // Downgrade so finalize_streams never closes a number JS may have
         // already closed (whose value the kernel may have since recycled).
-        self.stdio_pipes.with_mut(|pipes| {
-            for slot in pipes.iter_mut() {
-                if let ExtraPipe::OwnedFd(fd) | ExtraPipe::UnownedFd(fd) = *slot {
-                    *slot = match fd.make_crt_owned() {
-                        Ok(fd) => ExtraPipe::UnownedFd(fd),
-                        Err(_) => {
-                            fd.close();
-                            ExtraPipe::Unavailable
-                        }
-                    };
-                }
-            }
-        });
+        self.stdio_pipes
+            .with_mut(|pipes| pipes.iter_mut().for_each(ExtraPipe::release_to_caller));
         for item in self.stdio_pipes.get().iter() {
             match item {
+                // The handle of a socket that the caller passed: it has no number, and a new one would own the handle.
+                #[cfg(windows)]
+                ExtraPipe::UnownedFd(fd) if fd.kind() == bun_core::FdKind::System => {
+                    array.push(global, JSValue::NULL)?;
+                }
                 ExtraPipe::OwnedFd(fd) | ExtraPipe::UnownedFd(fd) => {
                     array.push(global, JSValue::js_number_from_int32(fd.crt()))?;
                 }

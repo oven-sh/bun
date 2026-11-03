@@ -13,7 +13,6 @@ use core::sync::atomic::Ordering;
 
 #[cfg(target_os = "macos")]
 use bun_core::Output;
-#[cfg(unix)]
 use bun_sys::FdExt as _;
 use bun_sys::{self, Fd};
 
@@ -421,6 +420,19 @@ impl ExtraPipe {
         match self {
             ExtraPipe::OwnedFd(f) | ExtraPipe::UnownedFd(f) => *f,
             ExtraPipe::Unavailable => Fd::INVALID,
+        }
+    }
+
+    /// From here on the caller closes an `OwnedFd`, by the number that `.stdio` has for it.
+    pub fn release_to_caller(&mut self) {
+        if let ExtraPipe::OwnedFd(fd) = *self {
+            *self = match fd.make_crt_owned() {
+                Ok(fd) => ExtraPipe::UnownedFd(fd),
+                Err(_) => {
+                    fd.close();
+                    ExtraPipe::Unavailable
+                }
+            };
         }
     }
 }

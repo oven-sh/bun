@@ -1595,11 +1595,8 @@ fn spawn_maybe_sync(
     if !socket_fd_indices.is_empty() {
         subprocess.stdio_pipes.with_mut(|pipes| {
             for j in &socket_fd_indices {
-                if let Some(slot @ ExtraPipe::OwnedFd(_)) = pipes.get_mut(*j) {
-                    let ExtraPipe::OwnedFd(fd) = *slot else {
-                        unreachable!()
-                    };
-                    *slot = ExtraPipe::UnownedFd(fd);
+                if let Some(slot) = pipes.get_mut(*j) {
+                    slot.release_to_caller();
                 }
             }
         });

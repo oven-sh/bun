@@ -1341,6 +1341,36 @@ describe("close handling", () => {
       expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "PASS", stderr: "", exitCode: 0 });
     });
 
+    // A socket there is a handle without a number, and a number made for it would own the handle as well.
+    it.if(isWindows)("a socket at index >= 3 has no number in .stdio and stays the caller's", async () => {
+      const name = `\\\\.\\pipe\\bun-test-spawn-stdio-socket-${process.pid}`;
+      const received = Promise.withResolvers<string>();
+      let text = "";
+      using server = Bun.listen({
+        unix: name,
+        socket: {
+          data(_, chunk) {
+            text += chunk;
+            if (text.endsWith("parent")) received.resolve(text);
+          },
+        },
+      });
+      const socket = await Bun.connect({ unix: name, socket: { data() {} } });
+      try {
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", "require('fs').writeSync(3, 'child,')"],
+          env: bunEnv,
+          stdio: ["ignore", "inherit", "inherit", socket as any],
+        });
+        expect(proc.stdio).toEqual([null, null, null, null]);
+        expect(await proc.exited).toBe(0);
+        socket.write("parent");
+        expect(await received.promise).toBe("child,parent");
+      } finally {
+        socket.end();
+      }
+    });
+
     // Both ends are handles for overlapped I/O there: a call returns at once, with the operation under way.
     describe.if(isWindows)("'pipe' at index >= 3: fs calls on either end return when they are done", () => {
       it.each([null, 0])("fs.read() at position %p, with a write that ends before it", async position => {

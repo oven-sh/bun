@@ -259,6 +259,8 @@ it("self setter checks its receiver", async () => {
        results.push(self === globalThis);
        set.call(null, "from null");
        results.push(self);
+       set.call(undefined, "from undefined");
+       results.push(self);
        set.call(globalThis, "from globalThis");
        results.push(self);
        console.log(JSON.stringify(results));`,
@@ -278,6 +280,7 @@ it("self setter checks its receiver", async () => {
     "TypeError",
     true,
     "from null",
+    "from undefined",
     "from globalThis",
   ]);
   expect(exitCode).toBe(0);

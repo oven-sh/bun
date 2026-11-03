@@ -1281,21 +1281,20 @@ function loadImpl(): Loaded {
         ArrayPrototypeForEach(ObjectGetOwnPropertyNames(globalThis), name => {
           // Only set properties that do not already exist as a global builtin.
           if (!globalBuiltins.has(name)) {
-            ObjectDefineProperty(context, name, {
-              __proto__: null,
-              ...ObjectGetOwnPropertyDescriptor(globalThis, name),
-            });
+            let descriptor = ObjectGetOwnPropertyDescriptor(globalThis, name)!;
+            // The native `self` accessor only accepts the main global as its receiver.
+            if (name === "self" && descriptor.get) {
+              descriptor = {
+                value: context,
+                writable: true,
+                enumerable: descriptor.enumerable,
+                configurable: descriptor.configurable,
+              };
+            }
+            ObjectDefineProperty(context, name, { __proto__: null, ...descriptor });
           }
         });
         context!.global = context;
-        // The copied `self` accessor only accepts the main global as its receiver.
-        ObjectDefineProperty(context, "self", {
-          __proto__: null,
-          value: context,
-          writable: true,
-          enumerable: true,
-          configurable: true,
-        });
         const _console = new Console(this.output);
         ObjectDefineProperty(context, "console", {
           __proto__: null,

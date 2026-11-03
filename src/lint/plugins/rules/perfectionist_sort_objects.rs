@@ -16,6 +16,7 @@ use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use smallvec::SmallVec;
 use std::borrow::Cow;
+use std::cell::Cell;
 
 /// Enforce sorted objects.
 pub struct SortObjects {
@@ -453,17 +454,23 @@ impl SortObjects {
             cx.throw(object.span(), "SyntaxError", message);
             return;
         }
-        if nodes.len() >= 2
-            && let Some(message) = config.invalid_locale_error()
+
+        let reached_invalid_locale = Cell::new(false);
+        let sorted = Sorted {
+            all: sort_nodes_by_dependencies(&nodes, config, false, &reached_invalid_locale),
+            without_disabled: sort_nodes_by_dependencies(
+                &nodes,
+                config,
+                true,
+                &reached_invalid_locale,
+            ),
+        };
+        if reached_invalid_locale.get()
+            && let Some(message) = &config.invalid_locale
         {
-            cx.throw(object.span(), "RangeError", message);
+            cx.throw(object.span(), "RangeError", message.clone());
             return;
         }
-
-        let sorted = Sorted {
-            all: sort_nodes_by_dependencies(&nodes, config, false),
-            without_disabled: sort_nodes_by_dependencies(&nodes, config, true),
-        };
         report::report_all_errors(cx, &MESSAGES, &nodes, &sorted, config, |_| {
             make_fixes(
                 file,
@@ -483,9 +490,15 @@ fn sort_nodes_by_dependencies(
     nodes: &[SortingNode<'_>],
     config: &Configuration,
     ignore_eslint_disabled: bool,
+    reached_invalid_locale: &Cell<bool>,
 ) -> Vec<u32> {
-    let by_groups =
-        sort::sort_nodes_by_groups(nodes, config, ignore_eslint_disabled, IgnoredForGroup::Nothing);
+    let by_groups = sort::sort_nodes_by_groups(
+        nodes,
+        config,
+        ignore_eslint_disabled,
+        IgnoredForGroup::Nothing,
+        reached_invalid_locale,
+    );
     sort::sort_nodes_by_dependencies(nodes, &by_groups, ignore_eslint_disabled)
 }
 

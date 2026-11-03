@@ -9,28 +9,31 @@
 use super::SortingNode;
 use super::groups::GroupId;
 use super::options::{
-    Alphabet, Configuration, GroupEntry, GroupNames, Order, SortBy, SortOptions, SortType,
+    Alphabet, Configuration, GroupEntry, GroupNames, Locale, Order, SortBy, SortOptions, SortType,
     SpecialCharacters,
 };
 use bun_core::strings;
 use bun_lint::prelude::*;
 use std::borrow::Cow;
+use std::cell::Cell;
 use std::cmp::Ordering;
 
 /// Upstream's `computeComparators` applied to two nodes: the comparator of `options`, then, if that is `0`, the
 /// comparator of `{...options, ...options.fallbackSort}`. `type: "unsorted"` has no comparators at all, so the
 /// fallback is not tried either. `options` is the group's, already overridden by its `groups` entry and custom
-/// group; `config` has the `alphabet` and `groups`, which no override changes.
+/// group; `config` has the `alphabet` and `groups`, which no override changes. A comparison that calls
+/// `localeCompare` with a [`Locale::Invalid`] sets `reached_invalid_locale`, where upstream throws.
 pub(crate) fn compare(
     a: &SortingNode,
     b: &SortingNode,
     options: SortOptions,
     config: &Configuration,
+    reached_invalid_locale: &Cell<bool>,
 ) -> Ordering {
     if options.type_ == SortType::Unsorted {
         return Ordering::Equal;
     }
-    let main = compare_once(a, b, options, config);
+    let main = compare_once(a, b, options, config, reached_invalid_locale);
     if main != Ordering::Equal {
         return main;
     }
@@ -41,7 +44,7 @@ pub(crate) fn compare(
         sort_by: fallback.sort_by.unwrap_or(options.sort_by),
         ..options
     };
-    compare_once(a, b, with_fallback, config)
+    compare_once(a, b, with_fallback, config, reached_invalid_locale)
 }
 
 /// The comparator that `buildStringComparatorByOptionsComputer` picks for `options.type`, with
@@ -51,28 +54,43 @@ fn compare_once(
     b: &SortingNode,
     options: SortOptions,
     config: &Configuration,
+    reached_invalid_locale: &Cell<bool>,
 ) -> Ordering {
     let ascending = match options.type_ {
         SortType::Unsorted => return Ordering::Equal,
         SortType::SubgroupOrder => compare_by_subgroup_order(a, b, &config.groups),
         SortType::LineLength => a.size.cmp(&b.size),
         SortType::Alphabetical => match options.locale {
-            Some(collator) => {
+            Locale::Collator(collator) => {
                 collator.compare(&text_to_compare(a, options), &text_to_compare(b, options))
             }
-            None => {
+            Locale::Root => {
                 strings::locale_compare(&text_to_compare(a, options), &text_to_compare(b, options))
+            }
+            Locale::Invalid => {
+                reached_invalid_locale.set(true);
+                return Ordering::Equal;
             }
         },
         SortType::Natural => match options.locale {
-            Some(collator) => text::natural_orderby_in(
+            Locale::Collator(collator) => text::natural_orderby_in(
                 collator,
                 &text_to_compare(a, options),
                 &text_to_compare(b, options),
             ),
-            None => {
+            Locale::Root => {
                 text::natural_orderby(&text_to_compare(a, options), &text_to_compare(b, options))
             }
+            Locale::Invalid => match text::natural_orderby_without_locale(
+                &text_to_compare(a, options),
+                &text_to_compare(b, options),
+            ) {
+                Some(order) => order,
+                None => {
+                    reached_invalid_locale.set(true);
+                    return Ordering::Equal;
+                }
+            },
         },
         SortType::Custom => compare_by_custom_sort(
             &text_to_compare(a, options),

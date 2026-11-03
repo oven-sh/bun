@@ -10,6 +10,7 @@ use super::compare::compare;
 use super::groups::options_by_group_index;
 use super::options::{Configuration, SortBy, SortOptions};
 use bun_lint::utils::sort::{merge_sort_indices, sort_indices};
+use std::cell::Cell;
 use std::cmp::Ordering;
 
 /// The two orders `reportAllErrors` needs: `sortNodesExcludingEslintDisabled(false)` and `(true)`. In `all` every
@@ -43,15 +44,24 @@ impl IgnoredForGroup {
 
 /// Upstream's `sortNodes` on `order`, indices into `nodes` in their current order: sorts them in place under
 /// `options` (a group's, from `options_by_group_index`), and a node `is_ignored` says to stays at its index.
+/// `reached_invalid_locale` is set by a comparison that upstream's `localeCompare` throws for (see
+/// [`compare`]).
 pub(crate) fn sort_nodes<'a>(
     nodes: &[SortingNode<'a>],
     order: &mut [u32],
     is_ignored: &dyn Fn(&SortingNode<'a>) -> bool,
     options: SortOptions,
     config: &Configuration,
+    reached_invalid_locale: &Cell<bool>,
 ) {
     let mut cmp = |a: u32, b: u32| -> Ordering {
-        compare(&nodes[a as usize], &nodes[b as usize], options, config)
+        compare(
+            &nodes[a as usize],
+            &nodes[b as usize],
+            options,
+            config,
+            reached_invalid_locale,
+        )
     };
     if !order.iter().any(|&i| is_ignored(&nodes[i as usize])) {
         merge_sort_indices(order, &mut cmp);
@@ -83,6 +93,7 @@ pub(crate) fn sort_nodes_by_groups<'a>(
     config: &Configuration,
     ignore_eslint_disabled: bool,
     ignored_for_group: IgnoredForGroup,
+    reached_invalid_locale: &Cell<bool>,
 ) -> Vec<u32> {
     let mut order: Vec<u32> = (0..nodes.len() as u32).collect();
     let mut sorted: Vec<u32> = Vec::new();
@@ -100,6 +111,7 @@ pub(crate) fn sort_nodes_by_groups<'a>(
             config,
             ignore_eslint_disabled,
             ignored_for_group,
+            reached_invalid_locale,
         );
         start = end;
     }
@@ -114,6 +126,7 @@ fn sort_partition_by_groups<'a>(
     config: &Configuration,
     ignore_eslint_disabled: bool,
     ignored_for_group: IgnoredForGroup,
+    reached_invalid_locale: &Cell<bool>,
 ) {
     let is_excluded = |node: &SortingNode<'a>| ignore_eslint_disabled && node.is_eslint_disabled;
     sorted.clear();
@@ -132,7 +145,14 @@ fn sort_partition_by_groups<'a>(
         }
         let options = options_by_group_index(config, group_index);
         let is_ignored = |node: &SortingNode<'a>| ignored_for_group.ignores(node, options);
-        sort_nodes(nodes, &mut sorted[start..end], &is_ignored, options, config);
+        sort_nodes(
+            nodes,
+            &mut sorted[start..end],
+            &is_ignored,
+            options,
+            config,
+            reached_invalid_locale,
+        );
         start = end;
     }
     let mut next = sorted.iter();

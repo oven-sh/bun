@@ -14,6 +14,7 @@ use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use smallvec::SmallVec;
 use std::borrow::Cow;
+use std::cell::Cell;
 
 /// Enforce sorted union types.
 pub struct SortUnionTypes {
@@ -205,20 +206,10 @@ impl SortUnionTypes {
             });
             last = Some(span);
         }
-        // A partition of one node is sorted without a comparison.
-        let has_pair_in_partition = nodes
-            .iter()
-            .zip(nodes.iter().skip(1))
-            .any(|(a, b)| a.partition_id == b.partition_id);
-        if has_pair_in_partition
-            && let Some(message) = config.invalid_locale_error()
-        {
-            cx.throw(ty, "RangeError", message);
-            return;
-        }
 
         // `for (let nodes of formattedMembers) reportAllErrors(..)`: each partition is sorted, reported and fixed on
         // its own, so a fix never spans two partitions.
+        let reached_invalid_locale = Cell::new(false);
         let mut start = 0;
         while let Some(first) = nodes.get(start) {
             let partition_id = first.partition_id;
@@ -233,15 +224,25 @@ impl SortUnionTypes {
             start = end;
 
             // `sortNodesExcludingEslintDisabled`
-            let sorted = Sorted {
-                all: sort::sort_nodes_by_groups(partition, config, false, IgnoredForGroup::Nothing),
-                without_disabled: sort::sort_nodes_by_groups(
+            let sort_all = |ignore_eslint_disabled| {
+                sort::sort_nodes_by_groups(
                     partition,
                     config,
-                    true,
+                    ignore_eslint_disabled,
                     IgnoredForGroup::Nothing,
-                ),
+                    &reached_invalid_locale,
+                )
             };
+            let sorted = Sorted {
+                all: sort_all(false),
+                without_disabled: sort_all(true),
+            };
+            if reached_invalid_locale.get()
+                && let Some(message) = &config.invalid_locale
+            {
+                cx.throw(ty, "RangeError", message.clone());
+                return;
+            }
             report::report_all_errors(cx, &MESSAGES, partition, &sorted, config, |_| {
                 make_fixes(
                     file,

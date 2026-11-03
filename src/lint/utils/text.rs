@@ -20,7 +20,7 @@
 //! | `String.fromCodePoint(...values)`, `String.fromCharCode(...values)` | [`string_from_code_points`], [`strings::push_codepoint_wtf8_joined`] |
 //! | `a < b`, `a.localeCompare`-free sorting | [`strings::order_utf16`] |
 //! | `require("natural-compare")` | [`natural_compare`] |
-//! | `require("natural-orderby").compare()`, `compare({ locale })` | [`natural_orderby`], [`natural_orderby_in`] |
+//! | `require("natural-orderby").compare()`, `compare({ locale })` | [`natural_orderby`], [`natural_orderby_in`], [`natural_orderby_without_locale`] |
 //! | `a.localeCompare(b, locale)` | [`strings::Collator`] |
 //! | `esutils.keyword.isIdentifierES5`, `isIdentifierES6` | [`is_identifier_es5`], [`is_identifier_es6`] |
 //! | `s.split(/\r\n\|[\r\n\u2028\u2029]/u)`, `/\r\n\|[\r\n\u2028\u2029]/u.test(s)` | [`strings::js_lines`], [`strings::contains_js_line_break`] |
@@ -316,6 +316,18 @@ pub fn natural_orderby(a: &[u8], b: &[u8]) -> Ordering {
 /// `collator`, `localeCompare(other, locale)`.
 pub fn natural_orderby_in(collator: strings::Collator, a: &[u8], b: &[u8]) -> Ordering {
     natural_orderby::compare(a, b, |a, b| collator.compare(a, b))
+}
+
+/// [`natural_orderby`] as `compare({ locale })` makes it for a `locale` that `localeCompare` throws a `RangeError`
+/// for: `None` where that call is made, which is for two differing chunks that are not numbers with a character
+/// outside ASCII between them; `Some` of the order everywhere else, where the locale is never read.
+pub fn natural_orderby_without_locale(a: &[u8], b: &[u8]) -> Option<Ordering> {
+    let reached_locale = std::cell::Cell::new(false);
+    let order = natural_orderby::compare(a, b, |_, _| {
+        reached_locale.set(true);
+        Ordering::Equal
+    });
+    (!reached_locale.get()).then_some(order)
 }
 
 mod natural_orderby {

@@ -13,6 +13,7 @@ use bun_core::strings;
 use bun_lint::prelude::*;
 use smallvec::SmallVec;
 use std::borrow::Cow;
+use std::cell::Cell;
 
 /// Both rules parse the same options: `sort-interfaces` reuses the `defaultOptions` and `jsonSchema` of
 /// `sort-object-types`. Its `allSelectors` are `index-signature`, `member`, `method` and `property`, its
@@ -292,26 +293,28 @@ pub(crate) fn sort_object_type_elements<'a, R>(
         });
         last_in_partition = Some(span);
     }
-    if nodes.len() >= 2
-        && let Some(message) = config.invalid_locale_error()
-    {
-        cx.throw(node, "RangeError", message);
-        return;
-    }
 
     // `sortNodesExcludingEslintDisabled`
+    let reached_invalid_locale = Cell::new(false);
     let sort_all = |ignore_eslint_disabled| {
         sort::sort_nodes_by_groups(
             &nodes,
             config,
             ignore_eslint_disabled,
             IgnoredForGroup::ValuelessWhenSortedByValue,
+            &reached_invalid_locale,
         )
     };
     let sorted = Sorted {
         all: sort_all(false),
         without_disabled: sort_all(true),
     };
+    if reached_invalid_locale.get()
+        && let Some(message) = &config.invalid_locale
+    {
+        cx.throw(node, "RangeError", message.clone());
+        return;
+    }
     report::report_all_errors(cx, messages, &nodes, &sorted, config, |_| {
         fixes::make_fixes(file, &nodes, &sorted.without_disabled, config, FIX_OPTIONS)
     });

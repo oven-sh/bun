@@ -97,8 +97,7 @@ pub(crate) struct Execution {
     /// The entry whose callback is on the stack, which `get_current_state_data()` can't name in a concurrent group.
     /// Cleared before the call's microtasks drain, because those can resume other tests in the group.
     pub(crate) on_stack: core::cell::Cell<Option<EntryData>>,
-    /// When bun last killed a process, or ended a `Bun.spawnSync` wait, because the timeout of a test or hook had
-    /// passed. `EPOCH` = never.
+    /// When bun last killed a process or ended a `Bun.spawnSync` wait for a timeout that had passed. `EPOCH` = never.
     pub(crate) killed_on_timeout_at: Timespec,
 }
 
@@ -287,12 +286,11 @@ impl ExecutionSequence {
         false
     }
 
-    /// Whether `handle_uncaught_exception` reports the error of a hook and leaves `result` as the body set it: the
-    /// `Pass` of a `test.failing` body that threw, `Todo`, or the `Skip` of node:test's `t.skip()`. The `skip()` of a
-    /// test context hides later errors on purpose, so it doesn't count.
+    /// Whether `handle_uncaught_exception` prints the error of a hook and leaves `result`, so the test doesn't fail.
     fn result_survives_hook_error(&self) -> bool {
         match self.result {
             Result::Pass | Result::Todo => true,
+            // `skip()` of a test context hides later errors on purpose.
             Result::Skip => self.context.is_none(),
             _ => false,
         }
@@ -1360,8 +1358,7 @@ fn step_sequence_one(
             // SAFETY: re-deref after run_test_callback; sequence_ptr still valid (sequences is a
             // Box<[ExecutionSequence]>, never reallocated during execution).
             let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
-            // A callback that failed keeps its own result. Its deadline still counts if bun killed a process for it,
-            // or if it is a hook whose error didn't fail the test, so that only the timeout does.
+            // A failed callback keeps its result, unless bun killed a process for it or it is a hook whose error can't fail the test.
             let checks_deadline = end == CallbackEnd::Returned
                 || buntest_strong.get().execution.killed_on_timeout_at.order(&next_item.timespec) != core::cmp::Ordering::Less
                 || (Some(next_item_ptr) != sequence.test_entry && sequence.result_survives_hook_error());

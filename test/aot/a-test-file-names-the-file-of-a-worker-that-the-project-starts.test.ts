@@ -43,7 +43,7 @@ export const startOfNode = (entry: URL) => askOfNode(new Worker(entry));
   "src/read.ts": `import { readFileSync } from "node:fs";\nexport const read = (file: URL) => readFileSync(file, "utf8").length;\n`,
   "src/only-read.ts": `export const never = "run";\n`,
   "workers.test.ts":
-    `import { expect, test } from "bun:test";
+    `import { beforeAll, expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import startByDefault, { start, startSecond } from "./src/spawn";
@@ -55,18 +55,23 @@ import { read } from "./src/read";
 import { Worker as WorkerOfNode } from "node:worker_threads";
 import { askOfNode, startOfNode } from "./src/spawn-of-node";
 const inVariable = new URL("./src/worker/w7.ts", import.meta.url);
-test("the Workers answer", async () => {
-  // A file that was compiled answers with what it said when the build read it.
+// A file that was compiled answers with what it said when the build read it.
+beforeAll(() => {
   for (let n = 1; process.env.WRITES_OVER_WORKERS && n <= ${count}; n++) {
     const file = new URL("./src/worker/w" + n + ".ts", import.meta.url);
     writeFileSync(file, readFileSync(file, "utf8").replace('"w' + n + ' "', '"from disk "'));
   }
-` +
-    Object.entries(ways)
-      .map(([name, code]) => `  console.log("SEEN " + ${JSON.stringify(name)} + " | " + (await ${code}));\n`)
-      .join("") +
-    `  expect(read(new URL("./src/only-read.ts", import.meta.url))).toBeGreaterThan(0);
 });
+` +
+    // A test for each way. A debug build takes up to a second to start one Worker, and bun:test gives a test five: all eleven in one
+    // test ran out of them.
+    Object.entries(ways)
+      .map(
+        ([name, code]) =>
+          `test(${JSON.stringify(name)}, async () => { console.log("SEEN " + ${JSON.stringify(name)} + " | " + (await ${code})); });\n`,
+      )
+      .join("") +
+    `test("a file that is only read", () => { expect(read(new URL("./src/only-read.ts", import.meta.url))).toBeGreaterThan(0); });
 `,
   "other.test.ts": `import { expect, test } from "bun:test";\ntest("another file", () => { expect(1).toBe(1); });\n`,
 };
@@ -89,9 +94,7 @@ const fromDisk = Object.keys(ways).map(name => `SEEN ${name} | from disk 42`);
 
 async function see(flags: string[], env: Record<string, string>) {
   using dir = tempDir("aot-worker-named-by-a-test-file", files);
-  // The one test of the project starts eleven Workers. A debug build takes from one second to more than five for that, and bun:test
-  // gives a test five.
-  const command = [bunExe(), "test", "--timeout=60000", ...flags, "--isolate"];
+  const command = [bunExe(), "test", ...flags, "--isolate"];
   const ran = await run(command, String(dir), { ...bunEnv, ...env });
   // A crash prints only there. The log of the phases is thousands of lines that say nothing of one.
   if (ran.exitCode !== 0) {
@@ -124,10 +127,10 @@ async function see(flags: string[], env: Record<string, string>) {
   };
 }
 
-// What every run reports of the two test files of the project.
+// What every run reports of the two test files of the project: a test for each way, and two more.
 const report = {
-  results: ["(pass) another file", "(pass) the Workers answer"],
-  summary: ["2 pass", "0 fail", "2 expect() calls", "Ran 2 tests across 2 files."],
+  results: [...Object.keys(ways), "a file that is only read", "another file"].map(name => `(pass) ${name}`).sort(),
+  summary: [`${count + 2} pass`, "0 fail", "2 expect() calls", `Ran ${count + 2} tests across 2 files.`],
   exitCode: 0,
 };
 

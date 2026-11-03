@@ -27,6 +27,39 @@ Off by default. To turn it on:
 "perfectionist/sort-interfaces" = "error" # or "warn"
 ```
 
+Every option, set to its default. The ones that are commented out are unset by default.
+
+```toml bunfig.toml
+[lint.rules]
+"perfectionist/sort-interfaces" = ["error", {
+  type = "alphabetical",
+  order = "asc", # "asc" or "desc"
+  ignoreCase = true,
+  specialCharacters = "keep", # "remove", "trim" or "keep"
+  alphabet = "", # string
+  locales = "en-US",
+  sortBy = "name", # "name" or "value"
+  fallbackSort = {
+    type = "unsorted",
+    # order = <"asc" or "desc">,
+    sortBy = "name", # "name" or "value"
+  },
+  groups = [],
+  customGroups = [], # list of objects
+  newlinesBetween = "ignore", # "ignore" or number
+  newlinesInside = "newlinesBetween", # "ignore", number or "newlinesBetween"
+  partitionByNewLine = false,
+  partitionByComment = false,
+  useConfigurationIf = {
+    # allNamesMatchPattern = <list of objects or strings, object or string>,
+    # hasNumericKeysOnly = <true or false>,
+    # declarationCommentMatchesPattern = <list, object or string>,
+    # matchesAstSelector = <string>,
+    # declarationMatchesPattern = <list, object or string>,
+  },
+}]
+```
+
 {/* End of the generated section. */}
 
 ## Examples

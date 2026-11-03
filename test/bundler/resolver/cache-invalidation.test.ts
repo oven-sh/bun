@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { promises as fs, writeFileSync } from "fs";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { createRequire } from "module";
 import * as path from "path";
 
@@ -514,6 +514,48 @@ describe("resolver cache invalidation", () => {
     expect({ success: result.success, logs: result.logs.map(log => log.message) }).toEqual({
       success: false,
       logs: ["Unexpected end of file"],
+    });
+  });
+
+  // A build reads the tsconfig.json and the .env of the working directory before its first lookup: as they are then.
+  // The .env is new: a build opens one only when the listing of that directory has it.
+  test("a build takes the paths, the jsx factory and the .env that were written since the build before it", async () => {
+    using dir = tempDir("cache-test-build-config", {
+      "package.json": `{}`,
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { jsx: "react", jsxFactory: "h1", paths: { "@lib": ["./a.ts"] } },
+      }),
+      "a.ts": `export const v = "lib-a";\n`,
+      "b.ts": `export const v = "lib-b";\n`,
+      "src/entry.tsx": `import { v } from "@lib";\nconsole.log(<div />, v, process.env.LATE_VALUE);\n`,
+      "driver.ts": `
+        import { writeFileSync } from "node:fs";
+        const build = async () => {
+          const result = await Bun.build({ entrypoints: ["./src/entry.tsx"], env: "inline", throw: false });
+          if (!result.success) return result.logs.map(log => log.message).join(" | ");
+          const text = await result.outputs[0].text();
+          const env = text.includes("from-dot-env") ? "the .env" : "no .env";
+          return [text.match(/lib-[ab]/)?.[0], text.match(/\\bh[12]\\b/)?.[0], env].join(", ");
+        };
+        console.log(await build());
+        const compilerOptions = { jsx: "react", jsxFactory: "h2", paths: { "@lib": ["./b.ts"] } };
+        writeFileSync("tsconfig.json", JSON.stringify({ compilerOptions }));
+        writeFileSync(".env", "LATE_VALUE=from-dot-env\\n");
+        console.log(await build());
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "driver.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "lib-a, h1, no .env\nlib-b, h2, the .env\n",
+      stderr: "",
+      exitCode: 0,
     });
   });
 });

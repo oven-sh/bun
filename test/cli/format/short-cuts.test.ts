@@ -461,10 +461,10 @@ describe("Markdown", () => {
     "a\0b\n\n# c\n",
     "\f\n# e\n",
     // Code.
-    "```js\nconst  a = 1\n```\n\n```\nplain\n```\n\n```unknown meta  data\n  kept  \n```\n\n```ts title=\"a\"\nlet  b\n```\n",
+    '```js\nconst  a = 1\n```\n\n```\nplain\n```\n\n```unknown meta  data\n  kept  \n```\n\n```ts title="a"\nlet  b\n```\n',
     "```\n```\n\n```\n\n```\n\n``` js\na\n```\n\n```js \na\n```\n\n````md\n```js\na\n```\n````\n\n~~~\na\n~~~\n",
     "```js\na\n ```\n\n```js\na\n```  \n\n```js\n`` ``` ``\n```\n\n```a`b\n```\n\n```a\\b &amp;\nc\n```\n\n```js\nnot closed\n",
-    "```css\na{b:c}\n```\n\n```json\n{\"a\":1}\n```\n\n```yaml\na:   1\n```\n\n```html\n<p>a</p>\n```\n\n```js\nsyntax error (\n```\n",
+    '```css\na{b:c}\n```\n\n```json\n{"a":1}\n```\n\n```yaml\na:   1\n```\n\n```html\n<p>a</p>\n```\n\n```js\nsyntax error (\n```\n',
     // Emphasis, and what only looks like it.
     "*a* and _b_ and *two words* and (*c*) and *d*.\n\na*b*c and a_b_c and snake_case_name and _open and 2 * 3 and *.txt\n",
     "**a** and __b__ and **a_b** and **a\\*b** and ***c*** and **a* b and *a** b\n\n_a_ _b_ and *a*_b_ and _a *b* c_ and _a_b and a_ b_\n",
@@ -482,7 +482,7 @@ describe("Markdown", () => {
     "`a` and `` a`b `` and `` `a` `` and ` a ` and `  ` and ` a` and ``a`` and `a\nb` and `not closed\n",
     "`a {{ b` }} *c* `d` and {{ a ` b }} *c* ` d\n",
     // Links, images, references.
-    "[a](b) [a](<b c>) [a](b \"c\") [a](b 'c') [a](b (c)) [a](b \"c'd\") [a]() [a](b(c)d) [a](b\\)c) [a](b&amp;c) [a](b&c)\n",
+    '[a](b) [a](<b c>) [a](b "c") [a](b \'c\') [a](b (c)) [a](b "c\'d") [a]() [a](b(c)d) [a](b\\)c) [a](b&amp;c) [a](b&c)\n',
     "[a] [a][b] [a][] [a]: b [^a] [[a]] ![a](b) ![a] ![a][b] [![a](b)](c) [a [b](c)](d) a] b [c\n\n[a]: d\n",
     "[a][b\\_c] [a][d&amp;e] [a][f\u00a0g] [a][\u3000h] [a][i\\(j] [a][k&l] [a][\u00e9]\n\n[b\\_c]: u\n[d&amp;e]: u\n[f\u00a0g]: u\n[\u3000h]: u\n[i\\(j]: u\n[k&l]: u\n[\u00e9]: u\n",
     "[b\\_c][] [b\\_c] [d&amp;e][] [d&amp;e] [a][b\\_c][b\\_c] **[a][d&amp;e]**\n\n| [a][d&amp;e] |\n| --- |\n\n[b\\_c]: u\n[d&amp;e]: u\n",
@@ -502,7 +502,7 @@ describe("Markdown", () => {
     "**a http://b_c.d e** and **a \u00e9http://b_c.d e** and **a xhttp://b_c.d e**\n",
     "http://a\u4e2d(*b* and www.a\u4e2d(*b*\n\nhttp://a\"(*b* and http://a'(*b*\n\nhttp://a](*b*\n\nhttp://a|(*b*\n\nhttp://a>(*b* and http://a}(*b* and http://a^(*b*\n",
     "**<http://a.b/[[c>]]**\n\n**<a:[[>]] b**\n\n<http://a.b/[[c>]]\n\n**<a b='[['>]]**\n\n**`[[`]]**\n",
-    "<http://a.b> <a@b.c> <a b> <a> </a> <a b=\"c*d*\"> <a\nb> < a <= b <1@b.c> <!-- c --> <?php ?> <br/> a<b>c\n",
+    '<http://a.b> <a@b.c> <a b> <a> </a> <a b="c*d*"> <a\nb> < a <= b <1@b.c> <!-- c --> <?php ?> <br/> a<b>c\n',
     // What a line of a paragraph starts with.
     "a\n1. b\n\na\n2. b\n\na\n1986. b\n\na\n1986 b\n\na\n- b\n\na\n-b\n\na\n+ b\n\na\n# b\n\na\n#b\n\na\n> b\n\na\n=\n\na\n-\n\na\n---\n",
     "a\n```\nb\n```\n\na\n```b`c\n\na\n~~~\nb\n~~~\n\na\n$$\nb\n$$\n\na\n<div>\n\na\n<b>\n\na\n<b>\n:\n\na\n:::\n\na\n:-\n\na\n| b |\n\na | b\n- | -\n",
@@ -516,11 +516,11 @@ describe("Markdown", () => {
     "[a]({{b) *c* }}\n\n[a]({{b}}/c_d) *e*\n\n[a]({{b}}&amp;) }}\n\n[a]({{b}}(c)) }}\n\n[a]({{b}}\\)) }}\n\n[a]({%b%}) and [a]({{b}}{{c}}) and ![a]({{b}})\n",
     "[a][{%]  %}]\n\n[][{{]  }}]\n\n[{%]  %}]\n\n[{%]: u\n[{{]: u\n",
     "[a {{ b ] }} c   d](e)\n\n[{{ a }}]({{ b }})\n\n![{{ a ] }}](b)\n",
-    "[a]({{ b }}) and [a]({{< b \"c\" >}}) and ![a]({{ b }}) and [a](b{{ c }})\n",
+    '[a]({{ b }}) and [a]({{< b "c" >}}) and ![a]({{ b }}) and [a](b{{ c }})\n',
     // HTML.
-    "<div>\n  <p>*a*</p>  \n\n</div>\n\n<img src=\"a\">\n\n<img src=\"a\"> b\n\n<span>a</span> *b*\n\n<my-element>\n\n<p-a>\n\n</div>\n  \n<div>\n",
-    "<!-- a -->\n\n<!-- a\nb -->\n\n<!-- a --> b\n\n<!-->\n<n s=\"\">\n\n<!-- a -->\n<div>\n\n<style>\n\na {}\n</style>\n\n<pre>\n\n</pre>\n",
-    "<g s=\"\">\n\ufeff",
+    '<div>\n  <p>*a*</p>  \n\n</div>\n\n<img src="a">\n\n<img src="a"> b\n\n<span>a</span> *b*\n\n<my-element>\n\n<p-a>\n\n</div>\n  \n<div>\n',
+    '<!-- a -->\n\n<!-- a\nb -->\n\n<!-- a --> b\n\n<!-->\n<n s="">\n\n<!-- a -->\n<div>\n\n<style>\n\na {}\n</style>\n\n<pre>\n\n</pre>\n',
+    '<g s="">\n\ufeff',
     "<div>\n\u00a0\n",
     // Comments that tell the printer to leave something alone.
     "<!-- prettier-ignore -->\n| a | b |\n|--|--|\n\n| a | b |\n|--|--|\n",
@@ -546,7 +546,7 @@ describe("Markdown", () => {
     "| a | b |\n| --- | --- |\n| c | d |\n\n| a   | b   |\n| --- | --- |\n| c   | d   |\n",
     "| a | b | c | d |\n|:-|-:|:-:|-|\n| left | right | center | none |\n| 中文 | é | 😀 | `a\\|b` |\n|||||\n",
     "| a |\n|-|\n| b | c |\n\n| a | b |\n|-|-|\n| c |\n\na | b\n-|-\nc | d\n\n| a |\n|-|\n| b\n\n| a |\n| b |\n\n| a |\n|-|\nb\n",
-    "| a |\n|-|\n| *b* |\n| a  b |\n| a\\|b |\n| a\\\\|b |\n| <br> |\n| <a b=\"|\"> |\n| {{ c }} |\n| {{ c | d }} |\n| `a|b` |\n| [a](b) |\n| \ta |\n",
+    '| a |\n|-|\n| *b* |\n| a  b |\n| a\\|b |\n| a\\\\|b |\n| <br> |\n| <a b="|"> |\n| {{ c }} |\n| {{ c | d }} |\n| `a|b` |\n| [a](b) |\n| \ta |\n',
     "| a |\n|-|\n| b |\n{{ c }}\n\n| a |\n|-|\n  \ntext\n",
     "|||||\n|-|-|-|-|\n|||||\n",
     // The row under the header is as long as it's printed, with a space where a dash belongs.
@@ -592,17 +592,17 @@ describe("MDX", () => {
     "import a from  'a'\nexport const b = 1\n\nimportant text\n\nexports\n\ntext\nimport c from 'c'\n",
     "{/* a */}\n\n{/* a */}\n```js\nb\n```\n\n{/* a */}\ntext\n\n{/*a*/}\n\n{/*  a  */}\n\n{/* a */} b\n\n{/* a */} b {/* c */}\n\n{/* é */}\n\n# {/* a */}\n",
     "{/* prettier-ignore */}\n| a | b |\n|--|--|\n\n{/* prettier-ignore */}\n*a*  b\n\n*c*\n",
-    "<A />\n\n<A>\n\ntext\n\n</A>\n\n<A b=\"c\">\n  <B>\n\n<A>b</A>\n\n<A.B c>\n\n<a-b>\n\n<pre>\n\n<A>\n  \n</A>\n\n<A>\n<!-- b -->\n\n<A b={c}>\n\n<>\n\n<A>\u00a0\n",
+    '<A />\n\n<A>\n\ntext\n\n</A>\n\n<A b="c">\n  <B>\n\n<A>b</A>\n\n<A.B c>\n\n<a-b>\n\n<pre>\n\n<A>\n  \n</A>\n\n<A>\n<!-- b -->\n\n<A b={c}>\n\n<>\n\n<A>\u00a0\n',
     // JSX that's formatted already, and nearly so.
     '<Note>You cannot use both.</Note>\n\n<ParamField path="--config" type="string">\n  Specify path to config file (<code>bunfig.toml</code>). Alias: <code>-c</code>\n</ParamField>\n\n<ParamField path="--elide-lines" type="number" default="0">\n  Truncate each script\'s output to its last N lines when using --filter. Default 0 shows all lines\n</ParamField>\n',
     '<A b="c">\n  d\n</A>\n\n<A>\n  d\n</A>\n\n<A b="c" d>\n  e\n</A>\n\n<A b="c" d>e</A>\n\n<A b=\'c\'>d</A>\n\n<A b={c}>d</A>\n\n<A b="&quot;">d</A>\n\n<fbt>a</fbt>\n\n<A />\n\n<A/>\n\n<A b />\n\n<A>  d</A>\n\n<A>d  e</A>\n\n<A>{d}</A>\n\n<A>\u00e9</A>\n',
     "<A>\n  <code>a</code>\n</A>\n\n<A>\n  a <code>b</code>\n  c\n</A>\n\n<A>\n  a <code>b</code> c\n</A>\n\n<A>\n  a<code>b</code> c\n</A>\n\n<A>\n  a <br /> c\n</A>\n\n<A>\n    a\n</A>\n\n<A>\n\ta\n</A>\n\n<A>\n  a\n  b\n</A>\n\n<A>\n</A>\n\n<A>\n  a\n</B>\n",
     `<A>\n  ${"word ".repeat(15)}word\n  ${"word ".repeat(3)}word\n</A>\n\n<A>\n  ${"word ".repeat(14)}word\n  ${"word ".repeat(3)}word\n</A>\n\n<A>${"word ".repeat(14)}word</A>\n\n<A>${"word ".repeat(15)}word</A>\n\n<A b="${"c".repeat(90)}">\n  d\n</A>\n`,
-    "a <b>c</b> d <br/> e < f <= g <A b=\"*c*\" /> *h*\n\na {b} c {{ d }} e {% f %} g { h } i {/* j */}\n",
+    'a <b>c</b> d <br/> e < f <= g <A b="*c*" /> *h*\n\na {b} c {{ d }} e {% f %} g { h } i {/* j */}\n',
     "_a_ and *a* and _two words_ and a_b and a_b_ c and _a and snake_case `a_` and __a__\n\n**a** and **a b** and ** a** and **a **  and **a*b** and **`a*b`** and **a_b** and **[a](b)** and ***a***\n",
     "**a **: b\n\n**a & ** b\n\n**a\u00a0** b\n\n- **a **: b\n\n**a\u00e9** b\n\n| **a ** |\n| - |\n",
     "| [a  ](b) |\n| --- |\n| c |\n\n| a |\n| --- |\n| [b c  ](d). |\n\n| [a ](b) |\n| --- |\n\n| [  a](b) |\n| --- |\n\n| [ a](b) |\n| --- |\n\n[a  ](b) and [a ](b) and [  a](b)\n",
-    "[a](b) and [a](b \"c\") and [a] and [a][b] and ![a](b) and [`a`](b) and [a](é) and [a\\]](b) and a] b\n\n[a](b)\n\n[a]: b\n",
+    '[a](b) and [a](b "c") and [a] and [a][b] and ![a](b) and [`a`](b) and [a](é) and [a\\]](b) and a] b\n\n[a](b)\n\n[a]: b\n',
     "a\\*b and a\\_b and a\\#b and a $b$ c and ~a~ and ~~a~~ and http://a.b and www.a.b and a@b.c\n",
     "**Note**: a\n\n🟢 a\n\n\u00a0a\n\n\ufeffa\n\n135 rules.\n\n1. a\n\n1.5 b\n\na\n**b**\n\na\n🟢 b\n\na\n1 b\n\na\u00a0\n",
     "- a\n- b\n  c\n- **d**\n\n- e\n  - f\n\n* g\n\n1. a\n2. b\n\n- a\n\n  b\n\n- [a](b)\n- _a_\n- 1,000\n",
@@ -1562,7 +1562,8 @@ describe.skipIf(!hasFlag)("what breaks whether it fits or not, and what only loo
       declare const { o }: {
        p: q };
     `,
-    "language-comments.js": "/* GraphQL */\n`{a}`;\n/* HTML */\n`<a>b</a>`;\n/* c */\n`{a}`;\nx =\n  /* GraphQL */\n  `{a}`;\n",
+    "language-comments.js":
+      "/* GraphQL */\n`{a}`;\n/* HTML */\n`<a>b</a>`;\n/* c */\n`{a}`;\nx =\n  /* GraphQL */\n  `{a}`;\n",
     // Whether the element before \`{" "}\` is measured with it depends on what the printer has measured before.
     "before-jsx-space.jsx": ["", "<b />", "<b>\n  ccccccc\n  <d>e</d>\n</b>", "<b>\n  <d>e</d>\n</b>", "text"]
       .map(
@@ -1570,9 +1571,11 @@ describe.skipIf(!hasFlag)("what breaks whether it fits or not, and what only loo
           `a = (\n<>\n${first}\n<Divider orientation="left">sub-element xxxxxxxxxxxxxxxxxx center</Divider> <Row>\n</Row>\n</>\n);\n`,
       )
       .join(""),
-    "optional-targets.ts": "a?.bbbbbbbb.cccc = `/${dddd.eeeee}/`;\na?.b = c(dddddddd, eeeeeeee);\nf = a?.b.c = `${dddddddddd}`;\n",
+    "optional-targets.ts":
+      "a?.bbbbbbbb.cccc = `/${dddd.eeeee}/`;\na?.b = c(dddddddd, eeeeeeee);\nf = a?.b.c = `${dddddddddd}`;\n",
     // A comment before the \`{\` is printed before the first statement, which starts after it.
-    "static-blocks.ts": "class A { static /*\nd*/ { f(aaaaaaaaaa, bbbbbbbbbb); } }\nclass B { static /* c */ { f(aaaaaa, bbbbbb); } }\n",
+    "static-blocks.ts":
+      "class A { static /*\nd*/ { f(aaaaaaaaaa, bbbbbbbbbb); } }\nclass B { static /* c */ { f(aaaaaa, bbbbbb); } }\n",
     // Where the column is a guess, the printer has to know of the \`;\` or the \`,\` after a chain that always breaks.
     "chains.ts": `
       x = a || class d { a = l().p().t(b + c); };
@@ -1605,7 +1608,8 @@ describe.skipIf(!hasFlag)("what breaks whether it fits or not, and what only loo
       d((a = f(bbbbbb)) => {});
       d((a = 1) => {});
     `,
-    "assertions-in-conditions.ts": "if (a && <{\n b: c }>d) { e; }\nwhile (a && <a<{\nT}>>x) { e; }\nif (a < b && c) { e; }\n",
+    "assertions-in-conditions.ts":
+      "if (a && <{\n b: c }>d) { e; }\nwhile (a && <a<{\nT}>>x) { e; }\nif (a < b && c) { e; }\n",
     // A comment after a \`(\` belongs to what's before the parenthesis.
     "comments-in-parentheses.mjs": `
       new l(2, (/**/
@@ -1706,7 +1710,8 @@ describe.skipIf(!hasFlag)("names, literals, member accesses, calls and operators
       expressions.push(`(${operator}${operand}) ${first} b`, `a ${first} ${operator}${operand}`);
       if (first !== "**") expressions.push(`${operator}${operand} ${first} b`);
       if (operand === "a") expressions.push(`${operator}(a ${first} b)`);
-      if (operator === "++" || operator === "--") expressions.push(`a.b${operator} ${first} c`, `c ${first} a.b${operator}`);
+      if (operator === "++" || operator === "--")
+        expressions.push(`a.b${operator} ${first} c`, `c ${first} a.b${operator}`);
     }
     files[`operators-${index}.ts`] = `async function f() {\n${expressions.flatMap(places).join("\n")}\n}\n`;
   }
@@ -1779,7 +1784,7 @@ describe.skipIf(!hasFlag)("names, literals, member accesses, calls and operators
     "a.b('c')",
     'a.b("c")',
     "a.b('c\"d')",
-    "a.b(\"c'd\")",
+    'a.b("c\'d")',
     "a.b('', \"\")",
     "a.b('c', d)",
     "a('b').c",
@@ -2222,8 +2227,10 @@ describe.skipIf(!hasFlag)("where lines are written without a document", () => {
     // Scripts in other languages.
     "component.vue": `<script setup lang="ts">\nimport { ref } from 'vue'\nconst aaaaaaaaaaaaaaaaaaaaaaaaa = bbbbbbbbbbbbbbbbbbbbbbbbbbb(ccccccccccccccccccc, dddddd)\nfunction e() {\n  return f(() => {\n    g('h')\n  })\n}\n</script>\n<template>\n  <div @click="e()">{{ a }}</div>\n</template>\n`,
     "page.html": `<html>\n<body>\n<div><div><script>\nconst aaaaaaaaaaaaaaaaaaaaaaa = bbbbbbbbbbbbbbbbbbbbbbb(ccccccccccccccccc, dddddd)\nfunction e() { return f(() => { g('h') }) }\n</script></div></div>\n</body>\n</html>\n`,
-    "text.md": "- a\n\n  ```js\n  const aaaaaaaaaaaaaaaaaaaaaaaaaaa = bbbbbbbbbbbbbbbbbbbbbbbbbbbb(ccccccccccccccccccc, dddd)\n  function e() { return `f\n  g` }\n  ```\n\n```jsx\n<a b='c' />\n```\n",
-    "text.mdx": "import   {a} from 'b'\nexport const c = { d: 1,\n e: f(g) }\n\n# h\n\n<A b={() => { c('d') }} />\n\n```ts\nlet i: J = k('l')\n```\n",
+    "text.md":
+      "- a\n\n  ```js\n  const aaaaaaaaaaaaaaaaaaaaaaaaaaa = bbbbbbbbbbbbbbbbbbbbbbbbbbbb(ccccccccccccccccccc, dddd)\n  function e() { return `f\n  g` }\n  ```\n\n```jsx\n<a b='c' />\n```\n",
+    "text.mdx":
+      "import   {a} from 'b'\nexport const c = { d: 1,\n e: f(g) }\n\n# h\n\n<A b={() => { c('d') }} />\n\n```ts\nlet i: J = k('l')\n```\n",
   };
 
   test.concurrent.each([
@@ -2340,7 +2347,9 @@ describe.skipIf(!hasFlag)("expressions that are too wide for their line", () => 
     "conditions.ts": `if (!this._hasAllOutlets && this._rowOutlet && this._headerRowOutlet && this._footerRowOutlet) {\n  run();\n} else if (value !== "above" && value !== "below" && (typeof ngDevMode === "undefined" || ngDevMode)) {\n  stop();\n}\nfunction f() {\n  return this._disabled || (this.buttonToggleGroup && this.buttonToggleGroup.disabled) || other;\n}\nconst deferredBody = body !== undefined && (isBlob(body) || FileHandle.isFileHandle(body));\nconst preview = document.querySelector(".cdk-drag-preview-with-a-long-name")! as HTMLElement;\nconst trigger = fixture.debugElement.query(By.css(".mat-mdc-select-trigger"))!.nativeElement;\n`,
     "literals.ts": `const routes = [{ path: "a", component: A }, { path: "b", component: B }];\nconst table = { "quoted-key": 1, 2: two, [computed]: three, plain: [first, second, { third: function () { return 3; } }] };\n`,
   };
-  const widths = [20, 24, 30, 34, 36, 40, 45, 50, 60, 66, 70, 72, 74, 76, 78, 79, 80, 81, 82, 84, 88, 90, 100, 110, 120];
+  const widths = [
+    20, 24, 30, 34, 36, 40, 45, 50, 60, 66, 70, 72, 74, 76, 78, 79, 80, 81, 82, 84, 88, 90, 100, 110, 120,
+  ];
   const others = [
     {},
     { trailingComma: "none" },

@@ -483,6 +483,7 @@ impl Scratches {
     /// Forgets what is known from the files that have been formatted, as at the start of a run.
     fn forget_other_files(&mut self) {
         self.css.forget_other_files();
+        self.markdown.forget_other_files();
         if let Some(blocks) = &mut self.blocks {
             blocks.forget_other_files();
         }

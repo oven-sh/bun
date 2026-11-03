@@ -66,6 +66,15 @@ pub struct Scratch {
     guests: Guests,
 }
 
+impl Scratch {
+    /// Forgets what is known from the texts that have been formatted, as at the start of a run.
+    pub fn forget_other_files(&mut self) {
+        if let Some(others) = &mut self.guests.others {
+            others.css.forget_other_files();
+        }
+    }
+}
+
 /// The same for the formatters of code blocks and front matter.
 #[derive(Default)]
 struct Guests {

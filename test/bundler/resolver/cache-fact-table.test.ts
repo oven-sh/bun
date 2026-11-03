@@ -695,12 +695,12 @@ const fixture = /* js */ `
   // A listing that was read right after its directory was made is read once more. Windows keeps none.
   async function untilListingsAreKept(row) {
     if (process.platform === "win32") return;
-    const { resolverCounters } = require("bun:internal-for-testing");
+    const { getCounters } = require("bun:internal-for-testing");
     const deadline = performance.now() + 2000;
     while (performance.now() < deadline) {
-      const before = resolverCounters().refills;
+      const before = getCounters().resolver.refills;
       for (const l of row.prime) await lookup(row, l);
-      if (resolverCounters().refills === before) return;
+      if (getCounters().resolver.refills === before) return;
     }
   }
 

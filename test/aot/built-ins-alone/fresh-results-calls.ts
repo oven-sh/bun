@@ -162,9 +162,6 @@ export const calls: Record<string, string[]> = {
       [`const other = {};\nprocess.${name}.call(other${operands === "" ? "" : `, ${operands}`});\nother._events`],
     ]),
   ),
-  "native:Bindgen:BunObjectInternals.bind.ts:resolverCounters": [
-    'import { resolverCounters } from "bun:internal-for-testing";\nresolverCounters()',
-  ],
   "native:Bindgen:Counters.bind.ts:createCountersObject": [
     'import { getCounters } from "bun:internal-for-testing";\ngetCounters()',
   ],

@@ -431,14 +431,14 @@ describe.concurrent("a file or package created after the resolver read its direc
 
     expect(req("@pk/a.ts")).toEqual({ a: 1 });
     for (let i = 0; i < 3; i++) {
-      const before = internals.resolverCounters().lookupsRunAgain;
+      const before = internals.getCounters().resolver.lookupsRunAgain;
       let message = "";
       try {
         req("@pk/nope.ts");
       } catch (e) {
         message = (e as Error).message;
       }
-      expect(internals.resolverCounters().lookupsRunAgain - before).toBe(1);
+      expect(internals.getCounters().resolver.lookupsRunAgain - before).toBe(1);
       expect(message).toBe(`Cannot find module '@pk/nope.ts'\nRequire stack:\n- ${path.join(root, "main.ts")}`);
     }
   });
@@ -475,9 +475,9 @@ test("a kept listing still lets a link be stat'ed again", () => {
   const deadline = Date.now() + 2_000;
   let listedAgain: number;
   do {
-    const before = internals.resolverCounters().refills;
+    const before = internals.getCounters().resolver.refills;
     expect(() => req("also-missing")).toThrow("Cannot find module 'also-missing'");
-    listedAgain = internals.resolverCounters().refills - before;
+    listedAgain = internals.getCounters().resolver.refills - before;
   } while (keepsListings && listedAgain > 0 && Date.now() < deadline);
   // Misses that listed a directory again for all that time, with nothing changed above, are the resolver's doing.
   if (keepsListings && listedAgain > 0) expect(stampsAbove(root)).not.toBe(atFirst);

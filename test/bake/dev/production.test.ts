@@ -507,9 +507,9 @@ export default function () {
       `,
       // How many lookups the resolvers of the process that builds have run again after a miss.
       "counters.ts": `
-        import { resolverCounters } from "bun:internal-for-testing";
+        import { getCounters } from "bun:internal-for-testing";
         export function lookupsRunAgain() {
-          const count = resolverCounters().lookupsRunAgain;
+          const count = getCounters().resolver.lookupsRunAgain;
           console.log("lookups run again: " + count);
           return count;
         }

@@ -10,7 +10,4 @@ export const registerMacro = b.fn({
 });
 
 /** `bun:internal-for-testing`. */
-export const resolverCounters = b.fn({ returns: b.record(b.usize) });
-
-/** `bun:internal-for-testing`. */
 export const resolverMissHold = b.fn({ args: { step: b.i32 }, returns: b.bool });

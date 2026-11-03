@@ -346,9 +346,9 @@ it("import override to bun:test", async () => {
 async function missesNotRunAgain(specifiers: string[]) {
   const notRunAgain: string[] = [];
   for (const specifier of specifiers) {
-    const before = internals.resolverCounters().lookupsRunAgain;
+    const before = internals.getCounters().resolver.lookupsRunAgain;
     await expect(import(specifier)).rejects.toThrow();
-    if (internals.resolverCounters().lookupsRunAgain === before) notRunAgain.push(specifier);
+    if (internals.getCounters().resolver.lookupsRunAgain === before) notRunAgain.push(specifier);
   }
   return notRunAgain;
 }
@@ -356,8 +356,8 @@ async function missesNotRunAgain(specifiers: string[]) {
 // The directory records and the listings that the resolver made since `before`. It frees neither, so a miss may
 // make none when nothing changed on disk since the same miss before it: the run after it finds each cached
 // directory as it was. `refills` is left out: Windows reads each listing again in place.
-function madeSince(before: ReturnType<typeof internals.resolverCounters>) {
-  const now = internals.resolverCounters();
+function madeSince(before: ReturnType<typeof internals.getCounters>["resolver"]) {
+  const now = internals.getCounters().resolver;
   return { dirInfoSlots: now.dirInfoSlots - before.dirInfoSlots, newListings: now.newListings - before.newListings };
 }
 
@@ -397,7 +397,7 @@ it.if(isWindows)("import() of a missing file at the drive root rejects", async (
     `${drive}///doesnotexist.ts`,
   ];
   expect(await missesNotRunAgain(specifiers)).toEqual([]);
-  const before = internals.resolverCounters();
+  const before = internals.getCounters().resolver;
   expect(await missesNotRunAgain(specifiers)).toEqual([]);
   expect(madeSince(before)).toEqual({ dirInfoSlots: 0, newListings: 0 });
 });
@@ -409,7 +409,7 @@ it.if(isWindows)("import() of a missing file at the root of a share rejects", as
   const share = `\\\\localhost\\${process.cwd()[0]}$`;
   const specifiers = [`${share}\\doesnotexist.ts`, `${share}\\\\doesnotexist.ts`];
   expect(await missesNotRunAgain(specifiers)).toEqual([]);
-  const before = internals.resolverCounters();
+  const before = internals.getCounters().resolver;
   expect(await missesNotRunAgain(specifiers)).toEqual([]);
   expect(madeSince(before)).toEqual({ dirInfoSlots: 0, newListings: 0 });
 });
@@ -447,7 +447,7 @@ describe.if(isWindows)("a lookup that missed finds what was written since", () =
     // each directory above it: see madeSince().
     const missing = () => found(() => from(root).resolve(`${root}\\${one}`));
     missing();
-    const before = internals.resolverCounters();
+    const before = internals.getCounters().resolver;
     missing();
     const madeByUnchangedMiss = madeSince(before);
     const answers: Record<string, string[]> = {};

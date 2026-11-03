@@ -474,9 +474,9 @@ describe.skipIf(!supported)("bun test --aot", () => {
       "tsconfig.json": "{}",
       "package.json": JSON.stringify({ name: "scans", type: "module" }),
       "counters.ts": `
-        import { resolverCounters } from "bun:internal-for-testing";
+        import { getCounters } from "bun:internal-for-testing";
         export function lookupsRunAgain() {
-          return resolverCounters().lookupsRunAgain;
+          return getCounters().resolver.lookupsRunAgain;
         }
       `,
       "a.test.ts": `

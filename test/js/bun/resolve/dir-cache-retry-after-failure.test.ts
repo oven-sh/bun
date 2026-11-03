@@ -207,17 +207,17 @@ const files = {
     // each miss answers, then what 20 more rounds of the misses add to each counter of the
     // resolver. The fixture is in the directory "here".
     const unchangedMisses = (here, misses) => {
-      const { resolverCounters } = require("bun:internal-for-testing");
+      const { getCounters } = require("bun:internal-for-testing");
       for (const [label, miss] of misses) res(label, miss);
       // What one more round of the misses adds to each counter of the resolver.
       const round = () => {
-        const before = resolverCounters();
+        const before = getCounters().resolver;
         for (const [, miss] of misses) {
           try {
             miss();
           } catch {}
         }
-        const after = resolverCounters();
+        const after = getCounters().resolver;
         const added = {};
         for (const name of Object.keys(after)) added[name] = after[name] - before[name];
         return added;
@@ -777,7 +777,7 @@ const files = {
         // directory whose record is out of date a new record. The Worker continues. The new record
         // is as the disk is, and it is not of the Worker's run: the Worker must find the module
         // through it, and must not replace what this thread has just read.
-        const { resolverMissHold, resolverCounters } = require("bun:internal-for-testing");
+        const { resolverMissHold, getCounters } = require("bun:internal-for-testing");
         const { specifier, importer, resolves, GO, SET, ANSWER, WAIT, RELEASE, store, waitWhile } =
           require("./race-shared.cjs");
         const json = (file, value) => write(file, JSON.stringify(value));
@@ -835,11 +835,11 @@ const files = {
           waitWhile(cell, SET, turn - 1);
           if (!resolverMissHold(WAIT)) throw new Error(kind + ": the lookup of the Worker did not miss");
           const mine = resolves(dir, specifier[kind]);
-          const records = resolverCounters().dirInfoSlots;
+          const records = getCounters().resolver.dirInfoSlots;
           resolverMissHold(RELEASE);
           waitWhile(cell, ANSWER, 0);
           const theirs = Atomics.load(cell, ANSWER) - 1;
-          const replaced = resolverCounters().dirInfoSlots - records;
+          const replaced = getCounters().resolver.dirInfoSlots - records;
           console.log(
             kind + ": found before the change " + early + ", then by this thread " + mine + ", by the Worker " + theirs +
               ", new directory records by the Worker " + replaced,
@@ -947,8 +947,8 @@ const files = {
         // What was removed next to the importer after a miss. The old retry answered these as a
         // new process does: it dropped the importer's directory. Now the run after the miss
         // checks what it takes from the caches, and finds what is gone.
-        const { resolverCounters } = require("bun:internal-for-testing");
-        const ranAgain = resolverCounters().lookupsRunAgain;
+        const { getCounters } = require("bun:internal-for-testing");
+        const ranAgain = getCounters().resolver.lookupsRunAgain;
         // The node_modules next to the importer has a copy of a package whose "exports" do not
         // cover the request. The copy is removed, as a dedupe does.
         const hoisted = top => {
@@ -972,7 +972,7 @@ const files = {
         fs.rmSync(path.join("r2", "sub", "package.json"));
         res("RM4", () => r2.resolve("pkg"));
         // Each of the four lookups missed on its first run, and ran once more.
-        console.log("RM1 to RM4 lookups run again:", resolverCounters().lookupsRunAgain - ranAgain);
+        console.log("RM1 to RM4 lookups run again:", getCounters().resolver.lookupsRunAgain - ranAgain);
       },
 
       async relink() {
@@ -1012,11 +1012,11 @@ const files = {
         // disk. The old retry answered these as a new process does: it dropped the importer's
         // directory. Now the run after a miss reads the listing again in place, and that keeps an
         // entry only under the spelling that the directory has.
-        const { resolverCounters } = require("bun:internal-for-testing");
+        const { getCounters } = require("bun:internal-for-testing");
         // Prints how many lookups ran again since the last call: each one that missed at first, once.
-        let ranAgain = resolverCounters().lookupsRunAgain;
+        let ranAgain = getCounters().resolver.lookupsRunAgain;
         const counted = rows => {
-          const now = resolverCounters().lookupsRunAgain;
+          const now = getCounters().resolver.lookupsRunAgain;
           console.log(rows, "lookups run again:", now - ranAgain);
           ranAgain = now;
         };
@@ -1172,7 +1172,7 @@ const files = {
         // "handled": the import sits in a try block. A build that does not find such a module
         // succeeds, and prints the require() as an expression that throws: the bundle never loads
         // the module.
-        const { resolverCounters } = require("bun:internal-for-testing");
+        const { getCounters } = require("bun:internal-for-testing");
         const run = async (label, { handled, probe, made = "gen.js", asked = "./gen.js", before = "" }) => {
           const dir = path.join(root, "inflight", label);
           const load = "require(" + JSON.stringify(asked) + ").v";
@@ -1195,7 +1195,7 @@ const files = {
               });
             },
           };
-          const ranAgain = resolverCounters().lookupsRunAgain;
+          const ranAgain = getCounters().resolver.lookupsRunAgain;
           const built = await Bun.build({
             entrypoints: [path.join(dir, "ent.js")],
             plugins: [writesThenDeclines],
@@ -1213,7 +1213,7 @@ const files = {
               : text.includes(throws)
                 ? "not bundled, the require throws"
                 : "not bundled";
-          console.log(label, answer + ", lookups run again", resolverCounters().lookupsRunAgain - ranAgain);
+          console.log(label, answer + ", lookups run again", getCounters().resolver.lookupsRunAgain - ranAgain);
         };
         // The first build of the process too: no build comes before IF1.
         await run("IF1", { handled: false, probe: true });
@@ -1240,21 +1240,21 @@ const files = {
           'exports.real = require("real");',
         ];
         write(loader, imports.join("\\n"));
-        const ranAgain = resolverCounters().lookupsRunAgain;
+        const ranAgain = getCounters().resolver.lookupsRunAgain;
         const built = await Bun.build({ entrypoints: [loader], target: "bun", throw: false });
         const answer = built.success ? "built" : "ERR " + built.logs.map(log => log.message).join("|");
-        console.log("HD", answer + ", lookups run again", resolverCounters().lookupsRunAgain - ranAgain);
+        console.log("HD", answer + ", lookups run again", getCounters().resolver.lookupsRunAgain - ranAgain);
       },
 
       async build() {
         // Bun.build() shares the cache across calls. Shapes of "installed after the
         // first build failed", and one of "written while the build runs".
-        const { resolverCounters } = require("bun:internal-for-testing");
+        const { getCounters } = require("bun:internal-for-testing");
         // build(), and how many lookups ran again after a miss meanwhile.
         const buildCounted = async (label, entry, plugins) => {
-          const before = resolverCounters().lookupsRunAgain;
+          const before = getCounters().resolver.lookupsRunAgain;
           await build(label, entry, plugins);
-          console.log(label, "lookups run again:", resolverCounters().lookupsRunAgain - before);
+          console.log(label, "lookups run again:", getCounters().resolver.lookupsRunAgain - before);
         };
         // node_modules did not exist.
         write(path.join("g1", "ent.ts"), 'import { v } from "dpk1"; console.log(v);');

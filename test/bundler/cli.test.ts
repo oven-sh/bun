@@ -1167,8 +1167,8 @@ describe.concurrent("a module that a macro writes during the build", () => {
     // counter: in a release build the VM of a macro of `bun build` does not read the environment that lets Bun's own
     // tests import bun:internal-for-testing, and a Worker's does. The counters are those of the process.
     "app/counters.worker.ts": `
-      import { resolverCounters } from "bun:internal-for-testing";
-      postMessage(resolverCounters().lookupsRunAgain);
+      import { getCounters } from "bun:internal-for-testing";
+      postMessage(getCounters().resolver.lookupsRunAgain);
     `,
     // The macro waits for its Worker to close: LeakSanitizer reports what a live Worker holds when `bun build` exits.
     "app/counters.ts": `

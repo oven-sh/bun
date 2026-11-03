@@ -1,5 +1,5 @@
 use crate::bindgen::JsHeap;
-use crate::generated_bindgen::counters::CountersObject;
+use crate::generated_bindgen::counters::{CountersObject, ResolverCounters};
 
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy)]
@@ -21,9 +21,16 @@ impl Counters {
 pub(crate) fn create_counters_object(heap: &JsHeap<'_>) -> CountersObject {
     // SAFETY: only the VM is taken from it.
     let counters = unsafe { heap.global() }.bun_vm().counters;
+    let resolver = bun_resolver::resolver::test_hooks::counters();
     CountersObject {
         spawn_sync_blocking: counters.spawn_sync_blocking,
         spawn_memfd: counters.spawn_memfd,
+        resolver: ResolverCounters {
+            lookups_run_again: resolver.lookups_run_again,
+            dir_info_slots: resolver.dir_info_slots,
+            new_listings: resolver.new_listings,
+            refills: resolver.refills,
+        },
     }
 }
 

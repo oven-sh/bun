@@ -409,13 +409,13 @@ describe.concurrent("bun test --changed", () => {
       `,
       // The scan looks "./not-there.ts" up. The run does not: nothing calls the function.
       "a.test.ts": `
-        import { resolverCounters } from "bun:internal-for-testing";
+        import { getCounters } from "bun:internal-for-testing";
         import { test } from "bun:test";
         function never() {
           return require("./not-there.ts");
         }
         test("a", () => {
-          console.log(typeof never, "lookups run again before the tests:", resolverCounters().lookupsRunAgain);
+          console.log(typeof never, "lookups run again before the tests:", getCounters().resolver.lookupsRunAgain);
         });
       `,
       // gen.ts is written while the scan reads this file, and leads to dep.ts.

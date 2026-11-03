@@ -6827,6 +6827,35 @@ exports.format = async text => "by Prettier";
     expect(result.exitCode).toBe(2);
   });
 
+  // TypeScript's parser accepts these. typescript-estree throws while it converts the tree.
+  test.each([
+    "a?.b`c`",
+    "a()++",
+    "++a?.b",
+    "--a!.b?.c",
+    "class A { #x; m() { return 1 + #x } }",
+    "class A { #x; m() { return this in #x } }",
+    'import("a", "b", "c")',
+    "import()",
+    'import.source("a")',
+    "a;\nexport declare function f() {}",
+    "a;\nb;\nasync var c",
+    "declare var a = 1",
+  ])("an expression or a modifier that Prettier rejects in TypeScript is a syntax error: %j", async code => {
+    const result = await format({ "a.ts": code + "\n" }, ["a.ts"], { reads: ["a.ts"] });
+    expect(result.files).toEqual({ "a.ts": code + "\n" });
+    expect(result.stderr).toMatch(syntaxErrorIn("a.ts"));
+    expect(result.exitCode).toBe(2);
+  });
+
+  test("the same kinds of expressions are formatted where they are valid", async () => {
+    const code =
+      'a++;\nb.c--;\n++d[e];\nf!++;\nclass A {\n  #x;\n  m() {\n    return #x in this;\n  }\n}\nimport("a");\ng`h`;\n(i?.j)`k`;\n';
+    const result = await format({ "a.ts": code }, ["a.ts", "--check"], { reads: ["a.ts"] });
+    expect(result.stderr).toBe("1 file is formatted.");
+    expect(result.exitCode).toBe(0);
+  });
+
   test.each([
     "function f(x: number): string",
     "function* g()",

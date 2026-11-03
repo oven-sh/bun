@@ -1369,6 +1369,23 @@ impl<'a> Resolver<'a> {
             }
         }
 
+        // `python:json`: Python finds the module when the program runs. Importing one may have side effects.
+        if import_path.starts_with(b"python:") {
+            self.extension_order = original_order;
+            if !self.opts.target.is_bun() || kind.is_entry_point() {
+                return ResultUnion::NotFound;
+            }
+            return ResultUnion::Success(Result {
+                import_kind: kind,
+                path_pair: PathPair {
+                    primary: Fs::Path::init(import_path),
+                    secondary: None,
+                },
+                flags: ResultFlags::IS_EXTERNAL,
+                ..Default::default()
+            });
+        }
+
         // #29590: a tsconfig `paths` key can look bare (e.g. "@/*") and
         // otherwise collide with `packages=external + isPackagePath`. Try
         // the alias first, but only follow it when it actually resolves to

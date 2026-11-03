@@ -4289,6 +4289,7 @@ pub mod bv2_impl {
                     Target::Node,
                     Default::default(),
                 ) || specifier.starts_with(b"bun:")
+                    || specifier.starts_with(b"python:")
                     || specifier == b"bun"
             };
 
@@ -6912,6 +6913,28 @@ pub mod bv2_impl {
                                                     bstr::BStr::new(&import_record.path.text),
                                                     if self.dev_server.is_none() {
                                                         ". To use Node.js builtins, set target to 'node' or 'bun'"
+                                                    } else {
+                                                        ""
+                                                    },
+                                                ),
+                                                import_record.path.text,
+                                                import_record.kind,
+                                            );
+                                        } else if !ctx.target.is_bun()
+                                            && import_record.path.text.starts_with(b"python:")
+                                        {
+                                            add_error(
+                                                log,
+                                                Some(source),
+                                                import_record.range,
+                                                format_args!(
+                                                    "Only Bun can {} a Python module: \"{}\"{}",
+                                                    bstr::BStr::new(
+                                                        import_record.kind.error_label()
+                                                    ),
+                                                    bstr::BStr::new(&import_record.path.text),
+                                                    if self.dev_server.is_none() {
+                                                        ". When bundling for Bun, set target to 'bun'"
                                                     } else {
                                                         ""
                                                     },

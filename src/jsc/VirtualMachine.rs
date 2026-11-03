@@ -5594,6 +5594,11 @@ impl VirtualMachine {
             ret.path = result.path.as_bytes();
             return Ok(());
         }
+        // Python finds the module when it is loaded. It is never a package to look for or to install.
+        if specifier.starts_with(b"python:") {
+            ret.path = specifier;
+            return Ok(());
+        }
         if self.module_loader.eval_source.is_some()
             && (specifier.ends_with(bun_paths::path_literal!("/[eval]").as_bytes())
                 || specifier.ends_with(bun_paths::path_literal!("/[stdin]").as_bytes()))

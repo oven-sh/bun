@@ -46,6 +46,7 @@
 #include "JSCommonJSExtensions.h"
 
 #include "BunProcess.h"
+#include "BunPython.h"
 
 namespace Bun {
 using namespace JSC;
@@ -671,6 +672,12 @@ BuiltinModule fetchBuiltinModuleWithoutResolution(
             return { Kind::Exports, exports };
         }
     }
+    String key = specifier->toWTFString(BunString::ZeroCopy);
+    if (auto name = Bun::pythonModuleNameOfSpecifier(key); !name.isNull()) [[unlikely]] {
+        JSValue module = Bun::importPythonModule(globalObject, name, true);
+        RETURN_IF_EXCEPTION(scope, {});
+        return { Kind::Exports, module };
+    }
     if (Bun__fetchBuiltinModule(bunVM, globalObject, specifier, true, res)) {
         if (!res->success) [[unlikely]] {
             throwException(scope, res->result.err, globalObject);
@@ -1266,6 +1273,20 @@ static JSValue fetchESMSourceCode(
         RETURN_IF_EXCEPTION(scope, {});
         if (virtualModuleResult) {
             RELEASE_AND_RETURN(scope, handleVirtualModuleResult<allowPromise>(globalObject, virtualModuleResult, res, specifier, referrer, fetch, wasModuleMock));
+        }
+    }
+
+    if (!pluginContents) {
+        String moduleKey = specifier->toWTFString(BunString::ZeroCopy);
+        if (auto name = Bun::pythonModuleNameOfSpecifier(moduleKey); !name.isNull()) [[unlikely]] {
+            JSValue module = Bun::importPythonModule(globalObject, name, false);
+            if (auto* exception = scope.exception()) [[unlikely]] {
+                (void)scope.tryClearException();
+                RELEASE_AND_RETURN(scope, reject(exception));
+            }
+            // didFulfillPendingVirtualModule tells a source from an error by this.
+            res->success = true;
+            RELEASE_AND_RETURN(scope, rejectOrResolve(createJSValueModuleSourceCode(vm, module, moduleKey)));
         }
     }
 

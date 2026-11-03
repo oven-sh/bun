@@ -523,7 +523,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
         }
     } else {
         // In Node.js, `node:doesnotexist` resolves to `node:doesnotexist`
-        if (specifier.startsWith("node:"_s) || specifier.startsWith("bun:"_s)) [[unlikely]] {
+        if (specifier.startsWith("node:"_s) || specifier.startsWith("bun:"_s) || specifier.startsWith("python:"_s)) [[unlikely]] {
             return JSValue::encode(jsString(vm, specifier));
         }
 

@@ -1,4 +1,5 @@
 #include "root.h"
+#include <JavaScriptCore/PyExec.h>
 
 static constexpr ASCIILiteral builtinModuleNamesSortedLength[] = {
     "fs"_s,
@@ -93,6 +94,10 @@ bool isBuiltinModule(const String& namePossiblyWithNodePrefix)
         if (namePossiblyWithNodePrefix == builtinModule)
             return true;
     }
+
+    // Of what Python can import by name, its standard library is built in.
+    if (namePossiblyWithNodePrefix.startsWith("python:"_s))
+        return JSC::Python::isStandardLibraryModuleName(StringView(namePossiblyWithNodePrefix).substring(7));
 
     // If no match found and the name has a "node:" prefix, try without the prefix
     String name = namePossiblyWithNodePrefix;

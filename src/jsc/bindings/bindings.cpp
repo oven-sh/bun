@@ -995,6 +995,82 @@ static bool isWellKnownConstructor(JSValue value)
 
 extern "C" bool Bun__VM__isRunningVitestEntry(void* bunVM);
 
+// Python says whether two of its objects are equal, or one of them and a primitive value: `==`, which asks __eq__. Their
+// properties do not: a set, a date and the keys of a dict that are no strings have none. An exception is compared as any Error.
+// Against an object of JS, what has all it holds among its properties is compared by them, as an instance of a class of JS is
+// with an object literal: a dict whose keys are strings, an instance by its attributes, a tuple. bytes are compared with a
+// Uint8Array by what they hold. Nothing else equals an object of JS.
+template<bool comparesTypes>
+static std::optional<bool> pythonObjectsDequal(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSValue v1, JSValue v2)
+{
+    auto isPythonObject = [](JSValue value) {
+        return value.isCell() && isPyObjectType(value.asCell()->type()) && value.asCell()->type() != PyExceptionType;
+    };
+    bool isPython1 = isPythonObject(v1);
+    bool isPython2 = isPythonObject(v2);
+    if (!isPython1 && !isPython2) [[likely]]
+        return std::nullopt;
+    if ((!isPython1 && !v1.isPrimitive()) || (!isPython2 && !v2.isPrimitive())) {
+        if constexpr (comparesTypes)
+            return false;
+        VM& vm = globalObject->vm();
+        JSObject* python = asObject(isPython1 ? v1 : v2);
+        JSObject* other = asObject(isPython1 ? v2 : v1);
+        switch (python->type()) {
+        case PyTupleType:
+        case PyInstanceType:
+        case PyModuleType:
+            return std::nullopt;
+        case PyDictType: {
+            size_t items = 0;
+            forEachInIterable(globalObject, python, [&](VM&, JSGlobalObject*, JSValue) {
+                ++items;
+            });
+            RETURN_IF_EXCEPTION(scope, false);
+            PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+            python->methodTable()->getOwnPropertyNames(python, globalObject, names, DontEnumPropertiesMode::Exclude);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (names.size() != items)
+                return false;
+            return std::nullopt;
+        }
+        case PyBytesType:
+        case PyByteArrayType: {
+            auto* bytes = dynamicDowncast<JSC::JSUint8Array>(other);
+            if (!bytes)
+                return false;
+            JSValue length = python->get(globalObject, vm.propertyNames->length);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!length.isUInt32() || length.asUInt32() != bytes->length())
+                return false;
+            for (uint32_t i = 0, count = length.asUInt32(); i < count; i++) {
+                JSValue byte = python->getIndex(globalObject, i);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (i >= bytes->length() || byte != jsNumber(bytes->typedSpan()[i]))
+                    return false;
+            }
+            return true;
+        }
+        default:
+            return false;
+        }
+    }
+    if constexpr (comparesTypes) {
+        if (isPython1 && isPython2) {
+            auto& constructor = globalObject->vm().propertyNames->constructor;
+            JSValue type1 = v1.get(globalObject, constructor);
+            RETURN_IF_EXCEPTION(scope, false);
+            JSValue type2 = v2.get(globalObject, constructor);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (type1 != type2)
+                return false;
+        }
+    }
+    bool equal = JSValue::equal(globalObject, v1, v2);
+    RETURN_IF_EXCEPTION(scope, false);
+    return equal;
+}
+
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
 bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, bool addToStack)
 {
@@ -1050,6 +1126,9 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
     if (v1.isEmpty() || v2.isEmpty())
         return v1.isEmpty() == v2.isEmpty();
+
+    if (auto equal = pythonObjectsDequal<isStrict || checkPrototypes>(globalObject, scope, v1, v2)) [[unlikely]]
+        return *equal;
 
     if (v1.isPrimitive() || v2.isPrimitive())
         return false;
@@ -1164,8 +1243,32 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     bool v2Array = isArray(globalObject, v2);
     RETURN_IF_EXCEPTION(scope, false);
 
-    if (v1Array != v2Array)
+    if (v1Array != v2Array) {
+        // As an instance of a class equals an object literal with the same properties unless the comparison is strict,
+        // a tuple of Python's equals an array with the same items.
+        if constexpr (!isStrict && !checkPrototypes) {
+            if ((v1Array ? c2 : c1)->type() == PyTupleType) {
+                JSValue length1 = o1->get(globalObject, vm.propertyNames->length);
+                RETURN_IF_EXCEPTION(scope, false);
+                JSValue length2 = o2->get(globalObject, vm.propertyNames->length);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (length1 != length2 || !length1.isUInt32())
+                    return false;
+                for (uint32_t i = 0, count = length1.asUInt32(); i < count; i++) {
+                    JSValue left = o1->getIndex(globalObject, i);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    JSValue right = o2->getIndex(globalObject, i);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    bool itemsEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (!itemsEqual)
+                        return false;
+                }
+                return true;
+            }
+        }
         return false;
+    }
 
     if (v1Array && v2Array && !(o1->isProxy() || o2->isProxy())) {
         JSC::JSArray* array1 = uncheckedDowncast<JSC::JSArray>(v1);

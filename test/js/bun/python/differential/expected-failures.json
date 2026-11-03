@@ -5,7 +5,6 @@
   "llint/ll_items": "iterator.__setstate__(2 ** 64) does not raise OverflowError (the script prints a digest: give it an argument to see the lines)",
   "mod_ast/known_gaps_parse": "four positions of errors at the end of the input",
   "mod_ast/known_gaps_positions": "a tree with line 0 in it gives line 1 in the traceback",
-  "mod_audit/events": "the audit event `import` is raised twice for one import",
   "mod_posix/posix_surface": "posix has spawnv, spawnve, spawnvp, spawnvpe, P_WAIT, P_NOWAIT and P_NOWAITO of its own: there is no fork for os.py to make them of",
-  "once_crashed/lazy_import_long_dotted_name": "FIXME: 10 000 dots in a thread with a stack of 256 KiB: no RecursionError, and in a debug build the thread dies"
+  "once_crashed/lazy_import_long_dotted_name": "10 000 dots in a thread with a stack of 256 KiB: they are gone through in a loop, so there is no RecursionError"
 }

@@ -1858,6 +1858,11 @@ impl<'a> Formatter<'a> {
                     writer.write_all(b"}");
                     writer.write_all(b"\n");
                 }
+                Tag::JSON if js_type.is_python_object() => {
+                    let repr = python_repr(self.global_this, value)?.to_bun_string(self.global_this)?;
+                    self.add_for_new_line(repr.length());
+                    writer.print(format_args!("{}", repr));
+                }
                 Tag::JSON => {
                     let str = value.json_stringify(self.global_this, self.indent)?;
                     self.add_for_new_line(str.length());
@@ -3409,6 +3414,14 @@ fn for_each_of_collection(
     })
 }
 
+/// `repr(value)`: what an object of Python's answers `util.inspect()` with.
+fn python_repr(global: &JSGlobalObject, value: JSValue) -> JsResult<JSValue> {
+    match value.fast_get(global, bun_jsc::BuiltinName::inspectCustom)? {
+        Some(inspect) if inspect.is_callable() => inspect.call(global, value, &[]),
+        _ => Ok(value),
+    }
+}
+
 fn write_string(global: &JSGlobalObject, out: &mut Vec<u8>, value: JSValue) -> JsResult<()> {
     out.extend_from_slice(value.to_js_string_view(global)?.to_utf8().slice());
     Ok(())
@@ -3878,6 +3891,10 @@ impl Formatter<'_> {
         has_called_to_json: bool,
     ) -> JsResult<()> {
         let global = self.global_this;
+        let js_type = value.js_type();
+        if js_type.is_python_object() && js_type != JSType::PyException {
+            return write_string(global, out, python_repr(global, value)?);
+        }
         if self.print_with_plugin(out, value)? {
             return Ok(());
         }

@@ -368,6 +368,11 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 
         std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
         WTF::initializeMainThread();
+#if ENABLE(AOT)
+        // The limit on threads may be reached at any time: a container sets one, a program lowers its own (setrlimit). The collector
+        // does without the helpers it cannot start.
+        WTF::Thread::setSurvivesFailedCreation();
+#endif
 
         // Use JSC::initialize with a callback to set Options during initialization.
         // The callback runs BEFORE IPInt::initialize() so we can configure WASM options early.

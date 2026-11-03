@@ -216,6 +216,18 @@ JSValue createPythonNamespace(Zig::GlobalObject* globalObject)
     return Python::importModuleFromJS(globalObject, "__python__"_s);
 }
 
+StringView pythonModuleNameOfSpecifier(StringView specifier)
+{
+    constexpr auto prefix = "python:"_s;
+    return specifier.startsWith(prefix) ? specifier.substring(prefix.length()) : StringView();
+}
+
+JSValue importPythonModule(Zig::GlobalObject* globalObject, StringView name, bool isRequire)
+{
+    preparePython();
+    return Python::importModuleFromJS(globalObject, name.toString(), isRequire ? "MODULE_NOT_FOUND"_s : "ERR_MODULE_NOT_FOUND"_s);
+}
+
 // The process is about to exit.
 extern "C" void Bun__Python__finalize(Zig::GlobalObject* globalObject)
 {

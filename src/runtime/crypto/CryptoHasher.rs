@@ -618,7 +618,7 @@ impl CryptoHasherZig {
 
     fn final_<'a>(&mut self, output_digest_slice: &'a mut [u8]) -> &'a mut [u8] {
         let len = self.digest_length as usize;
-        self.final_with_len(&mut output_digest_slice[..len], len)
+        self.final_with_len(output_digest_slice, len)
     }
 }
 

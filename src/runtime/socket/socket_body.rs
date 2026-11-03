@@ -1024,9 +1024,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         self.handlers.get().is_some()
     }
 
-    /// No event may reach the JS wrapper: its finalizer runs or ran, or the GC
-    /// condemned it and the sweep has yet to run it. Dispatch nothing, and never
-    /// make a second wrapper for the same socket.
+    /// The wrapper is finalizing or collected: dispatch nothing, and never make a second one.
     pub(crate) fn wrapper_gone(&self) -> bool {
         self.flags.get().contains(Flags::FINALIZING) || self.this_value.get().is_collected()
     }
@@ -1631,8 +1629,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return value;
         }
         if self.this_value.get().is_collected() {
-            // The JS wrapper was garbage-collected. Creating a new one here
-            // would result in a second `finalize` (and double-deref) later.
+            // A second wrapper would mean a second `finalize` and a double deref.
             return JSValue::UNDEFINED;
         }
         let value = self.to_js(global);
@@ -4274,10 +4271,7 @@ impl DuplexUpgradeContext {
                     this.upgrade.finish_close();
                     return;
                 }
-                // The GC condemned the wrapper while this task was queued, and
-                // the stream with it: nothing can reach an engine started now.
-                // The close below dispatches nothing, and the wrapper's
-                // finalizer finds the socket detached.
+                // The GC condemned the wrapper, and the stream with it: nothing can reach an engine started now.
                 if this.tls_this_ptr().is_some_and(|tls| tls.wrapper_gone()) {
                     this.upgrade.abandon_js_side();
                     this.upgrade.finish_close();

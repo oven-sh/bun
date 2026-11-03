@@ -2721,6 +2721,15 @@ describe("code in Markdown and MDX", () => {
       `<A b="c" d>e</A>\n\n<A b="c" d>\n  e f\n</A>\n\n<A b="${"c".repeat(90)}">\n  d   e\n</A>\n\n<A b d="${"c".repeat(90)}">\n  d   e\n</A>\n\n<A b='c'>\n  d   e\n</A>\n`,
       // White space next to a tag means something unless it has a line break in it.
       "<A> b   c</A>\n\n<A>b   c </A>\n\n<A> b   c </A>\n\n<A>\tb   c\n</A>\n\n<A> \n b   c \n </A>\n",
+      // Small elements among the words: a blank next to one is `{" "}` where the line is broken, and a line can be
+      // broken where there is nothing.
+      `<A>\n  Exclude <code>dev</code>, <code>optional</code>, or <code>peer</code> dependencies from install and ${"word ".repeat(12)}<code>a</code> b\n</A>\n`,
+      `<A>\n  ${"a".repeat(60)} <code>bbbbbb</code> c\n</A>\n\n<A>\n  ${"a".repeat(60)} <code>bbbbbbb</code> c\n</A>\n\n<A>\n  ${"a".repeat(61)}(<code>bbbbbb</code>) c\n</A>\n\n<A>\n  ${"a".repeat(64)} <code>b</code>, c\n</A>\n\n<A>\n  ${"a".repeat(65)} <code>b</code>, c\n</A>\n`,
+      '<A><code>b</code></A>\n\n<A>b <code>c</code></A>\n\n<A>\n  <code>b</code>   c\n</A>\n\n<A>\n  b\n  <code>c</code>\n</A>\n\n<A>\n  <code>b</code>\n  c\n</A>\n\n<A>\n  <code>b</code><code>c</code>\n</A>\n\n<A>\n  <code>b</code> <code>c</code>\n</A>\n\n<A>\n  b{" "}\n  <code>c</code>\n</A>\n',
+      `<A>\n  b <code>${"c".repeat(90)}</code> d\n</A>\n\n<A>\n  b <code> c</code> <code>d </code> <code>e  f</code> <code></code> <code g="h" i>j</code> <code>k<b>l</b></code> <br />\n</A>\n`,
+      // Words that aren't ASCII are as wide as the printer says.
+      `<A>\n  ${"\u4e2d".repeat(19)} ${"\u6587".repeat(19)} c   d\n</A>\n\n<A>\n  ${"\u4e2d".repeat(19)} ${"\u6587".repeat(20)} c   d\n</A>\n\n<A>\n  ${"\u00e9".repeat(38)} ${"\u00e9".repeat(39)} c   d\n</A>\n\n<A>\n  \u26a1\ufe0f **a** \u2014 b   c\u2026\n</A>\n`,
+      "<A>\n  \u200b\n</A>\n\n<A>\n  \u3000\n</A>\n\n<A>\n  \ufeff\n</A>\n\n<A>\n  \u2028\n</A>\n\n<A>\n  a\u00a0b   c\n</A>\n\n<A>\n  \u0301   a\u0301\n</A>\n\n<A>\n  \u0085   a\n</A>\n",
       // What isn't a word.
       "<A>\n  b   {c}\n</A>\n\n<A>\n  b   }\n</A>\n\n<A>\n  b   >\n</A>\n\n<A>\n  b   <B />\n</A>\n\n<A>\n  b   é\n</A>\n\n<A>\n  b     c\n</A>\n\n<A>\n  b   &amp; & `c` **d** \"e\" 'f' \\\n</A>\n",
       "<A>\n  b   c\n</B>\n\n<A>\n  b   c\n\n<A>\n  b   c\n</A> d\n\n<A>\n  b   c\n</A>\n<B />\n\n<fbt>\n  b   c\n</fbt>\n\n<pre>\n  b   c\n</pre>\n\n<A></A>\n\n<A>\n</A>\n",

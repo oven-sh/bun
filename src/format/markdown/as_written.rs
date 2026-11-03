@@ -277,6 +277,26 @@ struct JsxLayout {
     uses_tabs: bool,
     /// `singleAttributePerLine`
     is_one_per_line: bool,
+    /// `{" "}`
+    space: &'static [u8],
+}
+
+/// What is between two items of the `fill` in an element.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum JsxSeparator {
+    /// `line`, between two words.
+    Line,
+    /// `jsxWhitespace`: a blank, or `{" "}` and a line break.
+    Space,
+    /// `softline`
+    Nothing,
+}
+
+impl JsxSeparator {
+    /// On one line.
+    fn width(self) -> usize {
+        usize::from(self != JsxSeparator::Nothing)
+    }
 }
 
 /// An opening tag of JSX.
@@ -1216,8 +1236,9 @@ impl<'t> Reader<'t> {
             debug_comments,
             // Where a tag that's broken ends. One that's read is on one line.
             bracket_same_line: _,
+            // `{" "}`
+            quote_style,
             // For what isn't read: other strings, expressions, statements, comments.
-            quote_style: _,
             quote_properties: _,
             trailing_commas: _,
             semicolons: _,
@@ -1272,6 +1293,10 @@ impl<'t> Reader<'t> {
             tab_width: indent_width.value() as usize,
             uses_tabs: matches!(indent_style, crate::options::IndentStyle::Tab),
             is_one_per_line: *attribute_position == crate::options::AttributePosition::Multiline,
+            space: match quote_style.is_double() {
+                true => b"{\" \"}",
+                false => b"{' '}",
+            },
         })
     }
 
@@ -1288,9 +1313,12 @@ impl<'t> Reader<'t> {
         (!is_broken).then_some(tag)
     }
 
-    /// Writes the text from `start` to `end` if it's one element with strings for attributes and nothing but words in it,
-    /// whatever the lines are that the words are on: see `is_formatted_jsx` for the layout. White space between a tag and
-    /// a word means nothing if it has a line break in it. Without one it's `{" "}`, which isn't written here.
+    /// Writes the text from `start` to `end` if it's one element with strings for attributes, and words and small elements
+    /// in it, whatever the lines are that they are on: see `is_formatted_jsx` for the layout.
+    /// - White space between a tag of the element and what is in it means nothing if it has a line break in it. Without
+    ///   one it's `{" "}` on a line of its own, which isn't written here.
+    /// - Next to a small element, a line can be broken where there is no white space. White space without a line break is
+    ///   `{" "}` where the line is broken. With a line break it means nothing, which few mean to write: not read.
     fn write_jsx_words(&mut self, start: usize, end: usize) -> Option<()> {
         let layout = self.jsx_layout()?;
         let tag = self.jsx_opening_tag_as_printed(start, end, &layout)?;
@@ -1305,63 +1333,91 @@ impl<'t> Reader<'t> {
             }
             at
         };
-        let means_nothing = |from: usize, to: usize| {
-            from == to || bun_core::strings::contains_char(&text[from..to], b'\n')
-        };
+        let has_line_break =
+            |from: usize, to: usize| bun_core::strings::contains_char(&text[from..to], b'\n');
         let first = white_end(tag.end);
-        if !means_nothing(tag.end, first) {
+        if first > tag.end && !has_line_break(tag.end, first) {
             return None;
         }
-        // How wide it is on one line.
+        // The items of the `fill`, each with what is in front of it, and how wide all of it is on one line.
+        let mut items: SmallVec<[(usize, usize, usize, JsxSeparator); 32]> = SmallVec::new();
         let (mut at, mut flat) = (first, tag.end - start);
+        let (mut separator, mut has_element) = (JsxSeparator::Nothing, false);
         let closing = loop {
-            let word = at;
-            while is_jsx_word_byte(byte(at)) {
-                at += 1;
-            }
-            if at == word {
+            let is_element = byte(at) == b'<';
+            let item_end = match is_element {
+                // One that doesn't fit on a line is broken itself.
+                true => (self.jsx_inline_element(at, end))
+                    .filter(|item_end| layout.tab_width + (item_end - at) <= layout.print_width)?,
+                false => {
+                    let is_in_word = |&&it: &&u8| is_jsx_word_byte(it) || it >= 0x80;
+                    at + text.get(at..)?.iter().take_while(is_in_word).count()
+                }
+            };
+            let width = match &text[at..item_end] {
+                item if item.is_ascii() => item.len(),
+                // Measured as the printer measures it. What is white space to the scanner of JavaScript is text in JSX,
+                // but text with nothing else in it is left out.
+                word => {
+                    let is_white =
+                        |it: char| it.is_whitespace() || matches!(it, '\u{200B}' | '\u{FEFF}');
+                    (std::str::from_utf8(word).ok()).filter(|word| !word.chars().any(is_white))?;
+                    crate::ir::width::string_width(word) as usize
+                }
+            };
+            if width == 0 {
                 return None;
             }
-            flat += at - word + usize::from(word > first);
-            let next = white_end(at);
-            if byte(next) == b'<' {
-                if !means_nothing(at, next) {
+            items.push((at, item_end, width, separator));
+            flat += separator.width() + width;
+            has_element |= is_element;
+            let next = white_end(item_end);
+            if byte(next) == b'<' && byte(next + 1) == b'/' {
+                if next > item_end && !has_line_break(item_end, next) {
                     return None;
                 }
                 break next;
             }
+            let is_next_to_element = is_element || byte(next) == b'<';
+            separator = match next > item_end {
+                true if !is_next_to_element => JsxSeparator::Line,
+                true if has_line_break(item_end, next) => return None,
+                true => JsxSeparator::Space,
+                // Between two elements it's a forced line break.
+                false if is_element && byte(next) == b'<' => return None,
+                false => JsxSeparator::Nothing,
+            };
             at = next;
         };
         if self.jsx_closing_tag(closing, tag.name)? != end {
             return None;
         }
-        let is_broken = tag.attributes > 1 || flat + (end - closing) > layout.print_width;
+        let is_broken =
+            tag.attributes > 1 || has_element || flat + (end - closing) > layout.print_width;
         self.copy_up_to(tag.end);
-        let (mut at, mut column) = (first, layout.tab_width);
-        while at < closing {
-            let word = at;
-            while is_jsx_word_byte(byte(at)) {
-                at += 1;
-            }
-            let fits = column + 1 + (at - word) <= layout.print_width;
-            let out = &mut self.memory.rewritten;
-            if is_broken && (word == first || !fits) {
+        let out = &mut self.memory.rewritten;
+        let mut column = layout.tab_width;
+        for (index, &(from, to, width, separator)) in items.iter().enumerate() {
+            let fits = column + separator.width() + width <= layout.print_width;
+            if is_broken && (index == 0 || !fits) {
+                if index > 0 && separator == JsxSeparator::Space {
+                    out.extend_from_slice(layout.space);
+                }
                 out.push(b'\n');
                 match layout.uses_tabs {
                     true => out.push(b'\t'),
                     false => out.resize(out.len() + layout.tab_width, b' '),
                 }
                 column = layout.tab_width;
-            } else if word > first {
+            } else if index > 0 && separator != JsxSeparator::Nothing {
                 out.push(b' ');
                 column += 1;
             }
-            out.extend_from_slice(&text[word..at]);
-            column += at - word;
-            at = white_end(at);
+            out.extend_from_slice(&text[from..to]);
+            column += width;
         }
         if is_broken {
-            self.memory.rewritten.push(b'\n');
+            out.push(b'\n');
         }
         self.copied = Some(closing);
         Some(())

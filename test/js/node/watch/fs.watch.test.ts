@@ -275,57 +275,31 @@ describe("fs.watch", () => {
     }
   });
 
-  // NTFS keeps that to itself until somebody opens the directory.
-  test.skipIf(!isWindows)("a recursive watch reports the directory that got a new file, each time", async () => {
-    using dir = tempDir("watch-parent-change", { "sub": { "deep": {} } });
-    let events: string[] = [];
-    let wanted: string[] = [];
-    let seen = Promise.withResolvers<void>();
-    const watcher = fs.watch(String(dir), { recursive: true }, (event, filename) => {
-      // What it has to say about the making of the directories comes first.
-      if (events.length > 0 || `${event} ${filename}` === wanted[0]) events.push(`${event} ${filename}`);
-      if (wanted.every(line => events.includes(line))) seen.resolve();
-    });
-    watcher.on("error", error => seen.reject(error));
+  test.skipIf(!isWindows)("a directory that takes the name of a renamed one gets its own watcher", async () => {
+    using dir = tempDir("watch-renamed", { "a": {} });
+    const [a, b] = ["a", "b"].map(name => path.join(String(dir), name));
+    const watch = (target: string) => {
+      const names = new Set<string>();
+      const sawOne = Promise.withResolvers<void>();
+      const watcher = fs.watch(target, (_, filename) => {
+        names.add(`${filename}`);
+        sawOne.resolve();
+      });
+      watcher.on("error", sawOne.reject);
+      return { names, sawOne: sawOne.promise, watcher };
+    };
+    const watches = [watch(a)];
     try {
-      for (const name of ["sub\\a.txt", "sub\\b.txt", "sub\\deep\\c.txt", "sub\\d.txt"]) {
-        events = [];
-        wanted = [`rename ${name}`, `change ${name}`, `change ${path.dirname(name)}`];
-        seen = Promise.withResolvers<void>();
-        fs.writeFileSync(path.join(String(dir), name), "");
-        await seen.promise;
-        // The two changes come in either order.
-        expect(new Set(events)).toEqual(new Set(wanted));
-      }
+      fs.renameSync(a, b);
+      fs.mkdirSync(a);
+      watches.push(watch(a));
+      fs.writeFileSync(path.join(b, "in-b.txt"), "");
+      fs.writeFileSync(path.join(a, "in-a.txt"), "");
+      await Promise.all(watches.map(watch => watch.sawOne));
+      // The first one stays with its directory.
+      expect(watches.map(watch => [...watch.names])).toEqual([["in-b.txt"], ["in-a.txt"]]);
     } finally {
-      watcher.close();
-    }
-  });
-
-  test.skipIf(!isWindows)("a watched directory that got a new file is reported to its parent's watcher", async () => {
-    using dir = tempDir("watch-parent-of-watched", { "sub": {} });
-    let wanted = "";
-    let seen = Promise.withResolvers<void>();
-    const watchers = [
-      fs.watch(String(dir), (event, filename) => {
-        if (`${event} ${filename}` === wanted) seen.resolve();
-      }),
-      fs.watch(path.join(String(dir), "sub"), () => {}),
-    ];
-    for (const watcher of watchers) watcher.on("error", error => seen.reject(error));
-    try {
-      const reported: string[] = [];
-      // The files next to "sub" are there because a watcher takes two equal events within a millisecond for one.
-      for (const name of ["sub\\a.txt", "a.txt", "sub\\b.txt", "b.txt", "sub\\c.txt"]) {
-        wanted = name.startsWith("sub") ? "change sub" : `rename ${name}`;
-        seen = Promise.withResolvers<void>();
-        fs.writeFileSync(path.join(String(dir), name), "");
-        await seen.promise;
-        reported.push(wanted);
-      }
-      expect(reported).toEqual(["change sub", "rename a.txt", "change sub", "rename b.txt", "change sub"]);
-    } finally {
-      for (const watcher of watchers) watcher.close();
+      for (const { watcher } of watches) watcher.close();
     }
   });
 

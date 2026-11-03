@@ -499,19 +499,13 @@ pub(crate) fn watch(
 
     manager.mutex.lock();
 
-    // SAFETY: holding manager.mutex; exclusive access to manager.watchers,
-    // scoped to this lookup.
-    let existing = unsafe { (*manager.watchers.get()).get(key).copied() };
-    // The reader thread has yet to end a watcher whose directory is gone. What has the name now is another one.
-    #[cfg(windows)]
-    let existing = existing.filter(|&existing| {
-        // SAFETY: existing is a live PathWatcher under manager.mutex.
-        let is_over = Windows::is_deleted(unsafe { (*existing).platform.dir });
-        if is_over {
-            manager.unlink_watcher_locked(existing);
-        }
-        !is_over
-    });
+    let existing = if cfg!(windows) {
+        // A handle stays with its directory when that is renamed, which nothing reports: the path can name another one by now.
+        None
+    } else {
+        // SAFETY: holding manager.mutex; exclusive access to manager.watchers, scoped to this lookup.
+        unsafe { (*manager.watchers.get()).get(key).copied() }
+    };
     if let Some(existing) = existing {
         // SAFETY: existing is a live PathWatcher under manager.mutex.
         unsafe {
@@ -545,6 +539,8 @@ pub(crate) fn watch(
                 .put(ctx, ChangeEvent::new(path.as_bytes())),
         )
     };
+    let address = (watcher as usize).to_ne_bytes();
+    let key = if cfg!(windows) { &address[..] } else { key };
     // SAFETY: holding manager.mutex; exclusive access to manager.watchers.
     unsafe { handle_oom((*manager.watchers.get()).put(key, watcher)) };
 
@@ -2018,7 +2014,6 @@ impl Windows {
             && Windows::is_deleted(watcher.platform.dir);
         // The name of a deleted directory is taken for as long as a handle to it is open.
         Windows::release(watcher);
-        // The next `fs.watch()` of the path starts over.
         manager.unlink_watcher_locked(watcher);
         if is_deleted {
             // As libuv.
@@ -2055,7 +2050,6 @@ impl Windows {
         let units: &[u16] = bun_core::cast_slice(buffer);
         let mut utf8 = path::path_buffer_pool::get();
         let mut long_buf = path::w_path_buffer_pool::get();
-        let mut parent = None;
         let mut at: usize = 0;
         loop {
             // `FILE_NOTIFY_INFORMATION`: NextEntryOffset, Action, FileNameLength, FileName.
@@ -2069,14 +2063,7 @@ impl Windows {
                 return false;
             }
             let name = &units[name_start / 2..name_end / 2];
-            Windows::emit_record(
-                watcher,
-                action,
-                name,
-                &mut parent,
-                &mut utf8[..],
-                &mut long_buf[..],
-            );
+            Windows::emit_record(watcher, action, name, &mut utf8[..], &mut long_buf[..]);
             if next == 0 {
                 return true;
             }
@@ -2087,12 +2074,10 @@ impl Windows {
         }
     }
 
-    /// `parent`: the one that [`Windows::look_at_parent`] looked at last.
-    fn emit_record<'a>(
+    fn emit_record(
         watcher: &PathWatcher,
         action: u32,
-        name: &'a [u16],
-        parent: &mut Option<&'a [u16]>,
+        name: &[u16],
         utf8: &mut [u8],
         long_buf: &mut [u16],
     ) {
@@ -2116,24 +2101,12 @@ impl Windows {
         }
 
         let name = if exists {
-            Windows::look_at_parent(watcher.platform.dir, name, parent);
             Windows::long_name(&watcher.platform.dir_path, name, long_buf).unwrap_or(name)
         } else {
             name
         };
         let name = path::string_paths::from_w_path(utf8, name);
         watcher.emit(kind, name.as_bytes(), false);
-    }
-
-    /// NTFS holds back the record about a directory with a new entry until somebody opens that directory.
-    fn look_at_parent<'a>(dir: Fd, name: &'a [u16], last: &mut Option<&'a [u16]>) {
-        let parent = &name[..name.len() - Windows::last_component(name).len()];
-        if *last != Some(parent) {
-            *last = Some(parent);
-            // No name at all is `dir` itself. Its record goes to a watcher of the directory that it is in.
-            let path = parent.split_last().map_or(parent, |(_, path)| path);
-            let _ = sys::directory_exists_at_w(dir, path);
-        }
     }
 
     /// `name` without the 8.3 names it has if those were used to make the change.

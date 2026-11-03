@@ -1991,6 +1991,102 @@ describe("deno_task", () => {
       .quiet()
       .runAsTest("redirect stdout to stderr quiet");
 
+    describe("fd duplication shorthand (#47822)", () => {
+      TestBuilder.command`echo hi >&2`.stdout("").stderr("hi\n").runAsTest(">&2 on a builtin");
+
+      TestBuilder.command`echo hi >& 2`.stdout("").stderr("hi\n").runAsTest(">& 2 with a blank before the fd");
+
+      TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log('Stdout'); console.error('Stderr')"} >&2`
+        .stderr("Stdout\nStderr\n")
+        .stdout("")
+        .runAsTest(">&2 on a subprocess");
+
+      TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log('Stdout'); console.error('Stderr')"} >&2`
+        .stderr("Stdout\nStderr\n")
+        .stdout("")
+        .quiet()
+        .runAsTest(">&2 on a subprocess quiet");
+
+      TestBuilder.command`echo hi >&1`.stdout("hi\n").stderr("").runAsTest(">&1 is a no-op");
+      TestBuilder.command`echo hi 1>&1`.stdout("hi\n").stderr("").runAsTest("1>&1 is a no-op");
+      TestBuilder.command`echo hi 2>&2`.stdout("hi\n").stderr("").runAsTest("2>&2 is a no-op");
+      TestBuilder.command`echo hi <&0`.stdout("hi\n").stderr("").runAsTest("<&0 is a no-op");
+      TestBuilder.command`echo hi 0<&0`.stdout("hi\n").stderr("").runAsTest("0<&0 is a no-op");
+
+      TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log('Stdout')"} 1>&1`
+        .stdout("Stdout\n")
+        .runAsTest("1>&1 on a subprocess is a no-op");
+
+      TestBuilder.command`echo $(echo hi 1>&1)`
+        .stdout("hi\n")
+        .runAsTest("1>&1 keeps the output of a command substitution");
+
+      TestBuilder.command`echo $(BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log('Stdout')"} 1>&1)`
+        .stdout("Stdout\n")
+        .runAsTest("1>&1 keeps the output of a subprocess in a command substitution");
+
+      TestBuilder.command`echo hi >&2; echo there`.stdout("there\n").stderr("hi\n").runAsTest(">&2 followed by ;");
+
+      TestBuilder.command`echo hi >&2 && echo there`.stdout("there\n").stderr("hi\n").runAsTest(">&2 followed by &&");
+
+      TestBuilder.command`echo hi >&2 | cat`.stdout("").stderr("hi\n").runAsTest(">&2 followed by a pipe");
+
+      TestBuilder.command`echo abc3>out; cat out`
+        .ensureTempDir()
+        .stdout("abc3\n")
+        .runAsTest("a digit inside a word is not an fd");
+
+      TestBuilder.command`echo file2>&1`
+        .stdout("file2\n")
+        .stderr("")
+        .runAsTest("a digit that ends a word is not an fd");
+
+      TestBuilder.command`echo hi 1>&2 msg`
+        .stderr(s => expect(s).toContain("command not found: msg"))
+        .exitCode(1)
+        .runAsTest("a word after 1>&2 is not a file");
+
+      TestBuilder.command`echo hi ">&2"`.stdout("hi >&2\n").runAsTest("quoted >&2 is a word");
+
+      TestBuilder.command`echo hi >\&2; cat '&2'`
+        .ensureTempDir()
+        .stdout("hi\n")
+        .runAsTest("escaped & after > is a file name");
+
+      // TestBuilder's `.error()` passes when no error is thrown, so check the message directly.
+      const parseErrorOf = async (source: string): Promise<string | undefined> => {
+        try {
+          await Bun.$({ raw: [source] } as unknown as TemplateStringsArray);
+        } catch (e) {
+          return (e as Error).message;
+        }
+        return undefined;
+      };
+
+      const onlyStdFds = "`3>`: Bun Shell only redirects file descriptors 0, 1 and 2. Please file an issue on GitHub.";
+      const onlyStdPairs = (form: string) =>
+        `\`${form}\`: Bun Shell only duplicates stdout and stderr onto each other: \`1>&2\` (or \`>&2\`) and \`2>&1\`. Please file an issue on GitHub.`;
+      const needsFd =
+        "`>&` must be followed by a file descriptor number: `>&2`, `1>&2` or `2>&1`. To send stdout and stderr to a file, use `&> file`.";
+
+      test.each([
+        ["echo hi 3>&1", onlyStdFds],
+        ["echo hi 3> out", onlyStdFds],
+        ["echo hi >&3", onlyStdPairs(">&3")],
+        ["echo hi 1>&0", onlyStdPairs("1>&0")],
+        ["cat 0<&1", onlyStdPairs("0<&1")],
+        [
+          "echo hi 2>>&1",
+          "`2>>&`: a file descriptor cannot be appended to. Use `2>> file`, or `1>&2` / `2>&1` to duplicate a file descriptor.",
+        ],
+        ["echo hi >&", needsFd],
+        ["echo hi >&out", needsFd],
+        ["echo hi >&2foo", "`>&2`: the file descriptor number must end the word. Put a space after it."],
+      ])("%s is a parse error that names the form", async (source, message) => {
+        expect(await parseErrorOf(source)).toBe(message);
+      });
+    });
+
     TestBuilder.command`echo hi > /dev/null`.quiet().runAsTest("redirect /dev/null");
 
     TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log('Hello friends')"} > /dev/null`

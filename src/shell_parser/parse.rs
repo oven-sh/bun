@@ -432,8 +432,9 @@ pub mod ast {
             const STDOUT        = 1 << 1;
             const STDERR        = 1 << 2;
             const APPEND        = 1 << 3;
-            /// 1>&2 === stdout=true and duplicate_out=true
-            /// 2>&1 === stderr=true and duplicate_out=true
+            /// The other flag names the fd that is copied:
+            /// `1>&2` (or `>&2`) === stderr=true and duplicate_out=true (stdout := stderr)
+            /// `2>&1` === stdout=true and duplicate_out=true (stderr := stdout)
             const DUPLICATE_OUT = 1 << 4;
         }
     }
@@ -531,18 +532,6 @@ pub mod ast {
             }
         }
 
-        pub(crate) fn lt() -> RedirectFlags {
-            Self::STDIN
-        }
-        pub(crate) fn lt_lt() -> RedirectFlags {
-            Self::STDIN | Self::APPEND
-        }
-        pub(crate) fn gt() -> RedirectFlags {
-            Self::STDOUT
-        }
-        pub(crate) fn gt_gt() -> RedirectFlags {
-            Self::APPEND | Self::STDOUT
-        }
         pub(crate) fn amp_gt() -> RedirectFlags {
             Self::STDOUT | Self::STDERR
         }
@@ -1374,15 +1363,13 @@ impl<'bump> Parser<'bump> {
                     break 'redirect_file Some(ast::Redirect::JsBuf(ast::JSBuf::new(obj_ref)));
                 }
 
-                let file = match self.parse_atom()? {
-                    Some(f) => f,
-                    None => {
-                        if redirect.duplicate_out() {
-                            break 'redirect_file None;
-                        }
-                        self.add_error(format_args!("Redirection with no file"))?;
-                        return Err(ParseError::Expected.into());
-                    }
+                // `1>&2` has no file. A word after it is not its target.
+                if redirect.duplicate_out() {
+                    break 'redirect_file None;
+                }
+                let Some(file) = self.parse_atom()? else {
+                    self.add_error(format_args!("Redirection with no file"))?;
+                    return Err(ParseError::Expected.into());
                 };
                 break 'redirect_file Some(ast::Redirect::Atom(file));
             }
@@ -2157,6 +2144,16 @@ pub(crate) enum RedirectDirection {
     In,
 }
 
+/// What `Lexer::eat_redirect_operator` found after a `>` or `<`.
+enum RedirectLex {
+    /// A redirect that takes a file, or a `1>&2` / `2>&1` duplication.
+    Redirect(ast::RedirectFlags),
+    /// `n>&n` or `n<&n`: a duplication onto itself. No token.
+    NoOp,
+    /// A form Bun Shell does not support. The error is already recorded.
+    Unsupported,
+}
+
 /// Whether `Lexer::break_word` follows the text it flushes with a `Token::Delimit`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AddDelimiter {
@@ -2716,17 +2713,37 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             return Ok(());
                         }
                         c if (u32::from(b'0')..=u32::from(b'9')).contains(&c) => {
-                            if self.chars.state != CharState::Normal {
+                            // An fd number starts a word: `abc3>out` writes `abc3`. A tab does
+                            // not end a word, so `a<TAB>2>f` still redirects fd 2.
+                            let after_whitespace = self.chars.prev.is_some_and(|prev| {
+                                !prev.escaped && ShellCharIter::<ENCODING>::is_whitespace(prev)
+                            });
+                            if self.chars.state != CharState::Normal
+                                || (self.word_is_open() && !after_whitespace)
+                            {
                                 break 'escaped;
                             }
-                            let snapshot = self.make_snapshot();
-                            if let Some(redirect) = self.eat_redirect(input) {
-                                self.break_word(AddDelimiter::AfterText)?;
-                                self.tokens.push(Token::Redirect(redirect));
-                                fell_through = true;
-                                break 'escaped;
+                            let dir = match self.peek() {
+                                Some(next) if !next.escaped && next.char == u32::from(b'>') => {
+                                    RedirectDirection::Out
+                                }
+                                Some(next) if !next.escaped && next.char == u32::from(b'<') => {
+                                    RedirectDirection::In
+                                }
+                                _ => break 'escaped,
+                            };
+                            // Guarded by the arm pattern: c is an ASCII digit.
+                            let fd = u8::try_from(c - u32::from(b'0')).expect("int cast");
+                            let _ = self.eat();
+                            self.break_word(AddDelimiter::AfterText)?;
+                            match self.eat_redirect_operator(Some(fd), dir) {
+                                RedirectLex::Redirect(flags) => {
+                                    self.tokens.push(Token::Redirect(flags))
+                                }
+                                RedirectLex::NoOp => {}
+                                RedirectLex::Unsupported => return Ok(()),
                             }
-                            self.backtrack(&snapshot);
+                            fell_through = true;
                             break 'escaped;
                         }
                         // Operators
@@ -2766,8 +2783,13 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 break 'escaped;
                             }
                             self.break_word(AddDelimiter::AfterWord)?;
-                            let redirect = self.eat_simple_redirect(RedirectDirection::Out);
-                            self.tokens.push(Token::Redirect(redirect));
+                            match self.eat_redirect_operator(None, RedirectDirection::Out) {
+                                RedirectLex::Redirect(flags) => {
+                                    self.tokens.push(Token::Redirect(flags))
+                                }
+                                RedirectLex::NoOp => {}
+                                RedirectLex::Unsupported => return Ok(()),
+                            }
                             fell_through = true;
                         }
                         c if c == u32::from(b'<') => {
@@ -2778,8 +2800,13 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 break 'escaped;
                             }
                             self.break_word(AddDelimiter::AfterWord)?;
-                            let redirect = self.eat_simple_redirect(RedirectDirection::In);
-                            self.tokens.push(Token::Redirect(redirect));
+                            match self.eat_redirect_operator(None, RedirectDirection::In) {
+                                RedirectLex::Redirect(flags) => {
+                                    self.tokens.push(Token::Redirect(flags))
+                                }
+                                RedirectLex::NoOp => {}
+                                RedirectLex::Unsupported => return Ok(()),
+                            }
                             fell_through = true;
                         }
                         c if c == u32::from(b'&') => {
@@ -2942,22 +2969,10 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                     .is_some_and(|p| !p.escaped && p.char == u32::from(b'\'')))
     }
 
-    fn break_word(&mut self, add_delimiter: AddDelimiter) -> Result<(), LexerError> {
-        let start: u32 = self.word_start;
-        let end: u32 = self.j;
-        if start != end || self.is_immediately_escaped_quote() {
-            let tok: Token = match self.chars.state {
-                CharState::Normal => Token::Text(TextRange { start, end }),
-                CharState::Single => Token::SingleQuotedText(TextRange { start, end }),
-                CharState::Double => Token::DoubleQuotedText(TextRange { start, end }),
-            };
-            self.tokens.push(tok);
-            if add_delimiter != AddDelimiter::No {
-                self.tokens.push(Token::Delimit);
-            }
-        } else if add_delimiter == AddDelimiter::AfterWord
-            && !self.tokens.is_empty()
-            && match self.tokens[self.tokens.len() - 1].tag() {
+    /// Whether a word is open: text is pending, or no `Delimit` follows the last part of a word.
+    fn word_is_open(&self) -> bool {
+        self.word_start != self.j
+            || self.tokens.last().is_some_and(|tok| match tok.tag() {
                 TokenTag::Var
                 | TokenTag::VarArgv
                 | TokenTag::Text
@@ -2986,8 +3001,23 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 | TokenTag::DoubleBracketClose
                 | TokenTag::Delimit
                 | TokenTag::Eof => false,
+            })
+    }
+
+    fn break_word(&mut self, add_delimiter: AddDelimiter) -> Result<(), LexerError> {
+        let start: u32 = self.word_start;
+        let end: u32 = self.j;
+        if start != end || self.is_immediately_escaped_quote() {
+            let tok: Token = match self.chars.state {
+                CharState::Normal => Token::Text(TextRange { start, end }),
+                CharState::Single => Token::SingleQuotedText(TextRange { start, end }),
+                CharState::Double => Token::DoubleQuotedText(TextRange { start, end }),
+            };
+            self.tokens.push(tok);
+            if add_delimiter != AddDelimiter::No {
+                self.tokens.push(Token::Delimit);
             }
-        {
+        } else if add_delimiter == AddDelimiter::AfterWord && self.word_is_open() {
             self.tokens.push(Token::Delimit);
             self.delimit_quote = false;
         }
@@ -2995,19 +3025,119 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         Ok(())
     }
 
-    fn eat_simple_redirect(&mut self, dir: RedirectDirection) -> ast::RedirectFlags {
+    /// Lexes the rest of a redirect operator. The caller ate the `>` or `<`
+    /// and passes the fd number that came before it, if any.
+    ///
+    /// Grammar: `[n]>[>][&m]` and `[n]<[<][&m]`. `n` defaults to 1 for `>`
+    /// and 0 for `<`. `&m` duplicates fd `m` onto `n`: `1>&2` sends stdout
+    /// to stderr, `>&2` is the same thing, `2>&1` sends stderr to stdout.
+    /// The runtime has no fd above 2, so only those pairs, and `n>&n` as a
+    /// no-op, are accepted. Every other form gets an error that names it.
+    fn eat_redirect_operator(&mut self, src_fd: Option<u8>, dir: RedirectDirection) -> RedirectLex {
         let is_double = self.eat_simple_redirect_operator(dir);
+        // The operator as typed, for error messages: `1>`, `>>`, `0<`.
+        let shown_fd = match src_fd {
+            Some(fd) => ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"][usize::from(fd)],
+            None => "",
+        };
+        let shown_op = match (dir, is_double) {
+            (RedirectDirection::Out, false) => ">",
+            (RedirectDirection::Out, true) => ">>",
+            (RedirectDirection::In, false) => "<",
+            (RedirectDirection::In, true) => "<<",
+        };
+        let src_fd = src_fd.unwrap_or(match dir {
+            RedirectDirection::Out => 1,
+            RedirectDirection::In => 0,
+        });
 
+        let mut flags = match src_fd {
+            0 => ast::RedirectFlags::STDIN,
+            1 => ast::RedirectFlags::STDOUT,
+            2 => ast::RedirectFlags::STDERR,
+            _ => {
+                self.add_error_fmt(format_args!(
+                    "`{shown_fd}{shown_op}`: Bun Shell only redirects file descriptors 0, 1 and 2. Please file an issue on GitHub."
+                ));
+                return RedirectLex::Unsupported;
+            }
+        };
         if is_double {
-            return match dir {
-                RedirectDirection::Out => ast::RedirectFlags::gt_gt(),
-                RedirectDirection::In => ast::RedirectFlags::lt_lt(),
-            };
+            flags |= ast::RedirectFlags::APPEND;
         }
 
-        match dir {
-            RedirectDirection::Out => ast::RedirectFlags::gt(),
-            RedirectDirection::In => ast::RedirectFlags::lt(),
+        match self.peek() {
+            Some(next) if !next.escaped && next.char == u32::from(b'&') => {
+                let _ = self.eat();
+            }
+            _ => return RedirectLex::Redirect(flags),
+        }
+
+        if is_double {
+            self.add_error_fmt(format_args!(
+                "`{shown_fd}{shown_op}&`: a file descriptor cannot be appended to. Use `{shown_fd}{shown_op} file`, or `1>&2` / `2>&1` to duplicate a file descriptor."
+            ));
+            return RedirectLex::Unsupported;
+        }
+
+        // POSIX allows blanks between `>&` and the fd number.
+        while let Some(next) = self.peek() {
+            if next.escaped || !(next.char == u32::from(b' ') || next.char == u32::from(b'\t')) {
+                break;
+            }
+            let _ = self.eat();
+        }
+
+        let target_fd = match self.peek() {
+            Some(next)
+                if !next.escaped && (u32::from(b'0')..=u32::from(b'9')).contains(&next.char) =>
+            {
+                let _ = self.eat();
+                // Guarded by the match arm: next.char is an ASCII digit.
+                u8::try_from(next.char - u32::from(b'0')).expect("int cast")
+            }
+            _ => {
+                self.add_error_fmt(format_args!(
+                    "`{shown_fd}{shown_op}&` must be followed by a file descriptor number: `>&2`, `1>&2` or `2>&1`. To send stdout and stderr to a file, use `&> file`."
+                ));
+                return RedirectLex::Unsupported;
+            }
+        };
+
+        let at_word_end = match self.peek() {
+            None => true,
+            Some(next) => {
+                !next.escaped
+                    && (ShellCharIter::<ENCODING>::is_whitespace(next)
+                        || matches!(
+                            u8::try_from(next.char),
+                            Ok(b';' | b'|' | b'&' | b'(' | b')' | b'<' | b'>')
+                        ))
+            }
+        };
+        if !at_word_end {
+            self.add_error_fmt(format_args!(
+                "`{shown_fd}{shown_op}&{target_fd}`: the file descriptor number must end the word. Put a space after it."
+            ));
+            return RedirectLex::Unsupported;
+        }
+
+        if target_fd == src_fd {
+            return RedirectLex::NoOp;
+        }
+        match (dir, src_fd, target_fd) {
+            (RedirectDirection::Out, 1, 2) => RedirectLex::Redirect(
+                ast::RedirectFlags::STDERR | ast::RedirectFlags::DUPLICATE_OUT,
+            ),
+            (RedirectDirection::Out, 2, 1) => RedirectLex::Redirect(
+                ast::RedirectFlags::STDOUT | ast::RedirectFlags::DUPLICATE_OUT,
+            ),
+            _ => {
+                self.add_error_fmt(format_args!(
+                    "`{shown_fd}{shown_op}&{target_fd}`: Bun Shell only duplicates stdout and stderr onto each other: `1>&2` (or `>&2`) and `2>&1`. Please file an issue on GitHub."
+                ));
+                RedirectLex::Unsupported
+            }
         }
     }
 
@@ -3039,71 +3169,10 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         false
     }
 
-    // TODO Arbitrary file descriptor redirect
-    fn eat_redirect(&mut self, first: InputChar) -> Option<ast::RedirectFlags> {
-        let mut flags = ast::RedirectFlags::default();
-        match first.char {
-            c if c == u32::from(b'0') => flags |= ast::RedirectFlags::STDIN,
-            c if c == u32::from(b'1') => flags |= ast::RedirectFlags::STDOUT,
-            c if c == u32::from(b'2') => flags |= ast::RedirectFlags::STDERR,
-            // Just allow the std file descriptors for now
-            _ => return None,
-        }
-        if let Some(input) = self.peek() {
-            if input.escaped {
-                return None;
-            }
-            match input.char {
-                c if c == u32::from(b'>') => {
-                    let _ = self.eat();
-                    let is_double = self.eat_simple_redirect_operator(RedirectDirection::Out);
-                    if is_double {
-                        flags |= ast::RedirectFlags::APPEND;
-                    }
-                    if let Some(peeked) = self.peek() {
-                        if !peeked.escaped && peeked.char == u32::from(b'&') {
-                            let _ = self.eat();
-                            if let Some(peeked2) = self.peek() {
-                                match peeked2.char {
-                                    c2 if c2 == u32::from(b'1') => {
-                                        let _ = self.eat();
-                                        if !flags.stdout() && flags.stderr() {
-                                            flags |= ast::RedirectFlags::DUPLICATE_OUT;
-                                            flags |= ast::RedirectFlags::STDOUT;
-                                            flags.remove(ast::RedirectFlags::STDERR);
-                                        } else {
-                                            return None;
-                                        }
-                                    }
-                                    c2 if c2 == u32::from(b'2') => {
-                                        let _ = self.eat();
-                                        if !flags.stderr() && flags.stdout() {
-                                            flags |= ast::RedirectFlags::DUPLICATE_OUT;
-                                            flags |= ast::RedirectFlags::STDERR;
-                                            flags.remove(ast::RedirectFlags::STDOUT);
-                                        } else {
-                                            return None;
-                                        }
-                                    }
-                                    _ => return None,
-                                }
-                            }
-                        }
-                    }
-                    Some(flags)
-                }
-                c if c == u32::from(b'<') => {
-                    let is_double = self.eat_simple_redirect_operator(RedirectDirection::In);
-                    if is_double {
-                        flags |= ast::RedirectFlags::APPEND;
-                    }
-                    Some(flags)
-                }
-                _ => None,
-            }
-        } else {
-            None
-        }
+    fn add_error_fmt(&mut self, args: fmt::Arguments<'_>) {
+        let mut buf = Vec::new();
+        write!(&mut buf, "{args}").expect("write to Vec");
+        self.add_error(&buf);
     }
 
     fn eat_subshell(&mut self, kind: SubShellKind) -> Result<(), LexerError> {

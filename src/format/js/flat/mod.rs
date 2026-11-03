@@ -30,12 +30,14 @@ mod flow;
 mod functions;
 mod holes;
 mod signatures;
+mod jsx;
 mod statements;
 mod ts_declarations;
 mod types;
 
 pub(crate) use statements::write_case_head;
 pub(crate) use ts_declarations::{write_enum_member, write_signature};
+pub(crate) use jsx::write_jsx_child;
 
 use crate::ir::element::{FormatElement, LineMode, Tag, Text, TextWidth, Token};
 use crate::js::parentheses::expression::{chain_expression_needs_parentheses, needs_parentheses};
@@ -44,6 +46,7 @@ use crate::js::print::block_statement::is_empty_block;
 use crate::js::print::call_like_expression::keeps_arguments_on_one_line;
 use crate::js::print::class::write_class_body_after_head;
 use crate::js::print::function::FormatFunctionBody;
+use crate::js::print::jsx::write_children_on_lines;
 use crate::js::print::parameters::can_avoid_parentheses;
 use crate::js::print::statements::{
     expression_statement_needs_semicolon, follows_type_cast_comment,
@@ -250,6 +253,10 @@ enum Part<'a> {
     /// The `{ .. }` of a class, with members in it.
     ClassBody(Class<'a>),
     Hole(holes::Hole<'a>),
+    /// What's between the tags of an element, on lines of its own.
+    JsxChildren(Jsx<'a>),
+    /// An attribute on a line of its own.
+    JsxAttribute(Prop<'a>),
 }
 
 /// Where an expression is, as far as parentheses go.
@@ -291,6 +298,8 @@ struct Line<'f, 'a> {
     is_careful: bool,
     /// On one line it's too wide, so the outermost group breaks.
     breaks: bool,
+    /// The indentation isn't a guess.
+    is_certain: bool,
     /// There's no comment anywhere in the source of what's written.
     is_quiet: bool,
     is_flow: bool,
@@ -345,7 +354,8 @@ fn is_before_block_comment(source: &[u8], end: u32) -> bool {
     let mut starts_line = false;
     loop {
         rest = match rest {
-            [b' ' | b'\t' | b'\r', tail @ ..] => tail,
+            // White space that isn't ASCII too.
+            [b' ' | b'\t' | b'\r' | 0x80.., tail @ ..] => tail,
             [b',' | b';', tail @ ..] => {
                 starts_line = false;
                 tail
@@ -361,8 +371,11 @@ fn is_before_block_comment(source: &[u8], end: u32) -> bool {
 
 /// True if a block comment is before what starts at `start` on its line, so that it doesn't start where its line does.
 fn is_after_block_comment(source: &[u8], start: u32) -> bool {
-    let before = source.get(..start as usize).unwrap_or_default();
-    strings::trim_right(before, b" \t").ends_with(b"*/")
+    let mut before = source.get(..start as usize).unwrap_or_default();
+    while let [rest @ .., b' ' | b'\t' | 0x80..] = before {
+        before = rest;
+    }
+    before.ends_with(b"*/")
 }
 
 /// By how much the text buffer is longer than what's written to it while a [`Line`] writes.
@@ -418,6 +431,7 @@ impl<'a> Formatter<'a> {
             is_odd: false,
             is_careful: false,
             breaks: false,
+            is_certain: state.is_certain,
             is_quiet: self.is_quiet(),
             is_flow: state.is_flow,
             has_semicolons: state.has_semicolons,
@@ -497,6 +511,17 @@ impl<'a> Formatter<'a> {
                 Part::Expr(e) => CertainIf(false, &e).fmt(self),
                 Part::ClassBody(class) => write_class_body_after_head(class, self),
                 Part::Hole(hole) => hole.write(self),
+                Part::JsxChildren(element) => {
+                    self.context_mut().short_cuts.follows_line = true;
+                    // The printer measures what's in a fill again after a forced line break, until a group starts.
+                    let children = format_with(|f| write_children_on_lines(element, f));
+                    write!(self, group(&children).should_expand(true));
+                }
+                Part::JsxAttribute(attribute) => {
+                    if !jsx::write_jsx_attribute(attribute, self) {
+                        attribute.fmt(self);
+                    }
+                }
             }
         }
         true

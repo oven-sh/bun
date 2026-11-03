@@ -34,6 +34,7 @@ impl<'a> Line<'_, 'a> {
                 | ExprTag::New
                 | ExprTag::Await
                 | ExprTag::Assign
+                | ExprTag::Jsx
         ) || (place != Place::Free && needs_parentheses(e, self.f))
             || (tag == ExprTag::Call && e.is_chain_root())
         {
@@ -49,6 +50,7 @@ impl<'a> Line<'_, 'a> {
                 line.token("await ")?;
                 line.last_expr(e.operand().ok_or(Refused)?, Place::Other)
             }
+            ExprTag::Jsx => line.jsx(e, true),
             _ => line.assignment(e, true),
         })
     }
@@ -304,6 +306,7 @@ impl<'a> Line<'_, 'a> {
                 self.expr(expr, Place::Object)?;
                 self.byte(b'!')
             }
+            ExprKind::Jsx(_) => self.jsx(e, false),
             ExprKind::Regex(regex) if regex.flags().is_sorted() => {
                 let text = self.text_of(e.span());
                 match text.iter().all(|byte| *byte >= b' ') {
@@ -672,6 +675,7 @@ impl<'a> Line<'_, 'a> {
                 self.expr(body, Place::Other)?;
                 self.byte(b')')
             }
+            ExprTag::Jsx if is_last => self.last_expr(body, Place::Other),
             _ => self.expr(body, Place::Other),
         }
     }

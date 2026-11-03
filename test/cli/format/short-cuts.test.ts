@@ -1460,6 +1460,11 @@ describe.skipIf(!hasFlag)("where lines are written without a document", () => {
     "start-of-statement.js": `a();\n[b].c();\n(d || e).f();\n\`g\`.h();\n+i;\n/j/.k();\n/** @type {A} */ (l).m();\n(() => {})();\nn => o;\nlet p = 1;\nclass Q {}\n`,
     // What the parser reads and the printer drops.
     "rest-parameter.ts": `declare function a(b, ...c?);\nfunction d(...e?: any[]) {}\n`,
+    // JSX: on one line, or the tags, the attributes and the children on lines of their own.
+    "elements.tsx": `const a = <B c="d" e={f} {...g} h />;\nconst i = <J k='l"m' n="o'p" q="&quot;">text  more\n  words</J>;\nrender(<R s={t}>{u}</R>);\nfunction V() {\n  return <div className="w" onClick={() => { x(); }} style={{ y: 1,\n z: 2 }}>\n    <A />\n\n    <B c="d">text</B>\n    {e}\n    {f.map(g => <li key={g}>{g}</li>)}\n    {h && <I j="k" />}\n    {l ? <M /> : <N />}\n    text <b>bold</b> and {more} text that goes on for some time so that it has to be wrapped\n    <></>\n    <O.P q:r="s" t-u="v" />\n  </div>;\n}\nconst w = () => <X y="z"><A /></X>;\nconst b = { c: <D><E /></D>, f: <G /> };\n`,
+    "elements-wide.jsx": `function A() {\n  return (\n    <${"B".repeat(30)} ${"c".repeat(20)}="d" ${"e".repeat(19)}="f" />\n  );\n}\nfunction G() {\n  return (\n    <${"B".repeat(30)} ${"c".repeat(20)}="d" ${"e".repeat(20)}="f" />\n  );\n}\nfunction H() {\n  return <I j="${"k".repeat(80)}">{l}</I>;\n}\nfunction M() {\n  return <N>${"o".repeat(66)}</N>;\n}\nfunction P() {\n  return <N>${"o".repeat(67)}</N>;\n}\nfunction Q() {\n  return <N>${"é".repeat(66)}</N>;\n}\n`,
+    "elements-odd.jsx": `a = <>{await (<B>\n  c d e f\n</B// g\n>)}</>;\nh = <div>{i ? (j ? <K /> : <L />) : null}</div>;\nm = <div>\n  First <div>\n    Second\n  </div> Third\n</div>;\nn = <style jsx>{\`\n  div { color: red }\n\`}</style>;\no = <P css={\`color: red\`} q={\`r\${s}\`} />;\nt = <U>{/* v */}</U>;\nw = <X>{" "}y{" "}</X>;\nz = <A b=<C /> />;\n`,
+    "only-element.md": "```jsx\n<A b={{ c: 1 }}>...</A>\n```\n\n```jsx\n<A />;\n<B />\n```\n",
     // Scripts in other languages.
     "component.vue": `<script setup lang="ts">\nimport { ref } from 'vue'\nconst aaaaaaaaaaaaaaaaaaaaaaaaa = bbbbbbbbbbbbbbbbbbbbbbbbbbb(ccccccccccccccccccc, dddddd)\nfunction e() {\n  return f(() => {\n    g('h')\n  })\n}\n</script>\n<template>\n  <div @click="e()">{{ a }}</div>\n</template>\n`,
     "page.html": `<html>\n<body>\n<div><div><script>\nconst aaaaaaaaaaaaaaaaaaaaaaa = bbbbbbbbbbbbbbbbbbbbbbb(ccccccccccccccccc, dddddd)\nfunction e() { return f(() => { g('h') }) }\n</script></div></div>\n</body>\n</html>\n`,
@@ -1475,6 +1480,8 @@ describe.skipIf(!hasFlag)("where lines are written without a document", () => {
     [["--no-semi"]],
     [["--no-semi", "--trailing-comma=none", "--end-of-line=crlf"]],
     [["--trailing-comma=none", "--vue-indent-script-and-style"]],
+    [["--bracket-same-line", "--jsx-single-quote", "--print-width=40"]],
+    [["--single-attribute-per-line", "--print-width=27"]],
   ])("the same with %j", async flags => {
     const [short, long] = await Promise.all([format(files, flags), format(files, [...flags, "--no-short-cuts"])]);
     expect(short).toEqual(long);

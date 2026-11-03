@@ -215,6 +215,36 @@ impl<'a> Format<'a> for AnyJsxTagWithChildren<'a> {
     }
 }
 
+/// The parentheses that set an element apart from what's around it.
+#[derive(Copy, Clone)]
+pub(crate) enum Parentheses {
+    None,
+    IfItBreaks,
+    /// It breaks whether it fits or not.
+    Always,
+}
+
+pub(crate) fn parentheses_around<'a>(e: Expr<'a>, jsx: Jsx<'a>) -> Parentheses {
+    let parent = e.ast_parent();
+    match (AnyJsxTagWithChildren { expr: e, jsx }).get_wrap_state(parent) {
+        WrapState::NoWrap => Parentheses::None,
+        WrapState::WrapOnBreak if should_expand(parent) => Parentheses::Always,
+        WrapState::WrapOnBreak => Parentheses::IfItBreaks,
+    }
+}
+
+/// What's between the tags of `jsx`, which isn't on their line.
+pub(crate) fn write_children_on_lines<'a>(jsx: Jsx<'a>, f: &mut Formatter<'a>) {
+    match format_children(jsx, true, false, f) {
+        FormatChildrenResult::SingleChild(child) => child.fmt(f),
+        FormatChildrenResult::ForceMultiline(children)
+        | FormatChildrenResult::BestFitting {
+            expanded_children: children,
+            ..
+        } => children.fmt(f),
+    }
+}
+
 /// ```jsx
 /// a = (                      a =
 ///   // prettier-ignore         // prettier-ignore

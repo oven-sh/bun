@@ -4,8 +4,11 @@ mod child_list;
 mod element;
 mod opening_element;
 
+pub(crate) use self::child_list::{ChildOnLine, ChildrenOnLine};
 use self::element::AnyJsxTagWithChildren;
-pub(crate) use self::element::ignored_jsx_gets_no_parentheses;
+pub(crate) use self::element::{
+    Parentheses, ignored_jsx_gets_no_parentheses, parentheses_around, write_children_on_lines,
+};
 use crate::js::format::{ExprOptions, format_name, format_node, identifier, write_expression};
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::js::utils::tailwindcss::{InTailwindContext, context_of_attribute};

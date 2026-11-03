@@ -3,6 +3,7 @@
 use super::FormatJsxChild;
 use crate::cursor::with_jsx_children_marks;
 use crate::ir::element::{Group as GroupTag, GroupMode};
+use crate::js::flat::{CertainIf, Deeper, write_jsx_child};
 use crate::js::utils::jsx::{
     JsxRawSpace, JsxSpace, has_line_break, is_jsx_whitespace, is_meaningful_jsx_text,
     is_whitespace_jsx_expression,
@@ -356,6 +357,43 @@ impl<'a> Children<'a> {
     }
 }
 
+/// A part of what's between two tags on their line.
+#[derive(Copy, Clone)]
+pub(crate) enum ChildOnLine<'a> {
+    Word(&'a [u8]),
+    /// An element, or something in braces.
+    Node(Expr<'a>),
+    Space,
+}
+
+/// The children of an element that can be on the line of its tags.
+pub(crate) struct ChildrenOnLine<'a>(Children<'a>);
+
+impl<'a> ChildrenOnLine<'a> {
+    /// `None` if the children of `jsx` are on lines of their own whether they fit or not, whatever its attributes are.
+    pub(crate) fn new(jsx: Jsx<'a>, f: &Formatter<'a>) -> Option<Self> {
+        let children = Children::new(jsx, false, f);
+        let breaks = children.meta.contains_tag
+            || children.meta.contains_multiple_expressions
+            || (children.parts).contains(&Part::Separator(Separator::HardLine));
+        (!breaks).then_some(Self(children))
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = ChildOnLine<'a>> + '_ {
+        self.0.parts.iter().flat_map(|&part| {
+            let space = matches!(
+                part,
+                Part::Separator(Separator::JsxWhitespace | Separator::Line)
+            );
+            let items = self.0.items_of(part).iter().map(|item| match *item {
+                Item::Word(word) => ChildOnLine::Word(word),
+                Item::Node(node) => ChildOnLine::Node(node),
+            });
+            space.then_some(ChildOnLine::Space).into_iter().chain(items)
+        })
+    }
+}
+
 /// `{/* prettier-ignore */}`. `empty_expression` is the content of the braces.
 fn has_ignore_comment<'a>(empty_expression: Expr<'a>, f: &Formatter<'a>) -> bool {
     let comments = f.comments();
@@ -384,6 +422,8 @@ pub(super) fn format_children<'a>(
     is_mdx_block: bool,
     f: &mut Formatter<'a>,
 ) -> FormatChildrenResult<'a> {
+    // The opening tag ends a line whose indentation is known.
+    let follows_line = std::mem::take(&mut f.context_mut().short_cuts.follows_line);
     let children = Children::new(jsx, is_mdx_block, f);
     let meta = children.meta;
     let mut forced_break = forced_break || meta.contains_tag || meta.contains_multiple_expressions;
@@ -395,6 +435,7 @@ pub(super) fn format_children<'a>(
         return FormatChildrenResult::SingleChild(FormatSingleChild {
             item,
             forced_break,
+            follows_line,
             element: jsx.opening_span().start,
         });
     }
@@ -434,7 +475,20 @@ pub(super) fn format_children<'a>(
                     });
 
                     if forced_break {
-                        multiline.write_content(&format_node, f);
+                        let is_line_break = |part: Option<&Part>| {
+                            part.is_none_or(|it| *it == Part::Separator(Separator::HardLine))
+                        };
+                        let has_own_line = !is_suppressed
+                            && children.items_of(part).len() == 1
+                            && is_line_break(index.checked_sub(1).and_then(|at| parts.get(at)))
+                            && is_line_break(parts.get(index + 1));
+                        let format_node = format_with(|f| {
+                            if !(has_own_line && write_jsx_child(node.0, f)) {
+                                format_node.fmt(f);
+                            }
+                        });
+                        let format_node = Deeper(&format_node);
+                        multiline.write_content(&CertainIf(follows_line, &format_node), f);
                     } else if let Some(element) = f.intern(&format_node) {
                         forced_break = element.will_break(f);
                         let element = format_with(|f| f.write_element(element));
@@ -642,6 +696,8 @@ impl<'a> Format<'a> for FormatFlatChildren {
 pub(super) struct FormatSingleChild<'a> {
     item: Item<'a>,
     forced_break: bool,
+    /// See [`format_children`].
+    follows_line: bool,
     /// The start of the element that owns the child.
     element: u32,
 }
@@ -651,9 +707,12 @@ impl<'a> Format<'a> for FormatSingleChild<'a> {
         let format_inner = format_with(|f| {
             with_jsx_children_marks(self.element, !self.forced_break, f, |f| match self.item {
                 Item::Word(word) => text_without_whitespace(word).fmt(f),
+                Item::Node(node) if self.forced_break && write_jsx_child(node, f) => {}
                 Item::Node(node) => FormatJsxChild(node).fmt(f),
             });
         });
+        let format_inner = Deeper(&format_inner);
+        let format_inner = CertainIf(self.follows_line, &format_inner);
         match self.forced_break {
             true => write!(f, block_indent(&format_inner)),
             false => write!(f, soft_block_indent(&format_inner)),

@@ -126,7 +126,7 @@ impl<'a> TreeBuilder<'a, '_, '_, '_> {
                                 })
                         }
                     };
-                if !is_plain {
+                if !is_plain || node.has(Flags::FOLLOWS_DISPLAY_COMMENT) {
                     return None;
                 }
                 (Some((name, definition)), id)
@@ -604,6 +604,22 @@ impl<'a> TreeBuilder<'a, '_, '_, '_> {
                 .is_some_and(|parent| self.tree[parent].has(Flags::IS_IN_TEXT_OR_FOREIGN_OBJECT))
         {
             node.flags.insert(Flags::IS_IN_TEXT_OR_FOREIGN_OBJECT);
+        }
+        // White space between a comment and the element is still a text.
+        let is_blank = |id: &Id| {
+            let node = &self.tree[*id];
+            node.kind == Kind::Text && node.span.of(self.text).trim_ascii().is_empty()
+        };
+        let last = (self.tree).last_child(self.container().unwrap_or(self.root));
+        let before = match last.filter(is_blank) {
+            Some(blank) => self.tree.prev_of(blank),
+            None => last.map(|it| &self.tree[it]),
+        };
+        if before.is_some_and(|it| {
+            it.kind == Kind::Comment
+                && bun_core::strings::contains(it.span.of(self.text), b"display:")
+        }) {
+            node.flags.insert(Flags::FOLLOWS_DISPLAY_COMMENT);
         }
         let id = self.add_to_parent(node);
         self.container_stack.push(id);

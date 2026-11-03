@@ -71,6 +71,9 @@ bitflags::bitflags! {
         const HAS_READY_START_TAG = 1 << 20;
         /// It is called `text` or `foreignObject`, or is in something that is. Set while the tree is built.
         const IS_IN_TEXT_OR_FOREIGN_OBJECT = 1 << 21;
+        /// Element: `<!-- display: table -->` may be in front of it, so what is in it is not printed by its name. Set
+        /// while the tree is built.
+        const FOLLOWS_DISPLAY_COMMENT = 1 << 22;
     }
 }
 

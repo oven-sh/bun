@@ -1767,6 +1767,8 @@ describe.skipIf(!hasFlag)("Vue", () => {
     "<template>\n  <svg>\n    <foreignObject>\n      <div>\n        <svg> </svg>\n        <svg>\n          <g> </g>\n        </svg>\n      </div>\n    </foreignObject>\n  </svg>\n</template>\n",
     // What is in it is on the line of its last attribute.
     `<template>\n  <xmp :a="b">${"x".repeat(60)} <b>c</b></xmp>\n</template>\n`,
+    // A comment says that the element is a table, in which no group is around a child.
+    "<template>\n  <!-- display: table -->\n  <div>\n    {{ a }}\n    b\n  </div>\n</template>\n",
   );
   const files = Object.fromEntries(inputs.map((input, index) => [`${index}.vue`, input]));
 

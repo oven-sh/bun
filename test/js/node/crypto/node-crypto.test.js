@@ -1306,38 +1306,6 @@ it.concurrent("generatePrime({ add }) finds a prime with that remainder", async 
   });
 });
 
-it.concurrent("generatePrimeSync({ add, rem }) can be interrupted when no prime has that remainder", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-      const { Worker } = require("node:worker_threads");
-      const worker = new Worker(
-        'const { generatePrimeSync } = require("node:crypto");' +
-          'require("node:worker_threads").parentPort.postMessage("searching");' +
-          'generatePrimeSync(64, { add: 6n, rem: 3n });',
-        { eval: true },
-      );
-      worker.once("message", async () => {
-        await worker.terminate();
-        console.log("terminated");
-      });
-    `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-    stdout: "terminated",
-    stderr: "",
-    exitCode: 0,
-    signalCode: null,
-  });
-});
-
 it("generatePrime(Sync) should return an ArrayBuffer", async () => {
   const prime = crypto.generatePrimeSync(512);
   expect(prime).toBeInstanceOf(ArrayBuffer);

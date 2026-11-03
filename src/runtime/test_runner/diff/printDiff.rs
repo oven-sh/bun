@@ -1,6 +1,5 @@
 //! Tested in test/js/bun/test/printing/diffexample.test.ts. If modified, the snapshots will need to be updated.
 
-use std::borrow::Cow;
 use std::fmt::Write;
 
 use bstr::BStr;
@@ -36,9 +35,14 @@ pub(crate) fn print_diff_main(
     writer: &mut impl Write,
     config: &DiffConfig,
 ) -> std::fmt::Result {
-    let expected = with_visible_carriage_returns(expected_slice);
-    let expected_slice: &[u8] = &expected;
     if not {
+        let mut shown = Vec::new();
+        let expected_slice = if strings::contains_char(expected_slice, b'\r') {
+            push_with_visible_carriage_returns(&mut shown, expected_slice);
+            &shown[..]
+        } else {
+            expected_slice
+        };
         match config.enable_ansi_colors {
             true => write!(
                 writer,
@@ -51,8 +55,6 @@ pub(crate) fn print_diff_main(
         }
         return Ok(());
     }
-    let received = with_visible_carriage_returns(received_slice);
-    let received_slice: &[u8] = &received;
 
     let mut p = Printer {
         out: Vec::with_capacity(
@@ -64,6 +66,8 @@ pub(crate) fn print_diff_main(
         limit: config.truncate_threshold.max(config.truncate_context * 2),
         config,
         chars: diff::CharDiff::default(),
+        has_carriage_return: strings::contains_char(received_slice, b'\r')
+            || strings::contains_char(expected_slice, b'\r'),
     };
 
     if strings::index_of_char(received_slice, b'\n').is_none()
@@ -78,26 +82,18 @@ pub(crate) fn print_diff_main(
     p.result
 }
 
-/// Every `\r` as `␍` (U+240D). A terminal draws what follows a raw `\r` over the start of the row, and a
-/// GitHub Actions annotation drops it. The value printer writes a backslash as it is, so the two
-/// characters `\r` could also be a backslash and an `r`.
+/// Appends `text` with every `\r` as `␍` (U+240D). A terminal draws what follows a raw `\r` over the start
+/// of the row, and a GitHub Actions annotation drops it. The value printer writes a backslash as it is, so
+/// the two characters `\r` could also be a backslash and an `r`.
 #[optimize(size)]
-fn with_visible_carriage_returns(text: &[u8]) -> Cow<'_, [u8]> {
-    const VISIBLE: &[u8] = "\u{240D}".as_bytes();
-    let Some(first) = strings::index_of_char_usize(text, b'\r') else {
-        return Cow::Borrowed(text);
-    };
-    let count = strings::count_char(&text[first..], b'\r');
-    let mut shown = Vec::with_capacity(text.len() + count * (VISIBLE.len() - 1));
-    let (mut rest, mut next) = (text, Some(first));
-    while let Some(i) = next {
-        shown.extend_from_slice(&rest[..i]);
-        shown.extend_from_slice(VISIBLE);
+fn push_with_visible_carriage_returns(out: &mut Vec<u8>, text: &[u8]) {
+    let mut rest = text;
+    while let Some(i) = strings::index_of_char_usize(rest, b'\r') {
+        out.extend_from_slice(&rest[..i]);
+        out.extend_from_slice("\u{240D}".as_bytes());
         rest = &rest[i + 1..];
-        next = strings::index_of_char_usize(rest, b'\r');
     }
-    shown.extend_from_slice(rest);
-    Cow::Owned(shown)
+    out.extend_from_slice(rest);
 }
 
 /// Rendered output is handed to the writer in chunks of about this size, cut
@@ -160,6 +156,8 @@ struct Printer<'c, W: Write> {
     limit: usize,
     config: &'c DiffConfig,
     chars: diff::CharDiff,
+    /// Whether a side holds a `\r`. The diff compares the bytes as they are, and `b` draws them.
+    has_carriage_return: bool,
 }
 
 /// One row-group of the rendered diff. `Equal` covers a whole run of
@@ -240,8 +238,12 @@ impl<'c, W: Write> Printer<'c, W> {
     fn s(&mut self, s: &str) {
         self.out.extend_from_slice(s.as_bytes());
     }
+    /// The text of a value.
     #[inline]
     fn b(&mut self, b: &[u8]) {
+        if self.has_carriage_return {
+            return push_with_visible_carriage_returns(&mut self.out, b);
+        }
         self.out.extend_from_slice(b);
     }
     #[inline]

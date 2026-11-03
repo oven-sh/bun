@@ -1006,6 +1006,8 @@ describe("carriage returns", () => {
     ],
     // It is not the two characters "\r": the printer writes a backslash as it is.
     [String.raw`expect("a\r").toBe("a\\r")`, `Expected: "a\\r"\nReceived: "a␍"\n`],
+    // A "␍" in a value draws like a "\r". The diff compares the bytes, so the rows are still marked.
+    [String.raw`expect("a\r\nb").toBe("a␍\nb")`, `- "a␍\n+ "a␍\n  b"` + footer(1, 1)],
     // A string that is not Latin-1, and strings inside other values.
     [String.raw`expect("\u{1F600}\r\nb").toBe("\u{1F600}\nb")`, `- "\u{1F600}\n+ "\u{1F600}␍\n  b"` + footer(1, 1)],
     [
@@ -1026,6 +1028,7 @@ describe("carriage returns", () => {
   ];
   const expected = Object.fromEntries(failing);
   const [crlfAgainstLf, , insideAnObject] = Object.keys(expected);
+  const againstALiteral = String.raw`expect("a\r\nb").toBe("a␍\nb")`;
 
   // The messages come from a child process, so the colours and the agent mode of this process do not change them.
   async function messagesOf(env: Record<string, string>) {
@@ -1061,11 +1064,12 @@ describe("carriage returns", () => {
     expect(Object.fromEntries(Object.entries(messages).map(([k, message]) => [k, cleanAnsiEscapes(message)]))).toEqual(
       expected,
     );
-    expect(messages[crlfAgainstLf]).toBe(
-      `\x1B[32m- \x1B[0m\x1B[32m"a\x1B[0m\n` +
-        `\x1B[31m+ \x1B[0m\x1B[31m"a\x1B[0m\x1B[31m␍\x1B[0m\n` +
-        `  \x1B[0m\x1B[2mb"\x1B[0m\n\n` +
-        `\x1B[32m- Expected  - 1\x1B[0m\n\x1B[31m+ Received  + 1\x1B[0m\n`,
+    // A "\r" alone has the style of a whitespace change. A "␍" of the value has the colour of its row.
+    const unchanged = `  \x1B[0m\x1B[2mb"\x1B[0m\n\n\x1B[32m- Expected  - 1\x1B[0m\n\x1B[31m+ Received  + 1\x1B[0m\n`;
+    const received = `\x1B[31m+ \x1B[0m\x1B[31m"a\x1B[0m\x1B[31m\x1B[7m␍\x1B[0m\n`;
+    expect(messages[crlfAgainstLf]).toBe(`\x1B[32m- \x1B[0m\x1B[32m"a\x1B[0m\n` + received + unchanged);
+    expect(messages[againstALiteral]).toBe(
+      `\x1B[32m- \x1B[0m\x1B[32m"a\x1B[0m\x1B[32m␍\x1B[0m\n` + received + unchanged,
     );
     expect(exitCode).toBe(0);
   });

@@ -276,6 +276,7 @@ pub(crate) fn name_without_comments<'a>(span: Span) -> impl Format<'a> {
 /// [`format_name`] for a name that Prettier prints like any other node, so a `prettier-ignore` comment applies to it:
 /// `import /* prettier-ignore */ *  as a from /* prettier-ignore */ 'b'`, `a./* prettier-ignore */ \u{62}`. Don't use
 /// it for a property key.
+#[inline]
 pub(crate) fn format_ignorable_name<'a>(
     span: Span,
     f: &mut Formatter<'a>,
@@ -294,6 +295,22 @@ fn format_name_or_copy<'a>(
     if f.is_quiet() {
         return write(f);
     }
+    let mut write = Some(write);
+    format_name_with_comments(can_be_ignored, span, f, &mut |f| {
+        if let Some(write) = write.take() {
+            write(f);
+        }
+    });
+}
+
+/// There's one copy of this, whatever writes the name.
+#[inline(never)]
+fn format_name_with_comments<'a>(
+    can_be_ignored: bool,
+    span: Span,
+    f: &mut Formatter<'a>,
+    write: &mut dyn FnMut(&mut Formatter<'a>),
+) {
     let owned = f.comments().of_name(span.start);
     FormatLeadingComments::Comments(owned.leading).fmt(f);
     f.track_cursor(span, |f| match can_be_ignored && owned.is_ignored {

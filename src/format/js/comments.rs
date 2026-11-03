@@ -428,7 +428,7 @@ impl<'a> Comments<'a> {
     }
 
     /// The comments attached to the name or literal key that starts at `start`.
-    #[inline]
+    #[inline(never)]
     pub(crate) fn of_name(&self, start: u32) -> OwnedComments<'a> {
         self.owned(self.file_comments.owners.of_name(start))
     }

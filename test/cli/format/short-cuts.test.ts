@@ -1605,6 +1605,8 @@ describe.skipIf(!hasFlag)("HTML", () => {
     `<div>\n  a \u0300 ${"x".repeat(70)} yyyyy\n  <b></b>\n</div>\n`,
     // Where white space does not count, a line break is printed between a text and an `<svg>`.
     "<rt>;<svg></svg></rt>\n",
+    // A form feed is white space, so the end tag behind it, of another element, follows the last child.
+    "<ul>\n  <li>\n    <b>a</b>\n    \f</ul>\n",
   ];
   const files = Object.fromEntries(inputs.map((input, index) => [`${index}.html`, input]));
 

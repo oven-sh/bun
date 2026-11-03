@@ -925,6 +925,8 @@ impl<'a> Scanner<'_, 'a> {
         };
         let is_followed = match (self.at(next), self.at(next + 1)) {
             (0, _) => name.is_none() && next >= self.text.len(),
+            // White space too, so what follows it is not known.
+            (0x0C | b'\r', _) => false,
             // With nothing but a text in it, the parent is only broken if it does not fit on a line.
             (b'<', b'/') => {
                 !is_sole_text

@@ -10,6 +10,7 @@ import { chmodSync, mkdirSync, symlinkSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
 import {
   bunExe,
+  isLinux,
   isPosix,
   isRoot,
   isWindows,
@@ -18,6 +19,7 @@ import {
   tempDir,
   tempDirWithFiles,
   tmpdirSync,
+  unprivilegedSpawnOptions,
 } from "harness";
 import { join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
@@ -145,6 +147,111 @@ describe("bunshell", () => {
           );
         expect(err).toBeInstanceOf($.ShellError);
         expect({ exitCode: err.exitCode, stderr: err.stderr.toString() }).toEqual({ exitCode: 127, stderr: notFound });
+      });
+    });
+
+    // POSIX 2.8.2: the status is 126 when the command is found and cannot be executed. The shell reports it
+    // for a name with a slash. Windows has no execute bit: the lookup decides there by existence and extension.
+    describe.skipIf(isWindows)("a path that is there and cannot be executed exits 126", () => {
+      const run = async (cwd: string, script: string, quiet = true) => {
+        const promise = $`${{ raw: script }}`.cwd(String(cwd)).nothrow();
+        const { stdout, stderr, exitCode } = await (quiet ? promise.quiet() : promise);
+        return { stdout: stdout.toString(), stderr: stderr.toString(), exitCode };
+      };
+
+      test("file without the execute bit", async () => {
+        using dir = tempDir("shell-exit-126", { "notexec.sh": "#!/bin/sh\necho ran\n" });
+        chmodSync(join(String(dir), "notexec.sh"), 0o644);
+        const denied = (name: string) => ({ stdout: "", stderr: `bun: Permission denied: ${name}\n`, exitCode: 126 });
+
+        expect(await run(dir, "./notexec.sh")).toEqual(denied("./notexec.sh"));
+        expect(await run(dir, "./notexec.sh", false)).toEqual(denied("./notexec.sh"));
+        expect(await run(dir, `${dir}/notexec.sh`)).toEqual(denied(`${dir}/notexec.sh`));
+        expect(await run(dir, "echo hi | ./notexec.sh")).toEqual(denied("./notexec.sh"));
+        expect(await run(dir, "./notexec.sh || echo fallback")).toEqual({
+          stdout: "fallback\n",
+          stderr: "bun: Permission denied: ./notexec.sh\n",
+          exitCode: 0,
+        });
+      });
+
+      // On macOS the lookup accepts a directory, and the spawn refuses it. This status comes from the lookup.
+      test.skipIf(!isLinux)("directory", async () => {
+        using dir = tempDir("shell-exit-126", { "adir/.keep": "" });
+        expect(await run(dir, "./adir")).toEqual({
+          stdout: "",
+          stderr: "bun: Is a directory: ./adir\n",
+          exitCode: 126,
+        });
+      });
+
+      test("path through a regular file", async () => {
+        using dir = tempDir("shell-exit-126", { "afile": "" });
+        expect(await run(dir, "./afile/x")).toEqual({
+          stdout: "",
+          stderr: "bun: Not a directory: ./afile/x\n",
+          exitCode: 126,
+        });
+      });
+
+      // Permission bits must apply to the shell: root can search every directory.
+      test("file in a directory that cannot be searched", async () => {
+        using dir = tempDir("shell-exit-126", { "locked/x.sh": "#!/bin/sh\necho ran\n" });
+        chmodSync(join(String(dir), "locked", "x.sh"), 0o755);
+        using unprivileged = unprivilegedSpawnOptions(String(dir));
+        chmodSync(join(String(dir), "locked"), 0o000);
+        try {
+          await using proc = Bun.spawn({
+            cmd: [BUN, "exec", "./locked/x.sh"],
+            cwd: String(dir),
+            env: bunEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+            ...unprivileged,
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect({ stdout, stderr, exitCode }).toEqual({
+            stdout: "",
+            stderr: "bun: Permission denied: ./locked/x.sh\n",
+            exitCode: 126,
+          });
+        } finally {
+          chmodSync(join(String(dir), "locked"), 0o755);
+        }
+      });
+
+      // A bare name is searched for in $PATH only (POSIX 2.9.1.1). A file of that name in the working directory,
+      // or a file in $PATH that is not executable, is not a match.
+      test("bare name exits 127", async () => {
+        using dir = tempDir("shell-exit-127", { "notexec.sh": "#!/bin/sh\necho ran\n", "adir/.keep": "" });
+        chmodSync(join(String(dir), "notexec.sh"), 0o644);
+        for (const name of ["notexec.sh", "adir"]) {
+          expect(await run(dir, name)).toEqual({
+            stdout: "",
+            stderr: `bun: command not found: ${name}\n`,
+            exitCode: 127,
+          });
+        }
+        const inPath = await $`notexec.sh`
+          .env({ ...bunEnv, PATH: `${dir}:${process.env.PATH}` })
+          .quiet()
+          .nothrow();
+        expect({ stderr: inPath.stderr.toString(), exitCode: inPath.exitCode }).toEqual({
+          stderr: "bun: command not found: notexec.sh\n",
+          exitCode: 127,
+        });
+      });
+
+      // The lookup resolves a relative name against the path of the working directory. After the rename
+      // nothing is at that path, so the file is not found. It is not "Permission denied".
+      test("path under a working directory that was renamed exits 127", async () => {
+        using dir = tempDir("shell-exit-127", { "a/x.sh": "#!/bin/sh\necho ran\n" });
+        chmodSync(join(String(dir), "a", "x.sh"), 0o755);
+        expect(await run(dir, "cd a && mv ../a ../b && ./x.sh")).toEqual({
+          stdout: "",
+          stderr: "bun: command not found: ./x.sh\n",
+          exitCode: 127,
+        });
       });
     });
 

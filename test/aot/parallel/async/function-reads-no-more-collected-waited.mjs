@@ -1,30 +1,13 @@
 // What a function made and reads no more behind an await is collected while a function that it awaits runs on after a wait. Asked from that function, which waits in several ways.
+// Todo on win32 x64: Not every time: row 3517: some lines print that the object is kept: native frames there have home slots that nobody writes, and the collector reads what an earlier call left in them
 let last;
 let sink = 0;
-let overwritten = 1;
 function make(n) {
   const made = { n };
   last = new WeakRef(made);
   return made;
 }
-function overwriteStack(depth, a) {
-  if (depth === 0) return a;
-  const b = a + 1;
-  const c = b * 2;
-  const d = c - a;
-  const e = d + b;
-  const f = e * 3;
-  const g = f - c;
-  const h = g + d;
-  const i = h * 5;
-  const j = i - e;
-  const k = j + f;
-  const l = k * 7;
-  const m = l - g;
-  return (overwriteStack(depth - 1, m % 1000) + b + c + d + e + f + g + h + i + j + k + l) % 1000;
-}
 function collect() {
-  overwritten = overwriteStack(200, overwritten);
   for (let round = 0; round < 4; round++) Bun.gc(true);
 }
 function report(label) {
@@ -116,4 +99,4 @@ let n = 0;
 for (const wait of waits) {
   for (const holds of [map, mapFilledBySet, set, local, list]) await holds(n++, wait);
 }
-console.log(sink, overwritten);
+console.log(sink);

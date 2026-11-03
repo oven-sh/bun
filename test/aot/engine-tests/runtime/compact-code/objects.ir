@@ -26,7 +26,7 @@
 # CHECK: an object literal: nothing
 # CHECK-NEXT: an object literal without a prototype: nothing
 # CHECK-NEXT: Object.create(null): nothing
-# CHECK-NEXT: a spread into a literal: CopyDataProperties
+# CHECK-NEXT: a spread into a literal: nothing
 # CHECK-NEXT: Object.assign: nothing
 # CHECK-NEXT: a property added later: nothing
 # CHECK-NEXT: exited with 0

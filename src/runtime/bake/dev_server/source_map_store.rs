@@ -91,12 +91,7 @@ impl Entry {
     }
 
     /// `SourceMapStore.Entry.renderJSON`.
-    pub(crate) fn render_json(
-        &self,
-        dev: &mut DevServer,
-        kind: ChunkKind,
-        side: Side,
-    ) -> crate::Result<Vec<u8>> {
+    pub(crate) fn render_json(&self, kind: ChunkKind, side: Side) -> crate::Result<Vec<u8>> {
         let map_files = self.files.as_slice();
         let paths = &self.paths;
 
@@ -217,8 +212,6 @@ impl Entry {
         let json_bytes = j.done_with_end(b"\"}")?.into_vec();
         // errdefer @compileError("last try should be the final alloc") — no further fallible ops below.
 
-        let _ = dev;
-
         Ok(json_bytes)
     }
 
@@ -321,20 +314,6 @@ impl Entry {
             }
         }
         Ok(())
-    }
-
-    /// Drop handles `files` (each `Shared` decrements its `Rc<PackedMap>`)
-    /// and `paths` (both the outer box and the owned inner `Box<[u8]>` path
-    /// copies).
-    ///
-    /// Deliberately not `impl Drop` — the `ref_count == 0` assertion belongs
-    /// only on the explicit `unrefAtIndex` release path. Whole-store teardown and
-    /// `*out = Entry { .. }` overwrites legitimately drop entries with nonzero
-    /// counts, where a `Drop` assertion would diverge from spec and panic.
-    pub(crate) fn deinit(&mut self) {
-        debug_assert_eq!(self.ref_count, 0);
-        self.files.clear();
-        self.paths = Box::default();
     }
 }
 
@@ -629,10 +608,6 @@ impl SourceMapStore {
         // sign-correct without u64 wrap.
         let now: i64 = now_ts.sec.max(0);
 
-        // `emitMemoryVisualizerMessageIfNeeded` is inlined at both returns
-        // (a scopeguard cannot capture &mut store across the loop body
-        // without aliasing).
-
         while let Some(item) = store.weak_refs.read_item() {
             if item.expire <= now {
                 store.unref_count(item.key(), item.count);
@@ -646,15 +621,11 @@ impl SourceMapStore {
                         nsec: 0,
                     },
                 );
-                // SAFETY: invariant of `owner()`.
-                unsafe { (*store.owner()).emit_memory_visualizer_message_if_needed() };
                 return;
             }
         }
 
         store.weak_ref_sweep_timer.state = EventLoopTimerState::CANCELLED;
-        // SAFETY: invariant of `owner()`.
-        unsafe { (*store.owner()).emit_memory_visualizer_message_if_needed() };
     }
 
     /// This is used in exactly one place: remapping errors.

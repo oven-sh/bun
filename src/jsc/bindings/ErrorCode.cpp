@@ -31,7 +31,6 @@
 #include "JSDOMException.h"
 #include "JSDOMExceptionHandling.h"
 #include <atomic>
-#include <openssl/err.h>
 #include "ErrorCode.h"
 #include "ErrorStackTrace.h"
 #include "KeyObject.h"
@@ -235,7 +234,7 @@ JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, E
     return JSC::ErrorInstance::create(vm, structure, messageString, cause, nullptr, JSC::RuntimeType::TypeNothing, data.type, true);
 }
 
-JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, const String& message)
+NEVER_INLINE JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, const String& message)
 {
     return errorCache(globalObject)->createError(vm, globalObject, code, jsString(vm, message), jsUndefined());
 }
@@ -245,7 +244,7 @@ JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, const Str
     return createError(globalObject->vm(), globalObject, code, message);
 }
 
-JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code, const String& message)
+NEVER_INLINE JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code, const String& message)
 {
     return createError(vm, defaultGlobalObject(globalObject), code, message);
 }
@@ -268,7 +267,7 @@ JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode co
     return errorCache(globalObject)->createError(vm, globalObject, code, message, options);
 }
 
-JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, const String& message)
+NEVER_INLINE JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, const String& message)
 {
     return createError(globalObject->vm(), globalObject, code, message);
 }
@@ -1997,14 +1996,6 @@ extern "C" JSC::EncodedJSValue Bun__createErrorWithCode(JSC::JSGlobalObject* glo
     return JSValue::encode(createError(globalObject, code, message->toWTFString(BunString::ZeroCopy)));
 }
 
-void throwBoringSSLError(JSGlobalObject* globalObject, JSC::ThrowScope& scope, int errorCode)
-{
-    char buf[256] = { 0 };
-    ERR_error_string_n(static_cast<uint32_t>(errorCode), buf, sizeof(buf));
-    auto message = String::fromUTF8(buf);
-    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_STATE, message));
-}
-
 void throwCryptoOperationFailed(JSGlobalObject* globalObject, JSC::ThrowScope& scope)
 {
     scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Crypto operation failed"_s));
@@ -2078,7 +2069,7 @@ JSC::JSObject* Bun::createInvalidThisError(JSC::JSGlobalObject* globalObject, co
     return Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_THIS, message);
 }
 
-JSC::EncodedJSValue Bun::throwInvalidThisCallError(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, const ASCIILiteral typeName)
+NEVER_INLINE JSC::EncodedJSValue Bun::throwInvalidThisCallError(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, const ASCIILiteral typeName)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);

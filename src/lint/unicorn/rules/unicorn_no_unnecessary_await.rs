@@ -4,7 +4,7 @@ use bun_lint::rule::Plugin;
 /// Disallow awaiting non-promise values.
 pub struct NoUnnecessaryAwait;
 
-const UNNECESSARY_AWAIT: Message = Message::new("", "Unexpected `await` on a non-Promise value");
+const UNNECESSARY_AWAIT: &Message = &Message::new("", "Unexpected `await` on a non-Promise value");
 
 fn not_promise(argument: Expr) -> bool {
     let mut at = argument;

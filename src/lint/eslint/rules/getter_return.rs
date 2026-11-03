@@ -6,8 +6,8 @@ pub struct GetterReturn {
     allows_implicit: bool,
 }
 
-const EXPECTED: Message = Message::new("expected", "Expected to return a value in {{name}}.");
-const EXPECTED_ALWAYS: Message = Message::new(
+const EXPECTED: &Message = &Message::new("expected", "Expected to return a value in {{name}}.");
+const EXPECTED_ALWAYS: &Message = &Message::new(
     "expectedAlways",
     "Expected {{name}} to always return a value.",
 );

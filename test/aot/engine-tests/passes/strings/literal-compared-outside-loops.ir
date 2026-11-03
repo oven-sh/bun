@@ -308,150 +308,146 @@ function f21 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b8(v44: guard):
 # CHECK-NEXT: v45: guard = AllGuards v42, v44
 # CHECK-NEXT: v46: anything ~ undefined|null|string = GetArrayElement v40, v39, v45 arrayStorage=Contiguous level=Expected accessSite=4 [keyIsIntegral, isPresent]
-# CHECK-NEXT: v47: guard = AllGuards v42, v44
-# CHECK-NEXT: v48: anything ~ undefined|null|string = GetArrayElement v40, v39, v47 arrayStorage=Contiguous level=Expected accessSite=5 [keyIsIntegral, isPresent]
-# CHECK-NEXT: v49: guard = AllGuards v42, v44
-# CHECK-NEXT: v50: anything ~ undefined|null|string = GetArrayElement v40, v39, v49 arrayStorage=Contiguous level=Expected accessSite=6 [keyIsIntegral, isPresent]
-# CHECK-NEXT: v51: anything ~ "text" = Expect v46 expectedType="text"
-# CHECK-NEXT: v52: anything ~ undefined = Expect v48 expectedType=undefined
-# CHECK-NEXT: v53: anything ~ undefined|null = Expect v50 expectedType=undefined|null|boolean|number|bigint|object|symbol("text")@m0:31
-# CHECK-NEXT: v54: L0 = NewObject -, v51, v52, v53 layout=L0 fields=[1, 2, 0] allocationSite=12 allocationClass=0
-# CHECK-NEXT: v55: L0 = FinishObject v54
-# CHECK-NEXT: Jump -> next b10(v55)
+# CHECK-NEXT: v47: anything ~ "text" = Expect v46 expectedType="text"
+# CHECK-NEXT: v48: anything ~ undefined = Expect v46 expectedType=undefined
+# CHECK-NEXT: v49: anything ~ undefined|null = Expect v46 expectedType=undefined|null|boolean|number|bigint|object|symbol("text")@m0:31
+# CHECK-NEXT: v50: L0 = NewObject -, v47, v48, v49 layout=L0 fields=[1, 2, 0] allocationSite=12 allocationClass=0
+# CHECK-NEXT: v51: L0 = FinishObject v50
+# CHECK-NEXT: Jump -> next b10(v51)
 # CHECK-NEXT: b9() frequency=Rare:
-# CHECK-NEXT: v56: anything ~ undefined|null|string = ElemGet v40, v39 accessSite=4 receivers=[] [keyIsIntegral]
-# CHECK-NEXT: v57: anything ~ undefined|null|string = ElemGet v40, v39 accessSite=5 receivers=[] [keyIsIntegral]
-# CHECK-NEXT: v58: anything ~ undefined|null|string = ElemGet v40, v39 accessSite=6 receivers=[] [keyIsIntegral]
-# CHECK-NEXT: v59: anything ~ "text" = Expect v56 expectedType="text"
-# CHECK-NEXT: v60: anything ~ undefined = Expect v57 expectedType=undefined
-# CHECK-NEXT: v61: anything ~ undefined|null = Expect v58 expectedType=undefined|null|boolean|number|bigint|object|symbol("text")@m0:31
-# CHECK-NEXT: v62: L0 = NewObject -, v59, v60, v61 layout=L0 fields=[1, 2, 0] allocationSite=12 allocationClass=0
-# CHECK-NEXT: v63: L0 = FinishObject v62
-# CHECK-NEXT: Jump -> next b10(v63)
-# CHECK-NEXT: b10(v64: L0):
-# CHECK-NEXT: v65: 0 = Integer
-# CHECK-NEXT: v66: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: Jump -> next b11(v65)
-# CHECK-NEXT: b11(v67: int[0, 4294967295] ~ int[0, 2147483648]):
+# CHECK-NEXT: v52: anything ~ undefined|null|string = ElemGet v40, v39 accessSite=4 receivers=[] [keyIsIntegral]
+# CHECK-NEXT: v53: anything ~ undefined|null|string = ElemGet v40, v39 accessSite=5 receivers=[] [keyIsIntegral]
+# CHECK-NEXT: v54: anything ~ undefined|null|string = ElemGet v40, v39 accessSite=6 receivers=[] [keyIsIntegral]
+# CHECK-NEXT: v55: anything ~ "text" = Expect v52 expectedType="text"
+# CHECK-NEXT: v56: anything ~ undefined = Expect v53 expectedType=undefined
+# CHECK-NEXT: v57: anything ~ undefined|null = Expect v54 expectedType=undefined|null|boolean|number|bigint|object|symbol("text")@m0:31
+# CHECK-NEXT: v58: L0 = NewObject -, v55, v56, v57 layout=L0 fields=[1, 2, 0] allocationSite=12 allocationClass=0
+# CHECK-NEXT: v59: L0 = FinishObject v58
+# CHECK-NEXT: Jump -> next b10(v59)
+# CHECK-NEXT: b10(v60: L0):
+# CHECK-NEXT: v61: 0 = Integer
+# CHECK-NEXT: v62: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: Jump -> next b11(v61)
+# CHECK-NEXT: b11(v63: int[0, 4294967295] ~ int[0, 2147483648]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v69: int[0, 4294967295] ~ int[0, 2147483647] = Upcast v67 castType=int|whole
-# CHECK-NEXT: v70: int[0, 4294967295] = CallBuiltin v23 overload=ArrayPrototypeLength/0 accessSite=7
-# CHECK-NEXT: v71: boolean = Less v69, v70
-# CHECK-NEXT: Branch v71 -> taken b12(| 0), notTaken b13()
-# CHECK-NEXT: b12(v72: int[0, 4294967294] ~ int[0, 2147483647]):
-# CHECK-NEXT: v73: " " = String string=" "
-# CHECK-NEXT: v74: undefined|f2|f3|f4|f5|f6|f7|f8|f9 = GetArrayElement v23, v72 arrayStorage=Contiguous level=Proven accessSite=8 [keyIsIntegral]
-# CHECK-NEXT: v75: anything = Call v74, v23, v64 calleeName="ofRecord[f]" accessSite=9 callees=[f2, f3, f4, f5, f6, f7, f8, f9, ..]
-# CHECK-NEXT: v76: string = Add v73, v75
-# CHECK-NEXT: StringBuilderAppend v66, v76
-# CHECK-NEXT: v78: int[1, 4294967295] ~ int[1, 2147483648] = Increment v72
-# CHECK-NEXT: Jump -> next b11(v78)
+# CHECK-NEXT: v65: int[0, 4294967295] ~ int[0, 2147483647] = Upcast v63 castType=int|whole
+# CHECK-NEXT: v66: int[0, 4294967295] = CallBuiltin v23 overload=ArrayPrototypeLength/0 accessSite=7
+# CHECK-NEXT: v67: boolean = Less v65, v66
+# CHECK-NEXT: Branch v67 -> taken b12(| 0), notTaken b13()
+# CHECK-NEXT: b12(v68: int[0, 4294967294] ~ int[0, 2147483647]):
+# CHECK-NEXT: v69: " " = String string=" "
+# CHECK-NEXT: v70: undefined|f2|f3|f4|f5|f6|f7|f8|f9 = GetArrayElement v23, v68 arrayStorage=Contiguous level=Proven accessSite=8 [keyIsIntegral]
+# CHECK-NEXT: v71: anything = Call v70, v23, v60 calleeName="ofRecord[f]" accessSite=9 callees=[f2, f3, f4, f5, f6, f7, f8, f9, ..]
+# CHECK-NEXT: v72: string = Add v69, v71
+# CHECK-NEXT: StringBuilderAppend v62, v72
+# CHECK-NEXT: v74: int[1, 4294967295] ~ int[1, 2147483648] = Increment v68
+# CHECK-NEXT: Jump -> next b11(v74)
 # CHECK-NEXT: b13():
-# CHECK-NEXT: StringBuilderDiscard v66
-# CHECK-NEXT: v80: boolean = HasArrayStorage v40 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v80 -> taken b14(| 0), notTaken b17()
-# CHECK-NEXT: b14(v81: guard):
-# CHECK-NEXT: v82: boolean = IsElementPresent v40, v39, v81 arrayStorage=Contiguous [keyIsIntegral]
-# CHECK-NEXT: Branch v82 -> taken b15(), notTaken b17()
+# CHECK-NEXT: StringBuilderDiscard v62
+# CHECK-NEXT: v76: boolean = HasArrayStorage v40 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v76 -> taken b14(| 0), notTaken b17()
+# CHECK-NEXT: b14(v77: guard):
+# CHECK-NEXT: v78: boolean = IsElementPresent v40, v39, v77 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: Branch v78 -> taken b15(), notTaken b17()
 # CHECK-NEXT: b15():
 # CHECK-NEXT: Switch v29 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] -> case b16(v1), case b16(v2), case b16(v3), case b16(v4), case b16(v5), case b16(v6), case b16(v7), case b16(v8), case b16(v9), case b16(v10), case b16(v11), case b16(v12), otherwise b16(v13)
-# CHECK-NEXT: b16(v83: ""|"B"|"a longer one!"|"a longer one?"|"b"|"bb"|"c"|"tex"|"text"|"texts"|"texu"|"te\u{416}t"|"\u{416}"):
-# CHECK-NEXT: v84: undefined = Undefined
-# CHECK-NEXT: v85: undefined|string = CallBuiltin -, v83, v84 overload=JSONStringify/0 accessSite=13
-# CHECK-NEXT: v86: " " = String string=" "
-# CHECK-NEXT: v87: string = Add v85, v86
-# CHECK-NEXT: v88: int[1, 12] = Increment v39
-# CHECK-NEXT: Jump -> next b5(v88)
+# CHECK-NEXT: b16(v79: ""|"B"|"a longer one!"|"a longer one?"|"b"|"bb"|"c"|"tex"|"text"|"texts"|"texu"|"te\u{416}t"|"\u{416}"):
+# CHECK-NEXT: v80: undefined = Undefined
+# CHECK-NEXT: v81: undefined|string = CallBuiltin -, v79, v80 overload=JSONStringify/0 accessSite=13
+# CHECK-NEXT: v82: " " = String string=" "
+# CHECK-NEXT: v83: string = Add v81, v82
+# CHECK-NEXT: v84: int[1, 12] = Increment v39
+# CHECK-NEXT: Jump -> next b5(v84)
 # CHECK-NEXT: b17() frequency=Rare:
-# CHECK-NEXT: v89: anything ~ undefined|null|string = ElemGet v40, v39 accessSite=10 receivers=[] [keyIsIntegral]
+# CHECK-NEXT: v85: anything ~ undefined|null|string = ElemGet v40, v39 accessSite=10 receivers=[] [keyIsIntegral]
 # CHECK-NEXT: Switch v29 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] -> case b18(v1), case b18(v2), case b18(v3), case b18(v4), case b18(v5), case b18(v6), case b18(v7), case b18(v8), case b18(v9), case b18(v10), case b18(v11), case b18(v12), otherwise b18(v13)
-# CHECK-NEXT: b18(v90: ""|"B"|"a longer one!"|"a longer one?"|"b"|"bb"|"c"|"tex"|"text"|"texts"|"texu"|"te\u{416}t"|"\u{416}") frequency=Rare:
-# CHECK-NEXT: v91: undefined = Undefined
-# CHECK-NEXT: v92: undefined|string = CallBuiltin -, v90, v91 overload=JSONStringify/0 accessSite=13
-# CHECK-NEXT: v93: " " = String string=" "
-# CHECK-NEXT: v94: string = Add v92, v93
-# CHECK-NEXT: v95: int[1, 12] = Increment v39
-# CHECK-NEXT: Jump -> next b4(v95)
+# CHECK-NEXT: b18(v86: ""|"B"|"a longer one!"|"a longer one?"|"b"|"bb"|"c"|"tex"|"text"|"texts"|"texu"|"te\u{416}t"|"\u{416}") frequency=Rare:
+# CHECK-NEXT: v87: undefined = Undefined
+# CHECK-NEXT: v88: undefined|string = CallBuiltin -, v86, v87 overload=JSONStringify/0 accessSite=13
+# CHECK-NEXT: v89: " " = String string=" "
+# CHECK-NEXT: v90: string = Add v88, v89
+# CHECK-NEXT: v91: int[1, 12] = Increment v39
+# CHECK-NEXT: Jump -> next b4(v91)
 # CHECK-NEXT: b19():
-# CHECK-NEXT: v96: int[1, 13] = Increment v29
-# CHECK-NEXT: Jump -> next b1(v96)
+# CHECK-NEXT: v92: int[1, 13] = Increment v29
+# CHECK-NEXT: Jump -> next b1(v92)
 # CHECK-NEXT: b20():
-# CHECK-NEXT: v97: 0 = Integer
-# CHECK-NEXT: v98: 1 = Integer integer=1
-# CHECK-NEXT: v99: whole = Double number=-0
-# CHECK-NEXT: v100: whole = Double number=NaN
-# CHECK-NEXT: v101: fractional = Double number=1.5
-# CHECK-NEXT: v102: null = Null
-# CHECK-NEXT: v103: undefined = Undefined
-# CHECK-NEXT: v104: true = Boolean boolean=true
-# CHECK-NEXT: v105: false = Boolean
-# CHECK-NEXT: v106: L2 = NewObject layout=L2 allocationSite=13 allocationClass=2
-# CHECK-NEXT: v107: Array = NewArray contents=anything allocationSite=14
-# CHECK-NEXT: v108: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v107 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v109: "text" = String string="text"
-# CHECK-NEXT: v110: Array<"text", Contiguous> = NewArray v109 contents="text" allocationSite=15 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v111: Array<"text", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v110 provenType=Array<"text", proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v112: symbol("text")@m0:31 = KeyConstant key=symbol("text")@m0:31
-# CHECK-NEXT: v113: bigint = BigInt digits="10"
-# CHECK-NEXT: v114: bigint = BigInt digits="0"
-# CHECK-NEXT: v115: "text" = String string="text"
-# CHECK-NEXT: v116: String = CallBuiltin -, v115 overload=String/2 accessSite=15
-# CHECK-NEXT: v117: f10 = NewClosure function=f10 allocationSite=16
-# CHECK-NEXT: v118: RegExp<"text"[]> = NewRegExp pattern="text" allocationSite=17
-# CHECK-NEXT: v119: RegExp<"text"[], pristine[Storage, Names, AsCreated]> = AssumeType v118 provenType=RegExp<"text"[], pristine[Storage, Names, AsCreated]>
-# CHECK-NEXT: v120: 0 = Integer
-# CHECK-NEXT: v121: Date = CallBuiltin -, v120 overload=Date/2 accessSite=17
-# CHECK-NEXT: v122: Date<pristine[Storage, Names]> = AssumeType v121 provenType=Date<pristine[Storage, Names]>
-# CHECK-NEXT: v123: L1 = NewObject layout=L1 allocationSite=19 allocationClass=1
-# CHECK-NEXT: v124: L1 = FinishObject v123
-# CHECK-NEXT: v125: Array<undefined|null|boolean|number|bigint|symbol("text")@m0:31|L1|L2|f10|Array<"text", proven, pristine[Storage, Names, Dense]>|Date<pristine[Storage, Names]>|RegExp<"text"[], pristine[Storage, Names, AsCreated]>|String, Contiguous> = NewArray v97, v98, v99, v100, v101, v102, v103, v104, v105, v106, v108, v111, v112, v113, v114, v116, v117, v119, v122, v124 contents=undefined|null|boolean|number|bigint|symbol("text")@m0:31|L1|L2|f10|Array<"text", proven, pristine[Storage, Names, Dense]>|Date<pristine[Storage, Names]>|RegExp<"text"[], pristine[Storage, Names, AsCreated]>|String allocationSite=20 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v126: Array<undefined|null|boolean|number|bigint|symbol("text")@m0:31|L1|L2|f10|Array<"text", proven, pristine[Storage, Names, Dense]>|Date<pristine[Storage, Names]>|RegExp<"text"[], pristine[Storage, Names, AsCreated]>|String, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v125 provenType=Array<undefined|null|boolean|number|bigint|symbol("text")@m0:31|L1|L2|f10|Array<"text", proven, pristine[Storage, Names, Dense]>|Date<pristine[Storage, Names]>|RegExp<"text"[], pristine[Storage, Names, AsCreated]>|String, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v127: 0 = Integer
-# CHECK-NEXT: v128: "text" = String string="text"
-# CHECK-NEXT: v129: undefined = Undefined
-# CHECK-NEXT: v130: undefined|null|boolean|number|bigint|symbol("text")@m0:31|L1|L2|f10|Array<"text", proven, pristine[Storage, Names, Dense]>|Date<pristine[Storage, Names]>|RegExp<"text"[], pristine[Storage, Names, AsCreated]>|String = GetArrayElement v126, v127 arrayStorage=Contiguous level=Proven accessSite=18 [keyIsIntegral]
-# CHECK-NEXT: v131: L0 = NewObject -, v128, v129, v130 layout=L0 fields=[1, 2, 0] allocationSite=21 allocationClass=0
-# CHECK-NEXT: v132: L0 = FinishObject v131
-# CHECK-NEXT: v133: 0 = Integer
-# CHECK-NEXT: v134: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: Jump -> next b21(v133)
-# CHECK-NEXT: b21(v135: int[0, 2147483648] ~ 0):
-# CHECK-NEXT: Jump -> next b22(v135)
-# CHECK-NEXT: b22(v136: int[0, 2147483648]):
+# CHECK-NEXT: v93: 0 = Integer
+# CHECK-NEXT: v94: 1 = Integer integer=1
+# CHECK-NEXT: v95: whole = Double number=-0
+# CHECK-NEXT: v96: whole = Double number=NaN
+# CHECK-NEXT: v97: fractional = Double number=1.5
+# CHECK-NEXT: v98: null = Null
+# CHECK-NEXT: v99: undefined = Undefined
+# CHECK-NEXT: v100: true = Boolean boolean=true
+# CHECK-NEXT: v101: false = Boolean
+# CHECK-NEXT: v102: L2 = NewObject layout=L2 allocationSite=13 allocationClass=2
+# CHECK-NEXT: v103: Array = NewArray contents=anything allocationSite=14
+# CHECK-NEXT: v104: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v103 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v105: "text" = String string="text"
+# CHECK-NEXT: v106: Array<"text", Contiguous> = NewArray v105 contents="text" allocationSite=15 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v107: Array<"text", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v106 provenType=Array<"text", proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v108: symbol("text")@m0:31 = KeyConstant key=symbol("text")@m0:31
+# CHECK-NEXT: v109: bigint = BigInt digits="10"
+# CHECK-NEXT: v110: bigint = BigInt digits="0"
+# CHECK-NEXT: v111: "text" = String string="text"
+# CHECK-NEXT: v112: String = CallBuiltin -, v111 overload=String/2 accessSite=15
+# CHECK-NEXT: v113: f10 = NewClosure function=f10 allocationSite=16
+# CHECK-NEXT: v114: RegExp<"text"[]> = NewRegExp pattern="text" allocationSite=17
+# CHECK-NEXT: v115: RegExp<"text"[], pristine[Storage, Names, AsCreated]> = AssumeType v114 provenType=RegExp<"text"[], pristine[Storage, Names, AsCreated]>
+# CHECK-NEXT: v116: 0 = Integer
+# CHECK-NEXT: v117: Date = CallBuiltin -, v116 overload=Date/2 accessSite=17
+# CHECK-NEXT: v118: Date<pristine[Storage, Names]> = AssumeType v117 provenType=Date<pristine[Storage, Names]>
+# CHECK-NEXT: v119: L1 = NewObject layout=L1 allocationSite=19 allocationClass=1
+# CHECK-NEXT: v120: L1 = FinishObject v119
+# CHECK-NEXT: v121: Array<undefined|null|boolean|int[0, 1]|double|bigint|symbol("text")@m0:31|L1|L2|f10|Array<"text", proven, pristine[Storage, Names, Dense]>|Date<pristine[Storage, Names]>|RegExp<"text"[], pristine[Storage, Names, AsCreated]>|String, Contiguous> = NewArray v93, v94, v95, v96, v97, v98, v99, v100, v101, v102, v104, v107, v108, v109, v110, v112, v113, v115, v118, v120 contents=undefined|null|boolean|int[0, 1]|double|bigint|symbol("text")@m0:31|L1|L2|f10|Array<"text", proven, pristine[Storage, Names, Dense]>|Date<pristine[Storage, Names]>|RegExp<"text"[], pristine[Storage, Names, AsCreated]>|String allocationSite=20 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v122: Array<undefined|null|boolean|int[0, 1]|double|bigint|symbol("text")@m0:31|L1|L2|f10|Array<"text", proven, pristine[Storage, Names, Dense]>|Date<pristine[Storage, Names]>|RegExp<"text"[], pristine[Storage, Names, AsCreated]>|String, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v121 provenType=Array<undefined|null|boolean|int[0, 1]|double|bigint|symbol("text")@m0:31|L1|L2|f10|Array<"text", proven, pristine[Storage, Names, Dense]>|Date<pristine[Storage, Names]>|RegExp<"text"[], pristine[Storage, Names, AsCreated]>|String, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v123: 0 = Integer
+# CHECK-NEXT: v124: "text" = String string="text"
+# CHECK-NEXT: v125: undefined = Undefined
+# CHECK-NEXT: v126: undefined|null|boolean|int[0, 1]|double|bigint|symbol("text")@m0:31|L1|L2|f10|Array<"text", proven, pristine[Storage, Names, Dense]>|Date<pristine[Storage, Names]>|RegExp<"text"[], pristine[Storage, Names, AsCreated]>|String = GetArrayElement v122, v123 arrayStorage=Contiguous level=Proven accessSite=18 [keyIsIntegral]
+# CHECK-NEXT: v127: L0 = NewObject -, v124, v125, v126 layout=L0 fields=[1, 2, 0] allocationSite=21 allocationClass=0
+# CHECK-NEXT: v128: L0 = FinishObject v127
+# CHECK-NEXT: v129: 0 = Integer
+# CHECK-NEXT: v130: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: Jump -> next b21(v129)
+# CHECK-NEXT: b21(v131: int[0, 2147483648] ~ 0):
+# CHECK-NEXT: Jump -> next b22(v131)
+# CHECK-NEXT: b22(v132: int[0, 2147483648]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v138: int[0, 2147483648] ~ int[0, 2147483647] = Upcast v136 castType=int|whole
-# CHECK-NEXT: v139: " " = String string=" "
-# CHECK-NEXT: v140: undefined|f2|f3|f4|f5|f6|f7|f8|f9 = GetArrayElement v23, v138 arrayStorage=Contiguous level=Proven accessSite=19 [keyIsIntegral]
-# CHECK-NEXT: v141: anything = Call v140, v23, v132 calleeName="ofRecord[f]" accessSite=20 callees=[f2, f3, f4, f5, f6, f7, f8, f9]
-# CHECK-NEXT: Jump -> next b23(v138, v141)
-# CHECK-NEXT: b23(v142: int[0, 2147483648] ~ int[0, 2147483647], v143: anything):
-# CHECK-NEXT: v144: string = Add v139, v143
-# CHECK-NEXT: StringBuilderAppend v134, v144
-# CHECK-NEXT: v146: boolean ~ true = TypeTest v142 testedType=i32
-# CHECK-NEXT: Branch v146 -> taken b24(| 0), notTaken b25(v142)
-# CHECK-NEXT: b24(v147: int[0, 2147483647]):
-# CHECK-NEXT: v148: int[1, 2147483648] = Increment v147
-# CHECK-NEXT: Jump -> next b22(v148)
-# CHECK-NEXT: b25(v149: int|whole ~ int[0, 2147483647]) frequency=Rare:
-# CHECK-NEXT: v150: int|whole ~ int[1, 2147483648] = Increment v149
-# CHECK-NEXT: v151: boolean ~ true = TypeTest v150 testedType=int[0, 2147483648]
-# CHECK-NEXT: Branch v151 -> taken b26(| 0), notTaken b27()
-# CHECK-NEXT: b26(v152: int[0, 2147483648] ~ int[1, 2147483648]) frequency=Rare:
-# CHECK-NEXT: Jump -> next b21(v152)
+# CHECK-NEXT: v134: int[0, 2147483648] ~ int[0, 2147483647] = Upcast v132 castType=int|whole
+# CHECK-NEXT: v135: " " = String string=" "
+# CHECK-NEXT: v136: undefined|f2|f3|f4|f5|f6|f7|f8|f9 = GetArrayElement v23, v134 arrayStorage=Contiguous level=Proven accessSite=19 [keyIsIntegral]
+# CHECK-NEXT: v137: anything = Call v136, v23, v128 calleeName="ofRecord[f]" accessSite=20 callees=[f2, f3, f4, f5, f6, f7, f8, f9]
+# CHECK-NEXT: Jump -> next b23(v134, v137)
+# CHECK-NEXT: b23(v138: int[0, 2147483648] ~ int[0, 2147483647], v139: anything):
+# CHECK-NEXT: v140: string = Add v135, v139
+# CHECK-NEXT: StringBuilderAppend v130, v140
+# CHECK-NEXT: v142: boolean ~ true = TypeTest v138 testedType=i32
+# CHECK-NEXT: Branch v142 -> taken b24(| 0), notTaken b25(v138)
+# CHECK-NEXT: b24(v143: int[0, 2147483647]):
+# CHECK-NEXT: v144: int[1, 2147483648] = Increment v143
+# CHECK-NEXT: Jump -> next b22(v144)
+# CHECK-NEXT: b25(v145: int|whole ~ int[0, 2147483647]) frequency=Rare:
+# CHECK-NEXT: v146: int|whole ~ int[1, 2147483648] = Increment v145
+# CHECK-NEXT: v147: boolean ~ true = TypeTest v146 testedType=int[0, 2147483648]
+# CHECK-NEXT: Branch v147 -> taken b26(| 0), notTaken b27()
+# CHECK-NEXT: b26(v148: int[0, 2147483648] ~ int[1, 2147483648]) frequency=Rare:
+# CHECK-NEXT: Jump -> next b21(v148)
 # CHECK-NEXT: b27() frequency=Rare:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v154: int|whole ~ int[1, 2147483647] = Upcast v150 castType=int|whole
-# CHECK-NEXT: v155: undefined|f2|f3|f4|f5|f6|f7|f8|f9 = GetArrayElement v23, v154 arrayStorage=Contiguous level=Proven accessSite=19 [keyIsIntegral]
-# CHECK-NEXT: v156: anything = Call v155, v23, v132 calleeName="ofRecord[f]" accessSite=20 callees=[f2, f3, f4, f5, f6, f7, f8, f9]
-# CHECK-NEXT: v157: boolean ~ true = TypeTest v154 testedType=int[0, 2147483647]
-# CHECK-NEXT: Branch v157 -> taken b28(| 0), notTaken b29()
-# CHECK-NEXT: b28(v158: int[0, 2147483647] ~ int[1, 2147483647]) frequency=Rare:
-# CHECK-NEXT: Jump -> next b23(v158, v156)
+# CHECK-NEXT: v150: int|whole ~ int[1, 2147483647] = Upcast v146 castType=int|whole
+# CHECK-NEXT: v151: undefined|f2|f3|f4|f5|f6|f7|f8|f9 = GetArrayElement v23, v150 arrayStorage=Contiguous level=Proven accessSite=19 [keyIsIntegral]
+# CHECK-NEXT: v152: anything = Call v151, v23, v128 calleeName="ofRecord[f]" accessSite=20 callees=[f2, f3, f4, f5, f6, f7, f8, f9]
+# CHECK-NEXT: v153: boolean ~ true = TypeTest v150 testedType=int[0, 2147483647]
+# CHECK-NEXT: Branch v153 -> taken b28(| 0), notTaken b29()
+# CHECK-NEXT: b28(v154: int[0, 2147483647] ~ int[1, 2147483647]) frequency=Rare:
+# CHECK-NEXT: Jump -> next b23(v154, v152)
 # CHECK-NEXT: b29() frequency=Rare:
-# CHECK-NEXT: v159: " " = String string=" "
-# CHECK-NEXT: v160: string = Add v159, v156
-# CHECK-NEXT: StringBuilderAppend v134, v160
-# CHECK-NEXT: Jump -> next b25(v154)
+# CHECK-NEXT: v155: " " = String string=" "
+# CHECK-NEXT: v156: string = Add v155, v152
+# CHECK-NEXT: StringBuilderAppend v130, v156
+# CHECK-NEXT: Jump -> next b25(v150)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="maybeValue"
 # CHECK: module=m0 position=2231 kind=Arrow role=ParameterWrapper flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean}] functionTypes=[f12] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ParameterWrapper{body=f23} inlineFrames=[{}, {callee=f23 callPosition=2231 module=m0}, {callee=f23 callPosition=4294967295 isTailCall=true module=m0}] {

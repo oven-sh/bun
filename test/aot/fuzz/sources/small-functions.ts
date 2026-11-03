@@ -1,3 +1,4 @@
+// A list of programs from ../generators/small-functions.ts, which describes them.
 import { family } from "../family";
 import { program } from "../generators/small-functions";
 

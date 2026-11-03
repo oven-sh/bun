@@ -8,8 +8,8 @@ use bun_lint::rule::Plugin;
 /// Prefers `String#replaceAll()` over `String#replace()` when using a regex with the global flag.
 pub struct PreferStringReplaceAll;
 
-const STRING_LITERAL: Message = Message::new("", "This pattern can be replaced with `{{replacement}}`.");
-const USE_REPLACE_ALL: Message = Message::new(
+const STRING_LITERAL: &Message = &Message::new("", "This pattern can be replaced with `{{replacement}}`.");
+const USE_REPLACE_ALL: &Message = &Message::new(
     "",
     "Prefer `String#replaceAll()` over `String#replace()` when using a regex with the global flag.",
 );

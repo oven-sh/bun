@@ -1,5 +1,6 @@
 use bun_sema::bind::{Binding, Bound, CodeUnit, Decl, SymbolId, has_simple_parameter_list};
 use bun_sema::hir::{self, FnId, FnKind, ParamId, PatId, PatKind};
+use bun_sema::util::SharedSort;
 use smallvec::SmallVec;
 
 use crate::ir::generated::FunctionFlags;
@@ -39,7 +40,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 }
             }
             initial.reverse();
-            initial.sort_by_key(|entry| entry.0);
+            initial.shared_sort_by_key(|entry| entry.0);
             initial.dedup_by_key(|entry| entry.0);
             self.allocate_scope(top, &initial);
         } else {

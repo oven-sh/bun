@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { withoutDebugInformation } from "../harness/commands";
 import { describe, test } from "../supported";
 import { buildProgram } from "./build-program";
-import { generateProgram, kinds, scenarios, useEverything, type Kind } from "./generate-program";
+import { generateProgram, kinds, scenarios, scenariosByName, useEverything, type Kind } from "./generate-program";
 import type { Measurement, Request } from "./measure-startup";
 
 const usedCount = 50;
@@ -92,7 +92,7 @@ function leastOfBoth(one: Measurement, other: Measurement): Measurement {
   };
 }
 
-type Variant = { flags?: string[]; privateGrowthFactor?: number; scenariosThatGrow?: string[]; residentBytesDifferFromRunToRun?: true };
+type Variant = { flags?: string[]; loadsByName?: true; privateGrowthFactor?: number; scenariosThatGrow?: string[]; residentBytesDifferFromRunToRun?: true };
 
 export function describeStartupScaling(label: string, isUnused: (kind: Kind, index: number) => boolean, variant: Variant = {}) {
   const unusedKinds = kinds.filter((kind, index) => isUnused(kind, index) && !kindsThatGrow.includes(kind.name));
@@ -106,7 +106,7 @@ export function describeStartupScaling(label: string, isUnused: (kind: Kind, ind
     beforeAll(async () => {
       folder = tempDir("aot-startup-scaling", {});
       const build = (name: "small" | "large", count: (kind: Kind) => number) =>
-        buildProgram(bunExe(), join(String(folder), name), generateProgram(usedKinds, usedCount, unusedKinds.map(kind => ({ kind, count: count(kind) }))), bunEnv, [...withoutDebugInformation(), ...(variant.flags ?? [])]);
+        buildProgram(bunExe(), join(String(folder), name), generateProgram(usedKinds, usedCount, unusedKinds.map(kind => ({ kind, count: count(kind) })), variant.loadsByName), bunEnv, [...withoutDebugInformation(), ...(variant.flags ?? [])]);
       const [small, large] = await Promise.all([build("small", () => smallCount), build("large", largeCount)]);
       expect({ small: small.error, large: large.error }).toEqual({ small: undefined, large: undefined });
       executables.small = small.executable;
@@ -114,7 +114,8 @@ export function describeStartupScaling(label: string, isUnused: (kind: Kind, ind
     }, 240_000);
     afterAll(() => folder?.[Symbol.dispose](), 240_000);
 
-    test.concurrent.each([...scenarios, useEverything].filter(scenario => !variant.scenariosThatGrow?.includes(scenario)))(
+    const measured: string[] = variant.loadsByName ? [...scenariosByName] : [...scenarios, useEverything];
+    test.concurrent.each(measured.filter(scenario => !variant.scenariosThatGrow?.includes(scenario)))(
       "%s",
       async scenario => {
         const measureBoth = () => Promise.all([measureLeast(executables.small, scenario), measureLeast(executables.large, scenario)]);

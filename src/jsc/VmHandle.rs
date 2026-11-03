@@ -168,6 +168,8 @@ impl Shared {
         }
     }
 
+    #[cold]
+    #[inline(never)]
     fn notify(&self) {
         let _g = self.drained.0.lock();
         self.drained.1.notify_all();
@@ -853,13 +855,7 @@ impl ConcurrentPoster {
         task: NonNull<bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext>,
     ) {
         match self {
-            ConcurrentPoster::Mini(mini) => {
-                let mut mini = *mini;
-                // SAFETY: per `EventLoopHandle::Mini` invariant — the mini loop is
-                // alive for as long as work it created runs; its concurrent queue
-                // push is thread-safe.
-                unsafe { mini.get_mut() }.enqueue_task_concurrent(task);
-            }
+            ConcurrentPoster::Mini(mini) => mini.enqueue_task_concurrent(task),
             ConcurrentPoster::Js(..) => debug_assert!(false, "post_mini on a Js poster"),
         }
     }

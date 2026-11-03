@@ -17,7 +17,7 @@ use bun_collections::VecExt;
 use bun_core::strings;
 use bun_resolver::DataURL;
 
-use crate::chunk::{Content, CssImportOrderKind};
+use crate::chunk::{Content, CssImportOrder, CssImportOrderKind};
 
 // Raw pointers rather than `&mut` / `&` so that
 // (a) the container_of `container_of` recovery of `*mut BundleV2` from
@@ -97,6 +97,9 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
         let mut i: usize = css_chunk.imports_in_chunk_in_order.len() as usize;
         while i != 0 {
             i -= 1;
+            let SharedAnonymousConditions { before, after } =
+                shared_anonymous_conditions(css_chunk.imports_in_chunk_in_order.slice(), i);
+            let private_conditions = before.max(after);
             let entry = css_chunk.imports_in_chunk_in_order.mut_(i);
             // Reshaped for borrowck — match on entry.kind while also touching
             // entry.conditions / entry.condition_import_records relies on disjoint field borrows.
@@ -148,7 +151,11 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         composes: Default::default(),
                         ..BundlerStyleSheet::empty()
                     };
-                    wrap_rules_with_conditions(&mut ast, bump, &entry.conditions);
+                    wrap_rules_with_conditions(
+                        &mut ast,
+                        bump,
+                        &entry.conditions.slice()[private_conditions..],
+                    );
                     css_chunk.asts[i] = ast;
                 }
                 CssImportOrderKind::ExternalPath(p) => {
@@ -340,7 +347,11 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         "parse_bundler keeps each @import in StyleSheet::imports"
                     );
 
-                    wrap_rules_with_conditions(ast, bump, &entry.conditions);
+                    wrap_rules_with_conditions(
+                        ast,
+                        bump,
+                        &entry.conditions.slice()[private_conditions..],
+                    );
                     // TODO: Remove top-level duplicate rules across files
                 }
             }
@@ -368,16 +379,63 @@ fn arena_rule_list_one(bump: &Bump, rule: BundlerCssRule) -> BundlerCssRuleList 
     }
 }
 
+/// The number of leading conditions that an entry shares with its neighbours.
+#[derive(Clone, Copy)]
+pub(crate) struct SharedAnonymousConditions {
+    pub before: usize,
+    pub after: usize,
+}
+
+/// The entries of one anonymous layer must print in one block, so they open and
+/// close the conditions they share only once.
+pub(crate) fn shared_anonymous_conditions(
+    order: &[CssImportOrder],
+    i: usize,
+) -> SharedAnonymousConditions {
+    let shared = |a: &CssImportOrder, b: &CssImportOrder| {
+        if matches!(a.kind, CssImportOrderKind::ExternalPath(_))
+            || matches!(b.kind, CssImportOrderKind::ExternalPath(_))
+        {
+            return 0;
+        }
+        let (a, b) = (a.conditions.slice(), b.conditions.slice());
+        a.iter()
+            .zip(b)
+            .rposition(|(a, b)| a.has_anonymous_layer() && ImportConditions::layers_eql(a, b))
+            .map_or(0, |last| last + 1)
+    };
+    SharedAnonymousConditions {
+        before: i
+            .checked_sub(1)
+            .map_or(0, |prev| shared(&order[prev], &order[i])),
+        after: order.get(i + 1).map_or(0, |next| shared(&order[i], next)),
+    }
+}
+
+/// The blocks of `conditions` around no rules. `ManuallyDrop`, because the rules
+/// alias `conditions`.
+pub(crate) fn empty_blocks(
+    bump: &Bump,
+    conditions: &[ImportConditions],
+) -> core::mem::ManuallyDrop<BundlerStyleSheet> {
+    let mut ast = core::mem::ManuallyDrop::new(BundlerStyleSheet {
+        rules: arena_rule_list_one(bump, BundlerCssRule::Ignored),
+        sources: Default::default(),
+        source_map_urls: Default::default(),
+        license_comments: Default::default(),
+        composes: Default::default(),
+        ..BundlerStyleSheet::empty()
+    });
+    wrap_rules_with_conditions(&mut ast, bump, conditions);
+    ast
+}
+
 fn wrap_rules_with_conditions(
     ast: &mut BundlerStyleSheet,
     temp_bump: &Bump,
-    conditions: &Vec<ImportConditions>,
+    conditions: &[ImportConditions],
 ) {
-    let mut i: usize = conditions.len() as usize;
-    while i > 0 {
-        i -= 1;
-        let item = conditions.at(i);
-
+    for item in conditions.iter().rev() {
         // Generate "@layer" wrappers. Note that empty "@layer" rules still have
         // a side effect (they set the layer order) so they cannot be removed.
         if let Some(l) = &item.layer {

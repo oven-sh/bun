@@ -4,7 +4,8 @@ use bun_sema::bind::{
 };
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::hir::{
-    BinOp, Call, Chain, ExprId, ExprKind, FnBody, FnId, MemberKey, PatKind, StmtId, StmtKind, UnOp,
+    BinOp, Call, Chain, ExprId, ExprKind, FnBody, FnId, MemberKey, PatKind, PropKey, PropKind,
+    StmtId, StmtKind, UnOp,
 };
 use bun_sema::program::FileId;
 use smallvec::SmallVec;
@@ -17,7 +18,7 @@ use super::scope::{BindingForm, BindingRef, Storage};
 use super::{FileLowering, FunctionLowering, module};
 use crate::builtins::Resolved;
 use crate::builtins::id::BuiltinId;
-use crate::ir::{BlockId, Edge, FunctionId, FunctionKey, TypeTable, ValueId};
+use crate::ir::{BlockId, Edge, FunctionId, FunctionKey, PropertyKeyId, TypeTable, ValueId};
 use crate::known_helpers::{
     HeldFunction, Helper, KnownCallee, PrivateFieldAccess, PrivateMemberKind, PrivateStateKind,
     PrivateStateRole, PrivateStateSite, ResolveInput, ResolvedReference, Shape, resolve_callee,
@@ -52,6 +53,20 @@ struct ExportStarPlan {
     create_binding_builtins: SmallVec<[BuiltinPathExpr; 2]>,
 }
 
+struct CreateClassPlan {
+    define_properties: ResolvedReference,
+    define_property: ExprId,
+    lock_prototype: Option<(ExprId, ExprId)>,
+    lock_prototype_callee: Option<ExprId>,
+    builtins_are_locked: bool,
+    prototype_name: PropertyKeyId,
+    enumerable_name: PropertyKeyId,
+    configurable_name: PropertyKeyId,
+    writable_name: PropertyKeyId,
+    value_name: PropertyKeyId,
+    key_name: PropertyKeyId,
+}
+
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(in crate::lower) fn try_lower_known_call(&mut self, call: ExprId) -> Option<ValueId> {
         let helpers = self.file.inputs.known_helpers;
@@ -84,6 +99,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         match callee.helper(helpers)? {
             Helper::ExportStar => self.lower_export_star(call, site, &callee),
+            Helper::CreateClass => self.lower_create_class(call, site, &callee),
             Helper::ClassPrivateFieldGet | Helper::ClassPrivateFieldIn => {
                 self.lower_static_member_access(call, site)
             }
@@ -273,6 +289,174 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.emit_export_star(&plan, target, source, lowered.slow_path);
         let undefined = self.builder.undefined();
         Some(self.finish_with_slow_path(lowered, undefined))
+    }
+
+    // `_createClass(V, [{ key: "get", value: function () { .. } }], null)` does what the helpers' text does, one written descriptor after another: flow sees each key beside its class, whichever other classes the helpers serve.
+    fn lower_create_class(
+        &mut self,
+        call: ExprId,
+        site: Call,
+        callee: &KnownCallee,
+    ) -> Option<ValueId> {
+        if callee.file != self.file.file || !(2..=3).contains(&site.args.len()) {
+            return None;
+        }
+        let hir = self.file.hir;
+        let constructor = self.file.skip_type_syntax(hir.id_at(site.args, 0));
+        if !matches!(hir[constructor].kind, ExprKind::Ident(_)) {
+            return None;
+        }
+        let mut sides: [SmallVec<[ExprId; 4]>; 2] = Default::default();
+        for (index, side) in sides.iter_mut().enumerate() {
+            if index + 1 < site.args.len() {
+                *side = self
+                    .file
+                    .find_written_descriptors(hir.id_at(site.args, index + 1))?;
+            }
+        }
+        let mut candidates = callee.functions.iter();
+        let (held, plan) = candidates
+            .find_map(|&held| Some((held, self.file.plan_create_class(held.definition)?)))?;
+        if plan.define_properties.needs_guard && !self.is_readable(plan.define_properties.symbol) {
+            return None;
+        }
+        // Where nothing can stand in the helpers' places there is no other way. A call of the helpers in the program would tell flow that every class has what any of them defines.
+        // A `const` that is still empty throws where it is read, and this way reads no callee.
+        let is_certain = !callee.needs_guard()
+            && callee.holds_from_the_start
+            && !plan.define_properties.needs_guard
+            && plan.builtins_are_locked;
+        let mut other_way = None;
+        let define = if is_certain {
+            self.lower_expression(plan.define_property)
+        } else {
+            let lowered_callee = self.lower_callee(site.callee, None, None);
+            self.set_position(hir[call].pos);
+            let slow_path = self.create_unlikely_block();
+            if callee.needs_guard() {
+                self.guard_closure(
+                    lowered_callee.function,
+                    callee.file,
+                    held.closure,
+                    slow_path,
+                );
+            }
+            if plan.define_properties.needs_guard {
+                let file = self.file.file;
+                let stored = self.get_stored(BindingRef::Symbol(plan.define_properties.symbol));
+                self.guard_closure(
+                    stored,
+                    file,
+                    plan.define_properties.function.closure,
+                    slow_path,
+                );
+            }
+            let define = self.guard_builtin_path(
+                (plan.define_property, BuiltinId::ObjectDefineProperty),
+                slow_path,
+            );
+            if let Some(path) = plan.lock_prototype_callee {
+                self.guard_builtin_path((path, BuiltinId::ObjectDefineProperty), slow_path);
+            }
+            other_way = Some((lowered_callee, slow_path));
+            define
+        };
+
+        let object = self.lower_expression(constructor);
+        for (index, side) in sides.iter().enumerate() {
+            // The helper asks whether it was given a list, and an empty one is a list: `Constructor.prototype` is read for it.
+            let is_empty_list_of_prototype = index == 0
+                && site.args.len() > 1
+                && matches!(
+                    hir[self.file.skip_type_syntax(hir.id_at(site.args, 1))].kind,
+                    ExprKind::Array(_)
+                );
+            if side.is_empty() && !is_empty_list_of_prototype {
+                continue;
+            }
+            let target = if index == 0 {
+                self.emit_get(object, PropertyName::Constant(plan.prototype_name))
+            } else {
+                object
+            };
+            for &literal in side {
+                self.emit_written_descriptor(&plan, define, target, literal);
+            }
+        }
+        if let Some(lock) = plan.lock_prototype {
+            let name = self.lower_expression(lock.0);
+            let descriptor = self.lower_expression(lock.1);
+            let holder = self.emit_builtin_itself(BuiltinId::Object);
+            super::call::emit_call(self, define, Some(holder), &[object, name, descriptor]);
+        }
+        self.file.count(StatisticId::KnownHelperCalls, 1);
+
+        let Some((lowered_callee, slow_path)) = other_way else {
+            return Some(object);
+        };
+        let result = self.builder.create_variable(None);
+        let done = self.create_block();
+        self.builder.write_variable(result, object);
+        self.jump(done);
+        self.continue_in(slow_path);
+        let Arguments::Values(arguments) = self.lower_arguments(site.args) else {
+            unreachable!("a call with a spread argument is not a known call");
+        };
+        let returned =
+            self.emit_call_expression(call, lowered_callee, Arguments::Values(arguments), Tail::No);
+        self.builder.write_variable(result, returned);
+        self.jump(done);
+        self.continue_in(done);
+        Some(self.builder.read_variable(result))
+    }
+
+    fn emit_written_descriptor(
+        &mut self,
+        plan: &CreateClassPlan,
+        define: ValueId,
+        target: ValueId,
+        literal: ExprId,
+    ) {
+        let descriptor = self.lower_expression(literal);
+        let enumerable_name = PropertyName::Constant(plan.enumerable_name);
+        let enumerable = self.emit_get(descriptor, enumerable_name);
+        let is_set = self.builder.to_boolean(enumerable);
+        let value = self.builder.create_variable(None);
+        let (set, unset, joined) = (
+            self.create_block(),
+            self.create_block(),
+            self.create_block(),
+        );
+        self.builder.branch(is_set, Edge::to(set), Edge::to(unset));
+        self.continue_in(set);
+        self.builder.write_variable(value, enumerable);
+        self.jump(joined);
+        self.continue_in(unset);
+        let no = self.builder.boolean(false);
+        self.builder.write_variable(value, no);
+        self.jump(joined);
+        self.continue_in(joined);
+        let enumerable = self.builder.read_variable(value);
+        self.emit_set(descriptor, enumerable_name, enumerable);
+        let configurable_name = PropertyName::Constant(plan.configurable_name);
+        let yes = self.builder.boolean(true);
+        self.emit_set(descriptor, configurable_name, yes);
+        let value_name = PropertyName::Constant(plan.value_name);
+        let has_value = self.emit_has(descriptor, value_name);
+        let has_value = self.builder.to_boolean(has_value);
+        let (writes, behind) = (self.create_block(), self.create_block());
+        self.builder
+            .branch(has_value, Edge::to(writes), Edge::to(behind));
+        self.continue_in(writes);
+        let writable_name = PropertyName::Constant(plan.writable_name);
+        let yes = self.builder.boolean(true);
+        self.emit_set(descriptor, writable_name, yes);
+        self.jump(behind);
+        self.continue_in(behind);
+        let key_name = PropertyName::Constant(plan.key_name);
+        let key = self.emit_get(descriptor, key_name);
+        let object = self.emit_builtin_itself(BuiltinId::Object);
+        super::call::emit_call(self, define, Some(object), &[target, key, descriptor]);
     }
 
     fn lower_private_state_definition(
@@ -499,6 +683,124 @@ impl FileLowering<'_, '_, '_, '_> {
         is_resolved.then_some((builtins, define))
     }
 
+    // An array literal of object literals whose members evaluate to nothing that the program can see, or `null`: nothing that the helpers' calls could come between.
+    fn find_written_descriptors(&self, list: ExprId) -> Option<SmallVec<[ExprId; 4]>> {
+        let (hir, list) = (self.hir, self.skip_type_syntax(list));
+        let mut descriptors = SmallVec::new();
+        let elements = match hir[list].kind {
+            ExprKind::Null => return Some(descriptors),
+            ExprKind::Array(elements) => elements,
+            _ => return None,
+        };
+        for element in hir.ids(elements) {
+            let element = self.skip_type_syntax(element);
+            let ExprKind::Object(properties) = hir[element].kind else {
+                return None;
+            };
+            let is_written = (0..properties.len()).all(|index| {
+                let property = hir[properties.at(index)];
+                matches!(property.key, PropKey::Name(_))
+                    && matches!(property.kind, PropKind::Init | PropKind::Method)
+                    && matches!(
+                        hir[self.skip_type_syntax(property.value)].kind,
+                        ExprKind::Fn(_)
+                            | ExprKind::String(_)
+                            | ExprKind::Number(_)
+                            | ExprKind::True
+                            | ExprKind::False
+                    )
+            });
+            if !is_written {
+                return None;
+            }
+            descriptors.push(element);
+        }
+        Some(descriptors)
+    }
+
+    fn plan_create_class(&mut self, create_class: FnId) -> Option<CreateClassPlan> {
+        let helpers = self.inputs.known_helpers;
+        let known = helpers.function(self.file, create_class)?;
+        let locks_prototype = known.shape == Shape::CreateClassDefinesBothSidesAndLocksPrototype;
+        if !locks_prototype && known.shape != Shape::CreateClassDefinesBothSides {
+            return None;
+        }
+        let [reference] = known.references[..] else {
+            return None;
+        };
+        let define_properties =
+            resolve_reference(&resolve_input(self), self.file, reference, &|shape| {
+                shape == Shape::DefinePropertiesOfDescriptors
+            })?;
+        let statements = find_statements(self, define_properties.function.definition);
+        let &[loop_statement] = &statements[..] else {
+            return None;
+        };
+        let StmtKind::For { body, .. } = self.hir[loop_statement].kind else {
+            return None;
+        };
+        let StmtKind::Block(body) = self.hir[body].kind else {
+            return None;
+        };
+        let last = self.hir.ids(body).last()?;
+        let StmtKind::Expr(define) = self.hir[last].kind else {
+            return None;
+        };
+        let define_property = find_callee(self, define)?;
+        if !self.resolves_to_builtin((define_property, BuiltinId::ObjectDefineProperty)) {
+            return None;
+        }
+        let (mut lock_prototype, mut lock_prototype_callee) = (None, None);
+        if locks_prototype {
+            let statements = find_statements(self, create_class);
+            let StmtKind::Expr(lock) = self.hir[*statements.get(2)?].kind else {
+                return None;
+            };
+            let path = find_callee(self, lock)?;
+            if !self.resolves_to_builtin((path, BuiltinId::ObjectDefineProperty)) {
+                return None;
+            }
+            let ExprKind::Call(site) = self.hir[self.skip_type_syntax(lock)].kind else {
+                return None;
+            };
+            let site = self.hir[site];
+            lock_prototype = Some((self.hir.id_at(site.args, 1), self.hir.id_at(site.args, 2)));
+            lock_prototype_callee = Some(path);
+        }
+        Some(CreateClassPlan {
+            define_properties,
+            define_property,
+            lock_prototype,
+            lock_prototype_callee,
+            builtins_are_locked: matches!(self.builtins.of_pure_expr(define_property), Some(Resolved::Builtin(path)) if path.locked_builtin().is_some())
+                && lock_prototype_callee.is_none_or(|path| matches!(self.builtins.of_pure_expr(path), Some(Resolved::Builtin(path)) if path.locked_builtin().is_some())),
+            prototype_name: {
+                let text = self.intern_bytes(b"prototype");
+                self.text_key(text)
+            },
+            enumerable_name: {
+                let text = self.intern_bytes(b"enumerable");
+                self.text_key(text)
+            },
+            configurable_name: {
+                let text = self.intern_bytes(b"configurable");
+                self.text_key(text)
+            },
+            writable_name: {
+                let text = self.intern_bytes(b"writable");
+                self.text_key(text)
+            },
+            value_name: {
+                let text = self.intern_bytes(b"value");
+                self.text_key(text)
+            },
+            key_name: {
+                let text = self.intern_bytes(b"key");
+                self.text_key(text)
+            },
+        })
+    }
+
     fn plan_export_star(&self, export_star: FnId) -> Option<ExportStarPlan> {
         let helpers = self.inputs.known_helpers;
         let known = helpers.function(self.file, export_star)?;
@@ -662,6 +964,7 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
             removable: Default::default(),
             minifies_identifiers: false,
             obfuscates: false,
+            counts_executions: false,
         };
         let lowered = lower_program(files, options);
         let fragments = lowered.iter().map(|(_, lowered)| &lowered.fragment);

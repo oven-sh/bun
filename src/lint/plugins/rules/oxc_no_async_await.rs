@@ -5,7 +5,7 @@ use bun_lint_oxlint::text::find_next_token_within;
 /// Disallows the use of `async`/`await`.
 pub struct NoAsyncAwait;
 
-const NO_ASYNC: Message = Message::new("", "async is not allowed");
+const NO_ASYNC: &Message = &Message::new("", "async is not allowed");
 
 impl Rule for NoAsyncAwait {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "no-async-await", Kind::Suggestion);

@@ -13,7 +13,7 @@ pub struct SortKeys {
     allows_line_separated_groups: bool,
 }
 
-const SORT_KEYS: Message = Message::new(
+const SORT_KEYS: &Message = &Message::new(
     "sortKeys",
     "Expected object keys to be in {{sortName}} case-{{sensitivity}} {{direction}} order. '{{thisName}}' should be before '{{prevName}}'.",
 );

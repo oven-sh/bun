@@ -61,8 +61,10 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
     bool isCompiledHostFunction = isCompiled && frame.representsHostFunction();
     bool isCompiledHiddenBuiltin = isCompiled && !isCompiledHostFunction && frame.isBuiltinFunction();
 #if ENABLE(AOT)
-    if (isCompiled && !isStrictFrame && !isCompiledHiddenBuiltin && !isCompiledHostFunction)
+    if (isCompiled && !isStrictFrame && !isCompiledHiddenBuiltin && !isCompiledHostFunction) {
+        JSC::AOT::ImageOfTraceFrameScope imageOfFrame(frame.compiledFrame());
         isStrictFrame = JSC::AOT::FunctionDescription(frame.compiledFrame().function).isStrict();
+    }
 #endif
 
     // JSC::StackFrame has no receiver, so getThis() is always undefined.

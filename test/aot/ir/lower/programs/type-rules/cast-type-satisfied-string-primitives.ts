@@ -72,14 +72,25 @@ attempt("from any", value => { const given: any = value; return typeof (given as
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|string|Array flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v2 = Builtin builtin=Array
-// CHECK-NEXT: v3 = Builtin builtin=ArrayFrom
-// CHECK-NEXT: v4 = Call v3, v2, v1 calleeName="Array.from"
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|Array site=[[w_4]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-// CHECK-NEXT: v6 = PropGet v5 key="map"
-// CHECK-NEXT: v7 = Builtin builtin=String
-// CHECK-NEXT: v8 = Call v6, v5, v7 calleeKey="map" calleeName="map"
-// CHECK-NEXT: ReturnCall v8 casts=[{declared={type=undefined|null|Array<undefined|null|string> site=[[w_4]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array<undefined|null|string> site=[[w_3]] flags=[OmitsNull, OmitsUndefined]}}]
+// CHECK-NEXT: v2 = Builtin builtin=ArrayFrom
+// CHECK-NEXT: v3 = IsPristineArray v1
+// CHECK-NEXT: Branch v3 -> taken b2(), notTaken b3()
+// CHECK-NEXT: b2():
+// CHECK-NEXT: v4 = NewArray contents=anything
+// CHECK-NEXT: AppendSpread v4, v1
+// CHECK-NEXT: v6 = Convert v4 declared={type=undefined|null|Array site=[[w_4]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+// CHECK-NEXT: Jump -> next b4(v6)
+// CHECK-NEXT: b3():
+// CHECK-NEXT: v7 = Builtin builtin=Array [isNotReadFromHolder]
+// CHECK-NEXT: v8 = Builtin builtin=ArrayFrom [isNotReadFromHolder]
+// CHECK-NEXT: v9 = Call v8, v7, v1
+// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|Array site=[[w_4]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+// CHECK-NEXT: Jump -> next b4(v10)
+// CHECK-NEXT: b4(v11):
+// CHECK-NEXT: v12 = PropGet v11 key="map"
+// CHECK-NEXT: v13 = Builtin builtin=String
+// CHECK-NEXT: v14 = Call v12, v11, v13 calleeKey="map" calleeName="map"
+// CHECK-NEXT: ReturnCall v14 casts=[{declared={type=undefined|null|Array<undefined|null|string> site=[[w_4]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array<undefined|null|string> site=[[w_3]] flags=[OmitsNull, OmitsUndefined]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="generic"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string site=[[w_5]] flags=[OmitsNull, OmitsUndefined]}] {

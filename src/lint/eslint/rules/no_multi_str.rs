@@ -4,7 +4,7 @@ use bun_lint::prelude::*;
 /// Disallow multiline strings.
 pub struct NoMultiStr;
 
-const MULTILINE_STRING: Message = Message::new(
+const MULTILINE_STRING: &Message = &Message::new(
     "multilineString",
     "Multiline support is limited to browsers supporting ES5 only.",
 );

@@ -3,6 +3,7 @@ use super::failures::{FailureEffect, FailureOrder, ModuleFailureKind, PendingFai
 use super::interop::ModuleKind;
 use super::plan::ModuleRef;
 use super::requests::{ScannedSite, Scans};
+use crate::load::sources::parsed_source;
 use bun_sema::program::FileId;
 use bun_sema::util::SharedSort;
 
@@ -86,6 +87,10 @@ pub(super) fn find_unloadable_modules(
     while let Some(&module) = found.get(next) {
         next += 1;
         for &importer in &importers[module.file.idx()] {
+            // Each of its statements stands for a load by a file of its own, which fails alone.
+            if input.stand_in_for_files_from_disk == Some(importer) {
+                continue;
+            }
             if !core::mem::replace(&mut is_found[importer.idx()], true) {
                 found.push(UnloadableModule {
                     file: importer,
@@ -95,10 +100,21 @@ pub(super) fn find_unloadable_modules(
             }
         }
     }
+    let mut is_named = vec![false; file_count];
+    for &file in files {
+        for site in &scans.of(file).sites {
+            if let &ScannedSite::Module(ModuleRef::File(target)) = site {
+                is_named[target.idx()] = true;
+            }
+        }
+    }
     // Where the import that names nothing is loaded at start, it stops the build, whoever else reaches it.
     let is_loaded_at_start = find_modules_loaded_at_start(input, scans);
     let is_late = |file: FileId| !is_loaded_at_start[file.idx()];
-    found.retain(|module| is_late(module.file) && is_late(module.importer));
+    // In a test run each test file loads on its own, and one that fails fails alone, as under `bun test`.
+    if !input.runs_tests {
+        found.retain(|module| is_late(module.file) && is_late(module.importer));
+    }
     for module in &found {
         let scan = scans.find_mut(module.file);
         let scan = scan.expect("an unloadable module was scanned");
@@ -117,6 +133,9 @@ pub(super) fn find_unloadable_modules(
                 }
                 ModuleFailureKind::NotAProgram { .. } => ModuleFailureKind::NotAProgram {
                     is_loaded_at_start: false,
+                    is_silent: !is_named[module.file.idx()]
+                        || parsed_source(input.files, module.file)
+                            .is_some_and(|source| !source.is_language_assumed),
                 },
                 kind => kind,
             };

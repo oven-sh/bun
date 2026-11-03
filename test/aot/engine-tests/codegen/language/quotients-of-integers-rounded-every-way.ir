@@ -242,9 +242,9 @@ function f4 name="all" module=m0 position=1306 flags=[HasExplicitName] length=2 
 # -- generated: f0 positiveDivisor
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 337, patchpoints: 16, rare instructions: 74, polls: 3
+# CHECK-NEXT: instructions: 327, patchpoints: 14, rare instructions: 73, polls: 3
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="positiveDivisor"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 142, patchpoints: 5, rare instructions: 37
+# CHECK-NEXT: instructions: 140, patchpoints: 5, rare instructions: 37
 # CHECK-NEXT: end of function f2

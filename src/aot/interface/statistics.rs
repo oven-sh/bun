@@ -1,7 +1,9 @@
 #[path = "../statistics/limit_values.rs"]
 pub mod limit_values;
 
-pub use self::limit_values::{HOST_ARCHITECTURE, LimitValues, can_be_lowered, fails_build};
+pub use self::limit_values::{
+    HOST_ARCHITECTURE, LimitValues, can_be_lowered, fails_build, is_lowered_by_all,
+};
 use crate::Opaque;
 pub use crate::ir::generated::{Architecture, DegradesTo, LimitId, Stage, StatisticId};
 use crate::linked;

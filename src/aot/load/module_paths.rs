@@ -10,7 +10,8 @@ use bun_sema_driver::host::to_native;
 
 use crate::diagnostics::InternalError;
 use crate::load::loaders::{
-    BY_NAME, HostLoaderKind, host_loader_kind, loader_by_name, loader_by_path, to_host_loader,
+    BY_NAME, HostLoaderKind, host_loader_kind, is_asked_for_by_query, loader_by_name,
+    loader_by_path, to_host_loader,
 };
 use crate::load::plugin_modules::{DATA_URL_NAMESPACE, ENTRY_TEXT_NAMESPACE};
 use crate::load::sources::{ModulePaths, PluginModuleName, SourceKind};
@@ -45,8 +46,8 @@ impl<'s> FileMaps<'s> {
         for file in file_ids(files.modules.len()) {
             if is_linkable(files, file) {
                 let path = files.modules[file.idx()].path.text;
-                let compiled = files.compiled(file);
-                maps.add_linkable_file(path, file, compiled.map_or(BY_NAME, |it| it.loader));
+                let loader = files.compiled(file).map_or(BY_NAME, |it| it.loader);
+                maps.add_linkable_file(path, file, loader);
             }
         }
         for (index, &file) in files.entry_points().iter().enumerate() {
@@ -61,6 +62,11 @@ impl<'s> FileMaps<'s> {
     }
 
     fn add_linkable_file(&mut self, path: &'s [u8], file: FileId, loader: HostLoader) {
+        // What an import without attributes gets stands under the path, ahead of what a `type` asks for.
+        let loader = match is_asked_for_by_query(loader) {
+            true => BY_NAME,
+            false => loader,
+        };
         let primary = self.primary_files.entry(path).or_insert((file, loader));
         if loader < primary.1 {
             *primary = (file, loader);
@@ -106,6 +112,8 @@ pub(super) struct PathInput<'a> {
     pub kind: SourceKind,
     pub plugin_module: Option<&'a PluginModuleName>,
     pub file_name: &'a [u8],
+    /// What stands behind the path of the file in the name of the module: `?fresh=1`, or nothing.
+    pub query: &'a [u8],
     pub canonical_path: &'a [u8],
     pub host_loader: HostLoader,
     pub is_linkable: bool,
@@ -123,18 +131,9 @@ pub(super) fn compute_public_path(context: &PathContext<'_>, input: &PathInput<'
         Some(module) if *module.namespace == *ENTRY_TEXT_NAMESPACE => return module.path.clone(),
         Some(module) => plugin_public_path(&module.namespace, &module.path),
         None => match input.kind {
-            SourceKind::RuntimeModule(runtime_module) => {
-                let runtime_module = context.manifest.module(runtime_module.registry_id());
-                let specifier = runtime_module.and_then(|module| module.specifier.as_deref());
-                // `bun run` shows a module of src/js/internal as internal:<name>.
-                return match (
-                    specifier,
-                    specifier.and_then(|it| it.strip_prefix(b"internal/")),
-                ) {
-                    (_, Some(name)) => [b"internal:", name].concat().into(),
-                    (Some(specifier), None) => specifier.into(),
-                    (None, None) => input.file_name.into(),
-                };
+            SourceKind::RuntimeModule(module) => {
+                let path = compute_path_of_runtime_module(context.manifest, module.registry_id());
+                return path.unwrap_or_else(|| input.file_name.into());
             }
             SourceKind::RuntimeFunctions | SourceKind::EvaluatedText => {
                 return input.file_name.into();
@@ -144,12 +143,16 @@ pub(super) fn compute_public_path(context: &PathContext<'_>, input: &PathInput<'
             {
                 return input.file_name.into();
             }
-            SourceKind::Program | SourceKind::Data => compute_program_path(
-                context.runs_in_place,
-                context.paths,
-                to_native(input.file_name),
-                maps.entry_point_indexes.get(&input.file).copied(),
-            ),
+            SourceKind::Program | SourceKind::Data => {
+                let mut path = compute_program_path(
+                    context.runs_in_place,
+                    context.paths,
+                    to_native(input.file_name),
+                    maps.entry_point_indexes.get(&input.file).copied(),
+                );
+                path.extend_from_slice(input.query);
+                path
+            }
             SourceKind::TypesOnly => compute_program_path(
                 context.runs_in_place,
                 context.paths,
@@ -180,6 +183,27 @@ pub(super) fn compute_name_of_third_party_file(
     Some(name[..end].into())
 }
 
+/// A module that holds a part of another one is shown under the name of that one.
+pub(super) fn compute_name_of_module_held_in_part(
+    manifest: &Manifest,
+    kind: SourceKind,
+) -> Option<Box<[u8]>> {
+    let SourceKind::RuntimeModule(module) = kind else {
+        return None;
+    };
+    let whole = manifest.module_held_in_part(module.registry_id())?;
+    compute_path_of_runtime_module(manifest, whole)
+}
+
+fn compute_path_of_runtime_module(manifest: &Manifest, id: u32) -> Option<Box<[u8]>> {
+    let specifier = manifest.module(id)?.specifier.as_deref()?;
+    // `bun run` shows a module of src/js/internal as internal:<name>.
+    Some(match specifier.strip_prefix(b"internal/") {
+        Some(name) => [b"internal:", name].concat().into(),
+        None => specifier.into(),
+    })
+}
+
 fn requested_loader(host_loader: HostLoader, file_name: &[u8]) -> Loader {
     match host_loader_kind(host_loader) {
         Some(HostLoaderKind::Loader(loader)) => loader,
@@ -193,7 +217,10 @@ fn is_data_that_only_an_attribute_asks_for(
     input: &PathInput<'_>,
 ) -> bool {
     let is_file_with_data = input.kind == SourceKind::Data && input.plugin_module.is_none();
-    if !is_file_with_data || context.maps.entry_point_indexes.contains_key(&input.file) {
+    if !is_file_with_data
+        || context.maps.entry_point_indexes.contains_key(&input.file)
+        || is_asked_for_by_query(input.host_loader)
+    {
         return false;
     }
     let kinds = [
@@ -297,15 +324,16 @@ pub(super) fn check_unique_public_paths<'a>(
     check_unique_public_paths_of(paths.collect())
 }
 
+pub(super) fn are_all_different<'a>(mut paths: impl Iterator<Item = &'a [u8]>) -> bool {
+    let mut seen: FxHashSet<&[u8]> = FxHashSet::default();
+    seen.reserve(paths.size_hint().0);
+    paths.all(|path| seen.insert(path))
+}
+
 fn check_unique_public_paths_of(
     mut modules: Vec<(FileId, ModulePaths<'_>)>,
 ) -> Result<(), InternalError> {
-    let mut seen: FxHashSet<&[u8]> = FxHashSet::default();
-    seen.reserve(modules.len());
-    if modules
-        .iter()
-        .all(|(_, paths)| seen.insert(paths.public_path))
-    {
+    if are_all_different(modules.iter().map(|it| it.1.public_path)) {
         return Ok(());
     }
     modules.shared_sort_unstable_by_key(|&(file, paths)| (paths.public_path, file));
@@ -334,6 +362,7 @@ mod tests {
 
     use super::*;
     use crate::builtins::RuntimeModule;
+    use crate::load::loaders::{to_host_loader_of_attribute, to_host_loader_of_query};
     use crate::options::default_loaders;
 
     fn as_text() -> HostLoader {
@@ -369,6 +398,7 @@ mod tests {
             kind: SourceKind::Program,
             plugin_module: None,
             file_name: path,
+            query: b"",
             canonical_path: path,
             host_loader,
             is_linkable: true,
@@ -558,6 +588,22 @@ mod tests {
     }
 
     #[test]
+    fn module_with_query_stands_under_path_of_file_and_query() {
+        let (file, module) = (b"/project/lib/a.ts", b"/project/lib/a%3fx.ts");
+        let mut maps = FileMaps::default();
+        maps.add_linkable_file(file, FileId(1), BY_NAME);
+        maps.add_linkable_file(module, FileId(2), BY_NAME);
+        let input = PathInput {
+            query: b"?x",
+            canonical_path: module,
+            ..program_file(2, file, BY_NAME)
+        };
+        assert_eq!(public_path(&maps, input), b"/$bunfs/root/lib/a.ts?x");
+        let input = program_file(1, file, BY_NAME);
+        assert_eq!(public_path(&maps, input), b"/$bunfs/root/lib/a.ts");
+    }
+
+    #[test]
     fn import_at_entry_point_name_has_suffix() {
         let (main_ts, main_js) = (b"/project/main.ts", b"/project/main.js");
         let mut maps = FileMaps {
@@ -732,6 +778,29 @@ mod tests {
             path(b"/project/a.sql", Loader::Text),
             b"/$bunfs/root/a.sql?text"
         );
+    }
+
+    #[test]
+    fn text_that_a_query_asks_for_stands_under_path_of_file_and_query() {
+        let (file_name, module) = (b"/project/a.json", b"/project/a%3fraw.json");
+        let by_query = to_host_loader_of_query(Loader::Text);
+        let as_json = to_host_loader_of_attribute(Loader::Json, module);
+        let mut maps = FileMaps::default();
+        maps.add_linkable_file(module, FileId(1), as_json);
+        maps.add_linkable_file(module, FileId(2), by_query);
+        maps.add_linkable_file(module, FileId(3), as_text());
+        let path = |file, host_loader| {
+            let input = PathInput {
+                kind: SourceKind::Data,
+                query: b"?raw",
+                canonical_path: module,
+                ..program_file(file, file_name, host_loader)
+            };
+            public_path(&maps, input)
+        };
+        assert_eq!(path(1, as_json), b"/$bunfs/root/a.json?raw?json");
+        assert_eq!(path(2, by_query), b"/$bunfs/root/a.json?raw");
+        assert_eq!(path(3, as_text()), b"/$bunfs/root/a.json?raw?text");
     }
 
     #[test]

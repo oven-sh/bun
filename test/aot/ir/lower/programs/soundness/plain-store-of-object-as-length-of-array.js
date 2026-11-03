@@ -77,26 +77,27 @@ try { list.length = neither; } catch (error) { console.log(error instanceof Type
 
 // GENERATED: storeUnder dropTheArray setLength Count L [Symbol.toPrimitive]
 // CHECK-LABEL: function {{*}}name="storeUnder"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|number|string flags=[IsExpected]}, {type=undefined|null|number|[[L_1]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|object, v1: undefined|null|number|string, v2: undefined|null|number|[[L_1]]):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]]|Array<never> flags=[IsExpected]}, {type=undefined|null|number|string flags=[IsExpected]}, {type=undefined|null|number|[[L_2]] flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] {
+// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]|Array<never>, v1: undefined|null|number|string, v2: undefined|null|number|[[L_2]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: ElemSet v0, v1, v2
 // CHECK-NEXT: v4 = PropGet v0 key="length"
-// CHECK-NEXT: Return v4
+// CHECK-NEXT: v5 = Convert v4 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="dropTheArray"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = NewClosure function=[[f_2]]
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[f_3]]|[[f_4]]|[[f_5]]|[[f_6]]|[[f_7]] flags=[IsExpected]}
-// CHECK-NEXT: v2 = NewObject layout=[[L_1]]
+// CHECK-NEXT: v0 = NewClosure function=[[f_3]]
+// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[f_4]]|[[f_5]]|[[f_6]]|[[f_7]]|[[f_8]] flags=[IsExpected]}
+// CHECK-NEXT: v2 = NewObject layout=[[L_2]]
 // CHECK-NEXT: PropDefine v2, v1 key="valueOf"
 // CHECK-NEXT: v4 = FinishObject v2
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|number|[[L_1]] flags=[IsExpected]}
-// CHECK-NEXT: v6 = Data data=[[d_8]]
+// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|number|[[L_2]] flags=[IsExpected]}
+// CHECK-NEXT: v6 = Data data=[[d_9]]
 // CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|Array<never> flags=[IsExpected]}
 // CHECK-NEXT: v8 = Convert v5 declared={type=number flags=[IsExpected]}
 // CHECK-NEXT: PropSet v7, v8 key="length"
@@ -104,8 +105,8 @@ try { list.length = neither; } catch (error) { console.log(error instanceof Type
 // CHECK-NEXT: Return v10
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="setLength"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|boolean|number|string|symbol|bigint|[[L_1]]|[[L_9]] flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|boolean|number|string|symbol|bigint|[[L_1]]|[[L_9]]):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|boolean|number|string|symbol|bigint|[[L_2]]|[[L_10]] flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] {
+// CHECK-NEXT: b0(v0: anything, v1: undefined|null|boolean|number|string|symbol|bigint|[[L_2]]|[[L_10]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: PropSet v0, v1 key="length"
@@ -119,10 +120,10 @@ try { list.length = neither; } catch (error) { console.log(error instanceof Type
 // CHECK-NEXT: b0(v0: anything, v1: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = GetConstructPrototype v0 layout=[[L_10]]
-// CHECK-NEXT: v3 = NewObject v2 layout=[[L_10]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=[[L_10]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|[[L_10]] flags=[IsExpected]}
+// CHECK-NEXT: v2 = GetConstructPrototype v0 layout=[[L_11]]
+// CHECK-NEXT: v3 = NewObject v2 layout=[[L_11]]
+// CHECK-NEXT: v4 = Convert v3 declared={type=[[L_11]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|[[L_11]] flags=[IsExpected]}
 // CHECK-NEXT: PropSet v5, v1 key="n"
 // CHECK-NEXT: v7 = Undefined
 // CHECK-NEXT: v8 = TypeTest v7 testedType=object
@@ -140,8 +141,8 @@ try { list.length = neither; } catch (error) { console.log(error instanceof Type
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_11]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_11]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_1]]
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_1]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.toPrimitive]"

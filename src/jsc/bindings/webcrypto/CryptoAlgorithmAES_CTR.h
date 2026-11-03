@@ -48,7 +48,6 @@ public:
         // 128 bits integer with miminum required operators.
         struct CounterBlockBits {
             void set();
-            bool all() const;
             bool any() const;
 
             CounterBlockBits operator&(const CounterBlockBits&) const;

@@ -155,8 +155,9 @@ attempt("honest again", () => [size([1], ""), total([1, 2], ""), next(1, "")]);
 // CHECK-NEXT: v34 = Call v33, v20, v29 calleeName="eval"
 // CHECK-NEXT: Jump -> next b10(v34)
 // CHECK-NEXT: b10(v35):
-// CHECK-NEXT: v36 = Convert v15 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v36
+// CHECK-NEXT: v36 = Integer integer=1
+// CHECK-NEXT: v37 = Convert v36 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: Return v37
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="throughAnArrow"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasThis, HasNewTarget, TakesCallee, HasArgumentCount, HasHiddenRest, HasExplicitName] length=2 captures=[{type=env [[L_1]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_5]]] {

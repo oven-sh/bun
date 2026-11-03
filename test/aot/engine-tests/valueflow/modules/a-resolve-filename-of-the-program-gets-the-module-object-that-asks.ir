@@ -1,0 +1,30 @@
+# module.exports = function hidden() {}; Module._resolveFilename = function (name, parent) { return parent.exports() }; require.resolve("asked")
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK-NOT: unreached f2
+# RUN(ESCAPED): valueflow-why escaped-builtin=ModuleObject
+# ESCAPED: held: those of 1 of 1 modules
+# RUN(HOLDER): valueflow-why escaped-builtin=NodeModule
+# HOLDER-NOT: not held
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    PutModuleVariable v0 variable=g0
+    v2 = Builtin builtin=NodeModule
+    v3 = NewClosure function=f1
+    PropSet v2, v3 key="_resolveFilename" mode=Strict
+    v5 = String string="asked"
+    v6 = ResolveDynamic v5 referrer=m0
+    Return
+}
+function f1 name="resolve" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v1 key="exports"
+    v3 = Call v2
+    Return v3
+}
+function f2 name="hidden" module=m0 results=[{type=anything}] {
+    Return
+}

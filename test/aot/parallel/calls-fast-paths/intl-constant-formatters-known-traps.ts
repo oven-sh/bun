@@ -11,6 +11,11 @@ export function roundedToAnIncrement(amount: number): string {
   return amount.toLocaleString("br", { minimumFractionDigits: 2, roundingIncrement: 100, trailingZeroDisplay: "stripIfInteger" });
 }
 (globalThis as any).kept = [accountingInTamil, roundedToAnIncrement];
+for (const amount of [0, 1, -1, 1234.5, -1234567.891, 0.005, 1e15]) {
+  const inTamil = amount.toLocaleString(JSON.parse('"ta"'), JSON.parse('{"style":"currency","currency":"INR","currencySign":"accounting"}'));
+  const rounded = amount.toLocaleString(JSON.parse('"br"'), JSON.parse('{"minimumFractionDigits":2,"roundingIncrement":100,"trailingZeroDisplay":"stripIfInteger"}'));
+  console.log(amount, accountingInTamil(amount) === inTamil ? "same" : accountingInTamil(amount) + " | " + inTamil, roundedToAnIncrement(amount) === rounded ? "same" : roundedToAnIncrement(amount) + " | " + rounded);
+}
 const say = (run: () => unknown): string => {
   try {
     return String(run());

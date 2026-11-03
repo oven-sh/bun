@@ -14,7 +14,7 @@ struct Pattern {
     text: String,
 }
 
-const PARAM_NAMES: Message = Message::new("", "Promise constructor parameters must be named to match `{{pattern}}`");
+const PARAM_NAMES: &Message = &Message::new("", "Promise constructor parameters must be named to match `{{pattern}}`");
 
 impl Rule for ParamNames {
     const META: Meta = Meta::oxlint(Plugin::Promise, "param-names", Kind::Suggestion);

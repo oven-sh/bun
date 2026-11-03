@@ -8,6 +8,7 @@ use bun_io::KeepAlive;
 use bun_resolver::fs as Fs;
 
 use crate::bun_string_jsc;
+use crate::resolved_source::PrintedAst;
 use crate::virtual_machine::VirtualMachine;
 use crate::{
     self as jsc, EncodedSliceJsc as _, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise,
@@ -1062,8 +1063,7 @@ impl AsyncModule {
             )?;
         }
         // Read before `print_with_source_map` moves `ast` into `print_ast`.
-        let is_commonjs_module = parse_result.ast.has_commonjs_export_names
-            || parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
+        let printed_ast = PrintedAst::new(&parse_result.ast);
 
         // `VirtualMachine.source_code_printer` is a thread-local
         // `?*BufferPrinter` (see `SOURCE_CODE_PRINTER`). `BufferPrinter` is `!Clone`, so
@@ -1137,11 +1137,12 @@ impl AsyncModule {
         // the number recycled) by the transpile frame's fd guard.
 
         Ok(ResolvedSource {
-            source_code: BunString::clone_latin1(printer.ctx.get_written()),
             source_url: BunString::clone_utf8(path.text),
-            is_commonjs_module,
             is_static: self.is_static,
-            ..Default::default()
+            ..ResolvedSource::printed(
+                printed_ast,
+                BunString::clone_latin1(printer.ctx.get_written()),
+            )
         })
     }
 }

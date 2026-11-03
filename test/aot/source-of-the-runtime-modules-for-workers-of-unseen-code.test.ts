@@ -148,6 +148,32 @@ const unseen: Case[] = [
     "a/b\n",
   ],
   [
+    "the constructor under a name made at run time, beside a Worker of a file",
+    `await heard(new Worker("./w.js"));
+     await heard(new globalThis[made("Wor", "ker")](made("data:text/javascript,", ...asksForModule)));`,
+    "w.js\na/b\n",
+  ],
+  [
+    "the constructor under one of two names, beside a Worker of a file",
+    `await heard(new Worker("./w.js"));
+     const name = process.argv.length > 9 ? "Blob" : "Worker";
+     await heard(new globalThis[name](made("data:text/javascript,", ...asksForModule)));`,
+    "w.js\na/b\n",
+  ],
+  [
+    "the constructor read off the global object that the host hands back",
+    `const handedBack = new CustomEvent("unknown", { detail: globalThis }).detail;
+     await heard(new handedBack.Worker(made("data:text/javascript,", ...asksForModule)));`,
+    "a/b\n",
+  ],
+  [
+    "the constructor read from a Worker of a file",
+    `const known = new Worker("./w.js");
+     await heard(known);
+     await heard(new known.constructor(made("data:text/javascript,", ...asksForModule)));`,
+    "w.js\na/b\n",
+  ],
+  [
     "a written text that is no program",
     `await heard(new Worker("data:text/javascript,this is no program"));`,
     "error\n",

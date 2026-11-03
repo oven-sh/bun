@@ -2,27 +2,21 @@ import * as b from "../../codegen/bindgen-lib.ts";
 import { CallbackOrOptions, DescriptionOrCallback } from "./ScopeFunctions.bind.ts";
 
 // Not `bun_test.bind.ts`: a release build leaves out a `*_test.bind.ts`.
-export default b.module({ rustPath: "crate::test_runner::bun_test::js_fns::generic_hook" });
+export default b.module({ rustPath: "crate::test_runner::bun_test::js_fns" });
 
 const js = { capability: "js", throws: true } as const;
 
-/** Takes what `callAsFunction` does. */
-const hook = (name: string) =>
-  b.fn({
-    export: `Bun__BunTest__${name}`,
-    args: { first: DescriptionOrCallback, second: CallbackOrOptions, third: CallbackOrOptions },
-    expected: {
-      first: `${name}() expects a function as the first argument`,
-      second: `${name}() expects a number or object as the second argument`,
-      third: `${name}() expects a number or object as the third argument`,
-    },
-    ...js,
-  });
-export const beforeAll = hook("beforeAll");
-export const beforeEach = hook("beforeEach");
-export const afterEach = hook("afterEach");
-export const afterAll = hook("afterAll");
-export const onTestFinished = hook("onTestFinished");
+/**
+ * All hooks call this one function. Each hook is bound to it with `hook`, a number that identifies the hook, as the first argument.
+ * The other arguments are the same as `callAsFunction`'s.
+ * `this` is the `TestFixtures` of an extended `test`, if the hook is one of its members.
+ */
+export const hook = b.fn({
+  export: "Bun__BunTest__hook",
+  passThis: true,
+  args: { hook: b.u8, first: DescriptionOrCallback, second: CallbackOrOptions, third: CallbackOrOptions },
+  ...js,
+});
 
 /** The reactions to the promise that a test or a hook returns. */
 const reaction = {

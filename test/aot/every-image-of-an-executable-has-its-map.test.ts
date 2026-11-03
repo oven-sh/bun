@@ -15,8 +15,8 @@ worker.onmessage = event => {
 worker.postMessage(20);
 `,
   "beside.ts": `declare var self: Worker;
-function twice(n: number) {
-  return n * 2;
+function twice(n: number): number {
+  return n <= 0 ? 0 : 2 + twice(n - 1);
 }
 self.onmessage = event => postMessage(twice(event.data));
 `,

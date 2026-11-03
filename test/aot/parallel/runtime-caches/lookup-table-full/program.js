@@ -1,6 +1,8 @@
 // Objects whose structures do not fit in a full lookup table are still read and written correctly, and a full collection makes room for new structures.
 // COUNTER: LookupTableBases >= 1
 // COUNTER: LookupTableBases <= 3000
+// Flags: --aot-heat=none --aot-limit=LookupTableBases:256
+// Env: JSC_aotCountsPath=/dev/null
 const counts = typeof aotRuntimeCounters === "function";   // Only the jsc shell can count. Elsewhere the program checks the answers alone.
 function counter(name) { if (!counts) return 0; for (const line of aotRuntimeCounters().split("\n")) { const [count, counted] = line.split("\t"); if (counted === name) return Number(count); } throw new Error("no counter " + name); }
 function calls(...names) { let sum = 0; if (counts) for (const name of names) sum += aotOperationCount("operationAOT" + name); return sum; }

@@ -1,5 +1,5 @@
 use bun_ast::runtime::ReactCompilerMode;
-use bun_sema::hir::{BinOp, ExprKind, FnBody, FnKind, StmtId, StmtKind};
+use bun_sema::hir::{BinOp, CallId, ExprKind, FnBody, FnKind, StmtId, StmtKind};
 use bun_sema::resolve::{JsxRuntime, JsxSettings, TranspileSettings};
 
 use super::{
@@ -104,6 +104,27 @@ fn generated_imports_are_plain_value_imports() {
             assert!(import.default.is_none() && import.namespace.is_none());
             assert!(import.attributes.is_none());
         }
+    });
+}
+
+#[test]
+fn commonjs_file_requires_what_it_needs() {
+    let text = "function Rule() { return <hr />; }\nmodule.exports = Rule;\n";
+    with_tree("main.jsx", text, ReactCompilerMode::Client, |tree| {
+        assert!(tree.has_compiled_components());
+        assert_eq!(tree.count_jsx_elements(), 0);
+        assert!(tree.imported_names(COMPILER_RUNTIME).is_empty());
+        let hir = tree.hir();
+        let path_of = |call: CallId| match hir[hir.ids(hir[call].args).next().unwrap()].kind {
+            ExprKind::String(path) => tree.name_text(path),
+            _ => panic!("expected a string"),
+        };
+        let calls = tree.calls_of("require").into_iter();
+        let required: Vec<String> = calls.map(path_of).collect();
+        assert_eq!(required, [DEVELOPMENT_RUNTIME, COMPILER_RUNTIME]);
+        let cache = tree.declaration_named(CACHE_FUNCTION);
+        let path = ["%react:required:react/compiler-runtime", "c"];
+        assert_eq!(tree.member_path(cache.init), path);
     });
 }
 

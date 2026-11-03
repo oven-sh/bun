@@ -3,7 +3,7 @@ title: Image
 description: Decode, transform, and encode images with a fast native pipeline
 ---
 
-`Bun.Image` is a chainable image pipeline for decoding, resizing, rotating, and re-encoding JPEG, PNG, WebP, HEIC, and AVIF. It is built on libjpeg-turbo, spng, libwebp, and SIMD geometry kernels, with zero npm dependencies and no native addon build step.
+`Bun.Image` is a chainable image pipeline for decoding, resizing, rotating, and re-encoding JPEG, PNG, WebP, HEIC, and AVIF. It is built on libjpeg-turbo, libwebp, a built-in PNG codec, and SIMD geometry kernels, with zero npm dependencies and no native addon build step.
 
 ```ts
 await Bun.file("photo.jpg").image().resize(400, 400, { fit: "inside" }).webp({ quality: 80 }).write("thumb.webp");
@@ -31,6 +31,8 @@ When passing a `TypedArray`/`ArrayBuffer`, don't mutate it while a terminal is p
 
 Bun decodes a damaged JPEG when libjpeg-turbo can finish the decode with only a warning. Examples are stray bytes between segments, a missing end-of-image marker, and truncated scan data. libjpeg-turbo fills the blocks that have no data with flat grey. A progressive file that is cut after its first scan has data for every block, so Bun returns the whole picture with less detail. When libjpeg-turbo cannot finish the decode, the terminal rejects with `ERR_IMAGE_DECODE_FAILED`. `metadata()` reads only the header, so it can resolve for a file that a terminal rejects.
 
+Bun does not verify the checksums in a PNG. It skips the CRC of each chunk and the Adler-32 of the pixel data, so a file with damaged bytes can decode to different pixels. Bun reads `IDAT` chunks until one of them completes the last row, and ignores everything after the data of that chunk. When the file ends before the data of that chunk does, the terminal rejects with `ERR_IMAGE_DECODE_FAILED`. The terminal also rejects when the pixel data ends before the last row.
+
 A second `options` argument guards against decompression bombs and controls EXIF handling:
 
 ```ts
@@ -42,6 +44,8 @@ new Bun.Image(input, {
   autoOrient: true,
 });
 ```
+
+A decoded image takes 4 bytes per pixel, so the default `maxPixels` allows 1 GiB for one image. A PNG of 32 KiB can decode to that size. The decode needs more memory while it runs: up to 20 bytes per pixel for a PNG that is one very wide row, which is 5 GiB at the default. For untrusted input, set `maxPixels` to the largest image your application accepts.
 
 ## Metadata
 
@@ -182,14 +186,14 @@ For a passive "image in clipboard, press ⌘V" hint, poll `clipboardChangeCount(
 
 ## Platform backends
 
-|                        | Linux                             | macOS               | Windows      |
-| ---------------------- | --------------------------------- | ------------------- | ------------ |
-| JPEG / PNG / WebP      | libjpeg-turbo · spng · libwebp    | same                | same         |
-| BMP / GIF (decode)     | built-in                          | ImageIO             | WIC          |
-| TIFF (decode)          | ❌                                | ImageIO             | WIC          |
-| Resize / rotate / flip | Highway SIMD                      | Accelerate vImage ³ | Highway SIMD |
-| HEIC / AVIF            | ❌ `ERR_IMAGE_FORMAT_UNSUPPORTED` | ImageIO ²           | WIC ¹        |
-| Clipboard              | ❌ returns `null`                 | NSPasteboard        | Win32        |
+|                        | Linux                              | macOS               | Windows      |
+| ---------------------- | ---------------------------------- | ------------------- | ------------ |
+| JPEG / PNG / WebP      | libjpeg-turbo · built-in · libwebp | same                | same         |
+| BMP / GIF (decode)     | built-in                           | ImageIO             | WIC          |
+| TIFF (decode)          | ❌                                 | ImageIO             | WIC          |
+| Resize / rotate / flip | Highway SIMD                       | Accelerate vImage ³ | Highway SIMD |
+| HEIC / AVIF            | ❌ `ERR_IMAGE_FORMAT_UNSUPPORTED`  | ImageIO ²           | WIC ¹        |
+| Clipboard              | ❌ returns `null`                  | NSPasteboard        | Win32        |
 
 ¹ Windows requires the **HEIF Image Extensions** / **AV1 Video Extension** from the Microsoft Store.
 ² AVIF _encode_ needs an OS AV1 encoder — Apple Silicon M3+ only. Intel Mac and M1/M2 reject with `ERR_IMAGE_FORMAT_UNSUPPORTED`; AVIF _decode_ works everywhere ImageIO does (macOS 13+).

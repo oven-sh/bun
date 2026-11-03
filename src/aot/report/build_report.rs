@@ -34,6 +34,7 @@ const PROGRAM_SIZES: [(&str, StatisticId); 4] = [
     ("functions", StatisticId::ImageFunctionsEmitted),
 ];
 
+#[optimize(size)]
 pub fn write(input: &ReportInput<'_>, detail: ReportDetail, build_id: Option<&[u8]>) -> Vec<u8> {
     let mut positions = Positions::new(input, PathStyle::Posix);
 
@@ -48,6 +49,7 @@ pub fn write(input: &ReportInput<'_>, detail: ReportDetail, build_id: Option<&[u
     write_stages(&mut json, input.statistics);
     write_retained_features(&mut json, input);
     write_unseen_code(&mut json, input, &mut positions);
+    write_computed_imports(&mut json, input.statistics);
     if detail >= ReportDetail::Functions {
         sites::write_functions(&mut json, input, &mut positions);
     } else {
@@ -181,6 +183,16 @@ fn write_unseen_code(
         let builtin = builtin.map(table::text_of);
         json.optional_string("builtin", builtin.as_deref().map(str::as_bytes));
         write_position(json, "location", location.as_ref());
+    });
+}
+
+// The files that each computed import brings into the build, the largest first.
+fn write_computed_imports(json: &mut JsonWriter, statistics: &Statistics) {
+    let imports = statistics.computed_imports();
+    json.objects("computedImports", imports, |json, import| {
+        write_position(json, "location", Some(&import.site));
+        json.number("files", u64::from(import.files));
+        json.number("bytes", import.bytes);
     });
 }
 

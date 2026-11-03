@@ -2791,10 +2791,7 @@ pub mod bv2_impl {
                             .flags
                             .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
 
-                        // Disable failing packages from being printed.
-                        // This may cause broken code to write.
-                        // However, doing this means we tell them all the resolve errors
-                        // Rather than just the first one.
+                        // Disable failing packages from being printed: the output may be broken, but every resolve error is reported, not just the first.
                         record.path.is_disabled = true;
                         record
                             .flags
@@ -6837,10 +6834,7 @@ pub mod bv2_impl {
                             }
                         }
 
-                        // Disable failing packages from being printed.
-                        // This may cause broken code to write.
-                        // However, doing this means we tell them all the resolve errors
-                        // Rather than just the first one.
+                        // Disable failing packages from being printed: the output may be broken, but every resolve error is reported, not just the first.
                         import_record.path.is_disabled = true;
                         import_record
                             .flags

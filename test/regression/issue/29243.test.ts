@@ -144,7 +144,7 @@ test.concurrent("await as a tagged-template call identifier keeps working in CJS
   expect(stderr).toBe("");
 
   expect(stdout).toContain("var await = String.raw");
-  expect(stdout).toContain("globalThis.output = await");
+  expect(stdout).toContain("globalThis.output = await`hello ${1 + 1} world`");
   expect(exitCode).toBe(0);
 });
 
@@ -350,7 +350,7 @@ globalThis.output = await!.then(console.log);`,
   // The `!` is a TypeScript postfix assertion and must drop out of the
   // JavaScript output entirely. `await` stays as a plain identifier.
   expect(stdout).toContain("var await =");
-  expect(stdout).toContain(".then(console.log)");
+  expect(stdout).toContain("globalThis.output = await.then(console.log)");
   expect(stdout).not.toContain("await!");
   expect(exitCode).toBe(0);
 });

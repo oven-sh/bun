@@ -800,8 +800,9 @@ function endNT(self: $Node.Socket, socket: SocketHandle | null, callback: WriteC
   // A TLS wrap made since _final attached this socket's handle, or left the fd to the raw half of `socket`.
   const current = self._handle;
   const handle = !socket || current?.[kAdoptedTLSRaw] ? current : socket;
-  // Destroyed since _final: node's shutdown() reports the closed handle and _final calls back at once.
-  if (!handle) return callback();
+  // Destroyed since _final: node's shutdown() reports the closed handle and _final calls back at
+  // once. A callback parked here would reach the next life of a socket that connect() reuses.
+  if (!handle || self.destroyed) return callback();
   handle.shutdown();
   // Node completes the shutdown request from libuv's pending phase, after this nextTick drain
   // and its microtasks, and calls back from there (afterShutdown). Until then the socket is

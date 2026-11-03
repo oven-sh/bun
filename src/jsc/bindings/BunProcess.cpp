@@ -5506,7 +5506,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionQueueLoopTask, (JSC::JSGlobalObject * lexical
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
-    JSValue fn = AsyncContextFrame::withAsyncContextIfNeeded(globalObject, callFrame->argument(0));
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue callback = callFrame->argument(0);
+    if (!callback.isCallable())
+        return throwVMTypeError(globalObject, scope, "The task must be a function"_s);
+    JSValue fn = AsyncContextFrame::withAsyncContextIfNeeded(globalObject, callback);
     globalObject->scriptExecutionContext()->postTask([fn = Strong<Unknown>(vm, fn), arg = Strong<Unknown>(vm, callFrame->argument(1))](ScriptExecutionContext& context) {
         auto* globalObject = context.globalObject();
         auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));

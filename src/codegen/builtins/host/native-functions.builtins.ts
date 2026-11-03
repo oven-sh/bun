@@ -252,6 +252,7 @@ export default b.declarations(
     args: { fn: b.callable, arg: b.any.optional },
     returns: b.undefined,
     capability: "heap",
+    throws: true,
     uses: {
       fn: [
         b.retained,

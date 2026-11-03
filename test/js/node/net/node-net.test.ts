@@ -10,12 +10,14 @@ import {
   gc,
   isASAN,
   isDebug,
+  isLinux,
   isMusl,
   isWindows,
   tempDir,
   tls as tlsCert,
   tmpdirSync,
 } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
@@ -3609,19 +3611,30 @@ it.each(Object.entries({ setDefaultAutoSelectFamily, setDefaultAutoSelectFamilyA
 // nextTick drain. Until then the socket is ended but not finished and not destroyed. #47834
 describe.concurrent("the _final callback runs a loop turn after the shutdown", () => {
   type Peer = { server: Server; port: number; [Symbol.asyncDispose](): Promise<void> };
+  // The disposer destroys the sockets of both sides: server.close() leaves live connections open.
   async function listen(onConnection: (peer: Socket) => void): Promise<Peer> {
+    const sockets: Socket[] = [];
     const server = createServer(peer => {
+      sockets.push(peer);
       peer.on("error", () => {});
       onConnection(peer);
     });
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as { port: number }).port;
     return {
       server,
-      port: (server.address() as { port: number }).port,
+      port,
       async [Symbol.asyncDispose]() {
+        for (const socket of sockets) socket.destroy();
         server.close();
       },
-    };
+      async connect() {
+        const socket = connect(port, "127.0.0.1");
+        sockets.push(socket);
+        await once(socket, "connect");
+        return socket;
+      },
+    } as Peer & { connect(): Promise<Socket> };
   }
   // Resolves at 'close'. Unlike once(), an 'error' before it does not reject.
   function record(socket: Socket, events: string[]): Promise<void> {
@@ -3630,11 +3643,6 @@ describe.concurrent("the _final callback runs a loop turn after the shutdown", (
     socket.on("error", err => events.push(`error ${(err as { code?: string }).code}`));
     return new Promise(resolve => socket.on("close", hadError => void (events.push(`close ${hadError}`), resolve())));
   }
-  async function connected(port: number): Promise<Socket> {
-    const socket = connect(port, "127.0.0.1");
-    await once(socket, "connect");
-    return socket;
-  }
   // The peer half-closes on the first byte it reads. The socket gets 'end', and with
   // allowHalfOpen false its own end() follows from the stream.
   const endsOnFirstByte = (peer: Socket) => peer.once("data", () => peer.end());
@@ -3642,7 +3650,7 @@ describe.concurrent("the _final callback runs a loop turn after the shutdown", (
   // A write from a microtask after 'end' is what the mongodb driver does, then waits on 'drain'.
   it("a write after the peer's FIN emits 'error' (EPIPE) and rejects the wait for 'drain'", async () => {
     await using peer = await listen(endsOnFirstByte);
-    const socket = await connected(peer.port);
+    const socket = await peer.connect();
     const events: string[] = [];
     const closed = record(socket, events);
     socket.write("x");
@@ -3651,7 +3659,9 @@ describe.concurrent("the _final callback runs a loop turn after the shutdown", (
       writableFinished: false,
       destroyed: false,
     });
-    const wrote = socket.write(new Uint8Array(64), err => events.push(`write callback ${(err as { code?: string })?.code}`));
+    const wrote = socket.write(new Uint8Array(64), err =>
+      events.push(`write callback ${(err as { code?: string })?.code}`),
+    );
     const drain = once(socket, "drain").then(
       () => "drain",
       err => `rejected ${err.code}`,
@@ -3674,15 +3684,14 @@ describe.concurrent("the _final callback runs a loop turn after the shutdown", (
       await closed;
       resolve(events);
     });
-    const client = await connected(peer.port);
+    const client = await peer.connect();
     client.end();
     expect(await promise).toEqual(["end", "write callback EPIPE", "error EPIPE", "close true"]);
-    client.destroy();
   });
 
   it("'finish' follows the nextTicks and microtasks of end(), and precedes its setImmediate", async () => {
     await using peer = await listen(() => {});
-    const socket = await connected(peer.port);
+    const socket = await peer.connect();
     const events: string[] = [];
     socket.on("finish", () => events.push("finish"));
     socket.end();
@@ -3692,7 +3701,6 @@ describe.concurrent("the _final callback runs a loop turn after the shutdown", (
     await once(socket, "finish");
     await new Promise(resolve => setImmediate(resolve));
     expect(events).toEqual(["microtask", "nextTick", "finish", "immediate"]);
-    socket.destroy();
   });
 
   it("a destroy() on the next tick of end() leaves no 'finish', one from setImmediate comes after it", async () => {
@@ -3701,7 +3709,7 @@ describe.concurrent("the _final callback runs a loop turn after the shutdown", (
       [process.nextTick, ["destroy", "end callback ERR_STREAM_DESTROYED", "close false"]],
       [setImmediate, ["end callback null", "finish", "destroy", "close false"]],
     ] as const) {
-      const socket = await connected(peer.port);
+      const socket = await peer.connect();
       const events: string[] = [];
       socket.on("finish", () => events.push("finish"));
       socket.on("close", hadError => events.push(`close ${hadError}`));
@@ -3718,7 +3726,7 @@ describe.concurrent("the _final callback runs a loop turn after the shutdown", (
   // The shutdown request of the first life completes with the close, not inside the second end().
   it("a connect() after end() and destroy() gets its own 'finish'", async () => {
     await using peer = await listen(() => {});
-    const socket = await connected(peer.port);
+    const socket = await peer.connect();
     const events: string[] = [];
     socket.on("finish", () => events.push("finish"));
     socket.on("error", err => events.push(`error ${(err as { code?: string }).code}`));
@@ -3735,49 +3743,67 @@ describe.concurrent("the _final callback runs a loop turn after the shutdown", (
     expect(events).toEqual(["close false", "end callback", "finish", "close false"]);
   });
 
+  // A destroy() before the nextTick of _final, then a connect() from the same drain: the first
+  // life's request must not reach the second. Node emits the first life's 'close', then
+  // 'connect', and nothing for the second end().
+  it("a connect() in the microtask after end() and destroy() gets nothing from the first end()", async () => {
+    await using peer = await listen(() => {});
+    const socket = await peer.connect();
+    const events: string[] = [];
+    socket.on("finish", () => events.push("finish"));
+    socket.on("error", err => events.push(`error ${(err as { code?: string }).code}`));
+    socket.on("close", hadError => events.push(`close ${hadError}`));
+    socket.on("connect", () => events.push("connect"));
+    socket.end();
+    socket.destroy();
+    await Promise.resolve();
+    socket.connect(peer.port, "127.0.0.1");
+    socket.end(err => events.push(`end callback ${(err as { code?: string } | null)?.code ?? null}`));
+    await once(socket, "connect");
+    for (let i = 0; i < 3; i++) await new Promise(resolve => setImmediate(resolve));
+    expect(events).toEqual(["close false", "connect"]);
+  });
+
   // The peer reads the FIN from the poll that follows. Node completes the shutdown request
   // before that poll from every origin. Bun drains its task queue only after the poll that
-  // follows the immediates, so from a setImmediate callback the peer's 'end' comes first.
-  it.failing("'finish' precedes the peer's 'end' when end() runs from setImmediate", async () => {
+  // follows the immediates, so from a setImmediate callback the peer's 'end' comes first. Linux
+  // delivers the loopback FIN inside shutdown(2), so that poll always reads it.
+  (isLinux ? it.failing : it.skip)("'finish' precedes the peer's 'end' when end() runs from setImmediate", async () => {
     const { promise: peerEnded, resolve } = Promise.withResolvers<void>();
     const events: string[] = [];
     await using peer = await listen(accepted => {
       accepted.resume();
       accepted.on("end", () => void (events.push("peer end"), resolve()));
     });
-    const socket = await connected(peer.port);
+    const socket = await peer.connect();
     const finished = new Promise<void>(r => socket.on("finish", () => void (events.push("finish"), r())));
     await new Promise<void>(r => setImmediate(() => void (socket.end(), r())));
     await Promise.all([peerEnded, finished]);
     expect(events).toEqual(["finish", "peer end"]);
-    socket.destroy();
   });
 
   // A server over maxConnections closes the accepted socket at once, so the client's first write
   // is answered with a reset behind the FIN. Linux reads the FIN first and reports the reset in
   // CLOSE_WAIT as EPIPE. The other kernels order the two differently.
-  it.skipIf(process.platform !== "linux")("a reset that lands behind the peer's FIN closes the socket quietly", async () => {
+  it.skipIf(!isLinux)("a reset that lands behind the peer's FIN closes the socket quietly", async () => {
     await using peer = await listen(() => {});
     peer.server.maxConnections = 1;
-    const first = await connected(peer.port);
+    await peer.connect();
     const socket = connect(peer.port, "127.0.0.1", () => socket.write("x"));
     const events: string[] = [];
     await record(socket, events);
     expect(events).toEqual(["end", "finish", "close false"]);
-    first.destroy();
   });
 
   it("the end() callback and 'finish' see the store of end()", async () => {
-    const { AsyncLocalStorage } = require("node:async_hooks");
     await using peer = await listen(() => {});
-    const socket = await connected(peer.port);
+    const socket = await peer.connect();
     const store = new AsyncLocalStorage<string>();
     const seen: string[] = [];
     socket.on("finish", () => seen.push(`finish ${store.getStore()}`));
     store.run("end", () => socket.end(() => seen.push(`callback ${store.getStore()}`)));
     await once(socket, "finish");
     expect(seen).toEqual(["callback end", "finish end"]);
-    socket.destroy();
   });
 
   it("the queued completion keeps the process alive until 'close'", async () => {

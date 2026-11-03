@@ -202,6 +202,8 @@ test.each([
     tlsSocket.on("data", data => log.push(`data ${data.length}`));
     await once(tlsSocket, "end");
     expect(log).toEqual(["data 5"]);
+    // The transport's final() ends raw a turn later: a destroy() of raw before then fails that end().
+    await once(tlsSocket, "close");
   } finally {
     raw.destroy();
     server.close();

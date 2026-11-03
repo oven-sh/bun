@@ -334,6 +334,7 @@ mod natural_orderby {
     use super::{number_to_string, to_lower_case};
     use bun_core::fmt::js_string_to_number;
     use bun_core::strings;
+    use smallvec::SmallVec;
     use std::borrow::Cow;
     use std::cmp::Ordering;
 
@@ -448,9 +449,9 @@ mod natural_orderby {
         a.partial_cmp(&b).unwrap_or(Ordering::Equal)
     }
 
-    fn chunks_of(text: &[u8]) -> Vec<Chunk<'_>> {
+    fn chunks_of(text: &[u8]) -> SmallVec<[Chunk<'_>; 4]> {
         let pieces = split(text);
-        let mut chunks = Vec::with_capacity(pieces.len());
+        let mut chunks = SmallVec::with_capacity(pieces.len());
         for (index, piece) in pieces.iter().enumerate() {
             let previous = index.checked_sub(1).and_then(|i| pieces.get(i)).copied();
             chunks.push(Chunk {
@@ -462,8 +463,8 @@ mod natural_orderby {
     }
 
     /// `value.replace(RE_NUMBERS, "\0$1\0").replace(/\0$/, "").replace(/^\0/, "").split("\0")`
-    fn split(text: &[u8]) -> Vec<&[u8]> {
-        let mut pieces = Vec::new();
+    fn split(text: &[u8]) -> SmallVec<[&[u8]; 4]> {
+        let mut pieces = SmallVec::new();
         let mut start = 0;
         let mut at = 0;
         if let Some(end) = leading_number(text) {

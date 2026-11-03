@@ -2636,7 +2636,7 @@ describe.concurrent("behavior depends on the module a function is imported from"
     });
   });
 
-  test("toMatchObject() applies a matcher that is the whole expected or received value under both imports", async () => {
+  test("toMatchObject() applies a matcher that is the whole expected value under both imports", async () => {
     const { log, exitCode } = await runTests({
       "a.test.js": `
         import * as bun from "bun:test";
@@ -2649,19 +2649,12 @@ describe.concurrent("behavior depends on the module a function is imported from"
               outcome(() => expect({ a: 1, b: 2 }).toMatchObject(expect.objectContaining({ a: 2 }))),
               outcome(() => expect({ a: 1 }).not.toMatchObject(expect.any(Array))),
             ].join(" "));
-            console.log(name, "received:", [
-              outcome(() => expect(expect.any(Object)).toMatchObject({ a: 1 })),
-              outcome(() => expect(expect.any(Array)).toMatchObject({ a: 1 })),
-            ].join(" "));
           });
         }
       `,
     });
     expect({ log, exitCode }).toEqual({
-      log: ["bun", "vitest"].flatMap(name => [
-        `${name} expected: passes fails passes`,
-        `${name} received: passes fails`,
-      ]),
+      log: ["bun expected: passes fails passes", "vitest expected: passes fails passes"],
       exitCode: 0,
     });
   });

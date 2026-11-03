@@ -1268,7 +1268,7 @@ describe.concurrent("matchers that have to wait for a promise", () => {
     expect({ exitCode, signalCode }).toEqual({ exitCode: 1, signalCode: null });
   });
 
-  test("a matcher that waits, as the whole expected or received value of toMatchObject", async () => {
+  test("a matcher that waits, as the whole expected value of toMatchObject", async () => {
     const source = `
       expect.extend({
         async toHaveLater(received, key) {
@@ -1282,7 +1282,6 @@ describe.concurrent("matchers that have to wait for a promise", () => {
         console.log(expect(Promise.resolve({ a: 1 })).toMatchObject(expect.resolvesTo.objectContaining({ a: 1 })));
         await expect(later({ a: 1 })).not.toMatchObject(expect.resolvesTo.objectContaining({ a: 2 }));
         await expect(laterReject({ a: 1 })).toMatchObject(expect.rejectsTo.objectContaining({ a: 1 }));
-        await expect(expect.resolvesTo.objectContaining({ a: 1 })).toMatchObject(later({ a: 1 }));
         await expect({ a: 1 }).toMatchObject(expect.toHaveLater("a"));
         await expect({ a: 1 }).not.toMatchObject(expect.toHaveLater("b"));
       });

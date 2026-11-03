@@ -1031,11 +1031,10 @@ describe("expect.addEqualityTesters", () => {
     expect(seen).toHaveLength(1);
   });
 
-  test("an asymmetric matcher that is the whole value of toMatchObject comes first", () => {
+  test("an asymmetric matcher that is the whole expected value of toMatchObject comes first", () => {
     seen.length = 0;
     expect(litre()).toMatchObject(expect.any(Volume));
     expect(litre()).not.toMatchObject(expect.any(Array));
-    expect(expect.any(Volume)).toMatchObject(litre());
     expect(seen).toHaveLength(0);
     // a tester that says "equal" does not decide for the matcher
     const marked = { marked: true };

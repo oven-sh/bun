@@ -173,18 +173,16 @@ it("defines asymmetric variadic matchers that can be prefixed by not", () => {
 it("applies an asymmetric matcher passed as the whole toMatchObject argument", () => {
   expect({ value: 2 }).toMatchObject(expect._toCustomEqual({ value: 2 }));
   expect({ value: 2 }).not.toMatchObject(expect._toCustomEqual({ value: 3 }));
-  // the message is colored in CI, so match the matcher name only
-  expect(() => expect({ value: 2 }).toMatchObject(expect._toCustomEqual({ value: 3 }))).toThrow(/toMatchObject/);
+  // the message is colored in CI, so match the matcher name only, as Jest and Bun, or Vitest print it
+  expect(() => expect({ value: 2 }).toMatchObject(expect._toCustomEqual({ value: 3 }))).toThrow(
+    /toMatchObject|to match object/,
+  );
 
   expect({ value: 2 }).toMatchObject(expect.not._toCustomEqual({ value: 3 }));
   expect({ value: 2 }).not.toMatchObject(expect.not._toCustomEqual({ value: 2 }));
 
   // the matcher receives the whole object, which is not a number
   expect({ value: 2 }).not.toMatchObject(expect._toBeDivisibleBy(2));
-
-  // the matcher as the whole received value
-  expect(expect._toCustomEqual({ value: 2 })).toMatchObject({ value: 2 });
-  expect(expect._toCustomEqual({ value: 3 })).not.toMatchObject({ value: 2 });
 });
 
 it("prints the Symbol into the error message", () => {

@@ -17,6 +17,12 @@ class Base {
 class Middle extends Base {}
 class Derived extends Middle {}
 
+function deepClass(prototypes) {
+  let Class = Base;
+  for (let i = 1; i < prototypes; i++) Class = class extends Class {};
+  return new Class();
+}
+
 const user = () => ({
   id: 1,
   name: "n",
@@ -38,13 +44,16 @@ const cases = {
   "8 properties, 1 expected": [user(), { id: 1 }],
   "class instance": [new Point(), { x: 1 }],
   "class instance, 3 prototypes": [new Derived(), { id: 1 }],
+  "class instance, 12 prototypes": [deepClass(12), { id: 1 }],
   "EventEmitter": [new EventEmitter(), {}],
   "URL": [new URL("http://example.com/"), {}],
+  "URL expected": [new URL("http://example.com/"), new URL("http://example.com/")],
   "array": [
     [1, 2, 3],
     [1, 2, 3],
   ],
   "nested object": [{ x: 1, y: { z: 2 } }, { y: { z: 2 } }],
+  "expect.any(Object)": [{ a: 1, b: 2 }, expect.any(Object)],
   "expect.objectContaining()": [{ a: 1, b: 2 }, expect.objectContaining({ a: 1 })],
 };
 

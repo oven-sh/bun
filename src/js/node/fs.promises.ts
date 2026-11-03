@@ -425,7 +425,7 @@ const exports = {
     for (let retries = 0; ;) {
       try {
         return await fs.rm(path, options);
-      } catch (err) {
+      } catch (err: any) {
         const code = err?.code;
         if (retries > 0 && code === "ENOENT") return;
         if (

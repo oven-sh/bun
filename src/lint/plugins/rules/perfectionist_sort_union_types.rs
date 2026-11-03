@@ -261,7 +261,6 @@ impl SortUnionTypes {
 impl Rule for SortUnionTypes {
     const META: Meta = Meta::plugin(Plugin::Perfectionist, "sort-union-types", Kind::Suggestion)
         .fixable(Fixable::Code)
-        .recommended()
         .reports_on_exit();
     const ON: On = On::new().types(&[TypeTag::Union]);
     type State<'a> = State;

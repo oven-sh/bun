@@ -603,7 +603,6 @@ fn is_node_inside_deferred_function<'a, 'p>(
 impl Rule for SortObjects {
     const META: Meta = Meta::plugin(Plugin::Perfectionist, "sort-objects", Kind::Suggestion)
         .fixable(Fixable::Code)
-        .recommended()
         .reports_on_exit();
     const ON: On = On::new().exprs(&[ExprTag::Object]).pats(&[PatTag::Object]);
     type State<'a> = State;

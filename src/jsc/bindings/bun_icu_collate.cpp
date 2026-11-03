@@ -18,10 +18,14 @@
 #include <unicode/utypes.h>
 extern "C" {
 typedef struct UCollator UCollator;
-typedef enum { UCOL_NORMALIZATION_MODE = 4,
+typedef enum { UCOL_CASE_FIRST = 2,
+    UCOL_CASE_LEVEL = 3,
+    UCOL_NORMALIZATION_MODE = 4,
     UCOL_STRENGTH = 5,
     UCOL_NUMERIC_COLLATION = 7 } UColAttribute;
 typedef enum { UCOL_PRIMARY = 0,
+    UCOL_TERTIARY = 2,
+    UCOL_OFF = 16,
     UCOL_ON = 17 } UColAttributeValue;
 typedef enum { UCOL_LESS = -1,
     UCOL_EQUAL = 0,
@@ -49,10 +53,12 @@ static const UCollator* open(const char* locale, bool isNumericAndBase)
     UCollator* collator = ucol_open(locale, &status);
     if (U_FAILURE(status))
         return nullptr;
-    if (isNumericAndBase) {
-        ucol_setAttribute(collator, UCOL_STRENGTH, UCOL_PRIMARY, &status);
-        ucol_setAttribute(collator, UCOL_NUMERIC_COLLATION, UCOL_ON, &status);
-    }
+    // `Intl.Collator` sets these whatever the locale's tailoring says: Danish's puts upper case first, `localeCompare`
+    // in Danish does not.
+    ucol_setAttribute(collator, UCOL_STRENGTH, isNumericAndBase ? UCOL_PRIMARY : UCOL_TERTIARY, &status);
+    ucol_setAttribute(collator, UCOL_CASE_LEVEL, UCOL_OFF, &status);
+    ucol_setAttribute(collator, UCOL_CASE_FIRST, UCOL_OFF, &status);
+    ucol_setAttribute(collator, UCOL_NUMERIC_COLLATION, isNumericAndBase ? UCOL_ON : UCOL_OFF, &status);
     // Texts that are canonically equivalent are equal.
     ucol_setAttribute(collator, UCOL_NORMALIZATION_MODE, UCOL_ON, &status);
     if (U_FAILURE(status)) {

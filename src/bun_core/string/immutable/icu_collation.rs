@@ -179,12 +179,3 @@ impl Collator {
         collate(a, b, With::Locale(self))
     }
 }
-
-/// `a.localeCompare(b, locale)`, for WTF-8: the root collation when `locale` is not a well-formed language tag or
-/// not a supported one. Looks the collator up by tag each time; a loop keeps a [`Collator`] instead.
-pub fn locale_compare_in(locale: &[u8], a: &[u8], b: &[u8]) -> Ordering {
-    match Collator::open(locale) {
-        Ok(collator) => collator.compare(a, b),
-        Err(_) => locale_compare(a, b),
-    }
-}

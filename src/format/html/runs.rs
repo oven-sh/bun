@@ -772,9 +772,11 @@ impl<'a> Scanner<'_, 'a> {
         if parent_definition.is_closed_by_child(name) {
             return None;
         }
-        // `<ElButton>` is a name like any other, unless it is the name of a tag but for its capital letters.
+        // `<ElButton>` is a name like any other, unless it is the name of a tag but for its capital letters, or
+        // `<foreignObject>`, which is in the namespace of `<svg>` wherever it is.
         if has_capital
-            && (data::has_tag_definition(&name.to_ascii_lowercase())
+            && (data::has_tag_definition(name)
+                || data::has_tag_definition(&name.to_ascii_lowercase())
                 || data::css_display_of_tag(&name.to_ascii_lowercase()).is_some()
                 || data::is_pre_tag(&name.to_ascii_lowercase()))
         {

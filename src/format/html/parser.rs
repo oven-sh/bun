@@ -112,10 +112,11 @@ impl<'a> TreeBuilder<'a, '_, '_, '_> {
                     && !definition.ignore_first_lf
                     && !definition.is_void
                     && !data::is_pre_tag(name);
+                // What is in these is not printed like the rest, nor is an `<svg>` further in.
                 let is_plain = is_plain
+                    && !node.has(Flags::IS_IN_TEXT_OR_FOREIGN_OBJECT)
                     && match is_in_svg {
-                        // What is in these is not printed like the rest.
-                        true => !node.has(Flags::IS_IN_TEXT_OR_FOREIGN_OBJECT),
+                        true => true,
                         false => {
                             node.namespace.is_empty()
                                 && name.iter().all(|byte| match byte {

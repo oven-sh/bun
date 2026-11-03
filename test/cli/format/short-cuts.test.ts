@@ -1753,6 +1753,9 @@ describe.skipIf(!hasFlag)("Vue", () => {
     "<custom>\n  <p>\n</custom>\n\n<template>\n  <p>a</p>\n</template>\n",
     "<template>\n  <p>a</p>\n</template>\n<br>\n",
     '<!doctype html>\n<html>\n  <body>\n    <p A="b">c</p>\n  </body>\n</html>\n',
+    // In a `<foreignObject>`, which need not be in an `<svg>`, an `<svg>` and what is in it are inline.
+    "<template>\n  <foreignObject>\n    <svg> </svg>\n  </foreignObject>\n</template>\n",
+    "<template>\n  <svg>\n    <foreignObject>\n      <div>\n        <svg> </svg>\n        <svg>\n          <g> </g>\n        </svg>\n      </div>\n    </foreignObject>\n  </svg>\n</template>\n",
   );
   const files = Object.fromEntries(inputs.map((input, index) => [`${index}.vue`, input]));
 

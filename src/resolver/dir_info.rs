@@ -14,6 +14,55 @@ use allocators::{NOT_FOUND, UNASSIGNED};
 
 pub type Index = IndexType;
 
+/// Who asks the caches for a fact. It is a type of the lookup, not a field: a `Resolver` is copied while it runs.
+pub(crate) trait Asker: Copy {
+    /// False for `Trusting`, whose code is the code without any check.
+    const CHECKS: bool;
+    /// The generation that a cached fact is compared with. 0 for `Trusting`.
+    fn generation(self) -> Generation;
+}
+
+/// Takes every cached fact as it is.
+#[derive(Clone, Copy)]
+pub(crate) struct Trusting;
+
+/// Takes a cached fact as it is only if it was read or checked at this generation, which is never 0.
+#[derive(Clone, Copy)]
+pub(crate) struct Checked(pub(crate) Generation);
+
+impl Asker for Trusting {
+    const CHECKS: bool = false;
+    #[inline(always)]
+    fn generation(self) -> Generation {
+        0
+    }
+}
+
+impl Asker for Checked {
+    const CHECKS: bool = true;
+    #[inline(always)]
+    fn generation(self) -> Generation {
+        self.0
+    }
+}
+
+/// Runs `$body` with `$asker` bound to the asker that `$generation` stands for: `Trusting` for 0, else `Checked`.
+macro_rules! dispatch_asker {
+    ($generation:expr, |$asker:ident| $body:expr) => {
+        match $generation {
+            0 => {
+                let $asker = $crate::dir_info::Trusting;
+                $body
+            }
+            generation => {
+                let $asker = $crate::dir_info::Checked(generation);
+                $body
+            }
+        }
+    };
+}
+pub(crate) use dispatch_asker;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // DirInfoRef — arena handle into the DirInfo BSSMap singleton.
 //

@@ -251,6 +251,7 @@ use bun_ptr::Interned;
 use bun_sys::Fd as FD;
 use bun_threading::Mutex;
 
+use crate::dir_info::Asker;
 use crate::fs as Fs;
 use crate::fs::FilenameStoreAppender;
 use crate::node_fallbacks as NodeFallbackModules;
@@ -1375,8 +1376,9 @@ impl<'a> Resolver<'a> {
     /// disk. Used to let path-aliased local files win over `packages=external`
     /// without breaking catch-all `"*"` paths entries that only cover ambient
     /// type stubs.
-    pub(crate) fn resolve_via_tsconfig_paths(
+    pub(crate) fn resolve_via_tsconfig_paths<A: Asker>(
         &mut self,
+        asker: A,
         source_dir: &[u8],
         import_path: &[u8],
         kind: ast::ImportKind,
@@ -1388,7 +1390,7 @@ impl<'a> Resolver<'a> {
         if !bun_paths::is_absolute(source_dir) {
             return MatchStatus::NotFound;
         }
-        let Some(dir_info) = self.dir_info_cached(source_dir).ok().flatten() else {
+        let Some(dir_info) = self.dir_info_cached(asker, source_dir).ok().flatten() else {
             return MatchStatus::NotFound;
         };
         let Some(tsconfig) = self.enclosing_tsconfig_json(&dir_info) else {
@@ -1397,7 +1399,7 @@ impl<'a> Resolver<'a> {
         if tsconfig.paths.count() == 0 {
             return MatchStatus::NotFound;
         }
-        self.match_tsconfig_paths(&tsconfig, import_path, kind, out)
+        self.match_tsconfig_paths(asker, &tsconfig, import_path, kind, out)
     }
 
     pub(crate) fn flush_debug_logs(&mut self, flush_mode: FlushMode) -> crate::CrateResult<()> {
@@ -1736,10 +1738,9 @@ impl<'a> Resolver<'a> {
             && !self.matches_user_external_pattern(import_path)
         {
             let mut res = MatchResult::default();
-            if self
-                .resolve_via_tsconfig_paths(source_dir, import_path, kind, &mut res)
-                .is_success()
-            {
+            let aliased = DirInfo::dispatch_asker!(self.generation, |asker| self
+                .resolve_via_tsconfig_paths(asker, source_dir, import_path, kind, &mut res));
+            if aliased.is_success() {
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug.add_note(
                         b"Resolved via tsconfig.json \"paths\" before applying packages=external"
@@ -1982,8 +1983,14 @@ impl<'a> Resolver<'a> {
             None
         };
         let marks = (self.log_mark(), self.esm_failure);
-        let as_written =
-            self.resolve_without_symlinks(source_dir_normalized, import_path, kind, global_cache);
+        let as_written = DirInfo::dispatch_asker!(self.generation, |asker| self
+            .resolve_without_symlinks(
+                asker,
+                source_dir_normalized,
+                import_path,
+                kind,
+                global_cache
+            ));
         // The flag is set for what an executable compiled in place holds at the path.
         let (tmp, is_at_source_path) = if matches!(as_written, ResultUnion::NotFound) {
             self.resolve_after_miss_as_written(
@@ -2007,7 +2014,9 @@ impl<'a> Resolver<'a> {
                 if result.path_pair.primary.namespace() != b"node"
                     && !result.flags.is_standalone_module()
                 {
-                    if let Err(err) = self.finalize_result(&mut result, kind) {
+                    let finalized = DirInfo::dispatch_asker!(self.generation, |asker| self
+                        .finalize_result(asker, &mut result, kind));
+                    if let Err(err) = finalized {
                         self.extension_order = original_order;
                         return ResultUnion::Failure(err);
                     }
@@ -2182,8 +2191,9 @@ impl<'a> Resolver<'a> {
         self.resolve_as(source_dir, import_path, kind, how)
     }
 
-    pub(crate) fn finalize_result(
+    pub(crate) fn finalize_result<A: Asker>(
         &mut self,
+        asker: A,
         result: &mut Result,
         kind: ast::ImportKind,
     ) -> crate::CrateResult<()> {
@@ -2196,7 +2206,7 @@ impl<'a> Resolver<'a> {
         for path in result.path_pair.iter_mut() {
             let name = path.name();
             let primary = core::mem::take(&mut is_primary);
-            let Ok(Some(dir)) = self.read_dir_info(name.dir) else {
+            let Ok(Some(dir)) = self.dir_info_cached_maybe_log(asker, false, name.dir) else {
                 continue;
             };
 
@@ -2264,11 +2274,11 @@ impl<'a> Resolver<'a> {
             // concurrent resolver at a newer generation rewrites this `DirEntry`'s
             // map in place under that lock. The entry pointer stays valid after
             // unlock (EntryStore-owned).
-            if let Some(query) = dir.get_entry(self.generation, name.filename) {
+            if let Some(query) = dir.get_entry(asker.generation(), name.filename) {
                 let symlink_path =
                     query
                         .entry()
-                        .symlink_for(self.generation, self.rfs_ref(), self.store_fd);
+                        .symlink_for(asker.generation(), self.rfs_ref(), self.store_fd);
                 if !symlink_path.is_empty() {
                     path.set_realpath(symlink_path);
                     if !result.file_fd.is_valid() {
@@ -2399,8 +2409,8 @@ impl<'a> Resolver<'a> {
             source_dir,
             import_path,
             |this| {
-                let as_written =
-                    this.resolve_without_symlinks(source_dir, import_path, kind, global_cache);
+                let as_written = DirInfo::dispatch_asker!(this.generation, |asker| this
+                    .resolve_without_symlinks(asker, source_dir, import_path, kind, global_cache));
                 if !matches!(as_written, ResultUnion::NotFound) {
                     return (as_written, false);
                 }
@@ -2443,8 +2453,14 @@ impl<'a> Resolver<'a> {
                 bstr::BStr::new(&import_path[suffix..])
             ));
         }
-        let without_suffix =
-            self.resolve_without_symlinks(source_dir, &import_path[0..suffix], kind, global_cache);
+        let without_suffix = DirInfo::dispatch_asker!(self.generation, |asker| self
+            .resolve_without_symlinks(
+                asker,
+                source_dir,
+                &import_path[0..suffix],
+                kind,
+                global_cache
+            ));
         (without_suffix, false)
     }
 
@@ -2610,8 +2626,9 @@ impl<'a> Resolver<'a> {
         stale || found
     }
 
-    pub(crate) fn resolve_without_symlinks<'r>(
+    pub(crate) fn resolve_without_symlinks<'r, A: Asker>(
         &mut self,
+        asker: A,
         source_dir: &[u8],
         input_import_path: &'r [u8],
         kind: ast::ImportKind,
@@ -2671,12 +2688,12 @@ impl<'a> Resolver<'a> {
             }
 
             // First, check path overrides from the nearest enclosing TypeScript "tsconfig.json" file
-            if let Ok(Some(dir_info)) = self.dir_info_cached(source_dir) {
+            if let Ok(Some(dir_info)) = self.dir_info_cached(asker, source_dir) {
                 if let Some(tsconfig) = self.enclosing_tsconfig_json(&dir_info) {
                     if tsconfig.paths.count() > 0 {
                         let mut res = MatchResult::default();
                         if self
-                            .match_tsconfig_paths(&tsconfig, import_path, kind, &mut res)
+                            .match_tsconfig_paths(asker, &tsconfig, import_path, kind, &mut res)
                             .is_success()
                         {
                             // We don't set the directory fd here because it might remap an entirely different directory
@@ -2723,6 +2740,7 @@ impl<'a> Resolver<'a> {
             let mut entry = MatchResult::default();
             if self
                 .load_as_file_or_directory(
+                    asker,
                     normalizer.resolve(source_dir, import_path),
                     kind,
                     &mut entry,
@@ -2756,6 +2774,7 @@ impl<'a> Resolver<'a> {
                 for custom_path in custom_paths {
                     let custom_utf8 = custom_path.to_utf8();
                     match self.check_relative_path(
+                        asker,
                         custom_utf8.slice(),
                         import_path,
                         kind,
@@ -2770,7 +2789,7 @@ impl<'a> Resolver<'a> {
                 debug_assert!(!check_package); // always from JavaScript
                 return ResultUnion::NotFound; // bail out now since there isn't anywhere else to check
             } else {
-                match self.check_relative_path(source_dir, import_path, kind, global_cache) {
+                match self.check_relative_path(asker, source_dir, import_path, kind, global_cache) {
                     ResultUnion::Success(res) => return ResultUnion::Success(res),
                     ResultUnion::Pending(p) => return ResultUnion::Pending(p),
                     ResultUnion::Failure(p) => return ResultUnion::Failure(p),
@@ -2792,7 +2811,7 @@ impl<'a> Resolver<'a> {
                 // polyfill. The lookup uses the bare name so it matches the same
                 // spellings the polyfill table below does.
                 let browser_map_overrides_builtin = self.care_about_browser_field
-                    && matches!(self.dir_info_cached(source_dir), Ok(Some(info))
+                    && matches!(self.dir_info_cached(asker, source_dir), Ok(Some(info))
                     if info
                         .get_enclosing_browser_scope()
                         .is_some_and(|scope| {
@@ -2897,6 +2916,7 @@ impl<'a> Resolver<'a> {
                 for custom_path in custom_paths {
                     let custom_utf8 = custom_path.to_utf8();
                     match self.check_package_path(
+                        asker,
                         custom_utf8.slice(),
                         import_path,
                         kind,
@@ -2909,7 +2929,7 @@ impl<'a> Resolver<'a> {
                     }
                 }
             } else {
-                match self.check_package_path(source_dir, import_path, kind, global_cache) {
+                match self.check_package_path(asker, source_dir, import_path, kind, global_cache) {
                     ResultUnion::Success(res) => return ResultUnion::Success(res),
                     ResultUnion::Pending(p) => return ResultUnion::Pending(p),
                     ResultUnion::Failure(p) => return ResultUnion::Failure(p),
@@ -2940,8 +2960,9 @@ impl<'a> Resolver<'a> {
         rest.is_empty() || ResolvePath::is_sep_any(rest[rest.len() - 1])
     }
 
-    pub(crate) fn check_relative_path(
+    pub(crate) fn check_relative_path<A: Asker>(
         &mut self,
+        asker: A,
         source_dir: &[u8],
         import_path: &[u8],
         kind: ast::ImportKind,
@@ -2988,7 +3009,7 @@ impl<'a> Resolver<'a> {
         if self.care_about_browser_field {
             // ".." segments can reach the filesystem root, which has no parent.
             let dirname = bun_paths::dirname(abs_path).unwrap_or(abs_path);
-            if let Ok(Some(import_dir_info_outer)) = self.dir_info_cached(dirname) {
+            if let Ok(Some(import_dir_info_outer)) = self.dir_info_cached(asker, dirname) {
                 if let Some(import_dir_info) = import_dir_info_outer.get_enclosing_browser_scope() {
                     let pkg = import_dir_info.package_json().unwrap();
                     if let Some(remap) = self
@@ -3018,6 +3039,7 @@ impl<'a> Resolver<'a> {
                         let mut match_result = MatchResult::default();
                         if self
                             .resolve_without_remapping(
+                                asker,
                                 import_dir_info,
                                 remap,
                                 kind,
@@ -3071,7 +3093,7 @@ impl<'a> Resolver<'a> {
 
         let mut res = MatchResult::default();
         let ret = if self
-            .load_as_file_or_directory(abs_path, kind, &mut res)
+            .load_as_file_or_directory(asker, abs_path, kind, &mut res)
             .is_success()
         {
             ResultUnion::Success(Result {
@@ -3088,15 +3110,16 @@ impl<'a> Resolver<'a> {
         ret
     }
 
-    pub(crate) fn check_package_path<'r>(
+    pub(crate) fn check_package_path<'r, A: Asker>(
         &mut self,
+        asker: A,
         source_dir: &[u8],
         unremapped_import_path: &'r [u8],
         kind: ast::ImportKind,
         global_cache: GlobalCache,
     ) -> ResultUnion<'r> {
         let mut import_path = unremapped_import_path;
-        let mut source_dir_info: DirInfoRef = match self.dir_info_cached(source_dir) {
+        let mut source_dir_info: DirInfoRef = match self.dir_info_cached(asker, source_dir) {
             Err(_) => return ResultUnion::NotFound,
             Ok(Some(d)) => d,
             Ok(None) => 'dir: {
@@ -3129,7 +3152,7 @@ impl<'a> Resolver<'a> {
                 // has been visited. `None` is theoretically impossible since
                 // the drive root should always exist.
                 while let Some(current) = bun_paths::dirname(closest_dir) {
-                    match self.dir_info_cached(current) {
+                    match self.dir_info_cached(asker, current) {
                         Err(_) => return ResultUnion::NotFound,
                         Ok(Some(dir)) => break 'dir dir,
                         Ok(None) => {}
@@ -3156,6 +3179,7 @@ impl<'a> Resolver<'a> {
                             let mut node_module = MatchResult::default();
                             if self
                                 .load_node_modules(
+                                    asker,
                                     import_path,
                                     kind,
                                     source_dir_info,
@@ -3203,6 +3227,7 @@ impl<'a> Resolver<'a> {
 
         let mut res = MatchResult::default();
         match self.resolve_without_remapping(
+            asker,
             source_dir_info,
             import_path,
             kind,
@@ -3241,7 +3266,11 @@ impl<'a> Resolver<'a> {
                 if res.package_json.is_some() && self.care_about_browser_field {
                     let base_dir_info = match res.dir_info {
                         Some(d) => d,
-                        None => match self.read_dir_info(result.path_pair.primary.name().dir) {
+                        None => match self.dir_info_cached_maybe_log(
+                            asker,
+                            false,
+                            result.path_pair.primary.name().dir,
+                        ) {
                             Ok(Some(d)) => d,
                             _ => return ResultUnion::Success(result),
                         },
@@ -3261,6 +3290,7 @@ impl<'a> Resolver<'a> {
                                 let mut remapped = MatchResult::default();
                                 if self
                                     .resolve_without_remapping(
+                                        asker,
                                         browser_scope,
                                         remap,
                                         kind,
@@ -3780,8 +3810,10 @@ impl<'a> Resolver<'a> {
         busted
     }
 
-    pub(crate) fn load_node_modules(
+    #[cfg_attr(mordant, allow(generic_body_not_generic))]
+    pub(crate) fn load_node_modules<A: Asker>(
         &mut self,
+        asker: A,
         import_path: &[u8],
         kind: ast::ImportKind,
         // NOTE: `DirInfoRef` (not `&mut`) — body re-enters `dir_cache` via
@@ -3812,7 +3844,7 @@ impl<'a> Resolver<'a> {
             // Try path substitutions first
             if tsconfig.paths.count() > 0 {
                 if self
-                    .match_tsconfig_paths(&tsconfig, import_path, kind, out)
+                    .match_tsconfig_paths(asker, &tsconfig, import_path, kind, out)
                     .is_success()
                 {
                     if let Some(d) = self.debug_logs.as_mut() {
@@ -3829,7 +3861,10 @@ impl<'a> Resolver<'a> {
                     &[base, import_path],
                     bufs!(load_as_file_or_directory_via_tsconfig_base_path),
                 ) {
-                    if self.load_as_file_or_directory(abs, kind, out).is_success() {
+                    if self
+                        .load_as_file_or_directory(asker, abs, kind, out)
+                        .is_success()
+                    {
                         if let Some(d) = self.debug_logs.as_mut() {
                             d.decrease_indent();
                         }
@@ -3858,6 +3893,7 @@ impl<'a> Resolver<'a> {
 
             if import_path.starts_with(b"#") && !forbid_imports && package_json.imports.is_some() {
                 let r = self.load_package_imports(
+                    asker,
                     import_path,
                     _dir_info_package_json,
                     kind,
@@ -3941,7 +3977,8 @@ impl<'a> Resolver<'a> {
                         };
 
                         if let Some(abs_package_path) = abs_package_path
-                            && let Ok(Some(pkg_dir_info)) = self.dir_info_cached(abs_package_path)
+                            && let Ok(Some(pkg_dir_info)) =
+                                self.dir_info_cached(asker, abs_package_path)
                         {
                             self.extension_order = match kind {
                                 ast::ImportKind::Url
@@ -3985,6 +4022,7 @@ impl<'a> Resolver<'a> {
 
                                         if self
                                             .handle_esm_resolution(
+                                                asker,
                                                 esm_resolution,
                                                 abs_package_path,
                                                 kind,
@@ -4043,6 +4081,7 @@ impl<'a> Resolver<'a> {
                                         );
                                         if self
                                             .handle_esm_resolution(
+                                                asker,
                                                 esm_resolution,
                                                 abs_package_path,
                                                 kind,
@@ -4105,7 +4144,7 @@ impl<'a> Resolver<'a> {
                     }
 
                     if self
-                        .load_as_file_or_directory(abs_path, kind, out)
+                        .load_as_file_or_directory(asker, abs_path, kind, out)
                         .is_success()
                     {
                         self.extension_order = prev_extension_order;
@@ -4154,7 +4193,7 @@ impl<'a> Resolver<'a> {
                     ));
                 }
                 if self
-                    .load_as_file_or_directory(abs_path, kind, out)
+                    .load_as_file_or_directory(asker, abs_path, kind, out)
                     .is_success()
                 {
                     if let Some(d) = self.debug_logs.as_mut() {
@@ -4369,7 +4408,7 @@ impl<'a> Resolver<'a> {
                             bufs!(path_in_global_disk_cache),
                         )
                     {
-                        let found = self.dir_info_cached(folder);
+                        let found = self.dir_info_cached(asker, folder);
                         if !matches!(found, Ok(Some(_))) {
                             self.log_mut().add_error_fmt(
                                 None,
@@ -4494,7 +4533,11 @@ impl<'a> Resolver<'a> {
                         return MatchStatus::NotFound;
                     }
 
-                    self.dir_info_for_resolution(dir_path_for_resolution, resolved_package_id)
+                    self.dir_info_for_resolution(
+                        asker,
+                        dir_path_for_resolution,
+                        resolved_package_id,
+                    )
                 };
 
                 match package_dir_info {
@@ -4527,6 +4570,7 @@ impl<'a> Resolver<'a> {
 
                                         if self
                                             .handle_esm_resolution(
+                                                asker,
                                                 esm_resolution,
                                                 abs_package_path,
                                                 kind,
@@ -4569,6 +4613,7 @@ impl<'a> Resolver<'a> {
                                         );
                                         if self
                                             .handle_esm_resolution(
+                                                asker,
                                                 esm_resolution,
                                                 abs_package_path,
                                                 kind,
@@ -4635,7 +4680,7 @@ impl<'a> Resolver<'a> {
                             }
 
                             if self
-                                .load_as_file_or_directory(abs_path, kind, out)
+                                .load_as_file_or_directory(asker, abs_path, kind, out)
                                 .is_success()
                             {
                                 out.is_node_module = true;
@@ -4662,8 +4707,9 @@ impl<'a> Resolver<'a> {
         MatchStatus::NotFound
     }
 
-    fn dir_info_for_resolution(
+    fn dir_info_for_resolution<A: Asker>(
         &mut self,
+        asker: A,
         dir_path_maybe_trail_slash: &[u8],
         package_id: Install::PackageID,
     ) -> crate::CrateResult<Option<DirInfoRef>> {
@@ -4718,7 +4764,7 @@ impl<'a> Resolver<'a> {
 
         if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
             if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
-                if entries.generation >= self.generation {
+                if !A::CHECKS || entries.generation >= asker.generation() {
                     dir_entries_option = cached_entry;
                     needs_iter = false;
                 } else {
@@ -4740,7 +4786,7 @@ impl<'a> Resolver<'a> {
                         .append_slice(dir_path)
                         .expect("unreachable")
                 },
-                self.generation,
+                asker.generation(),
             );
 
             // Pre-size `data` so the per-entry inserts below skip the
@@ -4832,6 +4878,7 @@ impl<'a> Resolver<'a> {
         // retag that would pop the shared tag mid-argument-list under Stacked Borrows).
         let dir_entries_dir = unsafe { &*dir_entries_option }.entries().dir;
         self.dir_info_uncached(
+            asker.generation(),
             dir_info_ptr,
             dir_entries_dir,
             // already `*mut EntriesOption` — pass raw, no intermediate `&mut` retag
@@ -4928,8 +4975,9 @@ impl<'a> Resolver<'a> {
         unreachable!("TODO: implement enqueueDependencyToResolve for non-root packages")
     }
 
-    fn handle_esm_resolution(
+    fn handle_esm_resolution<A: Asker>(
         &mut self,
+        asker: A,
         mut esm_resolution: crate::package_json::Resolution,
         abs_package_path: &[u8],
         kind: ast::ImportKind,
@@ -4938,6 +4986,7 @@ impl<'a> Resolver<'a> {
         out: &mut MatchResult,
     ) -> MatchStatus {
         let status = self.load_esm_resolution(
+            asker,
             &mut esm_resolution,
             abs_package_path,
             kind,
@@ -4951,8 +5000,10 @@ impl<'a> Resolver<'a> {
         status
     }
 
-    fn load_esm_resolution(
+    #[cfg_attr(mordant, allow(generic_body_not_generic))]
+    fn load_esm_resolution<A: Asker>(
         &mut self,
+        asker: A,
         esm_resolution: &mut crate::package_json::Resolution,
         abs_package_path: &[u8],
         kind: ast::ImportKind,
@@ -4987,7 +5038,7 @@ impl<'a> Resolver<'a> {
         match esm_resolution.status {
             Status::Exact | Status::ExactEndsWithStar => {
                 let resolved_dir_info = match self
-                    .dir_info_cached(bun_paths::dirname(abs_esm_path).unwrap())
+                    .dir_info_cached(asker, bun_paths::dirname(abs_esm_path).unwrap())
                     .ok()
                     .flatten()
                 {
@@ -5014,7 +5065,7 @@ impl<'a> Resolver<'a> {
                 let looked_up = {
                     let _entries_lock = self.rfs_ref().entries_mutex.lock_guard();
                     resolved_dir_info
-                        .get_entries_ref_locked(self.generation)
+                        .get_entries_ref_locked(asker.generation())
                         .map(|entries| (entries.get(base), entries.fd))
                 };
                 let Some((entry_lookup, dirname_fd)) = looked_up else {
@@ -5023,7 +5074,7 @@ impl<'a> Resolver<'a> {
                 };
                 let entry_kind = entry_lookup.as_ref().map(|q| {
                     q.entry()
-                        .kind_for(self.generation, self.rfs_ref(), self.store_fd)
+                        .kind_for(asker.generation(), self.rfs_ref(), self.store_fd)
                 });
                 let entry_query = match entry_lookup {
                     Some(q) if entry_kind != Some(Fs::file_system::EntryKind::Dangling) => q,
@@ -5032,6 +5083,7 @@ impl<'a> Resolver<'a> {
                         esm_resolution.status = Status::ModuleNotFound;
 
                         if self.probe_target_extensions(
+                            asker,
                             resolved_dir_info,
                             dirname_fd,
                             package_json,
@@ -5050,6 +5102,7 @@ impl<'a> Resolver<'a> {
                     let ends_with_star = esm_resolution.status == Status::ExactEndsWithStar;
                     if ends_with_star
                         && self.probe_target_extensions(
+                            asker,
                             resolved_dir_info,
                             dirname_fd,
                             package_json,
@@ -5065,7 +5118,7 @@ impl<'a> Resolver<'a> {
 
                     // Try to have a friendly error message if people forget the "/index.js" suffix
                     if ends_with_star {
-                        if let Ok(Some(dir_info_ref)) = self.dir_info_cached(abs_esm_path) {
+                        if let Ok(Some(dir_info_ref)) = self.dir_info_cached(asker, abs_esm_path) {
                             let index = b"index";
                             let buf = bufs!(load_as_file);
                             buf[..index.len()].copy_from_slice(index);
@@ -5077,10 +5130,10 @@ impl<'a> Resolver<'a> {
                                 let file_name = &mut buf[0..index.len() + ext.len()];
                                 file_name[index.len()..].copy_from_slice(ext);
                                 let index_query =
-                                    dir_info_ref.get_entry(self.generation, &file_name[..]);
+                                    dir_info_ref.get_entry(asker.generation(), &file_name[..]);
                                 if let Some(iq) = index_query {
                                     if iq.entry().kind_for(
-                                        self.generation,
+                                        asker.generation(),
                                         self.rfs_ref(),
                                         self.store_fd,
                                     ) == Fs::file_system::EntryKind::File
@@ -5152,7 +5205,7 @@ impl<'a> Resolver<'a> {
                 // instead of a "*", we need to try CommonJS-style implicit
                 // extension and/or directory detection.
                 if self
-                    .load_as_file_or_directory(abs_esm_path, kind, out)
+                    .load_as_file_or_directory(asker, abs_esm_path, kind, out)
                     .is_success()
                 {
                     out.is_node_module = true;
@@ -5175,8 +5228,9 @@ impl<'a> Resolver<'a> {
     /// Each probe goes through [`DirInfo::get_entry`] so the map walk happens
     /// under `entries_mutex`; `dirname_fd` was captured under the caller's
     /// critical section.
-    fn probe_target_extensions(
+    fn probe_target_extensions<A: Asker>(
         &mut self,
+        asker: A,
         resolved_dir_info: DirInfoRef,
         dirname_fd: FD,
         package_json: &PackageJSON,
@@ -5196,11 +5250,11 @@ impl<'a> Resolver<'a> {
                 let file_name = &mut buf[0..base.len() + ext.len()];
                 file_name[base.len()..].copy_from_slice(ext);
                 if let Some(ext_query) =
-                    resolved_dir_info.get_entry(self.generation, &file_name[..])
+                    resolved_dir_info.get_entry(asker.generation(), &file_name[..])
                 {
                     if ext_query
                         .entry()
-                        .kind_for(self.generation, self.rfs_ref(), self.store_fd)
+                        .kind_for(asker.generation(), self.rfs_ref(), self.store_fd)
                         == Fs::file_system::EntryKind::File
                     {
                         if let Some(debug) = self.debug_logs.as_mut() {
@@ -5238,12 +5292,13 @@ impl<'a> Resolver<'a> {
                     let file_name = &mut buf[0..segment.len() + replacement.len()];
                     file_name[segment.len()..].copy_from_slice(replacement);
                     if let Some(ts_query) =
-                        resolved_dir_info.get_entry(self.generation, &file_name[..])
+                        resolved_dir_info.get_entry(asker.generation(), &file_name[..])
                     {
-                        if ts_query
-                            .entry()
-                            .kind_for(self.generation, self.rfs_ref(), self.store_fd)
-                            == Fs::file_system::EntryKind::File
+                        if ts_query.entry().kind_for(
+                            asker.generation(),
+                            self.rfs_ref(),
+                            self.store_fd,
+                        ) == Fs::file_system::EntryKind::File
                         {
                             if let Some(debug) = self.debug_logs.as_mut() {
                                 debug.add_note_fmt(format_args!(
@@ -5319,8 +5374,9 @@ impl<'a> Resolver<'a> {
         true
     }
 
-    pub(crate) fn resolve_without_remapping(
+    pub(crate) fn resolve_without_remapping<A: Asker>(
         &mut self,
+        asker: A,
         // NOTE: `DirInfoRef` (not `&mut`) — forwards into `load_node_modules`
         // which re-enters `dir_cache` and may re-derive the same DirInfo slot.
         source_dir_info: DirInfoRef,
@@ -5330,7 +5386,15 @@ impl<'a> Resolver<'a> {
         out: &mut MatchResult,
     ) -> MatchStatus {
         if is_package_path(import_path) {
-            self.load_node_modules(import_path, kind, source_dir_info, global_cache, false, out)
+            self.load_node_modules(
+                asker,
+                import_path,
+                kind,
+                source_dir_info,
+                global_cache,
+                false,
+                out,
+            )
         } else {
             let Some(resolved) = self.fs_ref().abs_buf_checked(
                 &[source_dir_info.abs_path, import_path],
@@ -5338,7 +5402,7 @@ impl<'a> Resolver<'a> {
             ) else {
                 return MatchStatus::NotFound;
             };
-            self.load_as_file_or_directory(resolved, kind, out)
+            self.load_as_file_or_directory(asker, resolved, kind, out)
         }
     }
 
@@ -5429,6 +5493,7 @@ impl<'a> Resolver<'a> {
 
     pub(crate) fn parse_package_json<const ALLOW_DEPENDENCIES: bool>(
         &mut self,
+        _generation: Generation,
         file: &[u8],
         dirname_fd: FD,
         package_id: Option<Install::PackageID>,
@@ -5467,25 +5532,29 @@ impl<'a> Resolver<'a> {
         Ok(Some(intern_package_json(pkg)))
     }
 
-    fn dir_info_cached(&mut self, path: &[u8]) -> crate::CrateResult<Option<DirInfoRef>> {
-        self.dir_info_cached_maybe_log(true, path)
+    fn dir_info_cached<A: Asker>(
+        &mut self,
+        asker: A,
+        path: &[u8],
+    ) -> crate::CrateResult<Option<DirInfoRef>> {
+        self.dir_info_cached_maybe_log(asker, true, path)
     }
 
     pub fn read_dir_info(&mut self, path: &[u8]) -> crate::CrateResult<Option<DirInfoRef>> {
-        self.dir_info_cached_maybe_log(false, path)
+        DirInfo::dispatch_asker!(self.generation, |asker| self
+            .dir_info_cached_maybe_log(asker, false, path))
     }
 
     /// Like `readDirInfo`, but returns `null` instead of throwing an error.
     pub fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef> {
-        self.dir_info_cached_maybe_log(false, path).ok().flatten()
+        self.read_dir_info(path).ok().flatten()
     }
 
-    // NOTE: `follow_symlinks` is `true` at every call
-    // site, so it's dropped here; `enable_logging` is a plain runtime parameter
-    // (it gates one cold error-formatting branch) so this large dir-walk function
-    // monomorphizes to a single copy instead of two faulted in at startup.
-    fn dir_info_cached_maybe_log(
+    // `enable_logging` is a run-time argument: it gates one cold branch, so only the asker makes a copy of this function.
+    #[cfg_attr(mordant, allow(generic_body_not_generic))]
+    fn dir_info_cached_maybe_log<A: Asker>(
         &mut self,
+        asker: A,
         enable_logging: bool,
         raw_input_path: &[u8],
     ) -> crate::CrateResult<Option<DirInfoRef>> {
@@ -5582,7 +5651,8 @@ impl<'a> Resolver<'a> {
             return Ok(cached);
         }
 
-        let result = self.dir_info_cached_miss(enable_logging, input_path, top_result);
+        let result =
+            self.dir_info_cached_miss(asker.generation(), enable_logging, input_path, top_result);
         if matches!(result, Ok(None)) {
             self.record_missing_dir(path_without_trailing_slash);
         }
@@ -5598,6 +5668,7 @@ impl<'a> Resolver<'a> {
     #[inline(never)]
     fn dir_info_cached_miss(
         &mut self,
+        generation: Generation,
         enable_logging: bool,
         input_path: &[u8],
         top_result: allocators::Result,
@@ -5960,7 +6031,7 @@ impl<'a> Resolver<'a> {
 
             if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
                 if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
-                    if entries.generation >= self.generation {
+                    if entries.generation >= generation {
                         dir_entries_option = cached_entry;
                         needs_iter = false;
                     } else {
@@ -5982,7 +6053,7 @@ impl<'a> Resolver<'a> {
                             .append_slice(dir_path)
                             .expect("unreachable")
                     },
-                    self.generation,
+                    generation,
                 );
 
                 // Pre-size `data` so the per-entry inserts below skip the
@@ -6077,6 +6148,7 @@ impl<'a> Resolver<'a> {
                 .map(|p| unsafe { DirInfoRef::from_raw(p) });
 
             self.dir_info_uncached(
+                generation,
                 dir_info_ptr,
                 dir_path,
                 // SAFETY: ARENA — `dir_entries_option` is a slot in `rfs.entries` (BSSMap) and outlives the resolver.
@@ -6108,8 +6180,10 @@ impl<'a> Resolver<'a> {
 
     // This closely follows the behavior of "tryLoadModuleUsingPaths()" in the
     // official TypeScript compiler
-    pub(crate) fn match_tsconfig_paths(
+    #[cfg_attr(mordant, allow(generic_body_not_generic))]
+    pub(crate) fn match_tsconfig_paths<A: Asker>(
         &mut self,
+        asker: A,
         tsconfig: &TSConfigJSON,
         path: &[u8],
         kind: ast::ImportKind,
@@ -6162,7 +6236,7 @@ impl<'a> Resolver<'a> {
                         }
 
                         if self
-                            .load_as_file_or_directory(absolute_original_path, kind, out)
+                            .load_as_file_or_directory(asker, absolute_original_path, kind, out)
                             .is_success()
                         {
                             return MatchStatus::Success;
@@ -6232,7 +6306,7 @@ impl<'a> Resolver<'a> {
                 };
 
                 if self
-                    .load_as_file_or_directory(absolute_original_path, kind, out)
+                    .load_as_file_or_directory(asker, absolute_original_path, kind, out)
                     .is_success()
                 {
                     return MatchStatus::Success;
@@ -6267,8 +6341,10 @@ impl<'a> Resolver<'a> {
         true
     }
 
-    pub(crate) fn load_package_imports(
+    #[cfg_attr(mordant, allow(generic_body_not_generic))]
+    pub(crate) fn load_package_imports<A: Asker>(
         &mut self,
+        asker: A,
         import_path: &[u8],
         // NOTE: `DirInfoRef` (not `&mut`) — `handle_esm_resolution` re-enters
         // `dir_cache` via `dir_info_cached(dirname(abs_esm_path))`; for any
@@ -6353,6 +6429,7 @@ impl<'a> Resolver<'a> {
             }
 
             return self.load_node_modules(
+                asker,
                 &esm_resolution.path,
                 kind,
                 dir_info,
@@ -6363,6 +6440,7 @@ impl<'a> Resolver<'a> {
         }
 
         self.handle_esm_resolution(
+            asker,
             esm_resolution,
             package_json.source.path.name().dir,
             kind,
@@ -6470,8 +6548,9 @@ impl<'a> Resolver<'a> {
         None
     }
 
-    pub(crate) fn load_from_main_field(
+    pub(crate) fn load_from_main_field<A: Asker>(
         &mut self,
+        asker: A,
         path: &[u8],
         // NOTE: `DirInfoRef` (not `&mut`) — `get_enclosing_browser_scope()`
         // may return `dir_info` itself (self-browser-scope),
@@ -6551,7 +6630,7 @@ impl<'a> Resolver<'a> {
         }
 
         // Is this a file?
-        if let Some(result) = self.load_as_file(field_abs_path, extension_order) {
+        if let Some(result) = self.load_as_file(asker, field_abs_path, extension_order) {
             if let Some(package_json) = dir_info.package_json() {
                 *out = MatchResult {
                     path_pair: PathPair {
@@ -6577,11 +6656,13 @@ impl<'a> Resolver<'a> {
         }
 
         // Is it a directory with an index?
-        let Some(field_dir_info) = self.dir_info_cached(field_abs_path).ok().flatten() else {
+        let Some(field_dir_info) = self.dir_info_cached(asker, field_abs_path).ok().flatten()
+        else {
             dec_ret!(MatchStatus::NotFound);
         };
 
         let r = self.load_as_index_with_browser_remapping(
+            asker,
             field_dir_info,
             field_abs_path,
             extension_order,
@@ -6598,8 +6679,9 @@ impl<'a> Resolver<'a> {
 
     // NOTE: `dir_info` is a `DirInfoRef` (matching spec `*DirInfo`) so
     // `load_index_with_extension` may re-borrow without aliasing the caller's `&mut`.
-    pub(crate) fn load_as_index(
+    pub(crate) fn load_as_index<A: Asker>(
         &mut self,
+        asker: A,
         dir_info: DirInfoRef,
         extension_order: options::ExtOrder,
         out: &mut MatchResult,
@@ -6615,7 +6697,7 @@ impl<'a> Resolver<'a> {
             // `self.opts` and never mutated while the resolver runs.
             let ext = bun_ptr::RawSlice::new(&*self.opts.ext_order_slice(extension_order)[i]);
             if self
-                .load_index_with_extension(dir_info, &ext, out)
+                .load_index_with_extension(asker, dir_info, &ext, out)
                 .is_success()
             {
                 return MatchStatus::Success;
@@ -6630,7 +6712,7 @@ impl<'a> Resolver<'a> {
             // `extra_cjs_extensions` is heap-stable for the resolver's life.
             let ext = bun_ptr::RawSlice::new(&*self.opts.extra_cjs_extensions[i]);
             if self
-                .load_index_with_extension(dir_info, &ext, out)
+                .load_index_with_extension(asker, dir_info, &ext, out)
                 .is_success()
             {
                 return MatchStatus::Success;
@@ -6640,8 +6722,10 @@ impl<'a> Resolver<'a> {
         MatchStatus::NotFound
     }
 
-    fn load_index_with_extension(
+    #[cfg_attr(mordant, allow(generic_body_not_generic))]
+    fn load_index_with_extension<A: Asker>(
         &mut self,
+        asker: A,
         dir_info: DirInfoRef,
         ext: &[u8],
         out: &mut MatchResult,
@@ -6661,7 +6745,7 @@ impl<'a> Resolver<'a> {
         let looked_up = {
             let _entries_lock = self.rfs_ref().entries_mutex.lock_guard();
             dir_info
-                .get_entries_ref_locked(self.generation)
+                .get_entries_ref_locked(asker.generation())
                 .map(|entries| {
                     (
                         entries.get(&base[..]),
@@ -6676,7 +6760,7 @@ impl<'a> Resolver<'a> {
         if let Some((Some(lookup), dirname_fd)) = looked_up {
             if lookup
                 .entry()
-                .kind_for(self.generation, self.rfs_ref(), self.store_fd)
+                .kind_for(asker.generation(), self.rfs_ref(), self.store_fd)
                 == Fs::file_system::EntryKind::File
             {
                 let Ok(out_buf) = lookup.entry().abs_path_or_try_fill(|| {
@@ -6737,8 +6821,10 @@ impl<'a> Resolver<'a> {
         MatchStatus::NotFound
     }
 
-    pub(crate) fn load_as_index_with_browser_remapping(
+    #[cfg_attr(mordant, allow(generic_body_not_generic))]
+    pub(crate) fn load_as_index_with_browser_remapping<A: Asker>(
         &mut self,
+        asker: A,
         // NOTE: `DirInfoRef` (not `&mut`) — `get_enclosing_browser_scope()`
         // may return `dir_info` itself (self-browser-scope),
         // which would alias a live `&mut`.
@@ -6808,7 +6894,8 @@ impl<'a> Resolver<'a> {
                         };
 
                         // Is this a file
-                        if let Some(file_result) = self.load_as_file(remapped_abs, extension_order)
+                        if let Some(file_result) =
+                            self.load_as_file(asker, remapped_abs, extension_order)
                         {
                             *out = MatchResult {
                                 dirname_fd: file_result.dirname_fd,
@@ -6822,9 +6909,9 @@ impl<'a> Resolver<'a> {
                         }
 
                         // Is it a directory with an index?
-                        if let Ok(Some(new_dir)) = self.dir_info_cached(remapped_abs) {
+                        if let Ok(Some(new_dir)) = self.dir_info_cached(asker, remapped_abs) {
                             if self
-                                .load_as_index(new_dir, extension_order, out)
+                                .load_as_index(asker, new_dir, extension_order, out)
                                 .is_success()
                             {
                                 return MatchStatus::Success;
@@ -6837,11 +6924,12 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        self.load_as_index(dir_info, extension_order, out)
+        self.load_as_index(asker, dir_info, extension_order, out)
     }
 
-    pub(crate) fn load_as_file_or_directory(
+    pub(crate) fn load_as_file_or_directory<A: Asker>(
         &mut self,
+        asker: A,
         path: &[u8],
         kind: ast::ImportKind,
         out: &mut MatchResult,
@@ -6849,7 +6937,7 @@ impl<'a> Resolver<'a> {
         let extension_order = self.extension_order;
 
         // Is this a file?
-        if let Some(file) = self.load_as_file(path, extension_order) {
+        if let Some(file) = self.load_as_file(asker, path, extension_order) {
             // Determine the package folder by looking at the last node_modules/ folder in the path
             let nm_seg = const_format::concatcp!("node_modules", SEP_STR).as_bytes();
             if let Some(last_node_modules_folder) = strings::last_index_of(file.path, nm_seg) {
@@ -6859,6 +6947,7 @@ impl<'a> Resolver<'a> {
                     strings::index_of_char(&file.path[node_modules_folder_offset..], SEP)
                 {
                     if let Ok(Some(package_dir_info)) = self.dir_info_cached(
+                        asker,
                         &file.path[0..node_modules_folder_offset + package_name_length as usize],
                     ) {
                         if let Some(package_json) = package_dir_info.package_json() {
@@ -6912,7 +7001,7 @@ impl<'a> Resolver<'a> {
         // NOTE: `DirInfoRef` (not `&mut`).
         // The callees fetch `get_enclosing_browser_scope()` which can resolve
         // back to this same BSSMap slot — holding a `&mut` here would alias.
-        let dir_info: DirInfoRef = match self.dir_info_cached(path) {
+        let dir_info: DirInfoRef = match self.dir_info_cached(asker, path) {
             Ok(Some(d)) => d,
             Ok(None) => dec_ret!(MatchStatus::NotFound),
             Err(_err) => {
@@ -6970,6 +7059,7 @@ impl<'a> Resolver<'a> {
 
                     if !self
                         .load_from_main_field(
+                            asker,
                             path,
                             dir_info,
                             field_rel_path,
@@ -7004,6 +7094,7 @@ impl<'a> Resolver<'a> {
                             if !main_rel_path.is_empty() {
                                 auto_main_found = self
                                     .load_from_main_field(
+                                        asker,
                                         path,
                                         dir_info,
                                         main_rel_path,
@@ -7019,6 +7110,7 @@ impl<'a> Resolver<'a> {
                             // as the value for "main".
                             auto_main_found = self
                                 .load_as_index_with_browser_remapping(
+                                    asker,
                                     dir_info,
                                     path,
                                     mf_ext_order,
@@ -7088,7 +7180,7 @@ impl<'a> Resolver<'a> {
 
         // Look for an "index" file with known extensions
         if self
-            .load_as_index_with_browser_remapping(dir_info, path, extension_order, out)
+            .load_as_index_with_browser_remapping(asker, dir_info, path, extension_order, out)
             .is_success()
         {
             out.package_json = out.package_json.or(package_json);
@@ -7098,8 +7190,10 @@ impl<'a> Resolver<'a> {
         dec_ret!(MatchStatus::NotFound);
     }
 
-    pub(crate) fn load_as_file(
+    #[cfg_attr(mordant, allow(generic_body_not_generic))]
+    pub(crate) fn load_as_file<A: Asker>(
         &mut self,
+        asker: A,
         path: &[u8],
         extension_order: options::ExtOrder,
     ) -> Option<LoadResult> {
@@ -7131,7 +7225,7 @@ impl<'a> Resolver<'a> {
             match unsafe { &mut *self.rfs_ptr() }.read_directory(
                 dir_path,
                 None,
-                self.generation,
+                asker.generation(),
                 self.store_fd,
             ) {
                 Ok(e) => bun_ptr::BackRef::new(&*e),
@@ -7179,7 +7273,7 @@ impl<'a> Resolver<'a> {
         if let Some(query) = plain_query {
             if query
                 .entry()
-                .kind_for(self.generation, self.rfs_ref(), self.store_fd)
+                .kind_for(asker.generation(), self.rfs_ref(), self.store_fd)
                 == Fs::file_system::EntryKind::File
             {
                 if let Some(debug) = self.debug_logs.as_mut() {
@@ -7224,7 +7318,7 @@ impl<'a> Resolver<'a> {
             // body can take `&mut self`. Backing `Box<[u8]>` is owned by
             // `self.opts` and never mutated while the resolver runs.
             let ext = bun_ptr::RawSlice::new(&*self.opts.ext_order_slice(extension_order)[i]);
-            if let Some(result) = self.load_extension(base, path, &ext, dir_entry) {
+            if let Some(result) = self.load_extension(asker, base, path, &ext, dir_entry) {
                 dec_ret!(Some(result));
             }
         }
@@ -7237,7 +7331,7 @@ impl<'a> Resolver<'a> {
             // BACKREF: see `RawSlice` note above — backing `Box<[u8]>` in
             // `extra_cjs_extensions` is heap-stable for the resolver's life.
             let ext = bun_ptr::RawSlice::new(&*self.opts.extra_cjs_extensions[i]);
-            if let Some(result) = self.load_extension(base, path, &ext, dir_entry) {
+            if let Some(result) = self.load_extension(asker, base, path, &ext, dir_entry) {
                 dec_ret!(Some(result));
             }
         }
@@ -7265,7 +7359,7 @@ impl<'a> Resolver<'a> {
                     if let Some(query) = ts_query {
                         if query
                             .entry()
-                            .kind_for(self.generation, self.rfs_ref(), self.store_fd)
+                            .kind_for(asker.generation(), self.rfs_ref(), self.store_fd)
                             == Fs::file_system::EntryKind::File
                         {
                             if let Some(debug) = self.debug_logs.as_mut() {
@@ -7337,8 +7431,10 @@ impl<'a> Resolver<'a> {
         dec_ret!(None);
     }
 
-    fn load_extension(
+    #[cfg_attr(mordant, allow(generic_body_not_generic))]
+    fn load_extension<A: Asker>(
         &mut self,
+        asker: A,
         base: &[u8],
         path: &[u8],
         ext: &[u8],
@@ -7362,7 +7458,7 @@ impl<'a> Resolver<'a> {
         if let Some(query) = ext_query {
             if query
                 .entry()
-                .kind_for(self.generation, self.rfs_ref(), self.store_fd)
+                .kind_for(asker.generation(), self.rfs_ref(), self.store_fd)
                 == Fs::file_system::EntryKind::File
             {
                 if let Some(debug) = self.debug_logs.as_mut() {
@@ -7396,6 +7492,7 @@ impl<'a> Resolver<'a> {
 
     fn dir_info_uncached(
         &mut self,
+        generation: Generation,
         info: *mut DirInfo::DirInfo,
         path: &'static [u8],
         _entries: *mut Fs::file_system::real_fs::EntriesOption,
@@ -7458,7 +7555,7 @@ impl<'a> Resolver<'a> {
                     DirInfo::Flag::HasNodeModules,
                     entry
                         .entry()
-                        .kind_for(self.generation, self.rfs_ref(), self.store_fd)
+                        .kind_for(generation, self.rfs_ref(), self.store_fd)
                         == Fs::file_system::EntryKind::Dir,
                 );
             }
@@ -7510,7 +7607,7 @@ impl<'a> Resolver<'a> {
                 if info.is_node_modules() {
                     if let Some(q) = entries!().get_comptime_query(b".bin") {
                         if q.entry()
-                            .kind_for(self.generation, self.rfs_ref(), self.store_fd)
+                            .kind_for(generation, self.rfs_ref(), self.store_fd)
                             == Fs::file_system::EntryKind::Dir
                         {
                             // SAFETY: BIN_FOLDERS_LOADED is single-thread init-once; protected by RESOLVER_MUTEX held by callers.
@@ -7587,7 +7684,7 @@ impl<'a> Resolver<'a> {
                 // The only caller that reaches this with `parent` set
                 // (`dir_info_cached_miss`) already holds `entries_mutex`, and that
                 // mutex is non-recursive, so go through the `_locked` accessor.
-                if let Some(parent_entries) = parent_.get_entries_ref_locked(self.generation) {
+                if let Some(parent_entries) = parent_.get_entries_ref_locked(generation) {
                     if let Some(lookup) = parent_entries.get(base) {
                         let entries_fd = entries!().fd;
                         if entries_fd.is_valid()
@@ -7599,11 +7696,10 @@ impl<'a> Resolver<'a> {
                             lookup.entry().set_cache_fd(entries_fd);
                         }
 
-                        let mut symlink = lookup.entry().symlink_for(
-                            self.generation,
-                            self.rfs_ref(),
-                            self.store_fd,
-                        );
+                        let mut symlink =
+                            lookup
+                                .entry()
+                                .symlink_for(generation, self.rfs_ref(), self.store_fd);
                         if !symlink.is_empty() {
                             if let Some(logs) = self.debug_logs.as_mut() {
                                 let mut buf = Vec::new();
@@ -7663,7 +7759,7 @@ impl<'a> Resolver<'a> {
             if let Some(lookup) = entries!().get_comptime_query(b"package.json") {
                 if lookup
                     .entry()
-                    .kind_for(self.generation, self.rfs_ref(), self.store_fd)
+                    .kind_for(generation, self.rfs_ref(), self.store_fd)
                     == Fs::file_system::EntryKind::File
                 {
                     // A package in the global cache has a `package_id`, and keeps it even if its
@@ -7673,6 +7769,7 @@ impl<'a> Resolver<'a> {
                         && !info.is_node_modules()
                     {
                         self.parse_package_json::<true>(
+                            generation,
                             path,
                             if FeatureFlags::STORE_FILE_DESCRIPTORS {
                                 fd
@@ -7685,6 +7782,7 @@ impl<'a> Resolver<'a> {
                         .flatten()
                     } else {
                         self.parse_package_json::<false>(
+                            generation,
                             path,
                             if FeatureFlags::STORE_FILE_DESCRIPTORS {
                                 fd
@@ -7735,7 +7833,7 @@ impl<'a> Resolver<'a> {
             if let Some(lookup) = entries!().get_comptime_query(b"tsconfig.json") {
                 if lookup
                     .entry()
-                    .kind_for(self.generation, self.rfs_ref(), self.store_fd)
+                    .kind_for(generation, self.rfs_ref(), self.store_fd)
                     == Fs::file_system::EntryKind::File
                 {
                     let parts = [path, b"tsconfig.json".as_slice()];
@@ -7748,7 +7846,7 @@ impl<'a> Resolver<'a> {
                 if let Some(lookup) = entries!().get_comptime_query(b"jsconfig.json") {
                     if lookup
                         .entry()
-                        .kind_for(self.generation, self.rfs_ref(), self.store_fd)
+                        .kind_for(generation, self.rfs_ref(), self.store_fd)
                         == Fs::file_system::EntryKind::File
                     {
                         let parts = [path, b"jsconfig.json".as_slice()];
@@ -7771,7 +7869,7 @@ impl<'a> Resolver<'a> {
                 if self.opts.tsconfig_override.is_some() {
                     self.log = NonNull::from(&mut ignored);
                 }
-                let loaded = self.load_tsconfig(tsconfigpath, fd);
+                let loaded = self.load_tsconfig(generation, tsconfigpath, fd);
                 self.log = log;
                 // A leaked Box, interned into DirInfo: it outlives the resolver.
                 info.tsconfig_json = loaded?.map(|it| {
@@ -7787,6 +7885,7 @@ impl<'a> Resolver<'a> {
     /// The configuration file at `tsconfigpath`, with what it inherits from those that it extends.
     fn load_tsconfig(
         &mut self,
+        _generation: Generation,
         tsconfigpath: &[u8],
         fd: FD,
     ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
@@ -7968,7 +8067,10 @@ impl<'a> Resolver<'a> {
             {
                 path = joined.to_vec();
             }
-            let loaded = self.load_tsconfig(&path, FD::INVALID).ok().flatten();
+            let loaded = self
+                .load_tsconfig(self.generation, &path, FD::INVALID)
+                .ok()
+                .flatten();
             self.opts.tsconfig_override_json = Some(loaded.map(Arc::from));
         }
         self.opts.tsconfig_override_json.clone()

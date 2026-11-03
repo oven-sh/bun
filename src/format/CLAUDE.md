@@ -122,6 +122,17 @@ With `proseWrap: "preserve"` most of a text is printed as it's written, or nearl
 - **What is below the root is printed as soon as it has a document** (`Printer::print_to`): nothing there is in a group or indented. A part that's only texts and forced line breaks isn't measured (`write_lines`).
 - All of it is off with `no_short_cuts`, for another `proseWrap`, for oxfmt's flavor, in a template and in a code block. `test/cli/format/short-cuts.test.ts` has the shapes that a fuzzer found to differ.
 
+## JavaScript: expressions that do not fit on their line
+
+`js/flat/` writes what starts a line straight from the tree to text (its `mod.rs` has the contract). An expression that is too wide is written there too, with its line breaks, where those are certain. `js/flat/breaks.rs` has the rules, and they are the part to read before adding a layout.
+
+- **`Line::fits_or_breaks` is what the printer does with a group in a group that is broken**: on one line if that fits together with what follows up to the next possible line break (`Line::tail`), else once more with `Line::breaks`. An attempt ends where the line is full, so each costs no more than a line.
+- **Which layout applies is asked of `print/` and `utils/`**, not decided again: `AssignmentLike::layout_of`, `arguments_layout`, `MemberChain::new`, `BinaryLikeExpression::layout`, `can_break_between_parameters`. **Whoever changes what one of those printers writes for a layout changes it in `flat/` too**: `assignments.rs`, `expressions.rs` (arguments), `chains.rs`, `binary.rs`, `conditionals.rs`, `arrows.rs`, `suffixes.rs`, `forced.rs`.
+- **What is not known goes the long way by itself**: an argument, an operand, a branch or a right side on a line of its own is a hole (`Part::Expr`, `Part::Aligned`) that `print/` fills. After one, the width of the line is not known, and nothing more is decided on it.
+- **A line that is too wide has been measured in bytes, up to where it was full.** So all of it has to be plain and free of comments, holes included (`Line::has_measured`), and a choice among variants (a chain on one line or not, an argument hugged or not) needs to know where the first forced line break is.
+- The elements of an array and the properties of an object that are certain to break are items like statements: `write_array_element`, `write_property`. Not where line breaks are taken out again or the content is printed apart: `Formatter::capture_without_short_cuts`.
+- What found the mistakes: every `printWidth` from 20 to 120 over real files and the fixtures of Prettier and oxfmt, with and without `--no-short-cuts`, and real files with damage (names made longer, lines joined and split, comments, parentheses) under random options. `test/cli/format/short-cuts.test.ts` has one input for each kind of mistake.
+
 ## Syntax errors
 
 `[error] a.css: SyntaxError: Unclosed string (3:6)`, and under it the lines around the place as Prettier shows them. `syntax_error.rs`:

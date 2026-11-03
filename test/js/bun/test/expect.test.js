@@ -1332,6 +1332,14 @@ describe("expect()", () => {
           delete ANY(arguments).length;
           expect(printed(arguments)).toBe("Arguments []");
         })();
+        // `JSON.stringify()` printed the own keys, so a `length` that the object does not fill ends at its last item.
+        (function () {
+          ANY(arguments).length = 2 ** 32 - 1;
+          expect(printed(arguments)).toBe("Arguments [\n  1,\n  2,\n]");
+        })(1, 2);
+        expect(printed(new Function("arguments.length = 2 ** 32 - 1; return arguments")(1n, 2))).toBe(
+          "Arguments [\n  1n,\n  2,\n]",
+        );
         // A function that is not in strict mode has another kind of arguments object, and a third kind with a closure.
         expect(printed(new Function("return arguments")(1n, 2))).toBe("Arguments [\n  1n,\n  2,\n]");
         expect(printed(new Function("a", "(() => a)(); return arguments")(1n, 2))).toBe("Arguments [\n  1n,\n  2,\n]");

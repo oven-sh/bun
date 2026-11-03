@@ -1449,6 +1449,9 @@ impl<'a> Formatter<'a> {
                     // `get_length()` answers the largest length for a Proxy or an `arguments` object that has none.
                     let len: u32 = if js_type.is_array() {
                         value.get_length(self.global_this)? as u32
+                    } else if js_type.is_arguments() {
+                        // An `arguments` object can claim any `length`, so its items end at its last own index.
+                        length_of(self.global_this, value)?.min(end_of_own_indexes(self.global_this, value)?)
                     } else {
                         length_of(self.global_this, value)?
                     };
@@ -3189,6 +3192,14 @@ fn length_of(global: &JSGlobalObject, value: JSValue) -> JsResult<u32> {
         safe fn SnapshotFormat__lengthOf(global: &JSGlobalObject, value: JSValue) -> u32;
     }
     jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__lengthOf(global, value))
+}
+
+/// One past the largest own index of `value`.
+fn end_of_own_indexes(global: &JSGlobalObject, value: JSValue) -> JsResult<u32> {
+    unsafe extern "C" {
+        safe fn SnapshotFormat__endOfOwnIndexes(global: &JSGlobalObject, value: JSValue) -> u32;
+    }
+    jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__endOfOwnIndexes(global, value))
 }
 
 /// `Number(value)`, so a BigInt converts instead of throwing.

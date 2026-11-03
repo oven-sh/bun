@@ -129,28 +129,28 @@ const projects: Record<string, Project> = {
 // How a compiled run says that it is built. A Bun that loads one program a realm (macOS, Windows, a hardened build) has no layers.
 const oneRealm = "this Bun loads one program a realm";
 const oneProgram = new RegExp(`^one program(: ${oneRealm})? \\| test files 1$`);
-type Way = { env: Record<string, string>; form: RegExp; standIn: boolean };
+type Way = { env: Record<string, string>; form: RegExp[] };
 const ways: [string, Way][] = [
-  ["as one program", { env: { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" }, form: oneProgram, standIn: false }],
+  ["as one program", { env: { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" }, form: [oneProgram] }],
   [
     "in layers",
     {
       env: { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2,TestRunPartFiles:1" },
-      form: new RegExp(`^(layers 2|programs without layers: ${oneRealm}) \\| test files 1 \\| to a program 1( \\||$)`),
-      standIn: false,
+      form: [
+        new RegExp(`^(layers 2|programs without layers: ${oneRealm}) \\| test files 1 \\| to a program 1( \\||$)`),
+      ],
     },
   ],
   [
     "with the test files from disk",
     {
-      // The word changes no build. With it a run says how it is built, and prints the file that stands in for the test files that its build does not see.
+      // The word changes no build. With it a run says how it is built, and names the file that stands in for the test files that its build does not see.
       env: {
         BUN_AOT_TEST_FILES_FROM_DISK: "1",
         BUN_AOT_TESTS_NAME_WHAT_THEY_USE: "1",
         BUN_DEBUG_TEST_AOT_WORDS: "TestRunShowsStandIn:1",
       },
-      form: oneProgram,
-      standIn: true,
+      form: [oneProgram, /^stand-in \| .*[\\/]bun-test-files-from-disk\.js$/],
     },
   ],
 ];
@@ -162,11 +162,17 @@ async function runTests(directory: string, env: Record<string, string> = {}, ...
   if (exitCode !== 0 && exitCode !== 1) console.error(stderr);
   return {
     // Plain `bun test` says nothing of the kind, and neither does a Bun that takes `--aot` and compiles nothing.
-    form: [...stderr.matchAll(/^AOT test run \| ((?:one program|layers|programs without layers)\b.*)$/gm)].map(
-      match => match[1],
-    ),
-    standIn: /^AOT stand-in \| .*[\\/]bun-test-files-from-disk\.js$/m.test(stderr),
-    printed: stdout.split("\n").filter(line => line && !line.startsWith("bun test ")),
+    // A build that starts over names its stand-in again, so each line counts once.
+    form: [
+      ...new Set(
+        [
+          ...stderr.matchAll(
+            /^AOT (?:test run \| ((?:one program|layers|programs without layers)\b.*)|(stand-in \| .*))$/gm,
+          ),
+        ].map(match => match[1] ?? match[2]),
+      ),
+    ],
+    stdout: stdout.split("\n"),
     errors: stderr.split("\n").filter(line => line.startsWith("error")),
     results: [...stderr.matchAll(/^\((pass|fail)\) (.*?)(?: \[.*\])?$/gm)].map(match => `${match[1]} ${match[2]}`),
     exitCode,
@@ -181,14 +187,17 @@ const plainRun = (name: string) =>
     return await runTests(String(dir));
   });
 
+const banner = `bun test ${Bun.version_with_sha}`;
+
 for (const [name, { files, printed, results }] of Object.entries(projects)) {
-  for (const [title, { env, form, standIn }] of ways) {
+  for (const [title, { env, form }] of ways) {
     test.concurrent(`${name}, ${title}`, async () => {
       const plain = await plainRun(name);
-      expect(plain).toEqual({ form: [], standIn: false, printed, errors: [], results, exitCode: 0 });
+      const stdout = [banner, ...printed, ""];
+      expect(plain).toEqual({ form: [], stdout, errors: [], results, exitCode: 0 });
       using dir = tempDir("an-entry-under-the-name-of-a-node-module", files);
       const compiled = await runTests(String(dir), env, "--aot");
-      expect(compiled).toEqual({ ...plain, form: [expect.stringMatching(form)], standIn });
+      expect(compiled).toEqual({ ...plain, form: form.map(pattern => expect.stringMatching(pattern)) });
     });
   }
 }

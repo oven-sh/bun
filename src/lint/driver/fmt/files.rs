@@ -205,6 +205,13 @@ impl Kind {
         if let Some(parser) = parser {
             return Kind::from_parser(parser);
         }
+        // Most files. Such a path ends with its extension, wherever its name starts.
+        const SCRIPTS: [&[u8]; 8] = [
+            b".ts", b".tsx", b".js", b".jsx", b".mjs", b".cjs", b".mts", b".cts",
+        ];
+        if SCRIPTS.iter().any(|it| path.ends_with(it)) {
+            return Some(Kind::Script);
+        }
         // Prettier's `getLanguageByFileName` compares the lowercased name.
         let lowered;
         let name = match paths::basename(path) {

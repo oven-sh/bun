@@ -1654,8 +1654,8 @@ JSC_DEFINE_CUSTOM_SETTER(errorConstructorPrepareStackTraceSetter,
 #pragma mark - Globals
 
 // onmessage/onerror are CustomValue properties, so JSC invokes these callbacks
-// with the object that has the property as thisValue. A caller that passes
-// anything else gets the default global object, not a bad cast.
+// with the property receiver as thisValue, which is not necessarily the global
+// object: the global of `vm.createContext(globalThis)` as a Reflect.set receiver.
 static Zig::GlobalObject* globalObjectForEventHandler(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue thisValue)
 {
     if (auto* globalObject = dynamicDowncast<Zig::GlobalObject>(JSValue::decode(thisValue)))

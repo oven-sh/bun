@@ -199,6 +199,42 @@ test.concurrent(
   },
 );
 
+// The global of a node:vm context made from globalThis answers for the properties of globalThis. As the receiver of a
+// Reflect.set it is what the native setter gets as its `this`, and it is no global object of Bun's own.
+test.concurrent(
+  "onmessage/onerror: Reflect.set with the global of a node:vm context of globalThis as the receiver",
+  async () => {
+    const script = `
+    const vm = require("node:vm");
+    const contextGlobal = vm.runInContext("globalThis", vm.createContext(globalThis));
+    const events = {
+      onmessage: () => new MessageEvent("message", { data: "payload" }),
+      onerror: () => new ErrorEvent("error", { error: "payload" }),
+    };
+    const seen = [];
+    for (const [name, makeEvent] of Object.entries(events)) {
+      const handler = event => seen.push(name + ":" + (event.data ?? event.error));
+      if (!Reflect.set({}, name, handler, contextGlobal)) throw new Error(name + ": Reflect.set answered false");
+      if (globalThis[name] !== handler) throw new Error(name + ": not read back");
+      dispatchEvent(makeEvent());
+      if (!Reflect.set({}, name, null, contextGlobal)) throw new Error(name + ": Reflect.set answered false");
+      if (globalThis[name] !== null) throw new Error(name + ": not cleared");
+      dispatchEvent(makeEvent());
+    }
+    console.log(seen.join());
+  `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("onmessage:payload,onerror:payload\n");
+    expect(exitCode).toBe(0);
+  },
+);
+
 test.concurrent("worker: every store that ends in a definition on self installs onmessage", async () => {
   using dir = tempDir("worker-definition-onmessage", {
     "worker.js": `

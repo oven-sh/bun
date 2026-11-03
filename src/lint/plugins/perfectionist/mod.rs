@@ -13,6 +13,7 @@
 //! - `compare`: `utils/compare/*.ts`
 //! - `sort`: `sort-nodes.ts`, `sort-nodes-by-groups.ts`, `sort-nodes-by-dependencies.ts`,
 //!   `compute-nodes-in-circular-dependencies.ts`, `is-node-dependent-on-other-node.ts`
+//! - `partition`: `should-partition.ts`, `is-partition-comment.ts`, `get-comments-before.ts`, `get-lines-between.ts`
 //! - `disabled`: `get-eslint-disabled-lines.ts`, `get-eslint-disabled-rules.ts`, `is-node-eslint-disabled.ts`
 //! - `fixes`: `get-node-range.ts`, `make-order-fixes.ts`, `make-comment-after-fixes.ts`,
 //!   `make-single-node-comment-after-fixes.ts`, `make-fixes.ts`, `range-to-diff.ts`
@@ -23,6 +24,7 @@ pub(crate) mod disabled;
 pub(crate) mod fixes;
 pub(crate) mod groups;
 pub(crate) mod options;
+pub(crate) mod partition;
 pub(crate) mod sort;
 
 use bun_lint::prelude::*;

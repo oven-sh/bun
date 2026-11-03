@@ -358,23 +358,25 @@ pub mod dir_iterator {
     #[cfg(unix)]
     #[inline]
     fn record_at(buf: &AlignedBuf, index: usize, end_index: usize) -> Option<dirent::Record<'_>> {
+        dirent::parse::<dirent::Native>(filled(buf, end_index)?, index)
+    }
+
+    /// The bytes the last refill wrote, `end_index` of them. `None` after a walk ended at a malformed record.
+    #[cfg(unix)]
+    #[inline]
+    fn filled(buf: &AlignedBuf, end_index: usize) -> Option<&[u8]> {
         if end_index > BUF_SIZE {
             return None;
         }
         // SAFETY: the syscall filled `[0..end_index]`, and `end_index <= BUF_SIZE`.
-        let filled = unsafe { buf.filled(end_index) };
-        dirent::parse::<dirent::Native>(filled, index)
+        Some(unsafe { buf.filled(end_index) })
     }
 
     /// The inode of the record at `index` if that record is `.`, which `dirent::parse` reports as skipped.
     #[cfg(unix)]
     #[inline]
     fn dot_ino_at(buf: &AlignedBuf, index: usize, end_index: usize) -> Option<u64> {
-        if end_index > BUF_SIZE {
-            return None;
-        }
-        // SAFETY: the syscall filled `[0..end_index]`, and `end_index <= BUF_SIZE`.
-        let record = unsafe { buf.filled(end_index) }.get(index..)?;
+        let record = filled(buf, end_index)?.get(index..)?;
         let name = record.get(<dirent::Native as dirent::Layout>::D_NAME..)?;
         if !matches!(*name, [b'.', 0, ..]) {
             return None;
@@ -9041,11 +9043,11 @@ pub fn iterate_dir(dir: Fd) -> dir_iterator::WrappedIterator {
     dir_iterator::iterate(dir)
 }
 
-/// Nanoseconds of the wall clock that stamps a file change, read without a syscall. 0 on Windows, where no listing has an inode of `.` to go with it.
+/// Nanoseconds of the wall clock that stamps a file change, read without a syscall. 0 when there is no clock: on Windows, where no listing has an inode of `.` to go with one, or when the call fails.
 pub fn file_stamp_clock_ns() -> i64 {
     #[cfg(unix)]
     {
-        // The coarse clock is never ahead of the one an inode is stamped with, which the fine clock can be by a tick.
+        // On Linux and Android the coarse clock is never ahead of the one an inode is stamped with, which the fine clock can be by a tick. On FreeBSD the name is an alias of `CLOCK_REALTIME_FAST`.
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         const CLOCK: libc::clockid_t = libc::CLOCK_REALTIME_COARSE;
         #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]

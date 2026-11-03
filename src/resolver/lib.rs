@@ -1433,6 +1433,7 @@ pub mod fs {
             let Ok(now) = bun_sys::stat_force_sync(dir) else {
                 return false;
             };
+            // Overlayfs with layers on different file systems and xino off lists the layer's inode for ".", not the one a stat reports: no listing is kept there.
             if !listing.unchanged_since_read(&now) || !self.stamps_with_local_clock(now.dev, dir) {
                 return false;
             }

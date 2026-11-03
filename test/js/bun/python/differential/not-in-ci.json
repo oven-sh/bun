@@ -1,6 +1,4 @@
 {
-  "gc/wait_in_the_kernel_for_finalizer": "FIXME: a thread that waits in a system call for what a finalizer would do: waits for ever in a release build",
-  "interop/015_operators_jit": "loops that are long enough for the optimizing compilers: ten minutes in a debug build, a second in a release build",
   "mod_faulthandler/faulthandler_basic": "what the watchdog thread finds the main thread doing depends on timing, under CPython too",
   "mod_math/math_cbrt": "the last digit is the C library's: glibc's cbrt(2.0) is off by one unit in the last place, Bun's is not",
   "mod_posix/posix_pwd_grp": "prints the users and groups of the machine",

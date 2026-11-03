@@ -20,6 +20,9 @@ for path in samples:
         try:
             result = getattr(os.path, name)(path)
             print("  ", name, ascii(result[len(os.getcwd()):] if isinstance(result, str) and result.startswith(os.getcwd()) else result))
+        except UnicodeEncodeError as e:
+            # Not the position: realpath() has put the working directory in front.
+            print("  ", name, type(e).__name__, e.encoding, ascii(e.object[e.start:e.end]), e.reason)
         except Exception as e:
             print("  ", name, type(e).__name__, str(e)[:60])
     try:

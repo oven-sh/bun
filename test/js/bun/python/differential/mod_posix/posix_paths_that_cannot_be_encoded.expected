@@ -1,5 +1,5 @@
 status: 0
-script: d794d7c24382038b
+script: d0f723728ed61c79
 ---
 'a/\udfff/../b'
    normpath 'a/b'
@@ -20,8 +20,8 @@ script: d794d7c24382038b
    isjunction False
    isdevdrive False
    abspath '/a/b'
-   realpath UnicodeEncodeError 'utf-8' codec can't encode character '\udfff' in position 52
-   getsize UnicodeEncodeError 'utf-8' codec can't encode character '\udfff' in position 2:
+   realpath UnicodeEncodeError utf-8 '\udfff' surrogates not allowed
+   getsize UnicodeEncodeError utf-8 '\udfff' surrogates not allowed
    expanduser 'a/\udfff/../b'
    expandvars 'a/\udfff/../b'
    pure 'a/\udfff/../b' ('a', '\udfff', '..', 'b') 'b' ''
@@ -58,8 +58,8 @@ script: d794d7c24382038b
    isjunction False
    isdevdrive False
    abspath '/\ud800'
-   realpath UnicodeEncodeError 'utf-8' codec can't encode character '\ud800' in position 50
-   getsize UnicodeEncodeError 'utf-8' codec can't encode character '\ud800' in position 0:
+   realpath UnicodeEncodeError utf-8 '\ud800' surrogates not allowed
+   getsize UnicodeEncodeError utf-8 '\ud800' surrogates not allowed
    expanduser '\ud800'
    expandvars '\ud800'
    pure '\ud800' ('\ud800',) '\ud800' ''
@@ -172,8 +172,8 @@ script: d794d7c24382038b
    isjunction False
    isdevdrive False
    abspath '/Am\xe9rica/\ud800York'
-   realpath UnicodeEncodeError 'utf-8' codec can't encode character '\ud800' in position 58
-   getsize UnicodeEncodeError 'utf-8' codec can't encode character '\ud800' in position 8:
+   realpath UnicodeEncodeError utf-8 '\ud800' surrogates not allowed
+   getsize UnicodeEncodeError utf-8 '\ud800' surrogates not allowed
    expanduser 'Am\xe9rica/\ud800York'
    expandvars 'Am\xe9rica/\ud800York'
    pure 'Am\xe9rica/\ud800York' ('Am\xe9rica', '\ud800York') '\ud800York' ''
@@ -248,8 +248,8 @@ script: d794d7c24382038b
    isjunction False
    isdevdrive False
    abspath ''
-   realpath UnicodeEncodeError 'utf-8' codec can't encode characters in position 50-51: sur
-   getsize UnicodeEncodeError 'utf-8' codec can't encode characters in position 0-1: surro
+   realpath UnicodeEncodeError utf-8 '\udfff\ud800' surrogates not allowed
+   getsize UnicodeEncodeError utf-8 '\udfff\ud800' surrogates not allowed
    expanduser '\udfff\ud800/..'
    expandvars '\udfff\ud800/..'
    pure '\udfff\ud800/..' ('\udfff\ud800', '..') '..' ''

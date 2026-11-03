@@ -958,7 +958,6 @@ impl NTSTATUS {
     /// `STATUS_END_OF_FILE` — `NtReadFile` past EOF.
     pub const END_OF_FILE: NTSTATUS = NTSTATUS(0xC000_0011);
     pub const PENDING: NTSTATUS = NTSTATUS(0x0000_0103);
-    pub const CANCELLED: NTSTATUS = NTSTATUS(0xC000_0120);
 
     #[inline]
     pub const fn from_raw(raw: u32) -> Self {

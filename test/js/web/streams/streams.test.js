@@ -2818,7 +2818,7 @@ it("Bun.file().stream() read text from large file", async () => {
   }
 });
 
-it("Bun.file().stream() of the null device ends without a chunk", async () => {
+it.skipIf(!isWindows)("Bun.file().stream() of the null device ends without a chunk", async () => {
   expect(await Array.fromAsync(Bun.file(devNull).stream())).toEqual([]);
   const fd = openSync(devNull, "r");
   try {

@@ -19,6 +19,7 @@ of CPython (stale lengths, freed memory shown) or messages.
 | `evil_waits.py` | what waits (locks, joins, `SimpleQueue.get`, sleeps, `select`) with odd arguments, through odd call paths, from finalizers, trace functions and signal handlers, at the recursion limit, with signals arriving meanwhile, under contention |
 | `evil_imports.py` | `sys.modules`, `sys.meta_path`, `sys.path_hooks`, `__import__`, `__builtins__`, `__spec__`, `__path__`... replaced by junk or deleted; finders and loaders that misbehave; `_imp` and the frozen importer with junk; built-in modules made twice and emptied; damaged `.pyc` files; rings of imports in threads |
 | `dict_popitem_cycles.py` | `d[k] = v; d.popitem()` again and again (used to fill the index table with dummies: endless lookup) |
+| `gc_values_stored_while_marking.py` | ints and objects stored by turns to dicts, sets, lists, deques, generators' variables, attributes and containers just made, each in a process in which one full collection follows the other: what a thread of the collector reads must be the old value or the new one. Most telling on a release build: there it died within 3 s while the values of a dict were not aligned |
 
     python3 fuzz_drive.py [-j N] [--ours CMD] [--seeds A-B] [--trials N] [modules...]
 

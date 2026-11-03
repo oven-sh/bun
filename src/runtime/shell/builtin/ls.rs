@@ -62,10 +62,10 @@ pub(crate) struct ExecState {
     /// it, so that a listing of many directories is not one write for each of them.
     batch: Vec<u8>,
     batch_stream: IoKind,
-    /// Stdout and stderr are two `IOWriter`s. They can have one destination (a terminal), where
-    /// the order of the writes shows. So a chunk of one stream waits until the chunks of the
-    /// other are written.
-    two_writers: bool,
+    /// Whether stdout and stderr are two `IOWriter`s on one file (a terminal, or one pipe), where
+    /// the order of the writes shows. A chunk of one stream then waits until the chunks of the
+    /// other are written. `None` until the two streams first meet ([`Ls::one_destination`]).
+    one_destination: Option<bool>,
     /// The stream of the chunks that are queued and not written yet.
     in_flight: IoKind,
     /// [`Ls::drain`] is running: a chunk that completes inside it is only counted.
@@ -166,13 +166,6 @@ impl Ls {
                 // Many operands: several tasks share the `stat` calls.
                 let parts = (operands.len() / OPERANDS_PER_PART)
                     .clamp(1, usize::from(bun_core::get_thread_count()));
-                let builtin = Builtin::of(interp, cmd);
-                let two_writers = match (&builtin.stdout, &builtin.stderr) {
-                    (BuiltinIO::Fd(stdout), BuiltinIO::Fd(stderr)) => {
-                        !Rc::ptr_eq(&stdout.writer, &stderr.writer)
-                    }
-                    _ => false,
-                };
                 Self::state_mut(interp, cmd).state = State::Exec(ExecState {
                     err: None,
                     task_count: AtomicUsize::new(1),
@@ -187,7 +180,7 @@ impl Ls {
                     writing: None,
                     batch: Vec::new(),
                     batch_stream: IoKind::Stdout,
-                    two_writers,
+                    one_destination: None,
                     in_flight: IoKind::Stdout,
                     draining: false,
                 });
@@ -455,8 +448,8 @@ impl Ls {
     }
 
     /// Queues the batch on its `IOWriter`. False if it has to wait, because chunks of the other
-    /// stream are not written yet. A chunk is counted in `output_waiting`, and
-    /// `on_io_writer_chunk` runs once for it, now or later.
+    /// stream are not written yet and go to the same file. A chunk is counted in
+    /// `output_waiting`, and `on_io_writer_chunk` runs once for it, now or later.
     fn flush(interp: &Interpreter, cmd: NodeId) -> bool {
         let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
             return false;
@@ -465,9 +458,15 @@ impl Ls {
             return true;
         }
         let stream = exec.batch_stream;
-        if exec.two_writers && exec.output_done < exec.output_waiting && exec.in_flight != stream {
+        if exec.output_done < exec.output_waiting
+            && exec.in_flight != stream
+            && Self::one_destination(interp, cmd)
+        {
             return false;
         }
+        let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
+            return false;
+        };
         let batch = core::mem::take(&mut exec.batch);
         exec.in_flight = stream;
         exec.output_waiting += 1;
@@ -478,6 +477,38 @@ impl Ls {
         io.enqueue(ChildPtr::new(cmd, WriterTag::Builtin), &batch, safeguard)
             .run(interp);
         true
+    }
+
+    /// See [`ExecState::one_destination`]. Two pipes, or a pipe and a terminal, are two
+    /// destinations: a reader that does not drain one of them must not stop the other.
+    fn one_destination(interp: &Interpreter, cmd: NodeId) -> bool {
+        let State::Exec(exec) = &Self::state_mut(interp, cmd).state else {
+            return false;
+        };
+        if let Some(known) = exec.one_destination {
+            return known;
+        }
+        let builtin = Builtin::of(interp, cmd);
+        let one = match (&builtin.stdout, &builtin.stderr) {
+            (BuiltinIO::Fd(stdout), BuiltinIO::Fd(stderr))
+                if !Rc::ptr_eq(&stdout.writer, &stderr.writer) =>
+            {
+                match (
+                    bun_sys::fstat(stdout.writer.fd()),
+                    bun_sys::fstat(stderr.writer.fd()),
+                ) {
+                    (Ok(a), Ok(b)) => a.st_dev == b.st_dev && a.st_ino == b.st_ino,
+                    // Not known: keep the order.
+                    _ => true,
+                }
+            }
+            // One writer keeps the order of its chunks, and a buffer takes its bytes at once.
+            _ => false,
+        };
+        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+            exec.one_destination = Some(one);
+        }
+        one
     }
 
     /// Returns the index of the first non-flag arg, or `None` if there are no

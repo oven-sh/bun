@@ -1,7 +1,18 @@
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isPosix, isRoot, tempDir, tempDirWithFiles, unprivilegedSpawnOptions } from "harness";
-import { chmodSync, symlinkSync, utimesSync } from "node:fs";
+import {
+  chmodSync,
+  closeSync,
+  constants,
+  existsSync,
+  openSync,
+  readFileSync,
+  readSync,
+  symlinkSync,
+  utimesSync,
+  writeSync,
+} from "node:fs";
 import { join } from "node:path";
 import { createTestBuilder } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -743,6 +754,7 @@ describe.concurrent("bunshell ls", () => {
     // What `ls -R top` has to print, from the listings in `output`: the section of a directory comes after the
     // listing that names it and before the section of the entry after it (depth first). A listing is in the order
     // of its directory, so the test reads each one from the output. `denied` prints its error and no section.
+    // `entries` is every name that the listings have, for a check against the fixture.
     function depthFirst(output: string, denied?: string) {
       const error = `ls: ${denied}: Permission denied`;
       const listings = new Map<string, string[]>([["top", []]]);
@@ -763,7 +775,11 @@ describe.concurrent("bunshell ls", () => {
           subdirectories.map(sub => section(sub, `${sub}:\n`)).join("")
         );
       };
-      return { directories: [...listings.keys()].sort(), expected: section("top", "") };
+      return {
+        directories: [...listings.keys()].sort(),
+        entries: [...listings.values()].flat().sort(),
+        expected: section("top", ""),
+      };
     }
     const recursiveFixture = () =>
       tempDir("ls-recursive-order", {
@@ -774,15 +790,115 @@ describe.concurrent("bunshell ls", () => {
       });
     const recursiveDirectories = (without?: number) =>
       ["top", ...shuffled.flatMap(i => (i === without ? [] : [`top/s${two(i)}`, `top/s${two(i)}/t${two(i)}`]))].sort();
+    const recursiveEntries = (without?: number) =>
+      ["f", ...shuffled.flatMap(i => [`s${two(i)}`, ...(i === without ? [] : ["g", `t${two(i)}`, "h"])])].sort();
 
     test("-R lists a directory before its subdirectories", async () => {
       using dir = recursiveFixture();
       const { stdout, stderr, exitCode } = await run("ls -R top", String(dir));
       const output = stdout.replaceAll("\\", "/");
-      const { directories, expected } = depthFirst(output);
-      expect({ directories, stderr }).toEqual({ directories: recursiveDirectories(), stderr: "" });
+      const { directories, entries, expected } = depthFirst(output);
+      expect({ directories, entries, stderr }).toEqual({
+        directories: recursiveDirectories(),
+        entries: recursiveEntries(),
+        stderr: "",
+      });
       expect(output).toBe(expected);
       expect(exitCode).toBe(0);
+    });
+
+    // The listing is several times what a pipe holds. The reader takes one byte and then waits, so `ls` queues the
+    // rest while the pipe is full. `ls` has to stay until the reader has taken the last chunk, and the bytes have to
+    // be those of a listing that did not wait.
+    test.if(isPosix)("a listing larger than a pipe reaches a reader that stalls", async () => {
+      const suffix = Buffer.alloc(230, "x").toString();
+      const longNames = Array.from({ length: 100 }, (_, i) => `f${two(i)}${suffix}`);
+      const big = Object.fromEntries(longNames.map(name => [name, ""]));
+      using dir = tempDir("ls-stalled-reader", {
+        top: Object.fromEntries(shuffled.flatMap(i => [[`big${two(i)}`, big] as const, [`small${two(i)}`, { g: "" }]])),
+      });
+      const [first, go] = [join(String(dir), "first"), join(String(dir), "go")];
+      await $`mkfifo ${go}`.quiet().throws(true);
+      // Open for both directions: the open does not wait, and the reader finds a byte whenever it comes for it.
+      const release = openSync(go, "r+");
+      try {
+        // The reader copies one byte, makes the file `first`, waits for one byte from `go`, and then copies the rest.
+        const reader = 'dd bs=1 count=1 2>/dev/null && : > "$0" && dd bs=1 count=1 < "$1" > /dev/null 2>&1 && cat';
+        const stalled = $`ls -R top | sh -c ${reader} ${first} ${go}`.cwd(String(dir)).quiet().run();
+        while (!existsSync(first)) await Bun.sleep(1);
+        // A second walk of the same tree is complete here, so the first one has queued its listing by now.
+        const captured = await run("ls -R top", String(dir));
+        writeSync(release, "x");
+        const { stdout, exitCode } = await stalled;
+
+        const lines = [
+          ...shuffled.flatMap(i => [`big${two(i)}`, `small${two(i)}`, `top/big${two(i)}:`, `top/small${two(i)}:`, "g"]),
+          ...shuffled.flatMap(() => longNames),
+        ];
+        expect(captured.stdout.split("\n").slice(0, -1).sort()).toEqual(lines.sort());
+        expect(captured.stdout.length).toBeGreaterThan(4 * 65536);
+        expect(stdout.toString()).toBe(captured.stdout);
+        expect(exitCode).toBe(0);
+      } finally {
+        closeSync(release);
+      }
+    });
+
+    // Stdout is a file, and stderr is a pipe that is full, so the errors cannot be written yet. The listing must not
+    // wait for them: a reader that does not drain one stream must not stop the other stream.
+    test.if(isPosix)("a stream does not wait for the other one when they go to two places", async () => {
+      using dir = fixture();
+      const [errors, out] = [join(String(dir), "errors"), join(String(dir), "out.txt")];
+      await $`mkfifo ${errors}`.quiet().throws(true);
+      const wouldBlock = (e: unknown) => {
+        if ((e as NodeJS.ErrnoException).code !== "EAGAIN") throw e;
+      };
+      // The test is the reader of the pipe, and fills it first. This descriptor does not block.
+      const pipe = openSync(errors, constants.O_RDWR | constants.O_NONBLOCK);
+      try {
+        let filled = 0;
+        for (const block of [Buffer.alloc(4096, "#"), Buffer.alloc(1, "#")]) {
+          try {
+            for (;;) filled += writeSync(pipe, block);
+          } catch (e) {
+            wouldBlock(e);
+          }
+        }
+        const stderr = openSync(errors, "w");
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "exec", `ls nope-b ${shuffledParts} nope-a > out.txt`],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "ignore",
+          stderr,
+        });
+        closeSync(stderr);
+
+        // The listing is in the file while the errors still wait for room in the pipe.
+        const listing = () => (existsSync(out) ? readFileSync(out, "utf8") : "");
+        while (listing().length < sortedParts.length) await Bun.sleep(1);
+        const early = listing();
+
+        const chunks: Buffer[] = [];
+        const read = () => {
+          const buffer = Buffer.alloc(65536);
+          try {
+            for (let n; (n = readSync(pipe, buffer)) > 0;) chunks.push(Buffer.from(buffer.subarray(0, n)));
+          } catch (e) {
+            wouldBlock(e);
+          }
+        };
+        read();
+        const exitCode = await proc.exited;
+        read();
+        expect({ early, errors: Buffer.concat(chunks).toString().slice(filled), exitCode }).toEqual({
+          early: sortedParts,
+          errors: noSuchFile("nope-b") + noSuchFile("nope-a"),
+          exitCode: 1,
+        });
+      } finally {
+        closeSync(pipe);
+      }
     });
 
     // The error of a directory that does not open is where the section of that directory would be. `ls` runs in a
@@ -826,9 +942,10 @@ describe.concurrent("bunshell ls", () => {
       test.each(oneDestination)("under -R, %s", async (_, cmd) => {
         using dir = recursiveFixture();
         const { stdout, stderr, exitCode } = await child(cmd("ls -R top"), String(dir), "top/s05");
-        const { directories, expected } = depthFirst(stdout, "top/s05");
-        expect({ directories, stderr, exitCode }).toEqual({
+        const { directories, entries, expected } = depthFirst(stdout, "top/s05");
+        expect({ directories, entries, stderr, exitCode }).toEqual({
           directories: recursiveDirectories(5),
+          entries: recursiveEntries(5),
           stderr: "",
           exitCode: 1,
         });

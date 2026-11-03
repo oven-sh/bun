@@ -1319,6 +1319,86 @@ describe.skipIf(!hasFlag)("calls of test functions", () => {
   );
 });
 
+// Whether the right side stays on the line of the `=` depends on where it can break first.
+describe.skipIf(!hasFlag)("what an operator or parentheses are around, in every place", () => {
+  const [a, b, c, d, e] = ["a", "b", "c", "d", "e"].map(it => it.repeat(12));
+  const cores = [
+    a,
+    `${a} ? ${b} : ${c}`,
+    `${a} && ${b}`,
+    `${a} || ${b} && ${c}`,
+    `${a} + ${b} + ${c}`,
+    `${a}, ${b}`,
+    `(${a}) => ${b}`,
+    `(${a}) => {\n  ${b}();\n}`,
+    `{ ${a}: ${b}, ${c} }`,
+    `{\n  ${a}: ${b}, ${c} }`,
+    "{}",
+    `[${a}, ${b}, ${c}]`,
+    `${a}(${b}, ${c})`,
+    `${a}.${b}(${c}).${d}(${e})`,
+    `${a} = ${b}`,
+    `new ${a}(${b}, ${c})`,
+    `'${a} ${b} ${c}'`,
+  ];
+  const wrappers = [
+    "%",
+    "await (%)",
+    "void (%)",
+    "typeof (%)",
+    "!(%)",
+    "-(%)",
+    `new (%)(${d})`,
+    `(%) as ${d}`,
+    "(%)!",
+    `(%).${d}`,
+    `(%)(${d})`,
+    `(await (%)).${d}`,
+    `(%) && ${d}`,
+    `${d} && (%)`,
+    `(%) ? ${d} : ${e}`,
+    `${d} ? (%) : ${e}`,
+    "[...(%)]",
+    `${d}(...(%))`,
+    "() => (%)",
+  ];
+  const places = [
+    "%;",
+    `${e} = %;`,
+    `${e}.${d}.${c} = %;`,
+    `${e} ||= %;`,
+    `const x = %;`,
+    `let x: ${d} = %;`,
+    `const { ${e}, ${d} } = %;`,
+    `const [${e}, ${d}] = %;`,
+    "return %;",
+    `x = {\n  ${e}: %,\n};`,
+    `x = {\n  [${e}]: %,\n};`,
+    `${e} = () => %;`,
+    `${e}(() => %);`,
+    `${e}(${d}, %);`,
+    "if (%) {\n  x();\n}",
+  ];
+  const files = Object.fromEntries(
+    places.map((place, index) => [
+      `${index}.ts`,
+      `async function f() {\n${wrappers
+        .flatMap(wrapper => cores.map(core => `{\n${place.replace("%", () => wrapper.replace("%", () => core))}\n}`))
+        .join("\n")}\n}\n`,
+    ]),
+  );
+
+  test.concurrent.each(Array.from({ length: isDebug ? 4 : 12 }, (_, index) => 22 + index * (isDebug ? 12 : 4)))(
+    "--print-width=%d",
+    async width => {
+      const [withShortCuts, without] = await difference(files, [`--print-width=${width}`]);
+      expect(withShortCuts).toEqual(without);
+      expect(without.stderr).toBe("");
+      expect(without.exitCode).toBe(0);
+    },
+  );
+});
+
 describe.skipIf(!hasFlag)("names, literals, member accesses, calls and operators", () => {
   const binary = "?? || && | ^ & == != === !== < <= > >= in instanceof << >> >>> + - * / % **".split(" ");
   const unary = ["!", "-", "+", "~", "typeof ", "void ", "delete ", "++", "--", "await "];

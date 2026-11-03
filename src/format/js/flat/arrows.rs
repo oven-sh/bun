@@ -52,6 +52,10 @@ impl<'a> Line<'_, 'a> {
             ExprKind::Object(_) => " ({".len(),
             ExprKind::Array(elements) if elements.is_empty() => " []".len() + self.tail,
             ExprKind::Array(_) => " [".len(),
+            // [`Line::arrow_body`] doesn't write it.
+            ExprKind::Cond { .. } if matches!(self.text_of(body.span()), [b'(' | b'{', ..]) => {
+                return Err(Refused);
+            }
             // The space counts.
             ExprKind::Cond { .. } => 1,
             _ => 0,

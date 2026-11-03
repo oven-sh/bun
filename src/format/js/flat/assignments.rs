@@ -200,7 +200,12 @@ impl<'a> Line<'_, 'a> {
     /// True if the first line of `value`, written with all the line breaks that there can be, ends where the first of
     /// them is: `a(`, `a.b(`, `new A(`, `await a(`, `{`, `[`.
     fn breaks_first_at_end_of_line(&self, mut value: Expr<'a>) -> bool {
+        let whole = value;
         loop {
+            // What's in parentheses has been written on one line, so that says nothing about where it breaks first.
+            if value != whole && needs_parentheses(value, self.f) {
+                return false;
+            }
             if let Some(inner) = self.before_suffix(value) {
                 value = inner;
                 continue;

@@ -56,12 +56,24 @@ fn compare_once(
         SortType::Unsorted => return Ordering::Equal,
         SortType::SubgroupOrder => compare_by_subgroup_order(a, b, &config.groups),
         SortType::LineLength => a.size.cmp(&b.size),
-        SortType::Alphabetical => {
-            strings::locale_compare(&text_to_compare(a, options), &text_to_compare(b, options))
-        }
-        SortType::Natural => {
-            text::natural_orderby(&text_to_compare(a, options), &text_to_compare(b, options))
-        }
+        SortType::Alphabetical => match options.locale {
+            Some(collator) => {
+                collator.compare(&text_to_compare(a, options), &text_to_compare(b, options))
+            }
+            None => {
+                strings::locale_compare(&text_to_compare(a, options), &text_to_compare(b, options))
+            }
+        },
+        SortType::Natural => match options.locale {
+            Some(collator) => text::natural_orderby_in(
+                collator,
+                &text_to_compare(a, options),
+                &text_to_compare(b, options),
+            ),
+            None => {
+                text::natural_orderby(&text_to_compare(a, options), &text_to_compare(b, options))
+            }
+        },
         SortType::Custom => compare_by_custom_sort(
             &text_to_compare(a, options),
             &text_to_compare(b, options),

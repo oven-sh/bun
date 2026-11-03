@@ -826,7 +826,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC:
     RETURN_IF_EXCEPTION(scope, {});
 
     // A CommonJS script runs inside the call, and what it throws leaves through the call.
-    bool isLoaded = Bun::runMainModule(defaultGlobalObject(globalObject), key.string());
+    bool isLoaded = Bun::loadMainModule(defaultGlobalObject(globalObject), key.string());
     RETURN_IF_EXCEPTION(scope, {});
     if (isLoaded)
         return JSC::JSValue::encode(JSC::jsUndefined());

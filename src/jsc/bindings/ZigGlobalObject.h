@@ -41,6 +41,7 @@ class SecureContextCache;
 class GCProfilerObserver;
 
 struct ModuleGraphState;
+struct RunMainState;
 } // namespace Bun
 
 namespace v8 {
@@ -531,10 +532,6 @@ public:
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSResizableOrGrowableSharedBufferSubclassStructure)  \
     V(private, LazyPropertyOfGlobalObject<JSWeakMap>, m_vmModuleContextMap)                                  \
     V(private, WriteBarrier<JSObject>, m_lazyRequireCacheObject)                                             \
-    /* The CommonJS module that Module.runMain() made the main module, until the next entry load. */         \
-    V(public, WriteBarrier<JSObject>, m_mainModuleOfRunMain)                                                 \
-    /* The `main` accessor of the require functions that are made after that. */                             \
-    V(public, WriteBarrier<JSCell>, m_requireMainOfRunMain)                                                  \
     V(public, LazyPropertyOfGlobalObject<Bun::JSCommonJSExtensions>, m_lazyRequireExtensionsObject)          \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_lazyTestModuleObject)                                 \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_testMatcherUtilsObject)                                \
@@ -687,8 +684,6 @@ public:
     bool hasOverriddenModuleResolveFilenameFunction = false;
     // De-optimization once `require("module").wrapper` or `require("module").wrap` is written to
     bool hasOverriddenModuleWrapper = false;
-    // The path of the entry module, if Module.runMain() started a script before the entry module loaded: that load makes the entry module the main module again.
-    WTF::String m_entryThatTakesMainModuleBack;
     // De-optimization once `require("module").runMain` is written to
     bool hasOverriddenModuleRunMain = false;
 
@@ -704,6 +699,8 @@ public:
     std::unique_ptr<Bun::SecureContextCache> m_secureContextCache;
 
     std::unique_ptr<Bun::ModuleGraphState> m_moduleGraphs;
+
+    std::unique_ptr<Bun::RunMainState> m_runMain;
 
     // Backs node:v8's GCProfiler. Lazily created on first start(); its
     // destructor detaches from the heap so a worker that exits mid-profile

@@ -108,6 +108,9 @@ JSValue fetchESMSourceCodeAsync(
     BunString* referrer,
     BunString* typeAttribute);
 
+// Fetches the ES module `key` on this thread, as require() of an ES module does, and gives the source to the loader. The load of `key` that the caller starts next needs no other thread, so that module starts before one that is loaded after it. That load reports what this fetch throws.
+void fetchESModuleOnThisThread(Zig::GlobalObject*, JSC::JSString* specifierJS, const WTF::String& key);
+
 // Appends { ...object, default: object }. Returns object if any export was deferred (its value is empty), null otherwise or on exception.
 JSC::JSObject* appendInternalModuleExports(Zig::GlobalObject*, JSC::JSObject* object, WTF::Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues);
 // Appends what an `import` of a module in NativeModuleList.h gets. Returns the object that a deferred export (its value is empty) is read from, null for a module that never defers or on exception.

@@ -13,6 +13,8 @@ class GlobalObject;
 namespace Bun {
 using namespace JSC;
 
+struct RunMainState;
+
 // Bytes. phys_footprint (Activity Monitor's number) on macOS, the resident set size elsewhere.
 extern "C" int getRSS(size_t* rss);
 extern "C" int getPeakRSS(size_t* peak);
@@ -76,8 +78,8 @@ public:
     template<size_t NumArgs>
     void queueNextTick(JSC::JSGlobalObject* globalObject, JSValue func, const JSValue (&args)[NumArgs]);
 
-    // Module.runMain() made a CommonJS module the main module (Bun::mainModuleOfRunMain): `process.mainModule` reads it.
-    void setMainModuleOfRunMain(JSC::JSGlobalObject*);
+    // Module.runMain() makes `module` the main module in place of RunMainState::mainModule. Null stands for the entry module.
+    void setMainModuleOfRunMain(JSC::JSGlobalObject*, RunMainState&, JSC::JSObject* module);
 
     // Some Node.js events want to be emitted on the next tick rather than synchronously.
     // This is equivalent to `process.nextTick(() => process.emit(eventName, event))` from JavaScript.

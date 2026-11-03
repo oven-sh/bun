@@ -4967,12 +4967,7 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     RefPtr<JSC::ScriptFetcher>)
 {
     auto* importMeta = Zig::ImportMetaObject::create(globalObject, key);
-    auto* graph = Bun::moduleGraphOfLoader(globalObject, loader);
-    importMeta->setModuleGraph(globalObject->vm(), graph);
-    // Nothing called Module.runMain() if nothing made that function. A graph has a main module of its own.
-    auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-    if (zigGlobalObject->m_moduleRunMainFunction.isInitialized() && !graph) [[unlikely]]
-        Bun::putImportMetaMainOfRunMainModule(zigGlobalObject, importMeta, key);
+    importMeta->setModuleGraph(globalObject->vm(), Bun::moduleGraphOfLoader(globalObject, loader));
     return importMeta;
 }
 

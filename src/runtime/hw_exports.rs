@@ -95,7 +95,7 @@ pub(crate) fn set_override_module_run_main_promise(
     vm: &mut VirtualMachine,
     promise: *mut JSInternalPromise,
 ) {
-    if vm.pending_internal_promise().is_none() {
+    if vm.pending_internal_promise().is_none() && !vm.run_main_ran_entry_point {
         vm.set_pending_internal_promise(Some(promise));
     }
 }
@@ -136,10 +136,13 @@ pub(crate) fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier
     false
 }
 
-/// Called once by JSCommonJSModule.cpp for the root CJS module so the run command reports
+/// Called by JSCommonJSModule.cpp for each root CJS module so the run command reports
 /// origin `uncaughtException`. `main()` compare filters out an ESM entry that `import`s CJS.
 // HOST_EXPORT(Bun__VM__noteCommonJSEvaluation, c)
 pub(crate) fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSValue) {
+    if this.pending_internal_promise().is_none() {
+        this.run_main_ran_entry_point = true;
+    }
     if this.entry_point_result.evaluated_as_cjs {
         return;
     }
@@ -155,16 +158,6 @@ pub(crate) fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSV
     if specifier_str.eql_utf8(main) {
         this.entry_point_result.evaluated_as_cjs = true;
     }
-}
-
-// HOST_EXPORT(Bun__VM__addRunMainModule, c)
-pub(crate) fn add_run_main_module(this: &mut VirtualMachine, key: &bun_core::String) {
-    bun_core::handle_oom(this.run_main_modules.insert(key.to_utf8().slice()));
-}
-
-// HOST_EXPORT(Bun__VM__isRunMainModule, c)
-pub(crate) fn is_run_main_module(this: &mut VirtualMachine, key: &bun_core::String) -> bool {
-    this.run_main_modules.contains(key.to_utf8().slice())
 }
 
 /// `export fn Bun__closeChildIPC(global)` — defers the actual socket close to

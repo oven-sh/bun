@@ -264,6 +264,9 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
         scope);
     RETURN_IF_EXCEPTION(scope, {});
     if (result == jsNumber(-1)) {
+        // Module.runMain() loads an ES module as import() does, after this handler returns.
+        if (std::exchange(mod->loadedAsMain, false)) [[unlikely]]
+            return JSC::JSValue::encode(jsUndefined());
         // ESM
         JSC::JSFunction* requireESM = global->requireESMFromHijackedExtension();
         JSC::MarkedArgumentBuffer args;

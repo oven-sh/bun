@@ -188,8 +188,6 @@ pub struct VirtualMachine {
     pub main_hash: u32,
     /// Set if code overrides Bun.main to a custom value.
     pub overridden_main: crate::strong::Optional,
-    /// The registry keys of the modules that `Module.runMain()` started. `import.meta.main` is true in them until the next entry load.
-    pub run_main_modules: bun_collections::StringSet,
     /// `bun bake`: the plugins of `bake.config.ts`, a JS array. The dev server loads them after the
     /// `[serve.static] plugins` of bunfig.toml.
     pub bake_config_plugins: crate::strong::Optional,
@@ -314,6 +312,8 @@ pub struct VirtualMachine {
     /// True if `load_preloads` kept the preload list for a reload that was deferred while it ran.
     pub preloads_kept_for_reload: bool,
     pub has_patched_run_main: bool,
+    /// A CommonJS script ran inside `Module.runMain()` before a load had the entry point's promise. For the call of an overridden `Module.runMain`, that script is the entry point: it has no promise, and a load that starts later does not give one.
+    pub run_main_ran_entry_point: bool,
 
     pub transpiler_store: crate::runtime_transpiler_store::RuntimeTranspilerStore,
 
@@ -3480,7 +3480,6 @@ impl VirtualMachine {
             addr_of_mut!((*vm).main_hash).write(0);
             addr_of_mut!((*vm).main_entry_point).write(MainEntryPoint::File);
             addr_of_mut!((*vm).main_resolved_path).write(bun_core::String::EMPTY);
-            addr_of_mut!((*vm).run_main_modules).write(bun_collections::StringSet::default());
             addr_of_mut!((*vm).bake_config_plugin_names).write(Box::default());
             addr_of_mut!((*vm).bake_pages).write(false);
             addr_of_mut!((*vm).hide_bun_stackframes).write(true);
@@ -3688,12 +3687,7 @@ impl VirtualMachine {
     }
 
     /// A new entry load starts, or code assigns `Bun.main`: what `Module.runMain()` started before is not a main module.
-    #[inline(never)]
     pub fn forget_run_main_modules(&mut self) {
-        if self.run_main_modules.is_empty() {
-            return;
-        }
-        self.run_main_modules = bun_collections::StringSet::default();
         crate::cpp::Bun__forgetMainModuleOfRunMain(self.global());
     }
 
@@ -3853,6 +3847,7 @@ impl VirtualMachine {
                 {
                     bun_core::hint::cold();
                     self.set_pending_internal_promise(None);
+                    self.run_main_ran_entry_point = false;
                     let global_ref = self.global();
                     let run_main_path = match (self.main_entry_point, self.main()) {
                         (MainEntryPoint::File, _) | (_, None) => MAIN_FILE_NAME,
@@ -3892,6 +3887,13 @@ impl VirtualMachine {
                             }
                         };
                     self.set_pending_internal_promise(Some(promise));
+                    // Nothing waits for a settled promise. This runs the microtasks and the ticks of a script that ran inside the call.
+                    if self.run_main_ran_entry_point
+                        && crate::JSPromise::status_ptr(promise)
+                            == crate::js_promise::Status::Fulfilled
+                    {
+                        self.event_loop_mut().tick();
+                    }
                     return Ok(promise);
                 }
             }
@@ -6122,7 +6124,6 @@ impl VirtualMachine {
         drop(self.sampling_profiler_directory.take());
 
         self.overridden_main.deinit();
-        drop(core::mem::take(&mut self.run_main_modules));
         self.bake_config_plugins.deinit();
         drop(core::mem::take(&mut self.bake_config_plugin_names));
         self.bake_framework.deinit();

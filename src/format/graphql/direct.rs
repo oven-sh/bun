@@ -8,8 +8,9 @@
 //! 1. Straight to the output, with every group on one line. That's what Prettier prints if the line fits. As long as
 //!    the text between two tokens is what would be written between them, nothing is written at all: the tokens join a
 //!    run of the source that's copied in one piece. A text that's already formatted is one run.
-//! 2. If the line doesn't fit, or a line break is forced inside a group, the [unit](Direct::unit) is read again and
-//!    written as a document, which `css/doc.rs` prints.
+//! 2. If the line doesn't fit, or a line break is forced inside a group: a list in brackets is written with its items on
+//!    lines of their own, since it breaks whatever follows it. Anything else is a [unit](Direct::unit) that's read again
+//!    and written as a document, which `css/doc.rs` prints.
 //! 3. A definition with anything else in it is parsed into a tree and printed from there, like the whole text is
 //!    without this file: a comment that isn't between two items, a syntax error, a string that's printed differently
 //!    from how Prettier prints it.
@@ -1171,6 +1172,8 @@ impl<'t> Direct<'t, '_> {
         }
         if self.is_document || self.groups > 0 {
             self.list_as_group(item, close, keeps_empty_lines)?;
+        } else if self.list_is_too_wide() {
+            self.list_on_lines(item, close, keeps_empty_lines)?;
         } else {
             let (mark, had_group) = (self.mark(), self.has_group);
             match self
@@ -1188,6 +1191,39 @@ impl<'t> Direct<'t, '_> {
         }
         self.nesting -= 1;
         Ok(())
+    }
+
+    /// True if the tokens from the bracket that's the next token to the one that closes it are wider than what's left of
+    /// the line, or one of them forces a line break. Saves writing most lists that don't fit twice.
+    fn list_is_too_wide(&self) -> bool {
+        // Where the bracket is going to be written, at the least.
+        let column = match self.gap {
+            Gap::Lines => self.gap_level as usize * self.tab_width,
+            _ => self.column(),
+        };
+        let room = self.width.saturating_sub(column);
+        let (mut width, mut depth) = (0, 0u32);
+        for token in self.tokens.get(self.index..).unwrap_or_default() {
+            width += match token.kind {
+                Kind::Comment | Kind::BlockString => return true,
+                Kind::End | Kind::Invalid => return false,
+                // They can be printed narrower than they're written.
+                Kind::StringToMeasure | Kind::StringWithEscapes => 2,
+                _ => (token.end - token.start) as usize,
+            };
+            match token.kind {
+                Kind::ParenL | Kind::BracketL | Kind::BraceL => depth += 1,
+                Kind::ParenR | Kind::BracketR | Kind::BraceR => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+            if width > room {
+                return true;
+            }
+            if depth == 0 {
+                return false;
+            }
+        }
+        false
     }
 
     fn list_as_group(&mut self, item: Item, close: Kind, keeps_empty_lines: bool) -> Result {
@@ -1440,6 +1476,8 @@ impl<'t> Direct<'t, '_> {
         // graphql-js's `dedentBlockStringLines`
         self.lines.clear();
         let (mut common_indent, mut first, mut last) = (usize::MAX, usize::MAX, 0);
+        // Lines with white space at their end, the last one aside.
+        let mut has_trailing_white_space = false;
         let mut line_start = content_start;
         loop {
             let rest = text.get(line_start..content_end).unwrap_or_default();
@@ -1460,10 +1498,30 @@ impl<'t> Direct<'t, '_> {
             if len == rest.len() {
                 break;
             }
+            has_trailing_white_space |= rest[..len].last().is_some_and(is_space_or_tab);
         }
         let starts_with_space = text.get(content_start).is_some_and(is_space_or_tab);
         if first == 0 && last == 0 && starts_with_space {
             return Err(Refusal::Definition);
+        }
+
+        // Written the way it's printed: the quotes on lines of their own, and everything at its indentation.
+        let indentation = self.indentation_len(self.level);
+        if !self.is_document
+            && self.groups == 0
+            && self.has_only_spaces
+            && !has_trailing_white_space
+            && common_indent == indentation
+            && first == 1
+            && last + 2 == self.lines.len()
+            && self.lines.first().is_some_and(|line| line.0 == line.1)
+            && (self.lines.last()).is_some_and(|line| (line.1 - line.0) as usize == indentation)
+        {
+            self.put(start, end);
+            self.line_start = self.printer.out.len() + (content_end - self.run_start);
+            self.line_indent = self.level as usize * self.tab_width;
+            self.read_token();
+            return Ok(());
         }
 
         self.put(start, start + 3);

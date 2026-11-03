@@ -829,7 +829,10 @@ describe.concurrent("bunshell ls", () => {
         // The reader copies one byte, makes the file `first`, waits for one byte from `go`, and then copies the rest.
         const reader = 'dd bs=1 count=1 2>/dev/null && : > "$0" && dd bs=1 count=1 < "$1" > /dev/null 2>&1 && cat';
         const stalled = $`ls -R top | sh -c ${reader} ${first} ${go}`.cwd(String(dir)).quiet().run();
-        while (!existsSync(first)) await Bun.sleep(1);
+        // A pipeline that ends before the reader has its first byte has failed: the comparison below then says how.
+        let ended = false;
+        stalled.finally(() => (ended = true)).catch(() => {});
+        while (!existsSync(first) && !ended) await Bun.sleep(1);
         // A second walk of the same tree is complete here, so the first one has queued its listing by now.
         const captured = await run("ls -R top", String(dir));
         writeSync(release, "x");
@@ -880,7 +883,7 @@ describe.concurrent("bunshell ls", () => {
 
         // The listing is in the file while the errors still wait for room in the pipe.
         const listing = () => (existsSync(out) ? readFileSync(out, "utf8") : "");
-        while (listing().length < sortedParts.length) await Bun.sleep(1);
+        while (listing().length < sortedParts.length && proc.exitCode === null) await Bun.sleep(1);
         const early = listing();
 
         const chunks: Buffer[] = [];

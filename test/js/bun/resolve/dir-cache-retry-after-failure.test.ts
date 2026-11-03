@@ -1139,7 +1139,8 @@ const files = {
         // "probe": the plugin first looks the module up at the runtime. That lookup misses and runs
         // again, so the listing is no longer the build's own.
         // "handled": the import sits in a try block. A build that does not find such a module
-        // succeeds, and leaves the import for the run time.
+        // succeeds, and prints the require() as an expression that throws: the bundle never loads
+        // the module.
         const { resolverCounters } = require("bun:internal-for-testing");
         const run = async (label, { handled, probe, made = "gen.js", asked = "./gen.js", before = "" }) => {
           const dir = path.join(root, "inflight", label);
@@ -1170,11 +1171,17 @@ const files = {
             target: "bun",
             throw: false,
           });
+          const text = built.success ? await built.outputs[0].text() : "";
+          // The expression that the build prints for a handled require() that it did not find. The
+          // name is part of it: the require() in "before" is printed in the same way.
+          const throws = '"Cannot require module "+' + JSON.stringify(asked);
           const answer = !built.success
             ? "ERR " + built.logs.map(log => log.message).join("|")
-            : (await built.outputs[0].text()).includes("MADE BY THE PLUGIN")
+            : text.includes("MADE BY THE PLUGIN")
               ? "bundled"
-              : "left for the run time";
+              : text.includes(throws)
+                ? "not bundled, the require throws"
+                : "not bundled";
           console.log(label, answer + ", lookups run again", resolverCounters().lookupsRunAgain - ranAgain);
         };
         // The first build of the process too: no build comes before IF1.
@@ -1483,11 +1490,11 @@ describe.concurrent("a failed resolution sees them from each way to ask the reso
         "IF2 bundled, lookups run again 1",
         // The listing is the build's own: its lookup misses, and runs again unless the program handles the miss.
         "IF3 bundled, lookups run again 1",
-        "IF4 left for the run time, lookups run again 0",
+        "IF4 not bundled, the require throws, lookups run again 0",
         // A directory that was not there is opened again by each lookup of a build.
         "ID1 bundled, lookups run again 0",
         // The build listed the directory above without the new one, and takes its own listing as it is.
-        "ID2 left for the run time, lookups run again 0",
+        "ID2 not bundled, the require throws, lookups run again 0",
         "ID3 bundled, lookups run again 1",
         // Each form of an import whose miss the program handles: five misses, and no lookup runs again.
         "HD built, lookups run again 0",

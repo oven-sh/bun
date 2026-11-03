@@ -1600,6 +1600,9 @@ describe.skipIf(!hasFlag)("HTML", () => {
       Array.from({ length: 40 }, (_, depth) => line(39 - depth, "</div>")).join(""),
     // `</script` is on the last line of the code, which does not fit with it.
     "<b><script>foo(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)</script>x</b>\n",
+    // The printer does not count the blank in front of a word that takes no room.
+    "b \u0300\n",
+    `<div>\n  a \u0300 ${"x".repeat(70)} yyyyy\n  <b></b>\n</div>\n`,
   ];
   const files = Object.fromEntries(inputs.map((input, index) => [`${index}.html`, input]));
 

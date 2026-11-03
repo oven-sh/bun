@@ -194,6 +194,11 @@ fn width_of_word(word: &[u8]) -> usize {
     }
 }
 
+/// The same, or `None` for a word that takes no room: the printer does not count the blank in front of it either.
+fn width_of_visible_word(word: &[u8]) -> Option<usize> {
+    Some(width_of_word(word)).filter(|width| *width > 0)
+}
+
 /// What the name of an element and the place where it is say about it.
 #[derive(Copy, Clone)]
 struct Element<'a> {
@@ -1317,7 +1322,7 @@ impl<'a> Scanner<'_, 'a> {
         self.out.source(from, at);
         let word = self.text.get(start..at)?;
         let excess = match is_wide {
-            true => word.len() - width_of_word(word).min(word.len()),
+            true => word.len() - width_of_visible_word(word)?.min(word.len()),
             false => 0,
         };
         Some((at, excess))
@@ -1830,8 +1835,8 @@ impl<'a> Scanner<'_, 'a> {
             words.width = (self.text.get(start..end)?)
                 .split(|byte| TEXT_KINDS[*byte as usize] == SPACE)
                 .filter(|word| !word.is_empty())
-                .map(|word| width_of_word(word) + 1)
-                .sum::<usize>()
+                .map(|word| Some(width_of_visible_word(word)? + 1))
+                .sum::<Option<usize>>()?
                 - 1;
         }
         self.measured = Some(words);

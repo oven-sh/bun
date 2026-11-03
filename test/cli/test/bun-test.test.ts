@@ -3608,6 +3608,38 @@ describe.concurrent("a rejection left by the callback that settles", () => {
       expect(stderr).toContain("Unhandled error between tests");
     });
 
+    // The runner looks at what a callback rejected as soon as the callback returns or waits, and a hook is no exception.
+    test.each(
+      Object.entries({
+        "is synchronous": `beforeEach(() => {
+            rejected = Promise.reject(new Error("left"));
+          });`,
+        "has no await": `beforeEach(async () => {
+            rejected = Promise.reject(new Error("left"));
+          });`,
+        "rejects it before its last await": `beforeEach(async () => {
+            rejected = Promise.reject(new Error("left"));
+            await new Promise(resolve => setTimeout(resolve));
+          });`,
+      }),
+    )("a hook that %s, though its test handles it at once", async (_, hook) => {
+      const { stderr, errors, exitCode } = await runFiles({
+        "a.test.ts": `
+          ${imports}
+          let rejected;
+          ${hook}
+          test("handles it", async () => {
+            await expect(rejected).rejects.toThrow("left");
+          });
+        `,
+      });
+      expect({ results: results(stderr), errors, exitCode }).toEqual({
+        ...failsThatTest,
+        results: ["(pass) handles it"],
+      });
+      expect(stderr).toContain("Unhandled error between tests");
+    });
+
     // A report when a test times out could resume the code of that test, so the runner leaves it to the next callback.
     test.each(
       Object.entries({
@@ -3654,7 +3686,7 @@ describe.concurrent("a rejection left by the callback that settles", () => {
       });
     });
 
-    // Which test of the group left it isn't known, so it is reported once all of them have ended.
+    // Which test of the group left it isn't known, so none of them fails.
     test.each(
       Object.entries({
         "settles last": [
@@ -3689,6 +3721,32 @@ describe.concurrent("a rejection left by the callback that settles", () => {
       });
       expect(stderr).toContain("Unhandled error between tests");
     });
+
+    // The report calls the listener, and the group then waits for the matcher like for any other.
+    test("a test of a concurrent group, and so is a matcher that a listener for the rejection calls", async () => {
+      const { stderr, errors, exitCode } = await runFiles({
+        "a.test.ts": `
+          import { expect, test } from "vitest";
+          process.on("unhandledRejection", () => {
+            expect(new Promise(resolve => setTimeout(() => resolve(1)))).resolves.toBe(2);
+          });
+          test.concurrent("settles first", async () => {
+            await new Promise(resolve => setImmediate(resolve));
+          });
+          test.concurrent("leaves", async () => {
+            await new Promise(resolve => setImmediate(resolve));
+            ${leave}
+          });
+          ${next}
+        `,
+      });
+      expect({ results: results(stderr), errors, exitCode }).toEqual({
+        results: ["(pass) settles first", "(pass) leaves", "(pass) next"],
+        errors: ["error: expect(received).toBe(expected)"],
+        exitCode: 1,
+      });
+      expect(stderr).toContain("Unhandled error between tests");
+    });
   });
 
   // What a hook leaves fails no test, so the callback that runs next can still handle it before its first await.
@@ -3718,6 +3776,237 @@ describe.concurrent("a rejection left by the callback that settles", () => {
         exitCode: 0,
       });
     });
+
+    // The tests of a concurrent group run together, so each of them can still handle it.
+    test("the second test of a concurrent group, after a beforeAll() that an fs promise settles", async () => {
+      const { stderr, errors, exitCode } = await runFiles({
+        "a.test.ts": `
+          ${imports}
+          let rejected;
+          beforeAll(async () => {
+            await stat(import.meta.path);
+            rejected = Promise.reject(new Error("left"));
+          });
+          test.concurrent("first", () => {});
+          test.concurrent("handles it", async () => {
+            await expect(rejected).rejects.toThrow("left");
+          });
+        `,
+      });
+      expect({ results: results(stderr), errors, exitCode }).toEqual({
+        results: ["(pass) first", "(pass) handles it"],
+        errors: [],
+        exitCode: 0,
+      });
+    });
+  });
+
+  // A concurrent group has no result of its own, so what its tests left gets the same chance as what a hook left.
+  describe("a concurrent group isn't reported when the next callback handles it at once", () => {
+    test.each(
+      Object.entries({
+        "afterAll()": [`afterAll(() => void rejected.catch(() => {}));`, ""],
+        "the next test": ["", `test("handles it", () => void rejected.catch(() => {}));`],
+      }),
+    )("%s, after a group whose last test an fs promise settles", async (_, [before, after]) => {
+      const { stderr, errors, exitCode } = await runFiles({
+        "a.test.ts": `
+          ${imports}
+          let rejected;
+          ${before}
+          test.concurrent("first", () => {});
+          test.concurrent("leaves", async () => {
+            await stat(import.meta.path);
+            rejected = Promise.reject(new Error("left"));
+          });
+          ${after}
+        `,
+      });
+      expect({ results: results(stderr), errors, exitCode }).toEqual({
+        results: ["(pass) first", "(pass) leaves", ...(after ? ["(pass) handles it"] : [])],
+        errors: [],
+        exitCode: 0,
+      });
+    });
+  });
+
+  // A describe() that left a rejection is failed when its callback ends, so none of its tests runs.
+  describe("a describe() is reported when only a later callback handles it", () => {
+    test.each(
+      Object.entries({
+        "a test of that describe()": [
+          `test("handles it", async () => {
+            await expect(rejected).rejects.toThrow("left");
+          });`,
+          "",
+        ],
+        "the next describe()": [`test("not run", () => {});`, `rejected.catch(() => {});`],
+      }),
+    )("%s", async (_, [inside, next]) => {
+      const { stderr, errors, exitCode } = await runFiles({
+        "a.test.ts": `
+          ${imports}
+          let rejected;
+          describe("leaves", async () => {
+            ${inside}
+            await stat(import.meta.path);
+            rejected = Promise.reject(new Error("left"));
+          });
+          describe("next", () => {
+            ${next}
+            test("one", () => {});
+          });
+        `,
+      });
+      expect({ results: results(stderr), errors, exitCode }).toEqual({
+        ...failsThatTest,
+        results: ["(pass) next > one"],
+      });
+    });
+  });
+
+  // A time limit aborts the signal of the test, and the jobs of its listeners run after the runner has moved on.
+  describe("of a concurrent test that timed out isn't reported when a later job of its abort listener handles it", () => {
+    test.each(
+      Object.entries({
+        "waits for its time limit": `
+          test.concurrent("times out", async ({ signal }) => {
+            signal.addEventListener("abort", async () => {
+              const rejected = Promise.reject(new Error("left"));
+              await null;
+              rejected.catch(() => {});
+            });
+            await new Promise(() => {});
+          }, 10);
+        `,
+        "returns after its time limit": `
+          test.concurrent("times out", ({ signal }) => {
+            signal.addEventListener("abort", () => {
+              const rejected = Promise.reject(new Error("left"));
+              queueMicrotask(() => void rejected.catch(() => {}));
+            });
+            const end = performance.now() + 20;
+            while (performance.now() < end);
+          }, 1);
+        `,
+      }),
+    )("a test that %s", async (_, timesOut) => {
+      const { stderr, errors, exitCode } = await runFiles({
+        "a.test.ts": `
+          import { test } from "vitest";
+          test.concurrent("other", () => {});
+          ${timesOut}
+        `,
+      });
+      expect({ results: results(stderr), errors, exitCode }).toEqual({
+        results: ["(pass) other", "(fail) times out"],
+        errors: [],
+        exitCode: 1,
+      });
+    });
+
+    // A report calls the listeners of the process, and the microtasks after each of them would resume the test.
+    test("and the code that the time limit resumes doesn't run before the next test", async () => {
+      const { stdout, stderr, exitCode } = await runFiles({
+        "a.test.ts": `
+          import { test } from "vitest";
+          process.on("unhandledRejection", () => {});
+          test.concurrent("other", () => {});
+          test.concurrent("times out", async ({ signal }) => {
+            try {
+              await new Promise((resolve, reject) => {
+                signal.addEventListener("abort", () => {
+                  Promise.reject(new Error("left"));
+                  reject(signal.reason);
+                });
+              });
+            } finally {
+              console.log("resumed");
+            }
+          }, 10);
+          test("next", () => console.log("next"));
+        `,
+      });
+      expect({ stdout: stdout.match(/^(next|resumed)$/gm), results: results(stderr), exitCode }).toEqual({
+        stdout: ["next", "resumed"],
+        results: ["(pass) other", "(fail) times out", "(pass) next"],
+        exitCode: 1,
+      });
+    });
+  });
+
+  // The call of a callback drains the microtasks only if the callback returns, so the runner drains them after a throw.
+  describe("by a promise job of a callback that threw", () => {
+    const load = `
+      const load = async () => {
+        await null;
+        throw new Error("left");
+      };
+    `;
+
+    test("a test fails that test", async () => {
+      const { stderr, errors, exitCode } = await runFiles({
+        "a.test.ts": `
+          ${imports}
+          ${load}
+          test("leaves", () => {
+            load();
+            expect(1).toBe(2);
+          });
+          ${next}
+        `,
+      });
+      expect({ results: results(stderr), errors, exitCode }).toEqual({
+        ...failsThatTest,
+        errors: ["error: expect(received).toBe(expected)", "error: left"],
+      });
+    });
+
+    test("a describe() fails that describe(), and the next describe() keeps its test", async () => {
+      const { stderr, errors, exitCode } = await runFiles({
+        "a.test.ts": `
+          ${imports}
+          ${load}
+          describe("leaves", () => {
+            test("not run", () => {});
+            load();
+            throw new Error("thrown");
+          });
+          describe("next", () => {
+            test("one", () => {});
+          });
+        `,
+      });
+      expect({ results: results(stderr), errors, exitCode }).toEqual({
+        results: ["(pass) next > one"],
+        errors: ["error: thrown", "error: left"],
+        exitCode: 1,
+      });
+    });
+
+    // The job attaches the handler before the runner looks at what the hook left.
+    test("isn't reported when such a job handles what a hook left", async () => {
+      const { stderr, errors, exitCode } = await runFiles({
+        "a.test.ts": `
+          ${imports}
+          let rejected;
+          let attempt = 0;
+          beforeEach(async () => {
+            await stat(import.meta.path);
+            rejected = Promise.reject(new Error("left"));
+          });
+          test("throws once", () => {
+            queueMicrotask(() => void rejected.catch(() => {}));
+            if (++attempt === 1) throw new Error("thrown");
+          }, { retry: 1 });
+        `,
+      });
+      expect({ results: results(stderr), errors, exitCode }).toEqual({
+        results: ["(pass) throws once (attempt 2)"],
+        errors: ["error: thrown"],
+        exitCode: 0,
+      });
+    });
   });
 
   // The result of a test is decided when the runner leaves it, so a later hook or callback comes too late.
@@ -3738,8 +4027,33 @@ describe.concurrent("a rejection left by the callback that settles", () => {
       expect({ results: results(stderr), errors, exitCode }).toEqual(failsThatTest);
     });
 
+    // An afterEach() hook runs right after its test, so the check comes before the rest of the turn.
+    test("a later immediate of the same turn, if the test has an afterEach() hook", async () => {
+      const { stderr, errors, exitCode } = await runFiles({
+        "a.test.ts": `
+          ${imports}
+          afterEach(() => {});
+          test("leaves", async () => {
+            let rejected;
+            await new Promise<void>(resolve => {
+              setImmediate(() => {
+                rejected = Promise.reject(new Error("left"));
+                resolve();
+              });
+              setImmediate(() => void rejected.catch(() => {}));
+            });
+          });
+          ${next}
+        `,
+      });
+      expect({ results: results(stderr), errors, exitCode }).toEqual(failsThatTest);
+    });
+  });
+
+  // The next test starts in a new task of the event loop, so the rest of the turn still belongs to the test that settled.
+  describe("in the turn that settled a test", () => {
     test.each(Object.entries({ "": next, ", after the last test of the file": "" }))(
-      "a later immediate of the same turn%s",
+      "isn't reported when a later immediate of that turn handles it%s",
       async (_, next) => {
         const { stderr, errors, exitCode } = await runFiles({
           "a.test.ts": `
@@ -3758,11 +4072,93 @@ describe.concurrent("a rejection left by the callback that settles", () => {
           `,
         });
         expect({ results: results(stderr), errors, exitCode }).toEqual({
-          ...failsThatTest,
-          results: next ? failsThatTest.results : ["(fail) leaves"],
+          results: next ? ["(pass) leaves", "(pass) next"] : ["(pass) leaves"],
+          errors: [],
+          exitCode: 0,
         });
       },
     );
+
+    const leavesLater = `
+      await new Promise<void>(resolve => {
+        setImmediate(resolve);
+        setImmediate(() => void Promise.reject(new Error("left")));
+      });
+    `;
+    const nextWaits = (options = "") => `
+      test("next", async () => {
+        await new Promise(resolve => setTimeout(resolve));
+      }${options});
+    `;
+
+    // With { retry }, a charge to the next test would make the run pass.
+    test.each(Object.entries({ "": "", ", and not a next test that would pass on its retry": ", { retry: 1 }" }))(
+      "fails that test when a later immediate of that turn leaves it%s",
+      async (_, options) => {
+        const { stderr, errors, exitCode } = await runFiles({
+          "a.test.ts": `${imports}test("leaves", async () => {${leavesLater}});${nextWaits(options)}`,
+        });
+        expect({ results: results(stderr), errors, exitCode }).toEqual(failsThatTest);
+      },
+    );
+
+    // The hook ran before the later immediate, so the test has its result by then.
+    test("is an error between tests when the test has an afterEach() hook", async () => {
+      const { stderr, errors, exitCode } = await runFiles({
+        "a.test.ts": `
+          ${imports}
+          afterEach(() => {});
+          test("leaves", async () => {${leavesLater}});
+          ${nextWaits(", { retry: 1 }")}
+        `,
+      });
+      expect({ results: results(stderr), errors, exitCode }).toEqual({
+        ...failsThatTest,
+        results: ["(pass) leaves", "(pass) next"],
+      });
+      expect(stderr).toContain("Unhandled error between tests");
+    });
+
+    // Another attempt is another run of the sequence of the test, so it starts in a new task too.
+    test("is followed by the next attempt of the test only after the later immediates of that turn", async () => {
+      const { stdout, stderr, errors, exitCode } = await runFiles({
+        "a.test.ts": `
+          ${imports}
+          afterEach(() => {});
+          let attempt = 0;
+          test("leaves", async () => {
+            if (++attempt > 1) return;
+            await new Promise<void>(resolve => {
+              setImmediate(() => {
+                Promise.reject(new Error("left"));
+                resolve();
+              });
+              setImmediate(() => console.log("attempt", attempt));
+            });
+          }, { retry: 1 });
+        `,
+      });
+      expect({ stdout: stdout.match(/^attempt \d$/m)?.[0], results: results(stderr), errors, exitCode }).toEqual({
+        stdout: "attempt 1",
+        results: ["(pass) leaves (attempt 2)"],
+        errors: ["error: left"],
+        exitCode: 0,
+      });
+    });
+
+    test("fails the describe() whose callback a later immediate of that turn leaves it for", async () => {
+      const { stderr, errors, exitCode } = await runFiles({
+        "a.test.ts": `
+          ${imports}
+          describe("leaves", async () => {
+            test("not run", () => {});
+            ${leavesLater}
+          });
+          ${nextWaits(", { retry: 1 }")}
+        `,
+      });
+      expect({ results: results(stderr), errors, exitCode }).toEqual({ ...failsThatTest, results: ["(pass) next"] });
+    });
   });
 
   describe("is the expected failure of a test.todo() body under --todo", () => {
@@ -3907,6 +4303,39 @@ describe.concurrent("a rejection left by the callback that settles", () => {
         exitCode: 0,
       });
     });
+
+    // The runner knows each of them, so a test never gets the error of another test.
+    test("and each skip() throws an error of its own", async () => {
+      const { stdout, stderr, errors, exitCode } = await runFiles({
+        "a.test.ts": `
+          import { test } from "vitest";
+          let first;
+          test("one", ({ skip }) => {
+            try {
+              skip();
+            } catch (error) {
+              first = error;
+              error.seen = true;
+              throw error;
+            }
+          });
+          test("two", ({ skip }) => {
+            try {
+              skip();
+            } catch (error) {
+              console.log("same:", error === first, "seen:", error.seen, "same stack:", error.stack === first.stack);
+              throw error;
+            }
+          });
+        `,
+      });
+      expect({ stdout: stdout.match(/^same: .*$/m)?.[0], results: results(stderr), errors, exitCode }).toEqual({
+        stdout: "same: false seen: undefined same stack: false",
+        results: ["(skip) one", "(skip) two"],
+        errors: [],
+        exitCode: 0,
+      });
+    });
   });
 
   // While a test runs, the turns of the event loop are the only points at which a rejection is reported.
@@ -3984,26 +4413,7 @@ describe.concurrent("a rejection left by the callback that settles", () => {
     });
   });
 
-  // Such a callback runs after the runner has moved on, and nothing says which test it belongs to.
-  test.todo("from a later callback of the turn that settled the test fails that test", async () => {
-    const { stderr, errors, exitCode } = await runFiles({
-      "a.test.ts": `
-        ${imports}
-        test("leaves", async () => {
-          await new Promise<void>(resolve => {
-            setImmediate(resolve);
-            setImmediate(() => void Promise.reject(new Error("left")));
-          });
-        });
-        test("next", async () => {
-          await new Promise(resolve => setTimeout(resolve));
-        });
-      `,
-    });
-    expect({ results: results(stderr), errors, exitCode }).toEqual(failsThatTest);
-  });
-
-  // The runner has moved on too when the promise jobs run that a time limit queues: what the listeners of the abort
+  // The runner has moved on when the promise jobs run that a time limit queues: what the listeners of the abort
   // signal resume, and what awaits a matcher that ends with its test.
   test.todo("from what the time limit of the test resumes doesn't fail the next test", async () => {
     const { stderr, errors, exitCode } = await runFiles({
@@ -4020,6 +4430,49 @@ describe.concurrent("a rejection left by the callback that settles", () => {
       `,
     });
     expect({ results: results(stderr), errors, exitCode }).toEqual(failsThatTest);
+  });
+
+  // The tests of a concurrent group keep what a callback didn't handle for each other, and --bail exits before the report.
+  test.todo("of a concurrent test is printed before --bail exits", async () => {
+    const { stderr, errors, exitCode } = await runFiles(
+      {
+        "a.test.ts": `
+          ${imports}
+          afterEach(() => {
+            throw new Error("thrown");
+          });
+          test.concurrent("leaves", async () => {${leave}});
+          test.concurrent("other", async () => {
+            await new Promise(resolve => setTimeout(resolve, 100));
+          });
+        `,
+      },
+      "--bail",
+    );
+    expect({ results: results(stderr), errors, exitCode }).toEqual({
+      results: ["(fail) leaves"],
+      errors: ["error: thrown", "error: left"],
+      exitCode: 1,
+    });
+  });
+
+  // node:test marks the test as skipped when the test ends, so the runner doesn't know it earlier.
+  test.todo("of a node:test test that called t.skip() doesn't fail that test while it still runs", async () => {
+    const { stderr, errors, exitCode } = await runFiles({
+      "a.test.ts": `
+        import { test } from "node:test";
+        test("skips", async t => {
+          t.skip();
+          Promise.reject(new Error("left"));
+          await new Promise(resolve => setTimeout(resolve));
+        });
+        test("next", () => {});
+      `,
+    });
+    expect({ results: results(stderr), errors, exitCode }).toEqual({
+      ...failsThatTest,
+      results: ["(skip) skips", "(pass) next"],
+    });
   });
 });
 

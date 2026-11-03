@@ -2745,12 +2745,16 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                     break 'escaped;
                                 }
                             };
+                            let _ = self.eat();
+                            let is_dup = self
+                                .peek()
+                                .is_some_and(|next| !next.escaped && next.char == u32::from(b'&'));
                             // In `0>f`, `1<f` and `2<f` the digit is a word.
-                            let src_fd = match (fd, dir) {
-                                (0, RedirectDirection::In) => StdFd::Stdin,
-                                (1, RedirectDirection::Out) => StdFd::Stdout,
-                                (2, RedirectDirection::Out) => StdFd::Stderr,
-                                (0..=2, _) => {
+                            let src_fd = match (fd, dir, is_dup) {
+                                (0, RedirectDirection::In, _) | (0, _, true) => StdFd::Stdin,
+                                (1, RedirectDirection::Out, _) | (1, _, true) => StdFd::Stdout,
+                                (2, RedirectDirection::Out, _) | (2, _, true) => StdFd::Stderr,
+                                (0..=2, _, false) => {
                                     self.backtrack(&snapshot);
                                     break 'escaped;
                                 }
@@ -2760,12 +2764,11 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                         RedirectDirection::In => '<',
                                     };
                                     self.add_error_fmt(format_args!(
-                                        "`{fd}{op}`: Bun Shell only redirects file descriptors 0, 1 and 2. Please file an issue on GitHub."
+                                        "`{fd}{op}`: Bun Shell only redirects file descriptors 0, 1 and 2 (`<`, `>`, `2>`, `1>&2`, `2>&1`). Please file an issue on GitHub."
                                     ));
                                     return Ok(());
                                 }
                             };
-                            let _ = self.eat();
                             self.break_word(AddDelimiter::AfterText)?;
                             match self.eat_redirect_operator(Some(src_fd), dir) {
                                 RedirectLex::Redirect(flags) => {

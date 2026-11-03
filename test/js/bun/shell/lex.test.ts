@@ -476,6 +476,9 @@ describe("lex shell", () => {
       ["cmd1 2>&2", [...cmd, { Eof: {} }]],
       ["cmd1 <&0", [...cmd, { Eof: {} }]],
       ["cmd1 0<&0", [...cmd, { Eof: {} }]],
+      ["cmd1 0>&0", [...cmd, { Eof: {} }]],
+      ["cmd1 1<&1", [...cmd, { Eof: {} }]],
+      ["cmd1 2<&2", [...cmd, { Eof: {} }]],
       ["cmd1 >&1 arg", [...cmd, { Text: "arg" }, { Delimit: {} }, { Eof: {} }]],
       // An fd number starts a word.
       [

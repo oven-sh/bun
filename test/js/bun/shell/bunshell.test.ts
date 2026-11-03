@@ -2012,6 +2012,8 @@ describe("deno_task", () => {
       TestBuilder.command`echo hi 2>&2`.stdout("hi\n").stderr("").runAsTest("2>&2 is a no-op");
       TestBuilder.command`echo hi <&0`.stdout("hi\n").stderr("").runAsTest("<&0 is a no-op");
       TestBuilder.command`echo hi 0<&0`.stdout("hi\n").stderr("").runAsTest("0<&0 is a no-op");
+      TestBuilder.command`echo hi 0>&0`.stdout("hi\n").stderr("").runAsTest("0>&0 is a no-op");
+      TestBuilder.command`echo hi 1<&1`.stdout("hi\n").stderr("").runAsTest("1<&1 is a no-op");
 
       TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log('Stdout')"} 1>&1`
         .stdout("Stdout\n")
@@ -2081,7 +2083,8 @@ describe("deno_task", () => {
         return undefined;
       };
 
-      const onlyStdFds = "`3>`: Bun Shell only redirects file descriptors 0, 1 and 2. Please file an issue on GitHub.";
+      const onlyStdFds =
+        "`3>`: Bun Shell only redirects file descriptors 0, 1 and 2 (`<`, `>`, `2>`, `1>&2`, `2>&1`). Please file an issue on GitHub.";
       const onlyStdPairs = (form: string) =>
         `\`${form}\`: Bun Shell only duplicates stdout and stderr onto each other: \`1>&2\` (or \`>&2\`) and \`2>&1\`. Please file an issue on GitHub.`;
       const needsFd =
@@ -2090,14 +2093,8 @@ describe("deno_task", () => {
       test.each([
         ["echo hi 3>&1", onlyStdFds],
         ["echo hi 3> out", onlyStdFds],
-        [
-          "echo hi 10>&1",
-          "`10>`: Bun Shell only redirects file descriptors 0, 1 and 2. Please file an issue on GitHub.",
-        ],
-        [
-          "echo hi 12>out",
-          "`12>`: Bun Shell only redirects file descriptors 0, 1 and 2. Please file an issue on GitHub.",
-        ],
+        ["echo hi 10>&1", onlyStdFds.replace("`3>`", "`10>`")],
+        ["echo hi 12>out", onlyStdFds.replace("`3>`", "`12>`")],
         ["echo hi >&3", onlyStdPairs(">&3")],
         ["echo hi >&12", onlyStdPairs(">&12")],
         ["echo hi 1>&0", onlyStdPairs("1>&0")],

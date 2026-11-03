@@ -419,7 +419,7 @@ static OnLoadResult handleOnLoadResult(Zig::GlobalObject* globalObject, JSC::JSV
     return handleOnLoadResultNotPromise(globalObject, objectValue, specifier, typeAttribute, wasModuleMock);
 }
 
-// Returns empty when require() should return the module namespace object instead.
+// The `module.exports` that the object names, such as the `default` of one marked `__esModule`. Empty if it names none.
 static JSValue commonJSExportsOfObjectModule(Zig::GlobalObject* globalObject, JSC::JSObject* object, bool wasModuleMock)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -436,7 +436,7 @@ static JSValue commonJSExportsOfObjectModule(Zig::GlobalObject* globalObject, JS
         if (defaultValue && !defaultValue.isUndefined())
             return defaultValue;
     }
-    return wasModuleMock ? object : JSValue();
+    return {};
 }
 
 template<bool allowPromise>
@@ -524,12 +524,13 @@ static JSValue handleVirtualModuleResult(
             if (scope.exception()) [[unlikely]] {
                 return rejectOrResolve({});
             }
-            if (exports == exportsObject) {
+            if (!exports && wasModuleMock) {
                 JSC::JSModuleLoader* loader = Bun::moduleLoaderOf(globalObject, scope, commonJSModule->moduleGraph());
                 RETURN_IF_EXCEPTION(scope, {});
                 // Like import(), require() then returns the namespace object of the loaded module, not the factory's object.
                 if (Bun::isESModulePatchedByMockModule(loader, specifier->toWTFString(BunString::ZeroCopy), object))
                     return jsNumber(-1);
+                exports = exportsObject;
             }
             if (exports) {
                 commonJSModule->setExportsObject(exports);
@@ -673,7 +674,7 @@ BuiltinModule fetchBuiltinModuleWithoutResolution(
             }
             JSValue exports = commonJSExportsOfObjectModule(globalObject, result, true);
             RETURN_IF_EXCEPTION(scope, {});
-            return { Kind::Exports, exports };
+            return { Kind::Exports, exports ? exports : JSValue(result) };
         }
     }
     if (Bun__fetchBuiltinModule(bunVM, globalObject, specifier, true, res)) {

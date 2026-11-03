@@ -3481,14 +3481,23 @@ describe.concurrent("require() of an ES module that mock.module() has patched in
     await expectFixturesToPass(
       {
         ...files,
+        "own-default.ts": dep,
         "default.test.ts": `
           import { expect, mock, test } from "bun:test";
           import * as dep from "./dep";
+          import * as ownDefault from "./own-default";
           test("the default export of a factory's object marked __esModule", () => {
             const fake = { a: "mocked-a" };
             mock.module("./dep", () => ({ __esModule: true, default: fake, a: "mocked-a" }));
             expect(dep.a).toBe("mocked-a");
             expect(require("./dep")).toBe(fake);
+          });
+          test("also when that default export is the factory's object", () => {
+            const exports = { __esModule: true, a: "mocked-a" };
+            exports.default = exports;
+            mock.module("./own-default", () => exports);
+            expect(ownDefault.a).toBe("mocked-a");
+            expect(require("./own-default")).toBe(exports);
           });
         `,
         "cached.ts": dep,
@@ -3581,7 +3590,7 @@ describe.concurrent("require() of an ES module that mock.module() has patched in
           });
         `,
       },
-      10,
+      11,
       args,
     );
   });

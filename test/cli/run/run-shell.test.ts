@@ -37,6 +37,42 @@ describe.concurrent("run-shell", () => {
     const stderr = await proc.stderr.text();
     expect(stderr).toBe("error: Failed to run script.sh due to error Unexpected ')'\n");
   });
+
+  test("a command that is not found exits 127, as it does in sh", async () => {
+    using dir = tempDir("run-shell-not-found", {
+      "script.sh": "zz-made-up-command\n",
+      "package.json": JSON.stringify({ name: "not-found-fixture", scripts: { missing: "zz-made-up-command" } }),
+    });
+    const run = async (...args: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+
+    expect(await run("script.sh")).toEqual({
+      stdout: "",
+      stderr: "bun: command not found: zz-made-up-command\n",
+      exitCode: 127,
+    });
+    expect(await run("run", "--shell=bun", "missing")).toEqual({
+      stdout: "",
+      stderr:
+        "$ zz-made-up-command\n" +
+        "bun: command not found: zz-made-up-command\n" +
+        'error: script "missing" exited with code 127\n',
+      exitCode: 127,
+    });
+    // A POSIX system shell gives the same status for the same script. On Windows it is cmd.exe, which exits 1.
+    if (!isWindows) {
+      expect(await run("run", "--shell=system", "missing")).toMatchObject({ stdout: "", exitCode: 127 });
+    }
+  });
 });
 
 test.skipIf(isWindows)(

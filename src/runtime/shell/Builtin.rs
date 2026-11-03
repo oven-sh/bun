@@ -14,7 +14,7 @@ use crate::shell::interpreter::{
 use crate::shell::io::{InKind, OutFd, OutKind};
 use crate::shell::io_reader::IOReader;
 use crate::shell::io_writer::{self, IOWriter};
-use crate::shell::states::cmd::{Cmd, CmdState};
+use crate::shell::states::cmd::{Cmd, CmdFailure, CmdState};
 use crate::shell::yield_::Yield;
 
 pub(crate) struct Builtin {
@@ -521,6 +521,7 @@ impl Builtin {
                     return Some(Self::cmd_write_failing_error(
                         interp,
                         cmd,
+                        CmdFailure::Setup,
                         format_args!("bun: ambiguous redirect: at `{}`\n", kind.as_str()),
                     ));
                 }
@@ -554,6 +555,7 @@ impl Builtin {
                             return Some(Self::cmd_write_failing_error(
                                 interp,
                                 cmd,
+                                CmdFailure::Setup,
                                 format_args!(
                                     "bun: {}: {}",
                                     bstr::BStr::new(sys.message.byte_slice()),
@@ -584,6 +586,7 @@ impl Builtin {
                             return Some(Self::cmd_write_failing_error(
                                 interp,
                                 cmd,
+                                CmdFailure::Setup,
                                 format_args!(
                                     "bun: {}: {}",
                                     bstr::BStr::new(sys.message.byte_slice()),
@@ -755,22 +758,24 @@ impl Builtin {
         None
     }
 
-    /// Sets the owning Cmd's state to
-    /// `WaitingWriteErr` and writes to the *Cmd's* `io.stderr` (not the
-    /// builtin's, which may already have been redirected). Hoisted here
-    /// because `init_redirections` and `Cmd::transition_to_exec` (the
-    /// "command not found" / spawn-error paths) are the only callers.
+    /// Writes the message to the *Cmd's* `io.stderr` (not the builtin's,
+    /// which may already have been redirected) and ends the Cmd with the
+    /// status of `why`.
     pub(crate) fn cmd_write_failing_error(
         interp: &Interpreter,
         cmd: NodeId,
+        why: CmdFailure,
         args: core::fmt::Arguments<'_>,
     ) -> Yield {
         use std::io::Write as _;
         let mut buf = Vec::new();
         let _ = buf.write_fmt(args);
         if let Some(_safeguard) = interp.as_cmd(cmd).io.stderr.needs_io() {
-            // Only the `Fd` arm transitions state.
-            interp.as_cmd_mut(cmd).state = CmdState::WaitingWriteErr;
+            // `Cmd::on_io_writer_chunk` ends the Cmd with this status after
+            // the write. It replaces the status a sole `$(...)` word left here.
+            let me = interp.as_cmd_mut(cmd);
+            me.exit_code = Some(why.exit_code());
+            me.state = CmdState::WaitingWriteErr;
             let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Cmd);
             // SAFETY: `OutKind::Fd` guaranteed by `needs_io()`.
             if let OutKind::Fd(fd) = &interp.as_cmd(cmd).io.stderr {
@@ -779,7 +784,7 @@ impl Builtin {
             unreachable!()
         }
         // No-IO path: append to the shell env's captured stderr and finish
-        // synchronously with exit 1 (Cmd::on_io_writer_chunk's behaviour).
+        // in this turn.
         if let OutKind::Pipe = &interp.as_cmd(cmd).io.stderr {
             // SAFETY: single trampoline frame; no other borrow of the env's
             // (or its parent's) stderr buffer is live.
@@ -792,8 +797,7 @@ impl Builtin {
             };
             stderr.append_slice(&buf);
         }
-        let parent = interp.as_cmd(cmd).base.parent;
-        interp.child_done(parent, cmd, 1)
+        Cmd::on_exec_done(interp, cmd, why.exit_code())
     }
 
     /// Finish the builtin with `exit_code` and signal the owning Cmd.

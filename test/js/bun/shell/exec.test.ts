@@ -12,7 +12,7 @@ describe("bun exec", () => {
   TestBuilder.command`${BUN} exec ${"echo hi!"}`.env(bunEnv).stdout("hi!\n").runAsTest("it works");
   TestBuilder.command`${BUN} exec sldkfjslkdjflksdjflj`
     .env(bunEnv)
-    .exitCode(1)
+    .exitCode(127)
     .stderr("bun: command not found: sldkfjslkdjflksdjflj\n")
     .runAsTest("it works on command fail");
 

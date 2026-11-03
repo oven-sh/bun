@@ -271,7 +271,7 @@ impl Pipeline {
         Yield::Next(this)
     }
 
-    /// Same shape as `Builtin::cmd_write_failing_error`: `.fd` stderr
+    /// Like `Builtin::cmd_write_failing_error` without a reason: `.fd` stderr
     /// enqueues an async write and parks in `WaitingWriteErr` (resumed by
     /// `on_io_writer_chunk`); otherwise append to the captured stderr buffer
     /// and finish with exit 1.

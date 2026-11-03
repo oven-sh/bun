@@ -1488,7 +1488,7 @@ describe.concurrent("bun run", () => {
     const blocked = await run(ownBun("blocked"), "run", "v");
     expect(blocked.stderr).toContain("warn: failed to create node alias in ");
     expect(blocked.stderr).toContain("command not found: node");
-    expect(blocked).toMatchObject({ stdout: "", exitCode: 1 });
+    expect(blocked).toMatchObject({ stdout: "", exitCode: 127 });
   });
 
   // Windows runs a .cmd or .bat file through cmd.exe, which reads the arguments a second time: it

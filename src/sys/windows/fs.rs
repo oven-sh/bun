@@ -20,7 +20,7 @@ use bun_windows_sys::externs::{
     FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILETIME, FS_INFORMATION_CLASS,
     GENERIC_WRITE, GetCurrentDirectoryW, GetFileAttributesExW, NT_ERROR, NT_SUCCESS, RtlGenRandom,
     SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE, SYMBOLIC_LINK_FLAG_DIRECTORY, UNICODE_STRING,
-    VOLUME_NAME_DOS, WIN32_FILE_ATTRIBUTE_DATA,
+    VOLUME_NAME_DOS, WAIT_OBJECT_0, WIN32_FILE_ATTRIBUTE_DATA,
 };
 
 use super::{
@@ -709,7 +709,11 @@ fn transfer_once(
             return status;
         }
         let _entry = PendingTransferEntry::new(handle, io);
-        kernel32::WaitForSingleObject(event, INFINITE);
+        // Until the event is set, `io` and the buffer are the system's to write to.
+        assert_eq!(
+            kernel32::WaitForSingleObject(event, INFINITE),
+            WAIT_OBJECT_0
+        );
         // SAFETY: the operation is over.
         NTSTATUS(unsafe { (*io).Status } as u32)
     });

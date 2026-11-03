@@ -1014,6 +1014,28 @@ std::optional<std::string> X509View::getSignatureAlgorithmOID() const
     return std::string(buf, static_cast<size_t>(len));
 }
 
+std::optional<int64_t> X509View::getValidToTime() const
+{
+    MarkPopErrorOnReturn mark_pop_error_on_return;
+    if (cert_ == nullptr) return std::nullopt;
+    const ASN1_TIME* time = X509_get0_notAfter(cert_);
+    if (time == nullptr) return std::nullopt;
+    int64_t tp {};
+    if (ASN1_TIME_to_posix(time, &tp) != 1) return std::nullopt;
+    return tp;
+}
+
+std::optional<int64_t> X509View::getValidFromTime() const
+{
+    MarkPopErrorOnReturn mark_pop_error_on_return;
+    if (cert_ == nullptr) return std::nullopt;
+    const ASN1_TIME* time = X509_get0_notBefore(cert_);
+    if (time == nullptr) return std::nullopt;
+    int64_t tp {};
+    if (ASN1_TIME_to_posix(time, &tp) != 1) return std::nullopt;
+    return tp;
+}
+
 DataPointer X509View::getSerialNumber() const
 {
     ClearErrorOnReturn clearErrorOnReturn;

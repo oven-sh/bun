@@ -23,6 +23,7 @@
 #include "JavaScriptCore/ObjectPrototype.h"
 #include "BunString.h"
 #include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/JSONObject.h>
 #include "JSBuffer.h"
 #include "wtf/text/ExternalStringImpl.h"
 #include <wtf/SIMDUTF.h>
@@ -203,7 +204,7 @@ JSX509Certificate* JSX509Certificate::create(JSC::VM& vm, JSC::Structure* struct
     // Initialize the X509 certificate from the provided data
     auto result = ncrypto::X509Pointer::Parse(ncrypto::Buffer<const unsigned char> { reinterpret_cast<const unsigned char*>(der.data()), der.size() });
     if (!result) {
-        Bun::throwBoringSSLError(globalObject, scope, result.error.value_or(0));
+        throwCryptoError(globalObject, scope, result.error.value_or(0));
         return nullptr;
     }
 
@@ -523,11 +524,11 @@ bool JSX509Certificate::computeIsCA(ncrypto::X509View view, JSGlobalObject* glob
     return view.isCA();
 }
 
-static bool handleMatchResult(JSGlobalObject* globalObject, ASCIILiteral errorMessage, JSC::ThrowScope& scope, ncrypto::X509View::CheckMatch result)
+static bool handleMatchResult(JSGlobalObject* globalObject, JSC::ThrowScope& scope, ncrypto::X509View::CheckMatch result)
 {
     switch (result) {
     case ncrypto::X509View::CheckMatch::INVALID_NAME:
-        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE, errorMessage);
+        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE, "Invalid name"_s);
         return false;
     case ncrypto::X509View::CheckMatch::NO_MATCH:
         return false;
@@ -546,7 +547,7 @@ bool JSX509Certificate::checkHost(JSGlobalObject* globalObject, std::span<const 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto result = view().checkHost(name, flags, peerName);
-    return handleMatchResult(globalObject, "Invalid name"_s, scope, result);
+    return handleMatchResult(globalObject, scope, result);
 }
 
 bool JSX509Certificate::checkEmail(JSGlobalObject* globalObject, std::span<const char> email, uint32_t flags)
@@ -555,7 +556,7 @@ bool JSX509Certificate::checkEmail(JSGlobalObject* globalObject, std::span<const
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto result = view().checkEmail(email, flags);
-    return handleMatchResult(globalObject, "Invalid email"_s, scope, result);
+    return handleMatchResult(globalObject, scope, result);
 }
 
 bool JSX509Certificate::checkIP(JSGlobalObject* globalObject, WTF::StringView ip)
@@ -567,7 +568,7 @@ bool JSX509Certificate::checkIP(JSGlobalObject* globalObject, WTF::StringView ip
     // where the C string that checkIp() takes would end.
     auto ipUtf8 = ip.tryGetUTF8();
     auto result = ipUtf8 && !ip.contains(u'\0') ? view().checkIp(ipUtf8->legacyCStringPointer(), 0) : ncrypto::X509View::CheckMatch::INVALID_NAME;
-    return handleMatchResult(globalObject, "Invalid IP address"_s, scope, result);
+    return handleMatchResult(globalObject, scope, result);
 }
 
 bool JSX509Certificate::checkIssued(JSGlobalObject* globalObject, JSX509Certificate* issuer)
@@ -1199,16 +1200,19 @@ JSValue JSX509Certificate::computeInfoAccess(ncrypto::X509View view, JSGlobalObj
         if (identifier.isNull()) {
             continue;
         }
+        // A value that had to be escaped was printed as a JSON string.
+        JSValue jsValue = value.startsWith('"') ? JSONParseWithException(globalObject, value) : jsString(vm, value);
+        RETURN_IF_EXCEPTION(scope, {});
         JSValue existingValue = object->getIfPropertyExists(globalObject, identifier);
         RETURN_IF_EXCEPTION(scope, {});
         if (existingValue) {
             JSArray* array = uncheckedDowncast<JSArray>(existingValue);
-            array->putDirectIndex(globalObject, array->length(), jsString(vm, value));
+            array->putDirectIndex(globalObject, array->length(), jsValue);
             RETURN_IF_EXCEPTION(scope, {});
         } else {
             JSArray* array = constructEmptyArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), 1);
             RETURN_IF_EXCEPTION(scope, {});
-            array->putDirectIndex(globalObject, 0, jsString(vm, value));
+            array->putDirectIndex(globalObject, 0, jsValue);
             RETURN_IF_EXCEPTION(scope, {});
             object->putDirect(vm, identifier, array);
         }

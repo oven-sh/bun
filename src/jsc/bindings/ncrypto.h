@@ -959,6 +959,8 @@ public:
     BIOPointer getValidTo() const;
     std::optional<std::string_view> getSignatureAlgorithm() const;
     std::optional<std::string> getSignatureAlgorithmOID() const;
+    std::optional<int64_t> getValidFromTime() const;
+    std::optional<int64_t> getValidToTime() const;
     DataPointer getSerialNumber() const;
     Result<EVPKeyPointer, int> getPublicKey() const;
     StackOfASN1 getKeyUsage() const;

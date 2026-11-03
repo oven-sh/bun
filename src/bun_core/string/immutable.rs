@@ -1410,7 +1410,7 @@ pub fn index_of_newline_or_non_ascii_check_start<const CHECK_START: bool>(
 
     if CHECK_START {
         // this shows up in profiling
-        if remaining[0] > 127 || (remaining[0] < 0x20 && remaining[0] != 0x09) {
+        if remaining[0] > 127 || remaining[0] < 0x20 {
             return Some(offset);
         }
     }

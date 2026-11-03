@@ -522,7 +522,11 @@ impl DirEntry {
                 // `data` keys are the lowercased basenames, so an exact match on
                 // `name_lc` is the case-insensitive match — and reuses
                 // `name_hash` instead of re-hashing.
-                if let Some(&existing_ptr) = map.get_hashed(name_hash, name_lc) {
+                // An entry is kept only under the spelling that is listed now: a name in another case gets a new entry.
+                if let Some(&existing_ptr) = map.get_hashed(name_hash, name_lc)
+                    // SAFETY: EntryStore-owned pointer, valid for lifetime of store
+                    && unsafe { &*existing_ptr }.base() == name_slice
+                {
                     // SAFETY: EntryStore-owned pointer, valid for lifetime of store
                     let existing = unsafe { &mut *existing_ptr };
                     // `MutexGuard` stores a `BackRef<Mutex>` (lifetime-erased), so
@@ -544,10 +548,13 @@ impl DirEntry {
                     // cache, stale but untorn.
                     // Relaxed load: writes are serialized on the per-entry
                     // mutex held above.
+                    // A path that the entry holds came from a link or from the real path of its directory: either can differ now, so it is statted again.
+                    let memo = existing.cache();
                     existing.need_stat.store(
                         existing.need_stat.load(Ordering::Relaxed)
                             || found_kind.is_none()
-                            || Some(existing.cache().kind) != found_kind,
+                            || Some(memo.kind) != found_kind
+                            || !memo.symlink.is_empty(),
                         Ordering::Release,
                     );
                     // Relaxed: see `Entry::kind_for`.

@@ -2895,6 +2895,71 @@ describe.concurrent("a mocked module's exports are read from the object the fact
     );
   });
 
+  test("in hot code, a getter is called by each read and by no other lookup", async () => {
+    await expectFixturesToPass(
+      {
+        ...dep,
+        "other.ts": `export const plain = "other";`,
+        "hot-lookups.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import * as ns from "./dep";
+          import * as other from "./other";
+          import { flag } from "./dep";
+
+          const state = vi.hoisted(() => ({ calls: 0 }));
+          vi.mock("./dep", () => ({ get flag() { state.calls++; return "getter"; }, plain: "plain" }));
+          const iterations = ${isDebug || isASAN ? 2_000 : 100_000};
+
+          function lookUpManyTimes(has, getter) {
+            let different = 0;
+            for (let i = 0; i < iterations; i++) {
+              if (Object.hasOwn(ns, "flag") !== has) different++;
+              if ("flag" in ns !== has) different++;
+              if (typeof Object.getOwnPropertyDescriptor(ns, "flag")?.get !== getter) different++;
+              let listed = false;
+              for (const key in ns) listed ||= key === "flag";
+              if (listed !== has) different++;
+              // A namespace object that is not mocked keeps its own answers.
+              if (Object.hasOwn(other, "flag") || "flag" in other || other.flag !== undefined) different++;
+            }
+            return different;
+          }
+
+          function readManyTimes(expected) {
+            let different = 0;
+            for (let i = 0; i < iterations; i++) {
+              if (ns.flag !== expected) different++;
+              if (flag !== expected) different++;
+            }
+            return different;
+          }
+
+          test("the same export as a getter, as a value, deleted, and as a getter again", () => {
+            expect([lookUpManyTimes(true, "function"), state.calls]).toEqual([0, 0]);
+            expect([readManyTimes("getter"), state.calls]).toEqual([0, iterations * 2]);
+
+            Object.defineProperty(ns, "flag", { value: "value", writable: true, enumerable: true, configurable: true });
+            expect([lookUpManyTimes(true, "undefined"), readManyTimes("value"), state.calls]).toEqual([0, 0, iterations * 2]);
+
+            delete ns.flag;
+            expect(lookUpManyTimes(false, "undefined")).toBe(0);
+
+            Object.defineProperty(ns, "flag", { get: () => (state.calls++, "again"), enumerable: true, configurable: true });
+            expect([lookUpManyTimes(true, "function"), state.calls]).toEqual([0, iterations * 2]);
+            expect([readManyTimes("again"), state.calls]).toEqual([0, iterations * 4]);
+
+            // Mocked again: the bindings and the namespace object read the new factory's object.
+            vi.mock("./dep", () => ({ get flag() { state.calls++; return "third"; }, plain: "plain" }));
+            state.calls = 0;
+            expect([lookUpManyTimes(true, "function"), state.calls]).toEqual([0, 0]);
+            expect([readManyTimes("third"), state.calls]).toEqual([0, iterations * 2]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
   for (const [args] of isolationFlags) {
     test(`in files that mock the same module differently ${JSON.stringify(args)}`, async () => {
       const file = (mock: string, expected: string) => `
@@ -3009,6 +3074,603 @@ describe.concurrent("a mocked module's exports are read from the object the fact
       5,
     );
   });
+
+  // Vitest 5.0.3 and Jest 30.5.2 print `[Getter]` for the same factory, and call a getter as often.
+  const described = {
+    ...Object.fromEntries(
+      ["vi-mock", "jest-mock", "mock-module", "vi-do-mock", "jest-do-mock", "import-mock"].map(name => [
+        `${name}.ts`,
+        `export const value = "real";`,
+      ]),
+    ),
+    "star.ts": `export * from "./vi-mock";`,
+    "named.ts": `export { value, thrower as renamed, plain } from "./vi-mock";`,
+  };
+  const hoistedFactory = `
+    const state = vi.hoisted(() => {
+      const state = { calls: 0, receivers: [], exports: [] };
+      state.factory = () => {
+        const exports = {
+          get value() {
+            state.calls++;
+            state.receivers.push(this);
+            return 42;
+          },
+          get thrower() {
+            state.calls++;
+            throw new Error("from the factory getter");
+          },
+          get both() {
+            state.calls++;
+            return "both";
+          },
+          set both(value) {},
+          set setter(value) {},
+          plain: 1,
+        };
+        Object.defineProperty(exports, "hidden", { get: () => (state.calls++, "hidden"), configurable: true });
+        Object.defineProperty(exports, "hiddenData", { value: 1, writable: true, configurable: true });
+        state.exports.push(exports);
+        return exports;
+      };
+      return state;
+    });
+    beforeEach(() => {
+      state.calls = 0;
+      state.receivers.length = 0;
+    });
+  `;
+
+  test("printing or describing the namespace object calls no getter", async () => {
+    await expectFixturesToPass(
+      {
+        ...described,
+        "describe.test.ts": `
+          import { beforeAll, beforeEach, describe, expect, jest, mock, test, vi } from "bun:test";
+          import util from "node:util";
+          import * as viMock from "./vi-mock";
+          import * as jestMock from "./jest-mock";
+          ${hoistedFactory}
+          vi.mock("./vi-mock", state.factory);
+          jest.mock("./jest-mock", state.factory);
+          vi.mock("./import-mock", state.factory);
+
+          const load = {
+            "vi.mock()": () => viMock,
+            "jest.mock()": () => jestMock,
+            "vi.importMock()": () => vi.importMock("./import-mock"),
+            "mock.module()": () => (mock.module("./mock-module", state.factory), import("./mock-module")),
+            "vi.doMock()": () => (vi.doMock("./vi-do-mock", state.factory), import("./vi-do-mock")),
+            "jest.doMock()": () => (jest.doMock("./jest-do-mock", state.factory), import("./jest-do-mock")),
+          };
+
+          describe.each(Object.keys(load))("%s", name => {
+            let ns, exports;
+            beforeAll(async () => {
+              ns = await load[name]();
+              const getter = Object.getOwnPropertyDescriptor(ns, "value").get;
+              exports = state.exports.find(exports => Object.getOwnPropertyDescriptor(exports, "value").get === getter);
+            });
+
+            test("a print", () => {
+              expect(Bun.inspect(ns)).toBe("Module {\\n  value: [Getter],\\n  thrower: [Getter],\\n  both: [Getter/Setter],\\n  setter: [Setter],\\n  plain: 1,\\n}");
+              expect(Bun.inspect(ns, { sorted: true })).toBe("Module {\\n  both: [Getter/Setter],\\n  plain: 1,\\n  setter: [Setter],\\n  thrower: [Getter],\\n  value: [Getter],\\n}");
+              expect(Bun.inspect({ nested: [ns] })).toContain("thrower: [Getter],");
+              const text = "{\\n  value: [Getter],\\n  thrower: [Getter],\\n  both: [Getter/Setter],\\n  setter: [Setter],\\n  plain: 1\\n}";
+              expect(util.inspect(ns)).toEndWith(text);
+              expect(util.format("%O", ns)).toEndWith(text);
+              expect(state.calls).toBe(0);
+            });
+
+            test("a descriptor", () => {
+              for (const key of ["value", "thrower", "both", "setter", "hidden"]) {
+                const descriptor = Object.getOwnPropertyDescriptor(exports, key);
+                expect(Object.getOwnPropertyDescriptor(ns, key)).toEqual(descriptor);
+                expect(Reflect.getOwnPropertyDescriptor(ns, key).get).toBe(descriptor.get);
+                expect(Object.hasOwn(ns, key)).toBe(true);
+                expect(Object.prototype.propertyIsEnumerable.call(ns, key)).toBe(key !== "hidden");
+                expect(Object.prototype.__lookupGetter__.call(ns, key)).toBe(descriptor.get);
+              }
+              expect(Object.getOwnPropertyDescriptor(ns, "plain")).toEqual({ value: 1, writable: true, enumerable: true, configurable: true });
+              expect(Object.getOwnPropertyDescriptor(ns, "hiddenData")).toEqual({ value: 1, writable: true, enumerable: false, configurable: true });
+              expect(Object.prototype.propertyIsEnumerable.call(ns, "hiddenData")).toBe(false);
+              expect(util.types.isModuleNamespaceObject(ns)).toBe(true);
+              const keys = [];
+              for (const key in ns) keys.push(key);
+              expect(keys).toEqual(["value", "thrower", "both", "setter", "plain"]);
+              expect([Object.isFrozen(ns), Object.isSealed(ns)]).toEqual([false, false]);
+              expect(state.calls).toBe(0);
+            });
+
+            test("a read calls it once, on the object the factory returned", () => {
+              expect(ns.value).toBe(42);
+              expect(() => ns.thrower).toThrow("from the factory getter");
+              expect([ns.both, ns.setter, ns.hidden, Reflect.get(ns, "value", {})]).toEqual(["both", undefined, "hidden", 42]);
+              expect(state.calls).toBe(5);
+              expect(state.receivers.map(receiver => receiver === exports)).toEqual([true, true]);
+            });
+
+            test("util.inspect() with getters", () => {
+              expect(util.inspect(ns, { getters: true })).toEndWith(
+                "{\\n  value: [Getter: 42],\\n  thrower: [Getter: <Inspection threw (from the factory getter)>],\\n  both: [Getter/Setter: 'both'],\\n  setter: [Setter],\\n  plain: 1\\n}",
+              );
+              expect(state.calls).toBe(3);
+              expect(state.receivers[0]).toBe(exports);
+            });
+
+            test("a failed matcher calls it once and keeps a getter that throws", () => {
+              let message = "";
+              try {
+                expect({ ns }).toEqual({});
+              } catch (error) {
+                message = Bun.stripANSI(error.message);
+              }
+              expect(message).toContain('"value": 42,');
+              expect(message).toContain('"thrower": ');
+              expect(state.calls).toBe(3);
+            });
+
+            test("copying the exports calls it once", () => {
+              delete ns.thrower;
+              const copy = { value: 42, both: "both", setter: undefined, plain: 1 };
+              expect([{ ...ns }, Object.assign({}, ns), Object.fromEntries(Object.entries(ns)), Object.values(ns)]).toEqual([copy, copy, copy, Object.values(copy)]);
+              expect(state.calls).toBe(8);
+            });
+          });
+        `,
+      },
+      36,
+    );
+  });
+
+  test("a namespace object that re-exports from the mock prints a getter without calling it, and describes it by its value", async () => {
+    await expectFixturesToPass(
+      {
+        ...described,
+        "re-exports.test.ts": `
+          import { beforeEach, expect, test, vi } from "bun:test";
+          import util from "node:util";
+          import * as star from "./star";
+          import * as named from "./named";
+          ${hoistedFactory}
+          vi.mock("./vi-mock", state.factory);
+
+          test("a print", () => {
+            expect(Bun.inspect(star)).toBe("Module {\\n  both: [Getter/Setter],\\n  plain: 1,\\n  setter: [Setter],\\n  thrower: [Getter],\\n  value: [Getter],\\n}");
+            expect(Bun.inspect(star, { sorted: true })).toBe(Bun.inspect(star));
+            expect(Bun.inspect(named)).toBe("Module {\\n  plain: 1,\\n  renamed: [Getter],\\n  value: [Getter],\\n}");
+            expect(Bun.inspect(named, { sorted: true })).toBe(Bun.inspect(named));
+            expect(state.calls).toBe(0);
+          });
+
+          test("a descriptor", () => {
+            const value = { value: 42, writable: true, enumerable: true, configurable: false };
+            expect([Object.getOwnPropertyDescriptor(star, "value"), Object.getOwnPropertyDescriptor(named, "value")]).toEqual([value, value]);
+            expect(state.calls).toBe(2);
+            expect(() => Object.getOwnPropertyDescriptor(star, "thrower")).toThrow("from the factory getter");
+            expect(() => Object.getOwnPropertyDescriptor(named, "renamed")).toThrow("from the factory getter");
+          });
+
+          test("util.inspect()", () => {
+            expect(util.inspect(star)).toEndWith("{\\n  both: 'both',\\n  plain: 1,\\n  setter: undefined,\\n  thrower: <Inspection threw (from the factory getter)>,\\n  value: 42\\n}");
+            expect(util.inspect(named)).toEndWith("{\\n  plain: 1,\\n  renamed: <Inspection threw (from the factory getter)>,\\n  value: 42\\n}");
+            expect(state.calls).toBe(5);
+          });
+        `,
+      },
+      3,
+    );
+  });
+
+  test("a namespace object calls a getter as often as the object the factory returned", async () => {
+    await expectFixturesToPass(
+      {
+        ...Object.fromEntries(
+          ["vi-mock", "jest-mock", "mock-module", "vi-do-mock", "jest-do-mock"].map(name => [
+            `${name}.ts`,
+            `export const value = "real"; export const both = "real"; export const plain = "real";`,
+          ]),
+        ),
+        "star.ts": `export * from "./vi-mock";`,
+        "named.ts": `export { value, both, plain } from "./vi-mock";`,
+        "table.test.ts": `
+          import { describe, expect, jest, mock, test, vi } from "bun:test";
+          import assert from "node:assert";
+          import util from "node:util";
+          import * as viMock from "./vi-mock";
+          import * as jestMock from "./jest-mock";
+          import * as star from "./star";
+          import * as named from "./named";
+
+          const state = vi.hoisted(() => {
+            const state = { calls: 0, exports: {} };
+            state.factory = name => () =>
+              (state.exports[name] = {
+                get value() {
+                  state.calls++;
+                  return 42;
+                },
+                get both() {
+                  state.calls++;
+                  return "both";
+                },
+                set both(value) {},
+                plain: 1,
+              });
+            return state;
+          });
+          vi.mock("./vi-mock", state.factory("vi-mock"));
+          jest.mock("./jest-mock", state.factory("jest-mock"));
+
+          const copy = () => ({ value: 42, both: "both", plain: 1 });
+          const caught = fn => {
+            try {
+              fn();
+            } catch {}
+          };
+          // Each is run on the object the factory returned and on a namespace object.
+          const operations = {
+            "read": o => o.value,
+            "Reflect.get": o => Reflect.get(o, "value", {}),
+            "destructure": ({ value }) => value,
+            "rest": ({ plain, ...rest }) => rest,
+            "through the prototype chain": o => Object.create(o).value,
+            "in": o => "value" in o,
+            "Reflect.has": o => Reflect.has(o, "value"),
+            "Object.hasOwn": o => Object.hasOwn(o, "value"),
+            "hasOwnProperty": o => Object.prototype.hasOwnProperty.call(o, "value"),
+            "propertyIsEnumerable": o => Object.prototype.propertyIsEnumerable.call(o, "value"),
+            "Object.getOwnPropertyDescriptor": o => Object.getOwnPropertyDescriptor(o, "value"),
+            "Reflect.getOwnPropertyDescriptor": o => Reflect.getOwnPropertyDescriptor(o, "value"),
+            "Object.getOwnPropertyDescriptors": o => Object.getOwnPropertyDescriptors(o),
+            "__lookupGetter__": o => Object.prototype.__lookupGetter__.call(o, "value"),
+            "__lookupSetter__": o => Object.prototype.__lookupSetter__.call(o, "both"),
+            "Object.isFrozen": o => Object.isFrozen(o),
+            "Object.isSealed": o => Object.isSealed(o),
+            "Object.keys": o => Object.keys(o),
+            "Object.getOwnPropertyNames": o => Object.getOwnPropertyNames(o),
+            "Reflect.ownKeys": o => Reflect.ownKeys(o),
+            "for-in": o => {
+              for (const key in o);
+            },
+            "Object.values": o => Object.values(o),
+            "Object.entries": o => Object.entries(o),
+            "spread": o => ({ ...o }),
+            "Object.assign": o => Object.assign({}, o),
+            "new Headers": o => new Headers(o),
+            "new URLSearchParams": o => new URLSearchParams(o),
+            "structuredClone": o => caught(() => structuredClone(o)),
+            "Bun.inspect": o => Bun.inspect(o),
+            "Bun.inspect sorted": o => Bun.inspect(o, { sorted: true }),
+            "Bun.inspect nested": o => Bun.inspect({ a: [o] }),
+            "Bun.inspect of an object that inherits from it": o => Bun.inspect(Object.create(o)),
+            "console.log": o => console.log(o),
+            "util.inspect": o => util.inspect(o),
+            "util.inspect showHidden": o => util.inspect(o, { showHidden: true }),
+            "util.inspect getters": o => util.inspect(o, { getters: true }),
+            "util.inspect getters: get": o => util.inspect(o, { getters: "get" }),
+            "util.inspect getters: set": o => util.inspect(o, { getters: "set" }),
+            "util.format %o": o => util.format("%o", o),
+            "util.format %O": o => util.format("%O", o),
+            "Bun.deepEquals": o => Bun.deepEquals(o, copy()),
+            "Bun.deepEquals strict": o => Bun.deepEquals(o, copy(), true),
+            "util.isDeepStrictEqual": o => util.isDeepStrictEqual(o, copy()),
+            "assert.deepEqual": o => assert.deepEqual(o, copy()),
+            "toEqual": o => expect(o).toEqual(copy()),
+            "toEqual fails": o => caught(() => expect({ o }).toEqual({})),
+            "toMatchObject": o => expect(o).toMatchObject({ value: 42 }),
+            "toMatchObject fails": o => caught(() => expect(o).toMatchObject({ plain: 2 })),
+            "toHaveProperty": o => expect(o).toHaveProperty("value", 42),
+            "toContainKey": o => expect(o).toContainKey("value"),
+            "toContainValue": o => expect(o).toContainValue(1),
+            "toHaveBeenCalledWith": o => {
+              const fn = vi.fn();
+              fn(o);
+              expect(fn).toHaveBeenCalledWith(copy());
+            },
+          };
+
+          function calls(operation, o) {
+            state.calls = 0;
+            operation(o);
+            return state.calls;
+          }
+          // [calls on the object the factory returned, calls on the namespace object], for the operations where they differ.
+          function differences(exports, ns) {
+            const differences = {};
+            for (const [name, operation] of Object.entries(operations)) {
+              const counts = [calls(operation, exports), calls(operation, ns)];
+              if (counts[0] !== counts[1]) differences[name] = counts;
+            }
+            return differences;
+          }
+
+          // A namespace object is not a plain object: it can't be cloned, and a strict comparison stops at its type.
+          const notAPlainObject = { "structuredClone": [2, 0], "Bun.deepEquals strict": [2, 0], "util.isDeepStrictEqual": [2, 0] };
+
+          describe("a namespace object calls a getter as often as the object the factory returned", () => {
+            test.each([
+              ["vi.mock()", "vi-mock", () => viMock],
+              ["jest.mock()", "jest-mock", () => jestMock],
+              ["mock.module()", "mock-module", () => (mock.module("./mock-module", state.factory("mock-module")), import("./mock-module"))],
+              ["vi.doMock()", "vi-do-mock", () => (vi.doMock("./vi-do-mock", state.factory("vi-do-mock")), import("./vi-do-mock"))],
+              ["jest.doMock()", "jest-do-mock", () => (jest.doMock("./jest-do-mock", state.factory("jest-do-mock")), import("./jest-do-mock"))],
+            ])("%s", async (_, name, load) => {
+              const ns = await load();
+              expect(differences(state.exports[name], ns)).toEqual(notAPlainObject);
+            });
+
+            // [[GetOwnProperty]] of a namespace object that re-exports from the mock reads the value: one more call for each getter it describes.
+            test.each([
+              ["export * from", () => star],
+              ["export { name } from", () => named],
+            ])("%s", (_, load) => {
+              expect(differences(state.exports["vi-mock"], load())).toEqual({
+                ...notAPlainObject,
+                "rest": [2, 4],
+                "Object.hasOwn": [0, 1],
+                "hasOwnProperty": [0, 1],
+                "propertyIsEnumerable": [0, 1],
+                "Object.getOwnPropertyDescriptor": [0, 1],
+                "Reflect.getOwnPropertyDescriptor": [0, 1],
+                "Object.getOwnPropertyDescriptors": [0, 2],
+                "__lookupGetter__": [0, 1],
+                "__lookupSetter__": [0, 1],
+                "Object.isFrozen": [0, 1],
+                "Object.isSealed": [0, 2],
+                "for-in": [0, 2],
+                "Object.values": [2, 4],
+                "Object.entries": [2, 4],
+                "spread": [2, 4],
+                "Object.assign": [2, 4],
+                "new Headers": [2, 4],
+                "new URLSearchParams": [2, 4],
+                "util.inspect": [0, 2],
+                "util.inspect showHidden": [0, 2],
+                "util.inspect getters: get": [1, 2],
+                "util.inspect getters: set": [1, 2],
+                "util.format %o": [0, 2],
+                "util.format %O": [0, 2],
+                "toContainKey": [0, 1],
+                "toContainValue": [2, 4],
+              });
+            });
+          });
+        `,
+      },
+      7,
+    );
+  });
+
+  test("a write, a descriptor and a spy do what they do on the object the factory returned", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": `export const value = "real"; export const both = "real"; export const plain = "real";`,
+        "results.test.ts": `
+          import { afterEach, expect, test, vi } from "bun:test";
+          import * as ns from "./dep";
+
+          const state = vi.hoisted(() => ({ calls: 0, sets: [], exports: null }));
+          vi.mock("./dep", () => (state.exports = {
+            get value() {
+              state.calls++;
+              return 42;
+            },
+            get both() {
+              state.calls++;
+              return "both";
+            },
+            set both(value) {
+              state.sets.push([this, value]);
+            },
+            plain: 1,
+          }));
+          afterEach(() => {
+            vi.restoreAllMocks();
+            state.calls = 0;
+          });
+
+          test("a write with another receiver does what it does on the object the factory returned", () => {
+            const derived = Object.create(ns);
+            expect(() => {
+              derived.value = 1;
+            }).toThrow(TypeError);
+            derived.both = 1;
+            const other = {};
+            expect([Reflect.set(ns, "value", 1, other), Reflect.set(ns, "both", 2, other)]).toEqual([false, true]);
+            expect([Reflect.set(ns, "value", 1, 1), Reflect.set(ns, "both", 3, 1)]).toEqual([false, true]);
+            expect([Object.keys(derived), Object.keys(other)]).toEqual([[], []]);
+            expect(state.sets).toEqual([[derived, 1], [other, 2], [1, 3]]);
+            expect(state.calls).toBe(0);
+          });
+
+          test("a descriptor that is read and then defined again keeps the getter", () => {
+            const getter = Object.getOwnPropertyDescriptor(state.exports, "value").get;
+            Object.defineProperty(ns, "value", Object.getOwnPropertyDescriptor(ns, "value"));
+            expect(Object.getOwnPropertyDescriptor(state.exports, "value").get).toBe(getter);
+            expect(state.calls).toBe(0);
+          });
+
+          test("a spy on the getter counts the reads and no other lookup", () => {
+            const spy = vi.spyOn(ns, "value", "get");
+            expect([Object.hasOwn(ns, "value"), "value" in ns, Object.keys(ns)]).toEqual([true, true, ["value", "both", "plain"]]);
+            for (const key in ns);
+            expect(spy).not.toHaveBeenCalled();
+
+            spy.mockReturnValueOnce("once");
+            expect(typeof Object.getOwnPropertyDescriptor(ns, "value").get).toBe("function");
+            expect([{ ...ns }.value, Object.assign({}, ns).value, Object.fromEntries(Object.entries(ns)).value, Object.values(ns)[0]]).toEqual(["once", 42, 42, 42]);
+            expect(spy).toHaveBeenCalledTimes(4);
+          });
+        `,
+      },
+      3,
+    );
+  });
+
+  test("a Proxy that the factory returned answers each lookup in its trap of the same name", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": `export const a = "real";`,
+        "proxy.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import * as ns from "./dep";
+
+          const state = vi.hoisted(() => ({ traps: [] }));
+          vi.mock(
+            "./dep",
+            () =>
+              new Proxy(
+                { a: 1 },
+                {
+                  get(target, key, receiver) {
+                    state.traps.push("get " + String(key));
+                    return key === "a" ? 10 : Reflect.get(target, key, receiver);
+                  },
+                  has(target, key) {
+                    state.traps.push("has " + String(key));
+                    return Reflect.has(target, key);
+                  },
+                  getOwnPropertyDescriptor(target, key) {
+                    state.traps.push("getOwnPropertyDescriptor " + String(key));
+                    return Reflect.getOwnPropertyDescriptor(target, key);
+                  },
+                },
+              ),
+          );
+          const traps = fn => {
+            state.traps.length = 0;
+            return [fn(), [...state.traps]];
+          };
+
+          test("each lookup runs the trap of the same name", () => {
+            const descriptor = { value: 1, writable: true, enumerable: true, configurable: true };
+            expect(traps(() => Object.getOwnPropertyDescriptor(ns, "a"))).toEqual([descriptor, ["getOwnPropertyDescriptor a"]]);
+            expect(traps(() => Object.hasOwn(ns, "a"))).toEqual([true, ["getOwnPropertyDescriptor a"]]);
+            expect(traps(() => "a" in ns)).toEqual([true, ["has a"]]);
+            expect(traps(() => ns.a)).toEqual([10, ["get a"]]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test("import() of a CommonJS module that exports the namespace object copies each getter's value", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": `export const value = "real"; export const thrower = "real";`,
+        "star.ts": `export * from "./dep";`,
+        "named.ts": `export { value, thrower } from "./dep";`,
+        "via-star.cjs": `module.exports = require("./star.ts");`,
+        "via-named.cjs": `module.exports = require("./named.ts");`,
+        "via-own.cjs": `module.exports = require("./dep.ts");`,
+        "plain.cjs": `
+          module.exports = {
+            get value() {
+              return 42;
+            },
+            get thrower() {
+              throw new Error("from a CommonJS getter");
+            },
+          };
+        `,
+        "cjs.test.ts": `
+          import { expect, test, vi } from "bun:test";
+
+          const state = vi.hoisted(() => ({ calls: 0 }));
+          vi.mock("./dep", () => ({
+            get value() {
+              state.calls++;
+              return 42;
+            },
+            get thrower() {
+              state.calls++;
+              throw new Error("from the factory getter");
+            },
+          }));
+
+          // import() of a CommonJS module copies each export one time. A getter that throws leaves undefined.
+          test.each(["./via-star.cjs", "./via-named.cjs", "./via-own.cjs"])("import(%j)", async specifier => {
+            state.calls = 0;
+            const { value, thrower } = await import(specifier);
+            expect([value, thrower, state.calls]).toEqual([42, undefined, 2]);
+          });
+
+          test("a CommonJS module that has the same getters", async () => {
+            const { value, thrower } = await import("./plain.cjs");
+            expect([value, thrower]).toEqual([42, undefined]);
+          });
+        `,
+      },
+      4,
+    );
+  });
+
+  test("a module that is loaded when it is mocked is updated in place, with the value of each getter", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": `export const value = "real"; export const plain = "real";`,
+        "loaded.test.ts": `
+          import { expect, mock, test, vi } from "bun:test";
+          import * as ns from "./dep";
+
+          test("a module that is loaded when it is mocked reads each getter once", () => {
+            const state = { calls: 0 };
+            mock.module("./dep", () => ({
+              get value() {
+                state.calls++;
+                return 42;
+              },
+              plain: 1,
+            }));
+            expect(state.calls).toBe(1);
+            expect(Object.getOwnPropertyDescriptor(ns, "value")).toEqual({ value: 42, writable: true, enumerable: true, configurable: false });
+            expect([ns.value, Bun.inspect(ns), state.calls]).toEqual([42, "Module {\\n  plain: 1,\\n  value: 42,\\n}", 1]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test("an export that the factory's object inherits from a class", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": `export const url = "real";`,
+        "instance.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import * as ns from "./dep";
+
+          const state = vi.hoisted(() => {
+            const state = { calls: 0, instance: null };
+            state.Config = class Config {
+              #host = "localhost";
+              own = 1;
+              get url() {
+                state.calls++;
+                return "http://" + this.#host;
+              }
+            };
+            return state;
+          });
+          vi.mock("./dep", () => (state.instance = new state.Config()));
+
+          test("an export that the factory's object inherits", () => {
+            const descriptor = Object.getOwnPropertyDescriptor(state.Config.prototype, "url");
+            expect(Object.getOwnPropertyDescriptor(ns, "url")).toEqual(descriptor);
+            expect(Object.prototype.propertyIsEnumerable.call(ns, "url")).toBe(false);
+            expect(Object.keys(ns)).toEqual(["own"]);
+            expect(state.calls).toBe(0);
+            // The getter runs on the instance, which has the private field.
+            expect([ns.url, state.calls]).toEqual(["http://localhost", 1]);
+            expect(Bun.inspect(ns)).toBe("Module {\\n  own: 1,\\n}");
+          });
+        `,
+      },
+      1,
+    );
+  });
 });
 
 describe.concurrent("util.inspect() of a mocked module", () => {
@@ -3037,9 +3699,12 @@ describe.concurrent("util.inspect() of a mocked module", () => {
           const print = value => util.inspect(value, { breakLength: Infinity });
 
           test("the mocked module", () => {
-            expect(print(ns)).toEndWith("{ value: <Inspection threw (from the factory getter)>, later: <uninitialized>, plain: 1 }");
-            expect(print([ns])).toEndWith("{ value: <Inspection threw (from the factory getter)>, later: <uninitialized>, plain: 1 } ]");
-            expect(util.format("%O", ns)).toEndWith("{\\n  value: <Inspection threw (from the factory getter)>,\\n  later: <uninitialized>,\\n  plain: 1\\n}");
+            expect(print(ns)).toEndWith("{ value: [Getter], later: [Getter], plain: 1 }");
+            expect(print([ns])).toEndWith("{ value: [Getter], later: [Getter], plain: 1 } ]");
+            expect(util.format("%O", ns)).toEndWith("{\\n  value: [Getter],\\n  later: [Getter],\\n  plain: 1\\n}");
+            expect(util.inspect(ns, { getters: true, breakLength: Infinity })).toEndWith(
+              "{ value: [Getter: <Inspection threw (from the factory getter)>], later: [Getter: <Inspection threw (later is not defined)>], plain: 1 }",
+            );
           });
 
           test("a module that re-exports from it", () => {
@@ -3080,6 +3745,7 @@ describe.concurrent("util.inspect() of a mocked module", () => {
             expect(util.inspect({ ns }, { depth: 0 })).toStartWith("{ ns: [Module");
             expect(() => ns.toString).toThrow('No "toString" export is defined on the mock of "./dep".');
             expect(util.format("%s", ns)).toEndWith("{ a: 'other-a' }");
+            expect(Bun.inspect(ns)).toBe('Module {\\n  a: "other-a",\\n}');
           });
 
           test("a mocked module that is printed before its factory has returned", () => {

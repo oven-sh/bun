@@ -214,8 +214,10 @@ public:
     JSC::Strong<JSC::Unknown> assignedMainModule;
     // The path of the entry module, while its load can still make it the main module again.
     WTF::String entryThatTakesMainModuleBack;
-    // The registry keys that the loader of import() got. `import.meta.main` is true in an ES module, and a CommonJS module becomes the main module when it runs.
+    // The registry keys that the loader of import() got. A CommonJS module with such a key becomes the main module when that loader runs it.
     WTF::HashSet<WTF::String> startedKeys;
+    // The same scripts by `import.meta.url`. `import.meta.main` is true in an ES module with such a URL.
+    WTF::HashSet<WTF::String> startedURLs;
 };
 
 // The CommonJS module that Module.runMain() made the main module. Null: the entry module is the main module.

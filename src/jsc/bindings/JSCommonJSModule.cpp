@@ -212,6 +212,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__forgetMainModuleOfRunMain(Zig::Glob
     if (!state)
         return;
     state->startedKeys.clear();
+    state->startedURLs.clear();
     if (!state->mainModule)
         return;
     forgetMainModule(globalObject, *state);
@@ -260,6 +261,7 @@ static void willRunModuleOfLoader(Zig::GlobalObject* globalObject, RunMainState&
         return;
     // Module.runMain() gave the script to this loader: it becomes the main module as it starts to run.
     if (state.startedKeys.remove(key.string())) {
+        state.startedURLs.remove(Zig::ImportMetaObject::urlOfSpecifier(key.string()));
         moduleObject->loadedAsMain = true;
         return;
     }
@@ -1714,7 +1716,9 @@ bool loadMainModule(Zig::GlobalObject* globalObject, const WTF::String& key)
         JSC__JSMap__remove(requireMap, globalObject, JSValue::encode(specifierValue));
         RETURN_IF_EXCEPTION(throwScope, false);
     }
-    runMainState(globalObject).startedKeys.add(key);
+    auto& state = runMainState(globalObject);
+    state.startedKeys.add(key);
+    state.startedURLs.add(Zig::ImportMetaObject::urlOfSpecifier(key));
     return false;
 }
 

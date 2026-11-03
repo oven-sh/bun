@@ -96,7 +96,7 @@ ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, JS
     return ImportMetaObject::createFromSpecifier(globalObject, specifier);
 }
 
-ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier)
+String ImportMetaObject::urlOfSpecifier(const String& specifier)
 {
     auto index = specifier.find('?');
     URL url;
@@ -107,7 +107,12 @@ ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* glo
     } else {
         url = URL::fileURLWithFileSystemPath(specifier);
     }
-    return create(globalObject, url.string());
+    return url.string();
+}
+
+ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier)
+{
+    return create(globalObject, urlOfSpecifier(specifier));
 }
 
 extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
@@ -658,11 +663,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
     }
 
     // An ES module that Module.runMain() started is a main module beside the entry module.
-    if (auto* runMain = globalObject->m_runMain.get(); runMain && !runMain->startedKeys.isEmpty()) [[unlikely]] {
-        WTF::URL url(thisObject->url);
-        if (url.protocolIsFile() && runMain->startedKeys.contains(makeString(url.fileSystemPath(), url.queryWithLeadingQuestionMark())))
-            return JSValue::encode(jsBoolean(true));
-    }
+    if (auto* runMain = globalObject->m_runMain.get(); runMain && runMain->startedURLs.contains(thisObject->url)) [[unlikely]]
+        return JSValue::encode(jsBoolean(true));
 
     // In an executable, `require.main === module` in a CommonJS file reads this property, and the file that a Worker starts with is the main module of its thread.
     if (!globalObject->scriptExecutionContext()->isMainThread() && !(Bun::hasCompiledModules() && JSC::AOT::entryPointIsCommonJS(globalObject)))

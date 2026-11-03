@@ -2571,6 +2571,16 @@ impl JSValue {
             index => Some(index as u32),
         }
     }
+    /// For an `Array` cell: its length, and whether its prototype is not its realm's `Array.prototype`. Runs no JS.
+    pub(crate) fn array_length_and_flags(self) -> Option<(u32, bool)> {
+        unsafe extern "C" {
+            safe fn Bun__JSArray__lengthAndFlags(this: JSValue) -> u64;
+        }
+        match Bun__JSArray__lengthAndFlags(self) {
+            u64::MAX => None,
+            bits => Some((bits as u32, bits >> 32 != 0)),
+        }
+    }
     /// `JSValue.getNameProperty` — the value's `.name` (function/class
     /// name). Empty for empty/`undefined`/`null`.
     pub fn get_name_property(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {

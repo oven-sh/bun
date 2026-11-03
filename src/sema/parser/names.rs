@@ -49,6 +49,7 @@ impl Long {
 
 const MENTIONED_WORDS: usize = bun_sema::hir::MENTIONED_BITS / 64;
 const SHORT_BITS: u32 = 14;
+const MIN_SHORT_BITS: u32 = 5;
 const LONG_BITS: u32 = 12;
 const KNOWN_BITS: u32 = 10;
 const KNOWN_LONG_BITS: u32 = 6;
@@ -320,11 +321,13 @@ impl Names {
 
     /// Call before parsing a file of `len` bytes that has its own atoms.
     pub(crate) fn begin_own(&mut self, len: usize) {
-        // One slot in `short` for every 8 bytes of text.
+        // One slot in `short` for every 8 bytes of text, and no fewer than 256. A short text, like an expression in a
+        // template, has one for every 2 bytes: clearing 256 would take longer than reading it.
         let bits = (len / 8)
+            .max((len / 2).min(256))
             .next_power_of_two()
             .trailing_zeros()
-            .clamp(6, SHORT_BITS);
+            .clamp(MIN_SHORT_BITS, SHORT_BITS);
         self.short_mask = (1 << bits) - 1;
         self.long_mask = self.short_mask >> (SHORT_BITS - LONG_BITS);
         self.short[..=self.short_mask].fill(NO_SHORT);

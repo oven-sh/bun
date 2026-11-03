@@ -4718,6 +4718,16 @@ exports.format = async (text, options) => {
         expect(checked).toMatchObject({ raw: "(stdin)\n", exitCode: 1 });
         const unnamed = await format(files, ["--parser", "markdown"], { stdin: markdown });
         expect(unnamed).toMatchObject({ raw: byPrettier(markdown), stderr: "", exitCode: 0 });
+        // The cursor is before `hello`, which the stand-in moves by the spaces it removes.
+        const at = vue.indexOf("hello");
+        const cursor = await format(files, ["--stdin-filepath", "App.vue", "--cursor-offset", String(at)], {
+          stdin: vue,
+        });
+        expect(cursor).toMatchObject({
+          raw: byPrettier(vue),
+          stderr: String(byPrettier(vue).indexOf("hello")),
+          exitCode: 0,
+        });
       },
       timeout,
     );

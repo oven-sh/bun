@@ -1610,7 +1610,19 @@ impl Run<'_> {
                 }
             }
             Ok(_) if self.options.debug_check => self.out.stdout = Self::name_of_stdin(path),
-            Ok(formatted) => self.out.stdout = formatted,
+            Ok(formatted) => {
+                // Prettier's fallback for `cursorOffset`, as for a Svelte component: the texts are compared.
+                let mut options = FormatOptions::default();
+                if let Some(offset) =
+                    (self.options.format.iter()).rfind(|it| it.0 == b"cursorOffset")
+                    && options.set(b"cursorOffset", &offset.1).is_ok()
+                    && let Some(cursor) =
+                        bun_format::cursor::cursor_in_formatted_text(text, &options, &formatted)
+                {
+                    let _ = writeln!(self.out.stderr, "{cursor}");
+                }
+                self.out.stdout = formatted;
+            }
         }
         self.out
     }
@@ -2251,7 +2263,7 @@ impl Run<'_> {
         // The reason is printed at the end.
         self.has_skipped_files = left_for_plugins.0 > 0
             || !others.is_empty()
-            || !needs_plugins.0.is_empty()
+            || (!needs_plugins.0.is_empty() && !options.allow_unsupported)
             || (classes_are_unknown.is_some() && !options.allow_unsupported);
         // oxfmt has no `--debug-check`, so that flag behaves as it does without a config.
         if is_oxfmt && (options.check || !options.debug_check) {

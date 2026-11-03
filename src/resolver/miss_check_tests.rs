@@ -905,11 +905,11 @@ fn a_directory_below_the_renamed_target_of_a_link_gets_a_new_real_path() {
         made.write("data/a/x/y/f.js", "");
         made.link("data/a", "link");
         let real_path = |info: DirInfoRef| bstr::BStr::new(info.abs_real_path);
+        // Old before a slot joins a real path below them, and not changed after: each asker keeps these listings, with the paths that their entries hold.
+        listing_once_kept(&made.path("link/x/"));
+        listing_once_kept(&made.path("link/x/y/"));
         let old = made.checked_info("link/x/y");
         assert_eq!(real_path(old), bstr::BStr::new(&made.path("data/a/x/y")));
-        // No directory below the target changes: an asker keeps these listings, with the paths that their entries hold.
-        listing_once_kept(&made.path("link/x"));
-        listing_once_kept(&made.path("link/x/y"));
         made.rename("data/a", "data/b");
         made.remove("link");
         made.link("data/b", "link");

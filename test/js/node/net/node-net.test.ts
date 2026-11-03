@@ -3434,6 +3434,66 @@ describe("a write that fails at once", () => {
   });
 });
 
+// The two ends have a close handler each.
+describe.each(["connecting", "accepted"] as const)("a reset with a write in flight on the %s end", end => {
+  // The callbacks of the write in flight and of the one queued behind it, and 'error', in order.
+  async function resetWithWriteInFlight(listens: boolean) {
+    const server = createServer();
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const connection = once(server, "connection") as Promise<[Socket]>;
+    const client = connect((server.address() as import("node:net").AddressInfo).port, "127.0.0.1");
+    try {
+      const [[accepted]] = await Promise.all([connection, once(client, "connect")]);
+      const [writer, peer] = end === "connecting" ? [client, accepted] : [accepted, client];
+      peer.on("error", () => {});
+      const seen: string[] = [];
+      const { promise: done, resolve } = Promise.withResolvers<void>();
+      let left = 3;
+      const step = () => void (--left === 0 && resolve());
+      const onError = (err: NodeJS.ErrnoException) => void seen.push(`error ${err.code}`);
+      if (listens) writer.on("error", onError);
+      const called = (what: string, err?: NodeJS.ErrnoException | null) => {
+        // Too late for the close of the handle, in time for the 'error' of the stream.
+        if (writer.listenerCount("error") === 0) writer.on("error", onError);
+        seen.push(`${what} ${err?.code}`);
+        step();
+      };
+      writer.on("close", step);
+      const chunk = Buffer.alloc(1024 * 1024, "a");
+      let writes = 0;
+      while (writes < 256 && writer.writableLength === 0) {
+        const nth = ++writes;
+        writer.write(chunk, err => void (nth === writes && called("written", err)));
+      }
+      expect(writer.writableLength).toBeGreaterThan(0);
+      writer.write("b", err => called("queued", err));
+      peer.resetAndDestroy();
+      await done;
+      return seen;
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  }
+
+  it("is the error of that write when nothing listens for 'error'", async () => {
+    const seen = await resetWithWriteInFlight(false);
+    // BSD kernels report a send after a received RST as EPIPE.
+    const code = seen[0] === "written EPIPE" ? "EPIPE" : "ECONNRESET";
+    expect(seen).toEqual([`written ${code}`, `queued ${code}`, `error ${code}`]);
+  });
+
+  it("fails both writes and is one 'error' when something listens for it", async () => {
+    const seen = await resetWithWriteInFlight(true);
+    // The order and the codes differ by platform.
+    expect(seen.map(line => line.replace(/ E[A-Z]+$/, " with an errno")).sort()).toEqual([
+      "error with an errno",
+      "queued with an errno",
+      "written with an errno",
+    ]);
+  });
+});
+
 // libuv's uv__tcp_bind always sets SO_REUSEADDR on Unix, so Node can bind a
 // client localPort that still has earlier connections in TIME_WAIT. Bun used
 // to call bind() bare here and fail with EADDRINUSE, which made

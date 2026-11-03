@@ -2154,7 +2154,7 @@ const SocketHandlers2 = {
     const pendingWrite = self[kwriteCallback];
     if (pendingWrite) {
       self[kwriteCallback] = null;
-      pendingWrite($ERR_SOCKET_CLOSED());
+      pendingWrite(err ?? $ERR_SOCKET_CLOSED());
     }
   },
   handshake(socket: $Node.SocketHandle<ConnectData<$Node.TLSSocket>>, success, verifyError) {

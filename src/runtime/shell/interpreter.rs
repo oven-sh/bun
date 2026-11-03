@@ -404,8 +404,7 @@ impl ShellArgs {
 /// Only used by the construction path (`Interpreter::init`).
 pub(crate) type ShellResult<T> = Result<T, ShellErr>;
 
-/// A script that does not lex or parse. `msg` is one line per lexer or parser
-/// error, allocated in the parse arena.
+/// A script that does not parse. `msg` is one line per lexer or parser error.
 #[derive(Clone, Copy)]
 pub(crate) struct ParseFailure<'a> {
     pub(crate) msg: &'a [u8],

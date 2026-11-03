@@ -9,7 +9,6 @@ pub(crate) struct Stmt {
     pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Stmt>,
     pub(crate) idx: usize,
-    pub(crate) last_exit_code: Option<ExitCode>,
     pub(crate) currently_executing: Option<NodeId>,
     pub(crate) io: IO,
 }
@@ -26,7 +25,6 @@ impl Stmt {
             base: Base::new(parent, shell),
             node: bun_ptr::BackRef::new(node),
             idx: 0,
-            last_exit_code: None,
             currently_executing: None,
             io,
         }));
@@ -37,24 +35,23 @@ impl Stmt {
     pub(crate) fn start(interp: &Interpreter, this: NodeId) -> Yield {
         let me = interp.as_stmt(this);
         debug_assert!(me.idx == 0);
-        debug_assert!(me.last_exit_code.is_none());
         debug_assert!(me.currently_executing.is_none());
         Yield::Next(this)
     }
 
     pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
-        let (idx, len, parent, last, shell) = {
+        let (idx, len, parent, shell) = {
             let me = interp.as_stmt(this);
-            (
-                me.idx,
-                Self::expr_count(me),
-                me.base.parent,
-                me.last_exit_code,
-                me.base.shell,
-            )
+            (me.idx, Self::expr_count(me), me.base.parent, me.base.shell)
         };
         if idx >= len {
-            return interp.child_done(parent, this, last.unwrap_or(0));
+            // `child_done` stored the status of the last child. A statement with no command (the body of `$(\n)`) ran none.
+            let exit_code = if idx == 0 {
+                0
+            } else {
+                interp.as_stmt(this).base.shell().last_exit_code
+            };
+            return interp.child_done(parent, this, exit_code);
         }
         let expr: ast::Expr = interp.as_stmt(this).node.exprs[idx];
         let io = interp.as_stmt(this).io.clone();
@@ -72,7 +69,7 @@ impl Stmt {
         log!("Stmt {} childDone exit={}", this, exit_code);
         {
             let me = interp.as_stmt_mut(this);
-            me.last_exit_code = Some(exit_code);
+            me.base.shell_mut().last_exit_code = exit_code;
             me.idx += 1;
             me.currently_executing = None;
         }

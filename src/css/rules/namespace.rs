@@ -1,9 +1,11 @@
 use crate::css_rules::Location;
+use crate::css_rules::layer::LayerStatementRule;
 use crate::values::ident::Ident;
 use crate::values::string::{CssString, CssStringFns};
 use crate::{PrintErr, Printer};
 
 /// A [@namespace](https://drafts.csswg.org/css-namespaces/#declaration) rule.
+#[derive(Clone, Copy)]
 pub struct NamespaceRule {
     /// An optional namespace prefix to declare, or `None` to declare the default namespace.
     pub(crate) prefix: Option<Ident>,
@@ -14,6 +16,20 @@ pub struct NamespaceRule {
 }
 
 impl NamespaceRule {
+    pub fn prefix(&self) -> Option<&[u8]> {
+        self.prefix.as_ref().map(Ident::v)
+    }
+
+    pub fn url(&self) -> &[u8] {
+        // SAFETY: a slice of the parser's arena, which outlives the rule (see `crate::arena_str`).
+        unsafe { crate::arena_str(self.url) }
+    }
+
+    /// Whether the rule comes after `layer` in the source of their sheet.
+    pub fn follows(&self, layer: &LayerStatementRule) -> bool {
+        (self.loc.line, self.loc.column) > (layer.loc.line, layer.loc.column)
+    }
+
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);

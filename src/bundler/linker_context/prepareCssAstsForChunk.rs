@@ -142,6 +142,17 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                     );
                     css_chunk.asts[i] = ast;
                 }
+                CssImportOrderKind::Namespaces(namespaces) => {
+                    let mut rules: ArenaVec<BundlerCssRule> =
+                        ArenaVec::with_capacity_in(namespaces.len(), bump);
+                    for rule in namespaces.iter() {
+                        rules.push(BundlerCssRule::Namespace(*rule));
+                    }
+                    css_chunk.asts[i] = BundlerStyleSheet {
+                        rules: arena_rule_list(rules),
+                        ..BundlerStyleSheet::empty()
+                    };
+                }
                 CssImportOrderKind::ExternalPath(p) => {
                     // Taking `&mut` at index 0 here would exclusively borrow
                     // the whole `entry.conditions` Vec while the `while j != 1`
@@ -322,6 +333,8 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         css_chunk.asts[i] = unsafe { core::ptr::read(original_stylesheet) };
                         break 'ast &mut css_chunk.asts[i];
                     };
+                    // The `Namespaces` entry prints these rules. The list aliases the source sheet, so leak the header.
+                    let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut ast.namespaces));
 
                     {
                         // Strip leading "@import" and ".ignored" rules. Any

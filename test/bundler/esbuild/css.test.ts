@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { itBundled } from "../expectBundled";
 
@@ -3125,6 +3126,502 @@ describe("bundler", () => {
       },
     });
   }
+
+  // A style sheet takes "@namespace" only after its "@import" rules and before each other rule.
+  // A chunk is one style sheet, so it prints the "@namespace" rules of its files once, at that place.
+  const svg = "http://www.w3.org/2000/svg";
+  const xhtml = "http://www.w3.org/1999/xhtml";
+  const icons = `@namespace svg url(${svg});\nsvg|a { color: red }`;
+  const reset = `@namespace url(${xhtml});\na { color: red }`;
+  type NamespaceCase = {
+    files: Record<string, string>;
+    out: string;
+    // The files whose rules have another namespace in the chunk than in their own sheet.
+    rebound?: string[];
+    logs?: string[];
+  };
+  const namespaceCases: Record<string, NamespaceCase> = {
+    OfImportingFile: {
+      files: {
+        "/entry.css": `@import "./a.css";\n${icons}`,
+        "/a.css": `.a { color: blue }`,
+      },
+      out: `@namespace svg "${svg}";.a{color:#00f}svg|a{color:red}`,
+    },
+    // The conditions of an import are a block around the rules of its file.
+    OfMediaImport: {
+      files: {
+        "/entry.css": `@import "./icons.css" screen;\n.e { color: green }`,
+        "/icons.css": icons,
+      },
+      out: `@namespace svg "${svg}";@media screen{svg|a{color:red}}.e{color:green}`,
+    },
+    OfSupportsImport: {
+      files: {
+        "/entry.css": `@import "./icons.css" supports(display: grid);\n.e { color: green }`,
+        "/icons.css": icons,
+      },
+      out: `@namespace svg "${svg}";@supports (display:grid){svg|a{color:red}}.e{color:green}`,
+    },
+    OfLayerImport: {
+      files: {
+        "/entry.css": `@import "./icons.css" layer(x);\n.e { color: green }`,
+        "/icons.css": icons,
+      },
+      out: `@namespace svg "${svg}";@layer x{svg|a{color:red}}.e{color:green}`,
+    },
+    OfBareLayerImport: {
+      files: {
+        "/entry.css": `@import "./icons.css" layer;\n.e { color: green }`,
+        "/icons.css": icons,
+      },
+      out: `@namespace svg "${svg}";@layer{svg|a{color:red}}.e{color:green}`,
+    },
+    OfImportWithTwoConditionSets: {
+      files: {
+        "/entry.css": `@import "./icons.css" screen;\n@import "./icons.css" layer(x);\n.e { color: green }`,
+        "/icons.css": icons,
+      },
+      out: `@namespace svg "${svg}";@media screen{svg|a{color:red}}@layer x{svg|a{color:red}}.e{color:green}`,
+    },
+    // A file with no other rule prints nothing, so its layer is a statement and its media query has no block.
+    OfFileWithNoOtherRule: {
+      files: {
+        "/entry.css": `@import "./only.css" layer(y);\n@import "./only.css" print;\n.e { color: green }`,
+        "/only.css": `@namespace svg url(${svg});`,
+      },
+      out: `@namespace svg "${svg}";@layer y;.e{color:green}`,
+    },
+    // A "@layer" statement after an "@import" ends the place where "@namespace" is valid.
+    AfterExternalImport: {
+      files: {
+        "/entry.css": `@import "https://example.com/e.css";\n@import "./empty.css" layer(x);\n${icons}`,
+        "/empty.css": ``,
+      },
+      out: `@import "https://example.com/e.css";@namespace svg "${svg}";@layer x;svg|a{color:red}`,
+    },
+    AfterExternalImportsOfTwoFiles: {
+      files: {
+        "/entry.css": `@import "https://example.com/one.css";\n@import "./a.css";\n${icons}`,
+        "/a.css": `@import "https://example.com/two.css" screen;\n@namespace xl "urn:x";\nxl|b { color: blue }`,
+      },
+      out: `@import "https://example.com/one.css";@import "https://example.com/two.css" screen;@namespace xl "urn:x";@namespace svg "${svg}";xl|b{color:#00f}svg|a{color:red}`,
+    },
+    AfterLayerStatementBeforeImport: {
+      files: {
+        "/entry.css": `@layer a;\n@import "./local.css";\n${icons}`,
+        "/local.css": `.l { color: blue }`,
+      },
+      out: `@layer a;@namespace svg "${svg}";.l{color:#00f}svg|a{color:red}`,
+    },
+    BeforeLayerStatementOfFile: {
+      files: {
+        "/entry.css": `@layer a;\n${icons}`,
+      },
+      out: `@namespace svg "${svg}";@layer a;svg|a{color:red}`,
+    },
+    // The two files of the anonymous layer stay in one block.
+    BeforeSharedAnonymousLayer: {
+      files: {
+        "/entry.css": `@import "./x.css" layer;\n.e { color: green }`,
+        "/x.css": `@import "./y.css";\n${icons}`,
+        "/y.css": `.y { color: blue }`,
+      },
+      out: `@namespace svg "${svg}";@layer{.y{color:#00f}svg|a{color:red}}.e{color:green}`,
+    },
+
+    // A rule is in place when bun's parser takes it where its file prints. It is then in force as written.
+    // A default namespace in force also governs the files that declare none.
+    DefaultOfFirstFile: {
+      files: {
+        "/entry.css": `@import "./reset.css";\n.e { color: green }`,
+        "/reset.css": reset,
+      },
+      out: `@namespace "${xhtml}";a{color:red}.e{color:green}`,
+      rebound: ["/entry.css: default"],
+    },
+    DefaultAndPrefixAsWritten: {
+      files: {
+        "/entry.css": `@namespace url(${xhtml});\n@namespace svg url(${svg});\na { color: red }\nsvg|a { color: blue }`,
+      },
+      out: `@namespace "${xhtml}";@namespace svg "${svg}";a{color:red}svg|a{color:#00f}`,
+    },
+    // A file of statements does not end the place where "@namespace" is valid.
+    DefaultAfterLayerOrderFile: {
+      files: {
+        "/entry.css": `@import "./layers.css";\n@import "./reset.css";`,
+        "/layers.css": `@layer reset, base;`,
+        "/reset.css": reset,
+      },
+      out: `@namespace "${xhtml}";@layer reset,base;a{color:red}`,
+    },
+    DefaultAfterExternalImportOnlyFile: {
+      files: {
+        "/entry.css": `@import "./fonts.css";\n@import "./reset.css";`,
+        "/fonts.css": `@import "https://example.com/font.css";`,
+        "/reset.css": reset,
+      },
+      out: `@import "https://example.com/font.css";@namespace "${xhtml}";a{color:red}`,
+    },
+    DefaultAfterLocalImportOnlyFile: {
+      files: {
+        "/entry.css": `@import "./barrel.css";\n@import "./reset.css";`,
+        "/barrel.css": `@import "./empty.css";`,
+        "/empty.css": ``,
+        "/reset.css": reset,
+      },
+      out: `@namespace "${xhtml}";a{color:red}`,
+    },
+    DefaultAfterUnknownAtRuleStatement: {
+      files: {
+        "/entry.css": `@import "./tailwind.css";\n@import "./reset.css";`,
+        "/tailwind.css": `@tailwind base;`,
+        "/reset.css": reset,
+      },
+      out: `@namespace "${xhtml}";@tailwind base;a{color:red}`,
+      logs: ["invalid @ rule encountered: '@tailwind'"],
+    },
+    // An import of a file with no rule prints nothing under a media query.
+    DefaultAfterEmptyMediaImport: {
+      files: {
+        "/entry.css": `@import "./empty.css" screen;\n${reset}`,
+        "/empty.css": ``,
+      },
+      out: `@namespace "${xhtml}";a{color:red}`,
+    },
+    // An import of a file with no rule prints a "@layer" statement for its layer.
+    DefaultAfterLayerOfEmptyImport: {
+      files: {
+        "/entry.css": `@import "./empty.css" layer(x);\n${reset}`,
+        "/empty.css": ``,
+      },
+      out: `@namespace "${xhtml}";@layer x;a{color:red}`,
+    },
+    // The file does not print the "@layer" statement that is ahead of its "@import".
+    DefaultAfterLayerStatementAndExternalImport: {
+      files: {
+        "/entry.css": `@layer a;\n@import "https://example.com/e.css";\n${reset}`,
+      },
+      out: `@layer a;@import "https://example.com/e.css";@namespace "${xhtml}";a{color:red}`,
+    },
+    DefaultAfterLayerStatementOfFirstFile: {
+      files: {
+        "/entry.css": `@layer x;\n${reset}`,
+      },
+      out: `@namespace "${xhtml}";@layer x;a{color:red}`,
+    },
+    DefaultBeforeLayerStatementOfFile: {
+      files: {
+        "/entry.css": `@import "https://example.com/e.css";\n@namespace url(${xhtml});\n@layer x;\na { color: red }`,
+      },
+      out: `@import "https://example.com/e.css";@namespace "${xhtml}";@layer x;a{color:red}`,
+    },
+    // The last rule for a prefix, or for the default namespace, is the one in force.
+    PrefixTwiceInOneFile: {
+      files: {
+        "/entry.css": `@namespace a "urn:1";\n@namespace b "urn:2";\n@namespace a "urn:3";\na|x { color: red }\nb|y { color: blue }`,
+      },
+      out: `@namespace a "urn:3";@namespace b "urn:2";a|x{color:red}b|y{color:#00f}`,
+    },
+    PrefixRedeclaredAfterLayerOrderFile: {
+      files: {
+        "/entry.css": `@import "./one.css";\n@import "./two.css";`,
+        "/one.css": `@layer reset;\n@namespace p "urn:p1";`,
+        "/two.css": `@namespace p "urn:p2";\np|a { color: red }`,
+      },
+      out: `@namespace p "urn:p2";@layer reset;p|a{color:red}`,
+    },
+    LastRuleOfFilesInPlace: {
+      files: {
+        "/entry.css": `@import "./one.css";\n@import "./two.css";\n.e { color: green }`,
+        "/one.css": `@namespace "urn:one";\n@namespace p "urn:p1";`,
+        "/two.css": `@namespace "urn:two";\n@namespace p "urn:p2";\na { color: red }`,
+      },
+      out: `@namespace "urn:two";@namespace p "urn:p2";a{color:red}.e{color:green}`,
+      rebound: ["/entry.css: default"],
+    },
+
+    // A rule that is not in place adds only a prefix that is free. Its default namespace would also govern
+    // the other files, and a browser does not read it from a place that is not valid.
+    DefaultOfLaterFile: {
+      files: {
+        "/entry.css": `@import "./a.css";\n${reset}`,
+        "/a.css": `.a { color: blue }`,
+      },
+      out: `.a{color:#00f}a{color:red}`,
+      rebound: ["/entry.css: default"],
+    },
+    DefaultOfConditionalImport: {
+      files: {
+        "/entry.css": `@import "./d.css" screen;\n.e { color: green }`,
+        "/d.css": `@namespace url(${xhtml});\n@namespace svg url(${svg});\np { color: red }\nsvg|a { color: red }`,
+      },
+      out: `@namespace svg "${svg}";@media screen{p,svg|a{color:red}}.e{color:green}`,
+      rebound: ["/d.css: default"],
+    },
+    // With a minify flag the file prints with no "@media all" block. The import still has a condition.
+    DefaultOfMediaAllImport: {
+      files: {
+        "/entry.css": `@import "./reset.css" all;\n.e { color: green }`,
+        "/reset.css": reset,
+      },
+      out: `a{color:red}.e{color:green}`,
+      rebound: ["/reset.css: default"],
+    },
+    DefaultAfterBlock: {
+      files: {
+        "/entry.css": `@import "./layers.css" screen;\n@import "./reset.css";\n@import "./shapes.css";`,
+        "/layers.css": `@layer reset, base;`,
+        "/reset.css": reset,
+        "/shapes.css": `circle { color: blue }`,
+      },
+      out: `@media screen{@layer reset,base;}a{color:red}circle{color:#00f}`,
+      rebound: ["/reset.css: default"],
+    },
+    // The import that closes the cycle declares its layer in a block.
+    DefaultAfterLayerOfCycle: {
+      files: {
+        "/entry.css": `@import "./entry.css" layer(x) screen;\n${reset}`,
+      },
+      out: `@media screen{@layer x;}a{color:red}`,
+      rebound: ["/entry.css: default"],
+    },
+    // Before this change the import printed a block around the "@namespace" rule of its file.
+    DefaultAfterNamespaceOfLayerImport: {
+      files: {
+        "/entry.css": `@import "./only.css" layer(y);\n${reset}`,
+        "/only.css": `@namespace svg url(${svg});`,
+      },
+      out: `@namespace svg "${svg}";@layer y;a{color:red}`,
+      rebound: ["/entry.css: default"],
+    },
+    DefaultAfterLayerOfEmptyImportAfterExternalImport: {
+      files: {
+        "/entry.css": `@import "https://example.com/e.css";\n@import "./empty.css" layer(x);\n${reset}`,
+        "/empty.css": ``,
+      },
+      out: `@import "https://example.com/e.css";@layer x;a{color:red}`,
+      rebound: ["/entry.css: default"],
+    },
+    DefaultAfterLayerStatementAfterImport: {
+      files: {
+        "/entry.css": `@import "https://example.com/e.css";\n@import "./layers.css";\n@import "./reset.css";`,
+        "/layers.css": `@layer x;`,
+        "/reset.css": reset,
+      },
+      out: `@import "https://example.com/e.css";@layer x;a{color:red}`,
+      rebound: ["/reset.css: default"],
+    },
+    DefaultAfterLayerStatementOfFile: {
+      files: {
+        "/entry.css": `@import "https://example.com/e.css";\n@import "./reset.css";`,
+        "/reset.css": `@layer x;\n${reset}`,
+      },
+      out: `@import "https://example.com/e.css";@layer x;a{color:red}`,
+      rebound: ["/reset.css: default"],
+    },
+    // bun's parser ends the place at each of these rules. A browser skips a rule that it does not know.
+    DefaultAfterCustomMedia: {
+      files: {
+        "/entry.css": `@import "./media.css";\n@import "./reset.css";`,
+        "/media.css": `@custom-media --narrow (max-width: 30em);`,
+        "/reset.css": reset,
+      },
+      out: `@custom-media --narrow (max-width:30em);a{color:red}`,
+      rebound: ["/reset.css: default"],
+    },
+    DefaultAfterUnknownAtRuleBlock: {
+      files: {
+        "/entry.css": `@import "./unknown.css";\n@import "./reset.css";`,
+        "/unknown.css": `@unknown x { a: b }`,
+        "/reset.css": `@namespace url(${xhtml});\n${icons}\na { color: blue }`,
+      },
+      out: `@namespace svg "${svg}";@unknown x{a: b}svg|a{color:red}a{color:#00f}`,
+      rebound: ["/reset.css: default"],
+      logs: ["invalid @ rule encountered: '@unknown'"],
+    },
+    DefaultAfterMozDocument: {
+      files: {
+        "/entry.css": `@import "./moz.css";\n@import "./reset.css";`,
+        "/moz.css": `@-moz-document url-prefix() { b { color: blue } }`,
+        "/reset.css": reset,
+      },
+      out: `@-moz-document url-prefix(){b{color:#00f}}a{color:red}`,
+      rebound: ["/reset.css: default"],
+    },
+    // One style sheet has one URL for a prefix. The first file that declares the prefix keeps it.
+    PrefixOfTwoURLs: {
+      files: {
+        "/entry.css": `@import "./a.css";\n@import "./b.css";`,
+        "/a.css": `@namespace p "urn:a";\np|x { color: red }`,
+        "/b.css": `@namespace p "urn:b";\np|y { color: blue }`,
+      },
+      out: `@namespace p "urn:a";p|x{color:red}p|y{color:#00f}`,
+      rebound: ["/b.css: p"],
+    },
+    PrefixRedeclaredInMediaImport: {
+      files: {
+        "/entry.css": `@import "./ns.css";\n@import "./b.css" screen;\n@import "./c.css";`,
+        "/ns.css": `@namespace p "urn:a";`,
+        "/b.css": `@namespace p "urn:b";\np|b { color: blue }`,
+        "/c.css": `@namespace p "urn:a";\np|c { color: red }`,
+      },
+      out: `@namespace p "urn:a";@media screen{p|b{color:#00f}}p|c{color:red}`,
+      rebound: ["/b.css: p"],
+    },
+    PrefixRedeclaredInLayerImport: {
+      files: {
+        "/entry.css": `@import "./ns.css";\n@import "./b.css" layer(x);\n@import "./c.css";`,
+        "/ns.css": `@namespace p "urn:a";`,
+        "/b.css": `@namespace p "urn:b";\np|b { color: blue }`,
+        "/c.css": `@namespace p "urn:a";\np|c { color: red }`,
+      },
+      out: `@namespace p "urn:a";@layer x{p|b{color:#00f}}p|c{color:red}`,
+      rebound: ["/b.css: p"],
+    },
+    SamePrefixInEachFile: {
+      files: {
+        "/entry.css": `@import "./a.css";\n@import "./b.css";\n@namespace svg url(${svg});\nsvg|c { color: green }`,
+        "/a.css": `@namespace svg url(${svg});\nsvg|a { color: red }`,
+        "/b.css": `@namespace svg url(${svg});\nsvg|b { color: blue }`,
+      },
+      out: `@namespace svg "${svg}";svg|a{color:red}svg|b{color:#00f}svg|c{color:green}`,
+    },
+    FreePrefixOfLaterFile: {
+      files: {
+        "/entry.css": `@import "./a.css";\n@namespace svg url(${svg});\n@namespace m "urn:1";\n@namespace m "urn:2";\nsvg|a { color: red }\nm|b { color: blue }`,
+        "/a.css": `@namespace svg "urn:other";\nsvg|z { color: blue }`,
+      },
+      out: `@namespace svg "urn:other";@namespace m "urn:2";svg|z{color:#00f}svg|a{color:red}m|b{color:#00f}`,
+      rebound: ["/entry.css: svg"],
+    },
+    // In its own sheet the rule of "a.css" is not valid, because the sheet does not declare the prefix.
+    PrefixOfOtherFile: {
+      files: {
+        "/entry.css": `@import "./ns.css";\n@import "./a.css";`,
+        "/ns.css": `@namespace svg url(${svg});`,
+        "/a.css": `svg|a { color: red }`,
+      },
+      out: `@namespace svg "${svg}";svg|a{color:red}`,
+      rebound: ["/a.css: svg"],
+    },
+  };
+  // Reads the flat rules of the cases above: a file has a prefix where a selector has "prefix|", and it has the
+  // default namespace where a selector has a part with no prefix.
+  function reboundNamespaces(files: Record<string, string>, out: string) {
+    const declared = (css: string) => {
+      const urls: Record<string, string | undefined> = {};
+      const rules = css.matchAll(/@namespace\s+(?:([\w-]+)\s+)?(?:url\(([^)]*)\)|"([^"]*)")/g);
+      for (const [, prefix = "default", url, quoted] of rules) urls[prefix] = url ?? quoted;
+      return urls;
+    };
+    const chunk = declared(out);
+    const rebound: string[] = [];
+    for (const [file, css] of Object.entries(files)) {
+      const selectors = css.replaceAll(/@[\w-]+\b[^;{]*;|\{[^{}]*\}/g, " ");
+      const prefixes = Array.from(selectors.matchAll(/([\w-]+)\|(?!=)/g), match => match[1]);
+      if (/[^\s]/.test(selectors.replaceAll(/[\w-]+\|(?!=)[\w*-]+/g, ""))) prefixes.push("default");
+      const own = declared(css);
+      for (const prefix of new Set(prefixes)) if (own[prefix] !== chunk[prefix]) rebound.push(`${file}: ${prefix}`);
+    }
+    return rebound;
+  }
+  for (const [name, { files, out, rebound = [], logs = [] }] of Object.entries(namespaceCases)) {
+    itBundled(`css/CSSAtNamespace${name}`, {
+      files,
+      outfile: "/out.css",
+      minifyWhitespace: true,
+      onAfterApiBundle(build) {
+        expect(build.logs.map(log => log.message)).toEqual(logs);
+      },
+      async onAfterBundle(api) {
+        api.expectFile("/out.css").toBe(out + "\n");
+        expect(reboundNamespaces(files, out)).toEqual(rebound);
+        // The second bundle checks the place of the "@namespace" rules, not the URL of a prefix.
+        const again = await Bun.build({ entrypoints: [api.outfile], throw: false });
+        expect(again.logs.map(log => log.message)).toEqual(logs);
+        expect(again.success).toBe(true);
+      },
+    });
+  }
+
+  // The rules have no file comment, because they are the rules of the chunk.
+  itBundled("css/CSSAtNamespaceNotMinified", {
+    files: namespaceCases.OfImportingFile.files,
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toBe(`@namespace svg "${svg}";
+
+/* a.css */
+.a {
+  color: #00f;
+}
+
+/* entry.css */
+svg|a {
+  color: red;
+}
+`);
+    },
+  });
+
+  itBundled("css/CSSAtNamespaceCLI", {
+    files: namespaceCases.OfMediaImport.files,
+    outfile: "/out.css",
+    backend: "cli",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toBe(`@namespace svg "${svg}";
+
+/* icons.css */
+@media screen {
+  svg|a {
+    color: red;
+  }
+}
+
+/* entry.css */
+.e {
+  color: green;
+}
+`);
+    },
+  });
+
+  // The minifier joins the two selectors, and a browser drops the whole rule when "xl" is not declared.
+  itBundled("css/CSSAtNamespaceOfSecondFileOfJSEntry", {
+    files: {
+      "/entry.js": `import "./base.css";\nimport "./icons.css";`,
+      "/base.css": `.icon { fill: red }`,
+      "/icons.css": `@namespace xl "urn:example:xlink";\na[href^="#"] { color: green }\na[xl|href^="#"] { color: green }`,
+    },
+    outdir: "/out",
+    minifySyntax: true,
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      api
+        .expectFile("/out/entry.css")
+        .toBe(`@namespace xl "urn:example:xlink";.icon{fill:red}a[href^=\\#],a[xl|href^="#"]{color:green}\n`);
+    },
+  });
+
+  // The two entry points have equal import orders, so they share one file.
+  itBundled("css/CSSAtNamespaceOfTwoEntryPoints", {
+    files: {
+      "/a.js": `import "./base.css";\nimport "./icons.css";\nconsole.log("a");`,
+      "/b.js": `import "./base.css";\nimport "./icons.css";\nconsole.log("b");`,
+      "/base.css": `.b { color: blue }`,
+      "/icons.css": icons,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    outdir: "/out",
+    splitting: true,
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      const stylesheets = readdirSync(api.outdir).filter(file => file.endsWith(".css"));
+      expect(stylesheets).toHaveLength(1);
+      api.expectFile(`/out/${stylesheets[0]}`).toBe(`@namespace svg "${svg}";.b{color:#00f}svg|a{color:red}\n`);
+    },
+  });
 
   // A media or container condition the parser does not know is kept as written.
   itBundled("css/GeneralEnclosedCondition", {

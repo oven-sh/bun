@@ -1063,6 +1063,40 @@ body {
     },
   });
 
+  // The chunk prints "@namespace" ahead of the rules of the first sheet, and the two pages share the chunk.
+  itBundled("html/SharedCSSWithNamespace", {
+    outdir: "out/",
+    minifyWhitespace: true,
+    files: {
+      "/first.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./base.css" />
+    <link rel="stylesheet" href="./icons.css" />
+  </head>
+  <body><svg><use class="icon" /></svg></body>
+</html>`,
+      "/second.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./base.css" />
+    <link rel="stylesheet" href="./icons.css" />
+  </head>
+  <body><svg><use class="icon" /></svg></body>
+</html>`,
+      "/base.css": `.icon { color: blue }`,
+      "/icons.css": `@namespace svg url(http://www.w3.org/2000/svg);\nsvg|use { color: red }`,
+    },
+    entryPoints: ["/first.html", "/second.html"],
+    onAfterBundle(api) {
+      const href = (page: string) => api.readFile("out/" + page).match(/href="(.*?\.css)"/)![1];
+      expect(href("first.html")).toBe(href("second.html"));
+      expect(stylesheetOf(api, "first.html")).toBe(
+        `@namespace svg "http://www.w3.org/2000/svg";.icon{color:#00f}svg|use{color:red}\n`,
+      );
+    },
+  });
+
   // The import orders of the two pages differ only in the names of a layer list: "x.y, z" and "x, yz".
   itBundled("html/SeparateCSSWhenLayerNamesDiffer", {
     outdir: "out/",

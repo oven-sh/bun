@@ -6045,7 +6045,7 @@ impl<'a> Resolver<'a> {
                 self.generation,
                 self.store_fd,
             ) {
-                Ok(e) => bun_ptr::BackRef::new(&*e),
+                Ok(e) => bun_ptr::BackRef::new(e),
                 Err(_) => dec_ret!(None),
             };
 

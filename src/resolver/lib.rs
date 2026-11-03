@@ -452,7 +452,7 @@ pub mod fs {
             dir: &[u8],
             generation: Generation,
             store_fd: bool,
-        ) -> crate::CrateResult<&'static mut EntriesOption> {
+        ) -> crate::CrateResult<&'static EntriesOption> {
             self.fs.read_directory(dir, None, generation, store_fd)
         }
     }
@@ -721,15 +721,15 @@ pub mod fs {
             const { core::cell::RefCell::new(core::mem::MaybeUninit::uninit()) };
     }
 
-    fn temp_entries_option_write(value: EntriesOption) -> &'static mut EntriesOption {
+    fn temp_entries_option_write(value: EntriesOption) -> &'static EntriesOption {
         TEMP_ENTRIES_OPTION.with_borrow_mut(|slot| {
             slot.write(value);
             // SAFETY: just wrote; threadlocal storage outlives the caller.
             // Re-erase to 'static for the BSSMap-shaped
-            // unbounded `&mut EntriesOption` return type — the `RefMut` guard
+            // unbounded `&EntriesOption` return type — the `RefMut` guard
             // drops immediately on return, so no live `RefCell` borrow aliases
             // the escaped reference.
-            unsafe { &mut *slot.as_mut_ptr() }
+            unsafe { &*slot.as_ptr() }
         })
     }
 
@@ -747,9 +747,9 @@ pub mod fs {
         bun_core::enum_unwrap!(pub EntriesOption, Entries => fn entries / entries_mut -> DirEntry);
 
         /// The listing, or the error that reading the directory gave.
-        pub fn try_entries_mut(&mut self) -> crate::CrateResult<&mut DirEntry> {
+        pub fn try_entries(&self) -> crate::CrateResult<&DirEntry> {
             match self {
-                EntriesOption::Entries(entries) => Ok(&mut **entries),
+                EntriesOption::Entries(entries) => Ok(&**entries),
                 EntriesOption::Err(err) => Err(err.canonical_error),
             }
         }
@@ -1022,7 +1022,7 @@ pub mod fs {
             &mut self,
             dir: &[u8],
             err: crate::Error,
-        ) -> crate::CrateResult<&'static mut EntriesOption> {
+        ) -> crate::CrateResult<&'static EntriesOption> {
             let mut get_or_put_result = self.entries.get_or_put(dir)?;
             if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                 self.entries.mark_not_found(get_or_put_result);
@@ -1041,7 +1041,7 @@ pub mod fs {
                 }),
             )?;
             // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
-            Ok(unsafe { &mut *opt })
+            Ok(unsafe { &*opt })
         }
 
         /// A missing directory's `Err` is this thread's scratch slot; read it before the next call.
@@ -1051,7 +1051,7 @@ pub mod fs {
             handle_: Option<Fd>,
             generation: Generation,
             store_fd: bool,
-        ) -> crate::CrateResult<&'static mut EntriesOption> {
+        ) -> crate::CrateResult<&'static EntriesOption> {
             self.read_directory_with_iterator(dir_, handle_, generation, store_fd, &mut ())
         }
 
@@ -1070,7 +1070,7 @@ pub mod fs {
             generation: Generation,
             store_fd: bool,
             iterator: &mut I,
-        ) -> crate::CrateResult<&'static mut EntriesOption> {
+        ) -> crate::CrateResult<&'static EntriesOption> {
             let dir = strings::paths::without_trailing_slash_windows_path(dir_maybe_trail_slash);
 
             crate::Resolver::assert_valid_cache_key(dir);
@@ -1181,7 +1181,7 @@ pub mod fs {
 
             let out = self.entries.put(&mut cache_result, result)?;
             // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
-            Ok(unsafe { &mut *out })
+            Ok(unsafe { &*out })
         }
 
         /// Evicts `file_path` from the directory-entry cache; returns whether
@@ -1450,7 +1450,7 @@ pub mod fs {
             &mut self,
             index: bun_alloc::IndexType,
             generation: Generation,
-        ) -> Option<&mut EntriesOption> {
+        ) -> Option<&EntriesOption> {
             debug_assert!(
                 self.entries_mutex.is_held_by_current_thread(),
                 "entries_at_locked: caller must hold entries_mutex",
@@ -1496,7 +1496,7 @@ pub mod fs {
                 }
             }
             // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
-            Some(unsafe { &mut *result_ptr })
+            Some(unsafe { &*result_ptr })
         }
 
         fn platform_temp_dir_compute() -> &'static [u8] {

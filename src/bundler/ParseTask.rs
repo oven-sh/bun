@@ -258,16 +258,10 @@ impl<'a> ParseTask<'a> {
         ctx: *mut BundleV2<'a>,
     ) -> ParseTask<'a> {
         let (package_name, package_version) = match resolve_result.package_json {
-            // SAFETY: `package_json` is `Option<*const PackageJSON>`; the resolver
-            // arena outlives the bundle pass, so deref'ing the raw pointer here to
-            // borrow `name`/`version` is sound.
-            Some(pj) => unsafe {
-                let pj = &*pj;
-                (
-                    ast::StoreStr::new(&pj.name[..]),
-                    ast::StoreStr::new(&pj.version[..]),
-                )
-            },
+            Some(pj) => (
+                ast::StoreStr::new(&pj.name[..]),
+                ast::StoreStr::new(&pj.version[..]),
+            ),
             None => (ast::StoreStr::EMPTY, ast::StoreStr::EMPTY),
         };
         // SAFETY: lifetime erased — `ctx` outlives the ParseTask (BACKREF);

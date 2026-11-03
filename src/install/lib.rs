@@ -390,13 +390,23 @@ impl RunCommand {
     #[cfg(not(windows))]
     const SHELLS_TO_SEARCH: &'static [&'static [u8]] = &[b"bash", b"sh", b"zsh"];
 
-    /// `/tmp/bun-node-<uid>-<sha>` (or debug variant): `/tmp` is everybody's, this is one user's.
-    ///
-    /// NOTE: the SHA alone does not uniquely identify a binary — two local
-    /// builds at the same commit share this dir. `create_fake_temporary_node_executable`
-    /// therefore re-points a stale link on EEXIST instead of trusting it.
+    /// Nothing after a SHA: tools find the directory of the links as `bun-node-<hex digits>`.
+    const NODE_LINKS_KEY_SEPARATOR: &'static str =
+        if bun_core::env::IS_DEBUG || bun_core::env::GIT_SHA_SHORT.is_empty() {
+            "-"
+        } else {
+            ""
+        };
+
+    /// `/tmp/bun-node-<uid>-<sha><key>` (or debug variant): for one user and one executable.
     #[cfg(not(windows))]
     pub fn bun_node_dir() -> &'static ZStr {
+        &Self::node_links().0
+    }
+
+    /// The directory of the `node` and `bun` links, and their target. `Ok(None)`: no links to make.
+    #[cfg(not(windows))]
+    fn node_links() -> &'static (bun_core::ZBox, Result<Option<&'static ZStr>, crate::Error>) {
         const TMP: &str = if cfg!(target_os = "macos") {
             "/private/tmp"
         } else if cfg!(target_os = "android") {
@@ -411,15 +421,41 @@ impl RunCommand {
         } else {
             const_format::concatcp!("-", bun_core::env::GIT_SHA_SHORT)
         };
-        static DIR: std::sync::OnceLock<bun_core::ZBox> = std::sync::OnceLock::new();
-        DIR.get_or_init(|| {
-            bun_core::ZBox::from_bytes(format!("{TMP}/bun-node-{}{SUFFIX}", bun_sys::c::getuid()))
+        static LINKS: std::sync::OnceLock<(
+            bun_core::ZBox,
+            Result<Option<&'static ZStr>, crate::Error>,
+        )> = std::sync::OnceLock::new();
+        LINKS.get_or_init(|| {
+            let dir = format!("{TMP}/bun-node-{}{SUFFIX}", bun_sys::c::getuid());
+            // Not `argv[0]`: in a nested `bun run` it is the outer one's `bun` link (#30711).
+            let target = match bun_core::self_exe_path() {
+                Ok(self_path) if !self_path.as_bytes().is_empty() => self_path,
+                result => {
+                    let argv0 = bun_core::argv().get(0).unwrap_or(bun_core::zstr!("bun"));
+                    let argv0_bytes = argv0.as_bytes();
+                    if argv0_bytes.starts_with(dir.as_bytes()) {
+                        // That link. Its directory has the links and is in `PATH`.
+                        let outer = bun_paths::dirname(argv0_bytes).unwrap_or(dir.as_bytes());
+                        return (bun_core::ZBox::from_bytes(outer), Ok(None));
+                    }
+                    if argv0_bytes.first() != Some(&b'/') {
+                        // No usable target — propagate the OS error when we have one.
+                        let no_target = result.map(|_| None).map_err(Into::into);
+                        return (bun_core::ZBox::from_bytes(dir), no_target);
+                    }
+                    argv0
+                }
+            };
+            let key = bun_wyhash::hash(target.as_bytes());
+            let keyed = format!("{dir}{}{key:016x}", Self::NODE_LINKS_KEY_SEPARATOR);
+            (bun_core::ZBox::from_bytes(keyed), Ok(Some(target)))
         })
     }
 
     /// Under `%TEMP%`, or beside bun.exe when that is another drive, which no hard link reaches.
     #[cfg(windows)]
     pub fn windows_node_shim_dir(buf: &mut [u16]) -> Option<usize> {
+        use bun_core::strings;
         use bun_sys::windows as win;
 
         const TEMP_DIR_NAME: &str = if bun_core::env::IS_DEBUG {
@@ -430,6 +466,8 @@ impl RunCommand {
             const_format::concatcp!("bun-node-", bun_core::env::GIT_SHA_SHORT)
         };
         const BESIDE_EXE_DIR_NAME: &str = "bun-node";
+        /// The hex digits of a `u64`.
+        const KEY_LEN: usize = 16;
 
         // The case of a drive letter varies.
         fn drive(path: &[u16]) -> Option<u16> {
@@ -438,43 +476,89 @@ impl RunCommand {
                 _ => None,
             }
         }
+        fn key_of(path: &[u16]) -> u64 {
+            let mut utf8 = Vec::new();
+            strings::to_utf8_append_to_list(&mut utf8, path);
+            bun_wyhash::hash_ascii_lowercase(0, &utf8)
+        }
 
         let image_path = win::exe_path_w().as_slice();
+        let exe_dir = bun_paths::resolve_path::dirname_w(image_path);
+        let file_name = strings::basename_windows(image_path);
+
+        // A nested `bun run` is the `bun.exe` link: use its folder if `node.exe` there is this one.
+        let exe_dir_name = strings::basename_windows(exe_dir);
+        if strings::eql_case_insensitive_t(file_name, b"bun.exe")
+            && exe_dir_name.len() >= BESIDE_EXE_DIR_NAME.len()
+            && strings::eql_case_insensitive_t(
+                &exe_dir_name[..BESIDE_EXE_DIR_NAME.len()],
+                BESIDE_EXE_DIR_NAME.as_bytes(),
+            )
+        {
+            let node = bun_core::w!("\\node.exe");
+            // The callers append `\node.exe` and a NUL.
+            if exe_dir.len() + node.len() + 1 > buf.len() {
+                return None;
+            }
+            buf[..exe_dir.len()].copy_from_slice(exe_dir);
+            buf[exe_dir.len()..][..node.len()].copy_from_slice(node);
+            let node_id = Self::windows_file_id(&buf[..exe_dir.len() + node.len()]);
+            if node_id.is_some() && node_id == Self::windows_file_id(image_path) {
+                return Some(exe_dir.len());
+            }
+        }
+
         // SAFETY: GetTempPathW writes at most `nBufferLength` WCHARs (incl.
         // trailing NUL) into `buf`.
         let temp_len = unsafe { win::GetTempPathW(buf.len() as u32, buf.as_mut_ptr()) } as usize;
 
-        let (mut len, name) = if temp_len > 0
+        let (mut len, name, key) = if temp_len > 0
             && temp_len < buf.len()
             && drive(&buf[..temp_len]).is_some_and(|temp| Some(temp) == drive(image_path))
         {
             // Ends with a separator.
-            (temp_len, TEMP_DIR_NAME)
+            let key = (Self::NODE_LINKS_KEY_SEPARATOR, key_of(image_path));
+            (temp_len, TEMP_DIR_NAME, Some(key))
         } else {
-            let exe_dir = bun_paths::resolve_path::dirname_w(image_path);
             if exe_dir.is_empty() || exe_dir.len() >= buf.len() {
                 return None;
             }
             buf[..exe_dir.len()].copy_from_slice(exe_dir);
-            if exe_dir.ends_with(bun_core::w!("\\bun-node")) {
-                // The process is running as the `bun.exe` link (a nested `bun run`), so this is
-                // already the directory.
-                (exe_dir.len(), "")
-            } else {
-                buf[exe_dir.len()] = b'\\' as u16;
-                (exe_dir.len() + 1, BESIDE_EXE_DIR_NAME)
-            }
+            buf[exe_dir.len()] = b'\\' as u16;
+            // Beside the image, its file name is the key, and `bun.exe` has none.
+            let key = (!strings::eql_case_insensitive_t(file_name, b"bun.exe"))
+                .then(|| ("-", key_of(file_name)));
+            (exe_dir.len() + 1, BESIDE_EXE_DIR_NAME, key)
         };
 
         // The callers append `\node.exe` and a NUL.
-        if len + name.len() + b"\\node.exe\0".len() > buf.len() {
+        let key_len = key.map_or(0, |(separator, _)| separator.len() + KEY_LEN);
+        if len + name.len() + key_len + b"\\node.exe\0".len() > buf.len() {
             return None;
         }
         for b in name.bytes() {
-            buf[len] = b as u16;
+            buf[len] = u16::from(b);
             len += 1;
         }
+        if let Some((separator, key)) = key {
+            let digits = bun_core::fmt::u64_hex_fixed::<true, KEY_LEN>(key);
+            for b in separator.bytes().chain(digits) {
+                buf[len] = u16::from(b);
+                len += 1;
+            }
+        }
         Some(len)
+    }
+
+    /// The identity of the file at `path`: a hard link has no target to read back.
+    #[cfg(windows)]
+    fn windows_file_id(path: &[u16]) -> Option<(u64, u64)> {
+        let flags = bun_sys::O::RDONLY | bun_sys::O::NOFOLLOW;
+        bun_sys::openat_windows(bun_sys::Fd::cwd(), path, flags, 0)
+            .map(bun_sys::File::from_fd)
+            .and_then(|file| file.stat())
+            .ok()
+            .map(|stat| (stat.st_dev, stat.st_ino))
     }
 
     #[cfg(not(windows))]
@@ -552,60 +636,12 @@ impl RunCommand {
 
         #[cfg(not(windows))]
         {
-            let argv0: &ZStr = bun_core::argv().get(0).unwrap_or(bun_core::zstr!("bun"));
-            let dir = Self::bun_node_dir();
-
-            // PREFER `self_exe_path()` OVER `argv[0]`: on a nested `--bun`, the
-            // OUTER bun prepends `BUN_NODE_DIR` to `PATH` and the INNER bun is
-            // execve'd with `argv[0] = <BUN_NODE_DIR>/bun` — exactly the shim
-            // we're about to (re)write. Using that as the symlink target
-            // produces `<BUN_NODE_DIR>/bun -> <BUN_NODE_DIR>/bun` (self-loop),
-            // and the next `/usr/bin/env node` bails with ELOOP "Too many
-            // levels of symbolic links" (#30711). `self_exe_path()` readlinks
-            // `/proc/self/exe` (Linux) / canonicalizes `_NSGetExecutablePath`
-            // (macOS), so it always resolves to the REAL bun regardless of
-            // how the process was invoked. It's memoized via `Once`, so the
-            // cost is paid once per process.
-            let argv0_z: &ZStr = if !optional_bun_path.is_empty() {
-                // When the caller pre-supplied a path, that path is the symlink
-                // target.
-                // SAFETY: callers pass a slice borrowed from a `ZStr` (argv[0] /
-                // self_exe_path / static literal), so `ptr[len] == 0` holds.
-                unsafe { ZStr::from_raw(optional_bun_path.as_ptr(), optional_bun_path.len()) }
-            } else {
-                // Ask the OS for the real absolute path first. Fall back to an
-                // absolute `argv[0]` only if that fails — never trust a bare
-                // `argv[0]` as the target here, because on nested `--bun` the
-                // inner process's `argv[0]` IS `<BUN_NODE_DIR>/bun`.
-                match bun_core::self_exe_path() {
-                    Ok(self_path) if !self_path.as_bytes().is_empty() => {
-                        *optional_bun_path = self_path.as_bytes();
-                        self_path
-                    }
-                    result => {
-                        let argv0_bytes = argv0.as_bytes();
-                        if argv0_bytes.starts_with(dir.as_bytes()) {
-                            // `self_exe_path()` failed and `argv[0]` is the shim
-                            // under `BUN_NODE_DIR` (nested `--bun`). Using it as
-                            // the target would recreate the #30711 self-loop; the
-                            // OUTER bun already planted working shims and PATH, so
-                            // leave them untouched.
-                            return Ok(());
-                        }
-                        if argv0_bytes.first() == Some(&b'/') {
-                            *optional_bun_path = argv0_bytes;
-                            argv0
-                        } else {
-                            // No usable target — propagate the OS error when we
-                            // have one, otherwise leave PATH unmodified.
-                            return match result {
-                                Err(e) => Err(e.into()),
-                                Ok(_) => Ok(()),
-                            };
-                        }
-                    }
-                }
+            // The name of `dir` has a hash of the link target, so both come from one place.
+            let (dir, target) = Self::node_links();
+            let Some(argv0_z) = (*target)? else {
+                return Ok(());
             };
+            *optional_bun_path = argv0_z.as_bytes();
 
             let links = [&b"/node"[..], b"/bun"]
                 .map(|name| bun_core::ZBox::from_vec([dir.as_bytes(), name].concat()));
@@ -633,13 +669,7 @@ impl RunCommand {
                     match bun_sys::symlink(argv0_z, dest) {
                         Ok(()) => break,
                         Err(e) if e.get_errno() == bun_sys::E::EEXIST => {
-                            // The dir is keyed only on the uid and GIT_SHA_SHORT, so two
-                            // different binaries built at the same commit (e.g.
-                            // side-by-side local builds being benchmarked)
-                            // collide here. Blindly reusing the existing link
-                            // would make every `--bun` child of the SECOND
-                            // binary silently exec the FIRST. Verify the target
-                            // before reusing; replace it once if stale.
+                            // An entry that differs is not from this code: replace it once.
                             // Never remove a matching link: concurrent runs' scripts exec it.
                             let mut buf = bun_paths::path_buffer_pool::get();
                             let matches = bun_sys::readlink(dest, &mut buf)
@@ -688,15 +718,7 @@ impl RunCommand {
             let dir_slice_len = prefix.len() + dir_len;
 
             let image_path = win::exe_path_w();
-            // A hard link has no target to read back, so compare file identity instead.
-            let image_stat = bun_sys::File::openat_os_path(
-                bun_sys::Fd::cwd(),
-                image_path,
-                bun_sys::O::RDONLY,
-                0,
-            )
-            .and_then(|image| image.stat())
-            .ok();
+            let image_id = Self::windows_file_id(image_path.as_slice());
 
             for name in [strings::w!("\\node.exe\0"), strings::w!("\\bun.exe\0")] {
                 target_path_buffer[dir_slice_len..][..name.len()].copy_from_slice(name);
@@ -713,19 +735,10 @@ impl RunCommand {
                     }
                     match win::Win32Error::get() {
                         win::Win32Error::ALREADY_EXISTS => {
-                            // As in the POSIX EEXIST branch: a rebuilt bun is a different file.
-                            let keep = image_stat.as_ref().is_none_or(|image| {
-                                bun_sys::openat_windows(
-                                    bun_sys::Fd::cwd(),
-                                    &target_path_buffer[..link_len],
-                                    bun_sys::O::RDONLY | bun_sys::O::NOFOLLOW,
-                                    0,
-                                )
-                                .map(bun_sys::File::from_fd)
-                                .and_then(|link| link.stat())
-                                .is_ok_and(|link| {
-                                    link.st_dev == image.st_dev && link.st_ino == image.st_ino
-                                })
+                            // A link to another file is from before a new file got this image path.
+                            let keep = image_id.is_none_or(|image| {
+                                Self::windows_file_id(&target_path_buffer[..link_len])
+                                    == Some(image)
                             });
                             if keep || replaced {
                                 break;

@@ -866,6 +866,32 @@ const files = {
         if (keepsListings) console.log("listings read again", count, more.refills);
       },
 
+      async edits() {
+        // An alias is added to a config file after a lookup of it missed. The file is next to
+        // the importer (N) or two directories above it (A). The old retry read again the
+        // directory that the text of the specifier names: it saw N1 and N3 only.
+        const paths = map => ({ compilerOptions: { baseUrl: ".", paths: map } });
+        const imports = map => ({ name: "app", imports: map });
+        const rows = [
+          ["1", "tsconfig.json", paths, { "@a": ["./lib/a.js"] }, { "@b": ["./lib/b.js"] }, "@b"],
+          ["2", "tsconfig.json", paths, { "@a": ["./lib/a.js"] }, { "@alias/*": ["./lib/*"] }, "@alias/b.js"],
+          ["3", "package.json", imports, { "#a": "./lib/a.js" }, { "#b": "./lib/b.js" }, "#b"],
+          ["4", "package.json", imports, { "#a": "./lib/a.js" }, { "#int/*": "./lib/*" }, "#int/b.js"],
+        ];
+        for (const [where, importer] of [["N", ""], ["A", path.join("src", "app")]]) {
+          for (const [n, file, config, first, added, specifier] of rows) {
+            const top = path.join("edits", where + n);
+            write(path.join(top, file), JSON.stringify(config(first)));
+            write(path.join(top, "lib", "b.js"), "");
+            fs.mkdirSync(path.join(top, importer), { recursive: true });
+            const from = requireFrom(path.join(top, importer));
+            res(where + n + " before", () => from.resolve(specifier));
+            write(path.join(top, file), JSON.stringify(config({ ...first, ...added })));
+            res(where + n + " after", () => from.resolve(specifier));
+          }
+        }
+      },
+
       async issues() {
         // #12372, from the ways to ask that the tsconfig group does not use.
         await import("./ts/apis.mjs");
@@ -1137,6 +1163,17 @@ describe.concurrent("a failed resolution sees them from each way to ask the reso
 });
 
 describe.concurrent("a failed resolution answers as a new process does", () => {
+  test("an alias added to a config file next to the importer or above it", async () => {
+    const rows = ["N1", "N2", "N3", "N4", "A1", "A2", "A3", "A4"];
+    expect(await runGroup("edits")).toEqual({
+      exitCode: 0,
+      stderr: "",
+      stdout: rows
+        .flatMap(row => [`${row} before ERR MODULE_NOT_FOUND`, `${row} after OK edits/${row}/lib/b.js`])
+        .join("\n"),
+    });
+  });
+
   test("the reported lookups, from the other ways to ask the resolver", async () => {
     expect(await runGroup("issues")).toEqual({
       exitCode: 0,

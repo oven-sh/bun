@@ -298,7 +298,14 @@ fn binds_a_name(hir: &File<'_>, pattern: PatId) -> bool {
 
 /// What declares a `var` stays, because the name is visible outside.
 pub fn is_removed_where_never_run(hir: &File<'_>, statement: StmtId) -> bool {
-    let is_removed = |part: StmtId| part.is_none() || is_removed_where_never_run(hir, part);
+    is_removed_where_never_run_in(hir, statement, false)
+}
+
+/// `nested`: the statement sits in the body of a statement that never runs, where a
+/// function declaration is block-scoped and goes too.
+fn is_removed_where_never_run_in(hir: &File<'_>, statement: StmtId, nested: bool) -> bool {
+    let is_removed =
+        |part: StmtId| part.is_none() || is_removed_where_never_run_in(hir, part, true);
     match hir[statement].kind {
         StmtKind::Empty
         | StmtKind::Debugger
@@ -316,17 +323,23 @@ pub fn is_removed_where_never_run(hir: &File<'_>, statement: StmtId) -> bool {
             declaration.kind != VarKind::Var || !binds_a_name(hir, declaration.pat)
         }),
         StmtKind::Fn(function) => {
-            !(hir[function].flags).intersects(Flags::ASYNC | Flags::GENERATOR)
+            nested || !(hir[function].flags).intersects(Flags::ASYNC | Flags::GENERATOR)
         }
         StmtKind::Block(list) => hir.ids(list).all(is_removed),
         StmtKind::If { yes, no, .. } => is_removed(yes) && is_removed(no),
         StmtKind::While { body, .. }
         | StmtKind::DoWhile { body, .. }
         | StmtKind::Labeled { body, .. } => is_removed(body),
-        StmtKind::For { init, body, .. } => is_removed(init) && is_removed(body),
-        StmtKind::ForIn { left, body, .. } | StmtKind::ForOf { left, body, .. } => {
-            is_removed(left) && is_removed(body)
+        StmtKind::For { init, body, .. } => {
+            (init.is_none() || is_removed_where_never_run_in(hir, init, false)) && is_removed(body)
         }
+        StmtKind::ForIn { left, body, .. } | StmtKind::ForOf { left, body, .. } => {
+            is_removed_where_never_run_in(hir, left, false) && is_removed(body)
+        }
+        StmtKind::With { body, .. } => is_removed(body),
+        StmtKind::Switch { cases, .. } => cases
+            .iter()
+            .all(|case| hir.ids(hir[case].body).all(is_removed)),
         StmtKind::Try {
             block,
             handler,

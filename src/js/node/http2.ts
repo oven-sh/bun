@@ -5199,8 +5199,8 @@ class ClientHttp2Session extends Http2Session {
   #pingCallbacks: Array<[PingCallback, number]> | null = null;
   // RFC 9113 reserved (pushed) streams the peer may have open at once (node session option).
   #maxReservedRemoteStreams: number = 200;
-  #maxOriginSetSize: number = 128;
   #reservedStreamsCount: number = 0;
+  #maxOriginSetSize: number = 128;
   #strictFieldWhitespaceValidation: boolean = true;
   // Client-side SETTINGS_MAX_CONCURRENT_STREAMS accounting: requests whose HEADERS frame has been
   // submitted and whose stream has not closed yet, plus the queue of requests waiting for a slot
@@ -5565,8 +5565,7 @@ class ClientHttp2Session extends Http2Session {
     origin(self: ClientHttp2Session, origin: string | Array<string> | undefined) {
       if (!self) return;
       const socket = self[bunHTTP2Socket];
-      if (self.encrypted && socket) {
-        if (!origin) return;
+      if (self.encrypted && socket && origin) {
         const originSet = initOriginSet(self, socket);
         const origins = $isArray(origin) ? origin : [origin];
         for (const item of origins) {

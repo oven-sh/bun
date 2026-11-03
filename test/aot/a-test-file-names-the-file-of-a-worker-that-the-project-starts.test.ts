@@ -154,14 +154,19 @@ const forms = {
   "TestRunLayers:2,TestRunPartFiles:1": "layers 2 | test files 2 | to a program 1",
   "TestRunLayers:3,TestRunPartFiles:1": "layers 3 | test files 2 | to a program 1",
 };
+// Where this Bun loads one program a realm (macOS, Windows, a hardened build) no word brings layers. The run says so behind its first
+// field, and the programs of the test files are "programs without layers".
+const oneARealm = ": this Bun loads one program a realm";
+const withoutLayers = (form: string) =>
+  form.replace(/^layers \d+/, "programs without layers").replace(" | ", `${oneARealm} | `);
+
 // A form is built once, for the run that writes over the files: a build is what costs. There each Worker still says what plain bun test
 // prints for the files as they were written, which only compiled code does.
 for (const [words, form] of Object.entries(forms)) {
   test.concurrent(`each Worker answers as under plain bun test, and runs compiled (${words})`, async () => {
     const env = { BUN_DEBUG_TEST_AOT_WORDS: words, WRITES_OVER_WORKERS: "1", BUN_JSC_logAOTPhaseTimes: "1" };
     const compiled = await see(["--aot"], env);
-    // Where this Bun loads one program a realm (macOS, Windows, a hardened build) no word brings layers, and the run says so.
-    const built = compiled.built?.includes("this Bun loads one program a realm") ? compiled.built : form;
+    const built = compiled.built?.includes(oneARealm) ? withoutLayers(form) : form;
     expect(compiled).toEqual({ ...plain, taken: [count], built });
   });
 }

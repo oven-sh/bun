@@ -1285,6 +1285,20 @@ describe("Bun.inspect of an array and its class name", () => {
       });
     });
 
+    // `Ελληνικά` is 8 letters and 16 bytes of UTF-8. A line holds as many as of a Latin-1 name of 8 letters.
+    it("and counts the letters of a name that is not Latin-1 for the line width", () => {
+      const twelve = (...items) =>
+        Bun.inspect(
+          Array.from({ length: 12 }, () => Ελληνικά.of(...items)),
+          { depth: 0 },
+        );
+      const lines = item => `[\n  ${[5, 5, 2].map(count => Array(count).fill(item).join(", ")).join(",\n  ")}\n]`;
+      expect({ prefix: twelve(), marker: twelve(1) }).toEqual({
+        prefix: lines("Ελληνικά(0) []"),
+        marker: lines("[Ελληνικά ...]"),
+      });
+    });
+
     it("with no color", () => {
       expect(Bun.inspect(Plain.of(1), { colors: true })).toBe("Plain(1) [ \x1b[0m\x1b[33m1\x1b[0m ]");
     });

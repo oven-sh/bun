@@ -5517,11 +5517,15 @@ pub mod formatter {
             value: JSValue,
         ) -> JsResult<()> {
             let name = value.get_class_name(self.global_this)?;
-            let name = name.to_utf8();
-            self.print_depth_exceeded_marker::<C>(
+            self.add_for_new_line(name.length() + "[ ...]".len());
+            let _ = write!(
                 writer_,
-                core::str::from_utf8(&name).unwrap_or("Array"),
-            )
+                "{}[{} ...]{}",
+                pfmt!("<r><cyan>", C),
+                name,
+                pfmt!("<r>", C)
+            );
+            Ok(())
         }
 
         #[inline(never)]

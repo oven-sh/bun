@@ -910,7 +910,8 @@ describe.concurrent("bunshell ls", () => {
 
     // The error of a directory that does not open is where the section of that directory would be. `ls` runs in a
     // child that is not root, so that the mode bits apply to it.
-    describe.if(isPosix)("a directory that does not open", () => {
+    // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
+    describe.serial.if(isPosix)("a directory that does not open", () => {
       const child = async (cmd: string[], dir: string, locked: string) => {
         using options = unprivilegedSpawnOptions(dir);
         chmodSync(join(dir, locked), 0o000);

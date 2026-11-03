@@ -1,0 +1,72 @@
+status: 0
+script: 9575002d11506283
+---
+deque([]) 0 False None
+deque([0, 1, 2]) 3 [0, 1, 2] 0 2 1
+2 0 deque([1])
+1 deque([])
+IndexError pop from an empty deque
+IndexError pop from an empty deque
+deque([0, 1, 2, 3, 4])
+deque(['c', 'b', 'a', 0, 1, 2, 3, 4])
+deque(['c', 'b', 'a', 0, 1, 2, 3, 4, 'c', 'b', 'a', 0, 1, 2, 3, 4]) 16
+deque([]) 0
+0 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+1 [9, 0, 1, 2, 3, 4, 5, 6, 7, 8]
+-1 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+3 [7, 8, 9, 0, 1, 2, 3, 4, 5, 6]
+-3 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+10 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+11 [9, 0, 1, 2, 3, 4, 5, 6, 7, 8]
+-11 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+25 [5, 6, 7, 8, 9, 0, 1, 2, 3, 4]
+-25 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+1000003 [7, 8, 9, 0, 1, 2, 3, 4, 5, 6]
+[6, 7, 8, 9, 0, 1, 2, 3, 4, 5]
+deque(['f', 'e', 'd', 'c', 'b', 'a'])
+1 0 True False
+3 3 3 3
+ValueError deque.index(x): x not in deque
+ValueError deque.index(x): x not in deque
+ValueError deque.index(x): x not in deque
+TypeError slice indices must be integers or have an __index__ method
+TypeError slice indices must be integers or have an __index__ method
+deque(['f', 'e', 'd', 'b', 'a'])
+ValueError deque.remove(x): x not in deque
+deque(['X', 'f', 'e', 'd', 'b', 'a'])
+deque(['X', 'f', 'e', 'd', 'b', 'a', 'Y'])
+deque(['Z', 'X', 'f', 'e', 'd', 'b', 'a', 'Y'])
+deque(['Z', 'X', 'M', 'f', 'e', 'd', 'b', 'a', 'Y'])
+deque(['Z', 'X', 'M', 'f', 'e', 'd', 'b', 'N', 'a', 'Y'])
+deque([1, 'X', 'M', 3, 'e', 'd', 'b', 'N', 'a', 2])
+deque(['X', 'M', 3, 'e', 'd', 'b', 'N', 'a', 2])
+deque(['X', 'M', 3, 'e', 'd', 'b', 'N', 'a'])
+deque(['X', 'M', 'e', 'd', 'b', 'N', 'a'])
+IndexError deque index out of range
+IndexError deque index out of range
+IndexError deque index out of range
+IndexError deque index out of range
+TypeError sequence index must be integer, not 'str'
+TypeError sequence index must be integer, not 'slice'
+TypeError sequence index must be integer, not 'float'
+TypeError sequence index must be integer, not 'str'
+TypeError sequence index must be integer, not 'slice'
+TypeError sequence index must be integer, not 'slice'
+deque(['X', 'M', 'e', 'd', 'b', 'N', 'a']) deque(['X', 'M', 'e', 'd', 'b', 'N', 'a', 99])
+True False
+['a', 'N', 'b', 'd', 'e', 'M', 'X'] ['X', 'M', 'e', 'd', 'b', 'N', 'a']
+deque([1, 2, 3]) deque([1, 2, 1, 2]) deque([1, 2, 1, 2]) deque([]) deque([]) deque([]) deque([7, 7, 7, 7])
+TypeError can only concatenate deque (not "list") to deque
+TypeError
+TypeError can't multiply sequence by non-int of type 'str'
+TypeError can't multiply sequence by non-int of type 'float'
+MemoryError 
+OverflowError cannot fit 'int' into an index-sized integer
+deque([1, 2, 3]) True
+deque([1, 2, 3, 1, 2, 3]) True
+deque([1, 2, 3, 1, 2, 3])
+deque([]) True
+TypeError 'int' object is not iterable
+TypeError can't multiply sequence by non-int of type 'str'
+TypeError
+None

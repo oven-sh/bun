@@ -1,0 +1,6 @@
+status: 5
+stderr: to stderr
+script: 713d1be06314696c
+source: 713d1be06314696c
+---
+no newline at the end, still flushed

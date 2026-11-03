@@ -1,0 +1,83 @@
+status: 0
+script: 4608d912de6db35c
+source: cebfad449709c937
+---
+(+ 1 2 (* 3 4))                                    => 15
+(define (square x) (* x x))                        => square
+(square 12)                                        => 144
+(define (fact n) (if (<= n 1) 1 (* n (fact (- n 1) => fact
+(fact 20)                                          => 2432902008176640000
+(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fi => fib
+(map fib '(0 1 2 3 4 5 6 7 8 9 10))                => (0 1 1 2 3 5 8 13 21 34 55)
+(define (loop n acc) (if (= n 0) acc (loop (- n 1) => loop
+(loop 5000 0)                                      => 12502500
+(define (make-counter) (let ((n 0)) (lambda () (se => make-counter
+(define c1 (make-counter))                         => c1
+(define c2 (make-counter))                         => c2
+(list (c1) (c1) (c2) (c1))                         => (1 2 1 3)
+(define (range a b) (if (< a b) (cons a (range (+  => range
+(filter (lambda (x) (= 0 (mod x 3))) (range 0 20)) => (0 3 6 9 12 15 18)
+(define (compose f g) (lambda (x) (f (g x))))      => compose
+((compose square (lambda (x) (+ x 1))) 4)          => 25
+(define (reverse l) (if (null? l) '() (append (rev => reverse
+(reverse '(1 2 (3 4) five))                        => (five (3 4) 2 1)
+(define (qsort l) (if (null? l) '() (let ((p (car  => qsort
+(qsort '(3 1 4 1 5 9 2 6 5 3 5))                   => (1 1 2 3 3 4 5 5 5 6 9)
+(cond ((< 1 0) 'a) ((= 1 2) 'b) (else 'c))         => c
+(and 1 2 3)                                        => 3
+(and 1 (< 2 1) 3)                                  => #f
+(or (< 2 1) 'x)                                    => x
+(let ((x 2) (y 3)) (* x y))                        => 6
+(apply + '(1 2 3))                                 => 6
+(/ 7 2)                                            => 3.5
+(/ 8 2)                                            => 4
+(if (< 1 2) 'yes)                                  => yes
+'(quote a)                                         => (quote a)
+(lambda (a b) a)                                   => <lambda/2>
+(define (ackermann m n) (cond ((= m 0) (+ n 1)) (( => ackermann
+(ackermann 2 3)                                    => 9
+(undefined-thing)                                  => error: unbound symbol undefined-thing
+(car '())                                          => IndexError: list index out of range
+(1 2 3)                                            => error: not a procedure: 1
+((lambda (x) x))                                   => error: expected 1 arguments, got 0
+(+ 1 'a)                                           => TypeError: unsupported operand type(s) for +: 'int' and 'Sym'
+(                                                  => error: missing )
+)                                                  => error: unexpected )
+()                                                 => error: cannot evaluate ()
+(/ 1 0)                                            => ZeroDivisionError: division by zero
+code => [('push', 1), ('push', 2), ('push', 3), ('op', '*'), ('op', '+')]
+run(code) => (7, 5)
+code => [('push', 5), ('store', 'x'), ('load', 'x'), ('push', 3), ('op', '<'), ('jz', 10), ('load', 'x'), ('push', 2), ('op', '*'), ('jmp', 13), ('load', 'x'), ('push', 3), ('op', '-')]
+run(code) => (2, 9)
+len(code) => 28
+run(code, n=10) => (55, 185)
+run(code, n=200) => (20100, 3415)
+(21, 64)
+SyntaxError: cannot compile ('?', 1, 2)
+SyntaxError: cannot compile ('+', 1)
+SyntaxError: cannot compile [1]
+KeyError: 'nope'
+repr(bf("++++++++[>++++[>++>+++>+++>+<<<<-]>+>+>->>+[<]<-]>>.>---.+++... => 'Hello World!\n'
+bf(",[.,]", "echo") => echo
+bf(",>,<[->+<]>.", "\x20\x21") => A
+bf("+++[>+++[>+++<-]<-]>>++++++.") => !
+'abc' 'xxabcxx' -> 'abc'
+'a.c' 'abc' -> 'abc'
+'a*' 'aaab' -> 'aaa'
+'a+b' 'caaab' -> 'aaab'
+'colou?r' 'my color' -> 'color'
+'^ab' 'abab' -> 'ab'
+'^b' 'ab' -> None
+'ab$' 'abab' -> 'ab'
+'^a.*z$' 'a to z' -> 'a to z'
+'[0-9]+' 'tel 12345 x' -> '12345'
+'[^ ]+' '  word  ' -> 'word'
+'[a-c]+[x-z]?' '--abcaz' -> 'abcaz'
+'a\\.b' 'a.b axb' -> 'a.b'
+'x*' 'abc' -> ''
+'(' 'a(b' -> '('
+'[abc' 'a' -> ValueError: substring not found
+'.*' '' -> ''
+'a.*b.*c' 'a1b2c3c' -> 'a1b2c3c'
+'h.llo w.rld' 'hello world' -> 'hello world'
+'é+' 'caféé' -> 'éé'

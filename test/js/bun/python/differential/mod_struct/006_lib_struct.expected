@@ -1,0 +1,17 @@
+status: 0
+script: 8a99b951b22af58d
+---
+['Struct', 'calcsize', 'error', 'iter_unpack', 'pack', 'pack_into', 'unpack', 'unpack_from'] struct _struct _struct pack
+b'\x01\x00\x02\x00\x03\x00\x00\x00' (1, 2, 3) 8 24
+(b'raymond   ', 4658, 264, 8)
+b'#\x00\x00\x00\x15\x14\x13\x12' b'\x15\x14\x13\x12#' 8 5 b'\x01\x00\x00\x00\x00\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x00\x03\x00\x00\x00\x00\x00\x00\x00'
+b'\x03\xff' b'\xff\x03' b'\xde\xad\xbe\xef' b'\xff\xff\xff\xff\xff\xff\xff\xff'
+b'\x00\x01\x00\x02ab\x00\x00' (1, 2, b'ab\x00\x00') 8 !HH4s
+struct.error 'h' format requires -32768 <= number <= 32767
+struct.error unpack requires a buffer of 2 bytes
+struct.error pack expected 2 items for packing (got 1)
+caught 'B' format requires 0 <= number <= 255
+bytearray(b'\x00\x00\x00\x00\x00\x01\x00\x02\x00\x03\x00\x00') (1, 2, 3) [(0,), (0,), (1,), (2,), (3,), (0,)]
+True little
+str
+Student(name=b'raymond   ', serialnum=4658, school=264, gradelevel=8)

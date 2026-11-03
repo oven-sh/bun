@@ -1,0 +1,72 @@
+status: 0
+script: a28a44799276b3a6
+source: dd1e4ef07a4f7722
+---
+['origin', ('on y axis', 5), ('on x axis', 5), ('3d', 1, 2, 3), 'origin', ('diagonal', 4), 'some point', ('noargs', 2), 'noargs any', 'noargs any', 'other', 'other', 'other']
+[('bool', True), ('int', 1), ('float', 1.5), ('str', 's'), ('bytes', b'b'), ('bytearray', bytearray(b'a')), ('list', [1]), ('tuple', (1,)), ('dict', {1: 2}), ('set', {1}), ('frozenset', frozenset({1})), 'complex has no self-matching', 'range', 'a class', 'object', ('int', 3), ('str', 'm')]
+['bit', 'bit', 'large', 'ab:a', ('list starting with 1', [2]), ('dict with k', 3), ('pair', 1, 2), ('attributes of int', 7), 'str', 'bit']
+exec("match 1:\n case int(1, 2): pass") => TypeError: int() accepts 1 positional sub-pattern (2 given)
+exec("match 'a':\n case str(a, b): pass") => TypeError: str() accepts 1 positional sub-pattern (2 given)
+exec("match 1j:\n case complex(a): pass") => TypeError: complex() accepts 0 positional sub-patterns (1 given)
+exec("match 1:\n case object(a): pass") => TypeError: object() accepts 0 positional sub-patterns (1 given)
+exec("match range(1):\n case range(a): pass") => TypeError: range() accepts 0 positional sub-patterns (1 given)
+exec("match []:\n case list(a, b, c): pass") => TypeError: list() accepts 1 positional sub-pattern (3 given)
+exec("match 1.5:\n case int(1, 2): pass\nprint('not an instance: the ... => not an instance: the count is not checked
+None
+TypeError: Point() accepts 2 positional sub-patterns (3 given)
+None
+TypeError: class pattern must refer to a class
+TypeError: class pattern must refer to a class
+TypeError: Point() got multiple sub-patterns for attribute 'x'
+NameError: name 'Undefined' is not defined
+TypeError: class pattern must refer to a class
+TypeError: class pattern must refer to a class
+TypeError: class pattern must refer to a class
+TypeError: class pattern must refer to a class
+too_many(5) => None
+no_match_args(5) => None
+union_class(5) => TypeError: class pattern must refer to a class
+bad_ma(("a",)) => ('matched', 1)
+bad_ma(["a"]) => TypeError: C.__match_args__ must be a tuple (got list)
+bad_ma("a") => TypeError: C.__match_args__ must be a tuple (got str)
+bad_ma((1,)) => TypeError: __match_args__ elements must be strings (got int)
+bad_ma(()) => TypeError: C() accepts 0 positional sub-patterns (1 given)
+bad_ma(None) => TypeError: C.__match_args__ must be a tuple (got NoneType)
+bad_ma(("missing",)) => 'no match'
+bad_ma((b"a",)) => TypeError: __match_args__ elements must be strings (got bytes)
+bad_ma(("a", "a")) => ('matched', 1)
+dup_ma() => TypeError: C() got multiple sub-patterns for attribute 'a'
+bad_ma(TupSub(("a",))) => TypeError: C.__match_args__ must be a tuple (got TupSub)
+p read; p read; q read; p read; q read; p read; ('p only', 1)
+props_err(Props()) => ValueError: not an AttributeError
+dyn_a dyn_b
+missing attribute: no match
+class attribute
+Point
+None attribute matches None
+instancecheck; virt("magic") => virtual instance
+instancecheck; virt("plain") => no
+inh(Derived()) => derived
+inh(Base()) => base
+inh(1) => None
+dotted class 5
+module type via dotted name
+[('from origin to', 1, 2), 'vertical', ('open', 7), ('list of points', 4), ('dict of points', 8), None]
+[('ValueError', 'm'), ('ENOENT', 'f.txt'), 'lookup', 'lookup', 'no args', 'base', 'base']
+ty(int) => the int class
+ty(str) => ('class', 'str')
+ty(1) => None
+sl(slice(5)) => ('simple slice', 5)
+sl(slice(1, 2, 3)) => (1, 2, 3)
+inherited 1
+overridden 2 1
+the pattern's class decides 1
+int.__dict__.get("__match_args__") => None
+hasattr(int, "__match_args__") => False
+Point.__match_args__ => ('x', 'y')
+type(sys.version_info).__match_args__[:2] => ('major', 'minor')
+type(sys.float_info).__match_args__[:1] => ('max',)
+version tuple
+structseq positional True
+read p1; read p2; read k2; read k1; 
+read p1; read p2; read k1; stops at the first failure

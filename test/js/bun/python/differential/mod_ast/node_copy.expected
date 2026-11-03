@@ -1,0 +1,22 @@
+status: 0
+script: 1c456d01eaa1dea6
+---
+True (None, None) True 3
+(<class 'ast.Load'>, (), {})
+(<class 'ast.Name'>, (), {})
+((None,), {'left': 1, 'right': 2})
+((None, None, None), {'left': 1, 'right': 2, 'op': 3})
+((), {})
+((), {'a': 1})
+((None, None), {'id': 'x', 'ctx': Load(), 'lineno': 1, 'col_offset': 2})
+('Name', [('col_offset', 2), ('ctx', 'Load'), ('id', 'x'), ('lineno', 1)])
+('Name', [('col_offset', 2), ('ctx', 'Load'), ('id', 'y'), ('lineno', 1)])
+('Name', [('col_offset', 2), ('ctx', 'Load'), ('id', 'x'), ('lineno', 10)])
+TypeError: ast.Name.__init__ got an unexpected keyword argument 'foo'
+TypeError: __replace__() takes no positional arguments
+False
+('Load', [])
+('BinOp', [('left', 1), ('op', 4), ('right', 2)])
+TypeError: ast.BinOp.__init__ missing 3 required positional arguments: 'left', 'op', and 'right'
+('BinOp', [('left', 1), ('op', 2), ('right', 3)])
+('Name', [('col_offset', 2), ('ctx', 'Load'), ('id', 'x'), ('lineno', 1)])

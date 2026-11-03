@@ -1,0 +1,88 @@
+status: 0
+script: b579e42798fed65a
+---
+== trace: counts
+5
+   1 3
+   2 1
+   3 2
+   7 1
+   8 4
+   9 3
+   10 1
+== trace: lines as they run
+    --- modulename: tools, funcname: work
+   tools.py(17):      total = 0
+   tools.py(18):      for i in range(n):
+   tools.py(19):          total += helper(i)
+    --- modulename: tools, funcname: helper
+   tools.py(11):      if n > 1:
+   tools.py(13):      return n
+   tools.py(18):      for i in range(n):
+   tools.py(19):          total += helper(i)
+    --- modulename: tools, funcname: helper
+   tools.py(11):      if n > 1:
+   tools.py(13):      return n
+   tools.py(18):      for i in range(n):
+   tools.py(20):      return total
+== trace: who calls whom
+   runfunc -> work
+   work -> helper
+== trace: functions called
+['helper', 'work']
+== trace: executable lines
+[0, 1, 2, 3, 6, 7, 8, 9, 10]
+== bdb
+settrace 1
+   line work 7
+   line work 8
+   line work 9
+   call helper 0
+   line helper 1
+   line helper 3
+   return helper 3 0
+   line work 8
+   line work 9
+   call helper 0
+   line helper 1
+   line helper 3
+   return helper 3 1
+   line work 8
+monitoring 1
+   line work 7
+   line work 8
+   line work 9
+   call helper 0
+   line helper 1
+   line helper 3
+   return helper 3 0
+   line work 8
+   line work 9
+   call helper 0
+   line helper 1
+   line helper 3
+   return helper 3 1
+   line work 8
+settrace 11
+   line work 7 {'n': 4}
+   line helper 2 {'n': 2}
+   line helper 2 {'n': 3}
+monitoring 11
+   line work 7 {'n': 4}
+   line helper 2 {'n': 2}
+   line helper 2 {'n': 3}
+== doctest with pdb
+> <doctest documented[1]>(1)<module>()
+-> import pdb; pdb.set_trace()
+(Pdb) 41
+(Pdb) 
+TestResults(failed=0, attempted=3)
+== a coverage tool
+[1, 3, 7, 8, 9, 10] [0, 1, 2, 3, 6, 7, 8, 9, 10] [0, 2, 6]
+== threads
+True
+[('t0', 'call'), ('t0', 'line'), ('t0', 'line'), ('t0', 'return'), ('t1', 'call'), ('t1', 'line'), ('t1', 'line'), ('t1', 'return')]
+True
+[('p', 'call'), ('p', 'return')]
+[('waiting', 'call'), ('waiting', 'line'), ('waiting', 'line'), ('waiting', 'return'), ('MainThread', 'call'), ('MainThread', 'line'), ('MainThread', 'line'), ('MainThread', 'return')] None
+[('waiting', 'call'), ('waiting', 'return')] None

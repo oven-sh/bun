@@ -1,0 +1,173 @@
+status: 0
+script: 8def215e56b3a181
+---
+['ACCESS_COPY', 'ACCESS_DEFAULT', 'ACCESS_READ', 'ACCESS_WRITE', 'ALLOCATIONGRANULARITY', 'MADV_DODUMP', 'MADV_DOFORK', 'MADV_DONTDUMP', 'MADV_DONTFORK', 'MADV_DONTNEED', 'MADV_FREE', 'MADV_HUGEPAGE', 'MADV_HWPOISON', 'MADV_MERGEABLE', 'MADV_NOHUGEPAGE', 'MADV_NORMAL', 'MADV_RANDOM', 'MADV_REMOVE', 'MADV_SEQUENTIAL', 'MADV_UNMERGEABLE', 'MADV_WILLNEED', 'MAP_32BIT', 'MAP_ANON', 'MAP_ANONYMOUS', 'MAP_DENYWRITE', 'MAP_EXECUTABLE', 'MAP_NORESERVE', 'MAP_POPULATE', 'MAP_PRIVATE', 'MAP_SHARED', 'MAP_STACK', 'MS_ASYNC', 'MS_INVALIDATE', 'MS_SYNC', 'PAGESIZE', 'PROT_EXEC', 'PROT_READ', 'PROT_WRITE', 'error', 'mmap']
+[('ACCESS_COPY', 3), ('ACCESS_DEFAULT', 0), ('ACCESS_READ', 1), ('ACCESS_WRITE', 2), ('ALLOCATIONGRANULARITY', 4096), ('MADV_DODUMP', 17), ('MADV_DOFORK', 11), ('MADV_DONTDUMP', 16), ('MADV_DONTFORK', 10), ('MADV_DONTNEED', 4), ('MADV_FREE', 8), ('MADV_HUGEPAGE', 14), ('MADV_HWPOISON', 100), ('MADV_MERGEABLE', 12), ('MADV_NOHUGEPAGE', 15), ('MADV_NORMAL', 0), ('MADV_RANDOM', 1), ('MADV_REMOVE', 9), ('MADV_SEQUENTIAL', 2), ('MADV_UNMERGEABLE', 13), ('MADV_WILLNEED', 3), ('MAP_32BIT', 64), ('MAP_ANON', 32), ('MAP_ANONYMOUS', 32), ('MAP_DENYWRITE', 2048), ('MAP_EXECUTABLE', 4096), ('MAP_NORESERVE', 16384), ('MAP_POPULATE', 32768), ('MAP_PRIVATE', 2), ('MAP_SHARED', 1), ('MAP_STACK', 131072), ('MS_ASYNC', 1), ('MS_INVALIDATE', 2), ('MS_SYNC', 4), ('PAGESIZE', 4096), ('PROT_EXEC', 4), ('PROT_READ', 1), ('PROT_WRITE', 2)]
+['close', 'closed', 'find', 'flush', 'madvise', 'move', 'read', 'read_byte', 'readline', 'resize', 'rfind', 'seek', 'seekable', 'set_name', 'size', 'tell', 'write', 'write_byte'] (<class 'mmap.mmap'>, <class 'object'>) True
+<mmap.mmap closed=False, access=ACCESS_DEFAULT, length=16, pos=0, offset=0> 16 16 0 False b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' 0 0 True
+5 5 b'hello\x00\x00\x00' None 6 b'hello!\x00\x00' 0 b'hel' 108 4 b'o!\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' 16 b'' read_byte
+ValueError: read byte out of range
+ValueError: write byte out of range
+ValueError: data out of range
+0
+0 2 15 16 16
+ValueError: seek out of range
+ValueError: seek out of range
+ValueError: unknown seek type
+ValueError: seek out of range
+ValueError: seek out of range
+TypeError: 'str' object cannot be interpreted as an integer
+OverflowError: Python int too large to convert to C ssize_t
+ValueError: seek out of range
+b'ab\n' b'cd\n' b'\n' b'ef\x00' b'' 16
+65 90 b'Ab\n'
+b'AXYc'
+b'1X2c3\n'
+b'\x0f\x0e\r\x0c\x0b\n\t\x08\x07\x06\x05\x04\x03\x02\x01\x00'
+b'\r\n\x07' b'\x05\x08\x0b' b'' b'' b'\x02\x01\x00' b'\x0f\n\x05\x00'
+IndexError: mmap index out of range
+IndexError: mmap index out of range
+TypeError: mmap indices must be integers
+TypeError: mmap indices must be integers
+IndexError: cannot fit 'int' into an index-sized integer
+ValueError: slice step cannot be zero
+IndexError: mmap index out of range
+ValueError: mmap item value must be in range(0, 256)
+ValueError: mmap item value must be in range(0, 256)
+TypeError: mmap item value must be an int
+TypeError: mmap item value must be an int
+TypeError: mmap item value must be an int
+TypeError: mmap indices must be integer
+IndexError: mmap slice assignment is wrong size
+TypeError: a bytes-like object is required, not 'str'
+TypeError: a bytes-like object is required, not 'int'
+TypeError: cannot fit 'int' into an index-sized integer
+None
+TypeError: mmap doesn't support item deletion
+TypeError: mmap object doesn't support slice deletion
+TypeError: mmap indices must be integer
+0 0 3 -1 3 -1 0 16 -1 -1 0 6 2 2 2 5
+12 6 9 -1 16 7 15 13 12
+6 12 6 4
+TypeError: a bytes-like object is required, not 'str'
+TypeError: a bytes-like object is required, not 'int'
+TypeError: find expected at least 1 argument, got 0
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+TypeError: find expected at most 3 arguments, got 4
+TypeError: mmap.find() takes no keyword arguments
+None b'abcabcab' None b'aabcabcabcabcabc' None None
+ValueError: source, destination, or count out of range
+ValueError: source, destination, or count out of range
+ValueError: source, destination, or count out of range
+ValueError: source, destination, or count out of range
+ValueError: source, destination, or count out of range
+TypeError: move expected 3 arguments, got 2
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: argument should be integer or None, not 'str'
+TypeError: argument should be integer or None, not 'float'
+b'aab' 0 b'aab' 0 b'aab' 0 b'aab'
+OverflowError: cannot fit 'int' into an index-sized integer
+TypeError: read expected at most 1 argument, got 2
+TypeError: a bytes-like object is required, not 'str'
+TypeError: a bytes-like object is required, not 'int'
+OverflowError: unsigned byte integer is greater than maximum
+OverflowError: unsigned byte integer is less than minimum
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'bytes' object cannot be interpreted as an integer
+TypeError: mmap.write_byte() takes exactly one argument (0 given)
+OverflowError: Python int too large to convert to C long
+[b'a', b'a', b'b'] True False False b'c' iterator
+None None None None True
+ValueError: flush values out of range
+ValueError: flush values out of range
+ValueError: flush values out of range
+ValueError: flush values out of range
+OSError: [Errno 22] Invalid argument
+TypeError: flush() takes at most 2 positional arguments (3 given)
+None
+None None None None
+ValueError: madvise start out of bounds
+ValueError: madvise start out of bounds
+ValueError: madvise length invalid
+OverflowError: madvise length too large
+OSError: [Errno 22] Invalid argument
+TypeError: madvise expected at least 1 argument, got 0
+TypeError: 'str' object cannot be interpreted as an integer
+True
+True
+True
+TypeError: unsupported operand type(s) for +: 'mmap.mmap' and 'mmap.mmap'
+TypeError: unsupported operand type(s) for *: 'mmap.mmap' and 'int'
+AttributeError: 'mmap.mmap' object has no attribute 'x'
+AttributeError: 'mmap.mmap' object has no attribute 'x' and no __dict__ for setting new attributes
+True False
+True <mmap.mmap closed=True>
+None
+ValueError: mmap closed or invalid
+ValueError: mmap closed or invalid
+ValueError: mmap closed or invalid
+ValueError: mmap closed or invalid
+ValueError: mmap closed or invalid
+ValueError: mmap closed or invalid
+ValueError: mmap closed or invalid
+ValueError: mmap closed or invalid
+ValueError: mmap closed or invalid
+ValueError: mmap closed or invalid
+ValueError: mmap closed or invalid
+ValueError: mmap closed or invalid
+ValueError: mmap closed or invalid
+ValueError: mmap closed or invalid
+ValueError: mmap closed or invalid
+ValueError: mmap closed or invalid
+ValueError: mmap closed or invalid
+ValueError: mmap closed or invalid
+ValueError: mmap closed or invalid
+ValueError: mmap closed or invalid
+ValueError: mmap closed or invalid
+ValueError: mmap closed or invalid
+ValueError: mmap closed or invalid
+True
+None
+OSError: [Errno 22] Invalid argument
+OverflowError: memory mapped length must be positive
+OverflowError: memory mapped offset must be positive
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'str' object cannot be interpreted as an integer
+OverflowError: Python int too large to convert to C ssize_t
+OverflowError: signed integer is greater than maximum
+ValueError: mmap invalid access parameter.
+ValueError: mmap invalid access parameter.
+ValueError: mmap can't specify both access and flags, prot.
+ValueError: mmap can't specify both access and flags, prot.
+OSError: [Errno 9] Bad file descriptor
+OSError: [Errno 22] Invalid argument
+OSError: [Errno 22] Invalid argument
+<mmap.mmap closed=False, access=ACCESS_READ, length=10, pos=0, offset=0>
+<mmap.mmap closed=False, access=ACCESS_READ, length=8, pos=0, offset=0>
+TypeError: mmap can't modify a readonly memory map.
+True
+<mmap.mmap closed=False, access=ACCESS_WRITE, length=8, pos=0, offset=0>
+1
+False
+<mmap.mmap closed=False, access=ACCESS_COPY, length=8, pos=0, offset=0>
+1
+False
+<mmap.mmap closed=False, access=ACCESS_DEFAULT, length=8, pos=0, offset=0>
+1
+False
+<mmap.mmap closed=False, access=ACCESS_READ, length=8, pos=0, offset=0>
+TypeError: mmap can't modify a readonly memory map.
+True
+<mmap.mmap closed=False, access=ACCESS_WRITE, length=8, pos=0, offset=0>
+1
+False
+<mmap.mmap closed=False, access=ACCESS_DEFAULT, length=8, pos=0, offset=0>
+1
+False
+<mmap.mmap closed=False, access=ACCESS_READ, length=8, pos=0, offset=0>
+TypeError: mmap can't modify a readonly memory map.
+True
+<M closed=False, access=ACCESS_DEFAULT, length=4, pos=0, offset=0> 8 1 True
+<M closed=True>

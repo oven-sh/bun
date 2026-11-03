@@ -1,0 +1,102 @@
+status: 0
+script: 1dc7087512e72acb
+---
+== simple -> 1
+   simple call 0 None
+   callee call 0 None
+   callee return 1 1
+   simple return 1 1
+== builtins -> None
+   builtins call 0 None
+   builtins c_call 1 len
+   builtins c_return 1 len
+   builtins c_call 2 list.append
+   builtins c_return 2 list.append
+   builtins c_call 3 str.upper
+   builtins c_return 3 str.upper
+   builtins c_call 4 str.upper
+   builtins c_return 4 str.upper
+   builtins c_call 6 max
+   callee call 0 None
+   callee return 1 1
+   callee call 0 None
+   callee return 1 2
+   builtins c_return 6 max
+   builtins c_call 7 sorted
+   builtins c_return 7 sorted
+   builtins c_call 8 dict.get
+   builtins c_return 8 dict.get
+   builtins c_call 9 print
+   builtins c_return 9 print
+   builtins return 9 None
+== builtin_raises -> None
+   builtin_raises call 0 None
+   builtin_raises c_call 2 len
+   builtin_raises c_exception 2 len
+   builtin_raises c_call 6 dict.pop
+   builtin_raises c_exception 6 dict.pop
+   builtin_raises return 9 None
+== classes -> None
+   classes call 0 None
+   method call 0 None
+   method return 1 1
+   classes c_call 3 len
+   __len__ call 0 None
+   __len__ return 1 0
+   classes c_return 3 len
+   classes return 5 None
+== catches -> None
+   catches call 0 None
+   raises call 0 None
+   raises return 1 None
+   catches return 5 None
+== raises -> raised ValueError('v')
+   raises call 0 None
+   raises return 1 None
+== generators -> None
+   generators call 0 None
+   gen call 0 None
+   gen return 1 1
+   gen call 1 None
+   gen return 2 2
+   gen call 2 None
+   gen return 2 None
+   generators c_call 4 next
+   gen call 0 None
+   gen return 1 1
+   generators c_return 4 next
+   generators c_call 5 generator.close
+   gen call 1 None
+   gen return 1 None
+   generators c_return 5 generator.close
+   generators c_call 7 next
+   gen call 0 None
+   gen return 1 1
+   generators c_return 7 next
+   generators c_call 9 generator.throw
+   gen call 1 None
+   gen return 1 None
+   generators c_exception 9 generator.throw
+   generators return 12 None
+== star_calls -> None
+   star_calls call 0 None
+   callee call 0 None
+   callee return 1 1
+   star_calls c_call 2 len
+   star_calls c_return 2 len
+   star_calls return 3 None
+None
+True
+None
+caught in the profile function None
+trace simple call
+profile simple call
+trace simple line
+trace callee call
+profile callee call
+trace callee line
+trace callee return
+profile callee return
+trace simple return
+profile simple return
+profile <module> c_call

@@ -1,0 +1,26 @@
+status: 0
+script: 27f0590d2b5049b4
+---
+[('int', 1), ('str', 'a'), ('object', 1.5), ('sequence', [1]), ('sequence', (2,)), ('int', True), ('object', None)]
+('int', True)
+True
+['int', 'list', 'object', 'str', 'tuple']
+'mappingproxy'
+TypeError show requires at least 1 positional argument
+('show', 'show doc')
+('int', 5)
+('float', 1.5)
+('float', 1.5)
+('mapping', [1, 2])
+('sized', 2)
+('sized', 3)
+('sized', 3)
+[('base', 'Base'), ('base', 'Derived'), ('base', 'Other')]
+[('base', 'Base'), ('derived', 'Derived'), ('derived', 'Other')]
+TypeError Invalid first argument to `register()`. 1 is not a class or union type.
+TypeError Invalid first argument to `register()`: 'a'. Use either `@register(some_class)` or plain `@register` on an annotated function.
+('int', 1)
+[('int', 1), ('str', 'a'), ('default', None)]
+[('Dispatcher', 'int', 1), ('Dispatcher', 'default', 'a')]
+'m doc'
+TypeError m requires at least 1 positional argument

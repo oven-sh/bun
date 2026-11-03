@@ -1,0 +1,24 @@
+status: 0
+script: 682efb79a2f27475
+---
+['shm_open', 'shm_unlink'] ($module, /, path, flags, mode=511) ($module, path, /)
+FileNotFoundError: [Errno 2] No such file or directory: '/nonexistent-xyz' (2, 'No such file or directory')
+FileNotFoundError: [Errno 2] No such file or directory: '/nonexistent-xyz' (2, 'No such file or directory')
+TypeError: shm_open() argument 1 must be str, not int ('shm_open() argument 1 must be str, not int',)
+ValueError: embedded null character ('embedded null character',)
+TypeError: shm_open() missing required argument 'path' (pos 1) ("shm_open() missing required argument 'path' (pos 1)",)
+TypeError: 'str' object cannot be interpreted as an integer ("'str' object cannot be interpreted as an integer",)
+TypeError: shm_unlink() argument must be str, not bytes ('shm_unlink() argument must be str, not bytes',)
+FileNotFoundError: [Errno 2] No such file or directory: '/nonexistent-xyz' (2, 'No such file or directory')
+TypeError: _posixshmem.shm_unlink() takes no keyword arguments ('_posixshmem.shm_unlink() takes no keyword arguments',)
+TypeError: shm_open() takes at most 3 arguments (4 given) ('shm_open() takes at most 3 arguments (4 given)',)
+UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed ('utf-8', '\ud800', 0, 1, 'surrogates not allowed')
+2 /nonexistent-xyz
+True False 0o600
+FileExistsError: [Errno 17] File exists: '/pytest-shm-PID' (17, 'File exists')
+b'hello'
+None
+FileNotFoundError: [Errno 2] No such file or directory: '/pytest-shm-PID' (2, 'No such file or directory')
+True memoryview True
+b'data'
+FileNotFoundError 2

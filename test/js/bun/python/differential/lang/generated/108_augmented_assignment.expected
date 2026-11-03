@@ -1,0 +1,236 @@
+status: 0
+script: 2a7fc43f61cd31e5
+source: 94f94b210851ceeb
+---
+15
+12
+24
+6.0
+3.0
+27.0
+2.0
+8
+13
+11
+88
+22
+3
+-4
+-2
+0.5
+1267650600228229401496703205376
+9223372036854775808
+9223372036854775807
+x => 10
+type(x) => <class 'int'>
+ab
+ababab
+ababab
+5
+2.5
+5.0
+2.0
+4.0
+1.0
+b => 2
+type(b) => <class 'int'>
+b => False
+type(b) => <class 'bool'>
+b => 3
+type(b) => <class 'int'>
+(-1+0j)
+0j
+l => [1, 2]
+a => [1, 2]
+l is a => True
+l => [1, 2, 3]
+a => [1, 2]
+l is a => False
+l => [1, 1]
+a => [1, 1]
+l is a => True
+tp => (1, 2)
+a => (1,)
+tp is a => False
+(1, 2, 1, 2)
+st => {1, 2}
+a is st => True
+st => {2}
+a is st => True
+st => {2, 3}
+a is st => True
+st => {3}
+a is st => True
+fs => frozenset({1, 2})
+a => frozenset({1})
+a is fs => False
+d => {1: 1, 2: 2}
+a is d => True
+ba => bytearray(b'ab')
+a is ba => True
+ba => bytearray(b'abab')
+a is ba => True
+by => b'ab'
+a => b'a'
+s => ab
+a => a
+['a', 'b', 1, 2, 3, 0, 1, 9]
+TypeError: 'int' object is not iterable
+TypeError: can only concatenate list (not "str") to list
+TypeError: 'NoneType' object is not iterable
+TypeError: can only concatenate tuple (not "list") to tuple
+TypeError: can only concatenate str (not "int") to str
+TypeError: unsupported operand type(s) for +=: 'int' and 'str'
+TypeError: unsupported operand type(s) for +=: 'NoneType' and 'int'
+TypeError: unsupported operand type(s) for +=: 'dict' and 'dict'
+TypeError: object is not iterable
+{1: 2}
+TypeError: unsupported operand type(s) for |=: 'set' and 'list'
+TypeError: unsupported operand type(s) for +=: 'set' and 'set'
+TypeError: can't multiply sequence by non-int of type 'str'
+TypeError: unsupported operand type(s) for -=: 'list' and 'list'
+ZeroDivisionError: division by zero
+TypeError: unsupported operand type(s) for @=: 'int' and 'int'
+TypeError: unsupported operand type(s) for <<=: 'float' and 'int'
+TypeError: unsupported operand type(s) for -=: 'str' and 'str'
+UnboundLocalError: cannot access local variable 'undefined_aug' where it is not associated with a value
+UnboundLocalError: cannot access local variable 'loc' where it is not associated with a value
+TypeError: unsupported operand type(s) for **=: 'int' and 'str'
+TypeError: unsupported operand type(s) for //=: 'list' and 'int'
+ValueError: negative shift count
+TypeError: unsupported operand type(s) for +=: 'object' and 'int'
+ZeroDivisionError: division by zero
+[11, 2, 6]
+[11, 2, 7, 8, 6]
+[11, 2, 7, 8, 6, 11, 2, 7, 8, 6]
+[0, 2, 0, 8, 0, 11, 0, 7, 0, 6]
+{'a': 2}
+exec("d['zz'] += 1", {"d": d}) => KeyError: 'zz'
+{'a': 2, 'l': [1, 2]}
+2
+exec("o.nope += 1", {"o": o}) => AttributeError: 'O' object has no attribute 'nope'
+c1.n => 1
+CA.n => 0
+c1.__dict__ => {'n': 1}
+c1.n => 1
+CA.n => 5
+CA().n => 5
+c2.l => [1]
+CL.l => [1]
+c2.__dict__ => {'l': [1]}
+c2.l is CL.l => True
+{'a': [{'b': 2}]}
+[[0, 5], [-5, 0]]
+TypeError: 'tuple' object does not support item assignment ([1, 2],)
+([1, 2],)
+i => I(6)
+a is i => True
+i => I(5)
+a is i => False
+a => I(6)
+replaced by a string
+None
+fell back to __floordiv__
+imod() => TypeError: unsupported operand type(s) for %=: 'I' and 'int'
+right operand's __rmod__
+('ipow', 3) ('imatmul', 3) ('ilshift', 3) ('irshift', 3) ('iand', 3) ('ior', 3) ('ixor', 3) 
+x => OnlyAdd(2)
+a => OnlyAdd(1)
+x is a => False
+('radd', 1)
+[1, 2]
+list_iadd_radd() => ('radd', [1])
+ir() => ValueError: iadd failed
+get; set 2; get; set 20; 20
+ro() => AttributeError: property 'v' of 'RO' object has no setter
+getitem a; setitem a 1; getitem a; setitem a 2; getitem (1, 2); setitem (1, 2) 5; getitem slice(1, 2, None); setitem slice(1, 2, None) 1; {'a': 2, (1, 2): 5, slice(1, 2, None): 1}
+2
+(1, 2, 2)
+no_nonlocal() => UnboundLocalError: cannot access local variable 'n' where it is not associated with a value
+Body.v => 2
+Body.g => 102
+g => 2
+12
+10
+[6]
+[(w := w + v) for v in range(4)] => [0, 1, 3, 6]
+w => 6
+ok: x += 1
+SyntaxError: invalid syntax <- x + = 1
+ok: x =+ 1
+SyntaxError: invalid syntax <- x += += 1
+SyntaxError: invalid syntax <- x += y += 1
+SyntaxError: invalid syntax <- x = y += 1
+SyntaxError: invalid syntax <- x += y = 1
+ok: (x) += 1
+ok: ((x)) += 1
+SyntaxError: 'tuple' is an illegal expression for augmented assignment <- (x, y) += 1
+SyntaxError: 'tuple' is an illegal expression for augmented assignment <- x, y += 1
+SyntaxError: 'list' is an illegal expression for augmented assignment <- [x] += 1
+SyntaxError: 'list' is an illegal expression for augmented assignment <- [x, y] += 1
+SyntaxError: 'function call' is an illegal expression for augmented assignment <- x() += 1
+SyntaxError: 'function call' is an illegal expression for augmented assignment <- x.y() += 1
+SyntaxError: 'literal' is an illegal expression for augmented assignment <- 1 += 1
+SyntaxError: 'literal' is an illegal expression for augmented assignment <- 'a' += 'b'
+SyntaxError: 'None' is an illegal expression for augmented assignment <- None += 1
+SyntaxError: 'expression' is an illegal expression for augmented assignment <- x + y += 1
+SyntaxError: 'expression' is an illegal expression for augmented assignment <- -x += 1
+ok: x[0] += 1
+ok: x.y += 1
+ok: x[0].y[1] += 1
+ok: x[1:2] += y
+SyntaxError: 'starred' is an illegal expression for augmented assignment <- *x += 1
+SyntaxError: can't use starred expression here <- x += *y
+ok: x += *y, z
+ok: x += y, z
+SyntaxError: 'yield' outside function <- x += (yield)
+SyntaxError: 'yield' outside function <- x += yield
+ok: def f(): x += yield
+ok: x += lambda: 1
+ok: x += y if z else w
+SyntaxError: 'conditional expression' is an illegal expression for augmented assignment <- x if y else z += 1
+SyntaxError: invalid syntax <- x: int += 1
+SyntaxError: invalid syntax <- x += 1: int
+SyntaxError: 'named expression' is an illegal expression for augmented assignment <- (x := 1) += 1
+ok: x += (y := 1)
+SyntaxError: invalid syntax <- x += y := 1
+SyntaxError: invalid syntax <- x ++
+SyntaxError: invalid syntax <- x++
+ok: ++x
+SyntaxError: invalid syntax <- x --
+ok: --x
+ok: x **= 2
+ok: x //= 2
+ok: x >>= 1
+ok: x <<= 1
+ok: x @= y
+SyntaxError: invalid syntax <- x &&= y
+SyntaxError: invalid syntax <- x ||= y
+SyntaxError: invalid syntax <- x ??= y
+ok: x ^= y
+SyntaxError: invalid syntax <- x ~= y
+ok: x != 1
+ok: x %= y
+SyntaxError: invalid syntax <- x >>>= 1
+SyntaxError: invalid syntax <- x ***= 1
+SyntaxError: invalid syntax <- x ///= 1
+SyntaxError: invalid syntax <- f(x += 1)
+SyntaxError: invalid syntax <- [x += 1]
+SyntaxError: invalid syntax <- print(x += 1)
+SyntaxError: invalid syntax <- if x += 1: pass
+SyntaxError: 'lambda' is an illegal expression for augmented assignment <- lambda: x += 1
+ok: x += 1; y -= 1
+ok: x += 1,
+SyntaxError: invalid syntax <- del x += 1
+SyntaxError: invalid syntax <- for x += 1 in y: pass
+SyntaxError: invalid syntax <- with x as y += 1: pass
+SyntaxError: cannot assign to __debug__ <- x.__debug__ += 1
+SyntaxError: cannot assign to __debug__ <- __debug__ += 1
+SyntaxError: 'True' is an illegal expression for augmented assignment <- True += 1
+SyntaxError: 'ellipsis' is an illegal expression for augmented assignment <- ... += 1
+SyntaxError: 'f-string expression' is an illegal expression for augmented assignment <- f'{x}' += 'a'
+SyntaxError: 'set display' is an illegal expression for augmented assignment <- {x} += 1
+SyntaxError: 'dict literal' is an illegal expression for augmented assignment <- {} += 1
+SyntaxError: 'comparison' is an illegal expression for augmented assignment <- x < y += 1
+SyntaxError: 'expression' is an illegal expression for augmented assignment <- not x += 1
+SyntaxError: 'await expression' is an illegal expression for augmented assignment <- await x += 1

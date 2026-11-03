@@ -1,0 +1,4 @@
+status: 0
+script: 4ab15ade0a78ffeb
+---
+RuntimeError can't start new thread

@@ -1,0 +1,33 @@
+status: 0
+oracle: none
+mask: addresses
+---
+P(1) {'a': 1, 'b': [1, 2.0], 3: (4,)} (1, 'two', None, 3.0) {1} b'bytes'
+[
+  P(2), 1.5
+] {
+  p: P(3),
+  n: 1,
+}
+[
+  1.0, 2.5
+] 2.0 [
+  3.0
+]
+<function add at 0xADDR> <class '012_console.P'> <012_console.Plain object at 0xADDR> <module '012_console' from '<dir>/012_console.py'>
+P(4) (1, 'two', None, 3.0) P(5)|P(6)
+Traceback (most recent call last):
+  File "012_console.py", line 11, in fail
+    def fail(): raise ValueError("shown")
+ValueError: shown
+Traceback (most recent call last):
+  File "012_console.py", line 15, in fail2
+  File "012_console.py", line 11, in fail
+ValueError: shown
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "012_console.py", line 17, in fail2
+012_console.MyErr: outer
+function default,float,import,kwargs

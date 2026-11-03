@@ -1,0 +1,2718 @@
+status: 0
+script: 4e9759d9b9293d5a
+---
+b'<a/>'
+('StartElement', 'a', {})
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 4, 4)
+--
+('StartElement', ('a', {}), 1, 0, 0)
+('EndElement', ('a',), 1, 4, 4)
+('result', 1)
+('pos', 1, 4, 4)
+--
+('Default', '<a/>')
+('result', 1)
+('pos', 1, 4, 4)
+--
+('StartElement', 'a', {})
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 4, 4)
+--
+('StartElement', 'a', {})
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 4, 4)
+--
+('StartElement', 'a', [])
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 4, 4)
+--
+b'<a></a>'
+('StartElement', 'a', {})
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 7, 7)
+--
+('StartElement', ('a', {}), 1, 0, 0)
+('EndElement', ('a',), 1, 3, 3)
+('result', 1)
+('pos', 1, 7, 7)
+--
+('Default', '<a>')
+('Default', '</a>')
+('result', 1)
+('pos', 1, 7, 7)
+--
+('StartElement', 'a', {})
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 7, 7)
+--
+('StartElement', 'a', {})
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 7, 7)
+--
+('StartElement', 'a', [])
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 7, 7)
+--
+b'<a>text</a>'
+('StartElement', 'a', {})
+('CharacterData', 'text')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 11, 11)
+--
+('StartElement', ('a', {}), 1, 0, 0)
+('CharacterData', ('text',), 1, 3, 3)
+('EndElement', ('a',), 1, 7, 7)
+('result', 1)
+('pos', 1, 11, 11)
+--
+('Default', '<a>')
+('Default', 'text')
+('Default', '</a>')
+('result', 1)
+('pos', 1, 11, 11)
+--
+('StartElement', 'a', {})
+('CharacterData', 't')
+('CharacterData', 'e')
+('CharacterData', 'x')
+('CharacterData', 't')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 11, 11)
+--
+('StartElement', 'a', {})
+('CharacterData', 'text')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 11, 11)
+--
+('StartElement', 'a', [])
+('CharacterData', 'text')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 11, 11)
+--
+b'<a b="c"/>'
+('StartElement', 'a', {'b': 'c'})
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 10, 10)
+--
+('StartElement', ('a', {'b': 'c'}), 1, 0, 0)
+('EndElement', ('a',), 1, 10, 10)
+('result', 1)
+('pos', 1, 10, 10)
+--
+('Default', '<a b="c"/>')
+('result', 1)
+('pos', 1, 10, 10)
+--
+('StartElement', 'a', {'b': 'c'})
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 10, 10)
+--
+('StartElement', 'a', {'b': 'c'})
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 10, 10)
+--
+('StartElement', 'a', ['b', 'c'])
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 10, 10)
+--
+b'<a b="c" d=\'e\'>x</a>'
+('StartElement', 'a', {'b': 'c', 'd': 'e'})
+('CharacterData', 'x')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 20, 20)
+--
+('StartElement', ('a', {'b': 'c', 'd': 'e'}), 1, 0, 0)
+('CharacterData', ('x',), 1, 15, 15)
+('EndElement', ('a',), 1, 16, 16)
+('result', 1)
+('pos', 1, 20, 20)
+--
+('Default', '<a b="c" d=\'e\'>')
+('Default', 'x')
+('Default', '</a>')
+('result', 1)
+('pos', 1, 20, 20)
+--
+('StartElement', 'a', {'b': 'c', 'd': 'e'})
+('CharacterData', 'x')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 20, 20)
+--
+('StartElement', 'a', {'b': 'c', 'd': 'e'})
+('CharacterData', 'x')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 20, 20)
+--
+('StartElement', 'a', ['b', 'c', 'd', 'e'])
+('CharacterData', 'x')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 20, 20)
+--
+b'<a><b/><c>t</c></a>'
+('StartElement', 'a', {})
+('StartElement', 'b', {})
+('EndElement', 'b')
+('StartElement', 'c', {})
+('CharacterData', 't')
+('EndElement', 'c')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 19, 19)
+--
+('StartElement', ('a', {}), 1, 0, 0)
+('StartElement', ('b', {}), 1, 3, 3)
+('EndElement', ('b',), 1, 7, 7)
+('StartElement', ('c', {}), 1, 7, 7)
+('CharacterData', ('t',), 1, 10, 10)
+('EndElement', ('c',), 1, 11, 11)
+('EndElement', ('a',), 1, 15, 15)
+('result', 1)
+('pos', 1, 19, 19)
+--
+('Default', '<a>')
+('Default', '<b/>')
+('Default', '<c>')
+('Default', 't')
+('Default', '</c>')
+('Default', '</a>')
+('result', 1)
+('pos', 1, 19, 19)
+--
+('StartElement', 'a', {})
+('StartElement', 'b', {})
+('EndElement', 'b')
+('StartElement', 'c', {})
+('CharacterData', 't')
+('EndElement', 'c')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 19, 19)
+--
+('StartElement', 'a', {})
+('StartElement', 'b', {})
+('EndElement', 'b')
+('StartElement', 'c', {})
+('CharacterData', 't')
+('EndElement', 'c')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 19, 19)
+--
+('StartElement', 'a', [])
+('StartElement', 'b', [])
+('EndElement', 'b')
+('StartElement', 'c', [])
+('CharacterData', 't')
+('EndElement', 'c')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 19, 19)
+--
+b'<?xml version="1.0"?><a/>'
+('XmlDecl', '1.0', None, -1)
+('StartElement', 'a', {})
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 25, 25)
+--
+('XmlDecl', ('1.0', None, -1), 1, 0, 0)
+('StartElement', ('a', {}), 1, 21, 21)
+('EndElement', ('a',), 1, 25, 25)
+('result', 1)
+('pos', 1, 25, 25)
+--
+('Default', '<?xml version="1.0"?>')
+('Default', '<a/>')
+('result', 1)
+('pos', 1, 25, 25)
+--
+('XmlDecl', '1.0', None, -1)
+('StartElement', 'a', {})
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 25, 25)
+--
+('XmlDecl', '1.0', None, -1)
+('StartElement', 'a', {})
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 25, 25)
+--
+('XmlDecl', '1.0', None, -1)
+('StartElement', 'a', [])
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 25, 25)
+--
+b'<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<a/>'
+('XmlDecl', '1.0', 'utf-8', 1)
+('StartElement', 'a', {})
+('EndElement', 'a')
+('result', 1)
+('pos', 2, 4, 60)
+--
+('XmlDecl', ('1.0', 'utf-8', 1), 1, 0, 0)
+('StartElement', ('a', {}), 2, 0, 56)
+('EndElement', ('a',), 2, 4, 60)
+('result', 1)
+('pos', 2, 4, 60)
+--
+('Default', '<?xml version="1.0" encoding="utf-8" standalone="yes"?>')
+('Default', '\n')
+('Default', '<a/>')
+('result', 1)
+('pos', 2, 4, 60)
+--
+('XmlDecl', '1.0', 'utf-8', 1)
+('StartElement', 'a', {})
+('EndElement', 'a')
+('result', 1)
+('pos', 2, 4, 60)
+--
+('XmlDecl', '1.0', 'utf-8', 1)
+('StartElement', 'a', {})
+('EndElement', 'a')
+('result', 1)
+('pos', 2, 4, 60)
+--
+('XmlDecl', '1.0', 'utf-8', 1)
+('StartElement', 'a', [])
+('EndElement', 'a')
+('result', 1)
+('pos', 2, 4, 60)
+--
+b'<a>1\n2\r\n3\r4</a>'
+('StartElement', 'a', {})
+('CharacterData', '1')
+('CharacterData', '\n')
+('CharacterData', '2')
+('CharacterData', '\n')
+('CharacterData', '3')
+('CharacterData', '\n')
+('CharacterData', '4')
+('EndElement', 'a')
+('result', 1)
+('pos', 4, 5, 15)
+--
+('StartElement', ('a', {}), 1, 0, 0)
+('CharacterData', ('1',), 1, 3, 3)
+('CharacterData', ('\n',), 1, 4, 4)
+('CharacterData', ('2',), 2, 0, 5)
+('CharacterData', ('\n',), 2, 1, 6)
+('CharacterData', ('3',), 3, 0, 8)
+('CharacterData', ('\n',), 3, 1, 9)
+('CharacterData', ('4',), 4, 0, 10)
+('EndElement', ('a',), 4, 1, 11)
+('result', 1)
+('pos', 4, 5, 15)
+--
+('Default', '<a>')
+('Default', '1')
+('Default', '\n')
+('Default', '2')
+('Default', '\r\n')
+('Default', '3')
+('Default', '\r')
+('Default', '4')
+('Default', '</a>')
+('result', 1)
+('pos', 4, 5, 15)
+--
+('StartElement', 'a', {})
+('CharacterData', '1')
+('CharacterData', '\n')
+('CharacterData', '2')
+('CharacterData', '\n')
+('CharacterData', '3')
+('CharacterData', '\n')
+('CharacterData', '4')
+('EndElement', 'a')
+('result', 1)
+('pos', 4, 5, 15)
+--
+('StartElement', 'a', {})
+('CharacterData', '1\n2\n3\n4')
+('EndElement', 'a')
+('result', 1)
+('pos', 4, 5, 15)
+--
+('StartElement', 'a', [])
+('CharacterData', '1')
+('CharacterData', '\n')
+('CharacterData', '2')
+('CharacterData', '\n')
+('CharacterData', '3')
+('CharacterData', '\n')
+('CharacterData', '4')
+('EndElement', 'a')
+('result', 1)
+('pos', 4, 5, 15)
+--
+b'<a>&lt;&gt;&amp;&quot;&apos;</a>'
+('StartElement', 'a', {})
+('CharacterData', '<')
+('CharacterData', '>')
+('CharacterData', '&')
+('CharacterData', '"')
+('CharacterData', "'")
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 32, 32)
+--
+('StartElement', ('a', {}), 1, 0, 0)
+('CharacterData', ('<',), 1, 3, 3)
+('CharacterData', ('>',), 1, 7, 7)
+('CharacterData', ('&',), 1, 11, 11)
+('CharacterData', ('"',), 1, 16, 16)
+('CharacterData', ("'",), 1, 22, 22)
+('EndElement', ('a',), 1, 28, 28)
+('result', 1)
+('pos', 1, 32, 32)
+--
+('Default', '<a>')
+('Default', '&lt;')
+('Default', '&gt;')
+('Default', '&amp;')
+('Default', '&quot;')
+('Default', '&apos;')
+('Default', '</a>')
+('result', 1)
+('pos', 1, 32, 32)
+--
+('StartElement', 'a', {})
+('CharacterData', '<')
+('CharacterData', '>')
+('CharacterData', '&')
+('CharacterData', '"')
+('CharacterData', "'")
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 32, 32)
+--
+('StartElement', 'a', {})
+('CharacterData', '<>&"\'')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 32, 32)
+--
+('StartElement', 'a', [])
+('CharacterData', '<')
+('CharacterData', '>')
+('CharacterData', '&')
+('CharacterData', '"')
+('CharacterData', "'")
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 32, 32)
+--
+b'<a>&#65;&#x42;&#x1F600;</a>'
+('StartElement', 'a', {})
+('CharacterData', 'A')
+('CharacterData', 'B')
+('CharacterData', '\U0001f600')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 27, 27)
+--
+('StartElement', ('a', {}), 1, 0, 0)
+('CharacterData', ('A',), 1, 3, 3)
+('CharacterData', ('B',), 1, 8, 8)
+('CharacterData', ('\U0001f600',), 1, 14, 14)
+('EndElement', ('a',), 1, 23, 23)
+('result', 1)
+('pos', 1, 27, 27)
+--
+('Default', '<a>')
+('Default', '&#65;')
+('Default', '&#x42;')
+('Default', '&#x1F600;')
+('Default', '</a>')
+('result', 1)
+('pos', 1, 27, 27)
+--
+('StartElement', 'a', {})
+('CharacterData', 'A')
+('CharacterData', 'B')
+('CharacterData', '\U0001f600')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 27, 27)
+--
+('StartElement', 'a', {})
+('CharacterData', 'AB\U0001f600')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 27, 27)
+--
+('StartElement', 'a', [])
+('CharacterData', 'A')
+('CharacterData', 'B')
+('CharacterData', '\U0001f600')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 27, 27)
+--
+b'<a><!-- c --><?pi data?><?pi2?></a>'
+('StartElement', 'a', {})
+('Comment', ' c ')
+('ProcessingInstruction', 'pi', 'data')
+('ProcessingInstruction', 'pi2', '')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 35, 35)
+--
+('StartElement', ('a', {}), 1, 0, 0)
+('Comment', (' c ',), 1, 3, 3)
+('ProcessingInstruction', ('pi', 'data'), 1, 13, 13)
+('ProcessingInstruction', ('pi2', ''), 1, 24, 24)
+('EndElement', ('a',), 1, 31, 31)
+('result', 1)
+('pos', 1, 35, 35)
+--
+('Default', '<a>')
+('Default', '<!-- c -->')
+('Default', '<?pi data?>')
+('Default', '<?pi2?>')
+('Default', '</a>')
+('result', 1)
+('pos', 1, 35, 35)
+--
+('StartElement', 'a', {})
+('Comment', ' c ')
+('ProcessingInstruction', 'pi', 'data')
+('ProcessingInstruction', 'pi2', '')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 35, 35)
+--
+('StartElement', 'a', {})
+('Comment', ' c ')
+('ProcessingInstruction', 'pi', 'data')
+('ProcessingInstruction', 'pi2', '')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 35, 35)
+--
+('StartElement', 'a', [])
+('Comment', ' c ')
+('ProcessingInstruction', 'pi', 'data')
+('ProcessingInstruction', 'pi2', '')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 35, 35)
+--
+b'<!-- before --><a/><!-- after --><?pi?>\n'
+('Comment', ' before ')
+('StartElement', 'a', {})
+('EndElement', 'a')
+('Comment', ' after ')
+('ProcessingInstruction', 'pi', '')
+('result', 1)
+('pos', 2, 0, 40)
+--
+('Comment', (' before ',), 1, 0, 0)
+('StartElement', ('a', {}), 1, 15, 15)
+('EndElement', ('a',), 1, 19, 19)
+('Comment', (' after ',), 1, 19, 19)
+('ProcessingInstruction', ('pi', ''), 1, 33, 33)
+('result', 1)
+('pos', 2, 0, 40)
+--
+('Default', '<!-- before -->')
+('Default', '<a/>')
+('Default', '<!-- after -->')
+('Default', '<?pi?>')
+('Default', '\n')
+('result', 1)
+('pos', 2, 0, 40)
+--
+('Comment', ' before ')
+('StartElement', 'a', {})
+('EndElement', 'a')
+('Comment', ' after ')
+('ProcessingInstruction', 'pi', '')
+('result', 1)
+('pos', 2, 0, 40)
+--
+('Comment', ' before ')
+('StartElement', 'a', {})
+('EndElement', 'a')
+('Comment', ' after ')
+('ProcessingInstruction', 'pi', '')
+('result', 1)
+('pos', 2, 0, 40)
+--
+('Comment', ' before ')
+('StartElement', 'a', [])
+('EndElement', 'a')
+('Comment', ' after ')
+('ProcessingInstruction', 'pi', '')
+('result', 1)
+('pos', 2, 0, 40)
+--
+b'<a><![CDATA[x<y]]>z</a>'
+('StartElement', 'a', {})
+('StartCdataSection',)
+('CharacterData', 'x<y')
+('EndCdataSection',)
+('CharacterData', 'z')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 23, 23)
+--
+('StartElement', ('a', {}), 1, 0, 0)
+('StartCdataSection', (), 1, 3, 3)
+('CharacterData', ('x<y',), 1, 12, 12)
+('EndCdataSection', (), 1, 15, 15)
+('CharacterData', ('z',), 1, 18, 18)
+('EndElement', ('a',), 1, 19, 19)
+('result', 1)
+('pos', 1, 23, 23)
+--
+('Default', '<a>')
+('Default', '<![CDATA[')
+('Default', 'x<y')
+('Default', ']]>')
+('Default', 'z')
+('Default', '</a>')
+('result', 1)
+('pos', 1, 23, 23)
+--
+('StartElement', 'a', {})
+('StartCdataSection',)
+('CharacterData', 'x')
+('CharacterData', '<')
+('CharacterData', 'y')
+('EndCdataSection',)
+('CharacterData', 'z')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 23, 23)
+--
+('StartElement', 'a', {})
+('StartCdataSection',)
+('CharacterData', 'x<y')
+('EndCdataSection',)
+('CharacterData', 'z')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 23, 23)
+--
+('StartElement', 'a', [])
+('StartCdataSection',)
+('CharacterData', 'x<y')
+('EndCdataSection',)
+('CharacterData', 'z')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 23, 23)
+--
+b'<a><![CDATA[]]></a>'
+('StartElement', 'a', {})
+('StartCdataSection',)
+('EndCdataSection',)
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 19, 19)
+--
+('StartElement', ('a', {}), 1, 0, 0)
+('StartCdataSection', (), 1, 3, 3)
+('EndCdataSection', (), 1, 12, 12)
+('EndElement', ('a',), 1, 15, 15)
+('result', 1)
+('pos', 1, 19, 19)
+--
+('Default', '<a>')
+('Default', '<![CDATA[')
+('Default', ']]>')
+('Default', '</a>')
+('result', 1)
+('pos', 1, 19, 19)
+--
+('StartElement', 'a', {})
+('StartCdataSection',)
+('EndCdataSection',)
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 19, 19)
+--
+('StartElement', 'a', {})
+('StartCdataSection',)
+('EndCdataSection',)
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 19, 19)
+--
+('StartElement', 'a', [])
+('StartCdataSection',)
+('EndCdataSection',)
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 19, 19)
+--
+b'<a><![CDATA[a]b]]c\nd\r\ne]]></a>'
+('StartElement', 'a', {})
+('StartCdataSection',)
+('CharacterData', 'a')
+('CharacterData', ']b')
+('CharacterData', ']')
+('CharacterData', ']c')
+('CharacterData', '\n')
+('CharacterData', 'd')
+('CharacterData', '\n')
+('CharacterData', 'e')
+('EndCdataSection',)
+('EndElement', 'a')
+('result', 1)
+('pos', 3, 8, 30)
+--
+('StartElement', ('a', {}), 1, 0, 0)
+('StartCdataSection', (), 1, 3, 3)
+('CharacterData', ('a',), 1, 12, 12)
+('CharacterData', (']b',), 1, 13, 13)
+('CharacterData', (']',), 1, 15, 15)
+('CharacterData', (']c',), 1, 16, 16)
+('CharacterData', ('\n',), 1, 18, 18)
+('CharacterData', ('d',), 2, 0, 19)
+('CharacterData', ('\n',), 2, 1, 20)
+('CharacterData', ('e',), 3, 0, 22)
+('EndCdataSection', (), 3, 1, 23)
+('EndElement', ('a',), 3, 4, 26)
+('result', 1)
+('pos', 3, 8, 30)
+--
+('Default', '<a>')
+('Default', '<![CDATA[')
+('Default', 'a')
+('Default', ']b')
+('Default', ']')
+('Default', ']c')
+('Default', '\n')
+('Default', 'd')
+('Default', '\r\n')
+('Default', 'e')
+('Default', ']]>')
+('Default', '</a>')
+('result', 1)
+('pos', 3, 8, 30)
+--
+('StartElement', 'a', {})
+('StartCdataSection',)
+('CharacterData', 'a')
+('CharacterData', ']b')
+('CharacterData', ']')
+('CharacterData', ']c')
+('CharacterData', '\n')
+('CharacterData', 'd')
+('CharacterData', '\n')
+('CharacterData', 'e')
+('EndCdataSection',)
+('EndElement', 'a')
+('result', 1)
+('pos', 3, 8, 30)
+--
+('StartElement', 'a', {})
+('StartCdataSection',)
+('CharacterData', 'a]b]]c\nd\ne')
+('EndCdataSection',)
+('EndElement', 'a')
+('result', 1)
+('pos', 3, 8, 30)
+--
+('StartElement', 'a', [])
+('StartCdataSection',)
+('CharacterData', 'a')
+('CharacterData', ']b')
+('CharacterData', ']')
+('CharacterData', ']c')
+('CharacterData', '\n')
+('CharacterData', 'd')
+('CharacterData', '\n')
+('CharacterData', 'e')
+('EndCdataSection',)
+('EndElement', 'a')
+('result', 1)
+('pos', 3, 8, 30)
+--
+b'<a>]</a>'
+('StartElement', 'a', {})
+('CharacterData', ']')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 8, 8)
+--
+('StartElement', ('a', {}), 1, 0, 0)
+('CharacterData', (']',), 1, 3, 3)
+('EndElement', ('a',), 1, 4, 4)
+('result', 1)
+('pos', 1, 8, 8)
+--
+('Default', '<a>')
+('Default', ']')
+('Default', '</a>')
+('result', 1)
+('pos', 1, 8, 8)
+--
+('StartElement', 'a', {})
+('CharacterData', ']')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 8, 8)
+--
+('StartElement', 'a', {})
+('CharacterData', ']')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 8, 8)
+--
+('StartElement', 'a', [])
+('CharacterData', ']')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 8, 8)
+--
+b'<a>]]</a>'
+('StartElement', 'a', {})
+('CharacterData', ']]')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 9, 9)
+--
+('StartElement', ('a', {}), 1, 0, 0)
+('CharacterData', (']]',), 1, 3, 3)
+('EndElement', ('a',), 1, 5, 5)
+('result', 1)
+('pos', 1, 9, 9)
+--
+('Default', '<a>')
+('Default', ']]')
+('Default', '</a>')
+('result', 1)
+('pos', 1, 9, 9)
+--
+('StartElement', 'a', {})
+('CharacterData', ']]')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 9, 9)
+--
+('StartElement', 'a', {})
+('CharacterData', ']]')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 9, 9)
+--
+('StartElement', 'a', [])
+('CharacterData', ']]')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 9, 9)
+--
+b'<a>a]b]]c</a>'
+('StartElement', 'a', {})
+('CharacterData', 'a]b]]c')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 13, 13)
+--
+('StartElement', ('a', {}), 1, 0, 0)
+('CharacterData', ('a]b]]c',), 1, 3, 3)
+('EndElement', ('a',), 1, 9, 9)
+('result', 1)
+('pos', 1, 13, 13)
+--
+('Default', '<a>')
+('Default', 'a]b]]c')
+('Default', '</a>')
+('result', 1)
+('pos', 1, 13, 13)
+--
+('StartElement', 'a', {})
+('CharacterData', 'a')
+('CharacterData', ']b')
+('CharacterData', ']]c')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 13, 13)
+--
+('StartElement', 'a', {})
+('CharacterData', 'a]b]]c')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 13, 13)
+--
+('StartElement', 'a', [])
+('CharacterData', 'a]b]]c')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 13, 13)
+--
+b'  \n <a/>  \n'
+('StartElement', 'a', {})
+('EndElement', 'a')
+('result', 1)
+('pos', 3, 0, 11)
+--
+('StartElement', ('a', {}), 2, 1, 4)
+('EndElement', ('a',), 2, 5, 8)
+('result', 1)
+('pos', 3, 0, 11)
+--
+('Default', '  \n ')
+('Default', '<a/>')
+('Default', '  \n')
+('result', 1)
+('pos', 3, 0, 11)
+--
+('StartElement', 'a', {})
+('EndElement', 'a')
+('result', 1)
+('pos', 3, 0, 11)
+--
+('StartElement', 'a', {})
+('EndElement', 'a')
+('result', 1)
+('pos', 3, 0, 11)
+--
+('StartElement', 'a', [])
+('EndElement', 'a')
+('result', 1)
+('pos', 3, 0, 11)
+--
+b'<a  b = "c"  />'
+('StartElement', 'a', {'b': 'c'})
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 15, 15)
+--
+('StartElement', ('a', {'b': 'c'}), 1, 0, 0)
+('EndElement', ('a',), 1, 15, 15)
+('result', 1)
+('pos', 1, 15, 15)
+--
+('Default', '<a  b = "c"  />')
+('result', 1)
+('pos', 1, 15, 15)
+--
+('StartElement', 'a', {'b': 'c'})
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 15, 15)
+--
+('StartElement', 'a', {'b': 'c'})
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 15, 15)
+--
+('StartElement', 'a', ['b', 'c'])
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 15, 15)
+--
+b'<a\nb="c"\n>\n</a\n>'
+('StartElement', 'a', {'b': 'c'})
+('CharacterData', '\n')
+('EndElement', 'a')
+('result', 1)
+('pos', 5, 1, 16)
+--
+('StartElement', ('a', {'b': 'c'}), 1, 0, 0)
+('CharacterData', ('\n',), 3, 1, 10)
+('EndElement', ('a',), 4, 0, 11)
+('result', 1)
+('pos', 5, 1, 16)
+--
+('Default', '<a\nb="c"\n>')
+('Default', '\n')
+('Default', '</a\n>')
+('result', 1)
+('pos', 5, 1, 16)
+--
+('StartElement', 'a', {'b': 'c'})
+('CharacterData', '\n')
+('EndElement', 'a')
+('result', 1)
+('pos', 5, 1, 16)
+--
+('StartElement', 'a', {'b': 'c'})
+('CharacterData', '\n')
+('EndElement', 'a')
+('result', 1)
+('pos', 5, 1, 16)
+--
+('StartElement', 'a', ['b', 'c'])
+('CharacterData', '\n')
+('EndElement', 'a')
+('result', 1)
+('pos', 5, 1, 16)
+--
+b'<a>\xc3\xa9\xe4\xb8\xad\xf0\x9f\x98\x80</a>'
+('StartElement', 'a', {})
+('CharacterData', '\xe9\u4e2d\U0001f600')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 10, 16)
+--
+('StartElement', ('a', {}), 1, 0, 0)
+('CharacterData', ('\xe9\u4e2d\U0001f600',), 1, 3, 3)
+('EndElement', ('a',), 1, 6, 12)
+('result', 1)
+('pos', 1, 10, 16)
+--
+('Default', '<a>')
+('Default', '\xe9\u4e2d\U0001f600')
+('Default', '</a>')
+('result', 1)
+('pos', 1, 10, 16)
+--
+('StartElement', 'a', {})
+('CharacterData', '\xe9')
+('CharacterData', '\u4e2d')
+('CharacterData', '\U0001f600')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 10, 16)
+--
+('StartElement', 'a', {})
+('CharacterData', '\xe9\u4e2d\U0001f600')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 10, 16)
+--
+('StartElement', 'a', [])
+('CharacterData', '\xe9\u4e2d\U0001f600')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 10, 16)
+--
+b'<\xc3\xa9 \xe4\xb8\xad="\xf0\x9f\x98\x80"/>'
+('StartElement', '\xe9', {'\u4e2d': '\U0001f600'})
+('EndElement', '\xe9')
+('result', 1)
+('pos', 1, 10, 16)
+--
+('StartElement', ('\xe9', {'\u4e2d': '\U0001f600'}), 1, 0, 0)
+('EndElement', ('\xe9',), 1, 10, 16)
+('result', 1)
+('pos', 1, 10, 16)
+--
+('Default', '<\xe9 \u4e2d="\U0001f600"/>')
+('result', 1)
+('pos', 1, 10, 16)
+--
+('StartElement', '\xe9', {'\u4e2d': '\U0001f600'})
+('EndElement', '\xe9')
+('result', 1)
+('pos', 1, 10, 16)
+--
+('StartElement', '\xe9', {'\u4e2d': '\U0001f600'})
+('EndElement', '\xe9')
+('result', 1)
+('pos', 1, 10, 16)
+--
+('StartElement', '\xe9', ['\u4e2d', '\U0001f600'])
+('EndElement', '\xe9')
+('result', 1)
+('pos', 1, 10, 16)
+--
+b'<a b="1&#10;2&#9;3 \n\t4&amp;&lt;"/>'
+('StartElement', 'a', {'b': '1\n2\t3   4&<'})
+('EndElement', 'a')
+('result', 1)
+('pos', 2, 14, 34)
+--
+('StartElement', ('a', {'b': '1\n2\t3   4&<'}), 1, 0, 0)
+('EndElement', ('a',), 2, 14, 34)
+('result', 1)
+('pos', 2, 14, 34)
+--
+('Default', '<a b="1&#10;2&#9;3 \n\t4&amp;&lt;"/>')
+('result', 1)
+('pos', 2, 14, 34)
+--
+('StartElement', 'a', {'b': '1\n2\t3   4&<'})
+('EndElement', 'a')
+('result', 1)
+('pos', 2, 14, 34)
+--
+('StartElement', 'a', {'b': '1\n2\t3   4&<'})
+('EndElement', 'a')
+('result', 1)
+('pos', 2, 14, 34)
+--
+('StartElement', 'a', ['b', '1\n2\t3   4&<'])
+('EndElement', 'a')
+('result', 1)
+('pos', 2, 14, 34)
+--
+b'<a b="  x  y  "/>'
+('StartElement', 'a', {'b': '  x  y  '})
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 17, 17)
+--
+('StartElement', ('a', {'b': '  x  y  '}), 1, 0, 0)
+('EndElement', ('a',), 1, 17, 17)
+('result', 1)
+('pos', 1, 17, 17)
+--
+('Default', '<a b="  x  y  "/>')
+('result', 1)
+('pos', 1, 17, 17)
+--
+('StartElement', 'a', {'b': '  x  y  '})
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 17, 17)
+--
+('StartElement', 'a', {'b': '  x  y  '})
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 17, 17)
+--
+('StartElement', 'a', ['b', '  x  y  '])
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 17, 17)
+--
+b'<a><b><c><d/></c></b></a>'
+('StartElement', 'a', {})
+('StartElement', 'b', {})
+('StartElement', 'c', {})
+('StartElement', 'd', {})
+('EndElement', 'd')
+('EndElement', 'c')
+('EndElement', 'b')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 25, 25)
+--
+('StartElement', ('a', {}), 1, 0, 0)
+('StartElement', ('b', {}), 1, 3, 3)
+('StartElement', ('c', {}), 1, 6, 6)
+('StartElement', ('d', {}), 1, 9, 9)
+('EndElement', ('d',), 1, 13, 13)
+('EndElement', ('c',), 1, 13, 13)
+('EndElement', ('b',), 1, 17, 17)
+('EndElement', ('a',), 1, 21, 21)
+('result', 1)
+('pos', 1, 25, 25)
+--
+('Default', '<a>')
+('Default', '<b>')
+('Default', '<c>')
+('Default', '<d/>')
+('Default', '</c>')
+('Default', '</b>')
+('Default', '</a>')
+('result', 1)
+('pos', 1, 25, 25)
+--
+('StartElement', 'a', {})
+('StartElement', 'b', {})
+('StartElement', 'c', {})
+('StartElement', 'd', {})
+('EndElement', 'd')
+('EndElement', 'c')
+('EndElement', 'b')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 25, 25)
+--
+('StartElement', 'a', {})
+('StartElement', 'b', {})
+('StartElement', 'c', {})
+('StartElement', 'd', {})
+('EndElement', 'd')
+('EndElement', 'c')
+('EndElement', 'b')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 25, 25)
+--
+('StartElement', 'a', [])
+('StartElement', 'b', [])
+('StartElement', 'c', [])
+('StartElement', 'd', [])
+('EndElement', 'd')
+('EndElement', 'c')
+('EndElement', 'b')
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 25, 25)
+--
+b'<a:b xmlns:a="u"/>'
+('StartElement', 'a:b', {'xmlns:a': 'u'})
+('EndElement', 'a:b')
+('result', 1)
+('pos', 1, 18, 18)
+--
+('StartElement', ('a:b', {'xmlns:a': 'u'}), 1, 0, 0)
+('EndElement', ('a:b',), 1, 18, 18)
+('result', 1)
+('pos', 1, 18, 18)
+--
+('Default', '<a:b xmlns:a="u"/>')
+('result', 1)
+('pos', 1, 18, 18)
+--
+('StartElement', 'a:b', {'xmlns:a': 'u'})
+('EndElement', 'a:b')
+('result', 1)
+('pos', 1, 18, 18)
+--
+('StartElement', 'a:b', {'xmlns:a': 'u'})
+('EndElement', 'a:b')
+('result', 1)
+('pos', 1, 18, 18)
+--
+('StartElement', 'a:b', ['xmlns:a', 'u'])
+('EndElement', 'a:b')
+('result', 1)
+('pos', 1, 18, 18)
+--
+b'<a.b-c_d/>'
+('StartElement', 'a.b-c_d', {})
+('EndElement', 'a.b-c_d')
+('result', 1)
+('pos', 1, 10, 10)
+--
+('StartElement', ('a.b-c_d', {}), 1, 0, 0)
+('EndElement', ('a.b-c_d',), 1, 10, 10)
+('result', 1)
+('pos', 1, 10, 10)
+--
+('Default', '<a.b-c_d/>')
+('result', 1)
+('pos', 1, 10, 10)
+--
+('StartElement', 'a.b-c_d', {})
+('EndElement', 'a.b-c_d')
+('result', 1)
+('pos', 1, 10, 10)
+--
+('StartElement', 'a.b-c_d', {})
+('EndElement', 'a.b-c_d')
+('result', 1)
+('pos', 1, 10, 10)
+--
+('StartElement', 'a.b-c_d', [])
+('EndElement', 'a.b-c_d')
+('result', 1)
+('pos', 1, 10, 10)
+--
+b'<_a/>'
+('StartElement', '_a', {})
+('EndElement', '_a')
+('result', 1)
+('pos', 1, 5, 5)
+--
+('StartElement', ('_a', {}), 1, 0, 0)
+('EndElement', ('_a',), 1, 5, 5)
+('result', 1)
+('pos', 1, 5, 5)
+--
+('Default', '<_a/>')
+('result', 1)
+('pos', 1, 5, 5)
+--
+('StartElement', '_a', {})
+('EndElement', '_a')
+('result', 1)
+('pos', 1, 5, 5)
+--
+('StartElement', '_a', {})
+('EndElement', '_a')
+('result', 1)
+('pos', 1, 5, 5)
+--
+('StartElement', '_a', [])
+('EndElement', '_a')
+('result', 1)
+('pos', 1, 5, 5)
+--
+b'<a b=""/>'
+('StartElement', 'a', {'b': ''})
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 9, 9)
+--
+('StartElement', ('a', {'b': ''}), 1, 0, 0)
+('EndElement', ('a',), 1, 9, 9)
+('result', 1)
+('pos', 1, 9, 9)
+--
+('Default', '<a b=""/>')
+('result', 1)
+('pos', 1, 9, 9)
+--
+('StartElement', 'a', {'b': ''})
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 9, 9)
+--
+('StartElement', 'a', {'b': ''})
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 9, 9)
+--
+('StartElement', 'a', ['b', ''])
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 9, 9)
+--
+b''
+('ExpatError', 'no element found: line 1, column 0', 3, 1, 0, 3, 1, 0, 0)
+('pos', 1, 0, 0)
+--
+('ExpatError', 'no element found: line 1, column 0', 3, 1, 0, 3, 1, 0, 0)
+('pos', 1, 0, 0)
+--
+('ExpatError', 'no element found: line 1, column 0', 3, 1, 0, 3, 1, 0, 0)
+('pos', 1, 0, 0)
+--
+b' '
+('ExpatError', 'no element found: line 1, column 1', 3, 1, 1, 3, 1, 1, 1)
+('pos', 1, 1, 1)
+--
+('ExpatError', 'no element found: line 1, column 1', 3, 1, 1, 3, 1, 1, 1)
+('pos', 1, 1, 1)
+--
+('DefaultHandlerExpand', ' ')
+('ExpatError', 'no element found: line 1, column 1', 3, 1, 1, 3, 1, 1, 1)
+('pos', 1, 1, 1)
+--
+b'\n\n'
+('ExpatError', 'no element found: line 3, column 0', 3, 3, 0, 3, 3, 0, 2)
+('pos', 3, 0, 2)
+--
+('ExpatError', 'no element found: line 3, column 0', 3, 3, 0, 3, 3, 0, 2)
+('pos', 3, 0, 2)
+--
+('DefaultHandlerExpand', '\n\n')
+('ExpatError', 'no element found: line 3, column 0', 3, 3, 0, 3, 3, 0, 2)
+('pos', 3, 0, 2)
+--
+b'<'
+('ExpatError', 'unclosed token: line 1, column 0', 5, 1, 0, 5, 1, 0, 0)
+('pos', 1, 0, 0)
+--
+('ExpatError', 'unclosed token: line 1, column 0', 5, 1, 0, 5, 1, 0, 0)
+('pos', 1, 0, 0)
+--
+('ExpatError', 'unclosed token: line 1, column 0', 5, 1, 0, 5, 1, 0, 0)
+('pos', 1, 0, 0)
+--
+b'<a'
+('ExpatError', 'unclosed token: line 1, column 0', 5, 1, 0, 5, 1, 0, 0)
+('pos', 1, 0, 0)
+--
+('ExpatError', 'unclosed token: line 1, column 0', 5, 1, 0, 5, 1, 0, 0)
+('pos', 1, 0, 0)
+--
+('ExpatError', 'unclosed token: line 1, column 0', 5, 1, 0, 5, 1, 0, 0)
+('pos', 1, 0, 0)
+--
+b'<a>'
+('StartElement', 'a', {})
+('ExpatError', 'no element found: line 1, column 3', 3, 1, 3, 3, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('StartElement', 'a', {})
+('ExpatError', 'no element found: line 1, column 3', 3, 1, 3, 3, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'no element found: line 1, column 3', 3, 1, 3, 3, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+b'<a><b>'
+('StartElement', 'a', {})
+('StartElement', 'b', {})
+('ExpatError', 'no element found: line 1, column 6', 3, 1, 6, 3, 1, 6, 6)
+('pos', 1, 6, 6)
+--
+('StartElement', 'a', {})
+('StartElement', 'b', {})
+('ExpatError', 'no element found: line 1, column 6', 3, 1, 6, 3, 1, 6, 6)
+('pos', 1, 6, 6)
+--
+('DefaultHandlerExpand', '<a>')
+('DefaultHandlerExpand', '<b>')
+('ExpatError', 'no element found: line 1, column 6', 3, 1, 6, 3, 1, 6, 6)
+('pos', 1, 6, 6)
+--
+b'<a></b>'
+('StartElement', 'a', {})
+('ExpatError', 'mismatched tag: line 1, column 5', 7, 1, 5, 7, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+('StartElement', 'a', {})
+('ExpatError', 'mismatched tag: line 1, column 5', 7, 1, 5, 7, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'mismatched tag: line 1, column 5', 7, 1, 5, 7, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+b'<a></a'
+('StartElement', 'a', {})
+('ExpatError', 'unclosed token: line 1, column 3', 5, 1, 3, 5, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('StartElement', 'a', {})
+('ExpatError', 'unclosed token: line 1, column 3', 5, 1, 3, 5, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'unclosed token: line 1, column 3', 5, 1, 3, 5, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+b'<a></a><b/>'
+('StartElement', 'a', {})
+('EndElement', 'a')
+('ExpatError', 'junk after document element: line 1, column 7', 9, 1, 7, 9, 1, 7, 7)
+('pos', 1, 7, 7)
+--
+('StartElement', 'a', {})
+('EndElement', 'a')
+('ExpatError', 'junk after document element: line 1, column 7', 9, 1, 7, 9, 1, 7, 7)
+('pos', 1, 7, 7)
+--
+('DefaultHandlerExpand', '<a>')
+('DefaultHandlerExpand', '</a>')
+('ExpatError', 'junk after document element: line 1, column 7', 9, 1, 7, 9, 1, 7, 7)
+('pos', 1, 7, 7)
+--
+b'<a/>x'
+('StartElement', 'a', {})
+('EndElement', 'a')
+('ExpatError', 'junk after document element: line 1, column 4', 9, 1, 4, 9, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+('StartElement', 'a', {})
+('EndElement', 'a')
+('ExpatError', 'junk after document element: line 1, column 4', 9, 1, 4, 9, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+('DefaultHandlerExpand', '<a/>')
+('ExpatError', 'junk after document element: line 1, column 4', 9, 1, 4, 9, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+b'x<a/>'
+('ExpatError', 'not well-formed (invalid token): line 1, column 1', 4, 1, 1, 4, 1, 1, 1)
+('pos', 1, 1, 1)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 1', 4, 1, 1, 4, 1, 1, 1)
+('pos', 1, 1, 1)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 1', 4, 1, 1, 4, 1, 1, 1)
+('pos', 1, 1, 1)
+--
+b'<a/><'
+('StartElement', 'a', {})
+('EndElement', 'a')
+('ExpatError', 'unclosed token: line 1, column 4', 5, 1, 4, 5, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+('StartElement', 'a', {})
+('EndElement', 'a')
+('ExpatError', 'unclosed token: line 1, column 4', 5, 1, 4, 5, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+('DefaultHandlerExpand', '<a/>')
+('ExpatError', 'unclosed token: line 1, column 4', 5, 1, 4, 5, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+b'<a/>&amp;'
+('StartElement', 'a', {})
+('EndElement', 'a')
+('ExpatError', 'not well-formed (invalid token): line 1, column 4', 4, 1, 4, 4, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+('StartElement', 'a', {})
+('EndElement', 'a')
+('ExpatError', 'not well-formed (invalid token): line 1, column 4', 4, 1, 4, 4, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+('DefaultHandlerExpand', '<a/>')
+('ExpatError', 'not well-formed (invalid token): line 1, column 4', 4, 1, 4, 4, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+b'<a b/>'
+('ExpatError', 'not well-formed (invalid token): line 1, column 4', 4, 1, 4, 4, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 4', 4, 1, 4, 4, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 4', 4, 1, 4, 4, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+b'<a b=/>'
+('ExpatError', 'not well-formed (invalid token): line 1, column 5', 4, 1, 5, 4, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 5', 4, 1, 5, 4, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 5', 4, 1, 5, 4, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+b'<a b=c/>'
+('ExpatError', 'not well-formed (invalid token): line 1, column 5', 4, 1, 5, 4, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 5', 4, 1, 5, 4, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 5', 4, 1, 5, 4, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+b'<a b="c/>'
+('ExpatError', 'unclosed token: line 1, column 0', 5, 1, 0, 5, 1, 0, 0)
+('pos', 1, 0, 0)
+--
+('ExpatError', 'unclosed token: line 1, column 0', 5, 1, 0, 5, 1, 0, 0)
+('pos', 1, 0, 0)
+--
+('ExpatError', 'unclosed token: line 1, column 0', 5, 1, 0, 5, 1, 0, 0)
+('pos', 1, 0, 0)
+--
+b'<a b="c"d="e"/>'
+('ExpatError', 'not well-formed (invalid token): line 1, column 8', 4, 1, 8, 4, 1, 8, 8)
+('pos', 1, 8, 8)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 8', 4, 1, 8, 4, 1, 8, 8)
+('pos', 1, 8, 8)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 8', 4, 1, 8, 4, 1, 8, 8)
+('pos', 1, 8, 8)
+--
+b'<a b="c" b="d"/>'
+('ExpatError', 'duplicate attribute: line 1, column 9', 8, 1, 9, 8, 1, 9, 9)
+('pos', 1, 9, 9)
+--
+('ExpatError', 'duplicate attribute: line 1, column 9', 8, 1, 9, 8, 1, 9, 9)
+('pos', 1, 9, 9)
+--
+('ExpatError', 'duplicate attribute: line 1, column 9', 8, 1, 9, 8, 1, 9, 9)
+('pos', 1, 9, 9)
+--
+b'<a b="<"/>'
+('ExpatError', 'not well-formed (invalid token): line 1, column 6', 4, 1, 6, 4, 1, 6, 6)
+('pos', 1, 6, 6)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 6', 4, 1, 6, 4, 1, 6, 6)
+('pos', 1, 6, 6)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 6', 4, 1, 6, 4, 1, 6, 6)
+('pos', 1, 6, 6)
+--
+b'<a b="&"/>'
+('ExpatError', 'not well-formed (invalid token): line 1, column 7', 4, 1, 7, 4, 1, 7, 7)
+('pos', 1, 7, 7)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 7', 4, 1, 7, 4, 1, 7, 7)
+('pos', 1, 7, 7)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 7', 4, 1, 7, 4, 1, 7, 7)
+('pos', 1, 7, 7)
+--
+b'<a b="&x;"/>'
+('ExpatError', 'undefined entity: line 1, column 0', 11, 1, 0, 11, 1, 0, 0)
+('pos', 1, 0, 0)
+--
+('ExpatError', 'undefined entity: line 1, column 0', 11, 1, 0, 11, 1, 0, 0)
+('pos', 1, 0, 0)
+--
+('ExpatError', 'undefined entity: line 1, column 0', 11, 1, 0, 11, 1, 0, 0)
+('pos', 1, 0, 0)
+--
+b'<a b="&#0;"/>'
+('ExpatError', 'reference to invalid character number: line 1, column 6', 14, 1, 6, 14, 1, 6, 6)
+('pos', 1, 6, 6)
+--
+('ExpatError', 'reference to invalid character number: line 1, column 6', 14, 1, 6, 14, 1, 6, 6)
+('pos', 1, 6, 6)
+--
+('ExpatError', 'reference to invalid character number: line 1, column 6', 14, 1, 6, 14, 1, 6, 6)
+('pos', 1, 6, 6)
+--
+b'<a>&</a>'
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 4', 4, 1, 4, 4, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 4', 4, 1, 4, 4, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'not well-formed (invalid token): line 1, column 4', 4, 1, 4, 4, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+b'<a>&x</a>'
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 5', 4, 1, 5, 4, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 5', 4, 1, 5, 4, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'not well-formed (invalid token): line 1, column 5', 4, 1, 5, 4, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+b'<a>&x;</a>'
+('StartElement', 'a', {})
+('ExpatError', 'undefined entity: line 1, column 3', 11, 1, 3, 11, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('StartElement', 'a', {})
+('ExpatError', 'undefined entity: line 1, column 3', 11, 1, 3, 11, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'undefined entity: line 1, column 3', 11, 1, 3, 11, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+b'<a>&;</a>'
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 4', 4, 1, 4, 4, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 4', 4, 1, 4, 4, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'not well-formed (invalid token): line 1, column 4', 4, 1, 4, 4, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+b'<a>&#;</a>'
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 5', 4, 1, 5, 4, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 5', 4, 1, 5, 4, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'not well-formed (invalid token): line 1, column 5', 4, 1, 5, 4, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+b'<a>&#x;</a>'
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 6', 4, 1, 6, 4, 1, 6, 6)
+('pos', 1, 6, 6)
+--
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 6', 4, 1, 6, 4, 1, 6, 6)
+('pos', 1, 6, 6)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'not well-formed (invalid token): line 1, column 6', 4, 1, 6, 4, 1, 6, 6)
+('pos', 1, 6, 6)
+--
+b'<a>&#0;</a>'
+('StartElement', 'a', {})
+('ExpatError', 'reference to invalid character number: line 1, column 3', 14, 1, 3, 14, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('StartElement', 'a', {})
+('ExpatError', 'reference to invalid character number: line 1, column 3', 14, 1, 3, 14, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'reference to invalid character number: line 1, column 3', 14, 1, 3, 14, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+b'<a>&#xD800;</a>'
+('StartElement', 'a', {})
+('ExpatError', 'reference to invalid character number: line 1, column 3', 14, 1, 3, 14, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('StartElement', 'a', {})
+('ExpatError', 'reference to invalid character number: line 1, column 3', 14, 1, 3, 14, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'reference to invalid character number: line 1, column 3', 14, 1, 3, 14, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+b'<a>&#x110000;</a>'
+('StartElement', 'a', {})
+('ExpatError', 'reference to invalid character number: line 1, column 3', 14, 1, 3, 14, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('StartElement', 'a', {})
+('ExpatError', 'reference to invalid character number: line 1, column 3', 14, 1, 3, 14, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'reference to invalid character number: line 1, column 3', 14, 1, 3, 14, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+b'<a>&#xFFFE;</a>'
+('StartElement', 'a', {})
+('ExpatError', 'reference to invalid character number: line 1, column 3', 14, 1, 3, 14, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('StartElement', 'a', {})
+('ExpatError', 'reference to invalid character number: line 1, column 3', 14, 1, 3, 14, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'reference to invalid character number: line 1, column 3', 14, 1, 3, 14, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+b'<a>&#1;</a>'
+('StartElement', 'a', {})
+('ExpatError', 'reference to invalid character number: line 1, column 3', 14, 1, 3, 14, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('StartElement', 'a', {})
+('ExpatError', 'reference to invalid character number: line 1, column 3', 14, 1, 3, 14, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'reference to invalid character number: line 1, column 3', 14, 1, 3, 14, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+b'<a>]]></a>'
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 5', 4, 1, 5, 4, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 5', 4, 1, 5, 4, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'not well-formed (invalid token): line 1, column 5', 4, 1, 5, 4, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+b'<a>x]]></a>'
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 6', 4, 1, 6, 4, 1, 6, 6)
+('pos', 1, 6, 6)
+--
+('StartElement', 'a', {})
+('CharacterData', 'x')
+('ExpatError', 'not well-formed (invalid token): line 1, column 6', 4, 1, 6, 4, 1, 6, 6)
+('pos', 1, 6, 6)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'not well-formed (invalid token): line 1, column 6', 4, 1, 6, 4, 1, 6, 6)
+('pos', 1, 6, 6)
+--
+b'<a><!-- -- --></a>'
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 10', 4, 1, 10, 4, 1, 10, 10)
+('pos', 1, 10, 10)
+--
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 10', 4, 1, 10, 4, 1, 10, 10)
+('pos', 1, 10, 10)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'not well-formed (invalid token): line 1, column 10', 4, 1, 10, 4, 1, 10, 10)
+('pos', 1, 10, 10)
+--
+b'<a><!-- x'
+('StartElement', 'a', {})
+('ExpatError', 'unclosed token: line 1, column 3', 5, 1, 3, 5, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('StartElement', 'a', {})
+('ExpatError', 'unclosed token: line 1, column 3', 5, 1, 3, 5, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'unclosed token: line 1, column 3', 5, 1, 3, 5, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+b'<a><!- x --></a>'
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 6', 4, 1, 6, 4, 1, 6, 6)
+('pos', 1, 6, 6)
+--
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 6', 4, 1, 6, 4, 1, 6, 6)
+('pos', 1, 6, 6)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'not well-formed (invalid token): line 1, column 6', 4, 1, 6, 4, 1, 6, 6)
+('pos', 1, 6, 6)
+--
+b'<a><!x></a>'
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 5', 4, 1, 5, 4, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 5', 4, 1, 5, 4, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'not well-formed (invalid token): line 1, column 5', 4, 1, 5, 4, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+b'<a><![CDATA[x</a>'
+('StartElement', 'a', {})
+('StartCdataSection',)
+('CharacterData', 'x</a>')
+('ExpatError', 'unclosed CDATA section: line 1, column 17', 20, 1, 17, 20, 1, 17, 17)
+('pos', 1, 17, 17)
+--
+('StartElement', 'a', {})
+('StartCdataSection',)
+('CharacterData', 'x')
+('CharacterData', '<')
+('CharacterData', '/')
+('CharacterData', 'a')
+('CharacterData', '>')
+('ExpatError', 'unclosed CDATA section: line 1, column 17', 20, 1, 17, 20, 1, 17, 17)
+('pos', 1, 17, 17)
+--
+('DefaultHandlerExpand', '<a>')
+('DefaultHandlerExpand', '<![CDATA[')
+('DefaultHandlerExpand', 'x</a>')
+('ExpatError', 'unclosed CDATA section: line 1, column 17', 20, 1, 17, 20, 1, 17, 17)
+('pos', 1, 17, 17)
+--
+b'<a><![CDATX[x]]></a>'
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 10', 4, 1, 10, 4, 1, 10, 10)
+('pos', 1, 10, 10)
+--
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 10', 4, 1, 10, 4, 1, 10, 10)
+('pos', 1, 10, 10)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'not well-formed (invalid token): line 1, column 10', 4, 1, 10, 4, 1, 10, 10)
+('pos', 1, 10, 10)
+--
+b'<a><![CDA'
+('StartElement', 'a', {})
+('ExpatError', 'unclosed token: line 1, column 3', 5, 1, 3, 5, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('StartElement', 'a', {})
+('ExpatError', 'unclosed token: line 1, column 3', 5, 1, 3, 5, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'unclosed token: line 1, column 3', 5, 1, 3, 5, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+b'<a><?pi</a>'
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 7', 4, 1, 7, 4, 1, 7, 7)
+('pos', 1, 7, 7)
+--
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 7', 4, 1, 7, 4, 1, 7, 7)
+('pos', 1, 7, 7)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'not well-formed (invalid token): line 1, column 7', 4, 1, 7, 4, 1, 7, 7)
+('pos', 1, 7, 7)
+--
+b'<a><??></a>'
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 5', 4, 1, 5, 4, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 5', 4, 1, 5, 4, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'not well-formed (invalid token): line 1, column 5', 4, 1, 5, 4, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+b'<a><?xml version="1.0"?></a>'
+('StartElement', 'a', {})
+('ExpatError', 'XML or text declaration not at start of entity: line 1, column 3', 17, 1, 3, 17, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('StartElement', 'a', {})
+('ExpatError', 'XML or text declaration not at start of entity: line 1, column 3', 17, 1, 3, 17, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'XML or text declaration not at start of entity: line 1, column 3', 17, 1, 3, 17, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+b'<a><?XML x?></a>'
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 8', 4, 1, 8, 4, 1, 8, 8)
+('pos', 1, 8, 8)
+--
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 8', 4, 1, 8, 4, 1, 8, 8)
+('pos', 1, 8, 8)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'not well-formed (invalid token): line 1, column 8', 4, 1, 8, 4, 1, 8, 8)
+('pos', 1, 8, 8)
+--
+b'<a><?xMl?></a>'
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 8', 4, 1, 8, 4, 1, 8, 8)
+('pos', 1, 8, 8)
+--
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 8', 4, 1, 8, 4, 1, 8, 8)
+('pos', 1, 8, 8)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'not well-formed (invalid token): line 1, column 8', 4, 1, 8, 4, 1, 8, 8)
+('pos', 1, 8, 8)
+--
+b' <?xml version="1.0"?><a/>'
+('ExpatError', 'XML or text declaration not at start of entity: line 1, column 1', 17, 1, 1, 17, 1, 1, 1)
+('pos', 1, 1, 1)
+--
+('ExpatError', 'XML or text declaration not at start of entity: line 1, column 1', 17, 1, 1, 17, 1, 1, 1)
+('pos', 1, 1, 1)
+--
+('DefaultHandlerExpand', ' ')
+('ExpatError', 'XML or text declaration not at start of entity: line 1, column 1', 17, 1, 1, 17, 1, 1, 1)
+('pos', 1, 1, 1)
+--
+b'<?xml?><a/>'
+('ExpatError', 'XML declaration not well-formed: line 1, column 5', 30, 1, 5, 30, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+('ExpatError', 'XML declaration not well-formed: line 1, column 5', 30, 1, 5, 30, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+('ExpatError', 'XML declaration not well-formed: line 1, column 5', 30, 1, 5, 30, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+b'<?xml version?><a/>'
+('ExpatError', 'XML declaration not well-formed: line 1, column 13', 30, 1, 13, 30, 1, 13, 13)
+('pos', 1, 13, 13)
+--
+('ExpatError', 'XML declaration not well-formed: line 1, column 13', 30, 1, 13, 30, 1, 13, 13)
+('pos', 1, 13, 13)
+--
+('ExpatError', 'XML declaration not well-formed: line 1, column 13', 30, 1, 13, 30, 1, 13, 13)
+('pos', 1, 13, 13)
+--
+b'<?xml version=1.0?><a/>'
+('ExpatError', 'XML declaration not well-formed: line 1, column 14', 30, 1, 14, 30, 1, 14, 14)
+('pos', 1, 14, 14)
+--
+('ExpatError', 'XML declaration not well-formed: line 1, column 14', 30, 1, 14, 30, 1, 14, 14)
+('pos', 1, 14, 14)
+--
+('ExpatError', 'XML declaration not well-formed: line 1, column 14', 30, 1, 14, 30, 1, 14, 14)
+('pos', 1, 14, 14)
+--
+b'<?xml version="1.0" foo="x"?><a/>'
+('ExpatError', 'XML declaration not well-formed: line 1, column 20', 30, 1, 20, 30, 1, 20, 20)
+('pos', 1, 20, 20)
+--
+('ExpatError', 'XML declaration not well-formed: line 1, column 20', 30, 1, 20, 30, 1, 20, 20)
+('pos', 1, 20, 20)
+--
+('ExpatError', 'XML declaration not well-formed: line 1, column 20', 30, 1, 20, 30, 1, 20, 20)
+('pos', 1, 20, 20)
+--
+b'<?xml encoding="utf-8"?><a/>'
+('ExpatError', 'XML declaration not well-formed: line 1, column 6', 30, 1, 6, 30, 1, 6, 6)
+('pos', 1, 6, 6)
+--
+('ExpatError', 'XML declaration not well-formed: line 1, column 6', 30, 1, 6, 30, 1, 6, 6)
+('pos', 1, 6, 6)
+--
+('ExpatError', 'XML declaration not well-formed: line 1, column 6', 30, 1, 6, 30, 1, 6, 6)
+('pos', 1, 6, 6)
+--
+b'<?xml version="1.0" standalone="maybe"?><a/>'
+('ExpatError', 'XML declaration not well-formed: line 1, column 32', 30, 1, 32, 30, 1, 32, 32)
+('pos', 1, 32, 32)
+--
+('ExpatError', 'XML declaration not well-formed: line 1, column 32', 30, 1, 32, 30, 1, 32, 32)
+('pos', 1, 32, 32)
+--
+('ExpatError', 'XML declaration not well-formed: line 1, column 32', 30, 1, 32, 30, 1, 32, 32)
+('pos', 1, 32, 32)
+--
+b'<?xml version="1.0" encoding=""?><a/>'
+('ExpatError', 'XML declaration not well-formed: line 1, column 30', 30, 1, 30, 30, 1, 30, 30)
+('pos', 1, 30, 30)
+--
+('ExpatError', 'XML declaration not well-formed: line 1, column 30', 30, 1, 30, 30, 1, 30, 30)
+('pos', 1, 30, 30)
+--
+('ExpatError', 'XML declaration not well-formed: line 1, column 30', 30, 1, 30, 30, 1, 30, 30)
+('pos', 1, 30, 30)
+--
+b'<?xml version="1.0" encoding="1x"?><a/>'
+('ExpatError', 'XML declaration not well-formed: line 1, column 30', 30, 1, 30, 30, 1, 30, 30)
+('pos', 1, 30, 30)
+--
+('ExpatError', 'XML declaration not well-formed: line 1, column 30', 30, 1, 30, 30, 1, 30, 30)
+('pos', 1, 30, 30)
+--
+('ExpatError', 'XML declaration not well-formed: line 1, column 30', 30, 1, 30, 30, 1, 30, 30)
+('pos', 1, 30, 30)
+--
+b'<?xml version="1.0"encoding="utf-8"?><a/>'
+('ExpatError', 'XML declaration not well-formed: line 1, column 19', 30, 1, 19, 30, 1, 19, 19)
+('pos', 1, 19, 19)
+--
+('ExpatError', 'XML declaration not well-formed: line 1, column 19', 30, 1, 19, 30, 1, 19, 19)
+('pos', 1, 19, 19)
+--
+('ExpatError', 'XML declaration not well-formed: line 1, column 19', 30, 1, 19, 30, 1, 19, 19)
+('pos', 1, 19, 19)
+--
+b'<?xml version="1.0" standalone="yes" encoding="utf-8"?><a/>'
+('ExpatError', 'XML declaration not well-formed: line 1, column 37', 30, 1, 37, 30, 1, 37, 37)
+('pos', 1, 37, 37)
+--
+('ExpatError', 'XML declaration not well-formed: line 1, column 37', 30, 1, 37, 30, 1, 37, 37)
+('pos', 1, 37, 37)
+--
+('ExpatError', 'XML declaration not well-formed: line 1, column 37', 30, 1, 37, 30, 1, 37, 37)
+('pos', 1, 37, 37)
+--
+b'<?xml version="1.0" ?x><a/>'
+('ExpatError', 'unclosed token: line 1, column 0', 5, 1, 0, 5, 1, 0, 0)
+('pos', 1, 0, 0)
+--
+('ExpatError', 'unclosed token: line 1, column 0', 5, 1, 0, 5, 1, 0, 0)
+('pos', 1, 0, 0)
+--
+('ExpatError', 'unclosed token: line 1, column 0', 5, 1, 0, 5, 1, 0, 0)
+('pos', 1, 0, 0)
+--
+b'<?xml version="1.0'
+('ExpatError', 'unclosed token: line 1, column 0', 5, 1, 0, 5, 1, 0, 0)
+('pos', 1, 0, 0)
+--
+('ExpatError', 'unclosed token: line 1, column 0', 5, 1, 0, 5, 1, 0, 0)
+('pos', 1, 0, 0)
+--
+('ExpatError', 'unclosed token: line 1, column 0', 5, 1, 0, 5, 1, 0, 0)
+('pos', 1, 0, 0)
+--
+b'<?xml version="a b"?><a/>'
+('ExpatError', 'XML declaration not well-formed: line 1, column 16', 30, 1, 16, 30, 1, 16, 16)
+('pos', 1, 16, 16)
+--
+('ExpatError', 'XML declaration not well-formed: line 1, column 16', 30, 1, 16, 30, 1, 16, 16)
+('pos', 1, 16, 16)
+--
+('ExpatError', 'XML declaration not well-formed: line 1, column 16', 30, 1, 16, 30, 1, 16, 16)
+('pos', 1, 16, 16)
+--
+b'<?xml  version = "1.0"  ?><a/>'
+('XmlDecl', '1.0', None, -1)
+('StartElement', 'a', {})
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 30, 30)
+--
+('XmlDecl', '1.0', None, -1)
+('StartElement', 'a', {})
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 30, 30)
+--
+('DefaultHandlerExpand', '<?xml  version = "1.0"  ?>')
+('DefaultHandlerExpand', '<a/>')
+('result', 1)
+('pos', 1, 30, 30)
+--
+b'<1a/>'
+('ExpatError', 'not well-formed (invalid token): line 1, column 1', 4, 1, 1, 4, 1, 1, 1)
+('pos', 1, 1, 1)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 1', 4, 1, 1, 4, 1, 1, 1)
+('pos', 1, 1, 1)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 1', 4, 1, 1, 4, 1, 1, 1)
+('pos', 1, 1, 1)
+--
+b'<-a/>'
+('ExpatError', 'not well-formed (invalid token): line 1, column 1', 4, 1, 1, 4, 1, 1, 1)
+('pos', 1, 1, 1)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 1', 4, 1, 1, 4, 1, 1, 1)
+('pos', 1, 1, 1)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 1', 4, 1, 1, 4, 1, 1, 1)
+('pos', 1, 1, 1)
+--
+b'< a/>'
+('ExpatError', 'not well-formed (invalid token): line 1, column 1', 4, 1, 1, 4, 1, 1, 1)
+('pos', 1, 1, 1)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 1', 4, 1, 1, 4, 1, 1, 1)
+('pos', 1, 1, 1)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 1', 4, 1, 1, 4, 1, 1, 1)
+('pos', 1, 1, 1)
+--
+b'<a/ >'
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+b'<a//>'
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+b'</a>'
+('ExpatError', 'not well-formed (invalid token): line 1, column 1', 4, 1, 1, 4, 1, 1, 1)
+('pos', 1, 1, 1)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 1', 4, 1, 1, 4, 1, 1, 1)
+('pos', 1, 1, 1)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 1', 4, 1, 1, 4, 1, 1, 1)
+('pos', 1, 1, 1)
+--
+b'<a></ a>'
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 5', 4, 1, 5, 4, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 5', 4, 1, 5, 4, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'not well-formed (invalid token): line 1, column 5', 4, 1, 5, 4, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+b'<a></a b>'
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 7', 4, 1, 7, 4, 1, 7, 7)
+('pos', 1, 7, 7)
+--
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 7', 4, 1, 7, 4, 1, 7, 7)
+('pos', 1, 7, 7)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'not well-formed (invalid token): line 1, column 7', 4, 1, 7, 4, 1, 7, 7)
+('pos', 1, 7, 7)
+--
+b'<a>\x00</a>'
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+b'<a>\x01</a>'
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+b'<a>\x1f</a>'
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+b'<a b="\x01"/>'
+('ExpatError', 'not well-formed (invalid token): line 1, column 6', 4, 1, 6, 4, 1, 6, 6)
+('pos', 1, 6, 6)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 6', 4, 1, 6, 4, 1, 6, 6)
+('pos', 1, 6, 6)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 6', 4, 1, 6, 4, 1, 6, 6)
+('pos', 1, 6, 6)
+--
+b'<a>\xff</a>'
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+b'<a>\xc3</a>'
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+b'<a>\xc3'
+('StartElement', 'a', {})
+('ExpatError', 'partial character: line 1, column 3', 6, 1, 3, 6, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('StartElement', 'a', {})
+('ExpatError', 'partial character: line 1, column 3', 6, 1, 3, 6, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'partial character: line 1, column 3', 6, 1, 3, 6, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+b'<a>\xe4\xb8'
+('StartElement', 'a', {})
+('ExpatError', 'partial character: line 1, column 3', 6, 1, 3, 6, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('StartElement', 'a', {})
+('ExpatError', 'partial character: line 1, column 3', 6, 1, 3, 6, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'partial character: line 1, column 3', 6, 1, 3, 6, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+b'<a>\xc0\x80</a>'
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+b'<a>\xed\xa0\x80</a>'
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+b'<a>\xef\xbf\xbe</a>'
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+b'<a>\xef\xbf\xbf</a>'
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+b'<a>\xf4\x90\x80\x80</a>'
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+b'<a>\xf0\x9f\x98</a>'
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('StartElement', 'a', {})
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('DefaultHandlerExpand', '<a>')
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+b'<\xf0\x9f\x98\x80/>'
+('ExpatError', 'not well-formed (invalid token): line 1, column 1', 4, 1, 1, 4, 1, 1, 1)
+('pos', 1, 1, 1)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 1', 4, 1, 1, 4, 1, 1, 1)
+('pos', 1, 1, 1)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 1', 4, 1, 1, 4, 1, 1, 1)
+('pos', 1, 1, 1)
+--
+b'<a \xf0\x9f\x98\x80="x"/>'
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 3', 4, 1, 3, 4, 1, 3, 3)
+('pos', 1, 3, 3)
+--
+b'<a>\n\n  <b>\n</c></a>'
+('StartElement', 'a', {})
+('CharacterData', '\n')
+('CharacterData', '\n')
+('CharacterData', '  ')
+('StartElement', 'b', {})
+('CharacterData', '\n')
+('ExpatError', 'mismatched tag: line 4, column 2', 7, 4, 2, 7, 4, 2, 13)
+('pos', 4, 2, 13)
+--
+('StartElement', 'a', {})
+('CharacterData', '\n')
+('CharacterData', '\n')
+('CharacterData', ' ')
+('CharacterData', ' ')
+('StartElement', 'b', {})
+('CharacterData', '\n')
+('ExpatError', 'mismatched tag: line 4, column 2', 7, 4, 2, 7, 4, 2, 13)
+('pos', 4, 2, 13)
+--
+('DefaultHandlerExpand', '<a>')
+('DefaultHandlerExpand', '\n')
+('DefaultHandlerExpand', '\n')
+('DefaultHandlerExpand', '  ')
+('DefaultHandlerExpand', '<b>')
+('DefaultHandlerExpand', '\n')
+('ExpatError', 'mismatched tag: line 4, column 2', 7, 4, 2, 7, 4, 2, 13)
+('pos', 4, 2, 13)
+--
+b'<a>\r\n\r\n x &y; </a>'
+('StartElement', 'a', {})
+('CharacterData', '\n')
+('CharacterData', '\n')
+('CharacterData', ' x ')
+('ExpatError', 'undefined entity: line 3, column 3', 11, 3, 3, 11, 3, 3, 10)
+('pos', 3, 3, 10)
+--
+('StartElement', 'a', {})
+('CharacterData', '\n')
+('CharacterData', '\n')
+('CharacterData', ' ')
+('CharacterData', 'x')
+('CharacterData', ' ')
+('ExpatError', 'undefined entity: line 3, column 3', 11, 3, 3, 11, 3, 3, 10)
+('pos', 3, 3, 10)
+--
+('DefaultHandlerExpand', '<a>')
+('DefaultHandlerExpand', '\r\n')
+('DefaultHandlerExpand', '\r\n')
+('DefaultHandlerExpand', ' x ')
+('ExpatError', 'undefined entity: line 3, column 3', 11, 3, 3, 11, 3, 3, 10)
+('pos', 3, 3, 10)
+--
+b'<a>\xc3\xa9\xc3\xa9&y;</a>'
+('StartElement', 'a', {})
+('CharacterData', '\xe9\xe9')
+('ExpatError', 'undefined entity: line 1, column 5', 11, 1, 5, 11, 1, 5, 7)
+('pos', 1, 5, 7)
+--
+('StartElement', 'a', {})
+('CharacterData', '\xe9')
+('CharacterData', '\xe9')
+('ExpatError', 'undefined entity: line 1, column 5', 11, 1, 5, 11, 1, 5, 7)
+('pos', 1, 5, 7)
+--
+('DefaultHandlerExpand', '<a>')
+('DefaultHandlerExpand', '\xe9\xe9')
+('ExpatError', 'undefined entity: line 1, column 5', 11, 1, 5, 11, 1, 5, 7)
+('pos', 1, 5, 7)
+--
+b'<a>\xf0\x9f\x98\x80&y;</a>'
+('StartElement', 'a', {})
+('CharacterData', '\U0001f600')
+('ExpatError', 'undefined entity: line 1, column 4', 11, 1, 4, 11, 1, 4, 7)
+('pos', 1, 4, 7)
+--
+('StartElement', 'a', {})
+('CharacterData', '\U0001f600')
+('ExpatError', 'undefined entity: line 1, column 4', 11, 1, 4, 11, 1, 4, 7)
+('pos', 1, 4, 7)
+--
+('DefaultHandlerExpand', '<a>')
+('DefaultHandlerExpand', '\U0001f600')
+('ExpatError', 'undefined entity: line 1, column 4', 11, 1, 4, 11, 1, 4, 7)
+('pos', 1, 4, 7)
+--
+b'<a><b></a></b>'
+('StartElement', 'a', {})
+('StartElement', 'b', {})
+('ExpatError', 'mismatched tag: line 1, column 8', 7, 1, 8, 7, 1, 8, 8)
+('pos', 1, 8, 8)
+--
+('StartElement', 'a', {})
+('StartElement', 'b', {})
+('ExpatError', 'mismatched tag: line 1, column 8', 7, 1, 8, 7, 1, 8, 8)
+('pos', 1, 8, 8)
+--
+('DefaultHandlerExpand', '<a>')
+('DefaultHandlerExpand', '<b>')
+('ExpatError', 'mismatched tag: line 1, column 8', 7, 1, 8, 7, 1, 8, 8)
+('pos', 1, 8, 8)
+--
+b'<a>x'
+('StartElement', 'a', {})
+('CharacterData', 'x')
+('ExpatError', 'no element found: line 1, column 4', 3, 1, 4, 3, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+('StartElement', 'a', {})
+('CharacterData', 'x')
+('ExpatError', 'no element found: line 1, column 4', 3, 1, 4, 3, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+('DefaultHandlerExpand', '<a>')
+('DefaultHandlerExpand', 'x')
+('ExpatError', 'no element found: line 1, column 4', 3, 1, 4, 3, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+b'<a>x\r'
+('StartElement', 'a', {})
+('CharacterData', 'x')
+('CharacterData', '\n')
+('ExpatError', 'no element found: line 1, column 4', 3, 1, 4, 3, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+('StartElement', 'a', {})
+('CharacterData', 'x')
+('CharacterData', '\n')
+('ExpatError', 'no element found: line 1, column 4', 3, 1, 4, 3, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+('DefaultHandlerExpand', '<a>')
+('DefaultHandlerExpand', 'x')
+('DefaultHandlerExpand', '\r')
+('ExpatError', 'no element found: line 1, column 4', 3, 1, 4, 3, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+b'<a>x]'
+('StartElement', 'a', {})
+('CharacterData', 'x')
+('CharacterData', ']')
+('ExpatError', 'no element found: line 1, column 5', 3, 1, 5, 3, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+('StartElement', 'a', {})
+('CharacterData', 'x')
+('CharacterData', ']')
+('ExpatError', 'no element found: line 1, column 5', 3, 1, 5, 3, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+('DefaultHandlerExpand', '<a>')
+('DefaultHandlerExpand', 'x')
+('DefaultHandlerExpand', ']')
+('ExpatError', 'no element found: line 1, column 5', 3, 1, 5, 3, 1, 5, 5)
+('pos', 1, 5, 5)
+--
+b'<a>x]]'
+('StartElement', 'a', {})
+('CharacterData', 'x')
+('CharacterData', ']]')
+('ExpatError', 'no element found: line 1, column 6', 3, 1, 6, 3, 1, 6, 6)
+('pos', 1, 6, 6)
+--
+('StartElement', 'a', {})
+('CharacterData', 'x')
+('CharacterData', ']]')
+('ExpatError', 'no element found: line 1, column 6', 3, 1, 6, 3, 1, 6, 6)
+('pos', 1, 6, 6)
+--
+('DefaultHandlerExpand', '<a>')
+('DefaultHandlerExpand', 'x')
+('DefaultHandlerExpand', ']]')
+('ExpatError', 'no element found: line 1, column 6', 3, 1, 6, 3, 1, 6, 6)
+('pos', 1, 6, 6)
+--
+b'<a/>\r'
+('StartElement', 'a', {})
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 4, 4)
+--
+('StartElement', 'a', {})
+('EndElement', 'a')
+('result', 1)
+('pos', 2, 0, 5)
+--
+('DefaultHandlerExpand', '<a/>')
+('DefaultHandlerExpand', '\r')
+('result', 1)
+('pos', 1, 4, 4)
+--
+b'<a/> \r'
+('StartElement', 'a', {})
+('EndElement', 'a')
+('result', 1)
+('pos', 1, 5, 5)
+--
+('StartElement', 'a', {})
+('EndElement', 'a')
+('result', 1)
+('pos', 2, 0, 6)
+--
+('DefaultHandlerExpand', '<a/>')
+('DefaultHandlerExpand', ' ')
+('DefaultHandlerExpand', '\r')
+('result', 1)
+('pos', 1, 5, 5)
+--
+b'<a/><!--'
+('StartElement', 'a', {})
+('EndElement', 'a')
+('ExpatError', 'unclosed token: line 1, column 4', 5, 1, 4, 5, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+('StartElement', 'a', {})
+('EndElement', 'a')
+('ExpatError', 'unclosed token: line 1, column 4', 5, 1, 4, 5, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+('DefaultHandlerExpand', '<a/>')
+('ExpatError', 'unclosed token: line 1, column 4', 5, 1, 4, 5, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+b'<a/><?x'
+('StartElement', 'a', {})
+('EndElement', 'a')
+('ExpatError', 'unclosed token: line 1, column 4', 5, 1, 4, 5, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+('StartElement', 'a', {})
+('EndElement', 'a')
+('ExpatError', 'unclosed token: line 1, column 4', 5, 1, 4, 5, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+('DefaultHandlerExpand', '<a/>')
+('ExpatError', 'unclosed token: line 1, column 4', 5, 1, 4, 5, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+b'<a/>]'
+('StartElement', 'a', {})
+('EndElement', 'a')
+('ExpatError', 'junk after document element: line 1, column 4', 9, 1, 4, 9, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+('StartElement', 'a', {})
+('EndElement', 'a')
+('ExpatError', 'junk after document element: line 1, column 4', 9, 1, 4, 9, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+('DefaultHandlerExpand', '<a/>')
+('ExpatError', 'junk after document element: line 1, column 4', 9, 1, 4, 9, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+b'<a/><![CDATA[x]]>'
+('StartElement', 'a', {})
+('EndElement', 'a')
+('ExpatError', 'junk after document element: line 1, column 4', 9, 1, 4, 9, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+('StartElement', 'a', {})
+('EndElement', 'a')
+('ExpatError', 'junk after document element: line 1, column 4', 9, 1, 4, 9, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+('DefaultHandlerExpand', '<a/>')
+('ExpatError', 'junk after document element: line 1, column 4', 9, 1, 4, 9, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+b'<a/><!DOCTYPE a>'
+('StartElement', 'a', {})
+('EndElement', 'a')
+('ExpatError', 'junk after document element: line 1, column 4', 9, 1, 4, 9, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+('StartElement', 'a', {})
+('EndElement', 'a')
+('ExpatError', 'junk after document element: line 1, column 4', 9, 1, 4, 9, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+('DefaultHandlerExpand', '<a/>')
+('ExpatError', 'junk after document element: line 1, column 4', 9, 1, 4, 9, 1, 4, 4)
+('pos', 1, 4, 4)
+--
+b'<!DOCTYPE a><!DOCTYPE a><a/>'
+('StartDoctypeDecl', 'a', None, None, 0)
+('EndDoctypeDecl',)
+('ExpatError', 'syntax error: line 1, column 12', 2, 1, 12, 2, 1, 12, 12)
+('pos', 1, 12, 12)
+--
+('StartDoctypeDecl', 'a', None, None, 0)
+('EndDoctypeDecl',)
+('ExpatError', 'syntax error: line 1, column 12', 2, 1, 12, 2, 1, 12, 12)
+('pos', 1, 12, 12)
+--
+('DefaultHandlerExpand', '<!DOCTYPE')
+('DefaultHandlerExpand', ' ')
+('DefaultHandlerExpand', 'a')
+('DefaultHandlerExpand', '>')
+('ExpatError', 'syntax error: line 1, column 12', 2, 1, 12, 2, 1, 12, 12)
+('pos', 1, 12, 12)
+--
+b'<!DOCTYPE>'
+('ExpatError', 'not well-formed (invalid token): line 1, column 9', 4, 1, 9, 4, 1, 9, 9)
+('pos', 1, 9, 9)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 9', 4, 1, 9, 4, 1, 9, 9)
+('pos', 1, 9, 9)
+--
+('ExpatError', 'not well-formed (invalid token): line 1, column 9', 4, 1, 9, 4, 1, 9, 9)
+('pos', 1, 9, 9)
+--
+b'<!DOCTYPE a'
+('ExpatError', 'no element found: line 1, column 11', 3, 1, 11, 3, 1, 11, 11)
+('pos', 1, 11, 11)
+--
+('ExpatError', 'no element found: line 1, column 11', 3, 1, 11, 3, 1, 11, 11)
+('pos', 1, 11, 11)
+--
+('DefaultHandlerExpand', '<!DOCTYPE')
+('DefaultHandlerExpand', ' ')
+('DefaultHandlerExpand', 'a')
+('ExpatError', 'no element found: line 1, column 11', 3, 1, 11, 3, 1, 11, 11)
+('pos', 1, 11, 11)
+--
+b'<!DOCTYPE a>'
+('StartDoctypeDecl', 'a', None, None, 0)
+('EndDoctypeDecl',)
+('ExpatError', 'no element found: line 1, column 12', 3, 1, 12, 3, 1, 12, 12)
+('pos', 1, 12, 12)
+--
+('StartDoctypeDecl', 'a', None, None, 0)
+('EndDoctypeDecl',)
+('ExpatError', 'no element found: line 1, column 12', 3, 1, 12, 3, 1, 12, 12)
+('pos', 1, 12, 12)
+--
+('DefaultHandlerExpand', '<!DOCTYPE')
+('DefaultHandlerExpand', ' ')
+('DefaultHandlerExpand', 'a')
+('DefaultHandlerExpand', '>')
+('ExpatError', 'no element found: line 1, column 12', 3, 1, 12, 3, 1, 12, 12)
+('pos', 1, 12, 12)
+--
+b'<!DOCTYPE a x><a/>'
+('ExpatError', 'syntax error: line 1, column 12', 2, 1, 12, 2, 1, 12, 12)
+('pos', 1, 12, 12)
+--
+('ExpatError', 'syntax error: line 1, column 12', 2, 1, 12, 2, 1, 12, 12)
+('pos', 1, 12, 12)
+--
+('DefaultHandlerExpand', '<!DOCTYPE')
+('DefaultHandlerExpand', ' ')
+('DefaultHandlerExpand', 'a')
+('DefaultHandlerExpand', ' ')
+('ExpatError', 'syntax error: line 1, column 12', 2, 1, 12, 2, 1, 12, 12)
+('pos', 1, 12, 12)
+--
+b'<!FOO a><a/>'
+('ExpatError', 'syntax error: line 1, column 0', 2, 1, 0, 2, 1, 0, 0)
+('pos', 1, 0, 0)
+--
+('ExpatError', 'syntax error: line 1, column 0', 2, 1, 0, 2, 1, 0, 0)
+('pos', 1, 0, 0)
+--
+('ExpatError', 'syntax error: line 1, column 0', 2, 1, 0, 2, 1, 0, 0)
+('pos', 1, 0, 0)
+--
+b'<!doctype a><a/>'
+('ExpatError', 'syntax error: line 1, column 0', 2, 1, 0, 2, 1, 0, 0)
+('pos', 1, 0, 0)
+--
+('ExpatError', 'syntax error: line 1, column 0', 2, 1, 0, 2, 1, 0, 0)
+('pos', 1, 0, 0)
+--
+('ExpatError', 'syntax error: line 1, column 0', 2, 1, 0, 2, 1, 0, 0)
+('pos', 1, 0, 0)
+--

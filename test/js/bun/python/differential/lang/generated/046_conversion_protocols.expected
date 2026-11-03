@@ -1,0 +1,227 @@
+status: 0
+script: aafe5b33cf054be4
+source: 6b62f7f66744febd
+---
+repr(R()) => R-repr
+str(R()) => R-repr
+str(S()) => S-str
+repr(S())[:14] => <__main__.S ob
+repr(RS()) => RS-repr
+str(RS()) => RS-str
+[R(), RS()] => [R-repr, RS-repr]
+(RS(),) => (RS-repr,)
+{RS(): RS()} => {RS-repr: RS-repr}
+{R()} => {R-repr}
+"%s %r" % (RS(), RS()) => RS-str RS-repr
+"{} {!r} {!s}".format(RS(), RS(), RS()) => RS-str RS-repr RS-str
+f"{RS()} {RS()!r} {RS()!s} {RS()!a}" => RS-str RS-repr RS-str RS-repr
+format(RS()) => RS-str
+RS-str R-repr
+print(RS(), R()) => None
+ascii(R()) => R-repr
+str([S()])[:15] => [<__main__.S ob
+repr(mk(__repr__=5)) => TypeError: X.__repr__() must return a str, not int
+str(mk(__str__=5)) => TypeError: X.__str__() must return a str, not int
+repr(mk(__repr__=None)) => TypeError: X.__repr__() must return a str, not NoneType
+str(mk(__repr__=5)) => TypeError: X.__str__() must return a str, not int
+str(mk(__str__=b"b")) => TypeError: X.__str__() must return a str, not bytes
+"%s" % mk(__str__=1) => TypeError: X.__str__() must return a str, not int
+f"{mk(__str__=1)}" => TypeError: X.__str__() must return a str, not int
+[mk(__repr__=1)].__repr__() => TypeError: X.__repr__() must return a str, not int
+print(mk(__str__=1)) => TypeError: X.__str__() must return a str, not int
+ascii(mk(__repr__=1)) => TypeError: X.__repr__() must return a str, not int
+format(mk(__str__=1)) => TypeError: X.__str__() must return a str, not int
+type(str(mk(__str__=StrSub("sub")))).__name__ => StrSub
+type(repr(mk(__repr__=StrSub("sub")))).__name__ => StrSub
+str(mk(__str__=StrSub("sub"))) => sub
+ascii(mk(__repr__="é")) => \xe9
+repr(mk(__repr__="é\n")) => é
+
+str(StrSub("x")) => x
+type(str(StrSub("x"))).__name__ => str
+repr(StrSub("x")) => 'x'
+repr(RaisingRepr()) => ValueError: repr failed
+str(RaisingRepr()) => ValueError: repr failed
+[RaisingRepr()].__repr__() => ValueError: repr failed
+"%r" % RaisingRepr() => ValueError: repr failed
+f"{RaisingRepr()}" => ValueError: repr failed
+{1: RaisingRepr()}.__repr__() => ValueError: repr failed
+bool(mk(__bool__=True)) => True
+bool(mk(__bool__=False)) => False
+bool(mk(__len__=0)) => False
+bool(mk(__len__=2)) => True
+bool(mk(__bool__=True, __len__=0)) => True
+bool(mk()) => True
+not mk(__bool__=False) => True
+mk(__bool__=False) or "or" => or
+mk(__bool__=True) and "and" => and
+"y" if mk(__bool__=False) else "n" => n
+[x for x in [1] if mk(__bool__=False)] => []
+all([mk(__bool__=False)]) => False
+any([mk(__bool__=True)]) => True
+list(filter(None, [mk(__bool__=False)])) => []
+bool(mk(__bool__=1)) => TypeError: X.__bool__() must return a bool, not int
+bool(mk(__bool__=0)) => TypeError: X.__bool__() must return a bool, not int
+bool(mk(__bool__=None)) => TypeError: X.__bool__() must return a bool, not NoneType
+bool(mk(__bool__="x")) => TypeError: X.__bool__() must return a bool, not str
+not mk(__bool__=1) => TypeError: X.__bool__() must return a bool, not int
+mk(__bool__=1) and 1 => TypeError: X.__bool__() must return a bool, not int
+1 if mk(__bool__=[]) else 2 => TypeError: X.__bool__() must return a bool, not list
+wh() => TypeError: X.__bool__() must return a bool, not int
+asrt() => TypeError: X.__bool__() must return a bool, not int
+bool(RaisingBool()) => ValueError: no truth
+RaisingBool() or 1 => ValueError: no truth
+not RaisingBool() => ValueError: no truth
+[1 for _ in [1] if RaisingBool()] => ValueError: no truth
+1 < 2 < 3 and RaisingBool() and 1 => ValueError: no truth
+any([RaisingBool()]) => ValueError: no truth
+int(mk(__int__=5)) => 5
+int(mk(__index__=6)) => 6
+int(mk(__int__=5, __index__=6)) => 5
+float(mk(__float__=1.5)) => 1.5
+float(mk(__index__=2)) => 2.0
+complex(mk(__complex__=1j)) => 1j
+complex(mk(__float__=1.5)) => (1.5+0j)
+complex(mk(__index__=3)) => (3+0j)
+int(mk(__int__=True)) if False else "" => 
+float(mk(__float__=1.5, __index__=2)) => 1.5
+int(mk(__int__=10 ** 30)) => 1000000000000000000000000000000
+float(mk(__index__=10 ** 20)) => 1e+20
+int(mk(__int__=1.5)) => TypeError: X.__int__() must return an int, not float
+int(mk(__int__="5")) => TypeError: X.__int__() must return an int, not str
+int(mk(__int__=None)) => TypeError: X.__int__() must return an int, not NoneType
+int(mk(__index__=1.5)) => TypeError: X.__index__() must return an int, not float
+int(mk(__trunc__=5)) => TypeError: int() argument must be a string, a bytes-like object or a real number, not 'X'
+int(mk(__float__=1.5)) => TypeError: int() argument must be a string, a bytes-like object or a real number, not 'X'
+int(mk()) => TypeError: int() argument must be a string, a bytes-like object or a real number, not 'X'
+float(mk(__float__=1)) => TypeError: X.__float__() must return a float, not int
+float(mk(__float__="1.5")) => TypeError: X.__float__() must return a float, not str
+float(mk(__int__=1)) => TypeError: float() argument must be a string or a real number, not 'X'
+float(mk()) => TypeError: float() argument must be a string or a real number, not 'X'
+float(mk(__index__=10 ** 400)) => OverflowError: int too large to convert to float
+complex(mk(__complex__=1)) => TypeError: X.__complex__() must return a complex, not int
+complex(mk(__complex__=1.5)) => TypeError: X.__complex__() must return a complex, not float
+complex(mk(__int__=1)) => TypeError: complex() argument must be a string or a number, not X
+complex(mk()) => TypeError: complex() argument must be a string or a number, not X
+int(mk(__int__=5), 10) => TypeError: int() can't convert non-string with explicit base
+int(mk(__int__=True)) => 1
+int(mk(__index__=True)) => 1
+[1, 2][mk(__int__=1)] => TypeError: list indices must be integers or slices, not X
+(float(mk(__float__=FS(1.5))), type(float(mk(__float__=FS(1.5))))) => (1.5, <class 'float'>)
+(int(mk(__int__=IS(5))), type(int(mk(__int__=IS(5))))) => (5, <class 'int'>)
+(complex(mk(__complex__=CS(1j))), type(complex(mk(__complex__=CS(1j))))) => (1j, <class 'complex'>)
+round(mk(__round__="rounded")) => rounded
+round(mk(__round__="rounded"), 2) => rounded
+abs(mk(__abs__="abs")) => abs
+divmod(mk(__divmod__="dm"), 1) => dm
+divmod(1, mk(__rdivmod__="rdm")) => rdm
+round(mk(__round__=None)) => None
+round(Rd()) => ('round', None)
+round(Rd(), 1) => ('round', 1)
+round(Rd(), None) => ('round', None)
+round(Rd(), ndigits=2) => ('round', 2)
+round(number=Rd()) => ('round', None)
+round(mk()) => TypeError: type X doesn't define __round__ method
+round("a") => TypeError: type str doesn't define __round__ method
+round(None) => TypeError: type NoneType doesn't define __round__ method
+round([]) => TypeError: type list doesn't define __round__ method
+abs(mk()) => TypeError: bad operand type for abs(): 'X'
+abs("a") => TypeError: bad operand type for abs(): 'str'
+abs(None) => TypeError: bad operand type for abs(): 'NoneType'
+abs([]) => TypeError: bad operand type for abs(): 'list'
+round() => TypeError: round() missing required argument 'number' (pos 1)
+round(1, 2, 3) => TypeError: round() takes at most 2 arguments (3 given)
+round(1.5, "a") => TypeError: 'str' object cannot be interpreted as an integer
+round(1, 1.5) => TypeError: 'float' object cannot be interpreted as an integer
+abs() => TypeError: abs() takes exactly one argument (0 given)
+abs(1, 2) => TypeError: abs() takes exactly one argument (2 given)
+divmod(1) => TypeError: divmod expected 2 arguments, got 1
+divmod("a", 1) => TypeError: unsupported operand type(s) for divmod(): 'str' and 'int'
+divmod(1, "a") => TypeError: unsupported operand type(s) for divmod(): 'int' and 'str'
+divmod(mk(), 1) => TypeError: unsupported operand type(s) for divmod(): 'X' and 'int'
+format(F()) => F<>
+format(F(), "x") => F<x>
+"{}".format(F()) => F<>
+"{:abc}".format(F()) => F<abc>
+f"{F()}" => F<>
+f"{F():>10}" => F<>10>
+f"{F()!s:.3}" => <__
+"{!r:.3}".format(F()) => <__
+"%s" % F() != "F<>" => True
+format(mk(__format__=5)) => TypeError: X.__format__() must return a str, not int
+format(mk(__format__=None)) => TypeError: X.__format__() must return a str, not NoneType
+f"{mk(__format__=5)}" => TypeError: X.__format__() must return a str, not int
+format(mk(), "x") => TypeError: unsupported format string passed to X.__format__
+format(mk(), "")[:3] => '<__'
+format() => TypeError: format expected at least 1 argument, got 0
+format(1, 2, 3) => TypeError: format expected at most 2 arguments, got 3
+format(1, 1) => TypeError: format() argument 2 must be str, not int
+object.__format__(1, "x") => TypeError: unsupported format string passed to int.__format__
+object.__format__(1, 1) => TypeError: __format__() argument must be str, not int
+format(None, "x") => TypeError: unsupported format string passed to NoneType.__format__
+format([], ">5") => TypeError: unsupported format string passed to list.__format__
+format(type, "x") => TypeError: unsupported format string passed to type.__format__
+format(len, "x") => TypeError: unsupported format string passed to builtin_function_or_method.__format__
+format(..., "5") => TypeError: unsupported format string passed to ellipsis.__format__
+format((1,), "5") => TypeError: unsupported format string passed to tuple.__format__
+format({}, "5") => TypeError: unsupported format string passed to dict.__format__
+format(range(1), "5") => TypeError: unsupported format string passed to range.__format__
+format(b"a", "5") => TypeError: unsupported format string passed to bytes.__format__
+format(object(), "s") => TypeError: unsupported format string passed to object.__format__
+bytes(mk(__bytes__=b"x")) => b'x'
+hash(mk(__hash__=5)) => 5
+mk(__call__="called")() => called
+mk(__call__="called")(1, a=2) => called
+callable(mk(__call__=1)) => True
+callable(mk()) => False
+callable(type("C", (), {"__call__": None})()) => True
+callable(int) => True
+callable(len) => True
+callable(lambda: 0) => True
+callable("a") => False
+callable(None) => False
+callable([].append) => True
+callable(type) => True
+callable(mk) => True
+callable(staticmethod(len)) => True
+callable(classmethod(len)) => False
+callable(property()) => False
+bytes(mk(__bytes__="x")) => TypeError: X.__bytes__() must return a bytes, not str
+bytes(mk(__bytes__=5)) => TypeError: X.__bytes__() must return a bytes, not int
+bytes(mk(__bytes__=None)) => TypeError: X.__bytes__() must return a bytes, not NoneType
+bytes(mk()) => TypeError: cannot convert 'X' object to bytes
+mk()() => TypeError: 'X' object is not callable
+type("C", (), {"__call__": None})()() => TypeError: 'NoneType' object is not callable
+type("C", (), {"__call__": 5})()() => TypeError: 'int' object is not callable
+compile("1", mk(__fspath__=5), "eval") => TypeError: expected X.__fspath__() to return str or bytes, not int
+compile("1", mk(), "eval") => TypeError: expected str, bytes or os.PathLike object, not X
+compile("1", mk(__fspath__="path"), "eval").co_filename => path
+compile("1", mk(__fspath__=b"bpath"), "eval").co_filename => bpath
+compile("1", b"bytes", "eval").co_filename => bytes
+c() => ((), {})
+c(1) => ((1,), {})
+c(1, x=2) => ((1,), {'x': 2})
+c(*[1, 2], **{"y": 3}) => ((1, 2), {'y': 3})
+c.__call__(5) => ((5,), {})
+Call.__call__(c, 6) => ((6,), {})
+list(map(c, [1, 2])) => [((1,), {}), ((2,), {})]
+sorted([2, 1], key=lambda v: c(v)[0]) => [1, 2]
+type(c.__call__).__name__ => method
+c.__call__.__call__.__call__(7) => ((7,), {})
+CallChain
+((1,), {})
+CallType()("5") => 5
+CallType()() => 0
+2
+repr(WithAll)[:8] => <class '
+bool(WithAll) => True
+isinstance(hash(WithAll), int) => True
+type(WithAll()).__name__ => WithAll
+len(WithAll) => TypeError: object of type 'type' has no len()
+int(WithAll) => TypeError: int() argument must be a string, a bytes-like object or a real number, not 'type'
+iter(WithAll) => TypeError: 'type' object is not iterable
+WithAll.__len__() => TypeError: WithAll.__len__() missing 1 required positional argument: 's'
+WithAll.__repr__() => TypeError: WithAll.__repr__() missing 1 required positional argument: 's'
+WithAll.__repr__(WithAll()) => inst
+WithAll.__len__(WithAll()) => 1
+type.__repr__(WithAll)[:8] => <class '

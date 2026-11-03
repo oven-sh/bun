@@ -1,0 +1,129 @@
+status: 0
+script: 57be4787abde61ee
+---
+True default {}
+('default', None, <class 'DeprecationWarning'>, '__main__', 0)
+('ignore', None, <class 'DeprecationWarning'>, None, 0)
+('ignore', None, <class 'PendingDeprecationWarning'>, None, 0)
+('ignore', None, <class 'ImportWarning'>, None, 0)
+('ignore', None, <class 'ResourceWarning'>, None, 0)
+True True
+['_acquire_lock', '_defaultaction', '_filters_mutated_lock_held', '_onceregistry', '_release_lock', '_warnings_context', 'filters', 'warn', 'warn_explicit']
+SHOWN UserWarning in a loop filters.py 17 None
+SHOWN UserWarning in a loop filters.py 18 None
+[('in a loop', <class 'UserWarning'>, 17), ('in a loop', <class 'UserWarning'>, 18)]
+SHOWN DeprecationWarning deprecated filters.py 22 None
+SHOWN RuntimeWarning an instance filters.py 26 None
+SHOWN RuntimeWarning an instance wins filters.py 27 None
+SHOWN UserWarning none filters.py 28 None
+SHOWN UserWarning 42 filters.py 29 None
+SHOWN UserWarning None filters.py 30 None
+SHOWN Mine mine filters.py 32 None
+SHOWN Mine ('a', 'b') filters.py 33 None
+TypeError category must be a Warning subclass, not class 'int'
+TypeError category must be a Warning subclass, not 'int'
+TypeError category must be a Warning subclass, not 'str'
+TypeError category must be a Warning subclass, not class 'Exception'
+TypeError category must be a Warning subclass, not 'tuple'
+-- error {}
+raised UserWarning text one
+raised UserWarning text one
+-- ignore {}
+-- always {}
+SHOWN UserWarning text one filters.py 49 None
+SHOWN UserWarning text one filters.py 50 None
+SHOWN RuntimeWarning text two filters.py 51 None
+SHOWN UserWarning text one filters.py 49 None
+SHOWN UserWarning text one filters.py 50 None
+SHOWN RuntimeWarning text two filters.py 51 None
+-- all {}
+SHOWN UserWarning text one filters.py 49 None
+SHOWN UserWarning text one filters.py 50 None
+SHOWN RuntimeWarning text two filters.py 51 None
+SHOWN UserWarning text one filters.py 49 None
+SHOWN UserWarning text one filters.py 50 None
+SHOWN RuntimeWarning text two filters.py 51 None
+-- default {}
+SHOWN UserWarning text one filters.py 49 None
+SHOWN UserWarning text one filters.py 50 None
+SHOWN RuntimeWarning text two filters.py 51 None
+-- module {}
+SHOWN UserWarning text one filters.py 49 None
+SHOWN RuntimeWarning text two filters.py 51 None
+-- once {}
+SHOWN UserWarning text one filters.py 49 None
+SHOWN RuntimeWarning text two filters.py 51 None
+-- error {'category': <class 'RuntimeWarning'>}
+SHOWN UserWarning text one filters.py 49 None
+SHOWN UserWarning text one filters.py 50 None
+raised RuntimeWarning text two
+raised RuntimeWarning text two
+-- error {'message': 'text t'}
+SHOWN UserWarning text one filters.py 49 None
+SHOWN UserWarning text one filters.py 50 None
+raised RuntimeWarning text two
+raised RuntimeWarning text two
+-- error {'message': 'TEXT ONE'}
+raised UserWarning text one
+raised UserWarning text one
+-- error {'message': 'ext'}
+SHOWN UserWarning text one filters.py 49 None
+SHOWN UserWarning text one filters.py 50 None
+SHOWN RuntimeWarning text two filters.py 51 None
+-- error {'module': '__main__'}
+raised UserWarning text one
+raised UserWarning text one
+-- error {'module': '__mai'}
+raised UserWarning text one
+raised UserWarning text one
+-- error {'module': 'other'}
+SHOWN UserWarning text one filters.py 49 None
+SHOWN UserWarning text one filters.py 50 None
+SHOWN RuntimeWarning text two filters.py 51 None
+-- ignore {'lineno': 1}
+SHOWN UserWarning text one filters.py 49 None
+SHOWN UserWarning text one filters.py 50 None
+SHOWN RuntimeWarning text two filters.py 51 None
+-- nonsense {}
+ValueError invalid action: 'nonsense'
+RuntimeError Unrecognized action ('nonsense') in warnings.filters:
+ ('nonsense', None, <class 'Warning'>, None, 0)
+ValueError warnings.filters item 0 isn't a 5-tuple
+SHOWN UserWarning level -1 filters.py 86 None
+SHOWN UserWarning level 0 filters.py 86 None
+SHOWN UserWarning level 1 filters.py 86 None
+SHOWN UserWarning level 2 filters.py 88 None
+SHOWN UserWarning level 3 filters.py 92 None
+SHOWN UserWarning level 4 <sys> 0 None
+SHOWN UserWarning level 100 <sys> 0 None
+OverflowError Python int too large to convert to C ssize_t
+TypeError 'str' object cannot be interpreted as an integer
+SHOWN UserWarning skipping nothing filters.py 105 None
+SHOWN UserWarning skipping elsewhere <sys> 0 None
+SHOWN UserWarning skipping this file <sys> 0 None
+TypeError warn() argument 'skip_file_prefixes' must be tuple, not list
+TypeError warn() argument 'skip_file_prefixes' must be tuple, not str
+TypeError Found non-str 'int' in skip_file_prefixes.
+TypeError warn() argument 'skip_file_prefixes' must be tuple, not None
+SHOWN UserWarning explicit file.py 10 None
+SHOWN UserWarning explicit file.py 11 None
+[('explicit', <class 'UserWarning'>, 10), ('explicit', <class 'UserWarning'>, 11)] True
+SHOWN UserWarning no registry file.py 10 None
+SHOWN UserWarning no registry file.py 10 None
+SHOWN UserWarning instance file.py 12 None
+SHOWN UserWarning with module file.py 13 None
+SHOWN UserWarning globals file.py 1 None
+TypeError 'str' object cannot be interpreted as an integer
+TypeError warn_explicit() argument 'filename' must be str, not int
+TypeError 'int' object is not callable
+TypeError module_globals must be a dict or a frozendict, not int
+SHOWN UserWarning only once filters.py 141 None
+[]
+SHOWN UserWarning for the module filters.py 152 None
+SHOWN UserWarning forgotten filters.py 160 None
+SHOWN UserWarning forgotten filters.py 160 None
+WarningMessage FutureWarning recorded 168 filters.py None False
+WarningMessage ResourceWarning with source 169 filters.py None True
+raised an error by default
+RuntimeError cannot release un-acquired lock
+RuntimeError warnings lock is not held

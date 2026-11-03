@@ -1,0 +1,165 @@
+status: 0
+script: c724ea55467d28f8
+---
+--- construction
+b'' 0 b''
+b'' 0 b''
+b'abc' 0 b'abc'
+b'abc' 0 b'abc'
+b'' 0 b''
+b'xy'
+TypeError: a bytes-like object is required, not 'str'
+TypeError: a bytes-like object is required, not 'int'
+TypeError: a bytes-like object is required, not 'list'
+TypeError: BytesIO() takes at most 1 argument (2 given)
+TypeError: BytesIO() got an unexpected keyword argument 'bad'
+TypeError: BytesIO() takes at most 1 argument (2 given)
+bytes bytes
+True True True
+b'shared data!' b'shared data'
+--- what it can do
+True True True False False None
+UnsupportedOperation: fileno
+UnsupportedOperation: detach
+<_io.BytesIO object a
+--- read
+b'012' b'' b'34' 5 b'56789' b'' b'' 10
+b'0123456789' 4 b'456789' 8 b'89'
+b'0123456789' 2 b'234' b'56789' b''
+TypeError: argument should be integer or None, not 'str'
+TypeError: argument should be integer or None, not 'float'
+OverflowError: cannot fit 'int' into an index-sized integer
+TypeError: read expected at most 1 argument, got 2
+b'01' b'2'
+--- readinto
+4 bytearray(b'8967') 4 bytearray(b'8967') 2 bytearray(b'8967') 0 bytearray(b'8967') 0
+TypeError: readinto() argument must be read-write bytes-like object, not bytes
+TypeError: readinto() argument must be read-write bytes-like object, not str
+TypeError: readinto() argument must be read-write bytes-like object, not None
+4 bytearray(b'0123')
+0 bytearray(b'0123')
+--- lines
+b'one\n' b'tw' b'' b'o\n' b'\n' b'three\r\n' b'last' b''
+[b'one\n', b'two\n', b'\n', b'three\r\n', b'last']
+None [b'one\n', b'two\n', b'\n', b'three\r\n', b'last'] 20
+0 [b'one\n', b'two\n', b'\n', b'three\r\n', b'last'] 20
+-1 [b'one\n', b'two\n', b'\n', b'three\r\n', b'last'] 20
+1 [b'one\n'] 4
+4 [b'one\n'] 4
+5 [b'one\n', b'two\n'] 8
+8 [b'one\n', b'two\n'] 8
+9 [b'one\n', b'two\n', b'\n'] 9
+100 [b'one\n', b'two\n', b'\n', b'three\r\n', b'last'] 20
+TypeError: integer argument expected, got 'str'
+TypeError: integer argument expected, got 'float'
+TypeError: integer argument expected, got 'Idx'
+[b'one\n', b'two\n', b'\n', b'three\r\n', b'last'] []
+b'two\n' b'\n' True
+StopIteration: 
+[b'\n', b'\n'] [] b'x'
+--- write
+3 2 0 5 b'abcde'
+1 2 b'aXYde' 3
+4 5 b'aXYd12345'
+12 b'aXYd12345' 1 b'aXYd12345\x00\x00\x00!' 13
+TypeError: a bytes-like object is required, not 'str'
+TypeError: a bytes-like object is required, not 'int'
+TypeError: a bytes-like object is required, not 'NoneType'
+TypeError: a bytes-like object is required, not 'list'
+TypeError: BytesIO.write() takes exactly one argument (0 given)
+b'abcd'
+TypeError: a bytes-like object is required, not 'str'
+b'abcde'
+TypeError: 'int' object is not iterable
+TypeError: 'NoneType' object is not iterable
+TypeError: a bytes-like object is required, not 'int'
+--- seek and tell
+3 5 4 7 10 15 15 b''
+0 0 0 1
+ValueError: negative seek value -1
+ValueError: negative seek value -1
+ValueError: invalid whence (3, should be 0, 1 or 2)
+ValueError: invalid whence (-1, should be 0, 1 or 2)
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+TypeError: 'NoneType' object cannot be interpreted as an integer
+TypeError: 'NoneType' object cannot be interpreted as an integer
+TypeError: seek expected at least 1 argument, got 0
+OverflowError: Python int too large to convert to C ssize_t
+9223372036854775807
+OverflowError: new position too large
+OverflowError: new position too large
+b'' b'' b'' [] 0
+OverflowError: new buffer size too large
+MemoryError: 
+--- truncate
+5 b'01234' 0 3 3 b'012' 3 100 b'012'
+10 10 b'012' 1 b'012\x00\x00\x00\x00\x00\x00\x00x'
+0 b'' 11 1
+ValueError: negative size value -1
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+b'xxxyz'
+--- getvalue is a snapshot
+b'abcdef' b'abcdef' b'Xbcdefghi'
+b'abcdef' b'XYZdef'
+--- growth
+8994 8994 126493
+200000 b'aabb'
+--- closed
+None True None
+read ValueError: I/O operation on closed file.
+read1 ValueError: I/O operation on closed file.
+readline ValueError: I/O operation on closed file.
+readlines ValueError: I/O operation on closed file.
+getvalue ValueError: I/O operation on closed file.
+getbuffer ValueError: I/O operation on closed file.
+tell ValueError: I/O operation on closed file.
+truncate ValueError: I/O operation on closed file.
+flush ValueError: I/O operation on closed file.
+isatty ValueError: I/O operation on closed file.
+readable ValueError: I/O operation on closed file.
+writable ValueError: I/O operation on closed file.
+seekable ValueError: I/O operation on closed file.
+__next__ ValueError: I/O operation on closed file.
+__enter__ ValueError: I/O operation on closed file.
+__getstate__ ValueError: I/O operation on closed file.
+ValueError: I/O operation on closed file.
+TypeError: a bytes-like object is required, not 'str'
+ValueError: I/O operation on closed file.
+ValueError: I/O operation on closed file.
+ValueError: I/O operation on closed file.
+True
+b'x'
+True
+False
+--- initialized again
+0 b'xyz12'
+0 b''
+b'' False 1 b'q'
+--- pickling
+(b'abcdef', 2, None)
+(b'abcdef', 2, {'extra': [1]}) False
+None b'xyz' 1 {}
+b'12345' 5 {'k': 'v'}
+b'' ['j', 'k']
+TypeError: _io.BytesIO.__setstate__ argument should be 3-tuple, got tuple
+TypeError: _io.BytesIO.__setstate__ argument should be 3-tuple, got list
+TypeError: _io.BytesIO.__setstate__ argument should be 3-tuple, got NoneType
+TypeError: a bytes-like object is required, not 'str'
+TypeError: second item of state must be an integer, not str
+TypeError: second item of state must be an integer, not float
+ValueError: position value cannot be negative
+TypeError: third item of state should be a dict, got a int
+TypeError: third item of state should be a dict, got a list
+__newobj__ (<class '_io.BytesIO'>,) (b'abcdef', 2, {'extra': [1]})
+--- subclasses
+[b'a\n', b'b\n'] 0 [] True ['Sub', 'BytesIO', '_BufferedIOBase', '_IOBase', 'object']
+TypeError: Sub.__setstate__ argument should be 3-tuple, got int
+int
+--- the type
+<class '_io.BytesIO'> BytesIO BytesIO _io (<class '_io._BufferedIOBase'>,)
+TypeError: cannot set 'x' attribute of immutable type '_io.BytesIO'
+AttributeError: attribute 'closed' of '_io.BytesIO' objects is not writable
+TypeError: cannot create '_io._BytesIOBuffer' instances
+<class '_io._BytesIOBuffer'>

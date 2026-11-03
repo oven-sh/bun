@@ -1,0 +1,7 @@
+status: 0
+oracle: none
+---
+(None, 42, True)
+[0,1,2,3,4]
+800 100000
+(None, 2, True) (None, 4, True)

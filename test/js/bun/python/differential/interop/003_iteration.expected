@@ -1,0 +1,25 @@
+status: 0
+oracle: none
+mask: addresses
+---
+0,1,2 closed
+1,2,3 a,1,b,2 ('a', 1),('b', 2) 1,2 2,4,6
+number1,number2.5
+3,2,1 0,10,20 1,2
+0 1 2,3,4
+3 3 2
+closed
+true
+function function function function undefined
+{"value":0,"done":false} {"value":1,"done":false} {"value":"done","done":true} {"done":true} ('got', 'hi'),closed
+{"value":7,"done":true} {"done":true}
+function true {"value":1,"done":false} [object Iterator] 0
+3,4
+{"value":"caught v","done":false}
+{"value":"js JSError","done":false}
+undefined undefined undefined undefined
+true true
+ValueError no iter
+mine
+6 9 a,b 1,2 1,2
+6 7

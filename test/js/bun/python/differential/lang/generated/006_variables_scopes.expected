@@ -1,0 +1,66 @@
+status: 0
+script: f6e8f4a9dee07d74
+source: 2d8933eadef92916
+---
+1
+shadow() => 2
+x => 1
+3
+new
+unbound() => UnboundLocalError: cannot access local variable 'x' where it is not associated with a value
+unbound2() => UnboundLocalError: cannot access local variable 'y' where it is not associated with a value
+unbound3() => UnboundLocalError: cannot access local variable 'del_me' where it is not associated with a value
+unbound_aug() => UnboundLocalError: cannot access local variable 'x' where it is not associated with a value
+not_defined => NameError: name 'not_defined' is not defined
+nameerr() => NameError: name 'also_not_defined' is not defined
+del_unbound() => UnboundLocalError: cannot access local variable 'zzz' where it is not associated with a value
+del_global() => NameError: name 'gone' is not defined
+for_unbound() => UnboundLocalError: cannot access local variable 'i' where it is not associated with a value
+except_unbound() => UnboundLocalError: cannot access local variable 'e' where it is not associated with a value
+2
+c1() => 1
+c1() => 2
+c2() => 1
+c1() => 3
+NameError cannot access free variable 'later' where it is not associated with a value in enclosing scope
+5
+del_free() => NameError: cannot access free variable 'v' where it is not associated with a value in enclosing scope
+ab
+20
+[2, 2, 2]
+[0, 1, 2]
+[0, 1, 2]
+[2, 2, 2]
+K().m() => global y
+K.z => class y!
+K.l => ['global y']
+('func y', 'func y')
+class_local_then_enclosing() => NameError: name 'v' is not defined
+class_sees_global() => module v
+'class'
+gl["x"] => 3
+"x" in gl => True
+gl is globals() => True
+__name__ => __main__
+99
+[('a', 1), ('b', 2), ('c', 3)]
+({}, ['l', 'q'])
+True
+shadowed
+1
+shadow_builtin() => 5
+max(1, 2) => 2
+b => [1]
+c => [1]
+a is c => True
+i => 1
+j => 0
+a => NameError: name 'a' is not defined
+[1]
+x => NameError: name 'x' is not defined
+SyntaxError name 'a' is parameter and global
+SyntaxError name 'a' is assigned to before global declaration
+SyntaxError no binding for nonlocal 'q' found
+SyntaxError nonlocal declaration not allowed at module level
+SyntaxError name 'a' is used prior to global declaration
+SyntaxError name 'a' is nonlocal and global

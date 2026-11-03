@@ -1,0 +1,102 @@
+status: 0
+script: d303ae8af4811480
+source: acf3ceead9fcbc1c
+---
+binary -> [1, 2, 3, 4] | 3
+power -> [2, 3, 1] | 8
+unary -> [1, 2] | -4
+parens -> [1, 2, 3, 4] | 21
+ops by precedence -> ['make a', 'make b', 'make c', 'make d', 'c.pow', 'b.mul', 'a.add'] | Tr(a)
+left assoc -> ['make a', 'make b', 'a.sub', 'make c', 'a.sub'] | Tr(a)
+shift/bit -> ['make a', 'make b', 'make c', 'make d', 'make e', 'd.lshift', 'c.and', 'b.xor', 'a.or'] | Tr(a)
+neg pow -> ['make a', 'make b', 'a.pow', 'a.neg'] | Tr(a)
+comparison chain -> [1, 2, 3, 4] | True
+comparison chain stops -> [1, 0] | False
+comparison objects -> ['make a', 'make b', 'a.lt', 'a.bool', 'make c', 'b.le'] | Tr(b)
+in / not in -> [1, 1, 2] | True
+contains -> ['make x', 'make c', 'c.contains', 'c.bool'] | True
+is -> [1, 1] | True
+and -> [1, 0] | 0
+or -> [0, 2] | 2
+and/or mix -> [0, 2, 3] | 3
+not -> [1] | False
+conditional true -> ['cond', 'then'] | then
+conditional false -> ['cond', 'else'] | else
+nested conditional -> ['c1', 'c2', 3] | 3
+tuple -> [1, 2, 3] | (1, 2, 3)
+list -> [1, 2, 3] | [1, 2, 3]
+set -> [1, 2, 3] | [1, 2, 3]
+dict -> ['k1', 'v1', 'k2', 'v2'] | {'k1': 'v1', 'k2': 'v2'}
+dict unpack -> ['k1', 'v1', 'm', 'k2', 'v2'] | {'k1': 'v1', 'x': 1, 'k2': 'v2'}
+list unpack -> [1, 'it', 4] | [1, 2, 3, 4]
+slice -> [1, 8, 2] | [1, 3, 5, 7]
+subscript -> ['obj', 'idx'] | 2
+attribute -> ['obj'] | S
+attr chain -> ['make a', 'a.getattr(b)', 'a.getattr(c)', 'make x', 'a.call', 'a.getattr(d)'] | Tr(a)
+call -> ['f', 1, 2, 3, 4] | None
+call star -> ['f', 1, 's', 3, 's2', 5, 'kw', 6] | None
+keyword before star -> ['f', 's', 1] | None
+method call -> ['make o', 'o.getattr(m)', 'make a1', 'make a2', 'o.call'] | Tr(o)
+nested calls -> ['outer', 'in1', 'a', 'in2', 'b'] | None
+call of call -> ['make f', 'make a', 'f.call', 'make b', 'f.call'] | Tr(f)
+f-string -> [1, 2, 3, 4] | 1   2 4
+lambda default -> ['d1', 'd2'] | None
+comprehension -> ['iter', ('cond', 1), ('elt', 1), ('cond', 2), ('elt', 2)] | [('elt', 1), ('elt', 2)]
+nested comprehension -> ['outer', ('inner', 1), ('inner', 2)] | [(1, 0), (2, 0)]
+dict comprehension -> ['iter', ('k', 1), ('v', 1), ('k', 2), ('v', 2)] | {('k', 1): ('v', 1), ('k', 2): ('v', 2)}
+walrus -> [1, 2] | 4
+error stops evaluation -> [1, 2] | TypeError: unsupported operand type(s) for +: 'int' and 'str'
+error in the callee lookup -> [] | NameError: name 'undefined_function' is not defined
+error in arguments first -> ['f', 1] | ZeroDivisionError: division by zero
+not callable after arguments -> ['f', 1, 2] | TypeError: 'int' object is not callable
+star arg error -> ['f', 's'] | TypeError: Value after * must be an iterable, not int
+assignment -> [1] 
+rhs first -> ['value', 'obj', 'key'] 
+attribute target -> ['value', 'make o'] 
+multiple targets -> ['value', 'o1', 'k1', 'o2', 'k2'] 
+tuple target -> ['v1', 'v2', 'o1', 'k1', 'o2', 'k2'] 
+swap -> [(1, [1, 9])] 
+chained with dependency -> [(1, [0, 1])] 
+unpack from iterator -> ['it'] 
+starred -> ['v', 'o', 'k'] 
+slice target -> ['v', 'o', 0, 1] 
+augmented name -> [1] 
+augmented subscript -> ['make o', 'make k', 'o.getitem', 'make v', 'o.iadd', 'o.setitem'] 
+augmented attribute -> ['make o', 'o.getattr(a)', 'make v', 'o.iadd'] 
+augmented slice -> ['o', 0, 2, 'v'] 
+annotated -> ['v', 'o', 'k'] 
+annotated no value -> ['o', 'k'] 
+annotated name -> ['v'] 
+del -> ['o1', 'k', 'o2', 'i'] 
+return -> [1, 2] 
+raise from -> ['exc', 'cause'] ValueError: x
+assert ok -> ['cond'] 
+assert fail -> ['cond', 'msg'] AssertionError: msg
+if/elif -> [1, 2, 3] 
+while -> ['cond', 'body', 'cond', 'body', 'cond', 'else'] 
+for -> ['it', 'o', 'k', 'body', 'o', 'k', 'body'] 
+with -> ['m1', 'enter 1', 'o', 'k', 'm2', 'enter 2', 'body', 'exit 2', 'exit 1'] 
+def -> ['deco1', 'deco2', 'd1', 'd2'] 
+def annotations are lazy -> ['d1', 'defined', 'ann a', 'ret'] 
+class -> ['deco', 'base', 'meta', 'body'] 
+import-free global -> [1] 
+try -> ['try', 'h1', 'h2', 'b2', 'finally'] 
+match -> ['subject', 'g2', 'g3', 'body'] 
+print -> [1, 2, 'sep', 'end', 'file'] AttributeError: 'str' object has no attribute 'write'
+expression list -> [1, 2, 3] 
+lambda body is lazy -> ['after def', 'body'] 
+generator is lazy -> ['it', 'created', 1, 2] 
+default evaluated once -> ['default', [1, 1, 1]] 
+class body order -> ['a', 'b', 'm'] 
+star assign order -> [1, 2, 3] 
+comparison with side effects -> [1, 2, 2] 
+subscript store vs value error -> ['v'] NameError: name 'undefined' is not defined
+target error after value -> ['v', 'o', 'k'] TypeError: 'int' object does not support item assignment
+unpack error before targets -> ['v'] ValueError: not enough values to unpack (expected 2, got 1)
+partial unpack assignment -> [{'a': 1, 'b': 2}] 
+del order with error -> [('KeyError', (2,), {})] 
+aug assign reads before rhs -> [2] 
+aug item reads before rhs -> [[2]] 
+operand captured before call -> [(2, 11)] 
+callee captured before args -> ['a'] 
+method captured before args -> ['old'] 

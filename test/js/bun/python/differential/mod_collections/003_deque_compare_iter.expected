@@ -1,0 +1,21 @@
+status: 1
+stderr: RuntimeError: deque mutated during iteration
+script: c296ab753e8b9dae
+---
+[(True, False, False, True, False, True), (False, True, True, True, False, False), (False, True, True, True, False, False), (False, True, True, True, False, False), (False, True, True, True, False, False), (False, True, True, True, False, False)]
+[(False, True, False, False, True, True), (True, False, False, True, False, True), (False, True, True, True, False, False), (False, True, True, True, False, False), (False, True, True, True, False, False), (False, True, True, True, False, False)]
+[(False, True, False, False, True, True), (False, True, False, False, True, True), (True, False, False, True, False, True), (False, True, True, True, False, False), (False, True, True, True, False, False), (True, False, False, True, False, True)]
+[(False, True, False, False, True, True), (False, True, False, False, True, True), (False, True, False, False, True, True), (True, False, False, True, False, True), (False, True, True, True, False, False), (False, True, False, False, True, True)]
+[(False, True, False, False, True, True), (False, True, False, False, True, True), (False, True, False, False, True, True), (False, True, False, False, True, True), (True, False, False, True, False, True), (False, True, False, False, True, True)]
+[(False, True, False, False, True, True), (False, True, False, False, True, True), (True, False, False, True, False, True), (False, True, True, True, False, False), (False, True, True, True, False, False), (True, False, False, True, False, True)]
+False True False NotImplemented NotImplemented
+TypeError
+TypeError '<' not supported between instances of 'int' and 'str'
+True True 1 0
+_deque_iterator 5 0 4 True
+[1, 2, 3, 4] 0
+StopIteration 
+_deque_reverse_iterator 5 4 [3, 2, 1, 0]
+StopIteration 
+RuntimeError deque mutated during iteration
+RuntimeError deque mutated during iteration

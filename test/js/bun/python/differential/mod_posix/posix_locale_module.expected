@@ -1,0 +1,37 @@
+status: 0
+script: 7c30b4437e853d83
+---
+locale Error 6 127
+('C', 'UTF-8')
+(None, None)
+'UTF-8'
+'utf-8'
+'utf-8'
+'C'
+(None, None)
+'C.UTF-8'
+('C', 'UTF-8')
+'C.UTF-8'
+Error unsupported locale setting
+Error unsupported locale setting
+'C.UTF-8'
+{'int_curr_symbol': '', 'currency_symbol': '', 'mon_decimal_point': '', 'mon_thousands_sep': '', 'mon_grouping': [], 'positive_sign': '', 'negative_sign': '', 'int_frac_digits': 127, 'frac_digits': 127, 'p_cs_precedes': 127, 'p_sep_by_space': 127, 'n_cs_precedes': 127, 'n_sep_by_space': 127, 'p_sign_posn': 127, 'n_sign_posn': 127, 'decimal_point': '.', 'thousands_sep': '', 'grouping': []}
+'1234567'
+'1234.50 and x'
+'1.5'
+1.5
+15
+'1,234.5'
+'1234.5'
+ValueError Currency formatting is not possible using the 'C' locale.
+True True 0
+'abc'
+['B', 'C', 'a', 'b']
+['B', 'C', 'a', 'b']
+'en_US.ISO8859-1'
+'de_DE.ISO8859-15@euro'
+'C'
+'UTF-8'
+'Sunday'
+'x'
+'messages'

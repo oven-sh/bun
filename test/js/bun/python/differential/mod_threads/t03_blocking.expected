@@ -1,0 +1,20 @@
+status: 0
+script: 6f427075540982fe
+---
+sleep True None
+os.read True b'x'
+select True [1, 0, 0]
+poll True 1
+select timeout True ([], [], [])
+epoll True 1
+FileIO.read True b'file'
+recv True b'sock'
+recv timeout True timed out
+accept True b'hi'
+subprocess True 0
+os.system True 0
+lock timeout False None
+lock timeout True False
+event True False
+getaddrinfo True ('127.0.0.1', 80)
+['sleep', b'1', ([], [], []), b'2', 0] True

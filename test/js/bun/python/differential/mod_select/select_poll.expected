@@ -1,0 +1,45 @@
+status: 0
+script: b7f272a7164f0931
+---
+[]
+None None
+True
+True
+None True
+None []
+None True True True
+[]
+True
+[]
+True
+True
+KeyError True
+KeyError: 12345
+FileNotFoundError: [Errno 2] No such file or directory
+ValueError: file descriptor cannot be a negative integer (-1)
+TypeError: argument must be an int, or have a fileno() method.
+TypeError: argument must be an int, or have a fileno() method.
+ValueError: Cannot convert negative int
+OverflowError: Python int too large for C unsigned short
+None
+OverflowError: Python int too large for C unsigned short
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+TypeError: 'NoneType' object cannot be interpreted as an integer
+TypeError: register expected at least 1 argument, got 0
+TypeError: register expected at most 2 arguments, got 3
+TypeError: poll.register() takes no keyword arguments
+TypeError: modify expected 2 arguments, got 1
+ValueError: Cannot convert negative int
+TypeError: timeout must be a real number or None, not str
+ValueError: Invalid value NaN (not a number)
+OverflowError: timestamp out of range for C PyTime_t
+OverflowError: timestamp out of range for C PyTime_t
+TypeError: poll expected at most 1 argument, got 2
+TypeError: poll.poll() takes no keyword arguments
+True
+[]
+KeyError: 0
+True
+True
+True

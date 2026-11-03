@@ -1,0 +1,36 @@
+status: 0
+script: 52d8b83bc5f3f39b
+---
+TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError: type 'zlib.Compress' is not an acceptable base type
+TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError: type 'zlib.Decompress' is not an acceptable base type
+TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError: type 'zlib._ZlibDecompressor' is not an acceptable base type
+TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError: type 'sqlite3.Blob' is not an acceptable base type
+TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError: type 'sqlite3.PrepareProtocol' is not an acceptable base type
+TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError: type '_hashlib.HMAC' is not an acceptable base type
+TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError: type '_hmac.HMAC' is not an acceptable base type
+TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError: type '_md5.md5' is not an acceptable base type
+TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError: type '_sha3.sha3_224' is not an acceptable base type
+TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError: type '_sha3.shake_128' is not an acceptable base type
+TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError: type '_blake2.blake2b' is not an acceptable base type
+TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError: type 'compression.zstd.ZstdDict' is not an acceptable base type
+TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError: type 'compression.zstd.ZstdCompressor' is not an acceptable base type
+TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError: type 'compression.zstd.ZstdDecompressor' is not an acceptable base type
+TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError: cannot set 'x' attribute of immutable type 'zlib.Compress'
+TypeError: cannot set 'x' attribute of immutable type 'zlib._ZlibDecompressor'

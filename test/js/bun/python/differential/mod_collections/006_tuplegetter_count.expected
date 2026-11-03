@@ -1,0 +1,48 @@
+status: 0
+script: 5e9782c77032d72d
+---
+_tuplegetter(1, 'doc for 1') doc for 1 (1, 'doc for 1') True _tuplegetter collections
+10 20 _tuplegetter(0, 'x doc') x doc
+IndexError tuple index out of range
+IndexError tuple index out of range
+AttributeError can't set attribute
+AttributeError can't delete attribute
+TypeError descriptor for index '1' for tuple subclasses doesn't apply to 'int' object
+TypeError descriptor for index '1' for tuple subclasses doesn't apply to 'list' object
+TypeError __get__(None, None) is invalid
+TypeError __get__(None, None) is invalid
+True 2 2
+AttributeError can't set attribute
+AttributeError can't delete attribute
+new _tuplegetter(1, 'new')
+None
+TypeError _tuplegetter expected 2 arguments, got 0
+TypeError _tuplegetter expected 2 arguments, got 1
+TypeError _tuplegetter expected 2 arguments, got 3
+TypeError 'str' object cannot be interpreted as an integer
+TypeError _tuplegetter() takes no keyword arguments
+OverflowError Python int too large to convert to C ssize_t
+TypeError
+AttributeError
+_tuplegetter(3, [1, 'a'])
+{'a': 5, 'b': 2, 'r': 2, 'c': 1, 'd': 1}
+{'a': 6, 'b': 2, 'r': 2, 'c': 1, 'd': 1, 1: 3}
+TypeError can only concatenate str (not "int") to str
+{'a': 2.5, 'b': 'x'}
+TypeError 'int' object is not iterable
+AttributeError 'int' object has no attribute 'get'
+TypeError unhashable type: 'list'
+TypeError _count_elements expected 2 arguments, got 1
+TypeError _collections._count_elements() takes no keyword arguments
+set a 1
+set a 2
+set b 1
+{'a': 2, 'b': 1}
+get a 0
+get a 0
+get b 0
+{'a': 2, 'b': 1}
+{'a': 2, 'b': 1}
+defaultdict(<class 'int'>, {'a': 2, 'b': 1})
+{1: 2, 2: 1}
+{'x': 1180591620717411303425}

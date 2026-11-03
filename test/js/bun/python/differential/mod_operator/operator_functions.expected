@@ -1,0 +1,1379 @@
+status: 0
+script: 091f9522d454d10d
+---
+['_compare_digest', 'abs', 'add', 'and_', 'attrgetter', 'call', 'concat', 'contains', 'countOf', 'delitem', 'eq', 'floordiv', 'ge', 'getitem', 'gt', 'iadd', 'iand', 'iconcat', 'ifloordiv', 'ilshift', 'imatmul', 'imod', 'imul', 'index', 'indexOf', 'inv', 'invert', 'ior', 'ipow', 'irshift', 'is_', 'is_none', 'is_not', 'is_not_none', 'isub', 'itemgetter', 'itruediv', 'ixor', 'le', 'length_hint', 'lshift', 'lt', 'matmul', 'methodcaller', 'mod', 'mul', 'ne', 'neg', 'not_', 'or_', 'pos', 'pow', 'rshift', 'setitem', 'sub', 'truediv', 'truth', 'xor']
+_operator Operator interface.
+--- every function on a few operands
+- add
+9
+9.5
+-5
+1
+7
+(2+1j)
+4
+TypeError can only concatenate str (not "int") to str
+'abb'
+[1, 2, 2]
+TypeError can only concatenate list (not "int") to list
+(1, 2, 2)
+TypeError unsupported operand type(s) for +: 'set' and 'set'
+TypeError unsupported operand type(s) for +: 'dict' and 'int'
+b'abb'
+TypeError unsupported operand type(s) for +: 'NoneType' and 'NoneType'
+1180591620717411303427
+1180591620717411303427
+TypeError can only concatenate str (not "NoneType") to str
+TypeError unsupported operand type(s) for +: 'float' and 'str'
+- sub
+5
+5.5
+-9
+3
+7
+(-2+1j)
+-2
+TypeError unsupported operand type(s) for -: 'str' and 'int'
+TypeError unsupported operand type(s) for -: 'str' and 'str'
+TypeError unsupported operand type(s) for -: 'list' and 'list'
+TypeError unsupported operand type(s) for -: 'list' and 'int'
+TypeError unsupported operand type(s) for -: 'tuple' and 'tuple'
+{1}
+TypeError unsupported operand type(s) for -: 'dict' and 'int'
+TypeError unsupported operand type(s) for -: 'bytes' and 'bytes'
+TypeError unsupported operand type(s) for -: 'NoneType' and 'NoneType'
+1180591620717411303421
+-1180591620717411303421
+TypeError unsupported operand type(s) for -: 'str' and 'NoneType'
+TypeError unsupported operand type(s) for -: 'float' and 'str'
+- mul
+14
+15.0
+-14
+-2
+0
+2j
+3
+'abab'
+TypeError can't multiply sequence by non-int of type 'str'
+TypeError can't multiply sequence by non-int of type 'list'
+[1, 2]
+TypeError can't multiply sequence by non-int of type 'tuple'
+TypeError unsupported operand type(s) for *: 'set' and 'set'
+TypeError unsupported operand type(s) for *: 'dict' and 'int'
+TypeError can't multiply sequence by non-int of type 'bytes'
+TypeError unsupported operand type(s) for *: 'NoneType' and 'NoneType'
+3541774862152233910272
+3541774862152233910272
+TypeError can't multiply sequence by non-int of type 'NoneType'
+TypeError can't multiply sequence by non-int of type 'float'
+- matmul
+TypeError unsupported operand type(s) for @: 'int' and 'int'
+TypeError unsupported operand type(s) for @: 'float' and 'int'
+TypeError unsupported operand type(s) for @: 'int' and 'int'
+TypeError unsupported operand type(s) for @: 'int' and 'int'
+TypeError unsupported operand type(s) for @: 'int' and 'int'
+TypeError unsupported operand type(s) for @: 'complex' and 'int'
+TypeError unsupported operand type(s) for @: 'bool' and 'int'
+TypeError unsupported operand type(s) for @: 'str' and 'int'
+TypeError unsupported operand type(s) for @: 'str' and 'str'
+TypeError unsupported operand type(s) for @: 'list' and 'list'
+TypeError unsupported operand type(s) for @: 'list' and 'int'
+TypeError unsupported operand type(s) for @: 'tuple' and 'tuple'
+TypeError unsupported operand type(s) for @: 'set' and 'set'
+TypeError unsupported operand type(s) for @: 'dict' and 'int'
+TypeError unsupported operand type(s) for @: 'bytes' and 'bytes'
+TypeError unsupported operand type(s) for @: 'NoneType' and 'NoneType'
+TypeError unsupported operand type(s) for @: 'int' and 'int'
+TypeError unsupported operand type(s) for @: 'int' and 'int'
+TypeError unsupported operand type(s) for @: 'str' and 'NoneType'
+TypeError unsupported operand type(s) for @: 'float' and 'str'
+- truediv
+3.5
+3.75
+-3.5
+-2.0
+ZeroDivisionError division by zero
+0.5j
+0.3333333333333333
+TypeError unsupported operand type(s) for /: 'str' and 'int'
+TypeError unsupported operand type(s) for /: 'str' and 'str'
+TypeError unsupported operand type(s) for /: 'list' and 'list'
+TypeError unsupported operand type(s) for /: 'list' and 'int'
+TypeError unsupported operand type(s) for /: 'tuple' and 'tuple'
+TypeError unsupported operand type(s) for /: 'set' and 'set'
+TypeError unsupported operand type(s) for /: 'dict' and 'int'
+TypeError unsupported operand type(s) for /: 'bytes' and 'bytes'
+TypeError unsupported operand type(s) for /: 'NoneType' and 'NoneType'
+3.935305402391371e+20
+2.541098841762901e-21
+TypeError unsupported operand type(s) for /: 'str' and 'NoneType'
+TypeError unsupported operand type(s) for /: 'float' and 'str'
+- floordiv
+3
+3.0
+-4
+-2
+ZeroDivisionError division by zero
+TypeError unsupported operand type(s) for //: 'complex' and 'int'
+0
+TypeError unsupported operand type(s) for //: 'str' and 'int'
+TypeError unsupported operand type(s) for //: 'str' and 'str'
+TypeError unsupported operand type(s) for //: 'list' and 'list'
+TypeError unsupported operand type(s) for //: 'list' and 'int'
+TypeError unsupported operand type(s) for //: 'tuple' and 'tuple'
+TypeError unsupported operand type(s) for //: 'set' and 'set'
+TypeError unsupported operand type(s) for //: 'dict' and 'int'
+TypeError unsupported operand type(s) for //: 'bytes' and 'bytes'
+TypeError unsupported operand type(s) for //: 'NoneType' and 'NoneType'
+393530540239137101141
+0
+TypeError unsupported operand type(s) for //: 'str' and 'NoneType'
+TypeError unsupported operand type(s) for //: 'float' and 'str'
+- mod
+1
+1.5
+1
+0
+ZeroDivisionError division by zero
+TypeError unsupported operand type(s) for %: 'complex' and 'int'
+1
+TypeError not all arguments converted during string formatting (required 0, got 1)
+TypeError not all arguments converted during string formatting (required 0, got 1)
+TypeError unsupported operand type(s) for %: 'list' and 'list'
+TypeError unsupported operand type(s) for %: 'list' and 'int'
+TypeError unsupported operand type(s) for %: 'tuple' and 'tuple'
+TypeError unsupported operand type(s) for %: 'set' and 'set'
+TypeError unsupported operand type(s) for %: 'dict' and 'int'
+TypeError not all arguments converted during bytes formatting (required 0, got 1)
+TypeError unsupported operand type(s) for %: 'NoneType' and 'NoneType'
+1
+3
+TypeError not all arguments converted during string formatting (required 0, got 1)
+TypeError unsupported operand type(s) for %: 'float' and 'str'
+- pow
+49
+56.25
+49
+0.5
+1
+(-1+0j)
+1
+TypeError unsupported operand type(s) for ** or pow(): 'str' and 'int'
+TypeError unsupported operand type(s) for ** or pow(): 'str' and 'str'
+TypeError unsupported operand type(s) for ** or pow(): 'list' and 'list'
+TypeError unsupported operand type(s) for ** or pow(): 'list' and 'int'
+TypeError unsupported operand type(s) for ** or pow(): 'tuple' and 'tuple'
+TypeError unsupported operand type(s) for ** or pow(): 'set' and 'set'
+TypeError unsupported operand type(s) for ** or pow(): 'dict' and 'int'
+TypeError unsupported operand type(s) for ** or pow(): 'bytes' and 'bytes'
+TypeError unsupported operand type(s) for ** or pow(): 'NoneType' and 'NoneType'
+1645504557321206042154969182557350504982735865633579863348609024
+TypeError unsupported operand type(s) for ** or pow(): 'str' and 'NoneType'
+TypeError unsupported operand type(s) for ** or pow(): 'float' and 'str'
+- lshift
+28
+TypeError unsupported operand type(s) for <<: 'float' and 'int'
+-28
+ValueError negative shift count
+7
+TypeError unsupported operand type(s) for <<: 'complex' and 'int'
+8
+TypeError unsupported operand type(s) for <<: 'str' and 'int'
+TypeError unsupported operand type(s) for <<: 'str' and 'str'
+TypeError unsupported operand type(s) for <<: 'list' and 'list'
+TypeError unsupported operand type(s) for <<: 'list' and 'int'
+TypeError unsupported operand type(s) for <<: 'tuple' and 'tuple'
+TypeError unsupported operand type(s) for <<: 'set' and 'set'
+TypeError unsupported operand type(s) for <<: 'dict' and 'int'
+TypeError unsupported operand type(s) for <<: 'bytes' and 'bytes'
+TypeError unsupported operand type(s) for <<: 'NoneType' and 'NoneType'
+9444732965739290427392
+TypeError unsupported operand type(s) for <<: 'str' and 'NoneType'
+TypeError unsupported operand type(s) for <<: 'float' and 'str'
+- rshift
+1
+TypeError unsupported operand type(s) for >>: 'float' and 'int'
+-2
+ValueError negative shift count
+7
+TypeError unsupported operand type(s) for >>: 'complex' and 'int'
+0
+TypeError unsupported operand type(s) for >>: 'str' and 'int'
+TypeError unsupported operand type(s) for >>: 'str' and 'str'
+TypeError unsupported operand type(s) for >>: 'list' and 'list'
+TypeError unsupported operand type(s) for >>: 'list' and 'int'
+TypeError unsupported operand type(s) for >>: 'tuple' and 'tuple'
+TypeError unsupported operand type(s) for >>: 'set' and 'set'
+TypeError unsupported operand type(s) for >>: 'dict' and 'int'
+TypeError unsupported operand type(s) for >>: 'bytes' and 'bytes'
+TypeError unsupported operand type(s) for >>: 'NoneType' and 'NoneType'
+147573952589676412928
+0
+TypeError unsupported operand type(s) for >>: 'str' and 'NoneType'
+TypeError unsupported operand type(s) for >>: 'float' and 'str'
+- and_
+2
+TypeError unsupported operand type(s) for &: 'float' and 'int'
+0
+2
+0
+TypeError unsupported operand type(s) for &: 'complex' and 'int'
+1
+TypeError unsupported operand type(s) for &: 'str' and 'int'
+TypeError unsupported operand type(s) for &: 'str' and 'str'
+TypeError unsupported operand type(s) for &: 'list' and 'list'
+TypeError unsupported operand type(s) for &: 'list' and 'int'
+TypeError unsupported operand type(s) for &: 'tuple' and 'tuple'
+{2}
+TypeError unsupported operand type(s) for &: 'dict' and 'int'
+TypeError unsupported operand type(s) for &: 'bytes' and 'bytes'
+TypeError unsupported operand type(s) for &: 'NoneType' and 'NoneType'
+0
+0
+TypeError unsupported operand type(s) for &: 'str' and 'NoneType'
+TypeError unsupported operand type(s) for &: 'float' and 'str'
+- or_
+7
+TypeError unsupported operand type(s) for |: 'float' and 'int'
+-5
+-1
+7
+TypeError unsupported operand type(s) for |: 'complex' and 'int'
+3
+TypeError unsupported operand type(s) for |: 'str' and 'int'
+TypeError unsupported operand type(s) for |: 'str' and 'str'
+TypeError unsupported operand type(s) for |: 'list' and 'list'
+TypeError unsupported operand type(s) for |: 'list' and 'int'
+TypeError unsupported operand type(s) for |: 'tuple' and 'tuple'
+{1, 2, 3}
+TypeError unsupported operand type(s) for |: 'dict' and 'int'
+TypeError unsupported operand type(s) for |: 'bytes' and 'bytes'
+TypeError unsupported operand type(s) for |: 'NoneType' and 'NoneType'
+1180591620717411303427
+1180591620717411303427
+TypeError unsupported operand type(s) for |: 'str' and 'NoneType'
+TypeError unsupported operand type(s) for |: 'float' and 'str'
+- xor
+5
+TypeError unsupported operand type(s) for ^: 'float' and 'int'
+-5
+-3
+7
+TypeError unsupported operand type(s) for ^: 'complex' and 'int'
+2
+TypeError unsupported operand type(s) for ^: 'str' and 'int'
+TypeError unsupported operand type(s) for ^: 'str' and 'str'
+TypeError unsupported operand type(s) for ^: 'list' and 'list'
+TypeError unsupported operand type(s) for ^: 'list' and 'int'
+TypeError unsupported operand type(s) for ^: 'tuple' and 'tuple'
+{1, 3}
+TypeError unsupported operand type(s) for ^: 'dict' and 'int'
+TypeError unsupported operand type(s) for ^: 'bytes' and 'bytes'
+TypeError unsupported operand type(s) for ^: 'NoneType' and 'NoneType'
+1180591620717411303427
+1180591620717411303427
+TypeError unsupported operand type(s) for ^: 'str' and 'NoneType'
+TypeError unsupported operand type(s) for ^: 'float' and 'str'
+- iadd
+9
+9.5
+-5
+1
+7
+(2+1j)
+4
+TypeError can only concatenate str (not "int") to str
+'abb'
+[1, 2, 2]
+TypeError 'int' object is not iterable
+(1, 2, 2)
+TypeError unsupported operand type(s) for +=: 'set' and 'set'
+TypeError unsupported operand type(s) for +=: 'dict' and 'int'
+b'abb'
+TypeError unsupported operand type(s) for +=: 'NoneType' and 'NoneType'
+1180591620717411303427
+1180591620717411303427
+TypeError can only concatenate str (not "NoneType") to str
+TypeError unsupported operand type(s) for +=: 'float' and 'str'
+- isub
+5
+5.5
+-9
+3
+7
+(-2+1j)
+-2
+TypeError unsupported operand type(s) for -=: 'str' and 'int'
+TypeError unsupported operand type(s) for -=: 'str' and 'str'
+TypeError unsupported operand type(s) for -=: 'list' and 'list'
+TypeError unsupported operand type(s) for -=: 'list' and 'int'
+TypeError unsupported operand type(s) for -=: 'tuple' and 'tuple'
+{1}
+TypeError unsupported operand type(s) for -=: 'dict' and 'int'
+TypeError unsupported operand type(s) for -=: 'bytes' and 'bytes'
+TypeError unsupported operand type(s) for -=: 'NoneType' and 'NoneType'
+1180591620717411303421
+-1180591620717411303421
+TypeError unsupported operand type(s) for -=: 'str' and 'NoneType'
+TypeError unsupported operand type(s) for -=: 'float' and 'str'
+- imul
+14
+15.0
+-14
+-2
+0
+2j
+3
+'abab'
+TypeError can't multiply sequence by non-int of type 'str'
+[1, 2]
+TypeError can't multiply sequence by non-int of type 'tuple'
+TypeError unsupported operand type(s) for *=: 'set' and 'set'
+TypeError unsupported operand type(s) for *=: 'dict' and 'int'
+TypeError can't multiply sequence by non-int of type 'bytes'
+TypeError unsupported operand type(s) for *=: 'NoneType' and 'NoneType'
+3541774862152233910272
+3541774862152233910272
+TypeError can't multiply sequence by non-int of type 'NoneType'
+TypeError can't multiply sequence by non-int of type 'float'
+- imatmul
+TypeError unsupported operand type(s) for @=: 'int' and 'int'
+TypeError unsupported operand type(s) for @=: 'float' and 'int'
+TypeError unsupported operand type(s) for @=: 'int' and 'int'
+TypeError unsupported operand type(s) for @=: 'int' and 'int'
+TypeError unsupported operand type(s) for @=: 'int' and 'int'
+TypeError unsupported operand type(s) for @=: 'complex' and 'int'
+TypeError unsupported operand type(s) for @=: 'bool' and 'int'
+TypeError unsupported operand type(s) for @=: 'str' and 'int'
+TypeError unsupported operand type(s) for @=: 'str' and 'str'
+TypeError unsupported operand type(s) for @=: 'list' and 'list'
+TypeError unsupported operand type(s) for @=: 'list' and 'int'
+TypeError unsupported operand type(s) for @=: 'tuple' and 'tuple'
+TypeError unsupported operand type(s) for @=: 'set' and 'set'
+TypeError unsupported operand type(s) for @=: 'dict' and 'int'
+TypeError unsupported operand type(s) for @=: 'bytes' and 'bytes'
+TypeError unsupported operand type(s) for @=: 'NoneType' and 'NoneType'
+TypeError unsupported operand type(s) for @=: 'int' and 'int'
+TypeError unsupported operand type(s) for @=: 'int' and 'int'
+TypeError unsupported operand type(s) for @=: 'str' and 'NoneType'
+TypeError unsupported operand type(s) for @=: 'float' and 'str'
+- itruediv
+3.5
+3.75
+-3.5
+-2.0
+ZeroDivisionError division by zero
+0.5j
+0.3333333333333333
+TypeError unsupported operand type(s) for /=: 'str' and 'int'
+TypeError unsupported operand type(s) for /=: 'str' and 'str'
+TypeError unsupported operand type(s) for /=: 'list' and 'list'
+TypeError unsupported operand type(s) for /=: 'list' and 'int'
+TypeError unsupported operand type(s) for /=: 'tuple' and 'tuple'
+TypeError unsupported operand type(s) for /=: 'set' and 'set'
+TypeError unsupported operand type(s) for /=: 'dict' and 'int'
+TypeError unsupported operand type(s) for /=: 'bytes' and 'bytes'
+TypeError unsupported operand type(s) for /=: 'NoneType' and 'NoneType'
+3.935305402391371e+20
+2.541098841762901e-21
+TypeError unsupported operand type(s) for /=: 'str' and 'NoneType'
+TypeError unsupported operand type(s) for /=: 'float' and 'str'
+- ifloordiv
+3
+3.0
+-4
+-2
+ZeroDivisionError division by zero
+TypeError unsupported operand type(s) for //=: 'complex' and 'int'
+0
+TypeError unsupported operand type(s) for //=: 'str' and 'int'
+TypeError unsupported operand type(s) for //=: 'str' and 'str'
+TypeError unsupported operand type(s) for //=: 'list' and 'list'
+TypeError unsupported operand type(s) for //=: 'list' and 'int'
+TypeError unsupported operand type(s) for //=: 'tuple' and 'tuple'
+TypeError unsupported operand type(s) for //=: 'set' and 'set'
+TypeError unsupported operand type(s) for //=: 'dict' and 'int'
+TypeError unsupported operand type(s) for //=: 'bytes' and 'bytes'
+TypeError unsupported operand type(s) for //=: 'NoneType' and 'NoneType'
+393530540239137101141
+0
+TypeError unsupported operand type(s) for //=: 'str' and 'NoneType'
+TypeError unsupported operand type(s) for //=: 'float' and 'str'
+- imod
+1
+1.5
+1
+0
+ZeroDivisionError division by zero
+TypeError unsupported operand type(s) for %=: 'complex' and 'int'
+1
+TypeError not all arguments converted during string formatting (required 0, got 1)
+TypeError not all arguments converted during string formatting (required 0, got 1)
+TypeError unsupported operand type(s) for %=: 'list' and 'list'
+TypeError unsupported operand type(s) for %=: 'list' and 'int'
+TypeError unsupported operand type(s) for %=: 'tuple' and 'tuple'
+TypeError unsupported operand type(s) for %=: 'set' and 'set'
+TypeError unsupported operand type(s) for %=: 'dict' and 'int'
+TypeError not all arguments converted during bytes formatting (required 0, got 1)
+TypeError unsupported operand type(s) for %=: 'NoneType' and 'NoneType'
+1
+3
+TypeError not all arguments converted during string formatting (required 0, got 1)
+TypeError unsupported operand type(s) for %=: 'float' and 'str'
+- ipow
+49
+56.25
+49
+0.5
+1
+(-1+0j)
+1
+TypeError unsupported operand type(s) for **=: 'str' and 'int'
+TypeError unsupported operand type(s) for **=: 'str' and 'str'
+TypeError unsupported operand type(s) for **=: 'list' and 'list'
+TypeError unsupported operand type(s) for **=: 'list' and 'int'
+TypeError unsupported operand type(s) for **=: 'tuple' and 'tuple'
+TypeError unsupported operand type(s) for **=: 'set' and 'set'
+TypeError unsupported operand type(s) for **=: 'dict' and 'int'
+TypeError unsupported operand type(s) for **=: 'bytes' and 'bytes'
+TypeError unsupported operand type(s) for **=: 'NoneType' and 'NoneType'
+1645504557321206042154969182557350504982735865633579863348609024
+TypeError unsupported operand type(s) for **=: 'str' and 'NoneType'
+TypeError unsupported operand type(s) for **=: 'float' and 'str'
+- ilshift
+28
+TypeError unsupported operand type(s) for <<=: 'float' and 'int'
+-28
+ValueError negative shift count
+7
+TypeError unsupported operand type(s) for <<=: 'complex' and 'int'
+8
+TypeError unsupported operand type(s) for <<=: 'str' and 'int'
+TypeError unsupported operand type(s) for <<=: 'str' and 'str'
+TypeError unsupported operand type(s) for <<=: 'list' and 'list'
+TypeError unsupported operand type(s) for <<=: 'list' and 'int'
+TypeError unsupported operand type(s) for <<=: 'tuple' and 'tuple'
+TypeError unsupported operand type(s) for <<=: 'set' and 'set'
+TypeError unsupported operand type(s) for <<=: 'dict' and 'int'
+TypeError unsupported operand type(s) for <<=: 'bytes' and 'bytes'
+TypeError unsupported operand type(s) for <<=: 'NoneType' and 'NoneType'
+9444732965739290427392
+TypeError unsupported operand type(s) for <<=: 'str' and 'NoneType'
+TypeError unsupported operand type(s) for <<=: 'float' and 'str'
+- irshift
+1
+TypeError unsupported operand type(s) for >>=: 'float' and 'int'
+-2
+ValueError negative shift count
+7
+TypeError unsupported operand type(s) for >>=: 'complex' and 'int'
+0
+TypeError unsupported operand type(s) for >>=: 'str' and 'int'
+TypeError unsupported operand type(s) for >>=: 'str' and 'str'
+TypeError unsupported operand type(s) for >>=: 'list' and 'list'
+TypeError unsupported operand type(s) for >>=: 'list' and 'int'
+TypeError unsupported operand type(s) for >>=: 'tuple' and 'tuple'
+TypeError unsupported operand type(s) for >>=: 'set' and 'set'
+TypeError unsupported operand type(s) for >>=: 'dict' and 'int'
+TypeError unsupported operand type(s) for >>=: 'bytes' and 'bytes'
+TypeError unsupported operand type(s) for >>=: 'NoneType' and 'NoneType'
+147573952589676412928
+0
+TypeError unsupported operand type(s) for >>=: 'str' and 'NoneType'
+TypeError unsupported operand type(s) for >>=: 'float' and 'str'
+- iand
+2
+TypeError unsupported operand type(s) for &=: 'float' and 'int'
+0
+2
+0
+TypeError unsupported operand type(s) for &=: 'complex' and 'int'
+1
+TypeError unsupported operand type(s) for &=: 'str' and 'int'
+TypeError unsupported operand type(s) for &=: 'str' and 'str'
+TypeError unsupported operand type(s) for &=: 'list' and 'list'
+TypeError unsupported operand type(s) for &=: 'list' and 'int'
+TypeError unsupported operand type(s) for &=: 'tuple' and 'tuple'
+{2}
+TypeError unsupported operand type(s) for &=: 'dict' and 'int'
+TypeError unsupported operand type(s) for &=: 'bytes' and 'bytes'
+TypeError unsupported operand type(s) for &=: 'NoneType' and 'NoneType'
+0
+0
+TypeError unsupported operand type(s) for &=: 'str' and 'NoneType'
+TypeError unsupported operand type(s) for &=: 'float' and 'str'
+- ior
+7
+TypeError unsupported operand type(s) for |=: 'float' and 'int'
+-5
+-1
+7
+TypeError unsupported operand type(s) for |=: 'complex' and 'int'
+3
+TypeError unsupported operand type(s) for |=: 'str' and 'int'
+TypeError unsupported operand type(s) for |=: 'str' and 'str'
+TypeError unsupported operand type(s) for |=: 'list' and 'list'
+TypeError unsupported operand type(s) for |=: 'list' and 'int'
+TypeError unsupported operand type(s) for |=: 'tuple' and 'tuple'
+{1, 2, 3}
+TypeError 'int' object is not iterable
+TypeError unsupported operand type(s) for |=: 'bytes' and 'bytes'
+TypeError unsupported operand type(s) for |=: 'NoneType' and 'NoneType'
+1180591620717411303427
+1180591620717411303427
+TypeError unsupported operand type(s) for |=: 'str' and 'NoneType'
+TypeError unsupported operand type(s) for |=: 'float' and 'str'
+- ixor
+5
+TypeError unsupported operand type(s) for ^=: 'float' and 'int'
+-5
+-3
+7
+TypeError unsupported operand type(s) for ^=: 'complex' and 'int'
+2
+TypeError unsupported operand type(s) for ^=: 'str' and 'int'
+TypeError unsupported operand type(s) for ^=: 'str' and 'str'
+TypeError unsupported operand type(s) for ^=: 'list' and 'list'
+TypeError unsupported operand type(s) for ^=: 'list' and 'int'
+TypeError unsupported operand type(s) for ^=: 'tuple' and 'tuple'
+{1, 3}
+TypeError unsupported operand type(s) for ^=: 'dict' and 'int'
+TypeError unsupported operand type(s) for ^=: 'bytes' and 'bytes'
+TypeError unsupported operand type(s) for ^=: 'NoneType' and 'NoneType'
+1180591620717411303427
+1180591620717411303427
+TypeError unsupported operand type(s) for ^=: 'str' and 'NoneType'
+TypeError unsupported operand type(s) for ^=: 'float' and 'str'
+- lt
+False
+False
+True
+False
+False
+TypeError '<' not supported between instances of 'complex' and 'int'
+True
+TypeError '<' not supported between instances of 'str' and 'int'
+True
+True
+TypeError '<' not supported between instances of 'list' and 'int'
+True
+False
+TypeError '<' not supported between instances of 'dict' and 'int'
+True
+TypeError '<' not supported between instances of 'NoneType' and 'NoneType'
+False
+True
+TypeError '<' not supported between instances of 'str' and 'NoneType'
+TypeError '<' not supported between instances of 'float' and 'str'
+- le
+False
+False
+True
+False
+False
+TypeError '<=' not supported between instances of 'complex' and 'int'
+True
+TypeError '<=' not supported between instances of 'str' and 'int'
+True
+True
+TypeError '<=' not supported between instances of 'list' and 'int'
+True
+False
+TypeError '<=' not supported between instances of 'dict' and 'int'
+True
+TypeError '<=' not supported between instances of 'NoneType' and 'NoneType'
+False
+True
+TypeError '<=' not supported between instances of 'str' and 'NoneType'
+TypeError '<=' not supported between instances of 'float' and 'str'
+- eq
+False
+False
+False
+False
+False
+False
+False
+False
+False
+False
+False
+False
+False
+False
+False
+True
+False
+False
+False
+False
+- ne
+True
+True
+True
+True
+True
+True
+True
+True
+True
+True
+True
+True
+True
+True
+True
+False
+True
+True
+True
+True
+- gt
+True
+True
+False
+True
+True
+TypeError '>' not supported between instances of 'complex' and 'int'
+False
+TypeError '>' not supported between instances of 'str' and 'int'
+False
+False
+TypeError '>' not supported between instances of 'list' and 'int'
+False
+False
+TypeError '>' not supported between instances of 'dict' and 'int'
+False
+TypeError '>' not supported between instances of 'NoneType' and 'NoneType'
+True
+False
+TypeError '>' not supported between instances of 'str' and 'NoneType'
+TypeError '>' not supported between instances of 'float' and 'str'
+- ge
+True
+True
+False
+True
+True
+TypeError '>=' not supported between instances of 'complex' and 'int'
+False
+TypeError '>=' not supported between instances of 'str' and 'int'
+False
+False
+TypeError '>=' not supported between instances of 'list' and 'int'
+False
+False
+TypeError '>=' not supported between instances of 'dict' and 'int'
+False
+TypeError '>=' not supported between instances of 'NoneType' and 'NoneType'
+True
+False
+TypeError '>=' not supported between instances of 'str' and 'NoneType'
+TypeError '>=' not supported between instances of 'float' and 'str'
+- is_
+False
+False
+False
+False
+False
+False
+False
+False
+False
+False
+False
+False
+False
+False
+False
+True
+False
+False
+False
+False
+- is_not
+True
+True
+True
+True
+True
+True
+True
+True
+True
+True
+True
+True
+True
+True
+True
+False
+True
+True
+True
+True
+- concat
+TypeError 'int' object can't be concatenated
+TypeError 'float' object can't be concatenated
+TypeError 'int' object can't be concatenated
+TypeError 'int' object can't be concatenated
+TypeError 'int' object can't be concatenated
+TypeError 'complex' object can't be concatenated
+TypeError 'bool' object can't be concatenated
+TypeError can only concatenate str (not "int") to str
+'abb'
+[1, 2, 2]
+TypeError can only concatenate list (not "int") to list
+(1, 2, 2)
+TypeError 'set' object can't be concatenated
+TypeError 'dict' object can't be concatenated
+b'abb'
+TypeError 'NoneType' object can't be concatenated
+TypeError 'int' object can't be concatenated
+TypeError 'int' object can't be concatenated
+TypeError can only concatenate str (not "NoneType") to str
+TypeError 'float' object can't be concatenated
+- iconcat
+TypeError 'int' object can't be concatenated
+TypeError 'float' object can't be concatenated
+TypeError 'int' object can't be concatenated
+TypeError 'int' object can't be concatenated
+TypeError 'int' object can't be concatenated
+TypeError 'complex' object can't be concatenated
+TypeError 'bool' object can't be concatenated
+TypeError can only concatenate str (not "int") to str
+'abb'
+[1, 2, 2]
+TypeError 'int' object is not iterable
+(1, 2, 2)
+TypeError 'set' object can't be concatenated
+TypeError 'dict' object can't be concatenated
+b'abb'
+TypeError 'NoneType' object can't be concatenated
+TypeError 'int' object can't be concatenated
+TypeError 'int' object can't be concatenated
+TypeError can only concatenate str (not "NoneType") to str
+TypeError 'float' object can't be concatenated
+- contains
+TypeError argument of type 'int' is not a container or iterable
+TypeError argument of type 'float' is not a container or iterable
+TypeError argument of type 'int' is not a container or iterable
+TypeError argument of type 'int' is not a container or iterable
+TypeError argument of type 'int' is not a container or iterable
+TypeError argument of type 'complex' is not a container or iterable
+TypeError argument of type 'bool' is not a container or iterable
+TypeError 'in <string>' requires string as left operand, not int
+True
+False
+True
+False
+False
+True
+True
+TypeError argument of type 'NoneType' is not a container or iterable
+TypeError argument of type 'int' is not a container or iterable
+TypeError argument of type 'int' is not a container or iterable
+TypeError 'in <string>' requires string as left operand, not NoneType
+TypeError argument of type 'float' is not a container or iterable
+- countOf
+TypeError argument of type 'int' is not iterable
+TypeError argument of type 'float' is not iterable
+TypeError argument of type 'int' is not iterable
+TypeError argument of type 'int' is not iterable
+TypeError argument of type 'int' is not iterable
+TypeError argument of type 'complex' is not iterable
+TypeError argument of type 'bool' is not iterable
+0
+1
+0
+1
+0
+0
+1
+0
+TypeError argument of type 'NoneType' is not iterable
+TypeError argument of type 'int' is not iterable
+TypeError argument of type 'int' is not iterable
+0
+TypeError argument of type 'float' is not iterable
+- indexOf
+TypeError argument of type 'int' is not iterable
+TypeError argument of type 'float' is not iterable
+TypeError argument of type 'int' is not iterable
+TypeError argument of type 'int' is not iterable
+TypeError argument of type 'int' is not iterable
+TypeError argument of type 'complex' is not iterable
+TypeError argument of type 'bool' is not iterable
+ValueError sequence.index(x): x not in sequence
+1
+ValueError sequence.index(x): x not in sequence
+0
+ValueError sequence.index(x): x not in sequence
+ValueError sequence.index(x): x not in sequence
+0
+ValueError sequence.index(x): x not in sequence
+TypeError argument of type 'NoneType' is not iterable
+TypeError argument of type 'int' is not iterable
+TypeError argument of type 'int' is not iterable
+ValueError sequence.index(x): x not in sequence
+TypeError argument of type 'float' is not iterable
+- getitem
+TypeError 'int' object is not subscriptable
+TypeError 'float' object is not subscriptable
+TypeError 'int' object is not subscriptable
+TypeError 'int' object is not subscriptable
+TypeError 'int' object is not subscriptable
+TypeError 'complex' object is not subscriptable
+TypeError 'bool' object is not subscriptable
+IndexError string index out of range
+TypeError string indices must be integers, not 'str'
+TypeError list indices must be integers or slices, not list
+2
+TypeError tuple indices must be integers or slices, not tuple
+TypeError 'set' object is not subscriptable
+2
+TypeError byte indices must be integers or slices, not bytes
+TypeError 'NoneType' object is not subscriptable
+TypeError 'int' object is not subscriptable
+TypeError 'int' object is not subscriptable
+TypeError string indices must be integers, not 'NoneType'
+TypeError 'float' object is not subscriptable
+- delitem
+TypeError 'int' object does not support item deletion
+TypeError 'float' object does not support item deletion
+TypeError 'int' object does not support item deletion
+TypeError 'int' object does not support item deletion
+TypeError 'int' object does not support item deletion
+TypeError 'complex' object does not support item deletion
+TypeError 'bool' object does not support item deletion
+TypeError 'str' object does not support item deletion
+TypeError list indices must be integers or slices, not list
+None
+TypeError 'tuple' object does not support item deletion
+TypeError 'set' object does not support item deletion
+None
+TypeError 'bytes' object does not support item deletion
+TypeError 'NoneType' object does not support item deletion
+TypeError 'int' object does not support item deletion
+TypeError 'int' object does not support item deletion
+TypeError 'str' object does not support item deletion
+TypeError 'float' object does not support item deletion
+- _compare_digest
+TypeError unsupported operand types(s) or combination of types: 'int' and 'int'
+TypeError unsupported operand types(s) or combination of types: 'float' and 'int'
+TypeError unsupported operand types(s) or combination of types: 'int' and 'int'
+TypeError unsupported operand types(s) or combination of types: 'int' and 'int'
+TypeError unsupported operand types(s) or combination of types: 'int' and 'int'
+TypeError unsupported operand types(s) or combination of types: 'complex' and 'int'
+TypeError unsupported operand types(s) or combination of types: 'bool' and 'int'
+TypeError unsupported operand types(s) or combination of types: 'str' and 'int'
+False
+TypeError unsupported operand types(s) or combination of types: 'list' and 'list'
+TypeError unsupported operand types(s) or combination of types: 'list' and 'int'
+TypeError unsupported operand types(s) or combination of types: 'tuple' and 'tuple'
+TypeError unsupported operand types(s) or combination of types: 'set' and 'set'
+TypeError unsupported operand types(s) or combination of types: 'dict' and 'int'
+False
+TypeError unsupported operand types(s) or combination of types: 'NoneType' and 'NoneType'
+TypeError unsupported operand types(s) or combination of types: 'int' and 'int'
+TypeError unsupported operand types(s) or combination of types: 'int' and 'int'
+TypeError unsupported operand types(s) or combination of types: 'str' and 'NoneType'
+TypeError unsupported operand types(s) or combination of types: 'float' and 'str'
+- neg
+-5
+5
+0
+-2.5
+0.0
+(-0-1j)
+-1
+TypeError bad operand type for unary -: 'str'
+TypeError bad operand type for unary -: 'str'
+TypeError bad operand type for unary -: 'list'
+TypeError bad operand type for unary -: 'list'
+TypeError bad operand type for unary -: 'NoneType'
+-1180591620717411303424
+1180591620717411303424
+TypeError bad operand type for unary -: 'bytes'
+TypeError bad operand type for unary -: 'set'
+- pos
+5
+-5
+0
+2.5
+-0.0
+1j
+1
+TypeError bad operand type for unary +: 'str'
+TypeError bad operand type for unary +: 'str'
+TypeError bad operand type for unary +: 'list'
+TypeError bad operand type for unary +: 'list'
+TypeError bad operand type for unary +: 'NoneType'
+1180591620717411303424
+-1180591620717411303424
+TypeError bad operand type for unary +: 'bytes'
+TypeError bad operand type for unary +: 'set'
+- abs
+5
+5
+0
+2.5
+0.0
+1.0
+1
+TypeError bad operand type for abs(): 'str'
+TypeError bad operand type for abs(): 'str'
+TypeError bad operand type for abs(): 'list'
+TypeError bad operand type for abs(): 'list'
+TypeError bad operand type for abs(): 'NoneType'
+1180591620717411303424
+1180591620717411303424
+TypeError bad operand type for abs(): 'bytes'
+TypeError bad operand type for abs(): 'set'
+- inv
+-6
+4
+-1
+TypeError bad operand type for unary ~: 'float'
+TypeError bad operand type for unary ~: 'float'
+TypeError bad operand type for unary ~: 'complex'
+-2
+TypeError bad operand type for unary ~: 'str'
+TypeError bad operand type for unary ~: 'str'
+TypeError bad operand type for unary ~: 'list'
+TypeError bad operand type for unary ~: 'list'
+TypeError bad operand type for unary ~: 'NoneType'
+-1180591620717411303425
+1180591620717411303423
+TypeError bad operand type for unary ~: 'bytes'
+TypeError bad operand type for unary ~: 'set'
+- invert
+-6
+4
+-1
+TypeError bad operand type for unary ~: 'float'
+TypeError bad operand type for unary ~: 'float'
+TypeError bad operand type for unary ~: 'complex'
+-2
+TypeError bad operand type for unary ~: 'str'
+TypeError bad operand type for unary ~: 'str'
+TypeError bad operand type for unary ~: 'list'
+TypeError bad operand type for unary ~: 'list'
+TypeError bad operand type for unary ~: 'NoneType'
+-1180591620717411303425
+1180591620717411303423
+TypeError bad operand type for unary ~: 'bytes'
+TypeError bad operand type for unary ~: 'set'
+- not_
+False
+False
+True
+False
+True
+False
+False
+False
+True
+True
+False
+True
+False
+False
+True
+False
+- truth
+True
+True
+False
+True
+False
+True
+True
+True
+False
+False
+True
+False
+True
+True
+False
+True
+- index
+5
+-5
+0
+TypeError 'float' object cannot be interpreted as an integer
+TypeError 'float' object cannot be interpreted as an integer
+TypeError 'complex' object cannot be interpreted as an integer
+1
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'list' object cannot be interpreted as an integer
+TypeError 'list' object cannot be interpreted as an integer
+TypeError 'NoneType' object cannot be interpreted as an integer
+1180591620717411303424
+-1180591620717411303424
+TypeError 'bytes' object cannot be interpreted as an integer
+TypeError 'set' object cannot be interpreted as an integer
+- is_none
+False
+False
+False
+False
+False
+False
+False
+False
+False
+False
+False
+True
+False
+False
+False
+False
+- is_not_none
+True
+True
+True
+True
+True
+True
+True
+True
+True
+True
+True
+False
+True
+True
+True
+True
+--- how many arguments
+TypeError add expected 2 arguments, got 0
+TypeError add expected 2 arguments, got 1
+TypeError add expected 2 arguments, got 3
+TypeError _operator.add() takes no keyword arguments
+TypeError sub expected 2 arguments, got 0
+TypeError sub expected 2 arguments, got 1
+TypeError sub expected 2 arguments, got 3
+TypeError _operator.sub() takes no keyword arguments
+TypeError mul expected 2 arguments, got 0
+TypeError mul expected 2 arguments, got 1
+TypeError mul expected 2 arguments, got 3
+TypeError _operator.mul() takes no keyword arguments
+TypeError matmul expected 2 arguments, got 0
+TypeError matmul expected 2 arguments, got 1
+TypeError matmul expected 2 arguments, got 3
+TypeError _operator.matmul() takes no keyword arguments
+TypeError truediv expected 2 arguments, got 0
+TypeError truediv expected 2 arguments, got 1
+TypeError truediv expected 2 arguments, got 3
+TypeError _operator.truediv() takes no keyword arguments
+TypeError floordiv expected 2 arguments, got 0
+TypeError floordiv expected 2 arguments, got 1
+TypeError floordiv expected 2 arguments, got 3
+TypeError _operator.floordiv() takes no keyword arguments
+TypeError mod expected 2 arguments, got 0
+TypeError mod expected 2 arguments, got 1
+TypeError mod expected 2 arguments, got 3
+TypeError _operator.mod() takes no keyword arguments
+TypeError pow expected 2 arguments, got 0
+TypeError pow expected 2 arguments, got 1
+TypeError pow expected 2 arguments, got 3
+TypeError _operator.pow() takes no keyword arguments
+TypeError lshift expected 2 arguments, got 0
+TypeError lshift expected 2 arguments, got 1
+TypeError lshift expected 2 arguments, got 3
+TypeError _operator.lshift() takes no keyword arguments
+TypeError rshift expected 2 arguments, got 0
+TypeError rshift expected 2 arguments, got 1
+TypeError rshift expected 2 arguments, got 3
+TypeError _operator.rshift() takes no keyword arguments
+TypeError and_ expected 2 arguments, got 0
+TypeError and_ expected 2 arguments, got 1
+TypeError and_ expected 2 arguments, got 3
+TypeError _operator.and_() takes no keyword arguments
+TypeError or_ expected 2 arguments, got 0
+TypeError or_ expected 2 arguments, got 1
+TypeError or_ expected 2 arguments, got 3
+TypeError _operator.or_() takes no keyword arguments
+TypeError xor expected 2 arguments, got 0
+TypeError xor expected 2 arguments, got 1
+TypeError xor expected 2 arguments, got 3
+TypeError _operator.xor() takes no keyword arguments
+TypeError iadd expected 2 arguments, got 0
+TypeError iadd expected 2 arguments, got 1
+TypeError iadd expected 2 arguments, got 3
+TypeError _operator.iadd() takes no keyword arguments
+TypeError isub expected 2 arguments, got 0
+TypeError isub expected 2 arguments, got 1
+TypeError isub expected 2 arguments, got 3
+TypeError _operator.isub() takes no keyword arguments
+TypeError imul expected 2 arguments, got 0
+TypeError imul expected 2 arguments, got 1
+TypeError imul expected 2 arguments, got 3
+TypeError _operator.imul() takes no keyword arguments
+TypeError imatmul expected 2 arguments, got 0
+TypeError imatmul expected 2 arguments, got 1
+TypeError imatmul expected 2 arguments, got 3
+TypeError _operator.imatmul() takes no keyword arguments
+TypeError itruediv expected 2 arguments, got 0
+TypeError itruediv expected 2 arguments, got 1
+TypeError itruediv expected 2 arguments, got 3
+TypeError _operator.itruediv() takes no keyword arguments
+TypeError ifloordiv expected 2 arguments, got 0
+TypeError ifloordiv expected 2 arguments, got 1
+TypeError ifloordiv expected 2 arguments, got 3
+TypeError _operator.ifloordiv() takes no keyword arguments
+TypeError imod expected 2 arguments, got 0
+TypeError imod expected 2 arguments, got 1
+TypeError imod expected 2 arguments, got 3
+TypeError _operator.imod() takes no keyword arguments
+TypeError ipow expected 2 arguments, got 0
+TypeError ipow expected 2 arguments, got 1
+TypeError ipow expected 2 arguments, got 3
+TypeError _operator.ipow() takes no keyword arguments
+TypeError ilshift expected 2 arguments, got 0
+TypeError ilshift expected 2 arguments, got 1
+TypeError ilshift expected 2 arguments, got 3
+TypeError _operator.ilshift() takes no keyword arguments
+TypeError irshift expected 2 arguments, got 0
+TypeError irshift expected 2 arguments, got 1
+TypeError irshift expected 2 arguments, got 3
+TypeError _operator.irshift() takes no keyword arguments
+TypeError iand expected 2 arguments, got 0
+TypeError iand expected 2 arguments, got 1
+TypeError iand expected 2 arguments, got 3
+TypeError _operator.iand() takes no keyword arguments
+TypeError ior expected 2 arguments, got 0
+TypeError ior expected 2 arguments, got 1
+TypeError ior expected 2 arguments, got 3
+TypeError _operator.ior() takes no keyword arguments
+TypeError ixor expected 2 arguments, got 0
+TypeError ixor expected 2 arguments, got 1
+TypeError ixor expected 2 arguments, got 3
+TypeError _operator.ixor() takes no keyword arguments
+TypeError lt expected 2 arguments, got 0
+TypeError lt expected 2 arguments, got 1
+TypeError lt expected 2 arguments, got 3
+TypeError _operator.lt() takes no keyword arguments
+TypeError le expected 2 arguments, got 0
+TypeError le expected 2 arguments, got 1
+TypeError le expected 2 arguments, got 3
+TypeError _operator.le() takes no keyword arguments
+TypeError eq expected 2 arguments, got 0
+TypeError eq expected 2 arguments, got 1
+TypeError eq expected 2 arguments, got 3
+TypeError _operator.eq() takes no keyword arguments
+TypeError ne expected 2 arguments, got 0
+TypeError ne expected 2 arguments, got 1
+TypeError ne expected 2 arguments, got 3
+TypeError _operator.ne() takes no keyword arguments
+TypeError gt expected 2 arguments, got 0
+TypeError gt expected 2 arguments, got 1
+TypeError gt expected 2 arguments, got 3
+TypeError _operator.gt() takes no keyword arguments
+TypeError ge expected 2 arguments, got 0
+TypeError ge expected 2 arguments, got 1
+TypeError ge expected 2 arguments, got 3
+TypeError _operator.ge() takes no keyword arguments
+TypeError is_ expected 2 arguments, got 0
+TypeError is_ expected 2 arguments, got 1
+TypeError is_ expected 2 arguments, got 3
+TypeError _operator.is_() takes no keyword arguments
+TypeError is_not expected 2 arguments, got 0
+TypeError is_not expected 2 arguments, got 1
+TypeError is_not expected 2 arguments, got 3
+TypeError _operator.is_not() takes no keyword arguments
+TypeError concat expected 2 arguments, got 0
+TypeError concat expected 2 arguments, got 1
+TypeError concat expected 2 arguments, got 3
+TypeError _operator.concat() takes no keyword arguments
+TypeError iconcat expected 2 arguments, got 0
+TypeError iconcat expected 2 arguments, got 1
+TypeError iconcat expected 2 arguments, got 3
+TypeError _operator.iconcat() takes no keyword arguments
+TypeError contains expected 2 arguments, got 0
+TypeError contains expected 2 arguments, got 1
+TypeError contains expected 2 arguments, got 3
+TypeError _operator.contains() takes no keyword arguments
+TypeError countOf expected 2 arguments, got 0
+TypeError countOf expected 2 arguments, got 1
+TypeError countOf expected 2 arguments, got 3
+TypeError _operator.countOf() takes no keyword arguments
+TypeError indexOf expected 2 arguments, got 0
+TypeError indexOf expected 2 arguments, got 1
+TypeError indexOf expected 2 arguments, got 3
+TypeError _operator.indexOf() takes no keyword arguments
+TypeError getitem expected 2 arguments, got 0
+TypeError getitem expected 2 arguments, got 1
+TypeError getitem expected 2 arguments, got 3
+TypeError _operator.getitem() takes no keyword arguments
+TypeError delitem expected 2 arguments, got 0
+TypeError delitem expected 2 arguments, got 1
+TypeError delitem expected 2 arguments, got 3
+TypeError _operator.delitem() takes no keyword arguments
+TypeError _compare_digest expected 2 arguments, got 0
+TypeError _compare_digest expected 2 arguments, got 1
+TypeError _compare_digest expected 2 arguments, got 3
+TypeError _operator._compare_digest() takes no keyword arguments
+TypeError _operator.neg() takes exactly one argument (0 given)
+TypeError _operator.neg() takes exactly one argument (2 given)
+TypeError _operator.neg() takes no keyword arguments
+TypeError _operator.pos() takes exactly one argument (0 given)
+TypeError _operator.pos() takes exactly one argument (2 given)
+TypeError _operator.pos() takes no keyword arguments
+TypeError _operator.abs() takes exactly one argument (0 given)
+TypeError _operator.abs() takes exactly one argument (2 given)
+TypeError _operator.abs() takes no keyword arguments
+TypeError _operator.inv() takes exactly one argument (0 given)
+TypeError _operator.inv() takes exactly one argument (2 given)
+TypeError _operator.inv() takes no keyword arguments
+TypeError _operator.invert() takes exactly one argument (0 given)
+TypeError _operator.invert() takes exactly one argument (2 given)
+TypeError _operator.invert() takes no keyword arguments
+TypeError _operator.not_() takes exactly one argument (0 given)
+TypeError _operator.not_() takes exactly one argument (2 given)
+TypeError _operator.not_() takes no keyword arguments
+TypeError _operator.truth() takes exactly one argument (0 given)
+TypeError _operator.truth() takes exactly one argument (2 given)
+TypeError _operator.truth() takes no keyword arguments
+TypeError _operator.index() takes exactly one argument (0 given)
+TypeError _operator.index() takes exactly one argument (2 given)
+TypeError _operator.index() takes no keyword arguments
+TypeError _operator.is_none() takes exactly one argument (0 given)
+TypeError _operator.is_none() takes exactly one argument (2 given)
+TypeError _operator.is_none() takes no keyword arguments
+TypeError _operator.is_not_none() takes exactly one argument (0 given)
+TypeError _operator.is_not_none() takes exactly one argument (2 given)
+TypeError _operator.is_not_none() takes no keyword arguments
+TypeError setitem expected 3 arguments, got 0
+TypeError setitem expected 3 arguments, got 2
+TypeError setitem expected 3 arguments, got 4
+TypeError _operator.setitem() takes no keyword arguments
+--- the functions themselves
+add add _operator builtin_function_or_method <built-in function add> True
+is_ is_ _operator builtin_function_or_method <built-in function is_> True
+length_hint length_hint _operator builtin_function_or_method <built-in function length_hint> True
+call call _operator builtin_function_or_method <built-in function call> True
+_compare_digest _compare_digest _operator builtin_function_or_method <built-in function _compare_digest> True
+countOf countOf _operator builtin_function_or_method <built-in function countOf> True
+False inv invert
+--- classes with the special methods
+add ('__add__', V(v), V(w)) ('__add__', V(v), 1) ('__radd__', V(v), 1)
+sub ('__sub__', V(v), V(w)) ('__sub__', V(v), 1) ('__rsub__', V(v), 1)
+mul ('__mul__', V(v), V(w)) ('__mul__', V(v), 1) ('__rmul__', V(v), 1)
+matmul ('__matmul__', V(v), V(w)) ('__matmul__', V(v), 1) ('__rmatmul__', V(v), 1)
+truediv ('__truediv__', V(v), V(w)) ('__truediv__', V(v), 1) ('__rtruediv__', V(v), 1)
+floordiv ('__floordiv__', V(v), V(w)) ('__floordiv__', V(v), 1) ('__rfloordiv__', V(v), 1)
+mod ('__mod__', V(v), V(w)) ('__mod__', V(v), 1) ('__rmod__', V(v), 1)
+pow ('__pow__', V(v), V(w)) ('__pow__', V(v), 1) ('__rpow__', V(v), 1)
+lshift ('__lshift__', V(v), V(w)) ('__lshift__', V(v), 1) ('__rlshift__', V(v), 1)
+rshift ('__rshift__', V(v), V(w)) ('__rshift__', V(v), 1) ('__rrshift__', V(v), 1)
+and_ ('__and__', V(v), V(w)) ('__and__', V(v), 1) ('__rand__', V(v), 1)
+or_ ('__or__', V(v), V(w)) ('__or__', V(v), 1) ('__ror__', V(v), 1)
+xor ('__xor__', V(v), V(w)) ('__xor__', V(v), 1) ('__rxor__', V(v), 1)
+iadd ('__add__', V(v), V(w)) ('__add__', V(v), 1) ('__radd__', V(v), 1)
+isub ('__sub__', V(v), V(w)) ('__sub__', V(v), 1) ('__rsub__', V(v), 1)
+imul ('__mul__', V(v), V(w)) ('__mul__', V(v), 1) ('__rmul__', V(v), 1)
+imatmul ('__matmul__', V(v), V(w)) ('__matmul__', V(v), 1) ('__rmatmul__', V(v), 1)
+itruediv ('__truediv__', V(v), V(w)) ('__truediv__', V(v), 1) ('__rtruediv__', V(v), 1)
+ifloordiv ('__floordiv__', V(v), V(w)) ('__floordiv__', V(v), 1) ('__rfloordiv__', V(v), 1)
+imod ('__mod__', V(v), V(w)) ('__mod__', V(v), 1) ('__rmod__', V(v), 1)
+ipow ('__pow__', V(v), V(w)) ('__pow__', V(v), 1) ('__rpow__', V(v), 1)
+ilshift ('__lshift__', V(v), V(w)) ('__lshift__', V(v), 1) ('__rlshift__', V(v), 1)
+irshift ('__rshift__', V(v), V(w)) ('__rshift__', V(v), 1) ('__rrshift__', V(v), 1)
+iand ('__and__', V(v), V(w)) ('__and__', V(v), 1) ('__rand__', V(v), 1)
+ior ('__or__', V(v), V(w)) ('__or__', V(v), 1) ('__ror__', V(v), 1)
+ixor ('__xor__', V(v), V(w)) ('__xor__', V(v), 1) ('__rxor__', V(v), 1)
+lt ('__lt__', V(v), V(w)) ('__lt__', V(v), 1) ('__gt__', V(v), 1)
+le ('__le__', V(v), V(w)) ('__le__', V(v), 1) ('__ge__', V(v), 1)
+eq ('__eq__', V(v), V(w)) ('__eq__', V(v), 1) ('__eq__', V(v), 1)
+ne ('__ne__', V(v), V(w)) ('__ne__', V(v), 1) ('__ne__', V(v), 1)
+gt ('__gt__', V(v), V(w)) ('__gt__', V(v), 1) ('__lt__', V(v), 1)
+ge ('__ge__', V(v), V(w)) ('__ge__', V(v), 1) ('__le__', V(v), 1)
+getitem ('__getitem__', V(v), V(w)) ('__getitem__', V(v), 1) 
+neg ('__neg__', V(v))
+pos ('__pos__', V(v))
+abs ('__abs__', V(v))
+inv ('__invert__', V(v))
+invert ('__invert__', V(v))
+iadd ('__iadd__', V(i), 1)
+isub ('__isub__', V(i), 1)
+imul ('__imul__', V(i), 1)
+imatmul ('__imatmul__', V(i), 1)
+itruediv ('__itruediv__', V(i), 1)
+ifloordiv ('__ifloordiv__', V(i), 1)
+imod ('__imod__', V(i), 1)
+ipow ('__ipow__', V(i), 1)
+ilshift ('__ilshift__', V(i), 1)
+irshift ('__irshift__', V(i), 1)
+iand ('__iand__', V(i), 1)
+ior ('__ior__', V(i), 1)
+ixor ('__ixor__', V(i), 1)
+add ('__add__', V(i), 1)
+sub ('__sub__', V(i), 1)
+--- in place
+(True, [1, 2])
+(True, [1, 2, 'a', 'b'])
+(True, [1, 2, 'a', 'b', 1, 2, 'a', 'b'])
+(True, [1, 2, 'a', 'b', 1, 2, 'a', 'b', 9])
+(True, {1, 2})
+(True, {2})
+(True, [2, 3])
+(True, {2})
+(True, {1: 1, 2: 2})
+((1, 2), (1,))
+(True, bytearray(b'ab'))
+(True, bytearray(b'abc'))
+(True, bytearray(b'abcabc'))
+--- items
+2
+4
+[2, 3]
+IndexError list index out of range
+TypeError list indices must be integers or slices, not str
+(None, ['x', 2, 3, 4])
+(None, ['x', 'y', 'z', 4])
+IndexError list assignment index out of range
+(None, ['y', 'z', 4])
+(None, [4])
+IndexError list assignment index out of range
+(None, {}, 1, None, {})
+KeyError 'k'
+KeyError 'k'
+TypeError 'tuple' object does not support item assignment
+list[int]
+--- identity and truth
+(True, False, False, True)
+(True, False, False, True)
+[True, False, False, False, False]
+[False, True, True, True, True]
+(True, False, False, True)
+TypeError Truth.__bool__() must return a bool, not int
+TypeError Truth.__bool__() must return a bool, not int
+ValueError no truth
+ValueError no truth
+(False, True)
+--- index
+5
+1208925819614629174706176
+TypeError Ix.__index__() must return an int, not str
+TypeError Ix.__index__() must return an int, not float
+(3, 'int')
+(1, 'int')
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'NoneType' object cannot be interpreted as an integer
+--- comparisons
+[True, True, False, True, False, False]
+[False, False, False, True, True, True]
+[False, True, True, False, False, True]
+[False, True, True, False, False, True]
+[True, True, False, True, False, False]
+TypeError '<' not supported between instances of 'complex' and 'complex'
+TypeError '>=' not supported between instances of 'NoneType' and 'NoneType'
+True
+TypeError '<' not supported between instances of 'list' and 'tuple'
+[False, False, False, True, False, False]

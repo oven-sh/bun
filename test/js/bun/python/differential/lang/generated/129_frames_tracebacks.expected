@@ -1,0 +1,125 @@
+status: 0
+script: 311e39d298ee43a4
+source: c1e242946be6fd5d
+---
+type(f).__name__ => frame
+f.f_code is here.__code__ => True
+f.f_code.co_name => here
+f.f_globals is globals() => True
+f.f_builtins is sys.modules["builtins"].__dict__ => True
+f.f_back.f_code.co_name => <module>
+f.f_lineno == here.__code__.co_firstlineno => True
+f.f_locals => {}
+type(f.f_lasti).__name__ => int
+f.f_trace => None
+f.f_trace_lines => True
+f.f_trace_opcodes => False
+f.f_generator => None
+repr(f)[:12] => <frame at 0x
+"file" in repr(f) => True
+"line" in repr(f) => True
+"code here" in repr(f) => True
+m.f_code.co_name => <module>
+m.f_back => None
+m.f_locals is globals() => True
+m.f_globals is globals() => True
+m.f_code.co_filename.rsplit("/", 1)[-1] => 129_frames_tracebacks.py
+m.f_code.co_firstlineno => 1
+a() => ['names', 'c', 'b', 'a', '<module>']
+names() => ['names', '<module>']
+names(1) => ['<module>']
+('calls_caller', '__main__', '<module>')
+sys._getframe(100) => ValueError: call stack is not deep enough
+sys._getframe(-1).f_code.co_name => '<lambda>'
+sys._getframe("a") => TypeError: 'str' object cannot be interpreted as an integer
+sys._getframe(1, 2) => TypeError: _getframe expected at most 1 argument, got 2
+sys._getframe(2 ** 70) => OverflowError: Python int too large to convert to C int
+(lambda: sys._getframe().f_code.co_name)() => <lambda>
+[sys._getframe().f_code.co_name for _ in range(1)] => ['<module>']
+list(sys._getframe().f_code.co_name for _ in range(1)) => ['<genexpr>']
+type("K", (), {"n": sys._getframe().f_code.co_name}).n => <module>
+Body.name => Body
+Body.back => <module>
+Body.loc => True
+through_builtins()[0] => ['names', '<lambda>', 'through_builtins', '<module>']
+out => ['names', '<lambda>', 'through_builtins', '<module>']
+mm.meth() => ['names', 'meth', '<module>']
+out => ['names', '__len__', '<module>']
+mm.p => ['names', 'p', '<module>']
+mm() => ['names', '__call__', '<module>']
+mm.missing => ['names', '__getattr__', '<module>']
+mm.made => ['names', '__init__', '<module>']
+['names', '__enter__', '<module>']
+['names', '__iter__', '<module>', 'names', '__len__', '<module>']
+['names', '__eq__', '<module>']
+drive() => ['names', 'gen', 'drive', '<module>']
+list(gen()) => [['names', 'gen', '<module>']]
+first() => first
+second() => second
+g.gi_frame.f_back => None
+['names', 'co', 'drive_co', '<module>']
+eval("names()") => ['names', '<module>', '<module>']
+eval("sys._getframe().f_code.co_name") => <module>
+eval("sys._getframe().f_code.co_filename") => <string>
+['names', '<module>', '<module>'] <module> 1
+3
+(1, 2, [5, 6])
+caller_line() - base => 2
+caller_line() - base => 4
+[caller_line() - base, caller_line() - base] => [8, 9]
+({'p': 1, 'q': 2, 'r': 3}, 'FrameLocalsProxy', True, 1, 5, ['fr', 'p', 'q', 'r', 'snap'], 'dflt')
+(2, 3, True, True, ['extra', 'fr', 'x'])
+changed by the callee
+(('cell', ['c'], 'cell'), 'cell')
+(False, True, False)
+['KeyError: "local variable \'\'nope\'\' is not defined"', 'ValueError: cannot remove local variables from FrameLocalsProxy', "AttributeError: 'FrameLocalsProxy' object has no attribute 'clear'", 'ValueError: cannot remove local variables from FrameLocalsProxy', 'ok', "TypeError: unhashable type: 'FrameLocalsProxy'", "AttributeError: 'FrameLocalsProxy' object has no attribute 'popitem'"]
+k.f_locals["secret"] => 42
+k.f_back and k.f_back.f_code.co_name => <module>
+k.f_code.co_name => kept
+dict(k.f_locals) => {'secret': 42}
+AttributeError: attribute 'f_code' of 'frame' objects is not writable
+AttributeError: attribute 'f_back' of 'frame' objects is not writable
+AttributeError: 'frame' object has no attribute 'x' and no __dict__ for setting new attributes
+ValueError: f_lineno can only be set in a trace function
+AttributeError: attribute 'f_locals' of 'frame' objects is not writable
+type(f)() => TypeError: cannot create 'frame' instances
+f.clear() => None
+sys._getframe().clear() => RuntimeError: cannot clear an executing frame
+f == f => True
+hash(f) == hash(f) => True
+type("X", (type(f),), {}) => TypeError: type 'frame' is not an acceptable base type
+type(tb).__name__ => traceback
+walk(tb) => [('top', 1, 'int'), ('mid', 0, 'int'), ('boom', 0, 'int')]
+tb.tb_frame.f_code.co_name => top
+tb.tb_next.tb_next.tb_next => None
+repr(tb)[:17] => <traceback object
+new.tb_lineno => 99
+new.tb_next => None
+new.tb_frame is tb.tb_frame => True
+True
+TB() => TypeError: traceback() missing required argument 'tb_next' (pos 1)
+TB(1, tb.tb_frame, 0, 1) => TypeError: expected traceback object or None, got 'int'
+TB(None, 1, 0, 1) => TypeError: traceback() argument 'tb_frame' must be frame, not int
+TB(None, tb.tb_frame, "a", 1) => TypeError: 'str' object cannot be interpreted as an integer
+type("X", (TB,), {}) => TypeError: type 'traceback' is not an acceptable base type
+True
+None
+TypeError: expected traceback object, got 'int'
+ValueError: traceback loop detected
+AttributeError: readonly attribute
+AttributeError: attribute 'tb_lineno' of 'traceback' objects is not writable
+TypeError: can't delete tb_next attribute
+ValueError: traceback loop detected
+multi_line_raise() => 2
+multi_line_call() => 2
+multi_line_expr() => 3
+in_for_header() => 3
+in_with_exit() => 5
+reraised() => [('reraised', 3, 'int')]
+raised_again() => [('raised_again', 5, 'int'), ('raised_again', 3, 'int')]
+from_finally() => [('from_finally', 3, 'int')]
+kept alive by the traceback
+None
+[('<module>', 547, 'int')]
+walk(e1.__traceback__) => [('<module>', 553, 'int'), ('<module>', 547, 'int')]
+raising again prepends nothing at the same level but appends an entry

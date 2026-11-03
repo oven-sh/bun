@@ -1,0 +1,169 @@
+status: 0
+script: c5003adde85f3cd0
+source: 3750b5aa3279a6e3
+---
+[x for x in range(5)] => [0, 1, 2, 3, 4]
+[x * 2 for x in range(5)] => [0, 2, 4, 6, 8]
+[x for x in range(10) if x % 2] => [1, 3, 5, 7, 9]
+[x for x in range(20) if x % 2 if x % 3] => [1, 5, 7, 11, 13, 17, 19]
+[x if x % 2 else -x for x in range(5)] => [0, 1, -2, 3, -4]
+[(x, y) for x in range(2) for y in range(2)] => [(0, 0), (0, 1), (1, 0), (1, 1)]
+[(x, y) for x in range(3) for y in range(x)] => [(1, 0), (2, 0), (2, 1)]
+[x + y for x in "ab" for y in "cd"] => ['ac', 'ad', 'bc', 'bd']
+[[y for y in range(x)] for x in range(3)] => [[], [0], [0, 1]]
+[x for x in []] => []
+[x for x in "abc"] => ['a', 'b', 'c']
+[1 for _ in range(3)] => [1, 1, 1]
+[x for x, in [(1,), (2,)]] => [1, 2]
+[a + b for a, b in [(1, 2), (3, 4)]] => [3, 7]
+[a for a, *b in [(1, 2, 3)]] => [1]
+[b for a, *b in [(1, 2, 3)]] => [[2, 3]]
+[(a, c) for a, (b, c) in [(1, (2, 3))]] => [(1, 3)]
+{x for x in range(5)} => {0, 1, 2, 3, 4}
+{x % 3 for x in range(10)} => {0, 1, 2}
+{x for x in [1, 1, 2]} => {1, 2}
+{x: x * x for x in range(4)} => {0: 0, 1: 1, 2: 4, 3: 9}
+{x: y for x, y in [("a", 1), ("b", 2)]} => {'a': 1, 'b': 2}
+{x: y for x in "ab" for y in range(2)} => {'a': 1, 'b': 1}
+{v: k for k, v in {"a": 1}.items()} => {1: 'a'}
+{x: [y for y in range(x)] for x in range(3)} => {0: [], 1: [0], 2: [0, 1]}
+{x for x in ()} => set()
+{x: 1 for x in ()} => {}
+{(x, y) for x in range(2) for y in range(2)} == {(0, 0), (0, 1), (1, ... => True
+{x: x for x in range(5) if x % 2} => {1: 1, 3: 3}
+type({x for x in ()}) => <class 'set'>
+type({x: 1 for x in ()}) => <class 'dict'>
+type(g).__name__ => generator
+next(g) => 0
+list(g) => [2, 4]
+list(g) => []
+sum(x for x in range(5)) => 10
+max(x for x in [1, 3, 2]) => 3
+list(x for x in "ab") => ['a', 'b']
+tuple(x for x in range(2)) => (0, 1)
+"".join(c for c in "abc" if c != "b") => ac
+any(x > 3 for x in range(5)) => True
+all(x > 3 for x in range(5)) => False
+sorted(x for x in [3, 1]) => [1, 3]
+dict((x, 1) for x in "a") => {'a': 1}
+sum((x for x in range(3)), 10) => 13
+list((x, y) for x in range(2) for y in "a") => [(0, 'a'), (1, 'a')]
+x => outer
+r => [0, 1, 2]
+outer
+outer
+outer
+[zz for zz in range(3)] and zz => NameError: name 'zz' is not defined
+('local', [0, 1])
+[x for x in x] => [1, 2, 3]
+[x for x in x if x > 1] => [2, 3]
+[[x for x in range(x)] for x in x] => [[0], [0, 1], [0, 1, 2]]
+[y for y in x for x in [y]] => [1, 2, 3]
+[6, 6]
+[1, 2]
+[1, 2, 3]
+(v for v in 5) => TypeError: 'int' object is not iterable
+[v for v in 5] => TypeError: 'int' object is not iterable
+type((v for v in [1] for w in 5)).__name__ => 'generator'
+list(v for v in [1] for w in 5) => TypeError: 'int' object is not iterable
+[v for v in None] => TypeError: 'NoneType' object is not iterable
+{v: 1 for v in 1} => TypeError: 'int' object is not iterable
+[v for v in [1] if undefined_name] => NameError: name 'undefined_name' is not defined
+[1 / v for v in [1, 0]] => ZeroDivisionError: division by zero
+{[]: v for v in [1]} => TypeError: cannot use 'list' as a dict key (unhashable type: 'list')
+{[] for v in [1]} => TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+[a for a, b in [1]] => TypeError: cannot unpack non-iterable int object
+[a for a, b in [(1, 2, 3)]] => ValueError: too many values to unpack (expected 2, got 3)
+[2, 2, 2]
+[0, 1, 2]
+[0, 1, 2]
+[2, 2, 2]
+[1, 1]
+([10, 11, 12], [[10, 11], [11, 12]], {10: 1}, [0, 10, 20], [10, 11])
+C.a => [0, 1, 2]
+C.b => [6, 6]
+C.c => [0, 1]
+C.d => [0, 1, 2]
+C.e => [3, 3]
+[w := i for i in range(3)] => [0, 1, 2]
+w => 2
+[(q := i * 2) + 1 for i in range(3)] => [1, 3, 5]
+q => 4
+[last for i in range(5) if (last := i) % 2] => [1, 3]
+last => 4
+any((hit := v) > 2 for v in [1, 2, 3, 4]) => True
+hit => 3
+{(s := i) for i in range(2)} => {0, 1}
+s => 1
+{i: (u := i) for i in range(2)} => {0: 0, 1: 1}
+u => 1
+([1, 3, 6], 6)
+([[0, 0], [0, 1], [0, 2]], 2)
+SyntaxError: e.msg [src='[i := 0 for i in range(3)]'] => assignment expression cannot rebind comprehension iteration variable 'i'
+SyntaxError: e.msg [src='[(i := 0) for i in range(3)]'] => assignment expression cannot rebind comprehension iteration variable 'i'
+SyntaxError: e.msg [src='[[(j := 0) for i in range(2)] for j in range(2)]'] => assignment expression cannot rebind comprehension iteration variable 'j'
+SyntaxError: e.msg [src='[i for i in (i := range(3))]'] => assignment expression cannot be used in a comprehension iterable expression
+SyntaxError: e.msg [src='[i for i in range(3) if (i := 1)]'] => assignment expression cannot rebind comprehension iteration variable 'i'
+SyntaxError: e.msg [src='class K:\n [(a := 1) for _ in range(1)]'] => assignment expression within a comprehension cannot be used in a class body
+SyntaxError: e.msg [src='[x for x in y := [1]]'] => invalid syntax
+SyntaxError: e.msg [src='{a := 1: 2 for _ in [1]}'] => invalid syntax
+SyntaxError: e.msg [src='[x for x in *[1]]'] => invalid syntax
+SyntaxError: e.msg [src='[x for]'] => invalid syntax
+SyntaxError: e.msg [src='[for x in y]'] => invalid syntax
+SyntaxError: e.msg [src='[x for x in]'] => invalid syntax
+SyntaxError: e.msg [src='[x, y for x in z]'] => did you forget parentheses around the comprehension target?
+SyntaxError: e.msg [src='{x: y, for x in z}'] => invalid syntax
+SyntaxError: e.msg [src='{x, y for x in z}'] => did you forget parentheses around the comprehension target?
+SyntaxError: e.msg [src='(x, y for x in z)'] => invalid syntax
+SyntaxError: e.msg [src='f(x for x in y, 1)'] => Generator expression must be parenthesized
+SyntaxError: e.msg [src='f(1, x for x in y)'] => Generator expression must be parenthesized
+SyntaxError: e.msg [src='[x for x in y if]'] => invalid syntax
+SyntaxError: e.msg [src='[x async for x in y]'] => asynchronous comprehension outside of an asynchronous function
+SyntaxError: e.msg [src='[yield for x in y]'] => invalid syntax
+SyntaxError: e.msg [src='[(yield x) for x in y]'] => 'yield' inside list comprehension
+SyntaxError: e.msg [src='[x for x in (yield)]'] => 'yield' outside function
+SyntaxError: e.msg [src='{x:y for x in z for}'] => invalid syntax
+SyntaxError: e.msg [src='[x for x in 1, 2]'] => invalid syntax
+SyntaxError: e.msg [src='[x for x in lambda: 1, 2]'] => invalid syntax
+[x for x in (1, 2)] => [1, 2]
+[x for x in [1, 2] if x if x] => [1, 2]
+[x for x in range(3) if x or True] => [0, 1, 2]
+[x for x in range(3) if (lambda: x)()] => [1, 2]
+[(lambda: [y for y in range(x)])() for x in range(3)] => [[], [0], [0, 1]]
+[x for x in range(2) for x in range(3)] => [0, 1, 2, 0, 1, 2]
+[x for y in range(2) for x in range(y + 1)] => [0, 0, 1]
+[[x, y] for x in range(2) if x for y in range(2) if y] => [[1, 1]]
+[x for x in range(30) if x % 2 == 0 if x % 3 == 0 if x % 5 == 0] => [0]
+sum([i * j for i in range(50) for j in range(50)]) => 1500625
+len({(i, j) for i in range(30) for j in range(30)}) => 900
+len({i: j for i in range(100) for j in range(3)}) => 100
+sum(1 for _ in range(1000)) => 1000
+[[[k for k in range(2)] for j in range(2)] for i in range(2)] => [[[0, 1], [0, 1]], [[0, 1], [0, 1]]]
+[i for i in range(3)][::-1] => [2, 1, 0]
+[i for i in range(3)][1] => 1
+len([i for i in range(3)]) => 3
+[*[i for i in range(2)], *(i for i in range(2))] => [0, 1, 0, 1]
+[i for i in [j for j in range(3)]] => [0, 1, 2]
+{**{i: i for i in range(2)}} => {0: 0, 1: 1}
+(lambda *a: a)(*[i for i in range(2)]) => (0, 1)
+[i for i in range(3)] + [i for i in range(2)] => [0, 1, 2, 0, 1]
+[*x for x in [[1, 2], [3]]] => [1, 2, 3]
+{*x for x in [[1, 2], [2]]} => {1, 2}
+{**d for d in [{"a": 1}, {"b": 2}, {"a": 3}]} => {'a': 3, 'b': 2}
+list(*x for x in ["ab", "c"]) => ['a', 'b', 'c']
+[*x for x in [(), (1,)] if x] => [1]
+[*range(i) for i in range(4)] => [0, 0, 1, 0, 1, 2]
+[*x for y in [[[1], [2]], [[3]]] for x in y] => [1, 2, 3]
+[*x for x in [1]] => TypeError: Value after * must be an iterable, not int
+{**x for x in [[1]]} => TypeError: 'list' object is not a mapping
+[[r[i] for r in m] for i in range(3)] => [[1, 4], [2, 5], [3, 6]]
+[v for r in m for v in r] => [1, 2, 3, 4, 5, 6]
+[sum(r) for r in m] => [6, 15]
+{i: r for i, r in enumerate(m)} => {0: [1, 2, 3], 1: [4, 5, 6]}
+[max(c) for c in zip(*m)] => [4, 5, 6]
+[[v * 2 for v in r] for r in m] => [[2, 4, 6], [8, 10, 12]]
+[v for r in m if sum(r) > 6 for v in r if v % 2] => [5]
+[locals() for _ in [1]][0].keys() >= {"_"} => True
+sorted(k for k in [locals() for inner in [1]][0] if k in ("inner", "m")) => ['inner']
+[globals() is g2 for g2 in [globals()]] => [True]
+['a', 'b']

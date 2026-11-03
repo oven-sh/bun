@@ -1,0 +1,18 @@
+status: 0
+script: 9e8149a8e728e40b
+---
+[('SIGUSR1', True)]
+[('SIGUSR1', True)]
+False [('SIGUSR1', True)]
+[('SIGUSR1', True)]
+False [('SIGUSR1', True)]
+lock KeyError 'from handler'
+sleep KeyError 'from handler'
+event KeyError 'from handler'
+join KeyError 'from handler'
+['signal only works in main thread of the main interpreter', 'set_wakeup_fd only works in main thread of the main interpreter']
+KeyboardInterrupt
+[('SIGUSR1', True)]
+[('SIGUSR1', True)]
+[b'k'] [('SIGUSR1', True)]
+[<Signals.SIGUSR2: 12>]

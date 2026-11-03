@@ -1,0 +1,143 @@
+status: 0
+script: 250a0f1931351c75
+---
+Struct('<ih') <ih 6 Struct('<ih') Struct('<ih') Struct _struct Struct (<class '_struct.Struct'>, <class 'object'>)
+b'\x01\x00\x00\x00\x02\x00' (1, 2) (1, 2) (1, 2) [(0, 0), (0, 0)]
+None bytearray(b'\x00\x03\x00\x00\x00\x04\x00\x00')
+builtins.TypeError Struct() missing required argument 'format' (pos 1)
+builtins.TypeError Struct() argument 1 must be a str or bytes object, not int
+builtins.TypeError Struct() takes at most 1 argument (2 given)
+Struct('i')
+builtins.TypeError Struct() missing required argument 'format' (pos 1)
+builtins.TypeError Struct() argument 1 must be a str or bytes object, not NoneType
+struct.error bad char in struct format
+builtins.TypeError Struct() takes at most 1 argument (2 given)
+Struct('i')
+builtins.ValueError non-ASCII character in struct format
+builtins.TypeError Struct() argument 1 must be a str or bytes object, not bytearray
+builtins.TypeError Struct() takes at most 1 keyword argument (2 given)
+struct.error pack expected 2 items for packing (got 0)
+struct.error pack expected 2 items for packing (got 3)
+builtins.TypeError Struct.pack() takes no keyword arguments
+builtins.TypeError Struct.unpack() takes exactly one argument (0 given)
+builtins.TypeError a bytes-like object is required, not 'str'
+struct.error unpack requires a buffer of 6 bytes
+builtins.TypeError Struct.unpack() takes exactly one argument (2 given)
+builtins.TypeError Struct.unpack() takes no keyword arguments
+builtins.TypeError unpack_from() missing required argument 'buffer' (pos 1)
+builtins.TypeError unpack_from() takes at most 2 arguments (3 given)
+builtins.TypeError unpack_from() got an unexpected keyword argument 'x'
+struct.error unpack_from requires a buffer of at least 6 bytes for unpacking 6 bytes at offset 0 (actual buffer size is 3)
+builtins.TypeError pack_into expected at least 2 arguments, got 0
+builtins.TypeError pack_into() argument 1 must be read-write bytes-like object, not bytes
+builtins.TypeError pack_into expected at least 2 arguments, got 1
+struct.error pack_into expected 2 items for packing (got 0)
+builtins.TypeError Struct.pack_into() takes no keyword arguments
+builtins.TypeError pack_into() argument 1 must be read-write bytes-like object, not str
+builtins.TypeError Struct.iter_unpack() takes exactly one argument (0 given)
+builtins.TypeError a bytes-like object is required, not 'int'
+struct.error iterative unpacking requires a buffer of a multiple of 6 bytes
+builtins.TypeError Struct.iter_unpack() takes exactly one argument (2 given)
+[96, 128, 192, 128, 192, 128, 96, 96, 160]
+builtins.AttributeError readonly attribute
+builtins.AttributeError readonly attribute
+builtins.AttributeError readonly attribute
+AttributeError
+TypeError
+True True False True
+['__init__', '__new__', '__repr__', '__sizeof__', 'format', 'iter_unpack', 'pack', 'pack_into', 'size', 'unpack', 'unpack_from']
+Create a compiled struct object.
+
+Return a new Struct object which writes and reads binary data according
+to the format string.  See help(struct) for more on format strings.
+True
+None
+i 4
+None
+None
+  warning: FutureWarning Re-initialization of Struct by calling the __init__() method will not work in future Python versions
+h 2 b'\x01\x00'
+None
+  warning: FutureWarning Re-initialization of Struct by calling the __init__() method will not work in future Python versions
+q
+builtins.TypeError Struct() missing required argument 'format' (pos 1)
+struct.error bad char in struct format
+  warning: FutureWarning Re-initialization of Struct by calling the __init__() method will not work in future Python versions
+q
+builtins.TypeError Struct() argument 1 must be a str or bytes object, not int
+  warning: FutureWarning Re-initialization of Struct by calling the __init__() method will not work in future Python versions
+builtins.TypeError Struct() takes at most 1 argument (2 given)
+None
+  warning: FutureWarning Re-initialization of Struct by calling the __init__() method will not work in future Python versions
+b
+Struct -1
+builtins.AttributeError '_struct.Struct' object has no attribute 'format'
+builtins.RuntimeError Struct object is not initialized
+builtins.RuntimeError Struct object is not initialized
+builtins.RuntimeError Struct object is not initialized
+builtins.RuntimeError Struct object is not initialized
+builtins.RuntimeError Struct object is not initialized
+builtins.RuntimeError Struct object is not initialized
+builtins.RuntimeError Struct object is not initialized
+builtins.TypeError a bytes-like object is required, not 'str'
+None
+Struct('h') 2
+Struct('i') 4
+None
+None
+None
+Struct('i')
+struct.error bad char in struct format
+builtins.TypeError Struct() argument 1 must be a str or bytes object, not int
+builtins.RuntimeError Struct object is not initialized
+Struct('i')
+builtins.RuntimeError Struct object is not initialized
+TypeError
+TypeError
+Sub('<h') Sub b'\x01\x00' 1 {'attr': 1} True
+builtins.TypeError Struct() missing required argument 'format' (pos 1)
+struct.error bad char in struct format
+builtins.TypeError Struct() takes at most 1 argument (2 given)
+Sub('i')
+WithInit('<h')
+WithInit('<h')
+  warning: DeprecationWarning Struct() takes at most 1 argument (2 given)
+5
+  warning: DeprecationWarning Struct() takes at most 1 argument (2 given)
+WithInit('<h')
+  warning: DeprecationWarning Struct() missing required argument 'format' (pos 1)
+struct.error bad char in struct format
+  warning: DeprecationWarning Invalid 'format' argument for Struct.__new__(): bad char in struct format
+builtins.TypeError Struct() argument 1 must be a str or bytes object, not int
+  warning: DeprecationWarning Invalid 'format' argument for Struct.__new__(): Struct() argument 1 must be a str or bytes object, not int
+InitOther('<q')
+  warning: FutureWarning Different format arguments for __new__() and __init__() methods of Struct
+InitOther('<q')
+InitOther('<q')
+  warning: DeprecationWarning Invalid 'format' argument for Struct.__new__(): bad char in struct format
+InitOther('<q')
+  warning: DeprecationWarning Invalid 'format' argument for Struct.__new__(): Struct() argument 1 must be a str or bytes object, not int
+NoSuperInit('<h')
+builtins.RuntimeError Struct object is not initialized
+  warning: DeprecationWarning Struct() missing required argument 'format' (pos 1)
+-1
+  warning: DeprecationWarning Struct() missing required argument 'format' (pos 1)
+builtins.RuntimeError Struct object is not initialized
+  warning: DeprecationWarning Struct() missing required argument 'format' (pos 1)
+-1
+  warning: DeprecationWarning Struct() takes at most 1 argument (3 given)
+WithNew('3b')
+3
+WithNew2('i')
+builtins.TypeError Struct() missing required argument 'format' (pos 1)
+builtins.TypeError Struct() takes at most 1 argument (2 given)
+struct.error bad char in struct format
+WithNew2('i')
+builtins.TypeError Struct() missing required argument 'format' (pos 1)
+builtins.TypeError Struct() argument 1 must be a str or bytes object, not int
+WithBoth('2b')
+2
+builtins.FutureWarning Re-initialization of Struct by calling the __init__() method will not work in future Python versions
+i
+builtins.DeprecationWarning Struct() missing required argument 'format' (pos 1)
+builtins.DeprecationWarning Invalid 'format' argument for Struct.__new__(): bad char in struct format

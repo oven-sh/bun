@@ -1,0 +1,82 @@
+status: 0
+script: 9221b01f2de0dec0
+---
+['COVERAGE_ID', 'DEBUGGER_ID', 'DISABLE', 'MISSING', 'OPTIMIZER_ID', 'PROFILER_ID', '_all_events', 'clear_tool_id', 'events', 'free_tool_id', 'get_events', 'get_local_events', 'get_tool', 'register_callback', 'restart_events', 'set_events', 'set_local_events', 'use_tool_id']
+[(0, 'NO_EVENTS'), (1, 'PY_START'), (2, 'PY_RESUME'), (4, 'PY_RETURN'), (8, 'PY_YIELD'), (16, 'CALL'), (32, 'LINE'), (64, 'INSTRUCTION'), (128, 'JUMP'), (256, 'BRANCH_LEFT'), (512, 'BRANCH_RIGHT'), (1024, 'STOP_ITERATION'), (2048, 'RAISE'), (4096, 'EXCEPTION_HANDLED'), (8192, 'PY_UNWIND'), (16384, 'PY_THROW'), (32768, 'RERAISE'), (65536, 'C_RETURN'), (131072, 'C_RAISE'), (262144, 'BRANCH')]
+0 1 2 5
+module sys.monitoring <object  <object 
+get_tool -> ValueError invalid tool -1 (must be between 0 and 5)
+get_tool (0,) -> None
+get_tool (5,) -> None
+get_tool -> ValueError invalid tool 6 (must be between 0 and 5)
+get_tool -> ValueError invalid tool 7 (must be between 0 and 5)
+get_tool -> ValueError invalid tool 8 (must be between 0 and 5)
+get_tool -> TypeError 'str' object cannot be interpreted as an integer
+get_tool -> TypeError 'float' object cannot be interpreted as an integer
+use_tool_id (0, 'first') -> None
+get_tool (0,) -> first
+use_tool_id -> ValueError tool 0 is already in use
+use_tool_id -> ValueError tool name must be a str
+use_tool_id -> ValueError invalid tool 6 (must be between 0 and 5)
+free_tool_id (0,) -> None
+get_tool (0,) -> None
+free_tool_id (0,) -> None
+free_tool_id -> ValueError invalid tool 9 (must be between 0 and 5)
+clear_tool_id (0,) -> None
+clear_tool_id -> ValueError invalid tool 9 (must be between 0 and 5)
+get_events (0,) -> 0
+set_events -> ValueError tool 0 is not in use
+use_tool_id (0, 'tool') -> None
+set_events (0, 33) -> None
+get_events (0,) -> 33
+_all_events () -> {'PY_START': 1, 'LINE': 1}
+set_events -> ValueError cannot set C_RETURN or C_RAISE events independently
+set_events -> ValueError cannot set C_RETURN or C_RAISE events independently
+set_events (0, 196624) -> None
+get_events (0,) -> 16
+set_events (0, 262144) -> None
+get_events (0,) -> 768
+set_events -> ValueError invalid event set 0xffffffff
+set_events -> ValueError invalid event set 0x80000
+set_events -> OverflowError Python int too large to convert to C int
+set_events (0, 524287) -> None
+get_events (0,) -> 65535
+set_events (0, 0) -> None
+set_events -> ValueError invalid tool 9 (must be between 0 and 5)
+get_events -> ValueError invalid tool 9 (must be between 0 and 5)
+get_local_events ... -> 0
+set_local_events ... -> None
+get_local_events ... -> 36
+get_local_events ... -> 0
+set_local_events -> ValueError tool 1 is not in use
+set_local_events -> TypeError code must be a code object
+get_local_events -> TypeError code must be a code object
+set_local_events -> ValueError cannot set C_RETURN or C_RAISE events independently
+set_local_events -> ValueError cannot set C_RETURN or C_RAISE events independently
+get_local_events ... -> 36
+set_local_events ... -> None
+get_local_events ... -> 63488
+set_local_events ... -> None
+get_local_events ... -> 768
+set_local_events -> ValueError invalid local event set 0xfff8ffff
+set_local_events -> ValueError invalid local event set 0x80000
+set_local_events ... -> None
+set_local_events -> ValueError invalid tool 9 (must be between 0 and 5)
+None
+True
+True
+None
+register_callback -> ValueError The callback can only be set for one event at a time
+register_callback -> ValueError The callback can only be set for one event at a time
+register_callback -> ValueError invalid event 524288
+register_callback -> ValueError invalid event 33554432
+register_callback -> ValueError invalid tool 9 (must be between 0 and 5)
+register_callback ... -> None
+True
+None None None
+True True True
+tool 0 0 None
+None 0 0 None
+restart_events () -> None
+_all_events () -> {}
+[('sys.monitoring.register_callback', 1), ('sys.monitoring.register_callback', 1), ('sys.settrace', 0), ('sys.setprofile', 0)]

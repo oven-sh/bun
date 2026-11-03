@@ -1,0 +1,242 @@
+status: 0
+script: a295b0d9488edba7
+source: 2f7a919025d86566
+---
+d.get("a") => 1
+d.get("z") => None
+d.get("z", 0) => 0
+d.get("a", 0) => 1
+d.get(None) => None
+d.get(1, "x") => x
+{}.get("a") => None
+{None: 1}.get(None) => 1
+d.get() => TypeError: get expected at least 1 argument, got 0
+d.get("a", 1, 2) => TypeError: get expected at most 2 arguments, got 3
+d.get(key="a") => TypeError: dict.get() takes no keyword arguments
+d.setdefault("a", 9) => 1
+d.setdefault("c", 3) => 3
+d => {'a': 1, 'b': 2, 'c': 3}
+d.setdefault("e") => None
+d => {'a': 1, 'b': 2, 'c': 3, 'e': None}
+d.setdefault() => TypeError: setdefault expected at least 1 argument, got 0
+d.setdefault([], 1) => TypeError: cannot use 'list' as a dict key (unhashable type: 'list')
+{'k': [1, 2]}
+d.pop("a") => 1
+d => {'b': 2, 'c': 3}
+d.pop("z", None) => None
+d.pop("z", "dflt") => dflt
+d.pop("b", "dflt") => 2
+d => {'c': 3}
+d.pop("z") => KeyError: 'z'
+d.pop() => TypeError: pop expected at least 1 argument, got 0
+d.pop("a", 1, 2) => TypeError: pop expected at most 2 arguments, got 3
+{}.pop("a") => KeyError: 'a'
+{}.pop([]) => KeyError: []
+{}.pop(("a", 1)) => KeyError: ('a', 1)
+d.popitem() => ('c', 3)
+d => {'a': 1, 'b': 2}
+d.popitem() => ('b', 2)
+d.popitem() => ('a', 1)
+d => {}
+{}.popitem() => KeyError: 'popitem(): dictionary is empty'
+{1: 1}.popitem(1) => TypeError: dict.popitem() takes no arguments (1 given)
+d.update({"b": 2}) => None
+d => {'a': 1, 'b': 2}
+{'a': 1, 'b': 2, 'c': 3}
+{'a': 1, 'b': 2, 'c': 3, 'd': 4}
+{'a': 0, 'b': 2, 'c': 3, 'd': 4, 'e': 5}
+{'a': 0, 'b': 2, 'c': 3, 'd': 4, 'e': 5}
+{'a': 0, 'b': 2, 'c': 3, 'd': 4, 'e': 5, 'f': 6, 'g': 7}
+{'a': 0, 'b': 2, 'c': 3, 'd': 4, 'e': 5, 'f': 6, 'g': 7, 'h': 8, 'i': 9}
+9
+d["a"] => -1
+d["b"] => -2
+{}.update(1) => TypeError: 'int' object is not iterable
+{}.update([1]) => TypeError: object is not iterable
+{}.update([(1,)]) => ValueError: dictionary update sequence element #0 has length 1; 2 is required
+{}.update([(1, 2, 3)]) => ValueError: dictionary update sequence element #0 has length 3; 2 is required
+{}.update({}, {}) => TypeError: update expected at most 1 argument, got 2
+{}.update(None) => TypeError: 'NoneType' object is not iterable
+{}.update("ab") => ValueError: dictionary update sequence element #0 has length 1; 2 is required
+{}.update(["ab", "c"]) => ValueError: dictionary update sequence element #1 has length 1; 2 is required
+{}.update(["ab"]) => None
+dict.fromkeys("ab") => {'a': None, 'b': None}
+dict.fromkeys("ab", 0) => {'a': 0, 'b': 0}
+dict.fromkeys([1, 2], []) => {1: [], 2: []}
+dict.fromkeys([]) => {}
+dict.fromkeys(range(3), "x") => {0: 'x', 1: 'x', 2: 'x'}
+dict.fromkeys({"a": 1}) => {'a': None}
+dict.fromkeys((1, 1, 2)) => {1: None, 2: None}
+dict.fromkeys({1, 2}, None) => {1: None, 2: None}
+dict.fromkeys(iter("a")) => {'a': None}
+{'a': [1], 'b': [1]}
+dict.fromkeys() => TypeError: fromkeys expected at least 1 argument, got 0
+dict.fromkeys(1) => TypeError: 'int' object is not iterable
+dict.fromkeys([[]]) => TypeError: cannot use 'list' as a dict key (unhashable type: 'list')
+d => {'a': [1, 2]}
+c => {'a': [1, 2], 'b': 2}
+type(c) => <class 'dict'>
+c is d => False
+d.clear() => None
+d => {}
+len(d) => 0
+{'x': 1}
+k => dict_keys(['a', 'b', 'c'])
+v => dict_values([1, 2, 3])
+i => dict_items([('a', 1), ('b', 2), ('c', 3)])
+len(k) => 3
+len(v) => 3
+len(i) => 3
+list(k) => ['a', 'b', 'c']
+list(v) => [1, 2, 3]
+list(i) => [('a', 1), ('b', 2), ('c', 3)]
+"a" in k => True
+"z" in k => False
+1 in v => True
+9 in v => False
+("a", 1) in i => True
+("a", 2) in i => False
+("z", 1) in i => False
+"a" in i => False
+("a",) in i => False
+("a", 1, 2) in i => False
+["a", 1] in i => False
+k => dict_keys(['a', 'b', 'c', 'd'])
+v => dict_values([1, 2, 3, 4])
+i => dict_items([('a', 1), ('b', 2), ('c', 3), ('d', 4)])
+len(k) => 4
+list(k) => ['b', 'c', 'd']
+list(v) => [2, 3, 4]
+list(i) => [('b', 2), ('c', 3), ('d', 4)]
+k == {"b", "c", "d"} => True
+k == d.keys() => True
+k != {"b"} => True
+k == ["b", "c", "d"] => False
+i == {("b", 2), ("c", 3), ("d", 4)} => True
+v == v => True
+v == d.values() => False
+d.values() == d.values() => False
+k == {"b": 0, "c": 0, "d": 0}.keys() => True
+sorted(k & {"b", "x"}) => ['b']
+sorted(k | {"x"}) => ['b', 'c', 'd', 'x']
+sorted(k - {"b"}) => ['c', 'd']
+sorted(k ^ {"b", "x"}) => ['c', 'd', 'x']
+sorted({"b", "x"} & k) => ['b']
+sorted({"x"} | k) => ['b', 'c', 'd', 'x']
+sorted({"b", "x"} - k) => ['x']
+sorted({"b", "x"} ^ k) => ['c', 'd', 'x']
+sorted(k & ["b"]) => ['b']
+sorted(k | ["y"]) => ['b', 'c', 'd', 'y']
+sorted(k - "b") => ['c', 'd']
+sorted(k & d.keys()) => ['b', 'c', 'd']
+type(k & {"b"}) => <class 'set'>
+type(k | k) => <class 'set'>
+sorted(i & {("b", 2)}) => [('b', 2)]
+sorted(i | {(1, 2)}, key=str) => [('b', 2), ('c', 3), ('d', 4), (1, 2)]
+sorted(i - {("b", 2)}) => [('c', 3), ('d', 4)]
+sorted(k & "bc") => ['b', 'c']
+sorted(["b"] & k) if False else "" => 
+k <= {"b", "c", "d"} => True
+k < {"b", "c", "d"} => False
+k < {"b", "c", "d", "e"} => True
+k >= {"b"} => True
+k > {"b"} => True
+k <= {"b"} => False
+k.isdisjoint({"x"}) => True
+k.isdisjoint({"b"}) => False
+k.isdisjoint(["x"]) => True
+i.isdisjoint([("b", 2)]) => False
+i.isdisjoint([("b", 3)]) => True
+k.isdisjoint("") => True
+{"b"} <= k => True
+{"b"} < k => True
+v & {1} => TypeError: unsupported operand type(s) for &: 'dict_values' and 'set'
+v | v => TypeError: unsupported operand type(s) for |: 'dict_values' and 'dict_values'
+v < v => TypeError: '<' not supported between instances of 'dict_values' and 'dict_values'
+k & 1 => TypeError: 'int' object is not iterable
+k < ["b"] => TypeError: '<' not supported between instances of 'dict_keys' and 'list'
+k[0] => TypeError: 'dict_keys' object is not subscriptable
+len(k[0:1]) => TypeError: 'dict_keys' object is not subscriptable
+k.add("x") => AttributeError: 'dict_keys' object has no attribute 'add'
+hash(k) => TypeError: unhashable type: 'dict_keys'
+hash(v) is not None => True
+{"a": []}.items() & {1} => TypeError: unhashable type: 'list'
+v.isdisjoint([]) => AttributeError: 'dict_values' object has no attribute 'isdisjoint'
+type(k)() => TypeError: cannot create 'dict_keys' instances
+list(reversed(k)) => ['d', 'c', 'b']
+list(reversed(v)) => [4, 3, 2]
+list(reversed(i)) => [('d', 4), ('c', 3), ('b', 2)]
+k.mapping => {'b': 2, 'c': 3, 'd': 4}
+type(k.mapping).__name__ => mappingproxy
+v.mapping == d => True
+i.mapping["b"] => 2
+set_mapping() => TypeError: 'mappingproxy' object does not support item assignment
+repr({}.keys()) => dict_keys([])
+repr({}.values()) => dict_values([])
+repr({}.items()) => dict_items([])
+repr({1: [2]}.items()) => dict_items([(1, [2])])
+repr({"a": {"b": 1}}.values()) => dict_values([{'b': 1}])
+{'v': dict_values([...])}
+{'i': dict_items([('i', ...)])}
+next(it) => b
+it.__length_hint__() => 2
+list(it) => ['c', 'd']
+next(it, "end") => end
+it.__length_hint__() => 0
+next(it) => ('b', 2)
+type(next(it)) => <class 'tuple'>
+it.__length_hint__() => 1
+next(it) => 2
+list(it) => [3, 4]
+next(it) => RuntimeError: dictionary changed size during iteration
+next(it) => 'b'
+d.__len__() => 3
+d.__getitem__("c") => 3
+d.__contains__("c") => True
+d.__eq__(dict(d)) => True
+d.__eq__(1) => NotImplemented
+d.__ne__({}) => True
+d.__iter__().__next__() => c
+d.__repr__() => {'c': 3, 'd': 4, 'b': 2}
+d.__setitem__("q", 1) => None
+d.__delitem__("q") => None
+d.__reversed__().__next__() => b
+d.__or__({}) => {'c': 3, 'd': 4, 'b': 2}
+d.__class_getitem__(int) if False else "" => 
+d.__sizeof__() > 0 => True
+d.__lt__({}) => NotImplemented
+x => {'a': 1, 'b': 2}
+dict.get(x, "a") => 1
+dict.keys(x) => dict_keys(['a', 'b'])
+dict.__len__(x) => 2
+dict.pop(x, "a") => 1
+dict.get(1, 2) => TypeError: descriptor 'get' for 'dict' objects doesn't apply to a 'int' object
+dict.get() => TypeError: unbound method dict.get() needs an argument
+dict.keys([]) => TypeError: descriptor 'keys' for 'dict' objects doesn't apply to a 'list' object
+{}.nope => AttributeError: 'dict' object has no attribute 'nope'
+set_attr() => AttributeError: 'dict' object has no attribute 'x' and no __dict__ for setting new attributes
+len(kd) => 9
+kd[K(4)] => 4
+K(9) in kd => False
+kd.get(K(8)) => 8
+list(kd)[:4] => [K(0), K(1), K(2), K(3)]
+len(kd) => 8
+K(3) in kd => False
+K(6) in kd => True
+K(0) in kd => True
+(K(0), 'replaced')
+{BadHash(): 1} => TypeError: cannot use 'BadHash' as a dict key (__hash__ method should return an integer)
+{RaisingHash(): 1} => RuntimeError: no hash
+{RaisingEq(): 1, RaisingEq(): 2} => RuntimeError: no eq
+{NoHash(): 1} => TypeError: cannot use 'NoHash' as a dict key (unhashable type: 'NoHash')
+{EqOnly(): 1} => TypeError: cannot use 'EqOnly' as a dict key (unhashable type: 'EqOnly')
+{1: 1}[RaisingEq()] => RuntimeError: no eq
+hash(BigHash()) => 549755813888
+hash(NegHash()) => -2
+hash(BoolHash()) => 1
+len({BigHash(): 1, NegHash(): 2}) => 2
+{same: 1}[same] => 1
+{float("nan"): 1}.get(float("nan")) => None
+(lambda n: {n: 1}[n])(float("nan")) => 1
+ed.get(Evil(ed)) => None
+0

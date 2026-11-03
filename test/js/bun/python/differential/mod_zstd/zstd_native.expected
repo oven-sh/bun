@@ -1,0 +1,159 @@
+status: 0
+script: 5c4a7e1f757d7b16
+---
+['ZSTD_CLEVEL_DEFAULT', 'ZSTD_DStreamOutSize', 'ZSTD_btlazy2', 'ZSTD_btopt', 'ZSTD_btultra', 'ZSTD_btultra2', 'ZSTD_c_chainLog', 'ZSTD_c_checksumFlag', 'ZSTD_c_compressionLevel', 'ZSTD_c_contentSizeFlag', 'ZSTD_c_dictIDFlag', 'ZSTD_c_enableLongDistanceMatching', 'ZSTD_c_hashLog', 'ZSTD_c_jobSize', 'ZSTD_c_ldmBucketSizeLog', 'ZSTD_c_ldmHashLog', 'ZSTD_c_ldmHashRateLog', 'ZSTD_c_ldmMinMatch', 'ZSTD_c_minMatch', 'ZSTD_c_nbWorkers', 'ZSTD_c_overlapLog', 'ZSTD_c_searchLog', 'ZSTD_c_strategy', 'ZSTD_c_targetLength', 'ZSTD_c_windowLog', 'ZSTD_d_windowLogMax', 'ZSTD_dfast', 'ZSTD_fast', 'ZSTD_greedy', 'ZSTD_lazy', 'ZSTD_lazy2', 'ZstdCompressor', 'ZstdDecompressor', 'ZstdDict', 'ZstdError', 'finalize_dict', 'get_frame_info', 'get_frame_size', 'get_param_bounds', 'set_parameter_types', 'train_dict', 'zstd_version', 'zstd_version_number']
+{'ZSTD_CLEVEL_DEFAULT': 3, 'ZSTD_DStreamOutSize': 131072, 'ZSTD_btlazy2': 6, 'ZSTD_btopt': 7, 'ZSTD_btultra': 8, 'ZSTD_btultra2': 9, 'ZSTD_c_chainLog': 103, 'ZSTD_c_checksumFlag': 201, 'ZSTD_c_compressionLevel': 100, 'ZSTD_c_contentSizeFlag': 200, 'ZSTD_c_dictIDFlag': 202, 'ZSTD_c_enableLongDistanceMatching': 160, 'ZSTD_c_hashLog': 102, 'ZSTD_c_jobSize': 401, 'ZSTD_c_ldmBucketSizeLog': 163, 'ZSTD_c_ldmHashLog': 161, 'ZSTD_c_ldmHashRateLog': 164, 'ZSTD_c_ldmMinMatch': 162, 'ZSTD_c_minMatch': 105, 'ZSTD_c_nbWorkers': 400, 'ZSTD_c_overlapLog': 402, 'ZSTD_c_searchLog': 104, 'ZSTD_c_strategy': 107, 'ZSTD_c_targetLength': 106, 'ZSTD_c_windowLog': 101, 'ZSTD_d_windowLogMax': 100, 'ZSTD_dfast': 2, 'ZSTD_fast': 1, 'ZSTD_greedy': 3, 'ZSTD_lazy': 4, 'ZSTD_lazy2': 5}
+<class 'str'> <class 'int'> True
+(<class 'compression.zstd.ZstdError'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>) compression.zstd ZstdError An error occurred in the zstd library.
+<class 'compression.zstd.ZstdCompressor'> (<class 'compression.zstd.ZstdCompressor'>, <class 'object'>) compression.zstd ZstdCompressor [('CONTINUE', 'int'), ('FLUSH_BLOCK', 'int'), ('FLUSH_FRAME', 'int'), ('__new__', 'builtin_function_or_method'), ('compress', 'method_descriptor'), ('flush', 'method_descriptor'), ('last_mode', 'member_descriptor'), ('set_pledged_input_size', 'method_descriptor')]
+TypeError: type 'compression.zstd.ZstdCompressor' is not an acceptable base type
+TypeError: cannot set 'x' attribute of immutable type 'compression.zstd.ZstdCompressor'
+<class 'compression.zstd.ZstdDecompressor'> (<class 'compression.zstd.ZstdDecompressor'>, <class 'object'>) compression.zstd ZstdDecompressor [('__new__', 'builtin_function_or_method'), ('decompress', 'method_descriptor'), ('eof', 'member_descriptor'), ('needs_input', 'member_descriptor'), ('unused_data', 'getset_descriptor')]
+TypeError: type 'compression.zstd.ZstdDecompressor' is not an acceptable base type
+TypeError: cannot set 'x' attribute of immutable type 'compression.zstd.ZstdDecompressor'
+<class 'compression.zstd.ZstdDict'> (<class 'compression.zstd.ZstdDict'>, <class 'object'>) compression.zstd ZstdDict [('__len__', 'wrapper_descriptor'), ('__new__', 'builtin_function_or_method'), ('__repr__', 'wrapper_descriptor'), ('as_digested_dict', 'getset_descriptor'), ('as_prefix', 'getset_descriptor'), ('as_undigested_dict', 'getset_descriptor'), ('dict_content', 'getset_descriptor'), ('dict_id', 'member_descriptor')]
+TypeError: type 'compression.zstd.ZstdDict' is not an acceptable base type
+TypeError: cannot set 'x' attribute of immutable type 'compression.zstd.ZstdDict'
+0 1 2
+2
+<class 'bytes'> 0
+2 True
+-100 True 2
+-1 True 2
+0 True 2
+1 True 2
+3 True 2
+10 True 2
+19 True 2
+22 True 2
+True
+True 1 False True
+True 1 False True
+True 1 False True
+True 1 False True
+b'' True False 2
+b'one' b'two' b'(\xb5/\xfd \x00\x01\x00\x00' b'' b'' 0
+True
+True
+True
+TypeError: Only one of level or options should be used.
+TypeError: invalid type for level, expected int
+TypeError: invalid type for level, expected int
+ValueError: illegal compression level 23; the valid range is [-131072, 22]
+ValueError: illegal compression level -131073; the valid range is [-131072, 22]
+ValueError: illegal compression level; the valid range is [-131072, 22]
+ValueError: illegal compression level; the valid range is [-131072, 22]
+<compression.zstd.ZstdCompressor object>
+<compression.zstd.ZstdCompressor object>
+TypeError: ZstdCompressor() takes at most 3 arguments (4 given)
+TypeError: ZstdCompressor() got an unexpected keyword argument 'x'
+TypeError: Only one of level or options should be used.
+TypeError: ZstdCompressor() argument 'options' must be dict, not int
+TypeError: ZstdCompressor() argument 'options' must be dict, not list
+TypeError: ZstdCompressor() argument 'options' must be dict, not str
+TypeError: zstd_dict argument should be a ZstdDict object.
+TypeError: zstd_dict argument should be a ZstdDict object.
+TypeError: zstd_dict argument should be a ZstdDict object.
+<compression.zstd.ZstdCompressor object>
+ValueError: illegal compression level 100; the valid range is [-131072, 22]
+ValueError: compression parameter 'window_log' received an illegal value 100; the valid range is [10, 31]
+<compression.zstd.ZstdCompressor object>
+TypeError: compression options dictionary key must not be a DecompressionParameter attribute
+ValueError: invalid compression parameter 'unknown parameter (key 12345)'
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'str' object cannot be interpreted as an integer
+OverflowError: Python int too large to convert to C int
+OverflowError: Python int too large to convert to C int
+ValueError: compression parameter 'strategy' received an illegal value 99; the valid range is [1, 9]
+<compression.zstd.ZstdCompressor object>
+TypeError: 'float' object cannot be interpreted as an integer
+<compression.zstd.ZstdCompressor object>
+TypeError: compress() missing required argument 'data' (pos 1)
+TypeError: a bytes-like object is required, not 'str'
+TypeError: a bytes-like object is required, not 'int'
+ValueError: mode argument wrong value, it should be one of ZstdCompressor.CONTINUE, ZstdCompressor.FLUSH_BLOCK, ZstdCompressor.FLUSH_FRAME.
+ValueError: mode argument wrong value, it should be one of ZstdCompressor.CONTINUE, ZstdCompressor.FLUSH_BLOCK, ZstdCompressor.FLUSH_FRAME.
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: compress() takes at most 2 arguments (3 given)
+b'(\xb5/\xfd \x00\x01\x00\x00'
+TypeError: compress() missing required argument 'data' (pos 1)
+OverflowError: Python int too large to convert to C int
+ValueError: mode argument wrong value, it should be ZstdCompressor.FLUSH_FRAME or ZstdCompressor.FLUSH_BLOCK.
+ValueError: mode argument wrong value, it should be ZstdCompressor.FLUSH_FRAME or ZstdCompressor.FLUSH_BLOCK.
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: flush() takes at most 1 argument (2 given)
+b''
+TypeError: flush() got an unexpected keyword argument 'x'
+AttributeError: readonly attribute
+AttributeError: 'compression.zstd.ZstdCompressor' object has no attribute 'x' and no __dict__ for setting new attributes
+None
+(145890, 0) True
+(None, 0)
+(145890, 0)
+b'(\xb5/\xfd \x05)\x00\x0012345'
+2
+b'(\xb5/\xfd \nQ\x00\x001234567890'
+ZstdError: Unable to compress Zstandard data: Src size is incorrect
+b'(\xb5/\xfd \x00\x01\x00\x00'
+(None, 0)
+TypeError: ZstdCompressor.set_pledged_input_size() takes exactly one argument (0 given)
+ValueError: size argument should be a positive int less than 18446744073709551614
+ValueError: size argument should be a positive int less than 18446744073709551614
+ValueError: size argument should be a positive int less than 18446744073709551614
+ValueError: size argument should be a positive int less than 18446744073709551614
+None
+TypeError: an integer is required
+TypeError: an integer is required
+TypeError: ZstdCompressor.set_pledged_input_size() takes no keyword arguments
+None
+ValueError: set_pledged_input_size() method must be called when last_mode == FLUSH_FRAME
+ValueError: set_pledged_input_size() method must be called when last_mode == FLUSH_FRAME
+None
+True 2
+True
+True
+2896
+True True True
+ZstdError: Error when finding the compressed size of a Zstandard frame. Ensure the frame_buffer argument starts from the beginning of a frame, and its length is not less than this complete frame. Zstd error message: Src size is incorrect.
+ZstdError: Error when finding the compressed size of a Zstandard frame. Ensure the frame_buffer argument starts from the beginning of a frame, and its length is not less than this complete frame. Zstd error message: Src size is incorrect.
+ZstdError: Error when finding the compressed size of a Zstandard frame. Ensure the frame_buffer argument starts from the beginning of a frame, and its length is not less than this complete frame. Zstd error message: Unknown frame descriptor.
+TypeError: a bytes-like object is required, not 'str'
+TypeError: get_frame_size() missing required argument 'frame_buffer' (pos 1)
+TypeError: get_frame_size() takes at most 1 argument (2 given)
+(145890, 0)
+(145890, 0)
+ZstdError: Error when getting information from the header of a Zstandard frame. Ensure the frame_buffer argument starts from the beginning of a frame, and its length is not less than the frame header (6~18 bytes).
+ZstdError: Error when getting information from the header of a Zstandard frame. Ensure the frame_buffer argument starts from the beginning of a frame, and its length is not less than the frame header (6~18 bytes).
+ZstdError: Error when getting information from the header of a Zstandard frame. Ensure the frame_buffer argument starts from the beginning of a frame, and its length is not less than the frame header (6~18 bytes).
+TypeError: a bytes-like object is required, not 'int'
+TypeError: get_frame_info() missing required argument 'frame_buffer' (pos 1)
+compression_level 100 True <class 'int'> True
+window_log 101 True <class 'int'> True
+hash_log 102 True <class 'int'> True
+chain_log 103 True <class 'int'> True
+search_log 104 True <class 'int'> True
+min_match 105 True <class 'int'> True
+target_length 106 True <class 'int'> True
+strategy 107 True <class 'int'> True
+enable_long_distance_matching 160 True <class 'int'> True
+ldm_hash_log 161 True <class 'int'> True
+ldm_min_match 162 True <class 'int'> True
+ldm_bucket_size_log 163 True <class 'int'> True
+ldm_hash_rate_log 164 True <class 'int'> True
+content_size_flag 200 True <class 'int'> True
+checksum_flag 201 True <class 'int'> True
+dict_id_flag 202 True <class 'int'> True
+nb_workers 400 True <class 'int'> True
+job_size 401 True <class 'int'> True
+overlap_log 402 True <class 'int'> True
+(-131072, 22) (10, 31) (1, 9) (0, 1) (10, 31)
+ZstdError: Unable to get zstd compression parameter bounds: Unsupported parameter
+ZstdError: Unable to get zstd decompression parameter bounds: Unsupported parameter
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: get_param_bounds() missing required argument 'is_compress' (pos 2)
+TypeError: get_param_bounds() missing required argument 'parameter' (pos 1)
+OverflowError: Python int too large to convert to C int
+TypeError: set_parameter_types() argument 'c_parameter_type' must be type, not int
+TypeError: set_parameter_types() argument 'd_parameter_type' must be type, not int
+TypeError: set_parameter_types() missing required argument 'c_parameter_type' (pos 1)
+TypeError: set_parameter_types() missing required argument 'd_parameter_type' (pos 2)

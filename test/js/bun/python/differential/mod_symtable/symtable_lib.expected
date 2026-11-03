@@ -1,0 +1,169 @@
+status: 0
+script: e9f2476db5486aa1
+---
+<SymbolTable for module file.py>
+ module top 0 False False True ['Alias', 'Base', 'G', 'K', 'M', '__conditional_annotations__', 'ann', 'generic', 'glob', 'outer', 'p', 'sys']
+   <symbol 'Alias': LOCAL, DEF_LOCAL> False False False True False False True False False False False True False False True 1
+   <symbol 'Base': GLOBAL_IMPLICIT, USE> True False False True False False False False False False False False False False False 0
+   <symbol 'G': LOCAL, DEF_LOCAL> False False False True False False True False False False False True False False True 1
+   <symbol 'K': LOCAL, DEF_LOCAL> False False False True False False True False False False False True False False True 1
+   <symbol 'M': GLOBAL_IMPLICIT, USE> True False False True False False False False False False False False False False False 0
+   <symbol '__conditional_annotations__': GLOBAL_IMPLICIT, USE> True False False True False False False False False False False False False False False 0
+   <symbol 'ann': LOCAL, DEF_LOCAL|DEF_ANNOT> False False False True False False True True False False False True False False False 0
+   <symbol 'generic': LOCAL, DEF_LOCAL> False False False True False False True False False False False True False False True 1
+   <symbol 'glob': GLOBAL_EXPLICIT, DEF_GLOBAL|DEF_LOCAL> False False False True False True True False False False False True False False False 0
+   <symbol 'outer': LOCAL, DEF_LOCAL> False False False True False False True False False False False True False False True 1
+   <symbol 'p': LOCAL, DEF_IMPORT> False False False True False False True False False False True False False False False 0
+   <symbol 'sys': LOCAL, DEF_IMPORT> False False False True False False True False False False True False False False False 0
+  <SymbolTable for __annotate__ in file.py>
+   annotation __annotate__ 5 False False False ['.format']
+     <symbol '.format': LOCAL, USE|DEF_PARAM> True True False False False False True False False False False False False False False 0
+  <Function SymbolTable for outer in file.py>
+   function outer 5 True False True ['a', 'args', 'b', 'c', 'glob', 'inner', 'kw', 'lam', 'x']
+   function ('a', 'b', 'c', 'args', 'kw') ['a', 'args', 'b', 'c', 'inner', 'kw', 'lam', 'x'] ['glob'] [] [] ['x']
+     <symbol 'a': LOCAL, USE|DEF_PARAM> True True False False False False True False False False False False False False False 0
+     <symbol 'args': LOCAL, DEF_PARAM> False True False False False False True False False False False False False False False 0
+     <symbol 'b': LOCAL, DEF_PARAM> False True False False False False True False False False False False False False False 0
+     <symbol 'c': LOCAL, DEF_PARAM> False True False False False False True False False False False False False False False 0
+     <symbol 'glob': GLOBAL_EXPLICIT, DEF_GLOBAL> False False False True False True False False False False False False False False False 0
+     <symbol 'inner': LOCAL, USE|DEF_LOCAL> True False False False False False True False False False False True False False True 1
+     <symbol 'kw': LOCAL, DEF_PARAM> False True False False False False True False False False False False False False False 0
+     <symbol 'lam': LOCAL, DEF_LOCAL> False False False False False False True False False False False True False False False 0
+     <symbol 'x': CELL, DEF_LOCAL> False False False False False False True False False False False True False False False 0
+    <SymbolTable for __annotate__ in file.py>
+     annotation __annotate__ 9 False True False ['.format']
+       <symbol '.format': LOCAL, USE|DEF_PARAM> True True False False False False True False False False False False False False False 0
+    <Function SymbolTable for inner in file.py>
+     function inner 9 True True False ['free_global', 'glob', 'i', 'range', 'x', 'y']
+     function ('y',) ['i', 'y'] ['free_global', 'glob', 'range'] ['x'] ['x'] []
+       <symbol 'free_global': GLOBAL_IMPLICIT, USE> True False False True False False False False False False False False False False False 0
+       <symbol 'glob': GLOBAL_IMPLICIT, USE> True False False True False False False False False False False False False False False 0
+       <symbol 'i': LOCAL, USE|DEF_LOCAL|DEF_COMP_ITER> True False False False False False True False False False False True True False False 0
+       <symbol 'range': GLOBAL_IMPLICIT, USE> True False False True False False False False False False False False False False False 0
+       <symbol 'x': FREE, USE|DEF_NONLOCAL|DEF_LOCAL> True False False False True False False False True False False True False False False 0
+       <symbol 'y': LOCAL, USE|DEF_PARAM> True True False False False False True False False False False False False False False 0
+    <Function SymbolTable for <lambda> in file.py>
+     function <lambda> 13 True True False ['q', 'x']
+     function ('q',) ['q'] [] [] ['x'] []
+       <symbol 'q': LOCAL, USE|DEF_PARAM> True True False False False False True False False False False False False False False 0
+       <symbol 'x': FREE, USE> True False False False False False False False True False False False False False False 0
+  <Class SymbolTable for K in file.py>
+   class K 15 False False True ['Inner', 'am', 'attr', 'classmethod', 'cm', 'gen', 'method', 'nested', 'other', 'sm', 'staticmethod', 'z']
+   class ('method', 'sm', 'cm', 'am', 'gen')
+     <symbol 'Inner': LOCAL, DEF_LOCAL> False False False False False False True False False False False True False False True 1
+     <symbol 'am': LOCAL, DEF_LOCAL> False False False False False False True False False False False True False False True 1
+     <symbol 'attr': LOCAL, USE|DEF_LOCAL|DEF_ANNOT> True False False False False False True True False False False True False False False 0
+     <symbol 'classmethod': GLOBAL_IMPLICIT, USE> True False False True False False False False False False False False False False False 0
+     <symbol 'cm': LOCAL, DEF_LOCAL> False False False False False False True False False False False True False False True 1
+     <symbol 'gen': LOCAL, DEF_LOCAL> False False False False False False True False False False False True False False True 1
+     <symbol 'method': LOCAL, DEF_LOCAL> False False False False False False True False False False False True False False True 1
+     <symbol 'nested': LOCAL, DEF_LOCAL> False False False False False False True False False False False True False False False 0
+     <symbol 'other': LOCAL, USE|DEF_LOCAL> True False False False False False True False False False False True False False False 0
+     <symbol 'sm': LOCAL, DEF_LOCAL> False False False False False False True False False False False True False False True 1
+     <symbol 'staticmethod': GLOBAL_IMPLICIT, USE> True False False True False False False False False False False False False False False 0
+     <symbol 'z': LOCAL, USE|DEF_LOCAL|DEF_COMP_ITER> True False False False False False True False False False False True True False False 0
+    <SymbolTable for __annotate__ in file.py>
+     annotation __annotate__ 16 False False False ['.format', '__classdict__', 'int']
+       <symbol '.format': LOCAL, USE|DEF_PARAM> True True False False False False True False False False False False False False False 0
+       <symbol '__classdict__': FREE, USE> True False False False False False False False True False False False False False False 0
+       <symbol 'int': GLOBAL_IMPLICIT, USE> True False False True False False False False False False False False False False False 0
+    <SymbolTable for __annotate__ in file.py>
+     annotation __annotate__ 18 False False False ['.format', '__classdict__']
+       <symbol '.format': LOCAL, USE|DEF_PARAM> True True False False False False True False False False False False False False False 0
+       <symbol '__classdict__': FREE, USE> True False False False False False False False True False False False False False False 0
+    <Function SymbolTable for method in file.py>
+     function method 18 True False False ['__class__', 'self']
+     function ('self',) ['self'] [] [] ['__class__'] []
+       <symbol '__class__': FREE, USE> True False False False False False False False True False False False False False False 0
+       <symbol 'self': LOCAL, USE|DEF_PARAM> True True False False False False True False False False False False False False False 0
+    <SymbolTable for __annotate__ in file.py>
+     annotation __annotate__ 21 False False False ['.format', '__classdict__']
+       <symbol '.format': LOCAL, USE|DEF_PARAM> True True False False False False True False False False False False False False False 0
+       <symbol '__classdict__': FREE, USE> True False False False False False False False True False False False False False False 0
+    <Function SymbolTable for sm in file.py>
+     function sm 21 True False False []
+     function () [] [] [] [] []
+    <SymbolTable for __annotate__ in file.py>
+     annotation __annotate__ 23 False False False ['.format', '__classdict__']
+       <symbol '.format': LOCAL, USE|DEF_PARAM> True True False False False False True False False False False False False False False 0
+       <symbol '__classdict__': FREE, USE> True False False False False False False False True False False False False False False 0
+    <Function SymbolTable for cm in file.py>
+     function cm 23 True False False ['cls']
+     function ('cls',) ['cls'] [] [] [] []
+       <symbol 'cls': LOCAL, DEF_PARAM> False True False False False False True False False False False False False False False 0
+    <SymbolTable for __annotate__ in file.py>
+     annotation __annotate__ 24 False False False ['.format', '__classdict__']
+       <symbol '.format': LOCAL, USE|DEF_PARAM> True True False False False False True False False False False False False False False 0
+       <symbol '__classdict__': FREE, USE> True False False False False False False False True False False False False False False 0
+    <Function SymbolTable for am in file.py>
+     function am 24 True False False ['self']
+     function ('self',) ['self'] [] [] [] []
+       <symbol 'self': LOCAL, DEF_PARAM> False True False False False False True False False False False False False False False 0
+    <SymbolTable for __annotate__ in file.py>
+     annotation __annotate__ 25 False False False ['.format', '__classdict__']
+       <symbol '.format': LOCAL, USE|DEF_PARAM> True True False False False False True False False False False False False False False 0
+       <symbol '__classdict__': FREE, USE> True False False False False False False False True False False False False False False 0
+    <Function SymbolTable for gen in file.py>
+     function gen 25 True False False ['self']
+     function ('self',) ['self'] [] [] [] []
+       <symbol 'self': LOCAL, DEF_PARAM> False True False False False False True False False False False False False False False 0
+    <Class SymbolTable for Inner in file.py>
+     class Inner 27 False False False []
+     class ()
+  <SymbolTable for generic in file.py>
+   type parameters generic 28 False False True ['.defaults', 'P', 'T', 'Ts']
+     <symbol '.defaults': LOCAL, DEF_PARAM> False True False False False False True False False False False False False False False 0
+     <symbol 'P': LOCAL, DEF_LOCAL|DEF_TYPE_PARAM> False False True False False False True False False False False True False False False 0
+     <symbol 'T': CELL, DEF_LOCAL|DEF_TYPE_PARAM> False False True False False False True False False False False True False False True 1
+     <symbol 'Ts': LOCAL, DEF_LOCAL|DEF_TYPE_PARAM> False False True False False False True False False False False True False False False 0
+    <SymbolTable for T in file.py>
+     type variable T 28 False True False ['.format', 'int']
+       <symbol '.format': LOCAL, USE|DEF_PARAM> True True False False False False True False False False False False False False False 0
+       <symbol 'int': GLOBAL_IMPLICIT, USE> True False False True False False False False False False False False False False False 0
+    <SymbolTable for __annotate__ in file.py>
+     annotation __annotate__ 28 False True False ['.format', 'T']
+       <symbol '.format': LOCAL, USE|DEF_PARAM> True True False False False False True False False False False False False False False 0
+       <symbol 'T': FREE, USE> True False False False False False False False True False False False False False False 0
+    <Function SymbolTable for generic in file.py>
+     function generic 28 True True False ['v']
+     function ('v',) ['v'] [] [] [] []
+       <symbol 'v': LOCAL, USE|DEF_PARAM> True True False False False False True False False False False False False False False 0
+  <SymbolTable for G in file.py>
+   type parameters G 30 False False True ['.generic_base', '.type_params', 'U']
+     <symbol '.generic_base': LOCAL, USE|DEF_LOCAL> True False False False False False True False False False False True False False False 0
+     <symbol '.type_params': CELL, USE|DEF_LOCAL> True False False False False False True False False False False True False False False 0
+     <symbol 'U': CELL, DEF_LOCAL|DEF_TYPE_PARAM> False False True False False False True False False False False True False False False 0
+    <Class SymbolTable for G in file.py>
+     class G 30 False True True ['.type_params', 'U', '__type_params__', 'm']
+     class ('m',)
+       <symbol '.type_params': FREE, USE> True False False False False False False False True False False False False False False 0
+       <symbol 'U': FREE, > False False False False False False False False True False False False False False False 0
+       <symbol '__type_params__': LOCAL, DEF_LOCAL> False False False False False False True False False False False True False False False 0
+       <symbol 'm': LOCAL, DEF_LOCAL> False False False False False False True False False False False True False False True 1
+      <SymbolTable for __annotate__ in file.py>
+       annotation __annotate__ 31 False True False ['.format', 'U', '__classdict__']
+         <symbol '.format': LOCAL, USE|DEF_PARAM> True True False False False False True False False False False False False False False 0
+         <symbol 'U': FREE, USE> True False False False False False False False True False False False False False False 0
+         <symbol '__classdict__': FREE, USE> True False False False False False False False True False False False False False False 0
+      <Function SymbolTable for m in file.py>
+       function m 31 True True False ['self', 'u']
+       function ('self', 'u') ['self', 'u'] [] [] [] []
+         <symbol 'self': LOCAL, DEF_PARAM> False True False False False False True False False False False False False False False 0
+         <symbol 'u': LOCAL, DEF_PARAM> False True False False False False True False False False False False False False False 0
+  <SymbolTable for Alias in file.py>
+   type parameters Alias 32 False False True ['V']
+     <symbol 'V': CELL, DEF_LOCAL|DEF_TYPE_PARAM> False False True False False False True False False False False True False False False 0
+    <SymbolTable for Alias in file.py>
+     type alias Alias 32 False True False ['.format', 'V', 'list']
+       <symbol '.format': LOCAL, USE|DEF_PARAM> True True False False False False True False False False False False False False False 0
+       <symbol 'V': FREE, USE> True False False False False False False False True False False False False False False 0
+       <symbol 'list': GLOBAL_IMPLICIT, USE> True False False True False False False False False False False False False False False 0
+  <SymbolTable for __annotate__ in file.py>
+   annotation __annotate__ 33 False False False ['.format', 'int']
+     <symbol '.format': LOCAL, USE|DEF_PARAM> True True False False False False True False False False False False False False False 0
+     <symbol 'int': GLOBAL_IMPLICIT, USE> True False False True False False False False False False False False False False False 0
+outer class
+dict_keys(['x', 'y'])
+KeyError 'nope'
+SyntaxError duplicate parameter 'x' in function definition (bad.py, line 1)
+True function

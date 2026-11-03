@@ -1,0 +1,202 @@
+status: 0
+script: 5d00061817a7dadf
+source: 890c534b37ce8813
+---
+repr("a".center(5)) => '  a  '
+repr("a".center(4)) => ' a  '
+repr("ab".center(5)) => '  ab '
+repr("ab".center(4)) => ' ab '
+"a".center(5, "*") => **a**
+"abc".center(2) => abc
+"a".center(0) => a
+"a".center(-1) => a
+repr("".center(3)) => '   '
+"a".center(6, "é") => ééaééé
+"ab".center(7, "😀") => 😀😀😀ab😀😀
+repr("abc".center(6)) => ' abc  '
+repr("abc".center(7)) => '  abc  '
+repr("abcd".center(7)) => '  abcd '
+repr("a".ljust(3)) => 'a  '
+repr("a".rjust(3)) => '  a'
+"a".ljust(3, "-") => a--
+"a".rjust(3, "-") => --a
+"abc".ljust(2) => abc
+"abc".rjust(2) => abc
+"a".ljust(0) => a
+"é".rjust(3, "ü") => üüé
+"😀".ljust(3, "x") => 😀xx
+"a".center(5, "ab") => TypeError: The fill character must be exactly one character long
+"a".center(5, "") => TypeError: The fill character must be exactly one character long
+"a".ljust("5") => TypeError: 'str' object cannot be interpreted as an integer
+"a".rjust(5, 1) => TypeError: The fill character must be a unicode character, not int
+"a".center() => TypeError: center expected at least 1 argument, got 0
+"a".center(1.5) => TypeError: 'float' object cannot be interpreted as an integer
+"5".zfill(3) => 005
+"-5".zfill(4) => -005
+"+5".zfill(4) => +005
+"abc".zfill(5) => 00abc
+"".zfill(2) => 00
+"-".zfill(3) => -00
+"123".zfill(2) => 123
+"--5".zfill(5) => -00-5
+"5".zfill(0) => 5
+"5".zfill(-1) => 5
+"é".zfill(3) => 00é
+" 5".zfill(4) => 00 5
+"5".zfill("3") => TypeError: 'str' object cannot be interpreted as an integer
+"a\tb".expandtabs() => a       b
+"a\tb".expandtabs(4) => a   b
+"ab\tc".expandtabs(4) => ab  c
+"abcd\te".expandtabs(4) => abcd    e
+"a\tb\tc".expandtabs(2) => a b c
+"\t".expandtabs() =>         
+"a\nb\tc".expandtabs(4) => a
+b   c
+"a\r\tb".expandtabs(4) => a    b
+"a\tb".expandtabs(0) => ab
+"a\tb".expandtabs(-1) => ab
+"a\tb".expandtabs(1) => a b
+"a\tb".expandtabs(tabsize=3) => a  b
+"é\tb".expandtabs(4) => é   b
+"".expandtabs() => 
+name [name='isalpha'] => isalpha
+"".join("1" if getattr(s, name)() else "0" for s in tests) [name='isalpha'] => 011000010101100011100001000000001111100001100000000
+name [name='isdigit'] => isdigit
+"".join("1" if getattr(s, name)() else "0" for s in tests) [name='isdigit'] => 000100000000000000011000000000000000000100000000000
+name [name='isdecimal'] => isdecimal
+"".join("1" if getattr(s, name)() else "0" for s in tests) [name='isdecimal'] => 000100000000000000010000000000000000000100000000000
+name [name='isnumeric'] => isnumeric
+"".join("1" if getattr(s, name)() else "0" for s in tests) [name='isnumeric'] => 000100000000000000011111000000000000000100000000000
+name [name='isalnum'] => isalnum
+"".join("1" if getattr(s, name)() else "0" for s in tests) [name='isalnum'] => 011101110101110011111111000000001111100101100000000
+name [name='isspace'] => isspace
+"".join("1" if getattr(s, name)() else "0" for s in tests) [name='isspace'] => 000010000000000000000000110011000000000000000000000
+name [name='isupper'] => isupper
+"".join("1" if getattr(s, name)() else "0" for s in tests) [name='isupper'] => 001000100001000001000010000000000000000000000000000
+name [name='islower'] => islower
+"".join("1" if getattr(s, name)() else "0" for s in tests) [name='islower'] => 010001001000110110100000000000010001100011010010101
+name [name='istitle'] => istitle
+"".join("1" if getattr(s, name)() else "0" for s in tests) [name='istitle'] => 001000100110000001000010000000001100000000100000000
+name [name='isidentifier'] => isidentifier
+"".join("1" if getattr(s, name)() else "0" for s in tests) [name='isidentifier'] => 011001110101101111100011000000001111100001100010111
+name [name='isprintable'] => isprintable
+"".join("1" if getattr(s, name)() else "0" for s in tests) [name='isprintable'] => 111111111111111111111111000000111111111111100111111
+name [name='isascii'] => isascii
+"".join("1" if getattr(s, name)() else "0" for s in tests) [name='isascii'] => 111111111111111100000000111100000000011011110000000
+"Hello World".istitle() => True
+"Hello world".istitle() => False
+"HELLO".istitle() => False
+"A".istitle() => True
+"A B".istitle() => True
+"Ab'Cd".istitle() => True
+"Ab'cd".istitle() => False
+"1A".istitle() => True
+"1a".istitle() => False
+"A1a".istitle() => False
+"A1A".istitle() => True
+str.maketrans("ab", "xy") => {97: 120, 98: 121}
+str.maketrans("ab", "xy", "c") => {97: 120, 98: 121, 99: None}
+str.maketrans({"a": "x", "b": None, 99: "z"}) => {97: 'x', 98: None, 99: 'z'}
+str.maketrans("", "") => {}
+str.maketrans({}) => {}
+str.maketrans("é", "e") => {233: 101}
+str.maketrans({"a": 65}) => {97: 65}
+"abcabc".translate(str.maketrans("ab", "xy")) => xycxyc
+"abcabc".translate(str.maketrans("ab", "xy", "c")) => xyxy
+"abc".translate({97: "XX", 98: None, 99: 100}) => XXd
+"abc".translate({}) => abc
+"abc".translate({97: ""}) => bc
+"abc".translate({97: "😀"}) => 😀bc
+"a😀".translate({0x1f600: "b"}) => ab
+"abc".translate({97: 0x1f600}) => 😀bc
+"abc".translate(str.maketrans({"a": "1", "c": "3"})) => 1b3
+"abcd".translate(M()) => Abd
+"abc".translate(["x"] * 100) => xxx
+str.maketrans("a", "xy") => ValueError: the first two maketrans arguments must have equal length
+str.maketrans("a") => TypeError: if you give only one argument to maketrans it must be a dict
+str.maketrans({"ab": "x"}) => ValueError: string keys in translatetable must be of length 1
+str.maketrans({1.5: "x"}) => TypeError: keys in translate table mustbe strings or integers
+str.maketrans(1, 2) => TypeError: maketrans() argument 2 must be str, not int
+str.maketrans("a", "b", 1) => TypeError: maketrans() argument 3 must be str, not int
+"a".translate({97: 1.5}) => TypeError: character mapping must return integer, None or str
+"a".translate({97: -1}) => ValueError: character mapping must be in range(0x110000)
+"a".translate({97: 0x110000}) => ValueError: character mapping must be in range(0x110000)
+"a".translate(None) => TypeError: 'NoneType' object is not subscriptable
+"a".translate() => TypeError: str.translate() takes exactly one argument (0 given)
+"abc".encode() => b'abc'
+"é".encode() => b'\xc3\xa9'
+"é".encode("utf-8") => b'\xc3\xa9'
+"é".encode("latin-1") => b'\xe9'
+"€".encode("utf-8") => b'\xe2\x82\xac'
+"😀".encode("utf-8") => b'\xf0\x9f\x98\x80'
+"a".encode("ascii") => b'a'
+"é".encode("ascii", "ignore") => b''
+"é".encode("ascii", "replace") => b'?'
+"é".encode("ascii", "backslashreplace") => b'\\xe9'
+"é".encode("ascii", "xmlcharrefreplace") => b'&#233;'
+"é".encode("ascii", "namereplace") => b'\\N{LATIN SMALL LETTER E WITH ACUTE}'
+"😀".encode("ascii", "backslashreplace") => b'\\U0001f600'
+"€".encode("latin-1", "replace") => b'?'
+"ab".encode("utf-16-le") => b'a\x00b\x00'
+"ab".encode("utf-16-be") => b'\x00a\x00b'
+"a".encode("utf-16") in (b"\xff\xfea\x00", b"\xfe\xff\x00a") => True
+"😀".encode("utf-16-le") => b'=\xd8\x00\xde'
+"a".encode("utf-32-le") => b'a\x00\x00\x00'
+"😀".encode("utf-32-be") => b'\x00\x01\xf6\x00'
+"".encode() => b''
+"a".encode(encoding="utf-8", errors="strict") => b'a'
+"\ud800".encode("utf-8", "surrogatepass") => b'\xed\xa0\x80'
+"\udc80".encode("utf-8", "surrogateescape") => b'\x80'
+"a".encode("UTF8") => b'a'
+"a".encode("utf_8") => b'a'
+"a".encode("Latin1") => b'a'
+"a".encode("iso-8859-1") => b'a'
+"a".encode("US-ASCII") => b'a'
+"é".encode("ascii") => UnicodeEncodeError: 'ascii' codec can't encode character '\xe9' in position 0: ordinal not in range(128)
+"aé€".encode("ascii") => UnicodeEncodeError: 'ascii' codec can't encode characters in position 1-2: ordinal not in range(128)
+"€".encode("latin-1") => UnicodeEncodeError: 'latin-1' codec can't encode character '\u20ac' in position 0: ordinal not in range(256)
+"\ud800".encode("utf-8") => UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed
+"a\ud800b".encode() => UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 1: surrogates not allowed
+"\ud800".encode("utf-16") => UnicodeEncodeError: 'utf-16' codec can't encode character '\ud800' in position 0: surrogates not allowed
+"a".encode("nope") => LookupError: unknown encoding: nope
+"é".encode("ascii", "nope") => LookupError: unknown error handler name 'nope'
+"a".encode(1) => TypeError: encode() argument 'encoding' must be str, not int
+"a".encode("ascii", 1) => TypeError: encode() argument 'errors' must be str, not int
+e.encoding => ascii
+repr(e.object) => 'abé€'
+e.start => 2
+e.end => 4
+e.reason => ordinal not in range(128)
+e.args => ('ascii', 'abé€', 2, 4, 'ordinal not in range(128)')
+"{}".format(1) => 1
+"a".format() => a
+"{0}{1}{0}".format("a", "b") => aba
+"{x}".format(x=1) => 1
+"{x}".format_map({"x": 2}) => 2
+1<b>
+"{a}".format_map({}) => KeyError: 'a'
+"{a}".format_map(1) => TypeError: 'int' object is not subscriptable
+['capitalize', 'casefold', 'center', 'count', 'encode', 'endswith', 'expandtabs', 'find', 'format', 'format_map', 'index', 'isalnum', 'isalpha', 'isascii', 'isdecimal', 'isdigit', 'isidentifier', 'islower', 'isnumeric', 'isprintable', 'isspace', 'istitle', 'isupper', 'join', 'ljust', 'lower', 'lstrip', 'maketrans', 'partition', 'removeprefix', 'removesuffix', 'replace', 'rfind', 'rindex', 'rjust', 'rpartition', 'rsplit', 'rstrip', 'split', 'splitlines', 'startswith', 'strip', 'swapcase', 'title', 'translate', 'upper', 'zfill']
+str.upper("abc") => ABC
+str.join(",", ["a", "b"]) => a,b
+str.split("a b") => ['a', 'b']
+list(map(str.upper, ["a", "b"])) => ['A', 'B']
+str.__len__("abc") => 3
+sorted(["b", "A", "c"], key=str.lower) => ['A', 'b', 'c']
+str.upper(1) => TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'int' object
+str.upper() => TypeError: unbound method str.upper() needs an argument
+str.join(1, []) => TypeError: descriptor 'join' for 'str' objects doesn't apply to a 'int' object
+"a".upper(1) => TypeError: str.upper() takes no arguments (1 given)
+"a".nope() => AttributeError: 'str' object has no attribute 'nope'
+"a".upper.nope => AttributeError: 'builtin_function_or_method' object has no attribute 'nope'
+setattr_str() => AttributeError: 'str' object has no attribute 'x' and no __dict__ for setting new attributes
+"a".upper.__name__ => upper
+"a".upper.__self__ => a
+str.upper.__name__ => upper
+str.upper.__qualname__ => str.upper
+"a".upper.__qualname__ => str.upper
+type("a".upper).__name__ => builtin_function_or_method
+type(str.upper).__name__ => method_descriptor
+str.upper.__objclass__ => <class 'str'>
+"abc".isalpha.__doc__ is not None or True => True
+"Hello"[1:].upper().lower().title().swapcase().center(9, "*").strip("... => eLLO

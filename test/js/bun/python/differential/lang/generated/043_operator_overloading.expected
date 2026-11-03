@@ -1,0 +1,262 @@
+status: 0
+script: baeeac300b3ebdbc
+source: 41aa6b1990f8342b
+---
+a + b => V(('add', 1, 2))
+a + 5 => V(('add', 1, 5))
+5 + a => V(('radd', 1, 5))
+a - b => V(('sub', 1, 2))
+5 - a => V(('rsub', 1, 5))
+a * b => V(('mul', 1, 2))
+5 * a => V(('rmul', 1, 5))
+a @ b => V(('matmul', 1, 2))
+5 @ a => V(('rmatmul', 1, 5))
+a / b => V(('truediv', 1, 2))
+5 / a => V(('rtruediv', 1, 5))
+a // b => V(('floordiv', 1, 2))
+5 // a => V(('rfloordiv', 1, 5))
+a % b => V(('mod', 1, 2))
+5 % a => V(('rmod', 1, 5))
+divmod(a, b) => V(('divmod', 1, 2))
+divmod(5, a) => V(('rdivmod', 1, 5))
+a ** b => V(('pow', 1, 2, None))
+5 ** a => V(('rpow', 1, 5, None))
+pow(a, b) => V(('pow', 1, 2, None))
+pow(a, b, 7) => V(('pow', 1, 2, 7))
+pow(5, a) => V(('rpow', 1, 5, None))
+a << b => V(('lshift', 1, 2))
+5 << a => V(('rlshift', 1, 5))
+a >> b => V(('rshift', 1, 2))
+5 >> a => V(('rrshift', 1, 5))
+a & b => V(('and', 1, 2))
+5 & a => V(('rand', 1, 5))
+a | b => V(('or', 1, 2))
+5 | a => V(('ror', 1, 5))
+a ^ b => V(('xor', 1, 2))
+5 ^ a => V(('rxor', 1, 5))
+-a => V(('neg', 1))
++a => V(('pos', 1))
+abs(a) => V(('abs', 1))
+~a => V(('invert', 1))
+"s" % a => TypeError: not all arguments converted during string formatting (required 0, got 1)
+"s" + a => V(('radd', 1, 's'))
+"s" * a => V(('rmul', 1, 's'))
+[1] + a => V(('radd', 1, [1]))
+[1] * a => V(('rmul', 1, [1]))
+(1,) + a => V(('radd', 1, (1,)))
+1.5 + a => V(('radd', 1, 1.5))
+1j * a => V(('rmul', 1, 1j))
+None + a => V(('radd', 1, None))
+{} | a => V(('ror', 1, {}))
+{1} & a => V(('rand', 1, {1}))
+{1} - a => V(('rsub', 1, {1}))
+b"x" + a => V(('radd', 1, b'x'))
+b"%s" % a if False else "" => 
+True + a => V(('radd', 1, True))
+"%s" % a => V(1)
+range(1) + a if False else "" => 
+c => V(('iadd', 1, 5))
+d => V(('iadd', 1, 5))
+c is d => True
+c => V(('sub', 1, 5))
+d => V(1)
+c is d => False
+V(('xor', ('or', ('and', ('rshift', ('lshift', ('pow', ('mod', ('floordiv', ('truediv', ('matmul', ('mul', ('sub', 1, 5), 2), 2), 2), 2), 2), 2, None), 2), 2), 2), 2), 2))
+pow(5, a, 7) => V(('rpow', 1, 5, 7))
+pow(5, 6, a) => TypeError: unsupported operand type(s) for ** or pow(): 'int', 'int', 'V'
+eval(op) [op='n + 1'] => TypeError: unsupported operand type(s) for +: 'N' and 'int'
+eval(op) [op='1 + n'] => TypeError: unsupported operand type(s) for +: 'int' and 'N'
+eval(op) [op='n + n'] => TypeError: unsupported operand type(s) for +: 'N' and 'N'
+eval(op) [op='n - 1'] => TypeError: unsupported operand type(s) for -: 'N' and 'int'
+eval(op) [op='n * 1'] => TypeError: unsupported operand type(s) for *: 'N' and 'int'
+eval(op) [op='n @ 1'] => TypeError: unsupported operand type(s) for @: 'N' and 'int'
+eval(op) [op='n / 1'] => TypeError: unsupported operand type(s) for /: 'N' and 'int'
+eval(op) [op='n // 1'] => TypeError: unsupported operand type(s) for //: 'N' and 'int'
+eval(op) [op='n % 1'] => TypeError: unsupported operand type(s) for %: 'N' and 'int'
+eval(op) [op='divmod(n, 1)'] => TypeError: unsupported operand type(s) for divmod(): 'N' and 'int'
+eval(op) [op='n ** 1'] => TypeError: unsupported operand type(s) for ** or pow(): 'N' and 'int'
+eval(op) [op='pow(n, 1, 2)'] => TypeError: unsupported operand type(s) for ** or pow(): 'N', 'int', 'int'
+eval(op) [op='n << 1'] => TypeError: unsupported operand type(s) for <<: 'N' and 'int'
+eval(op) [op='n >> 1'] => TypeError: unsupported operand type(s) for >>: 'N' and 'int'
+eval(op) [op='n & 1'] => TypeError: unsupported operand type(s) for &: 'N' and 'int'
+eval(op) [op='n | 1'] => TypeError: unsupported operand type(s) for |: 'N' and 'int'
+eval(op) [op='n ^ 1'] => TypeError: unsupported operand type(s) for ^: 'N' and 'int'
+eval(op) [op='-n'] => TypeError: bad operand type for unary -: 'N'
+eval(op) [op='+n'] => TypeError: bad operand type for unary +: 'N'
+eval(op) [op='~n'] => TypeError: bad operand type for unary ~: 'N'
+eval(op) [op='abs(n)'] => TypeError: bad operand type for abs(): 'N'
+eval(op) [op='1 @ 2'] => TypeError: unsupported operand type(s) for @: 'int' and 'int'
+eval(op) [op="'a' @ 'b'"] => TypeError: unsupported operand type(s) for @: 'str' and 'str'
+eval(op) [op='[] @ []'] => TypeError: unsupported operand type(s) for @: 'list' and 'list'
+eval(op) [op='n + None'] => TypeError: unsupported operand type(s) for +: 'N' and 'NoneType'
+eval(op) [op='None + n'] => TypeError: unsupported operand type(s) for +: 'NoneType' and 'N'
+eval(op) [op="n + 'a'"] => TypeError: unsupported operand type(s) for +: 'N' and 'str'
+eval(op) [op="'a' + n"] => TypeError: can only concatenate str (not "N") to str
+eval(op) [op='[1] + n'] => TypeError: can only concatenate list (not "N") to list
+eval(op) [op='n + [1]'] => TypeError: unsupported operand type(s) for +: 'N' and 'list'
+eval(op) [op='(1,) + n'] => TypeError: can only concatenate tuple (not "N") to tuple
+eval(op) [op="'a' * n"] => TypeError: can't multiply sequence by non-int of type 'N'
+eval(op) [op="n * 'a'"] => TypeError: can't multiply sequence by non-int of type 'N'
+eval(op) [op='[1] * n'] => TypeError: can't multiply sequence by non-int of type 'N'
+eval(op) [op='1.5 + n'] => TypeError: unsupported operand type(s) for +: 'float' and 'N'
+eval(op) [op='n < n'] => TypeError: '<' not supported between instances of 'N' and 'N'
+eval(op) [op='n <= 1'] => TypeError: '<=' not supported between instances of 'N' and 'int'
+eval(op) [op='1 > n'] => TypeError: '>' not supported between instances of 'int' and 'N'
+eval(op) [op="n >= 'a'"] => TypeError: '>=' not supported between instances of 'N' and 'str'
+eval(op) [op='None < n'] => TypeError: '<' not supported between instances of 'NoneType' and 'N'
+eval(op) [op='divmod(1, n)'] => TypeError: unsupported operand type(s) for divmod(): 'int' and 'N'
+eval(op) [op='1 ** n'] => TypeError: unsupported operand type(s) for ** or pow(): 'int' and 'N'
+eval(op) [op='pow(1, n)'] => TypeError: unsupported operand type(s) for ** or pow(): 'int' and 'N'
+eval(op) [op='pow(1, 2, n)'] => TypeError: unsupported operand type(s) for ** or pow(): 'int', 'int', 'N'
+eval(op) [op='1 // n'] => TypeError: unsupported operand type(s) for //: 'int' and 'N'
+eval(op) [op='1 % n'] => TypeError: unsupported operand type(s) for %: 'int' and 'N'
+eval(op) [op="'%s' % n and 0"] => 0
+eval(op) [op='1 << n'] => TypeError: unsupported operand type(s) for <<: 'int' and 'N'
+eval(op) [op='1 | n'] => TypeError: unsupported operand type(s) for |: 'int' and 'N'
+eval(op) [op='{} | n'] => TypeError: unsupported operand type(s) for |: 'dict' and 'N'
+eval(op) [op='set() | n'] => TypeError: unsupported operand type(s) for |: 'set' and 'N'
+eval(op) [op='set() - n'] => TypeError: unsupported operand type(s) for -: 'set' and 'N'
+eval(op) [op='1 & n'] => TypeError: unsupported operand type(s) for &: 'int' and 'N'
+eval(op) [op='1 ^ n'] => TypeError: unsupported operand type(s) for ^: 'int' and 'N'
+eval(op) [op="b'a' + n"] => TypeError: can't concat N to bytes
+eval(op) [op="b'a' * n"] => TypeError: can't multiply sequence by non-int of type 'N'
+eval(op) [op='1j + n'] => TypeError: unsupported operand type(s) for +: 'complex' and 'N'
+eval(op) [op='True + n'] => TypeError: unsupported operand type(s) for +: 'bool' and 'N'
+eval(op) [op='n + N'] => TypeError: unsupported operand type(s) for +: 'N' and 'type'
+eval(op) [op='N + n'] => TypeError: unsupported operand type(s) for +: 'type' and 'N'
+eval(op) [op='N + N'] => TypeError: unsupported operand type(s) for +: 'type' and 'type'
+eval(op) [op='N | n'] => TypeError: unsupported operand type(s) for |: 'type' and 'N'
+eval(op) [op='len + n'] => TypeError: unsupported operand type(s) for +: 'builtin_function_or_method' and 'N'
+eval(op) [op='n + len'] => TypeError: unsupported operand type(s) for +: 'N' and 'builtin_function_or_method'
+TypeError: unsupported operand type(s) for +=: 'N' and 'int'
+TypeError: unsupported operand type(s) for -=: 'N' and 'int'
+TypeError: unsupported operand type(s) for *=: 'N' and 'int'
+TypeError: unsupported operand type(s) for @=: 'N' and 'int'
+TypeError: unsupported operand type(s) for /=: 'N' and 'int'
+TypeError: unsupported operand type(s) for //=: 'N' and 'int'
+TypeError: unsupported operand type(s) for %=: 'N' and 'int'
+TypeError: unsupported operand type(s) for **=: 'N' and 'int'
+TypeError: unsupported operand type(s) for <<=: 'N' and 'int'
+TypeError: unsupported operand type(s) for >>=: 'N' and 'int'
+TypeError: unsupported operand type(s) for &=: 'N' and 'int'
+TypeError: unsupported operand type(s) for |=: 'N' and 'int'
+TypeError: unsupported operand type(s) for ^=: 'N' and 'int'
+x + y -> 1 ['x.add']
+x + y -> TypeError: unsupported operand type(s) for +: 'L' and 'L' ['x.add']
+x + y -> TypeError: unsupported operand type(s) for +: 'L' and 'L' ['x.add']
+x + 1 -> TypeError: unsupported operand type(s) for +: 'L' and 'int' ['x.add']
+1 + x -> 5 ['x.radd']
+1 + x -> TypeError: unsupported operand type(s) for +: 'int' and 'L' ['x.radd']
+x == y -> yes ['x.eq', 'y.eq']
+x == y -> False ['x.eq', 'y.eq']
+x != y -> True ['x.ne', 'y.ne']
+x == x -> True ['x.eq', 'x.eq']
+x != x -> False ['x.ne', 'x.ne']
+x < y -> gt result ['x.lt', 'y.gt']
+x < y -> TypeError: '<' not supported between instances of 'L' and 'L' ['x.lt', 'y.gt']
+x <= y -> ge result ['x.le', 'y.ge']
+x > y -> lt result ['x.gt', 'y.lt']
+x >= y -> le result ['x.ge', 'y.le']
+x == 1 -> False ['x.eq']
+1 == x -> r ['x.eq']
+1 < x -> r ['x.gt']
+x < 1 -> TypeError: '<' not supported between instances of 'L' and 'int' ['x.lt']
+None == x -> r ['x.eq']
+'a' != x -> r ['x.ne']
+iadd result ['x.iadd']
+TypeError: unsupported operand type(s) for +=: 'L' and 'L' ['x.iadd', 'x.add']
+Base() + Sub() => Sub.radd
+Sub() + Base() => Base.add
+Base() + SubNo() => Base.add
+Base() < Sub() => Sub.gt
+Sub() < Base() => Base.lt
+Base() == Sub() => Sub.eq
+Sub() == Base() => Sub.eq
+Base() < SubNo() => Base.gt
+Base() == SubNo() => Base.eq
+Base() + Base() => Base.add
+1 + IntSub(2) => IntSub.radd
+1 - IntSub(2) => IntSub.rsub
+2 * IntSub(2) => IntSub.rmul
+IntSub(2) + 1 => 3
+1 == IntSub(1) => IntSub.eq
+1 < IntSub(2) => IntSub.gt
+IntSub(1) == 1 => IntSub.eq
+1.5 + IntSub(2) => 3.5
+1 / IntSub(2) => 0.5
+[1] * IntSub(2) => IntSub.rmul
+"a" * IntSub(2) => IntSub.rmul
+SameType() + SameType() => TypeError: unsupported operand type(s) for +: 'SameType' and 'SameType'
+o == 1 => not a bool
+o != 1 => False
+o < 1 => [1, 2]
+1 in o => True
+1 not in o => False
+-o => None
+not o => False
+o == o => not a bool
+(o == 1) is not True => True
+[o] == [o] => True
+o in [o] => True
+[o].index(o) => 0
+[o].count(1) => 1
+NeFromEq(True) != 1 => False
+NeFromEq(False) != 1 => True
+NeFromEq(NotImplemented) != 1 => True
+NeFromEq("x") != 1 => False
+NeFromEq("") != 1 => True
+NeFromEq(0) != 1 => True
+OnlyNe() != 1 => ne
+OnlyNe() == 1 => False
+OnlyNe() == OnlyNe() => False
+eval(e) [e='bl + 1'] => TypeError: 'NoneType' object is not callable
+eval(e) [e='1 + bl'] => TypeError: 'NoneType' object is not callable
+eval(e) [e='bl == 1'] => TypeError: 'NoneType' object is not callable
+eval(e) [e='1 == bl'] => TypeError: 'NoneType' object is not callable
+eval(e) [e='bl < 1'] => TypeError: 'NoneType' object is not callable
+eval(e) [e='-bl'] => TypeError: 'NoneType' object is not callable
+eval(e) [e='iter(bl)'] => TypeError: 'Blocked' object is not iterable
+eval(e) [e='1 in bl'] => TypeError: 'Blocked' object is not a container
+eval(e) [e='len(bl)'] => TypeError: 'NoneType' object is not callable
+eval(e) [e='hash(bl)'] => TypeError: unhashable type: 'Blocked'
+eval(e) [e='bl()'] => TypeError: 'NoneType' object is not callable
+eval(e) [e='bl[0]'] => TypeError: 'NoneType' object is not callable
+eval(e) [e='bool(bl)'] => TypeError: 'Blocked' cannot be interpreted as a boolean
+eval(e) [e='int(bl)'] => TypeError: 'NoneType' object is not callable
+eval(e) [e='[1][bl]'] => TypeError: 'NoneType' object is not callable
+eval(e) [e='reversed(bl)'] => TypeError: 'Blocked' object is not reversible
+eval(e) [e='format(bl)'] => TypeError: 'NoneType' object is not callable
+eval(e) [e='repr(bl)'] => TypeError: 'NoneType' object is not callable
+eval(e) [e='str(bl)'] => TypeError: 'NoneType' object is not callable
+eval(e) [e='list(bl)'] => TypeError: 'Blocked' object is not iterable
+eval(e) [e='bl != 1'] => TypeError: 'NoneType' object is not callable
+eval(e) [e='V(1) + bl'] => TypeError: 'NoneType' object is not callable
+blocked_iadd() => TypeError: 'NoneType' object is not callable
+inst + 1 => TypeError: unsupported operand type(s) for +: 'N' and 'int'
+len(inst) => TypeError: object of type 'N' has no len()
+inst() => TypeError: 'N' object is not callable
+repr(inst)[:12] => <__main__.N 
+inst == 1 => False
+bool(inst) => True
+inst.__add__(1) => instance attribute
+inst.__len__() => 5
+iter(inst) => TypeError: 'N' object is not iterable
+inst[0] => TypeError: 'N' object is not subscriptable
+n + 1 => added to the class later
+inst + 1 => added to the class later
+n + 1 => TypeError: unsupported operand type(s) for +: 'N' and 'int'
+V(1) + V(2) * V(3) => V(('add', 1, ('mul', 2, 3)))
+(V(1) + V(2)) * V(3) => V(('mul', ('add', 1, 2), 3))
+-V(1) ** 2 => V(('neg', ('pow', 1, 2, None)))
+(-V(1)) ** 2 => V(('pow', ('neg', 1), 2, None))
+V(1) - V(2) - V(3) => V(('sub', ('sub', 1, 2), 3))
+V(2) ** V(3) ** V(4) => V(('pow', 2, ('pow', 3, 4, None), None))
+~V(1) + 1 => V(('add', ('invert', 1), 1))
+V(1) | V(2) & V(3) ^ V(4) => V(('or', 1, ('xor', ('and', 2, 3), 4)))
+V(1) << 1 + 1 => V(('lshift', 1, 2))
+not V(1) => False
+V(1) + 1 if V(0) else 0 => V(('add', 1, 1))
+V(1) < V(2) if False else "" => 
+m @ m => Mat([[7, 10], [15, 22]])
+m @ Mat([[1, 0], [0, 1]]) => Mat([[1, 2], [3, 4]])
+Mat([[7, 10], [15, 22]])

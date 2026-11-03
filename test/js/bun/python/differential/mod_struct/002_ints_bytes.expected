@@ -1,0 +1,439 @@
+status: 0
+script: 9e44594cd038d066
+---
+@b [('80', -128), ('7f', 127), ('00', 0), ('01', 1), ('2a', 42), ('01', 1), ('05', 5)]
+struct.error 'b' format requires -128 <= number <= 127
+struct.error 'b' format requires -128 <= number <= 127
+struct.error 'b' format requires -128 <= number <= 127
+struct.error 'b' format requires -128 <= number <= 127
+struct.error 'b' format requires -128 <= number <= 127
+struct.error 'b' format requires -128 <= number <= 127
+@B [('00', 0), ('ff', 255), ('00', 0), ('01', 1), ('55', 85), ('01', 1), ('05', 5)]
+struct.error 'B' format requires 0 <= number <= 255
+struct.error 'B' format requires 0 <= number <= 255
+struct.error 'B' format requires 0 <= number <= 255
+struct.error 'B' format requires 0 <= number <= 255
+struct.error 'B' format requires 0 <= number <= 255
+struct.error 'B' format requires 0 <= number <= 255
+@h [('0080', -32768), ('ff7f', 32767), ('0000', 0), ('0100', 1), ('aa2a', 10922), ('0100', 1), ('0500', 5)]
+struct.error 'h' format requires -32768 <= number <= 32767
+struct.error 'h' format requires -32768 <= number <= 32767
+struct.error 'h' format requires -32768 <= number <= 32767
+struct.error 'h' format requires -32768 <= number <= 32767
+struct.error 'h' format requires -32768 <= number <= 32767
+struct.error 'h' format requires -32768 <= number <= 32767
+@H [('0000', 0), ('ffff', 65535), ('0000', 0), ('0100', 1), ('5555', 21845), ('0100', 1), ('0500', 5)]
+struct.error 'H' format requires 0 <= number <= 65535
+struct.error 'H' format requires 0 <= number <= 65535
+struct.error 'H' format requires 0 <= number <= 65535
+struct.error 'H' format requires 0 <= number <= 65535
+struct.error 'H' format requires 0 <= number <= 65535
+struct.error 'H' format requires 0 <= number <= 65535
+@i [('00000080', -2147483648), ('ffffff7f', 2147483647), ('00000000', 0), ('01000000', 1), ('aaaaaa2a', 715827882), ('01000000', 1), ('05000000', 5)]
+struct.error 'i' format requires -2147483648 <= number <= 2147483647
+struct.error 'i' format requires -2147483648 <= number <= 2147483647
+struct.error 'i' format requires -2147483648 <= number <= 2147483647
+struct.error 'i' format requires -2147483648 <= number <= 2147483647
+struct.error 'i' format requires -2147483648 <= number <= 2147483647
+struct.error 'i' format requires -2147483648 <= number <= 2147483647
+@I [('00000000', 0), ('ffffffff', 4294967295), ('00000000', 0), ('01000000', 1), ('55555555', 1431655765), ('01000000', 1), ('05000000', 5)]
+struct.error 'I' format requires 0 <= number <= 4294967295
+struct.error 'I' format requires 0 <= number <= 4294967295
+struct.error 'I' format requires 0 <= number <= 4294967295
+struct.error 'I' format requires 0 <= number <= 4294967295
+struct.error 'I' format requires 0 <= number <= 4294967295
+struct.error 'I' format requires 0 <= number <= 4294967295
+@l [('0000000000000080', -9223372036854775808), ('ffffffffffffff7f', 9223372036854775807), ('0000000000000000', 0), ('0100000000000000', 1), ('aaaaaaaaaaaaaa2a', 3074457345618258602), ('0100000000000000', 1), ('0500000000000000', 5)]
+struct.error 'l' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'l' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'l' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'l' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'l' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'l' format requires -9223372036854775808 <= number <= 9223372036854775807
+@L [('0000000000000000', 0), ('ffffffffffffffff', 18446744073709551615), ('0000000000000000', 0), ('0100000000000000', 1), ('5555555555555555', 6148914691236517205), ('0100000000000000', 1), ('0500000000000000', 5)]
+struct.error 'L' format requires 0 <= number <= 18446744073709551615
+struct.error 'L' format requires 0 <= number <= 18446744073709551615
+struct.error 'L' format requires 0 <= number <= 18446744073709551615
+struct.error 'L' format requires 0 <= number <= 18446744073709551615
+struct.error 'L' format requires 0 <= number <= 18446744073709551615
+struct.error 'L' format requires 0 <= number <= 18446744073709551615
+@q [('0000000000000080', -9223372036854775808), ('ffffffffffffff7f', 9223372036854775807), ('0000000000000000', 0), ('0100000000000000', 1), ('aaaaaaaaaaaaaa2a', 3074457345618258602), ('0100000000000000', 1), ('0500000000000000', 5)]
+struct.error 'q' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'q' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'q' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'q' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'q' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'q' format requires -9223372036854775808 <= number <= 9223372036854775807
+@Q [('0000000000000000', 0), ('ffffffffffffffff', 18446744073709551615), ('0000000000000000', 0), ('0100000000000000', 1), ('5555555555555555', 6148914691236517205), ('0100000000000000', 1), ('0500000000000000', 5)]
+struct.error 'Q' format requires 0 <= number <= 18446744073709551615
+struct.error 'Q' format requires 0 <= number <= 18446744073709551615
+struct.error 'Q' format requires 0 <= number <= 18446744073709551615
+struct.error 'Q' format requires 0 <= number <= 18446744073709551615
+struct.error 'Q' format requires 0 <= number <= 18446744073709551615
+struct.error 'Q' format requires 0 <= number <= 18446744073709551615
+@n [('0000000000000080', -9223372036854775808), ('ffffffffffffff7f', 9223372036854775807), ('0000000000000000', 0), ('0100000000000000', 1), ('aaaaaaaaaaaaaa2a', 3074457345618258602), ('0100000000000000', 1), ('0500000000000000', 5)]
+struct.error 'n' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'n' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'n' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'n' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'n' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'n' format requires -9223372036854775808 <= number <= 9223372036854775807
+@N [('0000000000000000', 0), ('ffffffffffffffff', 18446744073709551615), ('0000000000000000', 0), ('0100000000000000', 1), ('5555555555555555', 6148914691236517205), ('0100000000000000', 1), ('0500000000000000', 5)]
+struct.error 'N' format requires 0 <= number <= 18446744073709551615
+struct.error 'N' format requires 0 <= number <= 18446744073709551615
+struct.error 'N' format requires 0 <= number <= 18446744073709551615
+struct.error 'N' format requires 0 <= number <= 18446744073709551615
+struct.error 'N' format requires 0 <= number <= 18446744073709551615
+struct.error 'N' format requires 0 <= number <= 18446744073709551615
+struct.error required argument is not an integer
+struct.error required argument is not an integer
+struct.error required argument is not an integer
+struct.error required argument is not an integer
+struct.error required argument is not an integer
+struct.error required argument is not an integer
+=b [('80', -128), ('7f', 127), ('00', 0), ('01', 1), ('2a', 42), ('01', 1), ('05', 5)]
+struct.error 'b' format requires -128 <= number <= 127
+struct.error 'b' format requires -128 <= number <= 127
+struct.error 'b' format requires -128 <= number <= 127
+struct.error 'b' format requires -128 <= number <= 127
+struct.error 'b' format requires -128 <= number <= 127
+struct.error 'b' format requires -128 <= number <= 127
+=B [('00', 0), ('ff', 255), ('00', 0), ('01', 1), ('55', 85), ('01', 1), ('05', 5)]
+struct.error 'B' format requires 0 <= number <= 255
+struct.error 'B' format requires 0 <= number <= 255
+struct.error 'B' format requires 0 <= number <= 255
+struct.error 'B' format requires 0 <= number <= 255
+struct.error 'B' format requires 0 <= number <= 255
+struct.error 'B' format requires 0 <= number <= 255
+=h [('0080', -32768), ('ff7f', 32767), ('0000', 0), ('0100', 1), ('aa2a', 10922), ('0100', 1), ('0500', 5)]
+struct.error 'h' format requires -32768 <= number <= 32767
+struct.error 'h' format requires -32768 <= number <= 32767
+struct.error 'h' format requires -32768 <= number <= 32767
+struct.error 'h' format requires -32768 <= number <= 32767
+struct.error 'h' format requires -32768 <= number <= 32767
+struct.error 'h' format requires -32768 <= number <= 32767
+=H [('0000', 0), ('ffff', 65535), ('0000', 0), ('0100', 1), ('5555', 21845), ('0100', 1), ('0500', 5)]
+struct.error 'H' format requires 0 <= number <= 65535
+struct.error 'H' format requires 0 <= number <= 65535
+struct.error 'H' format requires 0 <= number <= 65535
+struct.error 'H' format requires 0 <= number <= 65535
+struct.error 'H' format requires 0 <= number <= 65535
+struct.error 'H' format requires 0 <= number <= 65535
+=i [('00000080', -2147483648), ('ffffff7f', 2147483647), ('00000000', 0), ('01000000', 1), ('aaaaaa2a', 715827882), ('01000000', 1), ('05000000', 5)]
+struct.error 'i' format requires -2147483648 <= number <= 2147483647
+struct.error 'i' format requires -2147483648 <= number <= 2147483647
+struct.error 'i' format requires -2147483648 <= number <= 2147483647
+struct.error 'i' format requires -2147483648 <= number <= 2147483647
+struct.error 'i' format requires -2147483648 <= number <= 2147483647
+struct.error 'i' format requires -2147483648 <= number <= 2147483647
+=I [('00000000', 0), ('ffffffff', 4294967295), ('00000000', 0), ('01000000', 1), ('55555555', 1431655765), ('01000000', 1), ('05000000', 5)]
+struct.error 'I' format requires 0 <= number <= 4294967295
+struct.error 'I' format requires 0 <= number <= 4294967295
+struct.error 'I' format requires 0 <= number <= 4294967295
+struct.error 'I' format requires 0 <= number <= 4294967295
+struct.error 'I' format requires 0 <= number <= 4294967295
+struct.error 'I' format requires 0 <= number <= 4294967295
+=l [('00000080', -2147483648), ('ffffff7f', 2147483647), ('00000000', 0), ('01000000', 1), ('aaaaaa2a', 715827882), ('01000000', 1), ('05000000', 5)]
+struct.error 'l' format requires -2147483648 <= number <= 2147483647
+struct.error 'l' format requires -2147483648 <= number <= 2147483647
+struct.error 'l' format requires -2147483648 <= number <= 2147483647
+struct.error 'l' format requires -2147483648 <= number <= 2147483647
+struct.error 'l' format requires -2147483648 <= number <= 2147483647
+struct.error 'l' format requires -2147483648 <= number <= 2147483647
+=L [('00000000', 0), ('ffffffff', 4294967295), ('00000000', 0), ('01000000', 1), ('55555555', 1431655765), ('01000000', 1), ('05000000', 5)]
+struct.error 'L' format requires 0 <= number <= 4294967295
+struct.error 'L' format requires 0 <= number <= 4294967295
+struct.error 'L' format requires 0 <= number <= 4294967295
+struct.error 'L' format requires 0 <= number <= 4294967295
+struct.error 'L' format requires 0 <= number <= 4294967295
+struct.error 'L' format requires 0 <= number <= 4294967295
+=q [('0000000000000080', -9223372036854775808), ('ffffffffffffff7f', 9223372036854775807), ('0000000000000000', 0), ('0100000000000000', 1), ('aaaaaaaaaaaaaa2a', 3074457345618258602), ('0100000000000000', 1), ('0500000000000000', 5)]
+struct.error 'q' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'q' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'q' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'q' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'q' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'q' format requires -9223372036854775808 <= number <= 9223372036854775807
+=Q [('0000000000000000', 0), ('ffffffffffffffff', 18446744073709551615), ('0000000000000000', 0), ('0100000000000000', 1), ('5555555555555555', 6148914691236517205), ('0100000000000000', 1), ('0500000000000000', 5)]
+struct.error 'Q' format requires 0 <= number <= 18446744073709551615
+struct.error 'Q' format requires 0 <= number <= 18446744073709551615
+struct.error 'Q' format requires 0 <= number <= 18446744073709551615
+struct.error 'Q' format requires 0 <= number <= 18446744073709551615
+struct.error 'Q' format requires 0 <= number <= 18446744073709551615
+struct.error 'Q' format requires 0 <= number <= 18446744073709551615
+struct.error required argument is not an integer
+struct.error required argument is not an integer
+struct.error required argument is not an integer
+struct.error required argument is not an integer
+struct.error required argument is not an integer
+struct.error required argument is not an integer
+<b [('80', -128), ('7f', 127), ('00', 0), ('01', 1), ('2a', 42), ('01', 1), ('05', 5)]
+struct.error 'b' format requires -128 <= number <= 127
+struct.error 'b' format requires -128 <= number <= 127
+struct.error 'b' format requires -128 <= number <= 127
+struct.error 'b' format requires -128 <= number <= 127
+struct.error 'b' format requires -128 <= number <= 127
+struct.error 'b' format requires -128 <= number <= 127
+<B [('00', 0), ('ff', 255), ('00', 0), ('01', 1), ('55', 85), ('01', 1), ('05', 5)]
+struct.error 'B' format requires 0 <= number <= 255
+struct.error 'B' format requires 0 <= number <= 255
+struct.error 'B' format requires 0 <= number <= 255
+struct.error 'B' format requires 0 <= number <= 255
+struct.error 'B' format requires 0 <= number <= 255
+struct.error 'B' format requires 0 <= number <= 255
+<h [('0080', -32768), ('ff7f', 32767), ('0000', 0), ('0100', 1), ('aa2a', 10922), ('0100', 1), ('0500', 5)]
+struct.error 'h' format requires -32768 <= number <= 32767
+struct.error 'h' format requires -32768 <= number <= 32767
+struct.error 'h' format requires -32768 <= number <= 32767
+struct.error 'h' format requires -32768 <= number <= 32767
+struct.error 'h' format requires -32768 <= number <= 32767
+struct.error 'h' format requires -32768 <= number <= 32767
+<H [('0000', 0), ('ffff', 65535), ('0000', 0), ('0100', 1), ('5555', 21845), ('0100', 1), ('0500', 5)]
+struct.error 'H' format requires 0 <= number <= 65535
+struct.error 'H' format requires 0 <= number <= 65535
+struct.error 'H' format requires 0 <= number <= 65535
+struct.error 'H' format requires 0 <= number <= 65535
+struct.error 'H' format requires 0 <= number <= 65535
+struct.error 'H' format requires 0 <= number <= 65535
+<i [('00000080', -2147483648), ('ffffff7f', 2147483647), ('00000000', 0), ('01000000', 1), ('aaaaaa2a', 715827882), ('01000000', 1), ('05000000', 5)]
+struct.error 'i' format requires -2147483648 <= number <= 2147483647
+struct.error 'i' format requires -2147483648 <= number <= 2147483647
+struct.error 'i' format requires -2147483648 <= number <= 2147483647
+struct.error 'i' format requires -2147483648 <= number <= 2147483647
+struct.error 'i' format requires -2147483648 <= number <= 2147483647
+struct.error 'i' format requires -2147483648 <= number <= 2147483647
+<I [('00000000', 0), ('ffffffff', 4294967295), ('00000000', 0), ('01000000', 1), ('55555555', 1431655765), ('01000000', 1), ('05000000', 5)]
+struct.error 'I' format requires 0 <= number <= 4294967295
+struct.error 'I' format requires 0 <= number <= 4294967295
+struct.error 'I' format requires 0 <= number <= 4294967295
+struct.error 'I' format requires 0 <= number <= 4294967295
+struct.error 'I' format requires 0 <= number <= 4294967295
+struct.error 'I' format requires 0 <= number <= 4294967295
+<l [('00000080', -2147483648), ('ffffff7f', 2147483647), ('00000000', 0), ('01000000', 1), ('aaaaaa2a', 715827882), ('01000000', 1), ('05000000', 5)]
+struct.error 'l' format requires -2147483648 <= number <= 2147483647
+struct.error 'l' format requires -2147483648 <= number <= 2147483647
+struct.error 'l' format requires -2147483648 <= number <= 2147483647
+struct.error 'l' format requires -2147483648 <= number <= 2147483647
+struct.error 'l' format requires -2147483648 <= number <= 2147483647
+struct.error 'l' format requires -2147483648 <= number <= 2147483647
+<L [('00000000', 0), ('ffffffff', 4294967295), ('00000000', 0), ('01000000', 1), ('55555555', 1431655765), ('01000000', 1), ('05000000', 5)]
+struct.error 'L' format requires 0 <= number <= 4294967295
+struct.error 'L' format requires 0 <= number <= 4294967295
+struct.error 'L' format requires 0 <= number <= 4294967295
+struct.error 'L' format requires 0 <= number <= 4294967295
+struct.error 'L' format requires 0 <= number <= 4294967295
+struct.error 'L' format requires 0 <= number <= 4294967295
+<q [('0000000000000080', -9223372036854775808), ('ffffffffffffff7f', 9223372036854775807), ('0000000000000000', 0), ('0100000000000000', 1), ('aaaaaaaaaaaaaa2a', 3074457345618258602), ('0100000000000000', 1), ('0500000000000000', 5)]
+struct.error 'q' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'q' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'q' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'q' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'q' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'q' format requires -9223372036854775808 <= number <= 9223372036854775807
+<Q [('0000000000000000', 0), ('ffffffffffffffff', 18446744073709551615), ('0000000000000000', 0), ('0100000000000000', 1), ('5555555555555555', 6148914691236517205), ('0100000000000000', 1), ('0500000000000000', 5)]
+struct.error 'Q' format requires 0 <= number <= 18446744073709551615
+struct.error 'Q' format requires 0 <= number <= 18446744073709551615
+struct.error 'Q' format requires 0 <= number <= 18446744073709551615
+struct.error 'Q' format requires 0 <= number <= 18446744073709551615
+struct.error 'Q' format requires 0 <= number <= 18446744073709551615
+struct.error 'Q' format requires 0 <= number <= 18446744073709551615
+struct.error required argument is not an integer
+struct.error required argument is not an integer
+struct.error required argument is not an integer
+struct.error required argument is not an integer
+struct.error required argument is not an integer
+struct.error required argument is not an integer
+>b [('80', -128), ('7f', 127), ('00', 0), ('01', 1), ('2a', 42), ('01', 1), ('05', 5)]
+struct.error 'b' format requires -128 <= number <= 127
+struct.error 'b' format requires -128 <= number <= 127
+struct.error 'b' format requires -128 <= number <= 127
+struct.error 'b' format requires -128 <= number <= 127
+struct.error 'b' format requires -128 <= number <= 127
+struct.error 'b' format requires -128 <= number <= 127
+>B [('00', 0), ('ff', 255), ('00', 0), ('01', 1), ('55', 85), ('01', 1), ('05', 5)]
+struct.error 'B' format requires 0 <= number <= 255
+struct.error 'B' format requires 0 <= number <= 255
+struct.error 'B' format requires 0 <= number <= 255
+struct.error 'B' format requires 0 <= number <= 255
+struct.error 'B' format requires 0 <= number <= 255
+struct.error 'B' format requires 0 <= number <= 255
+>h [('8000', -32768), ('7fff', 32767), ('0000', 0), ('0001', 1), ('2aaa', 10922), ('0001', 1), ('0005', 5)]
+struct.error 'h' format requires -32768 <= number <= 32767
+struct.error 'h' format requires -32768 <= number <= 32767
+struct.error 'h' format requires -32768 <= number <= 32767
+struct.error 'h' format requires -32768 <= number <= 32767
+struct.error 'h' format requires -32768 <= number <= 32767
+struct.error 'h' format requires -32768 <= number <= 32767
+>H [('0000', 0), ('ffff', 65535), ('0000', 0), ('0001', 1), ('5555', 21845), ('0001', 1), ('0005', 5)]
+struct.error 'H' format requires 0 <= number <= 65535
+struct.error 'H' format requires 0 <= number <= 65535
+struct.error 'H' format requires 0 <= number <= 65535
+struct.error 'H' format requires 0 <= number <= 65535
+struct.error 'H' format requires 0 <= number <= 65535
+struct.error 'H' format requires 0 <= number <= 65535
+>i [('80000000', -2147483648), ('7fffffff', 2147483647), ('00000000', 0), ('00000001', 1), ('2aaaaaaa', 715827882), ('00000001', 1), ('00000005', 5)]
+struct.error 'i' format requires -2147483648 <= number <= 2147483647
+struct.error 'i' format requires -2147483648 <= number <= 2147483647
+struct.error 'i' format requires -2147483648 <= number <= 2147483647
+struct.error 'i' format requires -2147483648 <= number <= 2147483647
+struct.error 'i' format requires -2147483648 <= number <= 2147483647
+struct.error 'i' format requires -2147483648 <= number <= 2147483647
+>I [('00000000', 0), ('ffffffff', 4294967295), ('00000000', 0), ('00000001', 1), ('55555555', 1431655765), ('00000001', 1), ('00000005', 5)]
+struct.error 'I' format requires 0 <= number <= 4294967295
+struct.error 'I' format requires 0 <= number <= 4294967295
+struct.error 'I' format requires 0 <= number <= 4294967295
+struct.error 'I' format requires 0 <= number <= 4294967295
+struct.error 'I' format requires 0 <= number <= 4294967295
+struct.error 'I' format requires 0 <= number <= 4294967295
+>l [('80000000', -2147483648), ('7fffffff', 2147483647), ('00000000', 0), ('00000001', 1), ('2aaaaaaa', 715827882), ('00000001', 1), ('00000005', 5)]
+struct.error 'l' format requires -2147483648 <= number <= 2147483647
+struct.error 'l' format requires -2147483648 <= number <= 2147483647
+struct.error 'l' format requires -2147483648 <= number <= 2147483647
+struct.error 'l' format requires -2147483648 <= number <= 2147483647
+struct.error 'l' format requires -2147483648 <= number <= 2147483647
+struct.error 'l' format requires -2147483648 <= number <= 2147483647
+>L [('00000000', 0), ('ffffffff', 4294967295), ('00000000', 0), ('00000001', 1), ('55555555', 1431655765), ('00000001', 1), ('00000005', 5)]
+struct.error 'L' format requires 0 <= number <= 4294967295
+struct.error 'L' format requires 0 <= number <= 4294967295
+struct.error 'L' format requires 0 <= number <= 4294967295
+struct.error 'L' format requires 0 <= number <= 4294967295
+struct.error 'L' format requires 0 <= number <= 4294967295
+struct.error 'L' format requires 0 <= number <= 4294967295
+>q [('8000000000000000', -9223372036854775808), ('7fffffffffffffff', 9223372036854775807), ('0000000000000000', 0), ('0000000000000001', 1), ('2aaaaaaaaaaaaaaa', 3074457345618258602), ('0000000000000001', 1), ('0000000000000005', 5)]
+struct.error 'q' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'q' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'q' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'q' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'q' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'q' format requires -9223372036854775808 <= number <= 9223372036854775807
+>Q [('0000000000000000', 0), ('ffffffffffffffff', 18446744073709551615), ('0000000000000000', 0), ('0000000000000001', 1), ('5555555555555555', 6148914691236517205), ('0000000000000001', 1), ('0000000000000005', 5)]
+struct.error 'Q' format requires 0 <= number <= 18446744073709551615
+struct.error 'Q' format requires 0 <= number <= 18446744073709551615
+struct.error 'Q' format requires 0 <= number <= 18446744073709551615
+struct.error 'Q' format requires 0 <= number <= 18446744073709551615
+struct.error 'Q' format requires 0 <= number <= 18446744073709551615
+struct.error 'Q' format requires 0 <= number <= 18446744073709551615
+struct.error required argument is not an integer
+struct.error required argument is not an integer
+struct.error required argument is not an integer
+struct.error required argument is not an integer
+struct.error required argument is not an integer
+struct.error required argument is not an integer
+!b [('80', -128), ('7f', 127), ('00', 0), ('01', 1), ('2a', 42), ('01', 1), ('05', 5)]
+struct.error 'b' format requires -128 <= number <= 127
+struct.error 'b' format requires -128 <= number <= 127
+struct.error 'b' format requires -128 <= number <= 127
+struct.error 'b' format requires -128 <= number <= 127
+struct.error 'b' format requires -128 <= number <= 127
+struct.error 'b' format requires -128 <= number <= 127
+!B [('00', 0), ('ff', 255), ('00', 0), ('01', 1), ('55', 85), ('01', 1), ('05', 5)]
+struct.error 'B' format requires 0 <= number <= 255
+struct.error 'B' format requires 0 <= number <= 255
+struct.error 'B' format requires 0 <= number <= 255
+struct.error 'B' format requires 0 <= number <= 255
+struct.error 'B' format requires 0 <= number <= 255
+struct.error 'B' format requires 0 <= number <= 255
+!h [('8000', -32768), ('7fff', 32767), ('0000', 0), ('0001', 1), ('2aaa', 10922), ('0001', 1), ('0005', 5)]
+struct.error 'h' format requires -32768 <= number <= 32767
+struct.error 'h' format requires -32768 <= number <= 32767
+struct.error 'h' format requires -32768 <= number <= 32767
+struct.error 'h' format requires -32768 <= number <= 32767
+struct.error 'h' format requires -32768 <= number <= 32767
+struct.error 'h' format requires -32768 <= number <= 32767
+!H [('0000', 0), ('ffff', 65535), ('0000', 0), ('0001', 1), ('5555', 21845), ('0001', 1), ('0005', 5)]
+struct.error 'H' format requires 0 <= number <= 65535
+struct.error 'H' format requires 0 <= number <= 65535
+struct.error 'H' format requires 0 <= number <= 65535
+struct.error 'H' format requires 0 <= number <= 65535
+struct.error 'H' format requires 0 <= number <= 65535
+struct.error 'H' format requires 0 <= number <= 65535
+!i [('80000000', -2147483648), ('7fffffff', 2147483647), ('00000000', 0), ('00000001', 1), ('2aaaaaaa', 715827882), ('00000001', 1), ('00000005', 5)]
+struct.error 'i' format requires -2147483648 <= number <= 2147483647
+struct.error 'i' format requires -2147483648 <= number <= 2147483647
+struct.error 'i' format requires -2147483648 <= number <= 2147483647
+struct.error 'i' format requires -2147483648 <= number <= 2147483647
+struct.error 'i' format requires -2147483648 <= number <= 2147483647
+struct.error 'i' format requires -2147483648 <= number <= 2147483647
+!I [('00000000', 0), ('ffffffff', 4294967295), ('00000000', 0), ('00000001', 1), ('55555555', 1431655765), ('00000001', 1), ('00000005', 5)]
+struct.error 'I' format requires 0 <= number <= 4294967295
+struct.error 'I' format requires 0 <= number <= 4294967295
+struct.error 'I' format requires 0 <= number <= 4294967295
+struct.error 'I' format requires 0 <= number <= 4294967295
+struct.error 'I' format requires 0 <= number <= 4294967295
+struct.error 'I' format requires 0 <= number <= 4294967295
+!l [('80000000', -2147483648), ('7fffffff', 2147483647), ('00000000', 0), ('00000001', 1), ('2aaaaaaa', 715827882), ('00000001', 1), ('00000005', 5)]
+struct.error 'l' format requires -2147483648 <= number <= 2147483647
+struct.error 'l' format requires -2147483648 <= number <= 2147483647
+struct.error 'l' format requires -2147483648 <= number <= 2147483647
+struct.error 'l' format requires -2147483648 <= number <= 2147483647
+struct.error 'l' format requires -2147483648 <= number <= 2147483647
+struct.error 'l' format requires -2147483648 <= number <= 2147483647
+!L [('00000000', 0), ('ffffffff', 4294967295), ('00000000', 0), ('00000001', 1), ('55555555', 1431655765), ('00000001', 1), ('00000005', 5)]
+struct.error 'L' format requires 0 <= number <= 4294967295
+struct.error 'L' format requires 0 <= number <= 4294967295
+struct.error 'L' format requires 0 <= number <= 4294967295
+struct.error 'L' format requires 0 <= number <= 4294967295
+struct.error 'L' format requires 0 <= number <= 4294967295
+struct.error 'L' format requires 0 <= number <= 4294967295
+!q [('8000000000000000', -9223372036854775808), ('7fffffffffffffff', 9223372036854775807), ('0000000000000000', 0), ('0000000000000001', 1), ('2aaaaaaaaaaaaaaa', 3074457345618258602), ('0000000000000001', 1), ('0000000000000005', 5)]
+struct.error 'q' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'q' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'q' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'q' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'q' format requires -9223372036854775808 <= number <= 9223372036854775807
+struct.error 'q' format requires -9223372036854775808 <= number <= 9223372036854775807
+!Q [('0000000000000000', 0), ('ffffffffffffffff', 18446744073709551615), ('0000000000000000', 0), ('0000000000000001', 1), ('5555555555555555', 6148914691236517205), ('0000000000000001', 1), ('0000000000000005', 5)]
+struct.error 'Q' format requires 0 <= number <= 18446744073709551615
+struct.error 'Q' format requires 0 <= number <= 18446744073709551615
+struct.error 'Q' format requires 0 <= number <= 18446744073709551615
+struct.error 'Q' format requires 0 <= number <= 18446744073709551615
+struct.error 'Q' format requires 0 <= number <= 18446744073709551615
+struct.error 'Q' format requires 0 <= number <= 18446744073709551615
+struct.error required argument is not an integer
+struct.error required argument is not an integer
+struct.error required argument is not an integer
+struct.error required argument is not an integer
+struct.error required argument is not an integer
+struct.error required argument is not an integer
+builtins.ZeroDivisionError idx
+builtins.ZeroDivisionError idx
+builtins.TypeError StrIndex.__index__() must return an int, not str
+b'\x00\x00\x00\x00\x00\x00\x00\x00' b'\xff\xff\xff\xff\xff\xff\xff\xff' b'\xff\xff\xff\xff\xff\xff\xff\xff' b'\x00\x00\x00\x00\x00\x00\x00\x80' b'\x07\x00\x00\x00\x00\x00\x00\x00' (18446744073709551615,) (0,)
+struct.error int too large to convert
+struct.error int too large to convert
+builtins.OverflowError Python int too large to convert to C unsigned long
+builtins.OverflowError Python int too large to convert to C long
+struct.error required argument is not an integer
+struct.error required argument is not an integer
+@ [b'\x01', b'\x00', b'\x00', b'\x01', b'\x01', b'\x00', b'\x01', b'\x00', b'\x01', b'\x00', b'\x00'] [False, True, True, True]
+< [b'\x01', b'\x00', b'\x00', b'\x01', b'\x01', b'\x00', b'\x01', b'\x00', b'\x01', b'\x00', b'\x00'] [False, True, True, True]
+> [b'\x01', b'\x00', b'\x00', b'\x01', b'\x01', b'\x00', b'\x01', b'\x00', b'\x01', b'\x00', b'\x00'] [False, True, True, True]
+builtins.ZeroDivisionError bool
+builtins.ZeroDivisionError bool
+b'a' b'abc' (b'a', b'b', b'c') b'\xff'
+struct.error char format requires a bytes object of length 1
+struct.error char format requires a bytes object of length 1
+struct.error char format requires a bytes object of length 1
+struct.error char format requires a bytes object of length 1
+struct.error char format requires a bytes object of length 1
+struct.error char format requires a bytes object of length 1
+s [b'\x00', b'a', b'a', b'a', b'x'] 1 b'z' b'a'
+0s [b'', b'', b'', b'', b''] 0 b'' b''
+1s [b'\x00', b'a', b'a', b'a', b'x'] 1 b'z' b'a'
+3s [b'\x00\x00\x00', b'a\x00\x00', b'abc', b'abc', b'xy\x00'] 3 b'zz' b'abc'
+5s [b'\x00\x00\x00\x00\x00', b'a\x00\x00\x00\x00', b'abc\x00\x00', b'abcde', b'xy\x00\x00\x00'] 5 b'zz' b'abcde'
+p [b'\x00', b'\x00', b'\x00', b'\x00', b'\x00'] 1 b'\x00' b''
+0p [b'', b'', b'', b'', b''] 0 b'' b''
+1p [b'\x00', b'\x00', b'\x00', b'\x00', b'\x00'] 1 b'\x00' b''
+2p [b'\x00\x00', b'\x01a', b'\x01a', b'\x01a', b'\x01x'] 2 b'\x01z' b'a'
+3p [b'\x00\x00\x00', b'\x01a\x00', b'\x02ab', b'\x02ab', b'\x02xy'] 3 b'\x02z' b'ab'
+5p [b'\x00\x00\x00\x00\x00', b'\x01a\x00\x00\x00', b'\x03abc\x00', b'\x04abcd', b'\x02xy\x00\x00'] 5 b'\x04z' b'abcd'
+300p [b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00', b'\x01a\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00', b'\x03abc\x00\x00\x00\x00\x00\x00\x00\x00', b'\x08abcdefgh\x00\x00\x00', b'\x02xy\x00\x00\x00\x00\x00\x00\x00\x00\x00'] 300 b'\xffz' b'abcdefgh'
+(b'abcd',) (b'ab',) (b'',) (b'',) (b'',) (b'',) (b'ab', b'cd') b'qqq' 255
+struct.error argument for 's' must be a bytes object
+struct.error argument for 's' must be a bytes object
+struct.error argument for 'p' must be a bytes object
+struct.error argument for 'p' must be a bytes object
+struct.error argument for 's' must be a bytes object
+b'\x00\x01\x00' b'\x00\x00\x00' b'\x00' (2,) () b'' () b'' () b'\x01\x00\x00\x00' b'\x01\x00\x00\x00\x02\x00\x00\x00' b'\x01\x02\x00\x00\x00' b'\x01\x00\x00\x00\x02\x00\x03\x00' b'\x01\x00\x00\x00\x00\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x00' b'\x01\x00\x02\x00\x03\x04\x05' (256, 770, 4, 5, 6)
+b'\x01\x00' (1,) b'\x01\x00' b'\x01\x00\x02'

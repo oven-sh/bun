@@ -1,0 +1,22 @@
+status: 0
+oracle: none
+mask: addresses
+---
+kwargs,float,import function
+(1, 2, (), 3, []) (1, 5, (), 3, []) (1, 2, (), 9, [('y', 2), ('z', 1)]) (1, 2, (3, 4), 0, []) ('A', 2, (), 3, []) (1, 2, (), 3, [])
+(2, 1) 2 11 none
+TypeError: f() got multiple values for argument 'a'
+TypeError: simple() got an unexpected keyword argument 'z'
+TypeError: only_kw() missing 1 required keyword-only argument: 'x'
+TypeError: no_args() got an unexpected keyword argument 'q'
+TypeError: simple() missing 1 required positional argument: 'b'
+1 given called
+(1, 5, 6) (1, 1, 0) ((1,), {'k': 2}) 3 4 5
+3,2,1 255 {'a': 1, 'b': 2} -5 a+b
+TypeError: len() takes no keyword arguments
+(OBJ, 2, (), 3, []) kwargs
+(7, 2, (), 3, []) (1, 8, (), 3, []) (1, 2, (), 4, [])
+(1, 2, (), 1.5, [('d', None)]) (1, 2, (), 2.0, []) (3.0, 2, (), 3, []) (3, 2, (), 3, [])
+true kwargs() takes an object
+object 3 2.5 float int true
+200010000

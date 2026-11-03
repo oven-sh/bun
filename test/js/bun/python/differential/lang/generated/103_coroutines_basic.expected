@@ -1,0 +1,136 @@
+status: 0
+script: 38d434d70ee85462
+source: e59dff97c0b25598
+---
+type(c).__name__ => coroutine
+c.__name__ => simple
+c.__qualname__ => simple
+c.cr_running => False
+c.cr_suspended => False
+c.cr_await => None
+c.cr_code is simple.__code__ => True
+c.cr_frame is not None => True
+c.cr_origin => None
+repr(c)[:26] => <coroutine object simple a
+result 42 (42,)
+c.cr_frame => None
+c.cr_running => False
+c.cr_suspended => False
+c.send(None) => RuntimeError: cannot reuse already awaited coroutine
+c.throw(ValueError("x")) => RuntimeError: cannot reuse already awaited coroutine
+None
+run(none()) => None
+run(simple()) => 42
+run(args(1, d=4)) => (1, 2, (), 4, {})
+run(args(1, 2, 3, d=4, z=5)) => (1, 2, (3,), 4, {'z': 5})
+args() => TypeError: args() missing 1 required positional argument: 'a'
+args(1) => TypeError: args() missing 1 required keyword-only argument: 'd'
+created
+body runs only when driven; 1
+84
+50
+c.send(None) => first
+c.cr_suspended => True
+type(c.cr_await).__name__ => generator
+c.send("A") => second
+('A', 'B')
+(['first', 'second'], (None, None))
+c.send(None) => deep
+c.cr_await.__name__ => deep2
+c.cr_await.cr_await.__name__ => deep3
+value sent to the bottom
+simple().send(1) => TypeError: can't send non-None value to a just-started coroutine
+simple().send() => TypeError: coroutine.send() takes exactly one argument (0 given)
+run(raises()) => ValueError: from coroutine
+caught from coroutine
+run(fin()) => finally; ValueError: from coroutine
+handled KeyError('k')
+c.throw(ValueError("unhandled")) => ValueError: unhandled
+c.send(None) => RuntimeError: cannot reuse already awaited coroutine
+c.throw(ValueError("before start")) => ValueError: before start
+c.send(None) => RuntimeError: cannot reuse already awaited coroutine
+run(stop_inside()) => RuntimeError: coroutine raised StopIteration
+coroutine raised StopIteration StopIteration()
+run(stop_async()) => StopAsyncIteration: allowed here
+StopIteration('as a value')
+(1, 2)
+GeneratorExit in coroutine; cleanup; c.close() => None
+c.cr_frame => None
+None
+None
+c.send(None) => RuntimeError: cannot reuse already awaited coroutine
+c.close() => RuntimeError: coroutine ignored GeneratorExit
+value
+run(aw(AwIter())) => (['y1', 'y2'], None)
+run(aw(AwGen())) => (['g1'], 'gen result')
+run(aw(simple())) => 42
+run(aw(aw(aw(simple())))) => 42
+run(aw(x)) [x=1] => TypeError: 'int' object can't be awaited
+run(aw(x)) [x=None] => TypeError: 'NoneType' object can't be awaited
+run(aw(x)) [x='s'] => TypeError: 'str' object can't be awaited
+run(aw(x)) [x=list] => TypeError: 'list' object can't be awaited
+run(aw(x)) [x=list_iterator] => TypeError: 'list_iterator' object can't be awaited
+run(aw(x)) [x=generator] => TypeError: 'generator' object can't be awaited
+run(aw(x)) [x=function] => TypeError: 'function' object can't be awaited
+run(aw(x)) [x=function] => TypeError: 'function' object can't be awaited
+run(aw(x)) [x=AwBad1] => TypeError: AwBad1.__await__() must return an iterator, not int
+run(aw(x)) [x=AwBad2] => TypeError: AwBad2.__await__() must return an iterator, not list
+run(aw(x)) [x=AwBad4] => TypeError: 'NoneType' object is not callable
+run(aw(x)) [x=AwRaises] => RuntimeError: __await__ failed
+run(aw(x)) [x=AwInst] => TypeError: 'AwInst' object can't be awaited
+run(aw(x)) [x=object] => TypeError: 'object' object can't be awaited
+run(aw(x)) [x=builtin_function_or_method] => TypeError: 'builtin_function_or_method' object can't be awaited
+run(aw(x)) [x=generator] => TypeError: 'generator' object can't be awaited
+run(aw(x)) [x=range] => TypeError: 'range' object can't be awaited
+run(aw(x)) [x=AwIter] => TypeError: 'type' object can't be awaited
+run(bad3) => TypeError: AwBad3.__await__() must return an iterator, not coroutine
+(42, 'cannot reuse already awaited coroutine')
+me.send(None) => ValueError: coroutine already executing
+coroutine already executing
+run(await_suspended()) => RuntimeError: coroutine is being awaited already
+iter(c) => TypeError: 'coroutine' object is not iterable
+next(c) => TypeError: 'coroutine' object is not an iterator
+list(c) => TypeError: 'coroutine' object is not iterable
+[x for x in c] => TypeError: 'coroutine' object is not iterable
+len(c) => TypeError: object of type 'coroutine' has no len()
+c() => TypeError: 'coroutine' object is not callable
+c + c => TypeError: unsupported operand type(s) for +: 'coroutine' and 'coroutine'
+bool(c) => True
+c == c => True
+hash(c) == hash(c) => True
+type(c)() => TypeError: cannot create 'coroutine' instances
+type("X", (type(c),), {}) => TypeError: type 'coroutine' is not an acceptable base type
+list(yf()) => TypeError: cannot 'yield from' a coroutine object in a non-coroutine generator
+type(w).__name__ => coroutine_wrapper
+iter(w) is w => True
+next(w) => StopIteration: 42
+next(w) => RuntimeError: cannot reuse already awaited coroutine
+next(w) => first
+w.send("x") => second
+w.throw(ValueError("via wrapper")) => ValueError: via wrapper
+None
+c.__name__ => renamed
+c.__qualname__ => q.renamed
+repr(c)[:28] => <coroutine object q.renamed 
+s1() => TypeError: __name__ must be set to a string object
+s2() => AttributeError: attribute 'cr_code' of 'coroutine' objects is not writable
+s3() => AttributeError: 'coroutine' object has no attribute 'x' and no __dict__ for setting new attributes
+simple.__code__.co_flags & 0x80 != 0 => True
+simple.__code__.co_flags & 0x20 != 0 => False
+type(simple).__name__ => function
+plain_gen.__code__.co_flags & 0x80 != 0 => False
+(True, False, None)
+run(k.m(1)) => ('method', 1)
+run(K.cm()) => K
+run(K.sm()) => static
+run(k()) => called
+run(k.p) => prop
+k.m(1).close() => None
+K.m.__qualname__ => K.m
+run(i()) => 11
+run(i()) => 12
+printed; (3, [3, 4], {'k': 'v'}, 10, -6, 7, '9  10', 2, 'ABC', 11, 8, True, True, 2, None, 'or', 1, 2, [1, 2], {'z': 1})
+[1, 2, 0, 3, 'w', {'k': 'w'}, 'k']
+['if', 'while', 'while', 1, 2, 'cm', 'raised', 3]
+None
+["ValueError('outer')", "KeyError('inner')", 'None']

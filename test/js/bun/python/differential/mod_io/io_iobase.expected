@@ -1,0 +1,196 @@
+status: 0
+script: ee110a690047c691
+---
+--- plain _IOBase
+_IOBase False False False False
+False
+UnsupportedOperation: fileno
+UnsupportedOperation: seek
+UnsupportedOperation: seek
+TypeError: 'str' object cannot be interpreted as an integer
+UnsupportedOperation: seek
+UnsupportedOperation: truncate
+UnsupportedOperation: truncate
+None
+None
+UnsupportedOperation: File or stream is not readable.
+UnsupportedOperation: File or stream is not writable.
+UnsupportedOperation: File or stream is not seekable.
+AttributeError: '_io._IOBase' object has no attribute 'read'
+AttributeError: '_io._IOBase' object has no attribute 'read'
+None
+AttributeError: '_io._IOBase' object has no attribute 'write'
+{}
+{'x': 1}
+AttributeError: attribute '__dict__' of '_io._IOBase' objects is not writable
+AttributeError: attribute 'closed' of '_io._IOBase' objects is not writable
+True
+True False
+True ['__IOBase_closed', 'x']
+ValueError: I/O operation on closed file.
+None
+ValueError: I/O operation on closed file.
+ValueError: I/O operation on closed file.
+ValueError: I/O operation on closed file.
+ValueError: I/O operation on closed file.
+ValueError: I/O operation on closed file.
+False
+None
+None
+--- order of the calls in close()
+flush, closed = False
+True
+OSError: flush failed
+True
+None
+RuntimeError: cannot set __IOBase_closed | context: OSError('flush failed')
+--- closed is looked up on the object
+ValueError: I/O operation on closed file.
+ValueError: I/O operation on closed file.
+ValueError: I/O operation on closed file.
+None
+False
+KeyError: 'closed'
+--- _check*
+True
+True
+True
+UnsupportedOperation: File or stream is not readable.
+UnsupportedOperation: File or stream is not writable.
+UnsupportedOperation: File or stream is not seekable.
+UnsupportedOperation: File or stream is not readable.
+UnsupportedOperation: File or stream is not writable.
+UnsupportedOperation: File or stream is not seekable.
+UnsupportedOperation: File or stream is not readable.
+UnsupportedOperation: File or stream is not writable.
+UnsupportedOperation: File or stream is not seekable.
+UnsupportedOperation: File or stream is not readable.
+UnsupportedOperation: File or stream is not writable.
+UnsupportedOperation: File or stream is not seekable.
+--- readline through read()
+b'ab\n' [1, 1, 1]
+b'c' b'd\n' b'' b'\n'
+b'ef' b'' b''
+TypeError: argument should be integer or None, not 'str'
+TypeError: argument should be integer or None, not 'float'
+TypeError: readline expected at most 1 argument, got 2
+[b'ab\n', b'cd\n', b'\n', b'ef']
+[b'ab\n', b'cd\n', b'\n', b'ef']
+0 [b'ab\n', b'cd\n', b'\n', b'ef']
+-1 [b'ab\n', b'cd\n', b'\n', b'ef']
+None [b'ab\n', b'cd\n', b'\n', b'ef']
+1 [b'ab\n']
+2 [b'ab\n']
+3 [b'ab\n', b'cd\n']
+4 [b'ab\n', b'cd\n']
+5 [b'ab\n', b'cd\n']
+6 [b'ab\n', b'cd\n', b'\n']
+7 [b'ab\n', b'cd\n', b'\n', b'ef']
+100 [b'ab\n', b'cd\n', b'\n', b'ef']
+b'ab\n' b'cd'
+StopIteration: 
+StopIteration: 
+OSError: read() should have returned a bytes object, not 'str'
+OSError: read() should have returned a bytes object, not 'NoneType'
+OSError: read() should have returned a bytes object, not 'bytearray'
+--- readline through peek()
+b'ab\n' [('peek', 1), 3]
+b'cdefghi\n' [('peek', 1), 4, ('peek', 1), 4]
+b'j' [('peek', 1), 1, ('peek', 1), 1]
+b'' [('peek', 1), 1]
+b'abcdef' [('peek', 1), 4, ('peek', 1), 2]
+b'abc' [('peek', 1), 3]
+OSError: peek() should have returned a bytes object, not 'str'
+--- interrupted calls are retried
+b'ab\n'
+OSError: [Errno 5] io error
+--- __next__ with odd readline()
+['a', [1], (2, 3)]
+TypeError: object of type 'int' has no len()
+TypeError: object of type 'NoneType' has no len()
+--- writelines
+[b'a', 'b', 3, 'x', 'y', 'z']
+TypeError: 'int' object is not iterable
+TypeError: 'NoneType' object is not iterable
+ValueError: I/O operation on closed file.
+--- _RawIOBase
+NotImplementedError: 
+NotImplementedError: 
+NotImplementedError: 
+NotImplementedError: 
+NotImplementedError: 
+NotImplementedError: 
+NotImplementedError: 
+True (<class '_io._RawIOBase'>, <class '_io._IOBase'>, <class 'object'>)
+b'abc' b'de' None b'f' b'' [('bytearray', 5), ('bytearray', 2), ('bytearray', 3), ('bytearray', 1), ('bytearray', 1)]
+b'abcdef' [('bytearray', 131072), ('bytearray', 131072), ('bytearray', 131072), ('bytearray', 131072)]
+b'abcdef' b'' b''
+b'abc' b'f' b''
+None
+b'' [('bytearray', 0)]
+TypeError: 'NoneType' object cannot be interpreted as an integer
+TypeError: 'str' object cannot be interpreted as an integer
+OverflowError: Python int too large to convert to C ssize_t
+[b'ab\n', b'c\n', b'd']
+ValueError: readinto returned -1 outside buffer size 5
+ValueError: readinto returned 6 outside buffer size 5
+TypeError: 'str' object cannot be interpreted as an integer
+ValueError: cannot fit 'int' into an index-sized integer
+TypeError: 'float' object cannot be interpreted as an integer
+TypeError: read() should return bytes
+--- _BufferedIOBase
+UnsupportedOperation: read
+UnsupportedOperation: read
+TypeError: 'str' object cannot be interpreted as an integer
+UnsupportedOperation: read1
+UnsupportedOperation: read1
+UnsupportedOperation: write
+UnsupportedOperation: detach
+UnsupportedOperation: read
+UnsupportedOperation: read1
+TypeError: readinto() argument must be read-write bytes-like object, not bytes
+TypeError: readinto() argument must be read-write bytes-like object, not None
+TypeError: readinto1() argument must be read-write bytes-like object, not str
+read 5
+2 bytearray(b'xy...')
+read1 5
+1 bytearray(b'zy...')
+read 5
+0 bytearray(b'zy...')
+read 5
+5 bytearray(b'12345')
+read 5
+ValueError: read() returned too much data: 5 bytes requested, 6 returned
+read 5
+TypeError: read() should return bytes
+read1 5
+TypeError: read() should return bytes
+read 5
+TypeError: read() should return bytes
+bytearray(b'12345')
+--- _TextIOBase
+UnsupportedOperation: read
+UnsupportedOperation: read
+UnsupportedOperation: readline
+UnsupportedOperation: write
+TypeError: write() argument 1 must be str, not bytes
+TypeError: write() argument 1 must be str, not None
+UnsupportedOperation: detach
+None None None
+AttributeError: attribute 'encoding' of '_io._TextIOBase' objects is not writable
+UnsupportedOperation: readline
+UnsupportedOperation: readline
+--- the types
+<class '_io._IOBase'> _IOBase _IOBase _io (<class 'object'>,) str
+TypeError: cannot set 'x' attribute of immutable type '_io._IOBase'
+<class '_io._RawIOBase'> _RawIOBase _RawIOBase _io (<class '_io._IOBase'>,) str
+TypeError: cannot set 'x' attribute of immutable type '_io._RawIOBase'
+<class '_io._BufferedIOBase'> _BufferedIOBase _BufferedIOBase _io (<class '_io._IOBase'>,) str
+TypeError: cannot set 'x' attribute of immutable type '_io._BufferedIOBase'
+<class '_io._TextIOBase'> _TextIOBase _TextIOBase _io (<class '_io._IOBase'>,) str
+TypeError: cannot set 'x' attribute of immutable type '_io._TextIOBase'
+<_io._IOBase object at 
+TypeError: _io._IOBase() takes no arguments
+TypeError: _io._IOBase() takes no arguments
+['Multi', '_RawIOBase', '_BufferedIOBase', '_IOBase', 'object']
+NotImplementedError: 

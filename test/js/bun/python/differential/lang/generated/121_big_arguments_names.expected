@@ -1,0 +1,35 @@
+status: 0
+script: f43032dbda472441
+source: f43032dbda472441
+---
+(300, 0, 44850, 0)
+(0, 300, 0, 44850)
+(150, 150, 11175, 11175)
+(100, 100, 4950, 4950)
+(5000, 0, 12497500, 0) (0, 3000, 0, 4498500)
+(449, 300) (449, 300) (449, 300)
+449 450 150 300
+449 1449 300
+TypeError: params() missing 1 required positional argument: 'p299'
+TypeError: params() takes 300 positional arguments but 301 were given
+TypeError: params() missing 10 required positional arguments: 'p290', 'p291', 'p292', 'p293', 'p294', 'p295', 'p296', 'p297', 'p298', and 'p299'
+259
+261 261
+300 0 True
+(11571, 400)
+89700
+80000.0 True
+44850
+11175 150
+199
+chained assignment chained assignment
+0 299
+0 498 499
+NameError: name 'u0' is not defined
+299
+11325
+61 0 59 30
+102 0 99
+44850 299
+300 299 ['attr0', 'attr1']
+a 2000 character identifier

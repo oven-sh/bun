@@ -1,0 +1,36 @@
+status: 0
+script: d6367fe14cb7945a
+---
+None RuntimeError: no running event loop RuntimeError: no running event loop RuntimeError: no running event loop RuntimeError: There is no current event loop in thread 'MainThread'.
+True True True True True True <built-in function get_running_loop> _asyncio
+None set() None
+True True True None
+RuntimeError: loop <_UnixSelectorEventLoop running=False closed=False debug=False> is not the running loop None t RuntimeError: Cannot enter into task 'u' while another task 't' is being executed. RuntimeError: Invalid attempt to leave task 'u' while task 't' is entered. RuntimeError: loop <_UnixSelectorEventLoop running=False closed=False debug=False> is not the running loop t v v None RuntimeError: Invalid attempt to leave task 'v' while task None is entered. RuntimeError: loop <_UnixSelectorEventLoop running=False closed=False debug=False> is not the running loop
+None
+RuntimeError: loop None is not the running loop RuntimeError: loop None is not the running loop TypeError: _asyncio._set_running_loop() takes exactly one argument (0 given) TypeError: _register_task() missing required argument 'task' (pos 1) TypeError: current_task() takes at most 1 argument (2 given)
+True True True True True
+101 True set
+51 True
+False
+True 51
+False
+True
+True
+True
+TypeError: cannot create weak reference to 'int' object TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+True
+False
+False
+False
+True 1 [('quick', 'q')] True False None
+False slow starts True True
+2 slow ends
+True KeyError('eager')
+True
+True Task
+1 0
+RuntimeError: cannot enter context: <_contextvars.Context object at 0x..> is already entered True
+False 1
+(True, 1) [(0, 1, True), (1, 1, True), (2, 1, True), (3, 1, True)]
+True True None
+None set()

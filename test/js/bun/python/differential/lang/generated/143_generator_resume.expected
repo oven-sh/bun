@@ -1,0 +1,156 @@
+status: 0
+script: 7ec39d8d3e74fe30
+source: a314cdd0e8c1c431
+---
+--- plain loops
+[x for x in count(5)] => [0, 1, 2, 3, 4]
+list(count(3)) => [0, 1, 2]
+sum(count(10)) => 45
+tuple(count(2)) => (0, 1)
+max(count(4)) => 3
+sorted(count(3), reverse=True) => [2, 1, 0]
+first loop 0
+first loop 1
+first loop 2
+next(g, "done") => done
+g.gi_frame => None
+g.gi_running => False
+inspect.getgeneratorstate(g) => GEN_CLOSED
+next(g) => 2
+[y for y in g] => [3, 4]
+inspect.getgeneratorstate(g) => GEN_CLOSED
+[]
+--- values of many kinds, and many variables
+1 int
+2.0 float
+'s' str
+None NoneType
+[1] list
+(2,) tuple
+{3: 4} dict
+1180591620717411303424 int
+1.5 float
+True bool
+(1, 2.0, 's', None, [1], (2,), {3: 4}, 1180591620717411303424, 1.5, True) tuple
+--- exceptions that leave the body
+loop_over(g) => [1, ('caught', 'from the generator 1', [('loop_over', 'for x in g: out.append(x)'), ('raises', 'raise ValueError("from the generator %d" % n)')])]
+inspect.getgeneratorstate(g) => GEN_CLOSED
+g.gi_frame => None
+list(g) => []
+[1, ('caught', 'from the generator 2', [('loop_over', 'for x in g: out.append(x)'), ('outer_for', 'for x in raises(n): yield x'), ('raises', 'raise ValueError("from the generator %d" % n)')])]
+[1, ('caught', 'from the generator 3', [('loop_over', 'for x in g: out.append(x)'), ('outer_from', 'yield from raises(n)'), ('raises', 'raise ValueError("from the generator %d" % n)')])]
+[1, 'caught inside: from the generator 4', 1, 'caught inside: from the generator 5']
+--- StopIteration must not leave a generator
+RuntimeError generator raised StopIteration | StopIteration('value') StopIteration('value') True [('report', 'f()'), ('<lambda>', 'try: report(lambda: [x for x in stops()])')]
+RuntimeError generator raised StopIteration | StopIteration('value') StopIteration('value') True [('report', 'f()'), ('<lambda>', 'try: report(lambda: list(stops()))')]
+RuntimeError generator raised StopIteration | StopIteration() StopIteration() True [('report', 'f()'), ('<lambda>', 'try: report(lambda: [x for x in via_next()])')]
+RuntimeError generator raised StopIteration | StopIteration('value') StopIteration('value') True [('report', 'f()'), ('<lambda>', 'try: report(lambda: [x for x in from_stops()])'), ('from_stops', 'yield from stops()')]
+RuntimeError coroutine raised StopIteration | StopIteration('in a coroutine') StopIteration('in a coroutine') True [('report', 'f()'), ('<lambda>', 'try: report(lambda: coro_stops().send(None))')]
+--- a generator that is running
+ValueError: generator already executing
+ValueError: generator already executing
+(True, 'GEN_RUNNING', True)
+me3.gi_running => False
+inspect.getgeneratorstate(me3) => GEN_CLOSED
+--- frames
+['names_up', 'inner_frames', 'middle_frames', 'top_frames', '<module>']
+['names_up', 'inner_frames', 'middle_frames', 'top_frames', '<module>']
+['names_up', 'inner_frames', 'middle_frames', 'top_frames', '<module>']
+['names_up', 'inner_frames', 'middle_frames', 'top_frames', '<module>']
+g.gi_frame.f_lineno - count.__code__.co_firstlineno => 0
+g.gi_frame.f_locals => {'n': 2}
+g.gi_frame.f_back => None
+g.gi_frame.f_lineno - count.__code__.co_firstlineno [x=0] => 2
+sorted(g.gi_frame.f_locals.items()) [x=0] => [('i', 0), ('n', 2)]
+g.gi_frame.f_back [x=0] => None
+g.gi_suspended [x=0] => True
+g.gi_frame.f_lineno - count.__code__.co_firstlineno [x=1] => 2
+sorted(g.gi_frame.f_locals.items()) [x=1] => [('i', 1), ('n', 2)]
+g.gi_frame.f_back [x=1] => None
+g.gi_suspended [x=1] => True
+1 {'local': 'value'} 4
+2 {'local': 'value'} 5
+frame_kept.f_lineno - keeps_frame.__code__.co_firstlineno => 5
+frame_kept.f_back => None
+--- the exception being handled belongs to each generator
+("KeyError('inner')", "ValueError('outer')")
+("KeyError('inner')", "ValueError('outer')")
+("ValueError('outer')", "ValueError('outer')")
+("KeyError('inner')", 'None')
+("KeyError('inner')", 'None')
+('None', 'None')
+repr(e) => ValueError('second')
+repr(e.__context__) => KeyError('first')
+repr(e.__context__.__context__) => OSError('around the loop')
+--- send, throw, close
+try_(g.send, 1) => TypeError: can't send non-None value to a just-started generator
+g.send(None) => None
+g.send(5) => 5
+g.throw(ValueError("x")) => threw x
+g.send(6) => 6
+g.close() => None
+try_(g.send, 7) => StopIteration: 
+try_(next, g) => StopIteration: 
+next(g) => None
+g.gi_yieldfrom.__name__ => echo_until
+g.send(1) => 1
+g.throw(ValueError("y")) => threw y
+g.send("stop") => ('returned', 'result')
+g.gi_yieldfrom => None
+try_(next, g) => StopIteration: 
+['cleaned inner', 'cleaned outer']
+['cleaned loop']
+RuntimeError: generator ignored GeneratorExit
+closing value
+try_(g.throw, KeyError("not started")) => KeyError: 'not started'
+list(g) => []
+--- what yield from evaluates to
+(['y', 'y', 'y', 'a', 'b', 'y'], [1, None, (1, 2), None, None, StopIteration('as a value')])
+[1, 2, "iterator's value"]
+--- depth
+['bottom']
+['bottom']
+RecursionError: maximum recursion depth 
+RecursionError: maximum recursion depth 
+GEN_CLOSED
+list(deep(50)) => ['bottom']
+sum(count(5)) => 10
+--- coroutines
+c.send(None) => first
+c.cr_await.__name__ => chain
+inspect.getcoroutinestate(c) => CORO_SUSPENDED
+c.send("A") => second
+c.send("B") => before failing
+('A', 'B', ('deep in the chain', [('main', 'await failing(3)'), ('failing', 'if k: return await failing(k - 1)'), ('failing', 'if k: return await failing(k - 1)'), ('failing', 'if k: return await failing(k - 1)'), ('failing', 'raise LookupError("deep in the chain")')]))
+inspect.getcoroutinestate(c) => CORO_CLOSED
+c.cr_await => None
+try_(c.send, None) => RuntimeError: cannot reuse already awaited coroutine
+StopIteration: (5, 'RuntimeError: cannot reuse already awaited coroutine')
+try_(c.throw, KeyError("from outside")) => KeyError: 'from outside'
+inspect.getcoroutinestate(c) => CORO_CLOSED
+c.close() => None
+inspect.getcoroutinestate(c) => CORO_CLOSED
+c.send(None) => old
+try_(c.send, "answer") => StopIteration: answer
+--- asynchronous generators, driven by hand
+c.send(None) => in the middle
+try_(c.send, None) => StopIteration: [1, 2]
+--- generators in odd places
+dict(zip(count(3), count(3))) => {0: 0, 1: 1, 2: 2}
+list(map(lambda a, b: a + b, count(3), count(3))) => [0, 2, 4]
+list(enumerate(count(2))) => [(0, 0), (1, 1)]
+list(filter(None, count(3))) => [1, 2]
+any(count(2)) => True
+all(count(2)) => False
+",".join(str(x) for x in count(3)) => 0,1,2
+{x for x in count(3)} => {0, 1, 2}
+[*count(2), *count(2)] => [0, 1, 0, 1]
+(lambda *a: a)(*count(3)) => (0, 1, 2)
+a => 0
+b => 1
+c => [2, 3, 4]
+3 in count(5) => True
+7 in count(5) => False
+[2, 4, 6]
+from __iter__
+['from __iter__']

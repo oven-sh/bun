@@ -1,0 +1,2 @@
+print("before")
+raise KeyError

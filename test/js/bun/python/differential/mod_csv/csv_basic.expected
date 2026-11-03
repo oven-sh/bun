@@ -1,0 +1,132 @@
+status: 0
+script: 812896b46aed8f3a
+---
+['Dialect', 'Error', 'QUOTE_ALL', 'QUOTE_MINIMAL', 'QUOTE_NONE', 'QUOTE_NONNUMERIC', 'QUOTE_NOTNULL', 'QUOTE_STRINGS', 'Reader', 'Writer', '_dialects', 'field_size_limit', 'get_dialect', 'list_dialects', 'reader', 'register_dialect', 'unregister_dialect', 'writer']
+CSV parsing and writing.
+
+0 1 2 3 4 5
+<class '_csv.Error'> (<class '_csv.Error'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>) _csv
+<class '_csv.Dialect'> <class '_csv.reader'> <class '_csv.writer'>
+['excel', 'excel-tab', 'unix']
+[['a', 'b', 'c'], ['1', '2', '3']]
+[['a', 'b', 'c'], ['1', '2', '3']]
+[]
+[[]]
+[[], []]
+[['a', '', 'c'], ['', '', '']]
+[['a,b', 'c']]
+[['a"b', 'c']]
+[['a\nb', 'c'], ['d']]
+[['a\r\nb', 'c'], ['d']]
+[['a"b', 'c']]
+[['ab', 'c']]
+Error ',' expected after '"'
+Error ',' expected after '"'
+Error unexpected end of data
+[['abc']]
+[['abc\n']]
+[['abc\n']]
+Error unexpected end of data
+[['a,b', 'c']]
+[['a\nb', 'c']]
+[['a\r'], ['b', 'c']]
+[['a"b', 'c']]
+[['a\nb', 'c']]
+[['a\n']]
+[[' a', ' b', ' "c"']]
+[['a', 'b', 'c']]
+[['a', 'b', 'c']]
+[['a;b', 'c']]
+[['a', 'b', 'c']]
+[['a', 'b']]
+[['a', 'b']]
+ValueError could not convert string to float: 'a'
+[[1.0, 'b', 2000.0, -4.0]]
+[[1.0, 'b', '', '']]
+[[1.0, 'b', None, '']]
+ValueError could not convert string to float: 'x'
+[['1', 'b', None, '']]
+[['1', '"b"', '', '""']]
+[['1', 'b', '', '']]
+[['a', 'b'], ['c', 'd']]
+Error new-line character seen in unquoted field - do you need to open the file with newline=''?
+Error new-line character seen in unquoted field - do you need to open the file with newline=''?
+[['a', 'b'], ['c', 'd']]
+[['a', 'b']]
+Error new-line character seen in unquoted field - do you need to open the file with newline=''?
+[['a', 'b'], [], ['c']]
+Error iterator should return strings, not bytes (the file should be opened in text mode)
+Error iterator should return strings, not int (the file should be opened in text mode)
+Error iterator should return strings, not NoneType (the file should be opened in text mode)
+Error iterator should return strings, not list (the file should be opened in text mode)
+[['é', '中文', '😀x']]
+[['', 'a', 'b']]
+[['a\x00b', 'c']]
+[['a"b"', '"']]
+[['a"b"']]
+[['ab"']]
+[['a"b']]
+[['a', 'b'], ['c', 'd']]
+[['a  ', 'b  ']]
+[['a', 'b, c']]
+[['a', ' "b', ' c"']]
+[['a', 'b', '', 'c']]
+[['a', 'b', 'c']]
+0 <class '_csv.reader'> <class '_csv.Dialect'>
+1 ['a', 'b']
+3 ['cd', 'e']
+4 ['f']
+StopIteration 
+True
+AttributeError readonly attribute
+AttributeError readonly attribute
+AttributeError '_csv.reader' object has no attribute 'foo' and no __dict__ for setting new attributes
+, " None '\r\n' 0 True False False
+131072
+131072 10
+[['aaaaaaaaaa', 'b']]
+Error field larger than field limit (10)
+Error field larger than field limit (10)
+[['😀😀😀😀😀😀😀😀😀😀']]
+Error field larger than field limit (10)
+10
+Error field larger than field limit (0)
+[['', '']]
+0
+Error field larger than field limit (-5)
+-5
+TypeError limit must be an integer
+TypeError limit must be an integer
+TypeError limit must be an integer
+TypeError limit must be an integer
+OverflowError Python int too large to convert to C ssize_t
+OverflowError Python int too large to convert to C ssize_t
+TypeError field_size_limit() takes at most 1 argument (2 given)
+131072 4611686018427387904
+131072
+TypeError reader expected at least 1 argument, got 0
+TypeError reader expected at most 2 arguments, got 3
+TypeError 'int' object is not iterable
+TypeError 'NoneType' object is not iterable
+TypeError this function got an unexpected keyword argument 'foo'
+Error unknown dialect
+Error unknown dialect
+TypeError argument for function given by name ('dialect') and position (1)
+TypeError "delimiter" must be a unicode character, not a string of length 2
+TypeError "delimiter" must be a unicode character, not a string of length 0
+TypeError "delimiter" must be a unicode character, not NoneType
+TypeError "delimiter" must be a unicode character, not int
+TypeError "delimiter" must be a unicode character, not bytes
+TypeError reader expected at least 1 argument, got 0
+TypeError cannot create '_csv.reader' instances
+TypeError cannot create '_csv.writer' instances
+TypeError cannot create '_csv.reader' instances
+['a', 'b']
+ValueError boom
+StopIteration 
+inner ['x3']
+Error iterator has already advanced the reader
+['x4']
+['x5']
+StopIteration 
+StopIteration 

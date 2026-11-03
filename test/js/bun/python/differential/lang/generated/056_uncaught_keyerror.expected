@@ -1,0 +1,6 @@
+status: 1
+stderr: KeyError: 'missing key'
+script: e31803612c855f3a
+source: e31803612c855f3a
+---
+before

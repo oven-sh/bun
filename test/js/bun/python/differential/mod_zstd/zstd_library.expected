@@ -1,0 +1,35 @@
+status: 0
+script: 6994cb4bb03e066c
+---
+['COMPRESSION_LEVEL_DEFAULT', 'CompressionParameter', 'DecompressionParameter', 'Strategy', 'ZstdCompressor', 'ZstdDecompressor', 'ZstdDict', 'ZstdError', 'ZstdFile', 'compress', 'decompress', 'finalize_dict', 'get_frame_info', 'get_frame_size', 'open', 'train_dict', 'zstd_version', 'zstd_version_info'] 3 3 True
+True True FrameInfo(decompressed_size=178890, dictionary_id=0) True
+True
+True
+True
+True
+ZstdError: Compressed data ended before the end-of-stream marker was reached
+ZstdError: Compressed data ended before the end-of-stream marker was reached
+ZstdError: Unable to decompress Zstandard data: Unknown frame descriptor
+ZstdError: Unable to decompress Zstandard data: Unknown frame descriptor
+TypeError: a bytes-like object is required, not 'str'
+ValueError: illegal compression level 100; the valid range is [-131072, 22]
+TypeError: Only one of level or options should be used.
+(-131072, 22) 10 [<Strategy.fast: 1>, <Strategy.dfast: 2>, <Strategy.greedy: 3>, <Strategy.lazy: 4>, <Strategy.lazy2: 5>, <Strategy.btlazy2: 6>, <Strategy.btopt: 7>, <Strategy.btultra: 8>, <Strategy.btultra2: 9>]
+ZstdDict True
+ZstdDict
+True True
+ValueError: samples contained no data; can't train dictionary.
+TypeError: dict_size must be an int object, not 'str'.
+ValueError: samples contained no data; can't train dictionary.
+TypeError: zstd_dict argument should be a ZstdDict object.
+1000 177890 178890 None True False
+b'0: we are ' b'the knights who say ni\n' 33 5000 b'146: we are the knig' 0 178890 b'' b'' True
+5000 4999: we are the knights who say ni
+
+True
+5001
+['hello.txt'] True
+['hello.txt']
+None [('one.txt', 93, True), ('two.txt', 93, True)] True True
+arch.tar.zst
+['f.txt']

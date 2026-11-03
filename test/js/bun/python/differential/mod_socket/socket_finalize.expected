@@ -1,0 +1,22 @@
+status: 0
+script: 245d8f6c12c39d73
+---
+False [('ResourceWarning', True, False)]
+False [('ResourceWarning', True, False)]
+False [('ResourceWarning', True, False)]
+False [('ResourceWarning', False, False), ('ResourceWarning', True, False)]
+False [('ResourceWarning', False, False), ('ResourceWarning', True, False)]
+0 True
+unraisable: ResourceWarning Exception ignored while finalizing socket  None
+False
+False 0
+S.__del__ True
+False 1
+S.__del__ False
+1
+-1 False 1
+1
+False 1 b''
+True 0
+b'x'
+False

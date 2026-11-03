@@ -1,0 +1,46 @@
+status: 0
+script: 0d8e9ef03dee046d
+---
+[(10, 'frame', '<module>')]
+[(10, 'frame', '<module>')]
+[(10, 'frame', '<module>')]
+[(10, 'frame', 'inner')]
+[(10, 'frame', '<module>')]
+<class 'int'> 12 True
+[] [<Signals.SIGHUP: 1>, <Signals.SIGUSR1: 10>, <Signals.SIGUSR2: 12>, <Signals.SIGTERM: 15>]
+[<Signals.SIGHUP: 1>, <Signals.SIGUSR1: 10>, <Signals.SIGUSR2: 12>, <Signals.SIGTERM: 15>]
+[1, 10, 12, 15] set() set()
+Boom: 10
+Boom: 10
+caught 10 boom
+loop ended by 14
+natives in a loop ended by 14
+first 10
+[12]
+slept on True [(14, 'frame', '<module>')]
+sleep ended by 14 True
+None [(14, 'frame', '<module>')]
+Boom: 14
+Boom: 14
+Boom: 14
+True
+True
+True
+True
+False True [(14, 'frame', '<module>')]
+True True
+[14, 14, 14]
+virtual
+0 1 0
+ignored []
+[]
+nothing []
+SIGCHLD does nothing
+KeyboardInterrupt ()
+KeyboardInterrupt again
+and again
+['outer in', 'nested', 'outer out']
+['once'] 1
+gen finally
+Boom: 10
+Boom: 10

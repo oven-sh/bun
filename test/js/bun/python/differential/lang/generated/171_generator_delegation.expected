@@ -1,0 +1,102 @@
+status: 0
+script: 5e0f7bc928c6e90d
+source: aeb275fc5d18b76c
+---
+([], ('simple', 'after'))
+([1, 2, 3], ([1, 2, 3], 'after'))
+([], ([], 'after'))
+([7], (1, 'after'))
+<TypeError: 'int' object can't be awaited>
+<TypeError: 'NoneType' object can't be awaited>
+<TypeError: NotIterator.__await__() must return an iterator, not int>
+<TypeError: ReturnsCoroutine.__await__() must return an iterator, not coroutine>
+<KeyError: 'await'>
+<TypeError: 'generator' object can't be awaited>
+<TypeError: 'list_iterator' object can't be awaited>
+s
+<RuntimeError: coroutine is being awaited already>
+<StopIteration: ['x']>
+<RuntimeError: cannot reuse already awaited coroutine>
+<ValueError: coroutine already executing>
+<StopIteration: simple>
+<RuntimeError: cannot reuse already awaited coroutine>
+o.cr_await => None
+i.cr_await => None
+o.cr_await is i => True
+type(i.cr_await).__name__ => generator
+inspect.getcoroutinestate(o) => CORO_SUSPENDED
+inspect.getcoroutinestate(i) => CORO_SUSPENDED
+attempt(o.send, "end") => <StopIteration: ['end']>
+o.cr_await => None
+i.cr_await => None
+inspect.getcoroutinestate(o) => CORO_CLOSED
+([], 'simple')
+<TypeError: 'async with' received an object from __aenter__ that does not implement __await__: int>
+<TypeError: 'async with' received an object from __aexit__ that does not implement __await__: int>
+(['in', 'out'], [1])
+next(g) => 0
+g.send("a") => 1
+g.gi_yieldfrom.gi_yieldfrom.gi_code.co_name => leaf
+g.throw(ValueError("v")) => after
+g.send("b") => top
+log => ['leaf done']
+<StopIteration: ('mid', ['a', ('caught', 'v'), 'b'])>
+g.close() => None
+log => ['leaf done']
+g.gi_yieldfrom => None
+g.gi_frame => None
+attempt(g.throw, KeyError("k")) => <KeyError: 'k'>
+log => ['leaf done']
+([1, 2, 'a', 'b', 7, 0, 1], (None, None, None, None, None))
+<AttributeError: 'tuple' object has no attribute 'send'>
+next(g) => next
+g.send(None) => next
+g.send(3) => ('send', 3)
+g.throw(ValueError) => ('throw', (<class 'ValueError'>,))
+g.close() => None
+log => ['closed']
+([], (1, 2))
+<RuntimeError: generator raised StopIteration>
+([], 'value')
+(['bottom'], 50)
+<ValueError: generator already executing>
+([1, 2, 2, 3, 4, 5], [5, 6])
+[('a', 1), ('b', 2), ('c', (3,)), ('d', 4), ('e', {'x': 5})]
+[('a', 1), ('b', 2), ('c', (3,)), ('d', 4), ('e', {'x': 5}), ('unused', 'unused')]
+[('a', 1), ('b', 2), ('c', (3,)), ('cell', 1), ('d', 4), ('e', {'x': 5}), ('inner', 1), ('unused', 'unused')]
+[('a', 1), ('b', 2), ('c', (3,)), ('cell', 1), ('d', 4), ('e', {'x': 5}), ('inner', 1), ('loop', 0), ('unused', 'unused')]
+attempt(next, g) => <StopIteration: >
+g.gi_frame => None
+next(g) => 1
+sorted(f.f_locals) => ['v']
+f.f_lineno - f.f_code.co_firstlineno => 4
+f is g.gi_frame => True
+f.f_back => None
+next(g) => 2
+sorted(f.f_locals) => ['v', 'w']
+f.f_lineno - f.f_code.co_firstlineno => 6
+attempt(next, g) => <StopIteration: 3>
+sorted(f.f_locals) => ['v', 'w']
+g.gi_frame => None
+[]
+['started']
+['started']
+['started', 'survives a collection']
+['started', 'survives a collection', 'finished']
+['started', 'survives a collection', 'finished', 'closed']
+sorted(log) == [i for i in range(100) if i % 4 == 2] => True
+len(log) => 25
+warning: RuntimeWarning coroutine 'simple' was never awaited
+kept
+warning: RuntimeWarning coroutine 'simple' was never awaited
+<StopIteration: simple>
+a suspended one says nothing
+warning: RuntimeWarning coroutine 'simple' was never awaited
+warning: RuntimeWarning coroutine 'simple' was never awaited
+warning: RuntimeWarning coroutine 'simple' was never awaited
+<RecursionError: maximum recursion depth
+<RecursionError: maximum recursion depth
+<RecursionError: maximum recursion depth
+next(g) => 0
+still works list(g) => [1, 2]
+end

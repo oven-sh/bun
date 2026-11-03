@@ -1,0 +1,58 @@
+import _socket as S, os, errno, tempfile, struct, array
+def t(f):
+    try: print(repr(f()))
+    except BaseException as x: print(type(x).__name__ + ':', x, getattr(x, 'errno', None))
+a, b = S.socketpair()
+print(type(a) is S.socket, a.family == S.AF_UNIX, a.type == S.SOCK_STREAM, a.proto, a.timeout, os.get_inheritable(a.fileno()), a.getsockname(), a.getpeername())
+print(a.send(b'ping'), b.recv(10), b.sendall(b'pong'), a.recv(10), b.send(b'x'), a.recvfrom(5), b.send(b'y'), a.recvmsg(5))
+a.close(); print(b.recv(10)); t(lambda: b.send(b'x')); b.close()
+for args in [(S.AF_UNIX, S.SOCK_DGRAM), (S.AF_UNIX, S.SOCK_SEQPACKET), (S.AF_UNIX, S.SOCK_STREAM, 0), (S.AF_UNIX, S.SOCK_STREAM | S.SOCK_NONBLOCK)]:
+    a, b = S.socketpair(*args); print(a.family, a.type, a.proto, a.timeout, b.timeout, a.send(b'm1'), a.send(b'm2'), b.recv(10)); a.close(); b.close()
+t(lambda: S.socketpair(S.AF_INET)); t(lambda: S.socketpair(S.AF_UNIX, 9999)); t(lambda: S.socketpair(S.AF_UNIX, S.SOCK_STREAM, 5))
+d = tempfile.mkdtemp(); p = os.path.join(d, 'sock')
+srv = S.socket(S.AF_UNIX); print(srv.bind(p), srv.getsockname() == p, srv.listen(), os.path.exists(p))
+t(lambda: S.socket(S.AF_UNIX).bind(p))
+c = S.socket(S.AF_UNIX); print(c.connect(p), c.getpeername() == p, c.getsockname())
+fd, addr = srv._accept(); x = S.socket(fileno=fd); print(repr(addr), x.family == S.AF_UNIX, x.getsockname() == p, x.getpeername(), c.send(b'u'), x.recv(5))
+x.close(); c.close()
+c = S.socket(S.AF_UNIX); print(c.connect(os.fsencode(p)), c.getpeername() == p); S.close(srv._accept()[0]); c.close()
+c = S.socket(S.AF_UNIX); print(c.connect(bytearray(os.fsencode(p))), c.connect_ex(p) == errno.EISCONN); S.close(srv._accept()[0]); c.close()
+srv.close(); os.unlink(p)
+c = S.socket(S.AF_UNIX); t(lambda: c.connect(p)); print(c.connect_ex(p) == errno.ENOENT); c.close()
+# names that are not UTF-8
+q = os.path.join(os.fsencode(d), b'\xff\xfe'); s = S.socket(S.AF_UNIX); s.bind(q); print(ascii(os.path.basename(s.getsockname()))); s.close(); os.unlink(q)
+q = os.path.join(d, 'sé€'); s = S.socket(S.AF_UNIX); s.bind(q); print(ascii(os.path.basename(s.getsockname())), os.listdir(d) == ['sé€']); s.close(); os.unlink(q)
+# the longest path
+os.chdir(d); s = S.socket(S.AF_UNIX); s.bind('y' * 107); print(len(s.getsockname())); s.close(); os.unlink('y' * 107)
+s = S.socket(S.AF_UNIX); t(lambda: s.bind('y' * 108)); t(lambda: s.bind('a\0b')); print(sorted(os.listdir(d)), repr(s.getsockname())); s.close()
+for n in os.listdir(d): os.unlink(n)
+# the abstract namespace
+s = S.socket(S.AF_UNIX); name = b'\0pytest-abstract-%d' % os.getpid(); s.bind(name); print(s.getsockname() == name, type(s.getsockname()).__name__); s.listen()
+c = S.socket(S.AF_UNIX); c.connect(name); print(c.getpeername() == name); c.close()
+c = S.socket(S.AF_UNIX); c.connect(name.decode()); print(c.getpeername() == name); c.close(); s.close()
+s = S.socket(S.AF_UNIX); s.bind(''); n = s.getsockname(); print(type(n).__name__, n[:1], len(n)); s.close()
+s = S.socket(S.AF_UNIX); s.bind(b'\0' + b'z' * 107); print(len(s.getsockname())); s.close()
+s = S.socket(S.AF_UNIX); s.bind(b'\0a\0b\0'); print(s.getsockname()); s.close()
+# datagrams
+u = S.socket(S.AF_UNIX, S.SOCK_DGRAM); u.bind('u'); v = S.socket(S.AF_UNIX, S.SOCK_DGRAM)
+print(v.sendto(b'anon', 'u'), u.recvfrom(10), v.bind('v'), v.sendto(b'named', 'u'), u.recvfrom(10), v.sendmsg([b'm'], [], 0, 'u'), u.recvmsg(10))
+u.close(); v.close(); os.unlink('u'); os.unlink('v')
+# passing descriptors
+a, b = S.socketpair()
+r, w = os.pipe()
+print(a.sendmsg([b'fd'], [(S.SOL_SOCKET, S.SCM_RIGHTS, struct.pack('i', w))]))
+data, anc, flags, addr = b.recvmsg(10, S.CMSG_SPACE(4))
+print(data, len(anc), anc[0][0] == S.SOL_SOCKET, anc[0][1] == S.SCM_RIGHTS, len(anc[0][2]), flags, addr)
+w2 = struct.unpack('i', anc[0][2])[0]; print(w2 != w, os.write(w2, b'through'), os.read(r, 10)); os.close(w2)
+print(a.sendmsg([b'2fds'], [(S.SOL_SOCKET, S.SCM_RIGHTS, array.array('i', [r, w]))]))
+data, anc, flags, addr = b.recvmsg(10, S.CMSG_SPACE(8), S.MSG_CMSG_CLOEXEC); fds = array.array('i'); fds.frombytes(anc[0][2]); print(data, len(fds), flags, [os.get_inheritable(f) for f in fds])
+for f in fds: os.close(f)
+buf = bytearray(4); print(a.sendmsg([b'into'], [(S.SOL_SOCKET, S.SCM_RIGHTS, struct.pack('i', r))])); n, anc, flags, addr = b.recvmsg_into([buf], 100); print(n, buf, len(anc), flags); os.close(struct.unpack('i', anc[0][2])[0])
+# no room for the descriptor
+print(a.sendmsg([b'lost'], [(S.SOL_SOCKET, S.SCM_RIGHTS, struct.pack('i', r))])); data, anc, flags, addr = b.recvmsg(10); print(data, anc, flags & S.MSG_CTRUNC != 0)
+t(lambda: a.sendmsg([b'bad'], [(S.SOL_SOCKET, S.SCM_RIGHTS, struct.pack('i', 99999))]))
+# credentials
+b.setsockopt(S.SOL_SOCKET, S.SO_PASSCRED, 1); a.send(b'cred'); data, anc, flags, addr = b.recvmsg(10, 100)
+print(data, anc[0][:2] == (S.SOL_SOCKET, S.SCM_CREDENTIALS), struct.unpack('3i', anc[0][2]) == (os.getpid(), os.getuid(), os.getgid()))
+print(struct.unpack('3i', a.getsockopt(S.SOL_SOCKET, S.SO_PEERCRED, 12)) == (os.getpid(), os.getuid(), os.getgid()))
+a.close(); b.close(); os.close(r); os.close(w); os.chdir('/'); os.rmdir(d)

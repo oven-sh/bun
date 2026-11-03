@@ -1,0 +1,52 @@
+status: 0
+script: 4856c679aa383a16
+---
+['Random'] _random 'Module implements the Mersenne Twister random number generator.'
+<class '_random.Random'> Random Random _random 'Random() -> create a random number generator with its own internal state.' (<class 'object'>,) (<class '_random.Random'>, <class 'object'>) <class 'type'>
+['__doc__', '__init__', '__module__', '__new__', 'getrandbits', 'getstate', 'random', 'seed', 'setstate']
+method_descriptor builtin_function_or_method random Random.random True <method 'random' of '_random.Random' objects>
+wrapper_descriptor builtin_function_or_method
+True True True
+Random [1, 2]  TypeError: Random expected at most 1 argument, got 2
+Random [] {'x': 1} TypeError: Random() takes no keyword arguments
+Random [1] {'x': 1} TypeError: Random() takes no keyword arguments
+Random [[]]  TypeError: unhashable type: 'list'
+setattr [<class '_random.Random'>, 'x', 1]  TypeError: cannot set 'x' attribute of immutable type '_random.Random'
+setattr ['Random', 'x', 1]  AttributeError: '_random.Random' object has no attribute 'x' and no __dict__ for setting new attributes
+getattr ['Random', '__dict__']  AttributeError: '_random.Random' object has no attribute '__dict__'
+getattr ['Random', 'nothing']  AttributeError: '_random.Random' object has no attribute 'nothing'
+delattr [<class '_random.Random'>, 'random']  TypeError: cannot set 'random' attribute of immutable type '_random.Random'
+random []  TypeError: unbound method Random.random() needs an argument
+random [1]  TypeError: descriptor 'random' for '_random.Random' objects doesn't apply to a 'int' object
+random ['object']  TypeError: descriptor 'random' for '_random.Random' objects doesn't apply to a 'object' object
+seed ['a', 1]  TypeError: descriptor 'seed' for '_random.Random' objects doesn't apply to a 'str' object
+getstate [None]  TypeError: descriptor 'getstate' for '_random.Random' objects doesn't apply to a 'NoneType' object
+__init__ [1]  TypeError: descriptor '__init__' requires a '_random.Random' object but received a 'int'
+__new__ []  TypeError: _random.Random.__new__(): not enough arguments
+__new__ [<class 'int'>]  TypeError: _random.Random.__new__(int): int is not a subtype of _random.Random
+__new__ [1]  TypeError: _random.Random.__new__(X): X is not a type object (int)
+__new__ [<class '_random.Random'>]  TypeError: object.__new__(_random.Random) is not safe, use _random.Random.__new__()
+False True
+0.0 0 (0, 0) 3
+True
+None True
+None 624
+__init__ [1, 2]  TypeError: Random expected at most 1 argument, got 2
+__init__ [] {'x': 1} TypeError: Random() takes no keyword arguments
+S True True (<class '__main__.S'>, <class '_random.Random'>, <class 'object'>)
+1 {'x': 1}
+S [1, 2]  TypeError: Random expected at most 1 argument, got 2
+S [] {'x': 1} TypeError: Random() takes no keyword arguments
+(1, 2, 3) {'x': 4} 0.0 2
+0.5578612550747453 918 3 625
+True
+True
+True
+True
+624
+WithNew [1, 2]  TypeError: Random expected at most 1 argument, got 2
+5 True
+setattr ['Slots', 'b', 1]  AttributeError: 'Slots' object has no attribute 'b' and no __dict__ for setting new attributes
+0.25 True
+TypeError: multiple bases have instance lay-out conflict
+hello True

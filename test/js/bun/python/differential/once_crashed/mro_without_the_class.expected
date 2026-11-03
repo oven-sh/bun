@@ -1,0 +1,4 @@
+status: 0
+script: d82933d6690fc357
+---
+TypeError super(type, obj): obj (type A) is not an instance or subtype of type (A).

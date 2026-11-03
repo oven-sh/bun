@@ -1,0 +1,40 @@
+import termios as T, os, pty, tty, sys
+def t(f):
+    try: print(repr(f()))
+    except BaseException as x: print(type(x).__name__ + ':', x, x.args)
+names = sorted(n for n in dir(T) if not n.startswith('__'))
+print(names)
+print([(n, getattr(T, n)) for n in names if isinstance(getattr(T, n), int)])
+print(T.error.__mro__, T.error.__module__, T.error.__name__, T.error.__qualname__)
+for n in names:
+    f = getattr(T, n)
+    if callable(f) and not isinstance(f, type): print(n, f.__text_signature__, type(f).__name__)
+m, s = os.openpty()
+a = T.tcgetattr(s)
+print(type(a).__name__, len(a), [type(x).__name__ for x in a], len(a[6]), a[:6], a[6])
+b = T.tcgetattr(s); b[3] &= ~(T.ECHO | T.ICANON); b[6][T.VMIN] = 1; b[6][T.VTIME] = 0
+print(T.tcsetattr(s, T.TCSANOW, b)); c = T.tcgetattr(s); print(c[3] & T.ECHO, c[3] & T.ICANON, c[6][T.VMIN], c[6][T.VTIME], type(c[6][T.VMIN]).__name__, type(c[6][T.VINTR]).__name__)
+c[6][T.VMIN] = b'\x02'; c[6][T.VINTR] = 5; T.tcsetattr(s, T.TCSADRAIN, c); e = T.tcgetattr(s); print(e[6][T.VMIN], e[6][T.VINTR])
+c[4] = c[5] = T.B9600; T.tcsetattr(s, T.TCSAFLUSH, c); print(T.tcgetattr(s)[4:6] == [T.B9600, T.B9600])
+T.tcsetattr(s, T.TCSANOW, a); print(T.tcgetattr(s) == a)
+class F:
+    def fileno(self): return s
+print(T.tcgetattr(F()) == a)
+print(T.tcgetwinsize(s), T.tcsetwinsize(s, (24, 80)), T.tcgetwinsize(s), T.tcsetwinsize(s, [50, 132]), T.tcgetwinsize(s), os.get_terminal_size(s))
+t(lambda: T.tcsetwinsize(s, (1,))); t(lambda: T.tcsetwinsize(s, (1, 2, 3))); t(lambda: T.tcsetwinsize(s, 5)); t(lambda: T.tcsetwinsize(s, ('a', 1))); t(lambda: T.tcsetwinsize(s, (1, 'b'))); t(lambda: T.tcsetwinsize(s, (65536, 1))); t(lambda: T.tcsetwinsize(s, (1, -1))); t(lambda: T.tcsetwinsize(s, (2**70, 1))); t(lambda: T.tcsetwinsize(s, {1: 2, 3: 4})); t(lambda: T.tcsetwinsize(s, 'ab'))
+print(T.tcdrain(s), T.tcflush(s, T.TCIOFLUSH), T.tcflow(s, T.TCOON), T.tcsendbreak(s, 0))
+t(lambda: T.tcflush(s, 99)); t(lambda: T.tcflow(s, 99)); t(lambda: T.tcsetattr(s, 99, a))
+t(lambda: T.tcsetattr(s, T.TCSANOW, 5)); t(lambda: T.tcsetattr(s, T.TCSANOW, tuple(a))); t(lambda: T.tcsetattr(s, T.TCSANOW, a[:6])); t(lambda: T.tcsetattr(s, T.TCSANOW, a[:6] + [5])); t(lambda: T.tcsetattr(s, T.TCSANOW, a[:6] + [a[6][:5]]))
+t(lambda: T.tcsetattr(s, T.TCSANOW, ['x'] + a[1:])); t(lambda: T.tcsetattr(s, T.TCSANOW, a[:6] + [['x'] + a[6][1:]])); t(lambda: T.tcsetattr(s, T.TCSANOW, a[:6] + [[b'ab'] + a[6][1:]])); t(lambda: T.tcsetattr(s, T.TCSANOW, a[:6] + [[1.5] + a[6][1:]])); t(lambda: T.tcsetattr(s, T.TCSANOW, [2**70] + a[1:]))
+t(lambda: T.tcsetattr(s, T.TCSANOW, a[:4] + [12345, 12345] + a[6:])); t(lambda: T.tcsetattr(s, 'x', a)); t(lambda: T.tcsetattr(s, T.TCSANOW)); t(lambda: T.tcsetattr())
+r, w = os.pipe()
+for f in [lambda: T.tcgetattr(r), lambda: T.tcsetattr(r, 0, a), lambda: T.tcdrain(r), lambda: T.tcflush(r, 0), lambda: T.tcflow(r, 0), lambda: T.tcsendbreak(r, 0), lambda: T.tcgetwinsize(r), lambda: T.tcsetwinsize(r, (1, 2))]: t(f)
+t(lambda: T.tcgetattr(-1)); t(lambda: T.tcgetattr('x')); t(lambda: T.tcgetattr(9999)); t(lambda: T.tcgetattr()); t(lambda: T.tcgetattr(1.5)); t(lambda: T.tcgetattr(fd=0))
+try: T.tcgetattr(r)
+except T.error as e: print(type(e).__name__, e.args, isinstance(e, OSError), str(e))
+# tty, pty
+tty.setraw(s); x = T.tcgetattr(s); print(x[3] & (T.ECHO | T.ICANON | T.ISIG), x[6][T.VMIN], x[6][T.VTIME]); T.tcsetattr(s, T.TCSANOW, a)
+tty.setcbreak(s); x = T.tcgetattr(s); print(x[3] & (T.ECHO | T.ICANON), x[3] & T.ISIG != 0); T.tcsetattr(s, T.TCSANOW, a)
+os.write(m, b'typed\n'); print(os.read(s, 100), os.read(m, 100)); os.write(s, b'out\n'); print(os.read(m, 100))
+print(os.isatty(s), os.isatty(m), os.isatty(r), os.ttyname(s).startswith('/dev/pts/'))
+for fd in (m, s, r, w): os.close(fd)

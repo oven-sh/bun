@@ -1,0 +1,17 @@
+status: 0
+script: 844e9dc8c5296fe6
+---
+True a
+True
+True
+True
+chain no
+count no
+repeat no
+groupby no
+product no
+itemgetter no
+attrgetter no
+methodcaller no
+KeyWrapper no
+_PlaceholderType no

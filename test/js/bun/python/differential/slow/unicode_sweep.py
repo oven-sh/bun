@@ -1,0 +1,4 @@
+# Properties and case mappings of every code point.
+print(sum(1 for c in map(chr, range(0x110000)) if c.isdecimal()), sum(1 for c in map(chr, range(0x110000)) if c.isdigit()), sum(1 for c in map(chr, range(0x110000)) if c.isnumeric()))
+print(sum(1 for c in map(chr, range(0x110000)) if c.isalpha()), sum(1 for c in map(chr, range(0x110000)) if c.isupper()), sum(1 for c in map(chr, range(0x110000)) if c.islower()), sum(1 for c in map(chr, range(0x110000)) if c.isprintable()), sum(1 for c in map(chr, range(0x110000)) if c.isidentifier()), sum(1 for c in map(chr, range(0x110000)) if c.isspace()), sum(1 for c in map(chr, range(0x110000)) if c.istitle()))
+print(sum(ord(c.upper()[0]) for c in map(chr, range(0x20000)) if not 0xd800 <= ord(c) < 0xe000), sum(ord(c.lower()[0]) for c in map(chr, range(0x20000)) if not 0xd800 <= ord(c) < 0xe000), sum(len(c.casefold()) for c in map(chr, range(0x20000))), sum(len(repr(c)) for c in map(chr, range(0x30000))))

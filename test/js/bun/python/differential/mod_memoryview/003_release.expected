@@ -1,0 +1,71 @@
+status: 0
+script: ceff269f65f2bf0e
+---
+None None
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+None
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+True
+False
+False
+False
+False
+False
+TypeError can't concat memoryview to bytes
+TypeError sequence item 0: expected a bytes-like object, memoryview found
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+b'hello'
+BufferError Existing exports of data: object cannot be re-sized
+BufferError Existing exports of data: object cannot be re-sized
+BufferError Existing exports of data: object cannot be re-sized
+BufferError Existing exports of data: object cannot be re-sized
+BufferError Existing exports of data: object cannot be re-sized
+BufferError Existing exports of data: object cannot be re-sized
+BufferError Existing exports of data: object cannot be re-sized
+b'HELlo'
+bytearray(b'HELlo!')
+ValueError operation forbidden on released memoryview object
+BufferError Existing exports of data: object cannot be re-sized
+b'el' b'hello' [101, 108] True
+BufferError Existing exports of data: object cannot be re-sized
+None
+bytearray(b'hello\x01')
+97
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+caught 'k'
+bytearray(b'xy\x01')
+None
+None
+TypeError memoryview.release() takes no arguments (1 given)

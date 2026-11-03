@@ -1,0 +1,263 @@
+status: 0
+script: a39437f42e52e3e3
+source: ff15bdfe12f07c78
+---
+1j 1 + 2j => (1+2j)
+1 - 2j => (1-2j)
+-1 + 2j => (-1+2j)
+-1 - 2j => (-1-2j)
+0j -0j => (-0-0j)
+1.5j 10000000000j 1e+100j 1 + 0j => (1+0j)
+0 + 1j => 1j
+1 + 2j => (1+2j)
+3.0 + 4.0j => (3+4j)
+-(1 + 2j) => (-1-2j)
++(1 + 2j) => (1+2j)
+1e-05j 1.5e16 + 1e16j => (1.5e+16+1e+16j)
+repr(1j) => 1j
+str(1j) => 1j
+repr(1 + 2j) => (1+2j)
+repr(complex(0, 0)) => 0j
+repr(complex(-0.0, 0)) => (-0+0j)
+repr(complex(0, -0.0)) => -0j
+repr(complex(-0.0, -0.0)) => (-0-0j)
+repr(complex(1, -0.0)) => (1-0j)
+repr(complex(-0.0, 1)) => (-0+1j)
+repr(-1j) => (-0-1j)
+repr(-(1j)) => (-0-1j)
+repr(0 - 1j) => -1j
+repr(complex(inf, nan)) => (inf+nanj)
+repr(complex(-inf, -inf)) => (-inf-infj)
+repr(complex(nan, 1)) => (nan+1j)
+repr(complex(0, inf)) => infj
+(1 + 2j) + (3 + 4j) => (4+6j)
+(1 + 2j) - (3 + 4j) => (-2-2j)
+(1 + 2j) * (3 + 4j) => (-5+10j)
+(1 + 2j) / (3 + 4j) => (0.44+0.08j)
+(1 + 2j) ** 2 => (-3+4j)
+(1 + 2j) ** 0 => (1+0j)
+(1 + 2j) ** -1 => (0.2-0.4j)
+(1 + 2j) ** 0.5 => (1.272019649514069+0.7861513777574233j)
+(1 + 2j) ** (1 + 1j) => (-0.24720004426291722+0.6964504870825432j)
+2 ** 1j => (0.7692389013639721+0.6389612763136348j)
+2.0 ** (1 + 1j) => (1.5384778027279442+1.2779225526272695j)
+1j ** 2 => (-1+0j)
+1j * 1j => (-1+0j)
+1j ** 1j => (0.20787957635076193+0j)
+(-1) ** 0.5 => (6.123233995736766e-17+1j)
+(-8) ** (1 / 3) => (1.0000000000000002+1.7320508075688772j)
+0j ** 0 => (1+0j)
+0j ** 2 => 0j
+(1 + 2j) ** 3 => (-11-2j)
+(1 + 2j) ** 10 => (237-3116j)
+(2 + 0j) ** 3 => (8+0j)
+(1 + 2j) + 1 => (2+2j)
+1 + (1 + 2j) => (2+2j)
+(1 + 2j) + 1.5 => (2.5+2j)
+(1 + 2j) * 2 => (2+4j)
+2 * (1 + 2j) => (2+4j)
+(1 + 2j) / 2 => (0.5+1j)
+2 / (1 + 2j) => (0.4-0.8j)
+(1 + 2j) - 1 => 2j
+1 - (1 + 2j) => -2j
+(1 + 2j) + True => (2+2j)
+10 ** 20 + 1j => (1e+20+1j)
+(1 + 2j) * 1.5 => (1.5+3j)
+1.5 / 1j => -1.5j
+(1 + 2j) / 0 => ZeroDivisionError: division by zero
+(1 + 2j) / 0j => ZeroDivisionError: division by zero
+1 / 0j => ZeroDivisionError: division by zero
+0j ** -1 => ZeroDivisionError: zero to a negative or complex power
+0j ** 1j => ZeroDivisionError: zero to a negative or complex power
+(1 + 2j) // 1 => TypeError: unsupported operand type(s) for //: 'complex' and 'int'
+(1 + 2j) % 1 => TypeError: unsupported operand type(s) for %: 'complex' and 'int'
+divmod(1 + 2j, 1) => TypeError: unsupported operand type(s) for divmod(): 'complex' and 'int'
+1 // 1j => TypeError: unsupported operand type(s) for //: 'int' and 'complex'
+(1 + 2j) < (1 + 3j) => TypeError: '<' not supported between instances of 'complex' and 'complex'
+(1 + 2j) >= 1 => TypeError: '>=' not supported between instances of 'complex' and 'int'
+int(1j) => TypeError: int() argument must be a string, a bytes-like object or a real number, not 'complex'
+float(1j) => TypeError: float() argument must be a string or a real number, not 'complex'
+round(1j) => TypeError: type complex doesn't define __round__ method
+pow(1j, 2, 3) => ValueError: complex modulo
+1e200j * 1e200j ** 2 => OverflowError: complex exponentiation
+(1e308 + 1e308j) ** 2 => OverflowError: complex exponentiation
+10 ** 400 + 1j => OverflowError: int too large to convert to float
+(1 + 2j).real => 1.0
+(1 + 2j).imag => 2.0
+(1 + 2j).conjugate() => (1-2j)
+abs(3 + 4j) => 5.0
+abs(1j) => 1.0
+abs(-1j) => 1.0
+abs(0j) => 0.0
+abs(complex(inf, nan)) => inf
+abs(complex(nan, 1)) => nan
+abs(1e200 + 1e200j) => 1.414213562373095e+200
+type((1 + 2j).real) => <class 'float'>
+abs(1e308 + 1e308j) => 1.4142135623730951e+308
+(1 + 2j) == (1 + 2j) => True
+(1 + 2j) != (1 + 2j) => False
+(1 + 0j) == 1 => True
+1 == (1 + 0j) => True
+(1 + 0j) == 1.0 => True
+(1 + 1j) == 1 => False
+1j == "1j" => False
+1j != None => True
+(1 + 0j) == True => True
+complex(nan, 0) == complex(nan, 0) => False
+10 ** 30 == complex(1e30, 0) => False
+(2 ** 53 + 1) == complex(2.0 ** 53, 0) => False
+bool(0j) => False
+bool(1j) => True
+bool(1 + 0j) => True
+bool(complex(0, -0.0)) => False
+bool(complex(nan, 0)) => True
+hash(0j) => 0
+hash(1 + 0j) => 1
+hash(1j) => 1000003
+hash(1 + 1j) => 1000004
+hash(-1j) => -2000006
+hash(1.5 + 2.5j) => 4611686018429387911
+hash(complex(inf, 0)) => 314159
+hash(complex(0, inf)) => 314159942477
+hash(1 + 0j) == hash(1) => True
+{1: "a"}[1 + 0j] => a
+hash(-1 + 0j) => -2
+hash(3 - 4j) => -4000009
+complex() => 0j
+complex(1) => (1+0j)
+complex(1, 2) => (1+2j)
+complex(1.5) => (1.5+0j)
+complex(1.5, 2.5) => (1.5+2.5j)
+complex(1j) => 1j
+complex(1j, 1j) => (-1+1j)
+complex(1, 1j) => 0j
+complex(1 + 2j, 3 + 4j) => (-3+5j)
+complex(True, False) => (1+0j)
+complex(10 ** 20) => (1e+20+0j)
+complex(real=1) => (1+0j)
+complex(imag=1) => 1j
+complex(real=1, imag=2) => (1+2j)
+complex("1") => (1+0j)
+complex("1j") => 1j
+complex("1+2j") => (1+2j)
+complex("1-2j") => (1-2j)
+complex(" 1+2j ") => (1+2j)
+complex("(1+2j)") => (1+2j)
+complex(" ( 1+2j ) ") => (1+2j)
+complex("1.5e3+2.5e-3j") => (1500+0.0025j)
+complex("j") => 1j
+complex("-j") => -1j
+complex("+j") => 1j
+complex("1+j") => (1+1j)
+complex("1-j") => (1-1j)
+complex("inf") => (inf+0j)
+complex("infj") => infj
+complex("nan+nanj") => (nan+nanj)
+complex("-inf-infj") => (-inf-infj)
+complex("1_0+2_0j") => (10+20j)
+complex("1J") => 1j
+complex(".5j") => 0.5j
+complex("5.j") => 5j
+complex("1e1j") => 10j
+complex(s) [s=''] => ValueError: complex() arg is a malformed string
+complex(s) [s=' '] => ValueError: complex() arg is a malformed string
+complex(s) [s='a'] => ValueError: complex() arg is a malformed string
+complex(s) [s='1+'] => ValueError: complex() arg is a malformed string
+complex(s) [s='1+2'] => ValueError: complex() arg is a malformed string
+complex(s) [s='1 + 2j'] => ValueError: complex() arg is a malformed string
+complex(s) [s='1+2j+3'] => ValueError: complex() arg is a malformed string
+complex(s) [s='(1+2j'] => ValueError: complex() arg is a malformed string
+complex(s) [s='1+2j)'] => ValueError: complex() arg is a malformed string
+complex(s) [s='1+2i'] => ValueError: complex() arg is a malformed string
+complex(s) [s='jj'] => ValueError: complex() arg is a malformed string
+complex(s) [s='1j+2'] => ValueError: complex() arg is a malformed string
+complex(s) [s='1j2'] => ValueError: complex() arg is a malformed string
+complex(s) [s='++1'] => ValueError: complex() arg is a malformed string
+complex(s) [s='1+-2j'] => ValueError: complex() arg is a malformed string
+complex(s) [s='()'] => ValueError: complex() arg is a malformed string
+complex(s) [s='1__0j'] => ValueError: could not convert string to complex: '1__0j'
+complex(s) [s='1+2j\x00'] => ValueError: complex() arg is a malformed string
+complex(s) [s='e1j'] => ValueError: complex() arg is a malformed string
+complex("1", 2) => TypeError: complex() argument 'real' must be a real number, not str
+complex(1, "2") => TypeError: complex() argument 'imag' must be a real number, not str
+complex(None) => TypeError: complex() argument must be a string or a number, not NoneType
+complex([]) => TypeError: complex() argument must be a string or a number, not list
+complex(1, None) => TypeError: complex() argument 'imag' must be a real number, not NoneType
+complex(1, 2, 3) => TypeError: complex() takes at most 2 arguments (3 given)
+complex(b"1") => TypeError: complex() argument must be a string or a number, not bytes
+complex(C()) => (5+6j)
+complex(F()) => (2.5+0j)
+complex(I()) => (7+0j)
+complex(F(), F()) => (2.5+2.5j)
+complex(I(), I()) => (7+7j)
+complex(1, F()) => (1+2.5j)
+complex(Bad()) => TypeError: Bad.__complex__() must return a complex, not int
+complex(1, C()) => TypeError: complex() argument 'imag' must be a real number, not C
+complex.from_number(1) => (1+0j)
+complex.from_number(1.5) => (1.5+0j)
+complex.from_number(1j) => 1j
+complex.from_number(C()) => (5+6j)
+complex.from_number("1") => TypeError: must be real number, not str
+(1 + 2j).__add__(1) => (2+2j)
+(1 + 2j).__radd__(1) => (2+2j)
+(1 + 2j).__add__("a") => NotImplemented
+(1 + 2j).__eq__(1 + 2j) => True
+(1 + 2j).__lt__(1) if hasattr(1j, "__lt__") else "" => NotImplemented
+(1 + 2j).__neg__() => (-1-2j)
+(1 + 2j).__pos__() => (1+2j)
+(1 + 2j).__abs__() => 2.23606797749979
+(1 + 2j).__bool__() => True
+(1 + 2j).__complex__() => (1+2j)
+(1 + 2j).__getnewargs__() => (1.0, 2.0)
+(1 + 2j).__rpow__(2) => (0.36691394948660344+1.9660554808224875j)
+(1 + 2j).__rtruediv__(1) => (0.2-0.4j)
+(1 + 2j).__rsub__(1) => -2j
+(1 + 2j).__rmul__(2) => (2+4j)
+type(1j) => <class 'complex'>
+isinstance(1j, complex) => True
+isinstance(1, complex) => False
+complex.__mro__ => (<class 'complex'>, <class 'object'>)
+type(1j * 1j) => <class 'complex'>
+type(1j + 1) => <class 'complex'>
+type(1j ** 2) => <class 'complex'>
+type(abs(1j)) => <class 'float'>
+sum([1j, 2j, 1]) => (1+3j)
+sum([1 + 1j] * 3) => (3+3j)
+sum([0.1 + 0.1j] * 10) => (1+1j)
+sum([1, 2.5, 1j]) => (3.5+1j)
+sum([1j], 1) => (1+1j)
+max([1j], key=abs) => 1j
+sorted([3j, 1j, 2j], key=abs) => [1j, 2j, 3j]
+sum([1e100 + 1j, 1.0, -1e100]) => (1+1j)
+inf * 1j => (nan+infj)
+complex(inf, 0) * 1j => (nan+infj)
+complex(inf, inf) * complex(1, 1) => (nan+infj)
+complex(0, inf) * complex(0, inf) => (-inf+nanj)
+complex(inf, 0) / complex(1, 1) => (inf-infj)
+1 / complex(inf, inf) => -0j
+complex(nan, nan) * 0 => (nan+nanj)
+complex(1, 1) / complex(inf, 0) => 0j
+-complex(0.0, 0.0) => (-0-0j)
+complex(0.0, 0.0) * -1 => (-0-0j)
+0j + -0.0 => 0j
+complex(-0.0, -0.0) + 0 => -0j
+1 - 0j => (1-0j)
+1 + -0j => (1-0j)
+-0.0 + 0j => 0j
+0.0 - 0j => -0j
+-0.0 - 0j => (-0-0j)
+1j - 0.0 => 1j
+1j * 0.0 => 0j
+1j * -0.0 => (-0-0j)
+(-0.0) * 1j => (-0-0j)
+2 * complex(-0.0, 0.0) => (-0+0j)
+complex(1, -0.0) - 1 => -0j
+1 - complex(1, 0.0) => -0j
+1.0 - complex(1, -0.0) => 0j
+str([1j, 1 + 1j]) => [1j, (1+1j)]
+str((1j,)) => (1j,)
+str({1j: 2j}) => {1j: 2j}
+f"{1j}" => 1j
+f"{1 + 2j!r}" => (1+2j)
+"%s %r" % (1j, 1 + 1j) => 1j (1+1j)
+"{}".format(2j) => 2j

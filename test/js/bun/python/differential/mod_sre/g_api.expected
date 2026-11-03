@@ -1,0 +1,429 @@
+status: 0
+script: abe27d9866b0882a
+---
+['CODESIZE', 'MAGIC', 'MAXGROUPS', 'MAXREPEAT', 'ascii_iscased', 'ascii_tolower', 'compile', 'copyright', 'getcodesize', 'template', 'unicode_iscased', 'unicode_tolower']
+20230612 4 4294967295 1073741823 4 ' SRE 2.2.2 Copyright (c) 1997-2002 by Secret Labs AB '
+[False, True, True, False, True, True, False, False, False, False]
+[64, 97, 122, 91, 97, 122, 123, 201, 256, -1]
+[False, True, True, False, True, True, True, True, True, True, True, True, False, True, True, True, True, True, True, True, True, False, False, False]
+[64, 97, 97, 181, 223, 233, 105, 305, 454, 454, 963, 223, 8064, 969, 107, 8560, 9424, 66600, 125218, 1114111, 1114112]
+TypeError: 'str' object cannot be interpreted as an integer
+OverflowError: Python int too large to convert to C int
+TypeError: _sre.unicode_tolower() takes exactly one argument (0 given)
+TypeError: _sre.unicode_tolower() takes exactly one argument (2 given)
+TypeError: _sre.unicode_tolower() takes no keyword arguments
+TypeError: _sre.getcodesize() takes no arguments (1 given)
+<class 're.Pattern'> Pattern Pattern re (<class 're.Pattern'>, <class 'object'>) Compiled regular expression object.
+re.compile('(?P<a>x+)(?P<b>y)?(z)?') (?P<a>x+)(?P<b>y)?(z)? 32 3 {'a': 1, 'b': 2} <class 'mappingproxy'>
+{} <class 'dict'>
+TypeError: cannot create 're.Pattern' instances
+TypeError: cannot create 're.Pattern' instances
+TypeError: type 're.Pattern' is not an acceptable base type
+AttributeError: readonly attribute
+AttributeError: readonly attribute
+AttributeError: readonly attribute
+AttributeError: attribute 'groupindex' of 're.Pattern' objects is not writable
+AttributeError: 're.Pattern' object has no attribute 'foo' and no __dict__ for setting new attributes
+AttributeError: readonly attribute
+TypeError: cannot set 'foo' attribute of immutable type 're.Pattern'
+AttributeError: 'mappingproxy' object has no attribute '__setitem__'
+re.Pattern[str] re.Pattern[bytes] <class 'types.GenericAlias'>
+True True
+TypeError: Pattern.__deepcopy__() takes exactly one argument (0 given)
+True False
+re.compile('a') True 32
+re.compile('a', re.IGNORECASE) True 34
+re.compile('a', re.IGNORECASE|re.MULTILINE) True 42
+re.compile('a', re.DOTALL|re.VERBOSE) True 112
+re.compile('a', re.ASCII) True 256
+re.compile('a', re.IGNORECASE|re.ASCII) True 258
+re.compile(b'a') True 0
+re.compile(b'a', re.LOCALE) True 4
+re.compile(b'a', re.IGNORECASE|re.LOCALE|re.MULTILINE|re.DOTALL|re.VERBOSE) True 94
+re.compile('(?i)a', re.IGNORECASE) True 34
+re.compile('(?ai)a', re.IGNORECASE|re.ASCII) True 258
+re.compile('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) True 32
+re.compile('\n\'"\\€😀') True 32
+re.compile('€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€) True 32
+re.compile('😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀, re.IGNORECASE) True 34
+re.compile(b'\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\x) True 0
+re.compile('a') re.compile('a', 0x600) re.compile(None, re.UNICODE) re.compile(b'a', re.UNICODE)
+re.compile('a', re.IGNORECASE|re.LOCALE|re.MULTILINE|re.DOTALL|re.UNICODE|re.VERBOSE|re.DEBUG|re.ASCII|0xfffffe01)
+True False False False False False True True False
+True 2 NotImplemented NotImplemented NotImplemented
+TypeError: '<' not supported between instances of 're.Pattern' and 're.Pattern'
+<re.Match object; span=(1, 2), match='x'>
+TypeError: prefixmatch() missing required argument 'string' (pos 1)
+TypeError: prefixmatch() takes at most 3 arguments (4 given)
+TypeError: prefixmatch() got an unexpected keyword argument 'foo'
+TypeError: argument for prefixmatch() given by name ('string') and position (1)
+TypeError: search() missing required argument 'string' (pos 1)
+TypeError: search() takes at most 3 arguments (4 given)
+TypeError: search() got an unexpected keyword argument 'foo'
+TypeError: argument for search() given by name ('string') and position (1)
+TypeError: findall() missing required argument 'string' (pos 1)
+TypeError: finditer() missing required argument 'string' (pos 1)
+TypeError: scanner() missing required argument 'string' (pos 1)
+TypeError: split() missing required argument 'string' (pos 1)
+TypeError: subn() missing required argument 'repl' (pos 1)
+<re.Match object; span=(0, 2), match='xy'>
+TypeError: fullmatch() missing required argument 'string' (pos 1)
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+TypeError: 'NoneType' object cannot be interpreted as an integer
+OverflowError: Python int too large to convert to C ssize_t
+OverflowError: Python int too large to convert to C ssize_t
+OverflowError: Python int too large to convert to C ssize_t
+<re.Match object; span=(1, 2), match='x'>
+<re.Match object; span=(1, 2), match='x'>
+<re.Match object; span=(2, 3), match='x'>
+TypeError: expected string or bytes-like object, got 'NoneType'
+TypeError: expected string or bytes-like object, got 'NoneType'
+TypeError: expected string or bytes-like object, got 'NoneType'
+TypeError: expected string or bytes-like object, got 'NoneType'
+TypeError: expected string or bytes-like object, got 'NoneType'
+TypeError: expected string or bytes-like object, got 'NoneType'
+TypeError: expected string or bytes-like object, got 'int'
+TypeError: expected string or bytes-like object, got 'int'
+TypeError: expected string or bytes-like object, got 'int'
+TypeError: expected string or bytes-like object, got 'int'
+TypeError: expected string or bytes-like object, got 'int'
+TypeError: expected string or bytes-like object, got 'int'
+TypeError: expected string or bytes-like object, got 'float'
+TypeError: expected string or bytes-like object, got 'float'
+TypeError: expected string or bytes-like object, got 'float'
+TypeError: expected string or bytes-like object, got 'float'
+TypeError: expected string or bytes-like object, got 'float'
+TypeError: expected string or bytes-like object, got 'float'
+TypeError: expected string or bytes-like object, got 'list'
+TypeError: expected string or bytes-like object, got 'list'
+TypeError: expected string or bytes-like object, got 'list'
+TypeError: expected string or bytes-like object, got 'list'
+TypeError: expected string or bytes-like object, got 'list'
+TypeError: expected string or bytes-like object, got 'list'
+TypeError: expected string or bytes-like object, got 'tuple'
+TypeError: expected string or bytes-like object, got 'tuple'
+TypeError: expected string or bytes-like object, got 'tuple'
+TypeError: expected string or bytes-like object, got 'tuple'
+TypeError: expected string or bytes-like object, got 'tuple'
+TypeError: expected string or bytes-like object, got 'tuple'
+TypeError: expected string or bytes-like object, got 'set'
+TypeError: expected string or bytes-like object, got 'set'
+TypeError: expected string or bytes-like object, got 'set'
+TypeError: expected string or bytes-like object, got 'set'
+TypeError: expected string or bytes-like object, got 'set'
+TypeError: expected string or bytes-like object, got 'set'
+TypeError: expected string or bytes-like object, got 'type'
+TypeError: expected string or bytes-like object, got 'type'
+TypeError: expected string or bytes-like object, got 'type'
+TypeError: expected string or bytes-like object, got 'type'
+TypeError: expected string or bytes-like object, got 'type'
+TypeError: expected string or bytes-like object, got 'type'
+TypeError: cannot use a string pattern on a bytes-like object
+TypeError: cannot use a string pattern on a bytes-like object
+TypeError: cannot use a string pattern on a bytes-like object
+TypeError: cannot use a string pattern on a bytes-like object
+TypeError: cannot use a string pattern on a bytes-like object
+TypeError: cannot use a string pattern on a bytes-like object
+TypeError: cannot use a string pattern on a bytes-like object
+TypeError: cannot use a string pattern on a bytes-like object
+TypeError: cannot use a string pattern on a bytes-like object
+TypeError: cannot use a string pattern on a bytes-like object
+TypeError: cannot use a string pattern on a bytes-like object
+TypeError: cannot use a string pattern on a bytes-like object
+TypeError: expected string or bytes-like object, got 'NoneType'
+TypeError: expected string or bytes-like object, got 'NoneType'
+TypeError: expected string or bytes-like object, got 'int'
+TypeError: expected string or bytes-like object, got 'int'
+TypeError: cannot use a bytes pattern on a string-like object
+TypeError: cannot use a bytes pattern on a string-like object
+TypeError: sequence item 1: expected a bytes-like object, str found
+TypeError: sequence item 1: expected str instance, bytes found
+KeyError: ('(?P<a>x+)(?P<b>y)?(z)?', 1)
+KeyError: ('(?P<a>x+)(?P<b>y)?(z)?', None)
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: sub() missing required argument 'string' (pos 2)
+'aybx'
+('aybx', 1)
+'axbx'
+['axbx']
+['a', 'x', None, None, 'bx']
+OverflowError: Python int too large to convert to C ssize_t
+[]
+[<re.Match object; span=(3, 4), match='x'>]
+<re.Match object; span=(0, 1), match='x'> <re.Match object; span=(0, 1), match=b'x'> None re.compile(None)
+<re.Match object; span=(1, 3), match='xx'> <class '__main__.Str'> True <class 'str'> <class 'str'> <class 'str'> <class 'str'> <class 'str'> <class 'tuple'>
+<class 'str'> False True
+True True True
+<re.Match object; span=(1, 3), match=b'xx'> <class '__main__.Bytes'> <class 'bytes'> <class 'bytes'> <class 'bytes'>
+True
+<re.Match object; span=(1, 3), match=b'xx'> <class 'bytearray'> True <class 'bytes'> b'xx' b'a-b' <class 'bytes'> [b'a', b'xx', b'b'] [b'xx'] b'a-b' None
+b'x' (1, 3) (b'x',) <re.Match object; span=(1, 3), match=b'x'>
+b'' (1, 3) (b'',) <re.Match object; span=(1, 3), match=b''>
+b'a<BufferError>b<BufferError>' bytearray(b'axxbxx')
+bytearray(b'')
+'ab'
+TypeError: sequence item 1: expected str instance, int found
+TypeError: sequence item 1: expected str instance, bytes found
+'ab'
+TypeError: sequence item 1: expected a bytes-like object, str found
+b'ayb'
+b'ab'
+ZeroDivisionError: division by zero
+'ab'
+TypeError: <lambda>() takes 0 positional arguments but 1 was given
+TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 're.Match' object
+'aX(1, 2)bXX(3, 5)c'
+('aqbqc', 2)
+'aqbqc'
+KeyError: ('(?P<a>x+)(?P<b>y)?(z)?', '[\\1]')
+'axbxxc'
+'a[x]b[xxy]c'
+'ax-bxx-yc'
+'axbyxxc'
+'ax\nb'
+'a\\b'
+b'axbxxc'
+b'a[x]b[xx]c'
+b'a[x]b[xx]c'
+''
+('', 0)
+(b'', 0)
+'-a-b-c-'
+'-'
+('-a-bc', 2)
+<class '_sre.SRE_Template'> SRE_Template _sre []
+TypeError: cannot create '_sre.SRE_Template' instances
+TypeError: invalid template
+TypeError: invalid template
+TypeError: invalid template
+TypeError: an integer is required
+OverflowError: Python int too large to convert to C ssize_t
+TypeError: template() argument 2 must be list, not tuple
+TypeError: template expected 2 arguments, got 1
+TypeError: _sre.template() takes no keyword arguments
+<class '_sre.SRE_Template'>
+TypeError: compile() missing required argument 'pattern' (pos 1)
+TypeError: compile() missing required argument 'indexgroup' (pos 6)
+TypeError: compile() argument 'code' must be list, not tuple
+TypeError: compile() argument 'groupindex' must be dict, not list
+TypeError: compile() argument 'indexgroup' must be tuple, not list
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'str' object cannot be interpreted as an integer
+OverflowError: Python int too large to convert to C int
+TypeError: expected string or bytes-like object, got 'int'
+TypeError: an integer is required
+OverflowError: can't convert negative value to unsigned int
+OverflowError: regular expression code size limit exceeded
+OverflowError: Python int too large to convert to C unsigned long
+TypeError: an integer is required
+re.compile('a')
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+False
+RuntimeError: invalid SRE code
+False
+RuntimeError: invalid SRE code
+True
+False
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+False
+False
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+False
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+False
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+False
+False
+RuntimeError: invalid SRE code
+False
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+False
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+True
+RuntimeError: invalid SRE code
+False
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+False
+RuntimeError: invalid SRE code
+False
+RuntimeError: invalid SRE code
+False
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+False
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+False
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+False
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+RuntimeError: invalid SRE code
+True
+<class 're.Match'> Match Match re (<class 're.Match'>, <class 'object'>) The result of re.search(), re.prefixmatch(), and re.fullmatch().
+Match objects always have a boolean value of True.
+<re.Match object; span=(2, 6), match='xxyz'> ..xxyz.. True 1 7 3 None ((2, 6), (2, 4), (4, 5), (5, 6)) True
+TypeError: cannot create 're.Match' instances
+TypeError: type 're.Match' is not an acceptable base type
+AttributeError: readonly attribute
+AttributeError: readonly attribute
+AttributeError: readonly attribute
+AttributeError: readonly attribute
+AttributeError: attribute 'lastindex' of 're.Match' objects is not writable
+AttributeError: attribute 'lastgroup' of 're.Match' objects is not writable
+AttributeError: attribute 'regs' of 're.Match' objects is not writable
+AttributeError: 're.Match' object has no attribute 'foo' and no __dict__ for setting new attributes
+AttributeError: readonly attribute
+re.Match[str] True True True
+xxyz xxyz xx y z xx y ('xx', 'y') ('xx', 'xxyz', 'z') xx xx
+xxyz xx xx y xx xx
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+TypeError: cannot use 'list' as a dict key (unhashable type: 'list')
+TypeError: cannot use 'list' as a dict key (unhashable type: 'list')
+TypeError: cannot use 'list' as a dict key (unhashable type: 'list')
+TypeError: cannot use 'list' as a dict key (unhashable type: 'list')
+TypeError: cannot use 'list' as a dict key (unhashable type: 'list')
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+IndexError: no such group
+TypeError: group() takes no keyword arguments
+TypeError: object of type 're.Match' has no len()
+TypeError: 're.Match' object is not iterable
+TypeError: argument of type 're.Match' is not a container or iterable
+AttributeError: 're.Match' object has no attribute '__setitem__'
+('xx', 'y', 'z') ('xx', 'y', 'z') ('xx', 'y', 'z') ('xx', 'y', 'z') {'a': 'xx', 'b': 'y'} {'a': 'xx', 'b': 'y'} {'a': 'xx', 'b': 'y'}
+TypeError: groups() takes at most 1 argument (2 given)
+TypeError: groupdict() takes at most 1 argument (2 given)
+TypeError: groups() got an unexpected keyword argument 'foo'
+2 6 (2, 6) 2 4 (2, 4) 4 5 (4, 5) (5, 6)
+TypeError: start expected at most 1 argument, got 2
+TypeError: Match.start() takes no keyword arguments
+<re.Match object; span=(0, 2), match='xx'> ('xx', None, None) ('xx', '', '') {'a': 'xx', 'b': None} {'a': 'xx', 'b': 0} None None None (-1, -1) -1 -1 1 a ((0, 2), (0, 2), (-1, -1), (-1, -1))
+('xx', None, None) True False False True
+() {} None None ((0, 3),) abc abc
+IndexError: no such group
+IndexError: no such group
+3 None ((0, 2), (0, 1), (-1, -1), (1, 2), (1, 2)) ('a', None, 'c', 'c')
+<re.Match object; span=(0, 60), match='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa>
+<re.Match object; span=(0, 47), match='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'>
+<re.Match object; span=(0, 48), match='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'>
+<re.Match object; span=(0, 49), match='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa>
+<re.Match object; span=(0, 60), match='€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€>
+<re.Match object; span=(0, 60), match='😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀>
+<re.Match object; span=(0, 30), match='\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\>
+<re.Match object; span=(0, 60), match="'''''''''''''''''''''''''''''''''''''''''''''''''>
+<re.Match object; span=(0, 60), match='\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\'"\>
+<re.Match object; span=(0, 30), match=b'\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff> <re.Match object; span=(0, 60), match=b'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa> <re.Match object; span=(0, 10), match=b'aaaaaaaaaa'>
+TypeError: expand() missing required argument 'template' (pos 1)
+'a'
+<re.Match object; span=(2, 5), match='b\U0001f601\U0001f602'> ('b', '\U0001f601', '\U0001f602') ((2, 5), (2, 3), (3, 4), (4, 5)) 0 7
+['a', '\U0001f600', 'b', '\U0001f601', '\U0001f602', 'c', '\u20ac'] ['\U0001f600', '\U0001f601\U0001f602', '\u20ac'] ['a', 'b', 'c', ''] 'a-b--c-' '\U0001f603\U0001f600\U0001f603\U0001f601\U0001f602\U0001f603\u20ac'
+[(1, 2), (3, 4), (4, 5), (6, 7)] <re.Match object; span=(4, 5), match='\U0001f602'> <re.Match object; span=(1, 4), match='\U0001f600b\U0001f601'> <re.Match object; span=(1, 7), match='\U0001f600b\U0001f601\U0001f602c\u20ac'> 7
+'a\U0001f600b\U0001f601\U0001f602c\u20ac' True
+<re.Match object; span=(2, 4), match='\U0001f600\U0001f600'> <re.Match object; span=(3, 4), match='c'> '\U0001f600|ab| |\U00010400c|'
+<class '_sre.SRE_Scanner'> SRE_Scanner _sre True ['match', 'pattern', 'prefixmatch', 'search']
+TypeError: cannot create '_sre.SRE_Scanner' instances
+AttributeError: readonly attribute
+<re.Match object; span=(0, 1), match='x'> <re.Match object; span=(2, 5), match='xxy'> None None
+<re.Match object; span=(0, 1), match='x'> None None None
+<re.Match object; span=(0, 1), match='x'> <re.Match object; span=(2, 5), match='xxy'> None
+<re.Match object; span=(2, 4), match='xx'> None
+<re.Match object; span=(2, 4), match='xx'> None
+<re.Match object; span=(0, 0), match=''> <re.Match object; span=(1, 1), match=''> <re.Match object; span=(2, 2), match=''> None None
+<re.Match object; span=(0, 0), match=''> None None
+<re.Match object; span=(0, 1), match='a'> <re.Match object; span=(1, 2), match='a'> <re.Match object; span=(2, 2), match=''> None None
+[<re.Match object; span=(0, 1), match='a'>, <re.Match object; span=(1, 2), match='\U0001f600'>, <re.Match object; span=(2, 3), match='b'>, <re.Match object; span=(3, 4), match='\u20ac'>, None]
+<class 'callable_iterator'> True <re.Match object; span=(0, 1), match='x'> <re.Match object; span=(2, 5), match='xxy'> end end
+<re.Match object; span=(0, 2), match=b'xx'>

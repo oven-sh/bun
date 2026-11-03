@@ -1,0 +1,297 @@
+status: 0
+script: cb5c2758204f1b01
+---
+(',', True, None, '\r\n', '"', 0, False, False)
+(',', True, None, '\r\n', '"', 0, False, False)
+(',', True, None, '\r\n', '"', 0, False, False)
+('\t', True, None, '\r\n', '"', 0, False, False)
+(',', True, None, '\n', '"', 1, False, False)
+Error unknown dialect
+(',', True, None, '\r\n', '"', 0, False, False)
+(',', True, None, '\r\n', '"', 0, False, False)
+(',', True, None, '\n', '"', 1, False, False)
+(',', True, None, '\r\n', '"', 0, False, False)
+(',', True, None, '\r\n', '"', 0, False, False)
+(';', True, None, '\r\n', '"', 0, False, False)
+(';', True, None, '\r\n', '"', 0, False, False)
+(';', False, '\\', '\n', "'", 1, True, True)
+TypeError function takes at most 9 arguments (10 given)
+TypeError function takes at most 9 arguments (10 given)
+TypeError function takes at most 9 keyword arguments (10 given)
+TypeError this function got an unexpected keyword argument 'foo'
+TypeError argument for function given by name ('delimiter') and position (2)
+(';', True, None, '\n', '"', 1, False, False)
+(',', True, None, '\n', '"', 0, False, False)
+delimiter '' TypeError "delimiter" must be a unicode character, not a string of length 0
+delimiter '' skip TypeError "delimiter" must be a unicode character, not a string of length 0
+delimiter 'ab' TypeError "delimiter" must be a unicode character, not a string of length 2
+delimiter 'ab' skip TypeError "delimiter" must be a unicode character, not a string of length 2
+delimiter 'abc' TypeError "delimiter" must be a unicode character, not a string of length 3
+delimiter 'abc' skip TypeError "delimiter" must be a unicode character, not a string of length 3
+delimiter None TypeError "delimiter" must be a unicode character, not NoneType
+delimiter None skip TypeError "delimiter" must be a unicode character, not NoneType
+delimiter 1 TypeError "delimiter" must be a unicode character, not int
+delimiter 1 skip TypeError "delimiter" must be a unicode character, not int
+delimiter b'x' TypeError "delimiter" must be a unicode character, not bytes
+delimiter b'x' skip TypeError "delimiter" must be a unicode character, not bytes
+delimiter 1.5 TypeError "delimiter" must be a unicode character, not float
+delimiter 1.5 skip TypeError "delimiter" must be a unicode character, not float
+delimiter [] TypeError "delimiter" must be a unicode character, not list
+delimiter [] skip TypeError "delimiter" must be a unicode character, not list
+delimiter '\n' ValueError bad delimiter value
+delimiter '\n' skip ValueError bad delimiter value
+delimiter '\r' ValueError bad delimiter value
+delimiter '\r' skip ValueError bad delimiter value
+delimiter ' ' (' ', True, None, '\r\n', '"', 0, False, False)
+delimiter ' ' skip (' ', True, None, '\r\n', '"', 0, True, False)
+delimiter '\t' ('\t', True, None, '\r\n', '"', 0, False, False)
+delimiter '\t' skip ('\t', True, None, '\r\n', '"', 0, True, False)
+delimiter '\x00' ('\x00', True, None, '\r\n', '"', 0, False, False)
+delimiter '\x00' skip ('\x00', True, None, '\r\n', '"', 0, True, False)
+delimiter 'é' ('é', True, None, '\r\n', '"', 0, False, False)
+delimiter 'é' skip ('é', True, None, '\r\n', '"', 0, True, False)
+delimiter '😀' ('😀', True, None, '\r\n', '"', 0, False, False)
+delimiter '😀' skip ('😀', True, None, '\r\n', '"', 0, True, False)
+delimiter ',' (',', True, None, '\r\n', '"', 0, False, False)
+delimiter ',' skip (',', True, None, '\r\n', '"', 0, True, False)
+delimiter '"' ValueError bad delimiter or quotechar value
+delimiter '"' skip ValueError bad delimiter or quotechar value
+delimiter '\\' ('\\', True, None, '\r\n', '"', 0, False, False)
+delimiter '\\' skip ('\\', True, None, '\r\n', '"', 0, True, False)
+escapechar '' TypeError "escapechar" must be a unicode character or None, not a string of length 0
+escapechar '' skip TypeError "escapechar" must be a unicode character or None, not a string of length 0
+escapechar 'ab' TypeError "escapechar" must be a unicode character or None, not a string of length 2
+escapechar 'ab' skip TypeError "escapechar" must be a unicode character or None, not a string of length 2
+escapechar 'abc' TypeError "escapechar" must be a unicode character or None, not a string of length 3
+escapechar 'abc' skip TypeError "escapechar" must be a unicode character or None, not a string of length 3
+escapechar None (',', True, None, '\r\n', '"', 0, False, False)
+escapechar None skip (',', True, None, '\r\n', '"', 0, True, False)
+escapechar 1 TypeError "escapechar" must be a unicode character or None, not int
+escapechar 1 skip TypeError "escapechar" must be a unicode character or None, not int
+escapechar b'x' TypeError "escapechar" must be a unicode character or None, not bytes
+escapechar b'x' skip TypeError "escapechar" must be a unicode character or None, not bytes
+escapechar 1.5 TypeError "escapechar" must be a unicode character or None, not float
+escapechar 1.5 skip TypeError "escapechar" must be a unicode character or None, not float
+escapechar [] TypeError "escapechar" must be a unicode character or None, not list
+escapechar [] skip TypeError "escapechar" must be a unicode character or None, not list
+escapechar '\n' ValueError bad escapechar value
+escapechar '\n' skip ValueError bad escapechar value
+escapechar '\r' ValueError bad escapechar value
+escapechar '\r' skip ValueError bad escapechar value
+escapechar ' ' (',', True, ' ', '\r\n', '"', 0, False, False)
+escapechar ' ' skip ValueError bad escapechar value
+escapechar '\t' (',', True, '\t', '\r\n', '"', 0, False, False)
+escapechar '\t' skip (',', True, '\t', '\r\n', '"', 0, True, False)
+escapechar '\x00' (',', True, '\x00', '\r\n', '"', 0, False, False)
+escapechar '\x00' skip (',', True, '\x00', '\r\n', '"', 0, True, False)
+escapechar 'é' (',', True, 'é', '\r\n', '"', 0, False, False)
+escapechar 'é' skip (',', True, 'é', '\r\n', '"', 0, True, False)
+escapechar '😀' (',', True, '😀', '\r\n', '"', 0, False, False)
+escapechar '😀' skip (',', True, '😀', '\r\n', '"', 0, True, False)
+escapechar ',' ValueError bad delimiter or escapechar value
+escapechar ',' skip ValueError bad delimiter or escapechar value
+escapechar '"' ValueError bad escapechar or quotechar value
+escapechar '"' skip ValueError bad escapechar or quotechar value
+escapechar '\\' (',', True, '\\', '\r\n', '"', 0, False, False)
+escapechar '\\' skip (',', True, '\\', '\r\n', '"', 0, True, False)
+quotechar '' TypeError "quotechar" must be a unicode character or None, not a string of length 0
+quotechar '' skip TypeError "quotechar" must be a unicode character or None, not a string of length 0
+quotechar 'ab' TypeError "quotechar" must be a unicode character or None, not a string of length 2
+quotechar 'ab' skip TypeError "quotechar" must be a unicode character or None, not a string of length 2
+quotechar 'abc' TypeError "quotechar" must be a unicode character or None, not a string of length 3
+quotechar 'abc' skip TypeError "quotechar" must be a unicode character or None, not a string of length 3
+quotechar None (',', True, None, '\r\n', None, 3, False, False)
+quotechar None skip (',', True, None, '\r\n', None, 3, True, False)
+quotechar 1 TypeError "quotechar" must be a unicode character or None, not int
+quotechar 1 skip TypeError "quotechar" must be a unicode character or None, not int
+quotechar b'x' TypeError "quotechar" must be a unicode character or None, not bytes
+quotechar b'x' skip TypeError "quotechar" must be a unicode character or None, not bytes
+quotechar 1.5 TypeError "quotechar" must be a unicode character or None, not float
+quotechar 1.5 skip TypeError "quotechar" must be a unicode character or None, not float
+quotechar [] TypeError "quotechar" must be a unicode character or None, not list
+quotechar [] skip TypeError "quotechar" must be a unicode character or None, not list
+quotechar '\n' ValueError bad quotechar value
+quotechar '\n' skip ValueError bad quotechar value
+quotechar '\r' ValueError bad quotechar value
+quotechar '\r' skip ValueError bad quotechar value
+quotechar ' ' (',', True, None, '\r\n', ' ', 0, False, False)
+quotechar ' ' skip ValueError bad quotechar value
+quotechar '\t' (',', True, None, '\r\n', '\t', 0, False, False)
+quotechar '\t' skip (',', True, None, '\r\n', '\t', 0, True, False)
+quotechar '\x00' (',', True, None, '\r\n', '\x00', 0, False, False)
+quotechar '\x00' skip (',', True, None, '\r\n', '\x00', 0, True, False)
+quotechar 'é' (',', True, None, '\r\n', 'é', 0, False, False)
+quotechar 'é' skip (',', True, None, '\r\n', 'é', 0, True, False)
+quotechar '😀' (',', True, None, '\r\n', '😀', 0, False, False)
+quotechar '😀' skip (',', True, None, '\r\n', '😀', 0, True, False)
+quotechar ',' ValueError bad delimiter or quotechar value
+quotechar ',' skip ValueError bad delimiter or quotechar value
+quotechar '"' (',', True, None, '\r\n', '"', 0, False, False)
+quotechar '"' skip (',', True, None, '\r\n', '"', 0, True, False)
+quotechar '\\' (',', True, None, '\r\n', '\\', 0, False, False)
+quotechar '\\' skip (',', True, None, '\r\n', '\\', 0, True, False)
+lineterminator '' (',', True, None, '', '"', 0, False, False)
+lineterminator 'ab' (',', True, None, 'ab', '"', 0, False, False)
+lineterminator None TypeError "lineterminator" must be a string, not NoneType
+lineterminator 1 TypeError "lineterminator" must be a string, not int
+lineterminator b'x' TypeError "lineterminator" must be a string, not bytes
+lineterminator '\n' (',', True, None, '\n', '"', 0, False, False)
+lineterminator '\r\n' (',', True, None, '\r\n', '"', 0, False, False)
+lineterminator ',' ValueError bad delimiter or lineterminator value
+lineterminator '"' ValueError bad quotechar or lineterminator value
+lineterminator 'x,y' ValueError bad delimiter or lineterminator value
+lineterminator 'x"y' ValueError bad quotechar or lineterminator value
+lineterminator '😀' (',', True, None, '😀', '"', 0, False, False)
+quoting 0 (',', True, None, '\r\n', '"', 0, False, False)
+quoting 1 (',', True, None, '\r\n', '"', 1, False, False)
+quoting 2 (',', True, None, '\r\n', '"', 2, False, False)
+quoting 3 (',', True, None, '\r\n', '"', 3, False, False)
+quoting 4 (',', True, None, '\r\n', '"', 4, False, False)
+quoting 5 (',', True, None, '\r\n', '"', 5, False, False)
+quoting 6 TypeError bad "quoting" value
+quoting -1 TypeError bad "quoting" value
+quoting 100 TypeError bad "quoting" value
+quoting None TypeError "quoting" must be an integer, not NoneType
+quoting '1' TypeError "quoting" must be an integer, not str
+quoting 1.0 TypeError "quoting" must be an integer, not float
+quoting True TypeError "quoting" must be an integer, not bool
+quoting False TypeError "quoting" must be an integer, not bool
+quoting 2147483648 OverflowError Python int too large to convert to C int
+quoting 1099511627776 OverflowError Python int too large to convert to C int
+quoting 1180591620717411303424 OverflowError Python int too large to convert to C int
+quoting -2147483649 OverflowError Python int too large to convert to C int
+doublequote 0 (',', False, None, '\r\n', '"', 0, False, False)
+doublequote 1 (',', True, None, '\r\n', '"', 0, False, False)
+doublequote None (',', False, None, '\r\n', '"', 0, False, False)
+doublequote '' (',', False, None, '\r\n', '"', 0, False, False)
+doublequote 'x' (',', True, None, '\r\n', '"', 0, False, False)
+doublequote [] (',', False, None, '\r\n', '"', 0, False, False)
+doublequote [0] (',', True, None, '\r\n', '"', 0, False, False)
+doublequote 2.5 (',', True, None, '\r\n', '"', 0, False, False)
+skipinitialspace 0 (',', True, None, '\r\n', '"', 0, False, False)
+skipinitialspace 1 (',', True, None, '\r\n', '"', 0, True, False)
+skipinitialspace None (',', True, None, '\r\n', '"', 0, False, False)
+skipinitialspace '' (',', True, None, '\r\n', '"', 0, False, False)
+skipinitialspace 'x' (',', True, None, '\r\n', '"', 0, True, False)
+skipinitialspace [] (',', True, None, '\r\n', '"', 0, False, False)
+skipinitialspace [0] (',', True, None, '\r\n', '"', 0, True, False)
+skipinitialspace 2.5 (',', True, None, '\r\n', '"', 0, True, False)
+strict 0 (',', True, None, '\r\n', '"', 0, False, False)
+strict 1 (',', True, None, '\r\n', '"', 0, False, True)
+strict None (',', True, None, '\r\n', '"', 0, False, False)
+strict '' (',', True, None, '\r\n', '"', 0, False, False)
+strict 'x' (',', True, None, '\r\n', '"', 0, False, True)
+strict [] (',', True, None, '\r\n', '"', 0, False, False)
+strict [0] (',', True, None, '\r\n', '"', 0, False, True)
+strict 2.5 (',', True, None, '\r\n', '"', 0, False, True)
+ValueError no truth
+ValueError no truth
+(',', True, None, '\r\n', None, 3, False, False)
+(',', True, None, '\r\n', None, 3, False, False)
+TypeError quotechar must be set if quoting enabled
+TypeError quotechar must be set if quoting enabled
+ValueError bad delimiter or escapechar value
+ValueError bad delimiter or quotechar value
+ValueError bad escapechar or quotechar value
+ValueError bad delimiter or lineterminator value
+ValueError bad escapechar or lineterminator value
+ValueError bad quotechar or lineterminator value
+(',', True, None, '\r\n', None, 3, False, False)
+(' ', True, None, '\r\n', '"', 0, True, False)
+(',', True, ' ', '\r\n', '"', 0, False, False)
+(',', True, None, '\r\n', ' ', 0, False, False)
+(';', True, None, '\r\n', "'", 0, False, True)
+(';', True, None, '\r\n', "'", 0, False, True)
+('|', True, None, '\r\n', "'", 0, False, True)
+TypeError "delimiter" must be a unicode character, not int
+KeyError 'prop'
+TypeError "quoting" must be an integer, not str
+TypeError "lineterminator" must be a string, not int
+True False True
+<class '__main__.Sub'> (',', True, None, '\r\n', '"', 0, False, False) True <class '_csv.Dialect'> True
+1
+AttributeError '_csv.Dialect' object has no attribute 'extra' and no __dict__ for setting new attributes
+AttributeError attribute 'delimiter' of '_csv.Dialect' objects is not writable
+AttributeError attribute 'delimiter' of '_csv.Dialect' objects is not writable
+getset_descriptor
+AttributeError readonly attribute
+AttributeError readonly attribute
+member_descriptor
+AttributeError attribute 'escapechar' of '_csv.Dialect' objects is not writable
+AttributeError attribute 'escapechar' of '_csv.Dialect' objects is not writable
+getset_descriptor
+AttributeError attribute 'lineterminator' of '_csv.Dialect' objects is not writable
+AttributeError attribute 'lineterminator' of '_csv.Dialect' objects is not writable
+getset_descriptor
+AttributeError attribute 'quotechar' of '_csv.Dialect' objects is not writable
+AttributeError attribute 'quotechar' of '_csv.Dialect' objects is not writable
+getset_descriptor
+AttributeError attribute 'quoting' of '_csv.Dialect' objects is not writable
+AttributeError attribute 'quoting' of '_csv.Dialect' objects is not writable
+getset_descriptor
+AttributeError readonly attribute
+AttributeError readonly attribute
+member_descriptor
+AttributeError readonly attribute
+AttributeError readonly attribute
+member_descriptor
+TypeError cannot pickle 'Dialect' instances
+TypeError cannot pickle 'Dialect' instances
+TypeError cannot pickle 'Sub' instances
+TypeError cannot pickle 'Dialect' instances
+TypeError cannot pickle 'Dialect' instances
+TypeError cannot pickle 'Dialect' instances
+TypeError cannot set 'x' attribute of immutable type '_csv.Dialect'
+CSV dialect
+
+The Dialect type records CSV parsing and generation options.
+
+Dialect Dialect _csv (<class 'object'>,)
+reader reader _csv writer
+True
+['excel', 'excel-tab', 'unix'] ['excel', 'excel-tab', 'unix'] <class 'dict'>
+TypeError register_dialect expected at least 1 argument, got 0
+TypeError dialect name must be a string
+TypeError dialect name must be a string
+TypeError dialect name must be a string
+TypeError register_dialect expected at most 2 arguments, got 3
+Error unknown dialect
+TypeError this function got an unexpected keyword argument 'foo'
+TypeError "delimiter" must be a unicode character, not a string of length 2
+TypeError register_dialect expected at least 1 argument, got 0
+['excel', 'excel-tab', 'unix']
+None
+None
+None
+None
+['excel', 'excel-tab', 'unix', 'mine', 'mine2', 'mine3', 'mine4']
+mine ('|', True, None, '\r\n', '"', 1, False, False)
+mine2 ('|', True, None, '\r\n', '"', 1, False, True)
+mine3 (';', True, None, '\r\n', "'", 0, False, True)
+mine4 (',', True, None, '\r\n', '"', 0, False, False)
+[['a', 'b']] [['a', 'b']]
+TypeError get_dialect() missing required argument 'name' (pos 1)
+Error unknown dialect
+Error unknown dialect
+Error unknown dialect
+TypeError cannot use 'list' as a dict key (unhashable type: 'list')
+<class '_csv.Dialect'>
+TypeError get_dialect() takes at most 1 argument (2 given)
+TypeError unregister_dialect() missing required argument 'name' (pos 1)
+Error unknown dialect
+Error unknown dialect
+TypeError cannot use 'list' as a dict key (unhashable type: 'list')
+None
+Error unknown dialect
+['excel', 'excel-tab', 'unix']
+TypeError _csv.list_dialects() takes no arguments (1 given)
+['excel', 'excel-tab', 'unix', 'sub'] <class '__main__.SN'>
+AttributeError 'MyD' object has no attribute 'strict'
+Error "delimiter" must be a unicode character, not a string of length 2
+Error "delimiter" must be a unicode character, not NoneType
+{'a': '1', 'b': '2', 'c': '3'}
+{'a': '4', 'b': '5', 'c': None}
+{'a': '6', 'b': '7', 'c': '8', None: ['9']}
+'a,b\r\n1,-\r\n1,2\r\n-,"x,y"\r\n'
+; " False False
+True

@@ -1,0 +1,51 @@
+status: 0
+script: 94d059872935ef97
+---
+in_table_a1 317 [('0000', False), ('0221', True), ('0222', False), ('0234', True), ('0250', False), ('02AE', True), ('02B0', False), ('02EF', True), ('0300', False), ('0350', True), ('0360', False), ('0370', True), ('0374', False), ('0376', True), ('037A', False), ('037B', True), ('037E', False), ('037F', True), ('0384', False), ('038B', True), ('038C', False), ('038D', True), ('038E', False), ('03A2', True), ('03A3', False), ('03CF', True), ('03D0', False), ('03F7', True), ('0400', False), ('0487', True), ('0488', False), ('04CF', True), ('04D0', False), ('04F6', True), ('04F8', False), ('04FA', True), ('0500', False), ('0515', True), ('0531', False), ('058C', True)] [('1D6A9', False), ('1D7CB', True), ('1D7D0', False), ('2A743', True), ('F014E', False)]
+in_table_b1 9 [('0000', False), ('00AD', True), ('00AE', False), ('034F', True), ('0350', False), ('200B', True), ('2012', False), ('FE05', True), ('FE13', False)] [('0350', False), ('200B', True), ('2012', False), ('FE05', True), ('FE13', False)]
+in_table_c11 3 [('0000', False), ('0020', True), ('0021', False)] [('0000', False), ('0020', True), ('0021', False)]
+in_table_c11_c12 11 [('0000', False), ('0020', True), ('0021', False), ('00A0', True), ('00A1', False), ('1680', True), ('1687', False), ('2004', True), ('2012', False), ('205F', True), ('2066', False)] [('1687', False), ('2004', True), ('2012', False), ('205F', True), ('2066', False)]
+in_table_c12 9 [('0000', False), ('00A0', True), ('00A1', False), ('1680', True), ('1687', False), ('2004', True), ('2012', False), ('205F', True), ('2066', False)] [('1687', False), ('2004', True), ('2012', False), ('205F', True), ('2066', False)]
+in_table_c21 4 [('0000', True), ('0020', False), ('007F', True), ('0080', False)] [('0000', True), ('0020', False), ('007F', True), ('0080', False)]
+in_table_c21_c22 8 [('0000', True), ('0020', False), ('007F', True), ('00A0', False), ('206D', True), ('2074', False), ('1D177', True), ('1D17C', False)] [('00A0', False), ('206D', True), ('2074', False), ('1D177', True), ('1D17C', False)]
+in_table_c22 7 [('0000', False), ('0080', True), ('00A0', False), ('206D', True), ('2074', False), ('1D177', True), ('1D17C', False)] [('00A0', False), ('206D', True), ('2074', False), ('1D177', True), ('1D17C', False)]
+in_table_c3 5 [('0000', False), ('E006', True), ('F904', False), ('F014E', True), ('E0001', False)] [('0000', False), ('E006', True), ('F904', False), ('F014E', True), ('E0001', False)]
+in_table_c4 4 [('0000', False), ('FDD4', True), ('FDF0', False), ('FFFE', True)] [('0000', False), ('FDD4', True), ('FDF0', False), ('FFFE', True)]
+in_table_c5 3 [('0000', False), ('D803', True), ('E006', False)] [('0000', False), ('D803', True), ('E006', False)]
+in_table_c6 3 [('0000', False), ('FFFD', True), ('10004', False)] [('0000', False), ('FFFD', True), ('10004', False)]
+in_table_c7 3 [('0000', False), ('2FF5', True), ('2FFC', False)] [('0000', False), ('2FF5', True), ('2FFC', False)]
+in_table_c8 7 [('0000', False), ('0340', True), ('0342', False), ('202E', True), ('2035', False), ('206D', True), ('2074', False)] [('0342', False), ('202E', True), ('2035', False), ('206D', True), ('2074', False)]
+in_table_c9 3 [('0000', False), ('E0001', True), ('FFFE', False)] [('0000', False), ('E0001', True), ('FFFE', False)]
+in_table_d1 25 [('0000', False), ('05D2', True), ('05EE', False), ('061F', True), ('063B', False), ('0642', True), ('0650', False), ('0673', True), ('06DC', False), ('0706', True), ('0730', False), ('0784', True), ('07A7', False), ('FB1F', True), ('FB42', False), ('FB49', True), ('FBB2', False), ('FBD5', True), ('FD41', False), ('FD56', True), ('FDCD', False), ('FDF0', True), ('FDFE', False), ('FE7C', True), ('FF01', False)] [('FDCD', False), ('FDF0', True), ('FDFE', False), ('FE7C', True), ('FF01', False)]
+in_table_d2 297 [('0000', False), ('0041', True), ('005B', False), ('0061', True), ('007B', False), ('00AA', True), ('00AB', False), ('00B5', True), ('00B6', False), ('00BA', True), ('00BB', False), ('00C0', True), ('00D7', False), ('00D8', True), ('00F7', False), ('00F8', True), ('0221', False), ('0222', True), ('0234', False), ('0250', True), ('02AE', False), ('02B0', True), ('02B9', False), ('02BB', True), ('02C2', False), ('02D0', True), ('02D2', False), ('02E0', True), ('02E5', False), ('02EE', True), ('02EF', False), ('037A', True), ('037B', False), ('0386', True), ('0387', False), ('0388', True), ('038B', False), ('038C', True), ('038D', False), ('038E', True)] [('1D7CB', False), ('20000', True), ('2A743', False), ('F014E', True), ('E0001', False)]
+map_table_b2 11728 [('0000', '\x00'), ('0001', '\x01'), ('0002', '\x02'), ('0003', '\x03'), ('0004', '\x04'), ('0005', '\x05'), ('0006', '\x06'), ('0007', '\x07'), ('0008', '\x08'), ('0009', '\t'), ('000A', '\n'), ('000B', '\x0b'), ('000C', '\x0c'), ('000D', '\r'), ('000E', '\x0e'), ('000F', '\x0f'), ('0010', '\x10'), ('0011', '\x11'), ('0012', '\x12'), ('0013', '\x13'), ('0014', '\x14'), ('0015', '\x15'), ('0016', '\x16'), ('0017', '\x17'), ('0018', '\x18'), ('0019', '\x19'), ('001A', '\x1a'), ('001B', '\x1b'), ('001C', '\x1c'), ('001D', '\x1d'), ('001E', '\x1e'), ('001F', '\x1f'), ('0020', ' '), ('0021', '!'), ('0022', '"'), ('0023', '#'), ('0024', '$'), ('0025', '%'), ('0026', '&'), ('0027', "'")] [('E0020', '\U000e0020'), ('FFFE', '\ufffe'), ('FFFF', '\uffff'), ('1FFFE', '\U0001fffe'), ('10FFFF', '\U0010ffff')]
+map_table_b3 11728 [('0000', '\x00'), ('0001', '\x01'), ('0002', '\x02'), ('0003', '\x03'), ('0004', '\x04'), ('0005', '\x05'), ('0006', '\x06'), ('0007', '\x07'), ('0008', '\x08'), ('0009', '\t'), ('000A', '\n'), ('000B', '\x0b'), ('000C', '\x0c'), ('000D', '\r'), ('000E', '\x0e'), ('000F', '\x0f'), ('0010', '\x10'), ('0011', '\x11'), ('0012', '\x12'), ('0013', '\x13'), ('0014', '\x14'), ('0015', '\x15'), ('0016', '\x16'), ('0017', '\x17'), ('0018', '\x18'), ('0019', '\x19'), ('001A', '\x1a'), ('001B', '\x1b'), ('001C', '\x1c'), ('001D', '\x1d'), ('001E', '\x1e'), ('001F', '\x1f'), ('0020', ' '), ('0021', '!'), ('0022', '"'), ('0023', '#'), ('0024', '$'), ('0025', '%'), ('0026', '&'), ('0027', "'")] [('E0020', '\U000e0020'), ('FFFE', '\ufffe'), ('FFFF', '\uffff'), ('1FFFE', '\U0001fffe'), ('10FFFF', '\U0010ffff')]
+b'xn--bcher-kva.example'
+b'xn--bcher-kva.example'
+b'strasse.de'
+b'xn--wgv71a119e.jp'
+b'a.b.c'
+b''
+UnicodeEncodeError: 'idna' codec can't encode character '\x2e' in position 0: label empty
+UnicodeEncodeError: 'idna' codec can't encode character '\x2e' in position 2: label empty
+b'ix.com'
+b'xn--9ca.com'
+b'xn--4xaa.gr'
+b'xn--bcher-kva.example'
+b'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com'
+UnicodeEncodeError: 'idna' codec can't encode characters in position 0-63: label too long
+UnicodeEncodeError: 'idna' codec can't encode character '\x61' in position 2: Violation of BIDI requirement 2
+b'abc.com'
+b'abc.def'
+b'xn--e28h.com'
+b'xn--6la.com'
+b'a b.com'
+b'fi.com'
+'b\xfccher.example'
+UnicodeDecodeError: 'idna' codec can't decode bytes in position 0-12: IDNA does not round-trip, 'b'xn--strae-oqa'' != 'b'strasse''
+'abc.'
+UnicodeDecodeError: 'idna' codec can't decode byte 0x78 in position 0: label empty
+UnicodeDecodeError: 'idna' codec can't decode byte 0x78 in position 0: Invalid character '\x80'
+'B\xfcCHER.example'
+UnicodeDecodeError: 'idna' codec can't decode byte 0xff in position 0: ordinal not in range(128)
+'\u65e5\u672c\u8a9e.jp'

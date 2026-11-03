@@ -1,0 +1,22 @@
+status: 0
+script: 881b9f11fd59b81b
+---
+a bytes [[True], [True], [True], [True], [True]]
+a bytearray [[True], [True], [True], [True], [True]]
+v bytes [[True], [True], [True], [True], [True]]
+v bytearray [[True], [True], [True], [True], [True]]
+av bytes [[True, True], [True, True], [True, True], [True, True], [True, True]]
+av bytearray [[True, True], [True, True], [True, True], [True, True], [True, True]]
+as bytes [[True], [True], [True], [True], [True]]
+as bytearray [[True], [True], [True], [True], [True]]
+avs bytes [[True, True], [True, True], [True, True], [True, True], [True, True]]
+avs bytearray [[True, True], [True, True], [True, True], [True, True], [True, True]]
+an bytes [[True], [True], [True], [True], [True]]
+an bytearray [[True], [True], [True], [True], [True]]
+vn bytes [[True], [True], [True], [True], [True]]
+vn bytearray [[True], [True], [True], [True], [True]]
+avn bytes [[True, True], [True, True], [True, True], [True, True], [True, True]]
+avn bytearray [[True, True], [True, True], [True, True], [True, True], [True, True]]
+[True, True, True, True, True, True]
+[[0], [0, 1], [0, 1, 2], [0, 1, 2, 3], [0, 1, 2, 3, 4]]
+True [True, True] [True]

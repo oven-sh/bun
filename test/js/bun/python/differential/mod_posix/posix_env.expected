@@ -1,0 +1,38 @@
+status: 0
+script: 57fa1e5b1d793d7e
+---
+dict True True
+True False False
+None
+b'one' None
+None
+b'two'
+None
+b''
+None
+b'caf\xc3\xa9 \xe2\x82\xac \xff'
+None
+b'\xfe'
+None
+b'a=b=c'
+ValueError illegal environment variable name
+ValueError illegal environment variable name
+OSError [Errno 22] Invalid argument
+TypeError putenv expected 2 arguments, got 1
+TypeError posix.putenv() takes no keyword arguments
+0
+None
+None
+None
+None
+None
+OSError [Errno 22] Invalid argument
+OSError [Errno 22] Invalid argument
+TypeError posix.unsetenv() takes exactly one argument (0 given)
+0
+None
+b'PYPOSIX_P'
+None
+{}
+TypeError posix._clearenv() takes no arguments (1 given)
+{b'ONLY': b'1'}

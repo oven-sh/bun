@@ -1,0 +1,10 @@
+status: 0
+script: e43626c39daebf95
+---
+through fdopen
+
+OSError [Errno 9] Bad file descriptor
+TypeError invalid fd type (<class 'str'>, expected integer)
+through fdopen
+ 15 False
+None

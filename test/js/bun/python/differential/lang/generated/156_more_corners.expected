@@ -1,0 +1,23 @@
+status: 0
+script: 2d748be5d2d69ac3
+source: 6b8ebde9cbcc24aa
+---
+[4, 3, 2, 1, 0]
+['f3', 'f2', 'f1']
+float(FooStr('8')) => 9.0
+float(FooBytes(b'8')) => 3.5
+float(PlainStr('8')) => 8.0
+stopped
+divmod(7, 2) => (3, 1)
+eval("divmod(9, 2)") => (4, 1)
+inner() => (5, 1)
+inner() => (5, 1)
+name 'nosuchname' is not defined
+Cannot have two type comments on def 3 4 3 -1
+() -> int
+() -> int
+type object 'int' has no attribute 'nosuch'
+type object 'collections.deque' has no attribute 'nosuch'
+type object 'itertools.count' has no attribute 'nosuch'
+type object 'functools.partial' has no attribute 'nosuch'
+type object 'C' has no attribute 'nosuch'

@@ -1,0 +1,698 @@
+status: 0
+script: 87bb1a4d76c17d5e
+---
+0 b'' b'' b'' True True True b'' b'' b'<~~>' True b'' True True
+1 b'G5' b'1&' b'g5' True True True b'G5`Po' b'1&q:S' b'<~1&~>' True b'2\x00\x00\x00' True True
+2 b'_>%' b'plb' b'{(+' True True True b'_>%wt' b'plb[X' b'<~plb~>' True b'\xf8\x93\x00\x00' True True
+3 b'zc%d' b'^GbH' b'ZC+D' True True True b'zc%dv' b'^GbHZ' b'<~^GbH~>' True b'\xbf6\xed\x00' True True
+4 b'h1hGX' b'L"L1B' b'H1Hgx' True True True b'h1hGX' b'L"L1B' b'<~L"L1B~>' True b'\x85\xd8k\xac' True True
+5 b'OMB_FIR' b'97,p03<' b'omb{fir' True True True b'OMB_FIRF3v' b'97,p03<0$Z' b'<~97,p03<~>' True b'K{\xe9\xb39\x00\x00\x00' True True
+6 b'5*=o_+fM' b'&fkSpgJ7' b'5/>O{*Fm' True True True b'5*=o_+fM)h' b'&fkSpgJ7eL' b'<~&fkSpgJ7~>' True b'\x12\x1df\xb9\xdbO\x00\x00' True True
+7 b'*udn#d@Gj' b'fYHR`Hn1N' b'/UDN-D[gJ' True True True b'*udn#d@Gj#' b'fYHR`Hn1N`' b'<~fYHR`Hn1N~>' True b'\xd8\xc0\xe4\xc0|+\x97\x00' True True
+8 b'o?~Lh9SF@G' b'Smu6L*=0n1' b'O)#lH9sf[g' True True True b'o?~Lh9SF@G' b'Smu6L*=0n1' b'<~Smu6L*=0n1~>' True b'\x9ecb\xc6\x1d\x08\xcd\x1d' True True
+9 b'Wd+~OzvKe@`v' b'AHgu9^Z5InqZ' b'wD*#oZVkE[}V' True True True b'Wd+~OzvKe@`v3p{' b'AHgu9^Z5InqZ$Tr' b'<~AHgu9^Z5InqZ~>' True b'e\x05\xdf\xcd\xbf\xe4\x02\xfb\xfb\x00\x00\x00' True True
+10 b'E2v%5V8A!o^}G' b'/#Zb&@)+_Sot1' b'e2V+5v8a.O]$g' True True True b'E2v%5V8A!o^}GN8' b'/#Zb&@)+_Sot18)' b'<~/#Zb&@)+_Sot1~>' True b'+\xa8]\xd3`\xc07\xd9\xf5\xbc\x00\x00' True True
+b'\x00\x00\x00\x00' b'z' b'z' b'z' b'<~z~>' b'00000' True
+b'\x00\x00\x00\x00\x00\x00\x00\x00' b'zz' b'zz' b'zz' b'<~zz~>' b'0000000000' True
+b'\x00\x00\x00' b'!!!!' b'!!!!' b'z' b'<~z~>' b'0000' True
+b'\x00\x00\x00\x00\x00' b'z!!' b'z!!' b'zz' b'<~zz~>' b'0000000' True
+b'    ' b'+<VdL' b'y' b'+<VdL' b'<~y~>' b'ARr(h' True
+b'        ' b'+<VdL+<VdL' b'yy' b'+<VdL+<VdL' b'<~yy~>' b'ARr(hARr(h' True
+b'   ' b'+<Vd' b'+<Vd' b'+<Vd,' b'<~+<Vd,~>' b'ARr(' True
+b'a\x00\x00\x00\x00' b'@/p9-!!' b'@/p9-!!' b'@/p9-z' b'<~@/p9-z~>' b'VE_OC00' True
+b'\x00\x00\x00\x00    ab' b'z+<VdL@:B' b'zy@:B' b'z+<VdL@:B3:' b'<~zy@:B3:~>' b'00000ARr(hVPX' True
+b'\xff\xff\xff\xff' b's8W-!' b's8W-!' b's8W-!' b'<~s8W-!~>' b'|NsC0' True
+b'\xff\xff\xff\xff\xff\xff\xff' b's8W-!s8W*' b's8W-!s8W*' b's8W-!s8W*!' b'<~s8W-!s8W*!~>' b'|NsC0|Ns9' True
+b'\x00' b'!!' b'!!' b'z' b'<~z~>' b'00' True
+b'\x00\x00' b'!!!' b'!!!' b'z' b'<~z~>' b'000' True
+0 b'N$84AmFN3.:(rm+g`\'c$P6U`qSE0t5D6O?NTCMs^z!!",a+<\\[QJSRm' b'<~N$84AmFN3.:(rm+g`\'c$P6U`qSE0t5D6O?NTCMs^z!!",a+<\\[QJSRm~>' b'j3NJW?bjIDP7{?A+#6&3lLq#`oaF}KZLkUjpYi|z00000001B$ARxwmfon?' b'' b'<~~>' b'' b'<~@/~>'
+1 b'N\n$\n8\n4\nA\nm\nF\nN\n3\n.\n:\n(\nr\nm\n+\ng\n`\n\'\nc\n$\nP\n6\nU\n`\nq\nS\nE\n0\nt\n5\nD\n6\nO\n?\nN\nT\nC\nM\ns\n^\nz\n!\n!\n"\n,\na\n+\n<\n\\\n[\nQ\nJ\nS\nR\nm' b'<~\nN$\n84\nAm\nFN\n3.\n:(\nrm\n+g\n`\'\nc$\nP6\nU`\nqS\nE0\nt5\nD6\nO?\nNT\nCM\ns^\nz!\n!"\n,a\n+<\n\\[\nQJ\nSR\nm\n~>' b'j3NJW\n?bjID\nP7{?A\n+#6&3\nlLq#`\noaF}K\nZLkUj\npYi|z\n00000\n001B$\nARxwm\nfon?' b'' b'<~\n~>' b'' b'<~\n@/\n~>'
+2 b'N$\n84\nAm\nFN\n3.\n:(\nrm\n+g\n`\'\nc$\nP6\nU`\nqS\nE0\nt5\nD6\nO?\nNT\nCM\ns^\nz!\n!"\n,a\n+<\n\\[\nQJ\nSR\nm' b'<~\nN$\n84\nAm\nFN\n3.\n:(\nrm\n+g\n`\'\nc$\nP6\nU`\nqS\nE0\nt5\nD6\nO?\nNT\nCM\ns^\nz!\n!"\n,a\n+<\n\\[\nQJ\nSR\nm\n~>' b'j3NJW\n?bjID\nP7{?A\n+#6&3\nlLq#`\noaF}K\nZLkUj\npYi|z\n00000\n001B$\nARxwm\nfon?' b'' b'<~\n~>' b'' b'<~\n@/\n~>'
+3 b'N$8\n4Am\nFN3\n.:(\nrm+\ng`\'\nc$P\n6U`\nqSE\n0t5\nD6O\n?NT\nCMs\n^z!\n!",\na+<\n\\[Q\nJSR\nm' b'<~N\n$84\nAmF\nN3.\n:(r\nm+g\n`\'c\n$P6\nU`q\nSE0\nt5D\n6O?\nNTC\nMs^\nz!!\n",a\n+<\\\n[QJ\nSRm\n~>' b'j3NJW\n?bjID\nP7{?A\n+#6&3\nlLq#`\noaF}K\nZLkUj\npYi|z\n00000\n001B$\nARxwm\nfon?' b'' b'<~\n~>' b'' b'<~@\n/~>'
+4 b'N$84\nAmFN\n3.:(\nrm+g\n`\'c$\nP6U`\nqSE0\nt5D6\nO?NT\nCMs^\nz!!"\n,a+<\n\\[QJ\nSRm' b'<~N$\n84Am\nFN3.\n:(rm\n+g`\'\nc$P6\nU`qS\nE0t5\nD6O?\nNTCM\ns^z!\n!",a\n+<\\[\nQJSR\nm~>' b'j3NJW\n?bjID\nP7{?A\n+#6&3\nlLq#`\noaF}K\nZLkUj\npYi|z\n00000\n001B$\nARxwm\nfon?' b'' b'<~~>' b'' b'<~@/\n~>'
+5 b'N$84A\nmFN3.\n:(rm+\ng`\'c$\nP6U`q\nSE0t5\nD6O?N\nTCMs^\nz!!",\na+<\\[\nQJSRm' b'<~N$8\n4AmFN\n3.:(r\nm+g`\'\nc$P6U\n`qSE0\nt5D6O\n?NTCM\ns^z!!\n",a+<\n\\[QJS\nRm~>' b'j3NJW\n?bjID\nP7{?A\n+#6&3\nlLq#`\noaF}K\nZLkUj\npYi|z\n00000\n001B$\nARxwm\nfon?' b'' b'<~~>' b'' b'<~@/\n~>'
+6 b'N$84Am\nFN3.:(\nrm+g`\'\nc$P6U`\nqSE0t5\nD6O?NT\nCMs^z!\n!",a+<\n\\[QJSR\nm' b'<~N$84\nAmFN3.\n:(rm+g\n`\'c$P6\nU`qSE0\nt5D6O?\nNTCMs^\nz!!",a\n+<\\[QJ\nSRm~>' b'j3NJW\n?bjID\nP7{?A\n+#6&3\nlLq#`\noaF}K\nZLkUj\npYi|z\n00000\n001B$\nARxwm\nfon?' b'' b'<~~>' b'' b'<~@/~>'
+9 b'N$84AmFN3\n.:(rm+g`\'\nc$P6U`qSE\n0t5D6O?NT\nCMs^z!!",\na+<\\[QJSR\nm' b'<~N$84AmF\nN3.:(rm+g\n`\'c$P6U`q\nSE0t5D6O?\nNTCMs^z!!\n",a+<\\[QJ\nSRm~>' b'j3NJW\n?bjID\nP7{?A\n+#6&3\nlLq#`\noaF}K\nZLkUj\npYi|z\n00000\n001B$\nARxwm\nfon?' b'' b'<~~>' b'' b'<~@/~>'
+10 b'N$84AmFN3.\n:(rm+g`\'c$\nP6U`qSE0t5\nD6O?NTCMs^\nz!!",a+<\\[\nQJSRm' b'<~N$84AmFN\n3.:(rm+g`\'\nc$P6U`qSE0\nt5D6O?NTCM\ns^z!!",a+<\n\\[QJSRm~>' b'j3NJW?bjID\nP7{?A+#6&3\nlLq#`oaF}K\nZLkUjpYi|z\n00000001B$\nARxwmfon?' b'' b'<~~>' b'' b'<~@/~>'
+11 b'N$84AmFN3.:\n(rm+g`\'c$P6\nU`qSE0t5D6O\n?NTCMs^z!!"\n,a+<\\[QJSRm' b'<~N$84AmFN3\n.:(rm+g`\'c$\nP6U`qSE0t5D\n6O?NTCMs^z!\n!",a+<\\[QJS\nRm~>' b'j3NJW?bjID\nP7{?A+#6&3\nlLq#`oaF}K\nZLkUjpYi|z\n00000001B$\nARxwmfon?' b'' b'<~~>' b'' b'<~@/~>'
+20 b'N$84AmFN3.:(rm+g`\'c$\nP6U`qSE0t5D6O?NTCMs^\nz!!",a+<\\[QJSRm' b'<~N$84AmFN3.:(rm+g`\'\nc$P6U`qSE0t5D6O?NTCM\ns^z!!",a+<\\[QJSRm~>' b'j3NJW?bjIDP7{?A+#6&3\nlLq#`oaF}KZLkUjpYi|z\n00000001B$ARxwmfon?' b'' b'<~~>' b'' b'<~@/~>'
+50 b'N$84AmFN3.:(rm+g`\'c$P6U`qSE0t5D6O?NTCMs^z!!",a+<\\[\nQJSRm' b'<~N$84AmFN3.:(rm+g`\'c$P6U`qSE0t5D6O?NTCMs^z!!",a+<\n\\[QJSRm~>' b'j3NJW?bjIDP7{?A+#6&3lLq#`oaF}KZLkUjpYi|z00000001B$\nARxwmfon?' b'' b'<~~>' b'' b'<~@/~>'
+58 b'N$84AmFN3.:(rm+g`\'c$P6U`qSE0t5D6O?NTCMs^z!!",a+<\\[QJSRm' b'<~N$84AmFN3.:(rm+g`\'c$P6U`qSE0t5D6O?NTCMs^z!!",a+<\\[QJSRm\n~>' b'j3NJW?bjIDP7{?A+#6&3lLq#`oaF}KZLkUjpYi|z00000001B$ARxwm\nfon?' b'' b'<~~>' b'' b'<~@/~>'
+59 b'N$84AmFN3.:(rm+g`\'c$P6U`qSE0t5D6O?NTCMs^z!!",a+<\\[QJSRm' b'<~N$84AmFN3.:(rm+g`\'c$P6U`qSE0t5D6O?NTCMs^z!!",a+<\\[QJSRm~>' b'j3NJW?bjIDP7{?A+#6&3lLq#`oaF}KZLkUjpYi|z00000001B$ARxwm\nfon?' b'' b'<~~>' b'' b'<~@/~>'
+60 b'N$84AmFN3.:(rm+g`\'c$P6U`qSE0t5D6O?NTCMs^z!!",a+<\\[QJSRm' b'<~N$84AmFN3.:(rm+g`\'c$P6U`qSE0t5D6O?NTCMs^z!!",a+<\\[QJSRm~>' b'j3NJW?bjIDP7{?A+#6&3lLq#`oaF}KZLkUjpYi|z00000001B$ARxwmfon?' b'' b'<~~>' b'' b'<~@/~>'
+61 b'N$84AmFN3.:(rm+g`\'c$P6U`qSE0t5D6O?NTCMs^z!!",a+<\\[QJSRm' b'<~N$84AmFN3.:(rm+g`\'c$P6U`qSE0t5D6O?NTCMs^z!!",a+<\\[QJSRm~>' b'j3NJW?bjIDP7{?A+#6&3lLq#`oaF}KZLkUjpYi|z00000001B$ARxwmfon?' b'' b'<~~>' b'' b'<~@/~>'
+62 b'N$84AmFN3.:(rm+g`\'c$P6U`qSE0t5D6O?NTCMs^z!!",a+<\\[QJSRm' b'<~N$84AmFN3.:(rm+g`\'c$P6U`qSE0t5D6O?NTCMs^z!!",a+<\\[QJSRm~>' b'j3NJW?bjIDP7{?A+#6&3lLq#`oaF}KZLkUjpYi|z00000001B$ARxwmfon?' b'' b'<~~>' b'' b'<~@/~>'
+63 b'N$84AmFN3.:(rm+g`\'c$P6U`qSE0t5D6O?NTCMs^z!!",a+<\\[QJSRm' b'<~N$84AmFN3.:(rm+g`\'c$P6U`qSE0t5D6O?NTCMs^z!!",a+<\\[QJSRm~>' b'j3NJW?bjIDP7{?A+#6&3lLq#`oaF}KZLkUjpYi|z00000001B$ARxwmfon?' b'' b'<~~>' b'' b'<~@/~>'
+64 b'N$84AmFN3.:(rm+g`\'c$P6U`qSE0t5D6O?NTCMs^z!!",a+<\\[QJSRm' b'<~N$84AmFN3.:(rm+g`\'c$P6U`qSE0t5D6O?NTCMs^z!!",a+<\\[QJSRm~>' b'j3NJW?bjIDP7{?A+#6&3lLq#`oaF}KZLkUjpYi|z00000001B$ARxwmfon?' b'' b'<~~>' b'' b'<~@/~>'
+1000 b'N$84AmFN3.:(rm+g`\'c$P6U`qSE0t5D6O?NTCMs^z!!",a+<\\[QJSRm' b'<~N$84AmFN3.:(rm+g`\'c$P6U`qSE0t5D6O?NTCMs^z!!",a+<\\[QJSRm~>' b'j3NJW?bjIDP7{?A+#6&3lLq#`oaF}KZLkUjpYi|z00000001B$ARxwmfon?' b'' b'<~~>' b'' b'<~@/~>'
+b'' -> b''
+    {'foldspaces': True} -> b''
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> b''
+    {'canonical': True} -> b''
+    {'foldspaces': True, 'canonical': True} -> b''
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> b''
+b'z' -> b'\x00\x00\x00\x00'
+    {'foldspaces': True} -> b'\x00\x00\x00\x00'
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> b'\x00\x00\x00\x00'
+    {'canonical': True} -> b'\x00\x00\x00\x00'
+    {'foldspaces': True, 'canonical': True} -> b'\x00\x00\x00\x00'
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> b'\x00\x00\x00\x00'
+b'zz' -> b'\x00\x00\x00\x00\x00\x00\x00\x00'
+    {'foldspaces': True} -> b'\x00\x00\x00\x00\x00\x00\x00\x00'
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> b'\x00\x00\x00\x00\x00\x00\x00\x00'
+    {'canonical': True} -> b'\x00\x00\x00\x00\x00\x00\x00\x00'
+    {'foldspaces': True, 'canonical': True} -> b'\x00\x00\x00\x00\x00\x00\x00\x00'
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> b'\x00\x00\x00\x00\x00\x00\x00\x00'
+b'y' -> binascii.Error Non-Ascii85 digit found: y
+    {'foldspaces': True} -> b'    '
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> binascii.Error Non-Ascii85 digit found: y
+    {'canonical': True} -> binascii.Error Non-Ascii85 digit found: y
+    {'foldspaces': True, 'canonical': True} -> b'    '
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> b''
+b'yy' -> binascii.Error Non-Ascii85 digit found: y
+    {'foldspaces': True} -> b'        '
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> binascii.Error Non-Ascii85 digit found: y
+    {'canonical': True} -> binascii.Error Non-Ascii85 digit found: y
+    {'foldspaces': True, 'canonical': True} -> b'        '
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> b''
+b'!!!!!' -> b'\x00\x00\x00\x00'
+    {'foldspaces': True} -> b'\x00\x00\x00\x00'
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> b'\x00\x00\x00\x00'
+    {'canonical': True} -> binascii.Error Non-canonical encoding, use 'z' for all-zero groups
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Non-canonical encoding, use 'z' for all-zero groups
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> b'\x00\x00\x00\x00'
+b'!!' -> b'\x00'
+    {'foldspaces': True} -> b'\x00'
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> b'\x00'
+    {'canonical': True} -> b'\x00'
+    {'foldspaces': True, 'canonical': True} -> b'\x00'
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> b'\x00'
+b'!!!' -> b'\x00\x00'
+    {'foldspaces': True} -> b'\x00\x00'
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> b'\x00\x00'
+    {'canonical': True} -> b'\x00\x00'
+    {'foldspaces': True, 'canonical': True} -> b'\x00\x00'
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> b'\x00\x00'
+b'!!!!' -> b'\x00\x00\x00'
+    {'foldspaces': True} -> b'\x00\x00\x00'
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> b'\x00\x00\x00'
+    {'canonical': True} -> b'\x00\x00\x00'
+    {'foldspaces': True, 'canonical': True} -> b'\x00\x00\x00'
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> b'\x00\x00\x00'
+b'!' -> binascii.Error Incomplete Ascii85 group
+    {'foldspaces': True} -> binascii.Error Incomplete Ascii85 group
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> binascii.Error Incomplete Ascii85 group
+    {'canonical': True} -> binascii.Error Incomplete Ascii85 group
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Incomplete Ascii85 group
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> binascii.Error Incomplete Ascii85 group
+b'a' -> binascii.Error Incomplete Ascii85 group
+    {'foldspaces': True} -> binascii.Error Incomplete Ascii85 group
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> binascii.Error Incomplete Ascii85 group
+    {'canonical': True} -> binascii.Error Incomplete Ascii85 group
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Incomplete Ascii85 group
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> binascii.Error Incomplete Ascii85 group
+b'ab' -> b'\xc9'
+    {'foldspaces': True} -> b'\xc9'
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> b'\xc9'
+    {'canonical': True} -> binascii.Error Non-zero padding bits
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Non-zero padding bits
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> b'\xc9'
+b'abc' -> b'\xc9\x89'
+    {'foldspaces': True} -> b'\xc9\x89'
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> b'\xc9\x89'
+    {'canonical': True} -> binascii.Error Non-zero padding bits
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Non-zero padding bits
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> b'\xc9\x89'
+b'abcd' -> b'\xc9\x89\xa3'
+    {'foldspaces': True} -> b'\xc9\x89\xa3'
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> b'\xc9\x89\xa3'
+    {'canonical': True} -> binascii.Error Non-zero padding bits
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Non-zero padding bits
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> b'\xc9\x89\xa3'
+b'abcde' -> b'\xc9\x89\xa3\xa2'
+    {'foldspaces': True} -> b'\xc9\x89\xa3\xa2'
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> b'\xc9\x89\xa3\xa2'
+    {'canonical': True} -> b'\xc9\x89\xa3\xa2'
+    {'foldspaces': True, 'canonical': True} -> b'\xc9\x89\xa3\xa2'
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> b'\xc9\x89\xa3\xa2'
+b'abcdef' -> binascii.Error Incomplete Ascii85 group
+    {'foldspaces': True} -> binascii.Error Incomplete Ascii85 group
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> binascii.Error Incomplete Ascii85 group
+    {'canonical': True} -> binascii.Error Incomplete Ascii85 group
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Incomplete Ascii85 group
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> binascii.Error Incomplete Ascii85 group
+b's8W-!' -> b'\xff\xff\xff\xff'
+    {'foldspaces': True} -> b'\xff\xff\xff\xff'
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> b'\xff\xff\xff\xff'
+    {'canonical': True} -> b'\xff\xff\xff\xff'
+    {'foldspaces': True, 'canonical': True} -> b'\xff\xff\xff\xff'
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> b'\xff\xff\xff\xff'
+b's8W-"' -> binascii.Error Ascii85 overflow
+    {'foldspaces': True} -> binascii.Error Ascii85 overflow
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> binascii.Error Ascii85 overflow
+    {'canonical': True} -> binascii.Error Ascii85 overflow
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Ascii85 overflow
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> binascii.Error Ascii85 overflow
+b'uuuuu' -> binascii.Error Ascii85 overflow
+    {'foldspaces': True} -> binascii.Error Ascii85 overflow
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> binascii.Error Ascii85 overflow
+    {'canonical': True} -> binascii.Error Ascii85 overflow
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Ascii85 overflow
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> binascii.Error Ascii85 overflow
+b's8W-' -> binascii.Error Ascii85 overflow
+    {'foldspaces': True} -> binascii.Error Ascii85 overflow
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> binascii.Error Ascii85 overflow
+    {'canonical': True} -> binascii.Error Ascii85 overflow
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Ascii85 overflow
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> binascii.Error Ascii85 overflow
+b's8W' -> binascii.Error Ascii85 overflow
+    {'foldspaces': True} -> binascii.Error Ascii85 overflow
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> binascii.Error Ascii85 overflow
+    {'canonical': True} -> binascii.Error Ascii85 overflow
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Ascii85 overflow
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> binascii.Error Ascii85 overflow
+b's8' -> binascii.Error Ascii85 overflow
+    {'foldspaces': True} -> binascii.Error Ascii85 overflow
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> binascii.Error Ascii85 overflow
+    {'canonical': True} -> binascii.Error Ascii85 overflow
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Ascii85 overflow
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> binascii.Error Ascii85 overflow
+b'abz' -> binascii.Error 'z' inside Ascii85 5-tuple
+    {'foldspaces': True} -> binascii.Error 'z' inside Ascii85 5-tuple
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> binascii.Error 'z' inside Ascii85 5-tuple
+    {'canonical': True} -> binascii.Error 'z' inside Ascii85 5-tuple
+    {'foldspaces': True, 'canonical': True} -> binascii.Error 'z' inside Ascii85 5-tuple
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> binascii.Error 'z' inside Ascii85 5-tuple
+b'aby' -> binascii.Error Non-Ascii85 digit found: y
+    {'foldspaces': True} -> binascii.Error 'y' inside Ascii85 5-tuple
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> binascii.Error Non-Ascii85 digit found: y
+    {'canonical': True} -> binascii.Error Non-Ascii85 digit found: y
+    {'foldspaces': True, 'canonical': True} -> binascii.Error 'y' inside Ascii85 5-tuple
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> b'\xc9'
+b'zab' -> b'\x00\x00\x00\x00\xc9'
+    {'foldspaces': True} -> b'\x00\x00\x00\x00\xc9'
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> b'\x00\x00\x00\x00\xc9'
+    {'canonical': True} -> binascii.Error Non-zero padding bits
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Non-zero padding bits
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> b'\x00\x00\x00\x00\xc9'
+b'ab cd e' -> binascii.Error Non-Ascii85 digit found:  
+    {'foldspaces': True} -> binascii.Error Non-Ascii85 digit found:  
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> b'\xc9\x89\xa3\xa2'
+    {'canonical': True} -> binascii.Error Non-Ascii85 digit found:  
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Non-Ascii85 digit found:  
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> binascii.Error Non-Ascii85 digit found:  
+b'ab\ncde' -> binascii.Error Non-Ascii85 digit found: 
+
+    {'foldspaces': True} -> binascii.Error Non-Ascii85 digit found: 
+
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> b'\xc9\x89\xa3\xa2'
+    {'canonical': True} -> binascii.Error Non-Ascii85 digit found: 
+
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Non-Ascii85 digit found: 
+
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> binascii.Error Non-Ascii85 digit found: 
+
+b'v' -> binascii.Error Non-Ascii85 digit found: v
+    {'foldspaces': True} -> binascii.Error Non-Ascii85 digit found: v
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> binascii.Error Non-Ascii85 digit found: v
+    {'canonical': True} -> binascii.Error Non-Ascii85 digit found: v
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Non-Ascii85 digit found: v
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> b''
+b'abcdv' -> binascii.Error Non-Ascii85 digit found: v
+    {'foldspaces': True} -> binascii.Error Non-Ascii85 digit found: v
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> binascii.Error Non-Ascii85 digit found: v
+    {'canonical': True} -> binascii.Error Non-Ascii85 digit found: v
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Non-Ascii85 digit found: v
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> b'\xc9\x89\xa3'
+b'\x01' -> binascii.Error Non-Ascii85 digit found: 
+    {'foldspaces': True} -> binascii.Error Non-Ascii85 digit found: 
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> binascii.Error Non-Ascii85 digit found: 
+    {'canonical': True} -> binascii.Error Non-Ascii85 digit found: 
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Non-Ascii85 digit found: 
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> binascii.Error Non-Ascii85 digit found: 
+b'\xe9' -> binascii.Error Non-Ascii85 digit found: é
+    {'foldspaces': True} -> binascii.Error Non-Ascii85 digit found: é
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> binascii.Error Non-Ascii85 digit found: é
+    {'canonical': True} -> binascii.Error Non-Ascii85 digit found: é
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Non-Ascii85 digit found: é
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> binascii.Error Non-Ascii85 digit found: é
+b'~>' -> binascii.Error Non-Ascii85 digit found: ~
+    {'foldspaces': True} -> binascii.Error Non-Ascii85 digit found: ~
+    {'adobe': True} -> b''
+    {'ignorechars': b' \n'} -> binascii.Error Non-Ascii85 digit found: ~
+    {'canonical': True} -> binascii.Error Non-Ascii85 digit found: ~
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Non-Ascii85 digit found: ~
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> b''
+    {'ignorechars': b'yzv~<>'} -> binascii.Error Incomplete Ascii85 group
+b'<~~>' -> binascii.Error Non-Ascii85 digit found: ~
+    {'foldspaces': True} -> binascii.Error Non-Ascii85 digit found: ~
+    {'adobe': True} -> b''
+    {'ignorechars': b' \n'} -> binascii.Error Non-Ascii85 digit found: ~
+    {'canonical': True} -> binascii.Error Non-Ascii85 digit found: ~
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Non-Ascii85 digit found: ~
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> b''
+    {'ignorechars': b'yzv~<>'} -> b'U'
+b'<~ab~>' -> binascii.Error Non-Ascii85 digit found: ~
+    {'foldspaces': True} -> binascii.Error Non-Ascii85 digit found: ~
+    {'adobe': True} -> b'\xc9'
+    {'ignorechars': b' \n'} -> binascii.Error Non-Ascii85 digit found: ~
+    {'canonical': True} -> binascii.Error Non-Ascii85 digit found: ~
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Non-Ascii85 digit found: ~
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> b'\xc9'
+    {'ignorechars': b'yzv~<>'} -> b'V`\xee'
+b'ab~>' -> binascii.Error Non-Ascii85 digit found: ~
+    {'foldspaces': True} -> binascii.Error Non-Ascii85 digit found: ~
+    {'adobe': True} -> b'\xc9'
+    {'ignorechars': b' \n'} -> binascii.Error Non-Ascii85 digit found: ~
+    {'canonical': True} -> binascii.Error Non-Ascii85 digit found: ~
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Non-Ascii85 digit found: ~
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> b'\xc9'
+    {'ignorechars': b'yzv~<>'} -> b'\xc9\x85'
+b'<~ab' -> binascii.Error Non-Ascii85 digit found: ~
+    {'foldspaces': True} -> binascii.Error Non-Ascii85 digit found: ~
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> binascii.Error Non-Ascii85 digit found: ~
+    {'canonical': True} -> binascii.Error Non-Ascii85 digit found: ~
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Non-Ascii85 digit found: ~
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> b'Va'
+b'<~' -> binascii.Error Non-Ascii85 digit found: ~
+    {'foldspaces': True} -> binascii.Error Non-Ascii85 digit found: ~
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> binascii.Error Non-Ascii85 digit found: ~
+    {'canonical': True} -> binascii.Error Non-Ascii85 digit found: ~
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Non-Ascii85 digit found: ~
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> binascii.Error Incomplete Ascii85 group
+b'~' -> binascii.Error Non-Ascii85 digit found: ~
+    {'foldspaces': True} -> binascii.Error Non-Ascii85 digit found: ~
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> binascii.Error Non-Ascii85 digit found: ~
+    {'canonical': True} -> binascii.Error Non-Ascii85 digit found: ~
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Non-Ascii85 digit found: ~
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> b''
+b'>' -> binascii.Error Incomplete Ascii85 group
+    {'foldspaces': True} -> binascii.Error Incomplete Ascii85 group
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> binascii.Error Incomplete Ascii85 group
+    {'canonical': True} -> binascii.Error Incomplete Ascii85 group
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Incomplete Ascii85 group
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> binascii.Error Incomplete Ascii85 group
+b'<~z~>' -> binascii.Error Non-Ascii85 digit found: ~
+    {'foldspaces': True} -> binascii.Error Non-Ascii85 digit found: ~
+    {'adobe': True} -> b'\x00\x00\x00\x00'
+    {'ignorechars': b' \n'} -> binascii.Error Non-Ascii85 digit found: ~
+    {'canonical': True} -> binascii.Error Non-Ascii85 digit found: ~
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Non-Ascii85 digit found: ~
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> b'\x00\x00\x00\x00'
+    {'ignorechars': b'yzv~<>'} -> binascii.Error 'z' inside Ascii85 5-tuple
+b'<~<~ab~>' -> binascii.Error Non-Ascii85 digit found: ~
+    {'foldspaces': True} -> binascii.Error Non-Ascii85 digit found: ~
+    {'adobe': True} -> binascii.Error Non-Ascii85 digit found: ~
+    {'ignorechars': b' \n'} -> binascii.Error Non-Ascii85 digit found: ~
+    {'canonical': True} -> binascii.Error Non-Ascii85 digit found: ~
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Non-Ascii85 digit found: ~
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Non-Ascii85 digit found: ~
+    {'ignorechars': b'yzv~<>'} -> b'U\x06%\x9c'
+b'ab~>~>' -> binascii.Error Non-Ascii85 digit found: ~
+    {'foldspaces': True} -> binascii.Error Non-Ascii85 digit found: ~
+    {'adobe': True} -> binascii.Error Non-Ascii85 digit found: ~
+    {'ignorechars': b' \n'} -> binascii.Error Non-Ascii85 digit found: ~
+    {'canonical': True} -> binascii.Error Non-Ascii85 digit found: ~
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Non-Ascii85 digit found: ~
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Non-Ascii85 digit found: ~
+    {'ignorechars': b'yzv~<>'} -> b'\xc9\x85\x82'
+b'5sdp' -> b'ABC'
+    {'foldspaces': True} -> b'ABC'
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> b'ABC'
+    {'canonical': True} -> b'ABC'
+    {'foldspaces': True, 'canonical': True} -> b'ABC'
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> b'ABC'
+b'5sdq' -> b'ABC'
+    {'foldspaces': True} -> b'ABC'
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> b'ABC'
+    {'canonical': True} -> binascii.Error Non-zero padding bits
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Non-zero padding bits
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> b'ABC'
+b'5sd' -> b'AB'
+    {'foldspaces': True} -> b'AB'
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> b'AB'
+    {'canonical': True} -> binascii.Error Non-zero padding bits
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Non-zero padding bits
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> b'AB'
+b'5se' -> b'AB'
+    {'foldspaces': True} -> b'AB'
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> b'AB'
+    {'canonical': True} -> binascii.Error Non-zero padding bits
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Non-zero padding bits
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> b'AB'
+b'5s' -> b'A'
+    {'foldspaces': True} -> b'A'
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> b'A'
+    {'canonical': True} -> binascii.Error Non-zero padding bits
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Non-zero padding bits
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> b'A'
+b'5t' -> b'A'
+    {'foldspaces': True} -> b'A'
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> b'A'
+    {'canonical': True} -> binascii.Error Non-zero padding bits
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Non-zero padding bits
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> b'A'
+abcde -> b'\xc9\x89\xa3\xa2'
+    {'foldspaces': True} -> b'\xc9\x89\xa3\xa2'
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> b'\xc9\x89\xa3\xa2'
+    {'canonical': True} -> b'\xc9\x89\xa3\xa2'
+    {'foldspaces': True, 'canonical': True} -> b'\xc9\x89\xa3\xa2'
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> b'\xc9\x89\xa3\xa2'
+bytearray(b'abcde') -> b'\xc9\x89\xa3\xa2'
+    {'foldspaces': True} -> b'\xc9\x89\xa3\xa2'
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> b'\xc9\x89\xa3\xa2'
+    {'canonical': True} -> b'\xc9\x89\xa3\xa2'
+    {'foldspaces': True, 'canonical': True} -> b'\xc9\x89\xa3\xa2'
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> b'\xc9\x89\xa3\xa2'
+b'+<VdL' -> b'    '
+    {'foldspaces': True} -> b'    '
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> b'    '
+    {'canonical': True} -> b'    '
+    {'foldspaces': True, 'canonical': True} -> b'    '
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> b'    '
+b'+<Vd' -> b'   '
+    {'foldspaces': True} -> b'   '
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> b'   '
+    {'canonical': True} -> b'   '
+    {'foldspaces': True, 'canonical': True} -> b'   '
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> b'   '
+b'z!!!!!z' -> b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+    {'foldspaces': True} -> b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+    {'adobe': True} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b' \n'} -> b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+    {'canonical': True} -> binascii.Error Non-canonical encoding, use 'z' for all-zero groups
+    {'foldspaces': True, 'canonical': True} -> binascii.Error Non-canonical encoding, use 'z' for all-zero groups
+    {'adobe': True, 'ignorechars': b' \t\n\r\x0b'} -> binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+    {'ignorechars': b'yzv~<>'} -> b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+b'' -> b''
+    {'ignorechars': b' \n'} -> b''
+    {'canonical': True} -> b''
+    {'alphabet': b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'} -> b''
+    {'alphabet': b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'} -> b''
+    {'ignorechars': b'",\xe9'} -> b''
+b'0' -> binascii.Error Incomplete Base85 group
+    {'ignorechars': b' \n'} -> binascii.Error Incomplete Base85 group
+    {'canonical': True} -> binascii.Error Incomplete Base85 group
+    {'alphabet': b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'} -> binascii.Error Incomplete Base85 group
+    {'alphabet': b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'} -> binascii.Error Incomplete Base85 group
+    {'ignorechars': b'",\xe9'} -> binascii.Error Incomplete Base85 group
+b'00' -> b'\x00'
+    {'ignorechars': b' \n'} -> b'\x00'
+    {'canonical': True} -> b'\x00'
+    {'alphabet': b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'} -> b'\x00'
+    {'alphabet': b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'} -> b'/'
+    {'ignorechars': b'",\xe9'} -> b'\x00'
+b'000' -> b'\x00\x00'
+    {'ignorechars': b' \n'} -> b'\x00\x00'
+    {'canonical': True} -> b'\x00\x00'
+    {'alphabet': b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'} -> b'\x00\x00'
+    {'alphabet': b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'} -> b'/:'
+    {'ignorechars': b'",\xe9'} -> b'\x00\x00'
+b'0000' -> b'\x00\x00\x00'
+    {'ignorechars': b' \n'} -> b'\x00\x00\x00'
+    {'canonical': True} -> b'\x00\x00\x00'
+    {'alphabet': b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'} -> b'\x00\x00\x00'
+    {'alphabet': b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'} -> b'/:\x02'
+    {'ignorechars': b'",\xe9'} -> b'\x00\x00\x00'
+b'00000' -> b'\x00\x00\x00\x00'
+    {'ignorechars': b' \n'} -> b'\x00\x00\x00\x00'
+    {'canonical': True} -> b'\x00\x00\x00\x00'
+    {'alphabet': b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'} -> b'\x00\x00\x00\x00'
+    {'alphabet': b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'} -> b'/:\x02\xa3'
+    {'ignorechars': b'",\xe9'} -> b'\x00\x00\x00\x00'
+b'000000' -> binascii.Error Incomplete Base85 group
+    {'ignorechars': b' \n'} -> binascii.Error Incomplete Base85 group
+    {'canonical': True} -> binascii.Error Incomplete Base85 group
+    {'alphabet': b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'} -> binascii.Error Incomplete Base85 group
+    {'alphabet': b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'} -> binascii.Error Incomplete Base85 group
+    {'ignorechars': b'",\xe9'} -> binascii.Error Incomplete Base85 group
+b'|NsC0' -> b'\xff\xff\xff\xff'
+    {'ignorechars': b' \n'} -> b'\xff\xff\xff\xff'
+    {'canonical': True} -> b'\xff\xff\xff\xff'
+    {'alphabet': b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'} -> binascii.Error bad Base85 character at position 0
+    {'alphabet': b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'} -> binascii.Error bad Base85 character at position 0
+    {'ignorechars': b'",\xe9'} -> b'\xff\xff\xff\xff'
+b'|NsC1' -> binascii.Error Base85 overflow in hunk starting at byte 0
+    {'ignorechars': b' \n'} -> binascii.Error Base85 overflow in hunk starting at byte 0
+    {'canonical': True} -> binascii.Error Base85 overflow in hunk starting at byte 0
+    {'alphabet': b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'} -> binascii.Error bad Base85 character at position 0
+    {'alphabet': b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'} -> binascii.Error bad Base85 character at position 0
+    {'ignorechars': b'",\xe9'} -> binascii.Error Base85 overflow in hunk starting at byte 0
+b'~~~~~' -> binascii.Error Base85 overflow in hunk starting at byte 0
+    {'ignorechars': b' \n'} -> binascii.Error Base85 overflow in hunk starting at byte 0
+    {'canonical': True} -> binascii.Error Base85 overflow in hunk starting at byte 0
+    {'alphabet': b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'} -> binascii.Error bad Base85 character at position 0
+    {'alphabet': b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'} -> binascii.Error bad Base85 character at position 0
+    {'ignorechars': b'",\xe9'} -> binascii.Error Base85 overflow in hunk starting at byte 0
+b'|NsC' -> binascii.Error Base85 overflow in hunk starting at byte 0
+    {'ignorechars': b' \n'} -> binascii.Error Base85 overflow in hunk starting at byte 0
+    {'canonical': True} -> binascii.Error Base85 overflow in hunk starting at byte 0
+    {'alphabet': b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'} -> binascii.Error bad Base85 character at position 0
+    {'alphabet': b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'} -> binascii.Error bad Base85 character at position 0
+    {'ignorechars': b'",\xe9'} -> binascii.Error Base85 overflow in hunk starting at byte 0
+b'|Ns' -> binascii.Error Base85 overflow in hunk starting at byte 0
+    {'ignorechars': b' \n'} -> binascii.Error Base85 overflow in hunk starting at byte 0
+    {'canonical': True} -> binascii.Error Base85 overflow in hunk starting at byte 0
+    {'alphabet': b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'} -> binascii.Error bad Base85 character at position 0
+    {'alphabet': b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'} -> binascii.Error bad Base85 character at position 0
+    {'ignorechars': b'",\xe9'} -> binascii.Error Base85 overflow in hunk starting at byte 0
+b'|N' -> binascii.Error Base85 overflow in hunk starting at byte 0
+    {'ignorechars': b' \n'} -> binascii.Error Base85 overflow in hunk starting at byte 0
+    {'canonical': True} -> binascii.Error Base85 overflow in hunk starting at byte 0
+    {'alphabet': b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'} -> binascii.Error bad Base85 character at position 0
+    {'alphabet': b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'} -> binascii.Error bad Base85 character at position 0
+    {'ignorechars': b'",\xe9'} -> binascii.Error Base85 overflow in hunk starting at byte 0
+b'|' -> binascii.Error Base85 overflow in hunk starting at byte 0
+    {'ignorechars': b' \n'} -> binascii.Error Base85 overflow in hunk starting at byte 0
+    {'canonical': True} -> binascii.Error Base85 overflow in hunk starting at byte 0
+    {'alphabet': b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'} -> binascii.Error bad Base85 character at position 0
+    {'alphabet': b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'} -> binascii.Error bad Base85 character at position 0
+    {'ignorechars': b'",\xe9'} -> binascii.Error Base85 overflow in hunk starting at byte 0
+b'VPa!s' -> b'abcd'
+    {'ignorechars': b' \n'} -> b'abcd'
+    {'canonical': True} -> b'abcd'
+    {'alphabet': b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'} -> b'\xb38\xa5\x8a'
+    {'alphabet': b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'} -> b'\xa6\xa6\xf4\xba'
+    {'ignorechars': b'",\xe9'} -> b'abcd'
+b'VPa!' -> b'abc'
+    {'ignorechars': b' \n'} -> b'abc'
+    {'canonical': True} -> binascii.Error Non-zero padding bits
+    {'alphabet': b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'} -> b'\xb38\xa5'
+    {'alphabet': b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'} -> b'\xa6\xa6\xf4'
+    {'ignorechars': b'",\xe9'} -> b'abc'
+b'VPa' -> b'ab'
+    {'ignorechars': b' \n'} -> b'ab'
+    {'canonical': True} -> binascii.Error Non-zero padding bits
+    {'alphabet': b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'} -> b'\xb38'
+    {'alphabet': b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'} -> b'\xa6\xa7'
+    {'ignorechars': b'",\xe9'} -> b'ab'
+b'VP' -> b'a'
+    {'ignorechars': b' \n'} -> b'a'
+    {'canonical': True} -> binascii.Error Non-zero padding bits
+    {'alphabet': b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'} -> b'\xb3'
+    {'alphabet': b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'} -> b'\xa6'
+    {'ignorechars': b'",\xe9'} -> b'a'
+b'VQ' -> b'a'
+    {'ignorechars': b' \n'} -> b'a'
+    {'canonical': True} -> binascii.Error Non-zero padding bits
+    {'alphabet': b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'} -> b'\xb3'
+    {'alphabet': b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'} -> b'\xa6'
+    {'ignorechars': b'",\xe9'} -> b'a'
+b'ab cd' -> binascii.Error bad Base85 character at position 2
+    {'ignorechars': b' \n'} -> b'qa\x9e'
+    {'canonical': True} -> binascii.Error bad Base85 character at position 2
+    {'alphabet': b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'} -> binascii.Error bad Base85 character at position 2
+    {'alphabet': b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'} -> binascii.Error bad Base85 character at position 2
+    {'ignorechars': b'",\xe9'} -> binascii.Error bad Base85 character at position 2
+b'ab\ncde' -> binascii.Error bad Base85 character at position 2
+    {'ignorechars': b' \n'} -> b'qa\x9e\xb6'
+    {'canonical': True} -> binascii.Error bad Base85 character at position 2
+    {'alphabet': b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'} -> binascii.Error bad Base85 character at position 2
+    {'alphabet': b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'} -> binascii.Error bad Base85 character at position 2
+    {'ignorechars': b'",\xe9'} -> binascii.Error bad Base85 character at position 2
+b'"' -> binascii.Error bad Base85 character at position 0
+    {'ignorechars': b' \n'} -> binascii.Error bad Base85 character at position 0
+    {'canonical': True} -> binascii.Error bad Base85 character at position 0
+    {'alphabet': b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'} -> binascii.Error bad Base85 character at position 0
+    {'alphabet': b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'} -> binascii.Error Incomplete Base85 group
+    {'ignorechars': b'",\xe9'} -> b''
+b'abc"e' -> binascii.Error bad Base85 character at position 3
+    {'ignorechars': b' \n'} -> binascii.Error bad Base85 character at position 3
+    {'canonical': True} -> binascii.Error bad Base85 character at position 3
+    {'alphabet': b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'} -> binascii.Error bad Base85 character at position 3
+    {'alphabet': b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'} -> b'\xc9\x89\x8d\xb8'
+    {'ignorechars': b'",\xe9'} -> b'qa\x9f'
+b'abcdeabc,' -> binascii.Error bad Base85 character at position 8
+    {'ignorechars': b' \n'} -> binascii.Error bad Base85 character at position 8
+    {'canonical': True} -> binascii.Error bad Base85 character at position 8
+    {'alphabet': b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'} -> binascii.Error bad Base85 character at position 8
+    {'alphabet': b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'} -> b'\xc9\x89\xa3\xa2\xc9\x89\x91'
+    {'ignorechars': b'",\xe9'} -> b'qa\x9e\xb6qa'
+b'\xe9' -> binascii.Error bad Base85 character at position 0
+    {'ignorechars': b' \n'} -> binascii.Error bad Base85 character at position 0
+    {'canonical': True} -> binascii.Error bad Base85 character at position 0
+    {'alphabet': b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'} -> binascii.Error bad Base85 character at position 0
+    {'alphabet': b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'} -> binascii.Error bad Base85 character at position 0
+    {'ignorechars': b'",\xe9'} -> b''
+VPa!s -> b'abcd'
+    {'ignorechars': b' \n'} -> b'abcd'
+    {'canonical': True} -> b'abcd'
+    {'alphabet': b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'} -> b'\xb38\xa5\x8a'
+    {'alphabet': b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'} -> b'\xa6\xa6\xf4\xba'
+    {'ignorechars': b'",\xe9'} -> b'abcd'
+bytearray(b'VPa!s') -> b'abcd'
+    {'ignorechars': b' \n'} -> b'abcd'
+    {'canonical': True} -> b'abcd'
+    {'alphabet': b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'} -> b'\xb38\xa5\x8a'
+    {'alphabet': b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'} -> b'\xa6\xa6\xf4\xba'
+    {'ignorechars': b'",\xe9'} -> b'abcd'
+b'00000~~~~~' -> binascii.Error Base85 overflow in hunk starting at byte 5
+    {'ignorechars': b' \n'} -> binascii.Error Base85 overflow in hunk starting at byte 5
+    {'canonical': True} -> binascii.Error Base85 overflow in hunk starting at byte 5
+    {'alphabet': b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'} -> binascii.Error bad Base85 character at position 5
+    {'alphabet': b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'} -> binascii.Error bad Base85 character at position 5
+    {'ignorechars': b'",\xe9'} -> binascii.Error Base85 overflow in hunk starting at byte 5
+b'0000000000~~~~~' -> binascii.Error Base85 overflow in hunk starting at byte 10
+    {'ignorechars': b' \n'} -> binascii.Error Base85 overflow in hunk starting at byte 10
+    {'canonical': True} -> binascii.Error Base85 overflow in hunk starting at byte 10
+    {'alphabet': b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'} -> binascii.Error bad Base85 character at position 10
+    {'alphabet': b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'} -> binascii.Error bad Base85 character at position 10
+    {'ignorechars': b'",\xe9'} -> binascii.Error Base85 overflow in hunk starting at byte 10
+b'abcdefg' -> b'qa\x9e\xb6\x81'
+    {'ignorechars': b' \n'} -> b'qa\x9e\xb6\x81'
+    {'canonical': True} -> binascii.Error Non-zero padding bits
+    {'alphabet': b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'} -> b'\x1f\x85\x9a$/'
+    {'alphabet': b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'} -> b'\xc9\x89\xa3\xa2\xd9'
+    {'ignorechars': b'",\xe9'} -> b'qa\x9e\xb6\x81'
+b'z' -> binascii.Error Incomplete Base85 group
+    {'ignorechars': b' \n'} -> binascii.Error Incomplete Base85 group
+    {'canonical': True} -> binascii.Error Incomplete Base85 group
+    {'alphabet': b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'} -> binascii.Error Incomplete Base85 group
+    {'alphabet': b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'} -> binascii.Error bad Base85 character at position 0
+    {'ignorechars': b'",\xe9'} -> binascii.Error Incomplete Base85 group
+b'y' -> binascii.Error Incomplete Base85 group
+    {'ignorechars': b' \n'} -> binascii.Error Incomplete Base85 group
+    {'canonical': True} -> binascii.Error Incomplete Base85 group
+    {'alphabet': b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'} -> binascii.Error Incomplete Base85 group
+    {'alphabet': b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'} -> binascii.Error bad Base85 character at position 0
+    {'ignorechars': b'",\xe9'} -> binascii.Error Incomplete Base85 group
+builtins.TypeError a2b_ascii85() takes exactly 1 positional argument (0 given)
+builtins.TypeError argument should be bytes, buffer or ASCII string, not 'int'
+builtins.ValueError string argument should contain only ASCII characters
+builtins.TypeError a2b_ascii85() takes exactly 1 positional argument (2 given)
+builtins.TypeError a bytes-like object is required, not 'str'
+builtins.TypeError a2b_ascii85() got an unexpected keyword argument 'foo'
+builtins.TypeError a2b_ascii85() got an unexpected keyword argument 'alphabet'
+builtins.TypeError b2a_ascii85() takes exactly 1 positional argument (0 given)
+builtins.TypeError a bytes-like object is required, not 'str'
+builtins.TypeError b2a_ascii85() takes exactly 1 positional argument (2 given)
+builtins.ValueError Cannot convert negative int
+builtins.TypeError 'str' object cannot be interpreted as an integer
+builtins.TypeError b2a_ascii85() got an unexpected keyword argument 'foo'
+builtins.TypeError a2b_base85() takes exactly 1 positional argument (0 given)
+builtins.TypeError argument should be bytes, buffer or ASCII string, not 'int'
+builtins.ValueError alphabet must have length 85
+builtins.TypeError a2b_base85() argument 'alphabet' must be bytes, not str
+builtins.TypeError a2b_base85() argument 'alphabet' must be bytes, not bytearray
+builtins.TypeError a bytes-like object is required, not 'int'
+builtins.TypeError a2b_base85() takes exactly 1 positional argument (2 given)
+builtins.TypeError b2a_base85() takes exactly 1 positional argument (0 given)
+builtins.TypeError a bytes-like object is required, not 'str'
+builtins.ValueError alphabet must have length 85
+builtins.TypeError a bytes-like object is required, not 'str'
+builtins.ValueError Cannot convert negative int
+builtins.TypeError b2a_base85() takes exactly 1 positional argument (2 given)
+b'\x1f\x19$>6'
+51000 1398137015 True
+50600 37504409 True
+50200 527251002 True

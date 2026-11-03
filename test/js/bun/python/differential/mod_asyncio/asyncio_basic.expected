@@ -1,0 +1,28 @@
+status: 0
+script: 3dc7525e7046338d
+---
+2
+[2, 4, 6]
+True
+False
+10 True 10
+TimeoutError TimeoutError
+timeout()
+cancelled True
+[0, 1, 2]
+event True
+soon
+True
+[0, 1, 2, 3, 4]
+2 4
+group ['boom']
+[0, 2, 4] 0
+[2, 6]
+8
+_UnixSelectorEventLoop EpollSelector True True
+skip executor
+done
+42
+2 4
+14 False
+True

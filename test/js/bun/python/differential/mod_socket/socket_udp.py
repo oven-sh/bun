@@ -1,0 +1,48 @@
+import _socket as S, errno, time
+def t(f):
+    try: print(repr(f()))
+    except BaseException as x: print(type(x).__name__ + ':', x, getattr(x, 'errno', None))
+u = S.socket(S.AF_INET, S.SOCK_DGRAM); u.bind(('127.0.0.1', 0)); ua = u.getsockname()
+v = S.socket(S.AF_INET, S.SOCK_DGRAM); v.bind(('127.0.0.1', 0)); va = v.getsockname()
+print(v.sendto(b'one', ua), u.recvfrom(100) == (b'one', va))
+print(v.sendto(b'two', 0, ua), u.recv(100))
+print(v.sendto(b'', ua), u.recvfrom(100) == (b'', va))
+print(v.sendto(b'truncated', ua), u.recvfrom(4) == (b'trun', va))
+print(v.sendto(b'zero', ua), u.recvfrom(0) == (b'', va))
+buf = bytearray(8)
+print(v.sendto(b'into', ua), u.recvfrom_into(buf) == (4, va), buf)
+print(v.sendto(b'abcdef', ua), u.recvfrom_into(buf, 2) == (2, va), buf)
+print(v.sendto(b'kw', ua), u.recvfrom_into(buffer=buf, nbytes=0, flags=0) == (2, va), buf)
+print(v.sendto(b'msg', ua), u.recvmsg(100) == (b'msg', [], 0, va))
+print(v.sendto(b'truncmsg', ua), u.recvmsg(5) == (b'trunc', [], S.MSG_TRUNC, va))
+v.sendto(b"truncmsg", ua); t(lambda: u.recvmsg(5, 0, S.MSG_TRUNC)); v.sendto(b"truncmsg", ua); t(lambda: u.recv(5, S.MSG_TRUNC)); v.sendto(b"truncmsg", ua); t(lambda: u.recvfrom(5, S.MSG_TRUNC)); v.sendto(b"truncmsg", ua); t(lambda: u.recv_into(bytearray(5), 0, S.MSG_TRUNC)); v.sendto(b"truncmsg", ua); t(lambda: u.recvfrom_into(bytearray(5), 0, S.MSG_TRUNC)[0]); v.sendto(b"truncmsg", ua); t(lambda: u.recvmsg_into([bytearray(5)], 0, S.MSG_TRUNC)[:3])
+b1, b2 = bytearray(3), bytearray(3)
+print(v.sendto(b'abcde', ua), u.recvmsg_into([b1, b2]) == (5, [], 0, va), b1, b2)
+print(v.sendmsg([b'se', b'nd'], [], 0, ua), u.recvfrom(100) == (b'send', va))
+t(lambda: v.sendmsg([b'noaddr']))
+t(lambda: v.send(b'noaddr'))
+print(v.connect(ua), v.send(b'conn'), u.recv(10), v.getpeername() == ua, v.sendmsg([b'c2']), u.recv(10))
+print(u.sendto(b'back', va), v.recv(10))
+t(lambda: v.sendto(b'x' * 70000, ua))
+u.settimeout(0.05); t0 = time.monotonic(); t(lambda: u.recvfrom(1)); print(0.045 <= time.monotonic() - t0 < 3)
+u.setblocking(False); t(lambda: u.recvfrom(1)); t(lambda: u.recv(1)); t(lambda: u.recvmsg(1))
+u.setblocking(True); t(lambda: u.recv(1, S.MSG_DONTWAIT)); t(lambda: u.recvfrom(1, S.MSG_DONTWAIT)); t(lambda: u.recvmsg(1, 0, S.MSG_DONTWAIT))
+# nobody listens: the error comes back on the next call
+port = u.getsockname()[1]; u.close()
+print(v.send(b'gone')); t(lambda: v.recv(1)); 
+v.close()
+# control messages
+u = S.socket(S.AF_INET, S.SOCK_DGRAM); u.bind(('127.0.0.1', 0)); u.setsockopt(S.IPPROTO_IP, S.IP_RECVTTL, 1); u.setsockopt(S.IPPROTO_IP, S.IP_RECVTOS, 1)
+v = S.socket(S.AF_INET, S.SOCK_DGRAM); v.setsockopt(S.IPPROTO_IP, S.IP_TTL, 33)
+v.sendto(b'ttl', u.getsockname()); d, anc, fl, ad = u.recvmsg(10, 1024); print(d, sorted(anc), fl)
+import struct
+v.sendmsg([b'ttl2'], [(S.IPPROTO_IP, S.IP_TTL, struct.pack('i', 44))], 0, u.getsockname()); d, anc, fl, ad = u.recvmsg(10, 1024); print(d, sorted(anc), fl)
+v.sendmsg([b'two'], [(S.IPPROTO_IP, S.IP_TTL, struct.pack('i', 45)), (S.IPPROTO_IP, S.IP_TOS, struct.pack('i', 16))], 0, u.getsockname()); d, anc, fl, ad = u.recvmsg(10, 1024); print(d, sorted(anc), fl)
+import warnings
+with warnings.catch_warnings(record=True) as w:
+    warnings.simplefilter('always')
+    v.sendto(b'cut', u.getsockname()); d, anc, fl, ad = u.recvmsg(10, S.CMSG_LEN(4)); print(d, len(anc), fl & S.MSG_CTRUNC != 0, [str(x.message) for x in w])
+    v.sendto(b'cut', u.getsockname()); d, anc, fl, ad = u.recvmsg(10, S.CMSG_LEN(0) + 2); print(d, [(a, b, len(c)) for a, b, c in anc], fl & S.MSG_CTRUNC != 0, [(x.category.__name__, str(x.message)) for x in w])
+    v.sendto(b'cut', u.getsockname()); d, anc, fl, ad = u.recvmsg(10, 3); print(d, anc, fl & S.MSG_CTRUNC != 0, len(w))
+t(lambda: v.sendmsg([b'bad'], [(S.IPPROTO_IP, S.IP_TTL, b'x')], 0, u.getsockname()))
+u.close(); v.close()

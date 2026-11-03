@@ -1,0 +1,7 @@
+# Without re._compile_template().
+REPLS = []
+p = C(r'(x+)')
+del _FakeRe._compile_template
+attempt(p.sub, 'y', 'axb')
+attempt(p.sub, r'\1', 'axb')
+attempt(p.match('x').expand, 'y')

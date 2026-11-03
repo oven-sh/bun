@@ -1,0 +1,294 @@
+status: 0
+script: c5c0962d40aafcee
+---
+errno "This module makes available standard errno system symbols.\n\nThe value of each symbol is the corresponding integer value,\ne.g., on most systems, errno.ENOENT equals the integer 2.\n\nThe dictionary errno.errorcode maps numeric codes to symbol names,\ne.g., errno.errorcode[2] could be the string 'ENOENT'.\n\nSymbols that are not relevant to the underlying system are not defined.\n\nTo map error codes to error messages, use the function os.strerror(),\ne.g. os.strerror(2) could return 'No such file or directory'."
+135
+E2BIG int 7
+EACCES int 13
+EADDRINUSE int 98
+EADDRNOTAVAIL int 99
+EADV int 68
+EAFNOSUPPORT int 97
+EAGAIN int 11
+EALREADY int 114
+EBADE int 52
+EBADF int 9
+EBADFD int 77
+EBADMSG int 74
+EBADR int 53
+EBADRQC int 56
+EBADSLT int 57
+EBFONT int 59
+EBUSY int 16
+ECANCELED int 125
+ECHILD int 10
+ECHRNG int 44
+ECOMM int 70
+ECONNABORTED int 103
+ECONNREFUSED int 111
+ECONNRESET int 104
+EDEADLK int 35
+EDEADLOCK int 35
+EDESTADDRREQ int 89
+EDOM int 33
+EDOTDOT int 73
+EDQUOT int 122
+EEXIST int 17
+EFAULT int 14
+EFBIG int 27
+EHOSTDOWN int 112
+EHOSTUNREACH int 113
+EHWPOISON int 133
+EIDRM int 43
+EILSEQ int 84
+EINPROGRESS int 115
+EINTR int 4
+EINVAL int 22
+EIO int 5
+EISCONN int 106
+EISDIR int 21
+EISNAM int 120
+EKEYEXPIRED int 127
+EKEYREJECTED int 129
+EKEYREVOKED int 128
+EL2HLT int 51
+EL2NSYNC int 45
+EL3HLT int 46
+EL3RST int 47
+ELIBACC int 79
+ELIBBAD int 80
+ELIBEXEC int 83
+ELIBMAX int 82
+ELIBSCN int 81
+ELNRNG int 48
+ELOOP int 40
+EMEDIUMTYPE int 124
+EMFILE int 24
+EMLINK int 31
+EMSGSIZE int 90
+EMULTIHOP int 72
+ENAMETOOLONG int 36
+ENAVAIL int 119
+ENETDOWN int 100
+ENETRESET int 102
+ENETUNREACH int 101
+ENFILE int 23
+ENOANO int 55
+ENOBUFS int 105
+ENOCSI int 50
+ENODATA int 61
+ENODEV int 19
+ENOENT int 2
+ENOEXEC int 8
+ENOKEY int 126
+ENOLCK int 37
+ENOLINK int 67
+ENOMEDIUM int 123
+ENOMEM int 12
+ENOMSG int 42
+ENONET int 64
+ENOPKG int 65
+ENOPROTOOPT int 92
+ENOSPC int 28
+ENOSR int 63
+ENOSTR int 60
+ENOSYS int 38
+ENOTBLK int 15
+ENOTCONN int 107
+ENOTDIR int 20
+ENOTEMPTY int 39
+ENOTNAM int 118
+ENOTRECOVERABLE int 131
+ENOTSOCK int 88
+ENOTSUP int 95
+ENOTTY int 25
+ENOTUNIQ int 76
+ENXIO int 6
+EOPNOTSUPP int 95
+EOVERFLOW int 75
+EOWNERDEAD int 130
+EPERM int 1
+EPFNOSUPPORT int 96
+EPIPE int 32
+EPROTO int 71
+EPROTONOSUPPORT int 93
+EPROTOTYPE int 91
+ERANGE int 34
+EREMCHG int 78
+EREMOTE int 66
+EREMOTEIO int 121
+ERESTART int 85
+ERFKILL int 132
+EROFS int 30
+ESHUTDOWN int 108
+ESOCKTNOSUPPORT int 94
+ESPIPE int 29
+ESRCH int 3
+ESRMNT int 69
+ESTALE int 116
+ESTRPIPE int 86
+ETIME int 62
+ETIMEDOUT int 110
+ETOOMANYREFS int 109
+ETXTBSY int 26
+EUCLEAN int 117
+EUNATCH int 49
+EUSERS int 87
+EWOULDBLOCK int 11
+EXDEV int 18
+EXFULL int 54
+errorcode dict 131
+dict 131
+19 ENODEV int str True
+50 ENOCSI int str True
+113 EHOSTUNREACH int str True
+42 ENOMSG int str True
+117 EUCLEAN int str True
+45 EL2NSYNC int str True
+51 EL2HLT int str True
+61 ENODATA int str True
+15 ENOTBLK int str True
+38 ENOSYS int str True
+32 EPIPE int str True
+22 EINVAL int str True
+75 EOVERFLOW int str True
+68 EADV int str True
+4 EINTR int str True
+87 EUSERS int str True
+39 ENOTEMPTY int str True
+105 ENOBUFS int str True
+71 EPROTO int str True
+66 EREMOTE int str True
+119 ENAVAIL int str True
+10 ECHILD int str True
+40 ELOOP int str True
+18 EXDEV int str True
+7 E2BIG int str True
+3 ESRCH int str True
+90 EMSGSIZE int str True
+97 EAFNOSUPPORT int str True
+53 EBADR int str True
+112 EHOSTDOWN int str True
+96 EPFNOSUPPORT int str True
+92 ENOPROTOOPT int str True
+16 EBUSY int str True
+11 EAGAIN int str True
+77 EBADFD int str True
+73 EDOTDOT int str True
+106 EISCONN int str True
+55 ENOANO int str True
+108 ESHUTDOWN int str True
+44 ECHRNG int str True
+80 ELIBBAD int str True
+64 ENONET int str True
+52 EBADE int str True
+9 EBADF int str True
+72 EMULTIHOP int str True
+5 EIO int str True
+49 EUNATCH int str True
+91 EPROTOTYPE int str True
+28 ENOSPC int str True
+8 ENOEXEC int str True
+114 EALREADY int str True
+100 ENETDOWN int str True
+118 ENOTNAM int str True
+13 EACCES int str True
+48 ELNRNG int str True
+84 EILSEQ int str True
+20 ENOTDIR int str True
+76 ENOTUNIQ int str True
+1 EPERM int str True
+33 EDOM int str True
+54 EXFULL int str True
+111 ECONNREFUSED int str True
+21 EISDIR int str True
+93 EPROTONOSUPPORT int str True
+30 EROFS int str True
+99 EADDRNOTAVAIL int str True
+43 EIDRM int str True
+70 ECOMM int str True
+69 ESRMNT int str True
+121 EREMOTEIO int str True
+47 EL3RST int str True
+74 EBADMSG int str True
+23 ENFILE int str True
+82 ELIBMAX int str True
+29 ESPIPE int str True
+67 ENOLINK int str True
+102 ENETRESET int str True
+110 ETIMEDOUT int str True
+2 ENOENT int str True
+17 EEXIST int str True
+122 EDQUOT int str True
+60 ENOSTR int str True
+57 EBADSLT int str True
+56 EBADRQC int str True
+79 ELIBACC int str True
+14 EFAULT int str True
+27 EFBIG int str True
+35 EDEADLOCK int str True
+107 ENOTCONN int str True
+89 EDESTADDRREQ int str True
+81 ELIBSCN int str True
+37 ENOLCK int str True
+120 EISNAM int str True
+103 ECONNABORTED int str True
+101 ENETUNREACH int str True
+116 ESTALE int str True
+63 ENOSR int str True
+12 ENOMEM int str True
+88 ENOTSOCK int str True
+86 ESTRPIPE int str True
+31 EMLINK int str True
+34 ERANGE int str True
+83 ELIBEXEC int str True
+46 EL3HLT int str True
+104 ECONNRESET int str True
+98 EADDRINUSE int str True
+95 ENOTSUP int str True
+78 EREMCHG int str True
+36 ENAMETOOLONG int str True
+25 ENOTTY int str True
+85 ERESTART int str True
+94 ESOCKTNOSUPPORT int str True
+62 ETIME int str True
+59 EBFONT int str True
+109 ETOOMANYREFS int str True
+24 EMFILE int str True
+26 ETXTBSY int str True
+115 EINPROGRESS int str True
+6 ENXIO int str True
+65 ENOPKG int str True
+123 ENOMEDIUM int str True
+124 EMEDIUMTYPE int str True
+125 ECANCELED int str True
+126 ENOKEY int str True
+133 EHWPOISON int str True
+127 EKEYEXPIRED int str True
+128 EKEYREVOKED int str True
+129 EKEYREJECTED int str True
+130 EOWNERDEAD int str True
+131 ENOTRECOVERABLE int str True
+132 ERFKILL int str True
+True EAGAIN True EDEADLOCK True ENOTSUP
+AttributeError module 'errno' has no attribute 'ENOSUCHERROR'
+2 FileNotFoundError
+13 PermissionError
+17 FileExistsError
+32 BrokenPipeError
+4 InterruptedError
+10 ChildProcessError
+3 ProcessLookupError
+110 TimeoutError
+104 ConnectionResetError
+21 IsADirectoryError
+20 NotADirectoryError
+11 BlockingIOError
+1 PermissionError
+22 OSError
+111 ConnectionRefusedError
+103 ConnectionAbortedError
+115 BlockingIOError
+114 BlockingIOError
+108 BrokenPipeError
+0 OSError

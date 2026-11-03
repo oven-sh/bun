@@ -1,0 +1,81 @@
+status: 0
+script: fd9844b5ed637f9e
+---
+[0, 2, 41, 107, 19, 75, 75, 585, 314, 422, 82, 192, 197, 459, 167, 734, 756, 573, 456, 562, 551, 178, 109, 430, 327, 807, 756, 645, 571, 928, 354, 793, 753, 846, 783, 789, 775, 780, 527, 941, 929, 606, 676, 310, 244, 304, 712, 953, 710, 924]
+[0, 2, 19, 41, 75, 75, 82, 107, 109, 167, 178, 192, 197, 244, 304, 310, 314, 327, 354, 422, 430, 456, 459, 527, 551, 562, 571, 573, 585, 606, 645, 676, 710, 712, 734, 753, 756, 756, 775, 780, 783, 789, 793, 807, 846, 924, 928, 929, 941, 953] []
+[54, 81, 227, 86, 112, 453, 262, 87, 205, 116, 333, 521, 880, 465, 489, 319, 538, 259, 569, 227, 717, 640, 450, 767, 660, 938, 906, 467, 720, 646, 726, 327, 596, 853, 700, 571, 768, 796, 906, 671]
+54 [81, 86, 227, 87, 112, 453, 262, 319]
+0 81 [86, 87, 227, 205, 112, 453, 262, 319]
+5
+[982, 958, 842, 919, 841, 615, 805, 910, 551, 791, 696, 201, 611, 600, 763, 881, 804, 434, 499, 725, 674, 187, 380, 29, 198, 570, 572, 556, 3, 80, 584, 761, 38, 215, 73, 117, 285, 308, 80, 146]
+982 [958, 919, 842, 910, 841, 615, 805, 881]
+5000 958 [919, 910, 842, 881, 841, 615, 805, 804]
+[989, 928, 980, 865, 879, 936, 941, 702, 819, 636, 869, 623, 278, 439, 828, 107, 161, 72, 454, 495, 569, 238, 66, 432, 603, 129, 204, 290, 389, 74]
+[989, 980, 941, 936, 928, 879, 869, 865, 828, 819, 702, 636, 623, 603, 569, 495, 454, 439, 432, 389, 290, 278, 238, 204, 161, 129, 107, 74, 72, 66]
+[0, 0, 0, 0, 0, 1, 1, 0, 4, 1, 1, 1, 4, 3, 2, 2, 1, 6, 7, 3] [0, 0, 0, 0, 0, 0, 1, 1, 1, 1]
+[999, 999, 999, 999, 999, 999, 997, 999, 997, 999, 998, 997, 997, 992, 997, 993, 999, 997, 992, 999] [999, 999, 999, 999, 999, 999, 999, 999, 999, 999]
+IndexError index out of range
+IndexError index out of range
+IndexError index out of range
+IndexError index out of range
+TypeError heappush() argument 1 must be list, not tuple
+TypeError heappush() argument 1 must be list, not None
+TypeError heappush expected 2 arguments, got 1
+TypeError heappush expected 2 arguments, got 3
+TypeError heappushpop() argument 1 must be list, not tuple
+TypeError heappushpop() argument 1 must be list, not None
+TypeError heappushpop expected 2 arguments, got 1
+TypeError heappushpop expected 2 arguments, got 3
+TypeError heapreplace() argument 1 must be list, not tuple
+TypeError heapreplace() argument 1 must be list, not None
+TypeError heapreplace expected 2 arguments, got 1
+TypeError heapreplace expected 2 arguments, got 3
+TypeError heappush_max() argument 1 must be list, not tuple
+TypeError heappush_max() argument 1 must be list, not None
+TypeError heappush_max expected 2 arguments, got 1
+TypeError heappush_max expected 2 arguments, got 3
+TypeError heappushpop_max() argument 1 must be list, not tuple
+TypeError heappushpop_max() argument 1 must be list, not None
+TypeError heappushpop_max expected 2 arguments, got 1
+TypeError heappushpop_max expected 2 arguments, got 3
+TypeError heapreplace_max() argument 1 must be list, not tuple
+TypeError heapreplace_max() argument 1 must be list, not None
+TypeError heapreplace_max expected 2 arguments, got 1
+TypeError heapreplace_max expected 2 arguments, got 3
+TypeError heappop() argument must be list, not tuple
+TypeError heappop() argument must be list, not None
+TypeError _heapq.heappop() takes exactly one argument (0 given)
+TypeError _heapq.heappop() takes exactly one argument (2 given)
+TypeError heapify() argument must be list, not tuple
+TypeError heapify() argument must be list, not None
+TypeError _heapq.heapify() takes exactly one argument (0 given)
+TypeError _heapq.heapify() takes exactly one argument (2 given)
+TypeError heappop_max() argument must be list, not tuple
+TypeError heappop_max() argument must be list, not None
+TypeError _heapq.heappop_max() takes exactly one argument (0 given)
+TypeError _heapq.heappop_max() takes exactly one argument (2 given)
+TypeError heapify_max() argument must be list, not tuple
+TypeError heapify_max() argument must be list, not None
+TypeError _heapq.heapify_max() takes exactly one argument (0 given)
+TypeError _heapq.heapify_max() takes exactly one argument (2 given)
+TypeError _heapq.heappush() takes no keyword arguments
+TypeError '<' not supported between instances of 'str' and 'int'
+TypeError '<' not supported between instances of 'int' and 'str'
+TypeError '<' not supported between instances of 'int' and 'str'
+[1, 3, 2] L
+[1, 3, 2] 0
+RuntimeError list changed size during iteration
+RuntimeError list changed size during iteration
+RuntimeError list changed size during iteration
+IndexError index out of range
+RuntimeError list changed size during iteration
+[C1, C3, C2, C5, C9, C8] [(8, 2), (1, 9), (3, 1), (1, 2), (3, 9), (5, 3)]
+[C0, C3, C1, C5, C9, C8, C2] [(0, 2), (0, 1)]
+C0 [C1, C3, C2, C5, C9, C8] [(3, 1), (2, 8), (2, 1)]
+[C9, C5, C8, C1, C3, C2] [(2, 8), (9, 1), (9, 3), (8, 9), (3, 1), (3, 5), (9, 5)]
+[C10, C5, C9, C1, C3, C2, C8] [(8, 10), (9, 10)]
+C10 [C9, C5, C8, C1, C3, C2] [(9, 5), (2, 8), (9, 8)]
+C9 [C8, C5, C4, C1, C3, C2] [(4, 9), (8, 5), (2, 4), (8, 4)]
+C4 [(8, 4)]
+['heapify', 'heapify_max', 'heappop', 'heappop_max', 'heappush', 'heappush_max', 'heappushpop', 'heappushpop_max', 'heapreplace', 'heapreplace_max']
+[(1, 'a'), (1, 'z'), (2, 'b'), (3, 'c')]

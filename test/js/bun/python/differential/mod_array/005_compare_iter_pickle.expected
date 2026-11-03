@@ -1,0 +1,293 @@
+status: 0
+script: d8757a38124ed393
+---
+[(True, False, False, True, False, True), (False, True, True, True, False, False), (False, True, True, True, False, False), (False, True, True, True, False, False), (False, True, True, True, False, False), (False, True, True, True, False, False), (False, True, True, True, False, False), (False, True, True, True, False, False), (False, True, True, True, False, False), (False, True, True, True, False, False)]
+[(False, True, False, False, True, True), (True, False, False, True, False, True), (False, True, True, True, False, False), (False, True, True, True, False, False), (False, True, True, True, False, False), (False, True, True, True, False, False), (False, True, True, True, False, False), (False, True, True, True, False, False), (False, True, True, True, False, False), (False, True, True, True, False, False)]
+[(False, True, False, False, True, True), (False, True, False, False, True, True), (True, False, False, True, False, True), (False, True, True, True, False, False), (False, True, True, True, False, False), (True, False, False, True, False, True), (True, False, False, True, False, True), (False, True, True, True, False, False), (True, False, False, True, False, True), (False, True, True, True, False, False)]
+[(False, True, False, False, True, True), (False, True, False, False, True, True), (False, True, False, False, True, True), (True, False, False, True, False, True), (False, True, True, True, False, False), (False, True, False, False, True, True), (False, True, False, False, True, True), (False, True, True, True, False, False), (False, True, False, False, True, True), (False, True, True, True, False, False)]
+[(False, True, False, False, True, True), (False, True, False, False, True, True), (False, True, False, False, True, True), (False, True, False, False, True, True), (True, False, False, True, False, True), (False, True, False, False, True, True), (False, True, False, False, True, True), (False, True, False, False, True, True), (False, True, False, False, True, True), (False, True, True, True, False, False)]
+[(False, True, False, False, True, True), (False, True, False, False, True, True), (True, False, False, True, False, True), (False, True, True, True, False, False), (False, True, True, True, False, False), (True, False, False, True, False, True), (True, False, False, True, False, True), (False, True, True, True, False, False), (True, False, False, True, False, True), (False, True, True, True, False, False)]
+[(False, True, False, False, True, True), (False, True, False, False, True, True), (True, False, False, True, False, True), (False, True, True, True, False, False), (False, True, True, True, False, False), (True, False, False, True, False, True), (True, False, False, True, False, True), (False, True, True, True, False, False), (True, False, False, True, False, True), (False, True, True, True, False, False)]
+[(False, True, False, False, True, True), (False, True, False, False, True, True), (False, True, False, False, True, True), (False, True, False, False, True, True), (False, True, True, True, False, False), (False, True, False, False, True, True), (False, True, False, False, True, True), (True, False, False, True, False, True), (False, True, False, False, True, True), (False, True, True, True, False, False)]
+[(False, True, False, False, True, True), (False, True, False, False, True, True), (True, False, False, True, False, True), (False, True, True, True, False, False), (False, True, True, True, False, False), (True, False, False, True, False, True), (True, False, False, True, False, True), (False, True, True, True, False, False), (True, False, False, True, False, True), (False, True, True, True, False, False)]
+[(False, True, False, False, True, True), (False, True, False, False, True, True), (False, True, False, False, True, True), (False, True, False, False, True, True), (False, True, False, False, True, True), (False, True, False, False, True, True), (False, True, False, False, True, True), (False, True, False, False, True, True), (False, True, False, False, True, True), (True, False, False, True, False, True)]
+False True False NotImplemented NotImplemented NotImplemented False
+TypeError
+TypeError
+True True True True True
+False
+True
+TypeError '<' not supported between instances of 'str' and 'int'
+False
+True
+True False True False True True
+TypeError '<' not supported between instances of 'complex' and 'complex'
+TypeError '>=' not supported between instances of 'complex' and 'float'
+True True True True False True True True
+True True True
+arrayiterator array True 1 ((array('i', [1, 2, 3]),), 1) True
+[2, 3, 4]
+StopIteration 
+StopIteration 
+(((),),)
+[4, 5]
+1
+5 []
+[]
+TypeError an integer is required
+TypeError an integer is required
+OverflowError Python int too large to convert to C ssize_t
+TypeError arrayiterator.__setstate__() takes exactly one argument (0 given)
+2
+[]
+TypeError
+['__iter__', '__next__', '__reduce__', '__setstate__']
+[3, 2, 1] [1, 2, 3] 6 2.5 ['1', '2'] ('a', 'b') [1, 2] {1: None, 2: None} xyz [(1, 'a'), (2, 'b')] 1000 [(0, 5)]
+1 2
+0 array ('i', [1, -2]) None True i
+0 array ('w', ['a', '€']) None True w
+0 array ('d', [1.5]) None True d
+0 array ('Zf', [1j]) None True Zf
+0 array ('e', [0.5]) None True e
+0 array ('b', []) None True b
+0 array ('Q', [18446744073709551615]) None True Q
+1 array ('i', [1, -2]) None True i
+1 array ('w', ['a', '€']) None True w
+1 array ('d', [1.5]) None True d
+1 array ('Zf', [1j]) None True Zf
+1 array ('e', [0.5]) None True e
+1 array ('b', []) None True b
+1 array ('Q', [18446744073709551615]) None True Q
+2 array ('i', [1, -2]) None True i
+2 array ('w', ['a', '€']) None True w
+2 array ('d', [1.5]) None True d
+2 array ('Zf', [1j]) None True Zf
+2 array ('e', [0.5]) None True e
+2 array ('b', []) None True b
+2 array ('Q', [18446744073709551615]) None True Q
+3 _array_reconstructor ('i', 8, b'\x01\x00\x00\x00\xfe\xff\xff\xff') None True i
+3 _array_reconstructor ('w', 20, b'a\x00\x00\x00\xac \x00\x00') None True w
+3 _array_reconstructor ('d', 16, b'\x00\x00\x00\x00\x00\x00\xf8?') None True d
+3 _array_reconstructor ('Zf', 22, b'\x00\x00\x00\x00\x00\x00\x80?') None True Zf
+3 _array_reconstructor ('e', 26, b'\x008') None True e
+3 _array_reconstructor ('b', 1, b'') None True b
+3 _array_reconstructor ('Q', 10, b'\xff\xff\xff\xff\xff\xff\xff\xff') None True Q
+4 _array_reconstructor ('i', 8, b'\x01\x00\x00\x00\xfe\xff\xff\xff') None True i
+4 _array_reconstructor ('w', 20, b'a\x00\x00\x00\xac \x00\x00') None True w
+4 _array_reconstructor ('d', 16, b'\x00\x00\x00\x00\x00\x00\xf8?') None True d
+4 _array_reconstructor ('Zf', 22, b'\x00\x00\x00\x00\x00\x00\x80?') None True Zf
+4 _array_reconstructor ('e', 26, b'\x008') None True e
+4 _array_reconstructor ('b', 1, b'') None True b
+4 _array_reconstructor ('Q', 10, b'\xff\xff\xff\xff\xff\xff\xff\xff') None True Q
+5 _array_reconstructor ('i', 8, b'\x01\x00\x00\x00\xfe\xff\xff\xff') None True i
+5 _array_reconstructor ('w', 20, b'a\x00\x00\x00\xac \x00\x00') None True w
+5 _array_reconstructor ('d', 16, b'\x00\x00\x00\x00\x00\x00\xf8?') None True d
+5 _array_reconstructor ('Zf', 22, b'\x00\x00\x00\x00\x00\x00\x80?') None True Zf
+5 _array_reconstructor ('e', 26, b'\x008') None True e
+5 _array_reconstructor ('b', 1, b'') None True b
+5 _array_reconstructor ('Q', 10, b'\xff\xff\xff\xff\xff\xff\xff\xff') None True Q
+_array_reconstructor True {'x': 1} S
+True ('i', [1]) {'x': 1}
+TypeError __reduce_ex__ argument should be an integer
+OverflowError Python int too large to convert to C long
+TypeError __reduce_ex__() takes exactly 1 positional argument (0 given)
+TypeError __reduce_ex__ argument should be an integer
+True
+TypeError first argument must be a type object, not int
+TypeError int is not a subtype of array.array
+ValueError second argument must be a valid type code
+ValueError third argument must be a valid machine format code.
+ValueError third argument must be a valid machine format code.
+ValueError third argument must be a valid machine format code.
+TypeError fourth argument should be bytes, not str
+TypeError fourth argument should be bytes, not bytearray
+ValueError string length not a multiple of item size
+TypeError _array_reconstructor() argument 2 must be str, not int
+TypeError 'str' object cannot be interpreted as an integer
+TypeError _array_reconstructor expected 4 arguments, got 3
+OverflowError Python int too large to convert to C int
+ValueError embedded null character
+TypeError _array_reconstructor() argument 2 must be str, not None
+ValueError bytes length not a multiple of item size
+TypeError array._array_reconstructor() takes no keyword arguments
+0 b array('B', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
+0 i array('B', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
+0 q array('B', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
+0 d array('B', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
+0 w array('B', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
+0 Zd array('B', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
+1 b array('b', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
+1 i array('b', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
+1 q array('b', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
+1 d array('b', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
+1 w array('b', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
+1 Zd array('b', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
+2 b array('H', [513, 1027, 1541, 2055, 2569, 3083, 3597, 4111])
+2 i array('H', [513, 1027, 1541, 2055, 2569, 3083, 3597, 4111])
+2 q array('H', [513, 1027, 1541, 2055, 2569, 3083, 3597, 4111])
+2 d array('H', [513, 1027, 1541, 2055, 2569, 3083, 3597, 4111])
+2 w array('H', [513, 1027, 1541, 2055, 2569, 3083, 3597, 4111])
+2 Zd array('H', [513, 1027, 1541, 2055, 2569, 3083, 3597, 4111])
+3 b array('H', [258, 772, 1286, 1800, 2314, 2828, 3342, 3856])
+3 i array('H', [258, 772, 1286, 1800, 2314, 2828, 3342, 3856])
+3 q array('H', [258, 772, 1286, 1800, 2314, 2828, 3342, 3856])
+3 d array('H', [258, 772, 1286, 1800, 2314, 2828, 3342, 3856])
+3 w array('H', [258, 772, 1286, 1800, 2314, 2828, 3342, 3856])
+3 Zd array('H', [258, 772, 1286, 1800, 2314, 2828, 3342, 3856])
+4 b array('h', [513, 1027, 1541, 2055, 2569, 3083, 3597, 4111])
+4 i array('h', [513, 1027, 1541, 2055, 2569, 3083, 3597, 4111])
+4 q array('h', [513, 1027, 1541, 2055, 2569, 3083, 3597, 4111])
+4 d array('h', [513, 1027, 1541, 2055, 2569, 3083, 3597, 4111])
+4 w array('h', [513, 1027, 1541, 2055, 2569, 3083, 3597, 4111])
+4 Zd array('h', [513, 1027, 1541, 2055, 2569, 3083, 3597, 4111])
+5 b array('h', [258, 772, 1286, 1800, 2314, 2828, 3342, 3856])
+5 i array('h', [258, 772, 1286, 1800, 2314, 2828, 3342, 3856])
+5 q array('h', [258, 772, 1286, 1800, 2314, 2828, 3342, 3856])
+5 d array('h', [258, 772, 1286, 1800, 2314, 2828, 3342, 3856])
+5 w array('h', [258, 772, 1286, 1800, 2314, 2828, 3342, 3856])
+5 Zd array('h', [258, 772, 1286, 1800, 2314, 2828, 3342, 3856])
+6 b array('I', [67305985, 134678021, 202050057, 269422093])
+6 i array('I', [67305985, 134678021, 202050057, 269422093])
+6 q array('I', [67305985, 134678021, 202050057, 269422093])
+6 d array('I', [67305985, 134678021, 202050057, 269422093])
+6 w array('I', [67305985, 134678021, 202050057, 269422093])
+6 Zd array('I', [67305985, 134678021, 202050057, 269422093])
+7 b array('I', [16909060, 84281096, 151653132, 219025168])
+7 i array('I', [16909060, 84281096, 151653132, 219025168])
+7 q array('I', [16909060, 84281096, 151653132, 219025168])
+7 d array('I', [16909060, 84281096, 151653132, 219025168])
+7 w array('I', [16909060, 84281096, 151653132, 219025168])
+7 Zd array('I', [16909060, 84281096, 151653132, 219025168])
+8 b array('i', [67305985, 134678021, 202050057, 269422093])
+8 i array('i', [67305985, 134678021, 202050057, 269422093])
+8 q array('i', [67305985, 134678021, 202050057, 269422093])
+8 d array('i', [67305985, 134678021, 202050057, 269422093])
+8 w array('i', [67305985, 134678021, 202050057, 269422093])
+8 Zd array('i', [67305985, 134678021, 202050057, 269422093])
+9 b array('i', [16909060, 84281096, 151653132, 219025168])
+9 i array('i', [16909060, 84281096, 151653132, 219025168])
+9 q array('i', [16909060, 84281096, 151653132, 219025168])
+9 d array('i', [16909060, 84281096, 151653132, 219025168])
+9 w array('i', [16909060, 84281096, 151653132, 219025168])
+9 Zd array('i', [16909060, 84281096, 151653132, 219025168])
+10 b array('Q', [578437695752307201, 1157159078456920585])
+10 i array('Q', [578437695752307201, 1157159078456920585])
+10 q array('Q', [578437695752307201, 1157159078456920585])
+10 d array('Q', [578437695752307201, 1157159078456920585])
+10 w array('Q', [578437695752307201, 1157159078456920585])
+10 Zd array('Q', [578437695752307201, 1157159078456920585])
+11 b array('Q', [72623859790382856, 651345242494996240])
+11 i array('Q', [72623859790382856, 651345242494996240])
+11 q array('Q', [72623859790382856, 651345242494996240])
+11 d array('Q', [72623859790382856, 651345242494996240])
+11 w array('Q', [72623859790382856, 651345242494996240])
+11 Zd array('Q', [72623859790382856, 651345242494996240])
+12 b array('q', [578437695752307201, 1157159078456920585])
+12 i array('q', [578437695752307201, 1157159078456920585])
+12 q array('q', [578437695752307201, 1157159078456920585])
+12 d array('q', [578437695752307201, 1157159078456920585])
+12 w array('q', [578437695752307201, 1157159078456920585])
+12 Zd array('q', [578437695752307201, 1157159078456920585])
+13 b array('q', [72623859790382856, 651345242494996240])
+13 i array('q', [72623859790382856, 651345242494996240])
+13 q array('q', [72623859790382856, 651345242494996240])
+13 d array('q', [72623859790382856, 651345242494996240])
+13 w array('q', [72623859790382856, 651345242494996240])
+13 Zd array('q', [72623859790382856, 651345242494996240])
+14 b TypeError 'float' object cannot be interpreted as an integer
+14 i TypeError 'float' object cannot be interpreted as an integer
+14 q TypeError 'float' object cannot be interpreted as an integer
+14 d array('d', [1.539989614439558e-36, 4.063216068939723e-34, 1.0711190335780294e-31, 2.8212601689791736e-29])
+14 w TypeError array item must be a unicode character, not float
+14 Zd array('Zd', [(1.539989614439558e-36+0j), (4.063216068939723e-34+0j), (1.0711190335780294e-31+0j), (2.8212601689791736e-29+0j)])
+15 b TypeError 'float' object cannot be interpreted as an integer
+15 i TypeError 'float' object cannot be interpreted as an integer
+15 q TypeError 'float' object cannot be interpreted as an integer
+15 d array('d', [2.387939260590663e-38, 6.301941157072183e-36, 1.6616339986002605e-33, 4.377525916134508e-31])
+15 w TypeError array item must be a unicode character, not float
+15 Zd array('Zd', [(2.387939260590663e-38+0j), (6.301941157072183e-36+0j), (1.6616339986002605e-33+0j), (4.377525916134508e-31+0j)])
+16 b TypeError 'float' object cannot be interpreted as an integer
+16 i TypeError 'float' object cannot be interpreted as an integer
+16 q TypeError 'float' object cannot be interpreted as an integer
+16 d array('d', [5.447603722011605e-270, 2.500364306227096e-231])
+16 w TypeError array item must be a unicode character, not float
+16 Zd array('Zd', [(5.447603722011605e-270+0j), (2.500364306227096e-231+0j)])
+17 b TypeError 'float' object cannot be interpreted as an integer
+17 i TypeError 'float' object cannot be interpreted as an integer
+17 q TypeError 'float' object cannot be interpreted as an integer
+17 d array('d', [8.20788039913184e-304, 4.0383818836028145e-265])
+17 w TypeError array item must be a unicode character, not float
+17 Zd array('Zd', [(8.20788039913184e-304+0j), (4.0383818836028145e-265+0j)])
+18 b TypeError cannot use a str to initialize an array with typecode 'b'
+18 i TypeError cannot use a str to initialize an array with typecode 'i'
+18 q TypeError cannot use a str to initialize an array with typecode 'q'
+18 d TypeError cannot use a str to initialize an array with typecode 'd'
+18 w array('w', 'ȁЃ\u0605ࠇਉఋญဏ')
+18 Zd TypeError cannot use a str to initialize an array with typecode 'Zd'
+19 b TypeError cannot use a str to initialize an array with typecode 'b'
+19 i TypeError cannot use a str to initialize an array with typecode 'i'
+19 q TypeError cannot use a str to initialize an array with typecode 'q'
+19 d TypeError cannot use a str to initialize an array with typecode 'd'
+19 w array('w', 'Ă̄Ԇ܈ऊଌഎ༐')
+19 Zd TypeError cannot use a str to initialize an array with typecode 'Zd'
+20 b UnicodeDecodeError 'utf-32-le' codec can't decode bytes in position 0-3: code point not in range(0x110000)
+20 i UnicodeDecodeError 'utf-32-le' codec can't decode bytes in position 0-3: code point not in range(0x110000)
+20 q UnicodeDecodeError 'utf-32-le' codec can't decode bytes in position 0-3: code point not in range(0x110000)
+20 d UnicodeDecodeError 'utf-32-le' codec can't decode bytes in position 0-3: code point not in range(0x110000)
+20 w UnicodeDecodeError 'utf-32-le' codec can't decode bytes in position 0-3: code point not in range(0x110000)
+20 Zd UnicodeDecodeError 'utf-32-le' codec can't decode bytes in position 0-3: code point not in range(0x110000)
+21 b UnicodeDecodeError 'utf-32-be' codec can't decode bytes in position 0-3: code point not in range(0x110000)
+21 i UnicodeDecodeError 'utf-32-be' codec can't decode bytes in position 0-3: code point not in range(0x110000)
+21 q UnicodeDecodeError 'utf-32-be' codec can't decode bytes in position 0-3: code point not in range(0x110000)
+21 d UnicodeDecodeError 'utf-32-be' codec can't decode bytes in position 0-3: code point not in range(0x110000)
+21 w UnicodeDecodeError 'utf-32-be' codec can't decode bytes in position 0-3: code point not in range(0x110000)
+21 Zd UnicodeDecodeError 'utf-32-be' codec can't decode bytes in position 0-3: code point not in range(0x110000)
+22 b TypeError 'complex' object cannot be interpreted as an integer
+22 i TypeError 'complex' object cannot be interpreted as an integer
+22 q TypeError 'complex' object cannot be interpreted as an integer
+22 d TypeError must be real number, not complex
+22 w TypeError array item must be a unicode character, not complex
+22 Zd array('Zd', [(1.539989614439558e-36+4.063216068939723e-34j), (1.0711190335780294e-31+2.8212601689791736e-29j)])
+23 b TypeError 'complex' object cannot be interpreted as an integer
+23 i TypeError 'complex' object cannot be interpreted as an integer
+23 q TypeError 'complex' object cannot be interpreted as an integer
+23 d TypeError must be real number, not complex
+23 w TypeError array item must be a unicode character, not complex
+23 Zd array('Zd', [(2.387939260590663e-38+6.301941157072183e-36j), (1.6616339986002605e-33+4.377525916134508e-31j)])
+24 b TypeError 'complex' object cannot be interpreted as an integer
+24 i TypeError 'complex' object cannot be interpreted as an integer
+24 q TypeError 'complex' object cannot be interpreted as an integer
+24 d TypeError must be real number, not complex
+24 w TypeError array item must be a unicode character, not complex
+24 Zd array('Zd', [(5.447603722011605e-270+2.500364306227096e-231j)])
+25 b TypeError 'complex' object cannot be interpreted as an integer
+25 i TypeError 'complex' object cannot be interpreted as an integer
+25 q TypeError 'complex' object cannot be interpreted as an integer
+25 d TypeError must be real number, not complex
+25 w TypeError array item must be a unicode character, not complex
+25 Zd array('Zd', [(8.20788039913184e-304+4.0383818836028145e-265j)])
+26 b TypeError 'float' object cannot be interpreted as an integer
+26 i TypeError 'float' object cannot be interpreted as an integer
+26 q TypeError 'float' object cannot be interpreted as an integer
+26 d array('d', [3.057718276977539e-05, 6.121397018432617e-05, 9.185075759887695e-05, 0.00012290477752685547, 0.00018417835235595703, 0.0002467632293701172, 0.0003693103790283203, 0.0004954338073730469])
+26 w TypeError array item must be a unicode character, not float
+26 Zd array('Zd', [(3.057718276977539e-05+0j), (6.121397018432617e-05+0j), (9.185075759887695e-05+0j), (0.00012290477752685547+0j), (0.00018417835235595703+0j), (0.0002467632293701172+0j), (0.0003693103790283203+0j), (0.0004954338073730469+0j)])
+27 b TypeError 'float' object cannot be interpreted as an integer
+27 i TypeError 'float' object cannot be interpreted as an integer
+27 q TypeError 'float' object cannot be interpreted as an integer
+27 d array('d', [1.537799835205078e-05, 4.601478576660156e-05, 7.665157318115234e-05, 0.00010728836059570312, 0.0001537799835205078, 0.00021505355834960938, 0.0003085136413574219, 0.000431060791015625])
+27 w TypeError array item must be a unicode character, not float
+27 Zd array('Zd', [(1.537799835205078e-05+0j), (4.601478576660156e-05+0j), (7.665157318115234e-05+0j), (0.00010728836059570312+0j), (0.0001537799835205078+0j), (0.00021505355834960938+0j), (0.0003085136413574219+0j), (0.000431060791015625+0j)])
+array('w', 'a€😀xy') array('w', 'a€😀xy') array('w', 'ab') array('w', 'abc')
+ValueError string length not a multiple of item size
+ValueError string length not a multiple of item size
+UnicodeDecodeError 'utf-16-le' codec can't decode bytes in position 0-1: illegal UTF-16 surrogate
+TypeError cannot use a str to initialize an array with typecode 'i'
+S('i', [1]) S array('q', [-1]) array('Q', [18446744073709551615]) array('H', [65534]) array('B', [255]) array('b', [-1]) array('d', [1.0]) array('f', [1.0]) array('e', [1.0]) array('d', [1.0])
+array('i', [1, 2]) array('i', [1, 2]) True False array array
+0 array('i', [1, 2]) array True None; 1 array('i', [1, 2]) array True None; 2 array('i', [1, 2]) array True None; 3 array('i', [1, 2]) array True None; 4 array('i', [1, 2]) array True None; 5 array('i', [1, 2]) array True None; 
+array('w', 'ab') array('w', 'ab') True False array array
+0 array('w', 'ab') array True None; 1 array('w', 'ab') array True None; 2 array('w', 'ab') array True None; 3 array('w', 'ab') array True None; 4 array('w', 'ab') array True None; 5 array('w', 'ab') array True None; 
+array('i', [1]) array('i', [1]) True False array array
+0 S('i', [1]) S True 1; 1 S('i', [1]) S True 1; 2 S('i', [1]) S True 1; 3 S('i', [1]) S True 1; 4 S('i', [1]) S True 1; 5 S('i', [1]) S True 1; 
+[2, 3] [2, 3]

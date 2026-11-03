@@ -1,0 +1,99 @@
+status: 0
+script: 4ca13b4351012298
+source: 012b5ddd454c6c49
+---
+before add; after; add(1, 2) => 3
+add.__name__ => wrapper
+param 2; param 3; deco 3; deco 2; 6
+called at definition
+deco got printed
+None
+reg => ['r1', 'r2']
+r1.__name__ => r1
+from dict
+from attr
+cond
+list
+wal => walrus
+x(0) => walrus
+eval 1; eval 2; eval 3; default; apply 3; apply 2; apply 1; 
+1
+instance of Inst
+sq(2) => 4
+sq(3) => 9
+sq.n => 2
+type(sq).__name__ => CountCalls
+before m; after; K().m() => m
+before s; after; K.s() => s
+before c; after; K.c() => K
+before p; after; K().p => p
+fib(80) => 23416728348467685
+len(fib.cache) => 81
+exec("@1\ndef f(): pass") => TypeError: 'int' object is not callable
+exec("@None\ndef f(): pass") => TypeError: 'NoneType' object is not callable
+exec("@undefined\ndef f(): pass") => NameError: name 'undefined' is not defined
+exec("@(lambda: 0)\ndef f(): pass") => TypeError: <lambda>() takes 0 positional arguments but 1 was given
+SyntaxError: e.msg [src='@\ndef f(): pass'] => invalid syntax
+SyntaxError: e.msg [src='@a\n'] => invalid syntax
+SyntaxError: e.msg [src='@a\nx = 1'] => invalid syntax
+SyntaxError: e.msg [src='@a def f(): pass'] => invalid syntax
+SyntaxError: e.msg [src='@a\n@b\n'] => invalid syntax
+SyntaxError: e.msg [src='@a;\ndef f(): pass'] => invalid syntax
+ok: src.replace("\n", "\\n") [src='@a\n\ndef f(): pass'] => @a\n\ndef f(): pass
+ok: src.replace("\n", "\\n") [src='@a # c\ndef f(): pass'] => @a # c\ndef f(): pass
+ok: src.replace("\n", "\\n") [src='@a\nasync def f(): pass'] => @a\nasync def f(): pass
+ok: src.replace("\n", "\\n") [src='@a\nclass C: pass'] => @a\nclass C: pass
+SyntaxError: e.msg [src='@a = 1\ndef f(): pass'] => invalid syntax. Maybe you meant '==' or ':=' instead of '='?
+SyntaxError: e.msg [src='@yield\ndef f(): pass'] => invalid syntax
+SyntaxError: e.msg [src='@*a\ndef f(): pass'] => invalid syntax
+SyntaxError: e.msg [src='@a, b\ndef f(): pass'] => invalid syntax
+SyntaxError: e.msg [src='@a\nlambda: 1'] => invalid syntax
+SyntaxError: e.msg [src='@a b\ndef f(): pass'] => invalid syntax
+ok: src.replace("\n", "\\n") [src='@a.b.c(1)[2](3)\ndef f(): pass'] => @a.b.c(1)[2](3)\ndef f(): pass
+ok: src.replace("\n", "\\n") [src='@not a\ndef f(): pass'] => @not a\ndef f(): pass
+ok: src.replace("\n", "\\n") [src='@a if b else c\ndef f(): pass'] => @a if b else c\ndef f(): pass
+ok: src.replace("\n", "\\n") [src='@a := b\ndef f(): pass'] => @a := b\ndef f(): pass
+ok: src.replace("\n", "\\n") [src='@lambda f: f\ndef f(): pass'] => @lambda f: f\ndef f(): pass
+SyntaxError: e.msg [src='@await a\ndef f(): pass'] => 'await' outside function
+a(1) => 1
+a(2) => 3
+a(3) => 6
+acc()(10) => 10
+g() => 5
+i() => 6
+i() => 7
+g() => 7
+g2() => 0
+g() => 7
+['changed', 'changed', 'changed']
+2
+orig
+3628800
+[(20, 0), (20, 10), (20, 20)]
+("NameError: cannot access free variable 'e' where it is not associated with a value in enclosing scope", 'boom')
+entered
+((1, 2), {'a': 3})
+kwonly_cell()() => 2
+kwonly_cell(k=10)() => 11
+('changed', 'v')
+next(it) => 1
+gn() => 1
+next(it) => 2
+gn() => 2
+list(it) => [3]
+gn() => 3
+cannot access free variable 'v' where it is not associated with a value in enclosing scope
+([0, 2, 4], [4, 4, 4])
+deep()()()()() => 10
+deep()()()().__code__.co_freevars => ('a', 'b', 'c', 'd')
+deep()().__code__.co_freevars => ('a', 'b')
+deep()().__code__.co_cellvars => ('c',)
+('mid', 'outer')
+global_in_nested() => local
+gv => set by inner
+counter() => 1
+counter() => 2
+counter() => 3
+720
+15
+(1, 2, 3)

@@ -1,0 +1,39 @@
+status: 0
+script: 2e5ad2afaaef55df
+---
+1f8b0800 True True
+0 True
+1 True
+9 True
+1000 97890 98890
+b'0: the qui' b'ck brown fox jumps over the lazy dog\n' 47 12345 5000 b' brown fox jumps ove' 0 98890 b''
+2000 1999: the quick brown fox jumps over the lazy dog
+
+EOFError Compressed file ended before the end-of-stream marker was reached
+BadGzipFile Not a gzipped file (b'no')
+BadGzipFile CRC check failed
+True
+True
+['one.txt', 'dir/two.txt', 'three.bin', 'mod.py', 'pkg/__init__.py', 'pkg/sub.py'] None
+one.txt 98890 8 True 0xba15754c
+dir/two.txt 3 0 True 0x11ca8a66
+three.bin 100000 8 True 0xd411957d
+mod.py 49 8 False 0x84aedf72
+pkg/__init__.py 18 8 False 0xebb16e87
+pkg/sub.py 16 8 False 0x7c541731
+True b'two' True
+b'0: the quick brown fox jumps over the lazy dog\n' b'1: th' 100 b' quic'
+['dir', 'mod.py', 'one.txt', 'pkg', 'three.bin'] two
+['one.txt', 'three.bin', 'mod.py', 'dir', 'pkg']
+w ['hello.txt', 'dir', 'dir/two.txt'] True 1000 b'two'
+['dir', 'hello.txt']
+w:gz ['hello.txt', 'dir', 'dir/two.txt'] True 1000 b'two'
+['dir', 'hello.txt']
+True
+['hello.txt', 'dir', 'dir/two.txt']
+arch.tar.gz
+['dir', 'mod.py', 'one.txt', 'pkg', 'three.bin']
+arch.zip
+['dir', 'mod.py', 'one.txt', 'pkg', 'three.bin']
+['gztar', 'tar', 'zip']
+True True

@@ -1,0 +1,288 @@
+status: 0
+script: 4ed323f525c748e6
+---
+--- construction
+True utf-8 strict None False False False 8192 False
+<_io.TextIOWrapper encoding='utf-8'> True True True False
+UnsupportedOperation: fileno
+AttributeError: '_io.BytesIO' object has no attribute 'name'
+AttributeError: '_io.TextIOWrapper' object has no attribute 'mode'
+('utf-8', 'strict', False, False)
+('UTF8', 'replace', True, True)
+('Latin-1', 'strict', False, True)
+('utf-8', 'strict', False, False)
+('UTF-8', 'strict', False, False)
+('ascii', 'ignore', True, True)
+('utf-8', 'strict', False, False)
+TypeError: TextIOWrapper() missing required argument 'buffer' (pos 1)
+TypeError: TextIOWrapper() argument 'encoding' must be str or None, not int
+TypeError: TextIOWrapper() argument 'encoding' must be str or None, not bytes
+TypeError: TextIOWrapper() argument 'errors' must be str or None, not int
+TypeError: TextIOWrapper() argument 'errors' must be str or None, not bytes
+TypeError: TextIOWrapper() argument 'newline' must be str or None, not int
+TypeError: TextIOWrapper() argument 'newline' must be str or None, not bytes
+ValueError: illegal newline value: x
+ValueError: illegal newline value: 
+
+ValueError: illegal newline value: 
+
+
+LookupError: unknown encoding: no-such-encoding
+LookupError: unknown encoding: 
+ValueError: embedded null character
+ValueError: embedded null character
+ValueError: embedded null character
+('utf-8', 'no-such-handler', False, False)
+LookupError: 'hex' is not a text encoding
+LookupError: 'rot13' is not a text encoding
+TypeError: TextIOWrapper() takes at most 6 arguments (7 given)
+TypeError: TextIOWrapper() got an unexpected keyword argument 'bad'
+AttributeError: 'int' object has no attribute 'readable'
+AttributeError: 'NoneType' object has no attribute 'readable'
+AttributeError: 'str' object has no attribute 'readable'
+--- attributes
+AttributeError: attribute 'buffer' of '_io.TextIOWrapper' objects is not writable
+AttributeError: readonly attribute
+AttributeError: attribute 'errors' of '_io.TextIOWrapper' objects is not writable
+AttributeError: attribute 'newlines' of '_io.TextIOWrapper' objects is not writable
+AttributeError: readonly attribute
+AttributeError: readonly attribute
+AttributeError: attribute 'closed' of '_io.TextIOWrapper' objects is not writable
+AttributeError: attribute 'name' of '_io.TextIOWrapper' objects is not writable
+<_io.TextIOWrapper mode='r' encoding='utf-8'> ['extra', 'mode']
+the name <_io.TextIOWrapper name='the name' mode='r' encoding='utf-8'>
+RuntimeError: reentrant call inside _io.TextIOWrapper.__repr__
+16
+ValueError: a strictly positive integer is required
+ValueError: a strictly positive integer is required
+TypeError: 'str' object cannot be interpreted as an integer
+ValueError: cannot fit 'int' into an index-sized integer
+TypeError: 'float' object cannot be interpreted as an integer
+AttributeError: attribute '_CHUNK_SIZE' of '_io.TextIOWrapper' objects cannot be deleted
+True
+TypeError: attribute value type must be bool
+TypeError: cannot pickle 'TextIOWrapper' instances
+TypeError: cannot pickle 'TextIOWrapper' instances
+--- read
+h él '' lo wörld  '\u20acuro \U0001f600!'  '' ''
+héllo ''
+héllo 0 héllo 0 hé llo
+TypeError: argument should be integer or None, not 'str'
+TypeError: argument should be integer or None, not 'float'
+OverflowError: cannot fit 'int' into an index-sized integer
+TypeError: read expected at most 1 argument, got 2
+True True True True
+True
+--- chunks that split characters
+1 ["'a'", "'\\u20ac'", "'\\U0001f600'", "'\\xe9'", "''"] 11
+2 ["'a'", "'\\u20ac'", "'\\U0001f600'", "'\\xe9'", "''"] 6
+3 ["'a'", "'\\u20ac'", "'\\U0001f600'", "'\\xe9'", "''"] 5
+'ab\u20ac' [('read1', 8192), ('read1', 8192), ('read1', 8192), ('read', -1)] 'c' [('read1', 8192), ('read1', 8192), ('read1', 8192), ('read', -1)]
+ab
+UnicodeDecodeError: 'utf-8' codec can't decode byte 0xe2 in position 0: unexpected end of data
+UnicodeDecodeError: 'utf-8' codec can't decode byte 0xe2 in position 2: unexpected end of data
+'ab\ufffd'
+'ab\ufffd' ''
+--- size hints
+[('read1', 8192), ('read1', 19993), ('read1', 19983), ('read1', 19973), ('read1', 19963), ('read1', 19953)]
+[('read1', 4), ('read1', 26)]
+--- a buffer without read1
+  read 8192
+  read -1
+abc
+ def
+--- what the buffer may get wrong
+TypeError: underlying read1() should have returned a bytes-like object, not 'str'
+TypeError: a bytes-like object is required, not 'str'
+TypeError: underlying read1() should have returned a bytes-like object, not 'str'
+TypeError: underlying read1() should have returned a bytes-like object, not 'int'
+TypeError: a bytes-like object is required, not 'int'
+TypeError: underlying read1() should have returned a bytes-like object, not 'int'
+TypeError: underlying read1() should have returned a bytes-like object, not 'NoneType'
+BlockingIOError: Read returned None.
+TypeError: underlying read1() should have returned a bytes-like object, not 'NoneType'
+TypeError: underlying read1() should have returned a bytes-like object, not 'list'
+TypeError: a bytes-like object is required, not 'list'
+TypeError: underlying read1() should have returned a bytes-like object, not 'list'
+a
+--- write
+3 b'' 3 0 None b'abc\xc3\xa9\xe2\x82\xac\xf0\x9f\x98\x80'
+TypeError: write() argument must be str, not bytes
+TypeError: write() argument must be str, not int
+TypeError: write() argument must be str, not None
+TypeError: TextIOWrapper.write() takes exactly one argument (0 given)
+TypeError: TextIOWrapper.write() takes exactly one argument (2 given)
+TypeError: write() argument must be str, not bytes
+TypeError: 'int' object is not iterable
+b'\x80ab\ncdex'
+3 None b'sub'
+--- when the buffer is written to
+[] None [('write', 'bytes', b'ab\n\xc3\xa9'), 'flush'] None ['flush']
+[]
+[('write', 'bytes', 8192)]
+[('write', 'bytes', 9000)] None ['flush']
+[('write', 'bytes', b'a'), ('write', 'bytes', 8192)] None ['flush']
+[('write', 'bytes', b'a'), ('write', 'bytes', 10000)] None [('write', 'bytes', b'b'), 'flush']
+[]
+[('write', 'bytes', b'abcd')]
+[('write', 'bytes', b'efghi')]
+[]
+[('write', 'bytes', b'abc\nd'), 'flush']
+[('write', 'bytes', b'e\r'), 'flush']
+[]
+[('write', 'bytes', b'ab')]
+[]
+[('write', 'bytes', b'c\n')]
+[('write', 'bytes', b'a\r\nb'), 'flush']
+--- not readable, not writable
+True False False
+UnsupportedOperation: not writable
+UnsupportedOperation: not writable
+UnsupportedOperation: not writable
+'' None
+False True False
+UnsupportedOperation: not readable
+UnsupportedOperation: not readable
+UnsupportedOperation: not readable
+UnsupportedOperation: not readable
+UnsupportedOperation: not readable
+UnsupportedOperation: not readable
+UnsupportedOperation: underlying stream is not seekable
+UnsupportedOperation: underlying stream is not seekable
+--- reading after writing
+01 2  b'0123456789AB'
+2 234 b'AB23456789' 5
+2 23456789 b'AB23456789'
+--- encoding errors
+ascii strict UnicodeEncodeError 'ascii' codec can't encode characters in position 1-3: ordinal not in range(128) b''
+ascii replace b'a???z'
+ascii ignore b'az'
+ascii backslashreplace b'a\\xe9\\u20ac\\udc80z'
+ascii xmlcharrefreplace b'a&#233;&#8364;&#56448;z'
+ascii namereplace b'a\\N{LATIN SMALL LETTER E WITH ACUTE}\\N{EURO SIGN}\\udc80z'
+latin-1 strict UnicodeEncodeError 'latin-1' codec can't encode characters in position 2-3: ordinal not in range(256) b''
+latin-1 replace b'a\xe9??z'
+utf-8 strict UnicodeEncodeError 'utf-8' codec can't encode character '\udc80' in position 3: surrogates not allowed b''
+utf-8 surrogateescape b'a\xc3\xa9\xe2\x82\xac\x80z'
+utf-8 surrogatepass b'a\xc3\xa9\xe2\x82\xac\xed\xb2\x80z'
+utf-8 replace b'a\xc3\xa9\xe2\x82\xac?z'
+ascii strict UnicodeDecodeError 'ascii' codec can't decode byte 0xe9 in position 1: ordinal not in range(128)
+ascii replace 'a\ufffd\ufffd\ufffd\ufffdz'
+ascii ignore 'az'
+ascii backslashreplace 'a\\xe9\\xff\\xc3\\xa9z'
+ascii surrogateescape 'a\udce9\udcff\udcc3\udca9z'
+utf-8 strict UnicodeDecodeError 'utf-8' codec can't decode byte 0xe9 in position 1: invalid continuation byte
+utf-8 replace 'a\ufffd\ufffd\xe9z'
+utf-8 ignore 'a\xe9z'
+utf-8 surrogateescape 'a\udce9\udcff\xe9z'
+utf-8 backslashreplace 'a\\xe9\\xff\xe9z'
+latin-1 strict 'a\xe9\xff\xc3\xa9z'
+UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 3: invalid start byte
+3
+LookupError: unknown error handler name 'no-such-handler'
+LookupError: unknown error handler name 'no-such-handler'
+--- close
+  buffer.flush
+  buffer.close, value = b'abc'
+None True True None <_io.TextIOWrapper encoding='utf-8'>
+read ValueError: I/O operation on closed file.
+readline ValueError: I/O operation on closed file.
+readlines ValueError: I/O operation on closed file.
+flush ValueError: I/O operation on closed file.
+tell ValueError: I/O operation on closed file.
+truncate ValueError: I/O operation on closed file.
+isatty ValueError: I/O operation on closed file.
+readable ValueError: I/O operation on closed file.
+writable ValueError: I/O operation on closed file.
+seekable ValueError: I/O operation on closed file.
+__next__ ValueError: I/O operation on closed file.
+__enter__ ValueError: I/O operation on closed file.
+__iter__ ValueError: I/O operation on closed file.
+detach ValueError: I/O operation on closed file.
+fileno UnsupportedOperation: fileno
+ValueError: I/O operation on closed file.
+ValueError: I/O operation on closed file.
+TypeError: write() argument must be str, not bytes
+ValueError: I/O operation on closed file.
+ValueError: I/O operation on closed file.
+ValueError: I/O operation on closed file.
+ValueError: I/O operation on closed file.
+ValueError: I/O operation on closed file.
+utf-8 strict True False None 8192
+x
+True True
+OSError: flush failed
+True
+KeyError: 'close failed'
+True
+KeyError('close failed') OSError('flush failed')
+True
+ValueError: I/O operation on closed file.
+ValueError: I/O operation on closed file.
+None
+--- detach
+True b'abc' False <_io.TextIOWrapper encoding='ascii'>
+read ValueError: underlying buffer has been detached
+readline ValueError: underlying buffer has been detached
+flush ValueError: underlying buffer has been detached
+close ValueError: underlying buffer has been detached
+detach ValueError: underlying buffer has been detached
+tell ValueError: underlying buffer has been detached
+truncate ValueError: underlying buffer has been detached
+readable ValueError: underlying buffer has been detached
+writable ValueError: underlying buffer has been detached
+seekable ValueError: underlying buffer has been detached
+isatty ValueError: underlying buffer has been detached
+fileno ValueError: underlying buffer has been detached
+__next__ ValueError: underlying buffer has been detached
+__iter__ ValueError: underlying buffer has been detached
+__enter__ ValueError: underlying buffer has been detached
+ValueError: underlying buffer has been detached
+ValueError: underlying buffer has been detached
+ValueError: underlying buffer has been detached
+buffer ValueError: underlying buffer has been detached
+closed ValueError: underlying buffer has been detached
+name ValueError: underlying buffer has been detached
+newlines ValueError: underlying buffer has been detached
+_CHUNK_SIZE ValueError: underlying buffer has been detached
+ascii strict False
+ValueError: underlying buffer has been detached
+--- uninitialized
+read ValueError: I/O operation on uninitialized object
+readline ValueError: I/O operation on uninitialized object
+flush ValueError: I/O operation on uninitialized object
+close ValueError: I/O operation on uninitialized object
+detach ValueError: I/O operation on uninitialized object
+tell ValueError: I/O operation on uninitialized object
+readable ValueError: I/O operation on uninitialized object
+__next__ ValueError: I/O operation on uninitialized object
+__repr__ ValueError: I/O operation on uninitialized object
+ValueError: I/O operation on uninitialized object
+buffer ValueError: I/O operation on uninitialized object
+closed True
+name ValueError: I/O operation on uninitialized object
+newlines ValueError: I/O operation on uninitialized object
+errors ValueError: I/O operation on uninitialized object
+_CHUNK_SIZE ValueError: I/O operation on uninitialized object
+encoding None
+line_buffering False
+LookupError: unknown encoding: no-such-encoding
+ValueError: I/O operation on uninitialized object
+None True
+ok ascii
+é latin-1
+ValueError: illegal newline value: x
+ValueError: I/O operation on uninitialized object
+--- subclasses
+  Sub.readline
+  Sub.readline
+  Sub.readline
+['a\n', 'b\n'] <Sub encoding='ascii'> ['Sub', 'TextIOWrapper', '_TextIOBase', '_IOBase', 'object']
+OSError: readline() should have returned a str object, not 'bytes'
+ValueError: I/O operation on closed file.
+ValueError: I/O operation on closed file.
+ValueError: I/O operation on closed file.
+TypeError: cannot pickle 'Sub' instances
+--- the type
+<class '_io.TextIOWrapper'> TextIOWrapper TextIOWrapper _io (<class '_io._TextIOBase'>,)
+TypeError: cannot set 'x' attribute of immutable type '_io.TextIOWrapper'

@@ -1,0 +1,11 @@
+status: 0
+script: 8e17bfc342e08c58
+---
+['Binary', 'Blob', 'Connection', 'Cursor', 'DataError', 'DatabaseError', 'Date', 'DateFromTicks', 'Error', 'IntegrityError', 'InterfaceError', 'InternalError', 'LEGACY_TRANSACTION_CONTROL', 'NotSupportedError', 'OperationalError', 'PARSE_COLNAMES', 'PARSE_DECLTYPES', 'PrepareProtocol', 'ProgrammingError', 'Row', 'Time', 'TimeFromTicks', 'Timestamp', 'TimestampFromTicks', 'Warning', 'adapt', 'adapters', 'apilevel', 'collections', 'complete_statement', 'connect', 'converters', 'datetime', 'dbapi2', 'enable_callback_tracebacks', 'paramstyle', 'register_adapter', 'register_converter', 'sqlite_version', 'sqlite_version_info', 'threadsafety', 'time']
+b'x' 2020-01-02 01:02:03 2020-01-02 03:04:05 1970 True
+True True
+b'1' b'2' [b'a', b'b'] 2 True b'd'
+[b'b']
+dbm.sqlite3
+b'2'
+[('x', [1, 2, {'y': 3}]), ('z', 'w')]

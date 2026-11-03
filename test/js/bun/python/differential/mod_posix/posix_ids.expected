@@ -1,0 +1,27 @@
+status: 0
+script: 0b3603ce8781324a
+---
+None
+None
+None
+None
+None
+None
+None
+None
+None
+None
+None
+None
+True True
+FileNotFoundError [Errno 2] No such file or directory: 'surely/not/there'
+FileNotFoundError [Errno 2] No such file or directory: b'surely/not/there'
+OSError [Errno 25] Inappropriate ioctl for device
+True True False
+-- groups and sessions
+False False
+None
+True True
+None
+PermissionError [Errno 1] Operation not permitted
+OSError [Errno 25] Inappropriate ioctl for device

@@ -1,0 +1,71 @@
+status: 0
+script: 696c7ee44dd3458e
+---
+TypeError: dumps() takes at least 1 positional argument (0 given)
+TypeError: dumps() takes at most 2 positional arguments (3 given)
+TypeError: dumps() got an unexpected keyword argument 'version'
+TypeError: dumps() takes at least 1 positional argument (0 given)
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+TypeError: 'NoneType' object cannot be interpreted as an integer
+OverflowError: Python int too large to convert to C int
+b'i\x01\x00\x00\x00'
+b'i\x01\x00\x00\x00'
+b'i\x01\x00\x00\x00'
+b'i\x01\x00\x00\x00'
+TypeError: dumps() takes at most 2 positional arguments (3 given)
+TypeError: dumps() got an unexpected keyword argument 'allow'
+TypeError: loads() takes exactly 1 positional argument (0 given)
+TypeError: a bytes-like object is required, not 'str'
+TypeError: a bytes-like object is required, not 'int'
+TypeError: a bytes-like object is required, not 'NoneType'
+TypeError: a bytes-like object is required, not 'list'
+TypeError: loads() takes exactly 1 positional argument (2 given)
+None
+TypeError: loads() takes exactly 1 positional argument (0 given)
+TypeError: loads() got an unexpected keyword argument 'nope'
+TypeError: dump() takes at least 2 positional arguments (0 given)
+TypeError: dump() takes at least 2 positional arguments (1 given)
+AttributeError: 'NoneType' object has no attribute 'write'
+AttributeError: 'int' object has no attribute 'write'
+TypeError: load() takes exactly 1 positional argument (0 given)
+AttributeError: 'NoneType' object has no attribute 'read'
+AttributeError: 'int' object has no attribute 'read'
+AttributeError: 'bytes' object has no attribute 'read'
+ValueError: marshalling code objects is disallowed
+ValueError: marshalling code objects is disallowed
+ValueError: unmarshallable object
+ValueError: unmarshalling code objects is disallowed
+ValueError: unmarshalling code objects is disallowed
+43 6 15 1
+True
+[1, 'two', 3.0, (4,), {5: 6}] next 1180591620717411303424 None True
+EOFError: EOF read where object expected
+EOFError: EOF read where object expected
+EOFError: EOF read where not expected
+EOFError: EOF read where not expected
+EOFError: EOF read where not expected
+ValueError: bad marshal data (unknown type code)
+TypeError: NULL object in marshal data for object
+TypeError: file.read() returned not bytes but str
+write bytes b'(\x02\x00\x00\x00i\x01\x00\x00\x00i\x02\x00\x00\x00'
+'written'
+OSError: disk full
+ValueError: unmarshallable object
+['ab', 5, b'xyz']
+[('read', 0), ('readinto', 'memoryview', 1, False), ('readinto', 'memoryview', 4, False), ('readinto', 'memoryview', 1, False), ('readinto', 'memoryview', 4, False), ('readinto', 'memoryview', 2, False), ('readinto', 'memoryview', 1, False), ('readinto', 'memoryview', 4, False), ('readinto', 'memoryview', 1, False), ('readinto', 'memoryview', 4, False), ('readinto', 'memoryview', 3, False)]
+AttributeError: 'NoReadinto' object has no attribute 'readinto'
+TypeError: file.read() returned not bytes but str
+TypeError: file.read() returned not bytes but NoneType
+ValueError: read() returned too much data: 11 bytes requested, 1000011 returned
+EOFError: EOF read where object expected
+TypeError: 'str' object cannot be interpreted as an integer
+ValueError: cannot fit 'int' into an index-sized integer
+KeyError: 'k'
+None
+RuntimeError: set changed size during iteration
+ValueError: unmarshallable object
+ValueError: unmarshallable object
+b'from buffer'
+[b'from buffer', {1: b'from buffer'}]
+dumps marshal marshal builtin_function_or_method

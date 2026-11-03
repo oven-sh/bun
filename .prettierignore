@@ -62,3 +62,11 @@ test/aot/parallel/errors/quoted-from-typed-expressions-written-over-several-line
 # in which column and line each private name stands is what is tested
 test/aot/parallel/errors/frames-of-private-names-read-from-paths.js
 test/aot/parallel/errors/static-private-fields-of-other-values-are-refused-in-the-words-of-plain-bun.js
+
+# Python's differential tests: in which line and column things stand is part of what is expected, and the rest is generated
+test/js/bun/python/differential/*/
+# written by score.py and deficit.py
+test/js/bun/python/cpython-suite/score.md
+test/js/bun/python/cpython-suite/score.json
+test/js/bun/python/cpython-suite/oracle.json
+test/js/bun/python/cpython-suite/deficit.md

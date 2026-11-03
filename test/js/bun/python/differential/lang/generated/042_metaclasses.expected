@@ -1,0 +1,129 @@
+status: 0
+script: a0c12a63f2b1fe6f
+source: dceb05f5d7245275
+---
+Meta.__new__ A [] ['x'] {}; Meta.__init__ A {}; 
+type(A) => <class '__main__.Meta'>
+A => <Meta class A>
+A.from_new => True
+A.meta_method() => meta_method of A
+A.attr => on meta
+isinstance(A, Meta) => True
+isinstance(A, type) => True
+type(A).__mro__ => (<class '__main__.Meta'>, <class 'type'>, <class 'object'>)
+Meta.__call__ A (5,) {}; a.v => 5
+type(a) => <Meta class A>
+a.meta_method() => AttributeError: 'A' object has no attribute 'meta_method'
+a.attr => AttributeError: 'A' object has no attribute 'attr'
+Meta.__new__ B ['A'] ['y'] {}; Meta.__init__ B {}; 
+type(B) => <class '__main__.Meta'>
+B => <Meta class B>
+B.meta_method() => meta_method of B
+B.__mro__ => (<Meta class B>, <Meta class A>, <class 'object'>)
+Meta.__new__ K ['A'] [] {'flag': True, 'n': 3}; Meta.__init__ K {'flag': True, 'n': 3}; 
+Meta.__new__ Dyn [] ['z'] {}; Meta.__init__ Dyn {}; 
+M2 => <Meta class Dyn>
+M2.z => 1
+type(M2) => <class '__main__.Meta'>
+prepare P () {'opt': 1}; P.seen => from prepare
+P.injected => from prepare
+O.order => ['b', 'a', 'm', 'c', 'a', 'l']
+O.c => from namespace
+O.a => 3
+O.l => 2
+MM.v => 1
+MM.w => 2
+MM.u => 1
+hasattr(MM, "tmp") => False
+bp() => TypeError: BadPrep.__prepare__() must return a mapping, not int
+np_() => TypeError: NonePrep.__prepare__() must return a mapping, not NoneType
+type.__prepare__("X", ()) => {}
+type.__prepare__() => {}
+type(type.__prepare__).__name__ => builtin_function_or_method
+type(Y1).__name__ => M_B
+type(Y2).__name__ => M_B
+type(Y3).__name__ => M_B
+type(Y4).__name__ => M_B
+type(Y5).__name__ => M_B
+type(Y6).__name__ => M_A
+c1() => TypeError: metaclass conflict: the metaclass of a derived class must be a (non-strict) subclass of the metaclasses of all its bases
+c2() => TypeError: metaclass conflict: the metaclass of a derived class must be a (non-strict) subclass of the metaclasses of all its bases
+type("Z", (XA, XC), {}) => TypeError: metaclass conflict: the metaclass of a derived class must be a (non-strict) subclass of the metaclasses of all its bases
+type(type("Z", (XA,), {})).__name__ => 'M_A'
+M_C("Z", (XA,), {}) => TypeError: metaclass conflict: the metaclass of a derived class must be a (non-strict) subclass of the metaclasses of all its bases
+type(M_A("Z", (XB,), {})).__name__ => 'M_B'
+('func_meta', 'F', (), ['a'], {'k': 1})
+('func_meta', 'F2', (<class 'int'>,), [], {})
+c3() => TypeError: 'int' object is not callable
+c4() => TypeError: 'NoneType' object is not callable
+c5() => TypeError: c5.<locals>.<lambda>() takes 0 positional arguments but 3 were given
+callable instance made F3
+Op + 1 => Op + 1
+1 + Op => 1 + Op
+len(Op) => 42
+Op[0] => ('item', 0)
+list(Op) => ['i1', 'i2']
+"yes" in Op => True
+"no" in Op => False
+bool(Op) => False
+Op == "equal" => True
+Op != "equal" => False
+hash(Op) => 7
+Op < 1 => True
+str(Op) => str of Op
+Op.missing => meta getattr missing
+isinstance("instance", Op) => True
+isinstance(Op(), Op) => True
+issubclass(int, Op) => True
+issubclass(Op, Op) => False
+Op | int => or
+-Op => neg
+int(Op) => 3
+f"{Op:x}" => fmt:x
+len(Op()) => 1
+Op() + 1 => instance add
+[v for v in Op] => ['i1', 'i2']
+{Op: 1}[Op] if False else "" => 
+sorted([Op, Op]) and "sorted" => sorted
+meta setattr new 1; meta delattr new; 
+entered
+Op().missing => AttributeError: 'Op' object has no attribute 'missing'
+a => i1
+b => i2
+type.__call__(int, "7") => 7
+type.__repr__(int) => <class 'int'>
+type.__name__ => type
+type.mro(int) => [<class 'int'>, <class 'object'>]
+int.mro() => [<class 'int'>, <class 'object'>]
+type.__subclasses__(M_A) => [<class '__main__.M_B'>]
+type.__instancecheck__(int, 1) => True
+type.__subclasscheck__(int, bool) => True
+int.__instancecheck__(True) => True
+int.__subclasscheck__(str) => False
+type.__dir__(int) == int.__dir__(int) if False else "" => 
+type.__or__(int, str) => int | str
+int.__or__(str) if False else "" => 
+type.__sizeof__(int) > 0 => True
+type.__dict__["__dict__"].__get__(int)["real"] is int.__dict__["real"] => True
+mro called for Short; mro called for Normal; Short.__mro__ => (<class '__main__.Short'>, <class 'object'>)
+hasattr(Short, "w") => False
+Normal.__mro__ => (<class '__main__.Normal'>, <class '__main__.Wide'>, <class 'object'>)
+Short.__bases__ => (<class '__main__.Wide'>,)
+TypeError: 'int' object is not iterable
+TypeError: X.mro() returned a non-class ('int')
+TypeError: X.mro() returned base with unsuitable layout ('int')
+TypeError: type MRO must not be empty
+Conf init; True
+sorted(Registry.reg) => ['bar', 'foo']
+Registry.reg["foo"] is Foo => True
+Util() => TypeError: Util cannot be instantiated
+f
+MetaMeta.__call__ Leaf; type(Leaf).__name__ => Mid
+type(type(Leaf)).__name__ => MetaMeta
+type(type(type(Leaf))).__name__ => type
+meta new ISB; meta new ISC; init_subclass ISC; 
+True; False; CC1().m().__name__ => CC1
+"__classcell__" in CC1.__dict__ => False
+dc() => RuntimeError: __class__ not set defining 'X' as <class '__main__.dc.<locals>.X'>. Was __classcell__ propagated to type.__new__?
+wc() => TypeError: __class__ set to <class '__main__.wc.<locals>.X'> defining 'X' as <class '__main__.wc.<locals>.X'>
+type("X", (), {"__classcell__": 1}) => TypeError: __classcell__ must be a nonlocal cell, not <class 'int'>

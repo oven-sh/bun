@@ -1,0 +1,303 @@
+status: 0
+script: 164c7671608efb1e
+source: fc93b20b0819a12a
+---
+5 & 3 => 1
+5 | 3 => 7
+5 ^ 3 => 6
+~5 => -6
+~-1 => 0
+~0 => -1
+1 << 4 => 16
+256 >> 4 => 16
+-1 >> 1 => -1
+-8 >> 1 => -4
+-1 << 3 => -8
+-5 & 3 => 3
+-5 | 3 => -5
+-5 ^ 3 => -8
+-5 & -3 => -7
+-5 | -3 => -1
+-5 ^ -3 => 6
+1 << 31 => 2147483648
+1 << 32 => 4294967296
+1 << 52 => 4503599627370496
+1 << 53 => 9007199254740992
+1 << 63 => 9223372036854775808
+1 << 64 => 18446744073709551616
+1 << 100 => 1267650600228229401496703205376
+(1 << 100) >> 98 => 4
+(1 << 100) >> 100 => 1
+(1 << 100) >> 101 => 0
+-(1 << 100) >> 101 => -1
+-(1 << 100) >> 99 => -2
+(1 << 64) - 1 & 0xFFFF => 65535
+(1 << 64) | 1 => 18446744073709551617
+(1 << 64) ^ (1 << 64) => 0
+~(1 << 64) => -18446744073709551617
+-(1 << 64) & ((1 << 70) - 1) => 1162144876643701751808
+(1 << 64) & -(1 << 3) => 18446744073709551616
+-(1 << 64) | 5 => -18446744073709551611
+-(1 << 64) ^ -(1 << 65) => 18446744073709551616
+0xFFFFFFFF & 0xFFFFFFFF => 4294967295
+0xFFFFFFFF | 0 => 4294967295
+0xFFFFFFFF + 1 => 4294967296
+0xFFFFFFFF << 1 => 8589934590
+0x7FFFFFFF << 1 => 4294967294
+0x80000000 >> 31 => 1
+-0x80000000 >> 31 => -1
+0xFFFFFFFF ^ 0xFFFFFFFF => 0
+~0xFFFFFFFF => -4294967296
+0xFFFFFFFFFFFF & 0xFFFF0000FFFF => 281470681808895
+2 ** 53 & 1 => 0
+(2 ** 53 + 1) & 1 => 1
+(2 ** 53 - 1) & (2 ** 52) => 4503599627370496
+2 ** 53 | 1 => 9007199254740993
+(2 ** 53 - 1) << 1 => 18014398509481982
+(2 ** 53 - 1) ^ (2 ** 53 - 1) => 0
+2 ** 52 >> 52 => 1
+(2 ** 52 + 2 ** 40) >> 40 => 4097
+0 << 1000 => 0
+0 >> 1000 => 0
+5 >> 1000 => 0
+-5 >> 1000 => -1
+5 << 0 => 5
+5 >> 0 => 5
+1 << 1 << 2 => 8
+256 >> 2 >> 1 => 32
+1 << -1 => ValueError: negative shift count
+1 >> -1 => ValueError: negative shift count
+1 << 1.0 => TypeError: unsupported operand type(s) for <<: 'int' and 'float'
+1.0 << 1 => TypeError: unsupported operand type(s) for <<: 'float' and 'int'
+1 & 1.0 => TypeError: unsupported operand type(s) for &: 'int' and 'float'
+"a" | 1 => TypeError: unsupported operand type(s) for |: 'str' and 'int'
+~1.0 => TypeError: bad operand type for unary ~: 'float'
+(0).bit_length() => 0
+(1).bit_length() => 1
+(255).bit_length() => 8
+(256).bit_length() => 9
+(-1).bit_length() => 1
+(-256).bit_length() => 9
+(2 ** 100).bit_length() => 101
+(2 ** 53).bit_length() => 54
+(2 ** 53 - 1).bit_length() => 53
+(0).bit_count() => 0
+(255).bit_count() => 8
+(-255).bit_count() => 8
+(2 ** 100 - 1).bit_count() => 100
+(2 ** 53 + 1).bit_count() => 2
+(5).conjugate() => 5
+(5).real => 5
+(5).imag => 0
+(5).numerator => 5
+(5).denominator => 1
+(5).as_integer_ratio() => (5, 1)
+(-5).as_integer_ratio() => (-5, 1)
+(5).is_integer() => True
+(1024).to_bytes(2, "big") => b'\x04\x00'
+(1024).to_bytes(2, "little") => b'\x00\x04'
+(1024).to_bytes(4) => b'\x00\x00\x04\x00'
+(0).to_bytes(1) => b'\x00'
+(255).to_bytes() => b'\xff'
+(-1).to_bytes(2, signed=True) => b'\xff\xff'
+(-1024).to_bytes(4, "little", signed=True) => b'\x00\xfc\xff\xff'
+(2 ** 64).to_bytes(9, "big") => b'\x01\x00\x00\x00\x00\x00\x00\x00\x00'
+(0).to_bytes(0) => b''
+(256).to_bytes(1, "big") => OverflowError: int too big to convert
+(-1).to_bytes(1, "big") => OverflowError: can't convert negative int to unsigned
+(1).to_bytes(-1, "big") => ValueError: length cannot be negative
+(1).to_bytes(1, "middle") => ValueError: byteorder must be either 'little' or 'big'
+(128).to_bytes(1, signed=True) => OverflowError: int too big to convert
+int.from_bytes(b"\x04\x00") => 1024
+int.from_bytes(b"\x04\x00", "little") => 4
+int.from_bytes(b"\xff\xff", signed=True) => -1
+int.from_bytes(b"\xff\xff") => 65535
+int.from_bytes(b"") => 0
+int.from_bytes([1, 2, 3]) => 66051
+int.from_bytes(b"\x01" * 10, "big") => 4740885567116192841985
+int.from_bytes(bytearray(b"\x80"), "big", signed=True) => -128
+int.from_bytes("abc") => TypeError: cannot convert 'str' object to bytes
+int.from_bytes(b"a", "x") => ValueError: byteorder must be either 'little' or 'big'
+bin(5) => 0b101
+bin(-5) => -0b101
+bin(0) => 0b0
+oct(8) => 0o10
+oct(-8) => -0o10
+hex(255) => 0xff
+hex(-255) => -0xff
+hex(0) => 0x0
+bin(2 ** 70) => 0b10000000000000000000000000000000000000000000000000000000000000000000000
+hex(2 ** 70) => 0x400000000000000000
+oct(2 ** 70) => 0o200000000000000000000000
+hex(-(2 ** 70)) => -0x400000000000000000
+bin(True) => 0b1
+bin(1.5) => TypeError: 'float' object cannot be interpreted as an integer
+hex("a") => TypeError: 'str' object cannot be interpreted as an integer
+oct(None) => TypeError: 'NoneType' object cannot be interpreted as an integer
+int("10") => 10
+int("-10") => -10
+int("+10") => 10
+int(" 10 ") => 10
+int("1_000") => 1000
+int("10", 2) => 2
+int("ff", 16) => 255
+int("FF", 16) => 255
+int("0xff", 16) => 255
+int("0xff", 0) => 255
+int("0b11", 0) => 3
+int("0o17", 0) => 15
+int("17", 8) => 15
+int("z", 36) => 35
+int("Z", 36) => 35
+int("10", 36) => 36
+int("0", 0) => 0
+int("00", 10) => 0
+int("-0") => 0
+int("0_0") => 0
+int("123456789012345678901234567890") => 123456789012345678901234567890
+int("-123456789012345678901234567890") => -123456789012345678901234567890
+int("1" * 50) => 11111111111111111111111111111111111111111111111111
+int("f" * 20, 16) => 1208925819614629174706175
+int("1" * 70, 2) => 1180591620717411303423
+int("9007199254740993") => 9007199254740993
+int("١٢٣") => 123
+int("１２３") => 123
+int("\t\n 5 \r\f\v") => 5
+int(b"12") => 12
+int(bytearray(b"13")) => 13
+int(b" 14 ") => 14
+int(s) [s=''] => ValueError: invalid literal for int() with base 10: ''
+int(s) [s=' '] => ValueError: invalid literal for int() with base 10: ' '
+int(s) [s='a'] => ValueError: invalid literal for int() with base 10: 'a'
+int(s) [s='1a'] => ValueError: invalid literal for int() with base 10: '1a'
+int(s) [s='1 2'] => ValueError: invalid literal for int() with base 10: '1 2'
+int(s) [s='1__0'] => ValueError: invalid literal for int() with base 10: '1__0'
+int(s) [s='_1'] => ValueError: invalid literal for int() with base 10: '_1'
+int(s) [s='1_'] => ValueError: invalid literal for int() with base 10: '1_'
+int(s) [s='0x'] => ValueError: invalid literal for int() with base 10: '0x'
+int(s) [s='1.0'] => ValueError: invalid literal for int() with base 10: '1.0'
+int(s) [s='1e3'] => ValueError: invalid literal for int() with base 10: '1e3'
+int(s) [s='--1'] => ValueError: invalid literal for int() with base 10: '--1'
+int(s) [s='+-1'] => ValueError: invalid literal for int() with base 10: '+-1'
+int(s) [s='0b2'] => ValueError: invalid literal for int() with base 10: '0b2'
+int(s) [s='9'] => 9
+int(s) [s='08'] => 8
+int(s) [s='١a'] => ValueError: invalid literal for int() with base 10: '١a'
+int(s) [s='\x001'] => ValueError: invalid literal for int() with base 10: '\x001'
+int(s) [s='1\x00'] => ValueError: invalid literal for int() with base 10: '1\x00'
+int(s) [s='²'] => ValueError: invalid literal for int() with base 10: '²'
+int("9", 8) => ValueError: invalid literal for int() with base 8: '9'
+int("08", 0) => ValueError: invalid literal for int() with base 0: '08'
+int("1", 1) => ValueError: int() base must be >= 2 and <= 36, or 0
+int("1", 37) => ValueError: int() base must be >= 2 and <= 36, or 0
+int("1", -1) => ValueError: int() base must be >= 2 and <= 36, or 0
+int(1, 10) => TypeError: int() can't convert non-string with explicit base
+int("1", "10") => TypeError: 'str' object cannot be interpreted as an integer
+int(None) => TypeError: int() argument must be a string, a bytes-like object or a real number, not 'NoneType'
+int([]) => TypeError: int() argument must be a string, a bytes-like object or a real number, not 'list'
+int(1j) => TypeError: int() argument must be a string, a bytes-like object or a real number, not 'complex'
+int("1", 10, 3) => TypeError: int expected at most 2 arguments, got 3
+int(b"1a") => ValueError: invalid literal for int() with base 10: b'1a'
+int("0x10", 10) => ValueError: invalid literal for int() with base 10: '0x10'
+int(1.9) => 1
+int(-1.9) => -1
+int(1e20) => 100000000000000000000
+int(-1e20) => -100000000000000000000
+int(1e300) % 1000 => 160
+int(0.0) => 0
+int(-0.0) => 0
+int(2.5) => 2
+int(True) => 1
+int(2 ** 53 + 0.0) => 9007199254740992
+int(float("inf")) => OverflowError: cannot convert float infinity to integer
+int(float("-inf")) => OverflowError: cannot convert float infinity to integer
+int(float("nan")) => ValueError: cannot convert float NaN to integer
+no x kw
+int(x=5) => TypeError: int() got an unexpected keyword argument 'x'
+int("12", base=3) => 5
+int("0", base=0) => 0
+int(base=10) => TypeError: int() missing string argument
+round(5) => 5
+round(15, -1) => 20
+round(25, -1) => 20
+round(35, -1) => 40
+round(-15, -1) => -20
+round(1234567, -3) => 1235000
+round(5, 2) => 5
+round(10 ** 30 + 5, -1) => 1000000000000000000000000000000
+round(149, -2) => 100
+round(150, -2) => 200
+round(250, -2) => 200
+type(round(5)) => <class 'int'>
+round(5, None) => 5
+round(True) => 1
+type(round(True)) => <class 'int'>
+(7).__index__() => 7
+(7).__int__() => 7
+(7).__float__() => 7.0
+(7).__trunc__() => 7
+(7).__floor__() => 7
+(7).__ceil__() => 7
+(7).__round__() => 7
+(7).__round__(-1) => 10
+(7).__abs__() => 7
+(-7).__abs__() => 7
+(7).__pos__() => 7
+(7).__invert__() => -8
+(7).__bool__() => True
+(0).__bool__() => False
+(7).__hash__() => 7
+(7).__repr__() => 7
+(7).__str__() => 7
+(7).__format__("03d") => 007
+hash(0) => 0
+hash(1) => 1
+hash(-1) => -2
+hash(-2) => -2
+hash(2 ** 61 - 1) => 0
+hash(2 ** 61) => 1
+hash(2 ** 61 + 1) => 2
+hash(-(2 ** 61 - 1)) => 0
+hash(-(2 ** 61)) => -2
+hash(2 ** 64) => 8
+hash(10 ** 30) => 465258685558744706
+hash(-(10 ** 30)) => -465258685558744706
+hash(2 ** 53) => 9007199254740992
+hash(2 ** 122) => 1
+str(10 ** 20) => 100000000000000000000
+repr(-(10 ** 20)) => -100000000000000000000
+len(str(2 ** 1000)) => 302
+str(2 ** 1000)[:20] => 10715086071862673209
+str(2 ** 1000)[-20:] => 24386837205668069376
+len(str(10 ** 4299)) => 4300
+len(str(10 ** 4300)) => ValueError: Exceeds the limit (4300 digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit
+int("1" * 4300) % 7 => 5
+int("1" * 4301) => ValueError: Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit
+len(hex(10 ** 5000)) => 4155
+len(bin(10 ** 5000)) => 16612
+4300
+isinstance(5, int) => True
+isinstance(10 ** 30, int) => True
+type(10 ** 30) is int => True
+type(5) is type(10 ** 30) => True
+int.__name__ => int
+int.__mro__ => (<class 'int'>, <class 'object'>)
+1 .real => 1
+1..real => 1.0
+1.0.real => 1.0
+1 .__class__ => <class 'int'>
+(1).__class__ is int => True
+divmod(10 ** 30, 7) => (142857142857142857142857142857, 1)
+divmod(-(10 ** 30), 7) => (-142857142857142857142857142858, 6)
+divmod(10 ** 30, -7) => (-142857142857142857142857142858, -6)
+divmod(7, 10 ** 30) => (0, 7)
+divmod(-7, 10 ** 30) => (-1, 999999999999999999999999999993)
+0 == -0 => True
+0 is not None => True
+-0 == 0.0 => True
+str(-0) => 0
+[-1000000000000000000000000000000, -1, 0, 3, 9007199254740992, 9007199254740993, 1000000000000000000000000000000]
+max(2 ** 53, 2 ** 53 + 1) => 9007199254740993
+min(-(2 ** 53), -(2 ** 53) - 1) => -9007199254740993
+sum([2 ** 53, 1, 1]) => 9007199254740994
+sum([2 ** 62] * 4) => 18446744073709551616

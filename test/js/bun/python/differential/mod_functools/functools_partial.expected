@@ -1,0 +1,227 @@
+status: 0
+script: 988f4b0b97ee3f8c
+---
+--- basics
+((), {})
+((1, 2), {})
+((1, 2, 3, 4), {})
+((), {'a': 1})
+((), {'a': 1, 'b': 2})
+((), {'a': 2})
+((), {'a': 1, 'b': 3, 'c': 4})
+((1, 3), {'a': 2, 'b': 4})
+((0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 0, 1, 2), {})
+((), {'k0': 0, 'k1': 1, 'k2': 2, 'k3': 3, 'k4': 4, 'k5': 5, 'k6': 6, 'k7': 7, 'k8': 8, 'k9': 9, 'k10': 10, 'k11': 11, 'z': 1})
+5
+1024
+9
+[3, 2, 1]
+'ABC'
+'a b'
+[1, 2, 4, 8, 16]
+((1, 2), {})
+TypeError <lambda>.<locals>.<lambda>() takes 0 positional arguments but 1 was given
+((), {'a': 1})
+((), {'func': 1, 'self': 2})
+True
+--- attributes
+(True, (1, 2), {'a': 10, 'b': 20})
+('tuple', 'dict')
+()
+{}
+{}
+AttributeError readonly attribute
+AttributeError readonly attribute
+AttributeError readonly attribute
+AttributeError readonly attribute
+AttributeError readonly attribute
+AttributeError readonly attribute
+('x', {'extra': 'x'})
+{}
+AttributeError 'functools.partial' object has no attribute 'missing'
+(1, {'z': 1})
+TypeError __dict__ must be set to a dictionary, not a 'int'
+TypeError cannot delete __dict__
+((), {'a': 1})
+((), {'a': 3, 'b': 4})
+--- errors
+TypeError type 'partial' takes at least one argument
+TypeError the first argument must be callable
+TypeError the first argument must be callable
+TypeError the first argument must be callable
+TypeError type 'partial' takes at least one argument
+TypeError type 'partial' takes at least one argument
+TypeError keywords must be strings
+--- repr
+functools.partial(<class 'int'>)
+functools.partial(<class 'int'>, 1)
+functools.partial(<class 'int'>, 1, 'a')
+functools.partial(<class 'int'>, base=2)
+functools.partial(<class 'int'>, 1, base=2, x=[1])
+functools.partial(<class 'int'>, 1, 2)
+"functools.partial(<class 'int'>, 1)"
+functools.partial(<class 'int'>, Placeholder, 1)
+functools.partial(...)
+functools.partial(<class 'int'>, ...)
+functools.partial(<class 'int'>, a=...)
+functools.partial(<class 'int'>, 1=2, None=3)
+RuntimeError bad repr
+RuntimeError bad repr
+"functools.partial(<class '__main__.BadRepr'>)"
+--- nesting
+(True, (1, 2), {'a': 1, 'b': 2}, ((1, 2, 3), {'a': 1, 'b': 2, 'c': 3}))
+({'a': 5}, {'a': 1}, ((1,), {'a': 5}))
+(True, (2,), ((1, 2, 3), {}))
+(True, (2,))
+--- subclasses
+(True, True, ((1, 3), {'a': 2}), {})
+__main__.Sub(<class 'int'>, 1)
+('Sub', (1, 2))
+('partial', (1, 2))
+TypeError type 'partial' takes at least one argument
+TypeError the first argument must be callable
+('sub', ((1, 2), {}))
+((1, 2, 3), {})
+(1, {'y': 2})
+((1,), {'z': 2})
+False
+--- as a method
+(('p', A(), 1), {})
+(('p', 1), {})
+(('s', 1), {})
+(('s', 1), {})
+True
+'method'
+A()
+True
+True
+True
+((1, A(), 2), {})
+((1, A(), 2), {})
+TypeError __get__(None, None) is invalid
+TypeError __get__(None, None) is invalid
+TypeError __get__ expected at least 1 argument, got 0
+TypeError __get__ expected at most 2 arguments, got 3
+((B(), 'second'), {})
+((B(), 'second', 3), {})
+--- Placeholder
+Placeholder
+'Placeholder'
+'_PlaceholderType'
+'functools'
+True
+True
+TypeError PlaceholderType takes no arguments
+TypeError PlaceholderType takes no arguments
+'Placeholder'
+True
+True
+True
+TypeError type 'functools._PlaceholderType' is not an acceptable base type
+False
+((1, 2), {})
+((1, 2, 3), {})
+((1, 2, 3, 4), {})
+((1, 2, 3, 4, 5, 6), {})
+((1, 2, 3), {})
+((1, 2), {'a': 1, 'b': 2})
+TypeError missing positional arguments in 'partial' call; expected at least 1, got 0
+TypeError missing positional arguments in 'partial' call; expected at least 2, got 1
+TypeError missing positional arguments in 'partial' call; expected at least 2, got 0
+TypeError missing positional arguments in 'partial' call; expected at least 1, got 0
+TypeError trailing Placeholders are not allowed
+TypeError trailing Placeholders are not allowed
+TypeError trailing Placeholders are not allowed
+TypeError Placeholder cannot be passed as a keyword argument
+TypeError Placeholder cannot be passed as a keyword argument
+(Placeholder, 1)
+((1, Placeholder), {})
+((1,), {'a': Placeholder})
+'bbnbnb'
+25
+4
+--- Placeholder and nesting
+(1, 2, Placeholder, 4)
+((1, 2, 3, 4), {})
+TypeError missing positional arguments in 'partial' call; expected at least 1, got 0
+(1, 2, 3, 4)
+((1, 2, 3, 4), {})
+(1, 2, 3, 4, 5)
+(Placeholder, 2, 3, 4)
+((1, 2, 3, 4), {})
+TypeError missing positional arguments in 'partial' call; expected at least 1, got 0
+(Placeholder, 2, Placeholder, 4, 5)
+((1, 2, 3, 4, 5), {})
+TypeError missing positional arguments in 'partial' call; expected at least 2, got 1
+TypeError trailing Placeholders are not allowed
+(Placeholder, 2, Placeholder, 4)
+((1, 2, 3, 4), {})
+TypeError missing positional arguments in 'partial' call; expected at least 2, got 1
+(Placeholder, 2, Placeholder, 4)
+(1, Placeholder, 3)
+((1, 2, 3), {})
+((1, 2, 3, 4), {})
+((1, 2, 3, 4, 5), {})
+--- pickling support
+(True, True, ((1, 2), {'a': 3}, None))
+((1, 2), {'a': 3}, {'x': 1})
+True
+TypeError partial.__reduce__() takes no arguments (1 given)
+None
+(True, (1,), {'a': 10}, {'attr': []})
+((1, 2), {'a': 10, 'b': 20})
+None
+((1,), {'a': 10}, None)
+(True, (1,), {'a': 10}, {})
+None
+(True, (1,), {}, {})
+((1, 2), {})
+None
+(True, (), {}, {})
+None
+(((1, 2), {}), (Placeholder, 2))
+TypeError missing positional arguments in 'partial' call; expected at least 1, got 0
+TypeError invalid partial state
+TypeError invalid partial state
+TypeError invalid partial state
+TypeError invalid partial state
+TypeError invalid partial state
+TypeError invalid partial state
+TypeError invalid partial state
+TypeError invalid partial state
+TypeError invalid partial state
+TypeError invalid partial state
+TypeError invalid partial state
+TypeError invalid partial state
+TypeError invalid partial state
+TypeError invalid partial state
+TypeError invalid partial state
+TypeError invalid partial state
+TypeError trailing Placeholders are not allowed
+TypeError trailing Placeholders are not allowed
+(((1, 2), {}), (Placeholder, 2))
+TypeError partial.__setstate__() takes exactly one argument (0 given)
+TypeError partial.__setstate__() takes exactly one argument (2 given)
+('tuple', 'dict', ((1, 2), {'a': 10}))
+(1, 'MyDict')
+(True, True, True)
+--- the type
+('partial', 'partial', 'functools', "<class 'functools.partial'>")
+True
+functools.partial[int]
+True
+(<class 'int'>, <class 'str'>)
+['__call__', '__class_getitem__', '__dict__', '__get__', '__new__', '__reduce__', '__repr__', '__setstate__', 'args', 'func', 'keywords']
+True
+(True, False, True)
+((1, 2), {})
+((1, 2), {})
+((1, 2), {})
+TypeError type 'partial' takes at least one argument
+'Create a new function with partial application of the given arguments\nand keywords.'
+--- what is called may do anything
+((1, 3), {'a': 2})
+(('changed', 3), {})
+KeyError (1, 2)
+(47, 48, 49)
+True

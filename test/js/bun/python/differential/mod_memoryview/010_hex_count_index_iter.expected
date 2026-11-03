@@ -1,0 +1,174 @@
+status: 0
+script: ee54c600807f5301
+---
+'b901ef007f80'
+True
+True
+True
+'b9:01:ef:00:7f:80'
+True
+True
+True
+'b9:01:ef:00:7f:80'
+True
+True
+True
+'b9:01:ef:00:7f:80'
+True
+True
+True
+'b901:ef00:7f80'
+True
+True
+True
+'b901:ef00:7f80'
+True
+True
+True
+'b901ef:007f80'
+True
+True
+True
+'b901ef00:7f80'
+True
+True
+True
+'b901ef007f80'
+True
+True
+True
+'b901ef007f80'
+True
+True
+True
+'b901ef007f80'
+True
+True
+True
+'b901ef007f80'
+True
+True
+True
+'b901_ef00_7f80'
+True
+True
+True
+'b9:01:ef:00:7f:80'
+True
+True
+True
+ValueError sep must be length 1.
+ValueError sep must be length 1.
+ValueError sep must be length 1.
+ValueError sep must be length 1.
+ValueError sep must be ASCII.
+ValueError sep must be ASCII.
+ValueError sep must be ASCII.
+TypeError object of type 'int' has no len()
+TypeError object of type 'NoneType' has no len()
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'float' object cannot be interpreted as an integer
+TypeError 'NoneType' object cannot be interpreted as an integer
+OverflowError Python int too large to convert to C ssize_t
+TypeError hex() takes at most 2 arguments (3 given)
+TypeError sep must be str or bytes.
+TypeError sep must be str or bytes.
+'b901:ef00:7f80'
+'b901ef007f80'
+TypeError hex() got an unexpected keyword argument 'x'
+''
+''
+'b901ef007f80'
+'b9:01:ef:00:7f:80'
+BufferError memoryview has 1 exported buffer
+TypeError sep must be str or bytes.
+b'abc'
+3
+3
+2
+0
+3
+0
+0
+0
+0
+3
+0
+TypeError memoryview.count() takes exactly one argument (0 given)
+TypeError memoryview.count() takes exactly one argument (2 given)
+TypeError memoryview.count() takes no keyword arguments
+2
+3
+0
+3
+0
+2
+2
+2
+4
+4
+0
+1
+2
+ValueError memoryview.index(x): x not found
+3
+6
+ValueError memoryview.index(x): x not found
+ValueError memoryview.index(x): x not found
+ValueError memoryview.index(x): x not found
+ValueError memoryview.index(x): x not found
+6
+3
+0
+ValueError memoryview.index(x): x not found
+0
+ValueError memoryview.index(x): x not found
+3
+3
+ValueError memoryview.index(x): x not found
+3
+ValueError memoryview.index(x): x not found
+0
+ValueError memoryview.index(x): x not found
+ValueError memoryview.index(x): x not found
+ValueError memoryview.index(x): x not found
+3
+3
+ValueError memoryview.index(x): x not found
+0
+0
+ValueError memoryview.index(x): x not found
+TypeError index expected at least 1 argument, got 0
+TypeError slice indices must be integers or have an __index__ method
+TypeError slice indices must be integers or have an __index__ method
+TypeError slice indices must be integers or have an __index__ method
+TypeError slice indices must be integers or have an __index__ method
+TypeError slice indices must be integers or have an __index__ method
+TypeError index expected at most 3 arguments, got 4
+TypeError memoryview.index() takes no keyword arguments
+TypeError memoryview.index() takes no keyword arguments
+1
+2
+2
+0
+ValueError memoryview.index(x): x not found
+2
+2
+KeyError 'eq'
+KeyError 'eq'
+KeyError 'eq'
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+memory_iterator builtins True 97 98 [99, 97, 98, 99, 97, 98] []
+StopIteration 
+TypeError cannot create 'memory_iterator' instances
+TypeError object of type 'memory_iterator' has no len()
+AttributeError 'memory_iterator' object has no attribute '__length_hint__'
+TypeError cannot pickle 'memory_iterator' object
+['__iter__', '__next__']
+0
+[97, 97, 97] [25185, 24931, 25442, 25185] [b'a', b'b', b'c', b'a', b'b', b'c', b'a', b'b'] [98, 97, 99, 98, 97, 99, 98, 97] [(97, 98), (98, 99), (99, 97), (97, 98), (98, 99), (99, 97), (97, 98)] [(0, 97), (1, 98)] ['a', 'b', 'c', 'a', 'b', 'c', 'a', 'b']
+97 [98, 99, 97, 98, 99, 97] 98
+97
+120 99

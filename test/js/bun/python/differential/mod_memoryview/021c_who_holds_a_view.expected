@@ -1,0 +1,30 @@
+status: 0
+script: 78e900576718538f
+---
+cast True None False
+__buffer__ True None False
+dict value True None False
+deque True None False
+namedtuple True None False
+class attribute True None False
+bound method True None False
+enumerate True None False
+filter True None False
+repeat True None False
+itemgetter target True None False
+default True None False
+generator temporary True None False
+exception True None False
+slice object True None False
+cell True None False
+weak reference only False None False
+True False True True False
+[True] False [True] False
+3 True True True 3False False
+True
+False
+True
+False
+True
+False
+[2, 1] False [True] False 1 bytearray(b'abc')

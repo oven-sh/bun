@@ -1,0 +1,229 @@
+status: 0
+script: 99afef7f774b3a19
+source: b06d69e981b8ba9d
+---
+type(it).__name__ => list_iterator
+iter(it) is it => True
+next(it) => 1
+next(it) => 2
+next(it) => 3
+next(it, "d") => d
+next(it, None) => None
+next(it) => StopIteration: 
+list_iterator True empty | tuple_iterator True empty | str_ascii_iterator True empty | bytes_iterator True empty | bytearray_iterator True empty | dict_keyiterator True empty | set_iterator True empty | set_iterator True empty | range_iterator True empty | dict_keyiterator True empty | dict_valueiterator True empty | dict_itemiterator True empty | list_iterator True empty | list_reverseiterator True empty | reversed True empty | range_iterator True empty | dict_reversekeyiterator True empty | reversed True empty | enumerate True empty | zip True empty | map True empty | filter True empty | generator True empty | callable_iterator True empty | longrange_iterator True 0 | dict_reverseitemiterator True empty | dict_reversekeyiterator True empty | dict_reversevalueiterator True empty | dict_keyiterator True empty | 
+type(ci).__name__ => callable_iterator
+list(ci) => [1, 2, 3]
+list(ci) => []
+next(ci, "done") => done
+n => [4]
+list(iter(lambda: 1, 1)) => []
+list(iter([3, 2, 1].pop, 2)) if False else "" => 
+next(iter(int, 1)) => 0
+next(iter(list, None)) => []
+list(iter(lambda: src.pop(0), None)) => [1, 2]
+src => [3]
+[]
+list(iter(raises_other, 1)) => KeyError: 'k'
+iter(5, 1) => TypeError: iter(v, w): v must be callable
+iter([1], 1) => TypeError: iter(v, w): v must be callable
+iter(None, None) => TypeError: iter(v, w): v must be callable
+iter("abc", "b") => TypeError: iter(v, w): v must be callable
+[]
+identity counts as equal
+out => [1, 2, 3, 4]
+l => [1, 2, 3, 4]
+out => [1, 3]
+l => [2, 4]
+gone
+stays exhausted
+[1, 2, 3]
+1
+2
+end
+end
+RuntimeError: dictionary changed size during iteration
+RuntimeError: dictionary changed size during iteration
+{1: 'same size is fine', 2: 'same size is fine'}
+RuntimeError: dictionary changed size during iteration
+RuntimeError: dictionary changed size during iteration
+RuntimeError: dictionary keys changed during iteration
+RuntimeError: Set changed size during iteration
+RuntimeError: Set changed size during iteration
+next(i) => RuntimeError: dictionary changed size during iteration
+next(i) => RuntimeError: dictionary changed size during iteration
+next(i) => RuntimeError: dictionary changed size during iteration
+i.__length_hint__() => 3
+next(i) => 1
+i.__length_hint__() => 2
+list(i) => [2, 3]
+i.__length_hint__() => 0
+iter((1, 2)).__length_hint__() => 2
+iter("abc").__length_hint__() => 3
+iter(range(5)).__length_hint__() => 5
+iter({1: 2}).__length_hint__() => 1
+iter({1, 2}).__length_hint__() => 2
+reversed([1, 2]).__length_hint__() => 2
+iter(b"ab").__length_hint__() => 2
+iter({1: 2}.items()).__length_hint__() => 1
+reversed(range(4)).__length_hint__() => 4
+[3, 4]
+[]
+[]
+[7, 8, 9]
+['b', 'c', 'd']
+[2, 3]
+type(e).__name__ => enumerate
+iter(e) is e => True
+next(e) => (0, 'a')
+list(e) => [(1, 'b'), (2, 'c')]
+list(enumerate("ab", 5)) => [(5, 'a'), (6, 'b')]
+list(enumerate("ab", start=-1)) => [(-1, 'a'), (0, 'b')]
+list(enumerate([])) => []
+list(enumerate("a", 2 ** 70)) => [(1180591620717411303424, 'a')]
+list(enumerate(iterable="ab")) => [(0, 'a'), (1, 'b')]
+list(enumerate("ab", True)) => [(1, 'a'), (2, 'b')]
+dict(enumerate("ab")) => {0: 'a', 1: 'b'}
+[i * v for i, v in enumerate([5, 6])] => [0, 6]
+list(enumerate(enumerate("a"))) => [(0, (0, 'a'))]
+enumerate() => TypeError: enumerate() missing required argument 'iterable'
+enumerate(1) => TypeError: 'int' object is not iterable
+enumerate("a", "b") => TypeError: 'str' object cannot be interpreted as an integer
+enumerate("a", 1.5) => TypeError: 'float' object cannot be interpreted as an integer
+enumerate("a", 1, 2) => TypeError: enumerate() takes at most 2 arguments (3 given)
+enumerate("a", nope=1) => TypeError: 'nope' is an invalid keyword argument for enumerate()
+enumerate(start=1) => TypeError: 'start' is an invalid keyword argument for enumerate()
+len(enumerate("a")) => TypeError: object of type 'enumerate' has no len()
+enumerate("a")[0] => TypeError: 'enumerate' object is not subscriptable
+enumerate[int]
+[(9223372036854775807, 'a'), (9223372036854775808, 'b')]
+type(z).__name__ => zip
+iter(z) is z => True
+next(z) => ('a', 1)
+list(z) => [('b', 2)]
+list(zip()) => []
+list(zip("abc")) => [('a',), ('b',), ('c',)]
+list(zip("abc", "de")) => [('a', 'd'), ('b', 'e')]
+list(zip("ab", "cd", "ef")) => [('a', 'c', 'e'), ('b', 'd', 'f')]
+list(zip([], "ab")) => []
+list(zip(*[(1, 2), (3, 4)])) => [(1, 3), (2, 4)]
+list(zip(*zip("ab", "cd"))) => [('a', 'b'), ('c', 'd')]
+dict(zip("ab", range(2))) => {'a': 0, 'b': 1}
+list(zip(range(3), range(10 ** 10))) => [(0, 0), (1, 1), (2, 2)]
+list(zip("ab", strict=True)) => [('a',), ('b',)]
+list(zip(strict=True)) => []
+list(zip("ab", "cd", strict=True)) => [('a', 'c'), ('b', 'd')]
+list(zip("ab", "cd", strict=False)) => [('a', 'c'), ('b', 'd')]
+list(zip("ab", "c", strict=0)) => [('a', 'c')]
+list(zip("ab", "c", strict=True)) => ValueError: zip() argument 2 is shorter than argument 1
+list(zip("a", "bc", strict=True)) => ValueError: zip() argument 2 is longer than argument 1
+list(zip("ab", "cd", "e", strict=True)) => ValueError: zip() argument 3 is shorter than arguments 1-2
+list(zip("ab", "c", "de", strict=True)) => ValueError: zip() argument 2 is shorter than argument 1
+list(zip("a", "bc", "de", strict=True)) => ValueError: zip() argument 2 is longer than argument 1
+list(zip("ab", "cd", "efg", strict=True)) => ValueError: zip() argument 3 is longer than arguments 1-2
+list(zip("", "a", strict=True)) => ValueError: zip() argument 2 is longer than argument 1
+list(zip("a", "", strict=True)) => ValueError: zip() argument 2 is shorter than argument 1
+zip(1) => TypeError: 'int' object is not iterable
+zip("a", 1) => TypeError: 'int' object is not iterable
+zip("a", None, "b") => TypeError: 'NoneType' object is not iterable
+zip("a", nope=1) => TypeError: zip() got an unexpected keyword argument 'nope'
+len(zip()) => TypeError: object of type 'zip' has no len()
+zip("a", strict="yes") and "truthy strict accepted" => 'truthy strict accepted'
+list(zip(a, b)) => [(1, 1)]
+next(a) => 3
+list(zip(b, a)) => [(1, 1)]
+next(a) => 2
+list(zip(i, i)) => [(0, 1), (2, 3), (4, 5)]
+list(zip(*[iter(range(7))] * 3)) => [(0, 1, 2), (3, 4, 5)]
+type(m).__name__ => map
+iter(m) is m => True
+next(m) => 1
+list(m) => ['2']
+list(map(lambda a, b: a + b, [1, 2], [10, 20, 30])) => [11, 22]
+list(map(pow, [2, 3], [2, 2])) => [4, 9]
+list(map(len, ["a", "bb"])) => [1, 2]
+list(map(str.upper, "ab")) => ['A', 'B']
+list(map(lambda: 1, [])) => []
+list(map(int, "12")) => [1, 2]
+list(map(None, [])) => []
+list(map(lambda *a: a, "ab", "cd", "ef")) => [('a', 'c', 'e'), ('b', 'd', 'f')]
+list(map(lambda x: x, map(lambda x: x + 1, [1]))) => [2]
+sum(map(abs, [-1, -2])) => 3
+list(map(lambda a, b: (a, b), "ab", "cd", strict=True)) => [('a', 'c'), ('b', 'd')]
+map() => TypeError: map() must have at least two arguments.
+map(str) => TypeError: map() must have at least two arguments.
+map(str, 1) => TypeError: 'int' object is not iterable
+list(map(None, [1])) => TypeError: 'NoneType' object is not callable
+list(map(5, [1])) => TypeError: 'int' object is not callable
+list(map(lambda: 1, [1])) => TypeError: <lambda>.<locals>.<lambda>() takes 0 positional arguments but 1 was given
+list(map(lambda a, b: 1, [1])) => TypeError: <lambda>.<locals>.<lambda>() missing 1 required positional argument: 'b'
+list(map(int, ["x"])) => ValueError: invalid literal for int() with base 10: 'x'
+map(str, [1], nope=1) => TypeError: map() got an unexpected keyword argument 'nope'
+list(map(lambda a, b: 1, "ab", "c", strict=True)) => ValueError: map() argument 2 is shorter than argument 1
+list(map(lambda a, b: 1, "a", "bc", strict=True)) => ValueError: map() argument 2 is longer than argument 1
+len(map(str, [])) => TypeError: object of type 'map' has no len()
+[]
+[1]
+type(f).__name__ => filter
+iter(f) is f => True
+list(f) => [1, 'a', [0]]
+list(filter(lambda x: x % 2, range(6))) => [1, 3, 5]
+list(filter(str.isdigit, "a1b2")) => ['1', '2']
+list(filter(None, [])) => []
+list(filter(bool, [0, 1])) => [1]
+list(filter(lambda x: None, [1])) => []
+list(filter(lambda x: "truthy", [0])) => [0]
+"".join(filter(str.isalpha, "a1b")) => ab
+list(filter(None, "ab")) => ['a', 'b']
+list(filter(callable, [len, 1])) => [<built-in function len>]
+filter() => TypeError: filter expected 2 arguments, got 0
+filter(None) => TypeError: filter expected 2 arguments, got 1
+filter(None, 1) => TypeError: 'int' object is not iterable
+list(filter(5, [1])) => TypeError: 'int' object is not callable
+filter(None, [], 1) => TypeError: filter expected 2 arguments, got 3
+list(filter(lambda: 1, [1])) => TypeError: <lambda>.<locals>.<lambda>() takes 0 positional arguments but 1 was given
+filter(function=None, iterable=[]) => TypeError: filter() takes no keyword arguments
+len(filter(None, [])) => TypeError: object of type 'filter' has no len()
+list(filter(None, [NoBool()])) => ValueError: no bool
+list(filter(lambda x: NoBool(), [1])) => ValueError: no bool
+type(r).__name__ => list_reverseiterator
+iter(r) is r => True
+next(r) => 3
+list(r) => [2, 1]
+list(reversed("abc")) => ['c', 'b', 'a']
+list(reversed((1, 2))) => [2, 1]
+list(reversed(range(5))) => [4, 3, 2, 1, 0]
+list(reversed(range(0, 10, 3))) => [9, 6, 3, 0]
+list(reversed(range(10, 0, -3))) => [1, 4, 7, 10]
+list(reversed({1: 2, 3: 4})) => [3, 1]
+list(reversed(b"ab")) => [98, 97]
+list(reversed(bytearray(b"ab"))) => [98, 97]
+list(reversed([])) => []
+list(reversed(list(reversed([1, 2])))) => [1, 2]
+"".join(reversed("héllo😀")) => 😀olléh
+list(reversed({1: 2, 3: 4}.values())) => [4, 2]
+type(reversed("")).__name__ => reversed
+type(reversed(())).__name__ => reversed
+type(reversed(range(1))).__name__ => range_iterator
+type(reversed({})).__name__ => dict_reversekeyiterator
+list(range(2 ** 64, 2 ** 64 + 3)) => [18446744073709551616, 18446744073709551617, 18446744073709551618]
+list(range(2 ** 64 + 2, 2 ** 64, -1)) => [18446744073709551618, 18446744073709551617]
+list(reversed(range(2 ** 64, 2 ** 64 + 2))) => [18446744073709551617, 18446744073709551616]
+next(iter(range(-(2 ** 70), 0))) => -1180591620717411303424
+type(iter(range(2 ** 64, 2 ** 65))).__name__ => longrange_iterator
+list(range(0, 2 ** 65, 2 ** 64)) => [0, 18446744073709551616]
+list("a😀é") => ['a', '😀', 'é']
+[ord(c) for c in "a😀"] => [97, 128512]
+list(b"\x00\xff") => [0, 255]
+list(iter("")) => []
+[c for c in "ab" for _ in "xy"] => ['a', 'a', 'b', 'b']
+list(bytearray(b"ab")) => [97, 98]
+1 2; 3 4; 1 2 3; 1 [2, 3]; 4 []; 1 2; o.x => 2
+lst => [0, 2]
+dd => {'k': 'b'}
+a => 1
+10
+else on empty 10
+unpack_err() => ValueError: too many values to unpack (expected 2, got 3)
+unpack_err2() => TypeError: cannot unpack non-iterable int object
+unpack_err3() => ValueError: not enough values to unpack (expected 2, got 1)
+x y x y x y x y x y x y x y x y x y x y x y x y 

@@ -1,0 +1,18 @@
+status: 0
+script: 1d75df8758f0f6d1
+---
+981173106 1234567890 (calendar.THURSDAY, 29) February Mon False 5
+   February 2024
+Mo Tu We Th Fr Sa Su
+          1  2  3  4
+ 5  6  7  8  9 10 11
+12 13 14 15 16 17 18
+19 20 21 22 23 24 25
+26 27 28 29
+
+2001-02-03 04:05:06.000789 2001-02-03T04:05:06.000789 Sat Feb  3 04:05:06 2001 Saturday 03 February 2001 04:05:06.000789 034 04 % time.struct_time(tm_year=2001, tm_mon=2, tm_mday=3, tm_hour=4, tm_min=5, tm_sec=6, tm_wday=5, tm_yday=34, tm_isdst=-1) time.struct_time(tm_year=2001, tm_mon=2, tm_mday=3, tm_hour=4, tm_min=5, tm_sec=6, tm_wday=5, tm_yday=34, tm_isdst=0) 981173106.000789 730519 5 (2001, 5, 6)
+1970-01-01 00:00:00+00:00 2009-02-13 23:31:30.500000+00:00 2009-02-13 23:31:30 1938-04-24 22:13:20+00:00 2001-02-03 04:05:00 2001-02-03 04:05:06+05:30
+2001-02-03 09:35:06.000789+05:30 UTC 0:00:00 +0000 UTC
+02/03/01 Sat 1971-01-01 04-05-06 0001 9999 9999
+True True True
+True True 3

@@ -417,3 +417,25 @@ test/js/bun/typescript/type-export.test.ts
 # End the process while threads, lookups and requests are in flight.
 test/js/bun/util/system-library-calls.test.ts
 test/napi/addon-allocations.test.ts
+
+# Python: never run with LeakSanitizer or with BUN_DESTRUCT_VM_ON_EXIT yet.
+test/js/bun/python/bytecode-cache.test.ts
+test/js/bun/python/cli.test.ts
+test/js/bun/python/differential/command-line.test.ts
+test/js/bun/python/differential/lang.test.ts
+test/js/bun/python/differential/modules-a-i.test.ts
+test/js/bun/python/differential/modules-j-r.test.ts
+test/js/bun/python/differential/modules-s.test.ts
+test/js/bun/python/differential/modules-t.test.ts
+test/js/bun/python/differential/modules-u-z.test.ts
+test/js/bun/python/differential/runtime.test.ts
+test/js/bun/python/event-loop.test.ts
+test/js/bun/python/gc.test.ts
+test/js/bun/python/host-modules.test.ts
+test/js/bun/python/import-js.test.ts
+test/js/bun/python/import-py.test.ts
+test/js/bun/python/operators.test.ts
+test/js/bun/python/ssl.test.ts
+test/js/bun/python/stdlib-vfs.test.ts
+test/js/bun/python/threads.test.ts
+test/js/bun/python/tracing.test.ts

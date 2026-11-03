@@ -1,0 +1,579 @@
+status: 0
+script: 06e3fe9cdd6a5780
+source: 19bf1b4453c9ee35
+---
+repr(e) => Exception()
+str(e) => 
+e.args => ()
+bool(e) => True
+type(e) => <class 'Exception'>
+e.__dict__ => {}
+e.__traceback__ => None
+e.__cause__ => None
+e.__context__ => None
+e.__suppress_context__ => False
+repr(x) [args=()] => Exception()
+| str(x) [args=()] => 
+| x.args [args=()] => ()
+repr(x) [args=(1,)] => Exception(1)
+| str(x) [args=(1,)] => 1
+| x.args [args=(1,)] => (1,)
+repr(x) [args=('a',)] => Exception('a')
+| str(x) [args=('a',)] => a
+| x.args [args=('a',)] => ('a',)
+repr(x) [args=('a', 'b')] => Exception('a', 'b')
+| str(x) [args=('a', 'b')] => ('a', 'b')
+| x.args [args=('a', 'b')] => ('a', 'b')
+repr(x) [args=(None,)] => Exception(None)
+| str(x) [args=(None,)] => None
+| x.args [args=(None,)] => (None,)
+repr(x) [args=tuple] => Exception((1, 2))
+| str(x) [args=tuple] => (1, 2)
+| x.args [args=tuple] => ((1, 2),)
+repr(x) [args=tuple] => Exception([1])
+| str(x) [args=tuple] => [1]
+| x.args [args=tuple] => ([1],)
+repr(x) [args=('',)] => Exception('')
+| str(x) [args=('',)] => 
+| x.args [args=('',)] => ('',)
+repr(x) [args=(1.5,)] => Exception(1.5)
+| str(x) [args=(1.5,)] => 1.5
+| x.args [args=(1.5,)] => (1.5,)
+repr(x) [args=('é',)] => Exception('é')
+| str(x) [args=('é',)] => é
+| x.args [args=('é',)] => ('é',)
+repr(x) [args=(b'b',)] => Exception(b'b')
+| str(x) [args=(b'b',)] => b'b'
+| x.args [args=(b'b',)] => (b'b',)
+repr(x) [args=("a'b",)] => Exception("a'b")
+| str(x) [args=("a'b",)] => a'b
+| x.args [args=("a'b",)] => ("a'b",)
+repr(x) [args=('line\nbreak',)] => Exception('line\nbreak')
+| str(x) [args=('line\nbreak',)] => line
+break
+| x.args [args=('line\nbreak',)] => ('line\nbreak',)
+repr(ValueError("x")) => ValueError('x')
+str(ValueError("x")) => x
+repr(KeyError("k")) => KeyError('k')
+str(KeyError("k")) => 'k'
+str(KeyError()) => 
+str(KeyError("a", "b")) => ('a', 'b')
+str(KeyError(1)) => 1
+str(KeyError(None)) => None
+str(KeyError("")) => ''
+str(KeyError((1, 2))) => (1, 2)
+repr(KeyError((1, 2))) => KeyError((1, 2))
+str(IndexError("i")) => i
+str(KeyError("it's")) => "it's"
+str(KeyError('q"q')) => 'q"q'
+e => (1, 2)
+repr(e) => ValueError(1, 2)
+('x', 'y')
+e.args => (3,)
+e => 3
+repr(e) => ValueError()
+str(e) == "" => True
+s1() => TypeError: 'int' object is not iterable
+s2() => TypeError: args may not be deleted
+s3() => TypeError: 'NoneType' object is not iterable
+e.custom => 5
+e.__dict__ => {'custom': 5}
+e.nope => AttributeError: 'ValueError' object has no attribute 'nope'
+Exception("a") == Exception("a") => False
+Exception("a") != Exception("a") => True
+(x := Exception("a")) == x => True
+isinstance(hash(x), int) => True
+{x: 1}[x] => 1
+Exception(a=1) => TypeError: Exception() takes no keyword arguments
+ValueError(x=1) => TypeError: ValueError() takes no keyword arguments
+BaseException(k=1) => TypeError: BaseException() takes no keyword arguments
+KeyError(k=1) => TypeError: KeyError() takes no keyword arguments
+bases(c)[:-1] [c=BaseException] => ['BaseException']
+c.__module__ [c=BaseException] => builtins
+repr(c) [c=BaseException] => <class 'BaseException'>
+bases(c)[:-1] [c=Exception] => ['Exception', 'BaseException']
+c.__module__ [c=Exception] => builtins
+repr(c) [c=Exception] => <class 'Exception'>
+bases(c)[:-1] [c=ArithmeticError] => ['ArithmeticError', 'Exception', 'BaseException']
+c.__module__ [c=ArithmeticError] => builtins
+repr(c) [c=ArithmeticError] => <class 'ArithmeticError'>
+bases(c)[:-1] [c=ZeroDivisionError] => ['ZeroDivisionError', 'ArithmeticError', 'Exception', 'BaseException']
+c.__module__ [c=ZeroDivisionError] => builtins
+repr(c) [c=ZeroDivisionError] => <class 'ZeroDivisionError'>
+bases(c)[:-1] [c=OverflowError] => ['OverflowError', 'ArithmeticError', 'Exception', 'BaseException']
+c.__module__ [c=OverflowError] => builtins
+repr(c) [c=OverflowError] => <class 'OverflowError'>
+bases(c)[:-1] [c=FloatingPointError] => ['FloatingPointError', 'ArithmeticError', 'Exception', 'BaseException']
+c.__module__ [c=FloatingPointError] => builtins
+repr(c) [c=FloatingPointError] => <class 'FloatingPointError'>
+bases(c)[:-1] [c=LookupError] => ['LookupError', 'Exception', 'BaseException']
+c.__module__ [c=LookupError] => builtins
+repr(c) [c=LookupError] => <class 'LookupError'>
+bases(c)[:-1] [c=KeyError] => ['KeyError', 'LookupError', 'Exception', 'BaseException']
+c.__module__ [c=KeyError] => builtins
+repr(c) [c=KeyError] => <class 'KeyError'>
+bases(c)[:-1] [c=IndexError] => ['IndexError', 'LookupError', 'Exception', 'BaseException']
+c.__module__ [c=IndexError] => builtins
+repr(c) [c=IndexError] => <class 'IndexError'>
+bases(c)[:-1] [c=ValueError] => ['ValueError', 'Exception', 'BaseException']
+c.__module__ [c=ValueError] => builtins
+repr(c) [c=ValueError] => <class 'ValueError'>
+bases(c)[:-1] [c=UnicodeError] => ['UnicodeError', 'ValueError', 'Exception', 'BaseException']
+c.__module__ [c=UnicodeError] => builtins
+repr(c) [c=UnicodeError] => <class 'UnicodeError'>
+bases(c)[:-1] [c=UnicodeDecodeError] => ['UnicodeDecodeError', 'UnicodeError', 'ValueError', 'Exception', 'BaseException']
+c.__module__ [c=UnicodeDecodeError] => builtins
+repr(c) [c=UnicodeDecodeError] => <class 'UnicodeDecodeError'>
+bases(c)[:-1] [c=UnicodeEncodeError] => ['UnicodeEncodeError', 'UnicodeError', 'ValueError', 'Exception', 'BaseException']
+c.__module__ [c=UnicodeEncodeError] => builtins
+repr(c) [c=UnicodeEncodeError] => <class 'UnicodeEncodeError'>
+bases(c)[:-1] [c=UnicodeTranslateError] => ['UnicodeTranslateError', 'UnicodeError', 'ValueError', 'Exception', 'BaseException']
+c.__module__ [c=UnicodeTranslateError] => builtins
+repr(c) [c=UnicodeTranslateError] => <class 'UnicodeTranslateError'>
+bases(c)[:-1] [c=TypeError] => ['TypeError', 'Exception', 'BaseException']
+c.__module__ [c=TypeError] => builtins
+repr(c) [c=TypeError] => <class 'TypeError'>
+bases(c)[:-1] [c=NameError] => ['NameError', 'Exception', 'BaseException']
+c.__module__ [c=NameError] => builtins
+repr(c) [c=NameError] => <class 'NameError'>
+bases(c)[:-1] [c=UnboundLocalError] => ['UnboundLocalError', 'NameError', 'Exception', 'BaseException']
+c.__module__ [c=UnboundLocalError] => builtins
+repr(c) [c=UnboundLocalError] => <class 'UnboundLocalError'>
+bases(c)[:-1] [c=AttributeError] => ['AttributeError', 'Exception', 'BaseException']
+c.__module__ [c=AttributeError] => builtins
+repr(c) [c=AttributeError] => <class 'AttributeError'>
+bases(c)[:-1] [c=OSError] => ['OSError', 'Exception', 'BaseException']
+c.__module__ [c=OSError] => builtins
+repr(c) [c=OSError] => <class 'OSError'>
+bases(c)[:-1] [c=FileNotFoundError] => ['FileNotFoundError', 'OSError', 'Exception', 'BaseException']
+c.__module__ [c=FileNotFoundError] => builtins
+repr(c) [c=FileNotFoundError] => <class 'FileNotFoundError'>
+bases(c)[:-1] [c=PermissionError] => ['PermissionError', 'OSError', 'Exception', 'BaseException']
+c.__module__ [c=PermissionError] => builtins
+repr(c) [c=PermissionError] => <class 'PermissionError'>
+bases(c)[:-1] [c=TimeoutError] => ['TimeoutError', 'OSError', 'Exception', 'BaseException']
+c.__module__ [c=TimeoutError] => builtins
+repr(c) [c=TimeoutError] => <class 'TimeoutError'>
+bases(c)[:-1] [c=ConnectionError] => ['ConnectionError', 'OSError', 'Exception', 'BaseException']
+c.__module__ [c=ConnectionError] => builtins
+repr(c) [c=ConnectionError] => <class 'ConnectionError'>
+bases(c)[:-1] [c=BrokenPipeError] => ['BrokenPipeError', 'ConnectionError', 'OSError', 'Exception', 'BaseException']
+c.__module__ [c=BrokenPipeError] => builtins
+repr(c) [c=BrokenPipeError] => <class 'BrokenPipeError'>
+bases(c)[:-1] [c=ConnectionResetError] => ['ConnectionResetError', 'ConnectionError', 'OSError', 'Exception', 'BaseException']
+c.__module__ [c=ConnectionResetError] => builtins
+repr(c) [c=ConnectionResetError] => <class 'ConnectionResetError'>
+bases(c)[:-1] [c=BlockingIOError] => ['BlockingIOError', 'OSError', 'Exception', 'BaseException']
+c.__module__ [c=BlockingIOError] => builtins
+repr(c) [c=BlockingIOError] => <class 'BlockingIOError'>
+bases(c)[:-1] [c=IsADirectoryError] => ['IsADirectoryError', 'OSError', 'Exception', 'BaseException']
+c.__module__ [c=IsADirectoryError] => builtins
+repr(c) [c=IsADirectoryError] => <class 'IsADirectoryError'>
+bases(c)[:-1] [c=RuntimeError] => ['RuntimeError', 'Exception', 'BaseException']
+c.__module__ [c=RuntimeError] => builtins
+repr(c) [c=RuntimeError] => <class 'RuntimeError'>
+bases(c)[:-1] [c=NotImplementedError] => ['NotImplementedError', 'RuntimeError', 'Exception', 'BaseException']
+c.__module__ [c=NotImplementedError] => builtins
+repr(c) [c=NotImplementedError] => <class 'NotImplementedError'>
+bases(c)[:-1] [c=RecursionError] => ['RecursionError', 'RuntimeError', 'Exception', 'BaseException']
+c.__module__ [c=RecursionError] => builtins
+repr(c) [c=RecursionError] => <class 'RecursionError'>
+bases(c)[:-1] [c=PythonFinalizationError] => ['PythonFinalizationError', 'RuntimeError', 'Exception', 'BaseException']
+c.__module__ [c=PythonFinalizationError] => builtins
+repr(c) [c=PythonFinalizationError] => <class 'PythonFinalizationError'>
+bases(c)[:-1] [c=StopIteration] => ['StopIteration', 'Exception', 'BaseException']
+c.__module__ [c=StopIteration] => builtins
+repr(c) [c=StopIteration] => <class 'StopIteration'>
+bases(c)[:-1] [c=StopAsyncIteration] => ['StopAsyncIteration', 'Exception', 'BaseException']
+c.__module__ [c=StopAsyncIteration] => builtins
+repr(c) [c=StopAsyncIteration] => <class 'StopAsyncIteration'>
+bases(c)[:-1] [c=GeneratorExit] => ['GeneratorExit', 'BaseException']
+c.__module__ [c=GeneratorExit] => builtins
+repr(c) [c=GeneratorExit] => <class 'GeneratorExit'>
+bases(c)[:-1] [c=KeyboardInterrupt] => ['KeyboardInterrupt', 'BaseException']
+c.__module__ [c=KeyboardInterrupt] => builtins
+repr(c) [c=KeyboardInterrupt] => <class 'KeyboardInterrupt'>
+bases(c)[:-1] [c=SystemExit] => ['SystemExit', 'BaseException']
+c.__module__ [c=SystemExit] => builtins
+repr(c) [c=SystemExit] => <class 'SystemExit'>
+bases(c)[:-1] [c=ImportError] => ['ImportError', 'Exception', 'BaseException']
+c.__module__ [c=ImportError] => builtins
+repr(c) [c=ImportError] => <class 'ImportError'>
+bases(c)[:-1] [c=ModuleNotFoundError] => ['ModuleNotFoundError', 'ImportError', 'Exception', 'BaseException']
+c.__module__ [c=ModuleNotFoundError] => builtins
+repr(c) [c=ModuleNotFoundError] => <class 'ModuleNotFoundError'>
+bases(c)[:-1] [c=ImportCycleError] => ['ImportCycleError', 'ImportError', 'Exception', 'BaseException']
+c.__module__ [c=ImportCycleError] => builtins
+repr(c) [c=ImportCycleError] => <class 'ImportCycleError'>
+bases(c)[:-1] [c=SyntaxError] => ['SyntaxError', 'Exception', 'BaseException']
+c.__module__ [c=SyntaxError] => builtins
+repr(c) [c=SyntaxError] => <class 'SyntaxError'>
+bases(c)[:-1] [c=IndentationError] => ['IndentationError', 'SyntaxError', 'Exception', 'BaseException']
+c.__module__ [c=IndentationError] => builtins
+repr(c) [c=IndentationError] => <class 'IndentationError'>
+bases(c)[:-1] [c=TabError] => ['TabError', 'IndentationError', 'SyntaxError', 'Exception', 'BaseException']
+c.__module__ [c=TabError] => builtins
+repr(c) [c=TabError] => <class 'TabError'>
+bases(c)[:-1] [c=AssertionError] => ['AssertionError', 'Exception', 'BaseException']
+c.__module__ [c=AssertionError] => builtins
+repr(c) [c=AssertionError] => <class 'AssertionError'>
+bases(c)[:-1] [c=EOFError] => ['EOFError', 'Exception', 'BaseException']
+c.__module__ [c=EOFError] => builtins
+repr(c) [c=EOFError] => <class 'EOFError'>
+bases(c)[:-1] [c=MemoryError] => ['MemoryError', 'Exception', 'BaseException']
+c.__module__ [c=MemoryError] => builtins
+repr(c) [c=MemoryError] => <class 'MemoryError'>
+bases(c)[:-1] [c=BufferError] => ['BufferError', 'Exception', 'BaseException']
+c.__module__ [c=BufferError] => builtins
+repr(c) [c=BufferError] => <class 'BufferError'>
+bases(c)[:-1] [c=ReferenceError] => ['ReferenceError', 'Exception', 'BaseException']
+c.__module__ [c=ReferenceError] => builtins
+repr(c) [c=ReferenceError] => <class 'ReferenceError'>
+bases(c)[:-1] [c=SystemError] => ['SystemError', 'Exception', 'BaseException']
+c.__module__ [c=SystemError] => builtins
+repr(c) [c=SystemError] => <class 'SystemError'>
+bases(c)[:-1] [c=Warning] => ['Warning', 'Exception', 'BaseException']
+c.__module__ [c=Warning] => builtins
+repr(c) [c=Warning] => <class 'Warning'>
+bases(c)[:-1] [c=UserWarning] => ['UserWarning', 'Warning', 'Exception', 'BaseException']
+c.__module__ [c=UserWarning] => builtins
+repr(c) [c=UserWarning] => <class 'UserWarning'>
+bases(c)[:-1] [c=DeprecationWarning] => ['DeprecationWarning', 'Warning', 'Exception', 'BaseException']
+c.__module__ [c=DeprecationWarning] => builtins
+repr(c) [c=DeprecationWarning] => <class 'DeprecationWarning'>
+bases(c)[:-1] [c=PendingDeprecationWarning] => ['PendingDeprecationWarning', 'Warning', 'Exception', 'BaseException']
+c.__module__ [c=PendingDeprecationWarning] => builtins
+repr(c) [c=PendingDeprecationWarning] => <class 'PendingDeprecationWarning'>
+bases(c)[:-1] [c=SyntaxWarning] => ['SyntaxWarning', 'Warning', 'Exception', 'BaseException']
+c.__module__ [c=SyntaxWarning] => builtins
+repr(c) [c=SyntaxWarning] => <class 'SyntaxWarning'>
+bases(c)[:-1] [c=RuntimeWarning] => ['RuntimeWarning', 'Warning', 'Exception', 'BaseException']
+c.__module__ [c=RuntimeWarning] => builtins
+repr(c) [c=RuntimeWarning] => <class 'RuntimeWarning'>
+bases(c)[:-1] [c=FutureWarning] => ['FutureWarning', 'Warning', 'Exception', 'BaseException']
+c.__module__ [c=FutureWarning] => builtins
+repr(c) [c=FutureWarning] => <class 'FutureWarning'>
+bases(c)[:-1] [c=ImportWarning] => ['ImportWarning', 'Warning', 'Exception', 'BaseException']
+c.__module__ [c=ImportWarning] => builtins
+repr(c) [c=ImportWarning] => <class 'ImportWarning'>
+bases(c)[:-1] [c=UnicodeWarning] => ['UnicodeWarning', 'Warning', 'Exception', 'BaseException']
+c.__module__ [c=UnicodeWarning] => builtins
+repr(c) [c=UnicodeWarning] => <class 'UnicodeWarning'>
+bases(c)[:-1] [c=BytesWarning] => ['BytesWarning', 'Warning', 'Exception', 'BaseException']
+c.__module__ [c=BytesWarning] => builtins
+repr(c) [c=BytesWarning] => <class 'BytesWarning'>
+bases(c)[:-1] [c=ResourceWarning] => ['ResourceWarning', 'Warning', 'Exception', 'BaseException']
+c.__module__ [c=ResourceWarning] => builtins
+repr(c) [c=ResourceWarning] => <class 'ResourceWarning'>
+bases(c)[:-1] [c=EncodingWarning] => ['EncodingWarning', 'Warning', 'Exception', 'BaseException']
+c.__module__ [c=EncodingWarning] => builtins
+repr(c) [c=EncodingWarning] => <class 'EncodingWarning'>
+bases(c)[:-1] [c=BaseExceptionGroup] => ['BaseExceptionGroup', 'BaseException']
+c.__module__ [c=BaseExceptionGroup] => builtins
+repr(c) [c=BaseExceptionGroup] => <class 'BaseExceptionGroup'>
+bases(c)[:-1] [c=ExceptionGroup] => ['ExceptionGroup', 'BaseExceptionGroup', 'Exception', 'BaseException']
+c.__module__ [c=ExceptionGroup] => builtins
+repr(c) [c=ExceptionGroup] => <class 'ExceptionGroup'>
+IOError is OSError => True
+EnvironmentError is OSError => True
+sorted(c.__name__ for c in Exception.__subclasses__() if c.__module__... => ['ArithmeticError', 'AssertionError', 'AttributeError', 'BufferError', 'EOFError', 'ExceptionGroup', 'ImportError', 'LookupError', 'MemoryError', 'NameError', 'OSError', 'ReferenceError', 'RuntimeError', 'StopAsyncIteration', 'StopIteration', 'SyntaxError', 'SystemError', 'TypeError', 'ValueError', 'Warning']
+sorted(c.__name__ for c in BaseException.__subclasses__()) => ['BaseExceptionGroup', 'Exception', 'GeneratorExit', 'KeyboardInterrupt', 'SystemExit']
+sorted(c.__name__ for c in OSError.__subclasses__() if c.__module__ =... => ['BlockingIOError', 'ChildProcessError', 'ConnectionError', 'FileExistsError', 'FileNotFoundError', 'InterruptedError', 'IsADirectoryError', 'NotADirectoryError', 'PermissionError', 'ProcessLookupError', 'TimeoutError']
+StopIteration().value => None
+StopIteration(1).value => 1
+StopIteration(1, 2).value => 1
+StopIteration((1, 2)).value => (1, 2)
+repr(StopIteration(1)) => StopIteration(1)
+str(StopIteration(1)) => 1
+StopAsyncIteration(1).args => (1,)
+hasattr(StopAsyncIteration(1), "value") => False
+s.value => 5
+s.args => (1,)
+SystemExit().code => None
+SystemExit(1).code => 1
+SystemExit("m").code => m
+SystemExit(1, 2).code => (1, 2)
+SystemExit(None).code => None
+repr(SystemExit(2)) => SystemExit(2)
+str(SystemExit(2)) => 2
+str(SystemExit()) => 
+n => msg
+n.name => nm
+n.args => ('msg',)
+NameError("m").name => None
+NameError().name => None
+repr(n) => NameError('msg')
+NameError("m", nope=1) => TypeError: NameError() got an unexpected keyword argument 'nope'
+NameError("m", obj=1) => TypeError: NameError() got an unexpected keyword argument 'obj'
+undefined_thing ("name 'undefined_thing' is not defined",)
+None ("cannot access local variable 'loc' where it is not associated with a value",) True
+i => msg
+i.name => nm
+i.path => pth
+i.msg => msg
+i.args => ('msg',)
+i.name_from => None
+ImportError().msg => None
+ImportError("a", "b").msg => None
+ImportError("a", "b").args => ('a', 'b')
+repr(i) => ImportError('msg', name='nm', path='pth')
+ImportError("m", name_from="nf").name_from => nf
+str(ImportError()) => 
+str(ImportError("a", "b")) => ('a', 'b')
+ModuleNotFoundError("m", name="n").name => n
+ImportError("m", nope=1) => TypeError: ImportError() got an unexpected keyword argument 'nope'
+ModuleNotFoundError No module named 'does_not_exist_module' does_not_exist_module None No module named 'does_not_exist_module'
+ImportError cannot import name 'does_not_exist_name' from 'sys' (unknown location) sys does_not_exist_name
+repr(o) => OSError()
+str(o) => 
+o.args => ()
+o.errno => None
+o.strerror => None
+o.filename => None
+o.filename2 => None
+repr(o) => OSError('only message')
+str(o) => only message
+o.args => ('only message',)
+o.errno => None
+o.strerror => None
+o.filename => None
+repr(o) => FileNotFoundError(2, 'No such file')
+str(o) => [Errno 2] No such file
+o.args => (2, 'No such file')
+o.errno => 2
+o.strerror => No such file
+o.filename => None
+type(o).__name__ => FileNotFoundError
+repr(o) => FileNotFoundError(2, 'No such file')
+str(o) => [Errno 2] No such file: 'f.txt'
+o.args => (2, 'No such file')
+o.errno => 2
+o.strerror => No such file
+o.filename => f.txt
+o.filename2 => None
+type(o).__name__ => FileNotFoundError
+repr(o) => FileNotFoundError(2, 'msg')
+str(o) => [Errno 2] msg: 'a' -> 'b'
+o.args => (2, 'msg')
+o.filename => a
+o.filename2 => b
+repr(o) => OSError(1, 2, 3, 4, 5, 6)
+str(o) => (1, 2, 3, 4, 5, 6)
+o.args => (1, 2, 3, 4, 5, 6)
+o.errno => None
+o.filename => None
+type(o).__name__ => OSError
+repr(o) => OSError('a', 'b')
+str(o) => [Errno a] b
+o.errno => a
+o.strerror => b
+type(o).__name__ => OSError
+[Errno 2] m: b'bytes.txt'
+[Errno 2] m: 5
+str(o) => [Errno None] None
+o.errno => None
+[Errno 2] None: 'f'
+EPERM PermissionError; ENOENT FileNotFoundError; ESRCH ProcessLookupError; EINTR InterruptedError; ECHILD ChildProcessError; EAGAIN BlockingIOError; EACCES PermissionError; EEXIST FileExistsError; ENOTDIR NotADirectoryError; EISDIR IsADirectoryError; EPIPE BrokenPipeError; ECONNABORTED ConnectionAbortedError; ECONNRESET ConnectionResetError; ETIMEDOUT TimeoutError; ECONNREFUSED ConnectionRefusedError; EALREADY BlockingIOError; EINPROGRESS BlockingIOError; EIO OSError; EINVAL OSError; ENOSPC OSError; zero OSError; neg OSError; big OSError; 
+type(FileNotFoundError(13, "x")).__name__ => FileNotFoundError
+type(ConnectionError(32, "x")).__name__ => ConnectionError
+FileNotFoundError("just msg").errno => None
+FileNotFoundError(2, "m", "f").filename => f
+repr(FileNotFoundError(2, "m")) => FileNotFoundError(2, 'm')
+str(PermissionError(13, "Permission denied", "/x")) => [Errno 13] Permission denied: '/x'
+BlockingIOError(11, "m", 5).characters_written => 5
+isinstance(OSError(2, "x"), FileNotFoundError) => True
+OSError(2, "x").__class__.__mro__[1].__name__ => OSError
+BlockingIOError(11, "m").characters_written => AttributeError: characters_written
+OSError(2, "x").characters_written => AttributeError: characters_written
+OSError(a=1) => TypeError: OSError() takes no keyword arguments
+type(MyOS(2, "x")).__name__ => MyOS
+MyOS(2, "x").errno => 2
+MyOS(2, "x", "f").filename => f
+str(MyOS(2, "x", "f")) => [Errno 2] x: 'f'
+MyOSInit("q").a => q
+MyOSInit("q").args => ()
+MyOSInit("q").errno => None
+MyOSNew("q").args => ()
+MyOSNew("q").errno => None
+str(o) => [Errno 5] changed: 'g'
+o.args => (2, 'm')
+str(o) => [Errno 5] changed
+o.filename => None
+repr(s) => SyntaxError()
+str(s) => None
+s.msg => None
+s.filename => None
+s.lineno => None
+s.offset => None
+s.text => None
+s.end_lineno => None
+s.end_offset => None
+s.print_file_and_line => None
+s.args => ()
+repr(s) => SyntaxError('m')
+str(s) => m
+s.msg => m
+s.lineno => None
+repr(s) => SyntaxError('m', ('f.py', 3, 5, 'text\n'))
+str(s) => m (f.py, line 3)
+s.msg => m
+s.filename => f.py
+s.lineno => 3
+s.offset => 5
+s.text => text
+
+s.end_lineno => None
+s.end_offset => None
+s.args => ('m', ('f.py', 3, 5, 'text\n'))
+str(s) => m (f.py, line 3)
+s.end_lineno => 4
+s.end_offset => 9
+m (f.py, line 3)
+m (line 3)
+m (f.py)
+m
+str(s) => 5 (f, line 1)
+s.msg => 5
+f
+SyntaxError("m", ("f", 1)) => TypeError: function takes at least 4 arguments (2 given)
+SyntaxError("m", ("f", 1, 2, 3, 4)) => TypeError: end_offset must be provided when end_lineno is provided
+SyntaxError("m", 5) => TypeError: 'int' object is not iterable
+SyntaxError("m", ("f", 1, 2, 3, 4, 5, 6, 7)) => TypeError: function takes at most 7 arguments (8 given)
+SyntaxError("m", "abcd").filename => 'a'
+SyntaxError("m", ("f", 1, 1, "t"), "extra").args => ('m', ('f', 1, 1, 't'), 'extra')
+SyntaxError | invalid syntax | 1 5 1 6 'x = \n' file.py
+SyntaxError | invalid syntax | 1 0 1 0 '1 +' file.py
+SyntaxError | invalid syntax | 1 7 1 8 'def f(:\n' file.py
+SyntaxError | expected ':' | 1 5 1 6 'if x\n' file.py
+IndentationError | unexpected indent | 1 2 1 -1 '  x = 1\n' file.py
+IndentationError | expected an indented block after 'if' statement on line 1 | 2 1 2 2 'x = 1\n' file.py
+IndentationError | unindent does not match any outer indentation level | 3 7 3 -1 ' y = 2\n' file.py
+TabError | inconsistent use of tabs and spaces in indentation | 3 1 3 0 '        y = 2\n' file.py
+SyntaxError | '(' was never closed | 1 5 1 0 'x = (1,' file.py
+SyntaxError | unterminated string literal (detected at line 1) | 1 5 1 5 "x = 'abc" file.py
+SyntaxError | invalid syntax | 1 3 1 4 'a b\n' file.py
+SyntaxError | invalid syntax | 1 8 1 9 'x = 1 +* 2\n' file.py
+SyntaxError | Missing parentheses in call to 'print'. Did you mean print(...)? | 1 1 1 11 "print 'hi'\n" file.py
+SyntaxError | invalid syntax | 1 5 1 6 'é = $\n' file.py
+SyntaxError | '[' was never closed | 1 5 1 0 'x = [1, 2' file.py
+SyntaxError | keyword argument repeated: a | 1 8 1 11 None file.py
+SyntaxError | 'return' outside function | 1 1 1 7 None file.py
+SyntaxError | cannot assign to literal | 1 5 1 6 'x = 5 = y\n' file.py
+IndentationError | unexpected indent | 4 1 4 -1 ' x\n' file.py
+SyntaxError | unmatched ')' | 2 5 2 5 'b = )' file.py
+SyntaxError | invalid character '😀' (U+1F600) | 1 5 1 5 "'é' 😀" file.py
+SyntaxError | unterminated triple-quoted string literal (detected at line 2) | 1 5 1 5 "x = '''a" file.py
+SyntaxError | cannot assign to literal here. Maybe you meant '==' instead of '='? | 1 1 1 2 '1 = x\n' file.py
+SyntaxError | expected ':' | 2 6 2 7 'else x\n' file.py
+SyntaxError | leading zeros in decimal integer literals are not permitted; use an 0o prefix for octal integers | 1 1 1 2 '0777' file.py
+SyntaxError | invalid decimal literal | 1 2 1 2 '1__0' file.py
+SyntaxError | invalid decimal literal | 1 2 1 2 '1.e' file.py
+SyntaxError | invalid hexadecimal literal | 1 2 1 2 '0x' file.py
+SyntaxError | invalid decimal literal | 1 2 1 2 '1_' file.py
+SyntaxError | invalid digit '2' in binary literal | 1 3 1 3 '0b2' file.py
+SyntaxError | invalid decimal literal | 1 1 1 1 '1a' file.py
+SyntaxError | expected 'else' after 'if' expression | 1 1 1 7 '1 if 2' file.py
+SyntaxError | invalid syntax | 1 0 1 0 'lambda' file.py
+SyntaxError | ':' expected after dictionary key | 1 12 1 0 'x = {1: 2, 3}\n' file.py
+SyntaxError | invalid syntax | 1 10 1 11 'x = {1, 2: 3}\n' file.py
+SyntaxError | cannot delete function call | 1 5 1 8 'del f()\n' file.py
+SyntaxError | cannot use attribute as import target | 1 15 1 18 'import a.b as c.d\n' file.py
+SyntaxError | Expected one or more names after 'import' | 1 14 1 14 'from . import\n' file.py
+SyntaxError | '(' was never closed | 1 15 1 0 'from a import (b, c\n' file.py
+SyntaxError | invalid syntax | 1 16 1 17 'from a import *, b\n' file.py
+SyntaxError | invalid syntax | 1 4 1 5 'a; ; b\n' file.py
+SyntaxError | unexpected EOF while parsing | 1 2 1 -1 '\\\n' file.py
+SyntaxError | unexpected character after line continuation character | 1 4 1 0 'a \\ b\n' file.py
+SyntaxError | unexpected EOF while parsing | 1 8 1 -1 'x = 1 \\\n' file.py
+repr(u) => UnicodeDecodeError('utf-8', b'a\xffb', 1, 2, 'invalid start byte')
+| str(u) => 'utf-8' codec can't decode byte 0xff in position 1: invalid start byte
+| u.encoding => utf-8
+u.object => b'a\xffb'
+u.start => 1
+u.end => 2
+u.reason => invalid start byte
+u.args => ('utf-8', b'a\xffb', 1, 2, 'invalid start byte')
+'utf-8' codec can't decode bytes in position 1-2: r
+'utf-8' codec can't decode byte 0x61 in position 0: changed
+type(u.object).__name__ => bytes
+str(u) => 'x' codec can't decode byte 0x61 in position 0: r
+repr(u) => UnicodeEncodeError('ascii', 'aéb', 1, 2, 'ordinal not in range(128)')
+| str(u) => 'ascii' codec can't encode character '\xe9' in position 1: ordinal not in range(128)
+| u.encoding => ascii
+u.object => aéb
+u.start => 1
+u.end => 2
+u.reason => ordinal not in range(128)
+str(UnicodeEncodeError("ascii", "a€b", 1, 2, "r")) => 'ascii' codec can't encode character '\u20ac' in position 1: r
+| str(UnicodeEncodeError("ascii", "a😀b", 1, 2, "r")) => 'ascii' codec can't encode character '\U0001f600' in position 1: r
+| str(UnicodeEncodeError("ascii", "aéèb", 1, 3, "r")) => 'ascii' codec can't encode characters in position 1-2: r
+| str(UnicodeEncodeError("ascii", "ab", 0, 1, "r")) => 'ascii' codec can't encode character '\x61' in position 0: r
+| str(UnicodeEncodeError("ascii", "", 0, 1, "r")) => 'ascii' codec can't encode characters in position 0-0: r
+| str(UnicodeEncodeError("ascii", "ab", 5, 6, "r")) => 'ascii' codec can't encode characters in position 5-5: r
+| str(UnicodeEncodeError("ascii", "ab", -1, 0, "r")) => 'ascii' codec can't encode characters in position -1--1: r
+repr(u) => UnicodeTranslateError('aéb', 1, 2, 'reason')
+| str(u) => can't translate character '\xe9' in position 1: reason
+| u.object => aéb
+u.start => 1
+u.end => 2
+u.reason => reason
+hasattr(u, "encoding") and u.encoding => None
+UnicodeDecodeError() => TypeError: function takes exactly 5 arguments (0 given)
+UnicodeDecodeError("a", "str", 0, 1, "r") => TypeError: a bytes-like object is required, not 'str'
+UnicodeDecodeError(1, b"", 0, 1, "r") => TypeError: argument 1 must be str, not int
+UnicodeDecodeError("a", b"", "0", 1, "r") => TypeError: 'str' object cannot be interpreted as an integer
+UnicodeEncodeError("a", b"bytes", 0, 1, "r") => TypeError: argument 2 must be str, not bytes
+UnicodeEncodeError("a", "s", 0, 1) => TypeError: function takes exactly 5 arguments (4 given)
+UnicodeTranslateError("s", 0, 1) => TypeError: function takes exactly 4 arguments (3 given)
+UnicodeDecodeError("a", b"", 0, 1, 5) => TypeError: argument 5 must be str, not int
+repr(UnicodeError("plain")) => UnicodeError('plain')
+UnicodeError().args => ()
+False
+n.__notes__ => ['note 1', 'note 2']
+str(n) => v
+repr(n) => ValueError('v')
+n.args => ('v',)
+n.add_note(1) => TypeError: add_note() argument must be str, not int
+n.add_note() => TypeError: BaseException.add_note() takes exactly one argument (0 given)
+n.add_note(None) => TypeError: add_note() argument must be str, not None
+n.add_note("x") => TypeError: Cannot add note: __notes__ is not a list
+n.__notes__ => ['fresh']
+"__notes__" in n.__dict__ => True
+repr(MyErr()) => MyErr()
+repr(MyErr("m")) => MyErr('m')
+str(MyErr("m", 1)) => ('m', 1)
+MyErr.__mro__[1].__name__ => Exception
+repr(WithFields(5, "m")) => WithFields('m')
+str(WithFields(5, "m")) => m
+WithFields(5, "m").code => 5
+WithFields(5, "m").args => ('m',)
+str(WithStr(1)) => custom str (1,)
+repr(WithStr(1)) => WithStr(1)
+NoSuper(1, 2).args => (1, 2)
+str(NoSuper(1, 2)) => (1, 2)
+repr(NoSuper(1, 2)) => NoSuper(1, 2)
+repr(WithRepr("x")) => WithRepr!
+str(WithRepr("x")) => x
+[WithRepr()] => [WithRepr!]
+str(Multi("k")) => 'k'
+isinstance(Multi(), LookupError) => True
+Multi.__mro__[1:4] => (<class 'KeyError'>, <class 'LookupError'>, <class 'AttributeError'>)
+MyErr not caught by ValueError; MyErr caught by MyErr; Multi caught by AttributeError; WithRepr caught by ValueError; MyErr caught by Exception; KeyboardInterrupt not caught by Exception; KeyboardInterrupt caught by BaseException; 
+WithFields(1) => TypeError: WithFields.__init__() missing 1 required positional argument: 'msg'
+NoSuper() => TypeError: NoSuper.__init__() missing 2 required positional arguments: 'a' and 'b'
+type("X", (Exception, int), {}) => TypeError: multiple bases have instance lay-out conflict
+type("X", (ValueError, OSError), {}).__name__ => 'X'
+type("X", (OSError, SyntaxError), {}) => TypeError: multiple bases have instance lay-out conflict
+type("X", (KeyError, IndexError), {})("a").args => ('a',)
+BaseException.__new__(ValueError, 1, 2).args => (1, 2)
+Exception.__new__(KeyError).args => ()
+ValueError.__init__(v := ValueError(1), 2, 3) => None
+v.args => (2, 3)
+BaseException.__str__(KeyError("k")) => k
+BaseException.__repr__(KeyError("k")) => KeyError('k')
+ValueError("a").__reduce__() => (<class 'ValueError'>, ('a',))
+WithFields(1, "m").__reduce__()[1] => ('m',)
+OSError(2, "m", "f").__reduce__()[1] => (2, 'm', 'f')
+(w := ValueError("s")).__setstate__({"z": 1}) => None
+w.z => 1
+KeyError("k").__reduce__()[0].__name__ => KeyError

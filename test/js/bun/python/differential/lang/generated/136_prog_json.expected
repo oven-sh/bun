@@ -1,0 +1,297 @@
+status: 0
+script: 237c0f837cacfa13
+source: 649d17f1f8a60f9a
+---
+dumps(v) [v=None] => null
+dumps(v) [v=True] => true
+dumps(v) [v=False] => false
+dumps(v) [v=0] => 0
+dumps(v) [v=-1] => -1
+dumps(v) [v=1000000000000000000000000000000] => 1000000000000000000000000000000
+dumps(v) [v=1.5] => 1.5
+dumps(v) [v=-0.0] => -0.0
+dumps(v) [v=1e+100] => 1e+100
+dumps(v) [v=1e-07] => 1e-07
+dumps(v) [v=0.1] => 0.1
+dumps(v) [v=inf] => Infinity
+dumps(v) [v=-inf] => -Infinity
+dumps(v) [v=nan] => NaN
+dumps(v) [v=''] => ""
+dumps(v) [v='plain'] => "plain"
+dumps(v) [v='q"uote'] => "q\"uote"
+dumps(v) [v='back\\slash'] => "back\\slash"
+dumps(v) [v='nl\n\ttab'] => "nl\n\ttab"
+dumps(v) [v='\x00\x1f\x7f'] => "\u0000\u001f\u007f"
+dumps(v) [v='é€'] => "\u00e9\u20ac"
+dumps(v) [v='😀'] => "\ud83d\ude00"
+dumps(v) [v='\ud800'] => "\ud800"
+dumps(v) [v=list] => []
+dumps(v) [v=dict] => {}
+dumps(v) [v=()] => []
+dumps(v) [v=list] => [1, [2, [3]]]
+dumps(v) [v=(1, 2)] => [1, 2]
+dumps(v) [v=dict] => {"a": 1}
+dumps(v) [v=dict] => {"b": [1, {"c": null}], "a": "x"}
+dumps(v) [v=dict] => {"1": "bool key", "2.5": "float key", "null": "none key"}
+dumps(v) [v=list] => [[], {}, [[]], [{}]]
+dumps(v) [v=dict] => {"": ""}
+dumps(v) [v=dict] => {"nested": {"deep": {"deeper": [1, 2, {"x": []}]}}}
+{"child": {"e": {}, "k": [1, 2, {"z": []}]}, "n": 3, "name": "Zo\u00eb \ud83d\ude00", "none": null, "ok": true, "pi": 3.14159, "t": [1, [2]], "tags": ["a", "b"]}
+{
+  "name": "Zo\u00eb \ud83d\ude00",
+  "tags": [
+    "a",
+    "b"
+  ],
+  "n": 3,
+  "pi": 3.14159,
+  "ok": true,
+  "none": null,
+  "child": {
+    "k": [
+      1,
+      2,
+      {
+        "z": []
+      }
+    ],
+    "e": {}
+  },
+  "t": [
+    1,
+    [
+      2
+    ]
+  ]
+}
+{"child": {"e": {}, "k": [1, 2, {"z": []}]}, "n": 3, "name": "Zoë 😀", "none": null, "ok": true, "pi": 3.14159, "t": [1, [2]], "tags": ["a", "b"]}
+[
+    1,
+    [
+        2,
+        3
+    ],
+    {}
+]
+dumps([], indent=2) => []
+dumps({}, indent=2) => {}
+dumps([[]], indent=1) => [
+ []
+]
+TypeError: Object of type object is not JSON serializable
+TypeError: Object of type set is not JSON serializable
+TypeError: Object of type bytes is not JSON serializable
+TypeError: Object of type complex is not JSON serializable
+TypeError: keys must be str, int, float, bool or None, not tuple
+TypeError: Object of type builtin_function_or_method is not JSON serializable
+TypeError: Object of type range is not JSON serializable
+ValueError: Circular reference detected
+ValueError: Circular reference detected
+[[1], [1], {"a": [1]}]
+[5, "s", [1], {"a": 1}]
+repr(src) [src='null'] => 'null'
+-> repr(loads(src)) [src='null'] => None
+repr(src) [src='true'] => 'true'
+-> repr(loads(src)) [src='true'] => True
+repr(src) [src='false'] => 'false'
+-> repr(loads(src)) [src='false'] => False
+repr(src) [src='0'] => '0'
+-> repr(loads(src)) [src='0'] => 0
+repr(src) [src='-0'] => '-0'
+-> repr(loads(src)) [src='-0'] => 0
+repr(src) [src='123'] => '123'
+-> repr(loads(src)) [src='123'] => 123
+repr(src) [src='-123'] => '-123'
+-> repr(loads(src)) [src='-123'] => -123
+repr(src) [src='1.5'] => '1.5'
+-> repr(loads(src)) [src='1.5'] => 1.5
+repr(src) [src='-1.5e3'] => '-1.5e3'
+-> repr(loads(src)) [src='-1.5e3'] => -1500.0
+repr(src) [src='1E5'] => '1E5'
+-> repr(loads(src)) [src='1E5'] => 100000.0
+repr(src) [src='1e-2'] => '1e-2'
+-> repr(loads(src)) [src='1e-2'] => 0.01
+repr(src) [src='1e+2'] => '1e+2'
+-> repr(loads(src)) [src='1e+2'] => 100.0
+repr(src) [src='0.0'] => '0.0'
+-> repr(loads(src)) [src='0.0'] => 0.0
+repr(src) [src='-0.0'] => '-0.0'
+-> repr(loads(src)) [src='-0.0'] => -0.0
+repr(src) [src='12345678901234567890123'] => '12345678901234567890123'
+-> repr(loads(src)) [src='12345678901234567890123'] => 12345678901234567890123
+repr(src) [src='""'] => '""'
+-> repr(loads(src)) [src='""'] => ''
+repr(src) [src='"abc"'] => '"abc"'
+-> repr(loads(src)) [src='"abc"'] => 'abc'
+repr(src) [src='"\\n\\t\\"\\\\\\/\\b\\f\\r"'] => '"\\n\\t\\"\\\\\\/\\b\\f\\r"'
+-> repr(loads(src)) [src='"\\n\\t\\"\\\\\\/\\b\\f\\r"'] => '\n\t"\\/\x08\x0c\r'
+repr(src) [src='"\\u00e9\\u20ac"'] => '"\\u00e9\\u20ac"'
+-> repr(loads(src)) [src='"\\u00e9\\u20ac"'] => 'é€'
+repr(src) [src='"\\ud83d\\ude00"'] => '"\\ud83d\\ude00"'
+-> repr(loads(src)) [src='"\\ud83d\\ude00"'] => '😀'
+repr(src) [src='"\\ud83d"'] => '"\\ud83d"'
+-> repr(loads(src)) [src='"\\ud83d"'] => '\ud83d'
+repr(src) [src='"\\ud83dx"'] => '"\\ud83dx"'
+-> repr(loads(src)) [src='"\\ud83dx"'] => '\ud83dx'
+repr(src) [src='"\\ude00\\ud83d"'] => '"\\ude00\\ud83d"'
+-> repr(loads(src)) [src='"\\ude00\\ud83d"'] => '\ude00\ud83d'
+repr(src) [src='"é😀"'] => '"é😀"'
+-> repr(loads(src)) [src='"é😀"'] => 'é😀'
+repr(src) [src='[]'] => '[]'
+-> repr(loads(src)) [src='[]'] => []
+repr(src) [src='[ ]'] => '[ ]'
+-> repr(loads(src)) [src='[ ]'] => []
+repr(src) [src='[1]'] => '[1]'
+-> repr(loads(src)) [src='[1]'] => [1]
+repr(src) [src='[1, 2, 3]'] => '[1, 2, 3]'
+-> repr(loads(src)) [src='[1, 2, 3]'] => [1, 2, 3]
+repr(src) [src='[1,[2,[3,[]]]]'] => '[1,[2,[3,[]]]]'
+-> repr(loads(src)) [src='[1,[2,[3,[]]]]'] => [1, [2, [3, []]]]
+repr(src) [src='{}'] => '{}'
+-> repr(loads(src)) [src='{}'] => {}
+repr(src) [src='{ }'] => '{ }'
+-> repr(loads(src)) [src='{ }'] => {}
+repr(src) [src='{"a": 1}'] => '{"a": 1}'
+-> repr(loads(src)) [src='{"a": 1}'] => {'a': 1}
+repr(src) [src='{"a": {"b": {"c": [1, 2, {"d": null}]}}}'] => '{"a": {"b": {"c": [1, 2, {"d": null}]}}}'
+-> repr(loads(src)) [src='{"a": {"b": {"c": [1, 2, {"d": null}]}}}'] => {'a': {'b': {'c': [1, 2, {'d': None}]}}}
+repr(src) [src='{"a": 1, "a": 2}'] => '{"a": 1, "a": 2}'
+-> repr(loads(src)) [src='{"a": 1, "a": 2}'] => {'a': 2}
+repr(src) [src=' \n\t[ 1 ,\r\n 2 ] \n'] => ' \n\t[ 1 ,\r\n 2 ] \n'
+-> repr(loads(src)) [src=' \n\t[ 1 ,\r\n 2 ] \n'] => [1, 2]
+repr(src) [src='{"": ""}'] => '{"": ""}'
+-> repr(loads(src)) [src='{"": ""}'] => {'': ''}
+repr(src) [src='NaN'] => 'NaN'
+-> repr(loads(src)) [src='NaN'] => nan
+repr(src) [src='Infinity'] => 'Infinity'
+-> repr(loads(src)) [src='Infinity'] => inf
+repr(src) [src='-Infinity'] => '-Infinity'
+-> repr(loads(src)) [src='-Infinity'] => -inf
+repr(src) [src='[NaN]'] => '[NaN]'
+-> repr(loads(src)) [src='[NaN]'] => [nan]
+repr(src) [src='1e400'] => '1e400'
+-> repr(loads(src)) [src='1e400'] => inf
+repr(src) [src='-1e400'] => '-1e400'
+-> repr(loads(src)) [src='-1e400'] => -inf
+repr(src) [src='1e-400'] => '1e-400'
+-> repr(loads(src)) [src='1e-400'] => 0.0
+repr(src) [src='[true, false, null]'] => '[true, false, null]'
+-> repr(loads(src)) [src='[true, false, null]'] => [True, False, None]
+repr(src) [src='"\\u0000"'] => '"\\u0000"'
+-> repr(loads(src)) [src='"\\u0000"'] => '\x00'
+repr(src) [src='{"a":[],"b":{}}'] => '{"a":[],"b":{}}'
+-> repr(loads(src)) [src='{"a":[],"b":{}}'] => {'a': [], 'b': {}}
+'' -> JSONError: Expecting value at position 0 0
+' ' -> JSONError: Expecting value at position 1 1
+'nul' -> JSONError: Expecting value at position 0 0
+'True' -> JSONError: Expecting value at position 0 0
+'tru' -> JSONError: Expecting value at position 0 0
+"'a'" -> JSONError: Expecting value at position 0 0
+'"abc' -> JSONError: Unterminated string starting at position 0 0
+'"abc\\' -> JSONError: Unterminated string starting at position 0 0
+'"\\x"' -> JSONError: Invalid \escape at position 1 1
+'"\\u12"' -> JSONError: Invalid \uXXXX escape at position 2 2
+'"\\u12g4"' -> JSONError: Invalid \uXXXX escape at position 2 2
+'"a\nb"' -> JSONError: Invalid control character at position 2 2
+'"\t"' -> JSONError: Invalid control character at position 1 1
+'[' -> JSONError: Expecting value at position 1 1
+'[1' -> JSONError: Expecting ',' delimiter at position 2 2
+'[1,' -> JSONError: Expecting value at position 3 3
+'[1,]' -> JSONError: Expecting value at position 3 3
+'[,1]' -> JSONError: Expecting value at position 1 1
+'[1 2]' -> JSONError: Expecting ',' delimiter at position 3 3
+'[1,,2]' -> JSONError: Expecting value at position 3 3
+']' -> JSONError: Expecting value at position 0 0
+'{' -> JSONError: Expecting property name enclosed in double quotes at position 1 1
+'{"a"' -> JSONError: Expecting ':' delimiter at position 4 4
+'{"a":' -> JSONError: Expecting value at position 5 5
+'{"a":1' -> JSONError: Expecting ',' delimiter at position 6 6
+'{"a":1,' -> JSONError: Expecting property name enclosed in double quotes at position 7 7
+'{"a":1,}' -> JSONError: Expecting property name enclosed in double quotes at position 7 7
+'{a:1}' -> JSONError: Expecting property name enclosed in double quotes at position 1 1
+'{1:1}' -> JSONError: Expecting property name enclosed in double quotes at position 1 1
+'{"a" 1}' -> JSONError: Expecting ':' delimiter at position 5 5
+'{"a":1 "b":2}' -> JSONError: Expecting ',' delimiter at position 7 7
+'}' -> JSONError: Expecting value at position 0 0
+'01' -> JSONError: Extra data at position 1 1
+'-' -> JSONError: Expecting value at position 0 0
+'+1' -> JSONError: Expecting value at position 0 0
+'.5' -> JSONError: Expecting value at position 0 0
+'1.' -> JSONError: Extra data at position 1 1
+'1.e5' -> JSONError: Extra data at position 1 1
+'1e' -> JSONError: Extra data at position 1 1
+'1e+' -> JSONError: Extra data at position 1 1
+'--1' -> JSONError: Expecting value at position 0 0
+'0x10' -> JSONError: Extra data at position 1 1
+'1 2' -> JSONError: Extra data at position 2 2
+'[] []' -> JSONError: Extra data at position 3 3
+'null null' -> JSONError: Extra data at position 5 5
+'{}x' -> JSONError: Extra data at position 2 2
+'[1]]' -> JSONError: Extra data at position 3 3
+'"a" "b"' -> JSONError: Extra data at position 4 4
+'nan' -> JSONError: Expecting value at position 0 0
+'inf' -> JSONError: Expecting value at position 0 0
+'-Inf' -> JSONError: Expecting value at position 0 0
+'١' -> JSONError: Expecting value at position 0 0
+'[1, 2' -> JSONError: Expecting ',' delimiter at position 5 5
+'{"a": [1, {"b": }]}' -> JSONError: Expecting value at position 16 16
+'\ufeff1' -> JSONError: Expecting value at position 0 0
+'/* c */ 1' -> JSONError: Expecting value at position 0 0
+'1 // c' -> JSONError: Extra data at position 2 2
+'[1, #]' -> JSONError: Expecting value at position 4 4
+'["a", \'b\']' -> JSONError: Expecting value at position 6 6
+same(v, loads(dumps(v))) [v=dict] => True
+same(v, loads(dumps(v, indent=3))) [v=dict] => True
+same(v, loads(dumps(v, ascii_only=False))) [v=dict] => True
+dumps(loads(dumps(v))) == dumps(v) [v=dict] => True
+same(v, loads(dumps(v))) [v=list] => True
+same(v, loads(dumps(v, indent=3))) [v=list] => True
+same(v, loads(dumps(v, ascii_only=False))) [v=list] => True
+dumps(loads(dumps(v))) == dumps(v) [v=list] => True
+same(v, loads(dumps(v))) [v=dict] => True
+same(v, loads(dumps(v, indent=3))) [v=dict] => True
+same(v, loads(dumps(v, ascii_only=False))) [v=dict] => True
+dumps(loads(dumps(v))) == dumps(v) [v=dict] => True
+same(v, loads(dumps(v))) [v='\x00\x1f é€😀 \\ " /'] => True
+same(v, loads(dumps(v, indent=3))) [v='\x00\x1f é€😀 \\ " /'] => True
+same(v, loads(dumps(v, ascii_only=False))) [v='\x00\x1f é€😀 \\ " /'] => True
+dumps(loads(dumps(v))) == dumps(v) [v='\x00\x1f é€😀 \\ " /'] => True
+same(v, loads(dumps(v))) [v=list] => True
+same(v, loads(dumps(v, indent=3))) [v=list] => True
+same(v, loads(dumps(v, ascii_only=False))) [v=list] => True
+dumps(loads(dumps(v))) == dumps(v) [v=list] => True
+same(v, loads(dumps(v))) [v=dict] => True
+same(v, loads(dumps(v, indent=3))) [v=dict] => True
+same(v, loads(dumps(v, ascii_only=False))) [v=dict] => True
+dumps(loads(dumps(v))) == dumps(v) [v=dict] => True
+same(v, loads(dumps(v))) [v=list] => True
+same(v, loads(dumps(v, indent=3))) [v=list] => True
+same(v, loads(dumps(v, ascii_only=False))) [v=list] => True
+dumps(loads(dumps(v))) == dumps(v) [v=list] => True
+same(v, loads(dumps(v))) [v=10000000000000000000000000000000000000000] => True
+same(v, loads(dumps(v, indent=3))) [v=10000000000000000000000000000000000000000] => True
+same(v, loads(dumps(v, ascii_only=False))) [v=10000000000000000000000000000000000000000] => True
+dumps(loads(dumps(v))) == dumps(v) [v=10000000000000000000000000000000000000000] => True
+same(v, loads(dumps(v))) [v=1e-300] => True
+same(v, loads(dumps(v, indent=3))) [v=1e-300] => True
+same(v, loads(dumps(v, ascii_only=False))) [v=1e-300] => True
+dumps(loads(dumps(v))) == dumps(v) [v=1e-300] => True
+same(v, loads(dumps(v))) [v=1.7976931348623157e+308] => True
+same(v, loads(dumps(v, indent=3))) [v=1.7976931348623157e+308] => True
+same(v, loads(dumps(v, ascii_only=False))) [v=1.7976931348623157e+308] => True
+dumps(loads(dumps(v))) == dumps(v) [v=1.7976931348623157e+308] => True
+same(v, loads(dumps(v))) [v=5e-324] => True
+same(v, loads(dumps(v, indent=3))) [v=5e-324] => True
+same(v, loads(dumps(v, ascii_only=False))) [v=5e-324] => True
+dumps(loads(dumps(v))) == dumps(v) [v=5e-324] => True
+same(v, loads(dumps(v))) [v=0.30000000000000004] => True
+same(v, loads(dumps(v, indent=3))) [v=0.30000000000000004] => True
+same(v, loads(dumps(v, ascii_only=False))) [v=0.30000000000000004] => True
+dumps(loads(dumps(v))) == dumps(v) [v=0.30000000000000004] => True
+len(text) => 6035
+same(big, back) => True
+back["rows"][59] => {'id': 59, 'name': 'row 59', 'vals': [0, 59, 118, 177, 236], 'flag': False, 'ratio': 8.428571428571429}
+sum(r["id"] for r in back["rows"]) => 1770
+text[:80] => {"rows": [{"id": 0, "name": "row 0", "vals": [0, 0, 0, 0, 0], "flag": true, "rat
+text.count("{") => 61
+text.count("true") => 20

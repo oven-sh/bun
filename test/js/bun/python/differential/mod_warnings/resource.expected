@@ -1,0 +1,33 @@
+status: 0
+script: a5d173219488d9be
+---
+text_file: ResourceWarning unclosed file <_io.TextIOWrapper name='HERE/resource.py' mode='r' encoding='utf-8'> TextIOWrapper
+binary_file: ResourceWarning unclosed file <_io.BufferedReader name='HERE/resource.py'> BufferedReader
+raw_file: ResourceWarning unclosed file <_io.FileIO name='HERE/resource.py' mode='rb' closefd=True> FileIO
+closed_file: nothing
+with_file: nothing
+from_descriptor: ResourceWarning unclosed file <_io.TextIOWrapper name=N mode='r' encoding='utf-8'> TextIOWrapper
+not_owned: nothing
+a_socket: ResourceWarning unclosed <socket.socket fd=N, family=2, type=1, proto=0, laddr=('0.0.0.0', 0)> socket
+closed_socket: nothing
+detached_socket: nothing
+scandir: ResourceWarning unclosed scandir iterator <posix.ScandirIterator object at 0x> ScandirIterator
+scandir_done: nothing
+0
+[('ResourceWarning', "unclosed file <_io.TextIOWrapper name='HERE/resource.py' mode='r' encoding='utf-8'>")]
+0 '' ['<string>:6: UserWarning: test']
+0 '' ["<sys>:0: ResourceWarning: unclosed file <_io.TextIOWrapper name='HERE/resource.py' mode='r' encoding='utf-8'>"]
+0 '' ["<sys>:0: ResourceWarning: unclosed file <_io.TextIOWrapper name='HERE/resource.py' mode='r' encoding='utf-8'>"]
+0 '' []
+0 '' ["Exception ignored while finalizing file <_io.FileIO name='HERE/resource.py' mode='rb' closefd=True>:", "ResourceWarning: unclosed file <_io.TextIOWrapper name='HERE/resource.py' mode='r' encoding='utf-8'>"]
+0 '' ["<sys>:0: ResourceWarning: unclosed <socket.socket fd=N, family=2, type=1, proto=0, laddr=('0.0.0.0', 0)>"]
+0 '' ["<sys>:0: ResourceWarning: unclosed file <_io.TextIOWrapper name='HERE/resource.py' mode='r' encoding='utf-8'>"]
+1 '' ['Traceback (most recent call last):', '  File "<string>", line 1, in <module>', "    import warnings; warnings.warn('x')", 'UserWarning: x']
+0 'quiet\n' []
+0 '' ['<string>:2: UserWarning: x']
+0 '' ['<string>:2: UserWarning: x', '<string>:2: UserWarning: x']
+1 '' ['<string>:1: UserWarning: x', 'Traceback (most recent call last):', '  File "<string>", line 1, in <module>', "    import warnings; warnings.warn('x'); warnings.warn('y', DeprecationWarning)", 'DeprecationWarning: y']
+0 '1\n' ["Invalid -W option ignored: invalid action: 'nonsense'"]
+0 'False\nTrue\n' ['<string>:1: UserWarning: native']
+0 '[]\n' []
+0 "['d', 'e::UserWarning']\n[('error', None, <class 'UserWarning'>, None, 0), ('default', None, <class 'Warning'>, None, 0)]\n" []

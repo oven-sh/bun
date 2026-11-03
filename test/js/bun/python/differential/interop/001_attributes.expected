@@ -1,0 +1,28 @@
+status: 0
+oracle: none
+mask: addresses
+---
+object object function function function
+5 2.5 2 number text true undefined
+21 7 42 prop 21 undefined undefined
+true false true true
+true false
+4 8 4
+new [('fresh', 'new'), ('none', None), ('x', 4)]
+true undefined true
+7 2 3 6
+20
+caught ValueError boom
+caught RuntimeError bad property
+caught AttributeError property 'prop' of 'A' object has no setter
+caught AttributeError
+1 undefined
+hello undefined true false
+true true
+true
+10 true true true
+undefined
+3 10
+1 1 [('defined', 3), ('none', None), ('x', 10)]
+6 6
+true 7

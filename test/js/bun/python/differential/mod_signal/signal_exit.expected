@@ -1,0 +1,10 @@
+status: 0
+script: c852fce04617c561
+---
+-2 ['ready'] KeyboardInterrupt
+-2 ['ready'] KeyboardInterrupt
+0 ['ready', 'caught'] None
+-15 ['ready'] None
+-10 ['ready'] None
+7 ['ready'] None
+0 ['ready', 'done'] None

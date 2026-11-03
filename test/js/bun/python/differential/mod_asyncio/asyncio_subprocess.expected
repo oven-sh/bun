@@ -1,0 +1,14 @@
+status: 0
+script: 49696571e2f841c0
+---
+b'hello\n' None 0
+(b'out\n', b'err\n') 3
+(b'through cat', None) 0
+b'line\n'
+b'' 0
+-15
+-9
+[0, 1, 2, 3, 4]
+FileNotFoundError 2
+timeout
+-9

@@ -1,0 +1,41 @@
+status: 0
+script: 8548e775178f4629
+---
+TypeError type 'memoryview' is not an acceptable base type
+<memory at 0x> <memory at 0x>
+True
+<released memory at 0x>
+AttributeError 'memoryview' object has no attribute 'x'
+AttributeError 'memoryview' object has no attribute 'x' and no __dict__ for setting new attributes
+AttributeError attribute 'obj' of 'memoryview' objects is not writable
+AttributeError attribute 'format' of 'memoryview' objects is not writable
+AttributeError attribute 'format' of 'memoryview' objects is not writable
+b'ab'
+TypeError memoryview.__new__(int): int is not a subtype of memoryview
+TypeError memoryview() missing required argument 'object' (pos 1)
+False
+True
+memoryview[int]
+(<class 'int'>, <class 'str'>)
+True
+True
+TypeError unsupported operand type(s) for +: 'memoryview' and 'memoryview'
+TypeError unsupported operand type(s) for *: 'memoryview' and 'int'
+TypeError '<' not supported between instances of 'memoryview' and 'memoryview'
+TypeError '<=' not supported between instances of 'memoryview' and 'bytes'
+TypeError '>' not supported between instances of 'memoryview' and 'memoryview'
+True
+False
+False
+'reversed'
+[99, 98, 97]
+[97, 98, 99]
+97
+294
+(97, 98, 99)
+3
+98
+True
+True
+True True True True False False True
+seq 97 98 99

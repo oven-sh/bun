@@ -1,0 +1,30 @@
+status: 0
+script: bdbe70fcf7a9866e
+---
+TypeError multiple bases have instance lay-out conflict
+TypeError multiple bases have instance lay-out conflict
+TypeError multiple bases have instance lay-out conflict
+TypeError multiple bases have instance lay-out conflict
+TypeError __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError __class__ assignment: 'B' object layout differs from 'A'
+'C'
+TypeError __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError __class__ assignment: 'P' object layout differs from 'A'
+TypeError __class__ assignment: 'A' object layout differs from 'P'
+TypeError descriptor '__next__' requires a 'itertools.chain' object but received a 'B'
+TypeError descriptor '__next__' requires a 'itertools.groupby' object but received a 'A'
+TypeError itertools.count.__new__(A): A is not a subtype of itertools.count
+TypeError itertools.chain.__new__(B): B is not a subtype of itertools.chain
+TypeError descriptor '__call__' requires a 'functools.partial' object but received a 'A'
+TypeError descriptor '__repr__' requires a 'functools.partial' object but received a 'itertools.chain'
+TypeError descriptor 'func' for 'functools.partial' objects doesn't apply to a 'itertools.chain' object
+<class 'int'>
+TypeError descriptor 'obj' for 'functools.KeyWrapper' objects doesn't apply to a 'itertools.chain' object
+TypeError descriptor '__call__' requires a 'operator.itemgetter' object but received a 'operator.attrgetter'
+TypeError descriptor '__repr__' requires a 'operator.itemgetter' object but received a 'operator.methodcaller'
+TypeError descriptor 'cache_info' for 'functools._lru_cache_wrapper' objects doesn't apply to a 'functools.partial' object
+TypeError descriptor '__length_hint__' for 'itertools.repeat' objects doesn't apply to a 'itertools.count' object
+TypeError descriptor '__sizeof__' for 'itertools.product' objects doesn't apply to a 'itertools.permutations' object
+TypeError descriptor '__sizeof__' for 'itertools.combinations' objects doesn't apply to a 'itertools.combinations_with_replacement' object
+TypeError descriptor '__next__' requires a 'itertools.combinations' object but received a 'itertools.combinations_with_replacement'

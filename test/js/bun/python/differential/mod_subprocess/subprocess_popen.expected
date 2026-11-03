@@ -1,0 +1,69 @@
+status: 0
+script: 66f7ea0c1ef38ef0
+---
+CompletedProcess(args=['/bin/echo', 'hello'], returncode=0, stdout=b'hello\n', stderr=b'') 0 b'hello\n' b'' ['/bin/echo', 'hello']
+CompletedProcess(args=['/bin/sh', '-c', 'echo out; echo err >&2; exit 3'], returncode=3, stdout='out\n', stderr='err\n')
+b'shell 3\n'
+b'piped input'
+text é
+0 1 0
+CalledProcessError: Command ['/bin/false'] returned non-zero exit status 1.
+CalledProcessError: Command ['/bin/sh', '-c', 'echo partial; exit 5'] returned non-zero exit status 5.
+9 ['/bin/sh', '-c', 'echo o; echo e >&2; exit 9'] b'o\n' b'o\n' b'e\n' Command ['/bin/sh', '-c', 'echo o; echo e >&2; exit 9'] returned non-zero exit status 9.
+FileNotFoundError: [Errno 2] No such file or directory: '/nonexistent/prog'
+2 No such file or directory /nonexistent/prog None
+2 No such file or directory /nonexistent/dir
+13 Permission denied /etc/passwd
+FileNotFoundError: [Errno 2] No such file or directory: 'nonexistent-program-xyz'
+b'via PATH\n'
+b'bar\n'
+b'/tmp\n'
+b'merged\n'
+0
+b''
+b'to file\n'
+b'to file\n'
+BufferedWriter BufferedReader None None None True ['/bin/cat']
+b'line\n'
+(b'more', None)
+0 0 0
+<Popen: returncode: 0 args: ['/bin/cat']>
+TextIOWrapper ('got word\n', None)
+1000000 True None
+1000000 b'done\n'
+None
+-15 True
+-9
+-2
+CalledProcessError: Command '['/bin/sh', '-c', 'kill -KILL $$']' died with <Signals.SIGKILL: 9>.
+TimeoutExpired: Command '['/bin/sleep', '30']' timed out after 0.1 seconds
+True
+TimeoutExpired: Command '['/bin/sleep', '30']' timed out after 0.05 seconds
+-9
+0.3 b'early\n' ['/bin/sh', '-c', 'echo early; exec sleep 30']
+(b'early\n', None)
+b'before\n' None Command '['/bin/sh', '-c', 'echo before; exec sleep 30']' timed out after 0.3 seconds
+True 0 b'x\n'
+0 b'y\n'
+True
+True
+b'0077\n'
+True True
+b'arg0-is-this\n'
+getoutput (4, 'st')
+"a b" c\"d e
+AttributeError: 'str' object has no attribute 'fileno'
+TypeError: bufsize must be an integer
+IndexError: list index out of range
+ValueError: embedded null byte
+ValueError: stdin and input arguments may not both be used.
+ValueError: stdout and stderr arguments may not be used with capture_output.
+0
+SubprocessError: Cannot disambiguate when both text and universal_newlines are supplied but different. Pass one or the other.
+popen
+
+ 768
+None
+2 0
+0
+ChildProcessError: [Errno 10] No child processes

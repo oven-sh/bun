@@ -1,0 +1,145 @@
+status: 0
+script: 8cdac9d886255386
+---
+Module(body=[Expr(value=Constant(value='Module doc.')), Import(names=[alias(name='os'), alias(name='sys', asname='s')], is_lazy=0), ImportFrom(module='a.b', names=[alias(name='c', asname='d')], level=0, is_lazy=0), FunctionDef(name='f', args=arguments(posonlyargs=[arg(arg='a')], args=[arg(arg='b', annotation=Name(id='int'))], vararg=arg(arg='args'), kwonlyargs=[arg(arg='c')], kw_defaults=[Constant(value=2)], kwarg=arg(arg='kw'), defaults=[Constant(value=1)]), body=[Expr(value=Constant(value='Doc\n       of f.')), Assign(targets=[Name(id='x', ctx=Store())], value=ListComp(elt=BinOp(left=Name(id
+FunctionDef(
+  name='f',
+  args=arguments(
+    posonlyargs=[
+      arg(arg='a')],
+    args=[
+      arg(
+        arg='b',
+        annotation=Name(id='int'))],
+    vararg=arg(arg='args'),
+    kwonlyargs=[
+      arg(arg='c')],
+    kw_defaults=[
+      Constant(value=2)],
+    kwarg=arg(arg='kw'),
+    defaults=[
+      Constant(value=1)]),
+  body=[
+    Expr(
+      value=Constant(value='Doc\n       of f.')),
+    Assign(
+      targets=[
+        Name(id='x', ctx=Store())],
+      value=ListComp(
+        elt=BinOp(
+          left=Name(id='i'),
+          op=Mult(),
+          right=Constant(value=2)),
+        generators=[
+          comprehension(
+            target=Name(id='i', ctx=Store()),
+            iter=Call(
+              func=Name(id='range'),
+              args=[
+                Name(id='b')]),
+            ifs=[
+              Name(id='i')],
+            is_async=0)])),
+    Assign(
+      targets
+Import([alias('os'), alias('sys', 's')], 0) Import(names=[alias(name='os', lineno=2, col_offset=7, end_lineno=2, end_col_offset=9), alias(name='sys', asname='s', lineno=2, col_offset=11, end_lineno=2, end_col_offset=19)], is_lazy=0, lineno=2, col_offset=0, end_lineno=2, end_col_offset=19) Import(names=[alias(name='os'), alias(name='sys', asname='s')], is_lazy=0)
+Expression(
+	body=Name(id='x')) Name(id='x') Module() Module(body=[], type_ignores=[])
+"""Module doc."""
+import os, sys as s
+from a.b import c as d
+
+@deco(1)
+def f(a, /, b: int=1, *args, c=2, **kw) -> str:
+    """Doc
+       of f."""
+    x = [i * 2 for i in range(b) if i]
+    y = {k: v for k, v in kw.items()}
+    z = lambda q=1: q ** (-2)
+    with open(a) as fh, ctx():
+        pass
+    try:
+        raise E from None
+    except (A, B) as e:
+        del e
+    else:
+        return f'{a!r:>{b}} x={x!r}'
+    finally:
+        global g
+    while x:
+        x -= 1
+    assert x, 'm'
+    return x if y else (yield)
+
+class K(B, metaclass=M):
+    a: int = 1
+
+    async def m(self):
+        async for i in self:
+            await i
+        async with self as w:
+            pass
+match v:
+    case [1, *r] | {'k': 2, **o}:
+        pass
+    case P(x=1) as p if p:
+        pass
+type T[U: int, *V, **W] = dict[U, V]
+t = t'a{b!s:c}'
+n = not a and b or c < d <= e is not f not in g
+u = -1 + ~2 // 3 @ 4 % 5 << 6 >> 7 & 8 ^ 9 | 10
+w = (a[1:2, ::3, ...], *b, (c := 1), 1e+100, 2j, b'x', None, True)
+True
+Module doc. 'Doc\nof f.' 'Doc\n       of f.' None
+['Module', 'Expr', 'Import', 'ImportFrom', 'FunctionDef', 'ClassDef', 'Match', 'TypeAlias', 'Assign', 'Assign', 'Assign', 'Assign', 'Constant', 'alias', 'alias', 'alias', 'arguments', 'Expr', 'Assign', 'Assign', 'Assign', 'With', 'Try', 'While', 'Assert'] 319
+[('name', 'str'), ('args', 'arguments'), ('body', 'list'), ('decorator_list', 'list'), ('returns', 'Name'), ('type_comment', 'NoneType'), ('type_params', 'list')] ['arguments', 'Expr', 'Assign', 'Assign', 'Assign', 'With', 'Try', 'While']
+x = [i * 2 for i in range(b) if i] | i * 2 | def f(a, /, b: int = 1, *args,
+'1' 1
+'-1' -1
+'+1' 1
+'1+2j' (1+2j)
+'-1-2j' (-1-2j)
+'"a" "b"' 'ab'
+'b"a"' b'a'
+'[1, (2,), {3}, {4: 5}]' [1, (2,), {3}, {4: 5}]
+'None' None
+'True' True
+'...' Ellipsis
+'set()' set()
+'{*()}' ValueError malformed node or string on line 1: Starred(value=Tuple(elts=[], ctx=Load()), ctx=Load())
+'x' ValueError malformed node or string on line 1: Name(id='x', ctx=Load())
+'1+1' ValueError malformed node or string on line 1: BinOp(left=Constant(value=1, kind=None), op=Add(), right=Constant(value=1, kind=None))
+'f()' ValueError malformed node or string on line 1: Call(func=Name(id='f', ctx=Load()), args=[], keywords=[])
+'-"a"' ValueError malformed node or string on line 1: UnaryOp(op=USub(), operand=Constant(value='a', kind=None))
+'[1, x]' ValueError malformed node or string on line 1: Name(id='x', ctx=Load())
+'{1: x}' ValueError malformed node or string on line 1: Name(id='x', ctx=Load())
+'1 if 1 else 2' ValueError malformed node or string on line 1: IfExp(test=Constant(value=1, kind=None), body=Constant(value=1, kind=None), orelse=Constant(value=2, kind=None))
+'  1' 1
+'\n1' 1
+'' SyntaxError invalid syntax (<unknown>, line 0)
+['def f', ('int', 'Load'), ('x', 'Store'), ('i', 'Load'), ('i', 'Store'), ('range', 'Load'), ('b', 'Load'), ('i', 'Load'), ('y', 'Store'), ('k', 'Load'), ('v', 'Load'), ('k', 'Store')] 66
+x = 3 * 2 - 1
+if x:
+    y = 1
+assert x
+1
+5
+[(6, 6), (7, 7)]
+True False False
+FunctionDef f False True True 5
+FunctionDef f False False True 5
+FunctionDef f False False True 5
+FunctionDef g False True False 5
+True 1 ('value', 'kind') 1024
+Num False
+Str False
+Bytes False
+NameConstant False
+Ellipsis False
+Index True
+ExtSlice True
+Suite True
+AugLoad True
+Param True
+slice True
+int str False

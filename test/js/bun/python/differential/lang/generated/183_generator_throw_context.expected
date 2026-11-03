@@ -1,0 +1,14 @@
+status: 0
+script: 06643b5d38549f1f
+source: 4981cade48e208ed
+---
+IndexError('outer') None
+IndexError('over')
+LookupError('inner')
+IndexError('couter') None
+swallowed
+after
+True None
+done
+True None
+done

@@ -1,0 +1,310 @@
+status: 0
+script: acd827424a3754c0
+source: 0d1cd38382ebd0f1
+---
+f() => ()
+f(1) => (1,)
+f(1, 2) => (1, 2)
+f(*[1, 2]) => (1, 2)
+f(*"ab") => ('a', 'b')
+f(1, *[2, 3]) => (1, 2, 3)
+f(*[1], 2) => (1, 2)
+f(*[1], *[2]) => (1, 2)
+f(*()) => ()
+f(*range(3)) => (0, 1, 2)
+f(*{1: 2}) => (1,)
+f(*(i for i in range(2))) => (0, 1)
+f(*[1], 2, *[3], 4) => (1, 2, 3, 4)
+type(f()) => <class 'tuple'>
+g() => {}
+g(a=1) => {'a': 1}
+g(a=1, b=2) => {'a': 1, 'b': 2}
+g(**{"a": 1}) => {'a': 1}
+g(a=1, **{"b": 2}) => {'a': 1, 'b': 2}
+g(**{"a": 1}, b=2) => {'a': 1, 'b': 2}
+g(**{"a": 1}, **{"b": 2}) => {'a': 1, 'b': 2}
+g(**{}) => {}
+g(b=1, a=2) => {'b': 1, 'a': 2}
+type(g()) => <class 'dict'>
+g(**dict(x=1)) => {'x': 1}
+g(**{"not an identifier": 1}) => {'not an identifier': 1}
+g(**{"": 1}) => {'': 1}
+g(**{"é": 1}) => {'é': 1}
+g(**{"class": 1}) => {'class': 1}
+g(self=1) => {'self': 1}
+g(kw=1) => {'kw': 1}
+h(1) => (1, (), {})
+h(1, 2) => (1, (2,), {})
+h(1, 2, 3, x=4) => (1, (2, 3), {'x': 4})
+h(a=1) => (1, (), {})
+h(a=1, b=2) => (1, (), {'b': 2})
+h(1, b=2) => (1, (), {'b': 2})
+h(*[1, 2], **{"c": 3}) => (1, (2,), {'c': 3})
+h(1, *[2], c=3, **{"d": 4}) => (1, (2,), {'c': 3, 'd': 4})
+h(**{"a": 1}) => (1, (), {})
+h(*[1], **{}) => (1, (), {})
+h(1, *(), **{}) => (1, (), {})
+k(1, c=3) => (1, 2, (), 3, 4, {})
+k(1, 2, 3, c=4) => (1, 2, (3,), 4, 4, {})
+k(1, c=3, d=5, e=6) => (1, 2, (), 3, 5, {'e': 6})
+k(a=1, c=3) => (1, 2, (), 3, 4, {})
+k(c=3, a=1, b=0) => (1, 0, (), 3, 4, {})
+k(1, 2, 3, 4, c=5, d=6, e=7, f=8) => (1, 2, (3, 4), 5, 6, {'e': 7, 'f': 8})
+k(*[1, 2, 3], **{"c": 4}) => (1, 2, (3,), 4, 4, {})
+ko(a=1) => (1, 2)
+ko(a=1, b=3) => (1, 3)
+ko(b=1, a=2) => (2, 1)
+ko(**{"a": 1}) => (1, 2)
+po(1) => (1, 2)
+po(1, 3) => (1, 3)
+po(*[1, 2]) => (1, 2)
+mix(1, 2, c=3) => (1, 2, 3)
+mix(1, b=2, c=3) => (1, 2, 3)
+mix(1, c=3, b=2) => (1, 2, 3)
+pokw(1, a=2) => (1, {'a': 2})
+pokw(1, a=2, b=3) => (1, {'a': 2, 'b': 3})
+pokw(1) => (1, {})
+podef() => (1, 2, 3)
+podef(9) => (9, 2, 3)
+podef(9, 8) => (9, 8, 3)
+podef(9, b=8, c=7) => (9, 8, 7)
+podef(c=0) => (1, 2, 0)
+f(a=1) => TypeError: f() got an unexpected keyword argument 'a'
+g(1) => TypeError: g() takes 0 positional arguments but 1 was given
+g(1, 2) => TypeError: g() takes 0 positional arguments but 2 were given
+g(1, a=2) => TypeError: g() takes 0 positional arguments but 1 was given
+h() => TypeError: h() missing 1 required positional argument: 'a'
+h(b=1) => TypeError: h() missing 1 required positional argument: 'a'
+h(1, a=2) => TypeError: h() got multiple values for argument 'a'
+h(1, 2, a=3) => TypeError: h() got multiple values for argument 'a'
+k(1) => TypeError: k() missing 1 required keyword-only argument: 'c'
+k() => TypeError: k() missing 1 required positional argument: 'a'
+k(c=1) => TypeError: k() missing 1 required positional argument: 'a'
+k(1, 2, 3) => TypeError: k() missing 1 required keyword-only argument: 'c'
+ko() => TypeError: ko() missing 1 required keyword-only argument: 'a'
+ko(1) => TypeError: ko() takes 0 positional arguments but 1 was given
+ko(1, 2) => TypeError: ko() takes 0 positional arguments but 2 were given
+ko(1, a=2) => TypeError: ko() takes 0 positional arguments but 1 positional argument (and 1 keyword-only argument) were given
+ko(b=1) => TypeError: ko() missing 1 required keyword-only argument: 'a'
+ko(a=1, c=2) => TypeError: ko() got an unexpected keyword argument 'c'
+ko(a=1, a1=2) => TypeError: ko() got an unexpected keyword argument 'a1'. Did you mean 'a'?
+po() => TypeError: po() missing 1 required positional argument: 'a'
+po(a=1) => TypeError: po() got some positional-only arguments passed as keyword arguments: 'a'
+po(1, b=2) => TypeError: po() got some positional-only arguments passed as keyword arguments: 'b'
+po(a=1, b=2) => TypeError: po() got some positional-only arguments passed as keyword arguments: 'a, b'
+po(1, 2, 3) => TypeError: po() takes from 1 to 2 positional arguments but 3 were given
+mix(1, 2, 3) => TypeError: mix() takes 2 positional arguments but 3 were given
+mix(1, 2) => TypeError: mix() missing 1 required keyword-only argument: 'c'
+mix(a=1, b=2, c=3) => TypeError: mix() got some positional-only arguments passed as keyword arguments: 'a'
+mix() => TypeError: mix() missing 2 required positional arguments: 'a' and 'b'
+mix(1) => TypeError: mix() missing 1 required positional argument: 'b'
+mix(c=3) => TypeError: mix() missing 2 required positional arguments: 'a' and 'b'
+mix(1, 2, c=3, d=4) => TypeError: mix() got an unexpected keyword argument 'd'
+pokw() => TypeError: pokw() missing 1 required positional argument: 'a'
+pokw(a=1) => TypeError: pokw() missing 1 required positional argument: 'a'
+podef(1, 2, 3) => TypeError: podef() takes from 0 to 2 positional arguments but 3 were given
+podef(a=1) => TypeError: podef() got some positional-only arguments passed as keyword arguments: 'a'
+zero(1) => TypeError: zero() takes 0 positional arguments but 1 was given
+zero(1, 2) => TypeError: zero() takes 0 positional arguments but 2 were given
+zero(a=1) => TypeError: zero() got an unexpected keyword argument 'a'
+one() => TypeError: one() missing 1 required positional argument: 'a'
+one(1, 2) => TypeError: one() takes 1 positional argument but 2 were given
+one(1, 2, 3) => TypeError: one() takes 1 positional argument but 3 were given
+one(b=1) => TypeError: one() got an unexpected keyword argument 'b'
+one(1, a=1) => TypeError: one() got multiple values for argument 'a'
+one(1, b=1) => TypeError: one() got an unexpected keyword argument 'b'
+two() => TypeError: two() missing 2 required positional arguments: 'a' and 'b'
+two(1) => TypeError: two() missing 1 required positional argument: 'b'
+two(b=1) => TypeError: two() missing 1 required positional argument: 'a'
+two(a=1) => TypeError: two() missing 1 required positional argument: 'b'
+two(1, 2, 3) => TypeError: two() takes 2 positional arguments but 3 were given
+two(1, 2, 3, 4) => TypeError: two() takes 2 positional arguments but 4 were given
+two(1, 2, b=3) => TypeError: two() got multiple values for argument 'b'
+two(1, c=3) => TypeError: two() got an unexpected keyword argument 'c'
+two(1, 2, c=3) => TypeError: two() got an unexpected keyword argument 'c'
+three() => TypeError: three() missing 3 required positional arguments: 'a', 'b', and 'c'
+three(1) => TypeError: three() missing 2 required positional arguments: 'b' and 'c'
+three(b=1) => TypeError: three() missing 2 required positional arguments: 'a' and 'c'
+four() => TypeError: four() missing 4 required positional arguments: 'a', 'b', 'c', and 'd'
+four(1) => TypeError: four() missing 3 required positional arguments: 'b', 'c', and 'd'
+four(c=1) => TypeError: four() missing 3 required positional arguments: 'a', 'b', and 'd'
+four(1, d=1) => TypeError: four() missing 2 required positional arguments: 'b' and 'c'
+dflt() => TypeError: dflt() missing 1 required positional argument: 'a'
+dflt(1, 2, 3, 4) => TypeError: dflt() takes from 1 to 3 positional arguments but 4 were given
+dflt(1, 2, 3, 4, 5) => TypeError: dflt() takes from 1 to 3 positional arguments but 5 were given
+dflt(b=1) => TypeError: dflt() missing 1 required positional argument: 'a'
+dflt(1, 2, 3, c=4) => TypeError: dflt() got multiple values for argument 'c'
+dflt(1, d=4) => TypeError: dflt() got an unexpected keyword argument 'd'
+kw2() => TypeError: kw2() missing 2 required keyword-only arguments: 'x' and 'y'
+kw2(x=1) => TypeError: kw2() missing 1 required keyword-only argument: 'y'
+kw2(y=1) => TypeError: kw2() missing 1 required keyword-only argument: 'x'
+kw3() => TypeError: kw3() missing 3 required keyword-only arguments: 'x', 'y', and 'z'
+kw3(y=1) => TypeError: kw3() missing 2 required keyword-only arguments: 'x' and 'z'
+kw2(1, x=1, y=2) => TypeError: kw2() takes 0 positional arguments but 1 positional argument (and 2 keyword-only arguments) were given
+kw2(1, 2, x=1, y=2) => TypeError: kw2() takes 0 positional arguments but 2 positional arguments (and 2 keyword-only arguments) were given
+kw2(1) => TypeError: kw2() takes 0 positional arguments but 1 was given
+kwmix(1, 2) => TypeError: kwmix() takes 1 positional argument but 2 were given
+kwmix(1, 2, x=3) => TypeError: kwmix() takes 1 positional argument but 2 positional arguments (and 1 keyword-only argument) were given
+kwmix(1, 2, 3, x=3) => TypeError: kwmix() takes 1 positional argument but 3 positional arguments (and 1 keyword-only argument) were given
+kwmix() => TypeError: kwmix() missing 1 required positional argument: 'a'
+kwmix(x=1) => TypeError: kwmix() missing 1 required positional argument: 'a'
+kwmix(1) => TypeError: kwmix() missing 1 required keyword-only argument: 'x'
+sug(1, colour=2) => TypeError: sug() got an unexpected keyword argument 'colour'. Did you mean 'color'?
+sug(1, sise=2) => TypeError: sug() got an unexpected keyword argument 'sise'. Did you mean 'size'?
+sug(1, Weight=2) => TypeError: sug() got an unexpected keyword argument 'Weight'. Did you mean 'weight'?
+sug(1, wieght=2) => TypeError: sug() got an unexpected keyword argument 'wieght'. Did you mean 'weight'?
+sug(1, zzzzz=2) => TypeError: sug() got an unexpected keyword argument 'zzzzz'
+sug(1, s=2) => TypeError: sug() got an unexpected keyword argument 's'
+sug(colr=1) => TypeError: sug() got an unexpected keyword argument 'colr'. Did you mean 'color'?
+g(**{"a": 1}, **{"a": 2}) => TypeError: __main__.g() got multiple values for keyword argument 'a'
+g(a=1, **{"a": 2}) => TypeError: __main__.g() got multiple values for keyword argument 'a'
+g(**{"a": 1}, a=2) if False else eval('g(**{"a": 1}, a=2)') => TypeError: __main__.g() got multiple values for keyword argument 'a'
+two(1, 2, **{"a": 3}) => TypeError: two() got multiple values for argument 'a'
+two(*[1, 2], **{"b": 3}) => TypeError: two() got multiple values for argument 'b'
+two(**{"a": 1, "b": 2, "c": 3}) => TypeError: two() got an unexpected keyword argument 'c'
+h(1, **{"a": 2}) => TypeError: h() got multiple values for argument 'a'
+g(**{1: 2}) => TypeError: keywords must be strings
+g(**{"a": 1, 2: 3}) => TypeError: keywords must be strings
+g(**{None: 1}) => TypeError: keywords must be strings
+two(*1) => TypeError: Value after * must be an iterable, not int
+two(**1) => TypeError: Value after ** must be a mapping, not int
+two(*None) => TypeError: Value after * must be an iterable, not NoneType
+two(**None) => TypeError: Value after ** must be a mapping, not NoneType
+two(**[("a", 1)]) => TypeError: Value after ** must be a mapping, not list
+two(*[1], *2) => TypeError: Value after * must be an iterable, not int
+two(**{"a": 1}, **2) => TypeError: Value after ** must be a mapping, not int
+len(*1) => TypeError: Value after * must be an iterable, not int
+len(**1) => TypeError: Value after ** must be a mapping, not int
+(lambda: 0)(*1) => TypeError: Value after * must be an iterable, not int
+C().m() => TypeError: C.m() missing 1 required positional argument: 'a'
+C().m(1, 2) => TypeError: C.m() takes 2 positional arguments but 3 were given
+C().m(b=1) => TypeError: C.m() got an unexpected keyword argument 'b'
+C.m() => TypeError: C.m() missing 2 required positional arguments: 'self' and 'a'
+C.m(1) => TypeError: C.m() missing 1 required positional argument: 'a'
+C.cm() => TypeError: C.cm() missing 1 required positional argument: 'a'
+C.cm(1, 2) => TypeError: C.cm() takes 2 positional arguments but 3 were given
+C.sm() => TypeError: C.sm() missing 1 required positional argument: 'a'
+C.sm(1, 2) => TypeError: C.sm() takes 1 positional argument but 2 were given
+C()() => TypeError: C.__call__() missing 1 required positional argument: 'a'
+C()(1, 2) => TypeError: C.__call__() takes 2 positional arguments but 3 were given
+C(1, 2) => TypeError: C.__init__() takes from 1 to 2 positional arguments but 3 were given
+C(y=1) => TypeError: C.__init__() got an unexpected keyword argument 'y'
+C().m(*1) => TypeError: Value after * must be an iterable, not int
+C().m(**1) => TypeError: Value after ** must be a mapping, not int
+C().m(1, a=2) => TypeError: C.m() got multiple values for argument 'a'
+C().m(self=1) => TypeError: C.m() got multiple values for argument 'self'
+outer()() => TypeError: outer.<locals>.inner() missing 1 required positional argument: 'a'
+(lambda a: a)() => TypeError: <lambda>.<locals>.<lambda>() missing 1 required positional argument: 'a'
+(lambda a, b: a)(1) => TypeError: <lambda>.<locals>.<lambda>() missing 1 required positional argument: 'b'
+(lambda: 0)(1) => TypeError: <lambda>.<locals>.<lambda>() takes 0 positional arguments but 1 was given
+(lambda *, a: a)() => TypeError: <lambda>.<locals>.<lambda>() missing 1 required keyword-only argument: 'a'
+(lambda a, /: a)(a=1) => TypeError: <lambda>.<locals>.<lambda>() got some positional-only arguments passed as keyword arguments: 'a'
+SyntaxError: e.msg [src='f(a=1, 2)'] => positional argument follows keyword argument
+SyntaxError: e.msg [src='f(**{}, 1)'] => positional argument follows keyword argument unpacking
+SyntaxError: e.msg [src='f(**{}, *[])'] => iterable argument unpacking follows keyword argument unpacking
+SyntaxError: e.msg [src='f(a=1, a=2)'] => keyword argument repeated: a
+ok: src [src='f(a=1, *[2])'] => f(a=1, *[2])
+SyntaxError: e.msg [src='f(1=2)'] => expression cannot contain assignment, perhaps you meant "=="?
+SyntaxError: e.msg [src='f(a.b=1)'] => expression cannot contain assignment, perhaps you meant "=="?
+SyntaxError: e.msg [src='f(a[0]=1)'] => expression cannot contain assignment, perhaps you meant "=="?
+SyntaxError: e.msg [src='f(None=1)'] => cannot assign to None
+SyntaxError: e.msg [src='f(True=1)'] => cannot assign to True
+SyntaxError: e.msg [src='f(a+b=1)'] => expression cannot contain assignment, perhaps you meant "=="?
+SyntaxError: e.msg [src="f('a'=1)"] => expression cannot contain assignment, perhaps you meant "=="?
+SyntaxError: e.msg [src='f(*)'] => Invalid star expression
+SyntaxError: e.msg [src='f(**)'] => invalid syntax
+SyntaxError: e.msg [src='f(a=)'] => expected argument value expression
+SyntaxError: e.msg [src='f(=1)'] => invalid syntax
+SyntaxError: e.msg [src='f(a, , b)'] => invalid syntax
+SyntaxError: e.msg [src='f(,)'] => invalid syntax
+SyntaxError: e.msg [src='f(a for a in b, c)'] => Generator expression must be parenthesized
+SyntaxError: e.msg [src='f(c, a for a in b)'] => Generator expression must be parenthesized
+ok: src [src='f(a for a in b)'] => f(a for a in b)
+SyntaxError: e.msg [src='f(**a for a in b)'] => cannot use dict unpacking in generator expression
+ok: src [src='f(a := 1)'] => f(a := 1)
+SyntaxError: e.msg [src='f(a=b := 1)'] => invalid syntax
+ok: src [src='f(a=(b := 1))'] => f(a=(b := 1))
+SyntaxError: e.msg [src='f(*a=1)'] => cannot assign to iterable argument unpacking
+SyntaxError: e.msg [src='f(lambda: 1=2)'] => expression cannot contain assignment, perhaps you meant "=="?
+SyntaxError: e.msg [src='f(__debug__=1)'] => cannot assign to __debug__
+SyntaxError: e.msg [src='f(x for x in y=1)'] => invalid syntax
+ok: src [src='f(a, b=1, *c, d=2, **e)'] => f(a, b=1, *c, d=2, **e)
+ok: src [src='f(*a, *b, **c, **d)'] => f(*a, *b, **c, **d)
+ok: src [src='f(a)(b)(c)'] => f(a)(b)(c)
+ok: src [src='f(print=1)'] => f(print=1)
+SyntaxError: e.msg [src='f(a=1 b=2)'] => invalid syntax. Perhaps you forgot a comma?
+SyntaxError: e.msg [src='f(a b)'] => invalid syntax. Perhaps you forgot a comma?
+SyntaxError: e.msg [src='f(1 2)'] => invalid syntax. Perhaps you forgot a comma?
+SyntaxError: e.msg [src='f(a, b c)'] => invalid syntax. Perhaps you forgot a comma?
+SyntaxError: e.msg [src='f(yield)'] => invalid syntax
+SyntaxError: e.msg [src='f(if=1)'] => invalid syntax
+SyntaxError: e.msg [src='f(*, a)'] => Invalid star expression
+SyntaxError: e.msg [src='def f(a, a): pass'] => duplicate parameter 'a' in function definition
+SyntaxError: e.msg [src='def f(a, *a): pass'] => duplicate parameter 'a' in function definition
+SyntaxError: e.msg [src='def f(a, **a): pass'] => duplicate parameter 'a' in function definition
+SyntaxError: e.msg [src='def f(a, *, a): pass'] => duplicate parameter 'a' in function definition
+SyntaxError: e.msg [src='def f(*a, *b): pass'] => * may appear only once
+SyntaxError: e.msg [src='def f(**a, b): pass'] => parameters cannot follow var-keyword parameter
+SyntaxError: e.msg [src='def f(**a, *b): pass'] => parameters cannot follow var-keyword parameter
+SyntaxError: e.msg [src='def f(**a, **b): pass'] => parameters cannot follow var-keyword parameter
+SyntaxError: e.msg [src='def f(a=1, b): pass'] => parameter without a default follows parameter with a default
+SyntaxError: e.msg [src='def f(a=1, /, b): pass'] => parameter without a default follows parameter with a default
+SyntaxError: e.msg [src='def f(*): pass'] => named parameters must follow bare *
+SyntaxError: e.msg [src='def f(*, **k): pass'] => named parameters must follow bare *
+SyntaxError: e.msg [src='def f(*, /): pass'] => / must be ahead of *
+SyntaxError: e.msg [src='def f(/): pass'] => invalid syntax
+SyntaxError: e.msg [src='def f(/, a): pass'] => at least one parameter must precede /
+SyntaxError: e.msg [src='def f(a, /, /): pass'] => / may appear only once
+SyntaxError: e.msg [src='def f(a, /, b, /): pass'] => / may appear only once
+SyntaxError: e.msg [src='def f(*a, /): pass'] => / must be ahead of *
+SyntaxError: e.msg [src='def f(*, a, /): pass'] => / must be ahead of *
+SyntaxError: e.msg [src='def f(a, *, *b): pass'] => * may appear only once
+SyntaxError: e.msg [src='def f(*a, *, b): pass'] => * may appear only once
+SyntaxError: e.msg [src='def f(*a=1): pass'] => var-positional parameter cannot have default value
+SyntaxError: e.msg [src='def f(**a=1): pass'] => var-keyword parameter cannot have default value
+ok: src [src='def f(a, *, b=1, c): pass'] => def f(a, *, b=1, c): pass
+SyntaxError: e.msg [src='def f(1): pass'] => invalid syntax
+SyntaxError: e.msg [src='def f(a.b): pass'] => invalid syntax
+SyntaxError: e.msg [src='def f((a, b)): pass'] => Function parameters cannot be parenthesized
+SyntaxError: e.msg [src='def f(None): pass'] => invalid syntax
+SyntaxError: e.msg [src='def f(__debug__): pass'] => cannot assign to __debug__
+SyntaxError: e.msg [src='def f(a,, b): pass'] => invalid syntax
+SyntaxError: e.msg [src='def f(a b): pass'] => invalid syntax
+SyntaxError: e.msg [src='def f(a=): pass'] => expected default value expression
+ok: src [src='def f(*, a=1, **k,): pass'] => def f(*, a=1, **k,): pass
+ok: src [src='def f(a, b,): pass'] => def f(a, b,): pass
+ok: src [src='def f(*a,): pass'] => def f(*a,): pass
+ok: src [src='def f(**k,): pass'] => def f(**k,): pass
+SyntaxError: e.msg [src='def f(,): pass'] => invalid syntax
+SyntaxError: e.msg [src='lambda a, a: 1'] => duplicate parameter 'a' in function definition
+SyntaxError: e.msg [src='lambda a=1, b: 1'] => parameter without a default follows parameter with a default
+SyntaxError: e.msg [src='lambda *: 1'] => named parameters must follow bare *
+SyntaxError: e.msg [src='lambda /: 1'] => invalid syntax
+SyntaxError: e.msg [src='lambda **a, b: 1'] => parameters cannot follow var-keyword parameter
+SyntaxError: e.msg [src='lambda (a): 1'] => Lambda expression parameters cannot be parenthesized
+ok: src [src='lambda a, /, b, *, c: 1'] => lambda a, /, b, *, c: 1
+ok: src [src='lambda *a, **k: 1'] => lambda *a, **k: 1
+SyntaxError: e.msg [src='lambda a: int: 1'] => illegal target for annotation
+ok: src [src='def f(a: int = 1, *b: int, c: int = 2, **d: int) -> int: pass'] => def f(a: int = 1, *b: int, c: int = 2, **d: int) -> int: pass
+SyntaxError: e.msg [src='def f(a = 1: int): pass'] => invalid syntax
+ok: src [src='def f(*a: *b): pass'] => def f(*a: *b): pass
+SyntaxError: e.msg [src='def f(a: *b): pass'] => invalid syntax
+SyntaxError: e.msg [src='def f(**a: *b): pass'] => invalid syntax
+SyntaxError: e.msg [src='def f(a, *, b, /, c): pass'] => / must be ahead of *
+ok: src [src='def f(): pass; pass'] => def f(): pass; pass
+SyntaxError: e.msg [src='def f() pass'] => expected ':'
+SyntaxError: e.msg [src='def f: pass'] => expected '('
+SyntaxError: e.msg [src='def (): pass'] => invalid syntax
+SyntaxError: e.msg [src='def f():'] => expected an indented block after function definition on line 1
+SyntaxError: e.msg [src='def f(a, *): pass'] => named parameters must follow bare *
+SyntaxError: e.msg [src='def f(a, *, ): pass'] => named parameters must follow bare *
+big(*range(300)) => (300, 0)
+big(**{"k%d" % i: i for i in range(300)}) => (0, 300)
+big(*range(1000), **{"k%d" % i: i for i in range(100)}) => (1000, 100)
+eval("big(" + ", ".join(str(i) for i in range(300)) + ")") => (300, 0)
+eval("big(" + ", ".join("a%d=%d" % (i, i) for i in range(300)) + ")") => (0, 300)
+many(*range(300)) => 299
+many(**{"p%d" % i: i for i in range(300)}) => 299
+eval("many(" + ", ".join(str(i) for i in range(300)) + ")") => 299
+many(*range(299)) => TypeError: many() missing 1 required positional argument: 'p299'
+many(*range(301)) => TypeError: many() takes 300 positional arguments but 301 were given

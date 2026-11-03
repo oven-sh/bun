@@ -1,0 +1,42 @@
+status: 0
+script: 0cff9ad974c4a3e6
+---
+code <tree> <module>
+out [0, 1, 1, 2, 3, 5, 8, 13, 21, 34]
+d {'a': 1, 'c': 3}
+g 1870
+err ZeroDivisionError
+fin True
+w 97
+m (2, [3], 4, {})
+lam 6
+n else
+big -123456789012345678901234567890
+z (1.5+2j)
+b b'bytes\x00'
+w2 20
+[0, 1, 13, 2, 21, 3, 34, 5, 8, 'a', 'c'] [3, (1, 2), 2, {'q': 3}]    3|  3 doc [0, 1, 2] Alias {'x': <class 'int'>}
+7
+3
+5
+42 -42 None Ellipsis True s b'b' 1.5 -0.0 2j
+(1, 'a', (2.0, None), frozenset({3})) frozenset({1, 2}) ()
+1000000000000000000000000000000 -1000000000000000000000000000000 9223372036854775808 -9223372036854775808 9007199254740992 -18446744073709551617
+3 [1, 2] ()
+True 3
+a1  'x'
+{1: 2, 3: 4}
+3
+{'a': 1, 'b': 2}
+el
+slice(1, 2, None)
+n True -3
+9
+[1, 2, 3]
+<module>
+7
+5 [1]
+3
+False True False
+FunctionType(argtypes=[Name(id='int',ctx=Load(),lineno=1,col_offset=1,end_lineno=1,end_col_offset=4),Name(id='str',ctx=Load(),lineno=1,col_offset=7,end_lineno=1,end_col_offset=10),Name(id='dict',ctx=Load(),lineno=1,col_offset=14,end_lineno=1,end_col_offset=18)],returns=Name(id='bool',ctx=Load(),lineno=1,col_offset=23,end_lineno=1,end_col_offset=27))
+Expression(body=Constant(value=(1, frozenset({2}), -10000000000000000000000000000000000000000),kind=None,lineno=1,col_offset=0,end_lineno=1,end_col_offset=0))

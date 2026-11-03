@@ -1,0 +1,50 @@
+status: 0
+script: c3539cb5f7a7263e
+---
+['CLOCK_BOOTTIME', 'CLOCK_MONOTONIC', 'CLOCK_MONOTONIC_RAW', 'CLOCK_PROCESS_CPUTIME_ID', 'CLOCK_REALTIME', 'CLOCK_TAI', 'CLOCK_THREAD_CPUTIME_ID', '_STRUCT_TM_ITEMS', 'altzone', 'asctime', 'clock_getres', 'clock_gettime', 'clock_gettime_ns', 'clock_settime', 'clock_settime_ns', 'ctime', 'daylight', 'get_clock_info', 'gmtime', 'localtime', 'mktime', 'monotonic', 'monotonic_ns', 'perf_counter', 'perf_counter_ns', 'process_time', 'process_time_ns', 'pthread_getcpuclockid', 'sleep', 'strftime', 'strptime', 'struct_time', 'thread_time', 'thread_time_ns', 'time', 'time_ns', 'timezone', 'tzname', 'tzset']
+time 'This module provides various functions to manipulate time values.\n\nThere are two standard representations of time.  One is the number\nof seconds since the Epoch, in UTC (a.k.a. GMT).  It may be an integer\nor a floating-point number (to represent fractions of seconds).\nThe epoch is the point where the time starts, the return value of time.gmtime(0).\nIt is January 1, 1970, 00:00:00 (UTC) on all platforms.\n\nThe other representation is a tuple of 9 integers giving local time.\nThe tuple items are:\n  year (including century, e.g. 1998)\n  month (1-12)\n  day (1-31)\n  hours (0-23)\n  minutes (0-59)\n  seconds (0-59)\n  weekday (0-6, Monday is 0)\n  Julian day (day in the year, 1-366)\n  DST (Daylight Savings Time) flag (-1, 0 or 1)\nIf the DST flag is 0, the time is given in the regular time zone;\nif it is 1, the time is given in the DST time zone;\nif it is -1, mktime() should guess based on the date and time.\n'
+CLOCK_BOOTTIME int 7
+CLOCK_MONOTONIC int 1
+CLOCK_MONOTONIC_RAW int 4
+CLOCK_PROCESS_CPUTIME_ID int 2
+CLOCK_REALTIME int 0
+CLOCK_TAI int 11
+CLOCK_THREAD_CPUTIME_ID int 3
+time SimpleNamespace namespace(implementation='clock_gettime(CLOCK_REALTIME)', monotonic=False, adjustable=True, resolution=1e-09) ['adjustable', 'implementation', 'monotonic', 'resolution'] ['implementation', 'monotonic', 'adjustable', 'resolution']
+float int True True True time time builtin_function_or_method
+True
+monotonic SimpleNamespace namespace(implementation='clock_gettime(CLOCK_MONOTONIC)', monotonic=True, adjustable=False, resolution=1e-09) ['adjustable', 'implementation', 'monotonic', 'resolution'] ['implementation', 'monotonic', 'adjustable', 'resolution']
+float int True True True monotonic time builtin_function_or_method
+True
+perf_counter SimpleNamespace namespace(implementation='clock_gettime(CLOCK_MONOTONIC)', monotonic=True, adjustable=False, resolution=1e-09) ['adjustable', 'implementation', 'monotonic', 'resolution'] ['implementation', 'monotonic', 'adjustable', 'resolution']
+float int True True True perf_counter time builtin_function_or_method
+True
+process_time SimpleNamespace namespace(implementation='clock_gettime(CLOCK_PROCESS_CPUTIME_ID)', monotonic=True, adjustable=False, resolution=1e-09) ['adjustable', 'implementation', 'monotonic', 'resolution'] ['implementation', 'monotonic', 'adjustable', 'resolution']
+float int True True True process_time time builtin_function_or_method
+True
+thread_time SimpleNamespace namespace(implementation='clock_gettime(CLOCK_THREAD_CPUTIME_ID)', monotonic=True, adjustable=False, resolution=1e-09) ['adjustable', 'implementation', 'monotonic', 'resolution'] ['implementation', 'monotonic', 'adjustable', 'resolution']
+float int True True True thread_time time builtin_function_or_method
+True
+True True
+True True
+True True
+CLOCK_BOOTTIME float int 1e-09 True
+CLOCK_MONOTONIC float int 1e-09 True
+CLOCK_MONOTONIC_RAW float int 1e-09 True
+CLOCK_PROCESS_CPUTIME_ID float int 1e-09 True
+CLOCK_REALTIME float int 1e-09 True
+CLOCK_TAI float int 1e-09 True
+CLOCK_THREAD_CPUTIME_ID float int 1e-09 True
+0 None True True
+0.0 None True True
+1e-09 None True True
+0.001 None True True
+0.01 None True True
+0.05 None True True
+0.02 None True True
+True
+True True
+True True True True True
+24 24 True True True
+int
+None 0 0 0 ('UTC', 'UTC')

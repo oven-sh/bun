@@ -1,0 +1,558 @@
+status: 0
+script: d3fde8ae78fba870
+---
+0 b' \n' True b'`\n' True
+1 b'!C   \n' True b'!C```\n' True
+2 b'"4\\, \n' True b'"4\\,`\n' True
+3 b'#&6;[\n' True b'#&6;[\n' True
+4 b'$WPEXA0  \n' True b'$WPEXA0``\n' True
+5 b"%IJOVC'( \n" True b"%IJOVC'(`\n" True
+44 b"LVW$>B03:#!Y/U]RL#\\\\[COG>!H9L+')Y@0P [M?4'D4;?YVW6@/7$09SG#  \n" True b"LVW$>B03:#!Y/U]RL#\\\\[COG>!H9L+')Y@0P`[M?4'D4;?YVW6@/7$09SG#``\n" True
+45 b'MHA.<CZ6V0OM)\\[3?<,V] HHERF>RGVD2B%6"FLP^5W._73WX.JD8.XN_F(T3\n' True b'MHA.<CZ6V0OM)\\[3?<,V]`HHERF>RGVD2B%6"FLP^5W._73WX.JD8.XN_F(T3\n' True
+b'%        \n' b'%````````\n' b'#86)C\n' b'`\n' b' \n'
+builtins.TypeError b2a_uu() takes exactly 1 positional argument (2 given)
+binascii.Error At most 45 bytes at once
+builtins.TypeError a bytes-like object is required, not 'str'
+builtins.TypeError b2a_uu() takes exactly 1 positional argument (0 given)
+builtins.TypeError b2a_uu() got an unexpected keyword argument 'foo'
+b'!80  \n'
+b'' -> binascii.Error Missing length byte
+b' ' -> b''
+b'`' -> b''
+b'\x7f' -> b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+b'!\x01' -> binascii.Error Illegal char
+b' abc' -> binascii.Error Trailing garbage
+b'#86)C' -> b'abc'
+b'#86)C\n' -> b'abc'
+b'#86)C\r\n' -> b'abc'
+b'#86)C  ' -> b'abc'
+b'#86)C``' -> b'abc'
+b'#86)Cx' -> binascii.Error Trailing garbage
+b'#86)' -> b'ab@'
+b'#86' -> b'a`\x00'
+b'#8' -> b'`\x00\x00'
+b'#' -> b'\x00\x00\x00'
+b'#\n' -> b'\x00\x00\x00'
+b'#86\n)C' -> binascii.Error Trailing garbage
+#86)C -> b'abc'
+bytearray(b'#86)C') -> b'abc'
+b'!86)C' -> binascii.Error Trailing garbage
+b'"86)C' -> binascii.Error Trailing garbage
+b'$86)C' -> b'abc\x00'
+b'M' -> b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+b'#86)\x00' -> binascii.Error Illegal char
+b'#86)a' -> binascii.Error Illegal char
+b'#86)\xe9' -> binascii.Error Illegal char
+b'#86)`' -> b'ab@'
+b'\x00' -> b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+b'\xa386)C' -> b'abc'
+b'# 6)C' -> b'\x01bc'
+b'#`6)C' -> b'\x01bc'
+builtins.TypeError binascii.a2b_uu() takes exactly one argument (0 given)
+builtins.TypeError argument should be bytes, buffer or ASCII string, not 'int'
+builtins.ValueError string argument should contain only ASCII characters
+builtins.TypeError binascii.a2b_uu() takes exactly one argument (2 given)
+builtins.TypeError binascii.a2b_uu() takes no keyword arguments
+b'' b'' b'' b'' b''
+b'abc' b'abc' b'abc' b'abc' b'abc'
+b'a=3Db' b'a=b' b'a=b' b'a=b' b'a=b'
+b'a=3db' b'a=b' b'a=b' b'a=b' b'a=b'
+b'=' b'' b'' b'' b''
+b'a=' b'a' b'a' b'a' b'a'
+b'==' b'=' b'=' b'=' b'='
+b'a==b' b'a=b' b'a=b' b'a=b' b'a=b'
+b'=\n' b'' b'' b'' b''
+b'a=\nb' b'ab' b'ab' b'ab' b'ab'
+b'a=\r\nb' b'ab' b'ab' b'ab' b'ab'
+b'a=\rb' b'a' b'a' b'a' b'a'
+b'a=\rb\nc' b'ac' b'ac' b'ac' b'ac'
+b'=3' b'=3' b'=3' b'=3' b'=3'
+b'=3\n' b'=3\n' b'=3\n' b'=3\n' b'=3\n'
+b'=3G' b'=3G' b'=3G' b'=3G' b'=3G'
+b'=G3' b'=G3' b'=G3' b'=G3' b'=G3'
+b'=AB=CD' b'\xab\xcd' b'\xab\xcd' b'\xab\xcd' b'\xab\xcd'
+b'a_b' b'a_b' b'a b' b'a b' b'a_b'
+b'=5F' b'_' b'_' b'_' b'_'
+b'a b' b'a b' b'a b' b'a b' b'a b'
+b'=00' b'\x00' b'\x00' b'\x00' b'\x00'
+b'=\x00' b'=\x00' b'=\x00' b'=\x00' b'=\x00'
+b'=20\n' b' \n' b' \n' b' \n' b' \n'
+b'a=\n' b'a' b'a' b'a' b'a'
+b'a=\r' b'a' b'a' b'a' b'a'
+b'===' b'=' b'=' b'=' b'='
+b'=3D=3D' b'==' b'==' b'==' b'=='
+b'\xff=FF' b'\xff\xff' b'\xff\xff' b'\xff\xff' b'\xff\xff'
+a=3Db b'a=b' b'a=b' b'a=b' b'a=b'
+bytearray(b'a=3Db') b'a=b' b'a=b' b'a=b' b'a=b'
+b'a\nb\r\nc' b'a\nb\r\nc' b'a\nb\r\nc' b'a\nb\r\nc' b'a\nb\r\nc'
+b'=a' b'=a' b'=a' b'=a' b'=a'
+b'=aZ' b'=aZ' b'=aZ' b'=aZ' b'=aZ'
+b'= \n' b'= \n' b'= \n' b'= \n' b'= \n'
+builtins.TypeError a2b_qp() missing required argument 'data' (pos 1)
+builtins.TypeError argument should be bytes, buffer or ASCII string, not 'int'
+builtins.ValueError string argument should contain only ASCII characters
+builtins.TypeError a2b_qp() takes at most 2 arguments (3 given)
+builtins.TypeError a2b_qp() got an unexpected keyword argument 'foo'
+b'a'
+b'' 0
+    {} b'' True
+    {'quotetabs': True} b'' True
+    {'istext': False} b'' True
+    {'header': True} b'' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'' True
+    {'quotetabs': True, 'header': True} b'' True
+    {'istext': False, 'header': True} b'' True
+b'abc' 3
+    {} b'abc' True
+    {'quotetabs': True} b'abc' True
+    {'istext': False} b'abc' True
+    {'header': True} b'abc' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'abc' True
+    {'quotetabs': True, 'header': True} b'abc' True
+    {'istext': False, 'header': True} b'abc' True
+b'a=b' 3
+    {} b'a=3Db' True
+    {'quotetabs': True} b'a=3Db' True
+    {'istext': False} b'a=3Db' True
+    {'header': True} b'a=3Db' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'a=3Db' True
+    {'quotetabs': True, 'header': True} b'a=3Db' True
+    {'istext': False, 'header': True} b'a=3Db' True
+b'a b' 3
+    {} b'a b' True
+    {'quotetabs': True} b'a=20b' True
+    {'istext': False} b'a b' True
+    {'header': True} b'a_b' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'a=20b' True
+    {'quotetabs': True, 'header': True} b'a=20b' True
+    {'istext': False, 'header': True} b'a_b' True
+b'a\tb' 3
+    {} b'a\tb' True
+    {'quotetabs': True} b'a=09b' True
+    {'istext': False} b'a\tb' True
+    {'header': True} b'a\tb' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'a=09b' True
+    {'quotetabs': True, 'header': True} b'a=09b' True
+    {'istext': False, 'header': True} b'a\tb' True
+b'a ' 2
+    {} b'a=20' True
+    {'quotetabs': True} b'a=20' True
+    {'istext': False} b'a=20' True
+    {'header': True} b'a=20' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'a=20' True
+    {'quotetabs': True, 'header': True} b'a=20' True
+    {'istext': False, 'header': True} b'a=20' True
+b'a\t' 2
+    {} b'a=09' True
+    {'quotetabs': True} b'a=09' True
+    {'istext': False} b'a=09' True
+    {'header': True} b'a=09' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'a=09' True
+    {'quotetabs': True, 'header': True} b'a=09' True
+    {'istext': False, 'header': True} b'a=09' True
+b' ' 1
+    {} b'=20' True
+    {'quotetabs': True} b'=20' True
+    {'istext': False} b'=20' True
+    {'header': True} b'=20' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'=20' True
+    {'quotetabs': True, 'header': True} b'=20' True
+    {'istext': False, 'header': True} b'=20' True
+b'\t' 1
+    {} b'=09' True
+    {'quotetabs': True} b'=09' True
+    {'istext': False} b'=09' True
+    {'header': True} b'=09' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'=09' True
+    {'quotetabs': True, 'header': True} b'=09' True
+    {'istext': False, 'header': True} b'=09' True
+b'a \n' 3
+    {} b'a=20\n' True
+    {'quotetabs': True} b'a=20\n' True
+    {'istext': False} b'a =0A' True
+    {'header': True} b'a_\n' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'a=20=0A' True
+    {'quotetabs': True, 'header': True} b'a=20\n' True
+    {'istext': False, 'header': True} b'a_=0A' True
+b'a\t\n' 3
+    {} b'a=09\n' True
+    {'quotetabs': True} b'a=09\n' True
+    {'istext': False} b'a\t=0A' True
+    {'header': True} b'a=09\n' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'a=09=0A' True
+    {'quotetabs': True, 'header': True} b'a=09\n' True
+    {'istext': False, 'header': True} b'a\t=0A' True
+b'a \r\n' 4
+    {} b'a=20\r\n' True
+    {'quotetabs': True} b'a=20\r\n' True
+    {'istext': False} b'a =0D=0A' True
+    {'header': True} b'a_\r\n' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'a=20=0D=0A' True
+    {'quotetabs': True, 'header': True} b'a=20\r\n' True
+    {'istext': False, 'header': True} b'a_=0D=0A' True
+b'a\nb' 3
+    {} b'a\nb' True
+    {'quotetabs': True} b'a\nb' True
+    {'istext': False} b'a=0Ab' True
+    {'header': True} b'a\nb' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'a=0Ab' True
+    {'quotetabs': True, 'header': True} b'a\nb' True
+    {'istext': False, 'header': True} b'a=0Ab' True
+b'a\r\nb' 4
+    {} b'a\r\nb' True
+    {'quotetabs': True} b'a\r\nb' True
+    {'istext': False} b'a=0D=0Ab' True
+    {'header': True} b'a\r\nb' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'a=0D=0Ab' True
+    {'quotetabs': True, 'header': True} b'a\r\nb' True
+    {'istext': False, 'header': True} b'a=0D=0Ab' True
+b'a\rb' 3
+    {} b'a\rb' True
+    {'quotetabs': True} b'a\rb' True
+    {'istext': False} b'a=0Db' True
+    {'header': True} b'a\rb' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'a=0Db' True
+    {'quotetabs': True, 'header': True} b'a\rb' True
+    {'istext': False, 'header': True} b'a=0Db' True
+b'a\r' 2
+    {} b'a\r' True
+    {'quotetabs': True} b'a\r' True
+    {'istext': False} b'a=0D' True
+    {'header': True} b'a\r' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'a=0D' True
+    {'quotetabs': True, 'header': True} b'a\r' True
+    {'istext': False, 'header': True} b'a=0D' True
+b'a\n' 2
+    {} b'a\n' True
+    {'quotetabs': True} b'a\n' True
+    {'istext': False} b'a=0A' True
+    {'header': True} b'a\n' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'a=0A' True
+    {'quotetabs': True, 'header': True} b'a\n' True
+    {'istext': False, 'header': True} b'a=0A' True
+b'\n' 1
+    {} b'\n' True
+    {'quotetabs': True} b'\n' True
+    {'istext': False} b'=0A' True
+    {'header': True} b'\n' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'=0A' True
+    {'quotetabs': True, 'header': True} b'\n' True
+    {'istext': False, 'header': True} b'=0A' True
+b'\r\n' 2
+    {} b'\r\n' True
+    {'quotetabs': True} b'\r\n' True
+    {'istext': False} b'=0D=0A' True
+    {'header': True} b'\r\n' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'=0D=0A' True
+    {'quotetabs': True, 'header': True} b'\r\n' True
+    {'istext': False, 'header': True} b'=0D=0A' True
+b'\r' 1
+    {} b'\r' True
+    {'quotetabs': True} b'\r' True
+    {'istext': False} b'=0D' True
+    {'header': True} b'\r' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'=0D' True
+    {'quotetabs': True, 'header': True} b'\r' True
+    {'istext': False, 'header': True} b'=0D' True
+b'.' 1
+    {} b'=2E' True
+    {'quotetabs': True} b'=2E' True
+    {'istext': False} b'=2E' True
+    {'header': True} b'=2E' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'=2E' True
+    {'quotetabs': True, 'header': True} b'=2E' True
+    {'istext': False, 'header': True} b'=2E' True
+b'.\n' 2
+    {} b'=2E\n' True
+    {'quotetabs': True} b'=2E\n' True
+    {'istext': False} b'=2E=0A' True
+    {'header': True} b'=2E\n' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'=2E=0A' True
+    {'quotetabs': True, 'header': True} b'=2E\n' True
+    {'istext': False, 'header': True} b'=2E=0A' True
+b'.a' 2
+    {} b'.a' True
+    {'quotetabs': True} b'.a' True
+    {'istext': False} b'.a' True
+    {'header': True} b'.a' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'.a' True
+    {'quotetabs': True, 'header': True} b'.a' True
+    {'istext': False, 'header': True} b'.a' True
+b'a.' 2
+    {} b'a.' True
+    {'quotetabs': True} b'a.' True
+    {'istext': False} b'a.' True
+    {'header': True} b'a.' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'a.' True
+    {'quotetabs': True, 'header': True} b'a.' True
+    {'istext': False, 'header': True} b'a.' True
+b'a\n.' 3
+    {} b'a\n=2E' True
+    {'quotetabs': True} b'a\n=2E' True
+    {'istext': False} b'a=0A.' True
+    {'header': True} b'a\n=2E' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'a=0A.' True
+    {'quotetabs': True, 'header': True} b'a\n=2E' True
+    {'istext': False, 'header': True} b'a=0A.' True
+b'a\n.\n' 4
+    {} b'a\n=2E\n' True
+    {'quotetabs': True} b'a\n=2E\n' True
+    {'istext': False} b'a=0A.=0A' True
+    {'header': True} b'a\n=2E\n' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'a=0A.=0A' True
+    {'quotetabs': True, 'header': True} b'a\n=2E\n' True
+    {'istext': False, 'header': True} b'a=0A.=0A' True
+b'a\n.b' 4
+    {} b'a\n.b' True
+    {'quotetabs': True} b'a\n.b' True
+    {'istext': False} b'a=0A.b' True
+    {'header': True} b'a\n.b' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'a=0A.b' True
+    {'quotetabs': True, 'header': True} b'a\n.b' True
+    {'istext': False, 'header': True} b'a=0A.b' True
+b'.\r\n' 3
+    {} b'=2E\r\n' True
+    {'quotetabs': True} b'=2E\r\n' True
+    {'istext': False} b'=2E=0D=0A' True
+    {'header': True} b'=2E\r\n' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'=2E=0D=0A' True
+    {'quotetabs': True, 'header': True} b'=2E\r\n' True
+    {'istext': False, 'header': True} b'=2E=0D=0A' True
+b'.\x00' 2
+    {} b'=2E=00' True
+    {'quotetabs': True} b'=2E=00' True
+    {'istext': False} b'=2E=00' True
+    {'header': True} b'=2E=00' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'=2E=00' True
+    {'quotetabs': True, 'header': True} b'=2E=00' True
+    {'istext': False, 'header': True} b'=2E=00' True
+b'..' 2
+    {} b'..' True
+    {'quotetabs': True} b'..' True
+    {'istext': False} b'..' True
+    {'header': True} b'..' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'..' True
+    {'quotetabs': True, 'header': True} b'..' True
+    {'istext': False, 'header': True} b'..' True
+b'_' 1
+    {} b'_' True
+    {'quotetabs': True} b'_' True
+    {'istext': False} b'_' True
+    {'header': True} b'=5F' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'=5F' True
+    {'quotetabs': True, 'header': True} b'=5F' True
+    {'istext': False, 'header': True} b'=5F' True
+b'a_b' 3
+    {} b'a_b' True
+    {'quotetabs': True} b'a_b' True
+    {'istext': False} b'a_b' True
+    {'header': True} b'a=5Fb' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'a=5Fb' True
+    {'quotetabs': True, 'header': True} b'a=5Fb' True
+    {'istext': False, 'header': True} b'a=5Fb' True
+b'\x00\x01\x1f' 3
+    {} b'=00=01=1F' True
+    {'quotetabs': True} b'=00=01=1F' True
+    {'istext': False} b'=00=01=1F' True
+    {'header': True} b'=00=01=1F' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'=00=01=1F' True
+    {'quotetabs': True, 'header': True} b'=00=01=1F' True
+    {'istext': False, 'header': True} b'=00=01=1F' True
+b'~\x7f\x80\xff' 4
+    {} b'~=7F=80=FF' True
+    {'quotetabs': True} b'~=7F=80=FF' True
+    {'istext': False} b'~=7F=80=FF' True
+    {'header': True} b'~=7F=80=FF' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'~=7F=80=FF' True
+    {'quotetabs': True, 'header': True} b'~=7F=80=FF' True
+    {'istext': False, 'header': True} b'~=7F=80=FF' True
+b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' 75
+    {} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' True
+    {'quotetabs': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' True
+    {'istext': False} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' True
+    {'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' True
+    {'quotetabs': True, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' True
+    {'istext': False, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' True
+b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' 76
+    {} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' True
+    {'quotetabs': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' True
+    {'istext': False} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' True
+    {'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' True
+    {'quotetabs': True, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' True
+    {'istext': False, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' True
+b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' 77
+    {} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\nxx' True
+    {'quotetabs': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\nxx' True
+    {'istext': False} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\nxx' True
+    {'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\nxx' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\nxx' True
+    {'quotetabs': True, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\nxx' True
+    {'istext': False, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\nxx' True
+b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' 200
+    {} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' True
+    {'quotetabs': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' True
+    {'istext': False} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' True
+    {'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' True
+    {'quotetabs': True, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' True
+    {'istext': False, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' True
+b'==============================' 30
+    {} b'=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=\n=3D=3D=3D=3D=3D' True
+    {'quotetabs': True} b'=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=\n=3D=3D=3D=3D=3D' True
+    {'istext': False} b'=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=\n=3D=3D=3D=3D=3D' True
+    {'header': True} b'=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=\n=3D=3D=3D=3D=3D' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=\n=3D=3D=3D=3D=3D' True
+    {'quotetabs': True, 'header': True} b'=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=\n=3D=3D=3D=3D=3D' True
+    {'istext': False, 'header': True} b'=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=\n=3D=3D=3D=3D=3D' True
+b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' 75
+    {} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n=3D' True
+    {'quotetabs': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n=3D' True
+    {'istext': False} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n=3D' True
+    {'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n=3D' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n=3D' True
+    {'quotetabs': True, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n=3D' True
+    {'istext': False, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n=3D' True
+b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' 74
+    {} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n=3D' True
+    {'quotetabs': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n=3D' True
+    {'istext': False} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n=3D' True
+    {'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n=3D' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n=3D' True
+    {'quotetabs': True, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n=3D' True
+    {'istext': False, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n=3D' True
+b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' 73
+    {} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=3D' True
+    {'quotetabs': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=3D' True
+    {'istext': False} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=3D' True
+    {'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=3D' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=3D' True
+    {'quotetabs': True, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=3D' True
+    {'istext': False, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=3D' True
+b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' 156
+    {} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy=\nyyyyy' True
+    {'quotetabs': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy=\nyyyyy' True
+    {'istext': False} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n=0Ayyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy=\nyyyyyyyy' True
+    {'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy=\nyyyyy' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n=0Ayyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy=\nyyyyyyyy' True
+    {'quotetabs': True, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy=\nyyyyy' True
+    {'istext': False, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n=0Ayyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy=\nyyyyyyyy' True
+b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' 77
+    {} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n' True
+    {'quotetabs': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n' True
+    {'istext': False} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n=0A' True
+    {'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n=0A' True
+    {'quotetabs': True, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n' True
+    {'istext': False, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n=0A' True
+b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' 76
+    {} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n=20' True
+    {'quotetabs': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n=20' True
+    {'istext': False} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n=20' True
+    {'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n=20' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n=20' True
+    {'quotetabs': True, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n=20' True
+    {'istext': False, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n=20' True
+b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' 77
+    {} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n y' True
+    {'quotetabs': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n=20y' True
+    {'istext': False} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n y' True
+    {'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n_y' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n=20y' True
+    {'quotetabs': True, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n=20y' True
+    {'istext': False, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\n_y' True
+b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' 162
+    {} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\r\nxxxxx\r\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy=\r\nyyyyy' True
+    {'quotetabs': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\r\nxxxxx\r\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy=\r\nyyyyy' True
+    {'istext': False} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\r\nxxxxx=0D=0Ayyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy=\r\nyyyyyyyyyyyyyyyy' True
+    {'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\r\nxxxxx\r\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy=\r\nyyyyy' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\r\nxxxxx=0D=0Ayyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy=\r\nyyyyyyyyyyyyyyyy' True
+    {'quotetabs': True, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\r\nxxxxx\r\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy=\r\nyyyyy' True
+    {'istext': False, 'header': True} b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\r\nxxxxx=0D=0Ayyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy=\r\nyyyyyyyyyyyyyyyy' True
+b'a\r\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' 108
+    {} b'a\r\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\r\nxxxxxxxxxxxxxxxxxxxxxxxxx\r\nb=20\r\nc' False
+    {'quotetabs': True} b'a\r\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\r\nxxxxxxxxxxxxxxxxxxxxxxxxx\r\nb=20\r\nc' False
+    {'istext': False} b'a=0D=0Axxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\r\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=0Ab =0Ac' True
+    {'header': True} b'a\r\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\r\nxxxxxxxxxxxxxxxxxxxxxxxxx\r\nb_\r\nc' False
+    {'quotetabs': True, 'istext': False, 'header': True} b'a=0D=0Axxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\r\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=0Ab=20=0Ac' True
+    {'quotetabs': True, 'header': True} b'a\r\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\r\nxxxxxxxxxxxxxxxxxxxxxxxxx\r\nb=20\r\nc' False
+    {'istext': False, 'header': True} b'a=0D=0Axxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\r\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=0Ab_=0Ac' True
+b'a\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' 105
+    {} b'a\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\nxxxxxxxxxxxxxxxxxxxxxxxxx\nb' False
+    {'quotetabs': True} b'a\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\nxxxxxxxxxxxxxxxxxxxxxxxxx\nb' False
+    {'istext': False} b'a=0Axxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=0D=0Ab' True
+    {'header': True} b'a\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\nxxxxxxxxxxxxxxxxxxxxxxxxx\nb' False
+    {'quotetabs': True, 'istext': False, 'header': True} b'a=0Axxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=0D=0Ab' True
+    {'quotetabs': True, 'header': True} b'a\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\nxxxxxxxxxxxxxxxxxxxxxxxxx\nb' False
+    {'istext': False, 'header': True} b'a=0Axxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=0D=0Ab' True
+b'a  \n  b\n' 8
+    {} b'a =20\n  b\n' True
+    {'quotetabs': True} b'a=20=20\n=20=20b\n' True
+    {'istext': False} b'a  =0A  b=0A' True
+    {'header': True} b'a__\n__b\n' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'a=20=20=0A=20=20b=0A' True
+    {'quotetabs': True, 'header': True} b'a=20=20\n=20=20b\n' True
+    {'istext': False, 'header': True} b'a__=0A__b=0A' True
+b'hello world\nhello world\nhello world\n' 36
+    {} b'hello world\nhello world\nhello world\n' True
+    {'quotetabs': True} b'hello=20world\nhello=20world\nhello=20world\n' True
+    {'istext': False} b'hello world=0Ahello world=0Ahello world=0A' True
+    {'header': True} b'hello_world\nhello_world\nhello_world\n' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'hello=20world=0Ahello=20world=0Ahello=20world=0A' True
+    {'quotetabs': True, 'header': True} b'hello=20world\nhello=20world\nhello=20world\n' True
+    {'istext': False, 'header': True} b'hello_world=0Ahello_world=0Ahello_world=0A' True
+b'\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9' 40
+    {} b'=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=\n=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9' True
+    {'quotetabs': True} b'=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=\n=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9' True
+    {'istext': False} b'=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=\n=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9' True
+    {'header': True} b'=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=\n=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=\n=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9' True
+    {'quotetabs': True, 'header': True} b'=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=\n=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9' True
+    {'istext': False, 'header': True} b'=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=\n=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9' True
+b'                                        ' 100
+    {} b'                                                                           =\n                        =20' True
+    {'quotetabs': True} b'=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=\n=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=\n=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=\n=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20' True
+    {'istext': False} b'                                                                           =\n                        =20' True
+    {'header': True} b'___________________________________________________________________________=\n________________________=20' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=\n=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=\n=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=\n=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20' True
+    {'quotetabs': True, 'header': True} b'=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=\n=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=\n=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=\n=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20=20' True
+    {'istext': False, 'header': True} b'___________________________________________________________________________=\n________________________=20' True
+b'\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t' 100
+    {} b'\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t=\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t=09' True
+    {'quotetabs': True} b'=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=\n=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=\n=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=\n=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09' True
+    {'istext': False} b'\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t=\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t=09' True
+    {'header': True} b'\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t=\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t=09' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=\n=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=\n=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=\n=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09' True
+    {'quotetabs': True, 'header': True} b'=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=\n=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=\n=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=\n=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09=09' True
+    {'istext': False, 'header': True} b'\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t=\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t=09' True
+b'a\n\nb' 4
+    {} b'a\n\nb' True
+    {'quotetabs': True} b'a\n\nb' True
+    {'istext': False} b'a=0A=0Ab' True
+    {'header': True} b'a\n\nb' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'a=0A=0Ab' True
+    {'quotetabs': True, 'header': True} b'a\n\nb' True
+    {'istext': False, 'header': True} b'a=0A=0Ab' True
+b'a \t \n' 5
+    {} b'a \t=20\n' True
+    {'quotetabs': True} b'a=20=09=20\n' True
+    {'istext': False} b'a \t =0A' True
+    {'header': True} b'a_\t_\n' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'a=20=09=20=0A' True
+    {'quotetabs': True, 'header': True} b'a=20=09=20\n' True
+    {'istext': False, 'header': True} b'a_\t_=0A' True
+b'\x19f\xfb\x7f/\x90\x82\x95BKEy\x9d\x17g\xe5\xb5\x93\x80\x81)\xca\xf3\x10zC\x0f]\x8a\xc7\xe8\xe3\xd6\xf0\xf3?svdV' 300
+    {} b'=19f=FB=7F/=90=82=95BKEy=9D=17g=E5=B5=93=80=81)=CA=F3=10zC=0F]=8A=C7=E8=E3=\n=D6=F0=F3?svdV=CA9HF=13=0Ea=0E=92J=C5=FC=94=0F5=DA(Y>=D7=9E=C7=127=C1*$=BA=\n=D3=CF=85=CDM=8C=01sS=8D=F8=F2=F9=DC=FE=3D8=B12%=AE=7F_>=19=BB=D4=92=92j=03=\n=08=89q=DC=92=84=9C=E7=1A=97l$*=A2=A1=A3]M=8A=E2=89=C4=0F=E9=AA3{\'=8D=00\n=0BA=CB6b=3D\'=C2sQ=15=83=DCNE=F1*t=0Bq;=A0"`T2$=DF=02=BF=C5a=B1|=D3=F5=0Ee=\n=EET=1C0=07=AA=18=F5=99%=0E=9A=AA>7=00=80=CA=19=EF$=BF]=C2=98=C7o=D2=D7=87=\n=D8=A3=91=AC[=D1=A3=BA=D1=B8X=93=C4=E6b=CA=CEB=96=A5=B0=F9k=F41,0=94=BDZ=10=\n=C2=B9=8F=C8!=A7J"=89=FE/8=95=C7qj=EB=F7=FD=1CJ=8Fg0Uv=95G!=11.=B7=80=A8=C0=\nJ=0Bx=B3=BC=F1=98=F1=F3=82=8CS=FC{=AB=CA=CA=0F1R=AD=BA#=97=93=C5=E6d=02=97=\n=9E=CF=D1=C2G&' True
+    {'quotetabs': True} b'=19f=FB=7F/=90=82=95BKEy=9D=17g=E5=B5=93=80=81)=CA=F3=10zC=0F]=8A=C7=E8=E3=\n=D6=F0=F3?svdV=CA9HF=13=0Ea=0E=92J=C5=FC=94=0F5=DA(Y>=D7=9E=C7=127=C1*$=BA=\n=D3=CF=85=CDM=8C=01sS=8D=F8=F2=F9=DC=FE=3D8=B12%=AE=7F_>=19=BB=D4=92=92j=03=\n=08=89q=DC=92=84=9C=E7=1A=97l$*=A2=A1=A3]M=8A=E2=89=C4=0F=E9=AA3{\'=8D=00\n=0BA=CB6b=3D\'=C2sQ=15=83=DCNE=F1*t=0Bq;=A0"`T2$=DF=02=BF=C5a=B1|=D3=F5=0Ee=\n=EET=1C0=07=AA=18=F5=99%=0E=9A=AA>7=00=80=CA=19=EF$=BF]=C2=98=C7o=D2=D7=87=\n=D8=A3=91=AC[=D1=A3=BA=D1=B8X=93=C4=E6b=CA=CEB=96=A5=B0=F9k=F41,0=94=BDZ=10=\n=C2=B9=8F=C8!=A7J"=89=FE/8=95=C7qj=EB=F7=FD=1CJ=8Fg0Uv=95G!=11.=B7=80=A8=C0=\nJ=0Bx=B3=BC=F1=98=F1=F3=82=8CS=FC{=AB=CA=CA=0F1R=AD=BA#=97=93=C5=E6d=02=97=\n=9E=CF=D1=C2G&' True
+    {'istext': False} b'=19f=FB=7F/=90=82=95BKEy=9D=17g=E5=B5=93=80=81)=CA=F3=10zC=0F]=8A=C7=E8=E3=\n=D6=F0=F3?svdV=CA9HF=13=0Ea=0E=92J=C5=FC=94=0F5=DA(Y>=D7=9E=C7=127=C1*$=BA=\n=D3=CF=85=CDM=8C=01sS=8D=F8=F2=F9=DC=FE=3D8=B12%=AE=7F_>=19=BB=D4=92=92j=03=\n=08=89q=DC=92=84=9C=E7=1A=97l$*=A2=A1=A3]M=8A=E2=89=C4=0F=E9=AA3{\'=8D=00=0A=\n=0BA=CB6b=3D\'=C2sQ=15=83=DCNE=F1*t=0Bq;=A0"`T2$=DF=02=BF=C5a=B1|=D3=F5=0Ee=\n=EET=1C0=07=AA=18=F5=99%=0E=9A=AA>7=00=80=CA=19=EF$=BF]=C2=98=C7o=D2=D7=87=\n=D8=A3=91=AC[=D1=A3=BA=D1=B8X=93=C4=E6b=CA=CEB=96=A5=B0=F9k=F41,0=94=BDZ=10=\n=C2=B9=8F=C8!=A7J"=89=FE/8=95=C7qj=EB=F7=FD=1CJ=8Fg0Uv=95G!=11.=B7=80=A8=C0=\nJ=0Bx=B3=BC=F1=98=F1=F3=82=8CS=FC{=AB=CA=CA=0F1R=AD=BA#=97=93=C5=E6d=02=97=\n=9E=CF=D1=C2G&' True
+    {'header': True} b'=19f=FB=7F/=90=82=95BKEy=9D=17g=E5=B5=93=80=81)=CA=F3=10zC=0F]=8A=C7=E8=E3=\n=D6=F0=F3?svdV=CA9HF=13=0Ea=0E=92J=C5=FC=94=0F5=DA(Y>=D7=9E=C7=127=C1*$=BA=\n=D3=CF=85=CDM=8C=01sS=8D=F8=F2=F9=DC=FE=3D8=B12%=AE=7F=5F>=19=BB=D4=92=92j=\n=03=08=89q=DC=92=84=9C=E7=1A=97l$*=A2=A1=A3]M=8A=E2=89=C4=0F=E9=AA3{\'=8D=00\n=0BA=CB6b=3D\'=C2sQ=15=83=DCNE=F1*t=0Bq;=A0"`T2$=DF=02=BF=C5a=B1|=D3=F5=0Ee=\n=EET=1C0=07=AA=18=F5=99%=0E=9A=AA>7=00=80=CA=19=EF$=BF]=C2=98=C7o=D2=D7=87=\n=D8=A3=91=AC[=D1=A3=BA=D1=B8X=93=C4=E6b=CA=CEB=96=A5=B0=F9k=F41,0=94=BDZ=10=\n=C2=B9=8F=C8!=A7J"=89=FE/8=95=C7qj=EB=F7=FD=1CJ=8Fg0Uv=95G!=11.=B7=80=A8=C0=\nJ=0Bx=B3=BC=F1=98=F1=F3=82=8CS=FC{=AB=CA=CA=0F1R=AD=BA#=97=93=C5=E6d=02=97=\n=9E=CF=D1=C2G&' True
+    {'quotetabs': True, 'istext': False, 'header': True} b'=19f=FB=7F/=90=82=95BKEy=9D=17g=E5=B5=93=80=81)=CA=F3=10zC=0F]=8A=C7=E8=E3=\n=D6=F0=F3?svdV=CA9HF=13=0Ea=0E=92J=C5=FC=94=0F5=DA(Y>=D7=9E=C7=127=C1*$=BA=\n=D3=CF=85=CDM=8C=01sS=8D=F8=F2=F9=DC=FE=3D8=B12%=AE=7F=5F>=19=BB=D4=92=92j=\n=03=08=89q=DC=92=84=9C=E7=1A=97l$*=A2=A1=A3]M=8A=E2=89=C4=0F=E9=AA3{\'=8D=00=\n=0A=0BA=CB6b=3D\'=C2sQ=15=83=DCNE=F1*t=0Bq;=A0"`T2$=DF=02=BF=C5a=B1|=D3=F5=\n=0Ee=EET=1C0=07=AA=18=F5=99%=0E=9A=AA>7=00=80=CA=19=EF$=BF]=C2=98=C7o=D2=D7=\n=87=D8=A3=91=AC[=D1=A3=BA=D1=B8X=93=C4=E6b=CA=CEB=96=A5=B0=F9k=F41,0=94=BDZ=\n=10=C2=B9=8F=C8!=A7J"=89=FE/8=95=C7qj=EB=F7=FD=1CJ=8Fg0Uv=95G!=11.=B7=80=A8=\n=C0J=0Bx=B3=BC=F1=98=F1=F3=82=8CS=FC{=AB=CA=CA=0F1R=AD=BA#=97=93=C5=E6d=02=\n=97=9E=CF=D1=C2G&' True
+    {'quotetabs': True, 'header': True} b'=19f=FB=7F/=90=82=95BKEy=9D=17g=E5=B5=93=80=81)=CA=F3=10zC=0F]=8A=C7=E8=E3=\n=D6=F0=F3?svdV=CA9HF=13=0Ea=0E=92J=C5=FC=94=0F5=DA(Y>=D7=9E=C7=127=C1*$=BA=\n=D3=CF=85=CDM=8C=01sS=8D=F8=F2=F9=DC=FE=3D8=B12%=AE=7F=5F>=19=BB=D4=92=92j=\n=03=08=89q=DC=92=84=9C=E7=1A=97l$*=A2=A1=A3]M=8A=E2=89=C4=0F=E9=AA3{\'=8D=00\n=0BA=CB6b=3D\'=C2sQ=15=83=DCNE=F1*t=0Bq;=A0"`T2$=DF=02=BF=C5a=B1|=D3=F5=0Ee=\n=EET=1C0=07=AA=18=F5=99%=0E=9A=AA>7=00=80=CA=19=EF$=BF]=C2=98=C7o=D2=D7=87=\n=D8=A3=91=AC[=D1=A3=BA=D1=B8X=93=C4=E6b=CA=CEB=96=A5=B0=F9k=F41,0=94=BDZ=10=\n=C2=B9=8F=C8!=A7J"=89=FE/8=95=C7qj=EB=F7=FD=1CJ=8Fg0Uv=95G!=11.=B7=80=A8=C0=\nJ=0Bx=B3=BC=F1=98=F1=F3=82=8CS=FC{=AB=CA=CA=0F1R=AD=BA#=97=93=C5=E6d=02=97=\n=9E=CF=D1=C2G&' True
+    {'istext': False, 'header': True} b'=19f=FB=7F/=90=82=95BKEy=9D=17g=E5=B5=93=80=81)=CA=F3=10zC=0F]=8A=C7=E8=E3=\n=D6=F0=F3?svdV=CA9HF=13=0Ea=0E=92J=C5=FC=94=0F5=DA(Y>=D7=9E=C7=127=C1*$=BA=\n=D3=CF=85=CDM=8C=01sS=8D=F8=F2=F9=DC=FE=3D8=B12%=AE=7F=5F>=19=BB=D4=92=92j=\n=03=08=89q=DC=92=84=9C=E7=1A=97l$*=A2=A1=A3]M=8A=E2=89=C4=0F=E9=AA3{\'=8D=00=\n=0A=0BA=CB6b=3D\'=C2sQ=15=83=DCNE=F1*t=0Bq;=A0"`T2$=DF=02=BF=C5a=B1|=D3=F5=\n=0Ee=EET=1C0=07=AA=18=F5=99%=0E=9A=AA>7=00=80=CA=19=EF$=BF]=C2=98=C7o=D2=D7=\n=87=D8=A3=91=AC[=D1=A3=BA=D1=B8X=93=C4=E6b=CA=CEB=96=A5=B0=F9k=F41,0=94=BDZ=\n=10=C2=B9=8F=C8!=A7J"=89=FE/8=95=C7qj=EB=F7=FD=1CJ=8Fg0Uv=95G!=11.=B7=80=A8=\n=C0J=0Bx=B3=BC=F1=98=F1=F3=82=8CS=FC{=AB=CA=CA=0F1R=AD=BA#=97=93=C5=E6d=02=\n=97=9E=CF=D1=C2G&' True
+b'a=20b' b'a=0Ab' b'a_b' b'a=3Db' b'a=3Db'
+builtins.TypeError b2a_qp() missing required argument 'data' (pos 1)
+builtins.TypeError a bytes-like object is required, not 'str'
+builtins.TypeError b2a_qp() takes at most 4 arguments (5 given)
+builtins.TypeError b2a_qp() got an unexpected keyword argument 'foo'
+builtins.TypeError a bytes-like object is required, not 'int'

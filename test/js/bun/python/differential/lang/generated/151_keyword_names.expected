@@ -1,0 +1,17 @@
+status: 0
+script: 3310de4442de5451
+source: 79b2be79ab180cae
+---
+[('S', 'a'), ('str', 'b')]
+[('S', 'a')]
+RuntimeError: eq
+RuntimeError: eq
+RuntimeError: eq
+RuntimeError: eq
+attempt(lambda: k(**{S("poison"): 1})) => (1, {})
+attempt(lambda: k(**{S("other"): 1})) => (None, {'other': 1})
+attempt(lambda: dict(**{S("x"): 1})) => {'x': 1}
+[type(x).__name__ for x in dict(**{S("x"): 1})] => ['S']
+0
+('old_function', ('old_arg',), {'old_keyword': None, 'evil_key': None})
+('new_function', ('new_arg',), {'new_keyword': None})

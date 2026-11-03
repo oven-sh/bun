@@ -1,0 +1,784 @@
+status: 0
+script: 9320ebb0d662314c
+---
+0 b'\n' True b'' b'\n' True
+1 b'jA==\n' True b'jA==' b'jA\n' True
+2 b'U8M=\n' True b'U8M=' b'U8M\n' True
+3 b'GWb7\n' True b'GWb7' b'GWb7\n' True
+4 b'3wl4hQ==\n' True b'3wl4hQ==' b'3wl4hQ\n' True
+5 b'pqv2jHI=\n' True b'pqv2jHI=' b'pqv2jHI\n' True
+6 b'bE50khMl\n' True b'bE50khMl' b'bE50khMl\n' True
+7 b'MvDymbQBVw==\n' True b'MvDymbQBVw==' b'MvDymbQBVw\n' True
+8 b'+JNvn1bejeo=\n' True b'+JNvn1bejeo=' b'+JNvn1bejeo\n' True
+9 b'vzbtpve6wsgf\n' True b'vzbtpve6wsgf' b'vzbtpve6wsgf\n' True
+10 b'hdhrrJiW96YZEg==\n' True b'hdhrrJiW96YZEg==' b'hdhrrJiW96YZEg\n' True
+11 b'S3vpszlzLYQTLgU=\n' True b'S3vpszlzLYQTLgU=' b'S3vpszlzLYQTLgU\n' True
+0 b'xn6Ba0v74vtU9r3ffBzhhwG/Md5Wcg9HZ2aHWaqIPFnqVhN70oWh2DxUVS83rmVb2gJ5mMzjGnaOX9mZ\n' b'xg==' b'\n' b'xn6Ba0v74g'
+1 b'xn6B\na0v7\n4vtU\n9r3f\nfBzh\nhwG/\nMd5W\ncg9H\nZ2aH\nWaqI\nPFnq\nVhN7\n0oWh\n2DxU\nVS83\nrmVb\n2gJ5\nmMzj\nGnaO\nX9mZ\n' b'xg==' b'\n' b'xn6B\na0v7\n4g'
+3 b'xn6B\na0v7\n4vtU\n9r3f\nfBzh\nhwG/\nMd5W\ncg9H\nZ2aH\nWaqI\nPFnq\nVhN7\n0oWh\n2DxU\nVS83\nrmVb\n2gJ5\nmMzj\nGnaO\nX9mZ\n' b'xg==' b'\n' b'xn6B\na0v7\n4g'
+4 b'xn6B\na0v7\n4vtU\n9r3f\nfBzh\nhwG/\nMd5W\ncg9H\nZ2aH\nWaqI\nPFnq\nVhN7\n0oWh\n2DxU\nVS83\nrmVb\n2gJ5\nmMzj\nGnaO\nX9mZ\n' b'xg==' b'\n' b'xn6B\na0v7\n4g'
+5 b'xn6B\na0v7\n4vtU\n9r3f\nfBzh\nhwG/\nMd5W\ncg9H\nZ2aH\nWaqI\nPFnq\nVhN7\n0oWh\n2DxU\nVS83\nrmVb\n2gJ5\nmMzj\nGnaO\nX9mZ\n' b'xg==' b'\n' b'xn6B\na0v7\n4g'
+7 b'xn6B\na0v7\n4vtU\n9r3f\nfBzh\nhwG/\nMd5W\ncg9H\nZ2aH\nWaqI\nPFnq\nVhN7\n0oWh\n2DxU\nVS83\nrmVb\n2gJ5\nmMzj\nGnaO\nX9mZ\n' b'xg==' b'\n' b'xn6B\na0v7\n4g'
+8 b'xn6Ba0v7\n4vtU9r3f\nfBzhhwG/\nMd5Wcg9H\nZ2aHWaqI\nPFnqVhN7\n0oWh2DxU\nVS83rmVb\n2gJ5mMzj\nGnaOX9mZ\n' b'xg==' b'\n' b'xn6Ba0v7\n4g'
+20 b'xn6Ba0v74vtU9r3ffBzh\nhwG/Md5Wcg9HZ2aHWaqI\nPFnqVhN70oWh2DxUVS83\nrmVb2gJ5mMzjGnaOX9mZ\n' b'xg==' b'\n' b'xn6Ba0v74g'
+76 b'xn6Ba0v74vtU9r3ffBzhhwG/Md5Wcg9HZ2aHWaqIPFnqVhN70oWh2DxUVS83rmVb2gJ5mMzjGnaO\nX9mZ\n' b'xg==' b'\n' b'xn6Ba0v74g'
+79 b'xn6Ba0v74vtU9r3ffBzhhwG/Md5Wcg9HZ2aHWaqIPFnqVhN70oWh2DxUVS83rmVb2gJ5mMzjGnaO\nX9mZ\n' b'xg==' b'\n' b'xn6Ba0v74g'
+80 b'xn6Ba0v74vtU9r3ffBzhhwG/Md5Wcg9HZ2aHWaqIPFnqVhN70oWh2DxUVS83rmVb2gJ5mMzjGnaOX9mZ\n' b'xg==' b'\n' b'xn6Ba0v74g'
+81 b'xn6Ba0v74vtU9r3ffBzhhwG/Md5Wcg9HZ2aHWaqIPFnqVhN70oWh2DxUVS83rmVb2gJ5mMzjGnaOX9mZ\n' b'xg==' b'\n' b'xn6Ba0v74g'
+1000 b'xn6Ba0v74vtU9r3ffBzhhwG/Md5Wcg9HZ2aHWaqIPFnqVhN70oWh2DxUVS83rmVb2gJ5mMzjGnaOX9mZ\n' b'xg==' b'\n' b'xn6Ba0v74g'
+9223372036854775808 b'xn6Ba0v74vtU9r3ffBzhhwG/Md5Wcg9HZ2aHWaqIPFnqVhN70oWh2DxUVS83rmVb2gJ5mMzjGnaOX9mZ\n' b'xg==' b'\n' b'xn6Ba0v74g'
+b'xn6Ba0v74vtU9g==\n' b'-__-\n' b'+//+\n' b'MK7X\n' b'\x18\x16\t#\n' b'YWJj\n'
+builtins.TypeError a bytes-like object is required, not 'str'
+builtins.ValueError Cannot convert negative int
+builtins.TypeError 'str' object cannot be interpreted as an integer
+builtins.OverflowError Python int too large for C size_t
+builtins.TypeError 'float' object cannot be interpreted as an integer
+builtins.TypeError a bytes-like object is required, not 'str'
+builtins.ValueError alphabet must have length 64
+builtins.ValueError alphabet must have length 64
+b'YQ=='
+builtins.TypeError b2a_base64() takes exactly 1 positional argument (2 given)
+builtins.TypeError b2a_base64() takes exactly 1 positional argument (0 given)
+builtins.TypeError b2a_base64() got an unexpected keyword argument 'foo'
+builtins.TypeError b2a_base64() takes exactly 1 positional argument (0 given)
+builtins.TypeError a bytes-like object is required, not 'NoneType'
+builtins.TypeError a bytes-like object is required, not 'NoneType'
+builtins.TypeError 'NoneType' object cannot be interpreted as an integer
+b'YQ'
+b'' -> b''
+    {'strict_mode': True} -> b''
+    {'padded': False} -> b''
+    {'strict_mode': True, 'padded': False} -> b''
+    {'canonical': True} -> b''
+    {'strict_mode': True, 'canonical': True} -> b''
+    {'ignorechars': b''} -> b''
+    {'ignorechars': b' \n\t'} -> b''
+    {'ignorechars': b'='} -> b''
+    {'ignorechars': b'=!@#$\n'} -> b''
+    {'strict_mode': False, 'ignorechars': b''} -> b''
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> b''
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> b''
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> b''
+b'YQ==' -> b'a'
+    {'strict_mode': True} -> b'a'
+    {'padded': False} -> b'a'
+    {'strict_mode': True, 'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> b'a'
+    {'strict_mode': True, 'canonical': True} -> b'a'
+    {'ignorechars': b''} -> b'a'
+    {'ignorechars': b' \n\t'} -> b'a'
+    {'ignorechars': b'='} -> b'a'
+    {'ignorechars': b'=!@#$\n'} -> b'a'
+    {'strict_mode': False, 'ignorechars': b''} -> b'a'
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> b'a'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> b'a'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> b'a'
+b'YWI=' -> b'ab'
+    {'strict_mode': True} -> b'ab'
+    {'padded': False} -> b'ab'
+    {'strict_mode': True, 'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> b'ab'
+    {'strict_mode': True, 'canonical': True} -> b'ab'
+    {'ignorechars': b''} -> b'ab'
+    {'ignorechars': b' \n\t'} -> b'ab'
+    {'ignorechars': b'='} -> b'ab'
+    {'ignorechars': b'=!@#$\n'} -> b'ab'
+    {'strict_mode': False, 'ignorechars': b''} -> b'ab'
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> b'ab'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> b'ab'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> b'ab'
+b'YWJj' -> b'abc'
+    {'strict_mode': True} -> b'abc'
+    {'padded': False} -> b'abc'
+    {'strict_mode': True, 'padded': False} -> b'abc'
+    {'canonical': True} -> b'abc'
+    {'strict_mode': True, 'canonical': True} -> b'abc'
+    {'ignorechars': b''} -> b'abc'
+    {'ignorechars': b' \n\t'} -> b'abc'
+    {'ignorechars': b'='} -> b'abc'
+    {'ignorechars': b'=!@#$\n'} -> b'abc'
+    {'strict_mode': False, 'ignorechars': b''} -> b'abc'
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> b'abc'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> b'abc'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> b'abc'
+YWJj -> b'abc'
+    {'strict_mode': True} -> b'abc'
+    {'padded': False} -> b'abc'
+    {'strict_mode': True, 'padded': False} -> b'abc'
+    {'canonical': True} -> b'abc'
+    {'strict_mode': True, 'canonical': True} -> b'abc'
+    {'ignorechars': b''} -> b'abc'
+    {'ignorechars': b' \n\t'} -> b'abc'
+    {'ignorechars': b'='} -> b'abc'
+    {'ignorechars': b'=!@#$\n'} -> b'abc'
+    {'strict_mode': False, 'ignorechars': b''} -> b'abc'
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> b'abc'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> b'abc'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> b'abc'
+bytearray(b'YWJj') -> b'abc'
+    {'strict_mode': True} -> b'abc'
+    {'padded': False} -> b'abc'
+    {'strict_mode': True, 'padded': False} -> b'abc'
+    {'canonical': True} -> b'abc'
+    {'strict_mode': True, 'canonical': True} -> b'abc'
+    {'ignorechars': b''} -> b'abc'
+    {'ignorechars': b' \n\t'} -> b'abc'
+    {'ignorechars': b'='} -> b'abc'
+    {'ignorechars': b'=!@#$\n'} -> b'abc'
+    {'strict_mode': False, 'ignorechars': b''} -> b'abc'
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> b'abc'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> b'abc'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> b'abc'
+b'YWJj\n' -> b'abc'
+    {'strict_mode': True} -> binascii.Error Only base64 data is allowed
+    {'padded': False} -> b'abc'
+    {'strict_mode': True, 'padded': False} -> binascii.Error Only base64 data is allowed
+    {'canonical': True} -> b'abc'
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Only base64 data is allowed
+    {'ignorechars': b''} -> binascii.Error Only base64 data is allowed
+    {'ignorechars': b' \n\t'} -> b'abc'
+    {'ignorechars': b'='} -> binascii.Error Only base64 data is allowed
+    {'ignorechars': b'=!@#$\n'} -> b'abc'
+    {'strict_mode': False, 'ignorechars': b''} -> b'abc'
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> b'abc'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> b'abc'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Only base64 data is allowed
+b'Y W\nJ\tj' -> b'abc'
+    {'strict_mode': True} -> binascii.Error Only base64 data is allowed
+    {'padded': False} -> b'abc'
+    {'strict_mode': True, 'padded': False} -> binascii.Error Only base64 data is allowed
+    {'canonical': True} -> b'abc'
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Only base64 data is allowed
+    {'ignorechars': b''} -> binascii.Error Only base64 data is allowed
+    {'ignorechars': b' \n\t'} -> b'abc'
+    {'ignorechars': b'='} -> binascii.Error Only base64 data is allowed
+    {'ignorechars': b'=!@#$\n'} -> binascii.Error Only base64 data is allowed
+    {'strict_mode': False, 'ignorechars': b''} -> b'abc'
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> binascii.Error Only base64 data is allowed
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> b'abc'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Only base64 data is allowed
+b'YQ' -> binascii.Error Incorrect padding
+    {'strict_mode': True} -> binascii.Error Incorrect padding
+    {'padded': False} -> b'a'
+    {'strict_mode': True, 'padded': False} -> b'a'
+    {'canonical': True} -> binascii.Error Incorrect padding
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Incorrect padding
+    {'ignorechars': b''} -> binascii.Error Incorrect padding
+    {'ignorechars': b' \n\t'} -> binascii.Error Incorrect padding
+    {'ignorechars': b'='} -> binascii.Error Incorrect padding
+    {'ignorechars': b'=!@#$\n'} -> binascii.Error Incorrect padding
+    {'strict_mode': False, 'ignorechars': b''} -> binascii.Error Incorrect padding
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> binascii.Error Incorrect padding
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> binascii.Error Incorrect padding
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Incorrect padding
+b'YQ=' -> binascii.Error Incorrect padding
+    {'strict_mode': True} -> binascii.Error Incorrect padding
+    {'padded': False} -> b'a'
+    {'strict_mode': True, 'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Incorrect padding
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Incorrect padding
+    {'ignorechars': b''} -> binascii.Error Incorrect padding
+    {'ignorechars': b' \n\t'} -> binascii.Error Incorrect padding
+    {'ignorechars': b'='} -> binascii.Error Incorrect padding
+    {'ignorechars': b'=!@#$\n'} -> binascii.Error Incorrect padding
+    {'strict_mode': False, 'ignorechars': b''} -> binascii.Error Incorrect padding
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> binascii.Error Incorrect padding
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> binascii.Error Incorrect padding
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Incorrect padding
+b'YWI' -> binascii.Error Incorrect padding
+    {'strict_mode': True} -> binascii.Error Incorrect padding
+    {'padded': False} -> b'ab'
+    {'strict_mode': True, 'padded': False} -> b'ab'
+    {'canonical': True} -> binascii.Error Incorrect padding
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Incorrect padding
+    {'ignorechars': b''} -> binascii.Error Incorrect padding
+    {'ignorechars': b' \n\t'} -> binascii.Error Incorrect padding
+    {'ignorechars': b'='} -> binascii.Error Incorrect padding
+    {'ignorechars': b'=!@#$\n'} -> binascii.Error Incorrect padding
+    {'strict_mode': False, 'ignorechars': b''} -> binascii.Error Incorrect padding
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> binascii.Error Incorrect padding
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> binascii.Error Incorrect padding
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Incorrect padding
+b'Y' -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'strict_mode': True} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'padded': False} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'strict_mode': True, 'padded': False} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'canonical': True} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'ignorechars': b''} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'ignorechars': b' \n\t'} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'ignorechars': b'='} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'ignorechars': b'=!@#$\n'} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'strict_mode': False, 'ignorechars': b''} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+b'YWJjY' -> binascii.Error Invalid base64-encoded string: number of data characters (5) cannot be 1 more than a multiple of 4
+    {'strict_mode': True} -> binascii.Error Invalid base64-encoded string: number of data characters (5) cannot be 1 more than a multiple of 4
+    {'padded': False} -> binascii.Error Invalid base64-encoded string: number of data characters (5) cannot be 1 more than a multiple of 4
+    {'strict_mode': True, 'padded': False} -> binascii.Error Invalid base64-encoded string: number of data characters (5) cannot be 1 more than a multiple of 4
+    {'canonical': True} -> binascii.Error Invalid base64-encoded string: number of data characters (5) cannot be 1 more than a multiple of 4
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Invalid base64-encoded string: number of data characters (5) cannot be 1 more than a multiple of 4
+    {'ignorechars': b''} -> binascii.Error Invalid base64-encoded string: number of data characters (5) cannot be 1 more than a multiple of 4
+    {'ignorechars': b' \n\t'} -> binascii.Error Invalid base64-encoded string: number of data characters (5) cannot be 1 more than a multiple of 4
+    {'ignorechars': b'='} -> binascii.Error Invalid base64-encoded string: number of data characters (5) cannot be 1 more than a multiple of 4
+    {'ignorechars': b'=!@#$\n'} -> binascii.Error Invalid base64-encoded string: number of data characters (5) cannot be 1 more than a multiple of 4
+    {'strict_mode': False, 'ignorechars': b''} -> binascii.Error Invalid base64-encoded string: number of data characters (5) cannot be 1 more than a multiple of 4
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> binascii.Error Invalid base64-encoded string: number of data characters (5) cannot be 1 more than a multiple of 4
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> binascii.Error Invalid base64-encoded string: number of data characters (5) cannot be 1 more than a multiple of 4
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Invalid base64-encoded string: number of data characters (5) cannot be 1 more than a multiple of 4
+b'=' -> b''
+    {'strict_mode': True} -> binascii.Error Leading padding not allowed
+    {'padded': False} -> b''
+    {'strict_mode': True, 'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> b''
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Leading padding not allowed
+    {'ignorechars': b''} -> binascii.Error Leading padding not allowed
+    {'ignorechars': b' \n\t'} -> binascii.Error Leading padding not allowed
+    {'ignorechars': b'='} -> b''
+    {'ignorechars': b'=!@#$\n'} -> b''
+    {'strict_mode': False, 'ignorechars': b''} -> b''
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> b''
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> b''
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Leading padding not allowed
+b'==' -> b''
+    {'strict_mode': True} -> binascii.Error Leading padding not allowed
+    {'padded': False} -> b''
+    {'strict_mode': True, 'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> b''
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Leading padding not allowed
+    {'ignorechars': b''} -> binascii.Error Leading padding not allowed
+    {'ignorechars': b' \n\t'} -> binascii.Error Leading padding not allowed
+    {'ignorechars': b'='} -> b''
+    {'ignorechars': b'=!@#$\n'} -> b''
+    {'strict_mode': False, 'ignorechars': b''} -> b''
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> b''
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> b''
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Leading padding not allowed
+b'====' -> b''
+    {'strict_mode': True} -> binascii.Error Leading padding not allowed
+    {'padded': False} -> b''
+    {'strict_mode': True, 'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> b''
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Leading padding not allowed
+    {'ignorechars': b''} -> binascii.Error Leading padding not allowed
+    {'ignorechars': b' \n\t'} -> binascii.Error Leading padding not allowed
+    {'ignorechars': b'='} -> b''
+    {'ignorechars': b'=!@#$\n'} -> b''
+    {'strict_mode': False, 'ignorechars': b''} -> b''
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> b''
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> b''
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Leading padding not allowed
+b'=YWJj' -> b'abc'
+    {'strict_mode': True} -> binascii.Error Leading padding not allowed
+    {'padded': False} -> b'abc'
+    {'strict_mode': True, 'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> b'abc'
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Leading padding not allowed
+    {'ignorechars': b''} -> binascii.Error Leading padding not allowed
+    {'ignorechars': b' \n\t'} -> binascii.Error Leading padding not allowed
+    {'ignorechars': b'='} -> b'abc'
+    {'ignorechars': b'=!@#$\n'} -> b'abc'
+    {'strict_mode': False, 'ignorechars': b''} -> b'abc'
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> b'abc'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> b'abc'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Leading padding not allowed
+b'YQ==YWJj' -> binascii.Error Incorrect padding
+    {'strict_mode': True} -> binascii.Error Excess data after padding
+    {'padded': False} -> b'a\x06\x16&'
+    {'strict_mode': True, 'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Incorrect padding
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Excess data after padding
+    {'ignorechars': b''} -> binascii.Error Excess data after padding
+    {'ignorechars': b' \n\t'} -> binascii.Error Excess data after padding
+    {'ignorechars': b'='} -> binascii.Error Incorrect padding
+    {'ignorechars': b'=!@#$\n'} -> binascii.Error Incorrect padding
+    {'strict_mode': False, 'ignorechars': b''} -> binascii.Error Incorrect padding
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> binascii.Error Incorrect padding
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> binascii.Error Incorrect padding
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Excess data after padding
+b'YQ=YWJj' -> binascii.Error Incorrect padding
+    {'strict_mode': True} -> binascii.Error Discontinuous padding not allowed
+    {'padded': False} -> b'a\x06\x16&'
+    {'strict_mode': True, 'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Incorrect padding
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Discontinuous padding not allowed
+    {'ignorechars': b''} -> binascii.Error Discontinuous padding not allowed
+    {'ignorechars': b' \n\t'} -> binascii.Error Discontinuous padding not allowed
+    {'ignorechars': b'='} -> binascii.Error Incorrect padding
+    {'ignorechars': b'=!@#$\n'} -> binascii.Error Incorrect padding
+    {'strict_mode': False, 'ignorechars': b''} -> binascii.Error Incorrect padding
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> binascii.Error Incorrect padding
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> binascii.Error Incorrect padding
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Discontinuous padding not allowed
+b'YQ==\n' -> b'a'
+    {'strict_mode': True} -> binascii.Error Only base64 data is allowed
+    {'padded': False} -> b'a'
+    {'strict_mode': True, 'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> b'a'
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Only base64 data is allowed
+    {'ignorechars': b''} -> binascii.Error Only base64 data is allowed
+    {'ignorechars': b' \n\t'} -> b'a'
+    {'ignorechars': b'='} -> binascii.Error Only base64 data is allowed
+    {'ignorechars': b'=!@#$\n'} -> b'a'
+    {'strict_mode': False, 'ignorechars': b''} -> b'a'
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> b'a'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> b'a'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Only base64 data is allowed
+b'YQ===' -> b'a'
+    {'strict_mode': True} -> binascii.Error Excess padding not allowed
+    {'padded': False} -> b'a'
+    {'strict_mode': True, 'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> b'a'
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Excess padding not allowed
+    {'ignorechars': b''} -> binascii.Error Excess padding not allowed
+    {'ignorechars': b' \n\t'} -> binascii.Error Excess padding not allowed
+    {'ignorechars': b'='} -> b'a'
+    {'ignorechars': b'=!@#$\n'} -> b'a'
+    {'strict_mode': False, 'ignorechars': b''} -> b'a'
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> b'a'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> b'a'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Excess padding not allowed
+b'YQ====' -> b'a'
+    {'strict_mode': True} -> binascii.Error Excess padding not allowed
+    {'padded': False} -> b'a'
+    {'strict_mode': True, 'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> b'a'
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Excess padding not allowed
+    {'ignorechars': b''} -> binascii.Error Excess padding not allowed
+    {'ignorechars': b' \n\t'} -> binascii.Error Excess padding not allowed
+    {'ignorechars': b'='} -> b'a'
+    {'ignorechars': b'=!@#$\n'} -> b'a'
+    {'strict_mode': False, 'ignorechars': b''} -> b'a'
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> b'a'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> b'a'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Excess padding not allowed
+b'YW=Jj' -> b'abc'
+    {'strict_mode': True} -> binascii.Error Discontinuous padding not allowed
+    {'padded': False} -> b'abc'
+    {'strict_mode': True, 'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> b'abc'
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Discontinuous padding not allowed
+    {'ignorechars': b''} -> binascii.Error Discontinuous padding not allowed
+    {'ignorechars': b' \n\t'} -> binascii.Error Discontinuous padding not allowed
+    {'ignorechars': b'='} -> b'abc'
+    {'ignorechars': b'=!@#$\n'} -> b'abc'
+    {'strict_mode': False, 'ignorechars': b''} -> b'abc'
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> b'abc'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> b'abc'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Discontinuous padding not allowed
+b'Y=WJj' -> b'abc'
+    {'strict_mode': True} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'padded': False} -> b'abc'
+    {'strict_mode': True, 'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> b'abc'
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'ignorechars': b''} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'ignorechars': b' \n\t'} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'ignorechars': b'='} -> b'abc'
+    {'ignorechars': b'=!@#$\n'} -> b'abc'
+    {'strict_mode': False, 'ignorechars': b''} -> b'abc'
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> b'abc'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> b'abc'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+b'Y===' -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'strict_mode': True} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'padded': False} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'strict_mode': True, 'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'ignorechars': b''} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'ignorechars': b' \n\t'} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'ignorechars': b'='} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'ignorechars': b'=!@#$\n'} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'strict_mode': False, 'ignorechars': b''} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+b'YWJj====' -> b'abc'
+    {'strict_mode': True} -> binascii.Error Excess padding not allowed
+    {'padded': False} -> b'abc'
+    {'strict_mode': True, 'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> b'abc'
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Excess padding not allowed
+    {'ignorechars': b''} -> binascii.Error Excess padding not allowed
+    {'ignorechars': b' \n\t'} -> binascii.Error Excess padding not allowed
+    {'ignorechars': b'='} -> b'abc'
+    {'ignorechars': b'=!@#$\n'} -> b'abc'
+    {'strict_mode': False, 'ignorechars': b''} -> b'abc'
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> b'abc'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> b'abc'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Excess padding not allowed
+b'!@#$' -> b''
+    {'strict_mode': True} -> binascii.Error Only base64 data is allowed
+    {'padded': False} -> b''
+    {'strict_mode': True, 'padded': False} -> binascii.Error Only base64 data is allowed
+    {'canonical': True} -> b''
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Only base64 data is allowed
+    {'ignorechars': b''} -> binascii.Error Only base64 data is allowed
+    {'ignorechars': b' \n\t'} -> binascii.Error Only base64 data is allowed
+    {'ignorechars': b'='} -> binascii.Error Only base64 data is allowed
+    {'ignorechars': b'=!@#$\n'} -> b''
+    {'strict_mode': False, 'ignorechars': b''} -> b''
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> binascii.Error Only base64 data is allowed
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> b''
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Only base64 data is allowed
+b'Y!Q@=#=' -> b'a'
+    {'strict_mode': True} -> binascii.Error Only base64 data is allowed
+    {'padded': False} -> b'a'
+    {'strict_mode': True, 'padded': False} -> binascii.Error Only base64 data is allowed
+    {'canonical': True} -> b'a'
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Only base64 data is allowed
+    {'ignorechars': b''} -> binascii.Error Only base64 data is allowed
+    {'ignorechars': b' \n\t'} -> binascii.Error Only base64 data is allowed
+    {'ignorechars': b'='} -> binascii.Error Only base64 data is allowed
+    {'ignorechars': b'=!@#$\n'} -> b'a'
+    {'strict_mode': False, 'ignorechars': b''} -> b'a'
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> binascii.Error Only base64 data is allowed
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> b'a'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Only base64 data is allowed
+b'YQ=!=' -> b'a'
+    {'strict_mode': True} -> binascii.Error Only base64 data is allowed
+    {'padded': False} -> b'a'
+    {'strict_mode': True, 'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> b'a'
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Only base64 data is allowed
+    {'ignorechars': b''} -> binascii.Error Only base64 data is allowed
+    {'ignorechars': b' \n\t'} -> binascii.Error Only base64 data is allowed
+    {'ignorechars': b'='} -> binascii.Error Only base64 data is allowed
+    {'ignorechars': b'=!@#$\n'} -> b'a'
+    {'strict_mode': False, 'ignorechars': b''} -> b'a'
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> binascii.Error Only base64 data is allowed
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> b'a'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Only base64 data is allowed
+b'\xff\xfeYQ==' -> b'a'
+    {'strict_mode': True} -> binascii.Error Only base64 data is allowed
+    {'padded': False} -> b'a'
+    {'strict_mode': True, 'padded': False} -> binascii.Error Only base64 data is allowed
+    {'canonical': True} -> b'a'
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Only base64 data is allowed
+    {'ignorechars': b''} -> binascii.Error Only base64 data is allowed
+    {'ignorechars': b' \n\t'} -> binascii.Error Only base64 data is allowed
+    {'ignorechars': b'='} -> binascii.Error Only base64 data is allowed
+    {'ignorechars': b'=!@#$\n'} -> binascii.Error Only base64 data is allowed
+    {'strict_mode': False, 'ignorechars': b''} -> b'a'
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> binascii.Error Only base64 data is allowed
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> b'a'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Only base64 data is allowed
+b'YR==' -> b'a'
+    {'strict_mode': True} -> b'a'
+    {'padded': False} -> b'a'
+    {'strict_mode': True, 'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Non-zero padding bits
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Non-zero padding bits
+    {'ignorechars': b''} -> b'a'
+    {'ignorechars': b' \n\t'} -> b'a'
+    {'ignorechars': b'='} -> b'a'
+    {'ignorechars': b'=!@#$\n'} -> b'a'
+    {'strict_mode': False, 'ignorechars': b''} -> b'a'
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> b'a'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> b'a'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> b'a'
+b'YWJ=' -> b'ab'
+    {'strict_mode': True} -> b'ab'
+    {'padded': False} -> b'ab'
+    {'strict_mode': True, 'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Non-zero padding bits
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Non-zero padding bits
+    {'ignorechars': b''} -> b'ab'
+    {'ignorechars': b' \n\t'} -> b'ab'
+    {'ignorechars': b'='} -> b'ab'
+    {'ignorechars': b'=!@#$\n'} -> b'ab'
+    {'strict_mode': False, 'ignorechars': b''} -> b'ab'
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> b'ab'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> b'ab'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> b'ab'
+b'YWK=' -> b'ab'
+    {'strict_mode': True} -> b'ab'
+    {'padded': False} -> b'ab'
+    {'strict_mode': True, 'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Non-zero padding bits
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Non-zero padding bits
+    {'ignorechars': b''} -> b'ab'
+    {'ignorechars': b' \n\t'} -> b'ab'
+    {'ignorechars': b'='} -> b'ab'
+    {'ignorechars': b'=!@#$\n'} -> b'ab'
+    {'strict_mode': False, 'ignorechars': b''} -> b'ab'
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> b'ab'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> b'ab'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> b'ab'
+b'YQ==Y' -> binascii.Error Incorrect padding
+    {'strict_mode': True} -> binascii.Error Excess data after padding
+    {'padded': False} -> b'a\x06'
+    {'strict_mode': True, 'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Incorrect padding
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Excess data after padding
+    {'ignorechars': b''} -> binascii.Error Excess data after padding
+    {'ignorechars': b' \n\t'} -> binascii.Error Excess data after padding
+    {'ignorechars': b'='} -> binascii.Error Incorrect padding
+    {'ignorechars': b'=!@#$\n'} -> binascii.Error Incorrect padding
+    {'strict_mode': False, 'ignorechars': b''} -> binascii.Error Incorrect padding
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> binascii.Error Incorrect padding
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> binascii.Error Incorrect padding
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Excess data after padding
+b'YQ==YQ==' -> b'a\x06\x10'
+    {'strict_mode': True} -> binascii.Error Excess data after padding
+    {'padded': False} -> b'a\x06\x10'
+    {'strict_mode': True, 'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> b'a\x06\x10'
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Excess data after padding
+    {'ignorechars': b''} -> binascii.Error Excess data after padding
+    {'ignorechars': b' \n\t'} -> binascii.Error Excess data after padding
+    {'ignorechars': b'='} -> b'a\x06\x10'
+    {'ignorechars': b'=!@#$\n'} -> b'a\x06\x10'
+    {'strict_mode': False, 'ignorechars': b''} -> b'a\x06\x10'
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> b'a\x06\x10'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> b'a\x06\x10'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Excess data after padding
+b'YWJjZA' -> binascii.Error Incorrect padding
+    {'strict_mode': True} -> binascii.Error Incorrect padding
+    {'padded': False} -> b'abcd'
+    {'strict_mode': True, 'padded': False} -> b'abcd'
+    {'canonical': True} -> binascii.Error Incorrect padding
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Incorrect padding
+    {'ignorechars': b''} -> binascii.Error Incorrect padding
+    {'ignorechars': b' \n\t'} -> binascii.Error Incorrect padding
+    {'ignorechars': b'='} -> binascii.Error Incorrect padding
+    {'ignorechars': b'=!@#$\n'} -> binascii.Error Incorrect padding
+    {'strict_mode': False, 'ignorechars': b''} -> binascii.Error Incorrect padding
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> binascii.Error Incorrect padding
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> binascii.Error Incorrect padding
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Incorrect padding
+b'YWJjZGU' -> binascii.Error Incorrect padding
+    {'strict_mode': True} -> binascii.Error Incorrect padding
+    {'padded': False} -> b'abcde'
+    {'strict_mode': True, 'padded': False} -> b'abcde'
+    {'canonical': True} -> binascii.Error Incorrect padding
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Incorrect padding
+    {'ignorechars': b''} -> binascii.Error Incorrect padding
+    {'ignorechars': b' \n\t'} -> binascii.Error Incorrect padding
+    {'ignorechars': b'='} -> binascii.Error Incorrect padding
+    {'ignorechars': b'=!@#$\n'} -> binascii.Error Incorrect padding
+    {'strict_mode': False, 'ignorechars': b''} -> binascii.Error Incorrect padding
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> binascii.Error Incorrect padding
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> binascii.Error Incorrect padding
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Incorrect padding
+b'-_-_' -> b''
+    {'strict_mode': True} -> binascii.Error Only base64 data is allowed
+    {'padded': False} -> b''
+    {'strict_mode': True, 'padded': False} -> binascii.Error Only base64 data is allowed
+    {'canonical': True} -> b''
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Only base64 data is allowed
+    {'ignorechars': b''} -> binascii.Error Only base64 data is allowed
+    {'ignorechars': b' \n\t'} -> binascii.Error Only base64 data is allowed
+    {'ignorechars': b'='} -> binascii.Error Only base64 data is allowed
+    {'ignorechars': b'=!@#$\n'} -> binascii.Error Only base64 data is allowed
+    {'strict_mode': False, 'ignorechars': b''} -> b''
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> binascii.Error Only base64 data is allowed
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> b'\xfb\xff\xbf'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> b'\xfb\xff\xbf'
+b'+/+/' -> b'\xfb\xff\xbf'
+    {'strict_mode': True} -> b'\xfb\xff\xbf'
+    {'padded': False} -> b'\xfb\xff\xbf'
+    {'strict_mode': True, 'padded': False} -> b'\xfb\xff\xbf'
+    {'canonical': True} -> b'\xfb\xff\xbf'
+    {'strict_mode': True, 'canonical': True} -> b'\xfb\xff\xbf'
+    {'ignorechars': b''} -> b'\xfb\xff\xbf'
+    {'ignorechars': b' \n\t'} -> b'\xfb\xff\xbf'
+    {'ignorechars': b'='} -> b'\xfb\xff\xbf'
+    {'ignorechars': b'=!@#$\n'} -> b'\xfb\xff\xbf'
+    {'strict_mode': False, 'ignorechars': b''} -> b'\xfb\xff\xbf'
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> b'\xfb\xff\xbf'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> b''
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Only base64 data is allowed
+b'A' -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'strict_mode': True} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'padded': False} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'strict_mode': True, 'padded': False} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'canonical': True} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'ignorechars': b''} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'ignorechars': b' \n\t'} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'ignorechars': b'='} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'ignorechars': b'=!@#$\n'} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'strict_mode': False, 'ignorechars': b''} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+b'AA' -> binascii.Error Incorrect padding
+    {'strict_mode': True} -> binascii.Error Incorrect padding
+    {'padded': False} -> b'\x00'
+    {'strict_mode': True, 'padded': False} -> b'\x00'
+    {'canonical': True} -> binascii.Error Incorrect padding
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Incorrect padding
+    {'ignorechars': b''} -> binascii.Error Incorrect padding
+    {'ignorechars': b' \n\t'} -> binascii.Error Incorrect padding
+    {'ignorechars': b'='} -> binascii.Error Incorrect padding
+    {'ignorechars': b'=!@#$\n'} -> binascii.Error Incorrect padding
+    {'strict_mode': False, 'ignorechars': b''} -> binascii.Error Incorrect padding
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> binascii.Error Incorrect padding
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> binascii.Error Incorrect padding
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Incorrect padding
+b'AAA' -> binascii.Error Incorrect padding
+    {'strict_mode': True} -> binascii.Error Incorrect padding
+    {'padded': False} -> b'\x00\x00'
+    {'strict_mode': True, 'padded': False} -> b'\x00\x00'
+    {'canonical': True} -> binascii.Error Incorrect padding
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Incorrect padding
+    {'ignorechars': b''} -> binascii.Error Incorrect padding
+    {'ignorechars': b' \n\t'} -> binascii.Error Incorrect padding
+    {'ignorechars': b'='} -> binascii.Error Incorrect padding
+    {'ignorechars': b'=!@#$\n'} -> binascii.Error Incorrect padding
+    {'strict_mode': False, 'ignorechars': b''} -> binascii.Error Incorrect padding
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> binascii.Error Incorrect padding
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> binascii.Error Incorrect padding
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Incorrect padding
+b'AAAA' -> b'\x00\x00\x00'
+    {'strict_mode': True} -> b'\x00\x00\x00'
+    {'padded': False} -> b'\x00\x00\x00'
+    {'strict_mode': True, 'padded': False} -> b'\x00\x00\x00'
+    {'canonical': True} -> b'\x00\x00\x00'
+    {'strict_mode': True, 'canonical': True} -> b'\x00\x00\x00'
+    {'ignorechars': b''} -> b'\x00\x00\x00'
+    {'ignorechars': b' \n\t'} -> b'\x00\x00\x00'
+    {'ignorechars': b'='} -> b'\x00\x00\x00'
+    {'ignorechars': b'=!@#$\n'} -> b'\x00\x00\x00'
+    {'strict_mode': False, 'ignorechars': b''} -> b'\x00\x00\x00'
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> b'\x00\x00\x00'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> b'\x00\x00\x00'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> b'\x00\x00\x00'
+b'AAAAA' -> binascii.Error Invalid base64-encoded string: number of data characters (5) cannot be 1 more than a multiple of 4
+    {'strict_mode': True} -> binascii.Error Invalid base64-encoded string: number of data characters (5) cannot be 1 more than a multiple of 4
+    {'padded': False} -> binascii.Error Invalid base64-encoded string: number of data characters (5) cannot be 1 more than a multiple of 4
+    {'strict_mode': True, 'padded': False} -> binascii.Error Invalid base64-encoded string: number of data characters (5) cannot be 1 more than a multiple of 4
+    {'canonical': True} -> binascii.Error Invalid base64-encoded string: number of data characters (5) cannot be 1 more than a multiple of 4
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Invalid base64-encoded string: number of data characters (5) cannot be 1 more than a multiple of 4
+    {'ignorechars': b''} -> binascii.Error Invalid base64-encoded string: number of data characters (5) cannot be 1 more than a multiple of 4
+    {'ignorechars': b' \n\t'} -> binascii.Error Invalid base64-encoded string: number of data characters (5) cannot be 1 more than a multiple of 4
+    {'ignorechars': b'='} -> binascii.Error Invalid base64-encoded string: number of data characters (5) cannot be 1 more than a multiple of 4
+    {'ignorechars': b'=!@#$\n'} -> binascii.Error Invalid base64-encoded string: number of data characters (5) cannot be 1 more than a multiple of 4
+    {'strict_mode': False, 'ignorechars': b''} -> binascii.Error Invalid base64-encoded string: number of data characters (5) cannot be 1 more than a multiple of 4
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> binascii.Error Invalid base64-encoded string: number of data characters (5) cannot be 1 more than a multiple of 4
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> binascii.Error Invalid base64-encoded string: number of data characters (5) cannot be 1 more than a multiple of 4
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Invalid base64-encoded string: number of data characters (5) cannot be 1 more than a multiple of 4
+b'A=' -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'strict_mode': True} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'padded': False} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'strict_mode': True, 'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'ignorechars': b''} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'ignorechars': b' \n\t'} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'ignorechars': b'='} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'ignorechars': b'=!@#$\n'} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'strict_mode': False, 'ignorechars': b''} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+b'A==' -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'strict_mode': True} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'padded': False} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'strict_mode': True, 'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'ignorechars': b''} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'ignorechars': b' \n\t'} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'ignorechars': b'='} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'ignorechars': b'=!@#$\n'} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'strict_mode': False, 'ignorechars': b''} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+b'A===' -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'strict_mode': True} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'padded': False} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'strict_mode': True, 'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'ignorechars': b''} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'ignorechars': b' \n\t'} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'ignorechars': b'='} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'ignorechars': b'=!@#$\n'} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'strict_mode': False, 'ignorechars': b''} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+b'AA=A' -> binascii.Error Incorrect padding
+    {'strict_mode': True} -> binascii.Error Discontinuous padding not allowed
+    {'padded': False} -> b'\x00\x00'
+    {'strict_mode': True, 'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Incorrect padding
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Discontinuous padding not allowed
+    {'ignorechars': b''} -> binascii.Error Discontinuous padding not allowed
+    {'ignorechars': b' \n\t'} -> binascii.Error Discontinuous padding not allowed
+    {'ignorechars': b'='} -> binascii.Error Incorrect padding
+    {'ignorechars': b'=!@#$\n'} -> binascii.Error Incorrect padding
+    {'strict_mode': False, 'ignorechars': b''} -> binascii.Error Incorrect padding
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> binascii.Error Incorrect padding
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> binascii.Error Incorrect padding
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Discontinuous padding not allowed
+b'AA=AA' -> b'\x00\x00\x00'
+    {'strict_mode': True} -> binascii.Error Discontinuous padding not allowed
+    {'padded': False} -> b'\x00\x00\x00'
+    {'strict_mode': True, 'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> b'\x00\x00\x00'
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Discontinuous padding not allowed
+    {'ignorechars': b''} -> binascii.Error Discontinuous padding not allowed
+    {'ignorechars': b' \n\t'} -> binascii.Error Discontinuous padding not allowed
+    {'ignorechars': b'='} -> b'\x00\x00\x00'
+    {'ignorechars': b'=!@#$\n'} -> b'\x00\x00\x00'
+    {'strict_mode': False, 'ignorechars': b''} -> b'\x00\x00\x00'
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> b'\x00\x00\x00'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> b'\x00\x00\x00'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Discontinuous padding not allowed
+b'AAA=A' -> b'\x00\x00\x00'
+    {'strict_mode': True} -> binascii.Error Excess data after padding
+    {'padded': False} -> b'\x00\x00\x00'
+    {'strict_mode': True, 'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> b'\x00\x00\x00'
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Excess data after padding
+    {'ignorechars': b''} -> binascii.Error Excess data after padding
+    {'ignorechars': b' \n\t'} -> binascii.Error Excess data after padding
+    {'ignorechars': b'='} -> b'\x00\x00\x00'
+    {'ignorechars': b'=!@#$\n'} -> b'\x00\x00\x00'
+    {'strict_mode': False, 'ignorechars': b''} -> b'\x00\x00\x00'
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> b'\x00\x00\x00'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> b'\x00\x00\x00'
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Excess data after padding
+b'AAA=AAAA' -> binascii.Error Incorrect padding
+    {'strict_mode': True} -> binascii.Error Excess data after padding
+    {'padded': False} -> b'\x00\x00\x00\x00\x00'
+    {'strict_mode': True, 'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Incorrect padding
+    {'strict_mode': True, 'canonical': True} -> binascii.Error Excess data after padding
+    {'ignorechars': b''} -> binascii.Error Excess data after padding
+    {'ignorechars': b' \n\t'} -> binascii.Error Excess data after padding
+    {'ignorechars': b'='} -> binascii.Error Incorrect padding
+    {'ignorechars': b'=!@#$\n'} -> binascii.Error Incorrect padding
+    {'strict_mode': False, 'ignorechars': b''} -> binascii.Error Incorrect padding
+    {'strict_mode': True, 'ignorechars': b'\n ='} -> binascii.Error Incorrect padding
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'} -> binascii.Error Incorrect padding
+    {'alphabet': b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', 'strict_mode': True} -> binascii.Error Excess data after padding
+builtins.TypeError a2b_base64() takes exactly 1 positional argument (0 given)
+builtins.TypeError argument should be bytes, buffer or ASCII string, not 'int'
+builtins.ValueError string argument should contain only ASCII characters
+builtins.ValueError string argument should contain only ASCII characters
+builtins.TypeError a2b_base64() takes exactly 1 positional argument (2 given)
+builtins.TypeError a2b_base64() argument 'alphabet' must be bytes, not str
+builtins.ValueError alphabet must have length 64
+builtins.TypeError a2b_base64() argument 'alphabet' must be bytes, not bytearray
+builtins.TypeError a bytes-like object is required, not 'str'
+b''
+builtins.TypeError a2b_base64() got an unexpected keyword argument 'foo'
+builtins.TypeError a2b_base64() takes exactly 1 positional argument (0 given)
+builtins.TypeError a2b_base64() argument 'alphabet' must be bytes, not None
+builtins.TypeError a bytes-like object is required, not 'NoneType'
+builtins.TypeError argument should be bytes, buffer or ASCII string, not 'NoneType'
+builtins.TypeError argument should be bytes, buffer or ASCII string, not 'list'
+b'hello world' b'' b'\xff\xff\xff' b'\xff\xef|'
+133337 3711145003 True True 2587776329 True
+b'a' b'a' b'a' b'YQ==\n'
+BufferError Existing exports of data: object cannot be re-sized
+b'abcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabc' bytearray(b'YWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJj')
+BufferError Existing exports of data: object cannot be re-sized
+b'YWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJj\n' bytearray(b'abcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabc')

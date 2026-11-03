@@ -1,0 +1,25 @@
+status: 0
+oracle: none
+mask: addresses
+---
+undefined
+1
+undefined
+TypeError 'tuple' object doesn't support item deletion
+1,2,3 2,3 2,4,6 1 false
+b,a,2,1 b,a,2,1
+true 3 3,1,2 6 class label n undefined python sort 4,2,3 (True, 'MyList')
+10 [3, 1, 2, 4] extra,note 0,1,2,3,note,extra [3,1,2,4] true undefined note
+[3] 3 undefined true true false
+item 3
+1 2 3
+ValueError bad len
+2 false
+3
+function 2 3,3 true
+true
+Obj undefined [Symbol.toPrimitive] true 0
+true
+true m.obj.nope is not a function. (In 'm.obj.nope()', 'm.obj.nope' is undefined)
+true m.obj.a is not a function. (In 'm.obj.a()', 'm.obj.a' is 2)
+true {"o":{"a":2,"b":3},"t":[1,2,3],"n":null}

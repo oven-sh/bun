@@ -1,0 +1,185 @@
+status: 0
+script: a9d1bc528ac9b1b8
+source: a47af67dd2508ae2
+---
+repr(g) => ExceptionGroup('msg', [ValueError(1), TypeError(2)])
+| str(g) => msg (2 sub-exceptions)
+| g.message => msg
+g.exceptions => (ValueError(1), TypeError(2))
+g.args => ('msg', [ValueError(1), TypeError(2)])
+type(g) => <class 'ExceptionGroup'>
+isinstance(g, Exception) => True
+isinstance(g, BaseExceptionGroup) => True
+ExceptionGroup.__mro__ => (<class 'ExceptionGroup'>, <class 'BaseExceptionGroup'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>)
+len(g.exceptions) => 2
+type(g.exceptions) => <class 'tuple'>
+str(ExceptionGroup("one", [ValueError()])) => one (1 sub-exception)
+| str(ExceptionGroup("", [ValueError(), KeyError(), TypeError()])) =>  (3 sub-exceptions)
+| repr(ExceptionGroup("n", [ExceptionGroup("i", [ValueError(1)])])) => ExceptionGroup('n', [ExceptionGroup('i', [ValueError(1)])])
+| repr(BaseExceptionGroup("b", [KeyboardInterrupt()])) => BaseExceptionGroup('b', [KeyboardInterrupt()])
+type(BaseExceptionGroup("b", [ValueError()])).__name__ => ExceptionGroup
+type(BaseExceptionGroup("b", [KeyboardInterrupt()])).__name__ => BaseExceptionGroup
+type(BaseExceptionGroup("b", [ValueError(), SystemExit()])).__name__ => BaseExceptionGroup
+type(BaseExceptionGroup("b", (ValueError(),))).__name__ => ExceptionGroup
+ExceptionGroup("t", (ValueError(1),)).exceptions => (ValueError(1),)
+ExceptionGroup("t", iter([ValueError(1)])).exceptions if False else "" => 
+ExceptionGroup() => TypeError: BaseExceptionGroup.__new__() takes exactly 2 arguments (0 given)
+ExceptionGroup("m") => TypeError: BaseExceptionGroup.__new__() takes exactly 2 arguments (1 given)
+ExceptionGroup("m", []) => ValueError: second argument (exceptions) must be a non-empty sequence
+ExceptionGroup("m", ()) => ValueError: second argument (exceptions) must be a non-empty sequence
+ExceptionGroup("m", [1]) => ValueError: Item 0 of second argument (exceptions) is not an exception
+ExceptionGroup("m", [ValueError(), 1]) => ValueError: Item 1 of second argument (exceptions) is not an exception
+ExceptionGroup("m", [ValueError]) => ValueError: Item 0 of second argument (exceptions) is not an exception
+ExceptionGroup("m", ValueError()) => TypeError: second argument (exceptions) must be a sequence
+ExceptionGroup("m", 1) => TypeError: second argument (exceptions) must be a sequence
+ExceptionGroup(1, [ValueError()]) => TypeError: BaseExceptionGroup.__new__() argument 1 must be str, not int
+ExceptionGroup(None, [ValueError()]) => TypeError: BaseExceptionGroup.__new__() argument 1 must be str, not None
+ExceptionGroup("m", [KeyboardInterrupt()]) => TypeError: Cannot nest BaseExceptions in an ExceptionGroup
+ExceptionGroup("m", [ValueError(), SystemExit()]) => TypeError: Cannot nest BaseExceptions in an ExceptionGroup
+ExceptionGroup("m", [BaseExceptionGroup("b", [KeyboardInterrupt()])]) => TypeError: Cannot nest BaseExceptions in an ExceptionGroup
+ExceptionGroup("m", [ValueError()], 1) => TypeError: BaseExceptionGroup.__new__() takes exactly 2 arguments (3 given)
+ExceptionGroup("m", "ab") => ValueError: Item 0 of second argument (exceptions) is not an exception
+ExceptionGroup("m", {ValueError()}) => TypeError: second argument (exceptions) must be a sequence
+ExceptionGroup("m", None) => TypeError: second argument (exceptions) must be a sequence
+ExceptionGroup(message="m", exceptions=[ValueError()]) => TypeError: BaseExceptionGroup.__new__() takes exactly 2 arguments (0 given)
+BaseExceptionGroup("m", []) => ValueError: second argument (exceptions) must be a non-empty sequence
+s1() => AttributeError: readonly attribute
+s2() => AttributeError: readonly attribute
+gl.exceptions => (ValueError(1),)
+gl.args => ('l', [ValueError(1), TypeError(2)])
+ExceptionGroup('top', [ValueError('v1'), ExceptionGroup('mid', [ValueError('v2')])])
+ExceptionGroup('top', [ExceptionGroup('mid', [TypeError('t1')])])
+ExceptionGroup('top', [ExceptionGroup('mid', [ExceptionGroup('low', [KeyError('k1')])])])
+ExceptionGroup('top', [ValueError('v1'), ExceptionGroup('mid', [ValueError('v2'), ExceptionGroup('low', [KeyError('k1')])])])
+None
+n.subgroup(Exception) is n => True
+n.subgroup(ExceptionGroup) is n => True
+show(n.subgroup(LookupError)) => ExceptionGroup('top', [ExceptionGroup('mid', [ExceptionGroup('low', [KeyError('k1')])])])
+show(n.subgroup(lambda e: isinstance(e, OSError))) => ExceptionGroup('top', [OSError('o1')])
+n.subgroup(lambda e: False) => None
+n.subgroup(lambda e: True) is n => True
+show(n.subgroup(lambda e: str(e).endswith("1") and not isinstance(e, ... => ExceptionGroup('top', [ValueError('v1'), ExceptionGroup('mid', [TypeError('t1')]), OSError('o1')])
+show(m) [cond=ValueError] => ExceptionGroup('top', [ValueError('v1'), ExceptionGroup('mid', [ValueError('v2')])])
+|| show(r) [cond=ValueError] => ExceptionGroup('top', [ExceptionGroup('mid', [TypeError('t1'), ExceptionGroup('low', [KeyError('k1')])]), OSError('o1')])
+show(m) [cond=tuple] => ExceptionGroup('top', [ExceptionGroup('mid', [TypeError('t1')]), OSError('o1')])
+|| show(r) [cond=tuple] => ExceptionGroup('top', [ValueError('v1'), ExceptionGroup('mid', [ValueError('v2'), ExceptionGroup('low', [KeyError('k1')])])])
+show(m) [cond=ZeroDivisionError] => None
+|| show(r) [cond=ZeroDivisionError] => ExceptionGroup('top', [ValueError('v1'), ExceptionGroup('mid', [TypeError('t1'), ValueError('v2'), ExceptionGroup('low', [KeyError('k1')])]), OSError('o1')])
+show(m) [cond=Exception] => ExceptionGroup('top', [ValueError('v1'), ExceptionGroup('mid', [TypeError('t1'), ValueError('v2'), ExceptionGroup('low', [KeyError('k1')])]), OSError('o1')])
+|| show(r) [cond=Exception] => None
+show(m) [cond=function] => ExceptionGroup('top', [ExceptionGroup('mid', [ExceptionGroup('low', [KeyError('k1')])])])
+|| show(r) [cond=function] => ExceptionGroup('top', [ValueError('v1'), ExceptionGroup('mid', [TypeError('t1'), ValueError('v2')]), OSError('o1')])
+['ExceptionGroup', 'ValueError', 'ExceptionGroup', 'TypeError', 'ValueError', 'ExceptionGroup', 'KeyError', 'OSError']
+n.subgroup(1) => TypeError: expected an exception type, a tuple of exception types, or a callable (other than a class)
+n.subgroup("a") => TypeError: expected an exception type, a tuple of exception types, or a callable (other than a class)
+n.subgroup(int) => TypeError: expected an exception type, a tuple of exception types, or a callable (other than a class)
+n.subgroup((ValueError, 1)) => TypeError: expected an exception type, a tuple of exception types, or a callable (other than a class)
+n.subgroup(()) => None
+n.subgroup([ValueError]) => TypeError: expected an exception type, a tuple of exception types, or a callable (other than a class)
+n.split(None) => TypeError: expected an exception type, a tuple of exception types, or a callable (other than a class)
+n.subgroup() => TypeError: BaseExceptionGroup.subgroup() takes exactly one argument (0 given)
+n.split(ValueError, 1) => TypeError: BaseExceptionGroup.split() takes exactly one argument (2 given)
+n.subgroup((int,)) => TypeError: expected an exception type, a tuple of exception types, or a callable (other than a class)
+n.subgroup(object) => TypeError: expected an exception type, a tuple of exception types, or a callable (other than a class)
+sub.__traceback__ is meta.__traceback__ => True
+repr(sub.__cause__) => OSError('cause')
+repr(sub.__context__) => KeyError('ctx')
+sub.__notes__ => ['a note']
+sub.__notes__ is meta.__notes__ => False
+sub.message => meta
+sub.exceptions[0] is meta.exceptions[0] => True
+sub.__suppress_context__ => True
+show(d) => ExceptionGroup('msg', [KeyError('k')])
+type(d).__name__ => ExceptionGroup
+d.message => msg
+d.__traceback__ => None
+d.__cause__ => None
+hasattr(d, "__notes__") => False
+type(g.derive([KeyboardInterrupt()])).__name__ => BaseExceptionGroup
+type(BaseExceptionGroup("b", [SystemExit()]).derive([ValueError()])).... => ExceptionGroup
+type(a).__name__ => MyGroup
+a.code => 42
+type(b).__name__ => MyGroup
+b.code => 42
+show(a) => MyGroup('my', [ValueError(1)])
+repr(mg) => MyGroup('my', (ValueError(1), TypeError(2)))
+mg.args => ('my', [ValueError(1), TypeError(2)], 42)
+type(a).__name__ => ExceptionGroup
+type(b).__name__ => ExceptionGroup
+type(nd.subgroup(Exception)).__name__ => NoDerive
+BadDerive("b", [ValueError(1), TypeError(2)]).split(ValueError) => TypeError: derive must return an instance of BaseExceptionGroup
+type(BaseOnly("b", [ValueError()])).__name__ => BaseOnly
+type(BaseOnly("b", [KeyboardInterrupt()])).__name__ => BaseOnly
+type(ExcAndBase("b", [ValueError()])).__name__ => ExcAndBase
+ExcAndBase("b", [KeyboardInterrupt()]) => TypeError: Cannot nest BaseExceptions in 'ExcAndBase'
+ExceptionGroup[int] => ExceptionGroup[int]
+BaseExceptionGroup[int] => BaseExceptionGroup[int]
+g.__reduce__()[0].__name__ if hasattr(g, "__reduce__") else "" => ExceptionGroup
+g == g => True
+g != ExceptionGroup("msg", [ValueError(1), TypeError(2)]) => True
+bool(g) => True
+[('ValueError', "ExceptionGroup('g', [ValueError(1)])"), ('escaped', "ExceptionGroup('g', [TypeError(2)])")]
+[('ValueError', "ExceptionGroup('g', [ValueError(1)])"), ('TypeError', "ExceptionGroup('g', [TypeError(2)])")]
+[('escaped', "ExceptionGroup('g', [ValueError(1), TypeError(2)])")]
+[('Exception', "ExceptionGroup('g', [ValueError(1), TypeError(2)])")]
+[('(ValueError, TypeError)', "ExceptionGroup('g', [ValueError(1), TypeError(2)])")]
+[('ValueError', "ExceptionGroup('g', [ValueError(1), ValueError(2)])"), ('escaped', "ExceptionGroup('g', [TypeError(3)])")]
+[('ValueError', "ExceptionGroup('top', [ValueError('v1'), ExceptionGroup('mid', [ValueError('v2')])])"), ('KeyError', "ExceptionGroup('top', [ExceptionGroup('mid', [ExceptionGroup('low', [KeyError('k1')])])])"), ('escaped', "ExceptionGroup('top', [ExceptionGroup('mid', [TypeError('t1')]), OSError('o1')])")]
+[('OSError', "ExceptionGroup('top', [OSError('o1')])"), ('Exception', "ExceptionGroup('top', [ValueError('v1'), ExceptionGroup('mid', [TypeError('t1'), ValueError('v2'), ExceptionGroup('low', [KeyError('k1')])])])")]
+[('ValueError', "ExceptionGroup('', [ValueError('naked')])")]
+[('escaped', "ValueError('naked')")]
+[('Exception', "ExceptionGroup('', [ValueError('naked')])")]
+[('LookupError', "ExceptionGroup('', [KeyError('naked')])")]
+[('ValueError', "ExceptionGroup('b', [ValueError(1)])"), ('escaped', "BaseExceptionGroup('b', [KeyboardInterrupt()])")]
+[('BaseException', "BaseExceptionGroup('b', [KeyboardInterrupt(), ValueError(1)])")]
+[('KeyboardInterrupt', "BaseExceptionGroup('', [KeyboardInterrupt()])")]
+[('ValueError', "MyGroup('my', [ValueError(1)])"), ('escaped', "MyGroup('my', [TypeError(2)])")]
+[('ValueError', "ExceptionGroup('o', [ExceptionGroup('i', [ValueError(1)])])")]
+['body', 'else', 'finally']
+raise_in_handler ExceptionGroup('', [KeyError('new'), ExceptionGroup('g', [TypeError(2)])]) | ctx: None | inner ctx: ["ExceptionGroup('g', [ValueError(1)])", None]
+raise_in_two ExceptionGroup('', [KeyError('k'), OSError('o')]) | ctx: None | inner ctx: ["ExceptionGroup('g', [ValueError(1)])", "ExceptionGroup('g', [TypeError(2)])"]
+reraise_bare ExceptionGroup('g', [ValueError(1), TypeError(2)]) | ctx: None | inner ctx: [None, None]
+reraise_e ExceptionGroup('', [ExceptionGroup('g', [ValueError(1)]), ExceptionGroup('g', [TypeError(2)])]) | ctx: None | inner ctx: [None, None]
+reraise_all ExceptionGroup('g', [ValueError(1), TypeError(2)]) | ctx: None | inner ctx: [None, None]
+raise_and_unhandled ExceptionGroup('', [KeyError('k'), ExceptionGroup('g', [OSError(3)])]) | ctx: None | inner ctx: ["ExceptionGroup('g', [ValueError(1)])", None]
+raise_group_in_handler ExceptionGroup('new', [KeyError('k')]) | ctx: ExceptionGroup('g', [ValueError(1)]) | inner ctx: [None]
+naked_reraise ExceptionGroup('', [ValueError('naked')]) | ctx: None | inner ctx: [None]
+nested_reraise ExceptionGroup('top', [ValueError('v1'), ExceptionGroup('mid', [TypeError('t1'), ValueError('v2')]), OSError('o1')]) | ctx: None | inner ctx: [None, None, None]
+ExceptionGroup('g', [ValueError(1)]) ExceptionGroup('g', [ValueError(1)]) True
+ExceptionGroup('g', [TypeError(2)])
+None
+name_deleted() => UnboundLocalError: cannot access local variable 'e' where it is not associated with a value
+exec("try: raise ValueError\nexcept* ExceptionGroup: pass") => TypeError: catching ExceptionGroup with except* is not allowed. Use except instead.
+exec("try: raise ValueError\nexcept* BaseExceptionGroup: pass") => TypeError: catching ExceptionGroup with except* is not allowed. Use except instead.
+exec("try: raise ValueError\nexcept* (ValueError, ExceptionGroup): pa... => TypeError: catching ExceptionGroup with except* is not allowed. Use except instead.
+exec("try: raise ValueError\nexcept* 1: pass") => TypeError: catching classes that do not inherit from BaseException is not allowed
+exec("try: raise ValueError\nexcept* (ValueError, 1): pass") => TypeError: catching classes that do not inherit from BaseException is not allowed
+exec("try: raise ValueError\nexcept* int: pass") => TypeError: catching classes that do not inherit from BaseException is not allowed
+exec("try: raise ValueError\nexcept* (): pass") => ValueError: 
+exec("try: pass\nexcept* ExceptionGroup: pass\nprint('checked only wh... => checked only when raised
+None
+exec("try: raise ValueError\nexcept* MyG: pass", {"MyG": MyGroup}) => TypeError: catching ExceptionGroup with except* is not allowed. Use except instead.
+SyntaxError: expected one or more exception types
+SyntaxError: cannot have both 'except' and 'except*' on the same 'try'
+SyntaxError: cannot have both 'except' and 'except*' on the same 'try'
+SyntaxError: cannot have both 'except' and 'except*' on the same 'try'
+SyntaxError: 'break', 'continue' and 'return' cannot appear in an except* block
+SyntaxError: 'break', 'continue' and 'return' cannot appear in an except* block
+SyntaxError: 'break', 'continue' and 'return' cannot appear in an except* block
+ok: for i in x:\n try: pass\n except* ValueError:\n  for j in y: break
+ok: def f():\n try: pass\n except* ValueError:\n  def g(): return
+ok: try: pass\nexcept * ValueError: pass
+ok: try: pass\nexcept *ValueError as e: pass
+ok: try: pass\nexcept* ValueError, TypeError: pass
+SyntaxError: multiple exception types must be parenthesized when using 'as'
+ok: try: pass\nexcept* (ValueError, TypeError) as e: pass
+SyntaxError: cannot use except* statement with attribute
+ok: def f():\n try: return\n except* ValueError: pass
+ok: def f():\n try: pass\n except* ValueError: pass\n else: return\n finally: return
+ok: def g():\n try: yield\n except* ValueError: yield
+ok: async def f():\n try: await x\n except* ValueError: await y
+[1, "ExceptionGroup('g', [ValueError(1)])", "ExceptionGroup('g', [TypeError(2)])", 'end']
+[0, "ExceptionGroup('g', [ValueError(1)])", 2]
+inner ExceptionGroup('g', [ValueError(1)])
+outer ExceptionGroup('g', [TypeError(2)])
+outer ExceptionGroup('g', [KeyError(3)])

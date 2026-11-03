@@ -1,0 +1,105 @@
+def t(f):
+    try:
+        print(repr(f()))
+    except Exception as e:
+        print(type(e).__name__ + ':', e)
+
+print("%s" % "a", "%s" % 1, "%s" % 1.5, "%s" % None, "%s" % [1], "%s" % (1,), "%s %s" % (1, 2), "%s" % ((1, 2),), "%r" % "a", "%r %s" % ("a", "a"), "%a" % "é", "%%", "%%" % (), "100%%" % (), "%s%%" % 5, "%c" % 65, "%c" % "A", "%c" % 0x1F600, "%c%c" % ("a", 98))
+print("%d" % 5, "%d" % -5, "%i" % 5, "%u" % 5, "%d" % True, "%d" % 5.9, "%d" % -5.9, "%d" % 10 ** 30, "%5d|" % 5, "%-5d|" % 5, "%05d|" % 5, "%+d" % 5, "%+d" % -5, "% d" % 5, "% d" % -5, "%+05d" % 5, "%-05d|" % 5, "%05d" % -5, "% 05d" % 5, "%.3d" % 5, "%.3d" % -5, "%5.3d|" % 5, "%-5.3d|" % 5, "%05.3d|" % 5, "%+.3d" % 5, "%.0d" % 0, "%ld %hd %Ld" % (1, 2, 3))
+print("%x" % 255, "%X" % 255, "%o" % 8, "%#x" % 255, "%#X" % 255, "%#o" % 8, "%x" % -255, "%#x" % -255, "%08x" % 255, "%#08x" % 255, "%-8x|" % 255, "%+x" % 255, "% x" % 255, "%.4x" % 255, "%#.4x" % 255, "%#10.4x|" % 255, "%x" % 10 ** 30, "%o" % -8, "%#o" % 0, "%#x" % 0, "%x" % True, "%#-10x|" % 255, "%#010X" % 255)
+print("%5s|" % "a", "%-5s|" % "a", "%.2s" % "abc", "%5.2s|" % "abc", "%-5.2s|" % "abc", "%.0s|" % "abc", "%05s|" % "a", "%5r|" % "a", "%.3r" % "abc", "%5c|" % "a", "%-5c|" % "a", "%s" % "", "%5s|" % "", "%.10s" % "abc", "%5s|" % "é", "%5s|" % "😀", "%.1s" % "😀a", "%+s" % "a", "% s" % "a", "%#s" % "a")
+print("%*d|" % (5, 1), "%-*d|" % (5, 1), "%*d|" % (-5, 1), "%.*f" % (2, 3.14159), "%*.*f|" % (8, 2, 3.14159), "%*s|" % (4, "a"), "%.*s" % (2, "abc"), "%0*d" % (5, 1))
+print("%(a)s" % {"a": 1}, "%(a)s %(b)s %(a)s" % {"a": 1, "b": 2}, "%(a)5d|" % {"a": 1}, "%(a b)s" % {"a b": 1}, "%()s" % {"": 1}, "%(a(b)c)s" % {"a(b)c": 1}, "%(a)s%%" % {"a": 1}, "%%(a)s" % {"a": 1}, "no format" % {"a": 1}, "%(a)s" % {"a": (1, 2)}, "%(é)s" % {"é": 1})
+class M:
+    def __getitem__(self, k): return "<%s>" % k
+print("%(x)s %(y)s" % M(), "plain" % M())
+t(lambda: "%s" % ())
+t(lambda: "%s %s" % (1,))
+t(lambda: "%s %s" % 1)
+t(lambda: "%s" % (1, 2))
+t(lambda: "" % (1,))
+t(lambda: "" % 1)
+t(lambda: "a" % "b")
+t(lambda: "a" % [1])
+t(lambda: "a" % {})
+t(lambda: "a" % {"x": 1})
+t(lambda: "%" % ())
+t(lambda: "%" % 1)
+t(lambda: "abc%" % 1)
+t(lambda: "%5" % 1)
+t(lambda: "%." % 1)
+t(lambda: "%z" % 1)
+t(lambda: "%y" % 1)
+t(lambda: "% " % 1)
+t(lambda: "%é" % 1)
+t(lambda: "%\x00" % 1)
+t(lambda: "%(a" % {"a": 1})
+t(lambda: "%(a)" % {"a": 1})
+t(lambda: "%(a)s" % 1)
+t(lambda: "%(a)s" % (1,))
+t(lambda: "%(a)s" % [1])
+t(lambda: "%(a)s" % {})
+t(lambda: "%(a)s" % "x")
+t(lambda: "%(a)s %s" % {"a": 1})
+t(lambda: "%d" % "1")
+t(lambda: "%d" % None)
+t(lambda: "%d" % [1])
+t(lambda: "%d" % 1j)
+t(lambda: "%i" % "x")
+t(lambda: "%x" % "1")
+t(lambda: "%x" % 1.0)
+t(lambda: "%o" % 1.5)
+t(lambda: "%X" % None)
+t(lambda: "%c" % "ab")
+t(lambda: "%c" % "")
+t(lambda: "%c" % -1)
+t(lambda: "%c" % 0x110000)
+t(lambda: "%c" % 1.0)
+t(lambda: "%c" % None)
+t(lambda: "%c" % 10 ** 30)
+t(lambda: "%f" % "1")
+t(lambda: "%e" % None)
+t(lambda: "%g" % [1])
+t(lambda: "%*d" % (1,))
+t(lambda: "%*d" % ("a", 1))
+t(lambda: "%.*f" % ("a", 1.0))
+t(lambda: "%*d" % (10 ** 30, 1))
+t(lambda: "%99999999999999999999d" % 1)
+t(lambda: "%.99999999999999999999d" % 1)
+t(lambda: "%(a)*d" % {"a": 1})
+t(lambda: "%s %(a)s" % {"a": 1})
+class I:
+    def __index__(self): return 42
+class N:
+    def __int__(self): return 43
+class F:
+    def __float__(self): return 1.5
+class S:
+    def __str__(self): return "S!"
+    def __repr__(self): return "R!"
+print("%d" % I(), "%x" % I(), "%c" % I(), "%s %r %a" % (S(), S(), S()), "%f" % F(), "%.1f" % I(), "%5s|%-5r|" % (S(), S()))
+t(lambda: "%d" % N())
+t(lambda: "%x" % N())
+t(lambda: "%d" % F())
+class T(tuple): pass
+class St(str): pass
+class Di(dict): pass
+print("%s %s" % T((1, 2)), St("%s") % 1, type(St("%s") % 1), "%(a)s" % Di(a=1), "%s" % St("x"), "%s" % Di(a=1))
+print("%s" % b"a", "%r" % b"a", "%s" % bytearray(b"a"), "%s" % range(3), "%s" % {1: 2}, "%s" % {1}, "%s" % type, "%s" % int, "%s" % ..., "%s" % NotImplemented, "%s" % 1j)
+print("a%sb%sc" % ("-", "+"), "%s" * 3 % (1, 2, 3), "%s, " * 2 % ("a", "b"), ("%d" % 5) + "x", "%d%%" % 50, "%3d%%|%-4d|" % (5, 6), "%s=%r" % ("k", "v"))
+x = "%s"
+x %= 5
+print(x)
+print("%s" % "%s", "%s" % "%", "%%s" % (), "%%%s" % 1, "%%%%" % (), "%d %s %f" % (1, "two", 3.0), "%(n)d items at %(p).2f" % {"n": 3, "p": 9.5})
+print(b"%s" % b"a", b"%d" % 5, b"%b" % b"x", b"%x" % 255, b"%c" % 65, b"%c" % b"A", b"%5d|" % 5, b"%r" % "a", b"%a" % "\xe9", b"%%", b"%(a)s" % {b"a": b"v"}, b"%f" % 1.5, b"%s %s" % (b"a", bytearray(b"b")), bytearray(b"%s") % b"x", b"%.2s" % b"abc", b"%05.1f" % 2.25, b"%#x" % 255, b"%+d" % 3)
+t(lambda: b"%s" % "a")
+t(lambda: b"%s" % 1)
+t(lambda: b"%b" % "a")
+t(lambda: b"%c" % 256)
+t(lambda: b"%c" % "a")
+t(lambda: b"%c" % b"ab")
+t(lambda: b"%d" % "a")
+t(lambda: b"%z" % 1)
+t(lambda: b"%s" % ())
+t(lambda: b"" % 1)
+t(lambda: b"%(a)s" % {"a": b"v"})

@@ -1,0 +1,90 @@
+status: 0
+script: 85b1ba519ed6f455
+source: ae1355ba2a814fb8
+---
+cls.__name__ [cls=Exception] => Exception
+cls.__weakrefoffset__ [cls=Exception] => 0
+"__weakref__" in dir(cls) [cls=Exception] => False
+cls.__name__ [cls=ValueError] => ValueError
+cls.__weakrefoffset__ [cls=ValueError] => 0
+"__weakref__" in dir(cls) [cls=ValueError] => False
+cls.__name__ [cls=OSError] => OSError
+cls.__weakrefoffset__ [cls=OSError] => 0
+"__weakref__" in dir(cls) [cls=OSError] => False
+cls.__name__ [cls=BaseException] => BaseException
+cls.__weakrefoffset__ [cls=BaseException] => 0
+"__weakref__" in dir(cls) [cls=BaseException] => False
+cls.__name__ [cls=KeyError] => KeyError
+cls.__weakrefoffset__ [cls=KeyError] => 0
+"__weakref__" in dir(cls) [cls=KeyError] => False
+cls.__name__ [cls=StopIteration] => StopIteration
+cls.__weakrefoffset__ [cls=StopIteration] => 0
+"__weakref__" in dir(cls) [cls=StopIteration] => False
+cls.__name__ [cls=SyntaxError] => SyntaxError
+cls.__weakrefoffset__ [cls=SyntaxError] => 0
+"__weakref__" in dir(cls) [cls=SyntaxError] => False
+cls.__name__ [cls=UnicodeDecodeError] => UnicodeDecodeError
+cls.__weakrefoffset__ [cls=UnicodeDecodeError] => 0
+"__weakref__" in dir(cls) [cls=UnicodeDecodeError] => False
+cls.__name__ [cls=BaseExceptionGroup] => BaseExceptionGroup
+cls.__weakrefoffset__ [cls=BaseExceptionGroup] => 0
+"__weakref__" in dir(cls) [cls=BaseExceptionGroup] => False
+cannot create weak reference to 'ValueError' object
+weakref.ref(E1()) is not None => True
+weakref.ref(E2()) is not None => True
+E1.__weakrefoffset__ != 0 => True
+E2.__weakrefoffset__ != 0 => True
+E3.__weakrefoffset__ => 0
+cannot create weak reference to 'E3' object
+__weakref__ slot disallowed: we already got one
+call (obj, /, *args, **kwargs)
+print (*objects, sep=' ', end='\n', file=None, flush=False)
+format (self, /, *args, **kwargs)
+__call__ (self, /, *args, **kwargs)
+__init__ (self, /, *args, **kwargs)
+__new__ (*args, **kwargs)
+__init__ (self, /, *args, **kwargs)
+no signature found for builtin <built-in function max>
+no signature found for builtin <method 'update' of 'dict' objects>
+no signature found for builtin <built-in function getattr>
+name [name='EXT_SUFFIX'] => EXT_SUFFIX
+type(v).__name__ [name='EXT_SUFFIX'] => str
+v[0] == "." if name != "SOABI" else v.count("-") >= 2 [name='EXT_SUFFIX'] => True
+v.endswith(".so") if name != "SOABI" else "" [name='EXT_SUFFIX'] => True
+name [name='SOABI'] => SOABI
+type(v).__name__ [name='SOABI'] => str
+v[0] == "." if name != "SOABI" else v.count("-") >= 2 [name='SOABI'] => True
+v.endswith(".so") if name != "SOABI" else "" [name='SOABI'] => 
+name [name='SHLIB_SUFFIX'] => SHLIB_SUFFIX
+type(v).__name__ [name='SHLIB_SUFFIX'] => str
+v[0] == "." if name != "SOABI" else v.count("-") >= 2 [name='SHLIB_SUFFIX'] => True
+v.endswith(".so") if name != "SOABI" else "" [name='SHLIB_SUFFIX'] => True
+True
+has(l) => True
+has(t) => True
+has(d) => True
+has(s) => True
+has(o) or has(o.__dict__) => True
+has(fn.__closure__[0]) => True
+has(globals()) => True
+has(K) => False
+type(r).__name__ => list
+[]
+any(i is K for i in gc.get_referrers(K.__init__)) or True => True
+gc.get_referrers() => []
+gc.get_referrers(1) == [] or True => True
+any(i is x for i in refs) => True
+any(i is l for i in refs) => True
+any(i is x for i in gc.get_referents(d)) => True
+any(i is x for i in gc.get_referents(t, s)) => True
+gc.get_referents() => []
+type(refs).__name__ => list
+any(i is l for i in objs) => True
+any(i is d for i in objs) => True
+any(i is o for i in objs) => True
+any(i is K for i in objs) => True
+any(i is closure for i in objs) => True
+type(objs).__name__ => list
+not any(isinstance(i, (int, str, float)) for i in objs) => False
+ValueError generation parameter must be less than the number of available generations (3)
+TypeError argument should be integer or None, not 'str'

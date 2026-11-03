@@ -1,0 +1,93 @@
+status: 0
+script: 19fee2bc8584dd22
+---
+--- what comes from _functools
+partial True
+reduce True
+cmp_to_key True
+_lru_cache_wrapper True
+Placeholder True
+_PlaceholderType True
+--- lru_cache
+[2, 4, 2]
+CacheInfo(hits=1, misses=2, maxsize=128, currsize=2)
+{'maxsize': 128, 'typed': False}
+('plain', 'plain', 'the doc', '__main__')
+10
+'_lru_cache_wrapper'
+'CacheInfo'
+1
+(1, 2, 128, 2)
+CacheInfo(hits=0, misses=0, maxsize=128, currsize=0)
+[1, 2, 3, 1, 3]
+CacheInfo(hits=1, misses=4, maxsize=2, currsize=2)
+{'maxsize': 2, 'typed': False}
+['int', 'float', 'bool', 'int']
+CacheInfo(hits=1, misses=3, maxsize=None, currsize=3)
+{'maxsize': None, 'typed': True}
+(1, 1, CacheInfo(hits=0, misses=2, maxsize=0, currsize=0))
+CacheInfo(hits=0, misses=0, maxsize=0, currsize=0)
+TypeError Expected first argument to be an integer, a callable, or None
+TypeError Expected first argument to be an integer, a callable, or None
+TypeError the first argument must be callable
+2432902008176640000
+CacheInfo(hits=0, misses=21, maxsize=None, currsize=21)
+15511210043330985984000000
+CacheInfo(hits=1, misses=26, maxsize=None, currsize=26)
+{'maxsize': None, 'typed': False}
+((1, 2, (), {}), (1, 2, (), {}), (1, 2, (), {}), (1, 2, (), {}), (1, 2, (3,), {'z': 4}))
+CacheInfo(hits=0, misses=5, maxsize=32, currsize=5)
+TypeError kw() missing 1 required positional argument: 'a'
+TypeError unhashable type: 'list'
+(11, 11, 21)
+CacheInfo(hits=1, misses=2, maxsize=None, currsize=2)
+(6, 6, CacheInfo(hits=1, misses=1, maxsize=None, currsize=1))
+(('WithCachedMethod', 2), ('WithCachedMethod', 2))
+True
+True
+'plain'
+--- wraps
+('original', 'original', 'original doc', '__main__', 'attr')
+True
+{'b': <class 'int'>, 'return': <class 'str'>}
+('__module__', '__name__', '__qualname__', '__doc__', '__annotate__', '__type_params__')
+('__dict__',)
+True
+('original', 'original doc', 'attr', True)
+['__annotate__', '__doc__', '__module__', '__name__', '__qualname__', '__type_params__', '__wrapped__', 'attr']
+True
+'original'
+1
+--- total_ordering
+(True, True, False, False, False, True, True, True)
+1
+ValueError must define at least one ordering operation: < > <= >=
+--- partialmethod
+((True, (), {}), True)
+((False, ('x', 2), {'k': 1, 'z': 3}), False)
+(True, ('n',), {})
+('first', ('second',), {})
+TypeError missing positional arguments in 'partial' call; expected at least 1, got 0
+'p'
+(True, (), {})
+'partial'
+TypeError _partial_new() missing 1 required positional argument: 'func'
+TypeError the first argument 1 must be a callable or a descriptor
+TypeError trailing Placeholders are not allowed
+"functools.partialmethod(<class 'int'>, 1, base=2)"
+--- cached_property
+([1, 2, 3], True, 1, {'value': [1, 2, 3]})
+([1, 2, 3], 2)
+'cached_property'
+'value doc'
+'value'
+--- partial through functools
+functools.partial(<class 'int'>, base=2)
+3
+'functools'
+20
+['a', 'b', 'c']
+1
+{1: [2], 'a': [3]}
+True
+True

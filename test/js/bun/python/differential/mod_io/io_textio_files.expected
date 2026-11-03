@@ -1,0 +1,48 @@
+status: 0
+script: 9ff9d21ebf4d5c56
+---
+280390 True
+True
+True
+True
+True True
+True 361
+True True
+utf-8 163890 True
+   True True True
+   True
+utf-16 180782 True
+   True True True
+   True
+utf-32 349564 True
+   True True True
+   True
+utf-16-le 180780 True
+   True True True
+   True
+--- updating in place
+'aaa\nBBB\nccc\n'
+'BBB\n' 'ccc\nddd\n'
+16 4 20
+['aaa', 'BBB', 'ccc', 'ddd', 'eee']
+--- what is written can be seen once it is flushed
+True None 3
+True
+200003
+True None 3
+3
+--- the layers
+u u u rb rb r True
+False True True False False False False
+BufferedReader False b'aaa'
+FileIO False 20 0 b'aaa'
+True True
+ValueError: I/O operation on closed file.
+None
+True True
+ValueError: I/O operation on closed file.
+ValueError: I/O operation on closed file.
+None
+True
+--- many files
+['294', '295', '296', '297', '298', '299', '293']

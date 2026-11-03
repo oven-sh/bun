@@ -1,0 +1,43 @@
+status: 0
+script: d87725de07eb4968
+---
+3 True
+3 b'two'
+0 True
+9 True
+4 True
+4 True bytearray(b'into\x00\x00\x00\x00')
+6 True bytearray(b'abto\x00\x00\x00\x00')
+2 True bytearray(b'kwto\x00\x00\x00\x00')
+3 True
+8 True
+ValueError: size larger than allocated size None
+ValueError: size larger than allocated size None
+ValueError: size larger than allocated size None
+8
+8
+(8, [], 32)
+5 True bytearray(b'abc') bytearray(b'de\x00')
+4 True
+OSError: [Errno 89] Destination address required 89
+OSError: [Errno 89] Destination address required 89
+None 4 b'conn' True 2 b'c2'
+4 b'back'
+OSError: [Errno 90] Message too long 90
+TimeoutError: timed out None
+True
+BlockingIOError: [Errno 11] Resource temporarily unavailable 11
+BlockingIOError: [Errno 11] Resource temporarily unavailable 11
+BlockingIOError: [Errno 11] Resource temporarily unavailable 11
+BlockingIOError: [Errno 11] Resource temporarily unavailable 11
+BlockingIOError: [Errno 11] Resource temporarily unavailable 11
+BlockingIOError: [Errno 11] Resource temporarily unavailable 11
+4
+ConnectionRefusedError: [Errno 111] Connection refused 111
+b'ttl' [(0, 1, b'\x00'), (0, 2, b'!\x00\x00\x00')] 0
+b'ttl2' [(0, 1, b'\x00'), (0, 2, b',\x00\x00\x00')] 0
+b'two' [(0, 1, b'\x10'), (0, 2, b'-\x00\x00\x00')] 0
+b'cut' 1 True []
+b'cut' [(0, 2, 2)] True []
+b'cut' [] True 0
+OSError: [Errno 22] Invalid argument 22

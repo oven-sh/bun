@@ -1,0 +1,74 @@
+status: 0
+script: eb2ac25f948d6e6b
+source: bdd113a41c4f41d3
+---
+[f(data) == ref for f in (quicksort, mergesort, heapsort, insertion, ... => [True, True, True, True, True]
+bubble(data[:60]) == sorted(data[:60]) => True
+ref[:10] => [0, 14, 15, 16, 22, 27, 27, 28, 37, 43]
+ref[-5:] => [940, 943, 943, 981, 995]
+data[:8] => [27, 264, 753, 806, 735, 532, 333, 266]
+[bsearch(ref, v) for v in (-1, 0, 500, 999, 5000)] => [0, 0, 105, 200, 200]
+all(ref[bsearch(ref, v)] == v for v in data) => True
+len(pr) => 303
+pr[:12] => [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37]
+pr[-3:] => [1993, 1997, 1999]
+sum(pr) => 277050
+[[], [2], [2, 2, 3], [97], [2, 2, 2, 3, 3, 5], [7, 11, 13], [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2], [999983], [71, 839, 1471, 6857]]
+gcd(1071, 462) => 21
+gcd(17, 5) => 1
+gcd(0, 9) => 9
+egcd(240, 46) => (2, -9, 47)
+240 * egcd(240, 46)[1] + 46 * egcd(240, 46)[2] => 2
+12 * 18 // gcd(12, 18) => 36
+[len(queens(n)) for n in range(1, 7)] => [1, 0, 0, 2, 10, 4]
+queens(6)[0] => [1, 3, 5, 0, 2, 4]
+queens(4) => [[1, 3, 0, 2], [2, 0, 3, 1]]
+knapsack([(12, 4), (2, 2), (1, 1), (1, 2), (4, 10)], 15) => 15
+knapsack([(w % 13 + 1, w % 29 + 1) for w in data[:30]], 60) => 276
+lcs("AGGTAB", "GXTXAYB") => GTAB
+lcs("the quick brown fox", "a quick brown dog") =>  quick brown o
+edit("kitten", "sitting") => 3
+edit("", "abc") => 3
+edit("flaw", "lawn") => 2
+edit("intention", "execution") => 5
+sorted(dist.items()) => [('A', 0), ('B', 7), ('C', 9), ('D', 20), ('E', 20), ('F', 11)]
+path[::-1] => ['A', 'C', 'F', 'E']
+bfs(graph, "A") => ['A', 'B', 'C', 'F', 'D', 'E']
+dfs(graph, "A") => ['A', 'B', 'C', 'D', 'E', 'F']
+bfs(graph, "G") => ['G']
+['shirt', 'socks', 'tie', 'trousers', 'belt', 'jacket', 'shoes']
+ValueError: cycle among a, b, c
+[d.union(a, b) for a, b in ((0, 1), (2, 3), (1, 3), (0, 2), (4, 5), (... => [True, True, True, False, True, True, True]
+len({d.find(i) for i in range(10)}) => 4
+sorted(d.size[d.find(i)] for i in range(10)) => [1, 1, 4, 4, 4, 4, 4, 4, 4, 4]
+mst => [('C', 'F', 2), ('D', 'E', 6), ('A', 'B', 7), ('A', 'C', 9), ('E', 'F', 9)]
+sum(w for _, _, w in mst) => 33
+matmul([[1, 2], [3, 4]], [[5, 6], [7, 8]]) => [[19, 22], [43, 50]]
+matpow([[1, 1], [1, 0]], 90)[0][1] => 2880067194370816120
+transpose([[1, 2, 3], [4, 5, 6]]) => [[1, 4], [2, 5], [3, 6]]
+det([[2, 0, 1], [1, 3, 2], [1, 1, 1]]) => 0
+det([[1, 2, 3, 4], [5, 6, 7, 8], [2, 6, 4, 8], [3, 1, 1, 2]]) => 72
+[to_base(255, b) for b in (2, 8, 16, 36)] => ['11111111', '377', 'ff', '73']
+to_base(-10, 3) => -101
+to_base(0, 2) => 0
+int(to_base(123456789, 7), 7) => 123456789
+['I', 'IV', 'IX', 'XIV', 'XL', 'XC', 'CD', 'MCMXCIV', 'MMXXIV', 'MMMCMXCIX']
+list(perms([1, 2, 3])) => [[1, 2, 3], [1, 3, 2], [2, 1, 3], [2, 3, 1], [3, 1, 2], [3, 2, 1]]
+list(combos("abcd", 2)) => [['a', 'b'], ['a', 'c'], ['a', 'd'], ['b', 'c'], ['b', 'd'], ['c', 'd']]
+subsets([1, 2, 3]) => [[], [1], [2], [1, 2], [3], [1, 3], [2, 3], [1, 2, 3]]
+sum(1 for _ in perms(list(range(5)))) => 120
+sum(1 for _ in combos(list(range(8)), 3)) => 56
+coins(100, [1, 5, 10, 25, 50]) => 292
+coins(200, [1, 2, 5, 10, 20, 50, 100, 200]) => 73682
+lis(data) => 20
+lis([10, 9, 2, 5, 3, 7, 101, 18]) => 4
+max_sub([-2, 1, -3, 4, -1, 2, 1, -5, 4]) => 6
+max_sub([x - 500 for x in data]) => 2958
+list(pascal(7)) => [[1], [1, 1], [1, 2, 1], [1, 3, 3, 1], [1, 4, 6, 4, 1], [1, 5, 10, 10, 5, 1], [1, 6, 15, 20, 15, 6, 1]]
+max(list(pascal(40))[-1]) => 68923264410
+[collatz(n) for n in (1, 7, 27, 97, 871)] => [0, 16, 111, 118, 178]
+max(range(1, 300), key=collatz) => 231
+len(hanoi(8, "A", "B", "C")) => 255
+hanoi(3, "A", "B", "C") => [('A', 'C'), ('A', 'B'), ('C', 'B'), ('A', 'C'), ('B', 'A'), ('B', 'C'), ('A', 'C')]
+[1, 2, 3, 4, 8, 12, 11, 10, 9, 5, 6, 7]
+['oo##.', 'o#..#', 'oo#..', '##...']

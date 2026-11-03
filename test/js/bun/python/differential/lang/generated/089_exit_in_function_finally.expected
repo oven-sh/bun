@@ -1,0 +1,8 @@
+status: 9
+stderr: 
+script: cd6e500e5d715b69
+source: cd6e500e5d715b69
+---
+cleanup 1
+cleanup 2
+exit sees SystemExit 9

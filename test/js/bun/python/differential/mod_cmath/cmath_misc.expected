@@ -1,0 +1,1603 @@
+status: 0
+script: 6ff5e669575e5602
+---
+['acos', 'acosh', 'asin', 'asinh', 'atan', 'atanh', 'cos', 'cosh', 'e', 'exp', 'inf', 'infj', 'isclose', 'isfinite', 'isinf', 'isnan', 'log', 'log10', 'nan', 'nanj', 'phase', 'pi', 'polar', 'rect', 'sin', 'sinh', 'sqrt', 'tan', 'tanh', 'tau']
+pi float 3.141592653589793
+e float 2.718281828459045
+tau float 6.283185307179586
+inf float inf
+nan float nan
+infj complex infj
+nanj complex nanj
+cmath 'This module provides access to mathematical functions for complex\nnumbers.' cmath sqrt <built-in function sqrt>
+log (0, 0)  ValueError: math domain error
+log (0, 1)  ValueError: math domain error
+log (0, -1)  complex (nan+infj)
+log (0, 2)  complex (-inf+nanj)
+log (0, 10)  complex (-inf+nanj)
+log (0, 0.5)  complex (inf+nanj)
+log (0, 1j)  complex (nan+infj)
+log (0, (-0-1j))  complex (nan-infj)
+log (0, (1+1j))  complex (-inf+infj)
+log (0, (-2.5+3j))  complex (-inf+infj)
+log (0, 0j)  ValueError: math domain error
+log (0, (-0+0j))  ValueError: math domain error
+log (0, -0j)  ValueError: math domain error
+log (0, (-0-0j))  ValueError: math domain error
+log (0, inf)  complex (nan+nanj)
+log (0, -inf)  complex (nan+nanj)
+log (0, nan)  complex (nan+nanj)
+log (0, (inf+infj))  complex (nan+nanj)
+log (0, (nan+infj))  complex (nan+nanj)
+log (0, infj)  complex (nan+nanj)
+log (0, 1e+308)  complex (-inf+nanj)
+log (0, 1e-308)  complex (inf+nanj)
+log (0, (1e+308+1e+308j))  complex (-inf+infj)
+log (0, 5e-324)  complex (inf+nanj)
+log (0, 2.718281828459045)  complex (-inf+nanj)
+log (0, 100)  complex (-inf+nanj)
+log (1, 0)  ValueError: math domain error
+log (1, 1)  ValueError: math domain error
+log (1, -1)  complex 0j
+log (1, 2)  complex 0j
+log (1, 10)  complex 0j
+log (1, 0.5)  complex (-0-0j)
+log (1, 1j)  complex 0j
+log (1, (-0-1j))  complex (-0+0j)
+log (1, (1+1j))  complex 0j
+log (1, (-2.5+3j))  complex 0j
+log (1, 0j)  ValueError: math domain error
+log (1, (-0+0j))  ValueError: math domain error
+log (1, -0j)  ValueError: math domain error
+log (1, (-0-0j))  ValueError: math domain error
+log (1, inf)  complex 0j
+log (1, -inf)  complex 0j
+log (1, nan)  complex (nan+nanj)
+log (1, (inf+infj))  complex 0j
+log (1, (nan+infj))  complex 0j
+log (1, infj)  complex 0j
+log (1, 1e+308)  complex 0j
+log (1, 1e-308)  complex (-0-0j)
+log (1, (1e+308+1e+308j))  complex 0j
+log (1, 5e-324)  complex (-0-0j)
+log (1, 2.718281828459045)  complex 0j
+log (1, 100)  complex 0j
+log (-1, 0)  ValueError: math domain error
+log (-1, 1)  ValueError: math domain error
+log (-1, -1)  complex (1+0j)
+log (-1, 2)  complex 4.532360141827194j
+log (-1, 10)  complex 1.3643763538418412j
+log (-1, 0.5)  complex (-0-4.532360141827194j)
+log (-1, 1j)  complex (2+0j)
+log (-1, (-0-1j))  complex (-2+0j)
+log (-1, (1+1j))  complex (3.3480640556730803+1.4774042445459015j)
+log (-1, (-2.5+3j))  complex (1.0184455637397896+0.6124020141376328j)
+log (-1, 0j)  ValueError: math domain error
+log (-1, (-0+0j))  ValueError: math domain error
+log (-1, -0j)  ValueError: math domain error
+log (-1, (-0-0j))  ValueError: math domain error
+log (-1, inf)  complex 0j
+log (-1, -inf)  complex 0j
+log (-1, nan)  complex (nan+nanj)
+log (-1, (inf+infj))  complex 0j
+log (-1, (nan+infj))  complex 0j
+log (-1, infj)  complex 0j
+log (-1, 1e+308)  complex 0.004429793356629356j
+log (-1, 1e-308)  complex (-0-0.004429793356629355j)
+log (-1, (1e+308+1e+308j))  complex (4.900970052770989e-06+0.004427624215262232j)
+log (-1, 5e-324)  complex (-0-0.004220074619950832j)
+log (-1, 2.718281828459045)  complex 3.141592653589793j
+log (-1, 100)  complex 0.6821881769209206j
+log (2, 0)  ValueError: math domain error
+log (2, 1)  ValueError: math domain error
+log (2, -1)  complex -0.2206356001526516j
+log (2, 2)  complex (1+0j)
+log (2, 10)  complex (0.30102999566398114+0j)
+log (2, 0.5)  complex (-1-0j)
+log (2, 1j)  complex -0.4412712003053032j
+log (2, (-0-1j))  complex (-0+0.4412712003053032j)
+log (2, (1+1j))  complex (0.32596797216345985-0.7387021222729507j)
+log (2, (-2.5+3j))  complex (0.13511768592394924-0.22470534817853405j)
+log (2, 0j)  ValueError: math domain error
+log (2, (-0+0j))  ValueError: math domain error
+log (2, -0j)  ValueError: math domain error
+log (2, (-0-0j))  ValueError: math domain error
+log (2, inf)  complex 0j
+log (2, -inf)  complex 0j
+log (2, nan)  complex (nan+nanj)
+log (2, (inf+infj))  complex 0j
+log (2, (nan+infj))  complex 0j
+log (2, infj)  complex 0j
+log (2, 1e+308)  complex (0.000977370115792147+0j)
+log (2, 1e-308)  complex (-0.0009773701157921467-0j)
+log (2, (1e+308+1e+308j))  complex (0.0009768915259847956-1.0813284689232996e-06j)
+log (2, 5e-324)  complex (-0.0009310986964618248-0j)
+log (2, 2.718281828459045)  complex (0.6931471805599453+0j)
+log (2, 100)  complex (0.15051499783199057+0j)
+log (10, 0)  ValueError: math domain error
+log (10, 1)  ValueError: math domain error
+log (10, -1)  complex -0.7329355988794278j
+log (10, 2)  complex (3.3219280948873626+0j)
+log (10, 10)  complex (1+0j)
+log (10, 0.5)  complex (-3.3219280948873626-0j)
+log (10, 1j)  complex -1.4658711977588557j
+log (10, (-0-1j))  complex (-0+1.4658711977588557j)
+log (10, (1+1j))  complex (1.0828421647632591-2.4539153337314352j)
+log (10, (-2.5+3j))  complex (0.44885123698693374-0.7464550091857192j)
+log (10, 0j)  ValueError: math domain error
+log (10, (-0+0j))  ValueError: math domain error
+log (10, -0j)  ValueError: math domain error
+log (10, (-0-0j))  ValueError: math domain error
+log (10, inf)  complex 0j
+log (10, -inf)  complex 0j
+log (10, nan)  complex (nan+nanj)
+log (10, (inf+infj))  complex 0j
+log (10, (nan+infj))  complex 0j
+log (10, infj)  complex 0j
+log (10, 1e+308)  complex (0.0032467532467532474+0j)
+log (10, 1e-308)  complex (-0.003246753246753247-0j)
+log (10, (1e+308+1e+308j))  complex (0.0032451634058262807-3.5920954207178454e-06j)
+log (10, 5e-324)  complex (-0.003093042918889537-0j)
+log (10, 2.718281828459045)  complex (2.302585092994046+0j)
+log (10, 100)  complex (0.5+0j)
+log (0.5, 0)  ValueError: math domain error
+log (0.5, 1)  ValueError: math domain error
+log (0.5, -1)  complex 0.2206356001526516j
+log (0.5, 2)  complex (-1+0j)
+log (0.5, 10)  complex (-0.30102999566398114+0j)
+log (0.5, 0.5)  complex (1-0j)
+log (0.5, 1j)  complex 0.4412712003053032j
+log (0.5, (-0-1j))  complex (-0-0.4412712003053032j)
+log (0.5, (1+1j))  complex (-0.32596797216345985+0.7387021222729507j)
+log (0.5, (-2.5+3j))  complex (-0.13511768592394924+0.22470534817853405j)
+log (0.5, 0j)  ValueError: math domain error
+log (0.5, (-0+0j))  ValueError: math domain error
+log (0.5, -0j)  ValueError: math domain error
+log (0.5, (-0-0j))  ValueError: math domain error
+log (0.5, inf)  complex (-0+0j)
+log (0.5, -inf)  complex (-0+0j)
+log (0.5, nan)  complex (nan+nanj)
+log (0.5, (inf+infj))  complex (-0+0j)
+log (0.5, (nan+infj))  complex (-0+0j)
+log (0.5, infj)  complex (-0+0j)
+log (0.5, 1e+308)  complex (-0.000977370115792147+0j)
+log (0.5, 1e-308)  complex (0.0009773701157921467-0j)
+log (0.5, (1e+308+1e+308j))  complex (-0.0009768915259847956+1.0813284689232996e-06j)
+log (0.5, 5e-324)  complex (0.0009310986964618248-0j)
+log (0.5, 2.718281828459045)  complex (-0.6931471805599453+0j)
+log (0.5, 100)  complex (-0.15051499783199057+0j)
+log (1j, 0)  ValueError: math domain error
+log (1j, 1)  ValueError: math domain error
+log (1j, -1)  complex (0.5+0j)
+log (1j, 2)  complex 2.266180070913597j
+log (1j, 10)  complex 0.6821881769209206j
+log (1j, 0.5)  complex (-0-2.266180070913597j)
+log (1j, 1j)  complex (1+0j)
+log (1j, (-0-1j))  complex (-1+0j)
+log (1j, (1+1j))  complex (1.6740320278365401+0.7387021222729507j)
+log (1j, (-2.5+3j))  complex (0.5092227818698948+0.3062010070688164j)
+log (1j, 0j)  ValueError: math domain error
+log (1j, (-0+0j))  ValueError: math domain error
+log (1j, -0j)  ValueError: math domain error
+log (1j, (-0-0j))  ValueError: math domain error
+log (1j, inf)  complex 0j
+log (1j, -inf)  complex 0j
+log (1j, nan)  complex (nan+nanj)
+log (1j, (inf+infj))  complex 0j
+log (1j, (nan+infj))  complex 0j
+log (1j, infj)  complex 0j
+log (1j, 1e+308)  complex 0.002214896678314678j
+log (1j, 1e-308)  complex (-0-0.0022148966783146775j)
+log (1j, (1e+308+1e+308j))  complex (2.4504850263854946e-06+0.002213812107631116j)
+log (1j, 5e-324)  complex (-0-0.002110037309975416j)
+log (1j, 2.718281828459045)  complex 1.5707963267948966j
+log (1j, 100)  complex 0.3410940884604603j
+log ((-0-1j), 0)  ValueError: math domain error
+log ((-0-1j), 1)  ValueError: math domain error
+log ((-0-1j), -1)  complex (-0.5-0j)
+log ((-0-1j), 2)  complex -2.266180070913597j
+log ((-0-1j), 10)  complex -0.6821881769209206j
+log ((-0-1j), 0.5)  complex (-0+2.266180070913597j)
+log ((-0-1j), 1j)  complex (-1-0j)
+log ((-0-1j), (-0-1j))  complex (1-0j)
+log ((-0-1j), (1+1j))  complex (-1.6740320278365401-0.7387021222729507j)
+log ((-0-1j), (-2.5+3j))  complex (-0.5092227818698948-0.3062010070688164j)
+log ((-0-1j), 0j)  ValueError: math domain error
+log ((-0-1j), (-0+0j))  ValueError: math domain error
+log ((-0-1j), -0j)  ValueError: math domain error
+log ((-0-1j), (-0-0j))  ValueError: math domain error
+log ((-0-1j), inf)  complex -0j
+log ((-0-1j), -inf)  complex -0j
+log ((-0-1j), nan)  complex (nan+nanj)
+log ((-0-1j), (inf+infj))  complex -0j
+log ((-0-1j), (nan+infj))  complex -0j
+log ((-0-1j), infj)  complex -0j
+log ((-0-1j), 1e+308)  complex -0.002214896678314678j
+log ((-0-1j), 1e-308)  complex (-0+0.0022148966783146775j)
+log ((-0-1j), (1e+308+1e+308j))  complex (-2.4504850263854946e-06-0.002213812107631116j)
+log ((-0-1j), 5e-324)  complex (-0+0.002110037309975416j)
+log ((-0-1j), 2.718281828459045)  complex -1.5707963267948966j
+log ((-0-1j), 100)  complex -0.3410940884604603j
+log ((1+1j), 0)  ValueError: math domain error
+log ((1+1j), 1)  ValueError: math domain error
+log ((1+1j), -1)  complex (0.25-0.1103178000763258j)
+log ((1+1j), 2)  complex (0.5+1.1330900354567985j)
+log ((1+1j), 10)  complex (0.15051499783199057+0.3410940884604603j)
+log ((1+1j), 0.5)  complex (-0.5-1.1330900354567985j)
+log ((1+1j), 1j)  complex (0.5-0.2206356001526516j)
+log ((1+1j), (-0-1j))  complex (-0.5+0.2206356001526516j)
+log ((1+1j), (1+1j))  complex (1+0j)
+log ((1+1j), (-2.5+3j))  complex (0.322170233896922+0.04074782944514118j)
+log ((1+1j), 0j)  ValueError: math domain error
+log ((1+1j), (-0+0j))  ValueError: math domain error
+log ((1+1j), -0j)  ValueError: math domain error
+log ((1+1j), (-0-0j))  ValueError: math domain error
+log ((1+1j), inf)  complex 0j
+log ((1+1j), -inf)  complex 0j
+log ((1+1j), nan)  complex (nan+nanj)
+log ((1+1j), (inf+infj))  complex 0j
+log ((1+1j), (nan+infj))  complex 0j
+log ((1+1j), infj)  complex 0j
+log ((1+1j), 1e+308)  complex (0.0004886850578960734+0.001107448339157339j)
+log ((1+1j), 1e-308)  complex (-0.0004886850578960733-0.0011074483391573387j)
+log ((1+1j), (1e+308+1e+308j))  complex (0.0004896710055055906+0.0011063653895810963j)
+log ((1+1j), 5e-324)  complex (-0.0004655493482309124-0.001055018654987708j)
+log ((1+1j), 2.718281828459045)  complex (0.34657359027997264+0.7853981633974483j)
+log ((1+1j), 100)  complex (0.07525749891599529+0.17054704423023015j)
+log ((-2.5+3j), 0)  ValueError: math domain error
+log ((-2.5+3j), 1)  ValueError: math domain error
+log ((-2.5+3j), -1)  complex (0.7211420616236955-0.43363029575781165j)
+log ((-2.5+3j), 2)  complex (1.9653686687814431+3.268475536698328j)
+log ((-2.5+3j), 10)  complex (0.5916349218414022+0.9839091766401261j)
+log ((-2.5+3j), 0.5)  complex (-1.9653686687814431-3.268475536698328j)
+log ((-2.5+3j), 1j)  complex (1.442284123247391-0.8672605915156233j)
+log ((-2.5+3j), (-0-1j))  complex (-1.442284123247391+0.8672605915156233j)
+log ((-2.5+3j), (1+1j))  complex (3.0550770550725623-0.3864036639141862j)
+log ((-2.5+3j), (-2.5+3j))  complex (1+0j)
+log ((-2.5+3j), 0j)  ValueError: math domain error
+log ((-2.5+3j), (-0+0j))  ValueError: math domain error
+log ((-2.5+3j), -0j)  ValueError: math domain error
+log ((-2.5+3j), (-0-0j))  ValueError: math domain error
+log ((-2.5+3j), inf)  complex 0j
+log ((-2.5+3j), -inf)  complex 0j
+log ((-2.5+3j), nan)  complex (nan+nanj)
+log ((-2.5+3j), (inf+infj))  complex 0j
+log ((-2.5+3j), (nan+infj))  complex 0j
+log ((-2.5+3j), infj)  complex 0j
+log ((-2.5+3j), 1e+308)  complex (0.0019208926033811766+0.003194510313766644j)
+log ((-2.5+3j), 1e-308)  complex (-0.0019208926033811762-0.0031945103137666435j)
+log ((-2.5+3j), (1e+308+1e+308j))  complex (0.0019234862936164216+0.00319082084559572j)
+log ((-2.5+3j), 5e-324)  complex (-0.0018299522055693137-0.0030432733116371766j)
+log ((-2.5+3j), 2.718281828459045)  complex (1.3622897515267103+2.2655346029916j)
+log ((-2.5+3j), 100)  complex (0.2958174609207011+0.49195458832006306j)
+log (0j, 0)  ValueError: math domain error
+log (0j, 1)  ValueError: math domain error
+log (0j, -1)  complex (nan+infj)
+log (0j, 2)  complex (-inf+nanj)
+log (0j, 10)  complex (-inf+nanj)
+log (0j, 0.5)  complex (inf+nanj)
+log (0j, 1j)  complex (nan+infj)
+log (0j, (-0-1j))  complex (nan-infj)
+log (0j, (1+1j))  complex (-inf+infj)
+log (0j, (-2.5+3j))  complex (-inf+infj)
+log (0j, 0j)  ValueError: math domain error
+log (0j, (-0+0j))  ValueError: math domain error
+log (0j, -0j)  ValueError: math domain error
+log (0j, (-0-0j))  ValueError: math domain error
+log (0j, inf)  complex (nan+nanj)
+log (0j, -inf)  complex (nan+nanj)
+log (0j, nan)  complex (nan+nanj)
+log (0j, (inf+infj))  complex (nan+nanj)
+log (0j, (nan+infj))  complex (nan+nanj)
+log (0j, infj)  complex (nan+nanj)
+log (0j, 1e+308)  complex (-inf+nanj)
+log (0j, 1e-308)  complex (inf+nanj)
+log (0j, (1e+308+1e+308j))  complex (-inf+infj)
+log (0j, 5e-324)  complex (inf+nanj)
+log (0j, 2.718281828459045)  complex (-inf+nanj)
+log (0j, 100)  complex (-inf+nanj)
+log ((-0+0j), 0)  ValueError: math domain error
+log ((-0+0j), 1)  ValueError: math domain error
+log ((-0+0j), -1)  complex (nan+infj)
+log ((-0+0j), 2)  complex (-inf+nanj)
+log ((-0+0j), 10)  complex (-inf+nanj)
+log ((-0+0j), 0.5)  complex (inf+nanj)
+log ((-0+0j), 1j)  complex (nan+infj)
+log ((-0+0j), (-0-1j))  complex (nan-infj)
+log ((-0+0j), (1+1j))  complex (-inf+infj)
+log ((-0+0j), (-2.5+3j))  complex (-inf+infj)
+log ((-0+0j), 0j)  ValueError: math domain error
+log ((-0+0j), (-0+0j))  ValueError: math domain error
+log ((-0+0j), -0j)  ValueError: math domain error
+log ((-0+0j), (-0-0j))  ValueError: math domain error
+log ((-0+0j), inf)  complex (nan+nanj)
+log ((-0+0j), -inf)  complex (nan+nanj)
+log ((-0+0j), nan)  complex (nan+nanj)
+log ((-0+0j), (inf+infj))  complex (nan+nanj)
+log ((-0+0j), (nan+infj))  complex (nan+nanj)
+log ((-0+0j), infj)  complex (nan+nanj)
+log ((-0+0j), 1e+308)  complex (-inf+nanj)
+log ((-0+0j), 1e-308)  complex (inf+nanj)
+log ((-0+0j), (1e+308+1e+308j))  complex (-inf+infj)
+log ((-0+0j), 5e-324)  complex (inf+nanj)
+log ((-0+0j), 2.718281828459045)  complex (-inf+nanj)
+log ((-0+0j), 100)  complex (-inf+nanj)
+log (-0j, 0)  ValueError: math domain error
+log (-0j, 1)  ValueError: math domain error
+log (-0j, -1)  complex (nan+infj)
+log (-0j, 2)  complex (-inf+nanj)
+log (-0j, 10)  complex (-inf+nanj)
+log (-0j, 0.5)  complex (inf+nanj)
+log (-0j, 1j)  complex (nan+infj)
+log (-0j, (-0-1j))  complex (nan-infj)
+log (-0j, (1+1j))  complex (-inf+infj)
+log (-0j, (-2.5+3j))  complex (-inf+infj)
+log (-0j, 0j)  ValueError: math domain error
+log (-0j, (-0+0j))  ValueError: math domain error
+log (-0j, -0j)  ValueError: math domain error
+log (-0j, (-0-0j))  ValueError: math domain error
+log (-0j, inf)  complex (nan+nanj)
+log (-0j, -inf)  complex (nan+nanj)
+log (-0j, nan)  complex (nan+nanj)
+log (-0j, (inf+infj))  complex (nan+nanj)
+log (-0j, (nan+infj))  complex (nan+nanj)
+log (-0j, infj)  complex (nan+nanj)
+log (-0j, 1e+308)  complex (-inf+nanj)
+log (-0j, 1e-308)  complex (inf+nanj)
+log (-0j, (1e+308+1e+308j))  complex (-inf+infj)
+log (-0j, 5e-324)  complex (inf+nanj)
+log (-0j, 2.718281828459045)  complex (-inf+nanj)
+log (-0j, 100)  complex (-inf+nanj)
+log ((-0-0j), 0)  ValueError: math domain error
+log ((-0-0j), 1)  ValueError: math domain error
+log ((-0-0j), -1)  complex (nan+infj)
+log ((-0-0j), 2)  complex (-inf+nanj)
+log ((-0-0j), 10)  complex (-inf+nanj)
+log ((-0-0j), 0.5)  complex (inf+nanj)
+log ((-0-0j), 1j)  complex (nan+infj)
+log ((-0-0j), (-0-1j))  complex (nan-infj)
+log ((-0-0j), (1+1j))  complex (-inf+infj)
+log ((-0-0j), (-2.5+3j))  complex (-inf+infj)
+log ((-0-0j), 0j)  ValueError: math domain error
+log ((-0-0j), (-0+0j))  ValueError: math domain error
+log ((-0-0j), -0j)  ValueError: math domain error
+log ((-0-0j), (-0-0j))  ValueError: math domain error
+log ((-0-0j), inf)  complex (nan+nanj)
+log ((-0-0j), -inf)  complex (nan+nanj)
+log ((-0-0j), nan)  complex (nan+nanj)
+log ((-0-0j), (inf+infj))  complex (nan+nanj)
+log ((-0-0j), (nan+infj))  complex (nan+nanj)
+log ((-0-0j), infj)  complex (nan+nanj)
+log ((-0-0j), 1e+308)  complex (-inf+nanj)
+log ((-0-0j), 1e-308)  complex (inf+nanj)
+log ((-0-0j), (1e+308+1e+308j))  complex (-inf+infj)
+log ((-0-0j), 5e-324)  complex (inf+nanj)
+log ((-0-0j), 2.718281828459045)  complex (-inf+nanj)
+log ((-0-0j), 100)  complex (-inf+nanj)
+log (inf, 0)  ValueError: math domain error
+log (inf, 1)  ValueError: math domain error
+log (inf, -1)  complex (nan-infj)
+log (inf, 2)  complex (inf+nanj)
+log (inf, 10)  complex (inf+nanj)
+log (inf, 0.5)  complex (-inf+nanj)
+log (inf, 1j)  complex (nan-infj)
+log (inf, (-0-1j))  complex (nan+infj)
+log (inf, (1+1j))  complex (inf-infj)
+log (inf, (-2.5+3j))  complex (inf-infj)
+log (inf, 0j)  ValueError: math domain error
+log (inf, (-0+0j))  ValueError: math domain error
+log (inf, -0j)  ValueError: math domain error
+log (inf, (-0-0j))  ValueError: math domain error
+log (inf, inf)  complex (nan+nanj)
+log (inf, -inf)  complex (nan+nanj)
+log (inf, nan)  complex (nan+nanj)
+log (inf, (inf+infj))  complex (nan+nanj)
+log (inf, (nan+infj))  complex (nan+nanj)
+log (inf, infj)  complex (nan+nanj)
+log (inf, 1e+308)  complex (inf+nanj)
+log (inf, 1e-308)  complex (-inf+nanj)
+log (inf, (1e+308+1e+308j))  complex (inf-infj)
+log (inf, 5e-324)  complex (-inf+nanj)
+log (inf, 2.718281828459045)  complex (inf+nanj)
+log (inf, 100)  complex (inf+nanj)
+log (-inf, 0)  ValueError: math domain error
+log (-inf, 1)  ValueError: math domain error
+log (-inf, -1)  complex (nan-infj)
+log (-inf, 2)  complex (inf+nanj)
+log (-inf, 10)  complex (inf+nanj)
+log (-inf, 0.5)  complex (-inf+nanj)
+log (-inf, 1j)  complex (nan-infj)
+log (-inf, (-0-1j))  complex (nan+infj)
+log (-inf, (1+1j))  complex (inf-infj)
+log (-inf, (-2.5+3j))  complex (inf-infj)
+log (-inf, 0j)  ValueError: math domain error
+log (-inf, (-0+0j))  ValueError: math domain error
+log (-inf, -0j)  ValueError: math domain error
+log (-inf, (-0-0j))  ValueError: math domain error
+log (-inf, inf)  complex (nan+nanj)
+log (-inf, -inf)  complex (nan+nanj)
+log (-inf, nan)  complex (nan+nanj)
+log (-inf, (inf+infj))  complex (nan+nanj)
+log (-inf, (nan+infj))  complex (nan+nanj)
+log (-inf, infj)  complex (nan+nanj)
+log (-inf, 1e+308)  complex (inf+nanj)
+log (-inf, 1e-308)  complex (-inf+nanj)
+log (-inf, (1e+308+1e+308j))  complex (inf-infj)
+log (-inf, 5e-324)  complex (-inf+nanj)
+log (-inf, 2.718281828459045)  complex (inf+nanj)
+log (-inf, 100)  complex (inf+nanj)
+log (nan, 0)  ValueError: math domain error
+log (nan, 1)  ValueError: math domain error
+log (nan, -1)  complex (nan+nanj)
+log (nan, 2)  complex (nan+nanj)
+log (nan, 10)  complex (nan+nanj)
+log (nan, 0.5)  complex (nan+nanj)
+log (nan, 1j)  complex (nan+nanj)
+log (nan, (-0-1j))  complex (nan+nanj)
+log (nan, (1+1j))  complex (nan+nanj)
+log (nan, (-2.5+3j))  complex (nan+nanj)
+log (nan, 0j)  ValueError: math domain error
+log (nan, (-0+0j))  ValueError: math domain error
+log (nan, -0j)  ValueError: math domain error
+log (nan, (-0-0j))  ValueError: math domain error
+log (nan, inf)  complex (nan+nanj)
+log (nan, -inf)  complex (nan+nanj)
+log (nan, nan)  complex (nan+nanj)
+log (nan, (inf+infj))  complex (nan+nanj)
+log (nan, (nan+infj))  complex (nan+nanj)
+log (nan, infj)  complex (nan+nanj)
+log (nan, 1e+308)  complex (nan+nanj)
+log (nan, 1e-308)  complex (nan+nanj)
+log (nan, (1e+308+1e+308j))  complex (nan+nanj)
+log (nan, 5e-324)  complex (nan+nanj)
+log (nan, 2.718281828459045)  complex (nan+nanj)
+log (nan, 100)  complex (nan+nanj)
+log ((inf+infj), 0)  ValueError: math domain error
+log ((inf+infj), 1)  ValueError: math domain error
+log ((inf+infj), -1)  complex (nan-infj)
+log ((inf+infj), 2)  complex (inf+nanj)
+log ((inf+infj), 10)  complex (inf+nanj)
+log ((inf+infj), 0.5)  complex (-inf+nanj)
+log ((inf+infj), 1j)  complex (nan-infj)
+log ((inf+infj), (-0-1j))  complex (nan+infj)
+log ((inf+infj), (1+1j))  complex (inf-infj)
+log ((inf+infj), (-2.5+3j))  complex (inf-infj)
+log ((inf+infj), 0j)  ValueError: math domain error
+log ((inf+infj), (-0+0j))  ValueError: math domain error
+log ((inf+infj), -0j)  ValueError: math domain error
+log ((inf+infj), (-0-0j))  ValueError: math domain error
+log ((inf+infj), inf)  complex (nan+nanj)
+log ((inf+infj), -inf)  complex (nan+nanj)
+log ((inf+infj), nan)  complex (nan+nanj)
+log ((inf+infj), (inf+infj))  complex (nan+nanj)
+log ((inf+infj), (nan+infj))  complex (nan+nanj)
+log ((inf+infj), infj)  complex (nan+nanj)
+log ((inf+infj), 1e+308)  complex (inf+nanj)
+log ((inf+infj), 1e-308)  complex (-inf+nanj)
+log ((inf+infj), (1e+308+1e+308j))  complex (inf-infj)
+log ((inf+infj), 5e-324)  complex (-inf+nanj)
+log ((inf+infj), 2.718281828459045)  complex (inf+nanj)
+log ((inf+infj), 100)  complex (inf+nanj)
+log ((nan+infj), 0)  ValueError: math domain error
+log ((nan+infj), 1)  ValueError: math domain error
+log ((nan+infj), -1)  complex (nan-infj)
+log ((nan+infj), 2)  complex (inf+nanj)
+log ((nan+infj), 10)  complex (inf+nanj)
+log ((nan+infj), 0.5)  complex (-inf+nanj)
+log ((nan+infj), 1j)  complex (nan-infj)
+log ((nan+infj), (-0-1j))  complex (nan+infj)
+log ((nan+infj), (1+1j))  complex (inf-infj)
+log ((nan+infj), (-2.5+3j))  complex (inf-infj)
+log ((nan+infj), 0j)  ValueError: math domain error
+log ((nan+infj), (-0+0j))  ValueError: math domain error
+log ((nan+infj), -0j)  ValueError: math domain error
+log ((nan+infj), (-0-0j))  ValueError: math domain error
+log ((nan+infj), inf)  complex (nan+nanj)
+log ((nan+infj), -inf)  complex (nan+nanj)
+log ((nan+infj), nan)  complex (nan+nanj)
+log ((nan+infj), (inf+infj))  complex (nan+nanj)
+log ((nan+infj), (nan+infj))  complex (nan+nanj)
+log ((nan+infj), infj)  complex (nan+nanj)
+log ((nan+infj), 1e+308)  complex (inf+nanj)
+log ((nan+infj), 1e-308)  complex (-inf+nanj)
+log ((nan+infj), (1e+308+1e+308j))  complex (inf-infj)
+log ((nan+infj), 5e-324)  complex (-inf+nanj)
+log ((nan+infj), 2.718281828459045)  complex (inf+nanj)
+log ((nan+infj), 100)  complex (inf+nanj)
+log (infj, 0)  ValueError: math domain error
+log (infj, 1)  ValueError: math domain error
+log (infj, -1)  complex (nan-infj)
+log (infj, 2)  complex (inf+nanj)
+log (infj, 10)  complex (inf+nanj)
+log (infj, 0.5)  complex (-inf+nanj)
+log (infj, 1j)  complex (nan-infj)
+log (infj, (-0-1j))  complex (nan+infj)
+log (infj, (1+1j))  complex (inf-infj)
+log (infj, (-2.5+3j))  complex (inf-infj)
+log (infj, 0j)  ValueError: math domain error
+log (infj, (-0+0j))  ValueError: math domain error
+log (infj, -0j)  ValueError: math domain error
+log (infj, (-0-0j))  ValueError: math domain error
+log (infj, inf)  complex (nan+nanj)
+log (infj, -inf)  complex (nan+nanj)
+log (infj, nan)  complex (nan+nanj)
+log (infj, (inf+infj))  complex (nan+nanj)
+log (infj, (nan+infj))  complex (nan+nanj)
+log (infj, infj)  complex (nan+nanj)
+log (infj, 1e+308)  complex (inf+nanj)
+log (infj, 1e-308)  complex (-inf+nanj)
+log (infj, (1e+308+1e+308j))  complex (inf-infj)
+log (infj, 5e-324)  complex (-inf+nanj)
+log (infj, 2.718281828459045)  complex (inf+nanj)
+log (infj, 100)  complex (inf+nanj)
+log (1e+308, 0)  ValueError: math domain error
+log (1e+308, 1)  ValueError: math domain error
+log (1e+308, -1)  complex -225.74416445486372j
+log (1e+308, 2)  complex (1023.1538532253074+0j)
+log (1e+308, 10)  complex (307.99999999999994+0j)
+log (1e+308, 0.5)  complex (-1023.1538532253074-0j)
+log (1e+308, 1j)  complex -451.48832890972744j
+log (1e+308, (-0-1j))  complex (-0+451.48832890972744j)
+log (1e+308, (1+1j))  complex (333.5153867470837-755.8059227892818j)
+log (1e+308, (-2.5+3j))  complex (138.24618099197556-229.90814282920144j)
+log (1e+308, 0j)  ValueError: math domain error
+log (1e+308, (-0+0j))  ValueError: math domain error
+log (1e+308, -0j)  ValueError: math domain error
+log (1e+308, (-0-0j))  ValueError: math domain error
+log (1e+308, inf)  complex 0j
+log (1e+308, -inf)  complex 0j
+log (1e+308, nan)  complex (nan+nanj)
+log (1e+308, (inf+infj))  complex 0j
+log (1e+308, (nan+infj))  complex 0j
+log (1e+308, infj)  complex 0j
+log (1e+308, 1e+308)  complex (1+0j)
+log (1e+308, 1e-308)  complex (-0.9999999999999999-0j)
+log (1e+308, (1e+308+1e+308j))  complex (0.9995103289944942-0.0011063653895810963j)
+log (1e+308, 5e-324)  complex (-0.9526572190179771-0j)
+log (1e+308, 2.718281828459045)  complex (709.196208642166+0j)
+log (1e+308, 100)  complex (153.99999999999997+0j)
+log (1e-308, 0)  ValueError: math domain error
+log (1e-308, 1)  ValueError: math domain error
+log (1e-308, -1)  complex 225.74416445486375j
+log (1e-308, 2)  complex (-1023.1538532253077+0j)
+log (1e-308, 10)  complex (-308+0j)
+log (1e-308, 0.5)  complex (1023.1538532253077-0j)
+log (1e-308, 1j)  complex 451.4883289097275j
+log (1e-308, (-0-1j))  complex (-0-451.4883289097275j)
+log (1e-308, (1+1j))  complex (-333.51538674708377+755.8059227892819j)
+log (1e-308, (-2.5+3j))  complex (-138.24618099197556+229.90814282920147j)
+log (1e-308, 0j)  ValueError: math domain error
+log (1e-308, (-0+0j))  ValueError: math domain error
+log (1e-308, -0j)  ValueError: math domain error
+log (1e-308, (-0-0j))  ValueError: math domain error
+log (1e-308, inf)  complex (-0+0j)
+log (1e-308, -inf)  complex (-0+0j)
+log (1e-308, nan)  complex (nan+nanj)
+log (1e-308, (inf+infj))  complex (-0+0j)
+log (1e-308, (nan+infj))  complex (-0+0j)
+log (1e-308, infj)  complex (-0+0j)
+log (1e-308, 1e+308)  complex (-1.0000000000000002+0j)
+log (1e-308, 1e-308)  complex (1-0j)
+log (1e-308, (1e+308+1e+308j))  complex (-0.9995103289944944+0.0011063653895810965j)
+log (1e-308, 5e-324)  complex (0.9526572190179772-0j)
+log (1e-308, 2.718281828459045)  complex (-709.1962086421661+0j)
+log (1e-308, 100)  complex (-154+0j)
+log ((1e+308+1e+308j), 0)  ValueError: math domain error
+log ((1e+308+1e+308j), 1)  ValueError: math domain error
+log ((1e+308+1e+308j), -1)  complex (0.25-225.85448225494008j)
+log ((1e+308+1e+308j), 2)  complex (1023.6538532253077+1.1330900354567985j)
+log ((1e+308+1e+308j), 10)  complex (308.150514997832+0.3410940884604603j)
+log ((1e+308+1e+308j), 0.5)  complex (-1023.6538532253077-1.1330900354567985j)
+log ((1e+308+1e+308j), 1j)  complex (0.5-451.70896450988016j)
+log ((1e+308+1e+308j), (-0-1j))  complex (-0.5+451.70896450988016j)
+log ((1e+308+1e+308j), (1+1j))  complex (334.51538674708377-755.8059227892819j)
+log ((1e+308+1e+308j), (-2.5+3j))  complex (138.5683512258725-229.86739499975633j)
+log ((1e+308+1e+308j), 0j)  ValueError: math domain error
+log ((1e+308+1e+308j), (-0+0j))  ValueError: math domain error
+log ((1e+308+1e+308j), -0j)  ValueError: math domain error
+log ((1e+308+1e+308j), (-0-0j))  ValueError: math domain error
+log ((1e+308+1e+308j), inf)  complex 0j
+log ((1e+308+1e+308j), -inf)  complex 0j
+log ((1e+308+1e+308j), nan)  complex (nan+nanj)
+log ((1e+308+1e+308j), (inf+infj))  complex 0j
+log ((1e+308+1e+308j), (nan+infj))  complex 0j
+log ((1e+308+1e+308j), infj)  complex 0j
+log ((1e+308+1e+308j), 1e+308)  complex (1.0004886850578962+0.001107448339157339j)
+log ((1e+308+1e+308j), 1e-308)  complex (-1.000488685057896-0.0011074483391573387j)
+log ((1e+308+1e+308j), (1e+308+1e+308j))  complex (1+0j)
+log ((1e+308+1e+308j), 5e-324)  complex (-0.9531227683662081-0.001055018654987708j)
+log ((1e+308+1e+308j), 2.718281828459045)  complex (709.542782232446+0.7853981633974483j)
+log ((1e+308+1e+308j), 100)  complex (154.075257498916+0.17054704423023015j)
+log (5e-324, 0)  ValueError: math domain error
+log (5e-324, 1)  ValueError: math domain error
+log (5e-324, -1)  complex 236.96263456394783j
+log (5e-324, 2)  complex (-1074.0000000000002+0j)
+log (5e-324, 10)  complex (-323.3062153431158+0j)
+log (5e-324, 0.5)  complex (1074.0000000000002-0j)
+log (5e-324, 1j)  complex 473.92526912789566j
+log (5e-324, (-0-1j))  complex (-0-473.92526912789566j)
+log (5e-324, (1+1j))  complex (-350.0896021035559+793.3660793211492j)
+log (5e-324, (-2.5+3j))  complex (-145.1163946823215+241.33354394374558j)
+log (5e-324, 0j)  ValueError: math domain error
+log (5e-324, (-0+0j))  ValueError: math domain error
+log (5e-324, -0j)  ValueError: math domain error
+log (5e-324, (-0-0j))  ValueError: math domain error
+log (5e-324, inf)  complex (-0+0j)
+log (5e-324, -inf)  complex (-0+0j)
+log (5e-324, nan)  complex (nan+nanj)
+log (5e-324, (inf+infj))  complex (-0+0j)
+log (5e-324, (nan+infj))  complex (-0+0j)
+log (5e-324, infj)  complex (-0+0j)
+log (5e-324, 1e+308)  complex (-1.0496955043607659+0j)
+log (5e-324, 1e-308)  complex (1.0496955043607656-0j)
+log (5e-324, (1e+308+1e+308j))  complex (-1.0491814989076707+0.001161346775623624j)
+log (5e-324, 5e-324)  complex (1-0j)
+log (5e-324, 2.718281828459045)  complex (-744.4400719213813+0j)
+log (5e-324, 100)  complex (-161.6531076715579+0j)
+log (2.718281828459045, 0)  ValueError: math domain error
+log (2.718281828459045, 1)  ValueError: math domain error
+log (2.718281828459045, -1)  complex -0.3183098861837907j
+log (2.718281828459045, 2)  complex (1.4426950408889634+0j)
+log (2.718281828459045, 10)  complex (0.43429448190325176+0j)
+log (2.718281828459045, 0.5)  complex (-1.4426950408889634-0j)
+log (2.718281828459045, 1j)  complex -0.6366197723675814j
+log (2.718281828459045, (-0-1j))  complex (-0+0.6366197723675814j)
+log (2.718281828459045, (1+1j))  complex (0.4702723769288552-1.0657218884973387j)
+log (2.718281828459045, (-2.5+3j))  complex (0.19493361541887408-0.32418129147839897j)
+log (2.718281828459045, 0j)  ValueError: math domain error
+log (2.718281828459045, (-0+0j))  ValueError: math domain error
+log (2.718281828459045, -0j)  ValueError: math domain error
+log (2.718281828459045, (-0-0j))  ValueError: math domain error
+log (2.718281828459045, inf)  complex 0j
+log (2.718281828459045, -inf)  complex 0j
+log (2.718281828459045, nan)  complex (nan+nanj)
+log (2.718281828459045, (inf+infj))  complex 0j
+log (2.718281828459045, (nan+infj))  complex 0j
+log (2.718281828459045, infj)  complex 0j
+log (2.718281828459045, 1e+308)  complex (0.0014100470191664022+0j)
+log (2.718281828459045, 1e-308)  complex (-0.001410047019166402-0j)
+log (2.718281828459045, (1e+308+1e+308j))  complex (0.0014093565600247166-1.5600272196877002e-06j)
+log (2.718281828459045, 5e-324)  complex (-0.001343291471963653-0j)
+log (2.718281828459045, 2.718281828459045)  complex (1+0j)
+log (2.718281828459045, 100)  complex (0.21714724095162588+0j)
+log (100, 0)  ValueError: math domain error
+log (100, 1)  ValueError: math domain error
+log (100, -1)  complex -1.4658711977588557j
+log (100, 2)  complex (6.643856189774725+0j)
+log (100, 10)  complex (2+0j)
+log (100, 0.5)  complex (-6.643856189774725-0j)
+log (100, 1j)  complex -2.9317423955177113j
+log (100, (-0-1j))  complex (-0+2.9317423955177113j)
+log (100, (1+1j))  complex (2.1656843295265182-4.9078306674628704j)
+log (100, (-2.5+3j))  complex (0.8977024739738675-1.4929100183714383j)
+log (100, 0j)  ValueError: math domain error
+log (100, (-0+0j))  ValueError: math domain error
+log (100, -0j)  ValueError: math domain error
+log (100, (-0-0j))  ValueError: math domain error
+log (100, inf)  complex 0j
+log (100, -inf)  complex 0j
+log (100, nan)  complex (nan+nanj)
+log (100, (inf+infj))  complex 0j
+log (100, (nan+infj))  complex 0j
+log (100, infj)  complex 0j
+log (100, 1e+308)  complex (0.006493506493506495+0j)
+log (100, 1e-308)  complex (-0.006493506493506494-0j)
+log (100, (1e+308+1e+308j))  complex (0.006490326811652561-7.184190841435691e-06j)
+log (100, 5e-324)  complex (-0.006186085837779074-0j)
+log (100, 2.718281828459045)  complex (4.605170185988092+0j)
+log (100, 100)  complex (1+0j)
+sqrt (4,)  complex (2+0j)
+sqrt (-4,)  complex 2j
+sqrt (True,)  complex (1+0j)
+sqrt (4.0,)  complex (2+0j)
+sqrt (-4.0,)  complex 2j
+sqrt (4j,)  complex (1.4142135623730951+1.414213562373095j)
+sqrt (4j,)  complex (1.4142135623730951+1.414213562373095j)
+sqrt (4j,)  complex (1.4142135623730951+1.414213562373095j)
+sqrt (4.0,)  complex (2+0j)
+sqrt (Cx(4j),)  complex (1.4142135623730951+1.414213562373095j)
+sqrt (Cx((-4+0j)),)  complex 2j
+sqrt (Cx(4),)  TypeError: Cx.__complex__() must return a complex, not int
+sqrt (Cx(4.0),)  TypeError: Cx.__complex__() must return a complex, not float
+sqrt (Cx('a'),)  TypeError: Cx.__complex__() must return a complex, not str
+sqrt (Cx(None),)  TypeError: Cx.__complex__() must return a complex, not NoneType
+sqrt (Fl(4.0),)  complex (2+0j)
+sqrt (Fl(4),)  TypeError: Fl.__float__() must return a float, not int
+sqrt (Idx(4),)  complex (2+0j)
+sqrt (Idx('huge'),)  OverflowError: int too large to convert to float
+sqrt (All(),)  complex (1.4142135623730951+1.414213562373095j)
+sqrt (Raises(),)  KeyError: 'complex'
+sqrt (NoneMethod(),)  TypeError: 'NoneType' object is not callable
+sqrt (Inst(),)  TypeError: must be real number, not Inst
+sqrt (10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,)  OverflowError: int too large to convert to float
+sqrt (-10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,)  OverflowError: int too large to convert to float
+sqrt (89884656743115795386465259539451236680898848947115328636715040578866337902750481566354238661203768010560056939935696678829394884407208311246423715319737062188883946712432742638151109800623047059726541476042502884419075341171231440736956555270413618581675255342293149119973622969239858152417678164812112068608,)  complex (9.480751908109177e+153+0j)
+sqrt ('a',)  TypeError: must be real number, not str
+sqrt (b'a',)  TypeError: must be real number, not bytes
+sqrt (None,)  TypeError: must be real number, not NoneType
+sqrt ([],)  TypeError: must be real number, not list
+sqrt ((),)  TypeError: must be real number, not tuple
+sqrt (<class 'object'>,)  TypeError: must be real number, not type
+sqrt ('4',)  TypeError: must be real number, not str
+sqrt ('4j',)  TypeError: must be real number, not str
+exp (4,)  complex (54.598150033144236+0j)
+exp (-4,)  complex (0.01831563888873418+0j)
+exp (True,)  complex (2.718281828459045+0j)
+exp (4.0,)  complex (54.598150033144236+0j)
+exp (-4.0,)  complex (0.01831563888873418+0j)
+exp (4j,)  complex (-0.6536436208636119-0.7568024953079282j)
+exp (4j,)  complex (-0.6536436208636119-0.7568024953079282j)
+exp (4j,)  complex (-0.6536436208636119-0.7568024953079282j)
+exp (4.0,)  complex (54.598150033144236+0j)
+exp (Cx(4j),)  complex (-0.6536436208636119-0.7568024953079282j)
+exp (Cx((-4+0j)),)  complex (0.01831563888873418+0j)
+exp (Cx(4),)  TypeError: Cx.__complex__() must return a complex, not int
+exp (Cx(4.0),)  TypeError: Cx.__complex__() must return a complex, not float
+exp (Cx('a'),)  TypeError: Cx.__complex__() must return a complex, not str
+exp (Cx(None),)  TypeError: Cx.__complex__() must return a complex, not NoneType
+exp (Fl(4.0),)  complex (54.598150033144236+0j)
+exp (Fl(4),)  TypeError: Fl.__float__() must return a float, not int
+exp (Idx(4),)  complex (54.598150033144236+0j)
+exp (Idx('huge'),)  OverflowError: int too large to convert to float
+exp (All(),)  complex (-0.6536436208636119-0.7568024953079282j)
+exp (Raises(),)  KeyError: 'complex'
+exp (NoneMethod(),)  TypeError: 'NoneType' object is not callable
+exp (Inst(),)  TypeError: must be real number, not Inst
+exp (10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,)  OverflowError: int too large to convert to float
+exp (-10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,)  OverflowError: int too large to convert to float
+exp (89884656743115795386465259539451236680898848947115328636715040578866337902750481566354238661203768010560056939935696678829394884407208311246423715319737062188883946712432742638151109800623047059726541476042502884419075341171231440736956555270413618581675255342293149119973622969239858152417678164812112068608,)  OverflowError: math range error
+exp ('a',)  TypeError: must be real number, not str
+exp (b'a',)  TypeError: must be real number, not bytes
+exp (None,)  TypeError: must be real number, not NoneType
+exp ([],)  TypeError: must be real number, not list
+exp ((),)  TypeError: must be real number, not tuple
+exp (<class 'object'>,)  TypeError: must be real number, not type
+exp ('4',)  TypeError: must be real number, not str
+exp ('4j',)  TypeError: must be real number, not str
+log (4,)  complex (1.3862943611198906+0j)
+log (-4,)  complex (1.3862943611198906+3.141592653589793j)
+log (True,)  complex 0j
+log (4.0,)  complex (1.3862943611198906+0j)
+log (-4.0,)  complex (1.3862943611198906+3.141592653589793j)
+log (4j,)  complex (1.3862943611198906+1.5707963267948966j)
+log (4j,)  complex (1.3862943611198906+1.5707963267948966j)
+log (4j,)  complex (1.3862943611198906+1.5707963267948966j)
+log (4.0,)  complex (1.3862943611198906+0j)
+log (Cx(4j),)  complex (1.3862943611198906+1.5707963267948966j)
+log (Cx((-4+0j)),)  complex (1.3862943611198906+3.141592653589793j)
+log (Cx(4),)  TypeError: Cx.__complex__() must return a complex, not int
+log (Cx(4.0),)  TypeError: Cx.__complex__() must return a complex, not float
+log (Cx('a'),)  TypeError: Cx.__complex__() must return a complex, not str
+log (Cx(None),)  TypeError: Cx.__complex__() must return a complex, not NoneType
+log (Fl(4.0),)  complex (1.3862943611198906+0j)
+log (Fl(4),)  TypeError: Fl.__float__() must return a float, not int
+log (Idx(4),)  complex (1.3862943611198906+0j)
+log (Idx('huge'),)  OverflowError: int too large to convert to float
+log (All(),)  complex (1.3862943611198906+1.5707963267948966j)
+log (Raises(),)  KeyError: 'complex'
+log (NoneMethod(),)  TypeError: 'NoneType' object is not callable
+log (Inst(),)  TypeError: must be real number, not Inst
+log (10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,)  OverflowError: int too large to convert to float
+log (-10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,)  OverflowError: int too large to convert to float
+log (89884656743115795386465259539451236680898848947115328636715040578866337902750481566354238661203768010560056939935696678829394884407208311246423715319737062188883946712432742638151109800623047059726541476042502884419075341171231440736956555270413618581675255342293149119973622969239858152417678164812112068608,)  complex (709.089565712824+0j)
+log ('a',)  TypeError: must be real number, not str
+log (b'a',)  TypeError: must be real number, not bytes
+log (None,)  TypeError: must be real number, not NoneType
+log ([],)  TypeError: must be real number, not list
+log ((),)  TypeError: must be real number, not tuple
+log (<class 'object'>,)  TypeError: must be real number, not type
+log ('4',)  TypeError: must be real number, not str
+log ('4j',)  TypeError: must be real number, not str
+phase (4,)  float 0.0
+phase (-4,)  float 3.141592653589793
+phase (True,)  float 0.0
+phase (4.0,)  float 0.0
+phase (-4.0,)  float 3.141592653589793
+phase (4j,)  float 1.5707963267948966
+phase (4j,)  float 1.5707963267948966
+phase (4j,)  float 1.5707963267948966
+phase (4.0,)  float 0.0
+phase (Cx(4j),)  float 1.5707963267948966
+phase (Cx((-4+0j)),)  float 3.141592653589793
+phase (Cx(4),)  TypeError: Cx.__complex__() must return a complex, not int
+phase (Cx(4.0),)  TypeError: Cx.__complex__() must return a complex, not float
+phase (Cx('a'),)  TypeError: Cx.__complex__() must return a complex, not str
+phase (Cx(None),)  TypeError: Cx.__complex__() must return a complex, not NoneType
+phase (Fl(4.0),)  float 0.0
+phase (Fl(4),)  TypeError: Fl.__float__() must return a float, not int
+phase (Idx(4),)  float 0.0
+phase (Idx('huge'),)  OverflowError: int too large to convert to float
+phase (All(),)  float 1.5707963267948966
+phase (Raises(),)  KeyError: 'complex'
+phase (NoneMethod(),)  TypeError: 'NoneType' object is not callable
+phase (Inst(),)  TypeError: must be real number, not Inst
+phase (10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,)  OverflowError: int too large to convert to float
+phase (-10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,)  OverflowError: int too large to convert to float
+phase (89884656743115795386465259539451236680898848947115328636715040578866337902750481566354238661203768010560056939935696678829394884407208311246423715319737062188883946712432742638151109800623047059726541476042502884419075341171231440736956555270413618581675255342293149119973622969239858152417678164812112068608,)  float 0.0
+phase ('a',)  TypeError: must be real number, not str
+phase (b'a',)  TypeError: must be real number, not bytes
+phase (None,)  TypeError: must be real number, not NoneType
+phase ([],)  TypeError: must be real number, not list
+phase ((),)  TypeError: must be real number, not tuple
+phase (<class 'object'>,)  TypeError: must be real number, not type
+phase ('4',)  TypeError: must be real number, not str
+phase ('4j',)  TypeError: must be real number, not str
+polar (4,)  tuple (4.0, 0.0)
+polar (-4,)  tuple (4.0, 3.141592653589793)
+polar (True,)  tuple (1.0, 0.0)
+polar (4.0,)  tuple (4.0, 0.0)
+polar (-4.0,)  tuple (4.0, 3.141592653589793)
+polar (4j,)  tuple (4.0, 1.5707963267948966)
+polar (4j,)  tuple (4.0, 1.5707963267948966)
+polar (4j,)  tuple (4.0, 1.5707963267948966)
+polar (4.0,)  tuple (4.0, 0.0)
+polar (Cx(4j),)  tuple (4.0, 1.5707963267948966)
+polar (Cx((-4+0j)),)  tuple (4.0, 3.141592653589793)
+polar (Cx(4),)  TypeError: Cx.__complex__() must return a complex, not int
+polar (Cx(4.0),)  TypeError: Cx.__complex__() must return a complex, not float
+polar (Cx('a'),)  TypeError: Cx.__complex__() must return a complex, not str
+polar (Cx(None),)  TypeError: Cx.__complex__() must return a complex, not NoneType
+polar (Fl(4.0),)  tuple (4.0, 0.0)
+polar (Fl(4),)  TypeError: Fl.__float__() must return a float, not int
+polar (Idx(4),)  tuple (4.0, 0.0)
+polar (Idx('huge'),)  OverflowError: int too large to convert to float
+polar (All(),)  tuple (4.0, 1.5707963267948966)
+polar (Raises(),)  KeyError: 'complex'
+polar (NoneMethod(),)  TypeError: 'NoneType' object is not callable
+polar (Inst(),)  TypeError: must be real number, not Inst
+polar (10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,)  OverflowError: int too large to convert to float
+polar (-10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,)  OverflowError: int too large to convert to float
+polar (89884656743115795386465259539451236680898848947115328636715040578866337902750481566354238661203768010560056939935696678829394884407208311246423715319737062188883946712432742638151109800623047059726541476042502884419075341171231440736956555270413618581675255342293149119973622969239858152417678164812112068608,)  tuple (8.98846567431158e+307, 0.0)
+polar ('a',)  TypeError: must be real number, not str
+polar (b'a',)  TypeError: must be real number, not bytes
+polar (None,)  TypeError: must be real number, not NoneType
+polar ([],)  TypeError: must be real number, not list
+polar ((),)  TypeError: must be real number, not tuple
+polar (<class 'object'>,)  TypeError: must be real number, not type
+polar ('4',)  TypeError: must be real number, not str
+polar ('4j',)  TypeError: must be real number, not str
+isnan (4,)  bool False
+isnan (-4,)  bool False
+isnan (True,)  bool False
+isnan (4.0,)  bool False
+isnan (-4.0,)  bool False
+isnan (4j,)  bool False
+isnan (4j,)  bool False
+isnan (4j,)  bool False
+isnan (4.0,)  bool False
+isnan (Cx(4j),)  bool False
+isnan (Cx((-4+0j)),)  bool False
+isnan (Cx(4),)  TypeError: Cx.__complex__() must return a complex, not int
+isnan (Cx(4.0),)  TypeError: Cx.__complex__() must return a complex, not float
+isnan (Cx('a'),)  TypeError: Cx.__complex__() must return a complex, not str
+isnan (Cx(None),)  TypeError: Cx.__complex__() must return a complex, not NoneType
+isnan (Fl(4.0),)  bool False
+isnan (Fl(4),)  TypeError: Fl.__float__() must return a float, not int
+isnan (Idx(4),)  bool False
+isnan (Idx('huge'),)  OverflowError: int too large to convert to float
+isnan (All(),)  bool False
+isnan (Raises(),)  KeyError: 'complex'
+isnan (NoneMethod(),)  TypeError: 'NoneType' object is not callable
+isnan (Inst(),)  TypeError: must be real number, not Inst
+isnan (10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,)  OverflowError: int too large to convert to float
+isnan (-10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,)  OverflowError: int too large to convert to float
+isnan (89884656743115795386465259539451236680898848947115328636715040578866337902750481566354238661203768010560056939935696678829394884407208311246423715319737062188883946712432742638151109800623047059726541476042502884419075341171231440736956555270413618581675255342293149119973622969239858152417678164812112068608,)  bool False
+isnan ('a',)  TypeError: must be real number, not str
+isnan (b'a',)  TypeError: must be real number, not bytes
+isnan (None,)  TypeError: must be real number, not NoneType
+isnan ([],)  TypeError: must be real number, not list
+isnan ((),)  TypeError: must be real number, not tuple
+isnan (<class 'object'>,)  TypeError: must be real number, not type
+isnan ('4',)  TypeError: must be real number, not str
+isnan ('4j',)  TypeError: must be real number, not str
+isfinite (4,)  bool True
+isfinite (-4,)  bool True
+isfinite (True,)  bool True
+isfinite (4.0,)  bool True
+isfinite (-4.0,)  bool True
+isfinite (4j,)  bool True
+isfinite (4j,)  bool True
+isfinite (4j,)  bool True
+isfinite (4.0,)  bool True
+isfinite (Cx(4j),)  bool True
+isfinite (Cx((-4+0j)),)  bool True
+isfinite (Cx(4),)  TypeError: Cx.__complex__() must return a complex, not int
+isfinite (Cx(4.0),)  TypeError: Cx.__complex__() must return a complex, not float
+isfinite (Cx('a'),)  TypeError: Cx.__complex__() must return a complex, not str
+isfinite (Cx(None),)  TypeError: Cx.__complex__() must return a complex, not NoneType
+isfinite (Fl(4.0),)  bool True
+isfinite (Fl(4),)  TypeError: Fl.__float__() must return a float, not int
+isfinite (Idx(4),)  bool True
+isfinite (Idx('huge'),)  OverflowError: int too large to convert to float
+isfinite (All(),)  bool True
+isfinite (Raises(),)  KeyError: 'complex'
+isfinite (NoneMethod(),)  TypeError: 'NoneType' object is not callable
+isfinite (Inst(),)  TypeError: must be real number, not Inst
+isfinite (10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,)  OverflowError: int too large to convert to float
+isfinite (-10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,)  OverflowError: int too large to convert to float
+isfinite (89884656743115795386465259539451236680898848947115328636715040578866337902750481566354238661203768010560056939935696678829394884407208311246423715319737062188883946712432742638151109800623047059726541476042502884419075341171231440736956555270413618581675255342293149119973622969239858152417678164812112068608,)  bool True
+isfinite ('a',)  TypeError: must be real number, not str
+isfinite (b'a',)  TypeError: must be real number, not bytes
+isfinite (None,)  TypeError: must be real number, not NoneType
+isfinite ([],)  TypeError: must be real number, not list
+isfinite ((),)  TypeError: must be real number, not tuple
+isfinite (<class 'object'>,)  TypeError: must be real number, not type
+isfinite ('4',)  TypeError: must be real number, not str
+isfinite ('4j',)  TypeError: must be real number, not str
+isinf (4,)  bool False
+isinf (-4,)  bool False
+isinf (True,)  bool False
+isinf (4.0,)  bool False
+isinf (-4.0,)  bool False
+isinf (4j,)  bool False
+isinf (4j,)  bool False
+isinf (4j,)  bool False
+isinf (4.0,)  bool False
+isinf (Cx(4j),)  bool False
+isinf (Cx((-4+0j)),)  bool False
+isinf (Cx(4),)  TypeError: Cx.__complex__() must return a complex, not int
+isinf (Cx(4.0),)  TypeError: Cx.__complex__() must return a complex, not float
+isinf (Cx('a'),)  TypeError: Cx.__complex__() must return a complex, not str
+isinf (Cx(None),)  TypeError: Cx.__complex__() must return a complex, not NoneType
+isinf (Fl(4.0),)  bool False
+isinf (Fl(4),)  TypeError: Fl.__float__() must return a float, not int
+isinf (Idx(4),)  bool False
+isinf (Idx('huge'),)  OverflowError: int too large to convert to float
+isinf (All(),)  bool False
+isinf (Raises(),)  KeyError: 'complex'
+isinf (NoneMethod(),)  TypeError: 'NoneType' object is not callable
+isinf (Inst(),)  TypeError: must be real number, not Inst
+isinf (10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,)  OverflowError: int too large to convert to float
+isinf (-10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,)  OverflowError: int too large to convert to float
+isinf (89884656743115795386465259539451236680898848947115328636715040578866337902750481566354238661203768010560056939935696678829394884407208311246423715319737062188883946712432742638151109800623047059726541476042502884419075341171231440736956555270413618581675255342293149119973622969239858152417678164812112068608,)  bool False
+isinf ('a',)  TypeError: must be real number, not str
+isinf (b'a',)  TypeError: must be real number, not bytes
+isinf (None,)  TypeError: must be real number, not NoneType
+isinf ([],)  TypeError: must be real number, not list
+isinf ((),)  TypeError: must be real number, not tuple
+isinf (<class 'object'>,)  TypeError: must be real number, not type
+isinf ('4',)  TypeError: must be real number, not str
+isinf ('4j',)  TypeError: must be real number, not str
+acos (4,)  complex -2.0634370688955608j
+acos (-4,)  complex (3.141592653589793-2.0634370688955608j)
+acos (True,)  complex -0j
+acos (4.0,)  complex -2.0634370688955608j
+acos (-4.0,)  complex (3.141592653589793-2.0634370688955608j)
+acos (4j,)  complex (1.5707963267948966-2.0947125472611012j)
+acos (4j,)  complex (1.5707963267948966-2.0947125472611012j)
+acos (4j,)  complex (1.5707963267948966-2.0947125472611012j)
+acos (4.0,)  complex -2.0634370688955608j
+acos (Cx(4j),)  complex (1.5707963267948966-2.0947125472611012j)
+acos (Cx((-4+0j)),)  complex (3.141592653589793-2.0634370688955608j)
+acos (Cx(4),)  TypeError: Cx.__complex__() must return a complex, not int
+acos (Cx(4.0),)  TypeError: Cx.__complex__() must return a complex, not float
+acos (Cx('a'),)  TypeError: Cx.__complex__() must return a complex, not str
+acos (Cx(None),)  TypeError: Cx.__complex__() must return a complex, not NoneType
+acos (Fl(4.0),)  complex -2.0634370688955608j
+acos (Fl(4),)  TypeError: Fl.__float__() must return a float, not int
+acos (Idx(4),)  complex -2.0634370688955608j
+acos (Idx('huge'),)  OverflowError: int too large to convert to float
+acos (All(),)  complex (1.5707963267948966-2.0947125472611012j)
+acos (Raises(),)  KeyError: 'complex'
+acos (NoneMethod(),)  TypeError: 'NoneType' object is not callable
+acos (Inst(),)  TypeError: must be real number, not Inst
+acos (10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,)  OverflowError: int too large to convert to float
+acos (-10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,)  OverflowError: int too large to convert to float
+acos (89884656743115795386465259539451236680898848947115328636715040578866337902750481566354238661203768010560056939935696678829394884407208311246423715319737062188883946712432742638151109800623047059726541476042502884419075341171231440736956555270413618581675255342293149119973622969239858152417678164812112068608,)  complex -709.782712893384j
+acos ('a',)  TypeError: must be real number, not str
+acos (b'a',)  TypeError: must be real number, not bytes
+acos (None,)  TypeError: must be real number, not NoneType
+acos ([],)  TypeError: must be real number, not list
+acos ((),)  TypeError: must be real number, not tuple
+acos (<class 'object'>,)  TypeError: must be real number, not type
+acos ('4',)  TypeError: must be real number, not str
+acos ('4j',)  TypeError: must be real number, not str
+log10 (4,)  complex (0.6020599913279623+0j)
+log10 (-4,)  complex (0.6020599913279623+1.3643763538418412j)
+log10 (True,)  complex 0j
+log10 (4.0,)  complex (0.6020599913279623+0j)
+log10 (-4.0,)  complex (0.6020599913279623+1.3643763538418412j)
+log10 (4j,)  complex (0.6020599913279623+0.6821881769209206j)
+log10 (4j,)  complex (0.6020599913279623+0.6821881769209206j)
+log10 (4j,)  complex (0.6020599913279623+0.6821881769209206j)
+log10 (4.0,)  complex (0.6020599913279623+0j)
+log10 (Cx(4j),)  complex (0.6020599913279623+0.6821881769209206j)
+log10 (Cx((-4+0j)),)  complex (0.6020599913279623+1.3643763538418412j)
+log10 (Cx(4),)  TypeError: Cx.__complex__() must return a complex, not int
+log10 (Cx(4.0),)  TypeError: Cx.__complex__() must return a complex, not float
+log10 (Cx('a'),)  TypeError: Cx.__complex__() must return a complex, not str
+log10 (Cx(None),)  TypeError: Cx.__complex__() must return a complex, not NoneType
+log10 (Fl(4.0),)  complex (0.6020599913279623+0j)
+log10 (Fl(4),)  TypeError: Fl.__float__() must return a float, not int
+log10 (Idx(4),)  complex (0.6020599913279623+0j)
+log10 (Idx('huge'),)  OverflowError: int too large to convert to float
+log10 (All(),)  complex (0.6020599913279623+0.6821881769209206j)
+log10 (Raises(),)  KeyError: 'complex'
+log10 (NoneMethod(),)  TypeError: 'NoneType' object is not callable
+log10 (Inst(),)  TypeError: must be real number, not Inst
+log10 (10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,)  OverflowError: int too large to convert to float
+log10 (-10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,)  OverflowError: int too large to convert to float
+log10 (89884656743115795386465259539451236680898848947115328636715040578866337902750481566354238661203768010560056939935696678829394884407208311246423715319737062188883946712432742638151109800623047059726541476042502884419075341171231440736956555270413618581675255342293149119973622969239858152417678164812112068608,)  complex (307.9536855642527+0j)
+log10 ('a',)  TypeError: must be real number, not str
+log10 (b'a',)  TypeError: must be real number, not bytes
+log10 (None,)  TypeError: must be real number, not NoneType
+log10 ([],)  TypeError: must be real number, not list
+log10 ((),)  TypeError: must be real number, not tuple
+log10 (<class 'object'>,)  TypeError: must be real number, not type
+log10 ('4',)  TypeError: must be real number, not str
+log10 ('4j',)  TypeError: must be real number, not str
+rect (4, 0)  complex (4+0j)
+rect (1, 4)  complex (-0.6536436208636119-0.7568024953079282j)
+log (4, 4)  complex (1+0j)
+isclose (4, 4)  bool True
+isclose (4, 4)  bool True
+rect (-4, 0)  complex (-4-0j)
+rect (1, -4)  complex (-0.6536436208636119+0.7568024953079282j)
+log (4, -4)  complex (0.16298398608172993-0.36935106113647537j)
+isclose (-4, 4)  bool False
+isclose (4, -4)  bool False
+rect (True, 0)  complex (1+0j)
+rect (1, True)  complex (0.5403023058681398+0.8414709848078965j)
+log (4, True)  ValueError: math domain error
+isclose (True, 4)  bool False
+isclose (4, True)  bool False
+rect (4.0, 0)  complex (4+0j)
+rect (1, 4.0)  complex (-0.6536436208636119-0.7568024953079282j)
+log (4, 4.0)  complex (1+0j)
+isclose (4.0, 4)  bool True
+isclose (4, 4.0)  bool True
+rect (-4.0, 0)  complex (-4-0j)
+rect (1, -4.0)  complex (-0.6536436208636119+0.7568024953079282j)
+log (4, -4.0)  complex (0.16298398608172993-0.36935106113647537j)
+isclose (-4.0, 4)  bool False
+isclose (4, -4.0)  bool False
+rect (4j, 0)  TypeError: must be real number, not complex
+rect (1, 4j)  TypeError: must be real number, not complex
+log (4, 4j)  complex (0.4378488780089731-0.4961222007079067j)
+isclose (4j, 4)  bool False
+isclose (4, 4j)  bool False
+rect (4j, 0)  TypeError: must be real number, not C
+rect (1, 4j)  TypeError: must be real number, not C
+log (4, 4j)  complex (0.4378488780089731-0.4961222007079067j)
+isclose (4j, 4)  bool False
+isclose (4, 4j)  bool False
+rect (4j, 0)  TypeError: must be real number, not C2
+rect (1, 4j)  TypeError: must be real number, not C2
+log (4, 4j)  complex (0.4378488780089731-0.4961222007079067j)
+isclose (4j, 4)  bool False
+isclose (4, 4j)  bool False
+rect (4.0, 0)  complex (4+0j)
+rect (1, 4.0)  complex (-0.6536436208636119-0.7568024953079282j)
+log (4, 4.0)  complex (1+0j)
+isclose (4.0, 4)  bool True
+isclose (4, 4.0)  bool True
+rect (Cx(4j), 0)  TypeError: must be real number, not Cx
+rect (1, Cx(4j))  TypeError: must be real number, not Cx
+log (4, Cx(4j))  complex (0.4378488780089731-0.4961222007079067j)
+isclose (Cx(4j), 4)  bool False
+isclose (4, Cx(4j))  bool False
+rect (Cx((-4+0j)), 0)  TypeError: must be real number, not Cx
+rect (1, Cx((-4+0j)))  TypeError: must be real number, not Cx
+log (4, Cx((-4+0j)))  complex (0.16298398608172993-0.36935106113647537j)
+isclose (Cx((-4+0j)), 4)  bool False
+isclose (4, Cx((-4+0j)))  bool False
+rect (Cx(4), 0)  TypeError: must be real number, not Cx
+rect (1, Cx(4))  TypeError: must be real number, not Cx
+log (4, Cx(4))  TypeError: Cx.__complex__() must return a complex, not int
+isclose (Cx(4), 4)  TypeError: Cx.__complex__() must return a complex, not int
+isclose (4, Cx(4))  TypeError: Cx.__complex__() must return a complex, not int
+rect (Cx(4.0), 0)  TypeError: must be real number, not Cx
+rect (1, Cx(4.0))  TypeError: must be real number, not Cx
+log (4, Cx(4.0))  TypeError: Cx.__complex__() must return a complex, not float
+isclose (Cx(4.0), 4)  TypeError: Cx.__complex__() must return a complex, not float
+isclose (4, Cx(4.0))  TypeError: Cx.__complex__() must return a complex, not float
+rect (Cx('a'), 0)  TypeError: must be real number, not Cx
+rect (1, Cx('a'))  TypeError: must be real number, not Cx
+log (4, Cx('a'))  TypeError: Cx.__complex__() must return a complex, not str
+isclose (Cx('a'), 4)  TypeError: Cx.__complex__() must return a complex, not str
+isclose (4, Cx('a'))  TypeError: Cx.__complex__() must return a complex, not str
+rect (Cx(None), 0)  TypeError: must be real number, not Cx
+rect (1, Cx(None))  TypeError: must be real number, not Cx
+log (4, Cx(None))  TypeError: Cx.__complex__() must return a complex, not NoneType
+isclose (Cx(None), 4)  TypeError: Cx.__complex__() must return a complex, not NoneType
+isclose (4, Cx(None))  TypeError: Cx.__complex__() must return a complex, not NoneType
+rect (Fl(4.0), 0)  complex (4+0j)
+rect (1, Fl(4.0))  complex (-0.6536436208636119-0.7568024953079282j)
+log (4, Fl(4.0))  complex (1+0j)
+isclose (Fl(4.0), 4)  bool True
+isclose (4, Fl(4.0))  bool True
+rect (Fl(4), 0)  TypeError: Fl.__float__() must return a float, not int
+rect (1, Fl(4))  TypeError: Fl.__float__() must return a float, not int
+log (4, Fl(4))  TypeError: Fl.__float__() must return a float, not int
+isclose (Fl(4), 4)  TypeError: Fl.__float__() must return a float, not int
+isclose (4, Fl(4))  TypeError: Fl.__float__() must return a float, not int
+rect (Idx(4), 0)  complex (4+0j)
+rect (1, Idx(4))  complex (-0.6536436208636119-0.7568024953079282j)
+log (4, Idx(4))  complex (1+0j)
+isclose (Idx(4), 4)  bool True
+isclose (4, Idx(4))  bool True
+rect (Idx('huge'), 0)  OverflowError: int too large to convert to float
+rect (1, Idx('huge'))  OverflowError: int too large to convert to float
+log (4, Idx('huge'))  OverflowError: int too large to convert to float
+isclose (Idx('huge'), 4)  OverflowError: int too large to convert to float
+isclose (4, Idx('huge'))  OverflowError: int too large to convert to float
+rect (All(), 0)  complex (9+0j)
+rect (1, All())  complex (-0.9111302618846769+0.4121184852417566j)
+log (4, All())  complex (0.4378488780089731-0.4961222007079067j)
+isclose (All(), 4)  bool False
+isclose (4, All())  bool False
+rect (Raises(), 0)  TypeError: must be real number, not Raises
+rect (1, Raises())  TypeError: must be real number, not Raises
+log (4, Raises())  KeyError: 'complex'
+isclose (Raises(), 4)  KeyError: 'complex'
+isclose (4, Raises())  KeyError: 'complex'
+rect (NoneMethod(), 0)  complex (4+0j)
+rect (1, NoneMethod())  complex (-0.6536436208636119-0.7568024953079282j)
+log (4, NoneMethod())  TypeError: 'NoneType' object is not callable
+isclose (NoneMethod(), 4)  TypeError: 'NoneType' object is not callable
+isclose (4, NoneMethod())  TypeError: 'NoneType' object is not callable
+rect (Inst(), 0)  TypeError: must be real number, not Inst
+rect (1, Inst())  TypeError: must be real number, not Inst
+log (4, Inst())  TypeError: must be real number, not Inst
+isclose (Inst(), 4)  TypeError: must be real number, not Inst
+isclose (4, Inst())  TypeError: must be real number, not Inst
+rect (10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000, 0)  OverflowError: int too large to convert to float
+rect (1, 10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000)  OverflowError: int too large to convert to float
+log (4, 10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000)  OverflowError: int too large to convert to float
+isclose (10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000, 4)  OverflowError: int too large to convert to float
+isclose (4, 10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000)  OverflowError: int too large to convert to float
+rect (-10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000, 0)  OverflowError: int too large to convert to float
+rect (1, -10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000)  OverflowError: int too large to convert to float
+log (4, -10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000)  OverflowError: int too large to convert to float
+isclose (-10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000, 4)  OverflowError: int too large to convert to float
+isclose (4, -10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000)  OverflowError: int too large to convert to float
+rect (89884656743115795386465259539451236680898848947115328636715040578866337902750481566354238661203768010560056939935696678829394884407208311246423715319737062188883946712432742638151109800623047059726541476042502884419075341171231440736956555270413618581675255342293149119973622969239858152417678164812112068608, 0)  complex (8.98846567431158e+307+0j)
+rect (1, 89884656743115795386465259539451236680898848947115328636715040578866337902750481566354238661203768010560056939935696678829394884407208311246423715319737062188883946712432742638151109800623047059726541476042502884419075341171231440736956555270413618581675255342293149119973622969239858152417678164812112068608)  complex (-0.826369834614148+0.563127779850884j)
+log (4, 89884656743115795386465259539451236680898848947115328636715040578866337902750481566354238661203768010560056939935696678829394884407208311246423715319737062188883946712432742638151109800623047059726541476042502884419075341171231440736956555270413618581675255342293149119973622969239858152417678164812112068608)  complex (0.0019550342130987292+0j)
+isclose (89884656743115795386465259539451236680898848947115328636715040578866337902750481566354238661203768010560056939935696678829394884407208311246423715319737062188883946712432742638151109800623047059726541476042502884419075341171231440736956555270413618581675255342293149119973622969239858152417678164812112068608, 4)  bool False
+isclose (4, 89884656743115795386465259539451236680898848947115328636715040578866337902750481566354238661203768010560056939935696678829394884407208311246423715319737062188883946712432742638151109800623047059726541476042502884419075341171231440736956555270413618581675255342293149119973622969239858152417678164812112068608)  bool False
+rect ('a', 0)  TypeError: must be real number, not str
+rect (1, 'a')  TypeError: must be real number, not str
+log (4, 'a')  TypeError: must be real number, not str
+isclose ('a', 4)  TypeError: must be real number, not str
+isclose (4, 'a')  TypeError: must be real number, not str
+rect (b'a', 0)  TypeError: must be real number, not bytes
+rect (1, b'a')  TypeError: must be real number, not bytes
+log (4, b'a')  TypeError: must be real number, not bytes
+isclose (b'a', 4)  TypeError: must be real number, not bytes
+isclose (4, b'a')  TypeError: must be real number, not bytes
+rect (None, 0)  TypeError: must be real number, not NoneType
+rect (1, None)  TypeError: must be real number, not NoneType
+log (4, None)  TypeError: must be real number, not NoneType
+isclose (None, 4)  TypeError: must be real number, not NoneType
+isclose (4, None)  TypeError: must be real number, not NoneType
+rect ([], 0)  TypeError: must be real number, not list
+rect (1, [])  TypeError: must be real number, not list
+log (4, [])  TypeError: must be real number, not list
+isclose ([], 4)  TypeError: must be real number, not list
+isclose (4, [])  TypeError: must be real number, not list
+rect ((), 0)  TypeError: must be real number, not tuple
+rect (1, ())  TypeError: must be real number, not tuple
+log (4, ())  TypeError: must be real number, not tuple
+isclose ((), 4)  TypeError: must be real number, not tuple
+isclose (4, ())  TypeError: must be real number, not tuple
+rect (<class 'object'>, 0)  TypeError: must be real number, not type
+rect (1, <class 'object'>)  TypeError: must be real number, not type
+log (4, <class 'object'>)  TypeError: must be real number, not type
+isclose (<class 'object'>, 4)  TypeError: must be real number, not type
+isclose (4, <class 'object'>)  TypeError: must be real number, not type
+rect ('4', 0)  TypeError: must be real number, not str
+rect (1, '4')  TypeError: must be real number, not str
+log (4, '4')  TypeError: must be real number, not str
+isclose ('4', 4)  TypeError: must be real number, not str
+isclose (4, '4')  TypeError: must be real number, not str
+rect ('4j', 0)  TypeError: must be real number, not str
+rect (1, '4j')  TypeError: must be real number, not str
+log (4, '4j')  TypeError: must be real number, not str
+isclose ('4j', 4)  TypeError: must be real number, not str
+isclose (4, '4j')  TypeError: must be real number, not str
+isclose (1, 1)  bool True
+isclose (1, 1) {'rel_tol': 1e-05} bool True
+isclose (1, 1) {'abs_tol': 1e-09} bool True
+isclose (1, 1) {'rel_tol': 0.0} bool True
+isclose (1, 1) {'rel_tol': 0.0, 'abs_tol': 2.0} bool True
+isclose (1, 1) {'rel_tol': inf} bool True
+isclose (1, 1) {'abs_tol': inf} bool True
+isclose (1, 1) {'rel_tol': nan} bool True
+isclose (1, 1) {'rel_tol': -1e-09} ValueError: tolerances must be non-negative
+isclose (1, 1) {'abs_tol': -0.5} ValueError: tolerances must be non-negative
+isclose (1, 1) {'rel_tol': 1} bool True
+isclose (1, 1.0000000001)  bool True
+isclose (1, 1.0000000001) {'rel_tol': 1e-05} bool True
+isclose (1, 1.0000000001) {'abs_tol': 1e-09} bool True
+isclose (1, 1.0000000001) {'rel_tol': 0.0} bool False
+isclose (1, 1.0000000001) {'rel_tol': 0.0, 'abs_tol': 2.0} bool True
+isclose (1, 1.0000000001) {'rel_tol': inf} bool True
+isclose (1, 1.0000000001) {'abs_tol': inf} bool True
+isclose (1, 1.0000000001) {'rel_tol': nan} bool False
+isclose (1, 1.0000000001) {'rel_tol': -1e-09} ValueError: tolerances must be non-negative
+isclose (1, 1.0000000001) {'abs_tol': -0.5} ValueError: tolerances must be non-negative
+isclose (1, 1.0000000001) {'rel_tol': 1} bool True
+isclose (1, 1.00000001)  bool False
+isclose (1, 1.00000001) {'rel_tol': 1e-05} bool True
+isclose (1, 1.00000001) {'abs_tol': 1e-09} bool False
+isclose (1, 1.00000001) {'rel_tol': 0.0} bool False
+isclose (1, 1.00000001) {'rel_tol': 0.0, 'abs_tol': 2.0} bool True
+isclose (1, 1.00000001) {'rel_tol': inf} bool True
+isclose (1, 1.00000001) {'abs_tol': inf} bool True
+isclose (1, 1.00000001) {'rel_tol': nan} bool False
+isclose (1, 1.00000001) {'rel_tol': -1e-09} ValueError: tolerances must be non-negative
+isclose (1, 1.00000001) {'abs_tol': -0.5} ValueError: tolerances must be non-negative
+isclose (1, 1.00000001) {'rel_tol': 1} bool True
+isclose (1j, 1.0000000001j)  bool True
+isclose (1j, 1.0000000001j) {'rel_tol': 1e-05} bool True
+isclose (1j, 1.0000000001j) {'abs_tol': 1e-09} bool True
+isclose (1j, 1.0000000001j) {'rel_tol': 0.0} bool False
+isclose (1j, 1.0000000001j) {'rel_tol': 0.0, 'abs_tol': 2.0} bool True
+isclose (1j, 1.0000000001j) {'rel_tol': inf} bool True
+isclose (1j, 1.0000000001j) {'abs_tol': inf} bool True
+isclose (1j, 1.0000000001j) {'rel_tol': nan} bool False
+isclose (1j, 1.0000000001j) {'rel_tol': -1e-09} ValueError: tolerances must be non-negative
+isclose (1j, 1.0000000001j) {'abs_tol': -0.5} ValueError: tolerances must be non-negative
+isclose (1j, 1.0000000001j) {'rel_tol': 1} bool True
+isclose ((1+1j), (1+1.0000000001j))  bool True
+isclose ((1+1j), (1+1.0000000001j)) {'rel_tol': 1e-05} bool True
+isclose ((1+1j), (1+1.0000000001j)) {'abs_tol': 1e-09} bool True
+isclose ((1+1j), (1+1.0000000001j)) {'rel_tol': 0.0} bool False
+isclose ((1+1j), (1+1.0000000001j)) {'rel_tol': 0.0, 'abs_tol': 2.0} bool True
+isclose ((1+1j), (1+1.0000000001j)) {'rel_tol': inf} bool True
+isclose ((1+1j), (1+1.0000000001j)) {'abs_tol': inf} bool True
+isclose ((1+1j), (1+1.0000000001j)) {'rel_tol': nan} bool False
+isclose ((1+1j), (1+1.0000000001j)) {'rel_tol': -1e-09} ValueError: tolerances must be non-negative
+isclose ((1+1j), (1+1.0000000001j)) {'abs_tol': -0.5} ValueError: tolerances must be non-negative
+isclose ((1+1j), (1+1.0000000001j)) {'rel_tol': 1} bool True
+isclose (0, 1e-10)  bool False
+isclose (0, 1e-10) {'rel_tol': 1e-05} bool False
+isclose (0, 1e-10) {'abs_tol': 1e-09} bool True
+isclose (0, 1e-10) {'rel_tol': 0.0} bool False
+isclose (0, 1e-10) {'rel_tol': 0.0, 'abs_tol': 2.0} bool True
+isclose (0, 1e-10) {'rel_tol': inf} bool True
+isclose (0, 1e-10) {'abs_tol': inf} bool True
+isclose (0, 1e-10) {'rel_tol': nan} bool False
+isclose (0, 1e-10) {'rel_tol': -1e-09} ValueError: tolerances must be non-negative
+isclose (0, 1e-10) {'abs_tol': -0.5} ValueError: tolerances must be non-negative
+isclose (0, 1e-10) {'rel_tol': 1} bool True
+isclose (0j, 1e-10j)  bool False
+isclose (0j, 1e-10j) {'rel_tol': 1e-05} bool False
+isclose (0j, 1e-10j) {'abs_tol': 1e-09} bool True
+isclose (0j, 1e-10j) {'rel_tol': 0.0} bool False
+isclose (0j, 1e-10j) {'rel_tol': 0.0, 'abs_tol': 2.0} bool True
+isclose (0j, 1e-10j) {'rel_tol': inf} bool True
+isclose (0j, 1e-10j) {'abs_tol': inf} bool True
+isclose (0j, 1e-10j) {'rel_tol': nan} bool False
+isclose (0j, 1e-10j) {'rel_tol': -1e-09} ValueError: tolerances must be non-negative
+isclose (0j, 1e-10j) {'abs_tol': -0.5} ValueError: tolerances must be non-negative
+isclose (0j, 1e-10j) {'rel_tol': 1} bool True
+isclose (inf, inf)  bool True
+isclose (inf, inf) {'rel_tol': 1e-05} bool True
+isclose (inf, inf) {'abs_tol': 1e-09} bool True
+isclose (inf, inf) {'rel_tol': 0.0} bool True
+isclose (inf, inf) {'rel_tol': 0.0, 'abs_tol': 2.0} bool True
+isclose (inf, inf) {'rel_tol': inf} bool True
+isclose (inf, inf) {'abs_tol': inf} bool True
+isclose (inf, inf) {'rel_tol': nan} bool True
+isclose (inf, inf) {'rel_tol': -1e-09} ValueError: tolerances must be non-negative
+isclose (inf, inf) {'abs_tol': -0.5} ValueError: tolerances must be non-negative
+isclose (inf, inf) {'rel_tol': 1} bool True
+isclose (inf, -inf)  bool False
+isclose (inf, -inf) {'rel_tol': 1e-05} bool False
+isclose (inf, -inf) {'abs_tol': 1e-09} bool False
+isclose (inf, -inf) {'rel_tol': 0.0} bool False
+isclose (inf, -inf) {'rel_tol': 0.0, 'abs_tol': 2.0} bool False
+isclose (inf, -inf) {'rel_tol': inf} bool False
+isclose (inf, -inf) {'abs_tol': inf} bool False
+isclose (inf, -inf) {'rel_tol': nan} bool False
+isclose (inf, -inf) {'rel_tol': -1e-09} ValueError: tolerances must be non-negative
+isclose (inf, -inf) {'abs_tol': -0.5} ValueError: tolerances must be non-negative
+isclose (inf, -inf) {'rel_tol': 1} bool False
+isclose ((inf+1j), (inf+1j))  bool True
+isclose ((inf+1j), (inf+1j)) {'rel_tol': 1e-05} bool True
+isclose ((inf+1j), (inf+1j)) {'abs_tol': 1e-09} bool True
+isclose ((inf+1j), (inf+1j)) {'rel_tol': 0.0} bool True
+isclose ((inf+1j), (inf+1j)) {'rel_tol': 0.0, 'abs_tol': 2.0} bool True
+isclose ((inf+1j), (inf+1j)) {'rel_tol': inf} bool True
+isclose ((inf+1j), (inf+1j)) {'abs_tol': inf} bool True
+isclose ((inf+1j), (inf+1j)) {'rel_tol': nan} bool True
+isclose ((inf+1j), (inf+1j)) {'rel_tol': -1e-09} ValueError: tolerances must be non-negative
+isclose ((inf+1j), (inf+1j)) {'abs_tol': -0.5} ValueError: tolerances must be non-negative
+isclose ((inf+1j), (inf+1j)) {'rel_tol': 1} bool True
+isclose ((inf+1j), (inf+2j))  bool False
+isclose ((inf+1j), (inf+2j)) {'rel_tol': 1e-05} bool False
+isclose ((inf+1j), (inf+2j)) {'abs_tol': 1e-09} bool False
+isclose ((inf+1j), (inf+2j)) {'rel_tol': 0.0} bool False
+isclose ((inf+1j), (inf+2j)) {'rel_tol': 0.0, 'abs_tol': 2.0} bool False
+isclose ((inf+1j), (inf+2j)) {'rel_tol': inf} bool False
+isclose ((inf+1j), (inf+2j)) {'abs_tol': inf} bool False
+isclose ((inf+1j), (inf+2j)) {'rel_tol': nan} bool False
+isclose ((inf+1j), (inf+2j)) {'rel_tol': -1e-09} ValueError: tolerances must be non-negative
+isclose ((inf+1j), (inf+2j)) {'abs_tol': -0.5} ValueError: tolerances must be non-negative
+isclose ((inf+1j), (inf+2j)) {'rel_tol': 1} bool False
+isclose (infj, infj)  bool True
+isclose (infj, infj) {'rel_tol': 1e-05} bool True
+isclose (infj, infj) {'abs_tol': 1e-09} bool True
+isclose (infj, infj) {'rel_tol': 0.0} bool True
+isclose (infj, infj) {'rel_tol': 0.0, 'abs_tol': 2.0} bool True
+isclose (infj, infj) {'rel_tol': inf} bool True
+isclose (infj, infj) {'abs_tol': inf} bool True
+isclose (infj, infj) {'rel_tol': nan} bool True
+isclose (infj, infj) {'rel_tol': -1e-09} ValueError: tolerances must be non-negative
+isclose (infj, infj) {'abs_tol': -0.5} ValueError: tolerances must be non-negative
+isclose (infj, infj) {'rel_tol': 1} bool True
+isclose (nan, nan)  bool False
+isclose (nan, nan) {'rel_tol': 1e-05} bool False
+isclose (nan, nan) {'abs_tol': 1e-09} bool False
+isclose (nan, nan) {'rel_tol': 0.0} bool False
+isclose (nan, nan) {'rel_tol': 0.0, 'abs_tol': 2.0} bool False
+isclose (nan, nan) {'rel_tol': inf} bool False
+isclose (nan, nan) {'abs_tol': inf} bool False
+isclose (nan, nan) {'rel_tol': nan} bool False
+isclose (nan, nan) {'rel_tol': -1e-09} ValueError: tolerances must be non-negative
+isclose (nan, nan) {'abs_tol': -0.5} ValueError: tolerances must be non-negative
+isclose (nan, nan) {'rel_tol': 1} bool False
+isclose ((nan+1j), (nan+1j))  bool False
+isclose ((nan+1j), (nan+1j)) {'rel_tol': 1e-05} bool False
+isclose ((nan+1j), (nan+1j)) {'abs_tol': 1e-09} bool False
+isclose ((nan+1j), (nan+1j)) {'rel_tol': 0.0} bool False
+isclose ((nan+1j), (nan+1j)) {'rel_tol': 0.0, 'abs_tol': 2.0} bool False
+isclose ((nan+1j), (nan+1j)) {'rel_tol': inf} bool False
+isclose ((nan+1j), (nan+1j)) {'abs_tol': inf} bool False
+isclose ((nan+1j), (nan+1j)) {'rel_tol': nan} bool False
+isclose ((nan+1j), (nan+1j)) {'rel_tol': -1e-09} ValueError: tolerances must be non-negative
+isclose ((nan+1j), (nan+1j)) {'abs_tol': -0.5} ValueError: tolerances must be non-negative
+isclose ((nan+1j), (nan+1j)) {'rel_tol': 1} bool False
+isclose (1e+308, -1e+308)  bool False
+isclose (1e+308, -1e+308) {'rel_tol': 1e-05} bool False
+isclose (1e+308, -1e+308) {'abs_tol': 1e-09} bool False
+isclose (1e+308, -1e+308) {'rel_tol': 0.0} bool False
+isclose (1e+308, -1e+308) {'rel_tol': 0.0, 'abs_tol': 2.0} bool False
+isclose (1e+308, -1e+308) {'rel_tol': inf} bool True
+isclose (1e+308, -1e+308) {'abs_tol': inf} bool True
+isclose (1e+308, -1e+308) {'rel_tol': nan} bool False
+isclose (1e+308, -1e+308) {'rel_tol': -1e-09} ValueError: tolerances must be non-negative
+isclose (1e+308, -1e+308) {'abs_tol': -0.5} ValueError: tolerances must be non-negative
+isclose (1e+308, -1e+308) {'rel_tol': 1} bool False
+isclose ((1e+308+1e+308j), (-1e+308-1e+308j))  bool False
+isclose ((1e+308+1e+308j), (-1e+308-1e+308j)) {'rel_tol': 1e-05} bool False
+isclose ((1e+308+1e+308j), (-1e+308-1e+308j)) {'abs_tol': 1e-09} bool False
+isclose ((1e+308+1e+308j), (-1e+308-1e+308j)) {'rel_tol': 0.0} bool False
+isclose ((1e+308+1e+308j), (-1e+308-1e+308j)) {'rel_tol': 0.0, 'abs_tol': 2.0} bool False
+isclose ((1e+308+1e+308j), (-1e+308-1e+308j)) {'rel_tol': inf} bool True
+isclose ((1e+308+1e+308j), (-1e+308-1e+308j)) {'abs_tol': inf} bool True
+isclose ((1e+308+1e+308j), (-1e+308-1e+308j)) {'rel_tol': nan} bool False
+isclose ((1e+308+1e+308j), (-1e+308-1e+308j)) {'rel_tol': -1e-09} ValueError: tolerances must be non-negative
+isclose ((1e+308+1e+308j), (-1e+308-1e+308j)) {'abs_tol': -0.5} ValueError: tolerances must be non-negative
+isclose ((1e+308+1e+308j), (-1e+308-1e+308j)) {'rel_tol': 1} bool False
+isclose (1, 2)  bool False
+isclose (1, 2) {'rel_tol': 1e-05} bool False
+isclose (1, 2) {'abs_tol': 1e-09} bool False
+isclose (1, 2) {'rel_tol': 0.0} bool False
+isclose (1, 2) {'rel_tol': 0.0, 'abs_tol': 2.0} bool True
+isclose (1, 2) {'rel_tol': inf} bool True
+isclose (1, 2) {'abs_tol': inf} bool True
+isclose (1, 2) {'rel_tol': nan} bool False
+isclose (1, 2) {'rel_tol': -1e-09} ValueError: tolerances must be non-negative
+isclose (1, 2) {'abs_tol': -0.5} ValueError: tolerances must be non-negative
+isclose (1, 2) {'rel_tol': 1} bool True
+isclose ((3+4j), (3+4j))  bool True
+isclose ((3+4j), (3+4j)) {'rel_tol': 1e-05} bool True
+isclose ((3+4j), (3+4j)) {'abs_tol': 1e-09} bool True
+isclose ((3+4j), (3+4j)) {'rel_tol': 0.0} bool True
+isclose ((3+4j), (3+4j)) {'rel_tol': 0.0, 'abs_tol': 2.0} bool True
+isclose ((3+4j), (3+4j)) {'rel_tol': inf} bool True
+isclose ((3+4j), (3+4j)) {'abs_tol': inf} bool True
+isclose ((3+4j), (3+4j)) {'rel_tol': nan} bool True
+isclose ((3+4j), (3+4j)) {'rel_tol': -1e-09} ValueError: tolerances must be non-negative
+isclose ((3+4j), (3+4j)) {'abs_tol': -0.5} ValueError: tolerances must be non-negative
+isclose ((3+4j), (3+4j)) {'rel_tol': 1} bool True
+isclose ((3+4j), (3.000001+4j))  bool False
+isclose ((3+4j), (3.000001+4j)) {'rel_tol': 1e-05} bool True
+isclose ((3+4j), (3.000001+4j)) {'abs_tol': 1e-09} bool False
+isclose ((3+4j), (3.000001+4j)) {'rel_tol': 0.0} bool False
+isclose ((3+4j), (3.000001+4j)) {'rel_tol': 0.0, 'abs_tol': 2.0} bool True
+isclose ((3+4j), (3.000001+4j)) {'rel_tol': inf} bool True
+isclose ((3+4j), (3.000001+4j)) {'abs_tol': inf} bool True
+isclose ((3+4j), (3.000001+4j)) {'rel_tol': nan} bool False
+isclose ((3+4j), (3.000001+4j)) {'rel_tol': -1e-09} ValueError: tolerances must be non-negative
+isclose ((3+4j), (3.000001+4j)) {'abs_tol': -0.5} ValueError: tolerances must be non-negative
+isclose ((3+4j), (3.000001+4j)) {'rel_tol': 1} bool True
+isclose (1, 1) {'rel_tol': 1j} TypeError: must be real number, not complex
+isclose (1, 1) {'abs_tol': 'a'} TypeError: must be real number, not str
+isclose (1, 1, 1e-09)  TypeError: isclose() takes exactly 2 positional arguments (3 given)
+isclose (1,)  TypeError: isclose() missing required argument 'b' (pos 2)
+isclose ()  TypeError: isclose() missing required argument 'a' (pos 1)
+isclose () {'a': 1, 'b': 1} bool True
+isclose (1,) {'b': 1} bool True
+isclose (1, 1) {'x': 1} TypeError: isclose() got an unexpected keyword argument 'x'
+isclose (1, 1) {'a': 1} TypeError: argument for isclose() given by name ('a') and position (1)
+acos 0 TypeError: cmath.acos() takes exactly one argument (0 given)
+acos 2 TypeError: cmath.acos() takes exactly one argument (2 given)
+acos 3 TypeError: cmath.acos() takes exactly one argument (3 given)
+acos 4 TypeError: cmath.acos() takes exactly one argument (4 given)
+acos {'z': 1} TypeError: cmath.acos() takes no keyword arguments
+acos {'zzz': 1} TypeError: cmath.acos() takes no keyword arguments
+acos 1, zzz TypeError: cmath.acos() takes no keyword arguments
+acosh 0 TypeError: cmath.acosh() takes exactly one argument (0 given)
+acosh 2 TypeError: cmath.acosh() takes exactly one argument (2 given)
+acosh 3 TypeError: cmath.acosh() takes exactly one argument (3 given)
+acosh 4 TypeError: cmath.acosh() takes exactly one argument (4 given)
+acosh {'z': 1} TypeError: cmath.acosh() takes no keyword arguments
+acosh {'zzz': 1} TypeError: cmath.acosh() takes no keyword arguments
+acosh 1, zzz TypeError: cmath.acosh() takes no keyword arguments
+asin 0 TypeError: cmath.asin() takes exactly one argument (0 given)
+asin 2 TypeError: cmath.asin() takes exactly one argument (2 given)
+asin 3 TypeError: cmath.asin() takes exactly one argument (3 given)
+asin 4 TypeError: cmath.asin() takes exactly one argument (4 given)
+asin {'z': 1} TypeError: cmath.asin() takes no keyword arguments
+asin {'zzz': 1} TypeError: cmath.asin() takes no keyword arguments
+asin 1, zzz TypeError: cmath.asin() takes no keyword arguments
+asinh 0 TypeError: cmath.asinh() takes exactly one argument (0 given)
+asinh 2 TypeError: cmath.asinh() takes exactly one argument (2 given)
+asinh 3 TypeError: cmath.asinh() takes exactly one argument (3 given)
+asinh 4 TypeError: cmath.asinh() takes exactly one argument (4 given)
+asinh {'z': 1} TypeError: cmath.asinh() takes no keyword arguments
+asinh {'zzz': 1} TypeError: cmath.asinh() takes no keyword arguments
+asinh 1, zzz TypeError: cmath.asinh() takes no keyword arguments
+atan 0 TypeError: cmath.atan() takes exactly one argument (0 given)
+atan 2 TypeError: cmath.atan() takes exactly one argument (2 given)
+atan 3 TypeError: cmath.atan() takes exactly one argument (3 given)
+atan 4 TypeError: cmath.atan() takes exactly one argument (4 given)
+atan {'z': 1} TypeError: cmath.atan() takes no keyword arguments
+atan {'zzz': 1} TypeError: cmath.atan() takes no keyword arguments
+atan 1, zzz TypeError: cmath.atan() takes no keyword arguments
+atanh 0 TypeError: cmath.atanh() takes exactly one argument (0 given)
+atanh 2 TypeError: cmath.atanh() takes exactly one argument (2 given)
+atanh 3 TypeError: cmath.atanh() takes exactly one argument (3 given)
+atanh 4 TypeError: cmath.atanh() takes exactly one argument (4 given)
+atanh {'z': 1} TypeError: cmath.atanh() takes no keyword arguments
+atanh {'zzz': 1} TypeError: cmath.atanh() takes no keyword arguments
+atanh 1, zzz TypeError: cmath.atanh() takes no keyword arguments
+cos 0 TypeError: cmath.cos() takes exactly one argument (0 given)
+cos 2 TypeError: cmath.cos() takes exactly one argument (2 given)
+cos 3 TypeError: cmath.cos() takes exactly one argument (3 given)
+cos 4 TypeError: cmath.cos() takes exactly one argument (4 given)
+cos {'z': 1} TypeError: cmath.cos() takes no keyword arguments
+cos {'zzz': 1} TypeError: cmath.cos() takes no keyword arguments
+cos 1, zzz TypeError: cmath.cos() takes no keyword arguments
+cosh 0 TypeError: cmath.cosh() takes exactly one argument (0 given)
+cosh 2 TypeError: cmath.cosh() takes exactly one argument (2 given)
+cosh 3 TypeError: cmath.cosh() takes exactly one argument (3 given)
+cosh 4 TypeError: cmath.cosh() takes exactly one argument (4 given)
+cosh {'z': 1} TypeError: cmath.cosh() takes no keyword arguments
+cosh {'zzz': 1} TypeError: cmath.cosh() takes no keyword arguments
+cosh 1, zzz TypeError: cmath.cosh() takes no keyword arguments
+exp 0 TypeError: cmath.exp() takes exactly one argument (0 given)
+exp 2 TypeError: cmath.exp() takes exactly one argument (2 given)
+exp 3 TypeError: cmath.exp() takes exactly one argument (3 given)
+exp 4 TypeError: cmath.exp() takes exactly one argument (4 given)
+exp {'z': 1} TypeError: cmath.exp() takes no keyword arguments
+exp {'zzz': 1} TypeError: cmath.exp() takes no keyword arguments
+exp 1, zzz TypeError: cmath.exp() takes no keyword arguments
+isclose 0 TypeError: isclose() missing required argument 'a' (pos 1)
+isclose 1 TypeError: isclose() missing required argument 'b' (pos 2)
+isclose 3 TypeError: isclose() takes exactly 2 positional arguments (3 given)
+isclose 4 TypeError: isclose() takes exactly 2 positional arguments (4 given)
+isclose {'z': 1} TypeError: isclose() missing required argument 'a' (pos 1)
+isclose {'zzz': 1} TypeError: isclose() missing required argument 'a' (pos 1)
+isclose 1, zzz TypeError: isclose() missing required argument 'b' (pos 2)
+isfinite 0 TypeError: cmath.isfinite() takes exactly one argument (0 given)
+isfinite 2 TypeError: cmath.isfinite() takes exactly one argument (2 given)
+isfinite 3 TypeError: cmath.isfinite() takes exactly one argument (3 given)
+isfinite 4 TypeError: cmath.isfinite() takes exactly one argument (4 given)
+isfinite {'z': 1} TypeError: cmath.isfinite() takes no keyword arguments
+isfinite {'zzz': 1} TypeError: cmath.isfinite() takes no keyword arguments
+isfinite 1, zzz TypeError: cmath.isfinite() takes no keyword arguments
+isinf 0 TypeError: cmath.isinf() takes exactly one argument (0 given)
+isinf 2 TypeError: cmath.isinf() takes exactly one argument (2 given)
+isinf 3 TypeError: cmath.isinf() takes exactly one argument (3 given)
+isinf 4 TypeError: cmath.isinf() takes exactly one argument (4 given)
+isinf {'z': 1} TypeError: cmath.isinf() takes no keyword arguments
+isinf {'zzz': 1} TypeError: cmath.isinf() takes no keyword arguments
+isinf 1, zzz TypeError: cmath.isinf() takes no keyword arguments
+isnan 0 TypeError: cmath.isnan() takes exactly one argument (0 given)
+isnan 2 TypeError: cmath.isnan() takes exactly one argument (2 given)
+isnan 3 TypeError: cmath.isnan() takes exactly one argument (3 given)
+isnan 4 TypeError: cmath.isnan() takes exactly one argument (4 given)
+isnan {'z': 1} TypeError: cmath.isnan() takes no keyword arguments
+isnan {'zzz': 1} TypeError: cmath.isnan() takes no keyword arguments
+isnan 1, zzz TypeError: cmath.isnan() takes no keyword arguments
+log 0 TypeError: log expected at least 1 argument, got 0
+log 3 TypeError: log expected at most 2 arguments, got 3
+log 4 TypeError: log expected at most 2 arguments, got 4
+log {'z': 1} TypeError: cmath.log() takes no keyword arguments
+log {'zzz': 1} TypeError: cmath.log() takes no keyword arguments
+log 1, zzz TypeError: cmath.log() takes no keyword arguments
+log10 0 TypeError: cmath.log10() takes exactly one argument (0 given)
+log10 2 TypeError: cmath.log10() takes exactly one argument (2 given)
+log10 3 TypeError: cmath.log10() takes exactly one argument (3 given)
+log10 4 TypeError: cmath.log10() takes exactly one argument (4 given)
+log10 {'z': 1} TypeError: cmath.log10() takes no keyword arguments
+log10 {'zzz': 1} TypeError: cmath.log10() takes no keyword arguments
+log10 1, zzz TypeError: cmath.log10() takes no keyword arguments
+phase 0 TypeError: cmath.phase() takes exactly one argument (0 given)
+phase 2 TypeError: cmath.phase() takes exactly one argument (2 given)
+phase 3 TypeError: cmath.phase() takes exactly one argument (3 given)
+phase 4 TypeError: cmath.phase() takes exactly one argument (4 given)
+phase {'z': 1} TypeError: cmath.phase() takes no keyword arguments
+phase {'zzz': 1} TypeError: cmath.phase() takes no keyword arguments
+phase 1, zzz TypeError: cmath.phase() takes no keyword arguments
+polar 0 TypeError: cmath.polar() takes exactly one argument (0 given)
+polar 2 TypeError: cmath.polar() takes exactly one argument (2 given)
+polar 3 TypeError: cmath.polar() takes exactly one argument (3 given)
+polar 4 TypeError: cmath.polar() takes exactly one argument (4 given)
+polar {'z': 1} TypeError: cmath.polar() takes no keyword arguments
+polar {'zzz': 1} TypeError: cmath.polar() takes no keyword arguments
+polar 1, zzz TypeError: cmath.polar() takes no keyword arguments
+rect 0 TypeError: rect expected 2 arguments, got 0
+rect 1 TypeError: rect expected 2 arguments, got 1
+rect 3 TypeError: rect expected 2 arguments, got 3
+rect 4 TypeError: rect expected 2 arguments, got 4
+rect {'z': 1} TypeError: cmath.rect() takes no keyword arguments
+rect {'zzz': 1} TypeError: cmath.rect() takes no keyword arguments
+rect 1, zzz TypeError: cmath.rect() takes no keyword arguments
+sin 0 TypeError: cmath.sin() takes exactly one argument (0 given)
+sin 2 TypeError: cmath.sin() takes exactly one argument (2 given)
+sin 3 TypeError: cmath.sin() takes exactly one argument (3 given)
+sin 4 TypeError: cmath.sin() takes exactly one argument (4 given)
+sin {'z': 1} TypeError: cmath.sin() takes no keyword arguments
+sin {'zzz': 1} TypeError: cmath.sin() takes no keyword arguments
+sin 1, zzz TypeError: cmath.sin() takes no keyword arguments
+sinh 0 TypeError: cmath.sinh() takes exactly one argument (0 given)
+sinh 2 TypeError: cmath.sinh() takes exactly one argument (2 given)
+sinh 3 TypeError: cmath.sinh() takes exactly one argument (3 given)
+sinh 4 TypeError: cmath.sinh() takes exactly one argument (4 given)
+sinh {'z': 1} TypeError: cmath.sinh() takes no keyword arguments
+sinh {'zzz': 1} TypeError: cmath.sinh() takes no keyword arguments
+sinh 1, zzz TypeError: cmath.sinh() takes no keyword arguments
+sqrt 0 TypeError: cmath.sqrt() takes exactly one argument (0 given)
+sqrt 2 TypeError: cmath.sqrt() takes exactly one argument (2 given)
+sqrt 3 TypeError: cmath.sqrt() takes exactly one argument (3 given)
+sqrt 4 TypeError: cmath.sqrt() takes exactly one argument (4 given)
+sqrt {'z': 1} TypeError: cmath.sqrt() takes no keyword arguments
+sqrt {'zzz': 1} TypeError: cmath.sqrt() takes no keyword arguments
+sqrt 1, zzz TypeError: cmath.sqrt() takes no keyword arguments
+tan 0 TypeError: cmath.tan() takes exactly one argument (0 given)
+tan 2 TypeError: cmath.tan() takes exactly one argument (2 given)
+tan 3 TypeError: cmath.tan() takes exactly one argument (3 given)
+tan 4 TypeError: cmath.tan() takes exactly one argument (4 given)
+tan {'z': 1} TypeError: cmath.tan() takes no keyword arguments
+tan {'zzz': 1} TypeError: cmath.tan() takes no keyword arguments
+tan 1, zzz TypeError: cmath.tan() takes no keyword arguments
+tanh 0 TypeError: cmath.tanh() takes exactly one argument (0 given)
+tanh 2 TypeError: cmath.tanh() takes exactly one argument (2 given)
+tanh 3 TypeError: cmath.tanh() takes exactly one argument (3 given)
+tanh 4 TypeError: cmath.tanh() takes exactly one argument (4 given)
+tanh {'z': 1} TypeError: cmath.tanh() takes no keyword arguments
+tanh {'zzz': 1} TypeError: cmath.tanh() takes no keyword arguments
+tanh 1, zzz TypeError: cmath.tanh() takes no keyword arguments
+phase ((1e+308+5e-324j),)  OverflowError: math range error
+polar ((1e+308+5e-324j),)  tuple (1e+308, 0.0)
+log ((1e+308+5e-324j),)  complex (709.196208642166+0j)
+phase ((1e+308+1e-300j),)  OverflowError: math range error
+polar ((1e+308+1e-300j),)  tuple (1e+308, 0.0)
+log ((1e+308+1e-300j),)  complex (709.196208642166+0j)
+phase ((1+5e-324j),)  float 5e-324
+polar ((1+5e-324j),)  tuple (1.0, 5e-324)
+log ((1+5e-324j),)  complex 5e-324j
+phase ((1+1e-308j),)  float 1e-308
+polar ((1+1e-308j),)  tuple (1.0, 1e-308)
+log ((1+1e-308j),)  complex 1e-308j
+phase ((2+2.2250738585072014e-308j),)  float 1.1125369292536007e-308
+polar ((2+2.2250738585072014e-308j),)  tuple (2.0, 1.1125369292536007e-308)
+log ((2+2.2250738585072014e-308j),)  complex (0.6931471805599453+1.1125369292536007e-308j)
+phase ((-1e+308+5e-324j),)  float 3.141592653589793
+polar ((-1e+308+5e-324j),)  tuple (1e+308, 3.141592653589793)
+log ((-1e+308+5e-324j),)  complex (709.196208642166+3.141592653589793j)
+phase ((1e+300+1e-10j),)  float 1e-310
+polar ((1e+300+1e-10j),)  tuple (1e+300, 1e-310)
+log ((1e+300+1e-10j),)  complex (690.7755278982137+1e-310j)
+phase ((1e+308-5e-324j),)  OverflowError: math range error
+polar ((1e+308-5e-324j),)  tuple (1e+308, -0.0)
+log ((1e+308-5e-324j),)  complex (709.196208642166-0j)
+phase ((5e-324+1e+308j),)  float 1.5707963267948966
+polar ((5e-324+1e+308j),)  tuple (1e+308, 1.5707963267948966)
+log ((5e-324+1e+308j),)  complex (709.196208642166+1.5707963267948966j)

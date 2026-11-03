@@ -1,0 +1,87 @@
+status: 0
+script: 8a9f441a1b98e2e2
+---
+<class 'os.stat_result'> stat_result stat_result os (<class 'os.stat_result'>, <class 'tuple'>, <class 'object'>)
+19 10 3 ('st_mode', 'st_ino', 'st_dev', 'st_nlink', 'st_uid', 'st_gid', 'st_size')
+['n_fields', 'n_sequence_fields', 'n_unnamed_fields', 'st_atime', 'st_atime_ns', 'st_blksize', 'st_blocks', 'st_ctime', 'st_ctime_ns', 'st_dev', 'st_gid', 'st_ino', 'st_mode', 'st_mtime', 'st_mtime_ns', 'st_nlink', 'st_rdev', 'st_size', 'st_uid']
+<class 'os.statvfs_result'> statvfs_result statvfs_result os (<class 'os.statvfs_result'>, <class 'tuple'>, <class 'object'>)
+11 10 0 ('f_bsize', 'f_frsize', 'f_blocks', 'f_bfree', 'f_bavail', 'f_files', 'f_ffree', 'f_favail', 'f_flag', 'f_namemax')
+['f_bavail', 'f_bfree', 'f_blocks', 'f_bsize', 'f_favail', 'f_ffree', 'f_files', 'f_flag', 'f_frsize', 'f_fsid', 'f_namemax', 'n_fields', 'n_sequence_fields', 'n_unnamed_fields']
+<class 'os.terminal_size'> terminal_size terminal_size os (<class 'os.terminal_size'>, <class 'tuple'>, <class 'object'>)
+2 2 0 ('columns', 'lines')
+['columns', 'lines', 'n_fields', 'n_sequence_fields', 'n_unnamed_fields']
+<class 'posix.times_result'> times_result times_result posix (<class 'posix.times_result'>, <class 'tuple'>, <class 'object'>)
+5 5 0 ('user', 'system', 'children_user', 'children_system', 'elapsed')
+['children_system', 'children_user', 'elapsed', 'n_fields', 'n_sequence_fields', 'n_unnamed_fields', 'system', 'user']
+<class 'posix.uname_result'> uname_result uname_result posix (<class 'posix.uname_result'>, <class 'tuple'>, <class 'object'>)
+5 5 0 ('sysname', 'nodename', 'release', 'version', 'machine')
+['machine', 'n_fields', 'n_sequence_fields', 'n_unnamed_fields', 'nodename', 'release', 'sysname', 'version']
+<class 'posix.waitid_result'> waitid_result waitid_result posix (<class 'posix.waitid_result'>, <class 'tuple'>, <class 'object'>)
+5 5 0 ('si_pid', 'si_uid', 'si_signo', 'si_status', 'si_code')
+['n_fields', 'n_sequence_fields', 'n_unnamed_fields', 'si_code', 'si_pid', 'si_signo', 'si_status', 'si_uid']
+<class 'posix.sched_param'> sched_param sched_param posix (<class 'posix.sched_param'>, <class 'tuple'>, <class 'object'>)
+1 1 0 ('sched_priority',)
+['n_fields', 'n_sequence_fields', 'n_unnamed_fields', 'sched_priority']
+<class 'pwd.struct_passwd'> struct_passwd struct_passwd pwd (<class 'pwd.struct_passwd'>, <class 'tuple'>, <class 'object'>)
+7 7 0 ('pw_name', 'pw_passwd', 'pw_uid', 'pw_gid', 'pw_gecos', 'pw_dir', 'pw_shell')
+['n_fields', 'n_sequence_fields', 'n_unnamed_fields', 'pw_dir', 'pw_gecos', 'pw_gid', 'pw_name', 'pw_passwd', 'pw_shell', 'pw_uid']
+<class 'grp.struct_group'> struct_group struct_group grp (<class 'grp.struct_group'>, <class 'tuple'>, <class 'object'>)
+4 4 0 ('gr_name', 'gr_passwd', 'gr_gid', 'gr_mem')
+['gr_gid', 'gr_mem', 'gr_name', 'gr_passwd', 'n_fields', 'n_sequence_fields', 'n_unnamed_fields']
+<class 'resource.struct_rusage'> struct_rusage struct_rusage resource (<class 'resource.struct_rusage'>, <class 'tuple'>, <class 'object'>)
+16 16 0 ('ru_utime', 'ru_stime', 'ru_maxrss', 'ru_ixrss', 'ru_idrss', 'ru_isrss', 'ru_minflt', 'ru_majflt', 'ru_nswap', 'ru_inblock', 'ru_oublock', 'ru_msgsnd', 'ru_msgrcv', 'ru_nsignals', 'ru_nvcsw', 'ru_nivcsw')
+['n_fields', 'n_sequence_fields', 'n_unnamed_fields', 'ru_idrss', 'ru_inblock', 'ru_isrss', 'ru_ixrss', 'ru_majflt', 'ru_maxrss', 'ru_minflt', 'ru_msgrcv', 'ru_msgsnd', 'ru_nivcsw', 'ru_nsignals', 'ru_nswap', 'ru_nvcsw', 'ru_oublock', 'ru_stime', 'ru_utime']
+TypeError structseq() missing required argument 'sequence' (pos 1)
+TypeError constructor requires a sequence
+TypeError os.stat_result() takes an at least 10-sequence (9-sequence given)
+os.stat_result(st_mode=0, st_ino=1, st_dev=2, st_nlink=3, st_uid=4, st_gid=5, st_size=6, st_atime=7, st_mtime=8, st_ctime=9)
+os.stat_result(st_mode=0, st_ino=1, st_dev=2, st_nlink=3, st_uid=4, st_gid=5, st_size=6, st_atime=7, st_mtime=8, st_ctime=9)
+os.stat_result(st_mode=0, st_ino=1, st_dev=2, st_nlink=3, st_uid=4, st_gid=5, st_size=6, st_atime=7, st_mtime=8, st_ctime=9)
+TypeError os.stat_result() takes an at most 19-sequence (20-sequence given)
+TypeError os.stat_result() takes a dict as second arg, if any
+TypeError os.stat_result() takes a dict as second arg, if any
+os.stat_result(st_mode=0, st_ino=1, st_dev=2, st_nlink=3, st_uid=4, st_gid=5, st_size=6, st_atime=7, st_mtime=8, st_ctime=9)
+os.stat_result(st_mode=0, st_ino=1, st_dev=2, st_nlink=3, st_uid=4, st_gid=5, st_size=6, st_atime=7, st_mtime=8, st_ctime=9)
+TypeError os.stat_result() got duplicate or unexpected field name(s)
+TypeError os.stat_result() got duplicate or unexpected field name(s)
+os.stat_result(st_mode=0, st_ino=1, st_dev=2, st_nlink=3, st_uid=4, st_gid=5, st_size=6, st_atime=7, st_mtime=8, st_ctime=9)
+os.stat_result(st_mode=0, st_ino=1, st_dev=2, st_nlink=3, st_uid=4, st_gid=5, st_size=6, st_atime=7, st_mtime=8, st_ctime=9)
+0 6 7 8 9 None None None
+10 7 9 (2, 3, 4) (0, 1, 2, 3, 4, 5, 6, 7, 8, 9) True
+True True True
+(<class 'os.stat_result'>, ((0, 1, 2, 3, 4, 5, 6, 7, 8, 9), {'st_atime': 7, 'st_mtime': 8, 'st_ctime': 9, 'st_atime_ns': None, 'st_mtime_ns': None, 'st_ctime_ns': None, 'st_blksize': None, 'st_blocks': None, 'st_rdev': None}))
+1.5 8 3 None
+(<class 'os.stat_result'>, ((0, 1, 2, 3, 4, 5, 6, 7, 8, 9), {'st_atime': 1.5, 'st_mtime': 8, 'st_ctime': 9, 'st_atime_ns': None, 'st_mtime_ns': None, 'st_ctime_ns': None, 'st_blksize': None, 'st_blocks': 3, 'st_rdev': None}))
+os.stat_result(st_mode=100, st_ino=101, st_dev=102, st_nlink=103, st_uid=104, st_gid=105, st_size=106, st_atime=107, st_mtime=108, st_ctime=109) 110 115 118
+AttributeError readonly attribute
+AttributeError readonly attribute
+AttributeError 'os.stat_result' object has no attribute 'other' and no __dict__ for setting new attributes
+TypeError __replace__() is not supported for os.stat_result because it has unnamed field(s)
+TypeError __replace__() is not supported for os.stat_result because it has unnamed field(s)
+True <class 'os.stat_result'> 118
+TypeError type 'os.stat_result' is not an acceptable base type
+matched 0 1 2
+os.terminal_size(columns=80, lines=24)
+TypeError os.terminal_size() takes a 2-sequence (1-sequence given)
+TypeError os.terminal_size() takes a 2-sequence (3-sequence given)
+80 24 (<class 'os.terminal_size'>, ((80, 24), {})) os.terminal_size(columns=80, lines=50) True
+TypeError Got unexpected field name(s): ['rows']
+TypeError __replace__() takes no positional arguments
+TypeError sched_param() missing required argument 'sched_priority' (pos 1)
+posix.sched_param(sched_priority=5)
+posix.sched_param(sched_priority=7)
+posix.sched_param(sched_priority=(5,))
+TypeError sched_param() takes at most 1 argument (2 given)
+5 5 1 (<class 'posix.sched_param'>, (5,)) posix.sched_param(sched_priority=9)
+posix.uname_result(sysname='a', nodename='b', release='c', version='d', machine='e')
+TypeError posix.uname_result() takes a 5-sequence (4-sequence given)
+a b c d e
+posix.times_result(user=0, system=1, children_user=2, children_system=3, elapsed=4)
+posix.waitid_result(si_pid=0, si_uid=1, si_signo=2, si_status=3, si_code=4)
+os.statvfs_result(f_bsize=0, f_frsize=1, f_blocks=2, f_bfree=3, f_bavail=4, f_files=5, f_ffree=6, f_favail=7, f_flag=8, f_namemax=9)
+os.statvfs_result(f_bsize=0, f_frsize=1, f_blocks=2, f_bfree=3, f_bavail=4, f_files=5, f_ffree=6, f_favail=7, f_flag=8, f_namemax=9)
+0 9 10 10
+None
+pwd.struct_passwd(pw_name=0, pw_passwd=1, pw_uid=2, pw_gid=3, pw_gecos=4, pw_dir=5, pw_shell=6)
+grp.struct_group(gr_name=0, gr_passwd=1, gr_gid=2, gr_mem=3)
+resource.struct_rusage(ru_utime=0, ru_stime=1, ru_maxrss=2, ru_ixrss=3, ru_idrss=4, ru_isrss=5, ru_minflt=6, ru_majflt=7, ru_nswap=8, ru_inblock=9, ru_oublock=10, ru_msgsnd=11, ru_msgrcv=12, ru_nsignals=13, ru_nvcsw=14, ru_nivcsw=15)

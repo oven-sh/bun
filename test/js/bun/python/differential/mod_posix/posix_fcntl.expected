@@ -1,0 +1,117 @@
+status: 0
+script: 772a73ba73fcac37
+---
+-- fcntl with ints
+1
+0
+0
+True
+0
+1
+True False
+0
+True False
+True True
+True False
+1
+1
+1
+1
+OSError [Errno 9] Bad file descriptor
+ValueError file descriptor cannot be a negative integer (-1)
+TypeError argument must be an int, or have a fileno() method.
+TypeError 'str' object cannot be interpreted as an integer
+OSError [Errno 22] Invalid argument
+OverflowError Python int too large to convert to C int
+TypeError fcntl() argument 3 must be an integer, a bytes-like object, or a string, not float
+TypeError fcntl() argument 3 must be an integer, a bytes-like object, or a string, not NoneType
+TypeError fcntl() argument 3 must be an integer, a bytes-like object, or a string, not list
+TypeError fcntl expected at least 2 arguments, got 1
+TypeError fcntl expected at most 3 arguments, got 4
+TypeError fcntl.fcntl() takes no keyword arguments
+-- fcntl with structures
+bytes True True
+True
+b'\x02\x00'
+True
+b'ignored'
+b'text \xc3\xa9'
+b''
+1024 1025 100000
+UnicodeEncodeError 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed
+OSError [Errno 9] Bad file descriptor
+OSError [Errno 22] Invalid argument
+-- pipes
+True
+True True
+-- ioctl
+b'\x05\x00\x00\x00' (5,)
+0
+bytearray(b'\x05\x00\x00\x00')
+0
+bytearray(b'\x05\x00\x00\x00')
+b'\x05\x00\x00\x00'
+bytearray(b'\x00\x00\x00\x00')
+0
+bytearray(b'\x00\x00\x05\x00\x00\x00\x00\x00')
+b'\x05\x00\x00\x00'
+b'\x05\x00\x00\x00'
+0
+bytearray(b'\x05\x00\x00\x00\x00\x00') 2000
+b'\x05\x00\x00\x00\x00\x00'
+b'\x01\x00\x00\x00'
+False
+OSError [Errno 25] Inappropriate ioctl for device
+OSError [Errno 9] Bad file descriptor
+OSError [Errno 14] Bad address
+OSError [Errno 25] Inappropriate ioctl for device
+OSError [Errno 25] Inappropriate ioctl for device
+TypeError ioctl() argument 2 must be int, not str
+TypeError ioctl() argument 2 must be int, not float
+TypeError ioctl() argument 2 must be int, not None
+TypeError ioctl() argument 3 must be an integer, a bytes-like object, or a string, not float
+TypeError ioctl() argument 3 must be an integer, a bytes-like object, or a string, not NoneType
+OverflowError signed integer is greater than maximum
+OverflowError signed integer is less than minimum
+OverflowError Python int too large to convert to C long
+TypeError argument must be an int, or have a fileno() method.
+TypeError ioctl expected at least 2 arguments, got 1
+TypeError ioctl expected at most 4 arguments, got 5
+b'\x05\x00\x00\x00'
+OSError [Errno 25] Inappropriate ioctl for device
+[('DeprecationWarning', 'integer value out of range')]
+b'\x1e\x00d\x00\x00\x00\x00\x00'
+(30, 100, 0, 0) os.terminal_size(columns=100, lines=30) os.terminal_size(columns=100, lines=30)
+-- flock
+None
+BlockingIOError [Errno 11] Resource temporarily unavailable
+BlockingIOError [Errno 11] Resource temporarily unavailable
+None
+None
+None
+None
+None
+None
+OSError [Errno 22] Invalid argument
+TypeError 'str' object cannot be interpreted as an integer
+OSError [Errno 9] Bad file descriptor
+TypeError flock expected 2 arguments, got 1
+-- lockf
+None
+None
+None
+None
+None
+None
+ValueError unrecognized lockf argument
+ValueError unrecognized lockf argument
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'str' object cannot be interpreted as an integer
+OverflowError Python int too large to convert to C long
+OSError [Errno 22] Invalid argument
+OSError [Errno 22] Invalid argument
+OSError [Errno 9] Bad file descriptor
+OSError [Errno 9] Bad file descriptor
+None
+TypeError lockf expected at least 2 arguments, got 1

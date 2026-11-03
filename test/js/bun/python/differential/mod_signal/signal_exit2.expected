@@ -1,0 +1,10 @@
+status: 0
+script: 65a7a745874cf817
+---
+-2 ['ready'] None
+-15 [] None
+-9 [] None
+-15 ['blocked'] None
+-15 ['blocked'] None
+0 ['ready', '10'] None
+0 ['ready', '{<Signals.SIGUSR1:', '10>}'] None

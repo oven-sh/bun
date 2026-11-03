@@ -1,0 +1,289 @@
+status: 0
+script: 298ea3a79c00c486
+source: 919a98714c0bb6d2
+---
+f"" => 
+f"a" => a
+f"{x}" => 5
+f"a{x}b" => a5b
+f"{x}{y}" => 5str
+f"{x} {y} {z}" => 5 str 3.14159
+f"{{}}" => {}
+f"{{{x}}}" => {5}
+f"{{x}}" => {x}
+f"{x}}}" => 5}
+f"{{{{" => {{
+f"{x!r}" => 5
+f"{y!r}" => 'str'
+f"{y!s}" => str
+f"{y!a}" => 'str'
+f"{'é'!a}" => '\xe9'
+f"{x:5}|" =>     5|
+f"{x:<5}|" => 5    |
+f"{x:05}" => 00005
+f"{y:>6}" =>    str
+f"{y:^7}|" =>   str  |
+f"{z:.2f}" => 3.14
+f"{z:8.3f}|" =>    3.142|
+f"{x:x}" => 5
+f"{255:#x}" => 0xff
+f"{x:+}" => +5
+f"{1000000:,}" => 1,000,000
+f"{y!r:>8}" =>    'str'
+f"{z!s:.3}" => 3.1
+f"{x + 1}" => 6
+f"{x * 2 + 1}" => 11
+f"{x == 5}" => True
+f"{x != 5}" => False
+f"{x >= 5}" => True
+f"{x if x > 3 else 0}" => 5
+f"{l[0]}" => 1
+f"{l[1:]}" => [2, 3]
+f"{d['a']}" => 1
+f"{d["a"]}" => 1
+f"{d['b c']}" => 2
+f"{len(l)}" => 3
+f"{y.upper()}" => STR
+f"{', '.join(str(i) for i in l)}" => 1, 2, 3
+f"{[i * 2 for i in l]}" => [2, 4, 6]
+f"{ {1: 2} }" => {1: 2}
+f"{ {1, 2} }" => {1, 2}
+f"{(1, 2)}" => (1, 2)
+f"{1, 2}" => (1, 2)
+f"{(lambda a: a + 1)(1)}" => 2
+f"{x!r:>{x}}" =>     5
+f"{not x}" => False
+f"{-x}" => -5
+f"{x ** 2}" => 25
+f"{x // 2}" => 2
+f"{x % 2}" => 1
+f"{x and y}" => str
+f"{None}" => None
+f"{True}" => True
+f"{...}" => Ellipsis
+f"{x:}" => 5
+f"{z:{w}.{p}f}|" =>      3.142|
+f"{z:{w}}|" =>    3.14159|
+f"{y:{fill}{align}{w}}|" => ***str****|
+f"{x:{'0'}{w}}" => 0000000005
+f"{z:.{p}}" => 3.14
+f"{x:{w}d}|" =>          5|
+f"{x:{w + 1}}|" =>           5|
+f"{y:{'>' if x else '<'}{w}}|" =>        str|
+f"{x:{f'{w}'}}|" =>          5|
+f"{z:{w}.{p}{'f'}}|" =>      3.142|
+f"{x:{w}{'x'}}|" =>          5|
+f"{x=}" => x=5
+f"{x = }" => x = 5
+f"{x =}" => x =5
+f"{x= }" => x= 5
+f"{y=}" => y='str'
+f"{y=!s}" => y=str
+f"{y=!r}" => y='str'
+f"{z=:.2f}" => z=3.14
+f"{x + 1=}" => x + 1=6
+f"{x+1 = }" => x+1 = 6
+f"{l[0]=}" => l[0]=1
+f"{d['a']=}" => d['a']=1
+f"{y.upper()=}" => y.upper()='STR'
+f"{x=:5}|" => x=    5|
+f"{x=:>5}|" => x=    5|
+f"{x = :05}" => x = 00005
+f"{(x, y)=}" => (x, y)=(5, 'str')
+f"{x,y=}" => x,y=(5, 'str')
+f"{ x = }" =>  x = 5
+f"{x=!r:>4}" => x=   5
+f"{'a' 'b'=}" => 'a' 'b'='ab'
+f"{x == 5=}" => x  ==  5=True
+f"{x # c =}" if False else "" => 
+f"{f'{x}'=}" => f'{x}'='5'
+f"{'nested'}" => nested
+f"{"same quotes"}" => same quotes
+f"{f'{x}'}" => 5
+f"{f"{f"{x}"}"}" => 5
+f"{f'{f"{x + 1}"}'}" => 6
+f"{'a' + f'{x}' + 'b'}" => a5b
+f"{'\n'!r}" => '\n'
+f"{'\\'}" => \
+f"{"\t"!r}" => '\t'
+f"a\nb{x}\tc" => a
+b5	c
+f"\{x}" if False else "" => 
+f"{x}\\" => 5\
+f"\x41{x}\101" => A5A
+f"\N{BULLET}{x}" => •5
+f"{'\N{BULLET}'}" => •
+rf"\n{x}\t" => \n5\t
+fr"{x}\\" => 5\\
+Rf"\{x}" => \5
+f"{x:\x3e4}" =>    5
+rf"{x:\>4}" if False else "" => 
+f"""multi line {x} end""" => multi
+line 5
+end
+f'''{x} {y}''' => 5
+str
+f"""{ x }""" => 5
+f"{x }" => 5
+f"{ x:5}|" =>     5|
+f"""{x: }""" if False else "" => 
+f"""a{'''b'''}c""" => abc
+f"{'''a b'''!r}" => 'a\nb'
+"a" f"{x}" "b" => a5b
+f"{x}" "c" => 5c
+"d" f"{x}" => d5
+f"{x}" f"{y}" => 5str
+"{x}" f"{x}" => {x}5
+f"{x}" "{x}" => 5{x}
+r"\n" f"\n{x}" == "\\n\n5" => True
+"a" "b" f"{x}" "c" "d" => ab5cd
+"p" f"{x}" f"{y}" "q" => p5strq
+f"{x:{{}}}" if False else "" => 
+f"{'{'}" => {
+f"{'}'}" => }
+f"{'{}'}" => {}
+f"{'{x}'}" => {x}
+f"{{{'x'}}}" => {x}
+f"{ {'a': 1}['a'] }" => 1
+f"{ {'a': {'b': 2}}['a']['b'] }" => 2
+f"{ {x} }" => {5}
+f"{ {x: y} }" => {5: 'str'}
+f"{[{1: 2}]}" => [{1: 2}]
+f"{({1: 2},)}" => ({1: 2},)
+f"{x:!<4}" => 5!!!
+f"{x:=^5}" => ==5==
+f"{x!s:=^5}" => ==5==
+f"{x!=6}" => True
+f"{x != 6}" => True
+f"{x!r}" => 5
+f"{(x!=6)!r}" => True
+f"{x<6}" => True
+f"{x>4}" => True
+f"{x:>4}" =>    5
+f"{x:=4}" =>    5
+f"{(y:=7)}" => 7
+y => 7
+f"{x:=>4}" => ===5
+f"{x::>4}" => :::5
+f"{x:::}" if False else "" => 
+f"{c}" => C[]
+f"{c:}" => C[]
+f"{c:abc}" => C[abc]
+f"{c:{x}}" => C[5]
+f"{c:a{x}b{y}c}" => C[a5bstrc]
+f"{c!r}" => C()
+f"{c!s}" => C-str
+f"{c!s:>7}" =>   C-str
+f"{c=}" => c=C()
+f"{c=:x}" => c=C[x]
+f"{c=!s}" => c=C-str
+f"{c:{{}}}" if False else "" => 
+f"{c:!r}" => C[!r]
+f"{c: }" => C[ ]
+f"{c: a }" => C[  a  ]
+f"{c:a:b}" => C[a:b]
+f"{c:[0]}" => C[[0]]
+f"{c:%Y-%m}" => C[%Y-%m]
+f"{c:\n}" => C[
+]
+f"{c:'\"}" => C['"]
+f"{c:{'}'}}" => C[}]
+f"{c:{"{"}}" => C[{]
+next(g) => 1
+g.send("sent") => sent
+f"{(lambda: x)()}" => 5
+f"{(lambda x: x * 2)(4)}" => 8
+f"{(lambda: {'a': 1})()['a']}" => 1
+[f"{i}{j}" for i in "ab" for j in "12"] => ['a1', 'a2', 'b1', 'b2']
+{f"k{i}": f"v{i}" for i in range(2)} => {'k0': 'v0', 'k1': 'v1'}
+f"{[f'{i}' for i in range(3)]}" => ['0', '1', '2']
+f"{sum(i for i in range(4))}" => 6
+f"{x if True else y:>3}" =>   5
+f"{*l,}" => (1, 2, 3)
+f"{[*l, *l]}" => [1, 2, 3, 1, 2, 3]
+f"{ {**d} }" => {'a': 1, 'b c': 2}
+len(f"{'a' * 1000}") => 1000
+f"{'':>3}|" =>    |
+f"{'':3}|" =>    |
+f"{1}{2}{3}{4}{5}{6}{7}{8}{9}{10}" => 12345678910
+f"{x}" * 3 => 555
+f"{x}"[0] => 5
+f"{x}{y}".upper() => 5STR
+f"{x}" + "a" => 5a
+f"{x}" == "5" => True
+f"{x}" in "456" => True
+type(f"{x}") => <class 'str'>
+type(f"") => <class 'str'>
+f"{1_000}" => 1000
+f"{0x10}" => 16
+f"{1e3}" => 1000.0
+f"{1j}" => 1j
+f"{b'a'}" => b'a'
+f"{'a' 'b'}" => ab
+f"{'a' 'b'}" => ab
+SyntaxError: f-string: expecting '}'
+SyntaxError: f-string: single '}' is not allowed
+SyntaxError: f-string: valid expression required before '}'
+SyntaxError: f-string: valid expression required before '}'
+SyntaxError: f-string: expecting '}'
+SyntaxError: f-string: missing conversion character
+SyntaxError: f-string: invalid conversion character 'z': expected 's', 'r', or 'a'
+SyntaxError: f-string: expecting '}'
+SyntaxError: f-string: invalid conversion character 'rr': expected 's', 'r', or 'a'
+SyntaxError: f-string: conversion type must come right after the exclamation mark
+'1'
+SyntaxError: f-string: valid expression required before '!'
+SyntaxError: f-string: valid expression required before ':'
+SyntaxError: f-string: valid expression required before '='
+SyntaxError: f-string: valid expression required before '}'
+SyntaxError: f-string: expressions nested too deeply
+SyntaxError: invalid syntax. Perhaps you forgot a comma?
+SyntaxError: f-string: expecting '=', or '!', or ':', or '}'
+SyntaxError: invalid syntax. Perhaps you forgot a comma?
+SyntaxError: f-string: lambda expressions are not allowed without parentheses
+SyntaxError: f-string: expecting '}'
+SyntaxError: f-string: single '}' is not allowed
+SyntaxError: f-string: single '}' is not allowed
+SyntaxError: f-string: single '}' is not allowed
+SyntaxError: f-string: expecting '=', or '!', or ':', or '}'
+SyntaxError: closing parenthesis '}' does not match opening parenthesis '('
+SyntaxError: f-string: unmatched ')'
+SyntaxError: closing parenthesis '}' does not match opening parenthesis '['
+SyntaxError: f-string: expecting ':' or '}'
+SyntaxError: f-string: missing conversion character
+SyntaxError: unexpected character after line continuation character
+SyntaxError: unexpected character after line continuation character
+SyntaxError: '{' was never closed
+SyntaxError: '{' was never closed
+SyntaxError: unterminated f-string literal (detected at line 1)
+SyntaxError: can't use starred expression here
+SyntaxError: f-string: expecting a valid expression after '{'
+SyntaxError: 'yield' outside function
+SyntaxError: 'await' outside function
+SyntaxError: f-string: expecting '!', or ':', or '}'
+' 1'
+SyntaxError: f-string: expecting a valid expression after '{'
+SyntaxError: f-string: expecting a valid expression after '{'
+SyntaxError: '{' was never closed
+SyntaxError: '{' was never closed
+SyntaxError: 'b' and 'f' prefixes are incompatible
+SyntaxError: 'b' and 'f' prefixes are incompatible
+SyntaxError: 'u' and 'f' prefixes are incompatible
+SyntaxError: cannot mix bytes and nonbytes literals
+SyntaxError: cannot mix bytes and nonbytes literals
+SyntaxError: f-string: expecting '=', or '!', or ':', or '}'
+SyntaxError: f-string: expecting '=', or '!', or ':', or '}'
+SyntaxError: invalid hexadecimal literal
+SyntaxError: invalid decimal literal
+SyntaxError: f-string: expecting '}'
+SyntaxError: f-string: expecting ':' or '}'
+SyntaxError: f-string: expecting a valid expression after '{'
+'ab'
+'f"{nope}"'() => NameError: name 'nope' is not defined
+AttributeError: 'int' object has no attribute 'nope'
+IndexError: list index out of range
+ValueError: Negative zero coercion (z) not allowed in integer format specifier
+ValueError: Unknown format code 'd' for object of type 'str'
+'f"{1/0}"'() => ZeroDivisionError: division by zero
+ValueError: Unknown format code 'q' for object of type 'int'
+ValueError: Unknown format code 'd' for object of type 'str'

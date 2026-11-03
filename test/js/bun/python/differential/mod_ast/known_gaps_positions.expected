@@ -1,0 +1,7 @@
+status: 0
+script: e99da2d3a2055793
+---
+at 0,0 ZeroDivisionError [('<module>', 0)]
+at -1,-1 ZeroDivisionError [('<module>', 0)]
+at 5000000,0 ZeroDivisionError [('<module>', 5000000)]
+at 2147483647,0 ZeroDivisionError [('<module>', 2147483647)]

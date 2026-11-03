@@ -1,0 +1,7 @@
+status: 0
+script: 1bdb2ecf0123e18f
+---
+BrokenPipeError [Errno 32] Broken pipe
+BrokenPipeError [Errno 32] Broken pipe
+BrokenPipeError [Errno 32] Broken pipe
+True

@@ -1,0 +1,202 @@
+status: 0
+script: 558c8b239291b307
+source: 4c9e269ac969f64a
+---
+l.append(1) => None
+l => [1]
+l.append([2]) => None
+l => [1, [2]]
+l.append(None) => None
+l => [1, [2], None]
+l.extend([2, 3]) => None
+l => [1, 2, 3]
+[1, 2, 3, 4, 'a', 'b', 0, 1, 7, 9, 10]
+[1, 2, 1, 2]
+[].extend(1) => TypeError: 'int' object is not iterable
+[].extend(None) => TypeError: 'NoneType' object is not iterable
+[].extend() => TypeError: list.extend() takes exactly one argument (0 given)
+[].extend([1], [2]) => TypeError: list.extend() takes exactly one argument (2 given)
+[].append() => TypeError: list.append() takes exactly one argument (0 given)
+[].append(1, 2) => TypeError: list.append() takes exactly one argument (2 given)
+['a', 1, 2, 3]
+['a', 1, 'b', 2, 3]
+['a', 1, 'b', 2, 3, 'c']
+['a', 1, 'b', 2, 3, 'd', 'c']
+['e', 'a', 1, 'b', 2, 3, 'd', 'c']
+['e', 'a', 1, 'b', 2, 3, 'd', 'c', 'f']
+['e', 'g', 'a', 1, 'b', 2, 3, 'd', 'c', 'f']
+[].insert(0) => TypeError: insert expected 2 arguments, got 1
+[].insert("a", 1) => TypeError: 'str' object cannot be interpreted as an integer
+[].insert(1.0, 1) => TypeError: 'float' object cannot be interpreted as an integer
+[].insert(None, 1) => TypeError: 'NoneType' object cannot be interpreted as an integer
+l.pop() => 5
+l => [1, 2, 3, 4]
+l.pop(0) => 1
+l => [2, 3, 4]
+l.pop(1) => 3
+l => [2, 4]
+l.pop(-1) => 4
+l => [2]
+l.pop(-1) => 2
+l => []
+[].pop() => IndexError: pop from empty list
+[1].pop(1) => IndexError: pop index out of range
+[1].pop(-2) => IndexError: pop index out of range
+[1].pop("a") => TypeError: 'str' object cannot be interpreted as an integer
+[1].pop(1.0) => TypeError: 'float' object cannot be interpreted as an integer
+[1].pop(0, 1) => TypeError: pop expected at most 1 argument, got 2
+l.remove(2) => None
+l => [1, 3, 2, 1]
+[3, 2, 1]
+[3, 2]
+[1].remove(2) => ValueError: list.remove(x): x not in list
+[].remove(None) => ValueError: list.remove(x): x not in list
+[1].remove() => TypeError: list.remove() takes exactly one argument (0 given)
+[1.0, True]
+[]
+[float("nan")].remove(float("nan")) => ValueError: list.remove(x): x not in list
+l.index(2) => 1
+l.index(2, 2) => 3
+l.index(1, 1) => 4
+l.index(2, -3) => 3
+l.index(1, -1) => 4
+l.index(3, 0, 3) => 2
+l.index(1, -100) => 0
+l.index(1, 0, 100) => 0
+[1.0].index(1) => 0
+[[1]].index([1]) => 0
+l.index(2, 1, 2) => 1
+l.index(9) => ValueError: list.index(x): x not in list
+l.index(3, 3) => ValueError: list.index(x): x not in list
+l.index(3, 0, 2) => ValueError: list.index(x): x not in list
+l.index("a") => ValueError: list.index(x): x not in list
+l.index() => TypeError: index expected at least 1 argument, got 0
+l.index(1, "a") => TypeError: slice indices must be integers or have an __index__ method
+l.index(1, 1.0) => TypeError: slice indices must be integers or have an __index__ method
+l.index([1, 2]) => ValueError: list.index(x): x not in list
+l.count(1) => 2
+l.count(2) => 2
+l.count(9) => 0
+[].count(1) => 0
+[1, 1.0, True].count(1) => 3
+[[1], [1]].count([1]) => 2
+[None, None].count(None) => 2
+[nan, nan].count(nan) => 2
+["a", "b", "a"].count("a") => 2
+l.count() => TypeError: list.count() takes exactly one argument (0 given)
+l.reverse() => None
+l => [3, 2, 1]
+[]
+[1]
+[4, 3, 2, 1]
+l => [1, [2, 9]]
+c => [1, [2, 9], 3]
+type(c) => <class 'list'>
+l.clear() => None
+l => []
+len(l) => 0
+[1]
+[].copy(1) => TypeError: list.copy() takes no arguments (1 given)
+[].clear(1) => TypeError: list.clear() takes no arguments (1 given)
+[].reverse(1) => TypeError: list.reverse() takes no arguments (1 given)
+l.sort() => None
+l => [1, 2, 3]
+[3, 2, 1]
+[3, 2, 1]
+[1, 2, 3]
+[2, 1, 3]
+[1, 2, 3]
+['A', 'B', 'b', 'c']
+['A', 'B', 'b', 'c']
+['c', 'B', 'b', 'A']
+['c', 'B', 'b', 'A']
+[(0, 'y'), (0, 'z'), (1, 'a'), (1, 'b')]
+[(0, 'y'), (0, 'z'), (1, 'a'), (1, 'b')]
+[(1, 'a'), (1, 'b'), (0, 'y'), (0, 'z')]
+[(1, 'a'), (1, 'b'), (0, 'y'), (0, 'z')]
+[-1000000000000000000000000000000, -1.5, 0, False, 1, True, 2.5, 1000000000000000000000000000000]
+[]
+[1]
+[1, 2]
+[1, 1, 1]
+[[], [1], [1, 2], [2, 1]]
+['', 'Z', 'a', 'aa', 'z', 'é', '\uffff', '😀']
+[b'', b'a', b'ab', b'b']
+[98, 91, 84, 77, 70, 63, 56, 49, 42, 35, 28, 21, 14, 7, 0, 99, 92, 85, 78, 71]
+l == sorted(set(l)) or l[:10] => True
+l[:5] => [0, 1, 2, 3, 4]
+l[-5:] => [995, 996, 997, 998, 999]
+True
+True
+l[:8] => [0, 1, 1, 2, 2, 3, 3, 4]
+l[-5:] => [48, 48, 49, 49, 50]
+len(l) => 110
+[1, "a"].sort() => TypeError: '<' not supported between instances of 'str' and 'int'
+["a", 1].sort() => TypeError: '<' not supported between instances of 'int' and 'str'
+[1, None].sort() => TypeError: '<' not supported between instances of 'NoneType' and 'int'
+[None, None].sort() => TypeError: '<' not supported between instances of 'NoneType' and 'NoneType'
+[[1], ["a"]].sort() => TypeError: '<' not supported between instances of 'str' and 'int'
+[1j, 2j].sort() => TypeError: '<' not supported between instances of 'complex' and 'complex'
+[{}, {}].sort() => TypeError: '<' not supported between instances of 'dict' and 'dict'
+[3, 1].sort(lambda x: x) => TypeError: sort() takes no positional arguments
+[3, 1].sort(key=1) => TypeError: 'int' object is not callable
+[3, 1].sort(cmp=1) => TypeError: sort() got an unexpected keyword argument 'cmp'
+[3, 1].sort(reverse="a") => None
+[3, 1].sort(reverse=None) => None
+[3, 1].sort(key=lambda: 1) => TypeError: <lambda>.<locals>.<lambda>() takes 0 positional arguments but 1 was given
+[3, 1].sort(key=lambda x: 1 / 0) => ZeroDivisionError: division by zero
+after failed key l => [3, 1, 2]
+after failed sort sorted(map(str, l)) => ['1', '2', '3', 'a']
+l.sort(key=mutating_key) => ValueError: list modified during sort
+0 0 0 [1, 2, 3]
+sorted([K(3), K(1), K(2)]) => [K1, K2, K3]
+log => [(1, 3), (2, 1), (1, 2), (2, 3), (2, 3), (2, 1)]
+sorted([K(1), K(2), K(3), K(4)]) => [K1, K2, K3, K4]
+log => [(2, 1), (3, 2), (4, 3)]
+sorted([K(4), K(3), K(2), K(1)]) => [K1, K2, K3, K4]
+log => [(3, 4), (2, 3), (1, 2)]
+sorted([K(2), K(1)], reverse=True) => [K2, K1]
+log => [(2, 1)]
+2
+sorted([OnlyEq(), OnlyEq()]) => TypeError: '<' not supported between instances of 'OnlyEq' and 'OnlyEq'
+sorted([3, 1, 2]) => [1, 2, 3]
+sorted((3, 1, 2)) => [1, 2, 3]
+sorted("cab") => ['a', 'b', 'c']
+sorted({3: 0, 1: 0}) => [1, 3]
+sorted({2, 1}) => [1, 2]
+sorted(range(3, 0, -1)) => [1, 2, 3]
+sorted([]) => []
+sorted([3, 1, 2], reverse=True) => [3, 2, 1]
+sorted(["b", "A"], key=str.upper) => ['A', 'b']
+sorted(x for x in [2, 1]) => [1, 2]
+sorted([1, 2, 3], key=lambda x: 0) => [1, 2, 3]
+sorted([1, 2, 3], key=lambda x: 0, reverse=True) => [1, 2, 3]
+sorted() => TypeError: sorted expected 1 argument, got 0
+sorted(1) => TypeError: 'int' object is not iterable
+sorted([1], None) => TypeError: sorted expected 1 argument, got 2
+sorted([1], key=None, reverse=None) => [1]
+sorted(iterable=[1]) => TypeError: sorted expected 1 argument, got 0
+list.append.__name__ => append
+[].append.__name__ => append
+[].append.__self__ => []
+type([].append).__name__ => builtin_function_or_method
+type(list.append).__name__ => method_descriptor
+list.append.__qualname__ => list.append
+list.sort.__objclass__ => <class 'list'>
+sorted(n for n in dir(list) if not n.startswith("_")) => ['append', 'clear', 'copy', 'count', 'extend', 'index', 'insert', 'pop', 'remove', 'reverse', 'sort']
+x => [1, 2]
+list.pop(x) => 2
+list.__len__(x) => 1
+list.index(x, 1) => 0
+list.append(1, 2) => TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'int' object
+list.append() => TypeError: unbound method list.append() needs an argument
+list.append((), 1) => TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'tuple' object
+[].nope => AttributeError: 'list' object has no attribute 'nope'
+set_attr() => AttributeError: 'list' object has no attribute 'x' and no __dict__ for setting new attributes
+[stack.pop() for _ in range(5)] => [4, 3, 2, 1, 0]
+stack => []
+[q.pop(0) for _ in range(5)] => [0, 1, 2, 3, 4]
+q => []
+m => [[0, 5, 0], [0, 0, 0]]
+[list(r) for r in zip(*m)] => [[0, 0], [5, 0], [0, 0]]
+[v for r in m for v in r] => [0, 5, 0, 0, 0, 0]

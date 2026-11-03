@@ -1,0 +1,14 @@
+status: 0
+script: 5ba1124efeaed10d
+---
+267 True ('<', '<=', '==', '!=', '>', '>=') 67 41
+[(1, 'OPTIMIZED'), (2, 'NEWLOCALS'), (4, 'VARARGS'), (8, 'VARKEYWORDS'), (16, 'NESTED'), (32, 'GENERATOR'), (64, 'NOFREE'), (128, 'COROUTINE'), (256, 'ITERABLE_COROUTINE'), (512, 'ASYNC_GENERATOR'), (67108864, 'HAS_DOCSTRING'), (134217728, 'METHOD')]
+OPTIMIZED, NEWLOCALS, GENERATOR, COROUTINE -1 -2
+Name:              f
+Filename:          FILE
+Argument count:    2
+Positional-only arguments: 0
+Kw-only arguments: 1
+Number of locals:  6
+
+OPTIMIZED, NEWLOCALS, VARARGS, VARKEYWORDS, HAS_DOCSTRING

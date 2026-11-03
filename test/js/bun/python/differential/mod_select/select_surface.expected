@@ -1,0 +1,14 @@
+status: 0
+script: 6ddcb95f25fd00f2
+---
+['EPOLLERR', 'EPOLLET', 'EPOLLEXCLUSIVE', 'EPOLLHUP', 'EPOLLIN', 'EPOLLMSG', 'EPOLLONESHOT', 'EPOLLOUT', 'EPOLLPRI', 'EPOLLRDBAND', 'EPOLLRDHUP', 'EPOLLRDNORM', 'EPOLLWAKEUP', 'EPOLLWRBAND', 'EPOLLWRNORM', 'EPOLL_CLOEXEC', 'PIPE_BUF', 'POLLERR', 'POLLHUP', 'POLLIN', 'POLLMSG', 'POLLNVAL', 'POLLOUT', 'POLLPRI', 'POLLRDBAND', 'POLLRDHUP', 'POLLRDNORM', 'POLLWRBAND', 'POLLWRNORM', 'epoll', 'error', 'poll', 'select']
+[('EPOLLERR', 8), ('EPOLLET', 2147483648), ('EPOLLEXCLUSIVE', 268435456), ('EPOLLHUP', 16), ('EPOLLIN', 1), ('EPOLLMSG', 1024), ('EPOLLONESHOT', 1073741824), ('EPOLLOUT', 4), ('EPOLLPRI', 2), ('EPOLLRDBAND', 128), ('EPOLLRDHUP', 8192), ('EPOLLRDNORM', 64), ('EPOLLWAKEUP', 536870912), ('EPOLLWRBAND', 512), ('EPOLLWRNORM', 256), ('EPOLL_CLOEXEC', 524288), ('PIPE_BUF', 4096), ('POLLERR', 8), ('POLLHUP', 16), ('POLLIN', 1), ('POLLMSG', 1024), ('POLLNVAL', 32), ('POLLOUT', 4), ('POLLPRI', 2), ('POLLRDBAND', 128), ('POLLRDHUP', 8192), ('POLLRDNORM', 64), ('POLLWRBAND', 512), ('POLLWRNORM', 256)]
+<class 'select.poll'> ['modify', 'poll', 'register', 'unregister'] (<class 'select.poll'>, <class 'object'>)
+<class 'select.epoll'> ['close', 'closed', 'fileno', 'fromfd', 'modify', 'poll', 'register', 'unregister'] (<class 'select.epoll'>, <class 'object'>)
+True <select.epoll object <select.poll object
+False False True True
+TypeError: cannot create 'select.poll' instances
+TypeError: select.poll() takes no arguments (1 given)
+TypeError: type 'select.epoll' is not an acceptable base type
+TypeError: type 'select.poll' is not an acceptable base type
+True

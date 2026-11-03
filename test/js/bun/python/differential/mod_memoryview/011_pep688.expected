@@ -1,0 +1,176 @@
+status: 0
+script: 9608c97eec02c294
+---
+[('WRITABLE', 1), ('FORMAT', 4), ('ND', 8), ('READ', 256), ('WRITE', 512)]
+[('buffer', 284), ('buffer', 284), ('buffer', 284)] b'hello' _buffer_wrapper False True B (5,) b'hello' bytearray(b'hello') [('buffer', 284), ('buffer', 284), ('buffer', 284)]
+TypeError cannot create '_buffer_wrapper' instances
+b'xhello' b'hello-hello' True True True True 4 448378203247 68656c6c6f [('buffer', 0), ('buffer', 0), ('buffer', 0), ('buffer', 0), ('buffer', 0), ('buffer', 0), ('buffer', 0), ('buffer', 0), ('buffer', 284)]
+False
+True
+TypeError object of type 'A' has no len()
+True
+TypeError Bad.__buffer__() must return a memoryview, not int
+TypeError Bad.__buffer__() must return a memoryview, not int
+TypeError can't concat Bad to bytes
+TypeError sequence item 0: expected a bytes-like object, Bad found
+False
+TypeError Bad.__buffer__() must return a memoryview, not bytes
+TypeError Bad.__buffer__() must return a memoryview, not bytes
+TypeError can't concat Bad to bytes
+TypeError sequence item 0: expected a bytes-like object, Bad found
+False
+TypeError Bad.__buffer__() must return a memoryview, not NoneType
+TypeError Bad.__buffer__() must return a memoryview, not NoneType
+TypeError can't concat Bad to bytes
+TypeError sequence item 0: expected a bytes-like object, Bad found
+False
+TypeError Bad.__buffer__() must return a memoryview, not bytearray
+TypeError Bad.__buffer__() must return a memoryview, not bytearray
+TypeError can't concat Bad to bytes
+TypeError sequence item 0: expected a bytes-like object, Bad found
+False
+TypeError Bad.__buffer__() must return a memoryview, not list
+TypeError Bad.__buffer__() must return a memoryview, not list
+TypeError can't concat Bad to bytes
+TypeError sequence item 0: expected a bytes-like object, Bad found
+False
+TypeError Arity.__buffer__() takes 1 positional argument but 2 were given
+KeyError 'nope'
+KeyError 'nope'
+TypeError can't concat Raises to bytes
+False
+False
+KeyError 'nope'
+TypeError 'NoneType' object is not callable
+TypeError memoryview: a bytes-like object is required, not 'Inst'
+ValueError operation forbidden on released memoryview object
+True b'hello' False
+TypeError already held
+BufferError memoryview has 1 exported buffer
+True bytearray(b'Hello')
+release True b'Hello'
+False
+release True b'Hello'
+b'Hello' False
+bytearray(b'Hello!')
+flags 1 1
+b'xello' False B (5,) (1,)
+flags 0 0
+b'xello' True
+flags 1 1
+RuntimeError not mutable
+flags 284 284
+True
+('SIMPLE', 'bytes', True, 'B', 1, 1, (4,), (1,), True)
+('SIMPLE', 'bytearray', False, 'B', 1, 1, (4,), (1,), True)
+BufferError Object is not writable.
+('WRITABLE', 'bytearray', False, 'B', 1, 1, (4,), (1,), True)
+('FORMAT', 'bytes', True, 'B', 1, 1, (4,), (1,), True)
+('FORMAT', 'bytearray', False, 'B', 1, 1, (4,), (1,), True)
+('ND', 'bytes', True, 'B', 1, 1, (4,), (1,), True)
+('ND', 'bytearray', False, 'B', 1, 1, (4,), (1,), True)
+('STRIDES', 'bytes', True, 'B', 1, 1, (4,), (1,), True)
+('STRIDES', 'bytearray', False, 'B', 1, 1, (4,), (1,), True)
+('C_CONTIGUOUS', 'bytes', True, 'B', 1, 1, (4,), (1,), True)
+('C_CONTIGUOUS', 'bytearray', False, 'B', 1, 1, (4,), (1,), True)
+('F_CONTIGUOUS', 'bytes', True, 'B', 1, 1, (4,), (1,), True)
+('F_CONTIGUOUS', 'bytearray', False, 'B', 1, 1, (4,), (1,), True)
+('ANY_CONTIGUOUS', 'bytes', True, 'B', 1, 1, (4,), (1,), True)
+('ANY_CONTIGUOUS', 'bytearray', False, 'B', 1, 1, (4,), (1,), True)
+('INDIRECT', 'bytes', True, 'B', 1, 1, (4,), (1,), True)
+('INDIRECT', 'bytearray', False, 'B', 1, 1, (4,), (1,), True)
+BufferError Object is not writable.
+('CONTIG', 'bytearray', False, 'B', 1, 1, (4,), (1,), True)
+('ND', 'bytes', True, 'B', 1, 1, (4,), (1,), True)
+('ND', 'bytearray', False, 'B', 1, 1, (4,), (1,), True)
+BufferError Object is not writable.
+('STRIDED', 'bytearray', False, 'B', 1, 1, (4,), (1,), True)
+('STRIDES', 'bytes', True, 'B', 1, 1, (4,), (1,), True)
+('STRIDES', 'bytearray', False, 'B', 1, 1, (4,), (1,), True)
+BufferError Object is not writable.
+('RECORDS', 'bytearray', False, 'B', 1, 1, (4,), (1,), True)
+('RECORDS_RO', 'bytes', True, 'B', 1, 1, (4,), (1,), True)
+('RECORDS_RO', 'bytearray', False, 'B', 1, 1, (4,), (1,), True)
+BufferError Object is not writable.
+('FULL', 'bytearray', False, 'B', 1, 1, (4,), (1,), True)
+('FULL_RO', 'bytes', True, 'B', 1, 1, (4,), (1,), True)
+('FULL_RO', 'bytearray', False, 'B', 1, 1, (4,), (1,), True)
+READ
+READ
+WRITE
+WRITE
+TypeError _from_flags() missing required argument 'flags' (pos 2)
+TypeError 'str' object cannot be interpreted as an integer
+OverflowError Python int too large to convert to C int
+TypeError memoryview: a bytes-like object is required, not 'int'
+b'a'
+True
+memoryview b'hello' True False B
+BufferError Existing exports of data: object cannot be re-sized
+None
+ValueError operation forbidden on released memoryview object
+ValueError memoryview's buffer has already been released
+bytearray(b'hello\x01')
+OverflowError cannot fit 'int' into an index-sized integer
+OverflowError buffer flags out of range
+OverflowError buffer flags out of range
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'float' object cannot be interpreted as an integer
+TypeError expected a memoryview object
+ValueError memoryview's buffer is not this object
+ValueError memoryview's buffer is not this object
+b'abc'
+BufferError Object is not writable.
+b'abc'
+False
+False
+True b'abcd' B (4,)
+BufferError memoryview has 1 exported buffer
+BufferError memoryview has 2 exported buffers
+None
+BufferError memoryview has 1 exported buffer
+ValueError operation forbidden on released memoryview object
+None
+ValueError operation forbidden on released memoryview object
+(0, 'B', 2, 1, (4,), (2,), 8, [97, 99, 101, 103])
+BufferError memoryview: cannot cast to unsigned bytes if the format flag is present
+(8, 'B', 2, 1, (4,), (2,), 8, [97, 99, 101, 103])
+(24, 'B', 2, 1, (4,), (2,), 8, [97, 99, 101, 103])
+(12, 'h', 2, 1, (4,), (2,), 8, [25185, 25699, 26213, 26727])
+(284, 'h', 2, 1, (4,), (2,), 8, [25185, 25699, 26213, 26727])
+BufferError memoryview: underlying buffer is not writable
+(56, 'B', 2, 1, (4,), (2,), 8, [97, 99, 101, 103])
+(88, 'B', 2, 1, (4,), (2,), 8, [97, 99, 101, 103])
+(152, 'B', 2, 1, (4,), (2,), 8, [97, 99, 101, 103])
+BufferError memoryview: underlying buffer is not C-contiguous
+BufferError memoryview: underlying buffer is not C-contiguous
+('rev', 24, 'B', 1, 1, (8,), (-1,), 8, b'hgfedcba')
+('rev', 284, 'B', 1, 1, (8,), (-1,), 8, b'hgfedcba')
+BufferError memoryview: underlying buffer is not C-contiguous
+BufferError memoryview: underlying buffer is not Fortran contiguous
+BufferError memoryview: underlying buffer is not contiguous
+BufferError memoryview: underlying buffer is not C-contiguous
+('2d', 0, 'B', 1, 1, (8,), (1,), 8, b'abcdefgh')
+('2d', 8, 'B', 1, 2, (2, 4), (4, 1), 8, b'abcdefgh')
+('2d', 24, 'B', 1, 2, (2, 4), (4, 1), 8, b'abcdefgh')
+('2d', 284, 'B', 1, 2, (2, 4), (4, 1), 8, b'abcdefgh')
+('2d', 56, 'B', 1, 2, (2, 4), (4, 1), 8, b'abcdefgh')
+BufferError memoryview: underlying buffer is not Fortran contiguous
+('2d', 152, 'B', 1, 2, (2, 4), (4, 1), 8, b'abcdefgh')
+('2d', 8, 'B', 1, 2, (2, 4), (4, 1), 8, b'abcdefgh')
+BufferError memoryview: underlying buffer is not C-contiguous
+BufferError memoryview: underlying buffer is not C-contiguous
+('2drev', 24, 'B', 1, 2, (2, 4), (-4, 1), 8, b'efghabcd')
+('2drev', 284, 'B', 1, 2, (2, 4), (-4, 1), 8, b'efghabcd')
+BufferError memoryview: underlying buffer is not C-contiguous
+BufferError memoryview: underlying buffer is not Fortran contiguous
+BufferError memoryview: underlying buffer is not contiguous
+BufferError memoryview: underlying buffer is not C-contiguous
+('0d', 0, 'B', 1, 1, (1,), (1,), 1, b'a')
+('0d', 8, 'B', 1, 0, (), (), 1, b'a')
+('0d', 24, 'B', 1, 0, (), (), 1, b'a')
+('0d', 284, 'B', 1, 0, (), (), 1, b'a')
+('0d', 56, 'B', 1, 0, (), (), 1, b'a')
+('0d', 88, 'B', 1, 0, (), (), 1, b'a')
+('0d', 152, 'B', 1, 0, (), (), 1, b'a')
+('0d', 8, 'B', 1, 0, (), (), 1, b'a')

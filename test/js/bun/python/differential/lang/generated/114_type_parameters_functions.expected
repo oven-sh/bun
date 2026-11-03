@@ -1,0 +1,196 @@
+status: 0
+script: 89295746e3f4e247
+source: 94478d9e5aa3e712
+---
+ident(1) => 1
+ident.__type_params__ => (T,)
+type(ident.__type_params__) => <class 'tuple'>
+type(ident.__type_params__[0]).__name__ => TypeVar
+ident.__annotations__ => {'x': T, 'return': T}
+ident.__name__ => ident
+ident.__qualname__ => ident
+T => T
+repr(T) => T
+str(T) => T
+T.__name__ => T
+T.__bound__ => None
+T.__constraints__ => ()
+T.__covariant__ => False
+T.__contravariant__ => False
+T.__infer_variance__ => True
+T.has_default() => False
+T.__module__ => typing
+type(T).__module__ => typing
+type(T).__qualname__ => TypeVar
+T == T => True
+hash(T) == hash(T) => True
+T is ident.__annotations__["x"] => True
+T.__default__ => typing.NoDefault
+repr(T.__default__) => typing.NoDefault
+type(T.__default__).__name__ => NoDefaultType
+two.__type_params__ => (A, B)
+bounded.__type_params__[0].__bound__ => <class 'int'>
+bounded.__type_params__[0].__constraints__ => ()
+constrained.__type_params__[0].__constraints__ => (<class 'int'>, <class 'str'>)
+constrained.__type_params__[0].__bound__ => None
+variadic.__type_params__ => (Ts,)
+type(variadic.__type_params__[0]).__name__ => TypeVarTuple
+repr(variadic.__type_params__[0]) => Ts
+paramspec.__type_params__ => (P,)
+type(paramspec.__type_params__[0]).__name__ => ParamSpec
+repr(paramspec.__type_params__[0]) => P
+everything.__type_params__ => (T, U, V, Ts, P)
+[type(p).__name__ for p in everything.__type_params__] => ['TypeVar', 'TypeVar', 'TypeVar', 'TypeVarTuple', 'ParamSpec']
+P.__name__ => P
+P.args => P.args
+P.kwargs => P.kwargs
+type(P.args).__name__ => ParamSpecArgs
+type(P.kwargs).__name__ => ParamSpecKwargs
+P.args.__origin__ is P => True
+P.__bound__ => None
+P.has_default() => False
+Ts.__name__ => Ts
+Ts.has_default() => False
+paramspec.__annotations__ => {'a': P.args, 'k': P.kwargs}
+variadic.__annotations__ => {'a': typing.Unpack[Ts]}
+P.args == P.args => True
+P.args == P.kwargs => False
+(lambda: 0).__type_params__ => ()
+len.__type_params__ if hasattr(len, "__type_params__") else "builtins... => builtins have none
+print.__class__.__name__ => builtin_function_or_method
+()
+(T,)
+s1() => TypeError: __type_params__ must be set to a tuple
+s2() => TypeError: __type_params__ must be set to a tuple
+s3() => TypeError: __type_params__ must be set to a tuple
+T
+tp.__bound__ => NameError: name 'undefined_bound' is not defined
+defined later
+lazy2.__type_params__[0].__constraints__ => NameError: name 'undefined_c1' is not defined
+[]
+tp.__bound__ => <class 'int'>
+log => ['bound']
+tp.__bound__ => <class 'int'>
+log => ['bound']
+tp.__default__ => <class 'bool'>
+log => ['bound', 'default']
+tp.__default__ => <class 'bool'>
+log => ['bound', 'default']
+'Fwd'
+list[T]
+[list[B], list[A]]
+d1.__type_params__[0].__default__ => <class 'int'>
+d1.__type_params__[0].has_default() => True
+d2.__type_params__[0].__default__ => <class 'bool'>
+d2.__type_params__[0].__bound__ => <class 'int'>
+d3.__type_params__[0].__default__ => *tuple[int, str]
+d4.__type_params__[0].__default__ => [<class 'int'>, <class 'str'>]
+d5.__type_params__[0].__default__ => None
+d5.__type_params__[0].has_default() => True
+d6.__type_params__[1].__default__ => A
+d7.__type_params__[0].__default__ => Ellipsis
+scope(1) => (T, 1)
+scope.__annotations__ => {'x': T, 'y': 'global', 'return': list[T]}
+scope.__defaults__ => ('global',)
+shadow(1) => outer_name
+shadow.__annotations__ => {'x': outer_name}
+outer_name => global
+T2 if False else ident.__type_params__[0].__name__ => 'T'
+Leak => NameError: name 'Leak' is not defined
+T
+i(1, 2) => (T, U)
+i.__type_params__ => (U,)
+i.__annotations__ => {'a': T, 'b': U}
+i.__qualname__ => nested_generic.<locals>.inner
+(T, T, False)
+5
+T
+['default', 'deco sees (T,)']
+name 'T9' is not defined
+ok: def f[T](): pass
+SyntaxError: Type parameter list cannot be empty <- def f[](): pass
+ok: def f[T,](): pass
+ok: def f[T, U](): pass
+SyntaxError: duplicate type parameter 'T' <- def f[T, T](): pass
+SyntaxError: duplicate type parameter 'T' <- def f[T, *T](): pass
+SyntaxError: duplicate type parameter 'T' <- def f[*T, **T](): pass
+SyntaxError: expected '(' <- def f[1](): pass
+SyntaxError: expected '(' <- def f['T'](): pass
+SyntaxError: expected '(' <- def f[T.U](): pass
+ok: def f[T: int](): pass
+ok: def f[T: (int, str)](): pass
+ok: def f[T: (int,)](): pass
+ok: def f[T: ()](): pass
+ok: def f[T: int, str](): pass
+SyntaxError: expected '(' <- def f[T:](): pass
+SyntaxError: expected '(' <- def f[T: int: str](): pass
+SyntaxError: cannot use bound with TypeVarTuple <- def f[*T: int](): pass
+SyntaxError: cannot use bound with ParamSpec <- def f[**T: int](): pass
+SyntaxError: expected '(' <- def f[***T](): pass
+ok: def f[*T, *U](): pass
+ok: def f[**P, **Q](): pass
+ok: def f[T = int](): pass
+SyntaxError: non-default type parameter 'U' follows default type parameter <- def f[T = int, U](): pass
+ok: def f[T = int, U = str](): pass
+SyntaxError: non-default type parameter 'Ts' follows default type parameter <- def f[T = int, *Ts](): pass
+SyntaxError: non-default type parameter 'P' follows default type parameter <- def f[T = int, **P](): pass
+ok: def f[*Ts = int](): pass
+ok: def f[*Ts = *x](): pass
+SyntaxError: expected '(' <- def f[T = *x](): pass
+SyntaxError: expected '(' <- def f[**P = *x](): pass
+SyntaxError: expected '(' <- def f[T =](): pass
+ok: def f[T: int = str](): pass
+SyntaxError: expected '(' <- def f[T = int: str](): pass
+SyntaxError: expected '(' <- def f[T := int](): pass
+SyntaxError: named expression cannot be used within a TypeVar bound <- def f[T: (x := int)](): pass
+SyntaxError: named expression cannot be used within a TypeVar default <- def f[T = (x := int)](): pass
+SyntaxError: yield expression cannot be used within a TypeVar bound <- def f[T: (yield)](): pass
+SyntaxError: await expression cannot be used within a TypeVar bound <- def f[T: (await x)](): pass
+SyntaxError: yield expression cannot be used within a TypeVar default <- def f[T = (yield)](): pass
+ok: def f[T: lambda: 1](): pass
+ok: def f[T: [x for x in y]](): pass
+ok: def f[T] (): pass
+ok: def f [T](): pass
+SyntaxError: expected '(' <- def f[T]: pass
+SyntaxError: expected '(' <- def f[T]
+SyntaxError: invalid syntax <- def [T]f(): pass
+SyntaxError: expected ':' <- def f()[T]: pass
+SyntaxError: invalid syntax <- lambda[T]: 1
+ok: class C[T]: pass
+ok: class C[T](): pass
+ok: class C[T](Base): pass
+ok: class C[T](Base[T]): pass
+SyntaxError: Type parameter list cannot be empty <- class C[]: pass
+SyntaxError: duplicate type parameter 'T' <- class C[T, T]: pass
+SyntaxError: invalid syntax <- class C(Base)[T]: pass
+SyntaxError: named expression cannot be used within the definition of a generic <- class C[T](x := 1): pass
+SyntaxError: yield expression cannot be used within the definition of a generic <- class C[T]((yield)): pass
+SyntaxError: await expression cannot be used within the definition of a generic <- class C[T](await x): pass
+ok: class C[T](metaclass=M): pass
+ok: class C[T](*bases, **kw): pass
+ok: class C[T: int = str, *Ts = *x, **P = [int]]: pass
+ok: async def f[T](): pass
+SyntaxError: expected '(' <- def f[None](): pass
+SyntaxError: expected '(' <- def f[True](): pass
+SyntaxError: cannot assign to __debug__ <- def f[__debug__](): pass
+ok: def f[_](): pass
+ok: def f[match](): pass
+ok: def f[type](): pass
+ok: def f[T](T): pass
+ok: def f[T](x: T = T): pass
+ok: def f[T]() -> T: pass
+ok: def f[T](): global T
+SyntaxError: nonlocal binding not allowed for type parameter 'T' <- def f[T](): nonlocal T
+SyntaxError: nonlocal binding not allowed for type parameter 'T' <- class C[T]:\n nonlocal T
+ok: class C[T]:\n global T
+SyntaxError: named expression cannot be used within an annotation <- def f[T](x: (y := T)): pass
+SyntaxError: yield expression cannot be used within an annotation <- def f[T](x: (yield)): pass
+SyntaxError: yield expression cannot be used within an annotation <- def f[T]() -> (yield): pass
+ok: def f[é](): pass
+ok: def f[T\n, U](): pass
+ok: def f[T: int\n](): pass
+ok: @d[T]\ndef f(): pass
+ok: def f[T](*args: *T): pass
+ok: def f[*Ts](*args: *Ts): pass
+SyntaxError: invalid syntax <- def f[*Ts](x: *Ts): pass
+ok: def f[T](x, /, y, *, z): pass

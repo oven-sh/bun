@@ -1,0 +1,11 @@
+status: 0
+script: 2306e4e2cd163a06
+---
+RuntimeError: the result of compiling a replacement string is int
+RuntimeError: the result of compiling a replacement string is int
+RuntimeError: the result of compiling a replacement string is int
+RuntimeError: the result of compiling a replacement string is int
+RuntimeError: the result of compiling a replacement string is int
+RuntimeError: the result of compiling a replacement string is int
+RuntimeError: the result of compiling a replacement string is int
+RuntimeError: the result of compiling a replacement string is int

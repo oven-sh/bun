@@ -1,0 +1,431 @@
+status: 0
+script: eb44789aa5aa6a4c
+---
+@e [('0000', 0.0), ('0080', -0.0), ('003c', 1.0), ('00be', -1.5), ('662e', 0.0999755859375), ('003c', 1.0), ('003c', 1.0), ('ff7b', 65504.0), ('007c', inf), ('00fc', -inf), ('0041', 2.5), ('0042', 3.0), ('0000', 0.0), ('0100', 5.960464477539063e-08), ('0000', 0.0), ('0000', 0.0)]
+007e (nan,)
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+builtins.OverflowError float too large to pack with e format
+builtins.OverflowError float too large to pack with e format
+struct.error int too large to convert
+builtins.OverflowError float too large to pack with e format
+struct.error int too large to convert
+'ff7b'
+builtins.OverflowError float too large to pack with e format
+builtins.OverflowError float too large to pack with e format
+@f [('00000000', 0.0), ('00000080', -0.0), ('0000803f', 1.0), ('0000c0bf', -1.5), ('cdcccc3d', 0.10000000149011612), ('0000803f', 1.0), ('0000803f', 1.0), ('00e07f47', 65504.0), ('0000807f', inf), ('000080ff', -inf), ('00002040', 2.5), ('00004040', 3.0), ('77cc2b32', 9.99999993922529e-09), ('00008033', 5.960464477539063e-08), ('01000000', 1.401298464324817e-45), ('00000000', 0.0)]
+0000c07f (nan,)
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+builtins.OverflowError float too large to pack with f format
+builtins.OverflowError float too large to pack with f format
+struct.error int too large to convert
+'00f07f47'
+'00f07f47'
+'e6ef7f47'
+builtins.OverflowError float too large to pack with f format
+'ffff7f7f'
+@d [('0000000000000000', 0.0), ('0000000000000080', -0.0), ('000000000000f03f', 1.0), ('000000000000f8bf', -1.5), ('9a9999999999b93f', 0.1), ('000000000000f03f', 1.0), ('000000000000f03f', 1.0), ('0000000000fcef40', 65504.0), ('000000000000f07f', inf), ('000000000000f0ff', -inf), ('0000000000000440', 2.5), ('0000000000000840', 3.0), ('3a8c30e28e79453e', 1e-08), ('000000000000703e', 5.960464477539063e-08), ('000000000000a036', 1.401298464324817e-45), ('0100000000000000', 5e-324)]
+000000000000f87f (nan,)
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+'9c7500883ce4377e'
+'9c7500883ce437fe'
+'9c7500883ce4377e'
+'0000000000feef40'
+'0000000000feef40'
+'cdccccccfcfdef40'
+'000000f0ffffef47'
+'ffffffefffffef47'
+@F [('0000000000000000', 0j), ('0000803f00000040', (1+2j)), ('000000800000c0bf', (-0-1.5j)), ('0000803f00000000', (1+0j)), ('0000204000000000', (2.5+0j)), ('0000803f00000000', (1+0j)), ('0000803f00000040', (1+2j)), ('0000204000000000', (2.5+0j)), ('0000404000000000', (3+0j)), ('0000807f000080ff', (inf-infj)), ('0000008000000080', (-0-0j)), ('cdcccc3dcdcc4c3e', (0.10000000149011612+0.20000000298023224j))]
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+'0000807f00000000'
+'000000000000807f'
+'0000807f00000000'
+@D [('00000000000000000000000000000000', 0j), ('000000000000f03f0000000000000040', (1+2j)), ('0000000000000080000000000000f8bf', (-0-1.5j)), ('000000000000f03f0000000000000000', (1+0j)), ('00000000000004400000000000000000', (2.5+0j)), ('000000000000f03f0000000000000000', (1+0j)), ('000000000000f03f0000000000000040', (1+2j)), ('00000000000004400000000000000000', (2.5+0j)), ('00000000000008400000000000000000', (3+0j)), ('000000000000f07f000000000000f0ff', (inf-infj)), ('00000000000000800000000000000080', (-0-0j)), ('9a9999999999b93f9a9999999999c93f', (0.1+0.2j))]
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+'9c7500883ce4377e0000000000000000'
+'00000000000000009c7500883ce4377e'
+'9c7500883ce4377e0000000000000000'
+@Zf [('0000000000000000', 0j), ('0000803f00000040', (1+2j)), ('000000800000c0bf', (-0-1.5j)), ('0000803f00000000', (1+0j)), ('0000204000000000', (2.5+0j)), ('0000803f00000000', (1+0j)), ('0000803f00000040', (1+2j)), ('0000204000000000', (2.5+0j)), ('0000404000000000', (3+0j)), ('0000807f000080ff', (inf-infj)), ('0000008000000080', (-0-0j)), ('cdcccc3dcdcc4c3e', (0.10000000149011612+0.20000000298023224j))]
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+'0000807f00000000'
+'000000000000807f'
+'0000807f00000000'
+@Zd [('00000000000000000000000000000000', 0j), ('000000000000f03f0000000000000040', (1+2j)), ('0000000000000080000000000000f8bf', (-0-1.5j)), ('000000000000f03f0000000000000000', (1+0j)), ('00000000000004400000000000000000', (2.5+0j)), ('000000000000f03f0000000000000000', (1+0j)), ('000000000000f03f0000000000000040', (1+2j)), ('00000000000004400000000000000000', (2.5+0j)), ('00000000000008400000000000000000', (3+0j)), ('000000000000f07f000000000000f0ff', (inf-infj)), ('00000000000000800000000000000080', (-0-0j)), ('9a9999999999b93f9a9999999999c93f', (0.1+0.2j))]
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+'9c7500883ce4377e0000000000000000'
+'00000000000000009c7500883ce4377e'
+'9c7500883ce4377e0000000000000000'
+=e [('0000', 0.0), ('0080', -0.0), ('003c', 1.0), ('00be', -1.5), ('662e', 0.0999755859375), ('003c', 1.0), ('003c', 1.0), ('ff7b', 65504.0), ('007c', inf), ('00fc', -inf), ('0041', 2.5), ('0042', 3.0), ('0000', 0.0), ('0100', 5.960464477539063e-08), ('0000', 0.0), ('0000', 0.0)]
+007e (nan,)
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+builtins.OverflowError float too large to pack with e format
+builtins.OverflowError float too large to pack with e format
+struct.error int too large to convert
+builtins.OverflowError float too large to pack with e format
+struct.error int too large to convert
+'ff7b'
+builtins.OverflowError float too large to pack with e format
+builtins.OverflowError float too large to pack with e format
+=f [('00000000', 0.0), ('00000080', -0.0), ('0000803f', 1.0), ('0000c0bf', -1.5), ('cdcccc3d', 0.10000000149011612), ('0000803f', 1.0), ('0000803f', 1.0), ('00e07f47', 65504.0), ('0000807f', inf), ('000080ff', -inf), ('00002040', 2.5), ('00004040', 3.0), ('77cc2b32', 9.99999993922529e-09), ('00008033', 5.960464477539063e-08), ('01000000', 1.401298464324817e-45), ('00000000', 0.0)]
+0000c07f (nan,)
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+builtins.OverflowError float too large to pack with f format
+builtins.OverflowError float too large to pack with f format
+struct.error int too large to convert
+'00f07f47'
+'00f07f47'
+'e6ef7f47'
+builtins.OverflowError float too large to pack with f format
+'ffff7f7f'
+=d [('0000000000000000', 0.0), ('0000000000000080', -0.0), ('000000000000f03f', 1.0), ('000000000000f8bf', -1.5), ('9a9999999999b93f', 0.1), ('000000000000f03f', 1.0), ('000000000000f03f', 1.0), ('0000000000fcef40', 65504.0), ('000000000000f07f', inf), ('000000000000f0ff', -inf), ('0000000000000440', 2.5), ('0000000000000840', 3.0), ('3a8c30e28e79453e', 1e-08), ('000000000000703e', 5.960464477539063e-08), ('000000000000a036', 1.401298464324817e-45), ('0100000000000000', 5e-324)]
+000000000000f87f (nan,)
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+'9c7500883ce4377e'
+'9c7500883ce437fe'
+'9c7500883ce4377e'
+'0000000000feef40'
+'0000000000feef40'
+'cdccccccfcfdef40'
+'000000f0ffffef47'
+'ffffffefffffef47'
+=F [('0000000000000000', 0j), ('0000803f00000040', (1+2j)), ('000000800000c0bf', (-0-1.5j)), ('0000803f00000000', (1+0j)), ('0000204000000000', (2.5+0j)), ('0000803f00000000', (1+0j)), ('0000803f00000040', (1+2j)), ('0000204000000000', (2.5+0j)), ('0000404000000000', (3+0j)), ('0000807f000080ff', (inf-infj)), ('0000008000000080', (-0-0j)), ('cdcccc3dcdcc4c3e', (0.10000000149011612+0.20000000298023224j))]
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+'0000807f00000000'
+'000000000000807f'
+'0000807f00000000'
+=D [('00000000000000000000000000000000', 0j), ('000000000000f03f0000000000000040', (1+2j)), ('0000000000000080000000000000f8bf', (-0-1.5j)), ('000000000000f03f0000000000000000', (1+0j)), ('00000000000004400000000000000000', (2.5+0j)), ('000000000000f03f0000000000000000', (1+0j)), ('000000000000f03f0000000000000040', (1+2j)), ('00000000000004400000000000000000', (2.5+0j)), ('00000000000008400000000000000000', (3+0j)), ('000000000000f07f000000000000f0ff', (inf-infj)), ('00000000000000800000000000000080', (-0-0j)), ('9a9999999999b93f9a9999999999c93f', (0.1+0.2j))]
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+'9c7500883ce4377e0000000000000000'
+'00000000000000009c7500883ce4377e'
+'9c7500883ce4377e0000000000000000'
+=Zf [('0000000000000000', 0j), ('0000803f00000040', (1+2j)), ('000000800000c0bf', (-0-1.5j)), ('0000803f00000000', (1+0j)), ('0000204000000000', (2.5+0j)), ('0000803f00000000', (1+0j)), ('0000803f00000040', (1+2j)), ('0000204000000000', (2.5+0j)), ('0000404000000000', (3+0j)), ('0000807f000080ff', (inf-infj)), ('0000008000000080', (-0-0j)), ('cdcccc3dcdcc4c3e', (0.10000000149011612+0.20000000298023224j))]
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+'0000807f00000000'
+'000000000000807f'
+'0000807f00000000'
+=Zd [('00000000000000000000000000000000', 0j), ('000000000000f03f0000000000000040', (1+2j)), ('0000000000000080000000000000f8bf', (-0-1.5j)), ('000000000000f03f0000000000000000', (1+0j)), ('00000000000004400000000000000000', (2.5+0j)), ('000000000000f03f0000000000000000', (1+0j)), ('000000000000f03f0000000000000040', (1+2j)), ('00000000000004400000000000000000', (2.5+0j)), ('00000000000008400000000000000000', (3+0j)), ('000000000000f07f000000000000f0ff', (inf-infj)), ('00000000000000800000000000000080', (-0-0j)), ('9a9999999999b93f9a9999999999c93f', (0.1+0.2j))]
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+'9c7500883ce4377e0000000000000000'
+'00000000000000009c7500883ce4377e'
+'9c7500883ce4377e0000000000000000'
+<e [('0000', 0.0), ('0080', -0.0), ('003c', 1.0), ('00be', -1.5), ('662e', 0.0999755859375), ('003c', 1.0), ('003c', 1.0), ('ff7b', 65504.0), ('007c', inf), ('00fc', -inf), ('0041', 2.5), ('0042', 3.0), ('0000', 0.0), ('0100', 5.960464477539063e-08), ('0000', 0.0), ('0000', 0.0)]
+007e (nan,)
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+builtins.OverflowError float too large to pack with e format
+builtins.OverflowError float too large to pack with e format
+struct.error int too large to convert
+builtins.OverflowError float too large to pack with e format
+struct.error int too large to convert
+'ff7b'
+builtins.OverflowError float too large to pack with e format
+builtins.OverflowError float too large to pack with e format
+<f [('00000000', 0.0), ('00000080', -0.0), ('0000803f', 1.0), ('0000c0bf', -1.5), ('cdcccc3d', 0.10000000149011612), ('0000803f', 1.0), ('0000803f', 1.0), ('00e07f47', 65504.0), ('0000807f', inf), ('000080ff', -inf), ('00002040', 2.5), ('00004040', 3.0), ('77cc2b32', 9.99999993922529e-09), ('00008033', 5.960464477539063e-08), ('01000000', 1.401298464324817e-45), ('00000000', 0.0)]
+0000c07f (nan,)
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+builtins.OverflowError float too large to pack with f format
+builtins.OverflowError float too large to pack with f format
+struct.error int too large to convert
+'00f07f47'
+'00f07f47'
+'e6ef7f47'
+builtins.OverflowError float too large to pack with f format
+'ffff7f7f'
+<d [('0000000000000000', 0.0), ('0000000000000080', -0.0), ('000000000000f03f', 1.0), ('000000000000f8bf', -1.5), ('9a9999999999b93f', 0.1), ('000000000000f03f', 1.0), ('000000000000f03f', 1.0), ('0000000000fcef40', 65504.0), ('000000000000f07f', inf), ('000000000000f0ff', -inf), ('0000000000000440', 2.5), ('0000000000000840', 3.0), ('3a8c30e28e79453e', 1e-08), ('000000000000703e', 5.960464477539063e-08), ('000000000000a036', 1.401298464324817e-45), ('0100000000000000', 5e-324)]
+000000000000f87f (nan,)
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+'9c7500883ce4377e'
+'9c7500883ce437fe'
+'9c7500883ce4377e'
+'0000000000feef40'
+'0000000000feef40'
+'cdccccccfcfdef40'
+'000000f0ffffef47'
+'ffffffefffffef47'
+<F [('0000000000000000', 0j), ('0000803f00000040', (1+2j)), ('000000800000c0bf', (-0-1.5j)), ('0000803f00000000', (1+0j)), ('0000204000000000', (2.5+0j)), ('0000803f00000000', (1+0j)), ('0000803f00000040', (1+2j)), ('0000204000000000', (2.5+0j)), ('0000404000000000', (3+0j)), ('0000807f000080ff', (inf-infj)), ('0000008000000080', (-0-0j)), ('cdcccc3dcdcc4c3e', (0.10000000149011612+0.20000000298023224j))]
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+'0000807f00000000'
+'000000000000807f'
+'0000807f00000000'
+<D [('00000000000000000000000000000000', 0j), ('000000000000f03f0000000000000040', (1+2j)), ('0000000000000080000000000000f8bf', (-0-1.5j)), ('000000000000f03f0000000000000000', (1+0j)), ('00000000000004400000000000000000', (2.5+0j)), ('000000000000f03f0000000000000000', (1+0j)), ('000000000000f03f0000000000000040', (1+2j)), ('00000000000004400000000000000000', (2.5+0j)), ('00000000000008400000000000000000', (3+0j)), ('000000000000f07f000000000000f0ff', (inf-infj)), ('00000000000000800000000000000080', (-0-0j)), ('9a9999999999b93f9a9999999999c93f', (0.1+0.2j))]
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+'9c7500883ce4377e0000000000000000'
+'00000000000000009c7500883ce4377e'
+'9c7500883ce4377e0000000000000000'
+<Zf [('0000000000000000', 0j), ('0000803f00000040', (1+2j)), ('000000800000c0bf', (-0-1.5j)), ('0000803f00000000', (1+0j)), ('0000204000000000', (2.5+0j)), ('0000803f00000000', (1+0j)), ('0000803f00000040', (1+2j)), ('0000204000000000', (2.5+0j)), ('0000404000000000', (3+0j)), ('0000807f000080ff', (inf-infj)), ('0000008000000080', (-0-0j)), ('cdcccc3dcdcc4c3e', (0.10000000149011612+0.20000000298023224j))]
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+'0000807f00000000'
+'000000000000807f'
+'0000807f00000000'
+<Zd [('00000000000000000000000000000000', 0j), ('000000000000f03f0000000000000040', (1+2j)), ('0000000000000080000000000000f8bf', (-0-1.5j)), ('000000000000f03f0000000000000000', (1+0j)), ('00000000000004400000000000000000', (2.5+0j)), ('000000000000f03f0000000000000000', (1+0j)), ('000000000000f03f0000000000000040', (1+2j)), ('00000000000004400000000000000000', (2.5+0j)), ('00000000000008400000000000000000', (3+0j)), ('000000000000f07f000000000000f0ff', (inf-infj)), ('00000000000000800000000000000080', (-0-0j)), ('9a9999999999b93f9a9999999999c93f', (0.1+0.2j))]
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+'9c7500883ce4377e0000000000000000'
+'00000000000000009c7500883ce4377e'
+'9c7500883ce4377e0000000000000000'
+>e [('0000', 0.0), ('8000', -0.0), ('3c00', 1.0), ('be00', -1.5), ('2e66', 0.0999755859375), ('3c00', 1.0), ('3c00', 1.0), ('7bff', 65504.0), ('7c00', inf), ('fc00', -inf), ('4100', 2.5), ('4200', 3.0), ('0000', 0.0), ('0001', 5.960464477539063e-08), ('0000', 0.0), ('0000', 0.0)]
+7e00 (nan,)
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+builtins.OverflowError float too large to pack with e format
+builtins.OverflowError float too large to pack with e format
+struct.error int too large to convert
+builtins.OverflowError float too large to pack with e format
+struct.error int too large to convert
+'7bff'
+builtins.OverflowError float too large to pack with e format
+builtins.OverflowError float too large to pack with e format
+>f [('00000000', 0.0), ('80000000', -0.0), ('3f800000', 1.0), ('bfc00000', -1.5), ('3dcccccd', 0.10000000149011612), ('3f800000', 1.0), ('3f800000', 1.0), ('477fe000', 65504.0), ('7f800000', inf), ('ff800000', -inf), ('40200000', 2.5), ('40400000', 3.0), ('322bcc77', 9.99999993922529e-09), ('33800000', 5.960464477539063e-08), ('00000001', 1.401298464324817e-45), ('00000000', 0.0)]
+7fc00000 (nan,)
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+builtins.OverflowError float too large to pack with f format
+builtins.OverflowError float too large to pack with f format
+struct.error int too large to convert
+'477ff000'
+'477ff000'
+'477fefe6'
+builtins.OverflowError float too large to pack with f format
+'7f7fffff'
+>d [('0000000000000000', 0.0), ('8000000000000000', -0.0), ('3ff0000000000000', 1.0), ('bff8000000000000', -1.5), ('3fb999999999999a', 0.1), ('3ff0000000000000', 1.0), ('3ff0000000000000', 1.0), ('40effc0000000000', 65504.0), ('7ff0000000000000', inf), ('fff0000000000000', -inf), ('4004000000000000', 2.5), ('4008000000000000', 3.0), ('3e45798ee2308c3a', 1e-08), ('3e70000000000000', 5.960464477539063e-08), ('36a0000000000000', 1.401298464324817e-45), ('0000000000000001', 5e-324)]
+7ff8000000000000 (nan,)
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+'7e37e43c8800759c'
+'fe37e43c8800759c'
+'7e37e43c8800759c'
+'40effe0000000000'
+'40effe0000000000'
+'40effdfccccccccd'
+'47effffff0000000'
+'47efffffefffffff'
+>F [('0000000000000000', 0j), ('3f80000040000000', (1+2j)), ('80000000bfc00000', (-0-1.5j)), ('3f80000000000000', (1+0j)), ('4020000000000000', (2.5+0j)), ('3f80000000000000', (1+0j)), ('3f80000040000000', (1+2j)), ('4020000000000000', (2.5+0j)), ('4040000000000000', (3+0j)), ('7f800000ff800000', (inf-infj)), ('8000000080000000', (-0-0j)), ('3dcccccd3e4ccccd', (0.10000000149011612+0.20000000298023224j))]
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+builtins.OverflowError float too large to pack with f format
+builtins.OverflowError float too large to pack with f format
+struct.error int too large to convert
+>D [('00000000000000000000000000000000', 0j), ('3ff00000000000004000000000000000', (1+2j)), ('8000000000000000bff8000000000000', (-0-1.5j)), ('3ff00000000000000000000000000000', (1+0j)), ('40040000000000000000000000000000', (2.5+0j)), ('3ff00000000000000000000000000000', (1+0j)), ('3ff00000000000004000000000000000', (1+2j)), ('40040000000000000000000000000000', (2.5+0j)), ('40080000000000000000000000000000', (3+0j)), ('7ff0000000000000fff0000000000000', (inf-infj)), ('80000000000000008000000000000000', (-0-0j)), ('3fb999999999999a3fc999999999999a', (0.1+0.2j))]
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+'7e37e43c8800759c0000000000000000'
+'00000000000000007e37e43c8800759c'
+'7e37e43c8800759c0000000000000000'
+>Zf [('0000000000000000', 0j), ('3f80000040000000', (1+2j)), ('80000000bfc00000', (-0-1.5j)), ('3f80000000000000', (1+0j)), ('4020000000000000', (2.5+0j)), ('3f80000000000000', (1+0j)), ('3f80000040000000', (1+2j)), ('4020000000000000', (2.5+0j)), ('4040000000000000', (3+0j)), ('7f800000ff800000', (inf-infj)), ('8000000080000000', (-0-0j)), ('3dcccccd3e4ccccd', (0.10000000149011612+0.20000000298023224j))]
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+builtins.OverflowError float too large to pack with f format
+builtins.OverflowError float too large to pack with f format
+struct.error int too large to convert
+>Zd [('00000000000000000000000000000000', 0j), ('3ff00000000000004000000000000000', (1+2j)), ('8000000000000000bff8000000000000', (-0-1.5j)), ('3ff00000000000000000000000000000', (1+0j)), ('40040000000000000000000000000000', (2.5+0j)), ('3ff00000000000000000000000000000', (1+0j)), ('3ff00000000000004000000000000000', (1+2j)), ('40040000000000000000000000000000', (2.5+0j)), ('40080000000000000000000000000000', (3+0j)), ('7ff0000000000000fff0000000000000', (inf-infj)), ('80000000000000008000000000000000', (-0-0j)), ('3fb999999999999a3fc999999999999a', (0.1+0.2j))]
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+'7e37e43c8800759c0000000000000000'
+'00000000000000007e37e43c8800759c'
+'7e37e43c8800759c0000000000000000'
+!e [('0000', 0.0), ('8000', -0.0), ('3c00', 1.0), ('be00', -1.5), ('2e66', 0.0999755859375), ('3c00', 1.0), ('3c00', 1.0), ('7bff', 65504.0), ('7c00', inf), ('fc00', -inf), ('4100', 2.5), ('4200', 3.0), ('0000', 0.0), ('0001', 5.960464477539063e-08), ('0000', 0.0), ('0000', 0.0)]
+7e00 (nan,)
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+builtins.OverflowError float too large to pack with e format
+builtins.OverflowError float too large to pack with e format
+struct.error int too large to convert
+builtins.OverflowError float too large to pack with e format
+struct.error int too large to convert
+'7bff'
+builtins.OverflowError float too large to pack with e format
+builtins.OverflowError float too large to pack with e format
+!f [('00000000', 0.0), ('80000000', -0.0), ('3f800000', 1.0), ('bfc00000', -1.5), ('3dcccccd', 0.10000000149011612), ('3f800000', 1.0), ('3f800000', 1.0), ('477fe000', 65504.0), ('7f800000', inf), ('ff800000', -inf), ('40200000', 2.5), ('40400000', 3.0), ('322bcc77', 9.99999993922529e-09), ('33800000', 5.960464477539063e-08), ('00000001', 1.401298464324817e-45), ('00000000', 0.0)]
+7fc00000 (nan,)
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+builtins.OverflowError float too large to pack with f format
+builtins.OverflowError float too large to pack with f format
+struct.error int too large to convert
+'477ff000'
+'477ff000'
+'477fefe6'
+builtins.OverflowError float too large to pack with f format
+'7f7fffff'
+!d [('0000000000000000', 0.0), ('8000000000000000', -0.0), ('3ff0000000000000', 1.0), ('bff8000000000000', -1.5), ('3fb999999999999a', 0.1), ('3ff0000000000000', 1.0), ('3ff0000000000000', 1.0), ('40effc0000000000', 65504.0), ('7ff0000000000000', inf), ('fff0000000000000', -inf), ('4004000000000000', 2.5), ('4008000000000000', 3.0), ('3e45798ee2308c3a', 1e-08), ('3e70000000000000', 5.960464477539063e-08), ('36a0000000000000', 1.401298464324817e-45), ('0000000000000001', 5e-324)]
+7ff8000000000000 (nan,)
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a float
+'7e37e43c8800759c'
+'fe37e43c8800759c'
+'7e37e43c8800759c'
+'40effe0000000000'
+'40effe0000000000'
+'40effdfccccccccd'
+'47effffff0000000'
+'47efffffefffffff'
+!F [('0000000000000000', 0j), ('3f80000040000000', (1+2j)), ('80000000bfc00000', (-0-1.5j)), ('3f80000000000000', (1+0j)), ('4020000000000000', (2.5+0j)), ('3f80000000000000', (1+0j)), ('3f80000040000000', (1+2j)), ('4020000000000000', (2.5+0j)), ('4040000000000000', (3+0j)), ('7f800000ff800000', (inf-infj)), ('8000000080000000', (-0-0j)), ('3dcccccd3e4ccccd', (0.10000000149011612+0.20000000298023224j))]
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+builtins.OverflowError float too large to pack with f format
+builtins.OverflowError float too large to pack with f format
+struct.error int too large to convert
+!D [('00000000000000000000000000000000', 0j), ('3ff00000000000004000000000000000', (1+2j)), ('8000000000000000bff8000000000000', (-0-1.5j)), ('3ff00000000000000000000000000000', (1+0j)), ('40040000000000000000000000000000', (2.5+0j)), ('3ff00000000000000000000000000000', (1+0j)), ('3ff00000000000004000000000000000', (1+2j)), ('40040000000000000000000000000000', (2.5+0j)), ('40080000000000000000000000000000', (3+0j)), ('7ff0000000000000fff0000000000000', (inf-infj)), ('80000000000000008000000000000000', (-0-0j)), ('3fb999999999999a3fc999999999999a', (0.1+0.2j))]
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+'7e37e43c8800759c0000000000000000'
+'00000000000000007e37e43c8800759c'
+'7e37e43c8800759c0000000000000000'
+!Zf [('0000000000000000', 0j), ('3f80000040000000', (1+2j)), ('80000000bfc00000', (-0-1.5j)), ('3f80000000000000', (1+0j)), ('4020000000000000', (2.5+0j)), ('3f80000000000000', (1+0j)), ('3f80000040000000', (1+2j)), ('4020000000000000', (2.5+0j)), ('4040000000000000', (3+0j)), ('7f800000ff800000', (inf-infj)), ('8000000080000000', (-0-0j)), ('3dcccccd3e4ccccd', (0.10000000149011612+0.20000000298023224j))]
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+builtins.OverflowError float too large to pack with f format
+builtins.OverflowError float too large to pack with f format
+struct.error int too large to convert
+!Zd [('00000000000000000000000000000000', 0j), ('3ff00000000000004000000000000000', (1+2j)), ('8000000000000000bff8000000000000', (-0-1.5j)), ('3ff00000000000000000000000000000', (1+0j)), ('40040000000000000000000000000000', (2.5+0j)), ('3ff00000000000000000000000000000', (1+0j)), ('3ff00000000000004000000000000000', (1+2j)), ('40040000000000000000000000000000', (2.5+0j)), ('40080000000000000000000000000000', (3+0j)), ('7ff0000000000000fff0000000000000', (inf-infj)), ('80000000000000008000000000000000', (-0-0j)), ('3fb999999999999a3fc999999999999a', (0.1+0.2j))]
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+struct.error required argument is not a complex
+'7e37e43c8800759c0000000000000000'
+'00000000000000007e37e43c8800759c'
+'7e37e43c8800759c0000000000000000'
+struct.error required argument is not a float
+struct.error required argument is not a float
+struct.error required argument is not a complex
+1.0009765625 013c 1.0009765625
+1.00048828125 003c 1.0
+1.00146484375 023c 1.001953125
+1.000488281250001 013c 1.0009765625
+2049.0 0068 2048.0
+2051.0 0268 2052.0
+2.9802322387695312e-08 0000 0.0
+2.980232536792755e-08 0100 5.960464477539063e-08
+8.940696716308594e-08 0200 1.1920928955078125e-07
+1.4901161193847656e-07 0200 1.1920928955078125e-07
+6.1005353927612305e-05 0004 6.103515625e-05
+6.102025508880615e-05 0004 6.103515625e-05
+65519.99 ff7b 65504.0
+0.3333333333333333 5535 0.333251953125
+1e-05 a800 1.0013580322265625e-05
+6.1e-05 ff03 6.097555160522461e-05
+6.103515625e-05 0004 6.103515625e-05
+[0.0, 5.960464477539063e-08, 6.097555160522461e-05, 6.103515625e-05, 1.0, 65504.0, inf, -inf, -0.0, -5.960464477539063e-08]
+<e 017e nan 017e 1.0 000000000004f87f
+<e 01fe nan 01fe -1.0 000000000004f8ff
+<e 007e nan 007e 1.0 000000000000f87f
+<e 00fe nan 00fe -1.0 000000000000f8ff
+<e 017c nan 017c 1.0 000000000004f07f
+<e fffd nan fffd -1.0 0000000000fcf7ff
+<e ff7f nan ff7f 1.0 0000000000fcff7f
+>e 7e01 nan 7e01 1.0 000000000004f87f
+>e fc01 nan fc01 -1.0 000000000004f0ff
+<f 0100c07f nan 0100c07f 1.0 000000200000f87f
+<f 0100c0ff nan 0100c0ff -1.0 000000200000f8ff
+<f 0000c07f nan 0000c07f 1.0 000000000000f87f
+<f ffffff7f nan ffffff7f 1.0 000000e0ffffff7f
+>f 7fc00001 nan 7fc00001 1.0 000000200000f87f
+>f ffc00001 nan ffc00001 -1.0 000000200000f8ff
+>f 7f800001 nan 7f800001 1.0 000000200000f07f
+>f ff800001 nan ff800001 -1.0 000000200000f0ff
+>f 7fa00000 nan 7fa00000 1.0 000000000000f47f
+<d 010000000000f87f nan 010000000000f87f 1.0 010000000000f87f
+<d 010000000000f8ff nan 010000000000f8ff -1.0 010000000000f8ff
+<d 010000000000f07f nan 010000000000f07f 1.0 010000000000f07f
+<d ffffffffffffffff nan ffffffffffffffff -1.0 ffffffffffffffff
+<d 000000000000f8ff nan 000000000000f8ff -1.0 000000000000f8ff
+>d 7ff8000000000001 nan 7ff8000000000001 1.0 010000000000f87f
+>d fff0000000000001 nan fff0000000000001 -1.0 010000000000f0ff
+00fe 0000c0ff ffc00000 True float nan
+(nan+nanj) 010000000000f8ff020000000000f07f fff80000000000017ff0000000000002 ffc000007fc00000

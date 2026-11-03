@@ -1,0 +1,71 @@
+status: 0
+script: efe4e250b4ba3263
+---
+i 4 12 1 (3,) (4,) False True 3 [1, 2, 3] 1 3 True b'\x01\x00\x00\x00\x02\x00\x00\x00\x03\x00\x00\x00'
+array('i', [100, 2, 3])
+[100, 200, 3]
+BufferError cannot resize an array that is exporting buffers
+BufferError cannot resize an array that is exporting buffers
+BufferError cannot resize an array that is exporting buffers
+BufferError cannot resize an array that is exporting buffers
+BufferError cannot resize an array that is exporting buffers
+BufferError cannot resize an array that is exporting buffers
+BufferError cannot resize an array that is exporting buffers
+BufferError cannot resize an array that is exporting buffers
+BufferError cannot resize an array that is exporting buffers
+BufferError cannot resize an array that is exporting buffers
+BufferError cannot resize an array that is exporting buffers
+BufferError cannot resize an array that is exporting buffers
+BufferError cannot resize an array that is exporting buffers
+BufferError cannot resize an array that is exporting buffers
+BufferError cannot resize an array that is exporting buffers
+BufferError cannot resize an array that is exporting buffers
+array('i', [100, 200, 3])
+array('i', [9, 200, 8]) [9, 200, 8]
+BufferError cannot resize an array that is exporting buffers
+array('i', [9, 200, 8, 4])
+BufferError cannot resize an array that is exporting buffers
+array('i', [9, 200, 8, 4, 5])
+array('i', [9, 200, 8, 4, 5, 6])
+b b 1 2 (2,) [1, 2]
+B B 1 2 (2,) [1, 2]
+w w 4 8 (2,) NotImplementedError memoryview: format w not supported
+h h 2 4 (2,) [1, 2]
+H H 2 4 (2,) [1, 2]
+i i 4 8 (2,) [1, 2]
+I I 4 8 (2,) [1, 2]
+l l 8 16 (2,) [1, 2]
+L L 8 16 (2,) [1, 2]
+q q 8 16 (2,) [1, 2]
+Q Q 8 16 (2,) [1, 2]
+e e 2 4 (2,) [1.0, 2.0]
+f f 4 8 (2,) [1.0, 2.0]
+d d 8 16 (2,) [1.0, 2.0]
+Zf Zf 8 16 (2,) [(1+0j), (2+0j)]
+Zd Zd 16 32 (2,) [(1+0j), (2+0j)]
+0 (0,) [] b'' i
+b'\x01\x00\x02\x00' bytearray(b'\x01\x02') b'' b'abcd' None 258 abc abc
+(1, 2) (2,) [(1,), (2,)] (1, 2) b'01000200' True b'YWJj\n' b'abc' b'6162' b'ab'
+array('b', [1, 0, 2, 0])
+array('b', [1, -1, -1, 0])
+TypeError pack_into() argument 2 must be read-write bytes-like object, not memoryview
+TypeError pack_into() argument 2 must be read-write bytes-like object, not memoryview
+array('b', [97, 98, 99, 100, 101, 102, 103, 104])
+TypeError a bytes-like object is required
+BufferError cannot resize an array that is exporting buffers
+TypeError a bytes-like object is required
+array('b', [97, 98, 99, 100, 101, 102, 103, 104, 1, 0, 0, 0])
+array('b', [97, 98]) array('i', [5, 6]) array('B', [97, 99])
+memoryview 24 B True
+BufferError cannot resize an array that is exporting buffers
+1
+ValueError operation forbidden on released memoryview object
+TypeError 'str' object cannot be interpreted as an integer
+TypeError expected a memoryview object
+ValueError memoryview's buffer is not this object
+BufferError cannot resize an array that is exporting buffers
+array('b', [1, -1, -1, 0, 1])
+BufferError Existing exports of data: object cannot be re-sized
+bytearray(b'abcd\x01')
+True True
+b'\x01\x00\x02\x00' [1, 2] True

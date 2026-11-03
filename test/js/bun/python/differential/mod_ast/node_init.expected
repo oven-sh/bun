@@ -1,0 +1,99 @@
+status: 0
+script: 11157bdda787cb02
+---
+[('ctx', Load()), ('id', 'x')] Name(id='x', ctx=Load())
+[('ctx', Store()), ('id', 'x')] Name(id='x', ctx=Store())
+[('ctx', Load()), ('id', 'x')] Name(id='x', ctx=Load())
+[('ctx', Del()), ('id', 'x')] Name(id='x', ctx=Del())
+TypeError: ast.Name.__init__ missing 1 required positional argument: 'id'
+TypeError: Name constructor takes at most 2 positional arguments
+TypeError: ast.Name got multiple values for argument 'id'
+TypeError: ast.Name.__init__ got an unexpected keyword argument 'foo'
+[('col_offset', 4), ('ctx', Load()), ('id', 'x'), ('lineno', 3)] Name(id='x', ctx=Load())
+[('ctx', Load()), ('end_lineno', None), ('id', 'x'), ('lineno', 3)] Name(id='x', ctx=Load())
+TypeError: ast.BinOp.__init__ missing 3 required positional arguments: 'left', 'op', and 'right'
+TypeError: ast.BinOp.__init__ missing 2 required positional arguments: 'op' and 'right'
+TypeError: ast.BinOp.__init__ missing 1 required positional argument: 'right'
+[('left', 1), ('op', 2), ('right', 3)] BinOp(left=1, op=2, right=3)
+TypeError: ast.BinOp.__init__ missing 1 required positional argument: 'op'
+[('body', []), ('type_ignores', [])] Module(body=[], type_ignores=[])
+[('body', []), ('type_ignores', [])] Module(body=[], type_ignores=[])
+[('body', []), ('type_ignores', [])] Module(body=[], type_ignores=[])
+TypeError: Module constructor takes at most 2 positional arguments
+[('args', arguments(posonlyargs=[], args=[], vararg=None, kwonlyargs=[], kw_defaults=[], kwarg=None, defaults=[])), ('body', []), ('decorator_list', []), ('name', 'f'), ('type_params', [])] FunctionDef(name='f', args=arguments(posonlyargs=[], args=[], vararg=None, kwonlyargs=[], kw_defaults=[], kwarg=None, defaults=[]), body=[], decorator_list=[], returns=None, type_comment=None, type_params=[])
+TypeError: ast.FunctionDef.__init__ missing 2 required positional arguments: 'name' and 'args'
+[('args', []), ('defaults', []), ('kw_defaults', []), ('kwonlyargs', []), ('posonlyargs', [])] arguments(posonlyargs=[], args=[], vararg=None, kwonlyargs=[], kw_defaults=[], kwarg=None, defaults=[])
+TypeError: ast.arg.__init__ missing 1 required positional argument: 'arg'
+[('arg', 'a')] arg(arg='a', annotation=None, type_comment=None)
+TypeError: ast.Constant.__init__ missing 1 required positional argument: 'value'
+[('value', None)] Constant(value=None, kind=None)
+[('kind', 'u'), ('value', 1)] Constant(value=1, kind='u')
+[] Load()
+TypeError: Load constructor takes at most 0 positional arguments
+TypeError: ast.Add.__init__ got an unexpected keyword argument 'x'
+[] Pass()
+[('lineno', 1)] Pass()
+[] Return(value=None)
+[('names', [])] Import(names=[], is_lazy=None)
+[('names', [])] ImportFrom(module=None, names=[], level=None, is_lazy=None)
+[('keys', []), ('values', [])] Dict(keys=[], values=[])
+TypeError: ast.Interpolation.__init__ missing 3 required positional arguments: 'value', 'str', and 'conversion'
+[] MatchAs(pattern=None, name=None)
+TypeError: ast.TypeVar.__init__ missing 1 required positional argument: 'name'
+TypeError: ast.TypeIgnore.__init__ missing 2 required positional arguments: 'lineno' and 'tag'
+TypeError: ast.comprehension.__init__ missing 3 required positional arguments: 'target', 'iter', and 'is_async'
+TypeError: ast.AnnAssign.__init__ missing 3 required positional arguments: 'target', 'annotation', and 'simple'
+[('attr', 'b'), ('ctx', Load()), ('value', Name(id='a', ctx=Load()))] Attribute(value=Name(id='a', ctx=Load()), attr='b', ctx=Load())
+True
+Load
+False
+False True
+None False
+None False
+AST ast.AST() [('DeprecationWarning', 'Instantiating abstract AST node class ast.AST is deprecated. This will become an error in Python 3.20')]
+True
+mod mod() [('DeprecationWarning', 'Instantiating abstract AST node class ast.mod is deprecated. This will become an error in Python 3.20')]
+True
+stmt stmt() [('DeprecationWarning', 'Instantiating abstract AST node class ast.stmt is deprecated. This will become an error in Python 3.20')]
+True
+expr expr() [('DeprecationWarning', 'Instantiating abstract AST node class ast.expr is deprecated. This will become an error in Python 3.20')]
+True
+expr_context expr_context() [('DeprecationWarning', 'Instantiating abstract AST node class ast.expr_context is deprecated. This will become an error in Python 3.20')]
+True
+operator operator() [('DeprecationWarning', 'Instantiating abstract AST node class ast.operator is deprecated. This will become an error in Python 3.20')]
+True
+pattern pattern() [('DeprecationWarning', 'Instantiating abstract AST node class ast.pattern is deprecated. This will become an error in Python 3.20')]
+True
+type_param type_param() [('DeprecationWarning', 'Instantiating abstract AST node class ast.type_param is deprecated. This will become an error in Python 3.20')]
+True
+excepthandler excepthandler() [('DeprecationWarning', 'Instantiating abstract AST node class ast.excepthandler is deprecated. This will become an error in Python 3.20')]
+True
+False
+False
+False
+False
+False
+TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+[('ctx', Load()), ('id', 'x')] MyName(id='x', ctx=Load())
+TypeError: MyName.__init__ missing 1 required positional argument: 'id'
+AttributeError: 'Custom' object has no attribute 'a'
+AttributeError: 'Custom' object has no attribute 'b'
+[('a', 1), ('b', 2)] Custom(a=1, b=2)
+TypeError: Custom constructor takes at most 2 positional arguments
+TypeError: Custom.__init__ got an unexpected keyword argument 'c'
+AttributeError: 'Typed' object has no attribute 'c'
+TypeError: Typed.__init__ missing 1 required positional argument: 'a'
+TypeError: Field 'b' is missing from Partial._field_types
+[] Sub()
+[('x', 1)] WithAttrs()
+TypeError: WithAttrs.__init__ got an unexpected keyword argument 'y'
+TypeError: attribute name must be string, not 'int'
+TypeError: object of type 'int' has no len()
+3 {'id': 'x', 'ctx': Load(), 'foo': 3}
+AttributeError: 'Name' object has no attribute 'id'
+<slot wrapper '__init__' of 'a True
+None <attribute '__dict__' of 'ast.AST' objects>
+Name(id='q', ctx=Load())
+getset_descriptor False
+True True <class 'ast.expr'>
+matched 1 2

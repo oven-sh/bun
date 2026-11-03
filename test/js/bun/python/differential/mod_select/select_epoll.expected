@@ -1,0 +1,65 @@
+status: 0
+script: 75d5b21a4438833c
+---
+False True False
+[] [] []
+None None
+True
+True
+1 2 2
+None True True True
+None True []
+None None
+[]
+True
+[]
+True
+FileNotFoundError: [Errno 2] No such file or directory
+FileNotFoundError: [Errno 2] No such file or directory
+FileExistsError: [Errno 17] File exists
+ValueError: file descriptor cannot be a negative integer (-1)
+OSError: [Errno 9] Bad file descriptor
+TypeError: argument must be an int, or have a fileno() method.
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+TypeError: register() missing required argument 'fd' (pos 1)
+TypeError: modify() missing required argument 'eventmask' (pos 2)
+TypeError: timeout must be a real number or None, not str
+ValueError: Invalid value NaN (not a number)
+OverflowError: timestamp out of range for C PyTime_t
+OverflowError: timestamp out of range for C PyTime_t
+OverflowError: timestamp out of range for C PyTime_t
+OverflowError: timestamp out of range for C PyTime_t
+ValueError: maxevents must be greater than 0, got 0
+ValueError: maxevents must be greater than 0, got -2
+TypeError: 'str' object cannot be interpreted as an integer
+OverflowError: Python int too large to convert to C int
+TypeError: poll() takes at most 2 arguments (3 given)
+ValueError: negative sizehint
+ValueError: negative sizehint
+None
+None
+None
+OSError: invalid flags
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: epoll() takes at most 2 arguments (3 given)
+TypeError: epoll() got an unexpected keyword argument 'foo'
+False
+True
+OSError: [Errno 9] Bad file descriptor
+ValueError: I/O operation on closed epoll object
+ValueError: I/O operation on closed epoll object
+ValueError: I/O operation on closed epoll object
+ValueError: I/O operation on closed epoll object
+ValueError: I/O operation on closed epoll object
+ValueError: I/O operation on closed epoll object
+None
+None
+epoll True True
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: epoll.fromfd() takes exactly one argument (0 given)
+True False
+OSError: [Errno 9] Bad file descriptor
+True
+OSError: [Errno 9] Bad file descriptor
+TypeError: type 'select.epoll' is not an acceptable base type

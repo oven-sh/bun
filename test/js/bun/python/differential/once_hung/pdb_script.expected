@@ -1,0 +1,8 @@
+status: 0
+script: 07cf313689ccc7b9
+---
+> TMP/main.py(1)<module>()
+-> x = 1
+(Pdb) > TMP/main.py(2)<module>()
+-> print(x)
+(Pdb)  0

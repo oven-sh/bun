@@ -1,0 +1,45 @@
+status: 0
+script: 8788f55d760b00aa
+---
+D([1, 2, 3]) D 5 {'x': 5} True 3
+D([1, 2, 3]) D {}
+D deque D D([1, 2, 3, 1, 2, 3]) True True
+True () {'x': 5} [1, 2, 3]
+((), 4) None [1]
+True () None [1, 2]
+E([1, 2], maxlen=5) 3 E([1, 2], maxlen=5) 0 5
+[1]
+G([7, 8]) [7, 8] True False 1 [2, 1]
+AttributeError 'H' object has no attribute 'x' and no __dict__ for setting new attributes
+H([1])
+Weird([]) Weird([])
+TypeError NotDeque() must return a deque, not int
+deque([]) D([]) D
+TypeError
+TypeError
+TypeError
+TypeError
+deque deque collections (<class 'collections.deque'>, <class 'object'>) <class 'object'>
+collections.deque[int] True (<class 'str'>,)
+seq 1 2
+['__add__', '__class_getitem__', '__contains__', '__copy__', '__delitem__', '__eq__', '__ge__', '__getitem__', '__gt__', '__hash__', '__iadd__', '__imul__', '__init__', '__iter__', '__le__', '__len__', '__lt__', '__mul__', '__ne__', '__new__', '__reduce__', '__repr__', '__reversed__', '__rmul__', '__setitem__', '__sizeof__', 'append', 'appendleft', 'clear', 'copy', 'count', 'extend', 'extendleft', 'index', 'insert', 'maxlen', 'pop', 'popleft', 'remove', 'reverse', 'rotate']
+A list-like sequence optimized for data accesses near its endpoints.
+TypeError deque.pop() takes no arguments (1 given)
+TypeError deque.append() takes exactly one argument (0 given)
+TypeError rotate expected at most 1 argument, got 2
+TypeError 'str' object cannot be interpreted as an integer
+OverflowError Python int too large to convert to C ssize_t
+TypeError 'str' object cannot be interpreted as an integer
+TypeError insert expected 2 arguments, got 1
+TypeError deque.append() takes no keyword arguments
+TypeError index expected at least 1 argument, got 0
+TypeError index expected at most 3 arguments, got 4
+b deque(['a', 'b', 'c'])
+deque(['c', 'a', 'b'])
+deque(['c', 'z', 'a', 'b']) 2
+20000 -9999 9999 0 0
+deque([-9, -8, -7, -6, -5, -4, -3, -2, -1, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+87655 87654 37655
+0 99999 True
+99999 49999 50001
+49999 x 50001 100000

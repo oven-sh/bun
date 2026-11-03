@@ -1,0 +1,6 @@
+status: 7
+stderr: 
+script: 5fefa2461128c057
+source: 5fefa2461128c057
+---
+status is taken modulo 256

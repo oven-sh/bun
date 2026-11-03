@@ -1,0 +1,213 @@
+status: 0
+script: 1b511ac28be3aec4
+---
+--- concat
+[1, 2]
+(1, 2)
+'ab'
+b'ab'
+bytearray(b'ab')
+b'ab'
+[]
+TypeError can only concatenate list (not "tuple") to list
+TypeError can only concatenate tuple (not "list") to tuple
+TypeError can only concatenate str (not "bytes") to str
+TypeError can only concatenate str (not "int") to str
+TypeError can only concatenate list (not "NoneType") to list
+TypeError 'int' object can't be concatenated
+TypeError 'float' object can't be concatenated
+TypeError 'NoneType' object can't be concatenated
+TypeError 'dict' object can't be concatenated
+TypeError 'set' object can't be concatenated
+TypeError 'range' object can't be concatenated
+TypeError 'int' object can't be concatenated
+Seq(1, 2)
+Seq(1, 2)
+Seq(1, 'a', 'b')
+TypeError 'Adds' object can't be concatenated
+TypeError 'Adds' object can't be concatenated
+TypeError 'Adds' object can't be concatenated
+TypeError 'Seq' object can't be concatenated
+TypeError 'Declines' object can't be concatenated
+('radd', Seq(1,))
+('radd', Seq(1,))
+TypeError can only concatenate list (not "RAdds") to list
+TypeError 'NotSeq' object can't be concatenated
+TypeError 'NotSeq' object can't be concatenated
+([1, 2], 'list')
+[1, 2]
+'my add'
+--- iconcat
+(True, [1, 2])
+(True, [1, 2, 3])
+(True, [1, 2, 3, 'a', 'b'])
+(True, [1, 2, 3, 'a', 'b', 9])
+TypeError 'int' object is not iterable
+(1, 2)
+TypeError can only concatenate tuple (not "list") to tuple
+'ab'
+TypeError can only concatenate str (not "int") to str
+b'ab'
+TypeError 'int' object can't be concatenated
+TypeError 'NoneType' object can't be concatenated
+TypeError 'dict' object can't be concatenated
+TypeError 'set' object can't be concatenated
+(True, Seq(1, 2))
+TypeError 'IAdds' object can't be concatenated
+(Seq(1, 2), Seq(1,))
+TypeError 'Seq' object can't be concatenated
+TypeError 'Declines' object can't be concatenated
+('radd', Seq(1,))
+TypeError 'NotSeq' object can't be concatenated
+(True, [1, 2])
+--- contains
+(True, False)
+(True, False)
+(True, False)
+(True, True, True)
+True
+True
+TypeError 'in <string>' requires string as left operand, not int
+TypeError argument of type 'int' is not a container or iterable
+TypeError argument of type 'NoneType' is not a container or iterable
+TypeError cannot use 'list' as a dict key (unhashable type: 'list')
+(True, False, True, False)
+--- countOf, indexOf
+3
+0
+0
+3
+0
+3
+1
+1
+2
+2
+1
+4
+TypeError argument of type 'int' is not iterable
+TypeError argument of type 'NoneType' is not iterable
+1
+1
+ValueError sequence.index(x): x not in sequence
+ValueError sequence.index(x): x not in sequence
+2
+ValueError sequence.index(x): x not in sequence
+1
+1
+1
+TypeError argument of type 'int' is not iterable
+(1, [3, 4])
+(1, 0)
+ZeroDivisionError bad eq
+ZeroDivisionError bad eq
+0
+ValueError bad iter
+TypeError argument of type 'BadIterType' is not iterable
+TypeError argument of type 'BadIterType' is not iterable
+KeyError 'mid'
+KeyError 'mid'
+0
+  eq item value
+0
+--- length_hint
+3
+3
+3
+3
+5
+2
+2
+1
+0
+7
+0
+7
+7
+-7
+1
+9223372036854775807
+4
+4
+0
+1
+7
+0
+ValueError Hint.__length_hint__() must return a non-negative int
+TypeError Hint.__length_hint__() must return an int, not str
+TypeError Hint.__length_hint__() must return an int, not float
+TypeError Hint.__length_hint__() must return an int, not NoneType
+OverflowError Python int too large to convert to C ssize_t
+7
+ValueError v
+11
+ValueError v
+TypeError length_hint expected at least 1 argument, got 0
+TypeError length_hint expected at most 2 arguments, got 3
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'float' object cannot be interpreted as an integer
+TypeError 'NoneType' object cannot be interpreted as an integer
+OverflowError Python int too large to convert to C ssize_t
+TypeError _operator.length_hint() takes no keyword arguments
+TypeError _operator.length_hint() takes no keyword arguments
+2
+0
+--- call
+0
+12
+10
+18
+((1, 2), {'x': 3, 'obj': 4})
+{'a': 1}
+3
+'ABC'
+TypeError call expected at least 1 argument, got 0
+TypeError 'int' object is not callable
+TypeError 'NoneType' object is not callable
+TypeError call expected at least 1 argument, got 0
+TypeError <lambda>.<locals>.<lambda>() takes 0 positional arguments but 1 was given
+ZeroDivisionError division by zero
+3
+--- _compare_digest
+True
+True
+False
+False
+False
+False
+False
+True
+True
+False
+True
+False
+True
+True
+False
+False
+True
+True
+True
+TypeError comparing strings with non-ASCII characters is not supported
+TypeError comparing strings with non-ASCII characters is not supported
+TypeError comparing strings with non-ASCII characters is not supported
+TypeError comparing strings with non-ASCII characters is not supported
+TypeError a bytes-like object is required, not 'str'
+TypeError a bytes-like object is required, not 'str'
+TypeError unsupported operand types(s) or combination of types: 'int' and 'int'
+TypeError unsupported operand types(s) or combination of types: 'NoneType' and 'NoneType'
+TypeError unsupported operand types(s) or combination of types: 'list' and 'tuple'
+TypeError unsupported operand types(s) or combination of types: 'str' and 'int'
+TypeError unsupported operand types(s) or combination of types: 'int' and 'str'
+TypeError a bytes-like object is required, not 'int'
+TypeError a bytes-like object is required, not 'int'
+TypeError a bytes-like object is required, not 'NoneType'
+TypeError _compare_digest expected 2 arguments, got 0
+TypeError _compare_digest expected 2 arguments, got 1
+TypeError _compare_digest expected 2 arguments, got 3
+TypeError _operator._compare_digest() takes no keyword arguments
+True
+True
+False
+True
+False

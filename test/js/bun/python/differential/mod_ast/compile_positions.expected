@@ -1,0 +1,25 @@
+status: 0
+script: 288a644c61e8b428
+---
+plain ZeroDivisionError [('<module>', 17), ('f', 5)]
+1 7 11 15
+shifted ValueError [('<module>', 117), ('m', 112)]
+101 111
+one line ZeroDivisionError [('<module>', 7), ('<lambda>', 7)]
+7
+scattered ZeroDivisionError [('<module>', 17), ('f', 1000)]
+50
+at 1000000,0 ZeroDivisionError [('<module>', 1000000)]
+at 4000000,0 ZeroDivisionError [('<module>', 4000000)]
+at 3,1000000 ZeroDivisionError [('<module>', 3)]
+at 3,2147483647 ZeroDivisionError [('<module>', 3)]
+no ends ZeroDivisionError [('<module>', 4)]
+'return' outside function <tree> 1 1 1 9 None
+name 'x' is assigned to before global declaration <tree> 3 3 3 11 None
+'break' outside loop <tree> 1 1 1 6 None
+duplicate parameter 'a' in function definition <tree> 1 10 1 11 None
+'continue' not properly in loop <tree> 5 5 5 13 None
+[('SyntaxWarning', '"is" with \'int\' literal. Did you mean "=="?', '<tree>', 3), ('SyntaxWarning', "'return' in a 'finally' block", '<tree>', 5)]
+generator ZeroDivisionError [('<module>', 5), ('gen', 3)]
+comprehension ZeroDivisionError [('<module>', 2)]
+class ZeroDivisionError [('<module>', 1), ('C', 3)]

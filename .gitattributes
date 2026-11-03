@@ -76,3 +76,6 @@ src/cli/init/tsconfig.default.json linguist-language=JSON-with-Comments
 
 # Every byte of these files is part of a CI image's name (scripts/build/ci-images/spec.ts).
 scripts/build/ci-images/** text eol=lf
+
+# Every byte of a script, and of what CPython printed when it ran it, is part of the test.
+test/js/bun/python/differential/*/** -text

@@ -1,0 +1,7 @@
+status: 1
+stderr: Stop: not an Exception
+script: ed4507ff4dfdda1f
+source: ed4507ff4dfdda1f
+---
+before
+finally runs

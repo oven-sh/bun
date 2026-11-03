@@ -1,0 +1,246 @@
+status: 0
+script: bf6ecef86257f4e9
+source: 7b2ddb50c464489e
+---
+[0, 1, 2]
+{0, 1, 2}
+{0: 0, 1: 2, 2: 4}
+[1, 3, 5]
+[(0, 0), (0, 1), (1, 0), (1, 1)]
+[(0, 0), (0, 1), (1, 0), (1, 1)]
+[(0, 0), (0, 1), (1, 0), (1, 1)]
+[0, 1, 2]
+[0, 2]
+[1, 2]
+{'a': 1}
+[[], [0], [0, 1]]
+[[], [0], [0, 1]]
+6
+[3, 7]
+[]
+(['a', 'b'], [None, None])
+([0, 2, 4], 4)
+[0, 1, 9]
+([1, 2, 3], {'a': 1, 'b': 2})
+('async_generator', '<genexpr>', [0, 2, 4])
+('async_generator', [0, 1, 2])
+('generator', [0, 1, 2])
+('generator', [1, 2])
+('async_generator', [(0, 0), (0, 1), (1, 0), (1, 1)])
+[1, 2]
+[1, 2]
+('async_generator', [0, 1])
+type(gexp).__name__ => async_generator
+run(collect(gexp)) => [0, 1]
+TypeError: 'async for' requires an object with __aiter__ method, got list
+TypeError: 'async for' requires an object with __aiter__ method, got int
+TypeError: 'async_generator' object is not iterable
+TypeError: 'int' object can't be awaited
+ZeroDivisionError: division by zero
+TypeError: 'async_generator' object is not iterable
+TypeError: 'async_generator' object is not iterable
+NameError: name 'undefined_name' is not defined
+TypeError: 'async for' requires an object with __aiter__ method, got int
+TypeError: 'async for' requires an object with __aiter__ method, got function
+run(s1()) => ([0, 1], 'outer')
+run(s2()) => [2, 2, 2]
+run(s3()) => [10, 11]
+SyntaxError: 'await' outside function <- await x
+SyntaxError: 'await' outside function <- x = await y
+SyntaxError: 'await' outside async function <- def f(): await x
+SyntaxError: 'await' outside async function <- def f(): return await x
+SyntaxError: 'await' outside async function <- lambda: await x
+ok: async def f(): await x
+SyntaxError: invalid syntax <- async def f(): await
+SyntaxError: invalid syntax <- async def f(): await x y
+SyntaxError: invalid syntax <- async def f(): await await x
+ok: async def f(): return await x
+SyntaxError: invalid syntax <- async def f(): x = await
+SyntaxError: invalid syntax <- async def f(): await = 1
+SyntaxError: cannot assign to await expression here. Maybe you meant '==' instead of '='? <- async def f(): await x = 1
+SyntaxError: cannot assign to await expression here. Maybe you meant '==' instead of '='? <- async def f(): (await x) = 1
+SyntaxError: 'await expression' is an illegal expression for augmented assignment <- async def f(): await x += 1
+SyntaxError: cannot delete await expression <- async def f(): del await x
+SyntaxError: invalid syntax <- async def f(): await -x
+ok: async def f(): -await x
+ok: async def f(): await x ** 2
+ok: async def f(): 2 ** await x
+SyntaxError: invalid syntax <- async def f(): await not x
+ok: async def f(): not await x
+ok: async def f(): await x.y
+ok: async def f(): await x()
+ok: async def f(): await x[0]
+ok: async def f(): (await x)()
+ok: async def f(): await (x, y)
+ok: async def f(): await x, y
+SyntaxError: invalid syntax <- async def f(): await lambda: 1
+ok: async def f(): await (lambda: 1)
+ok: async def f(): await x if y else z
+SyntaxError: invalid syntax <- async def f(): await *x
+SyntaxError: invalid syntax <- async def f(): await yield
+ok: async def f(): await (yield)
+ok: async def f(): yield await x
+ok: async def f(): await x + await y
+ok: async def f(): f(await x)
+ok: async def f(): f(a=await x)
+ok: async def f(): f(*await x)
+ok: async def f(): f(**await x)
+ok: async def f(): [await x]
+ok: async def f(): {await x: await y}
+ok: async def f(): x[await y]
+ok: async def f(): f'{await x}'
+ok: async def f(): await f'{x}'
+ok: async def f(): (x := await y)
+ok: async def f(): await (x := y)
+SyntaxError: cannot use assignment expressions with await expression <- async def f(): await x := y
+SyntaxError: 'await' outside function <- async def f(x=await y): pass
+ok: async def g():\n async def f(x=await y): pass
+ok: async def g():\n def f(x=await y): pass
+SyntaxError: 'await' outside async function <- async def g():\n def f(): await y
+SyntaxError: 'await' outside async function <- async def g():\n lambda: await y
+SyntaxError: 'await' outside function <- async def g():\n class C: await y
+SyntaxError: 'await' outside function <- async def g():\n class C:\n  x = await y
+ok: async def g():\n @await y\n def f(): pass
+ok: async def g():\n class C(await y): pass
+SyntaxError: await expression cannot be used within an annotation <- async def f(x: await y): pass
+SyntaxError: await expression cannot be used within an annotation <- async def f() -> await y: pass
+SyntaxError: 'await' outside function <- class C: await x
+ok: class C:\n async def f(self): await x
+ok: async def f(): pass
+ok: async  def f(): pass
+SyntaxError: invalid syntax <- async\ndef f(): pass
+ok: async def f(): return
+ok: async def f(): return 1
+ok: async def f(): yield
+ok: async def f(): yield 1
+ok: async def f(): yield; return
+SyntaxError: 'return' with value in async generator <- async def f(): yield; return 1
+SyntaxError: 'return' with value in async generator <- async def f(): return 1; yield
+SyntaxError: 'yield from' inside async function <- async def f(): yield from x
+SyntaxError: 'yield from' inside async function <- async def f(): x = yield from y
+SyntaxError: 'yield from' inside async function <- async def f(): await x; yield from y
+ok: async def f():\n def g(): yield from x
+SyntaxError: invalid syntax <- async f(): pass
+SyntaxError: invalid syntax <- async def: pass
+SyntaxError: expected '(' <- async def f: pass
+SyntaxError: expected ':' <- async def f()
+SyntaxError: invalid syntax <- async lambda: 1
+SyntaxError: invalid syntax <- async class C: pass
+SyntaxError: invalid syntax <- async x = 1
+SyntaxError: invalid syntax <- async
+SyntaxError: invalid syntax <- async = 1
+SyntaxError: invalid syntax <- await = 1
+SyntaxError: invalid syntax <- def async(): pass
+SyntaxError: invalid syntax <- def await(): pass
+SyntaxError: invalid syntax <- x.async
+SyntaxError: invalid syntax <- x.await
+SyntaxError: invalid syntax <- import async
+SyntaxError: invalid syntax <- async.x
+SyntaxError: invalid syntax <- print(async)
+SyntaxError: invalid syntax <- async if x: pass
+SyntaxError: invalid syntax <- async while x: pass
+SyntaxError: invalid syntax <- async try: pass\nfinally: pass
+SyntaxError: invalid syntax <- async match x:\n case 1: pass
+ok: @d\nasync def f(): pass
+SyntaxError: invalid syntax <- async @d\ndef f(): pass
+ok: async def f[T](): pass
+ok: async def f(): global x
+SyntaxError: no binding for nonlocal 'x' found <- async def f(): nonlocal x
+SyntaxError: 'async with' outside async function <- async with x: pass
+SyntaxError: 'async for' outside async function <- async for x in y: pass
+SyntaxError: 'async with' outside async function <- def f():\n async with x: pass
+SyntaxError: 'async for' outside async function <- def f():\n async for x in y: pass
+ok: async def f():\n async with x: pass
+ok: async def f():\n async for x in y: pass
+ok: async def f():\n async with x as y: pass
+ok: async def f():\n async with x as y, z as w: pass
+ok: async def f():\n async with (x as y, z as w): pass
+SyntaxError: invalid syntax <- async def f():\n async with: pass
+SyntaxError: expected ':' <- async def f():\n async with x
+SyntaxError: cannot assign to literal <- async def f():\n async with x as 1: pass
+SyntaxError: invalid syntax <- async def f():\n async for in y: pass
+SyntaxError: invalid syntax <- async def f():\n async for x y: pass
+SyntaxError: invalid syntax <- async def f():\n async for x in: pass
+ok: async def f():\n async for x in y: pass\n else: pass
+SyntaxError: cannot assign to literal <- async def f():\n async for 1 in y: pass
+ok: async def f():\n async for x, y in z: pass
+ok: async def f():\n async for x in y, z: pass
+ok: async def f():\n async for x in *y, z: pass
+SyntaxError: starred assignment target must be in a list or tuple <- async def f():\n async for *x in y: pass
+ok: async def f():\n async for x in y: break
+ok: async def f():\n async for x in y: continue
+ok: async def f():\n async  with  x: pass
+ok: async def f():\n async\\n with x: pass
+SyntaxError: 'async with' outside async function <- async def f():\n def g():\n  async with x: pass
+SyntaxError: asynchronous comprehension outside of an asynchronous function <- async def f():\n lambda: [x async for x in y]
+SyntaxError: 'async with' outside async function <- class C:\n async with x: pass
+SyntaxError: 'async for' outside async function <- class C:\n async for x in y: pass
+ok: async def f():\n with await x: pass
+ok: async def f():\n for x in await y: pass
+SyntaxError: invalid syntax <- async def f():\n await async with x: pass
+SyntaxError: asynchronous comprehension outside of an asynchronous function <- [x async for x in y]
+SyntaxError: asynchronous comprehension outside of an asynchronous function <- {x async for x in y}
+SyntaxError: asynchronous comprehension outside of an asynchronous function <- {x: x async for x in y}
+ok: (x async for x in y)
+SyntaxError: asynchronous comprehension outside of an asynchronous function <- [await x for x in y]
+ok: (await x for x in y)
+SyntaxError: 'await' outside function <- [x for x in await y]
+SyntaxError: asynchronous comprehension outside of an asynchronous function <- def f(): [x async for x in y]
+SyntaxError: asynchronous comprehension outside of an asynchronous function <- def f(): {x async for x in y}
+ok: def f(): (x async for x in y)
+ok: def f(): return (x async for x in y)
+SyntaxError: asynchronous comprehension outside of an asynchronous function <- def f(): [await x for x in y]
+ok: def f(): (await x for x in y)
+SyntaxError: 'await' outside async function <- def f(): [x for x in await y]
+SyntaxError: 'await' outside async function <- def f(): (x for x in await y)
+ok: def f(): ([x async for x in y] for z in w)
+ok: def f(): [(x async for x in y) for z in w]
+SyntaxError: asynchronous comprehension outside of an asynchronous function <- def f(): [[x async for x in y] for z in w]
+ok: def f(): ((x async for x in y) for z in w)
+ok: def f(): (x async for x in y if await z)
+ok: def f(): (x for x in y if await z)
+ok: def f(): (x for x in y async for z in w)
+SyntaxError: asynchronous comprehension outside of an asynchronous function <- def f(): [x for x in y async for z in w]
+SyntaxError: asynchronous comprehension outside of an asynchronous function <- lambda: [x async for x in y]
+ok: lambda: (x async for x in y)
+SyntaxError: asynchronous comprehension outside of an asynchronous function <- class C: [x async for x in y]
+ok: class C: x = (x async for x in y)
+ok: async def f(): [x async for x in y]
+ok: async def f(): [x async for x in y async for z in w]
+ok: async def f(): [x async for x in y if z async for w in v]
+SyntaxError: invalid syntax <- async def f(): [x async x in y]
+SyntaxError: invalid syntax <- async def f(): [x async for]
+SyntaxError: invalid syntax <- async def f(): [async for x in y]
+SyntaxError: invalid syntax <- async def f(): [x for async x in y]
+SyntaxError: invalid syntax <- async def f(): [x async for x in y for]
+ok: async def f(): [x async for x, y in z]
+ok: async def f(): [x async for (x, y) in z]
+SyntaxError: cannot assign to literal <- async def f(): [x async for 1 in z]
+SyntaxError: invalid syntax <- async def f(): [x async for x in y, z]
+ok: async def f(): f(x async for x in y)
+SyntaxError: Generator expression must be parenthesized <- async def f(): f(x async for x in y, 1)
+SyntaxError: invalid syntax <- async def f(): [yield async for x in y]
+SyntaxError: 'yield' inside list comprehension <- async def f(): [(yield x) async for x in y]
+SyntaxError: 'yield' inside generator expression <- async def f(): ((yield x) async for x in y)
+ok: async def f(): [x async for x in (yield)]
+SyntaxError: assignment expression cannot rebind comprehension iteration variable 'x' <- async def f(): [x := 1 async for x in y]
+ok: async def f(): [(z := x) async for x in y]
+SyntaxError: assignment expression cannot rebind comprehension iteration variable 'x' <- async def f(): [(x := 1) async for x in y]
+SyntaxError: invalid syntax. Perhaps you forgot a comma? <- async def f(): [x asyncfor x in y]
+ok: async def f(): [x async  for x in y]
+ok: async def f(): [x async\n for x in y]
+True
+type(co).__name__ => coroutine
+run(co) => None
+ns["r"] => 5
+code.co_flags & 0x80 != 0 => False
+eval(code) => 2
+7
+ok: async with x: pass 128
+ok: async for x in y: pass 128
+SyntaxError: 'yield' outside function <- yield
+SyntaxError: 'return' outside function <- return
+SyntaxError: 'await' outside async function <- def f(): await x
+SyntaxError: 'yield' outside function <- await x\nyield y
+SyntaxError: 'await' outside async function <- lambda: await x
+SyntaxError: 'await' outside function <- class C: await x

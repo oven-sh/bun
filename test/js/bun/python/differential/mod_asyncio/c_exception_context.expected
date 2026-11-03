@@ -1,0 +1,18 @@
+status: 0
+script: 2d39aa4c28fb8c81
+---
+[1] None
+None
+KeyError('k') None KeyError('k')
+None
+None
+['main']
+OSError('late')
+None True
+None
+None RuntimeError('handled while a task starts')
+None 0
+ValueError KeyError(3)
+KeyError(3)
+CancelledError ZeroDivisionError
+IndexError('outer') None

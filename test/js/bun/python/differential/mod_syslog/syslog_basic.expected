@@ -1,0 +1,40 @@
+status: 0
+script: 7cb56ca5febd8fa5
+---
+['LOG_ALERT', 'LOG_AUTH', 'LOG_AUTHPRIV', 'LOG_CONS', 'LOG_CRIT', 'LOG_CRON', 'LOG_DAEMON', 'LOG_DEBUG', 'LOG_EMERG', 'LOG_ERR', 'LOG_FTP', 'LOG_INFO', 'LOG_KERN', 'LOG_LOCAL0', 'LOG_LOCAL1', 'LOG_LOCAL2', 'LOG_LOCAL3', 'LOG_LOCAL4', 'LOG_LOCAL5', 'LOG_LOCAL6', 'LOG_LOCAL7', 'LOG_LPR', 'LOG_MAIL', 'LOG_MASK', 'LOG_NDELAY', 'LOG_NEWS', 'LOG_NOTICE', 'LOG_NOWAIT', 'LOG_ODELAY', 'LOG_PERROR', 'LOG_PID', 'LOG_SYSLOG', 'LOG_UPTO', 'LOG_USER', 'LOG_UUCP', 'LOG_WARNING', 'closelog', 'openlog', 'setlogmask', 'syslog']
+[('LOG_ALERT', 1), ('LOG_AUTH', 32), ('LOG_AUTHPRIV', 80), ('LOG_CONS', 2), ('LOG_CRIT', 2), ('LOG_CRON', 72), ('LOG_DAEMON', 24), ('LOG_DEBUG', 7), ('LOG_EMERG', 0), ('LOG_ERR', 3), ('LOG_FTP', 88), ('LOG_INFO', 6), ('LOG_KERN', 0), ('LOG_LOCAL0', 128), ('LOG_LOCAL1', 136), ('LOG_LOCAL2', 144), ('LOG_LOCAL3', 152), ('LOG_LOCAL4', 160), ('LOG_LOCAL5', 168), ('LOG_LOCAL6', 176), ('LOG_LOCAL7', 184), ('LOG_LPR', 48), ('LOG_MAIL', 16), ('LOG_NDELAY', 8), ('LOG_NEWS', 56), ('LOG_NOTICE', 5), ('LOG_NOWAIT', 16), ('LOG_ODELAY', 4), ('LOG_PERROR', 32), ('LOG_PID', 1), ('LOG_SYSLOG', 40), ('LOG_USER', 8), ('LOG_UUCP', 64), ('LOG_WARNING', 4)]
+LOG_MASK builtin_function_or_method ($module, pri, /)
+LOG_UPTO builtin_function_or_method ($module, pri, /)
+closelog builtin_function_or_method ($module, /)
+openlog builtin_function_or_method ($module, /, ident=<unrepresentable>, logoption=0, facility=LOG_USER)
+setlogmask builtin_function_or_method ($module, maskpri, /)
+syslog builtin_function_or_method None
+[1, 2, 4, 8, 16, 32, 64, 128] [1, 3, 7, 15, 31, 63, 127, 255] 8 31
+255 15 True
+None None None None None None None
+None None None None
+TypeError: syslog.syslog requires 1 to 2 arguments
+TypeError: syslog() argument 1 must be str, not int
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: syslog() argument 2 must be str, not int
+TypeError: syslog.syslog requires 1 to 2 arguments
+TypeError: syslog() argument 1 must be str, not bytes
+ValueError: embedded null character
+OverflowError: signed integer is greater than maximum
+TypeError: syslog() takes no keyword arguments
+UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed
+TypeError: openlog() argument 'ident' must be str, not int
+TypeError: openlog() argument 'ident' must be str, not bytes
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: openlog() takes at most 3 arguments (4 given)
+TypeError: openlog() got an unexpected keyword argument 'foo'
+OverflowError: Python int too large to convert to C long
+UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed
+TypeError: openlog() argument 'ident' must be str, not None
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: syslog.setlogmask() takes exactly one argument (0 given)
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: syslog.LOG_UPTO() takes exactly one argument (0 given)
+TypeError: syslog.closelog() takes no arguments (1 given)
+OverflowError: Python int too large to convert to C long

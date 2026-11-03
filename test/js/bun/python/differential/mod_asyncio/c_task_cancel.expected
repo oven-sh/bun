@@ -1,0 +1,25 @@
+status: 0
+script: 7a26486cc675d9b8
+---
+True True 1 False None
+CancelledError: () True False 1 False CANCELLED
+True True False True msg None
+CancelledError: ('msg',) CancelledError: () CancelledError: () None
+2 CancelledError: ('second',)
+True
+True
+True
+survived [(0, (0,), 1, 0), (1, (1,), 1, 0), (2, (2,), 1, 0)] False 0 0
+CancelledError: ('at the end',) True at the end
+True 0 False
+fine
+CancelledError: ('own',) True None CancelledError: ()
+Task True
+CancelledError: ('down',)
+True ['catcher']
+True please True
+CancelledError: ('please',)
+CancelledError: ('early',) False
+TimeoutError: ()
+inner done
+('TimeoutError', 'CancelledError', 0)

@@ -1,0 +1,6 @@
+status: 1
+stderr: AssertionError: ('x was', 3)
+script: 2f78d841b5954c08
+source: 2f78d841b5954c08
+---
+before

@@ -1,0 +1,110 @@
+status: 0
+script: 1c806974b0af76d4
+---
+True True _asyncio Future Future (<class '_asyncio.Task'>, <class '_asyncio.Future'>, <class 'object'>)
+['Future', 'Task', '_enter_task', '_get_running_loop', '_leave_task', '_register_eager_task', '_register_task', '_set_running_loop', '_swap_current_task', '_unregister_eager_task', '_unregister_task', 'all_tasks', 'current_task', 'future_add_to_awaited_by', 'future_discard_from_awaited_by', 'get_event_loop', 'get_running_loop']
+['__await__', '__class_getitem__', '__del__', '__iter__', '_asyncio_awaited_by', '_asyncio_future_blocking', '_callbacks', '_cancel_message', '_exception', '_log_traceback', '_loop', '_make_cancelled_error', '_result', '_source_traceback', '_state', 'add_done_callback', 'cancel', 'cancelled', 'done', 'exception', 'get_loop', 'remove_done_callback', 'result', 'set_exception', 'set_result']
+['_coro', '_fut_waiter', '_log_destroy_pending', '_must_cancel', 'cancelling', 'get_context', 'get_coro', 'get_name', 'get_stack', 'print_stack', 'set_name', 'uncancel']
+(*, loop=None) (coro, *, loop=None, name=None, context=None, eager_start=False)
+Future _make_cancelled_error ($self, /)
+Future add_done_callback ($self, fn, /, *, context=<unrepresentable>)
+Future cancel ($self, /, msg=None)
+Future cancelled ($self, /)
+Future done ($self, /)
+Future exception ($self, /)
+Future get_loop ($self, /)
+Future remove_done_callback ($self, fn, /)
+Future result ($self, /)
+Future set_exception ($self, exception, /)
+Future set_result ($self, result, /)
+Task _make_cancelled_error ($self, /)
+Task add_done_callback ($self, fn, /, *, context=<unrepresentable>)
+Task cancel ($self, /, msg=None)
+Task cancelled ($self, /)
+Task cancelling ($self, /)
+Task done ($self, /)
+Task exception ($self, /)
+Task get_context ($self, /)
+Task get_coro ($self, /)
+Task get_loop ($self, /)
+Task get_name ($self, /)
+Task get_stack ($self, /, *, limit=None)
+Task print_stack ($self, /, *, limit=None, file=None)
+Task remove_done_callback ($self, fn, /)
+Task result ($self, /)
+Task set_exception ($self, exception, /)
+Task set_name ($self, value, /)
+Task set_result ($self, result, /)
+Task uncancel ($self, /)
+_enter_task ($module, /, loop, task)
+_get_running_loop ($module, /)
+_leave_task ($module, /, loop, task)
+_register_eager_task ($module, /, task)
+_register_task ($module, /, task)
+_set_running_loop ($module, loop, /)
+_swap_current_task ($module, /, loop, task)
+_unregister_eager_task ($module, /, task)
+_unregister_task ($module, /, task)
+all_tasks ($module, /, loop=None)
+current_task ($module, /, loop=None)
+future_add_to_awaited_by ($module, fut, waiter, /)
+future_discard_from_awaited_by ($module, fut, waiter, /)
+get_event_loop ($module, /)
+get_running_loop ($module, /)
+Future PENDING False False None None None True True False None None False None
+<Future pending> InvalidStateError: Result is not set. InvalidStateError: Exception is not set.
+5 ['tuple2Context', 'tuple2Context', 'tuple2Context', 'tuple2Context', 'tuple2Context'] <Future pending cb=[<lambda>() at c_future_states.py:25, <3 more>, <lambda>() at c_future_states.py:28]>
+2 3 0 0
+None FINISHED True 42 None 42 None []
+[('a', True), ('b', 42), 'd']
+InvalidStateError: invalid state InvalidStateError: invalid state False False <Future finished result=42>
+d
+late
+1 None
+1 1 1 None
+None True True False True ValueError: boom <Future finished exception=ValueError('boom')>
+KeyError() KeyError: 
+TypeError: invalid exception object TypeError: invalid exception object PENDING
+None
+RuntimeError('StopIteration interacts badly with generators and cannot be raised into a Future') StopIteration(1) StopIteration(1) True
+None
+RuntimeError('StopIteration interacts badly with generators and cannot be raised into a Future')
+False ValueError: _log_traceback can only be set to False
+True True
+True
+True True True CANCELLED CancelledError:  CancelledError:  None <Future cancelled>
+True why CancelledError: why CancelledError('why')
+CancelledError: b
+AttributeError: attribute '_cancel_message' of '_asyncio.Future' objects cannot be deleted AttributeError: attribute '_log_traceback' of '_asyncio.Future' objects cannot be deleted AttributeError: attribute '_asyncio_future_blocking' of '_asyncio.Future' objects cannot be deleted AttributeError: attribute '_state' of '_asyncio.Future' objects is not writable AttributeError: attribute '_state' of '_asyncio.Future' objects is not writable
+5 True _asyncio.Future[int] _asyncio.Task[str] True True True True
+TypeError: Future() takes no positional arguments TypeError: Future() takes at most 1 keyword argument (2 given) Future
+RuntimeError: _asyncio.Future object is already initialized TypeError: add_done_callback() takes exactly 1 positional argument (0 given) TypeError: add_done_callback() takes exactly 1 positional argument (2 given) TypeError: add_done_callback() takes exactly 1 positional argument (0 given) TypeError: cancel() takes at most 1 argument (2 given) TypeError: Future.result() takes no arguments (1 given)
+True
+RuntimeError: There is no current event loop in thread 'MainThread'.
+result InvalidStateError: Future object is not initialized.
+exception InvalidStateError: Future object is not initialized.
+cancel RuntimeError: Future object is not initialized.
+cancelled False
+done False
+get_loop RuntimeError: Future object is not initialized.
+__iter__ RuntimeError: Future object is not initialized.
+__await__ RuntimeError: Future object is not initialized.
+__repr__ RuntimeError: Future object is not initialized.
+_make_cancelled_error 
+set_result RuntimeError: Future object is not initialized.
+set_exception RuntimeError: Future object is not initialized.
+add_done_callback RuntimeError: uninitialized Future object
+remove_done_callback RuntimeError: Future object is not initialized.
+_state RuntimeError: Future object is not initialized.
+_asyncio_future_blocking False
+_loop None
+_callbacks RuntimeError: Future object is not initialized.
+_result RuntimeError: Future object is not initialized.
+_exception RuntimeError: Future object is not initialized.
+_log_traceback RuntimeError: Future object is not initialized.
+_source_traceback None
+_cancel_message None
+_asyncio_awaited_by None
+RuntimeError: Future object is not initialized.
+TypeError: _asyncio.Future.__new__(int): int is not a subtype of _asyncio.Future Future TypeError: object.__new__(_asyncio.Future) is not safe, use _asyncio.Future.__new__() TypeError: descriptor 'result' for '_asyncio.Future' objects doesn't apply to a 'int' object
+StackSummary create_future <Future pending created at base_events.py:463>

@@ -1,0 +1,162 @@
+status: 0
+script: 25a488590cc4c2cd
+---
+['Blob', 'Connection', 'Cursor', 'DataError', 'DatabaseError', 'Error', 'IntegrityError', 'InterfaceError', 'InternalError', 'LEGACY_TRANSACTION_CONTROL', 'NotSupportedError', 'OperationalError', 'PARSE_COLNAMES', 'PARSE_DECLTYPES', 'PrepareProtocol', 'ProgrammingError', 'Row', 'Warning', 'adapt', 'adapters', 'complete_statement', 'connect', 'converters', 'enable_callback_tracebacks', 'register_adapter', 'register_converter', 'sqlite_version', 'threadsafety']
+{'SQLITE_ABORT': 4, 'SQLITE_ABORT_ROLLBACK': 516, 'SQLITE_ALTER_TABLE': 26, 'SQLITE_ANALYZE': 28, 'SQLITE_ATTACH': 24, 'SQLITE_AUTH': 23, 'SQLITE_AUTH_USER': 279, 'SQLITE_BUSY': 5, 'SQLITE_BUSY_RECOVERY': 261, 'SQLITE_BUSY_SNAPSHOT': 517, 'SQLITE_BUSY_TIMEOUT': 773, 'SQLITE_CANTOPEN': 14, 'SQLITE_CANTOPEN_CONVPATH': 1038, 'SQLITE_CANTOPEN_DIRTYWAL': 1294, 'SQLITE_CANTOPEN_FULLPATH': 782, 'SQLITE_CANTOPEN_ISDIR': 526, 'SQLITE_CANTOPEN_NOTEMPDIR': 270, 'SQLITE_CANTOPEN_SYMLINK': 1550, 'SQLITE_CONSTRAINT': 19, 'SQLITE_CONSTRAINT_CHECK': 275, 'SQLITE_CONSTRAINT_COMMITHOOK': 531, 'SQLITE_CONSTRAINT_FOREIGNKEY': 787, 'SQLITE_CONSTRAINT_FUNCTION': 1043, 'SQLITE_CONSTRAINT_NOTNULL': 1299, 'SQLITE_CONSTRAINT_PINNED': 2835, 'SQLITE_CONSTRAINT_PRIMARYKEY': 1555, 'SQLITE_CONSTRAINT_ROWID': 2579, 'SQLITE_CONSTRAINT_TRIGGER': 1811, 'SQLITE_CONSTRAINT_UNIQUE': 2067, 'SQLITE_CONSTRAINT_VTAB': 2323, 'SQLITE_CORRUPT': 11, 'SQLITE_CORRUPT_INDEX': 779, 'SQLITE_CORRUPT_SEQUENCE': 523, 'SQLITE_CORRUPT_VTAB': 267, 'SQLITE_CREATE_INDEX': 1, 'SQLITE_CREATE_TABLE': 2, 'SQLITE_CREATE_TEMP_INDEX': 3, 'SQLITE_CREATE_TEMP_TABLE': 4, 'SQLITE_CREATE_TEMP_TRIGGER': 5, 'SQLITE_CREATE_TEMP_VIEW': 6, 'SQLITE_CREATE_TRIGGER': 7, 'SQLITE_CREATE_VIEW': 8, 'SQLITE_CREATE_VTABLE': 29, 'SQLITE_DBCONFIG_DEFENSIVE': 1010, 'SQLITE_DBCONFIG_DQS_DDL': 1014, 'SQLITE_DBCONFIG_DQS_DML': 1013, 'SQLITE_DBCONFIG_ENABLE_FKEY': 1002, 'SQLITE_DBCONFIG_ENABLE_FTS3_TOKENIZER': 1004, 'SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION': 1005, 'SQLITE_DBCONFIG_ENABLE_QPSG': 1007, 'SQLITE_DBCONFIG_ENABLE_TRIGGER': 1003, 'SQLITE_DBCONFIG_ENABLE_VIEW': 1015, 'SQLITE_DBCONFIG_LEGACY_ALTER_TABLE': 1012, 'SQLITE_DBCONFIG_LEGACY_FILE_FORMAT': 1016, 'SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE': 1006, 'SQLITE_DBCONFIG_RESET_DATABASE': 1009, 'SQLITE_DBCONFIG_TRIGGER_EQP': 1008, 'SQLITE_DBCONFIG_TRUSTED_SCHEMA': 1017, 'SQLITE_DBCONFIG_WRITABLE_SCHEMA': 1011, 'SQLITE_DELETE': 9, 'SQLITE_DENY': 1, 'SQLITE_DETACH': 25, 'SQLITE_DONE': 101, 'SQLITE_DROP_INDEX': 10, 'SQLITE_DROP_TABLE': 11, 'SQLITE_DROP_TEMP_INDEX': 12, 'SQLITE_DROP_TEMP_TABLE': 13, 'SQLITE_DROP_TEMP_TRIGGER': 14, 'SQLITE_DROP_TEMP_VIEW': 15, 'SQLITE_DROP_TRIGGER': 16, 'SQLITE_DROP_VIEW': 17, 'SQLITE_DROP_VTABLE': 30, 'SQLITE_EMPTY': 16, 'SQLITE_ERROR': 1, 'SQLITE_ERROR_MISSING_COLLSEQ': 257, 'SQLITE_ERROR_RETRY': 513, 'SQLITE_ERROR_SNAPSHOT': 769, 'SQLITE_FORMAT': 24, 'SQLITE_FULL': 13, 'SQLITE_FUNCTION': 31, 'SQLITE_IGNORE': 2, 'SQLITE_INSERT': 18, 'SQLITE_INTERNAL': 2, 'SQLITE_INTERRUPT': 9, 'SQLITE_IOERR': 10, 'SQLITE_IOERR_ACCESS': 3338, 'SQLITE_IOERR_AUTH': 7178, 'SQLITE_IOERR_BEGIN_ATOMIC': 7434, 'SQLITE_IOERR_BLOCKED': 2826, 'SQLITE_IOERR_CHECKRESERVEDLOCK': 3594, 'SQLITE_IOERR_CLOSE': 4106, 'SQLITE_IOERR_COMMIT_ATOMIC': 7690, 'SQLITE_IOERR_CONVPATH': 6666, 'SQLITE_IOERR_CORRUPTFS': 8458, 'SQLITE_IOERR_DATA': 8202, 'SQLITE_IOERR_DELETE': 2570, 'SQLITE_IOERR_DELETE_NOENT': 5898, 'SQLITE_IOERR_DIR_CLOSE': 4362, 'SQLITE_IOERR_DIR_FSYNC': 1290, 'SQLITE_IOERR_FSTAT': 1802, 'SQLITE_IOERR_FSYNC': 1034, 'SQLITE_IOERR_GETTEMPPATH': 6410, 'SQLITE_IOERR_LOCK': 3850, 'SQLITE_IOERR_MMAP': 6154, 'SQLITE_IOERR_NOMEM': 3082, 'SQLITE_IOERR_RDLOCK': 2314, 'SQLITE_IOERR_READ': 266, 'SQLITE_IOERR_ROLLBACK_ATOMIC': 7946, 'SQLITE_IOERR_SEEK': 5642, 'SQLITE_IOERR_SHMLOCK': 5130, 'SQLITE_IOERR_SHMMAP': 5386, 'SQLITE_IOERR_SHMOPEN': 4618, 'SQLITE_IOERR_SHMSIZE': 4874, 'SQLITE_IOERR_SHORT_READ': 522, 'SQLITE_IOERR_TRUNCATE': 1546, 'SQLITE_IOERR_UNLOCK': 2058, 'SQLITE_IOERR_VNODE': 6922, 'SQLITE_IOERR_WRITE': 778, 'SQLITE_LIMIT_ATTACHED': 7, 'SQLITE_LIMIT_COLUMN': 2, 'SQLITE_LIMIT_COMPOUND_SELECT': 4, 'SQLITE_LIMIT_EXPR_DEPTH': 3, 'SQLITE_LIMIT_FUNCTION_ARG': 6, 'SQLITE_LIMIT_LENGTH': 0, 'SQLITE_LIMIT_LIKE_PATTERN_LENGTH': 8, 'SQLITE_LIMIT_SQL_LENGTH': 1, 'SQLITE_LIMIT_TRIGGER_DEPTH': 10, 'SQLITE_LIMIT_VARIABLE_NUMBER': 9, 'SQLITE_LIMIT_VDBE_OP': 5, 'SQLITE_LIMIT_WORKER_THREADS': 11, 'SQLITE_LOCKED': 6, 'SQLITE_LOCKED_SHAREDCACHE': 262, 'SQLITE_LOCKED_VTAB': 518, 'SQLITE_MISMATCH': 20, 'SQLITE_MISUSE': 21, 'SQLITE_NOLFS': 22, 'SQLITE_NOMEM': 7, 'SQLITE_NOTADB': 26, 'SQLITE_NOTFOUND': 12, 'SQLITE_NOTICE': 27, 'SQLITE_NOTICE_RECOVER_ROLLBACK': 539, 'SQLITE_NOTICE_RECOVER_WAL': 283, 'SQLITE_OK': 0, 'SQLITE_OK_LOAD_PERMANENTLY': 256, 'SQLITE_OK_SYMLINK': 512, 'SQLITE_PERM': 3, 'SQLITE_PRAGMA': 19, 'SQLITE_PROTOCOL': 15, 'SQLITE_RANGE': 25, 'SQLITE_READ': 20, 'SQLITE_READONLY': 8, 'SQLITE_READONLY_CANTINIT': 1288, 'SQLITE_READONLY_CANTLOCK': 520, 'SQLITE_READONLY_DBMOVED': 1032, 'SQLITE_READONLY_DIRECTORY': 1544, 'SQLITE_READONLY_RECOVERY': 264, 'SQLITE_READONLY_ROLLBACK': 776, 'SQLITE_RECURSIVE': 33, 'SQLITE_REINDEX': 27, 'SQLITE_ROW': 100, 'SQLITE_SAVEPOINT': 32, 'SQLITE_SCHEMA': 17, 'SQLITE_SELECT': 21, 'SQLITE_TOOBIG': 18, 'SQLITE_TRANSACTION': 22, 'SQLITE_UPDATE': 23, 'SQLITE_WARNING': 28, 'SQLITE_WARNING_AUTOINDEX': 284}
+<class 'tuple'> True True 1 2 -1 <class 'str'> ['date', 'datetime'] ['DATE', 'TIMESTAMP']
+Warning (<class 'sqlite3.Warning'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>) sqlite3 Warning
+Error (<class 'sqlite3.Error'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>) sqlite3 Error
+InterfaceError (<class 'sqlite3.InterfaceError'>, <class 'sqlite3.Error'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>) sqlite3 InterfaceError
+DatabaseError (<class 'sqlite3.DatabaseError'>, <class 'sqlite3.Error'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>) sqlite3 DatabaseError
+DataError (<class 'sqlite3.DataError'>, <class 'sqlite3.DatabaseError'>, <class 'sqlite3.Error'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>) sqlite3 DataError
+OperationalError (<class 'sqlite3.OperationalError'>, <class 'sqlite3.DatabaseError'>, <class 'sqlite3.Error'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>) sqlite3 OperationalError
+IntegrityError (<class 'sqlite3.IntegrityError'>, <class 'sqlite3.DatabaseError'>, <class 'sqlite3.Error'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>) sqlite3 IntegrityError
+InternalError (<class 'sqlite3.InternalError'>, <class 'sqlite3.DatabaseError'>, <class 'sqlite3.Error'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>) sqlite3 InternalError
+ProgrammingError (<class 'sqlite3.ProgrammingError'>, <class 'sqlite3.DatabaseError'>, <class 'sqlite3.Error'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>) sqlite3 ProgrammingError
+NotSupportedError (<class 'sqlite3.NotSupportedError'>, <class 'sqlite3.DatabaseError'>, <class 'sqlite3.Error'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>) sqlite3 NotSupportedError
+<class 'sqlite3.Connection'> (<class 'sqlite3.Connection'>, <class 'object'>) sqlite3 SQLite database connection object. [('DataError', 'member_descriptor'), ('DatabaseError', 'member_descriptor'), ('Error', 'member_descriptor'), ('IntegrityError', 'member_descriptor'), ('InterfaceError', 'member_descriptor'), ('InternalError', 'member_descriptor'), ('NotSupportedError', 'member_descriptor'), ('OperationalError', 'member_descriptor'), ('ProgrammingError', 'member_descriptor'), ('Warning', 'member_descriptor'), ('__call__', 'wrapper_descriptor'), ('__del__', 'wrapper_descriptor'), ('__enter__', 'method_descriptor'), ('__exit__', 'method_descriptor'), ('__init__', 'wrapper_descriptor'), ('__text_signature__', 'getset_descriptor'), ('autocommit', 'getset_descriptor'), ('backup', 'method_descriptor'), ('blobopen', 'method_descriptor'), ('close', 'method_descriptor'), ('commit', 'method_descriptor'), ('create_aggregate', 'method_descriptor'), ('create_collation', 'method_descriptor'), ('create_function', 'method_descriptor'), ('create_window_function', 'method_descriptor'), ('cursor', 'method_descriptor'), ('deserialize', 'method_descriptor'), ('execute', 'method_descriptor'), ('executemany', 'method_descriptor'), ('executescript', 'method_descriptor'), ('getconfig', 'method_descriptor'), ('getlimit', 'method_descriptor'), ('in_transaction', 'getset_descriptor'), ('interrupt', 'method_descriptor'), ('isolation_level', 'getset_descriptor'), ('iterdump', 'method_descriptor'), ('rollback', 'method_descriptor'), ('row_factory', 'getset_descriptor'), ('serialize', 'method_descriptor'), ('set_authorizer', 'method_descriptor'), ('set_progress_handler', 'method_descriptor'), ('set_trace_callback', 'method_descriptor'), ('setconfig', 'method_descriptor'), ('setlimit', 'method_descriptor'), ('text_factory', 'getset_descriptor'), ('total_changes', 'getset_descriptor')]
+<class 'sqlite3.Cursor'> (<class 'sqlite3.Cursor'>, <class 'object'>) sqlite3 SQLite database cursor class. [('__init__', 'wrapper_descriptor'), ('__iter__', 'wrapper_descriptor'), ('__next__', 'wrapper_descriptor'), ('arraysize', 'getset_descriptor'), ('close', 'method_descriptor'), ('connection', 'member_descriptor'), ('description', 'member_descriptor'), ('execute', 'method_descriptor'), ('executemany', 'method_descriptor'), ('executescript', 'method_descriptor'), ('fetchall', 'method_descriptor'), ('fetchmany', 'method_descriptor'), ('fetchone', 'method_descriptor'), ('lastrowid', 'member_descriptor'), ('row_factory', 'getset_descriptor'), ('rowcount', 'member_descriptor'), ('setinputsizes', 'method_descriptor'), ('setoutputsize', 'method_descriptor')]
+<class 'sqlite3.Row'> (<class 'sqlite3.Row'>, <class 'object'>) sqlite3 None [('__eq__', 'wrapper_descriptor'), ('__ge__', 'wrapper_descriptor'), ('__getitem__', 'wrapper_descriptor'), ('__gt__', 'wrapper_descriptor'), ('__hash__', 'wrapper_descriptor'), ('__iter__', 'wrapper_descriptor'), ('__le__', 'wrapper_descriptor'), ('__len__', 'wrapper_descriptor'), ('__lt__', 'wrapper_descriptor'), ('__ne__', 'wrapper_descriptor'), ('keys', 'method_descriptor')]
+<class 'sqlite3.Blob'> (<class 'sqlite3.Blob'>, <class 'object'>) sqlite3 None [('__delitem__', 'wrapper_descriptor'), ('__enter__', 'method_descriptor'), ('__exit__', 'method_descriptor'), ('__getitem__', 'wrapper_descriptor'), ('__len__', 'wrapper_descriptor'), ('__setitem__', 'wrapper_descriptor'), ('close', 'method_descriptor'), ('read', 'method_descriptor'), ('seek', 'method_descriptor'), ('tell', 'method_descriptor'), ('write', 'method_descriptor')]
+<class 'sqlite3.PrepareProtocol'> (<class 'sqlite3.PrepareProtocol'>, <class 'object'>) sqlite3 PEP 246 style object adaption protocol type. [('__init__', 'wrapper_descriptor')]
+2.0 qmark True True
+<class 'sqlite3.Connection'>  -1 False 0 None <class 'str'> (sql, /)
+<class 'sqlite3.Cursor'> True None None -1 1 None
+True None -1 0
+1 1 True 1
+1 2
+3 2
+1 0
+(('a', None, None, None, None, None, None), ('b', None, None, None, None, None, None), ('c', None, None, None, None, None, None), ('d', None, None, None, None, None, None), ('e', None, None, None, None, None, None))
+-1 (1, 'one', 1.5, b'\x00\x01', None) (2, 'two', 2.0, b'xy', 4611686018427387904) [(3, 'three', None, None, None)] [(4, 'four', None, None, None), (5, 'five', None, None, None)] [(6, 'six', None, None, None)] [] None [] []
+['int', 'str', 'float', 'bytes', 'NoneType'] ['int', 'str', 'float', 'bytes', 'int']
+[(5, 'five'), (6, 'six')] [(6, 21, 3.5, 'two', None, 1.0, 2.5, b'\x00\xff', '', b'')]
+3 3 [] 3
+3 0 0 1 -1 1
+(7,) True
+StopIteration: 
+0 (0, 'integer') int
+1 (1, 'integer') int
+-1 (-1, 'integer') int
+2147483648 (2147483648, 'integer') int
+-2147483649 (-2147483649, 'integer') int
+9007199254740992 (9007199254740992, 'integer') int
+9007199254740993 (9007199254740993, 'integer') int
+9223372036854775807 (9223372036854775807, 'integer') int
+-9223372036854775808 (-9223372036854775808, 'integer') int
+True (1, 'integer') int
+False (0, 'integer') int
+0.0 (0.0, 'real') float
+-0.0 (-0.0, 'real') float
+1.0 (1.0, 'real') float
+1e+300 (1e+300, 'real') float
+inf (inf, 'real') float
+-inf (-inf, 'real') float
+3.14 (3.14, 'real') float
+'' ('', 'text') str
+'a' ('a', 'text') str
+'héllo' ('héllo', 'text') str
+'€😀' ('€😀', 'text') str
+'nul\x00in' ('nul\x00in', 'text') str
+b'' (b'', 'blob') bytes
+b'\x00' (b'\x00', 'blob') bytes
+b'\x00\x01\x02\x03\x04\x05\x06\x07\x08\t (b'\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\x0c\r\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\ bytes
+bytearray(b'ba') (b'ba', 'blob') bytes
+<memory (b'mv', 'blob') bytes
+None (None, 'null') NoneType
+(None,)
+OverflowError: Python int too large to convert to SQLite INTEGER
+OverflowError: Python int too large to convert to SQLite INTEGER
+ProgrammingError: Error binding parameter 1: type 'object' is not supported
+ProgrammingError: Error binding parameter 1: type 'list' is not supported
+ProgrammingError: Error binding parameter 1: type 'dict' is not supported
+ProgrammingError: Error binding parameter 1: type 'complex' is not supported
+UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed
+ProgrammingError: Error binding parameter 1: type 'object' is not supported
+(5, 's', 2.5, b'b')
+ProgrammingError: Incorrect number of bindings supplied. The current statement uses 1, and there are 0 supplied.
+ProgrammingError: Incorrect number of bindings supplied. The current statement uses 1, and there are 0 supplied.
+ProgrammingError: Incorrect number of bindings supplied. The current statement uses 1, and there are 2 supplied.
+ProgrammingError: Incorrect number of bindings supplied. The current statement uses 2, and there are 1 supplied.
+ProgrammingError: Incorrect number of bindings supplied. The current statement uses 0, and there are 1 supplied.
+ProgrammingError: Binding 1 (':a') is a named parameter, but you supplied a sequence which requires nameless (qmark) placeholders.
+ProgrammingError: Binding 1 (':a') is a named parameter, but you supplied a sequence which requires nameless (qmark) placeholders.
+ProgrammingError: Binding 1 has no name, but you supplied a dictionary (which has only names).
+ProgrammingError: You did not supply a value for binding parameter :a.
+ProgrammingError: You did not supply a value for binding parameter :a.
+ProgrammingError: parameters are of unsupported type
+ProgrammingError: parameters are of unsupported type
+ProgrammingError: parameters are of unsupported type
+<sqlite3.Cursor object>
+<sqlite3.Cursor object>
+<sqlite3.Cursor object>
+<sqlite3.Cursor object>
+(1, 2, 1)
+(1, 2, 3)
+(0, 10)
+ZeroDivisionError: len
+ZeroDivisionError: item
+('missing x',)
+ProgrammingError: Binding 1 (':x') is a named parameter, but you supplied a sequence which requires nameless (qmark) placeholders.
+(1,)
+(4,)
+TypeError: execute expected at least 1 argument, got 0
+TypeError: execute() argument 1 must be str, not int
+TypeError: execute() argument 1 must be str, not bytes
+TypeError: execute expected at most 2 arguments, got 3
+TypeError: Connection.execute() takes no keyword arguments
+TypeError: execute expected at least 1 argument, got 0
+TypeError: execute() argument 1 must be str, not None
+TypeError: executemany expected 2 arguments, got 1
+TypeError: executemany() argument 1 must be str, not int
+TypeError: 'int' object is not iterable
+ProgrammingError: parameters are of unsupported type
+ProgrammingError: executemany() can only execute DML statements.
+ProgrammingError: executemany() can only execute DML statements.
+ProgrammingError: You can only execute one statement at a time.
+<sqlite3.Cursor object>
+<sqlite3.Cursor object>
+<sqlite3.Cursor object>
+<sqlite3.Cursor object>
+<sqlite3.Cursor object>
+<sqlite3.Cursor object>
+OperationalError: near "selec": syntax error
+OperationalError: no such table: nope
+ProgrammingError: the query contains a null character
+UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 7: surrogates not allowed
+OperationalError: no such function: nope
+OperationalError: no such function: nope
+OperationalError: no such function: nope
+ValueError: Cannot convert negative int
+TypeError: 'str' object cannot be interpreted as an integer
+OverflowError: Python int too large for C uint32_t
+[]
+TypeError: 'float' object cannot be interpreted as an integer
+TypeError: fetchmany() takes at most 1 argument (2 given)
+TypeError: 'NoneType' object cannot be interpreted as an integer
+TypeError: Cursor.fetchone() takes no arguments (1 given)
+TypeError: Cursor.fetchall() takes no arguments (1 given)
+ValueError: Cannot convert negative int
+TypeError: 'str' object cannot be interpreted as an integer
+OverflowError: Python int too large to convert to C uint32_t
+TypeError: 'float' object cannot be interpreted as an integer
+None
+0
+AttributeError: attribute 'arraysize' of 'sqlite3.Cursor' objects cannot be deleted
+AttributeError: readonly attribute
+AttributeError: readonly attribute
+AttributeError: readonly attribute
+AttributeError: readonly attribute
+AttributeError: readonly attribute
+AttributeError: readonly attribute
+AttributeError: readonly attribute
+AttributeError: readonly attribute
+None
+TypeError: Cursor.setinputsizes() takes exactly one argument (0 given)
+None
+None
+TypeError: setoutputsize expected at least 1 argument, got 0
+IntegrityError UNIQUE constraint failed: t.a ('UNIQUE constraint failed: t.a',) 1555 SQLITE_CONSTRAINT_PRIMARYKEY True
+1 SQLITE_ERROR True True
+True True True True
+AttributeError: readonly attribute

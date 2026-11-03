@@ -1,0 +1,10 @@
+status: 0
+oracle: none
+---
+True
+[0, 1, 4, 9]
+BunEventLoop
+set by a thread
+['run for a thread']
+True
+True

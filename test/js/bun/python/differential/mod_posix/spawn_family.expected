@@ -1,0 +1,25 @@
+status: 0
+script: bff7eae75641b24e
+---
+0 1 1
+['spawnl', 'spawnle', 'spawnlp', 'spawnlpe', 'spawnv', 'spawnve', 'spawnvp', 'spawnvpe']
+7
+9
+3
+4
+127
+5 6
+8 2
+127
+-9
+11
+127
+ValueError argv first element cannot be empty
+ValueError argv first element cannot be empty
+ValueError argv first element cannot be empty
+ValueError argv first element cannot be empty
+TypeError argv must be a tuple or a list
+TypeError argv must be a tuple or a list
+127
+127
+127

@@ -1,0 +1,116 @@
+status: 0
+script: 2963c85569a359bd
+source: 158f6bf64cd494f3
+---
+len(ws) => 54
+len(freq) => 33
+top[:8] => [('the', 8), ('it', 5), ('of', 4), ('was', 4), ('age', 2), ('dog', 2), ('fox', 2), ('times', 2)]
+max(ws, key=len) => foolishness
+sorted(set(w for w in ws if len(w) > 7)) => ['foolishness']
+sum(map(len, ws)) => 204
+the       8 ########
+it        5 #####
+of        4 ####
+was       4 ####
+age       2 ##
+len(lines) => 4
+[len(l) for l in lines] => [78, 78, 67, 52]
+[l.split()[0] for l in lines] => ['The', 'It', 'it', 'Ünïcödé']
+[l[-5:] for l in lines] => ['away!', 'sdom,', 't it?', ' too.']
+TEXT.count("the") => 6
+TEXT.lower().count("the") => 8
+TEXT.find("fox") => 16
+TEXT.rfind("fox") => 64
+TEXT.index("dog") => 40
+TEXT.count("\n") => 3
+TEXT.upper()[:20] => THE QUICK BROWN FOX 
+TEXT.title()[:30] => The Quick Brown Fox Jumps Over
+TEXT.swapcase()[:20] => tHE QUICK BROWN FOX 
+len(TEXT) => 278
+len(TEXT.encode()) => 294
+enc => Khoor, Zruog!
+caesar(enc, -3) => Hello, World!
+caesar("xyz ABC", 13) => klm NOP
+caesar(caesar(lines[0], 13), 13) == lines[0] => True
+v => LXFOPV EF RNHR
+vigenere(v, "LEMON", -1) => ATTACK AT DAWN
+r => [('a', 3), ('b', 1), ('c', 2), ('d', 5), ('e', 1), ('😀', 2)]
+"".join("%s%d" % p for p in r) => a3b1c2d5e1😀2
+unrle(r) => aaabccddddde😀😀
+[True, True, False, True, True, True]
+[['listen', 'silent', 'enlist', 'inlets', 'tinsel'], ['abc', 'cab', 'bca'], ['google', 'elgoog'], ['banana']]
+|It  was  the best of times, it|
+|was the worst of times, it was|
+|the  age of wisdom, it was the|
+|age  of foolishness... "Quoted|
+|text,"  she  said,  isn't  it?|
+[..The quick brown fox...] [     The quick brown fox]
+[jumps over the lazy dog.] [jumps over the lazy dog.]
+[.The dog barks; the fox.] [  The dog barks; the fox]
+[.......runs away!.......] [              runs away!]
+[['name', 'age', 'note'], ['Alice', '30', 'likes, commas'], ['Bob', '25', 'says "hi"'], ['Zoë', '41', ''], ['', '', '']]
+recs[0] => {'name': 'Alice', 'age': '30', 'note': 'likes, commas'}
+[r["name"] for r in recs] => ['Alice', 'Bob', 'Zoë', '']
+sum(int(r["age"] or 0) for r in recs) => 96
+name  | age | note
+Alice | 30  | likes, commas
+Bob   | 25  | says "hi"
+Zoë   | 41  |
+      |     |
+1 + 2 * 3 => 7
+(1 + 2) * 3 => 9
+2 ** 3 ** 2 => 512
+-2 ** 2 => -4
+10 / 4 => 2.5
+10 // 4 => 2
+10 % 4 => 2
+x = 5 => 5
+y = x * 2 + 1 => 11
+x * y - -3 => 58
+max(1, x, y) + min(4, 2) => 13
+abs(-7.5) => 7.5
+2 * pi => 6.28318
+1 + => SyntaxError: unexpected None
+(1 => SyntaxError: expected )
+1 / 0 => ZeroDivisionError: division by zero
+z + 1 => NameError: unknown name z
+1 $ 2 => SyntaxError: bad character '$' at 2
+1 2 => SyntaxError: unexpected 2
+max() => TypeError: max expected at least 1 argument, got 0
+((((7)))) => 7
+1.5.2 => ValueError: could not convert string to float: '1.5.2'
+Dear Ann, you owe 12.5 by tomorrow.
+m => .... . .-.. .-.. --- / .-- --- .-. .-.. -..
+| " ".join("".join(REV[c] for c in w.split()) for w in m.split(" / ")) => hello world
+snake("someVariableName") => some_variable_name
+camel("some_variable_name") => someVariableName
+snake("HTTPServer") => h_t_t_p_server
+camel("a") => a
+camel(snake("roundTripName")) => roundTripName
+['zero', 'thirteen', 'twenty-one', 'one hundred', 'three hundred and forty-two', 'one thousand', 'one thousand and one', 'twelve thousand, three hundred and forty-five', 'one million', 'seven million, six hundred and fifty-four thousand, three hundred and twenty-one']
+a     |  1.50|+0000|0|    0%
+bb    | 22.33|+0001|ff|   10%
+ccc   | -0.12|+0002|1fe|   20%
+a     | 1,500.0|  aa   |   'a'|0x000a
+bb    |22,333.0| bbbb  |  'bb'|0x000b
+ccc   |  -125.0|cccccc | 'ccc'|0x000c
+"leet speak example xyz".translate(table) => l33t sp34k 34mpl3 
+"hello".translate({ord("l"): "L", ord("o"): None, ord("h"): 0x1F600}) => 😀eLL
+" ".join(w[::-1] for w in lines[0].split()[:5]) => ehT kciuq nworb xof spmuj
+" ".join(lines[0].split()[:5][::-1]) => jumps fox brown quick The
+lines[0][::-1][:20] => !yawa snur xof eht ;
+"".join(sorted(set(lines[0].lower()) - set(" .;!"))) => abcdefghijklmnopqrstuvwxyz
+[w for w in ws if w[0] in "aeiou"][:6] => ['over', 'away', 'it', 'of', 'it', 'of']
+{len(w) for w in ws} => {2, 3, 4, 5, 6, 7, 11}
+sorted({w[0] for w in ws}) => ['a', 'b', 'c', 'd', 'e', 'f', 'i', 'j', 'l', 'n', 'o', 'q', 'r', 's', 't', 'w', 'ü']
+any(w.isdigit() for w in ws) => False
+all(w == w.lower() for w in ws) => True
+"é".encode() => b'\xc3\xa9'
+"é".encode("latin-1") => b'\xe9'
+"😀".encode("utf-8") => b'\xf0\x9f\x98\x80'
+b"\xc3\xa9".decode() => é
+[hex(ord(c)) for c in "aé€😀"] => ['0x61', '0xe9', '0x20ac', '0x1f600']
+"naïve café".encode("ascii", "replace") => b'na?ve caf?'
+"naïve café".encode("ascii", "ignore") => b'nave caf'
+"naïve".encode("ascii", "xmlcharrefreplace") => b'na&#239;ve'
+"naïve".encode("ascii", "backslashreplace") => b'na\\xefve'

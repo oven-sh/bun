@@ -1,0 +1,6 @@
+status: 1
+stderr: NameError: name 'some_long_nam' is not defined. Did you mean: 'some_long_name'?
+script: 5326a87db86197c1
+source: 5326a87db86197c1
+---
+before

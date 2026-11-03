@@ -1,0 +1,370 @@
+status: 0
+script: 8f72c9889af242ee
+---
+['EXPAT_VERSION', 'ErrorString', 'ExpatError', 'ParserCreate', 'XMLParserType', 'XML_PARAM_ENTITY_PARSING_ALWAYS', 'XML_PARAM_ENTITY_PARSING_NEVER', 'XML_PARAM_ENTITY_PARSING_UNLESS_STANDALONE', 'error', 'errors', 'features', 'model', 'native_encoding', 'version_info']
+['AttlistDeclHandler', 'CharacterDataHandler', 'CommentHandler', 'CurrentByteIndex', 'CurrentColumnNumber', 'CurrentLineNumber', 'DefaultHandler', 'DefaultHandlerExpand', 'ElementDeclHandler', 'EndCdataSectionHandler', 'EndDoctypeDeclHandler', 'EndElementHandler', 'EndNamespaceDeclHandler', 'EntityDeclHandler', 'ErrorByteIndex', 'ErrorCode', 'ErrorColumnNumber', 'ErrorLineNumber', 'ExternalEntityParserCreate', 'ExternalEntityRefHandler', 'GetBase', 'GetInputContext', 'GetReparseDeferralEnabled', 'NotStandaloneHandler', 'NotationDeclHandler', 'Parse', 'ParseFile', 'ProcessingInstructionHandler', 'SetAllocTrackerActivationThreshold', 'SetAllocTrackerMaximumAmplification', 'SetBase', 'SetBillionLaughsAttackProtectionActivationThreshold', 'SetBillionLaughsAttackProtectionMaximumAmplification', 'SetParamEntityParsing', 'SetReparseDeferralEnabled', 'SkippedEntityHandler', 'StartCdataSectionHandler', 'StartDoctypeDeclHandler', 'StartElementHandler', 'StartNamespaceDeclHandler', 'UnparsedEntityDeclHandler', 'UseForeignDTD', 'XmlDeclHandler', 'buffer_size', 'buffer_text', 'buffer_used', 'intern', 'namespace_prefixes', 'ordered_attributes', 'specified_attributes']
+expat_2.9.0 (2, 9, 0) UTF-8 [('sizeof(XML_Char)', 1), ('sizeof(XML_LChar)', 1), ('XML_DTD', 0), ('XML_CONTEXT_BYTES', 1024), ('XML_NS', 0), ('XML_BLAP_MAX_AMP', 100), ('XML_BLAP_ACT_THRES', 8388608), ('XML_GE', 0), ('XML_AT_MAX_AMP', 100), ('XML_AT_ACT_THRES', 67108864)]
+<class 'xml.parsers.expat.ExpatError'> (<class 'xml.parsers.expat.ExpatError'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>) True <class 'pyexpat.xmlparser'> <class 'pyexpat.xmlparser'> Python wrapper for Expat parser. XML parser
+pyexpat.errors pyexpat.model Constants used to describe error conditions. Constants used to interpret content model information. True True True
+[('XML_CQUANT_NONE', 0), ('XML_CQUANT_OPT', 1), ('XML_CQUANT_PLUS', 3), ('XML_CQUANT_REP', 2), ('XML_CTYPE_ANY', 2), ('XML_CTYPE_CHOICE', 5), ('XML_CTYPE_EMPTY', 1), ('XML_CTYPE_MIXED', 3), ('XML_CTYPE_NAME', 4), ('XML_CTYPE_SEQ', 6)]
+[('XML_ERROR_ABORTED', 'parsing aborted'), ('XML_ERROR_AMPLIFICATION_LIMIT_BREACH', 'limit on input amplification factor (from DTD and entities) breached'), ('XML_ERROR_ASYNC_ENTITY', 'asynchronous entity'), ('XML_ERROR_ATTRIBUTE_EXTERNAL_ENTITY_REF', 'reference to external entity in attribute'), ('XML_ERROR_BAD_CHAR_REF', 'reference to invalid character number'), ('XML_ERROR_BINARY_ENTITY_REF', 'reference to binary entity'), ('XML_ERROR_CANT_CHANGE_FEATURE_ONCE_PARSING', 'cannot change setting once parsing has begun'), ('XML_ERROR_DUPLICATE_ATTRIBUTE', 'duplicate attribute'), ('XML_ERROR_ENTITY_DECLARED_IN_PE', 'entity declared in parameter entity'), ('XML_ERROR_EXTERNAL_ENTITY_HANDLING', 'error in processing external entity reference'), ('XML_ERROR_FEATURE_REQUIRES_XML_DTD', 'requested feature requires XML_DTD support in Expat'), ('XML_ERROR_FINISHED', 'parsing finished'), ('XML_ERROR_INCOMPLETE_PE', 'incomplete markup in parameter entity'), ('XML_ERROR_INCORRECT_ENCODING', 'encoding specified in XML declaration is incorrect'), ('XML_ERROR_INVALID_ARGUMENT', 'invalid argument'), ('XML_ERROR_INVALID_TOKEN', 'not well-formed (invalid token)'), ('XML_ERROR_JUNK_AFTER_DOC_ELEMENT', 'junk after document element'), ('XML_ERROR_MISPLACED_XML_PI', 'XML or text declaration not at start of entity'), ('XML_ERROR_NOT_STANDALONE', 'document is not standalone'), ('XML_ERROR_NOT_STARTED', 'parser not started'), ('XML_ERROR_NOT_SUSPENDED', 'parser not suspended'), ('XML_ERROR_NO_BUFFER', 'a successful prior call to function XML_GetBuffer is required'), ('XML_ERROR_NO_ELEMENTS', 'no element found'), ('XML_ERROR_NO_MEMORY', 'out of memory'), ('XML_ERROR_PARAM_ENTITY_REF', 'illegal parameter entity reference'), ('XML_ERROR_PARTIAL_CHAR', 'partial character'), ('XML_ERROR_PUBLICID', 'illegal character(s) in public id'), ('XML_ERROR_RECURSIVE_ENTITY_REF', 'recursive entity reference'), ('XML_ERROR_RESERVED_NAMESPACE_URI', 'prefix must not be bound to one of the reserved namespace names'), ('XML_ERROR_RESERVED_PREFIX_XML', 'reserved prefix (xml) must not be undeclared or bound to another namespace name'), ('XML_ERROR_RESERVED_PREFIX_XMLNS', 'reserved prefix (xmlns) must not be declared or undeclared'), ('XML_ERROR_SUSPENDED', 'parser suspended'), ('XML_ERROR_SUSPEND_PE', 'cannot suspend in external parameter entity'), ('XML_ERROR_SYNTAX', 'syntax error'), ('XML_ERROR_TAG_MISMATCH', 'mismatched tag'), ('XML_ERROR_TEXT_DECL', 'text declaration not well-formed'), ('XML_ERROR_UNBOUND_PREFIX', 'unbound prefix'), ('XML_ERROR_UNCLOSED_CDATA_SECTION', 'unclosed CDATA section'), ('XML_ERROR_UNCLOSED_TOKEN', 'unclosed token'), ('XML_ERROR_UNDECLARING_PREFIX', 'must not undeclare prefix'), ('XML_ERROR_UNDEFINED_ENTITY', 'undefined entity'), ('XML_ERROR_UNEXPECTED_STATE', 'unexpected parser state - please send a bug report'), ('XML_ERROR_UNKNOWN_ENCODING', 'unknown encoding'), ('XML_ERROR_XML_DECL', 'XML declaration not well-formed')]
+True [(1, 'out of memory'), (2, 'syntax error'), (3, 'no element found'), (4, 'not well-formed (invalid token)'), (5, 'unclosed token'), (6, 'partial character'), (7, 'mismatched tag'), (8, 'duplicate attribute'), (9, 'junk after document element'), (10, 'illegal parameter entity reference'), (11, 'undefined entity'), (12, 'recursive entity reference'), (13, 'asynchronous entity'), (14, 'reference to invalid character number'), (15, 'reference to binary entity'), (16, 'reference to external entity in attribute'), (17, 'XML or text declaration not at start of entity'), (18, 'unknown encoding'), (19, 'encoding specified in XML declaration is incorrect'), (20, 'unclosed CDATA section'), (21, 'error in processing external entity reference'), (22, 'document is not standalone'), (23, 'unexpected parser state - please send a bug report'), (24, 'entity declared in parameter entity'), (25, 'requested feature requires XML_DTD support in Expat'), (26, 'cannot change setting once parsing has begun'), (27, 'unbound prefix'), (28, 'must not undeclare prefix'), (29, 'incomplete markup in parameter entity'), (30, 'XML declaration not well-formed'), (31, 'text declaration not well-formed'), (32, 'illegal character(s) in public id'), (33, 'parser suspended'), (34, 'parser not suspended'), (35, 'parsing aborted'), (36, 'parsing finished'), (37, 'cannot suspend in external parameter entity'), (38, 'reserved prefix (xml) must not be undeclared or bound to another namespace name'), (39, 'reserved prefix (xmlns) must not be declared or undeclared'), (40, 'prefix must not be bound to one of the reserved namespace names'), (41, 'invalid argument'), (42, 'a successful prior call to function XML_GetBuffer is required'), (43, 'limit on input amplification factor (from DTD and entities) breached'), (44, 'parser not started')]
+None
+None
+'out of memory'
+'syntax error'
+'parser not started'
+None
+None
+TypeError 'pyexpat.ErrorString() takes exactly one argument (0 given)' None
+TypeError "'str' object cannot be interpreted as an integer" None
+TypeError "'float' object cannot be interpreted as an integer" None
+OverflowError 'Python int too large to convert to C long' None
+buffer_size 8192 getset_descriptor
+buffer_text False getset_descriptor
+buffer_used 0 getset_descriptor
+namespace_prefixes False getset_descriptor
+ordered_attributes False getset_descriptor
+specified_attributes False getset_descriptor
+intern {} member_descriptor
+ErrorCode 0 getset_descriptor
+ErrorLineNumber 1 getset_descriptor
+ErrorColumnNumber 0 getset_descriptor
+ErrorByteIndex -1 getset_descriptor
+CurrentLineNumber 1 getset_descriptor
+CurrentColumnNumber 0 getset_descriptor
+CurrentByteIndex -1 getset_descriptor
+StartElementHandler None getset_descriptor
+DefaultHandlerExpand None getset_descriptor
+TypeError "cannot create 'pyexpat.xmlparser' instances" None
+AttributeError "'pyexpat.xmlparser' object has no attribute 'foo' and no __dict__ for setting new attributes" None
+AttributeError "'pyexpat.xmlparser' object has no attribute 'foo'" None
+TypeError "cannot set 'x' attribute of immutable type 'pyexpat.xmlparser'" None
+<class 'pyexpat.xmlparser'>
+TypeError "ParserCreate() argument 'encoding' must be str or None, not int" None
+TypeError "ParserCreate() argument 'encoding' must be str or None, not bytes" None
+TypeError "ParserCreate() argument 'namespace_separator' must be str or None, not int" None
+ValueError 'namespace_separator must be at most one character, omitted, or None' None
+ValueError 'namespace_separator must be at most one character, omitted, or None' None
+TypeError 'intern must be a dictionary' None
+TypeError 'intern must be a dictionary' None
+None
+{}
+{}
+ValueError 'embedded null character' None
+ValueError 'embedded null character' None
+TypeError 'ParserCreate() takes at most 3 arguments (4 given)' None
+TypeError "ParserCreate() got an unexpected keyword argument 'foo'" None
+<class 'pyexpat.xmlparser'>
+True
+['abc', 'de']
+AttributeError 'readonly attribute' None
+AttributeError 'readonly attribute' None
+<class '__main__.D'>
+buffer_text 1 True
+buffer_text 0 False
+buffer_text 'x' True
+buffer_text '' False
+buffer_text [] False
+buffer_text [0] True
+buffer_text None False
+buffer_text True True
+RuntimeError 'Cannot delete attribute' None
+namespace_prefixes 1 True
+namespace_prefixes 0 False
+namespace_prefixes 'x' True
+namespace_prefixes '' False
+namespace_prefixes [] False
+namespace_prefixes [0] True
+namespace_prefixes None False
+namespace_prefixes True True
+RuntimeError 'Cannot delete attribute' None
+ordered_attributes 1 True
+ordered_attributes 0 False
+ordered_attributes 'x' True
+ordered_attributes '' False
+ordered_attributes [] False
+ordered_attributes [0] True
+ordered_attributes None False
+ordered_attributes True True
+RuntimeError 'Cannot delete attribute' None
+specified_attributes 1 True
+specified_attributes 0 False
+specified_attributes 'x' True
+specified_attributes '' False
+specified_attributes [] False
+specified_attributes [0] True
+specified_attributes None False
+specified_attributes True True
+RuntimeError 'Cannot delete attribute' None
+KeyError "'bool'" None
+KeyError "'bool'" None
+None
+1 True
+None
+100 True
+None
+2147483647 True
+ValueError 'buffer_size must not be greater than 2147483647' None
+2147483647 True
+ValueError 'buffer_size must be greater than zero' None
+2147483647 True
+ValueError 'buffer_size must be greater than zero' None
+2147483647 True
+TypeError 'buffer_size must be an integer' None
+2147483647 True
+TypeError 'buffer_size must be an integer' None
+2147483647 True
+TypeError 'buffer_size must be an integer' None
+2147483647 True
+None
+1 True
+OverflowError 'Python int too large to convert to C long' None
+1 True
+RuntimeError 'Cannot delete attribute' None
+AttributeError "attribute 'buffer_used' of 'pyexpat.xmlparser' objects is not writable" None
+AttributeError "attribute 'ErrorCode' of 'pyexpat.xmlparser' objects is not writable" None
+AttributeError "attribute 'CurrentLineNumber' of 'pyexpat.xmlparser' objects is not writable" None
+AttributeError "attribute 'ErrorCode' of 'pyexpat.xmlparser' objects is not writable" None
+RuntimeError 'Cannot delete attribute' None
+TypeError "'int' object is not callable" None
+None
+TypeError 'Parse() takes at least 1 positional argument (0 given)' None
+TypeError "a bytes-like object is required, not 'int'" None
+TypeError "a bytes-like object is required, not 'NoneType'" None
+TypeError 'Parse() takes at most 2 arguments (3 given)' None
+TypeError 'Parse() takes at least 1 positional argument (0 given)' None
+TypeError "Parse() got an unexpected keyword argument 'isfinal'" None
+TypeError "a bytes-like object is required, not 'list'" None
+UnicodeEncodeError "'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed" None
+1
+1
+1
+1
+1
+KeyError "'bool'" None
+1 1 1 1
+ExpatError 'parsing finished: line 1, column 7' None
+ExpatError 'parsing finished: line 1, column 7' None
+36
+ExpatError 'mismatched tag: line 1, column 5' None
+ExpatError 'mismatched tag: line 1, column 10' None
+ExpatError 'mismatched tag: line 1, column 15' None
+7 1 15 5
+ExpatError 'no element found: line 1, column 0' None
+1
+ExpatError 'no element found: line 1, column 0' None
+<class 'xml.parsers.expat.ExpatError'> ('mismatched tag: line 2, column 6',) 7 2 6 ['code', 'lineno', 'offset'] mismatched tag
+TypeError 'ParseFile() takes exactly 1 positional argument (0 given)' None
+TypeError "argument must have 'read' attribute" None
+1
+ExpatError 'no element found: line 1, column 0' None
+ExpatError 'no element found: line 1, column 3' None
+TypeError 'read() did not return a bytes object (type=str)' None
+TypeError 'ParseFile() takes exactly 1 positional argument (0 given)' None
+1
+[2048, 2048, 2048, 2048]
+ValueError 'read() returned too much data: 2048 bytes requested, 3000 returned' None
+TypeError 'read() did not return a bytes object (type=NoneType)' None
+TypeError 'read() did not return a bytes object (type=memoryview)' None
+TypeError 'read() did not return a bytes object (type=str)' None
+OSError 'rd' None
+1
+1001 17007 1 17007
+KeyError "'boom'" None
+StartElementHandler [] 35 True True 1 4 4
+ExpatError 'parsing finished: line 1, column 4' None
+KeyError "'boom'" None
+EndElementHandler [('a', {})] 35 True True 1 4 4
+ExpatError 'parsing finished: line 1, column 4' None
+KeyError "'boom'" None
+CharacterDataHandler [('a', {})] 35 True True 1 4 4
+ExpatError 'parsing finished: line 1, column 4' None
+KeyError "'boom'" None
+CommentHandler [('a', {})] 35 True True 1 11 11
+ExpatError 'parsing finished: line 1, column 11' None
+KeyError "'boom'" None
+ProcessingInstructionHandler [] 35 True True 1 0 0
+ExpatError 'parsing finished: line 1, column 0' None
+1
+DefaultHandler [('a', {}), ('a',)] 0 False False 1 4 4
+ExpatError 'parsing finished: line 1, column 4' None
+1
+DefaultHandlerExpand [('a', {}), ('a',)] 0 False False 1 4 4
+ExpatError 'parsing finished: line 1, column 4' None
+KeyError "'boom'" None
+XmlDeclHandler [] 35 True True 1 0 0
+ExpatError 'parsing finished: line 1, column 0' None
+KeyError "'boom'" None
+StartDoctypeDeclHandler [] 35 True True 1 11 11
+ExpatError 'parsing finished: line 1, column 11' None
+KeyError "'boom'" None
+EndDoctypeDeclHandler [] 35 True True 1 11 11
+ExpatError 'parsing finished: line 1, column 11' None
+KeyError "'boom'" None
+EntityDeclHandler [] 35 True True 1 24 24
+ExpatError 'parsing finished: line 1, column 24' None
+KeyError "'boom'" None
+ElementDeclHandler [] 35 True True 1 27 27
+ExpatError 'parsing finished: line 1, column 27' None
+KeyError "'boom'" None
+AttlistDeclHandler [] 35 True True 1 33 33
+ExpatError 'parsing finished: line 1, column 33' None
+KeyError "'boom'" None
+NotationDeclHandler [] 35 True True 1 33 33
+ExpatError 'parsing finished: line 1, column 33' None
+KeyError "'boom'" None
+StartCdataSectionHandler [('a', {})] 35 True True 1 13 13
+ExpatError 'parsing finished: line 1, column 13' None
+KeyError "'boom'" None
+EndCdataSectionHandler [('a', {})] 35 True True 1 13 13
+ExpatError 'parsing finished: line 1, column 13' None
+KeyError "'boom'" None
+NotStandaloneHandler [] 22 True True 1 19 19
+ExpatError 'parsing finished: line 1, column 19' None
+KeyError "'boom'" None
+ExternalEntityRefHandler [('a', {})] 21 True True 1 40 40
+ExpatError 'parsing finished: line 1, column 40' None
+KeyError "'boom'" None
+SkippedEntityHandler [('a', {})] 35 True True 1 29 29
+ExpatError 'parsing finished: line 1, column 29' None
+KeyError "'boom'" None
+KeyError "'boom'" None
+KeyError "'boom'" None
+ExpatError 'parsing finished: line 1, column 4' None
+ExpatError 'document is not standalone: line 1, column 19' None
+ExpatError 'error in processing external entity reference: line 1, column 40' None
+1
+1
+TypeError "'NoneType' object cannot be interpreted as an integer" ["invalid 'NotStandalone' event handler return value"]
+TypeError "'NoneType' object cannot be interpreted as an integer" ["invalid 'ExternalEntityRef' event handler return value"]
+TypeError "'str' object cannot be interpreted as an integer" ["invalid 'NotStandalone' event handler return value"]
+TypeError "'str' object cannot be interpreted as an integer" ["invalid 'ExternalEntityRef' event handler return value"]
+OverflowError 'Python int too large to convert to C long' ["invalid 'NotStandalone' event handler return value"]
+OverflowError 'Python int too large to convert to C long' ["invalid 'ExternalEntityRef' event handler return value"]
+TypeError "'float' object cannot be interpreted as an integer" ["invalid 'NotStandalone' event handler return value"]
+TypeError "'float' object cannot be interpreted as an integer" ["invalid 'ExternalEntityRef' event handler return value"]
+1
+1
+ExpatError 'document is not standalone: line 1, column 19' None
+ExpatError 'error in processing external entity reference: line 1, column 40' None
+1
+1
+None
+RuntimeError 'cannot call Parse() from within a handler' None
+RuntimeError 'cannot call ParseFile() from within a handler' None
+b'<a><b c="d"/>tail'
+0 0
+RuntimeError 'cannot call Parse() from within a handler' None
+RuntimeError 'cannot call ParseFile() from within a handler' None
+b'<b c="d"/>tail'
+3 0
+None
+[b'x\xc3\xa9<!--c-->&amp;y</a>\n', b'<!--c-->&amp;y</a>\n', b'&amp;y</a>\n', b'y</a>\n', b'</a>\n']
+['a', 'b', '2', '3']
+['<a', ('1', 0), ('\n', 0), ('2', 0), ('&', 0), ('3', 0), '<b', '>b', ('4', 0), '!c', ('5', 0), ('A', 0), ('6', 0), '>a', ('used', 0)]
+['<a', ('1\n2&3', 0), '<b', '>b', ('4', 0), '!c', ('5A6', 0), '>a', ('used', 0)]
+['<a', ('1\n2&', 0), ('3', 0), '<b', '>b', ('4', 0), '!c', ('5A6', 0), '>a', ('used', 0)]
+['<a', ('1\n2&3', 0), '<b', '>b', ('4', 0), '!c', ('5A6', 0), '>a', ('used', 0)]
+['<a', ('1', 0), ('\n', 0), ('2', 0), ('&', 0), ('3', 0), '<b', '>b', ('4', 0), '!c', ('5', 0), ('A', 0), ('6', 0), '>a', ('used', 0)]
+['<a', ('12', 0), ('used', 0), ('34', 0), ('used', 0), '>a', ('used', 0)]
+['<a', ('12', 0), ('used', 0), ('34', 0), ('used', 0), '>a', ('used', 0)]
+['<a', ('12', 0), ('used', 0), ('34', 0), ('used', 0), '>a', ('used', 0)]
+['<a', ('12', 0), ('used', 0), ('34', 0), ('used', 0), '>a', ('used', 0)]
+['<a', ('12', 0), ('used', 0), ('34', 0), ('used', 0), '>a', ('used', 0)]
+['<a', ('xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 0), '>a', ('used', 0)]
+['<a', ('xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 0), '>a', ('used', 0)]
+['<a', ('xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 0), '>a', ('used', 0)]
+['<a', ('xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 0), '>a', ('used', 0)]
+['<a', ('xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 0), '>a', ('used', 0)]
+['<a', ('\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9', 0), ('\n', 0), ('\U0001f600\U0001f600\U0001f600\U0001f600\U0001f600', 0), '>a', ('used', 0)]
+['<a', ('\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\n\U0001f600\U0001f600\U0001f600\U0001f600\U0001f600', 0), '>a', ('used', 0)]
+['<a', ('\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9', 0), ('\n', 0), ('\U0001f600\U0001f600\U0001f600\U0001f600\U0001f600', 0), '>a', ('used', 0)]
+['<a', ('\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9', 0), ('\n', 0), ('\U0001f600\U0001f600\U0001f600\U0001f600\U0001f600', 0), '>a', ('used', 0)]
+['<a', ('\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9', 0), ('\n', 0), ('\U0001f600\U0001f600\U0001f600\U0001f600\U0001f600', 0), '>a', ('used', 0)]
+['<a', ('ab', 0), ('\n', 0), ('ab', 0), ('\n', 0), ('ab', 0), ('\n', 0), ('ab', 0), ('\n', 0), ('ab', 0), ('\n', 0), ('ab', 0), ('\n', 0), ('ab', 0), ('\n', 0), ('ab', 0), ('\n', 0), ('ab', 0), ('\n', 0), ('ab', 0), ('\n', 0), '>a', ('used', 0)]
+['<a', ('ab\nab\nab\nab\nab\nab\nab\nab\nab\nab\n', 0), '>a', ('used', 0)]
+['<a', ('ab\n', 0), ('ab\n', 0), ('ab\n', 0), ('ab\n', 0), ('ab\n', 0), ('ab\n', 0), ('ab\n', 0), ('ab\n', 0), ('ab\n', 0), ('ab\n', 0), '>a', ('used', 0)]
+['<a', ('ab\nab\nab\n', 0), ('ab\nab\nab\n', 0), ('ab\nab\nab\n', 0), ('ab\n', 0), '>a', ('used', 0)]
+['<a', ('ab', 0), ('\n', 0), ('ab', 0), ('\n', 0), ('ab', 0), ('\n', 0), ('ab', 0), ('\n', 0), ('ab', 0), ('\n', 0), ('ab', 0), ('\n', 0), ('ab', 0), ('\n', 0), ('ab', 0), ('\n', 0), ('ab', 0), ('\n', 0), ('ab', 0), ('\n', 0), '>a', ('used', 0)]
+['abc'] 0
+['abc'] 0 False
+['abc'] 0
+['abc', 'def'] 0
+['abc'] 0
+None
+None
+b
+TypeError 'SetBase() argument must be str, not int' None
+TypeError 'SetBase() argument must be str, not None' None
+ValueError 'embedded null character' None
+TypeError 'xmlparser.SetBase() takes exactly one argument (0 given)' None
+TypeError 'xmlparser.GetBase() takes no arguments (1 given)' None
+TypeError 'xmlparser.GetInputContext() takes no arguments (1 given)' None
+1 1 1 1
+TypeError "'str' object cannot be interpreted as an integer" None
+TypeError 'xmlparser.SetParamEntityParsing() takes exactly one argument (0 given)' None
+None
+None
+TypeError 'UseForeignDTD() takes at most 1 argument (2 given)' None
+0
+ExpatError 'cannot change setting once parsing has begun: line 1, column 3' None
+ExpatError 'cannot change setting once parsing has begun: line 1, column 3' None
+True
+None
+False
+None
+True
+TypeError 'xmlparser.SetReparseDeferralEnabled() takes exactly one argument (0 given)' None
+TypeError 'xmlparser.GetReparseDeferralEnabled() takes no arguments (1 given)' None
+True ['|', '|', '<doc', '>doc']
+True ['<a', '|', '|', '|', '|', '|', '|', '<b', 'x', '>b', '>a', '|']
+True ['|', '|', '|', '<a', '|', '|', '|', '>a', '|']
+True ['<a', 'xxxxxxxxxx', '|', '|', '|', '|', '<b', '>b', '>a']
+False ['|', '<doc', '>doc', '|']
+False ['<a', '|', '|', '|', '<b', '|', 'x', '|', '>b', '|', '>a', '|']
+False ['|', '|', '<a', '|', '|', '|', '|', '>a', '|']
+False ['<a', 'xxxxxxxxxx', '|', '|', '<b', '>b', '|', '>a', '|']
+None
+None
+None
+OverflowError 'Python int too large for C unsigned long long' None
+ValueError 'Cannot convert negative int' None
+TypeError "'str' object cannot be interpreted as an integer" None
+TypeError "'float' object cannot be interpreted as an integer" None
+None
+None
+None
+OverflowError 'Python int too large for C unsigned long long' None
+ValueError 'Cannot convert negative int' None
+TypeError "'str' object cannot be interpreted as an integer" None
+TypeError "'float' object cannot be interpreted as an integer" None
+None
+None
+None
+ExpatError "'max_factor' must be at least 1.0" None
+ExpatError "'max_factor' must be at least 1.0" None
+ExpatError "'max_factor' must be at least 1.0" None
+ExpatError "'max_factor' must be at least 1.0" None
+None
+TypeError 'must be real number, not str' None
+None
+None
+None
+ExpatError "'max_factor' must be at least 1.0" None
+ExpatError "'max_factor' must be at least 1.0" None
+ExpatError "'max_factor' must be at least 1.0" None
+ExpatError "'max_factor' must be at least 1.0" None
+None
+TypeError 'must be real number, not str' None
+[('D', '>'), ('D', '<a>'), ('D', '&e;'), ('D', '</a>')]
+[('X', '>'), ('X', '<a>'), ('X', 'v'), ('X', '</a>')]
+[('X', '>'), ('X', '<a>'), ('X', 'v'), ('X', '</a>')]
+[('D', '>'), ('D', '<a>'), ('D', '&e;'), ('D', '</a>')]
+[]
+[]
+[]
+[]
+['v']
+[('e', 0)]
+ExpatError 43 limit on input amplification factor (from DTD and entities) breached

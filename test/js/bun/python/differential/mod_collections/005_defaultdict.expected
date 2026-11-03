@@ -1,0 +1,54 @@
+status: 0
+script: 4c7696dd29387c74
+---
+defaultdict(<class 'list'>, {'a': [1, 2], 'b': []}) 2 True True defaultdict
+None False defaultdict(<class 'list'>, {'a': [1, 2], 'b': []})
+defaultdict(None, {}) None
+KeyError 'x'
+KeyError (1, 2)
+defaultdict(None, {'a': 1, 'b': 2})
+KeyError 'zz'
+defaultdict(<class 'int'>, {'a': 1, 'b': 2, 'c': 5, 'q': 0}) 0 defaultdict(<class 'int'>, {'a': 1, 'b': 2, 'c': 5, 'q': 0})
+TypeError first argument must be callable or None
+TypeError first argument must be callable or None
+TypeError 'int' object is not iterable
+TypeError dict expected at most 1 argument, got 2
+defaultdict(None, {'default_factory': <class 'int'>})
+defaultdict(<class 'list'>, {'a': [1, 2], 'b': []}) defaultdict True False True
+True
+True (<class 'list'>,) None None [('a', [1, 2]), ('b', [])]
+() []
+[] defaultdict(<class 'list'>, {'a': [1, 2], 'b': [], 'k': []})
+KeyError 'k'
+KeyError 'nope'
+0
+None
+KeyError 'nope2'
+TypeError 'int' object is not callable
+ValueError boom
+defaultdict(<class 'int'>, {1: 1, 2: 2}) True defaultdict(<class 'int'>, {1: 1, 3: 3}) defaultdict(<class 'int'>, {3: 3, 1: 1}) defaultdict True
+TypeError
+TypeError
+NotImplemented NotImplemented
+defaultdict(<class 'int'>, {1: 1, 9: 9}) defaultdict
+defaultdict(<class 'int'>, {1: 1, 9: 9, 8: 8})
+True True True
+S(<class 'int'>, {'a': 1, 'zz': 0}) S 0 {'attr': 1} S
+abab M(None, {})
+Rec(<bound method Rec._factory of Rec(..., {})>, {}) []
+defaultdict(<class 'int'>, {1: defaultdict(<class 'int'>, {...})})
+defaultdict collections (<class 'collections.defaultdict'>, <class 'dict'>, <class 'object'>) collections.defaultdict[str, int]
+['__class_getitem__', '__copy__', '__init__', '__missing__', '__or__', '__reduce__', '__repr__', '__ror__', 'copy', 'default_factory']
+defaultdict(default_factory=None, /, [...]) --> dict with default factory
+
+The default factory is called without arguments to produce
+a new value when a key is not present, in __getitem__ only.
+A defaultdict compares equal to a dict with the same items.
+All remaining arguments are treated the same as if they were
+passed to the dict constructor, including keyword arguments.
+
+TypeError
+TypeError cannot use 'K' as a dict key (nohash)
+TypeError cannot use 'list' as a dict key (unhashable type: 'list')
+0 1 0 {'a': 0, 'b': 1}
+inner {'k': 'inner'}

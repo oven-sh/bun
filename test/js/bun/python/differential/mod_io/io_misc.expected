@@ -1,0 +1,120 @@
+status: 0
+script: f1fae670aca4df5d
+---
+--- weak references
+FileIO True
+BytesIO True
+StringIO True
+BufferedReader True
+BufferedWriter True
+BufferedRandom True
+BufferedRWPair True
+TextIOWrapper True
+_IOBase True
+_RawIOBase True
+_BufferedIOBase True
+_TextIOBase True
+TypeError: cannot create weak reference to '_io.IncrementalNewlineDecoder' object
+--- identity
+FileIO True False True True True 1
+BytesIO True False True True True 1
+StringIO True False True True True 1
+BufferedReader True False True True True 1
+BufferedWriter True False True True True 1
+BufferedRandom True False True True True 1
+BufferedRWPair True False True True True 1
+TextIOWrapper True False True True True 1
+_IOBase True False True True True 1
+_RawIOBase True False True True True 1
+_BufferedIOBase True False True True True 1
+_TextIOBase True False True True True 1
+False False
+--- pickling
+FileIO 2 TypeError cannot pickle 'FileIO' instances
+FileIO 5 TypeError cannot pickle 'FileIO' instances
+BytesIO 2 BytesIO b'ab'
+BytesIO 5 BytesIO b'ab'
+StringIO 2 StringIO ab
+StringIO 5 StringIO ab
+BufferedReader 2 TypeError cannot pickle 'BufferedReader' instances
+BufferedReader 5 TypeError cannot pickle 'BufferedReader' instances
+BufferedWriter 2 TypeError cannot pickle 'BufferedWriter' instances
+BufferedWriter 5 TypeError cannot pickle 'BufferedWriter' instances
+BufferedRandom 2 TypeError cannot pickle 'BufferedRandom' instances
+BufferedRandom 5 TypeError cannot pickle 'BufferedRandom' instances
+BufferedRWPair 2 TypeError cannot pickle '_io.BufferedRWPair' object
+BufferedRWPair 5 TypeError cannot pickle '_io.BufferedRWPair' object
+TextIOWrapper 2 TypeError cannot pickle 'TextIOWrapper' instances
+TextIOWrapper 5 TypeError cannot pickle 'TextIOWrapper' instances
+_IOBase 2 _IOBase None
+_IOBase 5 _IOBase None
+_RawIOBase 2 _RawIOBase None
+_RawIOBase 5 _RawIOBase None
+_BufferedIOBase 2 _BufferedIOBase None
+_BufferedIOBase 5 _BufferedIOBase None
+_TextIOBase 2 _TextIOBase None
+_TextIOBase 5 _TextIOBase None
+b'0123456789' 4 x b'456789'
+'a\r\r\nb' 2 ['\r\n', 'b']
+MyBytesIO b'xyz' 1
+ValueError: I/O operation on closed file.
+MyRaw raw False raw
+--- copying
+False b'0123' 2
+False b'0123' 2
+0123 1
+TypeError: cannot pickle 'FileIO' instances
+TypeError: cannot pickle 'TextIOWrapper' instances
+--- dir
+_IOBase ['_checkClosed', '_checkReadable', '_checkSeekable', '_checkWritable', 'close', 'closed', 'fileno', 'flush', 'isatty', 'readable', 'readline', 'readlines', 'seek', 'seekable', 'tell', 'truncate', 'writable', 'writelines']
+    ['__del__', '__enter__', '__exit__', '__iter__', '__next__']
+_RawIOBase ['_checkClosed', '_checkReadable', '_checkSeekable', '_checkWritable', 'close', 'closed', 'fileno', 'flush', 'isatty', 'read', 'readable', 'readall', 'readinto', 'readline', 'readlines', 'seek', 'seekable', 'tell', 'truncate', 'writable', 'write', 'writelines']
+    []
+_BufferedIOBase ['_checkClosed', '_checkReadable', '_checkSeekable', '_checkWritable', 'close', 'closed', 'detach', 'fileno', 'flush', 'isatty', 'read', 'read1', 'readable', 'readinto', 'readinto1', 'readline', 'readlines', 'seek', 'seekable', 'tell', 'truncate', 'writable', 'write', 'writelines']
+    []
+_TextIOBase ['_checkClosed', '_checkReadable', '_checkSeekable', '_checkWritable', 'close', 'closed', 'detach', 'encoding', 'errors', 'fileno', 'flush', 'isatty', 'newlines', 'read', 'readable', 'readline', 'readlines', 'seek', 'seekable', 'tell', 'truncate', 'writable', 'write', 'writelines']
+    []
+FileIO ['_blksize', '_checkClosed', '_checkReadable', '_checkSeekable', '_checkWritable', '_dealloc_warn', '_finalizing', '_isatty_open_only', 'close', 'closed', 'closefd', 'fileno', 'flush', 'isatty', 'mode', 'read', 'readable', 'readall', 'readinto', 'readline', 'readlines', 'seek', 'seekable', 'tell', 'truncate', 'writable', 'write', 'writelines']
+    ['__getstate__', '__init__', '__repr__']
+BytesIO ['_checkClosed', '_checkReadable', '_checkSeekable', '_checkWritable', 'close', 'closed', 'detach', 'fileno', 'flush', 'getbuffer', 'getvalue', 'isatty', 'read', 'read1', 'readable', 'readinto', 'readinto1', 'readline', 'readlines', 'seek', 'seekable', 'tell', 'truncate', 'writable', 'write', 'writelines']
+    ['__getstate__', '__init__', '__iter__', '__next__', '__setstate__', '__sizeof__']
+StringIO ['_checkClosed', '_checkReadable', '_checkSeekable', '_checkWritable', 'close', 'closed', 'detach', 'encoding', 'errors', 'fileno', 'flush', 'getvalue', 'isatty', 'line_buffering', 'newlines', 'read', 'readable', 'readline', 'readlines', 'seek', 'seekable', 'tell', 'truncate', 'writable', 'write', 'writelines']
+    ['__getstate__', '__init__', '__next__', '__setstate__']
+BufferedReader ['_checkClosed', '_checkReadable', '_checkSeekable', '_checkWritable', '_dealloc_warn', '_finalizing', 'close', 'closed', 'detach', 'fileno', 'flush', 'isatty', 'mode', 'name', 'peek', 'raw', 'read', 'read1', 'readable', 'readinto', 'readinto1', 'readline', 'readlines', 'seek', 'seekable', 'tell', 'truncate', 'writable', 'write', 'writelines']
+    ['__getstate__', '__init__', '__next__', '__repr__', '__sizeof__']
+BufferedWriter ['_checkClosed', '_checkReadable', '_checkSeekable', '_checkWritable', '_dealloc_warn', '_finalizing', 'close', 'closed', 'detach', 'fileno', 'flush', 'isatty', 'mode', 'name', 'raw', 'read', 'read1', 'readable', 'readinto', 'readinto1', 'readline', 'readlines', 'seek', 'seekable', 'tell', 'truncate', 'writable', 'write', 'writelines']
+    ['__getstate__', '__init__', '__repr__', '__sizeof__']
+BufferedRandom ['_checkClosed', '_checkReadable', '_checkSeekable', '_checkWritable', '_dealloc_warn', '_finalizing', 'close', 'closed', 'detach', 'fileno', 'flush', 'isatty', 'mode', 'name', 'peek', 'raw', 'read', 'read1', 'readable', 'readinto', 'readinto1', 'readline', 'readlines', 'seek', 'seekable', 'tell', 'truncate', 'writable', 'write', 'writelines']
+    ['__getstate__', '__init__', '__next__', '__repr__', '__sizeof__']
+BufferedRWPair ['_checkClosed', '_checkReadable', '_checkSeekable', '_checkWritable', 'close', 'closed', 'detach', 'fileno', 'flush', 'isatty', 'peek', 'read', 'read1', 'readable', 'readinto', 'readinto1', 'readline', 'readlines', 'seek', 'seekable', 'tell', 'truncate', 'writable', 'write', 'writelines']
+    ['__init__']
+TextIOWrapper ['_CHUNK_SIZE', '_checkClosed', '_checkReadable', '_checkSeekable', '_checkWritable', '_finalizing', 'buffer', 'close', 'closed', 'detach', 'encoding', 'errors', 'fileno', 'flush', 'isatty', 'line_buffering', 'name', 'newlines', 'read', 'readable', 'readline', 'readlines', 'reconfigure', 'seek', 'seekable', 'tell', 'truncate', 'writable', 'write', 'write_through', 'writelines']
+    ['__getstate__', '__init__', '__next__', '__repr__']
+IncrementalNewlineDecoder ['decode', 'getstate', 'newlines', 'reset', 'setstate']
+    ['__init__']
+--- kinds of attributes
+FileIO read method_descriptor <method 'read' of '_io.FileIO' objects>
+FileIO closed getset_descriptor <attribute 'closed' of '_io.FileIO' objects>
+FileIO __init__ wrapper_descriptor <slot wrapper '__init__' of '_io.FileIO' objects>
+FileIO __repr__ wrapper_descriptor <slot wrapper '__repr__' of '_io.FileIO' objects>
+_IOBase __next__ wrapper_descriptor <slot wrapper '__next__' of '_io._IOBase' objects>
+_IOBase __enter__ method_descriptor <method '__enter__' of '_io._IOBase' objects>
+_IOBase __del__ wrapper_descriptor <slot wrapper '__del__' of '_io._IOBase' objects>
+BytesIO getvalue method_descriptor <method 'getvalue' of '_io.BytesIO' objects>
+TextIOWrapper name getset_descriptor <attribute 'name' of '_io.TextIOWrapper' objects>
+<built-in method read of _io.FileIO object <method-wrapper '__repr__' of _io.FileIO object read FileIO.read True
+TypeError: descriptor 'read' for '_io.FileIO' objects doesn't apply to a 'int' object
+TypeError: descriptor 'read' for '_io.FileIO' objects doesn't apply to a '_io.BytesIO' object
+TypeError: descriptor 'closed' for '_io.FileIO' objects doesn't apply to a 'int' object
+TypeError: descriptor 'getvalue' for '_io.BytesIO' objects doesn't apply to a '_io.StringIO' object
+TypeError: descriptor 'write' for '_io.TextIOWrapper' objects doesn't apply to a '_io.StringIO' object
+TypeError: descriptor 'close' for '_io._IOBase' objects doesn't apply to a 'int' object
+False False b''
+--- layouts do not mix
+['FileIO', 'BytesIO'] TypeError: multiple bases have instance lay-out conflict
+['BytesIO', 'StringIO'] TypeError: multiple bases have instance lay-out conflict
+['BufferedReader', 'BufferedWriter'] TypeError: multiple bases have instance lay-out conflict
+['TextIOWrapper', 'StringIO'] TypeError: multiple bases have instance lay-out conflict
+['FileIO', 'dict'] TypeError: multiple bases have instance lay-out conflict
+['BytesIO', 'int'] TypeError: multiple bases have instance lay-out conflict
+extra b'q' ['Mixed', 'Mixin', 'BytesIO', 'BufferedIOBase', '_BufferedIOBase', 'IOBase', '_IOBase', 'object']

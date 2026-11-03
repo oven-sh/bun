@@ -1,0 +1,77 @@
+status: 0
+script: 24ce4378a10a35a1
+---
+1 True True False b'' -
+2 True True False b'' -
+10 True True False b'' -
+1000 True True True b'' 0
+16384 True True True b'' 0
+16385 True True True b'' 0
+100000 True True True b'' 0
+163890 True True True b'' 0
+163891 True True True b'' 0
+100 True False
+True True b'' b''
+b'' b''
+error: Error -2 while decompressing data: inconsistent stream state
+b'' b'x' True
+100 20 0 False
+False b'' False
+True True True b''
+b'' True b'' True
+True True True
+10 False b'' True
+True True True b''
+True True True b''
+b'' True b'' True
+True True True
+10 False b'' True
+True True True b''
+True True True b''
+b'' True b'' True
+True True True
+10 False b'' True
+True True True b''
+True True True b''
+b'' True b'' True
+True True True
+10 False b'' True
+True True True b''
+True False
+True False b'' b''
+b'' False
+b'' b'' False
+True
+True True
+True True
+True True
+error: Error 2 while decompressing data
+error: Error -3 while setting zdict: invalid input data
+error: Error 2 while decompressing data
+True
+True True
+True True
+True True
+error: Error -3 while decompressing data: invalid distance too far back
+error: Error -3 while decompressing data: invalid distance too far back
+error: Error -3 while decompressing data: invalid distance too far back
+True
+True True True
+True True True
+True True True
+True True True
+True True True
+True
+ValueError: Inconsistent stream state
+TypeError: __deepcopy__() takes exactly 1 positional argument (0 given)
+TypeError: copy() takes no arguments
+True True True False
+True True True False
+True True True False
+True True True False
+True True True False
+True b'' False
+ValueError: Inconsistent stream state
+b'xyz' True b'' True
+TypeError: cannot pickle 'zlib.Compress' object
+TypeError: cannot pickle 'zlib.Decompress' object

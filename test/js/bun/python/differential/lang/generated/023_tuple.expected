@@ -1,0 +1,263 @@
+status: 0
+script: 8644ce1e83ffd4de
+source: bff57ddf5baabc04
+---
+p => (1, 2, 3, 4, 5)
+len(p) => 5
+p[0] => 1
+p[-1] => 5
+p[1:3] => (2, 3)
+p[::-1] => (5, 4, 3, 2, 1)
+p[::2] => (1, 3, 5)
+p[10:] => ()
+p[:] => (1, 2, 3, 4, 5)
+p[-2:] => (4, 5)
+type(p[1:2]) => <class 'tuple'>
+p[:] is p or True => True
+p[4:1:-2] => (5, 3)
+p[5] => IndexError: tuple index out of range
+p[-6] => IndexError: tuple index out of range
+p["a"] => TypeError: tuple indices must be integers or slices, not str
+p[1.0] => TypeError: tuple indices must be integers or slices, not float
+()[0] => IndexError: tuple index out of range
+p[::0] => ValueError: slice step cannot be zero
+assign() => TypeError: 'tuple' object does not support item assignment
+delete() => TypeError: 'tuple' object doesn't support item deletion
+sassign() => TypeError: 'tuple' object does not support item assignment
+sdelete() => TypeError: 'tuple' object does not support item deletion
+() => ()
+(1,) => (1,)
+(1, 2) => (1, 2)
+((),) => ((),)
+((1,),) => ((1,),)
+(1, (2, (3,))) => (1, (2, (3,)))
+1 1 (1,)[0] => 1
+tuple() => ()
+tuple([1, 2]) => (1, 2)
+tuple("ab") => ('a', 'b')
+tuple(range(3)) => (0, 1, 2)
+tuple({1: 2}) => (1,)
+tuple((1, 2)) => (1, 2)
+tuple(x for x in [1]) => (1,)
+tuple(iter([2])) => (2,)
+tuple(b"a") => (97,)
+tuple({3}) => (3,)
+x => (1, 2)
+y => (1,)
+z => ()
+w => (1, 2, 3)
+type(x) => <class 'tuple'>
+type(y) => <class 'tuple'>
+len(y) => 1
+tuple(1) => TypeError: 'int' object is not iterable
+tuple(None) => TypeError: 'NoneType' object is not iterable
+tuple(1, 2) => TypeError: tuple expected at most 1 argument, got 2
+tuple(sequence=[1]) => TypeError: tuple() takes no keyword arguments
+(1,) + (2,) => (1, 2)
+(1, 2) * 2 => (1, 2, 1, 2)
+2 * (1, 2) => (1, 2, 1, 2)
+(1,) * 0 => ()
+(1,) * -1 => ()
+() + () => ()
+() * 5 => ()
+(1,) + () + (2,) => (1, 2)
+((),) * 2 => ((), ())
+(1,) + [2] => TypeError: can only concatenate tuple (not "list") to tuple
+(1,) + 1 => TypeError: can only concatenate tuple (not "int") to tuple
+(1,) * "a" => TypeError: can't multiply sequence by non-int of type 'str'
+(1,) * 1.5 => TypeError: can't multiply sequence by non-int of type 'float'
+(1,) - (1,) => TypeError: unsupported operand type(s) for -: 'tuple' and 'tuple'
+(1,) + "a" => TypeError: can only concatenate tuple (not "str") to tuple
+1 in (1, 2) => True
+3 in (1, 2) => False
+(1,) in ((1,),) => True
+None in (None,) => True
+1 not in () => True
+1.0 in (1,) => True
+(1, 2) == (1, 2) => True
+(1, 2) != (1, 2) => False
+(1, 2) < (1, 3) => True
+(1, 2) < (1, 2, 0) => True
+(2,) > (1, 9) => True
+() < (0,) => True
+(1,) <= (1,) => True
+(1,) == [1] => False
+(1,) == (1.0,) => True
+((1, 2), 3) == ((1, 2), 3) => True
+("a", 1) < ("b", 0) => True
+(1, "a") < (2, None) => True
+() == () => True
+(1,) < (None,) => TypeError: '<' not supported between instances of 'int' and 'NoneType'
+(1,) < ("a",) => TypeError: '<' not supported between instances of 'int' and 'str'
+(1,) < [1] => TypeError: '<' not supported between instances of 'tuple' and 'list'
+(1,) < 1 => TypeError: '<' not supported between instances of 'tuple' and 'int'
+hash(()) == hash(()) => True
+hash((1, 2)) == hash((1, 2)) => True
+hash((1,)) != hash((2,)) => True
+hash((1, 2)) == hash((1.0, 2.0)) => True
+{(1, 2): "a"}[(1, 2)] => a
+{(): 0}[()] => 0
+(1, 2) in {(1, 2)} => True
+{(1, (2, 3)): 1}[1, (2, 3)] => 1
+hash(()) => 5740354900026072187
+hash((1,)) => -6644214454873602895
+hash((1, 2)) => -3550055125485641917
+hash((1, 2, 3)) => 529344067295497451
+hash((0,)) => -8753497827991233192
+hash((-1,)) => 8078679518589016365
+hash(((),)) => -5486347211504344842
+hash((1, (2, 3))) => 7267574591690527098
+hash((10 ** 20,)) => 1027588262227522940
+hash((1.5,)) => 1701133413810848945
+hash((True, False)) => -5164621852614943976
+hash(tuple(range(20))) => -9217304902224717415
+hash((None,)) == hash((None,)) => True
+hash(([],)) => TypeError: unhashable type: 'list'
+{([],): 1} => TypeError: cannot use 'tuple' as a dict key (unhashable type: 'list')
+hash((1, {})) => TypeError: unhashable type: 'dict'
+p.count(1) => 1
+p.count(9) => 0
+(1, 1, 1.0, True).count(1) => 4
+().count(1) => 0
+p.index(3) => 2
+p.index(3, 1) => 2
+p.index(3, -4) => 2
+p.index(5, 2, 5) => 4
+(1, 2, 1).index(1, 1) => 2
+p.index(9) => ValueError: tuple.index(x): x not in tuple
+p.index(1, 1) => ValueError: tuple.index(x): x not in tuple
+p.index() => TypeError: index expected at least 1 argument, got 0
+p.count() => TypeError: tuple.count() takes exactly one argument (0 given)
+p.append(1) => AttributeError: 'tuple' object has no attribute 'append'
+p.sort() => AttributeError: 'tuple' object has no attribute 'sort'
+p.nope => AttributeError: 'tuple' object has no attribute 'nope'
+([1, 9], 2)
+TypeError: 'tuple' object does not support item assignment
+([1, 5], 2)
+q => (1, 2)
+r => (1,)
+q is r => False
+(1, 2, 1, 2)
+iadd_bad() => TypeError: can only concatenate tuple (not "list") to tuple
+str(()) => ()
+repr((1,)) => (1,)
+str((1, "a", None)) => (1, 'a', None)
+str(((),)) => ((),)
+repr(("a'b",)) => ("a'b",)
+str((1.0, 1j, b"x")) => (1.0, 1j, b'x')
+"%s" % ((1,),) => (1,)
+"{}".format((1, 2)) => (1, 2)
+f"{(1,)}" => (1,)
+sum((1, 2, 3)) => 6
+max((1, 3, 2)) => 3
+min((1, 3, 2)) => 1
+sorted((3, 1, 2)) => [1, 2, 3]
+tuple(reversed((1, 2, 3))) => (3, 2, 1)
+any((0, 1)) => True
+all((0, 1)) => False
+list(enumerate(("a",))) => [(0, 'a')]
+tuple(sorted((2, 1))) => (1, 2)
+tuple(map(str, (1, 2))) => ('1', '2')
+len(()) => 0
+bool(()) => False
+bool((0,)) => True
+bool(((),)) => True
+sum(((1,), (2,)), ()) => (1, 2)
+a => 1
+b => 2
+a => 2
+b => 1
+a => 1
+b => 2
+c => 3
+a => 5
+b => 6
+7
+8
+a => x
+b => y
+c => z
+0 a 1; 1 b 2; 
+ret() => (1, 'a', [2])
+type(ret()) => <class 'tuple'>
+ret()[2] => [2]
+len(ret()) => 3
+(1, 2).__len__() => 2
+(1, 2).__getitem__(0) => 1
+(1, 2).__getitem__(slice(0, 1)) => (1,)
+(1, 2).__contains__(1) => True
+(1,).__add__((2,)) => (1, 2)
+(1,).__mul__(2) => (1, 1)
+(1,).__rmul__(2) => (1, 1)
+(1,).__eq__((1,)) => True
+(1,).__eq__([1]) => NotImplemented
+(1,).__lt__((2,)) => True
+(1,).__ne__((1,)) => False
+(1,).__repr__() => (1,)
+(1,).__hash__() == hash((1,)) => True
+(1, 2).__getnewargs__() => ((1, 2),)
+(1,).__add__([2]) if False else "" => 
+(1,).__ge__(1) => NotImplemented
+type(()) => <class 'tuple'>
+tuple.__mro__ => (<class 'tuple'>, <class 'object'>)
+isinstance((), tuple) => True
+tuple.__name__ => tuple
+type(iter(())).__name__ => tuple_iterator
+sorted(n for n in dir(tuple) if not n.startswith("_")) => ['count', 'index']
+next(it) => 1
+next(it) => 2
+next(it, "done") => done
+it.__length_hint__() => 0
+n[0][1] => 2
+n[1] => (3, 4)
+[v for r in n for v in r] => [1, 2, 3, 4]
+tuple(zip(*n)) => ((1, 3), (2, 4))
+dict(n) => {1: 2, 3: 4}
+n[-1][-1] => 4
+len(big) => 100000
+big[-1] => 99999
+sum(big) => 4999950000
+big[500:503] => (500, 501, 502)
+big.index(99999) => 99999
+big.count(0) => 1
+len(big + big) => 200000
+hash(big) == hash(tuple(range(100000))) => True
+big == tuple(range(100000)) => True
+big < big + (0,) => True
+s => (1, 2, 3)
+s.first() => 1
+type(s) => <class '__main__.T'>
+type(s[:2]) => <class 'tuple'>
+type(s + (4,)) => <class 'tuple'>
+type(s * 2) => <class 'tuple'>
+len(s) => 3
+s == (1, 2, 3) => True
+hash(s) == hash((1, 2, 3)) => True
+isinstance(s, tuple) => True
+list(s) => [1, 2, 3]
+tuple(s) => (1, 2, 3)
+type(tuple(s)) => <class 'tuple'>
+repr(s) => (1, 2, 3)
+{s: 1}[(1, 2, 3)] => 1
+T() => ()
+T("ab") => ('a', 'b')
+s.count(1) => 1
+s.index(2) => 1
+2 in s => True
+sorted(s, reverse=True) => [3, 2, 1]
+v => T2(1, 2)
+v.x => 1
+v[1] => 2
+len(v) => 2
+tuple(v) => (1, 2)
+v + v => (1, 2, 1, 2)
+[v] => [T2(1, 2)]
+(v,) => (T2(1, 2),)
+"%s" % (v,) => T2(1, 2)
+a := v == (1, 2) => True
+v.extra => 5
+v.__dict__ => {'extra': 5}
+T2(1) => TypeError: T2.__new__() missing 1 required positional argument: 'b'
+tuple.__new__(T2, 5) => TypeError: 'int' object is not iterable
+tuple.__new__(int) => TypeError: tuple.__new__(int): int is not a subtype of tuple
+tuple.__new__(list) => TypeError: tuple.__new__(list): list is not a subtype of tuple

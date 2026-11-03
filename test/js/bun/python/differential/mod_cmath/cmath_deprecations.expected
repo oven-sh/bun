@@ -1,0 +1,12 @@
+status: 0
+script: 4fcbdda62ce626e2
+---
+sqrt (Cx((4+0j)),)  complex (2+0j)
+sqrt (Fl(4.0),)  complex (2+0j)
+sqrt (Fl(4.0),)  float 2.0
+DeprecationWarning Cx.__complex__() must return a complex, not C.  The ability to return an instance of a strict subclass of complex is deprecated, and may be removed in a future version of Python.
+DeprecationWarning Fl.__float__() must return a float, not F.  The ability to return an instance of a strict subclass of float is deprecated, and may be removed in a future version of Python.
+DeprecationWarning Fl.__float__() must return a float, not F.  The ability to return an instance of a strict subclass of float is deprecated, and may be removed in a future version of Python.
+sqrt (Cx((4+0j)),)  DeprecationWarning: Cx.__complex__() must return a complex, not C.  The ability to return an instance of a strict subclass of complex is deprecated, and may be removed in a future version of Python.
+sqrt (Fl(4.0),)  DeprecationWarning: Fl.__float__() must return a float, not F.  The ability to return an instance of a strict subclass of float is deprecated, and may be removed in a future version of Python.
+sqrt (Fl(4.0),)  DeprecationWarning: Fl.__float__() must return a float, not F.  The ability to return an instance of a strict subclass of float is deprecated, and may be removed in a future version of Python.

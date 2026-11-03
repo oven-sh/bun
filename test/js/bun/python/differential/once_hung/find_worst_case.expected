@@ -1,0 +1,15 @@
+status: 0
+script: 865755196754dd26
+---
+1000 find -1
+1000 count 0
+1000 find at the end 5000
+1000 count at the end 1
+10000 find -1
+10000 count 0
+10000 find at the end 50000
+10000 count at the end 1
+100000 find -1
+100000 count 0
+100000 find at the end 500000
+100000 count at the end 1

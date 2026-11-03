@@ -1,0 +1,236 @@
+status: 0
+script: 2d4c2ac57ad44e67
+source: 61b0e8fed6d40f30
+---
+f => frozenset({1, 2, 3})
+len(f) => 3
+1 in f => True
+9 in f => False
+frozenset() => frozenset()
+frozenset("a") => frozenset({'a'})
+frozenset({1: 2}) => frozenset({1})
+frozenset(range(3)) => frozenset({0, 1, 2})
+frozenset(f) is f => True
+frozenset([1, 1]) => frozenset({1})
+bool(frozenset()) => False
+bool(f) => True
+type(f) => <class 'frozenset'>
+repr(frozenset()) => frozenset()
+repr(frozenset({1})) => frozenset({1})
+repr(frozenset({frozenset()})) => frozenset({frozenset()})
+str(f) => frozenset({1, 2, 3})
+f | g => frozenset({1, 2, 3, 4})
+f & g => frozenset({3})
+f - g => frozenset({1, 2})
+f ^ g => frozenset({1, 2, 4})
+type(f | g) => <class 'frozenset'>
+type(f | {9}) => <class 'frozenset'>
+type({9} | f) => <class 'set'>
+f | {9} => frozenset({1, 2, 3, 9})
+{9} | f => {9, 2, 3, 1}
+f & {1} => frozenset({1})
+{1, 9} & f => {1}
+type({1} & f) => <class 'set'>
+type(f & {1}) => <class 'frozenset'>
+f.union([9]) => frozenset({1, 2, 3, 9})
+f.intersection([1]) => frozenset({1})
+f.difference([1]) => frozenset({2, 3})
+f.symmetric_difference([1, 9]) => frozenset({2, 3, 9})
+type(f.union([9])) => <class 'frozenset'>
+f.copy() is f => True
+f.isdisjoint(g) => False
+f.issubset(range(9)) => True
+f.issuperset([1]) => True
+f == {1, 2, 3} => True
+{1, 2, 3} == f => True
+f != g => True
+f < {1, 2, 3, 4} => True
+f <= f => True
+f > {1} => True
+f >= g => False
+hash(f) == hash(frozenset([3, 2, 1])) => True
+hash(frozenset()) == hash(frozenset()) => True
+{f: 1}[frozenset({1, 2, 3})] => 1
+f in {f} => True
+{frozenset({1}), frozenset({1})} => {frozenset({1})}
+hash(frozenset()) => 133146708735736
+hash(frozenset({1})) => -558064481276695278
+hash(frozenset({1, 2})) => -1826646154956904602
+hash(frozenset(range(10))) => 3895031357313128696
+hash(frozenset({0})) => -2704248722033767810
+hash(frozenset({-1})) => 6776983852052281967
+hash(frozenset({frozenset()})) => -6993584179861130285
+hash(frozenset({(1, 2)})) => 3819360209092968377
+getattr(f, m) [m='add'] => AttributeError: 'frozenset' object has no attribute 'add'
+getattr(f, m) [m='remove'] => AttributeError: 'frozenset' object has no attribute 'remove'
+getattr(f, m) [m='discard'] => AttributeError: 'frozenset' object has no attribute 'discard'
+getattr(f, m) [m='pop'] => AttributeError: 'frozenset' object has no attribute 'pop'
+getattr(f, m) [m='clear'] => AttributeError: 'frozenset' object has no attribute 'clear'
+getattr(f, m) [m='update'] => AttributeError: 'frozenset' object has no attribute 'update'
+getattr(f, m) [m='intersection_update'] => AttributeError: 'frozenset' object has no attribute 'intersection_update'
+getattr(f, m) [m='difference_update'] => AttributeError: 'frozenset' object has no attribute 'difference_update'
+getattr(f, m) [m='symmetric_difference_update'] => AttributeError: 'frozenset' object has no attribute 'symmetric_difference_update'
+frozenset([[]]) => TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+frozenset(1) => TypeError: 'int' object is not iterable
+frozenset(1, 2) => TypeError: frozenset expected at most 1 argument, got 2
+f | [1] => TypeError: unsupported operand type(s) for |: 'frozenset' and 'list'
+f[0] => TypeError: 'frozenset' object is not subscriptable
+f < [1] => TypeError: '<' not supported between instances of 'frozenset' and 'list'
+h => frozenset({1, 2})
+k => frozenset({1})
+h is k => False
+type(h) => <class 'frozenset'>
+frozenset({2})
+frozenset()
+frozenset({5})
+x => FS({1, 2})
+type(x) => <class '__main__.FS'>
+type(x | {3}) => <class 'frozenset'>
+type(x.copy()) => <class 'frozenset'>
+type(frozenset(x)) => <class 'frozenset'>
+x == {1, 2} => True
+hash(x) == hash(frozenset({1, 2})) => True
+repr(FS()) => FS()
+FS(x) is x => False
+type(x & x) => <class 'frozenset'>
+sorted(n for n in dir(frozenset) if not n.startswith("_")) => ['copy', 'difference', 'intersection', 'isdisjoint', 'issubset', 'issuperset', 'symmetric_difference', 'union']
+frozenset.__mro__ => (<class 'frozenset'>, <class 'object'>)
+d => frozendict({'a': 1, 'b': 2})
+len(d) => 2
+d["a"] => 1
+"a" in d => True
+"z" in d => False
+list(d) => ['a', 'b']
+list(d.keys()) => ['a', 'b']
+list(d.values()) => [1, 2]
+list(d.items()) => [('a', 1), ('b', 2)]
+d.get("a") => 1
+d.get("z") => None
+d.get("z", 0) => 0
+bool(d) => True
+bool(frozendict()) => False
+type(d) => <class 'frozendict'>
+repr(frozendict()) => frozendict()
+str(d) => frozendict({'a': 1, 'b': 2})
+list(reversed(d)) => ['b', 'a']
+frozendict() => frozendict()
+frozendict(a=1) => frozendict({'a': 1})
+frozendict([("a", 1)]) => frozendict({'a': 1})
+frozendict({"a": 1}, b=2) => frozendict({'a': 1, 'b': 2})
+frozendict(d) is d => True
+frozendict(zip("ab", (1, 2))) => frozendict({'a': 1, 'b': 2})
+frozendict({1: [2]}) => frozendict({1: [2]})
+frozendict(frozendict(x=1), y=2) => frozendict({'x': 1, 'y': 2})
+frozendict.fromkeys("ab") => frozendict({'a': None, 'b': None})
+frozendict.fromkeys("ab", 0) => frozendict({'a': 0, 'b': 0})
+type(frozendict.fromkeys("a")) => <class 'frozendict'>
+d["z"] => KeyError: 'z'
+d[[]] => TypeError: cannot use 'list' as a frozendict key (unhashable type: 'list')
+frozendict(1) => TypeError: 'int' object is not iterable
+frozendict([1]) => TypeError: object is not iterable
+frozendict({}, {}) => TypeError: frozendict expected at most 1 argument, got 2
+frozendict({[]: 1}) => TypeError: cannot use 'list' as a dict key (unhashable type: 'list')
+setitem() => TypeError: 'frozendict' object does not support item assignment
+delitem() => TypeError: 'frozendict' object does not support item deletion
+getattr(d, m) [m='pop'] => AttributeError: 'frozendict' object has no attribute 'pop'
+getattr(d, m) [m='popitem'] => AttributeError: 'frozendict' object has no attribute 'popitem'
+getattr(d, m) [m='clear'] => AttributeError: 'frozendict' object has no attribute 'clear'
+getattr(d, m) [m='update'] => AttributeError: 'frozendict' object has no attribute 'update'
+getattr(d, m) [m='setdefault'] => AttributeError: 'frozendict' object has no attribute 'setdefault'
+getattr(d, m) [m='__setitem__'] => AttributeError: 'frozendict' object has no attribute '__setitem__'
+getattr(d, m) [m='__delitem__'] => AttributeError: 'frozendict' object has no attribute '__delitem__'
+getattr(d, m) [m='__ior__'] => AttributeError: 'frozendict' object has no attribute '__ior__'
+d == {"a": 1, "b": 2} => True
+{"a": 1, "b": 2} == d => True
+d == frozendict(b=2, a=1) => True
+d != frozendict() => True
+d == [("a", 1)] => False
+d == frozendict(a=1) => False
+frozendict() == {} => True
+d.keys() == {"a", "b"} => True
+d.items() == {("a", 1), ("b", 2)} => True
+hash(d) == hash(frozendict(b=2, a=1)) => True
+hash(frozendict()) == hash(frozendict()) => True
+{d: 1}[frozendict(a=1, b=2)] => 1
+d in {d} => True
+len({frozendict(a=1), frozendict(a=1), frozendict(a=2)}) => 2
+isinstance(hash(d), int) => True
+hash(frozendict(a=[])) => TypeError: unhashable type: 'list'
+{frozendict(a={}): 1} => TypeError: cannot use 'frozendict' as a dict key (unhashable type: 'dict')
+d | {"c": 3} => frozendict({'a': 1, 'b': 2, 'c': 3})
+type(d | {"c": 3}) => <class 'frozendict'>
+{"c": 3} | d => {'c': 3, 'a': 1, 'b': 2}
+type({"c": 3} | d) => <class 'dict'>
+d | frozendict(a=0) => frozendict({'a': 0, 'b': 2})
+d | d is d or True => True
+d | {} => frozendict({'a': 1, 'b': 2})
+frozendict() | frozendict() => frozendict()
+d | [("c", 3)] => TypeError: unsupported operand type(s) for |: 'frozendict' and 'list'
+d | 1 => TypeError: unsupported operand type(s) for |: 'frozendict' and 'int'
+d < d => TypeError: '<' not supported between instances of 'frozendict' and 'frozendict'
+d + d => TypeError: unsupported operand type(s) for +: 'frozendict' and 'frozendict'
+e => frozendict({'a': 1, 'b': 2, 'z': 26})
+f2 => frozendict({'a': 1, 'b': 2})
+e is f2 => False
+type(e) => <class 'frozendict'>
+d.copy() => frozendict({'a': 1, 'b': 2})
+d.copy() is d => True
+type(d.copy()) => <class 'frozendict'>
+dict(d) => {'a': 1, 'b': 2}
+type(dict(d)) => <class 'dict'>
+{**d} => {'a': 1, 'b': 2}
+{**d, "x": 0} => {'a': 1, 'b': 2, 'x': 0}
+dict(d, x=0) => {'a': 1, 'b': 2, 'x': 0}
+(lambda **k: k)(**d) => {'a': 1, 'b': 2}
+[k for k in d] => ['a', 'b']
+{k: v for k, v in d.items()} => {'a': 1, 'b': 2}
+sorted(d) => ['a', 'b']
+max(d) => b
+len(d.items()) => 2
+tuple(d) => ('a', 'b')
+set(d) == {"a", "b"} => True
+"%(a)s" % d => 1
+"{a}".format(**d) => 1
+"{0[a]}".format(d) => 1
+"{a}".format_map(d) => 1
+isinstance(d, dict) => False
+issubclass(frozendict, dict) => False
+frozendict.__mro__ => (<class 'frozendict'>, <class 'object'>)
+isinstance(d, frozendict) => True
+frozendict.__name__ => frozendict
+sorted(n for n in dir(frozendict) if not n.startswith("_")) => ['copy', 'fromkeys', 'get', 'items', 'keys', 'values']
+{'a': 1, 'b': 2}
+{'a': 1, 'b': 2}
+dict.fromkeys(d) => {'a': None, 'b': None}
+list(zip(d, d.values())) => [('a', 1), ('b', 2)]
+d.keys() & {"a"} => {'a'}
+d.keys().mapping == d => True
+n => frozendict({'a': frozendict({'b': (1, 2)})})
+n["a"]["b"] => (1, 2)
+hash(n) == hash(frozendict(a=frozendict(b=(1, 2)))) => True
+frozendict({'l': [1, 2]})
+y => FD({'a': 1})
+type(y) => <class '__main__.FD'>
+y.extra() => 1
+y == {"a": 1} => True
+hash(y) == hash(frozendict(a=1)) => True
+type(y | {"b": 2}) => <class 'frozendict'>
+type(y.copy()) => <class 'frozendict'>
+isinstance(y, frozendict) => True
+repr(FD()) => FD()
+matched 1 {'b': 2} <class 'dict'>
+class pattern
+next(it) => a
+next(it) => b
+next(it, "end") => end
+type(it).__name__ => dict_keyiterator
+type(d.keys()).__name__ => dict_keys
+type(d.items()).__name__ => dict_items
+eval("a + b", d) if False else "" => 
+eval("a + b", {}, d) => 3
+eval("a + b", dict(d)) => 3
+len(big) => 1000
+big[999] => 999
+1000 in big => False
+sum(big.values()) => 499500
+list(big)[:3] => [0, 1, 2]

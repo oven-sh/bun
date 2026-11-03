@@ -1,0 +1,101 @@
+status: 0
+script: 390376041a67d8d5
+source: 21b43717c2780335
+---
+body
+caught
+caught e => v
+type(e) => <class 'ValueError'>
+e.args => ('v',)
+tuple repr(e) => KeyError('k')
+base class IndexError('i')
+bare except
+else runs
+caught
+try; finally
+inner finally; outer caught inner
+t; e; f
+propagated 'a'
+replaced 'second' ValueError('first')
+re-raised again
+fin; from else
+'from finally' None
+'wins' ValueError('lost')
+finally runs; 'try'
+'finally wins'
+'swallowed'
+fin; 'except'
+fin; 'else'
+1
+[1, 2]
+f 0; 0
+f1; f2; 'inner'
+outer fin; 'middle'
+evaluated before finally; then finally; None
+ValueError('x')
+[0, 'f0', 'f1', 2, 'f2', 'f3']
+[0, 'f', 1, 'f', 2, 'f']
+0
+[0, 1, 2]
+22
+[(0, 0), (0, 1), (1, 0), (1, 1)]
+break overrides return
+['inner', 'outer', 'inner', 'outer', 'inner', 'outer']
+[0, 1]
+e => NameError: name 'e' is not defined
+("cannot access local variable 'e' where it is not associated with a value", 'ValueError')
+deleting it oneself is fine
+scope3() => UnboundLocalError: cannot access local variable 'e' where it is not associated with a value
+(1,)
+exec("try: raise ValueError\nexcept 1: pass") => TypeError: catching classes that do not inherit from BaseException is not allowed
+exec("try: raise ValueError\nexcept 'ValueError': pass") => TypeError: catching classes that do not inherit from BaseException is not allowed
+exec("try: raise ValueError\nexcept (ValueError, 1): pass") => TypeError: catching classes that do not inherit from BaseException is not allowed
+exec("try: raise ValueError\nexcept (1, ValueError): pass") => TypeError: catching classes that do not inherit from BaseException is not allowed
+exec("try: raise ValueError\nexcept None: pass") => TypeError: catching classes that do not inherit from BaseException is not allowed
+exec("try: raise ValueError\nexcept [ValueError]: pass") => TypeError: catching classes that do not inherit from BaseException is not allowed
+exec("try: raise ValueError\nexcept int: pass") => TypeError: catching classes that do not inherit from BaseException is not allowed
+exec("try: raise ValueError\nexcept (): pass") => ValueError: 
+exec("try: raise ValueError\nexcept ValueError(): pass") => TypeError: catching classes that do not inherit from BaseException is not allowed
+exec("try: raise ValueError\nexcept undefined_name: pass") => NameError: name 'undefined_name' is not defined
+exec("try: pass\nexcept undefined_name: pass\nprint('not evaluated wi... => not evaluated without an exception
+None
+exec("try: raise ValueError\nexcept ((KeyError, (ValueError,)),): pri... => TypeError: catching classes that do not inherit from BaseException is not allowed
+exec("try: raise ValueError\nexcept KeyError, ValueError: print('no p... => no parentheses, 3.14
+None
+exec("try: raise ValueError\nexcept object: pass") => TypeError: catching classes that do not inherit from BaseException is not allowed
+eval 1; eval 2; matched 2; 
+except uses the real MRO
+SyntaxError: expected 'except' or 'finally' block
+SyntaxError: expected 'except' or 'finally' block
+SyntaxError: default 'except:' must be last
+SyntaxError: invalid syntax
+SyntaxError: invalid syntax
+SyntaxError: invalid syntax
+SyntaxError: cannot use except statement with literal
+SyntaxError: cannot use except statement with attribute
+SyntaxError: cannot use except statement with tuple
+SyntaxError: invalid syntax
+SyntaxError: multiple exception types must be parenthesized when using 'as'
+ok: try: pass\nexcept (ValueError, KeyError) as e: pass
+SyntaxError: invalid syntax
+SyntaxError: invalid syntax
+SyntaxError: invalid syntax
+SyntaxError: expected an indented block after 'try' statement on line 1
+SyntaxError: cannot use except statement with None
+SyntaxError: expected one or more exception types
+SyntaxError: invalid syntax
+SyntaxError: expected an indented block after 'except' statement on line 2
+SyntaxError: invalid syntax
+ok: try: pass\nexcept a if b else c: pass
+ok: try: pass\nexcept lambda: 1: pass
+ok: try: pass\nexcept *a, b: pass
+SyntaxError: cannot assign to __debug__
+ok: try: x = 1\nexcept ValueError, : pass
+ok: def f():\n try: pass\n finally: return
+ok: for i in x:\n try: pass\n finally: continue
+ok: for i in x:\n try: pass\n finally: break
+SyntaxError: 'continue' not properly in loop
+SyntaxError: 'continue' not properly in loop
+SyntaxError: 'break' outside loop
+bottom [1, 2, 3, 4, 5]
+[1, 2, 3, 4, 4, 5, 6, 7, 7, 7, 4, 6, 6, 6]

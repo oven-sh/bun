@@ -1,0 +1,231 @@
+status: 0
+script: aa49aa6b0c6fb2dd
+source: df84623788911a86
+---
+1 < 2 => True
+2 < 1 => False
+1 <= 1 => True
+1 >= 2 => False
+1 == 1 => True
+1 != 1 => False
+1 == 1.0 => True
+1 != 1.0 => False
+True == 1 => True
+False == 0 => True
+True == 2 => False
+1 < 2 < 3 => True
+1 < 2 > 1 => True
+1 < 3 < 2 => False
+3 > 2 > 1 => True
+1 == 1 == 1 => True
+1 == 1 != 2 => True
+1 < 2 <= 2 < 3 != 4 => True
+"a" < "b" => True
+"a" < "B" => False
+"abc" < "abd" => True
+"ab" < "abc" => True
+"" < "a" => True
+"a" == "a" => True
+"a" != "b" => True
+"Z" < "a" => True
+"é" > "z" => True
+[1, 2] < [1, 3] => True
+[1, 2] < [1, 2, 3] => True
+[] < [1] => True
+[1, 2] == [1, 2] => True
+[1] != [2] => True
+[2] > [1, 5] => True
+[[1]] < [[2]] => True
+(1, 2) < (1, 3) => True
+(1,) < (1, 0) => True
+() == () => True
+(1, "a") == (1, "a") => True
+(1, 2) >= (1, 2) => True
+None == None => True
+None != None => False
+None == 0 => False
+None is None => True
+None is not None => False
+0 is not None => True
+10 ** 30 > 10 ** 29 => True
+10 ** 30 == 10 ** 30 => True
+10 ** 30 < 1e31 => True
+10 ** 30 == 1e30 => False
+2 ** 53 == 2.0 ** 53 => True
+2 ** 53 + 1 == 2.0 ** 53 => False
+2 ** 53 + 1 > 2.0 ** 53 => True
+1 < 1.5 => True
+1.5 < 2 => True
+2 > 1.5 => True
+0.1 + 0.2 == 0.3 => False
+0.5 == 1 / 2 => True
+float("inf") > 10 ** 400 => True
+float("-inf") < -(10 ** 400) => True
+nan == nan => False
+nan != nan => True
+nan < 1 => False
+nan > 1 => False
+nan <= nan => False
+[nan] == [nan] => True
+(nan,) == (nan,) => True
+nan in [nan] => True
+nan is nan => True
+1 < "a" => TypeError: '<' not supported between instances of 'int' and 'str'
+"a" < 1 => TypeError: '<' not supported between instances of 'str' and 'int'
+[1] < (1,) => TypeError: '<' not supported between instances of 'list' and 'tuple'
+None < None => TypeError: '<' not supported between instances of 'NoneType' and 'NoneType'
+None < 1 => TypeError: '<' not supported between instances of 'NoneType' and 'int'
+1 <= None => TypeError: '<=' not supported between instances of 'int' and 'NoneType'
+{} < {} => TypeError: '<' not supported between instances of 'dict' and 'dict'
+[1, "a"] < [1, 2] => TypeError: '<' not supported between instances of 'str' and 'int'
+1j < 2j => TypeError: '<' not supported between instances of 'complex' and 'complex'
+object() < object() => TypeError: '<' not supported between instances of 'object' and 'object'
+(1, None) > (1, 2) => TypeError: '>' not supported between instances of 'NoneType' and 'int'
+len < len => TypeError: '<' not supported between instances of 'builtin_function_or_method' and 'builtin_function_or_method'
+int < int => TypeError: '<' not supported between instances of 'type' and 'type'
+1 == "1" => False
+"1" == 1 => False
+[1] == (1,) => False
+{} == [] => False
+1 != "1" => True
+None != "None" => True
+b"a" == "a" => False
+bool(0) => False
+bool(1) => True
+bool(-1) => True
+bool(0.0) => False
+bool(0.1) => True
+bool("") => False
+bool(" ") => True
+bool([]) => False
+bool([0]) => True
+bool(()) => False
+bool((0,)) => True
+bool({}) => False
+bool({0: 0}) => True
+bool(set()) => False
+bool({0}) => True
+bool(None) => False
+bool(0j) => False
+bool(1j) => True
+bool(b"") => False
+bool(b"\0") => True
+bool(range(0)) => False
+bool(range(1)) => True
+bool(10 ** 30) => True
+bool(nan) => True
+1 and 2 => 2
+0 and 2 => 0
+1 or 2 => 1
+0 or 2 => 2
+"" or "x" => x
+"a" and "" => 
+None or 0 => 0
+None and 1 => None
+[] or {} => {}
+[] and {} => []
+0 or "" or None => None
+1 and 2 and 3 => 3
+1 and 0 and 3 => 0
+0 or 1 and 2 => 2
+(0 or 1) and 2 => 2
+not 1 or 2 => 2
+not (1 or 2) => False
+not True => False
+not False => True
+not None => True
+not "" => True
+not "a" => False
+not [] => True
+not 0.0 => True
+not not 5 => True
+side(0) and side(1) => 0
+side(1) or side(2) => 1
+side(1) and side(0) or side(3) => 3
+side.__defaults__[0] => [0, 1, 1, 0, 3]
+1 if True else 2 => 1
+1 if False else 2 => 2
+1 if 0 else 2 if 0 else 3 => 3
+(1 if 1 else 2) if 0 else 4 => 4
+"y" if [] else "n" => n
+1 in [1, 2] => True
+3 in [1, 2] => False
+1 not in [1, 2] => False
+"a" in "abc" => True
+"ac" in "abc" => False
+"" in "abc" => True
+1 in (1,) => True
+1 in {1: 2} => True
+2 in {1: 2} => False
+1 in {1} => True
+1.0 in [1] => True
+True in [1] => True
+1 in range(3) => True
+3 in range(3) => False
+1 in 5 => TypeError: argument of type 'int' is not a container or iterable
+1 in "abc" => TypeError: 'in <string>' requires string as left operand, not int
+"a" in 5 => TypeError: argument of type 'int' is not a container or iterable
+1 not in None => TypeError: argument of type 'NoneType' is not a container or iterable
+x is y => False
+x is z => True
+x is not y => True
+x == y => True
+isinstance(True, int) => True
+isinstance(True, bool) => True
+isinstance(1, bool) => False
+issubclass(bool, int) => True
+type(True + 1) => <class 'int'>
+type(True & False) => <class 'bool'>
+type(True & 1) => <class 'int'>
+type(True | False) => <class 'bool'>
+type(True ^ True) => <class 'bool'>
+type(~True) => <class 'int'>
+True & False => False
+True | False => True
+True ^ True => False
+True ^ False => True
+True & 3 => 1
+True | 2 => 3
+False ^ 5 => 5
+int(True) => 1
+int(False) => 0
+float(True) => 1.0
+str(True) => True
+repr(False) => False
+bool("False") => True
+bool(bool) => True
+True.real => 1
+True.imag => 0
+True.bit_length() => 1
+True.numerator => 1
+bool(1, 2) => TypeError: bool expected at most 1 argument, got 2
+bool() => False
+int() => 0
+float() => 0.0
+str() => 
+list() => []
+tuple() => ()
+dict() => {}
+set() => set()
+bytes() => b''
+complex() => 0j
+frozenset() => frozenset()
+max(True, 0) => True
+min(True, 2) => True
+sorted([True, 0, 2, False]) => [0, False, True, 2]
+sum([True, True, False]) => 2
+hash(True) => 1
+hash(False) => 0
+hash(1) => 1
+{True: "a", 1: "b", 1.0: "c"} => {True: 'c'}
+bool(A()) => False
+bool(B()) => False
+bool(C()) => True
+not A() => True
+A() or "dflt" => dflt
+C() and "yes" => yes
+bool(D()) => TypeError: D.__bool__() must return a bool, not int
+bool(E()) => ValueError: __len__() should return >= 0
+bool(F()) => TypeError: 'F' cannot be interpreted as a boolean
+not D() => TypeError: D.__bool__() must return a bool, not int
+1 if D() else 2 => TypeError: D.__bool__() must return a bool, not int

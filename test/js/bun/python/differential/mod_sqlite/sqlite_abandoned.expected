@@ -1,0 +1,17 @@
+status: 0
+script: 05f95e56c9e18e99
+---
+(0,)
+<sqlite3.Cursor object>
+(0,)
+<sqlite3.Cursor object>
+OperationalError: database table is locked
+<sqlite3.Cursor object>
+(0,)
+None
+(6,)
+<sqlite3.Cursor object>
+None
+OperationalError: database is locked
+None
+['x.db'] b'SQLite format 3'

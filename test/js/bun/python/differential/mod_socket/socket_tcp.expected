@@ -1,0 +1,126 @@
+status: 0
+script: c74c8afc8e836773
+---
+None None 1
+127.0.0.1 True int
+OSError: [Errno 22] Invalid argument 22
+OSError: [Errno 98] Address already in use 98
+None
+int True False True tuple
+True True 6 True True True
+OSError: [Errno 106] Transport endpoint is already connected 106
+True
+5 b'hello' 3 3 b'abc' b'def'
+None
+100000 {120}
+0 None
+4 b'pe' b'peek'
+BlockingIOError: [Errno 11] Resource temporarily unavailable 11
+5 5 bytearray(b'12345\x00\x00\x00\x00\x00')
+5 3 bytearray(b'6784590\x00\x00\x00') 2 bytearray(b'6784590\x00\x00\x00')
+2 1 1 bytearray(b'b784590\x00\x00\x00')
+ValueError: buffer too small for requested bytes None
+ValueError: negative buffersize in recv_into None
+TypeError: recv_into() argument 1 must be read-write bytes-like object, not bytes None
+TypeError: recv_into() argument 1 must be read-write bytes-like object, not str None
+TypeError: recv_into() missing required argument 'buffer' (pos 1) None
+TypeError: recv_into() takes at most 3 arguments (4 given) None
+TypeError: recv_into() got an unexpected keyword argument 'foo' None
+TypeError: 'str' object cannot be interpreted as an integer None
+TypeError: 'str' object cannot be interpreted as an integer None
+TypeError: recv_into() argument 1 must be read-write bytes-like object, not memoryview None
+TypeError: recv_into() argument 1 must be read-write bytes-like object, not int None
+8 8 array('i', [1, 2])
+4 (b'from', None) 4 (4, None) bytearray(b'into')
+ValueError: negative buffersize in recvfrom None
+TypeError: recvfrom() takes at least 1 argument (0 given) None
+ValueError: nbytes is greater than the length of the buffer None
+ValueError: negative buffersize in recvfrom_into None
+TypeError: recvfrom_into() argument 1 must be read-write bytes-like object, not bytes None
+3 (b'msg', [], 0, None) 4 (b'msg2', [], 0, None) 4 (b'ms', [], 0, None) (b'msg3', [], 0, None)
+5 (5, [], 0, None) bytearray(b'ab') bytearray(b'cde\x00\x00')
+2 (2, [], 0, None) bytearray(b'xy') 1 (1, [], 0, None) bytearray(b'zde\x00\x00')
+ValueError: negative buffer size in recvmsg() None
+ValueError: invalid ancillary data buffer length None
+TypeError: recvmsg() takes at least 1 argument (0 given) None
+TypeError: recvmsg() takes at most 3 arguments (4 given) None
+TypeError: 'str' object cannot be interpreted as an integer None
+ValueError: invalid ancillary data buffer length None
+TypeError: recvmsg_into() argument 1 must be an iterable None
+TypeError: recvmsg_into() argument 1 must be an iterable of single-segment read-write buffers None
+TypeError: recvmsg_into() argument 1 must be an iterable of single-segment read-write buffers None
+TypeError: recvmsg_into() takes at least 1 argument (0 given) None
+ValueError: invalid ancillary data buffer length None
+TypeError: 'str' object cannot be interpreted as an integer None
+TypeError: recvmsg_into() argument 1 must be an iterable of single-segment read-write buffers None
+6 b'abcdef' 0 1 b'g' 1 b'h' 1 b'i'
+TypeError: sendmsg() argument 1 must be an iterable None
+TypeError: a bytes-like object is required, not 'str' None
+TypeError: a bytes-like object is required, not 'int' None
+TypeError: sendmsg expected at least 1 argument, got 0 None
+TypeError: sendmsg() argument 2 must be an iterable None
+TypeError: [sendmsg() ancillary data items]() argument must be 3-item tuple, not int None
+TypeError: [sendmsg() ancillary data items]() argument must be tuple of length 3, not 2 None
+TypeError: a bytes-like object is required, not 'int' None
+TypeError: 'str' object cannot be interpreted as an integer None
+TypeError: 'str' object cannot be interpreted as an integer None
+1
+TypeError: 'str' object cannot be interpreted as an integer None
+TypeError: sendmsg(): AF_INET address must be tuple, not int None
+TypeError: sendmsg expected at most 4 arguments, got 5 None
+TypeError: socket.sendmsg() takes no keyword arguments None
+TypeError: a bytes-like object is required, not 'int' None
+TypeError: [sendmsg() ancillary data items]() argument must be tuple of length 3, not 4 None
+TypeError: [sendmsg() ancillary data items]() argument must be 3-item tuple, not None None
+TypeError: a bytes-like object is required, not 'str' None
+TypeError: a bytes-like object is required, not 'int' None
+TypeError: send expected at least 1 argument, got 0 None
+TypeError: 'str' object cannot be interpreted as an integer None
+TypeError: send expected at most 2 arguments, got 3 None
+TypeError: socket.send() takes no keyword arguments None
+OverflowError: Python int too large to convert to C int None
+TypeError: a bytes-like object is required, not 'str' None
+TypeError: sendall expected at least 1 argument, got 0 None
+TypeError: a bytes-like object is required, not 'NoneType' None
+TypeError: 'NoneType' object cannot be interpreted as an integer None
+b'x'
+2 b'to' 3 b'to2'
+None b'' b'' 0 (b'', None) (b'', [], 0, None)
+BrokenPipeError: [Errno 32] Broken pipe 32
+5 b'still' None b''
+None 5.0
+TimeoutError: timed out None
+True
+True ('timed out',) None None True True
+TimeoutError: timed out None
+TimeoutError: timed out None
+TimeoutError: timed out None
+TimeoutError: timed out None
+TimeoutError: timed out None
+b'now'
+TimeoutError: timed out None
+BlockingIOError: [Errno 11] Resource temporarily unavailable 11
+TimeoutError: timed out None
+TimeoutError: timed out None
+TimeoutError: timed out None
+BlockingIOError: [Errno 11] Resource temporarily unavailable 11
+BlockingIOError: [Errno 11] Resource temporarily unavailable 11
+BlockingIOError: [Errno 11] Resource temporarily unavailable 11
+BlockingIOError: [Errno 11] Resource temporarily unavailable 11
+True
+True 0 True
+BlockingIOError True
+ConnectionRefusedError: [Errno 111] Connection refused 111
+True
+ConnectionRefusedError: [Errno 111] Connection refused 111
+False
+ConnectionResetError: [Errno 104] Connection reset by peer 104
+BrokenPipeError: [Errno 32] Broken pipe 32
+None None None None
+0.0.0.0
+127.0.0.1
+127.0.0.1
+127.0.0.2
+127.0.0.1
+127.0.0.1
+127.0.0.1

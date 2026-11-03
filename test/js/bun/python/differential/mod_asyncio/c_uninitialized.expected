@@ -1,0 +1,44 @@
+status: 0
+script: 54586b53ae29a947
+---
+TypeError __class__ assignment only supported for mutable types or ModuleType subclasses
+Task
+TypeError __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError __class__ assignment only supported for mutable types or ModuleType subclasses
+ok None
+TypeError __class__ assignment only supported for mutable types or ModuleType subclasses
+Sub2
+cancel: ok True
+cancelling: ok 1
+uncancel: ok 0
+get_name: ok None
+get_coro: ok None
+get_context: ok None
+done: ok False
+cancelled: ok False
+result: InvalidStateError Future object is not initialized.
+exception: InvalidStateError Future object is not initialized.
+get_loop: RuntimeError Future object is not initialized.
+get_stack: RuntimeError Future object is not initialized.
+__repr__: RuntimeError Future object is not initialized.
+__await__: RuntimeError Future object is not initialized.
+__del__: ok None
+_coro: ok None
+_fut_waiter: ok None
+_must_cancel: ok False
+_log_destroy_pending: ok False
+_state: RuntimeError Future object is not initialized.
+_loop: ok None
+_callbacks: RuntimeError Future object is not initialized.
+_result: RuntimeError Future object is not initialized.
+_exception: RuntimeError Future object is not initialized.
+_log_traceback: RuntimeError Future object is not initialized.
+_source_traceback: ok None
+_cancel_message: ok None
+_asyncio_awaited_by: ok None
+_asyncio_future_blocking: ok False
+ok None
+0
+ok None
+ok None
+0

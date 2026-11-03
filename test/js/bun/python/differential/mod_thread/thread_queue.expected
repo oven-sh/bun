@@ -1,0 +1,38 @@
+status: 0
+script: 7f246883fab05b29
+---
+['Empty', 'SimpleQueue'] (<class '_queue.SimpleQueue'>, <class 'object'>) (<class '_queue.Empty'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>) _queue Empty Exception raised by Queue.get(block=0)/get_nowait().
+True True ['empty', 'get', 'get_nowait', 'put', 'put_nowait', 'qsize']
+Empty: 
+Empty: 
+ValueError: 'timeout' must be a non-negative number
+TypeError: must be real number, not str
+Empty: 
+Empty: 
+None
+TypeError: put() takes at most 3 arguments (4 given)
+TypeError: put() missing required argument 'item' (pos 1)
+1
+TypeError: get_nowait() takes no arguments
+0
+True
+TypeError: SimpleQueue() takes no positional arguments
+TypeError: SimpleQueue() takes no keyword arguments
+OverflowError: timestamp out of range for C PyTime_t
+_queue.SimpleQueue[int]
+None
+None
+None
+1
+1
+2
+0
+(<class '__main__.S'>, <class '_queue.SimpleQueue'>, <class 'object'>)
+AttributeError: '_queue.SimpleQueue' object has no attribute 'x' and no __dict__ for setting new attributes
+True
+1000 [0, 1, 2, 3, 4] 995 409050 95 False
+[('more', 7), ('more', 8), ('more', 9)] True 0
+0 0 1 -1 2 5 [-2, 3, -3, 4, -4]
+None True
+from the handler
+from the handler

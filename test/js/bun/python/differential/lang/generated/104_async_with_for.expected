@@ -1,0 +1,85 @@
+status: 0
+script: 85b27c2e00f4ccd8
+source: 0b772f4997fe5079
+---
+aenter acm; body; aexit acm None; None
+aenter n; aexit n None; 'n'
+aenter a; aenter b; ab; aexit b None; aexit a None; None
+aenter a; aenter b; parenthesised; aexit b None; aexit a None; None
+aenter s; body; aexit s None; (['entering s', 'in body', 'exiting s'], 'done')
+aenter acm; aexit acm ValueError; ValueError: propagates
+aenter acm; aexit acm ValueError; 'continues'
+aenter outer; aenter inner; aexit inner KeyError; aexit outer None; 'ok'
+aenter 0; aexit 0 None; aenter 1; aexit 1 None; 1
+aenter a; enter; aenter b; aexit b None; exit; aexit a None; 'mixed'
+TypeError: 'int' object does not support the asynchronous context manager protocol (missed __aexit__ method)
+TypeError: 'NoneType' object does not support the asynchronous context manager protocol (missed __aexit__ method)
+TypeError: 'CM' object does not support the asynchronous context manager protocol (missed __aexit__ method) but it supports the context manager protocol. Did you mean to use 'with'?
+TypeError: 'NoAexit' object does not support the asynchronous context manager protocol (missed __aexit__ method)
+TypeError: 'NoAenter' object does not support the asynchronous context manager protocol (missed __aenter__ method)
+TypeError: 'async with' received an object from __aenter__ that does not implement __await__: int
+body; TypeError: 'async with' received an object from __aexit__ that does not implement __await__: NoneType
+TypeError: 'object' object does not support the asynchronous context manager protocol (missed __aexit__ method)
+TypeError: 'list' object does not support the asynchronous context manager protocol (missed __aexit__ method)
+TypeError: 'type' object does not support the asynchronous context manager protocol (missed __aexit__ method)
+sync_with(ACM()) => TypeError: 'ACM' object does not support the context manager protocol (missed __exit__ method) but it supports the asynchronous context manager protocol. Did you mean to use 'async with'?
+run(aw(AenterRaises())) => RuntimeError: aenter failed
+run(aw(AexitRaises())) => body; RuntimeError: aexit failed
+("RuntimeError('aexit failed')", "ValueError('body')")
+c.send(None) => custom awaitable enter
+c.send("sent value") => custom awaitable exit
+('entered with', 'sent value')
+[1, 2, 3]
+[1, 2, 'else']
+2
+[2, 4]
+(['item 1', 'item 2'], [1, 2])
+[(1, 1), (1, 2), (2, 1), (2, 2)]
+'empty'
+1
+[3, 7]
+(2, [3], 3, [4])
+1
+TypeError: 'async for' requires an object with __aiter__ method, got int
+TypeError: 'async for' requires an object with __aiter__ method, got NoneType
+TypeError: 'async for' requires an object with __aiter__ method, got list
+TypeError: 'async for' requires an object with __aiter__ method, got list_iterator
+TypeError: 'async for' requires an object with __aiter__ method, got str
+TypeError: 'async for' received an object from __aiter__ that does not implement __anext__: NoAnext
+TypeError: 'async for' received an object from __aiter__ that does not implement __anext__: coroutine
+TypeError: 'async for' received an object from __aiter__ that does not implement __anext__: int
+TypeError: 'async for' received an invalid object from __anext__: int
+KeyError: 'anext failed'
+RuntimeError: coroutine raised StopIteration
+RuntimeError: aiter failed
+'finished'
+TypeError: 'async for' requires an object with __aiter__ method, got object
+TypeError: 'async for' requires an object with __aiter__ method, got range
+TypeError: 'async for' requires an object with __aiter__ method, got generator
+TypeError: 'async for' requires an object with __aiter__ method, got type
+sync_for(AIter(1)) => TypeError: 'AIter' object is not iterable
+run(b1()) => (1, 2, 'default', None)
+run(b2()) => ('StopAsyncIteration', ())
+type(aiter(AIter(1))).__name__ => AIter
+coroutine
+type(a).__name__ => anext_awaitable
+hasattr(a, "__await__") => True
+hasattr(a, "send") => True
+aiter(1) => TypeError: 'int' object is not an async iterable
+aiter([1]) => TypeError: 'list' object is not an async iterable
+aiter() => TypeError: aiter() takes exactly one argument (0 given)
+aiter(AIter(1), 2) => TypeError: aiter() takes exactly one argument (2 given)
+anext(1) => TypeError: 'int' object is not an async iterator
+anext([1]) => TypeError: 'list' object is not an async iterator
+anext() => TypeError: anext expected at least 1 argument, got 0
+anext(AIter(1), 1, 2) => TypeError: anext expected at most 2 arguments, got 3
+aiter(NoAnext()) => TypeError: NoAnext.__aiter__() must return an async iterator, not NoAnext
+aiter(AiterBad()) => TypeError: AiterBad.__aiter__() must return an async iterator, not int
+anext(iter([1])) => TypeError: 'list_iterator' object is not an async iterator
+next(AIter(1)) => TypeError: 'AIter' object is not an iterator
+iter(AIter(1)) => TypeError: 'AIter' object is not iterable
+run(body_raises()) => ValueError: in body at 2
+run(stop_in_body()) => StopAsyncIteration: raised by the body, not by __anext__
+[1, 'f', 'caught', 'f', 3, 'f']
+log => ['a0', 'b0', 'c0', 'a1', 'b1', 'b2']
+results => ['c done', 'a done', 'b done']

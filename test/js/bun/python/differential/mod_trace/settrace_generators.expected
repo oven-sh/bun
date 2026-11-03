@@ -1,0 +1,293 @@
+status: 0
+script: 3f2597a60381620c
+---
+== iterate -> [1, 2]
+   iterate call 0
+   iterate line 1
+   gen call 0
+   gen line 1
+   gen return 1 1
+   gen call 1
+   gen line 2
+   gen return 2 2
+   gen call 2
+   gen line 3
+   gen return 3 None
+   iterate return 1 [1, 2]
+== for_over_generator -> 3
+   for_over_generator call 0
+   for_over_generator line 1
+   for_over_generator line 2
+   gen call 0
+   gen line 1
+   gen return 1 1
+   for_over_generator line 3
+   for_over_generator line 2
+   gen call 1
+   gen line 2
+   gen return 2 2
+   for_over_generator line 3
+   for_over_generator line 2
+   gen call 2
+   gen line 3
+   gen return 3 None
+   for_over_generator line 4
+   for_over_generator return 4 3
+== send -> (1, 2, 'sent')
+   send call 0
+   send line 1
+   send line 2
+   gen call 0
+   gen line 1
+   gen return 1 1
+   send line 3
+   gen call 1
+   gen line 2
+   gen return 2 2
+   send line 4
+   send line 5
+   gen call 2
+   gen line 3
+   gen return 3 'sent'
+   send exception 5 StopIteration StopIteration('sent')
+   send line 6
+   send line 7
+   send return 7 (1, 2, 'sent')
+== throw -> ValueError('thrown')
+   throw call 0
+   throw line 1
+   throw line 2
+   gen call 0
+   gen line 1
+   gen return 1 1
+   throw line 3
+   throw line 4
+   gen call 1
+   gen exception 1 ValueError ValueError('thrown')
+   gen return 1 None
+   throw exception 4 ValueError ValueError('thrown')
+   throw line 5
+   throw line 6
+   throw return 6 "ValueError('thrown')"
+== throw_caught -> 2
+   throw_caught call 0
+   throw_caught line 1
+   throw_caught line 2
+   catching call 0
+   catching line 1
+   catching line 2
+   catching return 2 1
+   throw_caught line 3
+   catching call 2
+   catching exception 2 ValueError ValueError('thrown')
+   catching line 3
+   catching line 4
+   catching return 4 2
+   throw_caught line 4
+   catching call 4
+   catching exception 4 GeneratorExit GeneratorExit()
+   catching line 6
+   catching return 6 None
+   throw_caught line 5
+   throw_caught return 5 2
+== close -> None
+   close call 0
+   close line 1
+   close line 2
+   catching call 0
+   catching line 1
+   catching line 2
+   catching return 2 1
+   close line 3
+   catching call 2
+   catching exception 2 GeneratorExit GeneratorExit()
+   catching line 3
+   catching line 6
+   catching return 6 None
+   close return 3 None
+== close_unstarted -> None
+   close_unstarted call 0
+   close_unstarted line 1
+   close_unstarted line 2
+   close_unstarted return 2 None
+== yield_from -> [1, 2]
+   yield_from call 0
+   yield_from line 1
+   delegating call 0
+   delegating line 1
+   gen call 0
+   gen line 1
+   gen return 1 1
+   delegating return 1 1
+   delegating call 1
+   gen call 1
+   gen line 2
+   gen return 2 2
+   delegating return 1 2
+   delegating call 1
+   gen call 2
+   gen line 3
+   gen return 3 None
+   delegating exception 1 StopIteration StopIteration()
+   delegating line 2
+   delegating return 2 None
+   yield_from return 1 [1, 2]
+== generator_raises -> raised KeyError('k')
+   generator_raises call 0
+   generator_raises line 1
+   raising call 0
+   raising line 1
+   raising return 1 1
+   raising call 1
+   raising line 2
+   raising exception 2 KeyError KeyError('k')
+   raising return 2 None
+   generator_raises exception 1 KeyError KeyError('k')
+   generator_raises return 1 None
+== run_coroutine -> (['suspended'], 'awaited')
+   run_coroutine call 0
+   run_coroutine line 1
+   drive call 0
+   drive line 1
+   drive line 2
+   drive line 3
+   drive line 4
+   outer call 0
+   outer line 1
+   coroutine call 0
+   coroutine line 1
+   __await__ call 0
+   __await__ line 1
+   __await__ return 1 'suspended'
+   coroutine return 1 'suspended'
+   outer return 1 'suspended'
+   drive line 3
+   drive line 4
+   outer call 1
+   coroutine call 1
+   __await__ call 1
+   __await__ line 2
+   __await__ return 2 'awaited'
+   coroutine exception 1 StopIteration StopIteration('awaited')
+   coroutine line 2
+   coroutine return 2 'awaited'
+   outer exception 1 StopIteration StopIteration('awaited')
+   outer return 1 'awaited'
+   drive exception 4 StopIteration StopIteration('awaited')
+   drive line 5
+   drive line 6
+   drive return 6 (['suspended'], 'awaited')
+   run_coroutine return 1 (['suspended'], 'awaited')
+== run_async_for -> (['suspended'], 3)
+   run_async_for call 0
+   run_async_for line 1
+   drive call 0
+   drive line 1
+   drive line 2
+   drive line 3
+   drive line 4
+   async_for call 0
+   async_for line 1
+   async_for line 2
+   async_generator call 0
+   async_generator line 1
+   async_generator return 1 <async_generator_wrapped_value object>
+   async_for line 3
+   async_for line 2
+   async_generator call 1
+   async_generator line 2
+   __await__ call 0
+   __await__ line 1
+   __await__ return 1 'suspended'
+   async_generator return 2 'suspended'
+   async_for return 2 'suspended'
+   drive line 3
+   drive line 4
+   async_for call 2
+   async_generator call 2
+   __await__ call 1
+   __await__ line 2
+   __await__ return 2 'awaited'
+   async_generator exception 2 StopIteration StopIteration('awaited')
+   async_generator line 3
+   async_generator return 3 <async_generator_wrapped_value object>
+   async_for line 3
+   async_for line 2
+   async_generator call 3
+   async_generator return 3 None
+   async_for exception 2 StopAsyncIteration StopAsyncIteration()
+   async_for line 4
+   async_for return 4 3
+   drive exception 4 StopIteration StopIteration(3)
+   drive line 5
+   drive line 6
+   drive return 6 (['suspended'], 3)
+   run_async_for return 1 (['suspended'], 3)
+== run_async_with -> ([], 1)
+   run_async_with call 0
+   run_async_with line 1
+   drive call 0
+   drive line 1
+   drive line 2
+   drive line 3
+   drive line 4
+   async_with call 0
+   async_with line 1
+   __aenter__ call 0
+   __aenter__ line 1
+   __aenter__ return 1 <__main__.AsyncManager object>
+   async_with exception 1 StopIteration StopIteration(<__main__.AsyncManager object>)
+   async_with line 2
+   async_with line 1
+   __aexit__ call 0
+   __aexit__ line 1
+   __aexit__ return 1 False
+   async_with exception 1 StopIteration StopIteration(False)
+   async_with line 3
+   async_with return 3 1
+   drive exception 4 StopIteration StopIteration(1)
+   drive line 5
+   drive line 6
+   drive return 6 ([], 1)
+   run_async_with return 1 ([], 1)
+== run_async_comprehension -> (['suspended'], [1, 2])
+   run_async_comprehension call 0
+   run_async_comprehension line 1
+   drive call 0
+   drive line 1
+   drive line 2
+   drive line 3
+   drive line 4
+   async_comprehension call 0
+   async_comprehension line 1
+   async_generator call 0
+   async_generator line 1
+   async_generator return 1 <async_generator_wrapped_value object>
+   async_comprehension line 1
+   async_generator call 1
+   async_generator line 2
+   __await__ call 0
+   __await__ line 1
+   __await__ return 1 'suspended'
+   async_generator return 2 'suspended'
+   async_comprehension return 1 'suspended'
+   drive line 3
+   drive line 4
+   async_comprehension call 1
+   async_generator call 2
+   __await__ call 1
+   __await__ line 2
+   __await__ return 2 'awaited'
+   async_generator exception 2 StopIteration StopIteration('awaited')
+   async_generator line 3
+   async_generator return 3 <async_generator_wrapped_value object>
+   async_comprehension line 1
+   async_generator call 3
+   async_generator return 3 None
+   async_comprehension exception 1 StopAsyncIteration StopAsyncIteration()
+   async_comprehension return 1 [1, 2]
+   drive exception 4 StopIteration StopIteration([1, 2])
+   drive line 5
+   drive line 6
+   drive return 6 (['suspended'], [1, 2])
+   run_async_comprehension return 1 (['suspended'], [1, 2])

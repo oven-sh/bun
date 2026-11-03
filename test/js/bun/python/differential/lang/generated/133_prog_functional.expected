@@ -1,0 +1,115 @@
+status: 0
+script: 91343089c28a4297
+source: 047c9196a257d9c4
+---
+compose(inc, dbl, sq)(3) => 19
+compose()(5) => 5
+pipe(3, sq, dbl, inc) => 19
+curry(lambda a, b, c: a + b * c)(1)(2)(3) => 7
+curry(lambda a, b, c: (a, b, c))(1, 2)(3) => (1, 2, 3)
+curry(lambda a, b: a - b)(5, 3) => 2
+partial(pow, 2)(10) => 1024
+partial(int, base=2)("101") => 5
+partial(print, "a", sep="-").keywords => {'sep': '-'}
+flip(pow)(2, 10) => 100
+reduce(lambda a, b: a * b, range(1, 8)) => 5040
+reduce(lambda a, b: a + [b], "abc", []) => ['a', 'b', 'c']
+reduce(max, [3, 9, 2]) => 9
+reduce(lambda a, b: a + b, [], 0) => 0
+TypeError: reduce() of empty iterable with no initial value
+list(map(compose(str, sq), range(4))) => ['0', '1', '4', '9']
+list(filter(compose(lambda b: not b, lambda x: x % 3), range(10))) => [0, 3, 6, 9]
+sorted("hello World".split(), key=str.lower) => ['hello', 'World']
+sorted(range(-3, 4), key=lambda x: (abs(x), x)) => [0, -1, 1, -2, 2, -3, 3]
+[f(3) for f in (inc, dbl, sq)] => [4, 6, 9]
+[(lambda y: lambda x: x + y)(i)(10) for i in range(3)] => [10, 11, 12]
+list(map(lambda f, x: f(x), (inc, dbl), (1, 2))) => [2, 4]
+(lambda *a, **k: (a, k))(1, 2, z=3) => ((1, 2), {'z': 3})
+(lambda f: f(f, 5))(lambda f, n: 1 if n == 0 else n * f(f, n - 1)) => 120
+fib(60) => 1548008755920
+fib.__wrapped__.calls => 61
+len(fib.cache) => 61
+fib.__name__ => wrapper
+6
+fact(3,)
+  fact(2,)
+    fact(1,)
+    -> 1
+  -> 2
+-> 6
+ok after 2
+RuntimeError: gave up after 3 attempts | cause: ValueError('attempt 3 failed')
+abab
+TypeError: rep: expected int, got str
+sv.ping("a") => pong a
+sv.ping("b") => pong b
+Svc.ping.n => 2
+Config(5) is Config(6) => True
+Config().v => 5
+list(islice(count(5, 3), 4)) => [5, 8, 11, 14]
+list(islice(cycle("ab"), 5)) => ['a', 'b', 'a', 'b', 'a']
+list(repeat("x", 3)) => ['x', 'x', 'x']
+list(islice(range(20), 2, 12, 3)) => [2, 5, 8, 11]
+list(islice("abcdef", 2)) => ['a', 'b']
+list(chain("ab", [1], (2,), range(2))) => ['a', 'b', 1, 2, 0, 1]
+list(takewhile(lambda v: v < 3, [1, 2, 3, 1])) => [1, 2]
+list(dropwhile(lambda v: v < 3, [1, 2, 3, 1])) => [3, 1]
+list(accumulate([1, 2, 3, 4])) => [1, 3, 6, 10]
+list(accumulate([1, 2, 3, 4], lambda a, b: a * b)) => [1, 2, 6, 24]
+list(accumulate([])) => []
+list(groupby("aaabbcaa")) => [('a', ['a', 'a', 'a']), ('b', ['b', 'b']), ('c', ['c']), ('a', ['a', 'a'])]
+[(k, len(g)) for k, g in groupby(sorted("hello world".replace(" ", ""... => [('d', 1), ('e', 1), ('h', 1), ('l', 3), ('o', 2), ('r', 1), ('w', 1)]
+list(groupby(range(7), lambda v: v // 3)) => [(0, [0, 1, 2]), (1, [3, 4, 5]), (2, [6])]
+list(product("ab", [1, 2])) => [('a', 1), ('a', 2), ('b', 1), ('b', 2)]
+len(list(product(range(3), range(3), range(3)))) => 27
+list(product()) => [()]
+list(permutations("abc", 2)) => [('a', 'b'), ('a', 'c'), ('b', 'a'), ('b', 'c'), ('c', 'a'), ('c', 'b')]
+len(list(permutations(range(5)))) => 120
+list(combinations("abcd", 3)) => [('a', 'b', 'c'), ('a', 'b', 'd'), ('a', 'c', 'd'), ('b', 'c', 'd')]
+len(list(combinations(range(10), 4))) => 210
+list(zip_longest("abc", [1], fill="-")) => [('a', 1), ('b', '-'), ('c', '-')]
+list(pairwise("abcd")) => [('a', 'b'), ('b', 'c'), ('c', 'd')]
+list(batched(range(7), 3)) => [(0, 1, 2), (3, 4, 5), (6,)]
+[list(g) for g in tee(range(4), 3)] => [[0, 1, 2, 3], [0, 1, 2, 3], [0, 1, 2, 3]]
+list(starmap(pow, [(2, 3), (3, 2)])) => [8, 9]
+list(compress("abcd", [1, 0, 1, 0])) => ['a', 'c']
+list(unique([3, 1, 3, 2, 1])) => [3, 1, 2]
+list(unique("aAbBa", str.lower)) => ['a', 'b']
+list(flatten([1, [2, (3, [4, [5]])], 6])) => [1, 2, 3, 4, 5, 6]
+next(a) => 0
+next(a) => 1
+next(b) => 0
+next(a) => 2
+next(b) => 1
+next(b) => 2
+next(b) => 3
+list(islice(primes(), 15)) => [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47]
+list(takewhile(lambda v: v < 100, fibs())) => [0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89]
+next(v for v in fibs() if v > 10 ** 12) => 1548008755920
+list(islice((p for p in primes() if p % 10 == 3), 6)) => [3, 13, 23, 43, 53, 73]
+sum(islice((v * v for v in count(1) if v % 2), 10)) => 1330
+list(islice(zip(primes(), fibs()), 4)) => [(2, 0), (3, 1), (5, 1), (7, 2)]
+next(dropwhile(lambda p: p < 500, primes())) => 503
+[2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37]
+g1() => 6
+g2() => 101
+g1() => 0
+i1.__closure__[0].cell_contents => 0
+[c.cell_contents for c in r1.__closure__] => [0, 0]
+st["pop"]() => 2
+st["size"]() => 1
+st["peek"]() => 1
+trampoline(t_sum, 3000) => 4501500
+trampoline(t_even, 2001) => False
+['a0', 'b0', 'c0', 'a got tick4', 'a1', 'b finished', 'c1', 'a2', 'c got tick8', 'c finished', 'a finished']
+to_int(zero) => 0
+to_int(three) => 3
+to_int(mul(three)(two)) => 6
+to_int(mul(three)(add(three)(two))) => 15
+to_int(three(two)) => 8
+show(AND(T)(F)) => F
+show(OR(T)(F)) => T
+show(NOT(F)) => T
+show(AND(T)(NOT(F))) => T
+fst(pair(1)(2)) => 1
+snd(pair(1)(2)) => 2

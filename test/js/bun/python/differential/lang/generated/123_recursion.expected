@@ -1,0 +1,83 @@
+status: 0
+script: f7350e6d4b2a4265
+source: 2402a287a837e072
+---
+fact(20) => 2432902008176640000
+fact(100) % 10 ** 9 => 0
+fib(15) => 610
+ack(2, 3) => 9
+gcd(1071, 462) => 21
+depth(150) => 150
+len(hanoi(6)) => 63
+hanoi(2) => [('A', 'B'), ('A', 'C'), ('B', 'C')]
+perms("abc") => ['abc', 'acb', 'bac', 'bca', 'cab', 'cba']
+flatten([1, [2, [3, [4, [5]]]], []]) => [1, 2, 3, 4, 5]
+is_even(100) => True
+is_odd(101) => True
+power_set([1, 2, 3]) => [[], [3], [2], [2, 3], [1], [1, 3], [1, 2], [1, 2, 3]]
+3628800
+tree.total() => 36
+tree.height() => 4
+tree => N(1, N(2, N(4), N(5, N(8))), N(3, N(6), N(7)))
+9969216677189303386214405760200
+5050
+type(sys.getrecursionlimit()).__name__ => int
+sys.getrecursionlimit() => 1000
+sys.setrecursionlimit(0) => ValueError: recursion limit must be greater or equal than 1
+sys.setrecursionlimit(-1) => ValueError: recursion limit must be greater or equal than 1
+sys.setrecursionlimit("a") => TypeError: 'str' object cannot be interpreted as an integer
+sys.setrecursionlimit(1.5) => TypeError: 'float' object cannot be interpreted as an integer
+sys.setrecursionlimit() => TypeError: sys.setrecursionlimit() takes exactly one argument (0 given)
+sys.setrecursionlimit(2 ** 70) => OverflowError: Python int too large to convert to C int
+sys.getrecursionlimit(1) => TypeError: sys.getrecursionlimit() takes no arguments (1 given)
+inf() => RecursionError: maximum recursion depth exceeded
+RuntimeError ('maximum recursion depth exceeded',) True
+still working after a RecursionError depth(100) => 100
+caught again; caught again; caught again; 
+b - a => 100
+150 < a < 200 => True
+sys.getrecursionlimit() == old => True
+depth(50) => 50
+depth(150) => RecursionError: maximum recursion depth exceeded
+150
+low() => RecursionError: cannot set the recursion limit to 5 at the recursion depth 24: the limit is too low
+[2, 1, 0]
+caught somewhere deep
+getattr RecursionError; repr RecursionError; str RecursionError; eq RecursionError; call RecursionError; getitem RecursionError; add RecursionError; iter RecursionError; len RecursionError; bool RecursionError; hash RecursionError; init RecursionError; property RecursionError; contains RecursionError; format RecursionError; with RecursionError; setattr RecursionError; lt RecursionError; index RecursionError; lambda RecursionError; map RecursionError; sorted key RecursionError; comprehension RecursionError; genexpr RecursionError; eval RecursionError; getattr builtin RecursionError; class body RecursionError; method RecursionError; classmethod RecursionError; super RecursionError; decorator RecursionError; generator NameError name 'inf_gen' is not defined; 
+next(inf_gen()) => RecursionError: maximum recursion depth exceeded
+l => [1, [...]]
+repr(l) => [1, [...]]
+str(l) => [1, [...]]
+len(l) => 2
+l[1] is l => True
+l[1][1][1][0] => 1
+{'k': 1, 'self': {...}}
+([(...)],)
+[[[...]]]
+a => [[[...]]]
+b => [[[...]]]
+dd => {'l': [{...}]}
+dl => [{'l': [...]}]
+s => [1, {'a': [...]}]
+f"{s}" => [1, {'a': [...]}]
+"%s" % (s,) => [1, {'a': [...]}]
+"{}".format(s) => [1, {'a': [...]}]
+{'v': dict_values([...])}
+{'i': dict_items([('i', ...)])}
+[[...]]
+[[...], [...]]
+True; True; RecursionError; RecursionError; True; RecursionError; TypeError; True; 1; 1; 
+repr(deep) == "[" * 101 + "]" * 101 => True
+deep == eval(repr(deep)) => True
+len(str(deep)) => 202
+survived repr of a deep list
+survived comparison of deep lists
+survived hash of a deep tuple
+survived repr of a deep tuple
+survived str of a deep list
+survived ordering of deep lists
+eval("(" * 150 + "1" + ")" * 150) => 1
+compile("[" * 5000 + "]" * 5000, "<s>", "eval") => SyntaxError: too many nested parentheses (<s>, line 1)
+compile("x" + ".a" * 20000, "<s>", "eval") and "long attribute chains... => 'long attribute chains are iterative'
+compile("+".join(["1"] * 20000), "<s>", "eval") and "long sums compile" => 'long sums compile'
+done

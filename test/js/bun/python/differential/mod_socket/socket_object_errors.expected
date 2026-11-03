@@ -1,0 +1,143 @@
+status: 0
+script: 9891ca59bd082326
+---
+TypeError: bind(): AF_INET address must be tuple, not int
+TypeError: bind(): AF_INET address must be tuple, not list
+TypeError: AF_INET address must be a pair (host, port)
+TypeError: AF_INET address must be a pair (host, port)
+TypeError: AF_INET address must be a pair (host, port)
+TypeError: str, bytes or bytearray expected, not int
+TypeError: str, bytes or bytearray expected, not NoneType
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+OverflowError: bind(): port must be 0-65535.
+OverflowError: bind(): port must be 0-65535.
+OverflowError: bind(): port must be 0-65535.
+OverflowError: bind(): port must be 0-65535.
+TypeError: host name must not contain null character
+TypeError: host name must not contain null character
+gaierror: [Errno -9] Address family for hostname not supported
+TypeError: encoding of hostname failed
+TypeError: connect(): AF_INET address must be tuple, not int
+TypeError: connect_ex(): AF_INET address must be tuple, not int
+OverflowError: connect_ex(): port must be 0-65535.
+TypeError: sendto(): AF_INET address must be tuple, not int
+OverflowError: sendto(): port must be 0-65535.
+TypeError: sendto() takes 2 or 3 arguments (1 given)
+TypeError: sendto() takes 2 or 3 arguments (4 given)
+TypeError: a bytes-like object is required, not 'str'
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: socket.sendto() takes no keyword arguments
+TypeError: sendmsg(): AF_INET address must be tuple, not int
+TypeError: socket.bind() takes exactly one argument (0 given)
+TypeError: socket.bind() takes exactly one argument (2 given)
+TypeError: socket.bind() takes no keyword arguments
+TypeError: bind(): AF_INET6 address must be tuple, not int
+TypeError: AF_INET6 address must be a tuple (host, port[, flowinfo[, scopeid]])
+TypeError: AF_INET6 address must be a tuple (host, port[, flowinfo[, scopeid]])
+OverflowError: bind(): flowinfo must be 0-1048575.
+OverflowError: bind(): flowinfo must be 0-1048575.
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'str' object cannot be interpreted as an integer
+OverflowError: bind(): port must be 0-65535.
+OverflowError: bind(): port must be 0-65535.
+gaierror: [Errno -9] Address family for hostname not supported
+OSError: address family mismatched
+TypeError: str, bytes or bytearray expected, not int
+TypeError: a bytes-like object is required, not 'int'
+TypeError: a bytes-like object is required, not 'NoneType'
+TypeError: a bytes-like object is required, not 'tuple'
+OSError: AF_UNIX path too long
+OSError: AF_UNIX path too long
+FileNotFoundError: [Errno 2] No such file or directory
+2
+UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 1: surrogates not allowed
+(0, 0)
+TypeError: bind(): AF_NETLINK address must be tuple, not int
+TypeError: AF_NETLINK address must be a pair (pid, groups)
+TypeError: 'str' object cannot be interpreted as an integer
+(16, 3, 0)
+TypeError: socket() takes at most 4 arguments (5 given)
+TypeError: 'str' object cannot be interpreted as an integer
+OverflowError: Python int too large to convert to C int
+TypeError: socket() got an unexpected keyword argument 'foo'
+OSError: [Errno 97] Address family not supported by protocol
+OSError: [Errno 22] Invalid argument
+OSError: [Errno 22] Invalid argument
+ValueError: negative file descriptor
+ValueError: negative file descriptor
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+OverflowError: Python int too large to convert to C long
+OSError: [Errno 9] Bad file descriptor
+OSError: [Errno 88] Socket operation on non-socket
+OSError: [Errno 9] Bad file descriptor
+OSError: [Errno 88] Socket operation on non-socket
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: listen() takes at most 1 argument (2 given)
+TypeError: socket.listen() takes no keyword arguments
+OverflowError: signed integer is greater than maximum
+TypeError: 'str' object cannot be interpreted as an integer
+OverflowError: Python int too large to convert to C int
+TypeError: socket.shutdown() takes exactly one argument (0 given)
+OSError: [Errno 22] Invalid argument
+OSError: [Errno 107] Transport endpoint is not connected
+TypeError: must be real number, not str
+ValueError: Timeout value out of range
+None
+OverflowError: timestamp out of range for C PyTime_t
+TypeError: socket.settimeout() takes exactly one argument (0 given)
+OverflowError: timestamp out of range for C PyTime_t
+(None, 8589934592.0, 8589934592.0)
+(None, 0.1, True)
+(None, 1e-09, True)
+(None, 5.0, <class 'float'>)
+(None, 1.0)
+(None, 0.0, False)
+(None, None, True)
+TypeError: socket.setblocking() takes exactly one argument (0 given)
+TypeError: socket.gettimeout() takes no arguments (1 given)
+TypeError: setsockopt() takes at least 3 arguments (0 given)
+TypeError: setsockopt() takes at least 3 arguments (2 given)
+TypeError: setsockopt() takes at most 4 arguments (5 given)
+TypeError: setsockopt() requires 4 arguments when the third argument is None
+TypeError: setsockopt() only takes 4 arguments when the third argument is None (got int)
+TypeError: setsockopt() only takes 4 arguments when the third argument is None (got bytes)
+TypeError: socket option should be int, bytes-like object or None (got str)
+TypeError: socket option should be int, bytes-like object or None (got float)
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'str' object cannot be interpreted as an integer
+OverflowError: signed integer is greater than maximum
+OSError: [Errno 22] Invalid argument
+TypeError: 'str' object cannot be interpreted as an integer
+OSError: [Errno 22] Invalid argument
+TypeError: socket.setsockopt() takes no keyword arguments
+OSError: [Errno 92] Protocol not available
+TypeError: getsockopt() takes at least 2 arguments (0 given)
+TypeError: getsockopt() takes at least 2 arguments (1 given)
+TypeError: getsockopt() takes at most 3 arguments (4 given)
+OSError: getsockopt buflen out of range
+OSError: getsockopt buflen out of range
+TypeError: 'str' object cannot be interpreted as an integer
+0
+OSError: [Errno 95] Operation not supported
+OverflowError: signed integer is greater than maximum
+2
+AttributeError: readonly attribute
+AttributeError: attribute 'timeout' of '_socket.socket' objects is not writable
+AttributeError: readonly attribute
+AttributeError: '_socket.socket' object has no attribute 'x' and no __dict__ for setting new attributes
+AttributeError: '_socket.socket' object has no attribute '__dict__'
+TypeError: cannot create weak reference to '_socket.socket' object
+True
+True
+<socket object, fd=-1, family=0, type=0, proto=0>
+-1
+(0, 0, 0, None, -1)
+OSError: [Errno 9] Bad file descriptor
+None
+OSError: getsockaddrlen: bad family
+True
+True
+TypeError: cannot pickle '_socket.socket' object
+TypeError: cannot pickle '_socket.socket' object

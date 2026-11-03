@@ -1,0 +1,43 @@
+status: 0
+script: 7bef2e7df374ea2e
+---
+BufferError: Existing exports of data: object cannot be re-sized
+BufferError: Existing exports of data: object cannot be re-sized
+True
+10240
+BufferError: Existing exports of data: object cannot be re-sized
+BufferError: Existing exports of data: object cannot be re-sized
+True
+BufferError: Existing exports of data: object cannot be re-sized
+BufferError: Existing exports of data: object cannot be re-sized
+True
+BufferError: Existing exports of data: object cannot be re-sized
+BufferError: Existing exports of data: object cannot be re-sized
+True
+BufferError: Existing exports of data: object cannot be re-sized
+BufferError: Existing exports of data: object cannot be re-sized
+True
+BufferError: Existing exports of data: object cannot be re-sized
+BufferError: Existing exports of data: object cannot be re-sized
+True
+BufferError: Existing exports of data: object cannot be re-sized
+BufferError: Existing exports of data: object cannot be re-sized
+True
+BufferError: Existing exports of data: object cannot be re-sized
+BufferError: Existing exports of data: object cannot be re-sized
+True
+made
+b''
+__buffer__ 0
+__release_buffer__
+True
+True
+True
+KeyError: 'no buffer'
+KeyError: 'no buffer'
+error: Error 2 while decompressing data
+__buffer__ 0
+__release_buffer__
+made
+BufferError: Existing exports of data: object cannot be re-sized
+True

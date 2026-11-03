@@ -1,0 +1,22 @@
+# VARIANTS: 8
+# What re._compile_template() returns is not to be trusted. (CPython looks the function up once, hence a file for each.)
+REPLS = []
+p = C(r'(?P<a>x+)(?P<b>y)?(z)?')
+_FakeRe._compile_template = staticmethod([
+    lambda pattern, repl: 42,
+    lambda pattern, repl: _sre.template(pattern, ['<', 7, '>']),
+    lambda pattern, repl: _sre.template(pattern, ['<', 1, '', 2, '', 3, '>', 0, '']),
+    lambda pattern, repl: _sre.template(pattern, [b'<', 1, b'>']),
+    lambda pattern, repl: _sre.template(pattern, ['only']),
+    lambda pattern, repl: 1 / 0,
+    lambda pattern, repl: _sre.template(pattern, ['<', 1, 5]),
+    lambda pattern, repl: None,
+][VARIANT])
+attempt(p.sub, r'\1', 'axb')
+attempt(p.subn, r'\1', 'axyb')
+attempt(p.sub, r'\1', 'ab')
+attempt(p.match('x').expand, r'\1')
+attempt(p.match('xy').expand, 'no backslash')
+attempt(p.match('xy').expand, 1)
+attempt(p.sub, 1, 'axb')
+attempt(p.sub, None, 'axb')

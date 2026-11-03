@@ -1,0 +1,90 @@
+status: 0
+script: 4150306316dcc27f
+source: a687e32f7302c3f3
+---
+Point(1) => Point(1, 2, (), 3, {})
+Point(1, 5) => Point(1, 5, (), 3, {})
+Point(1, 2, 3, 4) => Point(1, 2, (3, 4), 3, {})
+Point(1, z=9) => Point(1, 2, (), 9, {})
+Point(x=1, y=7) => Point(1, 7, (), 3, {})
+Point(1, w=0) => Point(1, 2, (), 3, {'w': 0})
+Point(*[1, 2], **{"z": 5}) => Point(1, 2, (), 5, {})
+TypeError: Point.__init__() missing 1 required positional argument: 'x'
+TypeError: Point.__init__() got multiple values for argument 'x'
+type(Point(1)) is Point => True
+isinstance(Point(1), Point) => True
+--- one place, many callees
+show(try_(lambda: Callee(1))) [Callee=Point] => Point(1, 2, (), 3, {})
+show(try_(lambda: Callee(1))) [Callee=function] => ('function', (1,), {})
+show(try_(lambda: Callee(1))) [Callee=Point] => Point(1, 2, (), 3, {})
+show(try_(lambda: Callee(1))) [Callee=WithNew] => ('from __new__', (1,))
+show(try_(lambda: Callee(1))) [Callee=NewAndInit] => ['new', ('init', 1)]
+show(try_(lambda: Callee(1))) [Callee=Meta] => ('from the metaclass', 'WithMeta', (1,))
+show(try_(lambda: Callee(1))) [Callee=PlainMeta] => ('WithPlainMeta', 1)
+show(try_(lambda: Callee(1))) [Callee=Slots] => ('Slots', 1)
+show(try_(lambda: Callee(1))) [Callee=Derived] => Point(1, 1, (), 3, {})
+show(try_(lambda: Callee(1))) [Callee=Inherits] => Point(1, 2, (), 3, {})
+show(try_(lambda: Callee(1))) [Callee=FromList] => [1, 1]
+show(try_(lambda: Callee(1))) [Callee=FromError] => error 1
+show(try_(lambda: Callee(1))) [Callee=int] => 1
+show(try_(lambda: Callee(1))) [Callee=str] => 1
+show(try_(lambda: Callee(1))) [Callee=Point] => Point(1, 2, (), 3, {})
+show(try_(lambda: Callee(1))) [Callee=builtin_function_or_method] => TypeError: object of type 'int' has no len()
+show(try_(lambda: Callee(1))) [Callee=NoInit] => TypeError: NoInit() takes no arguments
+show(try_(lambda: Callee(1))) [Callee=5] => TypeError: 'int' object is not callable
+show(try_(lambda: Callee(1))) [Callee=None] => TypeError: 'NoneType' object is not callable
+show(NoInit()) => NoInit
+try_(lambda: NoInit(1)) => TypeError: NoInit() takes no arguments
+try_(lambda: NoInit(a=1)) => TypeError: NoInit() takes no arguments
+--- what __init__ returns
+TypeError: __init__() should return None, not 'int'
+ReturnsNone
+TypeError: __init__() should return None, not 'generator'
+TypeError: __init__() should return None, not 'coroutine'
+--- __init__ that is not a plain function
+static 1
+class ClassInit (1,)
+callable (1,)
+4
+printed
+BuiltinInit
+--- the class changes
+make(1).v => ('first', 1)
+make(2).v => ('first', 2)
+('second', 3)
+new took over
+('another class', 5)
+TypeError: Changing() takes no arguments
+('third', 7)
+('Base1', 1)
+('Base2', 2)
+--- abstract classes
+TypeError: Can't instantiate abstract class Abstract without an implementation for abstract method 'f'
+Concrete.__init__
+Concrete
+--- order of evaluation, and exceptions
+[1, 2, ('init', 1, 2)]
+try_(lambda: Deleted(raises())) => KeyError: 'in an argument'
+Deleted.count => 0
+[]
+[('where', 2), ('__init__', -3)]
+['finalized']
+--- recursion
+50
+RecursionError: maximum recursion depth 
+--- names from modules, nested names, generics
+collections.OrderedDict(a=1) => OrderedDict({'a': 1})
+fractions.Fraction(1, 3) => 1/3
+collections.Counter("aab") => Counter({'a': 2, 'b': 1})
+types.SimpleNamespace(a=1) => namespace(a=1)
+(3, 4)
+Generic(1).v => 1
+Generic[int](2).v => 2
+Data(1) => Data(a=1, b='b')
+Data(1, "c") => Data(a=1, b='c')
+Data(b="x", a=0) => Data(a=0, b='x')
+try_(lambda: Data()) => TypeError: Data.__init__() missing 1 required positional argument: 'a'
+_Private(1) => Point(1, 2, (), 3, {})
+__builtins__.__dict__["ValueError"]("v") if hasattr(__builtins__, "__... => v
+('a lambda named T', 1)
+NameError: name 'Undefined' is not defined

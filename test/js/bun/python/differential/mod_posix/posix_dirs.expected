@@ -1,0 +1,123 @@
+status: 0
+script: 27fe0c784bf98c80
+---
+-- listdir
+['.hidden', 'caf\xe9', 'dir', 'fifo', 'file', 'link_broken', 'link_dir', 'link_file', 'raw\udcff']
+[b'.hidden', b'caf\xc3\xa9', b'dir', b'fifo', b'file', b'link_broken', b'link_dir', b'link_file', b'raw\xff']
+[] []
+True True
+list
+['.hidden', 'caf\xe9', 'dir', 'fifo', 'file', 'link_broken', 'link_dir', 'link_file', 'raw\udcff']
+['.hidden', 'caf\xe9', 'dir', 'fifo', 'file', 'link_broken', 'link_dir', 'link_file', 'raw\udcff']
+OSError [Errno 9] Bad file descriptor
+FileNotFoundError [Errno 2] No such file or directory: 'nope'
+FileNotFoundError [Errno 2] No such file or directory: b'nope'
+NotADirectoryError [Errno 20] Not a directory: 'top/file'
+FileNotFoundError [Errno 2] No such file or directory: ''
+[]
+NotADirectoryError 20 Not a directory True
+NotADirectoryError 20 Not a directory True
+-- scandir
+ScandirIterator posix True
+StopIteration 
+StopIteration 
+'.hidden' 'top/.hidden' <DirEntry '.hidden'> False True False False False True 'top/.hidden' 'top/.hidden'
+   True True int
+   True True True True
+'caf\xe9' 'top/caf\xe9' <DirEntry 'caf\xe9'> False True False False False True 'top/caf\xe9' 'top/caf\xe9'
+   True True int
+   True True True True
+'dir' 'top/dir' <DirEntry 'dir'> True False False False True False 'top/dir' 'top/dir'
+   True True int
+   True True True True
+'fifo' 'top/fifo' <DirEntry 'fifo'> False False False False False False 'top/fifo' 'top/fifo'
+   True True int
+   True True True True
+'file' 'top/file' <DirEntry 'file'> False True False False False True 'top/file' 'top/file'
+   True True int
+   True True True True
+'link_broken' 'top/link_broken' <DirEntry 'link_broken'> False False True False False False 'top/link_broken' 'top/link_broken'
+   True True int
+FileNotFoundError [Errno 2] No such file or directory: 'top/link_broken'
+'link_dir' 'top/link_dir' <DirEntry 'link_dir'> True False True False False False 'top/link_dir' 'top/link_dir'
+   True True int
+   True True True True
+'link_file' 'top/link_file' <DirEntry 'link_file'> False True True False False False 'top/link_file' 'top/link_file'
+   True True int
+   True True True True
+'raw\udcff' 'top/raw\udcff' <DirEntry 'raw\udcff'> False True False False False True 'top/raw\udcff' 'top/raw\udcff'
+   True True int
+   True True True True
+<class 'posix.DirEntry'> DirEntry posix DirEntry True
+AttributeError readonly attribute
+AttributeError readonly attribute
+AttributeError readonly attribute
+AttributeError 'posix.DirEntry' object has no attribute 'other' and no __dict__ for setting new attributes
+TypeError is_dir() takes no positional arguments
+TypeError is_dir() got an unexpected keyword argument 'follow'
+TypeError stat() takes no positional arguments
+TypeError cannot create 'posix.DirEntry' instances
+posix.DirEntry[str]
+posix.DirEntry[bytes]
+TypeError cannot create 'posix.ScandirIterator' instances
+True False
+-- bytes, None, a descriptor
+b'.hidden' b'top/.hidden' <DirEntry b'.hidden'> b'top/.hidden' True
+b'caf\xc3\xa9' b'top/caf\xc3\xa9' <DirEntry b'caf\xc3\xa9'> b'top/caf\xc3\xa9' True
+b'dir' b'top/dir' <DirEntry b'dir'> b'top/dir' False
+b'fifo' b'top/fifo' <DirEntry b'fifo'> b'top/fifo' False
+b'file' b'top/file' <DirEntry b'file'> b'top/file' True
+b'link_broken' b'top/link_broken' <DirEntry b'link_broken'> b'top/link_broken' False
+b'link_dir' b'top/link_dir' <DirEntry b'link_dir'> b'top/link_dir' False
+b'link_file' b'top/link_file' <DirEntry b'link_file'> b'top/link_file' True
+b'raw\xff' b'top/raw\xff' <DirEntry b'raw\xff'> b'top/raw\xff' True
+[('.hidden', './.hidden'), ('caf\xe9', './caf\xe9'), ('dir', './dir'), ('fifo', './fifo'), ('file', './file'), ('link_broken', './link_broken'), ('link_dir', './link_dir'), ('link_file', './link_file'), ('raw\udcff', './raw\udcff')]
+True
+[('.hidden', './.hidden'), ('caf\xe9', './caf\xe9'), ('dir', './dir'), ('fifo', './fifo'), ('file', './file'), ('link_broken', './link_broken'), ('link_dir', './link_dir'), ('link_file', './link_file'), ('raw\udcff', './raw\udcff')]
+['top/.hidden', 'top/dir', 'top/fifo', 'top/file', 'top/link_broken', 'top/link_dir', 'top/link_file']
+['top//.hidden', 'top//dir', 'top//fifo', 'top//file', 'top//link_broken', 'top//link_dir', 'top//link_file']
+True
+'.hidden' '.hidden' False True False -
+'caf\xe9' 'caf\xe9' False True False -
+'dir' 'dir' True False False -
+'fifo' 'fifo' False False False -
+'file' 'file' False True False 5
+'link_broken' 'link_broken' False False True -
+'link_dir' 'link_dir' True False True -
+'link_file' 'link_file' False True True -
+'raw\udcff' 'raw\udcff' False True False -
+9
+5 True
+OSError [Errno 9] Bad file descriptor: 'link_dir'
+OSError [Errno 9] Bad file descriptor: 'file'
+False True
+OSError [Errno 9] Bad file descriptor: 'link_dir'
+[('inner', 'top/dir/inner')]
+-- closing
+None
+StopIteration 
+None
+ScandirIterator True
+StopIteration 
+None
+None
+StopIteration 
+[]
+TypeError ScandirIterator.close() takes no arguments (1 given)
+-- what is cached, and what is gone
+True False False
+FileNotFoundError [Errno 2] No such file or directory: 'top/file'
+True False False False
+FileNotFoundError [Errno 2] No such file or directory: 'top/link_file'
+True
+3 3
+3 3
+-- errors
+FileNotFoundError [Errno 2] No such file or directory: 'nope'
+FileNotFoundError [Errno 2] No such file or directory: b'nope'
+NotADirectoryError [Errno 20] Not a directory: 'top/fifo'
+FileNotFoundError [Errno 2] No such file or directory: ''
+TypeError scandir() takes at most 1 argument (2 given)
+ScandirIterator
+-- many
+300 f000 f299 True

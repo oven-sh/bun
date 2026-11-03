@@ -1,0 +1,15 @@
+status: 0
+oracle: none
+mask: addresses
+---
+def call(f): return f() | function K() { [native code] } | function len() { [native code] } | function int() { [native code] } | function upper() { [native code] } | function get() { [native code] }
+function PyMethod() { [native code] }
+function PyInstance() { [native code] }
+capture,call
+capture,sorted,call_sorted
+capture,list,call_map
+capture,__init__,K
+capture,method,unknown
+capture,__call__,unknown
+capture,gen,next
+capture,key,max

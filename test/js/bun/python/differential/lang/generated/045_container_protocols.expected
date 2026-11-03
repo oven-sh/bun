@@ -1,0 +1,259 @@
+status: 0
+script: a889aded1f557911
+source: eb1a1db72eea39cc
+---
+len(q) => 3
+getitem 0; q[0] => 1
+getitem -1; q[-1] => 3
+getitem slice(1, None, None); q[1:] => [2, 3]
+getitem slice(None, None, 2); q[::2] => [1, 3]
+setitem 0 9; setitem slice(1, 2, None) [7, 8]; delitem 0; delitem slice(0, 1, None); [8, 3]
+getitem 0; getitem 1; getitem 2; [8, 3]
+getitem 0; getitem 1; getitem 2; [8, 3]
+getitem 0; True
+getitem 0; getitem 1; getitem 2; False
+getitem 0; getitem 1; getitem 2; tuple(q) => (8, 3)
+getitem 0; getitem 1; getitem 2; sum(q) => 11
+getitem 0; getitem 1; getitem 2; max(q) => 8
+getitem 1; getitem 0; [3, 8]
+getitem 0; getitem 1; getitem 2; a => 8
+b => 3
+getitem 0; getitem 1; getitem 2; [(8, 'a'), (3, 'b')]
+getitem 0; getitem 1; getitem 2; [(0, 8), (1, 3)]
+getitem 0; getitem 1; getitem 2; [8, 3]
+bool(q) => True
+bool(Seq()) => False
+type(iter(q)).__name__ => iterator
+type(reversed(q)).__name__ => reversed
+getitem 0; getitem 1; getitem 2; [*q] => [8, 3]
+getitem 0; getitem 1; getitem 2; {*q} => {8, 3}
+getitem 0; getitem 1; getitem 2; (lambda *a: a)(*q) => (8, 3)
+q[10] => getitem 10; IndexError: list index out of range
+q["a"] => getitem a; TypeError: list indices must be integers or slices, not str
+list(G()) => [0, 1, 4]
+4 in G() => True
+5 in G() => False
+[x for x in G()] => [0, 1, 4]
+tuple(G()) => (0, 1, 4)
+sum(G()) => 5
+dict(enumerate(G())) => {0: 0, 1: 1, 2: 4}
+"".join(map(str, G())) => 014
+len(G()) => TypeError: object of type 'G' has no len()
+reversed(G()) => TypeError: object of type 'G' has no len()
+bool(G()) => True
+[0, 1]
+list(GErr()) => KeyError: 2
+5 in GErr() => KeyError: 2
+next(it) => 0
+next(it) => 1
+next(it) => 2
+100 in GInf() => True
+iter; list(It()) => [1, 2, 3]
+iter; 2 in It() => True
+iter; 9 in It() => False
+iter; [*It()] => [1, 2, 3]
+iter; max(It()) => 3
+contains 1; 1 in Cont() => True
+contains 2; 2 in Cont() => False
+contains 1; 1 not in Cont() => False
+1 in ContOdd() => False
+0 in ContOdd() => True
+iter(BadIter1()) => TypeError: BadIter1.__iter__() must return an iterator, not int
+list(BadIter2()) => TypeError: BadIter2.__iter__() must return an iterator, not list
+iter(BadIter3()) => TypeError: 'int' object is not callable
+iter(NextOnly()) => TypeError: 'NextOnly' object is not iterable
+1
+iter(IterSelfNoNext()) => TypeError: IterSelfNoNext.__iter__() must return an iterator, not IterSelfNoNext
+[x for x in IterSelfNoNext()] => TypeError: IterSelfNoNext.__iter__() must return an iterator, not IterSelfNoNext
+1 in BadIter1() => TypeError: argument of type 'BadIter1' is not a container or iterable
+for_loop(5) => TypeError: 'int' object is not iterable
+for_loop(None) => TypeError: 'NoneType' object is not iterable
+for_loop(BadIter1()) => TypeError: BadIter1.__iter__() must return an iterator, not int
+for_loop(NextOnly()) => TypeError: 'NextOnly' object is not iterable
+for_loop(int) => TypeError: 'type' object is not iterable
+for_loop(len) => TypeError: 'builtin_function_or_method' object is not iterable
+for_loop(1.5) => TypeError: 'float' object is not iterable
+for_loop(object()) => TypeError: 'object' object is not iterable
+iter(5) => TypeError: 'int' object is not iterable
+iter() => TypeError: iter expected at least 1 argument, got 0
+next(5) => TypeError: 'int' object is not an iterator
+next([1]) => TypeError: 'list' object is not an iterator
+next() => TypeError: next expected at least 1 argument, got 0
+next("a") => TypeError: 'str' object is not an iterator
+next(iter([])) => StopIteration: 
+next(range(1)) => TypeError: 'range' object is not an iterator
+iter(1, 2) => TypeError: iter(v, w): v must be callable
+iter(1, 2, 3) => TypeError: iter expected at most 2 arguments, got 3
+list(5) => TypeError: 'int' object is not iterable
+tuple(None) => TypeError: 'NoneType' object is not iterable
+set(1.5) => TypeError: 'float' object is not iterable
+sum(5) => TypeError: 'int' object is not iterable
+max(5) => TypeError: 'int' object is not iterable
+sorted(5) => TypeError: 'int' object is not iterable
+"".join(5) => TypeError: can only join an iterable
+dict(5) => TypeError: 'int' object is not iterable
+zip(5) => TypeError: 'int' object is not iterable
+map(str, 5) => TypeError: 'int' object is not iterable
+enumerate(5) => TypeError: 'int' object is not iterable
+filter(None, 5) => TypeError: 'int' object is not iterable
+reversed(5) => TypeError: 'int' object is not reversible
+all(5) => TypeError: 'int' object is not iterable
+any(None) => TypeError: 'NoneType' object is not iterable
+[].extend(5) => TypeError: 'int' object is not iterable
+1 in 5 => TypeError: argument of type 'int' is not a container or iterable
+list(c) => [1, 2, 3]
+list(c) => []
+next(c, "exhausted") => exhausted
+list(Count(0)) => []
+sum(Count(4)) => 10
+2 in Count(3) => True
+list(zip(Count(2), Count(5))) => [(1, 1), (2, 2)]
+[a * b for a in Count(2) for b in Count(2)] => [1, 2, 2, 4]
+('done', 0) done
+next(c) => 1
+3 in c => True
+list(c) => [4, 5]
+len(L(0)) => 0
+len(L(5)) => 5
+len(L(True)) => 1
+len(L(2 ** 62)) => 4611686018427387904
+bool(L(0)) => False
+bool(L(1)) => True
+len(L(-1)) => ValueError: __len__() should return >= 0
+len(L(1.0)) => TypeError: 'float' object cannot be interpreted as an integer
+len(L("a")) => TypeError: 'str' object cannot be interpreted as an integer
+len(L(None)) => TypeError: 'NoneType' object cannot be interpreted as an integer
+len(L(2 ** 63)) => OverflowError: cannot fit 'int' into an index-sized integer
+len(L(2 ** 100)) => OverflowError: cannot fit 'int' into an index-sized integer
+bool(L(-1)) => ValueError: __len__() should return >= 0
+bool(L(2 ** 100)) => OverflowError: cannot fit 'int' into an index-sized integer
+bool(L(1.5)) => TypeError: 'float' object cannot be interpreted as an integer
+len(5) => TypeError: object of type 'int' has no len()
+len(None) => TypeError: object of type 'NoneType' has no len()
+len() => TypeError: len() takes exactly one argument (0 given)
+len(1, 2) => TypeError: len() takes exactly one argument (2 given)
+len(int) => TypeError: object of type 'type' has no len()
+len(x for x in []) => TypeError: object of type 'generator' has no len()
+len(iter([])) => TypeError: object of type 'list_iterator' has no len()
+len(lambda: 0) => TypeError: object of type 'function' has no len()
+len(1.5) => TypeError: object of type 'float' has no len()
+len(zip()) => TypeError: object of type 'zip' has no len()
+len(map(str, [])) => TypeError: object of type 'map' has no len()
+4
+list(Hint(0)) => [1, 2, 3]
+list(Hint(100)) => [1, 2, 3]
+list(Hint(NotImplemented)) => [1, 2, 3]
+tuple(Hint(1)) => (1, 2, 3)
+list(Hint(-1)) => ValueError: Hint.__length_hint__() must return a non-negative int
+list(Hint("a")) => TypeError: Hint.__length_hint__() must return an int, not str
+list(Hint(1.5)) => TypeError: Hint.__length_hint__() must return an int, not float
+list(reversed(Rev())) => ['c', 'b', 'a']
+reversed(RevOdd()) => 5
+reversed(RevNone()) => TypeError: 'RevNone' object is not reversible
+reversed({1}) => TypeError: 'set' object is not reversible
+reversed(x for x in []) => TypeError: 'generator' object is not reversible
+reversed(iter([])) => TypeError: 'list_iterator' object is not reversible
+reversed() => TypeError: reversed expected 1 argument, got 0
+reversed([], 1) => TypeError: reversed expected 1 argument, got 2
+list(reversed({1: 2, 3: 4})) => [3, 1]
+list(reversed("abc")) => ['c', 'b', 'a']
+list(reversed((1, 2))) => [2, 1]
+list(reversed(range(3))) => [2, 1, 0]
+list(reversed([])) => []
+list(reversed({1: 2}.items())) => [(1, 2)]
+list(reversed(b"ab")) => [98, 97]
+next(rv) => 3
+rv.__length_hint__() => 2
+list(rv) => [2, 1]
+next(rv, None) => None
+[]
+[2, 1]
+m["a"] => 1
+m[1, 2] => 3
+"a" in m => True
+len(m) => 3
+list(m) => ['a', 'b', (1, 2)]
+dict(m) => {'a': 1, 'b': 2, (1, 2): 3}
+{**m} => {'a': 1, 'b': 2, (1, 2): 3}
+(lambda **k: k)(**{k: v for k, v in dict(m).items() if isinstance(k, ... => {'a': 1, 'b': 2}
+['b', (1, 2)]
+12
+m["zz"] => KeyError: 'zz'
+(lambda **k: k)(**m) => {'b': 12}
+"%(b)s" % m => 12
+"{b}".format_map(m) => 12
+"{0[b]}".format(m) => 12
+md["a"] => 1
+missing zz; md["zz"] => default for 'zz'
+md.get("zz") => None
+"zz" in md => False
+md => {'a': 1}
+missing (1, 2); md[1, 2] => default for (1, 2)
+md.pop("zz") => KeyError: 'zz'
+{'x': [1, 2], 'y': [3]}
+MissingRaise()["q"] => ValueError: no q
+get 1; set 1 15; get ('a', 'b'); set ('a', 'b') 20; get slice(1, 2, None); set slice(1, 2, None) 9; set Ellipsis 0; del None; set () 1; set [1] 2; set {} 3; 
+val 2; obj; key 1; set 1 2; 
+obj; key 1; get 1; val 2; set 1 12; 
+obj; key 1; del 1; 
+obj; key 1; get 1; 
+'int' object is not subscriptable | 'NoneType' object is not subscriptable | 'float' object is not subscriptable | 'builtin_function_or_method' object is not subscriptable | 'object' object is not subscriptable | type 'int' is not subscriptable | 'function' object is not subscriptable | 'set' object is not subscriptable | 'list_iterator' object is not subscriptable | 'generator' object is not subscriptable | 'ellipsis' object is not subscriptable | 'complex' object is not subscriptable | 'bool' object is not subscriptable | 'frozenset' object is not subscriptable | 'range_iterator' object is not subscriptable | 'zip' object is not subscriptable | 
+'int' object does not support item assignment | 'NoneType' object does not support item assignment | 'str' object does not support item assignment | 'tuple' object does not support item assignment | 'bytes' object does not support item assignment | 'builtin_function_or_method' object does not support item assignment | 'object' object does not support item assignment | 'set' object does not support item assignment | 'range' object does not support item assignment | 'frozenset' object does not support item assignment | 'type' object does not support item assignment | 'float' object does not support item assignment | 
+'int' object does not support item deletion | 'NoneType' object does not support item deletion | 'str' object doesn't support item deletion | 'tuple' object doesn't support item deletion | 'bytes' object doesn't support item deletion | 'builtin_function_or_method' object does not support item deletion | 'object' object does not support item deletion | 'set' object doesn't support item deletion | 'range' object doesn't support item deletion | 'frozenset' object doesn't support item deletion | 'type' object does not support item deletion | 
+[10, 20, 30][Ix(1)] => 20
+"abc"[Ix(-1)] => c
+(1, 2, 3)[Ix(0):Ix(2)] => (1, 2)
+list(range(Ix(3))) => [0, 1, 2]
+"a" * Ix(3) => aaa
+[0] * Ix(2) => [0, 0]
+bin(Ix(5)) => 0b101
+hex(Ix(255)) => 0xff
+oct(Ix(8)) => 0o10
+chr(Ix(65)) => A
+int(Ix(7)) => 7
+range(10)[Ix(2)] => 2
+b"abc"[Ix(1)] => 98
+bytes(Ix(2)) => b'\x00\x00'
+bytearray(Ix(1)) => bytearray(b'\x00')
+[1, 2, 3].pop(Ix(0)) => 1
+"abc".center(Ix(5), "*") => *abc*
+round(1.234, Ix(1)) => 1.2
+pow(2, Ix(3)) if False else "" => 
+1 << 2 => 4
+slice(Ix(1)).indices(5) => (0, 1, 1)
+"{:{}}".format(1, 3) =>   1
+[1, 2, 3].index(2, Ix(0)) => 1
+divmod(7, 2) => (3, 1)
+float(Ix(3)) => 3.0
+complex(Ix(2)) => (2+0j)
+"%d" % Ix(4) => 4
+"%x" % Ix(255) => ff
+format(Ix(5), "") [:1] != "5" => True
+isinstance(Ix(1), int) => False
+(5).to_bytes(Ix(2)) => b'\x00\x05'
+int.from_bytes(b"\x01", "big") => 1
+"ab".zfill(Ix(4)) => 00ab
+list(enumerate("a", Ix(5))) => [(5, 'a')]
+[1][Ix("a")] => TypeError: Ix.__index__() must return an int, not str
+[1][Ix(1.0)] => TypeError: Ix.__index__() must return an int, not float
+[1][Ix(None)] => TypeError: Ix.__index__() must return an int, not NoneType
+[1, 2][Ix(True)] => 2
+[1][Ix(2 ** 100)] => IndexError: cannot fit 'Ix' into an index-sized integer
+[1][Ix(5)] => IndexError: list index out of range
+"a" * Ix(2 ** 100) => OverflowError: cannot fit 'Ix' into an index-sized integer
+1 + Ix(1) => TypeError: unsupported operand type(s) for +: 'int' and 'Ix'
+Ix(1) + 1 => TypeError: unsupported operand type(s) for +: 'Ix' and 'int'
+1 << Ix(1) => TypeError: unsupported operand type(s) for <<: 'int' and 'Ix'
+Ix(1) & 1 => TypeError: unsupported operand type(s) for &: 'Ix' and 'int'
+range(Ix("a")) => TypeError: Ix.__index__() must return an int, not str
+[1][1.0] => TypeError: list indices must be integers or slices, not float
+[1]["0"] => TypeError: list indices must be integers or slices, not str
+[1][None] => TypeError: list indices must be integers or slices, not NoneType
+[1][[0]] => TypeError: list indices must be integers or slices, not list
+[1][(0,)] => TypeError: list indices must be integers or slices, not tuple
+"a"[1.0] => TypeError: string indices must be integers, not 'float'
+(1,)[1.0] => TypeError: tuple indices must be integers or slices, not float
+b"a"[1.0] => TypeError: byte indices must be integers or slices, not float
+range(1)[1.0] => TypeError: range indices must be integers or slices, not float
+[1][1j] => TypeError: list indices must be integers or slices, not complex
+[1][1.0:2] => TypeError: slice indices must be integers or have an __index__ method

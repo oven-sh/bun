@@ -1,0 +1,12 @@
+status: 0
+script: 7d281e27083ce59f
+---
+non-daemon threads are waited for | 0 | main done;thread done; | 
+daemon threads are not | 0 | main done; | 
+atexit runs after the threads are joined | 0 | main;thread;atexit; | 
+sys.exit in the main thread waits too | 3 | thread; | 
+os._exit does not | 4 | main; | 
+an exception in the main thread | 1 | thread; | ValueError: main fails
+no new threads at shutdown | 0 | PythonFinalizationError can't create new thread at interpreter shutdown; | 
+finalizers at exit with a daemon thread blocked | 0 | main done;finalized; | 
+threading._register_atexit | 0 | main;threading atexit;thread; | 

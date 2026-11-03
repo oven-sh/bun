@@ -1,0 +1,537 @@
+status: 0
+script: dfe0fd0247dad775
+source: 554f444cf4f84bd6
+---
+SyntaxError: invalid syntax <- 1 +
+SyntaxError: invalid syntax <- + 
+ok: 1 + + 2
+SyntaxError: invalid syntax <- 1 + * 2
+SyntaxError: can't use starred expression here <- * 2
+SyntaxError: invalid syntax <- 1 *
+SyntaxError: invalid syntax <- 1 ** 
+SyntaxError: invalid syntax <- ** 1
+SyntaxError: invalid syntax <- 1 // 
+SyntaxError: invalid syntax <- 1 /// 2
+SyntaxError: invalid syntax <- 1 % % 2
+SyntaxError: invalid syntax <- 1 @
+SyntaxError: invalid syntax <- @ 1
+SyntaxError: invalid syntax <- 1 & & 2
+SyntaxError: invalid syntax <- 1 && 2
+SyntaxError: invalid syntax <- 1 || 2
+SyntaxError: invalid syntax <- 1 | | 2
+SyntaxError: invalid syntax <- !1
+SyntaxError: invalid syntax <- 1 ! 2
+SyntaxError: invalid syntax <- 1 != = 2
+SyntaxError: invalid syntax.  Maybe you meant '!=' instead of '<>'? <- 1 <> 2
+SyntaxError: invalid syntax <- 1 === 2
+SyntaxError: invalid syntax <- 1 !== 2
+SyntaxError: cannot assign to literal <- 1 =< 2
+SyntaxError: cannot assign to literal <- 1 => 2
+SyntaxError: invalid syntax <- 1 >> > 2
+SyntaxError: invalid syntax <- 1 << < 2
+SyntaxError: invalid syntax <- ~
+SyntaxError: invalid syntax <- ~ ~
+SyntaxError: invalid syntax <- 1 ~ 2
+SyntaxError: invalid syntax <- not
+SyntaxError: invalid syntax <- not not
+SyntaxError: invalid syntax <- 1 not 2
+SyntaxError: invalid syntax <- 1 and
+SyntaxError: invalid syntax <- and 1
+SyntaxError: invalid syntax <- 1 or
+SyntaxError: invalid syntax <- or 1
+SyntaxError: invalid syntax <- 1 and or 2
+SyntaxError: invalid syntax <- 1 is
+SyntaxError: invalid syntax <- is 1
+SyntaxError: invalid syntax <- 1 is is 2
+SyntaxError: invalid syntax <- 1 is not
+SyntaxError: invalid syntax <- 1 not is 2
+SyntaxError: invalid syntax <- 1 in
+SyntaxError: invalid syntax <- in 1
+SyntaxError: invalid syntax <- 1 not in
+SyntaxError: invalid syntax <- 1 in not 2
+SyntaxError: invalid syntax <- 1 not not in 2
+SyntaxError: invalid syntax <- a ? b : c
+SyntaxError: invalid syntax <- a ?? b
+SyntaxError: invalid syntax <- a?.b
+SyntaxError: invalid syntax <- a++
+SyntaxError: invalid syntax <- a--
+ok: ++a
+ok: --a
+SyntaxError: invalid syntax <- a +=
+SyntaxError: invalid syntax <- a ->
+SyntaxError: invalid syntax <- a -> b
+ok: a <- b
+SyntaxError: invalid syntax <- a := 
+SyntaxError: invalid syntax <- := a
+SyntaxError: invalid syntax <- a :=: b
+SyntaxError: invalid syntax <- a $ b
+SyntaxError: invalid syntax <- $a
+SyntaxError: invalid syntax <- a ` b
+SyntaxError: invalid syntax <- `a`
+SyntaxError: unexpected character after line continuation character <- a \ b
+ok: a # b
+SyntaxError: invalid syntax <- a; ; b
+SyntaxError: invalid syntax <- ;
+SyntaxError: invalid syntax <- ;a
+SyntaxError: invalid syntax <- a;;
+SyntaxError: invalid syntax <- a,, b
+SyntaxError: invalid syntax <- , a
+SyntaxError: invalid syntax <- (a,, b)
+SyntaxError: invalid syntax <- [a,, b]
+SyntaxError: invalid syntax <- {a,, b}
+SyntaxError: invalid syntax <- f(a,, b)
+SyntaxError: invalid syntax <- f(, a)
+SyntaxError: invalid syntax. Perhaps you forgot a comma? <- f(a b)
+SyntaxError: invalid syntax. Perhaps you forgot a comma? <- f(a, b c)
+SyntaxError: invalid syntax. Perhaps you forgot a comma? <- (a b)
+SyntaxError: invalid syntax. Perhaps you forgot a comma? <- [a b]
+SyntaxError: invalid syntax. Perhaps you forgot a comma? <- {a b}
+SyntaxError: invalid syntax. Perhaps you forgot a comma? <- {a: b c}
+SyntaxError: invalid syntax. Perhaps you forgot a comma? <- {a: b, c d}
+SyntaxError: invalid syntax <- a b
+SyntaxError: invalid syntax <- a b c
+SyntaxError: invalid syntax <- 1 2
+SyntaxError: invalid syntax <- 1 a
+SyntaxError: invalid syntax <- a 1
+SyntaxError: invalid syntax <- 'a' 1
+SyntaxError: invalid syntax <- 1 'a'
+SyntaxError: invalid syntax <- a 'b'
+SyntaxError: invalid syntax <- 'a' b
+SyntaxError: invalid syntax <- a.1
+SyntaxError: invalid syntax <- a.'b'
+SyntaxError: invalid syntax <- a.(b)
+SyntaxError: invalid syntax <- a.[b]
+SyntaxError: invalid syntax <- a..b
+SyntaxError: invalid syntax <- a.
+SyntaxError: invalid syntax <- .a
+SyntaxError: invalid syntax <- a.b.
+SyntaxError: invalid decimal literal <- 1.a
+SyntaxError: invalid decimal literal <- 1.e
+ok: 1..a
+ok: 1 .a
+ok: 1.0.a
+SyntaxError: '[' was never closed <- a[
+SyntaxError: unmatched ']' <- a]
+SyntaxError: invalid syntax <- a[]
+SyntaxError: invalid syntax <- a[,]
+ok: a[1,]
+SyntaxError: invalid syntax. Perhaps you forgot a comma? <- a[1 2]
+SyntaxError: invalid syntax <- a[1:2:3:4]
+ok: a[::]
+SyntaxError: invalid syntax <- a[:::]
+ok: a[1:2,]
+ok: a[*b]
+ok: a[*b, c]
+SyntaxError: invalid syntax <- a[**b]
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='? <- a[b=1]
+ok: a[b:=1]
+ok: a[(b:=1)]
+SyntaxError: invalid syntax <- a[b:=1:2]
+SyntaxError: invalid syntax <- a[1:b:=2]
+ok: a[lambda: 1]
+ok: a[lambda: 1:2]
+SyntaxError: invalid syntax <- a[yield]
+SyntaxError: expected 'else' after 'if' expression <- a[1 if 2]
+SyntaxError: invalid syntax <- a[for]
+SyntaxError: '(' was never closed <- (
+SyntaxError: unmatched ')' <- )
+SyntaxError: '[' was never closed <- [
+SyntaxError: unmatched ']' <- ]
+SyntaxError: '{' was never closed <- {
+SyntaxError: unmatched '}' <- }
+SyntaxError: closing parenthesis ']' does not match opening parenthesis '(' <- (]
+SyntaxError: closing parenthesis ')' does not match opening parenthesis '[' <- [)
+SyntaxError: closing parenthesis ')' does not match opening parenthesis '{' <- {)
+SyntaxError: closing parenthesis '}' does not match opening parenthesis '(' <- (}
+SyntaxError: closing parenthesis '}' does not match opening parenthesis '[' <- [}
+SyntaxError: closing parenthesis ']' does not match opening parenthesis '{' <- {]
+SyntaxError: '(' was never closed <- (()
+SyntaxError: unmatched ')' <- ())
+SyntaxError: closing parenthesis ')' does not match opening parenthesis '[' <- ([)]
+SyntaxError: closing parenthesis '}' does not match opening parenthesis '[' <- {[}]
+SyntaxError: '(' was never closed <- ((1)
+SyntaxError: unmatched ')' <- (1))
+SyntaxError: '[' was never closed <- [[1]
+SyntaxError: unmatched ']' <- [1]]
+SyntaxError: '{' was never closed <- {{1}
+SyntaxError: unmatched '}' <- {1}}
+SyntaxError: '(' was never closed <- (1,
+SyntaxError: '[' was never closed <- [1,
+SyntaxError: '{' was never closed <- {1,
+SyntaxError: '{' was never closed <- {1:
+SyntaxError: '{' was never closed <- {1: 2,
+SyntaxError: '(' was never closed <- f(
+SyntaxError: '(' was never closed <- f(1
+SyntaxError: '(' was never closed <- f(1,
+SyntaxError: '(' was never closed <- f(a=
+SyntaxError: '[' was never closed <- a[1
+SyntaxError: '(' was never closed <- (\n
+SyntaxError: '(' was never closed <- (1\n
+SyntaxError: '(' was never closed <- (1,\n2
+SyntaxError: '[' was never closed <- [\n1,\n2
+SyntaxError: '{' was never closed <- {\n1: 2,\n
+SyntaxError: '(' was never closed <- f(\na,\nb
+SyntaxError: '(' was never closed <- x = (1 +\n2
+SyntaxError: '[' was never closed <- x = [1,\n2\ny = 3
+SyntaxError: '{' was never closed <- x = {1:\n2\ny = 3
+SyntaxError: '(' was never closed <- x = (\ny = 3
+SyntaxError: '(' was never closed <- print((1, 2)
+SyntaxError: unmatched ')' <- print(1, 2))
+SyntaxError: closing parenthesis ']' does not match opening parenthesis '(' <- a = (1, 2]
+SyntaxError: closing parenthesis ')' does not match opening parenthesis '[' <- a = [1, 2)
+SyntaxError: closing parenthesis ']' does not match opening parenthesis '{' <- a = {1, 2]
+SyntaxError: invalid syntax <- def f(:\n pass
+SyntaxError: Function parameters cannot be parenthesized <- def f(a, (b):\n pass
+SyntaxError: invalid syntax <- if (a:\n pass
+SyntaxError: unmatched ')' <- if a):\n pass
+SyntaxError: unmatched ')' <- x = )
+SyntaxError: unmatched ']' <- x = ]
+SyntaxError: unmatched '}' <- x = }
+SyntaxError: closing parenthesis ']' does not match opening parenthesis '(' <- foo(a, b]
+SyntaxError: closing parenthesis ')' does not match opening parenthesis '[' <- foo[a, b)
+SyntaxError: closing parenthesis ']' does not match opening parenthesis '(' <- (a for a in b]
+SyntaxError: closing parenthesis ')' does not match opening parenthesis '[' <- [a for a in b)
+SyntaxError: '(' was never closed <- 'a' ('b'
+SyntaxError: f-string: expecting '}' <- f'{a' )
+ok: ()
+SyntaxError: invalid syntax <- (,)
+ok: (1)
+ok: (1,)
+SyntaxError: invalid syntax <- (1,,)
+ok: []
+SyntaxError: invalid syntax <- [,]
+ok: [1,]
+ok: {}
+SyntaxError: invalid syntax <- {,}
+ok: {1,}
+SyntaxError: expression expected after dictionary key and ':' <- {1:}
+SyntaxError: invalid syntax <- {:1}
+ok: {1:2,}
+SyntaxError: invalid syntax <- {1:2:3}
+SyntaxError: invalid syntax <- {1, 2:3}
+SyntaxError: ':' expected after dictionary key <- {1:2, 3}
+ok: {1:2, **a}
+ok: {**a}
+SyntaxError: ':' expected after dictionary key <- {**a, 1}
+ok: {*a}
+SyntaxError: invalid syntax <- {*a, 1:2}
+SyntaxError: cannot use a starred expression in a dictionary key <- {*a: 1}
+SyntaxError: cannot use dict unpacking in a dictionary key <- {**a: 1}
+SyntaxError: cannot use a starred expression in a dictionary value <- {1: *a}
+SyntaxError: cannot use dict unpacking in a dictionary value <- {1: **a}
+SyntaxError: invalid syntax <- {***a}
+SyntaxError: cannot use dict unpacking here <- [**a]
+SyntaxError: cannot use dict unpacking here <- (**a)
+ok: [*a]
+SyntaxError: cannot use starred expression here <- (*a)
+ok: (*a,)
+SyntaxError: can't use starred expression here <- *a
+ok: *a,
+ok: *a, b
+ok: a, *b
+SyntaxError: can't use starred expression here <- x = *a
+ok: x = *a,
+SyntaxError: cannot use starred expression here <- x = (*a)
+ok: x = [*a]
+SyntaxError: invalid syntax <- **a
+SyntaxError: invalid syntax <- x = **a
+SyntaxError: Invalid star expression <- print(*)
+SyntaxError: invalid syntax <- print(**)
+ok: print(* a)
+ok: print(** a)
+ok: print(*a, *b)
+ok: print(**a, **b)
+SyntaxError: iterable argument unpacking follows keyword argument unpacking <- print(**a, *b)
+SyntaxError: positional argument follows keyword argument unpacking <- print(**a, b)
+SyntaxError: positional argument follows keyword argument <- print(a=1, b)
+ok: print(a=1, *b)
+ok: print(a=1, **b)
+SyntaxError: keyword argument repeated: a <- print(a=1, a=2)
+SyntaxError: keyword argument repeated: a <- print(a=1, b=2, a=3)
+SyntaxError: expression cannot contain assignment, perhaps you meant "=="? <- print(1=a)
+SyntaxError: expression cannot contain assignment, perhaps you meant "=="? <- print('a'=1)
+SyntaxError: expression cannot contain assignment, perhaps you meant "=="? <- print(a.b=1)
+SyntaxError: expression cannot contain assignment, perhaps you meant "=="? <- print(a[0]=1)
+SyntaxError: expression cannot contain assignment, perhaps you meant "=="? <- print(a()=1)
+SyntaxError: expression cannot contain assignment, perhaps you meant "=="? <- print((a)=1)
+SyntaxError: expression cannot contain assignment, perhaps you meant "=="? <- print(a+b=1)
+SyntaxError: cannot assign to None <- print(None=1)
+SyntaxError: cannot assign to True <- print(True=1)
+SyntaxError: cannot assign to False <- print(False=1)
+SyntaxError: cannot assign to __debug__ <- print(__debug__=1)
+SyntaxError: expression cannot contain assignment, perhaps you meant "=="? <- print(lambda: 1=2)
+SyntaxError: expected argument value expression <- print(a=)
+SyntaxError: invalid syntax <- print(=1)
+ok: print(a==1)
+ok: print(a:=1)
+ok: print(a:=1, b)
+SyntaxError: invalid syntax <- print(a=b:=1)
+ok: print(a=(b:=1))
+ok: print(a, b:=1)
+SyntaxError: invalid syntax <- print(*a:=b)
+ok: print(*(a:=b))
+ok: print(a for a in b)
+SyntaxError: Generator expression must be parenthesized <- print(a for a in b, c)
+SyntaxError: Generator expression must be parenthesized <- print(c, a for a in b)
+SyntaxError: Generator expression must be parenthesized <- print(a for a in b, c=1)
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='? <- print(a=b for b in c)
+ok: print(*a for a in b)
+SyntaxError: cannot use dict unpacking in generator expression <- print(**a for a in b)
+ok: print(a, )
+SyntaxError: invalid syntax <- print(a, , )
+SyntaxError: invalid syntax <- print(, )
+SyntaxError: expected 'else' after 'if' expression <- print(a if b)
+SyntaxError: expected expression after 'else', but statement is given <- print(a if b else)
+SyntaxError: invalid syntax <- print(if a)
+SyntaxError: invalid syntax <- print(else)
+SyntaxError: invalid syntax <- print(a else b)
+SyntaxError: invalid syntax <- print(yield)
+SyntaxError: invalid syntax <- print(yield a)
+SyntaxError: invalid syntax <- print(not)
+SyntaxError: invalid syntax <- print(a not)
+SyntaxError: invalid syntax <- print(pass)
+SyntaxError: invalid syntax <- print(return)
+SyntaxError: invalid syntax <- print(import a)
+SyntaxError: invalid syntax <- print(def)
+SyntaxError: invalid syntax <- print(class)
+SyntaxError: invalid syntax <- print(a; b)
+SyntaxError: invalid syntax <- print(a: b)
+SyntaxError: invalid syntax <- print(a: int = 1)
+SyntaxError: expected 'else' after 'if' expression <- a if b
+SyntaxError: expected expression after 'else', but statement is given <- a if b else
+SyntaxError: invalid syntax <- a if else c
+SyntaxError: invalid syntax <- if b else c
+SyntaxError: expected 'else' after 'if' expression <- a if b else c if d
+SyntaxError: invalid syntax <- a if b else c else d
+SyntaxError: expected 'else' after 'if' expression <- a if b if c else d else e
+ok: a if (b) else (c)
+SyntaxError: invalid syntax <- a if b: c
+SyntaxError: expected expression after 'else', but statement is given <- a if b else: c
+ok: a if not b else c
+ok: a if b else not c
+SyntaxError: expected 'else' after 'if' expression <- (a if b)
+SyntaxError: expected 'else' after 'if' expression <- [a if b]
+SyntaxError: expected 'else' after 'if' expression <- {a if b}
+SyntaxError: expected 'else' after 'if' expression <- x = a if b
+SyntaxError: expected 'else' after 'if' expression <- return a if b
+SyntaxError: expected expression after 'else', but statement is given <- a if b else pass
+SyntaxError: invalid syntax <- a if pass else b
+SyntaxError: expected expression before 'if', but statement is given <- pass if a else b
+SyntaxError: expected expression after 'else', but statement is given <- a if b else return
+SyntaxError: expected expression after 'else', but statement is given <- a if b else import c
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='? <- a = 1 if b else c = 2
+SyntaxError: expected 'else' after 'if' expression <- a if b = c else d
+SyntaxError: invalid syntax <- lambda
+SyntaxError: invalid syntax <- lambda:
+SyntaxError: invalid syntax <- lambda x
+SyntaxError: invalid syntax <- lambda x:
+SyntaxError: invalid syntax <- lambda: pass
+SyntaxError: invalid syntax <- lambda: return 1
+SyntaxError: cannot assign to lambda <- lambda: x = 1
+ok: lambda: (x := 1)
+SyntaxError: cannot use assignment expressions with lambda <- lambda: x := 1
+SyntaxError: cannot use assignment expressions with lambda <- lambda x: x := 1
+SyntaxError: invalid syntax <- lambda: yield
+ok: lambda: (yield)
+SyntaxError: duplicate parameter 'x' in function definition <- lambda x, x: 1
+SyntaxError: duplicate parameter 'x' in function definition <- lambda x, *x: 1
+SyntaxError: duplicate parameter 'x' in function definition <- lambda *x, **x: 1
+SyntaxError: parameter without a default follows parameter with a default <- lambda x=1, y: 1
+SyntaxError: named parameters must follow bare * <- lambda *: 1
+ok: lambda *, x: 1
+SyntaxError: named parameters must follow bare * <- lambda *, **k: 1
+SyntaxError: parameters cannot follow var-keyword parameter <- lambda **k, x: 1
+SyntaxError: parameters cannot follow var-keyword parameter <- lambda **k, *a: 1
+SyntaxError: parameters cannot follow var-keyword parameter <- lambda **k, **l: 1
+SyntaxError: * may appear only once <- lambda *a, *b: 1
+SyntaxError: invalid syntax <- lambda /: 1
+ok: lambda x, /: 1
+SyntaxError: / may appear only once <- lambda x, /, /: 1
+SyntaxError: / must be ahead of * <- lambda *, /: 1
+SyntaxError: / must be ahead of * <- lambda *a, /: 1
+ok: lambda x, /, y, *, z: 1
+SyntaxError: Lambda expression parameters cannot be parenthesized <- lambda (x): 1
+SyntaxError: Lambda expression parameters cannot be parenthesized <- lambda (x, y): 1
+SyntaxError: illegal target for annotation <- lambda x: int: 1
+SyntaxError: illegal target for annotation <- lambda x: (int): 1
+SyntaxError: invalid syntax <- lambda 1: 1
+SyntaxError: invalid syntax <- lambda 'a': 1
+SyntaxError: invalid syntax <- lambda x.y: 1
+SyntaxError: invalid syntax <- lambda x[0]: 1
+SyntaxError: invalid syntax <- lambda None: 1
+SyntaxError: invalid syntax <- lambda True: 1
+SyntaxError: cannot assign to __debug__ <- lambda __debug__: 1
+SyntaxError: invalid syntax <- lambda x=: 1
+SyntaxError: invalid syntax <- lambda x==1: 1
+SyntaxError: invalid syntax <- lambda x=1=2: 1
+SyntaxError: var-positional parameter cannot have default value <- lambda *x=1: 1
+SyntaxError: var-keyword parameter cannot have default value <- lambda **x=1: 1
+ok: lambda x,: 1
+SyntaxError: invalid syntax <- lambda x,,: 1
+SyntaxError: invalid syntax <- lambda ,: 1
+SyntaxError: invalid syntax <- lambda ,x: 1
+SyntaxError: invalid syntax <- lambda x y: 1
+ok: lambda: lambda: 1
+SyntaxError: invalid syntax <- lambda: lambda
+ok: lambda x: lambda y: x + y
+ok: lambda: 1, 2
+ok: lambda: (1, 2)
+SyntaxError: invalid syntax <- lambda: *a
+SyntaxError: invalid syntax <- lambda: *a, b
+ok: lambda: (*a, b)
+ok: lambda: 1 if 2 else 3
+SyntaxError: expected 'else' after 'if' expression <- lambda: 1 if 2
+ok: (lambda: 1)()
+ok: lambda: 1()
+ok: lambda x: x(1)
+SyntaxError: invalid syntax <- lambda = 1
+SyntaxError: cannot assign to lambda <- lambda: 1 = 2
+SyntaxError: cannot assign to lambda here. Maybe you meant '==' instead of '='? <- (lambda: 1) = 2
+SyntaxError: 'lambda' is an illegal expression for augmented assignment <- lambda: 1 += 2
+SyntaxError: cannot delete lambda <- del lambda: 1
+ok: lambda *a, b=1, **c: 1
+ok: lambda a=1, /, b=2, *, c=3: 1
+SyntaxError: parameter without a default follows parameter with a default <- lambda a=1, /, b: 1
+SyntaxError: parameter without a default follows parameter with a default <- lambda a, /, b=1, c: 1
+ok: lambda *, a=1, b: 1
+SyntaxError: invalid syntax <- x := 1
+ok: (x := 1)
+SyntaxError: invalid syntax <- x := 1, 2
+ok: (x := 1, 2)
+ok: (x := (1, 2))
+ok: (x, y := 1, 2)
+SyntaxError: cannot use assignment expressions with tuple <- ((x, y) := (1, 2))
+SyntaxError: cannot use assignment expressions with list <- ([x] := 1)
+SyntaxError: cannot use assignment expressions with attribute <- (x.y := 1)
+SyntaxError: cannot use assignment expressions with subscript <- (x[0] := 1)
+SyntaxError: cannot use assignment expressions with function call <- (x() := 1)
+SyntaxError: cannot use assignment expressions with literal <- (1 := 2)
+SyntaxError: cannot use assignment expressions with literal <- ('a' := 1)
+SyntaxError: cannot use assignment expressions with None <- (None := 1)
+SyntaxError: cannot use assignment expressions with True <- (True := 1)
+SyntaxError: cannot assign to __debug__ <- (__debug__ := 1)
+SyntaxError: invalid syntax <- (x := y := 1)
+ok: (x := (y := 1))
+SyntaxError: cannot use assignment expressions with named expression <- (x := 1) := 2
+SyntaxError: invalid syntax <- (x := )
+SyntaxError: invalid syntax <- (:= 1)
+SyntaxError: invalid syntax <- (x :=)
+SyntaxError: invalid syntax <- (x : = 1)
+ok: (x := 1 if y else 2)
+ok: (x := lambda: 1)
+SyntaxError: invalid syntax <- (x := yield)
+SyntaxError: 'yield' outside function <- (x := (yield))
+SyntaxError: invalid syntax <- (x := *y)
+SyntaxError: invalid syntax <- (x := *y,)
+ok: (x := not y)
+ok: (x := y and z)
+ok: (x := y) and z
+SyntaxError: invalid syntax <- x = y := 1
+ok: x = (y := 1)
+SyntaxError: invalid syntax <- x := y = 1
+SyntaxError: invalid syntax <- x += y := 1
+ok: x += (y := 1)
+SyntaxError: invalid syntax <- x: int := 1
+SyntaxError: named expression cannot be used within an annotation <- x: (y := 1) = 2
+ok: [x := 1]
+ok: [x := 1, y := 2]
+ok: {x := 1}
+SyntaxError: invalid syntax <- {x := 1: 2}
+ok: {(x := 1): 2}
+SyntaxError: invalid syntax <- {1: x := 2}
+ok: {1: (x := 2)}
+ok: f(x := 1)
+ok: f(x := 1, y := 2)
+SyntaxError: invalid syntax <- f(a=x := 1)
+ok: f(a=(x := 1))
+ok: x[y := 1]
+ok: x[y := 1, z := 2]
+SyntaxError: invalid syntax <- x[y := 1:2]
+ok: x[(y := 1):2]
+ok: if x := 1: pass
+ok: while x := 1: pass
+SyntaxError: invalid syntax <- elif x := 1: pass
+SyntaxError: invalid syntax <- for x in y := z: pass
+ok: for x in (y := z): pass
+SyntaxError: invalid syntax <- for x := 1 in y: pass
+SyntaxError: invalid syntax <- with x := y: pass
+ok: with (x := y): pass
+SyntaxError: cannot use named expression without parentheses here <- assert x := 1
+ok: assert (x := 1)
+SyntaxError: invalid syntax <- return x := 1
+SyntaxError: invalid syntax <- def f(): return x := 1
+ok: def f(): return (x := 1)
+SyntaxError: invalid syntax <- del x := 1
+SyntaxError: cannot delete named expression <- del (x := 1)
+SyntaxError: invalid syntax <- raise x := y
+ok: raise (x := y)
+SyntaxError: invalid syntax <- import x := y
+SyntaxError: invalid syntax <- def f(x := 1): pass
+SyntaxError: invalid syntax <- def f(x=y := 1): pass
+ok: def f(x=(y := 1)): pass
+SyntaxError: invalid syntax <- def f(x: y := 1): pass
+SyntaxError: named expression cannot be used within an annotation <- def f(x: (y := 1)): pass
+SyntaxError: expected ':' <- def f() -> x := 1: pass
+SyntaxError: named expression cannot be used within an annotation <- def f() -> (x := 1): pass
+ok: class C(x := 1): pass
+ok: class C: (x := 1)
+SyntaxError: assignment expression within a comprehension cannot be used in a class body <- class C: [y := 1 for z in w]
+SyntaxError: assignment expression within a comprehension cannot be used in a class body <- class C: [(y := 1) for z in w]
+ok: @x := y\ndef f(): pass
+ok: @(x := y)\ndef f(): pass
+SyntaxError: cannot use assignment expressions with lambda <- lambda: x := 1
+ok: lambda x=(y := 1): x
+ok: f'{x := 1}'
+ok: f'{(x := 1)}'
+ok: f'{x:=1}'
+ok: [(x := y) for y in z]
+SyntaxError: assignment expression cannot rebind comprehension iteration variable 'y' <- [(y := 1) for y in z]
+SyntaxError: assignment expression cannot be used in a comprehension iterable expression <- [y for y in (y := z)]
+SyntaxError: assignment expression cannot rebind comprehension iteration variable 'y' <- [y for y in z if (y := 1)]
+ok: [y for y in z if (w := 1)]
+SyntaxError: assignment expression cannot rebind comprehension iteration variable 'x' <- [(x := y) for y in z for x in w]
+SyntaxError: assignment expression cannot rebind comprehension iteration variable 'x' <- [[(x := y) for y in z] for x in w]
+SyntaxError: assignment expression cannot be used in a comprehension iterable expression <- [(x := 1) for y in (x := z)]
+SyntaxError: assignment expression cannot be used in a comprehension iterable expression <- [x for y in (w := z)]
+SyntaxError: assignment expression cannot be used in a comprehension iterable expression <- [x for y in z for v in (w := z)]
+ok: {(x := y): 1 for y in z}
+ok: {(x := y) for y in z}
+ok: ((x := y) for y in z)
+ok: [lambda: (x := y) for y in z]
+ok: [(lambda: (y := 1)) for y in z]
+SyntaxError: name 'x' is assigned to before global declaration <- def f(): [(x := y) for y in z]; global x
+ok: def f():\n global x\n [(x := y) for y in z]
+ok: def f():\n x = 1\n def g():\n  nonlocal x\n  [(x := y) for y in z]
+ok: (x := 1).real
+ok: (x := [1])[0]
+ok: (x := f)()
+ok: -(x := 1)
+ok: not (x := 1)
+ok: (x := 1) + (y := 2)
+ok: (x := 1) < (y := 2)
+ok: x = 1 + (y := 2)
+ok: print((x := 1), x)
+SyntaxError: cannot assign to named expression here. Maybe you meant '==' instead of '='? <- (a := b) = c
+SyntaxError: 'named expression' is an illegal expression for augmented assignment <- (a := b) += c
+ok: (a := 1, b := 2)
+SyntaxError: invalid syntax <- a, b := 1, 2
+ok: (a, b := 1, 2)
+SyntaxError: invalid syntax <- *a := b
+SyntaxError: invalid syntax <- (*a := b)
+SyntaxError: cannot use assignment expressions with attribute <- a.b := c
+SyntaxError: cannot use assignment expressions with subscript <- a[b] := c
+SyntaxError: cannot use assignment expressions with function call <- f() := c
+SyntaxError: cannot use assignment expressions with expression <- a + b := c
+SyntaxError: cannot use assignment expressions with expression <- (a + b := c)
+SyntaxError: cannot use assignment expressions with expression <- -a := b
+SyntaxError: cannot use assignment expressions with expression <- (-a := b)
+SyntaxError: cannot use assignment expressions with conditional expression <- a if b else c := d
+SyntaxError: cannot use assignment expressions with conditional expression <- (a if b else c := d)
+ok: (a := b if c else d)
+SyntaxError: cannot use assignment expressions with expression <- a and b := c
+SyntaxError: cannot use assignment expressions with expression <- (a and b := c)
+ok: (a and (b := c))
+SyntaxError: cannot use assignment expressions with expression <- not a := b
+SyntaxError: cannot use assignment expressions with expression <- (not a := b)
+SyntaxError: cannot use assignment expressions with comparison <- a < b := c
+SyntaxError: cannot use assignment expressions with comparison <- (a < b := c)

@@ -1,0 +1,261 @@
+status: 0
+script: 677a8b98a8d70427
+---
+--- write, then read
+<_io.FileIO name='a' mode='wb' closefd=True> a wb True False
+False True True False int
+5 6 0 11
+UnsupportedOperation: File not open for reading
+UnsupportedOperation: File not open for reading
+UnsupportedOperation: File not open for reading
+UnsupportedOperation: File not open for reading
+TypeError: a bytes-like object is required, not 'str'
+TypeError: a bytes-like object is required, not 'int'
+TypeError: a bytes-like object is required, not 'NoneType'
+None
+None True <_io.FileIO [closed]>
+None
+a wb True
+read ValueError: I/O operation on closed file
+readall ValueError: I/O operation on closed file
+tell ValueError: I/O operation on closed file
+fileno ValueError: I/O operation on closed file
+isatty ValueError: I/O operation on closed file
+readable ValueError: I/O operation on closed file
+writable ValueError: I/O operation on closed file
+seekable ValueError: I/O operation on closed file
+truncate ValueError: I/O operation on closed file
+flush ValueError: I/O operation on closed file.
+__enter__ ValueError: I/O operation on closed file.
+__iter__ ValueError: I/O operation on closed file.
+readline ValueError: I/O operation on closed file
+readlines ValueError: I/O operation on closed file.
+ValueError: I/O operation on closed file
+ValueError: I/O operation on closed file
+ValueError: I/O operation on closed file
+ValueError: I/O operation on closed file.
+<_io.FileIO name='a' mode='rb' closefd=True> rb True False True
+b'he' b'' 2 b'llo world' b'' b'' b'' 11
+0 b'hello world' 3 b'lo world' 9 b'ld' 1 3 b'l'
+100 b'' b'' 100
+UnsupportedOperation: File not open for writing
+UnsupportedOperation: File not open for writing
+UnsupportedOperation: File not open for writing
+OSError: [Errno 22] Invalid argument
+OSError: [Errno 22] Invalid argument
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+TypeError: 'str' object cannot be interpreted as an integer
+OverflowError: Python int too large to convert to C long
+OverflowError: Python int too large to convert to C int
+TypeError: argument should be integer or None, not 'str'
+TypeError: argument should be integer or None, not 'float'
+OverflowError: cannot fit 'int' into an index-sized integer
+8 bytearray(b'rldlo wo') 3 bytearray(b'rldlo wo') 0 bytearray(b'rldlo wo') 0
+TypeError: readinto() argument 1 must be read-write bytes-like object, not bytes
+TypeError: readinto() argument 1 must be read-write bytes-like object, not str
+TypeError: readinto() argument 1 must be read-write bytes-like object, not None
+--- lines
+b'one\n' b'tw' b'o\n' [b'\n', b'last']
+[b'one\n', b'two\n', b'\n', b'last']
+b'one\n' [b'two\n'] b'\n' b'last'
+StopIteration: 
+True
+--- modes
+'r' rb True False 0 <_io.FileIO name='m' mode='rb' closefd=True>
+10
+'w' wb False True 0 <_io.FileIO name='m' mode='wb' closefd=True>
+0
+'a' ab False True 10 <_io.FileIO name='m' mode='ab' closefd=True>
+10
+'x' xb False True 0 <_io.FileIO name='m' mode='xb' closefd=True>
+0
+'r+' rb+ True True 0 <_io.FileIO name='m' mode='rb+' closefd=True>
+10
+'w+' wb+ True True 0 <_io.FileIO name='m' mode='wb+' closefd=True>
+0
+'a+' ab+ True True 10 <_io.FileIO name='m' mode='ab+' closefd=True>
+10
+'x+' xb+ True True 0 <_io.FileIO name='m' mode='xb+' closefd=True>
+0
+'rb' rb True False 0 <_io.FileIO name='m' mode='rb' closefd=True>
+10
+'wb' wb False True 0 <_io.FileIO name='m' mode='wb' closefd=True>
+0
+'ab' ab False True 10 <_io.FileIO name='m' mode='ab' closefd=True>
+10
+'rb+' rb+ True True 0 <_io.FileIO name='m' mode='rb+' closefd=True>
+10
+'r+b' rb+ True True 0 <_io.FileIO name='m' mode='rb+' closefd=True>
+10
+'br' rb True False 0 <_io.FileIO name='m' mode='rb' closefd=True>
+10
+'+r' rb+ True True 0 <_io.FileIO name='m' mode='rb+' closefd=True>
+10
+'b+w' wb+ True True 0 <_io.FileIO name='m' mode='wb+' closefd=True>
+0
+'wb+' wb+ True True 0 <_io.FileIO name='m' mode='wb+' closefd=True>
+0
+ValueError: Must have exactly one of create/read/write/append mode and at most one plus
+ValueError: Must have exactly one of create/read/write/append mode and at most one plus
+ValueError: Must have exactly one of create/read/write/append mode and at most one plus
+ValueError: Must have exactly one of create/read/write/append mode and at most one plus
+ValueError: Must have exactly one of create/read/write/append mode and at most one plus
+ValueError: Must have exactly one of create/read/write/append mode and at most one plus
+ValueError: Must have exactly one of create/read/write/append mode and at most one plus
+ValueError: Must have exactly one of create/read/write/append mode and at most one plus
+ValueError: invalid mode: z
+ValueError: invalid mode: rt
+ValueError: invalid mode: U
+ValueError: invalid mode: rU
+ValueError: invalid mode: r 
+ValueError: invalid mode: R
+ValueError: invalid mode: é
+ValueError: embedded null character
+TypeError: FileIO() argument 'mode' must be str, not None
+TypeError: FileIO() argument 'mode' must be str, not int
+TypeError: FileIO() argument 'mode' must be str, not bytes
+FileExistsError: [Errno 17] File exists: 'm'
+FileNotFoundError: [Errno 2] No such file or directory: 'nonexistent'
+FileNotFoundError: [Errno 2] No such file or directory: 'nonexistent'
+FileNotFoundError: [Errno 2] No such file or directory: 'nodir/x'
+IsADirectoryError: [Errno 21] Is a directory: '.'
+IsADirectoryError: [Errno 21] Is a directory: '.'
+FileNotFoundError: [Errno 2] No such file or directory: b'nonexistent'
+FileNotFoundError: [Errno 2] No such file or directory: ''
+ValueError: embedded null byte
+ValueError: embedded null byte
+TypeError: expected str, bytes or os.PathLike object, not NoneType
+TypeError: expected str, bytes or os.PathLike object, not float
+TypeError: expected str, bytes or os.PathLike object, not list
+ValueError: negative file descriptor
+ValueError: negative file descriptor
+TypeError: expected str, bytes or os.PathLike object, not int
+TypeError: FileIO() missing required argument 'file' (pos 1)
+TypeError: FileIO() takes at most 4 arguments (5 given)
+TypeError: FileIO() got an unexpected keyword argument 'bad'
+TypeError: argument for FileIO() given by name ('file') and position (1)
+TypeError: FileIO() missing required argument 'file' (pos 1)
+ValueError: Cannot use closefd=False with file name
+FileNotFoundError: [Errno 2] No such file or directory: 'a\udcff'
+UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 1: surrogates not allowed
+FileNotFoundError True nonexistent No such file or directory (2, 'No such file or directory')
+--- append
+3 3 6 0 3 9
+9 b'' 0 b'abcdefghi'
+--- read and write
+10 2 b'234' 2 0 b'01234XY789'
+4 10 0 b'0123' 4 4
+8 0 b'0123\x00\x00\x00\x00'
+2 2 0 b'01'
+OSError: [Errno 22] Invalid argument
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+True 0 b'0'
+--- path-like and bytes names
+<_io.FileIO name=P('a') mode='rb' closefd=True> P('a') b'hel'
+<_io.FileIO name=b'a' mode='rb' closefd=True> b'a' b'hel'
+<_io.FileIO name=P(b'a') mode='rb' closefd=True> b'hel'
+TypeError: expected P.__fspath__() to return str or bytes, not int
+TypeError: expected P.__fspath__() to return str or bytes, not NoneType
+<_io.FileIO name='é\udc80' mode='wb' closefd=True> '\xe9\udc80'
+[b'\xc3\xa9\x80']
+--- file descriptors
+True True True rb <_io.FileIO name=FD mode='rb' closefd=True> b'hello'
+OSError: [Errno 9] Bad file descriptor
+False <_io.FileIO name=FD mode='rb' closefd=False> b'hello'
+True False
+ValueError: I/O operation on closed file
+b' wo'
+b'rld'
+OSError: [Errno 9] Bad file descriptor
+I b'he'
+wb True
+OSError: [Errno 9] Bad file descriptor
+--- opener
+opener a True True
+<_io.FileIO name='a' mode='rb' closefd=True> b'hel' False
+opener P('a') True True
+ValueError: opener returned -1
+ValueError: opener returned -7
+TypeError: expected integer from opener
+TypeError: expected integer from opener
+TypeError: expected integer from opener
+OverflowError: Python int too large to convert to C int
+ZeroDivisionError: division by zero
+TypeError: 'int' object is not callable
+IsADirectoryError: [Errno 21] Is a directory: 'a'
+OSError: [Errno 9] Bad file descriptor
+--- attributes
+False int True False
+True
+TypeError: attribute value type must be bool
+TypeError: can't delete numeric/char attribute
+AttributeError: attribute 'closed' of '_io.FileIO' objects is not writable
+AttributeError: attribute 'closefd' of '_io.FileIO' objects is not writable
+AttributeError: attribute 'mode' of '_io.FileIO' objects is not writable
+AttributeError: attribute '_blksize' of '_io.FileIO' objects is not writable
+<_io.FileIO name='other' mode='rb' closefd=True> ['extra', 'name']
+<_io.FileIO fd=FD mode='rb' closefd=True>
+TypeError: cannot pickle 'FileIO' instances
+TypeError: cannot pickle 'FileIO' object
+TypeError: cannot pickle 'FileIO' instances
+None
+RuntimeError: reentrant call inside _io.FileIO.__repr__
+True
+--- uninitialized
+<_io.FileIO [closed]> True True wb
+ValueError: I/O operation on closed file
+ValueError: I/O operation on closed file
+None
+TypeError: object.__new__(_io.FileIO) is not safe, use _io.FileIO.__new__()
+TypeError: _io.FileIO.__new__(int): int is not a subtype of _io.FileIO
+TypeError: _io.FileIO.__new__(): not enough arguments
+--- initialized again
+<_io.FileIO name='lines' mode='rb' closefd=True> b'one'
+ap b'abc'
+FileNotFoundError: [Errno 2] No such file or directory: 'nonexistent'
+True <_io.FileIO [closed]>
+False b'he'
+--- subclasses
+<Sub name='lines' mode='rb' closefd=True> (<class '_io.FileIO'>, <class '_io._RawIOBase'>) b'one\n' 4 True
+Sub.close
+True <Sub [closed]>
+TypeError: cannot pickle 'Sub' instances
+1 2 b'h'
+--- flush that fails
+RuntimeError: no flush
+True
+OSError: [Errno 9] Bad file descriptor
+--- closed behind its back
+OSError: [Errno 9] Bad file descriptor
+OSError: [Errno 9] Bad file descriptor
+OSError: [Errno 9] Bad file descriptor
+False
+OSError: [Errno 9] Bad file descriptor
+True
+--- pipes
+False False False
+OSError: [Errno 29] Illegal seek
+OSError: [Errno 29] Illegal seek
+7
+b'ab' b'c\n' b'def'
+b'xyz' b'' b''
+ab
+None None None None
+b'ab' None
+b'cd' b'' b''
+True None
+--- large files
+200000 b'AAA' b'NNN' 200000
+50000 b'EE'
+70000 130000 b''
+100010 b'aabb'
+b'aaaaa'
+b'' b'' b''
+b'' b'' False False
+b'\x00\x00\x00\x00'
+True
+--- the type
+<class '_io.FileIO'> FileIO FileIO _io (<class '_io._RawIOBase'>,)
+TypeError: cannot set 'x' attribute of immutable type '_io.FileIO'

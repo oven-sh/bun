@@ -1,0 +1,6 @@
+status: 1
+stderr: RecursionError: maximum recursion depth exceeded
+script: 2ed0004660473514
+source: 2ed0004660473514
+---
+before

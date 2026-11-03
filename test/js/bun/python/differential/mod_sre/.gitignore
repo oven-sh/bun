@@ -1,0 +1,4 @@
+# tools/gen.py also makes tests out of CPython's Lib/test/test_re.py and Lib/test/re_tests.py. They are not kept here: 5 MB, and
+# CPython's own test suite has them (../../cpython-suite).
+g_testre_*
+g_retests_*

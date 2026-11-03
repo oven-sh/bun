@@ -1,0 +1,136 @@
+status: 0
+script: 1311f6d76c6411d8
+---
+fv-alone -> '5'
+fv-alone-r -> "'a'"
+fv-bad-conv -> SystemError: Unrecognized conversion character 5
+fv-bad-conv2 -> SystemError: Unrecognized conversion character 122
+fv-spec-const -> '   5'
+fv-spec-name -> '005'
+fv-spec-int -> SystemError: Format specifier must be a string, not int
+joined-empty -> ''
+joined-int -> 1
+joined-name -> 'ab'
+joined-nested -> 'ab'
+joined-bytes -> b'a'
+template-empty -> Template(strings=('',), interpolations=())
+interp-alone -> Interpolation(1, 'x', None, '')
+template-const -> ('a', 'b', 'c')
+template-name -> Template(strings=('a',), interpolations=())
+template-int -> Template(strings=(1,), interpolations=())
+interp-str-int -> 5
+interp-bad-conv -> SystemError: Unrecognized conversion character 7
+slice-alone -> slice(None, None, None)
+slice-in-tuple -> (slice(1, None, None), 2)
+slice-in-list -> [slice(1, 2, 3)]
+starred-alone -> SyntaxError: can't use starred expression here (<e>, line 1)
+starred-in-binop -> SyntaxError: can't use starred expression here (<e>, line 1)
+starred-in-subscript -> SyntaxError: can't use starred expression here (<e>, line 1)
+starred-in-set -> {1, 2}
+starred-in-compare -> SyntaxError: can't use starred expression here (<e>, line 1)
+starred-kw -> SyntaxError: can't use starred expression here (<e>, line 1)
+set-empty -> set()
+name-odd -> 3
+name-empty -> 4
+attr-odd -> 5
+attr-none-const -> 6
+call-kw-odd -> {'a b': 1}
+call-kw-dup -> SyntaxError: keyword argument repeated: a (<e>, line 1)
+call-kw-True -> {'True': 1}
+call-kw-debug -> SyntaxError: cannot assign to __debug__ (<e>, line 1)
+call-genexp-more -> ([1], 2)
+yield-eval -> SyntaxError: 'yield' outside function (<e>, line 1)
+await-eval -> SyntaxError: 'await' outside function (<e>, line 1)
+named-toplevel -> 1
+lambda-dup -> SyntaxError: duplicate parameter 'a' in function definition (<e>, line 1)
+lambda-odd-arg -> 7
+compare-is-const -> True
+boolop-many -> 1
+const-tuple-nested -> (1, 2)
+const-in-frozenset -> True
+unary-const -> 5
+unary-not-tuple -> True
+ifexp-const -> 2
+comp-async-eval -> SyntaxError: asynchronous comprehension outside of an asynchronous function (<e>, line 1)
+comp-target-attr -> [1, 1]
+comp-target-sub -> [1, 1]
+dictcomp-unpack -> {}
+dict-unpack-const -> TypeError: 'int' object is not a mapping
+debug-name -> True
+aug-tuple -> SystemError: invalid node type (28) for augmented assignment
+aug-list -> SystemError: invalid node type (27) for augmented assignment
+aug-starred -> SystemError: invalid node type (25) for augmented assignment
+ann-tuple -> SystemError: invalid node type (28) for annotated assignment
+ann-starred -> SystemError: invalid node type (25) for annotated assignment
+ann-nonsimple-name -> ok [1, None]
+assign-starred-alone -> SyntaxError: starred assignment target must be in a list or tuple (<s>, line 1)
+assign-two-stars -> SyntaxError: multiple starred expressions in assignment (<s>, line 1)
+assign-empty-tuple -> ok []
+assign-debug -> SyntaxError: cannot assign to __debug__ (<s>, line 1)
+del-tuple -> ok [None]
+del-starred -> SyntaxError: can't use starred expression here (<s>, line 1)
+return-module -> SyntaxError: 'return' outside function (<s>, line 1)
+break-module -> SyntaxError: 'break' outside loop (<s>, line 1)
+continue-module -> SyntaxError: 'continue' not properly in loop (<s>, line 1)
+yield-module -> SyntaxError: 'yield' outside function (<s>, line 1)
+await-module -> SyntaxError: 'await' outside function (<s>, line 1)
+nonlocal-module -> SyntaxError: nonlocal declaration not allowed at module level (<s>, line 1)
+global-odd -> ok [1]
+global-None -> ok []
+import-odd -> ModuleNotFoundError: No module named 'a b'
+import-empty-name -> ValueError: Empty module name
+import-star -> ModuleNotFoundError: No module named '*'
+from-none-0 -> ValueError: Empty module name
+from-star-more -> ok []
+from-star-as -> ok []
+from-level-none -> ok []
+from-future-late -> SyntaxError: from __future__ imports must occur at the beginning of the file (<s>, line 1)
+from-future-bad -> SyntaxError: future feature nope is not defined (<s>, line 1)
+try-bare-not-last -> SyntaxError: default 'except:' must be last (<s>, line 1)
+trystar-break -> SyntaxError: 'break', 'continue' and 'return' cannot appear in an except* block (<s>, line 1)
+handler-odd-name -> ok []
+def-odd-name -> ok []
+def-empty-name -> ok []
+class-odd-name -> ok []
+class-kw-dup -> SyntaxError: keyword argument repeated: a (<s>, line 1)
+class-starred-base -> ok []
+def-return-value-gen -> ok []
+asyncgen-return -> SyntaxError: 'return' with value in async generator (<s>, line 1)
+async-yield-from -> SyntaxError: 'yield from' inside async function (<s>, line 1)
+asyncfor-in-def -> SyntaxError: 'async for' outside async function (<s>, line 1)
+asyncwith-in-def -> SyntaxError: 'async with' outside async function (<s>, line 1)
+asyncfor-module -> SyntaxError: 'async for' outside async function (<s>, line 1)
+None
+docstring-joined -> ok []
+None
+docstring-bytes -> ok []
+d
+docstring-str -> ok []
+with-tuple-target -> ok [1, 2]
+for-const-iter -> ok [2]
+for-starred-target -> SyntaxError: starred assignment target must be in a list or tuple (<s>, line 1)
+typealias-odd -> ok []
+typeparams-dup -> SyntaxError: duplicate type parameter 'T' (<s>, line 1)
+typeparams-default-order -> SyntaxError: non-default type parameter 'U' follows default type parameter (<s>, line 1)
+typevartuple-starred-default -> ok []
+assert-tuple -> ok []
+expr-const-stmt -> ok []
+lazy-in-def -> SyntaxError: lazy import not allowed inside functions (<s>, line 1)
+lazy-2 -> ok []
+m-two-stars -> SyntaxError: multiple starred names in sequence pattern (<s>, line 1)
+m-dup-capture -> SyntaxError: multiple assignments to name 'a' in pattern (<s>, line 1)
+m-or-different -> SyntaxError: name capture 'a' makes remaining patterns unreachable (<s>, line 1)
+m-or-irrefutable-first -> SyntaxError: wildcard makes remaining patterns unreachable (<s>, line 1)
+m-irrefutable-not-last -> SyntaxError: wildcard makes remaining patterns unreachable (<s>, line 1)
+m-value-joined -> SyntaxError: patterns may only match literals and attribute lookups (<s>, line 1)
+m-value-neg -> ok ['hit']
+m-value-negconst -> ok ['hit']
+m-value-complex -> ok ['hit']
+m-map-dup-key -> SyntaxError: mapping pattern checks duplicate key (1) (<s>, line 1)
+m-map-attr-key -> ok ['hit', 2, {3: 4}]
+m-map-none-key -> ok ['hit', 2, 3]
+m-class-dup-attr -> SyntaxError: attribute name repeated in class pattern: a (<s>, line 1)
+m-class-odd-attr -> ok ['hit', 5]
+m-as-odd-name -> ok ['hit', 1]
+m-singleton -> ok ['hit']
+m-seq-many -> ok ['hit', 299]

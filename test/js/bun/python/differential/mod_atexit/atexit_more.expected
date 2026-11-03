@@ -1,0 +1,21 @@
+status: 0
+script: 4b166b63fcb12c8d
+---
+f1 1 [3] 3
+f1 2 [3] 3
+f1 3 [3] 3
+f2 1 [3, 1] 3
+f2 2 [3, 1] 3
+f2 3 [3, 1] 3
+f3 1 [1] 3
+f3 2 [1] 2
+f3 3 [1] 3
+0
+0
+2
+[('same', 3), ('same', 2)]
+ZeroDivisionError eq 1
+0 '24\n42\n' []
+0 'first\n' []
+0 'still called\n' []
+0 'False\n' []

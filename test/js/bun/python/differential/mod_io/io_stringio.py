@@ -1,0 +1,265 @@
+# _io.StringIO
+import _io
+
+def t(f, *a, **k):
+    try:
+        r = f(*a, **k)
+    except BaseException as e:
+        print(type(e).__name__ + ':', e)
+    else:
+        print(repr(r))
+
+StringIO = _io.StringIO
+
+print('--- construction')
+for a in ((), ('',), ('abc',), (None,), ('a\nb', None), ('a\nb', ''), ('a\nb', '\n'), ('a\nb', '\r'), ('a\nb', '\r\n')):
+    s = StringIO(*a)
+    print(a, repr(s.getvalue()), s.tell(), repr(s.read()), s.newlines)
+print(StringIO(initial_value='xy', newline=None).getvalue(), StringIO(newline='\r').getvalue() == '')
+t(StringIO, b'abc')
+t(StringIO, 5)
+t(StringIO, 'a', 5)
+t(StringIO, 'a', b'\n')
+t(StringIO, 'a', 'x')
+t(StringIO, 'a', '\n\r')
+t(StringIO, 'a', '\n\n')
+t(StringIO, 'a', ' ')
+t(StringIO, 'a', ' ')
+t(StringIO, 'a', '\n', 1)
+t(StringIO, bad='a')
+class MyStr(str):
+    pass
+s = StringIO(MyStr('abc'))
+print(type(s.getvalue()).__name__, type(s.read()).__name__)
+s = StringIO()
+s.write(MyStr('abc'))
+print(type(s.getvalue()).__name__, s.getvalue())
+
+print('--- what it can do')
+s = StringIO('abc')
+print(s.readable(), s.writable(), s.seekable(), s.isatty(), s.closed, s.flush(), s.line_buffering, s.encoding, s.errors, s.newlines)
+t(s.fileno)
+t(s.detach)
+t(getattr, s, 'buffer')
+t(getattr, s, 'name')
+print(repr(s)[:22])
+
+print('--- read')
+s = StringIO('0123456789')
+print(s.read(3), repr(s.read(0)), s.read(2), s.tell(), s.read(None), repr(s.read()), repr(s.read(5)), s.tell())
+s.seek(0)
+print(s.read(-1), s.seek(4), s.read(-100), s.seek(8), s.read(100))
+t(s.read, 'x')
+t(s.read, 1.5)
+t(s.read, 2 ** 70)
+s.seek(20)
+print(repr(s.read()), repr(s.read(1)), repr(s.readline()), s.tell())
+
+print('--- write')
+s = StringIO()
+print(s.write('abc'), s.write(''), s.write('dé'), s.tell(), s.getvalue())
+print(s.seek(1), s.write('XY'), s.getvalue(), s.tell())
+print(s.seek(4), s.write('12345'), s.getvalue())
+print(s.seek(12), s.getvalue(), s.write('!'), repr(s.getvalue()), s.tell())
+t(s.write, b'x')
+t(s.write, 5)
+t(s.write, None)
+t(s.write)
+s = StringIO()
+s.writelines(['a', 'b', '', 'c'])
+s.writelines(iter('de'))
+print(s.getvalue())
+t(s.writelines, ['e', b'f'])
+t(s.writelines, 5)
+print(s.getvalue())
+s = StringIO('abc')
+print(s.write('X'), s.getvalue(), s.read())
+
+print('--- characters of all widths')
+text = 'aé€\U0001f600z'
+s = StringIO(text)
+print([s.read(1) for i in range(6)], s.tell())
+s = StringIO()
+print(s.write(text), s.tell(), s.getvalue() == text, len(s.getvalue()))
+print(s.seek(3), s.read(1) == '\U0001f600', s.tell(), s.seek(3), s.write('\U0001f601\U0001f602'), s.tell(), ascii(s.getvalue()))
+print(s.seek(1), s.write('e'), ascii(s.getvalue()), s.truncate(4), ascii(s.getvalue()))
+s = StringIO('\ud800x\udc00')
+print(ascii(s.read(1)), ascii(s.read()), ascii(s.getvalue()))
+s = StringIO('\0a\0')
+print(ascii(s.read()), len(s.getvalue()))
+
+print('--- lines')
+s = StringIO('one\ntwo\n\nthree\r\nfour\rlast')
+print([s.readline() for i in range(6)])
+s.seek(0)
+print(repr(s.readline(2)), repr(s.readline(0)), repr(s.readline(None)), repr(s.readline(-1)), repr(s.readline(100)))
+s.seek(0)
+print(s.readlines())
+for hint in (None, 0, -1, 1, 4, 5, 8, 100):
+    s.seek(0)
+    print(hint, s.readlines(hint), s.tell())
+s.seek(0)
+print(list(s), list(s))
+s.seek(4)
+print(repr(next(s)), repr(s.__next__()), iter(s) is s)
+s.seek(0, 2)
+t(next, s)
+t(s.readline, 'x')
+t(s.readline, 1.5)
+
+print('--- newline')
+text = 'a\nb\r\nc\rd\n\r\r\ne'
+for nl in (None, '', '\n', '\r', '\r\n'):
+    s = StringIO(text, nl)
+    print(repr(nl), repr(s.getvalue()), s.newlines)
+    print('   ', s.readlines(), s.newlines)
+    s = StringIO(newline=nl)
+    print('   ', s.write(text), s.tell(), repr(s.getvalue()), s.newlines)
+    s.seek(0)
+    print('   ', [s.readline(3) for i in range(8)])
+    s = StringIO(newline=nl)
+    for c in text:
+        s.write(c)
+    print('   ', repr(s.getvalue()), s.tell(), s.newlines)
+for parts in (['a\r', '\nb'], ['\r', '\r', '\n'], ['\n'], ['\r'], ['\r\n'], ['x']):
+    for nl in (None, ''):
+        s = StringIO(newline=nl)
+        for p in parts:
+            s.write(p)
+        print(parts, repr(nl), repr(s.getvalue()), s.newlines)
+
+print('--- seek and tell')
+s = StringIO('0123456789')
+print(s.seek(3), s.seek(0, 1), s.seek(0, 2), s.tell(), s.seek(15), s.tell(), s.seek(0), s.seek(True))
+t(s.seek, -1)
+t(s.seek, 1, 1)
+t(s.seek, -1, 1)
+t(s.seek, 1, 2)
+t(s.seek, -1, 2)
+t(s.seek, 0, 3)
+t(s.seek, 0, -1)
+t(s.seek, 5, 7)
+t(s.seek, 'x')
+t(s.seek, 1.5)
+t(s.seek, None)
+t(s.seek)
+t(s.seek, 2 ** 70)
+print(s.seek(2 ** 63 - 1))
+t(s.write, 'x')
+print(repr(s.read()))
+
+print('--- truncate')
+s = StringIO('0123456789')
+print(s.truncate(5), s.getvalue(), s.tell(), s.seek(3), s.truncate(), s.getvalue(), s.truncate(None), s.truncate(100), s.getvalue())
+print(s.seek(6), s.truncate(), s.getvalue(), s.write('x'), repr(s.getvalue()))
+print(s.truncate(0), repr(s.getvalue()), s.tell())
+t(s.truncate, -1)
+t(s.truncate, 'x')
+t(s.truncate, 1.5)
+s = StringIO()
+s.write('abcdef')
+print(s.truncate(2), s.getvalue(), s.tell(), s.write('Z'), repr(s.getvalue()))
+
+print('--- accumulating, then not')
+s = StringIO()
+for i in range(5):
+    s.write(str(i) * 3)
+print(s.getvalue(), s.tell())
+s.write('more')
+print(s.getvalue(), s.seek(0), s.read(), s.tell(), s.write('!'), s.getvalue())
+s = StringIO()
+s.write('abc')
+s.seek(0)
+print(s.read(), s.write('def'), s.getvalue(), s.seek(0), s.read(2), s.write('X'), s.getvalue())
+s = StringIO()
+parts = []
+for i in range(5000):
+    p = chr(32 + i % 2000) * (i % 5)
+    parts.append(p)
+    s.write(p)
+print(s.getvalue() == ''.join(parts), s.tell() == len(''.join(parts)))
+s.seek(100)
+print(s.read(20) == ''.join(parts)[100:120])
+
+print('--- closed')
+s = StringIO('abc')
+print(s.close(), s.closed, s.close())
+for m in ('read', 'readline', 'readlines', 'getvalue', 'tell', 'truncate', 'flush', 'isatty', 'readable', 'writable', 'seekable', '__next__', '__enter__', '__iter__', '__getstate__'):
+    print(m, end=' ')
+    t(getattr(s, m))
+t(s.write, 'x')
+t(s.write, b'x')
+t(s.writelines, [])
+t(s.seek, 0)
+t(getattr, s, 'newlines')
+t(getattr, s, 'line_buffering')
+t(s.__setstate__, ('', '\n', 0, None))
+with StringIO('x') as c:
+    print(c.read())
+print(c.closed)
+s.__init__('new')
+print(s.closed, s.read())
+
+print('--- uninitialized')
+s = StringIO.__new__(StringIO)
+for m in ('read', 'readline', 'getvalue', 'tell', 'truncate', 'readable', 'writable', 'seekable', '__next__'):
+    print(m, end=' ')
+    t(getattr(s, m))
+t(s.write, 'x')
+t(s.seek, 0)
+t(getattr, s, 'closed')
+t(getattr, s, 'newlines')
+t(s.flush)
+print(s.close())
+
+print('--- pickling')
+s = StringIO('ab\ncd')
+s.seek(2)
+print(s.__getstate__())
+s.extra = [1]
+st = s.__getstate__()
+print(st, st[3] is s.__dict__)
+for nl in (None, '', '\r', '\r\n'):
+    print(StringIO('a\nb\r\n', nl).__getstate__())
+c = StringIO()
+print(c.__setstate__(('xyz', '\n', 1, None)), c.getvalue(), c.tell(), c.__dict__)
+c.__setstate__(('a\r\nb', '\r\n', 5, {'k': 'v'}, 'ignored'))
+print(repr(c.getvalue()), c.tell(), c.__dict__, c.seek(0), c.readlines())
+c.__setstate__(('a\r\nb', None, 0, {'j': 1}))
+print(repr(c.getvalue()), sorted(c.__dict__), c.readlines())
+c.__setstate__((None, None, 0, None))
+print(repr(c.getvalue()))
+c.__setstate__(('', '\n', 3, None))
+print(repr(c.getvalue()), c.tell(), c.write('x'), repr(c.getvalue()))
+t(c.__setstate__, ('a', '\n', 0))
+t(c.__setstate__, ['a', '\n', 0, None])
+t(c.__setstate__, None)
+t(c.__setstate__, (b'a', '\n', 0, None))
+t(c.__setstate__, ('a', 'x', 0, None))
+t(c.__setstate__, ('a', '\n', 'x', None))
+t(c.__setstate__, ('a', '\n', -1, None))
+t(c.__setstate__, ('a', '\n', 0, 5))
+r = s.__reduce_ex__(2)
+print(r[0].__name__, r[1], r[2])
+
+print('--- subclasses')
+class Sub(StringIO):
+    def __init__(self, *a):
+        super().__init__(*a)
+        self.n = 0
+    def readline(self, *a):
+        self.n += 1
+        return super().readline(*a)
+s = Sub('a\nb\n')
+print(list(s), s.n, s.readlines(), isinstance(s, _io._TextIOBase), [c.__name__ for c in Sub.__mro__])
+class BadLine(StringIO):
+    def readline(self):
+        return b'x'
+t(next, BadLine('a'))
+t(Sub().__setstate__, 5)
+
+print('--- the type')
+print(StringIO, StringIO.__name__, StringIO.__qualname__, StringIO.__module__, StringIO.__bases__)
+t(setattr, StringIO, 'x', 1)
+t(setattr, StringIO(), 'closed', 1)
+t(setattr, StringIO(), 'newlines', 1)

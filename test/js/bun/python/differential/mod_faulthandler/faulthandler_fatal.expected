@@ -1,0 +1,120 @@
+status: 0
+script: 889eef8399e9745c
+---
+== segv | killed by a signal: True | stdout: ''
+Fatal Python error: Segmentation fault
+
+Current thread 0x (most recent call first):
+  File "<string>", line 5 in inner
+  File "<string>", line 7 in outer
+  File "<string>", line 8 in <module>
+
+Current thread's C stack trace (most recent call first):
+
+== fpe | killed by a signal: True | stdout: ''
+Fatal Python error: Floating-point exception
+
+Current thread 0x (most recent call first):
+  File "<string>", line 3 in <module>
+
+Current thread's C stack trace (most recent call first):
+
+== abort | killed by a signal: True | stdout: ''
+Fatal Python error: Aborted
+
+Current thread 0x (most recent call first):
+  File "<string>", line 3 in <module>
+
+Current thread's C stack trace (most recent call first):
+
+== one thread only | killed by a signal: True | stdout: ''
+Fatal Python error: Segmentation fault
+
+Stack (most recent call first):
+  File "<string>", line 3 in <module>
+
+Current thread's C stack trace (most recent call first):
+
+== no C stack | killed by a signal: True | stdout: ''
+Fatal Python error: Segmentation fault
+
+Current thread 0x (most recent call first):
+  File "<string>", line 3 in <module>
+
+== without the GIL | killed by a signal: True | stdout: ''
+Fatal Python error: Segmentation fault
+
+Current thread 0x (most recent call first):
+  File "<string>", line 3 in <module>
+
+Current thread's C stack trace (most recent call first):
+
+== -X faulthandler | killed by a signal: True | stdout: 'True\n'
+Fatal Python error: Segmentation fault
+
+Current thread 0x (most recent call first):
+  File "<string>", line 3 in <module>
+
+Current thread's C stack trace (most recent call first):
+
+== a name that is not ASCII | killed by a signal: True | stdout: ''
+Fatal Python error: Segmentation fault
+
+Current thread 0x (most recent call first):
+  File "<string>", line 4 in caf\xe9\u4e2d
+  File "<string>", line 5 in <module>
+
+== in a finalizer | killed by a signal: True | stdout: ''
+Fatal Python error: Segmentation fault
+
+Current thread 0x (most recent call first):
+  Garbage-collecting
+  File "<string>", line 6 in __del__
+  File "<string>", line 9 in <module>
+
+== deep | killed by a signal: True | stdout: ''
+Fatal Python error: Segmentation fault
+
+Current thread 0x (most recent call first):
+  File "<string>", line 8 in f
+  File "<string>", line 6 in f   (99 times)
+
+== threads | killed by a signal: True | stdout: ''
+Fatal Python error: Segmentation fault
+
+Thread 0x (most recent call first):
+  File "threading.py", line 363 in wait
+  File "threading.py", line 665 in wait
+  File "<string>", line 7 in wait
+  File "threading.py", line 1161 in run
+  File "threading.py", line 1219 in _bootstrap_inner
+  File "threading.py", line 1181 in _bootstrap
+
+Current thread 0x (most recent call first):
+  File "<string>", line 10 in <module>
+
+== more threads than are shown | killed by a signal: True | stdout: ''
+Fatal Python error: Segmentation fault
+
+Thread 0x (most recent call first):
+  File "threading.py", line 363 in wait
+  File "threading.py", line 665 in wait
+  File "<string>", line 7 in wait
+  File "threading.py", line 1161 in run
+  File "threading.py", line 1219 in _bootstrap_inner
+  File "threading.py", line 1181 in _bootstrap
+
+...
+
+True False False
+ True False
+'' Fatal Python error: Segmentation fault
+
+Current thread 0x (most recent call first):
+  File "<string>", line 4 in <module>
+
+'' Fatal Python error: Segmentation fault
+
+Current thread 0x (most recent call first):
+  File "<string>", line 3 in <module>
+

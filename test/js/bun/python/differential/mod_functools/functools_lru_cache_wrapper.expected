@@ -1,0 +1,168 @@
+status: 0
+script: d95c74d4557eabe8
+---
+--- no bound
+[1, 4, 1, 9, 4, 1]
+[1, 2, 3]
+(3, 3, None, 3)
+None
+(0, 0, None, 0)
+(1, (0, 1, None, 1))
+998001
+(1, 1000, None, 1000)
+--- nothing cached
+[1, 4, 1, 1]
+[1, 2, 1, 1]
+(0, 4, 0, 0)
+(0, 0, 0, 0)
+(0, 0, 0, 0)
+(0, 0, 0, 0)
+TypeError can't multiply sequence by non-int of type 'list'
+--- bounded
+[1, 4, 1, 9, 4, 1, 1, 9]
+[1, 2, 3, 2, 1, 3]
+(2, 6, 2, 2)
+(0, 0, 2, 0)
+[1, 1, 4, 4, 1]
+([1, 2, 1], (2, 3, 1, 1))
+([1, 9, 16], [])
+(4, [2])
+(4, 5, 3, 3)
+7011000
+(1000, (0, 1000, 100, 100))
+(0, 0, 1, 0)
+(0, 0, 4611686018427387904, 0)
+(0, 0, 2, 0)
+--- keys
+None (4, 12, None, 12)
+[((1,), {}), ((1.0,), {}), (('a',), {}), ((('a',),), {}), ((1, 2), {}), (((1, 2),), {}), ((), {'a': 1}), ((), {'a': 1, 'b': 2}), ((), {'b': 2, 'a': 1}), ((1,), {'a': 1}), ((), {}), ((None,), {})]
+10 (4, 12, 10, 10)
+[((1,), {}), ((1.0,), {}), (('a',), {}), ((('a',),), {}), ((1, 2), {}), (((1, 2),), {}), ((), {'a': 1}), ((), {'a': 1, 'b': 2}), ((), {'b': 2, 'a': 1}), ((1,), {'a': 1}), ((), {}), ((None,), {})]
+--- typed
+None (4, 7, None, 7)
+[((1,), {}), ((1.0,), {}), ((True,), {}), ((), {'a': 1}), ((), {'a': 1.0}), (((1,),), {}), (('a',), {})]
+10 (4, 7, 10, 7)
+[((1,), {}), ((1.0,), {}), ((True,), {}), ((), {'a': 1}), ((), {'a': 1.0}), (((1,),), {}), (('a',), {})]
+True
+True
+((0, 4, None, 4), 4)
+((0, 4, None, 4), 4)
+--- the same result object
+True
+True
+False
+(None, None, (1, 1, None, 1))
+--- what cannot be hashed
+TypeError unhashable type: 'list'
+TypeError unhashable type: 'dict'
+TypeError unhashable type: 'list'
+TypeError unhashable type: 'set'
+(0, 0, None, 0)
+TypeError unhashable type: 'list'
+TypeError unhashable type: 'dict'
+TypeError unhashable type: 'list'
+TypeError unhashable type: 'set'
+(0, 0, 2, 0)
+None 3 2 (3, 2, None, 2)
+1 3 2 (2, 3, 1, 1)
+2 3 2 (3, 2, 2, 2)
+ZeroDivisionError bad hash
+True
+ZeroDivisionError bad eq
+(0, 1, None, 1)
+ZeroDivisionError bad hash
+True
+ZeroDivisionError bad eq
+(0, 1, 2, 1)
+--- exceptions are not cached
+KeyError 1
+KeyError 1
+([1, 1], (0, 2, None, 0))
+KeyError 1
+KeyError 1
+([1, 1], (0, 2, 0, 0))
+KeyError 1
+KeyError 1
+([1, 1], (0, 2, 2, 0))
+--- recursion
+None 832040 (28, 31, None, 31)
+3 832040 (28, 31, 3, 3)
+100 832040 (28, 31, 100, 31)
+None ('outer', 'inner') ('outer', 'inner') (1, 2, None, 1)
+1 ('outer', 'inner') inner (1, 2, 1, 1)
+2 ('outer', 'inner') inner (1, 2, 2, 1)
+None [1, 2, 3, 1] (0, 0, None, 1)
+1 [1, 2, 3, 1] (0, 0, 1, 1)
+2 [1, 2, 3, 1] (0, 0, 2, 1)
+['x', 'y', 'outer', 'outer', 'c', 'b'] (2, 7, 2, 2)
+--- arguments
+TypeError lru_cache() missing required argument 'user_function' (pos 1)
+TypeError lru_cache() missing required argument 'maxsize' (pos 2)
+TypeError lru_cache() missing required argument 'typed' (pos 3)
+TypeError lru_cache() missing required argument 'cache_info_type' (pos 4)
+TypeError lru_cache() takes at most 4 arguments (5 given)
+TypeError the first argument must be callable
+TypeError the first argument must be callable
+TypeError maxsize should be integer or None
+TypeError maxsize should be integer or None
+TypeError maxsize should be integer or None
+OverflowError cannot fit 'int' into an index-sized integer
+OverflowError cannot fit 'int' into an index-sized integer
+(0, 0, 1, 0)
+(0, 0, 1, 0)
+TypeError lru_cache() takes at most 4 arguments (5 given)
+TypeError lru_cache() missing required argument 'cache_info_type' (pos 4)
+TypeError lru_cache() takes at most 4 arguments (5 given)
+TypeError lru_cache() missing required argument 'cache_info_type' (pos 4)
+TypeError 'NoneType' object is not callable
+TypeError 'int' object is not callable
+TypeError <lambda>.<locals>.<lambda>() takes 0 positional arguments but 4 were given
+RuntimeError bad bool
+TypeError _lru_cache_wrapper.cache_info() takes no arguments (1 given)
+TypeError _lru_cache_wrapper.cache_clear() takes no arguments (1 given)
+TypeError _lru_cache_wrapper.cache_info() takes no keyword arguments
+TypeError square() missing 1 required positional argument: 'x'
+TypeError square() takes 1 positional argument but 2 were given
+(0, 2, 2, 0)
+--- attributes
+{}
+['__doc__', '__name__', '__qualname__', '__wrapped__', 'anything']
+(True, 'square', 'doc', 1)
+'mod.square'
+True
+True
+True
+False
+True
+True
+True
+True
+1
+TypeError cannot delete __dict__
+TypeError __dict__ must be set to a dictionary, not a 'list'
+--- as a method
+(A(1), 2)
+(A(1), 2)
+(A(2), 2)
+(1, 2, None, 2)
+(A(1), 2)
+('static', 3)
+('A', 4)
+'method'
+A(1)
+True
+True
+(2, 2, None, 2)
+True
+9
+9
+TypeError __get__(None, None) is invalid
+TypeError __get__ expected at least 1 argument, got 0
+--- the type
+('_lru_cache_wrapper', '_lru_cache_wrapper', 'functools', "<class 'functools._lru_cache_wrapper'>")
+['__call__', '__copy__', '__deepcopy__', '__dict__', '__get__', '__new__', '__reduce__', 'cache_clear', 'cache_info']
+True
+'Create a cached callable that wraps another function.'
+is final
+['Placeholder', '_PlaceholderType', '_lru_cache_wrapper', 'cmp_to_key', 'partial', 'reduce']
+_functools Tools that operate on functions.

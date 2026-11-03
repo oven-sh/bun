@@ -1,0 +1,63 @@
+status: 0
+script: 8a09a1499f7763ed
+---
+TypeError array() takes at least 1 argument (0 given)
+TypeError array() argument 1 must be str, not int
+TypeError array() takes at most 2 arguments (3 given)
+ValueError bad typecode (must be b, B, u, w, h, H, i, I, l, L, q, Q, e, f, d, Zf or Zd)
+TypeError 'int' object is not iterable
+TypeError 'int' object is not iterable
+TypeError array.array() takes no keyword arguments
+TypeError array.array() takes no keyword arguments
+ValueError bad typecode (must be b, B, u, w, h, H, i, I, l, L, q, Q, e, f, d, Zf or Zd)
+ValueError bad typecode (must be b, B, u, w, h, H, i, I, l, L, q, Q, e, f, d, Zf or Zd)
+ValueError embedded null character
+TypeError array() argument 1 must be str, not bytes
+TypeError cannot use a str to initialize an array with typecode 'i'
+TypeError cannot use a unicode array to initialize an array with typecode 'i'
+TypeError array item must be a unicode character, not int
+ValueError bytes length not a multiple of item size
+TypeError 'NoneType' object is not iterable
+ValueError bad typecode (must be b, B, u, w, h, H, i, I, l, L, q, Q, e, f, d, Zf or Zd)
+TypeError array() argument 1 must be str, not None
+ValueError bad typecode (must be b, B, u, w, h, H, i, I, l, L, q, Q, e, f, d, Zf or Zd)
+ValueError bad typecode (must be b, B, u, w, h, H, i, I, l, L, q, Q, e, f, d, Zf or Zd)
+ValueError bad typecode (must be b, B, u, w, h, H, i, I, l, L, q, Q, e, f, d, Zf or Zd)
+array('i', [1, 2]) array('i', [1, 2]) array('i', [0, 1, 2]) array('i', [4, 5]) array('i', [1, 2]) array('i', [1]) array('i', [7, 8]) array('i', [7, 8]) array('d', [1.0, 2.0]) array('i', [3]) array('i', [9]) array('h') array('B', [97, 98, 99]) array('i')
+TypeError 'float' object cannot be interpreted as an integer
+KeyError 'boom'
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'NoneType' object cannot be interpreted as an integer
+S('i', [1, 2]) S 5 {'x': 5} True array array array array array S('i') S('w', 'ab')
+TypeError array.array() takes no keyword arguments
+TypeError array.array() takes no keyword arguments
+S2('i') {'x': 1}
+TypeError array() takes at least 1 argument (0 given)
+TypeError array() takes at most 2 arguments (3 given)
+S3('b', [0, 1, 2, 3])
+array('i', [42, 42, 42])
+array('i', [43, 43])
+IndexError list index out of range
+array array array (<class 'array.array'>, <class 'object'>) <class 'object'> None array.array[int] True
+TypeError
+TypeError
+AttributeError
+AttributeError
+AttributeError
+['__add__', '__class_getitem__', '__contains__', '__copy__', '__deepcopy__', '__delitem__', '__eq__', '__ge__', '__getitem__', '__gt__', '__hash__', '__iadd__', '__imul__', '__iter__', '__le__', '__len__', '__lt__', '__mul__', '__ne__', '__new__', '__reduce_ex__', '__repr__', '__rmul__', '__setitem__', '__sizeof__', 'append', 'buffer_info', 'byteswap', 'clear', 'count', 'extend', 'frombytes', 'fromfile', 'fromlist', 'fromunicode', 'index', 'insert', 'itemsize', 'pop', 'remove', 'reverse', 'tobytes', 'tofile', 'tolist', 'tounicode', 'typecode']
+seq 1 2
+True True False
+[64, 68, 76, 192, 70, 76, 80]
+[80, 80, 80, 80, 96, 96, 96, 96, 128, 128, 128, 128, 128, 128, 128, 128, 164, 164, 164, 164, 164, 164, 164, 164, 164, 200, 200, 200, 200, 200, 200, 200, 200, 200, 240, 240, 240, 240, 240, 240, 240, 240, 240, 240, 280, 280, 280, 280, 280, 280, 280, 280, 280, 280, 324, 324, 324, 324, 324, 324, 324, 324, 324, 324, 324, 372, 372, 372, 372, 372]
+[372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372]
+tuple 2 0 False
+1 True int
+1 DeprecationWarning The 'u' type code is deprecated and will be removed in Python 3.16
+array('u', 'ab€😀') 4 u ['a', 'b', '€', '😀'] ab€😀 4 😀 6100000062000000ac20000000f60100
+array('u', 'ab€😀zyyq') True True ('u', 20)
+ValueError character U+ffffffff is not in range [U+0000; U+10ffff]
+'\ud800'
+ValueError chr() arg not in range(0x110000)
+TypeError array item must be a unicode character, not a string of length 2
+TypeError array item must be a unicode character, not int
+DeprecationWarning The 'u' type code is deprecated and will be removed in Python 3.16

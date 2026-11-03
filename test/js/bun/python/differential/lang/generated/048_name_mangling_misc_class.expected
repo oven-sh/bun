@@ -1,0 +1,125 @@
+status: 0
+script: ccc7daf226a68bab
+source: 6ba481b9fabb891c
+---
+a.get() => ('instance private', 'class private', 'class private', 'private method', 'dunder', 'two underscores', 'three', 'one trailing')
+sorted(k for k in a.__dict__) => ['_A__inst', 'raw']
+sorted(k for k in A.__dict__ if "cls" in k or "method" in k or k in (... => ['_A__Inner', '_A__a_', '_A__cls', '_A__method', '__', '___']
+a._A__inst => instance private
+a._A__cls => class private
+a._A__method() => private method
+a.has() => (False, True, 'instance private')
+a.local() => (5, ['_A__loc', 'self'])
+a.param(1) => (1, 1)
+a.param(_A__p=2, _A__k=3) => (2, 3)
+a.glob() => mangled global
+a.nested() => ('instance private', 'class private', ['class private'])
+a.imp() => ('sys', ['_A__s'])
+a.kwcall() => ({'__x': 1}, {'__y': 2})
+a.other(A()) => instance private
+a.string() => ('__inst', 'not mangled in strings')
+a.inner() => ('deep', '__Inner', 'A.__Inner')
+A.param.__code__.co_varnames => ('self', '_A__p', '_A__k')
+A._A__method.__name__ => __method
+A._A__method.__qualname__ => A.__method
+a.__inst => AttributeError: 'A' object has no attribute '__inst'
+a.__cls => AttributeError: 'A' object has no attribute '__cls'
+A.__cls => AttributeError: type object 'A' has no attribute '__cls'
+a.__method() => AttributeError: 'A' object has no attribute '__method'
+a.param(__p=1) => TypeError: A.param() got an unexpected keyword argument '__p'
+5
+(False, False, None)
+{'raw': 1, '__outside': 1}
+b.get_b() => AttributeError: 'B' object has no attribute '_B__inst'
+b.get_ok() => instance private
+b.both() => ("B's own", 'class private')
+b.get()[1] => class private
+_Lead().g() => 1
+sorted(k for k in _Lead.__dict__ if "x" in k) => ['_Lead__x']
+__Lead2().g() => 2
+sorted(k for k in __Lead2.__dict__ if "x" in k) => ['_Lead2__x']
+___().g() => 3
+sorted(k for k in ___.__dict__ if "x" in k) => ['__x']
+at.f(type("O", (), {})()) => {'_Attr__v': 1}
+at.g() => ('Attr', 'Attr', {}, '__main__')
+at.h() => None
+_Attr__gl => global via mangling
+at.k() => ValueError
+at.w() => cm
+at.fo() => 1
+at.wal() => (4, 4)
+at.de() => ('fn', '__fn', '__Cl', ['_Attr__Cl', '_Attr__fn', 'self'])
+at.ma({"k": 1}) => 1
+at.ma(Attr()) => None
+at.ma([1, 2, 3]) => (1, [2, 3])
+at.lam() => (1, ('_Attr__q',))
+Attr.ann.__annotations__ => {'_Attr__an': <class 'int'>, 'return': None}
+at.dl() => (False, False)
+at.nl() => 2
+at.fs() => 7 __f=7
+at.dotted() => sys
+Late().m() => AttributeError: 'Late' object has no attribute '__x'
+T().m() => 1
+"__x" in T.__dict__ => True
+Body.y => global x
+Body.z => class x
+Body().m() => global x
+Body().lam() => global x
+Body.comp => ['global x']
+Body.gen => ['global x']
+Body.first => ['class x']
+Del.err => name 'v' is not defined
+hasattr(Del, "v") => False
+gname2 => set from class body
+gname => g
+GlobalInClass.gname => class level
+hasattr(GlobalInClass, "gname2") => False
+(2, 2, False)
+LocalsInBody.snapshot => ['a']
+LocalsInBody.injected => via locals()
+LocalsInBody.b => via locals()
+LocalsInBody.v => True
+Loop.attr0 => 0
+Loop.attr2 => 2
+Loop.i => 2
+[f(None) for f in Loop.fns] => [0, 1]
+true branch
+Redef().m() => 2
+Redef().first() => 1
+raises_in_body() => ValueError: in body
+name 'ReturnsSelfRef' is not defined
+SyntaxError: 'return' outside function
+SyntaxError: 'yield' outside function
+SyntaxError: 'await' outside function
+SyntaxError: 'return' outside function
+SyntaxError: no binding for nonlocal 'x' found
+ok: class C(): pass
+SyntaxError: invalid syntax
+ok: class C(a, b=1, *c, **d): pass
+SyntaxError: invalid syntax
+ok: class C(*a): pass
+ok: class C(**k): pass
+SyntaxError: positional argument follows keyword argument
+SyntaxError: keyword argument repeated: x
+SyntaxError: invalid syntax
+SyntaxError: expected ':'
+SyntaxError: expected an indented block after class definition on line 1
+SyntaxError: invalid syntax
+SyntaxError: invalid syntax
+ok: class C[T]: pass
+SyntaxError: Type parameter list cannot be empty
+SyntaxError: invalid syntax
+SyntaxError: keyword argument repeated: metaclass
+ok: class C: x: int
+ok: class C: pass; pass
+SyntaxError: expected an indented block after class definition on line 1
+SyntaxError: 'break' outside loop
+SyntaxError: 'continue' not properly in loop
+ok: class C:\n  import os as o\n  from sys import path
+SyntaxError: import * only allowed at module level
+SyntaxError: cannot assign to __debug__
+SyntaxError: invalid syntax
+SyntaxError: 'yield' outside function
+ok: class C(x := 1): pass
+ok: class C: global x; x = 1
+SyntaxError: name 'x' is assigned to before global declaration

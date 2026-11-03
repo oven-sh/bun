@@ -1,0 +1,755 @@
+status: 0
+script: 45d76d2815cd533b
+---
+== simple -> 3
+   simple call 0
+   simple line 1
+   simple line 2
+   simple line 3
+   simple return 3 3
+== only_pass -> None
+   only_pass call 0
+   only_pass line 1
+   only_pass return 1 None
+== constants -> None
+   constants call 0
+   constants line 1
+   constants line 2
+   constants line 3
+   constants line 4
+   constants return 4 None
+== if_else -> 1
+   if_else call 0
+   if_else line 1
+   if_else line 2
+   if_else line 5
+   if_else return 5 1
+== if_else -> 2
+   if_else call 0
+   if_else line 1
+   if_else line 4
+   if_else line 5
+   if_else return 5 2
+== if_elif -> one
+   if_elif call 0
+   if_elif line 1
+   if_elif line 2
+   if_elif return 2 'one'
+== if_elif -> two
+   if_elif call 0
+   if_elif line 1
+   if_elif line 3
+   if_elif line 4
+   if_elif return 4 'two'
+== if_elif -> many
+   if_elif call 0
+   if_elif line 1
+   if_elif line 3
+   if_elif line 5
+   if_elif line 6
+   if_elif line 7
+   if_elif return 7 'many'
+== if_elif -> many
+   if_elif call 0
+   if_elif line 1
+   if_elif line 3
+   if_elif line 5
+   if_elif line 7
+   if_elif return 7 'many'
+== for_loop -> 3
+   for_loop call 0
+   for_loop line 1
+   for_loop line 2
+   for_loop line 3
+   for_loop line 2
+   for_loop line 3
+   for_loop line 2
+   for_loop line 3
+   for_loop line 2
+   for_loop line 4
+   for_loop return 4 3
+== for_else -> 10
+   for_else call 0
+   for_else line 1
+   for_else line 2
+   for_else line 1
+   for_else line 2
+   for_else line 1
+   for_else line 4
+   for_else line 5
+   for_else return 5 10
+== for_break -> 1
+   for_break call 0
+   for_break line 1
+   for_break line 2
+   for_break line 1
+   for_break line 2
+   for_break line 3
+   for_break line 6
+   for_break return 6 1
+== for_continue -> 2
+   for_continue call 0
+   for_continue line 1
+   for_continue line 2
+   for_continue line 3
+   for_continue line 5
+   for_continue line 2
+   for_continue line 3
+   for_continue line 4
+   for_continue line 2
+   for_continue line 3
+   for_continue line 5
+   for_continue line 2
+   for_continue line 3
+   for_continue line 4
+   for_continue line 2
+   for_continue line 6
+   for_continue return 6 2
+== one_line_for -> 2
+   one_line_for call 0
+   one_line_for line 1
+   one_line_for line 1
+   one_line_for line 1
+   one_line_for line 1
+   one_line_for line 2
+   one_line_for return 2 2
+== one_line_while -> 3
+   one_line_while call 0
+   one_line_while line 1
+   one_line_while line 2
+   one_line_while line 2
+   one_line_while line 2
+   one_line_while line 2
+   one_line_while line 3
+   one_line_while return 3 3
+== while_loop -> 3
+   while_loop call 0
+   while_loop line 1
+   while_loop line 2
+   while_loop line 3
+   while_loop line 2
+   while_loop line 3
+   while_loop line 2
+   while_loop line 3
+   while_loop line 2
+   while_loop line 4
+   while_loop return 4 3
+== while_true -> 3
+   while_true call 0
+   while_true line 1
+   while_true line 2
+   while_true line 3
+   while_true line 4
+   while_true line 2
+   while_true line 3
+   while_true line 4
+   while_true line 2
+   while_true line 3
+   while_true line 4
+   while_true line 5
+   while_true line 6
+   while_true return 6 3
+== while_else -> 10
+   while_else call 0
+   while_else line 1
+   while_else line 2
+   while_else line 3
+   while_else line 2
+   while_else line 3
+   while_else line 2
+   while_else line 5
+   while_else line 6
+   while_else return 6 10
+== nested_loops -> 4
+   nested_loops call 0
+   nested_loops line 1
+   nested_loops line 2
+   nested_loops line 3
+   nested_loops line 4
+   nested_loops line 3
+   nested_loops line 4
+   nested_loops line 3
+   nested_loops line 2
+   nested_loops line 3
+   nested_loops line 4
+   nested_loops line 3
+   nested_loops line 4
+   nested_loops line 3
+   nested_loops line 2
+   nested_loops line 5
+   nested_loops return 5 4
+== try_except -> 3
+   try_except call 0
+   try_except line 1
+   try_except line 2
+   try_except line 3
+   try_except exception 3 ValueError ValueError('v') traceback
+   try_except line 4
+   try_except line 6
+   try_except line 7
+   try_except line 8
+   try_except return 8 3
+== try_bare_except -> 1
+   try_bare_except call 0
+   try_bare_except line 1
+   try_bare_except line 2
+   try_bare_except exception 2 ZeroDivisionError ZeroDivisionError('division by zero') traceback
+   try_bare_except line 3
+   try_bare_except line 4
+   try_bare_except line 5
+   try_bare_except return 5 1
+== try_else -> 3
+   try_else call 0
+   try_else line 1
+   try_else line 2
+   try_else line 6
+   try_else line 7
+   try_else return 7 3
+== try_finally -> 2
+   try_finally call 0
+   try_finally line 1
+   try_finally line 2
+   try_finally line 4
+   try_finally line 5
+   try_finally return 5 2
+== try_finally_raise -> raised ValueError('v')
+   try_finally_raise call 0
+   try_finally_raise line 1
+   try_finally_raise line 2
+   try_finally_raise exception 2 ValueError ValueError('v') traceback
+   try_finally_raise line 4
+   try_finally_raise return 4 None
+== try_except_finally -> 2
+   try_except_finally call 0
+   try_except_finally line 1
+   try_except_finally line 2
+   try_except_finally exception 2 ValueError ValueError('v') traceback
+   try_except_finally line 3
+   try_except_finally line 4
+   try_except_finally line 6
+   try_except_finally line 7
+   try_except_finally return 7 2
+== return_in_try_finally -> 1
+   return_in_try_finally call 0
+   return_in_try_finally line 1
+   return_in_try_finally line 2
+   return_in_try_finally line 4
+   return_in_try_finally return 4 1
+== return_in_except -> 5
+   return_in_except call 0
+   return_in_except line 1
+   return_in_except line 2
+   return_in_except exception 2 ValueError ValueError() traceback
+   return_in_except line 3
+   return_in_except line 4
+   return_in_except return 4 5
+== break_in_try_finally -> 0
+   break_in_try_finally call 0
+   break_in_try_finally line 1
+   break_in_try_finally line 2
+   break_in_try_finally line 3
+   break_in_try_finally line 5
+   break_in_try_finally line 6
+   break_in_try_finally return 6 0
+== continue_in_try_finally -> 1
+   continue_in_try_finally call 0
+   continue_in_try_finally line 1
+   continue_in_try_finally line 2
+   continue_in_try_finally line 3
+   continue_in_try_finally line 5
+   continue_in_try_finally line 1
+   continue_in_try_finally line 2
+   continue_in_try_finally line 3
+   continue_in_try_finally line 5
+   continue_in_try_finally line 1
+   continue_in_try_finally line 6
+   continue_in_try_finally return 6 1
+== not_caught -> raised ValueError('v')
+   not_caught call 0
+   not_caught line 1
+   not_caught line 2
+   not_caught exception 2 ValueError ValueError('v') traceback
+   not_caught line 3
+   not_caught return 3 None
+== reraise -> raised ValueError('v')
+   reraise call 0
+   reraise line 1
+   reraise line 2
+   reraise exception 2 ValueError ValueError('v') traceback
+   reraise line 3
+   reraise line 4
+   reraise return 4 None
+== raise_in_handler -> raised KeyError('k')
+   raise_in_handler call 0
+   raise_in_handler line 1
+   raise_in_handler line 2
+   raise_in_handler exception 2 ValueError ValueError('v') traceback
+   raise_in_handler line 3
+   raise_in_handler line 4
+   raise_in_handler exception 4 KeyError KeyError('k') traceback
+   raise_in_handler return 4 None
+== nested_try -> 3
+   nested_try call 0
+   nested_try line 1
+   nested_try line 2
+   nested_try line 3
+   nested_try exception 3 ValueError ValueError('v') traceback
+   nested_try line 5
+   nested_try line 6
+   nested_try line 7
+   nested_try line 8
+   nested_try return 8 3
+== with_statement -> 1
+   with_statement call 0
+   with_statement line 1
+   __init__ call 0
+   __init__ line 1
+   __init__ return 1 None
+   __enter__ call 0
+   __enter__ line 1
+   __enter__ return 1 <__main__.Manager object>
+   with_statement line 2
+   with_statement line 1
+   __exit__ call 0
+   __exit__ line 1
+   __exit__ return 1 False
+   with_statement line 3
+   with_statement return 3 1
+== with_raise -> raised ValueError('v')
+   with_raise call 0
+   with_raise line 1
+   __init__ call 0
+   __init__ line 1
+   __init__ return 1 None
+   __enter__ call 0
+   __enter__ line 1
+   __enter__ return 1 <__main__.Manager object>
+   with_raise line 2
+   with_raise exception 2 ValueError ValueError('v') traceback
+   with_raise line 1
+   __exit__ call 0
+   __exit__ line 1
+   __exit__ return 1 False
+   with_raise return 2 None
+== with_swallow -> 1
+   with_swallow call 0
+   with_swallow line 1
+   __init__ call 0
+   __init__ line 1
+   __init__ return 1 None
+   __enter__ call 0
+   __enter__ line 1
+   __enter__ return 1 <__main__.Manager object>
+   with_swallow line 2
+   with_swallow exception 2 ValueError ValueError('v') traceback
+   with_swallow line 1
+   __exit__ call 0
+   __exit__ line 1
+   __exit__ return 1 True
+   with_swallow line 3
+   with_swallow return 3 1
+== with_two -> 1
+   with_two call 0
+   with_two line 1
+   __init__ call 0
+   __init__ line 1
+   __init__ return 1 None
+   __enter__ call 0
+   __enter__ line 1
+   __enter__ return 1 <__main__.Manager object>
+   __init__ call 0
+   __init__ line 1
+   __init__ return 1 None
+   __enter__ call 0
+   __enter__ line 1
+   __enter__ return 1 <__main__.Manager object>
+   with_two line 2
+   with_two line 1
+   __exit__ call 0
+   __exit__ line 1
+   __exit__ return 1 False
+   __exit__ call 0
+   __exit__ line 1
+   __exit__ return 1 False
+   with_two line 3
+   with_two return 3 1
+== with_return -> 1
+   with_return call 0
+   with_return line 1
+   __init__ call 0
+   __init__ line 1
+   __init__ return 1 None
+   __enter__ call 0
+   __enter__ line 1
+   __enter__ return 1 <__main__.Manager object>
+   with_return line 2
+   with_return line 1
+   __exit__ call 0
+   __exit__ line 1
+   __exit__ return 1 False
+   with_return return 1 1
+== with_multiline -> 1
+   with_multiline call 0
+   with_multiline line 2
+   __init__ call 0
+   __init__ line 1
+   __init__ return 1 None
+   __enter__ call 0
+   __enter__ line 1
+   __enter__ return 1 <__main__.Manager object>
+   with_multiline line 3
+   __init__ call 0
+   __init__ line 1
+   __init__ return 1 None
+   __enter__ call 0
+   __enter__ line 1
+   __enter__ return 1 <__main__.Manager object>
+   with_multiline line 5
+   with_multiline line 3
+   __exit__ call 0
+   __exit__ line 1
+   __exit__ return 1 False
+   with_multiline line 2
+   __exit__ call 0
+   __exit__ line 1
+   __exit__ return 1 False
+   with_multiline line 6
+   with_multiline return 6 1
+== calls -> 6
+   calls call 0
+   calls line 1
+   callee call 0
+   callee line 1
+   callee return 1 3
+   calls line 2
+   calls line 3
+   calls line 4
+   calls line 2
+   callee call 0
+   callee line 1
+   callee return 1 6
+   calls line 6
+   calls return 6 6
+== multiline_expression -> (7, [1, 7, 3], {'a': 1, 'b': 7})
+   multiline_expression call 0
+   multiline_expression line 1
+   multiline_expression line 2
+   callee call 0
+   callee line 1
+   callee return 1 3
+   multiline_expression line 1
+   multiline_expression line 3
+   multiline_expression line 1
+   multiline_expression line 5
+   multiline_expression line 6
+   multiline_expression line 7
+   multiline_expression line 4
+   multiline_expression line 10
+   multiline_expression line 11
+   multiline_expression line 9
+   multiline_expression line 13
+   multiline_expression line 14
+   multiline_expression line 15
+   multiline_expression line 13
+   multiline_expression return 13 (7, [1, 7, 3], {'a': 1, 'b': 7})
+== multiline_assign -> 5
+   multiline_assign call 0
+   multiline_assign line 2
+   multiline_assign line 1
+   multiline_assign line 4
+   callee call 0
+   callee line 1
+   callee return 1 4
+   multiline_assign line 3
+   multiline_assign line 6
+   multiline_assign return 6 5
+== bool_ops -> 1
+   bool_ops call 0
+   bool_ops line 1
+   bool_ops line 2
+   bool_ops line 1
+   bool_ops line 3
+   bool_ops line 5
+   bool_ops line 6
+   bool_ops line 7
+   bool_ops return 7 1
+== bool_ops -> (0, 2)
+   bool_ops call 0
+   bool_ops line 1
+   bool_ops line 3
+   bool_ops line 4
+   bool_ops line 3
+   bool_ops line 5
+   bool_ops line 8
+   bool_ops return 8 (0, 2)
+== bool_ops -> (0, 1)
+   bool_ops call 0
+   bool_ops line 1
+   bool_ops line 2
+   bool_ops line 1
+   bool_ops line 3
+   bool_ops line 5
+   bool_ops line 6
+   bool_ops line 8
+   bool_ops return 8 (0, 1)
+== conditional_expression -> 1
+   conditional_expression call 0
+   conditional_expression line 1
+   conditional_expression line 3
+   conditional_expression return 3 1
+== conditional_expression -> 2
+   conditional_expression call 0
+   conditional_expression line 1
+   conditional_expression line 2
+   conditional_expression line 1
+   conditional_expression line 3
+   conditional_expression return 3 2
+== comprehension -> ([0, 1], [1])
+   comprehension call 0
+   comprehension line 1
+   comprehension line 1
+   comprehension line 1
+   comprehension line 3
+   comprehension line 2
+   comprehension line 3
+   comprehension line 4
+   comprehension line 2
+   comprehension line 3
+   comprehension line 4
+   comprehension line 2
+   comprehension line 3
+   comprehension line 5
+   comprehension return 5 ([0, 1], [1])
+== generator_expression -> 1
+   generator_expression call 0
+   generator_expression line 1
+   <genexpr> call 0
+   <genexpr> line 0
+   <genexpr> return 0 0
+   <genexpr> call 0
+   <genexpr> line 0
+   <genexpr> return 0 1
+   <genexpr> call 0
+   <genexpr> line 0
+   <genexpr> return 0 None
+   generator_expression return 1 1
+== make_lambda -> 2
+   make_lambda call 0
+   make_lambda line 1
+   make_lambda line 2
+   <lambda> call 0
+   <lambda> line 0
+   <lambda> return 0 2
+   make_lambda return 2 2
+== inner_function -> 1
+   inner_function call 0
+   inner_function line 1
+   inner_function line 3
+   inner call 0
+   inner line 1
+   inner return 1 1
+   inner_function return 3 1
+== decorated -> 1
+   decorated call 0
+   decorated line 1
+   decorated line 2
+   decorated line 3
+   decorated line 2
+   decorator call 0
+   decorator line 1
+   decorator return 1 <function decorated.<locals>.inner>
+   decorated line 1
+   decorator call 0
+   decorator line 1
+   decorator return 1 <function decorated.<locals>.inner>
+   decorated line 3
+   decorated line 5
+   inner call 0
+   inner line 3
+   inner return 3 1
+   decorated return 5 1
+== class_body -> 1
+   class_body call 0
+   class_body line 1
+   C call 0
+   C line 0
+   C line 1
+   C line 3
+   C return 3 None
+   class_body line 6
+   method call 0
+   method line 1
+   method return 1 1
+   class_body return 6 1
+== decorated_class -> C
+   decorated_class call 0
+   decorated_class line 1
+   decorated_class line 2
+   C call 0
+   C line 0
+   C line 2
+   C return 2 None
+   decorated_class line 1
+   decorator call 0
+   decorator line 1
+   decorator return 1 <class '__main__.decorated_class.<locals>.C'>
+   decorated_class line 2
+   decorated_class line 4
+   decorated_class return 4 'C'
+== delete -> 1
+   delete call 0
+   delete line 1
+   delete line 2
+   delete line 3
+   delete return 3 1
+== global_statement -> 1
+   global_statement call 0
+   global_statement line 2
+   global_statement line 3
+   global_statement return 3 1
+== assert_statement -> 1
+   assert_statement call 0
+   assert_statement line 1
+   assert_statement line 2
+   assert_statement return 2 1
+== assert_statement -> raised AssertionError('message')
+   assert_statement call 0
+   assert_statement line 1
+   assert_statement exception 1 AssertionError AssertionError('message') traceback
+   assert_statement return 1 None
+== augmented -> 2
+   augmented call 0
+   augmented line 1
+   augmented line 2
+   augmented line 3
+   augmented line 4
+   augmented line 5
+   augmented return 5 2
+== unpacking -> (1, 2, 2, 1)
+   unpacking call 0
+   unpacking line 1
+   unpacking line 3
+   unpacking line 2
+   unpacking line 3
+   unpacking line 4
+   unpacking return 4 (1, 2, 2, 1)
+== import_statement -> 1
+   import_statement call 0
+   import_statement line 1
+   import_statement line 2
+   import_statement line 3
+   import_statement return 3 1
+== match_statement -> one
+   match_statement call 0
+   match_statement line 1
+   match_statement line 2
+   match_statement line 3
+   match_statement return 3 'one'
+== match_statement -> pair
+   match_statement call 0
+   match_statement line 1
+   match_statement line 2
+   match_statement line 4
+   match_statement line 5
+   match_statement return 5 'pair'
+== match_statement -> mapping
+   match_statement call 0
+   match_statement line 1
+   match_statement line 2
+   match_statement line 4
+   match_statement line 6
+   match_statement line 7
+   match_statement return 7 'mapping'
+== match_statement -> str
+   match_statement call 0
+   match_statement line 1
+   match_statement line 2
+   match_statement line 4
+   match_statement line 6
+   match_statement line 8
+   match_statement line 9
+   match_statement return 9 'str'
+== match_statement -> other
+   match_statement call 0
+   match_statement line 1
+   match_statement line 2
+   match_statement line 4
+   match_statement line 6
+   match_statement line 8
+   match_statement line 10
+   match_statement line 11
+   match_statement return 11 'other'
+== star_except -> 3
+   star_except call 0
+   star_except line 1
+   star_except line 2
+   star_except exception 2 ExceptionGroup ExceptionGroup('g', [ValueError(1), KeyError(2)]) traceback
+   star_except line 3
+   star_except line 4
+   star_except line 5
+   star_except line 6
+   star_except line 7
+   star_except return 7 3
+== unbound -> raised UnboundLocalError("cannot access local variable 'x' where it is not associated with a value")
+   unbound call 0
+   unbound line 1
+   unbound line 3
+   unbound exception 3 UnboundLocalError UnboundLocalError("cannot access local variable 'x' where it is not associated with a value") traceback
+   unbound return 3 None
+== docstring -> 1
+   docstring call 0
+   docstring line 2
+   docstring return 2 1
+== empty_return -> None
+   empty_return call 0
+   empty_return line 1
+   empty_return return 1 None
+== return_multiline -> 1
+   return_multiline call 0
+   return_multiline line 2
+   return_multiline line 1
+   return_multiline return 1 1
+== fstring -> 12
+   fstring call 0
+   fstring line 1
+   fstring line 2
+   fstring line 1
+   fstring return 1 '12'
+== chained_methods -> a
+   chained_methods call 0
+   chained_methods line 1
+   chained_methods line 2
+   chained_methods line 3
+   chained_methods line 1
+   chained_methods return 1 'a'
+== annotations -> 1
+   annotations call 0
+   annotations line 1
+   annotations line 3
+   annotations return 3 1
+== walrus -> 3
+   walrus call 0
+   walrus line 1
+   walrus line 2
+   walrus return 2 3
+== try_in_loop -> 12
+   try_in_loop call 0
+   try_in_loop line 1
+   try_in_loop line 2
+   try_in_loop line 3
+   try_in_loop line 4
+   try_in_loop line 6
+   try_in_loop line 2
+   try_in_loop line 3
+   try_in_loop line 4
+   try_in_loop line 5
+   try_in_loop exception 5 ValueError ValueError() traceback
+   try_in_loop line 7
+   try_in_loop line 8
+   try_in_loop line 2
+   try_in_loop line 3
+   try_in_loop line 4
+   try_in_loop line 6
+   try_in_loop line 2
+   try_in_loop line 9
+   try_in_loop return 9 12

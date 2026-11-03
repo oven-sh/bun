@@ -1,0 +1,253 @@
+status: 0
+script: c7ffdcb46e7281ee
+source: 47b9843629097d49
+---
+p == q => True
+p != q => False
+p == r => False
+p != r => True
+p is q => False
+hash(p) == hash(q) => True
+p < r => True
+r < p => False
+p > r => False
+r > p => True
+p == 1 => False
+p != 1 => True
+1 == p => False
+{p: "v"}[q] => v
+len({p, q, r}) => 2
+p in [q] => True
+[p].index(q) => 0
+[p, r].count(q) => 1
+p in {q} => True
+p in (r,) => False
+sorted([r, p]) => [P(1,2), P(2,1)]
+max(p, r) => P(2,1)
+min([r, p]) => P(1,2)
+[p] == [q] => True
+(p,) == (q,) => True
+{1: p} == {1: q} => True
+{p} == {q} => True
+p <= r => TypeError: '<=' not supported between instances of 'P' and 'P'
+p >= r => TypeError: '>=' not supported between instances of 'P' and 'P'
+p < 1 => AttributeError: 'int' object has no attribute 'a'
+1 < p => TypeError: '<' not supported between instances of 'int' and 'P'
+1 > p => AttributeError: 'int' object has no attribute 'a'
+EqOnly.__hash__ => None
+EqHash.__hash__ is not None => True
+EqOverride.__hash__ => None
+"__hash__" in EqOnly.__dict__ => True
+"__hash__" in EqInherit.__dict__ => False
+hash(EqHash()) => 1
+hash(EqInherit()) => 1
+isinstance(hash(EqRestore()), int) => True
+hash(HashBack()) => 5
+hash(EqOnly()) => TypeError: unhashable type: 'EqOnly'
+{EqOnly()} => TypeError: cannot use 'EqOnly' as a set element (unhashable type: 'EqOnly')
+{EqOnly(): 1} => TypeError: cannot use 'EqOnly' as a dict key (unhashable type: 'EqOnly')
+hash(EqOverride()) => TypeError: unhashable type: 'EqOverride'
+hash(HashNone()) => TypeError: unhashable type: 'HashNone'
+hash(HashNoneSub()) => TypeError: unhashable type: 'HashNoneSub'
+EqOnly() in {1} => TypeError: cannot use 'EqOnly' as a set element (unhashable type: 'EqOnly')
+{}.get(EqOnly()) => TypeError: cannot use 'EqOnly' as a dict key (unhashable type: 'EqOnly')
+hash((1, EqOnly())) => TypeError: unhashable type: 'EqOnly'
+frozenset([EqOnly()]) => TypeError: cannot use 'EqOnly' as a set element (unhashable type: 'EqOnly')
+EqOnly() in [1] => True
+hash(H(5)) => 5
+hash(H(-1)) => -2
+hash(H(-2)) => -2
+hash(H(0)) => 0
+hash(H(True)) => 1
+hash(H(2 ** 61 - 1)) => 2305843009213693951
+hash(H(2 ** 61)) => 2305843009213693952
+hash(H(2 ** 63)) => 4
+hash(H(2 ** 64)) => 8
+hash(H(-(2 ** 63))) => -9223372036854775808
+hash(H(2 ** 63 - 1)) => 9223372036854775807
+hash(H(-(2 ** 63) - 1)) => -5
+hash(H(10 ** 30)) => 465258685558744706
+hash(H(-(10 ** 30))) => -465258685558744706
+hash(H(2 ** 62)) => 4611686018427387904
+hash(H(1.0)) => TypeError: __hash__ method should return an integer
+hash(H("a")) => TypeError: __hash__ method should return an integer
+hash(H(None)) => TypeError: __hash__ method should return an integer
+{H(1.5): 1} => TypeError: cannot use 'H.<locals>.X' as a dict key (__hash__ method should return an integer)
+hash(H(IntLike(7))) => 7
+type(hash(H(IntLike(7)))) => <class 'int'>
+d1 == d1 => True
+d1 == d2 => False
+d1 != d2 => True
+d1 != d1 => False
+d1 is d1 => True
+hash(d1) == hash(d1) => True
+d1 in [d1] => True
+d1 in [d2] => False
+{d1: 1}.get(d2) => None
+len({d1, d2, d1}) => 2
+d1.__eq__(d1) => True
+d1.__eq__(d2) => NotImplemented
+d1.__ne__(d1) => False
+d1.__ne__(d2) => NotImplemented
+d1.__lt__(d2) => NotImplemented
+d1.__le__(d1) => NotImplemented
+d1.__gt__(d2) => NotImplemented
+d1.__ge__(d2) => NotImplemented
+[d1] == [d1] => True
+[d1] == [d2] => False
+(d1, 1) == (d1, 1) => True
+d1 < d2 => TypeError: '<' not supported between instances of 'D' and 'D'
+d1 <= d1 => TypeError: '<=' not supported between instances of 'D' and 'D'
+d1 > 1 => TypeError: '>' not supported between instances of 'D' and 'int'
+"a" >= d1 => TypeError: '>=' not supported between instances of 'str' and 'D'
+sorted([d1, d2]) => TypeError: '<' not supported between instances of 'D' and 'D'
+max(d1, d2) => TypeError: '>' not supported between instances of 'D' and 'D'
+[d1] < [d2] => TypeError: '<' not supported between instances of 'D' and 'D'
+(1, d1) < (1, d2) => TypeError: '<' not supported between instances of 'D' and 'D'
+[d1] < [d1] if False else "" => 
+(1, d1) < (2, d2) => True
+[d1, 1] == [d1, 2] => False
+(d1,) <= (d1,) => True
+[d1] >= [d1] => True
+ne == ne => False
+ne in [ne] => True
+ne in (ne,) => True
+ne in {ne} => True
+ne in {ne: 1} => True
+[ne] == [ne] => True
+(ne,) == (ne,) => True
+{ne: 1} == {ne: 1} => True
+{ne} == {ne} => True
+[ne].index(ne) => 0
+[ne].count(ne) => 1
+[ne, ne].count(ne) => 2
+{1: ne} == {1: ne} => True
+ne in iter([ne]) => True
+[ne] != [ne] => False
+nan == nan => False
+nan in [nan] => True
+[nan] == [nan] => True
+{nan: 1}[nan] => 1
+nan in {nan} => True
+(nan,) == (nan,) => True
+[nan].count(nan) => 1
+[nan].index(nan) => 0
+float("nan") in [nan] => False
+[float("nan")] == [nan] => False
+{nan} == {nan} => True
+len({nan, nan}) => 1
+len({float("nan"), float("nan")}) => 2
+nan in (x for x in [nan]) => True
+nan in {nan: 1}.values() => False
+(1, nan) in {1: nan}.items() => True
+True ['eq11', 'eq23', 'lt23']
+False ['eq11', 'eq23']
+True ['eq11']
+True ['eq11', 'eq22']
+False []
+True ['eq21', 'gt21']
+False ['eq11', 'eq22']
+True ['eq01', 'eq11']
+1 ['eq01', 'eq11']
+2 ['eq01', 'eq11', 'eq11']
+3 ['gt31', 'gt23']
+1 ['lt12', 'lt31']
+[1, 2, 3] ['lt12', 'lt31', 'lt13', 'lt32']
+True ['lt12', 'lt23']
+False ['lt10']
+True ['eq11', 'eq12']
+True []
+True []
+False []
+True ['eq55']
+ev 1; ev 2; ev 3; True
+ev 1; ev 0; False
+ev 1; ev 1; ev 1; ev 2; True
+ev 1; ev 2; ev 0; ev 0; True
+1 < 2 in [2] => True
+1 in [1] == True => False
+(1 in [1]) == True => True
+1 is 1 is 1 if False else "" => 
+not 1 < 2 => False
+not 1 == 2 => True
+1 < 2 and 2 < 3 => True
+1 if 1 < 2 < 3 else 0 => 1
+OnlyLt(1) < OnlyLt(2) => True
+OnlyLt(1) > OnlyLt(2) => False
+OnlyLt(2) > OnlyLt(1) => True
+sorted([OnlyLt(3), OnlyLt(1)])[0].v => 1
+max(OnlyLt(1), OnlyLt(2)).v => 2
+min(OnlyLt(1), OnlyLt(2)).v => 1
+OnlyLt(1) <= OnlyLt(2) => TypeError: '<=' not supported between instances of 'OnlyLt' and 'OnlyLt'
+OnlyLt(1) >= OnlyLt(2) => TypeError: '>=' not supported between instances of 'OnlyLt' and 'OnlyLt'
+OnlyGt(1) < OnlyGt(2) => True
+OnlyGt(2) > OnlyGt(1) => True
+sorted([OnlyGt(3), OnlyGt(1)])[0].v => 1
+max(OnlyGt(1), OnlyGt(2)).v => 2
+1 == 1.0 == 1 + 0j == True => True
+hash(1) == hash(1.0) == hash(1 + 0j) == hash(True) => True
+0 == 0.0 == -0.0 == False == 0j => True
+"1" == 1 => False
+b"1" == "1" => False
+[] == () => False
+() == [] => False
+{} == set() => False
+set() == frozenset() => True
+None == False => False
+None == 0 => False
+None == "" => False
+"" == b"" => False
+1 == "1" => False
+(1,) == [1] => False
+range(0) == [] => False
+1.0 == "1.0" => False
+[1] == [1.0] => True
+{1} == {1.0} => True
+{1: 1} == {1.0: 1.0} => True
+(1, 2) == (1.0, 2.0) => True
+"a" == "a" => True
+b"a" == bytearray(b"a") => True
+int == int => True
+int == float => False
+len == len => True
+None == None => True
+... == ... => True
+NotImplemented == NotImplemented => True
+'<' not supported between instances of 'int' and 'str' | '<=' not supported between instances of 'int' and 'str' | '>' not supported between instances of 'int' and 'str' | '>=' not supported between instances of 'int' and 'str' | 
+'<' not supported between instances of 'str' and 'int' | '<=' not supported between instances of 'str' and 'int' | '>' not supported between instances of 'str' and 'int' | '>=' not supported between instances of 'str' and 'int' | 
+'<' not supported between instances of 'int' and 'NoneType' | '<=' not supported between instances of 'int' and 'NoneType' | '>' not supported between instances of 'int' and 'NoneType' | '>=' not supported between instances of 'int' and 'NoneType' | 
+'<' not supported between instances of 'NoneType' and 'int' | '<=' not supported between instances of 'NoneType' and 'int' | '>' not supported between instances of 'NoneType' and 'int' | '>=' not supported between instances of 'NoneType' and 'int' | 
+'<' not supported between instances of 'list' and 'tuple' | '<=' not supported between instances of 'list' and 'tuple' | '>' not supported between instances of 'list' and 'tuple' | '>=' not supported between instances of 'list' and 'tuple' | 
+'<' not supported between instances of 'tuple' and 'list' | '<=' not supported between instances of 'tuple' and 'list' | '>' not supported between instances of 'tuple' and 'list' | '>=' not supported between instances of 'tuple' and 'list' | 
+'<' not supported between instances of 'dict' and 'dict' | '<=' not supported between instances of 'dict' and 'dict' | '>' not supported between instances of 'dict' and 'dict' | '>=' not supported between instances of 'dict' and 'dict' | 
+'<' not supported between instances of 'set' and 'list' | '<=' not supported between instances of 'set' and 'list' | '>' not supported between instances of 'set' and 'list' | '>=' not supported between instances of 'set' and 'list' | 
+'<' not supported between instances of 'list' and 'set' | '<=' not supported between instances of 'list' and 'set' | '>' not supported between instances of 'list' and 'set' | '>=' not supported between instances of 'list' and 'set' | 
+'<' not supported between instances of 'int' and 'list' | '<=' not supported between instances of 'int' and 'list' | '>' not supported between instances of 'int' and 'list' | '>=' not supported between instances of 'int' and 'list' | 
+'<' not supported between instances of 'str' and 'bytes' | '<=' not supported between instances of 'str' and 'bytes' | '>' not supported between instances of 'str' and 'bytes' | '>=' not supported between instances of 'str' and 'bytes' | 
+'<' not supported between instances of 'bytes' and 'str' | '<=' not supported between instances of 'bytes' and 'str' | '>' not supported between instances of 'bytes' and 'str' | '>=' not supported between instances of 'bytes' and 'str' | 
+'<' not supported between instances of 'complex' and 'int' | '<=' not supported between instances of 'complex' and 'int' | '>' not supported between instances of 'complex' and 'int' | '>=' not supported between instances of 'complex' and 'int' | 
+'<' not supported between instances of 'int' and 'complex' | '<=' not supported between instances of 'int' and 'complex' | '>' not supported between instances of 'int' and 'complex' | '>=' not supported between instances of 'int' and 'complex' | 
+'<' not supported between instances of 'type' and 'type' | '<=' not supported between instances of 'type' and 'type' | '>' not supported between instances of 'type' and 'type' | '>=' not supported between instances of 'type' and 'type' | 
+'<' not supported between instances of 'builtin_function_or_method' and 'builtin_function_or_method' | '<=' not supported between instances of 'builtin_function_or_method' and 'builtin_function_or_method' | '>' not supported between instances of 'builtin_function_or_method' and 'builtin_function_or_method' | '>=' not supported between instances of 'builtin_function_or_method' and 'builtin_function_or_method' | 
+'<' not supported between instances of 'NoneType' and 'NoneType' | '<=' not supported between instances of 'NoneType' and 'NoneType' | '>' not supported between instances of 'NoneType' and 'NoneType' | '>=' not supported between instances of 'NoneType' and 'NoneType' | 
+'<' not supported between instances of 'ellipsis' and 'ellipsis' | '<=' not supported between instances of 'ellipsis' and 'ellipsis' | '>' not supported between instances of 'ellipsis' and 'ellipsis' | '>=' not supported between instances of 'ellipsis' and 'ellipsis' | 
+'<' not supported between instances of 'object' and 'int' | '<=' not supported between instances of 'object' and 'int' | '>' not supported between instances of 'object' and 'int' | '>=' not supported between instances of 'object' and 'int' | 
+'<' not supported between instances of 'float' and 'str' | '<=' not supported between instances of 'float' and 'str' | '>' not supported between instances of 'float' and 'str' | '>=' not supported between instances of 'float' and 'str' | 
+'<' not supported between instances of 'list' and 'int' | '<=' not supported between instances of 'list' and 'int' | '>' not supported between instances of 'list' and 'int' | '>=' not supported between instances of 'list' and 'int' | 
+'<' not supported between instances of 'range' and 'range' | '<=' not supported between instances of 'range' and 'range' | '>' not supported between instances of 'range' and 'range' | '>=' not supported between instances of 'range' and 'range' | 
+'<' not supported between instances of 'slice' and 'int' | '<=' not supported between instances of 'slice' and 'int' | '>' not supported between instances of 'slice' and 'int' | '>=' not supported between instances of 'slice' and 'int' | 
+'<' not supported between instances of 'dict_keys' and 'list' | '<=' not supported between instances of 'dict_keys' and 'list' | '>' not supported between instances of 'dict_keys' and 'list' | '>=' not supported between instances of 'dict_keys' and 'list' | 
+'<' not supported between instances of 'dict_values' and 'dict_values' | '<=' not supported between instances of 'dict_values' and 'dict_values' | '>' not supported between instances of 'dict_values' and 'dict_values' | '>=' not supported between instances of 'dict_values' and 'dict_values' | 
+'<' not supported between instances of 'frozenset' and 'int' | '<=' not supported between instances of 'frozenset' and 'int' | '>' not supported between instances of 'frozenset' and 'int' | '>=' not supported between instances of 'frozenset' and 'int' | 
+'<' not supported between instances of 'bytearray' and 'str' | '<=' not supported between instances of 'bytearray' and 'str' | '>' not supported between instances of 'bytearray' and 'str' | '>=' not supported between instances of 'bytearray' and 'str' | 
+'<' not supported between instances of 'bool' and 'NoneType' | '<=' not supported between instances of 'bool' and 'NoneType' | '>' not supported between instances of 'bool' and 'NoneType' | '>=' not supported between instances of 'bool' and 'NoneType' | 
+'<' not supported between instances of 'NotImplementedType' and 'int' | '<=' not supported between instances of 'NotImplementedType' and 'int' | '>' not supported between instances of 'NotImplementedType' and 'int' | '>=' not supported between instances of 'NotImplementedType' and 'int' | 
+'<' not supported between instances of 'type' and 'type' | '<=' not supported between instances of 'type' and 'type' | '>' not supported between instances of 'type' and 'type' | '>=' not supported between instances of 'type' and 'type' | 
+bool(NotImplemented) if False else "" => 
+NotImplemented is NotImplemented => True
+repr(NotImplemented) => NotImplemented
+type(NotImplemented).__name__ => NotImplementedType
+type(NotImplemented)() is NotImplemented => True
+bool(NotImplemented) => TypeError: NotImplemented should not be used in a boolean context
+not NotImplemented => TypeError: NotImplemented should not be used in a boolean context
+1 if NotImplemented else 2 => TypeError: NotImplemented should not be used in a boolean context

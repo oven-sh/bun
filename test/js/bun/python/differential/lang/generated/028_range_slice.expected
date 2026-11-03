@@ -1,0 +1,301 @@
+status: 0
+script: cf668fae95a03475
+source: e23ba92bd4a9d7dd
+---
+range(5) => range(0, 5)
+range(1, 5) => range(1, 5)
+range(1, 5, 2) => range(1, 5, 2)
+range(5, 1, -1) => range(5, 1, -1)
+range(0) => range(0, 0)
+range(0, 5, 1) => range(0, 5)
+range(-3) => range(0, -3)
+list(range(5)) => [0, 1, 2, 3, 4]
+list(range(1, 5)) => [1, 2, 3, 4]
+list(range(1, 10, 3)) => [1, 4, 7]
+list(range(5, 0, -1)) => [5, 4, 3, 2, 1]
+list(range(5, 0, -2)) => [5, 3, 1]
+list(range(0)) => []
+list(range(5, 1)) => []
+list(range(1, 5, -1)) => []
+list(range(-3, 3)) => [-3, -2, -1, 0, 1, 2]
+list(range(-1, -5, -1)) => [-1, -2, -3, -4]
+list(range(True, 3)) => [1, 2]
+range() => TypeError: range expected at least 1 argument, got 0
+range(1, 2, 3, 4) => TypeError: range expected at most 3 arguments, got 4
+range(1, 2, 0) => ValueError: range() arg 3 must not be zero
+range(1.0) => TypeError: 'float' object cannot be interpreted as an integer
+range("a") => TypeError: 'str' object cannot be interpreted as an integer
+range(1, "a") => TypeError: 'str' object cannot be interpreted as an integer
+range(1, 2, 1.0) => TypeError: 'float' object cannot be interpreted as an integer
+range(None) => TypeError: 'NoneType' object cannot be interpreted as an integer
+range(stop=1) => TypeError: range() takes no keyword arguments
+len(r) => 7
+r[0] => 1
+r[-1] => 19
+r[2] => 7
+r.start => 1
+r.stop => 20
+r.step => 3
+r[1:3] => range(4, 10, 3)
+r[::-1] => range(19, -2, -3)
+r[::2] => range(1, 22, 6)
+r[10:] => range(22, 22, 3)
+r[:2] => range(1, 7, 3)
+r[-2:] => range(16, 22, 3)
+list(r[::-1]) => [19, 16, 13, 10, 7, 4, 1]
+r[1:100] => range(4, 22, 3)
+r[5:1] => range(16, 4, 3)
+r[::-2] => range(19, -2, -6)
+r[1:-1] => range(4, 19, 3)
+range(10)[2:8][1:3] => range(3, 5)
+range(10)[::-1][::-1] => range(0, 10)
+range(10)[::-1][2:5] => range(7, 4, -1)
+range(0)[::-1] => range(-1, -1, -1)
+range(5)[5:] => range(5, 5)
+range(5)[-100:100:2] => range(0, 5, 2)
+r[7] => IndexError: range object index out of range
+r[-8] => IndexError: range object index out of range
+r["a"] => TypeError: range indices must be integers or slices, not str
+r[1.0] => TypeError: range indices must be integers or slices, not float
+r[::0] => ValueError: slice step cannot be zero
+range(0)[0] => IndexError: range object index out of range
+assign() => TypeError: 'range' object does not support item assignment
+setstart() => AttributeError: readonly attribute
+4 in r => True
+5 in r => False
+1 in r => True
+19 in r => True
+20 in r => False
+22 in r => False
+-2 in r => False
+4.0 in r => True
+4.5 in r => False
+"a" in r => False
+None in r => False
+True in r => True
+10 ** 30 in r => False
+4 not in r => False
+3 in range(5, 0, -1) => True
+0 in range(5, 0, -1) => False
+5 in range(5, 0, -1) => True
+0 in range(0) => False
+[] in r => False
+r.index(4) => 1
+r.index(19) => 6
+r.count(4) => 1
+r.count(5) => 0
+r.count("a") => 0
+r.index(4.0) => 1
+r.count(4.0) => 1
+range(5, 0, -1).index(3) => 2
+range(3).count(True) => 1
+r.index(5) => ValueError: range.index(x): x not in range
+r.index("a") => ValueError: sequence.index(x): x not in sequence
+r.index(22) => ValueError: range.index(x): x not in range
+r.index() => TypeError: range.index() takes exactly one argument (0 given)
+range(5) == range(5) => True
+range(5) == range(0, 5) => True
+range(5) == range(0, 5, 1) => True
+range(0) == range(1, 1) => True
+range(0) == range(5, 1) => True
+range(1, 10, 3) == range(1, 8, 3) => True
+range(1, 2, 5) == range(1, 2, 9) => True
+range(5) != range(6) => True
+range(5) == [0, 1, 2, 3, 4] => False
+range(3) == range(3.0 .__int__()) => True
+range(0, 3, 2) == range(0, 4, 2) => True
+range(2) == range(0, 2, 1) => True
+hash(range(5)) == hash(range(0, 5)) => True
+hash(range(0)) == hash(range(1, 1)) => True
+hash(range(1, 10, 3)) == hash(range(1, 8, 3)) => True
+{range(3): 1}[range(0, 3)] => 1
+isinstance(hash(range(3)), int) => True
+range(5) < range(6) => TypeError: '<' not supported between instances of 'range' and 'range'
+range(5) + range(5) => TypeError: unsupported operand type(s) for +: 'range' and 'range'
+range(5) * 2 => TypeError: unsupported operand type(s) for *: 'range' and 'int'
+bool(range(0)) => False
+bool(range(1)) => True
+bool(range(5, 1)) => False
+len(range(0)) => 0
+len(range(5, 1)) => 0
+len(range(10 ** 6)) => 1000000
+len(range(0, 10, 3)) => 4
+len(range(10, 0, -3)) => 4
+len(range(-5, 5)) => 10
+sum(range(101)) => 5050
+max(range(5)) => 4
+min(range(5)) => 0
+sorted(range(3), reverse=True) => [2, 1, 0]
+list(reversed(range(5))) => [4, 3, 2, 1, 0]
+list(reversed(range(1, 10, 3))) => [7, 4, 1]
+list(reversed(range(5, 0, -2))) => [1, 3, 5]
+list(reversed(range(0))) => []
+tuple(range(3)) => (0, 1, 2)
+set(range(3)) => {0, 1, 2}
+list(enumerate(range(2))) => [(0, 0), (1, 1)]
+list(zip(range(3), range(3, 6))) => [(0, 3), (1, 4), (2, 5)]
+any(range(1)) => False
+all(range(1, 3)) => True
+b => range(100000000000000000000, 100000000000000000010, 3)
+len(b) => 4
+b[0] => 100000000000000000000
+b[-1] => 100000000000000000009
+b[1] => 100000000000000000003
+list(b) => [100000000000000000000, 100000000000000000003, 100000000000000000006, 100000000000000000009]
+10 ** 20 + 3 in b => True
+10 ** 20 + 4 in b => False
+b.index(10 ** 20 + 6) => 2
+b.count(10 ** 20) => 1
+b[1:3] => range(100000000000000000003, 100000000000000000009, 3)
+b[::-1] => range(100000000000000000009, 99999999999999999997, -3)
+list(reversed(b)) => [100000000000000000009, 100000000000000000006, 100000000000000000003, 100000000000000000000]
+b.start => 100000000000000000000
+b.stop => 100000000000000000010
+sum(b) => 400000000000000000018
+b == range(10 ** 20, 10 ** 20 + 12, 3) => True
+max(b) => 100000000000000000009
+type(iter(b)).__name__ => longrange_iterator
+h[10 ** 29] => 100000000000000000000000000000
+h[-1] => 999999999999999999999999999999
+10 ** 29 in h => True
+h[10 ** 29:10 ** 29 + 2] => range(100000000000000000000000000000, 100000000000000000000000000002)
+h[::10 ** 29] => range(0, 1000000000000000000000000000000, 100000000000000000000000000000)
+len(h[::10 ** 29]) => 10
+bool(h) => True
+h.index(5) => 5
+h == h => True
+range(-(10 ** 30), 10 ** 30, 10 ** 29)[5] => -500000000000000000000000000000
+range(2 ** 63)[-1] => 9223372036854775807
+range(2 ** 53, 2 ** 53 + 3)[2] => 9007199254740994
+list(range(2 ** 53 - 1, 2 ** 53 + 2)) => [9007199254740991, 9007199254740992, 9007199254740993]
+list(range(2 ** 63 - 1, 2 ** 63 + 2)) => [9223372036854775807, 9223372036854775808, 9223372036854775809]
+len(h) => OverflowError: Python int too large to convert to C ssize_t
+len(range(2 ** 63)) => OverflowError: Python int too large to convert to C ssize_t
+h[10 ** 30] => IndexError: range object index out of range
+len(range(2 ** 63 - 1)) => 9223372036854775807
+len(range(-(2 ** 62), 2 ** 62 - 1)) => 9223372036854775807
+len(range(0, 2 ** 63, 2)) => 4611686018427387904
+len(range(-(2 ** 62), 2 ** 62)) => OverflowError: Python int too large to convert to C ssize_t
+next(it) => 0
+it.__length_hint__() => 2
+next(it) => 1
+next(it) => 2
+next(it, "end") => end
+type(it).__name__ => range_iterator
+type(reversed(range(3))).__name__ => range_iterator
+it.__length_hint__() => 0
+range(I()) => range(0, 3)
+list(range(I())) => [0, 1, 2]
+range(I(), 10, I()) => range(3, 10, 3)
+range(10)[I()] => 3
+range(10)[I():] => range(3, 10)
+len(range(I())) => 3
+repr(range(1, 2)) => range(1, 2)
+str(range(3)) => range(0, 3)
+repr(range(0, 3, 1)) => range(0, 3)
+repr(range(0, 3, 2)) => range(0, 3, 2)
+repr(range(-1, -3, -1)) => range(-1, -3, -1)
+type(range(1)) => <class 'range'>
+range.__mro__ => (<class 'range'>, <class 'object'>)
+sorted(n for n in dir(range) if not n.startswith("_")) => ['count', 'index', 'start', 'step', 'stop']
+range(3).__len__() => 3
+range(3).__getitem__(1) => 1
+range(3).__contains__(1) => True
+range(3).__reversed__().__next__() => 2
+range(3).__eq__(range(3)) => True
+range(3).__eq__(1) => NotImplemented
+range(3).__reduce__() => (<class 'range'>, (0, 3, 1))
+100
+i => 2
+x => 10
+slice(1) => slice(None, 1, None)
+slice(1, 2) => slice(1, 2, None)
+slice(1, 2, 3) => slice(1, 2, 3)
+slice(None) => slice(None, None, None)
+slice(None, None, -1) => slice(None, None, -1)
+slice("a", "b") => slice('a', 'b', None)
+slice(1.5) => slice(None, 1.5, None)
+slice(1, None) => slice(1, None, None)
+slice([1], (2,)) => slice([1], (2,), None)
+s.start => 1
+s.stop => 10
+s.step => 2
+slice(5).start => None
+slice(5).stop => 5
+slice(5).step => None
+s == slice(1, 10, 2) => True
+s != slice(1) => True
+s == (1, 10, 2) => False
+slice(1) < slice(2) => True
+slice(1, 2) < slice(1, 3) => True
+slice(1, 2) <= slice(1, 2) => True
+hash(slice(1, 2)) == hash(slice(1, 2)) => True
+{slice(1): 1}[slice(1)] => 1
+repr(s) => slice(1, 10, 2)
+str(s) => slice(1, 10, 2)
+type(s) => <class 'slice'>
+bool(s) => True
+slice() => TypeError: slice expected at least 1 argument, got 0
+slice(1, 2, 3, 4) => TypeError: slice expected at most 3 arguments, got 4
+hash(slice([])) => TypeError: unhashable type: 'list'
+slice(1) < 1 => TypeError: '<' not supported between instances of 'slice' and 'int'
+slice(1) < slice("a") => TypeError: '<' not supported between instances of 'int' and 'str'
+setattr_slice() => AttributeError: readonly attribute
+type("S", (slice,), {}) => TypeError: type 'slice' is not an acceptable base type
+(0, 10, 1) (2, 5, 1) (7, 10, 1) (9, -1, -1) (0, 10, 1) (0, 10, 1) (5, 2, 1) (5, 2, -1) (0, 10, 3) (9, -1, -1) (9, -1, -1) (0, 0, 1) (-1, -1, -1) (4, -1, -2) (0, 5, 1) (0, 5, 1000000000000000000000000000000) (4, -1, -1000000000000000000000000000000) (3, 10, 1) (2, 5, 1) (1, 3, 1) 
+slice(None, None, 0).indices(5) => ValueError: slice step cannot be zero
+slice(1.0).indices(5) => TypeError: slice indices must be integers or None or have an __index__ method
+slice("a").indices(5) => TypeError: slice indices must be integers or None or have an __index__ method
+slice(1).indices(-1) => ValueError: length should not be negative
+slice(1).indices("a") => TypeError: 'str' object cannot be interpreted as an integer
+slice(1).indices() => TypeError: slice.indices() takes exactly one argument (0 given)
+l[slice(2, 5)] => [2, 3, 4]
+l[slice(None, None, -1)] => [9, 8, 7, 6, 5, 4, 3, 2, 1, 0]
+l[slice(-3, None)] => [7, 8, 9]
+"hello"[slice(1, 3)] => el
+(1, 2, 3)[slice(1)] => (1,)
+l[s] => [1, 3, 5, 7, 9]
+l[slice(I())] => [0, 1, 2]
+l[I():] => [3, 4, 5, 6, 7, 8, 9]
+l[:I()] => [0, 1, 2]
+l[::I()] => [0, 3, 6, 9]
+l[None:None] => [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+l[None:None:None] => [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+l[True:] => [1, 2, 3, 4, 5, 6, 7, 8, 9]
+l[10 ** 30:] => []
+l[:10 ** 30] => [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+l[-(10 ** 30):] => [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+l[::10 ** 30] => [0]
+l[::-(10 ** 30)] => [9]
+g[1] => 1
+g[1:2] => slice(1, 2, None)
+g[1:2:3] => slice(1, 2, 3)
+g[:] => slice(None, None, None)
+g[::] => slice(None, None, None)
+g[1:] => slice(1, None, None)
+g[:1] => slice(None, 1, None)
+g[::2] => slice(None, None, 2)
+g[1, 2] => (1, 2)
+g[1:2, 3] => (slice(1, 2, None), 3)
+g[..., 1] => (Ellipsis, 1)
+g[()] => ()
+g[1,] => (1,)
+g[:, :] => (slice(None, None, None), slice(None, None, None))
+g["a":"b"] => slice('a', 'b', None)
+g[1:2, ::3, ...] => (slice(1, 2, None), slice(None, None, 3), Ellipsis)
+g[None] => None
+g[(1, 2)] => (1, 2)
+g[[1]] => [1]
+g[*[1, 2]] => (1, 2)
+g[*[1], 2] => (1, 2)
+g[0, *(1, 2)] => (0, 1, 2)
+g[*()] => ()
+g[1:2, *[3]] => (slice(1, 2, None), 3)
+set slice(1, 2, None) 3
+set (1, 2) 4
+set slice(None, None, None) 5
+del slice(1, 2, None)
+del slice(None, None, 2)
+del (1, 2)
+set (1, 2) 6
+del ('a', 'b')

@@ -1,0 +1,6 @@
+status: 0
+script: 269e29dd33172fb7
+---
+'ayb'
+AttributeError: type object '_FakeRe' has no attribute '_compile_template'
+AttributeError: type object '_FakeRe' has no attribute '_compile_template'

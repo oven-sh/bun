@@ -1,0 +1,158 @@
+status: 0
+script: 4d811b52b4a9e977
+---
+<class 'sqlite3.Row'> 4 ['a', 'B c', 'd', 'A2'] (1, 'two', 3.0, 1) [1, 'two', 3.0, 1] 1 1 ('two', 3.0) (1, 3.0, 'two', 1) 1 1 two 1 {'a': 1, 'B c': 'two', 'd': 3.0, 'A2': 1} False True
+IndexError: tuple index out of range
+IndexError: tuple index out of range
+IndexError: No item with that key
+IndexError: Index must be int or string
+IndexError: Index must be int or string
+IndexError: cannot fit 'int' into an index-sized integer
+IndexError: Index must be int or string
+IndexError: No item with that key
+<sqlite3.Row object>
+True False True False True False True False True False 1
+TypeError: '<' not supported between instances of 'sqlite3.Row' and 'sqlite3.Row'
+TypeError: '<=' not supported between instances of 'sqlite3.Row' and 'sqlite3.Row'
+NotImplemented NotImplemented False
+TypeError: 'sqlite3.Row' object does not support item assignment
+AttributeError: 'sqlite3.Row' object has no attribute 'x' and no __dict__ for setting new attributes
+1 two 3.0 1 [1, 3.0, 'two', 1] tuple_iterator
+TypeError: Row expected 2 arguments, got 0
+TypeError: Row expected 2 arguments, got 1
+TypeError: Row() argument 1 must be sqlite3.Cursor, not int
+TypeError: Row() argument 2 must be tuple, not list
+TypeError: Row expected 2 arguments, got 3
+TypeError: Row() takes no keyword arguments
+['a', 'B c', 'd', 'A2']
+[]
+IndexError: No item with key 'a'
+(1,)
+IndexError: tuple index out of range
+MyRow 5 5 True
+1
+TypeError: cannot pickle 'sqlite3.Row' object
+None
+[{'a': 1, 'd': 3.0}] True
+None
+[1, 3.0] [[1]] [[1]] [1]
+ZeroDivisionError: division by zero
+TypeError: 'int' object is not callable
+AttributeError: cannot delete row_factory attribute
+AttributeError: cannot delete row_factory attribute
+AttributeError: cannot delete text_factory attribute
+('hé', 'text', '')
+(b'h\xc3\xa9', b'text', b'')
+(bytearray(b'h\xc3\xa9'), bytearray(b'text'), bytearray(b''))
+('hÃ©', 'text', '')
+(3, 4, 0)
+('hé', 'text', '')
+OperationalError: Could not decode to UTF-8 column 'bad' with text '�A'
+OperationalError: Could not decode to UTF-8 column 'n��me' with text '�'
+ZeroDivisionError: division by zero
+TypeError: 'int' object is not callable
+("b'x'",)
+ProgrammingError: Error binding parameter 1: type 'Point' is not supported
+('1;2.5',) ('3;4',) 5;6 True True
+('conformed',) conformed
+ProgrammingError: Error binding parameter 1: type 'ConformNone' is not supported
+ProgrammingError: Error binding parameter 1: type 'ConformTypeError' is not supported
+ZeroDivisionError: conform
+ProgrammingError: can't adapt
+'alt'
+ProgrammingError: can't adapt
+ProgrammingError: can't adapt
+2
+TypeError: adapt expected at least 1 argument, got 0
+TypeError: adapt expected at most 3 arguments, got 4
+TypeError: _sqlite3.adapt() takes no keyword arguments
+('adapted', 5)
+ZeroDivisionError: division by zero
+ProgrammingError: Error binding parameter 1: type 'object' is not supported
+TypeError: register_adapter expected 2 arguments, got 0
+TypeError: register_adapter expected 2 arguments, got 1
+None
+TypeError: cannot use 'tuple' as a dict key (unhashable type: 'list')
+['POINT']
+0 ('1;2', '3;4', '5;6', '7;8', None, '1;2', '7;8', '7;8', '7;8', '7;8', '1;2', None)
+['a', 'b', 'c', 'd', 'e', 'x [point]', 'y [POINT]', 'z[point]', '[point]', 'w [nope]', 'v [', 'n [point]']
+1 (Point(1.0, 2.0), Point(3.0, 4.0), Point(5.0, 6.0), '7;8', None, Point(1.0, 2.0), '7;8', '7;8', '7;8', '7;8', Point(1.0, 2.0), None)
+['a', 'b', 'c', 'd', 'e', 'x [point]', 'y [POINT]', 'z[point]', '[point]', 'w [nope]', 'v [', 'n [point]']
+2 ('1;2', '3;4', '5;6', '7;8', None, Point(1.0, 2.0), Point(7.0, 8.0), Point(7.0, 8.0), Point(7.0, 8.0), '7;8', '1;2', None)
+['a', 'b', 'c', 'd', 'e', 'x', 'y', 'z', '', 'w', 'v', 'n']
+3 (Point(1.0, 2.0), Point(3.0, 4.0), Point(5.0, 6.0), '7;8', None, Point(1.0, 2.0), Point(7.0, 8.0), Point(7.0, 8.0), Point(7.0, 8.0), '7;8', Point(1.0, 2.0), None)
+['a', 'b', 'c', 'd', 'e', 'x', 'y', 'z', '', 'w', 'v', 'n']
+ZeroDivisionError: division by zero
+(None,)
+(1.5, b'A')
+(b'1.5', b'7', b't', b'\x00')
+TypeError: register_converter expected 2 arguments, got 0
+TypeError: register_converter() argument 1 must be str, not int
+TypeError: register_converter expected 2 arguments, got 1
+None
+(datetime.date(2020, 1, 2), datetime.datetime(2020, 1, 2, 3, 4, 5, 6)) ('2020-01-02', '2020-01-02 03:04:05.000006') [('DeprecationWarning', 'The default date adapter is deprecated a'), ('DeprecationWarning', 'The default date converter is deprecated'), ('DeprecationWarning', 'The default datetime adapter is deprecat'), ('DeprecationWarning', 'The default timestamp converter is depre')]
+(1001, 'a')
+(1,)
+MyCursor True 42 43 True
+TypeError: 'int' object is not callable
+TypeError: factory must return a cursor, not int
+TypeError: factory must return a cursor, not NoneType
+TypeError: 'sqlite3.Connection' object is not iterable
+TypeError: cursor() takes at most 1 argument (2 given)
+TypeError: cursor() got an unexpected keyword argument 'nope'
+ZeroDivisionError: division by zero
+TypeError: 'NoneType' object is not callable
+ProgrammingError: Base Cursor.__init__ not called.
+ProgrammingError: Base Cursor.__init__ not called.
+ProgrammingError: Base Cursor.__init__ not called.
+None
+None
+-1
+0
+ProgrammingError: Base Cursor.__init__ not called.
+TypeError: Cursor expected 1 argument, got 0
+TypeError: Cursor() argument 1 must be sqlite3.Connection, not int
+TypeError: Cursor expected 1 argument, got 2
+TypeError: Cursor() takes no keyword arguments
+<sqlite3.Cursor object>
+None None
+MyCon mine [(1,)] True
+None
+ProgrammingError: Base Connection.__init__ not called.
+ProgrammingError: Base Connection.__init__ not called.
+ProgrammingError: Base Connection.__init__ not called.
+ProgrammingError: Base Connection.__init__ not called.
+ProgrammingError: Base Connection.__init__ not called.
+ProgrammingError: Base Connection.__init__ not called.
+ProgrammingError: Base Connection.__init__ not called.
+ProgrammingError: Base Connection.__init__ not called.
+ProgrammingError: Base Connection.__init__ not called.
+ProgrammingError: Base Connection.__init__ not called.
+ProgrammingError: Base Connection.__init__ not called.
+ProgrammingError: Base Connection.__init__ not called.
+None
+ProgrammingError: Base Connection.__init__ not called.
+ProgrammingError: Base Connection.__init__ not called.
+OperationalError: no such table: z
+<sqlite3.Cursor object>
+Statement sqlite3 (<class 'sqlite3.Statement'>, <class 'object'>)
+TypeError: cannot create 'sqlite3.Statement' instances
+TypeError: function takes exactly 1 argument (0 given)
+TypeError: argument 1 must be str, not int
+TypeError: function takes exactly 1 argument (2 given)
+TypeError: sqlite3.Connection() takes no keyword arguments
+OperationalError: near "nonsense": syntax error
+ProgrammingError: You can only execute one statement at a time.
+0 [0, 1, 2, 0, 1, 2, 0, 1, 2]
+(1,) (1,) (2,) [(2,)] None
+1 [0, 1, 2, 0, 1, 2, 0, 1, 2]
+(1,) (1,) (2,) [(2,)] None
+2 [0, 1, 2, 0, 1, 2, 0, 1, 2]
+(1,) (1,) (2,) [(2,)] None
+128 [0, 1, 2, 0, 1, 2, 0, 1, 2]
+(1,) (1,) (2,) [(2,)] None
+-5 [0, 1, 2, 0, 1, 2, 0, 1, 2]
+(1,) (1,) (2,) [(2,)] None
+PrepareProtocol
+<sqlite3.PrepareProtocol object>
+TypeError: type 'sqlite3.PrepareProtocol' is not an acceptable base type

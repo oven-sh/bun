@@ -1,0 +1,376 @@
+status: 0
+script: 87928658efddcf39
+---
+[('CELL', 5), ('DEF_ANNOT', 256), ('DEF_BOUND', 134), ('DEF_COMP_CELL', 2048), ('DEF_COMP_ITER', 512), ('DEF_FREE_CLASS', 64), ('DEF_GLOBAL', 1), ('DEF_IMPORT', 128), ('DEF_LOCAL', 2), ('DEF_NONLOCAL', 8), ('DEF_PARAM', 4), ('DEF_TYPE_PARAM', 1024), ('FREE', 4), ('GLOBAL_EXPLICIT', 2), ('GLOBAL_IMPLICIT', 3), ('LOCAL', 1), ('SCOPE_MASK', 15), ('SCOPE_OFF', 12), ('TYPE_ANNOTATION', 3), ('TYPE_CLASS', 1), ('TYPE_FUNCTION', 0), ('TYPE_MODULE', 2), ('TYPE_TYPE_ALIAS', 4), ('TYPE_TYPE_PARAMETERS', 5), ('TYPE_TYPE_VARIABLE', 6), ('USE', 16)]
+''
+top 2 0 0 [] []
+'x'
+top 2 0 0 [] [('x', 12304)]
+'x = 1'
+top 2 0 0 [] [('x', 4098)]
+'import a.b as c, d.e\nfrom f import g, h as i\nfrom j import *'
+top 2 0 0 [] [('c', 4224), ('d', 4224), ('g', 4224), ('i', 4224)]
+'global x\nx = 1'
+top 2 0 0 [] [('x', 8195)]
+'del x'
+top 2 0 0 [] [('x', 4098)]
+'def f(a, /, b, *c, d=1, **e): return a + z'
+top 2 0 0 [] [('f', 4098)]
+ __annotate__ 3 0 1 ['.format'] [('.format', 4116)]
+ f 0 0 1 ['a', 'b', 'd', 'c', 'e'] [('a', 4116), ('b', 4100), ('c', 4100), ('d', 4100), ('e', 4100), ('z', 12304)]
+'def f():\n  x = 1\n  def g():\n    return x\n  return g'
+top 2 0 0 [] [('f', 4098)]
+ __annotate__ 3 0 1 ['.format'] [('.format', 4116)]
+ f 0 0 1 [] [('g', 4114), ('x', 20482)]
+  __annotate__ 3 1 3 ['.format'] [('.format', 4116)]
+  g 0 1 3 [] [('x', 16400)]
+'def f():\n  x = 1\n  def g():\n    nonlocal x\n    x = 2\n  def h():\n    global x\n    x = 3'
+top 2 0 0 [] [('f', 4098), ('x', 8193)]
+ __annotate__ 3 0 1 ['.format'] [('.format', 4116)]
+ f 0 0 1 [] [('g', 4098), ('h', 4098), ('x', 20482)]
+  __annotate__ 3 1 3 ['.format'] [('.format', 4116)]
+  g 0 1 3 [] [('x', 16394)]
+  __annotate__ 3 1 6 ['.format'] [('.format', 4116)]
+  h 0 1 6 [] [('x', 8195)]
+'def f():\n  def g():\n    def h():\n      return x\n  x = 1'
+top 2 0 0 [] [('f', 4098)]
+ __annotate__ 3 0 1 ['.format'] [('.format', 4116)]
+ f 0 0 1 [] [('g', 4098), ('x', 20482)]
+  __annotate__ 3 1 2 ['.format'] [('.format', 4116)]
+  g 0 1 2 [] [('h', 4098), ('x', 16384)]
+   __annotate__ 3 1 3 ['.format'] [('.format', 4116)]
+   h 0 1 3 [] [('x', 16400)]
+'class C:\n  x = 1\n  def m(self):\n    return __class__, x\n  def n(self):\n    super().n()'
+top 2 0 0 [] [('C', 4098)]
+ C 1 0 1 [] [('m', 4098), ('n', 4098), ('x', 4098)]
+  __annotate__ 3 0 3 ['.format'] [('.format', 4116), ('__classdict__', 16400)]
+  m 0 0 3 ['self'] [('__class__', 16400), ('self', 4100), ('x', 12304)]
+  __annotate__ 3 0 5 ['.format'] [('.format', 4116), ('__classdict__', 16400)]
+  n 0 0 5 ['self'] [('__class__', 16400), ('self', 4100), ('super', 12304)]
+'class C(B, metaclass=M):\n  y = x\n  x = 1'
+top 2 0 0 [] [('B', 12304), ('C', 4098), ('M', 12304)]
+ C 1 0 1 [] [('x', 4114), ('y', 4098)]
+'def f():\n  x = 1\n  class C:\n    x = x\n    def m(self): return x'
+top 2 0 0 [] [('f', 4098)]
+ __annotate__ 3 0 1 ['.format'] [('.format', 4116)]
+ f 0 0 1 [] [('C', 4098), ('x', 20482)]
+  C 1 1 3 [] [('m', 4098), ('x', 4178)]
+   __annotate__ 3 1 5 ['.format'] [('.format', 4116), ('__classdict__', 16400)]
+   m 0 1 5 ['self'] [('self', 4100), ('x', 16400)]
+'lambda a, b=c: a + d'
+top 2 0 0 [] [('c', 12304)]
+ <lambda> 0 0 1 ['a', 'b'] [('a', 4116), ('b', 4100), ('d', 12304)]
+'[x for x in y]'
+top 2 0 0 [] [('x', 4626), ('y', 12304)]
+'[x for x in y if x for z in x]'
+top 2 0 0 [] [('x', 4626), ('y', 12304), ('z', 4610)]
+'{x: y for x, y in z}'
+top 2 0 0 [] [('x', 4626), ('y', 4626), ('z', 12304)]
+'{x for x in y}'
+top 2 0 0 [] [('x', 4626), ('y', 12304)]
+'(x for x in y)'
+top 2 0 0 [] [('y', 12304)]
+ <genexpr> 0 0 1 ['.0'] [('.0', 4100), ('x', 4626)]
+'[[a for a in b] for b in c]'
+top 2 0 0 [] [('a', 4626), ('b', 4626), ('c', 12304)]
+'[lambda: x for x in y]'
+top 2 0 0 [] [('x', 23042), ('y', 12304)]
+ <lambda> 0 1 1 [] [('x', 16400)]
+'[(lambda: x, z) for x in y]'
+top 2 0 0 [] [('x', 23042), ('y', 12304), ('z', 12304)]
+ <lambda> 0 1 1 [] [('x', 16400)]
+'def f():\n  return [lambda: x for x in y]'
+top 2 0 0 [] [('f', 4098)]
+ __annotate__ 3 0 1 ['.format'] [('.format', 4116)]
+ f 0 0 1 [] [('x', 23042), ('y', 12304)]
+  <lambda> 0 1 2 [] [('x', 16400)]
+'def f(y):\n  return [x + y for x in y]'
+top 2 0 0 [] [('f', 4098)]
+ __annotate__ 3 0 1 ['.format'] [('.format', 4116)]
+ f 0 0 1 ['y'] [('x', 4626), ('y', 4116)]
+'def f():\n  q = 1\n  return [[q for i in a] for j in b]'
+top 2 0 0 [] [('f', 4098)]
+ __annotate__ 3 0 1 ['.format'] [('.format', 4116)]
+ f 0 0 1 [] [('a', 12304), ('b', 12304), ('i', 4610), ('j', 4610), ('q', 4114)]
+'def f():\n  q = 1\n  return [[lambda: q for i in a] for j in b]'
+top 2 0 0 [] [('f', 4098)]
+ __annotate__ 3 0 1 ['.format'] [('.format', 4116)]
+ f 0 0 1 [] [('a', 12304), ('b', 12304), ('i', 4610), ('j', 4610), ('q', 20482)]
+  <lambda> 0 1 3 [] [('q', 16400)]
+'def f():\n  q = 1\n  return [(q for i in a) for j in b]'
+top 2 0 0 [] [('f', 4098)]
+ __annotate__ 3 0 1 ['.format'] [('.format', 4116)]
+ f 0 0 1 [] [('a', 12304), ('b', 12304), ('j', 4610), ('q', 20482)]
+  <genexpr> 0 1 3 ['.0'] [('.0', 4100), ('i', 4610), ('q', 16400)]
+'class C:\n  z = [x for x in y]\n  w = [__class__ for _ in y]'
+top 2 0 0 [] [('C', 4098)]
+ C 1 0 1 [] [('_', 4610), ('__class__', 12304), ('w', 4098), ('x', 4626), ('y', 12304), ('z', 4098)]
+'class C:\n  a = 1\n  b = [a for _ in a]'
+top 2 0 0 [] [('C', 4098)]
+ C 1 0 1 [] [('_', 4610), ('a', 4114), ('b', 4098)]
+'x = 1\n[x for x in y]'
+top 2 0 0 [] [('x', 4098), ('y', 12304)]
+'def f():\n  x = 1\n  [x for x in y]\n  return x'
+top 2 0 0 [] [('f', 4098)]
+ __annotate__ 3 0 1 ['.format'] [('.format', 4116)]
+ f 0 0 1 [] [('x', 4114), ('y', 12304)]
+'def f():\n  [y := x for x in z]\n  return y'
+top 2 0 0 [] [('f', 4098)]
+ __annotate__ 3 0 1 ['.format'] [('.format', 4116)]
+ f 0 0 1 [] [('x', 4626), ('y', 4114), ('z', 12304)]
+'[y := x for x in z]'
+top 2 0 0 [] [('x', 4626), ('y', 8193), ('z', 12304)]
+'def f():\n  return [(y := x) for x in z if (w := x)]'
+top 2 0 0 [] [('f', 4098)]
+ __annotate__ 3 0 1 ['.format'] [('.format', 4116)]
+ f 0 0 1 [] [('w', 4098), ('x', 4626), ('y', 4098), ('z', 12304)]
+'async def f():\n  return [x async for x in y]'
+top 2 0 0 [] [('f', 4098)]
+ __annotate__ 3 0 1 ['.format'] [('.format', 4116)]
+ f 0 0 1 [] [('x', 4626), ('y', 12304)]
+'async def f():\n  await x\n  async with a as b: pass\n  async for c in d: pass'
+top 2 0 0 [] [('f', 4098)]
+ __annotate__ 3 0 1 ['.format'] [('.format', 4116)]
+ f 0 0 1 [] [('a', 12304), ('b', 4098), ('c', 4098), ('d', 12304), ('x', 12304)]
+'def g():\n  yield 1\n  x = yield from y'
+top 2 0 0 [] [('g', 4098)]
+ __annotate__ 3 0 1 ['.format'] [('.format', 4116)]
+ g 0 0 1 [] [('x', 4098), ('y', 12304)]
+'x: int = 1\ny: str'
+top 2 0 0 [] [('__conditional_annotations__', 12304), ('x', 4354), ('y', 4354)]
+ __annotate__ 3 0 1 ['.format'] [('.format', 4116), ('int', 12304), ('str', 12304)]
+'def f(a: int, b: "s" = 1) -> bool: pass'
+top 2 0 0 [] [('f', 4098)]
+ __annotate__ 3 0 1 ['.format'] [('.format', 4116), ('bool', 12304), ('int', 12304)]
+ f 0 0 1 ['a', 'b'] [('a', 4100), ('b', 4100)]
+'class C:\n  a: int\n  b: str = ""'
+top 2 0 0 [] [('C', 4098)]
+ C 1 0 1 [] [('a', 4354), ('b', 4354)]
+  __annotate__ 3 0 2 ['.format'] [('.format', 4116), ('__classdict__', 16400), ('int', 12304), ('str', 12304)]
+'def f():\n  x: int = 1\n  y: str'
+top 2 0 0 [] [('f', 4098)]
+ __annotate__ 3 0 1 ['.format'] [('.format', 4116)]
+ f 0 0 1 [] [('x', 4354), ('y', 4354)]
+  __annotate__ 3 1 2 ['.format'] [('.format', 4116)]
+'from __future__ import annotations\nx: int = 1\ndef f(a: b) -> c: pass'
+top 2 0 0 [] [('__conditional_annotations__', 12304), ('annotations', 4224), ('f', 4098), ('x', 4354)]
+ f 0 0 3 ['a'] [('a', 4100)]
+'if c:\n  x: int = 1'
+top 2 0 0 [] [('__conditional_annotations__', 12304), ('c', 12304), ('x', 4354)]
+ __annotate__ 3 0 2 ['.format'] [('.format', 4116), ('int', 12304)]
+'class C:\n  if c:\n    x: int'
+top 2 0 0 [] [('C', 4098)]
+ C 1 0 1 [] [('__conditional_annotations__', 12304), ('c', 12304), ('x', 4354)]
+  __annotate__ 3 0 3 ['.format'] [('.format', 4116), ('__classdict__', 16400), ('int', 12304)]
+'def f[T](a: T) -> T: pass'
+top 2 0 0 [] [('f', 4098)]
+ f 5 0 1 ['.defaults'] [('.defaults', 4100), ('T', 21506)]
+  __annotate__ 3 1 1 ['.format'] [('.format', 4116), ('T', 16400)]
+  f 0 1 1 ['a'] [('a', 4100)]
+'def f[T: int, *Ts, **P](a=1, *, b=2): pass'
+top 2 0 0 [] [('f', 4098)]
+ f 5 0 1 ['.defaults', '.kwdefaults'] [('.defaults', 4100), ('.kwdefaults', 4100), ('P', 5122), ('T', 5122), ('Ts', 5122)]
+  T 6 1 1 ['.format'] [('.format', 4116), ('int', 12304)]
+  __annotate__ 3 1 1 ['.format'] [('.format', 4116)]
+  f 0 1 1 ['a', 'b'] [('a', 4100), ('b', 4100)]
+'def f[T = int, U: (int, str) = str](): pass'
+top 2 0 0 [] [('f', 4098)]
+ f 5 0 1 ['.defaults'] [('.defaults', 4100), ('T', 5122), ('U', 5122)]
+  T 6 1 1 ['.format'] [('.format', 4116), ('int', 12304)]
+  U 6 1 1 ['.format'] [('.format', 4116), ('int', 12304), ('str', 12304)]
+  U 6 1 1 ['.format'] [('.format', 4116), ('str', 12304)]
+  __annotate__ 3 1 1 ['.format'] [('.format', 4116)]
+  f 0 1 1 [] []
+'class C[T](B[T]): x: T'
+top 2 0 0 [] [('C', 4098)]
+ C 5 0 1 [] [('.generic_base', 4114), ('.type_params', 20498), ('B', 12304), ('T', 21522)]
+  C 1 1 1 [] [('.type_params', 16400), ('T', 16384), ('__type_params__', 4098), ('x', 4354)]
+   __annotate__ 3 1 1 ['.format'] [('.format', 4116), ('T', 16400), ('__classdict__', 16400)]
+'class C[T: (a, b) = c]:\n  def m[U](self, x: T, y: U): pass'
+top 2 0 0 [] [('C', 4098)]
+ C 5 0 1 [] [('.generic_base', 4114), ('.type_params', 20498), ('T', 21506)]
+  T 6 1 1 ['.format'] [('.format', 4116), ('a', 12304), ('b', 12304)]
+  T 6 1 1 ['.format'] [('.format', 4116), ('c', 12304)]
+  C 1 1 1 [] [('.type_params', 16400), ('T', 16384), ('__type_params__', 4098), ('m', 4098)]
+   m 5 1 2 ['.defaults'] [('.defaults', 4100), ('T', 16384), ('U', 21506), ('__classdict__', 16464)]
+    __annotate__ 3 1 2 ['.format'] [('.format', 4116), ('T', 16400), ('U', 16400), ('__classdict__', 16400)]
+    m 0 1 2 ['self', 'x', 'y'] [('self', 4100), ('x', 4100), ('y', 4100)]
+'type A = int'
+top 2 0 0 [] [('A', 4098)]
+ A 4 0 1 ['.format'] [('.format', 4116), ('int', 12304)]
+'type A[T] = list[T]'
+top 2 0 0 [] [('A', 4098)]
+ A 5 0 1 [] [('T', 21506)]
+  A 4 1 1 ['.format'] [('.format', 4116), ('T', 16400), ('list', 12304)]
+'type A[T: int = str, *Ts = x, **P = y] = z'
+top 2 0 0 [] [('A', 4098)]
+ A 5 0 1 [] [('P', 5122), ('T', 5122), ('Ts', 5122)]
+  T 6 1 1 ['.format'] [('.format', 4116), ('int', 12304)]
+  T 6 1 1 ['.format'] [('.format', 4116), ('str', 12304)]
+  Ts 6 1 1 ['.format'] [('.format', 4116), ('x', 12304)]
+  P 6 1 1 ['.format'] [('.format', 4116), ('y', 12304)]
+  A 4 1 1 ['.format'] [('.format', 4116), ('z', 12304)]
+'class C:\n  type A[T] = T | x\n  x = 1'
+top 2 0 0 [] [('C', 4098)]
+ C 1 0 1 [] [('A', 4098), ('x', 4098)]
+  A 5 0 2 [] [('T', 21506), ('__classdict__', 16464)]
+   A 4 1 2 ['.format'] [('.format', 4116), ('T', 16400), ('__classdict__', 16400), ('x', 12304)]
+'def f():\n  type A = x\n  x = 1'
+top 2 0 0 [] [('f', 4098)]
+ __annotate__ 3 0 1 ['.format'] [('.format', 4116)]
+ f 0 0 1 [] [('A', 4098), ('x', 20482)]
+  A 4 1 2 ['.format'] [('.format', 4116), ('x', 16400)]
+'class C:\n  def f[T](self): return __class__'
+top 2 0 0 [] [('C', 4098)]
+ C 1 0 1 [] [('f', 4098)]
+  f 5 0 2 ['.defaults'] [('.defaults', 4100), ('T', 5122), ('__class__', 16384), ('__classdict__', 16464)]
+   __annotate__ 3 1 2 ['.format'] [('.format', 4116), ('__classdict__', 16400)]
+   f 0 1 2 ['self'] [('__class__', 16400), ('self', 4100)]
+'class C[T]:\n  x = T\n  def m(self): return T'
+top 2 0 0 [] [('C', 4098)]
+ C 5 0 1 [] [('.generic_base', 4114), ('.type_params', 20498), ('T', 21506)]
+  C 1 1 1 [] [('.type_params', 16400), ('T', 16464), ('__type_params__', 4098), ('m', 4098), ('x', 4098)]
+   __annotate__ 3 1 3 ['.format'] [('.format', 4116), ('__classdict__', 16400)]
+   m 0 1 3 ['self'] [('T', 16400), ('self', 4100)]
+'try:\n  pass\nexcept E as e:\n  pass'
+top 2 0 0 [] [('E', 12304), ('e', 4098)]
+'with a as (b, c): pass'
+top 2 0 0 [] [('a', 12304), ('b', 4098), ('c', 4098)]
+'for i, j in k: pass'
+top 2 0 0 [] [('i', 4098), ('j', 4098), ('k', 12304)]
+'match x:\n  case [a, *b]: pass\n  case {"k": c, **d}: pass\n  case E(f, g=h) as i: pass\n  case j | k: pass'
+top 2 0 0 [] [('E', 12304), ('a', 4098), ('b', 4098), ('c', 4098), ('d', 4098), ('f', 4098), ('h', 4098), ('i', 4098), ('j', 4098), ('k', 4098), ('x', 12304)]
+'class C:\n  __a = 1\n  def m(self): return self.__b, __c'
+top 2 0 0 [] [('C', 4098)]
+ C 1 0 1 [] [('_C__a', 4098), ('m', 4098)]
+  __annotate__ 3 0 3 ['.format'] [('.format', 4116), ('__classdict__', 16400)]
+  m 0 0 3 ['self'] [('_C__c', 12304), ('self', 4116)]
+'class _C:\n  def m(__x): return __x'
+top 2 0 0 [] [('_C', 4098)]
+ _C 1 0 1 [] [('m', 4098)]
+  __annotate__ 3 0 2 ['.format'] [('.format', 4116), ('__classdict__', 16400)]
+  m 0 0 2 ['_C__x'] [('_C__x', 4116)]
+'class C:\n  class D:\n    __x = 1'
+top 2 0 0 [] [('C', 4098)]
+ C 1 0 1 [] [('D', 4098)]
+  D 1 0 2 [] [('_D__x', 4098)]
+'def f():\n  import a.b\n  from c import d'
+top 2 0 0 [] [('f', 4098)]
+ __annotate__ 3 0 1 ['.format'] [('.format', 4116)]
+ f 0 0 1 [] [('a', 4224), ('d', 4224)]
+'def f(x):\n  del x'
+top 2 0 0 [] [('f', 4098)]
+ __annotate__ 3 0 1 ['.format'] [('.format', 4116)]
+ f 0 0 1 ['x'] [('x', 4102)]
+'def f():\n  global a, b\n  a = b'
+top 2 0 0 [] [('a', 8193), ('b', 8193), ('f', 4098)]
+ __annotate__ 3 0 1 ['.format'] [('.format', 4116)]
+ f 0 0 1 [] [('a', 8195), ('b', 8209)]
+'x = 1\ndef f():\n  print(x)\n  def g():\n    print(x)'
+top 2 0 0 [] [('f', 4098), ('x', 4098)]
+ __annotate__ 3 0 2 ['.format'] [('.format', 4116)]
+ f 0 0 2 [] [('g', 4098), ('print', 12304), ('x', 12304)]
+  __annotate__ 3 1 4 ['.format'] [('.format', 4116)]
+  g 0 1 4 [] [('print', 12304), ('x', 12304)]
+'def f(a, a): pass'
+SyntaxError ("duplicate parameter 'a' in function definition",) duplicate parameter 'a' in function definition <t> 1 10 1 11 None
+'def f():\n  x = 1\n  global x'
+SyntaxError ("name 'x' is assigned to before global declaration",) name 'x' is assigned to before global declaration <t> 3 3 3 11 None
+'def f():\n  nonlocal x'
+SyntaxError ("no binding for nonlocal 'x' found",) no binding for nonlocal 'x' found <t> 2 3 2 13 None
+'nonlocal x'
+SyntaxError ('nonlocal declaration not allowed at module level',) nonlocal declaration not allowed at module level <t> 1 1 1 11 None
+'def f(x):\n  global x'
+SyntaxError ("name 'x' is parameter and global",) name 'x' is parameter and global <t> 2 3 2 11 None
+'def f():\n  global x\n  nonlocal x'
+SyntaxError ("name 'x' is nonlocal and global",) name 'x' is nonlocal and global <t> 2 3 2 11 None
+'def f():\n  print(x)\n  global x'
+SyntaxError ("name 'x' is used prior to global declaration",) name 'x' is used prior to global declaration <t> 3 3 3 11 None
+'def f():\n  x: int\n  global x'
+SyntaxError ("annotated name 'x' can't be global",) annotated name 'x' can't be global <t> 3 3 3 11 None
+'class C:\n  return 1'
+top 2 0 0 [] [('C', 4098)]
+ C 1 0 1 [] []
+'def f():\n  from a import *'
+SyntaxError ('import * only allowed at module level',) import * only allowed at module level <t> 2 17 2 18 None
+'[x for x in (yield)]'
+top 2 0 0 [] [('x', 4626)]
+'[(x := 1) for x in y]'
+SyntaxError ("assignment expression cannot rebind comprehension iteration variable 'x'",) assignment expression cannot rebind comprehension iteration variable 'x' <t> 1 3 1 4 None
+'class C:\n  [y := 1 for x in z]'
+SyntaxError ('assignment expression within a comprehension cannot be used in a class body',) assignment expression within a comprehension cannot be used in a class body <t> 2 4 2 5 None
+'x: (yield)'
+SyntaxError ('yield expression cannot be used within an annotation',) yield expression cannot be used within an annotation <t> 1 5 1 10 None
+'def f[T: (yield)](): pass'
+SyntaxError ('yield expression cannot be used within a TypeVar bound',) yield expression cannot be used within a TypeVar bound <t> 1 11 1 16 None
+'def f[T, T](): pass'
+SyntaxError ("duplicate type parameter 'T'",) duplicate type parameter 'T' <t> 1 10 1 11 None
+'type A[T] = (x := 1)'
+SyntaxError ('named expression cannot be used within a type alias',) named expression cannot be used within a type alias <t> 1 14 1 20 None
+'def f(): await x'
+SyntaxError ("'await' outside async function",) 'await' outside async function <t> 1 10 1 17 None
+'await x'
+SyntaxError ("'await' outside function",) 'await' outside function <t> 1 1 1 8 None
+'lambda: (yield)'
+top 2 0 0 [] []
+ <lambda> 0 0 1 [] []
+'def f(__debug__): pass'
+SyntaxError ('cannot assign to __debug__',) cannot assign to __debug__ <t> 1 7 1 16 None
+'__debug__ = 1'
+SyntaxError ('cannot assign to __debug__',) cannot assign to __debug__ <t> 1 1 1 10 None
+'f(a=1, a=2)'
+top 2 0 0 [] [('f', 12304)]
+'x = (yield)'
+top 2 0 0 [] [('x', 4098)]
+'lazy import a'
+top 2 0 0 [] [('a', 4224)]
+'def f():\n  lazy import a'
+SyntaxError ('lazy import not allowed inside functions',) lazy import not allowed inside functions <t> 2 3 2 16 None
+'try:\n  lazy import a\nexcept E: pass'
+SyntaxError ('lazy import not allowed inside try/except blocks',) lazy import not allowed inside try/except blocks <t> 2 3 2 16 None
+'lazy from a import *'
+SyntaxError ('lazy from ... import * is not allowed',) lazy from ... import * is not allowed <t> 1 1 1 21 None
+'t"{x}{y!r:{z}}"'
+top 2 0 0 [] [('x', 12304), ('y', 12304), ('z', 12304)]
+'f"{x}{y!r:{z}}"'
+top 2 0 0 [] [('x', 12304), ('y', 12304), ('z', 12304)]
+'@d(a)\ndef f(b=c): pass'
+top 2 0 0 [] [('a', 12304), ('c', 12304), ('d', 12304), ('f', 4098)]
+ __annotate__ 3 0 2 ['.format'] [('.format', 4116)]
+ f 0 0 2 ['b'] [('b', 4100)]
+'@d\nclass C(e): pass'
+top 2 0 0 [] [('C', 4098), ('d', 12304), ('e', 12304)]
+ C 1 0 2 [] []
+'x + y'
+top 2 0 0 [] [('x', 12304), ('y', 12304)]
+'lambda: x'
+top 2 0 0 [] []
+ <lambda> 0 0 1 [] [('x', 12304)]
+'x = 1'
+SyntaxError ('invalid syntax', ('<t>', 1, 3, 'x = 1', 1, 4)) invalid syntax <t> 1 3 1 4 x = 1
+'x = 1'
+top 2 0 0 [] [('x', 4098)]
+b'x = 1'
+top 2 0 0 [] [('x', 4098)]
+b'# coding: latin-1\n\xe9 = 1'
+top 2 0 0 [] [('é', 4098)]
+'é = 1'
+top 2 0 0 [] [('é', 4098)]
+symtable entry builtins symtable entry <symtable entry top(ID), line 0> int True
+<symtable entry __annotate__(ID), line 1>
+TypeError cannot create 'symtable entry' instances
+AttributeError readonly attribute
+AttributeError 'symtable entry' object has no attribute 'foo'
+ValueError symtable() arg 3 must be 'exec' or 'eval' or 'single'
+TypeError symtable() takes exactly 3 positional arguments (2 given)
+TypeError symtable() arg 1 must be a string or bytes object
+TypeError expected str, bytes or os.PathLike object, not int
+TypeError symtable() argument 3 must be str, not int
+top
+TypeError symtable() argument 'module' must be str or None, not int
+top
+TypeError symtable() takes exactly 3 positional arguments (4 given)
+TypeError symtable() takes exactly 3 positional arguments (0 given)
+SyntaxError source code string cannot contain null bytes
+SyntaxError '(' was never closed (f, line 1)
+['children', 'id', 'lineno', 'name', 'nested', 'symbols', 'type', 'varnames']

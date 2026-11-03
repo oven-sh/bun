@@ -1,0 +1,119 @@
+status: 0
+script: ac870db95c836888
+---
+--- getbuffer
+memoryview 10 b'0123456789' False B 1 1 (10,) _BytesIOBuffer
+b'A1XY456789' b'A1X' 3 0 b'A1XY456789'
+BufferError: Existing exports of data: object cannot be re-sized
+BufferError: Existing exports of data: object cannot be re-sized
+BufferError: Existing exports of data: object cannot be re-sized
+BufferError: Existing exports of data: object cannot be re-sized
+BufferError: Existing exports of data: object cannot be re-sized
+BufferError: Existing exports of data: object cannot be re-sized
+BufferError: Existing exports of data: object cannot be re-sized
+BufferError: Existing exports of data: object cannot be re-sized
+False b'A1XY456789'
+BufferError: Existing exports of data: object cannot be re-sized
+0 2 b'zzXY456789'
+ValueError: operation forbidden on released memoryview object
+b'zzXY45678!' 4 b'zzXY'
+b'shared' b'Shared'
+0 b''
+b'abc' b'Abc' False
+3
+ValueError: I/O operation on closed file.
+BufferError: Existing exports of data: object cannot be re-sized
+b'ab..ef'
+--- memoryviews and arrays as data
+[2, 2, 3, 4, 4] b'mvmw234BADCBADC'
+b'init'
+b'mvmw234BADCBADC'
+BufferError: memoryview: underlying buffer is not C-contiguous
+[2, 2, 3, 4, 4]
+BufferError: memoryview: underlying buffer is not C-contiguous
+b'mvmw234BADCBADC'
+[2, 2, 3, 4, 4] None b'mvmw234BADCBADC'
+[2, 2, 3, 4, 4]
+b'mvmw234BADCBADC'
+--- memoryviews and arrays to read into
+BytesIO bytearray 4 b'abcd' 4 b'efgh'
+BytesIO memoryview 4 b'abcd' 4 b'efgh'
+BytesIO array 4 b'abcd' 4 b'efgh'
+BytesIO memoryview 4 b'\x00\x00abcd\x00\x00' 4 b'\x00\x00efgh\x00\x00'
+FileIO bytearray 4 b'mvmw' None b'mvmw'
+FileIO memoryview 4 b'mvmw' None b'mvmw'
+FileIO array 4 b'mvmw' None b'mvmw'
+FileIO memoryview 4 b'\x00\x00mvmw\x00\x00' None b'\x00\x00mvmw\x00\x00'
+BufferedReader bytearray 4 b'mvmw' 4 b'234B'
+BufferedReader memoryview 4 b'mvmw' 4 b'234B'
+BufferedReader array 4 b'mvmw' 4 b'234B'
+BufferedReader memoryview 4 b'\x00\x00mvmw\x00\x00' 4 b'\x00\x00234B\x00\x00'
+BufferedReader bytearray 4 b'abcd' 4 b'efgh'
+BufferedReader memoryview 4 b'abcd' 4 b'efgh'
+BufferedReader array 4 b'abcd' 4 b'efgh'
+BufferedReader memoryview 4 b'\x00\x00abcd\x00\x00' 4 b'\x00\x00efgh\x00\x00'
+BufferedRandom bytearray 4 b'abcd' 4 b'efgh'
+BufferedRandom memoryview 4 b'abcd' 4 b'efgh'
+BufferedRandom array 4 b'abcd' 4 b'efgh'
+BufferedRandom memoryview 4 b'\x00\x00abcd\x00\x00' 4 b'\x00\x00efgh\x00\x00'
+TypeError: readinto() argument must be read-write bytes-like object, not memoryview
+TypeError: readinto() argument must be read-write bytes-like object, not memoryview
+TypeError: readinto() argument must be read-write bytes-like object, not bytes
+TypeError: readinto() argument 1 must be read-write bytes-like object, not memoryview
+TypeError: readinto() argument 1 must be read-write bytes-like object, not memoryview
+TypeError: readinto() argument 1 must be read-write bytes-like object, not bytes
+TypeError: readinto() argument must be read-write bytes-like object, not memoryview
+TypeError: readinto() argument must be read-write bytes-like object, not memoryview
+TypeError: readinto() argument must be read-write bytes-like object, not bytes
+8 array('i', [1, 2])
+--- a bytearray cannot be resized while it is being read into or written
+  BufferError: Existing exports of data: object cannot be re-sized
+  BufferError: Existing exports of data: object cannot be re-sized
+  BufferError: Existing exports of data: object cannot be re-sized
+  BufferError: Existing exports of data: object cannot be re-sized
+  BufferError: Existing exports of data: object cannot be re-sized
+  BufferError: Existing exports of data: object cannot be re-sized
+  BufferError: Existing exports of data: object cannot be re-sized
+  BufferError: Existing exports of data: object cannot be re-sized
+  BufferError: Existing exports of data: object cannot be re-sized
+  BufferError: Existing exports of data: object cannot be re-sized
+10 bytearray(b'rrrrrrrrrr')
+  BufferError: Existing exports of data: object cannot be re-sized
+11 11
+--- what a raw stream is handed
+  readinto memoryview 8 False B None
+  readinto memoryview 16 False B None
+  readinto memoryview 16 False B None
+  readinto memoryview 16 False B None
+  readinto memoryview 8 False B None
+  readinto memoryview 8 False B None
+  readinto memoryview 8 False B None
+  readinto memoryview 8 False B None
+  readinto memoryview 8 False B None
+  readinto memoryview 6 False B None
+  readinto memoryview 4 False B None
+b'h' b'i' b'hihihi'
+  readinto memoryview 20 False B None
+  readinto memoryview 18 False B None
+  readinto memoryview 16 False B None
+  readinto memoryview 14 False B None
+  readinto memoryview 12 False B None
+  readinto memoryview 10 False B None
+  readinto memoryview 8 False B None
+  readinto memoryview 6 False B None
+  readinto memoryview 4 False B None
+  readinto memoryview 2 False B None
+20
+  write memoryview 3 True b'abc' None
+  TypeError: cannot modify read-only memory
+  write memoryview 10 True b'0123456789' None
+  TypeError: cannot modify read-only memory
+  write memoryview 10 True b'0123456789' None
+  TypeError: cannot modify read-only memory
+--- text over buffers that return other things than bytes
+['ab\n', 'cd\n', 'ef']
+ab
+cd
+e
+ab
+

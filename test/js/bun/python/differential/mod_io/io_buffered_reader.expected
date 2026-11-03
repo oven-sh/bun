@@ -1,0 +1,253 @@
+status: 0
+script: 08fc61d860ca3798
+---
+--- construction
+True False True False False <_io.BufferedReader> []
+False
+UnsupportedOperation: fileno
+AttributeError: 'Raw' object has no attribute 'name'
+AttributeError: 'Raw' object has no attribute 'mode'
+UnsupportedOperation: write
+TypeError: BufferedReader() missing required argument 'raw' (pos 1)
+ValueError: buffer size must be strictly positive
+ValueError: buffer size must be strictly positive
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+TypeError: BufferedReader() takes at most 2 arguments (3 given)
+TypeError: BufferedReader() got an unexpected keyword argument 'bad'
+<_io.BufferedReader>
+AttributeError: 'int' object has no attribute 'readable'
+AttributeError: 'NoneType' object has no attribute 'readable'
+UnsupportedOperation: File or stream is not readable.
+<_io.BufferedReader>
+UnsupportedOperation: File or stream is not readable.
+UnsupportedOperation: File or stream is not readable.
+AttributeError: readonly attribute
+AttributeError: readonly attribute
+AttributeError: attribute 'closed' of '_io.BufferedReader' objects is not writable
+False
+TypeError: attribute value type must be bool
+TypeError: cannot pickle 'BufferedReader' instances
+int
+{'extra': 1}
+--- read(n)
+b'abc' [('readinto', 8, 8)]
+b'def' []
+b'ghi' [('readinto', 8, 8)]
+b'' []
+b'jklmnopqrs' [('readinto', 8, 8)]
+b'tuvwxyz' [('readinto', 88, 2), ('readinto', 88, 0)]
+b'' [('readinto', 8, 0)]
+b'ab' [('readinto', 4, 3)] b'cdef' [('readinto', 4, 4)] b'ghijklmno' [('readinto', 8, 1), ('readinto', 4, 4), ('readinto', 4, 4)] b'p' [('readinto', 8, 0)]
+35 [('readinto', 30, 30), ('readinto', 10, 10)] 5 [] 20 [('readinto', 20, 20)] 40 [('readinto', 40, 40)] b'' [('readinto', 10, 0)]
+35 [('readinto', 32, 32), ('readinto', 16, 16)] 13 [] 16 [('readinto', 16, 16)]
+ValueError: read length must be non-negative or -1
+TypeError: argument should be integer or None, not 'str'
+TypeError: argument should be integer or None, not 'float'
+OverflowError: cannot fit 'int' into an index-sized integer
+--- read()
+b'abcdefg' [('readinto', 131072, 3), ('readinto', 131072, 3), ('readinto', 131072, 1), ('readinto', 131072, 0)] b'' [('readinto', 131072, 0)]
+b'a' b'bcdefg' [('readinto', 4, 3), ('readinto', 131072, 3), ('readinto', 131072, 1), ('readinto', 131072, 0)]
+b'a' b'bcdefg' [('readinto', 4, 3), ('readinto', 131072, 3), ('readinto', 131072, 1), ('readinto', 131072, 0)]
+  raw.read -1
+  raw.read -1
+  raw.read -1
+  raw.read -1
+b'abcde'
+  raw.read 4
+  raw.read -1
+  raw.read -1
+  raw.read -1
+  raw.read -1
+  raw.read -1
+b'a' b'bcd' b'e' b''
+  raw.read -1
+None
+  raw.read -1
+TypeError: read() should return bytes
+TypeError: readall() should return bytes
+None b'a' b'b'
+--- would block
+b'abc' [('readinto', 4, 3), ('readinto', 4, None)] b'de' [('readinto', 4, 2), ('readinto', 4, None)] None [('readinto', 4, None)] b'f' [('readinto', 4, 1), ('readinto', 4, 0)] b'' [('readinto', 4, 0)]
+b'' b'ab' b'' b'' [('readinto', 3, None), ('readinto', 3, 2), ('readinto', 3, None), ('readinto', 3, 0)]
+b'' b'ab' b'ab' b'' b'' [('readinto', 4, None), ('readinto', 4, 2), ('readinto', 4, None), ('readinto', 4, 0)]
+b'' b'ab\n' b'cd' b'e\n' b'' [('readinto', 4, None), ('readinto', 4, 4), ('readinto', 4, 1), ('readinto', 4, None), ('readinto', 4, 2), ('readinto', 4, 0)]
+None bytearray(b'cd\x00') 2 bytearray(b'cd\x00') 2 bytearray(b'cd\x00') 0 bytearray(b'cd\x00') 0 [('readinto', 4, None), ('readinto', 4, 2), ('readinto', 2, None), ('readinto', 4, 2), ('readinto', 2, 0), ('readinto', 4, 0), ('readinto', 4, 0)]
+b'ab' [('readinto', 131072, 2), ('readinto', 131072, None)]
+None [('readinto', 131072, None)]
+--- read1
+b'ab' [('readinto', 2, 2)] b'c' [('readinto', 4, 4)] b'def' [] b'ghij' [('readinto', 10, 4)] b'klm' [('readinto', 4, 3)] b'' [('readinto', 4, 0)] b'' b'' [('readinto', 4, 0)]
+TypeError: 'NoneType' object cannot be interpreted as an integer
+TypeError: 'str' object cannot be interpreted as an integer
+--- peek
+b'abcd' [('readinto', 4, 4)] b'abcd' b'abcd' b'abcd' [] b'abc' b'd' [] b'd' b'efgh' [('readinto', 4, 4)]
+b'' [('readinto', 131072, 2), ('readinto', 131072, 0), ('readinto', 4, 0)]
+TypeError: 'NoneType' object cannot be interpreted as an integer
+TypeError: 'str' object cannot be interpreted as an integer
+--- readinto
+3 bytearray(b'def') [('readinto', 4, 4)] 3 bytearray(b'def') [('readinto', 4, 4)]
+10 bytearray(b'ghijklmnop') [('readinto', 8, 8)]
+4 bytearray(b'qrst') [('readinto', 4, 4)] 0 []
+6 bytearray(b'uvwxyz\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00') [('readinto', 20, 6), ('readinto', 14, 0)] 0 [('readinto', 20, 0)]
+TypeError: readinto() argument must be read-write bytes-like object, not bytes
+TypeError: readinto() argument must be read-write bytes-like object, not str
+TypeError: readinto() argument must be read-write bytes-like object, not None
+3 bytearray(b'mnopqr') [('readinto', 6, 3)] 5 bytearray(b'mnopqr') [('readinto', 6, 5)] b'i' [('readinto', 4, 4)] 3 bytearray(b'mnopqr') [] 6 bytearray(b'mnopqr') [('readinto', 6, 6)]
+2 bytearray(b'uv') [('readinto', 4, 4)] 2 bytearray(b'uv') []
+--- lines
+b'one\n' [('readinto', 6, 6)] b'two\n' [('readinto', 6, 6)] b'\n' [] b'three and more\n' [('readinto', 6, 6), ('readinto', 6, 6)] b'last' [('readinto', 6, 4), ('readinto', 6, 0)] b'' [('readinto', 6, 0)]
+b'on' b'' b'e\n' b'two\n' b'\n' b'three an' b'd more\n' b'last' b''
+[b'one\n', b'two\n', b'\n', b'three and more\n', b'last']
+[b'one\n', b'two\n'] [b'\n', b'three and more\n', b'last'] []
+b'a\n' b'b' True
+StopIteration: 
+TypeError: argument should be integer or None, not 'str'
+TypeError: argument should be integer or None, not 'float'
+b'abcd\n' b'ef'
+--- seek and tell
+[('tell',)]
+0 [('tell',)] b'01' [('readinto', 8, 8)] 2 [('tell',)]
+4 [] b'4' 0 [] b'0' 8 [] b'8' [('readinto', 8, 8)]
+11 [] b'b' 9 [] b'9' 1 [('seek', -15, 1)] b'1' [('readinto', 8, 8)]
+18 [('seek', -2, 2)] b'ij' [('readinto', 131072, 2), ('readinto', 131072, 0)] 20 [('tell',)]
+100 b'' b'' 100 [('seek', 100, 0), ('readinto', 131072, 0), ('readinto', 8, 0), ('tell',)]
+100 0 1 True
+ValueError: whence value 5 unsupported
+ValueError: whence value -1 unsupported
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+TypeError: 'str' object cannot be interpreted as an integer
+ValueError: cannot fit 'int' into an offset-sized integer
+TypeError: seek expected at least 1 argument, got 0
+UnsupportedOperation: truncate
+UnsupportedOperation: truncate
+UnsupportedOperation: File or stream is not seekable.
+UnsupportedOperation: seek
+b'a'
+UnsupportedOperation: seek
+OSError: Raw stream returned invalid position -1
+OSError: Raw stream returned invalid position -1
+OSError: Raw stream returned invalid position -5
+OSError: Raw stream returned invalid position -5
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'NoneType' object cannot be interpreted as an integer
+TypeError: 'NoneType' object cannot be interpreted as an integer
+ValueError: cannot fit 'int' into an offset-sized integer
+ValueError: cannot fit 'int' into an offset-sized integer
+TypeError: 'float' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+b'0' 0
+--- what the raw stream may get wrong
+OSError: raw readinto() returned invalid length -1 (should have been between 0 and 8)
+OSError: raw readinto() returned invalid length 100 (should have been between 0 and 8)
+OSError: raw readinto() failed
+OSError: raw readinto() failed
+OSError: raw readinto() failed
+OSError: raw readinto() failed
+1
+OSError('raw readinto() failed') TypeError("'str' object cannot be interpreted as an integer") True True
+KeyError: 'boom'
+KeyError: 'boom'
+KeyError: 'boom'
+KeyError: 'boom'
+KeyError: 'boom'
+KeyError: 'boom'
+b'abcde' b'f'
+--- reentrant calls
+RuntimeError: reentrant call inside <_io.BufferedReader>
+RuntimeError: reentrant call inside <_io.BufferedReader>
+False
+--- close
+  raw.flush
+  raw.flush
+  raw.close, closed = False
+  raw.flush
+b'a' None None True True None <_io.BufferedReader>
+read ValueError: read of closed file
+read1 ValueError: read of closed file
+peek ValueError: peek of closed file
+readline ValueError: readline of closed file
+readlines ValueError: I/O operation on closed file.
+flush   raw.flush
+ValueError: I/O operation on closed file.
+__next__ ValueError: readline of closed file
+__enter__ ValueError: I/O operation on closed file.
+__iter__ ValueError: I/O operation on closed file.
+isatty ValueError: I/O operation on closed file.
+readable True
+seekable False
+tell UnsupportedOperation: seek
+ValueError: read of closed file
+ValueError: read of closed file
+ValueError: seek of closed file
+ValueError: readinto of closed file
+ValueError: readinto of closed file
+ValueError: truncate of closed file
+True
+b'x'
+True True
+b'a'
+True b'b' b'cd' b'cdef' ValueError: read of closed file
+OSError: close failed
+True
+OSError: flush failed
+True True
+KeyError('close failed') OSError('flush failed')
+--- detach
+b'a' True None <_io.BufferedReader> False
+read ValueError: raw stream has been detached
+read1 ValueError: raw stream has been detached
+peek ValueError: raw stream has been detached
+readline ValueError: raw stream has been detached
+flush ValueError: raw stream has been detached
+close ValueError: raw stream has been detached
+detach ValueError: raw stream has been detached
+tell ValueError: raw stream has been detached
+readable ValueError: raw stream has been detached
+seekable ValueError: raw stream has been detached
+isatty ValueError: raw stream has been detached
+fileno ValueError: raw stream has been detached
+__next__ ValueError: raw stream has been detached
+ValueError: raw stream has been detached
+ValueError: raw stream has been detached
+ValueError: raw stream has been detached
+ValueError: raw stream has been detached
+b'ef'
+--- uninitialized
+None <_io.BufferedReader>
+read ValueError: I/O operation on uninitialized object
+read1 ValueError: I/O operation on uninitialized object
+peek ValueError: I/O operation on uninitialized object
+readline ValueError: I/O operation on uninitialized object
+flush ValueError: I/O operation on uninitialized object
+close ValueError: I/O operation on uninitialized object
+detach ValueError: I/O operation on uninitialized object
+tell ValueError: I/O operation on uninitialized object
+readable ValueError: I/O operation on uninitialized object
+__next__ ValueError: I/O operation on uninitialized object
+ValueError: I/O operation on uninitialized object
+UnsupportedOperation: File or stream is not readable.
+ValueError: I/O operation on uninitialized object
+b'ok'
+ValueError: buffer size must be strictly positive
+ValueError: I/O operation on uninitialized object
+b'aga' b'in'
+--- name and mode come from the raw stream
+the name the mode <_io.BufferedReader name='the name'>
+RuntimeError: reentrant call inside _io.BufferedReader.__repr__
+<_io.BufferedReader name=5>
+KeyError: 'name'
+'<_io.BufferedReader>'
+--- subclasses
+  Sub.readline
+  Sub.readline
+  Sub.readline
+[b'a\n', b'b\n'] <Sub> ['Sub', 'BufferedReader', '_BufferedIOBase', '_IOBase', 'object']
+OSError: readline() should have returned a bytes object, not 'str'
+TypeError: cannot pickle 'Sub' instances
+--- over a BytesIO
+b'01234' 5 12 b'234' b'56789' b'567890123456789' 30 True
+--- the type
+<class '_io.BufferedReader'> BufferedReader BufferedReader _io (<class '_io._BufferedIOBase'>,)
+TypeError: cannot set 'x' attribute of immutable type '_io.BufferedReader'

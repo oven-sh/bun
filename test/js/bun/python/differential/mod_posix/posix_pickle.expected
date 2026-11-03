@@ -1,0 +1,15 @@
+status: 0
+script: dccfaf7bfa211b3f
+---
+TypeError cannot pickle 'posix.DirEntry' object
+TypeError cannot pickle 'posix.DirEntry' object
+os.stat_result(st_mode=0, st_ino=1, st_dev=2, st_nlink=3, st_uid=4, st_gid=5, st_size=6, st_atime=7, st_mtime=8, st_ctime=9)
+True True
+True
+posix.sched_param(sched_priority=3) os.terminal_size(columns=1, lines=2)
+TypeError cannot pickle 'posix.DirEntry' object
+True True
+TypeError cannot pickle 'posix.ScandirIterator' object
+True (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1) True
+[9, 8] True 5 1
+True True

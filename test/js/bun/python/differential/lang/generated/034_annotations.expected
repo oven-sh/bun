@@ -1,0 +1,140 @@
+status: 0
+script: c7da4a7b7e35b15b
+source: 81b4a0f0f07d33e4
+---
+f.__annotations__ => {'a': <class 'int'>, 'b': 'str', 'args': <class 'float'>, 'c': list[int], 'kw': <class 'dict'>, 'return': <class 'bool'>}
+list(f.__annotations__) => ['a', 'b', 'args', 'c', 'kw', 'return']
+f.__annotate__(1) == f.__annotations__ => True
+type(f.__annotate__).__name__ => function
+f.__annotate__.__name__ => __annotate__
+f.__annotate__.__qualname__ => f.__annotate__
+g.__annotations__ => {}
+g.__annotate__ => None
+{'return': None}
+later.__annotations__ => NameError: name 'Undefined1' is not defined
+{'a': <class 'int'>, 'b': 'Undefined2', 'return': <class 'str'>}
+['default']
+lazy.__annotations__ => {'a': 'a', 'b': 'b', 'return': 'r'}
+log => ['default', 'a', 'b', 'r']
+lazy.__annotations__ => {'a': 'a', 'b': 'b', 'return': 'r'}
+log => ['default', 'a', 'b', 'r']
+lazy.__annotate__(1) => {'a': 'a', 'b': 'b', 'return': 'r'}
+log => ['default', 'a', 'b', 'r', 'a', 'b', 'r']
+lazy.__annotate__(2) => {'a': 'a', 'b': 'b', 'return': 'r'}
+lazy.__annotate__(3) => NotImplementedError: 
+lazy.__annotate__(4) => NotImplementedError: 
+lazy.__annotate__(0) => {'a': 'a', 'b': 'b', 'return': 'r'}
+lazy.__annotate__() => TypeError: lazy.__annotate__() missing 1 required positional argument: 'format'
+lazy.__annotate__("a") => TypeError: '>' not supported between instances of 'str' and 'int'
+Node.__annotations__ => {'nxt': <class '__main__.Node'>}
+Node.link.__annotations__ => {'other': <class '__main__.Node'>, 'return': <class '__main__.Node'>}
+Node.__annotate__(1) => {'nxt': <class '__main__.Node'>}
+Node.__annotate__.__name__ => __annotate__
+x => 5
+z => 1
+w => 2
+main.__annotations__ => {'x': <class 'int'>, 'y': <class 'str'>, 'z': 'quoted'}
+"y" in globals() => False
+__annotate__(1) == main.__annotations__ => True
+"__annotations__" in globals() => True
+y => NameError: name 'y' is not defined
+C.__annotations__ => {'a': <class 'int'>, 'b': <class 'str'>, 'c': 'list[int]', 'd': int | None}
+C.a => 1
+hasattr(C, "b") => False
+C.__dict__.get("__annotations__") => None
+"__annotate_func__" in C.__dict__ or "__annotate__" in C.__dict__ => True
+D.__annotations__ => {'e': <class 'float'>}
+E.__annotations__ => {}
+E.__annotate__ => None
+local_ann() => (1, 2, ['q', 'v'])
+local_ann.__annotations__ => {}
+local_unbound() => UnboundLocalError: cannot access local variable 'v' where it is not associated with a value
+o.attr => 5
+lst => [6]
+dd => {'k': 'v'}
+hasattr(o, "noval") => False
+"o" in main.__annotations__ => False
+exec("undefined_obj.attr: int") => NameError: name 'undefined_obj' is not defined
+exec("undefined_obj.attr: int = 1") => NameError: name 'undefined_obj' is not defined
+exec("lst2[0]: int") => NameError: name 'lst2' is not defined
+f.__annotations__ => {'a': 1}
+f.__annotate__ => None
+{'a': 1, 'z': 2}
+{}
+{}
+g.__annotations__ => {'x': 1}
+g.__annotate__(2) => {'x': 2}
+g.__annotations__ => {'x': 1}
+g.__annotate__ => None
+s1() => TypeError: __annotate__ must be callable or None
+s2() => TypeError: __annotate__ cannot be deleted
+s3() => TypeError: __annotations__ must be set to a dict object
+g.__annotations__ => TypeError: __annotate__() must return a dict, not int
+{'q': 1}
+{}
+int.__annotations__ => AttributeError: type object 'int' has no attribute '__annotations__'
+(1).__annotations__ => AttributeError: 'int' object has no attribute '__annotations__'
+len.__annotations__ => AttributeError: 'builtin_function_or_method' object has no attribute '__annotations__'
+(lambda: 0).__annotations__ => {}
+(lambda: 0).__annotate__ => None
+{'a': 'rebound', 'return': 'rebound'}
+S.m.__annotations__ => {'a': 'class T'}
+S.__annotations__ => {'attr': 'class T'}
+S.__annotate__(1) => {'attr': 'changed'}
+S.m.__annotate__(1) => {'a': 'changed'}
+{'a': 'changed global'}
+{'a': [0, 1, 2], 'b': 1, 'c': {'a': 1}}
+mangled().m.__annotations__ => {'_P__a': <class 'int'>, 'b': 'mangled lookup'}
+mangled().__annotations__ => {'_P__x': <class 'int'>}
+{'a': *tuple[int, str]}
+SyntaxError: e.msg [src='def f(a: yield): pass'] => invalid syntax
+SyntaxError: e.msg [src='def f(a: await x): pass'] => await expression cannot be used within an annotation
+SyntaxError: e.msg [src='def f(a: (b := 1)): pass'] => named expression cannot be used within an annotation
+SyntaxError: e.msg [src='x: (yield)'] => yield expression cannot be used within an annotation
+SyntaxError: e.msg [src='x: (y := 1)'] => named expression cannot be used within an annotation
+SyntaxError: e.msg [src='x: await y'] => await expression cannot be used within an annotation
+SyntaxError: e.msg [src='def f(): x: (yield)'] => yield expression cannot be used within an annotation
+SyntaxError: e.msg [src='class C: x: (yield)'] => yield expression cannot be used within an annotation
+SyntaxError: e.msg [src='def f() -> (yield): pass'] => yield expression cannot be used within an annotation
+SyntaxError: e.msg [src='x: int = yield'] => 'yield' outside function
+ok: src.replace("\n", "\\n") [src='def f(): x: int = yield'] => def f(): x: int = yield
+SyntaxError: e.msg [src='x: *y'] => invalid syntax
+SyntaxError: e.msg [src='x: int, y: int'] => invalid syntax
+SyntaxError: e.msg [src='x, y: int'] => only single target (not tuple) can be annotated
+SyntaxError: e.msg [src='(x, y): int'] => only single target (not tuple) can be annotated
+SyntaxError: e.msg [src='[x]: int'] => only single target (not list) can be annotated
+ok: src.replace("\n", "\\n") [src='x: int = 1, 2'] => x: int = 1, 2
+ok: src.replace("\n", "\\n") [src='x: int = *a, b'] => x: int = *a, b
+SyntaxError: e.msg [src='x: int: str'] => invalid syntax
+SyntaxError: e.msg [src='1: int'] => illegal target for annotation
+SyntaxError: e.msg [src='f(): int'] => illegal target for annotation
+SyntaxError: e.msg [src='x: '] => invalid syntax
+SyntaxError: e.msg [src='x: int ='] => invalid syntax
+SyntaxError: e.msg [src='lambda x: int: 1'] => illegal target for annotation
+SyntaxError: e.msg [src='x += 1: int'] => invalid syntax
+ok: src.replace("\n", "\\n") [src='global x\nx: int'] => global x\nx: int
+SyntaxError: e.msg [src='def f():\n global x\n x: int'] => annotated name 'x' can't be global
+SyntaxError: e.msg [src='def f():\n nonlocal x\n x: int'] => annotated name 'x' can't be nonlocal
+SyntaxError: e.msg [src='def f():\n x: int\n global x'] => annotated name 'x' can't be global
+ok: src.replace("\n", "\\n") [src='x.y: int'] => x.y: int
+ok: src.replace("\n", "\\n") [src='x[0]: int'] => x[0]: int
+ok: src.replace("\n", "\\n") [src='(x): int'] => (x): int
+ok: src.replace("\n", "\\n") [src='((x)): int = 1'] => ((x)): int = 1
+ok: src.replace("\n", "\\n") [src='(x.y): int'] => (x.y): int
+SyntaxError: e.msg [src='None: int'] => illegal target for annotation
+SyntaxError: e.msg [src='__debug__: int'] => cannot assign to __debug__
+SyntaxError: e.msg [src='x: int = (yield)'] => 'yield' outside function
+ok: src.replace("\n", "\\n") [src="def f(a: int = 1, /, b: str = '', *, c: bytes = b'') -> None: pass"] => def f(a: int = 1, /, b: str = '', *, c: bytes = b'') -> None: pass
+ok: src.replace("\n", "\\n") [src='def f(*, a: int): pass'] => def f(*, a: int): pass
+ok: src.replace("\n", "\\n") [src='def f(a: lambda: 1): pass'] => def f(a: lambda: 1): pass
+ok: src.replace("\n", "\\n") [src='def f(a: 1 if 2 else 3 = 4): pass'] => def f(a: 1 if 2 else 3 = 4): pass
+ok: src.replace("\n", "\\n") [src='def f(a:int=1): pass'] => def f(a:int=1): pass
+SyntaxError: e.msg [src='def f(a) -> : pass'] => expected ':'
+SyntaxError: e.msg [src='def f(a) -> int, str: pass'] => expected ':'
+SyntaxError: e.msg [src='def f(a) ->: pass'] => expected ':'
+SyntaxError: e.msg [src='def f(a) -> *b: pass'] => expected ':'
+ns["f"].__annotations__ => {'a': 'int', 'b': "'str'", 'c': 'list[int]', 'd': 'x.y', 'e': '1 + 2', 'return': 'Undefined | None'}
+ns.get("__annotations__") => {'v': 'some.thing[1:2, ...]'}
+ns["K"].__annotations__ => {'w': 'lambda q: (q, *r)', 'u': "f'{a!r:>{b}}c'", 't': 'c if False else not -a ** b'}
+ns["f"].__code__.co_flags & 0x1000000 != 0 => True
+f.__code__.co_flags & 0x1000000 => 0

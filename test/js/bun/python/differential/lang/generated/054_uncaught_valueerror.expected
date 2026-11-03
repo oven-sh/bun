@@ -1,0 +1,6 @@
+status: 1
+stderr: ValueError: uncaught message
+script: ae9168ab21c1018c
+source: ae9168ab21c1018c
+---
+before

@@ -1,0 +1,18 @@
+status: 0
+script: 943da3b756c686c4
+---
+[('get_loop', 1), ('add', 1, 'task_wakeup')] True 3 1
+r [('result', 1)] None
+CancelledError: m [('get_loop', 2), ('add', 2, 'task_wakeup'), ('cancel', 2, 'm'), ('result', 2)]
+True True True <F cancelle Future
+True 1 ['T.__init__'] <T> n
+T True ['T.__init__']
+['T.__init__', 'T.cancel']
+TypeError: Cannot create a consistent method resolution order (MRO) for bases Future, Task Y TypeError: multiple bases have instance lay-out conflict TypeError: type '_asyncio.FutureIter' is not an acceptable base type
+TypeError: cannot set 'x' attribute of immutable type '_asyncio.Future' TypeError: cannot set 'cancel' attribute of immutable type '_asyncio.Task'
+TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+H
+TypeError: __class__ assignment: 'TS' object layout differs from 'H' TypeError: __bases__ assignment: '_asyncio.Task' object layout differs from '_asyncio.Future' TypeError: __bases__ assignment: '_asyncio.Future' object layout differs from '_asyncio.Task' TypeError: descriptor 'cancel' for '_asyncio.Task' objects doesn't apply to a 'H' object TypeError: descriptor '__init__' requires a '_asyncio.Task' object but received a 'H'
+True _GatheringFuture
+True
+9

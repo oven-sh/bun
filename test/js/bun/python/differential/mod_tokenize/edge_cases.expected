@@ -1,0 +1,120 @@
+status: 0
+script: 16fbd0e6ba1d684b
+---
+''
+   (0, '', (1, 0), (1, 0), '')
+   Stop ('EOF',)
+'a'
+   (1, 'a', (1, 0), (1, 1), 'a')
+   (4, '', (1, 1), (1, 2), 'a')
+   (0, '', (2, 0), (2, 0), '')
+   Stop ('EOF',)
+'('
+   (55, '(', (1, 0), (1, 1), '(')
+   (66, '', (1, 1), (1, 2), '(')
+    SyntaxError ('unexpected EOF in multi-line statement',) 1 0 None <string>
+'x = \\\n'
+   (1, 'x', (1, 0), (1, 1), 'x = \\\n')
+   (55, '=', (1, 2), (1, 3), 'x = \\\n')
+    SyntaxError ('unexpected EOF in multi-line statement',) 1 6 None <string>
+'x = 1 + \\\n  2 + \\\n'
+   (1, 'x', (1, 0), (1, 1), 'x = 1 + \\\n')
+   (55, '=', (1, 2), (1, 3), 'x = 1 + \\\n')
+   (2, '1', (1, 4), (1, 5), 'x = 1 + \\\n')
+   (55, '+', (1, 6), (1, 7), 'x = 1 + \\\n')
+   (2, '2', (2, 2), (2, 3), '  2 + \\\n')
+   (55, '+', (2, 4), (2, 5), '  2 + \\\n')
+    SyntaxError ('unexpected EOF in multi-line statement',) 2 18 None <string>
+'if x:\n    a\n  b\n'
+   (1, 'if', (1, 0), (1, 2), 'if x:\n')
+   (1, 'x', (1, 3), (1, 4), 'if x:\n')
+   (55, ':', (1, 4), (1, 5), 'if x:\n')
+   (4, '\n', (1, 5), (1, 6), 'if x:\n')
+   (5, '    ', (2, 0), (2, 4), '    a\n')
+   (1, 'a', (2, 4), (2, 5), '    a\n')
+   (4, '\n', (2, 5), (2, 6), '    a\n')
+    IndentationError ('unindent does not match any outer indentation level', ('<string>', 3, 4, '  b', None, None)) 3 4   b <string>
+'if x:\n\ta\n        b\n'
+   (1, 'if', (1, 0), (1, 2), 'if x:\n')
+   (1, 'x', (1, 3), (1, 4), 'if x:\n')
+   (55, ':', (1, 4), (1, 5), 'if x:\n')
+   (4, '\n', (1, 5), (1, 6), 'if x:\n')
+   (5, '\t', (2, 0), (2, 1), '\ta\n')
+   (1, 'a', (2, 1), (2, 2), '\ta\n')
+   (4, '\n', (2, 2), (2, 3), '\ta\n')
+    TabError ('inconsistent use of tabs and spaces in indentation', ('<string>', 3, 10, '        b', None, None)) 3 10         b <string>
+'a \\ b\n'
+   (1, 'a', (1, 0), (1, 1), 'a \\ b\n')
+    SyntaxError ('unexpected character after line continuation character', ('<string>', 1, 6, 'a \\ b', None, None)) 1 6 a \ b <string>
+'"abc\n'
+    SyntaxError ('unterminated string literal (detected at line 1)', ('<string>', 1, 1, '"abc', 1, 1)) 1 1 "abc <string>
+'"""abc\n'
+    SyntaxError ('unterminated triple-quoted string literal (detected at line 1)', ('<string>', 1, 1, '"""abc', 1, 1)) 1 1 """abc <string>
+'1a\n'
+   (2, '1', (1, 0), (1, 1), '1a\n')
+   (1, 'a', (1, 1), (1, 2), '1a\n')
+   (4, '\n', (1, 2), (1, 3), '1a\n')
+   (0, '', (2, 0), (2, 0), '')
+   Stop ('EOF',)
+'$\n'
+   (55, '$', (1, 0), (1, 1), '$\n')
+   (4, '\n', (1, 1), (1, 2), '$\n')
+   (0, '', (2, 0), (2, 0), '')
+   Stop ('EOF',)
+'a\x00b\n'
+    SyntaxError ('source code cannot contain null bytes', ('<string>', 1, 0, 'a', 1, 0)) 1 0 a <string>
+'f"{a\n'
+   (59, 'f"', (1, 0), (1, 2), 'f"{a\n')
+   (55, '{', (1, 2), (1, 3), 'f"{a\n')
+   (1, 'a', (1, 3), (1, 4), 'f"{a\n')
+   (66, '\n', (1, 4), (1, 5), 'f"{a\n')
+    SyntaxError ('unexpected EOF in multi-line statement',) 1 5 None <string>
+"f'{'\n"
+   (59, "f'", (1, 0), (1, 2), "f'{'\n")
+   (55, '{', (1, 2), (1, 3), "f'{'\n")
+    SyntaxError ("f-string: expecting '}'", ('<string>', 1, 4, "f'{'", 1, 4)) 1 4 f'{' <string>
+')\n'
+   (55, ')', (1, 0), (1, 1), ')\n')
+   (4, '\n', (1, 1), (1, 2), ')\n')
+   (0, '', (2, 0), (2, 0), '')
+   Stop ('EOF',)
+'(]\n'
+   (55, '(', (1, 0), (1, 1), '(]\n')
+   (55, ']', (1, 1), (1, 2), '(]\n')
+   (4, '\n', (1, 2), (1, 3), '(]\n')
+   (0, '', (2, 0), (2, 0), '')
+   Stop ('EOF',)
+'\\\n'
+    SyntaxError ('unexpected EOF in multi-line statement',) 1 0 None <string>
+'  \\\n'
+    SyntaxError ('unexpected EOF in multi-line statement',) 1 0 None <string>
+'é = (\n'
+   (1, 'é', (1, 0), (1, 1), 'é = (\n')
+   (55, '=', (1, 2), (1, 3), 'é = (\n')
+   (55, '(', (1, 4), (1, 5), 'é = (\n')
+   (66, '\n', (1, 5), (1, 6), 'é = (\n')
+    SyntaxError ('unexpected EOF in multi-line statement',) 1 0 None <string>
+TypeError tokenizeriter() takes exactly 1 positional argument (0 given)
+TypeError tokenizeriter() missing required argument 'extra_tokens' (pos 2)
+TypeError tokenizeriter() missing required argument 'extra_tokens' (pos 2)
+TypeError tokenizeriter() argument 'encoding' must be str, not int
+<class '_tokenize.TokenizerIter'> (1, 'x', (1, 0), (1, 1), 'x')
+TypeError tokenizeriter() got an unexpected keyword argument 'foo'
+LookupError unknown encoding: nope
+ValueError embedded null character
+    TypeError ('readline() returned a non-string object',) None None None None
+    TypeError ('readline() returned a non-string object',) None None None None
+    TypeError ('readline() returned a non-bytes object',) None None None None
+    KeyError ('k',) None None None None
+   (1, 'a', (1, 0), (1, 1), 'a = 1\n')
+   (55, '=', (1, 2), (1, 3), 'a = 1\n')
+   (2, '1', (1, 4), (1, 5), 'a = 1\n')
+   (4, '\n', (1, 5), (1, 6), 'a = 1\n')
+   (1, 'b', (2, 0), (2, 1), 'b = (\n')
+   (55, '=', (2, 2), (2, 3), 'b = (\n')
+   (55, '(', (2, 4), (2, 5), 'b = (\n')
+   (66, '\n', (2, 5), (2, 6), 'b = (\n')
+    KeyError ('later',) None None None None
+TokenizerIter _tokenize TokenizerIter (<class '_tokenize.TokenizerIter'>, <class 'object'>) 0 <class '_tokenize.TokenizerIter'>
+type '_tokenize.TokenizerIter' is not an acceptable base type
+    UnicodeEncodeError ('utf-8', 'a\udc80\n', 1, 2, 'surrogates not allowed') None None None None

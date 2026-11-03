@@ -1,0 +1,200 @@
+status: 0
+script: 1d7aba85284be5b0
+---
+--- chain
+[]
+[]
+['a', 'b', 'c']
+['a', 'b', 'c', 'd', 'e', 'f']
+['a', 'b', 'c', 1, 2, 3, 0, 1]
+['a', 'b', 'a', 'b', 'a', 'b']
+['a', 'b', 'c', 'd', 'e', 'f']
+[]
+['a', 'b', 'c']
+[1, 2, 3]
+[0, 1, 2, 0, 1, 2, 0, 1]
+TypeError 'int' object is not iterable
+TypeError 'int' object is not iterable
+[1, 'TypeError', 'StopIteration', 'StopIteration']
+[1, 'TypeError', 'StopIteration', 'StopIteration']
+TypeError 'int' object is not iterable
+[0, 1, 'ValueError', 7, 'StopIteration', 'StopIteration']
+['ValueError', 'StopIteration', 'StopIteration']
+[0, 1, 'ValueError', 'StopIteration', 'StopIteration']
+itertools.chain[int]
+True
+True
+TypeError chain.from_iterable() takes exactly one argument (0 given)
+TypeError chain.from_iterable() takes exactly one argument (2 given)
+TypeError chain.from_iterable() takes no keyword arguments
+TypeError chain() takes no keyword arguments
+True
+('a', ['b', 'c'], [], 'end')
+--- compress
+['A', 'C', 'E', 'F']
+[]
+[]
+['A', 'B']
+['A', 'B']
+['B']
+['B', 'C']
+['B', 'C']
+['B', 'C']
+[0, 2]
+[2, 5, 8, 11]
+TypeError compress() missing required argument 'data' (pos 1)
+TypeError compress() missing required argument 'selectors' (pos 2)
+TypeError compress() takes at most 2 arguments (3 given)
+TypeError 'int' object is not iterable
+TypeError 'int' object is not iterable
+TypeError 'NoneType' object is not iterable
+TypeError compress() takes at most 2 arguments (3 given)
+TypeError compress() missing required argument 'selectors' (pos 2)
+['a', 'RuntimeError', 'd', 'StopIteration', 'StopIteration']
+(['a'], ['c'])
+--- dropwhile
+[6, 3, 8]
+[]
+[]
+[1, 2]
+[0, 1, 0]
+TypeError 'NoneType' object is not callable
+TypeError dropwhile expected 2 arguments, got 0
+TypeError dropwhile expected 2 arguments, got 1
+TypeError 'int' object is not iterable
+TypeError dropwhile expected 2 arguments, got 3
+TypeError dropwhile() takes no keyword arguments
+['ZeroDivisionError', 'StopIteration', 'StopIteration', 'StopIteration', 'StopIteration']
+['RuntimeError', 'RuntimeError', 'StopIteration']
+[1, 2, 'ValueError', 'StopIteration', 'StopIteration']
+([2, 3, 4], [0, 1, 2])
+--- takewhile
+[1, 4]
+[]
+[1, 2]
+[]
+[1, 1]
+TypeError 'NoneType' object is not callable
+TypeError takewhile expected 2 arguments, got 0
+TypeError takewhile expected 2 arguments, got 1
+TypeError 'int' object is not iterable
+TypeError takewhile expected 2 arguments, got 3
+TypeError takewhile() takes no keyword arguments
+[0, 'ZeroDivisionError', 2, 3, 'StopIteration', 'StopIteration']
+[0, 1, 'StopIteration', 'StopIteration', 'StopIteration', 'StopIteration']
+([1, 2], [3])
+--- filterfalse
+[0, 2, 4, 6, 8]
+[0, '', [], None]
+[0, '', [], None]
+[]
+[0, 1, 2]
+[]
+TypeError filterfalse expected 2 arguments, got 0
+TypeError filterfalse expected 2 arguments, got 1
+TypeError 'int' object is not iterable
+TypeError filterfalse expected 2 arguments, got 3
+TypeError filterfalse() takes no keyword arguments
+TypeError 'int' object is not callable
+['ZeroDivisionError', 'StopIteration', 'StopIteration', 'StopIteration']
+['RuntimeError', 0, 'StopIteration', 'StopIteration']
+--- starmap
+[32, 9, 1000]
+[]
+['none', 'none', 'none']
+[('a', 'b'), (1,), (2, 3), (0, 1, 2), (4,)]
+[0, 2, 4]
+TypeError 'int' object is not iterable
+TypeError 'NoneType' object is not iterable
+TypeError 'int' object is not callable
+TypeError pow() missing required argument 'exp' (pos 2)
+TypeError starmap expected 2 arguments, got 0
+TypeError starmap expected 2 arguments, got 1
+TypeError 'int' object is not iterable
+TypeError starmap expected 2 arguments, got 3
+TypeError starmap() takes no keyword arguments
+[1.0, 'ZeroDivisionError', 0.5, 'StopIteration', 'StopIteration']
+[(7, 8)]
+--- pairwise
+[]
+[]
+[('a', 'b')]
+[('a', 'b'), ('b', 'c'), ('c', 'd'), ('d', 'e')]
+[(0, 1), (1, 2), (2, 3), (3, 4)]
+[(0, 1), (1, 2), (2, 3)]
+TypeError pairwise expected 1 argument, got 0
+TypeError 'int' object is not iterable
+TypeError pairwise expected 1 argument, got 2
+TypeError pairwise() takes no keyword arguments
+TypeError 'NoneType' object is not iterable
+[(0, 1), (1, 2), 'ValueError', 'StopIteration', 'StopIteration']
+['ValueError', 'StopIteration', 'StopIteration']
+['ValueError', 'StopIteration', 'StopIteration']
+(('a', 'b'), ('b', 'c'), True)
+--- accumulate
+[1, 3, 6, 10, 15]
+[]
+[7]
+['a', 'ab', 'abc']
+[[1], [1, 2], [1, 2, 3]]
+[1, 2, 6, 24, 120]
+[1, 2, 6, 24, 120]
+[1, 3, 6]
+[3, 3, 4, 4, 5, 9, 9]
+[3, 1, 1, 1, 1, 1, 1]
+[100, 101, 103, 106]
+[100]
+[1, 3, 6]
+[0, -1, -3, -6]
+[0.5, 1.5, 3.5, 6.5]
+['_', 'a_', 'ba_']
+[1.5, 3.5, (3.5+3j)]
+TypeError unsupported operand type(s) for +: 'int' and 'str'
+TypeError 'int' object is not callable
+[1]
+TypeError accumulate() missing required argument 'iterable' (pos 1)
+TypeError 'int' object is not iterable
+TypeError accumulate() takes at most 2 positional arguments (3 given)
+TypeError accumulate() takes at most 3 arguments (4 given)
+TypeError accumulate() got an unexpected keyword argument 'x'
+TypeError argument for accumulate() given by name ('iterable') and position (1)
+TypeError accumulate() missing required argument 'iterable' (pos 1)
+[1, 3, 'TypeError', 6, 10, 'StopIteration']
+[0, 1, 3, 'ValueError', 'StopIteration', 'StopIteration']
+[2, 4, 8, 16, 32, 64]
+[None, (None, None)]
+--- zip_longest
+[]
+[]
+[('a',), ('b',), ('c',)]
+[('a', 'd'), ('b', 'e'), ('c', None)]
+[('a', 'c', 'g'), ('b', 'd', None), (None, 'e', None), (None, 'f', None)]
+[('a', 'd'), ('b', 'e'), ('c', '-')]
+[('a', 0), ('b', 0), ('c', 0)]
+[]
+[]
+[('a', 0), ('b', 1), (None, 2), (None, 3)]
+[(0, 0), (1, 1), (2, 2)]
+[(0, 'a'), (1, 'b'), (2, None), (3, None)]
+TypeError 'int' object is not iterable
+TypeError 'int' object is not iterable
+TypeError zip_longest() got an unexpected keyword argument
+TypeError zip_longest() got an unexpected keyword argument
+TypeError zip_longest() got an unexpected keyword argument
+[(0, 'a'), 'ValueError', 'StopIteration', 'StopIteration', 'StopIteration']
+[('a', 0), 'ValueError', 'StopIteration', 'StopIteration', 'StopIteration']
+[('a', 'a'), (None, 'b'), 'StopIteration', 'StopIteration', 'StopIteration']
+True
+(('a', 'c'), ('b', None), True)
+[(1, 0), (None, 1), (None, 2), (None, 3), 'StopIteration', 'StopIteration']
+[1, 1, 'StopIteration', 'StopIteration', 'StopIteration']
+['StopIteration', 'StopIteration', 'StopIteration', 'StopIteration']
+[1, 1, 1, 1]
+[1, 'StopIteration', 3, 'StopIteration', 5]
+[1, 'StopIteration', 3, 'StopIteration', 5]
+[1, 'StopIteration', 4, 'StopIteration', 9]
+[1, 'StopIteration', 3, 'StopIteration', 5]
+['StopIteration', 'StopIteration', 'StopIteration']
+[(1,), 'StopIteration', 'StopIteration', 'StopIteration']
+[(1,), (3,), (5,), (7,)]
+[1, 'StopIteration', 'StopIteration', 'StopIteration', 'StopIteration']

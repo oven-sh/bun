@@ -1,0 +1,41 @@
+def t(f):
+    try:
+        print(repr(f()))
+    except Exception as e:
+        print(type(e).__name__ + ':', e)
+
+vals = [0.0, -0.0, 1.0, -1.0, 0.5, 1.5, 2.5, 3.14159265358979, 1234567.891, 1e-7, 1.5e-10, 1e10, 1.23e20, 1e100, 123456789012345678.0, 0.000123456, 9.999999, 0.1, 100.0, float("inf"), float("-inf"), float("nan")]
+for spec in ("", "f", ".0f", ".1f", ".2f", ".10f", "e", ".0e", ".3e", "E", "g", ".0g", ".3g", ".10g", "G", "%", ".1%", "n", ".3", ".15", "#.0f", "#g", "#.3g", "#e", "+f", " f", "+.2e", "10.2f", "<10.2f", ">10.2f", "^10.2f", "010.2f", "+010.2f", "*^12.3e", ",f", ",.2f", "_.2f", "z.1f", "=+10.1f", "F"):
+    print(repr(spec), [format(v, spec) for v in vals])
+print(format(1234567.891, ",.0f"), format(1234567.891, "_.3f"), format(0.000001234, ",.10f"), format(1e6, ","), format(1e15, ","), format(1e16, ","), format(123456.789, ",g"), format(12345678.9, ",.10g"), format(-1234.5, "012,.1f"), format(1234.5, "012_.1f"), format(1234.5, "0=12,.1f"))
+print(format(0.5, ".0f"), format(1.5, ".0f"), format(2.5, ".0f"), format(0.125, ".2f"), format(0.375, ".2f"), format(2.675, ".2f"), format(1.005, ".2f"), format(1e21, "f"), format(1e22, ".0f"), format(1e23, ".0f"), format(5e-324, ".3e"), format(5e-324, "g"), format(1.7976931348623157e308, "e"), format(1.7976931348623157e308, ".0f")[:25])
+print(format(0.1, ".20f"), format(0.1, ".30g"), format(1 / 3, ".25e"), format(2.5, ".50f"), format(1e-5, ".20g"))
+print(format(-0.0, "z"), format(-0.0, "zf"), format(-0.001, "z.1f"), format(-0.06, "z.1f"), format(-0.0, "z.0e"), format(0.0, "+z.1f"))
+print(format(1.0, ".3_f") , format(1234.56789, ".6_f"), format(1234.56789, ",.6_f"), format(0.123456789, "._f"), format(0.123456789, ".,f"), format(1.5, ".2,f"))
+for bad in ("d", "x", "c", "s", "b", "o", "X", "q", ".f", "1.2.3f", ",_f", "_,f", ",,f", ".2z", "10", "=", "<<5", "{", "ff", ",n", "_n", "zd", "#,", ".-1f", "5.f"):
+    t(lambda: format(1.5, bad))
+print("%f %e %g %F %E %G" % (1.5, 1.5, 1.5, 1.5, 1.5, 1.5), "%.2f|%10.3f|%-10.1f|%+.1f|% .1f|%010.2f|%#.0f|%.0f" % ((3.14159,) * 8))
+print("%g %g %g %g %g %g" % (100000, 1000000, 1e-4, 1e-5, 123456789, 0.0001234), "%.3g %#.3g %.10g" % (1.5, 1.5, 1.5), "%5.1f%%" % 99.5, "%s %r" % (1.0, 2.5), "%d %i" % (1.9, -1.9), "%f" % 1, "%e" % 10 ** 20, "%.1f" % True)
+print("%f" % float("inf"), "%e" % float("nan"), "%010f" % float("-inf"), "%+f" % float("inf"), "%5.2f" % float("nan"), "%G" % float("inf"))
+t(lambda: "%f" % "a")
+t(lambda: "%d" % "a")
+t(lambda: "%d" % float("inf"))
+t(lambda: "%d" % float("nan"))
+t(lambda: "%x" % 1.5)
+t(lambda: "%c" % 1.5)
+print(f"{1.5}", f"{1.5:.3f}", f"{1.5!r}", f"{1.5:>8}", f"{1e100}", f"{1.0:g}", f"{0.1 + 0.2}", f"{0.1 + 0.2:.2}", f"{1234.5:,}", f"{1.5:{8}.{2}f}", f"{1.5=}", f"{1.5 = :.1f}")
+print("{} {:.1f} {:e} {!r} {:>6}".format(1.5, 2.25, 3.0, 4.0, 5.5), "{0:.{1}f}".format(3.14159, 3), "{:{w}.{p}}".format(3.14159, w=10, p=3))
+print(str(1e16), str(1e-5), str(123456789012345678.0), str(1.0e+16), str(0.0001), str(1234567890123456.0), str(12345678901234567.0), repr(1e+300), repr(-1e-300))
+print([str(10.0 ** i) for i in range(-8, 20)])
+print([repr(1.0 / i) for i in range(1, 12)])
+print([repr(i / 10) for i in range(0, 15)])
+print([repr(2.0 ** i) for i in (-1074, -1022, -30, -1, 0, 10, 52, 53, 54, 64, 100, 1023)])
+print([format(x, ".17g") for x in (0.1, 0.2, 0.3, 1.1, 2.2, 1e23)])
+print([format(x, ".16g") for x in (0.1, 0.2, 0.3, 1.1, 2.2, 1e23)])
+print(format(123.456, "10"), format(123.456, "<10"), format(123.456, "^10"), format(123.456, "+"), format(123.456, " "), format(123.456, "010"), format(-123.456, "010"), format(123.456, "x<10"), format(123.456, "é^11"), format(123.456, "😀>9"))
+print(format(1e5, ""), format(1e5, "g"), format(1e5, ".1"), format(123456.0, ".2"), format(123456.0, ".6"), format(123456.0, ".7"), format(1.0, ".1"), format(10.0, ".1"), format(1.0, ".0"), format(0.5, ".0"), format(15.0, ".1"))
+print(complex(1.5, -2.5).__format__(".1f"), format(1 + 2j, ""), format(1 + 2j, "g"), format(1.5 + 2.5j, ".0f"), format(1 + 2j, ">12"), format(1 + 2j, "+.2e"), format(1234.5 + 1234.5j, ","), format(1j, ""), format(-0j, ""), format(1 + 2j, "10.1f"), format(complex("inf"), "f"), format(complex(1, float("nan")), ""))
+t(lambda: format(1j, "010"))
+t(lambda: format(1j, "=10"))
+t(lambda: format(1j, "d"))
+t(lambda: format(1j, "%"))

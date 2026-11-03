@@ -1,0 +1,71 @@
+status: 0
+script: 54cebe276e8dddd0
+---
+TypeError PickleBuffer() takes exactly 1 positional argument (0 given)
+TypeError PickleBuffer() takes at most 1 argument (2 given)
+TypeError PickleBuffer() takes exactly 1 positional argument (0 given)
+TypeError PickleBuffer() takes at most 1 argument (2 given)
+TypeError a bytes-like object is required, not 'int'
+TypeError a bytes-like object is required, not 'str'
+<class 'pickle.PickleBuffer'> pickle PickleBuffer PickleBuffer Wrapper for potentially out-of-band buffers ['__buffer__', '__release_buffer__', 'raw', 'release']
+TypeError type 'pickle.PickleBuffer' is not an acceptable base type
+(b'abc', 3, True, 1, 'B', 1, (3,), (1,), True, True) True (b'abc', 3, True, 1, 'B', 1, (3,), (1,), True, True) True b'abc' True
+ValueError operation forbidden on released PickleBuffer object
+ValueError operation forbidden on released PickleBuffer object
+ValueError operation forbidden on released PickleBuffer object
+(b'abc', 3, False, 1, 'B', 1, (3,), (1,), True, True) True (b'abc', 3, False, 1, 'B', 1, (3,), (1,), True, True) True b'abc' True
+ValueError operation forbidden on released PickleBuffer object
+ValueError operation forbidden on released PickleBuffer object
+ValueError operation forbidden on released PickleBuffer object
+(b'abcd', 4, True, 2, 'h', 1, (2,), (2,), True, True) True (b'abcd', 4, True, 1, 'B', 1, (4,), (1,), True, True) True b'abcd' True
+ValueError operation forbidden on released PickleBuffer object
+ValueError operation forbidden on released PickleBuffer object
+ValueError operation forbidden on released PickleBuffer object
+(b'\x01\x00\x00\x00\x02\x00\x00\x00', 8, False, 4, 'i', 1, (2,), (4,), True, True) True (b'\x01\x00\x00\x00\x02\x00\x00\x00', 8, False, 1, 'B', 1, (8,), (1,), True, True) True b'\x01\x00\x00\x00\x02\x00\x00\x00' True
+ValueError operation forbidden on released PickleBuffer object
+ValueError operation forbidden on released PickleBuffer object
+ValueError operation forbidden on released PickleBuffer object
+(b'\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b', 12, True, 1, 'B', 2, (3, 4), (4, 1), True, False) True (b'\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b', 12, True, 1, 'B', 1, (12,), (1,), True, True) True b'\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b' True
+ValueError operation forbidden on released PickleBuffer object
+ValueError operation forbidden on released PickleBuffer object
+ValueError operation forbidden on released PickleBuffer object
+(b'a', 1, True, 1, 'B', 0, (), (), True, True) True (b'a', 1, True, 1, 'B', 1, (1,), (1,), True, True) True b'a' True
+ValueError operation forbidden on released PickleBuffer object
+ValueError operation forbidden on released PickleBuffer object
+ValueError operation forbidden on released PickleBuffer object
+(b'', 0, True, 1, 'B', 1, (0,), (1,), True, True) True (b'', 0, True, 1, 'B', 1, (0,), (1,), True, True) True b'' True
+ValueError operation forbidden on released PickleBuffer object
+ValueError operation forbidden on released PickleBuffer object
+ValueError operation forbidden on released PickleBuffer object
+BufferError cannot extract raw buffer from non-contiguous buffer
+b'ace'
+BufferError cannot extract raw buffer from non-contiguous buffer
+(b'cd', 2, True, 1, 'B', 1, (2,), (1,), True, True)
+BufferError Existing exports of data: object cannot be re-sized
+BufferError Existing exports of data: object cannot be re-sized
+bytearray(b'Abc\x01')
+bytearray(b'Abc\x01\x02')
+True
+bytearray(b'Abc\x01\x02\x03')
+TypeError a bytes-like object is required, not '_buffer_wrapper'
+TypeError a bytes-like object is required, not '_buffer_wrapper'
+False
+TypeError object of type 'pickle.PickleBuffer' has no len()
+TypeError 'pickle.PickleBuffer' object is not subscriptable
+b'a'
+BufferError Object is not writable.
+PicklingError PickleBuffer can only be pickled with protocol >= 5
+PicklingError PickleBuffer can only be pickled with protocol >= 5
+PicklingError PickleBuffer can only be pickled with protocol >= 5
+PicklingError PickleBuffer can only be pickled with protocol >= 5
+PicklingError PickleBuffer can only be pickled with protocol >= 5
+b'\x80\x05\x95\x07\x00\x00\x00\x00\x00\x00\x00C\x03abc\x94.'
+b'abc'
+bytearray(b'abc')
+bytearray(b'abc')
+b'\x80\x05\x95\x08\x00\x00\x00\x00\x00\x00\x00]\x94(\x97\x98\x97e.' [b'abc', b'xyz'] ['PickleBuffer', 'PickleBuffer']
+['PickleBuffer', 'PickleBuffer']
+[b'1', bytearray(b'2')]
+UnpicklingError pickle stream refers to out-of-band data but no *buffers* argument was given
+UnpicklingError not enough out-of-band buffers
+False PickleBuffer PickleBuffer

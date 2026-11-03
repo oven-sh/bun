@@ -1,0 +1,43 @@
+status: 0
+script: 59309e73420c59c1
+---
+False 1
+None
+True 1
+1
+TextIOWrapper [('where_made.py', 18)]
+False 1
+TextIOWrapper None
+True 3
+TextIOWrapper [('where_made.py', 32), ('where_made.py', 30), ('where_made.py', 36)]
+BufferedReader [('where_made.py', 32), ('where_made.py', 30), ('where_made.py', 36)]
+FileIO [('where_made.py', 32), ('where_made.py', 30), ('where_made.py', 36)]
+socket [('where_made.py', 37), ('where_made.py', 32), ('where_made.py', 30)]
+WithDel [('where_made.py', 37), ('where_made.py', 32), ('where_made.py', 30)]
+TextIOWrapper None
+True
+ResourceWarning: unclosed file <_io.TextIOWrapper name='where_made.py' mode='r' encoding='utf-8'>
+Object allocated at (most recent call last):
+  File "where_made.py", lineno 57
+    leak()
+  File "where_made.py", lineno 48
+    open(__file__)
+
+ValueError the number of frames must be in range [1; 65535]
+ValueError the number of frames must be in range [1; 65535]
+ValueError the number of frames must be in range [1; 65535]
+OverflowError Python int too large to convert to C int
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'NoneType' object cannot be interpreted as an integer
+False
+0 False 1 []
+0 True 1 []
+0 True 7 []
+0 True 1 []
+0 True 10 []
+0 False 1 []
+0 False 1 []
+0 False 1 []
+1  ['Fatal Python error: config_init_tracemalloc: -X tracemalloc=NFRAME: invalid number of frames']
+1  ['Fatal Python error: config_init_tracemalloc: PYTHONTRACEMALLOC: invalid number of frames']
+0  ['Object allocated at (most recent call last):', '  File "<string>", lineno 3', '  File "<string>", lineno 2']

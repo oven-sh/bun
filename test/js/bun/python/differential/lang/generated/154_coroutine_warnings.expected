@@ -1,0 +1,55 @@
+status: 0
+script: 70973648dd309bec
+source: d0dc92873b4def57
+---
+0
+None
+1
+[('154_coroutine_warnings.py', 31, '<module>')]
+[('154_coroutine_warnings.py', 36, 'nested'), ('154_coroutine_warnings.py', 39, '<module>')]
+2
+attempt(lambda: sys.set_coroutine_origin_tracking_depth(-1)) => ('ValueError: depth must be >= 0', [])
+sys.get_coroutine_origin_tracking_depth() => 1000
+("TypeError: 'str' object cannot be interpreted as an integer", [])
+r[0] => None
+[(c, m.replace(__file__, "FILE")) for c, m in r[1]] => [('RuntimeWarning', 'coroutine \'corofn\' was never awaited\nCoroutine created at (most recent call last)\n  File "FILE", line 55, in drop\n    def drop(): nested()\n  File "FILE", line 36, in nested\n    def nested(): return corofn()')]
+(None, [('RuntimeWarning', "coroutine 'corofn' was never awaited")])
+attempt(drop) => (None, [('RuntimeWarning', "coroutine 'corofn' was never awaited")])
+seen => [('ZeroDivisionError', 'Exception ignored while finalizing coroutine', None)]
+attempt(drop) => (None, [('RuntimeWarning', "coroutine 'corofn' was never awaited")])
+seen => []
+[('RuntimeWarning', 'Exception ignored while finalizing coroutine', None)]
+(None, [('RuntimeWarning', "coroutine 'corofn' was never awaited")])
+(None, [('RuntimeWarning', "coroutine method 'asend' of 'agen' was never awaited")])
+(None, [('RuntimeWarning', "coroutine method 'athrow' of 'agen' was never awaited")])
+(None, [('RuntimeWarning', "coroutine method 'aclose' of 'agen' was never awaited")])
+(None, [('RuntimeWarning', "coroutine method 'asend' of 'agen' was never awaited")])
+(1, [])
+('exit', [('DeprecationWarning', 'the (type, exc, tb) signature of athrow() is deprecated, use the single-arg signature instead.')])
+([1], [])
+g["a"] => 1
+g["b"] => 2
+5
+1
+gi.close() => None
+seen => [('ZeroDivisionError', 'Exception ignored while closing generator')]
+('ZeroDivisionError: division by zero', [])
+('ZeroDivisionError: division by zero', [])
+attempt(lambda: array.join(iterator())) => ('BufferError: Existing exports of data: object cannot be re-sized', [])
+array => bytearray(b',')
+attempt(lambda: array.clear()) => (None, [])
+array => bytearray(b'')
+('ImportError: attempted relative import with no known parent package', [('ImportWarning', "can't resolve package from __spec__ or __package__, falling back on __name__ and __path__")])
+('os', [('DeprecationWarning', '__package__ != __spec__.parent')])
+{'a': 2}
+attempt(lambda: ast.dump(ast.parse(s))[:60]) [s=b'Tru\xe1\xb5\x89'] => ("ValueError: identifier field can't represent 'True' constant", [])
+attempt(lambda: exec(s)) [s=b'Tru\xe1\xb5\x89'] => ("ValueError: identifier field can't represent 'True' constant", [])
+attempt(lambda: ast.dump(ast.parse(s))[:60]) [s=b'x = Fal\xc5\xbfe'] => ("ValueError: identifier field can't represent 'False' constant", [])
+attempt(lambda: exec(s)) [s=b'x = Fal\xc5\xbfe'] => ("ValueError: identifier field can't represent 'False' constant", [])
+attempt(lambda: ast.dump(ast.parse(s))[:60]) [s=b'def N\xc2\xbane(): pass'] => ("ValueError: identifier field can't represent 'None' constant", [])
+attempt(lambda: exec(s)) [s=b'def N\xc2\xbane(): pass'] => ("ValueError: identifier field can't represent 'None' constant", [])
+attempt(lambda: ast.dump(ast.parse(s))[:60]) [s=b'a.N\xc2\xbane'] => ("ValueError: identifier field can't represent 'None' constant", [])
+attempt(lambda: exec(s)) [s=b'a.N\xc2\xbane'] => ("ValueError: identifier field can't represent 'None' constant", [])
+attempt(lambda: ast.dump(ast.parse(s))[:60]) [s=b'\xef\xac\x81 = 1; print(fi)'] => ("Module(body=[Assign(targets=[Name(id='fi', ctx=Store())], va", [])
+1
+attempt(lambda: exec(s)) [s=b'\xef\xac\x81 = 1; print(fi)'] => (None, [])

@@ -1,0 +1,19 @@
+status: 0
+script: 185382959651575f
+---
+('::', 0, 0, 0)
+::1 (0, 0) 4
+True True ::1 4 3 b'six'
+(0, 0)
+('::1',)
+5 b'dgram'
+1 ::1
+::
+::
+::ffff:127.0.0.1
+gaierror: [Errno -2] Name or service not known -2
+None
+None
+0
+10 ::1
+0

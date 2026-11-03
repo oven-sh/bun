@@ -1,0 +1,111 @@
+status: 0
+script: 8b4fae6755f9e9ce
+---
+TypeError: recv() takes at least 1 argument (0 given)
+TypeError: recv() takes at most 2 arguments (3 given)
+TypeError: socket.recv() takes no keyword arguments
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+ValueError: negative buffersize in recv
+OverflowError: Python int too large to convert to C ssize_t
+OverflowError: signed integer is greater than maximum
+TypeError: inet_pton() takes exactly 2 arguments (1 given)
+TypeError: inet_pton() takes no keyword arguments
+TypeError: inet_pton() argument 2 must be str, not int
+ValueError: embedded null character
+TypeError: inet_pton() argument 2 must be str, not bytes
+TypeError: inet_aton() argument must be str, not int
+ValueError: embedded null character
+TypeError: _socket.inet_aton() takes exactly one argument (0 given)
+TypeError: _socket.inet_aton() takes exactly one argument (2 given)
+TypeError: a bytes-like object is required, not 'str'
+OSError: packed IP wrong length for inet_ntoa
+ValueError: Cannot convert negative int
+OverflowError: Python int too large for C uint16_t
+OverflowError: Python int too large for C uint16_t
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+ValueError: Cannot convert negative int
+OverflowError: Python int too large for C uint32_t
+OverflowError: Python int too large for C uint32_t
+TypeError: getservbyname() argument 1 must be str, not int
+TypeError: getservbyname() argument 2 must be str, not int
+TypeError: getservbyname() argument 2 must be str, not None
+TypeError: getservbyname() takes at least 1 argument (0 given)
+TypeError: getservbyname() takes at most 2 arguments (3 given)
+TypeError: 'str' object cannot be interpreted as an integer
+OverflowError: getservbyport: port must be 0-65535.
+OverflowError: signed integer is greater than maximum
+TypeError: gethostbyname() argument 1 must be str, bytes or bytearray, not int
+TypeError: gethostbyname() argument 1 must be str, bytes or bytearray, not None
+TypeError: gethostbyname() argument 1 must be encoded string without null bytes, not str
+'127.0.0.1'
+'127.0.0.1'
+UnicodeEncodeError: 'idna' codec can't encode characters in position 0-63: label too long
+UnicodeEncodeError: 'idna' codec can't encode character '\x2e' in position 0: label empty
+'0.0.0.0'
+TypeError: 'str' object cannot be interpreted as an integer
+OSError: [Errno 9] Bad file descriptor
+OverflowError: Python int too large to convert to C long
+TypeError: _socket.close() takes exactly one argument (0 given)
+TypeError: 'str' object cannot be interpreted as an integer
+OSError: [Errno 9] Bad file descriptor
+OverflowError: CMSG_LEN() argument out of range
+OverflowError: CMSG_LEN() argument out of range
+OverflowError: Python int too large to convert to C ssize_t
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: CMSG_LEN() takes exactly 1 argument (0 given)
+OverflowError: CMSG_SPACE() argument out of range
+TypeError: expected str, bytes or os.PathLike object, not int
+OSError: [Errno 19] No such device
+1
+ValueError: embedded null byte
+ValueError: Cannot convert negative int
+OSError: [Errno 6] No such device or address
+OverflowError: Python int too large for C unsigned int
+OverflowError: Python int too large for C unsigned int
+TypeError: 'str' object cannot be interpreted as an integer
+OSError: [Errno 6] No such device or address
+TypeError: must be real number, not str
+ValueError: Timeout value out of range
+ValueError: Invalid value NaN (not a number)
+OverflowError: timestamp out of range for C PyTime_t
+TypeError: _socket.setdefaulttimeout() takes exactly one argument (0 given)
+TypeError: expected str, bytes or os.PathLike object, not int
+TypeError: sethostname() takes exactly 1 argument (0 given)
+TypeError: socketpair() takes at most 3 arguments (4 given)
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: socketpair() takes no keyword arguments
+TypeError: getnameinfo() takes exactly 2 arguments (0 given)
+TypeError: getnameinfo() argument 1 must be a tuple
+TypeError: getnameinfo(): illegal sockaddr argument
+TypeError: getnameinfo(): illegal sockaddr argument
+TypeError: getnameinfo(): illegal sockaddr argument
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: getnameinfo(): illegal sockaddr argument
+OSError: IPv4 sockaddr must be 2 tuple
+OverflowError: getnameinfo(): flowinfo must be 0-1048575.
+OverflowError: getnameinfo(): flowinfo must be 0-1048575.
+('::1', '1')
+TypeError: 'str' object cannot be interpreted as an integer
+OverflowError: signed integer is greater than maximum
+('127.0.0.1', '4464')
+gaierror: [Errno -8] Servname not supported for ai_socktype
+TypeError: getaddrinfo() missing required argument 'host' (pos 1)
+TypeError: getaddrinfo() argument 1 must be string or None
+OSError: Int or String expected
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: getaddrinfo() takes at most 6 arguments (7 given)
+TypeError: getaddrinfo() got an unexpected keyword argument 'foo'
+TypeError: getaddrinfo() missing required argument 'port' (pos 2)
+TypeError: getaddrinfo() argument 1 must be string or None
+gaierror: [Errno -8] Servname not supported for ai_socktype
+gaierror: [Errno -8] Servname not supported for ai_socktype
+gaierror: [Errno -6] ai_family not supported
+gaierror: [Errno -7] ai_socktype not supported
+gaierror: [Errno -1] Bad value for ai_flags
+gaierror: [Errno -2] Name or service not known
+UnicodeEncodeError: 'idna' codec can't encode characters in position 0-63: label too long
+gaierror: [Errno -8] Servname not supported for ai_socktype
+gaierror: [Errno -8] Servname not supported for ai_socktype
+[(2, 1, 6, '', ('127.0.0.1', 1)), (2, 2, 17, '', ('127.0.0.1', 1)), (2, 3, 0, '', ('127.0.0.1', 1))]

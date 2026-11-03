@@ -1,0 +1,22 @@
+status: 1
+stderr: TypeError: type 'memoryview' is not an acceptable base type
+script: d5bfcaef35cfc04c
+---
+<class 'memoryview'> <class 'type'> memoryview builtins memoryview (<class 'memoryview'>, <class 'object'>) Create a new memoryview object which references the given object.
+['__buffer__', '__class_getitem__', '__delitem__', '__enter__', '__exit__', '__getitem__', '__iter__', '__len__', '__release_buffer__', '__setitem__', '_from_flags', 'c_contiguous', 'cast', 'contiguous', 'count', 'f_contiguous', 'format', 'hex', 'index', 'itemsize', 'nbytes', 'ndim', 'obj', 'readonly', 'release', 'shape', 'strides', 'suboffsets', 'tobytes', 'tolist', 'toreadonly']
+['__buffer__', '__class_getitem__', '__delitem__', '__doc__', '__enter__', '__eq__', '__exit__', '__ge__', '__getitem__', '__gt__', '__hash__', '__iter__', '__le__', '__len__', '__lt__', '__ne__', '__new__', '__release_buffer__', '__repr__', '__setitem__', '_from_flags', 'c_contiguous', 'cast', 'contiguous', 'count', 'f_contiguous', 'format', 'hex', 'index', 'itemsize', 'nbytes', 'ndim', 'obj', 'readonly', 'release', 'shape', 'strides', 'suboffsets', 'tobytes', 'tolist', 'toreadonly']
+memoryview (0, True, 1, 'B', 1, (0,), (1,), (), True, True, True) 0 True True True True True True
+memoryview (1, True, 1, 'B', 1, (1,), (1,), (), True, True, True) 1 True True True True True True
+memoryview (3, True, 1, 'B', 1, (3,), (1,), (), True, True, True) 3 True True True True True True
+memoryview (0, False, 1, 'B', 1, (0,), (1,), (), True, True, True) 0 True True True True True True
+memoryview (5, False, 1, 'B', 1, (5,), (1,), (), True, True, True) 5 True True True True True True
+memoryview (256, True, 1, 'B', 1, (256,), (1,), (), True, True, True) 256 True True True True True True
+TypeError memoryview() missing required argument 'object' (pos 1)
+TypeError memoryview: a bytes-like object is required, not 'int'
+TypeError memoryview: a bytes-like object is required, not 'str'
+TypeError memoryview: a bytes-like object is required, not 'NoneType'
+TypeError memoryview: a bytes-like object is required, not 'list'
+TypeError memoryview() takes at most 1 argument (2 given)
+b'ab'
+TypeError memoryview() missing required argument 'object' (pos 1)
+TypeError memoryview() takes at most 1 argument (2 given)

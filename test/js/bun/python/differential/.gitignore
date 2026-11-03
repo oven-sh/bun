@@ -1,0 +1,3 @@
+__pycache__/
+# The users and groups of the machine it was made on are in it (see not-in-ci.json): tools/run.py --live mod_posix/posix_pwd_grp
+mod_posix/posix_pwd_grp.expected

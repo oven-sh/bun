@@ -1,0 +1,64 @@
+status: 0
+script: 7e75a650f39d177a
+---
+2 <AddressFamily.AF_INET: 2> 1 <SocketKind.SOCK_DGRAM: 2> <MsgFlag.MSG_PEEK: 2> <AddressInfo.AI_PASSIVE: 1> True AddressFamily
+<MsgFlag.MSG_OOB|MSG_PEEK: 3> <AddressFamily.AF_INET6: 10> <SocketKind.SOCK_STREAM: 1> True True True
+True True <class 'OSError'> gaierror True
+<socket.socket fd=N, family=2, type=1, proto=0, laddr=('0.0.0.0', 0)> 2 1 0 <AddressFamily.AF_INET: 2> <SocketKind.SOCK_STREAM: 1> (<class 'socket.socket'>, <class '_socket.socket'>, <class 'object'>)
+('0.0.0.0', 0) False None True False 0
+True True
+<socket.socket [closed] fd=-1, family=2, type=1, proto=0> True -1
+OSError: [Errno 9] Bad file descriptor 9
+2 False
+True
+TypeError: cannot pickle 'socket' object None
+TypeError: cannot pickle 'socket' object None
+<socket.socket fd=N, family=2, type=1, proto=0, laddr=('127.0.0.1', P)> 1
+5.0 2 1
+socket True 2 1 None True False
+<socket.socket fd=N, family=2, type=1, proto=0, laddr=('127.0.0.1', P), raddr=('127.0.0.1', P)>
+TextIOWrapper line one
+ 1 True r
+SocketIO rwb True True False True True 2
+BufferedWriter 6 None b'reply\n'
+line two
+
+ValueError: invalid mode 'x' (only r, w, b allowed) None
+ValueError: unbuffered streams must be binary None
+True True 3
+True
+-1 True -1
+ValueError: I/O operation on closed file. None
+ValueError: I/O operation on closed file. None
+ValueError: I/O operation on closed socket. None
+b''
+TimeoutError: timed out None
+OSError: cannot read from timed out object None
+None None
+socket True 2 1 True False
+3.0
+True True
+True -1
+2 1 6 True
+10000 10000
+10000 b'012345678901'
+10 b'0123456789' 3 b'567'
+TypeError: memoryview: a bytes-like object is required, not 'str' None
+ValueError: count must be a positive integer (got 0) None
+8 b'fallback'
+ValueError: non-blocking sockets are not supported None
+socket 1 1 <socket.socket fd=N, family=1, type=1, proto=0>
+3
+b'fds' 2 0 None
+127.0.0.1
+[('<AddressFamily.AF_INET: 2>', '<SocketKind.SOCK_STREAM: 1>', 6, '', ('127.0.0.1', 80))]
+('::1', 80, 0, 0)
+ConnectionRefusedError: [Errno 111] Connection refused 111
+ExceptionGroup: create_connection failed (1 sub-exception) None
+TypeError: a bytes-like object is required, not 'tuple' None
+1
+1
+<AddressFamily.AF_UNIX: 1> <socket.socket fd=N, family=1, type=1, proto=0>
+<AddressFamily.AF_NETLINK: 16> (0, 0)
+b'\x01\x02\x03\x04' 1.2.3.4 256 20 1
+True True True True True

@@ -1,0 +1,117 @@
+status: 0
+script: 4f727d54ecbc587c
+---
+--- groupby
+[]
+[('a', ['a'])]
+[('A', ['A', 'A', 'A', 'A']), ('B', ['B', 'B', 'B']), ('C', ['C', 'C']), ('D', ['D']), ('A', ['A', 'A']), ('B', ['B', 'B', 'B'])]
+[('A', 'AAAA'), ('B', 'BBB'), ('C', 'CC'), ('D', 'D')]
+['A', 'B', 'C', 'D', 'A', 'B']
+[(0, [0, 1, 2]), (1, [3, 4, 5]), (2, [6, 7, 8]), (3, [9])]
+[(0, [0, 1, 2]), (1, [3, 4, 5]), (2, [6, 7, 8]), (3, [9])]
+[(0, [0]), (1, [1]), (2, [2]), (3, [3])]
+[(1, [1, 3]), (0, [2, 4]), (1, [5])]
+[(1, [1, 1.0, True]), (2, [2, 2.0])]
+[('a', ['a', 'A']), ('b', ['b', 'B']), ('a', ['a'])]
+[(None, [None, None]), (0, [0]), (None, [None])]
+[(3, 2), (5, 3)]
+--- groups are views on the groupby
+[[], [], []]
+('a', 'a')
+('b', [], ['b', 'b'])
+[('c', ['c', 'c'])]
+[('b', ['b', 'b', 'b'])]
+(['a', 'a', 'a'], 'end', [])
+('end', [], [])
+True
+True
+True
+'_grouper'
+[(1, [('a', 2), ('b', 1)]), (2, [('b', 2), ('c', 1)])]
+--- groupby errors
+TypeError groupby() missing required argument 'iterable' (pos 1)
+TypeError 'int' object is not iterable
+TypeError groupby() takes at most 2 arguments (3 given)
+TypeError groupby() got an unexpected keyword argument 'x'
+TypeError argument for groupby() given by name ('iterable') and position (1)
+TypeError groupby() missing required argument 'iterable' (pos 1)
+TypeError 'int' object is not callable
+['ValueError', 'StopIteration', 'StopIteration']
+[0, 1, 'ValueError', 'StopIteration', 'StopIteration']
+[1, 0, 'ZeroDivisionError', 'StopIteration', 'StopIteration', 'StopIteration']
+[BadEq(1), 'RuntimeError', 'RuntimeError', 'RuntimeError', 'RuntimeError']
+[BadEq(1), BadEq(1), 'RuntimeError', 'RuntimeError', 'RuntimeError']
+[0, 0, 'ValueError', 'StopIteration', 'StopIteration']
+--- _grouper
+TypeError _grouper expected 2 arguments, got 0
+TypeError _grouper() argument 1 must be itertools.groupby, not int
+TypeError _grouper() argument 1 must be itertools.groupby, not None
+TypeError _grouper expected 2 arguments, got 1
+TypeError _grouper expected 2 arguments, got 3
+TypeError _grouper() takes no keyword arguments
+['a', 'a']
+[]
+['b']
+[]
+[('a', ['a', 'a']), ('b', ['b'])]
+--- tee
+()
+2
+1
+5
+[['a', 'b', 'c'], ['a', 'b', 'c']]
+[['a', 'b', 'c'], ['a', 'b', 'c'], ['a', 'b', 'c']]
+[[], [], []]
+[[0, 1, 2, 3]]
+(0, 1, 0, [2, 3, 4], [1, 2, 3, 4])
+(True, True)
+([0, 1, 0, 2, 3, 1, 4, 5, 2], [198, 199, 99], 'end', 100, 99)
+(True, 0, [58, 59, 60], 60, 1)
+True
+'_tee'
+True
+True
+--- tee of a tee
+(True, True)
+('b', 'b', ['b', 'c', 'd', 'e', 'f'], ['a', 'b', 'c', 'd', 'e', 'f'], ['c', 'd', 'e', 'f'], ['c', 'd', 'e', 'f'])
+('a', 'a', False)
+--- copies
+(True, True)
+('b', 'c', 'b', ['d', 'e', 'f'], ['c', 'd', 'e', 'f'], ['a', 'b', 'c', 'd', 'e', 'f'])
+TypeError _tee.__copy__() takes no arguments (1 given)
+--- _tee
+['a', 'b', 'c']
+['a', 'b', 'c']
+(True, ['b', 'c'], ['b', 'c'])
+TypeError _tee expected 1 argument, got 0
+TypeError 'int' object is not iterable
+TypeError _tee expected 1 argument, got 2
+TypeError _tee() takes no keyword arguments
+--- tee errors
+TypeError tee expected at least 1 argument, got 0
+TypeError 'int' object is not iterable
+()
+ValueError n cannot be negative
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'float' object cannot be interpreted as an integer
+TypeError 'NoneType' object cannot be interpreted as an integer
+OverflowError Python int too large to convert to C ssize_t
+TypeError tee expected at most 2 arguments, got 3
+TypeError itertools.tee() takes no keyword arguments
+TypeError itertools.tee() takes no keyword arguments
+([0, 1, 'ValueError', 'StopIteration', 'StopIteration'], [0, 1, 'StopIteration', 'StopIteration', 'StopIteration'])
+([1, 1, 3, 'StopIteration'], [1, 3, 'StopIteration', 'StopIteration'])
+--- _tee_dataobject
+'_tee_dataobject'
+TypeError teedataobject expected 3 arguments, got 0
+TypeError teedataobject() argument 2 must be list, not int
+TypeError teedataobject() argument 2 must be list, not tuple
+TypeError teedataobject() argument 2 must be list, not None
+ValueError Invalid arguments
+ValueError Invalid arguments
+ValueError Invalid arguments
+'_tee_dataobject'
+'_tee_dataobject'
+ValueError Invalid arguments
+TypeError teedataobject() takes no keyword arguments
+False

@@ -1,0 +1,142 @@
+status: 0
+script: e39e20bcddfdb620
+---
+--- construction
+TypeError: IncrementalNewlineDecoder() missing required argument 'decoder' (pos 1)
+TypeError: IncrementalNewlineDecoder() missing required argument 'translate' (pos 2)
+TypeError: IncrementalNewlineDecoder() takes at most 3 arguments (4 given)
+TypeError: IncrementalNewlineDecoder() got an unexpected keyword argument 'bad'
+None (b'', 0)
+a
+b
+'a\nb'
+ValueError: IncrementalNewlineDecoder.__init__() not called
+ValueError: IncrementalNewlineDecoder.__init__() not called
+ValueError: IncrementalNewlineDecoder.__init__() not called
+ValueError: IncrementalNewlineDecoder.__init__() not called
+ValueError: IncrementalNewlineDecoder.__init__() not called
+AttributeError: '_io.IncrementalNewlineDecoder' object has no attribute 'x' and no __dict__ for setting new attributes
+AttributeError: '_io.IncrementalNewlineDecoder' object has no attribute '__dict__'
+AttributeError: attribute 'newlines' of '_io.IncrementalNewlineDecoder' objects is not writable
+--- text in, text out
+True
+   'abc' 'abc' None (b'', 0)
+   'a\nb' 'a\nb' 
+ (b'', 0)
+   'c\r' 'c' 
+ (b'', 1)
+   '\nd' '\nd' ('\n', '\r\n') (b'', 0)
+   'e\r' 'e' ('\n', '\r\n') (b'', 1)
+   'f' '\nf' ('\r', '\n', '\r\n') (b'', 0)
+   '\r' '' ('\r', '\n', '\r\n') (b'', 1)
+   '\r' '\n' ('\r', '\n', '\r\n') (b'', 1)
+   '\n' '\n' ('\r', '\n', '\r\n') (b'', 0)
+   '' '' ('\r', '\n', '\r\n') (b'', 0)
+   'g\r\n\r\nh\n\ri' 'g\n\nh\n\ni' ('\r', '\n', '\r\n') (b'', 0)
+   '\r' '' ('\r', '\n', '\r\n') (b'', 1)
+   '\n' ('\r', '\n', '\r\n') (b'', 0)
+   'x\n' '\n' '\n' (b'', 0)
+   None (b'', 0)
+False
+   'abc' 'abc' None (b'', 0)
+   'a\nb' 'a\nb' 
+ (b'', 0)
+   'c\r' 'c' 
+ (b'', 1)
+   '\nd' '\r\nd' ('\n', '\r\n') (b'', 0)
+   'e\r' 'e' ('\n', '\r\n') (b'', 1)
+   'f' '\rf' ('\r', '\n', '\r\n') (b'', 0)
+   '\r' '' ('\r', '\n', '\r\n') (b'', 1)
+   '\r' '\r' ('\r', '\n', '\r\n') (b'', 1)
+   '\n' '\r\n' ('\r', '\n', '\r\n') (b'', 0)
+   '' '' ('\r', '\n', '\r\n') (b'', 0)
+   'g\r\n\r\nh\n\ri' 'g\r\n\r\nh\n\ri' ('\r', '\n', '\r\n') (b'', 0)
+   '\r' '' ('\r', '\n', '\r\n') (b'', 1)
+   '\r' ('\r', '\n', '\r\n') (b'', 0)
+   'x\r' '\r' '\n' (b'', 0)
+   None (b'', 0)
+--- which newlines were seen
+'' True '' None
+'' False '' None
+'x' True 'x' None
+'x' False 'x' None
+'\n' True '\n' 
+
+'\n' False '\n' 
+
+'\r' True '\n' 
+'\r' False '\r' 
+'\r\n' True '\n' 
+
+'\r\n' False '\r\n' 
+
+'\n\r' True '\n\n' ('\r', '\n')
+'\n\r' False '\n\r' ('\r', '\n')
+'\r\r\n' True '\n\n' ('\r', '\r\n')
+'\r\r\n' False '\r\r\n' ('\r', '\r\n')
+'\n\r\n' True '\n\n' ('\n', '\r\n')
+'\n\r\n' False '\n\r\n' ('\n', '\r\n')
+'\r\n\r\n' True '\n\n' 
+
+'\r\n\r\n' False '\r\n\r\n' 
+
+'\n\r\r\n' True '\n\n\n' ('\r', '\n', '\r\n')
+'\n\r\r\n' False '\n\r\r\n' ('\r', '\n', '\r\n')
+'a\nb\rc\r\nd' True 'a\nb\nc\nd' ('\r', '\n', '\r\n')
+'a\nb\rc\r\nd' False 'a\nb\rc\r\nd' ('\r', '\n', '\r\n')
+
+
+('\n', '\r\n')
+('\n', '\r\n')
+('\r', '\n', '\r\n')
+--- wide characters
+'\u20ac\n\U0001f600' '\n\u0a0d\u0d0a\n' ('\r', '\n', '\r\n')
+'\u0a0d\u0d0a' None '\u20ac\n' 
+
+'\u20ac\r\n\U0001f600' '\r\u0a0d\u0d0a\n' ('\r', '\n', '\r\n')
+'\u0a0d\u0d0a' None '\u20ac\n' 
+
+--- what is unchanged is the same object
+True
+MyStr str
+--- state
+(b'', 1)
+'\n' (b'', 0)
+'\n' 'x'
+(b'', 1) '\nx'
+TypeError: state argument must be a tuple
+TypeError: state argument must be a tuple
+TypeError: setstate(): illegal state argument
+TypeError: setstate(): illegal state argument
+TypeError: setstate(): illegal state argument
+TypeError: setstate(): illegal state argument
+TypeError: IncrementalNewlineDecoder.setstate() takes exactly one argument (0 given)
+None (b'', 1)
+None (b'', 0)
+--- over another decoder
+'a\nb' '\n' 
+ [('decode', b'a\r\nb\r', False), ('decode', b'\n', True)]
+(b'xy', 11) None (b'q', 7) None (b'q', 6) [('decode', b'\r', False), 'getstate', ('setstate', (b'q', 3)), 'getstate', 'reset', 'getstate']
+TypeError: illegal decoder state
+TypeError: illegal decoder state
+TypeError: illegal decoder state
+TypeError: illegal decoder state
+TypeError: illegal decoder state
+(b'', 0)
+(b'', 18446744073709551614)
+TypeError: decoder should return a string result, not 'bytes'
+TypeError: decoder should return a string result, not 'NoneType'
+TypeError: decoder should return a string result, not 'bytes'
+TypeError: decoder should return a string result, not 'int'
+TypeError: decoder should return a string result, not 'NoneType'
+AttributeError: 'int' object has no attribute 'decode'
+AttributeError: 'int' object has no attribute 'getstate'
+AttributeError: 'int' object has no attribute 'reset'
+TypeError: decode() missing required argument 'input' (pos 1)
+TypeError: decode() takes at most 2 arguments (3 given)
+--- subclasses
+'sub:a\n' 
+ 1 ['Sub', 'IncrementalNewlineDecoder', 'object']
+--- the type
+<class '_io.IncrementalNewlineDecoder'> IncrementalNewlineDecoder IncrementalNewlineDecoder _io (<class 'object'>,)
+TypeError: cannot set 'x' attribute of immutable type '_io.IncrementalNewlineDecoder'

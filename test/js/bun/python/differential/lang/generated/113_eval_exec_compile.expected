@@ -1,0 +1,368 @@
+status: 0
+script: d5b9b03013533d00
+source: 03030e8ae52dbc58
+---
+eval("1 + 2") => 3
+eval("x * 2") => 20
+eval("x", {"x": 5}) => 5
+eval("x + y", {"x": 1}, {"y": 2}) => 3
+eval("x", {"x": 1}, {"x": 2}) => 2
+eval("[i * 2 for i in range(3)]") => [0, 2, 4]
+eval("(lambda a: a + 1)(1)") => 2
+eval(" 1 + 1") => 2
+eval("\t1") => 1
+eval("1 + 1\n") => 2
+eval("1 + 1 \n\n") => 2
+eval("(1,\n2)") => (1, 2)
+eval("'é😀'") => é😀
+eval(b"1 + 1") => 2
+eval(bytearray(b"2 * 3")) => 6
+eval("None") => None
+eval("len('abc')") => 3
+eval("x if x else 0") => 10
+eval("(y := 5) + y", {}) => 10
+eval("__name__") => __main__
+eval("__name__", {}) => builtins
+eval("__name__", {"__name__": "custom"}) => custom
+eval("1,2") => (1, 2)
+eval("()") => ()
+eval("# comment\n1") if False else "" => 
+eval("1 # comment") => 1
+eval(memoryview(b"7")) => 7
+SyntaxError: invalid syntax <- ''
+SyntaxError: invalid syntax <- ' '
+SyntaxError: invalid syntax <- '\n'
+SyntaxError: invalid syntax <- 'x = 1'
+SyntaxError: invalid syntax <- 'pass'
+SyntaxError: invalid syntax <- 'import sys'
+SyntaxError: invalid syntax <- '1;2'
+SyntaxError: invalid syntax <- '1\n2'
+SyntaxError: invalid syntax <- 'def f(): pass'
+SyntaxError: invalid syntax <- 'if 1: 2'
+SyntaxError: invalid syntax <- 'return 1'
+SyntaxError: invalid syntax <- 'yield 1'
+SyntaxError: invalid syntax <- '1 +'
+SyntaxError: '(' was never closed <- '('
+SyntaxError: unmatched ')' <- ')'
+SyntaxError: Missing parentheses in call to 'print'. Did you mean print(...)? <- 'print 1'
+SyntaxError: invalid syntax <- 'x := 1'
+SyntaxError: invalid syntax <- 'del x'
+SyntaxError: invalid syntax <- 'for i in x: pass'
+SyntaxError: unexpected indent <- '  1\n 2'
+SyntaxError: invalid syntax <- '*x'
+SyntaxError: invalid syntax <- '**x'
+SyntaxError: invalid syntax <- 'x y'
+SyntaxError: invalid syntax <- 'lambda'
+SyntaxError: invalid syntax <- '#'
+SyntaxError: unexpected character after line continuation character <- '\\'
+SyntaxError: invalid syntax <- '1 if'
+SyntaxError: invalid syntax <- 'a.'
+SyntaxError: invalid syntax <- '.a'
+SyntaxError: invalid syntax <- 'a..b'
+ok: '1..real' 1.0
+SyntaxError: invalid decimal literal <- '1.real'
+ok: '1 .real' 1
+ok: '1.0.real' 1.0
+SyntaxError: invalid syntax <- '@'
+SyntaxError: invalid syntax <- '$'
+SyntaxError: invalid syntax <- '?'
+SyntaxError: invalid syntax <- '`x`'
+SyntaxError: invalid syntax <- 'x!'
+SyntaxError: invalid syntax <- '!x'
+SyntaxError: invalid syntax.  Maybe you meant '!=' instead of '<>'? <- 'x <> y'
+SyntaxError: invalid syntax <- 'x === y'
+SyntaxError: invalid syntax <- 'x => y'
+SyntaxError: invalid syntax <- 'x -> y'
+SyntaxError: invalid syntax <- 'x++'
+SyntaxError: invalid syntax <- 'not'
+SyntaxError: invalid syntax <- 'x not y'
+SyntaxError: invalid syntax <- 'x is not'
+SyntaxError: invalid syntax <- 'x not in'
+SyntaxError: 'await' outside function <- 'await x'
+SyntaxError: invalid syntax <- 'async'
+SyntaxError: source code string cannot contain null bytes <- '\x00'
+SyntaxError: source code string cannot contain null bytes <- '1\x002'
+SyntaxError: invalid syntax <- 'a\x0cb'
+ok: '\x0c1' 1
+eval() => TypeError: eval() takes at least 1 positional argument (0 given)
+eval(1) => TypeError: eval() arg 1 must be a string, bytes or code object
+eval(None) => TypeError: eval() arg 1 must be a string, bytes or code object
+eval([]) => TypeError: eval() arg 1 must be a string, bytes or code object
+eval("1", 1) => TypeError: globals must be a dict or a frozendict
+eval("1", []) => TypeError: globals must be a real dict or a frozendict; try eval(expr, {}, mapping)
+eval("1", {}, 1) => TypeError: locals must be a mapping
+eval("1", None, None) => 1
+eval("1", {}, {}, {}) => TypeError: eval() takes at most 3 arguments (4 given)
+eval("undefined_name") => NameError: name 'undefined_name' is not defined
+eval("undefined_name", {}) => NameError: name 'undefined_name' is not defined
+eval("x", {}) => NameError: name 'x' is not defined
+eval("1/0") => ZeroDivisionError: division by zero
+eval("len", {"__builtins__": {}}) => NameError: name 'len' is not defined
+eval("len", {"__builtins__": {"len": "fake"}}) => 'fake'
+eval("x", globals={"x": "kw globals"}) => 'kw globals'
+eval("x", locals={"x": "kw locals"}) => 'kw locals'
+eval(source="1") => TypeError: eval() takes at least 1 positional argument (0 given)
+eval("1", {1: 2}) => 1
+eval("\ud800") => UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed
+eval("'\ud800'") => UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 1: surrogates not allowed
+sorted(g) => ['__builtins__']
+type(g["__builtins__"]).__name__ => dict
+eval("len", g) => TypeError: 'NoneType' object is not subscriptable
+eval("1 + 1", g) => 2
+eval("magic", {}, M()) => 42
+eval("magic + len('ab')", {}, M()) => 44
+eval("other", {}, M()) => NameError: name 'other' is not defined
+eval("magic", M()) => TypeError: globals must be a real dict or a frozendict; try eval(expr, {}, mapping)
+from subclass getitem
+eval("zz", DS()) => 'from subclass getitem'
+('local', 'local!', ['local'], 10)
+i1() => NameError: name 'free' is not defined
+i2() => 'free'
+exec("a = 1\nb = a + 1", ns) => None
+ns["a"] => 1
+ns["b"] => 2
+sorted(k for k in ns if k != "__builtins__") => ['a', 'b']
+5
+11
+ns["f"](4) => 8
+ns["K"].v => 4
+ns["r"] => [0, 2, 4]
+ns["f"].__globals__ is ns => True
+ns["f"].__module__ => None
+ns["K"].__module__ => builtins
+ns["f"].__code__.co_filename => <string>
+sorted(l) => ['a', 'f']
+"a" in g => False
+l["f"]() => NameError: name 'a' is not defined
+l["f"]() => global a
+l["r"] => ['local a']
+l["C"].b => global a
+"z" in g => True
+"z" in l => False
+"w" in g => False
+"w" in l => True
+exec("") => None
+exec("\n") => None
+exec("# only a comment") => None
+exec("pass") => None
+exec("1 + 1") => None
+exec(b"pass") => None
+exec("x") => None
+exec(" \n\t\n") => None
+exec("if 1:\n pass") => None
+exec("if 1:\n pass\n") => None
+exec("a = 1;") => None
+exec("a = 1\\\n+ 2") => None
+exec("\x0c") => None
+exec("pass\x0c") => None
+exec(b"\xef\xbb\xbfpass") => None
+(1, False)
+(1, 2, 4)
+['visible']
+exec("\\\n") => SyntaxError: unexpected EOF while parsing (<string>, line 1)
+exec(chr(0xfeff) + "pass") => SyntaxError: invalid non-printable character U+FEFF (<string>, line 1)
+exec() => TypeError: exec() takes at least 1 positional argument (0 given)
+exec(1) => TypeError: exec() arg 1 must be a string, bytes or code object
+exec("x = ") => SyntaxError: invalid syntax (<string>, line 1)
+exec("return") => SyntaxError: 'return' outside function (<string>, line 1)
+exec("yield") => SyntaxError: 'yield' outside function (<string>, line 1)
+exec("await x") => SyntaxError: 'await' outside function (<string>, line 1)
+exec("break") => SyntaxError: 'break' outside loop (<string>, line 1)
+exec("continue") => SyntaxError: 'continue' not properly in loop (<string>, line 1)
+exec("nonlocal x") => SyntaxError: nonlocal declaration not allowed at module level (<string>, line 1)
+exec("raise ValueError('from exec')") => ValueError: from exec
+exec("1", 1) => TypeError: exec() globals must be a dict or a frozendict, not int
+exec("1", {}, 1) => TypeError: locals must be a mapping or None, not int
+exec(" x = 1") => IndentationError: unexpected indent (<string>, line 1)
+exec("if 1:\npass") => IndentationError: expected an indented block after 'if' statement on line 1 (<string>, line 2)
+exec("x = 1\n y = 2") => IndentationError: unexpected indent (<string>, line 2)
+exec("def f():\n\tpass\n pass") => TabError: inconsistent use of tabs and spaces in indentation (<string>, line 3)
+exec("sys.exit(3)", {"sys": sys}) => SystemExit: 3
+exec("import sys; sys.exit('msg')") => SystemExit: msg
+exec("a\x00b") => SyntaxError: source code string cannot contain null bytes
+exec("pass", closure=()) => TypeError: closure can only be used when source is a code object
+exec("pass", nope=1) => TypeError: exec() got an unexpected keyword argument 'nope'
+exec(b"\xff") => SyntaxError: Non-UTF-8 code starting with '\xff' on line 1, but no encoding declared; see https://peps.python.org/pep-0263/ for details (<string>, line 1)
+exec(b"x = '\xff'") => SyntaxError: Non-UTF-8 code starting with '\xff' on line 1, but no encoding declared; see https://peps.python.org/pep-0263/ for details (<string>, line 1)
+exec(b"# coding: latin-1\nprint('\xe9')") => é
+None
+exec(b"# -*- coding: nope -*-\npass") => SyntaxError: unknown encoding: nope (<string>, line 0)
+exec("# coding: latin-1\nprint('é: the cookie is ignored for str')") => é: the cookie is ignored for str
+None
+eval(f.__code__, {}, closure=f.__closure__) if False else "" => 
+exec(f.__code__, {}, closure=f.__closure__) => None
+exec(f.__code__, {}) => TypeError: code object requires a closure of exactly length 1
+eval(f.__code__, {}) => TypeError: code object passed to eval() may not contain free variables
+exec(f.__code__, {}, closure=(1,)) => TypeError: code object requires a closure of exactly length 1
+exec(f.__code__, {}, closure=()) => TypeError: code object requires a closure of exactly length 1
+type(c).__name__ => code
+eval(c) => 3
+c.co_filename => <test>
+c.co_name => <module>
+c.co_firstlineno => 1
+c.co_argcount => 0
+c.co_names => ()
+c.co_consts => (1,)
+c.co_varnames => ()
+c.co_flags & 0xFF => 0
+exec(c) => None
+exec(c, ns) => None
+eval(c, ns) => None
+ns["b"] => 2
+c.co_names => ('a', 'b')
+c.co_name => <module>
+c.co_filename => file.py
+3
+exec(c) => None
+<- single prints the value through sys.displayhook
+'5': 5
+|
+"'str'": 'str'
+|
+'None': |
+'x = 1': |
+'1; 2': 1
+2
+|
+'[1, 2]': [1, 2]
+|
+"print('p')": p
+|
+'a = 1; a': 1
+|
+'if 1: 3\n': 3
+|
+'for i in range(2): i\n': 0
+1
+|
+'1, 2': (1, 2)
+|
+'...': Ellipsis
+|
+'def f(): 1\n': |
+SyntaxError: invalid syntax <- 'if 1: 3'
+SyntaxError: invalid syntax <- 'def f(): 1'
+SyntaxError: multiple statements found while compiling a single statement <- '1\n2'
+SyntaxError: multiple statements found while compiling a single statement <- 'x = 1\ny = 2'
+SyntaxError: invalid syntax <- 'if 1:\n  1\n2'
+SyntaxError: invalid syntax <- ''
+SyntaxError: invalid syntax <- '\n'
+SyntaxError: invalid syntax <- 'def f(): pass\nf()'
+ok: '1\n'
+ok: '1\n\n'
+ok: 'if 1:\n  1\n'
+SyntaxError: invalid syntax <- '# c'
+ok: '1 # c\n'
+hook_log => [2, None, 'a', 2]
+sys.__displayhook__ is old_hook => True
+42
+eval("_", {}) if False else "" => 
+sys.modules["builtins"]._ => 42
+compile() => TypeError: compile() missing required argument 'source' (pos 1)
+compile("1") => TypeError: compile() missing required argument 'filename' (pos 2)
+compile("1", "f") => TypeError: compile() missing required argument 'mode' (pos 3)
+compile("1", "f", "nope") => ValueError: compile() mode must be 'exec', 'eval' or 'single'
+compile("1", "f", 1) => TypeError: compile() argument 'mode' must be str, not int
+compile(1, "f", "eval") => TypeError: compile() arg 1 must be a string, bytes or AST object
+compile("1", 1, "eval") => TypeError: expected str, bytes or os.PathLike object, not int
+compile("x = 1", "f", "eval") => SyntaxError: invalid syntax (f, line 1)
+compile("1", "f", "eval", 0x7FFFFFFF) => ValueError: compile(): unrecognised flags
+compile("1", "f", "eval", optimize=5) => ValueError: compile(): invalid optimize value
+compile("1", "f", "eval", optimize=-2) => ValueError: compile(): invalid optimize value
+compile("1", "f", "eval", nope=1) => TypeError: compile() got an unexpected keyword argument 'nope'
+compile("a\0b", "f", "exec") => SyntaxError: source code string cannot contain null bytes
+compile(None, "f", "exec") => TypeError: compile() arg 1 must be a string, bytes or AST object
+compile("1", "f", "eval", dont_inherit="x") and "ok" => 'ok'
+compile("1", "f\0", "eval") => ValueError: embedded null character
+compile("1", "f", "eval", 0, True, -1).co_filename => f
+compile(source="1", filename="f", mode="eval", flags=0, dont_inherit=... => <module>
+compile("x", "é.py", "eval").co_filename => é.py
+compile("1", "", "eval").co_filename == "" => True
+compile(b"1", "f", "eval").co_consts => (1,)
+compile("pass", "f", "exec", _feature_version=-1).co_name => <module>
+co.co_name => sample
+co.co_qualname => sample
+co.co_argcount => 3
+co.co_posonlyargcount => 2
+co.co_kwonlyargcount => 2
+co.co_nlocals => 9
+co.co_varnames => ('a', 'b', 'c', 'e', 'f', 'd', 'g', 'inner', 'i')
+co.co_cellvars => ('h',)
+co.co_freevars => ()
+co.co_names => ('len',)
+co.co_flags & 0x0F => 15
+co.co_consts[0] => doc
+co.co_filename.rsplit("/", 1)[-1] => 113_eval_exec_compile.py
+type(co.co_code).__name__ => bytes
+type(co.co_stacksize).__name__ => int
+co.co_firstlineno > 0 => True
+[type(k).__name__ for k in co.co_consts] => ['str', 'code']
+sample(1, e=2)[2].__code__.co_freevars => ('h',)
+co == co => True
+co == sample.__code__ => True
+co != (lambda: 0).__code__ => True
+hash(co) == hash(co) => True
+compile("1+1", "f", "eval") == compile("1+1", "f", "eval") => True
+compile("1+1", "f", "eval") == compile("1+2", "f", "eval") => False
+compile("a", "f", "eval") == compile("a", "g", "eval") => True
+r.co_name => renamed
+co.co_name => sample
+r.co_argcount => 3
+type(r).__name__ => code
+co.replace() == co => True
+co.replace(nope=1) => TypeError: replace() got an unexpected keyword argument 'nope'
+co.replace(co_name=1) => TypeError: replace() argument 'co_name' must be str, not int
+co.replace(co_argcount="a") => TypeError: 'str' object cannot be interpreted as an integer
+co.replace(1) => TypeError: replace() takes no positional arguments
+s1() => AttributeError: readonly attribute
+s2() => AttributeError: readonly attribute
+s3() => AttributeError: 'code' object has no attribute 'new' and no __dict__ for setting new attributes
+type(co)() => TypeError: code expected at least 16 arguments, got 0
+type("X", (type(co),), {}) => TypeError: type 'code' is not an acceptable base type
+sorted({l for _, _, l in lines.co_lines() if l}) => [1, 3, 4]
+type(lines.co_lines()).__name__ => line_iterator
+type(lines.co_positions()).__name__ => positions_iterator
+eval("2 ** 10") => 1024
+eval("'a' * 3") => aaa
+eval("(1, 2) + (3,)") => (1, 2, 3)
+eval("1 + 2 * 3 - 4 / 2") => 5.0
+eval("-(-1)") => 1
+eval("not not 1") => True
+eval("1 < 2 < 3") => True
+eval("'a' 'b'") => ab
+eval("b'a' b'b'") => b'ab'
+eval("1 if True else 2") => 1
+eval("[1, 2][0]") => 1
+eval("'abc'[1]") => b
+eval("(1, 2, 3)[-1]") => 3
+eval("~5") => -6
+eval("5 // 2, 5 % 2, -5 // 2") => (2, 1, -3)
+eval("2 ** -1") => 0.5
+eval("10 ** 20") => 100000000000000000000
+eval("1e308 * 10") => inf
+eval("0.1 + 0.2") => 0.30000000000000004
+eval("True + True") => 2
+eval("None is None") => True
+eval("1 in (1, 2)") => True
+eval("'a' in 'abc'") => True
+eval("3 in {1, 2, 3}") => True
+eval("1 << 100") => 1267650600228229401496703205376
+eval("'%d' % 5") => 5
+eval("'%s-%s' % (1, 2)") => 1-2
+eval("f'{1 + 1}'") => 2
+eval("1 / 0") => ZeroDivisionError: division by zero
+eval("1 % 0") => ZeroDivisionError: division by zero
+eval("1 // 0") => ZeroDivisionError: division by zero
+eval("'a' + 1") => TypeError: can only concatenate str (not "int") to str
+eval("(1, 2)[5]") => IndexError: tuple index out of range
+eval("'abc'[10]") => IndexError: string index out of range
+eval("1 << -1") => ValueError: negative shift count
+eval("2 ** 'a'") => TypeError: unsupported operand type(s) for ** or pow(): 'int' and 'str'
+eval("-'a'") => TypeError: bad operand type for unary -: 'str'
+eval("'a' * 'b'") => TypeError: can't multiply sequence by non-int of type 'str'
+eval("0 ** -1") => ZeroDivisionError: zero to a negative power
+eval("'%d' % 'a'") => TypeError: format argument: %d requires a real number, not str
+eval("[] < 1") => TypeError: '<' not supported between instances of 'list' and 'int'
+eval("1 in 1") => TypeError: argument of type 'int' is not a container or iterable
+eval("None + None") => TypeError: unsupported operand type(s) for +: 'NoneType' and 'NoneType'
+eval("len('a' * 1000)") => 1000

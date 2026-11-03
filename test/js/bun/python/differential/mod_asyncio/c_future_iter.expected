@@ -1,0 +1,36 @@
+status: 0
+script: 56373c2bcfb64dfb
+---
+FutureIter _asyncio FutureIter True True <_asyncio.FutureIter object at 0x..> ['__iter__', '__next__', 'close', 'send', 'throw']
+True True RuntimeError: ("await wasn't used with future",)  RuntimeError: ("await wasn't used with future",) 
+True
+StopIteration: ((1, 2),) (1, 2) StopIteration: ((1, 2),) (1, 2) StopIteration: ((1, 2),) (1, 2)
+StopIteration: (None,) None
+StopIteration: (StopIteration(3),) 3
+KeyError: ('k',)  False
+CancelledError: ('gone',) 
+None StopIteration: () None StopIteration: () None None
+ValueError: ('v',)  StopIteration: () None
+(<class 'ValueError'>,) ValueError: () 
+(<class 'ValueError'>, None) ValueError: () 
+(<class 'ValueError'>, 'a') ValueError: ('a',) 
+(<class 'ValueError'>, ('a', 'b')) ValueError: ('a', 'b') 
+(<class 'ValueError'>, ValueError('i')) ValueError: ('i',) 
+(<class 'ValueError'>, None, None) ValueError: () 
+(ValueError('x'), None) ValueError: ('x',) 
+(ValueError('x'), 1) TypeError: ('instance exception may not have a separate value',) 
+(<class 'ValueError'>, 1, 2) TypeError: ('throw() third argument must be a traceback',) 
+(<class 'int'>,) TypeError: ('exceptions must be classes deriving BaseException or instances of such a class',) 
+(3,) TypeError: ('exceptions must be classes deriving BaseException or instances of such a class',) 
+() TypeError: ('throw expected at least 1 argument, got 0',) 
+(1, 2, 3, 4) TypeError: ('throw expected at most 3 arguments, got 4',) 
+(<class 'list'>,) TypeError: ('exceptions must be classes deriving BaseException or instances of such a class',) 
+8 {'the (type, exc, tb) signature of throw() is deprecated, use the single-arg signature instead.'} {'DeprecationWarning'}
+True
+TypeError: ('FutureIter.throw() takes no keyword arguments',)  TypeError: ('FutureIter.send() takes exactly one argument (0 given)',)  TypeError: ('FutureIter.close() takes no arguments (1 given)',) 
+True FutureIter
+StopIteration: ('r',) r
+KeyError: ('thrown',) 
+None PENDING
+True
+StopIteration: (1,) 1

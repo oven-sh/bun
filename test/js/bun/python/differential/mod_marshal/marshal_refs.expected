@@ -1,0 +1,210 @@
+status: 0
+script: cd993837410846cf
+---
+0 False False False False False False True
+1 False False False False False False True
+2 False False False False False False True
+3 True True True True True True True
+4 True True True True True True True
+5 True True True True True True True
+6 True True True True True True True
+3 True 1
+4 True 1
+6 True 1
+True
+True 1
+ValueError: unmarshallable object
+b'\xdb\x01\x00\x00\x00:Nr\x00\x00\x00\x00N'
+ValueError: unmarshallable object
+ValueError: object too deeply nested to marshal
+ValueError: object too deeply nested to marshal
+10 list ok 56 11
+10 tuple ok 23 11
+10 dict ok 78 11
+1000 list ok 5006 1001
+1000 tuple ok 2003 1001
+1000 dict ok 7008 1001
+1990 list ok 9956 1991
+1990 tuple ok 3983 1991
+1990 dict ok 13938 1991
+1998 list ok 9996 1999
+1998 tuple ok 3999 1999
+1998 dict ok 13994 1999
+1999 list ValueError object too deeply nested to marshal
+1999 tuple ValueError object too deeply nested to marshal
+1999 dict ValueError object too deeply nested to marshal
+2000 list ValueError object too deeply nested to marshal
+2000 tuple ValueError object too deeply nested to marshal
+2000 dict ValueError object too deeply nested to marshal
+2001 list ValueError object too deeply nested to marshal
+2001 tuple ValueError object too deeply nested to marshal
+2001 dict ValueError object too deeply nested to marshal
+5000 list ValueError object too deeply nested to marshal
+5000 tuple ValueError object too deeply nested to marshal
+5000 dict ValueError object too deeply nested to marshal
+<class 'tuple'>
+<class 'list'>
+<class 'dict'>
+<class 'tuple'>
+<class 'list'>
+<class 'dict'>
+ValueError: recursion limit exceeded
+ValueError: recursion limit exceeded
+ValueError: recursion limit exceeded
+ValueError: recursion limit exceeded
+ValueError: recursion limit exceeded
+ValueError: recursion limit exceeded
+ValueError: recursion limit exceeded
+ValueError: recursion limit exceeded
+ValueError: recursion limit exceeded
+ValueError: recursion limit exceeded
+ValueError: recursion limit exceeded
+ValueError: recursion limit exceeded
+EOFError: EOF read where object expected
+TypeError: NULL object in marshal data for object
+None
+None
+ValueError: bad marshal data (unknown type code)
+ValueError: bad marshal data (unknown type code)
+ValueError: bad marshal data (unknown type code)
+ValueError: bad marshal data (unknown type code)
+EOFError: marshal data too short
+ValueError: bad marshal data (invalid reference)
+[[...]]
+((...),)
+ValueError: bad marshal data (invalid reference)
+ValueError: bad marshal data (invalid reference)
+ValueError: bad marshal data (invalid reference)
+EOFError: marshal data too short
+EOFError: marshal data too short
+1
+-1
+1
+-1
+-9223372036854775808
+EOFError: marshal data too short
+0
+1
+-1
+ValueError: bad marshal data (unnormalized long data)
+ValueError: bad marshal data (unnormalized long data)
+ValueError: bad marshal data (digit out of range in long)
+ValueError: bad marshal data (digit out of range in long)
+ValueError: bad marshal data (digit out of range in long)
+32767
+ValueError: bad marshal data (long size out of range)
+EOFError: marshal data too short
+EOFError: marshal data too short
+35184372088831
+-5764748263743881217
+EOFError: EOF read where not expected
+ValueError: could not convert string to float: ''
+1.5
+EOFError: marshal data too short
+ValueError: could not convert string to float: 'abc'
+inf
+-inf
+nan
+inf
+ValueError: could not convert string to float: ' 1.5'
+ValueError: could not convert string to float: '1.5 '
+ValueError: could not convert string to float: '1_0'
+ValueError: could not convert string to float: '0x1.8p+1'
+inf
+1.0
+EOFError: marshal data too short
+1.5
+EOFError: marshal data too short
+(1+2j)
+EOFError: EOF read where not expected
+ValueError: could not convert string to float: 'a'
+0j
+EOFError: marshal data too short
+EOFError: marshal data too short
+b''
+b'abc'
+EOFError: marshal data too short
+ValueError: bad marshal data (bytes object size out of range)
+EOFError: marshal data too short
+''
+'abc'
+'é'
+UnicodeDecodeError: 'utf-8' codec can't decode byte 0xc3 in position 0: unexpected end of data
+UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte
+'\ud800'
+ValueError: bad marshal data (string size out of range)
+EOFError: marshal data too short
+'abc'
+'abc'
+'abc'
+'Ã©'
+ValueError: bad marshal data (string size out of range)
+'abc'
+'abc'
+''
+EOFError: EOF read where not expected
+EOFError: marshal data too short
+'é'
+'é'
+()
+EOFError: EOF read where object expected
+(None,)
+TypeError: NULL object in marshal data for tuple
+(None, None)
+()
+(None,)
+ValueError: bad marshal data (tuple size out of range)
+TypeError: NULL object in marshal data for tuple
+EOFError: EOF read where object expected
+[]
+[None]
+TypeError: NULL object in marshal data for list
+ValueError: bad marshal data (list size out of range)
+EOFError: EOF read where object expected
+{}
+EOFError: EOF read where object expected
+EOFError: EOF read where object expected
+EOFError: EOF read where object expected
+{None: None}
+{}
+{None: None, True: False}
+TypeError: cannot use 'list' as a dict key (unhashable type: 'list')
+{None: True}
+frozendict()
+frozendict({None: None})
+EOFError: EOF read where object expected
+frozendict()
+[frozendict({None: None}), frozendict({None: None})]
+ValueError: bad marshal data (invalid reference)
+set()
+{None}
+{None}
+TypeError: NULL object in marshal data for set
+TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+ValueError: bad marshal data (set size out of range)
+EOFError: EOF read where object expected
+frozenset()
+frozenset({None})
+ValueError: bad marshal data (invalid reference)
+[frozenset({None}), frozenset({None})]
+[frozenset(), frozenset()]
+slice(None, None, None)
+EOFError: EOF read where object expected
+TypeError: NULL object in marshal data for object
+TypeError: NULL object in marshal data for object
+EOFError: EOF read where object expected
+ValueError: bad marshal data (invalid reference)
+[slice(None, None, None), slice(None, None, None)]
+slice(1, 1, None)
+<class 'StopIteration'>
+Ellipsis
+True
+False
+None
+True
+Ellipsis
+TypeError: NULL object in marshal data for object
+True
+True ['abc', 'abc']
+True True True
+1 True False

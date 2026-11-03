@@ -1,0 +1,77 @@
+status: 0
+script: 3ed44af9c7e571ac
+---
+b'hello' _buffer_wrapper False
+BufferError Existing exports of data: object cannot be re-sized
+A(b'hello!')
+b'hello' 0
+BufferError Existing exports of data: object cannot be re-sized
+release b'hello' None False
+1
+B(b'hello!')
+b'other' True
+b'other' bytearray(b'other') b'other' bytearray(b'other!') False True 5 2
+b'other' None
+memoryview's buffer is not this object
+b'hello' True
+BufferError Existing exports of data: object cannot be re-sized
+C.release b'hello' None
+C(b'hello!')
+C.release b'hello!' None
+C.release b'hello!' None
+b'hello!' bytearray(b'hello!x')
+b'hello'
+ValueError cannot create new view on restricted memoryview
+ValueError cannot create new view on restricted memoryview
+ValueError cannot create new view on restricted memoryview
+ValueError cannot create new view on restricted memoryview
+ValueError cannot create new view on restricted memoryview
+ValueError cannot create new view on restricted memoryview
+TypeError can't concat memoryview to bytes
+104
+[104, 101, 108, 108, 111]
+5
+[104, 101, 108, 108, 111]
+True
+'68656c6c6f'
+False
+b'hello'
+b'hello'
+ValueError operation forbidden on released memoryview object
+b'hello'
+b'hello'
+BufferError Existing exports of data: object cannot be re-sized
+bytearray(b'')
+b'hello A'
+b'hello C'
+ValueError operation forbidden on released memoryview object
+b'hello'
+b'hello'
+None
+X.release
+BufferError Existing exports of data: object cannot be re-sized
+X.release
+16
+Y.buffer 284
+b'yy' _buffer_wrapper
+Y.release b'yy' None
+Y.buffer 0
+Y.release b'yy' None
+Y.buffer 0
+Y.release b'yy' None
+Y.buffer 284
+Y.release b'yy' None
+Y.buffer 0
+Y.buffer 0
+Y.release b'yy' None
+Y.release b'yy' None
+b'yy' b'yy' b'yy' bytearray(b'yy') b'yy-yy'
+b'y2' Y2
+Y2.release b'y2' None True
+b'z'
+unraisable KeyError 'zz' Exception ignored in __release_buffer__ of Z None
+unraisable KeyError 'zz' Exception ignored in __release_buffer__ of Z None
+b'z'
+b'a'
+unraisable KeyError 'z2' Exception ignored in __release_buffer__ of Z2 None
+done

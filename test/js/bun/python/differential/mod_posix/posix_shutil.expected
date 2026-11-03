@@ -1,0 +1,76 @@
+status: 0
+script: 4e46b16a5682165b
+---
+-- copying files
+'copyfile'
+True -rw-r--r--
+'copy'
+True -rw-r----- False
+'copy2'
+True -rw-r----- 1111111111222222222
+'into/src'
+SameFileError 'src' and 'src' are the same file
+FileNotFoundError [Errno 2] No such file or directory: 'nope'
+IsADirectoryError [Errno 21] Is a directory: 'into'
+FileNotFoundError [Errno 2] No such file or directory: 'no/such/dir'
+'empty2'
+0
+'big2'
+True
+'link_copy'
+src
+None
+-rw-r-----
+None
+1111111111222222222
+['user.note'] b'kept'
+SpecialFileError `fifo` is a named pipe
+-- trees
+'tree2'
+[('tree2/a', 'drwxr-xr-x'), ('tree2/broken', 'lrwxrwxrwx'), ('tree2/c', 'drwxr-xr-x'), ('tree2/rel_link', 'lrwxrwxrwx'), ('tree2/top', '-rw-r--r--'), ('tree2/a/b', 'drwxr-xr-x'), ('tree2/a/one', '-rw-------'), ('tree2/a/b/two', '-rw-r--r--')]
+FileExistsError [Errno 17] File exists: 'tree2'
+'tree3'
+[('tree3/a', 'drwxr-xr-x'), ('tree3/c', 'drwxr-xr-x'), ('tree3/top', '-rw-r--r--'), ('tree3/a/b', 'drwxr-xr-x'), ('tree3/a/one', '-rw-------'), ('tree3/a/b/two', '-rw-r--r--')]
+'tree4'
+[('tree4/a', 'drwxr-xr-x'), ('tree4/broken', 'lrwxrwxrwx'), ('tree4/c', 'drwxr-xr-x'), ('tree4/rel_link', 'lrwxrwxrwx'), ('tree4/a/one', '-rw-------')]
+Error [('tree/broken', 'tree2/broken', "[Errno 17] File exists: 'nowhere' -> 'tree2/broken'"), ('tree/rel_link', 'tree2/rel_link', "[Errno 17] File exists: 'a/one' -> 'tree2/rel_link'")]
+Error [('tree/broken', 'tree5/broken', "[Errno 2] No such file or directory: 'tree/broken'")]
+None
+None
+FileNotFoundError [Errno 2] No such file or directory: 'tree2'
+None
+NotADirectoryError [Errno 20] Not a directory: 'src'
+OSError [Errno None] None: 'link'
+[('lstat', 'nope', 'FileNotFoundError')]
+True
+None
+None
+['big', 'big2', 'copy', 'copy2', 'copyfile', 'empty', 'empty2', 'fifo', 'into', 'link', 'link_copy', 'src', 'tree', 'tree4', 'with_xattr']
+-- move
+'moved'
+'into/moved'
+'into/tree4'
+FileNotFoundError [Errno 2] No such file or directory: 'nope'
+'into/src'
+[('into/moved', '-rw-r-----'), ('into/src', '-rw-r-----'), ('into/tree4', 'drwxr-xr-x'), ('into/tree4/a', 'drwxr-xr-x'), ('into/tree4/broken', 'lrwxrwxrwx'), ('into/tree4/c', 'drwxr-xr-x'), ('into/tree4/rel_link', 'lrwxrwxrwx'), ('into/tree4/a/one', '-rw-------')]
+-- the rest
+usage ('total', 'used', 'free') True True
+True None None /bin/sh
+None None
+./script ./script b'./script'
+os.terminal_size(columns=70, lines=20)
+os.terminal_size(columns=123, lines=45)
+None
+None
+LookupError no such user: 'no_such_user_here'
+ValueError user and/or group must be set
+-- tempfile
+True True True drwx------
+int -rw------- False True
+['sub', 'x']
+False
+b'named' True
+False
+b'anonymous'
+True True
+False

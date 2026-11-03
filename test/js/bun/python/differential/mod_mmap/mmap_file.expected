@@ -1,0 +1,74 @@
+status: 0
+script: 77cb676cd7b7246d
+---
+<mmap.mmap closed=False, access=ACCESS_DEFAULT, length=10000, pos=0, offset=0> 10000 10000 b'012345678901' b'789'
+b'ABCD45'
+b'ABCD45'
+b'ABCDEF67'
+(9, 11) [b'89', b'89'] (b'ABCD',) 5007
+False b'6'
+100 10000
+b'ABCD' 10000
+<mmap.mmap closed=False, access=ACCESS_DEFAULT, length=5904, pos=0, offset=4096> 5904 b'6789'
+<mmap.mmap closed=False, access=ACCESS_DEFAULT, length=10, pos=0, offset=4096> b'6789012345'
+ValueError: mmap offset is greater than file size
+ValueError: mmap offset is greater than file size
+ValueError: mmap length is greater than file size
+ValueError: mmap length is greater than file size
+OSError: [Errno 22] Invalid argument
+OverflowError: Python int too large to convert to C long
+<mmap.mmap closed=False, access=ACCESS_READ, length=10000, pos=0, offset=0> b'ABCD'
+TypeError: mmap can't modify a readonly memory map.
+TypeError: mmap can't modify a readonly memory map.
+TypeError: mmap can't modify a readonly memory map.
+TypeError: mmap can't modify a readonly memory map.
+TypeError: mmap can't modify a readonly memory map.
+TypeError: mmap can't resize a readonly or copy-on-write memory map.
+None True
+TypeError: cannot modify read-only memory
+b'copyEF' b'ABCDEF' None
+TypeError: mmap can't resize a readonly or copy-on-write memory map.
+b'writEF'
+PermissionError: [Errno 13] Permission denied
+10000
+<mmap.mmap closed=False, access=ACCESS_READ, length=10000, pos=0, offset=0>
+None 5000 5000 5000 None 20000 20000 20000 b'89\x00\x00\x00' 0
+None 15000 100 b''
+ValueError: new size out of range
+TypeError: 'str' object cannot be interpreted as an integer
+OverflowError: Python int too large to convert to C ssize_t
+TypeError: mmap.resize() takes exactly one argument (0 given)
+BufferError: mmap can't resize with extant buffers exported.
+BufferError: cannot close exported pointers exist
+b'writ'
+None 200
+ValueError: mmap: can't expand a shared anonymous mapping
+None 50 50
+None 100000 b'abc\x00' 0
+200 b'writ'
+ValueError: can't get size with trackfd=False
+ValueError: mmap can't resize with trackfd=False.
+ValueError: can't get size with trackfd=False
+ValueError: cannot mmap an empty file
+ValueError: mmap length is greater than file size
+PermissionError: [Errno 13] Permission denied
+b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' 10
+200 B 1 False True 1 (200,) True
+b'mv!t' b'mv!t' bytearray(b'mv!t')
+BufferError: cannot close exported pointers exist
+BufferError: cannot close exported pointers exist
+None
+memoryview False
+BufferError: cannot close exported pointers exist
+None
+0 200 b'mv!'
+b'mv!' b'mv!' 28022 400
+200
+0
+b'mv!'
+0
+None
+ValueError: name is too long
+TypeError: set_name() argument must be str, not int
+ValueError: embedded null character
+ValueError: Cannot set annotation on non-anonymous mappings

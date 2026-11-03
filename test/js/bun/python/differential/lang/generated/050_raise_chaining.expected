@@ -1,0 +1,165 @@
+status: 0
+script: 0dd77b4b92c00537
+source: 787e25ae8ac36de5
+---
+repr(e) [f=function] => ValueError()
+e.args [f=function] => ()
+repr(e.__cause__) [f=function] => None
+repr(e.__context__) [f=function] => None
+e.__suppress_context__ [f=function] => False
+repr(e) [f=function] => ValueError()
+e.args [f=function] => ()
+repr(e.__cause__) [f=function] => None
+repr(e.__context__) [f=function] => None
+e.__suppress_context__ [f=function] => False
+repr(e) [f=function] => ValueError('msg')
+e.args [f=function] => ('msg',)
+repr(e.__cause__) [f=function] => None
+repr(e.__context__) [f=function] => None
+e.__suppress_context__ [f=function] => False
+repr(e) [f=function] => ValueError('a', 'b')
+e.args [f=function] => ('a', 'b')
+repr(e.__cause__) [f=function] => None
+repr(e.__context__) [f=function] => None
+e.__suppress_context__ [f=function] => False
+repr(e) [f=function] => ValueError('x')
+e.args [f=function] => ('x',)
+repr(e.__cause__) [f=function] => None
+repr(e.__context__) [f=function] => None
+e.__suppress_context__ [f=function] => True
+repr(e) [f=function] => ValueError('x')
+e.args [f=function] => ('x',)
+repr(e.__cause__) [f=function] => KeyError('cause')
+repr(e.__context__) [f=function] => None
+e.__suppress_context__ [f=function] => True
+repr(e) [f=function] => ValueError('x')
+e.args [f=function] => ('x',)
+repr(e.__cause__) [f=function] => KeyError()
+repr(e.__context__) [f=function] => None
+e.__suppress_context__ [f=function] => True
+repr(e) [f=function] => ValueError()
+e.args [f=function] => ()
+repr(e.__cause__) [f=function] => KeyError()
+repr(e.__context__) [f=function] => None
+e.__suppress_context__ [f=function] => True
+exec("raise") => RuntimeError: No active exception to reraise
+exec("raise 1") => TypeError: exceptions must derive from BaseException
+exec("raise 'string'") => TypeError: exceptions must derive from BaseException
+exec("raise None") => TypeError: exceptions must derive from BaseException
+exec("raise int") => TypeError: exceptions must derive from BaseException
+exec("raise object()") => TypeError: exceptions must derive from BaseException
+exec("raise [ValueError]") => TypeError: exceptions must derive from BaseException
+exec("raise (ValueError,)") => TypeError: exceptions must derive from BaseException
+exec("raise ValueError from 1") => TypeError: exception causes must derive from BaseException
+exec("raise ValueError from 'x'") => TypeError: exception causes must derive from BaseException
+exec("raise ValueError from int") => TypeError: exception causes must derive from BaseException
+exec("raise ValueError from object()") => TypeError: exception causes must derive from BaseException
+exec("raise 1 from ValueError") => TypeError: exceptions must derive from BaseException
+exec("raise NotImplemented") => TypeError: exceptions must derive from BaseException
+exec("raise undefined") => NameError: name 'undefined' is not defined
+exec("raise ValueError from undefined") => NameError: name 'undefined' is not defined
+exec("raise type") => TypeError: exceptions must derive from BaseException
+exec("raise BadInit", {"BadInit": BadInit}) => RuntimeError: init failed
+exec("raise NeedsArg", {"NeedsArg": NeedsArg}) => TypeError: NeedsArg.__init__() missing 1 required positional argument: 'a'
+exec("raise NewOther", {"NewOther": NewOther}) => TypeError: calling <class '__main__.NewOther'> should have returned an instance of BaseException, not <class 'int'>
+exec("raise ValueError from BadInit", {"BadInit": BadInit}) => RuntimeError: init failed
+c1 [('ValueError', 'second', 'ctx', False), ('KeyError', "'first'", 'end', False)]
+c2 [('ValueError', 'second', 'cause', True), ('KeyError', "'first'", 'end', False)]
+c3 [('ValueError', 'second', 'ctx', True), ('KeyError', "'first'", 'end', False)]
+c4 [('ValueError', 'second', 'cause', True), ('TypeError', 'explicit', 'end', False)]
+c5 [('TypeError', '3', 'ctx', False), ('ValueError', '2', 'ctx', False), ('KeyError', "'1'", 'end', False)]
+c6 [('ValueError', 'in finally', 'ctx', False), ('KeyError', "'first'", 'end', False)]
+c7 [('ZeroDivisionError', 'division by zero', 'ctx', False), ('KeyError', "'first'", 'end', False)]
+c8 [('ValueError', 'after the handler: no context', 'end', False)]
+c9 [('TypeError', 'context is the KeyError', 'ctx', False), ('KeyError', "'first'", 'end', False)]
+c10 [('KeyError', "'first'", 'end', False)]
+c11 [('ValueError', 'reused', 'ctx', False), ('KeyError', "'k'", 'end', False)]
+c12 [('ValueError', 'raised in a function called from the handler', 'ctx', False), ('KeyError', "'first'", 'end', False)]
+c13 [('ZeroDivisionError', 'division by zero', 'ctx', False), ('KeyError', "'first'", 'end', False)]
+c14 [('ValueError', 'from __exit__', 'ctx', False), ('KeyError', "'in with'", 'end', False)]
+("KeyError('b')", 'None', True)
+None
+e.__cause__ => None
+e.__context__ => None
+e.__suppress_context__ => False
+e.__traceback__ => None
+repr(e.__cause__) => KeyError('k')
+e.__suppress_context__ => True
+e.__cause__ => None
+e.__suppress_context__ => True
+TypeError('t')
+False
+True
+TypeError: exception cause must be None or derive from BaseException
+TypeError: exception context must be None or derive from BaseException
+TypeError: __traceback__ must be a traceback or None
+TypeError: __cause__ may not be deleted
+TypeError: __context__ may not be deleted
+TypeError: __traceback__ may not be deleted
+TypeError: exception cause must be None or derive from BaseException
+TypeError: can't delete numeric/char attribute
+TypeError: attribute value type must be bool
+TypeError: attribute value type must be bool
+type(tb).__name__ => traceback
+tb.tb_frame.f_code.co_name => catch
+tb.tb_next.tb_frame.f_code.co_name => r3
+tb.tb_next.tb_next => None
+type(tb.tb_lineno).__name__ => int
+tb.tb_next.tb_lineno == r3.__code__.co_firstlineno => True
+x.with_traceback(None) is x => True
+x.__traceback__ => None
+x.with_traceback(tb).__traceback__ is tb => True
+x.with_traceback(1) => TypeError: __traceback__ must be a traceback or None
+x.with_traceback() => TypeError: BaseException.with_traceback() takes exactly one argument (0 given)
+['catch', 'lvl1', 'lvl2', 'lvl3']
+['catch', 'reraise', 'lvl2', 'lvl3']
+['catch', 'reraise_as', 'reraise_as', 'lvl2', 'lvl3']
+['catch', 'raise_saved', 'catch', 'lvl3']
+['catch', 'fin', 'lvl3']
+native ['catch', 'native']
+via_map ['catch', 'via_map', '<lambda>']
+via_sort ['catch', 'via_sort', '<lambda>', 'lvl3']
+via_comp ['catch', 'via_comp', 'lvl3']
+via_gen ['catch', 'via_gen', '<genexpr>', 'lvl3']
+via_cls ['catch', 'via_cls', '__init__', 'lvl3']
+via_prop ['catch', 'via_prop', '<lambda>', 'lvl3']
+via_op ['catch', 'via_op', '__add__', 'lvl3']
+bad_call ['catch', 'bad_call']
+sys.exception() => None
+sys.exc_info() => (None, None, None)
+sys.exception() is e => True
+sys.exc_info()[0].__name__ => ValueError
+sys.exc_info()[1] is e => True
+sys.exc_info()[2] is e.__traceback__ => True
+KeyError('nested')
+ValueError('cur')
+ValueError('cur')
+None
+finally sees ValueError('f')
+None
+None
+handler_return() => ValueError('r')
+sys.exception() => None
+['ValueError(0)', 'ValueError(1)', None]
+next(g) => None
+next(g) => KeyError('in gen')
+sys.exception() => None
+KeyError('in gen') ValueError('outside') ValueError('outside')
+None
+repr(catch(use_bare)) => ValueError('active')
+repr(catch(bare_raise_in_func)) => RuntimeError('No active exception to reraise')
+RuntimeError('No active exception to reraise')
+repr(catch(bare_in_finally)) => ValueError('fin')
+chain(catch(bare_in_finally)) => [('ValueError', 'fin', 'end', False)]
+SyntaxError: did you forget an expression between 'raise' and 'from'?
+SyntaxError: did you forget an expression after 'from'?
+SyntaxError: invalid syntax
+SyntaxError: invalid syntax
+SyntaxError: invalid syntax
+SyntaxError: invalid syntax
+ok: raise x if y else z
+SyntaxError: 'yield' outside function
+SyntaxError: invalid syntax
+ok: raise x from None
+ok: raise lambda: 1
+SyntaxError: invalid syntax

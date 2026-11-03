@@ -1,0 +1,9 @@
+status: 0
+script: e0785ad72b4457f7
+---
+end of the module
+del child []
+del parent ['child(closed)']
+del first []
+del second []
+del in a cycle ['in a cycle']

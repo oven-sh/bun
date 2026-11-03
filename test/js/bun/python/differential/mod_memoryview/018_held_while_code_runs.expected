@@ -1,0 +1,51 @@
+status: 0
+script: 25c633e44b5b029d
+---
+BufferError memoryview has 1 exported buffer
+BufferError Existing exports of data: object cannot be re-sized
+BufferError Existing exports of data: object cannot be re-sized
+'ab?cd'
+BufferError memoryview has 1 exported buffer
+BufferError Existing exports of data: object cannot be re-sized
+BufferError Existing exports of data: object cannot be re-sized
+'ab?cd'
+None
+BufferError Existing exports of data: object cannot be re-sized
+BufferError Existing exports of data: object cannot be re-sized
+'ab?cd'
+ValueError operation forbidden on released memoryview object
+bytearray(b'ab\xffcd\x01')
+BufferError cannot resize an array that is exporting buffers
+'ab?cd'
+BufferError cannot resize an array that is exporting buffers
+'ab?cd'
+array('B', [97, 98, 255, 99, 100, 1])
+BufferError memoryview has 1 exported buffer
+bytearray(b'\x01\x01\x00\x00\x00\x00\x00\x00')
+BufferError Existing exports of data: object cannot be re-sized
+bytearray(b'\x02\x01\x00\x00\x00\x00\x00\x00')
+BufferError Existing exports of data: object cannot be re-sized
+bytearray(b'\x03\x01\x00\x00\x00\x00\x00\x00')
+BufferError Existing exports of data: object cannot be re-sized
+bytearray(b'\x03\x05\x00\x00\x00\x00\x00\x00')
+BufferError Existing exports of data: object cannot be re-sized
+bytearray(b'\x01\x05\x00\x00\x00\x00\x00\x00')
+None
+bytearray(b'\x01xy\x00\x00\x00\x00\x00')
+BufferError Existing exports of data: object cannot be re-sized
+'01:78:79:00:00:00:00:00'
+BufferError Existing exports of data: object cannot be re-sized
+ValueError memoryview.index(x): x not found
+TypeError memoryview.cast(): elements of shape must be integers
+bytearray(b'\x01xy\x00\x00\x00\x00\x00\x01')
+BufferError memoryview has 1 exported buffer
+BufferError memoryview has 1 exported buffer
+True True True
+BufferError memoryview has 1 exported buffer
+bytearray(b'abcdef\x01')
+BufferError Existing exports of data: object cannot be re-sized
+bytearray(b'abXdef') b'Xd'
+bytearray(b'abXdef\x01')
+b'Local' bytearray(b'Local')
+b'mpor' b'temporary'
+19900 200

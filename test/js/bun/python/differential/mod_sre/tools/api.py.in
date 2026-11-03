@@ -1,0 +1,308 @@
+REPLS = [r'\1', r'[\g<0>]', r'\g<a>-\g<b>', r'\2\1', rb'\1', rb'[\g<0>]', r'x\n', r'\g<1>\g<1>', r'\\']
+
+I, L, M, S, U, X, DEBUG, A = 2, 4, 8, 16, 32, 64, 128, 256
+
+# ---- The module ----
+print(sorted(n for n in dir(_sre) if not n.startswith('__')))
+print(_sre.MAGIC, _sre.CODESIZE, _sre.MAXREPEAT, _sre.MAXGROUPS, _sre.getcodesize(), repr(_sre.copyright))
+print([_sre.ascii_iscased(c) for c in (64, 65, 90, 91, 97, 122, 123, 0xe9, 0x100, -1)])
+print([_sre.ascii_tolower(c) for c in (64, 65, 90, 91, 97, 122, 123, 0xc9, 0x100, -1)])
+print([_sre.unicode_iscased(c) for c in (64, 65, 97, 0xaa, 0xb5, 0xdf, 0xe9, 0xc9, 0x130, 0x131, 0x149, 0x1c5, 0x2b0, 0x345, 0x3c2, 0x1f80, 0x2160, 0x24b6, 0x10400, 0x10428, 0x1e900, 0x4e00, 0x10ffff, 0x110000)])
+print([_sre.unicode_tolower(c) for c in (64, 65, 97, 0xb5, 0xdf, 0xc9, 0x130, 0x131, 0x1c4, 0x1c5, 0x3a3, 0x1e9e, 0x1f88, 0x2126, 0x212a, 0x2160, 0x24b6, 0x10400, 0x1e900, 0x10ffff, 0x110000)])
+attempt(_sre.ascii_iscased, 'a')
+attempt(_sre.ascii_iscased, 2 ** 40)
+attempt(_sre.unicode_tolower)
+attempt(_sre.unicode_tolower, 1, 2)
+attempt(_sre.unicode_tolower, character=1)
+attempt(_sre.getcodesize, 1)
+
+# ---- re.Pattern ----
+p = C(r'(?P<a>x+)(?P<b>y)?(z)?')
+P = type(p)
+print(P, P.__name__, P.__qualname__, P.__module__, P.__mro__, P.__doc__)
+print(p, p.pattern, p.flags, p.groups, p.groupindex, type(p.groupindex))
+print(C(r'abc').groupindex, type(C(r'abc').groupindex))
+attempt(P)
+attempt(P.__new__, P)
+class_error = None
+try:
+    class Sub(P): pass
+except TypeError as e:
+    print('TypeError:', e)
+attempt(setattr, p, 'pattern', 'x')
+attempt(setattr, p, 'flags', 0)
+attempt(setattr, p, 'groups', 0)
+attempt(setattr, p, 'groupindex', {})
+attempt(setattr, p, 'foo', 1)
+attempt(delattr, p, 'pattern')
+attempt(setattr, P, 'foo', 1)
+attempt(lambda: p.groupindex.__setitem__('c', 1))
+print(P[str], P[bytes], type(P[str]))
+print(p.__copy__() is p, p.__deepcopy__({}) is p)
+attempt(p.__deepcopy__)
+print(bool(p), callable(p))
+
+for pattern in [C(r'a'), C(r'a', I), C(r'a', I | M), C(r'a', S | X), C(r'a', A), C(r'a', A | I), C(rb'a'), C(rb'a', L), C(rb'a', I | L | M | S | X),
+                C(r'(?i)a'), C(r'(?ai)a'), C('a' * 300), C('\n\'"\\€\U0001f600'), C('€' * 300), C('\U0001f600' * 300, I), C(rb'\xff' * 100)]:
+    print(repr(pattern), str(pattern) == repr(pattern), pattern.flags)
+print(_sre.compile('a', 0, [1], 0, {}, ()), _sre.compile('a', 32 | 512 | 1024, [1], 0, {}, ()), _sre.compile(None, 32, [1], 0, {}, ()), _sre.compile(b'a', 32, [1], 0, {}, ()))
+print(_sre.compile('a', -1, [1], 0, {}, ()))
+
+print(C(r'a') == C(r'a'), C(r'a') != C(r'a'), C(r'a') == C(r'b'), C(r'a') == C(r'a', I), C(r'a') == C(rb'a'), C(r'a') == 'a', C(r'a') != 'a', p == p, p != p)
+print(hash(C(r'a')) == hash(C(r'a')), len({C(r'a'), C(r'a'), C(r'b')}), C(r'a').__eq__(1), C(r'a').__ne__(1), C(r'a').__lt__(C(r'a')))
+attempt(lambda: C(r'a') < C(r'a'))
+
+# Arguments.
+attempt(p.match, string='xx', pos=1, endpos=2)
+attempt(p.prefixmatch)
+attempt(p.prefixmatch, 'x', 0, 1, 2)
+attempt(p.prefixmatch, 'x', foo=1)
+attempt(p.prefixmatch, 'x', string='x')
+attempt(p.search)
+attempt(p.search, 'x', 0, 1, 2)
+attempt(p.search, 'x', foo=1)
+attempt(p.search, 'x', string='x')
+attempt(p.findall)
+attempt(p.finditer)
+attempt(p.scanner)
+attempt(p.split)
+attempt(p.subn)
+attempt(p.prefixmatch, 'xy')
+attempt(p.fullmatch)
+attempt(p.search, 'x', 'y')
+attempt(p.search, 'x', 1.0)
+attempt(p.search, 'x', None)
+attempt(p.search, 'x', 2 ** 70)
+attempt(p.search, 'x', -2 ** 70)
+attempt(p.search, 'x', 0, 2 ** 70)
+attempt(p.search, 'ax', -5, 2 ** 62)
+attempt(p.search, 'ax', True)
+class Index:
+    def __index__(self): return 1
+attempt(p.search, 'xax', Index())
+for bad in (None, 1, 1.5, [], ('x',), {'x'}, object, b'x', bytearray(b'x')):
+    attempt(p.match, bad)
+    attempt(p.findall, bad)
+    attempt(p.sub, 'x', bad)
+    attempt(p.split, bad)
+    attempt(p.finditer, bad)
+    attempt(p.scanner, bad)
+pb = C(rb'(x+)')
+for bad in (None, 1, 'x'):
+    attempt(pb.match, bad)
+    attempt(pb.sub, b'x', bad)
+attempt(pb.sub, 'y', b'axb')
+attempt(p.sub, b'y', 'axb')
+attempt(p.sub, 1, 'axb')
+attempt(p.sub, None, 'axb')
+attempt(p.sub, 'y', 'axb', 'z')
+attempt(p.sub, 'y')
+attempt(p.sub, repl='y', string='axbx', count=1)
+attempt(p.subn, repl='y', string='axbx', count=1)
+attempt(p.sub, 'y', 'axbx', -1)
+attempt(p.split, 'axbx', -1)
+attempt(p.split, string='axbx', maxsplit=1)
+attempt(p.split, 'axbx', 2 ** 70)
+attempt(p.findall, string='axbx', pos=2, endpos=3)
+attempt(lambda: list(p.finditer(string='axbx', pos=2)))
+pnone = _sre.compile(None, 0, C(r'x')and [16, 120, 1], 0, {}, ())
+print(pnone.match('x'), pnone.match(b'x'), pnone.pattern, pnone)
+
+# str and bytes subclasses, bytearray.
+class Str(str): pass
+class Bytes(bytes): pass
+s = Str('axxb')
+m = p.search(s)
+print(m, type(m.string), m.string is s, type(m.group()), type(m[0]), type(p.sub('', s)), type(p.sub('q', Str('b'))), type(p.split(s)[0]), type(p.findall(s)[0]))
+m = C(r'.*').match(s)
+print(type(m.group()), m.group() is s, m.group() == s)
+s2 = 'axxb'
+print(C(r'.*').match(s2).group() is s2, C(r'q').sub('', s2) == s2, C(r'q').split(s2)[0] == s2)
+b = Bytes(b'axxb')
+m = pb.search(b)
+print(m, type(m.string), type(m.group()), type(pb.sub(b'', b)), type(C(rb'.*').match(b).group()))
+b2 = b'axxb'
+print(C(rb'.*').match(b2).group() is b2)
+ba = bytearray(b'axxb')
+m = pb.search(ba)
+print(m, type(m.string), m.string is ba, type(m.group()), m.group(), pb.sub(b'-', ba), type(pb.sub(b'-', ba)), pb.split(ba), pb.findall(ba), pb.sub(bytearray(b'-'), ba), pb.sub(bytearray(rb'[\1]'), ba) if False else None)
+del ba[2:]
+print(m.group(), m.span(), m.groups(), m)
+ba.clear()
+print(m.group(), m.span(), m.groups(), m)
+ba = bytearray(b'axxbxx')
+def shrink(m):
+    try:
+        ba.clear()
+    except BufferError as e:
+        return b'<BufferError>'
+    return b'<cleared>'
+print(pb.sub(shrink, ba), ba)
+ba.clear()
+print(ba)
+
+# Callable and odd replacements.
+attempt(p.sub, lambda m: None, 'axb')
+attempt(p.sub, lambda m: 1, 'axb')
+attempt(p.sub, lambda m: b'y', 'axb')
+attempt(p.sub, lambda m: '', 'axb')
+attempt(pb.sub, lambda m: 'y', b'axb')
+attempt(pb.sub, lambda m: bytearray(b'y'), b'axb')
+attempt(pb.sub, lambda m: None, b'axb')
+attempt(p.sub, lambda m: 1 / 0, 'axb')
+attempt(p.sub, lambda m: 1 / 0, 'ab')
+attempt(p.sub, lambda: 1, 'axb')
+attempt(p.sub, str.upper, 'axb')
+attempt(p.sub, lambda m: m.group().upper() + str(m.span()), 'axbxxc')
+attempt(p.subn, lambda m: Str('q'), 'axbxxc')
+attempt(p.sub, Str('q'), 'axbxxc')
+attempt(p.sub, Str(r'[\1]'), 'axbxxc')
+attempt(p.sub, r'\1', 'axbxxc')
+attempt(p.sub, r'[\g<0>]', 'axbxxyc')
+attempt(p.sub, r'\g<a>-\g<b>', 'axbxxyc')
+attempt(p.sub, r'\2\1', 'axbxxyc')
+attempt(p.sub, r'x\n', 'axb')
+attempt(p.sub, r'\\', 'axb')
+attempt(pb.sub, rb'\1', b'axbxxc')
+attempt(pb.sub, rb'[\g<0>]', b'axbxxc')
+attempt(pb.sub, bytearray(rb'[\g<0>]'), b'axbxxc')
+attempt(p.sub, 'y', '')
+attempt(p.subn, 'y', '')
+attempt(pb.subn, b'y', b'')
+attempt(C(r'').sub, '-', 'abc')
+attempt(C(r'').sub, '-', '')
+attempt(C(r'').subn, '-', 'abc', 2)
+
+# ---- _sre.template ----
+t = _sre.template(p, ['a', 1, 'b'])
+print(type(t), type(t).__name__, type(t).__module__, [n for n in dir(t) if not n.startswith('__')])
+attempt(type(t))
+attempt(_sre.template, p, [])
+attempt(_sre.template, p, ['a', 1])
+attempt(_sre.template, p, ['a', -1, 'b'])
+attempt(_sre.template, p, ['a', 'x', 'b'])
+attempt(_sre.template, p, ['a', 2 ** 70, 'b'])
+attempt(_sre.template, p, ('a',))
+attempt(_sre.template, p)
+attempt(_sre.template, pattern=p, template=['a'])
+attempt(lambda: type(_sre.template(None, [1])))
+
+# ---- _sre.compile ----
+attempt(_sre.compile)
+attempt(_sre.compile, 'a', 0, [1], 0, {})
+attempt(_sre.compile, 'a', 0, (1,), 0, {}, ())
+attempt(_sre.compile, 'a', 0, [1], 0, [], ())
+attempt(_sre.compile, 'a', 0, [1], 0, {}, [])
+attempt(_sre.compile, 'a', 'x', [1], 0, {}, ())
+attempt(_sre.compile, 'a', 0, [1], 'x', {}, ())
+attempt(_sre.compile, 'a', 2 ** 40, [1], 0, {}, ())
+attempt(_sre.compile, 1, 0, [1], 0, {}, ())
+attempt(_sre.compile, 'a', 0, ['x'], 0, {}, ())
+attempt(_sre.compile, 'a', 0, [-1], 0, {}, ())
+attempt(_sre.compile, 'a', 0, [2 ** 32], 0, {}, ())
+attempt(_sre.compile, 'a', 0, [2 ** 64], 0, {}, ())
+attempt(_sre.compile, 'a', 0, [1.0], 0, {}, ())
+attempt(_sre.compile, pattern='a', flags=0, code=[1], groups=0, groupindex={}, indexgroup=())
+for code, groups in [([], 0), ([0], 0), ([1], -1), ([1], 2 ** 31), ([99, 1], 0), ([16, 1], 0), ([16], 0), ([17, 0, 1], 0), ([17, 2, 1], 1), ([17, 1, 1], 1),
+                     ([6, 12, 1], 0), ([6, 11, 1], 0), ([8, 18, 1], 0), ([13, 2, 0, 1], 0), ([13, 4, 16, 97, 0, 1], 0), ([13, 4, 16, 97, 1, 1], 0),
+                     ([13, 100, 16, 97, 0, 1], 0), ([13, 4, 8, 18, 0, 1], 0), ([13, 4, 8, 17, 0, 1], 0), ([13, 5, 22, 97, 98, 0, 1], 0), ([13, 4, 22, 97, 0, 1], 0),
+                     ([13, 3, 9, 0, 1], 0), ([13, 3, 10, 0, 1], 0), ([13, 3, 2, 0, 1], 0),
+                     ([15, 1, 1], 0), ([15, 2, 1], 0), ([7, 0, 1], 0), ([7, 5, 16, 97, 15, 2, 0, 1], 0), ([7, 5, 16, 97, 15, 3, 0, 1], 0), ([7, 5, 16, 97, 16, 2, 0, 1], 0),
+                     ([24, 6, 0, 1, 16, 97, 1, 1], 0), ([24, 6, 2, 1, 16, 97, 1, 1], 0), ([24, 6, 0, 1, 16, 97, 0, 1], 0), ([24, 60, 0, 1, 16, 97, 1, 1], 0), ([24, 3, 0, 1, 1], 0),
+                     ([23, 5, 0, 1, 16, 97, 18, 1], 0), ([23, 5, 0, 1, 16, 97, 19, 1], 0), ([23, 5, 0, 1, 16, 97, 1, 1], 0), ([28, 5, 0, 1, 16, 97, 1, 1], 0), ([28, 5, 0, 1, 16, 97, 18, 1], 0),
+                     ([18, 1], 0), ([19, 1], 0), ([27, 4, 16, 97, 1, 1], 0), ([27, 4, 16, 97, 0, 1], 0), ([11, 0, 1], 0), ([11, 0, 1], 1), ([12, 0, 3, 16, 97, 1], 1), ([12, 0, 4, 16, 97, 1], 1),
+                     ([12, 1, 4, 16, 97, 1], 1), ([12, 0, 0, 1], 1), ([12, 0, 6, 16, 97, 15, 3, 16, 98, 1], 1), ([12, 0, 6, 16, 97, 15, 4, 16, 98, 1], 1),
+                     ([4, 5, 0, 16, 97, 1, 1], 0), ([4, 5, 0, 16, 97, 0, 1], 0), ([5, 5, 1, 16, 97, 1, 1], 0), ([4, 2, 0, 1], 0), ([4, 50, 0, 16, 97, 1, 1], 0),
+                     ([14, 4, 0, 0, 0, 1], 0), ([14, 3, 0, 0, 0, 1], 0), ([14, 5, 0, 0, 0, 1], 0), ([14, 4, 8, 0, 0, 1], 0), ([14, 4, 2, 0, 0, 1], 0), ([14, 4, 5, 0, 0, 1], 0), ([14, 0, 0, 0, 0, 1], 0),
+                     ([14, 8, 1, 1, 1, 1, 0, 97, 0, 16, 97, 1], 0), ([14, 8, 1, 1, 1, 1, 0, 97, 1, 16, 97, 1], 0), ([14, 8, 1, 1, 1, 5, 0, 97, 0, 16, 97, 1], 0),
+                     ([14, 8, 4, 1, 1, 16, 97, 0, 16, 97, 1], 0), ([14, 7, 4, 1, 1, 16, 97, 0, 16, 97, 1], 0), ([14, 7, 4, 1, 1, 16, 97, 1, 16, 97, 1], 0),
+                     ([25, 1], 0), ([21, 1], 0), ([22, 1, 2, 1], 0), ([9, 1], 0), ([42, 1, 2, 1], 0), ([43, 1], 0), ([2, 3, 0, 1, 1], 0)]:
+    attempt(lambda: _sre.compile('a', 0, code, groups, {}, ()).search('aab') is None)
+
+# ---- re.Match ----
+m = p.search('..xxyz..', 1, 7)
+MT = type(m)
+print(MT, MT.__name__, MT.__qualname__, MT.__module__, MT.__mro__, MT.__doc__)
+print(m, m.string, m.re is p, m.pos, m.endpos, m.lastindex, m.lastgroup, m.regs, m.regs is m.regs)
+attempt(MT)
+try:
+    class Sub(MT): pass
+except TypeError as e:
+    print('TypeError:', e)
+for name in ('string', 're', 'pos', 'endpos', 'lastindex', 'lastgroup', 'regs', 'foo'):
+    attempt(setattr, m, name, 1)
+attempt(delattr, m, 'string')
+print(MT[str], m.__copy__() is m, m.__deepcopy__(None) is m, bool(m))
+print(m.group(), m.group(0), m.group(1), m.group(2), m.group(3), m.group('a'), m.group('b'), m.group(1, 2), m.group('a', 0, 3), m.group(True), m.group(Index()))
+print(m[0], m[1], m['a'], m['b'], m[Index()], m[True])
+for bad in (4, -1, 'c', '', None, 1.0, b'a', (1,), [1], 2 ** 70, -2 ** 70, '1', slice(0, 1)):
+    attempt(m.group, bad)
+    attempt(lambda: m[bad])
+    attempt(m.start, bad)
+    attempt(m.end, bad)
+    attempt(m.span, bad)
+attempt(m.group, 1, 9)
+attempt(m.group, group=1)
+attempt(len, m)
+attempt(iter, m)
+attempt(lambda: 1 in m)
+attempt(lambda: m.__setitem__(0, 1))
+print(m.groups(), m.groups(None), m.groups('d'), m.groups(default=1), m.groupdict(), m.groupdict('d'), m.groupdict(default=1))
+attempt(m.groups, 1, 2)
+attempt(m.groupdict, 1, 2)
+attempt(m.groups, foo=1)
+print(m.start(), m.end(), m.span(), m.start(1), m.end(1), m.span(1), m.start('b'), m.end('b'), m.span('b'), m.span(3))
+attempt(m.start, 1, 2)
+attempt(m.start, group=1)
+m = p.search('xx')
+print(m, m.groups(), m.groups(''), m.groupdict(), m.groupdict(0), m.group(2), m.group('b'), m[2], m.span(2), m.start('b'), m.end(3), m.lastindex, m.lastgroup, m.regs)
+print(m.group(1, 2, 3), m == m, m != m, m == p.search('xx'), hash(m) == hash(m))
+m = C(r'abc').match('abc')
+print(m.groups(), m.groupdict(), m.lastindex, m.lastgroup, m.regs, m.group(), m[0])
+attempt(m.group, 1)
+attempt(m.group, 'a')
+m = C(r'(a)(b)?((c))').match('ac')
+print(m.lastindex, m.lastgroup, m.regs, m.groups())
+for s in ['a' * 60, 'a' * 47, 'a' * 48, 'a' * 49, '€' * 60, '\U0001f600' * 60, '\n' * 30, "'" * 60, '\'"' * 30]:
+    print(C(r'(?s).*').match(s))
+print(C(rb'(?s).*').match(b'\xff' * 30), C(rb'(?s).*').match(b'a' * 60), C(rb'(?s).*').match(bytearray(b'a' * 10)))
+attempt(m.expand)
+attempt(m.expand, template=r'\1')
+
+# Positions in strings with astral characters count code points.
+s = 'a\U0001f600b\U0001f601\U0001f602c€'
+m = C(r'(b)(.)(.)').search(s)
+print(ascii(m), ascii(m.groups()), m.regs, m.pos, m.endpos)
+print(ascii(C(r'.').findall(s)), ascii(C(r'[^a-c]+').findall(s)), ascii(C(r'[^a-c]+').split(s)), ascii(C(r'[^a-c]').sub('-', s)), ascii(C(r'[a-c]').sub('\U0001f603', s)))
+print([x.span() for x in C(r'[^a-c]').finditer(s)], ascii(C(r'.').search(s, 4)), ascii(C(r'.*').match(s, 1, 4)), ascii(C(r'.*').fullmatch(s, 1, 100)), len(s))
+print(ascii(C(r'(?s).*').match(s).group()) , C(r'(?s).*').match(s).group() == s)
+print(ascii(C(r'(.)\1').search('ab\U0001f600\U0001f600c')), ascii(C(r'(?<=\U0001f600)c').search('ab\U0001f600c')), ascii(C(r'\b').sub('|', '\U0001f600ab \U00010400c')))
+
+# ---- The scanner ----
+sc = p.scanner('xaxxyb')
+ST = type(sc)
+print(ST, ST.__name__, ST.__module__, sc.pattern is p, [n for n in dir(sc) if not n.startswith('__')])
+attempt(ST)
+attempt(setattr, sc, 'pattern', 1)
+print(sc.search(), sc.search(), sc.search(), sc.search())
+sc = p.scanner('xaxxyb')
+print(sc.match(), sc.match(), sc.match(), sc.search())
+sc = p.scanner('xaxxyb')
+print(sc.prefixmatch(), sc.search(), sc.prefixmatch())
+sc = p.scanner('xaxxyb', 2, 4)
+print(sc.search(), sc.search())
+sc = p.scanner(string='xaxxyb', pos=2, endpos=4)
+print(sc.match(), sc.match())
+sc = C(r'').scanner('ab')
+print(sc.search(), sc.search(), sc.search(), sc.search(), sc.search())
+sc = C(r'').scanner('ab')
+print(sc.match(), sc.match(), sc.match())
+sc = C(r'a|').scanner('aab')
+print(sc.match(), sc.match(), sc.match(), sc.match(), sc.match())
+sc = C(r'.').scanner('a\U0001f600b€')
+print(ascii([sc.search() for i in range(5)]))
+it = p.finditer('xaxxyb')
+print(type(it), iter(it) is it, next(it), next(it), next(it, 'end'), next(it, 'end'))
+ba = bytearray(b'xxaxxaxx')
+sc = pb.scanner(ba)
+print(sc.search())

@@ -1,0 +1,554 @@
+status: 0
+script: 62f702d13ff46f0b
+---
+quoting 0
+'\r\n' 2
+'""\r\n' 4
+'""\r\n' 4
+',\r\n' 3
+',\r\n' 3
+'a\r\n' 3
+'a,b\r\n' 5
+'1,2.5,True,,x\r\n' 15
+'"a,b"\r\n' 7
+'"a""b"\r\n' 8
+'"a\nb"\r\n' 7
+'"a\rb"\r\n' 7
+'a b\r\n' 5
+' a\r\n' 4
+'a\\b\r\n' 5
+'"s,s"\r\n' 7
+'5\r\n' 3
+'"o,o"\r\n' 7
+'N\r\n' 3
+'X\r\n' 3
+'1j\r\n' 4
+'1.5\r\n' 5
+'1/3\r\n' 5
+"b'bytes'\r\n" 10
+'"[1, 2]"\r\n' 10
+'"(1, 2)"\r\n' 10
+'é,中,😀\r\n' 7
+'a\x00b\r\n' 5
+'a,b,c\r\n' 7
+'a,b\r\n' 5
+'k,j\r\n' 5
+'i,j\r\n' 5
+'inf,nan,-0.0,1e+100,1000000000000000000000000000000\r\n' 53
+'""""\r\n' 6
+'""""""\r\n' 8
+"'\r\n" 3
+'a,\r\n' 4
+',a\r\n' 4
+',a\r\n' 4
+'a,\r\n' 4
+'\r\n' 2
+'""\r\n' 4
+'""\r\n' 4
+',\r\n' 3
+',\r\n' 3
+'a\r\n' 3
+'a,b\r\n' 5
+'1,2.5,True,,x\r\n' 15
+'"a,b"\r\n' 7
+'"a""b"\r\n' 8
+'"a\nb"\r\n' 7
+'"a\rb"\r\n' 7
+'a b\r\n' 5
+' a\r\n' 4
+'a\\\\b\r\n' 6
+'"s,s"\r\n' 7
+'5\r\n' 3
+'"o,o"\r\n' 7
+'N\r\n' 3
+'X\r\n' 3
+'1j\r\n' 4
+'1.5\r\n' 5
+'1/3\r\n' 5
+"b'bytes'\r\n" 10
+'"[1, 2]"\r\n' 10
+'"(1, 2)"\r\n' 10
+'é,中,😀\r\n' 7
+'a\x00b\r\n' 5
+'a,b,c\r\n' 7
+'a,b\r\n' 5
+'k,j\r\n' 5
+'i,j\r\n' 5
+'inf,nan,-0.0,1e+100,1000000000000000000000000000000\r\n' 53
+'""""\r\n' 6
+'""""""\r\n' 8
+"'\r\n" 3
+'a,\r\n' 4
+',a\r\n' 4
+',a\r\n' 4
+'a,\r\n' 4
+quoting 1
+'\r\n' 2
+'""\r\n' 4
+'""\r\n' 4
+'"",""\r\n' 7
+'"",""\r\n' 7
+'"a"\r\n' 5
+'"a","b"\r\n' 9
+'"1","2.5","True","","x"\r\n' 25
+'"a,b"\r\n' 7
+'"a""b"\r\n' 8
+'"a\nb"\r\n' 7
+'"a\rb"\r\n' 7
+'"a b"\r\n' 7
+'" a"\r\n' 6
+'"a\\b"\r\n' 7
+'"s,s"\r\n' 7
+'"5"\r\n' 5
+'"o,o"\r\n' 7
+'"N"\r\n' 5
+'"X"\r\n' 5
+'"1j"\r\n' 6
+'"1.5"\r\n' 7
+'"1/3"\r\n' 7
+'"b\'bytes\'"\r\n' 12
+'"[1, 2]"\r\n' 10
+'"(1, 2)"\r\n' 10
+'"é","中","😀"\r\n' 13
+'"a\x00b"\r\n' 7
+'"a","b","c"\r\n' 13
+'"a","b"\r\n' 9
+'"k","j"\r\n' 9
+'"i","j"\r\n' 9
+'"inf","nan","-0.0","1e+100","1000000000000000000000000000000"\r\n' 63
+'""""\r\n' 6
+'""""""\r\n' 8
+'"\'"\r\n' 5
+'"a",""\r\n' 8
+'"","a"\r\n' 8
+'"","a"\r\n' 8
+'"a",""\r\n' 8
+'\r\n' 2
+'""\r\n' 4
+'""\r\n' 4
+'"",""\r\n' 7
+'"",""\r\n' 7
+'"a"\r\n' 5
+'"a","b"\r\n' 9
+'"1","2.5","True","","x"\r\n' 25
+'"a,b"\r\n' 7
+'"a""b"\r\n' 8
+'"a\nb"\r\n' 7
+'"a\rb"\r\n' 7
+'"a b"\r\n' 7
+'" a"\r\n' 6
+'"a\\\\b"\r\n' 8
+'"s,s"\r\n' 7
+'"5"\r\n' 5
+'"o,o"\r\n' 7
+'"N"\r\n' 5
+'"X"\r\n' 5
+'"1j"\r\n' 6
+'"1.5"\r\n' 7
+'"1/3"\r\n' 7
+'"b\'bytes\'"\r\n' 12
+'"[1, 2]"\r\n' 10
+'"(1, 2)"\r\n' 10
+'"é","中","😀"\r\n' 13
+'"a\x00b"\r\n' 7
+'"a","b","c"\r\n' 13
+'"a","b"\r\n' 9
+'"k","j"\r\n' 9
+'"i","j"\r\n' 9
+'"inf","nan","-0.0","1e+100","1000000000000000000000000000000"\r\n' 63
+'""""\r\n' 6
+'""""""\r\n' 8
+'"\'"\r\n' 5
+'"a",""\r\n' 8
+'"","a"\r\n' 8
+'"","a"\r\n' 8
+'"a",""\r\n' 8
+quoting 2
+'\r\n' 2
+'""\r\n' 4
+'""\r\n' 4
+'"",""\r\n' 7
+'"",""\r\n' 7
+'"a"\r\n' 5
+'"a","b"\r\n' 9
+'1,2.5,True,"","x"\r\n' 19
+'"a,b"\r\n' 7
+'"a""b"\r\n' 8
+'"a\nb"\r\n' 7
+'"a\rb"\r\n' 7
+'"a b"\r\n' 7
+'" a"\r\n' 6
+'"a\\b"\r\n' 7
+'"s,s"\r\n' 7
+'5\r\n' 3
+'"o,o"\r\n' 7
+'N\r\n' 3
+'X\r\n' 3
+'1j\r\n' 4
+'1.5\r\n' 5
+'1/3\r\n' 5
+'"b\'bytes\'"\r\n' 12
+'"[1, 2]"\r\n' 10
+'"(1, 2)"\r\n' 10
+'"é","中","😀"\r\n' 13
+'"a\x00b"\r\n' 7
+'"a","b","c"\r\n' 13
+'"a","b"\r\n' 9
+'"k","j"\r\n' 9
+'"i","j"\r\n' 9
+'inf,nan,-0.0,1e+100,1000000000000000000000000000000\r\n' 53
+'""""\r\n' 6
+'""""""\r\n' 8
+'"\'"\r\n' 5
+'"a",""\r\n' 8
+'"","a"\r\n' 8
+'"","a"\r\n' 8
+'"a",""\r\n' 8
+'\r\n' 2
+'""\r\n' 4
+'""\r\n' 4
+'"",""\r\n' 7
+'"",""\r\n' 7
+'"a"\r\n' 5
+'"a","b"\r\n' 9
+'1,2.5,True,"","x"\r\n' 19
+'"a,b"\r\n' 7
+'"a""b"\r\n' 8
+'"a\nb"\r\n' 7
+'"a\rb"\r\n' 7
+'"a b"\r\n' 7
+'" a"\r\n' 6
+'"a\\\\b"\r\n' 8
+'"s,s"\r\n' 7
+'5\r\n' 3
+'"o,o"\r\n' 7
+'N\r\n' 3
+'X\r\n' 3
+'1j\r\n' 4
+'1.5\r\n' 5
+'1/3\r\n' 5
+'"b\'bytes\'"\r\n' 12
+'"[1, 2]"\r\n' 10
+'"(1, 2)"\r\n' 10
+'"é","中","😀"\r\n' 13
+'"a\x00b"\r\n' 7
+'"a","b","c"\r\n' 13
+'"a","b"\r\n' 9
+'"k","j"\r\n' 9
+'"i","j"\r\n' 9
+'inf,nan,-0.0,1e+100,1000000000000000000000000000000\r\n' 53
+'""""\r\n' 6
+'""""""\r\n' 8
+'"\'"\r\n' 5
+'"a",""\r\n' 8
+'"","a"\r\n' 8
+'"","a"\r\n' 8
+'"a",""\r\n' 8
+quoting 3
+'\r\n' 2
+Error single empty field record must be quoted ''
+Error single empty field record must be quoted ''
+',\r\n' 3
+',\r\n' 3
+'a\r\n' 3
+'a,b\r\n' 5
+'1,2.5,True,,x\r\n' 15
+Error need to escape, but no escapechar set ''
+Error need to escape, but no escapechar set ''
+Error need to escape, but no escapechar set ''
+Error need to escape, but no escapechar set ''
+'a b\r\n' 5
+' a\r\n' 4
+'a\\b\r\n' 5
+Error need to escape, but no escapechar set ''
+'5\r\n' 3
+Error need to escape, but no escapechar set ''
+'N\r\n' 3
+'X\r\n' 3
+'1j\r\n' 4
+'1.5\r\n' 5
+'1/3\r\n' 5
+"b'bytes'\r\n" 10
+Error need to escape, but no escapechar set ''
+Error need to escape, but no escapechar set ''
+'é,中,😀\r\n' 7
+'a\x00b\r\n' 5
+'a,b,c\r\n' 7
+'a,b\r\n' 5
+'k,j\r\n' 5
+'i,j\r\n' 5
+'inf,nan,-0.0,1e+100,1000000000000000000000000000000\r\n' 53
+Error need to escape, but no escapechar set ''
+Error need to escape, but no escapechar set ''
+"'\r\n" 3
+'a,\r\n' 4
+',a\r\n' 4
+',a\r\n' 4
+'a,\r\n' 4
+'\r\n' 2
+Error single empty field record must be quoted ''
+Error single empty field record must be quoted ''
+',\r\n' 3
+',\r\n' 3
+'a\r\n' 3
+'a,b\r\n' 5
+'1,2.5,True,,x\r\n' 15
+'a\\,b\r\n' 6
+'a\\"b\r\n' 6
+'a\\\nb\r\n' 6
+'a\\\rb\r\n' 6
+'a b\r\n' 5
+' a\r\n' 4
+'a\\\\b\r\n' 6
+'s\\,s\r\n' 6
+'5\r\n' 3
+'o\\,o\r\n' 6
+'N\r\n' 3
+'X\r\n' 3
+'1j\r\n' 4
+'1.5\r\n' 5
+'1/3\r\n' 5
+"b'bytes'\r\n" 10
+'[1\\, 2]\r\n' 9
+'(1\\, 2)\r\n' 9
+'é,中,😀\r\n' 7
+'a\x00b\r\n' 5
+'a,b,c\r\n' 7
+'a,b\r\n' 5
+'k,j\r\n' 5
+'i,j\r\n' 5
+'inf,nan,-0.0,1e+100,1000000000000000000000000000000\r\n' 53
+'\\"\r\n' 4
+'\\"\\"\r\n' 6
+"'\r\n" 3
+'a,\r\n' 4
+',a\r\n' 4
+',a\r\n' 4
+'a,\r\n' 4
+quoting 4
+'\r\n' 2
+'""\r\n' 4
+Error single empty field record must be quoted ''
+'"",""\r\n' 7
+',\r\n' 3
+'"a"\r\n' 5
+'"a","b"\r\n' 9
+'1,2.5,True,,"x"\r\n' 17
+'"a,b"\r\n' 7
+'"a""b"\r\n' 8
+'"a\nb"\r\n' 7
+'"a\rb"\r\n' 7
+'"a b"\r\n' 7
+'" a"\r\n' 6
+'"a\\b"\r\n' 7
+'"s,s"\r\n' 7
+'5\r\n' 3
+'"o,o"\r\n' 7
+'N\r\n' 3
+'X\r\n' 3
+'1j\r\n' 4
+'1.5\r\n' 5
+'1/3\r\n' 5
+"b'bytes'\r\n" 10
+'"[1, 2]"\r\n' 10
+'"(1, 2)"\r\n' 10
+'"é","中","😀"\r\n' 13
+'"a\x00b"\r\n' 7
+'"a","b","c"\r\n' 13
+'"a","b"\r\n' 9
+'"k","j"\r\n' 9
+'"i","j"\r\n' 9
+'inf,nan,-0.0,1e+100,1000000000000000000000000000000\r\n' 53
+'""""\r\n' 6
+'""""""\r\n' 8
+'"\'"\r\n' 5
+'"a",""\r\n' 8
+'"","a"\r\n' 8
+',"a"\r\n' 6
+'"a",\r\n' 6
+'\r\n' 2
+'""\r\n' 4
+Error single empty field record must be quoted ''
+'"",""\r\n' 7
+',\r\n' 3
+'"a"\r\n' 5
+'"a","b"\r\n' 9
+'1,2.5,True,,"x"\r\n' 17
+'"a,b"\r\n' 7
+'"a""b"\r\n' 8
+'"a\nb"\r\n' 7
+'"a\rb"\r\n' 7
+'"a b"\r\n' 7
+'" a"\r\n' 6
+'"a\\\\b"\r\n' 8
+'"s,s"\r\n' 7
+'5\r\n' 3
+'"o,o"\r\n' 7
+'N\r\n' 3
+'X\r\n' 3
+'1j\r\n' 4
+'1.5\r\n' 5
+'1/3\r\n' 5
+"b'bytes'\r\n" 10
+'"[1, 2]"\r\n' 10
+'"(1, 2)"\r\n' 10
+'"é","中","😀"\r\n' 13
+'"a\x00b"\r\n' 7
+'"a","b","c"\r\n' 13
+'"a","b"\r\n' 9
+'"k","j"\r\n' 9
+'"i","j"\r\n' 9
+'inf,nan,-0.0,1e+100,1000000000000000000000000000000\r\n' 53
+'""""\r\n' 6
+'""""""\r\n' 8
+'"\'"\r\n' 5
+'"a",""\r\n' 8
+'"","a"\r\n' 8
+',"a"\r\n' 6
+'"a",\r\n' 6
+quoting 5
+'\r\n' 2
+'""\r\n' 4
+Error single empty field record must be quoted ''
+'"",""\r\n' 7
+',\r\n' 3
+'"a"\r\n' 5
+'"a","b"\r\n' 9
+'"1","2.5","True",,"x"\r\n' 23
+'"a,b"\r\n' 7
+'"a""b"\r\n' 8
+'"a\nb"\r\n' 7
+'"a\rb"\r\n' 7
+'"a b"\r\n' 7
+'" a"\r\n' 6
+'"a\\b"\r\n' 7
+'"s,s"\r\n' 7
+'"5"\r\n' 5
+'"o,o"\r\n' 7
+'"N"\r\n' 5
+'"X"\r\n' 5
+'"1j"\r\n' 6
+'"1.5"\r\n' 7
+'"1/3"\r\n' 7
+'"b\'bytes\'"\r\n' 12
+'"[1, 2]"\r\n' 10
+'"(1, 2)"\r\n' 10
+'"é","中","😀"\r\n' 13
+'"a\x00b"\r\n' 7
+'"a","b","c"\r\n' 13
+'"a","b"\r\n' 9
+'"k","j"\r\n' 9
+'"i","j"\r\n' 9
+'"inf","nan","-0.0","1e+100","1000000000000000000000000000000"\r\n' 63
+'""""\r\n' 6
+'""""""\r\n' 8
+'"\'"\r\n' 5
+'"a",""\r\n' 8
+'"","a"\r\n' 8
+',"a"\r\n' 6
+'"a",\r\n' 6
+'\r\n' 2
+'""\r\n' 4
+Error single empty field record must be quoted ''
+'"",""\r\n' 7
+',\r\n' 3
+'"a"\r\n' 5
+'"a","b"\r\n' 9
+'"1","2.5","True",,"x"\r\n' 23
+'"a,b"\r\n' 7
+'"a""b"\r\n' 8
+'"a\nb"\r\n' 7
+'"a\rb"\r\n' 7
+'"a b"\r\n' 7
+'" a"\r\n' 6
+'"a\\\\b"\r\n' 8
+'"s,s"\r\n' 7
+'"5"\r\n' 5
+'"o,o"\r\n' 7
+'"N"\r\n' 5
+'"X"\r\n' 5
+'"1j"\r\n' 6
+'"1.5"\r\n' 7
+'"1/3"\r\n' 7
+'"b\'bytes\'"\r\n' 12
+'"[1, 2]"\r\n' 10
+'"(1, 2)"\r\n' 10
+'"é","中","😀"\r\n' 13
+'"a\x00b"\r\n' 7
+'"a","b","c"\r\n' 13
+'"a","b"\r\n' 9
+'"k","j"\r\n' 9
+'"i","j"\r\n' 9
+'"inf","nan","-0.0","1e+100","1000000000000000000000000000000"\r\n' 63
+'""""\r\n' 6
+'""""""\r\n' 8
+'"\'"\r\n' 5
+'"a",""\r\n' 8
+'"","a"\r\n' 8
+',"a"\r\n' 6
+'"a",\r\n' 6
+Error need to escape, but no escapechar set ''
+'a\\"b,c\r\n' 8
+'a\\"b\\\\,c\r\n' 10
+'"a""b\\\\",c\r\n' 12
+'a"b,c\r\n' 7
+Error need to escape, but no escapechar set ''
+'a"b,c\\,d\r\n' 10
+"'a;b';'c''d'\r\n" 14
+'a,b\n' 4
+'a,b' 3
+'a,"bXc"XY' 9
+Error need to escape, but no escapechar set ''
+'a,b\\YcXY' 8
+'"a","b"\n' 8
+'a\tb\r\n' 5
+'"a\tb"\tb\r\n' 9
+'"" a\r\n' 6
+'a ""\r\n' 6
+'"" a\r\n' 6
+Error empty field must be quoted if delimiter is a space and skipinitialspace is true ''
+Error empty field must be quoted if delimiter is a space and skipinitialspace is true ''
+Error empty field must be quoted if delimiter is a space and skipinitialspace is true ''
+'"" "a"\r\n' 8
+' a\r\n' 4
+' a,b \r\n' 7
+'😀😁"a😁b"\r\n' 9
+'😀,😁a😁😁b😁\r\n' 10
+'😀,a😂😁b\r\n' 8
+KeyError 'bad' ''
+Error iterable expected, not int ''
+Error iterable expected, not NoneType ''
+Error iterable expected, not float ''
+Error iterable expected, not O ''
+'a,b\r\n1,2\r\n\r\n' None
+'' None
+'a\r\n' None
+Error iterable expected, not int 'a\r\n'
+TypeError 'int' object is not iterable ''
+TypeError 'NoneType' object is not iterable ''
+'a\r\nb\r\n' None
+KeyError 'bad' 'a\r\n'
+write 'a,b\r\n'
+42
+write 'a,b\r\n'
+write 'c\r\n'
+None
+OSError disk full
+OSError disk full
+TypeError argument 1 must have a "write" method
+ZeroDivisionError prop
+TypeError argument 1 must have a "write" method
+TypeError argument 1 must have a "write" method
+TypeError writer expected at least 1 argument, got 0
+TypeError writer expected at most 2 arguments, got 3
+TypeError this function got an unexpected keyword argument 'foo'
+Error unknown dialect
+TypeError writer expected at least 1 argument, got 0
+<class '_csv.writer'> <class '_csv.Dialect'> ,
+AttributeError readonly attribute
+TypeError writer.writerow() takes exactly one argument (0 given)
+TypeError writer.writerow() takes exactly one argument (2 given)
+TypeError writer.writerows() takes exactly one argument (0 given)
+TypeError writer.writerow() takes no keyword arguments
+['dialect', 'writerow', 'writerows']
+['dialect', 'line_num']

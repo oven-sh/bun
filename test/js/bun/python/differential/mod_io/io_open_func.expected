@@ -1,0 +1,206 @@
+status: 0
+script: c52e7c051c78a207
+---
+--- what each mode makes
+'r' ['TextIOWrapper', 'BufferedReader', 'FileIO'] r m True False <_io.TextIOWrapper name='m' mode='r' encoding='utf-8'>
+'rt' ['TextIOWrapper', 'BufferedReader', 'FileIO'] rt m True False <_io.TextIOWrapper name='m' mode='rt' encoding='utf-8'>
+'tr' ['TextIOWrapper', 'BufferedReader', 'FileIO'] tr m True False <_io.TextIOWrapper name='m' mode='tr' encoding='utf-8'>
+'w' ['TextIOWrapper', 'BufferedWriter', 'FileIO'] w m False True <_io.TextIOWrapper name='m' mode='w' encoding='utf-8'>
+'a' ['TextIOWrapper', 'BufferedWriter', 'FileIO'] a m False True <_io.TextIOWrapper name='m' mode='a' encoding='utf-8'>
+'x' ['TextIOWrapper', 'BufferedWriter', 'FileIO'] x x False True <_io.TextIOWrapper name='x' mode='x' encoding='utf-8'>
+'r+' ['TextIOWrapper', 'BufferedRandom', 'FileIO'] r+ m True True <_io.TextIOWrapper name='m' mode='r+' encoding='utf-8'>
+'w+' ['TextIOWrapper', 'BufferedRandom', 'FileIO'] w+ m True True <_io.TextIOWrapper name='m' mode='w+' encoding='utf-8'>
+'a+' ['TextIOWrapper', 'BufferedRandom', 'FileIO'] a+ m True True <_io.TextIOWrapper name='m' mode='a+' encoding='utf-8'>
+'x+' ['TextIOWrapper', 'BufferedRandom', 'FileIO'] x+ x True True <_io.TextIOWrapper name='x' mode='x+' encoding='utf-8'>
+'+r' ['TextIOWrapper', 'BufferedRandom', 'FileIO'] +r m True True <_io.TextIOWrapper name='m' mode='+r' encoding='utf-8'>
+'rt+' ['TextIOWrapper', 'BufferedRandom', 'FileIO'] rt+ m True True <_io.TextIOWrapper name='m' mode='rt+' encoding='utf-8'>
+'r+t' ['TextIOWrapper', 'BufferedRandom', 'FileIO'] r+t m True True <_io.TextIOWrapper name='m' mode='r+t' encoding='utf-8'>
+'rb' ['BufferedReader', 'FileIO'] rb m True False <_io.BufferedReader name='m'>
+'br' ['BufferedReader', 'FileIO'] rb m True False <_io.BufferedReader name='m'>
+'wb' ['BufferedWriter', 'FileIO'] wb m False True <_io.BufferedWriter name='m'>
+'ab' ['BufferedWriter', 'FileIO'] ab m False True <_io.BufferedWriter name='m'>
+'xb' ['BufferedWriter', 'FileIO'] xb x False True <_io.BufferedWriter name='x'>
+'rb+' ['BufferedRandom', 'FileIO'] rb+ m True True <_io.BufferedRandom name='m'>
+'r+b' ['BufferedRandom', 'FileIO'] rb+ m True True <_io.BufferedRandom name='m'>
+'wb+' ['BufferedRandom', 'FileIO'] wb+ m True True <_io.BufferedRandom name='m'>
+'ab+' ['BufferedRandom', 'FileIO'] ab+ m True True <_io.BufferedRandom name='m'>
+'xb+' ['BufferedRandom', 'FileIO'] xb+ x True True <_io.BufferedRandom name='x'>
+'b+r' ['BufferedRandom', 'FileIO'] rb+ m True True <_io.BufferedRandom name='m'>
+--- unbuffered
+'rb' ['FileIO'] rb <_io.FileIO name='m' mode='rb' closefd=True>
+'wb' ['FileIO'] wb <_io.FileIO name='m' mode='wb' closefd=True>
+'ab' ['FileIO'] ab <_io.FileIO name='m' mode='ab' closefd=True>
+'rb+' ['FileIO'] rb+ <_io.FileIO name='m' mode='rb+' closefd=True>
+ValueError: can't have unbuffered text I/O
+ValueError: can't have unbuffered text I/O
+ValueError: can't have unbuffered text I/O
+ValueError: can't have unbuffered text I/O
+0
+--- bad modes
+ValueError: Must have exactly one of create/read/write/append mode and at most one plus
+ValueError: Must have exactly one of create/read/write/append mode and at most one plus
+ValueError: Must have exactly one of create/read/write/append mode and at most one plus
+ValueError: Must have exactly one of create/read/write/append mode and at most one plus
+ValueError: must have exactly one of create/read/write/append mode
+ValueError: must have exactly one of create/read/write/append mode
+ValueError: must have exactly one of create/read/write/append mode
+ValueError: must have exactly one of create/read/write/append mode
+ValueError: invalid mode: 'rr'
+ValueError: invalid mode: 'rbb'
+ValueError: invalid mode: 'r++'
+ValueError: invalid mode: 'tt'
+ValueError: can't have text and binary mode at once
+ValueError: can't have text and binary mode at once
+ValueError: invalid mode: 'z'
+ValueError: invalid mode: 'U'
+ValueError: invalid mode: 'rU'
+ValueError: invalid mode: 'R'
+ValueError: invalid mode: 'r '
+ValueError: invalid mode: ' r'
+ValueError: invalid mode: 'r,w'
+ValueError: invalid mode: 'é'
+ValueError: embedded null character
+TypeError: open() argument 'mode' must be str, not None
+TypeError: open() argument 'mode' must be str, not int
+TypeError: open() argument 'mode' must be str, not bytes
+--- binary mode takes no text arguments
+ValueError: binary mode doesn't take an encoding argument
+ValueError: binary mode doesn't take an errors argument
+ValueError: binary mode doesn't take a newline argument
+ValueError: binary mode doesn't take a newline argument
+<_io.BufferedReader name='a'>
+--- arguments
+TypeError: open() missing required argument 'file' (pos 1)
+TypeError: open() takes at most 8 arguments (9 given)
+TypeError: open() got an unexpected keyword argument 'bad'
+<_io.TextIOWrapper name='a' mode='r' encoding='ascii'>
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'NoneType' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+OverflowError: Python int too large to convert to C int
+TypeError: open() argument 'encoding' must be str or None, not int
+TypeError: open() argument 'errors' must be str or None, not int
+TypeError: open() argument 'newline' must be str or None, not int
+ValueError: illegal newline value: x
+LookupError: unknown encoding: no-such-encoding
+ValueError: embedded null character
+ValueError: Cannot use closefd=False with file name
+ValueError: Cannot use closefd=False with file name
+<_io.TextIOWrapper name='a' mode='r' encoding='utf-8'>
+TypeError: expected str, bytes or os.PathLike object, not NoneType
+TypeError: expected str, bytes or os.PathLike object, not float
+TypeError: expected str, bytes or os.PathLike object, not list
+ValueError: negative file descriptor
+FileNotFoundError: [Errno 2] No such file or directory: 'nonexistent'
+FileNotFoundError: [Errno 2] No such file or directory: 'nonexistent'
+FileNotFoundError: [Errno 2] No such file or directory: 'nonexistent'
+FileNotFoundError: [Errno 2] No such file or directory: b'nonexistent'
+IsADirectoryError: [Errno 21] Is a directory: '.'
+IsADirectoryError: [Errno 21] Is a directory: '.'
+FileExistsError: [Errno 17] File exists: 'a'
+ValueError: embedded null byte
+FileNotFoundError: [Errno 2] No such file or directory: ''
+<_io.TextIOWrapper name='a' mode='r' encoding='utf-8'>
+<_io.TextIOWrapper name=b'a' mode='r' encoding='utf-8'>
+TypeError: expected P.__fspath__() to return str or bytes, not int
+FileNotFoundError: [Errno 2] No such file or directory: 'nonexistent'
+--- nothing is left open, or created, when it fails
+LookupError unknown encoding: no-such-encoding
+ValueError illegal newline value: x
+ValueError can't have unbuffered text I/O
+LookupError unknown encoding: zz
+0 ['new1', 'new2', 'new3']
+--- buffer sizes
+-1 ['BufferedReader', 'FileIO'] 12 []
+-7 ['BufferedReader', 'FileIO'] 12 []
+1 ['BufferedReader', 'FileIO'] 12 [('RuntimeWarning', "line buffering (buffering=1) isn't supported in binary mode, the default buffer size will be used")]
+2 ['BufferedReader', 'FileIO'] 2 []
+16 ['BufferedReader', 'FileIO'] 12 []
+4096 ['BufferedReader', 'FileIO'] 12 []
+100000 ['BufferedReader', 'FileIO'] 12 []
+-1 131072
+1 131072
+2 2
+16 16
+4096 4096
+200000 200000
+-1 False 12
+-1 False False
+1 True 12
+1 True False
+2 False 2
+2 False False
+4096 False 12
+4096 False False
+True
+4
+4
+--- text
+utf-8 strict None 4
+b'\xc3\xa9\r\n\xe2\x82\xac\r\n'
+['é\n', '€\n'] 
+
+['é\r\n', '€\r\n'] 
+
+'\ufffd\ufffd\n\ufffd\ufffd\ufffd\n' replace
+UnicodeDecodeError: 'ascii' codec can't decode byte 0xc3 in position 0: ordinal not in range(128)
+'\xc3\xa9\n\xe2\x82\xac\n'
+utf-8 é
+b'\r\nx\x00'
+b'\xff\xfea\x00b\x00c\x00d\x00'
+abcd
+--- read and write
+10 0 012 3 3 2 0 012AB56789
+01 10 1 0 012AB56789!
+11 '' 1 0 012AB56789!?
+b'01' 2 b'B5' 0 b'01__B56789!?'
+4 01__ 4
+--- file descriptors
+True True True hello <_io.TextIOWrapper name=FD mode='r' encoding='utf-8'>
+OSError: [Errno 9] Bad file descriptor
+False hello
+0 b'hello'
+OSError: [Errno 9] Bad file descriptor
+[('RuntimeWarning', 'bool is used as a file descriptor')]
+--- opener
+  opener a 0 False False False False
+  opener a2 1 True True False False
+  opener a2 1 True False True False
+  opener a 2 False False False False
+  opener a2 2 True True False False
+  opener a 0 False False False False
+  opener a3 1 True False False True
+0o600
+ValueError: opener returned -1
+TypeError: expected integer from opener
+TypeError: 'int' object is not callable
+--- pipes
+['TextIOWrapper', 'BufferedReader', 'FileIO'] ['TextIOWrapper', 'BufferedWriter', 'FileIO'] False False False False
+'line one\n' 'line two\n'
+'rest' ''
+UnsupportedOperation: underlying stream is not seekable
+UnsupportedOperation: underlying stream is not seekable
+UnsupportedOperation: File or stream is not seekable.
+UnsupportedOperation: File or stream is not seekable.
+b'abc' None
+b'def\n' b'ghi' b''
+--- open_code
+['BufferedReader', 'FileIO'] b'hello\nworld\n'
+<_io.BufferedReader name='a'>
+TypeError: open_code() argument 'path' must be str, not bytes
+TypeError: open_code() argument 'path' must be str, not int
+TypeError: open_code() argument 'path' must be str, not P
+TypeError: open_code() missing required argument 'path' (pos 1)
+FileNotFoundError: [Errno 2] No such file or directory: 'nonexistent'
+--- text_encoding
+'utf-8'
+'utf-8'
+'latin-1'
+'latin-1'
+5
+TypeError: text_encoding expected at least 1 argument, got 0
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: _io.text_encoding() takes no keyword arguments
+--- the functions
+open open _io builtin_function_or_method <built-in function open>
+open_code text_encoding

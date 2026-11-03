@@ -1,0 +1,23 @@
+status: 0
+script: 9fd4befaf3f4de2c
+---
+[{'exception': "ValueError('lost')", 'future': "<Future finished exception=ValueError('lost')>", 'message': "'Future exception was never retrieved'"}]
+[]
+[]
+[]
+[{'exception': "ValueError('lost')", 'future': "<MyFuture finished exception=ValueError('lost')>", 'message': "'MyFuture exception was never retrieved'"}]
+[]
+[{'message': "'Task was destroyed but it is pending!'", 'task': "<Task pending name='Task-N' coro=<forever() done, defined at c_finalizers.py:23> wait_for=<Future pending cb=[Task.task_wakeup()]>>"}] True set()
+[{'message': "'Task was destroyed but it is pending!'", 'task': "<Task pending name='Task-N' coro=<forever() running at c_finalizers.py:23>>"}] True
+[] True set()
+[{'message': "'Task was destroyed but it is pending!'", 'task': "<MyTask pending name='Task-N' coro=<forever() done, defined at c_finalizers.py:23> wait_for=<Future pending cb=[MyTask.task_wakeup()]>>"}] True set()
+[] True set()
+['Loud.__del__', {'message': "'Task was destroyed but it is pending!'", 'task': "<Loud pending name='Task-N' coro=<forever() done, defined at c_finalizers.py:23> wait_for=<Future pending cb=[Loud.task_wakeup()]>>"}] True set()
+[{'exception': "KeyError('task')", 'future': "<Task finished name='Task-N' coro=<boom() done, defined at c_finalizers.py:24> exception=KeyError('task')>", 'message': "'Task exception was never retrieved'"}]
+1 True False
+False set()
+[]
+300 {'Task was destroyed but it is pending!'} set()
+[['exception', 'future', 'message', 'source_traceback']]
+[('ZeroDivisionError', 'Exception ignored while calling asyncio function <function <')]
+True True True

@@ -1,0 +1,63 @@
+status: 0
+script: a2a993cecfcd5ad7
+---
+['BlockingIOError', 'BufferedIOBase', 'BufferedRWPair', 'BufferedRandom', 'BufferedReader', 'BufferedWriter', 'BytesIO', 'DEFAULT_BUFFER_SIZE', 'FileIO', 'IOBase', 'IncrementalNewlineDecoder', 'RawIOBase', 'Reader', 'SEEK_CUR', 'SEEK_END', 'SEEK_SET', 'StringIO', 'TextIOBase', 'TextIOWrapper', 'UnsupportedOperation', 'Writer', 'open', 'open_code', 'text_encoding']
+open True
+open_code True
+text_encoding True
+FileIO True
+BytesIO True
+StringIO True
+BufferedReader True
+BufferedWriter True
+BufferedRWPair True
+BufferedRandom True
+IncrementalNewlineDecoder True
+TextIOWrapper True
+UnsupportedOperation True
+BlockingIOError True
+DEFAULT_BUFFER_SIZE True
+0 1 2 True True
+--- the abstract base classes
+<class 'io.IOBase'> ABCMeta ['IOBase', '_IOBase', 'object'] str
+<class 'io.RawIOBase'> ABCMeta ['RawIOBase', '_RawIOBase', 'IOBase', '_IOBase', 'object'] str
+<class 'io.BufferedIOBase'> ABCMeta ['BufferedIOBase', '_BufferedIOBase', 'IOBase', '_IOBase', 'object'] str
+<class 'io.TextIOBase'> ABCMeta ['TextIOBase', '_TextIOBase', 'IOBase', '_IOBase', 'object'] str
+FileIO [True, True, False, False] [True, True]
+BytesIO [True, False, True, False] [True, True]
+StringIO [True, False, False, True] [True, True]
+BufferedReader [True, False, True, False] [True, True]
+BufferedWriter [True, False, True, False] [True, True]
+BufferedRandom [True, False, True, False] [True, True]
+BufferedRWPair [True, False, True, False] [True, True]
+TextIOWrapper [True, False, False, True] [True, True]
+TextIOWrapper [True, False, False, True] [True, True]
+BufferedReader [True, False, True, False] [True, True]
+FileIO [True, True, False, False] [True, True]
+FileIO [True, True, False, False, True]
+BytesIO [True, False, True, False, True]
+StringIO [True, False, False, True, True]
+TextIOWrapper [True, False, False, True, True]
+--- UnsupportedOperation
+(<class 'io.UnsupportedOperation'>, <class 'OSError'>, <class 'ValueError'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>) io UnsupportedOperation
+OSError UnsupportedOperation('fileno') ('fileno',) None
+ValueError UnsupportedOperation('fileno') ('fileno',) None
+UnsupportedOperation UnsupportedOperation('fileno') ('fileno',) None
+UnsupportedOperation(1, 'two') 1 two
+--- streams written in Python
+b'HE' b'LLO\n' b'WORLD' False
+b'HELLO\nWORLD'
+['HELLO\n', 'WORLD']
+['A\n', 'B']
+True
+b'X'
+['a', '-', '1', '-', '[2]', '!\n', 'x', 'y'] None None None
+UnsupportedOperation: read
+UnsupportedOperation: detach
+2 bytearray(b'ab') 2
+TypeError: Can't instantiate abstract class Abstract without an implementation for abstract method 'frob'
+--- Reader and Writer
+True False True False io.Reader[bytes] io.Writer[str]
+--- print and input through real streams
+'hello world\n1, 2, 3'
+b'\xc3\xa9\r\n'

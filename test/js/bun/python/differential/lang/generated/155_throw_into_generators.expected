@@ -1,0 +1,29 @@
+status: 0
+script: 022b555a2cdf148f
+source: 09f4c221d9b31dc3
+---
+[('<module>', 30, 32), ('f', 8, 8)]
+[('<module>', 42, 44), ('c', 35, 35)]
+[('<module>', 54, 56), ('ag', 47, 47)]
+[('<module>', 67, 69), ('outer', 60, 60)]
+type(e).__name__ [cls=E] => TypeError
+e [cls=E] => calling <class '__main__.E'> should have returned an instance of BaseException, not type
+entries(e) [cls=E] => [('<module>', 94, 98), ('boring', 86, 86)]
+next(gen, "done") [cls=E] => done
+caught TypeError calling <class '__main__.E'> should have returned an instance of BaseException, not type
+stopped
+type(e).__name__ [cls=F] => KeyError
+e [cls=F] => 'init'
+entries(e) [cls=F] => [('<module>', 94, 98), ('boring', 86, 86), ('__init__', 83, 83)]
+next(gen, "done") [cls=F] => done
+caught KeyError 'init'
+stopped
+type(e).__name__ [args=(1,)] => TypeError
+e [args=(1,)] => exceptions must be classes or instances deriving from BaseException, not int
+next(gen, "done") [args=(1,)] => done
+type(e).__name__ [args=tuple] => TypeError
+e [args=tuple] => instance exception may not have a separate value
+next(gen, "done") [args=tuple] => done
+type(e).__name__ [args=tuple] => TypeError
+e [args=tuple] => throw() third argument must be a traceback object
+next(gen, "done") [args=tuple] => done

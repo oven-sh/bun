@@ -1,0 +1,558 @@
+status: 0
+script: 1463aafb4df18201
+---
+== simple -> 1
+   PY_START simple
+   LINE simple 1
+   LINE simple 2
+   PY_RETURN simple 1
+== python_calls -> None
+   PY_START python_calls
+   LINE python_calls 1
+   CALL python_calls callee MISSING
+   PY_START callee
+   LINE callee 1
+   PY_RETURN callee None
+   LINE python_calls 2
+   CALL python_calls callee 1
+   PY_START callee
+   LINE callee 1
+   PY_RETURN callee 1
+   LINE python_calls 3
+   CALL python_calls callee 1
+   PY_START callee
+   LINE callee 1
+   PY_RETURN callee 1
+   LINE python_calls 4
+   CALL python_calls callee 1
+   PY_START callee
+   LINE callee 1
+   PY_RETURN callee 1
+   LINE python_calls 5
+   CALL python_calls callee MISSING
+   PY_START callee
+   LINE callee 1
+   PY_RETURN callee 1
+   LINE python_calls 6
+   CALL python_calls callee 1
+   PY_START callee
+   LINE callee 1
+   PY_RETURN callee None
+   PY_RETURN python_calls None
+== method_calls -> None
+   PY_START method_calls
+   LINE method_calls 1
+   CALL method_calls C 5
+   PY_START __init__
+   LINE __init__ 1
+   PY_RETURN __init__ None
+   C_RETURN method_calls C 5
+   LINE method_calls 2
+   CALL method_calls C.method <__main__.C object>
+   PY_START method
+   LINE method 1
+   PY_RETURN method None
+   LINE method_calls 3
+   CALL method_calls C.method <__main__.C object>
+   PY_START method
+   LINE method 1
+   PY_RETURN method 1
+   LINE method_calls 4
+   CALL method_calls C.method <__main__.C object>
+   PY_START method
+   LINE method 1
+   PY_RETURN method 2
+   LINE method_calls 5
+   LINE method_calls 6
+   CALL method_calls C.method <__main__.C object>
+   PY_START method
+   LINE method 1
+   PY_RETURN method 3
+   LINE method_calls 7
+   CALL method_calls C.class_method C
+   PY_START class_method
+   LINE class_method 2
+   PY_RETURN class_method 1
+   LINE method_calls 8
+   CALL method_calls C.class_method C
+   PY_START class_method
+   LINE class_method 2
+   PY_RETURN class_method 1
+   LINE method_calls 9
+   CALL method_calls C.static_method 4
+   PY_START static_method
+   LINE static_method 2
+   PY_RETURN static_method 4
+   LINE method_calls 10
+   CALL method_calls <__main__.C object> 5
+   PY_START __call__
+   LINE __call__ 1
+   PY_RETURN __call__ 5
+   C_RETURN method_calls <__main__.C object> 5
+   PY_RETURN method_calls None
+== builtin_calls -> None
+   PY_START builtin_calls
+   LINE builtin_calls 1
+   CALL builtin_calls len 'abc'
+   C_RETURN builtin_calls len 'abc'
+   LINE builtin_calls 2
+   CALL builtin_calls list.append []
+   C_RETURN builtin_calls list.append [1]
+   LINE builtin_calls 3
+   CALL builtin_calls str.upper 'a'
+   C_RETURN builtin_calls str.upper 'a'
+   LINE builtin_calls 4
+   CALL builtin_calls str.upper 'a'
+   C_RETURN builtin_calls str.upper 'a'
+   LINE builtin_calls 5
+   CALL builtin_calls int '1'
+   C_RETURN builtin_calls int '1'
+   LINE builtin_calls 6
+   CALL builtin_calls dict 1
+   C_RETURN builtin_calls dict 1
+   LINE builtin_calls 7
+   CALL builtin_calls max 1
+   C_RETURN builtin_calls max 1
+   LINE builtin_calls 8
+   CALL builtin_calls print ''
+   C_RETURN builtin_calls print ''
+   LINE builtin_calls 9
+   CALL builtin_calls sorted [2, 1]
+   PY_START callee
+   LINE callee 1
+   PY_RETURN callee 2
+   PY_START callee
+   LINE callee 1
+   PY_RETURN callee 1
+   C_RETURN builtin_calls sorted [2, 1]
+   LINE builtin_calls 10
+   CALL builtin_calls isinstance 1
+   C_RETURN builtin_calls isinstance 1
+   LINE builtin_calls 11
+   CALL builtin_calls C MISSING
+   PY_START __init__
+   LINE __init__ 1
+   PY_RETURN __init__ None
+   C_RETURN builtin_calls C MISSING
+   CALL builtin_calls len <__main__.C object>
+   PY_START __len__
+   LINE __len__ 1
+   PY_RETURN __len__ 3
+   C_RETURN builtin_calls len <__main__.C object>
+   PY_RETURN builtin_calls None
+== builtin_raises -> None
+   PY_START builtin_raises
+   LINE builtin_raises 1
+   LINE builtin_raises 2
+   CALL builtin_raises len 1
+   C_RAISE builtin_raises len 1
+   RAISE builtin_raises TypeError("object of type 'int' has no len()")
+   EXCEPTION_HANDLED builtin_raises TypeError("object of type 'int' has no len()")
+   LINE builtin_raises 3
+   LINE builtin_raises 4
+   LINE builtin_raises 5
+   LINE builtin_raises 6
+   CALL builtin_raises int 'x'
+   C_RAISE builtin_raises int 'x'
+   RAISE builtin_raises ValueError("invalid literal for int() with base 10: 'x'")
+   EXCEPTION_HANDLED builtin_raises ValueError("invalid literal for int() with base 10: 'x'")
+   LINE builtin_raises 7
+   LINE builtin_raises 8
+   LINE builtin_raises 9
+   LINE builtin_raises 10
+   CALL builtin_raises dict.pop {}
+   C_RAISE builtin_raises dict.pop {}
+   RAISE builtin_raises KeyError('k')
+   EXCEPTION_HANDLED builtin_raises KeyError('k')
+   LINE builtin_raises 11
+   LINE builtin_raises 12
+   PY_RETURN builtin_raises None
+== class_calls -> None
+   PY_START class_calls
+   LINE class_calls 1
+   CALL class_calls C MISSING
+   PY_START __init__
+   LINE __init__ 1
+   PY_RETURN __init__ None
+   C_RETURN class_calls C MISSING
+   LINE class_calls 2
+   CALL class_calls C 1
+   PY_START __init__
+   LINE __init__ 1
+   PY_RETURN __init__ None
+   C_RETURN class_calls C 1
+   LINE class_calls 3
+   CALL class_calls object MISSING
+   C_RETURN class_calls object MISSING
+   LINE class_calls 4
+   CALL class_calls type 'T'
+   C_RETURN class_calls type 'T'
+   LINE class_calls 5
+   CALL class_calls ValueError 'v'
+   C_RETURN class_calls ValueError 'v'
+   PY_RETURN class_calls None
+== catches -> caught
+   PY_START catches
+   LINE catches 1
+   LINE catches 2
+   CALL catches raises MISSING
+   PY_START raises
+   LINE raises 1
+   CALL raises ValueError 'v'
+   C_RETURN raises ValueError 'v'
+   RAISE raises ValueError('v')
+   PY_UNWIND raises ValueError('v')
+   RAISE catches ValueError('v')
+   EXCEPTION_HANDLED catches ValueError('v')
+   LINE catches 3
+   LINE catches 4
+   PY_RETURN catches 'caught'
+== reraises -> raised ValueError('v')
+   PY_START reraises
+   LINE reraises 1
+   LINE reraises 2
+   CALL reraises raises MISSING
+   PY_START raises
+   LINE raises 1
+   CALL raises ValueError 'v'
+   C_RETURN raises ValueError 'v'
+   RAISE raises ValueError('v')
+   PY_UNWIND raises ValueError('v')
+   RAISE reraises ValueError('v')
+   EXCEPTION_HANDLED reraises ValueError('v')
+   LINE reraises 3
+   LINE reraises 4
+   RERAISE reraises ValueError('v')
+   EXCEPTION_HANDLED reraises ValueError('v')
+   RERAISE reraises ValueError('v')
+   PY_UNWIND reraises ValueError('v')
+== catches_finally -> None
+   PY_START catches_finally
+   LINE catches_finally 1
+   LINE catches_finally 2
+   CALL catches_finally finally_clause MISSING
+   PY_START finally_clause
+   LINE finally_clause 1
+   LINE finally_clause 2
+   CALL finally_clause raises MISSING
+   PY_START raises
+   LINE raises 1
+   CALL raises ValueError 'v'
+   C_RETURN raises ValueError 'v'
+   RAISE raises ValueError('v')
+   PY_UNWIND raises ValueError('v')
+   RAISE finally_clause ValueError('v')
+   EXCEPTION_HANDLED finally_clause ValueError('v')
+   LINE finally_clause 4
+   RERAISE finally_clause ValueError('v')
+   EXCEPTION_HANDLED finally_clause ValueError('v')
+   RERAISE finally_clause ValueError('v')
+   PY_UNWIND finally_clause ValueError('v')
+   RAISE catches_finally ValueError('v')
+   EXCEPTION_HANDLED catches_finally ValueError('v')
+   LINE catches_finally 3
+   LINE catches_finally 4
+   PY_RETURN catches_finally None
+== with_block -> None
+   PY_START with_block
+   LINE with_block 1
+   CALL with_block __build_class__ with_block.<locals>.M
+   PY_START M
+   LINE M 0
+   LINE M 1
+   LINE M 4
+   PY_RETURN M None
+   C_RETURN with_block __build_class__ with_block.<locals>.M
+   LINE with_block 7
+   CALL with_block with_block.<locals>.M MISSING
+   C_RETURN with_block with_block.<locals>.M MISSING
+   CALL with_block with_block.<locals>.M.__enter__ <__main__.with_block.<locals>.M object>
+   PY_START __enter__
+   LINE __enter__ 1
+   PY_RETURN __enter__ <__main__.with_block.<locals>.M object>
+   LINE with_block 8
+   CALL with_block KeyError 'k'
+   C_RETURN with_block KeyError 'k'
+   RAISE with_block KeyError('k')
+   EXCEPTION_HANDLED with_block KeyError('k')
+   LINE with_block 7
+   PY_START __exit__
+   LINE __exit__ 1
+   PY_RETURN __exit__ True
+   PY_RETURN with_block None
+== named_handler -> None
+   PY_START named_handler
+   LINE named_handler 1
+   LINE named_handler 2
+   CALL named_handler ValueError 'v'
+   C_RETURN named_handler ValueError 'v'
+   RAISE named_handler ValueError('v')
+   EXCEPTION_HANDLED named_handler ValueError('v')
+   LINE named_handler 3
+   LINE named_handler 4
+   PY_RETURN named_handler None
+== implicit_raise -> None
+   PY_START implicit_raise
+   LINE implicit_raise 1
+   LINE implicit_raise 2
+   RAISE implicit_raise ZeroDivisionError('division by zero')
+   EXCEPTION_HANDLED implicit_raise ZeroDivisionError('division by zero')
+   LINE implicit_raise 3
+   LINE implicit_raise 4
+   LINE implicit_raise 5
+   LINE implicit_raise 6
+   RAISE implicit_raise IndexError('list index out of range')
+   EXCEPTION_HANDLED implicit_raise IndexError('list index out of range')
+   LINE implicit_raise 7
+   LINE implicit_raise 8
+   LINE implicit_raise 9
+   LINE implicit_raise 10
+   RAISE implicit_raise AttributeError("'NoneType' object has no attribute 'a'")
+   EXCEPTION_HANDLED implicit_raise AttributeError("'NoneType' object has no attribute 'a'")
+   LINE implicit_raise 11
+   LINE implicit_raise 12
+   LINE implicit_raise 13
+   LINE implicit_raise 14
+   RAISE implicit_raise NameError("name 'undefined_name' is not defined")
+   EXCEPTION_HANDLED implicit_raise NameError("name 'undefined_name' is not defined")
+   LINE implicit_raise 15
+   LINE implicit_raise 16
+   PY_RETURN implicit_raise None
+== for_generator -> None
+   PY_START for_generator
+   LINE for_generator 1
+   CALL for_generator gen MISSING
+   PY_START gen
+   LINE gen 1
+   PY_YIELD gen 1
+   LINE for_generator 2
+   LINE for_generator 1
+   PY_RESUME gen
+   LINE gen 2
+   PY_YIELD gen 2
+   LINE for_generator 2
+   LINE for_generator 1
+   PY_RESUME gen
+   LINE gen 3
+   PY_RETURN gen 'done'
+   RAISE for_generator StopIteration('done')
+   PY_RETURN for_generator None
+== next_generator -> None
+   PY_START next_generator
+   LINE next_generator 1
+   CALL next_generator gen MISSING
+   LINE next_generator 2
+   CALL next_generator next gen
+   PY_START gen
+   LINE gen 1
+   PY_YIELD gen 1
+   C_RETURN next_generator next gen
+   LINE next_generator 3
+   CALL next_generator next gen
+   PY_RESUME gen
+   LINE gen 2
+   PY_YIELD gen 2
+   C_RETURN next_generator next gen
+   LINE next_generator 4
+   LINE next_generator 5
+   CALL next_generator next gen
+   PY_RESUME gen
+   LINE gen 3
+   PY_RETURN gen 'done'
+   C_RAISE next_generator next gen
+   RAISE next_generator StopIteration('done')
+   EXCEPTION_HANDLED next_generator StopIteration('done')
+   LINE next_generator 6
+   LINE next_generator 7
+   PY_RETURN next_generator None
+== list_generator -> None
+   PY_START list_generator
+   LINE list_generator 1
+   CALL list_generator gen MISSING
+   CALL list_generator list gen
+   PY_START gen
+   LINE gen 1
+   PY_YIELD gen 1
+   PY_RESUME gen
+   LINE gen 2
+   PY_YIELD gen 2
+   PY_RESUME gen
+   LINE gen 3
+   PY_RETURN gen 'done'
+   C_RETURN list_generator list gen
+   PY_RETURN list_generator None
+== throw_generator -> None
+   PY_START throw_generator
+   LINE throw_generator 1
+   CALL throw_generator gen MISSING
+   LINE throw_generator 2
+   CALL throw_generator next gen
+   PY_START gen
+   LINE gen 1
+   PY_YIELD gen 1
+   C_RETURN throw_generator next gen
+   LINE throw_generator 3
+   LINE throw_generator 4
+   CALL throw_generator ValueError 't'
+   C_RETURN throw_generator ValueError 't'
+   CALL throw_generator generator.throw gen
+   PY_THROW gen ValueError('t')
+   RAISE gen ValueError('t')
+   EXCEPTION_HANDLED gen ValueError('t')
+   RERAISE gen ValueError('t')
+   PY_UNWIND gen ValueError('t')
+   C_RAISE throw_generator generator.throw gen
+   RAISE throw_generator ValueError('t')
+   EXCEPTION_HANDLED throw_generator ValueError('t')
+   LINE throw_generator 5
+   LINE throw_generator 6
+   PY_RETURN throw_generator None
+== close_generator -> None
+   PY_START close_generator
+   LINE close_generator 1
+   CALL close_generator gen MISSING
+   LINE close_generator 2
+   CALL close_generator next gen
+   PY_START gen
+   LINE gen 1
+   PY_YIELD gen 1
+   C_RETURN close_generator next gen
+   LINE close_generator 3
+   CALL close_generator generator.close gen
+   PY_THROW gen GeneratorExit()
+   RAISE gen GeneratorExit()
+   EXCEPTION_HANDLED gen GeneratorExit()
+   RERAISE gen GeneratorExit()
+   PY_UNWIND gen GeneratorExit()
+   C_RETURN close_generator generator.close gen
+   PY_RETURN close_generator None
+== yield_from -> None
+   PY_START yield_from
+   LINE yield_from 1
+   CALL yield_from delegate MISSING
+   PY_START delegate
+   LINE delegate 1
+   CALL delegate gen MISSING
+   PY_START gen
+   LINE gen 1
+   PY_YIELD gen 1
+   PY_YIELD delegate 1
+   LINE yield_from 2
+   LINE yield_from 1
+   PY_RESUME delegate
+   PY_RESUME gen
+   LINE gen 2
+   PY_YIELD gen 2
+   PY_YIELD delegate 2
+   LINE yield_from 2
+   LINE yield_from 1
+   PY_RESUME delegate
+   PY_RESUME gen
+   LINE gen 3
+   PY_RETURN gen 'done'
+   STOP_ITERATION delegate StopIteration('done')
+   PY_RETURN delegate 'done'
+   RAISE yield_from StopIteration('done')
+   PY_RETURN yield_from None
+== for_iterator -> None
+   PY_START for_iterator
+   LINE for_iterator 1
+   CALL for_iterator iter [1]
+   C_RETURN for_iterator iter [1]
+   LINE for_iterator 2
+   LINE for_iterator 1
+   LINE for_iterator 3
+   CALL for_iterator range 1
+   C_RETURN for_iterator range 1
+   LINE for_iterator 4
+   LINE for_iterator 3
+   PY_RETURN for_iterator None
+== run_coroutine -> 1
+   PY_START run_coroutine
+   LINE run_coroutine 1
+   LINE run_coroutine 2
+   CALL run_coroutine awaits MISSING
+   CALL run_coroutine coroutine.send awaits
+   PY_START awaits
+   LINE awaits 1
+   CALL awaits coroutine MISSING
+   PY_START coroutine
+   LINE coroutine 1
+   PY_RETURN coroutine 1
+   STOP_ITERATION awaits StopIteration(1)
+   PY_RETURN awaits 1
+   C_RAISE run_coroutine coroutine.send awaits
+   RAISE run_coroutine StopIteration(1)
+   EXCEPTION_HANDLED run_coroutine StopIteration(1)
+   LINE run_coroutine 3
+   LINE run_coroutine 4
+   PY_RETURN run_coroutine 1
+== comprehension -> [0, 1]
+   PY_START comprehension
+   LINE comprehension 1
+   CALL comprehension range 2
+   C_RETURN comprehension range 2
+   CALL comprehension callee 0
+   PY_START callee
+   LINE callee 1
+   PY_RETURN callee 0
+   CALL comprehension callee 1
+   PY_START callee
+   LINE callee 1
+   PY_RETURN callee 1
+   PY_RETURN comprehension [0, 1]
+== generator_expression -> [0, 1]
+   PY_START generator_expression
+   LINE generator_expression 1
+   CALL generator_expression range 2
+   C_RETURN generator_expression range 2
+   CALL generator_expression generator_expression.<locals>.<genexpr> range(0, 2)
+   CALL generator_expression sorted generator_expression.<locals>.<genexpr>
+   PY_START <genexpr>
+   LINE <genexpr> 0
+   CALL <genexpr> callee 0
+   PY_START callee
+   LINE callee 1
+   PY_RETURN callee 0
+   PY_YIELD <genexpr> 0
+   PY_RESUME <genexpr>
+   CALL <genexpr> callee 1
+   PY_START callee
+   LINE callee 1
+   PY_RETURN callee 1
+   PY_YIELD <genexpr> 1
+   PY_RESUME <genexpr>
+   PY_RETURN <genexpr> None
+   C_RETURN generator_expression sorted generator_expression.<locals>.<genexpr>
+   PY_RETURN generator_expression [0, 1]
+== decorated -> None
+   PY_START decorated
+   LINE decorated 1
+   LINE decorated 2
+   LINE decorated 1
+   CALL decorated callee decorated.<locals>.inner
+   PY_START callee
+   LINE callee 1
+   PY_RETURN callee decorated.<locals>.inner
+   LINE decorated 2
+   PY_RETURN decorated None
+== operators -> None
+   PY_START operators
+   LINE operators 1
+   CALL operators C MISSING
+   PY_START __init__
+   LINE __init__ 1
+   PY_RETURN __init__ None
+   C_RETURN operators C MISSING
+   LINE operators 2
+   CALL operators len <__main__.C object>
+   PY_START __len__
+   LINE __len__ 1
+   PY_RETURN __len__ 3
+   C_RETURN operators len <__main__.C object>
+   LINE operators 3
+   LINE operators 4
+   LINE operators 5
+   CALL operators str <__main__.C object>
+   C_RETURN operators str <__main__.C object>
+   PY_RETURN operators None

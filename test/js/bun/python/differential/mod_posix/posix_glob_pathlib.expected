@@ -1,0 +1,22 @@
+status: 0
+script: 87b81a4fc5bd54a7
+---
+-- glob, fnmatch
+['big', 'copy', 'into'] ['into/moved', 'into/src', 'into/tree4'] ['into/', 'into/moved', 'into/src', 'into/tree4', 'into/tree4/a', 'into/tree4/a/one', 'into/tree4/broken', 'into/tree4/c', 'into/tree4/rel_link'] ['big', 'copy'] []
+[b'into/moved', b'into/src', b'into/tree4'] ['into/src'] ['moved', 'src', 'tree4']
+['moved', 'src', 'tree4']
+-- pathlib
+into True True False ['into/moved', 'into/src', 'into/tree4'] ['into/tree4/a'] ['into/tree4/a/one']
+4 text b'text' 4 new.txt .txt into True
+-rw------- True True
+into/renamed.txt False True
+FileNotFoundError [Errno 2] No such file or directory: 'into/renamed.txt'
+FileExistsError [Errno 17] File exists: 'into/x/y'
+True src True 3
+0 True /root
+into ['tree4', 'x'] ['l', 'moved', 'src', 'touched']
+into/tree4 ['a', 'c'] ['broken', 'rel_link']
+into/tree4/a [] ['one']
+into/tree4/c [] []
+into/x [] []
+False

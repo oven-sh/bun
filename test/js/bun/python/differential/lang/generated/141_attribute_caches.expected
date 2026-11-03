@@ -1,0 +1,164 @@
+status: 0
+script: d28e9044b2e91133
+source: d3b70745ef57799b
+---
+--- instance attribute, then the class changes
+1
+get_x(a) => property
+try_(set_x, a, 5) => AttributeError: property '<lambda>' of 'A' object has no setter
+1
+1
+class value
+other class value
+AttributeError: 'A' object has no attribute 'x'
+3
+--- different layouts at one place
+[1, 10, 100, 1, 1, 10, 10, 100, 100]
+[get_x(o) for o in (b1, b2, b3)] => [3, 12, 102]
+b1.__dict__ => {'x': 3, 'y': 2}
+b2.__dict__ => {'y': 2, 'x': 12}
+b3.__dict__ => {'z': 0, 'y': 0, 'x': 102}
+--- adding attributes through one place
+[(0, ['x']), (1, ['x']), (2, ['x']), (3, ['w', 'x']), (4, ['x']), (5, ['x'])]
+--- methods
+('A.m', (1,))
+('new A.m', (2,))
+('on the instance', (3,))
+('new A.m', (4,))
+('new A.m', (5,))
+('newer A.m', (6,))
+call_m(a2, 7) => ('A2.m', (7,))
+call_m(a, 7) => ('newer A.m', (7,))
+('newer A.m', (8,))
+warm(call_m, a2, 9) => ('static', (9,))
+warm(get_m, a2)(10) => ('static', (10,))
+warm(call_m, a2, 11) => ('class', 'A2', (11,))
+warm(call_m, a, 11) => ('class', 'A', (11,))
+warm(get_m, a2)(12) => ('class', 'A2', (12,))
+4
+B
+try_(call_m, a2) => TypeError: 'int' object is not callable
+warm(get_m, a2) => 5
+('callable object', (13,))
+('from __get__', 'A2', (14,))
+('instance beats non-data descriptor', (15,))
+('from __get__', 'A2', (16,))
+('instance beats non-data descriptor', (17,))
+--- __dict__
+warm(get_x, c) => 1
+warm(call_m, c) => C.m
+through the dict
+in the dict
+call_m(c) => C.m
+try_(get_x, c) => AttributeError: 'C' object has no attribute 'x'
+d => {'y': 2, 'x': 9}
+get_x(c) => 9
+warm(get_x, c) => new dict
+d => {'y': 2, 'x': 9}
+warm(get_x, c2) => 1
+get_x(c) => new dict
+get_x(c2) => 1
+get_x(c2) => 7
+get_x(C()) => 1
+try_(get_x, c3) => AttributeError: 'C' object has no attribute 'x'
+c3.__dict__ => {}
+{'x': 1}
+--- __class__
+warm(get_x, o) => D1.x
+warm(call_m, o) => D1.m
+warm(get_x, o) => D2.x
+warm(call_m, o) => D2.m
+own
+warm(get_x, o) => own
+warm(call_m, o) => D1.m
+--- __getattr__, __getattribute__, __setattr__ that come later
+warm(get_x, e) => 1
+warm(call_m, e) => E.m
+get_x(e) => 1
+call_m(e) => E.m
+fallback x
+AttributeError: 'E' object has no attribute 'x'
+2
+get_x(e) => intercepted x
+call_m(e) => intercepted call
+get_x(e) => 2
+call_m(e) => E.m
+get_x(e) => 3
+log => [('x', 4)]
+5
+--- __slots__
+AttributeError: 'S' object has no attribute 'x'
+warm(get_x, s) => 1
+warm(call_m, s) => S.m
+AttributeError: 'S' object has no attribute 'x'
+2
+get_x(s2) => 5
+get_x(s) => 2
+get_x(s2) => 5
+warm(get_x, s3) => slot
+s3.__dict__ => {'z': 1}
+warm(get_x, S3()) => hides the slot
+try_(set_x, S3(), 1) => AttributeError: 'S3' object attribute 'x' is read-only
+--- __bases__
+warm(get_x, g) => F1.x
+warm(call_m, g) => F1.m
+warm(get_x, g) => F2.x
+warm(call_m, g) => F2.m
+--- many attributes, and deleting
+after 200
+warm(get_x, h) => after 200
+len(vars(h)) => 101
+AttributeError: 'H' object has no attribute 'x'
+again
+{}
+--- names that are no property names
+vars(n) => {'0': 'zero', 'x': 1, '': 'empty', 'a b': 'space', '4294967295': 'big'}
+getattr(n, "0") => zero
+warm(get_x, n) => 1
+getattr(n, "") => empty
+getattr(n, "4294967295") => big
+[(type(key).__name__, key) for key in vars(n2)] => [('str', 'x'), ('Str', 'y')]
+n2.y => 2
+warm(get_x, n2) => 1
+getattr(n3, "x" + "") => 1
+getattr(n3, "".join(["x"])) => 1
+hasattr(n3, "".join(["y", "z"])) => False
+--- modules
+warm(get_x, m) => 1
+warm(call_m, m, 1) => ('function of the module', (1,))
+2
+AttributeError: module 'm' has no attribute 'x'
+module fallback x
+3
+4
+get_x(m) => 4
+call_m(m, 2) => ('function of the module', (2,))
+[4, 'm2', 4, 'm2', 'm2']
+m2
+get_x(m2) => property of the module's class
+try_(call_m, m2, 3) => ("method of the module's class", (3,))
+get_x(m2) => m2
+try_(call_m, m2, 3) => AttributeError: module 'm2' has no attribute 'm'
+--- built-in types and their subclasses at one place
+<!TypeError: count() argument 1 must be str, not int> in: [call_count(o, 1) for o in ([1, 1], [1.5, 1], ["a"], (1, 1, 1), L([1]...
+['A', 'T.upper', 'C', b'D', 'E', bytearray(b'F'), 'T.upper']
+call_count(l2, 1) => on the instance
+call_count(L2([1]), 1) => 1
+call_count([1], 1) => 1
+[0, 1, 'instance', 'Dict2.get', 4, 1, 'instance']
+--- classes with the same layout
+[('p1', 'P1'), ('p2', 'P2'), ('p1', 'P1'), ('p1', 'P1'), ('p2', 'P2'), ('p2', 'P2')]
+--- what a cached_property does
+warm(get_x, q) => computed
+Q.calls => 1
+vars(q) => {'x': 'computed'}
+warm(get_x, q) => computed
+Q.calls => 2
+--- classes that come and go
+89700
+--- exceptions and functions have dicts of their own
+['on the exception', 'on the function', 'on the exception', 'on the function']
+AttributeError: 'ValueError' object has no attribute 'x'
+class
+own
+class

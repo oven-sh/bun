@@ -1,0 +1,101 @@
+status: 0
+script: 1fb4141656d849bb
+source: e4003c8ca4d8ca32
+---
+next(a) => 0
+a.send(1) => 1
+a.send(2) => 3
+a.send(10) => 13
+returned 13
+a.send(1) => StopIteration: 
+next(a) => StopIteration: 
+acc().send(1) => TypeError: can't send non-None value to a just-started generator
+acc().send("x") => TypeError: can't send non-None value to a just-started generator
+0
+acc().send() => TypeError: generator.send() takes exactly one argument (0 given)
+acc().send(1, 2) => TypeError: generator.send() takes exactly one argument (2 given)
+next(g) => ready
+caught ValueError('v'); g.throw(ValueError("v")) => ready
+caught ValueError(); g.throw(ValueError) => ready
+g.throw(KeyError("k")) => ('key', ('k',))
+next(g) => ready
+sent 1; g.send(1) => ready
+g.throw(TypeError("escapes")) => TypeError: escapes
+next(g) => StopIteration: 
+g.throw(ValueError("after the end")) => ValueError: after the end
+None
+g.throw(ValueError("before start")) => ValueError: before start
+next(g) => StopIteration: 
+None
+g.throw() => TypeError: throw expected at least 1 argument, got 0
+g.throw(1) => TypeError: exceptions must be classes or instances deriving from BaseException, not int
+g.throw("s") => TypeError: exceptions must be classes or instances deriving from BaseException, not str
+g.throw(None) => TypeError: exceptions must be classes or instances deriving from BaseException, not NoneType
+g.throw(int) => TypeError: exceptions must be classes or instances deriving from BaseException, not type
+g.throw(ValueError, "msg", 1) => TypeError: throw() third argument must be a traceback object
+g.throw(ValueError(), 1) => TypeError: instance exception may not have a separate value
+g.throw(ValueError("i"), None, 5) => TypeError: throw() third argument must be a traceback object
+g.throw(1, 2, 3, 4) => TypeError: throw expected at most 3 arguments, got 4
+g.throw(object()) => TypeError: exceptions must be classes or instances deriving from BaseException, not object
+sent None; ready
+thr(ValueError) => ('ValueError', (), True)
+thr(ValueError("a")) => ('ValueError', ('a',), True)
+thr(ValueError("a", "b")) => ('ValueError', ('a', 'b'), True)
+thr(KeyboardInterrupt) => ('KeyboardInterrupt', (), True)
+thr(SystemExit(3)) => ('SystemExit', (3,), True)
+thr(StopIteration(1)) => ('StopIteration', (1,), True)
+thr(GeneratorExit) => ('GeneratorExit', (), True)
+thr(ExceptionGroup("g", [ValueError()]))[0] => ExceptionGroup
+returned from handler
+KeyError('converted') ValueError('orig')
+g.throw(ValueError("x")) => finally on throw; ValueError: x
+True
+GeneratorExit seen; finally on close; g.close() => None
+g.gi_frame => None
+next(g) => StopIteration: 
+g.close() => None
+g.close() => None
+g.close() => None
+closing an unstarted generator runs nothing
+next(g) => StopIteration: 
+finally on close; None
+continues after swallowing; None
+g.close() => close() returns this
+g.close() => None
+from finally
+g.close() => RuntimeError: generator ignored GeneratorExit
+False
+g.close() => RuntimeError: generator ignored GeneratorExit
+g.close() => ValueError: raised during close
+g.close() => KeyError: 'finally raises'
+g.close() => RuntimeError: generator raised StopIteration
+inner; outer; None
+__exit__ GeneratorExit; None
+GeneratorExit suppressed by the with; ret
+g.close(1) => TypeError: generator.close() takes no arguments (1 given)
+None
+g.close() => RuntimeError: generator ignored GeneratorExit
+g.throw(GeneratorExit) => GeneratorExit: 
+next(g) => StopIteration: 
+si1 RuntimeError generator raised StopIteration | cause: StopIteration('explicit') | ctx: StopIteration('explicit') True
+si2 RuntimeError generator raised StopIteration | cause: StopIteration() | ctx: StopIteration() True
+si3 RuntimeError generator raised StopIteration | cause: StopIteration() | ctx: StopIteration() True
+si4 [1, 'can be caught inside']
+si5 RuntimeError generator raised StopIteration | cause: StopIteration() | ctx: StopIteration() True
+si6 StopAsyncIteration fine in a sync generator | cause: None | ctx: None False
+('StopIteration', ('thrown in',), True)
+g.throw(StopIteration("thrown, uncaught")) => RuntimeError: generator raised StopIteration
+[1, 'ValueError: generator already executing', 'ValueError: generator already executing', 'ValueError: generator already executing', 'ValueError: generator already executing', 'ValueError: generator already executing']
+1
+next(g) => ValueError: boom
+next(g) => StopIteration: 
+list(g) => []
+g.gi_frame => None
+[0, 1] division by zero
+ValueError('v')
+ValueError('outer') KeyError('in')
+next(g) => None
+sys.exception() => None
+KeyError('gen') None
+[10.0, 15.0, 20.0]
+[1, 3, 5]

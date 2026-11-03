@@ -1,0 +1,21 @@
+status: 0
+script: 527f2c6a2f364f46
+---
+None
+None
+None
+[('first', 'test.one', ()), ('first', 'test.two', (1, 'a', None, [3]))]
+[('sys.addaudithook', ())]
+[('first', 'test.three', (3,)), ('second', 'test.three', (3,))]
+refused ((42,),)
+[('first', 'test.refuse', (42,)), ('second', 'test.refuse', (42,))]
+None
+['first', 'second', 'refusing', 'last']
+KeyboardInterrupt no more hooks
+TypeError audit expected at least 1 argument, got 0
+TypeError audit() argument 1 must be str, not int
+TypeError audit() argument 1 must be str, not bytes
+TypeError sys.audit() takes no keyword arguments
+TypeError addaudithook() missing required argument 'hook' (pos 1)
+None
+TypeError 'int' object is not callable

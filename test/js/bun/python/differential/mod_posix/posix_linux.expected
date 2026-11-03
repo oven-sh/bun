@@ -1,0 +1,203 @@
+status: 0
+script: e90c59a73098c77c
+---
+-- scheduling
+0 0 0
+1 1 99
+2 1 99
+3 0 0
+5 0 0
+OSError [Errno 22] Invalid argument
+OSError [Errno 22] Invalid argument
+TypeError 'str' object cannot be interpreted as an integer
+99
+None
+0
+ProcessLookupError [Errno 3] No such process
+OSError [Errno 22] Invalid argument
+posix.sched_param(sched_priority=0)
+ProcessLookupError [Errno 3] No such process
+True
+None
+TypeError must have a sched_param object
+TypeError must have a sched_param object
+TypeError 'str' object cannot be interpreted as an integer
+OverflowError sched_priority out of range
+OverflowError Python int too large to convert to C long
+OSError [Errno 22] Invalid argument
+None
+TypeError must have a sched_param object
+OSError [Errno 22] Invalid argument
+ProcessLookupError [Errno 3] No such process
+float True
+ProcessLookupError [Errno 3] No such process
+set True True True
+ProcessLookupError [Errno 3] No such process
+TypeError 'str' object cannot be interpreted as an integer
+TypeError posix.sched_getaffinity() takes exactly one argument (0 given)
+None
+True
+None
+True
+None
+True
+OSError [Errno 22] Invalid argument
+OSError [Errno 22] Invalid argument
+ValueError negative CPU number
+OverflowError CPU number too large
+OverflowError Python int too large to convert to C long
+TypeError expected an iterator of ints, but iterator yielded <class 'str'>
+TypeError expected an iterator of ints, but iterator yielded <class 'float'>
+TypeError 'int' object is not iterable
+ProcessLookupError [Errno 3] No such process
+-- eventfd
+False True
+3
+None
+None
+12
+None
+18446744073709551614
+OSError [Errno 22] Invalid argument
+OverflowError Python int too large for C unsigned long long
+ValueError Cannot convert negative int
+TypeError 'str' object cannot be interpreted as an integer
+None
+b'\x01\x00\x00\x00\x00\x00\x00\x00'
+8
+9
+OSError [Errno 9] Bad file descriptor
+True False
+1
+1
+BlockingIOError [Errno 11] Resource temporarily unavailable
+True
+ValueError Cannot convert negative int
+OverflowError Python int too large for C unsigned int
+TypeError 'str' object cannot be interpreted as an integer
+OSError [Errno 22] Invalid argument
+TypeError eventfd() missing required argument 'initval' (pos 1)
+-- timerfd
+False True
+(0.0, 0.0)
+(0, 0)
+(0.0, 0.0)
+float True 0.25
+int True 250000000
+True 250000000
+True 3.0000000000000004e-09
+(0.0, 0.0)
+(0.0, 0.0)
+1
+(0, 0)
+1
+(0.0, 0.0)
+1
+OSError [Errno 22] Invalid argument
+OverflowError timestamp out of range for C PyTime_t
+OverflowError timestamp out of range for C PyTime_t
+OverflowError timestamp out of range for C PyTime_t
+TypeError must be real number, not str
+TypeError must be real number, not NoneType
+TypeError timerfd_settime() takes exactly 1 positional argument (2 given)
+OSError [Errno 22] Invalid argument
+OSError [Errno 22] Invalid argument
+OverflowError int too big to convert
+TypeError 'float' object cannot be interpreted as an integer
+TypeError 'str' object cannot be interpreted as an integer
+OSError [Errno 9] Bad file descriptor
+OSError [Errno 9] Bad file descriptor
+False False
+BlockingIOError [Errno 11] Resource temporarily unavailable
+OSError [Errno 22] Invalid argument
+TypeError 'str' object cannot be interpreted as an integer
+OSError [Errno 22] Invalid argument
+-- memfd
+False /memfd:name (deleted)
+9
+b'in memory'
+9 True
+True
+OSError [Errno 22] Invalid argument
+OSError [Errno 22] Invalid argument
+TypeError 'str' object cannot be interpreted as an integer
+TypeError memfd_create() missing required argument 'name' (pos 1)
+-- pidfd
+False
+ProcessLookupError [Errno 3] No such process
+OSError [Errno 22] Invalid argument
+ValueError Cannot convert negative int
+OverflowError Python int too large for C unsigned int
+TypeError 'str' object cannot be interpreted as an integer
+True 3
+-- namespaces
+OSError [Errno 9] Bad file descriptor
+TypeError argument must be an int, or have a fileno() method.
+OSError [Errno 9] Bad file descriptor
+OSError [Errno 22] Invalid argument
+TypeError 'str' object cannot be interpreted as an integer
+None
+-- statx
+<class 'os.statx_result'> statx_result os
+5 0o100640 1 True True True True True
+1234567890.1234567 1234567890123456789 0.9876543210000001 987654321 True True
+True True 0 0 0
+True int int
+True True
+True True True True
+['stx_mask', 'stx_blksize', 'stx_attributes', 'stx_attributes_mask', 'stx_rdev_major', 'stx_rdev_minor', 'stx_rdev', 'stx_dev_major', 'stx_dev_minor', 'stx_dev', 'stx_mode', 'stx_nlink', 'stx_uid', 'stx_gid', 'stx_ino', 'stx_size', 'stx_blocks']
+5
+5 5
+5
+5
+False
+FileNotFoundError [Errno 2] No such file or directory: 'nope'
+OSError [Errno 9] Bad file descriptor: 9999
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'str' object cannot be interpreted as an integer
+ValueError use follow_symlinks kwarg instead of AT_SYMLINK_* flag
+ValueError use follow_symlinks kwarg instead of AT_SYMLINK_* flag
+ValueError use dir_fd kwarg instead of AT_EMPTY_PATH flag
+TypeError statx() takes exactly 2 positional arguments (3 given)
+TypeError statx() missing required argument 'mask' (pos 2)
+TypeError cannot create 'os.statx_result' instances
+AttributeError readonly attribute
+AttributeError attribute 'stx_size' of 'os.statx_result' objects is not writable
+AttributeError 'os.statx_result' object has no attribute 'other' and no __dict__ for setting new attributes
+AttributeError readonly attribute
+-- extended attributes
+[]
+OSError [Errno 61] No data available: 'file'
+None
+None
+None
+['user.empty', 'user.one', 'user.two']
+b'first'
+b'second'
+b''
+FileExistsError [Errno 17] File exists: 'file'
+OSError [Errno 61] No data available: 'file'
+None
+b'replaced'
+None
+1000
+OSError [Errno 95] Operation not supported: 'file'
+TypeError a bytes-like object is required, not 'str'
+TypeError 'str' object cannot be interpreted as an integer
+None
+OSError [Errno 61] No data available: 'file'
+['user.empty', 'user.one', 'user.two']
+['user.empty', 'user.one', 'user.two']
+b'replaced'
+None
+None
+['user.empty', 'user.one', 'user.two'] []
+b'replaced'
+OSError [Errno 61] No data available: 'link'
+PermissionError [Errno 1] Operation not permitted: 'link'
+PermissionError [Errno 1] Operation not permitted: 'link'
+FileNotFoundError [Errno 2] No such file or directory: 'nope'
+FileNotFoundError [Errno 2] No such file or directory: 'nope'
+OSError [Errno 9] Bad file descriptor: 9999
+[]
+[]

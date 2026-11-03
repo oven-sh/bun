@@ -1,0 +1,143 @@
+status: 0
+script: e7a9bdfe2ea8ed0c
+---
+ ('{urn:d}root', [('a', '1')], '\n  ', None)
+   ('{urn:d}item', [('id', '1'), ('kind', 'def')], 'text ent & ', '\n  ')
+     ('{urn:d}b', [], 'bold', ' tail')
+   ('{urn:p}item', [('{urn:p}x', 'y')], '<raw>', '\n  \n  ')
+   ('{urn:d}empty', [], None, '\xe9\U0001f600\n')
+'<ns0:root xmlns:ns0="urn:d" xmlns:ns1="urn:p" a="1">\n  <ns0:item id="1" kind="def">text ent &amp; <ns0:b>bold</ns0:b> tail</ns0:item>\n  <ns1:item ns1:x="y">&lt;raw&gt;</ns1:item>\n  \n  <ns0:empty />\xe9\U0001f600\n</ns0:root>'
+b'<ns0:root xmlns:ns0="urn:d" xmlns:ns1="urn:p" a="1">\n  <ns0:item id="1" kind="de'
+['{urn:d}root', '{urn:d}item', '{urn:d}b', '{urn:p}item', '{urn:d}empty'] def bold <raw>
+{urn:d}root
+{urn:d}root
+[('comment', '<function Comment'), ('start-ns', "('', 'urn:d')"), ('start-ns', "('p', 'urn:p')"), ('start', '{urn:d}root'), ('start', '{urn:d}item'), ('start', '{urn:d}b'), ('end', '{urn:d}b'), ('end', '{urn:d}item'), ('start', '{urn:p}item'), ('end', '{urn:p}item'), ('pi', '<function ProcessingInstruction'), ('start', '{urn:d}empty'), ('end', '{urn:d}empty'), ('end', '{urn:d}root'), ('end-ns', 'None'), ('end-ns', 'None')]
+[('start', '{urn:d}root'), ('start', '{urn:d}item'), ('start', '{urn:d}b'), ('end', '{urn:d}b'), ('end', '{urn:d}item'), ('start', '{urn:p}item'), ('end', '{urn:p}item'), ('start', '{urn:d}empty'), ('end', '{urn:d}empty'), ('end', '{urn:d}root')]
+[('end', 'b')]
+[('end', 'a')]
+ParseError no element found: line 1, column 0 3 (1, 0)
+ParseError no element found: line 1, column 3 3 (1, 3)
+ParseError mismatched tag: line 1, column 5 7 (1, 5)
+ParseError undefined entity: line 1, column 3 11 (1, 3)
+ParseError duplicate attribute: line 1, column 9 8 (1, 9)
+ParseError junk after document element: line 1, column 4 9 (1, 4)
+ParseError syntax error: line 1, column 0 2 (1, 0)
+ParseError not well-formed (invalid token): line 1, column 3 4 (1, 3)
+ParseError undefined entity &nbsp;: line 1, column 26 11 (1, 26)
+ParseError unbound prefix: line 1, column 0 27 (1, 0)
+doctype html -//W3C//DTD XHTML 1.0//EN http://x/y.dtd
+comment c
+start_ns  u
+start {u}html {}
+pi p d
+data 'tu'
+end {u}html
+end_ns 
+closed
+'\xa0'
+True True True
+<a a="2" b="1"><c></c>
+</a>
+300 v299
+'<?xml version="1.0" ?><!DOCTYPE root [<!ENTITY e "ent"><!ATTLIST item kind CDATA "def">]><!-- top --><root xmlns="urn:d" xmlns:p="urn:p" a="1">\n  <item id="1">text ent &amp; <b>bold</b> tail</item>\n  <p:item p:x="y"><![CDATA[<raw>]]></p:item>\n  <?pi data?>\n  <empty/>\xe9\U0001f600\n</root>'
+root urn:d root [('root', 10), ('#comment', 8), ('root', 1)] 1
+1  None 'text ent & ' [3, 1, 3]
+4 y
+'<?xml version="1.0" ?>\n<a>\n <b c="d">e</b>\n <!--f-->\n</a>\n'
+x
+ExpatError 'no element found: line 1, column 3'
+ExpatError 'no element found: line 1, column 0'
+ExpatError 'undefined entity: line 1, column 3'
+startDocument
+startElement root [('a', '1'), ('xmlns', 'urn:d'), ('xmlns:p', 'urn:p')] 4 0
+characters '\n'
+characters '  '
+startElement item [('id', '1'), ('kind', 'def')] 5 2
+characters 'text '
+characters 'ent'
+characters ' '
+characters '&'
+characters ' '
+startElement b [] 5 30
+characters 'bold'
+endElement b
+characters ' tail'
+endElement item
+characters '\n'
+characters '  '
+startElement p:item [('p:x', 'y')] 6 2
+characters '<raw>'
+endElement p:item
+characters '\n'
+characters '  '
+pi pi data
+characters '\n'
+characters '  '
+startElement empty [] 8 2
+endElement empty
+characters '\xe9\U0001f600'
+characters '\n'
+endElement root
+endDocument
+startDocument
+startPrefixMapping None urn:d
+startPrefixMapping p urn:p
+startElementNS ('urn:d', 'root') None [((None, 'a'), '1', 'a')]
+characters '\n'
+characters '  '
+startElementNS ('urn:d', 'item') None [((None, 'id'), '1', 'id'), ((None, 'kind'), 'def', 'kind')]
+characters 'text '
+characters 'ent'
+characters ' '
+characters '&'
+characters ' '
+startElementNS ('urn:d', 'b') None []
+characters 'bold'
+endElementNS ('urn:d', 'b') None
+characters ' tail'
+endElementNS ('urn:d', 'item') None
+characters '\n'
+characters '  '
+startElementNS ('urn:p', 'item') None [(('urn:p', 'x'), 'y', 'p:x')]
+characters '<raw>'
+endElementNS ('urn:p', 'item') None
+characters '\n'
+characters '  '
+pi pi data
+characters '\n'
+characters '  '
+startElementNS ('urn:d', 'empty') None []
+endElementNS ('urn:d', 'empty') None
+characters '\xe9\U0001f600'
+characters '\n'
+endElementNS ('urn:d', 'root') None
+endPrefixMapping p
+endPrefixMapping None
+endDocument
+startDocument
+startElement a [] None None
+characters 'x'
+endElement a
+endDocument
+SAXParseException no element found 1 3
+SAXParseException mismatched tag 1 5
+SAXParseException no element found 1 0
+SAXParseException undefined entity 1 3
+startDTD a p s
+notationDecl ('n', None, 'x')
+unparsedEntityDecl ('u', None, 'y', 'n')
+endDTD
+comment c
+startCDATA
+endCDATA
+<?xml version="1.0" encoding="utf-8"?>
+<a b="c&amp;">d&lt;<e></e></a>
+[('START_DOCUMENT', '#document'), ('START_ELEMENT', 'a'), ('START_ELEMENT', 'b'), ('CHARACTERS', '#text'), ('END_ELEMENT', 'b'), ('END_ELEMENT', 'a')]
+True b'<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLI'
+True
+ValueError "missing value for key 'a' at line 1"
+InvalidFileException 'Invalid file'
+ExpatError 'no element found: line 1, column 7'
+((1, 'two\xe9', 3.5, [True, 2], {'k': b'v'}, datetime.datetime(2020, 1, 2, 0, 0)), 'meth')
+Fault "<Fault 3: 'oops'>"
+ExpatParser

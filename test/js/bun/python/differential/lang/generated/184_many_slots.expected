@@ -1,0 +1,42 @@
+status: 0
+script: f75ce5a31643125e
+source: 0e60e72d2ec40c00
+---
+n [n=0] => 0
+ok
+n [n=1] => 1
+ok
+n [n=5] => 5
+ok
+n [n=6] => 6
+ok
+n [n=7] => 7
+ok
+n [n=8] => 8
+ok
+n [n=9] => 9
+ok
+n [n=20] => 20
+ok
+n [n=59] => 59
+ok
+n [n=60] => 60
+ok
+n [n=61] => 61
+ok
+n [n=62] => 62
+ok
+n [n=63] => 63
+ok
+n [n=64] => 64
+ok
+n [n=65] => 65
+ok
+n [n=100] => 100
+ok
+n [n=300] => 300
+ok
+sum(h._when for h in hs) => 1999000
+hs[7]._args => 7
+hs[1999]._source_traceback => None
+hs[5]._scheduled => False

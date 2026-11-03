@@ -1,0 +1,128 @@
+status: 0
+script: 2a185ccd3046d715
+source: 0a116ef6295bf554
+---
+type(g).__name__ => async_generator
+g.__name__ => ag
+g.__qualname__ => ag
+g.ag_running => False
+g.ag_suspended => False
+g.ag_await => None
+g.ag_code is ag.__code__ => True
+g.ag_frame is not None => True
+aiter(g) is g => True
+g.__aiter__() is g => True
+repr(g)[:28] => <async_generator object ag a
+type(a).__name__ => async_generator_asend
+hasattr(a, "__await__") => True
+iter(a.__await__()) is a.__await__() or True => True
+yielded 1
+2
+run(g.__anext__()) => StopAsyncIteration: 
+run(g.__anext__()) => StopAsyncIteration: 
+None
+run(collect(ag())) => [1, 2]
+run(collect(ag())) => [1, 2]
+(['suspended in the generator'], ['a', ('resumed with', None)])
+[]
+[1, (2,), 3]
+args() => TypeError: args() missing 1 required positional argument: 'a'
+[10, 20, 0, 1]
+run(g.asend(None)) => ('echo', None)
+run(g.asend(1)) => ('echo', 1)
+run(g.asend("x")) => ('echo', 'x')
+run(g.__anext__()) => ('echo', None)
+run(g.asend("stop")) => StopAsyncIteration: 
+run(g.asend(1)) => StopAsyncIteration: 
+run(echo().asend(5)) => TypeError: can't send non-None value to a just-started async generator
+echo().asend() => TypeError: async_generator.asend() takes exactly one argument (0 given)
+async_generator_asend
+run(g.__anext__()) => ready
+run(g.athrow(ValueError("v"))) => ('caught', "ValueError('v')")
+run(g.__anext__()) => ready
+run(g.athrow(ValueError)) => ('caught', 'ValueError()')
+run(g.athrow(KeyError("escapes"))) => KeyError: 'escapes'
+run(g.__anext__()) => StopAsyncIteration: 
+run(g.athrow(ValueError("before start"))) => ValueError: before start
+run(g.__anext__()) => StopAsyncIteration: 
+g.athrow() => TypeError: athrow expected at least 1 argument, got 0
+run(g.athrow(1)) => TypeError: exceptions must be classes or instances deriving from BaseException, not int
+run(g.athrow("s")) => TypeError: exceptions must be classes or instances deriving from BaseException, not str
+async_generator_athrow
+GeneratorExit; cleanup; run(g.aclose()) => None
+g.ag_frame => None
+run(g.__anext__()) => StopAsyncIteration: 
+None
+None
+run(g.__anext__()) => StopAsyncIteration: 
+cleaned; (['awaiting during cleanup'], None)
+run(g.aclose()) => RuntimeError: async generator ignored GeneratorExit
+run(g.aclose()) => KeyError: 'during aclose'
+None
+1
+run(g.__anext__()) => ValueError: boom
+run(g.__anext__()) => StopAsyncIteration: 
+async generator raised StopIteration StopIteration('si')
+async generator raised StopAsyncIteration StopAsyncIteration('sai')
+consumer caught boom
+iter(g) => TypeError: 'async_generator' object is not iterable
+next(g) => TypeError: 'async_generator' object is not an iterator
+list(g) => TypeError: 'async_generator' object is not iterable
+len(g) => TypeError: object of type 'async_generator' has no len()
+g.send(None) => AttributeError: 'async_generator' object has no attribute 'send'
+g.close() => AttributeError: 'async_generator' object has no attribute 'close'
+g.throw(ValueError) => AttributeError: 'async_generator' object has no attribute 'throw'
+type(g)() => TypeError: cannot create 'async_generator' instances
+g() => TypeError: 'async_generator' object is not callable
+bool(g) => True
+run(await_it()) => TypeError: 'async_generator' object can't be awaited
+sync_for() => TypeError: 'async_generator' object is not iterable
+list(yf()) => TypeError: 'async_generator' object is not iterable
+1
+run(a) => RuntimeError: cannot reuse already awaited __anext__()/asend()
+a.send(None) => RuntimeError: cannot reuse already awaited __anext__()/asend()
+slow
+a2.send(None) => RuntimeError: anext(): asynchronous generator is already running
+g.aclose().send(None) => RuntimeError: aclose(): asynchronous generator is already running
+g.athrow(ValueError).send(None) => RuntimeError: athrow(): asynchronous generator is already running
+True
+1
+a.send(5) => TypeError: can't send non-None value to a just-started async generator
+a.throw(ValueError("thrown into a fresh anext")) => ValueError: thrown into a fresh anext
+None
+a.send(None) => RuntimeError: cannot reuse already awaited __anext__()/asend()
+g.__name__ => renamed
+g.__qualname__ => q.renamed
+repr(g)[:30] => <async_generator object q.rena
+s1() => AttributeError: attribute 'ag_code' of 'async_generator' objects is not writable
+s2() => AttributeError: 'async_generator' object has no attribute 'x' and no __dict__ for setting new attributes
+ag.__code__.co_flags & 0x200 != 0 => True
+ag.__code__.co_flags & 0x80 != 0 => False
+ag.__code__.co_flags & 0x20 != 0 => False
+type(ag).__name__ => function
+run(me.__anext__()) => (True, False)
+me.ag_running => False
+me.ag_suspended => True
+type(g.ag_await).__name__ => generator
+g.ag_running => True
+g.ag_suspended => True
+run(collect(K())) => ['from', '__aiter__']
+run(collect(K().gen(3))) => [0, 1, 2]
+K().gen(1).__qualname__ => K.gen
+[None, None, (1, 2), (1, 2, 3), 'x', 'y1', 'y2', (None, (None, None)), 5, 7, [6, None]]
+aenter; finally; aexit None; ['acm', 'in try', 0]
+aenter; aexit GeneratorExit; None
+aenter; run(g.athrow(ValueError("into the async with"))) => aexit ValueError; ValueError: into the async with
+[1, 9, 25, 49]
+run(collect(take(src, 3))) => [0, 1, 2]
+run(src.aclose()) => None
+sys.get_asyncgen_hooks() => asyncgen_hooks(firstiter=None, finalizer=None)
+type(sys.get_asyncgen_hooks()).__name__ => asyncgen_hooks
+[]
+[('first', 'ag')]
+[('first', 'ag')]
+None
+[('first', 'ag')]
+sys.set_asyncgen_hooks(firstiter=1) => TypeError: callable firstiter expected, got int
+sys.set_asyncgen_hooks(finalizer="x") => TypeError: callable finalizer expected, got str
+sys.set_asyncgen_hooks(1) => TypeError: callable firstiter expected, got int

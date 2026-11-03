@@ -1,0 +1,467 @@
+status: 0
+script: 0b90ddb47ce0a789
+source: a1a82558633f7240
+---
+ok: match x:\n case 1: pass
+ok: match x:\n case -1: pass
+ok: match x:\n case +1: pass
+SyntaxError: invalid syntax <- match x:\n case --1: pass
+ok: match x:\n case 1.5: pass
+ok: match x:\n case -1.5: pass
+ok: match x:\n case 1j: pass
+ok: match x:\n case -1j: pass
+ok: match x:\n case 1+2j: pass
+ok: match x:\n case 1-2j: pass
+ok: match x:\n case -1+2j: pass
+SyntaxError: imaginary number required in complex literal <- match x:\n case 1+2: pass
+SyntaxError: real number required in complex literal <- match x:\n case 1j+2: pass
+SyntaxError: invalid syntax <- match x:\n case 1+2j+3: pass
+SyntaxError: invalid syntax <- match x:\n case 1*2: pass
+SyntaxError: invalid syntax <- match x:\n case 1+-2j: pass
+SyntaxError: invalid syntax <- match x:\n case (1)+2j: pass
+ok: match x:\n case 1 + 2.5j: pass
+ok: match x:\n case 1.5 + 2j: pass
+SyntaxError: real number required in complex literal <- match x:\n case 1j + 2j: pass
+ok: match x:\n case 'a': pass
+ok: match x:\n case 'a' 'b': pass
+ok: match x:\n case b'a': pass
+SyntaxError: cannot mix bytes and nonbytes literals <- match x:\n case 'a' b'b': pass
+SyntaxError: patterns may only match literals and attribute lookups <- match x:\n case f'a': pass
+SyntaxError: patterns may only match literals and attribute lookups <- match x:\n case f'{x}': pass
+SyntaxError: patterns may only match literals and attribute lookups <- match x:\n case 'a' f'b': pass
+SyntaxError: patterns may only match literals and attribute lookups <- match x:\n case t'a': pass
+ok: match x:\n case None: pass
+ok: match x:\n case True: pass
+ok: match x:\n case False: pass
+SyntaxError: invalid syntax <- match x:\n case ...: pass
+ok: match x:\n case Ellipsis: pass
+ok: match x:\n case NotImplemented: pass
+SyntaxError: cannot assign to __debug__ <- match x:\n case __debug__: pass
+SyntaxError: invalid syntax <- match x:\n case -None: pass
+SyntaxError: invalid syntax <- match x:\n case -True: pass
+SyntaxError: invalid syntax <- match x:\n case -'a': pass
+SyntaxError: invalid syntax <- match x:\n case not 1: pass
+SyntaxError: invalid syntax <- match x:\n case ~1: pass
+SyntaxError: invalid syntax <- match x:\n case 1 if y else 2: pass
+ok: match x:\n case x: pass
+ok: match x:\n case _: pass
+ok: match x:\n case x.y: pass
+ok: match x:\n case x.y.z: pass
+SyntaxError: invalid syntax <- match x:\n case _.y: pass
+ok: match x:\n case x._: pass
+SyntaxError: invalid syntax <- match x:\n case .x: pass
+SyntaxError: invalid syntax <- match x:\n case x.: pass
+SyntaxError: invalid syntax <- match x:\n case x.1: pass
+ok: match x:\n case x.y(): pass
+SyntaxError: invalid syntax <- match x:\n case x().y: pass
+SyntaxError: invalid syntax <- match x:\n case x[0]: pass
+SyntaxError: invalid syntax <- match x:\n case x.y[0]: pass
+SyntaxError: invalid syntax <- match x:\n case x + 1: pass
+SyntaxError: invalid syntax <- match x:\n case x.y + 1: pass
+SyntaxError: invalid syntax <- match x:\n case -x: pass
+SyntaxError: invalid syntax <- match x:\n case -x.y: pass
+ok: match x:\n case (x): pass
+ok: match x:\n case ((x)): pass
+ok: match x:\n case (1): pass
+ok: match x:\n case (): pass
+ok: match x:\n case (x,): pass
+ok: match x:\n case (x, y): pass
+ok: match x:\n case (x, y,): pass
+ok: match x:\n case x,: pass
+ok: match x:\n case x, y: pass
+ok: match x:\n case x, y,: pass
+ok: match x:\n case []: pass
+ok: match x:\n case [x]: pass
+ok: match x:\n case [x,]: pass
+ok: match x:\n case [x, y]: pass
+SyntaxError: invalid syntax <- match x:\n case [,]: pass
+SyntaxError: invalid syntax <- match x:\n case (,): pass
+SyntaxError: invalid syntax <- match x:\n case *x: pass
+SyntaxError: invalid syntax <- match x:\n case *_: pass
+ok: match x:\n case *x,: pass
+ok: match x:\n case *x, y: pass
+ok: match x:\n case x, *y: pass
+ok: match x:\n case [*x]: pass
+ok: match x:\n case [*_]: pass
+SyntaxError: multiple starred names in sequence pattern <- match x:\n case [*x, *y]: pass
+SyntaxError: multiple starred names in sequence pattern <- match x:\n case (*x, *y): pass
+SyntaxError: multiple starred names in sequence pattern <- match x:\n case *x, *y: pass
+ok: match x:\n case [x, *y, z]: pass
+SyntaxError: invalid syntax <- match x:\n case [*x.y]: pass
+SyntaxError: invalid syntax <- match x:\n case [*1]: pass
+SyntaxError: invalid syntax <- match x:\n case [*(x)]: pass
+SyntaxError: invalid syntax <- match x:\n case [*[x]]: pass
+SyntaxError: invalid syntax <- match x:\n case [**x]: pass
+SyntaxError: invalid syntax <- match x:\n case (*x): pass
+ok: match x:\n case [* x]: pass
+ok: match x:\n case {}: pass
+ok: match x:\n case {1: x}: pass
+ok: match x:\n case {'a': x}: pass
+ok: match x:\n case {'a': x,}: pass
+ok: match x:\n case {'a': 1, 'b': 2}: pass
+SyntaxError: invalid syntax <- match x:\n case {x: 1}: pass
+ok: match x:\n case {x.y: 1}: pass
+SyntaxError: invalid syntax <- match x:\n case {_: 1}: pass
+ok: match x:\n case {None: 1}: pass
+ok: match x:\n case {True: 1}: pass
+ok: match x:\n case {-1: x}: pass
+ok: match x:\n case {1+2j: x}: pass
+SyntaxError: invalid syntax <- match x:\n case {(1): x}: pass
+SyntaxError: invalid syntax <- match x:\n case {[1]: x}: pass
+SyntaxError: invalid syntax <- match x:\n case {(1, 2): x}: pass
+SyntaxError: mapping pattern keys may only match literals and attribute lookups <- match x:\n case {f'a': x}: pass
+ok: match x:\n case {'a' 'b': x}: pass
+ok: match x:\n case {b'a': x}: pass
+SyntaxError: mapping pattern checks duplicate key (1) <- match x:\n case {1: x, 1: y}: pass
+SyntaxError: mapping pattern checks duplicate key ('a') <- match x:\n case {'a': x, 'a': y}: pass
+SyntaxError: mapping pattern checks duplicate key (None) <- match x:\n case {None: x, None: y}: pass
+SyntaxError: mapping pattern checks duplicate key (1.0) <- match x:\n case {1: x, 1.0: y}: pass
+SyntaxError: mapping pattern checks duplicate key (1) <- match x:\n case {True: x, 1: y}: pass
+ok: match x:\n case {x.y: 1, x.y: 2}: pass
+ok: match x:\n case {**x}: pass
+SyntaxError: invalid syntax <- match x:\n case {**_}: pass
+ok: match x:\n case {**x,}: pass
+ok: match x:\n case {'a': 1, **x}: pass
+SyntaxError: double star pattern must be the last (right-most) subpattern in the mapping pattern <- match x:\n case {**x, 'a': 1}: pass
+SyntaxError: invalid syntax <- match x:\n case {**x, **y}: pass
+SyntaxError: invalid syntax <- match x:\n case {**x.y}: pass
+SyntaxError: invalid syntax <- match x:\n case {**{}}: pass
+SyntaxError: invalid syntax <- match x:\n case {**1}: pass
+SyntaxError: invalid syntax <- match x:\n case {'a'}: pass
+SyntaxError: invalid syntax <- match x:\n case {'a',}: pass
+SyntaxError: invalid syntax <- match x:\n case {'a': }: pass
+SyntaxError: invalid syntax <- match x:\n case {: x}: pass
+SyntaxError: invalid syntax <- match x:\n case {*x}: pass
+SyntaxError: invalid syntax <- match x:\n case {'a': *x}: pass
+SyntaxError: invalid syntax <- match x:\n case {'a': x for x in y}: pass
+SyntaxError: name capture 'x' makes remaining patterns unreachable <- match x:\n case {1: x | y}: pass
+SyntaxError: name capture 'x' makes remaining patterns unreachable <- match x:\n case {1: (x | y)}: pass
+ok: match x:\n case {1: 1 | 2}: pass
+SyntaxError: invalid syntax <- match x:\n case {1 | 2: x}: pass
+ok: match x:\n case C(): pass
+ok: match x:\n case C(1): pass
+ok: match x:\n case C(x): pass
+ok: match x:\n case C(x, y): pass
+ok: match x:\n case C(x,): pass
+ok: match x:\n case C(a=1): pass
+ok: match x:\n case C(a=x): pass
+ok: match x:\n case C(a=x,): pass
+ok: match x:\n case C(1, a=x): pass
+SyntaxError: positional patterns follow keyword patterns <- match x:\n case C(a=x, 1): pass
+SyntaxError: attribute name repeated in class pattern: a <- match x:\n case C(a=1, a=2): pass
+ok: match x:\n case C(a=1, b=2): pass
+SyntaxError: invalid syntax <- match x:\n case C(*x): pass
+SyntaxError: invalid syntax <- match x:\n case C(**x): pass
+SyntaxError: invalid syntax <- match x:\n case C(a.b=1): pass
+SyntaxError: invalid syntax <- match x:\n case C(1=x): pass
+SyntaxError: invalid syntax <- match x:\n case C('a'=x): pass
+SyntaxError: invalid syntax <- match x:\n case C(a=): pass
+SyntaxError: invalid syntax <- match x:\n case C(=x): pass
+SyntaxError: invalid syntax <- match x:\n case C(,): pass
+SyntaxError: invalid syntax <- match x:\n case C(x y): pass
+SyntaxError: invalid syntax <- match x:\n case C(a:=1): pass
+SyntaxError: invalid syntax <- match x:\n case C((a:=1)): pass
+ok: match x:\n case C(_=1): pass
+ok: match x:\n case C(a=_): pass
+SyntaxError: invalid syntax <- match x:\n case C(None=1): pass
+SyntaxError: invalid syntax <- match x:\n case C(True=1): pass
+SyntaxError: cannot assign to __debug__ <- match x:\n case C(__debug__=1): pass
+SyntaxError: invalid syntax <- match x:\n case C(x)(y): pass
+ok: match x:\n case C.D(): pass
+ok: match x:\n case C.D.E(x): pass
+SyntaxError: invalid syntax <- match x:\n case C().D: pass
+SyntaxError: invalid syntax <- match x:\n case C[int](): pass
+SyntaxError: invalid syntax <- match x:\n case 1(): pass
+SyntaxError: invalid syntax <- match x:\n case 'a'(): pass
+SyntaxError: invalid syntax <- match x:\n case None(): pass
+SyntaxError: invalid syntax <- match x:\n case _(): pass
+SyntaxError: invalid syntax <- match x:\n case (C)(): pass
+ok: match x:\n case C (): pass
+SyntaxError: invalid syntax <- match x:\n case C(x for x in y): pass
+SyntaxError: invalid syntax <- match x:\n case C(x=y=1): pass
+ok: match x:\n case int(x) | str(x): pass
+ok: match x:\n case 1 | 2: pass
+ok: match x:\n case 1 | 2 | 3: pass
+SyntaxError: name capture 'x' makes remaining patterns unreachable <- match x:\n case x | 1: pass
+SyntaxError: alternative patterns bind different names <- match x:\n case 1 | x: pass
+SyntaxError: name capture 'x' makes remaining patterns unreachable <- match x:\n case x | y: pass
+SyntaxError: wildcard makes remaining patterns unreachable <- match x:\n case _ | 1: pass
+ok: match x:\n case 1 | _: pass
+SyntaxError: name capture 'x' makes remaining patterns unreachable <- match x:\n case (x) | 1: pass
+SyntaxError: name capture 'x' makes remaining patterns unreachable <- match x:\n case x | x: pass
+ok: match x:\n case (1, x) | (x, 1): pass
+SyntaxError: alternative patterns bind different names <- match x:\n case (1, x) | (y, 1): pass
+SyntaxError: alternative patterns bind different names <- match x:\n case (1, x) | (1, 2): pass
+SyntaxError: alternative patterns bind different names <- match x:\n case [x] | [x, y]: pass
+ok: match x:\n case {1: x} | {2: x}: pass
+SyntaxError: alternative patterns bind different names <- match x:\n case {1: x} | {2: y}: pass
+ok: match x:\n case C(x) | D(x): pass
+SyntaxError: alternative patterns bind different names <- match x:\n case C(x) | D(y): pass
+ok: match x:\n case 1 | (2 | 3): pass
+ok: match x:\n case (1 | 2) | 3: pass
+SyntaxError: invalid syntax <- match x:\n case | 1: pass
+SyntaxError: invalid syntax <- match x:\n case 1 |: pass
+SyntaxError: invalid syntax <- match x:\n case 1 || 2: pass
+SyntaxError: invalid syntax <- match x:\n case 1 or 2: pass
+SyntaxError: invalid syntax <- match x:\n case 1 and 2: pass
+ok: match x:\n case 1 | 2 as x: pass
+ok: match x:\n case (1 | 2) as x: pass
+SyntaxError: alternative patterns bind different names <- match x:\n case 1 | (2 as x): pass
+ok: match x:\n case (1 as x) | (2 as x): pass
+SyntaxError: alternative patterns bind different names <- match x:\n case (1 as x) | (2 as y): pass
+ok: match x:\n case 1 as x: pass
+ok: match x:\n case x as y: pass
+ok: match x:\n case _ as x: pass
+SyntaxError: cannot use '_' as a target <- match x:\n case x as _: pass
+SyntaxError: cannot use '_' as a target <- match x:\n case 1 as _: pass
+SyntaxError: multiple assignments to name 'x' in pattern <- match x:\n case x as x: pass
+SyntaxError: invalid syntax <- match x:\n case 1 as x as y: pass
+ok: match x:\n case (1 as x) as y: pass
+SyntaxError: multiple assignments to name 'x' in pattern <- match x:\n case (1 as x) as x: pass
+SyntaxError: cannot use attribute as pattern target <- match x:\n case 1 as x.y: pass
+SyntaxError: cannot use literal as pattern target <- match x:\n case 1 as 2: pass
+SyntaxError: cannot use name as pattern target <- match x:\n case 1 as (x): pass
+SyntaxError: cannot use list as pattern target <- match x:\n case 1 as [x]: pass
+ok: match x:\n case 1 as x, y: pass
+ok: match x:\n case 1 as x, 2 as y: pass
+SyntaxError: multiple assignments to name 'x' in pattern <- match x:\n case [1 as x, 2 as x]: pass
+SyntaxError: multiple assignments to name 'x' in pattern <- match x:\n case [x, x]: pass
+SyntaxError: multiple assignments to name 'x' in pattern <- match x:\n case (x, x): pass
+SyntaxError: multiple assignments to name 'x' in pattern <- match x:\n case x, x: pass
+SyntaxError: multiple assignments to name 'x' in pattern <- match x:\n case [x, [x]]: pass
+SyntaxError: multiple assignments to name 'x' in pattern <- match x:\n case [x, *x]: pass
+SyntaxError: multiple assignments to name 'x' in pattern <- match x:\n case {1: x, 2: x}: pass
+SyntaxError: multiple assignments to name 'x' in pattern <- match x:\n case {1: x, **x}: pass
+SyntaxError: multiple assignments to name 'x' in pattern <- match x:\n case C(x, x): pass
+SyntaxError: multiple assignments to name 'x' in pattern <- match x:\n case C(x, a=x): pass
+SyntaxError: multiple assignments to name 'x' in pattern <- match x:\n case C(a=x, b=x): pass
+ok: match x:\n case [_, _]: pass
+ok: match x:\n case [_, *_]: pass
+ok: match x:\n case {1: _, 2: _}: pass
+ok: match x:\n case C(_, _): pass
+SyntaxError: invalid syntax <- match x:\n case as x: pass
+SyntaxError: invalid syntax <- match x:\n case 1 as: pass
+SyntaxError: cannot use None as pattern target <- match x:\n case 1 as None: pass
+SyntaxError: cannot use True as pattern target <- match x:\n case 1 as True: pass
+SyntaxError: cannot assign to __debug__ <- match x:\n case 1 as __debug__: pass
+SyntaxError: invalid syntax <- match x:\n case x := 1: pass
+SyntaxError: invalid syntax <- match x:\n case (x := 1): pass
+SyntaxError: invalid syntax <- match x:\n case lambda: 1: pass
+SyntaxError: invalid syntax <- match x:\n case x if y else z: pass
+SyntaxError: invalid syntax <- match x:\n case [x for x in y]: pass
+SyntaxError: invalid syntax <- match x:\n case x < 1: pass
+SyntaxError: invalid syntax <- match x:\n case x == 1: pass
+SyntaxError: invalid syntax <- match x:\n case x is None: pass
+SyntaxError: invalid syntax <- match x:\n case x in y: pass
+SyntaxError: invalid syntax <- match x:\n case await x: pass
+SyntaxError: invalid syntax <- match x:\n case yield: pass
+SyntaxError: invalid syntax <- match x:\n case (yield): pass
+SyntaxError: invalid syntax <- match x:\n case *: pass
+SyntaxError: invalid syntax <- match x:\n case **x: pass
+SyntaxError: invalid syntax <- match x:\n case x: int: pass
+SyntaxError: invalid syntax <- match x:\n case x = 1: pass
+ok: match x:\n case 1, 2 | 3: pass
+ok: match x:\n case (1, 2) | 3: pass
+ok: match x:\n case 'a' | b'a': pass
+SyntaxError: invalid syntax <- match x:\n case 1 2: pass
+SyntaxError: invalid syntax <- match x:\n case x y: pass
+SyntaxError: invalid syntax <- match x:\n case : pass
+ok: match x:\n case case: pass
+ok: match x:\n case match: pass
+ok: match x:\n case type: pass
+ok: match x:\n case print: pass
+ok: match x:\n case int: pass
+ok: match x:\n case _x: pass
+ok: match x:\n case __: pass
+ok: match x:\n case x.case: pass
+ok: match x:\n case match.case: pass
+ok: match x:\n case case(): pass
+ok: match x:\n case match(): pass
+ok: match x:\n case type(): pass
+ok: match x:\n case x.__class__: pass
+ok: match x:\n case é: pass
+ok: match x:\n case x.é: pass
+ok: match x:\n case 1_000: pass
+ok: match x:\n case 0x1F: pass
+ok: match x:\n case 0b1: pass
+ok: match x:\n case 0o7: pass
+ok: match x:\n case 1e5: pass
+ok: match x:\n case 1E-5: pass
+ok: match x:\n case 1_0.0_1: pass
+ok: match x:\n case 00: pass
+SyntaxError: leading zeros in decimal integer literals are not permitted; use an 0o prefix for octal integers <- match x:\n case 01: pass
+SyntaxError: invalid decimal literal <- match x:\n case 1__0: pass
+ok: match x:\n case '\N{DIGIT ONE}': pass
+ok: match x:\n case r'\d': pass
+ok: match x:\n case rb'\d': pass
+ok: match x:\n case u'a': pass
+ok: match x:\n case '''a\nb''': pass
+ok: match x:\n case -0: pass
+ok: match x:\n case -0.0: pass
+ok: match x:\n case 0j: pass
+ok: match x:\n case -0j: pass
+SyntaxError: invalid syntax <- match x:\n case 1 - -2j: pass
+ok: match x:\n case 1 + 2J: pass
+SyntaxError: invalid syntax <- match x:\n case 1--2j: pass
+SyntaxError: real number required in complex literal <- match x:\n case 2j - 1: pass
+ok: match x:\n case (1 + 2j): pass
+SyntaxError: invalid syntax <- match x:\n case -(1 + 2j): pass
+SyntaxError: invalid syntax <- match x:\n case -(1): pass
+SyntaxError: invalid syntax <- match x:\n case 1 + (2j): pass
+ok: match x:\n case x if y: pass
+SyntaxError: invalid syntax <- match x:\n case x if: pass
+SyntaxError: invalid syntax <- match x:\n case x if y if z: pass
+SyntaxError: invalid syntax <- match x:\n case x if y else z: pass
+ok: match x:\n case x if (y if z else w): pass
+ok: match x:\n case x if y:= 1: pass
+ok: match x:\n case x if (y := 1): pass
+ok: match x:\n case x if not y: pass
+ok: match x:\n case x if y and z or w: pass
+ok: match x:\n case x if lambda: 1: pass
+SyntaxError: invalid syntax <- match x:\n case x if *y: pass
+SyntaxError: invalid syntax <- match x:\n case x if y, z: pass
+ok: match x:\n case x if (y, z): pass
+SyntaxError: invalid syntax <- match x:\n case x if yield: pass
+SyntaxError: 'yield' outside function <- match x:\n case x if (yield): pass
+SyntaxError: 'await' outside function <- match x:\n case x if await y: pass
+ok: match x:\n case x if x: pass
+ok: match x:\n case x if _: pass
+SyntaxError: invalid syntax <- match x:\n case x if y for y in z: pass
+ok: match x:\n case x if [y for y in z]: pass
+ok: match x:\n case x if y == 1 if z else w: pass
+ok: match x:\n case x if 1: pass
+ok: match x:\n case x if None: pass
+SyntaxError: invalid syntax <- match x:\n case x when y: pass
+SyntaxError: invalid syntax <- match x:\n case x and y: pass
+SyntaxError: invalid syntax <- match x:\n case x if y as z: pass
+SyntaxError: name capture 'y' makes remaining patterns unreachable <- match x:\n case y: pass\n case 1: pass
+SyntaxError: wildcard makes remaining patterns unreachable <- match x:\n case _: pass\n case 1: pass
+SyntaxError: wildcard makes remaining patterns unreachable <- match x:\n case _: pass\n case _: pass
+ok: match x:\n case y if True: pass\n case 1: pass
+SyntaxError: name capture 'y' makes remaining patterns unreachable <- match x:\n case (y): pass\n case 1: pass
+SyntaxError: name capture 'y' makes remaining patterns unreachable <- match x:\n case y as z: pass\n case 1: pass
+SyntaxError: wildcard makes remaining patterns unreachable <- match x:\n case _ as z: pass\n case 1: pass
+SyntaxError: name capture 'y' makes remaining patterns unreachable <- match x:\n case 1 | y: pass\n case 2: pass
+SyntaxError: name capture 'y' makes remaining patterns unreachable <- match x:\n case y | 1: pass
+SyntaxError: wildcard makes remaining patterns unreachable <- match x:\n case _ | 1: pass
+SyntaxError: name capture 'y' makes remaining patterns unreachable <- match x:\n case (y | 1): pass
+SyntaxError: name capture 'y' makes remaining patterns unreachable <- match x:\n case [y | 1]: pass
+ok: match x:\n case [y]: pass\n case 1: pass
+ok: match x:\n case 1: pass\n case y: pass
+SyntaxError: name capture 'y' makes remaining patterns unreachable <- match x:\n case (1 | y) as z: pass\n case 2: pass
+SyntaxError: wildcard makes remaining patterns unreachable <- match x:\n case 1 | 2 | _: pass\n case 3: pass
+ok: match x:\n case 1: pass
+ok: match x:\n  case 1:\n    pass
+SyntaxError: invalid syntax <- match x: case 1: pass
+SyntaxError: invalid syntax <- match x:\n pass
+SyntaxError: invalid syntax <- match x:\n case 1: pass\n pass
+SyntaxError: invalid syntax <- match x:\n case 1: pass\nelse: pass
+SyntaxError: invalid syntax <- match x:\n case 1: pass\n else: pass
+IndentationError: expected an indented block after 'match' statement on line 1 <- match x:
+IndentationError: expected an indented block after 'match' statement on line 1 <- match x:\n
+SyntaxError: invalid syntax <- match:\n case 1: pass
+SyntaxError: expected ':' <- match x\n case 1: pass
+SyntaxError: invalid syntax <- match x:\n case 1 pass
+IndentationError: expected an indented block after 'case' statement on line 2 <- match x:\n case 1:
+IndentationError: expected an indented block after 'case' statement on line 2 <- match x:\n case 1:\n case 2: pass
+SyntaxError: invalid syntax <- match x:\n case: pass
+IndentationError: expected an indented block after 'match' statement on line 1 <- match x:\ncase 1: pass
+ok: match x, y:\n case 1: pass
+ok: match x,:\n case 1: pass
+ok: match (x, y):\n case 1: pass
+SyntaxError: invalid syntax <- match *x:\n case 1: pass
+ok: match *x,:\n case 1: pass
+ok: match *x, *y:\n case 1: pass
+ok: match x, *y:\n case 1: pass
+SyntaxError: invalid syntax <- match **x:\n case 1: pass
+ok: match x := 1:\n case 1: pass
+ok: match (x := 1):\n case 1: pass
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='? <- match x = 1:\n case 1: pass
+ok: match x if y else z:\n case 1: pass
+ok: match lambda: 1:\n case 1: pass
+SyntaxError: invalid syntax <- match yield:\n case 1: pass
+SyntaxError: 'yield' outside function <- match (yield):\n case 1: pass
+ok: def f():\n match (yield):\n  case 1: pass
+SyntaxError: invalid syntax <- def f():\n match yield:\n  case 1: pass
+SyntaxError: invalid syntax <- def f():\n match yield x:\n  case 1: pass
+SyntaxError: 'await' outside function <- match await x:\n case 1: pass
+ok: async def f():\n match await x:\n  case 1: pass
+ok: match not x:\n case 1: pass
+ok: match -x:\n case 1: pass
+ok: match [x]:\n case 1: pass
+ok: match {x}:\n case 1: pass
+ok: match (x):\n case 1: pass
+ok: match(x):\n case 1: pass
+ok: match()
+ok: match():\n case 1: pass
+ok: match ():\n case (): pass
+SyntaxError: invalid syntax <- match x for x in y:\n case 1: pass
+SyntaxError: invalid syntax <- match x y:\n case 1: pass
+ok: match 'a' 'b':\n case 1: pass
+ok: match ...:\n case 1: pass
+ok: match x:\n case 1: pass; pass
+SyntaxError: 'return' outside function <- match x:\n case 1: return
+SyntaxError: 'break' outside loop <- match x:\n case 1: break
+SyntaxError: 'continue' not properly in loop <- match x:\n case 1: continue
+ok: for i in y:\n match x:\n  case 1: break\n  case 2: continue
+ok: match x:\n case 1: pass\n\n case 2: pass
+ok: match x:\n # comment\n case 1: pass\n # comment\n case 2: pass
+IndentationError: unexpected indent <- match x:\n case 1: pass\n  case 2: pass
+IndentationError: unindent does not match any outer indentation level <- match x:\n  case 1: pass\n case 2: pass
+ok: match x:\n case 1:\n  match y:\n   case 2: pass
+ok: match x:\n case (\n  1\n ): pass
+ok: match x:\n case [\n  1,\n  2\n ]: pass
+ok: match x:\n case 1 |\\n 2: pass
+ok: match (\n x\n):\n case 1: pass
+ok: match x:\n case 1: x = 1\n case 2: y = 2
+ok: if 1:\n match x:\n  case 1: pass\nelse: pass
+ok: match x:\n case 1: pass\nmatch y:\n case 2: pass
+ok: match = 1
+ok: match: int = 1
+ok: match += 1
+ok: match.x = 1
+ok: match[0] = 1
+ok: match, case = 1, 2
+ok: match * 2
+ok: match - 1
+ok: match -1
+ok: match (1)
+ok: match [1]
+SyntaxError: expected ':' <- match {1}
+ok: match (1), 2
+ok: match(1)[0]
+ok: match.x()
+ok: match\n
+ok: match;
+ok: print(match)
+ok: del match
+ok: case = 1
+SyntaxError: case statement must be inside match statement <- case 1: pass
+ok: case: int
+ok: case(1)
+ok: case [1]
+ok: def match(): pass
+ok: def case(): pass
+ok: class match: pass
+ok: import match
+ok: from match import case
+ok: lambda match: case
+ok: for match in case: pass
+ok: with match as case: pass
+ok: match if case else 1
+ok: match is None
+ok: match in case
+ok: match or case
+ok: match == 1
+ok: [match for match in case]
+SyntaxError: invalid syntax <- match: pass
+SyntaxError: invalid syntax <- match x: pass
+ok: _ = 1
+ok: _: int = 1
+ok: def _(): pass
+ok: type = 1
+ok: type(x)
+ok: type X = int
+ok: type: int
+ok: print(type)
+ok: soft = match = case = type = _ = 1

@@ -1,0 +1,79 @@
+status: 0
+script: be31edfc47e9f91d
+---
+['fork_exec'] builtin_function_or_method
+(b'hello world\n', b'', 0)
+(b'', b'', 7)
+(b'', b'', -15)
+(b'', b'OSError:2:', 255)
+(b'', b'OSError:2:', 255)
+(b'found\n', b'', 0)
+(b'', b'OSError:d:', 255)
+(b'', b'OSError:d:', 255)
+(b'/tmp\n', b'', 0)
+(b'/usr\n', b'', 0)
+(b'', b'OSError:2:noexec:chdir', 255)
+(b'A=1\nB=two words\n', b'', 0)
+(b'', b'', 0)
+True
+(b'0027\n', b'', 0)
+(b'mixed types\n', b'', 0)
+(b'pathlike\n', b'', 0)
+(b'tuple\n', b'', 0)
+(b'iterator\n', b'', 0)
+(b'', b'', 0) b'hi\n'
+True
+0 b'hi\n'
+True
+0 b'hi\n' False
+5
+(b'from stdin', b'', 0)
+2
+True
+True
+0
+True True
+TypeError: fork_exec expected 22 arguments, got 0
+TypeError: fork_exec expected 22 arguments, got 21
+TypeError: fork_exec expected 22 arguments, got 23
+TypeError: _posixsubprocess.fork_exec() takes no keyword arguments
+TypeError: fork_exec() argument 4 must be tuple, not list
+TypeError: fork_exec() argument 4 must be tuple, not None
+ValueError: bad value(s) in fds_to_keep
+ValueError: bad value(s) in fds_to_keep
+ValueError: bad value(s) in fds_to_keep
+ValueError: bad value(s) in fds_to_keep
+ValueError: bad value(s) in fds_to_keep
+ValueError: bad value(s) in fds_to_keep
+ValueError: errpipe_write must be >= 3
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'str' object cannot be interpreted as an integer
+OverflowError: Python int too large to convert to C int
+TypeError: 'float' object cannot be interpreted as an integer
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'str' object cannot be interpreted as an integer
+OverflowError: Python int too large to convert to C int
+TypeError: object of type 'int' has no len()
+TypeError: expected bytes, str found
+ValueError: embedded null byte
+TypeError: expected bytes, int found
+TypeError: argv must be a tuple
+TypeError: expected str, bytes or os.PathLike object, not int
+ValueError: embedded null byte
+TypeError: expected str, bytes or os.PathLike object, not NoneType
+TypeError: object of type 'int' has no len()
+TypeError: expected bytes, str found
+ValueError: embedded null byte
+TypeError: expected str, bytes or os.PathLike object, not int
+ValueError: embedded null byte
+TypeError: setgroups argument must be a list
+TypeError: extra_groups must be integers
+ValueError: invalid group id
+ValueError: invalid group id
+TypeError: gid should be integer, not str
+OverflowError: gid is less than minimum
+TypeError: uid should be integer, not str
+OverflowError: uid is less than minimum
+KeyError: 'bool'
+KeyError: 'bool'
+KeyError: 'bool'

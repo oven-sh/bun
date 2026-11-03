@@ -1,0 +1,55 @@
+status: 0
+script: 73cc93053747d82f
+---
+--- every way of looking
+open True x
+open True x
+open rb True x
+open rb True x
+io.FileIO True x
+io.FileIO True x
+os.open True x
+os.open True x
+stat True x
+stat True x
+lstat True x
+lstat True x
+getsize True x
+getsize True x
+pathlib True x
+pathlib True x
+copy True x
+copy True x
+child True x
+child True x
+system True x
+system True x
+scandir True x
+scandir True x
+--- nothing is written twice, and positions are what they were
+3 3
+3 6
+aXcdef
+3
+b'Z'
+b'Z'
+4 b''
+b'Z123'
+Z123tail!
+b'a\r\nb\r\n'
+b'\xff\xfea\x00b\x00'
+text bytes text
+--- only streams that are what open() makes: nothing of the program's runs because someone looks at a file
+0 []
+['Text.flush']
+0 []
+['Buffered.flush']
+0 []
+['Raw.write']
+--- closed, detached and broken streams
+x
+x
+b'x'
+0
+OSError 9
+b'piped'

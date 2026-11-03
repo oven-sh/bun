@@ -1,0 +1,81 @@
+status: 0
+script: 4d977348ec18d9c6
+---
+['abs', 'add', 'and_', 'attrgetter', 'call', 'concat', 'contains', 'countOf', 'delitem', 'eq', 'floordiv', 'ge', 'getitem', 'gt', 'iadd', 'iand', 'iconcat', 'ifloordiv', 'ilshift', 'imatmul', 'imod', 'imul', 'index', 'indexOf', 'inv', 'invert', 'ior', 'ipow', 'irshift', 'is_', 'is_none', 'is_not', 'is_not_none', 'isub', 'itemgetter', 'itruediv', 'ixor', 'le', 'length_hint', 'lshift', 'lt', 'matmul', 'methodcaller', 'mod', 'mul', 'ne', 'neg', 'not_', 'or_', 'pos', 'pow', 'rshift', 'setitem', 'sub', 'truediv', 'truth', 'xor']
+['__add__', '__call__', '__not__', '_abs', 'abs', 'add', 'and_', 'attrgetter', 'call', 'concat', 'contains', 'countOf', 'delitem', 'eq', 'floordiv', 'ge', 'getitem', 'gt', 'iadd', 'iand', 'iconcat', 'ifloordiv', 'ilshift', 'imatmul', 'imod', 'imul', 'index', 'indexOf', 'inv', 'invert', 'ior', 'ipow', 'irshift', 'is_', 'is_none', 'is_not', 'is_not_none', 'isub', 'itemgetter', 'itruediv', 'ixor', 'le', 'length_hint', 'lshift', 'lt', 'matmul', 'methodcaller', 'mod', 'mul', 'ne', 'neg', 'not_', 'or_', 'pos', 'pow', 'rshift', 'setitem', 'sub', 'truediv', 'truth', 'xor']
+True
+not there
+__lt__ True
+__le__ True
+__eq__ True
+__ne__ True
+__ge__ True
+__gt__ True
+__not__ True
+__abs__ True
+__add__ True
+__and__ True
+__call__ True
+__floordiv__ True
+__index__ True
+__inv__ True
+__invert__ True
+__lshift__ True
+__mod__ True
+__mul__ True
+__matmul__ True
+__neg__ True
+__or__ True
+__pos__ True
+__pow__ True
+__rshift__ True
+__sub__ True
+__truediv__ True
+__xor__ True
+__concat__ True
+__contains__ True
+__delitem__ True
+__getitem__ True
+__setitem__ True
+__iadd__ True
+__iand__ True
+__iconcat__ True
+__ifloordiv__ True
+__ilshift__ True
+__imod__ True
+__imul__ True
+__imatmul__ True
+__ior__ True
+__ipow__ True
+__irshift__ True
+__isub__ True
+__itruediv__ True
+__ixor__ True
+3
+'ab'
+'b'
+1
+'A'
+<class 'operator.itemgetter'>
+operator.itemgetter(1, 2)
+3
+2
+2
+True
+False
+2
+2
+False
+operator.itemgetter(1) operator.itemgetter(1) True True
+operator.itemgetter(1, 2) operator.itemgetter(1, 2) True True
+operator.attrgetter('a.b', 'c') operator.attrgetter('a.b', 'c') True True
+operator.methodcaller('m', 1, k=[2]) operator.methodcaller('m', 1, k=[2]) True True
+10
+120
+'abc'
+12
+[(1, 'c'), (2, 'b')]
+[1, 2, 6, 24, 120]
+[8, 9]
+[1, 2]
+[0, -1, -2]

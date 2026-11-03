@@ -1,0 +1,43 @@
+status: 0
+script: 2b28ee1771668b95
+---
+True True PENDING False True False True None 0 Context True ret True None
+<Task pending name='Task-N' coro=<ret() running at c_task_basics.py:9>>
+TaskStepMethWrapper _asyncio True () True <Handle <_asyncio.TaskStepMethWrapper object at 0x..>()> TypeError: function takes no positional arguments TypeError: function takes no keyword arguments
+1 True 1 True <Task finished name='Task-N' coro=<ret() done, defined at c_task_basics.py:9> result=1>
+RuntimeError: Task does not support set_result operation RuntimeError: Task does not support set_exception operation
+1
+mine
+'5'
+x
+'12'
+str sub
+ValueError: boom ValueError('boom') FINISHED <Task finished name='Task-N' coro=<boom() done, defined at c_task_basics.py:10> exception=ValueError('boom')>
+TypeError: Task() missing required argument 'coro' (pos 1) TypeError: a coroutine was expected, got 1 TypeError: a coroutine was expected, got <function ret at 0x..> TypeError: a coroutine was expected, got []
+TypeError: a contextvars.Context was expected, got int TypeError: Task() takes exactly 1 positional argument (3 given) TypeError: Task() got an unexpected keyword argument 'nope'
+RuntimeError: There is no current event loop in thread 'MainThread'.
+outer [1, 2] outer
+True given
+None None
+5 RuntimeError: Task got bad yield: 5
+'s' RuntimeError: Task got bad yield: 's'
+(1,) RuntimeError: Task got bad yield: (1,)
+<class 'object'> RuntimeError: Task got bad yield: <class 'object'>
+RuntimeError: yield was used instead of yield from for generator in task <Task pending name='Task-15' coro=<y() running at c_task_basics.py:43> cb=[_run_until_complete_cb() at base_events.py:183]> with <generator object g at 0x..>
+RuntimeError: yield was used instead of yield from in task <
+RuntimeError: Task <Task pending name='Task-N' coro=<w() running at c_task_basics.py:50> cb=[_run_until_complete_cb() at base_events.py:183]> got Future <Future pending> attached to a different loop
+RuntimeError: Task cannot await on itself: <Task pending name='Task-N' coro=<selfish() running at c_task_basics.py:53> cb=[_run_until_complete_cb() at base_events.py:183]>
+TypeError: a coroutine was expected, got <generator object old at 0x..>
+like
+True False [('add', 'builtin_function_or_method', 'task_wakeup', 'Task.task_wakeup', 'Context')] <built-in method task_wakeup of _asyncio.Task object at 0x..> True
+duck
+RuntimeError: loop <_UnixSelectorEventLoop running=False closed=False debug=False> is not the running loop
+KeyboardInterrupt:  True KeyboardInterrupt()
+SystemExit: 3 True SystemExit(3)
+['deep'] 0
+Stack for <Task pending name='Task-N' coro=<deep() running at c_task_basics.py:97> wait_for=<Future pending cb=[Task.task_wakeup()]>> (most recent call last):
+  File "c_task_basics.py", line 97, in deep
+    async def deep(): await asyncio.sleep(10)
+
+CancelledError:  []
+TypeError: get_stack() takes no positional arguments TypeError: print_stack() takes no positional arguments

@@ -1,0 +1,6 @@
+status: 1
+stderr: RuntimeError: second, with é and 😀
+script: 17f3a860c2e78796
+source: 17f3a860c2e78796
+---
+before

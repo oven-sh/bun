@@ -1,0 +1,80 @@
+status: 0
+script: 8280467e7d35d6f3
+source: cde8fc2762ac6f00
+---
+0 -> zero | 1 -> one | -1 -> minus one | 1.5 -> float | -2.5 -> negative float | 1j -> imaginary | (1+2j) -> complex | (-1-2j) -> negative complex | 'a' -> str a | 'bc' -> concatenated | b'x' -> bytes | None -> None | True -> one | False -> zero | 16 -> hex | 1000 -> underscore | 1000.0 -> underscore | 'triple' -> triple quoted | '\\d' -> raw | '' -> empty str | 0.0 -> zero | -0.0 -> zero | 1.0 -> one | 0j -> zero | 2 -> no match | 'z' -> no match | b'' -> no match | [] -> no match | () -> no match | 0 -> zero | 1 -> one | bytearray(b'x') -> bytes | EqAny -> zero | nan -> no match | Ellipsis -> no match | NotImplemented -> no match | <class 'object'> -> no match | 
+['is True', 'is False', 'is None', '== 1', '== 0', '== 1', '== 0', '== 1', '== 1', None]
+num_first(True) => == 1
+num_first(1) => == 1
+num_first(1.0) => == 1
+cap(1) => ('captured', 1)
+cap(None) => ('captured', None)
+cap([1]) => ('captured', [1])
+wild(1) => one
+wild(2) => anything
+wild(None) => anything
+5
+_ => NameError: name '_' is not defined
+(False, None)
+[('a', 1), ('b', 2), ('c', 1), ('d', 2)]
+unbound() => UnboundLocalError: cannot access local variable 'z' where it is not associated with a value
+['small', 'small', 'letter', 'falsy singleton', 'falsy singleton', ('pair with 1', 5), ('pair with 1', 5), ('pair with 1', 1), ('pair with 1', 'x'), ('z', 2), 'number', 'number', 'other', 'other']
+[('n', 1), (3, 4, [3, 4]), (5, {'k': 5, 'z': 6}), ('s', 'str'), ('num', 7), ('num', 8.5), ('any', None)]
+negative; zero; big odd; fallthrough; fallthrough; 
+['equal pair', 'descending', 'fallthrough', 'long', 'string', 'fallthrough']
+guard a; guard c; c
+guard b; b
+guard d; d
+guard_raises(0) => ZeroDivisionError: division by zero
+guard_raises(1) => 'ok'
+non-empty list is true
+guard_walrus(5) => ('big', 25)
+guard_walrus(2) => ('small', 4)
+['red', 'green', 'blue', 'ns.val', 'deep list by equality', 'maxsize', 'red', 'red', 'other']
+val_missing(1) => AttributeError: type object 'Color' has no attribute 'PURPLE'
+val_undefined(1) => NameError: name 'undefined_ns' is not defined
+__eq__ called with 5; matched through __eq__
+subject.__eq__ 1; subject.__eq__ 2; two
+subject evaluated; 3
+nofall(1) => ['first']
+nofall(2) => ['default']
+None
+tuple subject 1 2
+one-tuple subject 1
+parens 1 2
+open sequence pattern 1 2
+starred subject 1 2 3
+dict 1
+walrus subject 5
+lambda subject 1
+conditional subject
+not subject
+negative subject
+concatenated subject
+comprehension subject
+match => 1
+case => 2
+match + case => 3
+match[0] => 1
+match[-1] => 2
+[5, 2]
+match(1) => ('function called match', 1)
+match (2) => ('function called match', 2)
+match((1, 2)) => ('function called match', (1, 2))
+class called case
+1
+{'k': 1, 'z': 2}
+match match
+case case 4
+match(*[1, 2]) => (1, 2)
+match(-1) => (-1,)
+match - 1 if False else "" => 
+underscore is a normal name outside patterns
+subject _
+nested(1, 1) => 1,1
+nested(1, 2) => 1,other
+nested(2, 1) => other,1
+nested(2, 2) => other,other
+['low', 'low', 'mid']
+[2, 'A', 4]
+[1]

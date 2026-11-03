@@ -1,0 +1,260 @@
+status: 0
+script: 3b0fe1d19aac0bbe
+source: d30ebef4fcd8b977
+---
+a => 1
+b => 2
+a => 2
+b => 1
+a => 1
+b => 2
+c => 3
+a => x
+b => y
+a => k
+b => j
+a => 0
+b => 1
+a => 0
+b => 1
+a => (1, 2)
+b => (3, 4)
+a => 1
+b => 2
+c => 3
+a => 1
+b => 2
+c => 3
+d => 4
+a => 1
+b => 2
+a => 1
+b => 2
+c => 3
+a => 1
+b => 2
+1
+2
+z
+a => 120
+b => 121
+[1, 2]
+[]
+a => 1
+b => [2, 3]
+a => [1, 2]
+b => 3
+a => 1
+b => [2, 3]
+c => 4
+a => 1
+b => []
+c => 2
+a => 1
+b => []
+a => h
+b => ['e', 'l', 'l', 'o']
+a => 1
+b => [2, 3]
+type(b) => <class 'list'>
+a => 0
+b => [1, 2, 3]
+a => 1
+b => [2]
+a => 0
+b => 1
+c => [2, 3, 4, 5, 6, 7]
+d => 8
+e => 9
+a => 1
+b => 2
+c => [3, 4]
+d => [5, 6]
+a => 1
+b => [2]
+a => 1
+b => [2, 3]
+c => 4
+a => [1, 2]
+b => 3
+c => 4
+a => (1, 2)
+b => 1
+c => 2
+a => 1
+b => 2
+c => [1, 2]
+a => 5
+b => 5
+c => 5
+a => 2
+b => 1
+[1, 2]
+i => 1
+l => [0, 9]
+i => 1
+l => [9, 1]
+o.x => 1
+o.y => 2
+{'a': 1, 'b': 2}
+{'a': 1, 'b': [2, 3]}
+[3, 2, 1]
+[3, 4, 1, 2]
+a => 3
+b => 1
+c => 2
+TypeError: cannot unpack non-iterable int object
+TypeError: cannot unpack non-iterable NoneType object
+ValueError: not enough values to unpack (expected 2, got 1)
+ValueError: too many values to unpack (expected 2, got 3)
+ValueError: not enough values to unpack (expected 2, got 0)
+ValueError: not enough values to unpack (expected 2, got 1)
+ValueError: too many values to unpack (expected 2)
+ValueError: not enough values to unpack (expected 2, got 1)
+ValueError: not enough values to unpack (expected 2, got 0)
+ValueError: too many values to unpack (expected 2, got 3)
+ValueError: too many values to unpack (expected 2, got 3)
+ValueError: too many values to unpack (expected 2)
+ValueError: too many values to unpack (expected 2)
+ValueError: too many values to unpack (expected 2)
+ValueError: too many values to unpack (expected 2)
+ValueError: not enough values to unpack (expected 1, got 0)
+ValueError: too many values to unpack (expected 1, got 2)
+ValueError: not enough values to unpack (expected at least 1, got 0)
+ValueError: not enough values to unpack (expected at least 2, got 1)
+ValueError: not enough values to unpack (expected at least 2, got 1)
+ValueError: not enough values to unpack (expected at least 2, got 1)
+TypeError: cannot unpack non-iterable int object
+TypeError: cannot unpack non-iterable int object
+ValueError: not enough values to unpack (expected 2, got 1)
+ValueError: too many values to unpack (expected 2, got 3)
+TypeError: cannot unpack non-iterable int object
+TypeError: cannot unpack non-iterable float object
+TypeError: cannot unpack non-iterable builtin_function_or_method object
+TypeError: cannot unpack non-iterable object object
+TypeError: cannot unpack non-iterable type object
+TypeError: cannot unpack non-iterable int object
+ValueError: not enough values to unpack (expected 4, got 2)
+ValueError: too many values to unpack (expected 2)
+TypeError: cannot unpack non-iterable int object
+ValueError: too many values to unpack (expected 2, got 3)
+ValueError: not enough values to unpack (expected 2, got 1)
+TypeError: cannot unpack non-iterable int object
+TypeError: cannot unpack non-iterable function object
+SyntaxError: starred assignment target must be in a list or tuple
+SyntaxError: multiple starred expressions in assignment
+SyntaxError: multiple starred expressions in assignment
+SyntaxError: can't use starred expression here
+SyntaxError: starred assignment target must be in a list or tuple
+SyntaxError: cannot use starred expression here
+SyntaxError: can't use starred expression here
+SyntaxError: cannot use starred expression here
+NameError: name 'b' is not defined
+TypeError: cannot unpack non-iterable int object
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?
+SyntaxError: cannot assign to literal here. Maybe you meant '==' instead of '='?
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?
+SyntaxError: 'tuple' is an illegal expression for augmented assignment
+SyntaxError: 'tuple' is an illegal expression for augmented assignment
+SyntaxError: 'list' is an illegal expression for augmented assignment
+SyntaxError: 'starred' is an illegal expression for augmented assignment
+SyntaxError: cannot assign to None
+SyntaxError: cannot assign to True
+SyntaxError: cannot assign to ellipsis here. Maybe you meant '==' instead of '='?
+SyntaxError: cannot assign to literal here. Maybe you meant '==' instead of '='?
+SyntaxError: cannot assign to literal
+SyntaxError: cannot assign to expression here. Maybe you meant '==' instead of '='?
+SyntaxError: cannot assign to function call here. Maybe you meant '==' instead of '='?
+SyntaxError: only single target (not tuple) can be annotated
+SyntaxError: only single target (not tuple) can be annotated
+SyntaxError: only single target (not list) can be annotated
+TypeError: cannot unpack non-iterable int object
+TypeError: cannot unpack non-iterable int object
+{}
+{}
+ValueError: too many values to unpack (expected 0, got 1)
+ValueError: too many values to unpack (expected 0, got 1)
+{'a': 1}
+SyntaxError: starred assignment target must be in a list or tuple
+{'a': [1]}
+{'a': 1, 'b': [2]}
+SyntaxError: cannot delete starred
+SyntaxError: cannot delete starred
+SyntaxError: cannot delete starred
+SyntaxError: 'yield' outside function
+SyntaxError: 'yield' outside function
+SyntaxError: cannot assign to named expression
+SyntaxError: invalid syntax
+SyntaxError: cannot assign to __debug__
+SyntaxError: cannot assign to set display here. Maybe you meant '==' instead of '='?
+SyntaxError: cannot assign to dict literal here. Maybe you meant '==' instead of '='?
+SyntaxError: cannot assign to conditional expression
+SyntaxError: cannot assign to expression
+SyntaxError: cannot assign to expression
+SyntaxError: cannot assign to comparison
+SyntaxError: cannot assign to lambda
+SyntaxError: cannot assign to list comprehension here. Maybe you meant '==' instead of '='?
+SyntaxError: cannot assign to f-string expression here. Maybe you meant '==' instead of '='?
+NameError: name 'a' is not defined
+[1, 2] [1, 2] [0, 1, 2, 3] ['a', 'b'] [0, 1, 2] [1] [] [] (1, 2) (1, 2) (0, 1) {1, 2} {1, 2} {'a'} [0, 1] [1] [[1]] 1 ('a', 'b', 'c', 'd') [3] [97] [('a', 1)]
+{**{"a": 1}} => {'a': 1}
+{**{"a": 1}, **{"b": 2}} => {'a': 1, 'b': 2}
+{"x": 0, **{"a": 1}} => {'x': 0, 'a': 1}
+{**{"a": 1}, "a": 2} => {'a': 2}
+{"a": 2, **{"a": 1}} => {'a': 1}
+{**{}} => {}
+{**{1: 2}} => {1: 2}
+{**{"a": 1}, **{"a": 2}, **{"a": 3}} => {'a': 3}
+{**dict(a=1)} => {'a': 1}
+{**{"a": {**{"b": 1}}}} => {'a': {'b': 1}}
+[*1] => TypeError: Value after * must be an iterable, not int
+[*None] => TypeError: Value after * must be an iterable, not NoneType
+(*1,) => TypeError: Value after * must be an iterable, not int
+{*1} => TypeError: 'int' object is not iterable
+{*[[]]} => TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+{**1} => TypeError: 'int' object is not a mapping
+{**[1]} => TypeError: 'list' object is not a mapping
+{**{"a": 1}, **None} => TypeError: 'NoneType' object is not a mapping
+[*[1], *2] => TypeError: Value after * must be an iterable, not int
+print(*1) => TypeError: Value after * must be an iterable, not int
+print(**1) => TypeError: Value after ** must be a mapping, not int
+print(*None) => TypeError: Value after * must be an iterable, not NoneType
+print(**[1]) => TypeError: Value after ** must be a mapping, not list
+print(**{1: 2}) => TypeError: keywords must be strings
+r() => (1, 2, 3)
+r2() => (1, 2)
+list(g()) => [(1, 2)]
+list(g2()) => [(1, 2)]
+1 2 3 1 2 
+(1, 2, 3)
+(0, 'a', 'b')
+()
+[1]
+[('ev', 'x'), ('ev', 'y'), ('ev', 'a'), ('ev', 'i'), ('set', 'a', 1, 10), ('ev', 'b'), ('ev', 'j'), ('set', 'b', 2, 20)]
+next 1; next 2; next 3; a => 1
+b => 2
+next 1; next 2; next 3; too many values to unpack (expected 2)
+next 1; next 2; not enough values to unpack (expected 3, got 1)
+next 1; next 2; next 3; next 4; a => 1
+b => [2, 3]
+next 1; next 2; next 3; next 4; a => [1, 2]
+b => 3
+a => 0
+b => 10
+a => 0
+b => [10]
+[*Seq()] => [0, 10]
+(*Seq(),) => (0, 10)
+{*Seq()} => {0, 10}
+u(BadIter()) => TypeError: BadIter.__iter__() must return an iterator, not int
+u(RaisingIter()) => RuntimeError: iter failed
+u(RaisingNext()) => RuntimeError: next failed
+[*BadIter()] => TypeError: BadIter.__iter__() must return an iterator, not int
+[*RaisingNext()] => RuntimeError: next failed
+a => 0
+p => 15
+a + b + c + d + e + f + g + h + i + j + k + l + m + n + o + p => 120
+first => 0
+len(middle) => 998
+last => 999

@@ -1,0 +1,6 @@
+status: 1
+stderr: ModuleNotFoundError: No module named 'no_such_module_anywhere'
+script: d529081e9e837fe6
+source: d529081e9e837fe6
+---
+before

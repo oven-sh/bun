@@ -1,0 +1,133 @@
+status: 0
+script: 0849698257fc8cf5
+---
+('Isaac', 'Newton')
+{'year': '2024', 'month': '05'}
+<re.Match object; span=(0, 3), match='abc'> None
+<re.Match object; span=(0, 1), match='a'> None
+['t', 'q', 'b', 'f'] [('a', '1'), ('b', '2')] ['', '', '']
+['Words', 'words', 'words', ''] ['Words', ', ', 'words', '.', ''] ['a', 'b c'] ['', 'a', '', 'b', 'c', ''] ['', 'a', ' ', 'b', '']
+static PyObject*
+py_myfunc(void)
+{
+pro--gram files -a-b--d- ('bba', 2)
+baababdccdcd True a0 -a-b-c-
+a\.b\*c\[d\]\\\ e\-f\
+€ b'a\\.b\xff' 
+[(1, 4), (6, 7)] ['1', '2']
+re.compile('a', re.IGNORECASE|re.MULTILINE) 32 0 34 256 re.IGNORECASE re.IGNORECASE|re.DOTALL re.NOFLAG re.NOFLAG re.VERBOSE
+a
+ValueError: cannot process flags argument with a compiled pattern
+True True
+<class 're.Pattern'> <class 're.Match'> <class 're.Pattern'> <class 're.Match'> True (<class 're.PatternError'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>)
+('3', '14') <re.Match object; span=(0, 2), match='ab'> <re.Match object; span=(0, 3), match='a\nb'> ['a', 'b'] ['a', 'b']
+PatternError: missing ), unterminated subpattern at position 0 ('missing ), unterminated subpattern', '(', 0, 1, 1)
+PatternError: unbalanced parenthesis at position 0 ('unbalanced parenthesis', ')', 0, 1, 1)
+PatternError: redefinition of group name 'a' as group 2; was group 1 at position 12 ("redefinition of group name 'a' as group 2; was group 1", '(?P<a>x)(?P<a>y)', 12, 1, 13)
+PatternError: nothing to repeat at position 0 ('nothing to repeat', '*', 0, 1, 1)
+PatternError: multiple repeat at position 2 ('multiple repeat', 'a**', 2, 1, 3)
+PatternError: min repeat greater than max repeat at position 2 ('min repeat greater than max repeat', 'a{2,1}', 2, 1, 3)
+PatternError: bad character range z-a at position 1 ('bad character range z-a', '[z-a]', 1, 1, 2)
+PatternError: unterminated character set at position 0 ('unterminated character set', '[', 0, 1, 1)
+PatternError: unterminated character set at position 0 ('unterminated character set', '[a', 0, 1, 1)
+PatternError: bad escape (end of pattern) at position 0 ('bad escape (end of pattern)', '\\', 0, 1, 1)
+PatternError: bad character in group name '1a' at position 4 ("bad character in group name '1a'", '(?P<1a>x)', 4, 1, 5)
+PatternError: unknown group name 'a' at position 4 ("unknown group name 'a'", '(?P=a)', 4, 1, 5)
+PatternError: look-behind requires fixed-width pattern ('look-behind requires fixed-width pattern', None, None, None, None)
+PatternError: invalid group reference 1 at position 1 ('invalid group reference 1', '\\1', 1, 1, 2)
+PatternError: invalid group reference 2 at position 4 ('invalid group reference 2', '(a)\\2', 4, 1, 5)
+PatternError: invalid group reference 1 at position 3 ('invalid group reference 1', '(?(1)a)', 3, 1, 4)
+PatternError: unknown group name 'a' at position 3 ("unknown group name 'a'", '(?(a)b)', 3, 1, 4)
+PatternError: missing -, : or ) at position 3 ('missing -, : or )', '(?i', 3, 1, 4)
+PatternError: unknown extension ?z at position 1 ('unknown extension ?z', '(?z)', 1, 1, 2)
+PatternError: global flags not at the start of the expression at position 1 ('global flags not at the start of the expression', 'a(?i)b', 1, 1, 2)
+PatternError: missing >, unterminated name at position 4 ('missing >, unterminated name', '(?P<a', 4, 1, 5)
+PatternError: unexpected end of pattern at position 3 ('unexpected end of pattern', '(?P', 3, 1, 4)
+PatternError: missing ), unterminated comment at position 0 ('missing ), unterminated comment', '(?#', 0, 1, 1)
+PatternError: unknown extension ?<a at position 1 ('unknown extension ?<a', '(?<a)', 1, 1, 2)
+PatternError: undefined character name 'nope' at position 0 ("undefined character name 'nope'", '\\N{nope}', 0, 1, 1)
+PatternError: missing { at position 2 ('missing {', '\\N', 2, 1, 3)
+PatternError: incomplete escape \x1 at position 0 ('incomplete escape \\x1', '\\x1', 0, 1, 1)
+PatternError: incomplete escape \u12 at position 0 ('incomplete escape \\u12', '\\u12', 0, 1, 1)
+PatternError: bad escape \U00110000 at position 0 ('bad escape \\U00110000', '\\U00110000', 0, 1, 1)
+PatternError: octal escape value \777 outside of range 0-0o377 at position 0 ('octal escape value \\777 outside of range 0-0o377', '\\777', 0, 1, 1)
+PatternError: invalid group reference 8 at position 1 ('invalid group reference 8', '\\8', 1, 1, 2)
+PatternError: bad escape \q at position 0 ('bad escape \\q', '\\q', 0, 1, 1)
+PatternError: bad escape \q at position 1 ('bad escape \\q', '[\\q]', 1, 1, 2)
+re.compile('[\\b-a]')
+PatternError: bad character range \w-a at position 1 ('bad character range \\w-a', '[\\w-a]', 1, 1, 2)
+OverflowError: the repetition number is too large
+ValueError: ASCII and UNICODE flags are incompatible
+PatternError: bad inline flags: cannot use 'L' flag with a str pattern at position 3 ("bad inline flags: cannot use 'L' flag with a str pattern", '(?L)a', 3, 1, 4)
+PatternError: missing : at position 4 ('missing :', '(?-i)a', 4, 1, 5)
+PatternError: bad inline flags: flag turned on and off at position 5 ('bad inline flags: flag turned on and off', '(?i-i:a)', 5, 1, 6)
+PatternError: missing flag at position 3 ('missing flag', '(?-:a)', 3, 1, 4)
+PatternError: missing ), unterminated subpattern at position 0 ('missing ), unterminated subpattern', '(?>', 0, 1, 1)
+PatternError: multiple repeat at position 3 ('multiple repeat', 'a*+*', 3, 1, 4)
+PatternError: multiple repeat at position 3 ('multiple repeat', 'a++?', 3, 1, 4)
+PatternError: conditional backref with more than two branches at position 8 ('conditional backref with more than two branches', '(?(1)a|b|c)', 8, 1, 9)
+PatternError: multiple repeat at position 4 ('multiple repeat', 'x{2}{3}', 4, 1, 5)
+re.compile('(?P<\xe9>a)')
+PatternError: bad character in group name 'a b' at position 4 ("bad character in group name 'a b'", '(?P<a b>x)', 4, 1, 5)
+PatternError: invalid group reference 4 at position 7 ('invalid group reference 4', '()()()\\4', 7, 1, 8)
+PatternError: missing ), unterminated subpattern at position 1 (line 2, column 1) ('missing ), unterminated subpattern', '\n(', 1, 2, 1)
+PatternError: missing ), unterminated subpattern at position 5 (line 2, column 3) ('missing ), unterminated subpattern', 'ab\ncd(', 5, 2, 3)
+PatternError: bad escape \u at position 0 ('bad escape \\u', b'\\u1234', 0, 1, 1)
+PatternError: bad escape \N at position 0 ('bad escape \\N', b'\\N{SPACE}', 0, 1, 1)
+PatternError: bad inline flags: cannot use 'u' flag with a bytes pattern at position 3 ("bad inline flags: cannot use 'u' flag with a bytes pattern", b'(?u)a', 3, 1, 4)
+re.compile(b'\xff')
+PatternError: bad character in group name '\xe9' at position 4 ("bad character in group name '\\xe9'", b'(?P<\xe9>a)', 4, 1, 5)
+re.compile(b'[\xe0-\xff]')
+ValueError: cannot use LOCALE flag with a str pattern
+ValueError: cannot use UNICODE flag with a bytes pattern
+ValueError: ASCII and UNICODE flags are incompatible
+TypeError: first argument must be string or compiled pattern
+TypeError: first argument must be string or compiled pattern
+TypeError: unsupported operand type(s) for &: 'str' and 'int'
+PatternError: bad escape (end of pattern) at position 0 ('bad escape (end of pattern)', '\\', 0, 1, 1)
+PatternError: missing < at position 2 ('missing <', '\\g', 2, 1, 3)
+PatternError: missing group name at position 3 ('missing group name', '\\g<', 3, 1, 4)
+PatternError: missing group name at position 3 ('missing group name', '\\g<>', 3, 1, 4)
+PatternError: missing >, unterminated name at position 3 ('missing >, unterminated name', '\\g<a', 3, 1, 4)
+IndexError: unknown group name 'a'
+PatternError: bad character in group name '1a' at position 3 ("bad character in group name '1a'", '\\g<1a>', 3, 1, 4)
+PatternError: invalid group reference 2 at position 3 ('invalid group reference 2', '\\g<2>', 3, 1, 4)
+PatternError: invalid group reference 2 at position 1 ('invalid group reference 2', '\\2', 1, 1, 2)
+PatternError: bad character in group name '-1' at position 3 ("bad character in group name '-1'", '\\g<-1>', 3, 1, 4)
+PatternError: bad character in group name '+1' at position 3 ("bad character in group name '+1'", '\\g<+1>', 3, 1, 4)
+PatternError: bad character in group name '1_0' at position 3 ("bad character in group name '1_0'", '\\g<1_0>', 3, 1, 4)
+PatternError: bad escape \q at position 0 ('bad escape \\q', '\\q', 0, 1, 1)
+PatternError: invalid group reference 8 at position 1 ('invalid group reference 8', '\\8', 1, 1, 2)
+PatternError: octal escape value \400 outside of range 0-0o377 at position 0 ('octal escape value \\400 outside of range 0-0o377', '\\400', 0, 1, 1)
+PatternError: bad character in group name ' 1' at position 3 ("bad character in group name ' 1'", '\\g< 1>', 3, 1, 4)
+PatternError: bad escape \x at position 0 ('bad escape \\x', '\\x41', 0, 1, 1)
+PatternError: bad escape \N at position 0 ('bad escape \\N', '\\N{SPACE}', 0, 1, 1)
+'x\x00y'
+'x\x00y'
+'x\x01y'
+'x@y'
+PatternError: invalid group reference 18 at position 1 ('invalid group reference 18', '\\18', 1, 1, 2)
+'xay'
+'xay'
+PatternError: bad character in group name '\xe9' at position 3 ("bad character in group name '\\xe9'", b'\\g<\xe9>', 3, 1, 4)
+TypeError: sequence item 0: expected str instance, bytes found
+TypeError: sequence item 0: expected a bytes-like object, str found
+'[a||a]'
+b'[a||a]'
+([('name', 'x'), ('op', '='), ('int', 3), ('op', '+'), ('name', 'foo_'), ('int', 1), ('op', '*'), ('int', 42)], '?!')
+True True True 34
+True True
+TypeError: cannot pickle 're.Match' object
+True
+TypeError: cannot create weak reference to 're.Match' object
+['Straße', 'STRAẞE'] ['Σ', 'σ', 'ς'] ['k', 'K', 'K'] ['k', 'K'] ['i', 'I', 'İ', 'ı'] ['ЖжёЁ'] ['𐐀', '𐐨']
+['12', '٣٤', '１'] ['12'] ['naïve', 'café', '中文', '_x1'] [' ', '\t', '\xa0', '\u2003', '\u3000']
+[b'na', b've'] [b'\xe9'] [b'\xff'] b'a b c' [b'a', b'a', b'a']
+[b'ab', b'cd'] (1, 2) b'abcd'
+TypeError: expected string or bytes-like object, got 'memoryview'
+TypeError: cannot use a string pattern on a bytes-like object
+(None,) ('a',) ('b',) ('',) ('',) ('b', 'a', 'b')
+(1, 2) (2, 3) ['ab', 'bc', 'cd'] a-a- ['', 'a', 'b', '', '', 'c', '']
+None (0, 2) (0, 2) (0, 2) (0, 3) ('', 'aaa')
+None None None None (0, 2) (0, 5)
+40000 10001 30000 (100000, 100001)

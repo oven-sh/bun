@@ -1,0 +1,14 @@
+status: 0
+script: 6a5ab249697c07fc
+---
+('AST', [('DeprecationWarning', 'Instantiating abstract AST node class ast.AST is deprecated. This will become an error in Python 3.20')])
+("TypeError: ast.AST.__init__ got an unexpected keyword argument 'arg1'", [('DeprecationWarning', 'Instantiating abstract AST node class ast.AST is deprecated. This will become an error in Python 3.20')])
+("AttributeError: type object 'ast.AST' has no attribute '_fields'", [('DeprecationWarning', 'Instantiating abstract AST node class ast.AST is deprecated. This will become an error in Python 3.20')])
+("AttributeError: type object 'ast.AST' has no attribute '_fields'", [('DeprecationWarning', 'Instantiating abstract AST node class ast.AST is deprecated. This will become an error in Python 3.20')])
+(Name(id='x', ctx=Load()), [])
+(Module(body=[], type_ignores=[]), [])
+('AST', [('DeprecationWarning', 'Instantiating abstract AST node class ast.AST is deprecated. This will become an error in Python 3.20')])
+1 1
+False True True
+(None, []) ('Name(a=1, b=2)', [])
+(None, []) X

@@ -1,0 +1,11 @@
+status: 0
+script: 66fe4b34500cd75f
+---
+'a[x]b'
+'[x]'
+b'a[x]b'
+b'[x]'
+TypeError: unhashable type: 'list'
+TypeError: unhashable type: 'dict'
+TypeError: unhashable type: 'list'
+b'a[x]b'

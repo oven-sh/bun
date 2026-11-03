@@ -1,0 +1,85 @@
+status: 0
+script: bf17c648e3c9e0ec
+---
+TypeError cannot modify read-only memory
+TypeError cannot modify read-only memory
+TypeError cannot modify read-only memory
+TypeError cannot modify read-only memory
+TypeError cannot modify read-only memory
+TypeError cannot modify read-only memory
+b'A123456789'
+b'A12345678B'
+b'AC2345678B'
+b'AC\x01345678B'
+b'AC\x01345678\xff'
+b'AC\x01345678\x00'
+ValueError memoryview: invalid value for format 'B'
+ValueError memoryview: invalid value for format 'B'
+ValueError memoryview: invalid value for format 'B'
+TypeError memoryview: invalid type for format 'B'
+TypeError memoryview: invalid type for format 'B'
+TypeError memoryview: invalid type for format 'B'
+TypeError memoryview: invalid type for format 'B'
+IndexError index out of bounds on dimension 1
+IndexError index out of bounds on dimension 1
+IndexError cannot fit 'int' into an index-sized integer
+TypeError memoryview: invalid slice key
+TypeError memoryview: invalid slice key
+TypeError memoryview: invalid slice key
+TypeError cannot index 1-dimension view with 2-element tuple
+NotImplementedError sub-views are not implemented
+TypeError memoryview: invalid slice key
+NotImplementedError memoryview slice assignments are currently restricted to ndim = 1
+b'FC\x01345678\x00'
+b'FG\x01345678\x00'
+IndexError index out of bounds on dimension 1
+TypeError cannot delete memory
+TypeError cannot delete memory
+TypeError cannot delete memory
+bytearray(b'FG\x01345678\x00')
+b'abc345678\x00'
+b'ABC345678\x00'
+b'xyz345678\x00'
+b'.y.3.5.7.\x00'
+b'9876543210'
+b'9876Z4Y2X0'
+b'9876Z4Y2X0'
+b'9876Z4Y2X0'
+b'abcdZ4Y2X0'
+b'dcbaZ4Y2X0'
+ValueError memoryview assignment: lvalue and rvalue have different structures
+ValueError memoryview assignment: lvalue and rvalue have different structures
+ValueError memoryview assignment: lvalue and rvalue have different structures
+TypeError a bytes-like object is required, not 'int'
+TypeError a bytes-like object is required, not 'str'
+TypeError a bytes-like object is required, not 'list'
+TypeError a bytes-like object is required, not 'NoneType'
+ValueError memoryview assignment: lvalue and rvalue have different structures
+ValueError memoryview assignment: lvalue and rvalue have different structures
+ValueError memoryview assignment: lvalue and rvalue have different structures
+b'abcaZ4Y2X0'
+ValueError memoryview assignment: lvalue and rvalue have different structures
+ValueError slice step cannot be zero
+TypeError slice indices must be integers or have an __index__ method
+bytearray(b'5678956789')
+bytearray(b'0012346789')
+bytearray(b'1234556789')
+bytearray(b'9876543210')
+bytearray(b'1133557799')
+bytearray(b'0246856789')
+bytearray(b'0113253749')
+bytearray(b'9876543210')
+bytearray(b'0187654389')
+bytearray(b'0123456789')
+bytearray(b'01A3z5B789') b'AzB' b'01A3z5B789'
+TypeError cannot modify read-only memory
+True False True True True
+88 88
+ValueError operation forbidden on released memoryview object
+bytearray(b'abc')
+IndexError index out of bounds on dimension 1
+ValueError operation forbidden on released memoryview object
+ValueError operation forbidden on released memoryview object
+b''
+IndexError index out of bounds on dimension 1
+bytearray(b'abc\x01')

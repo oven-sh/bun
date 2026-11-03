@@ -1,0 +1,705 @@
+status: 0
+script: 84add4517e420d85
+source: 9773a22b1668785a
+---
+SyntaxError: cannot assign to literal here. Maybe you meant '==' instead of '='? <- 1 = x
+SyntaxError: cannot assign to literal here. Maybe you meant '==' instead of '='? <- 'a' = x
+SyntaxError: cannot assign to literal here. Maybe you meant '==' instead of '='? <- b'a' = x
+SyntaxError: cannot assign to literal here. Maybe you meant '==' instead of '='? <- 1.5 = x
+SyntaxError: cannot assign to literal here. Maybe you meant '==' instead of '='? <- 1j = x
+SyntaxError: cannot assign to None <- None = x
+SyntaxError: cannot assign to True <- True = x
+SyntaxError: cannot assign to False <- False = x
+SyntaxError: cannot assign to ellipsis here. Maybe you meant '==' instead of '='? <- ... = x
+SyntaxError: cannot assign to __debug__ <- __debug__ = x
+SyntaxError: cannot assign to function call here. Maybe you meant '==' instead of '='? <- f() = x
+ok: f().a = x
+ok: f()[0] = x
+ok: a.b = x
+ok: a[0] = x
+ok: a[0:1] = x
+SyntaxError: cannot assign to expression here. Maybe you meant '==' instead of '='? <- a + b = x
+SyntaxError: cannot assign to expression here. Maybe you meant '==' instead of '='? <- a - b = x
+SyntaxError: cannot assign to expression here. Maybe you meant '==' instead of '='? <- -a = x
+SyntaxError: cannot assign to expression <- not a = x
+SyntaxError: cannot assign to expression <- a and b = x
+SyntaxError: cannot assign to expression <- a or b = x
+SyntaxError: cannot assign to comparison <- a < b = x
+SyntaxError: cannot assign to comparison <- a == b = x
+SyntaxError: cannot assign to comparison <- a is b = x
+SyntaxError: cannot assign to comparison <- a in b = x
+SyntaxError: cannot assign to conditional expression <- a if b else c = x
+SyntaxError: cannot assign to lambda <- lambda: 1 = x
+ok: (a) = x
+ok: ((a)) = x
+ok: (a, b) = x
+ok: [a, b] = x
+ok: a, b = x
+ok: a, = x
+ok: (a,) = x
+ok: [a] = x
+ok: () = x
+ok: [] = x
+SyntaxError: cannot assign to dict literal here. Maybe you meant '==' instead of '='? <- {} = x
+SyntaxError: cannot assign to set display here. Maybe you meant '==' instead of '='? <- {a} = x
+SyntaxError: cannot assign to dict literal here. Maybe you meant '==' instead of '='? <- {a: b} = x
+SyntaxError: cannot assign to set display here. Maybe you meant '==' instead of '='? <- {a, b} = x
+SyntaxError: cannot assign to literal <- (a, 1) = x
+SyntaxError: cannot assign to literal <- [a, 1] = x
+SyntaxError: cannot assign to literal here. Maybe you meant '==' instead of '='? <- a, 1 = x
+SyntaxError: cannot assign to function call <- (a, f()) = x
+SyntaxError: cannot assign to expression <- (a, b + c) = x
+SyntaxError: cannot assign to literal <- (a, (b, 1)) = x
+SyntaxError: cannot assign to None <- (a, None) = x
+SyntaxError: cannot assign to None <- a, None = x
+SyntaxError: cannot assign to literal <- [a, [b, 'c']] = x
+SyntaxError: starred assignment target must be in a list or tuple <- *a = x
+ok: *a, = x
+ok: (*a,) = x
+ok: [*a] = x
+ok: *a, b = x
+ok: a, *b = x
+ok: a, *b, c = x
+SyntaxError: multiple starred expressions in assignment <- *a, *b = x
+SyntaxError: multiple starred expressions in assignment <- a, *b, *c = x
+SyntaxError: multiple starred expressions in assignment <- (*a, *b) = x
+SyntaxError: multiple starred expressions in assignment <- [*a, *b] = x
+ok: *a, (*b, c) = x
+SyntaxError: cannot use starred expression here <- (*a) = x
+SyntaxError: starred assignment target must be in a list or tuple <- *(a) = x
+ok: *(a, b), c = x
+ok: *[a, b], c = x
+ok: *a.b, c = x
+ok: *a[0], c = x
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='? <- *f(), c = x
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='? <- *1, c = x
+SyntaxError: invalid syntax <- **a = x
+ok: a = b = c
+SyntaxError: cannot assign to literal <- a = 1 = c
+ok: a = b = 1
+SyntaxError: cannot assign to function call <- a = f() = c
+SyntaxError: cannot assign to literal <- a = (b, 1) = c
+SyntaxError: can't use starred expression here <- a = *b
+ok: a = *b, c
+SyntaxError: 'yield' outside function <- a = yield
+SyntaxError: 'yield' outside function <- a = yield b
+SyntaxError: 'yield' outside function <- a = (yield)
+SyntaxError: 'yield' outside function <- a = b = yield
+SyntaxError: assignment to yield expression not possible <- a = yield = b
+SyntaxError: cannot assign to yield expression here. Maybe you meant '==' instead of '='? <- (yield) = a
+SyntaxError: assignment to yield expression not possible <- yield = a
+SyntaxError: cannot assign to await expression here. Maybe you meant '==' instead of '='? <- await a = b
+SyntaxError: cannot assign to await expression here. Maybe you meant '==' instead of '='? <- (await a) = b
+SyntaxError: cannot assign to list comprehension here. Maybe you meant '==' instead of '='? <- [a for a in b] = c
+SyntaxError: cannot assign to generator expression <- (a for a in b) = c
+SyntaxError: cannot assign to set comprehension here. Maybe you meant '==' instead of '='? <- {a for a in b} = c
+SyntaxError: cannot assign to dict comprehension here. Maybe you meant '==' instead of '='? <- {a: a for a in b} = c
+SyntaxError: cannot assign to f-string expression here. Maybe you meant '==' instead of '='? <- f'{a}' = b
+SyntaxError: cannot assign to f-string expression here. Maybe you meant '==' instead of '='? <- f'a' = b
+SyntaxError: cannot assign to literal here. Maybe you meant '==' instead of '='? <- 'a' 'b' = c
+ok: a.b.c = d
+ok: a.b().c = d
+ok: a().b = c
+ok: a[b].c[d] = e
+ok: a[b][c] = d
+ok: a[1, 2] = b
+ok: a[*b] = c
+ok: a[b:c, d] = e
+SyntaxError: invalid syntax <- a = 
+SyntaxError: invalid syntax <- = a
+SyntaxError: invalid syntax <- a = = b
+SyntaxError: invalid syntax <- a == = b
+SyntaxError: invalid syntax <- a = b =
+SyntaxError: invalid syntax <- a b = c
+SyntaxError: invalid syntax <- a = b c
+SyntaxError: invalid syntax <- a, b = c d
+SyntaxError: invalid syntax <- a; = b
+SyntaxError: invalid syntax <- a: = b
+SyntaxError: invalid syntax <- a =: b
+ok: a = b; c = d
+ok: a = b, c = d
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='? <- (a = b)
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='? <- [a = b]
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='? <- {a = b}
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='? <- (a = b, c)
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='? <- x = (a = b)
+SyntaxError: cannot assign to function call here. Maybe you meant '==' instead of '='? <- f(a) = b
+SyntaxError: cannot assign to function call here. Maybe you meant '==' instead of '='? <- f(a=1) = b
+SyntaxError: invalid syntax <- f(a = b = c)
+SyntaxError: invalid syntax <- a.1 = b
+SyntaxError: invalid syntax <- a.b! = c
+SyntaxError: invalid syntax <- a? = b
+ok: a: int
+ok: a: int = 1
+ok: a: int = 1, 2
+SyntaxError: can't use starred expression here <- a: int = *b
+ok: a: int = *b, c
+SyntaxError: 'yield' outside function <- a: int = yield
+SyntaxError: invalid syntax <- a: int = b = c
+SyntaxError: invalid syntax <- a: int: str
+SyntaxError: invalid syntax <- a: int, b: str
+SyntaxError: only single target (not tuple) can be annotated <- a, b: int
+SyntaxError: only single target (not tuple) can be annotated <- (a, b): int
+SyntaxError: only single target (not list) can be annotated <- [a, b]: int
+ok: (a): int
+ok: (a): int = 1
+ok: ((a)): int
+ok: a.b: int
+ok: a.b: int = 1
+ok: a[0]: int
+ok: a[0]: int = 1
+ok: a[0:1]: int
+SyntaxError: illegal target for annotation <- f(): int
+ok: f().a: int
+SyntaxError: illegal target for annotation <- 1: int
+SyntaxError: illegal target for annotation <- 'a': int
+SyntaxError: illegal target for annotation <- None: int
+SyntaxError: illegal target for annotation <- True: int
+SyntaxError: cannot assign to __debug__ <- __debug__: int
+SyntaxError: invalid syntax <- *a: int
+SyntaxError: illegal target for annotation <- a + b: int
+SyntaxError: illegal target for annotation <- -a: int
+SyntaxError: invalid syntax <- a: 
+SyntaxError: invalid syntax <- : int
+SyntaxError: invalid syntax <- a: = 1
+SyntaxError: invalid syntax <- a: int =
+SyntaxError: invalid syntax <- a: int += 1
+ok: a: 1
+ok: a: 'str'
+ok: a: None
+ok: a: f()
+ok: a: lambda: 1
+SyntaxError: yield expression cannot be used within an annotation <- a: (yield)
+SyntaxError: invalid syntax <- a: yield
+SyntaxError: await expression cannot be used within an annotation <- a: await b
+SyntaxError: named expression cannot be used within an annotation <- a: (b := 1)
+SyntaxError: invalid syntax <- a: b := 1
+SyntaxError: invalid syntax <- a: *b
+SyntaxError: invalid syntax <- a: *b = c
+ok: a: (*b,)
+SyntaxError: invalid syntax <- a: b, c
+ok: a: (b, c)
+ok: a: b if c else d
+ok: a: [b for b in c]
+ok: a: int; b: str
+SyntaxError: invalid syntax <- lambda: (a: int)
+SyntaxError: invalid syntax <- (a: int)
+SyntaxError: invalid syntax <- [a: int]
+SyntaxError: invalid syntax <- f(a: int)
+ok: def f(): a: int
+SyntaxError: annotated name 'a' can't be global <- def f():\n a: int\n global a
+SyntaxError: annotated name 'a' can't be global <- def f():\n global a\n a: int
+SyntaxError: annotated name 'a' can't be global <- def f():\n global a\n a: int = 1
+SyntaxError: annotated name 'a' can't be nonlocal <- def f():\n nonlocal a\n a: int
+SyntaxError: annotated name 'a' can't be nonlocal <- def g():\n a = 1\n def f():\n  nonlocal a\n  a: int
+ok: class C:\n a: int\n b: str = 'x'
+ok: global a\na: int
+SyntaxError: annotated name 'a' can't be global <- a: int\nglobal a
+SyntaxError: invalid syntax <- for a: int in b: pass
+SyntaxError: invalid syntax <- with a as b: int: pass
+SyntaxError: invalid syntax <- del a: int
+SyntaxError: invalid syntax <- a: int = 1 = 2
+SyntaxError: invalid syntax <- pass pass
+ok: pass;
+ok: pass; pass
+SyntaxError: invalid syntax <- pass,
+SyntaxError: invalid syntax <- pass 1
+SyntaxError: invalid syntax <- pass = 1
+SyntaxError: invalid syntax <- pass()
+SyntaxError: invalid syntax <- pass.x
+SyntaxError: invalid syntax <- x = pass
+SyntaxError: 'break' outside loop <- break
+SyntaxError: 'continue' not properly in loop <- continue
+SyntaxError: invalid syntax <- break 1
+SyntaxError: invalid syntax <- continue 1
+SyntaxError: invalid syntax <- while 1: break 1
+ok: for x in y: break; continue
+SyntaxError: 'break' outside loop <- while 1:\n def f(): break
+SyntaxError: 'break' outside loop <- while 1:\n class C: break
+SyntaxError: invalid syntax <- while 1:\n lambda: break
+SyntaxError: 'continue' not properly in loop <- for x in y:\n def f(): continue
+SyntaxError: 'break' outside loop <- for x in y: pass\nelse: break
+SyntaxError: 'continue' not properly in loop <- while 1: pass\nelse: continue
+ok: for x in y:\n for z in w: pass\n else: break
+SyntaxError: 'break' outside loop <- if 1: break
+SyntaxError: 'break' outside loop <- try: break\nfinally: pass
+SyntaxError: 'break' outside loop <- with x: break
+SyntaxError: 'break' outside loop <- def f(): break
+SyntaxError: 'continue' not properly in loop <- class C: continue
+ok: while 1:\n if 1: break\n else: continue
+ok: while 1:\n try: pass\n finally: break
+ok: while 1:\n try: pass\n finally: continue
+ok: while 1:\n with x: continue
+ok: while 1:\n match x:\n  case 1: break
+SyntaxError: 'return' outside function <- return
+SyntaxError: 'return' outside function <- return 1
+SyntaxError: 'return' outside function <- return 1, 2
+ok: def f(): return
+ok: def f(): return 1, 2
+SyntaxError: can't use starred expression here <- def f(): return *a
+ok: def f(): return *a,
+ok: def f(): return *a, b
+SyntaxError: cannot use starred expression here <- def f(): return (*a)
+SyntaxError: invalid syntax <- def f(): return a = 1
+SyntaxError: invalid syntax <- def f(): return a := 1
+SyntaxError: invalid syntax <- def f(): return return
+SyntaxError: invalid syntax <- def f(): return pass
+ok: def f(): return; return
+SyntaxError: invalid syntax <- def f(): return 1 2
+SyntaxError: invalid syntax <- def f(): return,
+ok: def f(): return 1,
+ok: def f(): return lambda: 1
+SyntaxError: invalid syntax <- def f(): return yield
+ok: def f(): return (yield)
+ok: def f(): return not a
+ok: def f(): return a if b else c
+SyntaxError: expected 'else' after 'if' expression <- def f(): return a if b
+SyntaxError: 'return' outside function <- class C: return
+SyntaxError: 'return' outside function <- class C:\n def f(self): return 1\n return 2
+SyntaxError: invalid syntax <- lambda: return
+SyntaxError: 'return' outside function <- if 1: return
+SyntaxError: 'return' outside function <- while 1: return
+SyntaxError: 'return' outside function <- try: return\nfinally: pass
+SyntaxError: 'return' outside function <- with a: return
+SyntaxError: 'return' outside function <- for a in b: return
+SyntaxError: 'return' outside function <- def f():\n class C: return
+ok: async def f(): return 1
+SyntaxError: 'return' with value in async generator <- async def f(): yield 1; return 2
+ok: def f(): yield 1; return 2
+SyntaxError: invalid syntax <- global
+ok: global a
+ok: global a, b
+SyntaxError: invalid syntax <- global a,
+SyntaxError: invalid syntax <- global a b
+SyntaxError: invalid syntax <- global 1
+SyntaxError: invalid syntax <- global a.b
+SyntaxError: invalid syntax <- global a = 1
+SyntaxError: invalid syntax <- global (a)
+SyntaxError: invalid syntax <- global *a
+SyntaxError: invalid syntax <- global None
+SyntaxError: invalid syntax <- global True
+ok: global __debug__
+ok: global a; a = 1
+SyntaxError: name 'a' is assigned to before global declaration <- a = 1; global a
+SyntaxError: name 'a' is used prior to global declaration <- print(a); global a
+SyntaxError: name 'a' is assigned to before global declaration <- a = 1\nglobal a
+SyntaxError: name 'a' is assigned to before global declaration <- del a\nglobal a
+ok: import a\nglobal a
+SyntaxError: name 'a' is assigned to before global declaration <- for a in b: pass\nglobal a
+SyntaxError: name 'a' is assigned to before global declaration <- def a(): pass\nglobal a
+SyntaxError: name 'a' is assigned to before global declaration <- class a: pass\nglobal a
+ok: def f(): global a; a = 1
+SyntaxError: name 'a' is assigned to before global declaration <- def f(): a = 1; global a
+SyntaxError: name 'a' is used prior to global declaration <- def f(): print(a); global a
+SyntaxError: name 'a' is parameter and global <- def f(a): global a
+SyntaxError: name 'a' is parameter and global <- def f(*a): global a
+SyntaxError: name 'a' is parameter and global <- def f(**a): global a
+SyntaxError: name 'a' is parameter and global <- def f(*, a): global a
+SyntaxError: name 'a' is parameter and global <- def f(a=1): global a
+ok: def f(): global a; global a
+ok: def f(): global a, a
+SyntaxError: no binding for nonlocal 'a' found <- def f():\n global a\n def g(): nonlocal a
+SyntaxError: name 'a' is nonlocal and global <- def f():\n global a\n nonlocal a
+SyntaxError: name 'a' is nonlocal and global <- def f():\n a = 1\n def g():\n  global a\n  nonlocal a
+SyntaxError: name 'a' is assigned to before global declaration <- def f():\n for a in b: pass\n global a
+ok: def f():\n import a\n global a
+SyntaxError: name 'a' is assigned to before global declaration <- def f():\n with b as a: pass\n global a
+SyntaxError: name 'a' is assigned to before global declaration <- def f():\n try: pass\n except E as a: pass\n global a
+SyntaxError: name 'a' is assigned to before global declaration <- def f():\n def a(): pass\n global a
+SyntaxError: name 'a' is assigned to before global declaration <- def f():\n class a: pass\n global a
+SyntaxError: name 'a' is assigned to before global declaration <- def f():\n (a := 1)\n global a
+ok: def f():\n [a for a in b]\n global a
+SyntaxError: name 'a' is assigned to before global declaration <- def f():\n del a\n global a
+SyntaxError: name 'a' is assigned to before global declaration <- def f():\n a += 1\n global a
+SyntaxError: annotated name 'a' can't be global <- def f():\n a: int\n global a
+ok: def f():\n global a\n def a(): pass
+ok: def f():\n global a\n class a: pass
+ok: def f():\n global a\n import a
+ok: def f():\n global a\n for a in b: pass
+ok: class C:\n global a\n a = 1
+SyntaxError: name 'a' is assigned to before global declaration <- class C:\n a = 1\n global a
+SyntaxError: invalid syntax <- lambda: global a
+SyntaxError: name 'a' is assigned to before global declaration <- def f():\n match x:\n  case a: pass\n global a
+ok: def f():\n if 0: global a\n a = 1
+SyntaxError: name 'a' is assigned to before global declaration <- def f():\n a = 1\n if 0: global a
+SyntaxError: invalid syntax <- nonlocal
+SyntaxError: nonlocal declaration not allowed at module level <- nonlocal a
+SyntaxError: nonlocal declaration not allowed at module level <- nonlocal a, b
+SyntaxError: no binding for nonlocal 'a' found <- def f(): nonlocal a
+ok: def f():\n a = 1\n def g(): nonlocal a
+SyntaxError: no binding for nonlocal 'b' found <- def f():\n a = 1\n def g(): nonlocal a, b
+ok: def f():\n def g(): nonlocal a\n a = 1
+SyntaxError: name 'a' is assigned to before nonlocal declaration <- def f():\n a = 1\n def g(): a = 2; nonlocal a
+SyntaxError: name 'a' is used prior to nonlocal declaration <- def f():\n a = 1\n def g(): print(a); nonlocal a
+SyntaxError: name 'a' is parameter and nonlocal <- def f():\n a = 1\n def g(a): nonlocal a
+ok: def f(a):\n def g(): nonlocal a
+ok: def f():\n a = 1\n class C: nonlocal a
+ok: def f():\n a = 1\n class C:\n  def m(self): nonlocal a
+SyntaxError: no binding for nonlocal 'a' found <- class C:\n a = 1\n def m(self): nonlocal a
+SyntaxError: no binding for nonlocal 'a' found <- a = 1\ndef f(): nonlocal a
+SyntaxError: no binding for nonlocal 'a' found <- def f():\n global a\n def g(): nonlocal a
+ok: def f():\n a = 1\n def g():\n  def h(): nonlocal a
+SyntaxError: invalid syntax <- def f():\n a = 1\n lambda: nonlocal a
+SyntaxError: invalid syntax <- def f():\n nonlocal 1
+SyntaxError: invalid syntax <- def f():\n a = 1\n def g(): nonlocal a.b
+SyntaxError: invalid syntax <- def f():\n a = 1\n def g(): nonlocal a = 2
+SyntaxError: invalid syntax <- def f():\n a = 1\n def g(): nonlocal (a)
+SyntaxError: invalid syntax <- def f():\n a = 1\n def g(): nonlocal a,
+ok: def f():\n a = 1\n def g(): nonlocal a; nonlocal a
+ok: def f():\n __class__ = 1\n def g(): nonlocal __class__
+ok: class C:\n def m(self): nonlocal __class__
+SyntaxError: no binding for nonlocal '__class__' found <- class C:\n nonlocal __class__
+SyntaxError: no binding for nonlocal 'a' found <- def f():\n [a for a in b]\n def g(): nonlocal a
+ok: def f():\n a = 1\n [(lambda: a) for b in c]\n def g(): nonlocal a
+SyntaxError: invalid syntax <- def f():\n nonlocal None
+SyntaxError: name 'x' is nonlocal and global <- def f():\n x = 1\n def g():\n  nonlocal x\n  global x
+SyntaxError: invalid syntax <- if
+SyntaxError: invalid syntax <- if:
+SyntaxError: expected ':' <- if a
+IndentationError: expected an indented block after 'if' statement on line 1 <- if a:
+IndentationError: expected an indented block after 'if' statement on line 1 <- if a: 
+IndentationError: expected an indented block after 'if' statement on line 1 <- if a:\n
+SyntaxError: invalid syntax <- if a pass
+SyntaxError: invalid syntax <- if a: pass else: pass
+SyntaxError: expected ':' <- if a: pass\nelse
+SyntaxError: expected ':' <- if a: pass\nelse pass
+IndentationError: expected an indented block after 'else' statement on line 2 <- if a: pass\nelse:
+SyntaxError: invalid syntax <- if a: pass\nelif
+SyntaxError: invalid syntax <- if a: pass\nelif:
+SyntaxError: expected ':' <- if a: pass\nelif b
+SyntaxError: invalid syntax <- if a: pass\nelif b pass
+SyntaxError: 'elif' block follows an 'else' block <- if a: pass\nelse: pass\nelif b: pass
+SyntaxError: invalid syntax <- if a: pass\nelse: pass\nelse: pass
+SyntaxError: expected ':' <- if a: pass\nelse if b: pass
+SyntaxError: invalid syntax <- if a: pass\nelseif b: pass
+SyntaxError: invalid syntax <- else: pass
+SyntaxError: invalid syntax <- elif a: pass
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='? <- if a = 1: pass
+ok: if a == 1: pass
+ok: if a := 1: pass
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='? <- if (a = 1): pass
+SyntaxError: invalid syntax <- if a, b: pass
+SyntaxError: invalid syntax <- if *a: pass
+ok: if a: b: c
+SyntaxError: invalid syntax <- if a:: pass
+SyntaxError: invalid syntax <- if a; pass
+SyntaxError: invalid syntax <- if a then b
+ok: if (a): pass
+ok: if(a): pass
+ok: if a:pass
+SyntaxError: invalid syntax <- if not: pass
+SyntaxError: invalid syntax <- if a and: pass
+IndentationError: expected an indented block after 'if' statement on line 1 <- if a:\npass
+IndentationError: unexpected indent <- if a:\n pass\n  pass
+IndentationError: unindent does not match any outer indentation level <- if a:\n  pass\n pass
+IndentationError: expected an indented block after 'else' statement on line 3 <- if a:\n pass\nelse:\npass
+SyntaxError: invalid syntax <- if a: if b: pass
+SyntaxError: invalid syntax <- if a: for b in c: pass
+SyntaxError: invalid syntax <- if a: def f(): pass
+SyntaxError: invalid syntax <- if a: class C: pass
+ok: if a: x = 1; y = 2
+SyntaxError: invalid syntax <- if a: pass; else: pass
+ok: if a: import b
+ok: if lambda: 1: pass
+ok: if (lambda: 1): pass
+SyntaxError: invalid syntax <- if yield: pass
+ok: if a if b else c: pass
+ok: if a: pass\n\n\nelse: pass
+ok: if a: pass\n# c\nelse: pass
+IndentationError: expected an indented block after 'if' statement on line 1 <- if a:\n # only a comment
+ok: if a:\n # c\n pass
+ok: if a:\n\n\n pass
+ok: if a: # c\n pass
+ok: if a: pass # c
+TabError: inconsistent use of tabs and spaces in indentation <- if True:\n	pass\n        pass
+TabError: inconsistent use of tabs and spaces in indentation <- if True:\n        pass\n	pass
+TabError: inconsistent use of tabs and spaces in indentation <- if True:\n 	pass\n	 pass
+SyntaxError: invalid syntax <- while
+SyntaxError: invalid syntax <- while:
+SyntaxError: expected ':' <- while a
+IndentationError: expected an indented block after 'while' statement on line 1 <- while a:
+SyntaxError: invalid syntax <- while a pass
+SyntaxError: expected ':' <- while a: pass\nelse
+SyntaxError: invalid syntax <- while a: pass\nelse: pass\nelse: pass
+SyntaxError: invalid syntax <- while a: pass\nelif b: pass
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='? <- while a = 1: pass
+ok: while a := 1: pass
+SyntaxError: invalid syntax <- while a, b: pass
+IndentationError: expected an indented block after 'while' statement on line 1 <- while a:\npass
+ok: while (a): pass
+SyntaxError: invalid syntax <- while a: while b: pass
+SyntaxError: invalid syntax <- do: pass\nwhile a
+SyntaxError: invalid syntax <- until a: pass
+SyntaxError: invalid syntax <- loop: pass
+SyntaxError: invalid syntax <- for
+SyntaxError: invalid syntax <- for:
+SyntaxError: invalid syntax <- for a
+SyntaxError: invalid syntax <- for a:
+SyntaxError: invalid syntax <- for a in
+SyntaxError: invalid syntax <- for a in:
+SyntaxError: expected ':' <- for a in b
+SyntaxError: invalid syntax <- for a in b pass
+SyntaxError: invalid syntax <- for in b: pass
+SyntaxError: invalid syntax <- for a b: pass
+SyntaxError: invalid syntax <- for a of b: pass
+SyntaxError: invalid syntax <- for a = b: pass
+IndentationError: expected an indented block after 'for' statement on line 1 <- for a in b:
+IndentationError: expected an indented block after 'for' statement on line 1 <- for a in b:\npass
+SyntaxError: cannot assign to literal <- for 1 in b: pass
+SyntaxError: cannot assign to literal <- for 'a' in b: pass
+SyntaxError: cannot assign to None <- for None in b: pass
+SyntaxError: cannot assign to function call <- for f() in b: pass
+SyntaxError: cannot assign to expression <- for a + b in c: pass
+ok: for a.b in c: pass
+ok: for a[0] in c: pass
+ok: for a, b in c: pass
+ok: for (a, b) in c: pass
+ok: for [a, b] in c: pass
+ok: for a, in c: pass
+SyntaxError: cannot assign to literal <- for a, 1 in c: pass
+SyntaxError: cannot assign to literal <- for (a, 1) in c: pass
+SyntaxError: starred assignment target must be in a list or tuple <- for *a in c: pass
+ok: for *a, in c: pass
+ok: for *a, b in c: pass
+ok: for a, *b in c: pass
+SyntaxError: multiple starred expressions in assignment <- for *a, *b in c: pass
+SyntaxError: cannot use starred expression here <- for (*a) in c: pass
+ok: for a in b, c: pass
+ok: for a in b,: pass
+SyntaxError: can't use starred expression here <- for a in *b: pass
+ok: for a in *b, c: pass
+ok: for a in *b, *c: pass
+ok: for a in (*b, c): pass
+ok: for a in b in c: pass
+ok: for a in (b in c): pass
+SyntaxError: invalid syntax <- for (a in b) in c: pass
+SyntaxError: invalid syntax <- for a in b if c: pass
+ok: for a in b if c else d: pass
+SyntaxError: invalid syntax <- for a in b for c in d: pass
+ok: for a in lambda: 1: pass
+ok: for a in (lambda: 1): pass
+SyntaxError: invalid syntax <- for a in yield: pass
+SyntaxError: 'yield' outside function <- for a in (yield): pass
+SyntaxError: invalid syntax <- for a in b := c: pass
+ok: for a in (b := c): pass
+SyntaxError: invalid syntax <- for a := 1 in b: pass
+SyntaxError: cannot assign to named expression <- for (a := 1) in b: pass
+SyntaxError: invalid syntax <- for a: int in b: pass
+ok: for a in b: pass\nelse: pass
+SyntaxError: expected ':' <- for a in b: pass\nelse
+SyntaxError: invalid syntax <- for a in b: pass\nelif c: pass
+SyntaxError: invalid syntax <- for a in b: pass\nelse: pass\nelse: pass
+ok: for a in range(3): print(a)
+ok: for(a)in(b):pass
+SyntaxError: cannot assign to conditional expression <- for a if b else c in d: pass
+SyntaxError: cannot assign to expression <- for not a in b: pass
+SyntaxError: invalid syntax <- for a not in b: pass
+SyntaxError: invalid syntax <- for a is b: pass
+SyntaxError: cannot assign to expression <- for -a in b: pass
+SyntaxError: cannot assign to function call <- for a() in b: pass
+ok: for a().b in c: pass
+SyntaxError: cannot assign to dict literal <- for {} in b: pass
+SyntaxError: cannot assign to set display <- for {a} in b: pass
+ok: for () in b: pass
+ok: for [] in b: pass
+SyntaxError: cannot assign to __debug__ <- for __debug__ in b: pass
+SyntaxError: cannot assign to __debug__ <- for a, __debug__ in b: pass
+SyntaxError: cannot assign to await expression <- for await a in b: pass
+SyntaxError: cannot assign to yield expression <- for (yield) in b: pass
+SyntaxError: invalid syntax <- foreach a in b: pass
+SyntaxError: invalid syntax <- for (a; b; c): pass
+SyntaxError: invalid syntax <- for a in b; pass
+SyntaxError: invalid syntax <- def
+SyntaxError: expected '(' <- def f
+SyntaxError: '(' was never closed <- def f(
+SyntaxError: expected ':' <- def f()
+IndentationError: expected an indented block after function definition on line 1 <- def f():
+SyntaxError: expected ':' <- def f() pass
+IndentationError: expected an indented block after function definition on line 1 <- def f(): 
+IndentationError: expected an indented block after function definition on line 1 <- def f():\n
+IndentationError: expected an indented block after function definition on line 1 <- def f():\npass
+SyntaxError: invalid syntax <- def (): pass
+SyntaxError: invalid syntax <- def 1(): pass
+SyntaxError: expected '(' <- def f.g(): pass
+SyntaxError: expected '(' <- def f[0](): pass
+SyntaxError: invalid syntax <- def f(): pass pass
+SyntaxError: invalid syntax <- def f():: pass
+SyntaxError: expected ':' <- def f() -> : pass
+SyntaxError: expected ':' <- def f() ->: pass
+SyntaxError: expected ':' <- def f() -> int pass
+SyntaxError: expected ':' <- def f() - > int: pass
+ok: def f() -> int: pass
+SyntaxError: expected ':' <- def f() -> int, str: pass
+ok: def f() -> (int, str): pass
+SyntaxError: expected ':' <- def f() -> *a: pass
+ok: def f() -> lambda: 1: pass
+SyntaxError: expected ':' <- def f() -> int -> str: pass
+SyntaxError: invalid syntax <- def f(): -> int
+SyntaxError: expected '(' <- def f -> int: pass
+SyntaxError: expected '(' <- def f: pass
+SyntaxError: '(' was never closed <- def f(a: pass
+SyntaxError: expected '(' <- def f a: pass
+SyntaxError: unmatched ')' <- def f(a)): pass
+SyntaxError: Function parameters cannot be parenthesized <- def f((a)): pass
+SyntaxError: Function parameters cannot be parenthesized <- def f((a, b)): pass
+SyntaxError: invalid syntax <- def f([a]): pass
+SyntaxError: invalid syntax <- def f(a.b): pass
+SyntaxError: invalid syntax <- def f(a[0]): pass
+SyntaxError: invalid syntax <- def f(1): pass
+SyntaxError: invalid syntax <- def f('a'): pass
+SyntaxError: invalid syntax <- def f(a b): pass
+SyntaxError: invalid syntax <- def f(a,, b): pass
+SyntaxError: invalid syntax <- def f(,): pass
+SyntaxError: invalid syntax <- def f(, a): pass
+ok: def f(a,): pass
+SyntaxError: expected default value expression <- def f(a=): pass
+SyntaxError: invalid syntax <- def f(a==1): pass
+SyntaxError: invalid syntax <- def f(=1): pass
+SyntaxError: invalid syntax <- def f(a:): pass
+SyntaxError: expected default value expression <- def f(a: int=): pass
+ok: def f(a: int = 1): pass
+SyntaxError: invalid syntax <- def f(a = 1: int): pass
+SyntaxError: invalid syntax <- def f(a: int: str): pass
+SyntaxError: invalid syntax <- def None(): pass
+SyntaxError: invalid syntax <- def True(): pass
+SyntaxError: cannot assign to __debug__ <- def __debug__(): pass
+SyntaxError: invalid syntax <- def if(): pass
+SyntaxError: invalid syntax <- def class(): pass
+SyntaxError: invalid syntax <- def def(): pass
+ok: def print(): pass
+SyntaxError: invalid syntax <- def f(if): pass
+SyntaxError: invalid syntax <- def f(class): pass
+SyntaxError: invalid syntax <- def f(a, if): pass
+SyntaxError: invalid syntax <- def f(a=if): pass
+SyntaxError: invalid syntax <- def f(): def g(): pass
+SyntaxError: invalid syntax <- def f(): class C: pass
+SyntaxError: invalid syntax <- def f(): if a: pass
+ok: def f(): x = 1; return x
+IndentationError: unexpected indent <- def f(): return\n  pass
+IndentationError: unindent does not match any outer indentation level <- def f():\n  pass\n pass
+ok: def f():\n 'doc'
+ok: def f():\n ...
+ok: def f(): ...
+SyntaxError: named parameters must follow bare * <- def f(*): pass
+SyntaxError: named parameters must follow bare * <- def f(*,): pass
+ok: def f(*, a): pass
+SyntaxError: named parameters must follow bare * <- def f(*, **k): pass
+SyntaxError: * may appear only once <- def f(*, *a): pass
+SyntaxError: invalid syntax <- def f(*a, *): pass
+SyntaxError: * may appear only once <- def f(*a, *b): pass
+SyntaxError: parameters cannot follow var-keyword parameter <- def f(**k, a): pass
+SyntaxError: parameters cannot follow var-keyword parameter <- def f(**k, *a): pass
+SyntaxError: parameters cannot follow var-keyword parameter <- def f(**k, **l): pass
+ok: def f(**k,): pass
+SyntaxError: var-keyword parameter cannot have default value <- def f(**k=1): pass
+SyntaxError: var-positional parameter cannot have default value <- def f(*a=1): pass
+ok: def f(*a: int): pass
+ok: def f(*a: *b): pass
+ok: def f(**k: int): pass
+SyntaxError: invalid syntax <- def f(**k: *b): pass
+SyntaxError: invalid syntax <- def f(a: *b): pass
+SyntaxError: invalid syntax <- def f(/): pass
+SyntaxError: at least one parameter must precede / <- def f(/, a): pass
+ok: def f(a, /): pass
+ok: def f(a, /,): pass
+SyntaxError: / may appear only once <- def f(a, /, /): pass
+SyntaxError: / may appear only once <- def f(a, /, b, /): pass
+SyntaxError: / must be ahead of * <- def f(*, /): pass
+SyntaxError: / must be ahead of * <- def f(*, a, /): pass
+SyntaxError: / must be ahead of * <- def f(*a, /): pass
+SyntaxError: parameters cannot follow var-keyword parameter <- def f(**k, /): pass
+ok: def f(a, /, *, b): pass
+SyntaxError: named parameters must follow bare * <- def f(a, /, *): pass
+SyntaxError: parameter without a default follows parameter with a default <- def f(a=1, /, b): pass
+ok: def f(a=1, /, b=2): pass
+SyntaxError: parameter without a default follows parameter with a default <- def f(a=1, b): pass
+ok: def f(a=1, *, b): pass
+ok: def f(a=1, *b, c): pass
+SyntaxError: parameter without a default follows parameter with a default <- def f(a, b=1, c): pass
+SyntaxError: parameter without a default follows parameter with a default <- def f(a, b=1, /, c): pass
+SyntaxError: duplicate parameter 'a' in function definition <- def f(a, a): pass
+SyntaxError: duplicate parameter 'a' in function definition <- def f(a, *a): pass
+SyntaxError: duplicate parameter 'a' in function definition <- def f(a, **a): pass
+SyntaxError: duplicate parameter 'a' in function definition <- def f(a, *, a): pass
+SyntaxError: duplicate parameter 'a' in function definition <- def f(a, /, a): pass
+SyntaxError: duplicate parameter 'a' in function definition <- def f(*a, **a): pass
+SyntaxError: duplicate parameter 'a' in function definition <- def f(a, b, c, a): pass
+SyntaxError: Function parameters cannot be parenthesized <- def f(a, (b)): pass
+SyntaxError: invalid syntax <- def f(*(a)): pass
+ok: def f(* a): pass
+ok: def f(** a): pass
+SyntaxError: invalid syntax <- def f(* *a): pass
+SyntaxError: invalid syntax <- def f(***a): pass
+ok: def f(a, *, b=1, c): pass
+ok: def f(a, b=1, *c, d, e=2, **f): pass
+ok: def f(self, /, *args, **kwargs): pass
+ok: def f(a=lambda: 1): pass
+SyntaxError: 'yield' outside function <- def f(a=(yield)): pass
+SyntaxError: invalid syntax <- def f(a=yield): pass
+SyntaxError: invalid syntax <- def f(a=*b): pass
+SyntaxError: invalid syntax <- def f(a=**b): pass
+SyntaxError: invalid syntax <- def f(a=b=c): pass
+ok: def f(a=b, c=d): pass
+ok: def f(a=1 if b else 2): pass
+ok: def f(a=[x for x in y]): pass
+ok: def f(a: 'str' = 'x') -> 'ret': pass
+SyntaxError: invalid syntax <- function f(): pass
+SyntaxError: invalid syntax <- fn f(): pass
+SyntaxError: invalid syntax <- func f(): pass
+SyntaxError: invalid syntax <- define f(): pass
+SyntaxError: invalid syntax <- @
+SyntaxError: invalid syntax <- @a
+SyntaxError: invalid syntax <- @a\n
+SyntaxError: invalid syntax <- @a\npass
+SyntaxError: invalid syntax <- @a\nx = 1
+SyntaxError: invalid syntax <- @a\n@b
+SyntaxError: invalid syntax <- @a def f(): pass
+ok: @a\ndef f(): pass
+ok: @a\nclass C: pass
+ok: @a\nasync def f(): pass
+ok: @a.b\ndef f(): pass
+ok: @a.b.c(1)\ndef f(): pass
+ok: @a()\ndef f(): pass
+ok: @a()()\ndef f(): pass
+ok: @a[0]\ndef f(): pass
+ok: @a[0].b\ndef f(): pass
+ok: @a + b\ndef f(): pass
+ok: @-a\ndef f(): pass
+ok: @not a\ndef f(): pass
+ok: @a if b else c\ndef f(): pass
+ok: @lambda f: f\ndef f(): pass
+ok: @(lambda f: f)\ndef f(): pass
+SyntaxError: invalid syntax <- @a, b\ndef f(): pass
+ok: @(a, b)\ndef f(): pass
+ok: @[a]\ndef f(): pass
+ok: @{a}\ndef f(): pass
+ok: @1\ndef f(): pass
+ok: @'a'\ndef f(): pass
+ok: @None\ndef f(): pass
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='? <- @a = b\ndef f(): pass
+ok: @a := b\ndef f(): pass
+ok: @(a := b)\ndef f(): pass
+SyntaxError: invalid syntax <- @*a\ndef f(): pass
+SyntaxError: invalid syntax <- @yield\ndef f(): pass
+SyntaxError: 'yield' outside function <- @(yield)\ndef f(): pass
+SyntaxError: 'await' outside function <- @await a\ndef f(): pass
+ok: @a\n\ndef f(): pass
+ok: @a\n# c\ndef f(): pass
+ok: @a # c\ndef f(): pass
+ok: @ a\ndef f(): pass
+SyntaxError: invalid syntax <- @a;\ndef f(): pass
+IndentationError: unexpected indent <- @a\n def f(): pass
+IndentationError: unexpected indent <-  @a\ndef f(): pass
+SyntaxError: invalid syntax <- @a\nif b: pass
+SyntaxError: invalid syntax <- @a\nfor b in c: pass
+SyntaxError: invalid syntax <- @a\nwith b: pass
+SyntaxError: invalid syntax <- @a\nlambda: 1
+SyntaxError: invalid syntax <- @a\nimport b
+ok: @a\n@b\n@c\ndef f(): pass
+ok: @a @b\ndef f(): pass
+SyntaxError: invalid syntax <- @@a\ndef f(): pass
+SyntaxError: invalid syntax <- @a\ntype X = int
+ok: class C:\n @a\n def f(self): pass
+SyntaxError: invalid syntax <- class C:\n @a\n x = 1
+SyntaxError: invalid syntax <- @a for a in b\ndef f(): pass
+ok: @[a for a in b][0]\ndef f(): pass

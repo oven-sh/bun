@@ -1,0 +1,87 @@
+status: 0
+script: 8013eb0f9c8dd251
+---
+['_abc_init', '_abc_instancecheck', '_abc_register', '_abc_subclasscheck', '_get_dump', '_reset_caches', '_reset_registry', 'get_cache_token']
+Module contains faster C implementation of abc.ABCMeta
+abc True
+<class '_abc._abc_data'> _abc_data _abc Internal state held by ABC machinery.
+['c', 'f', 'p', 's'] <class 'frozenset'>
+TypeError Can't instantiate abstract class A without an implementation for abstract methods 'c', 'f', 'p', 's'
+['c', 'p', 's']
+TypeError Can't instantiate abstract class B without an implementation for abstract methods 'c', 'p', 's'
+[]
+C
+['g']
+TypeError Can't instantiate abstract class D without an implementation for abstract method 'g'
+False False False
+True
+1
+True True True True
+True 1
+True 1
+TypeError Can only register classes
+TypeError Can only register classes
+TypeError Can only register classes
+RuntimeError Refusing to create an inheritance cycle
+'no register'
+True Z
+False False
+True True True True
+True True False True False
+True True False True
+TypeError issubclass() arg 1 must be a class
+TypeError issubclass() arg 1 must be a class
+TypeError issubclass() arg 1 must be a class
+TypeError issubclass() arg 1 must be a class
+TypeError issubclass() arg 1 must be a class
+True
+TypeError issubclass() arg 1 must be a class
+AttributeError 'int' object has no attribute '_abc_impl'
+AttributeError 'int' object has no attribute '_abc_impl'
+TypeError issubclass() arg 2 must be a class, a tuple of classes, or a union
+TypeError Can only register classes
+AttributeError 'int' object has no attribute '_abc_impl'
+AttributeError type object 'int' has no attribute '_abc_impl'
+AttributeError type object 'int' has no attribute '_abc_impl'
+AttributeError type object 'int' has no attribute '_abc_impl'
+TypeError _abc._abc_init() takes exactly one argument (0 given)
+AttributeError 'int' object has no attribute '__dict__'
+TypeError _abc._abc_init() takes exactly one argument (2 given)
+TypeError _abc.get_cache_token() takes no arguments (1 given)
+True False False True False
+[('H', 'Duck'), ('H', 'Cow'), ('H', 'Dog'), ('Cow', 'Dog')]
+True False False
+[]
+True False False
+[('H', 'str'), ('Cow', 'str'), ('H', 'Cow'), ('H', 'Dog'), ('Cow', 'Dog')]
+AssertionError __subclasshook__ must return either False, True, or NotImplemented
+AssertionError __subclasshook__ must return either False, True, or NotImplemented
+AssertionError __subclasshook__ must return either False, True, or NotImplemented
+AssertionError __subclasshook__ must return either False, True, or NotImplemented
+AssertionError __subclasshook__ must return either False, True, or NotImplemented
+AssertionError __subclasshook__ must return either False, True, or NotImplemented
+KeyError 'hook'
+KeyError 'hook'
+TypeError _abc_impl is set to a wrong type
+TypeError _abc_impl is set to a wrong type
+TypeError _abc_impl is set to a wrong type
+TypeError _abc_impl is set to a wrong type
+False
+'_abc_data'
+'_abc_data'
+False False
+TypeError type '_abc._abc_data' is not an acceptable base type
+True True
+TypeError issubclass() arg 1 must be a class
+KeyError 'cls'
+True
+<class 'set'> <class 'set'> <class 'set'> <class 'int'>
+['M1'] [] ['M2', 'int'] True
+True
+1 0 0
+True
+False [0, 0, 1]
+Class: __main__.M ['Inv. counter', '_abc_registry', '_abc_cache', '_abc_negative_cache', '_abc_negative_cache_version']
+[0, 0, 0]
+[1, 0, 1]
+True True [0, 0, 0]

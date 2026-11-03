@@ -1,0 +1,64 @@
+status: 0
+script: 77a92af1744b9948
+---
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+(0, '0')
+ProgrammingError: Cannot operate on a closed database.
+(0,)
+(1,)
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+None
+ProgrammingError: Cannot operate on a closed database.
+(b'0', '0')
+(1, '1')
+[(1,)]
+[(2, '2'), (3, '3'), (4, '4')]
+[(10,)]
+[(1,)]
+OperationalError: no such function: f
+[(0,), (1,), (2,), (3,), (4,)]
+(1,)
+finalize
+None
+ProgrammingError: Cannot operate on a closed database.
+(1,)
+finalize [0, 1, 2] (7,)
+collected
+<sqlite3.Cursor object>
+(1,)
+finalize [0, 1, 2] (7,)
+collected
+finalize [0, 1, 2] (7,)
+[(0,)]
+IndexError: Blob index out of range
+IndexError: Blob index out of range
+b''
+b''
+IndexError: Blob slice assignment is wrong size
+IndexError: Blob index out of range
+ProgrammingError: Cannot operate on a closed blob.
+ProgrammingError: Cannot operate on a closed blob.
+TypeError: __class__ assignment: 'C' object layout differs from 'P'
+P
+(<class '__main__.C'>, <class '__main__.D'>)
+TypeError: __class__ assignment: 'C' object layout differs from 'P'
+P
+(<class '__main__.C'>, <class '__main__.D'>)
+TypeError: __class__ assignment: 'C' object layout differs from 'P'
+P
+(<class '__main__.C'>, <class '__main__.D'>)
+TypeError: multiple bases have instance lay-out conflict
+TypeError: multiple bases have instance lay-out conflict
+TypeError: multiple bases have instance lay-out conflict
+TypeError: multiple bases have instance lay-out conflict
+TypeError: multiple bases have instance lay-out conflict
+'X'
+C2 [(1,)]
+TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError: sqlite3.Row.__new__(C1): C1 is not a subtype of sqlite3.Row

@@ -1,0 +1,7 @@
+status: 1
+stderr: 
+script: cdc6db7c2dd38c50
+source: cdc6db7c2dd38c50
+---
+True
+hook: ValueError handled by the hook; status is still 1 <module>

@@ -1,0 +1,8 @@
+status: 0
+script: 430d4009320ec500
+---
+value = 6  True False b'twotwo' True True 
+mod True zipimporter
+42 from the zip
+42 from the zip True
+ZipImportError not a Zip file

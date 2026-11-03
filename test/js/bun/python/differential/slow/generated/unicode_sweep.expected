@@ -1,0 +1,18 @@
+status: 0
+script: 759c8c12fd0e59f5
+source: 60e8cdacba604d17
+---
+sum(1 for c in map(chr, range(0x110000)) if c.isdecimal()) => 770
+sum(1 for c in map(chr, range(0x110000)) if c.isdigit()) => 898
+sum(1 for c in map(chr, range(0x110000)) if c.isnumeric()) => 2023
+sum(1 for c in map(chr, range(0x110000)) if c.isalpha()) => 145672
+sum(1 for c in map(chr, range(0x110000)) if c.isupper()) => 2006
+sum(1 for c in map(chr, range(0x110000)) if c.islower()) => 2595
+sum(1 for c in map(chr, range(0x110000)) if c.isprintable()) => 159613
+sum(1 for c in map(chr, range(0x110000)) if c.isidentifier()) => 145894
+sum(1 for c in map(chr, range(0x110000)) if c.isspace()) => 29
+sum(1 for c in map(chr, range(0x110000)) if c.istitle()) => 2037
+sum(ord(c.upper()[0]) for c in map(chr, range(0x20000)) if not 0xd800... => 8470854598
+sum(ord(c.lower()[0]) for c in map(chr, range(0x20000)) if not 0xd800... => 8477135061
+sum(len(c.casefold()) for c in map(chr, range(0x20000))) => 131192
+sum(len(repr(c)) for c in map(chr, range(0x30000))) => 1005885

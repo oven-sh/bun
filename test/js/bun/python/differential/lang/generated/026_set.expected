@@ -1,0 +1,324 @@
+status: 0
+script: 496318ff8f35d56e
+source: feff616f55bf5700
+---
+a => {1, 2, 3}
+len(a) => 3
+1 in a => True
+9 in a => False
+1 not in a => False
+bool(a) => True
+bool(set()) => False
+set() => set()
+{1} => {1}
+{1, 1, 1} => {1}
+{1, 1.0, True} => {1}
+{0, False, 0.0} => {0}
+type({1}) => <class 'set'>
+type({}) => <class 'dict'>
+type(set()) => <class 'set'>
+set([1, 2, 2]) => {1, 2}
+set((1, 2)) => {1, 2}
+s(set("abca")) => ['a', 'b', 'c']
+set(range(5)) => {0, 1, 2, 3, 4}
+set({1: 2}) => {1}
+set({1}) => {1}
+set(x for x in [1, 2]) => {1, 2}
+set([]) => set()
+set("") => set()
+set(frozenset([1])) => {1}
+set(iter([3])) => {3}
+s({(1, 2), "a", None, 1.5, b"x", frozenset()}) => ['a', (1, 2), 1.5, None, b'x', frozenset()]
+set(1) => TypeError: 'int' object is not iterable
+set(None) => TypeError: 'NoneType' object is not iterable
+set(1, 2) => TypeError: set expected at most 1 argument, got 2
+set([[]]) => TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+{[]} => TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+{{}} => TypeError: cannot use 'dict' as a set element (unhashable type: 'dict')
+{set()} => TypeError: cannot use 'set' as a set element (unhashable type: 'set')
+{(1, [])} => TypeError: cannot use 'tuple' as a set element (unhashable type: 'list')
+[] in a => TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+set() in a => False
+{1} in {frozenset({1})} => True
+a[0] => TypeError: 'set' object is not subscriptable
+hash(a) => TypeError: unhashable type: 'set'
+a + b => TypeError: unsupported operand type(s) for +: 'set' and 'set'
+a * 2 => TypeError: unsupported operand type(s) for *: 'set' and 'int'
+set(a=1) => TypeError: set() takes no keyword arguments
+a | b => {1, 2, 3, 4, 5}
+a & b => {3}
+a - b => {1, 2}
+b - a => {4, 5}
+a ^ b => {1, 2, 4, 5}
+a | set() => {1, 2, 3}
+a & set() => set()
+a - set() => {1, 2, 3}
+a ^ set() => {1, 2, 3}
+a | a => {1, 2, 3}
+a & a => {1, 2, 3}
+a - a => set()
+a ^ a => set()
+a | b | {9} => {1, 2, 3, 4, 5, 9}
+a & b & {3} => {3}
+a - b - {1} => {2}
+set() | set() => set()
+a.union(b) => {1, 2, 3, 4, 5}
+a.union([7], (8,)) => {1, 2, 3, 7, 8}
+a.union() => {1, 2, 3}
+a.union("x") - a => {'x'}
+a.intersection(b) => {3}
+a.intersection([1, 2], [2, 3]) => {2}
+a.intersection() => {1, 2, 3}
+a.difference(b) => {1, 2}
+a.difference([1], [2]) => {3}
+a.difference() => {1, 2, 3}
+a.symmetric_difference(b) => {1, 2, 4, 5}
+a.symmetric_difference([1, 9]) => {2, 3, 9}
+a.union({}) => {1, 2, 3}
+a.union(range(2)) => {0, 1, 2, 3}
+a.intersection(range(2, 10)) => {2, 3}
+a.difference({1: 0}) => {2, 3}
+a | [1] => TypeError: unsupported operand type(s) for |: 'set' and 'list'
+a & [1] => TypeError: unsupported operand type(s) for &: 'set' and 'list'
+a - [1] => TypeError: unsupported operand type(s) for -: 'set' and 'list'
+a ^ [1] => TypeError: unsupported operand type(s) for ^: 'set' and 'list'
+[1] | a => TypeError: unsupported operand type(s) for |: 'list' and 'set'
+a | 1 => TypeError: unsupported operand type(s) for |: 'set' and 'int'
+a | None => TypeError: unsupported operand type(s) for |: 'set' and 'NoneType'
+a.union(1) => TypeError: 'int' object is not iterable
+a.union([[]]) => TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+a.intersection(1) => TypeError: 'int' object is not iterable
+a.symmetric_difference() => TypeError: set.symmetric_difference() takes exactly one argument (0 given)
+a.symmetric_difference([1], [2]) => TypeError: set.symmetric_difference() takes exactly one argument (2 given)
+a == {3, 2, 1} => True
+a != b => True
+a == frozenset(a) => True
+a == [1, 2, 3] => False
+a == {1: 0, 2: 0, 3: 0}.keys() => True
+{1, 2} < a => True
+{1, 2} <= a => True
+a <= a => True
+a < a => False
+a > {1} => True
+a >= {1} => True
+a >= a => True
+a > a => False
+{1, 9} < a => False
+{1, 9} <= a => False
+set() < a => True
+set() <= set() => True
+set() < set() => False
+a < b => False
+a > b => False
+a <= b => False
+{1} < {2} => False
+a.issubset(a) => True
+a.issubset({1, 2, 3, 4}) => True
+a.issubset([1, 2, 3]) => True
+a.issubset([1]) => False
+a.issubset(range(10)) => True
+a.issuperset({1}) => True
+a.issuperset([1, 2]) => True
+a.issuperset([9]) => False
+a.issuperset([]) => True
+a.isdisjoint(b) => False
+a.isdisjoint({9}) => True
+a.isdisjoint([]) => True
+a.isdisjoint([3]) => False
+set().isdisjoint(set()) => True
+a.isdisjoint("ab") => True
+set().issubset([]) => True
+a < [1] => TypeError: '<' not supported between instances of 'set' and 'list'
+a <= 1 => TypeError: '<=' not supported between instances of 'set' and 'int'
+a.issubset(1) => TypeError: 'int' object is not iterable
+a.isdisjoint(1) => TypeError: 'int' object is not iterable
+a.isdisjoint([[]]) => TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+x.add(2) => None
+set(x) => {1, 2}
+x.add(2) => None
+set(x) => {1, 2}
+x.add("a") or s(x) => ['a', 1, 2]
+x.add(None) or len(x) => 4
+x.add((1, 2)) or len(x) => 5
+x.add([]) => TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+x.add() => TypeError: set.add() takes exactly one argument (0 given)
+x.add(1, 2) => TypeError: set.add() takes exactly one argument (2 given)
+x.remove(1) => None
+x => {2, 3}
+x.discard(2) => None
+x => {3}
+x.discard(9) => None
+x => {3}
+x.remove(9) => KeyError: 9
+x.remove("a") => KeyError: 'a'
+x.remove((1, 2)) => KeyError: (1, 2)
+x.remove([]) => TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+x.discard([]) => TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+x.remove({9}) => KeyError: {9}
+set()
+y => set()
+{1} in {frozenset({1})} => True
+x.pop() => 1
+x => set()
+set().pop() => KeyError: 'pop from an empty set'
+sorted([x.pop(), x.pop(), x.pop()]) => [1, 2, 3]
+x => set()
+x.clear() => None
+x => set()
+len(x) => 0
+x => {1, 2}
+c => {1, 2, 3}
+type(c) => <class 'set'>
+x.update([2, 3]) => None
+x => {1, 2, 3}
+['a', 1, 2, 3, 4, 5]
+6
+{1, 2, 3, 4}
+x.intersection_update([1, 2, 9]) => None
+x => {1, 2}
+{1}
+{1}
+x.difference_update([1], [2]) => None
+x => {3, 4}
+{3, 4}
+set()
+x.symmetric_difference_update([3, 4]) => None
+x => {1, 2, 4}
+set()
+{1}.update(1) => TypeError: 'int' object is not iterable
+{1}.update([[]]) => TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+{1}.intersection_update(1) => TypeError: 'int' object is not iterable
+{1}.difference_update(1) => TypeError: 'int' object is not iterable
+{1}.symmetric_difference_update(1) => TypeError: 'int' object is not iterable
+x => {1, 2, 3}
+y is x => True
+{1, 3}
+{3}
+x => {4}
+y is x => True
+x => {9, 4}
+type(x) => <class 'set'>
+bad_ior() => TypeError: unsupported operand type(s) for |=: 'set' and 'list'
+bad_iand() => TypeError: unsupported operand type(s) for &=: 'set' and 'list'
+bad_isub() => TypeError: unsupported operand type(s) for -=: 'set' and 'list'
+bad_ixor() => TypeError: unsupported operand type(s) for ^=: 'set' and 'list'
+{3, 1, 2} => {1, 2, 3}
+{10, 5, 0} => {0, 10, 5}
+{8, 0, 16} => {8, 0, 16}
+{-1, 1, 0} => {0, 1, -1}
+{100, 200, 300} => {200, 100, 300}
+set(range(10)) => {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+set(range(9, -1, -1)) => {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+{5, 13, 21} => {13, 21, 5}
+{1000, 1, 100, 10} => {1000, 1, 10, 100}
+set([7, 15, 23, 31]) => {31, 15, 23, 7}
+{2 ** 10, 2 ** 20, 2 ** 5} => {1024, 1048576, 32}
+{-5, -3, -1} => {-5, -3, -1}
+{-2, -1} => {-2, -1}
+{33, 1, 65} => {65, 33, 1}
+set(range(0, 100, 7)) => {0, 98, 35, 70, 7, 42, 77, 14, 49, 84, 21, 56, 91, 28, 63}
+set(range(20, 0, -3)) => {2, 5, 8, 11, 14, 17, 20}
+z => {1, 33, 9, 41, 17, 25}
+list(z) => [1, 33, 9, 41, 17, 25]
+{33, 9, 41, 17, 49, 25}
+{1, 33, 9, 41, 17, 49, 25}
+{1, 2, 4, 5, 7, 8, 10, 11, 13, 14, 16, 17, 19, 20, 22, 23, 25, 26, 28, 29}
+{1, 2, 4, 5, 7, 8, 10, 11, 13, 14, 16, 17, 19, 20, 22, 23, 25, 26, 28, 29, 50, 75, 100}
+{1, 2, 3} | {10, 20} => {1, 2, 3, 20, 10}
+{10, 20} | {1, 2, 3} => {1, 2, 3, 20, 10}
+{1, 2, 3, 4, 5} & {5, 4, 9} => {4, 5}
+{5, 4, 9} & {1, 2, 3, 4, 5} => {4, 5}
+{1, 2, 3, 4} - {2} => {1, 3, 4}
+{1, 2} ^ {2, 3} => {1, 3}
+{9, 8, 7} ^ {7, 6} => {8, 9, 6}
+set([3, 2, 1]).union([0]) => {0, 1, 2, 3}
+{1.0, 2, 3.5} => {1.0, 2, 3.5}
+{True, 2} => {True, 2}
+{1.5, 2.5, 0.5} => {0.5, 1.5, 2.5}
+{10 ** 20, 1} => {1, 100000000000000000000}
+{2 ** 61 - 1, 0, 1} => {2305843009213693951, 0, 1}
+{2 ** 61, 1} => {2305843009213693952, 1}
+{0.0, 1e300} => {0.0, 1e+300}
+[x for x in {4, 2, 8}] => [8, 2, 4]
+sorted({3, 1, 2}) => [1, 2, 3]
+list({2, 1}) => [1, 2]
+tuple({2, 1}) => (1, 2)
+sum({1, 2, 3}) => 6
+max({1, 5, 3}) => 5
+min({1, 5, 3}) => 1
+len({1, 2}) => 2
+any({0}) => False
+all({0, 1}) => False
+sorted(map(str, {1, 2})) => ['1', '2']
+list(enumerate({7})) => [(0, 7)]
+{x * 2 for x in {1, 2, 3}} => {2, 4, 6}
+sorted(zip({1}, {2})) => [(1, 2)]
+grow() => RuntimeError: Set changed size during iteration
+shrink() => RuntimeError: Set changed size during iteration
+next(it) => 1
+it.__length_hint__() => 2
+type(it).__name__ => set_iterator
+sorted(it) => [2, 3]
+next(it, "end") => end
+repr(set()) => set()
+repr({1}) => {1}
+str({1, 2}) => {1, 2}
+repr({"a"}) => {'a'}
+repr({(1, 2)}) => {(1, 2)}
+repr({None}) => {None}
+repr({frozenset()}) => {frozenset()}
+repr({frozenset({1})}) => {frozenset({1})}
+repr({1.5}) => {1.5}
+"%s" % {1} => {1}
+f"{ {1} }" => {1}
+repr({b"a"}) => {b'a'}
+repr(r) => R()
+repr(R([1])) => R({1})
+type(R([1]) | {2}) => <class 'set'>
+type({2} | R([1])) => <class 'set'>
+type(R([1]).copy()) => <class 'set'>
+type(R([1]).union([2])) => <class 'set'>
+R([1]) == {1} => True
+isinstance(R(), set) => True
+len(R("aab")) => 2
+a.__len__() => 3
+a.__contains__(1) => True
+a.__and__(b) => {3}
+a.__or__(b) => {1, 2, 3, 4, 5}
+a.__sub__(b) => {1, 2}
+a.__xor__(b) => {1, 2, 4, 5}
+a.__rand__(b) => {3}
+a.__ror__(b) => {1, 2, 3, 4, 5}
+a.__rsub__(b) => {4, 5}
+a.__rxor__(b) => {1, 2, 4, 5}
+a.__eq__(a) => True
+a.__eq__(1) => NotImplemented
+a.__le__(a) => True
+a.__lt__(1) => NotImplemented
+a.__and__([1]) => NotImplemented
+a.__ge__(b) => False
+a.__gt__(b) => False
+a.__ne__(b) => True
+set.__hash__ => None
+a.__iand__({1, 2, 3}) => {1, 2, 3}
+a.__repr__() => {1, 2, 3}
+a.__sizeof__() > 0 => True
+set.__mro__ => (<class 'set'>, <class 'object'>)
+set.__name__ => set
+sorted(n for n in dir(set) if not n.startswith("_")) => ['add', 'clear', 'copy', 'difference', 'difference_update', 'discard', 'intersection', 'intersection_update', 'isdisjoint', 'issubset', 'issuperset', 'pop', 'remove', 'symmetric_difference', 'symmetric_difference_update', 'union', 'update']
+len(big) => 100000
+99999 in big => True
+100000 in big => False
+sum(big) => 4999950000
+len(big & set(range(50000, 150000))) => 50000
+len(big | set(range(50000, 150000))) => 150000
+len(big - set(range(50000))) => 50000
+min(big) => 0
+max(big) => 99999
+list(big)[:5] => [0, 1, 2, 3, 4]
+len(big ^ set(range(1, 100001))) => 2
+len(st) => 1000
+"s999" in st => True
+"s1000" in st => False
+len(st & {"s1", "x"}) => 1
+sorted(st)[:3] => ['s0', 's1', 's10']

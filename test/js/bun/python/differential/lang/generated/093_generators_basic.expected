@@ -1,0 +1,214 @@
+status: 0
+script: a2aa6b433ddc0222
+source: cc99a150aa378e67
+---
+type(it).__name__ => generator
+iter(it) is it => True
+start; 1
+middle; 2
+next(it) => end; StopIteration: 
+next(it) => StopIteration: 
+default
+start; middle; end; [1, 2]
+start; middle; end; [1, 2]
+start; middle; end; sum(g()) => 3
+start; middle; end; max(g()) => 2
+start; middle; end; tuple(g()) => (1, 2)
+start; middle; 2 in g() => True
+start; middle; end; 5 in g() => False
+start; middle; end; a => 1
+b => 2
+start; middle; end; 1 2
+start; start; middle; middle; end; {1: 1, 2: 2}
+list(empty()) => []
+list(only_return()) => []
+StopIteration('value') value ('value',)
+StopIteration() None ()
+StopIteration((1, 2)) (1, 2) ((1, 2),)
+StopIteration(ValueError('returned, not raised')) ValueError('returned, not raised')
+list(count(5)) => [0, 1, 2, 3, 4]
+list(count(0)) => []
+sum(count(100)) => 4950
+list(zip(count(3), count(10))) => [(0, 0), (1, 1), (2, 2)]
+list(map(lambda v: v * 2, count(3))) => [0, 2, 4]
+list(enumerate(count(2))) => [(0, 0), (1, 1)]
+sorted(count(3), reverse=True) => [2, 1, 0]
+list(filter(None, count(3))) => [1, 2]
+any(count(2)) => True
+all(count(2)) => False
+min(count(3)) => 0
+"".join(str(v) for v in count(3)) => 012
+[*count(2), *count(2)] => [0, 1, 0, 1]
+{*count(3)} => {0, 1, 2}
+{k: k for k in count(2)} => {0: 0, 1: 1}
+[0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377]
+list(take(5, fib())) => [0, 1, 1, 2, 3]
+list(take(3, take(10, fib()))) => [0, 1, 1]
+created
+body runs with 1; 1
+next(args(1, d=4)) => (1, 2, (), 4, {})
+next(args(1, 2, 3, d=4, z=5)) => (1, 2, (3,), 4, {'z': 5})
+args() => TypeError: args() missing 1 required positional argument: 'a'
+args(1) => TypeError: args() missing 1 required keyword-only argument: 'd'
+args(1, d=1, a=2) => TypeError: args() got multiple values for argument 'a'
+[(0, 0, ['i', 'total']), (1, 1, ['i', 'total']), (3, 2, ['i', 'total'])]
+next(g1) => 0
+next(g1) => 1
+next(g2) => 0
+next(g1) => 2
+next(g2) => 1
+next(e) => first
+next(e) => ('got', None)
+e.send(5) => ('got', 5)
+e.send(None) => ('got', None)
+e.send((1, 2)) => ('got', (1, 2))
+6; [None, None, 1, 2, 3, 4, 5, 6, 7, 7, 8, 9, (10, 11), None] (0, 1, [2, 3], 9, 8, '9', {10: 11}, 12, 13)
+[None, None, (), (1,), (1, 2), (1, 2), [1], (1, 2, 3), 'fn', False, 2, None, None, None, None]
+cleanup; [1, 2]
+enter; exit None; ['cm', 'cm2']
+[0, 1, 'else', 'while else']
+[(0, 0), (0, 1), (2, 0), (2, 1)]
+['handling v', 'still handling v', 'after']
+[5, 4, 3, 2, 1]
+[1, 2, 3, 4, 5, 6]
+list(c) => [10, 20, 30]
+list(c) => [10, 20, 30]
+list(c.gen(2)) => [2, 4, 6]
+list(C.sg()) => ['static']
+list(c.cg()) => ['C']
+list(c.pg) => ['prop']
+[a * b for a in c for b in c][:4] => [100, 200, 300, 200]
+20 in c => True
+max(c) => 30
+list(lam()) => [1]
+type(lam()).__name__ => generator
+[1, 2]
+n.__name__ => named
+n.__qualname__ => named
+n.gi_code is named.__code__ => True
+n.gi_running => False
+n.gi_suspended => False
+n.gi_yieldfrom => None
+n.gi_frame is not None => True
+n.gi_frame.f_code.co_name => named
+n.gi_frame.f_lineno == named.__code__.co_firstlineno => True
+repr(n)[:29] => <generator object named at 0x
+type(n).__module__ => builtins
+hasattr(n, "__dict__") => False
+n.gi_frame.f_locals => {}
+n.gi_frame.f_back => None
+n.gi_running => False
+n.gi_suspended => True
+n.gi_frame is not None => True
+n.gi_running => False
+n.gi_suspended => False
+n.gi_frame => None
+n.__name__ => renamed
+n.__qualname__ => q.renamed
+repr(n)[:32] => <generator object q.renamed at 0
+named.__name__ => named
+TypeError: __name__ must be set to a string object
+AttributeError: attribute 'gi_code' of 'generator' objects is not writable
+AttributeError: 'generator' object has no attribute 'x' and no __dict__ for setting new attributes
+TypeError: __name__ must be set to a string object
+AttributeError: attribute 'gi_running' of 'generator' objects is not writable
+next(me) => (True, False, True)
+me.gi_running => False
+me.gi_suspended => True
+C.__iter__.__code__.co_flags & 0x20 != 0 => True
+named.__code__.co_flags & 0x20 != 0 => True
+(lambda: 0).__code__.co_flags & 0x20 != 0 => False
+type(named).__name__ => function
+C().gen(1).__qualname__ => C.gen
+type(n)() => TypeError: cannot create 'generator' instances
+type(n)(named.__code__) => TypeError: cannot create 'generator' instances
+len(n) => TypeError: object of type 'generator' has no len()
+n[0] => TypeError: 'generator' object is not subscriptable
+n + n => TypeError: unsupported operand type(s) for +: 'generator' and 'generator'
+n() => TypeError: 'generator' object is not callable
+reversed(n) => TypeError: 'generator' object is not reversible
+hash(n) == hash(n) => True
+n == n => True
+n < n => TypeError: '<' not supported between instances of 'generator' and 'generator'
+bool(n) => True
+type("X", (type(n),), {}) => TypeError: type 'generator' is not an acceptable base type
+{'a': 1}
+{'a': 1, 'b': 2}
+{'a': 1, 'b': 2, 'c': 3}
+SyntaxError: 'yield' outside function <- yield
+SyntaxError: 'yield' outside function <- yield 1
+SyntaxError: 'yield' outside function <- x = yield
+SyntaxError: assignment to yield expression not possible <- def f(): yield = 1
+SyntaxError: assignment to yield expression not possible <- def f(): x = yield = 1
+SyntaxError: invalid syntax <- def f(): yield: int
+SyntaxError: invalid syntax <- def f(): yield x for x in y
+SyntaxError: cannot assign to yield expression here. Maybe you meant '==' instead of '='? <- def f(): (yield) = 1
+SyntaxError: invalid syntax <- def f(): yield += 1
+ok: def f(): x = yield 1, 2
+SyntaxError: invalid syntax <- def f(): x = 1 + yield
+ok: def f(): x = 1 + (yield)
+SyntaxError: invalid syntax <- def f(): f(yield)
+SyntaxError: invalid syntax <- def f(): f(yield 1)
+SyntaxError: invalid syntax <- def f(): f(yield, 1)
+SyntaxError: invalid syntax <- def f(): f(a=yield)
+SyntaxError: invalid syntax <- def f(): [yield]
+ok: def f(): [(yield)]
+SyntaxError: invalid syntax <- def f(): x[yield]
+SyntaxError: invalid syntax <- def f(): x[yield 1]
+SyntaxError: invalid syntax <- def f(): return yield
+ok: def f(): return (yield)
+SyntaxError: invalid syntax <- def f(): yield yield
+ok: def f(): yield (yield)
+SyntaxError: invalid syntax <- def f(): del yield
+SyntaxError: invalid syntax <- def f(): not yield
+ok: def f(): yield not x
+SyntaxError: invalid syntax <- def f(): lambda: yield
+ok: def f(): lambda: (yield)
+SyntaxError: invalid syntax <- def f(): x = yield from
+SyntaxError: invalid syntax <- def f(): yield from x, y
+SyntaxError: invalid syntax <- def f(): yield from *x
+SyntaxError: can't use starred expression here <- def f(): yield *x
+ok: def f(): yield *x, y
+SyntaxError: invalid syntax <- def f(): yield **x
+SyntaxError: 'yield' outside function <- class C: yield
+ok: class C:\n def f(self): yield
+SyntaxError: 'yield' inside list comprehension <- def f(): [(yield x) for x in y]
+SyntaxError: 'yield' inside generator expression <- def f(): ((yield x) for x in y)
+SyntaxError: 'yield' inside set comprehension <- def f(): {(yield x) for x in y}
+SyntaxError: 'yield' inside dict comprehension <- def f(): {x: (yield) for x in y}
+ok: def f(): [x for x in (yield)]
+SyntaxError: 'yield' inside list comprehension <- def f(): [x for x in y if (yield)]
+SyntaxError: 'yield' inside list comprehension <- def f(): [x for x in y for z in (yield)]
+SyntaxError: 'yield' outside function <- def f(x=(yield)): pass
+ok: def g():\n def f(x=(yield)): pass
+SyntaxError: yield expression cannot be used within an annotation <- def f(x: (yield)): pass
+SyntaxError: yield expression cannot be used within an annotation <- def f() -> (yield): pass
+ok: def g():\n @(yield)\n def f(): pass
+SyntaxError: invalid syntax <- def f(): if (yield): pass
+ok: def f():\n if (yield): pass
+ok: def f():\n while (yield): pass
+ok: def f():\n for x in (yield): pass
+ok: def f():\n with (yield): pass
+ok: def f():\n with (yield) as x: pass
+ok: def f():\n assert (yield)
+ok: def f():\n raise (yield)
+ok: def f(): yield; return 1
+SyntaxError: 'await' outside async function <- def f(): await x; yield
+SyntaxError: invalid syntax <- def f(): print(yield)
+ok: def f(): x = yield; y = yield x
+ok: def f(): (x := (yield))
+SyntaxError: invalid syntax <- def f(): x := yield
+SyntaxError: invalid syntax <- def f(): yield x := 1
+ok: def f(): yield (x := 1)
+ok: def f(): f'{yield}'
+ok: def f(): f'{(yield)}'
+ok: def f(): yield 1 if x else 2
+ok: def f(): (yield 1) if x else (yield 2)
+SyntaxError: invalid syntax <- def f(): x if yield else y
+SyntaxError: invalid syntax <- def f(): yield,
+ok: def f(): yield()
+ok: def f(): yield[1]
+SyntaxError: invalid syntax <- def f(): yield.x
+ok: def f(): yield -1
+ok: def f(): yield...
+SyntaxError: invalid syntax <- def f(): global yield

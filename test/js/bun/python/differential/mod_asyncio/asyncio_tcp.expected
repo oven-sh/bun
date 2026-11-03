@@ -1,0 +1,29 @@
+status: 0
+script: 415d9d22efa09578
+---
+True 1
+0 127.0.0.1 True
+([b'CLIENT 0 LINE 0\n', b'CLIENT 0 LINE 1\n', b'CLIENT 0 LINE 2\n'], b'')
+1 127.0.0.1 True
+2 127.0.0.1 True
+3 127.0.0.1 True
+4 127.0.0.1 True
+5 127.0.0.1 True
+([b'CLIENT 1 LINE 0\n', b'CLIENT 1 LINE 1\n', b'CLIENT 1 LINE 2\n'], b'')
+([b'CLIENT 2 LINE 0\n', b'CLIENT 2 LINE 1\n', b'CLIENT 2 LINE 2\n'], b'')
+([b'CLIENT 3 LINE 0\n', b'CLIENT 3 LINE 1\n', b'CLIENT 3 LINE 2\n'], b'')
+([b'CLIENT 4 LINE 0\n', b'CLIENT 4 LINE 1\n', b'CLIENT 4 LINE 2\n'], b'')
+([b'CLIENT 5 LINE 0\n', b'CLIENT 5 LINE 1\n', b'CLIENT 5 LINE 2\n'], b'')
+300000 True
+False
+refused 111
+b'low level'
+4 bytearray(b'into')
+b'reader'
+True False
+writable
+True
+True False
+b'margatad'
+b'UNIX\n'
+skip getaddrinfo (executor)

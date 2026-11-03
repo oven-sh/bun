@@ -1,0 +1,140 @@
+status: 0
+script: e8effac7385d3ade
+---
+['HMAC', 'UnknownHashError', '_GIL_MINSIZE', 'compute_blake2b_32', 'compute_blake2s_32', 'compute_digest', 'compute_md5', 'compute_sha1', 'compute_sha224', 'compute_sha256', 'compute_sha384', 'compute_sha3_224', 'compute_sha3_256', 'compute_sha3_384', 'compute_sha3_512', 'compute_sha512', 'new'] (<class '_hmac.UnknownHashError'>, <class 'ValueError'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>) _hmac (<class '_hmac.HMAC'>, <class 'object'>) 2048
+[('__repr__', 'wrapper_descriptor'), ('block_size', 'getset_descriptor'), ('copy', 'method_descriptor'), ('digest', 'method_descriptor'), ('digest_size', 'getset_descriptor'), ('hexdigest', 'method_descriptor'), ('name', 'getset_descriptor'), ('update', 'method_descriptor')]
+md5 hmac-md5 16 64 ed7e724d3a91554aaa2043041d9c5305 True
+  0 dd2701993d29fdd0b032c233
+  250 bc69b204599a4104382d5592
+sha1 hmac-sha1 20 64 772b71c8a2997e768be01d9711e4a4f34a24ef33 True
+  0 9b4a918f398d74d3e367970a
+  250 d9acb8a265a23cb35101be16
+sha224 hmac-sha224 28 64 e671a34e8cea889324905af2e923d564cddef30e77925c8982df122e True
+  0 d473c456fa6aad72bbec9c6a
+  250 ff6bcc174112fb71b7366907
+sha256 hmac-sha256 32 64 b60090e3052297aeb5a080889ce2fc4bca957e756faeb4df7d31800ca1e771ec True
+  0 fd7adb152c05ef80dccf50a1
+  250 fb2ab7b5f077002b4b7471d0
+sha384 hmac-sha384 48 128 847b8055f85f4c8db26b6225fe1cce69783466ffee767a97d6c865c388fcd2fddd4dc1b96acfb1fd5b6461adc8f07cd4 True
+  0 948f7c5caa500c31d7d4a0f5
+  250 733035a160efa57fbb768894
+sha512 hmac-sha512 64 128 94ec958658ae2d2e92ae742007904d439af3a5509156f6ad5bd0bab74868b4cbb7cbc817162b11e4aff59813415a730e9720fc5ff1d1015a1f7d1b67fb047d87 True
+  0 29689f6b79a8dd686068c2ee
+  250 393be58ee85f0950230885e5
+sha3_224 hmac-sha3_224 28 144 45efad5f5320114b318727e6b7bb05a173689be3b989e7a6425cf5ff True
+  0 45590e15e0bcb331f9de5c3b
+  250 4c266e8d91a8f764edccb1e1
+sha3_256 hmac-sha3_256 32 136 1b92d4a22666154356c30c31595306c7db17a27a0fb02efae867f69018d3a876 True
+  0 776bdf4f598121a2ac38c408
+  250 8e3aa4789df7a3956c7f58dd
+sha3_384 hmac-sha3_384 48 104 ca8c62eb0fd2e3c0b527a5abcdb532540f7a43d185153eb32128496281f138aac22ca6514a024761c3d552be713f6e3e True
+  0 175064a7663c17b5fa7abcd6
+  250 67bd7854f71796926e3c08eb
+sha3_512 hmac-sha3_512 64 72 f5466becfd5399c75f8a45ff14678769529b22c036a1bdca835c12ab30de681870e0e56c5ea8ffcc274872e83f8a6a90f4fa7c30c29e5e58f48817d49adc7ff7 True
+  0 aedf400b73941c7a3bfb6f72
+  250 36cda30e28556a0f058c805e
+sha2_224 hmac-sha224 28 64 e671a34e8cea889324905af2e923d564cddef30e77925c8982df122e True
+  0 d473c456fa6aad72bbec9c6a
+  250 ff6bcc174112fb71b7366907
+sha2_256 hmac-sha256 32 64 b60090e3052297aeb5a080889ce2fc4bca957e756faeb4df7d31800ca1e771ec True
+  0 fd7adb152c05ef80dccf50a1
+  250 fb2ab7b5f077002b4b7471d0
+sha2_384 hmac-sha384 48 128 847b8055f85f4c8db26b6225fe1cce69783466ffee767a97d6c865c388fcd2fddd4dc1b96acfb1fd5b6461adc8f07cd4 True
+  0 948f7c5caa500c31d7d4a0f5
+  250 733035a160efa57fbb768894
+sha2_512 hmac-sha512 64 128 94ec958658ae2d2e92ae742007904d439af3a5509156f6ad5bd0bab74868b4cbb7cbc817162b11e4aff59813415a730e9720fc5ff1d1015a1f7d1b67fb047d87 True
+  0 29689f6b79a8dd686068c2ee
+  250 393be58ee85f0950230885e5
+MD5 hmac-md5 16 64 ed7e724d3a91554aaa2043041d9c5305 True
+  0 dd2701993d29fdd0b032c233
+  250 bc69b204599a4104382d5592
+SHA1 hmac-sha1 20 64 772b71c8a2997e768be01d9711e4a4f34a24ef33 True
+  0 9b4a918f398d74d3e367970a
+  250 d9acb8a265a23cb35101be16
+SHA224 hmac-sha224 28 64 e671a34e8cea889324905af2e923d564cddef30e77925c8982df122e True
+  0 d473c456fa6aad72bbec9c6a
+  250 ff6bcc174112fb71b7366907
+SHA256 hmac-sha256 32 64 b60090e3052297aeb5a080889ce2fc4bca957e756faeb4df7d31800ca1e771ec True
+  0 fd7adb152c05ef80dccf50a1
+  250 fb2ab7b5f077002b4b7471d0
+SHA384 hmac-sha384 48 128 847b8055f85f4c8db26b6225fe1cce69783466ffee767a97d6c865c388fcd2fddd4dc1b96acfb1fd5b6461adc8f07cd4 True
+  0 948f7c5caa500c31d7d4a0f5
+  250 733035a160efa57fbb768894
+SHA512 hmac-sha512 64 128 94ec958658ae2d2e92ae742007904d439af3a5509156f6ad5bd0bab74868b4cbb7cbc817162b11e4aff59813415a730e9720fc5ff1d1015a1f7d1b67fb047d87 True
+  0 29689f6b79a8dd686068c2ee
+  250 393be58ee85f0950230885e5
+UnknownHashError: unsupported hash algorithm sha512_256
+UnknownHashError: unsupported hash algorithm shake_128
+UnknownHashError: unsupported hash algorithm hmac-sha256
+UnknownHashError: unsupported hash algorithm sha2-256
+UnknownHashError: unsupported hash algorithm blake2s256
+UnknownHashError: unsupported hash algorithm blake2b512
+UnknownHashError: unsupported hash algorithm sha3-256
+UnknownHashError: unsupported hash algorithm ripemd160
+<sha256 HMAC object>
+<sha3_256 HMAC object>
+<sha512 HMAC object>
+UnknownHashError: unsupported hash algorithm 
+md5 4e4748e62b463521f6775fbf921234b5 74e6f7298a9c2d16 4fa236b64cf5eebd
+sha1 2088df74d5f2146b48146caf4965377e9d0be3a4 fbdb1d1b18aa6c08 80364654de42351d
+sha224 a0b5eecae3f74f0561a8da6f389f78f1a3895c8c183c31c1756d7925 5ce14f7289466221 2605668997023cc4
+sha256 6e9ef29b75fffc5b7abae527d58fdadb2fe42e7219011976917343065f58ed4a b613679a0814d9ec b61f300e0fd3a947
+sha384 0fd3ae3237be98c64a075b7394989fc6789f31788fada42eada85ee6698bde2feae20b66271b67544b9062c773b2d86f 6c1f2ee938fad2e2 bb43e90486732ecb
+sha512 e477384d7ca229dd1426e64b63ebf2d36ebd6d7e669a6735424e72ea6c01d3f8b56eb39c36d8232f5427999b8d1a3f9cd1128fc69f4d75b434216810fa367e98 b936cee86c9f87aa e8af3c979349c331
+sha3_224 d67a1f6c06fba02851bdb27bb78463f805b63f34bfbc7ebb8bf24016 1b9044e0d5bb4ef9 614d3bc438251d13
+sha3_256 0f43852a24d5597a8200312a95993991581679d63264f1b1ad4b5ccac7fe8ba4 e841c164e5b4f10c 099977f57081ba17
+sha3_384 be48b7a82bf3dda2dc743a584e7a7d6375a664e611d240a6c951f3d15e18666fc6d4b3e31f8d6c44caec98667209aa31 adca89f07bbfbeaf b7785c6e90228ad0
+sha3_512 4b733ae1713d83ed27e49527a1e4ce032ecad6657e82403b42c31f901f00bdc306fdc5d1e4b664530e9c691a01070d85e6479be0b9c43b28e0ed7740f90628cf cbcf45540782d4bc b5453f98e5dc9e22
+blake2s_32 bba8fa28708ae80d249e317318c95c859f3f77512be23910d5094d9110454d6f eaf4bb25938f4d20 018f131632ca2f9f
+blake2b_32 04e9ada930688cde75eec939782eed653073dd621d7643f813702976257cf037d325b50eedd417c01b6ad1f978fbe2980a93d27d854044e8626df6fa279d6680 198cd2006f66ff83 289bb8dcca806476
+cfb0a92a74f0b600e6364e352260f30542c6756729d397019f405ff4b128e0fcb1eb82f06c5939f207c87651772e60558be5cf77f1326bb566eb5fb5c1cc45f9 998d5d39acad301fad7d906adb391c363c726fd6eec3a7f25627ed04d66aff37
+TypeError: new() missing required argument 'key' (pos 1)
+TypeError: new() missing 1 required argument 'digestmod'
+TypeError: new() missing 1 required argument 'digestmod'
+UnknownHashError: unsupported hash algorithm None
+<md5 HMAC object>
+TypeError: Strings must be encoded before hashing
+TypeError: Strings must be encoded before hashing
+UnknownHashError: unsupported hash algorithm 1
+UnknownHashError: unsupported hash algorithm <built-in function openssl_sha256>
+UnknownHashError: unsupported hash algorithm <class '_blake2.blake2b'>
+UnknownHashError: unsupported hash algorithm <built-in function len>
+<md5 HMAC object>
+TypeError: object supporting the buffer API required
+<md5 HMAC object>
+TypeError: new() takes at most 3 arguments (4 given)
+TypeError: object supporting the buffer API required
+UnknownHashError: unsupported hash algorithm nope
+UnknownHashError: unsupported hash algorithm <built-in function md5>
+UnknownHashError: unsupported hash algorithm <built-in function sha256>
+UnknownHashError: unsupported hash algorithm <class '_sha3.sha3_256'>
+UnknownHashError: unsupported hash algorithm <class '_blake2.blake2s'>
+UnknownHashError: unsupported hash algorithm <built-in function openssl_sha1>
+<md5 HMAC object>
+TypeError: update() missing required argument 'msg' (pos 1)
+TypeError: Strings must be encoded before hashing
+None
+TypeError: update() takes at most 1 argument (2 given)
+TypeError: object supporting the buffer API required
+TypeError: HMAC.digest() takes no arguments (1 given)
+TypeError: copy() takes no arguments
+TypeError: HMAC.hexdigest() takes no arguments (1 given)
+<md5 HMAC object>
+TypeError: cannot create '_hmac.HMAC' instances
+AttributeError: attribute 'name' of '_hmac.HMAC' objects is not writable
+TypeError: type '_hmac.HMAC' is not an acceptable base type
+TypeError: compute_digest() missing required argument 'key' (pos 1)
+TypeError: compute_digest() missing required argument 'digest' (pos 3)
+UnknownHashError: unsupported hash algorithm nope
+TypeError: Strings must be encoded before hashing
+TypeError: Strings must be encoded before hashing
+UnknownHashError: unsupported hash algorithm <built-in function openssl_md5>
+b'w+q\xc8\xa2\x99~v\x8b\xe0\x1d\x97\x11\xe4\xa4\xf3J$\xef3'
+UnknownHashError: unsupported hash algorithm None
+TypeError: compute_md5 expected 2 arguments, got 0
+TypeError: Strings must be encoded before hashing
+TypeError: Strings must be encoded before hashing
+TypeError: compute_md5 expected 2 arguments, got 1
+TypeError: _hmac.compute_md5() takes no keyword arguments
+TypeError: object supporting the buffer API required
+TypeError: compute_md5 expected 2 arguments, got 3

@@ -1,0 +1,362 @@
+status: 0
+script: 2eb10c3cff7f6887
+---
+True True True
+<class '_json.Scanner'>
+1
+-1
+0
+0
+1.5
+-1.5
+1000.0
+1000.0
+1000.0
+0.001
+15000000000.0
+-0.0
+0.0
+inf
+-inf
+0.0
+123456789012345
+1234567890123456
+12345678901234567890
+-12345678901234567890123456789
+9007199254740991
+9007199254740992
+9007199254740993
+-9007199254740993
+0.1
+1.0
+100.0
+100.0
+1.0
+'x'
+''
+'\n'
+'é'
+'😀'
+'\ud83d'
+'\ude00'
+'\ud83dx'
+'\ud83d\n'
+'\ud83dA'
+'\ud83d😀'
+'é'
+'😀'
+'"\\/\x08\x0c\n\r\t'
+None
+True
+False
+nan
+inf
+-inf
+[]
+{}
+[1]
+[1, 2]
+[1, 2]
+{'a': 1}
+{'a': 1, 'b': []}
+1
+1
+[[[[]]]]
+{'a': {'b': {'c': {}}}}
+[1, 'a', None, True, False, 1.5, {'x': []}]
+{'a': 2}
+{'': 0}
+['😀', 1]
+{'😀': '😁'}
+'\x7f'
+'\u2028\u2029'
+[100000.0, 100000.0, 100000.0]
+'\x00'
+'\uffff'
+'ꯍꯍ'
+inf
+[0, -0.0, 0, 0.0]
+JSONDecodeError Expecting value: line 1 column 1 (char 0) Expecting value 0 1 1
+JSONDecodeError Expecting value: line 1 column 2 (char 1) Expecting value 1 1 2
+JSONDecodeError Expecting value: line 1 column 1 (char 0) Expecting value 0 1 1
+JSONDecodeError Expecting value: line 1 column 1 (char 0) Expecting value 0 1 1
+JSONDecodeError Extra data: line 1 column 2 (char 1) Extra data 1 1 2
+JSONDecodeError Extra data: line 1 column 2 (char 1) Extra data 1 1 2
+JSONDecodeError Expecting value: line 1 column 1 (char 0) Expecting value 0 1 1
+JSONDecodeError Extra data: line 1 column 2 (char 1) Extra data 1 1 2
+JSONDecodeError Extra data: line 1 column 2 (char 1) Extra data 1 1 2
+JSONDecodeError Extra data: line 1 column 2 (char 1) Extra data 1 1 2
+JSONDecodeError Expecting value: line 1 column 1 (char 0) Expecting value 0 1 1
+JSONDecodeError Expecting value: line 1 column 1 (char 0) Expecting value 0 1 1
+JSONDecodeError Expecting value: line 1 column 1 (char 0) Expecting value 0 1 1
+JSONDecodeError Expecting value: line 1 column 1 (char 0) Expecting value 0 1 1
+JSONDecodeError Expecting value: line 1 column 1 (char 0) Expecting value 0 1 1
+JSONDecodeError Extra data: line 1 column 5 (char 4) Extra data 4 1 5
+JSONDecodeError Expecting value: line 1 column 1 (char 0) Expecting value 0 1 1
+JSONDecodeError Expecting value: line 1 column 1 (char 0) Expecting value 0 1 1
+JSONDecodeError Expecting value: line 1 column 1 (char 0) Expecting value 0 1 1
+JSONDecodeError Expecting value: line 1 column 1 (char 0) Expecting value 0 1 1
+JSONDecodeError Expecting value: line 1 column 1 (char 0) Expecting value 0 1 1
+JSONDecodeError Expecting value: line 1 column 1 (char 0) Expecting value 0 1 1
+JSONDecodeError Expecting value: line 1 column 1 (char 0) Expecting value 0 1 1
+JSONDecodeError Unterminated string starting at: line 1 column 1 (char 0) Unterminated string starting at 0 1 1
+JSONDecodeError Unterminated string starting at: line 1 column 1 (char 0) Unterminated string starting at 0 1 1
+JSONDecodeError Unterminated string starting at: line 1 column 1 (char 0) Unterminated string starting at 0 1 1
+JSONDecodeError Invalid \escape: line 1 column 2 (char 1) Invalid \escape 1 1 2
+JSONDecodeError Invalid \uXXXX escape: line 1 column 3 (char 2) Invalid \uXXXX escape 2 1 3
+JSONDecodeError Invalid \uXXXX escape: line 1 column 3 (char 2) Invalid \uXXXX escape 2 1 3
+JSONDecodeError Invalid \uXXXX escape: line 1 column 3 (char 2) Invalid \uXXXX escape 2 1 3
+JSONDecodeError Invalid \uXXXX escape: line 1 column 3 (char 2) Invalid \uXXXX escape 2 1 3
+JSONDecodeError Invalid \uXXXX escape: line 1 column 3 (char 2) Invalid \uXXXX escape 2 1 3
+JSONDecodeError Invalid \uXXXX escape: line 1 column 3 (char 2) Invalid \uXXXX escape 2 1 3
+JSONDecodeError Unterminated string starting at: line 1 column 1 (char 0) Unterminated string starting at 0 1 1
+JSONDecodeError Invalid \uXXXX escape: line 1 column 9 (char 8) Invalid \uXXXX escape 8 1 9
+JSONDecodeError Invalid \uXXXX escape: line 1 column 9 (char 8) Invalid \uXXXX escape 8 1 9
+JSONDecodeError Invalid \uXXXX escape: line 1 column 9 (char 8) Invalid \uXXXX escape 8 1 9
+JSONDecodeError Invalid \uXXXX escape: line 1 column 9 (char 8) Invalid \uXXXX escape 8 1 9
+JSONDecodeError Unterminated string starting at: line 1 column 1 (char 0) Unterminated string starting at 0 1 1
+JSONDecodeError Unterminated string starting at: line 1 column 1 (char 0) Unterminated string starting at 0 1 1
+JSONDecodeError Invalid \uXXXX escape: line 1 column 9 (char 8) Invalid \uXXXX escape 8 1 9
+JSONDecodeError Invalid control character at: line 1 column 2 (char 1) Invalid control character at 1 1 2
+JSONDecodeError Invalid control character at: line 1 column 2 (char 1) Invalid control character at 1 1 2
+JSONDecodeError Invalid control character at: line 1 column 2 (char 1) Invalid control character at 1 1 2
+JSONDecodeError Invalid control character at: line 1 column 2 (char 1) Invalid control character at 1 1 2
+JSONDecodeError Invalid control character at: line 1 column 3 (char 2) Invalid control character at 2 1 3
+JSONDecodeError Expecting value: line 1 column 2 (char 1) Expecting value 1 1 2
+JSONDecodeError Expecting value: line 1 column 1 (char 0) Expecting value 0 1 1
+JSONDecodeError Expecting ',' delimiter: line 1 column 3 (char 2) Expecting ',' delimiter 2 1 3
+JSONDecodeError Expecting value: line 1 column 4 (char 3) Expecting value 3 1 4
+JSONDecodeError Illegal trailing comma before end of array: line 1 column 3 (char 2) Illegal trailing comma before end of array 2 1 3
+JSONDecodeError Expecting value: line 1 column 2 (char 1) Expecting value 1 1 2
+JSONDecodeError Expecting ',' delimiter: line 1 column 4 (char 3) Expecting ',' delimiter 3 1 4
+JSONDecodeError Expecting value: line 1 column 4 (char 3) Expecting value 3 1 4
+JSONDecodeError Expecting property name enclosed in double quotes: line 1 column 2 (char 1) Expecting property name enclosed in double quotes 1 1 2
+JSONDecodeError Expecting value: line 1 column 1 (char 0) Expecting value 0 1 1
+JSONDecodeError Expecting ':' delimiter: line 1 column 5 (char 4) Expecting ':' delimiter 4 1 5
+JSONDecodeError Expecting value: line 1 column 6 (char 5) Expecting value 5 1 6
+JSONDecodeError Expecting ',' delimiter: line 1 column 7 (char 6) Expecting ',' delimiter 6 1 7
+JSONDecodeError Expecting property name enclosed in double quotes: line 1 column 8 (char 7) Expecting property name enclosed in double quotes 7 1 8
+JSONDecodeError Illegal trailing comma before end of object: line 1 column 7 (char 6) Illegal trailing comma before end of object 6 1 7
+JSONDecodeError Expecting property name enclosed in double quotes: line 1 column 2 (char 1) Expecting property name enclosed in double quotes 1 1 2
+JSONDecodeError Expecting property name enclosed in double quotes: line 1 column 2 (char 1) Expecting property name enclosed in double quotes 1 1 2
+JSONDecodeError Expecting property name enclosed in double quotes: line 1 column 2 (char 1) Expecting property name enclosed in double quotes 1 1 2
+JSONDecodeError Expecting property name enclosed in double quotes: line 1 column 2 (char 1) Expecting property name enclosed in double quotes 1 1 2
+JSONDecodeError Expecting ':' delimiter: line 1 column 6 (char 5) Expecting ':' delimiter 5 1 6
+JSONDecodeError Expecting ',' delimiter: line 1 column 8 (char 7) Expecting ',' delimiter 7 1 8
+JSONDecodeError Expecting value: line 1 column 6 (char 5) Expecting value 5 1 6
+JSONDecodeError Expecting property name enclosed in double quotes: line 1 column 8 (char 7) Expecting property name enclosed in double quotes 7 1 8
+JSONDecodeError Extra data: line 1 column 4 (char 3) Extra data 3 1 4
+JSONDecodeError Extra data: line 1 column 3 (char 2) Extra data 2 1 3
+JSONDecodeError Extra data: line 1 column 3 (char 2) Extra data 2 1 3
+JSONDecodeError Extra data: line 1 column 4 (char 3) Extra data 3 1 4
+JSONDecodeError Unexpected UTF-8 BOM (decode using utf-8-sig): line 1 column 1 (char 0) Unexpected UTF-8 BOM (decode using utf-8-sig) 0 1 1
+JSONDecodeError Expecting value: line 1 column 2 (char 1) Expecting value 1 1 2
+JSONDecodeError Expecting value: line 1 column 7 (char 6) Expecting value 6 1 7
+JSONDecodeError Expecting value: line 1 column 7 (char 6) Expecting value 6 1 7
+JSONDecodeError Invalid \escape: line 1 column 3 (char 2) Invalid \escape 2 1 3
+JSONDecodeError Invalid control character at: line 1 column 3 (char 2) Invalid control character at 2 1 3
+JSONDecodeError Illegal trailing comma before end of array: line 1 column 6 (char 5) Illegal trailing comma before end of array 5 1 6
+JSONDecodeError Expecting value: line 1 column 1 (char 0) Expecting value 0 1 1
+JSONDecodeError Expecting value: line 3 column 2 (char 8) Expecting value 8 3 2
+JSONDecodeError Expecting value: line 3 column 7 (char 16) Expecting value 16 3 7
+JSONDecodeError Invalid \uXXXX escape: line 1 column 9 (char 8) Invalid \uXXXX escape 8 1 9
+JSONDecodeError Invalid \uXXXX escape: line 1 column 3 (char 2) Invalid \uXXXX escape 2 1 3
+JSONDecodeError Invalid \uXXXX escape: line 1 column 3 (char 2) Invalid \uXXXX escape 2 1 3
+JSONDecodeError Expecting ',' delimiter: line 1 column 5 (char 4) Expecting ',' delimiter 4 1 5
+JSONDecodeError Expecting ',' delimiter: line 1 column 5 (char 4) Expecting ',' delimiter 4 1 5
+JSONDecodeError Extra data: line 1 column 2 (char 1) Extra data 1 1 2
+JSONDecodeError Extra data: line 1 column 2 (char 1) Extra data 1 1 2
+JSONDecodeError Expecting value: line 1 column 1 (char 0) Expecting value 0 1 1
+JSONDecodeError Expecting value: line 1 column 2 (char 1) Expecting value 1 1 2
+JSONDecodeError Expecting value: line 1 column 1 (char 0) Expecting value 0 1 1
+JSONDecodeError Expecting value: line 1 column 1 (char 0) Expecting value 0 1 1
+JSONDecodeError Expecting ',' delimiter: line 1 column 3 (char 2) Expecting ',' delimiter 2 1 3
+JSONDecodeError Expecting value: line 1 column 1 (char 0) Expecting value 0 1 1
+JSONDecodeError Expecting value: line 1 column 1 (char 0) Expecting value 0 1 1
+JSONDecodeError Expecting value: line 1 column 1 (char 0) Expecting value 0 1 1
+JSONDecodeError Extra data: line 1 column 4 (char 3) Extra data 3 1 4
+JSONDecodeError Extra data: line 1 column 9 (char 8) Extra data 8 1 9
+JSONDecodeError Extra data: line 1 column 5 (char 4) Extra data 4 1 5
+JSONDecodeError Extra data: line 1 column 2 (char 1) Extra data 1 1 2
+JSONDecodeError Extra data: line 1 column 4 (char 3) Extra data 3 1 4
+JSONDecodeError Extra data: line 1 column 10 (char 9) Extra data 9 1 10
+'\n'
+'\t\x00\x1f'
+'a\nb\n'
+['\r']
+{'\n': '\n'}
+('abc', 5)
+('bc', 5)
+('', 5)
+JSONDecodeError Unterminated string starting at: line 1 column 5 (char 4) Unterminated string starting at 4 1 5
+ValueError end is out of bounds
+('', 1)
+ValueError end is out of bounds
+('abc', 4)
+('def', 8)
+JSONDecodeError Unterminated string starting at: line 1 column 0 (char -1) Unterminated string starting at -1 1 0
+ValueError end is out of bounds
+JSONDecodeError Unterminated string starting at: line 1 column 1 (char 0) Unterminated string starting at 0 1 1
+('', 1)
+JSONDecodeError Invalid control character at: line 1 column 2 (char 1) Invalid control character at 1 1 2
+('\n', 3)
+JSONDecodeError Invalid control character at: line 1 column 2 (char 1) Invalid control character at 1 1 2
+('\n', 3)
+('\n', 3)
+JSONDecodeError Invalid control character at: line 1 column 2 (char 1) Invalid control character at 1 1 2
+('ab😁c', 7)
+('ab😁c\n', 9)
+JSONDecodeError Unterminated string starting at: line 1 column 2 (char 1) Unterminated string starting at 1 1 2
+JSONDecodeError Invalid \escape: line 1 column 6 (char 5) Invalid \escape 5 1 6
+('😀', 3)
+('', 3)
+JSONDecodeError Unterminated string starting at: line 1 column 3 (char 2) Unterminated string starting at 2 1 3
+ValueError end is out of bounds
+('𝄠x', 15)
+('\ud834yx', 15)
+('𝄠', 14)
+JSONDecodeError Invalid \uXXXX escape: line 1 column 9 (char 8) Invalid \uXXXX escape 8 1 9
+('\ud834𝄠', 20)
+('\udd20\ud834', 14)
+('z𝄠x', 16)
+('{', 8)
+('A JSON payload should be an object or array, not a string.', 60)
+('/', 4)
+('ģ䕧覫췯ꯍ\uef4a', 38)
+TypeError scanstring expected at least 2 arguments, got 0
+TypeError scanstring expected at least 2 arguments, got 1
+TypeError scanstring() argument 1 must be str, not bytes
+TypeError scanstring() argument 1 must be str, not int
+TypeError scanstring() argument 1 must be str, not None
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'float' object cannot be interpreted as an integer
+TypeError 'NoneType' object cannot be interpreted as an integer
+OverflowError Python int too large to convert to C ssize_t
+OverflowError Python int too large to convert to C ssize_t
+TypeError scanstring expected at most 3 arguments, got 4
+TypeError _json.scanstring() takes no keyword arguments
+TypeError _json.scanstring() takes no keyword arguments
+('x', 3)
+('x', 3)
+<class 'str'> <class 'str'>
+(1, 1)
+StopIteration 1
+StopIteration 2
+ValueError idx cannot be negative
+StopIteration 0
+(1, 2)
+([1, 2], 6)
+([1, 2], 7)
+([1, '😁'], 9)
+StopIteration 1
+StopIteration 1
+StopIteration 2
+StopIteration 1
+StopIteration 0
+StopIteration 0
+(1, 1)
+(1, 1)
+(1, 1)
+(1, 1)
+(1, 1)
+(1, 1)
+(100000.0, 3)
+(100000.0, 4)
+(1.5, 3)
+(1.5, 3)
+(0, 1)
+(0, 2)
+(12, 2)
+(None, 4)
+StopIteration 0
+StopIteration 0
+(1, 1)
+(100000.0, 3)
+(1e+55, 4)
+(1, 1)
+StopIteration 3
+('😀', 3)
+({'😀': 1}, 7)
+TypeError scan_once() missing required argument 'string' (pos 1)
+TypeError scan_once() missing required argument 'idx' (pos 2)
+TypeError first argument must be a string, not int
+TypeError first argument must be a string, not bytes
+TypeError first argument must be a string, not NoneType
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'NoneType' object cannot be interpreted as an integer
+TypeError 'float' object cannot be interpreted as an integer
+OverflowError Python int too large to convert to C ssize_t
+TypeError scan_once() takes at most 2 arguments (3 given)
+(1, 1)
+(1, 1)
+TypeError scan_once() takes at most 2 arguments (3 given)
+TypeError scan_once() missing required argument 'idx' (pos 2)
+(1, 2)
+True None None None <class 'float'> <class 'int'> nan
+AttributeError readonly attribute
+AttributeError '_json.Scanner' object has no attribute 'foo' and no __dict__ for setting new attributes
+TypeError make_scanner() missing required argument 'context' (pos 1)
+AttributeError 'int' object has no attribute 'strict'
+TypeError make_scanner() takes at most 1 argument (2 given)
+TypeError make_scanner() missing required argument 'context' (pos 1)
+<class '_json.Scanner'>
+AttributeError 'Ctx' object has no attribute 'parse_constant'
+([1, 2.5], 8)
+TypeError 'NoneType' object is not callable
+KeyError 'truth'
+TypeError type '_json.Scanner' is not an acceptable base type
+[('a', 1), ('b', [1.5, [('c', None), ('d', nan)]]), ('e', [('f', -inf), ('g', 12345678901234567890)]), ('h', [])]
+[('a', 1), ('b', [1.5, [('c', None), ('d', nan)]]), ('e', [('f', -inf), ('g', 12345678901234567890)]), ('h', [])]
+OrderedDict({'a': 1, 'b': [1.5, OrderedDict({'c': None, 'd': nan})], 'e': OrderedDict({'f': -inf, 'g': 12345678901234567890}), 'h': []})
+('P', 4)
+{'a': 1, 'b': (1.5, {'c': None, 'd': nan}), 'e': {'f': -inf, 'g': 12345678901234567890}, 'h': ()}
+{'a': 1, 'b': ('A', 2), 'e': {'f': -inf, 'g': 12345678901234567890}, 'h': ('A', 0)}
+{'a': 1, 'b': [Decimal('1.5'), {'c': None, 'd': nan}], 'e': {'f': -inf, 'g': 12345678901234567890}, 'h': []}
+{'a': 1, 'b': [('F', '1.5'), {'c': None, 'd': nan}], 'e': {'f': -inf, 'g': 12345678901234567890}, 'h': []}
+{'a': ('I', '1'), 'b': [1.5, {'c': None, 'd': nan}], 'e': {'f': -inf, 'g': ('I', '12345678901234567890')}, 'h': []}
+{'a': 1.0, 'b': [1.5, {'c': None, 'd': nan}], 'e': {'f': -inf, 'g': 1.2345678901234567e+19}, 'h': []}
+{'a': 1, 'b': [1.5, {'c': None, 'd': ('C', 'NaN')}], 'e': {'f': ('C', '-Infinity'), 'g': 12345678901234567890}, 'h': []}
+['-0', '-1', '1e5', '-1.5E-3', '0.0']
+KeyError 'boom'
+TypeError 'int' object is not callable
+KeyError 'boom'
+TypeError 'int' object is not callable
+KeyError 'boom'
+TypeError 'int' object is not callable
+KeyError 'boom'
+TypeError 'int' object is not callable
+KeyError 'boom'
+TypeError 'int' object is not callable
+KeyError 'boom'
+TypeError 'int' object is not callable
+'empty'
+('empty', [])
+('empty', [])
+[True, True]
+['int', 'float', 'float', 'int', 'int', 'float'] [1, 1.0, 100.0, 10000000000000000000000, 0, -0.0]
+[1]
+[1]
+[1, 'é']
+[1, 'é']
+[1, 'é']
+[1]
+[1]
+[1]
+UnicodeDecodeError 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte
+TypeError the JSON object must be str, bytes or bytearray, not int
+TypeError the JSON object must be str, bytes or bytearray, not NoneType
+TypeError the JSON object must be str, bytes or bytearray, not list
+TypeError the JSON object must be str, bytes or bytearray, not memoryview
+([1], 3)
+([1], 5)
+JSONDecodeError Expecting value: line 1 column 1 (char 0) Expecting value 0 1 1
+JSONDecodeError Expecting value: line 1 column 1 (char 0) Expecting value 0 1 1
+([1], 4)
+ValueError idx cannot be negative
+JSONDecodeError Expecting value: line 1 column 11 (char 10) Expecting value 10 1 11
+4300
+ValueError Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit
+ValueError Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit
+ValueError Exceeds the limit (4300 digits) for integer string conversion: value has 5000 digits; use sys.set_int_max_str_digits() to increase the limit
+inf
+0.1111111111111111

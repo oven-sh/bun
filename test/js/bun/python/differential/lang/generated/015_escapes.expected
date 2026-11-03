@@ -1,0 +1,76 @@
+status: 0
+script: e01507fa3e36292f
+source: 4ca5358957b5cae0
+---
+ascii("\u00e9 \u20ac \uffff \u0041 \u2028 \ufeff \u200b \u0000") => '\xe9 \u20ac \uffff A \u2028 \ufeff \u200b \x00'
+len("\u00e9\u20ac") => 2
+ascii("\U0001F600\U00000041\U0010FFFF") => '\U0001f600A\U0010ffff'
+len("\U0001F600") => 1
+ascii("\x41\x00\xff\x7f\x80") => 'A\x00\xff\x7f\x80'
+ascii("\101\0\7\77\377\1011\08") => 'A\x00\x07?\xffA1\x008'
+ascii("\a\b\f\n\r\t\v\\\'\"") => '\x07\x08\x0c\n\r\t\x0b\\\'"'
+ascii("\ud800") => '\ud800'
+ascii("\udfff") => '\udfff'
+ascii("\ud83dx\ude00") => '\ud83dx\ude00'
+len("\ud83dx\ude00") => 3
+'\u2022\u20ac\U0001f4a9'
+ascii(r"\u00e9\x41\n\N{BULLET}") => '\\u00e9\\x41\\n\\N{BULLET}'
+len(r"\u00e9") => 6
+ascii(rb"\x41\n") => b'\\x41\\n'
+ascii(b"\x41\n\0\101\\\'\"\a") => b'A\n\x00A\\\'"\x07'
+b"\u00e9" == b"\\u00e9" => True
+len(b"\N{BULLET}") => 10
+ascii(f"\u00e9{1}\x41{'\u00e9'}\N{BULLET}") => '\xe91A\xe9\u2022'
+ascii(rf"\u00e9{1}\n") => '\\u00e91\\n'
+ascii(fr"\{1}") => '\\1'
+ascii(f"\{{1}}") if False else "" => 
+ascii("a\ b") => 'ab'
+ascii('''a\ b''') => 'ab'
+ascii("""a b""") => 'a\nb'
+ascii(r"a\ b") => 'a\\\nb'
+ascii("a\\\ b") => 'a\\b'
+ascii("'") => "'"
+ascii('"') => '"'
+ascii("'\"") => '\'"'
+ascii('\'') => "'"
+ascii("\"") => '"'
+ascii("""'"'""") => '\'"\''
+ascii('''"'"''') => '"\'"'
+ascii(""""a" """) => '"a" '
+ascii('''\'''') => "'"
+ascii("""a\"""") => 'a"'
+SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position 0-1: truncated \xXX escape
+SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position 0-2: truncated \xXX escape
+SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position 0-1: truncated \xXX escape
+SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position 0-1: truncated \uXXXX escape
+SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position 0-3: truncated \uXXXX escape
+SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position 0-1: truncated \UXXXXXXXX escape
+SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position 0-8: truncated \UXXXXXXXX escape
+SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position 0-9: illegal Unicode character
+SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position 0-1: malformed \N character escape
+SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position 0-2: malformed \N character escape
+SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position 0-2: malformed \N character escape
+SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position 0-10: unknown Unicode character name
+SyntaxError: (value error) invalid \x escape at position 0
+SyntaxError: (value error) invalid \x escape at position 0
+'\u01ff'
+'\u0100'
+b'\xff'
+SyntaxError: unterminated string literal (detected at line 1)
+SyntaxError: unterminated string literal (detected at line 1)
+SyntaxError: unterminated triple-quoted string literal (detected at line 1)
+SyntaxError: unterminated string literal (detected at line 1)
+SyntaxError: unterminated triple-quoted string literal (detected at line 1)
+SyntaxError: unterminated string literal (detected at line 1)
+SyntaxError: unterminated string literal (detected at line 1)
+ascii(eval(r'"\u00e9"')) => '\xe9'
+ascii(eval(r'"\\\u00e9"')) => '\\\xe9'
+ascii(eval(r'r"\u00e9"')) => '\\u00e9'
+ascii(eval(r'b"\u00e9"')) => b'\\u00e9'
+ascii(eval('"\\u00e9"')) => '\xe9'
+ascii(eval('"\\x41\\101\\n"')) => 'AA\n'
+ascii(str(b"\u00e9", "unicode_escape")) => '\xe9'
+ascii(b"\\x41\\n\\101".decode("unicode_escape")) => 'A\nA'
+ascii("é\n\x00€😀".encode("unicode_escape")) => b'\\xe9\\n\\x00\\u20ac\\U0001f600'
+ascii("é\n€😀".encode("raw_unicode_escape")) => b'\xe9\n\\u20ac\\U0001f600'
+ascii(b"\u20ac\\n".decode("raw_unicode_escape")) => '\u20ac\\n'

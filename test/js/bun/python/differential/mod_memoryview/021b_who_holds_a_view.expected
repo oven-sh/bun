@@ -1,0 +1,20 @@
+status: 0
+script: 5d9065d8d389173b
+---
+slice True None False
+view of view True None False
+tuple True None False
+set True None False
+OrderedDict True None False
+slot True None False
+namespace True None False
+reversed True None False
+map True None False
+islice True None False
+partial keyword True None False
+closure True True False
+generator True True False
+traceback True None False
+nested True None False
+staticmethod True None False
+mappingproxy True None False

@@ -1,0 +1,277 @@
+status: 0
+script: 694d2275d3f07d27
+---
+x = 1 # type: int
+Module(body=[Assign(targets=[Name(id='x',ctx=Store(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1)],value=Constant(value=1,kind=None,lineno=1,col_offset=4,end_lineno=1,end_col_offset=5),type_comment=None,lineno=1,col_offset=0,end_lineno=1,end_col_offset=5)],type_ignores=[])
+Module(body=[Assign(targets=[Name(id='x',ctx=Store(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1)],value=Constant(value=1,kind=None,lineno=1,col_offset=4,end_lineno=1,end_col_offset=5),type_comment='int',lineno=1,col_offset=0,end_lineno=1,end_col_offset=17)],type_ignores=[])
+def f(a, # type: int\n      b=1, # type: str\n      *c, # type: bytes\n      **d # type: dict\n      ):\n  # type: (...) -> None\n  pass
+Module(body=[FunctionDef(name='f',args=arguments(posonlyargs=[],args=[arg(arg='a',annotation=None,type_comment=None,lineno=1,col_offset=6,end_lineno=1,end_col_offset=7),arg(arg='b',annotation=None,type_comment=None,lineno=2,col_offset=6,end_lineno=2,end_col_offset=7)],vararg=arg(arg='c',annotation=None,type_comment=None,lineno=3,col_offset=7,end_lineno=3,end_col_offset=8),kwonlyargs=[],kw_defaults=[],kwarg=arg(arg='d',annotation=None,type_comment=None,lineno=4,col_offset=8,end_lineno=4,end_col_offset=9),defaults=[Constant(value=1,kind=None,lineno=2,col_offset=8,end_lineno=2,end_col_offset=9)]),body=[Pass(lineno=7,col_offset=2,end_lineno=7,end_col_offset=6)],decorator_list=[],returns=None,type_comment=None,type_params=[],lineno=1,col_offset=0,end_lineno=7,end_col_offset=6)],type_ignores=[])
+Module(body=[FunctionDef(name='f',args=arguments(posonlyargs=[],args=[arg(arg='a',annotation=None,type_comment='int',lineno=1,col_offset=6,end_lineno=1,end_col_offset=7),arg(arg='b',annotation=None,type_comment='str',lineno=2,col_offset=6,end_lineno=2,end_col_offset=7)],vararg=arg(arg='c',annotation=None,type_comment='bytes',lineno=3,col_offset=7,end_lineno=3,end_col_offset=8),kwonlyargs=[],kw_defaults=[],kwarg=arg(arg='d',annotation=None,type_comment='dict',lineno=4,col_offset=8,end_lineno=4,end_col_offset=9),defaults=[Constant(value=1,kind=None,lineno=2,col_offset=8,end_lineno=2,end_col_offset=9)]),body=[Pass(lineno=7,col_offset=2,end_lineno=7,end_col_offset=6)],decorator_list=[],returns=None,type_comment='(...) -> None',type_params=[],lineno=1,col_offset=0,end_lineno=7,end_col_offset=6)],type_ignores=[])
+def f(a): # type: (int) -> int\n  pass
+Module(body=[FunctionDef(name='f',args=arguments(posonlyargs=[],args=[arg(arg='a',annotation=None,type_comment=None,lineno=1,col_offset=6,end_lineno=1,end_col_offset=7)],vararg=None,kwonlyargs=[],kw_defaults=[],kwarg=None,defaults=[]),body=[Pass(lineno=2,col_offset=2,end_lineno=2,end_col_offset=6)],decorator_list=[],returns=None,type_comment=None,type_params=[],lineno=1,col_offset=0,end_lineno=2,end_col_offset=6)],type_ignores=[])
+Module(body=[FunctionDef(name='f',args=arguments(posonlyargs=[],args=[arg(arg='a',annotation=None,type_comment=None,lineno=1,col_offset=6,end_lineno=1,end_col_offset=7)],vararg=None,kwonlyargs=[],kw_defaults=[],kwarg=None,defaults=[]),body=[Pass(lineno=2,col_offset=2,end_lineno=2,end_col_offset=6)],decorator_list=[],returns=None,type_comment='(int) -> int',type_params=[],lineno=1,col_offset=0,end_lineno=2,end_col_offset=6)],type_ignores=[])
+async def f(): # type: () -> int\n  pass
+Module(body=[AsyncFunctionDef(name='f',args=arguments(posonlyargs=[],args=[],vararg=None,kwonlyargs=[],kw_defaults=[],kwarg=None,defaults=[]),body=[Pass(lineno=2,col_offset=2,end_lineno=2,end_col_offset=6)],decorator_list=[],returns=None,type_comment=None,type_params=[],lineno=1,col_offset=0,end_lineno=2,end_col_offset=6)],type_ignores=[])
+Module(body=[AsyncFunctionDef(name='f',args=arguments(posonlyargs=[],args=[],vararg=None,kwonlyargs=[],kw_defaults=[],kwarg=None,defaults=[]),body=[Pass(lineno=2,col_offset=2,end_lineno=2,end_col_offset=6)],decorator_list=[],returns=None,type_comment='() -> int',type_params=[],lineno=1,col_offset=0,end_lineno=2,end_col_offset=6)],type_ignores=[])
+for i in x: # type: int\n  pass
+Module(body=[For(target=Name(id='i',ctx=Store(),lineno=1,col_offset=4,end_lineno=1,end_col_offset=5),iter=Name(id='x',ctx=Load(),lineno=1,col_offset=9,end_lineno=1,end_col_offset=10),body=[Pass(lineno=2,col_offset=2,end_lineno=2,end_col_offset=6)],orelse=[],type_comment=None,lineno=1,col_offset=0,end_lineno=2,end_col_offset=6)],type_ignores=[])
+Module(body=[For(target=Name(id='i',ctx=Store(),lineno=1,col_offset=4,end_lineno=1,end_col_offset=5),iter=Name(id='x',ctx=Load(),lineno=1,col_offset=9,end_lineno=1,end_col_offset=10),body=[Pass(lineno=2,col_offset=2,end_lineno=2,end_col_offset=6)],orelse=[],type_comment='int',lineno=1,col_offset=0,end_lineno=2,end_col_offset=6)],type_ignores=[])
+async def g():\n  async for i in x: # type: int\n    pass\n  async with a as b: # type: T\n    pass
+Module(body=[AsyncFunctionDef(name='g',args=arguments(posonlyargs=[],args=[],vararg=None,kwonlyargs=[],kw_defaults=[],kwarg=None,defaults=[]),body=[AsyncFor(target=Name(id='i',ctx=Store(),lineno=2,col_offset=12,end_lineno=2,end_col_offset=13),iter=Name(id='x',ctx=Load(),lineno=2,col_offset=17,end_lineno=2,end_col_offset=18),body=[Pass(lineno=3,col_offset=4,end_lineno=3,end_col_offset=8)],orelse=[],type_comment=None,lineno=2,col_offset=2,end_lineno=3,end_col_offset=8),AsyncWith(items=[withitem(context_expr=Name(id='a',ctx=Load(),lineno=4,col_offset=13,end_lineno=4,end_col_offset=14),optional_vars=Name(id='b',ctx=Store(),lineno=4,col_offset=18,end_lineno=4,end_col_offset=19))],body=[Pass(lineno=5,col_offset=4,end_lineno=5,end_col_offset=8)],type_comment=None,lineno=4,col_offset=2,end_lineno=5,end_col_offset=8)],decorator_list=[],returns=None,type_comment=None,type_params=[],lineno=1,col_offset=0,end_lineno=5,end_col_offset=8)],type_ignores=[])
+Module(body=[AsyncFunctionDef(name='g',args=arguments(posonlyargs=[],args=[],vararg=None,kwonlyargs=[],kw_defaults=[],kwarg=None,defaults=[]),body=[AsyncFor(target=Name(id='i',ctx=Store(),lineno=2,col_offset=12,end_lineno=2,end_col_offset=13),iter=Name(id='x',ctx=Load(),lineno=2,col_offset=17,end_lineno=2,end_col_offset=18),body=[Pass(lineno=3,col_offset=4,end_lineno=3,end_col_offset=8)],orelse=[],type_comment='int',lineno=2,col_offset=2,end_lineno=3,end_col_offset=8),AsyncWith(items=[withitem(context_expr=Name(id='a',ctx=Load(),lineno=4,col_offset=13,end_lineno=4,end_col_offset=14),optional_vars=Name(id='b',ctx=Store(),lineno=4,col_offset=18,end_lineno=4,end_col_offset=19))],body=[Pass(lineno=5,col_offset=4,end_lineno=5,end_col_offset=8)],type_comment='T',lineno=4,col_offset=2,end_lineno=5,end_col_offset=8)],decorator_list=[],returns=None,type_comment=None,type_params=[],lineno=1,col_offset=0,end_lineno=5,end_col_offset=8)],type_ignores=[])
+with a as b: # type: T\n  pass
+Module(body=[With(items=[withitem(context_expr=Name(id='a',ctx=Load(),lineno=1,col_offset=5,end_lineno=1,end_col_offset=6),optional_vars=Name(id='b',ctx=Store(),lineno=1,col_offset=10,end_lineno=1,end_col_offset=11))],body=[Pass(lineno=2,col_offset=2,end_lineno=2,end_col_offset=6)],type_comment=None,lineno=1,col_offset=0,end_lineno=2,end_col_offset=6)],type_ignores=[])
+Module(body=[With(items=[withitem(context_expr=Name(id='a',ctx=Load(),lineno=1,col_offset=5,end_lineno=1,end_col_offset=6),optional_vars=Name(id='b',ctx=Store(),lineno=1,col_offset=10,end_lineno=1,end_col_offset=11))],body=[Pass(lineno=2,col_offset=2,end_lineno=2,end_col_offset=6)],type_comment='T',lineno=1,col_offset=0,end_lineno=2,end_col_offset=6)],type_ignores=[])
+x = 1 # type: ignore
+Module(body=[Assign(targets=[Name(id='x',ctx=Store(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1)],value=Constant(value=1,kind=None,lineno=1,col_offset=4,end_lineno=1,end_col_offset=5),type_comment=None,lineno=1,col_offset=0,end_lineno=1,end_col_offset=5)],type_ignores=[])
+Module(body=[Assign(targets=[Name(id='x',ctx=Store(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1)],value=Constant(value=1,kind=None,lineno=1,col_offset=4,end_lineno=1,end_col_offset=5),type_comment=None,lineno=1,col_offset=0,end_lineno=1,end_col_offset=5)],type_ignores=[TypeIgnore(lineno=1,tag='')])
+x = 1 # type: ignore[abc]\ny = 2 # type:ignore\n# type: ignore # why\nz = 3 #type: ignore@x
+Module(body=[Assign(targets=[Name(id='x',ctx=Store(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1)],value=Constant(value=1,kind=None,lineno=1,col_offset=4,end_lineno=1,end_col_offset=5),type_comment=None,lineno=1,col_offset=0,end_lineno=1,end_col_offset=5),Assign(targets=[Name(id='y',ctx=Store(),lineno=2,col_offset=0,end_lineno=2,end_col_offset=1)],value=Constant(value=2,kind=None,lineno=2,col_offset=4,end_lineno=2,end_col_offset=5),type_comment=None,lineno=2,col_offset=0,end_lineno=2,end_col_offset=5),Assign(targets=[Name(id='z',ctx=Store(),lineno=4,col_offset=0,end_lineno=4,end_col_offset=1)],value=Constant(value=3,kind=None,lineno=4,col_offset=4,end_lineno=4,end_col_offset=5),type_comment=None,lineno=4,col_offset=0,end_lineno=4,end_col_offset=5)],type_ignores=[])
+Module(body=[Assign(targets=[Name(id='x',ctx=Store(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1)],value=Constant(value=1,kind=None,lineno=1,col_offset=4,end_lineno=1,end_col_offset=5),type_comment=None,lineno=1,col_offset=0,end_lineno=1,end_col_offset=5),Assign(targets=[Name(id='y',ctx=Store(),lineno=2,col_offset=0,end_lineno=2,end_col_offset=1)],value=Constant(value=2,kind=None,lineno=2,col_offset=4,end_lineno=2,end_col_offset=5),type_comment=None,lineno=2,col_offset=0,end_lineno=2,end_col_offset=5),Assign(targets=[Name(id='z',ctx=Store(),lineno=4,col_offset=0,end_lineno=4,end_col_offset=1)],value=Constant(value=3,kind=None,lineno=4,col_offset=4,end_lineno=4,end_col_offset=5),type_comment=None,lineno=4,col_offset=0,end_lineno=4,end_col_offset=5)],type_ignores=[TypeIgnore(lineno=1,tag='[abc]'),TypeIgnore(lineno=2,tag=''),TypeIgnore(lineno=3,tag=' # why\n'),TypeIgnore(lineno=4,tag='@x')])
+x = 1 # type:    spaced  
+Module(body=[Assign(targets=[Name(id='x',ctx=Store(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1)],value=Constant(value=1,kind=None,lineno=1,col_offset=4,end_lineno=1,end_col_offset=5),type_comment=None,lineno=1,col_offset=0,end_lineno=1,end_col_offset=5)],type_ignores=[])
+Module(body=[Assign(targets=[Name(id='x',ctx=Store(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1)],value=Constant(value=1,kind=None,lineno=1,col_offset=4,end_lineno=1,end_col_offset=5),type_comment='spaced  ',lineno=1,col_offset=0,end_lineno=1,end_col_offset=25)],type_ignores=[])
+x = [ # type: int\n 1]
+Module(body=[Assign(targets=[Name(id='x',ctx=Store(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1)],value=List(elts=[Constant(value=1,kind=None,lineno=2,col_offset=1,end_lineno=2,end_col_offset=2)],ctx=Load(),lineno=1,col_offset=4,end_lineno=2,end_col_offset=3),type_comment=None,lineno=1,col_offset=0,end_lineno=2,end_col_offset=3)],type_ignores=[])
+SyntaxError invalid syntax (<t>, line 1) 1 15 1 18 'x = [ # type: int\n'
+x = 1 # type: é
+Module(body=[Assign(targets=[Name(id='x',ctx=Store(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1)],value=Constant(value=1,kind=None,lineno=1,col_offset=4,end_lineno=1,end_col_offset=5),type_comment=None,lineno=1,col_offset=0,end_lineno=1,end_col_offset=5)],type_ignores=[])
+Module(body=[Assign(targets=[Name(id='x',ctx=Store(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1)],value=Constant(value=1,kind=None,lineno=1,col_offset=4,end_lineno=1,end_col_offset=5),type_comment='é',lineno=1,col_offset=0,end_lineno=1,end_col_offset=16)],type_ignores=[])
+if x: # type: int\n  pass
+Module(body=[If(test=Name(id='x',ctx=Load(),lineno=1,col_offset=3,end_lineno=1,end_col_offset=4),body=[Pass(lineno=2,col_offset=2,end_lineno=2,end_col_offset=6)],orelse=[],lineno=1,col_offset=0,end_lineno=2,end_col_offset=6)],type_ignores=[])
+SyntaxError invalid syntax (<t>, line 1) 1 15 1 18 'if x: # type: int\n'
+x += 1 # type: int
+Module(body=[AugAssign(target=Name(id='x',ctx=Store(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1),op=Add(),value=Constant(value=1,kind=None,lineno=1,col_offset=5,end_lineno=1,end_col_offset=6),lineno=1,col_offset=0,end_lineno=1,end_col_offset=6)],type_ignores=[])
+SyntaxError invalid syntax (<t>, line 1) 1 16 1 19 'x += 1 # type: int\n'
+x: int = 1 # type: int
+Module(body=[AnnAssign(target=Name(id='x',ctx=Store(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1),annotation=Name(id='int',ctx=Load(),lineno=1,col_offset=3,end_lineno=1,end_col_offset=6),value=Constant(value=1,kind=None,lineno=1,col_offset=9,end_lineno=1,end_col_offset=10),simple=1,lineno=1,col_offset=0,end_lineno=1,end_col_offset=10)],type_ignores=[])
+SyntaxError invalid syntax (<t>, line 1) 1 20 1 23 'x: int = 1 # type: int\n'
+def f(\n  a, # type: int\n): pass
+Module(body=[FunctionDef(name='f',args=arguments(posonlyargs=[],args=[arg(arg='a',annotation=None,type_comment=None,lineno=2,col_offset=2,end_lineno=2,end_col_offset=3)],vararg=None,kwonlyargs=[],kw_defaults=[],kwarg=None,defaults=[]),body=[Pass(lineno=3,col_offset=3,end_lineno=3,end_col_offset=7)],decorator_list=[],returns=None,type_comment=None,type_params=[],lineno=1,col_offset=0,end_lineno=3,end_col_offset=7)],type_ignores=[])
+Module(body=[FunctionDef(name='f',args=arguments(posonlyargs=[],args=[arg(arg='a',annotation=None,type_comment='int',lineno=2,col_offset=2,end_lineno=2,end_col_offset=3)],vararg=None,kwonlyargs=[],kw_defaults=[],kwarg=None,defaults=[]),body=[Pass(lineno=3,col_offset=3,end_lineno=3,end_col_offset=7)],decorator_list=[],returns=None,type_comment=None,type_params=[],lineno=1,col_offset=0,end_lineno=3,end_col_offset=7)],type_ignores=[])
+lambda a: 0 # type: int
+Module(body=[Expr(value=Lambda(args=arguments(posonlyargs=[],args=[arg(arg='a',annotation=None,type_comment=None,lineno=1,col_offset=7,end_lineno=1,end_col_offset=8)],vararg=None,kwonlyargs=[],kw_defaults=[],kwarg=None,defaults=[]),body=Constant(value=0,kind=None,lineno=1,col_offset=10,end_lineno=1,end_col_offset=11),lineno=1,col_offset=0,end_lineno=1,end_col_offset=11),lineno=1,col_offset=0,end_lineno=1,end_col_offset=11)],type_ignores=[])
+SyntaxError invalid syntax (<t>, line 1) 1 21 1 24 'lambda a: 0 # type: int\n'
+class C: # type: int\n  pass
+Module(body=[ClassDef(name='C',bases=[],keywords=[],body=[Pass(lineno=2,col_offset=2,end_lineno=2,end_col_offset=6)],decorator_list=[],type_params=[],lineno=1,col_offset=0,end_lineno=2,end_col_offset=6)],type_ignores=[])
+SyntaxError invalid syntax (<t>, line 1) 1 18 1 21 'class C: # type: int\n'
+def f(*, a, # type: A\n  b # type: B\n): pass
+Module(body=[FunctionDef(name='f',args=arguments(posonlyargs=[],args=[],vararg=None,kwonlyargs=[arg(arg='a',annotation=None,type_comment=None,lineno=1,col_offset=9,end_lineno=1,end_col_offset=10),arg(arg='b',annotation=None,type_comment=None,lineno=2,col_offset=2,end_lineno=2,end_col_offset=3)],kw_defaults=[None,None],kwarg=None,defaults=[]),body=[Pass(lineno=3,col_offset=3,end_lineno=3,end_col_offset=7)],decorator_list=[],returns=None,type_comment=None,type_params=[],lineno=1,col_offset=0,end_lineno=3,end_col_offset=7)],type_ignores=[])
+Module(body=[FunctionDef(name='f',args=arguments(posonlyargs=[],args=[],vararg=None,kwonlyargs=[arg(arg='a',annotation=None,type_comment='A',lineno=1,col_offset=9,end_lineno=1,end_col_offset=10),arg(arg='b',annotation=None,type_comment='B',lineno=2,col_offset=2,end_lineno=2,end_col_offset=3)],kw_defaults=[None,None],kwarg=None,defaults=[]),body=[Pass(lineno=3,col_offset=3,end_lineno=3,end_col_offset=7)],decorator_list=[],returns=None,type_comment=None,type_params=[],lineno=1,col_offset=0,end_lineno=3,end_col_offset=7)],type_ignores=[])
+def f(a, /, b # type: B\n): pass
+Module(body=[FunctionDef(name='f',args=arguments(posonlyargs=[arg(arg='a',annotation=None,type_comment=None,lineno=1,col_offset=6,end_lineno=1,end_col_offset=7)],args=[arg(arg='b',annotation=None,type_comment=None,lineno=1,col_offset=12,end_lineno=1,end_col_offset=13)],vararg=None,kwonlyargs=[],kw_defaults=[],kwarg=None,defaults=[]),body=[Pass(lineno=2,col_offset=3,end_lineno=2,end_col_offset=7)],decorator_list=[],returns=None,type_comment=None,type_params=[],lineno=1,col_offset=0,end_lineno=2,end_col_offset=7)],type_ignores=[])
+Module(body=[FunctionDef(name='f',args=arguments(posonlyargs=[arg(arg='a',annotation=None,type_comment=None,lineno=1,col_offset=6,end_lineno=1,end_col_offset=7)],args=[arg(arg='b',annotation=None,type_comment='B',lineno=1,col_offset=12,end_lineno=1,end_col_offset=13)],vararg=None,kwonlyargs=[],kw_defaults=[],kwarg=None,defaults=[]),body=[Pass(lineno=2,col_offset=3,end_lineno=2,end_col_offset=7)],decorator_list=[],returns=None,type_comment=None,type_params=[],lineno=1,col_offset=0,end_lineno=2,end_col_offset=7)],type_ignores=[])
+# type: int\nx = 1
+Module(body=[Assign(targets=[Name(id='x',ctx=Store(),lineno=2,col_offset=0,end_lineno=2,end_col_offset=1)],value=Constant(value=1,kind=None,lineno=2,col_offset=4,end_lineno=2,end_col_offset=5),type_comment=None,lineno=2,col_offset=0,end_lineno=2,end_col_offset=5)],type_ignores=[])
+SyntaxError invalid syntax (<t>, line 1) 1 9 1 12 '# type: int\n'
+x = 1 # type: int # more
+Module(body=[Assign(targets=[Name(id='x',ctx=Store(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1)],value=Constant(value=1,kind=None,lineno=1,col_offset=4,end_lineno=1,end_col_offset=5),type_comment=None,lineno=1,col_offset=0,end_lineno=1,end_col_offset=5)],type_ignores=[])
+Module(body=[Assign(targets=[Name(id='x',ctx=Store(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1)],value=Constant(value=1,kind=None,lineno=1,col_offset=4,end_lineno=1,end_col_offset=5),type_comment='int # more',lineno=1,col_offset=0,end_lineno=1,end_col_offset=24)],type_ignores=[])
+x = y = 1 # type: int
+Module(body=[Assign(targets=[Name(id='x',ctx=Store(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1),Name(id='y',ctx=Store(),lineno=1,col_offset=4,end_lineno=1,end_col_offset=5)],value=Constant(value=1,kind=None,lineno=1,col_offset=8,end_lineno=1,end_col_offset=9),type_comment=None,lineno=1,col_offset=0,end_lineno=1,end_col_offset=9)],type_ignores=[])
+Module(body=[Assign(targets=[Name(id='x',ctx=Store(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1),Name(id='y',ctx=Store(),lineno=1,col_offset=4,end_lineno=1,end_col_offset=5)],value=Constant(value=1,kind=None,lineno=1,col_offset=8,end_lineno=1,end_col_offset=9),type_comment='int',lineno=1,col_offset=0,end_lineno=1,end_col_offset=21)],type_ignores=[])
+def f(): pass # type: () -> None
+Module(body=[FunctionDef(name='f',args=arguments(posonlyargs=[],args=[],vararg=None,kwonlyargs=[],kw_defaults=[],kwarg=None,defaults=[]),body=[Pass(lineno=1,col_offset=9,end_lineno=1,end_col_offset=13)],decorator_list=[],returns=None,type_comment=None,type_params=[],lineno=1,col_offset=0,end_lineno=1,end_col_offset=13)],type_ignores=[])
+SyntaxError invalid syntax (<t>, line 1) 1 23 1 33 'def f(): pass # type: () -> None\n'
+'(int) -> str'
+FunctionType(argtypes=[Name(id='int',ctx=Load(),lineno=1,col_offset=1,end_lineno=1,end_col_offset=4)],returns=Name(id='str',ctx=Load(),lineno=1,col_offset=9,end_lineno=1,end_col_offset=12))
+'() -> None'
+FunctionType(argtypes=[],returns=Constant(value=None,kind=None,lineno=1,col_offset=6,end_lineno=1,end_col_offset=10))
+'(int, str) -> bool'
+FunctionType(argtypes=[Name(id='int',ctx=Load(),lineno=1,col_offset=1,end_lineno=1,end_col_offset=4),Name(id='str',ctx=Load(),lineno=1,col_offset=6,end_lineno=1,end_col_offset=9)],returns=Name(id='bool',ctx=Load(),lineno=1,col_offset=14,end_lineno=1,end_col_offset=18))
+'(*int) -> x'
+FunctionType(argtypes=[Name(id='int',ctx=Load(),lineno=1,col_offset=2,end_lineno=1,end_col_offset=5)],returns=Name(id='x',ctx=Load(),lineno=1,col_offset=10,end_lineno=1,end_col_offset=11))
+'(**int) -> x'
+FunctionType(argtypes=[Name(id='int',ctx=Load(),lineno=1,col_offset=3,end_lineno=1,end_col_offset=6)],returns=Name(id='x',ctx=Load(),lineno=1,col_offset=11,end_lineno=1,end_col_offset=12))
+'(a, *b, **c) -> d'
+FunctionType(argtypes=[Name(id='a',ctx=Load(),lineno=1,col_offset=1,end_lineno=1,end_col_offset=2),Name(id='b',ctx=Load(),lineno=1,col_offset=5,end_lineno=1,end_col_offset=6),Name(id='c',ctx=Load(),lineno=1,col_offset=10,end_lineno=1,end_col_offset=11)],returns=Name(id='d',ctx=Load(),lineno=1,col_offset=16,end_lineno=1,end_col_offset=17))
+'(*a, **b) -> c'
+FunctionType(argtypes=[Name(id='a',ctx=Load(),lineno=1,col_offset=2,end_lineno=1,end_col_offset=3),Name(id='b',ctx=Load(),lineno=1,col_offset=7,end_lineno=1,end_col_offset=8)],returns=Name(id='c',ctx=Load(),lineno=1,col_offset=13,end_lineno=1,end_col_offset=14))
+'(a, **b) -> c'
+FunctionType(argtypes=[Name(id='a',ctx=Load(),lineno=1,col_offset=1,end_lineno=1,end_col_offset=2),Name(id='b',ctx=Load(),lineno=1,col_offset=6,end_lineno=1,end_col_offset=7)],returns=Name(id='c',ctx=Load(),lineno=1,col_offset=12,end_lineno=1,end_col_offset=13))
+'int -> str'
+SyntaxError invalid syntax (<t>, line 1) 1 1 1 4 'int -> str'
+'(int)'
+SyntaxError invalid syntax (<t>, line 1) 1 0 1 0 '(int)'
+'(a=1) -> b'
+SyntaxError invalid syntax (<t>, line 1) 1 3 1 4 '(a=1) -> b'
+'(...) -> int'
+FunctionType(argtypes=[Constant(value=Ellipsis,kind=None,lineno=1,col_offset=1,end_lineno=1,end_col_offset=4)],returns=Name(id='int',ctx=Load(),lineno=1,col_offset=9,end_lineno=1,end_col_offset=12))
+'(a,) -> b'
+SyntaxError invalid syntax (<t>, line 1) 1 4 1 5 '(a,) -> b'
+'(*a, b) -> c'
+SyntaxError invalid syntax (<t>, line 1) 1 6 1 7 '(*a, b) -> c'
+''
+SyntaxError invalid syntax (<t>, line 0) 0 0 0 0 ''
+'(List[int], Dict[str, int]) -> Tuple[()]'
+FunctionType(argtypes=[Subscript(value=Name(id='List',ctx=Load(),lineno=1,col_offset=1,end_lineno=1,end_col_offset=5),slice=Name(id='int',ctx=Load(),lineno=1,col_offset=6,end_lineno=1,end_col_offset=9),ctx=Load(),lineno=1,col_offset=1,end_lineno=1,end_col_offset=10),Subscript(value=Name(id='Dict',ctx=Load(),lineno=1,col_offset=12,end_lineno=1,end_col_offset=16),slice=Tuple(elts=[Name(id='str',ctx=Load(),lineno=1,col_offset=17,end_lineno=1,end_col_offset=20),Name(id='int',ctx=Load(),lineno=1,col_offset=22,end_lineno=1,end_col_offset=25)],ctx=Load(),lineno=1,col_offset=17,end_lineno=1,end_col_offset=25),ctx=Load(),lineno=1,col_offset=12,end_lineno=1,end_col_offset=26)],returns=Subscript(value=Name(id='Tuple',ctx=Load(),lineno=1,col_offset=31,end_lineno=1,end_col_offset=36),slice=Tuple(elts=[],ctx=Load(),lineno=1,col_offset=37,end_lineno=1,end_col_offset=39),ctx=Load(),lineno=1,col_offset=31,end_lineno=1,end_col_offset=40))
+'(\n a,\n b\n) -> c'
+FunctionType(argtypes=[Name(id='a',ctx=Load(),lineno=2,col_offset=1,end_lineno=2,end_col_offset=2),Name(id='b',ctx=Load(),lineno=3,col_offset=1,end_lineno=3,end_col_offset=2)],returns=Name(id='c',ctx=Load(),lineno=4,col_offset=5,end_lineno=4,end_col_offset=6))
+'x' eval
+Expression(body=Name(id='x',ctx=Load(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1))
+'x = 1' eval
+SyntaxError invalid syntax (<t>, line 1) 1 3 1 4 'x = 1'
+'' eval
+SyntaxError invalid syntax (<t>, line 0) 0 0 0 0 ''
+'x\n' eval
+Expression(body=Name(id='x',ctx=Load(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1))
+'\n\nx\n\n' eval
+Expression(body=Name(id='x',ctx=Load(),lineno=3,col_offset=0,end_lineno=3,end_col_offset=1))
+' x' eval
+IndentationError unexpected indent (<t>, line 1) 1 1 1 -1 ' x'
+'x y' eval
+SyntaxError invalid syntax (<t>, line 1) 1 3 1 4 'x y'
+'' exec
+Module(body=[],type_ignores=[])
+'\n' exec
+Module(body=[],type_ignores=[])
+'# c' exec
+Module(body=[],type_ignores=[])
+'' single
+SyntaxError invalid syntax (<t>, line 0) 0 0 0 0 ''
+'\n' single
+SyntaxError invalid syntax (<t>, line 1) 1 0 1 0 '\n'
+'x' single
+Interactive(body=[Expr(value=Name(id='x',ctx=Load(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1)])
+'x\n' single
+Interactive(body=[Expr(value=Name(id='x',ctx=Load(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1)])
+'x;y' single
+Interactive(body=[Expr(value=Name(id='x',ctx=Load(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1),Expr(value=Name(id='y',ctx=Load(),lineno=1,col_offset=2,end_lineno=1,end_col_offset=3),lineno=1,col_offset=2,end_lineno=1,end_col_offset=3)])
+'x\ny' single
+SyntaxError multiple statements found while compiling a single statement (<t>, line 1) 1 2 1 3 'x\n'
+'if x:\n  y' single
+Interactive(body=[If(test=Name(id='x',ctx=Load(),lineno=1,col_offset=3,end_lineno=1,end_col_offset=4),body=[Expr(value=Name(id='y',ctx=Load(),lineno=2,col_offset=2,end_lineno=2,end_col_offset=3),lineno=2,col_offset=2,end_lineno=2,end_col_offset=3)],orelse=[],lineno=1,col_offset=0,end_lineno=2,end_col_offset=3)])
+'if x:\n  y\n' single
+Interactive(body=[If(test=Name(id='x',ctx=Load(),lineno=1,col_offset=3,end_lineno=1,end_col_offset=4),body=[Expr(value=Name(id='y',ctx=Load(),lineno=2,col_offset=2,end_lineno=2,end_col_offset=3),lineno=2,col_offset=2,end_lineno=2,end_col_offset=3)],orelse=[],lineno=1,col_offset=0,end_lineno=2,end_col_offset=3)])
+'if x:\n  y\n\n' single
+Interactive(body=[If(test=Name(id='x',ctx=Load(),lineno=1,col_offset=3,end_lineno=1,end_col_offset=4),body=[Expr(value=Name(id='y',ctx=Load(),lineno=2,col_offset=2,end_lineno=2,end_col_offset=3),lineno=2,col_offset=2,end_lineno=2,end_col_offset=3)],orelse=[],lineno=1,col_offset=0,end_lineno=2,end_col_offset=3)])
+'if x:\n  y\nz' single
+SyntaxError invalid syntax (<t>, line 3) 3 1 3 2 'z'
+'# c' single
+SyntaxError invalid syntax (<t>, line 1) 1 0 1 0 '# c'
+'x # c' single
+Interactive(body=[Expr(value=Name(id='x',ctx=Load(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1)])
+'def f(): pass' single
+SyntaxError invalid syntax (<t>, line 1) 1 0 1 0 'def f(): pass'
+512 'if x:\n  y'
+SyntaxError invalid syntax (<t>, line 2) 2 0 2 0 '  y'
+Module(body=[If(test=Name(id='x',ctx=Load(),lineno=1,col_offset=3,end_lineno=1,end_col_offset=4),body=[Expr(value=Name(id='y',ctx=Load(),lineno=2,col_offset=2,end_lineno=2,end_col_offset=3),lineno=2,col_offset=2,end_lineno=2,end_col_offset=3)],orelse=[],lineno=1,col_offset=0,end_lineno=2,end_col_offset=3)],type_ignores=[])
+512 'if x:'
+IndentationError expected an indented block after 'if' statement on line 1 (<t>, line 1) 1 5 1 -1 'if x:'
+IndentationError expected an indented block after 'if' statement on line 1 (<t>, line 1) 1 6 1 -1 'if x:\n'
+512 'x = ('
+SyntaxError '(' was never closed (<t>, line 1) 1 5 1 0 'x = ('
+SyntaxError '(' was never closed (<t>, line 1) 1 5 1 0 'x = (\n'
+512 'def f():\n  pass'
+SyntaxError invalid syntax (<t>, line 2) 2 0 2 0 '  pass'
+Module(body=[FunctionDef(name='f',args=arguments(posonlyargs=[],args=[],vararg=None,kwonlyargs=[],kw_defaults=[],kwarg=None,defaults=[]),body=[Pass(lineno=2,col_offset=2,end_lineno=2,end_col_offset=6)],decorator_list=[],returns=None,type_comment=None,type_params=[],lineno=1,col_offset=0,end_lineno=2,end_col_offset=6)],type_ignores=[])
+512 'x'
+Interactive(body=[Expr(value=Name(id='x',ctx=Load(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1)])
+Module(body=[Expr(value=Name(id='x',ctx=Load(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1)],type_ignores=[])
+512 'if x:\n  y\n'
+Interactive(body=[If(test=Name(id='x',ctx=Load(),lineno=1,col_offset=3,end_lineno=1,end_col_offset=4),body=[Expr(value=Name(id='y',ctx=Load(),lineno=2,col_offset=2,end_lineno=2,end_col_offset=3),lineno=2,col_offset=2,end_lineno=2,end_col_offset=3)],orelse=[],lineno=1,col_offset=0,end_lineno=2,end_col_offset=3)])
+Module(body=[If(test=Name(id='x',ctx=Load(),lineno=1,col_offset=3,end_lineno=1,end_col_offset=4),body=[Expr(value=Name(id='y',ctx=Load(),lineno=2,col_offset=2,end_lineno=2,end_col_offset=3),lineno=2,col_offset=2,end_lineno=2,end_col_offset=3)],orelse=[],lineno=1,col_offset=0,end_lineno=2,end_col_offset=3)],type_ignores=[])
+512 'x = \\'
+SyntaxError unexpected character after line continuation character (<t>, line 1) 1 5 1 0 'x = \\'
+SyntaxError unexpected EOF while parsing (<t>, line 1) 1 6 1 -1 'x = \\\n'
+512 'f('
+SyntaxError '(' was never closed (<t>, line 1) 1 2 1 0 'f('
+SyntaxError '(' was never closed (<t>, line 1) 1 2 1 0 'f(\n'
+512 '@d'
+SyntaxError invalid syntax (<t>, line 1) 1 0 1 0 '@d'
+SyntaxError invalid syntax (<t>, line 1) 1 0 1 0 '@d\n'
+512 'class C:'
+IndentationError expected an indented block after class definition on line 1 (<t>, line 1) 1 8 1 -1 'class C:'
+IndentationError expected an indented block after class definition on line 1 (<t>, line 1) 1 9 1 -1 'class C:\n'
+512 'try:\n  x'
+SyntaxError invalid syntax (<t>, line 2) 2 0 2 0 '  x'
+SyntaxError expected 'except' or 'finally' block (<t>, line 2) 2 4 2 -1 '  x\n'
+512 'x +'
+SyntaxError invalid syntax (<t>, line 1) 1 0 1 0 'x +'
+SyntaxError invalid syntax (<t>, line 1) 1 4 1 5 'x +\n'
+16384 'if x:\n  y'
+Interactive(body=[If(test=Name(id='x',ctx=Load(),lineno=1,col_offset=3,end_lineno=1,end_col_offset=4),body=[Expr(value=Name(id='y',ctx=Load(),lineno=2,col_offset=2,end_lineno=2,end_col_offset=3),lineno=2,col_offset=2,end_lineno=2,end_col_offset=3)],orelse=[],lineno=1,col_offset=0,end_lineno=2,end_col_offset=3)])
+Module(body=[If(test=Name(id='x',ctx=Load(),lineno=1,col_offset=3,end_lineno=1,end_col_offset=4),body=[Expr(value=Name(id='y',ctx=Load(),lineno=2,col_offset=2,end_lineno=2,end_col_offset=3),lineno=2,col_offset=2,end_lineno=2,end_col_offset=3)],orelse=[],lineno=1,col_offset=0,end_lineno=2,end_col_offset=3)],type_ignores=[])
+16384 'if x:'
+_IncompleteInputError incomplete input (<t>, line 1) 1 5 1 -1 'if x:'
+_IncompleteInputError incomplete input (<t>, line 1) 1 6 1 -1 'if x:\n'
+16384 'x = ('
+_IncompleteInputError incomplete input (<t>, line 1) 1 5 1 -1 'x = ('
+_IncompleteInputError incomplete input (<t>, line 1) 1 6 1 -1 'x = (\n'
+16384 'def f():\n  pass'
+Interactive(body=[FunctionDef(name='f',args=arguments(posonlyargs=[],args=[],vararg=None,kwonlyargs=[],kw_defaults=[],kwarg=None,defaults=[]),body=[Pass(lineno=2,col_offset=2,end_lineno=2,end_col_offset=6)],decorator_list=[],returns=None,type_comment=None,type_params=[],lineno=1,col_offset=0,end_lineno=2,end_col_offset=6)])
+Module(body=[FunctionDef(name='f',args=arguments(posonlyargs=[],args=[],vararg=None,kwonlyargs=[],kw_defaults=[],kwarg=None,defaults=[]),body=[Pass(lineno=2,col_offset=2,end_lineno=2,end_col_offset=6)],decorator_list=[],returns=None,type_comment=None,type_params=[],lineno=1,col_offset=0,end_lineno=2,end_col_offset=6)],type_ignores=[])
+16384 'x'
+Interactive(body=[Expr(value=Name(id='x',ctx=Load(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1)])
+Module(body=[Expr(value=Name(id='x',ctx=Load(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1)],type_ignores=[])
+16384 'if x:\n  y\n'
+Interactive(body=[If(test=Name(id='x',ctx=Load(),lineno=1,col_offset=3,end_lineno=1,end_col_offset=4),body=[Expr(value=Name(id='y',ctx=Load(),lineno=2,col_offset=2,end_lineno=2,end_col_offset=3),lineno=2,col_offset=2,end_lineno=2,end_col_offset=3)],orelse=[],lineno=1,col_offset=0,end_lineno=2,end_col_offset=3)])
+Module(body=[If(test=Name(id='x',ctx=Load(),lineno=1,col_offset=3,end_lineno=1,end_col_offset=4),body=[Expr(value=Name(id='y',ctx=Load(),lineno=2,col_offset=2,end_lineno=2,end_col_offset=3),lineno=2,col_offset=2,end_lineno=2,end_col_offset=3)],orelse=[],lineno=1,col_offset=0,end_lineno=2,end_col_offset=3)],type_ignores=[])
+16384 'x = \\'
+SyntaxError unexpected character after line continuation character (<t>, line 1) 1 5 1 0 'x = \\'
+_IncompleteInputError incomplete input (<t>, line 1) 1 6 1 -1 'x = \\\n'
+16384 'f('
+_IncompleteInputError incomplete input (<t>, line 1) 1 2 1 -1 'f('
+_IncompleteInputError incomplete input (<t>, line 1) 1 3 1 -1 'f(\n'
+16384 '@d'
+_IncompleteInputError incomplete input (<t>, line 1) 1 2 1 -1 '@d'
+_IncompleteInputError incomplete input (<t>, line 1) 1 3 1 -1 '@d\n'
+16384 'class C:'
+_IncompleteInputError incomplete input (<t>, line 1) 1 8 1 -1 'class C:'
+_IncompleteInputError incomplete input (<t>, line 1) 1 9 1 -1 'class C:\n'
+16384 'try:\n  x'
+_IncompleteInputError incomplete input (<t>, line 2) 2 3 2 -1 '  x'
+_IncompleteInputError incomplete input (<t>, line 2) 2 4 2 -1 '  x\n'
+16384 'x +'
+_IncompleteInputError incomplete input (<t>, line 1) 1 3 1 -1 'x +'
+SyntaxError invalid syntax (<t>, line 1) 1 4 1 5 'x +\n'
+16896 'if x:\n  y'
+_IncompleteInputError incomplete input (<t>, line 2) 2 3 2 -1 '  y'
+Module(body=[If(test=Name(id='x',ctx=Load(),lineno=1,col_offset=3,end_lineno=1,end_col_offset=4),body=[Expr(value=Name(id='y',ctx=Load(),lineno=2,col_offset=2,end_lineno=2,end_col_offset=3),lineno=2,col_offset=2,end_lineno=2,end_col_offset=3)],orelse=[],lineno=1,col_offset=0,end_lineno=2,end_col_offset=3)],type_ignores=[])
+16896 'if x:'
+_IncompleteInputError incomplete input (<t>, line 1) 1 5 1 -1 'if x:'
+_IncompleteInputError incomplete input (<t>, line 1) 1 6 1 -1 'if x:\n'
+16896 'x = ('
+_IncompleteInputError incomplete input (<t>, line 1) 1 5 1 -1 'x = ('
+_IncompleteInputError incomplete input (<t>, line 1) 1 6 1 -1 'x = (\n'
+16896 'def f():\n  pass'
+_IncompleteInputError incomplete input (<t>, line 2) 2 6 2 -1 '  pass'
+Module(body=[FunctionDef(name='f',args=arguments(posonlyargs=[],args=[],vararg=None,kwonlyargs=[],kw_defaults=[],kwarg=None,defaults=[]),body=[Pass(lineno=2,col_offset=2,end_lineno=2,end_col_offset=6)],decorator_list=[],returns=None,type_comment=None,type_params=[],lineno=1,col_offset=0,end_lineno=2,end_col_offset=6)],type_ignores=[])
+16896 'x'
+Interactive(body=[Expr(value=Name(id='x',ctx=Load(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1)])
+Module(body=[Expr(value=Name(id='x',ctx=Load(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1)],type_ignores=[])
+16896 'if x:\n  y\n'
+Interactive(body=[If(test=Name(id='x',ctx=Load(),lineno=1,col_offset=3,end_lineno=1,end_col_offset=4),body=[Expr(value=Name(id='y',ctx=Load(),lineno=2,col_offset=2,end_lineno=2,end_col_offset=3),lineno=2,col_offset=2,end_lineno=2,end_col_offset=3)],orelse=[],lineno=1,col_offset=0,end_lineno=2,end_col_offset=3)])
+Module(body=[If(test=Name(id='x',ctx=Load(),lineno=1,col_offset=3,end_lineno=1,end_col_offset=4),body=[Expr(value=Name(id='y',ctx=Load(),lineno=2,col_offset=2,end_lineno=2,end_col_offset=3),lineno=2,col_offset=2,end_lineno=2,end_col_offset=3)],orelse=[],lineno=1,col_offset=0,end_lineno=2,end_col_offset=3)],type_ignores=[])
+16896 'x = \\'
+SyntaxError unexpected character after line continuation character (<t>, line 1) 1 5 1 0 'x = \\'
+_IncompleteInputError incomplete input (<t>, line 1) 1 6 1 -1 'x = \\\n'
+16896 'f('
+_IncompleteInputError incomplete input (<t>, line 1) 1 2 1 -1 'f('
+_IncompleteInputError incomplete input (<t>, line 1) 1 3 1 -1 'f(\n'
+16896 '@d'
+_IncompleteInputError incomplete input (<t>, line 1) 1 2 1 -1 '@d'
+_IncompleteInputError incomplete input (<t>, line 1) 1 3 1 -1 '@d\n'
+16896 'class C:'
+_IncompleteInputError incomplete input (<t>, line 1) 1 8 1 -1 'class C:'
+_IncompleteInputError incomplete input (<t>, line 1) 1 9 1 -1 'class C:\n'
+16896 'try:\n  x'
+_IncompleteInputError incomplete input (<t>, line 2) 2 3 2 -1 '  x'
+_IncompleteInputError incomplete input (<t>, line 2) 2 4 2 -1 '  x\n'
+16896 'x +'
+_IncompleteInputError incomplete input (<t>, line 1) 1 3 1 -1 'x +'
+SyntaxError invalid syntax (<t>, line 1) 1 4 1 5 'x +\n'
+Module(body=[Assign(targets=[Name(id='x',ctx=Store(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1)],value=Constant(value=1,kind=None,lineno=1,col_offset=4,end_lineno=1,end_col_offset=5),type_comment=None,lineno=1,col_offset=0,end_lineno=1,end_col_offset=5)],type_ignores=[])
+Module(body=[Assign(targets=[Name(id='x',ctx=Store(),lineno=2,col_offset=0,end_lineno=2,end_col_offset=1)],value=Constant(value='é',kind=None,lineno=2,col_offset=4,end_lineno=2,end_col_offset=8),type_comment=None,lineno=2,col_offset=0,end_lineno=2,end_col_offset=8)],type_ignores=[])
+Module(body=[Assign(targets=[Name(id='x',ctx=Store(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1)],value=Constant(value='é',kind=None,lineno=1,col_offset=4,end_lineno=1,end_col_offset=8),type_comment=None,lineno=1,col_offset=0,end_lineno=1,end_col_offset=8)],type_ignores=[])
+Module(body=[Expr(value=Name(id='x',ctx=Load(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1)],type_ignores=[])
+Module(body=[Expr(value=Name(id='x',ctx=Load(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1)],type_ignores=[])
+Module(body=[Assign(targets=[Name(id='x',ctx=Store(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1)],value=Constant(value='1',kind=None,lineno=1,col_offset=4,end_lineno=1,end_col_offset=19),type_comment=None,lineno=1,col_offset=0,end_lineno=1,end_col_offset=19)],type_ignores=[])
+SyntaxError source code string cannot contain null bytes None None None None None
+TypeError compile() arg 1 must be a string, bytes or AST object     ''
+ValueError compile() mode must be 'exec', 'eval', 'single' or 'func_type'     ''
+ValueError compile(): unrecognised flags     ''
+ValueError compile(): invalid optimize value     ''
+TypeError compile() argument 'module' must be str or None, not int     ''
+Module(body=[Expr(value=Name(id='x',ctx=Load(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1)],type_ignores=[])
+Module(body=[Expr(value=Name(id='x',ctx=Load(),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1),lineno=1,col_offset=0,end_lineno=1,end_col_offset=1)],type_ignores=[])

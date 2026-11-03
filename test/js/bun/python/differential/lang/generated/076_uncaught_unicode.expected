@@ -1,0 +1,6 @@
+status: 1
+stderr: UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 2: invalid start byte
+script: 5289e91bdccf9143
+source: 5289e91bdccf9143
+---
+before

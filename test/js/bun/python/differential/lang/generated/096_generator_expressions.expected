@@ -1,0 +1,185 @@
+status: 0
+script: 2c58a50b9406a3ac
+source: f31f484c26935934
+---
+type(g).__name__ => generator
+g.__name__ => <genexpr>
+g.__qualname__ => <genexpr>
+iter(g) is g => True
+next(g) => 0
+next(g) => 1
+list(g) => [4, 9, 16]
+list(g) => []
+next(g, "done") => done
+sum(x for x in range(10)) => 45
+max(x % 3 for x in range(10)) => 2
+list(x for x in "abc") => ['a', 'b', 'c']
+tuple(x for x in ()) => ()
+set(x % 2 for x in range(5)) => {0, 1}
+dict((x, x * 2) for x in range(3)) => {0: 0, 1: 2, 2: 4}
+"".join(c.upper() for c in "abc") => ABC
+any(x > 3 for x in range(5)) => True
+all(x > 3 for x in range(5)) => False
+sorted(-x for x in range(3)) => [-2, -1, 0]
+min((x for x in [3, 1, 2]), key=lambda v: -v) => 3
+list(enumerate(x for x in "ab")) => [(0, 'a'), (1, 'b')]
+list(zip((x for x in "ab"), (y for y in "cd"))) => [('a', 'c'), ('b', 'd')]
+[*(x for x in range(2))] => [0, 1]
+(lambda *a: a)(*(x for x in range(3))) => (0, 1, 2)
+2 in (x for x in range(5)) => True
+len(list(x for x in range(7) if x % 2)) => 3
+list((x, y) for x in range(3) for y in range(x)) => [(1, 0), (2, 0), (2, 1)]
+list(x for x in range(10) if x % 2 if x % 3) => [1, 5, 7]
+list((x, y) for x in range(3) if x for y in range(3) if y != x) => [(1, 0), (1, 2), (2, 0), (2, 1)]
+list(x for y in [[1, 2], [3]] for x in y) => [1, 2, 3]
+list((a, b) for a, b in [(1, 2), (3, 4)]) => [(1, 2), (3, 4)]
+list(a for a, *b in [(1, 2, 3)]) => [1]
+list(y for x in range(3) for y in (x * 2,)) => [0, 2, 4]
+list(list(y for y in range(x)) for x in range(3)) => [[], [0], [0, 1]]
+evaluating outer; created
+evaluating inner; evaluating inner; [11, 12]
+evaluating src; created
+evaluating cond; evaluating cond; evaluating cond; [2, 3]
+(x for x in 5) => TypeError: 'int' object is not iterable
+(x for x in None) => TypeError: 'NoneType' object is not iterable
+(x for x in undefined_name) => NameError: name 'undefined_name' is not defined
+type((x for x in [1] for y in 5)).__name__ => 'generator'
+list(x for x in [1] for y in 5) => TypeError: 'int' object is not iterable
+list(x for x in [1] if undefined_name) => NameError: name 'undefined_name' is not defined
+list(undefined_name for x in [1]) => NameError: name 'undefined_name' is not defined
+list(undefined_name for x in []) => []
+[1, 2, 3, 4]
+[1, 2, 3]
+[100, 101]
+[7, 8]
+[2, 2, 2]
+[0, 1, 2]
+list(g) => [0, 1]
+x => outer x
+[20, 21]
+K.first => [1, 2]
+K.second => name 'b' is not defined
+([0, 2, 4], 4)
+next(g) => 0
+g.send(None) => 1
+g.send("ignored") => 2
+g.send(1) => StopIteration: 
+g.throw(ValueError("thrown")) => ValueError: thrown
+[]
+g.close() => None
+list(g) => []
+g.send(1) => TypeError: can't send non-None value to a just-started generator
+[0]
+g.gi_running => False
+g.gi_suspended => False
+g.gi_frame.f_code.co_name => <genexpr>
+g.gi_code.co_name => <genexpr>
+g.gi_yieldfrom => None
+list(g.gi_frame.f_locals) => ['.0']
+g.gi_code.co_varnames => ('.0', 'x')
+g.gi_code.co_argcount => 1
+qual().__qualname__ => qual.<locals>.<genexpr>
+(x for x in ()).__qualname__ => <genexpr>
+K.__dict__.get("nope") => None
+(lambda: (x for x in ()))().__qualname__ => <lambda>.<locals>.<genexpr>
+1.0
+next(g) => ZeroDivisionError: division by zero
+next(g) => StopIteration: 
+list(g) => RuntimeError: generator raised StopIteration
+list(raise_stop() for _ in range(1)) => RuntimeError: generator raised StopIteration
+[raise_stop() for _ in range(1)] => StopIteration: s
+list(x for x in iter(raise_stop, 1)) => []
+list(x for x in BadNext()) => KeyError: 'from __next__'
+next(me) => ValueError: generator already executing
+sum(x for x in range(3)) => 3
+sum((x for x in range(3))) => 3
+sum((x for x in range(3)), 10) => 13
+list(map(str, (x for x in range(2)))) => ['0', '1']
+0-1
+print(*(x for x in range(2)), sep="-") => None
+(lambda a: list(a))(x for x in range(2)) => [0, 1]
+(lambda a, b: list(a))((x for x in range(2)), 1) => [0, 1]
+(lambda a, b=1: list(a))((x for x in range(2)), b=2) => [0, 1]
+ok: f(x for x in y)
+SyntaxError: Generator expression must be parenthesized <- f(x for x in y, 1)
+SyntaxError: Generator expression must be parenthesized <- f(1, x for x in y)
+ok: f((x for x in y), 1)
+SyntaxError: Generator expression must be parenthesized <- f(x for x in y, a=1)
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='? <- f(a=x for x in y)
+ok: f(a=(x for x in y))
+ok: f(x for x in y for z in w)
+ok: f(*x for x in y)
+SyntaxError: cannot use dict unpacking in generator expression <- f(**x for x in y)
+ok: (x for x in y)
+SyntaxError: invalid syntax <- x for x in y
+SyntaxError: invalid syntax <- (x for x in)
+SyntaxError: invalid syntax <- (for x in y)
+SyntaxError: invalid syntax <- (x for in y)
+SyntaxError: 'in' expected after for-loop variables <- (x for x y)
+SyntaxError: invalid syntax <- (x for x in y if)
+SyntaxError: invalid syntax <- (x for x in y if z else w)
+ok: (x for x in (y if z else w))
+ok: (x for x in y if (z if a else b))
+SyntaxError: invalid syntax <- (x, y for x in z)
+ok: ((x, y) for x in z)
+ok: (x for x, in y)
+ok: (x for x, y in z)
+ok: (x for (x, y) in z)
+ok: (x for [x, y] in z)
+ok: (x for x.a in y)
+ok: (x for x[0] in y)
+SyntaxError: cannot assign to literal <- (x for 1 in y)
+SyntaxError: cannot assign to function call <- (x for f() in y)
+SyntaxError: invalid syntax <- (x for x in y, z)
+ok: (x for x in (y, z))
+SyntaxError: invalid syntax <- (x for x in *y)
+SyntaxError: invalid syntax <- (x for x in *y, z)
+SyntaxError: starred assignment target must be in a list or tuple <- (x for *x in y)
+ok: (x for *x, in y)
+ok: (*x for x in y)
+SyntaxError: cannot use dict unpacking in generator expression <- (**x for x in y)
+SyntaxError: invalid syntax <- (x: y for x in z)
+SyntaxError: invalid syntax <- (x for x in lambda: y)
+SyntaxError: invalid syntax <- (x for x in y if lambda: z)
+ok: (lambda: x for x in y)
+SyntaxError: assignment expression cannot rebind comprehension iteration variable 'x' <- (x := 1 for x in y)
+ok: ((z := x) for x in y)
+SyntaxError: assignment expression cannot rebind comprehension iteration variable 'x' <- ((x := 1) for x in y)
+SyntaxError: assignment expression cannot be used in a comprehension iterable expression <- (x for x in (x := y))
+SyntaxError: assignment expression cannot rebind comprehension iteration variable 'x' <- (x for x in y if (x := 1))
+ok: (x for x in y if (w := 1))
+SyntaxError: assignment expression cannot be used in a comprehension iterable expression <- (x for x in y for z in (w := 1))
+ok: (x async for x in y)
+ok: (await x for x in y)
+SyntaxError: 'await' outside function <- (x for x in await y)
+SyntaxError: invalid syntax <- class C(x for x in y): pass
+ok: @(x for x in y)\ndef f(): pass
+SyntaxError: cannot delete generator expression <- del (x for x in y)
+SyntaxError: cannot assign to generator expression <- (x for x in y) = 1
+SyntaxError: 'generator expression' is an illegal expression for augmented assignment <- (x for x in y) += 1
+SyntaxError: cannot assign to generator expression <- for (x for x in y) in z: pass
+ok: with (x for x in y) as z: pass
+ok: (x for x in y)[0]
+ok: (x for x in y).z
+ok: (x for x in y)()
+ok: print(x for x in y)
+ok: f(x for x in y)(z for z in w)
+ok: [x for x in y](z)
+ok: (x for x in y if z if w for a in b if c)
+ok: (x for x in y\n for z in w\n if q)
+ok: (not x for x in y)
+ok: (x if y else z for x in w)
+ok: (x for x in y or z)
+ok: (x for x in not y)
+ok: (x for x in y < z)
+SyntaxError: invalid syntax <- (yield for x in y)
+SyntaxError: 'yield' inside generator expression <- ((yield) for x in y)
+SyntaxError: 'yield' outside function <- (x for x in (yield))
+ok: def f(): return (x for x in (yield))
+next(big) => 64
+next(big) => 100
+next(big) => 144
+['produce 0', 'consume 0', 'produce 1', 'consume 2', 'produce 2', 'consume 4']
+list(x for x in range(1000) if x % 100 == 0) => [0, 100, 200, 300, 400, 500, 600, 700, 800, 900]
+sum(x * y for x in range(20) for y in range(20)) => 36100
+sum(1 for _ in range(5000)) => 5000

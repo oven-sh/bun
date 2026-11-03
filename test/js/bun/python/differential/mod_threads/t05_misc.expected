@@ -1,0 +1,28 @@
+status: 0
+script: df9cab69810913b5
+---
+[901, 'RecursionError', 501]
+[801]
+[(0, 'T0'), (1, 'T1'), (2, 'T2'), (3, 'MainThread')]
+ValueError generator already executing
+KeyError
+['KeyError', 'ZeroDivisionError']
+[None, 'ZeroDivisionError'] None
+['default', 'thread'] main
+2 True True
+['parked_here', 'run', '_bootstrap_inner', '_bootstrap']
+<module>
+0.005
+0.001
+ValueError switch interval must be strictly positive
+['[slow, [[...]]]', '[slow, [[...]]]', '[slow, [[...]]]']
+0
+1048576
+small stack 101
+ValueError size must be at least 53248 bytes
+0 True True 9223372036.0
+_ThreadHandle False True
+True
+RuntimeError thread not started
+TypeError thread function must be callable
+TypeError 'handle' must be a _ThreadHandle

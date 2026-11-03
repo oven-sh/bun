@@ -1,0 +1,130 @@
+status: 0
+script: 0e464ad462a7c4b4
+source: 7668d475aa87d082
+---
+a => Account('ann', 100.00)
+s => Savings('sam', 861.00)
+o => Overdraft('oli', -70.00)
+Account.count => 3
+sorted([a, s, o]) => [Overdraft('oli', -70.00), Account('ann', 100.00), Savings('sam', 861.00)]
+max(a, s, o) => Savings('sam', 861.00)
+a.history => [('deposit', 50), ('withdraw', 30), ('withdraw', 20)]
+a == a => True
+a == s => False
+len({a, s, o, a}) => 3
+InsufficientFunds: need 1000000.00, have 100.00 1000000.0
+PermissionError: too many withdrawals 
+InsufficientFunds: need 1000.00, have 30.00 1000
+ValueError: deposit must be positive 
+AttributeError: property 'balance' of 'Account' object has no setter 
+Circle with area 3.14 and perimeter 6.28 None False
+Square with area 4.00 and perimeter 8.00 4 True
+Rect with area 6.00 and perimeter 10.00 4 True
+Triangle with area 6.00 and perimeter 12.00 3 False
+NotImplementedError: Blob.area
+sum(sh.area() for sh in shapes if sh.sides) => 16.0
+[type(sh).__mro__[1].__name__ for sh in shapes] => ['Shape', 'Rect', 'Shape', 'Shape']
+{type(sh).__name__: round(sh.area(), 1) for sh in shapes} => {'Rect': 6, 'Square': 4, 'Circle': 3.1, 'Triangle': 6.0}
+ll => LinkedList(['z', 'a', 'b', 'c', 'd'])
+len(ll) => 5
+ll[0] => z
+ll[-1] => d
+ll[1:3] => LinkedList(['a', 'b'])
+"c" in ll => True
+"q" in ll => False
+ll + [1] => LinkedList(['z', 'a', 'b', 'c', 'd', 1])
+list(reversed(list(ll))) => ['d', 'c', 'b', 'a', 'z']
+bool(ll) => True
+bool(LinkedList()) => False
+ll == list("zabcd") => True
+LinkedList(['d', 'c', 'a', 'z']) ['D', 'C', 'A', 'Z'] {0: 'd', 1: 'c', 2: 'a', 3: 'z'} z ['a', 'c', 'd', 'z'] d-c-a-z d c a z
+IndexError: index out of range
+ValueError: 'nope' not in list
+list(t) => [10, 20, 30, 40, 50, 60, 65, 70, 80]
+len(t) => 9
+t.height() => 4
+60 in t => True
+61 in t => False
+min(t) => 10
+max(t) => 80
+sum(t) => 425
+[balanced(s) for s in ("", "()", "([]{})", "(]", "((", "())", "{[()()... => [True, True, True, False, False, False, True]
+Stack().push(1).push(2).peek => 2
+v + w => Vec(4, 2)
+v - w => Vec(2, 6)
+v * 2 => Vec(6, 8)
+2 * v => Vec(6, 8)
+v * w => -5
+-v => Vec(-3, -4)
+abs(v) => 5.0
+v == Vec(3, 4) => True
+v != w => True
+bool(Vec(0, 0)) => False
+tuple(v) => (3, 4)
+v[1] => 4
+{v: 1}[Vec(3, 4)] => 1
+sum([v, w, v], Vec(0, 0)) => Vec(7, 6)
+[*w] => [1, -2]
+max(v) => 4
+h + th => 5/6
+h - th => 1/6
+h * th => 1/6
+h / th => 3/2
+h ** 3 => 1/8
+h ** -2 => 4
+-h => -1/2
+1 + h => 3/2
+1 - h => 1/2
+2 * h => 1
+1 / th => 3
+h == Frac(2, 4) => True
+h < th => False
+sorted([h, th, Frac(3, 4), Frac(-1, 5)]) => [-1/5, 1/3, 1/2, 3/4]
+float(h) => 0.5
+int(Frac(7, 2)) => 3
+int(Frac(-7, 2)) => -3
+f"{th:.3f} {th}" => 0.333 1/3
+sum((Frac(1, n * (n + 1)) for n in range(1, 20)), Frac(0)) => 19/20
+Frac(6, -8) => -3/4
+h == 0.5 => False
+Frac(4, 2) == 2 => True
+ZeroDivisionError: Frac(1, 0)
+TypeError: unsupported operand type(s) for +: 'Frac' and 'str'
+ZeroDivisionError: Frac(1, 0)
+TypeError: unsupported operand type(s) for +: 'Frac' and 'float'
+ev.fire(10) => [11, 20]
+log => [('first', 10), ('second', 10)]
+ev.fire(5) => [10]
+log[-1] => ('second', 5)
+mch.state => idle
+mch.trace => ['engine on', ('idle', 'start', 'running'), ('running', 'pause', 'paused'), 'engine on', ('paused', 'start', 'running'), ('running', 'stop', 'idle')]
+RuntimeError: cannot pause while idle None True
+p => Person(age=30, name='Ann')
+p == Person("Ann", 30) => True
+p == Person("Bob", 30) => False
+p.to_json() => {"age": 30, "name": "Ann"}
+[c.__name__ for c in Person.__mro__] => ['Person', 'ReprMixin', 'EqMixin', 'JsonMixin', 'object']
+it => Item(name='pen', price=1.5, qty=1)
+Item("ink", 4.0, qty=3).total() => 12.0
+it == Item("pen", 1.5, 1) => True
+it == Item("pen", 2.0) => False
+Item.__match_args__ => ('name', 'price', 'qty')
+bulk cap 18.0
+TypeError: Item() missing argument 'price'
+TypeError: Item() takes 3 arguments but 4 were given
+Color.RED => <Color.RED: 1>
+list(Color) => [<Color.RED: 1>, <Color.GREEN: 2>, <Color.BLUE: 3>]
+len(Color) => 3
+Color["GREEN"] => <Color.GREEN: 2>
+Color(3) => <Color.BLUE: 3>
+Color.RED is Color(1) => True
+Color.BLUE.shout() => BLUE!
+Color.RED in Color => True
+isinstance(Color.RED, Color) => True
+{c.name: c.value for c in Color} => {'RED': 1, 'GREEN': 2, 'BLUE': 3}
+ValueError: 9 is not a valid Color
+AttributeError: cannot reassign member RED
+KeyError: 'PINK'
+{'a': 1, 'b': 2}
+{'a': 1, 'b': 2}
+{'a': 1, 'b': 2} rolled back and propagated

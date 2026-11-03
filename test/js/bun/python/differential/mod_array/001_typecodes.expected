@@ -1,0 +1,192 @@
+status: 0
+script: a89fd8c123ef699f
+---
+('b', 'B', 'u', 'w', 'h', 'H', 'i', 'I', 'l', 'L', 'q', 'Q', 'e', 'f', 'd', 'Zf', 'Zd') True
+b 1 b array('b') 0 False [] b''
+B 1 B array('B') 0 False [] b''
+w 4 w array('w') 0 False [] b''
+h 2 h array('h') 0 False [] b''
+H 2 H array('H') 0 False [] b''
+i 4 i array('i') 0 False [] b''
+I 4 I array('I') 0 False [] b''
+l 8 l array('l') 0 False [] b''
+L 8 L array('L') 0 False [] b''
+q 8 q array('q') 0 False [] b''
+Q 8 Q array('Q') 0 False [] b''
+e 2 e array('e') 0 False [] b''
+f 4 f array('f') 0 False [] b''
+d 8 d array('d') 0 False [] b''
+Zf 8 Zf array('Zf') 0 False [] b''
+Zd 16 Zd array('Zd') 0 False [] b''
+b array('b', [-128, 127, 0, 1]) 807f0001 True True int
+OverflowError signed char is less than minimum
+OverflowError signed char is greater than maximum
+OverflowError Python int too large to convert to C long
+OverflowError Python int too large to convert to C long
+TypeError 'float' object cannot be interpreted as an integer
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'NoneType' object cannot be interpreted as an integer
+TypeError 'complex' object cannot be interpreted as an integer
+TypeError 'bytes' object cannot be interpreted as an integer
+array('b', [1, 0])
+B array('B', [0, 255, 0, 1]) 00ff0001 True True int
+OverflowError unsigned byte integer is less than minimum
+OverflowError unsigned byte integer is greater than maximum
+OverflowError Python int too large to convert to C long
+OverflowError Python int too large to convert to C long
+TypeError 'float' object cannot be interpreted as an integer
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'NoneType' object cannot be interpreted as an integer
+TypeError 'complex' object cannot be interpreted as an integer
+TypeError 'bytes' object cannot be interpreted as an integer
+array('B', [1, 0])
+h array('h', [-32768, 32767, 0, 1]) 0080ff7f00000100 True True int
+OverflowError signed short integer is less than minimum
+OverflowError signed short integer is greater than maximum
+OverflowError Python int too large to convert to C long
+OverflowError Python int too large to convert to C long
+TypeError 'float' object cannot be interpreted as an integer
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'NoneType' object cannot be interpreted as an integer
+TypeError 'complex' object cannot be interpreted as an integer
+TypeError 'bytes' object cannot be interpreted as an integer
+array('h', [1, 0])
+H array('H', [0, 65535, 0, 1]) 0000ffff00000100 True True int
+OverflowError unsigned short is less than minimum
+OverflowError unsigned short is greater than maximum
+OverflowError Python int too large to convert to C long
+OverflowError Python int too large to convert to C long
+TypeError 'float' object cannot be interpreted as an integer
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'NoneType' object cannot be interpreted as an integer
+TypeError 'complex' object cannot be interpreted as an integer
+TypeError 'bytes' object cannot be interpreted as an integer
+array('H', [1, 0])
+i array('i', [-2147483648, 2147483647, 0, 1]) 00000080ffffff7f0000000001000000 True True int
+OverflowError signed integer is less than minimum
+OverflowError signed integer is greater than maximum
+OverflowError Python int too large to convert to C long
+OverflowError Python int too large to convert to C long
+TypeError 'float' object cannot be interpreted as an integer
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'NoneType' object cannot be interpreted as an integer
+TypeError 'complex' object cannot be interpreted as an integer
+TypeError 'bytes' object cannot be interpreted as an integer
+array('i', [1, 0])
+I array('I', [0, 4294967295, 0, 1]) 00000000ffffffff0000000001000000 True True int
+OverflowError can't convert negative value to unsigned int
+OverflowError unsigned int is greater than maximum
+OverflowError Python int too large to convert to C unsigned long
+OverflowError can't convert negative value to unsigned int
+TypeError 'float' object cannot be interpreted as an integer
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'NoneType' object cannot be interpreted as an integer
+TypeError 'complex' object cannot be interpreted as an integer
+TypeError 'bytes' object cannot be interpreted as an integer
+array('I', [1, 0])
+l array('l', [-9223372036854775808, 9223372036854775807, 0, 1]) 0000000000000080ffffffffffffff7f00000000000000000100000000000000 True True int
+OverflowError Python int too large to convert to C long
+OverflowError Python int too large to convert to C long
+OverflowError Python int too large to convert to C long
+OverflowError Python int too large to convert to C long
+TypeError 'float' object cannot be interpreted as an integer
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'NoneType' object cannot be interpreted as an integer
+TypeError 'complex' object cannot be interpreted as an integer
+TypeError 'bytes' object cannot be interpreted as an integer
+array('l', [1, 0])
+L array('L', [0, 18446744073709551615, 0, 1]) 0000000000000000ffffffffffffffff00000000000000000100000000000000 True True int
+OverflowError can't convert negative value to unsigned int
+OverflowError Python int too large to convert to C unsigned long
+OverflowError Python int too large to convert to C unsigned long
+OverflowError can't convert negative value to unsigned int
+TypeError 'float' object cannot be interpreted as an integer
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'NoneType' object cannot be interpreted as an integer
+TypeError 'complex' object cannot be interpreted as an integer
+TypeError 'bytes' object cannot be interpreted as an integer
+array('L', [1, 0])
+q array('q', [-9223372036854775808, 9223372036854775807, 0, 1]) 0000000000000080ffffffffffffff7f00000000000000000100000000000000 True True int
+OverflowError int too big to convert
+OverflowError int too big to convert
+OverflowError int too big to convert
+OverflowError int too big to convert
+TypeError 'float' object cannot be interpreted as an integer
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'NoneType' object cannot be interpreted as an integer
+TypeError 'complex' object cannot be interpreted as an integer
+TypeError 'bytes' object cannot be interpreted as an integer
+array('q', [1, 0])
+Q array('Q', [0, 18446744073709551615, 0, 1]) 0000000000000000ffffffffffffffff00000000000000000100000000000000 True True int
+OverflowError can't convert negative int to unsigned
+OverflowError int too big to convert
+OverflowError int too big to convert
+OverflowError can't convert negative int to unsigned
+TypeError 'float' object cannot be interpreted as an integer
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'NoneType' object cannot be interpreted as an integer
+TypeError 'complex' object cannot be interpreted as an integer
+TypeError 'bytes' object cannot be interpreted as an integer
+array('Q', [1, 0])
+OverflowError signed char is greater than maximum
+OverflowError signed char is less than minimum
+OverflowError signed short integer is greater than maximum
+OverflowError signed short integer is less than minimum
+OverflowError signed integer is greater than maximum
+OverflowError signed integer is less than minimum
+OverflowError unsigned int is greater than maximum
+array('b', [5]) array('B', [5]) array('h', [5]) array('H', [5]) array('i', [5]) array('I', [5]) array('l', [5]) array('L', [5]) array('q', [5]) array('Q', [5]) 
+OverflowError signed integer is greater than maximum
+OverflowError can't convert negative value to unsigned int
+OverflowError can't convert negative int to unsigned
+array('d', [3.0])
+array('f', [3.0])
+array('Zd', [(3+0j)])
+e array('e', [0.0, 1.5, -2.25, 1.0, 2.5, 1.0, inf, -inf, -0.0]) 0000003e80c0003c0041003c007c00fc0080
+array('e', [nan]) 0.0999755859375 0.0 65504.0
+TypeError must be real number, not str
+TypeError must be real number, not NoneType
+TypeError must be real number, not complex
+OverflowError int too large to convert to float
+TypeError must be real number, not C
+f array('f', [0.0, 1.5, -2.25, 1.0, 2.5, 1.0, inf, -inf, -0.0]) 000000000000c03f000010c00000803f000020400000803f0000807f000080ff00000080
+array('f', [nan]) 0.10000000149011612 1.000000013351432e-10 65504.0
+TypeError must be real number, not str
+TypeError must be real number, not NoneType
+TypeError must be real number, not complex
+OverflowError int too large to convert to float
+TypeError must be real number, not C
+d array('d', [0.0, 1.5, -2.25, 1.0, 2.5, 1.0, inf, -inf, -0.0]) 0000000000000000000000000000f83f00000000000002c0000000000000f03f0000000000000440000000000000f03f000000000000f07f000000000000f0ff0000000000000080
+array('d', [nan]) 0.1 1e-10 65504.0
+TypeError must be real number, not str
+TypeError must be real number, not NoneType
+TypeError must be real number, not complex
+OverflowError int too large to convert to float
+TypeError must be real number, not C
+OverflowError float too large to pack with e format
+array('e', [65504.0])
+array('e', [inf])
+OverflowError float too large to pack with e format
+array('f', [inf])
+array('f', [-inf])
+array('f', [3.3999999521443642e+38])
+array('f', [inf])
+[5.960464477539063e-08, 0.0, 5.960464477539063e-08, 6.103515625e-05, 6.103515625e-05, 1.0009765625, 1.0, 1.001953125, 2048.0, 2052.0, 0.333251953125]
+Zf array('Zf', [(1+2j), 0j, (1.5+0j), (-0-1j), (1+2j), (2.5+0j), (1+0j), (inf+nanj)]) 8 0000803f0000004000000000000000000000c03f0000000000000080000080bf0000803f000000400000204000000000 complex
+TypeError must be real number, not str
+TypeError must be real number, not NoneType
+OverflowError int too large to convert to float
+Zd array('Zd', [(1+2j), 0j, (1.5+0j), (-0-1j), (1+2j), (2.5+0j), (1+0j), (inf+nanj)]) 16 000000000000f03f000000000000004000000000000000000000000000000000000000000000f83f0000000000000000 complex
+TypeError must be real number, not str
+TypeError must be real number, not NoneType
+OverflowError int too large to convert to float
+array('Zf', [(inf+infj)]) array('Zf', [(0.10000000149011612+0.20000000298023224j)])
+array('w', 'héllo€😀') 7 4 ['h', 'é', 'l', 'l', 'o', '€', '😀'] héllo€😀 € 😀 68000000e90000006c0000006c0000006f000000ac20000000f60100
+TypeError array item must be a unicode character, not int
+TypeError array item must be a unicode character, not a string of length 2
+TypeError array item must be a unicode character, not a string of length 0
+TypeError array item must be a unicode character, not NoneType
+TypeError array item must be a unicode character, not bytes
+array('w', 'a€😀') array('w', 'x') array('w', 'xyz')
+array('w', 'ab') array('w', 'a')
+TypeError array item must be a unicode character, not Foo

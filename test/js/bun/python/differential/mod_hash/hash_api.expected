@@ -1,0 +1,694 @@
+status: 0
+script: 03bfa8f07a6ad5bd
+---
+_md5 ['MD5Type', '_GIL_MINSIZE', 'md5'] 2048
+_sha1 ['SHA1Type', '_GIL_MINSIZE', 'sha1'] 2048
+_sha2 ['SHA224Type', 'SHA256Type', 'SHA384Type', 'SHA512Type', '_GIL_MINSIZE', 'sha224', 'sha256', 'sha384', 'sha512'] 2048
+_sha3 ['_GIL_MINSIZE', 'implementation', 'sha3_224', 'sha3_256', 'sha3_384', 'sha3_512', 'shake_128', 'shake_256'] 2048
+_blake2 ['BLAKE2B_MAX_DIGEST_SIZE', 'BLAKE2B_MAX_KEY_SIZE', 'BLAKE2B_PERSON_SIZE', 'BLAKE2B_SALT_SIZE', 'BLAKE2S_MAX_DIGEST_SIZE', 'BLAKE2S_MAX_KEY_SIZE', 'BLAKE2S_PERSON_SIZE', 'BLAKE2S_SALT_SIZE', '_GIL_MINSIZE', 'blake2b', 'blake2s'] 2048
+<class '_md5.md5'> (<class '_md5.md5'>, <class 'object'>) _md5 md5 md5 builtin_function_or_method
+[('block_size', 'getset_descriptor'), ('copy', 'method_descriptor'), ('digest', 'method_descriptor'), ('digest_size', 'getset_descriptor'), ('hexdigest', 'method_descriptor'), ('name', 'getset_descriptor'), ('update', 'method_descriptor')]
+<_md5.md5 object>
+TypeError: md5.update() takes exactly one argument (0 given)
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+TypeError: object supporting the buffer API required
+TypeError: md5.update() takes exactly one argument (2 given)
+TypeError: md5.update() takes no keyword arguments
+TypeError: md5.update() takes no keyword arguments
+TypeError: object supporting the buffer API required
+None
+TypeError: copy() takes no arguments
+TypeError: copy() takes no arguments
+TypeError: md5.digest() takes no arguments (1 given)
+TypeError: md5.hexdigest() takes no arguments (1 given)
+TypeError: md5.digest() takes no keyword arguments
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+TypeError: md5() takes at most 1 positional argument (2 given)
+TypeError: md5() takes at most 1 positional argument (2 given)
+TypeError: md5() got an unexpected keyword argument 'x'
+TypeError: object supporting the buffer API required
+TypeError: object supporting the buffer API required
+TypeError: argument for md5() given by name ('data') and position (1)
+<_md5.md5 object>
+<_md5.md5 object>
+<_md5.md5 object>
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+[('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead"), ('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead"), ('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead")]
+TypeError: 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+TypeError: 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+DeprecationWarning: the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead
+TypeError: cannot create '_md5.md5' instances
+TypeError: type '_md5.md5' is not an acceptable base type
+AttributeError: '_md5.md5' object has no attribute 'x' and no __dict__ for setting new attributes
+AttributeError: attribute 'name' of '_md5.md5' objects is not writable
+AttributeError: attribute 'digest_size' of '_md5.md5' objects is not writable
+TypeError: cannot set 'x' attribute of immutable type '_md5.md5'
+False True True
+TypeError: cannot pickle '_md5.md5' object
+TypeError: cannot pickle '_md5.md5' object
+ZeroDivisionError: bool
+None
+BufferError: memoryview: underlying buffer is not C-contiguous
+<class '_sha1.sha1'> (<class '_sha1.sha1'>, <class 'object'>) _sha1 sha1 sha1 builtin_function_or_method
+[('block_size', 'getset_descriptor'), ('copy', 'method_descriptor'), ('digest', 'method_descriptor'), ('digest_size', 'getset_descriptor'), ('hexdigest', 'method_descriptor'), ('name', 'getset_descriptor'), ('update', 'method_descriptor')]
+<_sha1.sha1 object>
+TypeError: sha1.update() takes exactly one argument (0 given)
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+TypeError: object supporting the buffer API required
+TypeError: sha1.update() takes exactly one argument (2 given)
+TypeError: sha1.update() takes no keyword arguments
+TypeError: sha1.update() takes no keyword arguments
+TypeError: object supporting the buffer API required
+None
+TypeError: copy() takes no arguments
+TypeError: copy() takes no arguments
+TypeError: sha1.digest() takes no arguments (1 given)
+TypeError: sha1.hexdigest() takes no arguments (1 given)
+TypeError: sha1.digest() takes no keyword arguments
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+TypeError: sha1() takes at most 1 positional argument (2 given)
+TypeError: sha1() takes at most 1 positional argument (2 given)
+TypeError: sha1() got an unexpected keyword argument 'x'
+TypeError: object supporting the buffer API required
+TypeError: object supporting the buffer API required
+TypeError: argument for sha1() given by name ('data') and position (1)
+<_sha1.sha1 object>
+<_sha1.sha1 object>
+<_sha1.sha1 object>
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+[('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead"), ('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead"), ('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead")]
+TypeError: 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+TypeError: 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+DeprecationWarning: the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead
+TypeError: cannot create '_sha1.sha1' instances
+TypeError: type '_sha1.sha1' is not an acceptable base type
+AttributeError: '_sha1.sha1' object has no attribute 'x' and no __dict__ for setting new attributes
+AttributeError: attribute 'name' of '_sha1.sha1' objects is not writable
+AttributeError: attribute 'digest_size' of '_sha1.sha1' objects is not writable
+TypeError: cannot set 'x' attribute of immutable type '_sha1.sha1'
+False True True
+TypeError: cannot pickle '_sha1.sha1' object
+TypeError: cannot pickle '_sha1.sha1' object
+ZeroDivisionError: bool
+None
+BufferError: memoryview: underlying buffer is not C-contiguous
+<class '_sha2.SHA224Type'> (<class '_sha2.SHA224Type'>, <class 'object'>) _sha2 SHA224Type SHA224Type builtin_function_or_method
+[('block_size', 'getset_descriptor'), ('copy', 'method_descriptor'), ('digest', 'method_descriptor'), ('digest_size', 'getset_descriptor'), ('hexdigest', 'method_descriptor'), ('name', 'getset_descriptor'), ('update', 'method_descriptor')]
+<_sha2.SHA224Type object>
+TypeError: SHA224Type.update() takes exactly one argument (0 given)
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+TypeError: object supporting the buffer API required
+TypeError: SHA224Type.update() takes exactly one argument (2 given)
+TypeError: SHA224Type.update() takes no keyword arguments
+TypeError: SHA224Type.update() takes no keyword arguments
+TypeError: object supporting the buffer API required
+None
+TypeError: copy() takes no arguments
+TypeError: copy() takes no arguments
+TypeError: SHA224Type.digest() takes no arguments (1 given)
+TypeError: SHA224Type.hexdigest() takes no arguments (1 given)
+TypeError: SHA224Type.digest() takes no keyword arguments
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+TypeError: sha224() takes at most 1 positional argument (2 given)
+TypeError: sha224() takes at most 1 positional argument (2 given)
+TypeError: sha224() got an unexpected keyword argument 'x'
+TypeError: object supporting the buffer API required
+TypeError: object supporting the buffer API required
+TypeError: argument for sha224() given by name ('data') and position (1)
+<_sha2.SHA224Type object>
+<_sha2.SHA224Type object>
+<_sha2.SHA224Type object>
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+[('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead"), ('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead"), ('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead")]
+TypeError: 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+TypeError: 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+DeprecationWarning: the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead
+TypeError: cannot create '_sha2.SHA224Type' instances
+TypeError: type '_sha2.SHA224Type' is not an acceptable base type
+AttributeError: '_sha2.SHA224Type' object has no attribute 'x' and no __dict__ for setting new attributes
+AttributeError: attribute 'name' of '_sha2.SHA224Type' objects is not writable
+AttributeError: attribute 'digest_size' of '_sha2.SHA224Type' objects is not writable
+TypeError: cannot set 'x' attribute of immutable type '_sha2.SHA224Type'
+False True True
+TypeError: cannot pickle '_sha2.SHA224Type' object
+TypeError: cannot pickle '_sha2.SHA224Type' object
+ZeroDivisionError: bool
+None
+BufferError: memoryview: underlying buffer is not C-contiguous
+<class '_sha2.SHA256Type'> (<class '_sha2.SHA256Type'>, <class 'object'>) _sha2 SHA256Type SHA256Type builtin_function_or_method
+[('block_size', 'getset_descriptor'), ('copy', 'method_descriptor'), ('digest', 'method_descriptor'), ('digest_size', 'getset_descriptor'), ('hexdigest', 'method_descriptor'), ('name', 'getset_descriptor'), ('update', 'method_descriptor')]
+<_sha2.SHA256Type object>
+TypeError: SHA256Type.update() takes exactly one argument (0 given)
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+TypeError: object supporting the buffer API required
+TypeError: SHA256Type.update() takes exactly one argument (2 given)
+TypeError: SHA256Type.update() takes no keyword arguments
+TypeError: SHA256Type.update() takes no keyword arguments
+TypeError: object supporting the buffer API required
+None
+TypeError: copy() takes no arguments
+TypeError: copy() takes no arguments
+TypeError: SHA256Type.digest() takes no arguments (1 given)
+TypeError: SHA256Type.hexdigest() takes no arguments (1 given)
+TypeError: SHA256Type.digest() takes no keyword arguments
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+TypeError: sha256() takes at most 1 positional argument (2 given)
+TypeError: sha256() takes at most 1 positional argument (2 given)
+TypeError: sha256() got an unexpected keyword argument 'x'
+TypeError: object supporting the buffer API required
+TypeError: object supporting the buffer API required
+TypeError: argument for sha256() given by name ('data') and position (1)
+<_sha2.SHA256Type object>
+<_sha2.SHA256Type object>
+<_sha2.SHA256Type object>
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+[('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead"), ('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead"), ('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead")]
+TypeError: 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+TypeError: 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+DeprecationWarning: the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead
+TypeError: cannot create '_sha2.SHA256Type' instances
+TypeError: type '_sha2.SHA256Type' is not an acceptable base type
+AttributeError: '_sha2.SHA256Type' object has no attribute 'x' and no __dict__ for setting new attributes
+AttributeError: attribute 'name' of '_sha2.SHA256Type' objects is not writable
+AttributeError: attribute 'digest_size' of '_sha2.SHA256Type' objects is not writable
+TypeError: cannot set 'x' attribute of immutable type '_sha2.SHA256Type'
+False True True
+TypeError: cannot pickle '_sha2.SHA256Type' object
+TypeError: cannot pickle '_sha2.SHA256Type' object
+ZeroDivisionError: bool
+None
+BufferError: memoryview: underlying buffer is not C-contiguous
+<class '_sha2.SHA384Type'> (<class '_sha2.SHA384Type'>, <class 'object'>) _sha2 SHA384Type SHA384Type builtin_function_or_method
+[('block_size', 'getset_descriptor'), ('copy', 'method_descriptor'), ('digest', 'method_descriptor'), ('digest_size', 'getset_descriptor'), ('hexdigest', 'method_descriptor'), ('name', 'getset_descriptor'), ('update', 'method_descriptor')]
+<_sha2.SHA384Type object>
+TypeError: SHA384Type.update() takes exactly one argument (0 given)
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+TypeError: object supporting the buffer API required
+TypeError: SHA384Type.update() takes exactly one argument (2 given)
+TypeError: SHA384Type.update() takes no keyword arguments
+TypeError: SHA384Type.update() takes no keyword arguments
+TypeError: object supporting the buffer API required
+None
+TypeError: copy() takes no arguments
+TypeError: copy() takes no arguments
+TypeError: SHA384Type.digest() takes no arguments (1 given)
+TypeError: SHA384Type.hexdigest() takes no arguments (1 given)
+TypeError: SHA384Type.digest() takes no keyword arguments
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+TypeError: sha384() takes at most 1 positional argument (2 given)
+TypeError: sha384() takes at most 1 positional argument (2 given)
+TypeError: sha384() got an unexpected keyword argument 'x'
+TypeError: object supporting the buffer API required
+TypeError: object supporting the buffer API required
+TypeError: argument for sha384() given by name ('data') and position (1)
+<_sha2.SHA384Type object>
+<_sha2.SHA384Type object>
+<_sha2.SHA384Type object>
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+[('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead"), ('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead"), ('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead")]
+TypeError: 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+TypeError: 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+DeprecationWarning: the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead
+TypeError: cannot create '_sha2.SHA384Type' instances
+TypeError: type '_sha2.SHA384Type' is not an acceptable base type
+AttributeError: '_sha2.SHA384Type' object has no attribute 'x' and no __dict__ for setting new attributes
+AttributeError: attribute 'name' of '_sha2.SHA384Type' objects is not writable
+AttributeError: attribute 'digest_size' of '_sha2.SHA384Type' objects is not writable
+TypeError: cannot set 'x' attribute of immutable type '_sha2.SHA384Type'
+False True True
+TypeError: cannot pickle '_sha2.SHA384Type' object
+TypeError: cannot pickle '_sha2.SHA384Type' object
+ZeroDivisionError: bool
+None
+BufferError: memoryview: underlying buffer is not C-contiguous
+<class '_sha2.SHA512Type'> (<class '_sha2.SHA512Type'>, <class 'object'>) _sha2 SHA512Type SHA512Type builtin_function_or_method
+[('block_size', 'getset_descriptor'), ('copy', 'method_descriptor'), ('digest', 'method_descriptor'), ('digest_size', 'getset_descriptor'), ('hexdigest', 'method_descriptor'), ('name', 'getset_descriptor'), ('update', 'method_descriptor')]
+<_sha2.SHA512Type object>
+TypeError: SHA512Type.update() takes exactly one argument (0 given)
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+TypeError: object supporting the buffer API required
+TypeError: SHA512Type.update() takes exactly one argument (2 given)
+TypeError: SHA512Type.update() takes no keyword arguments
+TypeError: SHA512Type.update() takes no keyword arguments
+TypeError: object supporting the buffer API required
+None
+TypeError: copy() takes no arguments
+TypeError: copy() takes no arguments
+TypeError: SHA512Type.digest() takes no arguments (1 given)
+TypeError: SHA512Type.hexdigest() takes no arguments (1 given)
+TypeError: SHA512Type.digest() takes no keyword arguments
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+TypeError: sha512() takes at most 1 positional argument (2 given)
+TypeError: sha512() takes at most 1 positional argument (2 given)
+TypeError: sha512() got an unexpected keyword argument 'x'
+TypeError: object supporting the buffer API required
+TypeError: object supporting the buffer API required
+TypeError: argument for sha512() given by name ('data') and position (1)
+<_sha2.SHA512Type object>
+<_sha2.SHA512Type object>
+<_sha2.SHA512Type object>
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+[('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead"), ('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead"), ('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead")]
+TypeError: 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+TypeError: 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+DeprecationWarning: the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead
+TypeError: cannot create '_sha2.SHA512Type' instances
+TypeError: type '_sha2.SHA512Type' is not an acceptable base type
+AttributeError: '_sha2.SHA512Type' object has no attribute 'x' and no __dict__ for setting new attributes
+AttributeError: attribute 'name' of '_sha2.SHA512Type' objects is not writable
+AttributeError: attribute 'digest_size' of '_sha2.SHA512Type' objects is not writable
+TypeError: cannot set 'x' attribute of immutable type '_sha2.SHA512Type'
+False True True
+TypeError: cannot pickle '_sha2.SHA512Type' object
+TypeError: cannot pickle '_sha2.SHA512Type' object
+ZeroDivisionError: bool
+None
+BufferError: memoryview: underlying buffer is not C-contiguous
+<class '_sha3.sha3_224'> (<class '_sha3.sha3_224'>, <class 'object'>) _sha3 sha3_224 sha3_224 type
+[('__new__', 'builtin_function_or_method'), ('_capacity_bits', 'getset_descriptor'), ('_rate_bits', 'getset_descriptor'), ('_suffix', 'getset_descriptor'), ('block_size', 'getset_descriptor'), ('copy', 'method_descriptor'), ('digest', 'method_descriptor'), ('digest_size', 'getset_descriptor'), ('hexdigest', 'method_descriptor'), ('name', 'getset_descriptor'), ('update', 'method_descriptor')]
+<_sha3.sha3_224 object>
+TypeError: sha3_224.update() takes exactly one argument (0 given)
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+TypeError: object supporting the buffer API required
+TypeError: sha3_224.update() takes exactly one argument (2 given)
+TypeError: sha3_224.update() takes no keyword arguments
+TypeError: sha3_224.update() takes no keyword arguments
+TypeError: object supporting the buffer API required
+None
+TypeError: copy() takes no arguments
+TypeError: copy() takes no arguments
+TypeError: sha3_224.digest() takes no arguments (1 given)
+TypeError: sha3_224.hexdigest() takes no arguments (1 given)
+TypeError: sha3_224.digest() takes no keyword arguments
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+TypeError: sha3_224() takes at most 1 positional argument (2 given)
+TypeError: sha3_224() takes at most 1 positional argument (2 given)
+TypeError: sha3_224() got an unexpected keyword argument 'x'
+TypeError: object supporting the buffer API required
+TypeError: object supporting the buffer API required
+TypeError: argument for sha3_224() given by name ('data') and position (1)
+<_sha3.sha3_224 object>
+<_sha3.sha3_224 object>
+<_sha3.sha3_224 object>
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+[('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead"), ('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead"), ('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead")]
+TypeError: 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+TypeError: 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+DeprecationWarning: the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead
+<_sha3.sha3_224 object>
+TypeError: type '_sha3.sha3_224' is not an acceptable base type
+AttributeError: '_sha3.sha3_224' object has no attribute 'x' and no __dict__ for setting new attributes
+AttributeError: attribute 'name' of '_sha3.sha3_224' objects is not writable
+AttributeError: attribute 'digest_size' of '_sha3.sha3_224' objects is not writable
+TypeError: cannot set 'x' attribute of immutable type '_sha3.sha3_224'
+False True True
+TypeError: cannot pickle '_sha3.sha3_224' object
+TypeError: cannot pickle '_sha3.sha3_224' object
+ZeroDivisionError: bool
+None
+BufferError: memoryview: underlying buffer is not C-contiguous
+<class '_sha3.sha3_256'> (<class '_sha3.sha3_256'>, <class 'object'>) _sha3 sha3_256 sha3_256 type
+[('__new__', 'builtin_function_or_method'), ('_capacity_bits', 'getset_descriptor'), ('_rate_bits', 'getset_descriptor'), ('_suffix', 'getset_descriptor'), ('block_size', 'getset_descriptor'), ('copy', 'method_descriptor'), ('digest', 'method_descriptor'), ('digest_size', 'getset_descriptor'), ('hexdigest', 'method_descriptor'), ('name', 'getset_descriptor'), ('update', 'method_descriptor')]
+<_sha3.sha3_256 object>
+TypeError: sha3_256.update() takes exactly one argument (0 given)
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+TypeError: object supporting the buffer API required
+TypeError: sha3_256.update() takes exactly one argument (2 given)
+TypeError: sha3_256.update() takes no keyword arguments
+TypeError: sha3_256.update() takes no keyword arguments
+TypeError: object supporting the buffer API required
+None
+TypeError: copy() takes no arguments
+TypeError: copy() takes no arguments
+TypeError: sha3_256.digest() takes no arguments (1 given)
+TypeError: sha3_256.hexdigest() takes no arguments (1 given)
+TypeError: sha3_256.digest() takes no keyword arguments
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+TypeError: sha3_224() takes at most 1 positional argument (2 given)
+TypeError: sha3_224() takes at most 1 positional argument (2 given)
+TypeError: sha3_224() got an unexpected keyword argument 'x'
+TypeError: object supporting the buffer API required
+TypeError: object supporting the buffer API required
+TypeError: argument for sha3_224() given by name ('data') and position (1)
+<_sha3.sha3_256 object>
+<_sha3.sha3_256 object>
+<_sha3.sha3_256 object>
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+[('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead"), ('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead"), ('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead")]
+TypeError: 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+TypeError: 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+DeprecationWarning: the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead
+<_sha3.sha3_256 object>
+TypeError: type '_sha3.sha3_256' is not an acceptable base type
+AttributeError: '_sha3.sha3_256' object has no attribute 'x' and no __dict__ for setting new attributes
+AttributeError: attribute 'name' of '_sha3.sha3_256' objects is not writable
+AttributeError: attribute 'digest_size' of '_sha3.sha3_256' objects is not writable
+TypeError: cannot set 'x' attribute of immutable type '_sha3.sha3_256'
+False True True
+TypeError: cannot pickle '_sha3.sha3_256' object
+TypeError: cannot pickle '_sha3.sha3_256' object
+ZeroDivisionError: bool
+None
+BufferError: memoryview: underlying buffer is not C-contiguous
+<class '_sha3.sha3_384'> (<class '_sha3.sha3_384'>, <class 'object'>) _sha3 sha3_384 sha3_384 type
+[('__new__', 'builtin_function_or_method'), ('_capacity_bits', 'getset_descriptor'), ('_rate_bits', 'getset_descriptor'), ('_suffix', 'getset_descriptor'), ('block_size', 'getset_descriptor'), ('copy', 'method_descriptor'), ('digest', 'method_descriptor'), ('digest_size', 'getset_descriptor'), ('hexdigest', 'method_descriptor'), ('name', 'getset_descriptor'), ('update', 'method_descriptor')]
+<_sha3.sha3_384 object>
+TypeError: sha3_384.update() takes exactly one argument (0 given)
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+TypeError: object supporting the buffer API required
+TypeError: sha3_384.update() takes exactly one argument (2 given)
+TypeError: sha3_384.update() takes no keyword arguments
+TypeError: sha3_384.update() takes no keyword arguments
+TypeError: object supporting the buffer API required
+None
+TypeError: copy() takes no arguments
+TypeError: copy() takes no arguments
+TypeError: sha3_384.digest() takes no arguments (1 given)
+TypeError: sha3_384.hexdigest() takes no arguments (1 given)
+TypeError: sha3_384.digest() takes no keyword arguments
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+TypeError: sha3_224() takes at most 1 positional argument (2 given)
+TypeError: sha3_224() takes at most 1 positional argument (2 given)
+TypeError: sha3_224() got an unexpected keyword argument 'x'
+TypeError: object supporting the buffer API required
+TypeError: object supporting the buffer API required
+TypeError: argument for sha3_224() given by name ('data') and position (1)
+<_sha3.sha3_384 object>
+<_sha3.sha3_384 object>
+<_sha3.sha3_384 object>
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+[('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead"), ('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead"), ('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead")]
+TypeError: 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+TypeError: 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+DeprecationWarning: the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead
+<_sha3.sha3_384 object>
+TypeError: type '_sha3.sha3_384' is not an acceptable base type
+AttributeError: '_sha3.sha3_384' object has no attribute 'x' and no __dict__ for setting new attributes
+AttributeError: attribute 'name' of '_sha3.sha3_384' objects is not writable
+AttributeError: attribute 'digest_size' of '_sha3.sha3_384' objects is not writable
+TypeError: cannot set 'x' attribute of immutable type '_sha3.sha3_384'
+False True True
+TypeError: cannot pickle '_sha3.sha3_384' object
+TypeError: cannot pickle '_sha3.sha3_384' object
+ZeroDivisionError: bool
+None
+BufferError: memoryview: underlying buffer is not C-contiguous
+<class '_sha3.sha3_512'> (<class '_sha3.sha3_512'>, <class 'object'>) _sha3 sha3_512 sha3_512 type
+[('__new__', 'builtin_function_or_method'), ('_capacity_bits', 'getset_descriptor'), ('_rate_bits', 'getset_descriptor'), ('_suffix', 'getset_descriptor'), ('block_size', 'getset_descriptor'), ('copy', 'method_descriptor'), ('digest', 'method_descriptor'), ('digest_size', 'getset_descriptor'), ('hexdigest', 'method_descriptor'), ('name', 'getset_descriptor'), ('update', 'method_descriptor')]
+<_sha3.sha3_512 object>
+TypeError: sha3_512.update() takes exactly one argument (0 given)
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+TypeError: object supporting the buffer API required
+TypeError: sha3_512.update() takes exactly one argument (2 given)
+TypeError: sha3_512.update() takes no keyword arguments
+TypeError: sha3_512.update() takes no keyword arguments
+TypeError: object supporting the buffer API required
+None
+TypeError: copy() takes no arguments
+TypeError: copy() takes no arguments
+TypeError: sha3_512.digest() takes no arguments (1 given)
+TypeError: sha3_512.hexdigest() takes no arguments (1 given)
+TypeError: sha3_512.digest() takes no keyword arguments
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+TypeError: sha3_224() takes at most 1 positional argument (2 given)
+TypeError: sha3_224() takes at most 1 positional argument (2 given)
+TypeError: sha3_224() got an unexpected keyword argument 'x'
+TypeError: object supporting the buffer API required
+TypeError: object supporting the buffer API required
+TypeError: argument for sha3_224() given by name ('data') and position (1)
+<_sha3.sha3_512 object>
+<_sha3.sha3_512 object>
+<_sha3.sha3_512 object>
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+[('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead"), ('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead"), ('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead")]
+TypeError: 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+TypeError: 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+DeprecationWarning: the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead
+<_sha3.sha3_512 object>
+TypeError: type '_sha3.sha3_512' is not an acceptable base type
+AttributeError: '_sha3.sha3_512' object has no attribute 'x' and no __dict__ for setting new attributes
+AttributeError: attribute 'name' of '_sha3.sha3_512' objects is not writable
+AttributeError: attribute 'digest_size' of '_sha3.sha3_512' objects is not writable
+TypeError: cannot set 'x' attribute of immutable type '_sha3.sha3_512'
+False True True
+TypeError: cannot pickle '_sha3.sha3_512' object
+TypeError: cannot pickle '_sha3.sha3_512' object
+ZeroDivisionError: bool
+None
+BufferError: memoryview: underlying buffer is not C-contiguous
+<class '_sha3.shake_128'> (<class '_sha3.shake_128'>, <class 'object'>) _sha3 shake_128 shake_128 type
+[('__new__', 'builtin_function_or_method'), ('_capacity_bits', 'getset_descriptor'), ('_rate_bits', 'getset_descriptor'), ('_suffix', 'getset_descriptor'), ('block_size', 'getset_descriptor'), ('copy', 'method_descriptor'), ('digest', 'method_descriptor'), ('digest_size', 'getset_descriptor'), ('hexdigest', 'method_descriptor'), ('name', 'getset_descriptor'), ('update', 'method_descriptor')]
+<_sha3.shake_128 object>
+TypeError: shake_128.update() takes exactly one argument (0 given)
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+TypeError: object supporting the buffer API required
+TypeError: shake_128.update() takes exactly one argument (2 given)
+TypeError: shake_128.update() takes no keyword arguments
+TypeError: shake_128.update() takes no keyword arguments
+TypeError: object supporting the buffer API required
+None
+TypeError: copy() takes no arguments
+TypeError: copy() takes no arguments
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+TypeError: sha3_224() takes at most 1 positional argument (2 given)
+TypeError: sha3_224() takes at most 1 positional argument (2 given)
+TypeError: sha3_224() got an unexpected keyword argument 'x'
+TypeError: object supporting the buffer API required
+TypeError: object supporting the buffer API required
+TypeError: argument for sha3_224() given by name ('data') and position (1)
+<_sha3.shake_128 object>
+<_sha3.shake_128 object>
+<_sha3.shake_128 object>
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+[('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead"), ('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead"), ('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead")]
+TypeError: 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+TypeError: 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+DeprecationWarning: the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead
+<_sha3.shake_128 object>
+TypeError: type '_sha3.shake_128' is not an acceptable base type
+AttributeError: '_sha3.shake_128' object has no attribute 'x' and no __dict__ for setting new attributes
+AttributeError: attribute 'name' of '_sha3.shake_128' objects is not writable
+AttributeError: attribute 'digest_size' of '_sha3.shake_128' objects is not writable
+TypeError: cannot set 'x' attribute of immutable type '_sha3.shake_128'
+False True True
+TypeError: cannot pickle '_sha3.shake_128' object
+TypeError: cannot pickle '_sha3.shake_128' object
+ZeroDivisionError: bool
+None
+BufferError: memoryview: underlying buffer is not C-contiguous
+<class '_sha3.shake_256'> (<class '_sha3.shake_256'>, <class 'object'>) _sha3 shake_256 shake_256 type
+[('__new__', 'builtin_function_or_method'), ('_capacity_bits', 'getset_descriptor'), ('_rate_bits', 'getset_descriptor'), ('_suffix', 'getset_descriptor'), ('block_size', 'getset_descriptor'), ('copy', 'method_descriptor'), ('digest', 'method_descriptor'), ('digest_size', 'getset_descriptor'), ('hexdigest', 'method_descriptor'), ('name', 'getset_descriptor'), ('update', 'method_descriptor')]
+<_sha3.shake_256 object>
+TypeError: shake_256.update() takes exactly one argument (0 given)
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+TypeError: object supporting the buffer API required
+TypeError: shake_256.update() takes exactly one argument (2 given)
+TypeError: shake_256.update() takes no keyword arguments
+TypeError: shake_256.update() takes no keyword arguments
+TypeError: object supporting the buffer API required
+None
+TypeError: copy() takes no arguments
+TypeError: copy() takes no arguments
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+TypeError: sha3_224() takes at most 1 positional argument (2 given)
+TypeError: sha3_224() takes at most 1 positional argument (2 given)
+TypeError: sha3_224() got an unexpected keyword argument 'x'
+TypeError: object supporting the buffer API required
+TypeError: object supporting the buffer API required
+TypeError: argument for sha3_224() given by name ('data') and position (1)
+<_sha3.shake_256 object>
+<_sha3.shake_256 object>
+<_sha3.shake_256 object>
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+[('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead"), ('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead"), ('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead")]
+TypeError: 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+TypeError: 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+DeprecationWarning: the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead
+<_sha3.shake_256 object>
+TypeError: type '_sha3.shake_256' is not an acceptable base type
+AttributeError: '_sha3.shake_256' object has no attribute 'x' and no __dict__ for setting new attributes
+AttributeError: attribute 'name' of '_sha3.shake_256' objects is not writable
+AttributeError: attribute 'digest_size' of '_sha3.shake_256' objects is not writable
+TypeError: cannot set 'x' attribute of immutable type '_sha3.shake_256'
+False True True
+TypeError: cannot pickle '_sha3.shake_256' object
+TypeError: cannot pickle '_sha3.shake_256' object
+ZeroDivisionError: bool
+None
+BufferError: memoryview: underlying buffer is not C-contiguous
+<class '_blake2.blake2b'> (<class '_blake2.blake2b'>, <class 'object'>) _blake2 blake2b blake2b type
+[('MAX_DIGEST_SIZE', 'int'), ('MAX_KEY_SIZE', 'int'), ('PERSON_SIZE', 'int'), ('SALT_SIZE', 'int'), ('__new__', 'builtin_function_or_method'), ('block_size', 'getset_descriptor'), ('copy', 'method_descriptor'), ('digest', 'method_descriptor'), ('digest_size', 'getset_descriptor'), ('hexdigest', 'method_descriptor'), ('name', 'getset_descriptor'), ('update', 'method_descriptor')]
+<_blake2.blake2b object>
+TypeError: blake2b.update() takes exactly one argument (0 given)
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+TypeError: object supporting the buffer API required
+TypeError: blake2b.update() takes exactly one argument (2 given)
+TypeError: blake2b.update() takes no keyword arguments
+TypeError: blake2b.update() takes no keyword arguments
+TypeError: object supporting the buffer API required
+None
+TypeError: copy() takes no arguments
+TypeError: copy() takes no arguments
+TypeError: blake2b.digest() takes no arguments (1 given)
+TypeError: blake2b.hexdigest() takes no arguments (1 given)
+TypeError: blake2b.digest() takes no keyword arguments
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+TypeError: blake2b() takes at most 1 positional argument (2 given)
+TypeError: blake2b() takes at most 1 positional argument (2 given)
+TypeError: blake2b() got an unexpected keyword argument 'x'
+TypeError: object supporting the buffer API required
+TypeError: object supporting the buffer API required
+TypeError: argument for blake2b() given by name ('data') and position (1)
+<_blake2.blake2b object>
+<_blake2.blake2b object>
+<_blake2.blake2b object>
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+[('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead"), ('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead"), ('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead")]
+TypeError: 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+TypeError: 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+DeprecationWarning: the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead
+<_blake2.blake2b object>
+TypeError: type '_blake2.blake2b' is not an acceptable base type
+AttributeError: '_blake2.blake2b' object has no attribute 'x' and no __dict__ for setting new attributes
+AttributeError: attribute 'name' of '_blake2.blake2b' objects is not writable
+AttributeError: attribute 'digest_size' of '_blake2.blake2b' objects is not writable
+TypeError: cannot set 'x' attribute of immutable type '_blake2.blake2b'
+False True True
+TypeError: cannot pickle '_blake2.blake2b' object
+TypeError: cannot pickle '_blake2.blake2b' object
+ZeroDivisionError: bool
+None
+BufferError: memoryview: underlying buffer is not C-contiguous
+<class '_blake2.blake2s'> (<class '_blake2.blake2s'>, <class 'object'>) _blake2 blake2s blake2s type
+[('MAX_DIGEST_SIZE', 'int'), ('MAX_KEY_SIZE', 'int'), ('PERSON_SIZE', 'int'), ('SALT_SIZE', 'int'), ('__new__', 'builtin_function_or_method'), ('block_size', 'getset_descriptor'), ('copy', 'method_descriptor'), ('digest', 'method_descriptor'), ('digest_size', 'getset_descriptor'), ('hexdigest', 'method_descriptor'), ('name', 'getset_descriptor'), ('update', 'method_descriptor')]
+<_blake2.blake2s object>
+TypeError: blake2s.update() takes exactly one argument (0 given)
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+TypeError: object supporting the buffer API required
+TypeError: blake2s.update() takes exactly one argument (2 given)
+TypeError: blake2s.update() takes no keyword arguments
+TypeError: blake2s.update() takes no keyword arguments
+TypeError: object supporting the buffer API required
+None
+TypeError: copy() takes no arguments
+TypeError: copy() takes no arguments
+TypeError: blake2s.digest() takes no arguments (1 given)
+TypeError: blake2s.hexdigest() takes no arguments (1 given)
+TypeError: blake2s.digest() takes no keyword arguments
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+TypeError: blake2s() takes at most 1 positional argument (2 given)
+TypeError: blake2s() takes at most 1 positional argument (2 given)
+TypeError: blake2s() got an unexpected keyword argument 'x'
+TypeError: object supporting the buffer API required
+TypeError: object supporting the buffer API required
+TypeError: argument for blake2s() given by name ('data') and position (1)
+<_blake2.blake2s object>
+<_blake2.blake2s object>
+<_blake2.blake2s object>
+TypeError: object supporting the buffer API required
+TypeError: Strings must be encoded before hashing
+[('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead"), ('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead"), ('DeprecationWarning', "the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead")]
+TypeError: 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+TypeError: 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+DeprecationWarning: the 'string' keyword parameter is deprecated since Python 3.15 and slated for removal in Python 3.19; use the 'data' keyword parameter or pass the data to hash as a positional argument instead
+<_blake2.blake2s object>
+TypeError: type '_blake2.blake2s' is not an acceptable base type
+AttributeError: '_blake2.blake2s' object has no attribute 'x' and no __dict__ for setting new attributes
+AttributeError: attribute 'name' of '_blake2.blake2s' objects is not writable
+AttributeError: attribute 'digest_size' of '_blake2.blake2s' objects is not writable
+TypeError: cannot set 'x' attribute of immutable type '_blake2.blake2s'
+False True True
+TypeError: cannot pickle '_blake2.blake2s' object
+TypeError: cannot pickle '_blake2.blake2s' object
+ZeroDivisionError: bool
+None
+BufferError: memoryview: underlying buffer is not C-contiguous
+sha3_224 448 1152 b'\x06' 144 28 sha3_224 sha3_224([data], *, usedforsecurity=True) -> SHA3 object
+
+Return a new SHA3 hash object with a hashbit length of 28 bytes.
+sha3_256 512 1088 b'\x06' 136 32 sha3_256 sha3_256([data], *, usedforsecurity=True) -> SHA3 object
+
+Return a new SHA3 hash object with a hashbit length of 32 bytes.
+sha3_384 768 832 b'\x06' 104 48 sha3_384 sha3_384([data], *, usedforsecurity=True) -> SHA3 object
+
+Return a new SHA3 hash object with a hashbit length of 48 bytes.
+sha3_512 1024 576 b'\x06' 72 64 sha3_512 sha3_512([data], *, usedforsecurity=True) -> SHA3 object
+
+Return a new SHA3 hash object with a hashbit length of 64 bytes.
+shake_128 256 1344 b'\x1f' 168 0 shake_128 shake_128([data], *, usedforsecurity=True) -> SHAKE object
+
+Return a new SHAKE hash object.
+shake_256 512 1088 b'\x1f' 136 0 shake_256 shake_256([data], *, usedforsecurity=True) -> SHAKE object
+
+Return a new SHAKE hash object.
+TypeError: digest() missing required argument 'length' (pos 1)
+ValueError: length cannot be negative
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+OverflowError: digest length is too large
+b''
+OverflowError: Python int too large to convert to C ssize_t
+OverflowError: Python int too large to convert to C ssize_t
+b'\x7f\x9c+'
+TypeError: digest() takes at most 1 argument (2 given)
+TypeError: digest() missing required argument 'length' (pos 1)
+TypeError: digest() takes at most 1 argument (2 given)
+b'\x7f'
+TypeError: 'NoneType' object cannot be interpreted as an integer
+TypeError: hexdigest() missing required argument 'length' (pos 1)
+ValueError: length cannot be negative
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+OverflowError: digest length is too large
+''
+OverflowError: Python int too large to convert to C ssize_t
+OverflowError: Python int too large to convert to C ssize_t
+'7f9c2b'
+TypeError: hexdigest() takes at most 1 argument (2 given)
+TypeError: hexdigest() missing required argument 'length' (pos 1)
+TypeError: hexdigest() takes at most 1 argument (2 given)
+'7f'
+TypeError: 'NoneType' object cannot be interpreted as an integer
+Return a new BLAKE2b hash object. Return a new BLAKE2s hash object. None
+($module, /, data=b'', *, usedforsecurity=True, string=None) ($module, /, data=b'', *, usedforsecurity=True, string=None)

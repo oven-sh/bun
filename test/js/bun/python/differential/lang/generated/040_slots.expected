@@ -1,0 +1,140 @@
+status: 0
+script: 05f8efacb9100e28
+source: 481a49297b621257
+---
+p.x => 1
+p.y => 2
+P.__slots__ => ('x', 'y')
+hasattr(p, "__dict__") => False
+hasattr(p, "__weakref__") => False
+type(P.x).__name__ => member_descriptor
+[k for k in P.__dict__ if not k.startswith("__")] => ['x', 'y']
+"x" in dir(p) => True
+10
+p.x => AttributeError: 'P' object has no attribute 'x'
+False
+3
+s1() => AttributeError: 'P' object has no attribute 'z' and no __dict__ for setting new attributes
+s2() => AttributeError: 'P' object has no attribute 'z' and no __dict__ for setting new attributes
+s3() => AttributeError: y
+p.__dict__ => AttributeError: 'P' object has no attribute '__dict__'
+vars(p) => TypeError: vars() argument must have __dict__ attribute
+p.nope => AttributeError: 'P' object has no attribute 'nope'
+q.x => AttributeError: 'P' object has no attribute 'x'
+hasattr(q, "x") => False
+hasattr(q, "y") => False
+s4() => AttributeError: 'E' object has no attribute 'a' and no __dict__ for setting new attributes
+E.__slots__ => ()
+hasattr(e, "__dict__") => False
+s.single => 1
+S1.__slots__ => single
+SL.__slots__ => ['a', 'b']
+SD.__slots__ => {'a': 'doc of a', 'b': 'doc of b'}
+SD.a.__doc__ => None
+SL.a.__doc__ => None
+type(SG.__slots__).__name__ => generator
+hasattr(SG, "a") => True
+hasattr(SG, "b") => True
+w.a => 1
+w.other => 2
+w.__dict__ => {'other': 2}
+hasattr(WithWeak(), "__weakref__") => True
+hasattr(WithWeak(), "__dict__") => False
+d.a => 1
+d.b => 2
+hasattr(d, "__dict__") => False
+Derived.__slots__ => ('b',)
+Base.__slots__ => ('a',)
+s5() => AttributeError: 'Derived' object has no attribute 'c' and no __dict__ for setting new attributes
+n.a => 1
+n.c => 3
+n.__dict__ => {'c': 3}
+hasattr(n, "__weakref__") => True
+es.a => 1
+hasattr(es, "__dict__") => False
+sp.s => 1
+sp.__dict__ => {'t': 2}
+sh.a => derived slot
+Base.a.__get__(sh, Shadow) if False else "" => 
+Shadow.a is Base.a => False
+Base.a.__get__(sh) => AttributeError: 'Shadow' object has no attribute 'a'
+TypeError: multiple bases have instance lay-out conflict
+'X'
+(1, {'z': 2})
+TypeError: multiple bases have instance lay-out conflict
+6
+TypeError: arbitrary __slots__ not supported for subtype of 'int'
+None
+([1], 2, False)
+({'a': 1}, "'X' object has no attribute 'z' and no __dict__ for setting new attributes")
+None
+TypeError: arbitrary __slots__ not supported for subtype of 'bytes'
+(1.5, 1)
+(1, 2)
+TypeError: arbitrary __slots__ not supported for subtype of 'type'
+TypeError: multiple bases have instance lay-out conflict
+b(("a", "a"))() => 'X'
+b((1,))() => TypeError: __slots__ items must be strings, not 'int'
+b(("1a",))() => TypeError: __slots__ must be identifiers
+b(("a b",))() => TypeError: __slots__ must be identifiers
+b(("",))() => TypeError: __slots__ must be identifiers
+b(1)() => TypeError: 'int' object is not iterable
+b(None)() => TypeError: 'NoneType' object is not iterable
+b(("a",), a=1)() => ValueError: 'a' in __slots__ conflicts with class variable
+b(("__dict__", "__dict__"))() => TypeError: __dict__ slot disallowed: we already got one
+b(("__weakref__", "__weakref__"))() => TypeError: __weakref__ slot disallowed: we already got one
+b(("a-b",))() => TypeError: __slots__ must be identifiers
+b((b"a",))() => TypeError: __slots__ items must be strings, not 'bytes'
+b(("é",))() => 'X'
+b(("class",))() => 'X'
+b(("__slots__",))() => ValueError: '__slots__' in __slots__ conflicts with class variable
+b(("__init__",))() => 'X'
+b(("a",), __init__=lambda s: None)() => 'X'
+b("ab")() => 'X'
+b(("a",), b=1)() => 'X'
+b(("__qualname__",))() => 'X'
+b(("__class__",))() => 'X'
+b(("__doc__",))() => 'X'
+b(("__module__",))() => 'X'
+dd() => TypeError: __dict__ slot disallowed: we already got one
+ww() => TypeError: __weakref__ slot disallowed: we already got one
+mg.get() => 1
+mg._Mg__priv => 1
+mg._single => 2
+mg.__dunder__ => 3
+Mg.__slots__ => ('__priv', '_single', '__dunder__')
+sorted(k for k in Mg.__dict__ if "priv" in k or "single" in k or "dun... => ['_Mg__priv', '__dunder__', '_single']
+ca.v => 5
+ca.m() => 5
+ca.c() => class level
+ca.default => class level
+s6() => AttributeError: 'CA' object attribute 'default' is read-only
+changed
+type(a).__name__ => A2
+a.x => 1
+c1() => TypeError: __class__ assignment: 'A3' object layout differs from 'A2'
+c2() => TypeError: __class__ assignment: 'A4' object layout differs from 'A2'
+c3() => TypeError: __class__ assignment: 'Plain' object layout differs from 'A2'
+c4() => TypeError: __class__ assignment: 'A1' object layout differs from 'Plain'
+fallback a
+set a; h.a => 1
+h.b => fallback b
+s7() => set b; AttributeError: 'H' object has no attribute 'b'
+repr(P.x) => <member 'x' of 'P' objects>
+P.x.__name__ => x
+P.x.__objclass__.__name__ => P
+P.x.__get__(p) => 3
+P.x.__set__(p, 9) => None
+p.x => 9
+P.x.__get__(None, P) is P.x => True
+sum(getattr(mo, "s%d" % i) for i in range(100)) => 4950
+len(many.__slots__) => 100
+sum(o.x + o.y for o in objs) => 0
+objs[500].x => 500
+P(1, 2).__reduce_ex__(2)[2] => (None, {'x': 1, 'y': 2})
+P(1, 2).__getstate__() => (None, {'x': 1, 'y': 2})
+E().__getstate__() => None
+WithDict().__getstate__() => None
+Derived().__getstate__() => None
+P(1, 2).__reduce_ex__(1) => TypeError: a class that defines __slots__ without defining __getstate__ cannot be pickled
+P(1, 2).__reduce__() => TypeError: a class that defines __slots__ without defining __getstate__ cannot be pickled

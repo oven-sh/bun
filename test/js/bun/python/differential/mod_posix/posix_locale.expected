@@ -1,0 +1,179 @@
+status: 0
+script: 1bf20c242f42bfa6
+---
+<class 'locale.Error'> Error Error locale (<class 'locale.Error'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>) (<class 'Exception'>,)
+Error('x')
+True 127
+-- as the interpreter starts
+LC_CTYPE C.UTF-8 C.UTF-8
+LC_COLLATE C C
+LC_TIME C C
+LC_MONETARY C C
+LC_MESSAGES C C
+LC_NUMERIC C C
+'UTF-8'
+'UTF-8'
+-- setlocale
+'C'
+'C'
+'ANSI_X3.4-1968'
+'C.UTF-8'
+'C.UTF-8'
+'UTF-8'
+'C'
+'C.utf8'
+'C.utf8'
+'C.UTF-8'
+'C.UTF-8'
+Error unsupported locale setting
+Error unsupported locale setting
+'C.UTF-8'
+Error locale query failed
+Error unsupported locale setting
+Error locale query failed
+TypeError setlocale() argument 2 must be str or None, not int
+TypeError setlocale() argument 2 must be str or None, not bytes
+ValueError embedded null character
+UnicodeEncodeError 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'float' object cannot be interpreted as an integer
+OverflowError Python int too large to convert to C int
+TypeError setlocale expected at least 1 argument, got 0
+TypeError setlocale expected at most 2 arguments, got 3
+TypeError _locale.setlocale() takes no keyword arguments
+-- localeconv
+dict ['int_curr_symbol', 'currency_symbol', 'mon_decimal_point', 'mon_thousands_sep', 'mon_grouping', 'positive_sign', 'negative_sign', 'int_frac_digits', 'frac_digits', 'p_cs_precedes', 'p_sep_by_space', 'n_cs_precedes', 'n_sep_by_space', 'p_sign_posn', 'n_sign_posn', 'decimal_point', 'thousands_sep', 'grouping']
+{'int_curr_symbol': '', 'currency_symbol': '', 'mon_decimal_point': '', 'mon_thousands_sep': '', 'mon_grouping': [], 'positive_sign': '', 'negative_sign': '', 'int_frac_digits': 127, 'frac_digits': 127, 'p_cs_precedes': 127, 'p_sep_by_space': 127, 'n_cs_precedes': 127, 'n_sep_by_space': 127, 'p_sign_posn': 127, 'n_sign_posn': 127, 'decimal_point': '.', 'thousands_sep': '', 'grouping': []}
+TypeError _locale.localeconv() takes no arguments (1 given)
+-- strcoll, strxfrm
+'a' 'b' -1 -1
+'b' 'a' 1 1
+'a' 'a' 0 0
+'' '' 0 0
+'' 'a' -1 -1
+'a' 'A' 1 1
+'abc' 'abd' -1 -1
+'abc' 'ab' 1 1
+'\xe9' 'f' 1 1
+'\u20ac' '\U0001f40d' -1 -1
+'\U0001f40d' '\uff41' 1 1
+'\udc80' 'a' 1 1
+''
+'abc'
+'caf\xe9'
+'\u20ac'
+'\uffff'
+'\U00010000'
+'\U00010001\x01'
+'\U00010001\uf40d\uff41'
+'\U00010010\uffff'
+1000
+TypeError strcoll() argument 1 must be str, not int
+TypeError strcoll() argument 2 must be str, not int
+TypeError strcoll() argument 1 must be str, not int
+TypeError strcoll() argument 1 must be str, not bytes
+ValueError embedded null character
+ValueError embedded null character
+TypeError strcoll() argument 2 must be str, not int
+TypeError strcoll expected 2 arguments, got 1
+TypeError strxfrm() argument must be str, not int
+TypeError strxfrm() argument must be str, not None
+ValueError embedded null character
+TypeError _locale.strxfrm() takes exactly one argument (0 given)
+-- nl_langinfo
+ABDAY_1 'Sun'
+ABDAY_2 'Mon'
+ABDAY_3 'Tue'
+ABDAY_4 'Wed'
+ABDAY_5 'Thu'
+ABDAY_6 'Fri'
+ABDAY_7 'Sat'
+ABMON_1 'Jan'
+ABMON_10 'Oct'
+ABMON_11 'Nov'
+ABMON_12 'Dec'
+ABMON_2 'Feb'
+ABMON_3 'Mar'
+ABMON_4 'Apr'
+ABMON_5 'May'
+ABMON_6 'Jun'
+ABMON_7 'Jul'
+ABMON_8 'Aug'
+ABMON_9 'Sep'
+ALT_DIGITS ''
+AM_STR 'AM'
+CODESET 'UTF-8'
+CRNCYSTR '-'
+DAY_1 'Sunday'
+DAY_2 'Monday'
+DAY_3 'Tuesday'
+DAY_4 'Wednesday'
+DAY_5 'Thursday'
+DAY_6 'Friday'
+DAY_7 'Saturday'
+D_FMT '%m/%d/%y'
+D_T_FMT '%a %b %e %H:%M:%S %Y'
+ERA ''
+ERA_D_FMT ''
+ERA_D_T_FMT ''
+ERA_T_FMT ''
+MON_1 'January'
+MON_10 'October'
+MON_11 'November'
+MON_12 'December'
+MON_2 'February'
+MON_3 'March'
+MON_4 'April'
+MON_5 'May'
+MON_6 'June'
+MON_7 'July'
+MON_8 'August'
+MON_9 'September'
+NOEXPR '^[nN]'
+PM_STR 'PM'
+RADIXCHAR '.'
+THOUSEP ''
+T_FMT '%H:%M:%S'
+T_FMT_AMPM '%I:%M:%S %p'
+YESEXPR '^[yY]'
+_DATE_FMT '%a %b %e %H:%M:%S %Z %Y'
+ValueError unsupported langinfo constant
+ValueError unsupported langinfo constant
+ValueError unsupported langinfo constant
+TypeError 'str' object cannot be interpreted as an integer
+OverflowError Python int too large to convert to C int
+TypeError _locale.nl_langinfo() takes exactly one argument (0 given)
+-- gettext
+'a message'
+''
+'café €'
+TypeError gettext() argument must be str, not int
+TypeError gettext() argument must be str, not None
+ValueError embedded null character
+'m'
+'m'
+TypeError dgettext() argument 1 must be str or None, not int
+TypeError dgettext() argument 2 must be str, not int
+TypeError dgettext() argument 2 must be str, not None
+'m'
+'m'
+TypeError 'str' object cannot be interpreted as an integer
+'messages'
+'mine'
+'mine'
+TypeError textdomain() argument must be str or None, not int
+'messages'
+'/usr/share/locale'
+'/some/where'
+'/some/where'
+'/bytes'
+Error domain must be a non-empty string
+TypeError bindtextdomain() argument 1 must be str, not int
+TypeError bindtextdomain() argument 1 must be str, not None
+TypeError expected str, bytes or os.PathLike object, not int
+TypeError bindtextdomain expected 2 arguments, got 1
+None
+'UTF-8'
+'UTF-8'
+TypeError bind_textdomain_codeset() argument 1 must be str, not None
+TypeError bind_textdomain_codeset() argument 2 must be str or None, not int

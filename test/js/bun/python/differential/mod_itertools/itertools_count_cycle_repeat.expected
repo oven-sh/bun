@@ -1,0 +1,129 @@
+status: 0
+script: 6892714160d3580b
+---
+--- count
+[0, 1, 2, 3, 4]
+[3, 4, 5, 6, 7]
+[3, 5, 7, 9, 11]
+[0, 3, 6, 9, 12]
+[-2, -1, 0, 1, 2]
+[10, 7, 4, 1, -2]
+[1.5, 2.5, 3.5, 4.5]
+[1, 1.25, 1.5, 1.75]
+[0.5, 1.0, 1.5, 2.0]
+[1j, (1+1j), (2+1j)]
+[2, 2, 2]
+[1, 2, 3]
+[0, 1, 2]
+[True, 3, 5]
+[5, 6, 7]
+[MyInt(5), 7, 9]
+[1, 2, 3]
+[1, 3, 5]
+[Num(1), Num(2), Num(3)]
+[Num(1), Num(3), Num(5)]
+[0, Num(2), Num(4)]
+TypeError can only concatenate str (not "int") to str
+[9223372036854775806, 9223372036854775807, 9223372036854775808]
+[9223372036854775807, 9223372036854775808, 9223372036854775809]
+[9223372036854775808, 9223372036854775809, 9223372036854775810]
+[-9223372036854775809, -9223372036854775808, -9223372036854775807]
+[-9223372036854775808, -9223372036854775807, -9223372036854775806]
+[9223372036854775806, 9223372036854775808, 9223372036854775810]
+[1267650600228229401496703205376, 2535301200456458802993406410752, 3802951800684688204490109616128]
+[9007199254740991, 9007199254740992, 9007199254740993]
+[0, 9223372036854775807, 18446744073709551614]
+['int', 'int', 'int']
+['int', 'int', 'int']
+['MyInt', 'int', 'int']
+['float', 'float', 'float']
+['int', 'float', 'float']
+--- count repr
+count(0)
+count(3)
+count(3)
+count(3, 2)
+count(1.5)
+count(1, 1.0)
+count(1.0)
+count(1)
+count(1)
+count(4)
+count(MyInt(4), 3)
+count(1)
+count(Num(1))
+count(Num(1), Num(1))
+count(-5)
+count(0, -1)
+count(9223372036854775807)
+count(9223372036854775808)
+count(1180591620717411303424, 2)
+count(1j)
+count(7) count(7)
+count(9223372036854775806) 9223372036854775806
+count(9223372036854775807) 9223372036854775807
+count(9223372036854775808) 9223372036854775808
+count(9223372036854775809) 9223372036854775809
+count(3.5, 2)
+--- count errors
+TypeError a number is required
+TypeError a number is required
+TypeError a number is required
+TypeError a number is required
+TypeError a number is required
+TypeError count() takes at most 2 arguments (3 given)
+TypeError argument for count() given by name ('start') and position (1)
+TypeError count() got an unexpected keyword argument 'x'
+TypeError count() got an unexpected keyword argument 'stop'. Did you mean 'step'?
+caught bad add
+ZeroDivisionError bad add
+--- cycle
+['a', 'b', 'c', 'a', 'b', 'c', 'a']
+[]
+[1, 1, 1, 1, 1]
+[0, 1, 2, 0, 1, 2, 0, 1, 2, 0]
+[1, 2, 1, 2, 1]
+StopIteration 
+TypeError cycle expected 1 argument, got 0
+TypeError 'int' object is not iterable
+TypeError cycle expected 1 argument, got 2
+TypeError cycle() takes no keyword arguments
+[1, 2, 'boom', 1, 2, 1]
+[1, 2, 3, 4, 1, 2, 3, 4]
+--- repeat
+['a', 'a', 'a']
+[]
+[]
+['a', 'a']
+['a', 'a']
+[None, None]
+[None, None, None]
+['a']
+['a', 'a']
+repeat(1)
+repeat(1, 3)
+repeat('a', 0)
+repeat('a', 0)
+repeat([1, 2], 2)
+repeat(None)
+repeat(1, 1000000000000)
+repeat('x', 3) 3 x
+repeat('x', 2) 2 x
+repeat('x', 1) 1 x
+repeat('x', 0) 0 done
+repeat('x', 0) 0 done
+TypeError len() of unsized object
+9223372036854775807
+TypeError repeat() missing required argument 'object' (pos 1)
+TypeError repeat() takes at most 2 arguments (3 given)
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'NoneType' object cannot be interpreted as an integer
+TypeError 'float' object cannot be interpreted as an integer
+OverflowError Python int too large to convert to C ssize_t
+OverflowError Python int too large to convert to C ssize_t
+TypeError repeat() missing required argument 'object' (pos 1)
+TypeError repeat() got an unexpected keyword argument 'x'
+TypeError argument for repeat() given by name ('object') and position (1)
+[(0, 'z'), (1, 'z'), (2, 'z')]
+[0, 1, 4, 9, 16]
+True

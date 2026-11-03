@@ -1,0 +1,25 @@
+status: 0
+oracle: none
+mask: addresses
+---
+ValueError bad value true true true false false object
+ValueError: bad value ValueError: bad value ValueError: bad value [object ValueError] 1 bad value
+Traceback (most recent call last):|  File "005_exceptions.py", line 9, in fail|ValueError: bad value|
+AppError app failed 7 true true code
+KeyError 'k' KeyError: 'k'
+ZeroDivisionError division by zero
+WithMessage own message
+AttributeError 'NoneType' object has no attribute 'nope'
+RuntimeError ZeroDivisionError true true true false
+true
+true finally
+true enter,exit JSError
+true
+42 str
+JSError RangeError: js error true true true
+JSError RangeError: js error | ValueError bad value | ValueError made in js
+true true true
+true KeyError: 'mine'
+true
+{"code":7}
+rejected ValueError

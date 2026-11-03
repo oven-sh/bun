@@ -1,0 +1,262 @@
+status: 0
+script: e6b5cb5f77125c11
+source: b1bc2a9e5e460462
+---
+base.__name__ [base=float] => float
+attempt(lambda: base(*args, newarg=3)) [base=float] => TypeError: float() takes no keyword arguments
+base.__name__ [base=float] => float
+attempt(lambda: Plain(*args, newarg=3)) [base=float] => TypeError: float() takes no keyword arguments
+base.__name__ [base=float] => float
+attempt(lambda: WithInit(*args, newarg=3).newarg) [base=float] => 3
+base.__name__ [base=float] => float
+attempt(lambda: WithNew(*args, newarg=3).newarg) [base=float] => 3
+base.__name__ [base=filter] => filter
+attempt(lambda: base(*args, newarg=3)) [base=filter] => TypeError: filter() takes no keyword arguments
+base.__name__ [base=filter] => filter
+attempt(lambda: Plain(*args, newarg=3)) [base=filter] => TypeError: filter() takes no keyword arguments
+base.__name__ [base=filter] => filter
+attempt(lambda: WithInit(*args, newarg=3).newarg) [base=filter] => 3
+base.__name__ [base=filter] => filter
+attempt(lambda: WithNew(*args, newarg=3).newarg) [base=filter] => 3
+base.__name__ [base=reversed] => reversed
+attempt(lambda: base(*args, newarg=3)) [base=reversed] => TypeError: reversed() takes no keyword arguments
+base.__name__ [base=reversed] => reversed
+attempt(lambda: Plain(*args, newarg=3)) [base=reversed] => TypeError: reversed() takes no keyword arguments
+base.__name__ [base=reversed] => reversed
+attempt(lambda: WithInit(*args, newarg=3).newarg) [base=reversed] => AttributeError: 'list_reverseiterator' object has no attribute 'newarg'
+base.__name__ [base=reversed] => reversed
+attempt(lambda: WithNew(*args, newarg=3).newarg) [base=reversed] => AttributeError: 'list_reverseiterator' object has no attribute 'newarg' and no __dict__ for setting new attributes
+base.__name__ [base=list] => list
+attempt(lambda: base(*args, newarg=3)) [base=list] => TypeError: list() takes no keyword arguments
+base.__name__ [base=list] => list
+attempt(lambda: Plain(*args, newarg=3)) [base=list] => TypeError: list() takes no keyword arguments
+base.__name__ [base=list] => list
+attempt(lambda: WithInit(*args, newarg=3).newarg) [base=list] => 3
+base.__name__ [base=list] => list
+attempt(lambda: WithNew(*args, newarg=3).newarg) [base=list] => 3
+base.__name__ [base=tuple] => tuple
+attempt(lambda: base(*args, newarg=3)) [base=tuple] => TypeError: tuple() takes no keyword arguments
+base.__name__ [base=tuple] => tuple
+attempt(lambda: Plain(*args, newarg=3)) [base=tuple] => TypeError: tuple() takes no keyword arguments
+base.__name__ [base=tuple] => tuple
+attempt(lambda: WithInit(*args, newarg=3).newarg) [base=tuple] => 3
+base.__name__ [base=tuple] => tuple
+attempt(lambda: WithNew(*args, newarg=3).newarg) [base=tuple] => 3
+base.__name__ [base=set] => set
+attempt(lambda: base(*args, newarg=3)) [base=set] => TypeError: set() takes no keyword arguments
+base.__name__ [base=set] => set
+attempt(lambda: Plain(*args, newarg=3)) [base=set] => TypeError: set() takes no keyword arguments
+base.__name__ [base=set] => set
+attempt(lambda: WithInit(*args, newarg=3).newarg) [base=set] => 3
+base.__name__ [base=set] => set
+attempt(lambda: WithNew(*args, newarg=3).newarg) [base=set] => TypeError: set() takes no keyword arguments
+base.__name__ [base=frozenset] => frozenset
+attempt(lambda: base(*args, newarg=3)) [base=frozenset] => TypeError: frozenset() takes no keyword arguments
+base.__name__ [base=frozenset] => frozenset
+attempt(lambda: Plain(*args, newarg=3)) [base=frozenset] => TypeError: frozenset() takes no keyword arguments
+base.__name__ [base=frozenset] => frozenset
+attempt(lambda: WithInit(*args, newarg=3).newarg) [base=frozenset] => 3
+base.__name__ [base=frozenset] => frozenset
+attempt(lambda: WithNew(*args, newarg=3).newarg) [base=frozenset] => 3
+(7, [('DeprecationWarning', 'BadIndex.__index__() must return an int, not IntSub.  The ability to return an instance of a strict subclass of int is deprecated, and may be removed in a future version of Python.')])
+(1, [('DeprecationWarning', 'BadIndexBool.__index__() must return an int, not bool.  The ability to return an instance of a strict subclass of int is deprecated, and may be removed in a future version of Python.')])
+(8, [('DeprecationWarning', 'BadInt.__int__() must return an int, not IntSub.  The ability to return an instance of a strict subclass of int is deprecated, and may be removed in a future version of Python.')])
+(8, [('DeprecationWarning', 'BadIndex.__index__() must return an int, not IntSub.  The ability to return an instance of a strict subclass of int is deprecated, and may be removed in a future version of Python.')])
+('0b111', [('DeprecationWarning', 'BadIndex.__index__() must return an int, not IntSub.  The ability to return an instance of a strict subclass of int is deprecated, and may be removed in a future version of Python.')])
+warned(lambda: float(FloatSub(1.0))) => (42.0, [])
+warned(lambda: float(FloatSub2(1.0))) => (3.0, [('DeprecationWarning', 'FloatSub2.__float__() must return a float, not FloatSub.  The ability to return an instance of a strict subclass of float is deprecated, and may be removed in a future version of Python.')])
+warned(lambda: float.from_number(FloatSub(1.0))) => (1.0, [])
+warned(lambda: type(float.from_number(FloatSub2(1.0)))) => (<class 'float'>, [])
+float.from_number(x) is x => True
+attempt(lambda: float.from_number("1")) => TypeError: must be real number, not str
+attempt(lambda: float(b"\xe9")) => ValueError: could not convert string to float: b'\xe9'
+attempt(lambda: float(b"1\xe9")) => ValueError: could not convert string to float: b'1\xe9'
+math.sqrt(FloatSub(4.0)) => 2.0
+warned(lambda: math.sqrt(FloatSub2(4.0))) => (2.0, [])
+warned(lambda: ~True) => (-2, [('DeprecationWarning', "Bitwise inversion '~' on bool is deprecated and will be removed in Python 3.16. This returns the bitwise inversion of the underlying int object and is usually not what you expect from negating a bool. Use the 'not' operator for boolean negation or ~int(x) if you really want the bitwise inversion of the underlying int.")])
+warned(lambda: ~False) => (-1, [('DeprecationWarning', "Bitwise inversion '~' on bool is deprecated and will be removed in Python 3.16. This returns the bitwise inversion of the underlying int object and is usually not what you expect from negating a bool. Use the 'not' operator for boolean negation or ~int(x) if you really want the bitwise inversion of the underlying int.")])
+repr(n) if not isinstance(n, BadIndex) else "BadIndex" [n=-1] => -1
+warned(lambda: len(L(n))) [n=-1] => ('ValueError: __len__() should return >= 0', [])
+warned(lambda: bool(L(n))) [n=-1] => ('ValueError: __len__() should return >= 0', [])
+repr(n) if not isinstance(n, BadIndex) else "BadIndex" [n=-1267650600228229401496703205376] => -1267650600228229401496703205376
+warned(lambda: len(L(n))) [n=-1267650600228229401496703205376] => ('ValueError: __len__() should return >= 0', [])
+warned(lambda: bool(L(n))) [n=-1267650600228229401496703205376] => ('ValueError: __len__() should return >= 0', [])
+repr(n) if not isinstance(n, BadIndex) else "BadIndex" [n=1267650600228229401496703205376] => 1267650600228229401496703205376
+warned(lambda: len(L(n))) [n=1267650600228229401496703205376] => ("OverflowError: cannot fit 'int' into an index-sized integer", [])
+warned(lambda: bool(L(n))) [n=1267650600228229401496703205376] => ("OverflowError: cannot fit 'int' into an index-sized integer", [])
+repr(n) if not isinstance(n, BadIndex) else "BadIndex" [n=9223372036854775808] => 9223372036854775808
+warned(lambda: len(L(n))) [n=9223372036854775808] => ("OverflowError: cannot fit 'int' into an index-sized integer", [])
+warned(lambda: bool(L(n))) [n=9223372036854775808] => ("OverflowError: cannot fit 'int' into an index-sized integer", [])
+repr(n) if not isinstance(n, BadIndex) else "BadIndex" [n=1.5] => 1.5
+warned(lambda: len(L(n))) [n=1.5] => ("TypeError: 'float' object cannot be interpreted as an integer", [])
+warned(lambda: bool(L(n))) [n=1.5] => ("TypeError: 'float' object cannot be interpreted as an integer", [])
+repr(n) if not isinstance(n, BadIndex) else "BadIndex" [n='a'] => 'a'
+warned(lambda: len(L(n))) [n='a'] => ("TypeError: 'str' object cannot be interpreted as an integer", [])
+warned(lambda: bool(L(n))) [n='a'] => ("TypeError: 'str' object cannot be interpreted as an integer", [])
+repr(n) if not isinstance(n, BadIndex) else "BadIndex" [n=True] => True
+warned(lambda: len(L(n))) [n=True] => (1, [])
+warned(lambda: bool(L(n))) [n=True] => (True, [])
+repr(n) if not isinstance(n, BadIndex) else "BadIndex" [n=IntSub] => 3
+warned(lambda: len(L(n))) [n=IntSub] => (3, [])
+warned(lambda: bool(L(n))) [n=IntSub] => (True, [])
+repr(n) if not isinstance(n, BadIndex) else "BadIndex" [n=BadIndex] => BadIndex
+warned(lambda: len(L(n))) [n=BadIndex] => (7, [('DeprecationWarning', 'BadIndex.__index__() must return an int, not IntSub.  The ability to return an instance of a strict subclass of int is deprecated, and may be removed in a future version of Python.')])
+warned(lambda: bool(L(n))) [n=BadIndex] => (True, [('DeprecationWarning', 'BadIndex.__index__() must return an int, not IntSub.  The ability to return an instance of a strict subclass of int is deprecated, and may be removed in a future version of Python.')])
+name [name='append-pop', mutate=function] => append-pop
+attempt(lambda: data.sort()) [name='append-pop', mutate=function] => ValueError: list modified during sort
+[c.i for c in data] [name='append-pop', mutate=function] => [1, 2, 3]
+name [name='append-clear', mutate=function] => append-clear
+attempt(lambda: data.sort()) [name='append-clear', mutate=function] => ValueError: list modified during sort
+[c.i for c in data] [name='append-clear', mutate=function] => [1, 2, 3]
+name [name='append', mutate=function] => append
+attempt(lambda: data.sort()) [name='append', mutate=function] => ValueError: list modified during sort
+[c.i for c in data] [name='append', mutate=function] => [1, 2, 3]
+name [name='nothing', mutate=function] => nothing
+attempt(lambda: data.sort()) [name='nothing', mutate=function] => None
+[c.i for c in data] [name='nothing', mutate=function] => [1, 2, 3]
+name [name='clear', mutate=function] => clear
+attempt(lambda: data.sort()) [name='clear', mutate=function] => None
+[c.i for c in data] [name='clear', mutate=function] => [1, 2, 3]
+name [name='extend-del', mutate=function] => extend-del
+attempt(lambda: data.sort()) [name='extend-del', mutate=function] => ValueError: list modified during sort
+[c.i for c in data] [name='extend-del', mutate=function] => [1, 2, 3]
+name [name='read', mutate=function] => read
+attempt(lambda: data.sort()) [name='read', mutate=function] => None
+[c.i for c in data] [name='read', mutate=function] => [1, 2, 3]
+name [name='imul', mutate=function] => imul
+attempt(lambda: data.sort()) [name='imul', mutate=function] => None
+[c.i for c in data] [name='imul', mutate=function] => [1, 2, 3]
+attempt(lambda: nums.sort(key=lambda v: (nums.append(1), nums.pop(), ... => ValueError: list modified during sort
+nums => [1, 2, 3]
+attempt(lambda: fl.sort(key=lambda v: (fl.append(1.0), fl.pop(), v)[2])) => ValueError: list modified during sort
+fl => [1.5, 2.5, 3.5]
+True
+False
+True
+step [step=0] => 0
+r[0].__name__ [step=0] => reversed
+r[1:] [step=0] => (([4, 5, 6, 7],), 3)
+type(pickle.loads(pickle.dumps(it))).__name__ [step=0] => list_reverseiterator
+step [step=1] => 1
+r[0].__name__ [step=1] => reversed
+r[1:] [step=1] => (([4, 5, 6, 7],), 2)
+type(pickle.loads(pickle.dumps(it))).__name__ [step=1] => list_reverseiterator
+step [step=2] => 2
+r[0].__name__ [step=2] => reversed
+r[1:] [step=2] => (([4, 5, 6, 7],), 1)
+type(pickle.loads(pickle.dumps(it))).__name__ [step=2] => list_reverseiterator
+step [step=3] => 3
+r[0].__name__ [step=3] => reversed
+r[1:] [step=3] => (([4, 5, 6, 7],), 0)
+type(pickle.loads(pickle.dumps(it))).__name__ [step=3] => list_reverseiterator
+step [step=4] => 4
+r[0].__name__ [step=4] => reversed
+r[1:] [step=4] => (([],),)
+type(pickle.loads(pickle.dumps(it))).__name__ [step=4] => list_reverseiterator
+step [step=5] => 5
+r[0].__name__ [step=5] => reversed
+r[1:] [step=5] => (([],),)
+type(pickle.loads(pickle.dumps(it))).__name__ [step=5] => list_reverseiterator
+[[], [], [], []]
+[9, 9, None, (9, None)]
+['RuntimeError: dictionary keys changed during iteration', 'RuntimeError: dictionary keys changed during iteration', 'RuntimeError: dictionary keys changed during iteration', 'RuntimeError: dictionary keys changed during iteration']
+('TypeError', 'object is not iterable', ['Cannot convert dictionary update sequence element #0 to a sequence'])
+('TypeError', 'oops', ['Cannot convert dictionary update sequence element #0 to a sequence'])
+('TypeError', 'object is not iterable', ['Cannot convert dictionary update sequence element #1 to a sequence'])
+('ValueError', 'dictionary update sequence element #1 has length 3; 2 is required', None)
+('ValueError', 'oops', None)
+RuntimeError: dict mutated during update
+attempt(lambda: type('A\udcdcB', (), {})) => UnicodeEncodeError: 'utf-8' codec can't encode character '\udcdc' in position 1: surrogates not allowed
+attempt(lambda: type('A\x00B', (), {})) => ValueError: type name must not contain null characters
+attempt(lambda: type('A', (), {'__doc__': 'x\udcdcy'})) => UnicodeEncodeError: 'utf-8' codec can't encode character '\udcdc' in position 1: surrogates not allowed
+attempt(lambda: setattr(A, '__name__', 'A\udcdcB')) => UnicodeEncodeError: 'utf-8' codec can't encode character '\udcdc' in position 1: surrogates not allowed
+A.__name__ => C
+'x\udcdcy'
+🐍
+[k for k in C.__dict__ if len(k) == 1] => ['b', 'a']
+list(dict(od)) => ['b', 'a']
+list({**od}) => ['b', 'a']
+list(od.copy()) => ['b', 'a']
+list(dict(rd)) => ['b', 'a']
+list({**rd}) => ['b', 'a']
+[k for k in type('C', (), rd).__dict__ if len(k) == 1] => ['b', 'a']
+t.__name__ [t=int] => int
+bool(t.__flags__ & (1 << 8)) [t=int] => True
+bool(t.__flags__ & (1 << 14)) [t=int] => False
+bool(t.__flags__ & (1 << 9)) [t=int] => False
+t.__name__ [t=float] => float
+bool(t.__flags__ & (1 << 8)) [t=float] => True
+bool(t.__flags__ & (1 << 14)) [t=float] => False
+bool(t.__flags__ & (1 << 9)) [t=float] => False
+t.__name__ [t=str] => str
+bool(t.__flags__ & (1 << 8)) [t=str] => True
+bool(t.__flags__ & (1 << 14)) [t=str] => False
+bool(t.__flags__ & (1 << 9)) [t=str] => False
+t.__name__ [t=bytes] => bytes
+bool(t.__flags__ & (1 << 8)) [t=bytes] => True
+bool(t.__flags__ & (1 << 14)) [t=bytes] => False
+bool(t.__flags__ & (1 << 9)) [t=bytes] => False
+t.__name__ [t=list] => list
+bool(t.__flags__ & (1 << 8)) [t=list] => True
+bool(t.__flags__ & (1 << 14)) [t=list] => True
+bool(t.__flags__ & (1 << 9)) [t=list] => False
+t.__name__ [t=dict] => dict
+bool(t.__flags__ & (1 << 8)) [t=dict] => True
+bool(t.__flags__ & (1 << 14)) [t=dict] => True
+bool(t.__flags__ & (1 << 9)) [t=dict] => False
+t.__name__ [t=tuple] => tuple
+bool(t.__flags__ & (1 << 8)) [t=tuple] => True
+bool(t.__flags__ & (1 << 14)) [t=tuple] => True
+bool(t.__flags__ & (1 << 9)) [t=tuple] => False
+t.__name__ [t=object] => object
+bool(t.__flags__ & (1 << 8)) [t=object] => True
+bool(t.__flags__ & (1 << 14)) [t=object] => False
+bool(t.__flags__ & (1 << 9)) [t=object] => False
+t.__name__ [t=type] => type
+bool(t.__flags__ & (1 << 8)) [t=type] => True
+bool(t.__flags__ & (1 << 14)) [t=type] => True
+bool(t.__flags__ & (1 << 9)) [t=type] => False
+t.__name__ [t=C] => C
+bool(t.__flags__ & (1 << 8)) [t=C] => False
+bool(t.__flags__ & (1 << 14)) [t=C] => True
+bool(t.__flags__ & (1 << 9)) [t=C] => True
+t.__name__ [t=bool] => bool
+bool(t.__flags__ & (1 << 8)) [t=bool] => True
+bool(t.__flags__ & (1 << 14)) [t=bool] => False
+bool(t.__flags__ & (1 << 9)) [t=bool] => False
+t.__name__ [t=complex] => complex
+bool(t.__flags__ & (1 << 8)) [t=complex] => True
+bool(t.__flags__ & (1 << 14)) [t=complex] => False
+bool(t.__flags__ & (1 << 9)) [t=complex] => False
+t.__name__ [t=range] => range
+bool(t.__flags__ & (1 << 8)) [t=range] => True
+bool(t.__flags__ & (1 << 14)) [t=range] => False
+bool(t.__flags__ & (1 << 9)) [t=range] => False
+t.__name__ [t=bytearray] => bytearray
+bool(t.__flags__ & (1 << 8)) [t=bytearray] => True
+bool(t.__flags__ & (1 << 14)) [t=bytearray] => False
+bool(t.__flags__ & (1 << 9)) [t=bytearray] => False
+t.__name__ [t=NoneType] => NoneType
+bool(t.__flags__ & (1 << 8)) [t=NoneType] => True
+bool(t.__flags__ & (1 << 14)) [t=NoneType] => False
+bool(t.__flags__ & (1 << 9)) [t=NoneType] => False
+t.__name__ [t=set] => set
+bool(t.__flags__ & (1 << 8)) [t=set] => True
+bool(t.__flags__ & (1 << 14)) [t=set] => True
+bool(t.__flags__ & (1 << 9)) [t=set] => False
+t.__name__ [t=frozenset] => frozenset
+bool(t.__flags__ & (1 << 8)) [t=frozenset] => True
+bool(t.__flags__ & (1 << 14)) [t=frozenset] => True
+bool(t.__flags__ & (1 << 9)) [t=frozenset] => False
+t.__name__ [t=slice] => slice
+bool(t.__flags__ & (1 << 8)) [t=slice] => True
+bool(t.__flags__ & (1 << 14)) [t=slice] => True
+bool(t.__flags__ & (1 << 9)) [t=slice] => False
+t.__name__ [t=memoryview] => memoryview
+bool(t.__flags__ & (1 << 8)) [t=memoryview] => True
+bool(t.__flags__ & (1 << 14)) [t=memoryview] => True
+bool(t.__flags__ & (1 << 9)) [t=memoryview] => False
+t.__name__ [t=property] => property
+bool(t.__flags__ & (1 << 8)) [t=property] => True
+bool(t.__flags__ & (1 << 14)) [t=property] => True
+bool(t.__flags__ & (1 << 9)) [t=property] => False

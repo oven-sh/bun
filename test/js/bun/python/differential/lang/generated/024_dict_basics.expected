@@ -1,0 +1,211 @@
+status: 0
+script: 2fea88a2d062dcb2
+source: e57830da231677b4
+---
+d => {'a': 1, 'b': 2}
+len(d) => 2
+d["a"] => 1
+d["b"] => 2
+"a" in d => True
+"z" in d => False
+1 in d => False
+"a" not in d => False
+list(d) => ['a', 'b']
+bool(d) => True
+bool({}) => False
+d["z"] => KeyError: 'z'
+d[1] => KeyError: 1
+d[None] => KeyError: None
+{}[()] => KeyError: ()
+{}[""] => KeyError: ''
+{}["a'b"] => KeyError: "a'b"
+{}[(1, 2)] => KeyError: (1, 2)
+d[[]] => TypeError: cannot use 'list' as a dict key (unhashable type: 'list')
+d[{}] => TypeError: cannot use 'dict' as a dict key (unhashable type: 'dict')
+[] in d => TypeError: cannot use 'list' as a dict key (unhashable type: 'list')
+{[]: 1} => TypeError: cannot use 'list' as a dict key (unhashable type: 'list')
+{{}: 1} => TypeError: cannot use 'dict' as a dict key (unhashable type: 'dict')
+{set(): 1} => TypeError: cannot use 'set' as a dict key (unhashable type: 'set')
+{(1, []): 1} => TypeError: cannot use 'tuple' as a dict key (unhashable type: 'list')
+d.get([]) => TypeError: cannot use 'list' as a dict key (unhashable type: 'list')
+set_unhashable() => TypeError: cannot use 'list' as a dict key (unhashable type: 'list')
+del_unhashable() => TypeError: cannot use 'list' as a dict key (unhashable type: 'list')
+{'a': 1, 'b': 2, 'c': 3}
+{'a': 10, 'b': 2, 'c': 3}
+{'a': 10, 'c': 3}
+{'a': 10, 'c': 3, 'b': 20}
+del_missing() => KeyError: 'zz'
+{} => {}
+{1: 2} => {1: 2}
+{1: 2, 3: 4} => {1: 2, 3: 4}
+{"a": {"b": {"c": 1}}} => {'a': {'b': {'c': 1}}}
+{1: [1], 2: (2,), 3: {3}} => {1: [1], 2: (2,), 3: {3}}
+{None: None, True: False, 1.5: "f", (1, 2): "t", "s": "s", b"b": "b",... => {None: None, True: False, 1.5: 'f', (1, 2): 't', 's': 's', b'b': 'b', frozenset(): 'fs'}
+{1: 2,} => {1: 2}
+{1: 1, 1: 2} => {1: 2}
+{1: "a", 1.0: "b", True: "c"} => {1: 'c'}
+{0: "a", False: "b", 0.0: "c", -0.0: "d", 0j: "e"} => {0: 'e'}
+{"a": 1, **{"b": 2}} => {'a': 1, 'b': 2}
+{**{"a": 1}, "a": 2} => {'a': 2}
+{**{}, **{}} => {}
+{**{"a": 1}, **{"a": 2, "b": 3}} => {'a': 2, 'b': 3}
+dict() => {}
+dict({"a": 1}) => {'a': 1}
+dict([("a", 1), ("b", 2)]) => {'a': 1, 'b': 2}
+dict((("a", 1),)) => {'a': 1}
+dict(a=1, b=2) => {'a': 1, 'b': 2}
+dict({"a": 1}, b=2) => {'a': 1, 'b': 2}
+dict([("a", 1)], a=2) => {'a': 2}
+dict(zip("ab", [1, 2])) => {'a': 1, 'b': 2}
+dict([["a", 1]]) => {'a': 1}
+dict(["ab", "cd"]) => {'a': 'b', 'c': 'd'}
+dict(iter([("x", 1)])) => {'x': 1}
+dict({}) => {}
+dict([]) => {}
+dict(**{"a": 1}) => {'a': 1}
+dict({"a": 1}, **{"b": 2}) => {'a': 1, 'b': 2}
+dict(x for x in [(1, 2)]) => {1: 2}
+dict([(1, 2), (1, 3)]) => {1: 3}
+dict(dict(a=1)) => {'a': 1}
+dict(1) => TypeError: 'int' object is not iterable
+dict([1]) => TypeError: object is not iterable
+dict([(1,)]) => ValueError: dictionary update sequence element #0 has length 1; 2 is required
+dict([(1, 2, 3)]) => ValueError: dictionary update sequence element #0 has length 3; 2 is required
+dict(["a"]) => ValueError: dictionary update sequence element #0 has length 1; 2 is required
+dict(["abc"]) => ValueError: dictionary update sequence element #0 has length 3; 2 is required
+dict([[]]) => ValueError: dictionary update sequence element #0 has length 0; 2 is required
+dict(None) => TypeError: 'NoneType' object is not iterable
+dict({}, {}) => TypeError: dict expected at most 1 argument, got 2
+dict([(1, 2), 3]) => TypeError: object is not iterable
+dict([([], 1)]) => TypeError: cannot use 'list' as a dict key (unhashable type: 'list')
+dict(**{1: 2}) => TypeError: keywords must be strings
+{**1} => TypeError: 'int' object is not a mapping
+{**[1]} => TypeError: 'list' object is not a mapping
+{**None} => TypeError: 'NoneType' object is not a mapping
+{**"ab"} => TypeError: 'str' object is not a mapping
+dict(Keys()) => {'x': 'xx', 'y': 'yy'}
+{**Keys()} => {'x': 'xx', 'y': 'yy'}
+dict(Keys(), z=1) => {'x': 'xx', 'y': 'yy', 'z': 1}
+list(o) => ['z', 'y', 'x', 'a', 'b', 'c']
+list(o.values()) => [122, 121, 120, 97, 98, 99]
+list(o.items())[:2] => [('z', 122), ('y', 121)]
+['z', 'y', 'x', 'a', 'b', 'c']
+['z', 'y', 'a', 'b', 'c', 'x']
+['y', 'a', 'b', 'c', 'x', 'z']
+list(reversed(o)) => ['z', 'x', 'c', 'b', 'a', 'y']
+list(reversed(o.items()))[:2] => [('z', 2), ('x', 1)]
+list(reversed(o.values())) => [2, 1, 99, 98, 97, 0]
+{"b": 1, "a": 2} == {"a": 2, "b": 1} => True
+list({"b": 1, "a": 2}) == list({"a": 2, "b": 1}) => False
+{1: 2} == {1: 2} => True
+{1: 2} != {1: 3} => True
+{1: 2} == {1.0: 2.0} => True
+{} == {} => True
+{1: 2} == {2: 1} => False
+{1: 2} == [(1, 2)] => False
+{1: [1]} == {1: [1]} => True
+{1: 2} == {1: 2, 3: 4} => False
+{"a": {"b": 1}} == {"a": {"b": 1}} => True
+{1: float("nan")} == {1: float("nan")} => False
+{} < {} => TypeError: '<' not supported between instances of 'dict' and 'dict'
+{1: 2} >= {1: 2} => TypeError: '>=' not supported between instances of 'dict' and 'dict'
+{} + {} => TypeError: unsupported operand type(s) for +: 'dict' and 'dict'
+{} * 2 => TypeError: unsupported operand type(s) for *: 'dict' and 'int'
+{} - {} => TypeError: unsupported operand type(s) for -: 'dict' and 'dict'
+{} & {} => TypeError: unsupported operand type(s) for &: 'dict' and 'dict'
+hash({}) => TypeError: unhashable type: 'dict'
+{"a": 1} | {"b": 2} => {'a': 1, 'b': 2}
+{"a": 1} | {"a": 2} => {'a': 2}
+{} | {} => {}
+{"a": 1, "b": 2} | {"b": 3, "c": 4} => {'a': 1, 'b': 3, 'c': 4}
+{"a": 1}.__or__({"b": 2}) => {'a': 1, 'b': 2}
+{"a": 1}.__ror__({"a": 0, "b": 2}) => {'a': 1, 'b': 2}
+{"a": 1}.__or__([("b", 2)]) => NotImplemented
+{} | [] => TypeError: unsupported operand type(s) for |: 'dict' and 'list'
+{} | [("a", 1)] => TypeError: unsupported operand type(s) for |: 'dict' and 'list'
+[] | {} => TypeError: unsupported operand type(s) for |: 'list' and 'dict'
+{} | None => TypeError: unsupported operand type(s) for |: 'dict' and 'NoneType'
+{} | 1 => TypeError: unsupported operand type(s) for |: 'dict' and 'int'
+e => {'a': 1, 'b': 2}
+f is e => True
+{'a': 1, 'b': 2, 'c': 3}
+{'a': 0, 'b': 2, 'c': 3}
+{'a': 0, 'b': 2, 'c': 3}
+{'a': 0, 'b': 2, 'c': 3, 'x': 'xx', 'y': 'yy'}
+ior_bad() => TypeError: 'int' object is not iterable
+ior_bad2() => TypeError: object is not iterable
+a b a 1 b 2 1 2 
+grow() => RuntimeError: dictionary changed size during iteration
+shrink() => RuntimeError: dictionary changed size during iteration
+grow_items() => RuntimeError: dictionary changed size during iteration
+grow_values() => RuntimeError: dictionary changed size during iteration
+replace_ok() => {1: 0, 2: 0}
+same_size() => RuntimeError: dictionary keys changed during iteration
+clear_during() => RuntimeError: dictionary changed size during iteration
+r => {'self': {...}}
+r["self"]["self"] is r => True
+{'l': [{...}]}
+str({}) => {}
+repr({"a": "b"}) => {'a': 'b'}
+str({1: "a'b"}) => {1: "a'b"}
+str({"k": [1, {"n": (1,)}]}) => {'k': [1, {'n': (1,)}]}
+str({(1,): {2}}) => {(1,): {2}}
+"%s" % {"a": 1} => {'a': 1}
+f"{ {'a': 1} }" => {'a': 1}
+str({1.0: 2.0, None: ..., "x": b"y"}) => {1.0: 2.0, None: Ellipsis, 'x': b'y'}
+sorted({"b": 1, "a": 2}) => ['a', 'b']
+sorted({"b": 1, "a": 2}.items()) => [('a', 2), ('b', 1)]
+sorted({"b": 1, "a": 2}.values()) => [1, 2]
+max({"a": 1, "b": 0}) => b
+min({"a": 1, "b": 0}) => a
+sum({1: "x", 2: "y"}) => 3
+any({0: 1}) => False
+all({0: 1}) => False
+list(enumerate({"a": 1})) => [(0, 'a')]
+len({1: 1, 2: 2}) => 2
+max({"a": 1, "b": 0}.items(), key=lambda p: p[1]) => ('a', 1)
+tuple({"a": 1}) => ('a',)
+set({"a": 1}) => {'a'}
+list(zip({"a": 1}, {"b": 2})) => [('a', 'b')]
+dict(sorted({"b": 1, "a": 2}.items())) => {'a': 2, 'b': 1}
+list(map(str, {1: 2})) => ['1']
+"".join({"a": 1, "b": 2}) => ab
+len(big) => 10000
+big[9999] => 99980001
+10000 in big => False
+sum(big.values()) => 333283335000
+list(big)[:3] => [0, 1, 2]
+list(big)[-1] => 9999
+len(big) => 5000
+list(big)[:3] => [1, 3, 5]
+0 in big => False
+1 in big => True
+len(big) => 5050
+list(big)[-3:] => [94, 96, 98]
+list(big)[:2] => [1, 3]
+len(sk) => 1000
+sk["k999"] => 999
+"k1000" in sk => False
+list(sk)[:2] => ['k0', 'k1']
+sum(sk.values()) => 499500
+mixed => {1: 'bool', '1': 'str', 1.5: 'float', (1,): 'tuple', None: 'none', b'1': 'bytes', 1000000000000000000000000000000: 'big', -1: 'neg', '': 'empty', (): 'unit', frozenset({1}): 'fs'}
+len(mixed) => 11
+mixed[1] => bool
+mixed["1"] => str
+mixed[10 ** 30] => big
+mixed[frozenset([1])] => fs
+mixed[1.0] => bool
+mixed[-1] => neg
+mixed[-1.0] => neg
+type({}) => <class 'dict'>
+dict.__mro__ => (<class 'dict'>, <class 'object'>)
+isinstance({}, dict) => True
+dict.__name__ => dict
+dict.__hash__ => None
+type(iter({})).__name__ => dict_keyiterator
+type({}.keys()).__name__ => dict_keys
+type({}.values()).__name__ => dict_values
+type({}.items()).__name__ => dict_items
+type(iter({}.items())).__name__ => dict_itemiterator
+type(reversed({})).__name__ => dict_reversekeyiterator
+sorted(n for n in dir(dict) if not n.startswith("_")) => ['clear', 'copy', 'fromkeys', 'get', 'items', 'keys', 'pop', 'popitem', 'setdefault', 'update', 'values']

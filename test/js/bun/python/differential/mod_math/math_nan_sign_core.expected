@@ -1,0 +1,13 @@
+status: 0
+script: 570c5dd40fc12846
+---
+1.0 False True nan
+-1.0 True True nan
+1.0 False True nan
+-1.0 True True nan
+-1.0 True True nan
+-1.0 True True nan
+1.0 False True nan
+1.0 False True nan
+1.0 False True nan
+nan nan -2.0

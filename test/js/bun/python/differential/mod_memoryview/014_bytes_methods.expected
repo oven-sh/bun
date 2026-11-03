@@ -1,0 +1,197 @@
+status: 0
+script: 4c826b410953b4d8
+---
+bytes
+6
+12
+4
+15
+5
+True
+True
+True
+False
+b'bye world bye'
+b'heo world hello'
+[b'hello', b'world', b'hello']
+[b'hello world', b'hello']
+[b'hello', b' ', b'world hello']
+['bytes', 'memoryview', 'bytes']
+b'ello world hell'
+b'llo world hello'
+b'hello world he'
+b'world hello'
+b'hello world'
+b'\x97\x9a\x93'
+b'heo word heo'
+b'`xyc'
+b'a, b, c, d'
+b'ab'
+b'a-b'
+b'hello world hello!'
+TypeError unsupported operand type(s) for +: 'memoryview' and 'bytes'
+True
+False
+True
+False
+True
+TypeError '<' not supported between instances of 'bytes' and 'memoryview'
+b'hello world hello'
+b'x|y'
+b'abc'
+b'ace'
+b'abcd'
+b'abcdef'
+b'defabc'
+b'a'
+b'ab'
+TypeError encoding without a string argument
+TypeError center() argument 2 must be a byte string of length 1, not memoryview
+TypeError ljust() argument 2 must be a byte string of length 1, not memoryview
+TypeError sep must be str or bytes.
+BufferError memoryview: underlying buffer is not C-contiguous
+TypeError can't concat memoryview to bytes
+TypeError sequence item 0: expected a bytes-like object, memoryview found
+BufferError memoryview: underlying buffer is not C-contiguous
+BufferError memoryview: underlying buffer is not C-contiguous
+BufferError memoryview: underlying buffer is not C-contiguous
+BufferError memoryview: underlying buffer is not C-contiguous
+BufferError memoryview: underlying buffer is not C-contiguous
+False
+BufferError memoryview: underlying buffer is not C-contiguous
+BufferError memoryview: underlying buffer is not C-contiguous
+TypeError can't concat memoryview to bytes
+TypeError sequence item 0: expected a bytes-like object, memoryview found
+BufferError memoryview: underlying buffer is not C-contiguous
+BufferError memoryview: underlying buffer is not C-contiguous
+BufferError memoryview: underlying buffer is not C-contiguous
+BufferError memoryview: underlying buffer is not C-contiguous
+BufferError memoryview: underlying buffer is not C-contiguous
+False
+BufferError memoryview: underlying buffer is not C-contiguous
+-1
+b'hello world helloab'
+b'hello world helloabcd'
+bytearray
+6
+12
+4
+15
+5
+True
+True
+True
+False
+bytearray(b'bye world bye')
+bytearray(b'heo world hello')
+[bytearray(b'hello'), bytearray(b'world'), bytearray(b'hello')]
+[bytearray(b'hello world'), bytearray(b'hello')]
+[b'hello', b' ', b'world hello']
+['bytearray', 'bytearray', 'bytearray']
+bytearray(b'ello world hell')
+bytearray(b'llo world hello')
+bytearray(b'hello world he')
+bytearray(b'world hello')
+bytearray(b'hello world')
+bytearray(b'\x97\x9a\x93')
+bytearray(b'heo word heo')
+b'`xyc'
+bytearray(b'a, b, c, d')
+bytearray(b'ab')
+bytearray(b'a-b')
+bytearray(b'hello world hello!')
+TypeError unsupported operand type(s) for +: 'memoryview' and 'bytearray'
+True
+False
+True
+False
+True
+True
+bytearray(b'hello world hello')
+bytearray(b'x|y')
+bytearray(b'abc')
+bytearray(b'ace')
+bytearray(b'abcd')
+bytearray(b'abcdef')
+bytearray(b'defabc')
+bytearray(b'a')
+bytearray(b'ab')
+TypeError encoding without a string argument
+TypeError center() argument 2 must be a byte string of length 1, not memoryview
+TypeError ljust() argument 2 must be a byte string of length 1, not memoryview
+TypeError sep must be str or bytes.
+BufferError memoryview: underlying buffer is not C-contiguous
+TypeError can't concat memoryview to bytearray
+TypeError sequence item 0: expected a bytes-like object, memoryview found
+BufferError memoryview: underlying buffer is not C-contiguous
+BufferError memoryview: underlying buffer is not C-contiguous
+BufferError memoryview: underlying buffer is not C-contiguous
+BufferError memoryview: underlying buffer is not C-contiguous
+BufferError memoryview: underlying buffer is not C-contiguous
+False
+BufferError memoryview: underlying buffer is not C-contiguous
+BufferError memoryview: underlying buffer is not C-contiguous
+TypeError can't concat memoryview to bytearray
+TypeError sequence item 0: expected a bytes-like object, memoryview found
+BufferError memoryview: underlying buffer is not C-contiguous
+BufferError memoryview: underlying buffer is not C-contiguous
+BufferError memoryview: underlying buffer is not C-contiguous
+BufferError memoryview: underlying buffer is not C-contiguous
+BufferError memoryview: underlying buffer is not C-contiguous
+False
+BufferError memoryview: underlying buffer is not C-contiguous
+-1
+bytearray(b'hello world helloab')
+bytearray(b'hello world helloabcd')
+bytearray(b'abcdef')
+bytearray(b'abcdefgh')
+bytearray(b'aXYZdefgh')
+bytearray(b'1X2Z3e4g5')
+bytearray(b'ace1X2Z3e4g5')
+bytearray(b'ace1X2Z3e4g5abcd')
+TypeError can't set bytearray slice from memoryview
+TypeError can't concat memoryview to bytearray
+BufferError Existing exports of data: object cannot be re-sized
+BufferError Existing exports of data: object cannot be re-sized
+bytearray(b'ace1X2Z3e4g5abcd')
+bytearray(b'dcba5g4e3Z2X1eca')
+bytearray(b'ace1X2Z3e4g5abcd')
+None
+bytearray(b'new')
+BufferError Existing exports of data: object cannot be re-sized
+bytearray(b'new')
+'abc'
+'<memory at '
+42
+TypeError int() can't convert non-string with explicit base
+1.5
+258
+TypeError ord() expected string of length 1, but memoryview found
+2
+'f'
+True
+AttributeError 'memoryview' object has no attribute 'decode'
+TypeError complex() argument must be a string or a number, not memoryview
+True
+b'ABC'
+TypeError sequence item 0: expected str instance, memoryview found
+2
+6
+[(97, 97), (98, 98)]
+False
+True
+99
+b'cba'
+b'abc'
+True
+{97: None, 98: None}
+"b'a'"
+'<memory at'
+TypeError unsupported format string passed to memoryview.__format__
+TypeError cannot pickle memoryview objects
+TypeError cannot pickle memoryview objects
+TypeError cannot pickle memoryview objects
+TypeError cannot pickle 'memoryview' object
+TypeError cannot pickle memoryview objects
+TypeError cannot pickle memoryview objects
+None

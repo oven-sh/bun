@@ -1,0 +1,311 @@
+status: 0
+script: d5b8d7c564ed3112
+source: 19bb0c48dec14ba3
+---
+type(m).__name__ => memoryview
+len(m) => 5
+m[0] => 104
+m[-1] => 111
+type(m[1:3]).__name__ => memoryview
+bytes(m) => b'hello'
+bytes(m[1:3]) => b'el'
+m.tobytes() => b'hello'
+m.tolist() => [104, 101, 108, 108, 111]
+list(m) => [104, 101, 108, 108, 111]
+m.readonly => True
+m.format => B
+m.itemsize => 1
+m.ndim => 1
+m.shape => (5,)
+m.strides => (1,)
+m.suboffsets => ()
+m.nbytes => 5
+m.obj => b'hello'
+m.c_contiguous => True
+m.f_contiguous => True
+m.contiguous => True
+m.hex() => 68656c6c6f
+m.hex(" ") => 68 65 6c 6c 6f
+m.hex(":", 2) => 68:656c:6c6f
+repr(m)[:11] => <memory at 
+bool(m) => True
+bool(memoryview(b"")) => False
+104 in m => True
+0 in m => False
+m == b"hello" => True
+b"hello" == m => True
+m == memoryview(b"hello") => True
+m != b"x" => True
+m == "hello" => False
+hash(m) == hash(b"hello") => True
+bytes(m[::-1]) => b'olleh'
+bytes(m[::2]) => b'hlo'
+m[::2].strides => (2,)
+m[::-1].strides => (-1,)
+m[::2].contiguous => False
+len(m[::2]) => 3
+len(m[5:]) => 0
+bytes(m[-3:]) => b'llo'
+bytes(m[1:][1:]) => b'llo'
+max(m) => 111
+min(m) => 101
+sum(m) => 532
+sorted(m) => [101, 104, 108, 108, 111]
+list(reversed(m)) => [111, 108, 108, 101, 104]
+m.count(108) => 2
+m.index(108) => 2
+bytes(m).upper() => b'HELLO'
+str(m, "ascii") => hello
+bytearray(m) => bytearray(b'hello')
+b"-".join([m, m]) => b'hello-hello'
+b"x" + m => b'xhello'
+int.from_bytes(m, "big") => 448378203247
+m.tobytes("C") => b'hello'
+m.tobytes(order="F") => b'hello'
+m[5] => IndexError: index out of bounds on dimension 1
+m[-6] => IndexError: index out of bounds on dimension 1
+m["a"] => TypeError: memoryview: invalid slice key
+m[1.0] => TypeError: memoryview: invalid slice key
+m.__setitem__(0, 1) => TypeError: cannot modify read-only memory
+m.__setitem__(slice(0, 1), b"x") => TypeError: cannot modify read-only memory
+m.__delitem__(0) => TypeError: cannot modify read-only memory
+m + m => TypeError: unsupported operand type(s) for +: 'memoryview' and 'memoryview'
+m * 2 => TypeError: unsupported operand type(s) for *: 'memoryview' and 'int'
+m < m => TypeError: '<' not supported between instances of 'memoryview' and 'memoryview'
+m.nope => AttributeError: 'memoryview' object has no attribute 'nope'
+m.index(0) => ValueError: memoryview.index(x): x not found
+m + b"x" => TypeError: unsupported operand type(s) for +: 'memoryview' and 'bytes'
+m.decode() => AttributeError: 'memoryview' object has no attribute 'decode'
+m.upper() => AttributeError: 'memoryview' object has no attribute 'upper'
+m[::0] => ValueError: slice step cannot be zero
+m[0, 0] => TypeError: cannot index 1-dimension view with 2-element tuple
+m[()] => NotImplementedError: sub-views are not implemented
+memoryview(x) [x=1] => TypeError: memoryview: a bytes-like object is required, not 'int'
+memoryview(x) [x='s'] => TypeError: memoryview: a bytes-like object is required, not 'str'
+memoryview(x) [x=None] => TypeError: memoryview: a bytes-like object is required, not 'NoneType'
+memoryview(x) [x=list] => TypeError: memoryview: a bytes-like object is required, not 'list'
+memoryview(x) [x=(1,)] => TypeError: memoryview: a bytes-like object is required, not 'tuple'
+memoryview(x) [x=1.5] => TypeError: memoryview: a bytes-like object is required, not 'float'
+memoryview(x) [x=dict] => TypeError: memoryview: a bytes-like object is required, not 'dict'
+memoryview(x) [x=object] => TypeError: memoryview: a bytes-like object is required, not 'object'
+memoryview(x) [x=range] => TypeError: memoryview: a bytes-like object is required, not 'range'
+memoryview(x) [x=set] => TypeError: memoryview: a bytes-like object is required, not 'set'
+memoryview() => TypeError: memoryview() missing required argument 'object' (pos 1)
+memoryview(b"a", b"b") => TypeError: memoryview() takes at most 1 argument (2 given)
+memoryview(object=b"kw").tobytes() => b'kw'
+type("X", (memoryview,), {}) => TypeError: type 'memoryview' is not an acceptable base type
+w.readonly => False
+w.obj is ba => True
+bytearray(b'AbcdeF')
+bytearray(b'AXYdeF')
+bytearray(b'_X_d_F')
+w[1] => 48
+bytes(w) => b'_0_d_F'
+ba => bytearray(b'_0!d_F')
+bytes(sub) => b'!d_'
+sub.obj is ba => True
+bytearray(b'_0!123')
+bytearray(b'zz!123')
+bytearray(b'123123')
+bytearray(b'112312')
+w.__setitem__(0, 256) => ValueError: memoryview: invalid value for format 'B'
+w.__setitem__(0, -1) => ValueError: memoryview: invalid value for format 'B'
+w.__setitem__(0, "a") => TypeError: memoryview: invalid type for format 'B'
+w.__setitem__(0, b"a") => TypeError: memoryview: invalid type for format 'B'
+w.__setitem__(0, 1.5) => TypeError: memoryview: invalid type for format 'B'
+w.__setitem__(slice(0, 2), b"x") => ValueError: memoryview assignment: lvalue and rvalue have different structures
+w.__setitem__(slice(0, 2), b"xyz") => ValueError: memoryview assignment: lvalue and rvalue have different structures
+w.__setitem__(slice(0, 2), "ab") => TypeError: a bytes-like object is required, not 'str'
+w.__setitem__(slice(0, 2), [1, 2]) => TypeError: a bytes-like object is required, not 'list'
+w.__setitem__(10, 1) => IndexError: index out of bounds on dimension 1
+w.__setitem__(slice(0, 1), 5) => TypeError: a bytes-like object is required, not 'int'
+hash(w) => ValueError: cannot hash writable memoryview object
+w.__delitem__(slice(0, 1)) => TypeError: cannot delete memory
+ba.append(1) => BufferError: Existing exports of data: object cannot be re-sized
+ba.extend(b"x") => BufferError: Existing exports of data: object cannot be re-sized
+ba.pop() => BufferError: Existing exports of data: object cannot be re-sized
+ba.clear() => BufferError: Existing exports of data: object cannot be re-sized
+ba.__delitem__(0) => BufferError: Existing exports of data: object cannot be re-sized
+ba.__iadd__(b"x") => BufferError: Existing exports of data: object cannot be re-sized
+ba.insert(0, 1) => BufferError: Existing exports of data: object cannot be re-sized
+ba.__setitem__(slice(0, 1), b"xx") => BufferError: Existing exports of data: object cannot be re-sized
+ba.remove(ba[0]) => BufferError: Existing exports of data: object cannot be re-sized
+ba.__imul__(2) => BufferError: Existing exports of data: object cannot be re-sized
+ba => bytearray(b'21321Q')
+same-size changes are fine
+bytearray(b'21321Q!')
+r.release() => None
+r.release() => None
+repr(r)[:20] => <released memory at 
+ValueError: operation forbidden on released memoryview object
+ValueError: operation forbidden on released memoryview object
+ValueError: operation forbidden on released memoryview object
+ValueError: operation forbidden on released memoryview object
+ValueError: operation forbidden on released memoryview object
+ValueError: operation forbidden on released memoryview object
+ValueError: operation forbidden on released memoryview object
+ValueError: operation forbidden on released memoryview object
+ValueError: operation forbidden on released memoryview object
+ValueError: operation forbidden on released memoryview object
+ValueError: operation forbidden on released memoryview object
+False
+True
+ValueError: operation forbidden on released memoryview object
+ValueError: operation forbidden on released memoryview object
+ValueError: operation forbidden on released memoryview object
+ValueError: operation forbidden on released memoryview object
+ValueError: operation forbidden on released memoryview object
+ValueError: operation forbidden on released memoryview object
+ValueError: operation forbidden on released memoryview object
+ValueError: operation forbidden on released memoryview object
+120 b'xyz'
+cm[0] => ValueError: operation forbidden on released memoryview object
+hash(h) == hv => True
+BufferError: Existing exports of data: object cannot be re-sized
+bytearray(b'abc')
+outer.release() => None
+None
+ro.readonly => True
+ro[0] => 114
+ro.__setitem__(0, 1) => TypeError: cannot modify read-only memory
+ro[0] => 90
+bytes(ro) => b'Zw'
+bytes(mm) => b'nest'
+mm.obj => b'nest'
+c.cast("B").tolist() => [0, 1, 2, 3, 4, 5, 6, 7]
+c.cast("b").tolist() => [0, 1, 2, 3, 4, 5, 6, 7]
+c.cast("c").tolist()[:2] => [b'\x00', b'\x01']
+c.cast("H").tolist() => [256, 770, 1284, 1798]
+c.cast("h").tolist() => [256, 770, 1284, 1798]
+c.cast("I").tolist() => [50462976, 117835012]
+c.cast("i").tolist() => [50462976, 117835012]
+c.cast("L").tolist() => [506097522914230528]
+c.cast("Q").tolist() => [506097522914230528]
+c.cast("q").tolist() => [506097522914230528]
+c.cast("H").itemsize => 2
+c.cast("H").format => H
+c.cast("H").shape => (4,)
+c.cast("H").strides => (2,)
+len(c.cast("H")) => 4
+c.cast("H").nbytes => 8
+c.cast("I")[1] => 117835012
+c.cast("@H").format => @H
+c.cast("?").tolist() => [False, True, True, True, True, True, True, True]
+c.cast("n").tolist() => [506097522914230528]
+c.cast("N").tolist() => [506097522914230528]
+c.cast("P").tolist() => [506097522914230528]
+memoryview(b"\x00\x00\x80\x3f\x00\x00\x00\xc0").cast("f").tolist() => [1.0, -2.0]
+memoryview(b"\x00\x00\x00\x00\x00\x00\xf0\x3f").cast("d").tolist() => [1.0]
+memoryview(b"\xff\xff\xff\xff").cast("i").tolist() => [-1]
+memoryview(b"\xff\xff").cast("h")[0] => -1
+memoryview(b"\xff").cast("b")[0] => -1
+memoryview(b"\x00\x3c").cast("e").tolist() => [1.0]
+c.cast("B", (2, 4)).tolist() => [[0, 1, 2, 3], [4, 5, 6, 7]]
+c.cast("B", [4, 2]).tolist() => [[0, 1], [2, 3], [4, 5], [6, 7]]
+c.cast("B", (2, 2, 2)).tolist() => [[[0, 1], [2, 3]], [[4, 5], [6, 7]]]
+c.cast("B", (2, 4)).shape => (2, 4)
+c.cast("B", (2, 4)).strides => (4, 1)
+c.cast("B", (2, 4)).ndim => 2
+len(c.cast("B", (2, 4))) => 2
+c.cast("B", (2, 4))[1, 2] => 6
+c.cast("B", (2, 4))[-1, -1] => 7
+c.cast("H", (2, 2)).tolist() => [[256, 770], [1284, 1798]]
+c.cast("B", (2, 4)).tobytes() => b'\x00\x01\x02\x03\x04\x05\x06\x07'
+c.cast("B", (2, 4)).cast("B").tolist() => [0, 1, 2, 3, 4, 5, 6, 7]
+c.cast("B", (8,)).tolist() == list(c) => True
+c.cast("B", (2, 4)) == c.cast("B", (2, 4)) => True
+c.cast("B", (2, 4)) == c => False
+c.cast("B", (1, 8)).shape => (1, 8)
+c.cast("B", shape=(8, 1)).shape => (8, 1)
+c.cast("H").cast("I") => TypeError: memoryview: cannot cast between two non-byte formats
+c.cast("Z") => ValueError: memoryview: destination format must be a native format prefixed with an optional '@'
+c.cast("") => ValueError: memoryview: destination format must be a native format prefixed with an optional '@'
+c.cast("<H") => ValueError: memoryview: destination format must be a native format prefixed with an optional '@'
+c.cast(">I") => ValueError: memoryview: destination format must be a native format prefixed with an optional '@'
+c.cast("=H") => ValueError: memoryview: destination format must be a native format prefixed with an optional '@'
+c.cast("2B") => ValueError: memoryview: destination format must be a native format prefixed with an optional '@'
+c.cast("s") => ValueError: memoryview: destination format must be a native format prefixed with an optional '@'
+memoryview(b"abc").cast("H") => TypeError: memoryview: length is not a multiple of itemsize
+c.cast("B", (3, 3)) => TypeError: memoryview: product(shape) * itemsize != buffer size
+c.cast("B", (2, -4)) => ValueError: memoryview.cast(): elements of shape must be integers > 0
+c.cast("B", (0, 8)) => ValueError: memoryview.cast(): elements of shape must be integers > 0
+c.cast("B", 8) => TypeError: shape must be a list or a tuple
+c.cast("B", ("a",)) => TypeError: memoryview.cast(): elements of shape must be integers
+c.cast() => TypeError: cast() missing required argument 'format' (pos 1)
+c.cast(1) => TypeError: cast() argument 'format' must be str, not int
+c[::2].cast("H") => TypeError: memoryview: casts are restricted to C-contiguous views
+c.cast("B", (2, 4))[0] => NotImplementedError: multi-dimensional sub-views are not implemented
+c.cast("B", (2, 4))[0:1].tolist() => [[0, 1, 2, 3]]
+c.cast("B", (2, 4))[0, 0, 0] => TypeError: cannot index 2-dimension view with 3-element tuple
+c.cast("B", (2, 4))[2, 0] => IndexError: index out of bounds on dimension 1
+c.cast("B", (2, 4))[0, 4] => IndexError: index out of bounds on dimension 2
+list(c.cast("B", (2, 4))) => NotImplementedError: multi-dimensional sub-views are not implemented
+c.cast("B", (2, 4))[0, "a"] => TypeError: memoryview: invalid slice key
+1 in c.cast("B", (2, 4)) => NotImplementedError: multi-dimensional sub-views are not implemented
+hash(c.cast("H")) => ValueError: memoryview: hashing is restricted to formats 'B', 'b' or 'c'
+hash(c.cast("b")) == hash(bytes(c)) => True
+c.cast("B", (2, 4))[::2].tolist() => [[0, 1, 2, 3]]
+wb => bytearray(b'\x02\x01\x00\x00\x00\x00\xff\xff')
+wc.tolist() => [258, 0, 0, 65535]
+wc.__setitem__(0, 65536) => ValueError: memoryview: invalid value for format 'H'
+wc.__setitem__(0, -1) => ValueError: memoryview: invalid value for format 'H'
+wc.__setitem__(0, 1.5) => TypeError: memoryview: invalid type for format 'H'
+bytearray(b'\x02\x01\x00\x00\xfe\xff\xff\xff')
+wb => bytearray(b'\x00\x00\x00\x00\x00\x00\xf8?')
+wd[0] => 1.5
+3.0
+wd.__setitem__(0, "x") => TypeError: memoryview: invalid type for format 'd'
+bytearray(b'\x00\x00\x00\x00\x00\x00\x08\x07')
+bytearray(b'Z')
+wcc.__setitem__(0, 90) => TypeError: memoryview: invalid type for format 'c'
+wcc.__setitem__(0, b"ab") => ValueError: memoryview: invalid value for format 'c'
+bytearray(b'Z\x01\x00')
+memoryview(b"\x01\x00").cast("H") == memoryview(b"\x01\x00\x00\x00").... => True
+memoryview(b"\x01").cast("B") == memoryview(b"\x01").cast("b") => True
+memoryview(b"\xff").cast("B") == memoryview(b"\xff").cast("b") => False
+memoryview(b"\x00\x00\x80\x3f").cast("f") == memoryview(b"\x01\x00\x0... => True
+memoryview(b"\x00\x00\xc0\x7f").cast("f") == memoryview(b"\x00\x00\xc... => False
+memoryview(b"ab") == bytearray(b"ab") => True
+memoryview(b"ab") == memoryview(b"abc")[:2] => True
+memoryview(b"ab") == [97, 98] => False
+memoryview(b"") == b"" => True
+memoryview(b"ab")[::-1] == b"ba" => True
+bytes(v).split(b",") => [b'a', b'b']
+b"a,b,c".startswith(v) => True
+b"xa,by".find(v) => 1
+b"a,b" in b"za,bz" => True
+v in [b"a,b"] => True
+bytearray(b"x").join([v, v]) => bytearray(b'a,bxa,b')
+b"%s|%b" % (v, v) => b'a,b|a,b'
+bytes(v).replace(v[1:2], b";") => b'a;b'
+int(memoryview(b"42")) => 42
+float(memoryview(b"1.5")) => 1.5
+bytearray(v) + v => bytearray(b'a,ba,b')
+b"".join([v[0:1], v[2:3]]) => b'ab'
+(b"a,b").count(v[0:1]) => 1
+bytes.fromhex("61").__eq__(v[0:1]) => NotImplemented
+str(v[0:1], "utf-8") => a
+compile(memoryview(b"1+1"), "<m>", "eval").co_filename => <m>
+eval(memoryview(b"2*3")) => 6
+[bytes(p) for p in bytes(v).partition(v[1:2])] => [b'a', b',', b'b']
+b"a,b".strip(v[0:1]) => b',b'
+bytes(v).translate(None, v[1:2]) => b'ab'
+bytearray(b"__").__iadd__(v) => bytearray(b'__a,b')
+ord(v[0:1]) if False else "" => 
+v[0:1].tobytes().decode() => a
+bytearray(b'012345')
+len(big) => 1000
+sum(big) => 0
+big[500:510].tolist() => [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+big.nbytes => 1000
+len(big[::7]) => 143
+big[100:900:100].tolist() => [0, 0, 0, 0, 0, 0, 0, 0]
+memoryview(b"abc").__len__() => 3
+memoryview(b"abc").__getitem__(1) => 98
+memoryview(b"ab").__eq__(b"ab") => True
+memoryview(b"ab").__eq__(1) => NotImplemented
+memoryview(b"abc").__iter__().__next__() => 97
+type(iter(memoryview(b"a"))).__name__ => memory_iterator
+memoryview.__name__ => memoryview
+memoryview.__module__ => builtins
+sorted(n for n in dir(memoryview) if not n.startswith("_")) => ['c_contiguous', 'cast', 'contiguous', 'count', 'f_contiguous', 'format', 'hex', 'index', 'itemsize', 'nbytes', 'ndim', 'obj', 'readonly', 'release', 'shape', 'strides', 'suboffsets', 'tobytes', 'tolist', 'toreadonly']

@@ -1,0 +1,204 @@
+status: 0
+script: 56f886605d746740
+source: 247ae48d724d1cee
+---
+g.real => real
+g.inst => inst
+__getattr__ dyn_x; g.dyn_x => x
+__getattr__ dyn_y; getattr(g, "dyn_y") => y
+__getattr__ dyn_z; hasattr(g, "dyn_z") => True
+__getattr__ other; hasattr(g, "other") => False
+__getattr__ other; getattr(g, "other", "default") => default
+g.other => __getattr__ other; AttributeError: custom message for other
+GA.dyn_x => AttributeError: type object 'GA' has no attribute 'dyn_x'
+g.__dict__ => {'inst': 'inst'}
+g.__class__.__name__ => GA
+GA2().anything => None
+GA2().__len__ if False else "" => 
+hasattr(GA2(), "x") => True
+len(GA2()) => TypeError: object of type 'GA2' has no len()
+GA2()() => TypeError: 'GA2' object is not callable
+GA2() + 1 => TypeError: unsupported operand type(s) for +: 'GA2' and 'int'
+iter(GA2()) => TypeError: 'GA2' object is not iterable
+ga.x => ('intercepted', 1)
+ga.y => ('intercepted', 2)
+ga.fixed => always
+ga.__class__ => ('intercepted', <class '__main__.GetAttribute'>)
+hasattr(ga, "secret") => False
+hasattr(ga, "nope") => False
+type(ga).__name__ => GetAttribute
+GetAttribute.x => 1
+ga.secret => AttributeError: hidden
+ga.nope => AttributeError: 'GetAttribute' object has no attribute 'nope'
+getattribute a; 1
+getattribute missing; getattr missing; fallback
+BothRaise().x => AttributeError: second
+NonAttrError().x => ValueError: not an AttributeError
+hasattr(NonAttrError(), "x") => ValueError: not an AttributeError
+getattr(NonAttrError(), "x", 1) => ValueError: not an AttributeError
+len(bp) => 3
+repr(bp) => Bypass()
+str(bp) => Bypass()
+bool(bp) => True
+GA __len__; 3
+setattr a 1; setattr b 2; setattr keep k; {'a': 2, 'b': 4, 'keep': 'k'}
+delattr a; delattr b; {'keep': 'k'}
+s1() => setattr ro 1; AttributeError: read only: ro
+s2() => delattr keep; AttributeError: cannot delete keep
+s3() => delattr missing; AttributeError: 'SA' object has no attribute 'missing'
+1
+setattr a 1; setattr a 3; 6
+no hook for the class
+1
+f1() => TypeError: frozen
+f2() => TypeError: frozen del
+i.log => ['x', 'y']
+i.x => 1
+i.y => 2
+type(Recursion().x) => RecursionError: maximum recursion depth exceeded
+p.v => 5
+p.m() => ('m', 5)
+tg.__dict__ => {'v': 5, 'w': 6}
+list(p.__dict__) => ['_t']
+{'v': 5}
+pl._t => [1, 2, 3]
+pl.count(1) => 1
+pl.__len__() => 3
+len(pl) => TypeError: object of type 'Proxy' has no len()
+pl[0] => TypeError: 'Proxy' object is not subscriptable
+p.nope => AttributeError: 'Target' object has no attribute 'nope'
+object.__getattribute__(o, "i") => inst
+object.__getattribute__(o, "c") => class
+o.__getattribute__("i") => inst
+type.__getattribute__(Pl, "c") => class
+object.__getattribute__(Pl, "__name__") if False else "" => 
+object.__setattr__(o, "n", 1) => None
+o.n => 1
+object.__delattr__(o, "n") => None
+hasattr(o, "n") => False
+o.__setattr__("z", 1) => None
+o.z => 1
+o.__delattr__("z") => None
+object.__getattribute__(o, "nope") => AttributeError: 'Pl' object has no attribute 'nope'
+object.__getattribute__(o, 1) => TypeError: attribute name must be string, not 'int'
+object.__getattribute__(o) => TypeError: expected 1 argument, got 0
+object.__setattr__(o, 1, 2) => TypeError: attribute name must be string, not 'int'
+object.__delattr__(o, "nope") => AttributeError: 'Pl' object has no attribute 'nope'
+object.__setattr__(1, "a", 2) => AttributeError: 'int' object has no attribute 'a' and no __dict__ for setting new attributes
+object.__setattr__(Pl, "a", 2) => TypeError: can't apply this __setattr__ to type object
+object.__delattr__(Pl, "c") => TypeError: can't apply this __delattr__ to type object
+type.__setattr__(o, "a", 1) => TypeError: descriptor '__setattr__' requires a 'type' object but received a 'Pl'
+type.__getattribute__(o, "i") => TypeError: descriptor '__getattribute__' requires a 'type' object but received a 'Pl'
+type.__setattr__(int, "a", 1) => TypeError: cannot set 'a' attribute of immutable type 'int'
+object.__setattr__(object(), "a", 1) => AttributeError: 'object' object has no attribute 'a' and no __dict__ for setting new attributes
+object.__delattr__(object(), "a") => AttributeError: 'object' object has no attribute 'a' and no __dict__ for setting new attributes
+'int' object has no attribute 'nope' | nope True
+'float' object has no attribute 'nope' | nope True
+'str' object has no attribute 'nope' | nope True
+'bytes' object has no attribute 'nope' | nope True
+'list' object has no attribute 'nope' | nope True
+'tuple' object has no attribute 'nope' | nope True
+'dict' object has no attribute 'nope' | nope True
+'set' object has no attribute 'nope' | nope True
+'NoneType' object has no attribute 'nope' | nope True
+'bool' object has no attribute 'nope' | nope True
+'builtin_function_or_method' object has no attribute 'nope' | nope True
+type object 'int' has no attribute 'nope' | nope True
+type object 'type' has no attribute 'nope' | nope True
+'object' object has no attribute 'nope' | nope True
+'function' object has no attribute 'nope' | nope True
+'range' object has no attribute 'nope' | nope True
+'ellipsis' object has no attribute 'nope' | nope True
+'NotImplementedType' object has no attribute 'nope' | nope True
+'complex' object has no attribute 'nope' | nope True
+'list_iterator' object has no attribute 'nope' | nope True
+'generator' object has no attribute 'nope' | nope True
+'slice' object has no attribute 'nope' | nope True
+'builtin_function_or_method' object has no attribute 'nope' | nope True
+'method_descriptor' object has no attribute 'nope' | nope True
+type object 'Pl' has no attribute 'nope' | nope True
+'Pl' object has no attribute 'nope' | nope True
+'function' object has no attribute 'nope' | nope True
+'function' object has no attribute 'nope' | nope False
+'property' object has no attribute 'nope' | nope True
+'super' object has no attribute 'nope' | nope True
+'BaseException' object has no attribute 'nope' | nope True
+'frozenset' object has no attribute 'nope' | nope True
+'bytearray' object has no attribute 'nope' | nope True
+'mappingproxy' object has no attribute 'nope' | nope True
+'classmethod' object has no attribute 'nope' | nope True
+'staticmethod' object has no attribute 'nope' | nope True
+AttributeError 'int' object has no attribute 'nope' and no __dict__ for setting new attributes
+AttributeError 'str' object has no attribute 'nope' and no __dict__ for setting new attributes
+AttributeError 'list' object has no attribute 'nope' and no __dict__ for setting new attributes
+AttributeError 'dict' object has no attribute 'nope' and no __dict__ for setting new attributes
+AttributeError 'NoneType' object has no attribute 'nope' and no __dict__ for setting new attributes
+AttributeError 'builtin_function_or_method' object has no attribute 'nope' and no __dict__ for setting new attributes
+TypeError cannot set 'nope' attribute of immutable type 'int'
+AttributeError 'object' object has no attribute 'nope' and no __dict__ for setting new attributes
+AttributeError 'range' object has no attribute 'nope' and no __dict__ for setting new attributes
+AttributeError 'builtin_function_or_method' object has no attribute 'nope' and no __dict__ for setting new attributes
+AttributeError 'tuple' object has no attribute 'nope' and no __dict__ for setting new attributes
+AttributeError 'float' object has no attribute 'nope' and no __dict__ for setting new attributes
+AttributeError 'ellipsis' object has no attribute 'nope' and no __dict__ for setting new attributes
+AttributeError 'method_descriptor' object has no attribute 'nope' and no __dict__ for setting new attributes
+AttributeError 'method' object has no attribute 'nope' and no __dict__ for setting new attributes
+AttributeError 'property' object has no attribute 'nope' and no __dict__ for setting new attributes
+AttributeError 'int' object has no attribute 'nope' and no __dict__ for setting new attributes
+AttributeError 'str' object has no attribute 'nope' and no __dict__ for setting new attributes
+AttributeError 'list' object has no attribute 'nope' and no __dict__ for setting new attributes
+AttributeError 'NoneType' object has no attribute 'nope' and no __dict__ for setting new attributes
+AttributeError 'builtin_function_or_method' object has no attribute 'nope' and no __dict__ for setting new attributes
+TypeError cannot set 'nope' attribute of immutable type 'int'
+AttributeError 'object' object has no attribute 'nope' and no __dict__ for setting new attributes
+AttributeError 'Pl' object has no attribute 'nope'
+AttributeError type object 'Pl' has no attribute 'nope'
+AttributeError 'function' object has no attribute 'nope'
+AttributeError attribute 'real' of 'int' objects is not writable
+AttributeError attribute 'real' of 'int' objects is not writable
+AttributeError 'str' object attribute 'upper' is read-only
+AttributeError 'str' object attribute 'upper' is read-only
+AttributeError 'list' object attribute 'append' is read-only
+AttributeError 'list' object attribute 'append' is read-only
+AttributeError attribute '__name__' of 'builtin_function_or_method' objects is not writable
+AttributeError attribute '__name__' of 'builtin_function_or_method' objects is not writable
+TypeError cannot set '__add__' attribute of immutable type 'int'
+TypeError cannot set '__add__' attribute of immutable type 'int'
+AttributeError readonly attribute
+AttributeError readonly attribute
+AttributeError readonly attribute
+AttributeError readonly attribute
+AttributeError readonly attribute
+AttributeError readonly attribute
+AttributeError readonly attribute
+AttributeError readonly attribute
+TypeError 'NoneType' object is not iterable
+TypeError args may not be deleted
+AttributeError readonly attribute
+AttributeError readonly attribute
+AttributeError attribute '__mro__' of 'type' objects is not writable
+AttributeError attribute '__mro__' of 'type' objects is not writable
+dir(Dr()) => ['a', 'm', 'z']
+dir(Dr3()) => ['t', 'u']
+dir(Dr4()) => [1, 2, 3]
+dir(Dr2()) => TypeError: 'int' object is not iterable
+dir(Dr5()) => TypeError: '<' not supported between instances of 'int' and 'str'
+dir(1, 2) => TypeError: dir expected at most 1 argument, got 2
+dir(Dc) => ['meta']
+"x" in dir(Dc()) => True
+vars(V()) => TypeError: vars() argument must have __dict__ attribute
+vars(1) => TypeError: vars() argument must have __dict__ attribute
+vars(1, 2) => TypeError: vars expected at most 1 argument, got 2
+vars(Pl)["c"] => class
+vars(o) => {'i': 'inst'}
+type(vars(Pl)).__name__ => mappingproxy
+vars() is globals() => True
+'Pl' object has no attribute 'inst_' ("'Pl' object has no attribute 'inst_'",) inst_ True
+e => msg
+e.name => n
+e.obj => 5
+e.args => ('msg',)
+repr(e) => AttributeError()
+e.name => None
+e.obj => None
+AttributeError("m", nope=1) => TypeError: AttributeError() got an unexpected keyword argument 'nope'

@@ -1,0 +1,6 @@
+status: 1
+stderr: AttributeError: 'C' object has no attribute 'color'. Did you mean '.colour' instead of '.color'?
+script: 4d90f37a03a17b1d
+source: 4d90f37a03a17b1d
+---
+before

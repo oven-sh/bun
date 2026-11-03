@@ -1,0 +1,185 @@
+status: 0
+script: 2833855b3d687efe
+source: 0f7557c338dabb09
+---
+names(D) => ['D', 'B', 'C', 'A', 'object']
+D().who() => B
+D.v => C.v
+D().only_a() => only_a via B
+D.__bases__ => (<class '__main__.B'>, <class '__main__.C'>)
+D.__base__ => <class '__main__.B'>
+B.__base__ => <class '__main__.A'>
+isinstance(D(), A) => True
+issubclass(D, C) => True
+issubclass(B, C) => False
+issubclass(A, D) => False
+A.__subclasses__() => [<class '__main__.B'>, <class '__main__.C'>]
+B.__subclasses__() => [<class '__main__.D'>]
+D.__subclasses__() => []
+D.mro() == list(D.__mro__) => True
+names(E) => ['E', 'C', 'B', 'A', 'object']
+E().who() => C
+['G', 'F', 'D', 'B', 'C', 'A', 'object']
+type("X", (A, B), {}) => TypeError: Cannot create a consistent method resolution order (MRO) for bases A, B
+type("X", (D, E), {}) => TypeError: Cannot create a consistent method resolution order (MRO) for bases B, C
+type("X", (A, A), {}) => TypeError: duplicate base class A
+type("X", (object, A), {}) => TypeError: Cannot create a consistent method resolution order (MRO) for bases object, A
+type("X", (B, C, A, D), {}) => TypeError: Cannot create a consistent method resolution order (MRO) for bases B, C, A, D
+TypeError: Cannot create a consistent method resolution order (MRO) for bases A, B
+TypeError: int expected at most 2 arguments, got 3
+TypeError: str() argument 'encoding' must be str, not tuple
+TypeError: NoneType takes no arguments
+TypeError: type 'bool' is not an acceptable base type
+TypeError: multiple bases have instance lay-out conflict
+TypeError: type 'NoneType' is not an acceptable base type
+TypeError: type 'function' is not an acceptable base type
+TypeError: multiple bases have instance lay-out conflict
+TypeError: A() takes no arguments
+TypeError: type 'range' is not an acceptable base type
+TypeError: multiple bases have instance lay-out conflict
+TypeError: type 'slice' is not an acceptable base type
+TypeError: type 'ellipsis' is not an acceptable base type
+TypeError: multiple bases have instance lay-out conflict
+TypeError: multiple bases have instance lay-out conflict
+names(type("Z", (K1, K2, K3), {})) => TypeError: Cannot create a consistent method resolution order (MRO) for bases O1, O2, O3
+['Z', 'K1', 'K2', 'K3b', 'O1', 'O2', 'O3', 'object']
+names(M1) => ['M1', 'int', 'A', 'object']
+names(M2) => ['M2', 'A', 'int', 'object']
+M1(5) + 1 => 6
+M2(5).who() => A
+M3(a=1) => {'a': 1}
+M4([1]).who() => A
+M4([1]) => [1]
+M1.__base__ => <class 'int'>
+M2.__base__ => <class 'int'>
+M4.__base__ => <class 'list'>
+M5("e").who() => A
+M5.__base__ => <class 'Exception'>
+Child(1, 2).desc() => Child(2) < Base(1)
+Child(1, 2).__dict__ => {'a': 1, 'b': 2}
+5
+NoInit() => TypeError: Base.__init__() missing 1 required positional argument: 'a'
+s.log => ['S1', 'S3', 'S2', 'S4']
+s.f() => ['S4.f', 'S2.f', 'S3.f', 'S1.f']
+S4.cm() => ['S2.cm', 'S1.cm', 'S4']
+s.cm() => ['S2.cm', 'S1.cm', 'S4']
+S4.sm() => ['S2.sm', 'S1.sm']
+s.p => S2.p>S1.p
+s.get_attr() => S1.attr
+S2().f() => ['S2.f', 'S1.f']
+names(S4) => ['S4', 'S2', 'S3', 'S1', 'object']
+super(S2, s).f() => ['S3.f', 'S1.f']
+super(S3, s).f() => ['S1.f']
+super(S4, s).f() => ['S2.f', 'S3.f', 'S1.f']
+super(S2, S4).f(s) => ['S3.f', 'S1.f']
+super(S2, S4).cm() => ['S1.cm', 'S4']
+super(S4, S4).attr => S2.attr
+super(S2, s).attr => S1.attr
+super(S1, s).f() => AttributeError: 'super' object has no attribute 'f'
+super(S1, s).nope => AttributeError: 'super' object has no attribute 'nope'
+super(S4, s).nope => AttributeError: 'super' object has no attribute 'nope'
+super(S4, S1()) => TypeError: super(type, obj): obj (instance of S1) is not an instance or subtype of type (S4).
+super(S4, S1) => TypeError: super(type, obj): obj (type S1) is not an instance or subtype of type (S4).
+super(1, s) => TypeError: super() argument 1 must be a type, not int
+super(S4, 1) => TypeError: super(type, obj): obj (instance of int) is not an instance or subtype of type (S4).
+super() => RuntimeError: super(): no arguments
+super(S4, s, 1) => TypeError: super() expected at most 2 arguments, got 3
+super(x=1) => TypeError: super() takes no keyword arguments
+no_class() => RuntimeError: super(): no arguments
+no_class_arg(s) => RuntimeError: super(): __class__ cell not found
+NoArgs.m() => RuntimeError: super(): no arguments
+NoArgs().deleted() => RuntimeError: super(): arg[0] deleted
+NoArgs.st() => RuntimeError: super(): no arguments
+NoArgs.st2(1) => TypeError: super(type, obj): obj (instance of int) is not an instance or subtype of type (NoArgs).
+type(NoArgs.st2(NoArgs())).__name__ => 'super'
+su.__thisclass__.__name__ => S2
+su.__self__ is s => True
+su.__self_class__.__name__ => S4
+type(su).__name__ => super
+repr(su).replace(" object", "") => <super: <class 'S2'>, <S4>>
+repr(super(S2)) => <super: <class 'S2'>, NULL>
+super(S2).__self__ => None
+su.__class__ => <class 'super'>
+su.__doc__ is not None or True => True
+ssu() => AttributeError: 'super' object has no attribute 'x' and no __dict__ for setting new attributes
+un.__get__(s, S4).f() => ['S3.f', 'S1.f']
+type(un.__get__(None, S4)).__name__ => super
+UsesClassCell().m().__name__ => UsesClassCell
+SubCell().m().__name__ => UsesClassCell
+UsesClassCell().n() => ('UsesClassCell', '__init__')
+UsesClassCell.c() => True
+SubCell.c() => False
+SubCell().nested().__name__ => UsesClassCell
+UsesClassCell.m.__code__.co_freevars => ('__class__',)
+UsesClassCell.m.__closure__[0].cell_contents.__name__ => UsesClassCell
+__class__ => NameError: name '__class__' is not defined
+UsesClassCell().lam() => RuntimeError: super(): no arguments
+UsesClassCell().comp() => ['super']
+UsesClassCell().gen() => TypeError: super(type, obj): obj (instance of range) is not an instance or subtype of type (UsesClassCell).
+s.late() => RuntimeError: super(): __class__ cell not found
+['S2.f', 'S3.f', 'S1.f']
+m => MyList[1, 2, 6]
+m[0] => ('got', 1)
+len(m) => 30
+m + [9] => MyList[1, 2, 6, 9]
+m == 1 => eq called
+list(m) => [1, 2, 6]
+[v for v in m] => [1, 2, 6]
+m.copy() => [1, 2, 6]
+type(m + []) => <class '__main__.MyList'>
+type(m * 2) => <class 'list'>
+m * 2 => [1, 2, 6, 1, 2, 6]
+sorted(m) => [1, 2, 6]
+m[0:1] => ('got', [1])
+bool(MyList()) => False
+m.__class__.__mro__ => (<class '__main__.MyList'>, <class 'list'>, <class 'object'>)
+super(MyList, m)[0] => TypeError: 'super' object is not subscriptable
+len(super(MyList, m)) => TypeError: object of type 'super' has no len()
+super(MyList, m) + [1] => TypeError: unsupported operand type(s) for +: 'super' and 'list'
+r.f() => R1
+names(R) => ['R', 'R1', 'object']
+r.f() => R2
+names(R) => ['R', 'R2', 'object']
+R1.__subclasses__() => []
+R2.__subclasses__() => [<class '__main__.R'>]
+r.f() => R1
+names(R) => ['R', 'R1', 'R2', 'object']
+TypeError: __bases__ assignment: 'int' object layout differs from 'R1'
+TypeError: a __bases__ item causes an inheritance cycle
+TypeError: can only assign tuple to R.__bases__, not list
+TypeError: R.__bases__ must be tuple of classes, not 'int'
+TypeError: can only assign non-empty tuple to R.__bases__, not ()
+TypeError: duplicate base class R1
+TypeError: a __bases__ item causes an inheritance cycle
+TypeError: cannot delete '__bases__' attribute of type 'R'
+None
+isinstance(1, (int, str)) => True
+isinstance("a", (int, str)) => True
+isinstance(1.5, (int, str)) => False
+isinstance(1, ()) => False
+isinstance(1, (str, (float, (int,)))) => True
+issubclass(bool, (str, int)) => True
+issubclass(int, ()) => False
+isinstance(1, int | str) => True
+isinstance(None, int | None) => True
+issubclass(int, int | str) => True
+isinstance(True, int) => True
+isinstance(D(), (B, str)) => True
+isinstance(D, type) => True
+isinstance(1, object) => True
+issubclass(D, D) => True
+isinstance(1, 1) => TypeError: isinstance() arg 2 must be a type, a tuple of types, or a union
+isinstance(1, "int") => TypeError: isinstance() arg 2 must be a type, a tuple of types, or a union
+isinstance(1, [int]) => TypeError: isinstance() arg 2 must be a type, a tuple of types, or a union
+isinstance(1, (int, 1)) => True
+isinstance("a", (int, 1)) => TypeError: isinstance() arg 2 must be a type, a tuple of types, or a union
+issubclass(1, int) => TypeError: issubclass() arg 1 must be a class
+issubclass(int, 1) => TypeError: issubclass() arg 2 must be a class, a tuple of classes, or a union
+issubclass(int, (int, 1)) => True
+issubclass(str, (int, 1)) => TypeError: issubclass() arg 2 must be a class, a tuple of classes, or a union
+isinstance(1) => TypeError: isinstance expected 2 arguments, got 1
+issubclass(int, [int]) => TypeError: issubclass() arg 2 must be a class, a tuple of classes, or a union
+isinstance(1, list[int]) => TypeError: isinstance() argument 2 cannot be a parameterized generic
+issubclass(int, list[int]) => TypeError: issubclass() argument 2 cannot be a parameterized generic
+isinstance(1, int | list[int]) => True
+issubclass("a", int | str) => TypeError: issubclass() arg 1 must be a class

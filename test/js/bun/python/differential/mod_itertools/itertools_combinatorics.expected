@@ -1,0 +1,155 @@
+status: 0
+script: aaa56e7bf9090b5b
+---
+--- product
+[()]
+[]
+[('a',), ('b',)]
+[('a', 'c'), ('a', 'd'), ('b', 'c'), ('b', 'd')]
+[]
+[('a', 0), ('a', 1), ('a', 2), ('b', 0), ('b', 1), ('b', 2)]
+[('a', 'a'), ('a', 'b'), ('b', 'a'), ('b', 'b')]
+[()]
+[()]
+[()]
+[('a', 'c', 'a', 'c'), ('a', 'c', 'b', 'c'), ('b', 'c', 'a', 'c'), ('b', 'c', 'b', 'c')]
+[(1,), (2,)]
+243
+[('a', 'c'), ('a', 'd'), ('b', 'c'), ('b', 'd')]
+[(1, 5), (3, 5)]
+[(0, 0, 0, 0, 0, 0, 0, 0, 0, 0), (0, 0, 0, 0, 0, 0, 0, 0, 0, 1), (0, 0, 0, 0, 0, 0, 0, 0, 0, 2)]
+() 1 True
+('abc',) 1 True
+('abc',) 2 True
+('ab', 'cde') 1 True
+('ab', 'c', 'de') 1 True
+('ab', 'c') 2 True
+('a',) 4 True
+('', 'a') 1 True
+('abc', 'de', 'f', 'gh') 1 True
+('ab',) 4 True
+TypeError 'int' object is not iterable
+TypeError 'int' object is not iterable
+ValueError repeat argument cannot be negative
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'float' object cannot be interpreted as an integer
+TypeError 'NoneType' object cannot be interpreted as an integer
+OverflowError Python int too large to convert to C ssize_t
+OverflowError repeat argument too large
+OverflowError repeat argument too large
+TypeError product() got an unexpected keyword argument 'foo'
+TypeError product() takes at most 1 keyword argument (2 given)
+TypeError product() got an unexpected keyword argument 'repea'. Did you mean 'repeat'?
+'product'
+[()]
+[('a',), ('b',), 'StopIteration', 'StopIteration']
+[(), 'StopIteration', 'StopIteration']
+['StopIteration', 'StopIteration', 'StopIteration']
+True
+(('a', 'c'), ('a', 'd'), True)
+[(1, 1), (1, 2), (2, 1), (2, 2)]
+--- permutations
+[()]
+[('a',)]
+[('a', 'b'), ('b', 'a')]
+[('a', 'b', 'c'), ('a', 'c', 'b'), ('b', 'a', 'c'), ('b', 'c', 'a'), ('c', 'a', 'b'), ('c', 'b', 'a')]
+[('a', 'b'), ('a', 'c'), ('b', 'a'), ('b', 'c'), ('c', 'a'), ('c', 'b')]
+[()]
+[('a',), ('b',), ('c',)]
+[('a', 'b', 'c'), ('a', 'c', 'b'), ('b', 'a', 'c'), ('b', 'c', 'a'), ('c', 'a', 'b'), ('c', 'b', 'a')]
+[]
+[()]
+[]
+[('a', 'b', 'c'), ('a', 'c', 'b'), ('b', 'a', 'c'), ('b', 'c', 'a'), ('c', 'a', 'b'), ('c', 'b', 'a')]
+[('a', 'b'), ('a', 'c'), ('b', 'a'), ('b', 'c'), ('c', 'a'), ('c', 'b')]
+[('a',), ('b',)]
+[('a',), ('b',)]
+[('a', 'a'), ('a', 'b'), ('a', 'a'), ('a', 'b'), ('b', 'a'), ('b', 'a')]
+[('a',), ('b',)]
+720
+MemoryError 
+compared
+TypeError permutations() missing required argument 'iterable' (pos 1)
+TypeError 'int' object is not iterable
+TypeError permutations() takes at most 2 arguments (3 given)
+ValueError r must be non-negative
+TypeError Expected int as r
+TypeError Expected int as r
+OverflowError Python int too large to convert to C ssize_t
+OverflowError Python int too large to convert to C ssize_t
+TypeError permutations() got an unexpected keyword argument 'x'
+TypeError 'NoneType' object is not iterable
+TypeError 'int' object is not iterable
+[('a', 'b'), ('b', 'a'), 'StopIteration', 'StopIteration']
+[(), 'StopIteration', 'StopIteration']
+['StopIteration', 'StopIteration', 'StopIteration']
+TypeError Expected int as r
+--- combinations
+[('a', 'b'), ('a', 'c'), ('a', 'd'), ('b', 'c'), ('b', 'd'), ('c', 'd')]
+[()]
+[('a',), ('b',), ('c',), ('d',)]
+[('a', 'b', 'c'), ('a', 'b', 'd'), ('a', 'c', 'd'), ('b', 'c', 'd')]
+[('a', 'b', 'c', 'd')]
+[]
+[()]
+[]
+[(0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3)]
+[('a', 'b'), ('a', 'c'), ('b', 'c')]
+[('a', 'b'), ('a', 'c'), ('b', 'c')]
+[('a', 'a'), ('a', 'b'), ('a', 'b')]
+[('a',), ('b',)]
+[('a',), ('b',)]
+MemoryError 
+924
+compared
+TypeError combinations() missing required argument 'iterable' (pos 1)
+TypeError combinations() missing required argument 'r' (pos 2)
+TypeError combinations() takes at most 2 arguments (3 given)
+ValueError r cannot be negative
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'float' object cannot be interpreted as an integer
+TypeError 'NoneType' object cannot be interpreted as an integer
+OverflowError Python int too large to convert to C ssize_t
+TypeError 'int' object is not iterable
+ValueError r cannot be negative
+TypeError combinations() missing required argument 'r' (pos 2)
+TypeError combinations() takes at most 2 arguments (3 given)
+[('a',), ('b',), 'StopIteration', 'StopIteration']
+[(), 'StopIteration', 'StopIteration']
+['StopIteration', 'StopIteration', 'StopIteration']
+--- combinations_with_replacement
+[('a', 'a'), ('a', 'b'), ('a', 'c'), ('b', 'b'), ('b', 'c'), ('c', 'c')]
+[()]
+[('a',), ('b',), ('c',)]
+[('a', 'a', 'a'), ('a', 'a', 'b'), ('a', 'b', 'b'), ('b', 'b', 'b')]
+[('a', 'a', 'a', 'a')]
+[()]
+[]
+MemoryError 
+[(0, 0), (0, 1), (0, 2), (1, 1), (1, 2), (2, 2)]
+[('a', 'a'), ('a', 'b'), ('b', 'b')]
+[('a',), ('b',)]
+compared
+TypeError combinations_with_replacement() missing required argument 'iterable' (pos 1)
+TypeError combinations_with_replacement() missing required argument 'r' (pos 2)
+TypeError combinations_with_replacement() takes at most 2 arguments (3 given)
+ValueError r cannot be negative
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'NoneType' object cannot be interpreted as an integer
+OverflowError Python int too large to convert to C ssize_t
+TypeError 'int' object is not iterable
+TypeError combinations_with_replacement() missing required argument 'r' (pos 2)
+[('a',), ('b',), 'StopIteration', 'StopIteration']
+[(), 'StopIteration', 'StopIteration']
+['StopIteration', 'StopIteration', 'StopIteration']
+--- results are separate tuples
+4 True True
+6 True True
+3 True True
+6 True True
+--- sizes
+product [0, 8, 16, 24]
+combinations [0, 8, 16, 24]
+cwr [0, 8, 16, 24]
+permutations [0, 8, 16, 24]
+48

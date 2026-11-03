@@ -1,0 +1,316 @@
+status: 0
+script: 574954c1a22cbf6a
+source: 6222189a29b74168
+---
+{'a': 3} <- 'a = 1\\\n+ 2'
+{'a': 3} <- 'a = (1\n+ 2)'
+{'a': [1, 2]} <- 'a = [1,\n\n\n2]'
+{'a': {1: 2}} <- 'a = {1:\n2}'
+{'a': (1, 2)} <- 'a = (1 # comment\n, 2)'
+{'a': 3} <- 'a = 1 \\\n\\\n+ 2'
+{'a': 'xy'} <- "a = 'x\\\ny'"
+SyntaxError: unexpected character after line continuation character <- 'a = 1 \\ \n+ 2'
+SyntaxError: unexpected character after line continuation character <- 'a = 1 \\# c\n'
+{'a': 1, 'b': 2} <- 'a = 1 # c \\\nb = 2'
+{'a': 1} <- 'a \\\n= \\\n1'
+{'a': 1} <- 'if 1: \\\n a = 1'
+{'a': 1} <- 'if 1:\\\n a = 1'
+{'a': 1, 'b': 2} <- 'a = 1;b = 2;'
+{'a': 1, 'b': 2} <- 'a = 1 ; b = 2'
+{'a': 1, 'b': 2} <- 'a = 1;\nb = 2'
+SyntaxError: invalid syntax <- ';'
+SyntaxError: invalid syntax <- 'a = 1;;'
+{'a': 1} <- '\n\n\na = 1\n\n\n'
+{'a': 1} <- '# c\n# d\na = 1 # e\n# f'
+{'a': 1} <- 'a = 1#c'
+{} <- '#'
+{} <- ''
+{} <- '   '
+{} <- '   # c'
+{} <- '\t'
+{'a': 1, 'b': 2} <- 'a = 1\n   \nb = 2'
+{'a': 1, 'b': 2} <- 'a = 1\n   # indented comment\nb = 2'
+{'a': 1, 'b': 2, 'c': 3} <- 'if 1:\n  a = 1\n\n  b = 2\n # odd comment\n  c = 3'
+{'a': 1, 'b': 2} <- 'if 1:\n  a = 1\n      # deeper comment\nb = 2'
+{'a': 'x\n  y\n'} <- "a = '''x\n  y\n'''"
+{'a': ()} <- 'a = (\n)'
+{'a': []} <- 'a = [\n]'
+{'r': 3} <- 'def f(\n a,\n   b\n ): return a + b\nr = f(1,\n2)'
+{'a': 1} <- 'a = 1 if 1 \\\n else 2'
+{'a': '#'} <- "a = '#' # '"
+{'a': '\\'} <- "a = '\\\\'#c"
+SyntaxError: unexpected EOF while parsing <- 'a = 1\\'
+{'a': 1} <- '\\\na = 1'
+{'a': 1} <- '\\\n\\\na = 1'
+IndentationError: unexpected indent <- '  \\\na = 1'
+{'a': 1} <- 'if 1:\n  \\\n  a = 1'
+SyntaxError: unexpected EOF while parsing <- 'a = 1 \\\n'
+SyntaxError: unexpected EOF while parsing <- 'a = \\\n'
+{'a': 1, 'b': 2} <- 'a = 1\r\nb = 2\r\n'
+{'a': 1, 'b': 2} <- 'a = 1\rb = 2\r'
+{'a': 1, 'b': 2} <- 'a = 1\n\rb = 2'
+{'a': 'x\ny'} <- "a = '''x\r\ny'''"
+{'a': 'x\ny'} <- "a = '''x\ry'''"
+{'a': 'xy'} <- "a = 'x\\\r\ny'"
+{'a': (1, 2)} <- 'a = (1,\r\n2)'
+{'a': 1, 'b': 2} <- 'if 1:\r\n  a = 1\r\n  b = 2\r\n'
+{'a': 3} <- 'a = 1 \\\r\n+ 2'
+{'a': 1, 'b': 2} <- 'a = 1 # c\r\nb = 2'
+SyntaxError: invalid syntax <- 'a = 1\x0cb = 2'
+{'a': 1, 'b': 2} <- 'a = 1\n\x0cb = 2'
+{'a': 1} <- '\x0ca = 1'
+{'a': 1} <- 'if 1:\n\x0c  a = 1'
+IndentationError: expected an indented block after 'if' statement on line 1 <- 'if 1:\n  \x0ca = 1'
+{'a': 1} <- 'a\x0c=\x0c1'
+SyntaxError: invalid non-printable character U+000B <- 'a = 1\x0b'
+SyntaxError: source code string cannot contain null bytes <- 'a = 1\x00'
+SyntaxError: invalid non-printable character U+001A <- 'a = 1\x1a'
+SyntaxError: source code string cannot contain null bytes <- "a = '\x00'"
+SyntaxError: source code string cannot contain null bytes <- '# \x00\na = 1'
+SyntaxError: invalid non-printable character U+00A0 <- 'a\xa0= 1'
+SyntaxError: invalid non-printable character U+2028 <- 'a = 1\u2028b = 2'
+SyntaxError: invalid non-printable character U+3000 <- 'a = 1\u3000'
+SyntaxError: invalid non-printable character U+200B <- 'a\u200b = 1'
+{'a': '\u2028'} <- "a = '\u2028'"
+{'a': 1} <- 'a = 1 # \u2028 b = 2'
+{'a': 1} <- 'if 1:\n a = 1'
+{'a': 1} <- 'if 1:\n        a = 1'
+{'a': 1} <- 'if 1:\n\ta = 1'
+{'a': 1, 'b': 2} <- 'if 1:\n\ta = 1\n\tb = 2'
+{'a': 1, 'b': 2} <- 'if 1:\n \ta = 1\n \tb = 2'
+{'a': 1, 'b': 2} <- 'if 1:\n\t a = 1\n\t b = 2'
+TabError: inconsistent use of tabs and spaces in indentation <- 'if 1:\n\ta = 1\n        b = 2'
+TabError: inconsistent use of tabs and spaces in indentation <- 'if 1:\n        a = 1\n\tb = 2'
+TabError: inconsistent use of tabs and spaces in indentation <- 'if 1:\n  a = 1\n\tb = 2'
+{'a': 1, 'b': 2} <- 'if 1:\n\tif 1:\n\t\ta = 1\n\tb = 2'
+{'a': 1, 'b': 2} <- 'if 1:\n  if 1:\n      a = 1\n  b = 2'
+IndentationError: unindent does not match any outer indentation level <- 'if 1:\n  if 1:\n      a = 1\n    b = 2'
+IndentationError: unindent does not match any outer indentation level <- 'if 1:\n  a = 1\n b = 2'
+IndentationError: unexpected indent <- 'if 1:\n  a = 1\n   b = 2'
+IndentationError: unexpected indent <- ' a = 1'
+IndentationError: unexpected indent <- 'a = 1\n b = 2'
+IndentationError: expected an indented block after 'if' statement on line 1 <- 'if 1:\na = 1'
+{'a': (1, 2), 'b': 3} <- 'if 1:\n  a = (1,\n2)\n  b = 3'
+{'a': '\nx', 'b': 3} <- "if 1:\n  a = '''\nx'''\n  b = 3"
+{'a': 3, 'b': 3} <- 'if 1:\n  a = 1 + \\\n2\n  b = 3'
+IndentationError: unexpected indent <- 'if 1: a = 1\n  b = 2'
+{'a': 1} <- 'if 1: a = 1\nelse: a = 2'
+{'a': 2} <- 'if 0:\n  a = 1\nelse:\n      a = 2'
+{'a': 1} <- 'if 1:\n  pass\n  \n\n  a = 1'
+{'i': 1, 'a': 1, 'b': 1} <- 'for i in range(2):\n  a = i\nelse:\n  b = 1'
+{'a': 1} <- 'def f():\n  return 1\n\n\n\na = f()'
+{'r': 2} <- 'class C:\n  a = 1\n\n  b = 2\nr = C.b'
+{'a': 1, 'b': 2} <- 'if 1:\n  a = 1\n  # c\nb = 2'
+{'a': 1, 'b': 2} <- 'if 1:\n  a = 1 # c\n  b = 2 # d'
+{'a': 1, 'b': 2, 'c': 3, 'd': 4} <- 'if 1:\n    a = 1\n    if 1:\n        b = 2\n    c = 3\nd = 4'
+0 | 0 | 0 | 0 | 1 | 10 | 10 | 1000000 | 0 | 15 | 15 | 3735928559 | 15 | 0 | 15 | 15 | 7 | 0 | 5 | 5 | 1 | 1.0 | 1.0 | 0.1 | 0.0 | 0.5 | 1.5 | 10.01 | 1.0 | 1.0 | 10.0 | 0.1 | 10.0 | 1.0 | 100000000000.0 | 0.0 | 0.0 | inf | 0.0 | 1j | 1j | 1j | 0.1j | 10j | 0j | 0j | 1j | 10j | 0.0015j | 999999999999999999999999999999 | 1329227995784915872903807060280344575 | 1.7976931348623157e+308 | 5e-324 | 5e-324 | 0.1 | 1e+23 | 123456789.12345679 | 4.35 | 1.0000000000000002 | 9007199254740992.0 | 0.30000000000000004 | 
+SyntaxError: leading zeros in decimal integer literals are not permitted; use an 0o prefix for octal integers <- 01 | SyntaxError: leading zeros in decimal integer literals are not permitted; use an 0o prefix for octal integers <- 007 | SyntaxError: leading zeros in decimal integer literals are not permitted; use an 0o prefix for octal integers <- 0_1 | SyntaxError: invalid decimal literal <- 1__0 | NameError: name '_1' is not defined <- _1 | SyntaxError: invalid decimal literal <- 1_ | SyntaxError: invalid hexadecimal literal <- 0x | SyntaxError: invalid hexadecimal literal <- 0xg | SyntaxError: invalid hexadecimal literal <- 0x_ | SyntaxError: invalid hexadecimal literal <- 0x1_ | SyntaxError: invalid hexadecimal literal <- 0x__1 | SyntaxError: invalid digit '8' in octal literal <- 0o8 | SyntaxError: invalid octal literal <- 0o | SyntaxError: invalid digit '2' in binary literal <- 0b2 | SyntaxError: invalid binary literal <- 0b | SyntaxError: invalid decimal literal <- 0_x1 | SyntaxError: invalid hexadecimal literal <- 0X_ | SyntaxError: invalid decimal literal <- 1._0 | SyntaxError: invalid decimal literal <- 1_.0 | SyntaxError: invalid decimal literal <- 1.0_ | SyntaxError: invalid decimal literal <- 1e_1 | SyntaxError: invalid decimal literal <- 1_e1 | SyntaxError: invalid decimal literal <- 1e1_ | SyntaxError: invalid decimal literal <- 1e | SyntaxError: invalid decimal literal <- 1e+ | SyntaxError: invalid decimal literal <- 1e- | SyntaxError: invalid decimal literal <- 1.e | SyntaxError: invalid decimal literal <- 1ee1 | SyntaxError: invalid syntax <- 1e1.5 | SyntaxError: invalid syntax <- 1.2.3 | SyntaxError: invalid syntax <- 1..2 | SyntaxError: invalid decimal literal <- 1_j | SyntaxError: invalid imaginary literal <- 1jj | SyntaxError: invalid imaginary literal <- 1j1 | SyntaxError: invalid hexadecimal literal <- 0xfj | SyntaxError: invalid binary literal <- 0b1j | SyntaxError: invalid octal literal <- 0o7j | SyntaxError: invalid decimal literal <- 1l | SyntaxError: invalid decimal literal <- 1L | SyntaxError: invalid hexadecimal literal <- 0xfL | SyntaxError: invalid decimal literal <- 1u | SyntaxError: invalid decimal literal <- 1f | SyntaxError: invalid decimal literal <- 1.0f | SyntaxError: invalid decimal literal <- 1d | SyntaxError: invalid decimal literal <- 0d1 | SyntaxError: invalid decimal literal <- 1a | SyntaxError: invalid decimal literal <- 1_a | SyntaxError: invalid decimal literal <- 1e5x | SyntaxError: invalid digit '2' in binary literal <- 0b12 | SyntaxError: invalid digit '8' in octal literal <- 0o78 | SyntaxError: invalid decimal literal <- 0x1.8p1 | SyntaxError: unterminated string literal (detected at line 1) <- 1'000 | (1, 0) | SyntaxError: invalid character '١' (U+0661) <- ١٢٣ | SyntaxError: invalid character '１' (U+FF11) <- １２ | SyntaxError: invalid character '٢' (U+0662) <- 1٢ | SyntaxError: invalid character '²' (U+00B2) <- ² | SyntaxError: invalid character '²' (U+00B2) <- 1² | SyntaxError: leading zeros in decimal integer literals are not permitted; use an 0o prefix for octal integers <- 0127 | SyntaxError: leading zeros in decimal integer literals are not permitted; use an 0o prefix for octal integers <- 09 | 9.5 | 90.0 | 9j | SyntaxError: leading zeros in decimal integer literals are not permitted; use an 0o prefix for octal integers <- 0_9 | 2 | 1 | 1 | 1 | True | True | False | 31 | 1 | 1 | 1 | 1 | 1 | 15 | 100000.0 | [1] | SyntaxError: invalid decimal literal <- 1.real | 1 | 1.0 | 1.0 | 10.0 | 0.0 | 1 | SyntaxError: invalid decimal literal <- 1_0.real | SyntaxError: invalid decimal literal <- 1.__class__ | <class 'int'> | <class 'int'> | 
+{'a1': 1, '_': 2, '_a': 3, '__a__': 4, 'A': 5, 'aB': 6} <- 'a1 = 1; _ = 2; _a = 3; __a__ = 4; A = 5; aB = 6'
+{'é': 1, 'ñandú': 2, '日本語': 3, 'Ω': 4, 'а': 5} <- 'é = 1; ñandú = 2; 日本語 = 3; Ω = 4; а = 5'
+1
+{'a': 1} <- 'ａ = 1; print(a)'
+1
+{'fi': 1} <- 'ﬁ = 1; print(fi)'
+1
+{'a': 1} <- 'ª = 1; print(a)'
+1
+{'H': 1} <- 'ℌ = 1; print(H)'
+1
+{'Å': 1} <- 'Å = 1; print(Å)'
+SyntaxError: invalid character '²' (U+00B2) <- 'x² = 1'
+1
+{'á': 1} <- 'á = 1; print(á)'
+1
+{'μ': 1} <- 'µ = 1; print(μ)'
+1
+{'s': 1} <- 'ſ = 1; print(s)'
+1
+{'a': 1} <- '𝐚 = 1; print(a)'
+1
+{'Uni': 1} <- '𝔘𝔫𝔦 = 1; print(Uni)'
+{'a·b': 1} <- 'a·b = 1'
+SyntaxError: invalid character '·' (U+00B7) <- '·a = 1'
+{'a٠': 1} <- 'a٠ = 1'
+SyntaxError: invalid character '٠' (U+0660) <- '٠a = 1'
+{'℮': 1} <- '℮ = 1'
+{'a℮': 1} <- 'a℮ = 1'
+{'℘': 1} <- '℘ = 1'
+SyntaxError: invalid character '゛' (U+309B) <- '゛ = 1'
+SyntaxError: invalid character '゛' (U+309B) <- 'a゛ = 1'
+{'_é': 1} <- '_é = 1'
+SyntaxError: invalid character '😀' (U+1F600) <- '😀 = 1'
+SyntaxError: invalid character '😀' (U+1F600) <- 'a😀 = 1'
+SyntaxError: invalid character '€' (U+20AC) <- '€ = 1'
+SyntaxError: invalid character '€' (U+20AC) <- 'a€ = 1'
+SyntaxError: cannot assign to expression here. Maybe you meant '==' instead of '='? <- 'a-b = 1'
+SyntaxError: invalid syntax <- 'a$ = 1'
+SyntaxError: invalid decimal literal <- '1a = 1'
+NameError: name 'a' is not defined <- 'a.é = 1'
+{'r': 'É'} <- 'class É: pass\nr = É.__name__'
+{'r': (1, 2, ('a',))} <- 'def ƒ(ａ): return a\nr = ƒ(ａ=1), ƒ(a=2), ƒ.__code__.co_varnames'
+{'r': (1, True, False, 1, False)} <- "class C: ﬁ = 1\nr = C.fi, 'fi' in C.__dict__, 'ﬁ' in C.__dict__, getattr(C, 'fi'), hasattr(C, 'ﬁ')"
+{'r': 'sys'} <- 'import sys as ｓ\nr = s.__name__'
+{'a': 1, 'r': (True, False)} <- "ａ = 1\nr = 'a' in globals(), 'ａ' in globals()"
+{'a': 1} <- 'global ａ\na = 1'
+{'r': 1} <- 'r = (lambda ａ: a)(1)'
+{'r': {'a': 1}} <- 'r = dict(ａ=1)'
+{'r': [0, 1]} <- 'r = [ａ for a in range(2)]'
+{'r': {'a': 1}} <- "o = type('O', (), {})()\no.ａ = 1\nr = o.__dict__\ndel o"
+{'r': 'ａ'} <- "r = 'ａ'"
+{'𐐀': 1, 'r': True} <- "𐐀 = 1; r = '𐐀' in globals()"
+1
+{'vi': 1} <- 'vᵢ = 1; print(vi)'
+"é".isidentifier() => True
+"1a".isidentifier() => False
+"a1".isidentifier() => True
+"".isidentifier() => False
+"_".isidentifier() => True
+"a b".isidentifier() => False
+"ａ".isidentifier() => True
+"😀".isidentifier() => False
+"a·".isidentifier() => True
+"·".isidentifier() => False
+"℮".isidentifier() => True
+"None".isidentifier() => True
+"if".isidentifier() => True
+"a\u0301".isidentifier() => True
+"\u0301".isidentifier() => False
+"x²".isidentifier() => False
+"𝐚".isidentifier() => True
+"a\u200c".isidentifier() => True
+False -> cannot assign to False; None -> cannot assign to None; True -> cannot assign to True; and -> invalid syntax; as -> invalid syntax; assert -> invalid syntax; async -> invalid syntax; await -> invalid syntax; break -> invalid syntax; class -> invalid syntax; continue -> invalid syntax; def -> invalid syntax; del -> invalid syntax; elif -> invalid syntax; else -> invalid syntax; except -> invalid syntax; finally -> invalid syntax; for -> invalid syntax; from -> invalid syntax; global -> invalid syntax; if -> invalid syntax; import -> invalid syntax; in -> invalid syntax; is -> invalid syntax; lambda -> invalid syntax; nonlocal -> invalid syntax; not -> invalid syntax; or -> invalid syntax; pass -> invalid syntax; raise -> invalid syntax; return -> invalid syntax; try -> expected ':'; while -> invalid syntax; with -> invalid syntax; yield -> assignment to yield expression not possible; match ok; case ok; type ok; _ ok; lazy ok; print ok; exec ok; self ok; cls ok; nil ok; null ok; true ok; false ok; none ok; do ok; then ok; end ok; var ok; let ok; const ok; function ok; new ok; this ok; switch ok; goto ok; until ok; unless ok; __peg_parser__ ok; __debug__ -> cannot assign to __debug__; Ellipsis ok; NotImplemented ok; 
+x.None -> invalid syntax; x.None = 1 -> invalid syntax; def None(): pass -> invalid syntax; class None: pass -> invalid syntax; import None -> invalid syntax; f(None=1) -> cannot assign to None; def f(None): pass -> invalid syntax; for None in x: pass -> cannot assign to None; del None -> cannot delete None; global None -> invalid syntax; 
+x.True -> invalid syntax; x.True = 1 -> invalid syntax; def True(): pass -> invalid syntax; class True: pass -> invalid syntax; import True -> invalid syntax; f(True=1) -> cannot assign to True; def f(True): pass -> invalid syntax; for True in x: pass -> cannot assign to True; del True -> cannot delete True; global True -> invalid syntax; 
+x.if -> invalid syntax; x.if = 1 -> invalid syntax; def if(): pass -> invalid syntax; class if: pass -> invalid syntax; import if -> invalid syntax; f(if=1) -> invalid syntax; def f(if): pass -> invalid syntax; for if in x: pass -> invalid syntax; del if -> invalid syntax; global if -> invalid syntax; 
+x.class -> invalid syntax; x.class = 1 -> invalid syntax; def class(): pass -> invalid syntax; class class: pass -> invalid syntax; import class -> invalid syntax; f(class=1) -> invalid syntax; def f(class): pass -> invalid syntax; for class in x: pass -> invalid syntax; del class -> invalid syntax; global class -> invalid syntax; 
+x.def -> invalid syntax; x.def = 1 -> invalid syntax; def def(): pass -> invalid syntax; class def: pass -> invalid syntax; import def -> invalid syntax; f(def=1) -> invalid syntax; def f(def): pass -> invalid syntax; for def in x: pass -> invalid syntax; del def -> invalid syntax; global def -> invalid syntax; 
+x.lambda -> invalid syntax; x.lambda = 1 -> invalid syntax; def lambda(): pass -> invalid syntax; class lambda: pass -> invalid syntax; import lambda -> invalid syntax; f(lambda=1) -> invalid syntax; def f(lambda): pass -> invalid syntax; for lambda in x: pass -> invalid syntax; del lambda -> invalid syntax; global lambda -> invalid syntax; 
+x.not -> invalid syntax; x.not = 1 -> invalid syntax; def not(): pass -> invalid syntax; class not: pass -> invalid syntax; import not -> invalid syntax; f(not=1) -> invalid syntax; def f(not): pass -> invalid syntax; for not in x: pass -> invalid syntax; del not -> invalid syntax; global not -> invalid syntax; 
+x.in -> invalid syntax; x.in = 1 -> invalid syntax; def in(): pass -> invalid syntax; class in: pass -> invalid syntax; import in -> invalid syntax; f(in=1) -> invalid syntax; def f(in): pass -> invalid syntax; for in in x: pass -> invalid syntax; del in -> invalid syntax; global in -> invalid syntax; 
+x.is -> invalid syntax; x.is = 1 -> invalid syntax; def is(): pass -> invalid syntax; class is: pass -> invalid syntax; import is -> invalid syntax; f(is=1) -> invalid syntax; def f(is): pass -> invalid syntax; for is in x: pass -> invalid syntax; del is -> invalid syntax; global is -> invalid syntax; 
+x.and -> invalid syntax; x.and = 1 -> invalid syntax; def and(): pass -> invalid syntax; class and: pass -> invalid syntax; import and -> invalid syntax; f(and=1) -> invalid syntax; def f(and): pass -> invalid syntax; for and in x: pass -> invalid syntax; del and -> invalid syntax; global and -> invalid syntax; 
+x.yield -> invalid syntax; x.yield = 1 -> invalid syntax; def yield(): pass -> invalid syntax; class yield: pass -> invalid syntax; import yield -> invalid syntax; f(yield=1) -> invalid syntax; def f(yield): pass -> invalid syntax; for yield in x: pass -> invalid syntax; del yield -> invalid syntax; global yield -> invalid syntax; 
+x.await -> invalid syntax; x.await = 1 -> invalid syntax; def await(): pass -> invalid syntax; class await: pass -> invalid syntax; import await -> invalid syntax; f(await=1) -> invalid syntax; def f(await): pass -> invalid syntax; for await in x: pass -> invalid syntax; del await -> invalid syntax; global await -> invalid syntax; 
+x.async -> invalid syntax; x.async = 1 -> invalid syntax; def async(): pass -> invalid syntax; class async: pass -> invalid syntax; import async -> invalid syntax; f(async=1) -> invalid syntax; def f(async): pass -> invalid syntax; for async in x: pass -> invalid syntax; del async -> invalid syntax; global async -> invalid syntax; 
+x.print -> ok; x.print = 1 -> ok; def print(): pass -> ok; class print: pass -> ok; import print -> ok; f(print=1) -> ok; def f(print): pass -> ok; for print in x: pass -> ok; del print -> ok; global print -> ok; 
+x.match -> ok; x.match = 1 -> ok; def match(): pass -> ok; class match: pass -> ok; import match -> ok; f(match=1) -> ok; def f(match): pass -> ok; for match in x: pass -> ok; del match -> ok; global match -> ok; 
+x.type -> ok; x.type = 1 -> ok; def type(): pass -> ok; class type: pass -> ok; import type -> ok; f(type=1) -> ok; def f(type): pass -> ok; for type in x: pass -> ok; del type -> ok; global type -> ok; 
+a//b => 2
+a**b => 25
+a<<b => 20
+a>>b => 1
+a<=b => False
+a>=b => True
+a==b => False
+a!=b => True
+a--b => 7
+a-+b => 3
+a+-b => 3
+a- -b => 7
+a**-b => 0.04
+a*-b => -10
+a//-b => -3
+a%-b => -1
+a<-b => False
+a>-b => True
+a&~b => 5
+a|~b => -3
+a^~b => -8
+-a**b => -25
+~a**b => -26
+not a==b => True
+a if a<b else b => 2
+a<b<a => False
+[a][0] => 5
+a => 5
+(a,) => (5,)
+a => 5
+a.real => 5
+a .real => 5
+a. real => 5
+a . real => 5
+(a).real => 5
+a.real.real => 5
+1 .real => 1
+1.0.real => 1.0
+1..real => 1.0
+1.e0.real => 1.0
+[1,2][1:][0] => 2
+{1:2}[1] => 2
+{1:{2:3}}[1][2] => 3
+a if a else-a => 5
+a or-a => 5
+a and-a => -5
+not-a => False
+not~a => False
+a is not b => True
+a not in[b] => True
+a in(a,) => True
+[a for a in[1]] => [1]
+(lambda:a)() => 5
+(lambda*a:a)(1) => (1,)
+(lambda**a:a)(x=1) => {'x': 1}
+(lambda a,*b:b)(1,2) => (2,)
+print is print => True
+a@b if False else "" => 
+a<b>a => False
+a==b==a => False
+a!=b!=a => True
+1<2<3 => True
+1<2>1 => True
+1==1!=2 => True
+...is... => True
+[...][0] => Ellipsis
+Ellipsis ... == ... => True
+a.__class__ => <class 'int'>
+{'a': 10} <- 'a = 1\na +=1\na-=1\na*= 2\na **=2\na//=3\na %=2\na|=4\na&=6\na^=1\na<<=2\na>>=1'
+{'a': [1, 2, 3], 'b': [3, 2, 1], 'c': [3], 'd': [1, 2], 'e': [1, 3], 'f': [2, 3], 'g': [1, 2, 3]} <- 'a = [1, 2, 3]\nb = a[::-1]\nc = a[-1:]\nd = a[:-1]\ne = a[::2]\nf = a[1::]\ng = a[:]'
+{'a': 1, 'b': False, 'c': True, 'd': False, 'e': False, 'f': True} <- 'a = 1\nb = a<-1\nc = a>-1\nd = a<=-1\ne = a==-1\nf = a!=-1'
+{'b': 1} <- 'a = lambda: 1\nb = a()'
+{'a': {1: 2}, 'b': {1: -2}, 'd': 2} <- 'a = {1:2}\nb = {1:-2}\nc = {1: lambda: 2}\nd = c[1]()\ndel c'
+{'a': (1,), 'b': (1, 2), 'c': (1,), 'd': ()} <- 'a = 1,\nb = 1, 2\nc = (1),\nd = ()'
+{'a': -1, 'b': 1, 'c': 0.5, 'd': -0.25, 'e': 512, 'f': -2} <- 'a = -1 ** 2\nb = (-1) ** 2\nc = 2 ** -1\nd = -2 ** -2\ne = 2 ** 3 ** 2\nf = -2 ** 2 ** 0'
+{'a': True, 'b': True, 'c': False, 'd': False} <- 'a = not 1 == 2\nb = not (1 == 2)\nc = (not 1) == 2\nd = 1 == (not 2)'
+{'a': 3, 'b': 3, 'c': 2} <- 'a = 1 if 0 else 2 if 0 else 3\nb = (1 if 0 else 2) if 0 else 3\nc = 1 if 0 else (2 if 1 else 3)'
+{'a': 1, 'b': 0, 'c': True, 'd': False} <- 'a = 1 or 2 and 0\nb = (1 or 2) and 0\nc = not 0 or 1\nd = not (0 or 1)'
+{'a': 3, 'b': 24, 'c': 32, 'd': True, 'e': True} <- 'a = 1 | 2 ^ 3 & 4 << 1 + 1 * 2\nb = 1 + 2 << 3\nc = 1 << 2 + 3\nd = 6 & 3 == 2\ne = (6 & 3) == 2'
+{'a': False, 'b': True, 'c': False} <- 'a = 1 < 2 == True\nb = (1 < 2) == True\nc = 1 in [1] == True'
+{'a': -3, 'b': -2, 'c': 1, 'd': -2, 'e': -10, 'f': -5, 'g': -7} <- 'a = -5 // 2\nb = -(5 // 2)\nc = -5 % 3\nd = -(5 % 3)\ne = 5 * -2\nf = ~5 + 1\ng = ~(5 + 1)'
+{'a': 'abab', 'b': 'abb', 'c': 'a', 'd': 'a'} <- "a = 'a' 'b' * 2\nb = 'a' + 'b' * 2\nc = ('a' 'b')[0]\nd = 'a' 'b'[0]"
+{'a': 2, 'b': -1, 'c': True, 'd': 4, 'e': -2, 'f': -2} <- 'a = [1, 2][0] + 1\nb = -[1, 2][0]\nc = not [0][0]\nd = 2 ** [1, 2][1]\ne = -2 .real\nf = -2 .__abs__()'
+{'a': 'é'} <- b"a = '\xc3\xa9'"
+{'a': 'é'} <- b"# coding: utf-8\na = '\xc3\xa9'"
+{'a': 'é'} <- b"# coding: latin-1\na = '\xe9'"
+{'a': 'é'} <- b"# -*- coding: iso-8859-1 -*-\na = '\xe9'"
+{'a': 'é'} <- b"#!/usr/bin/python\n# coding=latin-1\na = '\xe9'"
+SyntaxError: Non-UTF-8 code starting with '\xe9' on line 4, but no encoding declared; see https://peps.python.org/pep-0263/ for details <- b"\n\n# coding: latin-1\na = '\xe9'"
+SyntaxError: Non-UTF-8 code starting with '\xe9' on line 3, but no encoding declared; see https://peps.python.org/pep-0263/ for details <- b"a = 1\n# coding: latin-1\nb = '\xe9'"
+{'a': 'é'} <- b"# vim: set fileencoding=latin-1 :\na = '\xe9'"
+SyntaxError: 'ascii' codec can't decode byte 0xe9 in position 21: ordinal not in range(128) <- b"# coding: ascii\na = '\xe9'"
+{'a': 'e'} <- b"# coding: ascii\na = 'e'"
+SyntaxError: unknown encoding: nope <- b'# coding: nope\na = 1'
+SyntaxError: Non-UTF-8 code starting with '\xe9' on line 1, but no encoding declared; see https://peps.python.org/pep-0263/ for details <- b"a = '\xe9'"
+{'a': 'é'} <- b"\xef\xbb\xbfa = '\xc3\xa9'"
+{'a': 1} <- b'\xef\xbb\xbf# coding: utf-8\na = 1'
+SyntaxError: encoding problem: iso-8859-1 with BOM <- b'\xef\xbb\xbf# coding: latin-1\na = 1'
+{'a': 'é'} <- b"# coding: utf8\na = '\xc3\xa9'"
+{'a': 'é'} <- b"# coding: UTF-8\na = '\xc3\xa9'"
+{'a': 1} <- b'# coding:utf-8\na = 1'
+{'a': 'é'} <- b"# coding : utf-8\na = '\xc3\xa9'"
+{'a': 1} <- b'#coding=utf-8\na = 1'
+{'a': 'é'} <- b"# encoding: latin-1\na = '\xe9'"
+{'a': 'é'} <- b"  # coding: latin-1\na = '\xe9'"
+SyntaxError: Non-UTF-8 code starting with '\xe9' on line 2, but no encoding declared; see https://peps.python.org/pep-0263/ for details <- b"x = 1 # coding: latin-1\na = '\xe9'"
+{'é': 1} <- b'# coding: latin-1\n\xe9 = 1'
+{'é': 1} <- b'# coding: utf-8\n\xc3\xa9 = 1'
+SyntaxError: Non-UTF-8 code starting with '\xe9' on line 1, but no encoding declared; see https://peps.python.org/pep-0263/ for details <- b'# \xe9\na = 1'
+{'a': '€'} <- b"# coding: cp1252\na = '\x80'"
+SyntaxError: 'utf-16-le' codec can't decode byte 0x0a in position 22: truncated data <- b'# coding: utf-16\na = 1'
+SyntaxError: bytes can only contain ASCII literal characters <- b"a = b'\xc3\xa9'"
+SyntaxError: bytes can only contain ASCII literal characters <- b"# coding: latin-1\na = b'\xe9'"
+SyntaxError: Non-UTF-8 code starting with '\xff' on line 1, but no encoding declared; see https://peps.python.org/pep-0263/ for details <- b"a = '\xff\xfe'"
+SyntaxError: Non-UTF-8 code starting with '\xed' on line 1, but no encoding declared; see https://peps.python.org/pep-0263/ for details <- b"a = '\xed\xa0\x80'"
+{'a': '😀'} <- b"a = '\xf0\x9f\x98\x80'"
+SyntaxError: Non-UTF-8 code starting with '\xc0' on line 1, but no encoding declared; see https://peps.python.org/pep-0263/ for details <- b"a = '\xc0\x80'"
+SyntaxError: Non-UTF-8 code starting with '\xff' on line 2, but no encoding declared; see https://peps.python.org/pep-0263/ for details <- b'a = 1\n\xff'
+SyntaxError: Non-UTF-8 code starting with '\xff' on line 2, but no encoding declared; see https://peps.python.org/pep-0263/ for details <- b"'''\xc3\xa9\n\xff'''"

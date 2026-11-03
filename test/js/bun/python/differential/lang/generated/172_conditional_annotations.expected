@@ -1,0 +1,13 @@
+status: 0
+script: f44a137c5eb1be3a
+source: fa69697e1417d4bc
+---
+{'x': <class 'int'>, 'z': <class 'float'>}
+{'a': <class 'int'>}
+E.__annotations__ => {'q': <class 'int'>}
+E.__conditional_annotations__ => {1}
+{'g': <class 'int'>}
+F.__annotations__ => {'a': <class 'int'>, 'b': <class 'str'>, 'd': <class 'float'>, 'f': <class 'list'>, 'g': <class 'dict'>}
+F.__annotate_func__.__code__.co_freevars => ('__classdict__', '__conditional_annotations__')
+G() => G(x=1, y='new')
+typing.get_type_hints(G) => {'x': <class 'int'>, 'y': <class 'str'>}

@@ -1,0 +1,6 @@
+status: 1
+stderr: Outer.MyError: custom str: (1, 'two')
+script: b52c27cd0d7ec092
+source: b52c27cd0d7ec092
+---
+before

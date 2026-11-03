@@ -1,0 +1,38 @@
+status: 0
+script: 149c6e15fa0631cb
+---
+b64encode b'AAcOFRwjKjE4P0ZNVFtiaXB3foWMk5qhqK+2vcTL0tng5+71/GhlbGxvIHdvcmxk' True True
+standard_b64encode b'AAcOFRwjKjE4P0ZNVFtiaXB3foWMk5qhqK+2vcTL0tng5+71/GhlbGxvIHdvcmxk' True True
+urlsafe_b64encode b'AAcOFRwjKjE4P0ZNVFtiaXB3foWMk5qhqK-2vcTL0tng5-71_GhlbGxvIHdvcmxk' True True
+b32encode b'AADQ4FI4EMVDCOB7IZGVIW3CNFYHO7UFRSJZVINIV63L3RGL2LM6BZ7O6X6GQZLMNRXSA53POJWGI===' True True
+b32hexencode b'003GS58S4CL32E1V8P6L8MR2D5O7EVK5HI9PL8D8LURBRH6BQBCU1PVEUNU6GPBCDHNI0TRFE9M68===' True True
+b16encode b'00070E151C232A31383F464D545B626970777E858C939AA1A8AFB6BDC4CBD2D9E0E7EEF5FC68656C6C6F20776F726C64' True True
+a85encode b"!!`uK*$Zpf3'Tl,<*NgGE-HbbN0B^(W3<YC`66T^i90P$r+KYXCi:G?DfTZ)" True True
+b85encode b'00#~g93v_*I6p>BR9j+caCd%%jFXz7sIRuY#LLpz;OFl3{AgutY;PcUZ*pv8' True True
+z85encode b'00-#G93V{/i6P(br9J*CAcD++JfxZ7SirUy-llPZ&ofL3@aGUTy&pCuz/PV8' True True
+encodebytes b'AAcOFRwjKjE4P0ZNVFtiaXB3foWMk5qhqK+2vcTL0tng5+71/GhlbGxvIHdvcmxk\n' True None
+b'-_8=' b'\xfb\xff' b'a' b'a' b'' b''
+binascii.Error Incorrect padding
+binascii.Error Invalid base64-encoded string: number of data characters (1) cannot be 1 more than a multiple of 4
+binascii.Error Only base64 data is allowed
+b'a'
+builtins.ValueError string argument should contain only ASCII characters
+builtins.TypeError a bytes-like object is required, not 'str'
+builtins.TypeError argument should be a bytes-like object or ASCII string, not 'int'
+builtins.ValueError invalid altchars: b'-'
+b'a' None b'\xab\xcd' b'ME======' b'AB'
+binascii.Error Only base32 data is allowed
+binascii.Error Incorrect padding
+binascii.Error Non-base16 digit found
+binascii.Error Odd number of hexadecimal digits
+binascii.Error Non-hexadecimal digit found
+b'<~BOu!r\nD]g/FGA\nhM<A,lT\n0zz~>' b'Hello World!' b'Hello World!' b'z' b'\x00\x00\x00\x00' b'    '
+binascii.Error 'z' inside Ascii85 5-tuple
+binascii.Error Ascii85 encoded byte sequences must end with b'~>'
+binascii.Error Ascii85 overflow
+binascii.Error Non-Ascii85 digit found: 
+binascii.Error Base85 overflow in hunk starting at byte 0
+binascii.Error bad Base85 character at position 0
+binascii.Error bad Base85 character at position 0
+b'VPazd' b'abc\x00' b'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\nAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==\n' b'a\x06 '
+['a85decode', 'a85encode', 'b16decode', 'b16encode', 'b32decode', 'b32encode', 'b32hexdecode', 'b32hexencode', 'b64decode', 'b64encode', 'b85decode', 'b85encode', 'decode', 'decodebytes', 'encode', 'encodebytes', 'standard_b64decode', 'standard_b64encode', 'urlsafe_b64decode', 'urlsafe_b64encode', 'z85decode', 'z85encode']

@@ -1,0 +1,17 @@
+status: 0
+script: d1534f9fde4ace0e
+---
+int True
+[(1, 2, True)]
+[0, 1, 4, 9, 16] [False, False, False, False, False]
+True True
+MainThread True 1
+worker-1 True True False MainThread True
+0 1
+hook: ValueError in a thread failing
+after SystemExit False
+alive after timeout True
+alive after set False
+RuntimeError cannot join current thread
+RuntimeError cannot join thread before it is started
+RuntimeError threads can only be started once

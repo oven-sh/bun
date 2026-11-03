@@ -1,0 +1,360 @@
+status: 0
+script: 1a642e3739cb83d0
+---
+b 0 -> (0, b'\x00')
+b 1 -> (1, b'\x01')
+b -1 -> (-1, b'\xff')
+b 127 -> (127, b'\x7f')
+b -128 -> (-128, b'\x80')
+b 128 -> ValueError memoryview: invalid value for format 'b'
+b -129 -> ValueError memoryview: invalid value for format 'b'
+b 1267650600228229401496703205376 -> ValueError memoryview: invalid value for format 'b'
+b -1267650600228229401496703205376 -> ValueError memoryview: invalid value for format 'b'
+b True -> (1, b'\x01')
+b I -> (5, b'\x05')
+b I -> ValueError memoryview: invalid value for format 'b'
+b 1.0 -> TypeError memoryview: invalid type for format 'b'
+b '1' -> TypeError memoryview: invalid type for format 'b'
+b None -> TypeError memoryview: invalid type for format 'b'
+b b'a' -> TypeError memoryview: invalid type for format 'b'
+b BadI -> KeyError 'idx'
+b BadI2 -> TypeError memoryview: invalid type for format 'b'
+b 1j -> TypeError memoryview: invalid type for format 'b'
+h 0 -> (0, b'\x00\x00')
+h 1 -> (1, b'\x01\x00')
+h -1 -> (-1, b'\xff\xff')
+h 32767 -> (32767, b'\xff\x7f')
+h -32768 -> (-32768, b'\x00\x80')
+h 32768 -> ValueError memoryview: invalid value for format 'h'
+h -32769 -> ValueError memoryview: invalid value for format 'h'
+h 1267650600228229401496703205376 -> ValueError memoryview: invalid value for format 'h'
+h -1267650600228229401496703205376 -> ValueError memoryview: invalid value for format 'h'
+h True -> (1, b'\x01\x00')
+h I -> (5, b'\x05\x00')
+h I -> ValueError memoryview: invalid value for format 'h'
+h 1.0 -> TypeError memoryview: invalid type for format 'h'
+h '1' -> TypeError memoryview: invalid type for format 'h'
+h None -> TypeError memoryview: invalid type for format 'h'
+h b'a' -> TypeError memoryview: invalid type for format 'h'
+h BadI -> KeyError 'idx'
+h BadI2 -> TypeError memoryview: invalid type for format 'h'
+h 1j -> TypeError memoryview: invalid type for format 'h'
+i 0 -> (0, b'\x00\x00\x00\x00')
+i 1 -> (1, b'\x01\x00\x00\x00')
+i -1 -> (-1, b'\xff\xff\xff\xff')
+i 2147483647 -> (2147483647, b'\xff\xff\xff\x7f')
+i -2147483648 -> (-2147483648, b'\x00\x00\x00\x80')
+i 2147483648 -> ValueError memoryview: invalid value for format 'i'
+i -2147483649 -> ValueError memoryview: invalid value for format 'i'
+i 1267650600228229401496703205376 -> ValueError memoryview: invalid value for format 'i'
+i -1267650600228229401496703205376 -> ValueError memoryview: invalid value for format 'i'
+i True -> (1, b'\x01\x00\x00\x00')
+i I -> (5, b'\x05\x00\x00\x00')
+i I -> ValueError memoryview: invalid value for format 'i'
+i 1.0 -> TypeError memoryview: invalid type for format 'i'
+i '1' -> TypeError memoryview: invalid type for format 'i'
+i None -> TypeError memoryview: invalid type for format 'i'
+i b'a' -> TypeError memoryview: invalid type for format 'i'
+i BadI -> KeyError 'idx'
+i BadI2 -> TypeError memoryview: invalid type for format 'i'
+i 1j -> TypeError memoryview: invalid type for format 'i'
+l 0 -> (0, b'\x00\x00\x00\x00\x00\x00\x00\x00')
+l 1 -> (1, b'\x01\x00\x00\x00\x00\x00\x00\x00')
+l -1 -> (-1, b'\xff\xff\xff\xff\xff\xff\xff\xff')
+l 9223372036854775807 -> (9223372036854775807, b'\xff\xff\xff\xff\xff\xff\xff\x7f')
+l -9223372036854775808 -> (-9223372036854775808, b'\x00\x00\x00\x00\x00\x00\x00\x80')
+l 9223372036854775808 -> ValueError memoryview: invalid value for format 'l'
+l -9223372036854775809 -> ValueError memoryview: invalid value for format 'l'
+l 1267650600228229401496703205376 -> ValueError memoryview: invalid value for format 'l'
+l -1267650600228229401496703205376 -> ValueError memoryview: invalid value for format 'l'
+l True -> (1, b'\x01\x00\x00\x00\x00\x00\x00\x00')
+l I -> (5, b'\x05\x00\x00\x00\x00\x00\x00\x00')
+l I -> ValueError memoryview: invalid value for format 'l'
+l 1.0 -> TypeError memoryview: invalid type for format 'l'
+l '1' -> TypeError memoryview: invalid type for format 'l'
+l None -> TypeError memoryview: invalid type for format 'l'
+l b'a' -> TypeError memoryview: invalid type for format 'l'
+l BadI -> KeyError 'idx'
+l BadI2 -> TypeError memoryview: invalid type for format 'l'
+l 1j -> TypeError memoryview: invalid type for format 'l'
+q 0 -> (0, b'\x00\x00\x00\x00\x00\x00\x00\x00')
+q 1 -> (1, b'\x01\x00\x00\x00\x00\x00\x00\x00')
+q -1 -> (-1, b'\xff\xff\xff\xff\xff\xff\xff\xff')
+q 9223372036854775807 -> (9223372036854775807, b'\xff\xff\xff\xff\xff\xff\xff\x7f')
+q -9223372036854775808 -> (-9223372036854775808, b'\x00\x00\x00\x00\x00\x00\x00\x80')
+q 9223372036854775808 -> ValueError memoryview: invalid value for format 'q'
+q -9223372036854775809 -> ValueError memoryview: invalid value for format 'q'
+q 1267650600228229401496703205376 -> ValueError memoryview: invalid value for format 'q'
+q -1267650600228229401496703205376 -> ValueError memoryview: invalid value for format 'q'
+q True -> (1, b'\x01\x00\x00\x00\x00\x00\x00\x00')
+q I -> (5, b'\x05\x00\x00\x00\x00\x00\x00\x00')
+q I -> ValueError memoryview: invalid value for format 'q'
+q 1.0 -> TypeError memoryview: invalid type for format 'q'
+q '1' -> TypeError memoryview: invalid type for format 'q'
+q None -> TypeError memoryview: invalid type for format 'q'
+q b'a' -> TypeError memoryview: invalid type for format 'q'
+q BadI -> KeyError 'idx'
+q BadI2 -> TypeError memoryview: invalid type for format 'q'
+q 1j -> TypeError memoryview: invalid type for format 'q'
+n 0 -> (0, b'\x00\x00\x00\x00\x00\x00\x00\x00')
+n 1 -> (1, b'\x01\x00\x00\x00\x00\x00\x00\x00')
+n -1 -> (-1, b'\xff\xff\xff\xff\xff\xff\xff\xff')
+n 9223372036854775807 -> (9223372036854775807, b'\xff\xff\xff\xff\xff\xff\xff\x7f')
+n -9223372036854775808 -> (-9223372036854775808, b'\x00\x00\x00\x00\x00\x00\x00\x80')
+n 9223372036854775808 -> ValueError memoryview: invalid value for format 'n'
+n -9223372036854775809 -> ValueError memoryview: invalid value for format 'n'
+n 1267650600228229401496703205376 -> ValueError memoryview: invalid value for format 'n'
+n -1267650600228229401496703205376 -> ValueError memoryview: invalid value for format 'n'
+n True -> (1, b'\x01\x00\x00\x00\x00\x00\x00\x00')
+n I -> (5, b'\x05\x00\x00\x00\x00\x00\x00\x00')
+n I -> ValueError memoryview: invalid value for format 'n'
+n 1.0 -> TypeError memoryview: invalid type for format 'n'
+n '1' -> TypeError memoryview: invalid type for format 'n'
+n None -> TypeError memoryview: invalid type for format 'n'
+n b'a' -> TypeError memoryview: invalid type for format 'n'
+n BadI -> KeyError 'idx'
+n BadI2 -> TypeError memoryview: invalid type for format 'n'
+n 1j -> TypeError memoryview: invalid type for format 'n'
+B 0 -> (0, b'\x00')
+B 1 -> (1, b'\x01')
+B -1 -> ValueError memoryview: invalid value for format 'B'
+B 255 -> (255, b'\xff')
+B 256 -> ValueError memoryview: invalid value for format 'B'
+B 1267650600228229401496703205376 -> ValueError memoryview: invalid value for format 'B'
+B -1267650600228229401496703205376 -> ValueError memoryview: invalid value for format 'B'
+B True -> (1, b'\x01')
+B I -> (5, b'\x05')
+B I -> ValueError memoryview: invalid value for format 'B'
+B 1.0 -> TypeError memoryview: invalid type for format 'B'
+B '1' -> TypeError memoryview: invalid type for format 'B'
+B None -> TypeError memoryview: invalid type for format 'B'
+B BadI -> KeyError 'idx'
+H 0 -> (0, b'\x00\x00')
+H 1 -> (1, b'\x01\x00')
+H -1 -> ValueError memoryview: invalid value for format 'H'
+H 65535 -> (65535, b'\xff\xff')
+H 65536 -> ValueError memoryview: invalid value for format 'H'
+H 1267650600228229401496703205376 -> ValueError memoryview: invalid value for format 'H'
+H -1267650600228229401496703205376 -> ValueError memoryview: invalid value for format 'H'
+H True -> (1, b'\x01\x00')
+H I -> (5, b'\x05\x00')
+H I -> ValueError memoryview: invalid value for format 'H'
+H 1.0 -> TypeError memoryview: invalid type for format 'H'
+H '1' -> TypeError memoryview: invalid type for format 'H'
+H None -> TypeError memoryview: invalid type for format 'H'
+H BadI -> KeyError 'idx'
+I 0 -> (0, b'\x00\x00\x00\x00')
+I 1 -> (1, b'\x01\x00\x00\x00')
+I -1 -> ValueError memoryview: invalid value for format 'I'
+I 4294967295 -> (4294967295, b'\xff\xff\xff\xff')
+I 4294967296 -> ValueError memoryview: invalid value for format 'I'
+I 1267650600228229401496703205376 -> ValueError memoryview: invalid value for format 'I'
+I -1267650600228229401496703205376 -> ValueError memoryview: invalid value for format 'I'
+I True -> (1, b'\x01\x00\x00\x00')
+I I -> (5, b'\x05\x00\x00\x00')
+I I -> ValueError memoryview: invalid value for format 'I'
+I 1.0 -> TypeError memoryview: invalid type for format 'I'
+I '1' -> TypeError memoryview: invalid type for format 'I'
+I None -> TypeError memoryview: invalid type for format 'I'
+I BadI -> KeyError 'idx'
+L 0 -> (0, b'\x00\x00\x00\x00\x00\x00\x00\x00')
+L 1 -> (1, b'\x01\x00\x00\x00\x00\x00\x00\x00')
+L -1 -> ValueError memoryview: invalid value for format 'L'
+L 18446744073709551615 -> (18446744073709551615, b'\xff\xff\xff\xff\xff\xff\xff\xff')
+L 18446744073709551616 -> ValueError memoryview: invalid value for format 'L'
+L 1267650600228229401496703205376 -> ValueError memoryview: invalid value for format 'L'
+L -1267650600228229401496703205376 -> ValueError memoryview: invalid value for format 'L'
+L True -> (1, b'\x01\x00\x00\x00\x00\x00\x00\x00')
+L I -> (5, b'\x05\x00\x00\x00\x00\x00\x00\x00')
+L I -> ValueError memoryview: invalid value for format 'L'
+L 1.0 -> TypeError memoryview: invalid type for format 'L'
+L '1' -> TypeError memoryview: invalid type for format 'L'
+L None -> TypeError memoryview: invalid type for format 'L'
+L BadI -> KeyError 'idx'
+Q 0 -> (0, b'\x00\x00\x00\x00\x00\x00\x00\x00')
+Q 1 -> (1, b'\x01\x00\x00\x00\x00\x00\x00\x00')
+Q -1 -> ValueError memoryview: invalid value for format 'Q'
+Q 18446744073709551615 -> (18446744073709551615, b'\xff\xff\xff\xff\xff\xff\xff\xff')
+Q 18446744073709551616 -> ValueError memoryview: invalid value for format 'Q'
+Q 1267650600228229401496703205376 -> ValueError memoryview: invalid value for format 'Q'
+Q -1267650600228229401496703205376 -> ValueError memoryview: invalid value for format 'Q'
+Q True -> (1, b'\x01\x00\x00\x00\x00\x00\x00\x00')
+Q I -> (5, b'\x05\x00\x00\x00\x00\x00\x00\x00')
+Q I -> ValueError memoryview: invalid value for format 'Q'
+Q 1.0 -> TypeError memoryview: invalid type for format 'Q'
+Q '1' -> TypeError memoryview: invalid type for format 'Q'
+Q None -> TypeError memoryview: invalid type for format 'Q'
+Q BadI -> KeyError 'idx'
+N 0 -> (0, b'\x00\x00\x00\x00\x00\x00\x00\x00')
+N 1 -> (1, b'\x01\x00\x00\x00\x00\x00\x00\x00')
+N -1 -> ValueError memoryview: invalid value for format 'N'
+N 18446744073709551615 -> (18446744073709551615, b'\xff\xff\xff\xff\xff\xff\xff\xff')
+N 18446744073709551616 -> ValueError memoryview: invalid value for format 'N'
+N 1267650600228229401496703205376 -> ValueError memoryview: invalid value for format 'N'
+N -1267650600228229401496703205376 -> ValueError memoryview: invalid value for format 'N'
+N True -> (1, b'\x01\x00\x00\x00\x00\x00\x00\x00')
+N I -> (5, b'\x05\x00\x00\x00\x00\x00\x00\x00')
+N I -> ValueError memoryview: invalid value for format 'N'
+N 1.0 -> TypeError memoryview: invalid type for format 'N'
+N '1' -> TypeError memoryview: invalid type for format 'N'
+N None -> TypeError memoryview: invalid type for format 'N'
+N BadI -> KeyError 'idx'
+P 0 -> (0, b'\x00\x00\x00\x00\x00\x00\x00\x00')
+P 1 -> (1, b'\x01\x00\x00\x00\x00\x00\x00\x00')
+P -1 -> (18446744073709551615, b'\xff\xff\xff\xff\xff\xff\xff\xff')
+P 18446744073709551615 -> (18446744073709551615, b'\xff\xff\xff\xff\xff\xff\xff\xff')
+P 18446744073709551616 -> ValueError memoryview: invalid value for format 'P'
+P -9223372036854775808 -> (9223372036854775808, b'\x00\x00\x00\x00\x00\x00\x00\x80')
+P -9223372036854775809 -> ValueError memoryview: invalid value for format 'P'
+P True -> (1, b'\x01\x00\x00\x00\x00\x00\x00\x00')
+P I -> TypeError memoryview: invalid type for format 'P'
+P 1.0 -> TypeError memoryview: invalid type for format 'P'
+P None -> TypeError memoryview: invalid type for format 'P'
+P 'a' -> TypeError memoryview: invalid type for format 'P'
+e 0.0 -> (0.0, b'\x00\x00')
+e -0.0 -> (-0.0, b'\x00\x80')
+e 1.5 -> (1.5, b'\x00>')
+e -2.25 -> (-2.25, b'\x80\xc0')
+e 1 -> (1.0, b'\x00<')
+e True -> (1.0, b'\x00<')
+e 1000 -> (1000.0, b'\xd0c')
+e 65504.0 -> (65504.0, b'\xff{')
+e 65519.0 -> (65504.0, b'\xff{')
+e 65520.0 -> ValueError memoryview: invalid value for format 'e'
+e 100000.0 -> ValueError memoryview: invalid value for format 'e'
+e 1e+38 -> ValueError memoryview: invalid value for format 'e'
+e 3.5e+38 -> ValueError memoryview: invalid value for format 'e'
+e 1e+300 -> ValueError memoryview: invalid value for format 'e'
+e 1e-08 -> (0.0, b'\x00\x00')
+e 5e-324 -> (0.0, b'\x00\x00')
+e 6e-08 -> (5.960464477539063e-08, b'\x01\x00')
+e 2e-08 -> (0.0, b'\x00\x00')
+e inf -> (inf, b'\x00|')
+e -inf -> (-inf, b'\x00\xfc')
+e 10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 -> ValueError memoryview: invalid value for format 'e'
+e F -> (2.5, b'\x00A')
+e I -> (3.0, b'\x00B')
+e '1' -> TypeError memoryview: invalid type for format 'e'
+e None -> TypeError memoryview: invalid type for format 'e'
+e b'a' -> TypeError memoryview: invalid type for format 'e'
+e 1j -> TypeError memoryview: invalid type for format 'e'
+e 0.1 -> (0.0999755859375, b'f.')
+e 0.3333333333333333 -> (0.333251953125, b'U5')
+e True True
+f 0.0 -> (0.0, b'\x00\x00\x00\x00')
+f -0.0 -> (-0.0, b'\x00\x00\x00\x80')
+f 1.5 -> (1.5, b'\x00\x00\xc0?')
+f -2.25 -> (-2.25, b'\x00\x00\x10\xc0')
+f 1 -> (1.0, b'\x00\x00\x80?')
+f True -> (1.0, b'\x00\x00\x80?')
+f 1000 -> (1000.0, b'\x00\x00zD')
+f 65504.0 -> (65504.0, b'\x00\xe0\x7fG')
+f 65519.0 -> (65519.0, b'\x00\xef\x7fG')
+f 65520.0 -> (65520.0, b'\x00\xf0\x7fG')
+f 100000.0 -> (100000.0, b'\x00P\xc3G')
+f 1e+38 -> (9.999999680285692e+37, b'\x99v\x96~')
+f 3.5e+38 -> (inf, b'\x00\x00\x80\x7f')
+f 1e+300 -> (inf, b'\x00\x00\x80\x7f')
+f 1e-08 -> (9.99999993922529e-09, b'w\xcc+2')
+f 5e-324 -> (0.0, b'\x00\x00\x00\x00')
+f 6e-08 -> (5.99999978589949e-08, b'Y\xd9\x803')
+f 2e-08 -> (1.999999987845058e-08, b'w\xcc\xab2')
+f inf -> (inf, b'\x00\x00\x80\x7f')
+f -inf -> (-inf, b'\x00\x00\x80\xff')
+f 10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 -> ValueError memoryview: invalid value for format 'f'
+f F -> (2.5, b'\x00\x00 @')
+f I -> (3.0, b'\x00\x00@@')
+f '1' -> TypeError memoryview: invalid type for format 'f'
+f None -> TypeError memoryview: invalid type for format 'f'
+f b'a' -> TypeError memoryview: invalid type for format 'f'
+f 1j -> TypeError memoryview: invalid type for format 'f'
+f 0.1 -> (0.10000000149011612, b'\xcd\xcc\xcc=')
+f 0.3333333333333333 -> (0.3333333432674408, b'\xab\xaa\xaa>')
+f True True
+d 0.0 -> (0.0, b'\x00\x00\x00\x00\x00\x00\x00\x00')
+d -0.0 -> (-0.0, b'\x00\x00\x00\x00\x00\x00\x00\x80')
+d 1.5 -> (1.5, b'\x00\x00\x00\x00\x00\x00\xf8?')
+d -2.25 -> (-2.25, b'\x00\x00\x00\x00\x00\x00\x02\xc0')
+d 1 -> (1.0, b'\x00\x00\x00\x00\x00\x00\xf0?')
+d True -> (1.0, b'\x00\x00\x00\x00\x00\x00\xf0?')
+d 1000 -> (1000.0, b'\x00\x00\x00\x00\x00@\x8f@')
+d 65504.0 -> (65504.0, b'\x00\x00\x00\x00\x00\xfc\xef@')
+d 65519.0 -> (65519.0, b'\x00\x00\x00\x00\xe0\xfd\xef@')
+d 65520.0 -> (65520.0, b'\x00\x00\x00\x00\x00\xfe\xef@')
+d 100000.0 -> (100000.0, b'\x00\x00\x00\x00\x00j\xf8@')
+d 1e+38 -> (1e+38, b'\xb1\xa1\x16*\xd3\xce\xd2G')
+d 3.5e+38 -> (3.5e+38, b'{\xcd\xd3\xc4\xf8t\xf0G')
+d 1e+300 -> (1e+300, b'\x9cu\x00\x88<\xe47~')
+d 1e-08 -> (1e-08, b':\x8c0\xe2\x8eyE>')
+d 5e-324 -> (5e-324, b'\x01\x00\x00\x00\x00\x00\x00\x00')
+d 6e-08 -> (6e-08, b'+i\xa4)+\x1bp>')
+d 2e-08 -> (2e-08, b':\x8c0\xe2\x8eyU>')
+d inf -> (inf, b'\x00\x00\x00\x00\x00\x00\xf0\x7f')
+d -inf -> (-inf, b'\x00\x00\x00\x00\x00\x00\xf0\xff')
+d 10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 -> ValueError memoryview: invalid value for format 'd'
+d F -> (2.5, b'\x00\x00\x00\x00\x00\x00\x04@')
+d I -> (3.0, b'\x00\x00\x00\x00\x00\x00\x08@')
+d '1' -> TypeError memoryview: invalid type for format 'd'
+d None -> TypeError memoryview: invalid type for format 'd'
+d b'a' -> TypeError memoryview: invalid type for format 'd'
+d 1j -> TypeError memoryview: invalid type for format 'd'
+d 0.1 -> (0.1, b'\x9a\x99\x99\x99\x99\x99\xb9?')
+d 0.3333333333333333 -> (0.3333333333333333, b'UUUUUU\xd5?')
+d True True
+Zf 0j -> (0j, b'\x00\x00\x00\x00\x00\x00\x00\x00')
+Zf (1+2j) -> ((1+2j), b'\x00\x00\x80?\x00\x00\x00@')
+Zf (-1.5-2.5j) -> ((-1.5-2.5j), b'\x00\x00\xc0\xbf\x00\x00 \xc0')
+Zf 1 -> ((1+0j), b'\x00\x00\x80?\x00\x00\x00\x00')
+Zf 2.5 -> ((2.5+0j), b'\x00\x00 @\x00\x00\x00\x00')
+Zf True -> ((1+0j), b'\x00\x00\x80?\x00\x00\x00\x00')
+Zf C -> ((1+2j), b'\x00\x00\x80?\x00\x00\x00@')
+Zf F -> ((2.5+0j), b'\x00\x00 @\x00\x00\x00\x00')
+Zf I -> ((3+0j), b'\x00\x00@@\x00\x00\x00\x00')
+Zf '1' -> TypeError memoryview: invalid type for format 'Zf'
+Zf None -> TypeError memoryview: invalid type for format 'Zf'
+Zf (inf-infj) -> ((inf-infj), b'\x00\x00\x80\x7f\x00\x00\x80\xff')
+Zf (1e+300+1e+300j) -> ((inf+infj), b'\x00\x00\x80\x7f\x00\x00\x80\x7f')
+Zf 10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 -> ValueError memoryview: invalid value for format 'Zf'
+Zd 0j -> (0j, b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00')
+Zd (1+2j) -> ((1+2j), b'\x00\x00\x00\x00\x00\x00\xf0?\x00\x00\x00\x00\x00\x00\x00@')
+Zd (-1.5-2.5j) -> ((-1.5-2.5j), b'\x00\x00\x00\x00\x00\x00\xf8\xbf\x00\x00\x00\x00\x00\x00\x04\xc0')
+Zd 1 -> ((1+0j), b'\x00\x00\x00\x00\x00\x00\xf0?\x00\x00\x00\x00\x00\x00\x00\x00')
+Zd 2.5 -> ((2.5+0j), b'\x00\x00\x00\x00\x00\x00\x04@\x00\x00\x00\x00\x00\x00\x00\x00')
+Zd True -> ((1+0j), b'\x00\x00\x00\x00\x00\x00\xf0?\x00\x00\x00\x00\x00\x00\x00\x00')
+Zd C -> ((1+2j), b'\x00\x00\x00\x00\x00\x00\xf0?\x00\x00\x00\x00\x00\x00\x00@')
+Zd F -> ((2.5+0j), b'\x00\x00\x00\x00\x00\x00\x04@\x00\x00\x00\x00\x00\x00\x00\x00')
+Zd I -> ((3+0j), b'\x00\x00\x00\x00\x00\x00\x08@\x00\x00\x00\x00\x00\x00\x00\x00')
+Zd '1' -> TypeError memoryview: invalid type for format 'Zd'
+Zd None -> TypeError memoryview: invalid type for format 'Zd'
+Zd (inf-infj) -> ((inf-infj), b'\x00\x00\x00\x00\x00\x00\xf0\x7f\x00\x00\x00\x00\x00\x00\xf0\xff')
+Zd (1e+300+1e+300j) -> ((1e+300+1e+300j), b'\x9cu\x00\x88<\xe47~\x9cu\x00\x88<\xe47~')
+Zd 10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 -> ValueError memoryview: invalid value for format 'Zd'
+? True -> (True, b'\x01')
+? False -> (False, b'\x00')
+? 0 -> (False, b'\x00')
+? 1 -> (True, b'\x01')
+? 2 -> (True, b'\x01')
+? -1 -> (True, b'\x01')
+? 256 -> (True, b'\x01')
+? '' -> (False, b'\x00')
+? 'a' -> (True, b'\x01')
+? [] -> (False, b'\x00')
+? [0] -> (True, b'\x01')
+? None -> (False, b'\x00')
+? 0.0 -> (False, b'\x00')
+? B -> KeyError 'no'
+c b'a' -> (b'a', b'a')
+c b'\xff' -> (b'\xff', b'\xff')
+c b'' -> ValueError memoryview: invalid value for format 'c'
+c b'ab' -> ValueError memoryview: invalid value for format 'c'
+c bytearray(b'a') -> TypeError memoryview: invalid type for format 'c'
+c memoryview -> TypeError memoryview: invalid type for format 'c'
+c 97 -> TypeError memoryview: invalid type for format 'c'
+c 'a' -> TypeError memoryview: invalid type for format 'c'
+c None -> TypeError memoryview: invalid type for format 'c'
+c b'z' -> (b'z', b'z')
+[False, True, True, True]
+-0.0 -1.0 float
+3.0 float [3.0]
+4611686018427387904 int
+18446744073709551615 -1 18446744073709551615 -1 18446744073709551615

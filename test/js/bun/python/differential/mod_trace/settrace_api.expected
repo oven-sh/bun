@@ -1,0 +1,36 @@
+status: 0
+script: 14dcd85e648935c9
+---
+[('f', 'call')]
+None
+True
+None
+[('g', 'call', 0), ('a', 'line', 1), ('b', 'line', 2), ('b', 'line', 3), ('b', 'return', 3)]
+[('line', 1), ('line', 2), ('line', 3), ('return', 3)]
+f_trace at call None
+f_trace at call None
+f_trace is local True
+[('line', 1), ('line', 2), ('line', 1), ('return', 1), ('line', 3), ('line', 6), ('line', 7)]
+[('return', 3)]
+True False None
+TypeError attribute value type must be bool
+TypeError attribute value type must be bool
+TypeError attribute value type must be bool
+TypeError attribute value type must be bool
+TypeError attribute value type must be bool
+TypeError attribute value type must be bool
+TypeError can't delete numeric/char attribute
+caught in the trace function None
+caught at call None
+caught at return None
+[('f', 'call'), ('f', 'line'), ('f', 'line'), ('f', 'line'), ('f', 'return')]
+[('f', 'call', 0), ('f', 'line', 1), ('f', 'line', 2), ('f', 'line', 3), ('f', 'return', 3)]
+[('start_with_f_trace', 'line', 3), ('start_with_f_trace', 'line', 4), ('start_with_f_trace', 'return', 4)]
+[('stop_here', 'call', 0), ('stop_here', 'line', 1), ('stop_here', 'line', 2)] None
+('changed', ['new', 'x'])
+ValueError f_lineno can only be set in a trace function
+ValueError lineno must be an integer
+AttributeError attribute 'f_lineno' of 'frame' objects cannot be deleted
+TypeError 'int' object is not callable None
+[('f', 'call'), ('traced_inside', 'call')]
+[('<module>', 'call', 0), ('<module>', 'line', 1), ('<module>', 'line', 2), ('C', 'call', 2), ('C', 'line', 2), ('C', 'line', 3), ('C', 'return', 3), ('<module>', 'return', 2)]

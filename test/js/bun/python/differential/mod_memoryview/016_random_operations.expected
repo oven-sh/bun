@@ -1,0 +1,31 @@
+status: 0
+script: 8f577e260f1e75e2
+---
+2047 2986553160
+56 TypeError: cannot modify read-only memory
+10 TypeError: memoryview: cannot cast between two non-byte formats
+12 TypeError: memoryview: casts are restricted to C-contiguous views
+109 TypeError: memoryview: length is not a multiple of itemsize
+146 ValueError: memoryview assignment: lvalue and rvalue have different structures
+('slice', (0,), (1,), b'', True, True, 0)
+('hex', 'cffe9f0f96cbe16dfd8a91735196dddd9e0caf26b0c8b38b136657081241c559ba76eafad7e17126f51ec8da5f', 'cf-fe-9f-0f-96-cb-e1-6d-fd-8a-91-73-51-96-dd-dd-9e-0c-af-26-b0-c8-b3-8b-13-66-57-08-12-41-c5-59-b
+('eq', True, True, True)
+('eq', False, True, True)
+('set', 3, b'\xcb\x08\xa4=')
+('cast', 'B', (34,), 1, 34)
+('hex', '97337a3d604375ca909315fbd35ee66f95a1338001f1094b043e34ac49503f3f', '9733-7a3d-6043-75ca-9093-15fb-d35e-e66f-95a1-3380-01f1-094b-043e-34ac-4950-3f3f')
+('cast', '?', (2,), 1, 2)
+('error', 'TypeError: cannot modify read-only memory')
+('cast', 'f', (0,), 4, 0)
+('error', 'ValueError: memoryview assignment: lvalue and rvalue have different structures')
+('slice', (1,), (-2,), b's', True, True, 1)
+('ro', True, b'\xb2\xd3\x9e\x13\x19W\x98\xcdz\x1f\xeb\xd1\xc2\xa6c\xfb\x9d)\x8b\xe7v\xa4\xb0\xf0z\xd3\xdf3\x951\xe1\x8cs')
+('iter', 1, 1, 0)
+('eq', False, True, True)
+('shape', (1, 44), (44, 1), True, b'\xf7\x03\xd2\xbe\xcaQfk9\xdc\xc4\xecQ\xc1\xd9\xbd\xde\xdcP\x19l\xc9\x97\xfdF\xe3\xd8%yG\x00\x0c\xd1\xd1\xbb\xef\xd9\xdft\xca\xd2\xb4Xg', b'\xf7\x03\xd2\xbe\xcaQfk9\
+('setslice', b'$\xe0;\xf1\x9a\x95\xa9\xdd\xdc\xf7\x92\x8d\xf7$\xe2}\xb7\xf5E\xe8\xa8')
+('error', 'TypeError: memoryview: casts are restricted to C-contiguous views')
+('slice', (0,), (-2,), b'', False, False, 0)
+('hex', '61d28989c9f59f6259f3ec0adda51cbee3aa9a7ab55c93fa60d9f3bab0fa66f5315e58a8', '61d2-8989-c9f5-9f62-59f3-ec0a-dda5-1cbe-e3aa-9a7a-b55c-93fa-60d9-f3ba-b0fa-66f5-315e-58a8')
+('tolist', '[[[93], [115], [67], [41], [202], [32], [77], [78], [85], [101], [117], [49], [43]], [[254], [197], [239], [56], [102], [9], [97], [40], [218], [207], [38], [102], [86]], [[97], [152], [31
+('error', 'TypeError: cannot modify read-only memory')

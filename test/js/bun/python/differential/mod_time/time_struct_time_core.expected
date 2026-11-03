@@ -1,0 +1,10 @@
+status: 0
+script: 60079f213a264427
+---
+struct_time ()  TypeError: structseq() missing required argument 'sequence' (pos 1)
+struct_time ([1, 1, 1, 1, 1, 1, 1, 1, 1], {}, 1)  TypeError: structseq() takes at most 2 arguments (3 given)
+struct_time () {'x': 1} TypeError: structseq() missing required argument 'sequence' (pos 1)
+setattr (time.struct_time(tm_year=1, tm_mon=1, tm_mday=1, tm_hour=1, tm_min=1, tm_sec=1, tm_wday=1, tm_yday=1, tm_isdst=1), 'tm_year', 5)  AttributeError: readonly attribute
+delattr (time.struct_time(tm_year=1, tm_mon=1, tm_mday=1, tm_hour=1, tm_min=1, tm_sec=1, tm_wday=1, tm_yday=1, tm_isdst=1), 'tm_year')  AttributeError: readonly attribute
+__replace__ (1,)  TypeError: __replace__() takes no positional arguments
+member_descriptor member_descriptor <member 'tm_year' of 'time.struct_time' objects> <member 'tm_zone' of 'time.struct_time' objects>

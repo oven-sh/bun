@@ -1,0 +1,191 @@
+status: 0
+script: 07f93a6dd878bc08
+---
+['_grouper', '_tee', '_tee_dataobject', 'accumulate', 'batched', 'chain', 'combinations', 'combinations_with_replacement', 'compress', 'count', 'cycle', 'dropwhile', 'filterfalse', 'groupby', 'islice', 'pairwise', 'permutations', 'product', 'repeat', 'starmap', 'takewhile', 'tee', 'zip_longest']
+itertools module
+accumulate type accumulate accumulate itertools True <class 'itertools.accumulate'> ['__iter__', '__new__', '__next__']
+batched type batched batched itertools True <class 'itertools.batched'> ['__iter__', '__new__', '__next__']
+chain type chain chain itertools True <class 'itertools.chain'> ['__class_getitem__', '__iter__', '__new__', '__next__', 'from_iterable']
+combinations type combinations combinations itertools True <class 'itertools.combinations'> ['__iter__', '__new__', '__next__', '__sizeof__']
+combinations_with_replacement type combinations_with_replacement combinations_with_replacement itertools True <class 'itertools.combinations_with_replacement'> ['__iter__', '__new__', '__next__', '__sizeof__']
+compress type compress compress itertools True <class 'itertools.compress'> ['__iter__', '__new__', '__next__']
+count type count count itertools True <class 'itertools.count'> ['__iter__', '__new__', '__next__', '__repr__']
+cycle type cycle cycle itertools True <class 'itertools.cycle'> ['__iter__', '__new__', '__next__']
+dropwhile type dropwhile dropwhile itertools True <class 'itertools.dropwhile'> ['__iter__', '__new__', '__next__']
+filterfalse type filterfalse filterfalse itertools True <class 'itertools.filterfalse'> ['__iter__', '__new__', '__next__']
+groupby type groupby groupby itertools True <class 'itertools.groupby'> ['__iter__', '__new__', '__next__']
+islice type islice islice itertools True <class 'itertools.islice'> ['__iter__', '__new__', '__next__']
+pairwise type pairwise pairwise itertools True <class 'itertools.pairwise'> ['__iter__', '__new__', '__next__']
+permutations type permutations permutations itertools True <class 'itertools.permutations'> ['__iter__', '__new__', '__next__', '__sizeof__']
+product type product product itertools True <class 'itertools.product'> ['__iter__', '__new__', '__next__', '__sizeof__']
+repeat type repeat repeat itertools True <class 'itertools.repeat'> ['__iter__', '__length_hint__', '__new__', '__next__', '__repr__']
+starmap type starmap starmap itertools True <class 'itertools.starmap'> ['__iter__', '__new__', '__next__']
+takewhile type takewhile takewhile itertools True <class 'itertools.takewhile'> ['__iter__', '__new__', '__next__']
+zip_longest type zip_longest zip_longest itertools True <class 'itertools.zip_longest'> ['__iter__', '__new__', '__next__']
+_grouper type _grouper _grouper itertools True <class 'itertools._grouper'> ['__iter__', '__new__', '__next__']
+_tee type _tee _tee itertools True <class 'itertools._tee'> ['__copy__', '__iter__', '__new__', '__next__']
+_tee_dataobject type _tee_dataobject _tee_dataobject itertools True <class 'itertools._tee_dataobject'> ['__new__']
+builtin_function_or_method tee tee itertools <built-in function tee>
+--- instances
+accumulate True True True True False [1, 3, 6]
+  no attributes
+  hash True True True True
+batched True True True True False [('a', 'b'), ('c', 'd'), ('e',)]
+  no attributes
+  hash True True True True
+chain True True True True False ['a', 'b', 'c']
+  no attributes
+  hash True True True True
+combinations True True True True False [('a', 'b'), ('a', 'c'), ('b', 'c')]
+  no attributes
+  hash True True True True
+combinations_with_replacement True True True True False [('a', 'a'), ('a', 'b'), ('b', 'b')]
+  no attributes
+  hash True True True True
+compress True True True True False ['a', 'c']
+  no attributes
+  hash True True True True
+count True True True True False [5, 6, 7, 8]
+  no attributes
+  hash True True True True
+cycle True True True True False ['a', 'b', 'a', 'b']
+  no attributes
+  hash True True True True
+dropwhile True True True True False [2, 3]
+  no attributes
+  hash True True True True
+filterfalse True True True True False [0, 0]
+  no attributes
+  hash True True True True
+groupby True True True True False [('a', ['a', 'a']), ('b', ['b'])]
+  no attributes
+  hash True True True True
+islice True True True True False ['b', 'c', 'd']
+  no attributes
+  hash True True True True
+pairwise True True True True False [('a', 'b'), ('b', 'c')]
+  no attributes
+  hash True True True True
+permutations True True True True False [('a', 'b'), ('b', 'a')]
+  no attributes
+  hash True True True True
+product True True True True False [('a', 'c'), ('b', 'c')]
+  no attributes
+  hash True True True True
+repeat True True True True False ['x', 'x', 'x']
+  no attributes
+  hash True True True True
+starmap True True True True False [8]
+  no attributes
+  hash True True True True
+takewhile True True True True False [1]
+  no attributes
+  hash True True True True
+zip_longest True True True True False [('a', 'c'), ('b', None)]
+  no attributes
+  hash True True True True
+--- subclasses
+accumulate True True extra 1 {'attribute': 1} True True
+   [1, 3]
+batched True True extra 1 {'attribute': 1} True True
+   [('a', 'b'), ('c', 'd')]
+chain True True extra 1 {'attribute': 1} True True
+   ['a', 'b']
+combinations True True extra 1 {'attribute': 1} True True
+   [('a', 'b'), ('a', 'c')]
+combinations_with_replacement True True extra 1 {'attribute': 1} True True
+   [('a', 'a'), ('a', 'b')]
+compress True True extra 1 {'attribute': 1} True True
+   ['a', 'c']
+count True True extra 1 {'attribute': 1} True True
+   [5, 6]
+cycle True True extra 1 {'attribute': 1} True True
+   ['a', 'b']
+dropwhile True True extra 1 {'attribute': 1} True True
+   [2, 3]
+filterfalse True True extra 1 {'attribute': 1} True True
+   [0, 0]
+groupby True True extra 1 {'attribute': 1} True True
+islice True True extra 1 {'attribute': 1} True True
+   ['b', 'c']
+pairwise True True extra 1 {'attribute': 1} True True
+   [('a', 'b'), ('b', 'c')]
+permutations True True extra 1 {'attribute': 1} True True
+   [('a', 'b'), ('b', 'a')]
+product True True extra 1 {'attribute': 1} True True
+   [('a', 'c'), ('b', 'c')]
+repeat True True extra 1 {'attribute': 1} True True
+   ['x', 'x']
+starmap True True extra 1 {'attribute': 1} True True
+   [8, 'end']
+takewhile True True extra 1 {'attribute': 1} True True
+   [1, 'end']
+zip_longest True True extra 1 {'attribute': 1} True True
+   [('a', 'c'), ('b', None)]
+--- final types
+_grouper is final
+_tee is final
+_tee_dataobject is final
+--- __next__ overridden
+[2, 4, 6, 8]
+'Doubling(3)'
+'Doubling(3, 2)'
+'Doubling(1.5)'
+"R('a')"
+"R('a', 2)"
+--- keywords for the __init__ of a subclass
+chain t ['a', 'b']
+TypeError chain() takes no keyword arguments
+cycle t ['a', 'b', 'a']
+TypeError cycle() takes no keyword arguments
+dropwhile t [0]
+TypeError dropwhile() takes no keyword arguments
+takewhile t [1]
+TypeError takewhile() takes no keyword arguments
+starmap t [1]
+TypeError starmap() takes no keyword arguments
+filterfalse t [0]
+TypeError filterfalse() takes no keyword arguments
+islice t ['a', 'b']
+TypeError islice() takes no keyword arguments
+pairwise t [('a', 'b'), ('b', 'c')]
+TypeError pairwise() takes no keyword arguments
+--- __new__ called directly
+['a', 'b', 'c']
+[3, 4]
+TypeError itertools.chain.__new__(itertools.count): itertools.count is not a subtype of itertools.chain
+TypeError itertools.chain.__new__(int): int is not a subtype of itertools.chain
+TypeError itertools.chain.__new__(): not enough arguments
+TypeError itertools.chain.__new__(X): X is not a type object (int)
+TypeError object.__new__(itertools.chain) is not safe, use itertools.chain.__new__()
+True
+True
+['a', 'b', 'c']
+True
+--- methods through the type
+'a'
+TypeError descriptor '__iter__' requires a 'itertools.chain' object but received a 'int'
+TypeError descriptor '__next__' requires a 'itertools.chain' object but received a 'itertools.count'
+'count(2)'
+StopIteration 
+StopIteration 
+--- with the built-in consumers
+45
+5
+['a', 'b', 'c']
+(1, 1, 1)
+True
+{'a': 1, 'b': None}
+['a', 'b', 'c']
+(0, 0)
+True
+False
+[[0, 1], [2, 3], [4]]
+[(0, ('a', 'b')), (1, ('b', 'c'))]
+[(0, 'a'), (1, 'b')]
+'abcd'
+[6, 3, 1]
+(0, 1, [2, 3, 4])
+TypeError object of type 'itertools.chain' has no len()
+TypeError 'itertools.chain' object is not subscriptable
+TypeError 'itertools.chain' object is not reversible

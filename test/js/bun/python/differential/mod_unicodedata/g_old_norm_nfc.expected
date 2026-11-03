@@ -1,0 +1,163 @@
+status: 0
+script: 71ae183ecbf5b4f9
+---
+NFC 0000 None
+NFC 0340 ('\u0300', False)
+NFC 0341 ('\u0301', False)
+NFC 0342 None
+NFC 0343 ('\u0313', False)
+NFC 0344 ('\u0308\u0301', False)
+NFC 0345 None
+NFC 0374 ('\u02b9', False)
+NFC 0375 None
+NFC 037E (';', False)
+NFC 037F None
+NFC 0387 ('\xb7', False)
+NFC 0388 None
+NFC 0958 ('\u0915\u093c', False)
+NFC 0959 ('\u0916\u093c', False)
+NFC 095A ('\u0917\u093c', False)
+NFC 095B ('\u091c\u093c', False)
+NFC 095C ('\u0921\u093c', False)
+NFC 095D ('\u0922\u093c', False)
+NFC 095E ('\u092b\u093c', False)
+NFC 095F ('\u092f\u093c', False)
+NFC 0960 None
+NFC 09DC ('\u09a1\u09bc', False)
+NFC 09DD ('\u09a2\u09bc', False)
+NFC 09DE None
+NFC 09DF ('\u09af\u09bc', False)
+NFC 09E0 None
+NFC 0A33 ('\u0a32\u0a3c', False)
+NFC 0A34 None
+NFC 0A36 ('\u0a38\u0a3c', False)
+NFC 0A37 None
+NFC 0A59 ('\u0a16\u0a3c', False)
+NFC 0A5A ('\u0a17\u0a3c', False)
+NFC 0A5B ('\u0a1c\u0a3c', False)
+NFC 0A5C None
+NFC 0A5E ('\u0a2b\u0a3c', False)
+NFC 0A5F None
+NFC 0B5C ('\u0b21\u0b3c', False)
+NFC 0B5D ('\u0b22\u0b3c', False)
+NFC 0B5E None
+NFC 0F43 ('\u0f42\u0fb7', False)
+NFC 0F44 None
+NFC 0F4D ('\u0f4c\u0fb7', False)
+NFC 0F4E None
+NFC 0F52 ('\u0f51\u0fb7', False)
+NFC 0F53 None
+NFC 0F57 ('\u0f56\u0fb7', False)
+NFC 0F58 None
+NFC 0F5C ('\u0f5b\u0fb7', False)
+NFC 0F5D None
+NFC 0F69 ('\u0f40\u0fb5', False)
+NFC 0F6A None
+NFC 0F73 ('\u0f71\u0f72', False)
+NFC 0F74 None
+NFC 0F75 ('\u0f71\u0f74', False)
+NFC 0F76 ('\u0fb2\u0f80', False)
+NFC 0F77 None
+NFC 0F78 ('\u0fb3\u0f80', False)
+NFC 0F79 None
+NFC 0F81 ('\u0f71\u0f80', False)
+NFC 0F82 None
+NFC 0F93 ('\u0f92\u0fb7', False)
+NFC 0F94 None
+NFC 0F9D ('\u0f9c\u0fb7', False)
+NFC 0F9E None
+NFC 0FA2 ('\u0fa1\u0fb7', False)
+NFC 0FA3 None
+NFC 0FA7 ('\u0fa6\u0fb7', False)
+NFC 0FA8 None
+NFC 0FAC ('\u0fab\u0fb7', False)
+NFC 0FAD None
+NFC 0FB9 ('\u0f90\u0fb5', False)
+NFC 0FBA None
+NFC 1F71 ('\u03ac', False)
+NFC 1F72 None
+NFC 1F73 ('\u03ad', False)
+NFC 1F74 None
+NFC 1F75 ('\u03ae', False)
+NFC 1F76 None
+NFC 1F77 ('\u03af', False)
+NFC 1F78 None
+NFC 1F79 ('\u03cc', False)
+NFC 1F7A None
+NFC 1F7B ('\u03cd', False)
+NFC 1F7C None
+NFC 1F7D ('\u03ce', False)
+NFC 1F7E None
+NFC 1FBB ('\u0386', False)
+NFC 1FBC None
+NFC 1FBE ('\u03b9', False)
+NFC 1FBF None
+NFC 1FC9 ('\u0388', False)
+NFC 1FCA None
+NFC 1FCB ('\u0389', False)
+NFC 1FCC None
+NFC 1FD3 ('\u0390', False)
+NFC 1FD4 None
+NFC 1FDB ('\u038a', False)
+NFC 1FDC None
+NFC 1FE3 ('\u03b0', False)
+NFC 1FE4 None
+NFC 1FEB ('\u038e', False)
+NFC 1FEC None
+NFC 1FEE ('\u0385', False)
+NFC 1FEF ('`', False)
+NFC 1FF0 None
+NFC 1FF9 ('\u038c', False)
+NFC 1FFA None
+NFC 1FFB ('\u038f', False)
+NFC 1FFC None
+NFC 1FFD ('\xb4', False)
+NFC 1FFE None
+NFC 2000 ('\u2002', False)
+NFC 2001 ('\u2003', False)
+NFC 2002 None
+NFC 2126 ('\u03a9', False)
+NFC 2127 None
+NFC 212A ('K', False)
+NFC 212B ('\xc5', False)
+NFC 212C None
+NFC 2329 ('\u3008', False)
+NFC 232A ('\u3009', False)
+NFC 232B None
+NFC 2ADC ('\u2add\u0338', False)
+NFC 2ADD None
+NFC F90B ('\u5587', False)
+NFC F918 ('\u843d', False)
+NFC F925 ('\u62c9', False)
+NFC F932 ('\u7210', False)
+NFC F93F ('\u9304', False)
+NFC F94C ('\u6a13', False)
+NFC F959 ('\u9675', False)
+NFC F966 ('\u5fa9', False)
+NFC F973 ('\u62fe', False)
+NFC F980 ('\u5442', False)
+NFC F98D ('\u8f62', False)
+NFC F99A ('\u9023', False)
+NFC F9A7 ('\u7375', False)
+NFC F9B4 ('\u9818', False)
+NFC F9C1 ('\u7642', False)
+NFC F9CE ('\u786b', False)
+NFC F9DB ('\u7387', False)
+NFC F9E8 ('\u88e1', False)
+NFC F9F5 ('\u6dcb', False)
+NFC FA02 ('\u62d3', False)
+NFC FA0F None
+NFC FA1C ('\u9756', False)
+NFC FA29 None
+NFC FA36 ('\u559d', False)
+NFC FA43 ('\u6691', False)
+NFC FA50 ('\u7956', False)
+NFC FA5D ('\u8279', False)
+NFC FA6A ('\u983b', False)
+NFC FA77 None
+NFC FB2D ('\u05e9\u05bc\u05c2', False)
+NFC FB3A ('\u05da\u05bc', False)
+NFC FB47 ('\u05e7\u05bc', False)
+NFC FB54 None
+NFC 1D15F ('\U0001d158\U0001d165', False)
+NFC 1D16C None

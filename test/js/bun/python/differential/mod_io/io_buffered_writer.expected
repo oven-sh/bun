@@ -1,0 +1,146 @@
+status: 0
+script: 562980e0ada02688
+---
+--- construction
+True False True False False <_io.BufferedWriter> []
+False
+UnsupportedOperation: fileno
+UnsupportedOperation: read
+UnsupportedOperation: read
+UnsupportedOperation: read1
+UnsupportedOperation: read
+UnsupportedOperation: read
+AttributeError: '_io.BufferedWriter' object has no attribute 'peek'
+UnsupportedOperation: read
+TypeError: BufferedWriter() missing required argument 'raw' (pos 1)
+ValueError: buffer size must be strictly positive
+ValueError: buffer size must be strictly positive
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: BufferedWriter() takes at most 2 arguments (3 given)
+TypeError: BufferedWriter() got an unexpected keyword argument 'bad'
+<_io.BufferedWriter>
+AttributeError: 'int' object has no attribute 'writable'
+UnsupportedOperation: File or stream is not writable.
+UnsupportedOperation: File or stream is not writable.
+TypeError: cannot pickle 'BufferedWriter' instances
+--- write
+3 [] 2 [] 3 [] 1 [('write', b'abcdefgh')] None [('write', b'i')]
+0 [] None []
+8 [('write', b'12345678')] 9 [('write', b'123456789')] 7 [] 20 [('write', b'1234567'), ('write', b'xxxxxxxxxxxxxxxxxxxx')] None []
+3 8 [('write', b'abc'), ('write', b'xxxxxxxx')] 3 7 [('write', b'abc')] None [('write', b'xxxxxxx')]
+2 None [('write', b'by')]
+TypeError: a bytes-like object is required, not 'str'
+TypeError: a bytes-like object is required, not 'int'
+TypeError: a bytes-like object is required, not 'NoneType'
+TypeError: BufferedWriter.write() takes exactly one argument (0 given)
+[('write', b'abc'), ('write', b'defghijkl')] None [('write', b'm')]
+b'xxxxxbyabcdefghijklm'
+--- the argument is copied at once
+[('write', b'abc')]
+--- partial writes
+7 [] None [('write', b'abc'), ('write', b'def'), ('write', b'g')]
+20 [('write', b'012'), ('write', b'345'), ('write', b'678'), ('write', b'9ab'), ('write', b'cde')] None [('write', b'fgh'), ('write', b'ij')]
+3 None [('write', b''), ('write', b''), ('write', b'ab'), ('write', b'c')]
+--- would block
+3 []
+BlockingIOError ('write could not complete without blocking', 0) 0 int
+[('write', b'abc', None)] flushed [('write', b'abc')]
+BlockingIOError ('write could not complete without blocking', 0) 0 int
+[('write', b'ab'), ('write', b'cdef', None)] flushed [('write', b'cdef')]
+2
+[] ('blocked', 0) [('write', b'abcdefgh', None)]
+BlockingIOError ('write could not complete without blocking', 2) 2 int
+[('write', b'abcdef', None)]
+BlockingIOError ('write could not complete without blocking', 0) 0 int
+[('write', b'abcdefgh', None)] flushed [('write', b'abcdefgh')]
+5
+[('write', b'abc'), ('write', b'def', None)] flushed [('write', b'defghijk')]
+BlockingIOError ('write could not complete without blocking', 5) 5 int
+[('write', b'abc'), ('write', b'def', None)] flushed [('write', b'defghijk')]
+BlockingIOError ('write could not complete without blocking', 8) 8 int
+[('write', b'0123456789abcdef', None)] flushed [('write', b'01234567')]
+8
+[('write', b'01234567', None)] flushed [('write', b'01234567')]
+BlockingIOError ('write could not complete without blocking', 13) 13 int
+[('write', b'01234'), ('write', b'56789abcdefghij', None)] flushed [('write', b'56789abc')]
+20
+[('write', b'0123456789ab'), ('write', b'cdefghij', None)] flushed [('write', b'cdefghij')]
+--- what the raw stream may get wrong
+OSError: raw write() returned invalid length -1 (should have been between 0 and 3)
+OSError: raw write() returned invalid length 100 (should have been between 0 and 3)
+OSError: raw write() returned invalid length -1 (should have been between 0 and 3)
+OSError: raw write() returned invalid length -1 (should have been between 0 and 3)
+OSError: raw write() returned invalid length -1 (should have been between 0 and 3)
+OSError: raw write() returned invalid length -1 (should have been between 0 and 3)
+KeyError: 'boom'
+[('write', b'abc', KeyError('boom'))] None [('write', b'abc')]
+KeyError: 'boom'
+[('write', b'abc', KeyError('boom'))] None [('write', b'abc')]
+None [('write', b'abc'), ('write', b'ab'), ('write', b'c'), ('write', b'c')]
+--- seek, tell, truncate
+[('tell',)]
+0 [('tell',)] 3 3 [('tell',)] 1 [('write', b'abc'), ('seek', 1, 0)] 1 2 [('tell',)] None [('write', b'X')] b'aXc'
+3 [('seek', 0, 2)] 2 4 [('write', b'de'), ('seek', -1, 1)] 1 5 [('write', b'Y'), ('seek', 0, 1)] b'aXcdY'
+10 1 None b'aXcdY\x00\x00\x00\x00\x00z' [('seek', 10, 0), ('write', b'z')]
+3 14 [('write', b'123'), ('truncate', None), ('tell',)] b'aXcdY\x00\x00\x00\x00\x00z123' 14
+2 [('tell',), ('truncate', 2), ('tell',)] b'aX' 14 14 b'aX'
+0 1 1 [('tell',), ('truncate', None), ('tell',), ('seek', 0, 0), ('write', b'q'), ('truncate', 1), ('tell',)] b'q'
+ValueError: whence value 5 unsupported
+TypeError: 'str' object cannot be interpreted as an integer
+ValueError: cannot fit 'int' into an offset-sized integer
+UnsupportedOperation: File or stream is not seekable.
+UnsupportedOperation: seek
+UnsupportedOperation: truncate
+UnsupportedOperation: seek
+--- close
+  raw.close, closed = False
+  raw.flush
+None [('write', b'abc')] True True None <_io.BufferedWriter>
+flush ValueError: flush of closed file
+tell UnsupportedOperation: seek
+truncate ValueError: truncate of closed file
+writable True
+seekable False
+isatty ValueError: I/O operation on closed file.
+__enter__ ValueError: I/O operation on closed file.
+ValueError: write to closed file
+ValueError: write to closed file
+TypeError: a bytes-like object is required, not 'str'
+ValueError: I/O operation on closed file.
+ValueError: seek of closed file
+True [('write', b'ctx')]
+OSError: write failed
+True True
+KeyError('close failed') OSError('write failed')
+True
+True
+ValueError: write to closed file
+ValueError: flush of closed file
+None
+--- detach
+True [('write', b'abc')] None <_io.BufferedWriter> False
+flush ValueError: raw stream has been detached
+close ValueError: raw stream has been detached
+detach ValueError: raw stream has been detached
+tell ValueError: raw stream has been detached
+writable ValueError: raw stream has been detached
+ValueError: raw stream has been detached
+ValueError: raw stream has been detached
+OSError: write failed
+True True [('write', b'abc', OSError('write failed')), ('write', b'abc')]
+--- uninitialized
+None <_io.BufferedWriter>
+ValueError: I/O operation on uninitialized object
+ValueError: I/O operation on uninitialized object
+ValueError: I/O operation on uninitialized object
+ValueError: I/O operation on uninitialized object
+2 None [('write', b'ok')]
+--- reentrant calls
+RuntimeError: reentrant call inside <_io.BufferedWriter>
+--- subclasses
+  Sub.flush
+[('write', b'abc')] <Sub> ['Sub', 'BufferedWriter', '_BufferedIOBase', '_IOBase', 'object']
+--- over a BytesIO
+5 b'' 6 b'hello' 11 0 b'hello world' 1 None b'Jello world'
+--- the type
+<class '_io.BufferedWriter'> BufferedWriter BufferedWriter _io (<class '_io._BufferedIOBase'>,)

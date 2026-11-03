@@ -1,0 +1,49 @@
+status: 0
+oracle: none
+mask: addresses
+---
+bind type -> 7
+bind native -> 2
+bind callable obj -> ('called', 1, 5)
+new bound type -> 8
+proxy call -> 6
+proxy construct -> 3
+Reflect.construct func threw TypeError Reflect.construct requires the first argument be a constructor
+Reflect.construct newTarget -> 4
+Reflect.construct as newTarget -> object
+Reflect.construct Array newTarget -> true
+Reflect.construct Error newTarget pyfunc -> object
+caller threw TypeError 'arguments', 'callee', and 'caller' cannot be accessed in this context.
+arguments threw TypeError 'arguments', 'callee', and 'caller' cannot be accessed in this context.
+prototype -> undefined
+extends func threw TypeError The superclass is not a constructor.
+extends type threw TypeError The value of the superclass's prototype property is not an object or null.
+generator proto next threw TypeError |this| should be a generator
+array iterator next threw TypeError %ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance
+Map.prototype.get threw TypeError Map operation called on non-Map object
+Array.prototype.push on tuple threw TypeError 'tuple' object does not support item assignment
+Array.prototype.concat -> 2
+captureStackTrace -> string
+Object.defineProperty accessor threw TypeError A Python object cannot be given an accessor property
+Object.seal -> false
+__proto__ get -> true
+__proto__ set -> true
+__defineGetter__ threw TypeError A Python object cannot be given an accessor property
+__lookupGetter__ -> undefined
+propertyIsEnumerable -> true,false
+isPrototypeOf -> true
+Symbol() key -> 1,2,3
+private field via return override -> true
+with statement -> 1
+for-in type -> kind,count,describe
+for-in func -> tag
+spread call -> 6
+apply tuple -> 6
+apply dict threw TypeError func() missing 2 required positional arguments: 'a' and 'b'
+toString deep recursion -> {'self': {...}}
+JSON cycle threw TypeError JSON.stringify cannot serialize cyclic structures.
+huge index -> undefined
+negative zero index -> 1
+float index -> undefined
+Object.entries type -> 0
+recursion threw RangeError Maximum call stack size exceeded.

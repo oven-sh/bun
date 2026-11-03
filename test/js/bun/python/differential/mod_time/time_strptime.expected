@@ -1,0 +1,37 @@
+status: 0
+script: 04422bf87068f49f
+---
+('2001-02-03 04:05:06', '%Y-%m-%d %H:%M:%S') time.struct_time(tm_year=2001, tm_mon=2, tm_mday=3, tm_hour=4, tm_min=5, tm_sec=6, tm_wday=5, tm_yday=34, tm_isdst=-1) zone=None gmtoff=None struct_time
+('Sat Feb  3 04:05:06 2001',) time.struct_time(tm_year=2001, tm_mon=2, tm_mday=3, tm_hour=4, tm_min=5, tm_sec=6, tm_wday=5, tm_yday=34, tm_isdst=-1) zone=None gmtoff=None struct_time
+('Sat Feb  3 04:05:06 2001', '%a %b %d %H:%M:%S %Y') time.struct_time(tm_year=2001, tm_mon=2, tm_mday=3, tm_hour=4, tm_min=5, tm_sec=6, tm_wday=5, tm_yday=34, tm_isdst=-1) zone=None gmtoff=None struct_time
+('3 February 2001', '%d %B %Y') time.struct_time(tm_year=2001, tm_mon=2, tm_mday=3, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=5, tm_yday=34, tm_isdst=-1) zone=None gmtoff=None struct_time
+('12/31/99', '%m/%d/%y') time.struct_time(tm_year=1999, tm_mon=12, tm_mday=31, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=4, tm_yday=365, tm_isdst=-1) zone=None gmtoff=None struct_time
+('12/31/68', '%m/%d/%y') time.struct_time(tm_year=2068, tm_mon=12, tm_mday=31, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=0, tm_yday=366, tm_isdst=-1) zone=None gmtoff=None struct_time
+('12/31/69', '%m/%d/%y') time.struct_time(tm_year=1969, tm_mon=12, tm_mday=31, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=2, tm_yday=365, tm_isdst=-1) zone=None gmtoff=None struct_time
+('11:59 PM', '%I:%M %p') time.struct_time(tm_year=1900, tm_mon=1, tm_mday=1, tm_hour=23, tm_min=59, tm_sec=0, tm_wday=0, tm_yday=1, tm_isdst=-1) zone=None gmtoff=None struct_time
+('12:00 AM', '%I:%M %p') time.struct_time(tm_year=1900, tm_mon=1, tm_mday=1, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=0, tm_yday=1, tm_isdst=-1) zone=None gmtoff=None struct_time
+('2001 034', '%Y %j') time.struct_time(tm_year=2001, tm_mon=2, tm_mday=3, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=5, tm_yday=34, tm_isdst=-1) zone=None gmtoff=None struct_time
+('2001-02-03 +0530', '%Y-%m-%d %z') time.struct_time(tm_year=2001, tm_mon=2, tm_mday=3, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=5, tm_yday=34, tm_isdst=-1) zone=None gmtoff=19800 struct_time
+('2001-02-03 -05:30', '%Y-%m-%d %z') time.struct_time(tm_year=2001, tm_mon=2, tm_mday=3, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=5, tm_yday=34, tm_isdst=-1) zone=None gmtoff=-19800 struct_time
+('2001-02-03 Z', '%Y-%m-%d %z') time.struct_time(tm_year=2001, tm_mon=2, tm_mday=3, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=5, tm_yday=34, tm_isdst=-1) zone=None gmtoff=0 struct_time
+('2001-02-03 UTC', '%Y-%m-%d %Z') time.struct_time(tm_year=2001, tm_mon=2, tm_mday=3, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=5, tm_yday=34, tm_isdst=0) zone='UTC' gmtoff=None struct_time
+('2001-02-03 GMT', '%Y-%m-%d %Z') time.struct_time(tm_year=2001, tm_mon=2, tm_mday=3, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=5, tm_yday=34, tm_isdst=0) zone='GMT' gmtoff=None struct_time
+('2024 10 1', '%Y %W %w') time.struct_time(tm_year=2024, tm_mon=3, tm_mday=4, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=0, tm_yday=64, tm_isdst=-1) zone=None gmtoff=None struct_time
+('2024 10 1', '%Y %U %w') time.struct_time(tm_year=2024, tm_mon=3, tm_mday=11, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=0, tm_yday=71, tm_isdst=-1) zone=None gmtoff=None struct_time
+('2024 10 1', '%G %V %u') time.struct_time(tm_year=2024, tm_mon=3, tm_mday=4, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=0, tm_yday=64, tm_isdst=-1) zone=None gmtoff=None struct_time
+('100%', '%H0%%') time.struct_time(tm_year=1900, tm_mon=1, tm_mday=1, tm_hour=10, tm_min=0, tm_sec=0, tm_wday=0, tm_yday=1, tm_isdst=-1) zone=None gmtoff=None struct_time
+('2001', '%Y') time.struct_time(tm_year=2001, tm_mon=1, tm_mday=1, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=0, tm_yday=1, tm_isdst=-1) zone=None gmtoff=None struct_time
+('', '') time.struct_time(tm_year=1900, tm_mon=1, tm_mday=1, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=0, tm_yday=1, tm_isdst=-1) zone=None gmtoff=None struct_time
+('2001-02-30', '%Y-%m-%d') ValueError: day 30 must be in range 1..28 for month 2 in year 2001
+('2001-13-01', '%Y-%m-%d') ValueError: time data '2001-13-01' does not match format '%Y-%m-%d'
+('2001-02-03x', '%Y-%m-%d') ValueError: unconverted data remains: x
+('abc', '%Y') ValueError: time data 'abc' does not match format '%Y'
+('2001', '%Q') ValueError: 'Q' is a bad directive in format '%Q'
+('2001', '%') ValueError: stray % in format '%'
+('2001', '%Y%Y') PatternError: redefinition of group name 'Y' as group 2; was group 1 at position 19
+(5, '%Y') TypeError: strptime() argument 0 must be str, not <class 'int'>
+('2001', 5) TypeError: strptime() argument 1 must be str, not <class 'int'>
+() TypeError: _strptime_time() missing 1 required positional argument: 'data_string'
+('a', 'b', 'c') TypeError: _strptime_time() takes from 1 to 2 positional arguments but 3 were given
+('1.5', '%S.%f') time.struct_time(tm_year=1900, tm_mon=1, tm_mday=1, tm_hour=0, tm_min=0, tm_sec=1, tm_wday=0, tm_yday=1, tm_isdst=-1) zone=None gmtoff=None struct_time
+('29 Feb', '%d %b') ValueError: Day of month directive '%d' may not be used without a year directive. Parsing dates involving a day of month without a year is ambiguous and fails to parse leap day. Add a year to the input and format. See https://github.com/python/cpython/issues/70647.

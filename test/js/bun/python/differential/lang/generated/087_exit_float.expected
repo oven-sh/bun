@@ -1,0 +1,6 @@
+status: 1
+stderr: 2.5
+script: 2f24cf641e44db7d
+source: 2f24cf641e44db7d
+---
+a float is printed, status 1

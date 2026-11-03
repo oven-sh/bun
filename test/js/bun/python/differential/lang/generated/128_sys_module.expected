@@ -1,0 +1,214 @@
+status: 0
+script: b1f001cc257cb480
+source: 7a24c8cd24658651
+---
+sys.maxsize => 9223372036854775807
+sys.maxsize == 2 ** 63 - 1 => True
+sys.maxunicode => 1114111
+sys.byteorder => little
+sys.platform => linux
+sys.getdefaultencoding() => utf-8
+sys.getfilesystemencoding() => utf-8
+sys.getfilesystemencodeerrors() => surrogateescape
+type(sys.version).__name__ => str
+sys.version.startswith("3.15") => True
+sys.hexversion >= 0x030F0000 => True
+type(sys.hexversion).__name__ => int
+vi[:2] => (3, 15)
+vi.major => 3
+vi.minor => 15
+type(vi.micro).__name__ => int
+vi.releaselevel in ("alpha", "beta", "candidate", "final") => True
+type(vi.serial).__name__ => int
+len(vi) => 5
+type(vi).__name__ => version_info
+isinstance(vi, tuple) => True
+vi >= (3, 15) => True
+vi < (4,) => True
+vi[0] == vi.major => True
+vi > (3, 14, 99) => True
+repr(vi).startswith("sys.version_info(major=3, minor=15, micro=") => True
+tuple(vi)[:2] => (3, 15)
+vi.n_fields => 5
+vi.n_sequence_fields => 5
+vi.n_unnamed_fields => 0
+vi.count(3) >= 1 => True
+vi.index(3) => 0
+hash(vi) == hash(tuple(vi)) => True
+vi == tuple(vi) => True
+vi[-1] == vi.serial => True
+vi[1:2] => (15,)
+[type(x).__name__ for x in vi] => ['int', 'int', 'int', 'str', 'int']
+type(vi)((1, 2, 3, 4, 5)) => TypeError: cannot create 'sys.version_info' instances
+setattr(vi, "major", 4) => AttributeError: readonly attribute
+vi.nope => AttributeError: 'sys.version_info' object has no attribute 'nope'
+vi[5] => IndexError: tuple index out of range
+vi + (1,) == tuple(vi) + (1,) => True
+major => 3
+minor => 15
+len(rest) => 3
+fi.max => 1.7976931348623157e+308
+fi.min => 2.2250738585072014e-308
+fi.epsilon => 2.220446049250313e-16
+fi.dig => 15
+fi.mant_dig => 53
+fi.max_exp => 1024
+fi.min_exp => -1021
+fi.max_10_exp => 308
+fi.min_10_exp => -307
+fi.radix => 2
+fi.rounds => 1
+len(fi) => 11
+type(fi).__name__ => float_info
+fi[0] == fi.max => True
+repr(fi) => sys.float_info(max=1.7976931348623157e+308, max_exp=1024, max_10_exp=308, min=2.2250738585072014e-308, min_exp=-1021, min_10_exp=-307, dig=15, mant_dig=53, epsilon=2.220446049250313e-16, radix=2, rounds=1)
+hi.width => 64
+hi.modulus => 2305843009213693951
+hi.inf => 314159
+hi.nan => 0
+hi.imag => 1000003
+hi.modulus == 2 ** 61 - 1 => True
+type(hi).__name__ => hash_info
+type(hi.algorithm).__name__ => str
+type(sys.int_info).__name__ => int_info
+sys.int_info.default_max_str_digits => 4300
+sys.int_info.str_digits_check_threshold => 640
+sys.implementation.name if False else "" => 
+type(sys.implementation).__name__ => SimpleNamespace
+sys.implementation.version[:2] if False else "" => 
+hasattr(sys.implementation, "name") => True
+hasattr(sys.implementation, "cache_tag") => True
+type(sys.thread_info).__name__ => thread_info
+type(sys.argv).__name__ => list
+len(sys.argv) => 1
+sys.argv[0].rsplit("/", 1)[-1] => 128_sys_module.py
+type(sys.path).__name__ => list
+all(isinstance(p, str) for p in sys.path) => True
+type(sys.modules).__name__ => dict
+"sys" in sys.modules => True
+"builtins" in sys.modules => True
+"__main__" in sys.modules => True
+type(sys.builtin_module_names).__name__ => tuple
+"sys" in sys.builtin_module_names => True
+"builtins" in sys.builtin_module_names => True
+type(sys.executable).__name__ => str
+type(sys.prefix).__name__ => str
+type(sys.flags).__name__ => flags
+type(sys.meta_path).__name__ => list
+type(sys.path_hooks).__name__ => list
+type(sys.path_importer_cache).__name__ => dict
+type(sys.warnoptions).__name__ => list
+type(sys.orig_argv).__name__ => list
+type(sys.stdlib_module_names).__name__ => frozenset
+"os" in sys.stdlib_module_names => True
+type(sys.dont_write_bytecode).__name__ => bool
+type(sys.copyright).__name__ => str
+type(sys.api_version).__name__ => int
+type(sys.platlibdir).__name__ => str
+sys.pycache_prefix => None
+type(sys.abiflags).__name__ => str
+type(sys._xoptions).__name__ => dict
+4300
+len(str(big)) => ValueError: Exceeds the limit (4300 digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit
+len(repr(big)) => ValueError: Exceeds the limit (4300 digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit
+int("1" * 4301) => ValueError: Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit
+len(str(10 ** 4299)) => 4300
+int("1" * 4300) > 0 => True
+f"{big}" => ValueError: Exceeds the limit (4300 digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit
+"%d" % big => ValueError: Exceeds the limit (4300 digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit
+format(big) => ValueError: Exceeds the limit (4300 digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit
+print(big) => ValueError: Exceeds the limit (4300 digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit
+len(hex(big)) > 0 => True
+len(bin(big)) > 0 => True
+len(oct(big)) > 0 => True
+len("%x" % big) > 0 => True
+int("f" * 5000, 16) > 0 => True
+int("1" * 5000, 2) > 0 => True
+int("1" * 5000, 3) => ValueError: Exceeds the limit (4300 digits) for integer string conversion: value has 5000 digits; use sys.set_int_max_str_digits() to increase the limit
+int("-" + "1" * 4301) => ValueError: Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit
+int("1_" * 4300 + "1") => ValueError: Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit
+int(" " * 5000 + "1") => 1
+int("0" * 5000 + "1") => ValueError: Exceeds the limit (4300 digits) for integer string conversion: value has 5001 digits; use sys.set_int_max_str_digits() to increase the limit
+len(str(-big)) => ValueError: Exceeds the limit (4300 digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit
+big + 1 > big => True
+big * big > big => True
+float(big) => OverflowError: int too large to convert to float
+eval("1" * 4301) => SyntaxError: Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit - Consider hexadecimal for huge integer literals to avoid decimal conversion limits. (<string>, line 1)
+compile("x = " + "1" * 4301, "<s>", "exec") => SyntaxError: Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit - Consider hexadecimal for huge integer literals to avoid decimal conversion limits. (<s>, line 1)
+[big].__repr__() => ValueError: Exceeds the limit (4300 digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit
+str(big)[:1] => ValueError: Exceeds the limit (4300 digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit
+len(str(big)) => 4301
+len(str(int("1" * 5000))) => 5000
+sys.get_int_max_str_digits() => 0
+str(10 ** 640) => ValueError: Exceeds the limit (640 digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit
+len(str(10 ** 639)) => 640
+int("1" * 641) => ValueError: Exceeds the limit (640 digits) for integer string conversion: value has 641 digits; use sys.set_int_max_str_digits() to increase the limit
+640
+sys.set_int_max_str_digits(639) => ValueError: maxdigits must be >= 640 or 0 for unlimited
+sys.set_int_max_str_digits(1) => ValueError: maxdigits must be >= 640 or 0 for unlimited
+sys.set_int_max_str_digits(-1) => ValueError: maxdigits must be >= 640 or 0 for unlimited
+sys.set_int_max_str_digits("a") => TypeError: 'str' object cannot be interpreted as an integer
+sys.set_int_max_str_digits() => TypeError: set_int_max_str_digits() missing required argument 'maxdigits' (pos 1)
+sys.set_int_max_str_digits(maxdigits=5000) => None
+5000
+a is b => False
+sys.intern(a) is sys.intern(b) => True
+sys.intern("x") == "x" => True
+sys.intern("é😀") => é😀
+sys.intern(1) => TypeError: intern() argument must be str, not int
+sys.intern(b"a") => TypeError: intern() argument must be str, not bytes
+sys.intern() => TypeError: sys.intern() takes exactly one argument (0 given)
+sys.intern(type("S", (str,), {})("a")) => TypeError: can't intern S
+type(sys.getsizeof(1)).__name__ => int
+sys.getsizeof([]) > 0 => True
+sys.getsizeof("a" * 100) > sys.getsizeof("a") => True
+sys.getsizeof([0] * 100) > sys.getsizeof([]) => True
+type(sys.getrefcount(object())).__name__ => int
+sys.getsizeof(NoSize()) => TypeError: an integer is required
+sys.getsizeof(NoSize(), 5) => 5
+sys.getsizeof(NegSize()) => ValueError: __sizeof__() should return >= 0
+sys.getsizeof(OkSize()) >= 100 => True
+sys.getsizeof() => TypeError: getsizeof() missing required argument 'object' (pos 1)
+sys.excepthook is sys.__excepthook__ => True
+sys.displayhook is sys.__displayhook__ => True
+sys.breakpointhook is sys.__breakpointhook__ => True
+sys.unraisablehook is sys.__unraisablehook__ => True
+sys.stdout is sys.__stdout__ => True
+sys.stderr is sys.__stderr__ => True
+sys.stdin is sys.__stdin__ => True
+5
+'s'
+[1, 'a']
+[1, 'a']
+sys.displayhook() => TypeError: sys.displayhook() takes exactly one argument (0 given)
+sys.displayhook(1, 2) => TypeError: sys.displayhook() takes exactly one argument (2 given)
+sys.gettrace() => None
+sys.getprofile() => None
+type(sys.getswitchinterval()).__name__ => float
+sys.getrecursionlimit() => 1000
+sys.is_finalizing() => False
+sys.exception() => None
+sys.exc_info() => (None, None, None)
+type(sys.getallocatedblocks()).__name__ => int
+sys.get_coroutine_origin_tracking_depth() => 0
+type(sys.getunicodeinternedsize()).__name__ if hasattr(sys, "getunico... => int
+sys.is_stack_trampoline_active() if hasattr(sys, "is_stack_trampoline... => False
+None
+sys.audit() => TypeError: audit expected at least 1 argument, got 0
+sys.audit(1) => TypeError: audit() argument 1 must be str, not int
+1
+sys.custom_attribute => AttributeError: module 'sys' has no attribute 'custom_attribute'
+sys.no_such_thing => AttributeError: module 'sys' has no attribute 'no_such_thing'
+5
+['replaced']
+['get_asyncgen_hooks', 'get_coroutine_origin_tracking_depth', 'get_int_max_str_digits', 'get_lazy_imports', 'get_lazy_imports_filter', 'getallocatedblocks', 'getdefaultencoding', 'getdlopenflags', 'getfilesystemencodeerrors', 'getfilesystemencoding', 'getprofile', 'getrecursionlimit', 'getrefcount', 'getsizeof', 'getswitchinterval', 'gettrace', 'getunicodeinternedsize']
+['set_asyncgen_hooks', 'set_coroutine_origin_tracking_depth', 'set_int_max_str_digits', 'set_lazy_imports', 'set_lazy_imports_filter', 'setdlopenflags', 'setprofile', 'setrecursionlimit', 'setswitchinterval', 'settrace']
+['__stderr__', '__stdin__', '__stdout__', 'exc_info', 'excepthook', 'exception', 'float_info', 'float_repr_style', 'hash_info', 'int_info', 'intern', 'maxsize', 'maxunicode', 'stderr', 'stdin', 'stdlib_module_names', 'stdout']
+sys.exit.__name__ => 'exit'
+sys.exit.__module__ => 'sys'
+repr(sys.exit) => '<built-in function exit>'
+type(sys.exit).__name__ => 'builtin_function_or_method'
+sys.exit.__self__ is sys => True
+sys.getrecursionlimit.__qualname__ => 'getrecursionlimit'
+sys.getrecursionlimit.__doc__ is not None => True
+sys.intern.__text_signature__ => '($module, string, /)'

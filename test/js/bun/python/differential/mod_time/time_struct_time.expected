@@ -1,0 +1,35 @@
+status: 0
+script: 0e2aa7b4eea705ef
+---
+<class 'time.struct_time'> struct_time struct_time time (<class 'tuple'>,) (<class 'time.struct_time'>, <class 'tuple'>, <class 'object'>) <class 'type'>
+11 9 0 ('tm_year', 'tm_mon', 'tm_mday', 'tm_hour', 'tm_min', 'tm_sec', 'tm_wday', 'tm_yday', 'tm_isdst') 11
+time.struct_time(tm_year=2001, tm_mon=2, tm_mday=3, tm_hour=4, tm_min=5, tm_sec=6, tm_wday=5, tm_yday=34, tm_isdst=0) 9 (2001, 2, 3, 4, 5, 6, 5, 34, 0) 2001 0 (3, 4, 5) [2001, 2, 3, 4, 5, 6, 5, 34, 0] True True True
+2001 2 3 4 5 6 5 34 0 None None
+time.struct_time(tm_year=0, tm_mon=1, tm_mday=2, tm_hour=3, tm_min=4, tm_sec=5, tm_wday=6, tm_yday=7, tm_isdst=8) 9 9 10
+time.struct_time(tm_year=0, tm_mon=1, tm_mday=2, tm_hour=3, tm_min=4, tm_sec=5, tm_wday=6, tm_yday=7, tm_isdst=8) 9 9 None
+time.struct_time(tm_year='a', tm_mon='b', tm_mday='c', tm_hour='d', tm_min='e', tm_sec='f', tm_wday='g', tm_yday='h', tm_isdst='i') a
+time.struct_time(tm_year=1, tm_mon=1, tm_mday=1, tm_hour=1, tm_min=1, tm_sec=1, tm_wday=1, tm_yday=1, tm_isdst=1) Z 5
+time.struct_time(tm_year=1, tm_mon=1, tm_mday=1, tm_hour=1, tm_min=1, tm_sec=1, tm_wday=1, tm_yday=1, tm_isdst=1) Q None
+struct_time ((1, 2, 3),)  TypeError: time.struct_time() takes an at least 9-sequence (3-sequence given)
+struct_time (range(0, 8),)  TypeError: time.struct_time() takes an at least 9-sequence (8-sequence given)
+struct_time (range(0, 12),)  TypeError: time.struct_time() takes an at most 11-sequence (12-sequence given)
+struct_time (5,)  TypeError: constructor requires a sequence
+struct_time (None,)  TypeError: constructor requires a sequence
+struct_time ([1, 1, 1, 1, 1, 1, 1, 1, 1], 5)  TypeError: time.struct_time() takes a dict as second arg, if any
+struct_time ([1, 1, 1, 1, 1, 1, 1, 1, 1], {'x': 1})  TypeError: time.struct_time() got duplicate or unexpected field name(s)
+struct_time ([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], {'tm_zone': 1})  TypeError: time.struct_time() got duplicate or unexpected field name(s)
+setattr (time.struct_time(tm_year=1, tm_mon=1, tm_mday=1, tm_hour=1, tm_min=1, tm_sec=1, tm_wday=1, tm_yday=1, tm_isdst=1), 'x', 5)  AttributeError: 'time.struct_time' object has no attribute 'x' and no __dict__ for setting new attributes
+getattr (time.struct_time(tm_year=1, tm_mon=1, tm_mday=1, tm_hour=1, tm_min=1, tm_sec=1, tm_wday=1, tm_yday=1, tm_isdst=1), 'nothing')  AttributeError: 'time.struct_time' object has no attribute 'nothing'
+__getitem__ (9,)  IndexError: tuple index out of range
+__getitem__ (10,)  IndexError: tuple index out of range
+True time.struct_time(tm_year=1970, tm_mon=1, tm_mday=1, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=3, tm_yday=1, tm_isdst=0) GMT 0
+(<class 'time.struct_time'>, ((1970, 1, 1, 0, 0, 0, 3, 1, 0), {'tm_zone': 'GMT', 'tm_gmtoff': 0}))
+time.struct_time(tm_year=2000, tm_mon=1, tm_mday=1, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=3, tm_yday=1, tm_isdst=0) X
+__replace__ () {'x': 1} TypeError: Got unexpected field name(s): ['x']
+(1970, 1, 1, 0, 0, 0, 3, 1, 0, 1) tuple True tuple True 1970 4 0
+matched 1970 1 1
+matched 1970 GMT
+1970 [1, 1, 0, 0, 0, 3, 1, 0]
+TypeError: type 'time.struct_time' is not an acceptable base type
+['count', 'index', 'n_fields', 'n_sequence_fields', 'n_unnamed_fields', 'tm_gmtoff', 'tm_hour', 'tm_isdst', 'tm_mday', 'tm_min', 'tm_mon', 'tm_sec', 'tm_wday', 'tm_yday', 'tm_year', 'tm_zone']
+time.struct_time(tm_year=1970, tm_mon=1, tm_mday=2, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=4, tm_yday=2, tm_isdst=0) True GMT

@@ -1,0 +1,139 @@
+status: 0
+script: 074bfc9d42707054
+---
+['BEGIN TRANSACTION;', 'CREATE TABLE t(a integer primary key, b text not null, c real default 1.5);', 'INSERT INTO "t" VALUES(1,\'x\',1.5);', 'INSERT INTO "t" VALUES(2,\'y\'\'z\',1.5);', 'INSERT INTO "t" VALUES(3,\'€\',1.5);', 'CREATE INDEX ti on t(b);', 'CREATE VIEW v as select a from t;', 'CREATE TRIGGER tr after insert on t begin select 1; end;', 'COMMIT;']
+['BEGIN TRANSACTION;', 'CREATE TABLE t(a integer primary key, b text not null, c real default 1.5);', 'INSERT INTO "t" VALUES(1,\'x\',1.5);', 'INSERT INTO "t" VALUES(2,\'y\'\'z\',1.5);', 'INSERT INTO "t" VALUES(3,\'€\',1.5);', 'CREATE INDEX ti on t(b);', 'CREATE TRIGGER tr after insert on t begin select 1; end;', 'COMMIT;']
+['BEGIN TRANSACTION;', 'COMMIT;']
+TypeError: iterdump() takes no positional arguments
+TypeError: iterdump() got an unexpected keyword argument 'nope'
+[(1, 'x', 1.5), (2, "y'z", 1.5), (3, '€', 1.5)]
+None [(1, 'x', 1.5), (2, "y'z", 1.5), (3, '€', 1.5)]
+True True 0 True (3,)
+TypeError: backup() missing required argument 'target' (pos 1)
+TypeError: backup() argument 'target' must be sqlite3.Connection, not int
+TypeError: backup() argument 'target' must be sqlite3.Connection, not None
+ValueError: target cannot be the same connection instance
+TypeError: backup() takes exactly 1 positional argument (2 given)
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: progress argument must be a callable
+TypeError: backup() argument 'name' must be str, not int
+OperationalError: unknown database nope
+TypeError: must be real number, not str
+TypeError: backup() got an unexpected keyword argument 'nope'
+ZeroDivisionError: division by zero
+None
+OperationalError: destination database is in use
+ProgrammingError: Cannot operate on a closed database.
+<class 'bytes'> b'SQLite format 3' 0 True
+OperationalError: unable to serialize 'nope'
+TypeError: serialize() takes no positional arguments
+TypeError: serialize() argument 'name' must be str, not int
+OperationalError: unable to serialize 'temp'
+None [('x',), ("y'z",), ('€',)]
+(4,)
+(3,)
+TypeError: deserialize() takes exactly 1 positional argument (0 given)
+TypeError: a bytes-like object is required, not 'int'
+TypeError: deserialize() takes exactly 1 positional argument (2 given)
+TypeError: deserialize() argument 'name' must be str, not int
+TypeError: deserialize() takes exactly 1 positional argument (0 given)
+DatabaseError: file is not a database
+MemoryError: 
+<sqlite3.Cursor object>
+DatabaseError: file is not a database
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+True True 50
+DataError: query string is too large
+DataError: query string is too large
+DataError: query string is too large
+(1,)
+True 2
+OperationalError: too many SQL variables
+True True
+DataError: string or blob too big
+DataError: string or blob too big
+ProgrammingError: 'category' is out of bounds
+ProgrammingError: 'category' is out of bounds
+ProgrammingError: 'category' is out of bounds
+TypeError: Connection.getlimit() takes exactly one argument (0 given)
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: setlimit expected 2 arguments, got 1
+TypeError: 'str' object cannot be interpreted as an integer
+OverflowError: Python int too large to convert to C int
+TypeError: Connection.getlimit() takes no keyword arguments
+TypeError: setlimit expected 2 arguments, got 3
+<class 'bool'> True True
+<class 'bool'> True True
+<class 'bool'> True True
+<class 'bool'> True True
+True (1,)
+True
+ValueError: unknown config 'op': -1
+ValueError: unknown config 'op': 1000
+ValueError: unknown config 'op': 12345
+TypeError: Connection.getconfig() takes exactly one argument (0 given)
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: setconfig expected at least 1 argument, got 0
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: setconfig expected at most 2 arguments, got 3
+TypeError: Connection.getconfig() takes no keyword arguments
+True False False False True
+TypeError: complete_statement() missing required argument 'statement' (pos 1)
+TypeError: complete_statement() argument 'statement' must be str, not int
+ValueError: embedded null character
+TypeError: complete_statement() takes at most 1 argument (2 given)
+TypeError: complete_statement() argument 'statement' must be str, not bytes
+None
+TypeError: Connection.interrupt() takes no arguments (1 given)
+(1,)
+OperationalError: interrupted
+True
+AttributeError: attribute 'total_changes' of 'sqlite3.Connection' objects is not writable
+AttributeError: attribute 'in_transaction' of 'sqlite3.Connection' objects is not writable
+AttributeError: 'sqlite3.Connection' object has no attribute 'nope' and no __dict__ for setting new attributes
+AttributeError: 'sqlite3.Connection' object has no attribute 'nope'
+ProgrammingError: Recursive use of cursors not allowed.
+ProgrammingError: Recursive use of cursors not allowed.
+ProgrammingError: Recursive use of cursors not allowed.
+ProgrammingError: Recursive use of cursors not allowed.
+ZeroDivisionError: gen
+-1 (1,)
+None None
+ProgrammingError: Cannot operate on a closed cursor.
+ProgrammingError: Cannot operate on a closed cursor.
+ProgrammingError: Cannot operate on a closed cursor.
+ProgrammingError: Cannot operate on a closed cursor.
+ProgrammingError: Cannot operate on a closed cursor.
+ProgrammingError: Cannot operate on a closed cursor.
+ProgrammingError: Cannot operate on a closed cursor.
+ProgrammingError: Cannot operate on a closed cursor.
+(('1', None, None, None, None, None, None),) -1 3 True 1
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+None <class 'str'> Error None
+[('ResourceWarning', 'unclosed database in <sqlite3.Connection object')]
+0
+('msg', 1) False ('msg', 1) Error('msg', 1)
+('msg', 1) False ('msg', 1) OperationalError('msg', 1)
+('x',)
+TypeError: cannot pickle 'sqlite3.Connection' object
+TypeError: cannot pickle 'sqlite3.Cursor' object
+True False True

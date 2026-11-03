@@ -1,0 +1,34 @@
+status: 0
+oracle: none
+mask: addresses
+---
+1 2 1 shadow function undefined three three ten 6
+a,b,items,3,10 {"a":1,"b":2,"items":"shadow","3":"three","10":"ten"}
+true false true false
+{'a': 1, 'b': 2.0, 'items': 'shadow', 3: 'three', (1, 2): 'tuple key', '10': 'ten', 'c': 5, 7: 'seven'}
+true true true {'a': 1, 'b': 2.0, 'items': 'shadow', 3: 'three', (1, 2): 'tuple key', '10': 'ten'}
+0 {} 0
+for-in z 1
+for-in y 2
+{"z":1,"y":2} z,1|y,2
+undefined undefined undefined dict_keys([]) {}
+1 2 number x undefined undefined 4 true false undefined
+0,1,2,3 [1,2,"x",null] 4
+2 8 undefined 3 [2,5,8] 2 3
+65 2 [65,66] 122
+bytearray(b'Ayz')
+caught TypeError 'tuple' object does not support item assignment
+caught ValueError byte must be in range(0, 256)
+[3] [4] 1 undefined
+20 undefined 3 [10,20,30] 0,1,2
+[21, 30]
+true 4 1 3.5 [1,2,3.5,[4]] 3 true 2.0
+[1, 2.0, 3.5, [4], 9]
+{"list":[1,[2,3]],"dict":{},"t":[true,false]}
+b,a,_p {"b":1,"a":[1,2]} x,y {"x":1,"y":2}
+sub sub! 3 s "sub" SUB object
+42 82 41 41 41 true object
+2.5 [1.5] 1 1.5 false
+bigint 1180591620717411303424 1180591620717411303425
+[object tuple] [object Plain] (1, 2.0, 'x', None) 1 (1, 2.0, 'x', None) {3}
+NoneType NoneType None int float str list bool int JSObject JSFunction

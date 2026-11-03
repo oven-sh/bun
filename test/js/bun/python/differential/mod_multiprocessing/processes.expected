@@ -1,0 +1,12 @@
+status: 0
+script: 9764b7cae886968b
+---
+True True
+[0, 1, 4, 9, 16, 25] 49 [1, 4, 9]
+ValueError in the child
+hello
+0 False
+3
+-15
+False
+ValueError cannot find context for 'no such method'

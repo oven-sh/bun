@@ -1,0 +1,14 @@
+status: 0
+script: bd142a3f22d1fadc
+---
+('radd', [1])
+('rmul', [1])
+('radd', bytearray(b'a'))
+TypeError can't multiply sequence by non-int of type 'list'
+TypeError can't multiply sequence by non-int of type 'str'
+TypeError can't multiply sequence by non-int of type 'float'
+TypeError 'str' object doesn't support item deletion
+TypeError 'tuple' object doesn't support item deletion
+TypeError 'str' object does not support item deletion
+TypeError 'str' object does not support item assignment
+TypeError 'str' object does not support item assignment

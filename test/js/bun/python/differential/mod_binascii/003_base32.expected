@@ -1,0 +1,473 @@
+status: 0
+script: 6ad6f4cd50652954
+---
+0 b'' True b'' True b''
+1 b'DE======' True b'DE' True b'34======'
+2 b'34EQ====' True b'34EQ' True b'RS4G===='
+3 b'U2V7M===' True b'U2V7M' True b'KQLVC==='
+4 b'NRHHJEQ=' True b'NRHHJEQ' True b'DH7794G='
+5 b'GLYPFGNU' True b'GLYPFGNU' True b'6BOF56DK'
+6 b'7CJW7H2W3Y======' True b'7CJW7H2W3Y' True b'V29MV7QMRO======'
+7 b'X43O3JXXXLBA====' True b'X43O3JXXXLBA' True b'NSRER9NNNB10===='
+8 b'QXMGXLEYS332M===' True b'QXMGXLEYS332M' True b'GNC6NB4OIRRQC==='
+9 b'JN56TMZZOMWYIEY=' True b'JN56TMZZOMWYIEY' True b'9DTUJCPPECMO84O='
+10 b'CIOWNOO3J5RGEDKL' True b'CIOWNOO3J5RGEDKL' True b'28EMDEER9TH643AB'
+11 b'3DAOJQD4FOLUAB3HWU======' True b'3DAOJQD4FOLUAB3HWU' True b'R30E9G3S5EBK01R7MK======'
+12 b'TZRWFRQ5BDGR2AMERWWA====' True b'TZRWFRQ5BDGR2AMERWWA' True b'JPHM5HGT136HQ0C4HMM0===='
+13 b'MUC57TN74QBPX65AMXPSE===' True b'MUC57TN74QBPX65AMXPSE' True b'CK2TVJDVSG1FNUT0CNFI4==='
+0 b'YZ7IC22L7PRPWVHWXXPXYHHBQ4A36MO6KZZA6R3HM2DVTKUIHRM6U===' b'' b'YZ7IC22L7M'
+1 b'YZ7IC22L\n7PRPWVHW\nXXPXYHHB\nQ4A36MO6\nKZZA6R3H\nM2DVTKUI\nHRM6U===' b'' b'YZ7IC22L\n7M'
+7 b'YZ7IC22L\n7PRPWVHW\nXXPXYHHB\nQ4A36MO6\nKZZA6R3H\nM2DVTKUI\nHRM6U===' b'' b'YZ7IC22L\n7M'
+8 b'YZ7IC22L\n7PRPWVHW\nXXPXYHHB\nQ4A36MO6\nKZZA6R3H\nM2DVTKUI\nHRM6U===' b'' b'YZ7IC22L\n7M'
+9 b'YZ7IC22L\n7PRPWVHW\nXXPXYHHB\nQ4A36MO6\nKZZA6R3H\nM2DVTKUI\nHRM6U===' b'' b'YZ7IC22L\n7M'
+15 b'YZ7IC22L\n7PRPWVHW\nXXPXYHHB\nQ4A36MO6\nKZZA6R3H\nM2DVTKUI\nHRM6U===' b'' b'YZ7IC22L\n7M'
+16 b'YZ7IC22L7PRPWVHW\nXXPXYHHBQ4A36MO6\nKZZA6R3HM2DVTKUI\nHRM6U===' b'' b'YZ7IC22L7M'
+17 b'YZ7IC22L7PRPWVHW\nXXPXYHHBQ4A36MO6\nKZZA6R3HM2DVTKUI\nHRM6U===' b'' b'YZ7IC22L7M'
+40 b'YZ7IC22L7PRPWVHWXXPXYHHBQ4A36MO6KZZA6R3H\nM2DVTKUIHRM6U===' b'' b'YZ7IC22L7M'
+55 b'YZ7IC22L7PRPWVHWXXPXYHHBQ4A36MO6KZZA6R3HM2DVTKUI\nHRM6U===' b'' b'YZ7IC22L7M'
+56 b'YZ7IC22L7PRPWVHWXXPXYHHBQ4A36MO6KZZA6R3HM2DVTKUIHRM6U===' b'' b'YZ7IC22L7M'
+57 b'YZ7IC22L7PRPWVHWXXPXYHHBQ4A36MO6KZZA6R3HM2DVTKUIHRM6U===' b'' b'YZ7IC22L7M'
+1000 b'YZ7IC22L7PRPWVHWXXPXYHHBQ4A36MO6KZZA6R3HM2DVTKUIHRM6U===' b'' b'YZ7IC22L7M'
+builtins.TypeError a bytes-like object is required, not 'str'
+builtins.ValueError Cannot convert negative int
+builtins.ValueError alphabet must have length 32
+builtins.TypeError a bytes-like object is required, not 'str'
+builtins.TypeError b2a_base32() takes exactly 1 positional argument (2 given)
+builtins.TypeError b2a_base32() takes exactly 1 positional argument (0 given)
+builtins.TypeError b2a_base32() got an unexpected keyword argument 'newline'
+b'\x0c\x05\x11\x06\x06==='
+b'' -> b''
+    {'padded': False} -> b''
+    {'canonical': True} -> b''
+    {'ignorechars': b' \n'} -> b''
+    {'ignorechars': b'='} -> b''
+    {'ignorechars': b'=\n 018'} -> b''
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> b''
+    {'padded': False, 'ignorechars': b'='} -> b''
+    {'padded': False, 'canonical': True} -> b''
+b'ME======' -> b'a'
+    {'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> b'a'
+    {'ignorechars': b' \n'} -> b'a'
+    {'ignorechars': b'='} -> b'a'
+    {'ignorechars': b'=\n 018'} -> b'a'
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> b'\xb3'
+    {'padded': False, 'ignorechars': b'='} -> b'a'
+    {'padded': False, 'canonical': True} -> binascii.Error Padding not allowed
+b'MFRA====' -> b'ab'
+    {'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> b'ab'
+    {'ignorechars': b' \n'} -> b'ab'
+    {'ignorechars': b'='} -> b'ab'
+    {'ignorechars': b'=\n 018'} -> b'ab'
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> b'\xb3\xf6'
+    {'padded': False, 'ignorechars': b'='} -> b'ab'
+    {'padded': False, 'canonical': True} -> binascii.Error Padding not allowed
+b'MFRGG===' -> b'abc'
+    {'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> b'abc'
+    {'ignorechars': b' \n'} -> b'abc'
+    {'ignorechars': b'='} -> b'abc'
+    {'ignorechars': b'=\n 018'} -> b'abc'
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> b'\xb3\xf7\x08'
+    {'padded': False, 'ignorechars': b'='} -> b'abc'
+    {'padded': False, 'canonical': True} -> binascii.Error Padding not allowed
+b'MFRGGZA=' -> b'abcd'
+    {'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> b'abcd'
+    {'ignorechars': b' \n'} -> b'abcd'
+    {'ignorechars': b'='} -> b'abcd'
+    {'ignorechars': b'=\n 018'} -> b'abcd'
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Only base32 data is allowed
+    {'padded': False, 'ignorechars': b'='} -> b'abcd'
+    {'padded': False, 'canonical': True} -> binascii.Error Padding not allowed
+b'MFRGGZDF' -> b'abcde'
+    {'padded': False} -> b'abcde'
+    {'canonical': True} -> b'abcde'
+    {'ignorechars': b' \n'} -> b'abcde'
+    {'ignorechars': b'='} -> b'abcde'
+    {'ignorechars': b'=\n 018'} -> b'abcde'
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Only base32 data is allowed
+    {'padded': False, 'ignorechars': b'='} -> b'abcde'
+    {'padded': False, 'canonical': True} -> b'abcde'
+MFRGGZDF -> b'abcde'
+    {'padded': False} -> b'abcde'
+    {'canonical': True} -> b'abcde'
+    {'ignorechars': b' \n'} -> b'abcde'
+    {'ignorechars': b'='} -> b'abcde'
+    {'ignorechars': b'=\n 018'} -> b'abcde'
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Only base32 data is allowed
+    {'padded': False, 'ignorechars': b'='} -> b'abcde'
+    {'padded': False, 'canonical': True} -> b'abcde'
+bytearray(b'MFRGGZDF') -> b'abcde'
+    {'padded': False} -> b'abcde'
+    {'canonical': True} -> b'abcde'
+    {'ignorechars': b' \n'} -> b'abcde'
+    {'ignorechars': b'='} -> b'abcde'
+    {'ignorechars': b'=\n 018'} -> b'abcde'
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Only base32 data is allowed
+    {'padded': False, 'ignorechars': b'='} -> b'abcde'
+    {'padded': False, 'canonical': True} -> b'abcde'
+b'ME' -> binascii.Error Incorrect padding
+    {'padded': False} -> b'a'
+    {'canonical': True} -> binascii.Error Incorrect padding
+    {'ignorechars': b' \n'} -> binascii.Error Incorrect padding
+    {'ignorechars': b'='} -> binascii.Error Incorrect padding
+    {'ignorechars': b'=\n 018'} -> binascii.Error Incorrect padding
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Incorrect padding
+    {'padded': False, 'ignorechars': b'='} -> b'a'
+    {'padded': False, 'canonical': True} -> b'a'
+b'MFRA' -> binascii.Error Incorrect padding
+    {'padded': False} -> b'ab'
+    {'canonical': True} -> binascii.Error Incorrect padding
+    {'ignorechars': b' \n'} -> binascii.Error Incorrect padding
+    {'ignorechars': b'='} -> binascii.Error Incorrect padding
+    {'ignorechars': b'=\n 018'} -> binascii.Error Incorrect padding
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Incorrect padding
+    {'padded': False, 'ignorechars': b'='} -> b'ab'
+    {'padded': False, 'canonical': True} -> b'ab'
+b'MFRGG' -> binascii.Error Incorrect padding
+    {'padded': False} -> b'abc'
+    {'canonical': True} -> binascii.Error Incorrect padding
+    {'ignorechars': b' \n'} -> binascii.Error Incorrect padding
+    {'ignorechars': b'='} -> binascii.Error Incorrect padding
+    {'ignorechars': b'=\n 018'} -> binascii.Error Incorrect padding
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Incorrect padding
+    {'padded': False, 'ignorechars': b'='} -> b'abc'
+    {'padded': False, 'canonical': True} -> b'abc'
+b'MFRGGZA' -> binascii.Error Incorrect padding
+    {'padded': False} -> b'abcd'
+    {'canonical': True} -> binascii.Error Incorrect padding
+    {'ignorechars': b' \n'} -> binascii.Error Incorrect padding
+    {'ignorechars': b'='} -> binascii.Error Incorrect padding
+    {'ignorechars': b'=\n 018'} -> binascii.Error Incorrect padding
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Only base32 data is allowed
+    {'padded': False, 'ignorechars': b'='} -> b'abcd'
+    {'padded': False, 'canonical': True} -> b'abcd'
+b'M' -> binascii.Error Invalid base32-encoded string: number of data characters (1) cannot be 1, 3, or 6 more than a multiple of 8
+    {'padded': False} -> binascii.Error Invalid base32-encoded string: number of data characters (1) cannot be 1, 3, or 6 more than a multiple of 8
+    {'canonical': True} -> binascii.Error Invalid base32-encoded string: number of data characters (1) cannot be 1, 3, or 6 more than a multiple of 8
+    {'ignorechars': b' \n'} -> binascii.Error Invalid base32-encoded string: number of data characters (1) cannot be 1, 3, or 6 more than a multiple of 8
+    {'ignorechars': b'='} -> binascii.Error Invalid base32-encoded string: number of data characters (1) cannot be 1, 3, or 6 more than a multiple of 8
+    {'ignorechars': b'=\n 018'} -> binascii.Error Invalid base32-encoded string: number of data characters (1) cannot be 1, 3, or 6 more than a multiple of 8
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Invalid base32-encoded string: number of data characters (1) cannot be 1, 3, or 6 more than a multiple of 8
+    {'padded': False, 'ignorechars': b'='} -> binascii.Error Invalid base32-encoded string: number of data characters (1) cannot be 1, 3, or 6 more than a multiple of 8
+    {'padded': False, 'canonical': True} -> binascii.Error Invalid base32-encoded string: number of data characters (1) cannot be 1, 3, or 6 more than a multiple of 8
+b'MFR' -> binascii.Error Invalid base32-encoded string: number of data characters (3) cannot be 1, 3, or 6 more than a multiple of 8
+    {'padded': False} -> binascii.Error Invalid base32-encoded string: number of data characters (3) cannot be 1, 3, or 6 more than a multiple of 8
+    {'canonical': True} -> binascii.Error Invalid base32-encoded string: number of data characters (3) cannot be 1, 3, or 6 more than a multiple of 8
+    {'ignorechars': b' \n'} -> binascii.Error Invalid base32-encoded string: number of data characters (3) cannot be 1, 3, or 6 more than a multiple of 8
+    {'ignorechars': b'='} -> binascii.Error Invalid base32-encoded string: number of data characters (3) cannot be 1, 3, or 6 more than a multiple of 8
+    {'ignorechars': b'=\n 018'} -> binascii.Error Invalid base32-encoded string: number of data characters (3) cannot be 1, 3, or 6 more than a multiple of 8
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Invalid base32-encoded string: number of data characters (3) cannot be 1, 3, or 6 more than a multiple of 8
+    {'padded': False, 'ignorechars': b'='} -> binascii.Error Invalid base32-encoded string: number of data characters (3) cannot be 1, 3, or 6 more than a multiple of 8
+    {'padded': False, 'canonical': True} -> binascii.Error Invalid base32-encoded string: number of data characters (3) cannot be 1, 3, or 6 more than a multiple of 8
+b'MFRGGZ' -> binascii.Error Invalid base32-encoded string: number of data characters (6) cannot be 1, 3, or 6 more than a multiple of 8
+    {'padded': False} -> binascii.Error Invalid base32-encoded string: number of data characters (6) cannot be 1, 3, or 6 more than a multiple of 8
+    {'canonical': True} -> binascii.Error Invalid base32-encoded string: number of data characters (6) cannot be 1, 3, or 6 more than a multiple of 8
+    {'ignorechars': b' \n'} -> binascii.Error Invalid base32-encoded string: number of data characters (6) cannot be 1, 3, or 6 more than a multiple of 8
+    {'ignorechars': b'='} -> binascii.Error Invalid base32-encoded string: number of data characters (6) cannot be 1, 3, or 6 more than a multiple of 8
+    {'ignorechars': b'=\n 018'} -> binascii.Error Invalid base32-encoded string: number of data characters (6) cannot be 1, 3, or 6 more than a multiple of 8
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Only base32 data is allowed
+    {'padded': False, 'ignorechars': b'='} -> binascii.Error Invalid base32-encoded string: number of data characters (6) cannot be 1, 3, or 6 more than a multiple of 8
+    {'padded': False, 'canonical': True} -> binascii.Error Invalid base32-encoded string: number of data characters (6) cannot be 1, 3, or 6 more than a multiple of 8
+b'MFRGGZDFM' -> binascii.Error Invalid base32-encoded string: number of data characters (9) cannot be 1, 3, or 6 more than a multiple of 8
+    {'padded': False} -> binascii.Error Invalid base32-encoded string: number of data characters (9) cannot be 1, 3, or 6 more than a multiple of 8
+    {'canonical': True} -> binascii.Error Invalid base32-encoded string: number of data characters (9) cannot be 1, 3, or 6 more than a multiple of 8
+    {'ignorechars': b' \n'} -> binascii.Error Invalid base32-encoded string: number of data characters (9) cannot be 1, 3, or 6 more than a multiple of 8
+    {'ignorechars': b'='} -> binascii.Error Invalid base32-encoded string: number of data characters (9) cannot be 1, 3, or 6 more than a multiple of 8
+    {'ignorechars': b'=\n 018'} -> binascii.Error Invalid base32-encoded string: number of data characters (9) cannot be 1, 3, or 6 more than a multiple of 8
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Only base32 data is allowed
+    {'padded': False, 'ignorechars': b'='} -> binascii.Error Invalid base32-encoded string: number of data characters (9) cannot be 1, 3, or 6 more than a multiple of 8
+    {'padded': False, 'canonical': True} -> binascii.Error Invalid base32-encoded string: number of data characters (9) cannot be 1, 3, or 6 more than a multiple of 8
+b'me======' -> binascii.Error Only base32 data is allowed
+    {'padded': False} -> binascii.Error Only base32 data is allowed
+    {'canonical': True} -> binascii.Error Only base32 data is allowed
+    {'ignorechars': b' \n'} -> binascii.Error Only base32 data is allowed
+    {'ignorechars': b'='} -> binascii.Error Only base32 data is allowed
+    {'ignorechars': b'=\n 018'} -> binascii.Error Only base32 data is allowed
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Only base32 data is allowed
+    {'padded': False, 'ignorechars': b'='} -> binascii.Error Only base32 data is allowed
+    {'padded': False, 'canonical': True} -> binascii.Error Only base32 data is allowed
+b'ME=====' -> binascii.Error Incorrect padding
+    {'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Incorrect padding
+    {'ignorechars': b' \n'} -> binascii.Error Incorrect padding
+    {'ignorechars': b'='} -> binascii.Error Incorrect padding
+    {'ignorechars': b'=\n 018'} -> binascii.Error Incorrect padding
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Incorrect padding
+    {'padded': False, 'ignorechars': b'='} -> b'a'
+    {'padded': False, 'canonical': True} -> binascii.Error Padding not allowed
+b'ME=======' -> binascii.Error Excess padding not allowed
+    {'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Excess padding not allowed
+    {'ignorechars': b' \n'} -> binascii.Error Excess padding not allowed
+    {'ignorechars': b'='} -> b'a'
+    {'ignorechars': b'=\n 018'} -> b'a'
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Excess padding not allowed
+    {'padded': False, 'ignorechars': b'='} -> b'a'
+    {'padded': False, 'canonical': True} -> binascii.Error Padding not allowed
+b'ME======ME======' -> binascii.Error Excess data after padding
+    {'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Excess data after padding
+    {'ignorechars': b' \n'} -> binascii.Error Excess data after padding
+    {'ignorechars': b'='} -> b'a\x18'
+    {'ignorechars': b'=\n 018'} -> b'a\x18'
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Excess data after padding
+    {'padded': False, 'ignorechars': b'='} -> b'a\x18'
+    {'padded': False, 'canonical': True} -> binascii.Error Padding not allowed
+b'ME======M' -> binascii.Error Excess data after padding
+    {'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Excess data after padding
+    {'ignorechars': b' \n'} -> binascii.Error Excess data after padding
+    {'ignorechars': b'='} -> binascii.Error Invalid base32-encoded string: number of data characters (3) cannot be 1, 3, or 6 more than a multiple of 8
+    {'ignorechars': b'=\n 018'} -> binascii.Error Invalid base32-encoded string: number of data characters (3) cannot be 1, 3, or 6 more than a multiple of 8
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Excess data after padding
+    {'padded': False, 'ignorechars': b'='} -> binascii.Error Invalid base32-encoded string: number of data characters (3) cannot be 1, 3, or 6 more than a multiple of 8
+    {'padded': False, 'canonical': True} -> binascii.Error Padding not allowed
+b'=' -> binascii.Error Leading padding not allowed
+    {'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Leading padding not allowed
+    {'ignorechars': b' \n'} -> binascii.Error Leading padding not allowed
+    {'ignorechars': b'='} -> b''
+    {'ignorechars': b'=\n 018'} -> b''
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Leading padding not allowed
+    {'padded': False, 'ignorechars': b'='} -> b''
+    {'padded': False, 'canonical': True} -> binascii.Error Padding not allowed
+b'========' -> binascii.Error Leading padding not allowed
+    {'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Leading padding not allowed
+    {'ignorechars': b' \n'} -> binascii.Error Leading padding not allowed
+    {'ignorechars': b'='} -> b''
+    {'ignorechars': b'=\n 018'} -> b''
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Leading padding not allowed
+    {'padded': False, 'ignorechars': b'='} -> b''
+    {'padded': False, 'canonical': True} -> binascii.Error Padding not allowed
+b'=ME=====' -> binascii.Error Leading padding not allowed
+    {'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Leading padding not allowed
+    {'ignorechars': b' \n'} -> binascii.Error Leading padding not allowed
+    {'ignorechars': b'='} -> b'a'
+    {'ignorechars': b'=\n 018'} -> b'a'
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Leading padding not allowed
+    {'padded': False, 'ignorechars': b'='} -> b'a'
+    {'padded': False, 'canonical': True} -> binascii.Error Padding not allowed
+b'ME=A====' -> binascii.Error Discontinuous padding not allowed
+    {'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Discontinuous padding not allowed
+    {'ignorechars': b' \n'} -> binascii.Error Discontinuous padding not allowed
+    {'ignorechars': b'='} -> binascii.Error Invalid base32-encoded string: number of data characters (3) cannot be 1, 3, or 6 more than a multiple of 8
+    {'ignorechars': b'=\n 018'} -> binascii.Error Invalid base32-encoded string: number of data characters (3) cannot be 1, 3, or 6 more than a multiple of 8
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Discontinuous padding not allowed
+    {'padded': False, 'ignorechars': b'='} -> binascii.Error Invalid base32-encoded string: number of data characters (3) cannot be 1, 3, or 6 more than a multiple of 8
+    {'padded': False, 'canonical': True} -> binascii.Error Padding not allowed
+b'ME==A===' -> binascii.Error Discontinuous padding not allowed
+    {'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Discontinuous padding not allowed
+    {'ignorechars': b' \n'} -> binascii.Error Discontinuous padding not allowed
+    {'ignorechars': b'='} -> binascii.Error Invalid base32-encoded string: number of data characters (3) cannot be 1, 3, or 6 more than a multiple of 8
+    {'ignorechars': b'=\n 018'} -> binascii.Error Invalid base32-encoded string: number of data characters (3) cannot be 1, 3, or 6 more than a multiple of 8
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Discontinuous padding not allowed
+    {'padded': False, 'ignorechars': b'='} -> binascii.Error Invalid base32-encoded string: number of data characters (3) cannot be 1, 3, or 6 more than a multiple of 8
+    {'padded': False, 'canonical': True} -> binascii.Error Padding not allowed
+b'M=======' -> binascii.Error Invalid base32-encoded string: number of data characters (1) cannot be 1, 3, or 6 more than a multiple of 8
+    {'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Invalid base32-encoded string: number of data characters (1) cannot be 1, 3, or 6 more than a multiple of 8
+    {'ignorechars': b' \n'} -> binascii.Error Invalid base32-encoded string: number of data characters (1) cannot be 1, 3, or 6 more than a multiple of 8
+    {'ignorechars': b'='} -> binascii.Error Invalid base32-encoded string: number of data characters (1) cannot be 1, 3, or 6 more than a multiple of 8
+    {'ignorechars': b'=\n 018'} -> binascii.Error Invalid base32-encoded string: number of data characters (1) cannot be 1, 3, or 6 more than a multiple of 8
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Invalid base32-encoded string: number of data characters (1) cannot be 1, 3, or 6 more than a multiple of 8
+    {'padded': False, 'ignorechars': b'='} -> binascii.Error Invalid base32-encoded string: number of data characters (1) cannot be 1, 3, or 6 more than a multiple of 8
+    {'padded': False, 'canonical': True} -> binascii.Error Padding not allowed
+b'MFR=====' -> binascii.Error Invalid base32-encoded string: number of data characters (3) cannot be 1, 3, or 6 more than a multiple of 8
+    {'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Invalid base32-encoded string: number of data characters (3) cannot be 1, 3, or 6 more than a multiple of 8
+    {'ignorechars': b' \n'} -> binascii.Error Invalid base32-encoded string: number of data characters (3) cannot be 1, 3, or 6 more than a multiple of 8
+    {'ignorechars': b'='} -> binascii.Error Invalid base32-encoded string: number of data characters (3) cannot be 1, 3, or 6 more than a multiple of 8
+    {'ignorechars': b'=\n 018'} -> binascii.Error Invalid base32-encoded string: number of data characters (3) cannot be 1, 3, or 6 more than a multiple of 8
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Invalid base32-encoded string: number of data characters (3) cannot be 1, 3, or 6 more than a multiple of 8
+    {'padded': False, 'ignorechars': b'='} -> binascii.Error Invalid base32-encoded string: number of data characters (3) cannot be 1, 3, or 6 more than a multiple of 8
+    {'padded': False, 'canonical': True} -> binascii.Error Padding not allowed
+b'MFRGGZ==' -> binascii.Error Invalid base32-encoded string: number of data characters (6) cannot be 1, 3, or 6 more than a multiple of 8
+    {'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Invalid base32-encoded string: number of data characters (6) cannot be 1, 3, or 6 more than a multiple of 8
+    {'ignorechars': b' \n'} -> binascii.Error Invalid base32-encoded string: number of data characters (6) cannot be 1, 3, or 6 more than a multiple of 8
+    {'ignorechars': b'='} -> binascii.Error Invalid base32-encoded string: number of data characters (6) cannot be 1, 3, or 6 more than a multiple of 8
+    {'ignorechars': b'=\n 018'} -> binascii.Error Invalid base32-encoded string: number of data characters (6) cannot be 1, 3, or 6 more than a multiple of 8
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Only base32 data is allowed
+    {'padded': False, 'ignorechars': b'='} -> binascii.Error Invalid base32-encoded string: number of data characters (6) cannot be 1, 3, or 6 more than a multiple of 8
+    {'padded': False, 'canonical': True} -> binascii.Error Padding not allowed
+b'ME======\n' -> binascii.Error Only base32 data is allowed
+    {'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Only base32 data is allowed
+    {'ignorechars': b' \n'} -> b'a'
+    {'ignorechars': b'='} -> binascii.Error Only base32 data is allowed
+    {'ignorechars': b'=\n 018'} -> b'a'
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Only base32 data is allowed
+    {'padded': False, 'ignorechars': b'='} -> binascii.Error Only base32 data is allowed
+    {'padded': False, 'canonical': True} -> binascii.Error Padding not allowed
+b'ME ======' -> binascii.Error Only base32 data is allowed
+    {'padded': False} -> binascii.Error Only base32 data is allowed
+    {'canonical': True} -> binascii.Error Only base32 data is allowed
+    {'ignorechars': b' \n'} -> b'a'
+    {'ignorechars': b'='} -> binascii.Error Only base32 data is allowed
+    {'ignorechars': b'=\n 018'} -> b'a'
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Only base32 data is allowed
+    {'padded': False, 'ignorechars': b'='} -> binascii.Error Only base32 data is allowed
+    {'padded': False, 'canonical': True} -> binascii.Error Only base32 data is allowed
+b'M E======' -> binascii.Error Only base32 data is allowed
+    {'padded': False} -> binascii.Error Only base32 data is allowed
+    {'canonical': True} -> binascii.Error Only base32 data is allowed
+    {'ignorechars': b' \n'} -> b'a'
+    {'ignorechars': b'='} -> binascii.Error Only base32 data is allowed
+    {'ignorechars': b'=\n 018'} -> b'a'
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Only base32 data is allowed
+    {'padded': False, 'ignorechars': b'='} -> binascii.Error Only base32 data is allowed
+    {'padded': False, 'canonical': True} -> binascii.Error Only base32 data is allowed
+b'MF======' -> b'a'
+    {'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Non-zero padding bits
+    {'ignorechars': b' \n'} -> b'a'
+    {'ignorechars': b'='} -> b'a'
+    {'ignorechars': b'=\n 018'} -> b'a'
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> b'\xb3'
+    {'padded': False, 'ignorechars': b'='} -> b'a'
+    {'padded': False, 'canonical': True} -> binascii.Error Padding not allowed
+b'MFRB====' -> b'ab'
+    {'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Non-zero padding bits
+    {'ignorechars': b' \n'} -> b'ab'
+    {'ignorechars': b'='} -> b'ab'
+    {'ignorechars': b'=\n 018'} -> b'ab'
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> b'\xb3\xf6'
+    {'padded': False, 'ignorechars': b'='} -> b'ab'
+    {'padded': False, 'canonical': True} -> binascii.Error Padding not allowed
+b'MFRGH===' -> b'abc'
+    {'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Non-zero padding bits
+    {'ignorechars': b' \n'} -> b'abc'
+    {'ignorechars': b'='} -> b'abc'
+    {'ignorechars': b'=\n 018'} -> b'abc'
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> b'\xb3\xf7\x08'
+    {'padded': False, 'ignorechars': b'='} -> b'abc'
+    {'padded': False, 'canonical': True} -> binascii.Error Padding not allowed
+b'MFRGGZB=' -> b'abcd'
+    {'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Non-zero padding bits
+    {'ignorechars': b' \n'} -> b'abcd'
+    {'ignorechars': b'='} -> b'abcd'
+    {'ignorechars': b'=\n 018'} -> b'abcd'
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Only base32 data is allowed
+    {'padded': False, 'ignorechars': b'='} -> b'abcd'
+    {'padded': False, 'canonical': True} -> binascii.Error Padding not allowed
+b'ME1=====' -> binascii.Error Only base32 data is allowed
+    {'padded': False} -> binascii.Error Only base32 data is allowed
+    {'canonical': True} -> binascii.Error Only base32 data is allowed
+    {'ignorechars': b' \n'} -> binascii.Error Only base32 data is allowed
+    {'ignorechars': b'='} -> binascii.Error Only base32 data is allowed
+    {'ignorechars': b'=\n 018'} -> binascii.Error Incorrect padding
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Invalid base32-encoded string: number of data characters (3) cannot be 1, 3, or 6 more than a multiple of 8
+    {'padded': False, 'ignorechars': b'='} -> binascii.Error Only base32 data is allowed
+    {'padded': False, 'canonical': True} -> binascii.Error Only base32 data is allowed
+b'ME0=====' -> binascii.Error Only base32 data is allowed
+    {'padded': False} -> binascii.Error Only base32 data is allowed
+    {'canonical': True} -> binascii.Error Only base32 data is allowed
+    {'ignorechars': b' \n'} -> binascii.Error Only base32 data is allowed
+    {'ignorechars': b'='} -> binascii.Error Only base32 data is allowed
+    {'ignorechars': b'=\n 018'} -> binascii.Error Incorrect padding
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Invalid base32-encoded string: number of data characters (3) cannot be 1, 3, or 6 more than a multiple of 8
+    {'padded': False, 'ignorechars': b'='} -> binascii.Error Only base32 data is allowed
+    {'padded': False, 'canonical': True} -> binascii.Error Only base32 data is allowed
+b'ME8=====' -> binascii.Error Only base32 data is allowed
+    {'padded': False} -> binascii.Error Only base32 data is allowed
+    {'canonical': True} -> binascii.Error Only base32 data is allowed
+    {'ignorechars': b' \n'} -> binascii.Error Only base32 data is allowed
+    {'ignorechars': b'='} -> binascii.Error Only base32 data is allowed
+    {'ignorechars': b'=\n 018'} -> binascii.Error Incorrect padding
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Invalid base32-encoded string: number of data characters (3) cannot be 1, 3, or 6 more than a multiple of 8
+    {'padded': False, 'ignorechars': b'='} -> binascii.Error Only base32 data is allowed
+    {'padded': False, 'canonical': True} -> binascii.Error Only base32 data is allowed
+b'\xffME======' -> binascii.Error Only base32 data is allowed
+    {'padded': False} -> binascii.Error Only base32 data is allowed
+    {'canonical': True} -> binascii.Error Only base32 data is allowed
+    {'ignorechars': b' \n'} -> binascii.Error Only base32 data is allowed
+    {'ignorechars': b'='} -> binascii.Error Only base32 data is allowed
+    {'ignorechars': b'=\n 018'} -> binascii.Error Only base32 data is allowed
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Only base32 data is allowed
+    {'padded': False, 'ignorechars': b'='} -> binascii.Error Only base32 data is allowed
+    {'padded': False, 'canonical': True} -> binascii.Error Only base32 data is allowed
+b'MFRGGZDFME======' -> b'abcdea'
+    {'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> b'abcdea'
+    {'ignorechars': b' \n'} -> b'abcdea'
+    {'ignorechars': b'='} -> b'abcdea'
+    {'ignorechars': b'=\n 018'} -> b'abcdea'
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Only base32 data is allowed
+    {'padded': False, 'ignorechars': b'='} -> b'abcdea'
+    {'padded': False, 'canonical': True} -> binascii.Error Padding not allowed
+b'MFRGGZDF=' -> binascii.Error Excess padding not allowed
+    {'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Excess padding not allowed
+    {'ignorechars': b' \n'} -> binascii.Error Excess padding not allowed
+    {'ignorechars': b'='} -> b'abcde'
+    {'ignorechars': b'=\n 018'} -> b'abcde'
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Only base32 data is allowed
+    {'padded': False, 'ignorechars': b'='} -> b'abcde'
+    {'padded': False, 'canonical': True} -> binascii.Error Padding not allowed
+b'MFRGGZDF========' -> binascii.Error Excess padding not allowed
+    {'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Excess padding not allowed
+    {'ignorechars': b' \n'} -> binascii.Error Excess padding not allowed
+    {'ignorechars': b'='} -> b'abcde'
+    {'ignorechars': b'=\n 018'} -> b'abcde'
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> binascii.Error Only base32 data is allowed
+    {'padded': False, 'ignorechars': b'='} -> b'abcde'
+    {'padded': False, 'canonical': True} -> binascii.Error Padding not allowed
+b'AA======' -> b'\x00'
+    {'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> b'\x00'
+    {'ignorechars': b' \n'} -> b'\x00'
+    {'ignorechars': b'='} -> b'\x00'
+    {'ignorechars': b'=\n 018'} -> b'\x00'
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> b'R'
+    {'padded': False, 'ignorechars': b'='} -> b'\x00'
+    {'padded': False, 'canonical': True} -> binascii.Error Padding not allowed
+b'AB======' -> b'\x00'
+    {'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> binascii.Error Non-zero padding bits
+    {'ignorechars': b' \n'} -> b'\x00'
+    {'ignorechars': b'='} -> b'\x00'
+    {'ignorechars': b'=\n 018'} -> b'\x00'
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> b'R'
+    {'padded': False, 'ignorechars': b'='} -> b'\x00'
+    {'padded': False, 'canonical': True} -> binascii.Error Padding not allowed
+b'00======' -> binascii.Error Only base32 data is allowed
+    {'padded': False} -> binascii.Error Only base32 data is allowed
+    {'canonical': True} -> binascii.Error Only base32 data is allowed
+    {'ignorechars': b' \n'} -> binascii.Error Only base32 data is allowed
+    {'ignorechars': b'='} -> binascii.Error Only base32 data is allowed
+    {'ignorechars': b'=\n 018'} -> b''
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> b'\x00'
+    {'padded': False, 'ignorechars': b'='} -> binascii.Error Only base32 data is allowed
+    {'padded': False, 'canonical': True} -> binascii.Error Only base32 data is allowed
+b'C4======' -> b'\x17'
+    {'padded': False} -> binascii.Error Padding not allowed
+    {'canonical': True} -> b'\x17'
+    {'ignorechars': b' \n'} -> b'\x17'
+    {'ignorechars': b'='} -> b'\x17'
+    {'ignorechars': b'=\n 018'} -> b'\x17'
+    {'alphabet': b'0123456789ABCDEFGHIJKLMNOPQRSTUV'} -> b'a'
+    {'padded': False, 'ignorechars': b'='} -> b'\x17'
+    {'padded': False, 'canonical': True} -> binascii.Error Padding not allowed
+builtins.TypeError a2b_base32() takes exactly 1 positional argument (0 given)
+builtins.TypeError argument should be bytes, buffer or ASCII string, not 'int'
+builtins.ValueError string argument should contain only ASCII characters
+builtins.TypeError a2b_base32() takes exactly 1 positional argument (2 given)
+builtins.TypeError a2b_base32() argument 'alphabet' must be bytes, not str
+builtins.ValueError alphabet must have length 32
+builtins.TypeError a2b_base32() argument 'alphabet' must be bytes, not bytearray
+builtins.TypeError a bytes-like object is required, not 'str'
+builtins.TypeError a2b_base32() got an unexpected keyword argument 'foo'
+builtins.TypeError a2b_base32() got an unexpected keyword argument 'strict_mode'
+builtins.TypeError a bytes-like object is required, not 'NoneType'
+80000 1677002886 True True 1768010558

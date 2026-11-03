@@ -1,0 +1,343 @@
+status: 0
+script: c7927b66e679fff3
+source: 2296f52cc571b7a4
+---
+hashing a tuple
+hashing a frozendict
+('SyntaxError: "is" with \'int\' literal. Did you mean "=="? (file.py, line 1)', [])
+('compiled', [('SyntaxWarning', '"is" with \'int\' literal. Did you mean "=="?', 'file.py', 1)])
+('compiled', [('SyntaxWarning', 'invalid decimal literal', 'file.py', 1)])
+('compiled', [('SyntaxWarning', '"\\e" is an invalid escape sequence. Such sequences will not work in the future. Did you mean "\\\\e"? A raw string is also an option.', 'file.py', 1)])
+('SyntaxError: "\\e" is an invalid escape sequence. Did you mean "\\\\e"? A raw string is also an option. (file.py, line 1)', [])
+('parsed', [('SyntaxWarning', '"\\e" is an invalid escape sequence. Such sequences will not work in the future. Did you mean "\\\\e"? A raw string is also an option.', 'file.py', 1)])
+('SyntaxError: "\\e" is an invalid escape sequence. Did you mean "\\\\e"? A raw string is also an option. (file.py, line 1)', [])
+attempt(lambda: exec("1 is 1", g)) => None
+attempt(lambda: eval("1 is 1", g)) => True
+attempt(lambda: exec("1 is 1", {"__name__": "other"})) => SyntaxError: "is" with 'int' literal. Did you mean "=="? (<string>, line 1)
+[('SyntaxWarning', '"is" with \'int\' literal. Did you mean "=="?', '<string>', 1), ('SyntaxWarning', '"is" with \'int\' literal. Did you mean "=="?', '<string>', 1)]
+repr(source) [source='a @= b', version=4, v=4] => 'a @= b'
+v [source='a @= b', version=4, v=4] => 4
+e.msg [source='a @= b', version=4, v=4] => The '@' operator is only supported in Python 3.5 and greater
+e.lineno [source='a @= b', version=4, v=4] => 1
+e.offset [source='a @= b', version=4, v=4] => 3
+e.end_lineno [source='a @= b', version=4, v=4] => 1
+e.end_offset [source='a @= b', version=4, v=4] => 5
+repr(source) [source='a @= b', version=4, v=5] => 'a @= b'
+v [source='a @= b', version=4, v=5] => 5
+ok
+repr(source) [source='a @ b', version=4, v=4] => 'a @ b'
+v [source='a @ b', version=4, v=4] => 4
+e.msg [source='a @ b', version=4, v=4] => The '@' operator is only supported in Python 3.5 and greater
+e.lineno [source='a @ b', version=4, v=4] => 1
+e.offset [source='a @ b', version=4, v=4] => 6
+e.end_lineno [source='a @ b', version=4, v=4] => 1
+e.end_offset [source='a @ b', version=4, v=4] => 7
+repr(source) [source='a @ b', version=4, v=5] => 'a @ b'
+v [source='a @ b', version=4, v=5] => 5
+ok
+repr(source) [source='x: int = 1', version=5, v=5] => 'x: int = 1'
+v [source='x: int = 1', version=5, v=5] => 5
+e.msg [source='x: int = 1', version=5, v=5] => Variable annotation syntax is only supported in Python 3.6 and greater
+e.lineno [source='x: int = 1', version=5, v=5] => 1
+e.offset [source='x: int = 1', version=5, v=5] => 11
+e.end_lineno [source='x: int = 1', version=5, v=5] => 1
+e.end_offset [source='x: int = 1', version=5, v=5] => 12
+repr(source) [source='x: int = 1', version=5, v=6] => 'x: int = 1'
+v [source='x: int = 1', version=5, v=6] => 6
+ok
+repr(source) [source='x.y: int', version=5, v=5] => 'x.y: int'
+v [source='x.y: int', version=5, v=5] => 5
+e.msg [source='x.y: int', version=5, v=5] => Variable annotations syntax is only supported in Python 3.6 and greater
+e.lineno [source='x.y: int', version=5, v=5] => 1
+e.offset [source='x.y: int', version=5, v=5] => 9
+e.end_lineno [source='x.y: int', version=5, v=5] => 1
+e.end_offset [source='x.y: int', version=5, v=5] => 10
+repr(source) [source='x.y: int', version=5, v=6] => 'x.y: int'
+v [source='x.y: int', version=5, v=6] => 6
+ok
+repr(source) [source='type X = int', version=11, v=11] => 'type X = int'
+v [source='type X = int', version=11, v=11] => 11
+e.msg [source='type X = int', version=11, v=11] => Type statement is only supported in Python 3.12 and greater
+e.lineno [source='type X = int', version=11, v=11] => 1
+e.offset [source='type X = int', version=11, v=11] => 13
+e.end_lineno [source='type X = int', version=11, v=11] => 1
+e.end_offset [source='type X = int', version=11, v=11] => 14
+repr(source) [source='type X = int', version=11, v=12] => 'type X = int'
+v [source='type X = int', version=11, v=12] => 12
+ok
+repr(source) [source='def f[T](): pass', version=11, v=11] => 'def f[T](): pass'
+v [source='def f[T](): pass', version=11, v=11] => 11
+e.msg [source='def f[T](): pass', version=11, v=11] => Type parameter lists are only supported in Python 3.12 and greater
+e.lineno [source='def f[T](): pass', version=11, v=11] => 1
+e.offset [source='def f[T](): pass', version=11, v=11] => 8
+e.end_lineno [source='def f[T](): pass', version=11, v=11] => 1
+e.end_offset [source='def f[T](): pass', version=11, v=11] => 9
+repr(source) [source='def f[T](): pass', version=11, v=12] => 'def f[T](): pass'
+v [source='def f[T](): pass', version=11, v=12] => 12
+ok
+repr(source) [source='class C[T]: pass', version=11, v=11] => 'class C[T]: pass'
+v [source='class C[T]: pass', version=11, v=11] => 11
+e.msg [source='class C[T]: pass', version=11, v=11] => Type parameter lists are only supported in Python 3.12 and greater
+e.lineno [source='class C[T]: pass', version=11, v=11] => 1
+e.offset [source='class C[T]: pass', version=11, v=11] => 10
+e.end_lineno [source='class C[T]: pass', version=11, v=11] => 1
+e.end_offset [source='class C[T]: pass', version=11, v=11] => 11
+repr(source) [source='class C[T]: pass', version=11, v=12] => 'class C[T]: pass'
+v [source='class C[T]: pass', version=11, v=12] => 12
+ok
+repr(source) [source='def f[T = int](): pass', version=12, v=12] => 'def f[T = int](): pass'
+v [source='def f[T = int](): pass', version=12, v=12] => 12
+e.msg [source='def f[T = int](): pass', version=12, v=12] => Type parameter defaults are only supported in Python 3.13 and greater
+e.lineno [source='def f[T = int](): pass', version=12, v=12] => 1
+e.offset [source='def f[T = int](): pass', version=12, v=12] => 14
+e.end_lineno [source='def f[T = int](): pass', version=12, v=12] => 1
+e.end_offset [source='def f[T = int](): pass', version=12, v=12] => 15
+repr(source) [source='def f[T = int](): pass', version=12, v=13] => 'def f[T = int](): pass'
+v [source='def f[T = int](): pass', version=12, v=13] => 13
+ok
+repr(source) [source='async def f(): pass', version=4, v=4] => 'async def f(): pass'
+v [source='async def f(): pass', version=4, v=4] => 4
+e.msg [source='async def f(): pass', version=4, v=4] => Async functions are only supported in Python 3.5 and greater
+e.lineno [source='async def f(): pass', version=4, v=4] => 1
+e.offset [source='async def f(): pass', version=4, v=4] => 20
+e.end_lineno [source='async def f(): pass', version=4, v=4] => 1
+e.end_offset [source='async def f(): pass', version=4, v=4] => 21
+repr(source) [source='async def f(): pass', version=4, v=5] => 'async def f(): pass'
+v [source='async def f(): pass', version=4, v=5] => 5
+ok
+repr(source) [source='async def f():\n async for x in y: pass', version=4, v=4] => 'async def f():\n async for x in y: pass'
+v [source='async def f():\n async for x in y: pass', version=4, v=4] => 4
+e.msg [source='async def f():\n async for x in y: pass', version=4, v=4] => Async for loops are only supported in Python 3.5 and greater
+e.lineno [source='async def f():\n async for x in y: pass', version=4, v=4] => 2
+e.offset [source='async def f():\n async for x in y: pass', version=4, v=4] => 24
+e.end_lineno [source='async def f():\n async for x in y: pass', version=4, v=4] => 2
+e.end_offset [source='async def f():\n async for x in y: pass', version=4, v=4] => -1
+repr(source) [source='async def f():\n async for x in y: pass', version=4, v=5] => 'async def f():\n async for x in y: pass'
+v [source='async def f():\n async for x in y: pass', version=4, v=5] => 5
+ok
+repr(source) [source='async def f():\n async with x: pass', version=4, v=4] => 'async def f():\n async with x: pass'
+v [source='async def f():\n async with x: pass', version=4, v=4] => 4
+e.msg [source='async def f():\n async with x: pass', version=4, v=4] => Async with statements are only supported in Python 3.5 and greater
+e.lineno [source='async def f():\n async with x: pass', version=4, v=4] => 2
+e.offset [source='async def f():\n async with x: pass', version=4, v=4] => 20
+e.end_lineno [source='async def f():\n async with x: pass', version=4, v=4] => 2
+e.end_offset [source='async def f():\n async with x: pass', version=4, v=4] => 21
+repr(source) [source='async def f():\n async with x: pass', version=4, v=5] => 'async def f():\n async with x: pass'
+v [source='async def f():\n async with x: pass', version=4, v=5] => 5
+ok
+repr(source) [source='async def f():\n await x', version=4, v=4] => 'async def f():\n await x'
+v [source='async def f():\n await x', version=4, v=4] => 4
+e.msg [source='async def f():\n await x', version=4, v=4] => Await expressions are only supported in Python 3.5 and greater
+e.lineno [source='async def f():\n await x', version=4, v=4] => 2
+e.offset [source='async def f():\n await x', version=4, v=4] => 9
+e.end_lineno [source='async def f():\n await x', version=4, v=4] => 2
+e.end_offset [source='async def f():\n await x', version=4, v=4] => 10
+repr(source) [source='async def f():\n await x', version=4, v=5] => 'async def f():\n await x'
+v [source='async def f():\n await x', version=4, v=5] => 5
+ok
+repr(source) [source='async def f():\n [x async for x in y]', version=5, v=5] => 'async def f():\n [x async for x in y]'
+v [source='async def f():\n [x async for x in y]', version=5, v=5] => 5
+e.msg [source='async def f():\n [x async for x in y]', version=5, v=5] => Async comprehensions are only supported in Python 3.6 and greater
+e.lineno [source='async def f():\n [x async for x in y]', version=5, v=5] => 2
+e.offset [source='async def f():\n [x async for x in y]', version=5, v=5] => 21
+e.end_lineno [source='async def f():\n [x async for x in y]', version=5, v=5] => 2
+e.end_offset [source='async def f():\n [x async for x in y]', version=5, v=5] => 22
+repr(source) [source='async def f():\n [x async for x in y]', version=5, v=6] => 'async def f():\n [x async for x in y]'
+v [source='async def f():\n [x async for x in y]', version=5, v=6] => 6
+ok
+repr(source) [source='try: pass\nexcept A, B: pass', version=13, v=13] => 'try: pass\nexcept A, B: pass'
+v [source='try: pass\nexcept A, B: pass', version=13, v=13] => 13
+e.msg [source='try: pass\nexcept A, B: pass', version=13, v=13] => except expressions without parentheses are only supported in Python 3.14 and greater
+e.lineno [source='try: pass\nexcept A, B: pass', version=13, v=13] => 2
+e.offset [source='try: pass\nexcept A, B: pass', version=13, v=13] => 18
+e.end_lineno [source='try: pass\nexcept A, B: pass', version=13, v=13] => 2
+e.end_offset [source='try: pass\nexcept A, B: pass', version=13, v=13] => 19
+repr(source) [source='try: pass\nexcept A, B: pass', version=13, v=14] => 'try: pass\nexcept A, B: pass'
+v [source='try: pass\nexcept A, B: pass', version=13, v=14] => 14
+ok
+repr(source) [source='try: pass\nexcept* A: pass', version=10, v=10] => 'try: pass\nexcept* A: pass'
+v [source='try: pass\nexcept* A: pass', version=10, v=10] => 10
+e.msg [source='try: pass\nexcept* A: pass', version=10, v=10] => Exception groups are only supported in Python 3.11 and greater
+e.lineno [source='try: pass\nexcept* A: pass', version=10, v=10] => 2
+e.offset [source='try: pass\nexcept* A: pass', version=10, v=10] => 16
+e.end_lineno [source='try: pass\nexcept* A: pass', version=10, v=10] => 2
+e.end_offset [source='try: pass\nexcept* A: pass', version=10, v=10] => -1
+repr(source) [source='try: pass\nexcept* A: pass', version=10, v=11] => 'try: pass\nexcept* A: pass'
+v [source='try: pass\nexcept* A: pass', version=10, v=11] => 11
+ok
+repr(source) [source='def f(a, /): pass', version=7, v=7] => 'def f(a, /): pass'
+v [source='def f(a, /): pass', version=7, v=7] => 7
+e.msg [source='def f(a, /): pass', version=7, v=7] => Positional-only parameters are only supported in Python 3.8 and greater
+e.lineno [source='def f(a, /): pass', version=7, v=7] => 1
+e.offset [source='def f(a, /): pass', version=7, v=7] => 11
+e.end_lineno [source='def f(a, /): pass', version=7, v=7] => 1
+e.end_offset [source='def f(a, /): pass', version=7, v=7] => 12
+repr(source) [source='def f(a, /): pass', version=7, v=8] => 'def f(a, /): pass'
+v [source='def f(a, /): pass', version=7, v=8] => 8
+ok
+repr(source) [source='lambda a, /: 1', version=7, v=7] => 'lambda a, /: 1'
+v [source='lambda a, /: 1', version=7, v=7] => 7
+e.msg [source='lambda a, /: 1', version=7, v=7] => Positional-only parameters are only supported in Python 3.8 and greater
+e.lineno [source='lambda a, /: 1', version=7, v=7] => 1
+e.offset [source='lambda a, /: 1', version=7, v=7] => 12
+e.end_lineno [source='lambda a, /: 1', version=7, v=7] => 1
+e.end_offset [source='lambda a, /: 1', version=7, v=7] => 13
+repr(source) [source='lambda a, /: 1', version=7, v=8] => 'lambda a, /: 1'
+v [source='lambda a, /: 1', version=7, v=8] => 8
+ok
+repr(source) [source='match x:\n case 1: pass', version=9, v=9] => 'match x:\n case 1: pass'
+v [source='match x:\n case 1: pass', version=9, v=9] => 9
+e.msg [source='match x:\n case 1: pass', version=9, v=9] => Pattern matching is only supported in Python 3.10 and greater
+e.lineno [source='match x:\n case 1: pass', version=9, v=9] => 2
+e.offset [source='match x:\n case 1: pass', version=9, v=9] => 14
+e.end_lineno [source='match x:\n case 1: pass', version=9, v=9] => 2
+e.end_offset [source='match x:\n case 1: pass', version=9, v=9] => -1
+repr(source) [source='match x:\n case 1: pass', version=9, v=10] => 'match x:\n case 1: pass'
+v [source='match x:\n case 1: pass', version=9, v=10] => 10
+ok
+repr(source) [source='(a := 1)', version=7, v=7] => '(a := 1)'
+v [source='(a := 1)', version=7, v=7] => 7
+e.msg [source='(a := 1)', version=7, v=7] => Assignment expressions are only supported in Python 3.8 and greater
+e.lineno [source='(a := 1)', version=7, v=7] => 1
+e.offset [source='(a := 1)', version=7, v=7] => 8
+e.end_lineno [source='(a := 1)', version=7, v=7] => 1
+e.end_offset [source='(a := 1)', version=7, v=7] => 9
+repr(source) [source='(a := 1)', version=7, v=8] => '(a := 1)'
+v [source='(a := 1)', version=7, v=8] => 8
+ok
+repr(source) [source='1_000', version=5, v=5] => '1_000'
+v [source='1_000', version=5, v=5] => 5
+e.msg [source='1_000', version=5, v=5] => Underscores in numeric literals are only supported in Python 3.6 and greater
+e.lineno [source='1_000', version=5, v=5] => 1
+e.offset [source='1_000', version=5, v=5] => 1
+e.end_lineno [source='1_000', version=5, v=5] => 1
+e.end_offset [source='1_000', version=5, v=5] => 6
+repr(source) [source='1_000', version=5, v=6] => '1_000'
+v [source='1_000', version=5, v=6] => 6
+ok
+repr(source) [source="t'x'", version=13, v=13] => "t'x'"
+v [source="t'x'", version=13, v=13] => 13
+e.msg [source="t'x'", version=13, v=13] => t-strings are only supported in Python 3.14 and greater
+e.lineno [source="t'x'", version=13, v=13] => 1
+e.offset [source="t'x'", version=13, v=13] => 4
+e.end_lineno [source="t'x'", version=13, v=13] => 1
+e.end_offset [source="t'x'", version=13, v=13] => 5
+repr(source) [source="t'x'", version=13, v=14] => "t'x'"
+v [source="t'x'", version=13, v=14] => 14
+ok
+repr(source) [source="f'{x}'", version=5, v=5] => "f'{x}'"
+v [source="f'{x}'", version=5, v=5] => 5
+ok
+repr(source) [source="f'{x}'", version=5, v=6] => "f'{x}'"
+v [source="f'{x}'", version=5, v=6] => 6
+ok
+repr(source) [source='with (a, b): pass', version=8, v=8] => 'with (a, b): pass'
+v [source='with (a, b): pass', version=8, v=8] => 8
+ok
+repr(source) [source='with (a, b): pass', version=8, v=9] => 'with (a, b): pass'
+v [source='with (a, b): pass', version=8, v=9] => 9
+ok
+repr(source) [source='with (a as b, c as d): pass', version=8, v=8] => 'with (a as b, c as d): pass'
+v [source='with (a as b, c as d): pass', version=8, v=8] => 8
+ok
+repr(source) [source='with (a as b, c as d): pass', version=8, v=9] => 'with (a as b, c as d): pass'
+v [source='with (a as b, c as d): pass', version=8, v=9] => 9
+ok
+repr(source) [source='@a.b[1]\ndef f(): pass', version=8, v=8] => '@a.b[1]\ndef f(): pass'
+v [source='@a.b[1]\ndef f(): pass', version=8, v=8] => 8
+ok
+repr(source) [source='@a.b[1]\ndef f(): pass', version=8, v=9] => '@a.b[1]\ndef f(): pass'
+v [source='@a.b[1]\ndef f(): pass', version=8, v=9] => 9
+ok
+repr(source) [source='f(**a, *b)', version=4, v=4] => 'f(**a, *b)'
+v [source='f(**a, *b)', version=4, v=4] => 4
+e.msg [source='f(**a, *b)', version=4, v=4] => iterable argument unpacking follows keyword argument unpacking
+e.lineno [source='f(**a, *b)', version=4, v=4] => 1
+e.offset [source='f(**a, *b)', version=4, v=4] => 6
+e.end_lineno [source='f(**a, *b)', version=4, v=4] => 1
+e.end_offset [source='f(**a, *b)', version=4, v=4] => 10
+repr(source) [source='f(**a, *b)', version=4, v=5] => 'f(**a, *b)'
+v [source='f(**a, *b)', version=4, v=5] => 5
+e.msg [source='f(**a, *b)', version=4, v=5] => iterable argument unpacking follows keyword argument unpacking
+e.lineno [source='f(**a, *b)', version=4, v=5] => 1
+e.offset [source='f(**a, *b)', version=4, v=5] => 6
+e.end_lineno [source='f(**a, *b)', version=4, v=5] => 1
+e.end_offset [source='f(**a, *b)', version=4, v=5] => 10
+repr(source) [source='print(*a, *b)', version=4, v=4] => 'print(*a, *b)'
+v [source='print(*a, *b)', version=4, v=4] => 4
+ok
+repr(source) [source='print(*a, *b)', version=4, v=5] => 'print(*a, *b)'
+v [source='print(*a, *b)', version=4, v=5] => 5
+ok
+repr(source) [source='{**a}', version=4, v=4] => '{**a}'
+v [source='{**a}', version=4, v=4] => 4
+ok
+repr(source) [source='{**a}', version=4, v=5] => '{**a}'
+v [source='{**a}', version=4, v=5] => 5
+ok
+repr(source) [source='return_ = [*a, *b]', version=4, v=4] => 'return_ = [*a, *b]'
+v [source='return_ = [*a, *b]', version=4, v=4] => 4
+ok
+repr(source) [source='return_ = [*a, *b]', version=4, v=5] => 'return_ = [*a, *b]'
+v [source='return_ = [*a, *b]', version=4, v=5] => 5
+ok
+repr(source) [source='def f(): return *a, b', version=7, v=7] => 'def f(): return *a, b'
+v [source='def f(): return *a, b', version=7, v=7] => 7
+ok
+repr(source) [source='def f(): return *a, b', version=7, v=8] => 'def f(): return *a, b'
+v [source='def f(): return *a, b', version=7, v=8] => 8
+ok
+repr(source) [source='x[*a]', version=10, v=10] => 'x[*a]'
+v [source='x[*a]', version=10, v=10] => 10
+ok
+repr(source) [source='x[*a]', version=10, v=11] => 'x[*a]'
+v [source='x[*a]', version=10, v=11] => 11
+ok
+repr(source) [source='def f(*a: *b): pass', version=10, v=10] => 'def f(*a: *b): pass'
+v [source='def f(*a: *b): pass', version=10, v=10] => 10
+ok
+repr(source) [source='def f(*a: *b): pass', version=10, v=11] => 'def f(*a: *b): pass'
+v [source='def f(*a: *b): pass', version=10, v=11] => 11
+ok
+repr(source) [source='for x in *a, b: pass', version=8, v=8] => 'for x in *a, b: pass'
+v [source='for x in *a, b: pass', version=8, v=8] => 8
+ok
+repr(source) [source='for x in *a, b: pass', version=8, v=9] => 'for x in *a, b: pass'
+v [source='for x in *a, b: pass', version=8, v=9] => 9
+ok
+repr(source) [source='def f(a, *, b): pass', version=4, v=4] => 'def f(a, *, b): pass'
+v [source='def f(a, *, b): pass', version=4, v=4] => 4
+ok
+repr(source) [source='def f(a, *, b): pass', version=4, v=5] => 'def f(a, *, b): pass'
+v [source='def f(a, *, b): pass', version=4, v=5] => 5
+ok
+repr(source) [source="f'{x=}'", version=7, v=7] => "f'{x=}'"
+v [source="f'{x=}'", version=7, v=7] => 7
+ok
+repr(source) [source="f'{x=}'", version=7, v=8] => "f'{x=}'"
+v [source="f'{x=}'", version=7, v=8] => 8
+ok
+repr(source) [source="f'{x!r:>{y}}'", version=11, v=11] => "f'{x!r:>{y}}'"
+v [source="f'{x!r:>{y}}'", version=11, v=11] => 11
+ok
+repr(source) [source="f'{x!r:>{y}}'", version=11, v=12] => "f'{x!r:>{y}}'"
+v [source="f'{x!r:>{y}}'", version=11, v=12] => 12
+ok
+repr(source) [source='global_ = not_ = 1', version=4, v=4] => 'global_ = not_ = 1'
+v [source='global_ = not_ = 1', version=4, v=4] => 4
+ok
+repr(source) [source='global_ = not_ = 1', version=4, v=5] => 'global_ = not_ = 1'
+v [source='global_ = not_ = 1', version=4, v=5] => 5
+ok
+repr(source) [source='with a as (b, c): pass', version=4, v=4] => 'with a as (b, c): pass'
+v [source='with a as (b, c): pass', version=4, v=4] => 4
+ok
+repr(source) [source='with a as (b, c): pass', version=4, v=5] => 'with a as (b, c): pass'
+v [source='with a as (b, c): pass', version=4, v=5] => 5
+ok
+repr(source) [source='del (a), b', version=4, v=4] => 'del (a), b'
+v [source='del (a), b', version=4, v=4] => 4
+ok
+repr(source) [source='del (a), b', version=4, v=5] => 'del (a), b'
+v [source='del (a), b', version=4, v=5] => 5
+ok

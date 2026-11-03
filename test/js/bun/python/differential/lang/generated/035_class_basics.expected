@@ -1,0 +1,218 @@
+status: 0
+script: f4d128d060e7d439
+source: 9675cd26b4f305ad
+---
+A.__name__ => A
+A.__qualname__ => A
+A.__module__ => __main__
+A.__bases__ => (<class 'object'>,)
+A.__mro__ => (<class '__main__.A'>, <class 'object'>)
+type(A) => <class 'type'>
+type(a) is A => True
+a.__class__ is A => True
+isinstance(a, A) => True
+isinstance(a, object) => True
+issubclass(A, object) => True
+A.__doc__ => None
+a.__dict__ => {}
+repr(A) => <class '__main__.A'>
+str(A) => <class '__main__.A'>
+A.__base__ => <class 'object'>
+callable(A) => True
+bool(a) => True
+a == a => True
+a != a => False
+a == A() => False
+hash(a) == hash(a) => True
+A.__dict__["__module__"] => __main__
+sorted(A.__dict__) => ['__dict__', '__doc__', '__firstlineno__', '__module__', '__static_attributes__', '__weakref__']
+a.x => 1
+a.y => [2]
+a.__dict__ => {'x': 1, 'y': [2]}
+vars(a) => {'x': 1, 'y': [2]}
+hasattr(a, "x") => True
+hasattr(a, "z") => False
+getattr(a, "x") => 1
+getattr(a, "z", "dflt") => dflt
+a.__dict__ => {'y': [2]}
+hasattr(a, "x") => False
+3
+{'y': [2]}
+a.nope => AttributeError: 'A' object has no attribute 'nope'
+A.nope => AttributeError: type object 'A' has no attribute 'nope'
+d1() => AttributeError: 'A' object has no attribute 'nope'
+d2() => AttributeError: type object 'A' has no attribute 'nope'
+getattr(a, "nope") => AttributeError: 'A' object has no attribute 'nope'
+getattr(a, 1) => TypeError: attribute name must be string, not 'int'
+setattr(a, 1, 2) => TypeError: attribute name must be string, not 'int'
+delattr(a, "nope") => AttributeError: 'A' object has no attribute 'nope'
+hasattr(a, 1) => TypeError: attribute name must be string, not 'int'
+A(1) => TypeError: A() takes no arguments
+A(x=1) => TypeError: A() takes no arguments
+a() => TypeError: 'A' object is not callable
+a + 1 => TypeError: unsupported operand type(s) for +: 'A' and 'int'
+a < a => TypeError: '<' not supported between instances of 'A' and 'A'
+len(a) => TypeError: object of type 'A' has no len()
+a[0] => TypeError: 'A' object is not subscriptable
+iter(a) => TypeError: 'A' object is not iterable
+int(a) => TypeError: int() argument must be a string, a bytes-like object or a real number, not 'A'
+-a => TypeError: bad operand type for unary -: 'A'
+1 in a => TypeError: argument of type 'A' is not a container or iterable
+si() => TypeError: 'A' object does not support item assignment
+di() => TypeError: 'A' object doesn't support item deletion
+p => P(3, 4)
+q => P(1, 0)
+p.dist() => 5.0
+p.move(1, 1) => P(4, 5)
+p.move(1).move(1) => P(6, 5)
+P.count => 2
+p.count => 2
+P.__doc__ => Doc of P
+p.__doc__ => Doc of P
+p.__dict__ => {'x': 6, 'y': 5}
+P.dist(p) => 7.810249675906654
+P.__init__.__name__ => __init__
+[p, q] => [P(6, 5), P(1, 0)]
+(p,) => (P(6, 5),)
+{"k": p} => {'k': P(6, 5)}
+str(p) => P(6, 5)
+"%s %r" % (p, p) => P(6, 5) P(6, 5)
+f"{p} {p!r}" => P(6, 5) P(6, 5)
+P() => TypeError: P.__init__() missing 1 required positional argument: 'x'
+P(1, 2, 3) => TypeError: P.__init__() takes from 2 to 3 positional arguments but 4 were given
+P(z=1) => TypeError: P.__init__() got an unexpected keyword argument 'z'
+p.dist(1) => TypeError: P.dist() takes 1 positional argument but 2 were given
+P.dist() => TypeError: P.dist() missing 1 required positional argument: 'self'
+P.move(p) => TypeError: P.move() missing 1 required positional argument: 'dx'
+p.count => 100
+q.count => 2
+P.count => 2
+2
+p.count => 7
+q.count => 7
+q.names => ['shared']
+P.names => ['shared']
+p.names => ['own']
+q.names => ['shared']
+p.new_attr => added
+q.new_attr => added
+p.new_attr => AttributeError: 'P' object has no attribute 'new_attr'
+p.shout() => x=6
+q.shout() => x=1
+p.dist() => instance attribute wins
+q.dist() => 1.0
+7.810249675906654
+p.times(2) => 12
+P.times(p, 3) => 18
+p.times.__func__ is external => True
+p.times.__self__ is p => True
+p.func(2) => TypeError: external() missing 1 required positional argument: 'k'
+2
+in body; B.b => 2
+B.i => 2
+B.c => yes
+B().n() => 2
+B.s => 6
+B.e => caught
+hasattr(B, "a") => False
+B.m is B.n => True
+[k for k in B.__dict__ if not k.startswith("__")] => ['b', 'i', 'c', 'm', 'n', 'l', 's', 'e']
+Empty.__doc__ => None
+WithDoc.__doc__ => only doc
+OneLine.x + OneLine.y => 3
+Empty().__dict__ => {}
+(<class 'object'>,)
+L1.v => 1
+L2.v => 2
+L1().get() => 1
+L2().get() => 2
+L1 is L2 => False
+L1.__name__ => Local
+L1.__qualname__ => make.<locals>.Local
+L1 == L1 => True
+L1 != L2 => True
+hash(L1) == hash(L1) => True
+{L1: 1}[L1] => 1
+[c.__name__ for c in classes] => ['A', 'P', 'int', 'str']
+[c for c in classes if issubclass(c, (int, A))] => [<class '__main__.A'>, <class 'int'>]
+Alias(0).x => 0
+Alias is P => True
+Alias.__name__ => P
+Outer.Inner.v => inner
+Outer().make().v => inner
+Outer.Inner.__qualname__ => Outer.Inner
+Outer.Inner.Deep.__qualname__ => Outer.Inner.Deep
+Outer.Inner.__name__ => Inner
+repr(Outer.Inner.Deep) => <class '__main__.Outer.Inner.Deep'>
+A.__name__ => Renamed
+repr(A) => <class '__main__.A'>
+A.__qualname__ => A
+<class '__main__.Q.Renamed'>
+repr(A) => <class 'mod.Q.Renamed'>
+A.__module__ => mod
+new
+TypeError: can only assign string to Renamed.__name__, not 'int'
+TypeError: can only assign string to Renamed.__qualname__, not 'int'
+TypeError: cannot delete '__name__' attribute of type 'Renamed'
+AttributeError: attribute '__dict__' of 'type' objects is not writable
+TypeError: 'mappingproxy' object does not support item assignment
+AttributeError: attribute '__mro__' of 'type' objects is not writable
+TypeError: cannot set 'x' attribute of immutable type 'int'
+TypeError: cannot set 'real' attribute of immutable type 'int'
+TypeError: cannot set '__name__' attribute of immutable type 'int'
+TypeError: cannot set 'x' attribute of immutable type 'object'
+ValueError: type name must not contain null characters
+AttributeError: attribute '__dict__' of 'type' objects is not writable
+TypeError: can only assign non-empty tuple to Renamed.__bases__, not ()
+AttributeError: readonly attribute
+type(A.__dict__).__name__ => mappingproxy
+"__dict__" in A.__dict__ => True
+"__weakref__" in A.__dict__ => True
+type(A.__dict__["__dict__"]).__name__ => getset_descriptor
+A.__dict__["__dict__"].__name__ => __dict__
+A.__dict__["__dict__"].__objclass__ is A => False
+a.k => v
+a.__dict__ => {'k': 'v'}
+1
+False
+sd() => TypeError: __dict__ must be set to a dictionary, not a 'int'
+dd() => {}
+type(x).__name__ => Y
+x.v => 1
+isinstance(x, Y) => True
+isinstance(x, X) => False
+sc1() => TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+sc2() => TypeError: __class__ must be set to a class, not 'int' object
+sc3() => TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+sc4() => TypeError: can't delete __class__ attribute
+sc5() => TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+dir(X()) == dir(X) => True
+"v" in dir(x) => True
+[n for n in dir(P(0)) if not n.startswith("__")] => ['count', 'dist', 'move', 'names', 'shout', 'times', 'x', 'y']
+sorted(set(dir(object))) == dir(object) => True
+len(dir(object)) > 20 => True
+"__init__" in dir(A) => True
+<class 'object' <class 'object'> () (<class 'object'>,) None True object <class 'object'> builtins <class 'type'> (<class 'object'>,) <class 'type'> True True True
+so() => AttributeError: 'object' object has no attribute 'x' and no __dict__ for setting new attributes
+o.__dict__ => AttributeError: 'object' object has no attribute '__dict__'
+object(1) => TypeError: object() takes no arguments
+object(x=1) => TypeError: object() takes no arguments
+o.x => AttributeError: 'object' object has no attribute 'x'
+o == o => True
+o != o => False
+o == object() => False
+hash(o) == hash(o) => True
+bool(o) => True
+o.__eq__(o) => True
+o.__eq__(1) => NotImplemented
+o.__ne__(o) => False
+o.__ne__(1) => NotImplemented
+o.__lt__(o) => NotImplemented
+o.__init__() => None
+o.__dir__() == dir(o) or sorted(o.__dir__()) == dir(o) => True
+o.__sizeof__() > 0 => True
+o.__format__(""[:0])[:7] => <object
+o.__reduce_ex__(2)[0].__name__ => __newobj__
+o.__init_subclass__() => None
+o.__subclasshook__(int) => NotImplemented
+o.__getstate__() => None

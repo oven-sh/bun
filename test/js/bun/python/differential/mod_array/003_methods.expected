@@ -1,0 +1,130 @@
+status: 0
+script: 3ebfb1328f311b72
+---
+array('i', [1, 2, 3, 4])
+array('i', [-10, 0, 22, 1, 2, 3, 9, 4, 10])
+array('i', [-10, 0, 22, 1, 2, 3, 9, 4, 10, 5, 6, 7, 0, 1, -10, 0, 22, 1, 2, 3, 9, 4, 10, 5, 6, 7, 0, 1]) 28
+TypeError 'int' object is not iterable
+TypeError can only extend with array of same kind
+TypeError 'str' object cannot be interpreted as an integer
+29 1
+TypeError 'str' object cannot be interpreted as an integer
+TypeError array.append() takes exactly one argument (0 given)
+TypeError array.append() takes exactly one argument (2 given)
+TypeError 'str' object cannot be interpreted as an integer
+TypeError insert expected 2 arguments, got 1
+TypeError 'str' object cannot be interpreted as an integer
+OverflowError Python int too large to convert to C ssize_t
+TypeError array.append() takes no keyword arguments
+2 0 0 2 1 3 3 4 True False False True False
+ValueError array.index(x): x not in array
+ValueError array.index(x): x not in array
+ValueError array.index(x): x not in array
+TypeError slice indices must be integers or have an __index__ method
+TypeError slice indices must be integers or have an __index__ method
+TypeError slice indices must be integers or have an __index__ method
+TypeError index expected at least 1 argument, got 0
+TypeError index expected at most 3 arguments, got 4
+0 0
+ValueError array.index(x): x not in array
+ValueError array.index(x): x not in array
+array('i', [1, 3, 2, 1])
+ValueError array.remove(x): x not in array
+ValueError array.remove(x): x not in array
+8 1 7 2 array('i', [3, 1])
+IndexError pop index out of range
+IndexError pop index out of range
+1
+3
+IndexError pop from empty array
+TypeError 'str' object cannot be interpreted as an integer
+TypeError pop expected at most 1 argument, got 2
+OverflowError Python int too large to convert to C ssize_t
+array('h', [6, 5, 4, 3, 2, 1, 0])
+array('h', [5, 4, 3, 2, 1, 0])
+array('Zd', [(3+0j), 2j, (1+0j)])
+array('b')
+array('b', [1])
+array('i') 0 72
+array('i', [1])
+False 0 False True False False False
+ValueError array.index(x): x not in array
+ValueError array.remove(x): x not in array
+b 010203; B 010203; h 000100020003; H 000100020003; i 000000010000000200000003; I 000000010000000200000003; l 000000000000000100000000000000020000000000000003; L 000000000000000100000000000000020000000000000003; q 000000000000000100000000000000020000000000000003; Q 000000000000000100000000000000020000000000000003; e 3c0040004200; f 3f8000004000000040400000; d 3ff000000000000040000000000000004008000000000000; 
+3f80000040000000
+array('Zf', [(1+2j)])
+3ff00000000000004000000000000000
+array('Zd', [(1+2j)])
+0000006100000062
+array('w', 'ab')
+TypeError array.byteswap() takes no arguments (1 given)
+[1, 2] b'\x01\x00\x00\x00\x02\x00\x00\x00' list bytes
+array('i', [1, 2, 3, 4])
+TypeError arg must be list
+TypeError 'str' object cannot be interpreted as an integer
+array('i', [1, 2, 3, 4])
+TypeError arg must be list
+OverflowError signed integer is greater than maximum
+array('i', [1, 2, 3, 4])
+array('i', [1, 2, 3, 4, 9])
+array('i', [1, 2, 3, 4, 9, 5, 6])
+ValueError bytes length not a multiple of item size
+TypeError a bytes-like object is required, not 'str'
+TypeError a bytes-like object is required, not 'int'
+TypeError array.frombytes() takes exactly one argument (0 given)
+7
+array('w', 'abcd€') abcd€
+TypeError fromunicode() argument must be str, not bytes
+TypeError fromunicode() argument must be str, not int
+TypeError fromunicode() argument must be str, not None
+ValueError fromunicode() may only be called on unicode type arrays ('u' or 'w')
+TypeError fromunicode() argument must be str, not int
+ValueError tounicode() may only be called on unicode type arrays ('u' or 'w')
+UnicodeDecodeError 'utf-32-le' codec can't decode bytes in position 0-3: code point not in range(0x110000)
+ValueError chr() arg not in range(0x110000)
+UnicodeDecodeError 'utf-32-le' codec can't decode bytes in position 0-3: code point not in range(0x110000)
+UnicodeDecodeError 'utf-32-le' codec can't decode bytes in position 0-3: code point in surrogate code point range(0xd800, 0xe000)
+'\ud800'
+'ab'
+array('w', 'ab')
+ValueError chr() arg not in range(0x110000)
+ValueError chr() arg not in range(0x110000)
+ValueError chr() arg not in range(0x110000)
+b'\x01\x00\x00\x00\x02\x00\x00\x00\x03\x00\x00\x00' [('bytes', 12)]
+[]
+[('bytes', 65536), ('bytes', 65536), ('bytes', 65536), ('bytes', 3392)] 200000
+array('i', [1]) [4]
+ValueError bytes length not a multiple of item size
+array('i', [1])
+array('i', [1])
+EOFError read() didn't return enough bytes
+array('i', [1, 2])
+AttributeError 'NoneType' object has no attribute 'read'
+ValueError n cannot be negative
+TypeError 'str' object cannot be interpreted as an integer
+TypeError fromfile() takes exactly 2 positional arguments (1 given)
+MemoryError 
+AttributeError 'NoneType' object has no attribute 'write'
+None
+TypeError tofile() takes exactly 1 positional argument (0 given)
+TypeError read() didn't return bytes
+TypeError read() didn't return bytes
+TypeError extend() takes exactly 1 positional argument (0 given)
+TypeError extend() takes at most 1 argument (2 given)
+TypeError extend() takes at most 1 argument (2 given)
+TypeError extend() takes exactly 1 positional argument (0 given)
+TypeError fromfile() takes exactly 2 positional arguments (0 given)
+TypeError fromfile() takes at most 2 arguments (3 given)
+TypeError fromfile() takes at most 2 arguments (3 given)
+TypeError fromfile() takes exactly 2 positional arguments (0 given)
+TypeError tofile() takes exactly 1 positional argument (0 given)
+TypeError tofile() takes at most 1 argument (2 given)
+TypeError tofile() takes at most 1 argument (2 given)
+TypeError tofile() takes exactly 1 positional argument (0 given)
+TypeError __reduce_ex__() takes exactly 1 positional argument (0 given)
+TypeError __reduce_ex__() takes at most 1 argument (2 given)
+TypeError __reduce_ex__() takes at most 1 argument (2 given)
+TypeError __reduce_ex__() takes exactly 1 positional argument (0 given)
+TypeError __reduce__() takes no arguments
+TypeError __reduce__() takes no arguments
+[2, 2, 1, 2, 1, 2, 1, 1, 1, 1, 1]

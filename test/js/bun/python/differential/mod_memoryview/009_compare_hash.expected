@@ -1,0 +1,82 @@
+status: 0
+script: 30f21befba8cfc31
+---
+True False True False
+True False True False
+True False True False
+True False True False
+False True False True
+False True False True
+False True False True
+False True False True
+False True False True
+False True False True
+False True False True
+False True False True
+False True False True
+True False True False
+True False True False
+False True False True
+True False True False
+True False True False
+True False True False
+True NotImplemented NotImplemented False NotImplemented NotImplemented NotImplemented NotImplemented
+TypeError '<' not supported between instances of 'memoryview' and 'memoryview'
+TypeError '<' not supported between instances of 'memoryview' and 'bytes'
+TypeError '<' not supported between instances of 'bytes' and 'memoryview'
+False
+TypeError '<=' not supported between instances of 'memoryview' and 'memoryview'
+TypeError '<=' not supported between instances of 'memoryview' and 'bytes'
+TypeError '<=' not supported between instances of 'bytes' and 'memoryview'
+True
+TypeError '>' not supported between instances of 'memoryview' and 'memoryview'
+TypeError '>' not supported between instances of 'memoryview' and 'bytes'
+TypeError '>' not supported between instances of 'bytes' and 'memoryview'
+False
+TypeError '>=' not supported between instances of 'memoryview' and 'memoryview'
+TypeError '>=' not supported between instances of 'memoryview' and 'bytes'
+TypeError '>=' not supported between instances of 'bytes' and 'memoryview'
+True
+b [True, True, True, True, True, True, True, True, True, True, True, True, True, True, True] [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False]
+B [True, True, True, True, True, True, True, True, True, True, True, True, True, True, True] [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False]
+h [True, True, True, True, True, True, True, True, True, True, True, True, True, True, True] [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False]
+H [True, True, True, True, True, True, True, True, True, True, True, True, True, True, True] [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False]
+i [True, True, True, True, True, True, True, True, True, True, True, True, True, True, True] [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False]
+I [True, True, True, True, True, True, True, True, True, True, True, True, True, True, True] [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False]
+l [True, True, True, True, True, True, True, True, True, True, True, True, True, True, True] [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False]
+L [True, True, True, True, True, True, True, True, True, True, True, True, True, True, True] [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False]
+q [True, True, True, True, True, True, True, True, True, True, True, True, True, True, True] [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False]
+Q [True, True, True, True, True, True, True, True, True, True, True, True, True, True, True] [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False]
+n [True, True, True, True, True, True, True, True, True, True, True, True, True, True, True] [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False]
+N [True, True, True, True, True, True, True, True, True, True, True, True, True, True, True] [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False]
+e [True, True, True, True, True, True, True, True, True, True, True, True, True, True, True] [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False]
+f [True, True, True, True, True, True, True, True, True, True, True, True, True, True, True] [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False]
+d [True, True, True, True, True, True, True, True, True, True, True, True, True, True, True] [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False]
+False True True False False False True False
+True True True False True False True False
+True True True False True True True
+True True True True False [(1+2j)] [(1+2j)] True True
+e False True False False False
+f False True False False False
+d False True False False False
+False False
+True True False
+True
+False True False False True True True False True True True False (0, 4) (0, 3) True
+True True False False False True
+True True False
+True True True True True True
+True True True True True True
+True True True True True True
+True True True True True True
+ValueError cannot hash writable memoryview object
+TypeError unhashable type: 'bytearray'
+ValueError memoryview: hashing is restricted to formats 'B', 'b' or 'c'
+ValueError memoryview: hashing is restricted to formats 'B', 'b' or 'c'
+ValueError memoryview: hashing is restricted to formats 'B', 'b' or 'c'
+True
+1
+1
+1
+True
+ValueError operation forbidden on released memoryview object

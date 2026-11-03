@@ -1,0 +1,162 @@
+status: 0
+script: 95b7705bd2b3a775
+---
+['cancel_dump_traceback_later', 'disable', 'dump_c_stack', 'dump_traceback', 'dump_traceback_later', 'enable', 'is_enabled', 'register', 'unregister']
+False False None True None True False False
+Current thread 0xT [name] (most recent call first):
+  File "faulthandler_basic.py", line 19 in f
+  File "faulthandler_basic.py", line 20 in g
+  File "faulthandler_basic.py", line 21 in <module>
+
+Stack (most recent call first):
+  File "faulthandler_basic.py", line 22 in f2
+  File "faulthandler_basic.py", line 23 in <module>
+
+Stack (most recent call first):
+  File "faulthandler_basic.py", line 24 in <module>
+
+Stack (most recent call first):
+  File "faulthandler_basic.py", line 26 in method
+  File "faulthandler_basic.py", line 27 in <module>
+
+Stack (most recent call first):
+  File "faulthandler_basic.py", line 28 in <lambda>
+  File "faulthandler_basic.py", line 28 in <module>
+
+Stack (most recent call first):
+  File "faulthandler_basic.py", line 30 in gen
+  File "faulthandler_basic.py", line 31 in <module>
+
+Stack (most recent call first):
+  File "faulthandler_basic.py", line 32 in <module>
+
+53
+101
+101
+101   File "faulthandler_basic.py", line 34 in deep
+Stack (most recent call first):
+  File "f\xefle \u20ac\U0001f600\x0a.py", line 1 in h\xe9\u4e2d
+  File "f\xefle \u20ac\U0001f600\x0a.py", line 2 in <module>
+  File "faulthandler_basic.py", line 40 in <module>
+
+532 xxxxxx...", line 1 in <module>
+before
+Stack (most recent call first):
+  File "faulthandler_basic.py", line 44 in <module>
+
+flushed
+Stack (most recent call first):
+  File "faulthandler_basic.py", line 48 in <module>
+
+Stack (most recent call first):
+  File "faulthandler_basic.py", line 51 in <module>
+
+ValueError: file is not a valid file descriptor
+AttributeError: 'str' object has no attribute 'fileno'
+AttributeError: 'float' object has no attribute 'fileno'
+AttributeError: 'object' object has no attribute 'fileno'
+OverflowError: Python int too large to convert to C int
+ValueError: file is not a valid file descriptor
+AttributeError: 'str' object has no attribute 'fileno'
+AttributeError: 'float' object has no attribute 'fileno'
+AttributeError: 'object' object has no attribute 'fileno'
+OverflowError: Python int too large to convert to C int
+ValueError: file is not a valid file descriptor
+AttributeError: 'str' object has no attribute 'fileno'
+AttributeError: 'float' object has no attribute 'fileno'
+AttributeError: 'object' object has no attribute 'fileno'
+OverflowError: Python int too large to convert to C int
+ValueError: file is not a valid file descriptor
+AttributeError: 'str' object has no attribute 'fileno'
+AttributeError: 'float' object has no attribute 'fileno'
+AttributeError: 'object' object has no attribute 'fileno'
+OverflowError: Python int too large to convert to C int
+ValueError: file is not a valid file descriptor
+AttributeError: 'str' object has no attribute 'fileno'
+AttributeError: 'float' object has no attribute 'fileno'
+AttributeError: 'object' object has no attribute 'fileno'
+OverflowError: Python int too large to convert to C int
+RuntimeError: file.fileno() is not a valid file descriptor
+RuntimeError: file.fileno() is not a valid file descriptor
+RuntimeError: file.fileno() is not a valid file descriptor
+RuntimeError: file.fileno() is not a valid file descriptor
+RuntimeError: file.fileno() is not a valid file descriptor
+KeyError: 'fileno'
+['sys.stderr is None', 'sys.stderr is None', 'sys.stderr is None', 'sys.stderr is None']
+TypeError: dump_traceback() takes at most 2 positional arguments (3 given)
+TypeError: dump_traceback() got an unexpected keyword argument 'nope'
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: enable() takes at most 3 positional arguments (4 given)
+TypeError: faulthandler.disable() takes no arguments (1 given)
+TypeError: faulthandler.is_enabled() takes no arguments (1 given)
+False
+ValueError: signal number out of range
+ValueError: signal number out of range
+ValueError: signal number out of range
+ValueError: signal number out of range
+ValueError: signal number out of range
+ValueError: signal number out of range
+ValueError: signal number out of range
+ValueError: signal number out of range
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'str' object cannot be interpreted as an integer
+RuntimeError: signal 11 cannot be registered, use enable() instead
+RuntimeError: signal 11 cannot be registered, use enable() instead
+RuntimeError: signal 8 cannot be registered, use enable() instead
+RuntimeError: signal 8 cannot be registered, use enable() instead
+RuntimeError: signal 6 cannot be registered, use enable() instead
+RuntimeError: signal 6 cannot be registered, use enable() instead
+RuntimeError: signal 7 cannot be registered, use enable() instead
+RuntimeError: signal 7 cannot be registered, use enable() instead
+RuntimeError: signal 4 cannot be registered, use enable() instead
+RuntimeError: signal 4 cannot be registered, use enable() instead
+TypeError: register() missing required argument 'signum' (pos 1)
+TypeError: faulthandler.unregister() takes exactly one argument (0 given)
+OSError: [Errno 22] Invalid argument
+False None 0
+Current thread 0xT [name] (most recent call first):
+  File "faulthandler_basic.py", line 81 in send
+  File "faulthandler_basic.py", line 82 in <module>
+
+Stack (most recent call first):
+  File "faulthandler_basic.py", line 81 in send
+  File "faulthandler_basic.py", line 83 in <module>
+
+True False
+Stack (most recent call first):
+  File "faulthandler_basic.py", line 81 in send
+  File "faulthandler_basic.py", line 87 in <module>
+ []
+'' [10]
+Stack (most recent call first):
+  File "faulthandler_basic.py", line 81 in send
+  File "faulthandler_basic.py", line 89 in <module>
+ [10]
+'' [10]
+Stack (most recent call first):
+  File "faulthandler_basic.py", line 81 in send
+  File "faulthandler_basic.py", line 91 in <module>
+
+''
+ValueError: timeout must be greater than 0
+ValueError: timeout must be greater than 0
+TypeError: must be real number, not str
+TypeError: must be real number, not NoneType
+ValueError: Invalid value NaN (not a number)
+OverflowError: timestamp out of range for C PyTime_t
+TypeError: dump_traceback_later() missing required argument 'timeout' (pos 1)
+None
+TypeError: faulthandler.cancel_dump_traceback_later() takes no arguments (1 given)
+Timeout (0:00:00.050000)!
+Thread 0xT [name] (most recent call first):
+  File "<dir>/faulthandler_basic.py", line N in wait
+  File "faulthandler_basic.py", line 104 in <module>
+
+Timeout (0:00:00.050000)!
+Thread 0xT [name] (most recent call first):
+  File "faulthandler_basic.py", line 105 in <module>
+
+''
+1
+True
+True

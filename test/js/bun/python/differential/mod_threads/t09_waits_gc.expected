@@ -1,0 +1,22 @@
+status: 0
+script: 5e054aa810815198
+---
+accept (True, True, None)
+barrier (True, True, True)
+condition (True, True, True)
+epoll (True, True, 1)
+event (True, True, True)
+join (True, True, None)
+lock (True, True, True)
+os.read (True, True, b'a')
+poll (True, True, 1)
+queue (True, True, 'item')
+readline (True, True, b'line\n')
+recv (True, True, b'e')
+rlock (True, True, True)
+select (True, True, 1)
+semaphore (True, True, True)
+simplequeue (True, True, 'simple')
+sleep (True, True, None)
+subprocess (True, True, 0)
+18 1

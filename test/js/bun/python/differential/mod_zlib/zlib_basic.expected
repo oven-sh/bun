@@ -1,0 +1,94 @@
+status: 0
+script: 9ce681b9c843dbcd
+---
+['DEFLATED', 'DEF_BUF_SIZE', 'DEF_MEM_LEVEL', 'MAX_WBITS', 'ZLIB_RUNTIME_VERSION', 'ZLIB_VERSION', 'Z_BEST_COMPRESSION', 'Z_BEST_SPEED', 'Z_BLOCK', 'Z_DEFAULT_COMPRESSION', 'Z_DEFAULT_STRATEGY', 'Z_FILTERED', 'Z_FINISH', 'Z_FIXED', 'Z_FULL_FLUSH', 'Z_HUFFMAN_ONLY', 'Z_NO_COMPRESSION', 'Z_NO_FLUSH', 'Z_PARTIAL_FLUSH', 'Z_RLE', 'Z_SYNC_FLUSH', 'Z_TREES', '_ZlibDecompressor', 'adler32', 'adler32_combine', 'compress', 'compressobj', 'crc32', 'crc32_combine', 'decompress', 'decompressobj', 'error']
+{'DEFLATED': 8, 'DEF_BUF_SIZE': 16384, 'DEF_MEM_LEVEL': 8, 'MAX_WBITS': 15, 'Z_BEST_COMPRESSION': 9, 'Z_BEST_SPEED': 1, 'Z_BLOCK': 5, 'Z_DEFAULT_COMPRESSION': -1, 'Z_DEFAULT_STRATEGY': 0, 'Z_FILTERED': 1, 'Z_FINISH': 4, 'Z_FIXED': 4, 'Z_FULL_FLUSH': 3, 'Z_HUFFMAN_ONLY': 2, 'Z_NO_COMPRESSION': 0, 'Z_NO_FLUSH': 0, 'Z_PARTIAL_FLUSH': 1, 'Z_RLE': 3, 'Z_SYNC_FLUSH': 2, 'Z_TREES': 6}
+(<class 'zlib.error'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>) zlib error error
+<class 'str'> <class 'str'>
+-1 15 bytes True True
+-1 9 bytes True True
+-1 -15 bytes True True
+-1 -9 bytes True True
+-1 31 bytes True True
+-1 25 bytes True True
+0 15 bytes True True
+0 9 bytes True True
+0 -15 bytes True True
+0 -9 bytes True True
+0 31 bytes True True
+0 25 bytes True True
+1 15 bytes True True
+1 9 bytes True True
+1 -15 bytes True True
+1 -9 bytes True True
+1 31 bytes True True
+1 25 bytes True True
+5 15 bytes True True
+5 9 bytes True True
+5 -15 bytes True True
+5 -9 bytes True True
+5 31 bytes True True
+5 25 bytes True True
+9 15 bytes True True
+9 9 bytes True True
+9 -15 bytes True True
+9 -9 bytes True True
+9 31 bytes True True
+9 25 bytes True True
+True True
+b'' b'' b'x'
+True
+True
+True
+True
+True
+0 True True
+1 True True
+2 True True
+7 True True
+100 True True
+16384 True True
+1048576 True True
+TypeError: compress() takes at least 1 positional argument (0 given)
+TypeError: a bytes-like object is required, not 'str'
+TypeError: a bytes-like object is required, not 'int'
+TypeError: a bytes-like object is required, not 'NoneType'
+TypeError: a bytes-like object is required, not 'list'
+TypeError: compress() takes at least 1 positional argument (0 given)
+error: Bad compression level
+error: Bad compression level
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+error: Bad compression level
+error: Bad compression level
+TypeError: compress() takes at most 3 arguments (4 given)
+OverflowError: Python int too large to convert to C int
+OverflowError: Python int too large to convert to C int
+TypeError: compress() got an unexpected keyword argument 'lvl'
+TypeError: argument for compress() given by name ('level') and position (2)
+TypeError: decompress() takes at least 1 positional argument (0 given)
+TypeError: a bytes-like object is required, not 'str'
+error: Error -5 while decompressing data: incomplete or truncated stream
+error: Error -3 while decompressing data: incorrect header check
+error: Error -3 while decompressing data: incorrect header check
+error: Error -5 while decompressing data: incomplete or truncated stream
+error: Error -5 while decompressing data: incomplete or truncated stream
+error: Error -5 while decompressing data: incomplete or truncated stream
+error: Error -5 while decompressing data: incomplete or truncated stream
+b'hello world, hello world, hello world! hello world, hello world, hello world! hello world, hello world, hello world! hello world, hello world, hello world! hello world, hello world, hello world! hel
+error: Error -3 while decompressing data: invalid stored block lengths
+error: Error -3 while decompressing data: incorrect header check
+error: Error -2 while preparing to decompress data: inconsistent stream state
+ValueError: bufsize cannot be negative
+TypeError: 'str' object cannot be interpreted as an integer
+OverflowError: Python int too large to convert to C ssize_t
+ValueError: bufsize cannot be negative
+error: Error -3 while decompressing data: invalid window size
+b'hello world, hello world, hello world! hello world, hello world, hello world! hello world, hello world, hello world! hello world, hello world, hello world! hello world, hello world, hello world! hel
+error: Error -3 while decompressing data: incorrect data check
+error: Error -3 while decompressing data: incorrect data check
+True
+True
+1.0 [('DeprecationWarning', "'__version__' is deprecated and slated for removal in Python 3.20")]
+AttributeError: module 'zlib' has no attribute 'nothing'
+True True True

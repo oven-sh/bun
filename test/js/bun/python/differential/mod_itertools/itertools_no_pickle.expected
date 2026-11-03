@@ -1,0 +1,226 @@
+status: 0
+script: 1601fd72523743b0
+---
+accumulate
+   __reduce__ False
+   __setstate__ False
+   __copy__ False
+   __deepcopy__ False
+   __getstate__ False
+TypeError cannot pickle 'itertools.accumulate' object
+TypeError cannot pickle 'itertools.accumulate' object
+TypeError cannot pickle 'accumulate' object
+TypeError cannot pickle 'itertools.accumulate' object
+TypeError cannot pickle 'itertools.accumulate' object
+batched
+   __reduce__ False
+   __setstate__ False
+   __copy__ False
+   __deepcopy__ False
+   __getstate__ False
+TypeError cannot pickle 'itertools.batched' object
+TypeError cannot pickle 'itertools.batched' object
+TypeError cannot pickle 'batched' object
+TypeError cannot pickle 'itertools.batched' object
+TypeError cannot pickle 'itertools.batched' object
+chain
+   __reduce__ False
+   __setstate__ False
+   __copy__ False
+   __deepcopy__ False
+   __getstate__ False
+TypeError cannot pickle 'itertools.chain' object
+TypeError cannot pickle 'itertools.chain' object
+TypeError cannot pickle 'chain' object
+TypeError cannot pickle 'itertools.chain' object
+TypeError cannot pickle 'itertools.chain' object
+combinations
+   __reduce__ False
+   __setstate__ False
+   __copy__ False
+   __deepcopy__ False
+   __getstate__ False
+TypeError cannot pickle 'itertools.combinations' object
+TypeError cannot pickle 'itertools.combinations' object
+TypeError cannot pickle 'combinations' object
+TypeError cannot pickle 'itertools.combinations' object
+TypeError cannot pickle 'itertools.combinations' object
+combinations_with_replacement
+   __reduce__ False
+   __setstate__ False
+   __copy__ False
+   __deepcopy__ False
+   __getstate__ False
+TypeError cannot pickle 'itertools.combinations_with_replacement' object
+TypeError cannot pickle 'itertools.combinations_with_replacement' object
+TypeError cannot pickle 'combinations_with_replacement' object
+TypeError cannot pickle 'itertools.combinations_with_replacement' object
+TypeError cannot pickle 'itertools.combinations_with_replacement' object
+compress
+   __reduce__ False
+   __setstate__ False
+   __copy__ False
+   __deepcopy__ False
+   __getstate__ False
+TypeError cannot pickle 'itertools.compress' object
+TypeError cannot pickle 'itertools.compress' object
+TypeError cannot pickle 'compress' object
+TypeError cannot pickle 'itertools.compress' object
+TypeError cannot pickle 'itertools.compress' object
+count
+   __reduce__ False
+   __setstate__ False
+   __copy__ False
+   __deepcopy__ False
+   __getstate__ False
+TypeError cannot pickle 'itertools.count' object
+TypeError cannot pickle 'itertools.count' object
+TypeError cannot pickle 'count' object
+TypeError cannot pickle 'itertools.count' object
+TypeError cannot pickle 'itertools.count' object
+cycle
+   __reduce__ False
+   __setstate__ False
+   __copy__ False
+   __deepcopy__ False
+   __getstate__ False
+TypeError cannot pickle 'itertools.cycle' object
+TypeError cannot pickle 'itertools.cycle' object
+TypeError cannot pickle 'cycle' object
+TypeError cannot pickle 'itertools.cycle' object
+TypeError cannot pickle 'itertools.cycle' object
+dropwhile
+   __reduce__ False
+   __setstate__ False
+   __copy__ False
+   __deepcopy__ False
+   __getstate__ False
+TypeError cannot pickle 'itertools.dropwhile' object
+TypeError cannot pickle 'itertools.dropwhile' object
+TypeError cannot pickle 'dropwhile' object
+TypeError cannot pickle 'itertools.dropwhile' object
+TypeError cannot pickle 'itertools.dropwhile' object
+filterfalse
+   __reduce__ False
+   __setstate__ False
+   __copy__ False
+   __deepcopy__ False
+   __getstate__ False
+TypeError cannot pickle 'itertools.filterfalse' object
+TypeError cannot pickle 'itertools.filterfalse' object
+TypeError cannot pickle 'filterfalse' object
+TypeError cannot pickle 'itertools.filterfalse' object
+TypeError cannot pickle 'itertools.filterfalse' object
+groupby
+   __reduce__ False
+   __setstate__ False
+   __copy__ False
+   __deepcopy__ False
+   __getstate__ False
+TypeError cannot pickle 'itertools.groupby' object
+TypeError cannot pickle 'itertools.groupby' object
+TypeError cannot pickle 'groupby' object
+TypeError cannot pickle 'itertools.groupby' object
+TypeError cannot pickle 'itertools.groupby' object
+islice
+   __reduce__ False
+   __setstate__ False
+   __copy__ False
+   __deepcopy__ False
+   __getstate__ False
+TypeError cannot pickle 'itertools.islice' object
+TypeError cannot pickle 'itertools.islice' object
+TypeError cannot pickle 'islice' object
+TypeError cannot pickle 'itertools.islice' object
+TypeError cannot pickle 'itertools.islice' object
+pairwise
+   __reduce__ False
+   __setstate__ False
+   __copy__ False
+   __deepcopy__ False
+   __getstate__ False
+TypeError cannot pickle 'itertools.pairwise' object
+TypeError cannot pickle 'itertools.pairwise' object
+TypeError cannot pickle 'pairwise' object
+TypeError cannot pickle 'itertools.pairwise' object
+TypeError cannot pickle 'itertools.pairwise' object
+permutations
+   __reduce__ False
+   __setstate__ False
+   __copy__ False
+   __deepcopy__ False
+   __getstate__ False
+TypeError cannot pickle 'itertools.permutations' object
+TypeError cannot pickle 'itertools.permutations' object
+TypeError cannot pickle 'permutations' object
+TypeError cannot pickle 'itertools.permutations' object
+TypeError cannot pickle 'itertools.permutations' object
+product
+   __reduce__ False
+   __setstate__ False
+   __copy__ False
+   __deepcopy__ False
+   __getstate__ False
+TypeError cannot pickle 'itertools.product' object
+TypeError cannot pickle 'itertools.product' object
+TypeError cannot pickle 'product' object
+TypeError cannot pickle 'itertools.product' object
+TypeError cannot pickle 'itertools.product' object
+repeat
+   __reduce__ False
+   __setstate__ False
+   __copy__ False
+   __deepcopy__ False
+   __getstate__ False
+TypeError cannot pickle 'itertools.repeat' object
+TypeError cannot pickle 'itertools.repeat' object
+TypeError cannot pickle 'repeat' object
+TypeError cannot pickle 'itertools.repeat' object
+TypeError cannot pickle 'itertools.repeat' object
+starmap
+   __reduce__ False
+   __setstate__ False
+   __copy__ False
+   __deepcopy__ False
+   __getstate__ False
+TypeError cannot pickle 'itertools.starmap' object
+TypeError cannot pickle 'itertools.starmap' object
+TypeError cannot pickle 'starmap' object
+TypeError cannot pickle 'itertools.starmap' object
+TypeError cannot pickle 'itertools.starmap' object
+takewhile
+   __reduce__ False
+   __setstate__ False
+   __copy__ False
+   __deepcopy__ False
+   __getstate__ False
+TypeError cannot pickle 'itertools.takewhile' object
+TypeError cannot pickle 'itertools.takewhile' object
+TypeError cannot pickle 'takewhile' object
+TypeError cannot pickle 'itertools.takewhile' object
+TypeError cannot pickle 'itertools.takewhile' object
+zip_longest
+   __reduce__ False
+   __setstate__ False
+   __copy__ False
+   __deepcopy__ False
+   __getstate__ False
+TypeError cannot pickle 'itertools.zip_longest' object
+TypeError cannot pickle 'itertools.zip_longest' object
+TypeError cannot pickle 'zip_longest' object
+TypeError cannot pickle 'itertools.zip_longest' object
+TypeError cannot pickle 'itertools.zip_longest' object
+_grouper
+   __reduce__ False
+   __setstate__ False
+   __copy__ False
+   __deepcopy__ False
+   __getstate__ False
+TypeError cannot pickle 'itertools._grouper' object
+TypeError cannot pickle 'itertools._grouper' object
+TypeError cannot pickle '_grouper' object
+TypeError cannot pickle 'itertools._grouper' object
+TypeError cannot pickle 'itertools._grouper' object
+('_tee', ['b', 'c'], ['b', 'c'], ['a', 'b', 'c'])
+TypeError cannot pickle 'itertools._tee' object
+TypeError cannot pickle 'itertools._tee' object

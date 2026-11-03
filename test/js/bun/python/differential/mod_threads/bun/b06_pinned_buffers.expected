@@ -1,0 +1,9 @@
+status: 0
+oracle: none
+---
+[9] b'abcdefgh' False 8
+[9] b'abcdefghi' False 100000
+[9] b'abcdefgh' RangeError: ArrayBuffer resize failed with new byte length 4
+[9] b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00'
+4
+True 8

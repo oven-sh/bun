@@ -1,0 +1,49 @@
+status: 0
+script: 74afb35a29b13442
+---
+collections collections True True True False True True
+P(x=1, y=2) 1 2 1 {'x': 1, 'y': 2} P(x=5, y=2) ('x', 'y') P(x=3, y=4) True True _tuplegetter(0, 'Alias for field number 0') Alias for field number 0 _tuplegetter P(x, y) 2 (1, 2) (1, 2) ('x', 'y')
+TypeError P.__new__() missing 1 required positional argument: 'y'
+TypeError P.__new__() takes 3 positional arguments but 4 were given
+AttributeError can't set attribute
+P(x=1, y=2)
+TypeError P.__new__() got an unexpected keyword argument 'z'
+TypeError Got unexpected field names: ['z']
+ValueError Encountered duplicate field name: 'a'
+ValueError Type names and field names cannot be a keyword: 'class'
+ValueError Field names cannot start with an underscore: '_a'
+('a', '_1', '_2', '_3')
+D(a=1, b=2, c=3) {'b': 2, 'c': 3} D(a=1, b=2, c=9)
+5.0 P3(x=3, y=4)
+match 1 2
+Counter({'a': 5, 'b': 2, 'r': 2, 'c': 1, 'd': 1}) [('a', 5), ('b', 2)] 5 0 ['a', 'a', 'a', 'a', 'a', 'b', 'b', 'c', 'd', 'r', 'r'] 11 11
+Counter({'b': 11, 'a': 7, 'z': 5, 'r': 2, 'c': 1, 'd': 1}) Counter({'b': 11, 'a': 8, 'z': 5, 'r': 2, 'c': 1, 'd': 1}) Counter({'b': 11, 'z': 5, 'r': 2, 'c': 1, 'd': 1}) Counter({'a': 2, 'b': 2}) Counter({'b': 11, 'a': 7, 'z': 5, 'r': 2, 'c': 1, 'd': 1, 'q': 1}) Counter({'a': 1}) Counter({'b': 1}) True True
+Counter({1: 3, 2.0: 2}) Counter() Counter({'a': 3}) Counter({'a': 3}) Counter({'a': 1, 'b': 1}) {'a': 2, 'b': 1} [('a', 2), ('b', 1)] Counter({'b': 3, 'a': 3})
+TypeError 'int' object is not iterable
+NotImplementedError Counter.fromkeys() is undefined.  Use Counter(iterable) instead.
+OrderedDict({'c': 3}) ['b', 'c', 'a'] ('a', 1) ('b', 2) OrderedDict({'c': 3}) ['z', 'y', 'x'] True False True OrderedDict({'a': 1, 'b': 2})
+ChainMap({'a': 1}, {'a': 2, 'b': 3}) 1 3 2 ['a', 'b'] [{'a': 1}, {'a': 2, 'b': 3}] 4 ChainMap({'a': 2, 'b': 3}) {'a': 1, 'b': 3}
+KeyError 'z'
+{'a': 1, 'b': 2} {'a': 1, 'b': 2} 2 True {'a': 1, 'b': 2} {'a': 1, 'b': 2, 'c': 3}
+[1, 2, 3, 4] 1 [1, 2, 3, 4, 5] [1, 2, 3, 4] 4
+abc ABC abcd 3 abc b
+deque([7, 8, 9], maxlen=3) True
+1 1
+deque True True False True None None
+deque True True False True 5 None
+defaultdict True True False True None <class 'list'>
+defaultdict True True False True None None
+Counter True True False True None None
+OrderedDict True True False True None None
+P True True False True None None
+D True True False True None None
+deque pickles None None
+deque pickles 5 None
+defaultdict pickles None <class 'list'>
+defaultdict pickles None None
+Counter pickles None None
+OrderedDict pickles None None
+[2, 3] [2, 3] [3, 2, 1]
+True 1
+True
+['ChainMap', 'Counter', 'OrderedDict', 'UserDict', 'UserList', 'UserString', 'defaultdict', 'deque', 'namedtuple']

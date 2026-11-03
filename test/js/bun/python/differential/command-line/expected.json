@@ -1,0 +1,652 @@
+{
+ "flags-default": {
+  "stdout": "sys.flags(debug=0, inspect=0, interactive=0, optimize=0, dont_write_bytecode=0, no_user_site=0, no_site=0, ignore_environment=0, verbose=0, bytes_warning=0, quiet=0, hash_randomization=1, isolated=0, dev_mode=False, utf8_mode=1, warn_default_encoding=0, safe_path=False, int_max_str_digits=4300)\n",
+  "stderr": "",
+  "status": 0
+ },
+ "flags-many": {
+  "stdout": "sys.flags(debug=1, inspect=0, interactive=0, optimize=1, dont_write_bytecode=1, no_user_site=1, no_site=1, ignore_environment=1, verbose=0, bytes_warning=1, quiet=1, hash_randomization=1, isolated=0, dev_mode=False, utf8_mode=1, warn_default_encoding=0, safe_path=True, int_max_str_digits=4300)\n",
+  "stderr": "",
+  "status": 0
+ },
+ "flags-I": {
+  "stdout": "sys.flags(debug=0, inspect=0, interactive=0, optimize=0, dont_write_bytecode=0, no_user_site=1, no_site=0, ignore_environment=1, verbose=0, bytes_warning=0, quiet=0, hash_randomization=1, isolated=1, dev_mode=False, utf8_mode=1, warn_default_encoding=0, safe_path=True, int_max_str_digits=4300)\n",
+  "stderr": "",
+  "status": 0
+ },
+ "flags-v": {
+  "stdout": "2\n",
+  "stderr": null,
+  "status": 0
+ },
+ "flags-ddd-qq-ii": {
+  "stdout": "sys.flags(debug=1, inspect=1, interactive=1, optimize=0, dont_write_bytecode=0, no_user_site=0, no_site=0, ignore_environment=0, verbose=0, bytes_warning=0, quiet=1, hash_randomization=1, isolated=0, dev_mode=False, utf8_mode=1, warn_default_encoding=0, safe_path=False, int_max_str_digits=4300)\n",
+  "stderr": ">>> \n",
+  "status": 0
+ },
+ "flags-bb-OO-vv": {
+  "stdout": "sys.flags(debug=0, inspect=0, interactive=0, optimize=2, dont_write_bytecode=0, no_user_site=0, no_site=1, ignore_environment=0, verbose=0, bytes_warning=2, quiet=0, hash_randomization=1, isolated=0, dev_mode=False, utf8_mode=1, warn_default_encoding=0, safe_path=False, int_max_str_digits=4300)\n",
+  "stderr": "",
+  "status": 0
+ },
+ "flags-joined": {
+  "stdout": "sys.flags(debug=0, inspect=0, interactive=0, optimize=0, dont_write_bytecode=1, no_user_site=1, no_site=1, ignore_environment=0, verbose=0, bytes_warning=0, quiet=1, hash_randomization=1, isolated=0, dev_mode=False, utf8_mode=1, warn_default_encoding=0, safe_path=False, int_max_str_digits=4300)\n",
+  "stderr": "",
+  "status": 0
+ },
+ "flags-i": {
+  "stdout": "sys.flags(debug=0, inspect=1, interactive=1, optimize=0, dont_write_bytecode=0, no_user_site=0, no_site=0, ignore_environment=0, verbose=0, bytes_warning=0, quiet=0, hash_randomization=1, isolated=0, dev_mode=False, utf8_mode=1, warn_default_encoding=0, safe_path=False, int_max_str_digits=4300)\n",
+  "stderr": ">>> \n",
+  "status": 0
+ },
+ "flags-X-dev": {
+  "stdout": "sys.flags(debug=0, inspect=0, interactive=0, optimize=0, dont_write_bytecode=0, no_user_site=0, no_site=0, ignore_environment=0, verbose=0, bytes_warning=0, quiet=0, hash_randomization=1, isolated=0, dev_mode=True, utf8_mode=1, warn_default_encoding=0, safe_path=False, int_max_str_digits=4300)\n['default'] {'dev': True}\n",
+  "stderr": "",
+  "status": 0
+ },
+ "flags-Xdev-joined": {
+  "stdout": "sys.flags(debug=0, inspect=0, interactive=0, optimize=0, dont_write_bytecode=0, no_user_site=0, no_site=0, ignore_environment=0, verbose=0, bytes_warning=0, quiet=0, hash_randomization=1, isolated=0, dev_mode=True, utf8_mode=1, warn_default_encoding=0, safe_path=False, int_max_str_digits=4300)\n",
+  "stderr": "",
+  "status": 0
+ },
+ "flags-X-utf8-0": {
+  "stdout": "sys.flags(debug=0, inspect=0, interactive=0, optimize=0, dont_write_bytecode=0, no_user_site=0, no_site=0, ignore_environment=0, verbose=0, bytes_warning=0, quiet=0, hash_randomization=1, isolated=0, dev_mode=False, utf8_mode=0, warn_default_encoding=0, safe_path=False, int_max_str_digits=4300)\n",
+  "stderr": "",
+  "status": 0
+ },
+ "flags-X-utf8-bad": {
+  "stdout": "",
+  "stderr": "Fatal Python error: preconfig_init_utf8_mode: invalid -X utf8 option value\nPython runtime state: preinitializing\n\n",
+  "status": 1
+ },
+ "flags-X-digits": {
+  "stdout": "sys.flags(debug=0, inspect=0, interactive=0, optimize=0, dont_write_bytecode=0, no_user_site=0, no_site=0, ignore_environment=0, verbose=0, bytes_warning=0, quiet=0, hash_randomization=1, isolated=0, dev_mode=False, utf8_mode=1, warn_default_encoding=0, safe_path=False, int_max_str_digits=1000)\n1000\n",
+  "stderr": "",
+  "status": 0
+ },
+ "flags-X-digits-bad": {
+  "stdout": "",
+  "stderr": "Fatal Python error: config_init_int_max_str_digits: -X int_max_str_digits: invalid limit; must be >= 640 or 0 for unlimited.\nPython runtime state: preinitialized\n\n",
+  "status": 1
+ },
+ "flags-X-lazy": {
+  "stdout": "1 all\n",
+  "stderr": "",
+  "status": 0
+ },
+ "flags-X-lazy-bad": {
+  "stdout": "",
+  "stderr": "Fatal Python error: config_init_lazy_imports: -X lazy_imports: invalid value; expected 'all' or 'normal'\nPython runtime state: preinitialized\n\n",
+  "status": 1
+ },
+ "flags-X-wde": {
+  "stdout": "sys.flags(debug=0, inspect=0, interactive=0, optimize=0, dont_write_bytecode=0, no_user_site=0, no_site=0, ignore_environment=0, verbose=0, bytes_warning=0, quiet=0, hash_randomization=1, isolated=0, dev_mode=False, utf8_mode=1, warn_default_encoding=1, safe_path=False, int_max_str_digits=4300)\n",
+  "stderr": "",
+  "status": 0
+ },
+ "flags-X-unknown": {
+  "stdout": "['-c']  [] [('bar', '1=2'), ('foo', '3')] False None\n",
+  "stderr": "",
+  "status": 0
+ },
+ "flags-X-pycache": {
+  "stdout": "['-c']  [] [('pycache_prefix', '/tmp/x')] False /tmp/x\n",
+  "stderr": "",
+  "status": 0
+ },
+ "flags-X-importtime-bad": {
+  "stdout": "",
+  "stderr": "Fatal Python error: config_init_import_time: -X importtime: values other than 1 and 2 are reserved for future use.\nPython runtime state: preinitialized\n\n",
+  "status": 1
+ },
+ "flags-X-tracemalloc-bad": {
+  "stdout": "",
+  "stderr": "Fatal Python error: config_init_tracemalloc: -X tracemalloc=NFRAME: invalid number of frames\nPython runtime state: preinitialized\n\n",
+  "status": 1
+ },
+ "flags-X-cpu": {
+  "stdout": "3 3\n",
+  "stderr": "",
+  "status": 0
+ },
+ "flags-X-cpu-bad": {
+  "stdout": "",
+  "stderr": "Fatal Python error: config_init_cpu_count: -X cpu_count=n option: n is missing or an invalid number, n must be greater than 0\nPython runtime state: preinitialized\n\n",
+  "status": 1
+ },
+ "flags-X-frozen-bad": {
+  "stdout": "",
+  "stderr": "Fatal Python error: bad value for option -X frozen_modules (expected \"on\" or \"off\")\nPython runtime state: preinitialized\n\n",
+  "status": 1
+ },
+ "flags-X-gil-1": {
+  "stdout": "1\n",
+  "stderr": "",
+  "status": 0
+ },
+ "flags-X-gil-2": {
+  "stdout": "",
+  "stderr": "Fatal Python error: config_read_gil: PYTHON_GIL / -X gil must be \"0\" or \"1\"\nPython runtime state: preinitialized\n\n",
+  "status": 1
+ },
+ "env-flags": {
+  "stdout": "sys.flags(debug=1, inspect=0, interactive=0, optimize=1, dont_write_bytecode=1, no_user_site=1, no_site=0, ignore_environment=0, verbose=0, bytes_warning=0, quiet=0, hash_randomization=0, isolated=0, dev_mode=True, utf8_mode=1, warn_default_encoding=1, safe_path=True, int_max_str_digits=0)\n",
+  "stderr": "",
+  "status": 0
+ },
+ "env-ignored": {
+  "stdout": "sys.flags(debug=0, inspect=0, interactive=0, optimize=0, dont_write_bytecode=0, no_user_site=0, no_site=0, ignore_environment=1, verbose=0, bytes_warning=0, quiet=0, hash_randomization=1, isolated=0, dev_mode=False, utf8_mode=1, warn_default_encoding=0, safe_path=False, int_max_str_digits=4300)\n",
+  "stderr": "",
+  "status": 0
+ },
+ "env-inspect": {
+  "stdout": "sys.flags(debug=0, inspect=1, interactive=0, optimize=0, dont_write_bytecode=0, no_user_site=0, no_site=0, ignore_environment=0, verbose=0, bytes_warning=0, quiet=0, hash_randomization=1, isolated=0, dev_mode=False, utf8_mode=1, warn_default_encoding=0, safe_path=False, int_max_str_digits=4300)\n",
+  "stderr": "",
+  "status": 0
+ },
+ "env-hashseed": {
+  "stdout": "1\n",
+  "stderr": "",
+  "status": 0
+ },
+ "env-hashseed-random": {
+  "stdout": "1\n",
+  "stderr": "",
+  "status": 0
+ },
+ "env-hashseed-big": {
+  "stdout": "",
+  "stderr": "Fatal Python error: config_init_hash_seed: PYTHONHASHSEED must be \"random\" or an integer in range [0; 4294967295]\nPython runtime state: preinitialized\n\n",
+  "status": 1
+ },
+ "env-warnings": {
+  "stdout": "['-c']  ['default', 'always::DeprecationWarning', 'error::UserWarning', 'ignore'] [] False None\n",
+  "stderr": "",
+  "status": 0
+ },
+ "env-path": {
+  "stdout": "['', '/a', '/b', '<dir>']\n",
+  "stderr": "",
+  "status": 0
+ },
+ "env-path-E": {
+  "stdout": "False\n",
+  "stderr": "",
+  "status": 0
+ },
+ "env-pycache": {
+  "stdout": "['-c']  [] [] False /tmp/pc\n",
+  "stderr": "",
+  "status": 0
+ },
+ "env-utf8-bad": {
+  "stdout": "",
+  "stderr": "Fatal Python error: preconfig_init_utf8_mode: invalid PYTHONUTF8 environment variable value\nPython runtime state: preinitializing\n\n",
+  "status": 1
+ },
+ "env-ioencoding": {
+  "stdout": "iso8859-1 replace iso8859-1 replace iso8859-1 backslashreplace\n\\xe9\n",
+  "stderr": "",
+  "status": 0
+ },
+ "env-ioencoding-errors": {
+  "stdout": "utf-8 ignore utf-8 ignore utf-8 backslashreplace\n",
+  "stderr": "",
+  "status": 0
+ },
+ "env-ioencoding-enc": {
+  "stdout": "ascii strict ascii strict ascii backslashreplace\n",
+  "stderr": "",
+  "status": 0
+ },
+ "streams": {
+  "stdout": "<stdin> r utf-8 surrogateescape False False BufferedReader FileIO\n<stdout> w utf-8 surrogateescape False False BufferedWriter FileIO\n<stderr> w utf-8 backslashreplace True False BufferedWriter FileIO\n",
+  "stderr": "",
+  "status": 0
+ },
+ "streams-u": {
+  "stdout": "<stdin> r utf-8 surrogateescape False True BufferedReader FileIO\n<stdout> w utf-8 surrogateescape False True FileIO None\n<stderr> w utf-8 backslashreplace False True FileIO None\n",
+  "stderr": "",
+  "status": 0
+ },
+ "streams-env-u": {
+  "stdout": "True FileIO\n",
+  "stderr": "",
+  "status": 0
+ },
+ "argv-c": {
+  "stdout": "['-c', '-x', '--y', 'z']  [] [] False None\n",
+  "stderr": "",
+  "status": 0
+ },
+ "argv-c-joined": {
+  "stdout": "['-c', 'a']  [] [] False None\n",
+  "stderr": "",
+  "status": 0
+ },
+ "argv-m": {
+  "stdout": "['<dir>/showargs.py', '-x', '1'] <dir> [] [] False None\n",
+  "stderr": "",
+  "status": 0
+ },
+ "argv-m-pkg": {
+  "stdout": "['<dir>/pkg/__main__.py', '1'] <dir> [] [] False None\n__main__ pkg pkg.__main__\n",
+  "stderr": "",
+  "status": 0
+ },
+ "argv-m-sub": {
+  "stdout": "['<dir>/pkg/sub.py', '1'] <dir> [] [] False None\n__main__ pkg pkg.sub\n",
+  "stderr": "",
+  "status": 0
+ },
+ "argv-m-nomain": {
+  "stdout": "",
+  "stderr": "<python>: No module named nomain.__main__; 'nomain' is a package and cannot be directly executed\n",
+  "status": 1
+ },
+ "argv-script": {
+  "stdout": "['showargs.py', '-x', '1'] <dir> [] [] False None\n",
+  "stderr": "",
+  "status": 0
+ },
+ "argv-script-sub": {
+  "stdout": "['dir/inner.py', 'a'] <dir>/dir [] [] False None\n",
+  "stderr": "",
+  "status": 0
+ },
+ "argv-script-link": {
+  "stdout": "['link.py'] <dir>/dir [] [] False None\n",
+  "stderr": "",
+  "status": 0
+ },
+ "argv-script-P": {
+  "stdout": "['inpath.py'] False False\n",
+  "stderr": "",
+  "status": 0
+ },
+ "argv-script-I": {
+  "stdout": "['inpath.py'] False False\n",
+  "stderr": "",
+  "status": 0
+ },
+ "argv-script-safe-env": {
+  "stdout": "['inpath.py'] False False\n",
+  "stderr": "",
+  "status": 0
+ },
+ "argv-script-unsafe": {
+  "stdout": "['inpath.py'] True False\n",
+  "stderr": "",
+  "status": 0
+ },
+ "argv-dashdash": {
+  "stdout": "['showargs.py', '-x'] <dir> [] [] False None\n",
+  "stderr": "",
+  "status": 0
+ },
+ "argv-stdin": {
+  "stdout": "['-', 'a', 'b']  [] [] False None\n",
+  "stderr": "",
+  "status": 0
+ },
+ "argv-stdin-none": {
+  "stdout": "['']  [] [] False None\n",
+  "stderr": "",
+  "status": 0
+ },
+ "argv-dir": {
+  "stdout": "['appdir', '1'] <dir>/appdir [] [] False None\n__main__  __main__ <dir>/appdir/__main__.py\n",
+  "stderr": "",
+  "status": 0
+ },
+ "argv-zip": {
+  "stdout": "['app.zip', '1'] <dir>/app.zip [] [] False None\n__main__  __main__ <dir>/app.zip/__main__.py\n",
+  "stderr": "",
+  "status": 0
+ },
+ "argv-dir-nomain": {
+  "stdout": "",
+  "stderr": "<python>: can't find '__main__' module in '<dir>/dir'\n",
+  "status": 1
+ },
+ "main-attrs-c": {
+  "stdout": "['__builtins__', '__doc__', '__loader__', '__name__', '__package__', '__spec__']\n__main__ None <class '_frozen_importlib.BuiltinImporter'> None None\n",
+  "stderr": "",
+  "status": 0
+ },
+ "main-attrs-script": {
+  "stdout": "['__builtins__', '__doc__', '__file__', '__loader__', '__name__', '__package__', '__spec__']\n__main__ None SourceFileLoader None None <dir>/mainattrs.py\n",
+  "stderr": "",
+  "status": 0
+ },
+ "main-attrs-m": {
+  "stdout": "['__builtins__', '__doc__', '__file__', '__loader__', '__name__', '__package__', '__spec__']\n__main__ mainattrs SourceFileLoader  None <dir>/mainattrs.py\n",
+  "stderr": "",
+  "status": 0
+ },
+ "main-attrs-stdin": {
+  "stdout": "['__builtins__', '__doc__', '__file__', '__loader__', '__name__', '__package__', '__spec__']\n__main__ None <class '_frozen_importlib.BuiltinImporter'> None None\n",
+  "stderr": "",
+  "status": 0
+ },
+ "dedent": {
+  "stdout": "dedented\n",
+  "stderr": "",
+  "status": 0
+ },
+ "dedent-mixed": {
+  "stdout": "",
+  "stderr": "  File \"<string>\", line 1\n    print(1)\nIndentationError: unexpected indent\n",
+  "status": 1
+ },
+ "c-syntax-error": {
+  "stdout": "",
+  "stderr": "  File \"<string>\", line 1\n    print(1\nSyntaxError: '(' was never closed\n",
+  "status": 1
+ },
+ "c-exception": {
+  "stdout": "",
+  "stderr": "Traceback (most recent call last):\n  File \"<string>\", line 3, in <module>\n    f()\n  File \"<string>\", line 2, in f\n    1/0\nZeroDivisionError: division by zero\n",
+  "status": 1
+ },
+ "c-exit-3": {
+  "stdout": "",
+  "stderr": "",
+  "status": 3
+ },
+ "c-exit-str": {
+  "stdout": "",
+  "stderr": "bye\n",
+  "status": 1
+ },
+ "c-exit-none": {
+  "stdout": "",
+  "stderr": "",
+  "status": 0
+ },
+ "c-exit-big": {
+  "stdout": "",
+  "stderr": "",
+  "status": 44
+ },
+ "c-cookie": {
+  "stdout": "é\n",
+  "stderr": "",
+  "status": 0
+ },
+ "c-unicode": {
+  "stdout": "é中 '\\xe9\\u4e2d'\n",
+  "stderr": "",
+  "status": 0
+ },
+ "script-exception": {
+  "stdout": "",
+  "stderr": "Traceback (most recent call last):\n  File \"<dir>/raises.py\", line 4, in <module>\n    f(0)\n  File \"<dir>/raises.py\", line 2, in f\n    return 1 / x\nZeroDivisionError: division by zero\n",
+  "status": 1
+ },
+ "script-syntax": {
+  "stdout": "",
+  "stderr": "  File \"<dir>/badsyntax.py\", line 2\n    y = = 2\nSyntaxError: invalid syntax\n",
+  "status": 1
+ },
+ "script-x": {
+  "stdout": "second line 3\n",
+  "stderr": "",
+  "status": 0
+ },
+ "script-missing": {
+  "stdout": "",
+  "stderr": "<python>: can't open file '<dir>/missing.py': [Errno 2] No such file or directory\n",
+  "status": 2
+ },
+ "script-empty": {
+  "stdout": "",
+  "stderr": "",
+  "status": 0
+ },
+ "O-assert": {
+  "stdout": "False\n",
+  "stderr": "",
+  "status": 0
+ },
+ "OO-doc": {
+  "stdout": "None False\n",
+  "stderr": "",
+  "status": 0
+ },
+ "no-O": {
+  "stdout": "True\n",
+  "stderr": "Traceback (most recent call last):\n  File \"<string>\", line 2, in <module>\n    assert False, 'x'\nAssertionError: x\n",
+  "status": 1
+ },
+ "S-no-site": {
+  "stdout": "False False\n",
+  "stderr": "",
+  "status": 0
+ },
+ "site": {
+  "stdout": "True Use exit() or Ctrl-D (i.e. EOF) to exit Use quit() or Ctrl-D (i.e. EOF) to exit\n",
+  "stderr": "",
+  "status": 0
+ },
+ "S-hint": {
+  "stdout": "",
+  "stderr": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n    import nonexistent_module_x\nModuleNotFoundError: No module named 'nonexistent_module_x'. Site initialization is disabled, did you forget to add the site-packages directory to sys.path or to enable your virtual environment?\n",
+  "status": 1
+ },
+ "W-error": {
+  "stdout": "",
+  "stderr": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n    import warnings; warnings.warn('w')\nUserWarning: w\n",
+  "status": 1
+ },
+ "W-invalid": {
+  "stdout": "1\n",
+  "stderr": "Invalid -W option ignored: invalid action: 'bogus'\n",
+  "status": 0
+ },
+ "W-default": {
+  "stdout": "",
+  "stderr": "<string>:1: DeprecationWarning: w\n",
+  "status": 0
+ },
+ "version": {
+  "stdout": "Python 3.15.2\n",
+  "stderr": "",
+  "status": 0
+ },
+ "V": {
+  "stdout": "Python 3.15.2\n",
+  "stderr": "",
+  "status": 0
+ },
+ "bad-option": {
+  "stdout": "",
+  "stderr": "Unknown option: -Z\nusage: <python> [option] ... [-c cmd | -m mod | file | -] [arg] ...\nTry `python -h' for more information.\n",
+  "status": 2
+ },
+ "bad-long": {
+  "stdout": "",
+  "stderr": "Unknown option: --nope\nusage: <python> [option] ... [-c cmd | -m mod | file | -] [arg] ...\nTry `python -h' for more information.\n",
+  "status": 2
+ },
+ "missing-c": {
+  "stdout": "",
+  "stderr": "Argument expected for the -c option\nusage: <python> [option] ... [-c cmd | -m mod | file | -] [arg] ...\nTry `python -h' for more information.\n",
+  "status": 2
+ },
+ "missing-m": {
+  "stdout": "",
+  "stderr": "Argument expected for the -m option\nusage: <python> [option] ... [-c cmd | -m mod | file | -] [arg] ...\nTry `python -h' for more information.\n",
+  "status": 2
+ },
+ "missing-W": {
+  "stdout": "",
+  "stderr": "Argument expected for the -W option\nusage: <python> [option] ... [-c cmd | -m mod | file | -] [arg] ...\nTry `python -h' for more information.\n",
+  "status": 2
+ },
+ "missing-X": {
+  "stdout": "",
+  "stderr": "Argument expected for the -X option\nusage: <python> [option] ... [-c cmd | -m mod | file | -] [arg] ...\nTry `python -h' for more information.\n",
+  "status": 2
+ },
+ "check-hash": {
+  "stdout": "1\n",
+  "stderr": "",
+  "status": 0
+ },
+ "check-hash-bad": {
+  "stdout": "",
+  "stderr": "--check-hash-based-pycs must be one of 'default', 'always', or 'never'\nusage: <python> [option] ... [-c cmd | -m mod | file | -] [arg] ...\nTry `python -h' for more information.\n",
+  "status": 2
+ },
+ "check-hash-missing": {
+  "stdout": "",
+  "stderr": "Argument expected for the --check-hash-based-pycs options\nusage: <python> [option] ... [-c cmd | -m mod | file | -] [arg] ...\nTry `python -h' for more information.\n",
+  "status": 2
+ },
+ "i-stdin": {
+  "stdout": "2\nyes\n'end'\n",
+  "stderr": ">>> >>> >>> ... ... >>> Traceback (most recent call last):\n  File \"<stdin>\", line 1, in <module>\n    print(undefined)\nNameError: name 'undefined' is not defined\n>>> >>> \n",
+  "status": 0
+ },
+ "i-after-c": {
+  "stdout": "10\n",
+  "stderr": ">>> >>> \n",
+  "status": 0
+ },
+ "i-after-exit": {
+  "stdout": "1\n",
+  "stderr": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n    import sys; z = 1; sys.exit(3)\nSystemExit: 3\n>>> >>> \n",
+  "status": 0
+ },
+ "i-exit": {
+  "stdout": "",
+  "stderr": ">>> >>> ",
+  "status": 7
+ },
+ "i-syntax": {
+  "stdout": "after\n",
+  "stderr": ">>>   File \"<stdin>\", line 1\n    x = = 1\nSyntaxError: invalid syntax\n>>> >>> \n",
+  "status": 0
+ },
+ "i-def": {
+  "stdout": "8\n1\n",
+  "stderr": ">>> ... ... >>> >>> ... ... >>> >>> \n",
+  "status": 0
+ },
+ "i-ps": {
+  "stdout": "2\n3\n",
+  "stderr": ">>> >>> P1 P1 P2 P2 P1 P1 \n",
+  "status": 0
+ },
+ "i-underscore": {
+  "stdout": "5\n6\n6\n",
+  "stderr": ">>> >>> >>> >>> >>> \n",
+  "status": 0
+ },
+ "i-eof-incomplete": {
+  "stdout": "at eof\n",
+  "stderr": ">>> ... ... \n>>> \n",
+  "status": 0
+ },
+ "i-startup": {
+  "stdout": "in startup\n'startup ran'\n",
+  "stderr": ">>> >>> \n",
+  "status": 0
+ },
+ "i-startup-E": {
+  "stdout": "False\n",
+  "stderr": ">>> >>> \n",
+  "status": 0
+ },
+ "i-startup-missing": {
+  "stdout": "1\n",
+  "stderr": "Could not open PYTHONSTARTUP\nFileNotFoundError: [Errno 2] No such file or directory: 'nostartup.py'\n>>> >>> \n",
+  "status": 0
+ },
+ "i-banner": {
+  "stdout": "1\n",
+  "stderr": "Python <version> on linux\nType \"help\", \"copyright\", \"credits\" or \"license\" for more information.\n>>> >>> \n",
+  "status": 0
+ },
+ "i-banner-S": {
+  "stdout": "1\n",
+  "stderr": "Python <version> on linux\n>>> >>> \n",
+  "status": 0
+ },
+ "stdin-exception": {
+  "stdout": "",
+  "stderr": "Traceback (most recent call last):\n  File \"<stdin>\", line 3, in <module>\n  File \"<stdin>\", line 2, in f\nValueError: x\n",
+  "status": 1
+ },
+ "stdin-syntax": {
+  "stdout": "",
+  "stderr": "  File \"<stdin>\", line 1\n    x = (\nSyntaxError: '(' was never closed\n",
+  "status": 1
+ },
+ "executable-child": {
+  "stdout": "['-c', 'arg'] 42\n\n",
+  "stderr": "",
+  "status": 0
+ },
+ "executable-child-E": {
+  "stdout": "1\n\n",
+  "stderr": "",
+  "status": 0
+ },
+ "flush-fail": {
+  "stdout": null,
+  "stderr": "Exception ignored while flushing sys.stdout:\nOSError: [Errno 28] No space left on device\n",
+  "status": 120
+ },
+ "atexit": {
+  "stdout": "hi\nbye\n",
+  "stderr": "",
+  "status": 0
+ },
+ "keyboard-interrupt": {
+  "stdout": "",
+  "stderr": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n    raise KeyboardInterrupt\nKeyboardInterrupt\n",
+  "status": -2
+ },
+ "faulthandler": {
+  "stdout": "True\n",
+  "stderr": "",
+  "status": 0
+ },
+ "faulthandler-dev": {
+  "stdout": "True\n",
+  "stderr": "",
+  "status": 0
+ },
+ "faulthandler-off": {
+  "stdout": "False\n",
+  "stderr": "",
+  "status": 0
+ },
+ "tracemalloc": {
+  "stdout": "True 5\n",
+  "stderr": "",
+  "status": 0
+ },
+ "breakpoint-env": {
+  "stdout": "after\n",
+  "stderr": "",
+  "status": 0
+ },
+ "last-exc": {
+  "stdout": "('ZeroDivisionError', 'ZeroDivisionError', True)\n",
+  "stderr": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n    1/0\nZeroDivisionError: division by zero\n>>> >>> >>> \n",
+  "status": 0
+ },
+ "path-hooks": {
+  "stdout": "['zipimporter', 'path_hook_for_FileFinder'] True\n",
+  "stderr": "",
+  "status": 0
+ },
+ "modules-at-start": {
+  "stdout": "['abc', 'builtins', 'codecs', 'errno', 'genericpath', 'linecache', 'marshal', 'os', 'os.path', 'posix', 'posixpath', 'site', 'stat', 'sys', 'time', 'zipimport']\n",
+  "stderr": "",
+  "status": 0
+ }
+}

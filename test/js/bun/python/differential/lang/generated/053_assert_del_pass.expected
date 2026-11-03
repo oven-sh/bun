@@ -1,0 +1,161 @@
+status: 0
+script: 5096ace3711280b4
+source: 582dd8538414244f
+---
+AssertionError:  ()
+AssertionError: message ('message',)
+AssertionError: ('tuple', 'message') (('tuple', 'message'),)
+AssertionError: 42 (42,)
+AssertionError: None (None,)
+AssertionError: an exception as message (ValueError('an exception as message'),)
+AssertionError: 1 != 2 ('1 != 2',)
+AssertionError: f-string ('f-string',)
+NameError: name 'undefined_in_message' is not defined ("name 'undefined_in_message' is not defined",)
+NameError: name 'undefined_condition' is not defined ("name 'undefined_condition' is not defined",)
+message evaluated; AssertionError: m ('m',)
+AssertionError:  ('',)
+AssertionError:  ()
+None
+True
+<class 'AssertionError'> caught ('caught',) True
+shadowed() => AssertionError: the builtin is used regardless ('the builtin is used regardless',)
+SyntaxError: invalid syntax
+SyntaxError: invalid syntax
+SyntaxError: invalid syntax
+SyntaxError: invalid syntax
+SyntaxError: invalid syntax
+ok: assert (x, 'm')
+SyntaxError: cannot assign to name here. Maybe you meant '==' instead of '='?
+SyntaxError: cannot use named expression without parentheses here
+ok: assert (x := 1)
+ok: assert x, (y := 1)
+SyntaxError: invalid syntax
+ok: assert x if y else z, m
+ok: assert lambda: 1
+ok: assert not x
+ok: assert x;
+ok: assert(x)
+ok: assert x, 'a' 'b'
+SyntaxError: invalid syntax
+SyntaxError: cannot assign to __debug__
+SyntaxError: cannot delete __debug__
+SyntaxError: cannot assign to __debug__
+SyntaxError: cannot assign to __debug__
+SyntaxError: cannot assign to __debug__
+SyntaxError: cannot assign to __debug__
+SyntaxError: cannot assign to __debug__
+SyntaxError: cannot assign to __debug__
+SyntaxError: cannot assign to __debug__
+SyntaxError: cannot assign to __debug__
+SyntaxError: cannot assign to __debug__
+SyntaxError: cannot assign to __debug__
+SyntaxError: cannot assign to __debug__
+ok: x = __debug__
+ok: global __debug__
+SyntaxError: cannot assign to __debug__
+SyntaxError: cannot assign to __debug__
+SyntaxError: cannot assign to None
+SyntaxError: cannot assign to True
+SyntaxError: cannot assign to False
+SyntaxError: cannot assign to ellipsis here. Maybe you meant '==' instead of '='?
+SyntaxError: cannot delete None
+SyntaxError: cannot delete True
+SyntaxError: 'None' is an illegal expression for augmented assignment
+SyntaxError: invalid syntax
+SyntaxError: invalid syntax
+SyntaxError: invalid syntax
+SyntaxError: invalid syntax
+SyntaxError: cannot assign to None
+SyntaxError: cannot use assignment expressions with None
+SyntaxError: cannot assign to None
+SyntaxError: invalid syntax
+SyntaxError: invalid syntax
+ok: Ellipsis = 1
+ok: NotImplemented = 1
+ns["r"] => False
+ns["f"]() => 1
+ns["f"].__doc__ => doc
+ns["s"] => optimized
+ns["r"] => False
+ns["f"].__doc__ => None
+ns["C"].__doc__ => None
+exec(compile("assert False, 'kept'", "<s>", "exec", optimize=0)) => AssertionError: kept ('kept',)
+x => NameError: name 'x' is not defined ("name 'x' is not defined",)
+a => NameError: name 'a' is not defined ("name 'a' is not defined",)
+b => NameError: name 'b' is not defined ("name 'b' is not defined",)
+1
+a => NameError: name 'a' is not defined ("name 'a' is not defined",)
+b => NameError: name 'b' is not defined ("name 'b' is not defined",)
+c => NameError: name 'c' is not defined ("name 'c' is not defined",)
+a => NameError: name 'a' is not defined ("name 'a' is not defined",)
+a => NameError: name 'a' is not defined ("name 'a' is not defined",)
+[3, 4, 5]
+[3, 4]
+[]
+[3]
+{'c': 3}
+{}
+{'l': [2], 'd': {'k': [1]}}
+UnboundLocalError: cannot access local variable 'undefined_global' where it is not associated with a value ("cannot access local variable 'undefined_global' where it is not associated with a value",)
+UnboundLocalError: cannot access local variable 'loc' where it is not associated with a value ("cannot access local variable 'loc' where it is not associated with a value",)
+UnboundLocalError: cannot access local variable 'never_assigned' where it is not associated with a value ("cannot access local variable 'never_assigned' where it is not associated with a value",)
+AttributeError: 'O' object has no attribute 'nope' ("'O' object has no attribute 'nope'",)
+KeyError: 'nope' ('nope',)
+IndexError: list assignment index out of range ('list assignment index out of range',)
+AttributeError: attribute 'real' of 'int' objects is not writable ("attribute 'real' of 'int' objects is not writable",)
+TypeError: 'str' object doesn't support item deletion ("'str' object doesn't support item deletion",)
+TypeError: 'tuple' object doesn't support item deletion ("'tuple' object doesn't support item deletion",)
+AttributeError: attribute '__name__' of 'builtin_function_or_method' objects is not writable ("attribute '__name__' of 'builtin_function_or_method' objects is not writable",)
+NameError: cannot access free variable 'v' where it is not associated with a value in enclosing scope ("cannot access free variable 'v' where it is not associated with a value in enclosing scope",)
+UnboundLocalError: cannot access local variable 'p' where it is not associated with a value ("cannot access local variable 'p' where it is not associated with a value",)
+UnboundLocalError: cannot access local variable 'i' where it is not associated with a value ("cannot access local variable 'i' where it is not associated with a value",)
+1
+1; UnboundLocalError: cannot access local variable 'v' where it is not associated with a value ("cannot access local variable 'v' where it is not associated with a value",)
+2
+False
+[('ev', 1), ('key', 'a'), ('delitem', 1, 'a'), ('ev', 2), ('delattr', 2, 'attr'), ('ev', 3), ('key', 'b'), ('key', 'c'), ('delitem', 3, slice('b', 'c', None))]
+SyntaxError: invalid syntax
+SyntaxError: cannot delete literal
+SyntaxError: cannot delete literal
+SyntaxError: cannot delete function call
+SyntaxError: cannot delete expression
+SyntaxError: cannot delete expression
+SyntaxError: cannot delete literal
+SyntaxError: cannot delete literal
+SyntaxError: cannot delete function call
+SyntaxError: cannot delete function call
+SyntaxError: cannot delete conditional expression
+SyntaxError: cannot delete lambda
+SyntaxError: cannot delete expression
+SyntaxError: cannot delete generator expression
+SyntaxError: cannot delete list comprehension
+SyntaxError: cannot delete set display
+SyntaxError: cannot delete dict literal
+SyntaxError: cannot delete starred
+SyntaxError: cannot delete starred
+SyntaxError: cannot delete starred
+ok: del a,
+ok: del (a,)
+ok: del a.b, c[d], e
+SyntaxError: invalid syntax
+ok: del a; del b
+ok: del a[1:2, ::3]
+ok: del a[...]
+ok: del a()[0]
+ok: del a().b
+SyntaxError: cannot delete yield expression
+SyntaxError: cannot delete await expression
+SyntaxError: cannot delete f-string expression
+SyntaxError: invalid syntax
+SyntaxError: cannot delete named expression
+SyntaxError: cannot delete expression
+SyntaxError: cannot delete comparison
+SyntaxError: cannot delete ellipsis
+ok: del a.b.c[d].e
+p1() => None
+p2() => None
+p3() => None
+p4() => None
+p3.__doc__ => doc only
+p4.__doc__ => None
+end

@@ -1,0 +1,90 @@
+status: 0
+script: ba5f3a04d2c22998
+---
+6 ['dump', 'dumps', 'load', 'loads', 'version']
+0 cannot dump slice(None, None, None) unmarshallable object
+0 cannot dump slice(None, 1, None) unmarshallable object
+0 cannot dump slice(1, 2, None) unmarshallable object
+0 cannot dump slice(1, 2, 3) unmarshallable object
+0 cannot dump slice('a', (1,), [2]) unmarshallable object
+0 cannot dump slice(None, None, -1) unmarshallable object
+0 cannot dump frozendict() unmarshallable object
+0 cannot dump frozendict({'a': 1}) unmarshallable object
+0 cannot dump frozendict({1: frozendict({2: 3})}) unmarshallable object
+version 0 bad 0
+1 cannot dump slice(None, None, None) unmarshallable object
+1 cannot dump slice(None, 1, None) unmarshallable object
+1 cannot dump slice(1, 2, None) unmarshallable object
+1 cannot dump slice(1, 2, 3) unmarshallable object
+1 cannot dump slice('a', (1,), [2]) unmarshallable object
+1 cannot dump slice(None, None, -1) unmarshallable object
+1 cannot dump frozendict() unmarshallable object
+1 cannot dump frozendict({'a': 1}) unmarshallable object
+1 cannot dump frozendict({1: frozendict({2: 3})}) unmarshallable object
+version 1 bad 0
+2 cannot dump slice(None, None, None) unmarshallable object
+2 cannot dump slice(None, 1, None) unmarshallable object
+2 cannot dump slice(1, 2, None) unmarshallable object
+2 cannot dump slice(1, 2, 3) unmarshallable object
+2 cannot dump slice('a', (1,), [2]) unmarshallable object
+2 cannot dump slice(None, None, -1) unmarshallable object
+2 cannot dump frozendict() unmarshallable object
+2 cannot dump frozendict({'a': 1}) unmarshallable object
+2 cannot dump frozendict({1: frozendict({2: 3})}) unmarshallable object
+version 2 bad 0
+3 cannot dump slice(None, None, None) unmarshallable object
+3 cannot dump slice(None, 1, None) unmarshallable object
+3 cannot dump slice(1, 2, None) unmarshallable object
+3 cannot dump slice(1, 2, 3) unmarshallable object
+3 cannot dump slice('a', (1,), [2]) unmarshallable object
+3 cannot dump slice(None, None, -1) unmarshallable object
+3 cannot dump frozendict() unmarshallable object
+3 cannot dump frozendict({'a': 1}) unmarshallable object
+3 cannot dump frozendict({1: frozendict({2: 3})}) unmarshallable object
+version 3 bad 0
+4 cannot dump slice(None, None, None) unmarshallable object
+4 cannot dump slice(None, 1, None) unmarshallable object
+4 cannot dump slice(1, 2, None) unmarshallable object
+4 cannot dump slice(1, 2, 3) unmarshallable object
+4 cannot dump slice('a', (1,), [2]) unmarshallable object
+4 cannot dump slice(None, None, -1) unmarshallable object
+4 cannot dump frozendict() unmarshallable object
+4 cannot dump frozendict({'a': 1}) unmarshallable object
+4 cannot dump frozendict({1: frozendict({2: 3})}) unmarshallable object
+version 4 bad 0
+5 cannot dump frozendict() unmarshallable object
+5 cannot dump frozendict({'a': 1}) unmarshallable object
+5 cannot dump frozendict({1: frozendict({2: 3})}) unmarshallable object
+version 5 bad 0
+version 6 bad 0
+version 7 bad 0
+True <class 'float'>
+True <class 'float'>
+-1.0 -1.0
+b'abc' b'abc' b'abc' b'abc' b'abc' b'abc' b'abc' b'abc' b'' b'' b'' b'' b'xy' b'xy' b'xy' b'xy' 
+b'\x01\x02\x03' b'\x01\x00\x02\x00'
+ValueError: unmarshallable object
+ValueError: unmarshallable object
+ValueError: unmarshallable object
+ValueError: unmarshallable object
+ValueError: unmarshallable object
+ValueError: unmarshallable object
+ValueError: unmarshallable object
+ValueError: unmarshallable object
+ValueError: unmarshallable object
+ValueError: unmarshallable object
+ValueError: unmarshallable object
+ValueError: unmarshallable object
+ValueError: unmarshallable object
+ValueError: unmarshallable object
+ValueError: unmarshallable object
+ValueError: unmarshallable object
+ValueError: unmarshallable object
+ValueError: unmarshallable object
+ValueError: unmarshallable object
+ValueError: unmarshallable object
+ValueError: unmarshallable object
+ValueError: unmarshallable object
+ValueError: unmarshallable object
+ValueError: unmarshallable object
+b'sub'

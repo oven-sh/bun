@@ -1,0 +1,28 @@
+import _socket as S, errno
+def t(f):
+    try: print(repr(f()))
+    except BaseException as x: print(type(x).__name__ + ':', x, getattr(x, 'errno', None))
+srv = S.socket(S.AF_INET6)
+print(srv.getsockname())
+srv.bind(('::1', 0)); srv.listen()
+n = srv.getsockname(); print(n[0], n[2:], len(n))
+c = S.socket(S.AF_INET6); c.connect(('::1', n[1])); fd, addr = srv._accept(); a = S.socket(fileno=fd)
+print(addr == c.getsockname(), a.family == S.AF_INET6, a.getpeername()[0], len(addr), c.send(b'six'), a.recv(10))
+a.close(); c.close()
+c = S.socket(S.AF_INET6); c.connect(('::1', n[1], 0, 0)); S.close(srv._accept()[0]); print(c.getpeername()[2:]); c.close()
+c = S.socket(S.AF_INET6); c.connect(('::1', n[1], 5)); S.close(srv._accept()[0]); print(c.getpeername()[:1]); c.close()
+srv.close()
+u = S.socket(S.AF_INET6, S.SOCK_DGRAM); u.bind(('::1', 0)); v = S.socket(S.AF_INET6, S.SOCK_DGRAM)
+print(v.sendto(b'dgram', u.getsockname()), u.recvfrom(10)[0])
+print(v.sendto(b'x', ('::1', u.getsockname()[1])), u.recvfrom(10)[1][0])
+u.close(); v.close()
+s = S.socket(S.AF_INET6); s.bind(('', 0)); print(s.getsockname()[0]); s.close()
+s = S.socket(S.AF_INET6); s.bind(('::', 0, 0, 0)); print(s.getsockname()[0]); s.close()
+s = S.socket(S.AF_INET6); s.setsockopt(S.IPPROTO_IPV6, S.IPV6_V6ONLY, 0); s.bind(('::ffff:127.0.0.1', 0)); print(s.getsockname()[0]); s.close()
+s = S.socket(S.AF_INET6); t(lambda: s.bind(('fe80::1%nosuchif', 0))); s.close()
+s = S.socket(S.AF_INET6); t(lambda: s.bind(('::1', 0, 0, 2**32 - 1))); s.close()
+s = S.socket(S.AF_INET6); t(lambda: s.bind(('::1', 0, 2**20 - 1, 0))); print(s.getsockname()[2]); s.close()
+# socket.py
+import socket
+s6 = socket.create_server(('::1', 0), family=socket.AF_INET6); print(s6.family, s6.getsockname()[0]); s6.close()
+sd = socket.create_server(('', 0), family=socket.AF_INET6, dualstack_ipv6=True); print(sd.getsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY)); sd.close()

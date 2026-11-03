@@ -1,0 +1,38 @@
+status: 0
+script: 675daba3a5ae44ee
+---
+deque([7, 8, 9], maxlen=3) 3 3
+deque([8, 9, 10], maxlen=3)
+deque([0, 8, 9], maxlen=3)
+deque([9, 1, 2], maxlen=3)
+deque([8, 7, 9], maxlen=3)
+IndexError deque already at its maximum size
+deque([8, 5, 7], maxlen=3)
+deque([8, 5, 7], maxlen=3) 3 deque([7, 1, 2], maxlen=3) deque([8, 5, 7], maxlen=3) 3
+deque([8, 5, 7], maxlen=3)
+deque([], maxlen=0) 0 0
+deque([], maxlen=0)
+[]
+[]
+IndexError deque already at its maximum size
+None deque([], maxlen=5) deque(['a', 'b']) deque(['b'], maxlen=1)
+deque([5, 5, 5, 5, 5, 5, 5, 5, 5, 5], maxlen=10)
+deque([6, 5, 6, 5, 6], maxlen=5)
+ValueError maxlen must be non-negative
+TypeError an integer is required
+TypeError an integer is required
+OverflowError Python int too large to convert to C ssize_t
+TypeError 'int' object is not iterable
+TypeError deque() takes at most 2 arguments (3 given)
+TypeError deque() got an unexpected keyword argument 'x'
+TypeError argument for deque() given by name ('iterable') and position (1)
+TypeError deque() got an unexpected keyword argument 'maxlenn'. Did you mean 'maxlen'?
+4611686018427387904 1
+AttributeError
+AttributeError
+deque([9]) None
+deque([]) None
+deque([1, 'a', None], maxlen=7) deque([])
+deque([1, [...]])
+deque([1, [...]], maxlen=4)
+deque([[1, deque([2])]])

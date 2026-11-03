@@ -1,0 +1,48 @@
+status: 0
+script: 0cdc3f639a1cbfaa
+---
+SyntaxError: invalid syntax (1, 28, 1, 29) <- async def f(): [x async for]
+SyntaxError: invalid syntax (1, 23, 1, 28) <- async def f(): [x for async x in y]
+SyntaxError: invalid syntax (1, 39, 1, 40) <- async def f(): [x async for x in y for]
+SyntaxError: invalid syntax (1, 16, 1, 18) <- def f(): yield += 1
+SyntaxError: 'yield expression' is an illegal expression for augmented assignment (1, 11, 1, 16) <- def f(): (yield) += 1
+SyntaxError: invalid syntax (1, 18, 1, 20) <- def f(): yield 1 += 1
+SyntaxError: invalid syntax (1, 20, 1, 22) <- def f(): x = yield += 1
+SyntaxError: invalid syntax (1, 23, 1, 25) <- def f(): yield from a += 1
+SyntaxError: invalid syntax (2, 8, 2, 9) <- match x:\n case _.y: pass
+SyntaxError: invalid syntax (2, 8, 2, 9) <- match x:\n case _(): pass
+ok: match x:\n case _: pass
+SyntaxError: wildcard makes remaining patterns unreachable (2, 7, 2, 8) <- match x:\n case _ | _: pass
+ok: match x:\n case a._: pass
+SyntaxError: invalid syntax (2, 8, 2, 9) <- match x:\n case _._: pass
+ok: match x:\n case C(_=1): pass
+SyntaxError: invalid syntax (2, 9, 2, 10) <- match x:\n case _ = 1: pass
+SyntaxError: invalid syntax (2, 12, 2, 13) <- match x:\n case [_, _.a]: pass
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='? (1, 7, 1, 12) <- match x = 1:\n case 1: pass
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='? (1, 7, 1, 12) <- match x = 1
+SyntaxError: cannot assign to attribute here. Maybe you meant '==' instead of '='? (1, 7, 1, 10) <- match x.y = 1:\n case 1: pass
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='? (1, 8, 1, 13) <- match (x = 1):\n case 1: pass
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='? (1, 7, 1, 12) <- match x = 1, 2:\n case 1: pass
+SyntaxError: Generator expression must be parenthesized (1, 9, 1, 21) <- match f(x for x in y, 1):\n case 1: pass
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='? (1, 10, 1, 15) <- match x, y = 1:\n case 1: pass
+ok: match = 1
+ok: match x := 1:\n case 1: pass
+SyntaxError: cannot assign to literal here. Maybe you meant '==' instead of '='? (1, 7, 1, 8) <- match 1 = x:\n case 1: pass
+SyntaxError: invalid syntax (1, 14, 1, 15) <- match x == 1 = 2:\n case 1: pass
+SyntaxError: Missing parentheses in call to 'print'. Did you mean print(...)? (1, 7, 1, 14) <- match print x:\n case 1: pass
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='? (1, 8, 1, 13) <- match [x = 1]:\n case 1: pass
+SyntaxError: t-string: expecting '=', or '!', or ':', or '}' (1, 6, 1, 7) <- t"{1 +}"
+SyntaxError: f-string: expecting '=', or '!', or ':', or '}' (1, 6, 1, 7) <- f"{1 +}"
+SyntaxError: t-string: expecting '=', or '!', or ':', or '}' (1, 6, 1, 7) <- t"{1 + }"
+SyntaxError: t-string: valid expression required before '}' (1, 4, 1, 5) <- t"{}"
+SyntaxError: t-string: valid expression required before '}' (1, 5, 1, 6) <- t"{ }"
+SyntaxError: t-string: expecting a valid expression after '{' (1, 4, 1, 5) <- t"{+}"
+SyntaxError: invalid syntax. Perhaps you forgot a comma? (1, 4, 1, 7) <- t"{1 2}"
+SyntaxError: invalid syntax. Perhaps you forgot a comma? (1, 4, 1, 7) <- t"{a b}"
+SyntaxError: t-string: expecting '=', or '!', or ':', or '}' (1, 5, 1, 6) <- t"{a.}"
+SyntaxError: t-string: expecting '}' (1, 7, 1, 7) <- t"{a +"
+SyntaxError: can't use starred expression here (1, 4, 1, 6) <- t"{*a}"
+ok: t"{a,}"
+SyntaxError: t-string: lambda expressions are not allowed without parentheses (1, 4, 1, 13) <- t"{lambda x: 1}"
+ok: t"{a = }"
+SyntaxError: t-string: conversion type must come right after the exclamation mark (1, 6, 1, 9) <- t"{a ! r}"

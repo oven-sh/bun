@@ -1,0 +1,228 @@
+status: 0
+script: dbd726f71f547df4
+---
+--- construction
+() '' 0 '' None
+('',) '' 0 '' None
+('abc',) 'abc' 0 'abc' None
+(None,) '' 0 '' None
+('a\nb', None) 'a\nb' 0 'a\nb' 
+
+('a\nb', '') 'a\nb' 0 'a\nb' 
+
+('a\nb', '\n') 'a\nb' 0 'a\nb' None
+('a\nb', '\r') 'a\rb' 0 'a\rb' None
+('a\nb', '\r\n') 'a\r\nb' 0 'a\r\nb' None
+xy True
+TypeError: initial_value must be str or None, not bytes
+TypeError: initial_value must be str or None, not int
+TypeError: newline must be str or None, not int
+TypeError: newline must be str or None, not bytes
+ValueError: illegal newline value: 'x'
+ValueError: illegal newline value: '\n\r'
+ValueError: illegal newline value: '\n\n'
+ValueError: illegal newline value: ' '
+ValueError: illegal newline value: '\u2028'
+TypeError: StringIO() takes at most 2 arguments (3 given)
+TypeError: StringIO() got an unexpected keyword argument 'bad'
+str str
+str abc
+--- what it can do
+True True True False False None False None None None
+UnsupportedOperation: fileno
+UnsupportedOperation: detach
+AttributeError: '_io.StringIO' object has no attribute 'buffer'
+AttributeError: '_io.StringIO' object has no attribute 'name'
+<_io.StringIO object a
+--- read
+012 '' 34 5 56789 '' '' 10
+0123456789 4 456789 8 89
+TypeError: argument should be integer or None, not 'str'
+TypeError: argument should be integer or None, not 'float'
+OverflowError: cannot fit 'int' into an index-sized integer
+'' '' '' 20
+--- write
+3 0 2 5 abcdé
+1 2 aXYdé 3
+4 5 aXYd12345
+12 aXYd12345 1 'aXYd12345\x00\x00\x00!' 13
+TypeError: string argument expected, got 'bytes'
+TypeError: string argument expected, got 'int'
+TypeError: string argument expected, got 'NoneType'
+TypeError: StringIO.write() takes exactly one argument (0 given)
+abcde
+TypeError: string argument expected, got 'bytes'
+TypeError: 'int' object is not iterable
+abcdee
+1 Xbc bc
+--- characters of all widths
+['a', 'é', '€', '😀', 'z', ''] 5
+5 5 True 5
+3 True 4 3 2 5 'a\xe9\u20ac\U0001f601\U0001f602'
+1 1 'ae\u20ac\U0001f601\U0001f602' 4 'ae\u20ac\U0001f601'
+'\ud800' 'x\udc00' '\ud800x\udc00'
+'\x00a\x00' 3
+--- lines
+['one\n', 'two\n', '\n', 'three\r\n', 'four\rlast', '']
+'on' '' 'e\n' 'two\n' '\n'
+['one\n', 'two\n', '\n', 'three\r\n', 'four\rlast']
+None ['one\n', 'two\n', '\n', 'three\r\n', 'four\rlast'] 25
+0 ['one\n', 'two\n', '\n', 'three\r\n', 'four\rlast'] 25
+-1 ['one\n', 'two\n', '\n', 'three\r\n', 'four\rlast'] 25
+1 ['one\n'] 4
+4 ['one\n', 'two\n'] 8
+5 ['one\n', 'two\n'] 8
+8 ['one\n', 'two\n', '\n'] 9
+100 ['one\n', 'two\n', '\n', 'three\r\n', 'four\rlast'] 25
+['one\n', 'two\n', '\n', 'three\r\n', 'four\rlast'] []
+'two\n' '\n' True
+StopIteration: 
+TypeError: argument should be integer or None, not 'str'
+TypeError: argument should be integer or None, not 'float'
+--- newline
+None 'a\nb\nc\nd\n\n\ne' ('\r', '\n', '\r\n')
+    ['a\n', 'b\n', 'c\n', 'd\n', '\n', '\n', 'e'] ('\r', '\n', '\r\n')
+    13 11 'a\nb\nc\nd\n\n\ne' ('\r', '\n', '\r\n')
+    ['a\n', 'b\n', 'c\n', 'd\n', '\n', '\n', 'e', '']
+    'a\nb\n\nc\nd\n\n\n\ne' 13 ('\r', '\n')
+'' 'a\nb\r\nc\rd\n\r\r\ne' ('\r', '\n', '\r\n')
+    ['a\n', 'b\r\n', 'c\r', 'd\n', '\r', '\r\n', 'e'] ('\r', '\n', '\r\n')
+    13 13 'a\nb\r\nc\rd\n\r\r\ne' ('\r', '\n', '\r\n')
+    ['a\n', 'b\r\n', 'c\r', 'd\n', '\r', '\r\n', 'e', '']
+    'a\nb\r\nc\rd\n\r\r\ne' 13 ('\r', '\n')
+'\n' 'a\nb\r\nc\rd\n\r\r\ne' None
+    ['a\n', 'b\r\n', 'c\rd\n', '\r\r\n', 'e'] None
+    13 13 'a\nb\r\nc\rd\n\r\r\ne' None
+    ['a\n', 'b\r\n', 'c\rd', '\n', '\r\r\n', 'e', '', '']
+    'a\nb\r\nc\rd\n\r\r\ne' 13 None
+'\r' 'a\rb\r\rc\rd\r\r\r\re' None
+    ['a\r', 'b\r', '\r', 'c\r', 'd\r', '\r', '\r', '\r', 'e'] None
+    13 13 'a\rb\r\rc\rd\r\r\r\re' None
+    ['a\r', 'b\r', '\r', 'c\r', 'd\r', '\r', '\r', '\r']
+    'a\rb\r\rc\rd\r\r\r\re' 13 None
+'\r\n' 'a\r\nb\r\r\nc\rd\r\n\r\r\r\ne' None
+    ['a\r\n', 'b\r\r\n', 'c\rd\r\n', '\r\r\r\n', 'e'] None
+    13 17 'a\r\nb\r\r\nc\rd\r\n\r\r\r\ne' None
+    ['a\r\n', 'b\r\r', '\nc\r', 'd\r\n', '\r\r\r', '\ne', '', '']
+    'a\r\nb\r\r\nc\rd\r\n\r\r\r\ne' 17 None
+['a\r', '\nb'] None 'a\n\nb' ('\r', '\n')
+['a\r', '\nb'] '' 'a\r\nb' ('\r', '\n')
+['\r', '\r', '\n'] None '\n\n\n' ('\r', '\n')
+['\r', '\r', '\n'] '' '\r\r\n' ('\r', '\n')
+['\n'] None '\n' 
+
+['\n'] '' '\n' 
+
+['\r'] None '\n' 
+['\r'] '' '\r' 
+['\r\n'] None '\n' 
+
+['\r\n'] '' '\r\n' 
+
+['x'] None 'x' None
+['x'] '' 'x' None
+--- seek and tell
+3 3 10 10 15 15 0 1
+ValueError: Negative seek position -1
+OSError: Can't do nonzero cur-relative seeks
+OSError: Can't do nonzero cur-relative seeks
+OSError: Can't do nonzero cur-relative seeks
+OSError: Can't do nonzero cur-relative seeks
+ValueError: Invalid whence (3, should be 0, 1 or 2)
+ValueError: Invalid whence (-1, should be 0, 1 or 2)
+ValueError: Invalid whence (7, should be 0, 1 or 2)
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+TypeError: 'NoneType' object cannot be interpreted as an integer
+TypeError: seek expected at least 1 argument, got 0
+OverflowError: Python int too large to convert to C ssize_t
+9223372036854775807
+OverflowError: new position too large
+''
+--- truncate
+5 01234 0 3 3 012 3 100 012
+6 6 012 1 '012\x00\x00\x00x'
+0 '' 7
+ValueError: negative pos value -1
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+2 ab 6 1 'ab\x00\x00\x00\x00Z'
+--- accumulating, then not
+000111222333444 15
+000111222333444more 0 000111222333444more 19 1 000111222333444more!
+abc 3 abcdef 0 ab 1 abXdef
+True True
+True
+--- closed
+None True None
+read ValueError: I/O operation on closed file
+readline ValueError: I/O operation on closed file
+readlines ValueError: I/O operation on closed file.
+getvalue ValueError: I/O operation on closed file
+tell ValueError: I/O operation on closed file
+truncate ValueError: I/O operation on closed file
+flush None
+isatty ValueError: I/O operation on closed file.
+readable ValueError: I/O operation on closed file
+writable ValueError: I/O operation on closed file
+seekable ValueError: I/O operation on closed file
+__next__ ValueError: I/O operation on closed file
+__enter__ ValueError: I/O operation on closed file.
+__iter__ ValueError: I/O operation on closed file.
+__getstate__ ValueError: I/O operation on closed file
+ValueError: I/O operation on closed file
+TypeError: string argument expected, got 'bytes'
+ValueError: I/O operation on closed file.
+ValueError: I/O operation on closed file
+ValueError: I/O operation on closed file
+ValueError: I/O operation on closed file
+ValueError: I/O operation on closed file
+x
+True
+False new
+--- uninitialized
+read ValueError: I/O operation on uninitialized object
+readline ValueError: I/O operation on uninitialized object
+getvalue ValueError: I/O operation on uninitialized object
+tell ValueError: I/O operation on uninitialized object
+truncate ValueError: I/O operation on uninitialized object
+readable ValueError: I/O operation on uninitialized object
+writable ValueError: I/O operation on uninitialized object
+seekable ValueError: I/O operation on uninitialized object
+__next__ ValueError: I/O operation on uninitialized object
+ValueError: I/O operation on uninitialized object
+ValueError: I/O operation on uninitialized object
+ValueError: I/O operation on uninitialized object
+ValueError: I/O operation on uninitialized object
+None
+None
+--- pickling
+('ab\ncd', '\n', 2, None)
+('ab\ncd', '\n', 2, {'extra': [1]}) False
+('a\nb\n', None, 0, None)
+('a\nb\r\n', '', 0, None)
+('a\rb\r\r', '\r', 0, None)
+('a\r\nb\r\r\n', '\r\n', 0, None)
+None xyz 1 {}
+'a\r\nb' 5 {'k': 'v'} 0 ['a\r\n', 'b']
+'a\r\nb' ['j', 'k'] ['a\r\n', 'b']
+''
+'' 3 1 '\x00\x00\x00x'
+TypeError: _io.StringIO.__setstate__ argument should be 4-tuple, got tuple
+TypeError: _io.StringIO.__setstate__ argument should be 4-tuple, got list
+TypeError: _io.StringIO.__setstate__ argument should be 4-tuple, got NoneType
+TypeError: initial_value must be str or None, not bytes
+ValueError: illegal newline value: 'x'
+TypeError: third item of state must be an integer, got str
+ValueError: position value cannot be negative
+TypeError: fourth item of state should be a dict, got a int
+__newobj__ (<class '_io.StringIO'>,) ('ab\ncd', '\n', 2, {'extra': [1]})
+--- subclasses
+['a\n', 'b\n'] 3 [] True ['Sub', 'StringIO', '_TextIOBase', '_IOBase', 'object']
+OSError: readline() should have returned a str object, not 'bytes'
+TypeError: Sub.__setstate__ argument should be 4-tuple, got int
+--- the type
+<class '_io.StringIO'> StringIO StringIO _io (<class '_io._TextIOBase'>,)
+TypeError: cannot set 'x' attribute of immutable type '_io.StringIO'
+AttributeError: attribute 'closed' of '_io.StringIO' objects is not writable
+AttributeError: attribute 'newlines' of '_io.StringIO' objects is not writable

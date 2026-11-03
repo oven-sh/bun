@@ -1,0 +1,9 @@
+status: 0
+script: 182ca1ddfe08759c
+---
+1 [] ValueError: from the handler
+-2 ['ready', 'atexit'] KeyboardInterrupt
+-2 ['ready', 'del'] KeyboardInterrupt
+-14 [] None
+-2 [] KeyboardInterrupt
+0 ['1', 'EPIPE'] None

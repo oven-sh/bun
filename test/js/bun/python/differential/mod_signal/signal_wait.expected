@@ -1,0 +1,42 @@
+status: 0
+script: 64a758e8fc763c79
+---
+set()
+{<Signals.SIGUSR1: 10>}
+10 set()
+struct_siginfo 12 True True 7 0
+10 None None
+0 0
+{<Signals.SIGUSR1: 10>} 10
+{<Signals.SIGUSR2: 12>} 12
+True
+{<Signals.SIGCHLD: 17>} 17
+17 True
+True
+[] {<Signals.SIGUSR1: 10>}
+[<Signals.SIGUSR1: 10>, <Signals.SIGUSR2: 12>, <Signals.SIGCHLD: 17>] [10] set() set()
+{<Signals.SIGUSR1: 10>}
+set()
+alive
+b'\n\x0c' [('h', 10), ('h', 12)]
+True b'\x0e' [('h', 14)]
+True b'\x0e' [('h', 14)]
+b'\n' [('h', 10)]
+([], [], []) True [('h', 14)]
+Boom: 14
+Boom: 14
+no warning [('h', 10)]
+[('BlockingIOError', True, 'Exception ignored while trying to write to the signal wakeup fd', None)] [('h', 10)]
+b'data' [14]
+Boom: 14
+Boom: 14
+Boom: 14
+'line\n' [14]
+True [14]
+Boom: 14
+9
+([], [], []) [14]
+pending at once set()
+None
+OSError: [Errno 22] Invalid argument
+OSError: [Errno 22] Invalid argument

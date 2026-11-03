@@ -1,0 +1,909 @@
+status: 0
+script: 5a67ad5c79b51c30
+---
+feature_version -1
+  ok 'x: int = 1'
+  ok 'f"{x}"'
+  ok '1_000'
+  ok 'async def f(): await x'
+   'async = 1' invalid syntax 1 7 1 8
+   'await = 1' invalid syntax 1 7 1 8
+   'def f():\n  async = 1' invalid syntax 2 9 2 10
+  ok 'async def f():\n  [x async for x in y]'
+  ok 'def f(a, /): pass'
+  ok '(x := 1)'
+  ok 'f"{x=}"'
+  ok 'with (a as b, c as d): pass'
+  ok 'with (a, b): pass'
+  ok 'match x:\n  case 1: pass'
+  ok 'try:\n  pass\nexcept* E:\n  pass'
+  ok 'def f[T](): pass'
+  ok 'class C[T]: pass'
+  ok 'type X = int'
+  ok 'def f[T = int](): pass'
+  ok '@a.b[c]\ndef f(): pass'
+  ok '@a()()\ndef f(): pass'
+  ok 'a @ b'
+  ok 'a @= b'
+  ok 'print(*a, *b)'
+  ok '{**a, **b}'
+  ok 'x = *a, b'
+  ok 'return *a, b'
+  ok 'def f():\n  return *a, b'
+  ok 'def f():\n  yield *a, b'
+  ok 'for x in *a, b: pass'
+  ok 'x[*a]'
+  ok 'def f(*a: *b): pass'
+  ok 't"{x}"'
+  ok 'try:\n  pass\nexcept A, B:\n  pass'
+  ok 'lazy import a'
+  ok '[*a for a in b]'
+  ok '{**a for a in b}'
+  ok 'lambda x, /: x'
+  ok 'u"x"'
+  ok 'rb"x"'
+  ok 'x = yield'
+  ok 'nonlocal x'
+  ok 'global x'
+  ok 'with a as (b, c): pass'
+  ok 'del (a), (b)'
+  ok 'f(a for a in b)'
+  ok 'async def f():\n  async with a: pass\n  async for b in c: pass'
+  ok 'x = (yield)'
+  ok 'print(f"{x!r:>{y}}")'
+  ok 'f"{a["b"]}"'
+  ok 'f"{\n x}"'
+  ok "f'{x:{'a'}}'"
+feature_version 0
+   'x: int = 1' Variable annotation syntax is only supported in Python 3.6 and greater 1 11 1 12
+  ok 'f"{x}"'
+   '1_000' Underscores in numeric literals are only supported in Python 3.6 and greater 1 1 1 6
+   'async def f(): await x' Await expressions are only supported in Python 3.5 and greater 1 23 1 24
+   'async = 1' invalid syntax 1 7 1 8
+   'await = 1' invalid syntax 1 7 1 8
+   'def f():\n  async = 1' invalid syntax 2 9 2 10
+   'async def f():\n  [x async for x in y]' Async comprehensions are only supported in Python 3.6 and greater 2 22 2 23
+   'def f(a, /): pass' Positional-only parameters are only supported in Python 3.8 and greater 1 11 1 12
+   '(x := 1)' Assignment expressions are only supported in Python 3.8 and greater 1 8 1 9
+  ok 'f"{x=}"'
+  ok 'with (a as b, c as d): pass'
+  ok 'with (a, b): pass'
+   'match x:\n  case 1: pass' Pattern matching is only supported in Python 3.10 and greater 2 15 2 -1
+   'try:\n  pass\nexcept* E:\n  pass' Exception groups are only supported in Python 3.11 and greater 4 7 4 -1
+   'def f[T](): pass' Type parameter lists are only supported in Python 3.12 and greater 1 8 1 9
+   'class C[T]: pass' Type parameter lists are only supported in Python 3.12 and greater 1 10 1 11
+   'type X = int' Type statement is only supported in Python 3.12 and greater 1 13 1 14
+   'def f[T = int](): pass' Type parameter defaults are only supported in Python 3.13 and greater 1 14 1 15
+  ok '@a.b[c]\ndef f(): pass'
+  ok '@a()()\ndef f(): pass'
+   'a @ b' The '@' operator is only supported in Python 3.5 and greater 1 6 1 7
+   'a @= b' The '@' operator is only supported in Python 3.5 and greater 1 3 1 5
+  ok 'print(*a, *b)'
+  ok '{**a, **b}'
+  ok 'x = *a, b'
+  ok 'return *a, b'
+  ok 'def f():\n  return *a, b'
+  ok 'def f():\n  yield *a, b'
+  ok 'for x in *a, b: pass'
+  ok 'x[*a]'
+  ok 'def f(*a: *b): pass'
+   't"{x}"' t-strings are only supported in Python 3.14 and greater 1 6 1 7
+   'try:\n  pass\nexcept A, B:\n  pass' except expressions without parentheses are only supported in Python 3.14 and greater 4 7 4 -1
+  ok 'lazy import a'
+  ok '[*a for a in b]'
+  ok '{**a for a in b}'
+   'lambda x, /: x' Positional-only parameters are only supported in Python 3.8 and greater 1 12 1 13
+  ok 'u"x"'
+  ok 'rb"x"'
+  ok 'x = yield'
+  ok 'nonlocal x'
+  ok 'global x'
+  ok 'with a as (b, c): pass'
+  ok 'del (a), (b)'
+  ok 'f(a for a in b)'
+   'async def f():\n  async with a: pass\n  async for b in c: pass' Async with statements are only supported in Python 3.5 and greater 2 21 2 22
+  ok 'x = (yield)'
+  ok 'print(f"{x!r:>{y}}")'
+  ok 'f"{a["b"]}"'
+  ok 'f"{\n x}"'
+  ok "f'{x:{'a'}}'"
+feature_version 3
+   'x: int = 1' Variable annotation syntax is only supported in Python 3.6 and greater 1 11 1 12
+  ok 'f"{x}"'
+   '1_000' Underscores in numeric literals are only supported in Python 3.6 and greater 1 1 1 6
+   'async def f(): await x' Await expressions are only supported in Python 3.5 and greater 1 23 1 24
+   'async = 1' invalid syntax 1 7 1 8
+   'await = 1' invalid syntax 1 7 1 8
+   'def f():\n  async = 1' invalid syntax 2 9 2 10
+   'async def f():\n  [x async for x in y]' Async comprehensions are only supported in Python 3.6 and greater 2 22 2 23
+   'def f(a, /): pass' Positional-only parameters are only supported in Python 3.8 and greater 1 11 1 12
+   '(x := 1)' Assignment expressions are only supported in Python 3.8 and greater 1 8 1 9
+  ok 'f"{x=}"'
+  ok 'with (a as b, c as d): pass'
+  ok 'with (a, b): pass'
+   'match x:\n  case 1: pass' Pattern matching is only supported in Python 3.10 and greater 2 15 2 -1
+   'try:\n  pass\nexcept* E:\n  pass' Exception groups are only supported in Python 3.11 and greater 4 7 4 -1
+   'def f[T](): pass' Type parameter lists are only supported in Python 3.12 and greater 1 8 1 9
+   'class C[T]: pass' Type parameter lists are only supported in Python 3.12 and greater 1 10 1 11
+   'type X = int' Type statement is only supported in Python 3.12 and greater 1 13 1 14
+   'def f[T = int](): pass' Type parameter defaults are only supported in Python 3.13 and greater 1 14 1 15
+  ok '@a.b[c]\ndef f(): pass'
+  ok '@a()()\ndef f(): pass'
+   'a @ b' The '@' operator is only supported in Python 3.5 and greater 1 6 1 7
+   'a @= b' The '@' operator is only supported in Python 3.5 and greater 1 3 1 5
+  ok 'print(*a, *b)'
+  ok '{**a, **b}'
+  ok 'x = *a, b'
+  ok 'return *a, b'
+  ok 'def f():\n  return *a, b'
+  ok 'def f():\n  yield *a, b'
+  ok 'for x in *a, b: pass'
+  ok 'x[*a]'
+  ok 'def f(*a: *b): pass'
+   't"{x}"' t-strings are only supported in Python 3.14 and greater 1 6 1 7
+   'try:\n  pass\nexcept A, B:\n  pass' except expressions without parentheses are only supported in Python 3.14 and greater 4 7 4 -1
+  ok 'lazy import a'
+  ok '[*a for a in b]'
+  ok '{**a for a in b}'
+   'lambda x, /: x' Positional-only parameters are only supported in Python 3.8 and greater 1 12 1 13
+  ok 'u"x"'
+  ok 'rb"x"'
+  ok 'x = yield'
+  ok 'nonlocal x'
+  ok 'global x'
+  ok 'with a as (b, c): pass'
+  ok 'del (a), (b)'
+  ok 'f(a for a in b)'
+   'async def f():\n  async with a: pass\n  async for b in c: pass' Async with statements are only supported in Python 3.5 and greater 2 21 2 22
+  ok 'x = (yield)'
+  ok 'print(f"{x!r:>{y}}")'
+  ok 'f"{a["b"]}"'
+  ok 'f"{\n x}"'
+  ok "f'{x:{'a'}}'"
+feature_version 4
+   'x: int = 1' Variable annotation syntax is only supported in Python 3.6 and greater 1 11 1 12
+  ok 'f"{x}"'
+   '1_000' Underscores in numeric literals are only supported in Python 3.6 and greater 1 1 1 6
+   'async def f(): await x' Await expressions are only supported in Python 3.5 and greater 1 23 1 24
+   'async = 1' invalid syntax 1 7 1 8
+   'await = 1' invalid syntax 1 7 1 8
+   'def f():\n  async = 1' invalid syntax 2 9 2 10
+   'async def f():\n  [x async for x in y]' Async comprehensions are only supported in Python 3.6 and greater 2 22 2 23
+   'def f(a, /): pass' Positional-only parameters are only supported in Python 3.8 and greater 1 11 1 12
+   '(x := 1)' Assignment expressions are only supported in Python 3.8 and greater 1 8 1 9
+  ok 'f"{x=}"'
+  ok 'with (a as b, c as d): pass'
+  ok 'with (a, b): pass'
+   'match x:\n  case 1: pass' Pattern matching is only supported in Python 3.10 and greater 2 15 2 -1
+   'try:\n  pass\nexcept* E:\n  pass' Exception groups are only supported in Python 3.11 and greater 4 7 4 -1
+   'def f[T](): pass' Type parameter lists are only supported in Python 3.12 and greater 1 8 1 9
+   'class C[T]: pass' Type parameter lists are only supported in Python 3.12 and greater 1 10 1 11
+   'type X = int' Type statement is only supported in Python 3.12 and greater 1 13 1 14
+   'def f[T = int](): pass' Type parameter defaults are only supported in Python 3.13 and greater 1 14 1 15
+  ok '@a.b[c]\ndef f(): pass'
+  ok '@a()()\ndef f(): pass'
+   'a @ b' The '@' operator is only supported in Python 3.5 and greater 1 6 1 7
+   'a @= b' The '@' operator is only supported in Python 3.5 and greater 1 3 1 5
+  ok 'print(*a, *b)'
+  ok '{**a, **b}'
+  ok 'x = *a, b'
+  ok 'return *a, b'
+  ok 'def f():\n  return *a, b'
+  ok 'def f():\n  yield *a, b'
+  ok 'for x in *a, b: pass'
+  ok 'x[*a]'
+  ok 'def f(*a: *b): pass'
+   't"{x}"' t-strings are only supported in Python 3.14 and greater 1 6 1 7
+   'try:\n  pass\nexcept A, B:\n  pass' except expressions without parentheses are only supported in Python 3.14 and greater 4 7 4 -1
+  ok 'lazy import a'
+  ok '[*a for a in b]'
+  ok '{**a for a in b}'
+   'lambda x, /: x' Positional-only parameters are only supported in Python 3.8 and greater 1 12 1 13
+  ok 'u"x"'
+  ok 'rb"x"'
+  ok 'x = yield'
+  ok 'nonlocal x'
+  ok 'global x'
+  ok 'with a as (b, c): pass'
+  ok 'del (a), (b)'
+  ok 'f(a for a in b)'
+   'async def f():\n  async with a: pass\n  async for b in c: pass' Async with statements are only supported in Python 3.5 and greater 2 21 2 22
+  ok 'x = (yield)'
+  ok 'print(f"{x!r:>{y}}")'
+  ok 'f"{a["b"]}"'
+  ok 'f"{\n x}"'
+  ok "f'{x:{'a'}}'"
+feature_version 5
+   'x: int = 1' Variable annotation syntax is only supported in Python 3.6 and greater 1 11 1 12
+  ok 'f"{x}"'
+   '1_000' Underscores in numeric literals are only supported in Python 3.6 and greater 1 1 1 6
+  ok 'async def f(): await x'
+   'async = 1' invalid syntax 1 7 1 8
+   'await = 1' invalid syntax 1 7 1 8
+   'def f():\n  async = 1' invalid syntax 2 9 2 10
+   'async def f():\n  [x async for x in y]' Async comprehensions are only supported in Python 3.6 and greater 2 22 2 23
+   'def f(a, /): pass' Positional-only parameters are only supported in Python 3.8 and greater 1 11 1 12
+   '(x := 1)' Assignment expressions are only supported in Python 3.8 and greater 1 8 1 9
+  ok 'f"{x=}"'
+  ok 'with (a as b, c as d): pass'
+  ok 'with (a, b): pass'
+   'match x:\n  case 1: pass' Pattern matching is only supported in Python 3.10 and greater 2 15 2 -1
+   'try:\n  pass\nexcept* E:\n  pass' Exception groups are only supported in Python 3.11 and greater 4 7 4 -1
+   'def f[T](): pass' Type parameter lists are only supported in Python 3.12 and greater 1 8 1 9
+   'class C[T]: pass' Type parameter lists are only supported in Python 3.12 and greater 1 10 1 11
+   'type X = int' Type statement is only supported in Python 3.12 and greater 1 13 1 14
+   'def f[T = int](): pass' Type parameter defaults are only supported in Python 3.13 and greater 1 14 1 15
+  ok '@a.b[c]\ndef f(): pass'
+  ok '@a()()\ndef f(): pass'
+  ok 'a @ b'
+  ok 'a @= b'
+  ok 'print(*a, *b)'
+  ok '{**a, **b}'
+  ok 'x = *a, b'
+  ok 'return *a, b'
+  ok 'def f():\n  return *a, b'
+  ok 'def f():\n  yield *a, b'
+  ok 'for x in *a, b: pass'
+  ok 'x[*a]'
+  ok 'def f(*a: *b): pass'
+   't"{x}"' t-strings are only supported in Python 3.14 and greater 1 6 1 7
+   'try:\n  pass\nexcept A, B:\n  pass' except expressions without parentheses are only supported in Python 3.14 and greater 4 7 4 -1
+  ok 'lazy import a'
+  ok '[*a for a in b]'
+  ok '{**a for a in b}'
+   'lambda x, /: x' Positional-only parameters are only supported in Python 3.8 and greater 1 12 1 13
+  ok 'u"x"'
+  ok 'rb"x"'
+  ok 'x = yield'
+  ok 'nonlocal x'
+  ok 'global x'
+  ok 'with a as (b, c): pass'
+  ok 'del (a), (b)'
+  ok 'f(a for a in b)'
+  ok 'async def f():\n  async with a: pass\n  async for b in c: pass'
+  ok 'x = (yield)'
+  ok 'print(f"{x!r:>{y}}")'
+  ok 'f"{a["b"]}"'
+  ok 'f"{\n x}"'
+  ok "f'{x:{'a'}}'"
+feature_version 6
+  ok 'x: int = 1'
+  ok 'f"{x}"'
+  ok '1_000'
+  ok 'async def f(): await x'
+   'async = 1' invalid syntax 1 7 1 8
+   'await = 1' invalid syntax 1 7 1 8
+   'def f():\n  async = 1' invalid syntax 2 9 2 10
+  ok 'async def f():\n  [x async for x in y]'
+   'def f(a, /): pass' Positional-only parameters are only supported in Python 3.8 and greater 1 11 1 12
+   '(x := 1)' Assignment expressions are only supported in Python 3.8 and greater 1 8 1 9
+  ok 'f"{x=}"'
+  ok 'with (a as b, c as d): pass'
+  ok 'with (a, b): pass'
+   'match x:\n  case 1: pass' Pattern matching is only supported in Python 3.10 and greater 2 15 2 -1
+   'try:\n  pass\nexcept* E:\n  pass' Exception groups are only supported in Python 3.11 and greater 4 7 4 -1
+   'def f[T](): pass' Type parameter lists are only supported in Python 3.12 and greater 1 8 1 9
+   'class C[T]: pass' Type parameter lists are only supported in Python 3.12 and greater 1 10 1 11
+   'type X = int' Type statement is only supported in Python 3.12 and greater 1 13 1 14
+   'def f[T = int](): pass' Type parameter defaults are only supported in Python 3.13 and greater 1 14 1 15
+  ok '@a.b[c]\ndef f(): pass'
+  ok '@a()()\ndef f(): pass'
+  ok 'a @ b'
+  ok 'a @= b'
+  ok 'print(*a, *b)'
+  ok '{**a, **b}'
+  ok 'x = *a, b'
+  ok 'return *a, b'
+  ok 'def f():\n  return *a, b'
+  ok 'def f():\n  yield *a, b'
+  ok 'for x in *a, b: pass'
+  ok 'x[*a]'
+  ok 'def f(*a: *b): pass'
+   't"{x}"' t-strings are only supported in Python 3.14 and greater 1 6 1 7
+   'try:\n  pass\nexcept A, B:\n  pass' except expressions without parentheses are only supported in Python 3.14 and greater 4 7 4 -1
+  ok 'lazy import a'
+  ok '[*a for a in b]'
+  ok '{**a for a in b}'
+   'lambda x, /: x' Positional-only parameters are only supported in Python 3.8 and greater 1 12 1 13
+  ok 'u"x"'
+  ok 'rb"x"'
+  ok 'x = yield'
+  ok 'nonlocal x'
+  ok 'global x'
+  ok 'with a as (b, c): pass'
+  ok 'del (a), (b)'
+  ok 'f(a for a in b)'
+  ok 'async def f():\n  async with a: pass\n  async for b in c: pass'
+  ok 'x = (yield)'
+  ok 'print(f"{x!r:>{y}}")'
+  ok 'f"{a["b"]}"'
+  ok 'f"{\n x}"'
+  ok "f'{x:{'a'}}'"
+feature_version 7
+  ok 'x: int = 1'
+  ok 'f"{x}"'
+  ok '1_000'
+  ok 'async def f(): await x'
+   'async = 1' invalid syntax 1 7 1 8
+   'await = 1' invalid syntax 1 7 1 8
+   'def f():\n  async = 1' invalid syntax 2 9 2 10
+  ok 'async def f():\n  [x async for x in y]'
+   'def f(a, /): pass' Positional-only parameters are only supported in Python 3.8 and greater 1 11 1 12
+   '(x := 1)' Assignment expressions are only supported in Python 3.8 and greater 1 8 1 9
+  ok 'f"{x=}"'
+  ok 'with (a as b, c as d): pass'
+  ok 'with (a, b): pass'
+   'match x:\n  case 1: pass' Pattern matching is only supported in Python 3.10 and greater 2 15 2 -1
+   'try:\n  pass\nexcept* E:\n  pass' Exception groups are only supported in Python 3.11 and greater 4 7 4 -1
+   'def f[T](): pass' Type parameter lists are only supported in Python 3.12 and greater 1 8 1 9
+   'class C[T]: pass' Type parameter lists are only supported in Python 3.12 and greater 1 10 1 11
+   'type X = int' Type statement is only supported in Python 3.12 and greater 1 13 1 14
+   'def f[T = int](): pass' Type parameter defaults are only supported in Python 3.13 and greater 1 14 1 15
+  ok '@a.b[c]\ndef f(): pass'
+  ok '@a()()\ndef f(): pass'
+  ok 'a @ b'
+  ok 'a @= b'
+  ok 'print(*a, *b)'
+  ok '{**a, **b}'
+  ok 'x = *a, b'
+  ok 'return *a, b'
+  ok 'def f():\n  return *a, b'
+  ok 'def f():\n  yield *a, b'
+  ok 'for x in *a, b: pass'
+  ok 'x[*a]'
+  ok 'def f(*a: *b): pass'
+   't"{x}"' t-strings are only supported in Python 3.14 and greater 1 6 1 7
+   'try:\n  pass\nexcept A, B:\n  pass' except expressions without parentheses are only supported in Python 3.14 and greater 4 7 4 -1
+  ok 'lazy import a'
+  ok '[*a for a in b]'
+  ok '{**a for a in b}'
+   'lambda x, /: x' Positional-only parameters are only supported in Python 3.8 and greater 1 12 1 13
+  ok 'u"x"'
+  ok 'rb"x"'
+  ok 'x = yield'
+  ok 'nonlocal x'
+  ok 'global x'
+  ok 'with a as (b, c): pass'
+  ok 'del (a), (b)'
+  ok 'f(a for a in b)'
+  ok 'async def f():\n  async with a: pass\n  async for b in c: pass'
+  ok 'x = (yield)'
+  ok 'print(f"{x!r:>{y}}")'
+  ok 'f"{a["b"]}"'
+  ok 'f"{\n x}"'
+  ok "f'{x:{'a'}}'"
+feature_version 8
+  ok 'x: int = 1'
+  ok 'f"{x}"'
+  ok '1_000'
+  ok 'async def f(): await x'
+   'async = 1' invalid syntax 1 7 1 8
+   'await = 1' invalid syntax 1 7 1 8
+   'def f():\n  async = 1' invalid syntax 2 9 2 10
+  ok 'async def f():\n  [x async for x in y]'
+  ok 'def f(a, /): pass'
+  ok '(x := 1)'
+  ok 'f"{x=}"'
+  ok 'with (a as b, c as d): pass'
+  ok 'with (a, b): pass'
+   'match x:\n  case 1: pass' Pattern matching is only supported in Python 3.10 and greater 2 15 2 -1
+   'try:\n  pass\nexcept* E:\n  pass' Exception groups are only supported in Python 3.11 and greater 4 7 4 -1
+   'def f[T](): pass' Type parameter lists are only supported in Python 3.12 and greater 1 8 1 9
+   'class C[T]: pass' Type parameter lists are only supported in Python 3.12 and greater 1 10 1 11
+   'type X = int' Type statement is only supported in Python 3.12 and greater 1 13 1 14
+   'def f[T = int](): pass' Type parameter defaults are only supported in Python 3.13 and greater 1 14 1 15
+  ok '@a.b[c]\ndef f(): pass'
+  ok '@a()()\ndef f(): pass'
+  ok 'a @ b'
+  ok 'a @= b'
+  ok 'print(*a, *b)'
+  ok '{**a, **b}'
+  ok 'x = *a, b'
+  ok 'return *a, b'
+  ok 'def f():\n  return *a, b'
+  ok 'def f():\n  yield *a, b'
+  ok 'for x in *a, b: pass'
+  ok 'x[*a]'
+  ok 'def f(*a: *b): pass'
+   't"{x}"' t-strings are only supported in Python 3.14 and greater 1 6 1 7
+   'try:\n  pass\nexcept A, B:\n  pass' except expressions without parentheses are only supported in Python 3.14 and greater 4 7 4 -1
+  ok 'lazy import a'
+  ok '[*a for a in b]'
+  ok '{**a for a in b}'
+  ok 'lambda x, /: x'
+  ok 'u"x"'
+  ok 'rb"x"'
+  ok 'x = yield'
+  ok 'nonlocal x'
+  ok 'global x'
+  ok 'with a as (b, c): pass'
+  ok 'del (a), (b)'
+  ok 'f(a for a in b)'
+  ok 'async def f():\n  async with a: pass\n  async for b in c: pass'
+  ok 'x = (yield)'
+  ok 'print(f"{x!r:>{y}}")'
+  ok 'f"{a["b"]}"'
+  ok 'f"{\n x}"'
+  ok "f'{x:{'a'}}'"
+feature_version 9
+  ok 'x: int = 1'
+  ok 'f"{x}"'
+  ok '1_000'
+  ok 'async def f(): await x'
+   'async = 1' invalid syntax 1 7 1 8
+   'await = 1' invalid syntax 1 7 1 8
+   'def f():\n  async = 1' invalid syntax 2 9 2 10
+  ok 'async def f():\n  [x async for x in y]'
+  ok 'def f(a, /): pass'
+  ok '(x := 1)'
+  ok 'f"{x=}"'
+  ok 'with (a as b, c as d): pass'
+  ok 'with (a, b): pass'
+   'match x:\n  case 1: pass' Pattern matching is only supported in Python 3.10 and greater 2 15 2 -1
+   'try:\n  pass\nexcept* E:\n  pass' Exception groups are only supported in Python 3.11 and greater 4 7 4 -1
+   'def f[T](): pass' Type parameter lists are only supported in Python 3.12 and greater 1 8 1 9
+   'class C[T]: pass' Type parameter lists are only supported in Python 3.12 and greater 1 10 1 11
+   'type X = int' Type statement is only supported in Python 3.12 and greater 1 13 1 14
+   'def f[T = int](): pass' Type parameter defaults are only supported in Python 3.13 and greater 1 14 1 15
+  ok '@a.b[c]\ndef f(): pass'
+  ok '@a()()\ndef f(): pass'
+  ok 'a @ b'
+  ok 'a @= b'
+  ok 'print(*a, *b)'
+  ok '{**a, **b}'
+  ok 'x = *a, b'
+  ok 'return *a, b'
+  ok 'def f():\n  return *a, b'
+  ok 'def f():\n  yield *a, b'
+  ok 'for x in *a, b: pass'
+  ok 'x[*a]'
+  ok 'def f(*a: *b): pass'
+   't"{x}"' t-strings are only supported in Python 3.14 and greater 1 6 1 7
+   'try:\n  pass\nexcept A, B:\n  pass' except expressions without parentheses are only supported in Python 3.14 and greater 4 7 4 -1
+  ok 'lazy import a'
+  ok '[*a for a in b]'
+  ok '{**a for a in b}'
+  ok 'lambda x, /: x'
+  ok 'u"x"'
+  ok 'rb"x"'
+  ok 'x = yield'
+  ok 'nonlocal x'
+  ok 'global x'
+  ok 'with a as (b, c): pass'
+  ok 'del (a), (b)'
+  ok 'f(a for a in b)'
+  ok 'async def f():\n  async with a: pass\n  async for b in c: pass'
+  ok 'x = (yield)'
+  ok 'print(f"{x!r:>{y}}")'
+  ok 'f"{a["b"]}"'
+  ok 'f"{\n x}"'
+  ok "f'{x:{'a'}}'"
+feature_version 10
+  ok 'x: int = 1'
+  ok 'f"{x}"'
+  ok '1_000'
+  ok 'async def f(): await x'
+   'async = 1' invalid syntax 1 7 1 8
+   'await = 1' invalid syntax 1 7 1 8
+   'def f():\n  async = 1' invalid syntax 2 9 2 10
+  ok 'async def f():\n  [x async for x in y]'
+  ok 'def f(a, /): pass'
+  ok '(x := 1)'
+  ok 'f"{x=}"'
+  ok 'with (a as b, c as d): pass'
+  ok 'with (a, b): pass'
+  ok 'match x:\n  case 1: pass'
+   'try:\n  pass\nexcept* E:\n  pass' Exception groups are only supported in Python 3.11 and greater 4 7 4 -1
+   'def f[T](): pass' Type parameter lists are only supported in Python 3.12 and greater 1 8 1 9
+   'class C[T]: pass' Type parameter lists are only supported in Python 3.12 and greater 1 10 1 11
+   'type X = int' Type statement is only supported in Python 3.12 and greater 1 13 1 14
+   'def f[T = int](): pass' Type parameter defaults are only supported in Python 3.13 and greater 1 14 1 15
+  ok '@a.b[c]\ndef f(): pass'
+  ok '@a()()\ndef f(): pass'
+  ok 'a @ b'
+  ok 'a @= b'
+  ok 'print(*a, *b)'
+  ok '{**a, **b}'
+  ok 'x = *a, b'
+  ok 'return *a, b'
+  ok 'def f():\n  return *a, b'
+  ok 'def f():\n  yield *a, b'
+  ok 'for x in *a, b: pass'
+  ok 'x[*a]'
+  ok 'def f(*a: *b): pass'
+   't"{x}"' t-strings are only supported in Python 3.14 and greater 1 6 1 7
+   'try:\n  pass\nexcept A, B:\n  pass' except expressions without parentheses are only supported in Python 3.14 and greater 4 7 4 -1
+  ok 'lazy import a'
+  ok '[*a for a in b]'
+  ok '{**a for a in b}'
+  ok 'lambda x, /: x'
+  ok 'u"x"'
+  ok 'rb"x"'
+  ok 'x = yield'
+  ok 'nonlocal x'
+  ok 'global x'
+  ok 'with a as (b, c): pass'
+  ok 'del (a), (b)'
+  ok 'f(a for a in b)'
+  ok 'async def f():\n  async with a: pass\n  async for b in c: pass'
+  ok 'x = (yield)'
+  ok 'print(f"{x!r:>{y}}")'
+  ok 'f"{a["b"]}"'
+  ok 'f"{\n x}"'
+  ok "f'{x:{'a'}}'"
+feature_version 11
+  ok 'x: int = 1'
+  ok 'f"{x}"'
+  ok '1_000'
+  ok 'async def f(): await x'
+   'async = 1' invalid syntax 1 7 1 8
+   'await = 1' invalid syntax 1 7 1 8
+   'def f():\n  async = 1' invalid syntax 2 9 2 10
+  ok 'async def f():\n  [x async for x in y]'
+  ok 'def f(a, /): pass'
+  ok '(x := 1)'
+  ok 'f"{x=}"'
+  ok 'with (a as b, c as d): pass'
+  ok 'with (a, b): pass'
+  ok 'match x:\n  case 1: pass'
+  ok 'try:\n  pass\nexcept* E:\n  pass'
+   'def f[T](): pass' Type parameter lists are only supported in Python 3.12 and greater 1 8 1 9
+   'class C[T]: pass' Type parameter lists are only supported in Python 3.12 and greater 1 10 1 11
+   'type X = int' Type statement is only supported in Python 3.12 and greater 1 13 1 14
+   'def f[T = int](): pass' Type parameter defaults are only supported in Python 3.13 and greater 1 14 1 15
+  ok '@a.b[c]\ndef f(): pass'
+  ok '@a()()\ndef f(): pass'
+  ok 'a @ b'
+  ok 'a @= b'
+  ok 'print(*a, *b)'
+  ok '{**a, **b}'
+  ok 'x = *a, b'
+  ok 'return *a, b'
+  ok 'def f():\n  return *a, b'
+  ok 'def f():\n  yield *a, b'
+  ok 'for x in *a, b: pass'
+  ok 'x[*a]'
+  ok 'def f(*a: *b): pass'
+   't"{x}"' t-strings are only supported in Python 3.14 and greater 1 6 1 7
+   'try:\n  pass\nexcept A, B:\n  pass' except expressions without parentheses are only supported in Python 3.14 and greater 4 7 4 -1
+  ok 'lazy import a'
+  ok '[*a for a in b]'
+  ok '{**a for a in b}'
+  ok 'lambda x, /: x'
+  ok 'u"x"'
+  ok 'rb"x"'
+  ok 'x = yield'
+  ok 'nonlocal x'
+  ok 'global x'
+  ok 'with a as (b, c): pass'
+  ok 'del (a), (b)'
+  ok 'f(a for a in b)'
+  ok 'async def f():\n  async with a: pass\n  async for b in c: pass'
+  ok 'x = (yield)'
+  ok 'print(f"{x!r:>{y}}")'
+  ok 'f"{a["b"]}"'
+  ok 'f"{\n x}"'
+  ok "f'{x:{'a'}}'"
+feature_version 12
+  ok 'x: int = 1'
+  ok 'f"{x}"'
+  ok '1_000'
+  ok 'async def f(): await x'
+   'async = 1' invalid syntax 1 7 1 8
+   'await = 1' invalid syntax 1 7 1 8
+   'def f():\n  async = 1' invalid syntax 2 9 2 10
+  ok 'async def f():\n  [x async for x in y]'
+  ok 'def f(a, /): pass'
+  ok '(x := 1)'
+  ok 'f"{x=}"'
+  ok 'with (a as b, c as d): pass'
+  ok 'with (a, b): pass'
+  ok 'match x:\n  case 1: pass'
+  ok 'try:\n  pass\nexcept* E:\n  pass'
+  ok 'def f[T](): pass'
+  ok 'class C[T]: pass'
+  ok 'type X = int'
+   'def f[T = int](): pass' Type parameter defaults are only supported in Python 3.13 and greater 1 14 1 15
+  ok '@a.b[c]\ndef f(): pass'
+  ok '@a()()\ndef f(): pass'
+  ok 'a @ b'
+  ok 'a @= b'
+  ok 'print(*a, *b)'
+  ok '{**a, **b}'
+  ok 'x = *a, b'
+  ok 'return *a, b'
+  ok 'def f():\n  return *a, b'
+  ok 'def f():\n  yield *a, b'
+  ok 'for x in *a, b: pass'
+  ok 'x[*a]'
+  ok 'def f(*a: *b): pass'
+   't"{x}"' t-strings are only supported in Python 3.14 and greater 1 6 1 7
+   'try:\n  pass\nexcept A, B:\n  pass' except expressions without parentheses are only supported in Python 3.14 and greater 4 7 4 -1
+  ok 'lazy import a'
+  ok '[*a for a in b]'
+  ok '{**a for a in b}'
+  ok 'lambda x, /: x'
+  ok 'u"x"'
+  ok 'rb"x"'
+  ok 'x = yield'
+  ok 'nonlocal x'
+  ok 'global x'
+  ok 'with a as (b, c): pass'
+  ok 'del (a), (b)'
+  ok 'f(a for a in b)'
+  ok 'async def f():\n  async with a: pass\n  async for b in c: pass'
+  ok 'x = (yield)'
+  ok 'print(f"{x!r:>{y}}")'
+  ok 'f"{a["b"]}"'
+  ok 'f"{\n x}"'
+  ok "f'{x:{'a'}}'"
+feature_version 13
+  ok 'x: int = 1'
+  ok 'f"{x}"'
+  ok '1_000'
+  ok 'async def f(): await x'
+   'async = 1' invalid syntax 1 7 1 8
+   'await = 1' invalid syntax 1 7 1 8
+   'def f():\n  async = 1' invalid syntax 2 9 2 10
+  ok 'async def f():\n  [x async for x in y]'
+  ok 'def f(a, /): pass'
+  ok '(x := 1)'
+  ok 'f"{x=}"'
+  ok 'with (a as b, c as d): pass'
+  ok 'with (a, b): pass'
+  ok 'match x:\n  case 1: pass'
+  ok 'try:\n  pass\nexcept* E:\n  pass'
+  ok 'def f[T](): pass'
+  ok 'class C[T]: pass'
+  ok 'type X = int'
+  ok 'def f[T = int](): pass'
+  ok '@a.b[c]\ndef f(): pass'
+  ok '@a()()\ndef f(): pass'
+  ok 'a @ b'
+  ok 'a @= b'
+  ok 'print(*a, *b)'
+  ok '{**a, **b}'
+  ok 'x = *a, b'
+  ok 'return *a, b'
+  ok 'def f():\n  return *a, b'
+  ok 'def f():\n  yield *a, b'
+  ok 'for x in *a, b: pass'
+  ok 'x[*a]'
+  ok 'def f(*a: *b): pass'
+   't"{x}"' t-strings are only supported in Python 3.14 and greater 1 6 1 7
+   'try:\n  pass\nexcept A, B:\n  pass' except expressions without parentheses are only supported in Python 3.14 and greater 4 7 4 -1
+  ok 'lazy import a'
+  ok '[*a for a in b]'
+  ok '{**a for a in b}'
+  ok 'lambda x, /: x'
+  ok 'u"x"'
+  ok 'rb"x"'
+  ok 'x = yield'
+  ok 'nonlocal x'
+  ok 'global x'
+  ok 'with a as (b, c): pass'
+  ok 'del (a), (b)'
+  ok 'f(a for a in b)'
+  ok 'async def f():\n  async with a: pass\n  async for b in c: pass'
+  ok 'x = (yield)'
+  ok 'print(f"{x!r:>{y}}")'
+  ok 'f"{a["b"]}"'
+  ok 'f"{\n x}"'
+  ok "f'{x:{'a'}}'"
+feature_version 14
+  ok 'x: int = 1'
+  ok 'f"{x}"'
+  ok '1_000'
+  ok 'async def f(): await x'
+   'async = 1' invalid syntax 1 7 1 8
+   'await = 1' invalid syntax 1 7 1 8
+   'def f():\n  async = 1' invalid syntax 2 9 2 10
+  ok 'async def f():\n  [x async for x in y]'
+  ok 'def f(a, /): pass'
+  ok '(x := 1)'
+  ok 'f"{x=}"'
+  ok 'with (a as b, c as d): pass'
+  ok 'with (a, b): pass'
+  ok 'match x:\n  case 1: pass'
+  ok 'try:\n  pass\nexcept* E:\n  pass'
+  ok 'def f[T](): pass'
+  ok 'class C[T]: pass'
+  ok 'type X = int'
+  ok 'def f[T = int](): pass'
+  ok '@a.b[c]\ndef f(): pass'
+  ok '@a()()\ndef f(): pass'
+  ok 'a @ b'
+  ok 'a @= b'
+  ok 'print(*a, *b)'
+  ok '{**a, **b}'
+  ok 'x = *a, b'
+  ok 'return *a, b'
+  ok 'def f():\n  return *a, b'
+  ok 'def f():\n  yield *a, b'
+  ok 'for x in *a, b: pass'
+  ok 'x[*a]'
+  ok 'def f(*a: *b): pass'
+  ok 't"{x}"'
+  ok 'try:\n  pass\nexcept A, B:\n  pass'
+  ok 'lazy import a'
+  ok '[*a for a in b]'
+  ok '{**a for a in b}'
+  ok 'lambda x, /: x'
+  ok 'u"x"'
+  ok 'rb"x"'
+  ok 'x = yield'
+  ok 'nonlocal x'
+  ok 'global x'
+  ok 'with a as (b, c): pass'
+  ok 'del (a), (b)'
+  ok 'f(a for a in b)'
+  ok 'async def f():\n  async with a: pass\n  async for b in c: pass'
+  ok 'x = (yield)'
+  ok 'print(f"{x!r:>{y}}")'
+  ok 'f"{a["b"]}"'
+  ok 'f"{\n x}"'
+  ok "f'{x:{'a'}}'"
+feature_version 15
+  ok 'x: int = 1'
+  ok 'f"{x}"'
+  ok '1_000'
+  ok 'async def f(): await x'
+   'async = 1' invalid syntax 1 7 1 8
+   'await = 1' invalid syntax 1 7 1 8
+   'def f():\n  async = 1' invalid syntax 2 9 2 10
+  ok 'async def f():\n  [x async for x in y]'
+  ok 'def f(a, /): pass'
+  ok '(x := 1)'
+  ok 'f"{x=}"'
+  ok 'with (a as b, c as d): pass'
+  ok 'with (a, b): pass'
+  ok 'match x:\n  case 1: pass'
+  ok 'try:\n  pass\nexcept* E:\n  pass'
+  ok 'def f[T](): pass'
+  ok 'class C[T]: pass'
+  ok 'type X = int'
+  ok 'def f[T = int](): pass'
+  ok '@a.b[c]\ndef f(): pass'
+  ok '@a()()\ndef f(): pass'
+  ok 'a @ b'
+  ok 'a @= b'
+  ok 'print(*a, *b)'
+  ok '{**a, **b}'
+  ok 'x = *a, b'
+  ok 'return *a, b'
+  ok 'def f():\n  return *a, b'
+  ok 'def f():\n  yield *a, b'
+  ok 'for x in *a, b: pass'
+  ok 'x[*a]'
+  ok 'def f(*a: *b): pass'
+  ok 't"{x}"'
+  ok 'try:\n  pass\nexcept A, B:\n  pass'
+  ok 'lazy import a'
+  ok '[*a for a in b]'
+  ok '{**a for a in b}'
+  ok 'lambda x, /: x'
+  ok 'u"x"'
+  ok 'rb"x"'
+  ok 'x = yield'
+  ok 'nonlocal x'
+  ok 'global x'
+  ok 'with a as (b, c): pass'
+  ok 'del (a), (b)'
+  ok 'f(a for a in b)'
+  ok 'async def f():\n  async with a: pass\n  async for b in c: pass'
+  ok 'x = (yield)'
+  ok 'print(f"{x!r:>{y}}")'
+  ok 'f"{a["b"]}"'
+  ok 'f"{\n x}"'
+  ok "f'{x:{'a'}}'"
+feature_version 16
+  ok 'x: int = 1'
+  ok 'f"{x}"'
+  ok '1_000'
+  ok 'async def f(): await x'
+   'async = 1' invalid syntax 1 7 1 8
+   'await = 1' invalid syntax 1 7 1 8
+   'def f():\n  async = 1' invalid syntax 2 9 2 10
+  ok 'async def f():\n  [x async for x in y]'
+  ok 'def f(a, /): pass'
+  ok '(x := 1)'
+  ok 'f"{x=}"'
+  ok 'with (a as b, c as d): pass'
+  ok 'with (a, b): pass'
+  ok 'match x:\n  case 1: pass'
+  ok 'try:\n  pass\nexcept* E:\n  pass'
+  ok 'def f[T](): pass'
+  ok 'class C[T]: pass'
+  ok 'type X = int'
+  ok 'def f[T = int](): pass'
+  ok '@a.b[c]\ndef f(): pass'
+  ok '@a()()\ndef f(): pass'
+  ok 'a @ b'
+  ok 'a @= b'
+  ok 'print(*a, *b)'
+  ok '{**a, **b}'
+  ok 'x = *a, b'
+  ok 'return *a, b'
+  ok 'def f():\n  return *a, b'
+  ok 'def f():\n  yield *a, b'
+  ok 'for x in *a, b: pass'
+  ok 'x[*a]'
+  ok 'def f(*a: *b): pass'
+  ok 't"{x}"'
+  ok 'try:\n  pass\nexcept A, B:\n  pass'
+  ok 'lazy import a'
+  ok '[*a for a in b]'
+  ok '{**a for a in b}'
+  ok 'lambda x, /: x'
+  ok 'u"x"'
+  ok 'rb"x"'
+  ok 'x = yield'
+  ok 'nonlocal x'
+  ok 'global x'
+  ok 'with a as (b, c): pass'
+  ok 'del (a), (b)'
+  ok 'f(a for a in b)'
+  ok 'async def f():\n  async with a: pass\n  async for b in c: pass'
+  ok 'x = (yield)'
+  ok 'print(f"{x!r:>{y}}")'
+  ok 'f"{a["b"]}"'
+  ok 'f"{\n x}"'
+  ok "f'{x:{'a'}}'"
+feature_version 99
+  ok 'x: int = 1'
+  ok 'f"{x}"'
+  ok '1_000'
+  ok 'async def f(): await x'
+   'async = 1' invalid syntax 1 7 1 8
+   'await = 1' invalid syntax 1 7 1 8
+   'def f():\n  async = 1' invalid syntax 2 9 2 10
+  ok 'async def f():\n  [x async for x in y]'
+  ok 'def f(a, /): pass'
+  ok '(x := 1)'
+  ok 'f"{x=}"'
+  ok 'with (a as b, c as d): pass'
+  ok 'with (a, b): pass'
+  ok 'match x:\n  case 1: pass'
+  ok 'try:\n  pass\nexcept* E:\n  pass'
+  ok 'def f[T](): pass'
+  ok 'class C[T]: pass'
+  ok 'type X = int'
+  ok 'def f[T = int](): pass'
+  ok '@a.b[c]\ndef f(): pass'
+  ok '@a()()\ndef f(): pass'
+  ok 'a @ b'
+  ok 'a @= b'
+  ok 'print(*a, *b)'
+  ok '{**a, **b}'
+  ok 'x = *a, b'
+  ok 'return *a, b'
+  ok 'def f():\n  return *a, b'
+  ok 'def f():\n  yield *a, b'
+  ok 'for x in *a, b: pass'
+  ok 'x[*a]'
+  ok 'def f(*a: *b): pass'
+  ok 't"{x}"'
+  ok 'try:\n  pass\nexcept A, B:\n  pass'
+  ok 'lazy import a'
+  ok '[*a for a in b]'
+  ok '{**a for a in b}'
+  ok 'lambda x, /: x'
+  ok 'u"x"'
+  ok 'rb"x"'
+  ok 'x = yield'
+  ok 'nonlocal x'
+  ok 'global x'
+  ok 'with a as (b, c): pass'
+  ok 'del (a), (b)'
+  ok 'f(a for a in b)'
+  ok 'async def f():\n  async with a: pass\n  async for b in c: pass'
+  ok 'x = (yield)'
+  ok 'print(f"{x!r:>{y}}")'
+  ok 'f"{a["b"]}"'
+  ok 'f"{\n x}"'
+  ok "f'{x:{'a'}}'"
+code
+_IncompleteInputError incomplete input (<t>, line 1) 1 5 1 -1 'x = """'
+_IncompleteInputError incomplete input (<t>, line 1) 1 5 1 -1 'x = """\n'
+_IncompleteInputError incomplete input (<t>, line 1) 1 5 1 -1 'x = """'
+_IncompleteInputError incomplete input (<t>, line 1) 1 5 1 -1 'x = """\n'

@@ -1,0 +1,11 @@
+status: 0
+script: d31fbb1bb1a51edf
+source: d31fbb1bb1a51edf
+---
+before
+caught SystemExit() None
+caught SystemExit() None
+TypeError exit expected at most 1 argument, got 2
+caught SystemExit(1, 2) (1, 2)
+BaseException ()
+outer

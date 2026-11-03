@@ -1,0 +1,4800 @@
+status: 0
+script: 3b066c1b65193869
+---
+acos 0.0 1.5707963267948966
+acos -0.0 1.5707963267948966
+acos 1.0 0.0
+acos -1.0 3.141592653589793
+acos 0.5 1.0471975511965979
+acos -0.5 2.0943951023931957
+acos 2.0 ValueError: expected a number in range from -1 up to 1, got 2.0
+acos -2.0 ValueError: expected a number in range from -1 up to 1, got -2.0
+acos 3.0 ValueError: expected a number in range from -1 up to 1, got 3.0
+acos -3.0 ValueError: expected a number in range from -1 up to 1, got -3.0
+acos 0.1 1.4706289056333368
+acos -0.1 1.6709637479564565
+acos 0.25 1.318116071652818
+acos 0.75 0.7227342478134157
+acos 1.5 ValueError: expected a number in range from -1 up to 1, got 1.5
+acos -1.5 ValueError: expected a number in range from -1 up to 1, got -1.5
+acos 2.5 ValueError: expected a number in range from -1 up to 1, got 2.5
+acos -2.5 ValueError: expected a number in range from -1 up to 1, got -2.5
+acos 3.5 ValueError: expected a number in range from -1 up to 1, got 3.5
+acos -3.5 ValueError: expected a number in range from -1 up to 1, got -3.5
+acos 5e-324 1.5707963267948966
+acos -5e-324 1.5707963267948966
+acos 1e-323 1.5707963267948966
+acos 2.2250738585072014e-308 1.5707963267948966
+acos 2.225073858507201e-308 1.5707963267948966
+acos -2.2250738585072014e-308 1.5707963267948966
+acos 1e-300 1.5707963267948966
+acos -1e-300 1.5707963267948966
+acos 1e-20 1.5707963267948966
+acos 9.9e-21 1.5707963267948966
+acos -1e-20 1.5707963267948966
+acos 1e-16 1.5707963267948966
+acos 1e-08 1.5707963167948966
+acos 1e-05 1.5707863267948965
+acos 0.9999999999999999 1.4901161193847656e-08
+acos 1.0000000000000002 ValueError: expected a number in range from -1 up to 1, got 1.0000000000000002
+acos -0.9999999999999999 3.141592638688632
+acos -1.0000000000000002 ValueError: expected a number in range from -1 up to 1, got -1.0000000000000002
+acos 3.141592653589793 ValueError: expected a number in range from -1 up to 1, got 3.141592653589793
+acos -3.141592653589793 ValueError: expected a number in range from -1 up to 1, got -3.141592653589793
+acos 1.5707963267948966 ValueError: expected a number in range from -1 up to 1, got 1.5707963267948966
+acos 0.7853981633974483 0.6674572160283838
+acos 2.718281828459045 ValueError: expected a number in range from -1 up to 1, got 2.718281828459045
+acos 6.283185307179586 ValueError: expected a number in range from -1 up to 1, got 6.283185307179586
+acos 10.0 ValueError: expected a number in range from -1 up to 1, got 10.0
+acos 100.0 ValueError: expected a number in range from -1 up to 1, got 100.0
+acos 1000.0 ValueError: expected a number in range from -1 up to 1, got 1000.0
+acos 100000.0 ValueError: expected a number in range from -1 up to 1, got 100000.0
+acos 10000000000.0 ValueError: expected a number in range from -1 up to 1, got 10000000000.0
+acos 1000000000000000.0 ValueError: expected a number in range from -1 up to 1, got 1000000000000000.0
+acos 1e+16 ValueError: expected a number in range from -1 up to 1, got 1e+16
+acos 1e+17 ValueError: expected a number in range from -1 up to 1, got 1e+17
+acos 1e+22 ValueError: expected a number in range from -1 up to 1, got 1e+22
+acos 1e+100 ValueError: expected a number in range from -1 up to 1, got 1e+100
+acos 1e+300 ValueError: expected a number in range from -1 up to 1, got 1e+300
+acos -1e+300 ValueError: expected a number in range from -1 up to 1, got -1e+300
+acos 1.7976931348623157e+308 ValueError: expected a number in range from -1 up to 1, got 1.7976931348623157e+308
+acos -1.7976931348623157e+308 ValueError: expected a number in range from -1 up to 1, got -1.7976931348623157e+308
+acos inf ValueError: expected a number in range from -1 up to 1, got inf
+acos -inf ValueError: expected a number in range from -1 up to 1, got -inf
+acos nan nan
+acos 709.0 ValueError: expected a number in range from -1 up to 1, got 709.0
+acos 709.782712893384 ValueError: expected a number in range from -1 up to 1, got 709.782712893384
+acos 709.7827128933841 ValueError: expected a number in range from -1 up to 1, got 709.7827128933841
+acos 710.0 ValueError: expected a number in range from -1 up to 1, got 710.0
+acos -708.0 ValueError: expected a number in range from -1 up to 1, got -708.0
+acos -745.0 ValueError: expected a number in range from -1 up to 1, got -745.0
+acos -745.1332191019411 ValueError: expected a number in range from -1 up to 1, got -745.1332191019411
+acos -745.1332191019412 ValueError: expected a number in range from -1 up to 1, got -745.1332191019412
+acos -746.0 ValueError: expected a number in range from -1 up to 1, got -746.0
+acos 1023.0 ValueError: expected a number in range from -1 up to 1, got 1023.0
+acos 1024.0 ValueError: expected a number in range from -1 up to 1, got 1024.0
+acos 1023.9999999999999 ValueError: expected a number in range from -1 up to 1, got 1023.9999999999999
+acos -1074.0 ValueError: expected a number in range from -1 up to 1, got -1074.0
+acos -1075.0 ValueError: expected a number in range from -1 up to 1, got -1075.0
+acos -1076.0 ValueError: expected a number in range from -1 up to 1, got -1076.0
+acos 88.0 ValueError: expected a number in range from -1 up to 1, got 88.0
+acos 36.0 ValueError: expected a number in range from -1 up to 1, got 36.0
+acos 37.0 ValueError: expected a number in range from -1 up to 1, got 37.0
+acos 19.0 ValueError: expected a number in range from -1 up to 1, got 19.0
+acos 22.0 ValueError: expected a number in range from -1 up to 1, got 22.0
+acos 26.0 ValueError: expected a number in range from -1 up to 1, got 26.0
+acos 27.0 ValueError: expected a number in range from -1 up to 1, got 27.0
+acos 6.0 ValueError: expected a number in range from -1 up to 1, got 6.0
+acos -6.0 ValueError: expected a number in range from -1 up to 1, got -6.0
+acos 4503599627370496.0 ValueError: expected a number in range from -1 up to 1, got 4503599627370496.0
+acos 4503599627370497.0 ValueError: expected a number in range from -1 up to 1, got 4503599627370497.0
+acos 9007199254740992.0 ValueError: expected a number in range from -1 up to 1, got 9007199254740992.0
+acos 9007199254740992.0 ValueError: expected a number in range from -1 up to 1, got 9007199254740992.0
+acos -9007199254740992.0 ValueError: expected a number in range from -1 up to 1, got -9007199254740992.0
+acos 4503599627370495.5 ValueError: expected a number in range from -1 up to 1, got 4503599627370495.5
+acos 170.0 ValueError: expected a number in range from -1 up to 1, got 170.0
+acos 171.0 ValueError: expected a number in range from -1 up to 1, got 171.0
+acos 171.6 ValueError: expected a number in range from -1 up to 1, got 171.6
+acos 171.7 ValueError: expected a number in range from -1 up to 1, got 171.7
+acos 172.0 ValueError: expected a number in range from -1 up to 1, got 172.0
+acos 23.0 ValueError: expected a number in range from -1 up to 1, got 23.0
+acos 24.0 ValueError: expected a number in range from -1 up to 1, got 24.0
+acos 143.0 ValueError: expected a number in range from -1 up to 1, got 143.0
+acos 140.0 ValueError: expected a number in range from -1 up to 1, got 140.0
+acos 139.5 ValueError: expected a number in range from -1 up to 1, got 139.5
+acos 140.5 ValueError: expected a number in range from -1 up to 1, got 140.5
+acos 199.5 ValueError: expected a number in range from -1 up to 1, got 199.5
+acos 200.5 ValueError: expected a number in range from -1 up to 1, got 200.5
+acos -170.5 ValueError: expected a number in range from -1 up to 1, got -170.5
+acos -171.5 ValueError: expected a number in range from -1 up to 1, got -171.5
+acos -180.5 ValueError: expected a number in range from -1 up to 1, got -180.5
+acos -199.5 ValueError: expected a number in range from -1 up to 1, got -199.5
+acos -200.5 ValueError: expected a number in range from -1 up to 1, got -200.5
+acos -1000.5 ValueError: expected a number in range from -1 up to 1, got -1000.5
+acos 8.0 ValueError: expected a number in range from -1 up to 1, got 8.0
+acos 27.0 ValueError: expected a number in range from -1 up to 1, got 27.0
+acos -27.0 ValueError: expected a number in range from -1 up to 1, got -27.0
+acos 64.0 ValueError: expected a number in range from -1 up to 1, got 64.0
+acos 1e-09 1.5707963257948967
+acos 123456789.0 ValueError: expected a number in range from -1 up to 1, got 123456789.0
+acos 0.3 1.2661036727794992
+acos 0.7 0.7953988301841436
+acos 4.0 ValueError: expected a number in range from -1 up to 1, got 4.0
+acos 16.0 ValueError: expected a number in range from -1 up to 1, got 16.0
+acos 1e-154 1.5707963267948966
+acos 1e+154 ValueError: expected a number in range from -1 up to 1, got 1e+154
+acos 1.3407807929942596e+154 ValueError: expected a number in range from -1 up to 1, got 1.3407807929942596e+154
+acosh 0.0 ValueError: expected argument value not less than 1, got 0.0
+acosh -0.0 ValueError: expected argument value not less than 1, got -0.0
+acosh 1.0 0.0
+acosh -1.0 ValueError: expected argument value not less than 1, got -1.0
+acosh 0.5 ValueError: expected argument value not less than 1, got 0.5
+acosh -0.5 ValueError: expected argument value not less than 1, got -0.5
+acosh 2.0 1.3169578969248166
+acosh -2.0 ValueError: expected argument value not less than 1, got -2.0
+acosh 3.0 1.762747174039086
+acosh -3.0 ValueError: expected argument value not less than 1, got -3.0
+acosh 0.1 ValueError: expected argument value not less than 1, got 0.1
+acosh -0.1 ValueError: expected argument value not less than 1, got -0.1
+acosh 0.25 ValueError: expected argument value not less than 1, got 0.25
+acosh 0.75 ValueError: expected argument value not less than 1, got 0.75
+acosh 1.5 0.9624236501192069
+acosh -1.5 ValueError: expected argument value not less than 1, got -1.5
+acosh 2.5 1.566799236972411
+acosh -2.5 ValueError: expected argument value not less than 1, got -2.5
+acosh 3.5 1.9248473002384139
+acosh -3.5 ValueError: expected argument value not less than 1, got -3.5
+acosh 5e-324 ValueError: expected argument value not less than 1, got 5e-324
+acosh -5e-324 ValueError: expected argument value not less than 1, got -5e-324
+acosh 1e-323 ValueError: expected argument value not less than 1, got 1e-323
+acosh 2.2250738585072014e-308 ValueError: expected argument value not less than 1, got 2.2250738585072014e-308
+acosh 2.225073858507201e-308 ValueError: expected argument value not less than 1, got 2.225073858507201e-308
+acosh -2.2250738585072014e-308 ValueError: expected argument value not less than 1, got -2.2250738585072014e-308
+acosh 1e-300 ValueError: expected argument value not less than 1, got 1e-300
+acosh -1e-300 ValueError: expected argument value not less than 1, got -1e-300
+acosh 1e-20 ValueError: expected argument value not less than 1, got 1e-20
+acosh 9.9e-21 ValueError: expected argument value not less than 1, got 9.9e-21
+acosh -1e-20 ValueError: expected argument value not less than 1, got -1e-20
+acosh 1e-16 ValueError: expected argument value not less than 1, got 1e-16
+acosh 1e-08 ValueError: expected argument value not less than 1, got 1e-08
+acosh 1e-05 ValueError: expected argument value not less than 1, got 1e-05
+acosh 0.9999999999999999 ValueError: expected argument value not less than 1, got 0.9999999999999999
+acosh 1.0000000000000002 2.1073424255447017e-08
+acosh -0.9999999999999999 ValueError: expected argument value not less than 1, got -0.9999999999999999
+acosh -1.0000000000000002 ValueError: expected argument value not less than 1, got -1.0000000000000002
+acosh 3.141592653589793 1.811526272460853
+acosh -3.141592653589793 ValueError: expected argument value not less than 1, got -3.141592653589793
+acosh 1.5707963267948966 1.0232274785475506
+acosh 0.7853981633974483 ValueError: expected argument value not less than 1, got 0.7853981633974483
+acosh 2.718281828459045 1.6574544541530771
+acosh 6.283185307179586 2.524630659933467
+acosh 10.0 2.993222846126381
+acosh 100.0 5.298292365610484
+acosh 1000.0 7.600902209541989
+acosh 100000.0 12.206072645505174
+acosh 10000000000.0 23.7189981105004
+acosh 1000000000000000.0 35.23192357547063
+acosh 1e+16 37.53450866846468
+acosh 1e+17 39.837093761458725
+acosh 1e+22 51.350019226428955
+acosh 1e+100 230.95165647996453
+acosh 1e+300 691.4686750787736
+acosh -1e+300 ValueError: expected argument value not less than 1, got -1e+300
+acosh 1.7976931348623157e+308 710.4758600739439
+acosh -1.7976931348623157e+308 ValueError: expected argument value not less than 1, got -1.7976931348623157e+308
+acosh inf inf
+acosh -inf ValueError: expected argument value not less than 1, got -inf
+acosh nan nan
+acosh 709.0 7.257002209758403
+acosh 709.782712893384 7.25810556934033
+acosh 709.7827128933841 7.25810556934033
+acosh 710.0 7.258411654661591
+acosh -708.0 ValueError: expected argument value not less than 1, got -708.0
+acosh -745.0 ValueError: expected argument value not less than 1, got -745.0
+acosh -745.1332191019411 ValueError: expected argument value not less than 1, got -745.1332191019411
+acosh -745.1332191019412 ValueError: expected argument value not less than 1, got -745.1332191019412
+acosh -746.0 ValueError: expected argument value not less than 1, got -746.0
+acosh 1023.0 7.623641707626563
+acosh 1024.0 7.624618747740734
+acosh 1023.9999999999999 7.624618747740734
+acosh -1074.0 ValueError: expected argument value not less than 1, got -1074.0
+acosh -1075.0 ValueError: expected argument value not less than 1, got -1075.0
+acosh -1076.0 ValueError: expected argument value not less than 1, got -1076.0
+acosh 88.0 5.170451710416895
+acosh 36.0 4.276473161941219
+acosh 37.0 4.303882428113997
+acosh 19.0 3.6368929184641337
+acosh 22.0 3.783672704329451
+acosh 26.0 3.95087369077445
+acosh 27.0 3.988640934494432
+acosh 6.0 2.477888730288475
+acosh -6.0 ValueError: expected argument value not less than 1, got -6.0
+acosh 4503599627370496.0 36.7368005696771
+acosh 4503599627370497.0 36.7368005696771
+acosh 9007199254740992.0 37.42994775023705
+acosh 9007199254740992.0 37.42994775023705
+acosh -9007199254740992.0 ValueError: expected argument value not less than 1, got -9007199254740992.0
+acosh 4503599627370495.5 36.7368005696771
+acosh 170.0 5.828936966978927
+acosh 171.0 5.834802187313754
+acosh 171.6 5.838304877549644
+acosh 171.7 5.838887468285874
+acosh 172.0 5.840633206752488
+acosh 23.0 3.8281684713331012
+acosh 24.0 3.870766700287094
+acosh 143.0 5.65597958505895
+acosh 140.0 5.634776847823163
+acosh 139.5 5.631198934873477
+acosh 140.5 5.638342004613222
+acosh 199.5 5.9889551354631
+acosh 200.5 5.993955208381759
+acosh -170.5 ValueError: expected argument value not less than 1, got -170.5
+acosh -171.5 ValueError: expected argument value not less than 1, got -171.5
+acosh -180.5 ValueError: expected argument value not less than 1, got -180.5
+acosh -199.5 ValueError: expected argument value not less than 1, got -199.5
+acosh -200.5 ValueError: expected argument value not less than 1, got -200.5
+acosh -1000.5 ValueError: expected argument value not less than 1, got -1000.5
+acosh 8.0 2.7686593833135738
+acosh 27.0 3.988640934494432
+acosh -27.0 ValueError: expected argument value not less than 1, got -27.0
+acosh 64.0 4.851969223174674
+acosh 1e-09 ValueError: expected argument value not less than 1, got 1e-09
+acosh 123456789.0 19.324548946727962
+acosh 0.3 ValueError: expected argument value not less than 1, got 0.3
+acosh 0.7 ValueError: expected argument value not less than 1, got 0.7
+acosh 4.0 2.0634370688955608
+acosh 16.0 3.464757906675863
+acosh 1e-154 ValueError: expected argument value not less than 1, got 1e-154
+acosh 1e+154 355.291251501643
+acosh 1.3407807929942596e+154 355.58450362725193
+asin 0.0 0.0
+asin -0.0 -0.0
+asin 1.0 1.5707963267948966
+asin -1.0 -1.5707963267948966
+asin 0.5 0.5235987755982989
+asin -0.5 -0.5235987755982989
+asin 2.0 ValueError: expected a number in range from -1 up to 1, got 2.0
+asin -2.0 ValueError: expected a number in range from -1 up to 1, got -2.0
+asin 3.0 ValueError: expected a number in range from -1 up to 1, got 3.0
+asin -3.0 ValueError: expected a number in range from -1 up to 1, got -3.0
+asin 0.1 0.1001674211615598
+asin -0.1 -0.1001674211615598
+asin 0.25 0.25268025514207865
+asin 0.75 0.848062078981481
+asin 1.5 ValueError: expected a number in range from -1 up to 1, got 1.5
+asin -1.5 ValueError: expected a number in range from -1 up to 1, got -1.5
+asin 2.5 ValueError: expected a number in range from -1 up to 1, got 2.5
+asin -2.5 ValueError: expected a number in range from -1 up to 1, got -2.5
+asin 3.5 ValueError: expected a number in range from -1 up to 1, got 3.5
+asin -3.5 ValueError: expected a number in range from -1 up to 1, got -3.5
+asin 5e-324 5e-324
+asin -5e-324 -5e-324
+asin 1e-323 1e-323
+asin 2.2250738585072014e-308 2.2250738585072014e-308
+asin 2.225073858507201e-308 2.225073858507201e-308
+asin -2.2250738585072014e-308 -2.2250738585072014e-308
+asin 1e-300 1e-300
+asin -1e-300 -1e-300
+asin 1e-20 1e-20
+asin 9.9e-21 9.9e-21
+asin -1e-20 -1e-20
+asin 1e-16 1e-16
+asin 1e-08 1e-08
+asin 1e-05 1.0000000000166668e-05
+asin 0.9999999999999999 1.5707963118937354
+asin 1.0000000000000002 ValueError: expected a number in range from -1 up to 1, got 1.0000000000000002
+asin -0.9999999999999999 -1.5707963118937354
+asin -1.0000000000000002 ValueError: expected a number in range from -1 up to 1, got -1.0000000000000002
+asin 3.141592653589793 ValueError: expected a number in range from -1 up to 1, got 3.141592653589793
+asin -3.141592653589793 ValueError: expected a number in range from -1 up to 1, got -3.141592653589793
+asin 1.5707963267948966 ValueError: expected a number in range from -1 up to 1, got 1.5707963267948966
+asin 0.7853981633974483 0.9033391107665127
+asin 2.718281828459045 ValueError: expected a number in range from -1 up to 1, got 2.718281828459045
+asin 6.283185307179586 ValueError: expected a number in range from -1 up to 1, got 6.283185307179586
+asin 10.0 ValueError: expected a number in range from -1 up to 1, got 10.0
+asin 100.0 ValueError: expected a number in range from -1 up to 1, got 100.0
+asin 1000.0 ValueError: expected a number in range from -1 up to 1, got 1000.0
+asin 100000.0 ValueError: expected a number in range from -1 up to 1, got 100000.0
+asin 10000000000.0 ValueError: expected a number in range from -1 up to 1, got 10000000000.0
+asin 1000000000000000.0 ValueError: expected a number in range from -1 up to 1, got 1000000000000000.0
+asin 1e+16 ValueError: expected a number in range from -1 up to 1, got 1e+16
+asin 1e+17 ValueError: expected a number in range from -1 up to 1, got 1e+17
+asin 1e+22 ValueError: expected a number in range from -1 up to 1, got 1e+22
+asin 1e+100 ValueError: expected a number in range from -1 up to 1, got 1e+100
+asin 1e+300 ValueError: expected a number in range from -1 up to 1, got 1e+300
+asin -1e+300 ValueError: expected a number in range from -1 up to 1, got -1e+300
+asin 1.7976931348623157e+308 ValueError: expected a number in range from -1 up to 1, got 1.7976931348623157e+308
+asin -1.7976931348623157e+308 ValueError: expected a number in range from -1 up to 1, got -1.7976931348623157e+308
+asin inf ValueError: expected a number in range from -1 up to 1, got inf
+asin -inf ValueError: expected a number in range from -1 up to 1, got -inf
+asin nan nan
+asin 709.0 ValueError: expected a number in range from -1 up to 1, got 709.0
+asin 709.782712893384 ValueError: expected a number in range from -1 up to 1, got 709.782712893384
+asin 709.7827128933841 ValueError: expected a number in range from -1 up to 1, got 709.7827128933841
+asin 710.0 ValueError: expected a number in range from -1 up to 1, got 710.0
+asin -708.0 ValueError: expected a number in range from -1 up to 1, got -708.0
+asin -745.0 ValueError: expected a number in range from -1 up to 1, got -745.0
+asin -745.1332191019411 ValueError: expected a number in range from -1 up to 1, got -745.1332191019411
+asin -745.1332191019412 ValueError: expected a number in range from -1 up to 1, got -745.1332191019412
+asin -746.0 ValueError: expected a number in range from -1 up to 1, got -746.0
+asin 1023.0 ValueError: expected a number in range from -1 up to 1, got 1023.0
+asin 1024.0 ValueError: expected a number in range from -1 up to 1, got 1024.0
+asin 1023.9999999999999 ValueError: expected a number in range from -1 up to 1, got 1023.9999999999999
+asin -1074.0 ValueError: expected a number in range from -1 up to 1, got -1074.0
+asin -1075.0 ValueError: expected a number in range from -1 up to 1, got -1075.0
+asin -1076.0 ValueError: expected a number in range from -1 up to 1, got -1076.0
+asin 88.0 ValueError: expected a number in range from -1 up to 1, got 88.0
+asin 36.0 ValueError: expected a number in range from -1 up to 1, got 36.0
+asin 37.0 ValueError: expected a number in range from -1 up to 1, got 37.0
+asin 19.0 ValueError: expected a number in range from -1 up to 1, got 19.0
+asin 22.0 ValueError: expected a number in range from -1 up to 1, got 22.0
+asin 26.0 ValueError: expected a number in range from -1 up to 1, got 26.0
+asin 27.0 ValueError: expected a number in range from -1 up to 1, got 27.0
+asin 6.0 ValueError: expected a number in range from -1 up to 1, got 6.0
+asin -6.0 ValueError: expected a number in range from -1 up to 1, got -6.0
+asin 4503599627370496.0 ValueError: expected a number in range from -1 up to 1, got 4503599627370496.0
+asin 4503599627370497.0 ValueError: expected a number in range from -1 up to 1, got 4503599627370497.0
+asin 9007199254740992.0 ValueError: expected a number in range from -1 up to 1, got 9007199254740992.0
+asin 9007199254740992.0 ValueError: expected a number in range from -1 up to 1, got 9007199254740992.0
+asin -9007199254740992.0 ValueError: expected a number in range from -1 up to 1, got -9007199254740992.0
+asin 4503599627370495.5 ValueError: expected a number in range from -1 up to 1, got 4503599627370495.5
+asin 170.0 ValueError: expected a number in range from -1 up to 1, got 170.0
+asin 171.0 ValueError: expected a number in range from -1 up to 1, got 171.0
+asin 171.6 ValueError: expected a number in range from -1 up to 1, got 171.6
+asin 171.7 ValueError: expected a number in range from -1 up to 1, got 171.7
+asin 172.0 ValueError: expected a number in range from -1 up to 1, got 172.0
+asin 23.0 ValueError: expected a number in range from -1 up to 1, got 23.0
+asin 24.0 ValueError: expected a number in range from -1 up to 1, got 24.0
+asin 143.0 ValueError: expected a number in range from -1 up to 1, got 143.0
+asin 140.0 ValueError: expected a number in range from -1 up to 1, got 140.0
+asin 139.5 ValueError: expected a number in range from -1 up to 1, got 139.5
+asin 140.5 ValueError: expected a number in range from -1 up to 1, got 140.5
+asin 199.5 ValueError: expected a number in range from -1 up to 1, got 199.5
+asin 200.5 ValueError: expected a number in range from -1 up to 1, got 200.5
+asin -170.5 ValueError: expected a number in range from -1 up to 1, got -170.5
+asin -171.5 ValueError: expected a number in range from -1 up to 1, got -171.5
+asin -180.5 ValueError: expected a number in range from -1 up to 1, got -180.5
+asin -199.5 ValueError: expected a number in range from -1 up to 1, got -199.5
+asin -200.5 ValueError: expected a number in range from -1 up to 1, got -200.5
+asin -1000.5 ValueError: expected a number in range from -1 up to 1, got -1000.5
+asin 8.0 ValueError: expected a number in range from -1 up to 1, got 8.0
+asin 27.0 ValueError: expected a number in range from -1 up to 1, got 27.0
+asin -27.0 ValueError: expected a number in range from -1 up to 1, got -27.0
+asin 64.0 ValueError: expected a number in range from -1 up to 1, got 64.0
+asin 1e-09 1e-09
+asin 123456789.0 ValueError: expected a number in range from -1 up to 1, got 123456789.0
+asin 0.3 0.3046926540153975
+asin 0.7 0.775397496610753
+asin 4.0 ValueError: expected a number in range from -1 up to 1, got 4.0
+asin 16.0 ValueError: expected a number in range from -1 up to 1, got 16.0
+asin 1e-154 1e-154
+asin 1e+154 ValueError: expected a number in range from -1 up to 1, got 1e+154
+asin 1.3407807929942596e+154 ValueError: expected a number in range from -1 up to 1, got 1.3407807929942596e+154
+asinh 0.0 0.0
+asinh -0.0 -0.0
+asinh 1.0 0.881373587019543
+asinh -1.0 -0.881373587019543
+asinh 0.5 0.48121182505960347
+asinh -0.5 -0.48121182505960347
+asinh 2.0 1.4436354751788103
+asinh -2.0 -1.4436354751788103
+asinh 3.0 1.8184464592320668
+asinh -3.0 -1.8184464592320668
+asinh 0.1 0.09983407889920758
+asinh -0.1 -0.09983407889920758
+asinh 0.25 0.24746646154726346
+asinh 0.75 0.6931471805599453
+asinh 1.5 1.1947632172871094
+asinh -1.5 -1.1947632172871094
+asinh 2.5 1.6472311463710958
+asinh -2.5 -1.6472311463710958
+asinh 3.5 1.9657204716496515
+asinh -3.5 -1.9657204716496515
+asinh 5e-324 5e-324
+asinh -5e-324 -5e-324
+asinh 1e-323 1e-323
+asinh 2.2250738585072014e-308 2.2250738585072014e-308
+asinh 2.225073858507201e-308 2.225073858507201e-308
+asinh -2.2250738585072014e-308 -2.2250738585072014e-308
+asinh 1e-300 1e-300
+asinh -1e-300 -1e-300
+asinh 1e-20 1e-20
+asinh 9.9e-21 9.9e-21
+asinh -1e-20 -1e-20
+asinh 1e-16 1e-16
+asinh 1e-08 9.999999999999999e-09
+asinh 1e-05 9.999999999833334e-06
+asinh 0.9999999999999999 0.8813735870195429
+asinh 1.0000000000000002 0.8813735870195432
+asinh -0.9999999999999999 -0.8813735870195429
+asinh -1.0000000000000002 -0.8813735870195432
+asinh 3.141592653589793 1.8622957433108482
+asinh -3.141592653589793 -1.8622957433108482
+asinh 1.5707963267948966 1.233403117511217
+asinh 0.7853981633974483 0.7212254887267798
+asinh 2.718281828459045 1.725382558852315
+asinh 6.283185307179586 2.537297501373361
+asinh 10.0 2.99822295029797
+asinh 100.0 5.298342365610589
+asinh 1000.0 7.600902709541988
+asinh 100000.0 12.206072645555174
+asinh 10000000000.0 23.7189981105004
+asinh 1000000000000000.0 35.23192357547063
+asinh 1e+16 37.53450866846468
+asinh 1e+17 39.837093761458725
+asinh 1e+22 51.350019226428955
+asinh 1e+100 230.95165647996453
+asinh 1e+300 691.4686750787736
+asinh -1e+300 -691.4686750787736
+asinh 1.7976931348623157e+308 710.4758600739439
+asinh -1.7976931348623157e+308 -710.4758600739439
+asinh inf inf
+asinh -inf -inf
+asinh nan nan
+asinh 709.0 7.257003204425001
+asinh 709.782712893384 7.2581065618144
+asinh 709.7827128933841 7.2581065618144
+asinh 710.0 7.258412646528284
+asinh -708.0 -7.25559177299248
+asinh -745.0 -7.306531849369361
+asinh -745.1332191019411 -7.306710650808855
+asinh -745.1332191019412 -7.306710650808855
+asinh -746.0 -7.307873229986786
+asinh 1023.0 7.62364218539641
+asinh 1024.0 7.624619224577892
+asinh 1023.9999999999999 7.624619224577892
+asinh -1074.0 -7.672292672364881
+asinh -1075.0 -7.673223337454791
+asinh -1076.0 -7.674153137212839
+asinh 88.0 5.170516276532822
+asinh 36.0 4.276858964458208
+asinh 37.0 4.304247658249556
+asinh 19.0 3.6382779622295387
+asinh 22.0 3.7847057630994327
+asinh 26.0 3.9516133360820653
+asinh 27.0 3.989326805819546
+asinh 6.0 2.491779852644912
+asinh -6.0 -2.491779852644912
+asinh 4503599627370496.0 36.7368005696771
+asinh 4503599627370497.0 36.7368005696771
+asinh 9007199254740992.0 37.42994775023705
+asinh 9007199254740992.0 37.42994775023705
+asinh -9007199254740992.0 -37.42994775023705
+asinh 4503599627370495.5 36.7368005696771
+asinh 170.0 5.828954268016993
+asinh 171.0 5.834819286592168
+asinh 171.6 5.838321857461732
+asinh 171.7 5.838904428425141
+asinh 172.0 5.840650107780075
+asinh 23.0 3.8291136516208812
+asinh 24.0 3.8716347563877314
+asinh 143.0 5.656004036132364
+asinh 140.0 5.634802358027258
+asinh 139.5 5.631224628274141
+asinh 140.5 5.638367333573102
+asinh 199.5 5.98896769819826
+asinh 200.5 5.993967646115356
+asinh -170.5 -5.831891077029825
+asinh -171.5 -5.837738946917323
+asinh -180.5 -5.888885631604956
+asinh -199.5 -5.98896769819826
+asinh -200.5 -5.993967646115356
+asinh -1000.5 -7.601402584333827
+asinh 8.0 2.7764722807237177
+asinh 27.0 3.989326805819546
+asinh -27.0 -3.989326805819546
+asinh 64.0 4.85209129348869
+asinh 1e-09 1e-09
+asinh 123456789.0 19.324548946727962
+asinh 0.3 0.29567304756342244
+asinh 0.7 0.6526665660823557
+asinh 4.0 2.0947125472611012
+asinh 16.0 3.466711037884725
+asinh 1e-154 1e-154
+asinh 1e+154 355.291251501643
+asinh 1.3407807929942596e+154 355.58450362725193
+atan 0.0 0.0
+atan -0.0 -0.0
+atan 1.0 0.7853981633974483
+atan -1.0 -0.7853981633974483
+atan 0.5 0.4636476090008061
+atan -0.5 -0.4636476090008061
+atan 2.0 1.1071487177940904
+atan -2.0 -1.1071487177940904
+atan 3.0 1.2490457723982544
+atan -3.0 -1.2490457723982544
+atan 0.1 0.09966865249116204
+atan -0.1 -0.09966865249116204
+atan 0.25 0.24497866312686414
+atan 0.75 0.6435011087932844
+atan 1.5 0.982793723247329
+atan -1.5 -0.982793723247329
+atan 2.5 1.1902899496825317
+atan -2.5 -1.1902899496825317
+atan 3.5 1.2924966677897853
+atan -3.5 -1.2924966677897853
+atan 5e-324 5e-324
+atan -5e-324 -5e-324
+atan 1e-323 1e-323
+atan 2.2250738585072014e-308 2.2250738585072014e-308
+atan 2.225073858507201e-308 2.225073858507201e-308
+atan -2.2250738585072014e-308 -2.2250738585072014e-308
+atan 1e-300 1e-300
+atan -1e-300 -1e-300
+atan 1e-20 1e-20
+atan 9.9e-21 9.9e-21
+atan -1e-20 -1e-20
+atan 1e-16 1e-16
+atan 1e-08 1e-08
+atan 1e-05 9.999999999666668e-06
+atan 0.9999999999999999 0.7853981633974483
+atan 1.0000000000000002 0.7853981633974484
+atan -0.9999999999999999 -0.7853981633974483
+atan -1.0000000000000002 -0.7853981633974484
+atan 3.141592653589793 1.2626272556789118
+atan -3.141592653589793 -1.2626272556789118
+atan 1.5707963267948966 1.0038848218538872
+atan 0.7853981633974483 0.6657737500283538
+atan 2.718281828459045 1.2182829050172777
+atan 6.283185307179586 1.4129651365067377
+atan 10.0 1.4711276743037347
+atan 100.0 1.5607966601082315
+atan 1000.0 1.5697963271282298
+atan 100000.0 1.570786326794897
+atan 10000000000.0 1.5707963266948965
+atan 1000000000000000.0 1.5707963267948957
+atan 1e+16 1.5707963267948966
+atan 1e+17 1.5707963267948966
+atan 1e+22 1.5707963267948966
+atan 1e+100 1.5707963267948966
+atan 1e+300 1.5707963267948966
+atan -1e+300 -1.5707963267948966
+atan 1.7976931348623157e+308 1.5707963267948966
+atan -1.7976931348623157e+308 -1.5707963267948966
+atan inf 1.5707963267948966
+atan -inf -1.5707963267948966
+atan nan nan
+atan 709.0 1.569385890494629
+atan 709.782712893384 1.5693874458512131
+atan 709.7827128933841 1.5693874458512131
+atan 710.0 1.5693878770220004
+atan -708.0 -1.5693838983556097
+atan -745.0 -1.56945404572184
+atan -745.1332191019411 -1.569454285702101
+atan -745.1332191019412 -1.569454285702101
+atan -746.0 -1.5694558450240708
+atan 1023.0 1.5698188099996992
+atan 1024.0 1.5698197646053373
+atan 1023.9999999999999 1.5698197646053373
+atan -1074.0 -1.569865228367505
+atan -1075.0 -1.569866094505077
+atan -1076.0 -1.5698669590327294
+atan 88.0 1.5594331795306058
+atan 36.0 1.5430256902014756
+atan 37.0 1.5437758776076318
+atan 19.0 1.5182132651839548
+atan 22.0 1.5253730473733196
+atan 26.0 1.5323537367737086
+atan 27.0 1.5337762109209665
+atan 6.0 1.4056476493802699
+atan -6.0 -1.4056476493802699
+atan 4503599627370496.0 1.5707963267948963
+atan 4503599627370497.0 1.5707963267948963
+atan 9007199254740992.0 1.5707963267948966
+atan 9007199254740992.0 1.5707963267948966
+atan -9007199254740992.0 -1.5707963267948966
+atan 4503599627370495.5 1.5707963267948963
+atan 170.0 1.5649140416995198
+atan 171.0 1.5649484402410079
+atan 171.6 1.5649688869330711
+atan 171.7 1.564972280822441
+atan 172.0 1.5649824388130549
+atan 23.0 1.5273454314033659
+atan 24.0 1.5291537476963082
+atan 143.0 1.5638034337895632
+atan 140.0 1.5636535911254832
+atan 139.5 1.5636279907978046
+atan 140.5 1.5636790092536867
+atan 199.5 1.5657838374466786
+atan 200.5 1.5658088369779322
+atan -170.5 -1.564931291406273
+atan -171.5 -1.564965489085947
+atan -180.5 -1.5652562172711226
+atan -199.5 -1.5657838374466786
+atan -200.5 -1.5658088369779322
+atan -1000.5 -1.5697968268778553
+atan 8.0 1.446441332248135
+atan 27.0 1.5337762109209665
+atan -27.0 -1.5337762109209665
+atan 64.0 1.5551725981744198
+atan 1e-09 1e-09
+atan 123456789.0 1.5707963186948966
+atan 0.3 0.2914567944778671
+atan 0.7 0.6107259643892086
+atan 4.0 1.3258176636680326
+atan 16.0 1.5083775167989393
+atan 1e-154 1e-154
+atan 1e+154 1.5707963267948966
+atan 1.3407807929942596e+154 1.5707963267948966
+atanh 0.0 0.0
+atanh -0.0 -0.0
+atanh 1.0 ValueError: expected a number between -1 and 1, got 1.0
+atanh -1.0 ValueError: expected a number between -1 and 1, got -1.0
+atanh 0.5 0.5493061443340548
+atanh -0.5 -0.5493061443340548
+atanh 2.0 ValueError: expected a number between -1 and 1, got 2.0
+atanh -2.0 ValueError: expected a number between -1 and 1, got -2.0
+atanh 3.0 ValueError: expected a number between -1 and 1, got 3.0
+atanh -3.0 ValueError: expected a number between -1 and 1, got -3.0
+atanh 0.1 0.10033534773107558
+atanh -0.1 -0.10033534773107558
+atanh 0.25 0.25541281188299536
+atanh 0.75 0.9729550745276566
+atanh 1.5 ValueError: expected a number between -1 and 1, got 1.5
+atanh -1.5 ValueError: expected a number between -1 and 1, got -1.5
+atanh 2.5 ValueError: expected a number between -1 and 1, got 2.5
+atanh -2.5 ValueError: expected a number between -1 and 1, got -2.5
+atanh 3.5 ValueError: expected a number between -1 and 1, got 3.5
+atanh -3.5 ValueError: expected a number between -1 and 1, got -3.5
+atanh 5e-324 5e-324
+atanh -5e-324 -5e-324
+atanh 1e-323 1e-323
+atanh 2.2250738585072014e-308 2.2250738585072014e-308
+atanh 2.225073858507201e-308 2.225073858507201e-308
+atanh -2.2250738585072014e-308 -2.2250738585072014e-308
+atanh 1e-300 1e-300
+atanh -1e-300 -1e-300
+atanh 1e-20 1e-20
+atanh 9.9e-21 9.9e-21
+atanh -1e-20 -1e-20
+atanh 1e-16 1e-16
+atanh 1e-08 1.0000000000000002e-08
+atanh 1e-05 1.0000000000333335e-05
+atanh 0.9999999999999999 18.714973875118524
+atanh 1.0000000000000002 ValueError: expected a number between -1 and 1, got 1.0000000000000002
+atanh -0.9999999999999999 -18.714973875118524
+atanh -1.0000000000000002 ValueError: expected a number between -1 and 1, got -1.0000000000000002
+atanh 3.141592653589793 ValueError: expected a number between -1 and 1, got 3.141592653589793
+atanh -3.141592653589793 ValueError: expected a number between -1 and 1, got -3.141592653589793
+atanh 1.5707963267948966 ValueError: expected a number between -1 and 1, got 1.5707963267948966
+atanh 0.7853981633974483 1.0593061708232432
+atanh 2.718281828459045 ValueError: expected a number between -1 and 1, got 2.718281828459045
+atanh 6.283185307179586 ValueError: expected a number between -1 and 1, got 6.283185307179586
+atanh 10.0 ValueError: expected a number between -1 and 1, got 10.0
+atanh 100.0 ValueError: expected a number between -1 and 1, got 100.0
+atanh 1000.0 ValueError: expected a number between -1 and 1, got 1000.0
+atanh 100000.0 ValueError: expected a number between -1 and 1, got 100000.0
+atanh 10000000000.0 ValueError: expected a number between -1 and 1, got 10000000000.0
+atanh 1000000000000000.0 ValueError: expected a number between -1 and 1, got 1000000000000000.0
+atanh 1e+16 ValueError: expected a number between -1 and 1, got 1e+16
+atanh 1e+17 ValueError: expected a number between -1 and 1, got 1e+17
+atanh 1e+22 ValueError: expected a number between -1 and 1, got 1e+22
+atanh 1e+100 ValueError: expected a number between -1 and 1, got 1e+100
+atanh 1e+300 ValueError: expected a number between -1 and 1, got 1e+300
+atanh -1e+300 ValueError: expected a number between -1 and 1, got -1e+300
+atanh 1.7976931348623157e+308 ValueError: expected a number between -1 and 1, got 1.7976931348623157e+308
+atanh -1.7976931348623157e+308 ValueError: expected a number between -1 and 1, got -1.7976931348623157e+308
+atanh inf ValueError: expected a number between -1 and 1, got inf
+atanh -inf ValueError: expected a number between -1 and 1, got -inf
+atanh nan nan
+atanh 709.0 ValueError: expected a number between -1 and 1, got 709.0
+atanh 709.782712893384 ValueError: expected a number between -1 and 1, got 709.782712893384
+atanh 709.7827128933841 ValueError: expected a number between -1 and 1, got 709.7827128933841
+atanh 710.0 ValueError: expected a number between -1 and 1, got 710.0
+atanh -708.0 ValueError: expected a number between -1 and 1, got -708.0
+atanh -745.0 ValueError: expected a number between -1 and 1, got -745.0
+atanh -745.1332191019411 ValueError: expected a number between -1 and 1, got -745.1332191019411
+atanh -745.1332191019412 ValueError: expected a number between -1 and 1, got -745.1332191019412
+atanh -746.0 ValueError: expected a number between -1 and 1, got -746.0
+atanh 1023.0 ValueError: expected a number between -1 and 1, got 1023.0
+atanh 1024.0 ValueError: expected a number between -1 and 1, got 1024.0
+atanh 1023.9999999999999 ValueError: expected a number between -1 and 1, got 1023.9999999999999
+atanh -1074.0 ValueError: expected a number between -1 and 1, got -1074.0
+atanh -1075.0 ValueError: expected a number between -1 and 1, got -1075.0
+atanh -1076.0 ValueError: expected a number between -1 and 1, got -1076.0
+atanh 88.0 ValueError: expected a number between -1 and 1, got 88.0
+atanh 36.0 ValueError: expected a number between -1 and 1, got 36.0
+atanh 37.0 ValueError: expected a number between -1 and 1, got 37.0
+atanh 19.0 ValueError: expected a number between -1 and 1, got 19.0
+atanh 22.0 ValueError: expected a number between -1 and 1, got 22.0
+atanh 26.0 ValueError: expected a number between -1 and 1, got 26.0
+atanh 27.0 ValueError: expected a number between -1 and 1, got 27.0
+atanh 6.0 ValueError: expected a number between -1 and 1, got 6.0
+atanh -6.0 ValueError: expected a number between -1 and 1, got -6.0
+atanh 4503599627370496.0 ValueError: expected a number between -1 and 1, got 4503599627370496.0
+atanh 4503599627370497.0 ValueError: expected a number between -1 and 1, got 4503599627370497.0
+atanh 9007199254740992.0 ValueError: expected a number between -1 and 1, got 9007199254740992.0
+atanh 9007199254740992.0 ValueError: expected a number between -1 and 1, got 9007199254740992.0
+atanh -9007199254740992.0 ValueError: expected a number between -1 and 1, got -9007199254740992.0
+atanh 4503599627370495.5 ValueError: expected a number between -1 and 1, got 4503599627370495.5
+atanh 170.0 ValueError: expected a number between -1 and 1, got 170.0
+atanh 171.0 ValueError: expected a number between -1 and 1, got 171.0
+atanh 171.6 ValueError: expected a number between -1 and 1, got 171.6
+atanh 171.7 ValueError: expected a number between -1 and 1, got 171.7
+atanh 172.0 ValueError: expected a number between -1 and 1, got 172.0
+atanh 23.0 ValueError: expected a number between -1 and 1, got 23.0
+atanh 24.0 ValueError: expected a number between -1 and 1, got 24.0
+atanh 143.0 ValueError: expected a number between -1 and 1, got 143.0
+atanh 140.0 ValueError: expected a number between -1 and 1, got 140.0
+atanh 139.5 ValueError: expected a number between -1 and 1, got 139.5
+atanh 140.5 ValueError: expected a number between -1 and 1, got 140.5
+atanh 199.5 ValueError: expected a number between -1 and 1, got 199.5
+atanh 200.5 ValueError: expected a number between -1 and 1, got 200.5
+atanh -170.5 ValueError: expected a number between -1 and 1, got -170.5
+atanh -171.5 ValueError: expected a number between -1 and 1, got -171.5
+atanh -180.5 ValueError: expected a number between -1 and 1, got -180.5
+atanh -199.5 ValueError: expected a number between -1 and 1, got -199.5
+atanh -200.5 ValueError: expected a number between -1 and 1, got -200.5
+atanh -1000.5 ValueError: expected a number between -1 and 1, got -1000.5
+atanh 8.0 ValueError: expected a number between -1 and 1, got 8.0
+atanh 27.0 ValueError: expected a number between -1 and 1, got 27.0
+atanh -27.0 ValueError: expected a number between -1 and 1, got -27.0
+atanh 64.0 ValueError: expected a number between -1 and 1, got 64.0
+atanh 1e-09 1e-09
+atanh 123456789.0 ValueError: expected a number between -1 and 1, got 123456789.0
+atanh 0.3 0.30951960420311175
+atanh 0.7 0.8673005276940531
+atanh 4.0 ValueError: expected a number between -1 and 1, got 4.0
+atanh 16.0 ValueError: expected a number between -1 and 1, got 16.0
+atanh 1e-154 1e-154
+atanh 1e+154 ValueError: expected a number between -1 and 1, got 1e+154
+atanh 1.3407807929942596e+154 ValueError: expected a number between -1 and 1, got 1.3407807929942596e+154
+ceil 0.0 0
+ceil -0.0 0
+ceil 1.0 1
+ceil -1.0 -1
+ceil 0.5 1
+ceil -0.5 0
+ceil 2.0 2
+ceil -2.0 -2
+ceil 3.0 3
+ceil -3.0 -3
+ceil 0.1 1
+ceil -0.1 0
+ceil 0.25 1
+ceil 0.75 1
+ceil 1.5 2
+ceil -1.5 -1
+ceil 2.5 3
+ceil -2.5 -2
+ceil 3.5 4
+ceil -3.5 -3
+ceil 5e-324 1
+ceil -5e-324 0
+ceil 1e-323 1
+ceil 2.2250738585072014e-308 1
+ceil 2.225073858507201e-308 1
+ceil -2.2250738585072014e-308 0
+ceil 1e-300 1
+ceil -1e-300 0
+ceil 1e-20 1
+ceil 9.9e-21 1
+ceil -1e-20 0
+ceil 1e-16 1
+ceil 1e-08 1
+ceil 1e-05 1
+ceil 0.9999999999999999 1
+ceil 1.0000000000000002 2
+ceil -0.9999999999999999 0
+ceil -1.0000000000000002 -1
+ceil 3.141592653589793 4
+ceil -3.141592653589793 -3
+ceil 1.5707963267948966 2
+ceil 0.7853981633974483 1
+ceil 2.718281828459045 3
+ceil 6.283185307179586 7
+ceil 10.0 10
+ceil 100.0 100
+ceil 1000.0 1000
+ceil 100000.0 100000
+ceil 10000000000.0 10000000000
+ceil 1000000000000000.0 1000000000000000
+ceil 1e+16 10000000000000000
+ceil 1e+17 100000000000000000
+ceil 1e+22 10000000000000000000000
+ceil 1e+100 10000000000000000159028911097599180468360808563945281389781327557747838772170381060813469985856815104
+ceil 1e+300 1000000000000000052504760255204420248704468581108159154915854115511802457988908195786371375080447864043704443832883878176942523235360430575644792184786706982848387200926575803737830233794788090059368953234970799945081119038967640880074652742780142494579258788820056842838115669472196386865459400540160
+ceil -1e+300 -1000000000000000052504760255204420248704468581108159154915854115511802457988908195786371375080447864043704443832883878176942523235360430575644792184786706982848387200926575803737830233794788090059368953234970799945081119038967640880074652742780142494579258788820056842838115669472196386865459400540160
+ceil 1.7976931348623157e+308 179769313486231570814527423731704356798070567525844996598917476803157260780028538760589558632766878171540458953514382464234321326889464182768467546703537516986049910576551282076245490090389328944075868508455133942304583236903222948165808559332123348274797826204144723168738177180919299881250404026184124858368
+ceil -1.7976931348623157e+308 -179769313486231570814527423731704356798070567525844996598917476803157260780028538760589558632766878171540458953514382464234321326889464182768467546703537516986049910576551282076245490090389328944075868508455133942304583236903222948165808559332123348274797826204144723168738177180919299881250404026184124858368
+ceil inf OverflowError: cannot convert float infinity to integer
+ceil -inf OverflowError: cannot convert float infinity to integer
+ceil nan ValueError: cannot convert float NaN to integer
+ceil 709.0 709
+ceil 709.782712893384 710
+ceil 709.7827128933841 710
+ceil 710.0 710
+ceil -708.0 -708
+ceil -745.0 -745
+ceil -745.1332191019411 -745
+ceil -745.1332191019412 -745
+ceil -746.0 -746
+ceil 1023.0 1023
+ceil 1024.0 1024
+ceil 1023.9999999999999 1024
+ceil -1074.0 -1074
+ceil -1075.0 -1075
+ceil -1076.0 -1076
+ceil 88.0 88
+ceil 36.0 36
+ceil 37.0 37
+ceil 19.0 19
+ceil 22.0 22
+ceil 26.0 26
+ceil 27.0 27
+ceil 6.0 6
+ceil -6.0 -6
+ceil 4503599627370496.0 4503599627370496
+ceil 4503599627370497.0 4503599627370497
+ceil 9007199254740992.0 9007199254740992
+ceil 9007199254740992.0 9007199254740992
+ceil -9007199254740992.0 -9007199254740992
+ceil 4503599627370495.5 4503599627370496
+ceil 170.0 170
+ceil 171.0 171
+ceil 171.6 172
+ceil 171.7 172
+ceil 172.0 172
+ceil 23.0 23
+ceil 24.0 24
+ceil 143.0 143
+ceil 140.0 140
+ceil 139.5 140
+ceil 140.5 141
+ceil 199.5 200
+ceil 200.5 201
+ceil -170.5 -170
+ceil -171.5 -171
+ceil -180.5 -180
+ceil -199.5 -199
+ceil -200.5 -200
+ceil -1000.5 -1000
+ceil 8.0 8
+ceil 27.0 27
+ceil -27.0 -27
+ceil 64.0 64
+ceil 1e-09 1
+ceil 123456789.0 123456789
+ceil 0.3 1
+ceil 0.7 1
+ceil 4.0 4
+ceil 16.0 16
+ceil 1e-154 1
+ceil 1e+154 10000000000000000369475456880582265409809179829842688451922778552150543659347219597216513109705408327446511753687232667314337003349573404171046192448274432
+ceil 1.3407807929942596e+154 13407807929942595611008317640802934282464207265959107021466054756094376573581619054852612241927956455650759996398703782412109633178814162067569513603268608
+cos 0.0 1.0
+cos -0.0 1.0
+cos 1.0 0.5403023058681398
+cos -1.0 0.5403023058681398
+cos 0.5 0.8775825618903728
+cos -0.5 0.8775825618903728
+cos 2.0 -0.4161468365471424
+cos -2.0 -0.4161468365471424
+cos 3.0 -0.9899924966004454
+cos -3.0 -0.9899924966004454
+cos 0.1 0.9950041652780258
+cos -0.1 0.9950041652780258
+cos 0.25 0.9689124217106447
+cos 0.75 0.7316888688738209
+cos 1.5 0.0707372016677029
+cos -1.5 0.0707372016677029
+cos 2.5 -0.8011436155469337
+cos -2.5 -0.8011436155469337
+cos 3.5 -0.9364566872907963
+cos -3.5 -0.9364566872907963
+cos 5e-324 1.0
+cos -5e-324 1.0
+cos 1e-323 1.0
+cos 2.2250738585072014e-308 1.0
+cos 2.225073858507201e-308 1.0
+cos -2.2250738585072014e-308 1.0
+cos 1e-300 1.0
+cos -1e-300 1.0
+cos 1e-20 1.0
+cos 9.9e-21 1.0
+cos -1e-20 1.0
+cos 1e-16 1.0
+cos 1e-08 1.0
+cos 1e-05 0.99999999995
+cos 0.9999999999999999 0.5403023058681398
+cos 1.0000000000000002 0.5403023058681395
+cos -0.9999999999999999 0.5403023058681398
+cos -1.0000000000000002 0.5403023058681395
+cos 3.141592653589793 -1.0
+cos -3.141592653589793 -1.0
+cos 1.5707963267948966 6.123233995736766e-17
+cos 0.7853981633974483 0.7071067811865476
+cos 2.718281828459045 -0.9117339147869651
+cos 6.283185307179586 1.0
+cos 10.0 -0.8390715290764524
+cos 100.0 0.8623188722876839
+cos 1000.0 0.5623790762907029
+cos 100000.0 -0.9993608074382124
+cos 10000000000.0 0.873119622676856
+cos 1000000000000000.0 -0.5131937377869703
+cos 1e+16 -0.6261681981330862
+cos 1e+17 -0.8855573282976307
+cos 1e+22 0.523214785395139
+cos 1e+100 0.9247242387519338
+cos 1e+300 -0.5753861119575491
+cos -1e+300 -0.5753861119575491
+cos 1.7976931348623157e+308 -0.9999876894265599
+cos -1.7976931348623157e+308 -0.9999876894265599
+cos inf ValueError: expected a finite input, got inf
+cos -inf ValueError: expected a finite input, got -inf
+cos nan nan
+cos 709.0 0.5403530360836063
+cos 709.782712893384 0.97649888645104
+cos 709.7827128933841 0.9764988864510645
+cos 710.0 0.999999998182636
+cos -708.0 -0.41609201542499075
+cos -745.0 -0.9036663888697973
+cos -745.1332191019411 -0.8387786361346484
+cos -745.1332191019412 -0.8387786361345865
+cos -746.0 -0.1279038963304499
+cos 1023.0 0.4000681972008891
+cos 1024.0 0.9873536182198484
+cos 1023.9999999999999 0.9873536182198303
+cos -1074.0 0.9111675272946925
+cos -1075.0 0.8390223281516855
+cos -1076.0 -0.004516130144271112
+cos 88.0 0.9993732836951247
+cos 36.0 -0.12796368962740468
+cos 37.0 0.7654140519453434
+cos 19.0 0.9887046181866692
+cos 22.0 -0.9999608263946371
+cos 26.0 0.6469193223286404
+cos 27.0 -0.2921388087338362
+cos 6.0 0.960170286650366
+cos -6.0 0.960170286650366
+cos 4503599627370496.0 -0.4855348677422206
+cos 4503599627370497.0 -0.9979641031953171
+cos 9007199254740992.0 -0.5285117844130887
+cos 9007199254740992.0 -0.5285117844130887
+cos -9007199254740992.0 -0.5285117844130887
+cos 4503599627370495.5 -0.00697483195287147
+cos 170.0 0.9379947521194415
+cos 171.0 0.21510526876214117
+cos 171.6 -0.37389064390654064
+cos 171.7 -0.4646155260675894
+cos 172.0 -0.7055510066862999
+cos 23.0 -0.5328330203333975
+cos 24.0 0.424179007336997
+cos 143.0 0.05750252534912421
+cos 140.0 -0.19781357400426822
+cos 139.5 0.2963541836370153
+cos 140.5 -0.6435496697397284
+cos 199.5 0.008866380875648453
+cos 200.5 0.8462284350324767
+cos -170.5 0.6569752356961871
+cos -171.5 -0.2794299700233931
+cos -180.5 -0.141105086702016
+cos -199.5 0.008866380875648453
+cos -200.5 0.8462284350324767
+cos -1000.5 0.09710690144438526
+cos 8.0 -0.14550003380861354
+cos 27.0 -0.2921388087338362
+cos -27.0 -0.2921388087338362
+cos 64.0 0.39185723042955
+cos 1e-09 1.0
+cos 123456789.0 0.14025968153390964
+cos 0.3 0.955336489125606
+cos 0.7 0.7648421872844885
+cos 4.0 -0.6536436208636119
+cos 16.0 -0.9576594803233847
+cos 1e-154 1.0
+cos 1e+154 0.9585335384748351
+cos 1.3407807929942596e+154 0.24342711172645135
+cosh 0.0 1.0
+cosh -0.0 1.0
+cosh 1.0 1.5430806348152437
+cosh -1.0 1.5430806348152437
+cosh 0.5 1.1276259652063807
+cosh -0.5 1.1276259652063807
+cosh 2.0 3.7621956910836314
+cosh -2.0 3.7621956910836314
+cosh 3.0 10.067661995777765
+cosh -3.0 10.067661995777765
+cosh 0.1 1.0050041680558035
+cosh -0.1 1.0050041680558035
+cosh 0.25 1.0314130998795732
+cosh 0.75 1.2946832846768448
+cosh 1.5 2.352409615243247
+cosh -1.5 2.352409615243247
+cosh 2.5 6.132289479663686
+cosh -2.5 6.132289479663686
+cosh 3.5 16.572824671057315
+cosh -3.5 16.572824671057315
+cosh 5e-324 1.0
+cosh -5e-324 1.0
+cosh 1e-323 1.0
+cosh 2.2250738585072014e-308 1.0
+cosh 2.225073858507201e-308 1.0
+cosh -2.2250738585072014e-308 1.0
+cosh 1e-300 1.0
+cosh -1e-300 1.0
+cosh 1e-20 1.0
+cosh 9.9e-21 1.0
+cosh -1e-20 1.0
+cosh 1e-16 1.0
+cosh 1e-08 1.0
+cosh 1e-05 1.00000000005
+cosh 0.9999999999999999 1.5430806348152437
+cosh 1.0000000000000002 1.5430806348152442
+cosh -0.9999999999999999 1.5430806348152437
+cosh -1.0000000000000002 1.5430806348152442
+cosh 3.141592653589793 11.591953275521519
+cosh -3.141592653589793 11.591953275521519
+cosh 1.5707963267948966 2.5091784786580567
+cosh 0.7853981633974483 1.3246090892520057
+cosh 2.718281828459045 7.610125138662288
+cosh 6.283185307179586 267.7467614837482
+cosh 10.0 11013.232920103324
+cosh 100.0 1.3440585709080678e+43
+cosh 1000.0 OverflowError: math range error
+cosh 100000.0 OverflowError: math range error
+cosh 10000000000.0 OverflowError: math range error
+cosh 1000000000000000.0 OverflowError: math range error
+cosh 1e+16 OverflowError: math range error
+cosh 1e+17 OverflowError: math range error
+cosh 1e+22 OverflowError: math range error
+cosh 1e+100 OverflowError: math range error
+cosh 1e+300 OverflowError: math range error
+cosh -1e+300 OverflowError: math range error
+cosh 1.7976931348623157e+308 OverflowError: math range error
+cosh -1.7976931348623157e+308 OverflowError: math range error
+cosh inf inf
+cosh -inf inf
+cosh nan nan
+cosh 709.0 4.109203730777486e+307
+cosh 709.782712893384 8.988465674311366e+307
+cosh 709.7827128933841 8.98846567431239e+307
+cosh 710.0 1.1169973830808557e+308
+cosh -708.0 1.5116915721380276e+307
+cosh -745.0 OverflowError: math range error
+cosh -745.1332191019411 OverflowError: math range error
+cosh -745.1332191019412 OverflowError: math range error
+cosh -746.0 OverflowError: math range error
+cosh 1023.0 OverflowError: math range error
+cosh 1024.0 OverflowError: math range error
+cosh 1023.9999999999999 OverflowError: math range error
+cosh -1074.0 OverflowError: math range error
+cosh -1075.0 OverflowError: math range error
+cosh -1076.0 OverflowError: math range error
+cosh 88.0 8.258181274970009e+37
+cosh 36.0 2155615773557597.5
+cosh 37.0 5859571186401306.0
+cosh 19.0 89241150.48159362
+cosh 22.0 1792456423.065796
+cosh 26.0 97864804714.41939
+cosh 27.0 266024120300.89932
+cosh 6.0 201.7156361224559
+cosh -6.0 201.7156361224559
+cosh 4503599627370496.0 OverflowError: math range error
+cosh 4503599627370497.0 OverflowError: math range error
+cosh 9007199254740992.0 OverflowError: math range error
+cosh 9007199254740992.0 OverflowError: math range error
+cosh -9007199254740992.0 OverflowError: math range error
+cosh 4503599627370495.5 OverflowError: math range error
+cosh 170.0 3.3808969052425046e+73
+cosh 171.0 9.190230621414123e+73
+cosh 171.6 1.6745691995203129e+74
+cosh 171.7 1.850685179615056e+74
+cosh 172.0 2.498163689753789e+74
+cosh 23.0 4872401723.124452
+cosh 24.0 13244561064.921736
+cosh 143.0 6.354493159151094e+61
+cosh 140.0 3.1637158535777925e+60
+cosh 139.5 1.918890663813856e+60
+cosh 140.5 5.216085622244919e+60
+cosh 199.5 2.1913873183237471e+86
+cosh 200.5 5.956808326515039e+86
+cosh -170.5 5.574156641717553e+73
+cosh -171.5 1.515212870816512e+74
+cosh -180.5 1.2277897060368636e+78
+cosh -199.5 2.1913873183237471e+86
+cosh -200.5 5.956808326515039e+86
+cosh -1000.5 OverflowError: math range error
+cosh 8.0 1490.479161252178
+cosh 27.0 266024120300.89932
+cosh -27.0 266024120300.89932
+cosh 64.0 3.1175745404058084e+27
+cosh 1e-09 1.0
+cosh 123456789.0 OverflowError: math range error
+cosh 0.3 1.0453385141288605
+cosh 0.7 1.255169005630943
+cosh 4.0 27.308232836016487
+cosh 16.0 4443055.260253992
+cosh 1e-154 1.0
+cosh 1e+154 OverflowError: math range error
+cosh 1.3407807929942596e+154 OverflowError: math range error
+degrees 0.0 0.0
+degrees -0.0 -0.0
+degrees 1.0 57.29577951308232
+degrees -1.0 -57.29577951308232
+degrees 0.5 28.64788975654116
+degrees -0.5 -28.64788975654116
+degrees 2.0 114.59155902616465
+degrees -2.0 -114.59155902616465
+degrees 3.0 171.88733853924697
+degrees -3.0 -171.88733853924697
+degrees 0.1 5.729577951308233
+degrees -0.1 -5.729577951308233
+degrees 0.25 14.32394487827058
+degrees 0.75 42.97183463481174
+degrees 1.5 85.94366926962348
+degrees -1.5 -85.94366926962348
+degrees 2.5 143.2394487827058
+degrees -2.5 -143.2394487827058
+degrees 3.5 200.53522829578813
+degrees -3.5 -200.53522829578813
+degrees 5e-324 2.8e-322
+degrees -5e-324 -2.8e-322
+degrees 1e-323 5.7e-322
+degrees 2.2250738585072014e-308 1.2748734119735194e-306
+degrees 2.225073858507201e-308 1.2748734119735191e-306
+degrees -2.2250738585072014e-308 -1.2748734119735194e-306
+degrees 1e-300 5.729577951308232e-299
+degrees -1e-300 -5.729577951308232e-299
+degrees 1e-20 5.729577951308232e-19
+degrees 9.9e-21 5.672282171795151e-19
+degrees -1e-20 -5.729577951308232e-19
+degrees 1e-16 5.729577951308232e-15
+degrees 1e-08 5.729577951308232e-07
+degrees 1e-05 0.0005729577951308233
+degrees 0.9999999999999999 57.295779513082316
+degrees 1.0000000000000002 57.29577951308234
+degrees -0.9999999999999999 -57.295779513082316
+degrees -1.0000000000000002 -57.29577951308234
+degrees 3.141592653589793 180.0
+degrees -3.141592653589793 -180.0
+degrees 1.5707963267948966 90.0
+degrees 0.7853981633974483 45.0
+degrees 2.718281828459045 155.74607629780772
+degrees 6.283185307179586 360.0
+degrees 10.0 572.9577951308232
+degrees 100.0 5729.5779513082325
+degrees 1000.0 57295.77951308232
+degrees 100000.0 5729577.951308233
+degrees 10000000000.0 572957795130.8232
+degrees 1000000000000000.0 5.729577951308232e+16
+degrees 1e+16 5.7295779513082323e+17
+degrees 1e+17 5.729577951308233e+18
+degrees 1e+22 5.7295779513082325e+23
+degrees 1e+100 5.729577951308232e+101
+degrees 1e+300 5.729577951308233e+301
+degrees -1e+300 -5.729577951308233e+301
+degrees 1.7976931348623157e+308 inf
+degrees -1.7976931348623157e+308 -inf
+degrees inf inf
+degrees -inf -inf
+degrees nan nan
+degrees 709.0 40622.70767477537
+degrees 709.782712893384 40667.553820136745
+degrees 709.7827128933841 40667.553820136745
+degrees 710.0 40680.003454288446
+degrees -708.0 -40565.41189526228
+degrees -745.0 -42685.35573724633
+degrees -745.1332191019411 -42692.98862953808
+degrees -745.1332191019412 -42692.988629538086
+degrees -746.0 -42742.65151675941
+degrees 1023.0 58613.58244188322
+degrees 1024.0 58670.8782213963
+degrees 1023.9999999999999 58670.87822139629
+degrees -1074.0 -61535.66719705042
+degrees -1075.0 -61592.962976563496
+degrees -1076.0 -61650.25875607658
+degrees 88.0 5042.028597151244
+degrees 36.0 2062.648062470964
+degrees 37.0 2119.943841984046
+degrees 19.0 1088.619810748564
+degrees 22.0 1260.507149287811
+degrees 26.0 1489.6902673401405
+degrees 27.0 1546.9860468532227
+degrees 6.0 343.77467707849394
+degrees -6.0 -343.77467707849394
+degrees 4503599627370496.0 2.5803725126501965e+17
+degrees 4503599627370497.0 2.580372512650197e+17
+degrees 9007199254740992.0 5.160745025300393e+17
+degrees 9007199254740992.0 5.160745025300393e+17
+degrees -9007199254740992.0 -5.160745025300393e+17
+degrees 4503599627370495.5 2.5803725126501962e+17
+degrees 170.0 9740.282517223995
+degrees 171.0 9797.578296737078
+degrees 171.6 9831.955764444927
+degrees 171.7 9837.685342396235
+degrees 172.0 9854.87407625016
+degrees 23.0 1317.8029288008934
+degrees 24.0 1375.0987083139757
+degrees 143.0 8193.296470370773
+degrees 140.0 8021.409131831525
+degrees 139.5 7992.761242074984
+degrees 140.5 8050.057021588066
+degrees 199.5 11430.508012859924
+degrees 200.5 11487.803792373006
+degrees -170.5 -9768.930406980537
+degrees -171.5 -9826.226186493619
+degrees -180.5 -10341.888202111359
+degrees -199.5 -11430.508012859924
+degrees -200.5 -11487.803792373006
+degrees -1000.5 -57324.42740283886
+degrees 8.0 458.3662361046586
+degrees 27.0 1546.9860468532227
+degrees -27.0 -1546.9860468532227
+degrees 64.0 3666.9298888372687
+degrees 1e-09 5.7295779513082324e-08
+degrees 123456789.0 7073552961.937127
+degrees 0.3 17.188733853924695
+degrees 0.7 40.10704565915762
+degrees 4.0 229.1831180523293
+degrees 16.0 916.7324722093172
+degrees 1e-154 5.729577951308232e-153
+degrees 1e+154 5.729577951308232e+155
+degrees 1.3407807929942596e+154 7.682108069077477e+155
+erf 0.0 0.0
+erf -0.0 -0.0
+erf 1.0 0.8427007929497149
+erf -1.0 -0.8427007929497149
+erf 0.5 0.5204998778130465
+erf -0.5 -0.5204998778130465
+erf 2.0 0.9953222650189527
+erf -2.0 -0.9953222650189527
+erf 3.0 0.9999779095030014
+erf -3.0 -0.9999779095030014
+erf 0.1 0.1124629160182849
+erf -0.1 -0.1124629160182849
+erf 0.25 0.2763263901682369
+erf 0.75 0.7111556336535151
+erf 1.5 0.9661051464753108
+erf -1.5 -0.9661051464753108
+erf 2.5 0.999593047982555
+erf -2.5 -0.999593047982555
+erf 3.5 0.9999992569016276
+erf -3.5 -0.9999992569016276
+erf 5e-324 5e-324
+erf -5e-324 -5e-324
+erf 1e-323 1e-323
+erf 2.2250738585072014e-308 2.5107269871883543e-308
+erf 2.225073858507201e-308 2.510726987188354e-308
+erf -2.2250738585072014e-308 -2.5107269871883543e-308
+erf 1e-300 1.1283791670955126e-300
+erf -1e-300 -1.1283791670955126e-300
+erf 1e-20 1.1283791670955125e-20
+erf 9.9e-21 1.1170953754245576e-20
+erf -1e-20 -1.1283791670955125e-20
+erf 1e-16 1.1283791670955125e-16
+erf 1e-08 1.1283791670955126e-08
+erf 1e-05 1.1283791670579e-05
+erf 0.9999999999999999 0.8427007929497148
+erf 1.0000000000000002 0.842700792949715
+erf -0.9999999999999999 -0.8427007929497148
+erf -1.0000000000000002 -0.842700792949715
+erf 3.141592653589793 0.9999911238536323
+erf -3.141592653589793 -0.9999911238536323
+erf 1.5707963267948966 0.9736789250782586
+erf 0.7853981633974483 0.7333114255659121
+erf 2.718281828459045 0.9998790689599072
+erf 6.283185307179586 1.0
+erf 10.0 1.0
+erf 100.0 1.0
+erf 1000.0 1.0
+erf 100000.0 1.0
+erf 10000000000.0 1.0
+erf 1000000000000000.0 1.0
+erf 1e+16 1.0
+erf 1e+17 1.0
+erf 1e+22 1.0
+erf 1e+100 1.0
+erf 1e+300 1.0
+erf -1e+300 -1.0
+erf 1.7976931348623157e+308 1.0
+erf -1.7976931348623157e+308 -1.0
+erf inf 1.0
+erf -inf -1.0
+erf nan nan
+erf 709.0 1.0
+erf 709.782712893384 1.0
+erf 709.7827128933841 1.0
+erf 710.0 1.0
+erf -708.0 -1.0
+erf -745.0 -1.0
+erf -745.1332191019411 -1.0
+erf -745.1332191019412 -1.0
+erf -746.0 -1.0
+erf 1023.0 1.0
+erf 1024.0 1.0
+erf 1023.9999999999999 1.0
+erf -1074.0 -1.0
+erf -1075.0 -1.0
+erf -1076.0 -1.0
+erf 88.0 1.0
+erf 36.0 1.0
+erf 37.0 1.0
+erf 19.0 1.0
+erf 22.0 1.0
+erf 26.0 1.0
+erf 27.0 1.0
+erf 6.0 1.0
+erf -6.0 -1.0
+erf 4503599627370496.0 1.0
+erf 4503599627370497.0 1.0
+erf 9007199254740992.0 1.0
+erf 9007199254740992.0 1.0
+erf -9007199254740992.0 -1.0
+erf 4503599627370495.5 1.0
+erf 170.0 1.0
+erf 171.0 1.0
+erf 171.6 1.0
+erf 171.7 1.0
+erf 172.0 1.0
+erf 23.0 1.0
+erf 24.0 1.0
+erf 143.0 1.0
+erf 140.0 1.0
+erf 139.5 1.0
+erf 140.5 1.0
+erf 199.5 1.0
+erf 200.5 1.0
+erf -170.5 -1.0
+erf -171.5 -1.0
+erf -180.5 -1.0
+erf -199.5 -1.0
+erf -200.5 -1.0
+erf -1000.5 -1.0
+erf 8.0 1.0
+erf 27.0 1.0
+erf -27.0 -1.0
+erf 64.0 1.0
+erf 1e-09 1.1283791670955127e-09
+erf 123456789.0 1.0
+erf 0.3 0.3286267594591274
+erf 0.7 0.6778011938374184
+erf 4.0 0.9999999845827421
+erf 16.0 1.0
+erf 1e-154 1.1283791670955126e-154
+erf 1e+154 1.0
+erf 1.3407807929942596e+154 1.0
+erfc 0.0 1.0
+erfc -0.0 1.0
+erfc 1.0 0.15729920705028513
+erfc -1.0 1.842700792949715
+erfc 0.5 0.4795001221869535
+erfc -0.5 1.5204998778130465
+erfc 2.0 0.004677734981047265
+erfc -2.0 1.9953222650189528
+erfc 3.0 2.2090496998585438e-05
+erfc -3.0 1.9999779095030015
+erfc 0.1 0.8875370839817152
+erfc -0.1 1.1124629160182848
+erfc 0.25 0.7236736098317631
+erfc 0.75 0.28884436634648486
+erfc 1.5 0.033894853524689274
+erfc -1.5 1.9661051464753108
+erfc 2.5 0.0004069520174449589
+erfc -2.5 1.999593047982555
+erfc 3.5 7.430983723414128e-07
+erfc -3.5 1.9999992569016276
+erfc 5e-324 1.0
+erfc -5e-324 1.0
+erfc 1e-323 1.0
+erfc 2.2250738585072014e-308 1.0
+erfc 2.225073858507201e-308 1.0
+erfc -2.2250738585072014e-308 1.0
+erfc 1e-300 1.0
+erfc -1e-300 1.0
+erfc 1e-20 1.0
+erfc 9.9e-21 1.0
+erfc -1e-20 1.0
+erfc 1e-16 0.9999999999999999
+erfc 1e-08 0.9999999887162083
+erfc 1e-05 0.9999887162083294
+erfc 0.9999999999999999 0.1572992070502852
+erfc 1.0000000000000002 0.15729920705028505
+erfc -0.9999999999999999 1.8427007929497148
+erfc -1.0000000000000002 1.842700792949715
+erfc 3.141592653589793 8.876146367641612e-06
+erfc -3.141592653589793 1.9999911238536323
+erfc 1.5707963267948966 0.026321074921741443
+erfc 0.7853981633974483 0.2666885744340879
+erfc 2.718281828459045 0.00012093104009276269
+erfc 6.283185307179586 6.3481917051595e-19
+erfc 10.0 2.088487583762545e-45
+erfc 100.0 0.0
+erfc 1000.0 0.0
+erfc 100000.0 0.0
+erfc 10000000000.0 0.0
+erfc 1000000000000000.0 0.0
+erfc 1e+16 0.0
+erfc 1e+17 0.0
+erfc 1e+22 0.0
+erfc 1e+100 0.0
+erfc 1e+300 0.0
+erfc -1e+300 2.0
+erfc 1.7976931348623157e+308 0.0
+erfc -1.7976931348623157e+308 2.0
+erfc inf 0.0
+erfc -inf 2.0
+erfc nan nan
+erfc 709.0 0.0
+erfc 709.782712893384 0.0
+erfc 709.7827128933841 0.0
+erfc 710.0 0.0
+erfc -708.0 2.0
+erfc -745.0 2.0
+erfc -745.1332191019411 2.0
+erfc -745.1332191019412 2.0
+erfc -746.0 2.0
+erfc 1023.0 0.0
+erfc 1024.0 0.0
+erfc 1023.9999999999999 0.0
+erfc -1074.0 2.0
+erfc -1075.0 2.0
+erfc -1076.0 2.0
+erfc 88.0 0.0
+erfc 36.0 0.0
+erfc 37.0 0.0
+erfc 19.0 4.917722839256475e-159
+erfc 22.0 1.6219058609334724e-212
+erfc 26.0 5.663192408856143e-296
+erfc 27.0 5.23705e-319
+erfc 6.0 2.1519736712498916e-17
+erfc -6.0 2.0
+erfc 4503599627370496.0 0.0
+erfc 4503599627370497.0 0.0
+erfc 9007199254740992.0 0.0
+erfc 9007199254740992.0 0.0
+erfc -9007199254740992.0 2.0
+erfc 4503599627370495.5 0.0
+erfc 170.0 0.0
+erfc 171.0 0.0
+erfc 171.6 0.0
+erfc 171.7 0.0
+erfc 172.0 0.0
+erfc 23.0 4.441265948088058e-232
+erfc 24.0 1.6489825831519335e-252
+erfc 143.0 0.0
+erfc 140.0 0.0
+erfc 139.5 0.0
+erfc 140.5 0.0
+erfc 199.5 0.0
+erfc 200.5 0.0
+erfc -170.5 2.0
+erfc -171.5 2.0
+erfc -180.5 2.0
+erfc -199.5 2.0
+erfc -200.5 2.0
+erfc -1000.5 2.0
+erfc 8.0 1.1224297172982928e-29
+erfc 27.0 5.23705e-319
+erfc -27.0 2.0
+erfc 64.0 0.0
+erfc 1e-09 0.9999999988716208
+erfc 123456789.0 0.0
+erfc 0.3 0.6713732405408726
+erfc 0.7 0.32219880616258156
+erfc 4.0 1.541725790028002e-08
+erfc 16.0 2.3284857515715308e-113
+erfc 1e-154 1.0
+erfc 1e+154 0.0
+erfc 1.3407807929942596e+154 0.0
+exp 0.0 1.0
+exp -0.0 1.0
+exp 1.0 2.718281828459045
+exp -1.0 0.36787944117144233
+exp 0.5 1.6487212707001282
+exp -0.5 0.6065306597126334
+exp 2.0 7.38905609893065
+exp -2.0 0.1353352832366127
+exp 3.0 20.085536923187668
+exp -3.0 0.049787068367863944
+exp 0.1 1.1051709180756477
+exp -0.1 0.9048374180359595
+exp 0.25 1.2840254166877414
+exp 0.75 2.117000016612675
+exp 1.5 4.4816890703380645
+exp -1.5 0.22313016014842982
+exp 2.5 12.182493960703473
+exp -2.5 0.0820849986238988
+exp 3.5 33.11545195869231
+exp -3.5 0.0301973834223185
+exp 5e-324 1.0
+exp -5e-324 1.0
+exp 1e-323 1.0
+exp 2.2250738585072014e-308 1.0
+exp 2.225073858507201e-308 1.0
+exp -2.2250738585072014e-308 1.0
+exp 1e-300 1.0
+exp -1e-300 1.0
+exp 1e-20 1.0
+exp 9.9e-21 1.0
+exp -1e-20 1.0
+exp 1e-16 1.0
+exp 1e-08 1.00000001
+exp 1e-05 1.00001000005
+exp 0.9999999999999999 2.718281828459045
+exp 1.0000000000000002 2.718281828459046
+exp -0.9999999999999999 0.3678794411714424
+exp -1.0000000000000002 0.3678794411714422
+exp 3.141592653589793 23.140692632779267
+exp -3.141592653589793 0.04321391826377226
+exp 1.5707963267948966 4.810477380965351
+exp 0.7853981633974483 2.1932800507380152
+exp 2.718281828459045 15.154262241479262
+exp 6.283185307179586 535.4916555247646
+exp 10.0 22026.465794806718
+exp 100.0 2.6881171418161356e+43
+exp 1000.0 OverflowError: math range error
+exp 100000.0 OverflowError: math range error
+exp 10000000000.0 OverflowError: math range error
+exp 1000000000000000.0 OverflowError: math range error
+exp 1e+16 OverflowError: math range error
+exp 1e+17 OverflowError: math range error
+exp 1e+22 OverflowError: math range error
+exp 1e+100 OverflowError: math range error
+exp 1e+300 OverflowError: math range error
+exp -1e+300 0.0
+exp 1.7976931348623157e+308 OverflowError: math range error
+exp -1.7976931348623157e+308 0.0
+exp inf inf
+exp -inf 0.0
+exp nan nan
+exp 709.0 8.218407461554972e+307
+exp 709.782712893384 1.7976931348622732e+308
+exp 709.7827128933841 OverflowError: math range error
+exp 710.0 OverflowError: math range error
+exp -708.0 3.307553003638408e-308
+exp -745.0 5e-324
+exp -745.1332191019411 5e-324
+exp -745.1332191019412 0.0
+exp -746.0 0.0
+exp 1023.0 OverflowError: math range error
+exp 1024.0 OverflowError: math range error
+exp 1023.9999999999999 OverflowError: math range error
+exp -1074.0 0.0
+exp -1075.0 0.0
+exp -1076.0 0.0
+exp 88.0 1.6516362549940018e+38
+exp 36.0 4311231547115195.0
+exp 37.0 1.1719142372802612e+16
+exp 19.0 178482300.96318725
+exp 22.0 3584912846.131592
+exp 26.0 195729609428.83878
+exp 27.0 532048240601.79865
+exp 6.0 403.4287934927351
+exp -6.0 0.0024787521766663585
+exp 4503599627370496.0 OverflowError: math range error
+exp 4503599627370497.0 OverflowError: math range error
+exp 9007199254740992.0 OverflowError: math range error
+exp 9007199254740992.0 OverflowError: math range error
+exp -9007199254740992.0 0.0
+exp 4503599627370495.5 OverflowError: math range error
+exp 170.0 6.761793810485009e+73
+exp 171.0 1.8380461242828246e+74
+exp 171.6 3.3491383990406257e+74
+exp 171.7 3.701370359230112e+74
+exp 172.0 4.996327379507578e+74
+exp 23.0 9744803446.248903
+exp 24.0 26489122129.84347
+exp 143.0 1.2708986318302189e+62
+exp 140.0 6.327431707155585e+60
+exp 139.5 3.837781327627712e+60
+exp 140.5 1.0432171244489838e+61
+exp 199.5 4.3827746366474943e+86
+exp 200.5 1.1913616653030078e+87
+exp -170.5 8.969966797451463e-75
+exp -171.5 3.299866372772836e-75
+exp -180.5 4.0723586257611754e-79
+exp -199.5 2.2816596400788878e-87
+exp -200.5 8.393756733356555e-88
+exp -1000.5 0.0
+exp 8.0 2980.9579870417283
+exp 27.0 532048240601.79865
+exp -27.0 1.8795288165390832e-12
+exp 64.0 6.235149080811617e+27
+exp 1e-09 1.000000001
+exp 123456789.0 OverflowError: math range error
+exp 0.3 1.3498588075760032
+exp 0.7 2.0137527074704766
+exp 4.0 54.598150033144236
+exp 16.0 8886110.520507872
+exp 1e-154 1.0
+exp 1e+154 OverflowError: math range error
+exp 1.3407807929942596e+154 OverflowError: math range error
+exp2 0.0 1.0
+exp2 -0.0 1.0
+exp2 1.0 2.0
+exp2 -1.0 0.5
+exp2 0.5 1.4142135623730951
+exp2 -0.5 0.7071067811865476
+exp2 2.0 4.0
+exp2 -2.0 0.25
+exp2 3.0 8.0
+exp2 -3.0 0.125
+exp2 0.1 1.0717734625362931
+exp2 -0.1 0.9330329915368074
+exp2 0.25 1.189207115002721
+exp2 0.75 1.681792830507429
+exp2 1.5 2.8284271247461903
+exp2 -1.5 0.3535533905932738
+exp2 2.5 5.656854249492381
+exp2 -2.5 0.1767766952966369
+exp2 3.5 11.313708498984761
+exp2 -3.5 0.08838834764831845
+exp2 5e-324 1.0
+exp2 -5e-324 1.0
+exp2 1e-323 1.0
+exp2 2.2250738585072014e-308 1.0
+exp2 2.225073858507201e-308 1.0
+exp2 -2.2250738585072014e-308 1.0
+exp2 1e-300 1.0
+exp2 -1e-300 1.0
+exp2 1e-20 1.0
+exp2 9.9e-21 1.0
+exp2 -1e-20 1.0
+exp2 1e-16 1.0
+exp2 1e-08 1.0000000069314718
+exp2 1e-05 1.0000069314958282
+exp2 0.9999999999999999 1.9999999999999998
+exp2 1.0000000000000002 2.0000000000000004
+exp2 -0.9999999999999999 0.5
+exp2 -1.0000000000000002 0.49999999999999994
+exp2 3.141592653589793 8.824977827076287
+exp2 -3.141592653589793 0.11331473229676088
+exp2 1.5707963267948966 2.9706864235520194
+exp2 0.7853981633974483 1.7235679341273495
+exp2 2.718281828459045 6.5808859910179205
+exp2 6.283185307179586 77.8802336483881
+exp2 10.0 1024.0
+exp2 100.0 1.2676506002282294e+30
+exp2 1000.0 1.0715086071862673e+301
+exp2 100000.0 OverflowError: math range error
+exp2 10000000000.0 OverflowError: math range error
+exp2 1000000000000000.0 OverflowError: math range error
+exp2 1e+16 OverflowError: math range error
+exp2 1e+17 OverflowError: math range error
+exp2 1e+22 OverflowError: math range error
+exp2 1e+100 OverflowError: math range error
+exp2 1e+300 OverflowError: math range error
+exp2 -1e+300 0.0
+exp2 1.7976931348623157e+308 OverflowError: math range error
+exp2 -1.7976931348623157e+308 0.0
+exp2 inf inf
+exp2 -inf 0.0
+exp2 nan nan
+exp2 709.0 2.6931895815927672e+213
+exp2 709.782712893384 4.633263338271327e+213
+exp2 709.7827128933841 4.6332633382716917e+213
+exp2 710.0 5.386379163185535e+213
+exp2 -708.0 7.426138930840468e-214
+exp2 -745.0 5.403227209783267e-225
+exp2 -745.1332191019411 4.9266338292710486e-225
+exp2 -745.1332191019412 4.9266338292706605e-225
+exp2 -746.0 2.7016136048916335e-225
+exp2 1023.0 8.98846567431158e+307
+exp2 1024.0 OverflowError: math range error
+exp2 1023.9999999999999 1.7976931348621742e+308
+exp2 -1074.0 5e-324
+exp2 -1075.0 0.0
+exp2 -1076.0 0.0
+exp2 88.0 3.094850098213451e+26
+exp2 36.0 68719476736.0
+exp2 37.0 137438953472.0
+exp2 19.0 524288.0
+exp2 22.0 4194304.0
+exp2 26.0 67108864.0
+exp2 27.0 134217728.0
+exp2 6.0 64.0
+exp2 -6.0 0.015625
+exp2 4503599627370496.0 OverflowError: math range error
+exp2 4503599627370497.0 OverflowError: math range error
+exp2 9007199254740992.0 OverflowError: math range error
+exp2 9007199254740992.0 OverflowError: math range error
+exp2 -9007199254740992.0 0.0
+exp2 4503599627370495.5 OverflowError: math range error
+exp2 170.0 1.4965776766268446e+51
+exp2 171.0 2.9931553532536892e+51
+exp2 171.6 4.536775155065882e+51
+exp2 171.7 4.862395216693569e+51
+exp2 172.0 5.986310706507379e+51
+exp2 23.0 8388608.0
+exp2 24.0 16777216.0
+exp2 143.0 1.1150372599265312e+43
+exp2 140.0 1.393796574908164e+42
+exp2 139.5 9.855630097121465e+41
+exp2 140.5 1.971126019424293e+42
+exp2 199.5 1.1362767880421805e+60
+exp2 200.5 2.272553576084361e+60
+exp2 -170.5 4.724825127555721e-52
+exp2 -171.5 2.3624125637778606e-52
+exp2 -180.5 4.614087038628634e-55
+exp2 -199.5 8.800672604806202e-61
+exp2 -200.5 4.400336302403101e-61
+exp2 -1000.5 6.599170332783212e-302
+exp2 8.0 256.0
+exp2 27.0 134217728.0
+exp2 -27.0 7.450580596923828e-09
+exp2 64.0 1.8446744073709552e+19
+exp2 1e-09 1.000000000693147
+exp2 123456789.0 OverflowError: math range error
+exp2 0.3 1.2311444133449163
+exp2 0.7 1.624504792712471
+exp2 4.0 16.0
+exp2 16.0 65536.0
+exp2 1e-154 1.0
+exp2 1e+154 OverflowError: math range error
+exp2 1.3407807929942596e+154 OverflowError: math range error
+expm1 0.0 0.0
+expm1 -0.0 -0.0
+expm1 1.0 1.718281828459045
+expm1 -1.0 -0.6321205588285577
+expm1 0.5 0.6487212707001282
+expm1 -0.5 -0.3934693402873666
+expm1 2.0 6.38905609893065
+expm1 -2.0 -0.8646647167633873
+expm1 3.0 19.085536923187668
+expm1 -3.0 -0.950212931632136
+expm1 0.1 0.10517091807564763
+expm1 -0.1 -0.09516258196404043
+expm1 0.25 0.2840254166877415
+expm1 0.75 1.1170000166126748
+expm1 1.5 3.481689070338065
+expm1 -1.5 -0.7768698398515702
+expm1 2.5 11.182493960703473
+expm1 -2.5 -0.9179150013761013
+expm1 3.5 32.11545195869231
+expm1 -3.5 -0.9698026165776815
+expm1 5e-324 5e-324
+expm1 -5e-324 -5e-324
+expm1 1e-323 1e-323
+expm1 2.2250738585072014e-308 2.2250738585072014e-308
+expm1 2.225073858507201e-308 2.225073858507201e-308
+expm1 -2.2250738585072014e-308 -2.2250738585072014e-308
+expm1 1e-300 1e-300
+expm1 -1e-300 -1e-300
+expm1 1e-20 1e-20
+expm1 9.9e-21 9.9e-21
+expm1 -1e-20 -1e-20
+expm1 1e-16 1e-16
+expm1 1e-08 1.0000000050000001e-08
+expm1 1e-05 1.0000050000166668e-05
+expm1 0.9999999999999999 1.7182818284590449
+expm1 1.0000000000000002 1.718281828459046
+expm1 -0.9999999999999999 -0.6321205588285577
+expm1 -1.0000000000000002 -0.6321205588285578
+expm1 3.141592653589793 22.140692632779267
+expm1 -3.141592653589793 -0.9567860817362277
+expm1 1.5707963267948966 3.8104773809653514
+expm1 0.7853981633974483 1.1932800507380155
+expm1 2.718281828459045 14.154262241479262
+expm1 6.283185307179586 534.4916555247646
+expm1 10.0 22025.465794806718
+expm1 100.0 2.6881171418161356e+43
+expm1 1000.0 OverflowError: math range error
+expm1 100000.0 OverflowError: math range error
+expm1 10000000000.0 OverflowError: math range error
+expm1 1000000000000000.0 OverflowError: math range error
+expm1 1e+16 OverflowError: math range error
+expm1 1e+17 OverflowError: math range error
+expm1 1e+22 OverflowError: math range error
+expm1 1e+100 OverflowError: math range error
+expm1 1e+300 OverflowError: math range error
+expm1 -1e+300 -1.0
+expm1 1.7976931348623157e+308 OverflowError: math range error
+expm1 -1.7976931348623157e+308 -1.0
+expm1 inf inf
+expm1 -inf -1.0
+expm1 nan nan
+expm1 709.0 8.218407461554972e+307
+expm1 709.782712893384 1.7976931348622732e+308
+expm1 709.7827128933841 OverflowError: math range error
+expm1 710.0 OverflowError: math range error
+expm1 -708.0 -1.0
+expm1 -745.0 -1.0
+expm1 -745.1332191019411 -1.0
+expm1 -745.1332191019412 -1.0
+expm1 -746.0 -1.0
+expm1 1023.0 OverflowError: math range error
+expm1 1024.0 OverflowError: math range error
+expm1 1023.9999999999999 OverflowError: math range error
+expm1 -1074.0 -1.0
+expm1 -1075.0 -1.0
+expm1 -1076.0 -1.0
+expm1 88.0 1.6516362549940018e+38
+expm1 36.0 4311231547115194.0
+expm1 37.0 1.171914237280261e+16
+expm1 19.0 178482299.96318728
+expm1 22.0 3584912845.131592
+expm1 26.0 195729609427.83875
+expm1 27.0 532048240600.79865
+expm1 6.0 402.4287934927351
+expm1 -6.0 -0.9975212478233336
+expm1 4503599627370496.0 OverflowError: math range error
+expm1 4503599627370497.0 OverflowError: math range error
+expm1 9007199254740992.0 OverflowError: math range error
+expm1 9007199254740992.0 OverflowError: math range error
+expm1 -9007199254740992.0 -1.0
+expm1 4503599627370495.5 OverflowError: math range error
+expm1 170.0 6.76179381048501e+73
+expm1 171.0 1.8380461242828246e+74
+expm1 171.6 3.3491383990406257e+74
+expm1 171.7 3.701370359230112e+74
+expm1 172.0 4.996327379507578e+74
+expm1 23.0 9744803445.248903
+expm1 24.0 26489122128.84347
+expm1 143.0 1.2708986318302189e+62
+expm1 140.0 6.327431707155585e+60
+expm1 139.5 3.837781327627712e+60
+expm1 140.5 1.0432171244489838e+61
+expm1 199.5 4.3827746366474943e+86
+expm1 200.5 1.1913616653030078e+87
+expm1 -170.5 -1.0
+expm1 -171.5 -1.0
+expm1 -180.5 -1.0
+expm1 -199.5 -1.0
+expm1 -200.5 -1.0
+expm1 -1000.5 -1.0
+expm1 8.0 2979.9579870417283
+expm1 27.0 532048240600.79865
+expm1 -27.0 -0.9999999999981205
+expm1 64.0 6.235149080811617e+27
+expm1 1e-09 1.0000000005000001e-09
+expm1 123456789.0 OverflowError: math range error
+expm1 0.3 0.3498588075760031
+expm1 0.7 1.0137527074704764
+expm1 4.0 53.598150033144236
+expm1 16.0 8886109.520507872
+expm1 1e-154 1e-154
+expm1 1e+154 OverflowError: math range error
+expm1 1.3407807929942596e+154 OverflowError: math range error
+fabs 0.0 0.0
+fabs -0.0 0.0
+fabs 1.0 1.0
+fabs -1.0 1.0
+fabs 0.5 0.5
+fabs -0.5 0.5
+fabs 2.0 2.0
+fabs -2.0 2.0
+fabs 3.0 3.0
+fabs -3.0 3.0
+fabs 0.1 0.1
+fabs -0.1 0.1
+fabs 0.25 0.25
+fabs 0.75 0.75
+fabs 1.5 1.5
+fabs -1.5 1.5
+fabs 2.5 2.5
+fabs -2.5 2.5
+fabs 3.5 3.5
+fabs -3.5 3.5
+fabs 5e-324 5e-324
+fabs -5e-324 5e-324
+fabs 1e-323 1e-323
+fabs 2.2250738585072014e-308 2.2250738585072014e-308
+fabs 2.225073858507201e-308 2.225073858507201e-308
+fabs -2.2250738585072014e-308 2.2250738585072014e-308
+fabs 1e-300 1e-300
+fabs -1e-300 1e-300
+fabs 1e-20 1e-20
+fabs 9.9e-21 9.9e-21
+fabs -1e-20 1e-20
+fabs 1e-16 1e-16
+fabs 1e-08 1e-08
+fabs 1e-05 1e-05
+fabs 0.9999999999999999 0.9999999999999999
+fabs 1.0000000000000002 1.0000000000000002
+fabs -0.9999999999999999 0.9999999999999999
+fabs -1.0000000000000002 1.0000000000000002
+fabs 3.141592653589793 3.141592653589793
+fabs -3.141592653589793 3.141592653589793
+fabs 1.5707963267948966 1.5707963267948966
+fabs 0.7853981633974483 0.7853981633974483
+fabs 2.718281828459045 2.718281828459045
+fabs 6.283185307179586 6.283185307179586
+fabs 10.0 10.0
+fabs 100.0 100.0
+fabs 1000.0 1000.0
+fabs 100000.0 100000.0
+fabs 10000000000.0 10000000000.0
+fabs 1000000000000000.0 1000000000000000.0
+fabs 1e+16 1e+16
+fabs 1e+17 1e+17
+fabs 1e+22 1e+22
+fabs 1e+100 1e+100
+fabs 1e+300 1e+300
+fabs -1e+300 1e+300
+fabs 1.7976931348623157e+308 1.7976931348623157e+308
+fabs -1.7976931348623157e+308 1.7976931348623157e+308
+fabs inf inf
+fabs -inf inf
+fabs nan nan
+fabs 709.0 709.0
+fabs 709.782712893384 709.782712893384
+fabs 709.7827128933841 709.7827128933841
+fabs 710.0 710.0
+fabs -708.0 708.0
+fabs -745.0 745.0
+fabs -745.1332191019411 745.1332191019411
+fabs -745.1332191019412 745.1332191019412
+fabs -746.0 746.0
+fabs 1023.0 1023.0
+fabs 1024.0 1024.0
+fabs 1023.9999999999999 1023.9999999999999
+fabs -1074.0 1074.0
+fabs -1075.0 1075.0
+fabs -1076.0 1076.0
+fabs 88.0 88.0
+fabs 36.0 36.0
+fabs 37.0 37.0
+fabs 19.0 19.0
+fabs 22.0 22.0
+fabs 26.0 26.0
+fabs 27.0 27.0
+fabs 6.0 6.0
+fabs -6.0 6.0
+fabs 4503599627370496.0 4503599627370496.0
+fabs 4503599627370497.0 4503599627370497.0
+fabs 9007199254740992.0 9007199254740992.0
+fabs 9007199254740992.0 9007199254740992.0
+fabs -9007199254740992.0 9007199254740992.0
+fabs 4503599627370495.5 4503599627370495.5
+fabs 170.0 170.0
+fabs 171.0 171.0
+fabs 171.6 171.6
+fabs 171.7 171.7
+fabs 172.0 172.0
+fabs 23.0 23.0
+fabs 24.0 24.0
+fabs 143.0 143.0
+fabs 140.0 140.0
+fabs 139.5 139.5
+fabs 140.5 140.5
+fabs 199.5 199.5
+fabs 200.5 200.5
+fabs -170.5 170.5
+fabs -171.5 171.5
+fabs -180.5 180.5
+fabs -199.5 199.5
+fabs -200.5 200.5
+fabs -1000.5 1000.5
+fabs 8.0 8.0
+fabs 27.0 27.0
+fabs -27.0 27.0
+fabs 64.0 64.0
+fabs 1e-09 1e-09
+fabs 123456789.0 123456789.0
+fabs 0.3 0.3
+fabs 0.7 0.7
+fabs 4.0 4.0
+fabs 16.0 16.0
+fabs 1e-154 1e-154
+fabs 1e+154 1e+154
+fabs 1.3407807929942596e+154 1.3407807929942596e+154
+floor 0.0 0
+floor -0.0 0
+floor 1.0 1
+floor -1.0 -1
+floor 0.5 0
+floor -0.5 -1
+floor 2.0 2
+floor -2.0 -2
+floor 3.0 3
+floor -3.0 -3
+floor 0.1 0
+floor -0.1 -1
+floor 0.25 0
+floor 0.75 0
+floor 1.5 1
+floor -1.5 -2
+floor 2.5 2
+floor -2.5 -3
+floor 3.5 3
+floor -3.5 -4
+floor 5e-324 0
+floor -5e-324 -1
+floor 1e-323 0
+floor 2.2250738585072014e-308 0
+floor 2.225073858507201e-308 0
+floor -2.2250738585072014e-308 -1
+floor 1e-300 0
+floor -1e-300 -1
+floor 1e-20 0
+floor 9.9e-21 0
+floor -1e-20 -1
+floor 1e-16 0
+floor 1e-08 0
+floor 1e-05 0
+floor 0.9999999999999999 0
+floor 1.0000000000000002 1
+floor -0.9999999999999999 -1
+floor -1.0000000000000002 -2
+floor 3.141592653589793 3
+floor -3.141592653589793 -4
+floor 1.5707963267948966 1
+floor 0.7853981633974483 0
+floor 2.718281828459045 2
+floor 6.283185307179586 6
+floor 10.0 10
+floor 100.0 100
+floor 1000.0 1000
+floor 100000.0 100000
+floor 10000000000.0 10000000000
+floor 1000000000000000.0 1000000000000000
+floor 1e+16 10000000000000000
+floor 1e+17 100000000000000000
+floor 1e+22 10000000000000000000000
+floor 1e+100 10000000000000000159028911097599180468360808563945281389781327557747838772170381060813469985856815104
+floor 1e+300 1000000000000000052504760255204420248704468581108159154915854115511802457988908195786371375080447864043704443832883878176942523235360430575644792184786706982848387200926575803737830233794788090059368953234970799945081119038967640880074652742780142494579258788820056842838115669472196386865459400540160
+floor -1e+300 -1000000000000000052504760255204420248704468581108159154915854115511802457988908195786371375080447864043704443832883878176942523235360430575644792184786706982848387200926575803737830233794788090059368953234970799945081119038967640880074652742780142494579258788820056842838115669472196386865459400540160
+floor 1.7976931348623157e+308 179769313486231570814527423731704356798070567525844996598917476803157260780028538760589558632766878171540458953514382464234321326889464182768467546703537516986049910576551282076245490090389328944075868508455133942304583236903222948165808559332123348274797826204144723168738177180919299881250404026184124858368
+floor -1.7976931348623157e+308 -179769313486231570814527423731704356798070567525844996598917476803157260780028538760589558632766878171540458953514382464234321326889464182768467546703537516986049910576551282076245490090389328944075868508455133942304583236903222948165808559332123348274797826204144723168738177180919299881250404026184124858368
+floor inf OverflowError: cannot convert float infinity to integer
+floor -inf OverflowError: cannot convert float infinity to integer
+floor nan ValueError: cannot convert float NaN to integer
+floor 709.0 709
+floor 709.782712893384 709
+floor 709.7827128933841 709
+floor 710.0 710
+floor -708.0 -708
+floor -745.0 -745
+floor -745.1332191019411 -746
+floor -745.1332191019412 -746
+floor -746.0 -746
+floor 1023.0 1023
+floor 1024.0 1024
+floor 1023.9999999999999 1023
+floor -1074.0 -1074
+floor -1075.0 -1075
+floor -1076.0 -1076
+floor 88.0 88
+floor 36.0 36
+floor 37.0 37
+floor 19.0 19
+floor 22.0 22
+floor 26.0 26
+floor 27.0 27
+floor 6.0 6
+floor -6.0 -6
+floor 4503599627370496.0 4503599627370496
+floor 4503599627370497.0 4503599627370497
+floor 9007199254740992.0 9007199254740992
+floor 9007199254740992.0 9007199254740992
+floor -9007199254740992.0 -9007199254740992
+floor 4503599627370495.5 4503599627370495
+floor 170.0 170
+floor 171.0 171
+floor 171.6 171
+floor 171.7 171
+floor 172.0 172
+floor 23.0 23
+floor 24.0 24
+floor 143.0 143
+floor 140.0 140
+floor 139.5 139
+floor 140.5 140
+floor 199.5 199
+floor 200.5 200
+floor -170.5 -171
+floor -171.5 -172
+floor -180.5 -181
+floor -199.5 -200
+floor -200.5 -201
+floor -1000.5 -1001
+floor 8.0 8
+floor 27.0 27
+floor -27.0 -27
+floor 64.0 64
+floor 1e-09 0
+floor 123456789.0 123456789
+floor 0.3 0
+floor 0.7 0
+floor 4.0 4
+floor 16.0 16
+floor 1e-154 0
+floor 1e+154 10000000000000000369475456880582265409809179829842688451922778552150543659347219597216513109705408327446511753687232667314337003349573404171046192448274432
+floor 1.3407807929942596e+154 13407807929942595611008317640802934282464207265959107021466054756094376573581619054852612241927956455650759996398703782412109633178814162067569513603268608
+frexp 0.0 (0.0, 0)
+frexp -0.0 (-0.0, 0)
+frexp 1.0 (0.5, 1)
+frexp -1.0 (-0.5, 1)
+frexp 0.5 (0.5, 0)
+frexp -0.5 (-0.5, 0)
+frexp 2.0 (0.5, 2)
+frexp -2.0 (-0.5, 2)
+frexp 3.0 (0.75, 2)
+frexp -3.0 (-0.75, 2)
+frexp 0.1 (0.8, -3)
+frexp -0.1 (-0.8, -3)
+frexp 0.25 (0.5, -1)
+frexp 0.75 (0.75, 0)
+frexp 1.5 (0.75, 1)
+frexp -1.5 (-0.75, 1)
+frexp 2.5 (0.625, 2)
+frexp -2.5 (-0.625, 2)
+frexp 3.5 (0.875, 2)
+frexp -3.5 (-0.875, 2)
+frexp 5e-324 (0.5, -1073)
+frexp -5e-324 (-0.5, -1073)
+frexp 1e-323 (0.5, -1072)
+frexp 2.2250738585072014e-308 (0.5, -1021)
+frexp 2.225073858507201e-308 (0.9999999999999998, -1022)
+frexp -2.2250738585072014e-308 (-0.5, -1021)
+frexp 1e-300 (0.6696928794914171, -996)
+frexp -1e-300 (-0.6696928794914171, -996)
+frexp 1e-20 (0.737869762948382, -66)
+frexp 9.9e-21 (0.7304910653188983, -66)
+frexp -1e-20 (-0.737869762948382, -66)
+frexp 1e-16 (0.9007199254740992, -53)
+frexp 1e-08 (0.67108864, -26)
+frexp 1e-05 (0.65536, -16)
+frexp 0.9999999999999999 (0.9999999999999999, 0)
+frexp 1.0000000000000002 (0.5000000000000001, 1)
+frexp -0.9999999999999999 (-0.9999999999999999, 0)
+frexp -1.0000000000000002 (-0.5000000000000001, 1)
+frexp 3.141592653589793 (0.7853981633974483, 2)
+frexp -3.141592653589793 (-0.7853981633974483, 2)
+frexp 1.5707963267948966 (0.7853981633974483, 1)
+frexp 0.7853981633974483 (0.7853981633974483, 0)
+frexp 2.718281828459045 (0.6795704571147613, 2)
+frexp 6.283185307179586 (0.7853981633974483, 3)
+frexp 10.0 (0.625, 4)
+frexp 100.0 (0.78125, 7)
+frexp 1000.0 (0.9765625, 10)
+frexp 100000.0 (0.762939453125, 17)
+frexp 10000000000.0 (0.5820766091346741, 34)
+frexp 1000000000000000.0 (0.8881784197001252, 50)
+frexp 1e+16 (0.5551115123125783, 54)
+frexp 1e+17 (0.6938893903907228, 57)
+frexp 1e+22 (0.5293955920339377, 74)
+frexp 1e+100 (0.5714936956411375, 333)
+frexp 1e+300 (0.7466108948025751, 997)
+frexp -1e+300 (-0.7466108948025751, 997)
+frexp 1.7976931348623157e+308 (0.9999999999999999, 1024)
+frexp -1.7976931348623157e+308 (-0.9999999999999999, 1024)
+frexp inf (inf, 0)
+frexp -inf (-inf, 0)
+frexp nan (nan, 0)
+frexp 709.0 (0.6923828125, 10)
+frexp 709.782712893384 (0.6931471805599453, 10)
+frexp 709.7827128933841 (0.6931471805599454, 10)
+frexp 710.0 (0.693359375, 10)
+frexp -708.0 (-0.69140625, 10)
+frexp -745.0 (-0.7275390625, 10)
+frexp -745.1332191019411 (-0.7276691592792394, 10)
+frexp -745.1332191019412 (-0.7276691592792395, 10)
+frexp -746.0 (-0.728515625, 10)
+frexp 1023.0 (0.9990234375, 10)
+frexp 1024.0 (0.5, 11)
+frexp 1023.9999999999999 (0.9999999999999999, 10)
+frexp -1074.0 (-0.5244140625, 11)
+frexp -1075.0 (-0.52490234375, 11)
+frexp -1076.0 (-0.525390625, 11)
+frexp 88.0 (0.6875, 7)
+frexp 36.0 (0.5625, 6)
+frexp 37.0 (0.578125, 6)
+frexp 19.0 (0.59375, 5)
+frexp 22.0 (0.6875, 5)
+frexp 26.0 (0.8125, 5)
+frexp 27.0 (0.84375, 5)
+frexp 6.0 (0.75, 3)
+frexp -6.0 (-0.75, 3)
+frexp 4503599627370496.0 (0.5, 53)
+frexp 4503599627370497.0 (0.5000000000000001, 53)
+frexp 9007199254740992.0 (0.5, 54)
+frexp 9007199254740992.0 (0.5, 54)
+frexp -9007199254740992.0 (-0.5, 54)
+frexp 4503599627370495.5 (0.9999999999999999, 52)
+frexp 170.0 (0.6640625, 8)
+frexp 171.0 (0.66796875, 8)
+frexp 171.6 (0.6703125, 8)
+frexp 171.7 (0.670703125, 8)
+frexp 172.0 (0.671875, 8)
+frexp 23.0 (0.71875, 5)
+frexp 24.0 (0.75, 5)
+frexp 143.0 (0.55859375, 8)
+frexp 140.0 (0.546875, 8)
+frexp 139.5 (0.544921875, 8)
+frexp 140.5 (0.548828125, 8)
+frexp 199.5 (0.779296875, 8)
+frexp 200.5 (0.783203125, 8)
+frexp -170.5 (-0.666015625, 8)
+frexp -171.5 (-0.669921875, 8)
+frexp -180.5 (-0.705078125, 8)
+frexp -199.5 (-0.779296875, 8)
+frexp -200.5 (-0.783203125, 8)
+frexp -1000.5 (-0.97705078125, 10)
+frexp 8.0 (0.5, 4)
+frexp 27.0 (0.84375, 5)
+frexp -27.0 (-0.84375, 5)
+frexp 64.0 (0.5, 7)
+frexp 1e-09 (0.536870912, -29)
+frexp 123456789.0 (0.9198247566819191, 27)
+frexp 0.3 (0.6, -1)
+frexp 0.7 (0.7, 0)
+frexp 4.0 (0.5, 3)
+frexp 16.0 (0.5, 5)
+frexp 1e-154 (0.6703903964971298, -511)
+frexp 1e+154 (0.7458340731200207, 512)
+frexp 1.3407807929942596e+154 (0.9999999999999999, 512)
+gamma 0.0 ValueError: expected a noninteger or positive integer, got 0.0
+gamma -0.0 ValueError: expected a noninteger or positive integer, got -0.0
+gamma 1.0 1.0
+gamma -1.0 ValueError: expected a noninteger or positive integer, got -1.0
+gamma 0.5 1.7724538509055159
+gamma -0.5 -3.544907701811032
+gamma 2.0 1.0
+gamma -2.0 ValueError: expected a noninteger or positive integer, got -2.0
+gamma 3.0 2.0
+gamma -3.0 ValueError: expected a noninteger or positive integer, got -3.0
+gamma 0.1 9.513507698668732
+gamma -0.1 -10.686287021193193
+gamma 0.25 3.6256099082219087
+gamma 0.75 1.2254167024651779
+gamma 1.5 0.886226925452758
+gamma -1.5 2.3632718012073544
+gamma 2.5 1.3293403881791372
+gamma -2.5 -0.9453087204829417
+gamma 3.5 3.323350970447842
+gamma -3.5 0.27008820585226917
+gamma 5e-324 OverflowError: math range error
+gamma -5e-324 OverflowError: math range error
+gamma 1e-323 OverflowError: math range error
+gamma 2.2250738585072014e-308 4.49423283715579e+307
+gamma 2.225073858507201e-308 4.494232837155791e+307
+gamma -2.2250738585072014e-308 -4.49423283715579e+307
+gamma 1e-300 9.999999999999999e+299
+gamma -1e-300 -9.999999999999999e+299
+gamma 1e-20 1.0000000000000002e+20
+gamma 9.9e-21 1.0101010101010101e+20
+gamma -1e-20 -1e+20
+gamma 1e-16 9999999999999998.0
+gamma 1e-08 99999999.42278434
+gamma 1e-05 99999.42279422554
+gamma 0.9999999999999999 1.0
+gamma 1.0000000000000002 1.0
+gamma -0.9999999999999999 -9007199254740992.0
+gamma -1.0000000000000002 4503599627370495.0
+gamma 3.141592653589793 2.288037795340032
+gamma -3.141592653589793 1.0156971444602194
+gamma 1.5707963267948966 0.8905608903815393
+gamma 0.7853981633974483 1.181043114925474
+gamma 2.718281828459045 1.5674682557740531
+gamma 6.283185307179586 195.93611572444254
+gamma 10.0 362880.0
+gamma 100.0 9.332621544394415e+155
+gamma 1000.0 OverflowError: math range error
+gamma 100000.0 OverflowError: math range error
+gamma 10000000000.0 OverflowError: math range error
+gamma 1000000000000000.0 OverflowError: math range error
+gamma 1e+16 OverflowError: math range error
+gamma 1e+17 OverflowError: math range error
+gamma 1e+22 OverflowError: math range error
+gamma 1e+100 OverflowError: math range error
+gamma 1e+300 OverflowError: math range error
+gamma -1e+300 ValueError: expected a noninteger or positive integer, got -1e+300
+gamma 1.7976931348623157e+308 OverflowError: math range error
+gamma -1.7976931348623157e+308 ValueError: expected a noninteger or positive integer, got -1.7976931348623157e+308
+gamma inf inf
+gamma -inf ValueError: expected a noninteger or positive integer, got -inf
+gamma nan nan
+gamma 709.0 OverflowError: math range error
+gamma 709.782712893384 OverflowError: math range error
+gamma 709.7827128933841 OverflowError: math range error
+gamma 710.0 OverflowError: math range error
+gamma -708.0 ValueError: expected a noninteger or positive integer, got -708.0
+gamma -745.0 ValueError: expected a noninteger or positive integer, got -745.0
+gamma -745.1332191019411 0.0
+gamma -745.1332191019412 0.0
+gamma -746.0 ValueError: expected a noninteger or positive integer, got -746.0
+gamma 1023.0 OverflowError: math range error
+gamma 1024.0 OverflowError: math range error
+gamma 1023.9999999999999 OverflowError: math range error
+gamma -1074.0 ValueError: expected a noninteger or positive integer, got -1074.0
+gamma -1075.0 ValueError: expected a noninteger or positive integer, got -1075.0
+gamma -1076.0 ValueError: expected a noninteger or positive integer, got -1076.0
+gamma 88.0 2.1077572983795275e+132
+gamma 36.0 1.0333147966386145e+40
+gamma 37.0 3.7199332678990125e+41
+gamma 19.0 6402373705728000.0
+gamma 22.0 5.109094217170944e+19
+gamma 26.0 1.551121004333098e+25
+gamma 27.0 4.032914611266056e+26
+gamma 6.0 120.0
+gamma -6.0 ValueError: expected a noninteger or positive integer, got -6.0
+gamma 4503599627370496.0 OverflowError: math range error
+gamma 4503599627370497.0 OverflowError: math range error
+gamma 9007199254740992.0 OverflowError: math range error
+gamma 9007199254740992.0 OverflowError: math range error
+gamma -9007199254740992.0 ValueError: expected a noninteger or positive integer, got -9007199254740992.0
+gamma 4503599627370495.5 OverflowError: math range error
+gamma 170.0 4.269068009004705e+304
+gamma 171.0 7.257415615307998e+306
+gamma 171.6 1.5858969096672563e+308
+gamma 171.7 OverflowError: math range error
+gamma 172.0 OverflowError: math range error
+gamma 23.0 1.1240007277776077e+21
+gamma 24.0 2.585201673888497e+22
+gamma 143.0 2.6953641378881624e+245
+gamma 140.0 9.61572319694109e+238
+gamma 139.5 8.14861879182775e+237
+gamma 140.5 1.1367323214599712e+240
+gamma 199.5 OverflowError: math range error
+gamma 200.5 OverflowError: math range error
+gamma -170.5 -3.312739521538607e-308
+gamma -171.5 1.9316265431712e-310
+gamma -180.5 -0.0
+gamma -199.5 0.0
+gamma -200.5 -0.0
+gamma -1000.5 -0.0
+gamma 8.0 5040.0
+gamma 27.0 4.032914611266056e+26
+gamma -27.0 ValueError: expected a noninteger or positive integer, got -27.0
+gamma 64.0 1.9826083154044403e+87
+gamma 1e-09 999999999.4227841
+gamma 123456789.0 OverflowError: math range error
+gamma 0.3 2.991568987687591
+gamma 0.7 1.298055332647558
+gamma 4.0 6.0
+gamma 16.0 1307674368000.0
+gamma 1e-154 1e+154
+gamma 1e+154 OverflowError: math range error
+gamma 1.3407807929942596e+154 OverflowError: math range error
+isfinite 0.0 True
+isfinite -0.0 True
+isfinite 1.0 True
+isfinite -1.0 True
+isfinite 0.5 True
+isfinite -0.5 True
+isfinite 2.0 True
+isfinite -2.0 True
+isfinite 3.0 True
+isfinite -3.0 True
+isfinite 0.1 True
+isfinite -0.1 True
+isfinite 0.25 True
+isfinite 0.75 True
+isfinite 1.5 True
+isfinite -1.5 True
+isfinite 2.5 True
+isfinite -2.5 True
+isfinite 3.5 True
+isfinite -3.5 True
+isfinite 5e-324 True
+isfinite -5e-324 True
+isfinite 1e-323 True
+isfinite 2.2250738585072014e-308 True
+isfinite 2.225073858507201e-308 True
+isfinite -2.2250738585072014e-308 True
+isfinite 1e-300 True
+isfinite -1e-300 True
+isfinite 1e-20 True
+isfinite 9.9e-21 True
+isfinite -1e-20 True
+isfinite 1e-16 True
+isfinite 1e-08 True
+isfinite 1e-05 True
+isfinite 0.9999999999999999 True
+isfinite 1.0000000000000002 True
+isfinite -0.9999999999999999 True
+isfinite -1.0000000000000002 True
+isfinite 3.141592653589793 True
+isfinite -3.141592653589793 True
+isfinite 1.5707963267948966 True
+isfinite 0.7853981633974483 True
+isfinite 2.718281828459045 True
+isfinite 6.283185307179586 True
+isfinite 10.0 True
+isfinite 100.0 True
+isfinite 1000.0 True
+isfinite 100000.0 True
+isfinite 10000000000.0 True
+isfinite 1000000000000000.0 True
+isfinite 1e+16 True
+isfinite 1e+17 True
+isfinite 1e+22 True
+isfinite 1e+100 True
+isfinite 1e+300 True
+isfinite -1e+300 True
+isfinite 1.7976931348623157e+308 True
+isfinite -1.7976931348623157e+308 True
+isfinite inf False
+isfinite -inf False
+isfinite nan False
+isfinite 709.0 True
+isfinite 709.782712893384 True
+isfinite 709.7827128933841 True
+isfinite 710.0 True
+isfinite -708.0 True
+isfinite -745.0 True
+isfinite -745.1332191019411 True
+isfinite -745.1332191019412 True
+isfinite -746.0 True
+isfinite 1023.0 True
+isfinite 1024.0 True
+isfinite 1023.9999999999999 True
+isfinite -1074.0 True
+isfinite -1075.0 True
+isfinite -1076.0 True
+isfinite 88.0 True
+isfinite 36.0 True
+isfinite 37.0 True
+isfinite 19.0 True
+isfinite 22.0 True
+isfinite 26.0 True
+isfinite 27.0 True
+isfinite 6.0 True
+isfinite -6.0 True
+isfinite 4503599627370496.0 True
+isfinite 4503599627370497.0 True
+isfinite 9007199254740992.0 True
+isfinite 9007199254740992.0 True
+isfinite -9007199254740992.0 True
+isfinite 4503599627370495.5 True
+isfinite 170.0 True
+isfinite 171.0 True
+isfinite 171.6 True
+isfinite 171.7 True
+isfinite 172.0 True
+isfinite 23.0 True
+isfinite 24.0 True
+isfinite 143.0 True
+isfinite 140.0 True
+isfinite 139.5 True
+isfinite 140.5 True
+isfinite 199.5 True
+isfinite 200.5 True
+isfinite -170.5 True
+isfinite -171.5 True
+isfinite -180.5 True
+isfinite -199.5 True
+isfinite -200.5 True
+isfinite -1000.5 True
+isfinite 8.0 True
+isfinite 27.0 True
+isfinite -27.0 True
+isfinite 64.0 True
+isfinite 1e-09 True
+isfinite 123456789.0 True
+isfinite 0.3 True
+isfinite 0.7 True
+isfinite 4.0 True
+isfinite 16.0 True
+isfinite 1e-154 True
+isfinite 1e+154 True
+isfinite 1.3407807929942596e+154 True
+isinf 0.0 False
+isinf -0.0 False
+isinf 1.0 False
+isinf -1.0 False
+isinf 0.5 False
+isinf -0.5 False
+isinf 2.0 False
+isinf -2.0 False
+isinf 3.0 False
+isinf -3.0 False
+isinf 0.1 False
+isinf -0.1 False
+isinf 0.25 False
+isinf 0.75 False
+isinf 1.5 False
+isinf -1.5 False
+isinf 2.5 False
+isinf -2.5 False
+isinf 3.5 False
+isinf -3.5 False
+isinf 5e-324 False
+isinf -5e-324 False
+isinf 1e-323 False
+isinf 2.2250738585072014e-308 False
+isinf 2.225073858507201e-308 False
+isinf -2.2250738585072014e-308 False
+isinf 1e-300 False
+isinf -1e-300 False
+isinf 1e-20 False
+isinf 9.9e-21 False
+isinf -1e-20 False
+isinf 1e-16 False
+isinf 1e-08 False
+isinf 1e-05 False
+isinf 0.9999999999999999 False
+isinf 1.0000000000000002 False
+isinf -0.9999999999999999 False
+isinf -1.0000000000000002 False
+isinf 3.141592653589793 False
+isinf -3.141592653589793 False
+isinf 1.5707963267948966 False
+isinf 0.7853981633974483 False
+isinf 2.718281828459045 False
+isinf 6.283185307179586 False
+isinf 10.0 False
+isinf 100.0 False
+isinf 1000.0 False
+isinf 100000.0 False
+isinf 10000000000.0 False
+isinf 1000000000000000.0 False
+isinf 1e+16 False
+isinf 1e+17 False
+isinf 1e+22 False
+isinf 1e+100 False
+isinf 1e+300 False
+isinf -1e+300 False
+isinf 1.7976931348623157e+308 False
+isinf -1.7976931348623157e+308 False
+isinf inf True
+isinf -inf True
+isinf nan False
+isinf 709.0 False
+isinf 709.782712893384 False
+isinf 709.7827128933841 False
+isinf 710.0 False
+isinf -708.0 False
+isinf -745.0 False
+isinf -745.1332191019411 False
+isinf -745.1332191019412 False
+isinf -746.0 False
+isinf 1023.0 False
+isinf 1024.0 False
+isinf 1023.9999999999999 False
+isinf -1074.0 False
+isinf -1075.0 False
+isinf -1076.0 False
+isinf 88.0 False
+isinf 36.0 False
+isinf 37.0 False
+isinf 19.0 False
+isinf 22.0 False
+isinf 26.0 False
+isinf 27.0 False
+isinf 6.0 False
+isinf -6.0 False
+isinf 4503599627370496.0 False
+isinf 4503599627370497.0 False
+isinf 9007199254740992.0 False
+isinf 9007199254740992.0 False
+isinf -9007199254740992.0 False
+isinf 4503599627370495.5 False
+isinf 170.0 False
+isinf 171.0 False
+isinf 171.6 False
+isinf 171.7 False
+isinf 172.0 False
+isinf 23.0 False
+isinf 24.0 False
+isinf 143.0 False
+isinf 140.0 False
+isinf 139.5 False
+isinf 140.5 False
+isinf 199.5 False
+isinf 200.5 False
+isinf -170.5 False
+isinf -171.5 False
+isinf -180.5 False
+isinf -199.5 False
+isinf -200.5 False
+isinf -1000.5 False
+isinf 8.0 False
+isinf 27.0 False
+isinf -27.0 False
+isinf 64.0 False
+isinf 1e-09 False
+isinf 123456789.0 False
+isinf 0.3 False
+isinf 0.7 False
+isinf 4.0 False
+isinf 16.0 False
+isinf 1e-154 False
+isinf 1e+154 False
+isinf 1.3407807929942596e+154 False
+isnan 0.0 False
+isnan -0.0 False
+isnan 1.0 False
+isnan -1.0 False
+isnan 0.5 False
+isnan -0.5 False
+isnan 2.0 False
+isnan -2.0 False
+isnan 3.0 False
+isnan -3.0 False
+isnan 0.1 False
+isnan -0.1 False
+isnan 0.25 False
+isnan 0.75 False
+isnan 1.5 False
+isnan -1.5 False
+isnan 2.5 False
+isnan -2.5 False
+isnan 3.5 False
+isnan -3.5 False
+isnan 5e-324 False
+isnan -5e-324 False
+isnan 1e-323 False
+isnan 2.2250738585072014e-308 False
+isnan 2.225073858507201e-308 False
+isnan -2.2250738585072014e-308 False
+isnan 1e-300 False
+isnan -1e-300 False
+isnan 1e-20 False
+isnan 9.9e-21 False
+isnan -1e-20 False
+isnan 1e-16 False
+isnan 1e-08 False
+isnan 1e-05 False
+isnan 0.9999999999999999 False
+isnan 1.0000000000000002 False
+isnan -0.9999999999999999 False
+isnan -1.0000000000000002 False
+isnan 3.141592653589793 False
+isnan -3.141592653589793 False
+isnan 1.5707963267948966 False
+isnan 0.7853981633974483 False
+isnan 2.718281828459045 False
+isnan 6.283185307179586 False
+isnan 10.0 False
+isnan 100.0 False
+isnan 1000.0 False
+isnan 100000.0 False
+isnan 10000000000.0 False
+isnan 1000000000000000.0 False
+isnan 1e+16 False
+isnan 1e+17 False
+isnan 1e+22 False
+isnan 1e+100 False
+isnan 1e+300 False
+isnan -1e+300 False
+isnan 1.7976931348623157e+308 False
+isnan -1.7976931348623157e+308 False
+isnan inf False
+isnan -inf False
+isnan nan True
+isnan 709.0 False
+isnan 709.782712893384 False
+isnan 709.7827128933841 False
+isnan 710.0 False
+isnan -708.0 False
+isnan -745.0 False
+isnan -745.1332191019411 False
+isnan -745.1332191019412 False
+isnan -746.0 False
+isnan 1023.0 False
+isnan 1024.0 False
+isnan 1023.9999999999999 False
+isnan -1074.0 False
+isnan -1075.0 False
+isnan -1076.0 False
+isnan 88.0 False
+isnan 36.0 False
+isnan 37.0 False
+isnan 19.0 False
+isnan 22.0 False
+isnan 26.0 False
+isnan 27.0 False
+isnan 6.0 False
+isnan -6.0 False
+isnan 4503599627370496.0 False
+isnan 4503599627370497.0 False
+isnan 9007199254740992.0 False
+isnan 9007199254740992.0 False
+isnan -9007199254740992.0 False
+isnan 4503599627370495.5 False
+isnan 170.0 False
+isnan 171.0 False
+isnan 171.6 False
+isnan 171.7 False
+isnan 172.0 False
+isnan 23.0 False
+isnan 24.0 False
+isnan 143.0 False
+isnan 140.0 False
+isnan 139.5 False
+isnan 140.5 False
+isnan 199.5 False
+isnan 200.5 False
+isnan -170.5 False
+isnan -171.5 False
+isnan -180.5 False
+isnan -199.5 False
+isnan -200.5 False
+isnan -1000.5 False
+isnan 8.0 False
+isnan 27.0 False
+isnan -27.0 False
+isnan 64.0 False
+isnan 1e-09 False
+isnan 123456789.0 False
+isnan 0.3 False
+isnan 0.7 False
+isnan 4.0 False
+isnan 16.0 False
+isnan 1e-154 False
+isnan 1e+154 False
+isnan 1.3407807929942596e+154 False
+isnormal 0.0 False
+isnormal -0.0 False
+isnormal 1.0 True
+isnormal -1.0 True
+isnormal 0.5 True
+isnormal -0.5 True
+isnormal 2.0 True
+isnormal -2.0 True
+isnormal 3.0 True
+isnormal -3.0 True
+isnormal 0.1 True
+isnormal -0.1 True
+isnormal 0.25 True
+isnormal 0.75 True
+isnormal 1.5 True
+isnormal -1.5 True
+isnormal 2.5 True
+isnormal -2.5 True
+isnormal 3.5 True
+isnormal -3.5 True
+isnormal 5e-324 False
+isnormal -5e-324 False
+isnormal 1e-323 False
+isnormal 2.2250738585072014e-308 True
+isnormal 2.225073858507201e-308 False
+isnormal -2.2250738585072014e-308 True
+isnormal 1e-300 True
+isnormal -1e-300 True
+isnormal 1e-20 True
+isnormal 9.9e-21 True
+isnormal -1e-20 True
+isnormal 1e-16 True
+isnormal 1e-08 True
+isnormal 1e-05 True
+isnormal 0.9999999999999999 True
+isnormal 1.0000000000000002 True
+isnormal -0.9999999999999999 True
+isnormal -1.0000000000000002 True
+isnormal 3.141592653589793 True
+isnormal -3.141592653589793 True
+isnormal 1.5707963267948966 True
+isnormal 0.7853981633974483 True
+isnormal 2.718281828459045 True
+isnormal 6.283185307179586 True
+isnormal 10.0 True
+isnormal 100.0 True
+isnormal 1000.0 True
+isnormal 100000.0 True
+isnormal 10000000000.0 True
+isnormal 1000000000000000.0 True
+isnormal 1e+16 True
+isnormal 1e+17 True
+isnormal 1e+22 True
+isnormal 1e+100 True
+isnormal 1e+300 True
+isnormal -1e+300 True
+isnormal 1.7976931348623157e+308 True
+isnormal -1.7976931348623157e+308 True
+isnormal inf False
+isnormal -inf False
+isnormal nan False
+isnormal 709.0 True
+isnormal 709.782712893384 True
+isnormal 709.7827128933841 True
+isnormal 710.0 True
+isnormal -708.0 True
+isnormal -745.0 True
+isnormal -745.1332191019411 True
+isnormal -745.1332191019412 True
+isnormal -746.0 True
+isnormal 1023.0 True
+isnormal 1024.0 True
+isnormal 1023.9999999999999 True
+isnormal -1074.0 True
+isnormal -1075.0 True
+isnormal -1076.0 True
+isnormal 88.0 True
+isnormal 36.0 True
+isnormal 37.0 True
+isnormal 19.0 True
+isnormal 22.0 True
+isnormal 26.0 True
+isnormal 27.0 True
+isnormal 6.0 True
+isnormal -6.0 True
+isnormal 4503599627370496.0 True
+isnormal 4503599627370497.0 True
+isnormal 9007199254740992.0 True
+isnormal 9007199254740992.0 True
+isnormal -9007199254740992.0 True
+isnormal 4503599627370495.5 True
+isnormal 170.0 True
+isnormal 171.0 True
+isnormal 171.6 True
+isnormal 171.7 True
+isnormal 172.0 True
+isnormal 23.0 True
+isnormal 24.0 True
+isnormal 143.0 True
+isnormal 140.0 True
+isnormal 139.5 True
+isnormal 140.5 True
+isnormal 199.5 True
+isnormal 200.5 True
+isnormal -170.5 True
+isnormal -171.5 True
+isnormal -180.5 True
+isnormal -199.5 True
+isnormal -200.5 True
+isnormal -1000.5 True
+isnormal 8.0 True
+isnormal 27.0 True
+isnormal -27.0 True
+isnormal 64.0 True
+isnormal 1e-09 True
+isnormal 123456789.0 True
+isnormal 0.3 True
+isnormal 0.7 True
+isnormal 4.0 True
+isnormal 16.0 True
+isnormal 1e-154 True
+isnormal 1e+154 True
+isnormal 1.3407807929942596e+154 True
+issubnormal 0.0 False
+issubnormal -0.0 False
+issubnormal 1.0 False
+issubnormal -1.0 False
+issubnormal 0.5 False
+issubnormal -0.5 False
+issubnormal 2.0 False
+issubnormal -2.0 False
+issubnormal 3.0 False
+issubnormal -3.0 False
+issubnormal 0.1 False
+issubnormal -0.1 False
+issubnormal 0.25 False
+issubnormal 0.75 False
+issubnormal 1.5 False
+issubnormal -1.5 False
+issubnormal 2.5 False
+issubnormal -2.5 False
+issubnormal 3.5 False
+issubnormal -3.5 False
+issubnormal 5e-324 True
+issubnormal -5e-324 True
+issubnormal 1e-323 True
+issubnormal 2.2250738585072014e-308 False
+issubnormal 2.225073858507201e-308 True
+issubnormal -2.2250738585072014e-308 False
+issubnormal 1e-300 False
+issubnormal -1e-300 False
+issubnormal 1e-20 False
+issubnormal 9.9e-21 False
+issubnormal -1e-20 False
+issubnormal 1e-16 False
+issubnormal 1e-08 False
+issubnormal 1e-05 False
+issubnormal 0.9999999999999999 False
+issubnormal 1.0000000000000002 False
+issubnormal -0.9999999999999999 False
+issubnormal -1.0000000000000002 False
+issubnormal 3.141592653589793 False
+issubnormal -3.141592653589793 False
+issubnormal 1.5707963267948966 False
+issubnormal 0.7853981633974483 False
+issubnormal 2.718281828459045 False
+issubnormal 6.283185307179586 False
+issubnormal 10.0 False
+issubnormal 100.0 False
+issubnormal 1000.0 False
+issubnormal 100000.0 False
+issubnormal 10000000000.0 False
+issubnormal 1000000000000000.0 False
+issubnormal 1e+16 False
+issubnormal 1e+17 False
+issubnormal 1e+22 False
+issubnormal 1e+100 False
+issubnormal 1e+300 False
+issubnormal -1e+300 False
+issubnormal 1.7976931348623157e+308 False
+issubnormal -1.7976931348623157e+308 False
+issubnormal inf False
+issubnormal -inf False
+issubnormal nan False
+issubnormal 709.0 False
+issubnormal 709.782712893384 False
+issubnormal 709.7827128933841 False
+issubnormal 710.0 False
+issubnormal -708.0 False
+issubnormal -745.0 False
+issubnormal -745.1332191019411 False
+issubnormal -745.1332191019412 False
+issubnormal -746.0 False
+issubnormal 1023.0 False
+issubnormal 1024.0 False
+issubnormal 1023.9999999999999 False
+issubnormal -1074.0 False
+issubnormal -1075.0 False
+issubnormal -1076.0 False
+issubnormal 88.0 False
+issubnormal 36.0 False
+issubnormal 37.0 False
+issubnormal 19.0 False
+issubnormal 22.0 False
+issubnormal 26.0 False
+issubnormal 27.0 False
+issubnormal 6.0 False
+issubnormal -6.0 False
+issubnormal 4503599627370496.0 False
+issubnormal 4503599627370497.0 False
+issubnormal 9007199254740992.0 False
+issubnormal 9007199254740992.0 False
+issubnormal -9007199254740992.0 False
+issubnormal 4503599627370495.5 False
+issubnormal 170.0 False
+issubnormal 171.0 False
+issubnormal 171.6 False
+issubnormal 171.7 False
+issubnormal 172.0 False
+issubnormal 23.0 False
+issubnormal 24.0 False
+issubnormal 143.0 False
+issubnormal 140.0 False
+issubnormal 139.5 False
+issubnormal 140.5 False
+issubnormal 199.5 False
+issubnormal 200.5 False
+issubnormal -170.5 False
+issubnormal -171.5 False
+issubnormal -180.5 False
+issubnormal -199.5 False
+issubnormal -200.5 False
+issubnormal -1000.5 False
+issubnormal 8.0 False
+issubnormal 27.0 False
+issubnormal -27.0 False
+issubnormal 64.0 False
+issubnormal 1e-09 False
+issubnormal 123456789.0 False
+issubnormal 0.3 False
+issubnormal 0.7 False
+issubnormal 4.0 False
+issubnormal 16.0 False
+issubnormal 1e-154 False
+issubnormal 1e+154 False
+issubnormal 1.3407807929942596e+154 False
+lgamma 0.0 ValueError: expected a noninteger or positive integer, got 0.0
+lgamma -0.0 ValueError: expected a noninteger or positive integer, got -0.0
+lgamma 1.0 0.0
+lgamma -1.0 ValueError: expected a noninteger or positive integer, got -1.0
+lgamma 0.5 0.5723649429247004
+lgamma -0.5 1.265512123484645
+lgamma 2.0 0.0
+lgamma -2.0 ValueError: expected a noninteger or positive integer, got -2.0
+lgamma 3.0 0.693147180559945
+lgamma -3.0 ValueError: expected a noninteger or positive integer, got -3.0
+lgamma 0.1 2.2527126517342055
+lgamma -0.1 2.3689613327287886
+lgamma 0.25 1.2880225246980772
+lgamma 0.75 0.203280951431295
+lgamma 1.5 -0.12078223763524543
+lgamma -1.5 0.8600470153764812
+lgamma 2.5 0.2846828704729196
+lgamma -2.5 -0.05624371649767457
+lgamma 3.5 1.2009736023470738
+lgamma -3.5 -1.3090066849930417
+lgamma 5e-324 744.4400719213812
+lgamma -5e-324 744.4400719213812
+lgamma 1e-323 743.7469247408213
+lgamma 2.2250738585072014e-308 708.3964185322641
+lgamma 2.225073858507201e-308 708.3964185322641
+lgamma -2.2250738585072014e-308 708.3964185322641
+lgamma 1e-300 690.7755278982137
+lgamma -1e-300 690.7755278982137
+lgamma 1e-20 46.051701859880914
+lgamma 9.9e-21 46.061752195734414
+lgamma -1e-20 46.051701859880914
+lgamma 1e-16 36.84136148790473
+lgamma 1e-08 18.42068073818021
+lgamma 1e-05 11.512919692895824
+lgamma 0.9999999999999999 2.220446049250313e-16
+lgamma 1.0000000000000002 -3.3306690738754696e-16
+lgamma -0.9999999999999999 36.7368005696771
+lgamma -1.0000000000000002 36.04365338911715
+lgamma 3.141592653589793 0.8276945923234376
+lgamma -3.141592653589793 0.015575218558577575
+lgamma 1.5707963267948966 -0.115903800845502
+lgamma 0.7853981633974483 0.16639804368304217
+lgamma 2.718281828459045 0.4494617418200675
+lgamma 6.283185307179586 5.277788665919056
+lgamma 10.0 12.801827480081467
+lgamma 100.0 359.1342053695754
+lgamma 1000.0 5905.220423209181
+lgamma 100000.0 1051287.7089736566
+lgamma 10000000000.0 220258509288.81058
+lgamma 1000000000000000.0 3.353877639491067e+16
+lgamma 1e+16 3.5841361487904736e+17
+lgamma 1e+17 3.814394658089878e+18
+lgamma 1e+22 4.9656872045869006e+23
+lgamma 1e+100 2.292585092994046e+102
+lgamma 1e+300 6.897755278982137e+302
+lgamma -1e+300 ValueError: expected a noninteger or positive integer, got -1e+300
+lgamma 1.7976931348623157e+308 OverflowError: math range error
+lgamma -1.7976931348623157e+308 ValueError: expected a noninteger or positive integer, got -1.7976931348623157e+308
+lgamma inf inf
+lgamma -inf inf
+lgamma nan nan
+lgamma 709.0 3942.4106966176455
+lgamma 709.782712893384 3947.5481910455783
+lgamma 709.7827128933841 3947.5481910455787
+lgamma 710.0 3948.9745521441773
+lgamma -708.0 ValueError: expected a noninteger or positive integer, got -708.0
+lgamma -745.0 ValueError: expected a noninteger or positive integer, got -745.0
+lgamma -745.1332191019411 -4185.032989910661
+lgamma -745.1332191019412 -4185.032989910661
+lgamma -746.0 ValueError: expected a noninteger or positive integer, got -746.0
+lgamma 1023.0 6064.349918178499
+lgamma 1024.0 6071.28041294445
+lgamma 1023.9999999999999 6071.280412944449
+lgamma -1074.0 ValueError: expected a noninteger or positive integer, got -1074.0
+lgamma -1075.0 ValueError: expected a noninteger or positive integer, got -1075.0
+lgamma -1076.0 ValueError: expected a noninteger or positive integer, got -1076.0
+lgamma 88.0 304.68685676566867
+lgamma 36.0 92.1361756036871
+lgamma 37.0 95.7196945421432
+lgamma 19.0 36.39544520803305
+lgamma 22.0 45.38013889847691
+lgamma 26.0 58.00360522298052
+lgamma 27.0 61.26170176100201
+lgamma 6.0 4.787491742782047
+lgamma -6.0 ValueError: expected a noninteger or positive integer, got -6.0
+lgamma 4503599627370496.0 1.5782258434492883e+17
+lgamma 4503599627370497.0 1.5782258434492886e+17
+lgamma 9007199254740992.0 3.2188848345802304e+17
+lgamma 9007199254740992.0 3.2188848345802304e+17
+lgamma -9007199254740992.0 ValueError: expected a noninteger or positive integer, got -9007199254740992.0
+lgamma 4503599627370495.5 1.5782258434492883e+17
+lgamma 170.0 701.437263808737
+lgamma 171.0 706.5730622457874
+lgamma 171.6 709.6573587630564
+lgamma 171.7 710.1716129403749
+lgamma 172.0 711.71472580229
+lgamma 23.0 48.47118135183522
+lgamma 24.0 51.60667556776438
+lgamma 143.0 565.1248810948744
+lgamma 140.0 550.2786517242856
+lgamma 139.5 547.810515479084
+lgamma 140.5 552.7485800803454
+lgamma 199.5 855.2863892734526
+lgamma 200.5 860.5822035097825
+lgamma -170.5 -707.9984331450788
+lgamma -171.5 -713.1430164116848
+lgamma -180.5 -759.7019411043015
+lgamma -199.5 -859.4374736239332
+lgamma -200.5 -864.7382878706798
+lgamma -1000.5 -5914.437701116853
+lgamma 8.0 8.525161361065415
+lgamma 27.0 61.26170176100201
+lgamma -27.0 ValueError: expected a noninteger or positive integer, got -27.0
+lgamma 64.0 201.00931639928152
+lgamma 1e-09 20.723265836369194
+lgamma 123456789.0 2176716239.22327
+lgamma 0.3 1.0957979948180752
+lgamma 0.7 0.2608672465316669
+lgamma 4.0 1.7917594692280554
+lgamma 16.0 27.89927138384089
+lgamma 1e-154 354.59810432108304
+lgamma 1e+154 3.5359810432108305e+156
+lgamma 1.3407807929942596e+154 4.744907335304098e+156
+log 0.0 ValueError: expected a positive input, got 0.0
+log -0.0 ValueError: expected a positive input, got -0.0
+log 1.0 0.0
+log -1.0 ValueError: expected a positive input, got -1.0
+log 0.5 -0.6931471805599453
+log -0.5 ValueError: expected a positive input, got -0.5
+log 2.0 0.6931471805599453
+log -2.0 ValueError: expected a positive input, got -2.0
+log 3.0 1.0986122886681098
+log -3.0 ValueError: expected a positive input, got -3.0
+log 0.1 -2.3025850929940455
+log -0.1 ValueError: expected a positive input, got -0.1
+log 0.25 -1.3862943611198906
+log 0.75 -0.2876820724517809
+log 1.5 0.4054651081081644
+log -1.5 ValueError: expected a positive input, got -1.5
+log 2.5 0.9162907318741551
+log -2.5 ValueError: expected a positive input, got -2.5
+log 3.5 1.252762968495368
+log -3.5 ValueError: expected a positive input, got -3.5
+log 5e-324 -744.4400719213812
+log -5e-324 ValueError: expected a positive input, got -5e-324
+log 1e-323 -743.7469247408213
+log 2.2250738585072014e-308 -708.3964185322641
+log 2.225073858507201e-308 -708.3964185322641
+log -2.2250738585072014e-308 ValueError: expected a positive input, got -2.2250738585072014e-308
+log 1e-300 -690.7755278982137
+log -1e-300 ValueError: expected a positive input, got -1e-300
+log 1e-20 -46.051701859880914
+log 9.9e-21 -46.061752195734414
+log -1e-20 ValueError: expected a positive input, got -1e-20
+log 1e-16 -36.841361487904734
+log 1e-08 -18.420680743952367
+log 1e-05 -11.512925464970229
+log 0.9999999999999999 -1.1102230246251565e-16
+log 1.0000000000000002 2.2204460492503128e-16
+log -0.9999999999999999 ValueError: expected a positive input, got -0.9999999999999999
+log -1.0000000000000002 ValueError: expected a positive input, got -1.0000000000000002
+log 3.141592653589793 1.1447298858494002
+log -3.141592653589793 ValueError: expected a positive input, got -3.141592653589793
+log 1.5707963267948966 0.4515827052894548
+log 0.7853981633974483 -0.2415644752704905
+log 2.718281828459045 1.0
+log 6.283185307179586 1.8378770664093453
+log 10.0 2.302585092994046
+log 100.0 4.605170185988092
+log 1000.0 6.907755278982137
+log 100000.0 11.512925464970229
+log 10000000000.0 23.025850929940457
+log 1000000000000000.0 34.538776394910684
+log 1e+16 36.841361487904734
+log 1e+17 39.14394658089878
+log 1e+22 50.65687204586901
+log 1e+100 230.25850929940458
+log 1e+300 690.7755278982137
+log -1e+300 ValueError: expected a positive input, got -1e+300
+log 1.7976931348623157e+308 709.782712893384
+log -1.7976931348623157e+308 ValueError: expected a positive input, got -1.7976931348623157e+308
+log inf inf
+log -inf ValueError: expected a positive input, got -inf
+log nan nan
+log 709.0 6.5638555265321274
+log 709.782712893384 6.564958885017789
+log 709.7827128933841 6.564958885017789
+log 710.0 6.565264970035361
+log -708.0 ValueError: expected a positive input, got -708.0
+log -745.0 ValueError: expected a positive input, got -745.0
+log -745.1332191019411 ValueError: expected a positive input, got -745.1332191019411
+log -745.1332191019412 ValueError: expected a positive input, got -745.1332191019412
+log -746.0 ValueError: expected a positive input, got -746.0
+log 1023.0 6.930494765951626
+log 1024.0 6.931471805599453
+log 1023.9999999999999 6.931471805599453
+log -1074.0 ValueError: expected a positive input, got -1074.0
+log -1075.0 ValueError: expected a positive input, got -1075.0
+log -1076.0 ValueError: expected a positive input, got -1076.0
+log 88.0 4.477336814478207
+log 36.0 3.58351893845611
+log 37.0 3.6109179126442243
+log 19.0 2.9444389791664403
+log 22.0 3.091042453358316
+log 26.0 3.258096538021482
+log 27.0 3.295836866004329
+log 6.0 1.791759469228055
+log -6.0 ValueError: expected a positive input, got -6.0
+log 4503599627370496.0 36.04365338911715
+log 4503599627370497.0 36.04365338911715
+log 9007199254740992.0 36.7368005696771
+log 9007199254740992.0 36.7368005696771
+log -9007199254740992.0 ValueError: expected a positive input, got -9007199254740992.0
+log 4503599627370495.5 36.04365338911715
+log 170.0 5.135798437050262
+log 171.0 5.14166355650266
+log 171.6 5.145166187053862
+log 171.7 5.14574876790343
+log 172.0 5.147494476813453
+log 23.0 3.1354942159291497
+log 24.0 3.1780538303479458
+log 143.0 4.962844630259907
+log 140.0 4.941642422609304
+log 139.5 4.93806460126142
+log 140.5 4.945207488773801
+log 199.5 5.295814236329918
+log 200.5 5.300814246746624
+log -170.5 ValueError: expected a positive input, got -170.5
+log -171.5 ValueError: expected a positive input, got -171.5
+log -180.5 ValueError: expected a positive input, got -180.5
+log -199.5 ValueError: expected a positive input, got -199.5
+log -200.5 ValueError: expected a positive input, got -200.5
+log -1000.5 ValueError: expected a positive input, got -1000.5
+log 8.0 2.0794415416798357
+log 27.0 3.295836866004329
+log -27.0 ValueError: expected a positive input, got -27.0
+log 64.0 4.1588830833596715
+log 1e-09 -20.72326583694641
+log 123456789.0 18.63140176616802
+log 0.3 -1.2039728043259361
+log 0.7 -0.35667494393873245
+log 4.0 1.3862943611198906
+log 16.0 2.772588722239781
+log 1e-154 -354.59810432108304
+log 1e+154 354.59810432108304
+log 1.3407807929942596e+154 354.891356446692
+log10 0.0 ValueError: expected a positive input, got 0.0
+log10 -0.0 ValueError: expected a positive input, got -0.0
+log10 1.0 0.0
+log10 -1.0 ValueError: expected a positive input, got -1.0
+log10 0.5 -0.3010299956639812
+log10 -0.5 ValueError: expected a positive input, got -0.5
+log10 2.0 0.3010299956639812
+log10 -2.0 ValueError: expected a positive input, got -2.0
+log10 3.0 0.47712125471966244
+log10 -3.0 ValueError: expected a positive input, got -3.0
+log10 0.1 -1.0
+log10 -0.1 ValueError: expected a positive input, got -0.1
+log10 0.25 -0.6020599913279624
+log10 0.75 -0.12493873660829993
+log10 1.5 0.17609125905568124
+log10 -1.5 ValueError: expected a positive input, got -1.5
+log10 2.5 0.3979400086720376
+log10 -2.5 ValueError: expected a positive input, got -2.5
+log10 3.5 0.5440680443502757
+log10 -3.5 ValueError: expected a positive input, got -3.5
+log10 5e-324 -323.3062153431158
+log10 -5e-324 ValueError: expected a positive input, got -5e-324
+log10 1e-323 -323.0051853474518
+log10 2.2250738585072014e-308 -307.6526555685888
+log10 2.225073858507201e-308 -307.6526555685888
+log10 -2.2250738585072014e-308 ValueError: expected a positive input, got -2.2250738585072014e-308
+log10 1e-300 -300.0
+log10 -1e-300 ValueError: expected a positive input, got -1e-300
+log10 1e-20 -20.0
+log10 9.9e-21 -20.00436480540245
+log10 -1e-20 ValueError: expected a positive input, got -1e-20
+log10 1e-16 -16.0
+log10 1e-08 -8.0
+log10 1e-05 -5.0
+log10 0.9999999999999999 -4.8216373327664354e-17
+log10 1.0000000000000002 9.64327466553287e-17
+log10 -0.9999999999999999 ValueError: expected a positive input, got -0.9999999999999999
+log10 -1.0000000000000002 ValueError: expected a positive input, got -1.0000000000000002
+log10 3.141592653589793 0.4971498726941338
+log10 -3.141592653589793 ValueError: expected a positive input, got -3.141592653589793
+log10 1.5707963267948966 0.19611987703015263
+log10 0.7853981633974483 -0.10491011863382856
+log10 2.718281828459045 0.4342944819032518
+log10 6.283185307179586 0.798179868358115
+log10 10.0 1.0
+log10 100.0 2.0
+log10 1000.0 3.0
+log10 100000.0 5.0
+log10 10000000000.0 10.0
+log10 1000000000000000.0 15.0
+log10 1e+16 16.0
+log10 1e+17 17.0
+log10 1e+22 22.0
+log10 1e+100 100.0
+log10 1e+300 300.0
+log10 -1e+300 ValueError: expected a positive input, got -1e+300
+log10 1.7976931348623157e+308 308.25471555991675
+log10 -1.7976931348623157e+308 ValueError: expected a positive input, got -1.7976931348623157e+308
+log10 inf inf
+log10 -inf ValueError: expected a positive input, got -inf
+log10 nan nan
+log10 709.0 2.8506462351830666
+log10 709.782712893384 2.8511254176849503
+log10 709.7827128933841 2.8511254176849503
+log10 710.0 2.8512583487190755
+log10 -708.0 ValueError: expected a positive input, got -708.0
+log10 -745.0 ValueError: expected a positive input, got -745.0
+log10 -745.1332191019411 ValueError: expected a positive input, got -745.1332191019411
+log10 -745.1332191019412 ValueError: expected a positive input, got -745.1332191019412
+log10 -746.0 ValueError: expected a positive input, got -746.0
+log10 1023.0 3.00987563371216
+log10 1024.0 3.010299956639812
+log10 1023.9999999999999 3.010299956639812
+log10 -1074.0 ValueError: expected a positive input, got -1074.0
+log10 -1075.0 ValueError: expected a positive input, got -1075.0
+log10 -1076.0 ValueError: expected a positive input, got -1076.0
+log10 88.0 1.9444826721501687
+log10 36.0 1.5563025007672873
+log10 37.0 1.568201724066995
+log10 19.0 1.2787536009528289
+log10 22.0 1.3424226808222062
+log10 26.0 1.414973347970818
+log10 27.0 1.4313637641589874
+log10 6.0 0.7781512503836436
+log10 -6.0 ValueError: expected a positive input, got -6.0
+log10 4503599627370496.0 15.653559774527022
+log10 4503599627370497.0 15.653559774527022
+log10 9007199254740992.0 15.954589770191003
+log10 9007199254740992.0 15.954589770191003
+log10 -9007199254740992.0 ValueError: expected a positive input, got -9007199254740992.0
+log10 4503599627370495.5 15.653559774527022
+log10 170.0 2.230448921378274
+log10 171.0 2.2329961103921536
+log10 171.6 2.2345172835126865
+log10 171.7 2.2347702951609163
+log10 172.0 2.2355284469075487
+log10 23.0 1.3617278360175928
+log10 24.0 1.380211241711606
+log10 143.0 2.155336037465062
+log10 140.0 2.146128035678238
+log10 139.5 2.144574207609616
+log10 140.5 2.1476763242410986
+log10 199.5 2.299942900022767
+log10 200.5 2.302114376956201
+log10 -170.5 ValueError: expected a positive input, got -170.5
+log10 -171.5 ValueError: expected a positive input, got -171.5
+log10 -180.5 ValueError: expected a positive input, got -180.5
+log10 -199.5 ValueError: expected a positive input, got -199.5
+log10 -200.5 ValueError: expected a positive input, got -200.5
+log10 -1000.5 ValueError: expected a positive input, got -1000.5
+log10 8.0 0.9030899869919435
+log10 27.0 1.4313637641589874
+log10 -27.0 ValueError: expected a positive input, got -27.0
+log10 64.0 1.806179973983887
+log10 1e-09 -9.0
+log10 123456789.0 8.09151497716927
+log10 0.3 -0.5228787452803376
+log10 0.7 -0.1549019599857432
+log10 4.0 0.6020599913279624
+log10 16.0 1.2041199826559248
+log10 1e-154 -154.0
+log10 1e+154 154.0
+log10 1.3407807929942596e+154 154.12735777995837
+log1p 0.0 0.0
+log1p -0.0 -0.0
+log1p 1.0 0.6931471805599453
+log1p -1.0 ValueError: expected argument value > -1, got -1.0
+log1p 0.5 0.4054651081081644
+log1p -0.5 -0.6931471805599453
+log1p 2.0 1.0986122886681096
+log1p -2.0 ValueError: expected argument value > -1, got -2.0
+log1p 3.0 1.3862943611198906
+log1p -3.0 ValueError: expected argument value > -1, got -3.0
+log1p 0.1 0.09531017980432487
+log1p -0.1 -0.10536051565782631
+log1p 0.25 0.22314355131420976
+log1p 0.75 0.5596157879354227
+log1p 1.5 0.9162907318741551
+log1p -1.5 ValueError: expected argument value > -1, got -1.5
+log1p 2.5 1.252762968495368
+log1p -2.5 ValueError: expected argument value > -1, got -2.5
+log1p 3.5 1.5040773967762742
+log1p -3.5 ValueError: expected argument value > -1, got -3.5
+log1p 5e-324 5e-324
+log1p -5e-324 -5e-324
+log1p 1e-323 1e-323
+log1p 2.2250738585072014e-308 2.2250738585072014e-308
+log1p 2.225073858507201e-308 2.225073858507201e-308
+log1p -2.2250738585072014e-308 -2.2250738585072014e-308
+log1p 1e-300 1e-300
+log1p -1e-300 -1e-300
+log1p 1e-20 1e-20
+log1p 9.9e-21 9.9e-21
+log1p -1e-20 -1e-20
+log1p 1e-16 1e-16
+log1p 1e-08 9.999999950000001e-09
+log1p 1e-05 9.999950000333332e-06
+log1p 0.9999999999999999 0.6931471805599453
+log1p 1.0000000000000002 0.6931471805599454
+log1p -0.9999999999999999 -36.7368005696771
+log1p -1.0000000000000002 ValueError: expected argument value > -1, got -1.0000000000000002
+log1p 3.141592653589793 1.4210804127942926
+log1p -3.141592653589793 ValueError: expected argument value > -1, got -3.141592653589793
+log1p 1.5707963267948966 0.9442157056960554
+log1p 0.7853981633974483 0.5796414510841191
+log1p 2.718281828459045 1.3132616875182228
+log1p 6.283185307179586 1.9855683087099187
+log1p 10.0 2.3978952727983707
+log1p 100.0 4.61512051684126
+log1p 1000.0 6.90875477931522
+log1p 100000.0 11.51293546492023
+log1p 10000000000.0 23.025850930040455
+log1p 1000000000000000.0 34.538776394910684
+log1p 1e+16 36.841361487904734
+log1p 1e+17 39.14394658089878
+log1p 1e+22 50.65687204586901
+log1p 1e+100 230.25850929940458
+log1p 1e+300 690.7755278982137
+log1p -1e+300 ValueError: expected argument value > -1, got -1e+300
+log1p 1.7976931348623157e+308 709.782712893384
+log1p -1.7976931348623157e+308 ValueError: expected argument value > -1, got -1.7976931348623157e+308
+log1p inf inf
+log1p -inf ValueError: expected argument value > -1, got -inf
+log1p nan nan
+log1p 709.0 6.565264970035361
+log1p 709.782712893384 6.566366775350788
+log1p 709.7827128933841 6.566366775350789
+log1p 710.0 6.566672429803241
+log1p -708.0 ValueError: expected argument value > -1, got -708.0
+log1p -745.0 ValueError: expected argument value > -1, got -745.0
+log1p -745.1332191019411 ValueError: expected argument value > -1, got -745.1332191019411
+log1p -745.1332191019412 ValueError: expected argument value > -1, got -745.1332191019412
+log1p -746.0 ValueError: expected argument value > -1, got -746.0
+log1p 1023.0 6.931471805599453
+log1p 1024.0 6.932447891572509
+log1p 1023.9999999999999 6.932447891572508
+log1p -1074.0 ValueError: expected argument value > -1, got -1074.0
+log1p -1075.0 ValueError: expected argument value > -1, got -1075.0
+log1p -1076.0 ValueError: expected argument value > -1, got -1076.0
+log1p 88.0 4.48863636973214
+log1p 36.0 3.6109179126442243
+log1p 37.0 3.6375861597263857
+log1p 19.0 2.995732273553991
+log1p 22.0 3.1354942159291497
+log1p 26.0 3.295836866004329
+log1p 27.0 3.332204510175204
+log1p 6.0 1.9459101490553132
+log1p -6.0 ValueError: expected argument value > -1, got -6.0
+log1p 4503599627370496.0 36.04365338911715
+log1p 4503599627370497.0 36.04365338911715
+log1p 9007199254740992.0 36.7368005696771
+log1p 9007199254740992.0 36.7368005696771
+log1p -9007199254740992.0 ValueError: expected argument value > -1, got -9007199254740992.0
+log1p 4503599627370495.5 36.04365338911715
+log1p 170.0 5.14166355650266
+log1p 171.0 5.147494476813453
+log1p 171.6 5.150976778649327
+log1p 171.7 5.1515559851526325
+log1p 172.0 5.153291594497779
+log1p 23.0 3.1780538303479458
+log1p 24.0 3.2188758248682006
+log1p 143.0 4.969813299576001
+log1p 140.0 4.948759890378168
+log1p 139.5 4.9452074887738
+log1p 140.5 4.952299717083292
+log1p 199.5 5.300814246746624
+log1p 200.5 5.305789381386738
+log1p -170.5 ValueError: expected argument value > -1, got -170.5
+log1p -171.5 ValueError: expected argument value > -1, got -171.5
+log1p -180.5 ValueError: expected argument value > -1, got -180.5
+log1p -199.5 ValueError: expected argument value > -1, got -199.5
+log1p -200.5 ValueError: expected argument value > -1, got -200.5
+log1p -1000.5 ValueError: expected argument value > -1, got -1000.5
+log1p 8.0 2.1972245773362196
+log1p 27.0 3.332204510175204
+log1p -27.0 ValueError: expected argument value > -1, got -27.0
+log1p 64.0 4.174387269895637
+log1p 1e-09 9.999999995e-10
+log1p 123456789.0 18.631401774268017
+log1p 0.3 0.26236426446749106
+log1p 0.7 0.5306282510621704
+log1p 4.0 1.6094379124341003
+log1p 16.0 2.833213344056216
+log1p 1e-154 1e-154
+log1p 1e+154 354.59810432108304
+log1p 1.3407807929942596e+154 354.891356446692
+log2 0.0 ValueError: expected a positive input, got 0.0
+log2 -0.0 ValueError: expected a positive input, got -0.0
+log2 1.0 0.0
+log2 -1.0 ValueError: expected a positive input, got -1.0
+log2 0.5 -1.0
+log2 -0.5 ValueError: expected a positive input, got -0.5
+log2 2.0 1.0
+log2 -2.0 ValueError: expected a positive input, got -2.0
+log2 3.0 1.584962500721156
+log2 -3.0 ValueError: expected a positive input, got -3.0
+log2 0.1 -3.321928094887362
+log2 -0.1 ValueError: expected a positive input, got -0.1
+log2 0.25 -2.0
+log2 0.75 -0.4150374992788438
+log2 1.5 0.5849625007211562
+log2 -1.5 ValueError: expected a positive input, got -1.5
+log2 2.5 1.3219280948873624
+log2 -2.5 ValueError: expected a positive input, got -2.5
+log2 3.5 1.8073549220576042
+log2 -3.5 ValueError: expected a positive input, got -3.5
+log2 5e-324 -1074.0
+log2 -5e-324 ValueError: expected a positive input, got -5e-324
+log2 1e-323 -1073.0
+log2 2.2250738585072014e-308 -1022.0
+log2 2.225073858507201e-308 -1022.0
+log2 -2.2250738585072014e-308 ValueError: expected a positive input, got -2.2250738585072014e-308
+log2 1e-300 -996.5784284662087
+log2 -1e-300 ValueError: expected a positive input, got -1e-300
+log2 1e-20 -66.43856189774725
+log2 9.9e-21 -66.45306146744237
+log2 -1e-20 ValueError: expected a positive input, got -1e-20
+log2 1e-16 -53.150849518197795
+log2 1e-08 -26.575424759098897
+log2 1e-05 -16.609640474436812
+log2 0.9999999999999999 -1.6017132519074588e-16
+log2 1.0000000000000002 3.203426503814917e-16
+log2 -0.9999999999999999 ValueError: expected a positive input, got -0.9999999999999999
+log2 -1.0000000000000002 ValueError: expected a positive input, got -1.0000000000000002
+log2 3.141592653589793 1.6514961294723187
+log2 -3.141592653589793 ValueError: expected a positive input, got -3.141592653589793
+log2 1.5707963267948966 0.6514961294723187
+log2 0.7853981633974483 -0.3485038705276813
+log2 2.718281828459045 1.4426950408889634
+log2 6.283185307179586 2.651496129472319
+log2 10.0 3.321928094887362
+log2 100.0 6.643856189774724
+log2 1000.0 9.965784284662087
+log2 100000.0 16.609640474436812
+log2 10000000000.0 33.219280948873624
+log2 1000000000000000.0 49.82892142331043
+log2 1e+16 53.150849518197795
+log2 1e+17 56.47277761308516
+log2 1e+22 73.08241808752197
+log2 1e+100 332.19280948873626
+log2 1e+300 996.5784284662087
+log2 -1e+300 ValueError: expected a positive input, got -1e+300
+log2 1.7976931348623157e+308 1024.0
+log2 -1.7976931348623157e+308 ValueError: expected a positive input, got -1.7976931348623157e+308
+log2 inf inf
+log2 -inf ValueError: expected a positive input, got -inf
+log2 nan nan
+log2 709.0 9.469641817239516
+log2 709.782712893384 9.471233627055103
+log2 709.7827128933841 9.471233627055103
+log2 710.0 9.471675214392045
+log2 -708.0 ValueError: expected a positive input, got -708.0
+log2 -745.0 ValueError: expected a positive input, got -745.0
+log2 -745.1332191019411 ValueError: expected a positive input, got -745.1332191019411
+log2 -745.1332191019412 ValueError: expected a positive input, got -745.1332191019412
+log2 -746.0 ValueError: expected a positive input, got -746.0
+log2 1023.0 9.99859042974533
+log2 1024.0 10.0
+log2 1023.9999999999999 10.0
+log2 -1074.0 ValueError: expected a positive input, got -1074.0
+log2 -1075.0 ValueError: expected a positive input, got -1075.0
+log2 -1076.0 ValueError: expected a positive input, got -1076.0
+log2 88.0 6.459431618637297
+log2 36.0 5.169925001442312
+log2 37.0 5.20945336562895
+log2 19.0 4.247927513443585
+log2 22.0 4.459431618637297
+log2 26.0 4.700439718141092
+log2 27.0 4.754887502163468
+log2 6.0 2.584962500721156
+log2 -6.0 ValueError: expected a positive input, got -6.0
+log2 4503599627370496.0 52.0
+log2 4503599627370497.0 52.0
+log2 9007199254740992.0 53.0
+log2 9007199254740992.0 53.0
+log2 -9007199254740992.0 ValueError: expected a positive input, got -9007199254740992.0
+log2 4503599627370495.5 52.0
+log2 170.0 7.409390936137702
+log2 171.0 7.417852514885898
+log2 171.6 7.422905742612183
+log2 171.7 7.423746229114772
+log2 172.0 7.426264754702098
+log2 23.0 4.523561956057013
+log2 24.0 4.584962500721156
+log2 143.0 7.159871336778389
+log2 140.0 7.129283016944966
+log2 139.5 7.124121311829188
+log2 140.5 7.134426320220926
+log2 199.5 7.640244936222346
+log2 200.5 7.647458426454921
+log2 -170.5 ValueError: expected a positive input, got -170.5
+log2 -171.5 ValueError: expected a positive input, got -171.5
+log2 -180.5 ValueError: expected a positive input, got -180.5
+log2 -199.5 ValueError: expected a positive input, got -199.5
+log2 -200.5 ValueError: expected a positive input, got -200.5
+log2 -1000.5 ValueError: expected a positive input, got -1000.5
+log2 8.0 3.0
+log2 27.0 4.754887502163468
+log2 -27.0 ValueError: expected a positive input, got -27.0
+log2 64.0 6.0
+log2 1e-09 -29.897352853986263
+log2 123456789.0 26.879430932860473
+log2 0.3 -1.7369655941662063
+log2 0.7 -0.5145731728297583
+log2 4.0 2.0
+log2 16.0 4.0
+log2 1e-154 -511.5769266126538
+log2 1e+154 511.5769266126538
+log2 1.3407807929942596e+154 512.0
+modf 0.0 (0.0, 0.0)
+modf -0.0 (-0.0, -0.0)
+modf 1.0 (0.0, 1.0)
+modf -1.0 (-0.0, -1.0)
+modf 0.5 (0.5, 0.0)
+modf -0.5 (-0.5, -0.0)
+modf 2.0 (0.0, 2.0)
+modf -2.0 (-0.0, -2.0)
+modf 3.0 (0.0, 3.0)
+modf -3.0 (-0.0, -3.0)
+modf 0.1 (0.1, 0.0)
+modf -0.1 (-0.1, -0.0)
+modf 0.25 (0.25, 0.0)
+modf 0.75 (0.75, 0.0)
+modf 1.5 (0.5, 1.0)
+modf -1.5 (-0.5, -1.0)
+modf 2.5 (0.5, 2.0)
+modf -2.5 (-0.5, -2.0)
+modf 3.5 (0.5, 3.0)
+modf -3.5 (-0.5, -3.0)
+modf 5e-324 (5e-324, 0.0)
+modf -5e-324 (-5e-324, -0.0)
+modf 1e-323 (1e-323, 0.0)
+modf 2.2250738585072014e-308 (2.2250738585072014e-308, 0.0)
+modf 2.225073858507201e-308 (2.225073858507201e-308, 0.0)
+modf -2.2250738585072014e-308 (-2.2250738585072014e-308, -0.0)
+modf 1e-300 (1e-300, 0.0)
+modf -1e-300 (-1e-300, -0.0)
+modf 1e-20 (1e-20, 0.0)
+modf 9.9e-21 (9.9e-21, 0.0)
+modf -1e-20 (-1e-20, -0.0)
+modf 1e-16 (1e-16, 0.0)
+modf 1e-08 (1e-08, 0.0)
+modf 1e-05 (1e-05, 0.0)
+modf 0.9999999999999999 (0.9999999999999999, 0.0)
+modf 1.0000000000000002 (2.220446049250313e-16, 1.0)
+modf -0.9999999999999999 (-0.9999999999999999, -0.0)
+modf -1.0000000000000002 (-2.220446049250313e-16, -1.0)
+modf 3.141592653589793 (0.14159265358979312, 3.0)
+modf -3.141592653589793 (-0.14159265358979312, -3.0)
+modf 1.5707963267948966 (0.5707963267948966, 1.0)
+modf 0.7853981633974483 (0.7853981633974483, 0.0)
+modf 2.718281828459045 (0.7182818284590451, 2.0)
+modf 6.283185307179586 (0.28318530717958623, 6.0)
+modf 10.0 (0.0, 10.0)
+modf 100.0 (0.0, 100.0)
+modf 1000.0 (0.0, 1000.0)
+modf 100000.0 (0.0, 100000.0)
+modf 10000000000.0 (0.0, 10000000000.0)
+modf 1000000000000000.0 (0.0, 1000000000000000.0)
+modf 1e+16 (0.0, 1e+16)
+modf 1e+17 (0.0, 1e+17)
+modf 1e+22 (0.0, 1e+22)
+modf 1e+100 (0.0, 1e+100)
+modf 1e+300 (0.0, 1e+300)
+modf -1e+300 (-0.0, -1e+300)
+modf 1.7976931348623157e+308 (0.0, 1.7976931348623157e+308)
+modf -1.7976931348623157e+308 (-0.0, -1.7976931348623157e+308)
+modf inf (0.0, inf)
+modf -inf (-0.0, -inf)
+modf nan (nan, nan)
+modf 709.0 (0.0, 709.0)
+modf 709.782712893384 (0.7827128933839731, 709.0)
+modf 709.7827128933841 (0.7827128933840868, 709.0)
+modf 710.0 (0.0, 710.0)
+modf -708.0 (-0.0, -708.0)
+modf -745.0 (-0.0, -745.0)
+modf -745.1332191019411 (-0.13321910194110842, -745.0)
+modf -745.1332191019412 (-0.1332191019412221, -745.0)
+modf -746.0 (-0.0, -746.0)
+modf 1023.0 (0.0, 1023.0)
+modf 1024.0 (0.0, 1024.0)
+modf 1023.9999999999999 (0.9999999999998863, 1023.0)
+modf -1074.0 (-0.0, -1074.0)
+modf -1075.0 (-0.0, -1075.0)
+modf -1076.0 (-0.0, -1076.0)
+modf 88.0 (0.0, 88.0)
+modf 36.0 (0.0, 36.0)
+modf 37.0 (0.0, 37.0)
+modf 19.0 (0.0, 19.0)
+modf 22.0 (0.0, 22.0)
+modf 26.0 (0.0, 26.0)
+modf 27.0 (0.0, 27.0)
+modf 6.0 (0.0, 6.0)
+modf -6.0 (-0.0, -6.0)
+modf 4503599627370496.0 (0.0, 4503599627370496.0)
+modf 4503599627370497.0 (0.0, 4503599627370497.0)
+modf 9007199254740992.0 (0.0, 9007199254740992.0)
+modf 9007199254740992.0 (0.0, 9007199254740992.0)
+modf -9007199254740992.0 (-0.0, -9007199254740992.0)
+modf 4503599627370495.5 (0.5, 4503599627370495.0)
+modf 170.0 (0.0, 170.0)
+modf 171.0 (0.0, 171.0)
+modf 171.6 (0.5999999999999943, 171.0)
+modf 171.7 (0.6999999999999886, 171.0)
+modf 172.0 (0.0, 172.0)
+modf 23.0 (0.0, 23.0)
+modf 24.0 (0.0, 24.0)
+modf 143.0 (0.0, 143.0)
+modf 140.0 (0.0, 140.0)
+modf 139.5 (0.5, 139.0)
+modf 140.5 (0.5, 140.0)
+modf 199.5 (0.5, 199.0)
+modf 200.5 (0.5, 200.0)
+modf -170.5 (-0.5, -170.0)
+modf -171.5 (-0.5, -171.0)
+modf -180.5 (-0.5, -180.0)
+modf -199.5 (-0.5, -199.0)
+modf -200.5 (-0.5, -200.0)
+modf -1000.5 (-0.5, -1000.0)
+modf 8.0 (0.0, 8.0)
+modf 27.0 (0.0, 27.0)
+modf -27.0 (-0.0, -27.0)
+modf 64.0 (0.0, 64.0)
+modf 1e-09 (1e-09, 0.0)
+modf 123456789.0 (0.0, 123456789.0)
+modf 0.3 (0.3, 0.0)
+modf 0.7 (0.7, 0.0)
+modf 4.0 (0.0, 4.0)
+modf 16.0 (0.0, 16.0)
+modf 1e-154 (1e-154, 0.0)
+modf 1e+154 (0.0, 1e+154)
+modf 1.3407807929942596e+154 (0.0, 1.3407807929942596e+154)
+radians 0.0 0.0
+radians -0.0 -0.0
+radians 1.0 0.017453292519943295
+radians -1.0 -0.017453292519943295
+radians 0.5 0.008726646259971648
+radians -0.5 -0.008726646259971648
+radians 2.0 0.03490658503988659
+radians -2.0 -0.03490658503988659
+radians 3.0 0.05235987755982989
+radians -3.0 -0.05235987755982989
+radians 0.1 0.0017453292519943296
+radians -0.1 -0.0017453292519943296
+radians 0.25 0.004363323129985824
+radians 0.75 0.013089969389957472
+radians 1.5 0.026179938779914945
+radians -1.5 -0.026179938779914945
+radians 2.5 0.04363323129985824
+radians -2.5 -0.04363323129985824
+radians 3.5 0.061086523819801536
+radians -3.5 -0.061086523819801536
+radians 5e-324 0.0
+radians -5e-324 -0.0
+radians 1e-323 0.0
+radians 2.2250738585072014e-308 3.8834864931005e-310
+radians 2.225073858507201e-308 3.8834864931005e-310
+radians -2.2250738585072014e-308 -3.8834864931005e-310
+radians 1e-300 1.7453292519943295e-302
+radians -1e-300 -1.7453292519943295e-302
+radians 1e-20 1.7453292519943296e-22
+radians 9.9e-21 1.7278759594743864e-22
+radians -1e-20 -1.7453292519943296e-22
+radians 1e-16 1.7453292519943296e-18
+radians 1e-08 1.7453292519943295e-10
+radians 1e-05 1.7453292519943297e-07
+radians 0.9999999999999999 0.017453292519943292
+radians 1.0000000000000002 0.0174532925199433
+radians -0.9999999999999999 -0.017453292519943292
+radians -1.0000000000000002 -0.0174532925199433
+radians 3.141592653589793 0.05483113556160755
+radians -3.141592653589793 -0.05483113556160755
+radians 1.5707963267948966 0.027415567780803774
+radians 0.7853981633974483 0.013707783890401887
+radians 2.718281828459045 0.047442967903742035
+radians 6.283185307179586 0.1096622711232151
+radians 10.0 0.17453292519943295
+radians 100.0 1.7453292519943295
+radians 1000.0 17.453292519943297
+radians 100000.0 1745.3292519943295
+radians 10000000000.0 174532925.19943297
+radians 1000000000000000.0 17453292519943.295
+radians 1e+16 174532925199432.97
+radians 1e+17 1745329251994329.5
+radians 1e+22 1.7453292519943294e+20
+radians 1e+100 1.7453292519943295e+98
+radians 1e+300 1.7453292519943297e+298
+radians -1e+300 -1.7453292519943297e+298
+radians 1.7976931348623157e+308 3.1375664143845866e+306
+radians -1.7976931348623157e+308 -3.1375664143845866e+306
+radians inf inf
+radians -inf -inf
+radians nan nan
+radians 709.0 12.374384396639796
+radians 709.782712893384 12.388045313727158
+radians 709.7827128933841 12.38804531372716
+radians 710.0 12.39183768915974
+radians -708.0 -12.356931104119854
+radians -745.0 -13.002702927357754
+radians -745.1332191019411 -13.005028039313178
+radians -745.1332191019412 -13.00502803931318
+radians -746.0 -13.020156219877698
+radians 1023.0 17.854718247901992
+radians 1024.0 17.872171540421935
+radians 1023.9999999999999 17.87217154042193
+radians -1074.0 -18.7448361664191
+radians -1075.0 -18.762289458939044
+radians -1076.0 -18.779742751458986
+radians 88.0 1.53588974175501
+radians 36.0 0.6283185307179586
+radians 37.0 0.6457718232379019
+radians 19.0 0.33161255787892263
+radians 22.0 0.3839724354387525
+radians 26.0 0.4537856055185257
+radians 27.0 0.47123889803846897
+radians 6.0 0.10471975511965978
+radians -6.0 -0.10471975511965978
+radians 4503599627370496.0 78602641689204.89
+radians 4503599627370497.0 78602641689204.9
+radians 9007199254740992.0 157205283378409.78
+radians 9007199254740992.0 157205283378409.78
+radians -9007199254740992.0 -157205283378409.78
+radians 4503599627370495.5 78602641689204.88
+radians 170.0 2.9670597283903604
+radians 171.0 2.9845130209103035
+radians 171.6 2.9949849964222692
+radians 171.7 2.9967303256742635
+radians 172.0 3.001966313430247
+radians 23.0 0.4014257279586958
+radians 24.0 0.4188790204786391
+radians 143.0 2.4958208303518914
+radians 140.0 2.443460952792061
+radians 139.5 2.4347343065320897
+radians 140.5 2.452187599052033
+radians 199.5 3.4819318577286875
+radians 200.5 3.4993851502486306
+radians -170.5 -2.975786374650332
+radians -171.5 -2.993239667170275
+radians -180.5 -3.1503192998497647
+radians -199.5 -3.4819318577286875
+radians -200.5 -3.4993851502486306
+radians -1000.5 -17.462019166203266
+radians 8.0 0.13962634015954636
+radians 27.0 0.47123889803846897
+radians -27.0 -0.47123889803846897
+radians 64.0 1.117010721276371
+radians 1e-09 1.7453292519943298e-11
+radians 123456789.0 2154727.4519899176
+radians 0.3 0.005235987755982988
+radians 0.7 0.012217304763960306
+radians 4.0 0.06981317007977318
+radians 16.0 0.2792526803190927
+radians 1e-154 1.7453292519943294e-156
+radians 1e+154 1.7453292519943296e+152
+radians 1.3407807929942596e+154 2.340103938525035e+152
+signbit 0.0 False
+signbit -0.0 True
+signbit 1.0 False
+signbit -1.0 True
+signbit 0.5 False
+signbit -0.5 True
+signbit 2.0 False
+signbit -2.0 True
+signbit 3.0 False
+signbit -3.0 True
+signbit 0.1 False
+signbit -0.1 True
+signbit 0.25 False
+signbit 0.75 False
+signbit 1.5 False
+signbit -1.5 True
+signbit 2.5 False
+signbit -2.5 True
+signbit 3.5 False
+signbit -3.5 True
+signbit 5e-324 False
+signbit -5e-324 True
+signbit 1e-323 False
+signbit 2.2250738585072014e-308 False
+signbit 2.225073858507201e-308 False
+signbit -2.2250738585072014e-308 True
+signbit 1e-300 False
+signbit -1e-300 True
+signbit 1e-20 False
+signbit 9.9e-21 False
+signbit -1e-20 True
+signbit 1e-16 False
+signbit 1e-08 False
+signbit 1e-05 False
+signbit 0.9999999999999999 False
+signbit 1.0000000000000002 False
+signbit -0.9999999999999999 True
+signbit -1.0000000000000002 True
+signbit 3.141592653589793 False
+signbit -3.141592653589793 True
+signbit 1.5707963267948966 False
+signbit 0.7853981633974483 False
+signbit 2.718281828459045 False
+signbit 6.283185307179586 False
+signbit 10.0 False
+signbit 100.0 False
+signbit 1000.0 False
+signbit 100000.0 False
+signbit 10000000000.0 False
+signbit 1000000000000000.0 False
+signbit 1e+16 False
+signbit 1e+17 False
+signbit 1e+22 False
+signbit 1e+100 False
+signbit 1e+300 False
+signbit -1e+300 True
+signbit 1.7976931348623157e+308 False
+signbit -1.7976931348623157e+308 True
+signbit inf False
+signbit -inf True
+signbit nan False
+signbit 709.0 False
+signbit 709.782712893384 False
+signbit 709.7827128933841 False
+signbit 710.0 False
+signbit -708.0 True
+signbit -745.0 True
+signbit -745.1332191019411 True
+signbit -745.1332191019412 True
+signbit -746.0 True
+signbit 1023.0 False
+signbit 1024.0 False
+signbit 1023.9999999999999 False
+signbit -1074.0 True
+signbit -1075.0 True
+signbit -1076.0 True
+signbit 88.0 False
+signbit 36.0 False
+signbit 37.0 False
+signbit 19.0 False
+signbit 22.0 False
+signbit 26.0 False
+signbit 27.0 False
+signbit 6.0 False
+signbit -6.0 True
+signbit 4503599627370496.0 False
+signbit 4503599627370497.0 False
+signbit 9007199254740992.0 False
+signbit 9007199254740992.0 False
+signbit -9007199254740992.0 True
+signbit 4503599627370495.5 False
+signbit 170.0 False
+signbit 171.0 False
+signbit 171.6 False
+signbit 171.7 False
+signbit 172.0 False
+signbit 23.0 False
+signbit 24.0 False
+signbit 143.0 False
+signbit 140.0 False
+signbit 139.5 False
+signbit 140.5 False
+signbit 199.5 False
+signbit 200.5 False
+signbit -170.5 True
+signbit -171.5 True
+signbit -180.5 True
+signbit -199.5 True
+signbit -200.5 True
+signbit -1000.5 True
+signbit 8.0 False
+signbit 27.0 False
+signbit -27.0 True
+signbit 64.0 False
+signbit 1e-09 False
+signbit 123456789.0 False
+signbit 0.3 False
+signbit 0.7 False
+signbit 4.0 False
+signbit 16.0 False
+signbit 1e-154 False
+signbit 1e+154 False
+signbit 1.3407807929942596e+154 False
+sin 0.0 0.0
+sin -0.0 -0.0
+sin 1.0 0.8414709848078965
+sin -1.0 -0.8414709848078965
+sin 0.5 0.479425538604203
+sin -0.5 -0.479425538604203
+sin 2.0 0.9092974268256817
+sin -2.0 -0.9092974268256817
+sin 3.0 0.1411200080598672
+sin -3.0 -0.1411200080598672
+sin 0.1 0.09983341664682815
+sin -0.1 -0.09983341664682815
+sin 0.25 0.24740395925452294
+sin 0.75 0.6816387600233341
+sin 1.5 0.9974949866040544
+sin -1.5 -0.9974949866040544
+sin 2.5 0.5984721441039565
+sin -2.5 -0.5984721441039565
+sin 3.5 -0.35078322768961984
+sin -3.5 0.35078322768961984
+sin 5e-324 5e-324
+sin -5e-324 -5e-324
+sin 1e-323 1e-323
+sin 2.2250738585072014e-308 2.2250738585072014e-308
+sin 2.225073858507201e-308 2.225073858507201e-308
+sin -2.2250738585072014e-308 -2.2250738585072014e-308
+sin 1e-300 1e-300
+sin -1e-300 -1e-300
+sin 1e-20 1e-20
+sin 9.9e-21 9.9e-21
+sin -1e-20 -1e-20
+sin 1e-16 1e-16
+sin 1e-08 1e-08
+sin 1e-05 9.999999999833334e-06
+sin 0.9999999999999999 0.8414709848078964
+sin 1.0000000000000002 0.8414709848078966
+sin -0.9999999999999999 -0.8414709848078964
+sin -1.0000000000000002 -0.8414709848078966
+sin 3.141592653589793 1.2246467991473532e-16
+sin -3.141592653589793 -1.2246467991473532e-16
+sin 1.5707963267948966 1.0
+sin 0.7853981633974483 0.7071067811865475
+sin 2.718281828459045 0.41078129050290885
+sin 6.283185307179586 -2.4492935982947064e-16
+sin 10.0 -0.5440211108893698
+sin 100.0 -0.5063656411097588
+sin 1000.0 0.8268795405320025
+sin 100000.0 0.03574879797201651
+sin 10000000000.0 -0.4875060250875107
+sin 1000000000000000.0 0.8582727931702359
+sin 1e+16 0.7796880066069788
+sin 1e+17 -0.4645301048353727
+sin 1e+22 -0.8522008497671888
+sin 1e+100 -0.3806377310050287
+sin 1e+300 -0.8178819121159085
+sin -1e+300 0.8178819121159085
+sin 1.7976931348623157e+308 0.004961954789184062
+sin -1.7976931348623157e+308 -0.004961954789184062
+sin inf ValueError: expected a finite input, got inf
+sin -inf ValueError: expected a finite input, got -inf
+sin nan nan
+sin 709.0 -0.8414384091513941
+sin 709.782712893384 -0.2155224460697281
+sin 709.7827128933841 -0.21552244606961707
+sin 710.0 6.0288706691585265e-05
+sin -708.0 0.9093225141277265
+sin -745.0 0.42823715115227945
+sin -745.1332191019411 0.5444725884414192
+sin -745.1332191019412 0.5444725884415146
+sin -746.0 0.9917865664060436
+sin 1023.0 -0.9164853722719367
+sin 1024.0 -0.15853338004399595
+sin 1023.9999999999999 -0.15853338004410822
+sin -1074.0 0.41203608725896307
+sin -1075.0 -0.5440969884707371
+sin -1076.0 -0.9999898022322627
+sin 88.0 0.03539830273366068
+sin 36.0 -0.9917788534431158
+sin 37.0 -0.6435381333569995
+sin 19.0 0.14987720966295234
+sin 22.0 -0.008851309290403876
+sin 26.0 0.7625584504796027
+sin 27.0 0.956375928404503
+sin 6.0 -0.27941549819892586
+sin -6.0 0.27941549819892586
+sin 4503599627370496.0 0.8742173026236351
+sin 4503599627370497.0 0.06377812111975718
+sin 9007199254740992.0 -0.848925964814655
+sin 9007199254740992.0 -0.848925964814655
+sin -9007199254740992.0 0.848925964814655
+sin 4503599627370495.5 0.9999756755637755
+sin 170.0 0.3466494554970303
+sin 171.0 0.9765908679435658
+sin 171.6 0.9274727955035406
+sin 171.7 0.8855125142746076
+sin 172.0 0.7086591401823227
+sin 23.0 -0.8462204041751706
+sin 24.0 -0.9055783620066239
+sin 143.0 -0.9983453608739179
+sin 140.0 0.9802396594403116
+sin 139.5 0.9550781108583937
+sin 140.5 0.7654043523379563
+sin 199.5 -0.9999606928725588
+sin 200.5 -0.5328202658894324
+sin -170.5 -0.7539121564757657
+sin -171.5 -0.9601660751415484
+sin -180.5 0.9899946234736917
+sin -199.5 0.9999606928725588
+sin -200.5 0.5328202658894324
+sin -1000.5 -0.9952739571052135
+sin 8.0 0.9893582466233818
+sin 27.0 0.956375928404503
+sin -27.0 -0.956375928404503
+sin 64.0 0.9200260381967906
+sin 1e-09 1e-09
+sin 123456789.0 0.9901147518020355
+sin 0.3 0.29552020666133955
+sin 0.7 0.644217687237691
+sin 4.0 -0.7568024953079282
+sin 16.0 -0.2879033166650653
+sin 1e-154 1e-154
+sin 1e+154 -0.28497974598015174
+sin 1.3407807929942596e+154 0.9699191931684401
+sinh 0.0 0.0
+sinh -0.0 -0.0
+sinh 1.0 1.1752011936438014
+sinh -1.0 -1.1752011936438014
+sinh 0.5 0.5210953054937474
+sinh -0.5 -0.5210953054937474
+sinh 2.0 3.626860407847019
+sinh -2.0 -3.626860407847019
+sinh 3.0 10.017874927409903
+sinh -3.0 -10.017874927409903
+sinh 0.1 0.10016675001984403
+sinh -0.1 -0.10016675001984403
+sinh 0.25 0.2526123168081683
+sinh 0.75 0.82231673193583
+sinh 1.5 2.1292794550948173
+sinh -1.5 -2.1292794550948173
+sinh 2.5 6.0502044810397875
+sinh -2.5 -6.0502044810397875
+sinh 3.5 16.542627287634996
+sinh -3.5 -16.542627287634996
+sinh 5e-324 5e-324
+sinh -5e-324 -5e-324
+sinh 1e-323 1e-323
+sinh 2.2250738585072014e-308 2.2250738585072014e-308
+sinh 2.225073858507201e-308 2.225073858507201e-308
+sinh -2.2250738585072014e-308 -2.2250738585072014e-308
+sinh 1e-300 1e-300
+sinh -1e-300 -1e-300
+sinh 1e-20 1e-20
+sinh 9.9e-21 9.9e-21
+sinh -1e-20 -1e-20
+sinh 1e-16 1e-16
+sinh 1e-08 1.0000000000000002e-08
+sinh 1e-05 1.0000000000166668e-05
+sinh 0.9999999999999999 1.1752011936438014
+sinh 1.0000000000000002 1.1752011936438018
+sinh -0.9999999999999999 -1.1752011936438014
+sinh -1.0000000000000002 -1.1752011936438018
+sinh 3.141592653589793 11.548739357257748
+sinh -3.141592653589793 -11.548739357257748
+sinh 1.5707963267948966 2.3012989023072947
+sinh 0.7853981633974483 0.8686709614860095
+sinh 2.718281828459045 7.544137102816975
+sinh 6.283185307179586 267.74489404101644
+sinh 10.0 11013.232874703393
+sinh 100.0 1.3440585709080678e+43
+sinh 1000.0 OverflowError: math range error
+sinh 100000.0 OverflowError: math range error
+sinh 10000000000.0 OverflowError: math range error
+sinh 1000000000000000.0 OverflowError: math range error
+sinh 1e+16 OverflowError: math range error
+sinh 1e+17 OverflowError: math range error
+sinh 1e+22 OverflowError: math range error
+sinh 1e+100 OverflowError: math range error
+sinh 1e+300 OverflowError: math range error
+sinh -1e+300 OverflowError: math range error
+sinh 1.7976931348623157e+308 OverflowError: math range error
+sinh -1.7976931348623157e+308 OverflowError: math range error
+sinh inf inf
+sinh -inf -inf
+sinh nan nan
+sinh 709.0 4.109203730777486e+307
+sinh 709.782712893384 8.988465674311366e+307
+sinh 709.7827128933841 8.98846567431239e+307
+sinh 710.0 1.1169973830808557e+308
+sinh -708.0 -1.5116915721380276e+307
+sinh -745.0 OverflowError: math range error
+sinh -745.1332191019411 OverflowError: math range error
+sinh -745.1332191019412 OverflowError: math range error
+sinh -746.0 OverflowError: math range error
+sinh 1023.0 OverflowError: math range error
+sinh 1024.0 OverflowError: math range error
+sinh 1023.9999999999999 OverflowError: math range error
+sinh -1074.0 OverflowError: math range error
+sinh -1075.0 OverflowError: math range error
+sinh -1076.0 OverflowError: math range error
+sinh 88.0 8.258181274970009e+37
+sinh 36.0 2155615773557597.5
+sinh 37.0 5859571186401306.0
+sinh 19.0 89241150.48159364
+sinh 22.0 1792456423.065796
+sinh 26.0 97864804714.41939
+sinh 27.0 266024120300.89932
+sinh 6.0 201.71315737027922
+sinh -6.0 -201.71315737027922
+sinh 4503599627370496.0 OverflowError: math range error
+sinh 4503599627370497.0 OverflowError: math range error
+sinh 9007199254740992.0 OverflowError: math range error
+sinh 9007199254740992.0 OverflowError: math range error
+sinh -9007199254740992.0 OverflowError: math range error
+sinh 4503599627370495.5 OverflowError: math range error
+sinh 170.0 3.3808969052425046e+73
+sinh 171.0 9.190230621414123e+73
+sinh 171.6 1.6745691995203129e+74
+sinh 171.7 1.850685179615056e+74
+sinh 172.0 2.498163689753789e+74
+sinh 23.0 4872401723.124452
+sinh 24.0 13244561064.921736
+sinh 143.0 6.354493159151094e+61
+sinh 140.0 3.1637158535777925e+60
+sinh 139.5 1.918890663813856e+60
+sinh 140.5 5.216085622244919e+60
+sinh 199.5 2.1913873183237471e+86
+sinh 200.5 5.956808326515039e+86
+sinh -170.5 -5.574156641717553e+73
+sinh -171.5 -1.515212870816512e+74
+sinh -180.5 -1.2277897060368636e+78
+sinh -199.5 -2.1913873183237471e+86
+sinh -200.5 -5.956808326515039e+86
+sinh -1000.5 OverflowError: math range error
+sinh 8.0 1490.4788257895502
+sinh 27.0 266024120300.89932
+sinh -27.0 -266024120300.89932
+sinh 64.0 3.1175745404058084e+27
+sinh 1e-09 1e-09
+sinh 123456789.0 OverflowError: math range error
+sinh 0.3 0.3045202934471426
+sinh 0.7 0.7585837018395334
+sinh 4.0 27.28991719712775
+sinh 16.0 4443055.26025388
+sinh 1e-154 1e-154
+sinh 1e+154 OverflowError: math range error
+sinh 1.3407807929942596e+154 OverflowError: math range error
+sqrt 0.0 0.0
+sqrt -0.0 -0.0
+sqrt 1.0 1.0
+sqrt -1.0 ValueError: expected a nonnegative input, got -1.0
+sqrt 0.5 0.7071067811865476
+sqrt -0.5 ValueError: expected a nonnegative input, got -0.5
+sqrt 2.0 1.4142135623730951
+sqrt -2.0 ValueError: expected a nonnegative input, got -2.0
+sqrt 3.0 1.7320508075688772
+sqrt -3.0 ValueError: expected a nonnegative input, got -3.0
+sqrt 0.1 0.31622776601683794
+sqrt -0.1 ValueError: expected a nonnegative input, got -0.1
+sqrt 0.25 0.5
+sqrt 0.75 0.8660254037844386
+sqrt 1.5 1.224744871391589
+sqrt -1.5 ValueError: expected a nonnegative input, got -1.5
+sqrt 2.5 1.5811388300841898
+sqrt -2.5 ValueError: expected a nonnegative input, got -2.5
+sqrt 3.5 1.8708286933869707
+sqrt -3.5 ValueError: expected a nonnegative input, got -3.5
+sqrt 5e-324 2.2227587494850775e-162
+sqrt -5e-324 ValueError: expected a nonnegative input, got -5e-324
+sqrt 1e-323 3.1434555694052576e-162
+sqrt 2.2250738585072014e-308 1.4916681462400413e-154
+sqrt 2.225073858507201e-308 1.4916681462400412e-154
+sqrt -2.2250738585072014e-308 ValueError: expected a nonnegative input, got -2.2250738585072014e-308
+sqrt 1e-300 1e-150
+sqrt -1e-300 ValueError: expected a nonnegative input, got -1e-300
+sqrt 1e-20 1e-10
+sqrt 9.9e-21 9.9498743710662e-11
+sqrt -1e-20 ValueError: expected a nonnegative input, got -1e-20
+sqrt 1e-16 1e-08
+sqrt 1e-08 0.0001
+sqrt 1e-05 0.0031622776601683794
+sqrt 0.9999999999999999 0.9999999999999999
+sqrt 1.0000000000000002 1.0
+sqrt -0.9999999999999999 ValueError: expected a nonnegative input, got -0.9999999999999999
+sqrt -1.0000000000000002 ValueError: expected a nonnegative input, got -1.0000000000000002
+sqrt 3.141592653589793 1.7724538509055159
+sqrt -3.141592653589793 ValueError: expected a nonnegative input, got -3.141592653589793
+sqrt 1.5707963267948966 1.2533141373155001
+sqrt 0.7853981633974483 0.8862269254527579
+sqrt 2.718281828459045 1.6487212707001282
+sqrt 6.283185307179586 2.5066282746310002
+sqrt 10.0 3.1622776601683795
+sqrt 100.0 10.0
+sqrt 1000.0 31.622776601683793
+sqrt 100000.0 316.22776601683796
+sqrt 10000000000.0 100000.0
+sqrt 1000000000000000.0 31622776.60168379
+sqrt 1e+16 100000000.0
+sqrt 1e+17 316227766.01683795
+sqrt 1e+22 100000000000.0
+sqrt 1e+100 1e+50
+sqrt 1e+300 1e+150
+sqrt -1e+300 ValueError: expected a nonnegative input, got -1e+300
+sqrt 1.7976931348623157e+308 1.3407807929942596e+154
+sqrt -1.7976931348623157e+308 ValueError: expected a nonnegative input, got -1.7976931348623157e+308
+sqrt inf inf
+sqrt -inf ValueError: expected a nonnegative input, got -inf
+sqrt nan nan
+sqrt 709.0 26.627053911388696
+sqrt 709.782712893384 26.641747557046326
+sqrt 709.7827128933841 26.64174755704633
+sqrt 710.0 26.645825188948457
+sqrt -708.0 ValueError: expected a nonnegative input, got -708.0
+sqrt -745.0 ValueError: expected a nonnegative input, got -745.0
+sqrt -745.1332191019411 ValueError: expected a nonnegative input, got -745.1332191019411
+sqrt -745.1332191019412 ValueError: expected a nonnegative input, got -745.1332191019412
+sqrt -746.0 ValueError: expected a nonnegative input, got -746.0
+sqrt 1023.0 31.984371183438952
+sqrt 1024.0 32.0
+sqrt 1023.9999999999999 31.999999999999996
+sqrt -1074.0 ValueError: expected a nonnegative input, got -1074.0
+sqrt -1075.0 ValueError: expected a nonnegative input, got -1075.0
+sqrt -1076.0 ValueError: expected a nonnegative input, got -1076.0
+sqrt 88.0 9.38083151964686
+sqrt 36.0 6.0
+sqrt 37.0 6.082762530298219
+sqrt 19.0 4.358898943540674
+sqrt 22.0 4.69041575982343
+sqrt 26.0 5.0990195135927845
+sqrt 27.0 5.196152422706632
+sqrt 6.0 2.449489742783178
+sqrt -6.0 ValueError: expected a nonnegative input, got -6.0
+sqrt 4503599627370496.0 67108864.0
+sqrt 4503599627370497.0 67108864.0
+sqrt 9007199254740992.0 94906265.62425156
+sqrt 9007199254740992.0 94906265.62425156
+sqrt -9007199254740992.0 ValueError: expected a nonnegative input, got -9007199254740992.0
+sqrt 4503599627370495.5 67108863.99999999
+sqrt 170.0 13.038404810405298
+sqrt 171.0 13.076696830622021
+sqrt 171.6 13.099618315050252
+sqrt 171.7 13.103434664239753
+sqrt 172.0 13.114877048604
+sqrt 23.0 4.795831523312719
+sqrt 24.0 4.898979485566356
+sqrt 143.0 11.958260743101398
+sqrt 140.0 11.832159566199232
+sqrt 139.5 11.811011811017716
+sqrt 140.5 11.853269591129697
+sqrt 199.5 14.124446891825535
+sqrt 200.5 14.159802258506296
+sqrt -170.5 ValueError: expected a nonnegative input, got -170.5
+sqrt -171.5 ValueError: expected a nonnegative input, got -171.5
+sqrt -180.5 ValueError: expected a nonnegative input, got -180.5
+sqrt -199.5 ValueError: expected a nonnegative input, got -199.5
+sqrt -200.5 ValueError: expected a nonnegative input, got -200.5
+sqrt -1000.5 ValueError: expected a nonnegative input, got -1000.5
+sqrt 8.0 2.8284271247461903
+sqrt 27.0 5.196152422706632
+sqrt -27.0 ValueError: expected a nonnegative input, got -27.0
+sqrt 64.0 8.0
+sqrt 1e-09 3.1622776601683795e-05
+sqrt 123456789.0 11111.111060555555
+sqrt 0.3 0.5477225575051661
+sqrt 0.7 0.8366600265340756
+sqrt 4.0 2.0
+sqrt 16.0 4.0
+sqrt 1e-154 1e-77
+sqrt 1e+154 1e+77
+sqrt 1.3407807929942596e+154 1.1579208923731618e+77
+tan 0.0 0.0
+tan -0.0 -0.0
+tan 1.0 1.5574077246549023
+tan -1.0 -1.5574077246549023
+tan 0.5 0.5463024898437905
+tan -0.5 -0.5463024898437905
+tan 2.0 -2.185039863261519
+tan -2.0 2.185039863261519
+tan 3.0 -0.1425465430742778
+tan -3.0 0.1425465430742778
+tan 0.1 0.10033467208545055
+tan -0.1 -0.10033467208545055
+tan 0.25 0.25534192122103627
+tan 0.75 0.9315964599440725
+tan 1.5 14.101419947171719
+tan -1.5 -14.101419947171719
+tan 2.5 -0.7470222972386603
+tan -2.5 0.7470222972386603
+tan 3.5 0.3745856401585947
+tan -3.5 -0.3745856401585947
+tan 5e-324 5e-324
+tan -5e-324 -5e-324
+tan 1e-323 1e-323
+tan 2.2250738585072014e-308 2.2250738585072014e-308
+tan 2.225073858507201e-308 2.225073858507201e-308
+tan -2.2250738585072014e-308 -2.2250738585072014e-308
+tan 1e-300 1e-300
+tan -1e-300 -1e-300
+tan 1e-20 1e-20
+tan 9.9e-21 9.9e-21
+tan -1e-20 -1e-20
+tan 1e-16 1e-16
+tan 1e-08 1e-08
+tan 1e-05 1.0000000000333334e-05
+tan 0.9999999999999999 1.5574077246549018
+tan 1.0000000000000002 1.557407724654903
+tan -0.9999999999999999 -1.5574077246549018
+tan -1.0000000000000002 -1.557407724654903
+tan 3.141592653589793 -1.2246467991473532e-16
+tan -3.141592653589793 1.2246467991473532e-16
+tan 1.5707963267948966 1.633123935319537e+16
+tan 0.7853981633974483 0.9999999999999999
+tan 2.718281828459045 -0.4505495340698077
+tan 6.283185307179586 -2.4492935982947064e-16
+tan 10.0 0.6483608274590866
+tan 100.0 -0.5872139151569291
+tan 1000.0 1.4703241557027185
+tan 100000.0 -0.035771662952898776
+tan 10000000000.0 -0.5583496378112418
+tan 1000000000000000.0 -1.672414782127583
+tan 1e+16 -1.2451734357184063
+tan 1e+17 0.5245624309025501
+tan 1e+22 -1.6287782256068988
+tan 1e+100 -0.4116229628832498
+tan 1e+300 1.4214488238747245
+tan -1e+300 -1.4214488238747245
+tan 1.7976931348623157e+308 -0.004962015874444895
+tan -1.7976931348623157e+308 0.004962015874444895
+tan inf ValueError: expected a finite input, got inf
+tan -inf ValueError: expected a finite input, got -inf
+tan nan nan
+tan 709.0 -1.5572012239442703
+tan 709.782712893384 -0.22070936184373624
+tan 709.7827128933841 -0.220709361843617
+tan 710.0 6.0288706801151796e-05
+tan -708.0 -2.185388040188555
+tan -745.0 -0.47388854606827807
+tan -745.1332191019411 -0.6491254843477148
+tan -745.1332191019412 -0.6491254843478763
+tan -746.0 -7.754154446113853
+tan 1023.0 -2.290822861412639
+tan 1024.0 -0.16056393283879805
+tan 1023.9999999999999 -0.16056393283891465
+tan -1074.0 0.45220672918658694
+tan -1075.0 -0.6484892835561947
+tan -1076.0 221.42625882931853
+tan 88.0 0.03542050133937693
+tan 36.0 7.750470905699148
+tan 37.0 -0.8407712554027597
+tan 19.0 0.15158947061240008
+tan 22.0 0.00885165604168446
+tan 26.0 1.1787535542062797
+tan 27.0 -3.273703800428119
+tan 6.0 -0.29100619138474915
+tan -6.0 0.29100619138474915
+tan 4503599627370496.0 -1.8005242480088435
+tan 4503599627370497.0 -0.06390823168443646
+tan 9007199254740992.0 1.6062574002155612
+tan 9007199254740992.0 1.6062574002155612
+tan -9007199254740992.0 -1.6062574002155612
+tan 4503599627370495.5 -143.36914241383198
+tan 170.0 0.369564386915556
+tan 171.0 4.540060192683886
+tan 171.6 -2.480599101953928
+tan 171.7 -1.9059038378880793
+tan 172.0 -1.0044052569786848
+tan 23.0 1.5881530833912738
+tan 24.0 -2.1348966977217008
+tan 143.0 -17.36176550181936
+tan 140.0 -4.955371057696783
+tan 139.5 3.22275899444769
+tan 140.5 -1.189347750963045
+tan 199.5 -112.78115692265764
+tan 200.5 -0.6296411746894133
+tan -170.5 -1.1475503421020976
+tan -171.5 3.436159961872258
+tan -180.5 -7.0160094622552505
+tan -199.5 112.78115692265764
+tan -200.5 0.6296411746894133
+tan -1000.5 -10.249260786837313
+tan 8.0 -6.799711455220379
+tan 27.0 -3.273703800428119
+tan -27.0 3.273703800428119
+tan 64.0 2.3478603091954366
+tan 1e-09 1e-09
+tan 123456789.0 7.059154426802703
+tan 0.3 0.30933624960962325
+tan 0.7 0.8422883804630794
+tan 4.0 1.1578212823495775
+tan 16.0 0.3006322420239034
+tan 1e-154 1e-154
+tan 1e+154 -0.2973080591771422
+tan 1.3407807929942596e+154 3.9844337234645275
+tanh 0.0 0.0
+tanh -0.0 -0.0
+tanh 1.0 0.7615941559557649
+tanh -1.0 -0.7615941559557649
+tanh 0.5 0.46211715726000974
+tanh -0.5 -0.46211715726000974
+tanh 2.0 0.9640275800758169
+tanh -2.0 -0.9640275800758169
+tanh 3.0 0.9950547536867305
+tanh -3.0 -0.9950547536867305
+tanh 0.1 0.09966799462495582
+tanh -0.1 -0.09966799462495582
+tanh 0.25 0.24491866240370913
+tanh 0.75 0.6351489523872873
+tanh 1.5 0.9051482536448664
+tanh -1.5 -0.9051482536448664
+tanh 2.5 0.9866142981514303
+tanh -2.5 -0.9866142981514303
+tanh 3.5 0.9981778976111987
+tanh -3.5 -0.9981778976111987
+tanh 5e-324 5e-324
+tanh -5e-324 -5e-324
+tanh 1e-323 1e-323
+tanh 2.2250738585072014e-308 2.2250738585072014e-308
+tanh 2.225073858507201e-308 2.225073858507201e-308
+tanh -2.2250738585072014e-308 -2.2250738585072014e-308
+tanh 1e-300 1e-300
+tanh -1e-300 -1e-300
+tanh 1e-20 1e-20
+tanh 9.9e-21 9.9e-21
+tanh -1e-20 -1e-20
+tanh 1e-16 1e-16
+tanh 1e-08 1e-08
+tanh 1e-05 9.999999999666668e-06
+tanh 0.9999999999999999 0.7615941559557649
+tanh 1.0000000000000002 0.761594155955765
+tanh -0.9999999999999999 -0.7615941559557649
+tanh -1.0000000000000002 -0.761594155955765
+tanh 3.141592653589793 0.99627207622075
+tanh -3.141592653589793 -0.99627207622075
+tanh 1.5707963267948966 0.9171523356672744
+tanh 0.7853981633974483 0.6557942026326724
+tanh 2.718281828459045 0.9913289158005998
+tanh 6.283185307179586 0.9999930253396107
+tanh 10.0 0.9999999958776927
+tanh 100.0 1.0
+tanh 1000.0 1.0
+tanh 100000.0 1.0
+tanh 10000000000.0 1.0
+tanh 1000000000000000.0 1.0
+tanh 1e+16 1.0
+tanh 1e+17 1.0
+tanh 1e+22 1.0
+tanh 1e+100 1.0
+tanh 1e+300 1.0
+tanh -1e+300 -1.0
+tanh 1.7976931348623157e+308 1.0
+tanh -1.7976931348623157e+308 -1.0
+tanh inf 1.0
+tanh -inf -1.0
+tanh nan nan
+tanh 709.0 1.0
+tanh 709.782712893384 1.0
+tanh 709.7827128933841 1.0
+tanh 710.0 1.0
+tanh -708.0 -1.0
+tanh -745.0 -1.0
+tanh -745.1332191019411 -1.0
+tanh -745.1332191019412 -1.0
+tanh -746.0 -1.0
+tanh 1023.0 1.0
+tanh 1024.0 1.0
+tanh 1023.9999999999999 1.0
+tanh -1074.0 -1.0
+tanh -1075.0 -1.0
+tanh -1076.0 -1.0
+tanh 88.0 1.0
+tanh 36.0 1.0
+tanh 37.0 1.0
+tanh 19.0 0.9999999999999999
+tanh 22.0 1.0
+tanh 26.0 1.0
+tanh 27.0 1.0
+tanh 6.0 0.9999877116507956
+tanh -6.0 -0.9999877116507956
+tanh 4503599627370496.0 1.0
+tanh 4503599627370497.0 1.0
+tanh 9007199254740992.0 1.0
+tanh 9007199254740992.0 1.0
+tanh -9007199254740992.0 -1.0
+tanh 4503599627370495.5 1.0
+tanh 170.0 1.0
+tanh 171.0 1.0
+tanh 171.6 1.0
+tanh 171.7 1.0
+tanh 172.0 1.0
+tanh 23.0 1.0
+tanh 24.0 1.0
+tanh 143.0 1.0
+tanh 140.0 1.0
+tanh 139.5 1.0
+tanh 140.5 1.0
+tanh 199.5 1.0
+tanh 200.5 1.0
+tanh -170.5 -1.0
+tanh -171.5 -1.0
+tanh -180.5 -1.0
+tanh -199.5 -1.0
+tanh -200.5 -1.0
+tanh -1000.5 -1.0
+tanh 8.0 0.9999997749296758
+tanh 27.0 1.0
+tanh -27.0 -1.0
+tanh 64.0 1.0
+tanh 1e-09 1e-09
+tanh 123456789.0 1.0
+tanh 0.3 0.2913126124515909
+tanh 0.7 0.6043677771171636
+tanh 4.0 0.999329299739067
+tanh 16.0 0.9999999999999747
+tanh 1e-154 1e-154
+tanh 1e+154 1.0
+tanh 1.3407807929942596e+154 1.0
+trunc 0.0 0
+trunc -0.0 0
+trunc 1.0 1
+trunc -1.0 -1
+trunc 0.5 0
+trunc -0.5 0
+trunc 2.0 2
+trunc -2.0 -2
+trunc 3.0 3
+trunc -3.0 -3
+trunc 0.1 0
+trunc -0.1 0
+trunc 0.25 0
+trunc 0.75 0
+trunc 1.5 1
+trunc -1.5 -1
+trunc 2.5 2
+trunc -2.5 -2
+trunc 3.5 3
+trunc -3.5 -3
+trunc 5e-324 0
+trunc -5e-324 0
+trunc 1e-323 0
+trunc 2.2250738585072014e-308 0
+trunc 2.225073858507201e-308 0
+trunc -2.2250738585072014e-308 0
+trunc 1e-300 0
+trunc -1e-300 0
+trunc 1e-20 0
+trunc 9.9e-21 0
+trunc -1e-20 0
+trunc 1e-16 0
+trunc 1e-08 0
+trunc 1e-05 0
+trunc 0.9999999999999999 0
+trunc 1.0000000000000002 1
+trunc -0.9999999999999999 0
+trunc -1.0000000000000002 -1
+trunc 3.141592653589793 3
+trunc -3.141592653589793 -3
+trunc 1.5707963267948966 1
+trunc 0.7853981633974483 0
+trunc 2.718281828459045 2
+trunc 6.283185307179586 6
+trunc 10.0 10
+trunc 100.0 100
+trunc 1000.0 1000
+trunc 100000.0 100000
+trunc 10000000000.0 10000000000
+trunc 1000000000000000.0 1000000000000000
+trunc 1e+16 10000000000000000
+trunc 1e+17 100000000000000000
+trunc 1e+22 10000000000000000000000
+trunc 1e+100 10000000000000000159028911097599180468360808563945281389781327557747838772170381060813469985856815104
+trunc 1e+300 1000000000000000052504760255204420248704468581108159154915854115511802457988908195786371375080447864043704443832883878176942523235360430575644792184786706982848387200926575803737830233794788090059368953234970799945081119038967640880074652742780142494579258788820056842838115669472196386865459400540160
+trunc -1e+300 -1000000000000000052504760255204420248704468581108159154915854115511802457988908195786371375080447864043704443832883878176942523235360430575644792184786706982848387200926575803737830233794788090059368953234970799945081119038967640880074652742780142494579258788820056842838115669472196386865459400540160
+trunc 1.7976931348623157e+308 179769313486231570814527423731704356798070567525844996598917476803157260780028538760589558632766878171540458953514382464234321326889464182768467546703537516986049910576551282076245490090389328944075868508455133942304583236903222948165808559332123348274797826204144723168738177180919299881250404026184124858368
+trunc -1.7976931348623157e+308 -179769313486231570814527423731704356798070567525844996598917476803157260780028538760589558632766878171540458953514382464234321326889464182768467546703537516986049910576551282076245490090389328944075868508455133942304583236903222948165808559332123348274797826204144723168738177180919299881250404026184124858368
+trunc inf OverflowError: cannot convert float infinity to integer
+trunc -inf OverflowError: cannot convert float infinity to integer
+trunc nan ValueError: cannot convert float NaN to integer
+trunc 709.0 709
+trunc 709.782712893384 709
+trunc 709.7827128933841 709
+trunc 710.0 710
+trunc -708.0 -708
+trunc -745.0 -745
+trunc -745.1332191019411 -745
+trunc -745.1332191019412 -745
+trunc -746.0 -746
+trunc 1023.0 1023
+trunc 1024.0 1024
+trunc 1023.9999999999999 1023
+trunc -1074.0 -1074
+trunc -1075.0 -1075
+trunc -1076.0 -1076
+trunc 88.0 88
+trunc 36.0 36
+trunc 37.0 37
+trunc 19.0 19
+trunc 22.0 22
+trunc 26.0 26
+trunc 27.0 27
+trunc 6.0 6
+trunc -6.0 -6
+trunc 4503599627370496.0 4503599627370496
+trunc 4503599627370497.0 4503599627370497
+trunc 9007199254740992.0 9007199254740992
+trunc 9007199254740992.0 9007199254740992
+trunc -9007199254740992.0 -9007199254740992
+trunc 4503599627370495.5 4503599627370495
+trunc 170.0 170
+trunc 171.0 171
+trunc 171.6 171
+trunc 171.7 171
+trunc 172.0 172
+trunc 23.0 23
+trunc 24.0 24
+trunc 143.0 143
+trunc 140.0 140
+trunc 139.5 139
+trunc 140.5 140
+trunc 199.5 199
+trunc 200.5 200
+trunc -170.5 -170
+trunc -171.5 -171
+trunc -180.5 -180
+trunc -199.5 -199
+trunc -200.5 -200
+trunc -1000.5 -1000
+trunc 8.0 8
+trunc 27.0 27
+trunc -27.0 -27
+trunc 64.0 64
+trunc 1e-09 0
+trunc 123456789.0 123456789
+trunc 0.3 0
+trunc 0.7 0
+trunc 4.0 4
+trunc 16.0 16
+trunc 1e-154 0
+trunc 1e+154 10000000000000000369475456880582265409809179829842688451922778552150543659347219597216513109705408327446511753687232667314337003349573404171046192448274432
+trunc 1.3407807929942596e+154 13407807929942595611008317640802934282464207265959107021466054756094376573581619054852612241927956455650759996398703782412109633178814162067569513603268608
+ulp 0.0 5e-324
+ulp -0.0 5e-324
+ulp 1.0 2.220446049250313e-16
+ulp -1.0 2.220446049250313e-16
+ulp 0.5 1.1102230246251565e-16
+ulp -0.5 1.1102230246251565e-16
+ulp 2.0 4.440892098500626e-16
+ulp -2.0 4.440892098500626e-16
+ulp 3.0 4.440892098500626e-16
+ulp -3.0 4.440892098500626e-16
+ulp 0.1 1.3877787807814457e-17
+ulp -0.1 1.3877787807814457e-17
+ulp 0.25 5.551115123125783e-17
+ulp 0.75 1.1102230246251565e-16
+ulp 1.5 2.220446049250313e-16
+ulp -1.5 2.220446049250313e-16
+ulp 2.5 4.440892098500626e-16
+ulp -2.5 4.440892098500626e-16
+ulp 3.5 4.440892098500626e-16
+ulp -3.5 4.440892098500626e-16
+ulp 5e-324 5e-324
+ulp -5e-324 5e-324
+ulp 1e-323 5e-324
+ulp 2.2250738585072014e-308 5e-324
+ulp 2.225073858507201e-308 5e-324
+ulp -2.2250738585072014e-308 5e-324
+ulp 1e-300 1.6578092e-316
+ulp -1e-300 1.6578092e-316
+ulp 1e-20 1.504632769052528e-36
+ulp 9.9e-21 1.504632769052528e-36
+ulp -1e-20 1.504632769052528e-36
+ulp 1e-16 1.232595164407831e-32
+ulp 1e-08 1.6543612251060553e-24
+ulp 1e-05 1.6940658945086007e-21
+ulp 0.9999999999999999 1.1102230246251565e-16
+ulp 1.0000000000000002 2.220446049250313e-16
+ulp -0.9999999999999999 1.1102230246251565e-16
+ulp -1.0000000000000002 2.220446049250313e-16
+ulp 3.141592653589793 4.440892098500626e-16
+ulp -3.141592653589793 4.440892098500626e-16
+ulp 1.5707963267948966 2.220446049250313e-16
+ulp 0.7853981633974483 1.1102230246251565e-16
+ulp 2.718281828459045 4.440892098500626e-16
+ulp 6.283185307179586 8.881784197001252e-16
+ulp 10.0 1.7763568394002505e-15
+ulp 100.0 1.4210854715202004e-14
+ulp 1000.0 1.1368683772161603e-13
+ulp 100000.0 1.4551915228366852e-11
+ulp 10000000000.0 1.9073486328125e-06
+ulp 1000000000000000.0 0.125
+ulp 1e+16 2.0
+ulp 1e+17 16.0
+ulp 1e+22 2097152.0
+ulp 1e+100 1.942668892225729e+84
+ulp 1e+300 1.487016908477783e+284
+ulp -1e+300 1.487016908477783e+284
+ulp 1.7976931348623157e+308 1.99584030953472e+292
+ulp -1.7976931348623157e+308 1.99584030953472e+292
+ulp inf inf
+ulp -inf inf
+ulp nan nan
+ulp 709.0 1.1368683772161603e-13
+ulp 709.782712893384 1.1368683772161603e-13
+ulp 709.7827128933841 1.1368683772161603e-13
+ulp 710.0 1.1368683772161603e-13
+ulp -708.0 1.1368683772161603e-13
+ulp -745.0 1.1368683772161603e-13
+ulp -745.1332191019411 1.1368683772161603e-13
+ulp -745.1332191019412 1.1368683772161603e-13
+ulp -746.0 1.1368683772161603e-13
+ulp 1023.0 1.1368683772161603e-13
+ulp 1024.0 2.2737367544323206e-13
+ulp 1023.9999999999999 1.1368683772161603e-13
+ulp -1074.0 2.2737367544323206e-13
+ulp -1075.0 2.2737367544323206e-13
+ulp -1076.0 2.2737367544323206e-13
+ulp 88.0 1.4210854715202004e-14
+ulp 36.0 7.105427357601002e-15
+ulp 37.0 7.105427357601002e-15
+ulp 19.0 3.552713678800501e-15
+ulp 22.0 3.552713678800501e-15
+ulp 26.0 3.552713678800501e-15
+ulp 27.0 3.552713678800501e-15
+ulp 6.0 8.881784197001252e-16
+ulp -6.0 8.881784197001252e-16
+ulp 4503599627370496.0 1.0
+ulp 4503599627370497.0 1.0
+ulp 9007199254740992.0 2.0
+ulp 9007199254740992.0 2.0
+ulp -9007199254740992.0 2.0
+ulp 4503599627370495.5 0.5
+ulp 170.0 2.842170943040401e-14
+ulp 171.0 2.842170943040401e-14
+ulp 171.6 2.842170943040401e-14
+ulp 171.7 2.842170943040401e-14
+ulp 172.0 2.842170943040401e-14
+ulp 23.0 3.552713678800501e-15
+ulp 24.0 3.552713678800501e-15
+ulp 143.0 2.842170943040401e-14
+ulp 140.0 2.842170943040401e-14
+ulp 139.5 2.842170943040401e-14
+ulp 140.5 2.842170943040401e-14
+ulp 199.5 2.842170943040401e-14
+ulp 200.5 2.842170943040401e-14
+ulp -170.5 2.842170943040401e-14
+ulp -171.5 2.842170943040401e-14
+ulp -180.5 2.842170943040401e-14
+ulp -199.5 2.842170943040401e-14
+ulp -200.5 2.842170943040401e-14
+ulp -1000.5 1.1368683772161603e-13
+ulp 8.0 1.7763568394002505e-15
+ulp 27.0 3.552713678800501e-15
+ulp -27.0 3.552713678800501e-15
+ulp 64.0 1.4210854715202004e-14
+ulp 1e-09 2.0679515313825692e-25
+ulp 123456789.0 1.4901161193847656e-08
+ulp 0.3 5.551115123125783e-17
+ulp 0.7 1.1102230246251565e-16
+ulp 4.0 8.881784197001252e-16
+ulp 16.0 3.552713678800501e-15
+ulp 1e-154 1.656084321055619e-170
+ulp 1e+154 1.488565707357403e+138
+ulp 1.3407807929942596e+154 1.488565707357403e+138

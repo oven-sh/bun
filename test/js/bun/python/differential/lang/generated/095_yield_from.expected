@@ -1,0 +1,93 @@
+status: 0
+script: ff5a54318c1d89a5
+source: 2616b3e976af43ee
+---
+got inner result; [1, 2, 3]
+next(g) => 1
+next(g) => 2
+got inner result; next(g) => 3
+outer result
+[1, 2, 3, 4, 'a', 'b', 0, 1, 5, 7, 8, 0, 2, 1, '9', ('a', 'b'), (0, 'z'), 10, ('result of a plain iterable', None)]
+list(bad(5)) => TypeError: 'int' object is not iterable
+list(bad(None)) => TypeError: 'NoneType' object is not iterable
+list(bad(len)) => TypeError: 'builtin_function_or_method' object is not iterable
+list(bad(object())) => TypeError: 'object' object is not iterable
+list(bad(1.5)) => TypeError: 'float' object is not iterable
+list(bad(int)) => TypeError: 'type' object is not iterable
+next(d) => 0
+d.send("a") => 1
+d.send("b") => 2
+d.throw(ValueError("x")) => 3
+d.send("c") => 4
+d.send("stop") => ('sub returned', ['a', 'b', 'thrown x', 'c'])
+sub closed with ['a']; None
+d.throw(KeyError("not handled by sub")) => KeyError: 'not handled by sub'
+next(d) => StopIteration: 
+('outer caught', "KeyError('k')")
+None
+type(y.gi_yieldfrom).__name__ => generator
+y.gi_yieldfrom.__name__ => inner
+None
+tuple
+next(g) => 1
+g.send(None) => 2
+g.send(5) => AttributeError: 'tuple' object has no attribute 'send'
+next(g) => StopIteration: 
+g.throw(ValueError("to a list iterator")) => ValueError: to a list iterator
+next(g) => StopIteration: 
+None
+[1, 2, 'iterator result']
+next(g) => 1
+g.send(1) => ('send', 1)
+g.throw(ValueError) => ('throw', 'ValueError', 1)
+g.throw(KeyError("k")) => ('throw', "KeyError('k')", 1)
+g.send(None) => 2
+Full.close; g.close() => None
+g.close() => RuntimeError: close failed
+('resumed with', 'from throw')
+g.throw(ValueError("v")) => ValueError: v
+g.throw(GeneratorExit) => sub closed with []; GeneratorExit: 
+bottom
+['sent', 1, 2, 3, 4] 51
+[1, 2, '3', 4, 5, 6, 7]
+[1, 2, 3, 4, 5, 6, 7]
+[1, 2, 3, 4]
+[4]
+[1, 'caught in sub', 'continues']
+list(outer_finally()) => outer finally; ValueError: in sub
+list(outer_stop()) => RuntimeError: generator raised StopIteration
+[1, 2, ('inner result', None)]
+next(me) => ValueError: generator already executing
+next(a_ref) => 1
+next(a_ref) => 2
+next(a_ref) => ValueError: generator already executing
+1; [1, 2, 1, 2] (['inner result', 'inner result'], {'k': 1}, 1, '1')
+[1, 2]
+SyntaxError: 'yield from' outside function <- yield from x
+SyntaxError: invalid syntax <- def f(): yield from
+ok: def f(): x = yield from y
+SyntaxError: assignment to yield expression not possible <- def f(): yield from x = 1
+ok: def f(): yield from (yield)
+SyntaxError: invalid syntax <- def f(): yield from yield x
+SyntaxError: invalid syntax <- def f(): yield from x for x in y
+ok: def f(): yield from (x for x in y)
+ok: def f(): yield from [x for x in y]
+SyntaxError: invalid syntax <- def f(): return yield from x
+ok: def f(): return (yield from x)
+SyntaxError: invalid syntax <- def f(): f(yield from x)
+ok: def f(): f((yield from x))
+SyntaxError: 'yield from' inside async function <- async def f(): yield from x
+SyntaxError: 'yield from' outside function <- class C: yield from x
+SyntaxError: 'yield' inside list comprehension <- def f(): [(yield from x) for y in z]
+SyntaxError: invalid syntax <- def f(): yield from x, 
+ok: def f(): yield from lambda: 1
+ok: def f(): yield from not x
+ok: def f(): yield from x if y else z
+ok: def f(): yield  from  x
+ok: def f(): yield\\nfrom x
+SyntaxError: invalid syntax <- def f(): yieldfrom x
+SyntaxError: 'await' outside async function <- def f(): await (yield from x)
+ok: def f(): yield from x; yield from y
+ok: def f(): yield from(x)
+SyntaxError: invalid syntax <- def f(): yield from x := y
+ok: def f(): yield from (x := y)

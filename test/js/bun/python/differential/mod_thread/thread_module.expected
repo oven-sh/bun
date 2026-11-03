@@ -1,0 +1,144 @@
+status: 0
+script: e746c9aae28746e1
+---
+['LockType', 'RLock', 'TIMEOUT_MAX', '_ExceptHookArgs', '_NAME_MAXLEN', '_ThreadHandle', '_count', '_excepthook', '_get_main_thread_ident', '_get_name', '_is_main_interpreter', '_local', '_make_thread_handle', '_shutdown', 'allocate', 'allocate_lock', 'daemon_threads_allowed', 'error', 'exit', 'exit_thread', 'get_ident', 'get_native_id', 'interrupt_main', 'lock', 'set_name', 'stack_size', 'start_joinable_thread', 'start_new', 'start_new_thread']
+True True 9223372036.0 15
+True True <class 'int'> <class 'int'> True
+<class '_thread.lock'> (<class '_thread.lock'>, <class 'object'>) lock _thread lock
+['_at_fork_reinit', 'acquire', 'acquire_lock', 'locked', 'locked_lock', 'release', 'release_lock']
+'<unlocked _thread.lock object at 0x>'
+False True True
+'<locked _thread.lock object at 0x>'
+False False False False False False
+None False
+RuntimeError: release unlocked lock
+ValueError: can't specify a timeout for a non-blocking call
+ValueError: can't specify a timeout for a non-blocking call
+ValueError: timeout value must be a non-negative number
+ValueError: timeout value must be a non-negative number
+OverflowError: timestamp out of range for C PyTime_t
+OverflowError: timestamp out of range for C PyTime_t
+TypeError: acquire() takes at most 2 arguments (3 given)
+TypeError: must be real number, not str
+TypeError: must be real number, not str
+TypeError: acquire() got an unexpected keyword argument 'nope'
+TypeError: must be real number, not NoneType
+ValueError: Invalid value NaN (not a number)
+True True
+False
+in with False
+True True None False
+None False
+TypeError: __exit__ expected 3 arguments, got 0
+True
+None
+TypeError: __exit__ expected 3 arguments, got 1
+<unlocked _thread.lock object at 0x>
+TypeError: lock() takes no positional arguments
+<unlocked _thread.lock object at 0x>
+TypeError: type '_thread.lock' is not an acceptable base type
+AttributeError: '_thread.lock' object has no attribute 'x' and no __dict__ for setting new attributes
+True
+True True
+<class '_thread.RLock'> (<class '_thread.RLock'>, <class 'object'>) ['_acquire_restore', '_at_fork_reinit', '_is_owned', '_recursion_count', '_release_save', 'acquire', 'locked', 'release']
+'<unlocked _thread.RLock object owner=0 count=0 at 0x>'
+True True True True 4 True True
+<locked _thread.RLock object owner=N count=4 at 0x>
+None None None 1 None 0 False False
+RuntimeError: cannot release un-acquired lock
+ValueError: can't specify a timeout for a non-blocking call
+ValueError: timeout value must be a non-negative number
+OverflowError: timestamp out of range for C PyTime_t
+TypeError: acquire() takes at most 2 arguments (3 given)
+True 1
+2
+<class 'tuple'> 2 2 True False 0
+None 2
+0
+RuntimeError: cannot release un-acquired lock
+TypeError: _acquire_restore() argument must be 2-item tuple, not int
+TypeError: _acquire_restore() argument must be tuple of length 2, not 1
+TypeError: _acquire_restore() argument must be tuple of length 2, not 3
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: RLock._acquire_restore() takes exactly one argument (0 given)
+None False 0
+MyR True 1
+TypeError: RLock() takes no positional arguments
+TypeError: RLock() takes no keyword arguments
+True
+AttributeError: '_thread.RLock' object has no attribute 'x' and no __dict__ for setting new attributes
+<class '_thread._local'> (<class '_thread._local'>, <class 'object'>)
+1 [2] {'a': 1, 'b': [2]} ['a', 'b']
+AttributeError: '_thread._local' object has no attribute 'a'
+AttributeError: '_thread._local' object has no attribute 'a'
+TypeError: Initialization arguments are not supported
+TypeError: Initialization arguments are not supported
+init 5 {'k': 1}
+5 {'k': 1} class attribute {'v': 5, 'kw': {'k': 1}}
+1 2 {'d': 2}
+AttributeError: '_thread._local' object attribute '__dict__' is read-only
+AttributeError: '_thread._local' object attribute '__dict__' is read-only
+True
+dict
+<class '_thread._ThreadHandle'> ['_set_done', 'ident', 'is_done', 'join']
+'<_thread._ThreadHandle object: ident=0>'
+0 False
+RuntimeError: thread not started
+RuntimeError: thread not started
+RuntimeError: thread not started
+RuntimeError: thread not started
+TypeError: must be real number, not str
+TypeError: join() takes at most 1 argument (2 given)
+AttributeError: attribute 'ident' of '_thread._ThreadHandle' objects is not writable
+<_thread._ThreadHandle object: ident=0>
+True False
+RuntimeError: Cannot join current thread
+RuntimeError: Cannot join current thread
+None True None None None True
+TypeError: _thread._make_thread_handle() takes exactly one argument (0 given)
+TypeError: ident must be an integer
+OverflowError: can't convert negative int to unsigned
+TypeError: ident must be an integer
+OverflowError: int too big to convert
+12345 False
+'<_thread._ThreadHandle object: ident=12345>'
+TypeError: type '_thread._ThreadHandle' is not an acceptable base type
+0 0 0 True True None
+ValueError: size must be at least 53248 bytes
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: stack_size() takes at most 1 argument (2 given)
+ValueError: size must be at least 53248 bytes
+0 1048576 0 0
+SystemExit: 
+SystemExit: 
+TypeError: _thread.exit() takes no arguments (1 given)
+TypeError: _thread.get_ident() takes no arguments (1 given)
+TypeError: _thread._count() takes no arguments (1 given)
+TypeError: start_new_thread expected at least 2 arguments, got 0
+TypeError: start_new_thread expected at least 2 arguments, got 1
+TypeError: first arg must be callable
+TypeError: 2nd arg must be a tuple
+TypeError: optional 3rd arg must be a dictionary
+TypeError: start_new_thread expected at most 3 arguments, got 4
+TypeError: start_joinable_thread() missing required argument 'function' (pos 1)
+TypeError: thread function must be callable
+TypeError: thread function must be callable
+TypeError: 'handle' must be a _ThreadHandle
+TypeError: start_joinable_thread() got an unexpected keyword argument 'nope'
+ValueError: signal number out of range
+ValueError: signal number out of range
+ValueError: signal number out of range
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: set_name() missing required argument 'name' (pos 1)
+TypeError: set_name() argument 'name' must be str, not int
+TypeError: set_name() argument 'name' must be str, not bytes
+<class 'str'>
+None worker None a-very-long-thr None é€
+<class '_thread._ExceptHookArgs'> ('exc_type', 'exc_value', 'exc_traceback', 'thread') 4 4 _thread _ExceptHookArgs
+<class 'ValueError'> ValueError('boom') None None 4
+TypeError: _thread._ExceptHookArgs() takes a 4-sequence (2-sequence given)
+TypeError: structseq() missing required argument 'sequence' (pos 1)
+TypeError: _thread.excepthook argument type must be ExceptHookArgs
+TypeError: _thread.excepthook argument type must be ExceptHookArgs
+TypeError: _thread._excepthook() takes exactly one argument (0 given)
+None

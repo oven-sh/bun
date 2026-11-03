@@ -1,0 +1,14 @@
+status: 0
+script: 180b3ca8dc8674f1
+---
+{'x': 'List[int]', 'y': "'quoted'"}
+{'a': 'Dict[str, int]', 'b': "'B'", 'c': '1 + 2', 'd': 'lambda q: q', 'return': "Optional['T']"}
+{'z': 'Tuple[int, ...]', 'w': 'a.b.c[d:e, ::2]'}
+True True True
+{'v': 'Foo[bar]'} True
+SyntaxError 'await' outside function
+True
+0 AssertionError no
+1 False doc fdoc
+2 False None None
+True

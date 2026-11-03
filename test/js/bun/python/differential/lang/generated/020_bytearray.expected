@@ -1,0 +1,234 @@
+status: 0
+script: 642a3b4e95211f7d
+source: 031579a7a09c0871
+---
+a => bytearray(b'hello')
+len(a) => 5
+a[0] => 104
+a[-1] => 111
+a[1:3] => bytearray(b'el')
+type(a[1:3]) => <class 'bytearray'>
+a[::-1] => bytearray(b'olleh')
+list(a) => [104, 101, 108, 108, 111]
+str(a) => bytearray(b'hello')
+repr(bytearray()) => bytearray(b'')
+repr(bytearray(b"'\"\\\n\x00\xff")) => bytearray(b'\'"\\\n\x00\xff')
+bytearray() => bytearray(b'')
+bytearray(3) => bytearray(b'\x00\x00\x00')
+bytearray([1, 2]) => bytearray(b'\x01\x02')
+bytearray(b"ab") => bytearray(b'ab')
+bytearray("é", "utf-8") => bytearray(b'\xc3\xa9')
+bytearray(range(3)) => bytearray(b'\x00\x01\x02')
+bytearray(bytearray(b"x")) => bytearray(b'x')
+bytearray(iter([65])) => bytearray(b'A')
+bytearray("a", encoding="ascii") => bytearray(b'a')
+bytearray("a") => TypeError: string argument without an encoding
+bytearray(-1) => ValueError: negative count
+bytearray([256]) => ValueError: byte must be in range(0, 256)
+bytearray(["a"]) => TypeError: 'str' object cannot be interpreted as an integer
+bytearray(1.5) => TypeError: cannot convert 'float' object to bytearray
+bytearray(None) => TypeError: cannot convert 'NoneType' object to bytearray
+bytearray(b"a", "utf-8") => TypeError: encoding without a string argument
+bytearray(b'Hello')
+bytearray(b'HellO')
+bytearray(b'HELlO')
+bytearray(b'HxyzlO')
+bytearray(b'HlO')
+bytearray(b'H123lO')
+bytearray(b'A1B3CO')
+bytearray(b'hello')
+bytearray(b'hABlo')
+bytearray(b'hABlo!!')
+bytearray(b'hABlo!!z')
+bytearray(b'h\x00\x01\x02Blo!!z')
+ValueError: byte must be in range(0, 256)
+ValueError: byte must be in range(0, 256)
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'bytes' object cannot be interpreted as an integer
+IndexError: bytearray index out of range
+IndexError: bytearray index out of range
+ValueError: attempt to assign bytes of size 2 to extended slice of size 3
+TypeError: can assign only bytes, buffers, or iterables of ints in range(0, 256)
+TypeError: can assign only bytes, buffers, or iterables of ints in range(0, 256)
+ValueError: byte must be in range(0, 256)
+TypeError: bytearray indices must be integers or slices, not str
+TypeError: 'float' object cannot be interpreted as an integer
+IndexError: bytearray index out of range
+TypeError: bytearray indices must be integers or slices, not str
+TypeError: cannot convert 'NoneType' object to bytearray
+ValueError: slice step cannot be zero
+bytearray(b'ello world')
+bytearray(b'ello worl')
+bytearray(b'eo worl')
+bytearray(b'owr')
+bytearray(b'')
+bytearray(b'abc')
+bytearray(b'abcde')
+bytearray(b'abcdefg')
+bytearray(b'abcdefghi')
+bytearray(b'abcdefghij')
+bytearray(b'abcdefghijabcdefghij')
+bytearray(b'Aabcdefghijabcdefghij')
+bytearray(b'AabcdefghijabcdefghijZ')
+bytearray(b'AabcdefghijabcdefghijYZ')
+bytearray(b'@AabcdefghijabcdefghijYZ')
+a.pop() => 90
+a.pop(0) => 64
+a.pop(-1) => 89
+a.pop(1) => 97
+a => bytearray(b'Abcdefghijabcdefghij')
+bytearray(b'Abdefghijabcdefghij')
+bytearray(b'jihgfedcbajihgfedbA')
+a == c => False
+len(a) => 19
+len(c) => 20
+type(c) => <class 'bytearray'>
+a => bytearray(b'')
+len(a) => 0
+bytearray().pop() => IndexError: pop from empty bytearray
+bytearray(b"a").pop(5) => IndexError: pop index out of range
+bytearray(b"a").remove(98) => ValueError: value not found in bytearray
+bytearray(b"a").remove(256) => ValueError: byte must be in range(0, 256)
+bytearray(b"a").remove("a") => TypeError: 'str' object cannot be interpreted as an integer
+bytearray(b"a").append(256) => ValueError: byte must be in range(0, 256)
+bytearray(b"a").append("a") => TypeError: 'str' object cannot be interpreted as an integer
+bytearray(b"a").append(b"a") => TypeError: 'bytes' object cannot be interpreted as an integer
+bytearray(b"a").extend("a") => TypeError: expected iterable of integers; got: 'str'
+bytearray(b"a").extend([256]) => ValueError: byte must be in range(0, 256)
+bytearray(b"a").extend(1) => TypeError: can't extend bytearray with int
+bytearray(b"a").extend(["a"]) => TypeError: 'str' object cannot be interpreted as an integer
+bytearray(b"a").insert(0, 256) => ValueError: byte must be in range(0, 256)
+bytearray(b"a").insert("a", 1) => TypeError: 'str' object cannot be interpreted as an integer
+bytearray(b"a").insert(0) => TypeError: insert expected 2 arguments, got 1
+a => bytearray(b'abcd')
+b => bytearray(b'abcd')
+a is b => True
+a => bytearray(b'abcdabcd')
+b => bytearray(b'abcdabcd')
+a is b => True
+bytearray(b'abcdabcd!')
+a => bytearray(b'')
+b => bytearray(b'')
+iadd_bad() => TypeError: can't concat str to bytearray
+iadd_bad2() => TypeError: can't concat list to bytearray
+imul_bad() => TypeError: can't multiply sequence by non-int of type 'str'
+a + b"!" => bytearray(b'Hello World!')
+b"!" + a => b'!Hello World'
+type(a + b"!") => <class 'bytearray'>
+type(b"!" + a) => <class 'bytes'>
+a * 2 => bytearray(b'Hello WorldHello World')
+2 * a => bytearray(b'Hello WorldHello World')
+a == b"Hello World" => True
+a != b"x" => True
+a < b"I" => True
+a == bytearray(a) => True
+a == "Hello World" => False
+72 in a => True
+b"World" in a => True
+bytearray(b"lo") in a => True
+hash(a) => TypeError: unhashable type: 'bytearray'
+{a: 1} => TypeError: cannot use 'bytearray' as a dict key (unhashable type: 'bytearray')
+a + "x" => TypeError: can't concat str to bytearray
+a < "x" => TypeError: '<' not supported between instances of 'bytearray' and 'str'
+a.upper() => bytearray(b'HELLO WORLD')
+a.lower() => bytearray(b'hello world')
+a.swapcase() => bytearray(b'hELLO wORLD')
+a.title() => bytearray(b'Hello World')
+a.capitalize() => bytearray(b'Hello world')
+type(a.upper()) => <class 'bytearray'>
+a.strip(b"Hd") => bytearray(b'ello Worl')
+a.split() => [bytearray(b'Hello'), bytearray(b'World')]
+a.split(b"o") => [bytearray(b'Hell'), bytearray(b' W'), bytearray(b'rld')]
+a.rsplit(None, 1) => [bytearray(b'Hello'), bytearray(b'World')]
+a.partition(b" ") => (bytearray(b'Hello'), bytearray(b' '), bytearray(b'World'))
+a.rpartition(b"o") => (bytearray(b'Hello W'), bytearray(b'o'), bytearray(b'rld'))
+a.replace(b"o", b"0") => bytearray(b'Hell0 W0rld')
+a.find(b"o") => 4
+a.rfind(b"o") => 7
+a.index(b"W") => 6
+a.count(b"l") => 3
+a.startswith(b"He") => True
+a.endswith(b"ld") => True
+a.center(15, b"*") => bytearray(b'**Hello World**')
+a.ljust(13, b".") => bytearray(b'Hello World..')
+a.rjust(13) => bytearray(b'  Hello World')
+a.zfill(13) => bytearray(b'00Hello World')
+a.expandtabs() => bytearray(b'Hello World')
+a.splitlines() => [bytearray(b'Hello World')]
+a.join([b"1", b"2"]) => bytearray(b'1Hello World2')
+a.hex() => 48656c6c6f20576f726c64
+a.decode() => Hello World
+a.isalpha() => False
+a.isascii() => True
+a.removeprefix(b"Hello ") => bytearray(b'World')
+a.removesuffix(b"World") => bytearray(b'Hello ')
+a.translate(None, b"lo") => bytearray(b'He Wrd')
+a.lstrip(b"H") => bytearray(b'ello World')
+a.rstrip(b"d") => bytearray(b'Hello Worl')
+type(a.split()[0]) => <class 'bytearray'>
+type(a.partition(b" ")[0]) => <class 'bytearray'>
+type(a.partition(b" ")[1]) => <class 'bytearray'>
+type(a.join([])) => <class 'bytearray'>
+type(a.replace(b"x", b"y")) => <class 'bytearray'>
+a.replace(b"x", b"y") is a => False
+a.upper() is a => False
+a[:] is a => False
+a.strip() is a => False
+type(a.splitlines()[0]) => <class 'bytearray'>
+type(a.copy()) => <class 'bytearray'>
+bytearray.fromhex("0102") => bytearray(b'\x01\x02')
+type(bytearray.fromhex("")) => <class 'bytearray'>
+bytearray.maketrans(b"a", b"b")[97] => 98
+bytes(a) => b'Hello World'
+bytearray(bytes(a)) == a => True
+list(reversed(a))[:2] => [100, 108]
+sorted(bytearray(b"cab")) => [97, 98, 99]
+type(iter(a)).__name__ => bytearray_iterator
+next(it) => 72
+next(it) => 101
+res => [97, 98, 99, 98, 99, 100]
+g => bytearray(b'abcbcd')
+bytearray(b'abc\x00\x00')
+bytearray(b'ab')
+bytearray(b'')
+bytearray(b"a").resize(-1) => ValueError: Can only resize to positive sizes, got -1
+len(big) => 1000
+big[:5] => bytearray(b'\x00\x01\x02\x03\x04')
+big[-3:] => bytearray(b'\xe5\xe6\xe7')
+sum(big) => 124716
+big.count(0) => 4
+big.find(b"\xff\x00") => 255
+len(big) => 200
+big[99:102] => bytearray(b'c\x84\x85')
+bytearray(b"abc").__len__() => 3
+bytearray(b"abc").__getitem__(0) => 97
+bytearray(b"abc").__contains__(97) => True
+bytearray(b"abc").__eq__(b"abc") => True
+bytearray(b"abc").__alloc__() >= 3 => True
+bytearray.__hash__ => None
+bytearray.__mro__ => (<class 'bytearray'>, <class 'object'>)
+sorted(set(dir(bytearray)) - set(dir(bytes))) => ['__alloc__', '__delitem__', '__iadd__', '__imul__', '__release_buffer__', '__setitem__', 'append', 'clear', 'copy', 'extend', 'insert', 'pop', 'remove', 'resize', 'reverse', 'take_bytes']
+x => BA(b'abcd')
+x.extra() => 4
+type(x) => <class '__main__.BA'>
+type(x[:2]) => <class 'bytearray'>
+type(x + b"a") => <class 'bytearray'>
+type(x.upper()) => <class 'bytearray'>
+type(x.copy()) => <class 'bytearray'>
+isinstance(x, bytearray) => True
+x == b"abcd" => True
+y => b'abc'
+type(y) => <class '__main__.BS'>
+type(y[:2]) => <class 'bytes'>
+type(y + b"a") => <class 'bytes'>
+type(y.upper()) => <class 'bytes'>
+y == b"abc" => True
+hash(y) == hash(b"abc") => True
+bytes(y) => b'abc'
+type(bytes(y)) => <class 'bytes'>
+len(y) => 3
+y[0] => 97
+{y: 1}[b"abc"] => 1
+BS("é", "utf-8") => b'\xc3\xa9'
+BS(3) => b'\x00\x00\x00'
+BS([1, 2]) => b'\x01\x02'

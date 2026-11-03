@@ -1,0 +1,84 @@
+status: 1
+stderr: zlib.error: Error -3 while decompressing data: incorrect header check
+script: af685bd25be6e542
+---
+<class 'zlib.Compress'> <class 'zlib.Decompress'> (<class 'zlib.Compress'>, <class 'object'>) (<class 'zlib.Decompress'>, <class 'object'>) zlib Compress
+['__copy__', '__deepcopy__', 'compress', 'copy', 'flush']
+['__copy__', '__deepcopy__', 'copy', 'decompress', 'eof', 'flush', 'unconsumed_tail', 'unused_data']
+TypeError: cannot create 'zlib.Compress' instances
+TypeError: cannot create 'zlib.Decompress' instances
+TypeError: cannot create 'zlib.Compress' instances
+TypeError: type 'zlib.Compress' is not an acceptable base type
+AttributeError: 'zlib.Compress' object has no attribute 'x' and no __dict__ for setting new attributes
+AttributeError: readonly attribute
+AttributeError: attribute 'unused_data' of 'zlib.Decompress' objects is not writable
+AttributeError: attribute 'unconsumed_tail' of 'zlib.Decompress' objects is not writable
+member_descriptor getset_descriptor method_descriptor
+False b'' b''
+1 True True
+  1 True True b'' b''
+  13 True True b'' b''
+  1000 True True b'' b''
+  1048576 True True b'' b''
+7 True True
+  1 True True b'' b''
+  13 True True b'' b''
+  1000 True True b'' b''
+  1048576 True True b'' b''
+100 True True
+  1 True True b'' b''
+  13 True True b'' b''
+  1000 True True b'' b''
+  1048576 True True b'' b''
+4096 True True
+  1 True True b'' b''
+  13 True True b'' b''
+  1000 True True b'' b''
+  1048576 True True b'' b''
+100000 True True
+  1 True True b'' b''
+  13 True True b'' b''
+  1000 True True b'' b''
+  1048576 True True b'' b''
+options done
+True
+ValueError: Invalid initialization option
+ValueError: Invalid initialization option
+ValueError: Invalid initialization option
+ValueError: Invalid initialization option
+ValueError: Invalid initialization option
+ValueError: Invalid initialization option
+ValueError: Invalid initialization option
+TypeError: a bytes-like object is required, not 'str'
+TypeError: a bytes-like object is required, not 'NoneType'
+TypeError: compressobj() takes at most 6 arguments (7 given)
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+TypeError: compressobj() got an unexpected keyword argument 'foo'
+TypeError: argument for compressobj() given by name ('level') and position (1)
+OverflowError: Python int too large to convert to C int
+ValueError: Invalid dictionary
+ValueError: Invalid initialization option
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: zdict argument must support the buffer protocol
+TypeError: zdict argument must support the buffer protocol
+TypeError: zdict argument must support the buffer protocol
+TypeError: decompressobj() takes at most 2 arguments (3 given)
+TypeError: decompressobj() got an unexpected keyword argument 'foo'
+<zlib.Decompress object>
+OverflowError: Python int too large to convert to C int
+<zlib.Decompress object>
+<zlib.Decompress object>
+ValueError: Invalid initialization option
+TypeError: compress() takes exactly 1 positional argument (0 given)
+TypeError: a bytes-like object is required, not 'str'
+TypeError: a bytes-like object is required, not 'int'
+TypeError: compress() takes at most 1 argument (2 given)
+TypeError: compress() takes exactly 1 positional argument (0 given)
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+error: Error -2 while flushing: inconsistent stream state
+error: Error -2 while flushing: inconsistent stream state
+TypeError: flush() takes at most 1 argument (2 given)
+TypeError: flush() got an unexpected keyword argument 'mode'
+b'' b'x\x9c'

@@ -1,0 +1,416 @@
+status: 0
+script: bcdd8fbeb6d71738
+---
+builtin_function_or_method str.index (<built-in function getattr>, ('abcd', 'index'))
+   0 b'c__builtin__\ngetattr\np0\n(Vabcd\np1\nVindex\np2\ntp3\nRp4\n.' builtin_function_or_method False
+   0 b'c__builtin__\ngetattr\np0\n(Vabcd\np1\nVindex\np2\ntp3\nRp4\n.' builtin_function_or_method False
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00X\x04\x00\x00\x00abcdq\x01X\x05\x00\x00\x00indexq\x02\x86q\x03Rq\x04.' builtin_function_or_method False
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00X\x04\x00\x00\x00abcdq\x01X\x05\x00\x00\x00indexq\x02\x86q\x03Rq\x04.' builtin_function_or_method False
+   4  builtin_function_or_method False
+   4  builtin_function_or_method False
+method_descriptor str.index (<built-in function getattr>, (<class 'str'>, 'index'))
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nunicode\np1\nVindex\np2\ntp3\nRp4\n.' method_descriptor True
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nunicode\np1\nVindex\np2\ntp3\nRp4\n.' method_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nunicode\nq\x01X\x05\x00\x00\x00indexq\x02\x86q\x03Rq\x04.' method_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nunicode\nq\x01X\x05\x00\x00\x00indexq\x02\x86q\x03Rq\x04.' method_descriptor True
+   4  method_descriptor True
+   4  method_descriptor True
+method-wrapper list.__len__ (<built-in function getattr>, ([1, 2, 3], '__len__'))
+   0 b'c__builtin__\ngetattr\np0\n((lp1\nI1\naI2\naI3\naV__len__\np2\ntp3\nRp4\n.' method-wrapper False
+   0 b'c__builtin__\ngetattr\np0\n((lp1\nI1\naI2\naI3\naV__len__\np2\ntp3\nRp4\n.' method-wrapper False
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00]q\x01(K\x01K\x02K\x03eX\x07\x00\x00\x00__len__q\x02\x86q\x03Rq\x04.' method-wrapper False
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00]q\x01(K\x01K\x02K\x03eX\x07\x00\x00\x00__len__q\x02\x86q\x03Rq\x04.' method-wrapper False
+   4  method-wrapper False
+   4  method-wrapper False
+wrapper_descriptor list.__len__ (<built-in function getattr>, (<class 'list'>, '__len__'))
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nlist\np1\nV__len__\np2\ntp3\nRp4\n.' wrapper_descriptor True
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nlist\np1\nV__len__\np2\ntp3\nRp4\n.' wrapper_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nlist\nq\x01X\x07\x00\x00\x00__len__q\x02\x86q\x03Rq\x04.' wrapper_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nlist\nq\x01X\x07\x00\x00\x00__len__q\x02\x86q\x03Rq\x04.' wrapper_descriptor True
+   4  wrapper_descriptor True
+   4  wrapper_descriptor True
+builtin_function_or_method set.__contains__ (<built-in function getattr>, ({1, 2}, '__contains__'))
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nset\np1\n((lp2\nI1\naI2\natp3\nRp4\nV__contains__\np5\ntp6\nRp7\n.' builtin_function_or_method False
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nset\np1\n((lp2\nI1\naI2\natp3\nRp4\nV__contains__\np5\ntp6\nRp7\n.' builtin_function_or_method False
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nset\nq\x01]q\x02(K\x01K\x02e\x85q\x03Rq\x04X\x0c\x00\x00\x00__contains__q\x05\x86q\x06Rq\x07.' builtin_function_or_method False
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nset\nq\x01]q\x02(K\x01K\x02e\x85q\x03Rq\x04X\x0c\x00\x00\x00__contains__q\x05\x86q\x06Rq\x07.' builtin_function_or_method False
+   4  builtin_function_or_method False
+   4  builtin_function_or_method False
+method_descriptor set.__contains__ (<built-in function getattr>, (<class 'set'>, '__contains__'))
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nset\np1\nV__contains__\np2\ntp3\nRp4\n.' method_descriptor True
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nset\np1\nV__contains__\np2\ntp3\nRp4\n.' method_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nset\nq\x01X\x0c\x00\x00\x00__contains__q\x02\x86q\x03Rq\x04.' method_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nset\nq\x01X\x0c\x00\x00\x00__contains__q\x02\x86q\x03Rq\x04.' method_descriptor True
+   4  method_descriptor True
+   4  method_descriptor True
+builtin_function_or_method dict.fromkeys (<built-in function getattr>, (<class 'dict'>, 'fromkeys'))
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\ndict\np1\nVfromkeys\np2\ntp3\nRp4\n.' builtin_function_or_method True
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\ndict\np1\nVfromkeys\np2\ntp3\nRp4\n.' builtin_function_or_method True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\ndict\nq\x01X\x08\x00\x00\x00fromkeysq\x02\x86q\x03Rq\x04.' builtin_function_or_method True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\ndict\nq\x01X\x08\x00\x00\x00fromkeysq\x02\x86q\x03Rq\x04.' builtin_function_or_method True
+   4  builtin_function_or_method True
+   4  builtin_function_or_method True
+builtin_function_or_method bytearray.maketrans (<built-in function getattr>, (<class 'bytearray'>, 'maketrans'))
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nbytearray\np1\nVmaketrans\np2\ntp3\nRp4\n.' builtin_function_or_method True
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nbytearray\np1\nVmaketrans\np2\ntp3\nRp4\n.' builtin_function_or_method True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nbytearray\nq\x01X\t\x00\x00\x00maketransq\x02\x86q\x03Rq\x04.' builtin_function_or_method True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nbytearray\nq\x01X\t\x00\x00\x00maketransq\x02\x86q\x03Rq\x04.' builtin_function_or_method True
+   4  builtin_function_or_method True
+   4  builtin_function_or_method True
+builtin_function_or_method str.maketrans (<built-in function getattr>, (<class 'str'>, 'maketrans'))
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nunicode\np1\nVmaketrans\np2\ntp3\nRp4\n.' builtin_function_or_method True
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nunicode\np1\nVmaketrans\np2\ntp3\nRp4\n.' builtin_function_or_method True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nunicode\nq\x01X\t\x00\x00\x00maketransq\x02\x86q\x03Rq\x04.' builtin_function_or_method True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nunicode\nq\x01X\t\x00\x00\x00maketransq\x02\x86q\x03Rq\x04.' builtin_function_or_method True
+   4  builtin_function_or_method True
+   4  builtin_function_or_method True
+builtin_function_or_method len 'len'
+   0 b'c__builtin__\nlen\np0\n.' builtin_function_or_method True
+   0 b'c__builtin__\nlen\np0\n.' builtin_function_or_method True
+   2 b'\x80\x02c__builtin__\nlen\nq\x00.' builtin_function_or_method True
+   2 b'\x80\x02c__builtin__\nlen\nq\x00.' builtin_function_or_method True
+   4  builtin_function_or_method True
+   4  builtin_function_or_method True
+builtin_function_or_method sin 'sin'
+   0 b'cmath\nsin\np0\n.' builtin_function_or_method True
+   0 b'cmath\nsin\np0\n.' builtin_function_or_method True
+   2 b'\x80\x02cmath\nsin\nq\x00.' builtin_function_or_method True
+   2 b'\x80\x02cmath\nsin\nq\x00.' builtin_function_or_method True
+   4  builtin_function_or_method True
+   4  builtin_function_or_method True
+builtin_function_or_method Sub.count (<built-in function getattr>, ([1], 'count'))
+   0 b'c__builtin__\ngetattr\np0\n(ccopy_reg\n_reconstructor\np1\n(c__main__\nSub\np2\nc__builtin__\nlist\np3\n(lp4\nI1\natp5\nRp6\nVcount\np7\ntp8\nRp9\n.' builtin_function_or_method False
+   0 b'c__builtin__\ngetattr\np0\n(ccopy_reg\n_reconstructor\np1\n(c__main__\nSub\np2\nc__builtin__\nlist\np3\n(lp4\nI1\natp5\nRp6\nVcount\np7\ntp8\nRp9\n.' builtin_function_or_method False
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__main__\nSub\nq\x01)\x81q\x02K\x01aX\x05\x00\x00\x00countq\x03\x86q\x04Rq\x05.' builtin_function_or_method False
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__main__\nSub\nq\x01)\x81q\x02K\x01aX\x05\x00\x00\x00countq\x03\x86q\x04Rq\x05.' builtin_function_or_method False
+   4  builtin_function_or_method False
+   4  builtin_function_or_method False
+method_descriptor list.count (<built-in function getattr>, (<class 'list'>, 'count'))
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nlist\np1\nVcount\np2\ntp3\nRp4\n.' method_descriptor True
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nlist\np1\nVcount\np2\ntp3\nRp4\n.' method_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nlist\nq\x01X\x05\x00\x00\x00countq\x02\x86q\x03Rq\x04.' method_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nlist\nq\x01X\x05\x00\x00\x00countq\x02\x86q\x03Rq\x04.' method_descriptor True
+   4  method_descriptor True
+   4  method_descriptor True
+method_descriptor str.count (<built-in function getattr>, (<class 'str'>, 'count'))
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nunicode\np1\nVcount\np2\ntp3\nRp4\n.' method_descriptor True
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nunicode\np1\nVcount\np2\ntp3\nRp4\n.' method_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nunicode\nq\x01X\x05\x00\x00\x00countq\x02\x86q\x03Rq\x04.' method_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nunicode\nq\x01X\x05\x00\x00\x00countq\x02\x86q\x03Rq\x04.' method_descriptor True
+   4  method_descriptor True
+   4  method_descriptor True
+builtin_function_or_method Sub.Nested.count (<built-in function getattr>, ('x', 'count'))
+   0 b'c__builtin__\ngetattr\np0\n(ccopy_reg\n_reconstructor\np1\n(g0\n(c__main__\nSub\nVNested\np2\ntRp3\nc__builtin__\nunicode\np4\nVx\np5\ntp6\nRp7\nVcount\np8\ntp9\nRp10\n.' builtin_function_or_method False
+   0 b'c__builtin__\ngetattr\np0\n(ccopy_reg\n_reconstructor\np1\n(g0\n(c__main__\nSub\nVNested\np2\ntRp3\nc__builtin__\nunicode\np4\nVx\np5\ntp6\nRp7\nVcount\np8\ntp9\nRp10\n.' builtin_function_or_method False
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00h\x00c__main__\nSub\nX\x06\x00\x00\x00Nestedq\x01\x86Rq\x02X\x01\x00\x00\x00xq\x03\x85q\x04\x81q\x05X\x05\x00\x00\x00countq\x06\x86q\x07Rq\x08.' builtin_function_or_method False
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00h\x00c__main__\nSub\nX\x06\x00\x00\x00Nestedq\x01\x86Rq\x02X\x01\x00\x00\x00xq\x03\x85q\x04\x81q\x05X\x05\x00\x00\x00countq\x06\x86q\x07Rq\x08.' builtin_function_or_method False
+   4  builtin_function_or_method False
+   4  builtin_function_or_method False
+staticmethod  ('TypeError', "cannot pickle 'staticmethod' object")
+   0 TypeError cannot pickle 'staticmethod' object
+   0 TypeError cannot pickle 'staticmethod' object
+   2 TypeError cannot pickle 'staticmethod' object
+   2 TypeError cannot pickle 'staticmethod' object
+   4 TypeError cannot pickle 'staticmethod' object
+   4 TypeError cannot pickle 'staticmethod' object
+classmethod_descriptor dict.fromkeys ('TypeError', "cannot pickle 'classmethod_descriptor' object")
+   0 TypeError cannot pickle 'classmethod_descriptor' object
+   0 TypeError cannot pickle 'classmethod_descriptor' object
+   2 TypeError cannot pickle 'classmethod_descriptor' object
+   2 TypeError cannot pickle 'classmethod_descriptor' object
+   4 TypeError cannot pickle 'classmethod_descriptor' object
+   4 TypeError cannot pickle 'classmethod_descriptor' object
+wrapper_descriptor int.__add__ (<built-in function getattr>, (<class 'int'>, '__add__'))
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nlong\np1\nV__add__\np2\ntp3\nRp4\n.' wrapper_descriptor True
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nlong\np1\nV__add__\np2\ntp3\nRp4\n.' wrapper_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nlong\nq\x01X\x07\x00\x00\x00__add__q\x02\x86q\x03Rq\x04.' wrapper_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nlong\nq\x01X\x07\x00\x00\x00__add__q\x02\x86q\x03Rq\x04.' wrapper_descriptor True
+   4  wrapper_descriptor True
+   4  wrapper_descriptor True
+method-wrapper int.__add__ (<built-in function getattr>, (1, '__add__'))
+   0 b'c__builtin__\ngetattr\np0\n(I1\nV__add__\np1\ntp2\nRp3\n.' method-wrapper True
+   0 b'c__builtin__\ngetattr\np0\n(I1\nV__add__\np1\ntp2\nRp3\n.' method-wrapper True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00K\x01X\x07\x00\x00\x00__add__q\x01\x86q\x02Rq\x03.' method-wrapper True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00K\x01X\x07\x00\x00\x00__add__q\x01\x86q\x02Rq\x03.' method-wrapper True
+   4  method-wrapper True
+   4  method-wrapper True
+getset_descriptor int.real ('TypeError', "cannot pickle 'getset_descriptor' object")
+   0 TypeError cannot pickle 'getset_descriptor' object
+   0 TypeError cannot pickle 'getset_descriptor' object
+   2 TypeError cannot pickle 'getset_descriptor' object
+   2 TypeError cannot pickle 'getset_descriptor' object
+   4 TypeError cannot pickle 'getset_descriptor' object
+   4 TypeError cannot pickle 'getset_descriptor' object
+getset_descriptor int.real ('TypeError', "cannot pickle 'getset_descriptor' object")
+   0 TypeError cannot pickle 'getset_descriptor' object
+   0 TypeError cannot pickle 'getset_descriptor' object
+   2 TypeError cannot pickle 'getset_descriptor' object
+   2 TypeError cannot pickle 'getset_descriptor' object
+   4 TypeError cannot pickle 'getset_descriptor' object
+   4 TypeError cannot pickle 'getset_descriptor' object
+getset_descriptor function.__code__ ('TypeError', "cannot pickle 'getset_descriptor' object")
+   0 TypeError cannot pickle 'getset_descriptor' object
+   0 TypeError cannot pickle 'getset_descriptor' object
+   2 TypeError cannot pickle 'getset_descriptor' object
+   2 TypeError cannot pickle 'getset_descriptor' object
+   4 TypeError cannot pickle 'getset_descriptor' object
+   4 TypeError cannot pickle 'getset_descriptor' object
+member_descriptor function.__globals__ (<built-in function getattr>, (<class 'function'>, '__globals__'))
+   0 PicklingError Can't pickle <class 'function'>: it's not found as builtins.function
+   0 PicklingError Can't pickle <class 'function'>: it's not found as builtins.function
+   2 PicklingError Can't pickle <class 'function'>: it's not found as builtins.function
+   2 PicklingError Can't pickle <class 'function'>: it's not found as builtins.function
+   4 PicklingError Can't pickle <class 'function'>: it's not found as builtins.function
+   4 PicklingError Can't pickle <class 'function'>: it's not found as builtins.function
+wrapper_descriptor object.__init__ (<built-in function getattr>, (<class 'object'>, '__init__'))
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nobject\np1\nV__init__\np2\ntp3\nRp4\n.' wrapper_descriptor True
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nobject\np1\nV__init__\np2\ntp3\nRp4\n.' wrapper_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nobject\nq\x01X\x08\x00\x00\x00__init__q\x02\x86q\x03Rq\x04.' wrapper_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nobject\nq\x01X\x08\x00\x00\x00__init__q\x02\x86q\x03Rq\x04.' wrapper_descriptor True
+   4  wrapper_descriptor True
+   4  wrapper_descriptor True
+method-wrapper object.__init__ (<built-in function getattr>, (<object object>, '__init__'))
+   0 b'c__builtin__\ngetattr\np0\n(ccopy_reg\n_reconstructor\np1\n(c__builtin__\nobject\np2\ng2\nNtp3\nRp4\nV__init__\np5\ntp6\nRp7\n.' method-wrapper False
+   0 b'c__builtin__\ngetattr\np0\n(ccopy_reg\n_reconstructor\np1\n(c__builtin__\nobject\np2\ng2\nNtp3\nRp4\nV__init__\np5\ntp6\nRp7\n.' method-wrapper False
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nobject\nq\x01)\x81q\x02X\x08\x00\x00\x00__init__q\x03\x86q\x04Rq\x05.' method-wrapper False
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nobject\nq\x01)\x81q\x02X\x08\x00\x00\x00__init__q\x03\x86q\x04Rq\x05.' method-wrapper False
+   4  method-wrapper False
+   4  method-wrapper False
+builtin_function_or_method object.__new__ (<built-in function getattr>, (<class 'object'>, '__new__'))
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nobject\np1\nV__new__\np2\ntp3\nRp4\n.' builtin_function_or_method True
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nobject\np1\nV__new__\np2\ntp3\nRp4\n.' builtin_function_or_method True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nobject\nq\x01X\x07\x00\x00\x00__new__q\x02\x86q\x03Rq\x04.' builtin_function_or_method True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nobject\nq\x01X\x07\x00\x00\x00__new__q\x02\x86q\x03Rq\x04.' builtin_function_or_method True
+   4  builtin_function_or_method True
+   4  builtin_function_or_method True
+builtin_function_or_method int.__new__ (<built-in function getattr>, (<class 'int'>, '__new__'))
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nlong\np1\nV__new__\np2\ntp3\nRp4\n.' builtin_function_or_method True
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nlong\np1\nV__new__\np2\ntp3\nRp4\n.' builtin_function_or_method True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nlong\nq\x01X\x07\x00\x00\x00__new__q\x02\x86q\x03Rq\x04.' builtin_function_or_method True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nlong\nq\x01X\x07\x00\x00\x00__new__q\x02\x86q\x03Rq\x04.' builtin_function_or_method True
+   4  builtin_function_or_method True
+   4  builtin_function_or_method True
+wrapper_descriptor type.__call__ (<built-in function getattr>, (<class 'type'>, '__call__'))
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\ntype\np1\nV__call__\np2\ntp3\nRp4\n.' wrapper_descriptor True
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\ntype\np1\nV__call__\np2\ntp3\nRp4\n.' wrapper_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\ntype\nq\x01X\x08\x00\x00\x00__call__q\x02\x86q\x03Rq\x04.' wrapper_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\ntype\nq\x01X\x08\x00\x00\x00__call__q\x02\x86q\x03Rq\x04.' wrapper_descriptor True
+   4  wrapper_descriptor True
+   4  wrapper_descriptor True
+method_descriptor type.mro (<built-in function getattr>, (<class 'type'>, 'mro'))
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\ntype\np1\nVmro\np2\ntp3\nRp4\n.' method_descriptor True
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\ntype\np1\nVmro\np2\ntp3\nRp4\n.' method_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\ntype\nq\x01X\x03\x00\x00\x00mroq\x02\x86q\x03Rq\x04.' method_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\ntype\nq\x01X\x03\x00\x00\x00mroq\x02\x86q\x03Rq\x04.' method_descriptor True
+   4  method_descriptor True
+   4  method_descriptor True
+builtin_function_or_method int.from_bytes (<built-in function getattr>, (<class 'int'>, 'from_bytes'))
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nlong\np1\nVfrom_bytes\np2\ntp3\nRp4\n.' builtin_function_or_method True
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nlong\np1\nVfrom_bytes\np2\ntp3\nRp4\n.' builtin_function_or_method True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nlong\nq\x01X\n\x00\x00\x00from_bytesq\x02\x86q\x03Rq\x04.' builtin_function_or_method True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nlong\nq\x01X\n\x00\x00\x00from_bytesq\x02\x86q\x03Rq\x04.' builtin_function_or_method True
+   4  builtin_function_or_method True
+   4  builtin_function_or_method True
+method_descriptor int.to_bytes (<built-in function getattr>, (<class 'int'>, 'to_bytes'))
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nlong\np1\nVto_bytes\np2\ntp3\nRp4\n.' method_descriptor True
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nlong\np1\nVto_bytes\np2\ntp3\nRp4\n.' method_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nlong\nq\x01X\x08\x00\x00\x00to_bytesq\x02\x86q\x03Rq\x04.' method_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nlong\nq\x01X\x08\x00\x00\x00to_bytesq\x02\x86q\x03Rq\x04.' method_descriptor True
+   4  method_descriptor True
+   4  method_descriptor True
+builtin_function_or_method int.to_bytes (<built-in function getattr>, (5, 'to_bytes'))
+   0 b'c__builtin__\ngetattr\np0\n(I5\nVto_bytes\np1\ntp2\nRp3\n.' builtin_function_or_method True
+   0 b'c__builtin__\ngetattr\np0\n(I5\nVto_bytes\np1\ntp2\nRp3\n.' builtin_function_or_method True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00K\x05X\x08\x00\x00\x00to_bytesq\x01\x86q\x02Rq\x03.' builtin_function_or_method True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00K\x05X\x08\x00\x00\x00to_bytesq\x01\x86q\x02Rq\x03.' builtin_function_or_method True
+   4  builtin_function_or_method True
+   4  builtin_function_or_method True
+method P.__m (<built-in function getattr>, (<__main__.P object>, '_P__m'))
+   0 b'c__builtin__\ngetattr\np0\n(ccopy_reg\n_reconstructor\np1\n(c__main__\nP\np2\nc__builtin__\nobject\np3\nNtp4\nRp5\n(dp6\nVv\np7\nI1\nsbV_P__m\np8\ntp9\nRp10\n.' method False
+   0 b'c__builtin__\ngetattr\np0\n(ccopy_reg\n_reconstructor\np1\n(c__main__\nP\np2\nc__builtin__\nobject\np3\nNtp4\nRp5\n(dp6\nVv\np7\nI1\nsbV_P__m\np8\ntp9\nRp10\n.' method False
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__main__\nP\nq\x01)\x81q\x02}q\x03X\x01\x00\x00\x00vq\x04K\x01sbX\x05\x00\x00\x00_P__mq\x05\x86q\x06Rq\x07.' method False
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__main__\nP\nq\x01)\x81q\x02}q\x03X\x01\x00\x00\x00vq\x04K\x01sbX\x05\x00\x00\x00_P__mq\x05\x86q\x06Rq\x07.' method False
+   4  method False
+   4  method False
+method P.__c (<built-in function getattr>, (<class '__main__.P'>, '_P__c'))
+   0 b'c__builtin__\ngetattr\np0\n(c__main__\nP\np1\nV_P__c\np2\ntp3\nRp4\n.' method True
+   0 b'c__builtin__\ngetattr\np0\n(c__main__\nP\np1\nV_P__c\np2\ntp3\nRp4\n.' method True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__main__\nP\nq\x01X\x05\x00\x00\x00_P__cq\x02\x86q\x03Rq\x04.' method True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__main__\nP\nq\x01X\x05\x00\x00\x00_P__cq\x02\x86q\x03Rq\x04.' method True
+   4  method True
+   4  method True
+method P.__m (<built-in function getattr>, (<__main__._Q object>, '_Q__m'))
+   0 AttributeError '_Q' object has no attribute '_Q__m'
+   0 AttributeError '_Q' object has no attribute '_Q__m'
+   2 AttributeError '_Q' object has no attribute '_Q__m'
+   2 AttributeError '_Q' object has no attribute '_Q__m'
+   4 AttributeError '_Q' object has no attribute '_Q__m'
+   4 AttributeError '_Q' object has no attribute '_Q__m'
+method P.__c (<built-in function getattr>, (<class '__main__._Q'>, '_Q__c'))
+   0 AttributeError type object '_Q' has no attribute '_Q__c'
+   0 AttributeError type object '_Q' has no attribute '_Q__c'
+   2 AttributeError type object '_Q' has no attribute '_Q__c'
+   2 AttributeError type object '_Q' has no attribute '_Q__c'
+   4 AttributeError type object '_Q' has no attribute '_Q__c'
+   4 AttributeError type object '_Q' has no attribute '_Q__c'
+method P.m__ (<built-in function getattr>, (<__main__.P object>, 'm__'))
+   0 b'c__builtin__\ngetattr\np0\n(ccopy_reg\n_reconstructor\np1\n(c__main__\nP\np2\nc__builtin__\nobject\np3\nNtp4\nRp5\n(dp6\nVv\np7\nI1\nsbVm__\np8\ntp9\nRp10\n.' method False
+   0 b'c__builtin__\ngetattr\np0\n(ccopy_reg\n_reconstructor\np1\n(c__main__\nP\np2\nc__builtin__\nobject\np3\nNtp4\nRp5\n(dp6\nVv\np7\nI1\nsbVm__\np8\ntp9\nRp10\n.' method False
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__main__\nP\nq\x01)\x81q\x02}q\x03X\x01\x00\x00\x00vq\x04K\x01sbX\x03\x00\x00\x00m__q\x05\x86q\x06Rq\x07.' method False
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__main__\nP\nq\x01)\x81q\x02}q\x03X\x01\x00\x00\x00vq\x04K\x01sbX\x03\x00\x00\x00m__q\x05\x86q\x06Rq\x07.' method False
+   4  method False
+   4  method False
+method P.__d__ (<built-in function getattr>, (<__main__.P object>, '__d__'))
+   0 b'c__builtin__\ngetattr\np0\n(ccopy_reg\n_reconstructor\np1\n(c__main__\nP\np2\nc__builtin__\nobject\np3\nNtp4\nRp5\n(dp6\nVv\np7\nI1\nsbV__d__\np8\ntp9\nRp10\n.' method False
+   0 b'c__builtin__\ngetattr\np0\n(ccopy_reg\n_reconstructor\np1\n(c__main__\nP\np2\nc__builtin__\nobject\np3\nNtp4\nRp5\n(dp6\nVv\np7\nI1\nsbV__d__\np8\ntp9\nRp10\n.' method False
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__main__\nP\nq\x01)\x81q\x02}q\x03X\x01\x00\x00\x00vq\x04K\x01sbX\x05\x00\x00\x00__d__q\x05\x86q\x06Rq\x07.' method False
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__main__\nP\nq\x01)\x81q\x02}q\x03X\x01\x00\x00\x00vq\x04K\x01sbX\x05\x00\x00\x00__d__q\x05\x86q\x06Rq\x07.' method False
+   4  method False
+   4  method False
+method P.___ (<built-in function getattr>, (<__main__.P object>, '___'))
+   0 b'c__builtin__\ngetattr\np0\n(ccopy_reg\n_reconstructor\np1\n(c__main__\nP\np2\nc__builtin__\nobject\np3\nNtp4\nRp5\n(dp6\nVv\np7\nI1\nsbV___\np8\ntp9\nRp10\n.' method False
+   0 b'c__builtin__\ngetattr\np0\n(ccopy_reg\n_reconstructor\np1\n(c__main__\nP\np2\nc__builtin__\nobject\np3\nNtp4\nRp5\n(dp6\nVv\np7\nI1\nsbV___\np8\ntp9\nRp10\n.' method False
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__main__\nP\nq\x01)\x81q\x02}q\x03X\x01\x00\x00\x00vq\x04K\x01sbX\x03\x00\x00\x00___q\x05\x86q\x06Rq\x07.' method False
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__main__\nP\nq\x01)\x81q\x02}q\x03X\x01\x00\x00\x00vq\x04K\x01sbX\x03\x00\x00\x00___q\x05\x86q\x06Rq\x07.' method False
+   4  method False
+   4  method False
+method P.__x_ (<built-in function getattr>, (<__main__.P object>, '_P__x_'))
+   0 b'c__builtin__\ngetattr\np0\n(ccopy_reg\n_reconstructor\np1\n(c__main__\nP\np2\nc__builtin__\nobject\np3\nNtp4\nRp5\n(dp6\nVv\np7\nI1\nsbV_P__x_\np8\ntp9\nRp10\n.' method False
+   0 b'c__builtin__\ngetattr\np0\n(ccopy_reg\n_reconstructor\np1\n(c__main__\nP\np2\nc__builtin__\nobject\np3\nNtp4\nRp5\n(dp6\nVv\np7\nI1\nsbV_P__x_\np8\ntp9\nRp10\n.' method False
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__main__\nP\nq\x01)\x81q\x02}q\x03X\x01\x00\x00\x00vq\x04K\x01sbX\x06\x00\x00\x00_P__x_q\x05\x86q\x06Rq\x07.' method False
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__main__\nP\nq\x01)\x81q\x02}q\x03X\x01\x00\x00\x00vq\x04K\x01sbX\x06\x00\x00\x00_P__x_q\x05\x86q\x06Rq\x07.' method False
+   4  method False
+   4  method False
+member_descriptor complex.real (<built-in function getattr>, (<class 'complex'>, 'real'))
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\ncomplex\np1\nVreal\np2\ntp3\nRp4\n.' member_descriptor True
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\ncomplex\np1\nVreal\np2\ntp3\nRp4\n.' member_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\ncomplex\nq\x01X\x04\x00\x00\x00realq\x02\x86q\x03Rq\x04.' member_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\ncomplex\nq\x01X\x04\x00\x00\x00realq\x02\x86q\x03Rq\x04.' member_descriptor True
+   4  member_descriptor True
+   4  member_descriptor True
+member_descriptor slice.start (<built-in function getattr>, (<class 'slice'>, 'start'))
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nslice\np1\nVstart\np2\ntp3\nRp4\n.' member_descriptor True
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nslice\np1\nVstart\np2\ntp3\nRp4\n.' member_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nslice\nq\x01X\x05\x00\x00\x00startq\x02\x86q\x03Rq\x04.' member_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nslice\nq\x01X\x05\x00\x00\x00startq\x02\x86q\x03Rq\x04.' member_descriptor True
+   4  member_descriptor True
+   4  member_descriptor True
+member_descriptor range.start (<built-in function getattr>, (<class 'range'>, 'start'))
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nxrange\np1\nVstart\np2\ntp3\nRp4\n.' member_descriptor True
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nxrange\np1\nVstart\np2\ntp3\nRp4\n.' member_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nxrange\nq\x01X\x05\x00\x00\x00startq\x02\x86q\x03Rq\x04.' member_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nxrange\nq\x01X\x05\x00\x00\x00startq\x02\x86q\x03Rq\x04.' member_descriptor True
+   4  member_descriptor True
+   4  member_descriptor True
+member_descriptor property.fget (<built-in function getattr>, (<class 'property'>, 'fget'))
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nproperty\np1\nVfget\np2\ntp3\nRp4\n.' member_descriptor True
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nproperty\np1\nVfget\np2\ntp3\nRp4\n.' member_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nproperty\nq\x01X\x04\x00\x00\x00fgetq\x02\x86q\x03Rq\x04.' member_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nproperty\nq\x01X\x04\x00\x00\x00fgetq\x02\x86q\x03Rq\x04.' member_descriptor True
+   4  member_descriptor True
+   4  member_descriptor True
+getset_descriptor BaseException.args ('TypeError', "cannot pickle 'getset_descriptor' object")
+   0 TypeError cannot pickle 'getset_descriptor' object
+   0 TypeError cannot pickle 'getset_descriptor' object
+   2 TypeError cannot pickle 'getset_descriptor' object
+   2 TypeError cannot pickle 'getset_descriptor' object
+   4 TypeError cannot pickle 'getset_descriptor' object
+   4 TypeError cannot pickle 'getset_descriptor' object
+getset_descriptor BaseException.__traceback__ ('TypeError', "cannot pickle 'getset_descriptor' object")
+   0 TypeError cannot pickle 'getset_descriptor' object
+   0 TypeError cannot pickle 'getset_descriptor' object
+   2 TypeError cannot pickle 'getset_descriptor' object
+   2 TypeError cannot pickle 'getset_descriptor' object
+   4 TypeError cannot pickle 'getset_descriptor' object
+   4 TypeError cannot pickle 'getset_descriptor' object
+method_descriptor dict.__getitem__ (<built-in function getattr>, (<class 'dict'>, '__getitem__'))
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\ndict\np1\nV__getitem__\np2\ntp3\nRp4\n.' method_descriptor True
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\ndict\np1\nV__getitem__\np2\ntp3\nRp4\n.' method_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\ndict\nq\x01X\x0b\x00\x00\x00__getitem__q\x02\x86q\x03Rq\x04.' method_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\ndict\nq\x01X\x0b\x00\x00\x00__getitem__q\x02\x86q\x03Rq\x04.' method_descriptor True
+   4  method_descriptor True
+   4  method_descriptor True
+builtin_function_or_method dict.__getitem__ (<built-in function getattr>, ({}, '__getitem__'))
+   0 b'c__builtin__\ngetattr\np0\n((dp1\nV__getitem__\np2\ntp3\nRp4\n.' builtin_function_or_method False
+   0 b'c__builtin__\ngetattr\np0\n((dp1\nV__getitem__\np2\ntp3\nRp4\n.' builtin_function_or_method False
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00}q\x01X\x0b\x00\x00\x00__getitem__q\x02\x86q\x03Rq\x04.' builtin_function_or_method False
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00}q\x01X\x0b\x00\x00\x00__getitem__q\x02\x86q\x03Rq\x04.' builtin_function_or_method False
+   4  builtin_function_or_method False
+   4  builtin_function_or_method False
+builtin_function_or_method dict.get (<built-in function getattr>, ({}, 'get'))
+   0 b'c__builtin__\ngetattr\np0\n((dp1\nVget\np2\ntp3\nRp4\n.' builtin_function_or_method False
+   0 b'c__builtin__\ngetattr\np0\n((dp1\nVget\np2\ntp3\nRp4\n.' builtin_function_or_method False
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00}q\x01X\x03\x00\x00\x00getq\x02\x86q\x03Rq\x04.' builtin_function_or_method False
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00}q\x01X\x03\x00\x00\x00getq\x02\x86q\x03Rq\x04.' builtin_function_or_method False
+   4  builtin_function_or_method False
+   4  builtin_function_or_method False
+method_descriptor dict.get (<built-in function getattr>, (<class 'dict'>, 'get'))
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\ndict\np1\nVget\np2\ntp3\nRp4\n.' method_descriptor True
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\ndict\np1\nVget\np2\ntp3\nRp4\n.' method_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\ndict\nq\x01X\x03\x00\x00\x00getq\x02\x86q\x03Rq\x04.' method_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\ndict\nq\x01X\x03\x00\x00\x00getq\x02\x86q\x03Rq\x04.' method_descriptor True
+   4  method_descriptor True
+   4  method_descriptor True
+builtin_function_or_method print 'print'
+   0 b'c__builtin__\nprint\np0\n.' builtin_function_or_method True
+   0 b'c__builtin__\nprint\np0\n.' builtin_function_or_method True
+   2 b'\x80\x02c__builtin__\nprint\nq\x00.' builtin_function_or_method True
+   2 b'\x80\x02c__builtin__\nprint\nq\x00.' builtin_function_or_method True
+   4  builtin_function_or_method True
+   4  builtin_function_or_method True
+builtin_function_or_method list.append (<built-in function getattr>, ([], 'append'))
+   0 b'c__builtin__\ngetattr\np0\n((lp1\nVappend\np2\ntp3\nRp4\n.' builtin_function_or_method False
+   0 b'c__builtin__\ngetattr\np0\n((lp1\nVappend\np2\ntp3\nRp4\n.' builtin_function_or_method False
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00]q\x01X\x06\x00\x00\x00appendq\x02\x86q\x03Rq\x04.' builtin_function_or_method False
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00]q\x01X\x06\x00\x00\x00appendq\x02\x86q\x03Rq\x04.' builtin_function_or_method False
+   4  builtin_function_or_method False
+   4  builtin_function_or_method False
+method_descriptor str.join (<built-in function getattr>, (<class 'str'>, 'join'))
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nunicode\np1\nVjoin\np2\ntp3\nRp4\n.' method_descriptor True
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nunicode\np1\nVjoin\np2\ntp3\nRp4\n.' method_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nunicode\nq\x01X\x04\x00\x00\x00joinq\x02\x86q\x03Rq\x04.' method_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nunicode\nq\x01X\x04\x00\x00\x00joinq\x02\x86q\x03Rq\x04.' method_descriptor True
+   4  method_descriptor True
+   4  method_descriptor True
+builtin_function_or_method str.join (<built-in function getattr>, ('', 'join'))
+   0 b'c__builtin__\ngetattr\np0\n(V\np1\nVjoin\np2\ntp3\nRp4\n.' builtin_function_or_method True
+   0 b'c__builtin__\ngetattr\np0\n(V\np1\nVjoin\np2\ntp3\nRp4\n.' builtin_function_or_method True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00X\x00\x00\x00\x00q\x01X\x04\x00\x00\x00joinq\x02\x86q\x03Rq\x04.' builtin_function_or_method True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00X\x00\x00\x00\x00q\x01X\x04\x00\x00\x00joinq\x02\x86q\x03Rq\x04.' builtin_function_or_method True
+   4  builtin_function_or_method True
+   4  builtin_function_or_method True
+method_descriptor object.__reduce_ex__ (<built-in function getattr>, (<class 'object'>, '__reduce_ex__'))
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nobject\np1\nV__reduce_ex__\np2\ntp3\nRp4\n.' method_descriptor True
+   0 b'c__builtin__\ngetattr\np0\n(c__builtin__\nobject\np1\nV__reduce_ex__\np2\ntp3\nRp4\n.' method_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nobject\nq\x01X\r\x00\x00\x00__reduce_ex__q\x02\x86q\x03Rq\x04.' method_descriptor True
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nobject\nq\x01X\r\x00\x00\x00__reduce_ex__q\x02\x86q\x03Rq\x04.' method_descriptor True
+   4  method_descriptor True
+   4  method_descriptor True
+builtin_function_or_method object.__reduce_ex__ (<built-in function getattr>, (<object object>, '__reduce_ex__'))
+   0 b'c__builtin__\ngetattr\np0\n(ccopy_reg\n_reconstructor\np1\n(c__builtin__\nobject\np2\ng2\nNtp3\nRp4\nV__reduce_ex__\np5\ntp6\nRp7\n.' builtin_function_or_method False
+   0 b'c__builtin__\ngetattr\np0\n(ccopy_reg\n_reconstructor\np1\n(c__builtin__\nobject\np2\ng2\nNtp3\nRp4\nV__reduce_ex__\np5\ntp6\nRp7\n.' builtin_function_or_method False
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nobject\nq\x01)\x81q\x02X\r\x00\x00\x00__reduce_ex__q\x03\x86q\x04Rq\x05.' builtin_function_or_method False
+   2 b'\x80\x02c__builtin__\ngetattr\nq\x00c__builtin__\nobject\nq\x01)\x81q\x02X\r\x00\x00\x00__reduce_ex__q\x03\x86q\x04Rq\x05.' builtin_function_or_method False
+   4  builtin_function_or_method False
+   4  builtin_function_or_method False
+getset_descriptor type.__dict__ ('TypeError', "cannot pickle 'getset_descriptor' object")
+   0 TypeError cannot pickle 'getset_descriptor' object
+   0 TypeError cannot pickle 'getset_descriptor' object
+   2 TypeError cannot pickle 'getset_descriptor' object
+   2 TypeError cannot pickle 'getset_descriptor' object
+   4 TypeError cannot pickle 'getset_descriptor' object
+   4 TypeError cannot pickle 'getset_descriptor' object
+getset_descriptor object.__dict__ ('TypeError', "cannot pickle 'getset_descriptor' object")
+   0 TypeError cannot pickle 'getset_descriptor' object
+   0 TypeError cannot pickle 'getset_descriptor' object
+   2 TypeError cannot pickle 'getset_descriptor' object
+   2 TypeError cannot pickle 'getset_descriptor' object
+   4 TypeError cannot pickle 'getset_descriptor' object
+   4 TypeError cannot pickle 'getset_descriptor' object
+getset_descriptor object.__weakref__ ('TypeError', "cannot pickle 'getset_descriptor' object")
+   0 TypeError cannot pickle 'getset_descriptor' object
+   0 TypeError cannot pickle 'getset_descriptor' object
+   2 TypeError cannot pickle 'getset_descriptor' object
+   2 TypeError cannot pickle 'getset_descriptor' object
+   4 TypeError cannot pickle 'getset_descriptor' object
+   4 TypeError cannot pickle 'getset_descriptor' object

@@ -1,0 +1,13 @@
+status: 0
+script: cbcd7ae1d0e4857f
+---
+BufferError: Existing exports of data: object cannot be re-sized
+BufferError: Existing exports of data: object cannot be re-sized
+True
+BufferError: Existing exports of data: object cannot be re-sized
+BufferError: Existing exports of data: object cannot be re-sized
+True
+BufferError: Existing exports of data: object cannot be re-sized
+True
+'ZstdCompressor'
+{}

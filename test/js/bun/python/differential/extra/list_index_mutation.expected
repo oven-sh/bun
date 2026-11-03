@@ -1,0 +1,550 @@
+status: 0
+script: c52d7ec6b1cf5ab5
+---
+IndexError list index out of range
+IndexError list assignment index out of range
+IndexError list assignment index out of range
+([], [])
+([], [])
+ValueError slice step cannot be zero
+['a', 'b']
+['a', 'b']
+ValueError slice step cannot be zero
+ValueError slice step cannot be zero
+[]
+[]
+ValueError slice step cannot be zero
+[]
+ValueError attempt to assign sequence of size 2 to extended slice of size 0
+IndexError list index out of range
+IndexError list assignment index out of range
+IndexError list assignment index out of range
+([], [])
+([], [])
+([], [])
+['a', 'b']
+['a', 'b']
+[]
+['a', 'b', 'c', 'd', 'e']
+[]
+[]
+[]
+[]
+ValueError attempt to assign sequence of size 2 to extended slice of size 0
+IndexError list index out of range
+IndexError list assignment index out of range
+IndexError list assignment index out of range
+([], [])
+([], [])
+([], [])
+['a', 'b']
+['a', 'b']
+[]
+ValueError attempt to assign sequence of size 5 to extended slice of size 0
+[]
+[]
+[]
+[]
+ValueError attempt to assign sequence of size 2 to extended slice of size 0
+IndexError list index out of range
+IndexError list assignment index out of range
+IndexError list assignment index out of range
+([], [])
+([], [])
+([], [])
+['a', 'b']
+['a', 'b']
+[]
+ValueError attempt to assign sequence of size 5 to extended slice of size 0
+[]
+[]
+[]
+[]
+ValueError attempt to assign sequence of size 2 to extended slice of size 0
+IndexError list index out of range
+IndexError list assignment index out of range
+IndexError list assignment index out of range
+([], [])
+([], [])
+([], [])
+['a', 'b']
+['a', 'b']
+[]
+ValueError attempt to assign sequence of size 5 to extended slice of size 0
+[]
+[]
+[]
+[]
+ValueError attempt to assign sequence of size 2 to extended slice of size 0
+IndexError list index out of range
+IndexError list assignment index out of range
+IndexError list assignment index out of range
+([], [])
+([], [])
+([], [])
+['a', 'b']
+['a', 'b']
+[]
+ValueError attempt to assign sequence of size 5 to extended slice of size 0
+[]
+[]
+[]
+[]
+ValueError attempt to assign sequence of size 2 to extended slice of size 0
+IndexError list index out of range
+IndexError list assignment index out of range
+IndexError list assignment index out of range
+([], [])
+([], [])
+([], [])
+['a', 'b']
+['a', 'b']
+[]
+ValueError attempt to assign sequence of size 5 to extended slice of size 0
+[]
+[]
+[]
+[]
+ValueError attempt to assign sequence of size 2 to extended slice of size 0
+IndexError list index out of range
+IndexError list assignment index out of range
+IndexError list assignment index out of range
+([], [])
+([], [])
+([], [])
+['a', 'b']
+['a', 'b']
+[]
+ValueError attempt to assign sequence of size 5 to extended slice of size 0
+[]
+[]
+[]
+[]
+ValueError attempt to assign sequence of size 2 to extended slice of size 0
+IndexError list index out of range
+IndexError list assignment index out of range
+IndexError list assignment index out of range
+([], [])
+([], [])
+([], [])
+['a', 'b']
+['a', 'b']
+[]
+ValueError attempt to assign sequence of size 5 to extended slice of size 0
+[]
+[]
+[]
+[]
+ValueError attempt to assign sequence of size 2 to extended slice of size 0
+IndexError list index out of range
+IndexError list assignment index out of range
+IndexError list assignment index out of range
+([], [])
+([], [])
+([], [])
+['a', 'b']
+['a', 'b']
+[]
+ValueError attempt to assign sequence of size 5 to extended slice of size 0
+[]
+[]
+[]
+[]
+ValueError attempt to assign sequence of size 2 to extended slice of size 0
+IndexError cannot fit 'X' into an index-sized integer
+IndexError cannot fit 'X' into an index-sized integer
+IndexError cannot fit 'X' into an index-sized integer
+([], [])
+([], [])
+([], [])
+['a', 'b']
+['a', 'b']
+[]
+ValueError attempt to assign sequence of size 5 to extended slice of size 0
+[]
+[]
+[]
+[]
+ValueError attempt to assign sequence of size 2 to extended slice of size 0
+IndexError cannot fit 'X' into an index-sized integer
+IndexError cannot fit 'X' into an index-sized integer
+IndexError cannot fit 'X' into an index-sized integer
+([], [])
+([], [])
+([], [])
+['a', 'b']
+['a', 'b']
+[]
+ValueError attempt to assign sequence of size 5 to extended slice of size 0
+[]
+[]
+[]
+[]
+ValueError attempt to assign sequence of size 2 to extended slice of size 0
+(0, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+['x', 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+[1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+([], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+ValueError slice step cannot be zero
+['a', 'b']
+['a', 'b', 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+ValueError slice step cannot be zero
+ValueError slice step cannot be zero
+[]
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+ValueError slice step cannot be zero
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+ValueError attempt to assign sequence of size 2 to extended slice of size 0
+(1, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+[0, 'x', 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+[0, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+([1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+([0], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+[0, 'a', 'b']
+['a', 'b', 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+[100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+['a', 'b', 'c', 'd', 'e', 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+[0]
+[1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+[]
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+ValueError attempt to assign sequence of size 2 to extended slice of size 0
+(2, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+[0, 1, 'x', 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+[0, 1, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+([2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+([0, 1], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+([0, 2, 4, 6, 8, 100, 102, 104, 106, 108, 110, 112, 114, 116, 118], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+[0, 1, 'a', 'b']
+['a', 'b', 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+ValueError attempt to assign sequence of size 0 to extended slice of size 5
+['a', 1, 'b', 3, 'c', 5, 'd', 7, 'e', 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+[0, 1]
+[2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+[1, 3, 5, 7, 9, 101, 103, 105, 107, 109, 111, 113, 115, 117, 119]
+[0, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+ValueError attempt to assign sequence of size 2 to extended slice of size 1
+(5, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+[0, 1, 2, 3, 4, 'x', 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+[0, 1, 2, 3, 4, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+([5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+([0, 1, 2, 3, 4], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+([0, 5, 100, 105, 110, 115], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+[0, 1, 2, 3, 4, 'a', 'b']
+['a', 'b', 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+ValueError attempt to assign sequence of size 0 to extended slice of size 2
+ValueError attempt to assign sequence of size 5 to extended slice of size 2
+[0, 1, 2, 3, 4]
+[5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+[1, 2, 3, 4, 6, 7, 8, 9, 101, 102, 103, 104, 106, 107, 108, 109, 111, 112, 113, 114, 116, 117, 118, 119]
+[0, 2, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+[0, 'a', 2, 'b', 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+(9, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 'x', 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+([9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+([0, 1, 2, 3, 4, 5, 6, 7, 8], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+([0, 9, 108, 117], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 'a', 'b']
+['a', 'b', 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+ValueError attempt to assign sequence of size 0 to extended slice of size 2
+ValueError attempt to assign sequence of size 5 to extended slice of size 2
+[0, 1, 2, 3, 4, 5, 6, 7, 8]
+[9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+[1, 2, 3, 4, 5, 6, 7, 8, 100, 101, 102, 103, 104, 105, 106, 107, 109, 110, 111, 112, 113, 114, 115, 116, 118, 119]
+[0, 2, 4, 6, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+ValueError attempt to assign sequence of size 2 to extended slice of size 4
+(119, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 'x']
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118]
+([119], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+([119, 118, 117, 116, 115, 114, 113, 112, 111, 110, 109, 108, 107, 106, 105, 104, 103, 102, 101, 100, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 'a', 'b']
+['a', 'b', 119]
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+ValueError attempt to assign sequence of size 5 to extended slice of size 0
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118]
+[119]
+[]
+[0, 2, 4, 6, 8, 100, 102, 104, 106, 108, 110, 112, 114, 116, 118, 119]
+ValueError attempt to assign sequence of size 2 to extended slice of size 34
+(115, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 'x', 116, 117, 118, 119]
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 116, 117, 118, 119]
+([115, 116, 117, 118, 119], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+([119, 114, 109, 104, 9, 4], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 'a', 'b']
+['a', 'b', 115, 116, 117, 118, 119]
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+ValueError attempt to assign sequence of size 5 to extended slice of size 0
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114]
+[115, 116, 117, 118, 119]
+[0, 1, 2, 3, 5, 6, 7, 8, 100, 101, 102, 103, 105, 106, 107, 108, 110, 111, 112, 113, 115, 116, 117, 118]
+[0, 2, 4, 6, 8, 100, 102, 104, 106, 108, 110, 112, 114, 115, 116, 117, 118, 119]
+ValueError attempt to assign sequence of size 2 to extended slice of size 32
+(105, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 'x', 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+([105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+([0, 105], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 'a', 'b']
+['a', 'b', 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+ValueError attempt to assign sequence of size 0 to extended slice of size 1
+ValueError attempt to assign sequence of size 5 to extended slice of size 1
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104]
+[105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+[1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+[0, 2, 4, 6, 8, 100, 102, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+ValueError attempt to assign sequence of size 2 to extended slice of size 7
+(115, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 'x', 116, 117, 118, 119]
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 116, 117, 118, 119]
+([115, 116, 117, 118, 119], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+([0, 115], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 'a', 'b']
+['a', 'b', 115, 116, 117, 118, 119]
+ValueError attempt to assign sequence of size 0 to extended slice of size 1
+ValueError attempt to assign sequence of size 5 to extended slice of size 1
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114]
+[115, 116, 117, 118, 119]
+[1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 116, 117, 118, 119]
+[0, 2, 4, 6, 8, 100, 102, 104, 106, 108, 110, 112, 114, 115, 116, 117, 118, 119]
+ValueError attempt to assign sequence of size 2 to extended slice of size 12
+(5, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+[0, 1, 2, 3, 4, 'x', 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+[0, 1, 2, 3, 4, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+([5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+([0, 1, 2, 3, 4], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+([119, 4], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+[0, 1, 2, 3, 4, 'a', 'b']
+['a', 'b', 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+ValueError attempt to assign sequence of size 5 to extended slice of size 0
+[0, 1, 2, 3, 4]
+[5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+[0, 1, 2, 3, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118]
+[0, 2, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+ValueError attempt to assign sequence of size 2 to extended slice of size 22
+IndexError cannot fit 'X' into an index-sized integer
+IndexError cannot fit 'X' into an index-sized integer
+IndexError cannot fit 'X' into an index-sized integer
+([], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+([0], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 'a', 'b']
+['a', 'b']
+ValueError attempt to assign sequence of size 0 to extended slice of size 1
+ValueError attempt to assign sequence of size 5 to extended slice of size 1
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+[]
+[1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+[0, 2, 4, 6, 8, 100, 102, 104, 106, 108, 110, 112, 114, 116, 118]
+ValueError attempt to assign sequence of size 2 to extended slice of size 35
+IndexError cannot fit 'X' into an index-sized integer
+IndexError cannot fit 'X' into an index-sized integer
+IndexError cannot fit 'X' into an index-sized integer
+([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+([], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+([119], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119])
+['a', 'b']
+['a', 'b', 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+ValueError attempt to assign sequence of size 5 to extended slice of size 0
+[]
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118]
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+ValueError attempt to assign sequence of size 2 to extended slice of size 0
+(0, [0, 1, 2])
+['x', 1, 2]
+[1, 2]
+([0, 1, 2], [0, 1, 2])
+([], [0, 1, 2])
+ValueError slice step cannot be zero
+['a', 'b']
+['a', 'b', 0, 1, 2]
+ValueError slice step cannot be zero
+ValueError slice step cannot be zero
+[]
+[0, 1, 2]
+ValueError slice step cannot be zero
+[0, 1, 2]
+ValueError attempt to assign sequence of size 2 to extended slice of size 0
+(1, [0, 1, 2])
+[0, 'x', 2]
+[0, 2]
+([1, 2], [0, 1, 2])
+([0], [0, 1, 2])
+([0, 1, 2], [0, 1, 2])
+[0, 'a', 'b']
+['a', 'b', 1, 2]
+[]
+['a', 'b', 'c', 'd', 'e']
+[0]
+[1, 2]
+[]
+[0, 1, 2]
+ValueError attempt to assign sequence of size 2 to extended slice of size 0
+(2, [0, 1, 2])
+[0, 1, 'x']
+[0, 1]
+([2], [0, 1, 2])
+([0, 1], [0, 1, 2])
+([0, 2], [0, 1, 2])
+[0, 1, 'a', 'b']
+['a', 'b', 2]
+ValueError attempt to assign sequence of size 0 to extended slice of size 2
+ValueError attempt to assign sequence of size 5 to extended slice of size 2
+[0, 1]
+[2]
+[1]
+[0, 2]
+ValueError attempt to assign sequence of size 2 to extended slice of size 1
+IndexError list index out of range
+IndexError list assignment index out of range
+IndexError list assignment index out of range
+([], [0, 1, 2])
+([0, 1, 2], [0, 1, 2])
+([0], [0, 1, 2])
+[0, 1, 2, 'a', 'b']
+['a', 'b']
+ValueError attempt to assign sequence of size 0 to extended slice of size 1
+ValueError attempt to assign sequence of size 5 to extended slice of size 1
+[0, 1, 2]
+[]
+[1, 2]
+[0, 2]
+ValueError attempt to assign sequence of size 2 to extended slice of size 1
+IndexError list index out of range
+IndexError list assignment index out of range
+IndexError list assignment index out of range
+([], [0, 1, 2])
+([0, 1, 2], [0, 1, 2])
+([0], [0, 1, 2])
+[0, 1, 2, 'a', 'b']
+['a', 'b']
+ValueError attempt to assign sequence of size 0 to extended slice of size 1
+ValueError attempt to assign sequence of size 5 to extended slice of size 1
+[0, 1, 2]
+[]
+[1, 2]
+[0, 2]
+ValueError attempt to assign sequence of size 2 to extended slice of size 1
+(2, [0, 1, 2])
+[0, 1, 'x']
+[0, 1]
+([2], [0, 1, 2])
+([0, 1], [0, 1, 2])
+([2, 1, 0], [0, 1, 2])
+[0, 1, 'a', 'b']
+['a', 'b', 2]
+[0, 1, 2]
+ValueError attempt to assign sequence of size 5 to extended slice of size 0
+[0, 1]
+[2]
+[]
+[0, 2]
+ValueError attempt to assign sequence of size 2 to extended slice of size 1
+IndexError list index out of range
+IndexError list assignment index out of range
+IndexError list assignment index out of range
+([0, 1, 2], [0, 1, 2])
+([], [0, 1, 2])
+([2], [0, 1, 2])
+['a', 'b']
+['a', 'b', 0, 1, 2]
+[0, 1, 2]
+ValueError attempt to assign sequence of size 5 to extended slice of size 0
+[]
+[0, 1, 2]
+[0, 1]
+[0, 1, 2]
+ValueError attempt to assign sequence of size 2 to extended slice of size 0
+IndexError list index out of range
+IndexError list assignment index out of range
+IndexError list assignment index out of range
+([], [0, 1, 2])
+([0, 1, 2], [0, 1, 2])
+([0], [0, 1, 2])
+[0, 1, 2, 'a', 'b']
+['a', 'b']
+ValueError attempt to assign sequence of size 0 to extended slice of size 1
+ValueError attempt to assign sequence of size 5 to extended slice of size 1
+[0, 1, 2]
+[]
+[1, 2]
+[0, 2]
+ValueError attempt to assign sequence of size 2 to extended slice of size 1
+IndexError list index out of range
+IndexError list assignment index out of range
+IndexError list assignment index out of range
+([], [0, 1, 2])
+([0, 1, 2], [0, 1, 2])
+([0], [0, 1, 2])
+[0, 1, 2, 'a', 'b']
+['a', 'b']
+ValueError attempt to assign sequence of size 0 to extended slice of size 1
+ValueError attempt to assign sequence of size 5 to extended slice of size 1
+[0, 1, 2]
+[]
+[1, 2]
+[0, 2]
+ValueError attempt to assign sequence of size 2 to extended slice of size 1
+IndexError list index out of range
+IndexError list assignment index out of range
+IndexError list assignment index out of range
+([0, 1, 2], [0, 1, 2])
+([], [0, 1, 2])
+([2], [0, 1, 2])
+['a', 'b']
+['a', 'b', 0, 1, 2]
+[0, 1, 2]
+ValueError attempt to assign sequence of size 5 to extended slice of size 0
+[]
+[0, 1, 2]
+[0, 1]
+[0, 1, 2]
+ValueError attempt to assign sequence of size 2 to extended slice of size 0
+IndexError cannot fit 'X' into an index-sized integer
+IndexError cannot fit 'X' into an index-sized integer
+IndexError cannot fit 'X' into an index-sized integer
+([], [0, 1, 2])
+([0, 1, 2], [0, 1, 2])
+([0], [0, 1, 2])
+[0, 1, 2, 'a', 'b']
+['a', 'b']
+ValueError attempt to assign sequence of size 0 to extended slice of size 1
+ValueError attempt to assign sequence of size 5 to extended slice of size 1
+[0, 1, 2]
+[]
+[1, 2]
+[0, 2]
+ValueError attempt to assign sequence of size 2 to extended slice of size 1
+IndexError cannot fit 'X' into an index-sized integer
+IndexError cannot fit 'X' into an index-sized integer
+IndexError cannot fit 'X' into an index-sized integer
+([0, 1, 2], [0, 1, 2])
+([], [0, 1, 2])
+([2], [0, 1, 2])
+['a', 'b']
+['a', 'b', 0, 1, 2]
+[0, 1, 2]
+ValueError attempt to assign sequence of size 5 to extended slice of size 0
+[]
+[0, 1, 2]
+[0, 1]
+[0, 1, 2]
+ValueError attempt to assign sequence of size 2 to extended slice of size 0
+[1, 3, 5, 7] ['step', 'start', 'stop']
+TypeError slice indices must be integers or have an __index__ method
+TypeError list indices must be integers or slices, not float
+TypeError slice indices must be integers or have an __index__ method
+2 [2, 3, 4] 1 [] [] [0]
+IndexError cannot fit 'int' into an index-sized integer
+IndexError cannot fit 'H' into an index-sized integer

@@ -1,0 +1,5 @@
+logs/
+logs-*/
+oracle-logs/
+score-*.md
+score-*.json

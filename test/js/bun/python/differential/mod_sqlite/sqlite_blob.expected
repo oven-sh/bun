@@ -1,0 +1,129 @@
+status: 0
+script: b2cb32c3694cd0ad
+---
+<class 'sqlite3.Blob'> 10 0 b'\x00\x01\x02' 3 b'\x03\x04\x05\x06\x07\x08\t' 10 b'' b''
+b'\x00\x01\x02\x03\x04\x05\x06\x07\x08\t' None b'' b'\x02\x03' None b'\x07\x08\t' None None 3 None b'' None 10
+ValueError: offset out of blob range
+ValueError: offset out of blob range
+ValueError: offset out of blob range
+ValueError: offset out of blob range
+ValueError: 'origin' should be os.SEEK_SET, os.SEEK_CUR, or os.SEEK_END
+ValueError: 'origin' should be os.SEEK_SET, os.SEEK_CUR, or os.SEEK_END
+OverflowError: seek offset results in overflow
+OverflowError: seek offset results in overflow
+OverflowError: Python int too large to convert to C int
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: seek expected at least 1 argument, got 0
+TypeError: seek expected at most 2 arguments, got 3
+TypeError: Blob.seek() takes no keyword arguments
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: read expected at most 1 argument, got 2
+OverflowError: Python int too large to convert to C int
+TypeError: 'NoneType' object cannot be interpreted as an integer
+TypeError: Blob.tell() takes no arguments (1 given)
+0 9 9 0 b'\x02\x03\x04' b'\x00\x01\x02\x03\x04\x05\x06\x07\x08\t' b'\x00\x02\x04\x06\x08' b'\x01\x04\x07' b'' b'' b'\x07\x08\t' 1
+IndexError: Blob index out of range
+IndexError: Blob index out of range
+TypeError: Blob indices must be integers
+TypeError: Blob indices must be integers
+TypeError: Blob indices must be integers
+ValueError: Blob doesn't support slices with a negative step
+ValueError: Blob doesn't support slices with a negative step
+IndexError: cannot fit 'int' into an index-sized integer
+ValueError: slice step cannot be zero
+TypeError: Blob indices must be integers
+2 b'AB\x02\x03\x04\x05\x06\x07\x08\t'
+4 b'ABCD\x04\x05\x06\x07\x08\t'
+ValueError: data longer than blob length
+9
+10 b'ABCD\x04\x05\x06\x07\x08Z'
+ValueError: data longer than blob length
+TypeError: a bytes-like object is required, not 'str'
+TypeError: a bytes-like object is required, not 'int'
+TypeError: Blob.write() takes exactly one argument (0 given)
+TypeError: Blob.write() takes exactly one argument (2 given)
+TypeError: Blob.write() takes no keyword arguments
+b'abcX\x04Y\x06Z\x08z'
+ValueError: byte must be in range(0, 256)
+ValueError: byte must be in range(0, 256)
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'bytes' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+ValueError: byte must be in range(0, 256)
+IndexError: Blob index out of range
+IndexError: Blob index out of range
+TypeError: Blob indices must be integers
+IndexError: Blob slice assignment is wrong size
+IndexError: Blob slice assignment is wrong size
+TypeError: a bytes-like object is required, not 'str'
+TypeError: a bytes-like object is required, not 'int'
+ValueError: Blob doesn't support slices with a negative step
+None
+IndexError: Blob slice assignment is wrong size
+None
+TypeError: Blob indices must be integers
+TypeError: Blob doesn't support item deletion
+TypeError: Blob doesn't support slice deletion
+TypeError: Blob indices must be integers
+(b'\x01bcX\x04Y\x06Z\x08z',) True
+TypeError: 'sqlite3.Blob' object is not iterable
+TypeError: argument of type 'sqlite3.Blob' is not a container or iterable
+TypeError: cannot convert 'sqlite3.Blob' object to bytes
+TypeError: memoryview: a bytes-like object is required, not 'sqlite3.Blob'
+TypeError: unsupported operand type(s) for +: 'sqlite3.Blob' and 'bytes'
+True
+True
+True 20
+True
+ProgrammingError: Cannot operate on a closed blob.
+ProgrammingError: Cannot operate on a closed blob.
+ProgrammingError: Cannot operate on a closed blob.
+ProgrammingError: Cannot operate on a closed blob.
+ProgrammingError: Cannot operate on a closed blob.
+ProgrammingError: Cannot operate on a closed blob.
+ProgrammingError: Cannot operate on a closed blob.
+ProgrammingError: Cannot operate on a closed blob.
+ProgrammingError: Cannot operate on a closed blob.
+None
+None
+TypeError: __exit__ expected 3 arguments, got 0
+TypeError: __exit__ expected 3 arguments, got 2
+b'hello'
+OperationalError: attempt to write a readonly database
+OperationalError: attempt to write a readonly database
+b'text'
+0 b'' b'' False
+IndexError: Blob index out of range
+ValueError: data longer than blob length
+OperationalError: cannot open value of type null
+OperationalError: no such rowid: 99
+OperationalError: no such table: main.nope
+OperationalError: no such column: "nope"
+OperationalError: cannot open value of type null
+OperationalError: no such table: nope.t
+<sqlite3.Blob object>
+TypeError: blobopen() takes exactly 3 positional arguments (0 given)
+TypeError: blobopen() takes exactly 3 positional arguments (2 given)
+TypeError: blobopen() argument 1 must be str, not int
+TypeError: blobopen() argument 2 must be str, not int
+TypeError: expected 'int'
+TypeError: expected 'int'
+OverflowError: Python int too large to convert to SQLite INTEGER
+TypeError: blobopen() takes exactly 3 positional arguments (4 given)
+TypeError: blobopen() argument 'name' must be str, not int
+TypeError: blobopen() takes exactly 3 positional arguments (2 given)
+ValueError: embedded null character
+TypeError: blobopen() got an unexpected keyword argument 'nope'
+TypeError: cannot create 'sqlite3.Blob' instances
+TypeError: type 'sqlite3.Blob' is not an acceptable base type
+OperationalError: query aborted
+0
+IndexError: Blob index out of range
+4 SQLITE_ABORT
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+b'\x00\x00\x00\x00\x00'

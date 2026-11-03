@@ -1,0 +1,136 @@
+status: 0
+script: 579fe262454e7e83
+---
+10
+11
+29
+29
+10
+11
+10
+13
+27
+IndexError index out of bounds on dimension 1
+IndexError index out of bounds on dimension 1
+IndexError cannot fit 'int' into an index-sized integer
+IndexError cannot fit 'int' into an index-sized integer
+IndexError index out of bounds on dimension 1
+TypeError memoryview: invalid slice key
+TypeError memoryview: invalid slice key
+TypeError memoryview: invalid slice key
+TypeError memoryview: invalid slice key
+TypeError memoryview: invalid slice key
+TypeError memoryview: invalid slice key
+TypeError cannot index 1-dimension view with 2-element tuple
+NotImplementedError sub-views are not implemented
+NotImplementedError multi-dimensional slicing is not implemented
+NotImplementedError multi-dimensional slicing is not implemented
+TypeError memoryview: invalid slice key
+TypeError memoryview: invalid slice key
+TypeError memoryview: invalid slice key
+TypeError memoryview: invalid slice key
+TypeError memoryview: invalid slice key
+13
+13
+IndexError index out of bounds on dimension 1
+IndexError index out of bounds on dimension 1
+(b'\n\x0b\x0c\r\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d', 20, True, 1, 'B', 1, (20,), (1,), True, True, True, 20)
+True
+True
+True
+(b'', 0, True, 1, 'B', 1, (0,), (1,), True, True, True, 0)
+True
+True
+True
+(b'\x0b\x0c\r\x0e', 4, True, 1, 'B', 1, (4,), (1,), True, True, True, 4)
+True
+True
+True
+(b'', 0, True, 1, 'B', 1, (0,), (1,), True, True, True, 0)
+True
+True
+True
+(b'\x1b\x1c\x1d', 3, True, 1, 'B', 1, (3,), (1,), True, True, True, 3)
+True
+True
+True
+(b'\n\x0c\x0e\x10\x12\x14\x16\x18\x1a\x1c', 10, True, 1, 'B', 1, (10,), (2,), False, False, False, 10)
+True
+True
+True
+(b'\x1d\x1c\x1b\x1a\x19\x18\x17\x16\x15\x14\x13\x12\x11\x10\x0f\x0e\r\x0c\x0b\n', 20, True, 1, 'B', 1, (20,), (-1,), False, False, False, 20)
+True
+True
+True
+(b'\x0b\x0e\x11\x14\x17', 5, True, 1, 'B', 1, (5,), (3,), False, False, False, 5)
+True
+True
+True
+(b'\x19\x16\x13\x10\r', 5, True, 1, 'B', 1, (5,), (-3,), False, False, False, 5)
+True
+True
+True
+(b'', 0, True, 1, 'B', 1, (0,), (1,), True, True, True, 0)
+True
+True
+True
+(b'\n\x0b\x0c\r\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d', 20, True, 1, 'B', 1, (20,), (1,), True, True, True, 20)
+True
+True
+True
+(b'', 0, True, 1, 'B', 1, (0,), (2,), False, False, False, 0)
+True
+True
+True
+(b'\r', 1, True, 1, 'B', 1, (1,), (5,), True, True, True, 1)
+True
+True
+True
+(b'\x0c\x0e\x10\x12', 4, True, 1, 'B', 1, (4,), (2,), False, False, False, 4)
+True
+True
+True
+(b'\n', 1, True, 1, 'B', 1, (1,), (9223372036854775807,), True, True, True, 1)
+True
+True
+True
+(b'\x1d', 1, True, 1, 'B', 1, (1,), (-9223372036854775807,), True, True, True, 1)
+True
+True
+True
+(b'', 0, True, 1, 'B', 1, (0,), (1,), True, True, True, 0)
+True
+True
+True
+(b'\x1d', 1, True, 1, 'B', 1, (1,), (7,), True, True, True, 1)
+True
+True
+True
+ValueError slice step cannot be zero
+TypeError slice indices must be integers or have an __index__ method
+TypeError slice indices must be integers or have an __index__ method
+TypeError slice indices must be integers or have an __index__ method
+(b'\x0c\x0e\x10\x12\x14\x16\x18\x1a', 8, True, 1, 'B', 1, (8,), (2,), False, False, False, 8)
+(b'\x1a\x18\x16\x14\x12\x10\x0e\x0c', 8, True, 1, 'B', 1, (8,), (-2,), False, False, False, 8) (b'\x0e\x10\x12\x14', 4, True, 1, 'B', 1, (4,), (2,), False, False, False, 4) (b'\x0c\x10\x14\x18', 4, True, 1, 'B', 1, (4,), (4,), False, False, False, 4) (b'\x16\x12\x0e', 3, True, 1, 'B', 1, (3,), (-4,), False, False, False, 3) (b'\x16\x14\x12', 3, True, 1, 'B', 1, (3,), (-2,), False, False, False, 3)
+26 12 16 26 12
+IndexError index out of bounds on dimension 1
+IndexError index out of bounds on dimension 1
+True True
+ok
+TypeError can't concat memoryview to bytes
+TypeError sequence item 0: expected a bytes-like object, memoryview found
+BufferError memoryview: underlying buffer is not C-contiguous
+TypeError can't set bytearray slice from memoryview
+TypeError memoryview: casts are restricted to C-contiguous views
+BufferError memoryview: underlying buffer is not C-contiguous
+True
+True
+True
+True
+True
+(2,)
+(2,)
+False
+False
+True
+False

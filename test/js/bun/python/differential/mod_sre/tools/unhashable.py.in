@@ -1,0 +1,16 @@
+# re._compile_template() is tried again with a str or bytes if it raises TypeError, as it does for what cannot be hashed.
+REPLS = [r'[\1]', rb'[\1]']
+p = C(r'(x+)')
+pb = C(rb'(x+)')
+class Str(str):
+    __hash__ = None
+attempt(p.sub, Str(r'[\1]'), 'axb')
+attempt(p.match('x').expand, Str(r'[\1]'))
+attempt(pb.sub, bytearray(rb'[\1]'), b'axb')
+attempt(pb.match(b'x').expand, bytearray(rb'[\1]'))
+attempt(p.sub, [], 'axb')
+attempt(p.sub, {}, 'axb')
+attempt(p.match('x').expand, [])
+class Bytes(bytes):
+    __hash__ = None
+attempt(pb.sub, Bytes(rb'[\1]'), b'axb')

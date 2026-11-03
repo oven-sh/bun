@@ -1,0 +1,118 @@
+status: 0
+script: 7038a93925acd212
+---
+mode1 -> TypeError: expected Expression node, got Module
+mode2 -> TypeError: expected Module node, got Expression
+mode3 -> TypeError: expected Interactive node, got Module
+mode4 -> ok code
+mode5 -> TypeError: expected Expression node, got Constant
+mode6 -> ValueError: compile() mode 'func_type' requires flag PyCF_ONLY_AST
+mode7 -> TypeError: expected FunctionType node, got Expression
+mode8 -> ok FunctionType
+mode9 -> TypeError: expected Module node, got AST
+mode10 -> TypeError: expected Module node, got Load
+missing-lineno -> TypeError: required field "lineno" missing from expr
+missing-col -> TypeError: required field "col_offset" missing from expr
+no-end -> ok code
+bad-lineno -> ValueError: invalid integer value: 'a'
+float-lineno -> ValueError: invalid integer value: 1.5
+huge-lineno -> OverflowError: Python int too large to convert to C int
+bool-lineno -> ok code
+none-lineno -> ValueError: invalid integer value: None
+missing-value -> TypeError: required field "value" missing from Constant
+missing-id -> TypeError: required field "id" missing from Name
+missing-ctx -> TypeError: required field "ctx" missing from Name
+id-none -> ValueError: field 'id' is required for Name
+id-int -> TypeError: AST identifier must be of type str
+id-bytes -> TypeError: AST identifier must be of type str
+id-strsub -> TypeError: AST identifier must be of type str
+ctx-none -> TypeError: expected some sort of expr_context, but got None
+ctx-int -> TypeError: expected some sort of expr_context, but got 1
+ctx-op -> TypeError: expected some sort of expr_context, but got Add()
+ctx-class -> TypeError: expected some sort of expr_context, but got <class 'ast.Load'>
+body-none -> ValueError: field 'body' is required for Expression
+body-int -> TypeError: required field "lineno" missing from expr
+body-stmt -> TypeError: expected some sort of expr, but got Pass()
+body-str -> TypeError: required field "lineno" missing from expr
+binop-left-none -> ValueError: field 'left' is required for BinOp
+binop-op-none -> TypeError: expected some sort of operator, but got None
+binop-op-wrong -> TypeError: expected some sort of operator, but got And()
+binop-right-none -> ValueError: field 'right' is required for BinOp
+list-notlist -> TypeError: List field "elts" must be a list, not a tuple
+list-none -> TypeError: List field "elts" must be a list, not a NoneType
+list-str -> TypeError: List field "elts" must be a list, not a str
+list-has-none -> ValueError: None disallowed in expression list
+list-has-int -> TypeError: required field "lineno" missing from expr
+call-kw-none -> TypeError: required field "value" missing from keyword
+call-kw-int -> TypeError: required field "value" missing from keyword
+call-kw-noloc -> TypeError: required field "lineno" missing from keyword
+call-kw-novalue -> ValueError: field 'value' is required for keyword
+lambda-args-none -> ok code
+lambda-args-int -> ok code
+lambda-arg-noname -> ValueError: field 'arg' is required for arg
+compare-ops -> TypeError: expected some sort of cmpop, but got None
+compare-ops2 -> TypeError: expected some sort of cmpop, but got Add()
+fv-conv -> ValueError: invalid integer value: 'r'
+fv-conv-none -> ValueError: invalid integer value: None
+const-kind -> TypeError: AST string must be of type str
+const-kind-b -> ok code
+stmt-int -> TypeError: required field "lineno" missing from stmt
+stmt-expr -> TypeError: expected some sort of stmt, but got Constant(value=1, kind=None)
+stmt-none -> ValueError: None disallowed in statement list
+body-notlist -> TypeError: Module field "body" must be a list, not a tuple
+ignores-notlist -> TypeError: Module field "type_ignores" must be a list, not a int
+ignores-bad -> TypeError: expected some sort of type_ignore, but got 5
+ignores-none -> ok code
+ignores-tag -> TypeError: AST string must be of type str
+ignores-tag2 -> TypeError: AST string must be of type str
+ignores-ok -> ok code
+def-noname -> ValueError: field 'name' is required for FunctionDef
+def-tc -> TypeError: AST string must be of type str
+import-alias -> TypeError: required field "lineno" missing from alias
+import-alias-none -> ValueError: field 'name' is required for alias
+import-lazy -> ValueError: invalid integer value: 'x'
+importfrom-level -> ValueError: invalid integer value: 'x'
+annassign-simple -> ValueError: invalid integer value: None
+with-item -> TypeError: required field "context_expr" missing from withitem
+with-item-none -> ValueError: field 'context_expr' is required for withitem
+match-case -> ValueError: field 'pattern' is required for match_case
+match-case-int -> TypeError: required field "lineno" missing from pattern
+match-noend -> TypeError: required field "end_lineno" missing from pattern
+try-handler -> TypeError: required field "lineno" missing from excepthandler
+typeparam -> TypeError: required field "lineno" missing from type_param
+typeparam-noend -> TypeError: required field "end_lineno" missing from type_param
+comp -> TypeError: required field "target" missing from comprehension
+comp-async -> ValueError: invalid integer value: None
+changed-size -> RuntimeError: If field "body" changed size during iteration
+raises -> KeyError: 'boom'
+pos1 -> ValueError: AST node line range (2, 1) is not valid
+pos2 -> ValueError: AST node column range (0, 0) for line range (-1, 1) is not valid
+pos3 -> ValueError: AST node column range (-1, 0) for line range (1, 1) is not valid
+pos4 -> ValueError: line 1, column 5-2 is not a valid range
+pos5 -> ok code
+pos6 -> ok code
+pos7 -> ok code
+pos8 -> ok code
+pos9 -> ok code
+pos10 -> ok code
+pos-stmt -> ValueError: AST node line range (3, 2) is not valid
+pos-arg -> ValueError: AST node line range (3, 2) is not valid
+pos-handler -> ValueError: AST node line range (3, 2) is not valid
+pos-handler-star -> ok code
+pos-pattern -> ValueError: AST node line range (3, 2) is not valid
+pos-typeparam -> ValueError: AST node line range (3, 2) is not valid
+const-list -> TypeError: got an invalid type in Constant: list
+const-dict -> TypeError: got an invalid type in Constant: dict
+const-set -> TypeError: got an invalid type in Constant: set
+const-object -> TypeError: got an invalid type in Constant: object
+const-type -> TypeError: got an invalid type in Constant: type
+const-tuple -> TypeError: got an invalid type in Constant: list
+const-frozenset -> TypeError: got an invalid type in Constant: range
+const-bytearray -> TypeError: got an invalid type in Constant: bytearray
+const-range -> TypeError: got an invalid type in Constant: range
+const-S -> TypeError: got an invalid type in Constant: S
+const-NotImplementedType -> TypeError: got an invalid type in Constant: NotImplementedType
+const-Load -> TypeError: got an invalid type in Constant: Load
+const-I -> TypeError: got an invalid type in Constant: I
+const-F -> TypeError: got an invalid type in Constant: F
+const-T -> TypeError: got an invalid type in Constant: T

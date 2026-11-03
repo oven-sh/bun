@@ -1,0 +1,85 @@
+status: 0
+script: 43681ccc5b58cbb9
+---
+17.0.0 3.2.0
+category 9c1bb124f58a9b22
+bidirectional e66f31a1f35b096f
+combining 5a15f264fd68ef06
+east_asian_width fe3dca8d37a4f908
+mirrored 1c5e603130f17511
+decomposition 2ef95d95c59942bb
+decimal c03f4208cb6e48a6
+digit 041cf335683e8463
+numeric 5effc8eea73b4a21
+name 9beee021a7b6a026
+category 1b34daf75d5b1571
+bidirectional 3b4a9a2bbbf482fe
+combining 50dc8ebd1cdbb38b
+east_asian_width 15a07f166570020a
+mirrored f63c1159832669de
+decomposition 3942b112a5f61bb4
+decimal 34588ce5f23e830f
+digit 041cf335683e8463
+numeric 87c75034c328f4f0
+name f7b828f23f850069
+grapheme_cluster_break 7492379e44992e96
+extended_pictographic 17fa6018edab238b
+indic_conjunct_break 28245e9e09483d40
+block 260e61e6f0a44178
+isxidstart 7f2860edf57879ab
+isxidcontinue 8ab8bf8a1d23ed90
+NFC 31e71c2a4cd0bc21
+NFC 31e71c2a4cd0bc21
+NFD a6eca20a32a1ffb3
+NFD d6d9947f2435aea4
+NFKC e74e4f131fad89d8
+NFKC 7513a3c419a68bf0
+NFKD f7b03f3dcb27eef5
+NFKD f670b060fc09709c
+names that do not lead back: 0
+088F ARABIC LETTER NOON WITH RING ABOVE Lo AL 0 N 0 '' None None None Arabic Extended-B Other
+0897 ARABIC PEPET Mn NSM 230 N 0 '' None None None Arabic Extended-B Extend
+A7F1 MODIFIER LETTER CAPITAL S Lm L 0 N 0 '<super> 0053' None None None Latin Extended-D Other
+105C9 TODHRI LETTER EI Lo L 0 N 0 '105D2 0307' None None None Todhri Other
+10D40 GARAY DIGIT ZERO Nd AN 0 N 0 '' 0 0 0.0 Garay Other
+11383 TULU-TIGALARI LETTER II Lo L 0 N 0 '11382 113C9' None None None Tulu-Tigalari Other
+13460 EGYPTIAN HIEROGLYPH-13460 Lo L 0 N 0 '' None None None Egyptian Hieroglyphs Extended-A Other
+1611E GURUNG KHEMA VOWEL SIGN AA Mn NSM 0 N 0 '' None None None Gurung Khema Extend
+16121 GURUNG KHEMA VOWEL SIGN U Mn NSM 0 N 0 '1611E 1611E' None None None Gurung Khema Extend
+187F8 TANGUT IDEOGRAPH-187F8 Lo L 0 W 0 '' None None None Tangut Other
+18CFF KHITAN SMALL SCRIPT CHARACTER-18CFF Lo L 0 W 0 '' None None None Khitan Small Script Other
+1CCD6 OUTLINED LATIN CAPITAL LETTER A So L 0 N 0 '<font> 0041' None None None Symbols for Legacy Computing Supplement Other
+323B0 CJK UNIFIED IDEOGRAPH-323B0 Lo L 0 W 0 '' None None None CJK Unified Ideographs Extension J Other
+33479 CJK UNIFIED IDEOGRAPH-33479 Lo L 0 W 0 '' None None None CJK Unified Ideographs Extension J Other
+0295 LATIN LETTER PHARYNGEAL VOICED FRICATIVE Lo L 0 N 0 '' None None None IPA Extensions Other
+226D NOT EQUIVALENT TO Sm ON 0 N 1 '224D 0338' None None None Mathematical Operators Other
+5146 CJK UNIFIED IDEOGRAPH-5146 Lo L 0 W 0 '' None None 1000000000000.0 CJK Unified Ideographs Other
+'\U00013460\U000323b0\U000187f8\U00018cff\u0897\U00010d50'
+KeyError "undefined character name 'EGYPTIAN HIEROGLYPH-1345F'"
+KeyError "undefined character name 'EGYPTIAN HIEROGLYPH-143FB'"
+KeyError "undefined character name 'EGYPTIAN HIEROGLYPH-013460'"
+KeyError "undefined character name 'EGYPTIAN HIEROGLYPH-'"
+KeyError "undefined character name 'CJK UNIFIED IDEOGRAPH-3347A'"
+KeyError "undefined character name 'CJK UNIFIED IDEOGRAPH-323BG'"
+KeyError "undefined character name 'ARABIC PEPE'"
+KeyError "undefined character name 'ARABIC PEPETS'"
+KeyError "undefined character name ''"
+'\u0897' None Cn
+'\U000105d2\u0307' '\U000105c9' '\U000105d2\u0307' '\U000105c9' '\U000105d2\u0307' False True False True
+'a\U000105d2\u0307\u0301b' 'a\U000105c9\u0301b' 'a\U000105d2\u0307\u0301b' 'a\U000105c9\u0301b' 'a\U000105d2\u0307\u0301b' False True False True
+'\U000105c9\u0323' '\U000105c9\u0323' '\U000105d2\u0323\u0307' '\U000105c9\u0323' '\U000105d2\u0323\u0307' True False True False
+'\U000105d2\u0323\u0307' '\U000105c9\u0323' '\U000105d2\u0323\u0307' '\U000105c9\u0323' '\U000105d2\u0323\u0307' False True False True
+'\U00011382\U000113c9' '\U00011383' '\U00011382\U000113c9' '\U00011383' '\U00011382\U000113c9' False True False True
+'\U000113c2\U000113c2\U000113c2' '\U000113c5\U000113c2' '\U000113c2\U000113c2\U000113c2' '\U000113c5\U000113c2' '\U000113c2\U000113c2\U000113c2' False True False True
+'\U00016121\U0001611f' '\U00016126' '\U0001611e\U0001611e\U0001611f' '\U00016126' '\U0001611e\U0001611e\U0001611f' False False False False
+'\U0001611e\U0001611e\U0001611f' '\U00016126' '\U0001611e\U0001611e\U0001611f' '\U00016126' '\U0001611e\U0001611e\U0001611f' False True False True
+'\ua7f1x\u0301' '\ua7f1x\u0301' '\ua7f1x\u0301' 'Sx\u0301' 'Sx\u0301' True True False False
+'e\u0301\U0001ccd6' '\xe9\U0001ccd6' 'e\u0301\U0001ccd6' '\xe9A' 'e\u0301A' False True False False
+'\u0897\u0301\u0323' '\u0323\u0897\u0301' '\u0323\u0897\u0301' '\u0323\u0897\u0301' '\u0323\u0897\u0301' False False False False
+'q\u0323\u0897\u0307\u0301' 'q\u0323\u0897\u0307\u0301' 'q\u0323\u0897\u0307\u0301' 'q\u0323\u0897\u0307\u0301' 'q\u0323\u0897\u0307\u0301' True True True True
+'\uac01\U000105c9\u1100\u1161' '\uac01\U000105c9\uac00' '\u1100\u1161\u11a8\U000105d2\u0307\u1100\u1161' '\uac01\U000105c9\uac00' '\u1100\u1161\u11a8\U000105d2\u0307\u1100\u1161' False False False False
+'\U00010d69\U00010d6a\u0301' '\U00010d69\U00010d6a\u0301' '\U00010d69\U00010d6a\u0301' '\U00010d69\U00010d6a\u0301' '\U00010d69\U00010d6a\u0301' True True True True
+'\xe9\U00013460\xc5' '\xe9\U00013460\xc5' 'e\u0301\U00013460A\u030a' '\xe9\U00013460\xc5' 'e\u0301\U00013460A\u030a' True False True False
+["'a\\u0897\\U000113c2\\U000113c9\\U00016121\\U0001611f'", "'z'"]
+b'xn--bcher-kva.example' bücher.example b'strasse'
+abssẞ True True ẞ

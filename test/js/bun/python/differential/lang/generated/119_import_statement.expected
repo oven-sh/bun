@@ -1,0 +1,279 @@
+status: 0
+script: 428457598bf68862
+source: 5e36d86e54a52465
+---
+type(sys).__name__ => module
+sys.__name__ => sys
+repr(sys) => <module 'sys' (built-in)>
+sys is sys.modules["sys"] => True
+sys.__doc__ is not None => True
+sys.__spec__.name => sys
+sys.__loader__.__name__ => BuiltinImporter
+sys.__package__ == "" => True
+hasattr(sys, "__file__") => False
+system is sys => True
+a is b is sys => True
+maxsize == sys.maxsize => True
+ms == m2 == maxsize => True
+vi[0] => 3
+path is sys.path => True
+modules is sys.modules => True
+type(argv).__name__ => list
+len(argv) => 1
+argv[0].rsplit("/", 1)[-1] => 119_import_statement.py
+builtins.len is len => True
+builtins.__name__ => builtins
+type(__builtins__).__name__ => module
+__builtins__ is builtins => True
+repr(builtins) => <module 'builtins' (built-in)>
+"print" in dir(builtins) => True
+builtins.__spec__.origin => built-in
+builtins.__dict__["int"] is int => True
+(True, True, ['local_max', 'local_sys'])
+InClass.s is sys => True
+InClass.mx == maxsize => True
+True
+repeated imports are fine
+ModuleNotFoundError: No module named 'no_such_module' | name: no_such_module | path: None | name_from: None
+ModuleNotFoundError: No module named 'no_such_pkg' | name: no_such_pkg | path: None | name_from: None
+ModuleNotFoundError: No module named 'no_such_module' | name: no_such_module | path: None | name_from: None
+ImportError: cannot import name 'no_such_name' from 'sys' (unknown location) | name: sys | path: None | name_from: no_such_name
+ImportError: cannot import name 'no_such_name' from 'sys' (unknown location) | name: sys | path: None | name_from: no_such_name
+ModuleNotFoundError: No module named 'sys.no_such_submodule'; 'sys' is not a package | name: sys.no_such_submodule | path: None | name_from: None
+ModuleNotFoundError: No module named 'sys.sub'; 'sys' is not a package | name: sys.sub | path: None | name_from: None
+ImportError: attempted relative import with no known parent package | name: None | path: None | name_from: None
+ImportError: attempted relative import with no known parent package | name: None | path: None | name_from: None
+ImportError: attempted relative import with no known parent package | name: None | path: None | name_from: None
+ImportError: cannot import name 'nope' from 'builtins' (unknown location) | name: builtins | path: None | name_from: nope
+ModuleNotFoundError: No module named 'sys.path'; 'sys' is not a package | name: sys.path | path: None | name_from: None
+ModuleNotFoundError: No module named 'builtins.len'; 'builtins' is not a package | name: builtins.len | path: None | name_from: None
+True
+__import__("sys") is sys => True
+__import__("sys", globals(), locals(), [], 0) is sys => True
+__import__("sys", fromlist=["maxsize"]) is sys => True
+__import__(name="sys") is sys => True
+__import__("builtins").len is len => True
+__import__() => TypeError: __import__() missing required argument 'name' (pos 1)
+__import__(1) => TypeError: module name must be a string
+__import__("") => ValueError: Empty module name
+__import__("no_such_module") => ModuleNotFoundError: No module named 'no_such_module'
+__import__("sys", level=-1) => ValueError: level must be >= 0
+__import__("sys", level=1) => KeyError: "'__name__' not in globals"
+__import__("sys", {"__package__": None, "__name__": "x"}, level=1) => ImportError: attempted relative import with no known parent package
+__import__("sys", fromlist=["nope"]) is sys => True
+__import__("sys", fromlist=[1]) => <module 'sys' (built-in)>
+__import__("sys.nope") => ModuleNotFoundError: No module named 'sys.nope'; 'sys' is not a package
+__import__(None) => TypeError: module name must be a string
+__import__("a\0b") => ModuleNotFoundError: No module named 'a\x00b'
+__import__("sys", level="1") => TypeError: 'str' object cannot be interpreted as an integer
+__import__("", level=1) => KeyError: "'__name__' not in globals"
+[('sys', None, 0, '__main__'), ('sys', None, 0, '__main__'), ('sys', ('maxsize',), 0, '__main__'), ('sys', ('maxsize', 'path'), 0, '__main__'), ('nope_a.nope_b', None, 0, '__main__'), ('', ('rel',), 1, '__main__'), ('pkg', ('rel',), 2, '__main__')]
+anything is Fake => True
+x is Fake => True
+xs is Fake.sub => True
+attr => from a fake module
+sb.deep => deep
+ImportError: cannot import name 'missing' from 'Fake' (unknown location)
+ImportError: __import__ not found
+fake_mod is fake => True
+value => 42
+fake_mod.__name__ => fake_mod
+repr(fake_mod) => <module 'fake_mod'>
+fake_mod.__dict__.keys() >= {"value", "__name__"} => True
+fake_mod.__doc__ => None
+fake_mod.__spec__ => None
+fake_mod.__loader__ => None
+fake_mod.__package__ => None
+['other', 'value']
+['hidden', 'other', 'value']
+exec("from fake_mod import *", {}) => AttributeError: module 'fake_mod' has no attribute 'nope'
+exec("from fake_mod import *", {}) => TypeError: Item in fake_mod.__all__ must be str, not int
+exec("from fake_mod import *", {}) => TypeError: 'int' object does not support indexing
+[]
+exec("from fake_mod import *", {}) => AttributeError: module 'fake_mod' has no attribute 'a'
+n1() => ModuleNotFoundError: import of none_mod halted; None in sys.modules
+n2() => ModuleNotFoundError: import of none_mod halted; None in sys.modules
+not_a_module => a string
+upper() => A STRING
+pkg.sub => AttributeError: module 'pkg' has no attribute 'sub'
+pkg.sub is sub => True
+ps is sub => True
+s3 is sub => True
+v => 1
+s4 is sub => True
+from-import falls back to sys.modules
+m1() => ModuleNotFoundError: No module named 'pkg.missing'
+m2() => ImportError: cannot import name 'missing' from 'pkg' (unknown location)
+m.__name__ => m
+m.__doc__ => the doc
+sorted(m.__dict__) => ['__doc__', '__loader__', '__name__', '__package__', '__spec__']
+repr(m) => <module 'm'>
+m.__dict__ is vars(m) => True
+dir(m) => ['__doc__', '__loader__', '__name__', '__package__', '__spec__']
+m.x => 1
+m.__dict__["x"] => 1
+m.x => AttributeError: module 'm' has no attribute 'x'
+m.nope => AttributeError: module 'm' has no attribute 'nope'
+Mod() => TypeError: module() missing required argument 'name' (pos 1)
+Mod(1) => TypeError: module() argument 'name' must be str, not int
+Mod("a", "b", "c") => TypeError: module() takes at most 2 arguments (3 given)
+sys.nope => AttributeError: module 'sys' has no attribute 'nope'
+Mod("é").nope => AttributeError: module 'é' has no attribute 'nope'
+m.anything => dynamic anything
+hasattr(m, "zzz") => True
+['custom', 'dir']
+<module 'renamed' from 'dynamic __file__'>
+<module 'dynamic __name__' from 'dynamic __file__'>
+<module 'dynamic __name__' from '/x/y.py'>
+sm.prop => property on a module subclass
+repr(sm) => <module 'sm'>
+isinstance(sm, Mod) => True
+d1() => AttributeError: readonly attribute
+main.__name__ => __main__
+main.t is t => True
+main.__dict__ is globals() => True
+type(main).__name__ => module
+type(lz).__name__ => module
+lz is sys => True
+lzmax == sys.maxsize => True
+a lazy import of a missing module does not fail until it is used
+lazily_missing_module => ModuleNotFoundError: No module named 'lazily_missing_module'
+lazily_missing_module.attr => ModuleNotFoundError: No module named 'lazily_missing_module'
+thing => ModuleNotFoundError: No module named 'lazily_missing_too'
+a soft keyword
+sys.get_lazy_imports() => normal
+sys.get_lazy_imports_filter() => None
+type(sys.lazy_modules).__name__ => set
+type(globals()["raw_lazy"]).__name__ => lazy_import
+type(raw_lazy).__name__ => module
+type(globals()["raw_lazy"]).__name__ => module
+SyntaxError: Expected one or more names after 'import' <- import
+SyntaxError: invalid syntax <- import a,
+SyntaxError: invalid syntax <- import a b
+SyntaxError: invalid syntax <- import a as
+SyntaxError: cannot use attribute as import target <- import a as b.c
+ok: import a.b as c
+SyntaxError: cannot use literal as import target <- import a as 1
+SyntaxError: invalid syntax <- import 1
+SyntaxError: invalid syntax <- import a.
+SyntaxError: invalid syntax <- import .a
+SyntaxError: invalid syntax <- import a..b
+SyntaxError: invalid syntax <- import (a)
+ok: import a, b as c, d.e
+SyntaxError: invalid syntax <- import *
+SyntaxError: cannot use name as import target <- import a as b as c
+ok: import a; import b
+ok: import a.b.c
+SyntaxError: invalid syntax <- import 'a'
+SyntaxError: invalid syntax <- import a-b
+SyntaxError: cannot use None as import target <- import a as None
+SyntaxError: invalid syntax <- import None
+SyntaxError: invalid syntax <- import True
+SyntaxError: cannot assign to __debug__ <- import __debug__
+SyntaxError: cannot assign to __debug__ <- import a as __debug__
+SyntaxError: Expected one or more names after 'import' <- from a import
+SyntaxError: invalid syntax <- from import b
+SyntaxError: invalid syntax <- from a
+SyntaxError: trailing comma not allowed without surrounding parentheses <- from a import b,
+ok: from a import (b,)
+ok: from a import (b)
+SyntaxError: invalid syntax <- from a import ()
+SyntaxError: invalid syntax <- from a import (b c)
+SyntaxError: invalid syntax <- from a import b as
+SyntaxError: cannot use attribute as import target <- from a import b as c.d
+SyntaxError: invalid syntax <- from a import b.c
+ok: from a import *
+SyntaxError: invalid syntax <- from a import (*)
+SyntaxError: invalid syntax <- from a import *, b
+SyntaxError: invalid syntax <- from a import b, *
+SyntaxError: invalid syntax <- from a import * as b
+ok: from . import a
+ok: from .. import a
+ok: from ... import a
+ok: from .... import a
+ok: from . . import a
+ok: from .a import b
+ok: from ..a.b import c
+ok: from . a import b
+SyntaxError: invalid syntax <- from a. import b
+ok: from a.b import c
+ok: from .import a
+ok: from.import a
+ok: from . import *
+SyntaxError: Expected one or more names after 'import' <- from . import
+ok: from a import b as c, d as e
+ok: from a import (b as c,\n d)
+SyntaxError: trailing comma not allowed without surrounding parentheses <- from a import b,\n c
+SyntaxError: invalid syntax <- from a import None
+SyntaxError: cannot use None as import target <- from a import b as None
+SyntaxError: invalid syntax <- from None import a
+SyntaxError: cannot assign to __debug__ <- from a import __debug__
+SyntaxError: invalid syntax <- from 1 import a
+SyntaxError: invalid syntax <- from a import 1
+SyntaxError: import * only allowed at module level <- def f(): from a import *
+SyntaxError: import * only allowed at module level <- class C: from a import *
+SyntaxError: import * only allowed at module level <- def f():\n class C: from a import *
+SyntaxError: invalid syntax <- lambda: import a
+SyntaxError: invalid syntax <- x = import a
+SyntaxError: invalid syntax <- import a if b else c
+ok: from __future__ import annotations
+SyntaxError: future feature nope is not defined <- from __future__ import nope
+SyntaxError: not a chance <- from __future__ import braces
+ok: from __future__ import barry_as_FLUFL
+SyntaxError: from __future__ imports must occur at the beginning of the file <- x = 1\nfrom __future__ import annotations
+ok: 'doc'\nfrom __future__ import annotations
+SyntaxError: from __future__ imports must occur at the beginning of the file <- 'doc'\n'second'\nfrom __future__ import annotations
+ok: from __future__ import annotations, division
+SyntaxError: future feature * is not defined <- from __future__ import *
+ok: from __future__ import annotations as a
+ok: import __future__
+ok: from __future__ import annotations\nfrom __future__ import division\nx = 1
+ok: # c\n\nfrom __future__ import generators
+SyntaxError: from __future__ imports must occur at the beginning of the file <- import a\nfrom __future__ import division
+ok: from __future__ import (division)
+SyntaxError: from __future__ imports must occur at the beginning of the file <- def f(): from __future__ import division
+ok: lazy import a
+ok: lazy import a.b as c, d
+ok: lazy from a import b
+ok: lazy from a import (b, c)
+ok: lazy from . import a
+SyntaxError: lazy from ... import * is not allowed <- lazy from a import *
+SyntaxError: invalid syntax <- lazy import
+SyntaxError: invalid syntax <- lazy from a
+SyntaxError: invalid syntax <- lazy a
+SyntaxError: invalid syntax <- lazy lazy import a
+ok: lazy import lazy
+SyntaxError: lazy import not allowed inside functions <- def f(): lazy import a
+SyntaxError: lazy from ... import not allowed inside functions <- def f(): lazy from a import b
+SyntaxError: lazy import not allowed inside classes <- class C: lazy import a
+SyntaxError: lazy import not allowed inside functions <- class C:\n def f(self): lazy import a
+SyntaxError: lazy import not allowed inside functions <- async def f(): lazy import a
+SyntaxError: lazy import not allowed inside try/except blocks <- try: lazy import a\nexcept: pass
+SyntaxError: lazy import not allowed inside try/except blocks <- try: pass\nexcept: lazy import a
+SyntaxError: lazy import not allowed inside try/except blocks <- try: pass\nfinally: lazy import a
+SyntaxError: lazy import not allowed inside try/except blocks <- try: pass\nexcept: pass\nelse: lazy import a
+SyntaxError: lazy from ... import not allowed inside try/except blocks <- try: lazy from a import b\nfinally: pass
+SyntaxError: lazy import not allowed inside try/except blocks <- try:\n if 1: lazy import a\nfinally: pass
+SyntaxError: lazy import not allowed inside try/except blocks <- try: pass\nexcept* E: lazy import a
+ok: if 1: lazy import a
+ok: with x: lazy import a
+ok: for i in x: lazy import a
+ok: while x: lazy import a
+SyntaxError: lazy from __future__ import is not allowed <- lazy from __future__ import annotations
+ok: lazy = 1
+ok: lazy: int = 1
+ok: lazy.x = 1
+ok: lazy()
+ok: lazy[0]
+ok: lazy + 1
+ok: lazy, x = 1, 2
+ok: def lazy(): pass
+ok: class lazy: pass
+ok: import lazy
+ok: from lazy import lazy
+ok: lazy\nimport a
+ok: lazy; import a
+SyntaxError: invalid syntax <- x = lazy import a
+ok: lazy import a; lazy import b
+SyntaxError: cannot use None as import target <- lazy import a as None
+SyntaxError: cannot use attribute as import target <- lazy from a import b as c.d

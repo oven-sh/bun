@@ -1,0 +1,71 @@
+status: 0
+script: 0f2e140038de0e06
+---
+EpollSelector ['BaseSelector', 'DefaultSelector', 'EpollSelector', 'PollSelector', 'SelectSelector', '_PollLikeSelector']
+SelectSelector True True 1 data-a
+[('data-b', 2)]
+[('data-a', 1), ('data-b', 2)]
+[('data-a', 1), ('data-b', 2)]
+[('data-a', 1)]
+[]
+True
+2 data-a data-a 1
+KeyError: '<socket.socket fd=N, family=1, type=1, proto=0> is not registered'
+KeyError: '<socket.socket fd=N, family=1, type=1, proto=0> is not registered'
+KeyError: '<socket.socket fd=N, family=1, type=1, proto=0> (fd=N) is already registered'
+ValueError: Invalid events: 0
+ValueError: Invalid file descriptor: -1
+ValueError: Invalid file object: 'x'
+[('new-b', 1)]
+None
+PollSelector True True 1 data-a
+[('data-b', 2)]
+[('data-a', 1), ('data-b', 2)]
+[('data-a', 1), ('data-b', 2)]
+[('data-a', 1)]
+[]
+True
+2 data-a data-a 1
+KeyError: '<socket.socket fd=N, family=1, type=1, proto=0> is not registered'
+KeyError: '<socket.socket fd=N, family=1, type=1, proto=0> is not registered'
+KeyError: '<socket.socket fd=N, family=1, type=1, proto=0> (fd=N) is already registered'
+ValueError: Invalid events: 0
+ValueError: Invalid file descriptor: -1
+ValueError: Invalid file object: 'x'
+[('new-b', 1)]
+None
+EpollSelector True True 1 data-a
+[('data-b', 2)]
+[('data-a', 1), ('data-b', 2)]
+[('data-a', 1), ('data-b', 2)]
+[('data-a', 1)]
+[]
+True
+2 data-a data-a 1
+KeyError: '<socket.socket fd=N, family=1, type=1, proto=0> is not registered'
+KeyError: '<socket.socket fd=N, family=1, type=1, proto=0> is not registered'
+KeyError: '<socket.socket fd=N, family=1, type=1, proto=0> (fd=N) is already registered'
+ValueError: Invalid events: 0
+ValueError: Invalid file descriptor: -1
+ValueError: Invalid file object: 'x'
+[('new-b', 1)]
+True
+ValueError: I/O operation on closed epoll object
+EpollSelector True True 1 data-a
+[('data-b', 2)]
+[('data-a', 1), ('data-b', 2)]
+[('data-a', 1), ('data-b', 2)]
+[('data-a', 1)]
+[]
+True
+2 data-a data-a 1
+KeyError: '<socket.socket fd=N, family=1, type=1, proto=0> is not registered'
+KeyError: '<socket.socket fd=N, family=1, type=1, proto=0> is not registered'
+KeyError: '<socket.socket fd=N, family=1, type=1, proto=0> (fd=N) is already registered'
+ValueError: Invalid events: 0
+ValueError: Invalid file descriptor: -1
+ValueError: Invalid file object: 'x'
+[('new-b', 1)]
+True
+ValueError: I/O operation on closed epoll object
+[0, 5, 10, 15, 20, 25, 30, 35, 40, 45]

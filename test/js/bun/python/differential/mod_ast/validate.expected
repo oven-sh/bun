@@ -1,0 +1,274 @@
+status: 0
+script: eac990852e2d6bb3
+---
+name-None -> ValueError: identifier field can't represent 'None' constant
+store-None -> ValueError: identifier field can't represent 'None' constant
+name-True -> ValueError: identifier field can't represent 'True' constant
+store-True -> ValueError: identifier field can't represent 'True' constant
+name-False -> ValueError: identifier field can't represent 'False' constant
+store-False -> ValueError: identifier field can't represent 'False' constant
+name-__debug__ -> ok code
+store-__debug__ -> SyntaxError: cannot assign to __debug__ (<s>, line 1)
+name-a b -> ok code
+store-a b -> ok code
+name- -> ok code
+store- -> ok code
+name-1 -> ok code
+store-1 -> ok code
+ctx-store -> ValueError: expression must have Load context but has Store instead
+ctx-del -> ValueError: expression must have Load context but has Del instead
+assign-load -> ValueError: expression must have Store context but has Load instead
+assign-const -> ValueError: expression which can't be assigned to in Store context
+assign-empty -> ValueError: empty targets on Assign
+assign-none -> ValueError: None disallowed in expression list
+assign-value-store -> ValueError: expression must have Load context but has Store instead
+assign-tuple -> ValueError: expression must have Store context but has Load instead
+assign-tuple-load -> ValueError: expression must have Store context but has Load instead
+assign-starred -> ValueError: expression must have Store context but has Load instead
+del-empty -> ValueError: empty targets on Delete
+del-load -> ValueError: expression must have Del context but has Load instead
+del-none -> ValueError: None disallowed in expression list
+del-call -> ValueError: expression which can't be assigned to in Del context
+aug-load -> ValueError: expression must have Store context but has Load instead
+aug-value -> ValueError: expression must have Load context but has Store instead
+ann-simple -> TypeError: AnnAssign with simple non-Name target
+ann-load -> ValueError: expression must have Store context but has Load instead
+ann-value -> ValueError: expression must have Load context but has Store instead
+ann-annotation -> ValueError: expression must have Load context but has Store instead
+alias-name -> TypeError: TypeAlias with non-Name name
+alias-load -> ValueError: expression must have Store context but has Load instead
+alias-param -> ValueError: identifier field can't represent 'None' constant
+alias-bound -> ValueError: expression must have Load context but has Store instead
+alias-default -> ValueError: expression must have Load context but has Store instead
+alias-default2 -> ValueError: identifier field can't represent 'True' constant
+boolop-0 -> ValueError: BoolOp with less than 2 values
+boolop-1 -> ValueError: BoolOp with less than 2 values
+boolop-none -> ValueError: None disallowed in expression list
+boolop-store -> ValueError: expression must have Load context but has Store instead
+binop-store -> ValueError: expression must have Load context but has Store instead
+unary-store -> ValueError: expression must have Load context but has Store instead
+lambda-body -> ValueError: expression must have Load context but has Store instead
+ifexp -> ValueError: expression must have Load context but has Store instead
+dict-len -> ValueError: Dict doesn't have the same number of keys as values
+dict-none-value -> ValueError: None disallowed in expression list
+dict-none-key -> ok code
+set-none -> ValueError: None disallowed in expression list
+set-store -> ValueError: expression must have Load context but has Store instead
+ListComp-nogen -> ValueError: comprehension with no generators
+ListComp-target -> ValueError: expression must have Store context but has Load instead
+ListComp-iter -> ValueError: expression must have Load context but has Store instead
+ListComp-ifs -> ValueError: None disallowed in expression list
+ListComp-ifs2 -> ValueError: expression must have Load context but has Store instead
+ListComp-elt -> ValueError: expression must have Load context but has Store instead
+SetComp-nogen -> ValueError: comprehension with no generators
+SetComp-target -> ValueError: expression must have Store context but has Load instead
+SetComp-iter -> ValueError: expression must have Load context but has Store instead
+SetComp-ifs -> ValueError: None disallowed in expression list
+SetComp-ifs2 -> ValueError: expression must have Load context but has Store instead
+SetComp-elt -> ValueError: expression must have Load context but has Store instead
+GeneratorExp-nogen -> ValueError: comprehension with no generators
+GeneratorExp-target -> ValueError: expression must have Store context but has Load instead
+GeneratorExp-iter -> ValueError: expression must have Load context but has Store instead
+GeneratorExp-ifs -> ValueError: None disallowed in expression list
+GeneratorExp-ifs2 -> ValueError: expression must have Load context but has Store instead
+GeneratorExp-elt -> ValueError: expression must have Load context but has Store instead
+dictcomp-nogen -> ValueError: comprehension with no generators
+dictcomp-key -> ValueError: expression must have Load context but has Store instead
+dictcomp-value -> ValueError: expression must have Load context but has Store instead
+dictcomp-novalue -> ok code
+yield -> ValueError: expression must have Load context but has Store instead
+yieldfrom -> ValueError: expression must have Load context but has Store instead
+await -> ValueError: expression must have Load context but has Store instead
+compare-none -> ValueError: Compare with no comparators
+compare-len -> ValueError: Compare has a different number of comparators and operands
+compare-left -> ValueError: expression must have Load context but has Store instead
+compare-right -> ValueError: expression must have Load context but has Store instead
+call-func -> ValueError: expression must have Load context but has Store instead
+call-arg -> ValueError: None disallowed in expression list
+call-arg2 -> ValueError: expression must have Load context but has Store instead
+call-kw -> ValueError: expression must have Load context but has Store instead
+joined-none -> ValueError: None disallowed in expression list
+joined-store -> ValueError: expression must have Load context but has Store instead
+template-none -> ValueError: None disallowed in expression list
+fv-value -> ValueError: expression must have Load context but has Store instead
+fv-spec -> ValueError: expression must have Load context but has Store instead
+interp-value -> ValueError: expression must have Load context but has Store instead
+interp-spec -> ValueError: expression must have Load context but has Store instead
+attr-value -> ValueError: expression must have Load context but has Store instead
+attr-ctx -> ValueError: expression must have Load context but has Store instead
+sub-value -> ValueError: expression must have Load context but has Store instead
+sub-slice -> ValueError: expression must have Load context but has Store instead
+starred -> ValueError: expression must have Load context but has Store instead
+starred-ctx -> ValueError: expression must have Load context but has Store instead
+slice -> ValueError: expression must have Load context but has Store instead
+slice2 -> ValueError: expression must have Load context but has Store instead
+slice3 -> ValueError: expression must have Load context but has Store instead
+list-elt -> ValueError: expression must have Load context but has Store instead
+tuple-elt -> ValueError: None disallowed in expression list
+named-target -> TypeError: NamedExpr target must be a Name
+named-target-load -> ok code
+named-value -> ValueError: expression must have Load context but has Store instead
+FunctionDef-body -> ValueError: empty body on FunctionDef
+FunctionDef-name -> ValueError: identifier field can't represent 'None' constant
+FunctionDef-body-none -> ValueError: None disallowed in statement list
+FunctionDef-deco -> ValueError: expression must have Load context but has Store instead
+FunctionDef-deco-none -> ValueError: None disallowed in expression list
+FunctionDef-returns -> ValueError: expression must have Load context but has Store instead
+FunctionDef-tp -> ValueError: identifier field can't represent 'False' constant
+FunctionDef-ann -> ValueError: expression must have Load context but has Store instead
+FunctionDef-posann -> ValueError: expression must have Load context but has Store instead
+FunctionDef-kwann -> ValueError: expression must have Load context but has Store instead
+FunctionDef-varann -> ValueError: expression must have Load context but has Store instead
+FunctionDef-kwargann -> ValueError: expression must have Load context but has Store instead
+FunctionDef-defaults -> ValueError: more positional defaults than args on arguments
+FunctionDef-kwdefaults -> ValueError: length of kwonlyargs is not the same as kw_defaults on arguments
+FunctionDef-kwdefaults2 -> ValueError: length of kwonlyargs is not the same as kw_defaults on arguments
+FunctionDef-default-none -> ValueError: None disallowed in expression list
+FunctionDef-default-store -> ValueError: expression must have Load context but has Store instead
+FunctionDef-kwdefault-store -> ValueError: expression must have Load context but has Store instead
+AsyncFunctionDef-body -> ValueError: empty body on AsyncFunctionDef
+AsyncFunctionDef-name -> ValueError: identifier field can't represent 'None' constant
+AsyncFunctionDef-body-none -> ValueError: None disallowed in statement list
+AsyncFunctionDef-deco -> ValueError: expression must have Load context but has Store instead
+AsyncFunctionDef-deco-none -> ValueError: None disallowed in expression list
+AsyncFunctionDef-returns -> ValueError: expression must have Load context but has Store instead
+AsyncFunctionDef-tp -> ValueError: identifier field can't represent 'False' constant
+AsyncFunctionDef-ann -> ValueError: expression must have Load context but has Store instead
+AsyncFunctionDef-posann -> ValueError: expression must have Load context but has Store instead
+AsyncFunctionDef-kwann -> ValueError: expression must have Load context but has Store instead
+AsyncFunctionDef-varann -> ValueError: expression must have Load context but has Store instead
+AsyncFunctionDef-kwargann -> ValueError: expression must have Load context but has Store instead
+AsyncFunctionDef-defaults -> ValueError: more positional defaults than args on arguments
+AsyncFunctionDef-kwdefaults -> ValueError: length of kwonlyargs is not the same as kw_defaults on arguments
+AsyncFunctionDef-kwdefaults2 -> ValueError: length of kwonlyargs is not the same as kw_defaults on arguments
+AsyncFunctionDef-default-none -> ValueError: None disallowed in expression list
+AsyncFunctionDef-default-store -> ValueError: expression must have Load context but has Store instead
+AsyncFunctionDef-kwdefault-store -> ValueError: expression must have Load context but has Store instead
+class-body -> ValueError: empty body on ClassDef
+class-name -> ValueError: identifier field can't represent 'True' constant
+class-base -> ValueError: expression must have Load context but has Store instead
+class-base-none -> ValueError: None disallowed in expression list
+class-kw -> ValueError: expression must have Load context but has Store instead
+class-deco -> ValueError: expression must have Load context but has Store instead
+return -> ValueError: expression must have Load context but has Store instead
+For-target -> ValueError: expression must have Store context but has Load instead
+For-iter -> ValueError: expression must have Load context but has Store instead
+For-body -> ValueError: empty body on For
+For-orelse -> ValueError: None disallowed in statement list
+AsyncFor-target -> ValueError: expression must have Store context but has Load instead
+AsyncFor-iter -> ValueError: expression must have Load context but has Store instead
+AsyncFor-body -> ValueError: empty body on AsyncFor
+AsyncFor-orelse -> ValueError: None disallowed in statement list
+while-test -> ValueError: expression must have Load context but has Store instead
+while-body -> ValueError: empty body on While
+while-orelse -> ValueError: expression must have Load context but has Store instead
+if-test -> ValueError: expression must have Load context but has Store instead
+if-body -> ValueError: empty body on If
+if-orelse -> ValueError: expression must have Load context but has Store instead
+With-items -> ValueError: empty items on With
+With-ctx -> ValueError: expression must have Load context but has Store instead
+With-vars -> ValueError: expression must have Store context but has Load instead
+With-body -> ValueError: empty body on With
+AsyncWith-items -> ValueError: empty items on AsyncWith
+AsyncWith-ctx -> ValueError: expression must have Load context but has Store instead
+AsyncWith-vars -> ValueError: expression must have Store context but has Load instead
+AsyncWith-body -> ValueError: empty body on AsyncWith
+raise-cause -> ValueError: Raise with cause but no exception
+raise-exc -> ValueError: expression must have Load context but has Store instead
+raise-cause2 -> ValueError: expression must have Load context but has Store instead
+Try-body -> ValueError: empty body on Try
+Try-nothing -> ValueError: Try has neither except handlers nor finalbody
+Try-orelse -> ValueError: Try has orelse but no except handlers
+Try-type -> ValueError: expression must have Load context but has Store instead
+Try-name -> ValueError: identifier field can't represent 'None' constant
+Try-hbody -> ValueError: empty body on ExceptHandler
+Try-final -> ValueError: expression must have Load context but has Store instead
+Try-else -> ValueError: expression must have Load context but has Store instead
+TryStar-body -> ValueError: empty body on TryStar
+TryStar-nothing -> ValueError: TryStar has neither except handlers nor finalbody
+TryStar-orelse -> ValueError: TryStar has orelse but no except handlers
+TryStar-type -> ValueError: expression must have Load context but has Store instead
+TryStar-name -> ok code
+TryStar-hbody -> ValueError: empty body on ExceptHandler
+TryStar-final -> ValueError: expression must have Load context but has Store instead
+TryStar-else -> ValueError: expression must have Load context but has Store instead
+assert-test -> ValueError: expression must have Load context but has Store instead
+assert-msg -> ValueError: expression must have Load context but has Store instead
+import-empty -> ValueError: empty names on Import
+import-name -> ValueError: identifier field can't represent 'None' constant
+import-asname -> ValueError: identifier field can't represent 'True' constant
+from-empty -> ValueError: empty names on ImportFrom
+from-level -> ValueError: Negative ImportFrom level
+from-name -> ValueError: identifier field can't represent 'False' constant
+global-empty -> ValueError: empty names on Global
+nonlocal-empty -> ValueError: empty names on Nonlocal
+expr-store -> ValueError: expression must have Load context but has Store instead
+match-subject -> ValueError: expression must have Load context but has Store instead
+match-cases -> ValueError: empty cases on Match
+m-guard -> ValueError: expression must have Load context but has Store instead
+m-body -> ValueError: empty body on match_case
+m-value-None -> ValueError: unexpected constant inside of a literal pattern
+m-value-True -> ValueError: unexpected constant inside of a literal pattern
+m-value-Ellipsis -> ValueError: unexpected constant inside of a literal pattern
+m-value-(1,) -> ValueError: unexpected constant inside of a literal pattern
+m-value-frozenset() -> ValueError: unexpected constant inside of a literal pattern
+m-value-1 -> ok code
+m-value-1.5 -> ok code
+m-value-2j -> ok code
+m-value-'s' -> ok code
+m-value-b'b' -> ok code
+m-value-1000000000000000000000000000000 -> ok code
+m-value-name -> ValueError: patterns may only match literals and attribute lookups
+m-value-attr -> ok code
+m-value-store -> ValueError: expression must have Load context but has Store instead
+m-value-neg -> ok code
+m-value-pos -> ok code
+m-value-not -> ValueError: patterns may only match literals and attribute lookups
+m-value-negstr -> ValueError: patterns may only match literals and attribute lookups
+m-value-negname -> ValueError: patterns may only match literals and attribute lookups
+m-value-complex -> ok code
+m-value-complex2 -> ok code
+m-value-complex3 -> ValueError: patterns may only match literals and attribute lookups
+m-value-complex4 -> ValueError: patterns may only match literals and attribute lookups
+m-value-complex5 -> ValueError: patterns may only match literals and attribute lookups
+m-value-complex6 -> ValueError: patterns may only match literals and attribute lookups
+m-value-complex7 -> ValueError: patterns may only match literals and attribute lookups
+m-value-joined -> SyntaxError: patterns may only match literals and attribute lookups (<s>, line 1)
+m-value-call -> ValueError: patterns may only match literals and attribute lookups
+m-singleton-None -> ok code
+m-singleton-True -> ok code
+m-singleton-False -> ok code
+m-singleton-1 -> ValueError: MatchSingleton can only contain True, False and None
+m-singleton-'s' -> ValueError: MatchSingleton can only contain True, False and None
+m-singleton-Ellipsis -> ValueError: MatchSingleton can only contain True, False and None
+m-singleton-[1] -> ValueError: MatchSingleton can only contain True, False and None
+m-seq -> ValueError: unexpected constant inside of a literal pattern
+m-seq-star -> SyntaxError: multiple starred names in sequence pattern (<s>, line 1)
+m-seq-star_ -> ValueError: can't capture name '_' in patterns
+m-seq-starNone -> ValueError: identifier field can't represent 'None' constant
+m-star -> ValueError: can't use MatchStar here
+m-map-len -> ValueError: MatchMapping doesn't have the same number of keys as patterns
+m-map-rest -> ValueError: can't capture name '_' in patterns
+m-map-rest2 -> ValueError: identifier field can't represent 'True' constant
+m-map-key -> ValueError: patterns may only match literals and attribute lookups
+m-map-key-none -> ok code
+m-map-key-ellipsis -> ValueError: unexpected constant inside of a literal pattern
+m-map-star -> ValueError: can't use MatchStar here
+m-class-len -> ValueError: MatchClass doesn't have the same number of keyword attributes as patterns
+m-class-cls -> ValueError: MatchClass cls field can only contain Name or Attribute nodes.
+m-class-cls2 -> ValueError: MatchClass cls field can only contain Name or Attribute nodes.
+m-class-cls3 -> ValueError: expression must have Load context but has Store instead
+m-class-attr -> ValueError: identifier field can't represent 'None' constant
+m-class-star -> ValueError: can't use MatchStar here
+m-class-kwstar -> ValueError: can't use MatchStar here
+m-as_ -> ValueError: can't capture name '_' in patterns
+m-as-None -> ValueError: identifier field can't represent 'None' constant
+m-as-noname -> ValueError: MatchAs must specify a target name if a pattern is given
+m-as-star -> ValueError: can't use MatchStar here
+m-or-1 -> ValueError: MatchOr requires at least 2 patterns
+m-or-star -> ValueError: can't use MatchStar here
+functype-arg -> ValueError: None disallowed in expression list
+functype-arg2 -> ValueError: expression must have Load context but has Store instead
+functype-ret -> ValueError: expression must have Load context but has Store instead
+interactive -> ValueError: None disallowed in statement list
+onlyast-invalid -> ValueError: expression must have Load context but has Store instead

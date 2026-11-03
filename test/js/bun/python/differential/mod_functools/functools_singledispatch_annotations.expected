@@ -1,0 +1,6 @@
+status: 0
+script: 5fa878be61ee2d74
+---
+[('int', 1), ('text', 'a'), ('text', b'b'), ('object', 1.5), ('int', True)]
+TypeError Invalid first argument to `register()`: 
+[('int', 1), ('default', 'a')]

@@ -1,0 +1,27 @@
+status: 0
+script: 3d222ceb415184a6
+---
+TypeError _is_interned() argument must be str, not bytes
+TypeError _is_interned() argument must be str, not int
+TypeError _is_interned() argument must be str, not None
+True True
+dictionary for instance variables | list of weak references to the object
+getset_descriptor True
+($type, object, /) (object, /)
+($type, object, /) (object, /)
+($type, object, /) (object, /)
+($type, object, /) (object, /)
+($type, object, /) (object, /)
+($type, object, /) (object, /)
+S_IMODE (object, /)
+S_ISDIR (object, /)
+S_IFMT (object, /)
+filemode (object, /)
+MemoryError Parser stack overflowed - Python source too complex to parse
+SyntaxError too many nested parentheses (<test>, line 1)
+0 "ok b'x' y\n" []
+0 "ok b'x' y\n" []
+0 "ok b'x' y\n" []
+0 "ok b'x' y\n" []
+0 "ok b'x' y\n" []
+0 "ok b'x' y\n" []

@@ -1,0 +1,349 @@
+status: 0
+script: eb70237082b654d7
+source: 3511f0aa9cca827a
+---
+max(1, 2) => 2
+max(2, 1) => 2
+max(1, 2, 3) => 3
+max([1, 3, 2]) => 3
+max((1,)) => 1
+max("abc") => c
+max("a", "b") => b
+max([1, 2.5]) => 2.5
+max(1, 1.0) => 1
+max(1.0, 1) => 1.0
+max(True, 1) => True
+max(1, True) => 1
+max([[1, 2], [1, 3]]) => [1, 3]
+max((1, "a"), (1, "b")) => (1, 'b')
+max({1: 9, 2: 0}) => 2
+max({3, 1, 2}) => 3
+max(range(5)) => 4
+max(x for x in [1, 5, 2]) => 5
+max(-1, -2) => -1
+max(2 ** 70, 2 ** 69) => 1180591620717411303424
+max(float("inf"), 1) => inf
+max("é", "z") => é
+max(b"ab") => 98
+max([1], default=0) => 1
+max([], default=0) => 0
+max([], default=None) => None
+max((), default="d") => d
+max(iter([]), default=[]) => []
+max("a", "B", key=str.lower) => B
+max([1, -3, 2], key=abs) => -3
+max(1, -3, 2, key=abs) => -3
+max([1, 2], key=None) => 2
+max(1, 2, key=None) => 2
+max(["aa", "b", "cc"], key=len) => aa
+max([(1, "x"), (1, "y")], key=lambda p: p[0]) => (1, 'x')
+max([], key=abs, default="kd") => kd
+max([3], key=lambda v: 1 / 0 if False else v) => 3
+min(1, 2) => 1
+min(2, 1) => 1
+min(3, 1, 2) => 1
+min([3, 1, 2]) => 1
+min("abc") => a
+min(1, 1.0) => 1
+min(1.0, 1) => 1.0
+min(True, 1) => True
+min(1, True) => 1
+min([[1, 2], [1, 3]]) => [1, 2]
+min({1: 9, 2: 0}) => 1
+min(range(5)) => 0
+min(range(5, 0, -1)) => 1
+min(-1, -2) => -2
+min(float("-inf"), 1) => -inf
+min([], default=0) => 0
+min([1], default=0) => 1
+min("a", "B", key=str.lower) => a
+min([1, -3, 2], key=abs) => 1
+min(["aa", "b", "cc", "d"], key=len) => b
+min([(1, "x"), (1, "y")], key=lambda p: p[0]) => (1, 'x')
+min(0.0, -0.0) => 0.0
+min(-0.0, 0.0) => -0.0
+max(0.0, -0.0) => 0.0
+max(-0.0, 0.0) => -0.0
+max(nan, 1) => nan
+max(1, nan) => 1
+min(nan, 1) => nan
+min(1, nan) => 1
+max([1, nan, 2]) => 2
+max([nan, 1, 2]) => nan
+min([1, nan, 0]) => 0
+max([2, nan, 1]) => 2
+f() [f=builtin_function_or_method] => TypeError: max expected at least 1 argument, got 0
+f(1) [f=builtin_function_or_method] => TypeError: 'int' object is not iterable
+f([]) [f=builtin_function_or_method] => ValueError: max() iterable argument is empty
+f(()) [f=builtin_function_or_method] => ValueError: max() iterable argument is empty
+f("") [f=builtin_function_or_method] => ValueError: max() iterable argument is empty
+f(iter([])) [f=builtin_function_or_method] => ValueError: max() iterable argument is empty
+f(None) [f=builtin_function_or_method] => TypeError: 'NoneType' object is not iterable
+f(1, "a") [f=builtin_function_or_method] => TypeError: '>' not supported between instances of 'str' and 'int'
+f([1, "a"]) [f=builtin_function_or_method] => TypeError: '>' not supported between instances of 'str' and 'int'
+f([1, None]) [f=builtin_function_or_method] => TypeError: '>' not supported between instances of 'NoneType' and 'int'
+f(1, 2, default=0) [f=builtin_function_or_method] => TypeError: Cannot specify a default for max() with multiple positional arguments
+f([1], nope=1) [f=builtin_function_or_method] => TypeError: max() got an unexpected keyword argument 'nope'
+f([1, 2], key=1) [f=builtin_function_or_method] => TypeError: 'int' object is not callable
+f([1, 2], key=lambda: 0) [f=builtin_function_or_method] => TypeError: <lambda>.<locals>.<lambda>() takes 0 positional arguments but 1 was given
+f(1j, 2j) [f=builtin_function_or_method] => TypeError: '>' not supported between instances of 'complex' and 'complex'
+f([{}, {}]) [f=builtin_function_or_method] => TypeError: '>' not supported between instances of 'dict' and 'dict'
+f(key=abs) [f=builtin_function_or_method] => TypeError: max expected at least 1 argument, got 0
+f(default=1) [f=builtin_function_or_method] => TypeError: max expected at least 1 argument, got 0
+f([1], [2], default=0) [f=builtin_function_or_method] => TypeError: Cannot specify a default for max() with multiple positional arguments
+f(object(), object()) [f=builtin_function_or_method] => TypeError: '>' not supported between instances of 'object' and 'object'
+f([], key=abs) [f=builtin_function_or_method] => ValueError: max() iterable argument is empty
+f({}, default="empty dict") [f=builtin_function_or_method] => 'empty dict'
+f([1, 2], key=lambda v: [v, "a"][v - 1]) [f=builtin_function_or_method] => TypeError: '>' not supported between instances of 'str' and 'int'
+f() [f=builtin_function_or_method] => TypeError: min expected at least 1 argument, got 0
+f(1) [f=builtin_function_or_method] => TypeError: 'int' object is not iterable
+f([]) [f=builtin_function_or_method] => ValueError: min() iterable argument is empty
+f(()) [f=builtin_function_or_method] => ValueError: min() iterable argument is empty
+f("") [f=builtin_function_or_method] => ValueError: min() iterable argument is empty
+f(iter([])) [f=builtin_function_or_method] => ValueError: min() iterable argument is empty
+f(None) [f=builtin_function_or_method] => TypeError: 'NoneType' object is not iterable
+f(1, "a") [f=builtin_function_or_method] => TypeError: '<' not supported between instances of 'str' and 'int'
+f([1, "a"]) [f=builtin_function_or_method] => TypeError: '<' not supported between instances of 'str' and 'int'
+f([1, None]) [f=builtin_function_or_method] => TypeError: '<' not supported between instances of 'NoneType' and 'int'
+f(1, 2, default=0) [f=builtin_function_or_method] => TypeError: Cannot specify a default for min() with multiple positional arguments
+f([1], nope=1) [f=builtin_function_or_method] => TypeError: min() got an unexpected keyword argument 'nope'
+f([1, 2], key=1) [f=builtin_function_or_method] => TypeError: 'int' object is not callable
+f([1, 2], key=lambda: 0) [f=builtin_function_or_method] => TypeError: <lambda>.<locals>.<lambda>() takes 0 positional arguments but 1 was given
+f(1j, 2j) [f=builtin_function_or_method] => TypeError: '<' not supported between instances of 'complex' and 'complex'
+f([{}, {}]) [f=builtin_function_or_method] => TypeError: '<' not supported between instances of 'dict' and 'dict'
+f(key=abs) [f=builtin_function_or_method] => TypeError: min expected at least 1 argument, got 0
+f(default=1) [f=builtin_function_or_method] => TypeError: min expected at least 1 argument, got 0
+f([1], [2], default=0) [f=builtin_function_or_method] => TypeError: Cannot specify a default for min() with multiple positional arguments
+f(object(), object()) [f=builtin_function_or_method] => TypeError: '<' not supported between instances of 'object' and 'object'
+f([], key=abs) [f=builtin_function_or_method] => ValueError: min() iterable argument is empty
+f({}, default="empty dict") [f=builtin_function_or_method] => 'empty dict'
+f([1, 2], key=lambda v: [v, "a"][v - 1]) [f=builtin_function_or_method] => TypeError: '<' not supported between instances of 'str' and 'int'
+max([3, 1, 2], key=k) => 1
+calls => [3, 1, 2]
+min(3, 1, 2, key=k) => 3
+calls => [3, 1, 2]
+max(C(1), C(3), C(2)) => C3
+log => ['3>1', '2>3']
+min(C(2), C(1), C(3)) => C1
+log => ['1<2', '3<1']
+sorted([C(2), C(1), C(3)]) => [C1, C2, C3]
+log => ['1<2', '3<1', '1<3', '3<2']
+sorted([3, 1, 2]) => [1, 2, 3]
+sorted((3, 1, 2)) => [1, 2, 3]
+sorted("bca") => ['a', 'b', 'c']
+sorted({3: 0, 1: 0}) => [1, 3]
+sorted({3, 1, 2}) => [1, 2, 3]
+sorted(range(3, 0, -1)) => [1, 2, 3]
+sorted([]) => []
+sorted(x for x in [2, 1]) => [1, 2]
+sorted([3, 1, 2], reverse=True) => [3, 2, 1]
+sorted([3, 1, 2], reverse=False) => [1, 2, 3]
+sorted([3, 1, 2], reverse=1) => [3, 2, 1]
+sorted([3, 1, 2], reverse=0) => [1, 2, 3]
+sorted(["b", "A", "c"]) => ['A', 'b', 'c']
+sorted(["b", "A", "c"], key=str.lower) => ['A', 'b', 'c']
+sorted([1, -2, 3], key=abs) => [1, -2, 3]
+sorted([1, -2, 3], key=abs, reverse=True) => [3, -2, 1]
+sorted([1, 2.5, 0]) => [0, 1, 2.5]
+sorted([True, 0, 2]) => [0, True, 2]
+sorted([(2, "a"), (1, "b"), (1, "a")]) => [(1, 'a'), (1, 'b'), (2, 'a')]
+sorted([[2], [1, 5], [1]]) => [[1], [1, 5], [2]]
+sorted(["é", "z", "a", "😀", "Z"]) => ['Z', 'a', 'z', 'é', '😀']
+sorted([b"b", b"a"]) => [b'a', b'b']
+sorted([1, 2], key=None) => [1, 2]
+sorted([-0.0, 0.0]) => [-0.0, 0.0]
+sorted([0.0, -0.0]) => [0.0, -0.0]
+sorted([2 ** 70, 1, -(2 ** 70)]) => [-1180591620717411303424, 1, 1180591620717411303424]
+sorted(["aa", "a", ""]) => ['', 'a', 'aa']
+sorted([None] * 1) => [None]
+sorted([(1, None), (0, None)]) => [(0, None), (1, None)]
+sorted(pairs, key=lambda p: p[0]) => [(0, 'b'), (0, 'd'), (1, 'a'), (1, 'c'), (1, 'e')]
+sorted(pairs, key=lambda p: p[0], reverse=True) => [(1, 'a'), (1, 'c'), (1, 'e'), (0, 'b'), (0, 'd')]
+sorted(pairs, key=lambda p: -p[0]) => [(1, 'a'), (1, 'c'), (1, 'e'), (0, 'b'), (0, 'd')]
+src => [3, 1, 2]
+r => [1, 2, 3]
+r is src => False
+type(sorted((1,))) => <class 'list'>
+type(sorted("a")) => <class 'list'>
+sorted(range(100), key=lambda v: (v % 7, -v))[:10] => [98, 91, 84, 77, 70, 63, 56, 49, 42, 35]
+sorted(range(50), key=lambda v: v * 37 % 50) == list(sorted(range(50)... => True
+sorted([(i * 7919) % 1000 for i in range(300)])[:8] => [0, 3, 6, 9, 12, 15, 18, 21]
+sorted([(i * 7919) % 1000 for i in range(300)], reverse=True)[:8] => [996, 993, 990, 987, 984, 981, 978, 975]
+sorted(list(range(100)) + list(range(100)))[:6] => [0, 0, 1, 1, 2, 2]
+sorted([5] * 10 + [1] * 3)[:5] => [1, 1, 1, 5, 5]
+sorted(list(range(64, 0, -1)))[:5] => [1, 2, 3, 4, 5]
+sorted([str(i) for i in range(25)])[:12] => ['0', '1', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19']
+sorted() => TypeError: sorted expected 1 argument, got 0
+sorted(1) => TypeError: 'int' object is not iterable
+sorted(None) => TypeError: 'NoneType' object is not iterable
+sorted([1, "a"]) => TypeError: '<' not supported between instances of 'str' and 'int'
+sorted(["a", 1]) => TypeError: '<' not supported between instances of 'int' and 'str'
+sorted([1, None]) => TypeError: '<' not supported between instances of 'NoneType' and 'int'
+sorted([1j, 2j]) => TypeError: '<' not supported between instances of 'complex' and 'complex'
+sorted([{}, {}]) => TypeError: '<' not supported between instances of 'dict' and 'dict'
+sorted([1], abs) => TypeError: sorted expected 1 argument, got 2
+sorted([1], None, True) => TypeError: sorted expected 1 argument, got 3
+sorted([1], nope=1) => TypeError: sort() got an unexpected keyword argument 'nope'
+sorted([1, 2], key=1) => TypeError: 'int' object is not callable
+sorted([1, 2], key=lambda: 0) => TypeError: <lambda>.<locals>.<lambda>() takes 0 positional arguments but 1 was given
+sorted([1, 2], reverse="yes") => [2, 1]
+sorted([1, 2], reverse=None) => [1, 2]
+sorted([1, 2], reverse=1.5) => [2, 1]
+sorted([object(), object()]) => TypeError: '<' not supported between instances of 'object' and 'object'
+sorted([[1], ["a"]]) => TypeError: '<' not supported between instances of 'str' and 'int'
+sorted([(1, 2), (1, "a")]) => TypeError: '<' not supported between instances of 'str' and 'int'
+sorted([1, 2], key=lambda v: 1 / (v - 2)) => ZeroDivisionError: division by zero
+sorted([{1}, {2}]) => [{1}, {2}]
+sorted(iterable=[1]) => TypeError: sorted expected 1 argument, got 0
+sorted([int, str]) => TypeError: '<' not supported between instances of 'type' and 'type'
+sorted([{1, 2}, {1}, {1, 2, 3}], key=len) => [{1}, {1, 2}, {1, 2, 3}]
+sorted([{1}, {1, 2}]) => [{1}, {1, 2}]
+sorted([{2}, {1}]) in ([{2}, {1}], [{1}, {2}]) => True
+sorted([nan, 1, 0])[1:] if False else "" => 
+len(sorted([nan, 1, 0])) => 3
+any([]) => False
+any([0]) => False
+any([0, 1]) => True
+any([0, "", None]) => False
+any("a") => True
+any("") => False
+any({0: 1}) => False
+any({1: 0}) => True
+any(range(1)) => False
+any(range(2)) => True
+any(x > 2 for x in range(5)) => True
+any([[]]) => False
+any([[0]]) => True
+any(()) => False
+any({0}) => False
+any(iter([0, 0, 2])) => True
+all([]) => True
+all([1]) => True
+all([1, 0]) => False
+all([1, "a", [0]]) => True
+all("") => True
+all("a") => True
+all({0: 1}) => False
+all({1: 0}) => True
+all(range(1)) => False
+all(range(1, 3)) => True
+all(x < 5 for x in range(5)) => True
+all([[]]) => False
+all(()) => True
+all([None]) => False
+all([True, 1, 1.5, "x", (0,)]) => True
+yield 0; yield 1; True
+yield 1; yield 0; False
+yield 0; yield 0; False
+yield 1; yield 1; True
+any(it) => True
+list(it) => [2, 3]
+all(it) => False
+list(it) => [2, 3]
+any() => TypeError: any() takes exactly one argument (0 given)
+any(1) => TypeError: 'int' object is not iterable
+any(None) => TypeError: 'NoneType' object is not iterable
+any([1], [2]) => TypeError: any() takes exactly one argument (2 given)
+all() => TypeError: all() takes exactly one argument (0 given)
+all(1) => TypeError: 'int' object is not iterable
+all(None) => TypeError: 'NoneType' object is not iterable
+all(iterable=[]) => TypeError: all() takes no keyword arguments
+any(1 / 0 for _ in [1]) => ZeroDivisionError: division by zero
+any([NB()]) => ValueError: no bool
+all([NB()]) => ValueError: no bool
+any([1, NB()]) => True
+all([0, NB()]) => False
+len([]) => 0
+len([1, 2]) => 2
+len(()) => 0
+len("abc") => 3
+len("é😀") => 2
+len(b"ab") => 2
+len({}) => 0
+len({1: 2}) => 1
+len(set()) => 0
+len({1, 2}) => 2
+len(range(10)) => 10
+len(range(0, 10, 3)) => 4
+len(range(10, 0, -3)) => 4
+len(range(5, 0)) => 0
+len(bytearray(3)) => 3
+len(frozenset([1])) => 1
+len({}.keys()) => 0
+len({1: 2}.items()) => 1
+len({1: 2}.values()) => 1
+len(range(2 ** 62)) => 4611686018427387904
+len(memoryview(b"abc")) => 3
+len("\U0001F600" * 3) => 3
+len("a\0b") => 3
+len([[]]) => 1
+len(((),)) => 1
+len(frozendict(a=1)) => 1
+hash(0) => 0
+hash(1) => 1
+hash(-1) => -2
+hash(-2) => -2
+hash(2 ** 61 - 1) => 0
+hash(2 ** 61) => 1
+hash(2 ** 61 + 1) => 2
+hash(-(2 ** 61 - 1)) => 0
+hash(2 ** 100) => 549755813888
+hash(-(2 ** 100)) => -549755813888
+hash(1.0) => 1
+hash(1.5) => 1152921504606846977
+hash(-1.0) => -2
+hash(0.0) => 0
+hash(-0.0) => 0
+hash(float("inf")) => 314159
+hash(float("-inf")) => -314159
+hash(0.1) => 230584300921369408
+hash(1e100) => 1822893315824342674
+hash(1e-100) => 1735222877707689105
+hash(True) => 1
+hash(False) => 0
+hash(1 + 0j) => 1
+hash(1j) => 1000003
+hash(1 + 1j) => 1000004
+hash(-1j) => -2000006
+hash(()) => 5740354900026072187
+hash((1,)) => -6644214454873602895
+hash((1, 2)) => -3550055125485641917
+hash((1, (2, 3))) => 7267574591690527098
+hash(((),)) => -5486347211504344842
+hash(frozenset()) => 133146708735736
+hash(frozenset({1})) => -558064481276695278
+hash(frozenset({1, 2, 3})) => -272375401224217160
+hash(range(0)) => 2676694398852732306
+hash(range(3)) => -8338477496398685190
+hash(range(1, 4, 2)) => 6253859903769791411
+hash(None) == hash(None) => True
+hash("") => 0
+hash(b"") => 0
+hash("a") == hash("a") => True
+hash(b"a") == hash("a") => True
+hash(slice(1, 2, 3)) == hash(slice(1, 2, 3)) => True
+hash(3.0) == hash(3) => True
+hash(2.0 ** 70) == hash(2 ** 70) => True
+hash(0.5) == hash(0.5 + 0j) => True
+hash(int) == hash(int) => True
+hash(len) == hash(len) => True
+hash((1, 2)) == hash((1.0, 2.0)) => True
+hash(frozenset({1, 2})) == hash(frozenset({2, 1})) => True
+hash(...) == hash(...) => True
+hash(frozendict()) == hash(frozendict()) => True
+hash(frozendict(a=1, b=2)) == hash(frozendict(b=2, a=1)) => True
+hash(v) [v=list] => TypeError: unhashable type: 'list'
+hash(v) [v=dict] => TypeError: unhashable type: 'dict'
+hash(v) [v=set] => TypeError: unhashable type: 'set'
+hash(v) [v=bytearray] => TypeError: unhashable type: 'bytearray'
+hash(v) [v=list] => TypeError: unhashable type: 'list'
+hash(v) [v=tuple] => TypeError: unhashable type: 'list'
+hash(v) [v=tuple] => TypeError: unhashable type: 'list'
+hash(v) [v=dict_keys] => TypeError: unhashable type: 'dict_keys'
+hash(v) [v=dict_items] => TypeError: unhashable type: 'dict_items'
+hash(v) [v=list] => TypeError: unhashable type: 'list'
+hash(v) [v=slice] => TypeError: unhashable type: 'list'
+hash(v) [v=frozendict] => TypeError: unhashable type: 'list'
+hash(v) [v=memoryview] => ValueError: cannot hash writable memoryview object
+hash() => TypeError: hash() takes exactly one argument (0 given)
+hash(1, 2) => TypeError: hash() takes exactly one argument (2 given)

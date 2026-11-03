@@ -1,0 +1,146 @@
+status: 0
+script: afa1899c8d2d40e8
+source: 8378b3b0437c7909
+---
+get d obj A; unset
+set d 5; get d obj A; a.d => 5
+a.__dict__ => {'d': 5}
+delete d; {}
+get d None A; Data
+get d obj A; in dict
+a.n => ('nondata', False, 'A')
+A.n => ('nondata', True, 'A')
+a.n => instance wins
+a.__dict__["n"] => instance wins
+('nondata', False, 'A')
+a.os => ('via set', 1)
+a.__dict__["os"] => ('via set', 1)
+type(A.os).__name__ => OnlySet
+type(A().os).__name__ => OnlySet
+dos() => AttributeError: __delete__
+only delete; OnlyDelete
+sod() => AttributeError: __set__
+str
+a.d => in dict
+A.d => replaced on the class
+o.data => data descriptor
+o.nond => dict
+o.cls => dict
+o.own => dict
+o.missing => getattr missing
+type(h.p).__name__ => property
+type(h.n).__name__ => NonData
+True
+set_name U first; set_name U second; set_name U alias; U().first => alias
+U().second => second
+U().alias => alias
+U.__dict__["first"].owner.__name__ => U
+U().late => AttributeError: 'Named' object has no attribute 'name'
+set_name T x; x
+bsn() => ValueError: bad attr
+["Error calling __set_name__ on 'BadSetName' instance 'attr' in 'X'"] None None
+ncsn() => TypeError: 'int' object is not callable
+wa() => TypeError: WrongArgs.__set_name__() takes 1 positional argument but 3 were given
+instance __set_name__ ignored
+WithMeta.md => meta data descriptor
+WithMeta.mn => class attr wins over meta non-data
+WithMeta.both => class attr
+WithMeta().md => class attr hidden by meta data descriptor
+WithMeta().mn => class attr wins over meta non-data
+WithMeta().nope => AttributeError: 'WithMeta' object has no attribute 'nope'
+MetaOnly.md => meta data descriptor
+MetaOnly.mn => ('nondata', False, 'Meta')
+MetaOnly.both => meta attr
+MetaOnly().md => AttributeError: 'MetaOnly' object has no attribute 'md'
+MetaOnly().both => AttributeError: 'MetaOnly' object has no attribute 'both'
+special get True; len(sd) => 42
+special get True; sd() => 42
+special get True; sd[0] => 42
+special get True; hash(sd) => 42
+special get True; sd + 1 => 42
+special get True; [0] * 50 and list(range(100))[sd] => 42
+len(StaticSpecial()) => 7
+StaticSpecial()(1) => ('StaticSpecial', 1)
+StaticSpecial() + 5 => ('static add', 5)
+RA().x => AttributeError: descriptor says no
+RA.x => AttributeError: descriptor says no
+hasattr(RA(), "x") => False
+hasattr(RA, "x") => False
+getattr(RA(), "x", "d") => d
+RA2().x => fallback x
+BG().x => TypeError: BadGet.__get__() takes 1 positional argument but 3 were given
+BG.x => TypeError: BadGet.__get__() takes 1 positional argument but 3 were given
+NG().x => TypeError: 'NoneType' object is not callable
+sbs() => TypeError: BadSet.__set__() takes 2 positional arguments but 3 were given
+r.area => 6
+r.__dict__ => {'_w': 2, '_h': 3}
+30
+Rect(0, 1) => ValueError: w must be positive
+setattr(r, "h", -1) => ValueError: h must be positive
+3
+computing; u.val => 99
+u.val => 99
+u.__dict__ => {'val': 99}
+computing; 99
+type(md).__name__ => member_descriptor
+md.__get__(s) => 5
+md.__name__ => a
+md.__objclass__.__name__ => Sl
+md.__get__(None, Sl) is md => True
+repr(md) => <member 'a' of 'Sl' objects>
+md.__doc__ => None
+md.__get__(s) => AttributeError: 'Sl' object has no attribute 'a'
+md.__get__(1) => TypeError: descriptor 'a' for 'Sl' objects doesn't apply to a 'int' object
+md.__set__(1, 2) => TypeError: descriptor 'a' for 'Sl' objects doesn't apply to a 'int' object
+md.__delete__(s) => AttributeError: a
+type(gs).__name__ => getset_descriptor
+gs.__get__(int) => int
+gs.__name__ => __name__
+gs.__objclass__ => <class 'type'>
+repr(gs) => <attribute '__name__' of 'type' objects>
+gs.__get__(1) => TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'int' object
+gs.__set__(int, "x") => TypeError: cannot set '__name__' attribute of immutable type 'int'
+gs.__set__(1, "x") => TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'int' object
+type(mp).__name__ => mappingproxy
+"plain" in mp => True
+mp["plain"] => 1
+mp.get("nope") => None
+mp.get("nope", 1) => 1
+len(mp) > 3 => True
+"plain" in list(mp) => True
+"plain" in mp.keys() => True
+1 in mp.values() => True
+("plain", 1) in mp.items() => True
+type(mp.copy()).__name__ => dict
+mp == mp => True
+mp == dict(mp) => True
+type(mp | {}).__name__ => dict
+type({} | mp).__name__ => dict
+"plain" in reversed(mp) or True => True
+mp["nope"] => KeyError: 'nope'
+mp.__setitem__ => AttributeError: 'mappingproxy' object has no attribute '__setitem__'
+mp.pop => AttributeError: 'mappingproxy' object has no attribute 'pop'
+mp.update => AttributeError: 'mappingproxy' object has no attribute 'update'
+hash(mp) => TypeError: unhashable type: 'dict'
+smp() => TypeError: 'mappingproxy' object does not support item assignment
+dmp() => TypeError: 'mappingproxy' object does not support item deletion
+imp() => TypeError: '|=' is not supported by mappingproxy; use '|' instead
+m2 => {'a': 1}
+repr(m2) => mappingproxy({'a': 1})
+str(m2) => {'a': 1}
+m2["a"] => 1
+len(m2) => 1
+list(m2) => ['a']
+dict(m2) => {'a': 1}
+m2 == {"a": 1} => True
+MP(m2) => {'a': 1}
+MP(frozendict(b=2)) => frozendict({'b': 2})
+view => {'a': 1, 'b': 2}
+len(view) => 2
+MP() => TypeError: mappingproxy() missing required argument 'mapping' (pos 1)
+MP(1) => TypeError: mappingproxy() argument must be a mapping, not int
+MP([1]) => TypeError: mappingproxy() argument must be a mapping, not list
+MP((1,)) => TypeError: mappingproxy() argument must be a mapping, not tuple
+MP("a") => mappingproxy('a')
+MP({}, {}) => TypeError: mappingproxy() takes at most 1 argument (2 given)
+MP(None) => TypeError: mappingproxy() argument must be a mapping, not NoneType

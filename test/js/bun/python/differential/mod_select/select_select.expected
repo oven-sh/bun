@@ -1,0 +1,41 @@
+status: 0
+script: e3a0d3f9314f2da8
+---
+True
+True
+True
+True
+True
+True True 2
+([], [], [])
+True
+([], [], [])
+True
+TypeError: arguments 1-3 must be sequences
+TypeError: arguments 1-3 must be sequences
+TypeError: arguments 1-3 must be sequences
+TypeError: timeout must be a real number or None, not str
+ValueError: timeout must be non-negative
+ValueError: timeout must be non-negative
+ValueError: Invalid value NaN (not a number)
+OverflowError: timestamp out of range for C PyTime_t
+OverflowError: timestamp out of range for C PyTime_t
+ValueError: file descriptor cannot be a negative integer (-1)
+ValueError: filedescriptor out of range in select()
+OverflowError: Python int too large to convert to C int
+TypeError: argument must be an int, or have a fileno() method.
+TypeError: argument must be an int, or have a fileno() method.
+TypeError: argument must be an int, or have a fileno() method.
+TypeError: F.fileno() must return an int, not str
+ValueError: file descriptor cannot be a negative integer (-5)
+TypeError: select expected at least 3 arguments, got 1
+TypeError: select expected at most 4 arguments, got 5
+TypeError: select.select() takes no keyword arguments
+KeyError: 'boom'
+ValueError: in generator
+OSError: [Errno 9] Bad file descriptor
+([], [], [])
+([], [], [])
+([], [], [])
+([], [], [])
+5 5 True

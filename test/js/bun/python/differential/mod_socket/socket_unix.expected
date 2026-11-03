@@ -1,0 +1,47 @@
+status: 0
+script: 8d27057f8669c599
+---
+True True True 0 None False  
+4 b'ping' None b'pong' 1 (b'x', None) 1 (b'y', [], 0, None)
+b''
+BrokenPipeError: [Errno 32] Broken pipe 32
+1 2 0 None None 2 2 b'm1'
+1 5 0 None None 2 2 b'm1'
+1 1 0 None None 2 2 b'm1m2'
+1 1 0 0.0 0.0 2 2 b'm1m2'
+OSError: [Errno 95] Operation not supported 95
+OSError: [Errno 22] Invalid argument 22
+OSError: [Errno 93] Protocol not supported 93
+None True None True
+OSError: [Errno 98] Address already in use 98
+None True 
+'' True True  1 b'u'
+None True
+None True
+FileNotFoundError: [Errno 2] No such file or directory 2
+True
+'\udcff\udcfe'
+'s\xe9\u20ac' True
+107
+OSError: AF_UNIX path too long None
+None
+['a'] 'a'
+True bytes
+True
+True
+bytes b'\x00' 6
+108
+b'\x00a\x00b\x00'
+4 (b'anon', None) None 5 (b'named', 'v') 1 (b'm', [], 0, 'v')
+2
+b'fd' 1 True True 4 0 None
+True 7 b'through'
+4
+b'2fds' 2 1073741824 [False, False]
+4
+4 bytearray(b'into') 1 0
+4
+b'lost' [] True
+OSError: [Errno 9] Bad file descriptor 9
+b'cred' True True
+True

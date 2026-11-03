@@ -1,0 +1,288 @@
+status: 0
+script: a4146b6015f771a2
+source: 48532b8aa42dafdd
+---
+Abs() => TypeError: Can't instantiate abstract class Abs without an implementation for abstract method 'f'
+Abs() => TypeError: Can't instantiate abstract class Abs without an implementation for abstract methods 'f', 'g'
+Abs() => TypeError: Can't instantiate abstract class Abs without an implementation for abstract methods 'a', 'b', 'c'
+Abs
+Abs() => TypeError: Can't instantiate abstract class Abs without an implementation for abstract method 'f'
+Abs() => TypeError: Can't instantiate abstract class Abs without an implementation for abstract method 'f'
+Abs() => TypeError: Can't instantiate abstract class Abs without an implementation for abstract methods 'f', 'g'
+type(Abs()).__name__ => Abs
+Abs.__abstractmethods__ => ()
+type(AbsSub()).__name__ => AbsSub
+the flag is per class
+AbsSub.__abstractmethods__ => AttributeError: __abstractmethods__
+object.__abstractmethods__ => AttributeError: __abstractmethods__
+int.__abstractmethods__ => AttributeError: __abstractmethods__
+type.__abstractmethods__ => AttributeError: __abstractmethods__
+Abs
+Abs.__abstractmethods__ => AttributeError: __abstractmethods__
+d1() => AttributeError: __abstractmethods__
+d2() => TypeError: cannot set '__abstractmethods__' attribute of immutable type 'int'
+d3() => None
+Abs() => TypeError: 'int' object is not iterable
+custom __new__ that never reaches object.__new__
+AbsTuple() => ()
+type(AbsExc()).__name__ => 'AbsExc'
+o.who() => B
+type(o).__name__ => B
+isinstance(o, A) => False
+isinstance(o, B) => True
+o.v => 1
+o.who() => C
+isinstance(o, A) => True
+TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError: __class__ must be set to a class, not 'int' object
+TypeError: __class__ must be set to a class, not 'NoneType' object
+TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError: __class__ assignment: 'S' object layout differs from 'C'
+TypeError: __class__ assignment: 'L' object layout differs from 'C'
+TypeError: __class__ assignment: 'E' object layout differs from 'C'
+TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError: can't delete __class__ attribute
+TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+l.first() => 1
+type(l).__name__ => L2
+l => [1, 2]
+M2
+mod.answer => 42
+type(mod).__name__ => ModSub
+[c.__name__ for c in R.__subclasses__()] => ['R1', 'R2']
+[c.__name__ for c in R1.__subclasses__()] => ['R11']
+R11.__subclasses__() => []
+R11.__base__.__name__ => R1
+R11.__bases__ => (<class '__main__.R1'>,)
+[c.__name__ for c in R11.__mro__] => ['R11', 'R1', 'R', 'object']
+object.__base__ => None
+object.__bases__ => ()
+type.__base__ => <class 'object'>
+int.__base__ => <class 'object'>
+bool.__base__ => <class 'int'>
+bool.__bases__ => (<class 'int'>,)
+R.__subclasshook__(R1) => NotImplemented
+object.__subclasshook__(int) => NotImplemented
+type(R.__subclasses__).__name__ => builtin_function_or_method
+int in object.__subclasses__() => True
+bool in int.__subclasses__() => True
+Multi.__base__.__name__ => R1
+[c.__name__ for c in Multi.__bases__] => ['R1', 'R2']
+[c.__name__ for c in R2.__subclasses__()] => ['Multi']
+DictAndR.__base__ => <class 'dict'>
+IntAndR.__base__ => <class 'int'>
+DictAndR.__bases__[0].__name__ => R
+AttributeError: attribute '__mro__' of 'type' objects is not writable
+AttributeError: readonly attribute
+TypeError: cannot delete '__bases__' attribute of type 'R'
+TypeError: can only assign non-empty tuple to R.__bases__, not ()
+TypeError: a __bases__ item causes an inheritance cycle
+TypeError: a __bases__ item causes an inheritance cycle
+TypeError: can only assign tuple to R.__bases__, not list
+TypeError: R.__bases__ must be tuple of classes, not 'int'
+TypeError: cannot set '__bases__' attribute of immutable type 'object'
+TypeError: __bases__ assignment: 'int' object layout differs from 'object'
+Lc.__name__ => Local
+Lc.__qualname__ => outer.<locals>.Local
+Lc.Nested.__qualname__ => outer.<locals>.Local.Nested
+Lc.Nested.m.__qualname__ => outer.<locals>.Local.Nested.m
+Lc.m.__qualname__ => outer.<locals>.Local.m
+Lc().m().__qualname__ => outer.<locals>.Local.m.<locals>.inner
+Lc.lam.__qualname__ => outer.<locals>.Local.<lambda>
+Lc.__module__ => __main__
+repr(Lc) => <class '__main__.outer.<locals>.Local'>
+repr(Lc.Nested) => <class '__main__.outer.<locals>.Local.Nested'>
+repr(Lc())[:40] => <__main__.outer.<locals>.Local object at
+repr(Lc.m)[:38] => <function outer.<locals>.Local.m at 0x
+Doc.__doc__ => class doc
+Doc().__doc__ => class doc
+NoDoc.__doc__ => None
+NoDoc.m.__doc__ => None
+Doc.m.__doc__ => method doc
+DocAttr.__doc__ => explicit
+DocProp().__doc__ => dynamic doc
+type(DocProp.__doc__).__name__ => property
+type(int.__doc__).__name__ => str
+type(len.__doc__).__name__ => str
+(lambda: 0).__doc__ => None
+type(object.__doc__).__name__ => str
+type(type.__doc__).__name__ => str
+changed
+delattr(Doc, "__doc__") => TypeError: cannot delete '__doc__' attribute of type 'Doc'
+changed
+TypeError: can only assign string to Doc.__name__, not 'int'
+ValueError: type name must not contain null characters
+TypeError: can only assign string to Doc.__qualname__, not 'int'
+TypeError: cannot set '__name__' attribute of immutable type 'int'
+TypeError: cannot delete '__name__' attribute of type 'Doc'
+TypeError: cannot delete '__qualname__' attribute of type 'Doc'
+TypeError: cannot set '__doc__' attribute of immutable type 'int'
+TypeError: cannot delete '__module__' attribute of type 'Doc'
+TypeError: cannot set '__module__' attribute of immutable type 'int'
+Doc.__name__ => Renamed
+repr(Doc) => <class 'some.mod.Q.Renamed'>
+repr(Doc())[:28] => <some.mod.Q.Renamed object a
+Doc.m.__qualname__ => Doc.m
+<class 'Renamed'>
+<class 'Renamed'>
+<class '__main__.Q.Renamed'>
+ob.__eq__(ob) => True
+ob.__eq__(1) => NotImplemented
+ob.__ne__(ob) => False
+ob.__ne__(1) => NotImplemented
+ob.__lt__(1) => NotImplemented
+ob.__hash__() == hash(ob) => True
+ob.__repr__()[:17] => <object object at
+ob.__str__()[:17] => <object object at
+ob.__format__("")[:17] => <object object at
+ob.__class__ => <class 'object'>
+type(ob.__doc__).__name__ => str
+ob.__init__() => None
+ob.__dir__() == dir(ob) or sorted(ob.__dir__()) == dir(ob) => True
+ob.__sizeof__() > 0 => True
+ob.__init_subclass__() => None
+ob.__subclasshook__(int) => NotImplemented
+ob.__getstate__() => None
+type(ob.__reduce_ex__(2)).__name__ => tuple
+object.__new__(object).__class__ => <class 'object'>
+object.__call__().__class__ => <class 'object'>
+object().__setattr__.__name__ => __setattr__
+object.__eq__(1, 1) => True
+object.__eq__(1, 2) => NotImplemented
+object.__hash__(1) == object.__hash__(1) => True
+object.__repr__(1)[:14] => <int object at
+object.__str__(1) => 1
+object.__ne__(1, 1) => False
+object.__getattribute__(1, "real") => 1
+object.__dir__(1) == (1).__dir__() => True
+object(1) => TypeError: object() takes no arguments
+object(a=1) => TypeError: object() takes no arguments
+object.__new__() => TypeError: object.__new__(): not enough arguments
+object.__new__(1) => TypeError: object.__new__(X): X is not a type object (int)
+object.__new__(int) => TypeError: object.__new__(int) is not safe, use int.__new__()
+object.__new__(list) => TypeError: object.__new__(list) is not safe, use list.__new__()
+object.__new__(type) => TypeError: object.__new__(type) is not safe, use type.__new__()
+object.__init__() => TypeError: descriptor '__init__' of 'object' object needs an argument
+object.__init__(ob, 1) => TypeError: object.__init__() takes exactly one argument (the instance to initialize)
+ob.__format__("x") => TypeError: unsupported format string passed to object.__format__
+ob.__reduce_ex__() => TypeError: object.__reduce_ex__() takes exactly one argument (0 given)
+ob.x => AttributeError: 'object' object has no attribute 'x'
+setattr(ob, "x", 1) => AttributeError: 'object' object has no attribute 'x' and no __dict__ for setting new attributes
+ob.__dict__ => AttributeError: 'object' object has no attribute '__dict__'
+ob < ob => TypeError: '<' not supported between instances of 'object' and 'object'
+ob() => TypeError: 'object' object is not callable
+len(ob) => TypeError: object of type 'object' has no len()
+int.__new__(object) => TypeError: int.__new__(object): object is not a subtype of int
+int.__new__(str) => TypeError: int.__new__(str): str is not a subtype of int
+int.__new__(bool) => TypeError: int.__new__(bool) is not safe, use bool.__new__()
+list.__new__(dict) => TypeError: list.__new__(dict): dict is not a subtype of list
+tuple.__new__(A) => TypeError: tuple.__new__(A): A is not a subtype of tuple
+A.__new__(int) => TypeError: object.__new__(int) is not safe, use int.__new__()
+object.__new__(A).who() => 'A'
+dict.__new__(type("D", (dict,), {})) => {}
+St().__getstate__() => {'a': 1, 'b': [2]}
+StSlots().__getstate__() => (None, {'x': 1})
+StBoth().__getstate__() => ({'z': 3}, {'x': 1})
+StEmpty().__getstate__() => None
+(1).__getstate__() => None
+"s".__getstate__() => None
+[].__getstate__() => None
+St().__getstate__() is not St().__dict__ => True
+St().__reduce_ex__(2)[1:] => ((<class '__main__.St'>,), {'a': 1, 'b': [2]}, None, None)
+St().__reduce_ex__(4)[0].__name__ => __newobj__
+type("LS", (list,), {})([1]).__reduce_ex__(2)[1] => (<class '__main__.LS'>,)
+list(type("LS", (list,), {})([1, 2]).__reduce_ex__(2)[3]) => [1, 2]
+list(type("DS", (dict,), {})(a=1).__reduce_ex__(2)[4]) => [('a', 1)]
+p.__dict__ => {'a': 1}
+vars(p) is p.__dict__ => True
+2
+p.c => 3
+hasattr(p, "a") => False
+q2.x => 5
+q2.__dict__ is d => True
+{}
+p.__dict__ => {1: 'non-string key'}
+dir(p)[-1:] if False else "" => 
+p.z => 1
+type(p.__dict__).__name__ => DSub
+TypeError: __dict__ must be set to a dictionary, not a 'int'
+TypeError: __dict__ must be set to a dictionary, not a 'NoneType'
+TypeError: __dict__ must be set to a dictionary, not a 'list'
+AttributeError: attribute '__dict__' of 'type' objects is not writable
+TypeError: 'mappingproxy' object does not support item assignment
+AttributeError: attribute '__dict__' of 'type' objects is not writable
+TypeError: __dict__ must be set to a dictionary, not a 'mappingproxy'
+type(P.__dict__).__name__ => mappingproxy
+"__dict__" in P.__dict__ => True
+"__weakref__" in P.__dict__ => True
+type(P.__dict__["__dict__"]).__name__ => getset_descriptor
+P.__dict__["__dict__"].__get__(q1) is d => True
+sorted(P.__dict__) => ['__dict__', '__doc__', '__firstlineno__', '__module__', '__static_attributes__', '__weakref__']
+P.__dict__.get("nope") => None
+len(P.__dict__) == len(list(P.__dict__)) => True
+P.__dict__ == P.__dict__ => True
+P.__dict__.copy() == dict(P.__dict__) => True
+"__module__" in P.__dict__ => True
+P.__dict__["__module__"] => __main__
+len(many.__dict__) => 25
+list(many.__dict__)[:4] => ['a1', 'a3', 'a5', 'a7']
+many.a49 => 49
+sum(many.__dict__.values()) => 625
+[['x', 'y', 'z'], ['y', 'z', 'x'], ['z', 'x', 'y'], ['x', 'y', 'z'], ['y', 'z', 'x']]
+c1_.n => 2
+c2_.n => 1
+Cnt.n => 0
+Cnt.items => [1, 2, 1]
+c1_.items is c2_.items => True
+c1_.__dict__ => {'n': 2}
+"n" in Cnt.__dict__ => True
+0
+c1_.n => 10
+c2_.n => 1
+delattr(c1_, "n") => AttributeError: 'Cnt' object has no attribute 'n'
+c1_.late => added later
+c2_.late => added later
+c1_.late => AttributeError: 'Cnt' object has no attribute 'late'
+patched
+c1_.bump() => instance function, no self
+c2_.bump() => patched
+patched
+[classes[k]().who() for k in sorted(classes)] => ['A', 'B']
+[cls.__name__ for cls in (A, B, C)] => ['A', 'B', 'C']
+(A if True else B)().who() => A
+[k().who() for k in [A, B] * 2] => ['A', 'B', 'A', 'B']
+sorted([C, A, B], key=lambda k: k.__name__)[0].__name__ => A
+{A: 1}[A] => 1
+A == A => True
+A != B => True
+A is A => True
+hash(A) == hash(A) => True
+isinstance(A, type) => True
+callable(A) => True
+type(A)("Dyn", (A,), {})().who() => A
+max([A, B, C], key=lambda k: len(k.__mro__)).__name__ => C
+A < B => TypeError: '<' not supported between instances of 'type' and 'type'
+A + B => TypeError: unsupported operand type(s) for +: 'type' and 'type'
+A[0] => TypeError: type 'A' is not subscriptable
+len(A) => TypeError: object of type 'type' has no len()
+iter(A) => TypeError: 'type' object is not iterable
+A.who() => TypeError: A.who() missing 1 required positional argument: 'self'
+A.who(1) => 'A'
+A.who(B()) => 'A'
+A().who(1) => TypeError: A.who() takes 1 positional argument but 2 were given
+A(1) => TypeError: A() takes no arguments
+A.nope => AttributeError: type object 'A' has no attribute 'nope'
+A().nope => AttributeError: 'A' object has no attribute 'nope'
+-A => TypeError: bad operand type for unary -: 'type'
+A()() => TypeError: 'A' object is not callable
+A() + 1 => TypeError: unsupported operand type(s) for +: 'A' and 'int'
+A() < A() => TypeError: '<' not supported between instances of 'A' and 'A'
+int(A()) => TypeError: int() argument must be a string, a bytes-like object or a real number, not 'A'
+str(A)[:8] => "<class '"

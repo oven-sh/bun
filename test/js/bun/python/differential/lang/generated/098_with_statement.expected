@@ -1,0 +1,143 @@
+status: 0
+script: 7c44f479cbb0d638
+source: 1a143ac6dde1625f
+---
+enter cm; body; exit cm None None False; 
+enter cm; body cm; exit cm None None False; 
+enter cm; 5; exit cm None None False; 5
+enter a; enter b; body; exit b None None False; exit a None None False; 
+enter a; enter b; a b; exit b None None False; exit a None None False; 
+enter a; enter b; parenthesised; exit b None None False; exit a None None False; 
+enter a; enter b; trailing comma; exit b None None False; exit a None None False; 
+enter a; enter b; no as; exit b None None False; exit a None None False; 
+enter a; single in parens; exit a None None False; 
+enter a; parens then as a; exit a None None False; 
+enter a; enter b; enter c; multi-line; exit c None None False; exit b None None False; exit a None None False; 
+enter outer; enter inner; nested; exit inner None None False; exit outer None None False; 
+enter cm; 1 2; exit cm None None False; 
+enter cm; 1 2 3; exit cm None None False; 
+enter cm; 1 [2, 3]; exit cm None None False; 
+enter cm; enter cm; enter cm; exit cm None None False; exit cm None None False; exit cm None None False; o.attr => 1
+l => [2]
+d => {'k': 3}
+enter cm; exit cm ValueError ValueError('propagates') True; ValueError: propagates
+enter cm; exit cm ValueError ValueError('suppressed') True; 'continues after the with'
+enter outer; enter inner; exit inner ValueError ValueError('inner suppresses') True; exit outer None None False; 'outer sees no exception'
+enter outer; enter inner; exit inner ValueError ValueError('outer suppresses') True; exit outer ValueError ValueError('outer suppresses') True; 'ok'
+enter a; enter b; exit b KeyError KeyError('both see it') True; exit a KeyError KeyError('both see it') True; KeyError: 'both see it'
+True suppressed; False propagated; None propagated; 0 propagated; 1 suppressed; '' propagated; 'x' suppressed; [] propagated; [0] suppressed; 0.0 propagated; 2 suppressed; 
+e6() => RuntimeError: bool of the __exit__ result failed
+e7() => 'result not tested without an exception'
+RuntimeError: enter failed
+enter first; exit first RuntimeError RuntimeError('enter failed') True; RuntimeError: enter failed
+RuntimeError: exit failed
+("RuntimeError('exit failed')", "ValueError('body')")
+enter outer; exit outer RuntimeError RuntimeError('exit failed') True; RuntimeError: exit failed
+enter outer; exit outer RuntimeError RuntimeError('exit failed') True; 'outer suppressed the RuntimeError'
+enter cm; exit cm ValueError ValueError('too many values to unpack (expected 2, got 3)') True; ValueError: too many values to unpack (expected 2, got 3)
+TypeError: 'int' object does not support the context manager protocol (missed __exit__ method)
+TypeError: 'NoneType' object does not support the context manager protocol (missed __exit__ method)
+TypeError: 'str' object does not support the context manager protocol (missed __exit__ method)
+TypeError: 'list' object does not support the context manager protocol (missed __exit__ method)
+TypeError: 'object' object does not support the context manager protocol (missed __exit__ method)
+TypeError: 'NoExit' object does not support the context manager protocol (missed __exit__ method)
+TypeError: 'NoEnter' object does not support the context manager protocol (missed __enter__ method)
+TypeError: 'InstanceOnly' object does not support the context manager protocol (missed __exit__ method)
+TypeError: 'AsyncOnly' object does not support the context manager protocol (missed __exit__ method) but it supports the asynchronous context manager protocol. Did you mean to use 'async with'?
+TypeError: 'type' object does not support the context manager protocol (missed __exit__ method)
+TypeError: 'builtin_function_or_method' object does not support the context manager protocol (missed __exit__ method)
+TypeError: 'NoneType' object is not callable
+TypeError: 'tuple' object does not support the context manager protocol (missed __exit__ method)
+TypeError: 'generator' object does not support the context manager protocol (missed __exit__ method)
+enter cm; exit cm None None False; 'returned'
+enter 0; exit 0 None None False; enter 1; exit 1 None None False; 1
+enter 0; exit 0 None None False; enter 1; exit 1 None None False; enter 2; exit 2 None None False; [0, 2]
+enter a; enter b; exit b None None False; exit a None None False; 'deep return'
+'return is not an exception'
+enter cm; finally first; exit cm None None False; 'try'
+enter cm; exit cm None None False; 'after loop'
+enter gen; exit gen None None False; [1, 2]
+enter gen; exit gen GeneratorExit GeneratorExit() True; 
+enter gen; g.throw(ValueError("thrown into the with")) => exit gen ValueError ValueError('thrown into the with') True; ValueError: thrown into the with
+enter; special methods are looked up on the type; exit; 
+eval x; enter x; eval y; enter y; exit y None None False; exit x None None False; 
+get __exit__; get __enter__; body; 
+exit is called on the manager, not on the value; 
+enter rebound; exit rebound None None False; 
+<class 'ValueError'> <class 'ValueError'> () True insp True
+<class 'ValueError'> <class 'ValueError'> ('a', 'b') True insp True
+<class 'ZeroDivisionError'> <class 'ZeroDivisionError'> ('division by zero',) True insp True
+None <class 'NoneType'> None None None None
+<class 'KeyboardInterrupt'> <class 'KeyboardInterrupt'> () True insp True
+<class 'SystemExit'> <class 'SystemExit'> (3,) True insp True
+<class 'StopIteration'> <class 'StopIteration'> ('s',) True insp True
+<class 'IndexError'> <class 'IndexError'> ('pop from empty list',) True insp True
+<class 'ExceptionGroup'> <class 'ExceptionGroup'> ('g', [ValueError()]) True insp True
+ValueError('visible in __exit__'); None
+ValueError('same') None
+enter same; enter same; exit same None None False; exit same None None False; 
+enter same; enter same; exit same None None False; exit same None None False; 
+SyntaxError: invalid syntax <- with: pass
+SyntaxError: expected ':' <- with x
+SyntaxError: expected an indented block after 'with' statement on line 1 <- with x:
+SyntaxError: invalid syntax <- with x as: pass
+SyntaxError: cannot assign to literal <- with x as 1: pass
+SyntaxError: cannot assign to function call <- with x as f(): pass
+SyntaxError: the last 'with' item has a trailing comma <- with x as y, : pass
+SyntaxError: the last 'with' item has a trailing comma <- with x, : pass
+ok: with (x, ): pass
+ok: with (x as y, ): pass
+ok: with (): pass
+ok: with x as (y): pass
+ok: with x as (y, z): pass
+ok: with x as [y]: pass
+ok: with x as y.z: pass
+ok: with x as y[0]: pass
+SyntaxError: starred assignment target must be in a list or tuple <- with x as *y: pass
+ok: with x as (*y,): pass
+SyntaxError: invalid syntax <- with x as y as z: pass
+SyntaxError: invalid syntax <- with (x as y) as z: pass
+ok: with (x as y): pass
+ok: with (x, y) as z: pass
+ok: with (x, y as z): pass
+ok: with (x as y, z): pass
+ok: with x as y, z as w: pass
+SyntaxError: invalid syntax <- with x y: pass
+SyntaxError: cannot assign to None <- with x as None: pass
+SyntaxError: cannot assign to True <- with x as True: pass
+SyntaxError: cannot assign to expression <- with x as y + 1: pass
+SyntaxError: cannot assign to expression <- with x as -y: pass
+SyntaxError: cannot assign to literal <- with x as 'a': pass
+SyntaxError: cannot assign to literal <- with x as (y, 1): pass
+SyntaxError: cannot assign to set display <- with x as {y}: pass
+SyntaxError: cannot assign to lambda <- with x as lambda: 1: pass
+SyntaxError: 'yield' outside function <- with (yield): pass
+ok: with x if y else z: pass
+ok: with x if y else z as w: pass
+ok: with lambda: 1: pass
+ok: with (lambda: 1): pass
+SyntaxError: invalid syntax <- with x := y: pass
+ok: with (x := y): pass
+ok: with (x := y) as z: pass
+ok: with (x := y, z): pass
+SyntaxError: invalid syntax <- with *x: pass
+ok: with (*x,): pass
+SyntaxError: expected an indented block after 'with' statement on line 1 <- with x as y:\npass
+SyntaxError: invalid syntax <- with x as y: pass\nelse: pass
+ok: with x, y, z: pass
+ok: with (x), (y): pass
+ok: with (x) as a, (y) as b: pass
+ok: with (x)(y): pass
+ok: with (x).y: pass
+ok: with (x)[0] as y: pass
+ok: with (x, y)[0]: pass
+ok: with (x for x in y): pass
+ok: with [x]: pass
+ok: with x() as y, y() as z: pass
+SyntaxError: 'await' outside function <- with await x: pass
+SyntaxError: cannot assign to __debug__ <- with x as __debug__: pass
+SyntaxError: invalid syntax <- with (a as b, c as d) as e: pass
+SyntaxError: the last 'with' item has a trailing comma <- with open(f) as a, open(g) as b,: pass
+ok: with(x): pass
+ok: with x as y : pass
+ok: with x as(y): pass

@@ -1,0 +1,267 @@
+status: 0
+script: ead49e79dc778e1e
+source: 557b8970f960d5ab
+---
+"{}".format(1) => 1
+"{} {}".format(1, 2) => 1 2
+"{0} {1}".format(1, 2) => 1 2
+"{1} {0}".format(1, 2) => 2 1
+"{0} {0}".format(1) => 1 1
+"{a}".format(a=1) => 1
+"{a} {b}".format(a=1, b=2) => 1 2
+"{} {a}".format(1, a=2) => 1 2
+"{0} {a}".format(1, a=2) => 1 2
+"".format() => 
+"x".format(1, 2, a=3) => x
+"{{}}".format() => {}
+"{{{}}}".format(1) => {1}
+{{ "}}".format() => }
+"{{0}}".format(1) => {0}
+"a{{b}}c".format() => a{b}c
+"{0[0]}".format([1, 2]) => 1
+"{0[1]}".format((1, 2)) => 2
+"{0[a]}".format({"a": 1}) => 1
+"{a[b]}".format(a={"b": 2}) => 2
+"{0[0][1]}".format([[1, 2]]) => 2
+"{0.real}".format(5) => 5
+"{0.imag}".format(1j) => 1.0
+"{a.real}".format(a=2) => 2
+"{0[a].real}".format({"a": 3}) => 3
+"{[0]}".format([7]) => 7
+"{.real}".format(8) => 8
+"{0[-1]}".format({"-1": "neg"}) => neg
+"{0[a b]}".format({"a b": 1}) => 1
+"{0[1]}".format({1: "int key"}) => int key
+"{0[01]}".format({1: "one"}) if False else "" => 
+"{0[a.b]}".format({"a.b": 1}) => 1
+"{0[é]}".format({"é": 1}) => 1
+"{!s}".format("a") => a
+"{!r}".format("a") => 'a'
+"{!a}".format("é") => '\xe9'
+"{0!r}".format("a") => 'a'
+"{a!r}".format(a="a") => 'a'
+"{!r:>5}".format("a") =>   'a'
+"{!s:>5}".format(1) =>     1
+"{0!r:^7}".format("a") =>   'a'  
+"{!s:5}|".format(None) => None |
+"{!r:.2}".format("abc") => 'a
+"{:5}|".format("a") => a    |
+"{:<5}|".format("a") => a    |
+"{:>5}|".format("a") =>     a|
+"{:^5}|".format("a") =>   a  |
+"{:*^5}|".format("a") => **a**|
+"{:5}|".format(1) =>     1|
+"{:<5}|".format(1) => 1    |
+"{:^5}|".format(1) =>   1  |
+"{:05}|".format(1) => 00001|
+"{:.2}".format("abc") => ab
+"{:5.2}|".format("abc") => ab   |
+"{:^6}|".format("ab") =>   ab  |
+"{:^5}|".format("ab") =>  ab  |
+"{:x<5}".format("a") => axxxx
+"{:{}}|".format("a", 5) => a    |
+"{:{w}}|".format("a", w=5) => a    |
+"{:{}{}{}}|".format("a", "*", ">", 5) => ****a|
+"{0:{1}}|".format("a", 5) => a    |
+"{:{f}{a}{w}}".format("x", f="-", a="^", w=5) => --x--
+"{:}".format(1) => 1
+"{:s}".format("a") => a
+"{:<}".format("a") => a
+"{:é>4}".format("a") => éééa
+"{:😀^5}".format("a") => 😀😀a😀😀
+"{:d}".format(5) => 5
+"{:5d}|".format(5) =>     5|
+"{:<5d}|".format(5) => 5    |
+"{:^5d}|".format(5) =>   5  |
+"{:05d}".format(5) => 00005
+"{:+d}".format(5) => +5
+"{:+d}".format(-5) => -5
+"{: d}".format(5) =>  5
+"{:-d}".format(5) => 5
+"{:=5d}".format(-5) => -   5
+"{:0=5d}".format(-5) => -0005
+"{:*=6d}".format(-5) => -****5
+"{:05d}".format(-5) => -0005
+"{:+05d}".format(5) => +0005
+"{:,d}".format(1234567) => 1,234,567
+"{:_d}".format(1234567) => 1_234_567
+"{:,}".format(1234567) => 1,234,567
+"{:,}".format(-1234) => -1,234
+"{:,}".format(123) => 123
+"{:010,}".format(1234) => 00,001,234
+"{:011,}".format(1234) => 000,001,234
+"{:012,}".format(1234567) => 0,001,234,567
+"{:_}".format(12) => 12
+"{:d}".format(True) => 1
+"{:d}".format(10 ** 30) => 1000000000000000000000000000000
+"{:,}".format(10 ** 30) => 1,000,000,000,000,000,000,000,000,000,000
+"{:n}".format(1234567) => 1234567
+"{:c}".format(65) => A
+"{:c}".format(0x1F600) => 😀
+"{:5c}|".format(65) =>     A|
+"{:<5c}|".format(65) => A    |
+"{:b}".format(5) => 101
+"{:o}".format(8) => 10
+"{:x}".format(255) => ff
+"{:X}".format(255) => FF
+"{:#b}".format(5) => 0b101
+"{:#o}".format(8) => 0o10
+"{:#x}".format(255) => 0xff
+"{:#X}".format(255) => 0XFF
+"{:08b}".format(5) => 00000101
+"{:#010b}".format(5) => 0b00000101
+"{:#06x}".format(255) => 0x00ff
+"{:b}".format(-5) => -101
+"{:#b}".format(-5) => -0b101
+"{:#x}".format(-255) => -0xff
+"{:+x}".format(255) => +ff
+"{: x}".format(255) =>  ff
+"{:_b}".format(255) => 1111_1111
+"{:_x}".format(0x12345678) => 1234_5678
+"{:_o}".format(0o1234567) => 123_4567
+"{:#_x}".format(0x12345678) => 0x1234_5678
+"{:>8x}|".format(255) =>       ff|
+"{:^#8x}|".format(255) =>   0xff  |
+"{:=#8x}|".format(255) => 0x    ff|
+"{:x}".format(10 ** 30) => c9f2c9cd04674edea40000000
+"{:#b}".format(0) => 0b0
+"{:010_b}".format(255) => 0_1111_1111
+"{:=+#10x}".format(255) => +0x     ff
+"{:e}".format(5) => 5.000000e+00
+"{:f}".format(5) => 5.000000
+"{:g}".format(5) => 5
+"{:.2f}".format(5) => 5.00
+"{:%}".format(1) => 100.000000%
+"{:.0%}".format(1) => 100%
+"{:,.2f}".format(10 ** 6) => 1,000,000.00
+"{:10.3e}|".format(12345) =>  1.234e+04|
+"{:G}".format(10 ** 20) => 1E+20
+"{:f}".format(10 ** 20) => 100000000000000000000.000000
+"{:f}".format(True) => 1.000000
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec=',x'] => ValueError: Cannot specify ',' with 'x'.
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec=',b'] => ValueError: Cannot specify ',' with 'b'.
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec=',o'] => ValueError: Cannot specify ',' with 'o'.
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec=',c'] => ValueError: Cannot specify ',' with 'c'.
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec='_c'] => ValueError: Cannot specify '_' with 'c'.
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec=',s'] => ValueError: Cannot specify ',' with 's'.
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec='_n'] => ValueError: Cannot specify '_' with 'n'.
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec=',n'] => ValueError: Cannot specify ',' with 'n'.
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec='.2d'] => ValueError: Precision not allowed in integer format specifier
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec='.2x'] => ValueError: Precision not allowed in integer format specifier
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec='.2c'] => ValueError: Precision not allowed in integer format specifier
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec='+c'] => ValueError: Sign not allowed with integer format specifier 'c'
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec='#c'] => ValueError: Alternate form (#) not allowed with integer format specifier 'c'
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec='q'] => ValueError: Unknown format code 'q' for object of type 'int'
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec='dd'] => ValueError: Invalid format specifier 'dd' for object of type 'int'
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec='5,5'] => ValueError: Cannot specify ',' with '5'.
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec=',_'] => ValueError: Cannot specify both ',' and '_'.
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec='_,'] => ValueError: Cannot specify both ',' and '_'.
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec='__'] => ValueError: Cannot specify '_' with '_'.
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec=',,'] => ValueError: Cannot specify ',' with ','.
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec='+s'] => ValueError: Sign not allowed in string format specifier
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec=' s'] => ValueError: Space not allowed in string format specifier
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec='=s'] => ValueError: '=' alignment not allowed in string format specifier
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec='#s'] => ValueError: Alternate form (#) not allowed in string format specifier
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec='zs'] => ValueError: Negative zero coercion (z) not allowed in string format specifier
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec='zd'] => ValueError: Negative zero coercion (z) not allowed in integer format specifier
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec='10.5d'] => ValueError: Precision not allowed in integer format specifier
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec='é'] => ValueError: Unknown format code '\xe9' for object of type 'int'
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec='<<'] => '5'
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec='{'] => ValueError: Unknown format code '{' for object of type 'int'
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec='}'] => ValueError: Unknown format code '}' for object of type 'int'
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec='1e'] => '5.000000e+00'
+format(5, spec) if "s" not in spec or spec in ("s5",) else format("a"... [spec='s5'] => ValueError: Invalid format specifier 's5' for object of type 'int'
+format("a", "d") => ValueError: Unknown format code 'd' for object of type 'str'
+format("a", "x") => ValueError: Unknown format code 'x' for object of type 'str'
+format("a", "f") => ValueError: Unknown format code 'f' for object of type 'str'
+format("a", ",") => ValueError: Cannot specify ',' with 's'.
+format("a", "05") => 'a0000'
+format("a", "=5") => ValueError: '=' alignment not allowed in string format specifier
+format(1, "s") => ValueError: Unknown format code 's' for object of type 'int'
+format(1.5, "s") => ValueError: Unknown format code 's' for object of type 'float'
+format(None, "5") => TypeError: unsupported format string passed to NoneType.__format__
+format([], "5") => TypeError: unsupported format string passed to list.__format__
+format([], "s") => TypeError: unsupported format string passed to list.__format__
+format(object(), "x") => TypeError: unsupported format string passed to object.__format__
+format(1, 5) => TypeError: format() argument 2 must be str, not int
+format(1, None) => TypeError: format() argument 2 must be str, not None
+format(-1, "c") => OverflowError: %c arg not in range(0x110000)
+format(0x110000, "c") => OverflowError: %c arg not in range(0x110000)
+format(10 ** 30, "c") => OverflowError: Python int too large to convert to C long
+format(1, "99999999999999999999") => ValueError: Too many decimal digits in format string
+format(1, ".99999999999999999999f") => ValueError: Too many decimal digits in format string
+format(None, "") => None
+format([], "") => []
+format((1,), "") => (1,)
+format({}, "") => {}
+format(int, "") => <class 'int'>
+format(None) => None
+format(True) => True
+format(True, "") => True
+format(True, "d") => 1
+format(True, "5") =>     1
+format(True, ">5") =>     1
+format(True, "s") if False else "" => 
+format(1j) => 1j
+format("a") => a
+format("a", "") => a
+format(b"a") => b'a'
+"{}".format() => IndexError: Replacement index 0 out of range for positional args tuple
+"{} {}".format(1) => IndexError: Replacement index 1 out of range for positional args tuple
+"{1}".format(1) => IndexError: Replacement index 1 out of range for positional args tuple
+"{a}".format() => KeyError: 'a'
+"{a}".format(b=1) => KeyError: 'a'
+"{0} {}".format(1, 2) => ValueError: cannot switch from manual field specification to automatic field numbering
+"{} {0}".format(1, 2) => ValueError: cannot switch from automatic field numbering to manual field specification
+"{".format() => ValueError: Single '{' encountered in format string
+"}".format() => ValueError: Single '}' encountered in format string
+"{a".format(a=1) => ValueError: expected '}' before end of string
+"a}".format() => ValueError: Single '}' encountered in format string
+"{}}".format(1) => ValueError: Single '}' encountered in format string
+"{{}".format(1) => ValueError: Single '}' encountered in format string
+"{0[}".format([1]) => ValueError: expected '}' before end of string
+"{0[]}".format([1]) => ValueError: Empty attribute in format string
+"{0[0}".format([1]) => ValueError: expected '}' before end of string
+"{0[0]x}".format([1]) => ValueError: Only '.' or '[' may follow ']' in format field specifier
+"{0.}".format(1) => ValueError: Empty attribute in format string
+"{0..a}".format(1) => ValueError: Empty attribute in format string
+"{0.nope}".format(1) => AttributeError: 'int' object has no attribute 'nope'
+"{0[5]}".format([1]) => IndexError: list index out of range
+"{0[a]}".format([1]) => TypeError: list indices must be integers or slices, not str
+"{0[a]}".format({}) => KeyError: 'a'
+"{0[0]}".format(1) => TypeError: 'int' object is not subscriptable
+"{!}".format(1) => ValueError: unmatched '{' in format spec
+"{!x}".format(1) => ValueError: Unknown conversion specifier x
+"{!rr}".format(1) => ValueError: expected ':' after conversion specifier
+"{!r }".format(1) => ValueError: expected ':' after conversion specifier
+"{0!}".format(1) => ValueError: unmatched '{' in format spec
+"{:{}}".format(1) => IndexError: Replacement index 1 out of range for positional args tuple
+"{:{:{}}}".format(1, 2, 3) => ValueError: Max string recursion exceeded
+"{:{".format(1) => ValueError: unmatched '{' in format spec
+"{ 0}".format(1) => KeyError: ' 0'
+"{0 }".format(1) => KeyError: '0 '
+"{-1}".format(1) => KeyError: '-1'
+"{99999999999999999999}".format(1) => ValueError: Too many decimal digits in format string
+"{0[99999999999999999999]}".format([1]) => ValueError: Too many decimal digits in format string
+"{:d}".format("a") => ValueError: Unknown format code 'd' for object of type 'str'
+"{:z}".format(1) => ValueError: Negative zero coercion (z) not allowed in integer format specifier
+"{}".format(P(1)) => P(1|)
+"{:abc}".format(P(1)) => P(1|abc)
+"{:>10}".format(P(1)) => P(1|>10)
+"{!r}".format(P(1)) => P-repr
+"{!s:>8}".format(P(1)) =>   P-repr
+"{0.x}".format(P(5)) => 5
+"{0.x:03d}".format(P(5)) => 005
+format(P(1), "zz") => P(1|zz)
+"{:{}}".format(P(1), "n") => P(1|n)
+f"{P(2):!x}" => P(2|!x)
+"{:}}".format(P(1)) if False else "" => 
+format(Q()) => TypeError: Q.__format__() must return a str, not int
+"{}".format(Q()) => TypeError: Q.__format__() must return a str, not int
+format(R(), "a") => TypeError: unsupported format string passed to R.__format__
+format(R(), "")[:10] => <__main__.
+"{a}{b}".format(**{"a": 1, "b": 2}) => 12
+"{0}{1}".format(*"xy") => xy
+"{x}".format_map({"x": 1}) => 1
+"{self}".format(self=1) => 1
+"{format_string}".format(format_string=2) => 2

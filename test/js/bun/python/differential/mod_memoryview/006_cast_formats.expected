@@ -1,0 +1,138 @@
+status: 0
+script: 36b1c248e500dc5a
+---
+c (64, True, 1, 'c', 1, (64,), (1,), (), True, True, True) 64 b'\x01' b'\xe0' [b'\x01', b'\x02', b'\x03'] [b'\xe1', b'\xe0'] True [b'\x02', b'\x03'] True
+@c (64, True, 1, '@c', 1, (64,), (1,), (), True, True, True) 64 b'\x01' b'\xe0' [b'\x01', b'\x02', b'\x03'] [b'\xe1', b'\xe0'] True [b'\x02', b'\x03'] True
+b (64, True, 1, 'b', 1, (64,), (1,), (), True, True, True) 64 1 -32 [1, 2, 3] [-31, -32] True [2, 3] True
+@b (64, True, 1, '@b', 1, (64,), (1,), (), True, True, True) 64 1 -32 [1, 2, 3] [-31, -32] True [2, 3] True
+B (64, True, 1, 'B', 1, (64,), (1,), (), True, True, True) 64 1 224 [1, 2, 3] [225, 224] True [2, 3] True
+@B (64, True, 1, '@B', 1, (64,), (1,), (), True, True, True) 64 1 224 [1, 2, 3] [225, 224] True [2, 3] True
+h (64, True, 2, 'h', 1, (32,), (2,), (), True, True, True) 32 513 -7967 [513, 1027, 1541] [-7453, -7967] True [1027, 1541] True
+@h (64, True, 2, '@h', 1, (32,), (2,), (), True, True, True) 32 513 -7967 [513, 1027, 1541] [-7453, -7967] True [1027, 1541] True
+H (64, True, 2, 'H', 1, (32,), (2,), (), True, True, True) 32 513 57569 [513, 1027, 1541] [58083, 57569] True [1027, 1541] True
+@H (64, True, 2, '@H', 1, (32,), (2,), (), True, True, True) 32 513 57569 [513, 1027, 1541] [58083, 57569] True [1027, 1541] True
+i (64, True, 4, 'i', 1, (16,), (4,), (), True, True, True) 16 67305985 -522067229 [67305985, 134678021, 202050057] [-454695193, -522067229] True [134678021, 202050057] True
+@i (64, True, 4, '@i', 1, (16,), (4,), (), True, True, True) 16 67305985 -522067229 [67305985, 134678021, 202050057] [-454695193, -522067229] True [134678021, 202050057] True
+I (64, True, 4, 'I', 1, (16,), (4,), (), True, True, True) 16 67305985 3772900067 [67305985, 134678021, 202050057] [3840272103, 3772900067] True [134678021, 202050057] True
+@I (64, True, 4, '@I', 1, (16,), (4,), (), True, True, True) 16 67305985 3772900067 [67305985, 134678021, 202050057] [3840272103, 3772900067] True [134678021, 202050057] True
+l (64, True, 8, 'l', 1, (8,), (8,), (), True, True, True) 8 578437695752307201 -2242261671028070681 [578437695752307201, 1157159078456920585, 1735880461161533969] [-1663540288323457297, -2242261671028070681] True [1157159078456920585, 1735880461161533969] True
+@l (64, True, 8, '@l', 1, (8,), (8,), (), True, True, True) 8 578437695752307201 -2242261671028070681 [578437695752307201, 1157159078456920585, 1735880461161533969] [-1663540288323457297, -2242261671028070681] True [1157159078456920585, 1735880461161533969] True
+L (64, True, 8, 'L', 1, (8,), (8,), (), True, True, True) 8 578437695752307201 16204482402681480935 [578437695752307201, 1157159078456920585, 1735880461161533969] [16783203785386094319, 16204482402681480935] True [1157159078456920585, 1735880461161533969] True
+@L (64, True, 8, '@L', 1, (8,), (8,), (), True, True, True) 8 578437695752307201 16204482402681480935 [578437695752307201, 1157159078456920585, 1735880461161533969] [16783203785386094319, 16204482402681480935] True [1157159078456920585, 1735880461161533969] True
+q (64, True, 8, 'q', 1, (8,), (8,), (), True, True, True) 8 578437695752307201 -2242261671028070681 [578437695752307201, 1157159078456920585, 1735880461161533969] [-1663540288323457297, -2242261671028070681] True [1157159078456920585, 1735880461161533969] True
+@q (64, True, 8, '@q', 1, (8,), (8,), (), True, True, True) 8 578437695752307201 -2242261671028070681 [578437695752307201, 1157159078456920585, 1735880461161533969] [-1663540288323457297, -2242261671028070681] True [1157159078456920585, 1735880461161533969] True
+Q (64, True, 8, 'Q', 1, (8,), (8,), (), True, True, True) 8 578437695752307201 16204482402681480935 [578437695752307201, 1157159078456920585, 1735880461161533969] [16783203785386094319, 16204482402681480935] True [1157159078456920585, 1735880461161533969] True
+@Q (64, True, 8, '@Q', 1, (8,), (8,), (), True, True, True) 8 578437695752307201 16204482402681480935 [578437695752307201, 1157159078456920585, 1735880461161533969] [16783203785386094319, 16204482402681480935] True [1157159078456920585, 1735880461161533969] True
+n (64, True, 8, 'n', 1, (8,), (8,), (), True, True, True) 8 578437695752307201 -2242261671028070681 [578437695752307201, 1157159078456920585, 1735880461161533969] [-1663540288323457297, -2242261671028070681] True [1157159078456920585, 1735880461161533969] True
+@n (64, True, 8, '@n', 1, (8,), (8,), (), True, True, True) 8 578437695752307201 -2242261671028070681 [578437695752307201, 1157159078456920585, 1735880461161533969] [-1663540288323457297, -2242261671028070681] True [1157159078456920585, 1735880461161533969] True
+N (64, True, 8, 'N', 1, (8,), (8,), (), True, True, True) 8 578437695752307201 16204482402681480935 [578437695752307201, 1157159078456920585, 1735880461161533969] [16783203785386094319, 16204482402681480935] True [1157159078456920585, 1735880461161533969] True
+@N (64, True, 8, '@N', 1, (8,), (8,), (), True, True, True) 8 578437695752307201 16204482402681480935 [578437695752307201, 1157159078456920585, 1735880461161533969] [16783203785386094319, 16204482402681480935] True [1157159078456920585, 1735880461161533969] True
+f (64, True, 4, 'f', 1, (16,), (4,), (), True, True, True) 16 1.539989614439558e-36 -1.302145727392792e+20 [1.539989614439558e-36, 4.063216068939723e-34, 1.0711190335780294e-31] [-3.3927541281822647e+22, -1.302145727392792e+20] True [4.063216068939723e-34, 1.0711190335780294e-31] True
+@f (64, True, 4, '@f', 1, (16,), (4,), (), True, True, True) 16 1.539989614439558e-36 -1.302145727392792e+20 [1.539989614439558e-36, 4.063216068939723e-34, 1.0711190335780294e-31] [-3.3927541281822647e+22, -1.302145727392792e+20] True [4.063216068939723e-34, 1.0711190335780294e-31] True
+d (64, True, 8, 'd', 1, (8,), (8,), (), True, True, True) 8 5.447603722011605e-270 -4.911430439000917e+158 [5.447603722011605e-270, 2.500364306227096e-231, 1.2650169649295773e-192] [-2.4217148583686285e+197, -4.911430439000917e+158] True [2.500364306227096e-231, 1.2650169649295773e-192] True
+@d (64, True, 8, '@d', 1, (8,), (8,), (), True, True, True) 8 5.447603722011605e-270 -4.911430439000917e+158 [5.447603722011605e-270, 2.500364306227096e-231, 1.2650169649295773e-192] [-2.4217148583686285e+197, -4.911430439000917e+158] True [2.500364306227096e-231, 1.2650169649295773e-192] True
+e (64, True, 2, 'e', 1, (32,), (2,), (), True, True, True) 32 3.057718276977539e-05 -624.5 [3.057718276977539e-05, 6.121397018432617e-05, 9.185075759887695e-05] [-881.5, -624.5] True [6.121397018432617e-05, 9.185075759887695e-05] True
+@e (64, True, 2, '@e', 1, (32,), (2,), (), True, True, True) 32 3.057718276977539e-05 -624.5 [3.057718276977539e-05, 6.121397018432617e-05, 9.185075759887695e-05] [-881.5, -624.5] True [6.121397018432617e-05, 9.185075759887695e-05] True
+? (64, True, 1, '?', 1, (64,), (1,), (), True, True, True) 64 True True [True, True, True] [True, True] True [True, True] True
+@? (64, True, 1, '@?', 1, (64,), (1,), (), True, True, True) 64 True True [True, True, True] [True, True] True [True, True] True
+P (64, True, 8, 'P', 1, (8,), (8,), (), True, True, True) 8 578437695752307201 16204482402681480935 [578437695752307201, 1157159078456920585, 1735880461161533969] [16783203785386094319, 16204482402681480935] True [1157159078456920585, 1735880461161533969] True
+@P (64, True, 8, '@P', 1, (8,), (8,), (), True, True, True) 8 578437695752307201 16204482402681480935 [578437695752307201, 1157159078456920585, 1735880461161533969] [16783203785386094319, 16204482402681480935] True [1157159078456920585, 1735880461161533969] True
+Zf (64, True, 8, 'Zf', 1, (8,), (8,), (), True, True, True) 8 (1.539989614439558e-36+4.063216068939723e-34j) (-3.3927541281822647e+22-1.302145727392792e+20j) [(1.539989614439558e-36+4.063216068939723e-34j), (1.0711190335780294e-31+2.8212601689791736e-29j), (7.425166366716395e-27+1.9527441154166033e-24j)] [(-2.3011500099473897e+27-8.837158897251794e+24j), (-3.3927541281822647e+22-1.302145727392792e+20j)] True [(1.0711190335780294e-31+2.8212601689791736e-29j), (7.425166366716395e-27+1.9527441154166033e-24j)] True
+@Zf (64, True, 8, '@Zf', 1, (8,), (8,), (), True, True, True) 8 (1.539989614439558e-36+4.063216068939723e-34j) (-3.3927541281822647e+22-1.302145727392792e+20j) [(1.539989614439558e-36+4.063216068939723e-34j), (1.0711190335780294e-31+2.8212601689791736e-29j), (7.425166366716395e-27+1.9527441154166033e-24j)] [(-2.3011500099473897e+27-8.837158897251794e+24j), (-3.3927541281822647e+22-1.302145727392792e+20j)] True [(1.0711190335780294e-31+2.8212601689791736e-29j), (7.425166366716395e-27+1.9527441154166033e-24j)] True
+Zd (64, True, 16, 'Zd', 1, (4,), (16,), (), True, True, True) 4 (5.447603722011605e-270+2.500364306227096e-231j) (-2.4217148583686285e+197-4.911430439000917e+158j) [(5.447603722011605e-270+2.500364306227096e-231j), (1.2650169649295773e-192+5.802147495458688e-154j), (-5.621885836375608e+274-1.1413996157316056e+236j)] [(-5.621885836375608e+274-1.1413996157316056e+236j), (-2.4217148583686285e+197-4.911430439000917e+158j)] True [(1.2650169649295773e-192+5.802147495458688e-154j), (-5.621885836375608e+274-1.1413996157316056e+236j)] True
+@Zd (64, True, 16, '@Zd', 1, (4,), (16,), (), True, True, True) 4 (5.447603722011605e-270+2.500364306227096e-231j) (-2.4217148583686285e+197-4.911430439000917e+158j) [(5.447603722011605e-270+2.500364306227096e-231j), (1.2650169649295773e-192+5.802147495458688e-154j), (-5.621885836375608e+274-1.1413996157316056e+236j)] [(-5.621885836375608e+274-1.1413996157316056e+236j), (-2.4217148583686285e+197-4.911430439000917e+158j)] True [(1.2650169649295773e-192+5.802147495458688e-154j), (-5.621885836375608e+274-1.1413996157316056e+236j)] True
+ValueError memoryview: destination format must be a native format prefixed with an optional '@'
+ValueError memoryview: destination format must be a native format prefixed with an optional '@'
+ValueError memoryview: destination format must be a native format prefixed with an optional '@'
+ValueError memoryview: destination format must be a native format prefixed with an optional '@'
+ValueError memoryview: destination format must be a native format prefixed with an optional '@'
+ValueError memoryview: destination format must be a native format prefixed with an optional '@'
+ValueError memoryview: destination format must be a native format prefixed with an optional '@'
+ValueError memoryview: destination format must be a native format prefixed with an optional '@'
+ValueError memoryview: destination format must be a native format prefixed with an optional '@'
+ValueError memoryview: destination format must be a native format prefixed with an optional '@'
+ValueError memoryview: destination format must be a native format prefixed with an optional '@'
+ValueError memoryview: destination format must be a native format prefixed with an optional '@'
+ValueError memoryview: destination format must be a native format prefixed with an optional '@'
+ValueError memoryview: destination format must be a native format prefixed with an optional '@'
+ValueError memoryview: destination format must be a native format prefixed with an optional '@'
+ValueError memoryview: destination format must be a native format prefixed with an optional '@'
+ValueError memoryview: destination format must be a native format prefixed with an optional '@'
+ValueError memoryview: destination format must be a native format prefixed with an optional '@'
+ValueError memoryview: destination format must be a native format prefixed with an optional '@'
+ValueError memoryview: destination format must be a native format prefixed with an optional '@'
+ValueError memoryview: destination format must be a native format prefixed with an optional '@'
+UnicodeEncodeError 'ascii' codec can't encode character '\xe9' in position 0: ordinal not in range(128)
+UnicodeEncodeError 'ascii' codec can't encode character '\u20ac' in position 0: ordinal not in range(128)
+'B'
+'i'
+TypeError cast() argument 'format' must be str, not int
+TypeError cast() argument 'format' must be str, not None
+TypeError cast() argument 'format' must be str, not bytes
+TypeError cast() argument 'format' must be str, not list
+TypeError cast() argument 'format' must be str, not float
+TypeError cast() missing required argument 'format' (pos 1)
+TypeError cast() takes at most 2 arguments (3 given)
+'h'
+(4, 8)
+TypeError cast() missing required argument 'format' (pos 1)
+TypeError cast() got an unexpected keyword argument 'x'
+TypeError memoryview: cannot cast between two non-byte formats
+TypeError memoryview: cannot cast between two non-byte formats
+'i'
+'c'
+TypeError memoryview: cannot cast between two non-byte formats
+'B'
+'@b'
+(0, 'h', (0,))
+(0, 'i', (0,))
+(0, 'q', (0,))
+(0, 'Zd', (0,))
+(0, 'e', (0,))
+TypeError memoryview: length is not a multiple of itemsize
+TypeError memoryview: length is not a multiple of itemsize
+TypeError memoryview: length is not a multiple of itemsize
+TypeError memoryview: length is not a multiple of itemsize
+TypeError memoryview: length is not a multiple of itemsize
+(2, 'h', (1,))
+TypeError memoryview: length is not a multiple of itemsize
+TypeError memoryview: length is not a multiple of itemsize
+TypeError memoryview: length is not a multiple of itemsize
+(2, 'e', (1,))
+TypeError memoryview: length is not a multiple of itemsize
+TypeError memoryview: length is not a multiple of itemsize
+TypeError memoryview: length is not a multiple of itemsize
+TypeError memoryview: length is not a multiple of itemsize
+TypeError memoryview: length is not a multiple of itemsize
+(4, 'h', (2,))
+(4, 'i', (1,))
+TypeError memoryview: length is not a multiple of itemsize
+TypeError memoryview: length is not a multiple of itemsize
+(4, 'e', (2,))
+TypeError memoryview: length is not a multiple of itemsize
+TypeError memoryview: length is not a multiple of itemsize
+TypeError memoryview: length is not a multiple of itemsize
+TypeError memoryview: length is not a multiple of itemsize
+TypeError memoryview: length is not a multiple of itemsize
+(8, 'h', (4,))
+(8, 'i', (2,))
+(8, 'q', (1,))
+TypeError memoryview: length is not a multiple of itemsize
+(8, 'e', (4,))
+TypeError memoryview: length is not a multiple of itemsize
+TypeError memoryview: length is not a multiple of itemsize
+TypeError memoryview: length is not a multiple of itemsize
+TypeError memoryview: length is not a multiple of itemsize
+TypeError memoryview: length is not a multiple of itemsize
+(16, 'h', (8,))
+(16, 'i', (4,))
+(16, 'q', (2,))
+(16, 'Zd', (1,))
+(16, 'e', (8,))
+TypeError memoryview: casts are restricted to C-contiguous views
+TypeError memoryview: casts are restricted to C-contiguous views
+(1,)
+[100992003, 168364039]
+[650777868590383874]
+bytearray(b'\xcd\xab\x00\x00\xfe\xff\xff\xff\x00\x00\x00\x00\x00\x00\xf8?') [43981, -2, 0, 1073217536] [nan, 1.5]
+True False True

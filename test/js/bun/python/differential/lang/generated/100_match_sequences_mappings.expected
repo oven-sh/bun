@@ -1,0 +1,43 @@
+status: 0
+script: 0ffb63ec7bf5c843
+source: 841bbcaa775a620e
+---
+list empty | tuple empty | list just one | tuple ('single', 2) | list ('starts with 1', 5) | tuple ('pair', 3, 4) | list ('triple', 1, 2, 3) | list ('long', 1, [2, 3, 4]) | range empty | range ('pair', 0, 1) | range ('long', 0, [1, 2, 3, 4]) | L just one | T ('pair', 7, 8) | str not a sequence | str not a sequence | bytes not a sequence | bytearray not a sequence | set not a sequence | dict not a sequence | list_iterator not a sequence | generator not a sequence | NoneType not a sequence | int not a sequence | frozenset not a sequence | dict_keys not a sequence | memoryview ('pair', 97, 98) | dict_items not a sequence | 
+['empty via star', ('1 then', []), ('1 then', [2, 3]), ('ends with 9', [5]), ('ends with 9', []), ('same ends', [5, 6]), ('same ends', []), ('at least two', 2, 3), 'any sequence', None]
+list [2, 3]
+0 [1, 2, 3] 4
+1 2 []
+1 2 3 4
+1 2 3 4
+parens pattern matches a list 1 2 3
+parenthesised capture, not a sequence (1,)
+one-element sequence pattern 1
+5
+1 6
+plain classes are not sequences
+len; len; len; len; iter; (7, [8], 9)
+len; len; len; iter; ends with 5
+('point', 1, 2) | ('point', 1, 2) | ('circle', 5, {'color': 'red', 'w': 1}) | ('circle', 5, {}) | ('unknown type', 'sq') | ('ints', 'a', 'b') | ('None key', 0) | ('True key', 't') | ('deep', 42) | ('list head', 1) | any mapping | any mapping | ('unknown type', 'd') | not a mapping | not a mapping | not a mapping | not a mapping | ('unknown type', 'fd') | any mapping | 
+1 {'b': 2, 'c': 3} dict
+{'b': 2} dict
+{}
+present with a None value
+an absent key does not match None
+1.0 finds 1: int key
+or/as inside a mapping 1
+value pattern as key 1
+neg cplx bytes cat
+len; get a; get zz; len; get a; (1, {'b': 2})
+dup_runtime({1: 1, 2: 2}, 1, 2) => (1, 2)
+dup_runtime({1: 1, 2: 2}, 1, 1) => ValueError: mapping pattern checks duplicate key (1)
+dup_runtime({1: 1}, 1, 1.0) => None
+dup_runtime({1: 1}, [], 1) => None
+dup_runtime({}, 1, 1) => None
+['going north', 'bad direction', 'taking a,b', 'unknown take', 'bye', 'bye', 'nothing', 'unknown dance']
+ev(("+", 1, ("*", 2, ("-", 3)))) => -5
+ev(("sum", 1, 2, ("+", 3, 4))) => 10
+ev({"op": "+", "args": [1, {"op": "*", "args": [2, 3]}]}) => 7
+ev(("?", 1)) => ValueError: bad expression ('?', 1)
+{"a":[1,2.5,null,true,{"b":"c"}],"d":[],"e":{}}
+('unset', 'unset', 'unset')
+(2, 1)

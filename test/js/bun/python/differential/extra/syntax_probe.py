@@ -1,0 +1,6 @@
+for src in ["async def f(): [x async for]", "async def f(): [x for async x in y]", "async def f(): [x async for x in y for]", "def f(): yield += 1", "def f(): (yield) += 1", "def f(): yield 1 += 1", "def f(): x = yield += 1", "def f(): yield from a += 1",
+            "match x:\n case _.y: pass", "match x:\n case _(): pass", "match x:\n case _: pass", "match x:\n case _ | _: pass", "match x:\n case a._: pass", "match x:\n case _._: pass", "match x:\n case C(_=1): pass", "match x:\n case _ = 1: pass", "match x:\n case [_, _.a]: pass",
+            "match x = 1:\n case 1: pass", "match x = 1", "match x.y = 1:\n case 1: pass", "match (x = 1):\n case 1: pass", "match x = 1, 2:\n case 1: pass", "match f(x for x in y, 1):\n case 1: pass", "match x, y = 1:\n case 1: pass", "match = 1", "match x := 1:\n case 1: pass", "match 1 = x:\n case 1: pass", "match x == 1 = 2:\n case 1: pass", "match print x:\n case 1: pass", "match [x = 1]:\n case 1: pass",
+            't"{1 +}"', 'f"{1 +}"', 't"{1 + }"', 't"{}"', 't"{ }"', 't"{+}"', 't"{1 2}"', 't"{a b}"', 't"{a.}"', 't"{a +"', 't"{*a}"', 't"{a,}"', 't"{lambda x: 1}"', 't"{a = }"', 't"{a ! r}"']:
+    try: compile(src, "<s>", "exec"); print("ok:", src.replace("\n", "\\n"))
+    except SyntaxError as e: print("SyntaxError:", e.msg, (e.lineno, e.offset, e.end_lineno, e.end_offset), "<-", src.replace("\n", "\\n"))

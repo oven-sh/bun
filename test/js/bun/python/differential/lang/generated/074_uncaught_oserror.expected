@@ -1,0 +1,6 @@
+status: 1
+stderr: FileNotFoundError: [Errno 2] No such file or directory: '/nonexistent-directory/file.txt'
+script: 018249a82ae60e59
+source: 018249a82ae60e59
+---
+before

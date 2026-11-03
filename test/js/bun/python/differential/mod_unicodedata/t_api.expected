@@ -1,0 +1,717 @@
+status: 0
+script: e36726c28d1b6133
+---
+['UCD', 'bidirectional', 'block', 'category', 'combining', 'decimal', 'decomposition', 'digit', 'east_asian_width', 'extended_pictographic', 'grapheme_cluster_break', 'indic_conjunct_break', 'is_normalized', 'isxidcontinue', 'isxidstart', 'iter_graphemes', 'lookup', 'mirrored', 'name', 'normalize', 'numeric', 'ucd_3_2_0', 'unidata_version']
+unicodedata <class 'str'> 2 3.2.0
+<class 'unicodedata.UCD'> <class 'unicodedata.UCD'> UCD unicodedata (<class 'unicodedata.UCD'>, <class 'object'>) ['bidirectional', 'category', 'combining', 'decimal', 'decomposition', 'digit', 'east_asian_width', 'is_normalized', 'lookup', 'mirrored', 'name', 'normalize', 'numeric', 'unidata_version']
+TypeError: cannot create 'unicodedata.UCD' instances
+AttributeError: readonly attribute
+AttributeError: 'unicodedata.UCD' object has no attribute 'foo' and no __dict__ for setting new attributes
+category category category
+TypeError: unicodedata.category() takes exactly one argument (0 given)
+TypeError: category(): argument must be a unicode character, not a string of length 2
+TypeError: category(): argument must be a unicode character, not a string of length 0
+TypeError: category() argument must be a unicode character, not int
+TypeError: category() argument must be a unicode character, not bytes
+TypeError: category() argument must be a unicode character, not None
+TypeError: unicodedata.category() takes exactly one argument (3 given)
+'So'
+'Cs'
+TypeError: category(): argument must be a unicode character, not a string of length 2
+TypeError: unicodedata.category() takes no keyword arguments
+bidirectional bidirectional bidirectional
+TypeError: unicodedata.bidirectional() takes exactly one argument (0 given)
+TypeError: bidirectional(): argument must be a unicode character, not a string of length 2
+TypeError: bidirectional(): argument must be a unicode character, not a string of length 0
+TypeError: bidirectional() argument must be a unicode character, not int
+TypeError: bidirectional() argument must be a unicode character, not bytes
+TypeError: bidirectional() argument must be a unicode character, not None
+TypeError: unicodedata.bidirectional() takes exactly one argument (3 given)
+'ON'
+'L'
+TypeError: bidirectional(): argument must be a unicode character, not a string of length 2
+TypeError: unicodedata.bidirectional() takes no keyword arguments
+combining combining combining
+TypeError: unicodedata.combining() takes exactly one argument (0 given)
+TypeError: combining(): argument must be a unicode character, not a string of length 2
+TypeError: combining(): argument must be a unicode character, not a string of length 0
+TypeError: combining() argument must be a unicode character, not int
+TypeError: combining() argument must be a unicode character, not bytes
+TypeError: combining() argument must be a unicode character, not None
+TypeError: unicodedata.combining() takes exactly one argument (3 given)
+0
+0
+TypeError: combining(): argument must be a unicode character, not a string of length 2
+TypeError: unicodedata.combining() takes no keyword arguments
+mirrored mirrored mirrored
+TypeError: unicodedata.mirrored() takes exactly one argument (0 given)
+TypeError: mirrored(): argument must be a unicode character, not a string of length 2
+TypeError: mirrored(): argument must be a unicode character, not a string of length 0
+TypeError: mirrored() argument must be a unicode character, not int
+TypeError: mirrored() argument must be a unicode character, not bytes
+TypeError: mirrored() argument must be a unicode character, not None
+TypeError: unicodedata.mirrored() takes exactly one argument (3 given)
+0
+0
+TypeError: mirrored(): argument must be a unicode character, not a string of length 2
+TypeError: unicodedata.mirrored() takes no keyword arguments
+east_asian_width east_asian_width east_asian_width
+TypeError: unicodedata.east_asian_width() takes exactly one argument (0 given)
+TypeError: east_asian_width(): argument must be a unicode character, not a string of length 2
+TypeError: east_asian_width(): argument must be a unicode character, not a string of length 0
+TypeError: east_asian_width() argument must be a unicode character, not int
+TypeError: east_asian_width() argument must be a unicode character, not bytes
+TypeError: east_asian_width() argument must be a unicode character, not None
+TypeError: unicodedata.east_asian_width() takes exactly one argument (3 given)
+'W'
+'N'
+TypeError: east_asian_width(): argument must be a unicode character, not a string of length 2
+TypeError: unicodedata.east_asian_width() takes no keyword arguments
+decomposition decomposition decomposition
+TypeError: unicodedata.decomposition() takes exactly one argument (0 given)
+TypeError: decomposition(): argument must be a unicode character, not a string of length 2
+TypeError: decomposition(): argument must be a unicode character, not a string of length 0
+TypeError: decomposition() argument must be a unicode character, not int
+TypeError: decomposition() argument must be a unicode character, not bytes
+TypeError: decomposition() argument must be a unicode character, not None
+TypeError: unicodedata.decomposition() takes exactly one argument (3 given)
+''
+''
+TypeError: decomposition(): argument must be a unicode character, not a string of length 2
+TypeError: unicodedata.decomposition() takes no keyword arguments
+block block block
+TypeError: unicodedata.block() takes exactly one argument (0 given)
+TypeError: block(): argument must be a unicode character, not a string of length 2
+TypeError: block(): argument must be a unicode character, not a string of length 0
+TypeError: block() argument must be a unicode character, not int
+TypeError: block() argument must be a unicode character, not bytes
+TypeError: block() argument must be a unicode character, not None
+TypeError: unicodedata.block() takes exactly one argument (3 given)
+'Emoticons'
+'High Surrogates'
+TypeError: block(): argument must be a unicode character, not a string of length 2
+TypeError: unicodedata.block() takes no keyword arguments
+grapheme_cluster_break grapheme_cluster_break grapheme_cluster_break
+TypeError: unicodedata.grapheme_cluster_break() takes exactly one argument (0 given)
+TypeError: grapheme_cluster_break(): argument must be a unicode character, not a string of length 2
+TypeError: grapheme_cluster_break(): argument must be a unicode character, not a string of length 0
+TypeError: grapheme_cluster_break() argument must be a unicode character, not int
+TypeError: grapheme_cluster_break() argument must be a unicode character, not bytes
+TypeError: grapheme_cluster_break() argument must be a unicode character, not None
+TypeError: unicodedata.grapheme_cluster_break() takes exactly one argument (3 given)
+'Other'
+'Other'
+TypeError: grapheme_cluster_break(): argument must be a unicode character, not a string of length 2
+TypeError: unicodedata.grapheme_cluster_break() takes no keyword arguments
+indic_conjunct_break indic_conjunct_break indic_conjunct_break
+TypeError: unicodedata.indic_conjunct_break() takes exactly one argument (0 given)
+TypeError: indic_conjunct_break(): argument must be a unicode character, not a string of length 2
+TypeError: indic_conjunct_break(): argument must be a unicode character, not a string of length 0
+TypeError: indic_conjunct_break() argument must be a unicode character, not int
+TypeError: indic_conjunct_break() argument must be a unicode character, not bytes
+TypeError: indic_conjunct_break() argument must be a unicode character, not None
+TypeError: unicodedata.indic_conjunct_break() takes exactly one argument (3 given)
+'None'
+'None'
+TypeError: indic_conjunct_break(): argument must be a unicode character, not a string of length 2
+TypeError: unicodedata.indic_conjunct_break() takes no keyword arguments
+extended_pictographic extended_pictographic extended_pictographic
+TypeError: unicodedata.extended_pictographic() takes exactly one argument (0 given)
+TypeError: extended_pictographic(): argument must be a unicode character, not a string of length 2
+TypeError: extended_pictographic(): argument must be a unicode character, not a string of length 0
+TypeError: extended_pictographic() argument must be a unicode character, not int
+TypeError: extended_pictographic() argument must be a unicode character, not bytes
+TypeError: extended_pictographic() argument must be a unicode character, not None
+TypeError: unicodedata.extended_pictographic() takes exactly one argument (3 given)
+True
+False
+TypeError: extended_pictographic(): argument must be a unicode character, not a string of length 2
+TypeError: unicodedata.extended_pictographic() takes no keyword arguments
+isxidstart isxidstart isxidstart
+TypeError: unicodedata.isxidstart() takes exactly one argument (0 given)
+TypeError: isxidstart(): argument must be a unicode character, not a string of length 2
+TypeError: isxidstart(): argument must be a unicode character, not a string of length 0
+TypeError: isxidstart() argument must be a unicode character, not int
+TypeError: isxidstart() argument must be a unicode character, not bytes
+TypeError: isxidstart() argument must be a unicode character, not None
+TypeError: unicodedata.isxidstart() takes exactly one argument (3 given)
+False
+False
+TypeError: isxidstart(): argument must be a unicode character, not a string of length 2
+TypeError: unicodedata.isxidstart() takes no keyword arguments
+isxidcontinue isxidcontinue isxidcontinue
+TypeError: unicodedata.isxidcontinue() takes exactly one argument (0 given)
+TypeError: isxidcontinue(): argument must be a unicode character, not a string of length 2
+TypeError: isxidcontinue(): argument must be a unicode character, not a string of length 0
+TypeError: isxidcontinue() argument must be a unicode character, not int
+TypeError: isxidcontinue() argument must be a unicode character, not bytes
+TypeError: isxidcontinue() argument must be a unicode character, not None
+TypeError: unicodedata.isxidcontinue() takes exactly one argument (3 given)
+False
+False
+TypeError: isxidcontinue(): argument must be a unicode character, not a string of length 2
+TypeError: unicodedata.isxidcontinue() takes no keyword arguments
+decimal decimal decimal
+TypeError: decimal expected at least 1 argument, got 0
+TypeError: decimal(): argument 1 must be a unicode character, not a string of length 2
+TypeError: decimal(): argument 1 must be a unicode character, not a string of length 0
+TypeError: decimal() argument 1 must be a unicode character, not int
+TypeError: decimal() argument 1 must be a unicode character, not bytes
+TypeError: decimal() argument 1 must be a unicode character, not None
+TypeError: decimal expected at most 2 arguments, got 3
+ValueError: not a decimal
+ValueError: not a decimal
+TypeError: decimal(): argument 1 must be a unicode character, not a string of length 2
+TypeError: unicodedata.decimal() takes no keyword arguments
+digit digit digit
+TypeError: digit expected at least 1 argument, got 0
+TypeError: digit(): argument 1 must be a unicode character, not a string of length 2
+TypeError: digit(): argument 1 must be a unicode character, not a string of length 0
+TypeError: digit() argument 1 must be a unicode character, not int
+TypeError: digit() argument 1 must be a unicode character, not bytes
+TypeError: digit() argument 1 must be a unicode character, not None
+TypeError: digit expected at most 2 arguments, got 3
+ValueError: not a digit
+ValueError: not a digit
+TypeError: digit(): argument 1 must be a unicode character, not a string of length 2
+TypeError: unicodedata.digit() takes no keyword arguments
+numeric numeric numeric
+TypeError: numeric expected at least 1 argument, got 0
+TypeError: numeric(): argument 1 must be a unicode character, not a string of length 2
+TypeError: numeric(): argument 1 must be a unicode character, not a string of length 0
+TypeError: numeric() argument 1 must be a unicode character, not int
+TypeError: numeric() argument 1 must be a unicode character, not bytes
+TypeError: numeric() argument 1 must be a unicode character, not None
+TypeError: numeric expected at most 2 arguments, got 3
+ValueError: not a numeric character
+ValueError: not a numeric character
+TypeError: numeric(): argument 1 must be a unicode character, not a string of length 2
+TypeError: unicodedata.numeric() takes no keyword arguments
+name name name
+TypeError: name expected at least 1 argument, got 0
+TypeError: name(): argument 1 must be a unicode character, not a string of length 2
+TypeError: name(): argument 1 must be a unicode character, not a string of length 0
+TypeError: name() argument 1 must be a unicode character, not int
+TypeError: name() argument 1 must be a unicode character, not bytes
+TypeError: name() argument 1 must be a unicode character, not None
+TypeError: name expected at most 2 arguments, got 3
+'GRINNING FACE'
+ValueError: no such name
+TypeError: name(): argument 1 must be a unicode character, not a string of length 2
+TypeError: unicodedata.name() takes no keyword arguments
+None
+5
+5
+TypeError: decimal(): argument 1 must be a unicode character, not a string of length 2
+TypeError: decimal() argument 1 must be a unicode character, not int
+'x'
+()
+TypeError: unicodedata.decimal() takes no keyword arguments
+None
+5
+5
+TypeError: digit(): argument 1 must be a unicode character, not a string of length 2
+TypeError: digit() argument 1 must be a unicode character, not int
+'x'
+()
+TypeError: unicodedata.digit() takes no keyword arguments
+None
+5
+5.0
+TypeError: numeric(): argument 1 must be a unicode character, not a string of length 2
+TypeError: numeric() argument 1 must be a unicode character, not int
+'x'
+()
+TypeError: unicodedata.numeric() takes no keyword arguments
+'LATIN SMALL LETTER A'
+'LATIN SMALL LETTER A'
+'DIGIT FIVE'
+TypeError: name(): argument 1 must be a unicode character, not a string of length 2
+TypeError: name() argument 1 must be a unicode character, not int
+'LATIN SMALL LETTER A'
+()
+TypeError: unicodedata.name() takes no keyword arguments
+category category UCD.category
+TypeError: UCD.category() takes exactly one argument (0 given)
+TypeError: category(): argument must be a unicode character, not a string of length 2
+TypeError: category(): argument must be a unicode character, not a string of length 0
+TypeError: category() argument must be a unicode character, not int
+TypeError: category() argument must be a unicode character, not bytes
+TypeError: category() argument must be a unicode character, not None
+TypeError: UCD.category() takes exactly one argument (3 given)
+'Cn'
+'Cs'
+TypeError: category(): argument must be a unicode character, not a string of length 2
+TypeError: UCD.category() takes no keyword arguments
+bidirectional bidirectional UCD.bidirectional
+TypeError: UCD.bidirectional() takes exactly one argument (0 given)
+TypeError: bidirectional(): argument must be a unicode character, not a string of length 2
+TypeError: bidirectional(): argument must be a unicode character, not a string of length 0
+TypeError: bidirectional() argument must be a unicode character, not int
+TypeError: bidirectional() argument must be a unicode character, not bytes
+TypeError: bidirectional() argument must be a unicode character, not None
+TypeError: UCD.bidirectional() takes exactly one argument (3 given)
+''
+'L'
+TypeError: bidirectional(): argument must be a unicode character, not a string of length 2
+TypeError: UCD.bidirectional() takes no keyword arguments
+combining combining UCD.combining
+TypeError: UCD.combining() takes exactly one argument (0 given)
+TypeError: combining(): argument must be a unicode character, not a string of length 2
+TypeError: combining(): argument must be a unicode character, not a string of length 0
+TypeError: combining() argument must be a unicode character, not int
+TypeError: combining() argument must be a unicode character, not bytes
+TypeError: combining() argument must be a unicode character, not None
+TypeError: UCD.combining() takes exactly one argument (3 given)
+0
+0
+TypeError: combining(): argument must be a unicode character, not a string of length 2
+TypeError: UCD.combining() takes no keyword arguments
+mirrored mirrored UCD.mirrored
+TypeError: UCD.mirrored() takes exactly one argument (0 given)
+TypeError: mirrored(): argument must be a unicode character, not a string of length 2
+TypeError: mirrored(): argument must be a unicode character, not a string of length 0
+TypeError: mirrored() argument must be a unicode character, not int
+TypeError: mirrored() argument must be a unicode character, not bytes
+TypeError: mirrored() argument must be a unicode character, not None
+TypeError: UCD.mirrored() takes exactly one argument (3 given)
+0
+0
+TypeError: mirrored(): argument must be a unicode character, not a string of length 2
+TypeError: UCD.mirrored() takes no keyword arguments
+east_asian_width east_asian_width UCD.east_asian_width
+TypeError: UCD.east_asian_width() takes exactly one argument (0 given)
+TypeError: east_asian_width(): argument must be a unicode character, not a string of length 2
+TypeError: east_asian_width(): argument must be a unicode character, not a string of length 0
+TypeError: east_asian_width() argument must be a unicode character, not int
+TypeError: east_asian_width() argument must be a unicode character, not bytes
+TypeError: east_asian_width() argument must be a unicode character, not None
+TypeError: UCD.east_asian_width() takes exactly one argument (3 given)
+'N'
+'N'
+TypeError: east_asian_width(): argument must be a unicode character, not a string of length 2
+TypeError: UCD.east_asian_width() takes no keyword arguments
+decomposition decomposition UCD.decomposition
+TypeError: UCD.decomposition() takes exactly one argument (0 given)
+TypeError: decomposition(): argument must be a unicode character, not a string of length 2
+TypeError: decomposition(): argument must be a unicode character, not a string of length 0
+TypeError: decomposition() argument must be a unicode character, not int
+TypeError: decomposition() argument must be a unicode character, not bytes
+TypeError: decomposition() argument must be a unicode character, not None
+TypeError: UCD.decomposition() takes exactly one argument (3 given)
+''
+''
+TypeError: decomposition(): argument must be a unicode character, not a string of length 2
+TypeError: UCD.decomposition() takes no keyword arguments
+decimal decimal UCD.decimal
+TypeError: decimal expected at least 1 argument, got 0
+TypeError: decimal(): argument 1 must be a unicode character, not a string of length 2
+TypeError: decimal(): argument 1 must be a unicode character, not a string of length 0
+TypeError: decimal() argument 1 must be a unicode character, not int
+TypeError: decimal() argument 1 must be a unicode character, not bytes
+TypeError: decimal() argument 1 must be a unicode character, not None
+TypeError: decimal expected at most 2 arguments, got 3
+ValueError: not a decimal
+ValueError: not a decimal
+TypeError: decimal(): argument 1 must be a unicode character, not a string of length 2
+TypeError: UCD.decimal() takes no keyword arguments
+digit digit UCD.digit
+TypeError: digit expected at least 1 argument, got 0
+TypeError: digit(): argument 1 must be a unicode character, not a string of length 2
+TypeError: digit(): argument 1 must be a unicode character, not a string of length 0
+TypeError: digit() argument 1 must be a unicode character, not int
+TypeError: digit() argument 1 must be a unicode character, not bytes
+TypeError: digit() argument 1 must be a unicode character, not None
+TypeError: digit expected at most 2 arguments, got 3
+ValueError: not a digit
+ValueError: not a digit
+TypeError: digit(): argument 1 must be a unicode character, not a string of length 2
+TypeError: UCD.digit() takes no keyword arguments
+numeric numeric UCD.numeric
+TypeError: numeric expected at least 1 argument, got 0
+TypeError: numeric(): argument 1 must be a unicode character, not a string of length 2
+TypeError: numeric(): argument 1 must be a unicode character, not a string of length 0
+TypeError: numeric() argument 1 must be a unicode character, not int
+TypeError: numeric() argument 1 must be a unicode character, not bytes
+TypeError: numeric() argument 1 must be a unicode character, not None
+TypeError: numeric expected at most 2 arguments, got 3
+ValueError: not a numeric character
+ValueError: not a numeric character
+TypeError: numeric(): argument 1 must be a unicode character, not a string of length 2
+TypeError: UCD.numeric() takes no keyword arguments
+name name UCD.name
+TypeError: name expected at least 1 argument, got 0
+TypeError: name(): argument 1 must be a unicode character, not a string of length 2
+TypeError: name(): argument 1 must be a unicode character, not a string of length 0
+TypeError: name() argument 1 must be a unicode character, not int
+TypeError: name() argument 1 must be a unicode character, not bytes
+TypeError: name() argument 1 must be a unicode character, not None
+TypeError: name expected at most 2 arguments, got 3
+ValueError: no such name
+ValueError: no such name
+TypeError: name(): argument 1 must be a unicode character, not a string of length 2
+TypeError: UCD.name() takes no keyword arguments
+None
+5
+5
+TypeError: decimal(): argument 1 must be a unicode character, not a string of length 2
+TypeError: decimal() argument 1 must be a unicode character, not int
+'x'
+()
+TypeError: UCD.decimal() takes no keyword arguments
+None
+5
+5
+TypeError: digit(): argument 1 must be a unicode character, not a string of length 2
+TypeError: digit() argument 1 must be a unicode character, not int
+'x'
+()
+TypeError: UCD.digit() takes no keyword arguments
+None
+5
+5.0
+TypeError: numeric(): argument 1 must be a unicode character, not a string of length 2
+TypeError: numeric() argument 1 must be a unicode character, not int
+'x'
+()
+TypeError: UCD.numeric() takes no keyword arguments
+'LATIN SMALL LETTER A'
+'LATIN SMALL LETTER A'
+'DIGIT FIVE'
+TypeError: name(): argument 1 must be a unicode character, not a string of length 2
+TypeError: name() argument 1 must be a unicode character, not int
+'LATIN SMALL LETTER A'
+()
+TypeError: UCD.name() takes no keyword arguments
+Ll LATIN SMALL LETTER A a <class 'str'> <class 'str'> <class 'str'>  
+TypeError: normalize expected 2 arguments, got 0
+TypeError: normalize expected 2 arguments, got 1
+TypeError: normalize expected 2 arguments, got 3
+ValueError: invalid normalization form
+''
+ValueError: invalid normalization form
+TypeError: normalize() argument 2 must be str, not int
+TypeError: normalize() argument 1 must be str, not int
+TypeError: normalize() argument 1 must be str, not bytes
+TypeError: normalize() argument 2 must be str, not bytes
+ValueError: invalid normalization form
+ValueError: invalid normalization form
+''
+'abc'
+'e\u0301'
+'\xe9'
+'fi'
+'11\u20442'
+'\ud800\xe9\udc00'
+'\U0001d157\U0001d165'
+'\U0001d157\U0001d165'
+'\uac01'
+'\u1100\u1161\u11a8'
+'\uac01'
+'\uac00\u11a7'
+'\xe0\u05ae\u0300\u0315b'
+'\u0308\u0301'
+'\u0915\u093c'
+'\xc5'
+'\u1e69'
+'\u017f\u0323\u0307'
+'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\xc5\u030a\u030a'
+'A\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030a'
+TypeError: unicodedata.normalize() takes no keyword arguments
+TypeError: is_normalized expected 2 arguments, got 0
+TypeError: is_normalized expected 2 arguments, got 1
+TypeError: is_normalized expected 2 arguments, got 3
+ValueError: invalid normalization form
+True
+ValueError: invalid normalization form
+TypeError: is_normalized() argument 2 must be str, not int
+TypeError: is_normalized() argument 1 must be str, not int
+TypeError: is_normalized() argument 1 must be str, not bytes
+TypeError: is_normalized() argument 2 must be str, not bytes
+ValueError: invalid normalization form
+ValueError: invalid normalization form
+True
+True
+False
+False
+False
+False
+False
+False
+True
+False
+False
+False
+False
+False
+False
+False
+False
+False
+False
+False
+False
+TypeError: unicodedata.is_normalized() takes no keyword arguments
+TypeError: normalize expected 2 arguments, got 0
+TypeError: normalize expected 2 arguments, got 1
+TypeError: normalize expected 2 arguments, got 3
+ValueError: invalid normalization form
+''
+ValueError: invalid normalization form
+TypeError: normalize() argument 2 must be str, not int
+TypeError: normalize() argument 1 must be str, not int
+TypeError: normalize() argument 1 must be str, not bytes
+TypeError: normalize() argument 2 must be str, not bytes
+ValueError: invalid normalization form
+ValueError: invalid normalization form
+''
+'abc'
+'e\u0301'
+'\xe9'
+'fi'
+'11\u20442'
+'\ud800\xe9\udc00'
+'\U0001d157\U0001d165'
+'\U0001d157\U0001d165'
+'\uac01'
+'\u1100\u1161\u11a8'
+'\uac01'
+'\uac00\u11a7'
+'\xe0\u05ae\u0300\u0315b'
+'\u0308\u0301'
+'\u0915\u093c'
+'\xc5'
+'\u1e69'
+'\u017f\u0323\u0307'
+'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\xc5\u030a\u030a'
+'A\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030aA\u030a'
+TypeError: UCD.normalize() takes no keyword arguments
+TypeError: is_normalized expected 2 arguments, got 0
+TypeError: is_normalized expected 2 arguments, got 1
+TypeError: is_normalized expected 2 arguments, got 3
+ValueError: invalid normalization form
+True
+ValueError: invalid normalization form
+TypeError: is_normalized() argument 2 must be str, not int
+TypeError: is_normalized() argument 1 must be str, not int
+TypeError: is_normalized() argument 1 must be str, not bytes
+TypeError: is_normalized() argument 2 must be str, not bytes
+ValueError: invalid normalization form
+ValueError: invalid normalization form
+True
+True
+False
+False
+False
+False
+False
+False
+True
+False
+False
+False
+False
+False
+False
+False
+False
+False
+False
+False
+False
+TypeError: UCD.is_normalized() takes no keyword arguments
+True True
+' '
+' '
+' '
+KeyError: "undefined character name ' SPACE'"
+KeyError: "undefined character name 'SPACE '"
+KeyError: "undefined character name ''"
+KeyError: "undefined character name 'foo'"
+'a'
+KeyError: "undefined character name 'LATIN  SMALL LETTER A'"
+KeyError: "undefined character name 'LATIN-SMALL LETTER A'"
+KeyError: "undefined character name 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'"
+KeyError: 'name too long'
+' '
+TypeError: lookup() argument must be read-only bytes-like object, not bytearray
+KeyError: "undefined character name '�'"
+KeyError: "undefined character name 'é'"
+KeyError: "undefined character name '€'"
+KeyError: "undefined character name 'SPACE'"
+TypeError: a bytes-like object is required, not 'int'
+TypeError: a bytes-like object is required, not 'NoneType'
+TypeError: a bytes-like object is required, not 'list'
+'\u4e00'
+'\u4e00'
+KeyError: "undefined character name 'CJK UNIFIED IDEOGRAPH-04E00'"
+'\u3400'
+'\U00020000'
+KeyError: "undefined character name 'CJK UNIFIED IDEOGRAPH-'"
+KeyError: "undefined character name 'CJK UNIFIED IDEOGRAPH-FFFF'"
+KeyError: "undefined character name 'CJK UNIFIED IDEOGRAPH-4E0'"
+KeyError: "undefined character name 'CJK UNIFIED IDEOGRAPH-4E00 '"
+'\uf900'
+'\uac00'
+'\uac01'
+'\ud7a3'
+KeyError: "undefined character name 'HANGUL SYLLABLE'"
+KeyError: "undefined character name 'HANGUL SYLLABLE '"
+KeyError: "undefined character name 'HANGUL SYLLABLE X'"
+'\uac00'
+'\uc544'
+'\uc6d1'
+'\U00017000'
+'\x00'
+'\n'
+'\n'
+'\xa0'
+'\U0001f514'
+'\x07'
+'\x07'
+'\ufeff'
+'\ufeff'
+'\ufeff'
+'\u01a2'
+'\U000e0100'
+'\ufe18'
+'r\u0303'
+'#\ufe0f\u20e3'
+'\u0b95\u0bbe'
+'r\u0303'
+KeyError: "undefined character name '<control>'"
+KeyError: "undefined character name '<control-000A>'"
+KeyError: "undefined character name 'CONTROL-000A'"
+'\U0001f600'
+'\u20ac'
+TypeError: unicodedata.lookup() takes exactly one argument (0 given)
+TypeError: unicodedata.lookup() takes exactly one argument (2 given)
+TypeError: unicodedata.lookup() takes no keyword arguments
+' '
+' '
+' '
+KeyError: "undefined character name ' SPACE'"
+KeyError: "undefined character name 'SPACE '"
+KeyError: "undefined character name ''"
+KeyError: "undefined character name 'foo'"
+'a'
+KeyError: "undefined character name 'LATIN  SMALL LETTER A'"
+KeyError: "undefined character name 'LATIN-SMALL LETTER A'"
+KeyError: "undefined character name 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'"
+KeyError: 'name too long'
+' '
+TypeError: lookup() argument must be read-only bytes-like object, not bytearray
+KeyError: "undefined character name '�'"
+KeyError: "undefined character name 'é'"
+KeyError: "undefined character name '€'"
+KeyError: "undefined character name 'SPACE'"
+TypeError: a bytes-like object is required, not 'int'
+TypeError: a bytes-like object is required, not 'NoneType'
+TypeError: a bytes-like object is required, not 'list'
+'\u4e00'
+'\u4e00'
+KeyError: "undefined character name 'CJK UNIFIED IDEOGRAPH-04E00'"
+'\u3400'
+'\U00020000'
+KeyError: "undefined character name 'CJK UNIFIED IDEOGRAPH-'"
+KeyError: "undefined character name 'CJK UNIFIED IDEOGRAPH-FFFF'"
+KeyError: "undefined character name 'CJK UNIFIED IDEOGRAPH-4E0'"
+KeyError: "undefined character name 'CJK UNIFIED IDEOGRAPH-4E00 '"
+'\uf900'
+'\uac00'
+'\uac01'
+'\ud7a3'
+KeyError: "undefined character name 'HANGUL SYLLABLE'"
+KeyError: "undefined character name 'HANGUL SYLLABLE '"
+KeyError: "undefined character name 'HANGUL SYLLABLE X'"
+'\uac00'
+'\uc544'
+'\uc6d1'
+'\U00017000'
+KeyError: "undefined character name 'NULL'"
+KeyError: "undefined character name 'LINE FEED'"
+KeyError: "undefined character name 'LF'"
+KeyError: "undefined character name 'NBSP'"
+'\U0001f514'
+KeyError: "undefined character name 'ALERT'"
+KeyError: "undefined character name 'BEL'"
+KeyError: "undefined character name 'BYTE ORDER MARK'"
+KeyError: "undefined character name 'BOM'"
+KeyError: "undefined character name 'ZWNBSP'"
+KeyError: "undefined character name 'LATIN CAPITAL LETTER GHA'"
+KeyError: "undefined character name 'VS17'"
+KeyError: "undefined character name 'PRESENTATION FORM FOR VERTICAL RIGHT WHITE LENTICULAR BRACKET'"
+KeyError: "undefined character name 'LATIN SMALL LETTER R WITH TILDE'"
+KeyError: "undefined character name 'KEYCAP NUMBER SIGN'"
+KeyError: "undefined character name 'TAMIL SYLLABLE KAA'"
+KeyError: "undefined character name 'latin small letter r with tilde'"
+KeyError: "undefined character name '<control>'"
+KeyError: "undefined character name '<control-000A>'"
+KeyError: "undefined character name 'CONTROL-000A'"
+'\U0001f600'
+'\u20ac'
+TypeError: UCD.lookup() takes exactly one argument (0 given)
+TypeError: UCD.lookup() takes exactly one argument (2 given)
+TypeError: UCD.lookup() takes no keyword arguments
+("undefined character name 'nope'",)
+'\n\x00\xa0\U0001f514\x07a\u4e00\uac00\u01a2'
+SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position 0-34: unknown Unicode character name (<string>, line 1)
+SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position 0-7: unknown Unicode character name (<string>, line 1)
+SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position 0-2: malformed \N character escape (<string>, line 1)
+SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position 0-7: malformed \N character escape (<string>, line 1)
+SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position 0-1: malformed \N character escape (<string>, line 1)
+b'\\N{SPACE}'
+SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position 0-9: unknown Unicode character name (<string>, line 1)
+'\n\x07'
+UnicodeDecodeError: 'unicodeescape' codec can't decode bytes in position 0-21: unknown Unicode character name
+b'\n\x07\\N{LATIN SMALL LETTER E WITH ACUTE}\\N{EURO SIGN}\\N{GRINNING FACE}\\ud800\\N{HANGUL SYLLABLE GA}\\N{CJK UNIFIED IDEOGRAPH-4E00}'
+<class 'unicodedata.GraphemeBreakIterator'> GraphemeBreakIterator unicodedata True []
+<class 'unicodedata.Segment'> Segment unicodedata á 'a\u0301' <Segment 0:2> 0 2 ['end', 'start']
+[(2, 3, "'b'"), (3, 4, "'c'"), (4, 6, "'\\r\\n'"), (6, 8, "'\\U0001f1e6\\U0001f1e7'"), (8, 9, "'\\U0001f1e8'")] end end
+TypeError: cannot create 'unicodedata.GraphemeBreakIterator' instances
+TypeError: cannot create 'unicodedata.Segment' instances
+AttributeError: readonly attribute
+AttributeError: 'unicodedata.Segment' object has no attribute 'foo' and no __dict__ for setting new attributes
+TypeError: object of type 'unicodedata.Segment' has no len()
+True
+TypeError: iter_graphemes expected at least 1 argument, got 0
+TypeError: iter_graphemes() argument 1 must be str, not int
+TypeError: iter_graphemes() argument 1 must be str, not bytes
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'NoneType' object cannot be interpreted as an integer
+TypeError: iter_graphemes expected at most 3 arguments, got 4
+OverflowError: Python int too large to convert to C ssize_t
+OverflowError: Python int too large to convert to C ssize_t
+OverflowError: Python int too large to convert to C ssize_t
+TypeError: 'float' object cannot be interpreted as an integer
+TypeError: unicodedata.iter_graphemes() takes no keyword arguments
+[]
+[(0, 1, 'a'), (1, 2, 'b'), (2, 3, 'c')]
+[(1, 2, 'b'), (2, 3, 'c')]
+[(1, 2, 'b')]
+[(2, 3, 'c')]
+[(1, 2, 'b')]
+[]
+[]
+[(0, 1, 'a'), (1, 2, 'b'), (2, 3, 'c')]
+[(0, 1, 'a'), (1, 2, 'b'), (2, 3, 'c')]
+[]
+[]
+[]
+[(1, 3, '\u0301\u0301'), (3, 4, 'b')]
+[(2, 3, '\u0301'), (3, 4, 'b')]
+[(0, 3, '\U0001f600\u200d\U0001f600'), (3, 4, 'a')]
+[(1, 2, '\u200d'), (2, 3, '\U0001f600'), (3, 4, 'a')]
+[(2, 3, '\U0001f600'), (3, 4, 'a')]
+[(2, 4, '\U0001f1e7\U0001f1e8'), (4, 5, '\U0001f1e9')]
+[(0, 3, '\u0915\u094d\u0915')]
+[(1, 2, '\u094d'), (2, 3, '\u0915')]
+[(0, 6, '\u0915\u094d\u200d\u0915\u094d\u0937')]
+[(0, 3, '\u1100\u1161\u11a8'), (3, 5, '\uac00\u11a8'), (5, 7, '\uac01\u11a8')]
+[(0, 2, '\r\n'), (2, 3, '\n'), (3, 4, '\r')]
+[(0, 2, '\u0600a')]
+[(0, 2, 'a\u0903')]
+[(0, 1, 'a'), (1, 2, 'b')]
+[(0, 1, '\U00010000')]
+[(0, 1, '\udc00'), (1, 2, '\ud800')]

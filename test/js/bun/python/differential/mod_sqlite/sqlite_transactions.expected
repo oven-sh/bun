@@ -1,0 +1,130 @@
+status: 0
+script: 800f0ea37e37ac23
+---
+False
+True 1
+False 0
+False 1
+False
+False
+True
+True
+[(1,)] [('t',), ('u',)]
+'' True 1
+'DEFERRED' True 1
+'IMMEDIATE' True 1
+'EXCLUSIVE' True 1
+'DEFERRED' True 1
+'IMMEDIATE' True 1
+None False 2
+ValueError: isolation_level string must be '', 'DEFERRED', 'IMMEDIATE', or 'EXCLUSIVE'
+TypeError: isolation_level must be str or None
+TypeError: isolation_level must be str or None
+ValueError: embedded null character
+ValueError: isolation_level string must be '', 'DEFERRED', 'IMMEDIATE', or 'EXCLUSIVE'
+None
+AttributeError: cannot delete attribute
+True
+False 3
+True
+False 3
+ValueError: isolation_level string must be '', 'DEFERRED', 'IMMEDIATE', or 'EXCLUSIVE'
+TypeError: isolation_level must be str or None
+None
+'EXCLUSIVE'
+True
+False 1
+IntegrityError UNIQUE constraint failed: t.a
+False 1
+KeyError 1
+TypeError: __exit__ expected 3 arguments, got 0
+TypeError: __exit__ expected 3 arguments, got 2
+False
+False
+TypeError: Connection.__enter__() takes no arguments (1 given)
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+True
+Cursor False 3
+3
+True [] True True
+3
+OperationalError: near "nonsense": syntax error
+4
+TypeError: Connection.executescript() takes exactly one argument (0 given)
+TypeError: executescript() argument must be str, not int
+TypeError: executescript() argument must be str, not bytes
+ValueError: embedded null character
+UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 7: surrogates not allowed
+TypeError: executescript() argument must be str, not int
+TypeError: executescript() argument must be str, not None
+TypeError: Connection.executescript() takes exactly one argument (2 given)
+True True False ''
+False
+False
+1
+False
+False False True ''
+True
+True
+OperationalError: no such table: t
+True
+-1 -1 False ''
+True
+False
+0
+False
+-1 -1 False ''
+True
+False
+0
+False
+ValueError: autocommit must be True, False, or sqlite3.LEGACY_TRANSACTION_CONTROL
+ValueError: autocommit must be True, False, or sqlite3.LEGACY_TRANSACTION_CONTROL
+ValueError: autocommit must be True, False, or sqlite3.LEGACY_TRANSACTION_CONTROL
+ValueError: autocommit must be True, False, or sqlite3.LEGACY_TRANSACTION_CONTROL
+ValueError: autocommit must be True, False, or sqlite3.LEGACY_TRANSACTION_CONTROL
+ValueError: autocommit must be True, False, or sqlite3.LEGACY_TRANSACTION_CONTROL
+True False 1
+False True
+-1 True
+ValueError: autocommit must be True, False, or sqlite3.LEGACY_TRANSACTION_CONTROL
+ValueError: autocommit must be True, False, or sqlite3.LEGACY_TRANSACTION_CONTROL
+-1
+AttributeError: cannot delete autocommit attribute
+True 2
+2
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+0
+1
+OperationalError: database is locked
+5 SQLITE_BUSY
+3
+3
+3
+3
+3
+3
+OperationalError: attempt to write a readonly database
+OperationalError: unable to open database file
+OperationalError: unable to open database file
+OperationalError: unable to open database file
+14 SQLITE_CANTOPEN
+TypeError: Connection() missing required argument 'database' (pos 1)
+TypeError: expected str, bytes or os.PathLike object, not int
+TypeError: expected str, bytes or os.PathLike object, not NoneType
+TypeError: connect() takes at most 1 positional arguments (2 given)
+TypeError: connect() takes at most 1 positional arguments (3 given)
+ValueError: embedded null byte
+ValueError: embedded null byte
+TypeError: must be real number, not str
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: Connection() got an unexpected keyword argument 'nope'
+TypeError: argument for Connection() given by name ('database') and position (1)
+TypeError: Connection() missing required argument 'database' (pos 1)
+TypeError: Connection() takes exactly 1 positional argument (2 given)
+TypeError: 'int' object is not callable
+ValueError: dictionary update sequence element #0 has length 1; 2 is required
+(1,)

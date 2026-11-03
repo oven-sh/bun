@@ -1,0 +1,101 @@
+status: 0
+script: 9b11b13b9c25d306
+---
+'' [('x', 1, 2, 3, 0), ('b', 1, 2, 3, 0), ('B', 1, 2, 3, 0), ('c', 1, 2, 3, 0), ('s', 1, 2, 3, 0), ('p', 1, 2, 3, 0), ('h', 2, 4, 6, 0), ('H', 2, 4, 6, 0), ('i', 4, 8, 12, 0), ('I', 4, 8, 12, 0), ('l', 8, 16, 24, 0), ('L', 8, 16, 24, 0), ('n', 8, 16, 24, 0), ('N', 8, 16, 24, 0), ('q', 8, 16, 24, 0), ('Q', 8, 16, 24, 0), ('?', 1, 2, 3, 0), ('e', 2, 4, 6, 0), ('f', 4, 8, 12, 0), ('d', 8, 16, 24, 0), ('F', 8, 12, 24, 0), ('D', 16, 24, 48, 0), ('Zf', 8, 12, 24, 0), ('Zd', 16, 24, 48, 0), ('P', 8, 16, 24, 0)]
+'@' [('x', 1, 2, 3, 0), ('b', 1, 2, 3, 0), ('B', 1, 2, 3, 0), ('c', 1, 2, 3, 0), ('s', 1, 2, 3, 0), ('p', 1, 2, 3, 0), ('h', 2, 4, 6, 0), ('H', 2, 4, 6, 0), ('i', 4, 8, 12, 0), ('I', 4, 8, 12, 0), ('l', 8, 16, 24, 0), ('L', 8, 16, 24, 0), ('n', 8, 16, 24, 0), ('N', 8, 16, 24, 0), ('q', 8, 16, 24, 0), ('Q', 8, 16, 24, 0), ('?', 1, 2, 3, 0), ('e', 2, 4, 6, 0), ('f', 4, 8, 12, 0), ('d', 8, 16, 24, 0), ('F', 8, 12, 24, 0), ('D', 16, 24, 48, 0), ('Zf', 8, 12, 24, 0), ('Zd', 16, 24, 48, 0), ('P', 8, 16, 24, 0)]
+'=' [('x', 1, 2, 3, 0), ('b', 1, 2, 3, 0), ('B', 1, 2, 3, 0), ('c', 1, 2, 3, 0), ('s', 1, 2, 3, 0), ('p', 1, 2, 3, 0), ('h', 2, 3, 6, 0), ('H', 2, 3, 6, 0), ('i', 4, 5, 12, 0), ('I', 4, 5, 12, 0), ('l', 4, 5, 12, 0), ('L', 4, 5, 12, 0), ('n', 'bad char in struct format'), ('N', 'bad char in struct format'), ('q', 8, 9, 24, 0), ('Q', 8, 9, 24, 0), ('?', 1, 2, 3, 0), ('e', 2, 3, 6, 0), ('f', 4, 5, 12, 0), ('d', 8, 9, 24, 0), ('F', 8, 9, 24, 0), ('D', 16, 17, 48, 0), ('Zf', 8, 9, 24, 0), ('Zd', 16, 17, 48, 0), ('P', 'bad char in struct format')]
+'<' [('x', 1, 2, 3, 0), ('b', 1, 2, 3, 0), ('B', 1, 2, 3, 0), ('c', 1, 2, 3, 0), ('s', 1, 2, 3, 0), ('p', 1, 2, 3, 0), ('h', 2, 3, 6, 0), ('H', 2, 3, 6, 0), ('i', 4, 5, 12, 0), ('I', 4, 5, 12, 0), ('l', 4, 5, 12, 0), ('L', 4, 5, 12, 0), ('n', 'bad char in struct format'), ('N', 'bad char in struct format'), ('q', 8, 9, 24, 0), ('Q', 8, 9, 24, 0), ('?', 1, 2, 3, 0), ('e', 2, 3, 6, 0), ('f', 4, 5, 12, 0), ('d', 8, 9, 24, 0), ('F', 8, 9, 24, 0), ('D', 16, 17, 48, 0), ('Zf', 8, 9, 24, 0), ('Zd', 16, 17, 48, 0), ('P', 'bad char in struct format')]
+'>' [('x', 1, 2, 3, 0), ('b', 1, 2, 3, 0), ('B', 1, 2, 3, 0), ('c', 1, 2, 3, 0), ('s', 1, 2, 3, 0), ('p', 1, 2, 3, 0), ('h', 2, 3, 6, 0), ('H', 2, 3, 6, 0), ('i', 4, 5, 12, 0), ('I', 4, 5, 12, 0), ('l', 4, 5, 12, 0), ('L', 4, 5, 12, 0), ('n', 'bad char in struct format'), ('N', 'bad char in struct format'), ('q', 8, 9, 24, 0), ('Q', 8, 9, 24, 0), ('?', 1, 2, 3, 0), ('e', 2, 3, 6, 0), ('f', 4, 5, 12, 0), ('d', 8, 9, 24, 0), ('F', 8, 9, 24, 0), ('D', 16, 17, 48, 0), ('Zf', 8, 9, 24, 0), ('Zd', 16, 17, 48, 0), ('P', 'bad char in struct format')]
+'!' [('x', 1, 2, 3, 0), ('b', 1, 2, 3, 0), ('B', 1, 2, 3, 0), ('c', 1, 2, 3, 0), ('s', 1, 2, 3, 0), ('p', 1, 2, 3, 0), ('h', 2, 3, 6, 0), ('H', 2, 3, 6, 0), ('i', 4, 5, 12, 0), ('I', 4, 5, 12, 0), ('l', 4, 5, 12, 0), ('L', 4, 5, 12, 0), ('n', 'bad char in struct format'), ('N', 'bad char in struct format'), ('q', 8, 9, 24, 0), ('Q', 8, 9, 24, 0), ('?', 1, 2, 3, 0), ('e', 2, 3, 6, 0), ('f', 4, 5, 12, 0), ('d', 8, 9, 24, 0), ('F', 8, 9, 24, 0), ('D', 16, 17, 48, 0), ('Zf', 8, 9, 24, 0), ('Zd', 16, 17, 48, 0), ('P', 'bad char in struct format')]
+('', 0, 0)
+(' ', 0, 0)
+('  i  h ', 6, 6)
+('\ti\nh\rb\x0cb\x0bb', 9, 9)
+('bi', 8, 8)
+('bh', 4, 4)
+('bq', 16, 16)
+('bd', 16, 16)
+('bP', 16, 16)
+('bhbibq', 24, 24)
+('ibh', 8, 8)
+('iq0b', 16, 16)
+('b0q', 8, 8)
+('b0i', 4, 4)
+('bb0h', 2, 2)
+('3sh', 6, 6)
+('3s0i', 4, 4)
+('5pq', 16, 16)
+('?i', 8, 8)
+('e?e', 6, 6)
+('bF', 12, 12)
+('bD', 24, 24)
+('bZf', 12, 12)
+('bZd', 24, 24)
+('2i3h', 14, 14)
+('10s10p', 20, 20)
+struct.error bad char in struct format
+('xxxi', 8, 8)
+('3xi', 8, 8)
+('x0q', 8, 8)
+('0s', 0, 0)
+('0p', 0, 0)
+('0x', 0, 0)
+('<bi', 5, 5)
+('>bq', 9, 9)
+('=bd', 9, 9)
+('!bh', 3, 3)
+('@bi', 8, 8)
+('nN', 16, 16)
+('bn', 16, 16)
+('100000000s', 100000000, 100000000)
+('iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii', 200, 200)
+struct.error bad char in struct format
+struct.error bad char in struct format
+struct.error bad char in struct format
+struct.error bad char in struct format
+struct.error repeat count given without format specifier
+struct.error repeat count given without format specifier
+struct.error bad char in struct format
+struct.error bad char in struct format
+struct.error bad char in struct format
+struct.error bad char in struct format
+struct.error bad char in struct format
+struct.error bad char in struct format
+struct.error bad char in struct format
+struct.error bad char in struct format
+struct.error bad char in struct format
+struct.error bad char in struct format
+struct.error total struct size too long
+struct.error total struct size too long
+9223372036854775807
+9223372036854775807
+9223372036854775807
+struct.error total struct size too long
+struct.error total struct size too long
+struct.error total struct size too long
+struct.error total struct size too long
+struct.error embedded null character
+struct.error embedded null character
+builtins.ValueError non-ASCII character in struct format
+builtins.ValueError non-ASCII character in struct format
+struct.error bad char in struct format
+struct.error bad char in struct format
+struct.error bad char in struct format
+struct.error bad char in struct format
+struct.error bad char in struct format
+struct.error bad char in struct format
+struct.error repeat count given without format specifier
+struct.error repeat count given without format specifier
+struct.error bad char in struct format
+struct.error bad char in struct format
+6
+builtins.ValueError non-ASCII character in struct format
+struct.error embedded null character
+builtins.TypeError Struct() argument 1 must be a str or bytes object, not int
+builtins.TypeError Struct() argument 1 must be a str or bytes object, not NoneType
+builtins.TypeError cannot use 'bytearray' as a dict key (unhashable type: 'bytearray')
+builtins.TypeError cannot use 'list' as a dict key (unhashable type: 'list')
+builtins.TypeError _struct.calcsize() takes exactly one argument (0 given)
+builtins.TypeError _struct.calcsize() takes exactly one argument (2 given)
+builtins.TypeError _struct.calcsize() takes no keyword arguments
+6 6 ih str ih

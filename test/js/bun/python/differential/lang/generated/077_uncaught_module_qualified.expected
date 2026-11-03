@@ -1,0 +1,6 @@
+status: 1
+stderr: some.pkg.E: qualified by its module
+script: ed5e66339e2c837e
+source: ed5e66339e2c837e
+---
+before

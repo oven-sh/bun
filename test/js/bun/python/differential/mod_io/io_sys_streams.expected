@@ -1,0 +1,57 @@
+status: 0
+script: 5e9bfa00824e8003
+---
+True False
+True True _io open <built-in function open>
+stdin <_io.TextIOWrapper name='<stdin>' mode='r' encoding='utf-8'> True
+   True <stdin> r utf-8 surrogateescape False False None False 0 False
+   True False True
+   <_io.BufferedReader name='<stdin>'> BufferedReader <stdin> rb False 0 True False
+   <_io.FileIO name='<stdin>' mode='rb' closefd=False> FileIO <stdin> rb False False 0
+   ['mode'] [] ['name']
+stdout <_io.TextIOWrapper name='<stdout>' mode='w' encoding='utf-8'> True
+   True <stdout> w utf-8 surrogateescape False False None False 1 False
+   False True False
+   <_io.BufferedWriter name='<stdout>'> BufferedWriter <stdout> wb False 1 False True
+   <_io.FileIO name='<stdout>' mode='wb' closefd=False> FileIO <stdout> wb False False 1
+   ['mode'] [] ['name']
+stderr <_io.TextIOWrapper name='<stderr>' mode='w' encoding='utf-8'> True
+   True <stderr> w utf-8 backslashreplace True False None False 2 False
+   False True False
+   <_io.BufferedWriter name='<stderr>'> BufferedWriter <stderr> wb False 2 False True
+   <_io.FileIO name='<stderr>' mode='wb' closefd=False> FileIO <stderr> wb False False 2
+   ['mode'] [] ['name']
+--- reading at the end of the input
+'' '' [] b'' b''
+EOFError: EOF when reading a line
+prompt> 
+EOFError: EOF when reading a line
+UnsupportedOperation OSError not writable
+UnsupportedOperation OSError not readable
+UnsupportedOperation OSError not readable
+UnsupportedOperation OSError not readable
+--- text and bytes, in order
+one
+two
+three
+four
+five
+six
+5 None
+cafÃ© â‚¬ ðŸ˜€ lone € byte
+a
+b
+raw
+--- reconfigure
+backslashreplace lone \udc80 surrogate
+ascii xmlcharrefreplace True caf&#233;
+crlf
+
+UnicodeEncodeError: 'utf-8' codec can't encode character '\udc80' in position 0: surrogates not allowed
+--- another object as sys.stdout
+SHOUTED
+RuntimeError: lost sys.stdout
+--- a wrapper of its own around the same buffer
+latin é
+True
+--- what is pending when sys.stdout is replaced for good is not lost

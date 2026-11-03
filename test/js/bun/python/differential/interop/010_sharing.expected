@@ -1,0 +1,27 @@
+status: 0
+oracle: none
+mask: addresses
+---
+true true true true true true
+1,2,3,4 4
+5 [1, 2, 3, 4, 5]
+2,4,6,8,10
+true 2
+[1, 2, 'js'] true 1,2,js,py
+1 1 2 true false a,nested 2
+{"a":1,"nested":{"b":2},"c":3,"d":4} number
+5 undefined A-B
+2 3 7 3
+(5, '[1,{}]', 12)
+0 2 9
+3
+true true
+true true
+function Holder
+1 2 w
+keep,keys_of,_private true 010_sharing 1 false true
+true true true 1 true false true false
+{"p":1,"q":2} {"p":1,"q":2} {"p":1,"q":2,"r":3}
+1 {"q":2}
+p,1|q,2 1,2 true true
+1 1 undefined own

@@ -1,0 +1,95 @@
+status: 0
+script: 705f786710fba98c
+---
+--- construction
+True False True True True False <_io.BufferedRandom> [('tell',)]
+TypeError: BufferedRandom() missing required argument 'raw' (pos 1)
+ValueError: buffer size must be strictly positive
+TypeError: BufferedRandom() got an unexpected keyword argument 'bad'
+<_io.BufferedRandom>
+  seekable
+  readable
+UnsupportedOperation: File or stream is not readable.
+  seekable
+  readable
+  writable
+UnsupportedOperation: File or stream is not writable.
+  seekable
+UnsupportedOperation: File or stream is not seekable.
+TypeError: cannot pickle 'BufferedRandom' instances
+--- reads and writes interleaved
+b'01' [('seek', 0, 1), ('readinto', 8, b'01234567')] 2 [] b'45' [] b'0123456789abcdefghij'
+6 [('tell',)] None [('seek', -6, 1), ('write', b'XY'), ('seek', 2, 1)] b'01XY456789abcdefghij' 6
+b'678' [('tell',), ('seek', 0, 1), ('readinto', 8, b'6789abcd')] 10 [('seek', -5, 1), ('write', b'ZZZZZZZZZZ')] b'01XY45678ZZZZZZZZZZj' 19 b'j' [('tell',), ('seek', 0, 1), ('readinto', 131072, b'j'), ('readinto', 131072, b'')]
+2 [] b'23' [('write', b'AB'), ('seek', 0, 1), ('readinto', 8, b'23456789')] 2 0 [('seek', -6, 1), ('write', b'CD'), ('seek', 0, 0)] b'AB23CD6789abcdefghij' b'AB23CD6789abcdefghij'
+b'01234567' [('seek', 0, 1), ('readinto', 8, b'01234567')] 1 b'12345678' [('seek', -8, 1), ('write', b'A'), ('seek', 0, 1), ('readinto', 8, b'12345678')] b'123' [] 1 b'5678' [] b'A123456789abcdefghij'
+b'ab\n' 1 b'd\n' 6 2 b'\n' [b'gh\n'] b'ab\nXd\nYZ\ngh\n'
+3 bytearray(b'89a') 2 3 bytearray(b'89a') 3 bytearray(b'89a') 0 b'012--56789abcdefghij'
+[b'0', b'2', b'4', b'6', b'8'] b'0.2.4.6.8.'
+--- seek
+3 [('seek', 3, 0)] b'3' [('seek', 0, 1), ('readinto', 8, b'3456789a')] 5 [] 1 4 [] b'4W6' []
+6 b'6' 20 3 18 b'ijEND' b'01234W6789abcdefghijEND'
+30 1 None b'01234W6789abcdefghijEND\x00\x00\x00\x00\x00\x00\x00!'
+1 1 3 1 0 b'0a2b4'
+--- truncate
+b'012' 3 [('seek', 0, 1), ('readinto', 8, b'01234567'), ('seek', -5, 1), ('truncate', None), ('tell',)] b'012' 3 b''
+0 5 4 [('tell',), ('seek', 0, 1), ('readinto', 131072, b''), ('seek', 0, 0), ('write', b'ABCDE'), ('seek', 0, 1), ('truncate', 4), ('tell',)] b'ABCD' 5
+10 b'ABCD'
+--- close, detach
+None b'0x23' True True
+ValueError: read of closed file
+ValueError: write to closed file
+ValueError: seek of closed file
+True [('seek', -2, 1), ('write', b'x'), ('seek', 0, 1)] b'01x3' 3
+ValueError: raw stream has been detached
+--- over a BytesIO
+b'hello' 1 b'world' 0 b'hello_world' b'hello_world'
+0 21 7 b'WORLD' b'HELLO, WORLD AND MORE'
+--- BufferedRWPair
+<_io.BufferedRWPair object a False True True False False
+b'a' b'bc\n' b'bc\n' b'b' b'c\n' b'defghi' b'' b''
+2 bytearray(b'zy') 1 bytearray(b'zy')
+2 b'' 3 b'12' None b'12345'
+UnsupportedOperation: seek
+UnsupportedOperation: seek
+UnsupportedOperation: truncate
+UnsupportedOperation: fileno
+UnsupportedOperation: detach
+AttributeError: '_io.BufferedRWPair' object has no attribute 'raw'
+AttributeError: '_io.BufferedRWPair' object has no attribute 'name'
+TypeError: read() takes no keyword arguments
+TypeError: write() takes no keyword arguments
+TypeError: read expected at most 1 argument, got 2
+TypeError: BufferedWriter.write() takes exactly one argument (0 given)
+TypeError: BufferedRWPair.flush() takes no arguments (1 given)
+None True True True b'12345z' None ['writer', 'reader']
+ValueError: read of closed file
+ValueError: write to closed file
+ValueError: flush of closed file
+True
+ValueError: I/O operation on closed file.
+TypeError: BufferedRWPair expected at least 2 arguments, got 0
+TypeError: BufferedRWPair expected at least 2 arguments, got 1
+TypeError: BufferedRWPair expected at most 3 arguments, got 4
+ValueError: buffer size must be strictly positive
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: BufferedRWPair() takes no keyword arguments
+UnsupportedOperation: File or stream is not readable.
+UnsupportedOperation: File or stream is not writable.
+AttributeError: 'int' object has no attribute 'readable'
+ValueError: I/O operation on uninitialized object
+ValueError: I/O operation on uninitialized object
+ValueError: I/O operation on uninitialized object
+RuntimeError: the BufferedRWPair object is being garbage-collected
+ValueError: I/O operation on uninitialized object
+True True True
+OSError: writer
+KeyError: 'reader'
+KeyError('reader') OSError('writer')
+b'q'
+True
+[b'a\n', b'b\n']
+{'x': 1}
+['SubPair', 'BufferedRWPair', '_BufferedIOBase', '_IOBase', 'object'] b'z'
+--- the types
+<class '_io.BufferedRandom'> (<class '_io._BufferedIOBase'>,) <class '_io.BufferedRWPair'> (<class '_io._BufferedIOBase'>,) _io

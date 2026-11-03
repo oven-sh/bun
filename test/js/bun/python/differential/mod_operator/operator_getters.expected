@@ -1,0 +1,242 @@
+status: 0
+script: 3e7a18e23726e4d2
+---
+--- itemgetter
+'b'
+2
+2
+3
+5
+'v'
+'bc'
+[3, 2, 1]
+('b', 'a')
+('c', 'c', 'c')
+(1, 2)
+('a', 'bc')
+(100, 101, 102, 103, 104, 105, 106, 107, 108, 109)
+'tuple key'
+1
+'b'
+list[int]
+'tuple'
+[('c', 1), ('b', 2), ('a', 3)]
+[('a', 1), ('a', 3), ('b', 2)]
+['a', 'c']
+('b', 5)
+IndexError string index out of range
+IndexError tuple index out of range
+IndexError tuple index out of range
+KeyError 'x'
+IndexError string index out of range
+TypeError string indices must be integers, not 'str'
+TypeError 'int' object is not subscriptable
+TypeError 'NoneType' object is not subscriptable
+TypeError 'int' object is not subscriptable
+IndexError cannot fit 'int' into an index-sized integer
+'big'
+TypeError cannot use 'list' as a dict key (unhashable type: 'list')
+('overridden', 0)
+('got', 0)
+(('got', 0), ('got', 'a'), ('got', None))
+--- attrgetter
+1
+O(c=2, d=O(e=3))
+2
+3
+(1, 'n')
+(1, 2, 3)
+(1, 1)
+'tuple'
+5
+(3.0, 4.0)
+'int'
+(<class 'bool'>, <class 'int'>, <class 'object'>)
+'A'
+[O(n=1), O(n=2)]
+AttributeError 'O' object has no attribute 'x'
+AttributeError 'O' object has no attribute 'x'
+AttributeError 'int' object has no attribute 'x'
+AttributeError 'O' object has no attribute 'x'
+AttributeError 'O' object has no attribute ''
+AttributeError 'O' object has no attribute ''
+AttributeError 'int' object has no attribute ''
+AttributeError 'O' object has no attribute ''
+AttributeError 'O' object has no attribute ''
+AttributeError 'O' object has no attribute 'a b'
+'accent'
+'accent'
+'dyn:anything'
+'DYN:X'
+AttributeError no stop here
+ZeroDivisionError boom
+ZeroDivisionError boom
+1
+2
+--- methodcaller
+'ABC'
+['a', 'b', 'c']
+['a', 'b c']
+['a', 'b c']
+['a', 'b c']
+'default'
+'1 2 3'
+2
+8
+['a', 'b']
+('method', (), {})
+('method', (1, 2), {})
+('method', (), {'x': 1})
+('method', (1, 2), {'x': 3, 'y': 4})
+('static', (), {})
+('static', (1, 2), {})
+('static', (), {'x': 1})
+('static', (1, 2), {'x': 3, 'y': 4})
+('cls', 'M', (), {})
+('cls', 'M', (1, 2), {})
+('cls', 'M', (), {'x': 1})
+('cls', 'M', (1, 2), {'x': 3, 'y': 4})
+('instance', (), {})
+('instance', (1, 2), {})
+('instance', (), {'x': 1})
+('instance', (1, 2), {'x': 3, 'y': 4})
+('dynamic', (), {})
+('dynamic', (1, 2), {})
+('dynamic', (), {'x': 1})
+('dynamic', (1, 2), {'x': 3, 'y': 4})
+('method', (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19), {'k0': 0, 'k1': 1, 'k2': 2, 'k3': 3, 'k4': 4})
+TypeError M.method() got multiple values for argument 'self'
+TypeError 'int' object is not callable
+AttributeError missing
+AttributeError 'int' object has no attribute 'upper'
+TypeError str.upper() takes no arguments (1 given)
+TypeError str.upper() takes no keyword arguments
+AttributeError a.b
+AttributeError 
+'A'
+TypeError M.method() missing 1 required positional argument: 'self'
+('cls', 'M', (1,), {})
+True
+--- how they are made and called
+- itemgetter
+TypeError itemgetter expected 1 argument, got 0
+TypeError itemgetter() takes no keyword arguments
+TypeError itemgetter() takes no keyword arguments
+operator.itemgetter(1)
+operator.itemgetter(None)
+operator.itemgetter('a', 1)
+operator.itemgetter(b'a')
+TypeError itemgetter expected 1 argument, got 0
+TypeError itemgetter expected 1 argument, got 2
+TypeError itemgetter() takes no keyword arguments
+TypeError itemgetter() takes no keyword arguments
+TypeError itemgetter() takes no keyword arguments
+TypeError itemgetter() takes no keyword arguments
+True
+1
+- attrgetter
+TypeError attrgetter expected 1 argument, got 0
+TypeError attrgetter() takes no keyword arguments
+TypeError attrgetter() takes no keyword arguments
+TypeError attribute name must be a string
+TypeError attribute name must be a string
+TypeError attribute name must be a string
+TypeError attribute name must be a string
+TypeError attrgetter expected 1 argument, got 0
+TypeError attrgetter expected 1 argument, got 2
+TypeError attrgetter() takes no keyword arguments
+TypeError attrgetter() takes no keyword arguments
+TypeError attrgetter() takes no keyword arguments
+TypeError attrgetter() takes no keyword arguments
+True
+None
+- methodcaller
+TypeError methodcaller needs at least one argument, the method name
+TypeError methodcaller needs at least one argument, the method name
+operator.methodcaller('a', x=1)
+TypeError method name must be a string
+TypeError method name must be a string
+operator.methodcaller('a', 1)
+TypeError method name must be a string
+TypeError methodcaller expected 1 argument, got 0
+TypeError methodcaller expected 1 argument, got 2
+TypeError methodcaller expected 1 argument, got 0
+TypeError methodcaller() takes no keyword arguments
+TypeError methodcaller expected 1 argument, got 2
+TypeError methodcaller expected 1 argument, got 0
+True
+None
+--- repr
+operator.itemgetter(1) True
+operator.itemgetter('a') True
+operator.itemgetter(1, 2) True
+operator.itemgetter('a', 'b', 'c') True
+operator.itemgetter((1, 2)) True
+operator.itemgetter((1,), 2) True
+operator.itemgetter(slice(1, 2, None)) True
+operator.itemgetter(None) True
+operator.itemgetter([1], {2: 3}) True
+operator.itemgetter(-1) True
+operator.itemgetter(1180591620717411303424) True
+operator.itemgetter(1.5) True
+operator.attrgetter('a') True
+operator.attrgetter('a', 'b') True
+operator.attrgetter('a.b') True
+operator.attrgetter('a.b.c', 'd') True
+operator.attrgetter('') True
+operator.attrgetter('.') True
+operator.attrgetter('a..b') True
+operator.attrgetter("it's") True
+operator.attrgetter('é') True
+operator.methodcaller('a') True
+operator.methodcaller('a', 1) True
+operator.methodcaller('a', 1, 'b') True
+operator.methodcaller('a', x=1) True
+operator.methodcaller('a', 1, x=2, y='z') True
+operator.methodcaller('a', (1, 2)) True
+operator.methodcaller('a', None) True
+operator.methodcaller('a.b') True
+operator.methodcaller("it's") True
+operator.itemgetter([operator.itemgetter(...)])
+operator.itemgetter([operator.itemgetter(...)], 1)
+operator.methodcaller('m', [operator.methodcaller(...)])
+operator.methodcaller('m', k=[operator.methodcaller(...)])
+RuntimeError bad repr
+RuntimeError bad repr
+RuntimeError bad repr
+RuntimeError bad repr
+--- pickling support
+(<class 'operator.itemgetter'>, (1,)) True
+(<class 'operator.itemgetter'>, (1, 2)) True
+(<class 'operator.itemgetter'>, ((1, 2),)) True
+(<class 'operator.itemgetter'>, ('a', None)) True
+(<class 'operator.attrgetter'>, ('a',)) True
+(<class 'operator.attrgetter'>, ('a', 'b')) True
+(<class 'operator.attrgetter'>, ('a.b',)) True
+(<class 'operator.attrgetter'>, ('a.b', 'c.d.e')) True
+(<class 'operator.methodcaller'>, ('a',)) True
+(<class 'operator.methodcaller'>, ('a', 1)) True
+(<class 'operator.methodcaller'>, ('a', 1, (2,))) True
+TypeError itemgetter.__reduce__() takes no arguments (1 given)
+('partial', True, ('m',), {'x': 3, 'y': 4}, (1, 2))
+operator.methodcaller('m', 1, 2, x=3, y=4)
+(('m',), {'x': 3}, (), operator.methodcaller('m', x=3))
+--- the types
+itemgetter itemgetter operator <class 'operator.itemgetter'> type True
+['__call__', '__new__', '__reduce__', '__repr__', '__text_signature__']
+Return a callable object that fetches the given item(s) from its operand.
+(obj, /) False True False True True True
+is final
+no attributes
+attrgetter attrgetter operator <class 'operator.attrgetter'> type True
+['__call__', '__new__', '__reduce__', '__repr__', '__text_signature__']
+Return a callable object that fetches the given attribute(s) from its operand.
+(obj, /) False True False True True True
+is final
+no attributes
+methodcaller methodcaller operator <class 'operator.methodcaller'> type True
+['__call__', '__new__', '__reduce__', '__repr__', '__text_signature__']
+Return a callable object that calls the given method on its operand.
+(obj, /) False True False True True True
+is final
+no attributes

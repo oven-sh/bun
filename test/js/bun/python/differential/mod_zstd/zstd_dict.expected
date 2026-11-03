@@ -1,0 +1,97 @@
+status: 0
+script: 275443fd9a9557e4
+---
+<class 'bytes'> True 37a430ec
+True True True <class 'int'> True
+True True True <class 'tuple'> True
+True True True True
+True True True True
+True True True True
+True True True True
+True True True True
+True True True True
+True True True True
+True True True True
+True
+True
+ZstdError: Unable to decompress Zstandard data: Dictionary mismatch
+ZstdError: Unable to decompress Zstandard data: Dictionary mismatch
+True True
+True True
+True True
+True True True
+0 45 <ZstdDict dict_id=0 dict_size=45>
+b'some raw content that is no dictionary'
+TypeError: ZstdDict() takes exactly 1 positional argument (0 given)
+ValueError: Zstandard dictionary content too short (must have at least eight bytes)
+ValueError: Zstandard dictionary content too short (must have at least eight bytes)
+ValueError: invalid Zstandard dictionary
+<ZstdDict dict_id=0 dict_size=8>
+TypeError: ZstdDict() takes exactly 1 positional argument (2 given)
+TypeError: a bytes-like object is required, not 'str'
+TypeError: a bytes-like object is required, not 'int'
+TypeError: ZstdDict() takes exactly 1 positional argument (0 given)
+<ZstdDict dict_id=357785825 dict_size=4096>
+TypeError: ZstdDict() got an unexpected keyword argument 'x'
+<ZstdDict dict_id=357785825 dict_size=4096>
+<ZstdDict dict_id=357785825 dict_size=4096>
+<ZstdDict dict_id=357785825 dict_size=4096>
+True
+AttributeError: readonly attribute
+AttributeError: attribute 'dict_content' of 'compression.zstd.ZstdDict' objects is not writable
+AttributeError: 'compression.zstd.ZstdDict' object has no attribute 'x' and no __dict__ for setting new attributes
+TypeError: zstd_dict argument should be a ZstdDict object.
+TypeError: zstd_dict argument should be a ZstdDict object.
+TypeError: zstd_dict argument should be a ZstdDict object.
+TypeError: zstd_dict argument should be a ZstdDict object.
+TypeError: zstd_dict argument should be a ZstdDict object.
+TypeError: zstd_dict argument should be a ZstdDict object.
+TypeError: zstd_dict argument should be a ZstdDict object.
+TypeError: zstd_dict argument should be a ZstdDict object.
+TypeError: zstd_dict argument should be a ZstdDict object.
+TypeError: zstd_dict argument should be a ZstdDict object.
+TypeError: zstd_dict argument should be a ZstdDict object.
+TypeError: zstd_dict argument should be a ZstdDict object.
+TypeError: zstd_dict argument should be a ZstdDict object.
+TypeError: zstd_dict argument should be a ZstdDict object.
+OverflowError: Python int too large to convert to C int
+OverflowError: Python int too large to convert to C int
+TypeError: zstd_dict argument should be a ZstdDict object.
+TypeError: zstd_dict argument should be a ZstdDict object.
+<compression.zstd.ZstdCompressor object>
+<compression.zstd.ZstdDecompressor object>
+TypeError: zstd_dict argument should be a ZstdDict object.
+TypeError: zstd_dict argument should be a ZstdDict object.
+TypeError: zstd_dict argument should be a ZstdDict object.
+True
+TypeError: train_dict expected 3 arguments, got 0
+TypeError: train_dict expected 3 arguments, got 2
+TypeError: train_dict() argument 1 must be bytes, not str
+TypeError: train_dict() argument 1 must be bytes, not bytearray
+TypeError: train_dict() argument 2 must be tuple, not list
+TypeError: 'str' object cannot be interpreted as an integer
+ValueError: dict_size argument should be positive number.
+ValueError: dict_size argument should be positive number.
+ValueError: The samples size tuple doesn't match the concatenation's size.
+ValueError: The samples size tuple doesn't match the concatenation's size.
+TypeError: an integer is required
+ValueError: The samples size tuple doesn't match the concatenation's size.
+ValueError: The samples size tuple doesn't match the concatenation's size.
+TypeError: an integer is required
+ZstdError: Unable to train the Zstandard dictionary: Src size is incorrect
+ZstdError: Unable to train the Zstandard dictionary: Destination buffer is too small
+OverflowError: Python int too large to convert to C ssize_t
+TypeError: train_dict expected 3 arguments, got 4
+<class 'bytes'> True 37a430ec
+True
+TypeError: finalize_dict expected 5 arguments, got 0
+TypeError: finalize_dict expected 5 arguments, got 4
+TypeError: finalize_dict() argument 1 must be bytes, not str
+TypeError: finalize_dict() argument 2 must be bytes, not str
+TypeError: finalize_dict() argument 3 must be tuple, not list
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'str' object cannot be interpreted as an integer
+ValueError: dict_size argument should be positive number.
+ValueError: The samples size tuple doesn't match the concatenation's size.
+ZstdError: Unable to finalize the Zstandard dictionary: Destination buffer is too small
+OverflowError: Python int too large to convert to C int

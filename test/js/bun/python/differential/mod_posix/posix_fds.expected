@@ -1,0 +1,240 @@
+status: 0
+script: 087da6d5497fbbee
+---
+-- open
+int True 0o100640 False
+FileExistsError [Errno 17] File exists: 'f'
+FileNotFoundError [Errno 2] No such file or directory: 'nope'
+FileNotFoundError [Errno 2] No such file or directory: b'nope'
+IsADirectoryError [Errno 21] Is a directory: '.'
+NotADirectoryError [Errno 20] Not a directory: 'f/x'
+NotADirectoryError [Errno 20] Not a directory: 'f'
+TypeError open() missing required argument 'flags' (pos 2)
+0o100755
+-- write, read, lseek
+11
+2
+2
+0
+TypeError a bytes-like object is required, not 'str'
+TypeError a bytes-like object is required, not 'int'
+TypeError a bytes-like object is required, not 'NoneType'
+15
+0
+b'hello'
+b''
+b' world!!??'
+b''
+12
+b'!??'
+2
+5
+b' '
+OSError [Errno 22] Invalid argument
+OSError [Errno 22] Invalid argument
+100
+b''
+0
+15
+bytes
+OSError [Errno 9] Bad file descriptor
+OSError [Errno 9] Bad file descriptor
+OSError [Errno 9] Bad file descriptor
+OSError [Errno 9] Bad file descriptor
+OSError [Errno 9] Bad file descriptor
+IsADirectoryError [Errno 21] Is a directory
+-- pread, pwrite
+b'world'
+b'??'
+b''
+OSError [Errno 22] Invalid argument
+5
+1
+OSError [Errno 22] Invalid argument
+TypeError a bytes-like object is required, not 'str'
+b'HELLO World!!??'
+OSError [Errno 9] Bad file descriptor
+OSError [Errno 9] Bad file descriptor
+-- readinto
+8
+bytearray(b'HELLO Wo')
+7
+bytearray(b'rld!!??o')
+0
+bytearray(b'rld!!??o')
+0
+TypeError readinto() argument 2 must be read-write bytes-like object, not bytes
+TypeError readinto() argument 2 must be read-write bytes-like object, not str
+TypeError readinto() argument 2 must be read-write bytes-like object, not int
+TypeError readinto() argument 2 must be read-write bytes-like object, not None
+OSError [Errno 9] Bad file descriptor
+3
+bytearray(b'rlHEL??o')
+TypeError readinto() argument 2 must be read-write bytes-like object, not memoryview
+-- readv, writev
+11
+1
+0
+TypeError writev() arg 2 must be a sequence
+TypeError writev() arg 2 must be a sequence
+TypeError a bytes-like object is required, not 'str'
+TypeError a bytes-like object is required, not 'int'
+TypeError a bytes-like object is required, not 'int'
+OSError [Errno 9] Bad file descriptor
+9
+bytearray(b'onet') bytearray(b'') bytearray(b'wothr')
+3
+bytearray(b'ee!t') bytearray(b'') bytearray(b'wothr')
+0
+0
+BufferError Object is not writable.
+TypeError a bytes-like object is required, not 'str'
+TypeError a bytes-like object is required, not 'int'
+TypeError readv() arg 2 must be a sequence
+OSError [Errno 9] Bad file descriptor
+9
+bytearray(b'twot') bytearray(b'hree!')
+4
+0
+TypeError preadv2() arg 2 must be a sequence
+BufferError Object is not writable.
+4
+1
+1
+TypeError pwritev() arg 2 must be a sequence
+1
+b'ZYBCDothree!Z'
+BufferError Existing exports of data: object cannot be re-sized
+5
+-- dup, dup2
+True False True
+2
+OSError [Errno 9] Bad file descriptor
+OSError [Errno 9] Bad file descriptor
+True True
+True False
+True True
+True
+True
+OSError [Errno 22] Invalid argument
+OSError [Errno 9] Bad file descriptor
+OSError [Errno 9] Bad file descriptor
+-- close, closerange
+OSError [Errno 9] Bad file descriptor
+OSError [Errno 9] Bad file descriptor
+OSError [Errno 9] Bad file descriptor
+None
+[]
+[True, False, False, False, True]
+None
+None
+TypeError 'str' object cannot be interpreted as an integer
+OverflowError Python int too large to convert to C int
+-- inheritable, blocking
+False True
+None
+True
+None
+False
+TypeError 'str' object cannot be interpreted as an integer
+None
+False
+None
+True
+OSError [Errno 9] Bad file descriptor
+OSError [Errno 9] Bad file descriptor
+OSError [Errno 9] Bad file descriptor
+OSError [Errno 9] Bad file descriptor
+-- pipe
+builtin_function_or_method False False True True
+16
+b'through'
+b' the pipe'
+OSError [Errno 29] Illegal seek
+OSError [Errno 29] Illegal seek
+OSError [Errno 22] Invalid argument
+OSError [Errno 22] Invalid argument
+BlockingIOError [Errno 11] Resource temporarily unavailable
+b''
+True False False
+BlockingIOError [Errno 11] Resource temporarily unavailable
+False True
+OSError [Errno 22] Invalid argument
+TypeError posix.pipe2() takes exactly one argument (0 given)
+-- fstat, fsync, ftruncate, lockf
+10 True True stat_result
+OSError [Errno 9] Bad file descriptor
+OSError [Errno 9] Bad file descriptor
+None
+None
+None
+OSError [Errno 9] Bad file descriptor
+OSError [Errno 9] Bad file descriptor
+None
+OSError [Errno 9] Bad file descriptor
+None
+None
+None
+OSError [Errno 22] Invalid argument
+OSError [Errno 9] Bad file descriptor
+None
+100
+OSError [Errno 22] Invalid argument
+OSError [Errno 9] Bad file descriptor
+None
+OSError [Errno 22] Invalid argument
+OSError [Errno 9] Bad file descriptor
+-- sendfile, copy_file_range, splice
+5
+b'23456'
+3
+3
+b'23456012'
+0
+1
+OSError [Errno 9] Bad file descriptor
+OSError [Errno 9] Bad file descriptor
+4
+3
+0
+b'0123\x00\x00\x00\x00\x00\x00789'
+OSError [Errno 9] Bad file descriptor
+TypeError 'str' object cannot be interpreted as an integer
+4
+b'0123'
+4
+4
+b'6789'
+OSError [Errno 22] Invalid argument
+-- terminals
+False False False
+OSError [Errno 25] Inappropriate ioctl for device
+OSError [Errno 9] Bad file descriptor
+OSError [Errno 25] Inappropriate ioctl for device
+OSError [Errno 9] Bad file descriptor
+TypeError 'str' object cannot be interpreted as an integer
+None
+None
+None
+OSError [Errno 25] Inappropriate ioctl for device
+OSError [Errno 25] Inappropriate ioctl for device
+'/dev/tty'
+True True False False
+True True utf-8
+terminal_size 2
+b'hi\n'
+False
+None
+None
+True
+OSError [Errno 22] Invalid argument
+OSError [Errno 22] Invalid argument
+OSError [Errno 25] Inappropriate ioctl for device
+-- big
+True 1048576
+1048576 True
+True
+1099511627776
+3
+1099511627779
+b'\x00\x00end'

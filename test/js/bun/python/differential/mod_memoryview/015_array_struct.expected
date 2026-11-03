@@ -1,0 +1,281 @@
+status: 0
+script: 28c3a958c13ee046
+---
+b (3, False, 1, 'b', 1, (3,), (1,), True, True) True True True True 3
+True
+True
+True
+True
+True
+True
+True
+True
+True
+3
+ValueError cannot hash writable memoryview object
+B (3, False, 1, 'B', 1, (3,), (1,), True, True) True True True True 3
+True
+True
+True
+True
+True
+True
+True
+True
+True
+3
+ValueError cannot hash writable memoryview object
+u (12, False, 4, 'w', 1, (3,), (4,), True, True) True True True True 3
+NotImplementedError memoryview: format w not supported
+NotImplementedError memoryview: format w not supported
+NotImplementedError memoryview: format w not supported
+False
+False
+False
+False
+False
+True
+12
+ValueError cannot hash writable memoryview object
+w (12, False, 4, 'w', 1, (3,), (4,), True, True) True True True True 3
+NotImplementedError memoryview: format w not supported
+NotImplementedError memoryview: format w not supported
+NotImplementedError memoryview: format w not supported
+False
+False
+False
+False
+False
+True
+12
+ValueError cannot hash writable memoryview object
+h (6, False, 2, 'h', 1, (3,), (2,), True, True) True True True True 3
+True
+True
+True
+True
+True
+True
+True
+True
+True
+6
+ValueError cannot hash writable memoryview object
+H (6, False, 2, 'H', 1, (3,), (2,), True, True) True True True True 3
+True
+True
+True
+True
+True
+True
+True
+True
+True
+6
+ValueError cannot hash writable memoryview object
+i (12, False, 4, 'i', 1, (3,), (4,), True, True) True True True True 3
+True
+True
+True
+True
+True
+True
+True
+True
+True
+12
+ValueError cannot hash writable memoryview object
+I (12, False, 4, 'I', 1, (3,), (4,), True, True) True True True True 3
+True
+True
+True
+True
+True
+True
+True
+True
+True
+12
+ValueError cannot hash writable memoryview object
+l (24, False, 8, 'l', 1, (3,), (8,), True, True) True True True True 3
+True
+True
+True
+True
+True
+True
+True
+True
+True
+24
+ValueError cannot hash writable memoryview object
+L (24, False, 8, 'L', 1, (3,), (8,), True, True) True True True True 3
+True
+True
+True
+True
+True
+True
+True
+True
+True
+24
+ValueError cannot hash writable memoryview object
+q (24, False, 8, 'q', 1, (3,), (8,), True, True) True True True True 3
+True
+True
+True
+True
+True
+True
+True
+True
+True
+24
+ValueError cannot hash writable memoryview object
+Q (24, False, 8, 'Q', 1, (3,), (8,), True, True) True True True True 3
+True
+True
+True
+True
+True
+True
+True
+True
+True
+24
+ValueError cannot hash writable memoryview object
+e (6, False, 2, 'e', 1, (3,), (2,), True, True) True True True True 3
+True
+True
+True
+True
+True
+True
+True
+True
+True
+6
+ValueError cannot hash writable memoryview object
+f (12, False, 4, 'f', 1, (3,), (4,), True, True) True True True True 3
+True
+True
+True
+True
+True
+True
+True
+True
+True
+12
+ValueError cannot hash writable memoryview object
+d (24, False, 8, 'd', 1, (3,), (8,), True, True) True True True True 3
+True
+True
+True
+True
+True
+True
+True
+True
+True
+24
+ValueError cannot hash writable memoryview object
+Zf (24, False, 8, 'Zf', 1, (3,), (8,), True, True) True True True True 3
+True
+True
+True
+True
+True
+True
+True
+True
+True
+24
+ValueError cannot hash writable memoryview object
+Zd (48, False, 16, 'Zd', 1, (3,), (16,), True, True) True True True True 3
+True
+True
+True
+True
+True
+True
+True
+True
+True
+48
+ValueError cannot hash writable memoryview object
+array('i', [-5, 7, 8, 4]) [-5, 7, 8, 4]
+ValueError memoryview assignment: lvalue and rvalue have different structures
+ValueError memoryview assignment: lvalue and rvalue have different structures
+ValueError memoryview assignment: lvalue and rvalue have different structures
+array('i', [875770417, 943142453, 8, 4])
+BufferError cannot resize an array that is exporting buffers
+BufferError cannot resize an array that is exporting buffers
+BufferError cannot resize an array that is exporting buffers
+BufferError cannot resize an array that is exporting buffers
+BufferError cannot resize an array that is exporting buffers
+BufferError cannot resize an array that is exporting buffers
+BufferError cannot resize an array that is exporting buffers
+BufferError cannot resize an array that is exporting buffers
+BufferError cannot resize an array that is exporting buffers
+BufferError cannot resize an array that is exporting buffers
+BufferError cannot resize an array that is exporting buffers
+BufferError cannot resize an array that is exporting buffers
+array('i', [4, 6, 5, 9]) [4, 6, 5, 9]
+array('i', [4, 6, 5, 9, 1])
+BufferError cannot resize an array that is exporting buffers
+array('i', [4, 6, 5, 9, 1, 2])
+array('i', [4, 6, 5, 9, 1, 2, 3])
+(0, False, 8, 'd', 1, (0,), (8,), True, True) [] b''
+array('d', [1.0])
+(0, 'B', 4, (7,), (4,), 28, False, True)
+(1, 'B', 4, (7,), (4,), 28, False, True)
+(4, 'i', 4, (7,), (4,), 28, False, True)
+(8, 'B', 4, (7,), (4,), 28, False, True)
+(24, 'B', 4, (7,), (4,), 28, False, True)
+(284, 'i', 4, (7,), (4,), 28, False, True)
+(256, 'B', 4, (7,), (4,), 28, False, True)
+(512, 'B', 4, (7,), (4,), 28, False, True)
+BufferError cannot resize an array that is exporting buffers
+None
+ValueError operation forbidden on released memoryview object
+ValueError memoryview's buffer has already been released
+ValueError memoryview's buffer is not this object
+TypeError expected a memoryview object
+array('i', [4, 6, 5, 9, 1, 2, 3, 4])
+(4, False, 2, 'h', 1, (2,), (2,), True, True) True [1, 2]
+Sub2.__buffer__ 284
+[1, 2] _buffer_wrapper
+BufferError cannot resize an array that is exporting buffers
+Sub2.__release_buffer__ [1, 2]
+Sub2.__buffer__ 284
+Sub2.__release_buffer__ [1, 2, 3]
+Sub2('h', [1, 2, 3]) b'\x01\x00\x02\x00\x03\x00'
+bytearray(b'\x00\x00\xff\xff\xff\xff\x05\x00\x00\x00\x00\x00\x00\x00\x00\x00')
+bytearray(b'\x00\x00\xff\xff\xff\xff\x05\x00\x02\x01\x00\x00\x00\x00\x00\x00')
+(-1, 5)
+(-65536, 393215, 258, 0)
+(258, 0)
+BufferError memoryview: underlying buffer is not C-contiguous
+TypeError pack_into() argument 2 must be read-write bytes-like object, not memoryview
+TypeError pack_into() argument 2 must be read-write bytes-like object, not memoryview
+TypeError pack_into() argument 2 must be read-write bytes-like object, not memoryview
+[(0,), (-1,)]
+(1, 2)
+(1, 2)
+error argument for 's' must be a bytes object
+(-1,)
+b'0000ffff'
+b'0100'
+True
+b'AAD/\n'
+BufferError memoryview: underlying buffer is not C-contiguous
+b'ab'
+array('B', [97, 98, 99])
+array('h', [97, 98, 99, 100])
+OverflowError unsigned byte integer is greater than maximum
+array('h', [25185, 25699])
+BufferError memoryview: underlying buffer is not C-contiguous
+array('h', [25185, 25699, 97, 98])
+TypeError a bytes-like object is required

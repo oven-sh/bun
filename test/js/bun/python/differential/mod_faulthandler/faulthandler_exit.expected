@@ -1,0 +1,28 @@
+status: 0
+script: 2f47435aebf7f61e
+---
+1 []
+Timeout (0:00:00.100000)!
+Thread 0xT [name] (most recent call first):
+  File "child.py", line 4 in f
+  File "child.py", line 5 in <module>
+
+1 []
+Timeout (0:00:00.100000)!
+Thread 0xT [name] (most recent call first):
+  File "child.py", line 4 in f
+  File "child.py", line 5 in <module>
+
+0 ['done']
+
+-10 []
+Current thread 0xT [name] (most recent call first):
+  File "child.py", line 4 in f
+  File "child.py", line 5 in <module>
+
+0 []
+Current thread 0xT [name] (most recent call first):
+  File "child.py", line 2 in <module>
+
+0 ['True']
+

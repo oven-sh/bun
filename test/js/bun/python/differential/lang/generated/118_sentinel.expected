@@ -1,0 +1,128 @@
+status: 0
+script: d5fd03b615ce06cd
+source: 346e5f0bb41c3f80
+---
+MISSING => MISSING
+repr(MISSING) => MISSING
+str(MISSING) => MISSING
+format(MISSING) => MISSING
+f"{MISSING} {MISSING!r} {MISSING!s}" => MISSING MISSING MISSING
+"%s %r" % (MISSING, MISSING) => MISSING MISSING
+[MISSING] => [MISSING]
+{"k": MISSING} => {'k': MISSING}
+type(MISSING) => <class 'sentinel'>
+type(MISSING).__name__ => sentinel
+sentinel.__module__ => builtins
+sentinel.__mro__ => (<class 'sentinel'>, <class 'object'>)
+isinstance(MISSING, sentinel) => True
+isinstance(sentinel, type) => True
+MISSING.__name__ => MISSING
+MISSING.__module__ => __main__
+MISSING.__class__ => <class 'sentinel'>
+MISSING is MISSING => True
+MISSING == MISSING => True
+MISSING != MISSING => False
+bool(MISSING) => True
+not MISSING => False
+hash(MISSING) == hash(MISSING) => True
+{MISSING: 1}[MISSING] => 1
+MISSING in [MISSING] => True
+MISSING in {MISSING} => True
+MISSING == "MISSING" => False
+MISSING == None => False
+MISSING is None => False
+other is MISSING => False
+other == MISSING => False
+other != MISSING => True
+repr(other) == repr(MISSING) => True
+len({other, MISSING}) => 2
+sentinel("a.b") => a.b
+repr(sentinel("")) => 
+sentinel("é😀") => é😀
+sentinel("with space") => with space
+sentinel("X", repr="<X>") => <X>
+repr(sentinel("X", repr="<X>")) => <X>
+str(sentinel("X", repr="<X>")) => <X>
+sentinel("X", repr="<X>").__name__ => X
+sentinel("X", repr="") => 
+sentinel("line\nbreak") => line
+break
+sentinel() => TypeError: sentinel() takes exactly 1 positional argument (0 given)
+sentinel(1) => TypeError: sentinel() argument 1 must be str, not int
+sentinel(None) => TypeError: sentinel() argument 1 must be str, not None
+sentinel(b"a") => TypeError: sentinel() argument 1 must be str, not bytes
+sentinel("a", "b") => TypeError: sentinel() takes exactly 1 positional argument (2 given)
+sentinel(name="a") => TypeError: sentinel() takes exactly 1 positional argument (0 given)
+sentinel("a", repr=1) => TypeError: sentinel() argument 'repr' must be str or None, not int
+sentinel("a", repr=None) => a
+sentinel("a", nope=1) => TypeError: sentinel() got an unexpected keyword argument 'nope'
+sentinel("a", module_name="m") => TypeError: sentinel() got an unexpected keyword argument 'module_name'
+type("X", (sentinel,), {}) => TypeError: type 'sentinel' is not an acceptable base type
+MISSING() => TypeError: 'sentinel' object is not callable
+MISSING.x => AttributeError: 'sentinel' object has no attribute 'x'
+MISSING < MISSING => TypeError: '<' not supported between instances of 'sentinel' and 'sentinel'
+MISSING <= 1 => TypeError: '<=' not supported between instances of 'sentinel' and 'int'
+MISSING + 1 => TypeError: unsupported operand type(s) for +: 'sentinel' and 'int'
+len(MISSING) => TypeError: object of type 'sentinel' has no len()
+iter(MISSING) => TypeError: 'sentinel' object is not iterable
+MISSING[0] => TypeError: 'sentinel' object is not subscriptable
+int(MISSING) => TypeError: int() argument must be a string, a bytes-like object or a real number, not 'sentinel'
+MISSING.__dict__ => AttributeError: 'sentinel' object has no attribute '__dict__'
+format(MISSING, ">10") => TypeError: unsupported format string passed to sentinel.__format__
+-MISSING => TypeError: bad operand type for unary -: 'sentinel'
+MISSING & 1 => TypeError: unsupported operand type(s) for &: 'sentinel' and 'int'
+AttributeError: 'sentinel' object has no attribute 'x' and no __dict__ for setting new attributes
+AttributeError: readonly attribute
+AttributeError: readonly attribute
+None
+TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+MISSING | int => MISSING | int
+int | MISSING => int | MISSING
+MISSING | None => MISSING | None
+None | MISSING => None | MISSING
+MISSING | MISSING => MISSING
+(int | MISSING).__args__ => (<class 'int'>, MISSING)
+MISSING | other => MISSING | MISSING
+list[MISSING] => list[MISSING]
+dict[str, MISSING] => dict[str, MISSING]
+type(MISSING | int).__name__ => Union
+MISSING | int | str => MISSING | int | str
+(MISSING | int) == (int | MISSING) => True
+MISSING | 1 => TypeError: unsupported operand type(s) for |: 'sentinel' and 'int'
+1 | MISSING => TypeError: unsupported operand type(s) for |: 'int' and 'sentinel'
+MISSING | "s" => TypeError: unsupported operand type(s) for |: 'sentinel' and 'str'
+isinstance(MISSING, MISSING | int) => TypeError: isinstance() arg 2 must be a type, a tuple of types, or a union
+isinstance(1, int | MISSING) => True
+MISSING.__copy__() is MISSING => True
+MISSING.__deepcopy__({}) is MISSING => True
+MISSING.__reduce__() => MISSING
+MISSING.__reduce_ex__(4) => MISSING
+MISSING.__deepcopy__() => TypeError: sentinel.__deepcopy__() takes exactly one argument (0 given)
+MISSING.__copy__(1) => TypeError: sentinel.__copy__() takes no arguments (1 given)
+get({"a": 1}, "a") => 1
+get({}, "a", None) => None
+get({}, "a", 5) => 5
+get({}, "a") => KeyError: 'a'
+f() => not given
+f(None) => ('given', None)
+f(MISSING) => not given
+f.__defaults__ => (MISSING,)
+class pattern
+m(MISSING) => value pattern
+m(other) => other
+m(None) => other
+(local, '__main__', 'local')
+K.S => K.S
+K.S.__name__ => K.S
+K.S.__module__ => __main__
+K().S is K.S => True
+other_mod
+exec("s = sentinel('X'); print(s.__module__)", {"__name__": "other_mo... => None
+None
+exec("s = sentinel('X'); print(s.__module__)", {}) => None
+sorted(n for n in dir(MISSING) if not n.startswith("__")) => []
+[n for n in ("__name__", "__module__", "__copy__", "__deepcopy__", "_... => ['__name__', '__module__', '__copy__', '__deepcopy__', '__or__', '__ror__', '__reduce__', '__hash__', '__eq__']
+sorted([sentinel("b"), sentinel("a")], key=repr) => [a, b]
+max([sentinel("b"), sentinel("a")], key=lambda s: s.__name__) => b
+the name can be rebound
+True

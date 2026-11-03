@@ -1,0 +1,269 @@
+status: 1
+stderr: TypeError: show() got multiple values for argument 'name'
+script: 677c082242cdfdc8
+---
+time ()  returned float
+time (1,)  TypeError: time.time() takes no arguments (1 given)
+time (1, 2)  TypeError: time.time() takes no arguments (2 given)
+time () {'x': 1} TypeError: time.time() takes no keyword arguments
+time (None,)  TypeError: time.time() takes no arguments (1 given)
+time_ns ()  returned int
+time_ns (1,)  TypeError: time.time_ns() takes no arguments (1 given)
+time_ns (1, 2)  TypeError: time.time_ns() takes no arguments (2 given)
+time_ns () {'x': 1} TypeError: time.time_ns() takes no keyword arguments
+time_ns (None,)  TypeError: time.time_ns() takes no arguments (1 given)
+monotonic ()  returned float
+monotonic (1,)  TypeError: time.monotonic() takes no arguments (1 given)
+monotonic (1, 2)  TypeError: time.monotonic() takes no arguments (2 given)
+monotonic () {'x': 1} TypeError: time.monotonic() takes no keyword arguments
+monotonic (None,)  TypeError: time.monotonic() takes no arguments (1 given)
+monotonic_ns ()  returned int
+monotonic_ns (1,)  TypeError: time.monotonic_ns() takes no arguments (1 given)
+monotonic_ns (1, 2)  TypeError: time.monotonic_ns() takes no arguments (2 given)
+monotonic_ns () {'x': 1} TypeError: time.monotonic_ns() takes no keyword arguments
+monotonic_ns (None,)  TypeError: time.monotonic_ns() takes no arguments (1 given)
+perf_counter ()  returned float
+perf_counter (1,)  TypeError: time.perf_counter() takes no arguments (1 given)
+perf_counter (1, 2)  TypeError: time.perf_counter() takes no arguments (2 given)
+perf_counter () {'x': 1} TypeError: time.perf_counter() takes no keyword arguments
+perf_counter (None,)  TypeError: time.perf_counter() takes no arguments (1 given)
+perf_counter_ns ()  returned int
+perf_counter_ns (1,)  TypeError: time.perf_counter_ns() takes no arguments (1 given)
+perf_counter_ns (1, 2)  TypeError: time.perf_counter_ns() takes no arguments (2 given)
+perf_counter_ns () {'x': 1} TypeError: time.perf_counter_ns() takes no keyword arguments
+perf_counter_ns (None,)  TypeError: time.perf_counter_ns() takes no arguments (1 given)
+process_time ()  returned float
+process_time (1,)  TypeError: time.process_time() takes no arguments (1 given)
+process_time (1, 2)  TypeError: time.process_time() takes no arguments (2 given)
+process_time () {'x': 1} TypeError: time.process_time() takes no keyword arguments
+process_time (None,)  TypeError: time.process_time() takes no arguments (1 given)
+process_time_ns ()  returned int
+process_time_ns (1,)  TypeError: time.process_time_ns() takes no arguments (1 given)
+process_time_ns (1, 2)  TypeError: time.process_time_ns() takes no arguments (2 given)
+process_time_ns () {'x': 1} TypeError: time.process_time_ns() takes no keyword arguments
+process_time_ns (None,)  TypeError: time.process_time_ns() takes no arguments (1 given)
+thread_time ()  returned float
+thread_time (1,)  TypeError: time.thread_time() takes no arguments (1 given)
+thread_time (1, 2)  TypeError: time.thread_time() takes no arguments (2 given)
+thread_time () {'x': 1} TypeError: time.thread_time() takes no keyword arguments
+thread_time (None,)  TypeError: time.thread_time() takes no arguments (1 given)
+thread_time_ns ()  returned int
+thread_time_ns (1,)  TypeError: time.thread_time_ns() takes no arguments (1 given)
+thread_time_ns (1, 2)  TypeError: time.thread_time_ns() takes no arguments (2 given)
+thread_time_ns () {'x': 1} TypeError: time.thread_time_ns() takes no keyword arguments
+thread_time_ns (None,)  TypeError: time.thread_time_ns() takes no arguments (1 given)
+tzset ()  returned NoneType
+tzset (1,)  TypeError: time.tzset() takes no arguments (1 given)
+tzset (1, 2)  TypeError: time.tzset() takes no arguments (2 given)
+tzset () {'x': 1} TypeError: time.tzset() takes no keyword arguments
+tzset (None,)  TypeError: time.tzset() takes no arguments (1 given)
+gmtime ()  returned struct_time
+gmtime (None,)  returned struct_time
+gmtime (0,)  returned struct_time
+gmtime (0, 1)  TypeError: gmtime() takes at most 1 argument (2 given)
+gmtime (0, 1, 2)  TypeError: gmtime() takes at most 1 argument (3 given)
+gmtime ('a',)  TypeError: must be real number, not str
+gmtime (b'a',)  TypeError: must be real number, not bytes
+gmtime ([],)  TypeError: must be real number, not list
+gmtime (1j,)  TypeError: must be real number, not complex
+gmtime (Idx(5),)  returned struct_time
+gmtime (Fl(5.5),)  returned struct_time
+gmtime (Idx(1180591620717411303424),)  OverflowError: timestamp out of range for platform time_t
+gmtime (Fl(1e+30),)  OverflowError: timestamp out of range for platform time_t
+gmtime (Fl(nan),)  ValueError: Invalid value NaN (not a number)
+gmtime (<class 'type'>,)  TypeError: must be real number, not type
+gmtime (9223372036854775808,)  OverflowError: timestamp out of range for platform time_t
+gmtime (-9223372036854775809,)  OverflowError: timestamp out of range for platform time_t
+gmtime (1e+19,)  OverflowError: timestamp out of range for platform time_t
+gmtime (-1e+19,)  OverflowError: timestamp out of range for platform time_t
+gmtime (nan,)  ValueError: Invalid value NaN (not a number)
+gmtime (inf,)  OverflowError: timestamp out of range for platform time_t
+gmtime (4611686018427387904,)  OSError: [Errno 75] Value too large for defined data type
+gmtime (-4611686018427387904,)  OSError: [Errno 75] Value too large for defined data type
+gmtime () {'seconds': 0} TypeError: gmtime() takes no keyword arguments
+gmtime () {'x': 0} TypeError: gmtime() takes no keyword arguments
+gmtime (0,) {'x': 0} TypeError: gmtime() takes no keyword arguments
+localtime ()  returned struct_time
+localtime (None,)  returned struct_time
+localtime (0,)  returned struct_time
+localtime (0, 1)  TypeError: localtime() takes at most 1 argument (2 given)
+localtime (0, 1, 2)  TypeError: localtime() takes at most 1 argument (3 given)
+localtime ('a',)  TypeError: must be real number, not str
+localtime (b'a',)  TypeError: must be real number, not bytes
+localtime ([],)  TypeError: must be real number, not list
+localtime (1j,)  TypeError: must be real number, not complex
+localtime (Idx(5),)  returned struct_time
+localtime (Fl(5.5),)  returned struct_time
+localtime (Idx(1180591620717411303424),)  OverflowError: timestamp out of range for platform time_t
+localtime (Fl(1e+30),)  OverflowError: timestamp out of range for platform time_t
+localtime (Fl(nan),)  ValueError: Invalid value NaN (not a number)
+localtime (<class 'type'>,)  TypeError: must be real number, not type
+localtime (9223372036854775808,)  OverflowError: timestamp out of range for platform time_t
+localtime (-9223372036854775809,)  OverflowError: timestamp out of range for platform time_t
+localtime (1e+19,)  OverflowError: timestamp out of range for platform time_t
+localtime (-1e+19,)  OverflowError: timestamp out of range for platform time_t
+localtime (nan,)  ValueError: Invalid value NaN (not a number)
+localtime (inf,)  OverflowError: timestamp out of range for platform time_t
+localtime (4611686018427387904,)  OSError: [Errno 75] Value too large for defined data type
+localtime (-4611686018427387904,)  OSError: [Errno 75] Value too large for defined data type
+localtime () {'seconds': 0} TypeError: localtime() takes no keyword arguments
+localtime () {'x': 0} TypeError: localtime() takes no keyword arguments
+localtime (0,) {'x': 0} TypeError: localtime() takes no keyword arguments
+ctime ()  returned str
+ctime (None,)  returned str
+ctime (0,)  returned str
+ctime (0, 1)  TypeError: ctime() takes at most 1 argument (2 given)
+ctime (0, 1, 2)  TypeError: ctime() takes at most 1 argument (3 given)
+ctime ('a',)  TypeError: must be real number, not str
+ctime (b'a',)  TypeError: must be real number, not bytes
+ctime ([],)  TypeError: must be real number, not list
+ctime (1j,)  TypeError: must be real number, not complex
+ctime (Idx(5),)  returned str
+ctime (Fl(5.5),)  returned str
+ctime (Idx(1180591620717411303424),)  OverflowError: timestamp out of range for platform time_t
+ctime (Fl(1e+30),)  OverflowError: timestamp out of range for platform time_t
+ctime (Fl(nan),)  ValueError: Invalid value NaN (not a number)
+ctime (<class 'type'>,)  TypeError: must be real number, not type
+ctime (9223372036854775808,)  OverflowError: timestamp out of range for platform time_t
+ctime (-9223372036854775809,)  OverflowError: timestamp out of range for platform time_t
+ctime (1e+19,)  OverflowError: timestamp out of range for platform time_t
+ctime (-1e+19,)  OverflowError: timestamp out of range for platform time_t
+ctime (nan,)  ValueError: Invalid value NaN (not a number)
+ctime (inf,)  OverflowError: timestamp out of range for platform time_t
+ctime (4611686018427387904,)  OSError: [Errno 75] Value too large for defined data type
+ctime (-4611686018427387904,)  OSError: [Errno 75] Value too large for defined data type
+ctime () {'seconds': 0} TypeError: ctime() takes no keyword arguments
+ctime () {'x': 0} TypeError: ctime() takes no keyword arguments
+ctime (0,) {'x': 0} TypeError: ctime() takes no keyword arguments
+asctime (None,)  TypeError: Tuple or struct_time argument required
+asctime (0,)  TypeError: Tuple or struct_time argument required
+asctime (1.5,)  TypeError: Tuple or struct_time argument required
+asctime ('a',)  TypeError: Tuple or struct_time argument required
+asctime ([2000, 1, 1, 0, 0, 0, 0, 1, 0],)  TypeError: Tuple or struct_time argument required
+asctime ((),)  TypeError: asctime(): illegal time tuple argument
+asctime ((1,),)  TypeError: asctime(): illegal time tuple argument
+asctime ((2000, 1, 1, 0, 0, 0, 0, 1),)  TypeError: asctime(): illegal time tuple argument
+asctime ((2000, 1, 1, 0, 0, 0, 0, 1, 0, 0),)  TypeError: asctime(): illegal time tuple argument
+asctime ((2000, 1, 1, 0, 0, 0, 0, 1, 0, 'X', 0),)  TypeError: asctime(): illegal time tuple argument
+asctime ((2000, 1, 1, 0, 0, 0, 0, 1, 0),)  returned str
+asctime (('a', 1, 1, 0, 0, 0, 0, 1, 0),)  TypeError: 'str' object cannot be interpreted as an integer
+asctime ((2000, 'a', 1, 0, 0, 0, 0, 1, 0),)  TypeError: 'str' object cannot be interpreted as an integer
+asctime ((2000, 1, 1, 0, 0, 0, 0, 1, 'a'),)  TypeError: 'str' object cannot be interpreted as an integer
+asctime ((2000.0, 1, 1, 0, 0, 0, 0, 1, 0),)  TypeError: 'float' object cannot be interpreted as an integer
+asctime ((2000, 1, 1, 0, 0, 0.5, 0, 1, 0),)  TypeError: 'float' object cannot be interpreted as an integer
+asctime ((2000, 1, 1, 0, 0, None, 0, 1, 0),)  TypeError: 'NoneType' object cannot be interpreted as an integer
+asctime ((2147483648, 1, 1, 0, 0, 0, 0, 1, 0),)  OverflowError: signed integer is greater than maximum
+asctime ((-2147483649, 1, 1, 0, 0, 0, 0, 1, 0),)  OverflowError: signed integer is less than minimum
+asctime ((9223372036854775808, 1, 1, 0, 0, 0, 0, 1, 0),)  OverflowError: Python int too large to convert to C long
+asctime ((-9223372036854775809, 1, 1, 0, 0, 0, 0, 1, 0),)  OverflowError: Python int too large to convert to C long
+asctime ((2000, 2147483648, 1, 0, 0, 0, 0, 1, 0),)  OverflowError: signed integer is greater than maximum
+asctime ((2000, 1, 1, 0, 0, 0, 0, 1, 2147483648),)  OverflowError: signed integer is greater than maximum
+asctime ((Idx(2000), Idx(1), Idx(1), Idx(0), Idx(0), Idx(0), Idx(0), Idx(1), Idx(0)),)  returned str
+asctime (('a', 'b', 1),)  TypeError: asctime(): illegal time tuple argument
+asctime (('a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a'),)  TypeError: 'str' object cannot be interpreted as an integer
+asctime ((2000, 13, 'a', 0, 0, 0, 0, 1, 0),)  TypeError: 'str' object cannot be interpreted as an integer
+asctime ((2000, 13, 32, 25, 0, 0, 0, 1, 0),)  ValueError: month out of range
+asctime ((2000, 1, 32, 25, 0, 0, 0, 1, 0),)  ValueError: day of month out of range
+asctime ((2000, 1, 1, 25, 61, 0, 0, 1, 0),)  ValueError: hour out of range
+asctime ((2000, 1, 1, 0, 61, 62, 0, 1, 0),)  ValueError: minute out of range
+asctime ((2000, 1, 1, 0, 0, 62, -2, 1, 0),)  ValueError: seconds out of range
+asctime ((2000, 1, 1, 0, 0, 0, -2, 400, 0),)  ValueError: day of week out of range
+mktime (None,)  TypeError: Tuple or struct_time argument required
+mktime (0,)  TypeError: Tuple or struct_time argument required
+mktime (1.5,)  TypeError: Tuple or struct_time argument required
+mktime ('a',)  TypeError: Tuple or struct_time argument required
+mktime ([2000, 1, 1, 0, 0, 0, 0, 1, 0],)  TypeError: Tuple or struct_time argument required
+mktime ((),)  TypeError: mktime(): illegal time tuple argument
+mktime ((1,),)  TypeError: mktime(): illegal time tuple argument
+mktime ((2000, 1, 1, 0, 0, 0, 0, 1),)  TypeError: mktime(): illegal time tuple argument
+mktime ((2000, 1, 1, 0, 0, 0, 0, 1, 0, 0),)  TypeError: mktime(): illegal time tuple argument
+mktime ((2000, 1, 1, 0, 0, 0, 0, 1, 0, 'X', 0),)  TypeError: mktime(): illegal time tuple argument
+mktime ((2000, 1, 1, 0, 0, 0, 0, 1, 0),)  returned float
+mktime (('a', 1, 1, 0, 0, 0, 0, 1, 0),)  TypeError: 'str' object cannot be interpreted as an integer
+mktime ((2000, 'a', 1, 0, 0, 0, 0, 1, 0),)  TypeError: 'str' object cannot be interpreted as an integer
+mktime ((2000, 1, 1, 0, 0, 0, 0, 1, 'a'),)  TypeError: 'str' object cannot be interpreted as an integer
+mktime ((2000.0, 1, 1, 0, 0, 0, 0, 1, 0),)  TypeError: 'float' object cannot be interpreted as an integer
+mktime ((2000, 1, 1, 0, 0, 0.5, 0, 1, 0),)  TypeError: 'float' object cannot be interpreted as an integer
+mktime ((2000, 1, 1, 0, 0, None, 0, 1, 0),)  TypeError: 'NoneType' object cannot be interpreted as an integer
+mktime ((2147483648, 1, 1, 0, 0, 0, 0, 1, 0),)  OverflowError: signed integer is greater than maximum
+mktime ((-2147483649, 1, 1, 0, 0, 0, 0, 1, 0),)  OverflowError: signed integer is less than minimum
+mktime ((9223372036854775808, 1, 1, 0, 0, 0, 0, 1, 0),)  OverflowError: Python int too large to convert to C long
+mktime ((-9223372036854775809, 1, 1, 0, 0, 0, 0, 1, 0),)  OverflowError: Python int too large to convert to C long
+mktime ((2000, 2147483648, 1, 0, 0, 0, 0, 1, 0),)  OverflowError: signed integer is greater than maximum
+mktime ((2000, 1, 1, 0, 0, 0, 0, 1, 2147483648),)  OverflowError: signed integer is greater than maximum
+mktime ((Idx(2000), Idx(1), Idx(1), Idx(0), Idx(0), Idx(0), Idx(0), Idx(1), Idx(0)),)  returned float
+mktime (('a', 'b', 1),)  TypeError: mktime(): illegal time tuple argument
+mktime (('a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a'),)  TypeError: 'str' object cannot be interpreted as an integer
+mktime ((2000, 13, 'a', 0, 0, 0, 0, 1, 0),)  TypeError: 'str' object cannot be interpreted as an integer
+mktime ((2000, 13, 32, 25, 0, 0, 0, 1, 0),)  returned float
+mktime ((2000, 1, 32, 25, 0, 0, 0, 1, 0),)  returned float
+mktime ((2000, 1, 1, 25, 61, 0, 0, 1, 0),)  returned float
+mktime ((2000, 1, 1, 0, 61, 62, 0, 1, 0),)  returned float
+mktime ((2000, 1, 1, 0, 0, 62, -2, 1, 0),)  returned float
+mktime ((2000, 1, 1, 0, 0, 0, -2, 400, 0),)  returned float
+strftime ('%Y', None)  TypeError: Tuple or struct_time argument required
+strftime ('%Y', 0)  TypeError: Tuple or struct_time argument required
+strftime ('%Y', 1.5)  TypeError: Tuple or struct_time argument required
+strftime ('%Y', 'a')  TypeError: Tuple or struct_time argument required
+strftime ('%Y', [2000, 1, 1, 0, 0, 0, 0, 1, 0])  TypeError: Tuple or struct_time argument required
+strftime ('%Y', ())  TypeError: strftime(): illegal time tuple argument
+strftime ('%Y', (1,))  TypeError: strftime(): illegal time tuple argument
+strftime ('%Y', (2000, 1, 1, 0, 0, 0, 0, 1))  TypeError: strftime(): illegal time tuple argument
+strftime ('%Y', (2000, 1, 1, 0, 0, 0, 0, 1, 0, 0))  TypeError: strftime(): illegal time tuple argument
+strftime ('%Y', (2000, 1, 1, 0, 0, 0, 0, 1, 0, 'X', 0))  TypeError: strftime(): illegal time tuple argument
+strftime ('%Y', (2000, 1, 1, 0, 0, 0, 0, 1, 0))  returned str
+strftime ('%Y', ('a', 1, 1, 0, 0, 0, 0, 1, 0))  TypeError: 'str' object cannot be interpreted as an integer
+strftime ('%Y', (2000, 'a', 1, 0, 0, 0, 0, 1, 0))  TypeError: 'str' object cannot be interpreted as an integer
+strftime ('%Y', (2000, 1, 1, 0, 0, 0, 0, 1, 'a'))  TypeError: 'str' object cannot be interpreted as an integer
+strftime ('%Y', (2000.0, 1, 1, 0, 0, 0, 0, 1, 0))  TypeError: 'float' object cannot be interpreted as an integer
+strftime ('%Y', (2000, 1, 1, 0, 0, 0.5, 0, 1, 0))  TypeError: 'float' object cannot be interpreted as an integer
+strftime ('%Y', (2000, 1, 1, 0, 0, None, 0, 1, 0))  TypeError: 'NoneType' object cannot be interpreted as an integer
+strftime ('%Y', (2147483648, 1, 1, 0, 0, 0, 0, 1, 0))  OverflowError: signed integer is greater than maximum
+strftime ('%Y', (-2147483649, 1, 1, 0, 0, 0, 0, 1, 0))  OverflowError: signed integer is less than minimum
+strftime ('%Y', (9223372036854775808, 1, 1, 0, 0, 0, 0, 1, 0))  OverflowError: Python int too large to convert to C long
+strftime ('%Y', (-9223372036854775809, 1, 1, 0, 0, 0, 0, 1, 0))  OverflowError: Python int too large to convert to C long
+strftime ('%Y', (2000, 2147483648, 1, 0, 0, 0, 0, 1, 0))  OverflowError: signed integer is greater than maximum
+strftime ('%Y', (2000, 1, 1, 0, 0, 0, 0, 1, 2147483648))  OverflowError: signed integer is greater than maximum
+strftime ('%Y', (Idx(2000), Idx(1), Idx(1), Idx(0), Idx(0), Idx(0), Idx(0), Idx(1), Idx(0)))  returned str
+strftime ('%Y', ('a', 'b', 1))  TypeError: strftime(): illegal time tuple argument
+strftime ('%Y', ('a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a'))  TypeError: 'str' object cannot be interpreted as an integer
+strftime ('%Y', (2000, 13, 'a', 0, 0, 0, 0, 1, 0))  TypeError: 'str' object cannot be interpreted as an integer
+strftime ('%Y', (2000, 13, 32, 25, 0, 0, 0, 1, 0))  ValueError: month out of range
+strftime ('%Y', (2000, 1, 32, 25, 0, 0, 0, 1, 0))  ValueError: day of month out of range
+strftime ('%Y', (2000, 1, 1, 25, 61, 0, 0, 1, 0))  ValueError: hour out of range
+strftime ('%Y', (2000, 1, 1, 0, 61, 62, 0, 1, 0))  ValueError: minute out of range
+strftime ('%Y', (2000, 1, 1, 0, 0, 62, -2, 1, 0))  ValueError: seconds out of range
+strftime ('%Y', (2000, 1, 1, 0, 0, 0, -2, 400, 0))  ValueError: day of week out of range
+asctime ()  returned str
+asctime ((2000, 1, 1, 0, 0, 0, 0, 1, 0), 1)  TypeError: asctime expected at most 1 argument, got 2
+asctime () {'t': 1} TypeError: asctime() takes no keyword arguments
+asctime () {'time_tuple': (2000, 1, 1, 0, 0, 0, 0, 1, 0)} TypeError: asctime() takes no keyword arguments
+mktime ()  TypeError: time.mktime() takes exactly one argument (0 given)
+mktime (1, 2)  TypeError: time.mktime() takes exactly one argument (2 given)
+mktime () {'t': 1} TypeError: time.mktime() takes no keyword arguments
+strftime ()  TypeError: strftime() takes at least 1 argument (0 given)
+strftime ('%Y',)  returned str
+strftime (5,)  TypeError: strftime() argument 1 must be str, not int
+strftime (None,)  TypeError: strftime() argument 1 must be str, not None
+strftime (b'%Y',)  TypeError: strftime() argument 1 must be str, not bytes
+strftime (5, 5)  TypeError: strftime() argument 1 must be str, not int
+strftime ('%Y', (2000, 1, 1, 0, 0, 0, 0, 1, 0), 1)  TypeError: strftime() takes at most 2 arguments (3 given)
+strftime () {'format': '%Y'} TypeError: strftime() takes no keyword arguments
+strftime ('%Y',) {'t': 1} TypeError: strftime() takes no keyword arguments
+get_clock_info ()  TypeError: get_clock_info() takes exactly 1 argument (0 given)
+get_clock_info (1,)  TypeError: get_clock_info() argument 1 must be str, not int
+get_clock_info ('a',)  ValueError: unknown clock
+get_clock_info (None,)  TypeError: get_clock_info() argument 1 must be str, not None
+get_clock_info (b'time',)  TypeError: get_clock_info() argument 1 must be str, not bytes
+get_clock_info ('time',)  returned SimpleNamespace
+get_clock_info ('monotonic',)  returned SimpleNamespace
+get_clock_info ('perf_counter',)  returned SimpleNamespace
+get_clock_info ('process_time',)  returned SimpleNamespace
+get_clock_info ('thread_time',)  returned SimpleNamespace
+get_clock_info ('clock',)  ValueError: unknown clock
+get_clock_info ('',)  ValueError: unknown clock
+get_clock_info ('Time',)  ValueError: unknown clock
+get_clock_info ('time\x00',)  ValueError: embedded null character
+get_clock_info ('\x00',)  ValueError: embedded null character
+get_clock_info ('time', 1)  TypeError: get_clock_info() takes exactly 1 argument (2 given)
+get_clock_info ('é',)  ValueError: unknown clock

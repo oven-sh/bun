@@ -1,0 +1,469 @@
+status: 0
+script: d55bf440b188f228
+source: 80b78a8bba0b3624
+---
+None repr(None) => None
+str(None) => None
+f"{None}" => None
+"%s %r" % (None, None) => None None
+format(None) => None
+[None] => [None]
+{None: None} => {None: None}
+(None,) => (None,)
+bool(None) => False
+not None => True
+None is None => True
+None == None => True
+None != None => False
+None == 0 => False
+None == False => False
+None == "" => False
+None == [] => False
+None != 0 => True
+hash(None) == hash(None) => True
+type(hash(None)).__name__ => int
+NoneType => <class 'NoneType'>
+NoneType.__name__ => NoneType
+NoneType.__module__ => builtins
+NoneType.__qualname__ => NoneType
+NoneType() is None => True
+isinstance(None, NoneType) => True
+isinstance(None, object) => True
+NoneType.__mro__ => (<class 'NoneType'>, <class 'object'>)
+NoneType.__bases__ => (<class 'object'>,)
+None.__class__ => <class 'NoneType'>
+type(None.__doc__).__name__ => str
+None.__bool__() => False
+None.__eq__(None) => True
+None.__eq__(0) => NotImplemented
+None.__ne__(None) => False
+None.__repr__() => None
+None.__hash__() == hash(None) => True
+None.__str__() => None
+None.__sizeof__() > 0 => True
+None.__reduce__() if False else "" => 
+{None: 1}[None] => 1
+None in [None] => True
+None in {None} => True
+[None, None].count(None) => 2
+[1, None].index(None) => 1
+None or "default" => default
+None and "never" => None
+"x" if None else "y" => y
+[x for x in (None, 0, 1) if x is not None] => [0, 1]
+sorted([None], key=lambda v: 0) => [None]
+max([None]) => None
+list(filter(None, [None, 1])) => [1]
+dict.fromkeys("a") => {'a': None}
+{}.get("k") => None
+print(end="") => None
+(lambda: None)() => None
+[].append(1) => None
+callable(None) => False
+id(None) == id(None) => True
+None | int => None | int
+int | None => int | None
+(None | int).__args__ => (<class 'NoneType'>, <class 'int'>)
+eval(e) [e='None + 1'] => TypeError: unsupported operand type(s) for +: 'NoneType' and 'int'
+eval(e) [e='1 + None'] => TypeError: unsupported operand type(s) for +: 'int' and 'NoneType'
+eval(e) [e='None + None'] => TypeError: unsupported operand type(s) for +: 'NoneType' and 'NoneType'
+eval(e) [e='None - 1'] => TypeError: unsupported operand type(s) for -: 'NoneType' and 'int'
+eval(e) [e='None * 2'] => TypeError: unsupported operand type(s) for *: 'NoneType' and 'int'
+eval(e) [e='-None'] => TypeError: bad operand type for unary -: 'NoneType'
+eval(e) [e='~None'] => TypeError: bad operand type for unary ~: 'NoneType'
+eval(e) [e='None < None'] => TypeError: '<' not supported between instances of 'NoneType' and 'NoneType'
+eval(e) [e='None < 1'] => TypeError: '<' not supported between instances of 'NoneType' and 'int'
+eval(e) [e='1 < None'] => TypeError: '<' not supported between instances of 'int' and 'NoneType'
+eval(e) [e='None <= None'] => TypeError: '<=' not supported between instances of 'NoneType' and 'NoneType'
+eval(e) [e="None > 'a'"] => TypeError: '>' not supported between instances of 'NoneType' and 'str'
+eval(e) [e='None()'] => TypeError: 'NoneType' object is not callable
+eval(e) [e='None[0]'] => TypeError: 'NoneType' object is not subscriptable
+eval(e) [e='None.x'] => AttributeError: 'NoneType' object has no attribute 'x'
+eval(e) [e='len(None)'] => TypeError: object of type 'NoneType' has no len()
+eval(e) [e='iter(None)'] => TypeError: 'NoneType' object is not iterable
+eval(e) [e='int(None)'] => TypeError: int() argument must be a string, a bytes-like object or a real number, not 'NoneType'
+eval(e) [e='float(None)'] => TypeError: float() argument must be a string or a real number, not 'NoneType'
+eval(e) [e='list(None)'] => TypeError: 'NoneType' object is not iterable
+eval(e) [e='None in None'] => TypeError: argument of type 'NoneType' is not a container or iterable
+eval(e) [e='1 in None'] => TypeError: argument of type 'NoneType' is not a container or iterable
+eval(e) [e='for_ in None'] => NameError: name 'for_' is not defined
+eval(e) [e='NoneType(1)'] => TypeError: NoneType takes no arguments
+eval(e) [e='NoneType(x=1)'] => TypeError: NoneType takes no arguments
+eval(e) [e="type('X', (NoneType,), {})"] => TypeError: type 'NoneType' is not an acceptable base type
+eval(e) [e='None.__dict__'] => AttributeError: 'NoneType' object has no attribute '__dict__'
+eval(e) [e="setattr(None, 'x', 1)"] => AttributeError: 'NoneType' object has no attribute 'x' and no __dict__ for setting new attributes
+eval(e) [e="delattr(None, 'x')"] => AttributeError: 'NoneType' object has no attribute 'x' and no __dict__ for setting new attributes
+eval(e) [e="setattr(None, '__class__', int)"] => TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+eval(e) [e='[*None]'] => TypeError: Value after * must be an iterable, not NoneType
+eval(e) [e='{**None}'] => TypeError: 'NoneType' object is not a mapping
+eval(e) [e='print(*None)'] => TypeError: Value after * must be an iterable, not NoneType
+eval(e) [e='print(**None)'] => TypeError: Value after ** must be a mapping, not NoneType
+eval(e) [e='None @ None'] => TypeError: unsupported operand type(s) for @: 'NoneType' and 'NoneType'
+eval(e) [e='None ** 2'] => TypeError: unsupported operand type(s) for ** or pow(): 'NoneType' and 'int'
+eval(e) [e='divmod(None, 1)'] => TypeError: unsupported operand type(s) for divmod(): 'NoneType' and 'int'
+eval(e) [e='abs(None)'] => TypeError: bad operand type for abs(): 'NoneType'
+eval(e) [e='round(None)'] => TypeError: type NoneType doesn't define __round__ method
+eval(e) [e='hex(None)'] => TypeError: 'NoneType' object cannot be interpreted as an integer
+eval(e) [e='chr(None)'] => TypeError: 'NoneType' object cannot be interpreted as an integer
+eval(e) [e='ord(None)'] => TypeError: ord() expected string of length 1, but NoneType found
+eval(e) [e='[1][None]'] => TypeError: list indices must be integers or slices, not NoneType
+eval(e) [e="'a' * None"] => TypeError: can't multiply sequence by non-int of type 'NoneType'
+eval(e) [e="'a' + None"] => TypeError: can only concatenate str (not "NoneType") to str
+eval(e) [e="None + 'a'"] => TypeError: unsupported operand type(s) for +: 'NoneType' and 'str'
+eval(e) [e='[] + None'] => TypeError: can only concatenate list (not "NoneType") to list
+eval(e) [e='range(None)'] => TypeError: 'NoneType' object cannot be interpreted as an integer
+eval(e) [e='sum([None])'] => TypeError: unsupported operand type(s) for +: 'int' and 'NoneType'
+eval(e) [e='sorted([None, None])'] => TypeError: '<' not supported between instances of 'NoneType' and 'NoneType'
+eval(e) [e='sorted([None, 1])'] => TypeError: '<' not supported between instances of 'int' and 'NoneType'
+eval(e) [e='max(None, 1)'] => TypeError: '>' not supported between instances of 'int' and 'NoneType'
+eval(e) [e="''.join([None])"] => TypeError: sequence item 0: expected str instance, NoneType found
+eval(e) [e="format(None, 'd')"] => TypeError: unsupported format string passed to NoneType.__format__
+eval(e) [e="format(None, '>5')"] => TypeError: unsupported format string passed to NoneType.__format__
+eval(e) [e="'%d' % None"] => TypeError: format argument: %d requires a real number, not NoneType
+eval(e) [e="'{:d}'.format(None)"] => TypeError: unsupported format string passed to NoneType.__format__
+eval(e) [e="f'{None:5}'"] => TypeError: unsupported format string passed to NoneType.__format__
+eval(e) [e='None.__init__(1)'] => None
+eval(e) [e='NoneType.__new__(NoneType) is None'] => True
+eval(e) [e='NoneType.__new__(int)'] => TypeError: NoneType.__new__(int): int is not a subtype of NoneType
+eval(e) [e='object.__new__(NoneType)'] => TypeError: object.__new__(NoneType) is not safe, use NoneType.__new__()
+eval(e) [e='with_none()'] => NameError: name 'with_none' is not defined
+eval(e) [e='bytes(None)'] => TypeError: cannot convert 'NoneType' object to bytes
+eval(e) [e="str(None, 'utf-8')"] => TypeError: decoding to str: need a bytes-like object, NoneType found
+eval(e) [e='isinstance(1, None)'] => TypeError: isinstance() arg 2 must be a type, a tuple of types, or a union
+eval(e) [e='issubclass(int, None)'] => TypeError: issubclass() arg 2 must be a class, a tuple of classes, or a union
+eval(e) [e="getattr(None, 'real')"] => AttributeError: 'NoneType' object has no attribute 'real'
+eval(e) [e='None | 1'] => TypeError: unsupported operand type(s) for |: 'NoneType' and 'int'
+eval(e) [e='None | None'] => TypeError: unsupported operand type(s) for |: 'NoneType' and 'NoneType'
+eval(e) [e='None & None'] => TypeError: unsupported operand type(s) for &: 'NoneType' and 'NoneType'
+eval(e) [e='bool(None) + 1'] => 1
+TypeError: cannot unpack non-iterable NoneType object
+TypeError: 'NoneType' object does not support the context manager protocol (missed __exit__ method)
+TypeError: 'NoneType' object does not support item deletion
+TypeError: 'NoneType' object does not support item assignment
+TypeError: unsupported operand type(s) for +=: 'NoneType' and 'int'
+TypeError: exceptions must derive from BaseException
+AttributeError: 'NoneType' object has no attribute 'x'
+TypeError: Value after * must be an iterable, not NoneType
+TypeError: 'NoneType' object can't be awaited
+Ellipsis repr(...) => Ellipsis
+str(...) => Ellipsis
+Ellipsis => Ellipsis
+... is Ellipsis => True
+... == ... => True
+... != ... => False
+bool(...) => True
+hash(...) == hash(...) => True
+EllipsisType => <class 'ellipsis'>
+EllipsisType.__name__ => ellipsis
+EllipsisType() is ... => True
+isinstance(..., EllipsisType) => True
+[...] => [Ellipsis]
+(...,) => (Ellipsis,)
+{...: 1}[...] => 1
+{...} => {Ellipsis}
+f"{...}" => Ellipsis
+"%s" % ... => Ellipsis
+format(...) => Ellipsis
+... in [...] => True
+....__class__ => <class 'ellipsis'>
+....__repr__() => Ellipsis
+....__reduce__() => Ellipsis
+type(....__doc__).__name__ => str
+... or 1 => Ellipsis
+... and 1 => 1
+not ... => False
+[1, 2, 3][...:] if False else "" => 
+callable(...) => False
+... == None => False
+... == 0 => False
+... is not None => True
+type(...).__mro__ => (<class 'ellipsis'>, <class 'object'>)
+tuple[int, ...] => tuple[int, ...]
+list[...] => list[...]
+s[...] => Ellipsis
+s[..., 1] => (Ellipsis, 1)
+s[1, ..., 2] => (1, Ellipsis, 2)
+s[..., ...] => (Ellipsis, Ellipsis)
+s[...:...] => slice(Ellipsis, Ellipsis, None)
+s[1:..., ...] => (slice(1, Ellipsis, None), Ellipsis)
+set Ellipsis Ellipsis
+del Ellipsis
+body() => None
+EmptyBody.__name__ => EmptyBody
+(lambda: ...)() => Ellipsis
+[... for _ in range(2)] => [Ellipsis, Ellipsis]
+... if ... else None => Ellipsis
+eval(e) [e='... + 1'] => TypeError: unsupported operand type(s) for +: 'ellipsis' and 'int'
+eval(e) [e='...()'] => TypeError: 'ellipsis' object is not callable
+eval(e) [e='...[0]'] => TypeError: 'ellipsis' object is not subscriptable
+eval(e) [e='....x'] => AttributeError: 'ellipsis' object has no attribute 'x'
+eval(e) [e='len(...)'] => TypeError: object of type 'ellipsis' has no len()
+eval(e) [e='... < ...'] => TypeError: '<' not supported between instances of 'ellipsis' and 'ellipsis'
+eval(e) [e='-...'] => TypeError: bad operand type for unary -: 'ellipsis'
+eval(e) [e='iter(...)'] => TypeError: 'ellipsis' object is not iterable
+eval(e) [e='int(...)'] => TypeError: int() argument must be a string, a bytes-like object or a real number, not 'ellipsis'
+eval(e) [e='EllipsisType(1)'] => TypeError: EllipsisType takes no arguments
+eval(e) [e="type('X', (EllipsisType,), {})"] => TypeError: type 'ellipsis' is not an acceptable base type
+eval(e) [e="setattr(..., 'x', 1)"] => AttributeError: 'ellipsis' object has no attribute 'x' and no __dict__ for setting new attributes
+eval(e) [e='[1, 2][...]'] => TypeError: list indices must be integers or slices, not ellipsis
+eval(e) [e="'abc'[...]"] => TypeError: string indices must be integers, not 'ellipsis'
+eval(e) [e='(1, 2)[...]'] => TypeError: tuple indices must be integers or slices, not ellipsis
+eval(e) [e='{}[...]'] => KeyError: Ellipsis
+eval(e) [e='range(3)[...]'] => TypeError: range indices must be integers or slices, not ellipsis
+eval(e) [e="format(..., 'x')"] => TypeError: unsupported format string passed to ellipsis.__format__
+eval(e) [e='... | int'] => TypeError: unsupported operand type(s) for |: 'ellipsis' and 'type'
+eval(e) [e='int | ...'] => TypeError: unsupported operand type(s) for |: 'type' and 'ellipsis'
+eval(e) [e='[*...]'] => TypeError: Value after * must be an iterable, not ellipsis
+eval(e) [e="b'a'[...]"] => TypeError: byte indices must be integers or slices, not ellipsis
+Ellipsis => rebound
+Ellipsis
+True
+NotImplemented => NotImplemented
+repr(NotImplemented) => NotImplemented
+str(NotImplemented) => NotImplemented
+NotImplemented is NotImplemented => True
+NotImplemented == NotImplemented => True
+NotImplemented != NotImplemented => False
+NotImplemented == None => False
+hash(NotImplemented) == hash(NotImplemented) => True
+NIType => <class 'NotImplementedType'>
+NIType.__name__ => NotImplementedType
+NIType() is NotImplemented => True
+isinstance(NotImplemented, NIType) => True
+[NotImplemented] => [NotImplemented]
+{NotImplemented: 1}[NotImplemented] => 1
+f"{NotImplemented}" => NotImplemented
+NotImplemented.__class__ => <class 'NotImplementedType'>
+NotImplemented.__repr__() => NotImplemented
+NotImplemented.__reduce__() => NotImplemented
+type(NotImplemented.__doc__).__name__ => str
+callable(NotImplemented) => False
+NotImplemented in [NotImplemented] => True
+(1).__add__("a") => NotImplemented
+(1).__add__(1.5) => NotImplemented
+(1.5).__add__(1) => 2.5
+"a".__add__(1) if False else "" => 
+(1).__lt__("a") => NotImplemented
+(1).__eq__("a") => NotImplemented
+"a".__eq__(1) => NotImplemented
+[].__eq__(()) => NotImplemented
+[].__lt__(()) => NotImplemented
+{}.__eq__([]) => NotImplemented
+{}.__or__([]) => NotImplemented
+set().__or__([]) => NotImplemented
+set().__sub__([]) => NotImplemented
+(1).__radd__("a") => NotImplemented
+(1).__pow__("a") => NotImplemented
+(1).__truediv__("a") => NotImplemented
+(1j).__add__("a") => NotImplemented
+(1j).__lt__(1j) if hasattr(1j, "__lt__") else "" => NotImplemented
+b"a".__eq__("a") => NotImplemented
+(1,).__eq__([1]) => NotImplemented
+None.__eq__(1) => NotImplemented
+object().__eq__(1) => NotImplemented
+object().__lt__(1) => NotImplemented
+int.__eq__(1, 1.0) => NotImplemented
+float.__eq__(1.0, 1) => True
+frozenset().__and__([]) => NotImplemented
+range(1).__eq__([0]) => NotImplemented
+"a".__mod__(1) if False else "" => 
+[].__mul__("a") if False else "" => 
+[].__iadd__([1]) => [1]
+(1).__and__(1.5) => NotImplemented
+(1).__lshift__(1.5) => NotImplemented
+True.__and__(2) => 0
+True.__and__(1.5) => NotImplemented
+True.__or__(False) => True
+eval(e) [e='bool(NotImplemented)'] => TypeError: NotImplemented should not be used in a boolean context
+eval(e) [e='not NotImplemented'] => TypeError: NotImplemented should not be used in a boolean context
+eval(e) [e='NotImplemented and 1'] => TypeError: NotImplemented should not be used in a boolean context
+eval(e) [e='NotImplemented or 1'] => TypeError: NotImplemented should not be used in a boolean context
+eval(e) [e='1 if NotImplemented else 2'] => TypeError: NotImplemented should not be used in a boolean context
+eval(e) [e='NotImplemented()'] => TypeError: 'NotImplementedType' object is not callable
+eval(e) [e='NotImplemented + 1'] => TypeError: unsupported operand type(s) for +: 'NotImplementedType' and 'int'
+eval(e) [e='NotImplemented < 1'] => TypeError: '<' not supported between instances of 'NotImplementedType' and 'int'
+eval(e) [e='NotImplemented[0]'] => TypeError: 'NotImplementedType' object is not subscriptable
+eval(e) [e='NotImplemented.x'] => AttributeError: 'NotImplementedType' object has no attribute 'x'
+eval(e) [e='NIType(1)'] => TypeError: NotImplementedType takes no arguments
+eval(e) [e="type('X', (NIType,), {})"] => TypeError: type 'NotImplementedType' is not an acceptable base type
+eval(e) [e='raise_(NotImplemented)'] => NameError: name 'raise_' is not defined
+eval(e) [e='len(NotImplemented)'] => TypeError: object of type 'NotImplementedType' has no len()
+eval(e) [e='[x for x in [1] if NotImplemented]'] => TypeError: NotImplemented should not be used in a boolean context
+eval(e) [e='any([NotImplemented])'] => TypeError: NotImplemented should not be used in a boolean context
+eval(e) [e='all([NotImplemented])'] => TypeError: NotImplemented should not be used in a boolean context
+eval(e) [e='list(filter(None, [NotImplemented]))'] => TypeError: NotImplemented should not be used in a boolean context
+eval(e) [e='int(NotImplemented)'] => TypeError: int() argument must be a string, a bytes-like object or a real number, not 'NotImplementedType'
+eval(e) [e="setattr(NotImplemented, 'x', 1)"] => AttributeError: 'NotImplementedType' object has no attribute 'x' and no __dict__ for setting new attributes
+eval(e) [e='NotImplemented | int'] => TypeError: unsupported operand type(s) for |: 'NotImplementedType' and 'type'
+eval(e) [e="'a'.__add__(1)"] => TypeError: can only concatenate str (not "int") to str
+eval(e) [e='[].__add__(1)'] => TypeError: can only concatenate list (not "int") to list
+eval(e) [e="[].__mul__('a')"] => TypeError: 'str' object cannot be interpreted as an integer
+eval(e) [e='(1,).__add__([1])'] => TypeError: can only concatenate tuple (not "list") to tuple
+eval(e) [e="'a'.__mod__(1)"] => TypeError: not all arguments converted during string formatting (required 0, got 1)
+eval(e) [e="b'a'.__add__('a')"] => TypeError: can't concat str to bytes
+eval(e) [e="'a'.__mul__('b')"] => TypeError: 'str' object cannot be interpreted as an integer
+eval(e) [e="'a'.__rmul__('b')"] => TypeError: 'str' object cannot be interpreted as an integer
+wh() => TypeError: NotImplemented should not be used in a boolean context
+asrt() => TypeError: NotImplemented should not be used in a boolean context
+raise_(NotImplemented) => TypeError: exceptions must derive from BaseException
+raise_(NotImplementedError) => NotImplementedError: 
+raise_(NotImplementedError("msg")) => NotImplementedError: msg
+issubclass(NotImplementedError, RuntimeError) => True
+NotImplementedError is not NotImplemented => True
+True False repr(True) => True
+str(False) => False
+int(True) => 1
+int(False) => 0
+True + True => 2
+True * 5 => 5
+True / 2 => 0.5
+True // 2 => 0
+-True => -1
++True => 1
+~True => -2
+~False => -1
+abs(True) => 1
+True ** 2 => 1
+2 ** True => 2
+True << 2 => 4
+True & False => False
+True | False => True
+True ^ True => False
+True & 1 => 1
+True | 2 => 3
+True ^ 3 => 2
+1 & True => 1
+type(True & False) => <class 'bool'>
+type(True & 1) => <class 'int'>
+type(True | False) => <class 'bool'>
+type(True ^ True) => <class 'bool'>
+type(True + True) => <class 'int'>
+type(-True) => <class 'int'>
+type(~True) => <class 'int'>
+type(+True) => <class 'int'>
+type(abs(True)) => <class 'int'>
+True == 1 => True
+True == 1.0 => True
+True == 1 + 0j => True
+False == 0 => True
+True is True => True
+True is 1 if False else "" => 
+hash(True) => 1
+hash(False) => 0
+{True: "a", 1: "b", 1.0: "c"} => {True: 'c'}
+{0: "x", False: "y"} => {0: 'y'}
+[10, 20][True] => 20
+[10, 20][False] => 10
+"ab"[True] => b
+"x" * True => x
+"x" * False => 
+[1] * True => [1]
+range(True) => range(0, 1)
+list(range(False, True + True)) => [0, 1]
+sum([True, True, False]) => 2
+max(True, False) => True
+min(True, 0) => 0
+sorted([True, False, True]) => [False, True, True]
+sorted([1, True, 0, False]) => [0, False, 1, True]
+True < 2 => True
+False < True => True
+True > False => True
+True.real => 1
+True.imag => 0
+True.numerator => 1
+True.denominator => 1
+True.bit_length() => 1
+False.bit_length() => 0
+True.bit_count() => 1
+True.conjugate() => 1
+type(True.conjugate()) => <class 'int'>
+True.to_bytes(1, "big") => b'\x01'
+True.as_integer_ratio() => (1, 1)
+True.is_integer() => True
+float(True) => 1.0
+complex(True) => (1+0j)
+str(True).lower() => true
+"%d %s %r %x %5s" % (True, True, True, True, True) => 1 True True 1  True
+f"{True} {True:d} {True:5} {True!r:>6} {True:x} {True:.1f} {False:<6}|" => True 1     1   True 1 1.0 0     |
+format(True) => True
+format(True, "") => True
+format(True, "d") => 1
+format(True, "s") if False else "" => 
+round(True) => 1
+round(True, 1) => 1
+divmod(True, True) => (1, 0)
+pow(True, 2, 2) => 1
+bin(True) => 0b1
+hex(True) => 0x1
+oct(False) => 0o0
+chr(True + 64) => A
+bool.__mro__ => (<class 'bool'>, <class 'int'>, <class 'object'>)
+bool.__bases__ => (<class 'int'>,)
+bool.__name__ => bool
+type(bool.__doc__).__name__ => str
+isinstance(True, int) => True
+issubclass(bool, int) => True
+type(True) is bool => True
+type(True) is int => False
+bool(True) => True
+bool("False") => True
+bool(0.0) => False
+bool.__new__(bool, 5) => True
+bool.__new__(bool) => False
+int.__new__(int, True) => 1
+int.__add__(True, True) => 2
+bool.__and__(True, False) => False
+bool.__or__(True, 2) => 3
+bool.from_bytes(b"\x00") => False
+bool.from_bytes(b"\x05") => True
+type(bool.from_bytes(b"\x01")) => <class 'bool'>
+True.__bool__() => True
+True.__int__() => 1
+True.__index__() => 1
+True.__repr__() => True
+True.__hash__() => 1
+True.__class__ => <class 'bool'>
+True.__eq__(1) => True
+True.__eq__(1.0) => NotImplemented
+True.__and__(True) => True
+True.__rand__(1) => 1
+True.__xor__(1) => 0
+True.__invert__() => -2
+True.__neg__() => -1
+True.__abs__() => 1
+True.__float__() => 1.0
+True.__trunc__() => 1
+True.__floor__() => 1
+True.__ceil__() => 1
+True.__round__() => 1
+True.__sizeof__() > 0 => True
+True.__getnewargs__() => (1,)
+eval(e) [e='True()'] => TypeError: 'bool' object is not callable
+eval(e) [e='True[0]'] => TypeError: 'bool' object is not subscriptable
+eval(e) [e='True.x'] => AttributeError: 'bool' object has no attribute 'x'
+eval(e) [e='len(True)'] => TypeError: object of type 'bool' has no len()
+eval(e) [e='iter(True)'] => TypeError: 'bool' object is not iterable
+eval(e) [e="True + 'a'"] => TypeError: unsupported operand type(s) for +: 'bool' and 'str'
+eval(e) [e='True + None'] => TypeError: unsupported operand type(s) for +: 'bool' and 'NoneType'
+eval(e) [e='True / False'] => ZeroDivisionError: division by zero
+eval(e) [e='True // False'] => ZeroDivisionError: division by zero
+eval(e) [e='True % False'] => ZeroDivisionError: division by zero
+eval(e) [e='True ** -True'] => 1.0
+eval(e) [e='False ** -1'] => ZeroDivisionError: zero to a negative power
+eval(e) [e='True << -1'] => ValueError: negative shift count
+eval(e) [e="setattr(True, 'x', 1)"] => AttributeError: 'bool' object has no attribute 'x' and no __dict__ for setting new attributes
+eval(e) [e="type('X', (bool,), {})"] => TypeError: type 'bool' is not an acceptable base type
+eval(e) [e='bool(1, 2)'] => TypeError: bool expected at most 1 argument, got 2
+eval(e) [e='bool(x=1)'] => TypeError: bool() takes no keyword arguments
+eval(e) [e='bool.__new__(int)'] => TypeError: bool.__new__(int): int is not a subtype of bool
+eval(e) [e='int.__new__(bool, 1)'] => TypeError: int.__new__(bool) is not safe, use bool.__new__()
+eval(e) [e='bool.__new__(bool, 1, 2)'] => TypeError: bool expected at most 1 argument, got 2
+eval(e) [e="format(True, 's')"] => ValueError: Unknown format code 's' for object of type 'bool'
+eval(e) [e="'%c' % True"] => '\x01'
+eval(e) [e='True @ True'] => TypeError: unsupported operand type(s) for @: 'bool' and 'bool'
+eval(e) [e='[*True]'] => TypeError: Value after * must be an iterable, not bool
+eval(e) [e='True in True'] => TypeError: argument of type 'bool' is not a container or iterable
+eval(e) [e="True < 'a'"] => TypeError: '<' not supported between instances of 'bool' and 'str'
+eval(e) [e='True.real()'] => TypeError: 'int' object is not callable
+eval(e) [e="format(True, 'q')"] => ValueError: Unknown format code 'q' for object of type 'bool'
+eval(e) [e='object.__new__(bool)'] => TypeError: object.__new__(bool) is not safe, use bool.__new__()

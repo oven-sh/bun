@@ -1,0 +1,250 @@
+status: 0
+script: 350e26d5befb824f
+source: 97620138dd1e0e0f
+---
+f.__name__ => f
+f.__qualname__ => f
+f.__doc__ => doc of f
+f.__module__ => __main__
+f.__defaults__ => (2,)
+f.__kwdefaults__ => {'d': 4}
+f.__dict__ => {}
+f.__closure__ => None
+f.__globals__ is globals() => True
+f.__annotations__ => {}
+f.__type_params__ => ()
+type(f).__name__ => function
+f.__builtins__ is __builtins__.__dict__ => True
+c.co_name => f
+c.co_qualname => f
+c.co_argcount => 2
+c.co_posonlyargcount => 0
+c.co_kwonlyargcount => 2
+c.co_nlocals => 8
+c.co_varnames => ('a', 'b', 'c', 'd', 'args', 'kw', 'x', 'y')
+c.co_freevars => ()
+c.co_cellvars => ()
+c.co_flags & 0xff => 15
+c.co_firstlineno => 10
+c.co_filename.endswith("032_function_attributes.py") => True
+type(c).__name__ => code
+c.co_consts[0] if c.co_flags & 0x4000000 else None => doc of f
+g.__code__.co_argcount => 2
+g.__code__.co_posonlyargcount => 1
+g.__code__.co_kwonlyargcount => 1
+g.__code__.co_varnames => ('a', 'b', 'c')
+g.__code__.co_flags & 0xff => 3
+g.__defaults__ => None
+g.__kwdefaults__ => None
+g.__doc__ => None
+gen.__code__.co_flags & 0x3ff => 35
+co.__code__.co_flags & 0x3ff => 131
+ag.__code__.co_flags & 0x3ff => 515
+(lambda: 0).__code__.co_flags & 0x3ff => 3
+(lambda *a: 0).__code__.co_flags & 0x3ff => 7
+(lambda **k: 0).__code__.co_flags & 0x3ff => 11
+i.__name__ => inner
+i.__qualname__ => outer.<locals>.inner
+i.__code__.co_freevars => ('p', 'q')
+i.__code__.co_varnames => ('r', 's')
+i.__code__.co_cellvars => ()
+outer.__code__.co_cellvars => ('p', 'q')
+outer.__code__.co_varnames => ('p', 'unused', 'inner')
+outer.__code__.co_freevars => ()
+len(i.__closure__) => 2
+[c.cell_contents for c in i.__closure__] => [10, 1]
+type(i.__closure__[0]).__name__ => cell
+i(1) => 12
+outer.__code__.co_nlocals => 3
+i.__code__.co_flags & 0xff => 19
+102
+K.m.__qualname__ => K.m
+K.N.nm.__qualname__ => K.N.nm
+K().mk().__qualname__ => K.mk.<locals>.loc
+K.lam.__qualname__ => K.<lambda>
+K.lam.__name__ => <lambda>
+K.N.__qualname__ => K.N
+K.m.__name__ => m
+K().m.__qualname__ => K.m
+K().m.__name__ => m
+K.m.__module__ => __main__
+(lambda: 0).__name__ => <lambda>
+(lambda: 0).__qualname__ => <lambda>
+[lambda: 0][0].__qualname__ => <lambda>
+(lambda: (lambda: 0))().__qualname__ => <lambda>.<locals>.<lambda>
+('genexp_names.<locals>.<genexpr>', '<genexpr>', '<genexpr>')
+f.__name__ => renamed
+f.__qualname__ => q.renamed
+f.__doc__ => new doc
+f.__module__ => mod
+f.__code__.co_name => f
+repr(f)[:20] => <function q.renamed 
+None
+5
+None
+f.attr => 1
+f.__dict__ => {'attr': 1, 'other': [2]}
+hasattr(f, "attr") => True
+hasattr(f, "nope") => False
+vars(f) => {'attr': 1, 'other': [2]}
+{'other': [2]}
+3
+f.z => 26
+f.__dict__ => {'z': 26}
+f.nope => AttributeError: 'function' object has no attribute 'nope'
+TypeError: __name__ must be set to a string object
+TypeError: __qualname__ must be set to a string object
+TypeError: __defaults__ must be set to a tuple object
+TypeError: __kwdefaults__ must be set to a dict object
+TypeError: __dict__ must be set to a dictionary, not a 'int'
+AttributeError: readonly attribute
+AttributeError: readonly attribute
+TypeError: __name__ must be set to a string object
+TypeError: cannot delete __dict__
+TypeError: __code__ must be set to a code object
+TypeError: __annotations__ must be set to a dict object
+TypeError: __type_params__ must be set to a tuple
+AttributeError: readonly attribute
+AttributeError: 'function' object has no attribute 'nope'
+(0, 1, 2)
+(0, 10, 20)
+(0, 1, 5)
+d(0) => TypeError: d() missing 1 required positional argument: 'b'
+(7, 8, 9)
+d(0) => TypeError: d() missing 2 required positional arguments: 'b' and 'c'
+None
+(3, 4, 5)
+(1, 2)
+kd() => TypeError: kd() missing 1 required keyword-only argument: 'a'
+(0, 5)
+(1, 2)
+kd() => TypeError: kd() missing 2 required keyword-only arguments: 'a' and 'b'
+kd(a=1) => TypeError: kd() missing 1 required keyword-only argument: 'b'
+mut.__defaults__ => ([1, 1],)
+mut.__defaults__[0] is mut() => True
+f == f => True
+f != f => False
+f == g => False
+f is f => True
+hash(f) == hash(f) => True
+bool(f) => True
+callable(f) => True
+isinstance(f, type(g)) => True
+{f: 1}[f] => 1
+f in [f] => True
+sorted([f.__name__, g.__name__]) => ['g', 'renamed']
+f < g => TypeError: '<' not supported between instances of 'function' and 'function'
+f + g => TypeError: unsupported operand type(s) for +: 'function' and 'function'
+f[0] => TypeError: 'function' object is not subscriptable
+len(f) => TypeError: object of type 'function' has no len()
+iter(f) => TypeError: 'function' object is not iterable
+n(1, 1) => 102
+n.__name__ => tmpl
+n.__defaults__ => None
+n.__globals__["glob"] => 100
+n.__qualname__ => tmpl
+n(1) => TypeError: tmpl() missing 1 required positional argument: 'b'
+n(1) => 16
+n.__name__ => newname
+n.__qualname__ => tmpl
+n.__defaults__ => (10,)
+6
+{'z': 1}
+FunctionType(i.__code__, {}) => TypeError: arg 5 (closure) must be tuple
+FunctionType(i.__code__, {}, None, None, (1, 2)) => TypeError: arg 5 (closure) expected cell, found int
+FunctionType(i.__code__, {}, None, None, (CellType(1),)) => ValueError: inner requires closure of length 2, not 1
+FunctionType(tmpl.__code__, {}, None, None, (CellType(1),)) => ValueError: tmpl requires closure of length 0, not 1
+FunctionType(1, {}) => TypeError: function() argument 'code' must be code, not int
+FunctionType(tmpl.__code__, 1) => TypeError: function() argument 'globals' must be dict, not int
+FunctionType(tmpl.__code__, {}, 1) => TypeError: arg 3 (name) must be None or string
+FunctionType(tmpl.__code__, {}, None, [1]) => TypeError: arg 4 (defaults) must be None or tuple
+FunctionType() => TypeError: function() missing required argument 'code' (pos 1)
+repr(ce)[:9] => <cell at 
+repr(ce).endswith("empty>") => True
+ce.cell_contents => ValueError: Cell is empty
+ce.cell_contents => 5
+CellType(1) == CellType(1) => True
+CellType(1) < CellType(2) => True
+CellType() == CellType() => True
+CellType() < CellType(1) => True
+CellType(1) != CellType(2) => True
+ce.cell_contents => ValueError: Cell is empty
+hash(CellType(1)) => TypeError: unhashable type: 'cell'
+CellType(1, 2) => TypeError: cell expected at most 1 argument, got 2
+CellType(1) < 1 => TypeError: '<' not supported between instances of 'cell' and 'int'
+b.__self__ is o => True
+b.__func__ is M.meth => True
+b.__name__ => meth
+b.__qualname__ => M.meth
+b.__doc__ => mdoc
+b.__module__ => __main__
+b.__defaults__ => (1,)
+b.__code__ is M.meth.__code__ => True
+type(b).__name__ => method
+b() == (o, 1) => True
+b == o.meth => True
+b is o.meth => False
+hash(b) == hash(o.meth) => True
+b != M().meth => True
+callable(b) => True
+b.__call__(2)[1] => 2
+b.__func__(o, 3)[1] => 3
+t
+sb1() => AttributeError: 'method' object has no attribute 'tag' and no __dict__ for setting new attributes
+sb2() => AttributeError: readonly attribute
+sb3() => AttributeError: readonly attribute
+sb4() => AttributeError: 'method' object has no attribute 'newattr' and no __dict__ for setting new attributes
+b.nope => AttributeError: 'function' object has no attribute 'nope'
+mm(1) => ('SELF', 1)
+mm.__self__ => SELF
+MethodType(len, [1, 2])() => 2
+MethodType(mm, "x") .__self__ => x
+MethodType(1, 2) => TypeError: first argument must be callable
+MethodType(len, None) => TypeError: instance must not be None
+MethodType(len) => TypeError: method expected 2 arguments, got 1
+MethodType(lambda: 0, 1)() => TypeError: <lambda>.<locals>.<lambda>() takes 0 positional arguments but 1 was given
+len.__name__ => len
+len.__qualname__ => len
+len.__module__ => builtins
+len.__self__.__name__ => builtins
+type(len).__name__ => builtin_function_or_method
+[].append.__name__ => append
+[].append.__qualname__ => list.append
+type([].append).__name__ => builtin_function_or_method
+[1].append.__self__ => [1]
+len.__doc__ is not None or True => True
+repr(len) => <built-in function len>
+repr(print) => <built-in function print>
+len == len => True
+hash(len) == hash(len) => True
+callable(len) => True
+[].append == [].append => False
+(l := []).append == l.append => True
+len.__text_signature__ => ($module, obj, /)
+type(str.upper).__name__ => method_descriptor
+type(int.__add__).__name__ => wrapper_descriptor
+type((1).__add__).__name__ => method-wrapper
+type(dict.fromkeys).__name__ => builtin_function_or_method
+type(dict.__dict__["fromkeys"]).__name__ => classmethod_descriptor
+type(str.maketrans).__name__ => builtin_function_or_method
+type(str.__dict__["maketrans"]).__name__ => staticmethod
+repr(str.upper) => <method 'upper' of 'str' objects>
+repr(int.__add__) => <slot wrapper '__add__' of 'int' objects>
+repr(dict.__dict__["fromkeys"]) => <method 'fromkeys' of 'dict' objects>
+int.__add__.__name__ => __add__
+int.__add__.__objclass__ => <class 'int'>
+(1).__add__.__self__ => 1
+(1).__add__.__name__ => __add__
+int.__new__.__name__ => __new__
+int.__new__.__self__ => <class 'int'>
+type(int.__new__).__name__ => builtin_function_or_method
+type(int.real).__name__ => getset_descriptor
+repr(int.real) => <attribute 'real' of 'int' objects>
+int.real.__name__ => real
+int.real.__objclass__ => <class 'int'>
+sl() => AttributeError: 'builtin_function_or_method' object has no attribute 'x' and no __dict__ for setting new attributes
+len.__dict__ => AttributeError: 'builtin_function_or_method' object has no attribute '__dict__'
+len.__code__ => AttributeError: 'builtin_function_or_method' object has no attribute '__code__'
+len.__defaults__ => AttributeError: 'builtin_function_or_method' object has no attribute '__defaults__'
+len.__globals__ => AttributeError: 'builtin_function_or_method' object has no attribute '__globals__'
+len.nope => AttributeError: 'builtin_function_or_method' object has no attribute 'nope'

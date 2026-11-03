@@ -1,0 +1,331 @@
+status: 0
+script: 3cc04b4cf8f09827
+source: cf412c5f5951058d
+---
+b => b'hello world'
+len(b) => 11
+b[0] => 104
+b[-1] => 100
+b[0:5] => b'hello'
+b[6:] => b'world'
+b[::-1] => b'dlrow olleh'
+b[::2] => b'hlowrd'
+b[1:8:3] => b'eoo'
+b[100:] => b''
+list(b[:3]) => [104, 101, 108]
+type(b[0]) => <class 'int'>
+type(b[0:1]) => <class 'bytes'>
+bytes(b) is b or True => True
+b[11] => IndexError: index out of range
+b[-12] => IndexError: index out of range
+b["a"] => TypeError: byte indices must be integers or slices, not str
+b[1.0] => TypeError: byte indices must be integers or slices, not float
+assign() => TypeError: 'bytes' object does not support item assignment
+repr(b"") => b''
+repr(b"'") => b"'"
+repr(b'"') => b'"'
+repr(b"'\"") => b'\'"'
+repr(b"\\") => b'\\'
+repr(b"\n\r\t") => b'\n\r\t'
+repr(b"\x00\x01\x7f\x80\xff") => b'\x00\x01\x7f\x80\xff'
+repr(b"a\x00b") => b'a\x00b'
+str(b"abc") => b'abc'
+repr(bytes(range(32, 127))) => b' !"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~'
+bytes() => b''
+bytes(3) => b'\x00\x00\x00'
+bytes([1, 2, 3]) => b'\x01\x02\x03'
+bytes((65, 66)) => b'AB'
+bytes(range(5)) => b'\x00\x01\x02\x03\x04'
+bytes(b"ab") => b'ab'
+bytes(bytearray(b"ab")) => b'ab'
+bytes("é", "utf-8") => b'\xc3\xa9'
+bytes("é", encoding="latin-1") => b'\xe9'
+bytes("é", "ascii", "replace") => b'?'
+bytes(iter([1, 2])) => b'\x01\x02'
+bytes({65}) => b'A'
+bytes(0) => b''
+bytes([]) => b''
+bytes(True) => b'\x00'
+bytes(source=b"x") => b'x'
+bytes("", "ascii") => b''
+bytes("a") => TypeError: string argument without an encoding
+bytes(-1) => ValueError: negative count
+bytes([256]) => ValueError: bytes must be in range(0, 256)
+bytes([-1]) => ValueError: bytes must be in range(0, 256)
+bytes(["a"]) => TypeError: 'str' object cannot be interpreted as an integer
+bytes([1.0]) => TypeError: 'float' object cannot be interpreted as an integer
+bytes(1.0) => TypeError: cannot convert 'float' object to bytes
+bytes(None) => TypeError: cannot convert 'NoneType' object to bytes
+bytes(b"a", "utf-8") => TypeError: encoding without a string argument
+bytes(1, "utf-8") => TypeError: encoding without a string argument
+bytes("a", "nope") => LookupError: unknown encoding: nope
+bytes("é", "ascii") => UnicodeEncodeError: 'ascii' codec can't encode character '\xe9' in position 0: ordinal not in range(128)
+bytes(encoding="utf-8") => TypeError: encoding without a string argument
+bytes(errors="strict") => TypeError: errors without a string argument
+bytes(10 ** 30) => OverflowError: cannot fit 'int' into an index-sized integer
+bytes(B()) => b'B!'
+bytes(I()) => b'\x00\x00'
+bytes([I(), I()]) => b'\x02\x02'
+bytes(BadB()) => TypeError: BadB.__bytes__() must return a bytes, not str
+b"a" + b"b" => b'ab'
+b"ab" * 3 => b'ababab'
+3 * b"ab" => b'ababab'
+b"ab" * 0 => b''
+b"ab" * -1 => b''
+b"a" + bytearray(b"b") => b'ab'
+type(b"a" + bytearray(b"b")) => <class 'bytes'>
+bytearray(b"a") + b"b" => bytearray(b'ab')
+b"a" + "b" => TypeError: can't concat str to bytes
+b"a" + 1 => TypeError: can't concat int to bytes
+b"a" * "b" => TypeError: can't multiply sequence by non-int of type 'str'
+b"a" * 1.5 => TypeError: can't multiply sequence by non-int of type 'float'
+b"a" == b"a" => True
+b"a" != b"b" => True
+b"a" < b"b" => True
+b"ab" < b"abc" => True
+b"a" <= b"a" => True
+b"b" > b"a" => True
+b"a" == "a" => False
+b"a" != "a" => True
+b"a" == bytearray(b"a") => True
+b"a" < bytearray(b"b") => True
+b"" == b"" => True
+b"a" == 97 => False
+b"\xff" > b"\x00" => True
+b"a" == [97] => False
+b"a" < "a" => TypeError: '<' not supported between instances of 'bytes' and 'str'
+b"a" < 1 => TypeError: '<' not supported between instances of 'bytes' and 'int'
+97 in b => False
+b"h" in b => True
+b"lo w" in b => True
+b"x" in b => False
+0 in b => False
+b"" in b => True
+bytearray(b"he") in b => True
+97 not in b => True
+"a" in b => TypeError: a bytes-like object is required, not 'str'
+256 in b => ValueError: byte must be in range(0, 256)
+-1 in b => ValueError: byte must be in range(0, 256)
+1.0 in b => TypeError: a bytes-like object is required, not 'float'
+None in b => TypeError: a bytes-like object is required, not 'NoneType'
+hash(b"") == hash(b"") => True
+hash(b"abc") == hash(b"abc") => True
+hash(b"a") == hash("a") or True => True
+{b"a": 1}[b"a"] => 1
+b"a" in {b"a"} => True
+isinstance(hash(b"abc"), int) => True
+b.upper() => b'HELLO WORLD'
+b.lower() => b'hello world'
+b.capitalize() => b'Hello world'
+b.title() => b'Hello World'
+b.swapcase() => b'HELLO WORLD'
+b"\xe9a".upper() => b'\xe9A'
+b"Hello World".swapcase() => b'hELLO wORLD'
+b"a1b".title() => b'A1B'
+b"".upper() => b''
+b" a ".strip() => b'a'
+b" a ".lstrip() => b'a  '
+b" a ".rstrip() => b'  a'
+b"xxaxx".strip(b"x") => b'a'
+b"xyaxy".strip(b"yx") => b'a'
+b"\t\n\r\f\va ".strip() => b'a'
+b"a".strip(None) => b'a'
+b"\x1ca".strip() => b'\x1ca'
+b"\xa0a".strip() => b'\xa0a'
+b"abc".lstrip(bytearray(b"a")) => b'bc'
+b"a,b,c".split(b",") => [b'a', b'b', b'c']
+b"a,b,c".split(b",", 1) => [b'a', b'b,c']
+b"a b c".split() => [b'a', b'b', b'c']
+b" a b ".split(None, 1) => [b'a', b'b ']
+b"".split() => []
+b"".split(b",") => [b'']
+b"a,b,c".rsplit(b",", 1) => [b'a,b', b'c']
+b"a b c".rsplit(None, 1) => [b'a b', b'c']
+b"a\nb\r\nc".splitlines() => [b'a', b'b', b'c']
+b"a\nb".splitlines(True) => [b'a\n', b'b']
+b"a\x0bb\x0cc".splitlines() => [b'a\x0bb\x0cc']
+b"aXXb".split(b"XX") => [b'a', b'b']
+b"a,b".split(sep=b",", maxsplit=0) => [b'a,b']
+b"a".split(b"") => ValueError: empty separator
+b"a".split(",") => TypeError: a bytes-like object is required, not 'str'
+b"a".split(1) => TypeError: a bytes-like object is required, not 'int'
+b",".join([b"a", b"b"]) => b'a,b'
+b"".join([]) => b''
+b",".join([b"a"]) => b'a'
+b",".join((bytearray(b"a"), b"b")) => b'a,b'
+b"".join(iter([b"x", b"y"])) => b'xy'
+b"--".join([b"1", b"2", b"3"]) => b'1--2--3'
+b",".join(["a"]) => TypeError: sequence item 0: expected a bytes-like object, str found
+b",".join([b"a", 1]) => TypeError: sequence item 1: expected a bytes-like object, int found
+b",".join(b"ab") => TypeError: sequence item 0: expected a bytes-like object, int found
+b",".join(1) => TypeError: can only join an iterable
+b.find(b"o") => 4
+b.find(b"o", 5) => 7
+b.find(b"x") => -1
+b.find(111) => 4
+b.rfind(b"o") => 7
+b.rfind(111) => 7
+b.index(b"o") => 4
+b.rindex(b"o") => 7
+b.count(b"o") => 2
+b.count(111) => 2
+b.count(b"") => 12
+b.find(b"") => 0
+b.find(b"o", -3) => -1
+b.find(b"o", 0, 4) => -1
+b.count(b"l", 3) => 2
+b.find(bytearray(b"wor")) => 6
+b.index(b"x") => ValueError: subsection not found
+b.rindex(b"x") => ValueError: subsection not found
+b.find("o") => TypeError: argument should be integer or bytes-like object, not 'str'
+b.find(256) => ValueError: byte must be in range(0, 256)
+b.find(-1) => ValueError: byte must be in range(0, 256)
+b.count(None) => TypeError: argument should be integer or bytes-like object, not 'NoneType'
+b.index(1.0) => TypeError: argument should be integer or bytes-like object, not 'float'
+b.replace(b"o", b"0") => b'hell0 w0rld'
+b.replace(b"o", b"0", 1) => b'hell0 world'
+b.replace(b"l", b"") => b'heo word'
+b.replace(b"", b"-")[:9] => b'-h-e-l-l-'
+b.replace(b"x", b"y") => b'hello world'
+b.replace(b"o", bytearray(b"00")) => b'hell00 w00rld'
+b"aaa".replace(b"aa", b"b") => b'ba'
+b.replace(b"o", b"0", count=1) => b'hell0 world'
+b.replace("o", "0") => TypeError: a bytes-like object is required, not 'str'
+b.replace(b"o", 0) => TypeError: a bytes-like object is required, not 'int'
+b.startswith(b"he") => True
+b.startswith(b"x") => False
+b.startswith((b"x", b"he")) => True
+b.startswith(b"w", 6) => True
+b.endswith(b"ld") => True
+b.endswith((b"x", b"d")) => True
+b.endswith(b"o", 0, 5) => True
+b.startswith(b"") => True
+b.startswith(bytearray(b"h")) => True
+b.removeprefix(b"hello ") => b'world'
+b.removesuffix(b" world") => b'hello'
+b.removeprefix(b"x") => b'hello world'
+b.startswith("he") => TypeError: startswith first arg must be bytes or a tuple of bytes, not str
+b.startswith(104) => TypeError: startswith first arg must be bytes or a tuple of bytes, not int
+b.startswith((b"a", "b")) => TypeError: a bytes-like object is required, not 'str'
+b.partition(b" ") => (b'hello', b' ', b'world')
+b.rpartition(b"o") => (b'hello w', b'o', b'rld')
+b.partition(b"x") => (b'hello world', b'', b'')
+b.rpartition(b"x") => (b'', b'', b'hello world')
+b.partition(bytearray(b" ")) => (b'hello', bytearray(b' '), b'world')
+b.partition(b"") => ValueError: empty separator
+b.partition(" ") => TypeError: a bytes-like object is required, not 'str'
+b"a".center(5) => b'  a  '
+b"a".center(5, b"*") => b'**a**'
+b"a".ljust(3) => b'a  '
+b"a".rjust(3, b"-") => b'--a'
+b"5".zfill(3) => b'005'
+b"-5".zfill(4) => b'-005'
+b"a\tb".expandtabs() => b'a       b'
+b"a\tb".expandtabs(4) => b'a   b'
+b"abc".center(2) => b'abc'
+b"a".center(5, "*") => TypeError: center() argument 2 must be a byte string of length 1, not str
+b"a".center(5, b"ab") => TypeError: center(): argument 2 must be a byte string of length 1, not a bytes object of length 2
+b"a".center(5, 42) => TypeError: center() argument 2 must be a byte string of length 1, not int
+b'' 0 0 0 0 0 0 0 1; b'a' 1 0 1 0 0 1 0 1; b'A' 1 0 1 0 1 0 1 1; b'1' 0 1 1 0 0 0 0 1; b' ' 0 0 0 1 0 0 0 1; b'a1' 0 0 1 0 0 1 0 1; b'Ab' 1 0 1 0 0 0 1 1; b'AB' 1 0 1 0 1 0 0 1; b'ab' 1 0 1 0 0 1 0 1; b'\xe9' 0 0 0 0 0 0 0 0; b'\n' 0 0 0 1 0 0 0 1; b'A b' 0 0 0 0 0 0 0 1; b'Ab Cd' 0 0 0 0 0 0 1 1; b'\x7f' 0 0 0 0 0 0 0 1; b'_' 0 0 0 0 0 0 0 1; 
+b"abc".decode() => abc
+b"\xc3\xa9".decode() => é
+b"\xc3\xa9".decode("utf-8") => é
+b"\xe9".decode("latin-1") => é
+b"abc".decode("ascii") => abc
+b"\xff".decode("utf-8", "replace") => �
+b"\xff".decode("utf-8", "ignore") => 
+b"\xff".decode("utf-8", "backslashreplace") => \xff
+b"a\xffb".decode("ascii", "replace") => a�b
+repr(b"\xff".decode("utf-8", "surrogateescape")) => '\udcff'
+b"\xf0\x9f\x98\x80".decode() => 😀
+b"a\x00".decode("utf-16-le") => a
+b"".decode() => 
+b"abc".decode(encoding="utf-8", errors="strict") => abc
+b"\xe2\x82\xac".decode("utf8") => €
+bad.decode("utf-8") [bad=b'\xff'] => UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte
+'\ufffd' bad.decode("utf-8") [bad=b'\xc3'] => UnicodeDecodeError: 'utf-8' codec can't decode byte 0xc3 in position 0: unexpected end of data
+'\ufffd' bad.decode("utf-8") [bad=b'\xc3('] => UnicodeDecodeError: 'utf-8' codec can't decode byte 0xc3 in position 0: invalid continuation byte
+'\ufffd(' bad.decode("utf-8") [bad=b'\xe2\x82'] => UnicodeDecodeError: 'utf-8' codec can't decode bytes in position 0-1: unexpected end of data
+'\ufffd' bad.decode("utf-8") [bad=b'\xe2(\xa1'] => UnicodeDecodeError: 'utf-8' codec can't decode byte 0xe2 in position 0: invalid continuation byte
+'\ufffd(\ufffd' bad.decode("utf-8") [bad=b'\xf0\x9f\x98'] => UnicodeDecodeError: 'utf-8' codec can't decode bytes in position 0-2: unexpected end of data
+'\ufffd' bad.decode("utf-8") [bad=b'\xf0(\x8c\xbc'] => UnicodeDecodeError: 'utf-8' codec can't decode byte 0xf0 in position 0: invalid continuation byte
+'\ufffd(\ufffd\ufffd' bad.decode("utf-8") [bad=b'\xc0\x80'] => UnicodeDecodeError: 'utf-8' codec can't decode byte 0xc0 in position 0: invalid start byte
+'\ufffd\ufffd' bad.decode("utf-8") [bad=b'\xed\xa0\x80'] => UnicodeDecodeError: 'utf-8' codec can't decode byte 0xed in position 0: invalid continuation byte
+'\ufffd\ufffd\ufffd' bad.decode("utf-8") [bad=b'\xf4\x90\x80\x80'] => UnicodeDecodeError: 'utf-8' codec can't decode byte 0xf4 in position 0: invalid continuation byte
+'\ufffd\ufffd\ufffd\ufffd' bad.decode("utf-8") [bad=b'a\x80b'] => UnicodeDecodeError: 'utf-8' codec can't decode byte 0x80 in position 1: invalid start byte
+'a\ufffdb' bad.decode("utf-8") [bad=b'\xf8\x88\x80\x80\x80'] => UnicodeDecodeError: 'utf-8' codec can't decode byte 0xf8 in position 0: invalid start byte
+'\ufffd\ufffd\ufffd\ufffd\ufffd' bad.decode("utf-8") [bad=b'ab\xe2\x82'] => UnicodeDecodeError: 'utf-8' codec can't decode bytes in position 2-3: unexpected end of data
+'ab\ufffd' b"\x80".decode("ascii") => UnicodeDecodeError: 'ascii' codec can't decode byte 0x80 in position 0: ordinal not in range(128)
+b"a".decode("nope") => LookupError: unknown encoding: nope
+b"\xff".decode("utf-8", "nope") => LookupError: unknown error handler name 'nope'
+b"a".decode(1) => TypeError: decode() argument 'encoding' must be str, not int
+e.encoding => utf-8
+e.object => b'ab\xffcd'
+e.start => 2
+e.end => 3
+e.reason => invalid start byte
+e.args => ('utf-8', b'ab\xffcd', 2, 3, 'invalid start byte')
+b"\x01\xab".hex() => 01ab
+b"".hex() => 
+b"\x01\x02\x03".hex(":") => 01:02:03
+b"\x01\x02\x03\x04".hex("-", 2) => 0102-0304
+b"\x01\x02\x03".hex("-", 2) => 01-0203
+b"\x01\x02\x03".hex("-", -2) => 0102-03
+b"abc".hex(sep=" ") => 61 62 63
+b"\x01\x02\x03".hex(b".") => 01.02.03
+b"a".hex("ab") => ValueError: sep must be length 1.
+b"a".hex("") => ValueError: sep must be length 1.
+b"a".hex("é") => ValueError: sep must be ASCII.
+bytes.fromhex("01ab") => b'\x01\xab'
+bytes.fromhex("01 AB") => b'\x01\xab'
+bytes.fromhex("") => b''
+bytes.fromhex(" 01\t02\n") => b'\x01\x02'
+bytes.fromhex("ff" * 3) => b'\xff\xff\xff'
+bytes.fromhex(b"0102") => b'\x01\x02'
+bytes.fromhex("0") => ValueError: fromhex() arg must contain an even number of hexadecimal digits
+bytes.fromhex("0g") => ValueError: non-hexadecimal number found in fromhex() arg at position 1
+bytes.fromhex("01 0") => ValueError: fromhex() arg must contain an even number of hexadecimal digits
+bytes.fromhex("0 1") => ValueError: non-hexadecimal number found in fromhex() arg at position 1
+bytes.fromhex(1) => TypeError: fromhex() argument must be str or bytes-like, not int
+bytes.fromhex("é") => ValueError: non-hexadecimal number found in fromhex() arg at position 0
+bytes.maketrans(b"ab", b"xy")[95:100] => b'_`xyc'
+b"abc".translate(bytes.maketrans(b"ab", b"xy")) => b'xyc'
+b"abc".translate(None, b"b") => b'ac'
+b"abc".translate(bytes.maketrans(b"a", b"x"), b"c") => b'xb'
+b"abc".translate(None) => b'abc'
+b"abc".translate(None, delete=b"a") => b'bc'
+bytes.maketrans(b"a", b"xy") => ValueError: maketrans arguments must have same length
+bytes.maketrans("a", "b") => TypeError: a bytes-like object is required, not 'str'
+b"a".translate(b"short") => ValueError: translation table must be 256 characters long
+list(b"ab") => [97, 98]
+tuple(b"ab") => (97, 98)
+sorted(b"cab") => [97, 98, 99]
+list(reversed(b"ab")) => [98, 97]
+max(b"abc") => 99
+min(b"abc") => 97
+sum(b"\x01\x02") => 3
+list(enumerate(b"a")) => [(0, 97)]
+[x for x in b"ab"] => [97, 98]
+bytes(reversed(b"abc")) => b'cba'
+bytes(sorted(b"cab")) => b'abc'
+type(iter(b"")).__name__ => bytes_iterator
+next(iter(b"a")) => 97
+b"abc".__len__() => 3
+b"abc".__getitem__(1) => 98
+b"abc".__contains__(97) => True
+b"abc".__add__(b"d") => b'abcd'
+b"abc".__mul__(2) => b'abcabc'
+b"abc".__rmul__(2) => b'abcabc'
+b"abc".__eq__(b"abc") => True
+b"abc".__eq__("abc") => NotImplemented
+b"abc".__lt__(1) => NotImplemented
+b"abc".__bytes__() => b'abc'
+b"abc".__getnewargs__() => (b'abc',)
+b"a%sc".__mod__(b"b") => b'abc'
+b"abc".__repr__() => b'abc'
+b"abc".__str__() => b'abc'
+type(b"") => <class 'bytes'>
+bytes.__mro__ => (<class 'bytes'>, <class 'object'>)
+isinstance(b"", bytes) => True
+isinstance(bytearray(), bytes) => False
+sorted(n for n in dir(bytes) if not n.startswith("_")) => ['capitalize', 'center', 'count', 'decode', 'endswith', 'expandtabs', 'find', 'fromhex', 'hex', 'index', 'isalnum', 'isalpha', 'isascii', 'isdigit', 'islower', 'isspace', 'istitle', 'isupper', 'join', 'ljust', 'lower', 'lstrip', 'maketrans', 'partition', 'removeprefix', 'removesuffix', 'replace', 'rfind', 'rindex', 'rjust', 'rpartition', 'rsplit', 'rstrip', 'split', 'splitlines', 'startswith', 'strip', 'swapcase', 'title', 'translate', 'upper', 'zfill']

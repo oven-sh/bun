@@ -1,0 +1,116 @@
+status: 0
+script: 15efaf626de1e9d1
+source: 0cbc0e70ab9f25c6
+---
+Box.__type_params__ => (T,)
+Box.__parameters__ => (T,)
+Box.__bases__ => (<class 'typing.Generic'>,)
+Box.__orig_bases__ => (typing.Generic[T],)
+[c.__name__ for c in Box.__mro__] => ['Box', 'Generic', 'object']
+Box(1).get() => 1
+Box.tp => T
+Box.tp is Box.__type_params__[0] => True
+Box.__init__.__annotations__ => {'v': T}
+Box.get.__annotations__ => {'return': T}
+Box.__name__ => Box
+Box.__qualname__ => Box
+"T" in Box.__dict__ => False
+sorted(k for k in Box.__dict__ if not k.startswith("__") or k in ("__... => ['__orig_bases__', '__parameters__', '__type_params__', 'get', 'tp']
+Box[int] => __main__.Box[int]
+type(Box[int]).__name__ => _GenericAlias
+Box[int].__origin__ => <class '__main__.Box'>
+Box[int].__args__ => (<class 'int'>,)
+Box[int](5).v => 5
+Box[int](5).__orig_class__ => __main__.Box[int]
+isinstance(Box[int](5), Box) => True
+Box[int] == Box[int] => True
+Box[int] == Box[str] => False
+Box[Box[int]] => __main__.Box[__main__.Box[int]]
+Box[T] => __main__.Box[T]
+Box[T].__parameters__ => (T,)
+Box[T][str] => __main__.Box[str]
+Box[int, str] => TypeError: Too many arguments for <class '__main__.Box'>; actual 2, expected 1
+Box[()] => TypeError: Too few arguments for <class '__main__.Box'>; actual 0, expected at least 1
+isinstance(1, Box[int]) => TypeError: Subscripted generics cannot be used with class and instance checks
+Box[int][str] => TypeError: __main__.Box[int] is not a generic class
+issubclass(Box, Box[int]) => TypeError: Subscripted generics cannot be used with class and instance checks
+Pair[int, str] => __main__.Pair[int, str]
+Sub.__bases__ => (<class '__main__.Box'>, <class 'typing.Generic'>)
+Sub.__orig_bases__ => (__main__.Box[T], typing.Generic[T])
+Sub[int] => __main__.Sub[int]
+Concrete.__bases__ => (<class '__main__.Box'>,)
+Concrete.__orig_bases__ => (__main__.Box[int],)
+Concrete.__type_params__ => ()
+Concrete.__parameters__ => ()
+[c.__name__ for c in Multi.__mro__] => ['Multi', 'Box', 'Pair', 'Generic', 'object']
+WithBase.__bases__ => (<class 'dict'>, <class 'typing.Generic'>)
+WithBase[int](a=1) => {'a': 1}
+type(WithKw).__name__ => type
+Var[int, str] => __main__.Var[int, str]
+Var[()] => __main__.Var[()]
+Var[int] => __main__.Var[int]
+Spec[[int, str]] => __main__.Spec[[int, str]]
+Spec[int, str] => __main__.Spec[[int, str]]
+Spec[...] => __main__.Spec[...]
+Dflt[str] => __main__.Dflt[str]
+Dflt.__type_params__[0].__default__ => <class 'int'>
+Pair[int] => TypeError: Too few arguments for <class '__main__.Pair'>; actual 1, expected at least 2
+Pair[int, str, float] => TypeError: Too many arguments for <class '__main__.Pair'>; actual 3, expected 2
+Concrete[int] => TypeError: <class '__main__.Concrete'> is not a generic class
+ClsScope.x => T
+ClsScope.Inner.y => T
+ClsScope().m() => T
+ClsScope().lam() => T
+ClsScope.comp => [T]
+ClsScope.__annotations__ => {'attr': T}
+BaseUsesParam.__orig_bases__ => (list[T], typing.Generic[T])
+BaseUsesParam.__bases__ => (<class 'list'>, <class 'typing.Generic'>)
+BaseUsesParam([1]) => [1]
+MethodGeneric().m(1, 2) => (T, U)
+MethodGeneric.m.__type_params__ => (U,)
+MethodGeneric.m.__annotations__ => {'a': T, 'b': U}
+ClassVarVsTypeParam.v => class attribute wins inside the body after assignment
+ClassVarVsTypeParam().m() => T
+ClassVarVsTypeParam.__type_params__ => (T,)
+Plain.__type_params__ => ()
+int.__type_params__ => ()
+hasattr(Plain, "__parameters__") => False
+hasattr(Plain, "__orig_bases__") => False
+(T,)
+s4() => None
+s5() => TypeError: cannot set '__type_params__' attribute of immutable type 'int'
+SuperInGeneric(2).v => 4
+SuperInGeneric(1).cls().__name__ => SuperInGeneric
+init_subclass GenSub (T,) {'flag': 1}; 
+type(T)("X").__name__ => 'X'
+type(T)("X", int, str).__constraints__ => (<class 'int'>, <class 'str'>)
+type(T)("X", bound=int).__bound__ => <class 'int'>
+type(T)("X", int) => TypeError: A single constraint is not allowed
+type(T)("X", int, str, bound=int) => TypeError: Constraints cannot be combined with bound=...
+type(T)() => TypeError: typevar() missing required argument 'name' (pos 1)
+type(T)(1) => TypeError: typevar() argument 'name' must be str, not int
+type(T)("X", covariant=True, contravariant=True) => ValueError: Bivariant types are not supported.
+repr(type(T)("X", covariant=True)) => '+X'
+repr(type(T)("X", contravariant=True)) => '-X'
+repr(type(T)("X", infer_variance=True)) => 'X'
+type(T)("X", default=int).__default__ => <class 'int'>
+type("S", (type(T),), {}) => TypeError: type 'typing.TypeVar' is not an acceptable base type
+T() => TypeError: 'typing.TypeVar' object is not callable
+T[int] => TypeError: 'typing.TypeVar' object is not subscriptable
+isinstance(1, T) => TypeError: isinstance() arg 2 must be a type, a tuple of types, or a union
+T | int => T | int
+int | T => int | T
+list[T] => list[T]
+list[T][int] => list[int]
+dict[T, T][str] => dict[str, str]
+list[T].__parameters__ => (T,)
+T < T => TypeError: '<' not supported between instances of 'typing.TypeVar' and 'typing.TypeVar'
+[*Ts] => [typing.Unpack[Ts]]
+tuple[*Ts] => tuple[typing.Unpack[Ts]]
+tuple[*Ts][int, str] => tuple[int, str]
+tuple[int, *Ts, str][float] => tuple[int, float, str]
+len(T) => TypeError: object of type 'typing.TypeVar' has no len()
+T.nope => AttributeError: 'typing.TypeVar' object has no attribute 'nope'
+T.__dict__ if hasattr(T, "__dict__") else "no dict" => 'no dict'
+s6() => AttributeError: readonly attribute
+s7() => 1

@@ -1,0 +1,223 @@
+status: 0
+script: e6eb0493fb9040f5
+source: 8a7619d5dd76b1e6
+---
+len(s) => 5
+s[0] => a
+s[1] => 😀
+s[2] => b
+s[3] => 𝒳
+s[4] => c
+s[-1] => c
+s[-2] => 𝒳
+s[-4] => 😀
+s[1:2] => 😀
+s[1:4] => 😀b𝒳
+s[::-1] => c𝒳b😀a
+s[::2] => abc
+s[1::2] => 😀𝒳
+s[3:] => 𝒳c
+s[:2] => a😀
+s[-2:] => 𝒳c
+s[4:0:-2] => cb
+list(s) => ['a', '😀', 'b', '𝒳', 'c']
+[ord(c) for c in s] => [97, 128512, 98, 119987, 99]
+[len(c) for c in s] => [1, 1, 1, 1, 1]
+s[5] => IndexError: string index out of range
+s[-6] => IndexError: string index out of range
+s.index("b") => 2
+s.index("𝒳") => 3
+s.find("c") => 4
+s.rfind("😀") => 1
+s.count("😀") => 1
+s.find("😀", 2) => -1
+s.index("c", 3) => 4
+s.rindex("a") => 0
+s.find("b", 2, 3) => 2
+s.find("b", 3) => -1
+s.upper() => A😀B𝒳C
+s.replace("😀", "!") => a!b𝒳c
+s.split("😀") => ['a', 'b𝒳c']
+s.partition("𝒳") => ('a😀b', '𝒳', 'c')
+s.center(9, "*") => **a😀b𝒳c**
+s.ljust(7, ".") => a😀b𝒳c..
+s.rjust(7, "😀") => 😀😀a😀b𝒳c
+s.zfill(7) => 00a😀b𝒳c
+s.startswith("a😀") => True
+s.endswith("𝒳c") => True
+s.startswith("😀", 1) => True
+s.strip("ac") => 😀b𝒳
+s.strip("a😀") => b𝒳c
+"😀" in s => True
+"😀b" in s => True
+"\ud83d" in s => False
+s.isalpha() => False
+s.isprintable() => True
+s.isascii() => False
+s.title() => A😀B𝒳c
+s.swapcase() => A😀B𝒳C
+s * 2 => a😀b𝒳ca😀b𝒳c
+len(s * 2) => 10
+s + s == s * 2 => True
+(s * 2)[5] => a
+(s * 2)[6] => 😀
+s == "a\U0001F600b\U0001D4B3c" => True
+s < "a😁" => True
+s > "a￿" => True
+"😀" > "￿" => True
+"\U00010000" > "￿" => True
+"￿" < "\U00010000" => True
+sorted(["\U00010000", "￿", "a", "", "😀"]) => ['a', '\ue000', '\uffff', '𐀀', '😀']
+max("a￿\U00010000") => 𐀀
+min("😀￿") => ￿
+repr(s) => 'a😀b𝒳c'
+ascii(s) => 'a\U0001f600b\U0001d4b3c'
+str(s) => a😀b𝒳c
+"%s|%r|%a" % (s, s, s) => a😀b𝒳c|'a😀b𝒳c'|'a\U0001f600b\U0001d4b3c'
+"{}|{!r}|{!a}".format(s, s, s) => a😀b𝒳c|'a😀b𝒳c'|'a\U0001f600b\U0001d4b3c'
+f"{s}|{s!r}|{s!a}|{s:>7}|{s:*^9}|{s:.2}|{s:.3}" => a😀b𝒳c|'a😀b𝒳c'|'a\U0001f600b\U0001d4b3c'|  a😀b𝒳c|**a😀b𝒳c**|a😀|a😀b
+"%.2s|%7s|%-7s|" % (s, s, s) => a😀|  a😀b𝒳c|a😀b𝒳c  |
+format(s, "<8") + "|" => a😀b𝒳c   |
+s.encode("utf-8") => b'a\xf0\x9f\x98\x80b\xf0\x9d\x92\xb3c'
+s.encode("utf-16-le") => b'a\x00=\xd8\x00\xdeb\x005\xd8\xb3\xdcc\x00'
+s.encode("utf-32-le")[:12] => b'a\x00\x00\x00\x00\xf6\x01\x00b\x00\x00\x00'
+s.encode("ascii", "replace") => b'a?b?c'
+s.encode("ascii", "xmlcharrefreplace") => b'a&#128512;b&#119987;c'
+s.encode("ascii", "backslashreplace") => b'a\\U0001f600b\\U0001d4b3c'
+s.encode("utf-8").decode("utf-8") == s => True
+len(s.encode("utf-8")) => 11
+s.encode("utf-16-le").decode("utf-16-le") == s => True
+e.start => 1
+e.end => 2
+e.reason => ordinal not in range(128)
+e => 'ascii' codec can't encode character '\U0001f600' in position 1: ordinal not in range(128)
+e.start => 2
+e.end => 4
+e => 'latin-1' codec can't encode characters in position 2-3: ordinal not in range(256)
+[next(it) for _ in range(5)] => ['a', '😀', 'b', '𝒳', 'c']
+next(it, None) => None
+list(reversed(s)) => ['c', '𝒳', 'b', '😀', 'a']
+list(enumerate(s))[1] => (1, '😀')
+dict.fromkeys(s) => {'a': None, '😀': None, 'b': None, '𝒳': None, 'c': None}
+sorted(set(s)) == sorted(s) => True
+"".join(sorted(s)) => abc𝒳😀
+tuple(s)[3] => 𝒳
+[c for c in s if ord(c) > 0xffff] => ['😀', '𝒳']
+s.translate({0x1F600: "X", ord("a"): "😁"}) => 😁Xb𝒳c
+str.maketrans("😀", "x") => {128512: 120}
+s.expandtabs() => a😀b𝒳c
+s.splitlines() => ['a😀b𝒳c']
+s.casefold() => a😀b𝒳c
+s.capitalize() => A😀b𝒳c
+"😀".join("ab") => a😀b
+"😀".isidentifier() => False
+"𝒳".isidentifier() => True
+"𝒳".isalpha() => True
+"𝟙".isdigit() => True
+"𝟙".isdecimal() => True
+int("𝟙𝟚") => 12
+float("𝟙.𝟝") => 1.5
+"𝒳".upper() => 𝒳
+"𐐨".upper() => 𐐀
+"𐐀".lower() => 𐐨
+"𐐨".upper() == "𐐀" => True
+"𐐨x".title() => 𐐀x
+"𐐨".isupper() => False
+"𐐨".islower() => True
+len(l) => 1
+len(h) => 1
+len(l + "a") => 2
+repr(l) => '\ud83d'
+repr(h) => '\ude00'
+repr(l + "x" + h) => '\ud83dx\ude00'
+ord(l) => 55357
+ord(h) => 56832
+l == "\ud83d" => True
+l < h => True
+l.isprintable() => False
+repr("a\udc80b") => 'a\udc80b'
+len("a\udc80b") => 3
+"a\udc80b"[1] == "\udc80" => True
+l.encode("utf-8", "surrogatepass") => b'\xed\xa0\xbd'
+repr(b"\xed\xa0\xbd".decode("utf-8", "surrogatepass")) => '\ud83d'
+repr(b"\x80".decode("utf-8", "surrogateescape")) => '\udc80'
+len(e1) => 1
+len(e2) => 2
+e1 == e2 => False
+e2[0] => e
+repr(e2[1]) => '́'
+e2.upper() == "É" => True
+e2[::-1] == "́e" => True
+"ｆｕｌｌ".upper() => ＦＵＬＬ
+len("ｆｕｌｌ") => 4
+"ｆｕｌｌ".center(6, "*") => *ｆｕｌｌ*
+len("👨‍👩‍👧") => 5
+list("🇫🇷") => ['🇫', '🇷']
+len("é".encode()) => 2
+len(e2.encode()) => 3
+ß SS ß Ss Ss ss SS 2 1 | ﬁ FI ﬁ Fi Fi fi FI 2 1 | ŉ ʼN ŉ ʼN ʼN ʼn ʼN 2 1 | ǰ J̌ ǰ J̌ J̌ ǰ J̌ 2 1 | ΐ Ϊ́ ΐ Ϊ́ Ϊ́ ΐ Ϊ́ 3 1 | İ İ i̇ İ İ i̇ i̇ 1 2 | ﬃ FFI ﬃ Ffi Ffi ffi FFI 3 1 | և ԵՒ և Եւ Եւ եւ ԵՒ 2 1 | ẞ ẞ ß ẞ ẞ ss ß 1 1 | ᾳ ΑΙ ᾳ ᾼ ᾼ αι ΑΙ 2 1 | ᾼ ΑΙ ᾳ ᾼ ᾼ αι ᾼ 2 1 | ǅ Ǆ ǆ ǅ ǅ ǆ ǅ 1 1 | ǆ Ǆ ǆ ǅ ǅ ǆ Ǆ 1 1 | Ǆ Ǆ ǆ ǅ ǅ ǆ ǆ 1 1 | 
+"ὈΔΥΣΣΕΎΣ".lower() => ὀδυσσεύς
+"ΣΑΣ".lower() => σας
+"Σ".lower() => σ
+"ΑΣ1".lower() => ας1
+"ΑΣ'".lower() => ας'
+"Α'Σ".lower() => α'ς
+"Α Σ".lower() => α σ
+"ΑΣΑ".lower() => ασα
+"ς".upper() => Σ
+"σ".upper() => Σ
+"straße".upper() => STRASSE
+"STRASSE".lower() => strasse
+"straße".casefold() == "STRASSE".casefold() => True
+"Ǆ".title() => ǅ
+"ǆungla".title() => ǅungla
+"ĳ".upper() => Ĳ
+"ÿ".upper() => Ÿ
+"µ".upper() => Μ
+"ı".upper() => I
+"ſ".upper() => S
+"K".lower() => k
+"Å".lower() => å
+"Ω".lower() => ω
+['0x9', '0xa', '0xb', '0xc', '0xd', '0x1c', '0x1d', '0x1e', '0x1f', '0x20', '0x85', '0xa0', '0x1680', '0x2000', '0x2001', '0x2002', '0x2003', '0x2004', '0x2005', '0x2006', '0x2007', '0x2008', '0x2009', '0x200a', '0x2028', '0x2029', '0x202f', '0x205f', '0x3000']
+[hex(ord(c)) for c in map(chr, range(0x3100)) if len(("a" + c + "b").... => True
+[hex(ord(c)) for c in map(chr, range(0x3100)) if len(("a" + c + "b").... => ['0xa', '0xb', '0xc', '0xd', '0x1c', '0x1d', '0x1e', '0x85', '0x2028', '0x2029']
+sum(1 for c in map(chr, range(0x2500)) if c.isdecimal()) => 290
+sum(1 for c in map(chr, range(0x2500)) if c.isdigit()) => 358
+sum(1 for c in map(chr, range(0x2500)) if c.isnumeric()) => 533
+sum(1 for c in map(chr, range(0x2500)) if c.isalpha()) => 5440
+sum(1 for c in map(chr, range(0x2500)) if c.isupper()) => 905
+sum(1 for c in map(chr, range(0x2500)) if c.islower()) => 1171
+sum(1 for c in map(chr, range(0x2500)) if c.isprintable()) => 8467
+sum(1 for c in map(chr, range(0x2500)) if c.isidentifier()) => 5484
+sum(1 for c in map(chr, range(0x2500)) if c.isspace()) => 28
+sum(1 for c in map(chr, range(0x2500)) if c.istitle()) => 936
+sum(ord(c.upper()[0]) for c in map(chr, range(0x2500)) if not 0xd800 ... => 45384174
+sum(ord(c.lower()[0]) for c in map(chr, range(0x2500)) if not 0xd800 ... => 48115127
+sum(len(c.casefold()) for c in map(chr, range(0x2500))) => 9578
+sum(len(repr(c)) for c in map(chr, range(0x2500))) => 33302
+été => 1
+変数 => 2
+fi => 3
+X => 4
+"ﬁ" in globals() => False
+"fi" in globals() => True
+"𝒳" in globals() => False
+Ünï.ñ => 5
+Ünï.__name__ => Ünï
+getattr(Ünï, "ñ") => 5
+Ünï().ñ => 5
+ƒ(µ=1) => 1
+ƒ.__name__ => ƒ
+ƒ.__code__.co_varnames => ('μ',)
+☃ 😀 é 각 一 Ω "\N{LINE FEED}" == "\n" => True
+"\N{NBSP}" == "\xa0" => True
+SyntaxError: e.msg [src='"\\N{NOPE}"'] => (unicode error) 'unicodeescape' codec can't decode bytes in position 0-7: unknown Unicode character name
+SyntaxError: e.msg [src='"\\N{}"'] => (unicode error) 'unicodeescape' codec can't decode bytes in position 0-2: malformed \N character escape
+SyntaxError: e.msg [src='"\\N"'] => (unicode error) 'unicodeescape' codec can't decode bytes in position 0-1: malformed \N character escape
+SyntaxError: e.msg [src='"\\x4"'] => (unicode error) 'unicodeescape' codec can't decode bytes in position 0-2: truncated \xXX escape
+SyntaxError: e.msg [src='"\\u123"'] => (unicode error) 'unicodeescape' codec can't decode bytes in position 0-4: truncated \uXXXX escape
+SyntaxError: e.msg [src='"\\U0011ffff"'] => (unicode error) 'unicodeescape' codec can't decode bytes in position 0-9: illegal Unicode character
+SyntaxError: e.msg [src='"\\U1234567"'] => (unicode error) 'unicodeescape' codec can't decode bytes in position 0-8: truncated \UXXXXXXXX escape
+SyntaxError: e.msg [src='b"\\xg0"'] => (value error) invalid \x escape at position 0
+SyntaxError: e.msg [src='b"é"'] => bytes can only contain ASCII literal characters

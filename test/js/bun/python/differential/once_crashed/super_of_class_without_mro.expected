@@ -1,0 +1,4 @@
+status: 0
+script: 21ab43d3f4bee118
+---
+AttributeError 'super' object has no attribute 'xxx'

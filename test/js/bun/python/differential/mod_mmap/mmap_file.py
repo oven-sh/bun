@@ -1,0 +1,55 @@
+import mmap, os, tempfile, gc, struct, re
+def t(f):
+    try: print(repr(f()))
+    except BaseException as x: print(type(x).__name__ + ':', x)
+d = tempfile.mkdtemp(); p = os.path.join(d, 'f')
+with open(p, 'wb') as f: f.write(b'0123456789' * 1000)
+f = open(p, 'r+b')
+m = mmap.mmap(f.fileno(), 0); print(repr(m), len(m), m.size(), m[:12], m[-3:])
+m[0:4] = b'ABCD'; m.flush(); print(open(p, 'rb').read(6)); f.seek(0); print(f.read(6))
+f.seek(4); f.write(b'EF'); f.flush(); print(m[:8])
+print(re.search(rb'9A?0', m).span(), re.findall(rb'89', m)[:2], struct.unpack_from('4s', m, 0), m.find(b'789', 5000))
+m.close(); print(f.closed, f.read(1))
+m = mmap.mmap(f.fileno(), 100); print(len(m), m.size()); f.close(); print(m[:4], m.size()); m.close()
+f = open(p, 'r+b')
+m = mmap.mmap(f.fileno(), 0, offset=mmap.PAGESIZE); print(repr(m), len(m), m[:4]); m.close()
+m = mmap.mmap(f.fileno(), 10, offset=mmap.PAGESIZE); print(repr(m), m[:]); m.close()
+t(lambda: mmap.mmap(f.fileno(), 0, offset=10000)); t(lambda: mmap.mmap(f.fileno(), 0, offset=20000)); t(lambda: mmap.mmap(f.fileno(), 10001)); t(lambda: mmap.mmap(f.fileno(), 10, offset=9999)); t(lambda: mmap.mmap(f.fileno(), 10, offset=1)); t(lambda: mmap.mmap(f.fileno(), 10, offset=2**70))
+# access
+m = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ); print(repr(m), m[:4])
+def s(k, v): m[k] = v
+t(lambda: s(0, 1)); t(lambda: s(slice(0, 1), b'x')); t(lambda: m.write(b'x')); t(lambda: m.write_byte(1)); t(lambda: m.move(0, 1, 1)); t(lambda: m.resize(10)); print(m.flush(), memoryview(m).readonly); t(lambda: memoryview(m).__setitem__(0, 1)); gc.collect(); m.close()
+m = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_COPY); m[:4] = b'copy'; print(m[:6], open(p, 'rb').read(6), m.flush()); t(lambda: m.resize(10)); m.close()
+m = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_WRITE); m[:4] = b'writ'; m.flush(); print(open(p, 'rb').read(6)); m.close()
+g = open(p, 'rb'); t(lambda: mmap.mmap(g.fileno(), 0)); m = mmap.mmap(g.fileno(), 0, access=mmap.ACCESS_READ); print(len(m)); m.close(); m = mmap.mmap(g.fileno(), 0, prot=mmap.PROT_READ); print(repr(m)); m.close(); m = mmap.mmap(g.fileno(), 0, access=mmap.ACCESS_COPY); m[0] = 1; m.close(); g.close()
+# resize
+m = mmap.mmap(f.fileno(), 0); print(m.resize(5000), len(m), m.size(), os.path.getsize(p), m.resize(20000), len(m), m.size(), os.path.getsize(p), m[4998:5003], m[-1])
+m.seek(15000); print(m.resize(100), m.tell(), len(m), m.read(1)); t(lambda: m.resize(-1)); t(lambda: m.resize('x')); t(lambda: m.resize(2**70)); t(lambda: m.resize())
+v = memoryview(m); t(lambda: m.resize(200)); t(m.close); print(v[:4].tobytes()); v.release(); print(m.resize(200), len(m)); m.close()
+a = mmap.mmap(-1, 100); t(lambda: a.resize(200)); print(a.resize(50), len(a), a.size()); a.close()
+a = mmap.mmap(-1, 100, flags=mmap.MAP_PRIVATE); a[:3] = b'abc'; print(a.resize(100000), len(a), a[:4], a[-1]); a.close()
+# trackfd
+m = mmap.mmap(f.fileno(), 0, trackfd=False); print(len(m), m[:4]); t(m.size); t(lambda: m.resize(10)); m.close()
+a = mmap.mmap(-1, 10, trackfd=False); t(a.size); a.close()
+# empty file, other kinds of file
+e = open(os.path.join(d, 'e'), 'w+b'); t(lambda: mmap.mmap(e.fileno(), 0)); t(lambda: mmap.mmap(e.fileno(), 10)); e.close()
+r, w = os.pipe(); t(lambda: mmap.mmap(r, 10)); os.close(r); os.close(w)
+z = os.open('/dev/zero', os.O_RDWR); m = mmap.mmap(z, 10); print(m[:], len(m)); m.close(); os.close(z)
+# buffers
+m = mmap.mmap(f.fileno(), 0); v = memoryview(m); print(v.nbytes, v.format, v.itemsize, v.readonly, v.obj is m, v.ndim, v.shape, v.contiguous)
+v[0:3] = b'mv!'; print(m[:4], bytes(v[:4]), bytearray(m[:4])); w2 = v[10:20]; t(m.close); v.release(); t(m.close); w2.release(); print(m.close())
+m = mmap.mmap(f.fileno(), 0); b = m.__buffer__(0); print(type(b).__name__, b.readonly); t(m.close); m.__release_buffer__(b); print(m.close())
+m = mmap.mmap(f.fileno(), 0); os.write(1, b''); print(f.seek(0), f.readinto(m) , m[:3]); import io; print(io.BytesIO(m).read(3), bytes(m)[:3], int.from_bytes(m[:2], 'big'), len(b''.join([m, m])))
+n = os.open(os.path.join(d, 'o'), os.O_WRONLY | os.O_CREAT); print(os.write(n, m)); os.close(n); m.close()
+# dropped without being closed
+def fds(): return len(os.listdir('/proc/self/fd'))
+gc.collect(); before = fds()
+for i in range(50): m = mmap.mmap(f.fileno(), 0)
+del m; gc.collect(); print(fds() - before)
+m = mmap.mmap(f.fileno(), 0); v = memoryview(m); del m; gc.collect(); print(v[:3].tobytes()); del v; gc.collect(); print(fds() - before)
+# set_name
+a = mmap.mmap(-1, 4096); t(lambda: a.set_name('test')); t(lambda: a.set_name('x' * 67)); t(lambda: a.set_name(1)); t(lambda: a.set_name('a\0b')); a.close()
+m = mmap.mmap(f.fileno(), 0); t(lambda: m.set_name('test')); m.close()
+f.close()
+for n in os.listdir(d): os.unlink(os.path.join(d, n))
+os.rmdir(d)

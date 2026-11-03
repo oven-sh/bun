@@ -1,0 +1,32 @@
+status: 0
+script: 02499dbe97832b2d
+---
+--- text, buffered and raw files
+0
+t b'text\n'
+b b'bytes\n'
+r b'raw\n'
+u b'update\n'
+--- readers
+['text\n', b'bytes\n']
+0
+--- the layers are taken apart from the outside in
+['text.close', ('raw.write', b'abc'), 'buffered.close', 'raw.close']
+--- raw streams written in Python
+[('write', b'xyz', False), 'close']
+['close']
+--- close() is called once, and not at all on what is closed
+['close']
+--- detached
+[('write', b'1', False)] False
+[('write', b'1', False), 'close']
+--- subclasses of the streams in memory
+['B.close', 'S.close']
+--- __del__
+None True True None
+['D2.__del__', 'D2.__del__'] 0
+--- a wrapper that goes away closes what it wraps
+True
+--- more files than can be open at once
+5000
+OSError Too many open files t

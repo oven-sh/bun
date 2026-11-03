@@ -1,0 +1,46 @@
+status: 0
+script: c67c76ab0eb39ca4
+source: 4dfa36d86fbad512
+---
+--- globals that are a dict subclass
+('missing undefined_name', 'missing len')
+('missing undefined_name', 3)
+(('got', 'undefined_name'), ('got', 'len'))
+Err: undefined_name
+Err: globalname
+Err: superglobal
+a missing y
+a missing y
+TypeError: 'str' object is not callable
+t(eval, "len(x)", Counts(x="abc")) => 3
+calls => ['len', 'x']
+t(eval, "(lambda: len(x))()", Counts(x="abc")) => 3
+calls => ['len', 'x']
+--- builtins that are mappings
+1
+NameError: name 'superglobal' is not defined
+1
+AttributeError: iter
+(<built-in function iter>, ([1, 2],), 0)
+t(exec, "import foo.bar", ns) => None
+ns.get('foo')[0] => foo.bar
+ns.get('foo')[1] is ns => True
+ns.get('foo')[3:] => (None, 0)
+ImportError: __import__ not found
+NameError: __build_class__ not found
+None
+--- a function inherits the builtins of whoever makes it
+func2.__globals__ is ns => True
+func2.__builtins__ is func.__builtins__ => True
+func2("abc") => 3
+ns => {}
+ns['func3'].__builtins__ is safe => True
+ns['func4'].__builtins__ is safe => True
+ns['func4'].__globals__ => {}
+--- frozendict
+t(eval, "a + b", frozendict(a=1, b=2)) => TypeError: cannot assign __builtins__ to frozendict globals
+t(exec, "a = 1", frozendict()) => TypeError: cannot assign __builtins__ to frozendict globals
+t(exec, "global a\na = 1", frozendict()) => TypeError: cannot assign __builtins__ to frozendict globals
+t(exec, "del a", frozendict(a=1)) => TypeError: cannot assign __builtins__ to frozendict globals
+1
+TypeError: 'frozendict' object does not support item assignment

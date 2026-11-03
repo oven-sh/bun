@@ -1,0 +1,191 @@
+status: 0
+script: 5bc396a0e4610f01
+---
+[('ITIMER_PROF', 2), ('ITIMER_REAL', 0), ('ITIMER_VIRTUAL', 1), ('NSIG', 65), ('SIGABRT', 6), ('SIGALRM', 14), ('SIGBUS', 7), ('SIGCHLD', 17), ('SIGCLD', 17), ('SIGCONT', 18), ('SIGFPE', 8), ('SIGHUP', 1), ('SIGILL', 4), ('SIGINT', 2), ('SIGIO', 29), ('SIGIOT', 6), ('SIGKILL', 9), ('SIGPIPE', 13), ('SIGPOLL', 29), ('SIGPROF', 27), ('SIGPWR', 30), ('SIGQUIT', 3), ('SIGRTMAX', 64), ('SIGRTMIN', 34), ('SIGSEGV', 11), ('SIGSTKFLT', 16), ('SIGSTOP', 19), ('SIGSYS', 31), ('SIGTERM', 15), ('SIGTRAP', 5), ('SIGTSTP', 20), ('SIGTTIN', 21), ('SIGTTOU', 22), ('SIGURG', 23), ('SIGUSR1', 10), ('SIGUSR2', 12), ('SIGVTALRM', 26), ('SIGWINCH', 28), ('SIGXCPU', 24), ('SIGXFSZ', 25), ('SIG_BLOCK', 0), ('SIG_DFL', 0), ('SIG_IGN', 1), ('SIG_SETMASK', 2), ('SIG_UNBLOCK', 1)]
+['ItimerError', 'alarm', 'default_int_handler', 'getitimer', 'getsignal', 'pause', 'pidfd_send_signal', 'pthread_kill', 'pthread_sigmask', 'raise_signal', 'set_wakeup_fd', 'setitimer', 'siginterrupt', 'signal', 'sigpending', 'sigtimedwait', 'sigwait', 'sigwaitinfo', 'strsignal', 'struct_siginfo', 'valid_signals']
+(<class 'signal.ItimerError'>, <class 'OSError'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>) signal ItimerError ItimerError
+<class 'signal.struct_siginfo'> ('si_signo', 'si_code', 'si_errno', 'si_pid', 'si_uid', 'si_status', 'si_band') 7 7
+[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64]
+['Hangup', 'Interrupt', 'Quit', 'Illegal instruction', 'Trace/breakpoint trap', 'Aborted', 'Bus error', 'Floating point exception', 'Killed', 'User defined signal 1', 'Segmentation fault', 'User defined signal 2', 'Broken pipe', 'Alarm clock', 'Terminated', 'Stack fault', 'Child exited', 'Continued', 'Stopped (signal)', 'Stopped', 'Stopped (tty input)', 'Stopped (tty output)', 'Urgent I/O condition', 'CPU time limit exceeded', 'File size limit exceeded', 'Virtual timer expired', 'Profiling timer expired', 'Window changed', 'I/O possible', 'Power failure', 'Bad system call', None, None, 'Real-time signal 0', 'Real-time signal 1', 'Real-time signal 2', 'Real-time signal 3', 'Real-time signal 4', 'Real-time signal 5', 'Real-time signal 6', 'Real-time signal 7', 'Real-time signal 8', 'Real-time signal 9', 'Real-time signal 10', 'Real-time signal 11', 'Real-time signal 12', 'Real-time signal 13', 'Real-time signal 14', 'Real-time signal 15', 'Real-time signal 16', 'Real-time signal 17', 'Real-time signal 18', 'Real-time signal 19', 'Real-time signal 20', 'Real-time signal 21', 'Real-time signal 22', 'Real-time signal 23', 'Real-time signal 24', 'Real-time signal 25', 'Real-time signal 26', 'Real-time signal 27', 'Real-time signal 28', 'Real-time signal 29', 'Real-time signal 30']
+True _signal
+[(2, <built-in function default_int_handler>), (13, 1), (25, 1), (32, None), (33, None)]
+True True
+1 0 2 <Signals.SIGINT: 2> SIGINT 0 0
+ValueError: signal number out of range
+ValueError: signal number out of range
+ValueError: signal number out of range
+ValueError: signal number out of range
+OverflowError: Python int too large to convert to C int
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'NoneType' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+ValueError: signal number out of range
+ValueError: signal number out of range
+ValueError: signal number out of range
+ValueError: signal number out of range
+OverflowError: Python int too large to convert to C int
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'NoneType' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+TypeError: _signal.getsignal() takes exactly one argument (0 given)
+TypeError: _signal.getsignal() takes exactly one argument (2 given)
+ValueError: signal number out of range
+ValueError: signal number out of range
+ValueError: signal number out of range
+OverflowError: Python int too large to convert to C int
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: signal handler must be signal.SIG_IGN, signal.SIG_DFL, or a callable object
+TypeError: signal handler must be signal.SIG_IGN, signal.SIG_DFL, or a callable object
+TypeError: signal handler must be signal.SIG_IGN, signal.SIG_DFL, or a callable object
+TypeError: signal handler must be signal.SIG_IGN, signal.SIG_DFL, or a callable object
+TypeError: signal handler must be signal.SIG_IGN, signal.SIG_DFL, or a callable object
+TypeError: signal expected 2 arguments, got 1
+OSError: [Errno 22] Invalid argument
+OSError: [Errno 22] Invalid argument
+OSError: [Errno 22] Invalid argument
+OSError: [Errno 22] Invalid argument
+0 True 1 True True 0
+0 1 0
+True
+KeyboardInterrupt: 
+TypeError: default_int_handler expected 2 arguments, got 0
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: default_int_handler expected 2 arguments, got 1
+None
+OSError: [Errno 22] Invalid argument
+OSError: [Errno 22] Invalid argument
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: _signal.raise_signal() takes exactly one argument (0 given)
+0
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+TypeError: _signal.alarm() takes exactly one argument (0 given)
+0
+100
+OverflowError: Python int too large to convert to C int
+ValueError: signal number out of range
+ValueError: signal number out of range
+None
+None
+TypeError: 'str' object cannot be interpreted as an integer
+OSError: [Errno 22] Invalid argument
+TypeError: siginterrupt expected 2 arguments, got 1
+(0.0, 0.0)
+(0.0, 0.0)
+(0.0, 0.0)
+ItimerError: [Errno 22] Invalid argument
+ItimerError: [Errno 22] Invalid argument
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: _signal.getitimer() takes exactly one argument (0 given)
+(0.0, 0.0)
+ItimerError: [Errno 22] Invalid argument
+ItimerError: [Errno 22] Invalid argument
+TypeError: must be real number, not str
+TypeError: must be real number, not str
+TypeError: setitimer expected at least 2 arguments, got 1
+ValueError: Invalid value NaN (not a number)
+OverflowError: timestamp out of range for C PyTime_t
+TypeError: setitimer expected at most 3 arguments, got 4
+(0.0, 0.0) 2.5 True
+<class 'tuple'> 2 <class 'float'> 2.5 (0.0, 0.0)
+<class 'signal.ItimerError'> 22 Invalid argument (22, 'Invalid argument') True
+(0.0, 0.0) 1.0
+0.0 True
+TypeError: set_wakeup_fd() takes exactly 1 positional argument (0 given)
+TypeError: 'str' object cannot be interpreted as an integer
+-1
+OSError: [Errno 9] Bad file descriptor
+OSError: [Errno 9] Bad file descriptor
+OverflowError: Python int too large to convert to C int
+TypeError: set_wakeup_fd() takes exactly 1 positional argument (0 given)
+TypeError: set_wakeup_fd() takes exactly 1 positional argument (2 given)
+-1
+TypeError: set_wakeup_fd() got an unexpected keyword argument 'nope'
+the fd W must be in non-blocking mode
+-1 True True -1
+TypeError: 'int' object is not iterable
+TypeError: 'NoneType' object is not iterable
+TypeError: 'str' object cannot be interpreted as an integer
+ValueError: signal number 0 out of range [1; 64]
+ValueError: signal number -1 out of range [1; 64]
+ValueError: signal number 65 out of range [1; 64]
+ValueError: signal number 1000 out of range [1; 64]
+ValueError: signal number -1 out of range [1; 64]
+ValueError: signal number -1 out of range [1; 64]
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+TypeError: 'NoneType' object cannot be interpreted as an integer
+TypeError: 'int' object is not iterable
+TypeError: 'NoneType' object is not iterable
+TypeError: 'str' object cannot be interpreted as an integer
+ValueError: signal number 0 out of range [1; 64]
+ValueError: signal number -1 out of range [1; 64]
+ValueError: signal number 65 out of range [1; 64]
+ValueError: signal number 1000 out of range [1; 64]
+ValueError: signal number -1 out of range [1; 64]
+ValueError: signal number -1 out of range [1; 64]
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+TypeError: 'NoneType' object cannot be interpreted as an integer
+TypeError: 'int' object is not iterable
+TypeError: 'NoneType' object is not iterable
+TypeError: 'str' object cannot be interpreted as an integer
+ValueError: signal number 0 out of range [1; 64]
+ValueError: signal number -1 out of range [1; 64]
+ValueError: signal number 65 out of range [1; 64]
+ValueError: signal number 1000 out of range [1; 64]
+ValueError: signal number -1 out of range [1; 64]
+ValueError: signal number -1 out of range [1; 64]
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+TypeError: 'NoneType' object cannot be interpreted as an integer
+TypeError: 'int' object is not iterable
+TypeError: 'NoneType' object is not iterable
+TypeError: 'str' object cannot be interpreted as an integer
+ValueError: signal number 0 out of range [1; 64]
+ValueError: signal number -1 out of range [1; 64]
+ValueError: signal number 65 out of range [1; 64]
+ValueError: signal number 1000 out of range [1; 64]
+ValueError: signal number -1 out of range [1; 64]
+ValueError: signal number -1 out of range [1; 64]
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+TypeError: 'NoneType' object cannot be interpreted as an integer
+TypeError: pthread_sigmask expected 2 arguments, got 0
+TypeError: pthread_sigmask expected 2 arguments, got 1
+TypeError: 'str' object cannot be interpreted as an integer
+OSError: [Errno 22] Invalid argument
+OSError: [Errno 22] Invalid argument
+ValueError: timeout must be non-negative
+TypeError: must be real number, not str
+TypeError: must be real number, not NoneType
+ValueError: Invalid value NaN (not a number)
+TypeError: sigtimedwait expected 2 arguments, got 1
+None
+None
+OverflowError: timestamp out of range for C PyTime_t
+set()
+[('RuntimeWarning', 'invalid signal number 32, please use valid_signals()'), ('RuntimeWarning', 'invalid signal number 33, please use valid_signals()')]
+set()
+TypeError: _signal.sigpending() takes no arguments (1 given)
+TypeError: _signal.valid_signals() takes no arguments (1 given)
+TypeError: _signal.pause() takes no arguments (1 given)
+TypeError: pthread_kill expected 2 arguments, got 0
+TypeError: pthread_kill() argument 1 must be int, not str
+TypeError: pthread_kill() argument 1 must be int, not float
+TypeError: pthread_kill() argument 1 must be int, not None
+None
+OSError: [Errno 22] Invalid argument
+TypeError: 'str' object cannot be interpreted as an integer
+OSError: [Errno 22] Invalid argument
+TypeError: pidfd_send_signal expected at least 2 arguments, got 0
+OSError: [Errno 9] Bad file descriptor
+TypeError: siginfo must be None
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: pidfd_send_signal expected at most 4 arguments, got 5
+None
+None
+OSError: [Errno 22] Invalid argument
+Terminated True
+True

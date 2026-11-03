@@ -1,0 +1,161 @@
+status: 0
+script: d0626eb4679fb891
+---
+[(8, 3.0, 'abab', b'AA')]
+[('', 'int,float,str,bytes,NoneType', 'float', 'int')]
+r_none [(None, 'null')]
+r_int [(4611686018427387904, 'integer')]
+r_neg [(-5, 'integer')]
+r_bool [(1, 'integer')]
+r_float [(2.0, 'real')]
+r_float2 [(1.25, 'real')]
+r_str [('hé😀', 'text')]
+r_empty [('', 'text')]
+r_nul [('a\x00b', 'text')]
+r_bytes [(b'\x00\xff', 'blob')]
+r_ba [(b'ba', 'blob')]
+r_mv [(b'mv', 'blob')]
+r_eb [(b'', 'blob')]
+DataError: string or blob too big
+OperationalError: user-defined function raised exception
+OperationalError: user-defined function raised exception
+OperationalError: user-defined function raised exception
+OperationalError: user-defined function raised exception
+OperationalError: user-defined function raised exception
+MemoryError: 
+DataError: string or blob too big
+[(3,)]
+OperationalError: wrong number of arguments to function two()
+[(3, -5, -6)]
+[(500,)]
+[(3,)]
+OperationalError: non-deterministic functions prohibited in index expressions
+OperationalError: user-defined function raised exception
+OperationalError: user-defined function raised exception
+[('unicode name',)]
+TypeError: create_function() takes exactly 3 positional arguments (0 given)
+TypeError: create_function() takes exactly 3 positional arguments (1 given)
+TypeError: create_function() takes exactly 3 positional arguments (2 given)
+TypeError: create_function() argument 1 must be str, not int
+TypeError: 'str' object cannot be interpreted as an integer
+ProgrammingError: 'narg' must be between -1 and 100, not -2
+ProgrammingError: 'narg' must be between -1 and 100, not 1000
+TypeError: create_function() takes exactly 3 positional arguments (4 given)
+TypeError: create_function() takes exactly 3 positional arguments (2 given)
+TypeError: create_function() takes exactly 3 positional arguments (0 given)
+ValueError: embedded null character
+OverflowError: Python int too large to convert to C int
+TypeError: create_function() got an unexpected keyword argument 'nope'
+TypeError: create_function() takes at most 4 arguments (5 given)
+OperationalError: Error creating function
+[(10,)]
+[(45,)] [('x0', 18), ('x1', 12), ('x2', 15)] [(None,)] [(45, 90)]
+[("[(0, 'x0'), (1, 'x1')]",)] [('[(), ()]',)]
+OperationalError: user-defined aggregate's '__init__' method raised error
+[(None,)]
+OperationalError: user-defined aggregate's 'step' method not defined
+[(None,)]
+OperationalError: user-defined aggregate's 'step' method raised error
+[(None,)]
+OperationalError: user-defined aggregate's 'finalize' method not defined
+[(None,)]
+OperationalError: user-defined aggregate's 'finalize' method raised error
+[(None,)]
+OperationalError: user-defined aggregate's 'finalize' method raised error
+[(None,)]
+TypeError: create_aggregate() takes exactly 3 positional arguments (0 given)
+TypeError: create_aggregate() takes exactly 3 positional arguments (2 given)
+TypeError: create_aggregate() argument 1 must be str, not int
+TypeError: 'str' object cannot be interpreted as an integer
+ProgrammingError: 'n_arg' must be between -1 and 100, not -2
+TypeError: create_aggregate() takes at most 3 arguments (4 given)
+TypeError: create_aggregate() takes exactly 3 positional arguments (2 given)
+ProgrammingError: 'n_arg' must be between -1 and 100, not 500
+[(0, 1), (1, 3), (2, 6), (3, 9), (4, 12), (5, 15), (6, 18), (7, 21), (8, 24), (9, 17)] [(45,)]
+OperationalError: user-defined aggregate's 'inverse' method not defined
+OperationalError: user-defined aggregate's 'inverse' method raised error
+OperationalError: user-defined aggregate's 'value' method not defined
+OperationalError: user-defined aggregate's 'value' method raised error
+OperationalError: unable to set result from user-defined aggregate's 'value' method
+OperationalError: user-defined aggregate's '__init__' method raised error
+OperationalError: user-defined aggregate's 'step' method raised error
+OperationalError: no such function: wsum
+None
+TypeError: create_window_function() takes exactly 3 positional arguments (0 given)
+TypeError: create_window_function() takes exactly 3 positional arguments (2 given)
+TypeError: create_window_function() argument 1 must be str, not int
+ProgrammingError: 'num_params' must be between -1 and 100, not -2
+TypeError: create_window_function() takes at most 3 arguments (4 given)
+InterfaceError: bad parameter or other API misuse
+[('x2',), ('x1',), ('x0',)] [(0, 1)]
+[('x0',), ('x1',), ('x2',)]
+10
+10
+ZeroDivisionError: division by zero
+OperationalError: no such collation sequence: rev
+10
+TypeError: create_collation() takes exactly 2 positional arguments (0 given)
+TypeError: create_collation() takes exactly 2 positional arguments (1 given)
+TypeError: create_collation() argument 1 must be str, not int
+TypeError: parameter must be callable
+TypeError: create_collation() takes at most 2 arguments (3 given)
+TypeError: create_collation() takes exactly 2 positional arguments (1 given)
+ValueError: embedded null character
+OperationalError: unable to delete/modify collation sequence due to active statements
+[(21, None, None, None, None), (20, 't', 'a', 'main', None), (20, 't', 'b', 'main', None)]
+[(0,)]
+DatabaseError: access to t.b is prohibited
+[(0, None), (1, None)]
+DatabaseError: not authorized
+DatabaseError: not authorized
+DatabaseError: not authorized
+DatabaseError: not authorized
+DatabaseError: not authorized
+OperationalError: authorizer malfunction
+DatabaseError: not authorized
+DatabaseError: not authorized
+[('x0',)]
+TypeError: set_authorizer() takes exactly 1 positional argument (0 given)
+TypeError: set_authorizer() takes at most 1 argument (2 given)
+TypeError: set_authorizer() takes exactly 1 positional argument (0 given)
+DatabaseError: not authorized
+True
+0
+OperationalError: interrupted
+OperationalError: interrupted
+[(1,)]
+0
+0
+OperationalError: interrupted
+TypeError: set_progress_handler() takes at least 1 positional argument (0 given)
+TypeError: set_progress_handler() missing required argument 'n' (pos 2)
+TypeError: 'str' object cannot be interpreted as an integer
+None
+TypeError: set_progress_handler() takes at least 1 positional argument (0 given)
+TypeError: set_progress_handler() takes at most 2 arguments (3 given)
+["select 1, 'its'", 'insert into t values (100, NULL)', 'COMMIT', 'select 1;', ' select 2;']
+[]
+[(4,)]
+TypeError: set_trace_callback() takes exactly 1 positional argument (0 given)
+TypeError: set_trace_callback() takes at most 1 argument (2 given)
+TypeError: set_trace_callback() takes exactly 1 positional argument (0 given)
+OperationalError: user-defined function raised exception
+OperationalError: user-defined aggregate's 'step' method raised error
+DatabaseError: not authorized
+[('ZeroDivisionError', 'boom', 'Exception ignored on sqlite3 callback', None), ('ZeroDivisionError', 'division by zero', 'Exception ignored on sqlite3 callback', None), ('ZeroDivisionError', 'division by zero', 'Exception ignored on sqlite3 callback', None), ('ZeroDivisionError', 'division by zero', 'Exception ignored on sqlite3 callback', None)]
+TypeError: _sqlite3.enable_callback_tracebacks() takes exactly one argument (0 given)
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: _sqlite3.enable_callback_tracebacks() takes exactly one argument (2 given)
+TypeError: _sqlite3.enable_callback_tracebacks() takes no keyword arguments
+('alive', 1, 1)
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+ProgrammingError: Cannot operate on a closed database.
+(1,) (2,) ['select 1']
+(3,)
+(4,)
+OperationalError: user-defined function raised exception

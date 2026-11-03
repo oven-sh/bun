@@ -1,0 +1,41 @@
+status: 0
+script: da1e0049862fd09d
+source: 708052b580d2cc9e
+---
+c.m => TypeError descriptor 'upper' for 'str' objects doesn't apply to a 'C' object
+c.m() => TypeError descriptor 'upper' for 'str' objects doesn't apply to a 'C' object
+c.w => TypeError descriptor '__len__' for 'list' objects doesn't apply to a 'C' object
+c.w() => TypeError descriptor '__len__' requires a 'list' object but received a 'C'
+len(c) => TypeError descriptor '__len__' requires a 'list' object but received a 'C'
+iter(c) => TypeError descriptor '__iter__' requires a 'list' object but received a 'C'
+hash(c) => TypeError descriptor '__hash__' requires a 'str' object but received a 'C'
+repr(c) => TypeError descriptor '__repr__' requires a 'bytes' object but received a 'C'
+c[0] => TypeError descriptor '__getitem__' for 'dict' objects doesn't apply to a 'C' object
+c + c => TypeError descriptor '__add__' requires a 'list' object but received a 'C'
+c() => TypeError descriptor 'lower' for 'str' objects doesn't apply to a 'C' object
+c == c => TypeError descriptor '__eq__' requires a 'dict' object but received a 'C'
+bool(c) => TypeError descriptor '__bool__' requires a 'int' object but received a 'C'
+1 in c => TypeError descriptor '__contains__' for 'set' objects doesn't apply to a 'C' object
+c.c([1]) => {1: None}
+w() => TypeError descriptor 'upper' for 'str' objects doesn't apply to a 'C' object
+str.upper.__get__(c) => TypeError descriptor 'upper' for 'str' objects doesn't apply to a 'C' object
+str.upper.__get__(c, C) => TypeError descriptor 'upper' for 'str' objects doesn't apply to a 'C' object
+str.upper.__get__(None, str) => <method 'upper' of 'str' objects>
+str.upper.__get__("a")() => 'A'
+list.__len__.__get__(c) => TypeError descriptor '__len__' for 'list' objects doesn't apply to a 'C' object
+getattr(c, "m") => TypeError descriptor 'upper' for 'str' objects doesn't apply to a 'C' object
+[x for x in c] => TypeError descriptor '__iter__' requires a 'list' object but received a 'C'
+super(C, c).__init__ and C.m => <method 'upper' of 'str' objects>
+(S("a").up(), len(S("ab"))) => ('A', 2)
+G().real => TypeError descriptor '__getattribute__' requires a 'type' object but received a 'G'
+H().x => TypeError descriptor '__getattribute__' requires a 'module' object but received a 'H'
+object.__new__(K).x => TypeError descriptor 'x' for 'A' objects doesn't apply to a 'K' object
+setattr(object.__new__(K), "x", 1) => TypeError descriptor 'x' for 'A' objects doesn't apply to a 'K' object
+delattr(object.__new__(K), "x") => TypeError descriptor 'x' for 'A' objects doesn't apply to a 'K' object
+object.__new__(K).r => TypeError descriptor 'real' for 'int' objects doesn't apply to a 'K' object
+setattr(object.__new__(K), "r", 1) => TypeError descriptor 'real' for 'int' objects doesn't apply to a 'K' object
+K() => <__main__.K object at 0x7f63def0d6d0>
+N().f => TypeError descriptor 'fromkeys' requires a subtype of 'dict' but received 'N'
+N.f => TypeError descriptor 'fromkeys' requires a subtype of 'dict' but received 'N'
+N.h("00") => TypeError descriptor 'fromhex' requires a subtype of 'bytes' but received 'N'
+(O.f([1]), type(O().f([2])).__name__) => ({1: None}, 'O')

@@ -1,0 +1,9 @@
+status: 0
+script: 2de2a234c1fdfd91
+---
+[<class '__main__.A'>, <class 'object'>] [<class '__main__.D'>, <class '__main__.B'>, <class '__main__.C'>, <class '__main__.A'>, <class 'object'>] C
+(<class 'object'>, <class '__main__.A'>, <class '__main__.C'>, <class '__main__.B'>, <class '__main__.D'>, <class '__main__.X'>)
+A
+TypeError X.mro() returned base with unsuitable layout ('dict')
+TypeError X.mro() returned a non-class ('int')
+TypeError 'int' object is not iterable

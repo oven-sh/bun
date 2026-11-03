@@ -1,0 +1,235 @@
+status: 0
+script: 9eb177696b7c9ac7
+---
+== what it is
+True collections OrderedDict OrderedDict
+(<class 'collections.OrderedDict'>, <class 'dict'>, <class 'object'>) Dictionary that remembers insertion order
+['__delitem__', '__dict__', '__eq__', '__ge__', '__gt__', '__hash__', '__init__', '__ior__', '__iter__', '__le__', '__lt__', '__ne__', '__or__', '__reduce__', '__repr__', '__reversed__', '__ror__', '__setitem__', '__sizeof__', 'clear', 'copy', 'fromkeys', 'items', 'keys', 'move_to_end', 'pop', 'popitem', 'setdefault', 'update', 'values']
+True True True
+None ('TypeError', "unhashable type: 'collections.OrderedDict'")
+wrapper_descriptor method_descriptor classmethod_descriptor getset_descriptor
+fromkeys ($type, /, iterable, value=None)
+setdefault ($self, /, key, default=None)
+pop ($self, /, key, default=<unrepresentable>)
+popitem ($self, /, last=True)
+move_to_end ($self, /, key, last=True)
+copy ($self, /)
+clear ($self, /)
+keys ($self, /)
+update None
+__reduce__ ($self, /)
+__sizeof__ ($self, /)
+__reversed__ ($self, /)
+== making one
+OrderedDict() OrderedDict({'c': 1, 'b': 2, 'a': 3, 'd': 4, 'e': 5}) OrderedDict({'c': 1, 'b': 2, 'a': 3, 'd': 4, 'e': 5}) OrderedDict({'c': 1, 'b': 2, 'a': 3, 'd': 4, 'e': 5}) OrderedDict({'c': 9, 'b': 2, 'a': 3, 'd': 4, 'e': 5, 'z': 0})
+OrderedDict({'self': 1, 'other': 2}) OrderedDict({'a': 2})
+('TypeError', 'expected at most 1 argument, got 2') ('TypeError', "'int' object is not iterable") ('TypeError', "'int' object is not iterable") ('ValueError', 'need more than 1 value to unpack') ('ValueError', 'too many values to unpack (expected 2)') ('ValueError', 'need more than 0 values to unpack')
+('TypeError', "descriptor '__init__' of 'collections.OrderedDict' object needs an argument") ('TypeError', "descriptor '__init__' requires a 'collections.OrderedDict' object but received a 'dict'") ('TypeError', 'update() takes at most 1 positional argument (2 given)')
+OrderedDict({'c': 10, 'b': 2, 'a': 3, 'd': 4, 'e': 5, 'z': 26})
+OrderedDict({'x': 'X', 'y': 'Y'}) OrderedDict({'p': 1, 'q': 2}) OrderedDict({'c': 1, 'b': 2, 'a': 3, 'd': 4, 'e': 5}) OrderedDict({'c': 1, 'b': 2, 'a': 3, 'd': 4, 'e': 5})
+OrderedDict({'a': 'b', 'c': 'd'}) OrderedDict({'a': 1})
+== items
+OrderedDict({'c': 1, 'b': 20, 'd': 4, 'e': 5, 'f': 6}) 5 False True 20 None 0 ('KeyError', "'a'") ('KeyError', "'a'")
+['c', 'b', 'd', 'e', 'f', 'a'] ['a', 'f', 'e', 'd', 'b', 'c'] ['c', 'b', 'd', 'e', 'f', 'a'] [1, 20, 4, 5, 6, 30] [('c', 1), ('b', 20), ('d', 4), ('e', 5), ('f', 6), ('a', 30)]
+['a', 'f', 'e', 'd', 'b', 'c'] [30, 6, 5, 4, 20, 1] [('a', 30), ('f', 6), ('e', 5), ('d', 4), ('b', 20), ('c', 1)]
+('TypeError', "unhashable type: 'list'") ('TypeError', "unhashable type: 'list'") ('TypeError', "unhashable type: 'list'") ('TypeError', "unhashable type: 'list'") ('TypeError', "cannot use 'list' as a dict key (unhashable type: 'list')")
+== pop, popitem, setdefault
+2 None 7 4 8 9 ('KeyError', "'b'") ('TypeError', "pop() missing required argument 'key' (pos 1)") OrderedDict({'c': 1, 'a': 3, 'e': 5})
+('e', 5) ('c', 1) ('a', 3) ('KeyError', "'dictionary is empty'") ('KeyError', "'dictionary is empty'") OrderedDict()
+('TypeError', 'popitem() takes at most 1 argument (2 given)') ('c', 1) ('c', 1) ('e', 5)
+1 None 5 6 7 OrderedDict({'c': 1, 'b': 2, 'a': 3, 'd': 4, 'e': 5, 'x': None, 'y': 5, 'z': 6, 'w': 7})
+== move_to_end
+abdec abdec bdeca ebdca ebdca bedca becad 
+aecdb bdcea
+('KeyError', "'x'") ('KeyError', "'x'") ('KeyError', "'x'") ('TypeError', "move_to_end() missing required argument 'key' (pos 1)")
+OrderedDict({'a': 1})
+OrderedDict({2: 'b', 1: 'a'})
+OrderedDict({1: 'a', 2: 'b'})
+== a queue at either end, for long
+[19990, 19991, 19992, 19993, 19994, 19995, 19996, 19997, 19998, 19999]
+[-20000, -19999, -19998, -19997, -19996, -19995, -19994, -19993, -19992, -19991]
+10 True True
+4802 [51, 10, 78, 43, 12, 70, 35, 1] 32
+[2999, 2998, 2997, 2996, 2995] [4, 3, 2, 1, 0] [0, 1, 2] 3000
+[2999, 2997, 2995, 2993, 2991] [9, 7, 5, 3, 1] 1500 (2999, None) (1, None)
+== equality minds the order, between two of them
+False True True False True True False False False True False
+NotImplemented NotImplemented True NotImplemented NotImplemented NotImplemented NotImplemented ('TypeError', "'<' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'")
+True True False False True
+True True False True True
+== repr
+OrderedDict() OrderedDict({'c': 1, 'b': 2, 'a': 3, 'd': 4, 'e': 5}) OrderedDict({'c': 1, 'b': 2, 'a': 3, 'd': 4, 'e': 5}) Sub() Sub({'c': 1, 'b': 2, 'a': 3, 'd': 4, 'e': 5})          OrderedDict({'a': 1})
+OrderedDict({'self': ..., 'list': [...]})
+OrderedDict({'v': odict_values([..., odict_items([('v', ...), ('i', ...), ('k', odict_keys(['v', 'i', 'k']))]), odict_keys(['v', 'i', 'k'])]), 'i': odict_items([('v', odict_values([..., ..., odict_keys(['v', 'i', 'k'])])), ('i', ...), ('k', odict_keys(['v', 'i', 'k']))]), 'k': odict_keys(['v', 'i', 'k'])})
+odict_keys(['c', 'b', 'a', 'd', 'e']) odict_values([1, 2, 3, 4, 5]) odict_items([('c', 1), ('b', 2), ('a', 3), ('d', 4), ('e', 5)]) odict_keys([]) odict_values([]) odict_items([])
+== views and iterators
+odict_keys odict_values odict_items odict_iterator odict_iterator odict_iterator odict_iterator
+(<class 'odict_keys'>, <class 'dict_keys'>, <class 'object'>) (<class 'odict_values'>, <class 'dict_values'>, <class 'object'>) (<class 'odict_items'>, <class 'dict_items'>, <class 'object'>)
+True True True
+['a', 'c'] ['a', 'b', 'c', 'd', 'e', 'q'] ['b', 'c', 'd', 'e'] ['b', 'c', 'd', 'e', 'q'] True True True True
+5 True True False True True mappingproxy
+('TypeError', "cannot create 'odict_keys' instances") ('TypeError', "cannot create 'odict_iterator' instances")
+c True ['b', 'a', 'd', 'e'] [] ('StopIteration', '')
+('TypeError', "object of type 'odict_iterator' has no len()") False ['__iter__', '__next__']
+('new', 0) 6
+== changes while iterating
+add ['c', ('RuntimeError', 'OrderedDict mutated during iteration'), ('StopIteration', '')]
+add ['e', ('RuntimeError', 'OrderedDict mutated during iteration'), ('StopIteration', '')]
+add [1, ('RuntimeError', 'OrderedDict mutated during iteration'), ('StopIteration', '')]
+add [('e', 5), ('RuntimeError', 'OrderedDict mutated during iteration'), ('StopIteration', '')]
+delete ['c', ('RuntimeError', 'OrderedDict mutated during iteration'), ('StopIteration', '')]
+delete ['e', ('RuntimeError', 'OrderedDict mutated during iteration'), ('StopIteration', '')]
+delete [1, ('RuntimeError', 'OrderedDict mutated during iteration'), ('StopIteration', '')]
+delete [('e', 5), ('RuntimeError', 'OrderedDict mutated during iteration'), ('StopIteration', '')]
+replace a value ['c', 'b', 'a']
+replace a value ['e', 'd', 'a']
+replace a value [1, 2, 3]
+replace a value [('e', 5), ('d', 40), ('a', 3)]
+delete and add ['c', ('RuntimeError', 'OrderedDict mutated during iteration'), ('StopIteration', '')]
+delete and add ['e', ('RuntimeError', 'OrderedDict mutated during iteration'), ('StopIteration', '')]
+delete and add [1, ('RuntimeError', 'OrderedDict mutated during iteration'), ('StopIteration', '')]
+delete and add [('e', 5), ('RuntimeError', 'OrderedDict mutated during iteration'), ('StopIteration', '')]
+move ['c', ('RuntimeError', 'OrderedDict mutated during iteration'), ('StopIteration', '')]
+move ['e', ('RuntimeError', 'OrderedDict mutated during iteration'), ('StopIteration', '')]
+move [1, ('RuntimeError', 'OrderedDict mutated during iteration'), ('StopIteration', '')]
+move [('e', 5), ('RuntimeError', 'OrderedDict mutated during iteration'), ('StopIteration', '')]
+move what is there already ['c', 'b', 'a']
+move what is there already ['e', 'd', 'a']
+move what is there already [1, 2, 3]
+move what is there already [('e', 5), ('d', 4), ('a', 3)]
+clear ['c', ('RuntimeError', 'OrderedDict mutated during iteration'), ('StopIteration', '')]
+clear ['e', ('RuntimeError', 'OrderedDict mutated during iteration'), ('StopIteration', '')]
+clear [1, ('RuntimeError', 'OrderedDict mutated during iteration'), ('StopIteration', '')]
+clear [('e', 5), ('RuntimeError', 'OrderedDict mutated during iteration'), ('StopIteration', '')]
+popitem ['c', ('RuntimeError', 'OrderedDict mutated during iteration'), ('StopIteration', '')]
+popitem ['e', ('RuntimeError', 'OrderedDict mutated during iteration'), ('StopIteration', '')]
+popitem [1, ('RuntimeError', 'OrderedDict mutated during iteration'), ('StopIteration', '')]
+popitem [('e', 5), ('RuntimeError', 'OrderedDict mutated during iteration'), ('StopIteration', '')]
+pop ['c', ('RuntimeError', 'OrderedDict mutated during iteration'), ('StopIteration', '')]
+pop ['e', ('RuntimeError', 'OrderedDict mutated during iteration'), ('StopIteration', '')]
+pop [1, ('RuntimeError', 'OrderedDict mutated during iteration'), ('StopIteration', '')]
+pop [('e', 5), ('RuntimeError', 'OrderedDict mutated during iteration'), ('StopIteration', '')]
+setdefault of a new key ['c', ('RuntimeError', 'OrderedDict mutated during iteration'), ('StopIteration', '')]
+setdefault of a new key ['e', ('RuntimeError', 'OrderedDict mutated during iteration'), ('StopIteration', '')]
+setdefault of a new key [1, ('RuntimeError', 'OrderedDict mutated during iteration'), ('StopIteration', '')]
+setdefault of a new key [('e', 5), ('RuntimeError', 'OrderedDict mutated during iteration'), ('StopIteration', '')]
+setdefault of an old key ['c', 'b', 'a']
+setdefault of an old key ['e', 'd', 'a']
+setdefault of an old key [1, 2, 3]
+setdefault of an old key [('e', 5), ('d', 4), ('a', 3)]
+update with the same keys ['c', 'b', 'a']
+update with the same keys ['e', 'd', 'a']
+update with the same keys [1, 2, 3]
+update with the same keys [('e', 5), ('d', 4), ('a', 3)]
+[]
+a
+('StopIteration', '') ('StopIteration', '')
+('RuntimeError', 'OrderedDict mutated during iteration') ('RuntimeError', 'OrderedDict mutated during iteration') OrderedDict({'a': 3, 'd': 4, 'e': 5, 'c': 1})
+== copies
+OrderedDict OrderedDict({'c': 1, 'b': 2, 'a': 3, 'd': 4, 'e': 5}) {}
+OrderedDict OrderedDict({'c': 1, 'b': 2, 'a': 3, 'd': 4, 'e': 5}) {}
+OrderedDict OrderedDict({'c': 1, 'b': 2, 'a': 3, 'd': 4, 'e': 5}) {}
+Sub Sub({'c': 1, 'b': 2, 'a': 3, 'd': 4, 'e': 5}) {}
+Sub Sub({'c': 1, 'b': 2, 'a': 3, 'd': 4, 'e': 5}) {'attr': [1]}
+Sub Sub({'c': 1, 'b': 2, 'a': 3, 'd': 4, 'e': 5}) {'attr': [1]}
+True True True False {}
+OrderedDict({'a': None, 'b': None, 'c': None}) OrderedDict({'a': 0, 'b': 0, 'c': 0}) OrderedDict({'a': 1, 'b': 1}) Sub({'a': None, 'b': None}) Sub ('TypeError', "fromkeys() missing required argument 'iterable' (pos 1)") ('TypeError', "'int' object is not iterable")
+{'c': 1, 'b': 2, 'a': 3, 'd': 4, 'e': 5} True {'c': 1, 'b': 2, 'a': 3, 'd': 4, 'e': 5} {'c': 1, 'b': 2, 'a': 3, 'd': 4, 'e': 5} ['c', 'b', 'a', 'd', 'e'] True
+== | and |=
+OrderedDict OrderedDict({'a': 4, 'b': 2, 'c': 3})
+OrderedDict OrderedDict({'c': 3, 'a': 1, 'b': 2})
+OrderedDict OrderedDict({'a': 5, 'b': 2, 'z': 0})
+OrderedDict OrderedDict({'z': 0, 'a': 1, 'b': 2})
+Sub Sub({'a': 4, 'b': 2, 'c': 3})
+OrderedDict OrderedDict({'a': 4, 'b': 2, 'c': 3})
+Sub Sub({'q': 1, 'a': 1, 'b': 2})
+('TypeError', "unsupported operand type(s) for |: 'collections.OrderedDict' and 'list'") ('TypeError', "unsupported operand type(s) for |: 'list' and 'collections.OrderedDict'") NotImplemented NotImplemented ('TypeError', "'int' object is not iterable")
+True OrderedDict({'a': 4, 'b': 2, 'c': 3})
+OrderedDict({'a': 4, 'b': 2, 'c': 3, 'k': 1})
+OrderedDict({'a': 4, 'b': 2, 'c': 3, 'k': 1, 'x': 'X', 'y': 'Y'})
+== pickling
+<class 'collections.OrderedDict'> () None None odict_iterator [('c', 1), ('b', 2), ('a', 3), ('d', 4), ('e', 5)]
+Sub () {'attr': [1]} None [('c', 1), ('b', 2), ('a', 3), ('d', 4), ('e', 5)]
+(<class 'collections.OrderedDict'>, ()) (None, None)
+True OrderedDict
+True (['b', 'a', 'd', 'e'],) ['b', 'a', 'd', 'e'] ['b', 'a', 'd', 'e'] b
+True (['d', 'a', 'b', 'c'],) ['d', 'a', 'b', 'c'] ['d', 'a', 'b', 'c'] d
+True (['b', 'a', 'd', 'e'],) ['b', 'a', 'd', 'e'] ['b', 'a', 'd', 'e'] b
+True ([2, 3, 4, 5],) [2, 3, 4, 5] [2, 3, 4, 5] 2
+True ([('b', 2), ('a', 3), ('d', 4), ('e', 5)],) [('b', 2), ('a', 3), ('d', 4), ('e', 5)] [('b', 2), ('a', 3), ('d', 4), ('e', 5)] ('b', 2)
+True ([('d', 4), ('a', 3), ('b', 2), ('c', 1)],) [('d', 4), ('a', 3), ('b', 2), ('c', 1)] [('d', 4), ('a', 3), ('b', 2), ('c', 1)] ('d', 4)
+([],)
+== attributes, weak references, slots
+{'x': 1} {'x': 1} 1 OrderedDict() ('AttributeError', "'collections.OrderedDict' object has no attribute 'y'")
+2 {'y': 2}
+{}
+True 1
+Slotted({'a': 1}) 5 {'other': 6} 5 5
+True True True
+True True
+== what subclasses override is what gets called
+(Loud({'a': 1, 'b': 2}), [('set', 'a', 1), ('set', 'b', 2), ('keys',), ('get', 'a'), ('get', 'b')])
+(None, [('set', 'c', 3), ('set', 'd', 4)])
+(None, [('set', 'e', 5)])
+(None, [('keys',), ('get', 'f'), ('set', 'f', 6)])
+(1, [('in', 'a'), ('get', 'a')])
+(9, [('in', 'g'), ('set', 'g', 9)])
+(1, [])
+(None, [])
+(('KeyError', "'nope'"), [])
+(('g', 9), [])
+(('b', 2), [])
+(None, [])
+(Loud({'d': 4, 'e': 5, 'f': 6, 'c': 3}), [('get', 'd'), ('set', 'd', 4), ('get', 'e'), ('set', 'e', 5), ('get', 'f'), ('set', 'f', 6), ('get', 'c'), ('set', 'c', 3), ('keys',), ('get', 'd'), ('get', 'e'), ('get', 'f'), ('get', 'c')])
+(Loud({'x': 0, 'y': 0}), [('set', 'x', 0), ('set', 'y', 0), ('keys',), ('get', 'x'), ('get', 'y')])
+(None, [])
+("Loud({'a': 1, 'b': 2})", [('keys',), ('get', 'a'), ('get', 'b')])
+(True, [])
+[('items',)]
+(['a', 'b'], [('iter',)])
+({'a': 1, 'b': 2}, [('keys',), ('get', 'a'), ('get', 'b')])
+(Loud({'a': 1, 'b': 2, 'z': 1}), [('keys',), ('get', 'a'), ('set', 'a', 1), ('get', 'b'), ('set', 'b', 2), ('set', 'z', 1), ('keys',), ('get', 'a'), ('get', 'b'), ('get', 'z')])
+(Loud({'z': 1, 'a': 1, 'b': 2}), [('set', 'z', 1), ('keys',), ('get', 'a'), ('set', 'a', 1), ('get', 'b'), ('set', 'b', 2), ('keys',), ('get', 'z'), ('get', 'a'), ('get', 'b')])
+('missing', [('get', 'nope'), ('missing', 'nope')])
+(None, [])
+([1, 2], [])
+([('a', 1), ('b', 2)], [])
+(Loud({'a': 1, 'b': 2}), [('items',), ('set', 'a', 1), ('set', 'b', 2), ('keys',), ('get', 'a'), ('get', 'b')])
+(OrderedDict({'a': 1, 'b': 2}), [('keys',), ('get', 'a'), ('get', 'b')])
+0 None ('KeyError', "'x'") 5 None Missing({'a': 1, 'x': 5})
+== keys that misbehave
+OrderedDict({Key(0): 3, Key(1): 4, Key(2): 5})
+('KeyError', 'Key(100)') KeyError KeyError KeyError KeyError 4
+('ZeroDivisionError', 'eq') ('ZeroDivisionError', 'eq') ('ZeroDivisionError', 'eq') ('ZeroDivisionError', 'eq') 1
+False
+== going behind its back with dict's own methods
+100 ['c', 'b', 'a', 'd', 'e']
+5 True 3 3 ['a', 'b', 'c', 'd', 'e'] dict_keys True True dict
+== the garbage collector
+None
+True
+None
+== in the library
+{"c": 1, "b": 2, "a": 3, "d": 4, "e": 5} OrderedDict({'b': 1, 'a': 2})
+OrderedDict({'c': 1, 'b': 2, 'a': 3, 'd': 4, 'e': 5})
+OrderedDict([('key0', []),
+             ('key1', [0]),
+             ('key2', [0, 1]),
+             ('key3', [0, 1, 2]),
+             ('key4', [0, 1, 2, 3]),
+             ('key5', [0, 1, 2, 3, 4]),
+             ('key6',
+              [0, 1, 2, 3, 4, 5]),
+             ('key7',
+              [0, 1, 2, 3, 4, 5, 6])])
+OrderedDict()
+odict_keys(['a', 'b', 'c', 'd', 'e']) odict_items([('a', 3),
+ ('b', 2),
+ ('c', 1),
+ ('d', 4),
+ ('e', 5)]) Sub({'c': 1, 'b': 2, 'a': 3, 'd': 4, 'e': 5})
+mappingproxy typing.OrderedDict[str, int] collections.OrderedDict[str, int] True
+{'x': 1, 'y': 2}
+OrderedDict({'a': 5, 'b': 2, 'r': 2, 'c': 1, 'd': 1})
+2 ['a', 'b'] b OrderedDict({'a': 3, 'b': 2, 'c': 1, 'd': 4, 'e': 5})
+1 {'b': 2} dict

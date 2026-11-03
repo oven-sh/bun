@@ -1,0 +1,436 @@
+status: 0
+script: 7389ec620f3b3749
+source: 3e50345491e30d22
+---
+abs(5) => 5
+abs(-5) => 5
+abs(0) => 0
+abs(-0.0) => 0.0
+abs(-1.5) => 1.5
+abs(3 + 4j) => 5.0
+abs(True) => 1
+abs(-(2 ** 70)) => 1180591620717411303424
+abs(float("-inf")) => inf
+abs(float("nan")) => nan
+abs(-(2 ** 63)) => 9223372036854775808
+type(abs(True)) => <class 'int'>
+abs(1e308 + 1e308j) => 1.4142135623730951e+308
+abs("a") => TypeError: bad operand type for abs(): 'str'
+abs(None) => TypeError: bad operand type for abs(): 'NoneType'
+abs([]) => TypeError: bad operand type for abs(): 'list'
+abs() => TypeError: abs() takes exactly one argument (0 given)
+abs(1, 2) => TypeError: abs() takes exactly one argument (2 given)
+abs(1e308 * 10 + 1j) => inf
+abs(complex(1.7e308, 1.7e308)) => OverflowError: absolute value too large
+divmod(7, 2) => (3, 1)
+divmod(-7, 2) => (-4, 1)
+divmod(7, -2) => (-4, -1)
+divmod(-7, -2) => (3, -1)
+divmod(0, 5) => (0, 0)
+divmod(7.5, 2) => (3.0, 1.5)
+divmod(-7.5, 2) => (-4.0, 0.5)
+divmod(7, 2.5) => (2.0, 2.0)
+divmod(2 ** 70, 3) => (393530540239137101141, 1)
+divmod(-(2 ** 70), 2 ** 35) => (-34359738368, 0)
+divmod(True, True) => (1, 0)
+divmod(1, float("inf")) => (0.0, 1.0)
+divmod(-1, float("inf")) => (-1.0, inf)
+divmod(5.0, 5) => (1.0, 0.0)
+divmod(-0.0, 1) => (-0.0, 0.0)
+divmod(1e300, 1e-300)[1] >= 0 => True
+divmod(6, 3) => (2, 0)
+divmod(3, 6) => (0, 3)
+divmod(-3, 6) => (-1, 3)
+divmod(1, 0) => ZeroDivisionError: division by zero
+divmod(1.0, 0) => ZeroDivisionError: division by zero
+divmod(1, 0.0) => ZeroDivisionError: division by zero
+divmod(1j, 1) => TypeError: unsupported operand type(s) for divmod(): 'complex' and 'int'
+divmod("a", 1) => TypeError: unsupported operand type(s) for divmod(): 'str' and 'int'
+divmod(1, None) => TypeError: unsupported operand type(s) for divmod(): 'int' and 'NoneType'
+divmod(1) => TypeError: divmod expected 2 arguments, got 1
+divmod(float("inf"), 1) => (nan, nan)
+divmod(float("nan"), 1) => (nan, nan)
+divmod(2 ** 70, 0) => ZeroDivisionError: division by zero
+pow(2, 10) => 1024
+pow(2, -1) => 0.5
+pow(2, 0) => 1
+pow(0, 0) => 1
+pow(-2, 3) => -8
+pow(-2, 2) => 4
+pow(2, 0.5) => 1.4142135623730951
+pow(-8, 1 / 3) => (1.0000000000000002+1.7320508075688772j)
+pow(2.0, 3) => 8.0
+pow(2, 3.0) => 8.0
+pow(1j, 2) => (-1+0j)
+pow(2, 100) => 1267650600228229401496703205376
+pow(10, -2) => 0.01
+pow(0.0, 0) => 1.0
+pow(-1, 0.5) => (6.123233995736766e-17+1j)
+pow(True, 2) => 1
+pow(2, True) => 2
+pow(0, 5) => 0
+pow(-0.0, 3) => -0.0
+pow(float("inf"), 0) => 1.0
+pow(float("nan"), 0) => 1.0
+pow(1, float("nan")) => 1.0
+pow(-1, float("inf")) => 1.0
+pow(2, float("-inf")) => 0.0
+pow(0.5, float("-inf")) => inf
+pow(base=2, exp=3) => 8
+pow(2, exp=3) => 8
+pow(2, 3, mod=5) => 3
+pow(2, 3, None) => 8
+pow(2, 10, 1000) => 24
+pow(3, 200, 13) => 9
+pow(2, -1, 5) => 3
+pow(3, -2, 7) => 4
+pow(-2, 3, 5) => 2
+pow(2, 3, -5) => -2
+pow(-2, 3, -5) => -3
+pow(0, 0, 1) => 0
+pow(5, 0, 7) => 1
+pow(5, 0, 1) => 0
+pow(5, 0, -1) => 0
+pow(2 ** 70, 2 ** 70, 10 ** 9 + 7) => 295837643
+pow(7, 10 ** 18, 10 ** 9 + 7) => 259616729
+pow(2, 5, 2 ** 70) => 32
+pow(10, -1, 7) => 5
+pow(38, -1, 97) => 23
+pow(True, 1, 2) => 1
+pow(1, -1, 1) => 0
+pow(0, 5, 3) => 0
+pow(6, 2, 4) => 0
+pow(0, -1) => ZeroDivisionError: zero to a negative power
+pow(0.0, -1) => ZeroDivisionError: zero to a negative power
+pow(2, 3, 0) => ValueError: pow() 3rd argument cannot be 0
+pow(2, -1, 4) => ValueError: base is not invertible for the given modulus
+pow(2.0, 3, 5) => TypeError: pow() 3rd argument not allowed unless all arguments are integers
+pow(2, 3.0, 5) => TypeError: pow() 3rd argument not allowed unless all arguments are integers
+pow(2, 3, 5.0) => TypeError: pow() 3rd argument not allowed unless all arguments are integers
+pow("a", 2) => TypeError: unsupported operand type(s) for ** or pow(): 'str' and 'int'
+pow(2, "a") => TypeError: unsupported operand type(s) for ** or pow(): 'int' and 'str'
+pow(2) => TypeError: pow() missing required argument 'exp' (pos 2)
+pow() => TypeError: pow() missing required argument 'base' (pos 1)
+pow(1, 2, 3, 4) => TypeError: pow() takes at most 3 arguments (4 given)
+pow(10.0, 400) => OverflowError: (34, 'Numerical result out of range')
+pow(2, None) => TypeError: unsupported operand type(s) for ** or pow(): 'int' and 'NoneType'
+pow(1j, 2, 3) => ValueError: complex modulo
+pow(0j, -1) => ZeroDivisionError: zero to a negative or complex power
+pow(0, -1, 5) => ValueError: base is not invertible for the given modulus
+pow(2, 3, "a") => TypeError: unsupported operand type(s) for ** or pow(): 'int', 'int', 'str'
+pow(6, -1, 9) => ValueError: base is not invertible for the given modulus
+pow(-10.0, 400.5) => OverflowError: complex exponentiation
+0 ** -2 => ZeroDivisionError: zero to a negative power
+0.0 ** -0.5 => ZeroDivisionError: zero to a negative power
+(-0.0) ** -1 => ZeroDivisionError: zero to a negative power
+round(2.5) => 2
+round(3.5) => 4
+round(-2.5) => -2
+round(-3.5) => -4
+round(0.5) => 0
+round(1.5) => 2
+round(2.4) => 2
+round(2.6) => 3
+round(-0.4) => 0
+round(-0.5) => 0
+type(round(2.5)) => <class 'int'>
+round(2.675, 2) => 2.67
+round(2.665, 2) => 2.67
+round(1.005, 2) => 1.0
+round(0.125, 2) => 0.12
+round(0.375, 2) => 0.38
+round(1234.5678, -2) => 1200.0
+round(1234.5678, 0) => 1235.0
+type(round(1234.5678, 0)) => <class 'float'>
+round(1e20) => 100000000000000000000
+round(1.5e300) == int(1.5e300) => True
+round(5) => 5
+round(5, 2) => 5
+round(15, -1) => 20
+round(25, -1) => 20
+round(35, -1) => 40
+round(-15, -1) => -20
+round(-25, -1) => -20
+round(1234, -2) => 1200
+round(1250, -2) => 1200
+round(1350, -2) => 1400
+round(5, -1) => 0
+round(4, -1) => 0
+round(6, -1) => 10
+round(50, -2) => 0
+round(51, -2) => 100
+round(149, -2) => 100
+round(10 ** 30 + 5, -1) => 1000000000000000000000000000000
+round(True) => 1
+type(round(True)) => <class 'int'>
+round(True, 1) => 1
+round(1, -400) => 0
+round(2.5, None) => 2
+round(1.23456789, 5) => 1.23457
+round(1e-10, 5) => 0.0
+round(-1e-10, 5) => -0.0
+round(123.456, 400) => 123.456
+round(123.456, -400) => 0.0
+round(0.1 + 0.2, 15) => 0.3
+round(0.1 + 0.2, 17) => 0.30000000000000004
+round(5e-324, 400) => 5e-324
+round(1.7976931348623157e308, -300) => 1.79769313e+308
+round(-0.0) => 0
+round(-0.0, 1) => -0.0
+round(1e16 + 2) => 10000000000000002
+round(4503599627370497.5) => 4503599627370498
+round(0.49999999999999994) => 0
+round(2 ** 53 + 1) => 9007199254740993
+round(float("inf")) => OverflowError: cannot convert float infinity to integer
+round(float("nan")) => ValueError: cannot convert float NaN to integer
+round(float("inf"), 1) => inf
+round(float("nan"), 1) => nan
+round("a") => TypeError: type str doesn't define __round__ method
+round(1j) => TypeError: type complex doesn't define __round__ method
+round(1.5, 1.5) => TypeError: 'float' object cannot be interpreted as an integer
+round(1.5, "1") => TypeError: 'str' object cannot be interpreted as an integer
+round(1, 1.5) => TypeError: 'float' object cannot be interpreted as an integer
+round() => TypeError: round() missing required argument 'number' (pos 1)
+round(None) => TypeError: type NoneType doesn't define __round__ method
+round(1.7976931348623157e308, -308) => OverflowError: rounded value too large to represent
+round(1.5, 2 ** 70) => 1.5
+round(1.5, -(2 ** 70)) => 0.0
+round(5, 2 ** 70) => 5
+round(5, -(2 ** 70)) if False else "skipped" => 'skipped'
+sum([]) => 0
+sum([1, 2, 3]) => 6
+sum((1, 2)) => 3
+sum(range(101)) => 5050
+sum([1.5, 2.5]) => 4.0
+sum([1, 2.5]) => 3.5
+sum([0.1] * 10) => 1.0
+sum([0.1] * 10) == 1.0 => True
+sum([1e100, 1.0, -1e100]) => 1.0
+sum([1e16, 1.0, 1.0, -1e16]) => 2.0
+sum([1, 2], 10) => 13
+sum([1, 2], start=10) => 13
+sum([[1], [2]], []) => [1, 2]
+sum([(1,), (2,)], ()) => (1, 2)
+sum([1j, 2]) => (2+1j)
+sum([True, True]) => 2
+sum({1: 2, 3: 4}) => 4
+sum({1, 2, 3}) => 6
+sum(x for x in range(4)) => 6
+sum([2 ** 62, 2 ** 62, 2 ** 62]) => 13835058055282163712
+sum([2 ** 63 - 1, 1]) => 9223372036854775808
+sum([-(2 ** 63), -1]) => -9223372036854775809
+sum([1, 2 ** 70, 0.5]) => 1.1805916207174113e+21
+sum([], 5) => 5
+sum([], "empty start is returned") if False else "" => 
+sum([0.0, -0.0]) => 0.0
+sum([-0.0]) => 0.0
+sum([-0.0], -0.0) => -0.0
+sum([float("inf"), 1]) => inf
+sum([float("inf"), float("-inf")]) => nan
+sum([1e308, 1e308]) => inf
+sum([1e308, 1e308, -1e308]) => inf
+sum([3, 0.1, 0.2]) => 3.3000000000000003
+sum([0.1, 0.2, 0.3]) => 0.6
+sum([0.1, 0.2, 0.3], 0.0) => 0.6
+sum([1, 2], 0.5) => 3.5
+sum([0.1 + 0j] * 10) => (1+0j)
+sum([1.0, 2 ** 53, 1.0]) => 9007199254740994.0
+sum([[1]], [0]) => [0, 1]
+sum() => TypeError: sum() takes at least 1 positional argument (0 given)
+sum(1) => TypeError: 'int' object is not iterable
+sum(["a", "b"]) => TypeError: unsupported operand type(s) for +: 'int' and 'str'
+sum(["a"], "") => TypeError: sum() can't sum strings [use ''.join(seq) instead]
+sum([b"a"], b"") => TypeError: sum() can't sum bytes [use b''.join(seq) instead]
+sum([bytearray(b"a")], bytearray()) => TypeError: sum() can't sum bytearray [use b''.join(seq) instead]
+sum([[1]]) => TypeError: unsupported operand type(s) for +: 'int' and 'list'
+sum([1, "a"]) => TypeError: unsupported operand type(s) for +: 'int' and 'str'
+sum([None]) => TypeError: unsupported operand type(s) for +: 'int' and 'NoneType'
+sum([1], 2, 3) => TypeError: sum() takes at most 2 arguments (3 given)
+sum([1], nope=1) => TypeError: sum() got an unexpected keyword argument 'nope'
+sum([], "") => TypeError: sum() can't sum strings [use ''.join(seq) instead]
+sum([{}], {}) => TypeError: unsupported operand type(s) for +: 'dict' and 'dict'
+sum([1.5, "a"]) => TypeError: unsupported operand type(s) for +: 'float' and 'str'
+sum(None) => TypeError: 'NoneType' object is not iterable
+sum([1], None) => TypeError: unsupported operand type(s) for +: 'NoneType' and 'int'
+sum(iterable=[1]) => TypeError: sum() takes at least 1 positional argument (0 given)
+sum([A(1), A(2)]) => A(3)
+sum([A(1), A(2)], A(10)) => A(13)
+r => [1, 2]
+l0 => []
+bin(0) => 0b0
+bin(1) => 0b1
+bin(-1) => -0b1
+bin(10) => 0b1010
+bin(-10) => -0b1010
+bin(2 ** 70) => 0b10000000000000000000000000000000000000000000000000000000000000000000000
+bin(True) => 0b1
+oct(0) => 0o0
+oct(8) => 0o10
+oct(-8) => -0o10
+oct(2 ** 70) => 0o200000000000000000000000
+oct(True) => 0o1
+hex(0) => 0x0
+hex(255) => 0xff
+hex(-255) => -0xff
+hex(2 ** 70) => 0x400000000000000000
+hex(True) => 0x1
+hex(-(2 ** 64)) => -0x10000000000000000
+hex(16 ** 20 - 1) => 0xffffffffffffffffffff
+bin(1.5) => TypeError: 'float' object cannot be interpreted as an integer
+bin("1") => TypeError: 'str' object cannot be interpreted as an integer
+oct(1.0) => TypeError: 'float' object cannot be interpreted as an integer
+hex(None) => TypeError: 'NoneType' object cannot be interpreted as an integer
+hex() => TypeError: hex() takes exactly one argument (0 given)
+bin(1, 2) => TypeError: bin() takes exactly one argument (2 given)
+hex(1j) => TypeError: 'complex' object cannot be interpreted as an integer
+hex([]) => TypeError: 'list' object cannot be interpreted as an integer
+repr(chr(0)) => '\x00'
+chr(65) => A
+chr(0xE9) => é
+chr(0x20AC) => €
+chr(0x1F600) => 😀
+repr(chr(0x10FFFF)) => '\U0010ffff'
+repr(chr(0xD800)) => '\ud800'
+repr(chr(127)) => '\x7f'
+repr(chr(128)) => '\x80'
+chr(True) == "\x01" => True
+ord("a") => 97
+ord("é") => 233
+ord("€") => 8364
+ord("😀") => 128512
+ord("\x00") => 0
+ord("\U0010ffff") => 1114111
+ord("\ud800") => 55296
+ord(b"a") => 97
+ord(bytearray(b"\xff")) => 255
+[ord(c) for c in "aé€😀"] => [97, 233, 8364, 128512]
+chr(ord("😀")) == "😀" => True
+chr(-1) => ValueError: chr() arg not in range(0x110000)
+chr(0x110000) => ValueError: chr() arg not in range(0x110000)
+chr(2 ** 70) => ValueError: chr() arg not in range(0x110000)
+chr(-(2 ** 70)) => ValueError: chr() arg not in range(0x110000)
+chr("a") => TypeError: 'str' object cannot be interpreted as an integer
+chr(1.5) => TypeError: 'float' object cannot be interpreted as an integer
+chr() => TypeError: chr() takes exactly one argument (0 given)
+chr(None) => TypeError: 'NoneType' object cannot be interpreted as an integer
+ord("") => TypeError: ord() expected a character, but string of length 0 found
+ord("ab") => TypeError: ord() expected a character, but string of length 2 found
+ord(1) => TypeError: ord() expected string of length 1, but int found
+ord(b"") => TypeError: ord() expected a character, but string of length 0 found
+ord(b"ab") => TypeError: ord() expected a character, but string of length 2 found
+ord() => TypeError: ord() takes exactly one argument (0 given)
+ord(None) => TypeError: ord() expected string of length 1, but NoneType found
+ord("😀😀") => TypeError: ord() expected a character, but string of length 2 found
+ord(["a"]) => TypeError: ord() expected string of length 1, but list found
+ord("a", "b") => TypeError: ord() takes exactly one argument (2 given)
+bool() => False
+bool(0) => False
+bool(1) => True
+bool(-1) => True
+bool(0.0) => False
+bool(-0.0) => False
+bool(float("nan")) => True
+bool(0j) => False
+bool("") => False
+bool(" ") => True
+bool("0") => True
+bool("False") => True
+bool([]) => False
+bool([0]) => True
+bool(()) => False
+bool((0,)) => True
+bool({}) => False
+bool({0: 0}) => True
+bool(set()) => False
+bool({0}) => True
+bool(None) => False
+bool(...) => True
+bool(b"") => False
+bool(b"\0") => True
+bool(range(0)) => False
+bool(range(1)) => True
+bool(object()) => True
+bool(int) => True
+bool(len) => True
+bool(lambda: 0) => True
+bool(2 ** 100) => True
+bool(1e-320) => True
+bool(frozenset()) => False
+bool(bytearray()) => False
+bool(slice(0)) => True
+bool(iter([])) => True
+bool(type) => True
+bool(1, 2) => TypeError: bool expected at most 1 argument, got 2
+bool(x=1) => TypeError: bool() takes no keyword arguments
+type("X", (bool,), {}) => TypeError: type 'bool' is not an acceptable base type
+int() => 0
+int(5) => 5
+int(5.9) => 5
+int(-5.9) => -5
+int("5") => 5
+int(" 5 ") => 5
+int("-5") => -5
+int("+5") => 5
+int("1_000") => 1000
+int("ff", 16) => 255
+int("0xff", 16) => 255
+int("0xff", 0) => 255
+int("0b11", 0) => 3
+int("0o17", 0) => 15
+int("11", 2) => 3
+int("z", 36) => 35
+int("Z", 36) => 35
+int(True) => 1
+int(b"12") => 12
+int(bytearray(b"12")) => 12
+int("٣") => 3
+int("１２") => 12
+int(1e20) => 100000000000000000000
+int("0" * 50 + "7") => 7
+int("-0") => 0
+int("10", base=3) => 3
+int("0_0", 0) => 0
+int("00", 0) => 0
+int("\t\n 7 \r\x0b\x0c") => 7
+int("1" * 30) => 111111111111111111111111111111
+int(*a) [a=('',)] => ValueError: invalid literal for int() with base 10: ''
+int(*a) [a=('a',)] => ValueError: invalid literal for int() with base 10: 'a'
+int(*a) [a=('1.5',)] => ValueError: invalid literal for int() with base 10: '1.5'
+int(*a) [a=('1 2',)] => ValueError: invalid literal for int() with base 10: '1 2'
+int(*a) [a=('_1',)] => ValueError: invalid literal for int() with base 10: '_1'
+int(*a) [a=('1_',)] => ValueError: invalid literal for int() with base 10: '1_'
+int(*a) [a=('1__0',)] => ValueError: invalid literal for int() with base 10: '1__0'
+int(*a) [a=('0x',)] => ValueError: invalid literal for int() with base 10: '0x'
+int(*a) [a=('0xff',)] => ValueError: invalid literal for int() with base 10: '0xff'
+int(*a) [a=('ff',)] => ValueError: invalid literal for int() with base 10: 'ff'
+int(*a) [a=('2', 2)] => ValueError: invalid literal for int() with base 2: '2'
+int(*a) [a=('z', 35)] => ValueError: invalid literal for int() with base 35: 'z'
+int(*a) [a=('1', 1)] => ValueError: int() base must be >= 2 and <= 36, or 0
+int(*a) [a=('1', 37)] => ValueError: int() base must be >= 2 and <= 36, or 0
+int(*a) [a=('1', -1)] => ValueError: int() base must be >= 2 and <= 36, or 0
+int(*a) [a=('09', 0)] => ValueError: invalid literal for int() with base 0: '09'
+int(*a) [a=('+-1',)] => ValueError: invalid literal for int() with base 10: '+-1'
+int(*a) [a=('- 1',)] => ValueError: invalid literal for int() with base 10: '- 1'
+int(*a) [a=('1e3',)] => ValueError: invalid literal for int() with base 10: '1e3'
+int(*a) [a=(None,)] => TypeError: int() argument must be a string, a bytes-like object or a real number, not 'NoneType'
+int(*a) [a=tuple] => TypeError: int() argument must be a string, a bytes-like object or a real number, not 'list'
+int(*a) [a=(1.5, 10)] => TypeError: int() can't convert non-string with explicit base
+int(*a) [a=(5, 10)] => TypeError: int() can't convert non-string with explicit base
+int(*a) [a=('1', '10')] => TypeError: 'str' object cannot be interpreted as an integer
+int(*a) [a=('1', 1.5)] => TypeError: 'float' object cannot be interpreted as an integer
+int(*a) [a=(inf,)] => OverflowError: cannot convert float infinity to integer
+int(*a) [a=(nan,)] => ValueError: cannot convert float NaN to integer
+int(*a) [a=tuple] => TypeError: int() argument must be a string, a bytes-like object or a real number, not 'complex'
+int(*a) [a=('१२x',)] => ValueError: invalid literal for int() with base 10: '१२x'
+int(*a) [a=('0b2', 0)] => ValueError: invalid literal for int() with base 0: '0b2'
+int(*a) [a=('0o8', 0)] => ValueError: invalid literal for int() with base 0: '0o8'
+int(*a) [a=(b'\xff',)] => ValueError: invalid literal for int() with base 10: b'\xff'
+int(*a) [a=('1\x00',)] => ValueError: invalid literal for int() with base 10: '1\x00'
+int(*a) [a=('é',)] => ValueError: invalid literal for int() with base 10: 'é'
+int(*a) [a=('²',)] => ValueError: invalid literal for int() with base 10: '²'
+int(*a) [a=('1', 1180591620717411303424)] => ValueError: int() base must be >= 2 and <= 36, or 0
+int(*a) [a=tuple] => TypeError: int() argument must be a string, a bytes-like object or a real number, not 'dict'
+int(*a) [a=('0_', 0)] => ValueError: invalid literal for int() with base 0: '0_'
+int(*a) [a=('0x_f', 16)] => 15
+int(*a) [a=('0x_f', 0)] => 15
+int(*a) [a=('0_x1', 0)] => ValueError: invalid literal for int() with base 0: '0_x1'

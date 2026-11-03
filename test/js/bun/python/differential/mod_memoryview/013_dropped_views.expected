@@ -1,0 +1,32 @@
+status: 0
+script: 85de34aea884cde6
+---
+bytearray(b'abc\x01')
+3
+bytearray(b'abc\x01\x02')
+bytearray(b'abc\x01\x02\x03')
+BufferError Existing exports of data: object cannot be re-sized
+BufferError Existing exports of data: object cannot be re-sized
+b'bc\x01\x02\x03'
+bytearray(b'abc\x01\x02\x03\x04')
+bytearray(b'abc\x01\x02\x03')
+bytearray(b'abc\x01\x02\x03\x00\x01\x02\x03\x04')
+bytearray(b'')
+BufferError Existing exports of data: object cannot be re-sized
+bytearray(b'xyz\x01')
+bytearray(b'xyz\x01\x02')
+b'xyz\x01\x02' [120, 121, 122, 1, 2] 121 78797a0102
+bytearray(b'xyz\x01\x02\x03')
+b'xy' bytearray(b'z\x01\x02\x03')
+BufferError Existing exports of data: object cannot be re-sized
+bytearray(b'z\x01\x02\x03\x04')
+b'z\x01\x02\x03\x04'
+bytearray(b'z\x01\x02\x03\x04\x05')
+bytearray(b'z\x01\x02\x03\x04\x05\x06')
+BufferError Existing exports of data: object cannot be re-sized
+bytearray(b'z\x01\x02\x03\x04\x05\x06\x07')
+BufferError Existing exports of data: object cannot be re-sized
+bytearray(b'z\x01\x02\x03\x04\x05\x06\x07\x08')
+[b'rr']
+R(b'rr\x01')
+[b'rr', ('W', b'w')]

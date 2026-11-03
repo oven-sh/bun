@@ -1,0 +1,133 @@
+status: 0
+script: 46bfc83bbb00be56
+---
+3a 41-5a 5f 61-7a c0-d6 d8-f6 f8-131 134-13e 141-148 14a-17e 180-1c3 1cd-1f0 1f4-1f5 1fa-217 250-2a8 2bb-2c1 386 388-38a 38c 38e-3a1 3a3-3ce 3d0-3d6 3da 3dc 3de 3e0 3e2-3f3 401-40c 40e-44f 451-45c 45e-481 490-4c4 4c7-4c8 4cb-4cc 4d0-4eb 4ee-4f5 4f8-4f9 534 541 54e 568 575 582 5d0 5dd 5ea 62b 638 645 679 686 693 6a0 6ad 6ba 6c7 910 91d 92a 937 95e 985 99f 9ac 9b9 9e0 a07 a14 a21 a2e a89 a96 aa3 ab0 abd b0b b18 b25 b32 b9a bb4 c0f c1c c36 c9e cab cb8 d06 d13 d20 d2d d61 e0a e17 e24 e99 eb3 ec0 f42 f4f f5c f69 10a1 10ae 10bb 10d5 10e2 10ef 1109 11bf 1e09 1e16 1e23 1e30 1e3d 1e4a 1e57 1e64 1e71 1e7e 1e8b 1e98 1ea5 1eb2 1ebf 1ecc 1ed9 1ee6 1ef3 1f00 1f0d 1f1a 1f27 1f34 1f41 1f5b 1f68 1f75 1f82 1f8f 1f9c 1fa9 1fb6 1fc3 1fd0 1fea 1ff7 3044 3051 305e 306b 3078 3085 3092 30ac 30b9 30c6 30d3 30e0 30ed 30fa 3107 3114 3121 4e00-4e01 9fa5 ac00 d7a3
+2d-2e 30-3a 41-5a 5f 61-7a b7 c0-d6 d8-f6 f8-131 134-13e 141-148 14a-17e 180-1c3 1cd-1f0 1f4-1f5 1fa-217 250-2a8 2bb-2c1 2d0-2d1 300-345 360-361 386-38a 38c 38e-3a1 3a3-3ce 3d0-3d6 3da 3dc 3de 3e0 3e2-3f3 401-40c 40e-44f 451-45c 45e-481 483-486 490-4c4 4c7-4c8 4cb-4cc 4d0-4eb 4ee-4f5 4f8-4f9 534 541 54e 568 575 582 59c 5a9 5b6 5d0 5dd 5ea 62b 638 645 652 679 686 693 6a0 6ad 6ba 6c7 6e1 903 910 91d 92a 937 944 951 95e 96b 985 99f 9ac 9b9 9e0 9ed a07 a14 a21 a2e a48 a6f a89 a96 aa3 ab0 abd b0b b18 b25 b32 b3f b4c b66 b9a bb4 bc1 be8 c02 c0f c1c c36 c43 c6a c9e cab cb8 cec d06 d13 d20 d2d d47 d61 d6e e0a e17 e24 e31 e4b e58 e99 eb3 ec0 ecd f28 f35 f42 f4f f5c f69 f76 f83 f90 f9d faa fb7 10a1 10ae 10bb 10d5 10e2 10ef 1109 11bf 1e09 1e16 1e23 1e30 1e3d 1e4a 1e57 1e64 1e71 1e7e 1e8b 1e98 1ea5 1eb2 1ebf 1ecc 1ed9 1ee6 1ef3 1f00 1f0d 1f1a 1f27 1f34 1f41 1f5b 1f68 1f75 1f82 1f8f 1f9c 1fa9 1fb6 1fc3 1fd0 1fea 1ff7 20d4 20e1 302a 3044 3051 305e 306b 3078 3085 3092 30ac 30b9 30c6 30d3 30e0 30ed 30fa 3107 3114 3121 4e00-4e01 9fa5 ac00 d7a3
+latin-1 <?xml version="1.0" encoding="iso-8859-1"?> 3a 41-5a 5f 61-7a aa b5 ba c0-d6 d8-f6 f8-ff | 2d-2e 30-3a 41-5a 5f 61-7a aa b5 b7 ba c0-d6 d8-f6 f8-ff
+cp1252 <?xml version="1.0" encoding="cp1252"?> 3a 41-5a 5f 61-7a c0-d6 d8-f6 f8-ff 152-153 160-161 178 17d-17e 192 | 2d-2e 30-3a 41-5a 5f 61-7a b7 c0-d6 d8-f6 f8-ff 152-153 160-161 178 17d-17e 192
+latin-1 <?xml version="1.0" encoding="latin-1"?> 3a 41-5a 5f 61-7a c0-d6 d8-f6 f8-ff | 2d-2e 30-3a 41-5a 5f 61-7a b7 c0-d6 d8-f6 f8-ff
+koi8-r <?xml version="1.0" encoding="koi8-r"?> 3a 41-5a 5f 61-7a 401 410-44f 451 | 2d-2e 30-3a 41-5a 5f 61-7a b7 401 410-44f 451
+0xaa utf-8 <%s/> not well-formed (invalid token): line 1, column 1
+0xaa utf-8 <a%s/> not well-formed (invalid token): line 1, column 2
+0xaa utf-8 <!DOCTYPE a [<!ENTITY e "<%s/>">]><a>&e;</a> not well-formed (invalid token): line 1, column 36
+0xaa utf-8 <!DOCTYPE a [<!ENTITY %s "x"><!ENTITY e "&%s;">]><a b="&e;">&e;</a> not well-formed (invalid token): line 1, column 22
+0xaa utf-8 <!DOCTYPE a [<!ENTITY %% p "<!ELEMENT %s ANY>">%%p;]><a/> 1
+0xaa utf-16 <%s/> 1
+0xaa utf-16 <a%s/> 1
+0xaa utf-16 <!DOCTYPE a [<!ENTITY e "<%s/>">]><a>&e;</a> not well-formed (invalid token): line 1, column 37
+0xaa utf-16 <!DOCTYPE a [<!ENTITY %s "x"><!ENTITY e "&%s;">]><a b="&e;">&e;</a> not well-formed (invalid token): line 1, column 48
+0xaa utf-16 <!DOCTYPE a [<!ENTITY %% p "<!ELEMENT %s ANY>">%%p;]><a/> 1
+0xaa utf-16-le <%s/> 1
+0xaa utf-16-le <a%s/> 1
+0xaa utf-16-le <!DOCTYPE a [<!ENTITY e "<%s/>">]><a>&e;</a> not well-formed (invalid token): line 1, column 36
+0xaa utf-16-le <!DOCTYPE a [<!ENTITY %s "x"><!ENTITY e "&%s;">]><a b="&e;">&e;</a> not well-formed (invalid token): line 1, column 47
+0xaa utf-16-le <!DOCTYPE a [<!ENTITY %% p "<!ELEMENT %s ANY>">%%p;]><a/> 1
+0xaa utf-16-be <%s/> 1
+0xaa utf-16-be <a%s/> 1
+0xaa utf-16-be <!DOCTYPE a [<!ENTITY e "<%s/>">]><a>&e;</a> not well-formed (invalid token): line 1, column 36
+0xaa utf-16-be <!DOCTYPE a [<!ENTITY %s "x"><!ENTITY e "&%s;">]><a b="&e;">&e;</a> not well-formed (invalid token): line 1, column 47
+0xaa utf-16-be <!DOCTYPE a [<!ENTITY %% p "<!ELEMENT %s ANY>">%%p;]><a/> 1
+0xb5 utf-8 <%s/> not well-formed (invalid token): line 1, column 1
+0xb5 utf-8 <a%s/> not well-formed (invalid token): line 1, column 2
+0xb5 utf-8 <!DOCTYPE a [<!ENTITY e "<%s/>">]><a>&e;</a> not well-formed (invalid token): line 1, column 36
+0xb5 utf-8 <!DOCTYPE a [<!ENTITY %s "x"><!ENTITY e "&%s;">]><a b="&e;">&e;</a> not well-formed (invalid token): line 1, column 22
+0xb5 utf-8 <!DOCTYPE a [<!ENTITY %% p "<!ELEMENT %s ANY>">%%p;]><a/> 1
+0xb5 utf-16 <%s/> 1
+0xb5 utf-16 <a%s/> 1
+0xb5 utf-16 <!DOCTYPE a [<!ENTITY e "<%s/>">]><a>&e;</a> not well-formed (invalid token): line 1, column 37
+0xb5 utf-16 <!DOCTYPE a [<!ENTITY %s "x"><!ENTITY e "&%s;">]><a b="&e;">&e;</a> not well-formed (invalid token): line 1, column 48
+0xb5 utf-16 <!DOCTYPE a [<!ENTITY %% p "<!ELEMENT %s ANY>">%%p;]><a/> 1
+0xb5 utf-16-le <%s/> 1
+0xb5 utf-16-le <a%s/> 1
+0xb5 utf-16-le <!DOCTYPE a [<!ENTITY e "<%s/>">]><a>&e;</a> not well-formed (invalid token): line 1, column 36
+0xb5 utf-16-le <!DOCTYPE a [<!ENTITY %s "x"><!ENTITY e "&%s;">]><a b="&e;">&e;</a> not well-formed (invalid token): line 1, column 47
+0xb5 utf-16-le <!DOCTYPE a [<!ENTITY %% p "<!ELEMENT %s ANY>">%%p;]><a/> 1
+0xb5 utf-16-be <%s/> 1
+0xb5 utf-16-be <a%s/> 1
+0xb5 utf-16-be <!DOCTYPE a [<!ENTITY e "<%s/>">]><a>&e;</a> not well-formed (invalid token): line 1, column 36
+0xb5 utf-16-be <!DOCTYPE a [<!ENTITY %s "x"><!ENTITY e "&%s;">]><a b="&e;">&e;</a> not well-formed (invalid token): line 1, column 47
+0xb5 utf-16-be <!DOCTYPE a [<!ENTITY %% p "<!ELEMENT %s ANY>">%%p;]><a/> 1
+0xb7 utf-8 <%s/> not well-formed (invalid token): line 1, column 1
+0xb7 utf-8 <a%s/> 1
+0xb7 utf-8 <!DOCTYPE a [<!ENTITY e "<%s/>">]><a>&e;</a> not well-formed (invalid token): line 1, column 36
+0xb7 utf-8 <!DOCTYPE a [<!ENTITY %s "x"><!ENTITY e "&%s;">]><a b="&e;">&e;</a> syntax error: line 1, column 22
+0xb7 utf-8 <!DOCTYPE a [<!ENTITY %% p "<!ELEMENT %s ANY>">%%p;]><a/> 1
+0xb7 utf-16 <%s/> not well-formed (invalid token): line 1, column 2
+0xb7 utf-16 <a%s/> 1
+0xb7 utf-16 <!DOCTYPE a [<!ENTITY e "<%s/>">]><a>&e;</a> not well-formed (invalid token): line 1, column 37
+0xb7 utf-16 <!DOCTYPE a [<!ENTITY %s "x"><!ENTITY e "&%s;">]><a b="&e;">&e;</a> syntax error: line 1, column 23
+0xb7 utf-16 <!DOCTYPE a [<!ENTITY %% p "<!ELEMENT %s ANY>">%%p;]><a/> 1
+0xb7 utf-16-le <%s/> not well-formed (invalid token): line 1, column 1
+0xb7 utf-16-le <a%s/> 1
+0xb7 utf-16-le <!DOCTYPE a [<!ENTITY e "<%s/>">]><a>&e;</a> not well-formed (invalid token): line 1, column 36
+0xb7 utf-16-le <!DOCTYPE a [<!ENTITY %s "x"><!ENTITY e "&%s;">]><a b="&e;">&e;</a> syntax error: line 1, column 22
+0xb7 utf-16-le <!DOCTYPE a [<!ENTITY %% p "<!ELEMENT %s ANY>">%%p;]><a/> 1
+0xb7 utf-16-be <%s/> not well-formed (invalid token): line 1, column 1
+0xb7 utf-16-be <a%s/> 1
+0xb7 utf-16-be <!DOCTYPE a [<!ENTITY e "<%s/>">]><a>&e;</a> not well-formed (invalid token): line 1, column 36
+0xb7 utf-16-be <!DOCTYPE a [<!ENTITY %s "x"><!ENTITY e "&%s;">]><a b="&e;">&e;</a> syntax error: line 1, column 22
+0xb7 utf-16-be <!DOCTYPE a [<!ENTITY %% p "<!ELEMENT %s ANY>">%%p;]><a/> 1
+0xba utf-8 <%s/> not well-formed (invalid token): line 1, column 1
+0xba utf-8 <a%s/> not well-formed (invalid token): line 1, column 2
+0xba utf-8 <!DOCTYPE a [<!ENTITY e "<%s/>">]><a>&e;</a> not well-formed (invalid token): line 1, column 36
+0xba utf-8 <!DOCTYPE a [<!ENTITY %s "x"><!ENTITY e "&%s;">]><a b="&e;">&e;</a> not well-formed (invalid token): line 1, column 22
+0xba utf-8 <!DOCTYPE a [<!ENTITY %% p "<!ELEMENT %s ANY>">%%p;]><a/> 1
+0xba utf-16 <%s/> 1
+0xba utf-16 <a%s/> 1
+0xba utf-16 <!DOCTYPE a [<!ENTITY e "<%s/>">]><a>&e;</a> not well-formed (invalid token): line 1, column 37
+0xba utf-16 <!DOCTYPE a [<!ENTITY %s "x"><!ENTITY e "&%s;">]><a b="&e;">&e;</a> not well-formed (invalid token): line 1, column 48
+0xba utf-16 <!DOCTYPE a [<!ENTITY %% p "<!ELEMENT %s ANY>">%%p;]><a/> 1
+0xba utf-16-le <%s/> 1
+0xba utf-16-le <a%s/> 1
+0xba utf-16-le <!DOCTYPE a [<!ENTITY e "<%s/>">]><a>&e;</a> not well-formed (invalid token): line 1, column 36
+0xba utf-16-le <!DOCTYPE a [<!ENTITY %s "x"><!ENTITY e "&%s;">]><a b="&e;">&e;</a> not well-formed (invalid token): line 1, column 47
+0xba utf-16-le <!DOCTYPE a [<!ENTITY %% p "<!ELEMENT %s ANY>">%%p;]><a/> 1
+0xba utf-16-be <%s/> 1
+0xba utf-16-be <a%s/> 1
+0xba utf-16-be <!DOCTYPE a [<!ENTITY e "<%s/>">]><a>&e;</a> not well-formed (invalid token): line 1, column 36
+0xba utf-16-be <!DOCTYPE a [<!ENTITY %s "x"><!ENTITY e "&%s;">]><a b="&e;">&e;</a> not well-formed (invalid token): line 1, column 47
+0xba utf-16-be <!DOCTYPE a [<!ENTITY %% p "<!ELEMENT %s ANY>">%%p;]><a/> 1
+0xc0 utf-8 <%s/> 1
+0xc0 utf-8 <a%s/> 1
+0xc0 utf-8 <!DOCTYPE a [<!ENTITY e "<%s/>">]><a>&e;</a> 1
+0xc0 utf-8 <!DOCTYPE a [<!ENTITY %s "x"><!ENTITY e "&%s;">]><a b="&e;">&e;</a> 1
+0xc0 utf-8 <!DOCTYPE a [<!ENTITY %% p "<!ELEMENT %s ANY>">%%p;]><a/> 1
+0xc0 utf-16 <%s/> 1
+0xc0 utf-16 <a%s/> 1
+0xc0 utf-16 <!DOCTYPE a [<!ENTITY e "<%s/>">]><a>&e;</a> 1
+0xc0 utf-16 <!DOCTYPE a [<!ENTITY %s "x"><!ENTITY e "&%s;">]><a b="&e;">&e;</a> 1
+0xc0 utf-16 <!DOCTYPE a [<!ENTITY %% p "<!ELEMENT %s ANY>">%%p;]><a/> 1
+0xc0 utf-16-le <%s/> 1
+0xc0 utf-16-le <a%s/> 1
+0xc0 utf-16-le <!DOCTYPE a [<!ENTITY e "<%s/>">]><a>&e;</a> 1
+0xc0 utf-16-le <!DOCTYPE a [<!ENTITY %s "x"><!ENTITY e "&%s;">]><a b="&e;">&e;</a> 1
+0xc0 utf-16-le <!DOCTYPE a [<!ENTITY %% p "<!ELEMENT %s ANY>">%%p;]><a/> 1
+0xc0 utf-16-be <%s/> 1
+0xc0 utf-16-be <a%s/> 1
+0xc0 utf-16-be <!DOCTYPE a [<!ENTITY e "<%s/>">]><a>&e;</a> 1
+0xc0 utf-16-be <!DOCTYPE a [<!ENTITY %s "x"><!ENTITY e "&%s;">]><a b="&e;">&e;</a> 1
+0xc0 utf-16-be <!DOCTYPE a [<!ENTITY %% p "<!ELEMENT %s ANY>">%%p;]><a/> 1
+0x10000 <%s/> not well-formed (invalid token): line 1, column 1
+0x10000 <a%s/> not well-formed (invalid token): line 1, column 2
+0x10000 <a>%s</a> 1
+0x10000 <a b="%s"/> 1
+0x10400 <%s/> not well-formed (invalid token): line 1, column 1
+0x10400 <a%s/> not well-formed (invalid token): line 1, column 2
+0x10400 <a>%s</a> 1
+0x10400 <a b="%s"/> 1
+0x1f600 <%s/> not well-formed (invalid token): line 1, column 1
+0x1f600 <a%s/> not well-formed (invalid token): line 1, column 2
+0x1f600 <a>%s</a> 1
+0x1f600 <a b="%s"/> 1
+0x20000 <%s/> not well-formed (invalid token): line 1, column 1
+0x20000 <a%s/> not well-formed (invalid token): line 1, column 2
+0x20000 <a>%s</a> 1
+0x20000 <a b="%s"/> 1
+0xeffff <%s/> not well-formed (invalid token): line 1, column 1
+0xeffff <a%s/> not well-formed (invalid token): line 1, column 2
+0xeffff <a>%s</a> 1
+0xeffff <a b="%s"/> 1
+0x10ffff <%s/> not well-formed (invalid token): line 1, column 1
+0x10ffff <a%s/> not well-formed (invalid token): line 1, column 2
+0x10ffff <a>%s</a> 1
+0x10ffff <a b="%s"/> 1

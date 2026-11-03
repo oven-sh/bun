@@ -1,0 +1,106 @@
+status: 0
+script: 67dccb321af3bfa6
+source: 3a3d0dd19233e149
+---
+hello world
+single double triple triple2
+1 2 3
+
+0 -1 => -1
+42 1000000 123456789012345678901234567890
+16 15 5 255 7 1 1000000 255 2
+1.0 0.5 -2.25 => -2.25
+10000000000.0 1e-05 1.5e+300 1000.0 0.5 5.0 10.01
+True False None
+1j 2.5j 1+2j => (1+2j)
+-1j => (-0-1j)
+0j
+abc
+tab	here nl\n quote"s it's
+raw\n raw\t
+b'bytes' b'\x00\xff' b'\\n' b'x' b'y'
+
+ 
+ab!
+x-y-z
+xy
+
+
+one
+() => ()
+(1,) => (1,)
+(1, 2) => (1, 2)
+[] => []
+[1] => [1]
+[1, 2] => [1, 2]
+{} => {}
+{1: 2} => {1: 2}
+{1} => {1}
+[1, [2, [3, [4]]]] => [1, [2, [3, [4]]]]
+((1,), ((2,),)) => ((1,), ((2,),))
+Ellipsis Ellipsis => Ellipsis
+NotImplemented => NotImplemented
+None is None => True
+True is True => True
+... is Ellipsis => True
+type(1) => <class 'int'>
+type(1.0) => <class 'float'>
+type("") => <class 'str'>
+type(b"") => <class 'bytes'>
+type(None) => <class 'NoneType'>
+type(True) => <class 'bool'>
+type(()) => <class 'tuple'>
+type([]) => <class 'list'>
+type({}) => <class 'dict'>
+type({1}) => <class 'set'>
+type(1j) => <class 'complex'>
+type(...) => <class 'ellipsis'>
+unicode: é ü ñ 日本語 😀
+é 😀 A A a
+line1
+line2
+multi
+line
+string
+backslash
+1 2 3
+x => 5
+y => 6
+repr("a") => 'a'
+repr('it\'s') => "it's"
+repr('say "hi"') => 'say "hi"'
+repr('both \' and "') => 'both \' and "'
+repr("\n\t\r\\\x00\x7f\x1b") => '\n\t\r\\\x00\x7f\x1b'
+repr("é") => 'é'
+repr("​") => '\u200b'
+repr("\U0001F600") => '😀'
+str(1) => 1
+str(1.5) => 1.5
+str(None) => None
+str(True) => True
+str("s") => s
+str([1, "a"]) => [1, 'a']
+str((1,)) => (1,)
+str({"k": "v"}) => {'k': 'v'}
+repr(1) => 1
+repr(1.5) => 1.5
+repr(None) => None
+repr(True) => True
+repr([1, "a"]) => [1, 'a']
+-0 => 0
++5 => 5
+--5 => 5
+-+-5 => 5
+~5 => -6
+not 5 => False
+not 0 => True
+0.1 + 0.2 => 0.30000000000000004
+1 / 3 => 0.3333333333333333
+2 / 3 => 0.6666666666666666
+10 / 2 => 5.0
+1e+16 1000000000000000.0 1.2345678901234568e+17 1e+22 1e+21 0.0001 1e-05 0.0001 1e-05
+float("inf") => inf
+float("-inf") => -inf
+float("nan") => nan
+-0.0 => -0.0
+0.0

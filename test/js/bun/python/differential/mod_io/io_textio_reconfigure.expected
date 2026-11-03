@@ -1,0 +1,68 @@
+status: 0
+script: 441b3a224e700a39
+---
+--- nothing changes
+None ('ascii', 'replace', True, True)
+None ('ascii', 'replace', True, True)
+--- arguments
+TypeError: reconfigure() takes no positional arguments
+TypeError: reconfigure() got an unexpected keyword argument 'bad'
+TypeError: reconfigure() argument 'encoding' must be str or None, not int
+TypeError: reconfigure() argument 'encoding' must be str or None, not bytes
+TypeError: reconfigure() argument 'errors' must be str or None, not int
+TypeError: reconfigure() argument 'newline' must be str or None, not int
+ValueError: illegal newline value: x
+ValueError: illegal newline value: 
+
+
+LookupError: unknown encoding: no-such-encoding
+LookupError: 'hex' is not a text encoding
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+OverflowError: Python int too large to convert to C long
+('ascii', 'replace', True, True)
+--- buffering
+[] None [b'a\n', 'flush'] ('ascii', 'strict', True, False)
+[b'b\n', 'flush'] None ['flush'] ('ascii', 'strict', False, False)
+[] None [b'c\n', 'flush'] ('ascii', 'strict', False, True)
+[b'd'] None ['flush'] ('ascii', 'strict', True, False)
+[] None ('ascii', 'strict', True, False) [b'e', 'flush']
+--- encoding and errors, when writing
+None ('utf-8', 'strict', False, False) b'\xe9\n'
+b'\xe9\n\xc3\xa9\n'
+('ascii', 'replace', False, False) None b'\xe9\n\xc3\xa9\n?\n'
+('ascii', 'xmlcharrefreplace', False, False) None b'\xe9\n\xc3\xa9\n?\n&#233;\n'
+('latin-1', 'strict', False, False)
+('ascii', 'strict', False, False)
+UnicodeEncodeError: 'ascii' codec can't encode character '\xe9' in position 0: ordinal not in range(128)
+('UTF-8', 'strict', False, False)
+('UTF8', 'strict', False, False)
+--- byte order marks
+b'\xff\xfea\x00'
+b'\xff\xfea\x00b'
+b'\xff\xfea\x00bc\x00'
+b'\xef\xbb\xbfab'
+--- newline, when writing
+b'x\r\nx\rx\nx\nx\n'
+--- when reading
+None ('latin-1', 'strict', False, False) 'é\r\n'
+UnsupportedOperation: It is not possible to set the encoding or newline of stream after the first read
+UnsupportedOperation: It is not possible to set the encoding or newline of stream after the first read
+UnsupportedOperation: It is not possible to set the encoding or newline of stream after the first read
+UnsupportedOperation: It is not possible to set the encoding or newline of stream after the first read
+None ('latin-1', 'strict', True, False) 'b\r\n'
+None
+['a\r', '\nb\r', 'c\n'] None
+['a\n', 'b\n', 'c\n'] ('\r', '\n', '\r\n')
+'a\ufffdb' ('ascii', 'replace', False, False)
+''
+None
+''
+None
+''
+UnsupportedOperation: It is not possible to set the encoding or newline of stream after the first read
+None
+--- the flush fails
+OSError: flush failed
+('ascii', 'strict', False, False)

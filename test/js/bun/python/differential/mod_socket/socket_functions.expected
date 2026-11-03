@@ -1,0 +1,160 @@
+status: 0
+script: 83eaae277778e75d
+---
+b'\x01\x02\x03\x04'
+b'\x01\x02\x03\x04'
+b'\x00\x00\x00\x00'
+b'\x00\x00\x00\x00'
+b'\xff\xff\xff\xff'
+b'\xff\xff\xff\xff'
+b'\x01\x02\x00\x03'
+OSError: illegal IP address string passed to inet_pton None
+b'\x00\x00\x00\x01'
+OSError: illegal IP address string passed to inet_pton None
+b'\x7f\x00\x00\x01'
+OSError: illegal IP address string passed to inet_pton None
+b'\x7f\x00\x00\x01'
+OSError: illegal IP address string passed to inet_pton None
+OSError: illegal IP address string passed to inet_aton None
+OSError: illegal IP address string passed to inet_pton None
+OSError: illegal IP address string passed to inet_aton None
+OSError: illegal IP address string passed to inet_pton None
+OSError: illegal IP address string passed to inet_aton None
+OSError: illegal IP address string passed to inet_pton None
+OSError: illegal IP address string passed to inet_aton None
+OSError: illegal IP address string passed to inet_pton None
+OSError: illegal IP address string passed to inet_aton None
+OSError: illegal IP address string passed to inet_pton None
+b'\x01\x02\x03\x04'
+OSError: illegal IP address string passed to inet_pton None
+b'\x01\x02\x03\x04'
+OSError: illegal IP address string passed to inet_pton None
+b'\xff\x00\x00\x01'
+OSError: illegal IP address string passed to inet_pton None
+b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01'
+b'\x00\x01\x00\x02\x00\x03\x00\x04\x00\x05\x00\x06\x00\x07\x00\x08'
+OSError: illegal IP address string passed to inet_pton None
+b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\x01\x02\x03\x04'
+OSError: illegal IP address string passed to inet_pton None
+OSError: illegal IP address string passed to inet_pton None
+OSError: illegal IP address string passed to inet_pton None
+OSError: illegal IP address string passed to inet_pton None
+b' \x01\r\xb8\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\n'
+OSError: [Errno 97] Address family not supported by protocol 97
+OSError: [Errno 97] Address family not supported by protocol 97
+'1.2.3.4'
+'255.255.255.255'
+'0.0.0.0'
+OSError: packed IP wrong length for inet_ntoa None
+OSError: packed IP wrong length for inet_ntoa None
+'127.0.0.1'
+'::1'
+'1:203:405:607:809:a0b:c0d:e0f'
+'::ffff:1.2.3.4'
+ValueError: invalid length of packed IP address string None
+ValueError: invalid length of packed IP address string None
+ValueError: unknown address family 1 None
+ValueError: unknown address family -1 None
+TypeError: a bytes-like object is required, not 'str' None
+TypeError: inet_ntop() takes exactly 2 arguments (1 given) None
+TypeError: 'str' object cannot be interpreted as an integer None
+256 13330 4660 65535 0 256
+16777216 2018915346 305419896 4294967295 0
+513 33619968
+OSError: service/proto not found None
+OSError: service/proto not found None
+OSError: service/proto not found None
+OSError: service/proto not found None
+OSError: service/proto not found None
+OSError: service/proto not found None
+ValueError: embedded null character None
+UnicodeEncodeError: 'utf-8' codec can't encode character '\udc80' in position 0: surrogates not allowed None
+OSError: port/proto not found None
+OSError: port/proto not found None
+OSError: port/proto not found None
+OSError: port/proto not found None
+OSError: port/proto not found None
+OverflowError: getservbyport: port must be 0-65535. None
+TypeError: getservbyport() argument 2 must be str, not int None
+OSError: protocol not found None
+OSError: protocol not found None
+OSError: protocol not found None
+OSError: protocol not found None
+TypeError: getprotobyname() argument 1 must be str, not int None
+TypeError: getprotobyname() takes exactly 1 argument (0 given) None
+[16, 17, 20, 24, 25, 116] [16, 24, 24, 24, 32, 120]
+2147483647
+OverflowError: CMSG_LEN() argument out of range None
+2147483640
+OverflowError: CMSG_SPACE() argument out of range None
+OverflowError: CMSG_SPACE() argument out of range None
+str True
+True
+TypeError: _socket.gethostname() takes no arguments (1 given) None
+list True True
+1 lo 1
+TypeError: _socket.if_nameindex() takes no arguments (1 given) None
+PermissionError: [Errno 1] Operation not permitted 1
+PermissionError: [Errno 1] Operation not permitted 1
+'127.0.0.1'
+'1.2.3.4'
+'255.255.255.255'
+'255.255.255.255'
+'127.0.0.1'
+gaierror: [Errno -9] Address family for hostname not supported -9
+('127.0.0.1', [], ['127.0.0.1'])
+('localhost', [], ['127.0.0.1'])
+herror: [Errno 3] Unknown server error 3
+TypeError: gethostbyname_ex() argument 1 must be str, bytes or bytearray, not int None
+TypeError: gethostbyname_ex() takes exactly 1 argument (0 given) None
+('localhost', [], ['127.0.0.1'])
+herror: [Errno 1] Unknown host 1
+['127.0.0.1']
+TypeError: gethostbyaddr() argument 1 must be str, bytes or bytearray, not int None
+('127.0.0.1', '80')
+('127.0.0.1', '80')
+('127.0.0.1', '53')
+('localhost', '0')
+('::1', '80')
+('::1', '80')
+('fe80::1%lo', '80')
+gaierror: [Errno -2] Name or service not known -2
+ValueError: embedded null character None
+gaierror: [Errno -2] Name or service not known -2
+[(2, 1, 6, '', ('127.0.0.1', 80)), (2, 2, 17, '', ('127.0.0.1', 80)), (2, 3, 0, '', ('127.0.0.1', 80))]
+[(2, 1, 6, '', ('127.0.0.1', 80)), (2, 2, 17, '', ('127.0.0.1', 80)), (2, 3, 0, '', ('127.0.0.1', 80))]
+[(2, 1, 6, '', ('127.0.0.1', 80)), (2, 2, 17, '', ('127.0.0.1', 80)), (2, 3, 0, '', ('127.0.0.1', 80))]
+gaierror: [Errno -8] Servname not supported for ai_socktype -8
+[(2, 1, 6, '', ('127.0.0.1', 0)), (2, 2, 17, '', ('127.0.0.1', 0)), (2, 3, 0, '', ('127.0.0.1', 0))]
+[(10, 1, 6, '', ('::1', 0, 0, 0)), (10, 2, 17, '', ('::1', 0, 0, 0)), (10, 3, 0, '', ('::1', 0, 0, 0))]
+[(10, 1, 6, '', ('::1', 80, 0, 0)), (10, 2, 17, '', ('::1', 80, 0, 0)), (10, 3, 0, '', ('::1', 80, 0, 0)), (2, 1, 6, '', ('127.0.0.1', 80)), (2, 2, 17, '', ('127.0.0.1', 80)), (2, 3, 0, '', ('127.0.0.1', 80))]
+[(2, 1, 6, '', ('127.0.0.1', 80))]
+[(2, 2, 17, '', ('127.0.0.1', 80))]
+[(2, 1, 6, '', ('127.0.0.1', 80))]
+[(2, 1, 6, '', ('0.0.0.0', 80))]
+[(10, 1, 6, '', ('::', 80, 0, 0))]
+gaierror: [Errno -9] Address family for hostname not supported -9
+gaierror: [Errno -9] Address family for hostname not supported -9
+[(2, 1, 6, '', ('1.2.3.4', 0))]
+gaierror: [Errno -2] Name or service not known -2
+gaierror: [Errno -2] Name or service not known -2
+[(2, 1, 6, '', ('127.0.0.1', 80))]
+[(2, 1, 6, '127.0.0.1', ('127.0.0.1', 80))]
+[(10, 1, 6, '', ('fe80::1', 80, 0, 1))]
+[(10, 1, 6, '', ('fe80::1', 80, 0, 1))]
+[(2, 1, 6, '', ('127.0.0.1', 65535))]
+[(2, 1, 6, '', ('127.0.0.1', 0))]
+[(2, 1, 6, '', ('127.0.0.1', 1))]
+[(2, 1, 6, '', ('127.0.0.1', 258))]
+gaierror (-8, 'Servname not supported for ai_socktype') -8 Servname not supported for ai_socktype None True True
+None
+2.5
+2.5 True
+2.5 2.5
+0.0
+0.0 False
+3.0
+None
+None True
+TypeError: _socket.getdefaulttimeout() takes no arguments (1 given) None

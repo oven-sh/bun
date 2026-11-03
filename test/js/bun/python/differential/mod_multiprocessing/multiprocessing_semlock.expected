@@ -1,0 +1,58 @@
+status: 0
+script: 1fac1637e5644218
+---
+['SemLock', 'flags', 'sem_unlink'] {'HAVE_SEM_OPEN': 1, 'HAVE_SEM_TIMEDWAIT': 1}
+['SEM_VALUE_MAX', '_after_fork', '_count', '_get_value', '_is_mine', '_is_zero', '_rebuild', 'acquire', 'handle', 'kind', 'maxvalue', 'name', 'release'] (<class '_multiprocessing.SemLock'>, <class 'object'>) 2147483647 SemLock _multiprocessing
+_after_fork ($self, /) method_descriptor
+_count ($self, /) method_descriptor
+_get_value ($self, /) method_descriptor
+_is_mine ($self, /) method_descriptor
+_is_zero ($self, /) method_descriptor
+_rebuild ($type, handle, kind, maxvalue, name, /) builtin_function_or_method
+acquire ($self, /, block=True, timeout=None) method_descriptor
+release ($self, /) method_descriptor
+($module, name, /)
+1 3 True int True 0 2 False False
+True 1 1 True 0 True False False False False 2 True
+False True
+False
+None 1 None None 3 -1
+ValueError: semaphore or lock released too many times
+FileExistsError: [Errno 17] File exists
+3 True 1 3 True 2 1 -1
+True None 2
+None
+FileNotFoundError: [Errno 2] No such file or directory
+FileNotFoundError: [Errno 2] No such file or directory
+True 1
+2 __exit__
+None 0 True True True 3 True 0 None None 1 0 None 0 False 1
+AssertionError: attempt to release recursive lock not owned by thread
+None 0 False
+FileNotFoundError: [Errno 2] No such file or directory
+True False None
+ValueError: semaphore or lock released too many times
+ValueError: unrecognized kind
+ValueError: unrecognized kind
+TypeError: SemLock() missing required argument 'kind' (pos 1)
+TypeError: SemLock() missing required argument 'unlink' (pos 5)
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: SemLock() argument 'name' must be str, not int
+ValueError: embedded null character
+OSError: [Errno 22] Invalid argument
+TypeError: SemLock() takes at most 5 arguments (6 given)
+1
+OverflowError: Python int too large to convert to C int
+OSError: [Errno 22] Invalid argument
+TypeError: SemLock() argument 'name' must be str, not bytes
+TypeError: must be real number, not str
+TypeError: acquire() takes at most 2 arguments (3 given)
+TypeError: acquire() got an unexpected keyword argument 'foo'
+TypeError: sem_unlink() argument must be str, not int
+TypeError: _multiprocessing.sem_unlink() takes exactly one argument (0 given)
+ValueError: embedded null character
+AttributeError: readonly attribute
+AttributeError: '_multiprocessing.SemLock' object has no attribute 'x'
+Sub True 1
+2147483647 SemLock

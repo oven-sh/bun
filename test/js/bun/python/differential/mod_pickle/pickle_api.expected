@@ -1,0 +1,319 @@
+status: 0
+script: 966bb6e1a584bcbc
+---
+Pickler Pickler _pickle (<class 'object'>,) Unpickler _pickle
+['bin', 'clear_memo', 'dispatch_table', 'dump', 'fast', 'memo', 'persistent_id'] ['find_class', 'load', 'memo', 'persistent_load']
+(<class '_pickle.PickleError'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>) (<class '_pickle.PicklingError'>, <class '_pickle.PickleError'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>) (<class '_pickle.UnpicklingError'>, <class '_pickle.PickleError'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>)
+False False This takes a binary file for writing a p This takes a binary file for reading a p
+TypeError Pickler() missing required argument 'file' (pos 1) None NoneType
+TypeError file must have a 'write' attribute None NoneType
+TypeError file must have a 'write' attribute None NoneType
+ValueError pickle protocol must be <= 5 None NoneType
+TypeError 'str' object cannot be interpreted as an integer None NoneType
+OverflowError Python int too large to convert to C long None NoneType
+TypeError 'float' object cannot be interpreted as an integer None NoneType
+ValueError buffer_callback needs protocol >= 5 None NoneType
+TypeError Pickler() takes at most 4 arguments (5 given) None NoneType
+TypeError Pickler() got an unexpected keyword argument 'foo' None NoneType
+TypeError file must have a 'write' attribute None NoneType
+<class '_pickle.Pickler'>
+TypeError Unpickler() missing required argument 'file' (pos 1) None NoneType
+TypeError file must have 'read' and 'readline' attributes None NoneType
+TypeError file must have 'read' and 'readline' attributes None NoneType
+TypeError Unpickler() takes exactly 1 positional argument (2 given) None NoneType
+TypeError Unpickler() argument 'encoding' must be str, not int None NoneType
+TypeError Unpickler() argument 'errors' must be str, not int None NoneType
+ValueError embedded null character None NoneType
+TypeError 'int' object is not iterable None NoneType
+TypeError Unpickler() got an unexpected keyword argument 'foo' None NoneType
+<class '_pickle.Unpickler'>
+TypeError file must have 'read' and 'readline' attributes None NoneType
+TypeError file must have 'read' and 'readline' attributes None NoneType
+PicklingError Pickler.__init__() was not called by _pickle.Pickler.__init__() None NoneType
+UnpicklingError Unpickler.__init__() was not called by _pickle.Unpickler.__init__() None NoneType
+PicklingError Pickler.__init__() was not called by BadInitP.__init__() None NoneType
+UnpicklingError Unpickler.__init__() was not called by BadInitU.__init__() None NoneType
+None
+1 0
+AttributeError '_pickle.Pickler' object has no attribute 'dispatch_table' None NoneType
+AttributeError '_pickle.Pickler' object has no attribute 'foo' None NoneType
+AttributeError '_pickle.Pickler' object has no attribute 'foo' None NoneType
+AttributeError dispatch_table None NoneType
+TypeError 'str' object cannot be interpreted as an integer None NoneType
+TypeError can't delete numeric/char attribute None NoneType
+TypeError can't delete numeric/char attribute None NoneType
+TypeError attribute deletion is not supported None NoneType
+TypeError 'memo' attribute must be a PicklerMemoProxy object or dict, not int None NoneType
+TypeError 'memo' values must be 2-item tuples None NoneType
+TypeError 'memo' values must be 2-item tuples None NoneType
+TypeError an integer is required None NoneType
+5
+1
+7
+{}
+AttributeError '_pickle.Pickler' object has no attribute 'dispatch_table' None NoneType
+0 1 1 PicklerMemoProxy _pickle
+member_descriptor getset_descriptor member_descriptor method_descriptor method_descriptor
+TypeError unhashable type: '_pickle.PicklerMemoProxy' None NoneType
+False
+TypeError dump() takes exactly 1 positional argument (0 given) None NoneType
+TypeError dump() takes at most 1 argument (2 given) None NoneType
+TypeError Pickler.clear_memo() takes no arguments (1 given) None NoneType
+True
+True
+TypeError cannot pickle '_pickle.Pickler' object None NoneType
+TypeError cannot pickle '_pickle.Unpickler' object None NoneType
+b'\x80\x05\x95\x1b\x00\x00\x00\x00\x00\x00\x00\x8c\x08builtins\x94\x8c\x04dict\x94\x93\x94}\x94\x85\x94R\x94.'
+TypeError cannot set 'x' attribute of immutable type '_pickle.Pickler' None NoneType
+AttributeError '_pickle.Unpickler' object has no attribute 'foo' None NoneType
+AttributeError '_pickle.Unpickler' object has no attribute 'foo' None NoneType
+TypeError attribute deletion is not supported None NoneType
+TypeError 'memo' attribute must be an UnpicklerMemoProxy object or dict, not int None NoneType
+TypeError memo key must be integers None NoneType
+ValueError memo key must be positive integers. None NoneType
+OverflowError Python int too large to convert to C ssize_t None NoneType
+'UnpicklerMemoProxy'
+TypeError unhashable type: '_pickle.UnpicklerMemoProxy' None NoneType
+TypeError load() takes no arguments None NoneType
+TypeError find_class() takes exactly 2 positional arguments (0 given) None NoneType
+TypeError find_class() takes exactly 2 positional arguments (1 given) None NoneType
+<built-in function len>
+TypeError module name must be a string None NoneType
+TypeError attribute name must be string, not 'int' None NoneType
+AttributeError module 'builtins' has no attribute 'nope' None NoneType
+ModuleNotFoundError No module named 'nope_mod' None NoneType
+AttributeError module 'builtins' has no attribute 'int.real' None NoneType
+<class 'str'>
+UnpicklingError A load persistent id instruction was encountered, but no persistent_load function was specified. None NoneType
+TypeError persistent_load() takes exactly 1 positional argument (0 given) None NoneType
+b'\x80\x02]q\x00(K\x01X\x03\x00\x00\x00abcq\x01e.\x80\x02h\x00.' 20 25
+[0, 1] [[1, 'abc'], 'abc'] True
+<class 'dict'> 2
+{}
+b'\x80\x02]q\x00(K\x01X\x03\x00\x00\x00abcq\x01e.'
+{}
+2
+2
+b'\x80\x02h\x00.'
+b'\x80\x02]q\x01j,\x01\x00\x00a.'
+b'(lp1\ng300\na.'
+[[1, 'abc'], [1, 'abc']] {0: [[1, 'abc'], [1, 'abc']], 1: [1, 'abc'], 2: 'abc'} second {0: 'second', 1: [1, 'abc'], 2: 'abc'}
+(<class 'dict'>, ({0: 'second', 1: [1, 'abc'], 2: 'abc'},))
+{}
+{0: 1, 7: 2} 2
+EOFError Ran out of input None NoneType
+EOFError Ran out of input None NoneType
+b'(l(lI1\naVabc\naa(lI1\naVabc\naa(I1\nI2\nta(dVa\n(lI1\naVabc\nasaVabc\nac_codecs\nencode\n(Vb\nVlatin1\ntRac__builtin__\nset\n((lI1\natRac__builtin__\nfrozenset\n((lI2\natRaccopy_reg\n_reconstructor\n(c__main__\nC\nc__builtin__\nobject\nNtR(dVa\nI1\nsba.' {}
+b'](](K\x01X\x03\x00\x00\x00abce](K\x01X\x03\x00\x00\x00abce(K\x01K\x02t}X\x01\x00\x00\x00a](K\x01X\x03\x00\x00\x00abcesX\x03\x00\x00\x00abcc_codecs\nencode\n(X\x01\x00\x00\x00bX\x06\x00\x00\x00latin1tRc__builtin__\nset\n(]K\x01atRc__builtin__\nfrozenset\n(]K\x02atRccopy_reg\n_reconstructor\n(c__main__\nC\nc__builtin__\nobject\nNtR}X\x01\x00\x00\x00aK\x01sbe.' {}
+b'\x80\x02](](K\x01X\x03\x00\x00\x00abce](K\x01X\x03\x00\x00\x00abceK\x01K\x02\x86}X\x01\x00\x00\x00a](K\x01X\x03\x00\x00\x00abcesX\x03\x00\x00\x00abcc_codecs\nencode\nX\x01\x00\x00\x00bX\x06\x00\x00\x00latin1\x86Rc__builtin__\nset\n]K\x01a\x85Rc__builtin__\nfrozenset\n]K\x02a\x85Rc__main__\nC\n)\x81}X\x01\x00\x00\x00aK\x01sbe.' {}
+b'\x80\x03](](K\x01X\x03\x00\x00\x00abce](K\x01X\x03\x00\x00\x00abceK\x01K\x02\x86}X\x01\x00\x00\x00a](K\x01X\x03\x00\x00\x00abcesX\x03\x00\x00\x00abcC\x01bcbuiltins\nset\n]K\x01a\x85Rcbuiltins\nfrozenset\n]K\x02a\x85Rc__main__\nC\n)\x81}X\x01\x00\x00\x00aK\x01sbe.' {}
+b'\x80\x04\x95U\x00\x00\x00\x00\x00\x00\x00](](K\x01\x8c\x03abce](K\x01\x8c\x03abceK\x01K\x02\x86}\x8c\x01a](K\x01\x8c\x03abces\x8c\x03abcC\x01b\x8f(K\x01\x90(K\x02\x91\x8c\x08__main__\x8c\x01C\x93)\x81}\x8c\x01aK\x01sbe.' {}
+b'\x80\x05\x95U\x00\x00\x00\x00\x00\x00\x00](](K\x01\x8c\x03abce](K\x01\x8c\x03abceK\x01K\x02\x86}\x8c\x01a](K\x01\x8c\x03abces\x8c\x03abcC\x01b\x8f(K\x01\x90(K\x02\x91\x8c\x08__main__\x8c\x01C\x93)\x81}\x8c\x01aK\x01sbe.' {}
+ValueError fast mode: can't pickle cyclic objects including object type list
+ValueError fast mode: can't pickle cyclic objects including object type dict
+b"(lp0\nP('C', 1)\naVnone\np1\naPthe-id\naP('C', 1)\naI5\na." [('loaded', "('C', 1)"), 'none', ('loaded', 'the-id'), ('loaded', "('C', 1)"), 5]
+b']q\x00((X\x01\x00\x00\x00Cq\x01K\x01tq\x02QX\x04\x00\x00\x00noneq\x03X\x06\x00\x00\x00the-idq\x04Q(h\x01K\x01tq\x05QK\x05e.' [('loaded', ('C', 1)), 'none', ('loaded', 'the-id'), ('loaded', ('C', 1)), 5]
+b'\x80\x02]q\x00(X\x01\x00\x00\x00Cq\x01K\x01\x86q\x02QX\x04\x00\x00\x00noneq\x03X\x06\x00\x00\x00the-idq\x04Qh\x01K\x01\x86q\x05QK\x05e.' [('loaded', ('C', 1)), 'none', ('loaded', 'the-id'), ('loaded', ('C', 1)), 5]
+b'\x80\x03]q\x00(X\x01\x00\x00\x00Cq\x01K\x01\x86q\x02QX\x04\x00\x00\x00noneq\x03X\x06\x00\x00\x00the-idq\x04Qh\x01K\x01\x86q\x05QK\x05e.' [('loaded', ('C', 1)), 'none', ('loaded', 'the-id'), ('loaded', ('C', 1)), 5]
+b'\x80\x04\x95(\x00\x00\x00\x00\x00\x00\x00]\x94(\x8c\x01C\x94K\x01\x86\x94Q\x8c\x04none\x94\x8c\x06the-id\x94Qh\x01K\x01\x86\x94QK\x05e.' [('loaded', ('C', 1)), 'none', ('loaded', 'the-id'), ('loaded', ('C', 1)), 5]
+b'\x80\x05\x95(\x00\x00\x00\x00\x00\x00\x00]\x94(\x8c\x01C\x94K\x01\x86\x94Q\x8c\x04none\x94\x8c\x06the-id\x94Qh\x01K\x01\x86\x94QK\x05e.' [('loaded', ('C', 1)), 'none', ('loaded', 'the-id'), ('loaded', ('C', 1)), 5]
+KeyError 'pid' None NoneType
+PicklingError persistent IDs in protocol 0 must be ASCII strings None NoneType
+None
+UnpicklingError A load persistent id instruction was encountered, but no persistent_load function was specified. None NoneType
+UnpicklingError A load persistent id instruction was encountered, but no persistent_load function was specified. None NoneType
+KeyError 'pload' None NoneType
+('loaded', '')
+UnpicklingError persistent IDs in protocol 0 must be ASCII strings None NoneType
+None persistent_id None
+True
+[[1, 'a'], 1, 'a'] b'\x80\x02]q\x00(K\x01X\x01\x00\x00\x00aq\x01e.'
+persistent_id None
+TypeError 'int' object is not callable None NoneType
+('attr', 7)
+UnpicklingError A load persistent id instruction was encountered, but no persistent_load function was specified. None NoneType
+b'\x80\x02]q\x00K\x01a.'
+UnpicklingError A load persistent id instruction was encountered, but no persistent_load function was specified. None NoneType
+b'\x80\x02K\x01.'
+C(101)
+True
+C(102)
+[C(103), 1j]
+[C(4), 1j]
+TypeError 'int' object is not subscriptable None NoneType
+ValueError map None NoneType
+TypeError 'int' object is not callable None NoneType
+PicklingError __reduce__ must return a string or tuple, not int ['when serializing C object'] NoneType
+C(105)
+C(8)
+C('len')
+<class '__main__.C'>
+[C(2), 'x', 1, (2,)]
+<built-in function print>
+<class 'int'>
+PicklingError Can't pickle 1j: it's not found as __main__.complex None
+PicklingError __reduce__ must return a string or tuple, not int ['when serializing range object']
+KeyError 'ro' None
+AttributeError '_pickle.Pickler' object has no attribute 'reducer_override' None NoneType
+find_class __main__ C
+find_class __builtin__ len
+find_class collections OrderedDict
+find_class copy_reg _reconstructor
+find_class __builtin__ object
+[<class '__main__.C'>, <built-in function len>, <class 'collections.OrderedDict'>, C(1)]
+find_class __main__ C
+find_class __builtin__ len
+find_class collections OrderedDict
+find_class copy_reg _reconstructor
+find_class __builtin__ object
+[<class '__main__.C'>, <built-in function len>, <class 'collections.OrderedDict'>, C(1)]
+find_class __main__ C
+find_class __builtin__ len
+find_class collections OrderedDict
+[<class '__main__.C'>, <built-in function len>, <class 'collections.OrderedDict'>, C(1)]
+find_class __main__ C
+find_class builtins len
+find_class collections OrderedDict
+[<class '__main__.C'>, <built-in function len>, <class 'collections.OrderedDict'>, C(1)]
+find_class __main__ C
+find_class builtins len
+find_class collections OrderedDict
+[<class '__main__.C'>, <built-in function len>, <class 'collections.OrderedDict'>, C(1)]
+find_class __main__ C
+find_class builtins len
+find_class collections OrderedDict
+[<class '__main__.C'>, <built-in function len>, <class 'collections.OrderedDict'>, C(1)]
+find_class x boom
+KeyError 'fc' None NoneType
+RuntimeError Pickler object is already used
+RuntimeError Pickler object is already used
+RuntimeError Unpickler object is already used
+RuntimeError Unpickler object is already used
+7
+{} 0
+b'(lp0\nI1\naVabc\np1\na.'
+None b'\x80\x05\x95\t\x00\x00\x00\x00\x00\x00\x00]\x94(K\x01K\x02e.'
+[1, 2] 20
+[1, 'two', [3], {4}] b'tail'
+[1, 'two', [3], {4}] b'tail'
+EOFError Ran out of input None NoneType
+TypeError dump() missing required argument 'obj' (pos 1) None NoneType
+TypeError dump() missing required argument 'file' (pos 2) None NoneType
+TypeError file must have a 'write' attribute None NoneType
+TypeError dump() takes at most 3 positional arguments (4 given) None NoneType
+ValueError pickle protocol must be <= 5 None NoneType
+None
+TypeError load() missing required argument 'file' (pos 1) None NoneType
+TypeError file must have 'read' and 'readline' attributes None NoneType
+TypeError load() takes exactly 1 positional argument (2 given) None NoneType
+TypeError a bytes-like object is required, not 'str' None NoneType
+None
+TypeError load() argument 'encoding' must be str, not int None NoneType
+TypeError dumps() missing required argument 'obj' (pos 1) None NoneType
+TypeError dumps() takes at most 2 positional arguments (3 given) None NoneType
+b'\x80\x05K\x01.'
+OverflowError Python int too large to convert to C long None NoneType
+TypeError 'str' object cannot be interpreted as an integer None NoneType
+b'\x80\x05K\x01.'
+ValueError buffer_callback needs protocol >= 5 None NoneType
+TypeError dumps() got an unexpected keyword argument 'foo' None NoneType
+b'\x80\x05K\x01.'
+OSError full None NoneType
+OSError full None NoneType
+[1, 'abc', b'xyz', (1.5, None)] [('read', 1), ('read', 1), ('read', 1), ('readline',), ('read', 1), ('readline',), ('read', 1), ('read', 1), ('readline',), ('read', 1), ('readline',), ('read', 1), ('read', 1), ('readline',), ('readline',), ('read', 1), ('readline',), ('read', 1), ('read', 1), ('readline',), ('read', 1), ('readline',), ('read', 1), ('readline',), ('read', 1), ('readline',), ('read', 1), ('read', 1), ('readline',), ('read', 1), ('read', 1), ('readline',), ('read', 1), ('read', 1), ('read', 1), ('readline',), ('read', 1), ('read', 1), ('read', 1), ('readline',), ('read', 1), ('read', 1)]
+[1, 'abc', b'xyz', (1.5, None)] [('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 4), ('read', 3), ('read', 1), ('read', 1), ('read', 1), ('readline',), ('readline',), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 4), ('read', 3), ('read', 1), ('read', 1), ('read', 1), ('read', 4), ('read', 6), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 8), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 1)]
+[1, 'abc', b'xyz', (1.5, None)] [('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 4), ('read', 3), ('read', 1), ('read', 1), ('read', 1), ('readline',), ('readline',), ('read', 1), ('read', 1), ('read', 1), ('read', 4), ('read', 3), ('read', 1), ('read', 1), ('read', 1), ('read', 4), ('read', 6), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 8), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 1)]
+[1, 'abc', b'xyz', (1.5, None)] [('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 4), ('read', 3), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 3), ('read', 1), ('read', 1), ('read', 1), ('read', 8), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 1), ('read', 1)]
+[1, 'abc', b'xyz', (1.5, None)] [('read', 1), ('read', 1), ('read', 1), ('read', 8), ('read', 31)]
+[1, 'abc', b'xyz', (1.5, None)] [('read', 1), ('read', 1), ('read', 1), ('read', 8), ('read', 31)]
+[1, 'abc']
+[1, 'abc']
+[1, b'abcabcabcabcabcabcabcabcabcabc']
+[1, 'abc']
+[1, 'abc']
+[1, b'abcabcabcabcabcabcabcabcabcabc']
+TypeError a bytes-like object is required, not 'str' None NoneType
+TypeError a bytes-like object is required, not 'str' None NoneType
+TypeError a bytes-like object is required, not 'str' None NoneType
+TypeError a bytes-like object is required, not 'NoneType' None NoneType
+TypeError a bytes-like object is required, not 'NoneType' None NoneType
+TypeError a bytes-like object is required, not 'NoneType' None NoneType
+TypeError a bytes-like object is required, not 'list' None NoneType
+TypeError a bytes-like object is required, not 'list' None NoneType
+TypeError a bytes-like object is required, not 'list' None NoneType
+EOFError Ran out of input None NoneType
+EOFError Ran out of input None NoneType
+OSError read None NoneType
+3 [('bytes', 219245)]
+219245 8 0 True
+4 [('bytes', 65625), ('bytes', 65622), ('bytes', 65620), ('bytes', 9178)]
+206045 4 4 True
+5 [('bytes', 65625), ('bytes', 65622), ('bytes', 65620), ('bytes', 9178)]
+206045 4 4 True
+0 bytes [('bytes', 23)] 23 [('FRAME', 2)] True True True
+0 str [('bytes', 23)] 23 [('FRAME', 2)] True True True
+0 bytearray [('bytes', 30)] 30 [('FRAME', 2)] True True True
+3 bytes [('bytes', 26)] 26 [('FRAME', 2)] True True True
+3 str [('bytes', 26)] 26 [('FRAME', 2)] True True True
+3 bytearray [('bytes', 33)] 33 [('FRAME', 2)] True True True
+4 bytes [('bytes', 27)] 27 [('FRAME', 2)] True True True
+4 str [('bytes', 27)] 27 [('FRAME', 2)] True True True
+4 bytearray [('bytes', 34)] 34 [('FRAME', 2)] True True True
+65535 bytes [('bytes', 65557), ('bytes', 13)] 65570 [('FRAME', 2), ('FRAME', 65557)] True True True
+65535 str [('bytes', 65557), ('bytes', 13)] 65570 [('FRAME', 2), ('FRAME', 65557)] True True True
+65535 bytearray [('bytes', 65561), ('bytes', 13)] 65574 [('FRAME', 2), ('FRAME', 65561)] True True True
+65536 bytes [('bytes', 21), ('bytes', 65536), ('bytes', 14)] 65571 [('FRAME', 2), ('FRAME', 65557)] True True True
+65536 str [('bytes', 21), ('bytes', 65536), ('bytes', 14)] 65571 [('FRAME', 2), ('FRAME', 65557)] True True True
+65536 bytearray [('bytes', 25), ('bytearray', 65536), ('bytes', 14)] 65575 [('FRAME', 2), ('FRAME', 65561)] True True True
+65537 bytes [('bytes', 21), ('bytes', 65537), ('bytes', 14)] 65572 [('FRAME', 2), ('FRAME', 65558)] True True True
+65537 str [('bytes', 21), ('bytes', 65537), ('bytes', 14)] 65572 [('FRAME', 2), ('FRAME', 65558)] True True True
+65537 bytearray [('bytes', 25), ('bytearray', 65537), ('bytes', 14)] 65576 [('FRAME', 2), ('FRAME', 65562)] True True True
+200000 bytes [('bytes', 21), ('bytes', 200000), ('bytes', 14)] 200035 [('FRAME', 2), ('FRAME', 200021)] True True True
+200000 str [('bytes', 21), ('bytes', 200000), ('bytes', 14)] 200035 [('FRAME', 2), ('FRAME', 200021)] True True True
+200000 bytearray [('bytes', 25), ('bytearray', 200000), ('bytes', 14)] 200039 [('FRAME', 2), ('FRAME', 200025)] True True True
+b'\x80\x04N.' b'\x80\x04K\x01.' b'\x80\x04\x95\x04\x00\x00\x00\x00\x00\x00\x00M,\x01.' b'\x80\x04\x95\x06\x00\x00\x00\x00\x00\x00\x00Jp\x11\x01\x00.' b'\x80\x04\x95\x05\x00\x00\x00\x00\x00\x00\x00\x8c\x01a\x94.'
+PicklingError PickleBuffer can only be pickled with protocol >= 5 None NoneType
+PicklingError PickleBuffer can only be pickled with protocol >= 5 None NoneType
+PicklingError PickleBuffer can only be pickled with protocol >= 5 None NoneType
+PicklingError PickleBuffer can only be pickled with protocol >= 5 None NoneType
+PicklingError PickleBuffer can only be pickled with protocol >= 5 None NoneType
+b'\x80\x05\x95\x07\x00\x00\x00\x00\x00\x00\x00C\x03abc\x94.'
+b'\x80\x05\x95\t\x00\x00\x00\x00\x00\x00\x00]\x94(\x97\x98\x97\x98e.' 2 [b'abc', b'abc']
+['PickleBuffer', 'PickleBuffer'] [b'abc', b'abc']
+b'\x80\x05\x95\x07\x00\x00\x00\x00\x00\x00\x00C\x03abc\x94.'
+b'\x80\x05\x97\x98.'
+PicklingError PickleBuffer can only be pickled with protocol >= 5 None NoneType
+PicklingError PickleBuffer can only be pickled with protocol >= 5 None NoneType
+PicklingError PickleBuffer can only be pickled with protocol >= 5 None NoneType
+PicklingError PickleBuffer can only be pickled with protocol >= 5 None NoneType
+PicklingError PickleBuffer can only be pickled with protocol >= 5 None NoneType
+b'\x80\x05\x95\x0e\x00\x00\x00\x00\x00\x00\x00\x96\x03\x00\x00\x00\x00\x00\x00\x00abc\x94.'
+b'\x80\x05\x95\x07\x00\x00\x00\x00\x00\x00\x00]\x94(\x97\x97e.' 2 [b'abc', b'abc']
+['PickleBuffer', 'PickleBuffer'] [b'abc', b'abc']
+b'\x80\x05\x95\x0e\x00\x00\x00\x00\x00\x00\x00\x96\x03\x00\x00\x00\x00\x00\x00\x00abc\x94.'
+b'\x80\x05\x97.'
+PicklingError PickleBuffer can only be pickled with protocol >= 5 None NoneType
+PicklingError PickleBuffer can only be pickled with protocol >= 5 None NoneType
+PicklingError PickleBuffer can only be pickled with protocol >= 5 None NoneType
+PicklingError PickleBuffer can only be pickled with protocol >= 5 None NoneType
+PicklingError PickleBuffer can only be pickled with protocol >= 5 None NoneType
+b'\x80\x05\x95\x07\x00\x00\x00\x00\x00\x00\x00C\x03abc\x94.'
+b'\x80\x05\x95\t\x00\x00\x00\x00\x00\x00\x00]\x94(\x97\x98\x97\x98e.' 2 [b'abc', b'abc']
+['PickleBuffer', 'PickleBuffer'] [b'abc', b'abc']
+b'\x80\x05\x95\x07\x00\x00\x00\x00\x00\x00\x00C\x03abc\x94.'
+b'\x80\x05\x97\x98.'
+PicklingError PickleBuffer can only be pickled with protocol >= 5 None NoneType
+PicklingError PickleBuffer can only be pickled with protocol >= 5 None NoneType
+PicklingError PickleBuffer can only be pickled with protocol >= 5 None NoneType
+PicklingError PickleBuffer can only be pickled with protocol >= 5 None NoneType
+PicklingError PickleBuffer can only be pickled with protocol >= 5 None NoneType
+b'\x80\x05\x95\r\x00\x00\x00\x00\x00\x00\x00\x96\x02\x00\x00\x00\x00\x00\x00\x00bc\x94.'
+b'\x80\x05\x95\x07\x00\x00\x00\x00\x00\x00\x00]\x94(\x97\x97e.' 2 [b'bc', b'bc']
+['PickleBuffer', 'PickleBuffer'] [b'bc', b'bc']
+b'\x80\x05\x95\r\x00\x00\x00\x00\x00\x00\x00\x96\x02\x00\x00\x00\x00\x00\x00\x00bc\x94.'
+b'\x80\x05\x97.'
+PicklingError PickleBuffer can not be pickled when pointing to a non-contiguous buffer None NoneType
+ZeroDivisionError division by zero None NoneType
+TypeError 'int' object is not callable None NoneType
+ValueError operation forbidden on released PickleBuffer object None NoneType
+b'\x80\x05\x95\x10\x00\x00\x00\x00\x00\x00\x00]\x94(C\x06shared\x94h\x01e.'

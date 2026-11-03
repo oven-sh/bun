@@ -1,0 +1,19 @@
+status: 0
+script: a3b13b98ea8e5ea7
+---
+['heapify', 'heapify_max', 'heappop', 'heappop_max', 'heappush', 'heappush_max', 'heappushpop', 'heappushpop_max', 'heapreplace', 'heapreplace_max', 'merge', 'nlargest', 'nsmallest'] _heapq True True _bisect
+True
+[100, 97, 96, 94, 93] [0, 2, 3, 5, 6] [0, 2, 3] [0, 50, 100] [] [0] [100] True True
+[0, 1, 2, 3, 4, 5, 6, 7] [] [1] [6, 5, 4, 3, 2, 1] ['c', 'aa', 'b', 'ddd'] [1, 1, 1, 1]
+True 0 -1 2
+True 100 97 1000
+500
+IndexError index out of range
+TypeError '>=' not supported between instances of 'str' and 'int'
+TypeError heappush() argument 1 must be list, not int
+['F', 'A', 'C', 'C', 'B', 'A', 'A']
+True 30 31 10 30 0 60
+[('b', 25), ('d', 28), ('a', 30), ('c', 35)] 2
+deque([1, 3, 4, 5]) 2
+[1, 2, 3]
+array('i', [1, 3, 4, 5]) 1

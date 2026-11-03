@@ -1,0 +1,316 @@
+status: 0
+script: 478a4dbc7e180a52
+source: a0984e9c97477004
+---
+A => A
+repr(A) => A
+str(A) => A
+type(A).__name__ => TypeAliasType
+type(A).__module__ => typing
+A.__name__ => A
+A.__value__ => <class 'int'>
+A.__type_params__ => ()
+A.__parameters__ => ()
+A.__module__ => __main__
+A == A => True
+hash(A) == hash(A) => True
+A.__qualname__ => A
+B.__value__ => list[int] | None
+repr(C.__value__) => 'forward string'
+E.__value__ => (<class 'int'>, <class 'str'>)
+F.__value__() => 1
+G.__value__ => [0, 1]
+D.__value__ => NameError: name 'undefined_later' is not defined
+<class 'float'>
+log => []
+L.__value__ => evaluated
+log => ['evaluated']
+L.__value__ => evaluated
+log => ['evaluated']
+R.__value__ => list[__main__.R] | int
+R.__value__.__args__[0].__args__[0] is R => True
+M1.__value__ => list[__main__.M2]
+M2.__value__ => list[__main__.M1]
+Err.__value__ => ZeroDivisionError: division by zero
+Err.__value__ => ZeroDivisionError: division by zero
+Lst => Lst
+Lst.__type_params__ => (T,)
+Lst.__parameters__ => (T,)
+Lst.__value__ => list[T]
+Lst[int] => __main__.Lst[int]
+type(Lst[int]).__name__ => GenericAlias
+Lst[int].__origin__ is Lst => True
+Lst[int].__args__ => (<class 'int'>,)
+Pair[str, int] => __main__.Pair[str, int]
+Pair.__value__ => dict[K, V]
+Bnd.__type_params__[0].__bound__ => <class 'int'>
+Var[int, str] => __main__.Var[int, str]
+Var.__value__ => tuple[typing.Unpack[Ts]]
+Spec.__type_params__ => (P,)
+Dfl.__type_params__[0].__default__ => <class 'int'>
+Lst[int] == Lst[int] => True
+Lst[int] == Lst[str] => False
+Lst[Lst[int]] => __main__.Lst[__main__.Lst[int]]
+Lst[int].__value__ => list[T]
+A[int] => TypeError: Only generic type aliases are subscriptable
+Lst[int][str] => TypeError: __main__.Lst[int] is not a generic class
+Lst() => TypeError: 'typing.TypeAliasType' object is not callable
+A() => TypeError: 'typing.TypeAliasType' object is not callable
+isinstance(1, A) => TypeError: isinstance() arg 2 must be a type, a tuple of types, or a union
+issubclass(int, A) => TypeError: issubclass() arg 2 must be a class, a tuple of classes, or a union
+isinstance([], Lst[int]) => TypeError: isinstance() argument 2 cannot be a parameterized generic
+type("X", (A,), {}) => TypeError: metaclass conflict: the metaclass of a derived class must be a (non-strict) subclass of the metaclasses of all its bases
+A.nope => AttributeError: 'typing.TypeAliasType' object has no attribute 'nope'
+len(A) => TypeError: object of type 'typing.TypeAliasType' has no len()
+A < A => TypeError: '<' not supported between instances of 'typing.TypeAliasType' and 'typing.TypeAliasType'
+bool(A) => True
+list(A) => [typing.Unpack[A]]
+[*Var] => [typing.Unpack[Var]]
+AttributeError: readonly attribute
+AttributeError: attribute '__value__' of 'typing.TypeAliasType' objects is not writable
+AttributeError: 'typing.TypeAliasType' object has no attribute 'custom' and no __dict__ for setting new attributes
+AttributeError: readonly attribute
+A | int => __main__.A | int
+int | A => int | __main__.A
+A | None => __main__.A | None
+A | A => A
+Lst[int] | str => __main__.Lst[int] | str
+(A | int).__args__ => (A, <class 'int'>)
+list[A] => list[__main__.A]
+dict[A, B] => dict[__main__.A, __main__.B]
+tuple[A, ...] => tuple[__main__.A, ...]
+A | "str" if False else "" => 
+('local value', (T, 'local value'), 'in_function.<locals>.X')
+2
+K.Z.__value__ => NameError: name 'attr' is not defined
+K.X => K.X
+K.X.__value__ => class attribute
+K.Y.__value__ => (T, 'class attribute')
+K().m() => class attribute
+type(K.__dict__["X"]).__name__ => TypeAliasType
+K.X.__module__ => __main__
+Shadow.__value__ => int
+Shadow.__value__ is Shadow.__type_params__[0] => True
+1
+A.__value__ => <class 'str'>
+rebinding an alias name is an ordinary assignment
+Cond
+type(A)("Manual", int) => Manual
+type(A)("Manual", int).__value__ => <class 'int'>
+type(A)("G", list, type_params=Lst.__type_params__).__type_params__ => (T,)
+type(A)() => TypeError: typealias() missing required argument 'name' (pos 1)
+type(A)("X") => TypeError: typealias() missing required argument 'value' (pos 2)
+type(A)(1, int) => TypeError: typealias() argument 'name' must be str, not int
+type(A)("X", int, type_params=[1]) => TypeError: type_params must be a tuple
+type(A)("X", int, nope=1) => TypeError: typealias() got an unexpected keyword argument 'nope'
+type(A)("X", int, type_params=(1,)).__type_params__ => TypeError: Expected a type param, got 1
+type(1) => <class 'int'>
+type("X", (), {}).__name__ => X
+type.__name__ => type
+6
+<class 'int'>
+ok: type X = int
+ok: type X=int
+SyntaxError: invalid syntax <- type X
+SyntaxError: invalid syntax <- type X =
+ok: type = 1
+SyntaxError: invalid syntax <- type X = int = str
+SyntaxError: invalid syntax <- type X: int
+SyntaxError: invalid syntax <- type X += 1
+SyntaxError: invalid syntax <- type X.Y = int
+SyntaxError: invalid syntax <- type X[0] = int
+ok: type X[T] = T
+SyntaxError: Type parameter list cannot be empty <- type X[] = int
+SyntaxError: duplicate type parameter 'T' <- type X[T, T] = T
+ok: type X[T: int = str] = T
+ok: type X[*Ts] = Ts
+ok: type X[**P] = P
+SyntaxError: cannot assign to function call here. Maybe you meant '==' instead of '='? <- type (X) = int
+SyntaxError: invalid syntax <- type X, Y = int, str
+SyntaxError: invalid syntax <- type X = int, str
+SyntaxError: invalid syntax <- type X = *a
+SyntaxError: yield expression cannot be used within a type alias <- type X = (yield)
+SyntaxError: await expression cannot be used within a type alias <- type X = await y
+SyntaxError: named expression cannot be used within a type alias <- type X = (y := 1)
+SyntaxError: invalid syntax <- type X = y := 1
+SyntaxError: named expression cannot be used within a TypeVar bound <- type X[T: (y := 1)] = T
+SyntaxError: invalid syntax <- type 1 = int
+SyntaxError: invalid syntax <- type 'X' = int
+SyntaxError: invalid syntax <- type None = int
+SyntaxError: invalid syntax <- type True = int
+SyntaxError: cannot assign to __debug__ <- type __debug__ = int
+ok: type type = int
+ok: type match = int
+ok: type _ = int
+ok: type X = lambda: 1
+ok: type X = x if y else z
+ok: type X = not y
+ok: type X = [y for y in z]
+ok: type X = int; type Y = str
+ok: type\\nX = int
+ok: type X\\n= int
+ok: type X = (\nint\n)
+ok: def f(): type X = int
+ok: class C: type X = int
+SyntaxError: invalid syntax <- lambda: type X = int
+ok: if 1: type X = int
+ok: type X = int if 1 else str
+SyntaxError: invalid syntax <- x = type X = int
+SyntaxError: invalid syntax <- print(type X = int)
+SyntaxError: invalid syntax <- type X = yield
+SyntaxError: yield expression cannot be used within a type alias <- def f(): type X = (yield)
+SyntaxError: await expression cannot be used within a type alias <- async def f(): type X = await y
+SyntaxError: yield expression cannot be used within a type alias <- type X[T] = (yield)
+ok: type(X)
+ok: type (X)
+ok: type[X]
+ok: type [X]
+ok: type.X
+SyntaxError: invalid syntax <- type X
+ok: type * 2
+ok: type -1
+ok: type in x
+ok: type is x
+ok: type: int = 1
+ok: type, x = 1, 2
+ok: type += 1
+ok: del type
+ok: global type
+ok: import type
+ok: type = type
+SyntaxError: invalid syntax <- type type
+ok: type X = type
+ok: type X[type] = type
+ok: for type in x: pass
+ok: def type(): pass
+ok: class type: pass
+ok: type()
+ok: type(type)
+ok: type X = int # comment
+SyntaxError: invalid syntax <- @d\ntype X = int
+SyntaxError: unexpected indent <- type X = int\n  pass
+ok: type é = int
+u => int | str
+repr(u) => int | str
+type(u).__name__ => Union
+type(u).__module__ => typing
+u.__args__ => (<class 'int'>, <class 'str'>)
+u == (str | int) => True
+u == (int | str) => True
+hash(u) == hash(str | int) => True
+int | int => <class 'int'>
+type(int | int).__name__ => type
+int | str | int => int | str
+int | None => int | None
+None | int => None | int
+(int | None).__args__ => (<class 'int'>, <class 'NoneType'>)
+int | str | float => int | str | float
+(int | str) | (float | int) => int | str | float
+u | bytes => int | str | bytes
+bytes | u => bytes | int | str
+list[int] | str => list[int] | str
+int | list[int] => int | list[int]
+u.__parameters__ => ()
+(list[int] | int).__args__ => (list[int], <class 'int'>)
+isinstance(1, u) => True
+isinstance(1.5, u) => False
+issubclass(bool, u) => True
+u.__name__ if hasattr(u, "__name__") else "" => Union
+u.__origin__ if hasattr(u, "__origin__") else "" => <class 'typing.Union'>
+bool(u) => True
+int | 1 => TypeError: unsupported operand type(s) for |: 'type' and 'int'
+1 | int => TypeError: unsupported operand type(s) for |: 'int' and 'type'
+int | "str" => TypeError: unsupported operand type(s) for |: 'type' and 'str'
+"str" | int => TypeError: unsupported operand type(s) for |: 'str' and 'type'
+None | None => TypeError: unsupported operand type(s) for |: 'NoneType' and 'NoneType'
+int | [str] => TypeError: unsupported operand type(s) for |: 'type' and 'list'
+u() => TypeError: 'typing.Union' object is not callable
+u[int] => TypeError: int | str is not a generic class
+type(u)() => TypeError: cannot create 'typing.Union' instances
+type(u)[int, str] => int | str
+type(u)[int] => <class 'int'>
+type("X", (type(u),), {}) => TypeError: type 'typing.Union' is not an acceptable base type
+u < u => TypeError: '<' not supported between instances of 'typing.Union' and 'typing.Union'
+len(u) => TypeError: object of type 'typing.Union' has no len()
+list(u) => TypeError: 'typing.Union' object is not iterable
+u.nope => AttributeError: 'typing.Union' object has no attribute 'nope'
+int | (lambda: 0) => TypeError: unsupported operand type(s) for |: 'type' and 'function'
+int | ... => TypeError: unsupported operand type(s) for |: 'type' and 'ellipsis'
+int | len => TypeError: unsupported operand type(s) for |: 'type' and 'builtin_function_or_method'
+int | (1, 2) => TypeError: unsupported operand type(s) for |: 'type' and 'tuple'
+isinstance(1, int | list[int]) => True
+u | 1 => int | str | 1
+s5() => AttributeError: readonly attribute
+s6() => AttributeError: 'typing.Union' object has no attribute 'x' and no __dict__ for setting new attributes
+WithMeta | int => Meta.__or__
+int | WithMeta => Meta.__ror__
+WithMeta | None => Meta.__or__
+None | WithMeta => Meta.__ror__
+g => list[int]
+repr(g) => list[int]
+type(g).__name__ => GenericAlias
+type(g).__module__ => types
+g.__origin__ => <class 'list'>
+g.__args__ => (<class 'int'>,)
+g.__parameters__ => ()
+g == list[int] => True
+g == list[str] => False
+hash(g) == hash(list[int]) => True
+g() => []
+g([1, "a"]) => [1, 'a']
+type(g()) => <class 'list'>
+g.__name__ => list
+g.__qualname__ => list
+g.__module__ => builtins
+g.__doc__ == list.__doc__ => True
+g.append => <method 'append' of 'list' objects>
+g.__class__ => <class 'types.GenericAlias'>
+dict[str, int] => dict[str, int]
+dict[str, list[int]] => dict[str, list[int]]
+tuple[int, ...] => tuple[int, ...]
+tuple[()] => tuple[()]
+tuple[int] => tuple[int]
+list[int, str] => list[int, str]
+list[None] => list[None]
+list[...] => list[...]
+list["fwd"] => list['fwd']
+list[1] => list[1]
+list[[int]] => list[[int]]
+type[int] => type[int]
+set[int] => set[int]
+frozenset[int] => frozenset[int]
+list[list] => list[list]
+list[int | str] => list[int | str]
+collections_free := "no imports" => no imports
+callable(g) => True
+g.__mro_entries__((g,)) => (<class 'list'>,)
+g.__unpacked__ => False
+[*tuple[int, str]] => [*tuple[int, str]]
+(*tuple[int],)[0].__unpacked__ => True
+dir(g) == dir(g) => True
+isinstance(g, type) => False
+type(g)(list, (int,)) => list[int]
+type(g)(list, int) => list[int]
+type(g)(dict, (str, int)).__args__ => (<class 'str'>, <class 'int'>)
+isinstance([], g) => TypeError: isinstance() argument 2 cannot be a parameterized generic
+issubclass(list, g) => TypeError: issubclass() argument 2 cannot be a parameterized generic
+g[int] => TypeError: list[int] is not a generic class
+int[str] => TypeError: type 'int' is not subscriptable
+str[int] => TypeError: type 'str' is not subscriptable
+list[int](5) => TypeError: 'int' object is not iterable
+g.nope => AttributeError: type object 'list' has no attribute 'nope'
+type(g)() => TypeError: GenericAlias expected 2 arguments, got 0
+type(g)(list) => TypeError: GenericAlias expected 2 arguments, got 1
+len(g) => TypeError: object of type 'types.GenericAlias' has no len()
+g < g => TypeError: '<' not supported between instances of 'types.GenericAlias' and 'types.GenericAlias'
+g | 1 => TypeError: unsupported operand type(s) for |: 'types.GenericAlias' and 'int'
+type("X", (type(g),), {}).__name__ => 'X'
+list[int].__origin__[str] => list[str]
+g.__reduce__()[1] => (<class 'list'>, (<class 'int'>,))
+list[()] => list[()]
+bool(g) => True
+FromAlias.__bases__ => (<class 'list'>,)
+FromAlias.__orig_bases__ => (list[int],)
+FromAlias([1]) => [1]
+FromDict.__mro__[1] => <class 'dict'>
+FromDict(a=1) => {'a': 1}

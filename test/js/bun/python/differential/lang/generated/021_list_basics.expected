@@ -1,0 +1,256 @@
+status: 0
+script: 89fde73d2c374787
+source: 9db1434842c5ccc2
+---
+l => [1, 2, 3, 4, 5]
+len(l) => 5
+l[0] => 1
+l[-1] => 5
+l[2] => 3
+l[1:3] => [2, 3]
+l[:2] => [1, 2]
+l[3:] => [4, 5]
+l[:] => [1, 2, 3, 4, 5]
+l[::2] => [1, 3, 5]
+l[::-1] => [5, 4, 3, 2, 1]
+l[1::2] => [2, 4]
+l[-2:] => [4, 5]
+l[:-2] => [1, 2, 3]
+l[4:1:-1] => [5, 4, 3]
+l[10:] => []
+l[:10] => [1, 2, 3, 4, 5]
+l[3:1] => []
+l[-10:2] => [1, 2]
+l[::-2] => [5, 3, 1]
+l[100:200] => []
+l[-1:-4:-1] => [5, 4, 3]
+l[5] => IndexError: list index out of range
+l[-6] => IndexError: list index out of range
+l["a"] => TypeError: list indices must be integers or slices, not str
+l[1.0] => TypeError: list indices must be integers or slices, not float
+l[None] => TypeError: list indices must be integers or slices, not NoneType
+l[::0] => ValueError: slice step cannot be zero
+l[1, 2] => TypeError: list indices must be integers or slices, not tuple
+l[1:"a"] => TypeError: slice indices must be integers or have an __index__ method
+[][0] => IndexError: list index out of range
+[] => []
+[1] => [1]
+[1, 2] => [1, 2]
+[[]] => [[]]
+[[], []] => [[], []]
+[None] => [None]
+[1, "a", 2.5, None, True, [1], (1,), {1: 2}] => [1, 'a', 2.5, None, True, [1], (1,), {1: 2}]
+[1,] => [1]
+list() => []
+list([1, 2]) => [1, 2]
+list((1, 2)) => [1, 2]
+list("abc") => ['a', 'b', 'c']
+list(range(3)) => [0, 1, 2]
+list({1: 2, 3: 4}) => [1, 3]
+list({5}) => [5]
+list(iter([1])) => [1]
+list(x for x in range(2)) => [0, 1]
+list(b"ab") => [97, 98]
+list("") => []
+list(zip([1], [2])) => [(1, 2)]
+list(1) => TypeError: 'int' object is not iterable
+list(None) => TypeError: 'NoneType' object is not iterable
+list(1, 2) => TypeError: list expected at most 1 argument, got 2
+list(a=1) => TypeError: list() takes no keyword arguments
+[1] + [2] => [1, 2]
+[1, 2] * 2 => [1, 2, 1, 2]
+2 * [1, 2] => [1, 2, 1, 2]
+[1] * 0 => []
+[1] * -1 => []
+[] + [] => []
+[[]] * 2 => [[], []]
+[1] + [] + [2] => [1, 2]
+[0] * 5 => [0, 0, 0, 0, 0]
+[1, 2] * True => [1, 2]
+[1] + (2,) => TypeError: can only concatenate list (not "tuple") to list
+[1] + 1 => TypeError: can only concatenate list (not "int") to list
+[1] + "a" => TypeError: can only concatenate list (not "str") to list
+[1] + None => TypeError: can only concatenate list (not "NoneType") to list
+[1] * "a" => TypeError: can't multiply sequence by non-int of type 'str'
+[1] * 1.5 => TypeError: can't multiply sequence by non-int of type 'float'
+[1] * [2] => TypeError: can't multiply sequence by non-int of type 'list'
+[1] - [1] => TypeError: unsupported operand type(s) for -: 'list' and 'list'
+-[1] => TypeError: bad operand type for unary -: 'list'
+1 + [1] => TypeError: unsupported operand type(s) for +: 'int' and 'list'
+shared => [[0, 1], [0, 1], [0, 1]]
+shared[0] is shared[1] => True
+[10, 2, 3, 4, 5]
+[10, 2, 3, 4, 50]
+[10, 20, 30, 4, 50]
+[10, 7, 4, 50]
+[10, 1, 2, 3, 4, 50]
+[10, 0, 1, 2, 3, 4, 50]
+[10, 0, 3, 4, 50]
+['a', 0, 'b', 4, 'c']
+[1, 2, 3]
+[1, 2, 3, 9]
+[1, 2, 3, 4, 5]
+[1, 'x', 'y', 4, 5]
+[1, 8, 9, 4, 5]
+[0, 1, 1, 8, 9, 4, 5]
+[6, 5, 4, 3, 2, 1, 0]
+[6, 5, 4, 3, 2, 1, 0, 99]
+[6, 5, 4, 'ins', 3, 2, 1, 0, 99]
+[6, 6, 5, 4, 'ins', 3, 2, 1, 0, 99, 3, 2, 1, 0, 99]
+[99, 0, 1, 2, 3, 99, 0, 1, 2, 3, 'ins', 4, 5, 6, 6]
+IndexError: list assignment index out of range
+IndexError: list assignment index out of range
+TypeError: list indices must be integers or slices, not str
+ValueError: attempt to assign sequence of size 1 to extended slice of size 2
+ValueError: attempt to assign sequence of size 3 to extended slice of size 2
+TypeError: must assign iterable to extended slice
+TypeError: must assign iterable to extended slice
+TypeError: list indices must be integers or slices, not float
+IndexError: list assignment index out of range
+TypeError: list indices must be integers or slices, not str
+ValueError: slice step cannot be zero
+ValueError: slice step cannot be zero
+ValueError: attempt to assign sequence of size 1 to extended slice of size 3
+IndexError: list assignment index out of range
+[1, 2, 3, 4, 5, 6, 7, 8, 9]
+[1, 2, 3, 4, 5, 6, 7, 8]
+[1, 4, 5, 6, 7, 8]
+[4, 6, 8]
+[4, 6, 8]
+[]
+[0, 2, 3, 5, 6, 8, 9]
+[0, 2, 3, 5, 6]
+[0, 2, 3, 5, 6]
+[2, 5]
+[]
+1 in [1, 2] => True
+3 in [1, 2] => False
+[1] in [[1]] => True
+None in [None] => True
+"a" in ["a"] => True
+1.0 in [1] => True
+1 not in [] => True
+[] in [[]] => True
+(1,) in [(1,)] => True
+[1, 2] == [1, 2] => True
+[1, 2] == [2, 1] => False
+[1] != [1] => False
+[1, 2] < [1, 3] => True
+[1, 2] < [1, 2, 0] => True
+[2] > [1, 9] => True
+[] < [0] => True
+[1] <= [1] => True
+[1] >= [2] => False
+[1, [2, 3]] == [1, [2, 3]] => True
+[1] == (1,) => False
+[1] == [1.0] => True
+[True] == [1] => True
+["a"] < ["b"] => True
+[1, "a"] == [1, "a"] => True
+[] == [] => True
+[[]] == [[]] => True
+[1] < [None] => TypeError: '<' not supported between instances of 'int' and 'NoneType'
+[1] < ["a"] => TypeError: '<' not supported between instances of 'int' and 'str'
+[1] < 1 => TypeError: '<' not supported between instances of 'list' and 'int'
+[1] < (1,) => TypeError: '<' not supported between instances of 'list' and 'tuple'
+[1, 2] > [1, "a"] => TypeError: '>' not supported between instances of 'int' and 'str'
+[1, "a"] < [2, 1] => True
+[1, None] == [1, 0] => False
+[1, "x"] != [2, None] => True
+hash([]) => TypeError: unhashable type: 'list'
+{[]: 1} => TypeError: cannot use 'list' as a dict key (unhashable type: 'list')
+{[1]} => TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+a => [1, 2, 3]
+b => [1, 2, 3]
+c => [1, 2]
+a is b => True
+a is c => False
+a == c => False
+n => [[1, 2, 9], [3, 4]]
+s => [[1, 2, 9], [3, 4], 5]
+r => [1, [...]]
+r[1] is r => True
+r[1][1][1][0] => 1
+len(r) => 2
+[[[...]]]
+[{'l': [...]}]
+[1, 2, 3]
+[1, 2, 3, 4]
+[1, 2, 3, 4, 'x', 'y']
+[1, 2, 3, 4, 'x', 'y', 0, 1]
+[1, 2, 3, 4, 'x', 'y', 0, 1, 1, 2, 3, 4, 'x', 'y', 0, 1]
+[]
+z => [1, 2]
+y is z => True
+z => [1]
+y is z => False
+iadd_bad() => TypeError: 'int' object is not iterable
+iadd_none() => TypeError: 'NoneType' object is not iterable
+imul_bad() => TypeError: can't multiply sequence by non-int of type 'str'
+len([]) => 0
+len([[]]) => 1
+len([1] * 1000) => 1000
+bool([]) => False
+bool([[]]) => True
+bool([0]) => True
+str([]) => []
+repr([1, "a", None]) => [1, 'a', None]
+str(["a'b", 'c"d', "\n"]) => ["a'b", 'c"d', '\n']
+[1.0, 1e100, -0.0, 1j] => [1.0, 1e+100, -0.0, 1j]
+[b"a", bytearray(b"b")] => [b'a', bytearray(b'b')]
+[int, len, None, ...] [0:1] => [<class 'int'>]
+[[[[[]]]]] => [[[[[]]]]]
+sum([1, 2, 3]) => 6
+max([1, 3, 2]) => 3
+min([1, 3, 2]) => 1
+sorted([3, 1, 2]) => [1, 2, 3]
+list(reversed([1, 2, 3])) => [3, 2, 1]
+any([0, 1]) => True
+all([0, 1]) => False
+any([]) => False
+all([]) => True
+list(enumerate(["a", "b"])) => [(0, 'a'), (1, 'b')]
+list(zip([1, 2], "ab")) => [(1, 'a'), (2, 'b')]
+list(map(str, [1, 2])) => ['1', '2']
+list(filter(None, [0, 1, "", "a"])) => [1, 'a']
+sum([[1], [2]], []) => [1, 2]
+[1, 2, 3].__len__() => 3
+[1, 2, 3].__getitem__(1) => 2
+[1, 2, 3].__getitem__(slice(1, None)) => [2, 3]
+[1, 2].__contains__(1) => True
+[1].__add__([2]) => [1, 2]
+[1].__mul__(2) => [1, 1]
+[1].__rmul__(2) => [1, 1]
+[1].__eq__([1]) => True
+[1].__eq__(1) => NotImplemented
+[1].__lt__([2]) => True
+[1].__ne__([1]) => False
+[1].__repr__() => [1]
+[1].__add__((2,)) if False else "" => 
+list.__hash__ => None
+[1].__iadd__([2]) => [1, 2]
+[1].__imul__(2) => [1, 1]
+[3, 4].__reversed__().__next__() => 4
+[].__sizeof__() > 0 => True
+type([]) => <class 'list'>
+list.__mro__ => (<class 'list'>, <class 'object'>)
+isinstance([], list) => True
+type([1][0:1]) => <class 'list'>
+type([] + []) => <class 'list'>
+type([] * 2) => <class 'list'>
+list.__name__ => list
+type(iter([])).__name__ => list_iterator
+type(reversed([])).__name__ => list_reverseiterator
+len(big) => 100000
+big[99999] => 99999
+big[-1] => 99999
+sum(big) => 4999950000
+big[50000:50003] => [50000, 50001, 50002]
+len(big[::3]) => 33334
+big.index(77777) => 77777
+big.count(5) => 1
+99999 in big => True
+-1 in big => False
+big == list(range(100000)) => True
+len(big * 3) => 300000
+(big + big)[150000] => 50000

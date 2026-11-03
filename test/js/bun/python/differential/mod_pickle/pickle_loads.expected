@@ -1,0 +1,514 @@
+status: 0
+script: 1cf070f04d885227
+---
+None
+0
+1
+-5
+False
+True
+10
+5
+5
+12345678901234567890
+5
+ValueError could not convert string to int NoneType
+10
+5
+5
+-5
+123456789012345678901234567890
+5
+-1
+-2147483648
+255
+65535
+0
+-1
+127
+-32768
+255
+18446744073709551616
+0
+513
+1.5
+1.0
+-0.0
+inf
+nan
+100000.0
+ValueError could not convert string to float: ' 1.5
+' NoneType
+1.5
+inf
+0.0
+2.0
+'abc'
+'abc'
+''
+"a\nA'"
+'\\'
+'abc'
+'abc'
+''
+'abc'
+''
+'é😀'
+'é'
+'\\\\'
+'abc'
+'é'
+'😀'
+'\ud800'
+'abc'
+''
+'abc'
+b'abc'
+b'abc'
+b'abc'
+bytearray(b'abc')
+b''
+()
+(1,)
+(1, 2)
+(1, 2, 3)
+(1, 2)
+()
+[]
+[]
+[1, 2]
+{}
+{}
+{1: 2}
+set()
+frozenset()
+frozenset({1, 2})
+[1]
+[1, 2]
+[]
+{1: 2}
+{1: 2, 3: 4}
+{}
+{1, 2}
+set()
+True
+False
+1
+1
+1
+1
+(2,)
+5
+5
+5
+5
+5
+5
+5
+5
+UnpicklingError Memo value not found at index 0 NoneType
+(5, 6)
+5
+<class 'int'>
+<class 'int'>
+<class 'str'>
+<class 'collections.OrderedDict'>
+<class 'int'>
+None
+12
+0
+(1+2j)
+C([])
+C([('b', 2)])
+C([])
+C([('a', 5)])
+C([])
+C([('a', 7)])
+C([])
+C([('a', 7)])
+Old(())
+Old(())
+Old((1,))
+SL(1, {})
+SL(1, {'d': 2})
+C([])
+UnpicklingError slot state is not a dictionary NoneType
+App([1])
+App([1, 2])
+App([[1, 2]])
+App([[1]])
+Add([1, 2])
+SI([(1, 2), (3, 4)])
+SI([(1, 2)])
+None
+None
+None
+None
+None
+None
+None
+None
+1
+b'' EOFError Ran out of input NoneType
+b'N' EOFError Ran out of input NoneType
+b'\x80' UnpicklingError pickle data was truncated NoneType
+b'\x80\x06N.' ValueError unsupported pickle protocol: 6 NoneType
+b'\x80\xffN.' ValueError unsupported pickle protocol: 255 NoneType
+b'.' UnpicklingError unpickling stack underflow NoneType
+b'?' UnpicklingError invalid load key, '?'. NoneType
+b'\x00' UnpicklingError invalid load key, '\x00'. NoneType
+b'\xff' UnpicklingError invalid load key, '\xff'. NoneType
+b"'" UnpicklingError invalid load key, '\x27'. NoneType
+b'\\' UnpicklingError invalid load key, '\x5c'. NoneType
+b'z.' UnpicklingError invalid load key, 'z'. NoneType
+b' ' UnpicklingError invalid load key, ' '. NoneType
+b'\n' UnpicklingError invalid load key, '\x0a'. NoneType
+b'I' UnpicklingError pickle data was truncated NoneType
+b'I\n' UnpicklingError pickle data was truncated NoneType
+b'I\n.' UnpicklingError pickle data was truncated NoneType
+b'Iabc\n.' ValueError could not convert string to int NoneType
+b'I1' UnpicklingError pickle data was truncated NoneType
+b'I1.5\n.' ValueError could not convert string to int NoneType
+b'I--1\n.' ValueError could not convert string to int NoneType
+b'L' UnpicklingError pickle data was truncated NoneType
+b'L\n.' UnpicklingError pickle data was truncated NoneType
+b'LL\n.' ValueError invalid literal for int() with base 10: '' NoneType
+b'Labc\n.' ValueError invalid literal for int() with base 10: 'abc\n' NoneType
+b'LabcL\n.' ValueError invalid literal for int() with base 10: 'abc' NoneType
+b'L1.5L\n.' ValueError invalid literal for int() with base 10: '1.5' NoneType
+b'J\x00' UnpicklingError pickle data was truncated NoneType
+b'K' UnpicklingError pickle data was truncated NoneType
+b'M\x00' UnpicklingError pickle data was truncated NoneType
+b'\x8a' UnpicklingError pickle data was truncated NoneType
+b'\x8a\x02\x00' UnpicklingError pickle data was truncated NoneType
+b'\x8b\x00\x00\x00' UnpicklingError pickle data was truncated NoneType
+b'\x8b\xff\xff\xff\xff.' UnpicklingError LONG pickle has negative byte count NoneType
+b'\x8b\xff\xff\xff\x7f.' UnpicklingError pickle data was truncated NoneType
+b'F' UnpicklingError pickle data was truncated NoneType
+b'F\n.' UnpicklingError pickle data was truncated NoneType
+b'Fabc\n.' ValueError could not convert string to float: 'abc
+' NoneType
+b'F1.5x\n.' ValueError could not convert string to float NoneType
+b'F1.5' UnpicklingError pickle data was truncated NoneType
+b'F1e999\n.' OverflowError value too large to convert to float: '1e999
+' NoneType
+b'G\x00' UnpicklingError pickle data was truncated NoneType
+b'S' UnpicklingError pickle data was truncated NoneType
+b'S\n.' UnpicklingError the STRING opcode argument must be quoted NoneType
+b'Sabc\n.' UnpicklingError the STRING opcode argument must be quoted NoneType
+b"S'abc\n." UnpicklingError the STRING opcode argument must be quoted NoneType
+b'S\'abc"\n.' UnpicklingError the STRING opcode argument must be quoted NoneType
+b"S'\n." UnpicklingError the STRING opcode argument must be quoted NoneType
+b"S'abc'" UnpicklingError pickle data was truncated NoneType
+b"S'\\x'\n." ValueError invalid \x escape at position 0 NoneType
+b"S'\xe9'\n." UnicodeDecodeError 'ascii' codec can't decode byte 0xe9 in position 0: ordinal not in range(128) NoneType
+b'U' UnpicklingError pickle data was truncated NoneType
+b'U\x03ab' UnpicklingError pickle data was truncated NoneType
+b'T\x03\x00\x00' UnpicklingError pickle data was truncated NoneType
+b'T\xff\xff\xff\xff.' UnpicklingError BINSTRING pickle has negative byte count NoneType
+b'T\xff\xff\xff\x7f.' UnpicklingError pickle data was truncated NoneType
+b'U\x01\xe9.' UnicodeDecodeError 'ascii' codec can't decode byte 0xe9 in position 0: ordinal not in range(128) NoneType
+b'V' UnpicklingError pickle data was truncated NoneType
+b'Vabc' UnpicklingError pickle data was truncated NoneType
+b'V\\u12\n.' UnicodeDecodeError 'rawunicodeescape' codec can't decode bytes in position 0-3: truncated \uXXXX escape NoneType
+b'V\\U00110000\n.' UnicodeDecodeError 'rawunicodeescape' codec can't decode bytes in position 0-9: \Uxxxxxxxx out of range NoneType
+b'X' UnpicklingError pickle data was truncated NoneType
+b'X\x03\x00\x00\x00ab' UnpicklingError pickle data was truncated NoneType
+b'X\x01\x00\x00\x00\xff.' UnicodeDecodeError 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte NoneType
+b'X\x02\x00\x00\x00\xc3(.' UnicodeDecodeError 'utf-8' codec can't decode byte 0xc3 in position 0: invalid continuation byte NoneType
+b'X\xff\xff\xff\xff.' UnpicklingError pickle data was truncated NoneType
+b'\x8c' UnpicklingError pickle data was truncated NoneType
+b'\x8c\x03ab' UnpicklingError pickle data was truncated NoneType
+b'\x8c\x01\xff.' UnicodeDecodeError 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte NoneType
+b'\x8d\x03\x00\x00\x00\x00\x00\x00\x00ab' UnpicklingError pickle data was truncated NoneType
+b'\x8d\xff\xff\xff\xff\xff\xff\xff\xff.' OverflowError BINUNICODE exceeds system's maximum size of 9223372036854775807 bytes NoneType
+b'\x8d\xff\xff\xff\xff\xff\xff\xff\x7f.' UnpicklingError read would overflow (invalid bytecode) NoneType
+b'\x8d\x00\x00\x00\x00\x00\x00\x00' UnpicklingError pickle data was truncated NoneType
+b'C' UnpicklingError pickle data was truncated NoneType
+b'C\x03ab' UnpicklingError pickle data was truncated NoneType
+b'B\x03\x00\x00\x00ab' UnpicklingError pickle data was truncated NoneType
+b'B\xff\xff\xff\xff.' UnpicklingError pickle data was truncated NoneType
+b'\x8e\x03\x00\x00\x00\x00\x00\x00\x00ab' UnpicklingError pickle data was truncated NoneType
+b'\x8e\xff\xff\xff\xff\xff\xff\xff\xff.' OverflowError BINBYTES exceeds system's maximum size of 9223372036854775807 bytes NoneType
+b'\x8e\xff\xff\xff\xff\xff\xff\xff\x7f.' UnpicklingError pickle data was truncated NoneType
+b'\x96\x03\x00\x00\x00\x00\x00\x00\x00ab' UnpicklingError pickle data was truncated NoneType
+b'\x96\xff\xff\xff\xff\xff\xff\xff\xff.' OverflowError BYTEARRAY8 exceeds system's maximum size of 9223372036854775807 bytes NoneType
+b'\x96\xff\xff\xff\xff\xff\xff\xff\x7f.' UnpicklingError pickle data was truncated NoneType
+b'\x97.' UnpicklingError pickle stream refers to out-of-band data but no *buffers* argument was given NoneType
+b'\x98.' UnpicklingError unpickling stack underflow NoneType
+b'N\x98.' TypeError memoryview: a bytes-like object is required, not 'NoneType' NoneType
+b'C\x01a\x98.' b'a'
+b'\x85.' UnpicklingError unpickling stack underflow NoneType
+b'K\x01\x86.' UnpicklingError unpickling stack underflow NoneType
+b'K\x01K\x02\x87.' UnpicklingError unpickling stack underflow NoneType
+b't.' UnpicklingError could not find MARK NoneType
+b'l.' UnpicklingError could not find MARK NoneType
+b'd.' UnpicklingError could not find MARK NoneType
+b'\x91.' UnpicklingError could not find MARK NoneType
+b'(K\x01d.' UnpicklingError odd number of items for DICT NoneType
+b'(K\x01\x85.' (1,)
+b'(\x85.' UnpicklingError unexpected MARK found NoneType
+b'(K\x01\x86.' UnpicklingError unexpected MARK found NoneType
+b'K\x01(\x85.' UnpicklingError unexpected MARK found NoneType
+b'(]K\x01d.' TypeError cannot use 'list' as a dict key (unhashable type: 'list') NoneType
+b'(]\x91.' TypeError cannot use 'list' as a set element (unhashable type: 'list') NoneType
+b'a.' UnpicklingError unpickling stack underflow NoneType
+b'K\x01a.' UnpicklingError unpickling stack underflow NoneType
+b']a.' UnpicklingError unpickling stack underflow NoneType
+b'e.' UnpicklingError could not find MARK NoneType
+b'(e.' UnpicklingError unpickling stack underflow NoneType
+b'K\x01(K\x02e.' AttributeError 'int' object has no attribute 'append' NoneType
+b'NK\x01a.' AttributeError 'NoneType' object has no attribute 'append' NoneType
+b's.' UnpicklingError unpickling stack underflow NoneType
+b'}s.' UnpicklingError unpickling stack underflow NoneType
+b'}K\x01s.' UnpicklingError unpickling stack underflow NoneType
+b'u.' UnpicklingError could not find MARK NoneType
+b'(u.' UnpicklingError unpickling stack underflow NoneType
+b'}(K\x01u.' UnpicklingError odd number of items for SETITEMS NoneType
+b'K\x01(K\x02K\x03u.' TypeError 'int' object does not support item assignment NoneType
+b'}]K\x01s.' TypeError cannot use 'list' as a dict key (unhashable type: 'list') NoneType
+b'\x90.' UnpicklingError could not find MARK NoneType
+b'(\x90.' UnpicklingError unpickling stack underflow NoneType
+b'K\x01(K\x02\x90.' AttributeError 'int' object has no attribute 'add' NoneType
+b'\x8f(]\x90.' TypeError cannot use 'list' as a set element (unhashable type: 'list') NoneType
+b'(a.' UnpicklingError unexpected MARK found NoneType
+b'](a.' UnpicklingError unexpected MARK found NoneType
+b'(]a.' UnpicklingError unexpected MARK found NoneType
+b'(s.' UnpicklingError unexpected MARK found NoneType
+b'}(s.' UnpicklingError unexpected MARK found NoneType
+b'(}K\x01s.' UnpicklingError unexpected MARK found NoneType
+b'(}K\x01K\x02s.' {1: 2}
+b'0.' UnpicklingError unpickling stack underflow NoneType
+b'1.' UnpicklingError could not find MARK NoneType
+b'2.' UnpicklingError unpickling stack underflow NoneType
+b'(2.' UnpicklingError unexpected MARK found NoneType
+b'(.' UnpicklingError unexpected MARK found NoneType
+b'((.' UnpicklingError unexpected MARK found NoneType
+b'(0.' UnpicklingError unpickling stack underflow NoneType
+b'K\x01(.' UnpicklingError unexpected MARK found NoneType
+b'(K\x01.' 1
+b'g0\n.' UnpicklingError Memo value not found at index 0 NoneType
+b'g\n.' UnpicklingError pickle data was truncated NoneType
+b'g' UnpicklingError pickle data was truncated NoneType
+b'gabc\n.' ValueError invalid literal for int() with base 10: 'abc\n' NoneType
+b'g-1\n.' UnpicklingError Memo value not found at index -1 NoneType
+b'g99999999999999999999999\n.' OverflowError Python int too large to convert to C ssize_t NoneType
+b'h\x00.' UnpicklingError Memo value not found at index 0 NoneType
+b'h' UnpicklingError pickle data was truncated NoneType
+b'j\x00\x00\x00\x00.' UnpicklingError Memo value not found at index 0 NoneType
+b'j\x00' UnpicklingError pickle data was truncated NoneType
+b'j\xff\xff\xff\xff.' UnpicklingError Memo value not found at index 4294967295 NoneType
+b'p0\n.' UnpicklingError unpickling stack underflow NoneType
+b'Np\n.' UnpicklingError pickle data was truncated NoneType
+b'Npabc\n.' ValueError invalid literal for int() with base 10: 'abc\n' NoneType
+b'Np-1\n.' ValueError negative PUT argument NoneType
+b'Np99999999999999999999999\n.' OverflowError Python int too large to convert to C ssize_t NoneType
+b'Np' UnpicklingError pickle data was truncated NoneType
+b'q\x00.' UnpicklingError unpickling stack underflow NoneType
+b'Nq' UnpicklingError pickle data was truncated NoneType
+b'r\x00\x00\x00\x00.' UnpicklingError unpickling stack underflow NoneType
+b'Nr\x00' UnpicklingError pickle data was truncated NoneType
+b'\x94.' UnpicklingError unpickling stack underflow NoneType
+b'(p0\n.' UnpicklingError unexpected MARK found NoneType
+b'(q\x00.' UnpicklingError unexpected MARK found NoneType
+b'(\x94.' UnpicklingError unexpected MARK found NoneType
+b'(r\x00\x00\x00\x00.' UnpicklingError unexpected MARK found NoneType
+b'c' UnpicklingError pickle data was truncated NoneType
+b'c\n' UnpicklingError pickle data was truncated NoneType
+b'c\n\n.' UnpicklingError pickle data was truncated NoneType
+b'cbuiltins\n' UnpicklingError pickle data was truncated NoneType
+b'cbuiltins\n\n.' UnpicklingError pickle data was truncated NoneType
+b'cbuiltins\nint' UnpicklingError pickle data was truncated NoneType
+b'cbuiltins\nnope\n.' AttributeError module 'builtins' has no attribute 'nope' NoneType
+b'cnope_module\nx\n.' ModuleNotFoundError No module named 'nope_module' NoneType
+b'c\xff\nx\n.' UnicodeDecodeError 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte NoneType
+b'cbuiltins\n\xff\n.' UnicodeDecodeError 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte NoneType
+b'cbuiltins\nint.real\n.' AttributeError module 'builtins' has no attribute 'int.real' NoneType
+b'\x80\x04cbuiltins\nint.nope\n.' AttributeError Can't resolve path 'int.nope' on module 'builtins' AttributeError
+b'\x80\x04cbuiltins\nnope\n.' AttributeError module 'builtins' has no attribute 'nope' NoneType
+b'\x93.' UnpicklingError unpickling stack underflow NoneType
+b'N\x93.' UnpicklingError unpickling stack underflow NoneType
+b'NN\x93.' UnpicklingError STACK_GLOBAL requires str NoneType
+b'\x8c\x08builtinsN\x93.' UnpicklingError STACK_GLOBAL requires str NoneType
+b'\x8c\x08builtins\x8c\x04nope\x93.' AttributeError module 'builtins' has no attribute 'nope' NoneType
+b'\x80\x04\x8c\x08builtins\x8c\x08int.nope\x93.' AttributeError Can't resolve path 'int.nope' on module 'builtins' AttributeError
+b'\x8c\x08builtins\x8c\x08int.real\x93.' AttributeError module 'builtins' has no attribute 'int.real' NoneType
+b'\x80\x04\x8c\x08builtins\x8c\x00\x93.' AttributeError module 'builtins' has no attribute '' NoneType
+b'C\x08builtinsC\x03int\x93.' UnpicklingError STACK_GLOBAL requires str NoneType
+b'R.' UnpicklingError unpickling stack underflow NoneType
+b'NR.' UnpicklingError unpickling stack underflow NoneType
+b'NNR.' TypeError argument list must be a tuple NoneType
+b'cbuiltins\nint\nNR.' TypeError argument list must be a tuple NoneType
+b'cbuiltins\nint\n]R.' TypeError argument list must be a tuple NoneType
+b'N)R.' TypeError 'NoneType' object is not callable NoneType
+b'cbuiltins\nint\n(S"x"\ntR.' ValueError invalid literal for int() with base 10: 'x' NoneType
+b'(R.' UnpicklingError unexpected MARK found NoneType
+b'(NR.' UnpicklingError unexpected MARK found NoneType
+b'N(NR.' UnpicklingError unexpected MARK found NoneType
+b'(N)R.' TypeError 'NoneType' object is not callable NoneType
+b'\x81.' UnpicklingError unpickling stack underflow NoneType
+b'N\x81.' UnpicklingError unpickling stack underflow NoneType
+b'NN\x81.' UnpicklingError NEWOBJ class argument must be a type, not NoneType NoneType
+b'N)\x81.' UnpicklingError NEWOBJ class argument must be a type, not NoneType NoneType
+b'cbuiltins\nint\nN\x81.' UnpicklingError NEWOBJ args argument must be a tuple, not NoneType NoneType
+b'cbuiltins\nlen\n)\x81.' UnpicklingError NEWOBJ class argument must be a type, not builtin_function_or_method NoneType
+b'c__main__\nC\n]\x81.' UnpicklingError NEWOBJ args argument must be a tuple, not list NoneType
+b'\x92.' UnpicklingError unpickling stack underflow NoneType
+b'N\x92.' UnpicklingError unpickling stack underflow NoneType
+b'NN\x92.' UnpicklingError unpickling stack underflow NoneType
+b'NNN\x92.' UnpicklingError NEWOBJ_EX class argument must be a type, not NoneType NoneType
+b'N)}\x92.' UnpicklingError NEWOBJ_EX class argument must be a type, not NoneType NoneType
+b'c__main__\nC\nN}\x92.' UnpicklingError NEWOBJ_EX args argument must be a tuple, not NoneType NoneType
+b'c__main__\nC\n)N\x92.' UnpicklingError NEWOBJ_EX kwargs argument must be a dict, not NoneType NoneType
+b'c__main__\nC\n)]\x92.' UnpicklingError NEWOBJ_EX kwargs argument must be a dict, not list NoneType
+b'cbuiltins\nint\n}\x81.' UnpicklingError NEWOBJ args argument must be a tuple, not dict NoneType
+b'ctypes\nGeneratorType\n)\x81.' UnpicklingError NEWOBJ class argument 'type' doesn't have __new__ NoneType
+b'ctypes\nGeneratorType\n)}\x92.' UnpicklingError NEWOBJ_EX class argument 'type' doesn't have __new__ NoneType
+b'o.' UnpicklingError could not find MARK NoneType
+b'(o.' UnpicklingError unpickling stack underflow NoneType
+b'(No.' TypeError 'NoneType' object is not callable NoneType
+b'(K\x01K\x02o.' TypeError 'int' object is not callable NoneType
+b'i.' UnpicklingError could not find MARK NoneType
+b'(i' UnpicklingError pickle data was truncated NoneType
+b'(i\n\n.' UnpicklingError pickle data was truncated NoneType
+b'(ibuiltins\n' UnpicklingError pickle data was truncated NoneType
+b'(ibuiltins\nnope\n.' AttributeError module 'builtins' has no attribute 'nope' NoneType
+b'(i\xff\nx\n.' UnicodeDecodeError 'ascii' codec can't decode byte 0xff in position 0: ordinal not in range(128) NoneType
+b'i__main__\nC\n.' UnpicklingError could not find MARK NoneType
+b'(K\x01K\x02i__main__\nC\n.' TypeError C.__init__() takes from 1 to 2 positional arguments but 3 were given NoneType
+b'b.' UnpicklingError unpickling stack underflow NoneType
+b'Nb.' UnpicklingError unpickling stack underflow NoneType
+b'NNb.' None
+b'c__main__\nC\n)\x81K\x01b.' UnpicklingError state is not a dictionary NoneType
+b'c__main__\nC\n)\x81]b.' UnpicklingError state is not a dictionary NoneType
+b'c__main__\nC\n)\x81NK\x01\x86b.' UnpicklingError slot state is not a dictionary NoneType
+b'c__main__\nC\n)\x81}K\x01K\x02sb.' C([(1, 2)])
+b'c__main__\nC\n)\x81N}K\x01K\x02s\x86b.' TypeError attribute name must be string, not 'int' NoneType
+b'K\x01}b.' AttributeError 'int' object has no attribute '__dict__' NoneType
+b'K\x01}X\x01\x00\x00\x00aK\x01sb.' AttributeError 'int' object has no attribute '__dict__' NoneType
+b'(b.' UnpicklingError unexpected MARK found NoneType
+b'(Nb.' UnpicklingError unexpected MARK found NoneType
+b'N(Nb.' UnpicklingError unexpected MARK found NoneType
+b'(NNb.' None
+b'P' UnpicklingError pickle data was truncated NoneType
+b'P\n.' UnpicklingError A load persistent id instruction was encountered, but no persistent_load function was specified. NoneType
+b'Pabc\n.' UnpicklingError A load persistent id instruction was encountered, but no persistent_load function was specified. NoneType
+b'P\xff\n.' UnpicklingError persistent IDs in protocol 0 must be ASCII strings NoneType
+b'Q.' UnpicklingError unpickling stack underflow NoneType
+b'NQ.' UnpicklingError A load persistent id instruction was encountered, but no persistent_load function was specified. NoneType
+b'(Q.' UnpicklingError unexpected MARK found NoneType
+b'\x82' UnpicklingError pickle data was truncated NoneType
+b'\x82\x00.' UnpicklingError EXT specifies code <= 0 NoneType
+b'\x82\x01.' ValueError unregistered extension code 1 NoneType
+b'\x83\x00\x00.' UnpicklingError EXT specifies code <= 0 NoneType
+b'\x83\x01\x00.' ValueError unregistered extension code 1 NoneType
+b'\x84\x00\x00\x00\x00.' UnpicklingError EXT specifies code <= 0 NoneType
+b'\x84\xff\xff\xff\xff.' UnpicklingError EXT specifies code <= 0 NoneType
+b'\x84\x01\x00\x00\x00.' ValueError unregistered extension code 1 NoneType
+b'\x84\xff\xff\xff\x7f.' ValueError unregistered extension code 2147483647 NoneType
+b'\x95' UnpicklingError pickle data was truncated NoneType
+b'\x95\x00\x00\x00\x00\x00\x00\x00' UnpicklingError pickle data was truncated NoneType
+b'\x95\x05\x00\x00\x00\x00\x00\x00\x00N.' UnpicklingError pickle data was truncated NoneType
+b'\x95\xff\xff\xff\xff\xff\xff\xff\xffN.' OverflowError FRAME length exceeds system's maximum of 9223372036854775807 bytes NoneType
+b'\x95\xff\xff\xff\xff\xff\xff\xff\x7fN.' UnpicklingError read would overflow (invalid bytecode) NoneType
+b'\x95\x01\x00\x00\x00\x00\x00\x00\x00K\x01.' 1
+b'\x95\x02\x00\x00\x00\x00\x00\x00\x00C\x03abc.' b'abc'
+b'\x95\x0b\x00\x00\x00\x00\x00\x00\x00\x95\x01\x00\x00\x00\x00\x00\x00\x00N.' UnpicklingError beginning of a new frame before end of current frame NoneType
+b'\x95\x02\x00\x00\x00\x00\x00\x00\x00I1\n.' UnpicklingError pickle exhausted before end of frame NoneType
+b'\x95\x03\x00\x00\x00\x00\x00\x00\x00\x8c\x03abc.' UnpicklingError pickle exhausted before end of frame NoneType
+b'\x95\x02\x00\x00\x00\x00\x00\x00\x00\x96\x03\x00\x00\x00\x00\x00\x00\x00abc.' UnpicklingError pickle exhausted before end of frame NoneType
+b'\x95\t\x00\x00\x00\x00\x00\x00\x00\x96\x03\x00\x00\x00\x00\x00\x00\x00abc.' bytearray(b'abc')
+b'\x95\n\x00\x00\x00\x00\x00\x00\x00\x96\x03\x00\x00\x00\x00\x00\x00\x00abc.' UnpicklingError pickle exhausted before end of frame NoneType
+'Ã©'
+'Ã©'
+'Ã©'
+'a'
+b'\xc3\xa9'
+b'\xc3\xa9'
+b'\xc3\xa9'
+b'a'
+'é'
+'é'
+'é'
+'a'
+'��'
+'��'
+'��'
+'a'
+''
+''
+''
+'a'
+LookupError unknown encoding: nope NoneType
+LookupError unknown encoding: nope NoneType
+LookupError unknown encoding: nope NoneType
+LookupError unknown encoding: nope NoneType
+LookupError unknown error handler name 'nope' NoneType
+LookupError unknown error handler name 'nope' NoneType
+LookupError unknown error handler name 'nope' NoneType
+'a'
+UnicodeDecodeError 'ascii' codec can't decode byte 0xc3 in position 0: ordinal not in range(128) NoneType
+UnicodeDecodeError 'ascii' codec can't decode byte 0xc3 in position 0: ordinal not in range(128) NoneType
+UnicodeDecodeError 'ascii' codec can't decode byte 0xc3 in position 0: ordinal not in range(128) NoneType
+'a'
+ModuleNotFoundError No module named '__builtin__' NoneType
+<class 'str'>
+ModuleNotFoundError No module named '__builtin__' NoneType
+<class 'Exception'>
+<class 'collections.UserDict'>
+<class '_pickle.Pickler'>
+<class 'zip'>
+<class 'queue.Queue'>
+None
+5
+5
+TypeError a bytes-like object is required, not 'str' NoneType
+TypeError a bytes-like object is required, not 'int' NoneType
+TypeError a bytes-like object is required, not 'NoneType' NoneType
+TypeError a bytes-like object is required, not 'list' NoneType
+BufferError memoryview: underlying buffer is not C-contiguous NoneType
+TypeError loads() takes exactly 1 positional argument (0 given) NoneType
+TypeError loads() takes exactly 1 positional argument (2 given) NoneType
+TypeError loads() takes exactly 1 positional argument (0 given) NoneType
+TypeError loads() got an unexpected keyword argument 'foo' NoneType
+TypeError loads() argument 'encoding' must be str, not int NoneType
+TypeError loads() argument 'errors' must be str, not int NoneType
+TypeError loads() argument 'encoding' must be str, not None NoneType
+ValueError embedded null character NoneType
+TypeError 'int' object is not iterable NoneType
+None
+None
+b'abc'
+bytearray(b'abc')
+UnpicklingError not enough out-of-band buffers NoneType
+UnpicklingError not enough out-of-band buffers NoneType
+UnpicklingError not enough out-of-band buffers NoneType
+UnpicklingError pickle stream refers to out-of-band data but no *buffers* argument was given NoneType
+b'abc'
+<class 'memoryview'> True b'abc'
+TypeError memoryview: a bytes-like object is required, not 'int' NoneType
+1
+b'c__main__\nC\np0\n.' b'ccollections\nOrderedDict\np0\n.' b'(lp0\nc__main__\nC\np1\nag1\na.'
+b'c__main__\nC\nq\x00.' b'ccollections\nOrderedDict\nq\x00.' b']q\x00(c__main__\nC\nq\x01h\x01e.'
+b'\x80\x02\x82\xf0.' b'\x80\x02\x84p\x11\x01\x00.' b'\x80\x02]q\x00(\x82\xf0\x82\xf0e.'
+b'\x80\x03\x82\xf0.' b'\x80\x03\x84p\x11\x01\x00.' b'\x80\x03]q\x00(\x82\xf0\x82\xf0e.'
+b'\x80\x04\x82\xf0.' b'\x80\x04\x95\x06\x00\x00\x00\x00\x00\x00\x00\x84p\x11\x01\x00.' b'\x80\x04\x95\t\x00\x00\x00\x00\x00\x00\x00]\x94(\x82\xf0\x82\xf0e.'
+b'\x80\x05\x82\xf0.' b'\x80\x05\x95\x06\x00\x00\x00\x00\x00\x00\x00\x84p\x11\x01\x00.' b'\x80\x05\x95\t\x00\x00\x00\x00\x00\x00\x00]\x94(\x82\xf0\x82\xf0e.'
+<class '__main__.C'>
+<class 'collections.OrderedDict'>
+AttributeError module '__main__' has no attribute 'nope' NoneType
+[240, 70000]
+ValueError unregistered extension code 240 NoneType
+ValueError _inverted_registry[241] isn't a 2-tuple of strings NoneType
+ValueError _inverted_registry[241] isn't a 2-tuple of strings NoneType
+ValueError _inverted_registry[241] isn't a 2-tuple of strings NoneType
+True
+False
+True
+True
+True True True
+True True True
+True True True
+True True True
+True True True
+True True True

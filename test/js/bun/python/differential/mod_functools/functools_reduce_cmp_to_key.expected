@@ -1,0 +1,117 @@
+status: 0
+script: b177b0ff01672727
+---
+--- reduce
+10
+110
+110
+100
+None
+None
+7
+'abc'
+'ab'
+[1, 2, 3]
+10
+10
+3
+2432902008176640000
+((('a', 'b'), 'c'), 'd')
+((((None, 'a'), 'b'), 'c'), 'd')
+5
+1
+1
+5
+499500
+--- reduce errors
+TypeError reduce() takes at least 2 positional arguments (0 given)
+TypeError reduce() takes at least 2 positional arguments (1 given)
+TypeError reduce() takes at most 3 arguments (4 given)
+TypeError reduce() arg 2 must support iteration
+TypeError reduce() arg 2 must support iteration
+TypeError reduce() arg 2 must support iteration
+TypeError reduce() of empty iterable with no initial value
+TypeError reduce() of empty iterable with no initial value
+TypeError reduce() of empty iterable with no initial value
+TypeError 'int' object is not callable
+TypeError unsupported operand type(s) for +: 'int' and 'str'
+TypeError reduce() takes at least 2 positional arguments (0 given)
+TypeError reduce() takes at least 2 positional arguments (1 given)
+TypeError reduce() got an unexpected keyword argument 'x'
+TypeError reduce() takes at most 3 arguments (4 given)
+TypeError reduce() got an unexpected keyword argument 'initia'. Did you mean 'initial'?
+ValueError bad iter
+TypeError reduce() arg 2 must support iteration
+ZeroDivisionError bad next
+ZeroDivisionError bad next
+6
+ZeroDivisionError division by zero
+('reduce', 'reduce', '_functools', 'builtin_function_or_method', '<built-in function reduce>')
+--- cmp_to_key
+[1, 2, 3]
+[3, 2, 1]
+['fox', 'the', 'brown', 'quick']
+[0, 3, 6, 9, 12, 15, 18, 1, 4, 7, 10, 13, 16, 19, 2, 5, 8, 11, 14, 17]
+3
+1
+True
+1 2 True True False True False False
+2 1 False False False True True True
+1 1 False True True False False True
+5
+5
+None
+None
+True
+2
+True
+True
+True
+TypeError '<' not supported between instances of 'str' and 'int'
+False
+True
+TypeError '>=' not supported between instances of 'list' and 'int'
+'odd lt 0'
+'odd eq 0'
+--- cmp_to_key errors
+TypeError cmp_to_key() missing required argument 'mycmp' (pos 1)
+TypeError cmp_to_key() takes at most 1 argument (2 given)
+TypeError cmp_to_key() missing required argument 'mycmp' (pos 1)
+TypeError cmp_to_key() takes at most 1 argument (2 given)
+TypeError cmp_to_key() missing required argument 'mycmp' (pos 1)
+'KeyWrapper'
+TypeError 'int' object is not callable
+TypeError K() missing required argument 'obj' (pos 1)
+TypeError K() takes at most 1 argument (2 given)
+TypeError K() missing required argument 'obj' (pos 1)
+TypeError K() takes at most 1 argument (2 given)
+TypeError K() takes at most 1 argument (2 given)
+TypeError other argument must be K instance
+TypeError other argument must be K instance
+TypeError other argument must be K instance
+TypeError other argument must be K instance
+TypeError other argument must be K instance
+AttributeError object
+AttributeError object
+AttributeError object
+TypeError '>' not supported between instances of 'int' and 'str'
+ZeroDivisionError division by zero
+TypeError <lambda>.<locals>.<lambda>() takes 1 positional argument but 2 were given
+ZeroDivisionError division by zero
+TypeError unhashable type: 'functools.KeyWrapper'
+TypeError cannot use 'functools.KeyWrapper' as a set element (unhashable type: 'functools.KeyWrapper')
+None
+--- obj
+(10, True)
+None
+AttributeError object
+AttributeError object
+None
+False
+'(obj)'
+--- the type
+('KeyWrapper', 'KeyWrapper', 'functools', "<class 'functools.KeyWrapper'>")
+['__call__', '__eq__', '__ge__', '__gt__', '__hash__', '__le__', '__lt__', '__ne__', '__text_signature__', 'obj']
+('cmp_to_key', '_functools', 'builtin_function_or_method')
+--- sort stability
+[(0, 0), (0, 3), (0, 6), (0, 9), (1, 1), (1, 4), (1, 7), (2, 2), (2, 5), (2, 8)]

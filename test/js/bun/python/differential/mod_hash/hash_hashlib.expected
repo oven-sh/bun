@@ -1,0 +1,59 @@
+status: 0
+script: 084f005f5fd62e6a
+---
+['blake2b', 'blake2s', 'md5', 'sha1', 'sha224', 'sha256', 'sha384', 'sha3_224', 'sha3_256', 'sha3_384', 'sha3_512', 'sha512', 'shake_128', 'shake_256'] ['blake2b', 'blake2s', 'md5', 'md5-sha1', 'ripemd160', 'sha1', 'sha224', 'sha256', 'sha384', 'sha3_224', 'sha3_256', 'sha3_384', 'sha3_512', 'sha512', 'sha512_224', 'sha512_256', 'shake_128', 'shake_256']
+blake2b blake2b 64 128 ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923 True blake2b blake2b type
+blake2s blake2s 32 64 508c5e8c327c14e2e1a72ba34eeb452f37458b209ed63a294d999b4c86675982 True blake2s blake2s type
+md5 md5 16 64 900150983cd24fb0d6963f7d28e17f72 True HASH HASH builtin_function_or_method
+sha1 sha1 20 64 a9993e364706816aba3e25717850c26c9cd0d89d True HASH HASH builtin_function_or_method
+sha224 sha224 28 64 23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7 True HASH HASH builtin_function_or_method
+sha256 sha256 32 64 ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad True HASH HASH builtin_function_or_method
+sha384 sha384 48 128 cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7 True HASH HASH builtin_function_or_method
+sha3_224 sha3_224 28 144 e642824c3f8cf24ad09234ee7d3c766fc9a3a5168d0c94ad73b46fdf True HASH HASH builtin_function_or_method
+sha3_256 sha3_256 32 136 3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532 True HASH HASH builtin_function_or_method
+sha3_384 sha3_384 48 104 ec01498288516fc926459f58e2c6ad8df9b473cb0fc08c2596da7cf0e49be4b298d88cea927ac7f539f1edf228376d25 True HASH HASH builtin_function_or_method
+sha3_512 sha3_512 64 72 b751850b1a57168a5693cd924b6b096e08f621827444f70d884f5d0240d2712e10e116e9192af3c91a7ec57647e3934057340b4cf408d5a56592f8274eec53f0 True HASH HASH builtin_function_or_method
+sha512 sha512 64 128 ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f True HASH HASH builtin_function_or_method
+shake_128 shake_128 0 168 5881092dd818bf5c True HASHXOF HASHXOF builtin_function_or_method
+shake_256 shake_256 0 136 483366601360a877 True HASHXOF HASHXOF builtin_function_or_method
+'8eb208f7e05d987a9b044a8e98c6b087f15a0bfc'
+'4634270f707b6a54daae7530460842e20e37ed265ceee9a43e8924aa'
+'53048e2681941ef99b2e29b76b4c7dabe4c2d0c634fc6d46e0e2f13107e7af23'
+'900150983cd24fb0d6963f7d28e17f72a9993e364706816aba3e25717850c26c9cd0d89d'
+'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'
+ValueError: unsupported hash algorithm Blake2b
+ValueError: unsupported hash algorithm nope
+<_blake2.blake2b object>
+'ce2d142464'
+'c9fdf30d0cc4498261da6e5973d68c88789a4f9f0053b4e0759e730ca452db3c'
+<md5 _hashlib.HASH object>
+TypeError: Strings must be encoded before hashing
+TypeError: new() argument 'name' must be str, not int
+632c2812e46d4604102ba7618e9d6d7d2f8128f6266b4a03264d2a0460b7dcb3 b6727fa26c12fc5474d907a06363bfcf
+b57b64b198d5d59ce5a22a9b9f25e72a7d081476d432051aa923f3dbebb90934 900150983cd24fb0d6963f7d28e17f72 63906248
+7d899a658578c1523aa5e5bf06aab730fc73484b
+hmac-md5 16 64 80070713463e7749b90c2dc24911e275 True True
+hmac-sha1 20 64 de7c9b85b8b78aa6bc8a7a36f70a90701c9db4d9 True True
+hmac-sha256 32 64 f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8 True True
+hmac-sha512 64 128 b42af09057bac1e2d41708e48a902e09b5ff7f12ab428a4fe86653c73dd248fb82f948a549f7b791a5b41915ee4d1ec3935357e4e2317250d0372afa2ebeeb3a True True
+hmac-sha3_256 32 136 8c6e0683409427f8931711b10ca92a506eb1fafa48fadd66d76126f47ac2c333 True True
+hmac-blake2b 64 128 92294f92c0dfb9b00ec9ae8bd94d7e7d8a036b885a499f149dfe2fd2199394aaaf6b8894a1730cccb2cd050f9bcf5062a38b51b0dab33207f8ef35ae2c9df51b True True
+hmac-blake2s 32 64 f93215bb90d4af4c3061cd932fb169fb8bb8a91d0b4022baea1271e1323cd9a0 True True
+hmac-sha256 32 64 f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8 True True
+hmac-sha3_512 64 72 237a35049c40b3ef5ddd960b3dc893d8284953b9a4756611b1b61bffcf53edd979f93547db714b06ef0a692062c609b70208ab8d4a280ceee40ed8100f293063 True True
+hmac-blake2b 64 128 92294f92c0dfb9b00ec9ae8bd94d7e7d8a036b885a499f149dfe2fd2199394aaaf6b8894a1730cccb2cd050f9bcf5062a38b51b0dab33207f8ef35ae2c9df51b True True
+hmac-blake2b 10 128 f774978814155539deb9 True True
+hmac-md5 16 64 80070713463e7749b90c2dc24911e275 True True
+386081d3a1ad30125daa8d66db6df4ea73d39212c64794e2d02abe994806017c fbdb1d1b18aa6c08324b7d64b71fb76370690e1d
+TypeError: Missing required argument 'digestmod'.
+TypeError: Missing required argument 'digestmod'.
+TypeError: key: expected bytes or bytearray, but got 'str'
+TypeError: Strings must be encoded before hashing
+ValueError: unsupported hash algorithm nope
+ValueError: unsupported hash algorithm shake_128
+ValueError: unsupported hash algorithm nope
+AttributeError: 'int' object has no attribute 'new'
+True False True
+TypeError: a bytes-like object is required, not 'str'
+0.5951446248069528 74792486
+6fa459ea-ee8a-3ca4-894e-db77e160355e 886313e1-3b8a-5372-9b90-0c9aee199e5d 16

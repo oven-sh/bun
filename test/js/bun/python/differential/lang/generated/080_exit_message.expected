@@ -1,0 +1,6 @@
+status: 1
+stderr: a message goes to stderr, status 1
+script: 5c244f7f9b5b2b3d
+source: 5c244f7f9b5b2b3d
+---
+before

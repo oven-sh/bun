@@ -1,0 +1,13 @@
+status: 0
+script: 53a2fb89e6a46b1e
+---
+child first: [('parent', ['child']), ('child', [])]
+parent first: [('parent', ['child']), ('child', [])]
+three levels: [('a', ['b']), ('b', ['c']), ('c', [])]
+diamond: [('t', ['l', 'r']), ('r', ['d']), ('l', ['d']), ('d', [])]
+cycle: ['hanging', 'x', 'y'] hanging
+resurrection: [('phoenix', ['kept child'])]
+False
+then: [('kept child', [])]
+chain: 2000 ['1999', '1998', '1997'] ['1', '0'] True
+written by __del__ | written by __del__ too

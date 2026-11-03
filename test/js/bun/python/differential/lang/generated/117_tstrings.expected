@@ -1,0 +1,376 @@
+status: 0
+script: 69e633b4dbd42114
+source: e8869dad63810e88
+---
+Template.__name__ => Template
+Template.__module__ => string.templatelib
+Template.__qualname__ => Template
+Interpolation.__name__ => Interpolation
+Interpolation.__module__ => string.templatelib
+tp => Template(strings=('Hello ', '!'), interpolations=(Interpolation('World', 'name', None, ''),))
+repr(tp) == str(tp) => True
+tp.strings => ('Hello ', '!')
+tp.interpolations => (Interpolation('World', 'name', None, ''),)
+tp.values => ('World',)
+type(tp.strings) => <class 'tuple'>
+type(tp.interpolations) => <class 'tuple'>
+type(tp.values) => <class 'tuple'>
+i => Interpolation('World', 'name', None, '')
+i.value => World
+i.expression => name
+i.conversion => None
+i.format_spec => 
+repr(i) => Interpolation('World', 'name', None, '')
+t"" => Template(strings=('',), interpolations=())
+t"".strings => ('',)
+t"".interpolations => ()
+t"".values => ()
+t"plain".strings => ('plain',)
+t"{n}".strings => ('', '')
+t"{n}{n}".strings => ('', '', '')
+t"a{n}".strings => ('a', '')
+t"{n}b".strings => ('', 'b')
+t"a{n}b{n}c".strings => ('a', 'b', 'c')
+t"{n}{n}{n}".values => (42, 42, 42)
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [(42, 'n', None, '')]
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [(42, 'n', 'r', '')]
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [(42, 'n', 's', '')]
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [(42, 'n', 'a', '')]
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [(42, 'n', None, '>5')]
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [(42, 'n', 'r', '>5')]
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [(42, 'n', None, '')]
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [(42, ' n ', None, '')]
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [(42, 'n ', None, '')]
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [(42, ' n', None, '')]
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [(43, 'n + 1', None, '')]
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [(43, 'n+1', None, '')]
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [(42, '(n)', None, '')]
+x.strings [x=Template] => ('n=', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [(42, 'n', 'r', '')]
+x.strings [x=Template] => ('n = ', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [(42, 'n ', 'r', '')]
+x.strings [x=Template] => ('n=', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [(42, 'n', 's', '')]
+x.strings [x=Template] => ('n=', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [(42, 'n', None, '>5')]
+x.strings [x=Template] => ('n=', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [(42, 'n', 'r', '>5')]
+x.strings [x=Template] => (' n = ', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [(42, ' n ', 'r', '')]
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [(42, 'n', None, '42')]
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [(42, 'n', None, '42.42')]
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [(42, 'n', None, '>42')]
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [(42, 'n', None, 'x>5')]
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [('World', 'name', 'r', '42')]
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [(1, '[1, 2][0]', None, '')]
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [(1, " {'a': 1}['a'] ", None, '')]
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [(1, '(lambda: 1)()', None, '')]
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [('WORLD', 'name.upper()', None, '')]
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [('W', 'name[0]', None, '')]
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [(1, '1 if n else 2', None, '')]
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [('nested', "'nested'", None, '')]
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [('same quotes', '"same quotes"', None, '')]
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [('42', "f'{n}'", None, '')]
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [(42, 'n', None, '%Y-%m')]
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [(42, 'n', 'r', '')]
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [((42,), 'n,', None, '')]
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [((42, 42), 'n, n', None, '')]
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [((1, 2), '*[1, 2],', None, '')]
+x.strings [x=Template] => ('', '')
+[(j.value, j.expression, j.conversion, j.format_spec) for j in x.inte... [x=Template] => [(42, 'n', None, 'a42b42c')]
+type(nested.values[0]).__name__ => Template
+nested.values[0].values => (42,)
+nested.interpolations[0].expression => t'{n}'
+x.values => (Tr(), Tr(), Tr(), Tr())
+[j.conversion for j in x.interpolations] => [None, 's', None, 'r']
+log => [1, 2, 3, 4]
+x.values => (1, 2, 4)
+t"{undefined_name}" => NameError: name 'undefined_name' is not defined
+t"{1 / 0}" => ZeroDivisionError: division by zero
+t"{n:{undefined_name}}" => NameError: name 'undefined_name' is not defined
+t"{{}}".strings => ('{}',)
+t"{{{n}}}".strings => ('{', '}')
+t"a{{b".strings => ('a{b',)
+t"}}".strings => ('}',)
+t"\n\t\\".strings => ('\n\t\\',)
+t"\x41\u00e9\N{DIGIT ONE}".strings => ('Aé1',)
+t"é😀{n}😀".strings => ('é😀', '😀')
+T"upper {n}".strings => ('upper ', '')
+rt"raw\n{n}\d".strings => ('raw\\n', '\\d')
+tr"raw\n".strings => ('raw\\n',)
+Rt"\n".strings => ('\\n',)
+tR"\n".strings => ('\\n',)
+RT"\n".strings => ('\\n',)
+t'single {n}'.strings => ('single ', '')
+t"""triple {n} """.strings => ('triple\n', '\n')
+t'''a'b"c{n}'''.strings => ('a\'b"c', '')
+rt"{n:\d}".interpolations[0].format_spec => \d
+t"{n:\x41}".interpolations[0].format_spec => A
+t"{'\n'}".values => ('\n',)
+t"{n!r}".interpolations[0].conversion => r
+(t"a" t"b").strings => ('ab',)
+(t"a{n}" t"b{n}c").strings => ('a', 'b', 'c')
+(t"{n}" t"{n}").strings => ('', '', '')
+(t"a" t"" t"b").strings => ('ab',)
+(t"a" t"b").strings => ('ab',)
+x.interpolations[0].expression == "\n n\n" => True
+x.values => (42,)
+repr(x.interpolations[0].expression) => 'n  \n'
+x.values => (42,)
+(a + b).strings => ('a', 'b', 'c')
+(a + b).values => (42, 'World')
+type(a + b).__name__ => Template
+(a + t"").strings => ('a', '')
+(t"" + a).strings => ('a', '')
+(a + a + a).strings => ('a', 'a', 'a', '')
+a + "str" => TypeError: can only concatenate string.templatelib.Template (not "str") to string.templatelib.Template
+"str" + a => TypeError: can only concatenate str (not "string.templatelib.Template") to str
+a + 1 => TypeError: can only concatenate string.templatelib.Template (not "int") to string.templatelib.Template
+a * 2 => TypeError: unsupported operand type(s) for *: 'string.templatelib.Template' and 'int'
+a % 1 => TypeError: unsupported operand type(s) for %: 'string.templatelib.Template' and 'int'
+a == t"a{n}" => False
+a == a => True
+a != a => False
+hash(a) == hash(a) => True
+len(a) => TypeError: object of type 'string.templatelib.Template' has no len()
+a[0] => TypeError: 'string.templatelib.Template' object is not subscriptable
+bool(t"") => True
+a < a => TypeError: '<' not supported between instances of 'string.templatelib.Template' and 'string.templatelib.Template'
+"a" in a => True
+str(a) == repr(a) => True
+format(a) == repr(a) => True
+format(a, ">5") => TypeError: unsupported format string passed to string.templatelib.Template.__format__
+f"{a}" == repr(a) => True
+"".join([a]) => TypeError: sequence item 0: expected str instance, string.templatelib.Template found
+a.upper() => AttributeError: 'string.templatelib.Template' object has no attribute 'upper'
+a.nope => AttributeError: 'string.templatelib.Template' object has no attribute 'nope'
+isinstance(a, str) => False
+a() => TypeError: 'string.templatelib.Template' object is not callable
+list(a) => ['a', Interpolation(42, 'n', None, '')]
+list(b) => ['b', Interpolation('World', 'name', None, ''), 'c']
+list(t"") => []
+list(t"{n}") => [Interpolation(42, 'n', None, '')]
+list(t"{n}{n}") => [Interpolation(42, 'n', None, ''), Interpolation(42, 'n', None, '')]
+list(t"x") => ['x']
+[type(p).__name__ for p in t"a{n}b{n}"] => ['str', 'Interpolation', 'str', 'Interpolation']
+type(iter(a)).__name__ => TemplateIter
+AttributeError: readonly attribute
+AttributeError: 'string.templatelib.Template' object has no attribute 'x' and no __dict__ for setting new attributes
+AttributeError: readonly attribute
+AttributeError: readonly attribute
+Template() => Template(strings=('',), interpolations=())
+Template("a") => Template(strings=('a',), interpolations=())
+Template("a", "b") => Template(strings=('ab',), interpolations=())
+Template("a", "b").strings => ('ab',)
+Template(Interpolation(1, "x")) => Template(strings=('', ''), interpolations=(Interpolation(1, 'x', None, ''),))
+Template(Interpolation(1, "x")).strings => ('', '')
+Template("a", Interpolation(1, "x"), "b", "c", Interpolation(2, "y"),... => ('a', 'bc', '', '')
+Template("", "").strings => ('',)
+Interpolation(1) => Interpolation(1, '', None, '')
+Interpolation(1, "e") => Interpolation(1, 'e', None, '')
+Interpolation(1, "e", "r") => Interpolation(1, 'e', 'r', '')
+Interpolation(1, "e", "r", ">5") => Interpolation(1, 'e', 'r', '>5')
+Interpolation(1, "e", None, "") => Interpolation(1, 'e', None, '')
+Interpolation(value=1, expression="e", conversion="s", format_spec="f") => Interpolation(1, 'e', 's', 'f')
+Interpolation(None).value => None
+Interpolation(1).expression == "" => True
+Interpolation(1).conversion => None
+Interpolation(1).format_spec == "" => True
+Template(1) => TypeError: Template.__new__ *args need to be of type 'str' or 'Interpolation', got int
+Template(None) => TypeError: Template.__new__ *args need to be of type 'str' or 'Interpolation', got NoneType
+Template("a", 1) => TypeError: Template.__new__ *args need to be of type 'str' or 'Interpolation', got int
+Template(b"a") => TypeError: Template.__new__ *args need to be of type 'str' or 'Interpolation', got bytes
+Template(strings=()) => TypeError: Template.__new__ only accepts *args arguments
+Template(t"a") => TypeError: Template.__new__ *args need to be of type 'str' or 'Interpolation', got string.templatelib.Template
+Interpolation() => TypeError: Interpolation() missing required argument 'value' (pos 1)
+Interpolation(1, 2) => TypeError: Interpolation() argument 'expression' must be str, not int
+Interpolation(1, "e", "x") => ValueError: Interpolation() argument 'conversion' must be one of 's', 'a' or 'r'
+Interpolation(1, "e", 1) => TypeError: Interpolation() argument 'conversion' must be str, not int
+Interpolation(1, "e", "r", 1) => TypeError: Interpolation() argument 'format_spec' must be str, not int
+Interpolation(1, "e", "r", "f", "extra") => TypeError: Interpolation() takes at most 4 arguments (5 given)
+Interpolation(1, nope=1) => TypeError: Interpolation() got an unexpected keyword argument 'nope'
+Interpolation(1, "e", "") => ValueError: Interpolation() argument 'conversion' must be one of 's', 'a' or 'r'
+Interpolation(1, "e", "rs") => ValueError: Interpolation() argument 'conversion' must be one of 's', 'a' or 'r'
+type("X", (Template,), {}) => TypeError: type 'string.templatelib.Template' is not an acceptable base type
+type("X", (Interpolation,), {}) => TypeError: type 'string.templatelib.Interpolation' is not an acceptable base type
+Interpolation.__match_args__ => ('value', 'expression', 'conversion', 'format_spec')
+Interpolation(1, "e") == Interpolation(1, "e") => False
+hash(i) == hash(i) => True
+i == i => True
+matched 42 n r >3
+matched x '' 42
+render(tpl) [tpl=Template, f='Hello World!'] => Hello World!
+render(tpl) == f [tpl=Template, f='Hello World!'] => True
+render(tpl) [tpl=Template, f='    42|42    |  42  '] =>     42|42    |  42  
+render(tpl) == f [tpl=Template, f='    42|42    |  42  '] => True
+render(tpl) [tpl=Template, f="   'World'"] =>    'World'
+render(tpl) == f [tpl=Template, f="   'World'"] => True
+render(tpl) [tpl=Template, f='  42'] =>   42
+render(tpl) == f [tpl=Template, f='  42'] => True
+render(tpl) [tpl=Template, f='n=42'] => n=42
+render(tpl) == f [tpl=Template, f='n=42'] => True
+render(tpl) [tpl=Template, f="'\\xe9'"] => '\xe9'
+render(tpl) == f [tpl=Template, f="'\\xe9'"] => True
+render(tpl) [tpl=Template, f='3.14 1,000,000'] => 3.14 1,000,000
+render(tpl) == f [tpl=Template, f='3.14 1,000,000'] => True
+render(tpl) [tpl=Template, f='{42}'] => {42}
+render(tpl) == f [tpl=Template, f='{42}'] => True
+<p>&lt;script></p>
+(('local', 'World'), [(0,), (1,)], ('local',))
+(1,)
+next(g) => 1
+g.send("sent").values => ('sent',)
+SyntaxError: t-string: valid expression required before '}' <- t"{}"
+SyntaxError: t-string: valid expression required before '}' <- t"{ }"
+SyntaxError: t-string: expecting '}' <- t"{"
+SyntaxError: t-string: single '}' is not allowed <- t"}"
+SyntaxError: t-string: expecting '}' <- t"{a"
+SyntaxError: t-string: missing conversion character <- t"{a!}"
+SyntaxError: t-string: invalid conversion character 'x': expected 's', 'r', or 'a' <- t"{a!x}"
+SyntaxError: t-string: invalid conversion character 'rr': expected 's', 'r', or 'a' <- t"{a!rr}"
+SyntaxError: t-string: conversion type must come right after the exclamation mark <- t"{a! r}"
+ok: t"{a !r}"
+SyntaxError: t-string: expecting '}', or format specs <- t"{a:{b}"
+SyntaxError: t-string: valid expression required before '}' <- t"{a:{}}"
+ok: t"{a:{b:{c}}}"
+SyntaxError: t-string: expressions nested too deeply <- t"{a:{b:{c:{d}}}}"
+SyntaxError: invalid syntax. Perhaps you forgot a comma? <- t"{a b}"
+SyntaxError: t-string: expecting '!', or ':', or '}' <- t"{a=b}"
+ok: t"{a==b}"
+ok: t"{a!=b}"
+ok: t"{a:=1}"
+ok: t"{(a:=1)}"
+SyntaxError: t-string: lambda expressions are not allowed without parentheses <- t"{lambda: 1}"
+SyntaxError: t-string: lambda expressions are not allowed without parentheses <- t"{lambda x: 1}"
+ok: t"{(lambda: 1)}"
+SyntaxError: can't use starred expression here <- t"{*a}"
+SyntaxError: t-string: expecting a valid expression after '{' <- t"{**a}"
+SyntaxError: t-string: expecting '=', or '!', or ':', or '}' <- t"{a;b}"
+SyntaxError: '{' was never closed <- t"{#}"
+SyntaxError: '{' was never closed <- t"{a#}"
+SyntaxError: unexpected character after line continuation character <- t"{\n}"
+SyntaxError: unexpected character after line continuation character <- t"{a\n}"
+SyntaxError: 'yield' outside function <- t"{yield}"
+SyntaxError: 'await' outside function <- t"{await a}"
+SyntaxError: t-string: expecting a valid expression after '{' <- t"{return}"
+SyntaxError: t-string: expecting a valid expression after '{' <- t"{pass}"
+SyntaxError: t-string: expecting '!', or ':', or '}' <- t"{a = 1}"
+SyntaxError: t-string: expecting '=', or '!', or ':', or '}' <- t"{1 +}"
+SyntaxError: t-string: unmatched ')' <- t"{)}"
+SyntaxError: closing parenthesis '}' does not match opening parenthesis '(' <- t"{(}"
+SyntaxError: closing parenthesis '}' does not match opening parenthesis '[' <- t"{[}"
+SyntaxError: t-string: unmatched ']' <- t"{a]}"
+SyntaxError: cannot mix t-string literals with string or bytes literals <- t"a" "b"
+SyntaxError: cannot mix t-string literals with string or bytes literals <- "a" t"b"
+SyntaxError: cannot mix t-string literals with string or bytes literals <- t"a" f"b"
+SyntaxError: cannot mix t-string literals with string or bytes literals <- f"a" t"b"
+SyntaxError: cannot mix t-string literals with string or bytes literals <- t"a" b"b"
+SyntaxError: cannot mix t-string literals with string or bytes literals <- b"a" t"b"
+ok: t"a" t"b"
+SyntaxError: cannot mix t-string literals with string or bytes literals <- t"a" t"b" "c"
+SyntaxError: 'b' and 't' prefixes are incompatible <- bt"a"
+SyntaxError: 'b' and 't' prefixes are incompatible <- tb"a"
+SyntaxError: 'f' and 't' prefixes are incompatible <- ft"a"
+SyntaxError: 'f' and 't' prefixes are incompatible <- tf"a"
+SyntaxError: 'u' and 't' prefixes are incompatible <- ut"a"
+SyntaxError: 'u' and 't' prefixes are incompatible <- tu"a"
+ok: rt"a"
+ok: tr"a"
+SyntaxError: invalid syntax <- rtr"a"
+SyntaxError: invalid syntax <- tt"a"
+SyntaxError: invalid syntax <- t "a"
+SyntaxError: unterminated t-string literal (detected at line 1) <- t"a
+SyntaxError: unterminated t-string literal (detected at line 1) <- t'a\nb'
+SyntaxError: unterminated triple-quoted t-string literal (detected at line 1) <- t"""a
+SyntaxError: cannot assign to t-string expression here. Maybe you meant '==' instead of '='? <- t"{a}" = 1
+SyntaxError: 't-string expression' is an illegal expression for augmented assignment <- t"a" += 1
+SyntaxError: cannot delete t-string expression <- del t"a"
+ok: t"{a}".x
+ok: t"{a}"[0]
+ok: t"{a}"()
+ok: x = t"{a}", 1
+ok: f(t"{a}")
+ok: t"{t"{a}"}"
+ok: t"{f"{a}"}"
+ok: f"{t"{a}"}"
+SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position 0-7: unknown Unicode character name <- t"\N{nope}"
+SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position 0-2: truncated \xXX escape <- t"\x4"
+SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position 0-3: truncated \uXXXX escape <- t"\u12"
+ok: t"\777"
+ok: t"\d"
+SyntaxError: unterminated t-string literal (detected at line 1) <- rt"\"
+ok: t"{a:\}"
+ok: t"{a!r:{b!s}}"
+ok: t"{a:{b=}}"
+ok: t"{a,}"
+SyntaxError: t-string: expecting a valid expression after '{' <- t"{,}"
+SyntaxError: t-string: single '}' is not allowed <- t"{a:}}"
+SyntaxError: t-string: single '}' is not allowed <- t"{a}}"
+SyntaxError: t-string: single '}' is not allowed <- t"{{a}"
+ok: t"{ {a} }"
+ok: t"{{{a}}}"
+SyntaxError: t-string: expecting ':' or '}' <- t"{a!r=}"
+SyntaxError: t-string: missing conversion character <- t"{a=!}"
+ok: t"{a:!r}"
+ok: t = 1; t"a"
+ok: t
+ok: t.x
+ok: t[0]
+ok: t()
+SyntaxError: patterns may only match literals and attribute lookups <- match x:\n case t"a": pass
+ok: def f(x=t"{a}"): pass
+ok: class C(t"a"): pass
+ok: import t
+ok: x: t"a" = 1
+ok: t'{a!r:{b}}' t'{c}'
+ok: t"{a:{b}{c}}"
+ok: t"{a:x{b}y{c}z}"
+ok: t"{'a' 'b'}"
+ok: t"{a if b else c}"
+SyntaxError: expected 'else' after 'if' expression <- t"{a if b}"
+ok: t"{not a}"
+SyntaxError: t-string: expecting '=', or '!', or ':', or '}' <- t"{a for a in b}"
+ok: t"{[a for a in b]}"
+ok: t"{a:=^10}"
+ok: t"{a::}"
+ok: t"{a:::}"
+SyntaxError: t-string: valid expression required before ':' <- t"{::}"
+ok: t"{a[::2]}"
+ok: t"{a[b:c]:d}"
+SyntaxError: t-string: single '}' is not allowed <- t"{{}"
+SyntaxError: t-string: valid expression required before '}' <- t"{}}"
+SyntaxError: t-string: valid expression required before '!' <- t"{!r}"
+SyntaxError: t-string: valid expression required before ':' <- t"{:x}"
+SyntaxError: t-string: valid expression required before '=' <- t"{=}"

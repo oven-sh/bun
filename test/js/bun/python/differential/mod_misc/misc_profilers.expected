@@ -1,0 +1,28 @@
+status: 0
+script: c09c41b5cda232ae
+---
+{'Py_GIL_DISABLED': 0, 'Py_DEBUG': 0} ['config_vars']
+TypeError: _sysconfig.config_vars() takes no arguments (1 given)
+['_get_object_traceback', '_get_traces', 'clear_traces', 'get_traceback_limit', 'get_traced_memory', 'get_tracemalloc_memory', 'is_tracing', 'reset_peak', 'start', 'stop']
+False 1 (0, 0) 0 [] None None None None
+ValueError: the number of frames must be in range [1; 65535]
+ValueError: the number of frames must be in range [1; 65535]
+ValueError: the number of frames must be in range [1; 65535]
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: start expected at most 1 argument, got 2
+TypeError: _tracemalloc._get_object_traceback() takes exactly one argument (0 given)
+False None (0, 0) 0
+RuntimeError: the tracemalloc module must be tracing memory allocations to take a snapshot
+['Profiler', 'profiler_entry', 'profiler_subentry']
+(<class '_lsprof.Profiler'>, <class 'object'>) _lsprof Profiler ('code', 'callcount', 'reccallcount', 'totaltime', 'inlinetime', 'calls') ('code', 'callcount', 'reccallcount', 'totaltime', 'inlinetime') 6 5
+[] None None
+TypeError: Profiler() takes at most 4 arguments (5 given)
+TypeError: must be real number, not str
+TypeError: Profiler() got an unexpected keyword argument 'nope'
+Profiler Profiler
+TypeError: enable() takes at most 2 arguments (3 given)
+TypeError: enable() got an unexpected keyword argument 'nope'
+TypeError: getstats() takes no arguments
+(<class '__main__.Q'>, <class '_lsprof.Profiler'>, <class 'object'>)
+c 1 0 0.5 0.25 None _lsprof.profiler_entry(code='c', callcount=1, reccallcount=0, totaltime=0.5, inlinetime=0.25, calls=None)
+True

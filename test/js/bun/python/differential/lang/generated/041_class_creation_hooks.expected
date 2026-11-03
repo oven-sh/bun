@@ -1,0 +1,185 @@
+status: 0
+script: 3c74499db1024d2c
+source: 56e6db5f480b3762
+---
+init_subclass A None; init_subclass B b; init_subclass C None; init_subclass D d; Base.subs => ['A', 'B', 'C', 'D']
+A.tag => None
+B.tag => b
+C.tag => None
+D.tag => d
+type(Base.__dict__["__init_subclass__"]).__name__ => classmethod
+e1() => TypeError: e1.<locals>.X.__init_subclass__() takes no keyword arguments
+e2() => TypeError: e2.<locals>.X.__init_subclass__() takes no keyword arguments
+e3() => TypeError: e3.<locals>.X.__init_subclass__() takes no keyword arguments
+e4() => TypeError: e4.<locals>.X.__init_subclass__() takes no keyword arguments
+type("X", (Base,), {}, tag="via type").tag => init_subclass X via type; 'via type'
+type("X", (), {}, nope=1) => TypeError: X.__init_subclass__() takes no keyword arguments
+object.__init_subclass__(1) => TypeError: object.__init_subclass__() takes no arguments (1 given)
+object.__init_subclass__(a=1) => TypeError: object.__init_subclass__() takes no keyword arguments
+object.__init_subclass__() => None
+Base.subs[-1] => X
+visible S2 Sees ['attr', 'm']; 
+e5() => RuntimeError: no subclasses of Raises
+M1 1; M2 2; 
+G[int] => G[<class 'int'>]
+G[1, 2] => G[(1, 2)]
+G[()] => G[()]
+G["s"] => G['s']
+G2[0] => G2[0]
+G[1:2] => G[slice(1, 2, None)]
+type(G.__dict__["__class_getitem__"]).__name__ => classmethod
+G.__class_getitem__(5) => G[5]
+G()[0] => TypeError: 'G' object is not subscriptable
+Base[int] => TypeError: type 'Base' is not subscriptable
+object[int] => TypeError: type 'object' is not subscriptable
+int[int] => TypeError: type 'int' is not subscriptable
+type[int] => type[int]
+Base()[0] => TypeError: 'Base' object is not subscriptable
+len[int] => TypeError: 'builtin_function_or_method' object is not subscriptable
+None[0] => TypeError: 'NoneType' object is not subscriptable
+type(None)[0] => TypeError: type 'NoneType' is not subscriptable
+('meta getitem', 1)
+list[int] => list[int]
+dict[str, int] => dict[str, int]
+tuple[int, ...] => tuple[int, ...]
+set[int] => set[int]
+frozenset[str] => frozenset[str]
+type[int] => type[int]
+list[int].__origin__ => <class 'list'>
+list[int].__args__ => (<class 'int'>,)
+dict[str, int].__args__ => (<class 'str'>, <class 'int'>)
+list[int]([1]) => [1]
+type(list[int]).__name__ => GenericAlias
+list[int] == list[int] => True
+list[int] == list[str] => False
+list[list[int]] => list[list[int]]
+tuple[()] => tuple[()]
+list[int, str] => list[int, str]
+isinstance(list[int], type) => False
+list[int].__name__ => list
+repr(list["x"]) => list['x']
+list[None] => list[None]
+list[...] => list[...]
+hash(list[int]) == hash(list[int]) => True
+callable(list[int]) => True
+new N (1,) {'x': 2}; init (1,) {'x': 2}; N
+NotInstance() => 5
+type(NotInstance()) => <class 'int'>
+new N () {}; N
+init runs for a subclass instance; SubSub
+Singleton() is Singleton() => True
+Singleton().n => 3
+InitReturns() => TypeError: __init__() should return None, not 'int'
+InitReturnsNone
+OnlyNew(1).a => 1
+OnlyInit(2).a => 2
+OnlyNew() => TypeError: OnlyNew.__new__() missing 1 required positional argument: 'a'
+OnlyInit() => TypeError: OnlyInit.__init__() missing 1 required positional argument: 'a'
+Neither(1) => TypeError: Neither() takes no arguments
+OnlyNew(1, 2) => TypeError: OnlyNew.__new__() takes 2 positional arguments but 3 were given
+OnlyInit(1, 2) => TypeError: OnlyInit.__init__() takes 2 positional arguments but 3 were given
+Neither(a=1) => TypeError: Neither() takes no arguments
+object.__new__(Neither, 1) => TypeError: Neither() takes no arguments
+object.__new__(OnlyInit, 1).__dict__ => {}
+object.__new__(OnlyNew, 1) => TypeError: object.__new__() takes exactly one argument (the type to instantiate)
+object.__init__(Neither(), 1) => TypeError: Neither.__init__() takes exactly one argument (the instance to initialize)
+object.__init__(OnlyNew(1), 1) => None
+object.__init__(OnlyInit(1), 1) => TypeError: object.__init__() takes exactly one argument (the instance to initialize)
+NewPassesArgs(1) => TypeError: object.__new__() takes exactly one argument (the type to instantiate)
+type(NewStatic.__dict__["__new__"]).__name__ => staticmethod
+NewStatic.__new__(NewStatic) => implicit staticmethod
+NewStatic.__new__(int) => implicit staticmethod
+NewStatic() => implicit staticmethod
+i => 10
+i.extra => e
+i.inited => True
+i + 1 => 11
+type(i + 1) => <class 'int'>
+type(i) => <class '__main__.IntSub'>
+TupSub(1, 2, 3) => (1, 2, 3)
+len(TupSub()) => 0
+StrSub("abc") => ABC
+type(StrSub("a")).__name__ => StrSub
+StrSub("a") + "b" => Ab
+Abstractish() => TypeError: cannot instantiate Abstractish directly
+Concrete
+patched
+init () {}; N
+T => <class '__main__.T'>
+T.__name__ => T
+T.__bases__ => (<class 'object'>,)
+T().m() => 1
+T.__module__ => __main__
+T.__qualname__ => T
+T.__dict__["a"] => 1
+T.__doc__ => None
+type(T) => <class 'type'>
+init_subclass T2 None; 
+T2.__mro__[1:3] => (<class '__main__.T'>, <class '__main__.Base'>)
+T2.__doc__ => d
+T2.__qualname__ => Q.T2
+T2.__module__ => mm
+repr(T2) => <class 'mm.Q.T2'>
+T2().m() => 1
+"__qualname__" in T2.__dict__ => False
+hasattr(T3, "y") => False
+T3.x => 1
+type(1) => <class 'int'>
+type("a") => <class 'str'>
+type(T()) => <class '__main__.T'>
+type(type) => <class 'type'>
+type(None) => <class 'NoneType'>
+type(T) => <class 'type'>
+type(int) => <class 'type'>
+type(name="K", bases=(), dict={}) if False else "" => 
+type() => TypeError: type() takes 1 or 3 arguments
+type(1, 2) => TypeError: type() takes 1 or 3 arguments
+type(1, 2, 3) => TypeError: type.__new__() argument 1 must be str, not int
+type("X", 1, {}) => TypeError: type.__new__() argument 2 must be tuple, not int
+type("X", (), 1) => TypeError: type.__new__() argument 3 must be dict or frozendict, not int
+type("X", [], {}) => TypeError: type.__new__() argument 2 must be tuple, not list
+type("X", (), []) => TypeError: type.__new__() argument 3 must be dict or frozendict, not list
+type("X", (1,), {}) => TypeError: metaclass conflict: the metaclass of a derived class must be a (non-strict) subclass of the metaclasses of all its bases
+type("X", (), {}, 1) => TypeError: type() takes 1 or 3 arguments
+type(1, (), {}) => TypeError: type.__new__() argument 1 must be str, not int
+type("X", (), {1: 2}).__name__ => 'X'
+type("a\0b", (), {}) => ValueError: type name must not contain null characters
+type("X", (), {"__qualname__": 1}) => TypeError: type __qualname__ must be a str, not int
+type("X", (), {"__slots__": 1}) => TypeError: 'int' object is not iterable
+type("", (), {}).__name__ => ''
+type("not an identifier", (), {}).__name__ => 'not an identifier'
+type("X", (int, str), {}) => TypeError: multiple bases have instance lay-out conflict
+type("X", (bool,), {}) => TypeError: type 'bool' is not an acceptable base type
+type(x=1) => TypeError: type() takes 1 or 3 arguments
+type("X", (), {"__doc__": 5}).__doc__ => 5
+type("é", (), {}).__name__ => 'é'
+type.__new__(type, "X", (), {}).__name__ => 'X'
+type.__new__(int, "X", (), {}) => TypeError: type.__new__(int): int is not a subtype of type
+type.__new__(1) => TypeError: type.__new__(X): X is not a type object (int)
+type.__new__(type) => TypeError: type.__new__() takes exactly 3 arguments (0 given)
+type.__new__(type, 1) => TypeError: type.__new__() takes exactly 3 arguments (1 given)
+type.__call__(int, "5") => 5
+type.__call__(1) => TypeError: descriptor '__call__' requires a 'type' object but received a 'int'
+type.__init__(int) => TypeError: type.__init__() takes 1 or 3 arguments
+type.__init__(int, 1, 2) => TypeError: type.__init__() takes 1 or 3 arguments
+type.__init__(int, 1) => None
+type.__init__(int, 1, 2, 3) => None
+mro_entries 1; M1 None; init_subclass ME None; ME.__bases__ => (<class '__main__.A'>, <class '__main__.M1'>)
+ME.__orig_bases__[0].__class__.__name__ => Entry
+ME.__mro__[1].__name__ => A
+mro_entries 1; ME0.__bases__ => (<class 'object'>,)
+len(ME0.__orig_bases__) => 1
+e6() => TypeError: __mro_entries__ must return a tuple
+type("X", (Entry(A),), {}) => TypeError: type() doesn't support MRO entry resolution; use types.new_class()
+LG.__bases__ => (<class 'list'>,)
+LG.__orig_bases__ => (list[int],)
+LG([1]) => [1]
+['__doc__', '__firstlineno__', '__module__', '__qualname__'] NSp __main__; sorted(NSp.__static_attributes__) => ['a', 'b', 'c']
+type(NSp.__firstlineno__).__name__ => int
+NSp.__doc__ => doc
+"__qualname__" in NSp.__dict__ => False
+"__firstlineno__" in NSp.__dict__ => True
+QN.__qualname__ => Custom.QN
+QN.__name__ => QN
+repr(QN) => <class '__main__.Custom.QN'>
+bq() => TypeError: type __qualname__ must be a str, not int

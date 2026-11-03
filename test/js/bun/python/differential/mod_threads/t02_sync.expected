@@ -1,0 +1,24 @@
+status: 0
+script: 48132490950e3ed3
+---
+True True False False
+False
+RuntimeError release unlocked lock
+True
+8000
+True True True 2
+[False, False, 0, 'cannot release un-acquired lock']
+RuntimeError cannot release un-acquired lock
+False False
+consumed 42
+False False
+True
+[0, 1, 2] 0 False
+True
+cancelled
+[0, 1, 2, 3, 4, 5]
+late True
+Empty
+Empty
+[(False, True), (False, True), (False, True)] main {'x': 'main'}
+[(7, {'v': 7})] 2 7

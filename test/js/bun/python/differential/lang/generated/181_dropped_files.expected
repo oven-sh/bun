@@ -1,0 +1,25 @@
+status: 0
+script: a5742e974f7eacbe
+source: 829b94b4f9303b36
+---
+'hello'
+open(p, "rb").read() => b'bytes'
+os.path.getsize(p) => 5
+os.stat(p).st_size => 5
+from a function
+{'a': [1, 2]}
+(1, 'x')
+'printed\n'
+'1,2\n3,4\n'
+'1,2\n3,4\nappended\n'
+4
+for a child
+300000
+Yxx
+b'Yx'
+True
+kept open and more
+b'raw stack'
+b'\xc3\xa9'
+sorted(os.listdir(d)) => ['f', 'g0', 'g1', 'g2', 'g3', 'g4', 'g5', 'g6']
+open(os.path.join(d, "g0")).read() => 399

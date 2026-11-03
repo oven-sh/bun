@@ -1,0 +1,63 @@
+status: 0
+script: 0df172aa3b8ad798
+---
+4096 True 18446744073709551615
+<class 'resource.struct_rusage'> 16 ['float', 'float', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int']
+True True True True
+struct_rusage struct_rusage
+ValueError invalid who parameter
+TypeError 'str' object cannot be interpreted as an integer
+TypeError resource.getrusage() takes exactly one argument (0 given)
+TypeError resource.getrusage() takes no keyword arguments
+RLIMIT_AS tuple 2 ['int', 'int'] True
+RLIMIT_CORE tuple 2 ['int', 'int'] True
+RLIMIT_CPU tuple 2 ['int', 'int'] True
+RLIMIT_DATA tuple 2 ['int', 'int'] True
+RLIMIT_FSIZE tuple 2 ['int', 'int'] True
+RLIMIT_MEMLOCK tuple 2 ['int', 'int'] True
+RLIMIT_MSGQUEUE tuple 2 ['int', 'int'] True
+RLIMIT_NICE tuple 2 ['int', 'int'] True
+RLIMIT_NOFILE tuple 2 ['int', 'int'] True
+RLIMIT_NPROC tuple 2 ['int', 'int'] True
+RLIMIT_OFILE tuple 2 ['int', 'int'] True
+RLIMIT_RSS tuple 2 ['int', 'int'] True
+RLIMIT_RTPRIO tuple 2 ['int', 'int'] True
+RLIMIT_RTTIME tuple 2 ['int', 'int'] True
+RLIMIT_SIGPENDING tuple 2 ['int', 'int'] True
+RLIMIT_STACK tuple 2 ['int', 'int'] True
+ValueError invalid resource specified
+ValueError invalid resource specified
+TypeError 'str' object cannot be interpreted as an integer
+OverflowError Python int too large to convert to C int
+TypeError resource.getrlimit() takes exactly one argument (0 given)
+None
+True
+None
+None
+None
+True 200
+ValueError current limit exceeds maximum limit
+None
+ValueError expected a tuple of 2 integers
+ValueError expected a tuple of 2 integers
+TypeError 'int' object is not iterable
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'float' object cannot be interpreted as an integer
+ValueError Cannot convert negative int
+OverflowError Python int too large to convert to C rlim_t
+ValueError Cannot convert negative int
+ValueError invalid resource specified
+ValueError invalid resource specified
+TypeError setrlimit expected 2 arguments, got 1
+None
+True True
+DeprecationWarning Use RLIM_INFINITY instead of negative limit value.
+True True
+True True
+True
+ProcessLookupError [Errno 3] No such process
+ValueError invalid resource specified
+TypeError 'int' object is not iterable
+ValueError expected a tuple of 2 integers
+TypeError 'str' object cannot be interpreted as an integer
+TypeError prlimit expected at least 2 arguments, got 1

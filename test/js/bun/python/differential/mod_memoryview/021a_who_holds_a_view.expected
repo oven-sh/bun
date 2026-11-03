@@ -1,0 +1,20 @@
+status: 0
+script: 8fd31d0b0409e3a3
+---
+variable True True False
+readonly True None False
+list True True False
+dict key True None False
+defaultdict True None False
+attribute True True False
+module True None False
+iterator True None False
+zip True None False
+chain True None False
+partial True None False
+methodcaller True None False
+keyword default True None False
+coroutine True None False
+cycle True None False
+property True None False
+method True None False

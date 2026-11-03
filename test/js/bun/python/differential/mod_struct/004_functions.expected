@@ -1,0 +1,115 @@
+status: 0
+script: 695471e22adfb443
+---
+builtins.TypeError pack expected at least 1 argument, got 0
+builtins.TypeError Struct() argument 1 must be a str or bytes object, not int
+struct.error pack expected 1 items for packing (got 0)
+struct.error pack expected 1 items for packing (got 2)
+builtins.TypeError _struct.pack() takes no keyword arguments
+builtins.TypeError _struct.pack() takes no keyword arguments
+b''
+struct.error pack expected 0 items for packing (got 1)
+struct.error pack expected 1 items for packing (got 0)
+struct.error pack expected 2 items for packing (got 1)
+builtins.TypeError unpack expected 2 arguments, got 1
+builtins.TypeError a bytes-like object is required, not 'str'
+struct.error unpack requires a buffer of 4 bytes
+struct.error unpack requires a buffer of 4 bytes
+builtins.TypeError unpack expected 2 arguments, got 3
+builtins.TypeError Struct() argument 1 must be a str or bytes object, not NoneType
+builtins.TypeError a bytes-like object is required, not 'NoneType'
+builtins.TypeError a bytes-like object is required, not 'int'
+struct.error unpack requires a buffer of 0 bytes
+builtins.TypeError _struct.unpack() takes no keyword arguments
+builtins.TypeError unpack expected 2 arguments, got 0
+(1684234849,) (25185, 25699) (1684234849,) tuple
+builtins.TypeError unpack_from() missing required argument 'buffer' (pos 2)
+struct.error unpack_from requires a buffer of at least 5 bytes for unpacking 4 bytes at offset 1 (actual buffer size is 4)
+struct.error not enough data to unpack 4 bytes at offset -1
+struct.error offset -10 out of range for 4-byte buffer
+(1684234849,)
+builtins.TypeError 'str' object cannot be interpreted as an integer
+builtins.TypeError unpack_from() takes at most 3 arguments (4 given)
+builtins.TypeError unpack_from() got an unexpected keyword argument 'foo'
+builtins.TypeError unpack_from() takes at least 1 positional argument (0 given)
+builtins.TypeError a bytes-like object is required, not 'int'
+builtins.OverflowError Python int too large to convert to C ssize_t
+builtins.TypeError 'NoneType' object cannot be interpreted as an integer
+builtins.TypeError 'float' object cannot be interpreted as an integer
+builtins.TypeError unpack_from() takes at least 1 positional argument (0 given)
+builtins.TypeError unpack_from() takes at most 3 arguments (4 given)
+builtins.TypeError a bytes-like object is required, not 'str'
+[(256,), (513,), (3854,), (3854,), (256,), (3597,)] (256,) (1284,) () () None (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)
+struct.error unpack_from requires a buffer of at least 17 bytes for unpacking 2 bytes at offset 15 (actual buffer size is 16)
+struct.error unpack_from requires a buffer of at least 18 bytes for unpacking 2 bytes at offset 16 (actual buffer size is 16)
+struct.error unpack_from requires a buffer of at least 102 bytes for unpacking 2 bytes at offset 100 (actual buffer size is 16)
+struct.error not enough data to unpack 2 bytes at offset -1
+struct.error offset -17 out of range for 16-byte buffer
+struct.error unpack_from requires a buffer of at least 17 bytes for unpacking 0 bytes at offset 17 (actual buffer size is 16)
+()
+struct.error offset -17 out of range for 16-byte buffer
+struct.error unpack_from requires a buffer of at least 2 bytes for unpacking 2 bytes at offset 0 (actual buffer size is 0)
+struct.error unpack_from requires a buffer of at least 9223372036854775809 bytes for unpacking 2 bytes at offset 9223372036854775807 (actual buffer size is 16)
+struct.error offset -9223372036854775808 out of range for 16-byte buffer
+builtins.TypeError pack_into expected at least 3 arguments, got 1
+builtins.TypeError pack_into() argument 2 must be read-write bytes-like object, not bytes
+builtins.TypeError pack_into expected at least 3 arguments, got 2
+builtins.TypeError 'str' object cannot be interpreted as an integer
+struct.error pack_into requires a buffer of at least 5 bytes for packing 4 bytes at offset 1 (actual buffer size is 4)
+struct.error no space to pack 4 bytes at offset -1
+struct.error offset -10 out of range for 4-byte buffer
+struct.error pack_into expected 1 items for packing (got 0)
+builtins.TypeError pack_into() argument 2 must be read-write bytes-like object, not str
+builtins.TypeError _struct.pack_into() takes no keyword arguments
+builtins.TypeError pack_into() argument 2 must be read-write bytes-like object, not None
+builtins.TypeError 'NoneType' object cannot be interpreted as an integer
+struct.error pack_into expected 1 items for packing (got 2)
+builtins.TypeError pack_into expected at least 3 arguments, got 0
+builtins.OverflowError Python int too large to convert to C ssize_t
+struct.error bad char in struct format
+builtins.TypeError pack_into() argument 2 must be read-write bytes-like object, not int
+None bytearray(b'BA.z\x00\x00F.DC') None bytearray(b'BA.z\x00\x00F.DC') None bytearray(b'BA.z\x00\x00F.DC') None None None bytearray(b'BA.z\x00\x00F.DC')
+struct.error pack_into requires a buffer of at least 11 bytes for packing 2 bytes at offset 9 (actual buffer size is 10)
+struct.error pack_into requires a buffer of at least 12 bytes for packing 2 bytes at offset 10 (actual buffer size is 10)
+struct.error no space to pack 2 bytes at offset -1
+struct.error offset -11 out of range for 10-byte buffer
+struct.error pack_into requires a buffer of at least 11 bytes for packing 0 bytes at offset 11 (actual buffer size is 10)
+struct.error offset -11 out of range for 10-byte buffer
+bytearray(b'BA.z\x00\x00F.DC')
+struct.error required argument is not an integer
+bytearray(b'.BA\x00\x00\x00\x00.')
+array('b', [0, 2, 1, 6, 5, 4, 3, 0]) (258, 50595078)
+array('i', [-2, -1])
+struct.error pack_into requires a buffer of at least 9 bytes for packing 8 bytes at offset 1 (actual buffer size is 8)
+BufferError Existing exports of data: object cannot be re-sized
+bytearray(b'\x01\x07\x00\x00\x00\x00\x00\x00')
+bytearray(b'')
+BufferError cannot resize an array that is exporting buffers
+array('b', [1, 7, 0, 0])
+array('b')
+BufferError Existing exports of data: object cannot be re-sized
+None
+bytearray(b'\x00\x00\x00\x00\x00\x00\x00\x01')
+BufferError Existing exports of data: object cannot be re-sized
+(0,)
+builtins.TypeError iter_unpack expected 2 arguments, got 1
+builtins.TypeError a bytes-like object is required, not 'str'
+struct.error iterative unpacking requires a buffer of a multiple of 4 bytes
+struct.error cannot iteratively unpack with a struct of length 0
+builtins.TypeError iter_unpack expected 2 arguments, got 3
+struct.error cannot iteratively unpack with a struct of length 0
+builtins.TypeError a bytes-like object is required, not 'NoneType'
+struct.error bad char in struct format
+unpack_iterator _struct True 3 (256, 2) 2 [(1027, 5), (1798, 8)] 0
+builtins.StopIteration 
+builtins.StopIteration 
+[] [(25185,), (25699,)] [97, 98, 99] [(b'aa',), (b'bb',), (b'cc',)] [(), ()]
+TypeError
+['__iter__', '__length_hint__', '__next__']
+builtins.TypeError _struct._clearcache() takes no arguments (1 given)
+None
+249 b'\x01\x02'
+<class 'struct.error'> struct error error (<class 'struct.error'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>) True ('x', 1) boom
+caught ('required argument is not an integer',) True
+('a',) True
+['Struct', '_clearcache', 'calcsize', 'error', 'iter_unpack', 'pack', 'pack_into', 'unpack', 'unpack_from']

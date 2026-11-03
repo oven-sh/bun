@@ -1,0 +1,267 @@
+status: 0
+script: 8907baa51379a780
+---
+-- uname, times
+<class 'posix.uname_result'> 5 ['str', 'str', 'str', 'str', 'str'] Linux True True
+TypeError posix.uname() takes no arguments (1 given)
+<class 'posix.times_result'> 5 ['float', 'float', 'float', 'float', 'float'] True True True
+-- sysconf, confstr, pathconf
+4096
+4096
+100
+2097152
+65536
+2048
+1024
+200809
+200809
+8
+200809
+True
+ValueError unrecognized configuration name
+OSError [Errno 22] Invalid argument
+OSError [Errno 22] Invalid argument
+TypeError configuration names must be strings or integers
+TypeError configuration names must be strings or integers
+TypeError configuration names must be strings or integers
+OverflowError Python int too large to convert to C int
+TypeError posix.sysconf() takes exactly one argument (0 given)
+TypeError posix.sysconf() takes no keyword arguments
+100
+TypeError configuration names must be strings or integers
+'/bin:/usr/bin'
+True
+''
+ValueError unrecognized configuration name
+OSError [Errno 22] Invalid argument
+TypeError configuration names must be strings or integers
+255
+4096
+4096
+ValueError unrecognized configuration name
+OSError [Errno 22] Invalid argument
+FileNotFoundError [Errno 2] No such file or directory: '/nonexistent'
+OSError [Errno 22] Invalid argument
+255
+255
+255
+ValueError unrecognized configuration name
+OSError [Errno 22] Invalid argument
+OSError [Errno 9] Bad file descriptor
+-- counts
+int True True
+tuple 3 ['float', 'float', 'float'] True
+-- strerror
+'Success'
+'Operation not permitted'
+'No such file or directory'
+'File exists'
+'Invalid argument'
+'Directory not empty'
+'Memory page has hardware error'
+'Unknown error 134'
+'Unknown error 99999'
+'Unknown error -1'
+TypeError 'str' object cannot be interpreted as an integer
+OverflowError Python int too large to convert to C int
+TypeError posix.strerror() takes no keyword arguments
+-- random
+bytes 0
+bytes 1
+bytes 16
+bytes 1000
+bytes 100000
+True True
+1
+bytes 0
+bytes 1
+bytes 16
+bytes 256
+8 8
+OSError [Errno 22] Invalid argument
+TypeError 'str' object cannot be interpreted as an integer
+TypeError getrandom() missing required argument 'size' (pos 1)
+-- normpath
+'' '.' b'.'
+'.' '.' b'.'
+'..' '..' b'..'
+'/' '/' b'/'
+'//' '//' b'//'
+'///' '/' b'/'
+'////' '/' b'/'
+'/.' '/' b'/'
+'/..' '/' b'/'
+'/../..' '/' b'/'
+'//..' '//' b'//'
+'///..' '/' b'/'
+'a' 'a' b'a'
+'a/' 'a' b'a'
+'a//' 'a' b'a'
+'a/b' 'a/b' b'a/b'
+'a//b' 'a/b' b'a/b'
+'a/./b' 'a/b' b'a/b'
+'a/../b' 'b' b'b'
+'a/b/..' 'a' b'a'
+'a/b/../..' '.' b'.'
+'a/b/../../..' '..' b'..'
+'../a' '../a' b'../a'
+'../../a' '../../a' b'../../a'
+'../a/..' '..' b'..'
+'./a' 'a' b'a'
+'.//a' 'a' b'a'
+'./' '.' b'.'
+'././.' '.' b'.'
+'/a/b/c/../../d' '/a/d' b'/a/d'
+'//a/b' '//a/b' b'//a/b'
+'///a/b' '/a/b' b'/a/b'
+'/a/./b/' '/a/b' b'/a/b'
+'a/.../b' 'a/.../b' b'a/.../b'
+'...' '...' b'...'
+'..a' '..a' b'..a'
+'a..' 'a..' b'a..'
+'.a' '.a' b'.a'
+'a.' 'a.' b'a.'
+'/./a' '/a' b'/a'
+'/../a' '/a' b'/a'
+'//../a' '//a' b'//a'
+'a/b/c/../../../../d' '../d' b'../d'
+'../..' '../..' b'../..'
+'.././..' '../..' b'../..'
+'a/\x00/b' 'a/\x00/b' b'a/\x00/b'
+'\x00' '\x00' b'\x00'
+'a\x00' 'a\x00' b'a\x00'
+'/\x00/..' '/' b'/'
+'caf\xe9/./\u20ac/../\U0001f40d' 'caf\xe9/\U0001f40d' b'caf\xc3\xa9/\xf0\x9f\x90\x8d'
+'\udcff/../x' 'x' b'x'
+' ' ' ' b' '
+' / ' ' / ' b' / '
+'a/ /..' 'a' b'a'
+'b'
+b'b'
+'x'
+TypeError _path_normpath: path should be string, bytes or os.PathLike, not int
+TypeError _path_normpath: path should be string, bytes or os.PathLike, not NoneType
+TypeError _path_normpath() missing required argument 'path' (pos 1)
+b'\xff/\xfe'
+'y'
+8999 .
+-- splitroot
+'' ('', '', '') (b'', b'', b'')
+'.' ('', '', '.') (b'', b'', b'.')
+'..' ('', '', '..') (b'', b'', b'..')
+'/' ('', '/', '') (b'', b'/', b'')
+'//' ('', '//', '') (b'', b'//', b'')
+'///' ('', '/', '//') (b'', b'/', b'//')
+'////' ('', '/', '///') (b'', b'/', b'///')
+'/.' ('', '/', '.') (b'', b'/', b'.')
+'/..' ('', '/', '..') (b'', b'/', b'..')
+'/../..' ('', '/', '../..') (b'', b'/', b'../..')
+'//..' ('', '//', '..') (b'', b'//', b'..')
+'///..' ('', '/', '//..') (b'', b'/', b'//..')
+'a' ('', '', 'a') (b'', b'', b'a')
+'a/' ('', '', 'a/') (b'', b'', b'a/')
+'a//' ('', '', 'a//') (b'', b'', b'a//')
+'a/b' ('', '', 'a/b') (b'', b'', b'a/b')
+'a//b' ('', '', 'a//b') (b'', b'', b'a//b')
+'a/./b' ('', '', 'a/./b') (b'', b'', b'a/./b')
+'a/../b' ('', '', 'a/../b') (b'', b'', b'a/../b')
+'a/b/..' ('', '', 'a/b/..') (b'', b'', b'a/b/..')
+'a/b/../..' ('', '', 'a/b/../..') (b'', b'', b'a/b/../..')
+'a/b/../../..' ('', '', 'a/b/../../..') (b'', b'', b'a/b/../../..')
+'../a' ('', '', '../a') (b'', b'', b'../a')
+'../../a' ('', '', '../../a') (b'', b'', b'../../a')
+'../a/..' ('', '', '../a/..') (b'', b'', b'../a/..')
+'./a' ('', '', './a') (b'', b'', b'./a')
+'.//a' ('', '', './/a') (b'', b'', b'.//a')
+'./' ('', '', './') (b'', b'', b'./')
+'././.' ('', '', '././.') (b'', b'', b'././.')
+'/a/b/c/../../d' ('', '/', 'a/b/c/../../d') (b'', b'/', b'a/b/c/../../d')
+'//a/b' ('', '//', 'a/b') (b'', b'//', b'a/b')
+'///a/b' ('', '/', '//a/b') (b'', b'/', b'//a/b')
+'/a/./b/' ('', '/', 'a/./b/') (b'', b'/', b'a/./b/')
+'a/.../b' ('', '', 'a/.../b') (b'', b'', b'a/.../b')
+'...' ('', '', '...') (b'', b'', b'...')
+'..a' ('', '', '..a') (b'', b'', b'..a')
+'a..' ('', '', 'a..') (b'', b'', b'a..')
+'.a' ('', '', '.a') (b'', b'', b'.a')
+'a.' ('', '', 'a.') (b'', b'', b'a.')
+'/./a' ('', '/', './a') (b'', b'/', b'./a')
+'/../a' ('', '/', '../a') (b'', b'/', b'../a')
+'//../a' ('', '//', '../a') (b'', b'//', b'../a')
+'a/b/c/../../../../d' ('', '', 'a/b/c/../../../../d') (b'', b'', b'a/b/c/../../../../d')
+'../..' ('', '', '../..') (b'', b'', b'../..')
+'.././..' ('', '', '.././..') (b'', b'', b'.././..')
+'a/\x00/b' ('', '', 'a/\x00/b') (b'', b'', b'a/\x00/b')
+'\x00' ('', '', '\x00') (b'', b'', b'\x00')
+'a\x00' ('', '', 'a\x00') (b'', b'', b'a\x00')
+'/\x00/..' ('', '/', '\x00/..') (b'', b'/', b'\x00/..')
+'caf\xe9/./\u20ac/../\U0001f40d' ('', '', 'caf\xe9/./\u20ac/../\U0001f40d') (b'', b'', b'caf\xc3\xa9/./\xe2\x82\xac/../\xf0\x9f\x90\x8d')
+'\udcff/../x' ('', '', '\udcff/../x') (b'', b'', b'\xff/../x')
+' ' ('', '', ' ') (b'', b'', b' ')
+' / ' ('', '', ' / ') (b'', b'', b' / ')
+'a/ /..' ('', '', 'a/ /..') (b'', b'', b'a/ /..')
+('', '/', 'a')
+(b'', b'//', b'a')
+TypeError _path_splitroot_ex: path should be string, bytes or os.PathLike, not int
+TypeError posix._path_splitroot_ex() takes no keyword arguments
+-- devices
+0 0 0 True
+1 0 1 True
+255 0 255 True
+256 1 0 True
+4660 18 52 True
+305419896 1110 74616 True
+4294967296 0 1048576 True
+1099511627781 0 268435461 True
+9223372036854775808 2147483648 0 True
+18446744073709551615 -1 -1 False
+18446744073709551614 -1 4294967294 True
+-1 -1 -1 True
+OverflowError can't convert negative int to unsigned
+OverflowError can't convert negative int to unsigned
+OverflowError can't convert negative int to unsigned
+OverflowError can't convert negative int to unsigned
+OverflowError int too big to convert
+OverflowError int too big to convert
+OverflowError int too big to convert
+OverflowError int too big to convert
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'float' object cannot be interpreted as an integer
+TypeError 'float' object cannot be interpreted as an integer
+TypeError 'float' object cannot be interpreted as an integer
+TypeError 'float' object cannot be interpreted as an integer
+TypeError 'NoneType' object cannot be interpreted as an integer
+TypeError 'NoneType' object cannot be interpreted as an integer
+TypeError 'NoneType' object cannot be interpreted as an integer
+TypeError 'NoneType' object cannot be interpreted as an integer
+258
+2049
+4293985279
+1048575
+-1
+18446726481524555264
+OverflowError Python int too large to convert to C unsigned int
+OverflowError Python int too large to convert to C unsigned int
+-1
+18446726481524555520
+17592184996095
+256
+-1
+-- umask
+23 True
+TypeError 'str' object cannot be interpreted as an integer
+OverflowError Python int too large to convert to C int
+TypeError posix.umask() takes exactly one argument (0 given)
+-- the rest
+0
+False
+TypeError At least one argument is required.
+TypeError 'before' must be callable, not int
+TypeError 'after_in_child' must be callable, not str
+TypeError 'after_in_parent' must be callable, not NoneType
+None
+None
+TypeError register_at_fork() got an unexpected keyword argument 'other'

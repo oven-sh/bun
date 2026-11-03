@@ -1,0 +1,102 @@
+status: 0
+script: bea62104523e41b7
+---
+<class 'zlib._ZlibDecompressor'> (<class 'zlib._ZlibDecompressor'>, <class 'object'>) zlib ['decompress', 'eof', 'needs_input', 'unused_data']
+False True b''
+True True False b''
+EOFError: End of stream already reached
+EOFError: End of stream already reached
+True True False b'junk'
+1 True True False
+10 True True False
+999 True True False
+100000 True True False
+0 0 False False
+True 154890 True False b''
+1 1 False False
+True 154890 True False b''
+100 100 False False
+True 154890 True False b''
+16384 16384 False False
+True 154890 True False b''
+1048576 154890 True False
+True 154890 True False b''
+154890 154890 True False
+True 154890 True False b''
+9223372036854775807 154890 True False
+True 154890 True False b''
+10 10 False
+True True b'TAIL'
+False True b''
+True True False b''
+EOFError: End of stream already reached
+EOFError: End of stream already reached
+True True False b'junk'
+1 True True False
+10 True True False
+999 True True False
+100000 True True False
+0 0 False False
+True 154890 True False b''
+1 1 False False
+True 154890 True False b''
+100 100 False False
+True 154890 True False b''
+16384 16384 False False
+True 154890 True False b''
+1048576 154890 True False
+True 154890 True False b''
+154890 154890 True False
+True 154890 True False b''
+9223372036854775807 154890 True False
+True 154890 True False b''
+10 10 False
+True True b'TAIL'
+False True b''
+True True False b''
+EOFError: End of stream already reached
+EOFError: End of stream already reached
+True True False b'junk'
+1 True True False
+10 True True False
+999 True True False
+100000 True True False
+0 0 False False
+True 154890 True False b''
+1 1 False False
+True 154890 True False b''
+100 100 False False
+True 154890 True False b''
+16384 16384 False False
+True 154890 True False b''
+1048576 154890 True False
+True 154890 True False b''
+154890 154890 True False
+True 154890 True False b''
+9223372036854775807 154890 True False
+True 154890 True False b''
+10 10 False
+True True b'TAIL'
+TypeError: decompress() missing required argument 'data' (pos 1)
+TypeError: a bytes-like object is required, not 'str'
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+OverflowError: Python int too large to convert to C ssize_t
+b''
+TypeError: decompress() takes at most 2 arguments (3 given)
+TypeError: decompress() missing required argument 'data' (pos 1)
+ValueError: Invalid initialization option
+TypeError: 'str' object cannot be interpreted as an integer
+<zlib._ZlibDecompressor object>
+<zlib._ZlibDecompressor object>
+TypeError: _ZlibDecompressor() takes at most 2 arguments (3 given)
+TypeError: _ZlibDecompressor() got an unexpected keyword argument 'foo'
+<zlib._ZlibDecompressor object>
+error: Error -3 while decompressing data: incorrect header check
+False True b''
+error: Error -3 while decompressing data: incorrect header check
+True False True
+TypeError: type 'zlib._ZlibDecompressor' is not an acceptable base type
+AttributeError: readonly attribute
+AttributeError: 'zlib._ZlibDecompressor' object has no attribute 'foo' and no __dict__ for setting new attributes
+True

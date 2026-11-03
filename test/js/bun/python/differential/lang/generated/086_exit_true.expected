@@ -1,0 +1,6 @@
+status: 1
+stderr: 
+script: 7d4f3ef978b8f9b8
+source: 7d4f3ef978b8f9b8
+---
+bool is an int

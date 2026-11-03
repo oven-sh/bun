@@ -1,0 +1,324 @@
+status: 0
+script: 2a498a37b04924d6
+---
+-- kinds of path
+FileNotFoundError [Errno 2] No such file or directory: 'surely/not/there'
+FileNotFoundError [Errno 2] No such file or directory: b'surely/not/there'
+FileNotFoundError [Errno 2] No such file or directory: 'surely/not/there'
+FileNotFoundError [Errno 2] No such file or directory: b'surely/not/there'
+FileNotFoundError [Errno 2] No such file or directory: 'surely/not/there'
+FileNotFoundError [Errno 2] No such file or directory: b'surely/not/there'
+FileNotFoundError [Errno 2] No such file or directory: 'surely/not/there'
+TypeError expected P.__fspath__() to return str or bytes, not int
+TypeError expected P.__fspath__() to return str or bytes, not NoneType
+TypeError expected P.__fspath__() to return str or bytes, not P
+ValueError boom
+TypeError stat: path should be string, bytes, os.PathLike or integer, not NoneFspath
+TypeError stat: path should be string, bytes, os.PathLike or integer, not InstanceOnly
+TypeError stat: path should be string, bytes, os.PathLike or integer, not bytearray
+TypeError stat: path should be string, bytes, os.PathLike or integer, not memoryview
+TypeError stat: path should be string, bytes, os.PathLike or integer, not float
+TypeError stat: path should be string, bytes, os.PathLike or integer, not NoneType
+TypeError stat: path should be string, bytes, os.PathLike or integer, not list
+TypeError stat: path should be string, bytes, os.PathLike or integer, not tuple
+TypeError stat: path should be string, bytes, os.PathLike or integer, not object
+ValueError stat: embedded null character in path
+ValueError stat: embedded null character in path
+ValueError stat: embedded null character in path
+FileNotFoundError [Errno 2] No such file or directory: '\udcff/nope'
+UnicodeEncodeError 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed
+FileNotFoundError [Errno 2] No such file or directory: 'café/nope'
+FileNotFoundError [Errno 2] No such file or directory: '€🐍/nope'
+FileNotFoundError [Errno 2] No such file or directory: b'\xff\xfe/nope'
+FileNotFoundError [Errno 2] No such file or directory: ''
+-- which functions take what
+TypeError stat: path should be string, bytes, os.PathLike or integer, not float
+ValueError stat: embedded null character in path
+TypeError lstat: path should be string, bytes or os.PathLike, not float
+ValueError lstat: embedded null character in path
+TypeError listdir: path should be string, bytes, os.PathLike, integer or None, not float
+ValueError listdir: embedded null character in path
+TypeError scandir: path should be string, bytes, os.PathLike, integer or None, not float
+ValueError scandir: embedded null character in path
+TypeError mkdir: path should be string, bytes or os.PathLike, not float
+ValueError mkdir: embedded null character in path
+TypeError chdir: path should be string, bytes, os.PathLike or integer, not float
+ValueError chdir: embedded null character in path
+TypeError chmod: path should be string, bytes, os.PathLike or integer, not float
+ValueError chmod: embedded null character in path
+TypeError chown: path should be string, bytes, os.PathLike or integer, not float
+ValueError chown: embedded null character in path
+TypeError open: path should be string, bytes or os.PathLike, not float
+ValueError open: embedded null character in path
+TypeError readlink: path should be string, bytes or os.PathLike, not float
+ValueError readlink: embedded null character in path
+TypeError rmdir: path should be string, bytes or os.PathLike, not float
+ValueError rmdir: embedded null character in path
+TypeError unlink: path should be string, bytes or os.PathLike, not float
+ValueError unlink: embedded null character in path
+TypeError remove: path should be string, bytes or os.PathLike, not float
+ValueError remove: embedded null character in path
+TypeError truncate: path should be string, bytes, os.PathLike or integer, not float
+ValueError truncate: embedded null character in path
+TypeError utime: path should be string, bytes, os.PathLike or integer, not float
+ValueError utime: embedded null character in path
+TypeError statvfs: path should be string, bytes, os.PathLike or integer, not float
+ValueError statvfs: embedded null character in path
+TypeError access: path should be string, bytes or os.PathLike, not float
+ValueError access: embedded null character in path
+TypeError pathconf: path should be string, bytes, os.PathLike or integer, not float
+ValueError pathconf: embedded null character in path
+TypeError execv: path should be string, bytes or os.PathLike, not float
+ValueError execv: embedded null character in path
+TypeError execve: path should be string, bytes, os.PathLike or integer, not float
+ValueError execve: embedded null character in path
+TypeError chroot: path should be string, bytes or os.PathLike, not float
+ValueError chroot: embedded null character in path
+TypeError mkfifo: path should be string, bytes or os.PathLike, not float
+ValueError mkfifo: embedded null character in path
+TypeError mknod: path should be string, bytes or os.PathLike, not float
+ValueError mknod: embedded null character in path
+TypeError lchown: path should be string, bytes or os.PathLike, not float
+ValueError lchown: embedded null character in path
+TypeError getxattr: path should be string, bytes, os.PathLike or integer, not float
+ValueError getxattr: embedded null character in path
+TypeError listxattr: path should be string, bytes, os.PathLike, integer or None, not float
+ValueError listxattr: embedded null character in path
+TypeError statx: path should be string, bytes, os.PathLike or integer, not float
+ValueError statx: embedded null character in path
+TypeError _path_normpath: path should be string, bytes or os.PathLike, not float
+'a\x00b'
+TypeError _path_splitroot_ex: path should be string, bytes or os.PathLike, not float
+('', '', 'a\x00b')
+TypeError rename: src should be string, bytes or os.PathLike, not int
+TypeError rename: dst should be string, bytes or os.PathLike, not int
+ValueError rename: embedded null character in src
+ValueError rename: embedded null character in dst
+FileNotFoundError [Errno 2] No such file or directory: 'surely/not/there' -> 'surely/not/there2'
+FileNotFoundError [Errno 2] No such file or directory: b'surely/not/there' -> 'surely/not/there2'
+FileNotFoundError [Errno 2] No such file or directory: 'surely/not/there' -> b'surely/not/there'
+TypeError replace: src should be string, bytes or os.PathLike, not int
+TypeError replace: dst should be string, bytes or os.PathLike, not int
+ValueError replace: embedded null character in src
+ValueError replace: embedded null character in dst
+FileNotFoundError [Errno 2] No such file or directory: 'surely/not/there' -> 'surely/not/there2'
+FileNotFoundError [Errno 2] No such file or directory: b'surely/not/there' -> 'surely/not/there2'
+FileNotFoundError [Errno 2] No such file or directory: 'surely/not/there' -> b'surely/not/there'
+TypeError link: src should be string, bytes or os.PathLike, not int
+TypeError link: dst should be string, bytes or os.PathLike, not int
+ValueError link: embedded null character in src
+ValueError link: embedded null character in dst
+FileNotFoundError [Errno 2] No such file or directory: 'surely/not/there' -> 'surely/not/there2'
+FileNotFoundError [Errno 2] No such file or directory: b'surely/not/there' -> 'surely/not/there2'
+FileNotFoundError [Errno 2] No such file or directory: 'surely/not/there' -> b'surely/not/there'
+TypeError symlink: src should be string, bytes or os.PathLike, not int
+TypeError symlink: dst should be string, bytes or os.PathLike, not int
+ValueError symlink: embedded null character in src
+ValueError symlink: embedded null character in dst
+FileNotFoundError [Errno 2] No such file or directory: 'surely/not/there' -> 'surely/not/there2'
+FileNotFoundError [Errno 2] No such file or directory: b'surely/not/there' -> 'surely/not/there2'
+FileNotFoundError [Errno 2] No such file or directory: 'surely/not/there' -> b'surely/not/there'
+TypeError getxattr: attribute should be string, bytes or os.PathLike, not int
+ValueError getxattr: embedded null character in attribute
+TypeError a bytes-like object is required, not 'str'
+TypeError removexattr: path should be string, bytes, os.PathLike or integer, not float
+-- a descriptor for a path
+OSError [Errno 9] Bad file descriptor: 9999
+OSError [Errno 9] Bad file descriptor: -1
+OverflowError fd is greater than maximum
+OverflowError fd is less than minimum
+OverflowError fd is greater than maximum
+OverflowError fd is less than minimum
+OSError 9 Index
+OverflowError fd is greater than maximum
+OSError [Errno 9] Bad file descriptor
+OSError [Errno 9] Bad file descriptor
+OSError [Errno 9] Bad file descriptor: 9999
+OSError [Errno 9] Bad file descriptor
+OSError [Errno 9] Bad file descriptor: 9999
+OSError [Errno 9] Bad file descriptor: 9999
+OSError [Errno 9] Bad file descriptor: 9999
+OSError [Errno 9] Bad file descriptor: 9999
+OSError [Errno 9] Bad file descriptor: 9999
+stat_result
+NotADirectoryError [Errno 20] Not a directory: '.'
+OSError [Errno 22] Invalid argument
+[('RuntimeWarning', 'bool is used as a file descriptor'), ('RuntimeWarning', 'bool is used as a file descriptor'), ('RuntimeWarning', 'bool is used as a file descriptor')]
+RuntimeWarning bool is used as a file descriptor
+RuntimeWarning bool is used as a file descriptor
+-- dir_fd and follow_symlinks
+TypeError argument should be integer or None, not str
+TypeError argument should be integer or None, not float
+OverflowError fd is greater than maximum
+OverflowError fd is less than minimum
+FileNotFoundError [Errno 2] No such file or directory: 'surely/not/there'
+OSError [Errno 9] Bad file descriptor: 'surely/not/there'
+OSError [Errno 9] Bad file descriptor: 'surely/not/there'
+ValueError stat: can't specify dir_fd without matching path
+ValueError stat: cannot use fd and follow_symlinks together
+TypeError lstat: path should be string, bytes or os.PathLike, not int
+OSError [Errno 9] Bad file descriptor: 'surely/not/there'
+ValueError utime: can't specify dir_fd without matching path
+ValueError utime: cannot use fd and follow_symlinks together
+ValueError chown: can't specify both dir_fd and fd
+ValueError chown: cannot use fd and follow_symlinks together
+ValueError statx: can't specify dir_fd without matching path
+ValueError statx: cannot use fd and follow_symlinks together
+ValueError getxattr: cannot use fd and follow_symlinks together
+ValueError listxattr: cannot use fd and follow_symlinks together
+TypeError argument should be integer or None, not str
+OSError [Errno 9] Bad file descriptor: 'surely/not/there'
+OSError [Errno 9] Bad file descriptor: 'surely/not/there'
+OSError [Errno 9] Bad file descriptor: 'surely/not/there'
+OSError [Errno 9] Bad file descriptor: 'surely/not/there'
+OSError [Errno 9] Bad file descriptor: 'surely/not/there'
+OSError [Errno 9] Bad file descriptor: 'surely/not/there' -> 'surely/not/there'
+FileNotFoundError [Errno 2] No such file or directory: 'surely/not/there' -> 'surely/not/there'
+OSError [Errno 9] Bad file descriptor: 'surely/not/there' -> 'surely/not/there'
+OSError [Errno 9] Bad file descriptor: 'surely/not/there' -> 'surely/not/there'
+OSError [Errno 9] Bad file descriptor
+OSError [Errno 9] Bad file descriptor
+-- int
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'float' object cannot be interpreted as an integer
+TypeError 'NoneType' object cannot be interpreted as an integer
+OverflowError Python int too large to convert to C int
+OverflowError Python int too large to convert to C int
+OverflowError Python int too large to convert to C int
+OverflowError Python int too large to convert to C int
+OverflowError Python int too large to convert to C int
+TypeError Index.__index__() must return an int, not str
+TypeError 'list' object cannot be interpreted as an integer
+TypeError 'bytes' object cannot be interpreted as an integer
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'float' object cannot be interpreted as an integer
+TypeError 'float' object cannot be interpreted as an integer
+TypeError 'float' object cannot be interpreted as an integer
+TypeError 'NoneType' object cannot be interpreted as an integer
+TypeError 'NoneType' object cannot be interpreted as an integer
+TypeError 'NoneType' object cannot be interpreted as an integer
+OverflowError Python int too large to convert to C long
+OverflowError Python int too large to convert to C ssize_t
+OverflowError Python int too large to convert to C long
+OverflowError Python int too large to convert to C long
+OverflowError Python int too large to convert to C ssize_t
+OverflowError Python int too large to convert to C long
+OverflowError Python int too large to convert to C long
+OverflowError Python int too large to convert to C ssize_t
+OverflowError Python int too large to convert to C long
+OSError [Errno 22] Invalid argument
+OSError [Errno 22] Invalid argument
+ValueError size cannot be negative
+TypeError 'str' object cannot be interpreted as an integer
+OverflowError Python int too large to convert to C ssize_t
+OSError [Errno 22] Invalid argument
+ValueError count cannot be negative
+TypeError 'str' object cannot be interpreted as an integer
+ValueError count cannot be negative
+ValueError count cannot be negative
+ValueError count cannot be negative
+ValueError Cannot convert negative int
+OverflowError Python int too large for C unsigned int
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'str' object cannot be interpreted as an integer
+OverflowError Python int too large to convert to C int
+OverflowError Python int too large to convert to C ssize_t
+-- what has fileno()
+TypeError argument must be an int, or have a fileno() method.
+TypeError argument must be an int, or have a fileno() method.
+TypeError argument must be an int, or have a fileno() method.
+ValueError file descriptor cannot be a negative integer (-1)
+ValueError file descriptor cannot be a negative integer (-5)
+OverflowError Python int too large to convert to C int
+OverflowError Python int too large to convert to C int
+OSError [Errno 9] Bad file descriptor
+OSError [Errno 9] Bad file descriptor
+ValueError file descriptor cannot be a negative integer (-1)
+TypeError F.fileno() must return an int, not str
+TypeError F.fileno() must return an int, not float
+OverflowError Python int too large to convert to C int
+OSError [Errno 22] Invalid argument
+TypeError argument must be an int, or have a fileno() method.
+TypeError argument must be an int, or have a fileno() method.
+OSError [Errno 9] Bad file descriptor
+TypeError argument must be an int, or have a fileno() method.
+TypeError argument must be an int, or have a fileno() method.
+ValueError file descriptor cannot be a negative integer (-1)
+TypeError argument must be an int, or have a fileno() method.
+OSError [Errno 9] Bad file descriptor
+-- uid, gid
+TypeError uid should be integer, not str
+TypeError gid should be integer, not str
+TypeError uid should be integer, not float
+TypeError gid should be integer, not float
+TypeError uid should be integer, not NoneType
+TypeError gid should be integer, not NoneType
+OverflowError uid is less than minimum
+OverflowError gid is less than minimum
+OverflowError uid is less than minimum
+OverflowError gid is less than minimum
+OverflowError uid is less than minimum
+OverflowError gid is less than minimum
+FileNotFoundError [Errno 2] No such file or directory: 'surely/not/there'
+FileNotFoundError [Errno 2] No such file or directory: 'surely/not/there'
+OverflowError uid is greater than maximum
+OverflowError gid is greater than maximum
+OverflowError uid is greater than maximum
+OverflowError gid is greater than maximum
+OverflowError uid is greater than maximum
+OverflowError gid is greater than maximum
+TypeError uid should be integer, not Index
+TypeError gid should be integer, not Index
+TypeError uid should be integer, not str
+TypeError gid should be integer, not float
+OverflowError uid is less than minimum
+OverflowError gid is greater than maximum
+-- what becomes bytes
+TypeError expected str, bytes or os.PathLike object, not int
+TypeError expected str, bytes or os.PathLike object, not int
+TypeError expected str, bytes or os.PathLike object, not int
+TypeError expected str, bytes or os.PathLike object, not int
+TypeError expected str, bytes or os.PathLike object, not int
+TypeError expected str, bytes or os.PathLike object, not NoneType
+TypeError expected str, bytes or os.PathLike object, not NoneType
+TypeError expected str, bytes or os.PathLike object, not NoneType
+TypeError expected str, bytes or os.PathLike object, not NoneType
+TypeError expected str, bytes or os.PathLike object, not NoneType
+ValueError embedded null byte
+ValueError embedded null byte
+ValueError embedded null byte
+ValueError embedded null byte
+ValueError embedded null byte
+ValueError embedded null byte
+ValueError embedded null byte
+ValueError embedded null byte
+ValueError embedded null byte
+ValueError embedded null byte
+UnicodeEncodeError 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed
+UnicodeEncodeError 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed
+UnicodeEncodeError 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed
+UnicodeEncodeError 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed
+UnicodeEncodeError 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed
+TypeError expected P.__fspath__() to return str or bytes, not int
+TypeError expected P.__fspath__() to return str or bytes, not int
+TypeError expected P.__fspath__() to return str or bytes, not int
+TypeError expected P.__fspath__() to return str or bytes, not int
+TypeError expected P.__fspath__() to return str or bytes, not int
+ValueError embedded null byte
+ValueError embedded null byte
+ValueError embedded null byte
+ValueError embedded null byte
+ValueError embedded null byte
+TypeError expected str, bytes or os.PathLike object, not int
+'a'
+b'a'
+'x'
+b'x'
+TypeError expected P.__fspath__() to return str or bytes, not int
+TypeError expected str, bytes or os.PathLike object, not NoneFspath
+TypeError expected str, bytes or os.PathLike object, not InstanceOnly
+'x'
+StrSub BytesSub
+'kw'

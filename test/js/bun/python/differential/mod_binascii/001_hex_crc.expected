@@ -1,0 +1,76 @@
+status: 0
+script: 76f333bf78d25569
+---
+ASCII85_ALPHABET b'!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu'
+BASE32HEX_ALPHABET b'0123456789ABCDEFGHIJKLMNOPQRSTUV'
+BASE32_ALPHABET b'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
+BASE64_ALPHABET b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+BASE85_ALPHABET b'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+-;<=>?@^_`{|}~'
+BINHEX_ALPHABET b'!"#$%&\'()*+,-012345689@ABCDEFGHIJKLMNPQRSTUVXYZ[`abcdefhijklmpqr'
+CRYPT_ALPHABET b'./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
+URLSAFE_BASE64_ALPHABET b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'
+UU_ALPHABET b' !"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_'
+Z85_ALPHABET b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'
+['ASCII85_ALPHABET', 'BASE32HEX_ALPHABET', 'BASE32_ALPHABET', 'BASE64_ALPHABET', 'BASE85_ALPHABET', 'BINHEX_ALPHABET', 'CRYPT_ALPHABET', 'Error', 'Incomplete', 'URLSAFE_BASE64_ALPHABET', 'UU_ALPHABET', 'Z85_ALPHABET', 'a2b_ascii85', 'a2b_base32', 'a2b_base64', 'a2b_base85', 'a2b_hex', 'a2b_qp', 'a2b_uu', 'b2a_ascii85', 'b2a_base32', 'b2a_base64', 'b2a_base85', 'b2a_hex', 'b2a_qp', 'b2a_uu', 'crc32', 'crc_hqx', 'hexlify', 'unhexlify']
+(<class 'binascii.Error'>, <class 'ValueError'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>) (<class 'binascii.Incomplete'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>) binascii Error Conversion between binary data and ASCII ('x',) True
+b'' b'00ff616263' b'78797a' b'000102030405060708090a0b0c0d0e0f10111213' bytes
+- [b'01-02-03-04-05-06-07', b'01-0203-0405-0607', b'01-020304-050607', b'01-020304050607', b'01020304050607', b'01020304050607', b'01020304050607', b'01020304050607', b'01-02-03-04-05-06-07', b'0102-0304-0506-07', b'010203-040506-07', b'01020304050607', b'01020304050607']
+b':' [b'01:02:03:04:05:06:07', b'01:0203:0405:0607', b'01:020304:050607', b'01:020304050607', b'01020304050607', b'01020304050607', b'01020304050607', b'01020304050607', b'01:02:03:04:05:06:07', b'0102:0304:0506:07', b'010203:040506:07', b'01020304050607', b'01020304050607']
+é [b'01\xe902\xe903\xe904\xe905\xe906\xe907', b'01\xe90203\xe90405\xe90607', b'01\xe9020304\xe9050607', b'01\xe9020304050607', b'01020304050607', b'01020304050607', b'01020304050607', b'01020304050607', b'01\xe902\xe903\xe904\xe905\xe906\xe907', b'0102\xe90304\xe90506\xe907', b'010203\xe9040506\xe907', b'01020304050607', b'01020304050607']
+b'\xe9' [b'01\xe902\xe903\xe904\xe905\xe906\xe907', b'01\xe90203\xe90405\xe90607', b'01\xe9020304\xe9050607', b'01\xe9020304050607', b'01020304050607', b'01020304050607', b'01020304050607', b'01020304050607', b'01\xe902\xe903\xe904\xe905\xe906\xe907', b'0102\xe90304\xe90506\xe907', b'010203\xe9040506\xe907', b'01020304050607', b'01020304050607']
+  [b'01 02 03 04 05 06 07', b'01 0203 0405 0607', b'01 020304 050607', b'01 020304050607', b'01020304050607', b'01020304050607', b'01020304050607', b'01020304050607', b'01 02 03 04 05 06 07', b'0102 0304 0506 07', b'010203 040506 07', b'01020304050607', b'01020304050607']
+b'010203_04050607' b'01020304050607' b'' b'61' b'6162' b'6162' b'01.02.03.04.05.06.07' b'01020304050607'
+builtins.TypeError object of type 'int' has no len()
+builtins.ValueError sep must be length 1.
+builtins.ValueError sep must be length 1.
+builtins.ValueError sep must be ASCII.
+builtins.TypeError sep must be str or bytes.
+builtins.TypeError 'str' object cannot be interpreted as an integer
+builtins.TypeError object of type 'NoneType' has no len()
+builtins.TypeError a bytes-like object is required, not 'str'
+builtins.OverflowError Python int too large to convert to C ssize_t
+builtins.TypeError hexlify() takes at most 3 arguments (4 given)
+builtins.TypeError hexlify() missing required argument 'data' (pos 1)
+builtins.TypeError a bytes-like object is required, not 'int'
+builtins.TypeError hexlify() got an unexpected keyword argument 'foo'
+builtins.TypeError sep must be str or bytes.
+builtins.TypeError 'float' object cannot be interpreted as an integer
+builtins.TypeError b2a_hex() missing required argument 'data' (pos 1)
+builtins.ValueError sep must be length 1.
+b'' b'\x00\xff\xab\xcd' b'ab' b'ab' b'\xab\xcd' b'\xab' b'\xab' b'' b'\xab'
+binascii.Error Odd number of hexadecimal digits
+binascii.Error Non-hexadecimal digit found
+binascii.Error Odd number of hexadecimal digits
+binascii.Error Non-hexadecimal digit found
+builtins.TypeError unhexlify() takes exactly 1 positional argument (2 given)
+builtins.TypeError argument should be bytes, buffer or ASCII string, not 'int'
+builtins.ValueError string argument should contain only ASCII characters
+builtins.ValueError string argument should contain only ASCII characters
+builtins.TypeError argument should be bytes, buffer or ASCII string, not 'NoneType'
+builtins.TypeError unhexlify() takes exactly 1 positional argument (0 given)
+builtins.TypeError a bytes-like object is required, not 'str'
+builtins.TypeError a bytes-like object is required, not 'NoneType'
+builtins.TypeError unhexlify() got an unexpected keyword argument 'foo'
+builtins.TypeError unhexlify() takes exactly 1 positional argument (0 given)
+binascii.Error Odd number of hexadecimal digits
+binascii.Error Non-hexadecimal digit found
+binascii.Error Non-hexadecimal digit found
+True
+0 3904355907 222957957 907060870 222957957 3557889557 891568578 2679148245 3310005809 3310005809 3895967299 2679148245 12345
+0 31879 15332 15332 47257 40311 31879 40311 9029 12739 10673
+builtins.TypeError crc32 expected at least 1 argument, got 0
+builtins.TypeError 'str' object cannot be interpreted as an integer
+builtins.TypeError 'float' object cannot be interpreted as an integer
+builtins.TypeError a bytes-like object is required, not 'str'
+builtins.TypeError binascii.crc32() takes no keyword arguments
+builtins.TypeError crc32 expected at most 2 arguments, got 3
+builtins.TypeError 'NoneType' object cannot be interpreted as an integer
+builtins.TypeError crc_hqx expected 2 arguments, got 1
+builtins.TypeError a bytes-like object is required, not 'str'
+builtins.TypeError 'str' object cannot be interpreted as an integer
+builtins.TypeError crc_hqx expected 2 arguments, got 0
+builtins.TypeError crc_hqx expected 2 arguments, got 3
+3904355907 2564639436 3318394417 2679148245 3904355907 32647 31879
+7 [('DeprecationWarning', 'integer value out of range')]
+builtins.DeprecationWarning integer value out of range
+1993550816 31623 b'616263-6465666768696a'

@@ -1,0 +1,16 @@
+status: 0
+script: 9088207f1295384f
+---
+1801 True
+18000 True
+True True
+[b'abc', b'def']
+RuntimeError reentrant call inside
+[42, 42, 42, 42, 42, 42, 42, 42] 1
+['a', 'b']
+False
+True
+[True, 'not holding the import lock']
+[True, 'not holding the import lock']
+[True, 'not holding the import lock', 'acquired'] False
+RuntimeError not holding the import lock

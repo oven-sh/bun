@@ -1,0 +1,30 @@
+status: 0
+script: 8b95d65d6b068402
+---
+None None True frozenset
+True 3
+True
+frozenset()
+True
+None
+None None frozenset() None
+None frozenset()
+* Task(name='leaf', id=0x..)
+  + Call stack:
+  |   File 'graph.py', line 279, in print_call_graph()
+  |   File 'c_awaited_by.py', line 14, in async leaf()
+  + Awaited by:
+    * Task(name='middle', id=0x..)
+      + Call stack:
+      |   File 'c_awaited_by.py', line 16, in async middle()
+      + Awaited by:
+        * Task(name='top', id=0x..)
+          + Call stack:
+          |   File 'taskgroups.py', line 125, in async TaskGroup._aexit()
+          |   File 'taskgroups.py', line 75, in async TaskGroup.__aexit__()
+          |   File 'c_awaited_by.py', line 18, in async top()
+
+['FutureCallGraph', ['FrameCallGraphEntry'], 1, ['middle']]
+True
+frozenset()
+[1, 1]

@@ -1,0 +1,92 @@
+status: 0
+script: e1e24e84550f9f24
+---
+adler32
+1 0 1 12345 0 5 3 7
+6422626 6357089 6422626 815411354 6357089 6684774 6553700 6815848
+38600999 38404390 38600999 2465542495 38404390 39387435 38994217 39780653
+2603332608 2531243007 2603332608 3622626360 2531243007 2891691012 2747511810 3035870214
+167277244 3722080955 167277244 4189364980 3722080955 3123999424 1645638334 308376258
+47645036 47448427 47645036 2474586532 47448427 48431472 48038254 48824690
+71500092 71106875 71500092 631386484 71106875 73072960 72286526 73859394
+True
+TypeError: adler32 expected at least 1 argument, got 0
+TypeError: a bytes-like object is required, not 'str'
+TypeError: a bytes-like object is required, not 'int'
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+TypeError: 'NoneType' object cannot be interpreted as an integer
+TypeError: adler32 expected at most 2 arguments, got 3
+TypeError: zlib.adler32() takes no keyword arguments
+TypeError: zlib.adler32() takes no keyword arguments
+12452030 7471218
+crc32
+0 0 1 12345 0 5 3 7
+4294967295 4294967295
+3904355907 3904355907 2679148245 3081909883 3904355907 2564639436 1908338681 1993550816
+3310005809 3310005809
+891568578 891568578 887499765 3252201774 891568578 871334697 929234843 812341063
+899311407 899311407
+1409566477 1409566477 747463799 4117625502 1409566477 366538718 3718193795 3838486826
+9181401 9181401
+3147626774 3147626774 3224138737 626217590 3147626774 4120862252 927819327 50220002
+1910172133 1910172133
+3951999591 3951999591 3930902608 527585931 3951999591 3980753036 3922199614 4005670114
+3945831562 3945831562
+1924774308 1924774308 3118819841 4042086215 1924774308 578037783 4096641802 1874626844
+1015343096 1015343096
+True
+TypeError: crc32 expected at least 1 argument, got 0
+TypeError: a bytes-like object is required, not 'str'
+TypeError: a bytes-like object is required, not 'int'
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+TypeError: 'NoneType' object cannot be interpreted as an integer
+TypeError: crc32 expected at most 2 arguments, got 3
+TypeError: zlib.crc32() takes no keyword arguments
+TypeError: zlib.crc32() takes no keyword arguments
+4251816714 2181537457
+adler32_combine
+True 1
+True 6422626
+True 6488163
+True 234881829
+True 591862366
+2 65520 917518 899482178 1078264386 262154
+TypeError: adler32_combine expected 3 arguments, got 0
+TypeError: adler32_combine expected 3 arguments, got 2
+ValueError: len2 must be non-negative
+TypeError: adler32_combine() argument 3 must be int, not float
+TypeError: adler32_combine() argument 3 must be int, not str
+TypeError: adler32_combine() argument 3 must be int, not None
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'str' object cannot be interpreted as an integer
+OverflowError: Python int too large to convert to C ssize_t
+OverflowError: Python int too large to convert to C ssize_t
+OverflowError: Python int too large to convert to C ssize_t
+TypeError: adler32_combine expected 3 arguments, got 4
+TypeError: zlib.adler32_combine() takes no keyword arguments
+TypeError: adler32_combine() argument 3 must be int, not I
+393221
+crc32_combine
+True 0
+True 3904355907
+True 1908338681
+True 2934909520
+True 4085385477
+29518389 0 3265254991 3412177475 1052770281 1886057609
+TypeError: crc32_combine expected 3 arguments, got 0
+TypeError: crc32_combine expected 3 arguments, got 2
+ValueError: len2 must be non-negative
+TypeError: crc32_combine() argument 3 must be int, not float
+TypeError: crc32_combine() argument 3 must be int, not str
+TypeError: crc32_combine() argument 3 must be int, not None
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'str' object cannot be interpreted as an integer
+OverflowError: Python int too large to convert to C ssize_t
+OverflowError: Python int too large to convert to C ssize_t
+OverflowError: Python int too large to convert to C ssize_t
+TypeError: crc32_combine expected 3 arguments, got 4
+TypeError: zlib.crc32_combine() takes no keyword arguments
+TypeError: crc32_combine() argument 3 must be int, not I
+38190682

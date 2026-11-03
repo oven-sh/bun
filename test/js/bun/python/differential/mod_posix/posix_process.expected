@@ -1,0 +1,250 @@
+status: 0
+script: c3daff2b3828737e
+---
+-- ids
+getpid int True
+TypeError posix.getpid() takes no arguments (1 given)
+getppid int True
+TypeError posix.getppid() takes no arguments (1 given)
+getuid int True
+TypeError posix.getuid() takes no arguments (1 given)
+geteuid int True
+TypeError posix.geteuid() takes no arguments (1 given)
+getgid int True
+TypeError posix.getgid() takes no arguments (1 given)
+getegid int True
+TypeError posix.getegid() takes no arguments (1 given)
+getpgrp int True
+TypeError posix.getpgrp() takes no arguments (1 given)
+True True
+True True True
+True int
+ProcessLookupError [Errno 3] No such process
+ProcessLookupError [Errno 3] No such process
+ProcessLookupError [Errno 3] No such process
+True True
+list True
+TypeError setgroups argument must be a sequence
+TypeError setgroups argument must be a sequence
+TypeError groups must be integers
+TypeError groups must be integers
+OverflowError gid is less than minimum
+ValueError too many groups
+TypeError getgrouplist() argument 1 must be str, not int
+ValueError embedded null character
+TypeError gid should be integer, not str
+OverflowError gid is less than minimum
+True True list
+[7]
+TypeError expected str, bytes or os.PathLike object, not int
+TypeError gid should be integer, not str
+ProcessLookupError [Errno 3] No such process
+TypeError 'str' object cannot be interpreted as an integer
+-- priorities
+int True True
+OSError [Errno 22] Invalid argument
+ProcessLookupError [Errno 3] No such process
+OSError [Errno 22] Invalid argument
+None
+TypeError 'str' object cannot be interpreted as an integer
+1 1
+-- wait status
+0 True 0 False 0 False 0 False False
+0
+1 False 0 True 1 False 0 False False
+-1
+256 True 1 False 0 False 1 False False
+1
+768 True 3 False 0 False 3 False False
+3
+65280 True 255 False 0 False 255 False False
+255
+9 False 0 True 9 False 0 False False
+-9
+15 False 0 True 15 False 0 False False
+-15
+139 False 0 True 11 False 0 False True
+-11
+127 False 0 False 127 True 0 False False
+ValueError process stopped by delivery of signal 0
+4991 False 19 False 127 True 19 False False
+ValueError process stopped by delivery of signal 19
+65535 False 255 False 127 False 255 True True
+ValueError invalid wait status: 65535
+65536 True 0 False 0 False 0 False False
+0
+-1 False 255 False 127 False 255 False True
+ValueError invalid wait status: -1
+126 False 0 True 126 False 0 False False
+-126
+2147483647 False 255 False 127 False 255 False True
+ValueError invalid wait status: 2147483647
+TypeError 'str' object cannot be interpreted as an integer
+OverflowError Python int too large to convert to C int
+TypeError 'float' object cannot be interpreted as an integer
+TypeError WIFEXITED() missing required argument 'status' (pos 1)
+TypeError 'str' object cannot be interpreted as an integer
+OverflowError Python int too large to convert to C int
+TypeError 'float' object cannot be interpreted as an integer
+TypeError WEXITSTATUS() missing required argument 'status' (pos 1)
+TypeError 'str' object cannot be interpreted as an integer
+OverflowError Python int too large to convert to C int
+TypeError 'float' object cannot be interpreted as an integer
+TypeError posix.WCOREDUMP() takes exactly one argument (0 given)
+TypeError 'str' object cannot be interpreted as an integer
+OverflowError Python int too large to convert to C int
+TypeError 'float' object cannot be interpreted as an integer
+TypeError waitstatus_to_exitcode() missing required argument 'status' (pos 1)
+True
+TypeError posix.WCOREDUMP() takes no keyword arguments
+1
+-- system
+0 768 1024 0
+7 -9
+32512
+from the shell
+TypeError system() missing required argument 'command' (pos 1)
+TypeError expected str, bytes or os.PathLike object, not int
+-- no children
+ChildProcessError [Errno 10] No child processes
+ChildProcessError [Errno 10] No child processes
+ChildProcessError [Errno 10] No child processes
+ChildProcessError [Errno 10] No child processes
+ChildProcessError [Errno 10] No child processes
+ChildProcessError [Errno 10] No child processes
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'str' object cannot be interpreted as an integer
+TypeError waitpid expected 2 arguments, got 1
+TypeError wait3() missing required argument 'options' (pos 1)
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'str' object cannot be interpreted as an integer
+OSError [Errno 22] Invalid argument
+-- spawn and wait
+int True
+tuple True 1280 5
+ChildProcessError [Errno 10] No child processes
+True 1536
+3 True 1792 <class 'resource.struct_rusage'> 16 float int True
+3 True 2048 struct_rusage
+<class 'posix.waitid_result'> True True 17 9 True 5
+10
+2560
+-- a child that stays
+(0, 0)
+(0, 0) True
+(0, 0) (0.0, 0.0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+None
+None
+None
+True True True
+ValueError process stopped by delivery of signal 19
+None
+True True
+None
+True True 15 -15
+ProcessLookupError [Errno 3] No such process
+ProcessLookupError [Errno 3] No such process
+None
+OSError [Errno 22] Invalid argument
+ProcessLookupError [Errno 3] No such process
+None
+TypeError 'str' object cannot be interpreted as an integer
+-- what the child sees
+(b'a b c \n', 0)
+(b'caf\xc3\xa9 \xff\n', 0)
+(b'x 0\n', 0)
+(b'm|o\n', 0)
+(b'A=1\nB=x=y\nC=\n', 0)
+(b'', 0)
+(b'yes\n', 0)
+(b'found on the path\n', 0)
+FileNotFoundError [Errno 2] No such file or directory: 'echo'
+FileNotFoundError [Errno 2] No such file or directory: 'no_such_command_here'
+(b'Q=r\n', 0)
+(b'path-like\n', 0)
+0
+(b'hi\n', 0)
+(b'closed\n', 0)
+(b'ok\n', 0)
+(b'ok\n', 0)
+(b'ok\n', 0)
+(b'closed\n', 0)
+(b'inherited\n', 0)
+-- bad arguments
+TypeError posix_spawn: argv must be a tuple or list
+ValueError posix_spawn: argv must not be empty
+ValueError posix_spawn: argv must not be empty
+ValueError posix_spawn: argv first element cannot be empty
+TypeError expected str, bytes or os.PathLike object, not int
+ValueError embedded null byte
+TypeError posix_spawn: environment must be a mapping object or None
+AttributeError 'list' object has no attribute 'keys'
+ValueError illegal environment variable name
+ValueError illegal environment variable name
+TypeError expected str, bytes or os.PathLike object, not int
+TypeError expected str, bytes or os.PathLike object, not int
+ValueError embedded null byte
+ValueError embedded null byte
+PermissionError [Errno 13] Permission denied: '/'
+PermissionError [Errno 13] Permission denied: '/etc/passwd'
+FileNotFoundError [Errno 2] No such file or directory: b'/nonexistent'
+TypeError file_actions must be a sequence or None
+TypeError Each file_actions element must be a non-empty tuple
+TypeError Each file_actions element must be a non-empty tuple
+TypeError Each file_actions element must be a non-empty tuple
+TypeError 'str' object cannot be interpreted as an integer
+TypeError Unknown file_actions identifier
+TypeError Unknown file_actions identifier
+TypeError A open file_action tuple must have 5 elements
+TypeError expected str, bytes or os.PathLike object, not int
+TypeError 'str' object cannot be interpreted as an integer
+FileNotFoundError [Errno 2] No such file or directory: '/bin/true'
+TypeError A close file_action tuple must have 2 elements
+TypeError A close file_action tuple must have 2 elements
+OSError [Errno 9] Bad file descriptor
+TypeError A dup2 file_action tuple must have 3 elements
+OSError [Errno 9] Bad file descriptor: '/bin/true'
+TypeError A closefrom file_action tuple must have 2 elements
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'int' object is not iterable
+ValueError signal number 0 out of range [1; 64]
+ValueError signal number -1 out of range [1; 64]
+ValueError signal number 65 out of range [1; 64]
+ValueError signal number -1 out of range [1; 64]
+TypeError 'str' object cannot be interpreted as an integer
+TypeError 'float' object cannot be interpreted as an integer
+TypeError posix_spawn: scheduler must be a tuple or None
+TypeError A scheduler tuple must have two elements
+TypeError must have a sched_param object
+TypeError 'str' object cannot be interpreted as an integer
+TypeError posix_spawn() got an unexpected keyword argument 'unknown'
+TypeError posix_spawn() takes exactly 3 positional arguments (2 given)
+TypeError posix_spawn() takes exactly 3 positional arguments (4 given)
+TypeError posix_spawn() takes exactly 3 positional arguments (0 given)
+TypeError posix_spawnp: argv must be a tuple or list
+TypeError posix_spawnp: path should be string, bytes or os.PathLike, not int
+0 [('RuntimeWarning', 'invalid signal number 32, please use valid_signals()'), ('RuntimeWarning', 'invalid signal number 33, please use valid_signals()')]
+-- exec: bad arguments
+TypeError execv() arg 2 must be a tuple or list
+ValueError execv() arg 2 must not be empty
+ValueError execv() arg 2 first element cannot be empty
+TypeError expected str, bytes or os.PathLike object, not int
+FileNotFoundError [Errno 2] No such file or directory
+PermissionError [Errno 13] Permission denied
+TypeError execv: path should be string, bytes or os.PathLike, not int
+TypeError execv expected 2 arguments, got 1
+TypeError execve: argv must be a tuple or list
+ValueError execve: argv must not be empty
+ValueError execve: argv first element cannot be empty
+TypeError execve: environment must be a mapping object
+ValueError illegal environment variable name
+TypeError expected str, bytes or os.PathLike object, not int
+FileNotFoundError [Errno 2] No such file or directory: '/nonexistent'
+FileNotFoundError [Errno 2] No such file or directory: b'/nonexistent'
+OSError [Errno 9] Bad file descriptor: 9999
+TypeError execve: path should be string, bytes, os.PathLike or integer, not float
+TypeError execve() missing required argument 'env' (pos 3)
+FileNotFoundError [Errno 2] No such file or directory: '/nonexistent'
+-- exec
+replaced: argument value

@@ -1,0 +1,79 @@
+status: 0
+script: ea40442bcdd60434
+---
+MainThread False True True True True 1 True
+<_MainThread(MainThread, started N)>
+RuntimeError: cannot join current thread
+RuntimeError: threads can only be started once
+9223372036.0 True 0
+lock True True False None False
+RLock True True None None
+RuntimeError: cannot release un-acquired lock
+False False True None None
+RuntimeError: cannot wait on un-acquired lock
+RuntimeError: cannot notify on un-acquired lock
+False True
+<Condition(<unlocked _thread.lock object at 0x>, 0)>
+False False None True True True None False
+<threading.Event at 0x: unset>
+True True False False None True None
+<threading.Semaphore at 0x: value=2>
+ValueError: semaphore initial value must be >= 0
+ValueError: can't specify timeout for non-blocking acquire
+ValueError: n must be one or more
+True None
+ValueError: Semaphore released too many times
+in semaphore
+action
+action
+1 0 False 0 0
+<threading.Barrier at 0x: waiters=0/1>
+BrokenBarrierError: 
+True
+BrokenBarrierError: 
+False
+True
+ValueError: parties must be >= 1
+1 {'x': 1} _thread _local
+worker True False None None
+<Thread(worker, initial daemon)>
+RuntimeError: cannot join thread before it is started
+renamed False
+Thread-N
+Thread-N (len)
+AssertionError: group argument must be None for now
+False 10 None True
+True _ExceptHookArgs True
+None None None None
+1 ['MainThread']
+2 True False
+Full: 
+Full: 
+1 2 True
+Empty: 
+Empty: 
+Empty: 
+ValueError: task_done() called too many times
+None
+2 1
+1 2 3
+2 a b True _queue
+Empty: 
+Empty: 
+1
+ShutDown: 
+ShutDown: 
+False 2
+['a', 'b'] True
+INFO test MainThread hello 1
+WARNING test MainThread careful
+ERROR test MainThread bad thing
+False False False
+True 5 None
+ValueError: x
+ValueError('x')
+callback True
+True True
+CancelledError: 
+TimeoutError: 
+DoneAndNotDoneFutures(done=set(), not_done=set()) []

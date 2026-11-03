@@ -1,0 +1,172 @@
+status: 0
+script: eeb73c464797c2af
+---
+--- reading
+None
+  read       'a\nbb\nccc\ndddd\n\n\n\neee' ('\r', '\n', '\r\n')
+  readlines  ['a\n', 'bb\n', 'ccc\n', 'dddd\n', '\n', '\n', '\n', 'eee'] ('\r', '\n', '\r\n')
+  iteration  ['a\n', 'bb\n', 'ccc\n', 'dddd\n', '\n', '\n', '\n', 'eee'] ('\r', '\n', '\r\n')
+  chunks of 1 True ('\r', '\n', '\r\n')
+  chunks of 2 True ('\r', '\n', '\r\n')
+  chunks of 3 True ('\r', '\n', '\r\n')
+  chunks of 5 True ('\r', '\n', '\r\n')
+  read(1)    ['a', '\n', 'b', 'b', '\n', 'c', 'c', 'c', '\n', 'd', 'd', 'd', 'd', '\n', '\n', '\n', '\n', 'e', 'e', 'e', '', '', '', ''] ('\r', '\n', '\r\n')
+  readline 0 ['', '', '', '', '', '', '', '', '', '', '', '']
+  readline 1 ['a', '\n', 'b', 'b', '\n', 'c', 'c', 'c', '\n', 'd', 'd', 'd']
+  readline 2 ['a\n', 'bb', '\n', 'cc', 'c\n', 'dd', 'dd', '\n', '\n', '\n', '\n', 'ee']
+  readline 3 ['a\n', 'bb\n', 'ccc', '\n', 'ddd', 'd\n', '\n', '\n', '\n', 'eee', '', '']
+  readline 4 ['a\n', 'bb\n', 'ccc\n', 'dddd', '\n', '\n', '\n', '\n', 'eee', '', '', '']
+  mixed      'a\n' 'bb\n' 'ccc\n' 'd' 'ddd\n' '\n\n\neee'
+''
+  read       'a\nbb\r\nccc\rdddd\n\r\r\n\neee' ('\r', '\n', '\r\n')
+  readlines  ['a\n', 'bb\r\n', 'ccc\r', 'dddd\n', '\r', '\r\n', '\n', 'eee'] ('\r', '\n', '\r\n')
+  iteration  ['a\n', 'bb\r\n', 'ccc\r', 'dddd\n', '\r', '\r\n', '\n', 'eee'] ('\r', '\n', '\r\n')
+  chunks of 1 True ('\r', '\n', '\r\n')
+  chunks of 2 True ('\r', '\n', '\r\n')
+  chunks of 3 True ('\r', '\n', '\r\n')
+  chunks of 5 True ('\r', '\n', '\r\n')
+  read(1)    ['a', '\n', 'b', 'b', '\r', '\n', 'c', 'c', 'c', '\r', 'd', 'd', 'd', 'd', '\n', '\r', '\r', '\n', '\n', 'e', 'e', 'e', '', ''] ('\r', '\n', '\r\n')
+  readline 0 ['', '', '', '', '', '', '', '', '', '', '', '']
+  readline 1 ['a', '\n', 'b', 'b', '\r', '\n', 'c', 'c', 'c', '\r', 'd', 'd']
+  readline 2 ['a\n', 'bb', '\r\n', 'cc', 'c\r', 'dd', 'dd', '\n', '\r', '\r\n', '\n', 'ee']
+  readline 3 ['a\n', 'bb\r', '\n', 'ccc', '\r', 'ddd', 'd\n', '\r', '\r\n', '\n', 'eee', '']
+  readline 4 ['a\n', 'bb\r\n', 'ccc\r', 'dddd', '\n', '\r', '\r\n', '\n', 'eee', '', '', '']
+  mixed      'a\n' 'bb\r' '\n' 'c' 'cc\r' 'dddd\n\r\r\n\neee'
+'\n'
+  read       'a\nbb\r\nccc\rdddd\n\r\r\n\neee' None
+  readlines  ['a\n', 'bb\r\n', 'ccc\rdddd\n', '\r\r\n', '\n', 'eee'] None
+  iteration  ['a\n', 'bb\r\n', 'ccc\rdddd\n', '\r\r\n', '\n', 'eee'] None
+  chunks of 1 True None
+  chunks of 2 True None
+  chunks of 3 True None
+  chunks of 5 True None
+  read(1)    ['a', '\n', 'b', 'b', '\r', '\n', 'c', 'c', 'c', '\r', 'd', 'd', 'd', 'd', '\n', '\r', '\r', '\n', '\n', 'e', 'e', 'e', '', ''] None
+  readline 0 ['', '', '', '', '', '', '', '', '', '', '', '']
+  readline 1 ['a', '\n', 'b', 'b', '\r', '\n', 'c', 'c', 'c', '\r', 'd', 'd']
+  readline 2 ['a\n', 'bb', '\r\n', 'cc', 'c\r', 'dd', 'dd', '\n', '\r\r', '\n', '\n', 'ee']
+  readline 3 ['a\n', 'bb\r', '\n', 'ccc', '\rdd', 'dd\n', '\r\r\n', '\n', 'eee', '', '', '']
+  readline 4 ['a\n', 'bb\r\n', 'ccc\r', 'dddd', '\n', '\r\r\n', '\n', 'eee', '', '', '', '']
+  mixed      'a\n' 'bb\r' '\n' 'c' 'cc\rdddd\n' '\r\r\n\neee'
+'\r'
+  read       'a\nbb\r\nccc\rdddd\n\r\r\n\neee' None
+  readlines  ['a\nbb\r', '\nccc\r', 'dddd\n\r', '\r', '\n\neee'] None
+  iteration  ['a\nbb\r', '\nccc\r', 'dddd\n\r', '\r', '\n\neee'] None
+  chunks of 1 True None
+  chunks of 2 True None
+  chunks of 3 True None
+  chunks of 5 True None
+  read(1)    ['a', '\n', 'b', 'b', '\r', '\n', 'c', 'c', 'c', '\r', 'd', 'd', 'd', 'd', '\n', '\r', '\r', '\n', '\n', 'e', 'e', 'e', '', ''] None
+  readline 0 ['', '', '', '', '', '', '', '', '', '', '', '']
+  readline 1 ['a', '\n', 'b', 'b', '\r', '\n', 'c', 'c', 'c', '\r', 'd', 'd']
+  readline 2 ['a\n', 'bb', '\r', '\nc', 'cc', '\r', 'dd', 'dd', '\n\r', '\r', '\n\n', 'ee']
+  readline 3 ['a\nb', 'b\r', '\ncc', 'c\r', 'ddd', 'd\n\r', '\r', '\n\ne', 'ee', '', '', '']
+  readline 4 ['a\nbb', '\r', '\nccc', '\r', 'dddd', '\n\r', '\r', '\n\nee', 'e', '', '', '']
+  mixed      'a\nbb\r' '\ncc' 'c\r' 'd' 'ddd\n\r' '\r\n\neee'
+'\r\n'
+  read       'a\nbb\r\nccc\rdddd\n\r\r\n\neee' None
+  readlines  ['a\nbb\r\n', 'ccc\rdddd\n\r\r\n', '\neee'] None
+  iteration  ['a\nbb\r\n', 'ccc\rdddd\n\r\r\n', '\neee'] None
+  chunks of 1 True None
+  chunks of 2 True None
+  chunks of 3 True None
+  chunks of 5 True None
+  read(1)    ['a', '\n', 'b', 'b', '\r', '\n', 'c', 'c', 'c', '\r', 'd', 'd', 'd', 'd', '\n', '\r', '\r', '\n', '\n', 'e', 'e', 'e', '', ''] None
+  readline 0 ['', '', '', '', '', '', '', '', '', '', '', '']
+  readline 1 ['a', '\n', 'b', 'b', '\r', '\n', 'c', 'c', 'c', '\r', 'd', 'd']
+  readline 2 ['a\n', 'bb', '\r\n', 'cc', 'c\r', 'dd', 'dd', '\n\r', '\r\n', '\ne', 'ee', '']
+  readline 3 ['a\nb', 'b\r\n', 'ccc', '\rdd', 'dd\n', '\r\r\n', '\nee', 'e', '', '', '', '']
+  readline 4 ['a\nbb', '\r\n', 'ccc\r', 'dddd', '\n\r\r\n', '\neee', '', '', '', '', '', '']
+  mixed      'a\nbb\r\n' 'ccc' '\rdddd\n\r\r\n' '\n' 'eee' ''
+--- newlines as they are seen
+['\n', ('\n', '\r\n'), ('\r', '\n', '\r\n'), ('\r', '\n', '\r\n'), ('\r', '\n', '\r\n'), ('\r', '\n', '\r\n'), ('\r', '\n', '\r\n'), ('\r', '\n', '\r\n')]
+--- writing
+None 10 1 1 None b'a\nb\r\nc\rd\n\n\nx' None 12
+'' 10 1 1 None b'a\nb\r\nc\rd\n\n\nx' None 12
+'\n' 10 1 1 None b'a\nb\r\nc\rd\n\n\nx' None 12
+'\r' 10 1 1 None b'a\rb\r\rc\rd\r\r\rx' None 12
+'\r\n' 10 1 1 None b'a\r\nb\r\r\nc\rd\r\n\r\n\r\nx' None 17
+--- readline
+'one\n' 'two\n' '\n' 'last' '' ''
+TypeError: 'NoneType' object cannot be interpreted as an integer
+TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'float' object cannot be interpreted as an integer
+OverflowError: Python int too large to convert to C ssize_t
+TypeError: readline expected at most 1 argument, got 2
+None ['one\n', 'two\n', '\n', 'last']
+0 ['one\n', 'two\n', '\n', 'last']
+-1 ['one\n', 'two\n', '\n', 'last']
+1 ['one\n']
+3 ['one\n']
+4 ['one\n', 'two\n']
+5 ['one\n', 'two\n']
+100 ['one\n', 'two\n', '\n', 'last']
+a
+ b True
+StopIteration: 
+StopIteration: 
+--- long lines
+20001 20001 end True True
+8192 8192 3617 20001 20001 0
+--- lines of wide characters
+utf-8 None ["'\\xe9\\u20ac\\n'", "'\\U0001f600\\U0001f601x\\n'", "'\\u2028y\\x85z\\x0b\\x0c\\x1c\\n'", "'\\u20ac'"]
+    1 ["'\\xe9'", "'\\u20ac'", "'\\n'", "'\\U0001f600'", "'\\U0001f601'", "'x'", "'\\n'", "'\\u2028'", "'y'"]
+    2 ["'\\xe9\\u20ac'", "'\\n'", "'\\U0001f600\\U0001f601'", "'x\\n'", "'\\u2028y'", "'\\x85z'", "'\\x0b\\x0c'", "'\\x1c\\n'", "'\\u20ac'"]
+    3 ["'\\xe9\\u20ac\\n'", "'\\U0001f600\\U0001f601x'", "'\\n'", "'\\u2028y\\x85'", "'z\\x0b\\x0c'", "'\\x1c\\n'", "'\\u20ac'", "''", "''"]
+utf-8 '' ["'\\xe9\\u20ac\\n'", "'\\U0001f600\\U0001f601x\\r\\n'", "'\\u2028y\\x85z\\x0b\\x0c\\x1c\\n'", "'\\u20ac'"]
+    1 ["'\\xe9'", "'\\u20ac'", "'\\n'", "'\\U0001f600'", "'\\U0001f601'", "'x'", "'\\r'", "'\\n'", "'\\u2028'"]
+    2 ["'\\xe9\\u20ac'", "'\\n'", "'\\U0001f600\\U0001f601'", "'x\\r'", "'\\n'", "'\\u2028y'", "'\\x85z'", "'\\x0b\\x0c'", "'\\x1c\\n'"]
+    3 ["'\\xe9\\u20ac\\n'", "'\\U0001f600\\U0001f601x'", "'\\r\\n'", "'\\u2028y\\x85'", "'z\\x0b\\x0c'", "'\\x1c\\n'", "'\\u20ac'", "''", "''"]
+utf-8 '\r\n' ["'\\xe9\\u20ac\\n\\U0001f600\\U0001f601x\\r\\n'", "'\\u2028y\\x85z\\x0b\\x0c\\x1c\\n\\u20ac'"]
+    1 ["'\\xe9'", "'\\u20ac'", "'\\n'", "'\\U0001f600'", "'\\U0001f601'", "'x'", "'\\r'", "'\\n'", "'\\u2028'"]
+    2 ["'\\xe9\\u20ac'", "'\\n\\U0001f600'", "'\\U0001f601x'", "'\\r\\n'", "'\\u2028y'", "'\\x85z'", "'\\x0b\\x0c'", "'\\x1c\\n'", "'\\u20ac'"]
+    3 ["'\\xe9\\u20ac\\n'", "'\\U0001f600\\U0001f601x'", "'\\r\\n'", "'\\u2028y\\x85'", "'z\\x0b\\x0c'", "'\\x1c\\n\\u20ac'", "''", "''", "''"]
+utf-16 None ["'\\xe9\\u20ac\\n'", "'\\U0001f600\\U0001f601x\\n'", "'\\u2028y\\x85z\\x0b\\x0c\\x1c\\n'", "'\\u20ac'"]
+    1 ["'\\xe9'", "'\\u20ac'", "'\\n'", "'\\U0001f600'", "'\\U0001f601'", "'x'", "'\\n'", "'\\u2028'", "'y'"]
+    2 ["'\\xe9\\u20ac'", "'\\n'", "'\\U0001f600\\U0001f601'", "'x\\n'", "'\\u2028y'", "'\\x85z'", "'\\x0b\\x0c'", "'\\x1c\\n'", "'\\u20ac'"]
+    3 ["'\\xe9\\u20ac\\n'", "'\\U0001f600\\U0001f601x'", "'\\n'", "'\\u2028y\\x85'", "'z\\x0b\\x0c'", "'\\x1c\\n'", "'\\u20ac'", "''", "''"]
+utf-16 '' ["'\\xe9\\u20ac\\n'", "'\\U0001f600\\U0001f601x\\r\\n'", "'\\u2028y\\x85z\\x0b\\x0c\\x1c\\n'", "'\\u20ac'"]
+    1 ["'\\xe9'", "'\\u20ac'", "'\\n'", "'\\U0001f600'", "'\\U0001f601'", "'x'", "'\\r'", "'\\n'", "'\\u2028'"]
+    2 ["'\\xe9\\u20ac'", "'\\n'", "'\\U0001f600\\U0001f601'", "'x\\r'", "'\\n'", "'\\u2028y'", "'\\x85z'", "'\\x0b\\x0c'", "'\\x1c\\n'"]
+    3 ["'\\xe9\\u20ac\\n'", "'\\U0001f600\\U0001f601x'", "'\\r\\n'", "'\\u2028y\\x85'", "'z\\x0b\\x0c'", "'\\x1c\\n'", "'\\u20ac'", "''", "''"]
+utf-16 '\r\n' ["'\\xe9\\u20ac\\n\\U0001f600\\U0001f601x\\r\\n'", "'\\u2028y\\x85z\\x0b\\x0c\\x1c\\n\\u20ac'"]
+    1 ["'\\xe9'", "'\\u20ac'", "'\\n'", "'\\U0001f600'", "'\\U0001f601'", "'x'", "'\\r'", "'\\n'", "'\\u2028'"]
+    2 ["'\\xe9\\u20ac'", "'\\n\\U0001f600'", "'\\U0001f601x'", "'\\r\\n'", "'\\u2028y'", "'\\x85z'", "'\\x0b\\x0c'", "'\\x1c\\n'", "'\\u20ac'"]
+    3 ["'\\xe9\\u20ac\\n'", "'\\U0001f600\\U0001f601x'", "'\\r\\n'", "'\\u2028y\\x85'", "'z\\x0b\\x0c'", "'\\x1c\\n\\u20ac'", "''", "''", "''"]
+utf-32-le None ["'\\xe9\\u20ac\\n'", "'\\U0001f600\\U0001f601x\\n'", "'\\u2028y\\x85z\\x0b\\x0c\\x1c\\n'", "'\\u20ac'"]
+    1 ["'\\xe9'", "'\\u20ac'", "'\\n'", "'\\U0001f600'", "'\\U0001f601'", "'x'", "'\\n'", "'\\u2028'", "'y'"]
+    2 ["'\\xe9\\u20ac'", "'\\n'", "'\\U0001f600\\U0001f601'", "'x\\n'", "'\\u2028y'", "'\\x85z'", "'\\x0b\\x0c'", "'\\x1c\\n'", "'\\u20ac'"]
+    3 ["'\\xe9\\u20ac\\n'", "'\\U0001f600\\U0001f601x'", "'\\n'", "'\\u2028y\\x85'", "'z\\x0b\\x0c'", "'\\x1c\\n'", "'\\u20ac'", "''", "''"]
+utf-32-le '' ["'\\xe9\\u20ac\\n'", "'\\U0001f600\\U0001f601x\\r\\n'", "'\\u2028y\\x85z\\x0b\\x0c\\x1c\\n'", "'\\u20ac'"]
+    1 ["'\\xe9'", "'\\u20ac'", "'\\n'", "'\\U0001f600'", "'\\U0001f601'", "'x'", "'\\r'", "'\\n'", "'\\u2028'"]
+    2 ["'\\xe9\\u20ac'", "'\\n'", "'\\U0001f600\\U0001f601'", "'x\\r'", "'\\n'", "'\\u2028y'", "'\\x85z'", "'\\x0b\\x0c'", "'\\x1c\\n'"]
+    3 ["'\\xe9\\u20ac\\n'", "'\\U0001f600\\U0001f601x'", "'\\r\\n'", "'\\u2028y\\x85'", "'z\\x0b\\x0c'", "'\\x1c\\n'", "'\\u20ac'", "''", "''"]
+utf-32-le '\r\n' ["'\\xe9\\u20ac\\n\\U0001f600\\U0001f601x\\r\\n'", "'\\u2028y\\x85z\\x0b\\x0c\\x1c\\n\\u20ac'"]
+    1 ["'\\xe9'", "'\\u20ac'", "'\\n'", "'\\U0001f600'", "'\\U0001f601'", "'x'", "'\\r'", "'\\n'", "'\\u2028'"]
+    2 ["'\\xe9\\u20ac'", "'\\n\\U0001f600'", "'\\U0001f601x'", "'\\r\\n'", "'\\u2028y'", "'\\x85z'", "'\\x0b\\x0c'", "'\\x1c\\n'", "'\\u20ac'"]
+    3 ["'\\xe9\\u20ac\\n'", "'\\U0001f600\\U0001f601x'", "'\\r\\n'", "'\\u2028y\\x85'", "'z\\x0b\\x0c'", "'\\x1c\\n\\u20ac'", "''", "''", "''"]
+--- a carriage return at the end of a chunk
+None (b'a\r', b'\nb') ['a\n', 'b'] ['a\n'] 'a\nb'
+None (b'a\r', b'b') ['a\n', 'b'] ['a\n'] 'a\nb'
+None (b'a\r',) ['a\n'] ['a\n'] 'a\n'
+None (b'a\r', b'\r', b'\n') ['a\n', '\n'] ['a\n'] 'a\n\n'
+None (b'\r', b'\n', b'\r', b'\n') ['\n', '\n'] ['\n\n'] '\n\n'
+'' (b'a\r', b'\nb') ['a\r\n', 'b'] ['a\r'] 'a\r\nb'
+'' (b'a\r', b'b') ['a\r', 'b'] ['a\r'] 'a\rb'
+'' (b'a\r',) ['a\r'] ['a\r'] 'a\r'
+'' (b'a\r', b'\r', b'\n') ['a\r', '\r\n'] ['a\r'] 'a\r\r\n'
+'' (b'\r', b'\n', b'\r', b'\n') ['\r\n', '\r\n'] ['\r\n'] '\r\n\r\n'
+'\r' (b'a\r', b'\nb') ['a\r', '\nb'] ['a\r'] 'a\r\nb'
+'\r' (b'a\r', b'b') ['a\r', 'b'] ['a\r'] 'a\rb'
+'\r' (b'a\r',) ['a\r'] ['a\r'] 'a\r'
+'\r' (b'a\r', b'\r', b'\n') ['a\r', '\r', '\n'] ['a\r'] 'a\r\r\n'
+'\r' (b'\r', b'\n', b'\r', b'\n') ['\r', '\n\r', '\n'] ['\r\n'] '\r\n\r\n'
+'\r\n' (b'a\r', b'\nb') ['a\r\n', 'b'] ['a\r'] 'a\r\nb'
+'\r\n' (b'a\r', b'b') ['a\rb'] ['a\r'] 'a\rb'
+'\r\n' (b'a\r',) ['a\r'] ['a\r'] 'a\r'
+'\r\n' (b'a\r', b'\r', b'\n') ['a\r\r\n'] ['a\r'] 'a\r\r\n'
+'\r\n' (b'\r', b'\n', b'\r', b'\n') ['\r\n', '\r\n'] ['\r\n'] '\r\n\r\n'
+'\n' (b'a\r', b'\nb') ['a\r\n', 'b'] ['a\r'] 'a\r\nb'
+'\n' (b'a\r', b'b') ['a\rb'] ['a\r'] 'a\rb'
+'\n' (b'a\r',) ['a\r'] ['a\r'] 'a\r'
+'\n' (b'a\r', b'\r', b'\n') ['a\r\r\n'] ['a\r'] 'a\r\r\n'
+'\n' (b'\r', b'\n', b'\r', b'\n') ['\r\n', '\r\n'] ['\r\n'] '\r\n\r\n'

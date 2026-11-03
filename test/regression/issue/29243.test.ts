@@ -601,7 +601,7 @@ async function f() {}`,
   });
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "entry.js", "--format=cjs"],
+    cmd: [bunExe(), "build", "entry.js", "--format=cjs", "--minify-syntax"],
     env: bunEnv,
     cwd: String(dir),
     stderr: "pipe",
@@ -663,4 +663,32 @@ module.exports = v;`,
   expect(stderr).toContain("entry.js:1:11");
   expect(stderr).not.toContain("entry.js:1:17");
   expect(exitCode).not.toBe(0);
+});
+
+// A `var` in a brace-less dead body at module scope is not inside a block
+// scope, so it must still move out and let the await-bearing husk drop.
+test.concurrent("bun build --format=cjs drops dead brace-less if/while/do bodies holding an await and a var", async () => {
+  using dir = tempDir("issue-29243-dead-braceless-var", {
+    "entry.js": `if (false) if (await a()) var fromIf;
+if (false) while (await b()) var fromWhile;
+if (false) do var fromDo; while (await c());
+module.exports = 1;`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "entry.js", "--format=cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+
+  expect(stdout).not.toContain("await");
+  expect(stdout).toContain("var fromIf");
+  expect(stdout).toContain("var fromWhile");
+  expect(stdout).toContain("var fromDo");
+  expect(exitCode).toBe(0);
 });

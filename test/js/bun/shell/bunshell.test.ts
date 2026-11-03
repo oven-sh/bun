@@ -2043,6 +2043,18 @@ describe("deno_task", () => {
         .stderr("")
         .runAsTest("a digit that ends a word is not an fd");
 
+      TestBuilder.command`echo >&2 msg; ls`
+        .ensureTempDir()
+        .stdout("")
+        .stderr("msg\n")
+        .runAsTest("a word after >&2 is an argument, not a file");
+      TestBuilder.command`echo 1>&2 a b; ls`
+        .ensureTempDir()
+        .stdout("")
+        .stderr("a b\n")
+        .runAsTest("words after 1>&2 are arguments");
+      TestBuilder.command`echo a 2>&1 b | cat`.stdout("a b\n").runAsTest("words after 2>&1 are arguments");
+
       TestBuilder.command`echo $(echo hi 2>&1)`
         .stdout("hi\n")
         .runAsTest("2>&1 before the end of a command substitution");

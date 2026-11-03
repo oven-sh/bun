@@ -1334,6 +1334,12 @@ impl<'bump> Parser<'bump> {
             name_and_args.push(arg);
         }
         let parsed_redirect = self.parse_redirect()?;
+        // `1>&2` takes no file, so the words after it are arguments: `echo >&2 msg`.
+        if parsed_redirect.redirect.is_none() && parsed_redirect.flags.duplicate_out() {
+            while let Some(arg) = self.parse_atom()? {
+                name_and_args.push(arg);
+            }
+        }
 
         Ok(ast::CmdOrAssigns::Cmd(ast::Cmd {
             assigns: assigns.into_bump_slice(),
@@ -1362,15 +1368,13 @@ impl<'bump> Parser<'bump> {
                     break 'redirect_file Some(ast::Redirect::JsBuf(ast::JSBuf::new(obj_ref)));
                 }
 
-                let file = match self.parse_atom()? {
-                    Some(f) => f,
-                    None => {
-                        if redirect.duplicate_out() {
-                            break 'redirect_file None;
-                        }
-                        self.add_error(format_args!("Redirection with no file"))?;
-                        return Err(ParseError::Expected.into());
-                    }
+                if redirect.duplicate_out() {
+                    let _ = self.r#match(TokenTag::Delimit);
+                    break 'redirect_file None;
+                }
+                let Some(file) = self.parse_atom()? else {
+                    self.add_error(format_args!("Redirection with no file"))?;
+                    return Err(ParseError::Expected.into());
                 };
                 break 'redirect_file Some(ast::Redirect::Atom(file));
             }

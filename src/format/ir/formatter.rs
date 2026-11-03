@@ -690,7 +690,7 @@ impl<'a> Formatter<'a> {
 
     /// Writes any element. An element whose kind is known where it's written has a function below, which doesn't have
     /// to find out what it is.
-    #[inline(never)]
+    #[inline(always)]
     pub(crate) fn write_element(&mut self, element: FormatElement) {
         self.push(element);
     }
@@ -703,7 +703,7 @@ impl<'a> Formatter<'a> {
     }
 
     /// Writes a keyword or punctuator that's only known at run time. A string literal in `write!` is a [`Literal`].
-    #[inline(never)]
+    #[inline(always)]
     pub(crate) fn write_token(&mut self, text: &'static str) {
         match Token::new(text) {
             Some(token) => self.write_short_token(token),
@@ -711,9 +711,8 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    // The most frequent elements have functions of their own: thousands of places write one, and the code that does it
-    // is several times as long as a call. What they usually do calls nothing, so they have no registers to save: the
-    // rest is in a second function.
+    // The most frequent elements have functions of their own, which thousands of places inline. So they're short: what
+    // they usually do calls nothing, and the rest is in a second function, which isn't inlined.
 
     #[inline(always)]
     pub(crate) fn write_short_token(&mut self, token: Token) {
@@ -721,7 +720,7 @@ impl<'a> Formatter<'a> {
     }
 
     /// `bits` is [`Token::to_bits`].
-    #[inline(never)]
+    #[inline]
     fn write_token_of_bits(&mut self, bits: u128) {
         let token = Token::from_bits(bits);
         self.write_text_element(
@@ -771,7 +770,7 @@ impl<'a> Formatter<'a> {
         self.write_owned_text(text.as_bytes(), TextWidth::single(text.len() as u32));
     }
 
-    #[inline(never)]
+    #[inline]
     pub(crate) fn write_space(&mut self) {
         let index = self.storage.pool.len() as u32;
         match self.storage.pool.push_within_capacity(FormatElement::Space) {
@@ -780,7 +779,7 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    #[inline(never)]
+    #[inline]
     pub(crate) fn write_line_break(&mut self, mode: LineMode) {
         self.write_element_with_line(|| FormatElement::Line(mode), mode);
     }
@@ -795,7 +794,7 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    #[inline(never)]
+    #[inline]
     pub(crate) fn start_group(&mut self, id: Option<GroupId>, mode: GroupMode) {
         let make = || FormatElement::Tag(Tag::StartGroup(Group::new().with_id(id).with_mode(mode)));
         let index = self.storage.pool.len() as u32;
@@ -805,20 +804,20 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    #[inline(never)]
+    #[inline]
     pub(crate) fn end_group(&mut self) {
         let index = self.storage.pool.len() as u32;
         self.storage.pool.push(FormatElement::Tag(Tag::EndGroup));
         self.tracker.end_group(index, &mut self.storage);
     }
 
-    #[inline(never)]
+    #[inline]
     pub(crate) fn start_indent_with_line(&mut self, mode: LineMode) {
         self.write_element_with_line(|| FormatElement::Tag(Tag::StartIndentWithLine(mode)), mode);
     }
 
     /// `mode` is the line break after the indented content, if there is one.
-    #[inline(never)]
+    #[inline]
     pub(crate) fn end_indent_with_line(&mut self, mode: Option<LineMode>) {
         match mode {
             Some(mode) => self
@@ -833,28 +832,28 @@ impl<'a> Formatter<'a> {
     }
 
     /// `bits` is [`Token::to_bits`].
-    #[inline(never)]
+    #[inline]
     fn write_token_of_bits_if_breaks(&mut self, bits: u128) {
         self.write_without_notes(|| FormatElement::TokenIfBreaks(Token::from_bits(bits)));
     }
 
-    #[inline(never)]
+    #[inline]
     pub(crate) fn write_line_suffix_boundary(&mut self) {
         self.push(FormatElement::LineSuffixBoundary);
     }
 
-    #[inline(never)]
+    #[inline]
     pub(crate) fn write_indented_line_group(&mut self, id: GroupId) {
         self.push(FormatElement::IndentedLineGroup(id));
     }
 
-    #[inline(never)]
+    #[inline]
     pub(crate) fn write_interned(&mut self, interned: Interned) {
         self.push(FormatElement::Interned(interned));
     }
 
     /// Writes a tag that only affects indentation, or nothing at all.
-    #[inline(never)]
+    #[inline]
     pub(crate) fn write_tag_without_content(&mut self, tag: Tag) {
         debug_assert!(matches!(
             tag,
@@ -904,7 +903,7 @@ impl<'a> Formatter<'a> {
     }
 
     /// Writes the source text of `span`, which has no line break or tab.
-    #[inline(never)]
+    #[inline]
     pub(crate) fn write_source_token(&mut self, span: Span) {
         if !self.is_plain_source(span) {
             return self.write_odd_source_token(span);

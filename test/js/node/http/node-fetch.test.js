@@ -4,7 +4,7 @@ import fetch2, { fetch, Headers, Request, Response } from "node-fetch";
 import assert from "node:assert";
 import { constants, createPrivateKey } from "node:crypto";
 import { once } from "node:events";
-import { createReadStream, readFileSync, writeFileSync } from "node:fs";
+import { createReadStream, readFileSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";
 import net from "node:net";
@@ -13,7 +13,7 @@ import tls from "node:tls";
 import * as stream from "stream";
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { tls as tlsCert, tempDir } from "harness";
+import { tempDir, tls as tlsCert } from "harness";
 
 const originalResponse = globalThis.Response;
 const originalRequest = globalThis.Request;

@@ -10,9 +10,10 @@ import { test } from "./supported";
 // Every project here prints what it sees; a run in layers has to print what plain Bun prints.
 const part = (name: string) =>
   readFileSync(join(import.meta.dir, "layers-of-a-test-run-share-one-realm", name + ".txt"), "utf8");
+// A checkout may end the lines of a fixture with \r\n.
 const listed = (name: string) =>
   part(name)
-    .split("\n")
+    .split(/\r?\n/)
     .filter(line => line);
 
 async function seen(directory: string, flags: string[], words: string) {

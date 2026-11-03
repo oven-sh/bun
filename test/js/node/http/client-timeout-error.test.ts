@@ -52,6 +52,18 @@ describe("node:http client timeout", () => {
     }
   });
 
+  it("should emit timeout while the socket is still connecting", async () => {
+    // A lookup that never answers keeps the socket connecting.
+    const req = request({ host: "stalled.invalid", port: 80, timeout: 1, lookup: () => {} });
+    try {
+      req.end();
+      await once(req, "timeout");
+      expect(req.socket!.connecting).toBe(true);
+    } finally {
+      req.on("error", () => {}).destroy();
+    }
+  });
+
   it("should clear timeout when explicitly set to 0", async () => {
     const server = createServer((req, res) => {
       res.end("OK");

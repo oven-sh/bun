@@ -8,7 +8,7 @@
 // Two engines: openssl.c drives a socket, SSLWrapper drives TLS over a Duplex, a CONNECT tunnel or a named pipe.
 import { RedisClient, SQL } from "bun";
 import { afterAll, describe, expect, test } from "bun:test";
-import { tls as cert } from "harness";
+import { tls as cert, isLinux, isWindows } from "harness";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import https from "node:https";
@@ -482,4 +482,45 @@ describe.each(["TLSv1.3", "TLSv1.2"] as const)("a bad record on an established %
       }
     });
   });
+});
+
+// The peer resets the connection as it accepts it, so the kernel can refuse the send() of the ClientHello.
+test.each([false, true])("a client whose peer resets at accept hears ECONNRESET (write in open: %p)", async writes => {
+  using listener = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: { open: socket => void socket.terminate(), data() {} },
+  });
+  const events: string[] = [];
+  const closed = Promise.withResolvers<void>();
+  const connected = Bun.connect({
+    hostname: "127.0.0.1",
+    port: listener.port,
+    tls: { rejectUnauthorized: false },
+    socket: {
+      open(socket) {
+        if (writes) socket.write("x");
+      },
+      handshake: (_, success, error) => void events.push(`handshake(${success}, ${error?.code})`),
+      data() {},
+      close(_, error) {
+        events.push(`close(${error?.code})`);
+        closed.resolve();
+      },
+    },
+  });
+  // On Windows the reset can arrive before connect() completes, so the promise rejects with it instead.
+  if (
+    isWindows &&
+    (await connected.then(
+      () => false,
+      error => error.code === "ECONNRESET",
+    ))
+  )
+    return;
+  await connected;
+  await closed.promise;
+  // Off Linux the event loop can see the reset itself, and that closes without a handshake event, like any reset mid-handshake.
+  const sawHandshake = isLinux || events.length > 1;
+  expect(events).toEqual([...(sawHandshake ? ["handshake(false, ECONNRESET)"] : []), "close(ECONNRESET)"]);
 });

@@ -705,6 +705,8 @@ function connectionListenerHTTP1(server, socket, options) {
       parser.close();
     } catch {}
   });
+  // Node's parser reads from the handle, so a pause() by the socket's previous owner doesn't stop it.
+  socket.resume();
 }
 
 function closeIdleHttp1Connections(server) {

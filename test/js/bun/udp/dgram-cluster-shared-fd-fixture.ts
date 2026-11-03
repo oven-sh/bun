@@ -1,6 +1,6 @@
-// Multi-worker shared-fd traffic + close: exercises DGRAM_FDS Owned/Adopted
-// and SharedHandle teardown. A regression removing the double-close guard
-// would EBADF an IPC pipe and hang this fixture.
+// Multi-worker shared-fd traffic + close: every worker adopts the primary's
+// descriptor, and SharedHandle closes it once. A regression removing the
+// double-close guard would EBADF an IPC pipe and hang this fixture.
 //
 // Every worker adopting the primary's one descriptor is deterministic, so all
 // four must reach 'listening' before anything is sent. Which worker then wins a

@@ -17,6 +17,7 @@ function server(name: string) {
       "onNodeHTTPRequest",
       "onClientError",
       "onConnection",
+      "onServerName",
       "wsOnOpen",
       "wsOnMessage",
       "wsOnClose",

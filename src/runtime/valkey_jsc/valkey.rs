@@ -203,7 +203,7 @@ impl Address {
             let kind = SocketKind::ValkeyTls;
             let sock = match self {
                 Address::Unix(path) => {
-                    uws::SocketTLS::connect_unix_group(group, kind, ssl_ctx, path, owner, false)?
+                    uws::SocketTLS::connect_unix_group(group, kind, ssl_ctx, path, owner)?
                 }
                 Address::Host { host, port } => uws::SocketTLS::connect_group(
                     group,
@@ -212,7 +212,6 @@ impl Address {
                     host,
                     i32::from(*port),
                     owner,
-                    false,
                 )?,
             };
             Ok(AnySocket::SocketTls(sock))
@@ -220,7 +219,7 @@ impl Address {
             let kind = SocketKind::Valkey;
             let sock = match self {
                 Address::Unix(path) => {
-                    uws::SocketTCP::connect_unix_group(group, kind, ssl_ctx, path, owner, false)?
+                    uws::SocketTCP::connect_unix_group(group, kind, ssl_ctx, path, owner)?
                 }
                 Address::Host { host, port } => uws::SocketTCP::connect_group(
                     group,
@@ -229,7 +228,6 @@ impl Address {
                     host,
                     i32::from(*port),
                     owner,
-                    false,
                 )?,
             };
             Ok(AnySocket::SocketTcp(sock))

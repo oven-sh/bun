@@ -2135,6 +2135,9 @@ test("server wrapper survives GC while a websocket is connected after stop()", a
 
         await drain(baseline);
         const afterCloseGC = serverCount();
+        if (afterCloseGC !== baseline) {
+          console.error(await require(${JSON.stringify(path.join(import.meta.dir, "what-keeps-a-server.ts"))}).whatKeepsAServer());
+        }
 
         console.log(JSON.stringify({ baseline, afterStopGC, afterCloseGC }));
         process.exit(0);

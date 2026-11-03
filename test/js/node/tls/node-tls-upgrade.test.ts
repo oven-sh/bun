@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import { spawn } from "child_process";
-import { once } from "events";
+import { EventEmitter, once } from "events";
 import { bunEnv, bunExe, tls as certs } from "harness";
+import http from "http";
 import net from "net";
 import { Duplex } from "stream";
 import tls from "tls";
@@ -452,5 +453,265 @@ test("_parent is the wrapped net.Socket", async () => {
     });
   } finally {
     closeAll(server, sockets);
+  }
+});
+
+test("a STARTTLS upgrade doesn't reset the wrapped socket's bytesRead and bytesWritten", async () => {
+  const server = net.createServer(socket => {
+    socket.on("error", () => {});
+    socket.once("data", () => {
+      socket.write("GO", () => {
+        const tlsSocket = new tls.TLSSocket(socket, { isServer: true, ...certs });
+        tlsSocket.on("error", () => {});
+        tlsSocket.on("data", data => tlsSocket.end("echo:" + data));
+      });
+    });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const raw = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+    raw.write("STARTTLS");
+    await once(raw, "data");
+    const tlsSocket = tls.connect({ socket: raw, ca: certs.cert, servername: "localhost" });
+    expect([raw.bytesRead, raw.bytesWritten]).toEqual([2, 8]);
+    tlsSocket.on("secureConnect", () => tlsSocket.write("hi"));
+    tlsSocket.resume();
+    await once(tlsSocket, "close");
+    expect([tlsSocket.bytesRead, tlsSocket.bytesWritten]).toEqual([7, 2]);
+    // The wrapped socket also counts the TLS records it read.
+    expect(raw.bytesRead).toBeGreaterThan(2 + 7);
+    expect(raw.bytesWritten).toBeGreaterThanOrEqual(8);
+  } finally {
+    server.close();
+  }
+});
+
+// Sends CONNECT to an http server and resolves once the answer's head arrived. Bytes after the head stay readable.
+async function openTunnel(proxy: http.Server) {
+  const raw = net.connect((proxy.address() as net.AddressInfo).port, "127.0.0.1");
+  raw.write("CONNECT example.test:443 HTTP/1.1\r\nHost: example.test:443\r\n\r\n");
+  const { promise, resolve, reject } = Promise.withResolvers<net.Socket>();
+  let head = Buffer.alloc(0);
+  raw.on("error", reject);
+  raw.on("data", function readAnswer(chunk: Buffer) {
+    head = Buffer.concat([head, chunk]);
+    const end = head.indexOf("\r\n\r\n");
+    if (end === -1) return;
+    raw.removeListener("data", readAnswer);
+    raw.pause();
+    raw.unshift(head.subarray(end + 4));
+    resolve(raw);
+  });
+  return promise;
+}
+
+test("a server-side TLSSocket over an http 'connect' socket isn't connecting after the handshake", async () => {
+  const atSecure = Promise.withResolvers<object>();
+  const proxy = http.createServer();
+  proxy.on("connect", (_request, socket) => {
+    socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+    const secure = wrapAndEcho(socket);
+    secure.once("secure", () => atSecure.resolve({ connecting: secure.connecting, readyState: secure.readyState }));
+    secure.once("close", () => atSecure.reject(new Error("closed before 'secure'")));
+  });
+  await once(proxy.listen(0, "127.0.0.1"), "listening");
+  const raw = await openTunnel(proxy);
+  try {
+    expect(await pingOverTLS(raw)).toBe("ping");
+    expect(await atSecure.promise).toEqual({ connecting: false, readyState: "open" });
+  } finally {
+    raw.destroy();
+    proxy.closeAllConnections();
+    proxy.close();
+  }
+});
+
+test("tls.connect({ socket }) completes the handshake over an http server's 'connect' socket", async () => {
+  const echoed = Promise.withResolvers<string>();
+  const proxy = http.createServer();
+  proxy.on("connect", (_request, socket) => {
+    socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+    pingOverTLS(socket).then(echoed.resolve, echoed.reject);
+  });
+  await once(proxy.listen(0, "127.0.0.1"), "listening");
+  const raw = await openTunnel(proxy);
+  try {
+    wrapAndEcho(raw);
+    expect(await echoed.promise).toBe("ping");
+  } finally {
+    raw.destroy();
+    proxy.closeAllConnections();
+    proxy.close();
+  }
+});
+
+// Like a Duplex from another streams implementation: it has a stream's methods but isn't a stream.Duplex.
+class EmitterDuplex extends EventEmitter {
+  #socket: net.Socket;
+  constructor(socket: net.Socket) {
+    super();
+    this.#socket = socket;
+    for (const event of ["data", "end", "close", "error"]) socket.on(event, (...args) => this.emit(event, ...args));
+  }
+  pause() {
+    this.#socket.pause();
+    return this;
+  }
+  resume() {
+    this.#socket.resume();
+    return this;
+  }
+  cork() {}
+  uncork() {}
+  write(chunk: Buffer, ...rest: any[]) {
+    return this.#socket.write(chunk, ...rest);
+  }
+  end(...args: any[]) {
+    this.#socket.end(...args);
+    return this;
+  }
+  destroy(err?: Error) {
+    this.#socket.destroy(err);
+    return this;
+  }
+}
+
+test.each([
+  ["an EventEmitter with a stream's methods", (socket: net.Socket) => new EmitterDuplex(socket)],
+  // Only a net.Socket's handle has an fd the TLS layer can adopt.
+  ["a Duplex with its own _handle", (socket: net.Socket) => Object.assign(duplexOver(socket), { _handle: {} })],
+])("wraps %s on both sides", async (_name, streamOver) => {
+  const sockets: net.Socket[] = [];
+  const server = net.createServer(accepted => {
+    sockets.push(accepted);
+    wrapAndEcho(streamOver(accepted) as unknown as Duplex);
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const raw = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+  sockets.push(raw);
+  try {
+    await once(raw, "connect");
+    expect(await pingOverTLS(streamOver(raw) as unknown as Duplex)).toBe("ping");
+  } finally {
+    closeAll(server, sockets);
+  }
+});
+
+test("throws a TypeError for a socket that isn't a stream", () => {
+  const server = tls.createServer(certs);
+  const values = [{}, [], 42, "text", () => {}, new EventEmitter(), { pause: 1 }];
+  const errorNames = (wrap: (value: any) => unknown) =>
+    values.map(value => {
+      try {
+        wrap(value);
+      } catch (err) {
+        return (err as Error).name;
+      }
+    });
+  const everyTime = values.map(() => "TypeError");
+  expect(errorNames(value => new tls.TLSSocket(value, { isServer: true, ...certs }))).toEqual(everyTime);
+  expect(errorNames(value => server.emit("connection", value))).toEqual(everyTime);
+  expect(errorNames(value => tls.connect({ socket: value }))).toEqual(everyTime);
+});
+
+test("tls.Server starts a TLS session inside its own TLSSocket when that socket is emitted again", async () => {
+  let sessions = 0;
+  const server = tls.createServer(certs, socket => {
+    socket.on("error", () => {});
+    if (++sessions === 1) server.emit("connection", socket);
+    else socket.on("data", chunk => socket.write(chunk));
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as net.AddressInfo;
+  const outer = tls.connect({ port, host: "127.0.0.1", ca: certs.cert });
+  try {
+    await once(outer, "secureConnect");
+    expect(await pingOverTLS(outer)).toBe("ping");
+  } finally {
+    outer.destroy();
+    server.close();
+  }
+});
+
+test.each(["tls.connect({ socket })", "new TLSSocket(socket, { isServer: true })"])(
+  "%s sends a pre-handshake write once over a stream that emits 'drain' in write()",
+  async writer => {
+    const drainsInWrite = (raw: net.Socket) => {
+      const duplex = duplexOver(raw);
+      const write = duplex.write;
+      duplex.write = function (this: Duplex, ...args: Parameters<Duplex["write"]>) {
+        const result = write.apply(this, args);
+        this.emit("drain");
+        return result;
+      } as Duplex["write"];
+      return duplex;
+    };
+    const payload = Buffer.alloc(256 * 1024, "a");
+    const received = Promise.withResolvers<number>();
+    const countBytes = (socket: tls.TLSSocket) => {
+      let bytes = 0;
+      socket.on("data", chunk => (bytes += chunk.length));
+      socket.on("end", () => received.resolve(bytes));
+      socket.on("error", received.reject);
+    };
+    const sockets: net.Socket[] = [];
+    const server = net.createServer(accepted => {
+      sockets.push(accepted);
+      const isWriter = writer !== "tls.connect({ socket })";
+      const secure = new tls.TLSSocket(isWriter ? drainsInWrite(accepted) : accepted, { isServer: true, ...certs });
+      if (isWriter) secure.on("error", received.reject).end(payload);
+      else countBytes(secure);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const raw = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+    sockets.push(raw);
+    try {
+      await once(raw, "connect");
+      const isWriter = writer === "tls.connect({ socket })";
+      const client = tls.connect({ socket: isWriter ? drainsInWrite(raw) : raw, ca: certs.cert });
+      if (isWriter) client.on("error", received.reject).end(payload);
+      else countBytes(client);
+      expect(await received.promise).toBe(payload.length);
+    } finally {
+      closeAll(server, sockets);
+    }
+  },
+);
+
+test("sends a write made before the wrapped net.Socket connects once", async () => {
+  const backlog = Buffer.alloc(64 * 1024, "x");
+  const received = Promise.withResolvers<string>();
+  const sockets: net.Socket[] = [];
+  const peer = net.createServer(accepted => {
+    sockets.push(accepted);
+    let skipped = 0;
+    accepted.on("data", function skipBacklog(chunk: Buffer) {
+      skipped += chunk.length;
+      if (skipped < backlog.length) return;
+      accepted.removeListener("data", skipBacklog);
+      accepted.pause();
+      accepted.unshift(chunk.subarray(chunk.length - (skipped - backlog.length)));
+      let text = "";
+      tls
+        .connect({ socket: accepted, ca: certs.cert })
+        .on("data", data => (text += data))
+        .on("end", () => received.resolve(text))
+        .on("error", received.reject);
+    });
+  });
+  await once(peer.listen(0, "127.0.0.1"), "listening");
+  const raw = net.connect((peer.address() as net.AddressInfo).port, "127.0.0.1");
+  sockets.push(raw);
+  try {
+    raw.write(backlog);
+    const secure = new tls.TLSSocket(raw, { isServer: true, ...certs });
+    secure.on("error", received.reject);
+    secure.end("hello");
+    expect({ received: await received.promise, bytesWritten: secure.bytesWritten }).toEqual({
+      received: "hello",
+      bytesWritten: 5,
+    });
+  } finally {
+    closeAll(peer, sockets);
   }
 });

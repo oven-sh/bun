@@ -213,7 +213,7 @@ pub(crate) fn handle_internal_message_primary(
         return Ok(());
     };
 
-    if !ipc_data.internal_msg_queue.get().is_ready() {
+    if !message.is_object() || !ipc_data.internal_msg_queue.get().is_ready() {
         return Ok(());
     }
 
@@ -304,7 +304,7 @@ pub(crate) fn should_ignore_one_disconnect_event_listener(global: &JSGlobalObjec
 }
 
 pub(crate) fn cluster_raw_bind<'a>(
-    cx: &mut JsScope<'a>,
+    _cx: &mut JsScope<'a>,
     address_type: BindAddressType<'a>,
     address: BindAddress<'a>,
     port: f64,
@@ -314,7 +314,6 @@ pub(crate) fn cluster_raw_bind<'a>(
 
     #[cfg(windows)]
     {
-        let _ = cx;
         match address_type {
             BindAddressType::Udp(_) => return Ok(BindResult::Errno(-bun_sys::UV_E::NOTSUP)),
             BindAddressType::Family(family) if family == -1.0 => {
@@ -391,62 +390,28 @@ pub(crate) fn cluster_raw_bind<'a>(
             BindAddressType::Family(_) | BindAddressType::Ignored(_) => (false, 4),
         };
 
-        fn last_neg_errno() -> BindResult {
-            BindResult::Errno(-bun_core::ffi::errno())
-        }
-
-        fn close_fd(fd: c_int) {
-            let _ = bun_sys::FdExt::close_allowing_standard_io(bun_sys::Fd::from_native(fd), None);
-        }
-
-        fn set_cloexec_nonblock(fd: c_int) {
-            let fd = bun_sys::Fd::from_native(fd);
-            let _ = bun_sys::set_close_on_exec(fd);
-            let _ = bun_sys::set_nonblocking(fd);
-        }
+        use bun_uws::udp::raw::{bsd_close_socket, bsd_create_socket};
 
         if atype == -1 {
-            let path_bytes = match address {
-                BindAddress::Text(path) => path,
-                BindAddress::Ignored(value) => {
-                    return Err(cx.global().throw_invalid_argument_type_value(
-                        "address",
-                        "string",
-                        value.to_js(),
-                    ));
-                }
+            let BindAddress::Text(path_bytes) = address else {
+                return Ok(BindResult::Errno(-(libc::EINVAL)));
             };
-            let mut sun: libc::sockaddr_un = bun_core::ffi::zeroed();
-            sun.sun_family = libc::AF_UNIX as libc::sa_family_t;
-            if path_bytes.len() >= sun.sun_path.len() {
-                return Ok(BindResult::Errno(-(libc::ENAMETOOLONG)));
+            let mut err: c_int = 0;
+            // SAFETY: `path_bytes` is readable for its length, and `err` is a live local.
+            let fd = unsafe {
+                bun_uws::socket_transfer::bsd_create_bound_socket_unix(
+                    path_bytes.as_ptr().cast(),
+                    path_bytes.len(),
+                    &raw mut err,
+                )
+            };
+            if fd < 0 {
+                return Ok(BindResult::Errno(-err));
             }
-            for (i, b) in path_bytes.iter().enumerate() {
-                sun.sun_path[i] = *b as _;
-            }
-            // SAFETY: socket/bind FFI; `sun` is a live `sockaddr_un` and `len` is at most its size.
-            unsafe {
-                let fd = libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0);
-                if fd < 0 {
-                    return Ok(last_neg_errno());
-                }
-                set_cloexec_nonblock(fd);
-                // Abstract names (leading NUL) are length-delimited: a padded length binds a different name.
-                let len = if path_bytes.first() == Some(&0) {
-                    core::mem::offset_of!(libc::sockaddr_un, sun_path) + path_bytes.len()
-                } else {
-                    core::mem::size_of::<libc::sockaddr_un>()
-                } as libc::socklen_t;
-                if libc::bind(fd, (&raw const sun).cast(), len) != 0 {
-                    let e = last_neg_errno();
-                    close_fd(fd);
-                    return Ok(e);
-                }
-                return Ok(BindResult::Handle(BoundHandle {
-                    fd: fd as u64,
-                    port: -1,
-                }));
-            }
+            return Ok(BindResult::Handle(BoundHandle {
+                fd: fd as u64,
+                port: -1,
+            }));
         }
 
         let family: c_int = if atype == 6 {
@@ -498,11 +463,11 @@ pub(crate) fn cluster_raw_bind<'a>(
             // locals of the length passed, and every caller's `ss_len` is the size of a
             // `sockaddr_in` or `sockaddr_in6`, which fits in `ss`.
             unsafe {
-                let fd = libc::socket(family, socktype, 0);
+                let mut err: c_int = 0;
+                let fd = bsd_create_socket(family, socktype, 0, &mut err);
                 if fd < 0 {
-                    return Err(-bun_core::ffi::errno());
+                    return Err(-err);
                 }
-                set_cloexec_nonblock(fd);
 
                 let one: c_int = 1;
                 let one_ptr = (&raw const one).cast::<core::ffi::c_void>();
@@ -555,7 +520,7 @@ pub(crate) fn cluster_raw_bind<'a>(
 
                 if libc::bind(fd, core::ptr::from_ref(ss).cast(), ss_len) != 0 {
                     let e = -bun_core::ffi::errno();
-                    close_fd(fd);
+                    bsd_close_socket(fd);
                     return Err(e);
                 }
                 Ok(fd)
@@ -692,8 +657,8 @@ pub(crate) fn cluster_raw_bind<'a>(
     }
 }
 
-/// Returns 0 if `fd` is an unconnected socket of the wanted type, or a negative errno.
-pub(crate) fn cluster_validate_fd(fd: f64, want_dgram: bool) -> i32 {
+/// Takes ownership of `fd`, an unconnected socket of the wanted type that nothing in this process owns. Returns 0 or a negative errno.
+pub(crate) fn cluster_adopt_fd(fd: f64, want_dgram: bool) -> i32 {
     #[cfg(not(windows))]
     {
         let number = fd;
@@ -710,24 +675,15 @@ pub(crate) fn cluster_validate_fd(fd: f64, want_dgram: bool) -> i32 {
         } else {
             libc::SOCK_STREAM
         };
-        let mut ty: libc::c_int = 0;
-        let mut len = core::mem::size_of::<libc::c_int>() as libc::socklen_t;
-        // SAFETY: plain getsockopt on a caller-supplied fd; out-params are live locals, and `len`
-        // is the size of `ty`.
-        let rc = unsafe {
-            libc::getsockopt(
-                fd,
-                libc::SOL_SOCKET,
-                libc::SO_TYPE,
-                (&raw mut ty).cast(),
-                &raw mut len,
-            )
-        };
-        // node's createServerHandle: EINVAL for anything that cannot listen (e.g. a connected stdio socketpair), fd left untouched.
-        if rc != 0 || ty != wanted {
-            return -bun_sys::UV_E::INVAL;
+        if bun_uws::udp::raw::bsd_adopt_socket(fd, wanted) != 0 {
+            // node's createServerHandle: EINVAL for anything that cannot listen, fd left untouched.
+            return if bun_core::ffi::errno() == libc::EEXIST {
+                -bun_sys::UV_E::EXIST
+            } else {
+                -bun_sys::UV_E::INVAL
+            };
         }
-        if ty == libc::SOCK_STREAM {
+        if !want_dgram {
             // SAFETY: getpeername only writes within `peer_len`, the size of `peer`.
             let connected = unsafe {
                 let mut peer: libc::sockaddr_storage = bun_core::ffi::zeroed();
@@ -736,6 +692,7 @@ pub(crate) fn cluster_validate_fd(fd: f64, want_dgram: bool) -> i32 {
                 libc::getpeername(fd, (&raw mut peer).cast(), &raw mut peer_len) == 0
             };
             if connected {
+                bun_uws::udp::raw::bsd_disown_socket(fd);
                 return -bun_sys::UV_E::INVAL;
             }
         }
@@ -749,19 +706,7 @@ pub(crate) fn cluster_validate_fd(fd: f64, want_dgram: bool) -> i32 {
 }
 
 pub(crate) fn cluster_close_handle(fd: f64) {
-    #[cfg(windows)]
-    {
-        if fd.is_finite() && fd >= 0.0 {
-            bun_uws::socket_transfer::bsd_close_socket(
-                fd as u64 as bun_uws::LIBUS_SOCKET_DESCRIPTOR,
-            );
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        let fd = fd as i32;
-        if fd >= 0 {
-            let _ = bun_sys::FdExt::close_allowing_standard_io(bun_sys::Fd::from_native(fd), None);
-        }
+    if fd.is_finite() && fd >= 0.0 {
+        bun_uws::socket_transfer::bsd_close_socket(fd as u64 as bun_uws::LIBUS_SOCKET_DESCRIPTOR);
     }
 }

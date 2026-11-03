@@ -322,10 +322,11 @@ describe.skipIf(isWindows)("default store and OpenSSL's default paths", () => {
   const keys = join(import.meta.dir, "../test/fixtures/keys");
   const ca1 = readFileSync(join(keys, "ca1-cert.pem"), "utf8");
 
-  async function connectWith(env: Record<string, string | undefined>) {
+  async function connectWith(env: Record<string, string | undefined>, flags: string[] = []) {
     await using proc = spawn({
       cmd: [
         bunExe(),
+        ...flags,
         "-e",
         `const tls = require("tls"), fs = require("fs");
          const server = tls.createServer({ key: fs.readFileSync(${JSON.stringify(join(keys, "agent1-key.pem"))}), cert: fs.readFileSync(${JSON.stringify(join(keys, "agent1-cert.pem"))}) }, s => s.end());
@@ -367,6 +368,11 @@ describe.skipIf(isWindows)("default store and OpenSSL's default paths", () => {
     expect(await connectWith({ SSL_CERT_FILE: join(String(dir), `${file}.pem`) })).toBe(expected);
   });
 
+  test.each(["SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS"])("--use-openssl-ca trusts a private CA from %s", async source => {
+    using dir = tempDir("openssl-ca-file", { "ca.pem": ca1 });
+    expect(await connectWith({ [source]: join(String(dir), "ca.pem") }, ["--use-openssl-ca"])).toBe("authorized");
+  });
+
   // `openssl x509 -subject_hash -in ca1-cert.pem` is 468820ba; the hash-dir lookup only opens <hash>.<n> names.
   test.each([
     ["468820ba.0", "authorized"],
@@ -374,6 +380,97 @@ describe.skipIf(isWindows)("default store and OpenSSL's default paths", () => {
   ] as const)("a CA in the $SSL_CERT_DIR hash directory as %s -> %s", async (name, expected) => {
     using dir = tempDir("default-ca-dir", { [name]: ca1 });
     expect(await connectWith({ SSL_CERT_DIR: String(dir) })).toBe(expected);
+  });
+});
+
+// The system loader reads every file in $SSL_CERT_DIR. The default store's hash directory only opens <hash>.<n> names,
+// so a connection trusts ca1.pem only if the system's roots are in the default store.
+describe.skipIf(!isLinux).concurrent("tls.getCACertificates('default') lists what the default store holds", () => {
+  const keys = join(import.meta.dir, "../test/fixtures/keys");
+  const script = `
+    if (process.env.ASSIGN) process.env.NODE_USE_SYSTEM_CA = process.env.ASSIGN;
+    const tls = require("tls"), fs = require("fs");
+    const ca = fs.readFileSync(${JSON.stringify(join(keys, "ca1-cert.pem"))}, "utf8");
+    const server = tls.createServer({ key: fs.readFileSync(${JSON.stringify(join(keys, "agent1-key.pem"))}), cert: fs.readFileSync(${JSON.stringify(join(keys, "agent1-cert.pem"))}) }, s => s.end());
+    server.listen(0, () => {
+      const done = trusted => {
+        console.log(JSON.stringify({ listed: tls.getCACertificates("default").includes(ca), trusted }));
+        process.exit(0);
+      };
+      const socket = tls.connect({ port: server.address().port, host: "127.0.0.1", checkServerIdentity: () => undefined }, () => done(true));
+      socket.on("error", () => done(false));
+    });`;
+
+  test.each([
+    ["nothing", [], {}, "", false],
+    ["NODE_USE_SYSTEM_CA=1", [], { NODE_USE_SYSTEM_CA: "1" }, "", true],
+    ["NODE_USE_SYSTEM_CA=true", [], { NODE_USE_SYSTEM_CA: "true" }, "", true],
+    ["--use-system-ca", ["--use-system-ca"], {}, "", true],
+    ["--use-bundled-ca and NODE_USE_SYSTEM_CA=1", ["--use-bundled-ca"], { NODE_USE_SYSTEM_CA: "1" }, "", true],
+    ["--use-bundled-ca and NODE_USE_SYSTEM_CA=true", ["--use-bundled-ca"], { NODE_USE_SYSTEM_CA: "true" }, "", true],
+    ["NODE_USE_SYSTEM_CA=1 in .env", [], {}, "NODE_USE_SYSTEM_CA=1", false],
+    ["NODE_USE_SYSTEM_CA assigned at run time", [], { ASSIGN: "1" }, "", false],
+    ["NODE_USE_SYSTEM_CA=1 cleared at run time", [], { NODE_USE_SYSTEM_CA: "1", ASSIGN: "0" }, "", true],
+  ] as const)("%s", async (_name, flags, env, dotenv, expected) => {
+    using dir = tempDir("default-ca-sources", {
+      "certs/ca1.pem": readFileSync(join(keys, "ca1-cert.pem"), "utf8"),
+      "run.js": script,
+      ".env": dotenv,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), ...flags, "run.js"],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        NODE_USE_SYSTEM_CA: undefined,
+        NODE_EXTRA_CA_CERTS: undefined,
+        SSL_CERT_FILE: "",
+        SSL_CERT_DIR: join(String(dir), "certs"),
+        ...env,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: JSON.stringify({ listed: expected, trusted: expected }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("NODE_USE_SYSTEM_CA=true and a compiled executable, which parses no flags", async () => {
+    using dir = tempDir("default-ca-sources-compiled", {
+      "certs/ca1.pem": readFileSync(join(keys, "ca1-cert.pem"), "utf8"),
+      "run.js": script,
+    });
+    await using build = spawn({
+      cmd: [bunExe(), "build", "--compile", "run.js", "--outfile", "app"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "inherit",
+    });
+    expect(await build.exited).toBe(0);
+    await using proc = spawn({
+      cmd: [join(String(dir), "app")],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        NODE_USE_SYSTEM_CA: "true",
+        NODE_EXTRA_CA_CERTS: undefined,
+        SSL_CERT_FILE: "",
+        SSL_CERT_DIR: join(String(dir), "certs"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: JSON.stringify({ listed: true, trusted: true }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -587,6 +684,7 @@ describe.concurrent("--use-openssl-ca", () => {
   test.each([
     ["nothing", {}, {}, 0],
     ["nothing with NODE_USE_SYSTEM_CA=1", { NODE_USE_SYSTEM_CA: "1" }, {}, 0],
+    ["nothing with NODE_USE_SYSTEM_CA=true", { NODE_USE_SYSTEM_CA: "true" }, {}, 0],
     ["nothing with NODE_USE_SYSTEM_CA=1 in .env", {}, { ".env": "NODE_USE_SYSTEM_CA=1" }, 0],
     ["only $NODE_EXTRA_CA_CERTS", { NODE_EXTRA_CA_CERTS: ca1 }, {}, 1],
   ])("tls.getCACertificates('default') lists %s", async (_, env, files, count) => {

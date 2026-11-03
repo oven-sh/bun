@@ -1,6 +1,5 @@
 // The objects that the host answers for `$cpp(file, symbol)`, each from the code of the function of that name. operand-changes.builtins.ts says which binding answers which of the objects whose functions change an operand.
 import * as b from "bun-builtins-table";
-import { handedOver } from "./native-code.ts";
 
 const externalState = ["ExternalState"];
 const viewHeaps = ["TypedArrayStorage", "TypedArrayElements"];
@@ -30,19 +29,6 @@ const convertsDomain = {
   returns: b.string,
   implementation: b.generic,
 } satisfies b.FunctionField;
-
-// Native code keeps the server's flags and limits. It finds the server behind the wrapper, and throws for anything else.
-// It reads its operands without asking how many were passed.
-const configuresServer = (operands: Readonly<Record<string, readonly b.UseSpec[]>>) =>
-  ({
-    args: Object.fromEntries(Object.keys(operands).map(name => [name, b.any])),
-    returns: b.undefined,
-    capability: "js",
-    throws: true,
-    uses: operands,
-    writes: externalState,
-    implementation: b.generic,
-  }) satisfies b.FunctionField;
 
 export default b.declarations(
   bagOfFunctions(ttyFunctions, {
@@ -81,25 +67,6 @@ export default b.declarations(
     length: 0,
   }),
   bagOfFunctions(httpFunctions, {
-    // The two callbacks are called for each client error and each connection.
-    setServerCustomOptions: configuresServer({
-      server: handedOver,
-      requireHostHeader: b.inspected,
-      useStrictMethodValidation: b.inspected,
-      lenientHttpFlags: converted,
-      maxHeaderSize: converted,
-      onClientError: handedOver,
-      onConnection: handedOver,
-      httpAllowHalfOpen: b.inspected,
-    }),
-    setServerAppFlags: configuresServer({
-      server: handedOver,
-      requireHostHeader: b.inspected,
-      useStrictMethodValidation: b.inspected,
-      lenientHttpFlags: converted,
-      httpAllowHalfOpen: b.inspected,
-    }),
-    setServerMaxHeadersCount: configuresServer({ server: handedOver, maxHeadersCount: converted }),
     drainMicrotasks: { returns: b.undefined, capability: "js", throws: true, implementation: b.generic },
   }),
   answers("native:Cpp:NodeHTTP.cpp:createNodeHTTPInternalBinding", b.builtin(httpFunctions)),

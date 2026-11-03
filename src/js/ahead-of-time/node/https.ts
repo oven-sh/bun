@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/https.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 95c4c778f38564720fd172eefcb2549f3b525352f189c741d6170e9e5591d30f.
+// Written against that file with the SHA-256 711650e2aa869b8ff29d1713ef9c931028758a15fda7d53a23bfca57257c5ca6.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:https"
@@ -16,7 +16,13 @@ const {
   kWaitForProxyTunnel,
   kPerRequestCheckServerIdentity,
   isTlsSymbol,
+  serverSymbol,
+  tlsSymbol,
 } = require("internal/http");
+const { kSNIContexts } = require("internal/net/symbols");
+const buntls = Symbol.for("::buntls::");
+const setListenerSecureContext = $bindgen("Listener.bind.ts", "setSecureContext");
+const addServerName = $bindgen("Listener.bind.ts", "addServerName");
 const { validateHeaderValue } = require("node:_http_common");
 const { isAnyArrayBuffer, isDataView } = require("node:util/types");
 
@@ -124,7 +130,7 @@ function getTunnelConfigForProxiedHttps(agent, reqOptions) {
   return result;
 }
 
-function establishTunnel(agent, socket, options, tunnelConfig, afterSocket) {
+function establishTunnel(agent, socket, tunnelConfig, afterSocket) {
   const { proxyTunnelPayload } = tunnelConfig;
   // Once the tunnel outcome is decided the raw socket belongs to the TLS
   // wrap; stop reading from it and never re-register the readable listener.
@@ -344,7 +350,7 @@ function createConnection(...args) {
     });
     function onProxyConnection() {
       socket.removeListener("error", onError);
-      establishTunnel(agent, socket, options, tunnelConfig, cleanupAndPropagate);
+      establishTunnel(agent, socket, tunnelConfig, cleanupAndPropagate);
     }
     if (this[kProxyConfig].protocol === "http:") {
       socket = require("node:net").connect(connectOptions, onProxyConnection);
@@ -619,6 +625,30 @@ function Server(options, requestListener): void {
 $toClass(Server, "Server", http.Server);
 // A listener of this class speaks TLS whatever its options hold.
 Server.prototype[isTlsSymbol] = true;
+
+Server.prototype.addContext = function addContext(hostname, context) {
+  const tlsServer = this[tlsSymbol];
+  tlsServer.addContext(hostname, context);
+  const handle = this[serverSymbol];
+  if (handle) addServerName(handle, hostname, tlsServer[kSNIContexts].$get(hostname).context);
+};
+
+Server.prototype.setSecureContext = function setSecureContext(options) {
+  validateObject(options, "options");
+  const tlsServer = this[tlsSymbol];
+  // Inherits, because tls.Server reads each option by name: one that is inherited, a getter or non-enumerable counts, as in Node.
+  tlsServer.setSecureContext({ __proto__: options, ...require("internal/tls").ignoredByHttpsServer });
+  const handle = this[serverSymbol];
+  if (handle) setListenerSecureContext(handle, tlsServer[buntls](null)[0].secureContext);
+};
+
+Server.prototype.getTicketKeys = function getTicketKeys() {
+  return this[tlsSymbol].getTicketKeys();
+};
+
+Server.prototype.setTicketKeys = function setTicketKeys(keys) {
+  this[tlsSymbol].setTicketKeys(keys);
+};
 
 function createServer(options, requestListener) {
   return new Server(options, requestListener);

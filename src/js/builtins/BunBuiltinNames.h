@@ -65,6 +65,7 @@ using namespace JSC;
     macro(ctimeMs) \
     macro(data) \
     macro(decode) \
+    macro(defaultTimeout) \
     macro(dest) \
     macro(detail) \
     macro(dirname) \

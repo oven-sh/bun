@@ -1,5 +1,7 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunRun, isWindows, nodeExe, tempDir, tempDirWithFiles } from "harness";
+import { randomFillSync, randomUUID } from "node:crypto";
+import { once } from "node:events";
 import net from "node:net";
 import { join } from "node:path";
 
@@ -115,6 +117,32 @@ test("allowHalfOpen: false should work on client-side", async () => {
   ).toEqual(["Hello, World", "Received FIN"]);
 });
 
+// On Windows this is a named pipe, where end() used to close the read side too.
+test("delivers the reply to the last write before end() over a pipe", async () => {
+  using dir = tempDir("net-pipe-pingpong", {});
+  const path = isWindows ? `\\\\.\\pipe\\bun-test-pingpong-${randomUUID()}` : join(String(dir), "pingpong.sock");
+  const server = net.createServer({ allowHalfOpen: true }, socket => {
+    socket.on("data", () => socket.write("PONG"));
+    socket.on("end", () => socket.end());
+  });
+  await once(server.listen(path), "listening");
+  try {
+    const client = net.createConnection(path);
+    const replies = [];
+    client.setEncoding("utf8");
+    client.on("connect", () => client.write("PING"));
+    client.on("data", reply => {
+      if (replies.push(reply) > 1) return;
+      client.write("PING");
+      client.end();
+    });
+    await once(client, "close");
+    expect(replies).toEqual(["PONG", "PONG"]);
+  } finally {
+    server.close();
+  }
+});
+
 // A paused allowHalfOpen socket whose AF_UNIX peer writes a tail and closes (EPOLLHUP while paused) must keep
 // the tail for resume() and then deliver data, end and close once each; the paused window must not spin the loop.
 test.skipIf(isWindows)("allowHalfOpen: paused socket whose unix peer closed delivers its tail on resume", async () => {
@@ -126,4 +154,47 @@ test.skipIf(isWindows)("allowHalfOpen: paused socket whose unix peer closed deli
     Array.from({ length: 4 }, (_, i) => [`tail-${i}`, { data: `tail-${i}\n`, ends: 1, closes: 1 }]),
   );
   expect(result).toEqual({ stdout: JSON.stringify(expected) + "\nidle", stderr: "", exitCode: 0, signalCode: null });
+});
+
+// The client sends its request and FIN together, then reads. The reply is bigger than one send()
+// takes, so part of it is still queued in user space when the server sees the FIN.
+describe.each([
+  { allowHalfOpen: true, replyOn: "end" },
+  { allowHalfOpen: true, replyOn: "data" },
+  { allowHalfOpen: false, replyOn: "data" },
+])("server with allowHalfOpen: $allowHalfOpen that replies on '$replyOn'", ({ allowHalfOpen, replyOn }) => {
+  test("sends the whole reply after the client's FIN", async () => {
+    const N = 8 * 1024 * 1024;
+    const payload = randomFillSync(Buffer.allocUnsafe(N));
+    const serverSide = Promise.withResolvers();
+    const server = net.createServer({ allowHalfOpen }, socket => {
+      socket.on("error", serverSide.reject);
+      socket.on("close", serverSide.resolve);
+      socket.on("data", () => {
+        if (replyOn === "data") socket.end(payload);
+      });
+      socket.on("end", () => {
+        if (replyOn === "end") socket.end(payload);
+      });
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const clientSide = Promise.withResolvers();
+      let got = 0;
+      let mismatchAt = -1;
+      const client = net.connect({ port: server.address().port, host: "127.0.0.1", allowHalfOpen: true });
+      client.on("error", clientSide.reject);
+      client.on("connect", () => client.end("request\n"));
+      client.on("data", chunk => {
+        if (mismatchAt === -1 && !chunk.equals(payload.subarray(got, got + chunk.length))) mismatchAt = got;
+        got += chunk.length;
+      });
+      client.on("close", clientSide.resolve);
+      await Promise.all([clientSide.promise, serverSide.promise]);
+      expect({ got, mismatchAt }).toEqual({ got: N, mismatchAt: -1 });
+    } finally {
+      server.close();
+    }
+  });
 });

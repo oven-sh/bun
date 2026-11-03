@@ -8,8 +8,7 @@ pub(crate) struct WebSocketServerContext {
     pub(crate) handler: Handler,
 
     pub(crate) max_payload_length: u32, // default 16MB
-    pub(crate) max_lifetime: u16,
-    pub(crate) idle_timeout: u16, // default 2 minutes
+    pub(crate) idle_timeout: u16,       // default 2 minutes
     pub(crate) compression: i32,
     pub(crate) backpressure_limit: u32, // default 16MB
     pub(crate) send_pings_automatically: bool,
@@ -170,7 +169,6 @@ impl WebSocketServerContext {
             compression: self.compression,
             max_backpressure: self.backpressure_limit,
             send_pings_automatically: self.send_pings_automatically,
-            max_lifetime: self.max_lifetime,
             reset_idle_timeout_on_send: self.reset_idle_timeout_on_send,
             close_on_backpressure_limit: self.close_on_backpressure_limit,
             ..Default::default()
@@ -245,8 +243,7 @@ pub(crate) fn on_create(
     let mut server = WebSocketServerContext {
         handler,
         max_payload_length: 1024 * 1024 * 16, // 16MB
-        max_lifetime: 0,
-        idle_timeout: 120, // 2 minutes
+        idle_timeout: 120,                    // 2 minutes
         compression: 0,
         backpressure_limit: 1024 * 1024 * 16, // 16MB
         send_pings_automatically: true,

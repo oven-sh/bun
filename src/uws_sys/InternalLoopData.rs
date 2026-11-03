@@ -33,6 +33,8 @@ pub struct InternalLoopData {
     #[cfg(not(windows))]
     sweep_next_tick_ns: Cell<i64>,
     sweep_timer_count: Cell<i32>,
+    sweep_tick: Cell<u32>,
+    sweep_time_ms: Cell<u64>,
     wakeup_async: Cell<*mut us_internal_async>,
     head: Cell<*mut SocketGroup>,
     quic_head: Cell<*mut c_void>,
@@ -97,6 +99,22 @@ impl InternalLoopData {
 
     pub(crate) fn should_enable_date_header_timer(&self) -> bool {
         self.sweep_timer_count.get() > 0
+    }
+
+    /// How many sockets the timeout sweep visits.
+    pub fn sweep_timer_count(&self) -> i32 {
+        self.sweep_timer_count.get()
+    }
+
+    /// When the next timeout sweep is due.
+    #[cfg(not(windows))]
+    pub fn sweep_next_tick_ns(&self) -> i64 {
+        self.sweep_next_tick_ns.get()
+    }
+
+    /// Whether a pass over the loop's sockets is on the stack.
+    pub fn is_iterating(&self) -> bool {
+        !self.iterator.get().is_null() || !self.low_prio_iterator.get().is_null()
     }
 
     /// Tag values for `parent_tag`: 1 = `jsc::EventLoop`, 2 = `jsc::MiniEventLoop`.

@@ -147,6 +147,10 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
 static void prepare_cb(uv_prepare_t *p) {
   struct us_loop_t *loop = p->data;
   us_internal_loop_pre(loop);
+  /* Only a loop iteration releases a parked socket (us_internal_handle_low_priority_sockets). */
+  if (loop->data.low_prio_head) {
+    us_wakeup_loop(loop);
+  }
 }
 
 /* Note: libuv timers execute AFTER the post callback */
@@ -579,6 +583,13 @@ void us_timer_set(struct us_timer_t *t, void (*cb)(struct us_timer_t *t),
   } else {
     uv_timer_start(uv_timer, timer_cb, ms, repeat_ms);
   }
+}
+
+void us_timer_again(struct us_timer_t *t) {
+  uv_timer_t *uv_timer = (uv_timer_t *)((struct us_internal_callback_t *)t + 1);
+  // uv_timer_again() counts from the loop's cached time.
+  uv_update_time(uv_timer->loop);
+  uv_timer_again(uv_timer);
 }
 
 struct us_loop_t *us_timer_loop(struct us_timer_t *t) {

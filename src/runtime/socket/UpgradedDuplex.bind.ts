@@ -13,5 +13,4 @@ export const onReceivedData = b.fn({
   args: { data: DuplexChunk },
 });
 export const onEnd = b.fn({ ...listener, export: "Bun__UpgradedDuplex__onEnd" });
-export const onWritable = b.fn({ ...listener, export: "Bun__UpgradedDuplex__onWritable" });
 export const onCloseJS = b.fn({ ...listener, export: "Bun__UpgradedDuplex__onCloseJS" });

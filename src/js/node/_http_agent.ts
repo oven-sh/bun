@@ -69,7 +69,7 @@ function Agent(options): void {
 
   const proxyEnv = this.options.proxyEnv;
   if (typeof proxyEnv === "object" && proxyEnv !== null) {
-    this[kProxyConfig] = parseProxyConfigFromEnv(proxyEnv, this.protocol, this.keepAlive);
+    this[kProxyConfig] = parseProxyConfigFromEnv(proxyEnv, this.protocol);
     $debug(`new ${this.protocol} agent with proxy config`, this[kProxyConfig]);
   }
 

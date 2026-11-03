@@ -121,6 +121,13 @@ export default b.declarations(
     ["InternalForTesting", "TlsSockets"],
     ...nativeBindings("Bindgen", "SecureContext.bind.ts", "liveCount"),
     ...nativeBindings("Bindgen", "socket_body.bind.ts", "setSocketOptions"),
+    ...nativeBindings(
+      "Bindgen",
+      "socket_body.bind.ts",
+      "namedPipeLiveCount",
+      "sweepSocketTimers",
+      "upgradedDuplexLiveCount",
+    ),
   ),
   extendAll(
     ["InternalForTesting", "NodeFs"],
@@ -342,7 +349,6 @@ export default b.declarations(
       "dgramCloseFd",
       "dgramGetSockNameFd",
       "dgramGuessHandleType",
-      "dgramIsFdAdopted",
       "dgramListenFd",
       "dgramNewSocketFd",
       "disconnect",
@@ -380,7 +386,7 @@ export default b.declarations(
   extendAll(
     ["Sockets"],
     "%Listener%",
-    ...nativeBindings("Bindgen", "socket_body.bind.ts", "getBufferedAmount", "isNamedPipeSocket"),
+    ...nativeBindings("Bindgen", "socket_body.bind.ts", "getBufferedAmount", "getBytesRead", "isNamedPipeSocket"),
   ),
 
   extendAll(
@@ -411,6 +417,7 @@ export default b.declarations(
     "%DNSResolver%",
     ...nativeBindings("Bindgen", "dns_internals.bind.ts", "getRuntimeDefaultResultOrderOption"),
     ...nativeBindings("Bindgen", "dns_internals.bind.ts", "newResolver"),
+    ...nativeBindings("Bindgen", "dns_internals.bind.ts", "setConnectResultOrder"),
   ),
 
   extendAll(
@@ -448,6 +455,14 @@ export default b.declarations(
   extendAll(
     ["Tls"],
     ...nativeBindings("Bindgen", "Listener.bind.ts", "addServerName", "setSecureContext"),
+    ...nativeBindings("Bindgen", "SSLConfig.bind.ts", "protocolVersionCode"),
+    ...nativeBindings(
+      "Bindgen",
+      "node_tls_binding.bind.ts",
+      "getDefaultCA",
+      "getDefaultCACertificateTypes",
+      "setDefaultCA",
+    ),
     ...nativeBindings(
       "Bindgen",
       "socket_body.bind.ts",

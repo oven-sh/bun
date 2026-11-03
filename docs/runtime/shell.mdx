@@ -122,14 +122,14 @@ $.throws(false);
 await $`something-that-may-fail`; // No exception thrown
 ```
 
-When Bun Shell does not find a command, the command exits with code `127`, as it does in `sh`. Check for `127` to tell a missing command from a command that ran and failed.
+When Bun Shell does not find a command, the command exits with code `127`, as it does in `sh`. A command that runs can also exit with code `127`, so use [`Bun.which()`](/runtime/utils#bun-which) to confirm that the command is missing.
 
 ```js
 import { $ } from "bun";
 
 const { exitCode } = await $`some-tool --version`.nothrow().quiet();
 
-if (exitCode === 127) {
+if (exitCode === 127 && Bun.which("some-tool") === null) {
   console.log("some-tool is not installed");
 }
 ```

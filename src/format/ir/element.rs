@@ -136,13 +136,43 @@ impl Token {
     #[inline(always)]
     pub(crate) fn new(text: &str) -> Option<Token> {
         let mut bytes = [0; Token::MAX];
-        bytes
-            .get_mut(..text.len())?
-            .copy_from_slice(text.as_bytes());
+        match *text.as_bytes() {
+            // Most tokens, without a call to copy them.
+            [first] => bytes[0] = first,
+            [first, second] => (bytes[0], bytes[1]) = (first, second),
+            _ => bytes
+                .get_mut(..text.len())?
+                .copy_from_slice(text.as_bytes()),
+        }
         Some(Token {
             len: text.len() as u8,
             bytes,
         })
+    }
+
+    /// The token as a number, which a function takes in registers.
+    #[inline(always)]
+    pub(crate) const fn to_bits(self) -> u128 {
+        let mut bytes = [0; 16];
+        bytes[0] = self.len;
+        let mut index = 0;
+        while index < Token::MAX {
+            bytes[index + 1] = self.bytes[index];
+            index += 1;
+        }
+        u128::from_le_bytes(bytes)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn from_bits(bits: u128) -> Token {
+        let all = bits.to_le_bytes();
+        let mut bytes = [0; Token::MAX];
+        let mut index = 0;
+        while index < Token::MAX {
+            bytes[index] = all[index + 1];
+            index += 1;
+        }
+        Token { len: all[0], bytes }
     }
 
     /// Same, at compile time.

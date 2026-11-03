@@ -93,15 +93,18 @@ impl<'a> Format<'a> for &'static str {
 #[derive(Copy, Clone)]
 pub(crate) struct Literal {
     text: &'static str,
-    /// `None` if `text` is too long for one.
-    token: Option<Token>,
+    /// [`Token::to_bits`]. `None` if `text` is too long for a token.
+    token: Option<u128>,
 }
 
 impl Literal {
     pub(crate) const fn new(text: &'static str) -> Self {
         Literal {
             text,
-            token: Token::new_const(text),
+            token: match Token::new_const(text) {
+                Some(token) => Some(token.to_bits()),
+                None => None,
+            },
         }
     }
 }
@@ -110,7 +113,7 @@ impl<'a> Format<'a> for Literal {
     #[inline(always)]
     fn fmt(&self, f: &mut Formatter<'a>) {
         match self.token {
-            Some(token) => f.write_short_token(token),
+            Some(token) => f.write_token_of_bits(token),
             None => f.write_long_token(self.text),
         }
     }
@@ -675,8 +678,15 @@ impl<'a> Formatter<'a> {
 
     // ───────────────────────────── writing ─────────────────────────────
 
-    #[inline(always)]
+    /// Writes any element. An element whose kind is known where it's written has a function below, which doesn't have
+    /// to find out what it is.
+    #[inline(never)]
     pub(crate) fn write_element(&mut self, element: FormatElement) {
+        self.push(element);
+    }
+
+    #[inline(always)]
+    fn push(&mut self, element: FormatElement) {
         let index = self.storage.pool.len() as u32;
         self.storage.pool.push(element);
         self.tracker.note(element, index, &mut self.storage);
@@ -693,9 +703,15 @@ impl<'a> Formatter<'a> {
     // The most frequent elements have functions of their own: thousands of places write one, and the code that does it
     // is several times as long as a call.
 
-    #[inline(never)]
+    #[inline(always)]
     pub(crate) fn write_short_token(&mut self, token: Token) {
-        self.write_element(FormatElement::Token(token));
+        self.write_token_of_bits(token.to_bits());
+    }
+
+    /// `bits` is [`Token::to_bits`].
+    #[inline(never)]
+    fn write_token_of_bits(&mut self, bits: u128) {
+        self.push(FormatElement::Token(Token::from_bits(bits)));
     }
 
     #[cold]
@@ -706,36 +722,85 @@ impl<'a> Formatter<'a> {
 
     #[inline(never)]
     pub(crate) fn write_space(&mut self) {
-        self.write_element(FormatElement::Space);
+        self.push(FormatElement::Space);
     }
 
     #[inline(never)]
     pub(crate) fn write_line_break(&mut self, mode: LineMode) {
-        self.write_element(FormatElement::Line(mode));
+        self.push(FormatElement::Line(mode));
     }
 
     #[inline(never)]
     pub(crate) fn start_group(&mut self, group: Group) {
-        self.write_element(FormatElement::Tag(Tag::StartGroup(group)));
+        self.push(FormatElement::Tag(Tag::StartGroup(group)));
     }
 
     #[inline(never)]
     pub(crate) fn end_group(&mut self) {
-        self.write_element(FormatElement::Tag(Tag::EndGroup));
+        self.push(FormatElement::Tag(Tag::EndGroup));
     }
 
     #[inline(never)]
     pub(crate) fn start_indent_with_line(&mut self, mode: LineMode) {
-        self.write_element(FormatElement::Tag(Tag::StartIndentWithLine(mode)));
+        self.push(FormatElement::Tag(Tag::StartIndentWithLine(mode)));
     }
 
     /// `mode` is the line break after the indented content, if there is one.
     #[inline(never)]
     pub(crate) fn end_indent_with_line(&mut self, mode: Option<LineMode>) {
-        self.write_element(FormatElement::Tag(match mode {
+        self.push(FormatElement::Tag(match mode {
             Some(mode) => Tag::EndIndentWithLine(mode),
             None => Tag::EndIndent,
         }));
+    }
+
+    #[inline(always)]
+    pub(crate) fn write_token_if_breaks(&mut self, token: Token) {
+        self.write_token_of_bits_if_breaks(token.to_bits());
+    }
+
+    /// `bits` is [`Token::to_bits`].
+    #[inline(never)]
+    fn write_token_of_bits_if_breaks(&mut self, bits: u128) {
+        self.push(FormatElement::TokenIfBreaks(Token::from_bits(bits)));
+    }
+
+    #[inline(never)]
+    pub(crate) fn write_line_suffix_boundary(&mut self) {
+        self.push(FormatElement::LineSuffixBoundary);
+    }
+
+    #[inline(never)]
+    pub(crate) fn write_indented_line_group(&mut self, id: GroupId) {
+        self.push(FormatElement::IndentedLineGroup(id));
+    }
+
+    #[inline(never)]
+    pub(crate) fn write_interned(&mut self, interned: Interned) {
+        self.push(FormatElement::Interned(interned));
+    }
+
+    /// Writes a tag that only affects indentation, or nothing at all.
+    #[inline(never)]
+    pub(crate) fn write_tag_without_content(&mut self, tag: Tag) {
+        debug_assert!(matches!(
+            tag,
+            Tag::StartIndent
+                | Tag::EndIndent
+                | Tag::StartAlign(_)
+                | Tag::EndAlign
+                | Tag::StartDedent(_)
+                | Tag::EndDedent(_)
+                | Tag::StartIndentIfGroupBreaks(_)
+                | Tag::EndIndentIfGroupBreaks(_)
+                | Tag::StartFill
+                | Tag::EndFill
+                | Tag::StartEntry
+                | Tag::EndEntry
+                | Tag::StartLabelled(_)
+                | Tag::EndLabelled
+        ));
+        self.storage.pool.push(FormatElement::Tag(tag));
     }
 
     /// Returns the width of `text`, which may contain anything.
@@ -758,12 +823,12 @@ impl<'a> Formatter<'a> {
     }
 
     /// Writes the source text of `span`, which has no line break or tab.
-    #[inline]
+    #[inline(never)]
     pub(crate) fn write_source_token(&mut self, span: Span) {
         if !self.is_plain_source(span) {
             return self.write_odd_source_token(span);
         }
-        self.write_element(FormatElement::SourceText(Text {
+        self.push(FormatElement::SourceText(Text {
             start: span.start,
             len: span.len(),
             width: TextWidth::single(span.len()),
@@ -776,7 +841,7 @@ impl<'a> Formatter<'a> {
         if bun_core::strings::contains_char(text, b'\\') && self.write_name_without_escapes(text) {
             return;
         }
-        self.write_element(FormatElement::SourceText(Text {
+        self.push(FormatElement::SourceText(Text {
             start: span.start,
             len: span.len(),
             width: TextWidth::single(self.string_width(text)),
@@ -804,7 +869,7 @@ impl<'a> Formatter<'a> {
         let width = width.unwrap_or_else(|| self.text_width(text));
         let (source, part) = (self.source.as_ptr_range(), text.as_ptr_range());
         if source.start <= part.start && part.end <= source.end {
-            self.write_element(FormatElement::SourceText(Text {
+            self.push(FormatElement::SourceText(Text {
                 start: (part.start.addr() - source.start.addr()) as u32,
                 len: text.len() as u32,
                 width,
@@ -817,7 +882,7 @@ impl<'a> Formatter<'a> {
     fn write_owned_text(&mut self, text: &[u8], width: TextWidth) {
         let start = self.storage.text.len() as u32;
         self.storage.text.extend_from_slice(text);
-        self.write_element(FormatElement::OwnedText(Text {
+        self.push(FormatElement::OwnedText(Text {
             start,
             len: text.len() as u32,
             width,
@@ -836,7 +901,7 @@ impl<'a> Formatter<'a> {
         let start = self.storage.text.len();
         build(&mut self.storage.text);
         let len = self.storage.text.len().saturating_sub(start) as u32;
-        self.write_element(FormatElement::OwnedText(Text {
+        self.push(FormatElement::OwnedText(Text {
             start: start as u32,
             len,
             width: TextWidth::single(len),
@@ -848,7 +913,7 @@ impl<'a> Formatter<'a> {
         let text = self.storage.text.get(start..).unwrap_or_default();
         let width = self.text_width(text);
         let len = text.len() as u32;
-        self.write_element(FormatElement::OwnedText(Text {
+        self.push(FormatElement::OwnedText(Text {
             start: start as u32,
             len,
             width,
@@ -1180,7 +1245,7 @@ impl<'a, F: Format<'a>> Format<'a> for Memoized<F> {
         match f.storage.interned(interned) {
             [] => {}
             &[one] => f.write_element(one),
-            _ => f.write_element(FormatElement::Interned(interned)),
+            _ => f.write_interned(interned),
         }
     }
 }
@@ -1218,7 +1283,7 @@ impl Formatter<'_> {
         if let Some(element @ FormatElement::Nop) = self.storage.pool.get_mut(reserved) {
             *element = FormatElement::Tag(Tag::StartGroup(Group::new().with_mode(mode)));
             self.tracker.use_reserved(reserved as u32, mode);
-            self.write_element(FormatElement::Tag(Tag::EndGroup));
+            self.end_group();
         }
     }
 }

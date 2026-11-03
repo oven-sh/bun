@@ -5,7 +5,7 @@ import { bunEnv, bunExe } from "harness";
 // A fetch handler that returns a Response whose body has already been used
 // (most often the same Response object returned for every request) must invoke
 // the error handler instead of silently sending a 200 with an empty body.
-describe("returning a Response with an already-used body", () => {
+describe.concurrent("returning a Response with an already-used body", () => {
   const alreadyUsedError = {
     code: "ERR_BODY_ALREADY_USED",
     name: "TypeError",
@@ -193,6 +193,30 @@ describe("returning a Response with an already-used body", () => {
     expect(exitCode).toBe(0);
   });
 
+  // getReader() starts a native-backed stream, which sets bodyUsed before anything is read.
+  it.each([
+    ["string", () => new Response("whole body")],
+    ["Blob", () => new Response(new Blob(["whole body"]))],
+    ["fetch()", (upstream: string) => fetch(upstream)],
+  ])("a %s body is sent whole after getReader() and releaseLock()", async (_, makeResponse) => {
+    const error = jest.fn();
+    await using upstream = serve({ port: 0, fetch: () => new Response("whole body") });
+    await using server = serve({
+      port: 0,
+      async fetch() {
+        const response = await makeResponse(`http://127.0.0.1:${upstream.port}/`);
+        response.body!.getReader().releaseLock();
+        return response;
+      },
+      error,
+    });
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/`);
+    expect(await response.text()).toBe("whole body");
+    expect(response.status).toBe(200);
+    expect(error).not.toHaveBeenCalled();
+  });
+
   it("a Response that is not reused keeps working", async () => {
     const error = jest.fn();
     await using server = serve({
@@ -213,6 +237,7 @@ describe("returning a Response with an already-used body", () => {
 
   it("a Response reused through a static route keeps working", async () => {
     // Static routes snapshot the body at registration, so reuse is allowed there.
+    const error = jest.fn();
     await using server = serve({
       port: 0,
       routes: {
@@ -221,6 +246,7 @@ describe("returning a Response with an already-used body", () => {
       fetch() {
         return new Response("fallback");
       },
+      error,
     });
 
     for (let i = 0; i < 3; i++) {
@@ -228,6 +254,7 @@ describe("returning a Response with an already-used body", () => {
       expect(await response.text()).toBe("static-body");
       expect(response.status).toBe(200);
     }
+    expect(error).not.toHaveBeenCalled();
   });
 
   it("without an error handler, logs the error and responds with 500", async () => {
@@ -258,6 +285,142 @@ describe("returning a Response with an already-used body", () => {
     expect(stdout).toBe('200 "cached-route-body"\n500 "Something went wrong!"\n');
     expect(stderr).toContain("Response body already used");
     // The error is reported like any other unhandled error thrown from the fetch handler.
+    expect(exitCode).toBe(1);
+  });
+});
+
+describe.concurrent("a Response without a body returned for a request the server dropped", () => {
+  const bodiless = {
+    "null body": () => new Response(null, { status: 404 }),
+    "empty string body": () => new Response(""),
+  };
+  const kinds = Object.keys(bodiless) as (keyof typeof bodiless)[];
+
+  async function expectReusable(url: URL, kept: Response) {
+    const res = await fetch(url);
+    expect({ status: res.status, body: await res.text(), bodyUsed: kept.bodyUsed }).toEqual({
+      status: kept.status,
+      body: "",
+      bodyUsed: false,
+    });
+  }
+
+  it.each(kinds)("%s can be returned again after the client aborted", async kind => {
+    const kept = bodiless[kind]();
+    const started = Promise.withResolvers<void>();
+    const returned = Promise.withResolvers<void>();
+    await using server = serve({
+      port: 0,
+      async fetch(req) {
+        if (!req.url.endsWith("/drop")) return kept;
+        const aborted = Promise.withResolvers<void>();
+        req.signal.addEventListener("abort", () => aborted.resolve());
+        started.resolve();
+        await aborted.promise;
+        returned.resolve();
+        return kept;
+      },
+      error: (err: any) => new Response(err.code, { status: 500 }),
+    });
+
+    const controller = new AbortController();
+    const dropped = fetch(new URL("/drop", server.url), { signal: controller.signal });
+    await started.promise;
+    controller.abort();
+    await expect(dropped).rejects.toMatchObject({ name: "AbortError" });
+    await returned.promise;
+    await expectReusable(server.url, kept);
+  });
+
+  it.each(kinds)("%s can be returned again after server.upgrade()", async kind => {
+    const kept = bodiless[kind]();
+    await using server = serve({
+      port: 0,
+      fetch(req, server) {
+        server.upgrade(req);
+        return kept;
+      },
+      websocket: { message() {} },
+      error: (err: any) => new Response(err.code, { status: 500 }),
+    });
+
+    const closed = Promise.withResolvers<void>();
+    const ws = new WebSocket(server.url.href.replace("http:", "ws:"));
+    ws.onopen = () => ws.close();
+    ws.onerror = () => closed.reject(new Error("the WebSocket did not open"));
+    ws.onclose = () => closed.resolve();
+    await closed.promise;
+    await expectReusable(server.url, kept);
+  });
+});
+
+describe.concurrent("a Response around a stream that a reader holds", () => {
+  it("HEAD does not cancel a stream that another response is sending", async () => {
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const cancel = jest.fn();
+    const stream = new ReadableStream<Uint8Array>({
+      start(c) {
+        controller = c;
+        c.enqueue(new TextEncoder().encode("part1;"));
+      },
+      cancel,
+    });
+    const responses: Record<string, Response> = { "/a": new Response(stream), "/b": new Response(stream) };
+    await using server = serve({
+      port: 0,
+      fetch: req => responses[new URL(req.url).pathname],
+    });
+
+    const download = await fetch(new URL("/a", server.url));
+    const reader = download.body!.getReader();
+    expect(new TextDecoder().decode((await reader.read()).value)).toBe("part1;");
+
+    const head = await fetch(new URL("/b", server.url), { method: "HEAD" });
+    expect(head.status).toBe(200);
+
+    controller.enqueue(new TextEncoder().encode("part2;"));
+    controller.close();
+    expect(new TextDecoder().decode((await reader.read()).value)).toBe("part2;");
+    expect((await reader.read()).done).toBe(true);
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
+  it("refusing the Response leaves the stream open for its reader", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const encoder = new TextEncoder();
+        let controller;
+        const upstream = Bun.serve({
+          port: 0,
+          fetch: () => new Response(new ReadableStream({ start(c) { controller = c; c.enqueue(encoder.encode("one;")); } })),
+        });
+        const text = Promise.withResolvers();
+        const server = Bun.serve({
+          port: 0,
+          development: false,
+          async fetch() {
+            const response = await fetch(upstream.url);
+            text.resolve(new Response(response.body).text());
+            return response;
+          },
+        });
+        console.log((await fetch(server.url)).status);
+        controller.enqueue(encoder.encode("two;"));
+        controller.close();
+        console.log(await text.promise);
+        upstream.stop(true);
+        server.stop(true);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("ERR_STREAM_CANNOT_PIPE");
+    expect(stdout).toBe("500\none;two;\n");
     expect(exitCode).toBe(1);
   });
 });

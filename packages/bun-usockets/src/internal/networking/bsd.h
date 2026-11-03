@@ -33,7 +33,6 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #pragma comment(lib, "ws2_32.lib")
-#define SETSOCKOPT_PTR_TYPE const char *
 #define LIBUS_SOCKET_ERROR INVALID_SOCKET
 #else /* POSIX */
 #ifndef _GNU_SOURCE
@@ -42,7 +41,6 @@
 /* For socklen_t */
 #include <sys/socket.h>
 #include <netdb.h>
-#define SETSOCKOPT_PTR_TYPE int *
 #define LIBUS_SOCKET_ERROR -1
 #endif
 
@@ -189,12 +187,22 @@ int bsd_socket_get_tos(LIBUS_SOCKET_DESCRIPTOR fd);
  * resulting value to *out; on failure returns the setsockopt/getsockopt result
  * with the error left in errno (WSAGetLastError on Windows). */
 int bsd_socket_buffer_size(LIBUS_SOCKET_DESCRIPTOR fd, int is_recv, int size, int *out);
+/* See us_socket_delivered_bytes. */
+int bsd_socket_delivered_bytes(LIBUS_SOCKET_DESCRIPTOR fd, uint64_t *bytes);
 int bsd_prepare_adopted_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd);
 int bsd_set_reuseaddr(LIBUS_SOCKET_DESCRIPTOR fd);
 int bsd_bind_udp_fd(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr *addr, int addrlen, int flags);
 void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd);
 LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, int *err);
 
+/* Takes ownership of a descriptor opened elsewhere without touching it. EINVAL: not a socket of `type` (0 allows anything). EEXIST, not on Windows: a socket in this process owns it. */
+int bsd_adopt_socket(LIBUS_SOCKET_DESCRIPTOR fd, int type);
+/* Gives up ownership without closing. */
+void bsd_disown_socket(LIBUS_SOCKET_DESCRIPTOR fd);
+#ifdef _WIN32
+/* Ends the sending side of every socket this process made and shared with no other, on any thread's loop. For the exit of the process, where Winsock resets what is still open. */
+void bsd_shutdown_owned_sockets(void);
+#endif
 void bsd_close_socket(LIBUS_SOCKET_DESCRIPTOR fd);
 void bsd_shutdown_socket(LIBUS_SOCKET_DESCRIPTOR fd);
 void bsd_shutdown_socket_read(LIBUS_SOCKET_DESCRIPTOR fd);
@@ -209,8 +217,8 @@ int bsd_addr_get_ip_length(struct bsd_addr_t *addr);
 
 int bsd_addr_get_port(struct bsd_addr_t *addr);
 
-// called by dispatch_ready_poll
-LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd_addr_t *addr);
+// called by dispatch_ready_poll. shared: another process can accept on fd too.
+LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd_addr_t *addr, int shared);
 
 ssize_t bsd_recv(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags);
 /* One of the LIBUS_QUEUED_INPUT_* codes. Peeks, so it consumes nothing and the
@@ -231,18 +239,21 @@ int bsd_send_is_transient_error();
 
 // return LIBUS_SOCKET_ERROR or the fd that represents listen socket
 // listen both on ipv6 and ipv4
-LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options, int* error);
+LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options, int* error, int* dns_error);
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t pathlen, int options, int* error);
+LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t pathlen, int* error);
+/* Binds without listening: node:cluster's primary binds the path its workers listen on. */
+LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket_unix(const char *path, size_t pathlen, int* error);
 
 /* Creates an UDP socket bound to the hostname and port */
 LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int options, int *err);
 int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int port);
 int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd);
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, struct sockaddr_storage *local_addr, int options);
+LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, struct sockaddr_storage *local_addr);
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket_unix(const char *server_path, size_t pathlen, int options);
+/* Sets *connected to 1 if connect() itself returned 0, so the connection is already established. */
+LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket_unix(const char *server_path, size_t pathlen, int *connected);
 
 int bsd_socket_export_size(void);
 int bsd_socket_export(LIBUS_SOCKET_DESCRIPTOR fd, unsigned int target_pid, void *info_out);

@@ -40,12 +40,6 @@ namespace WebCore {
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(FetchHeaders);
 
-// https://fetch.spec.whatwg.org/#concept-headers-remove-privileged-no-cors-request-headers
-static void removePrivilegedNoCORSRequestHeaders(HTTPHeaderMap& headers)
-{
-    headers.remove(HTTPHeaderName::Range);
-}
-
 // String::trim takes a function pointer and dispatches through
 // StringImpl::trimMatchedCharacters, which is an indirect call per probed
 // character. Header values are almost always already free of leading/trailing
@@ -70,29 +64,25 @@ static inline const String& trimHTTPSpaceIfNeeded(const String& value, String& s
     return storage;
 }
 
-static ExceptionOr<bool> canWriteHeader(const HTTPHeaderName name, const String& value, const String& combinedValue, FetchHeaders::Guard guard)
+static ExceptionOr<void> validateHeader(const HTTPHeaderName name, const String& value)
 {
     ASSERT(value.isEmpty() || (!isHTTPSpace(value[0]) && !isHTTPSpace(value[value.length() - 1])));
     if (!isValidHTTPHeaderValue((value)))
         return Exception { TypeError, makeString("Header '"_s, httpHeaderNameString(name), "' has invalid value"_s) };
-    if (guard == FetchHeaders::Guard::Immutable)
-        return Exception { TypeError, "Headers object's guard is 'immutable'"_s };
-    return true;
+    return {};
 }
 
-static ExceptionOr<bool> canWriteHeader(const String& name, const String& value, const String& combinedValue, FetchHeaders::Guard guard)
+static ExceptionOr<void> validateHeader(const String& name, const String& value)
 {
     if (!isValidHTTPToken(name))
         return exceptionWithMessage(TypeError, "Invalid header name: '"_s, name, "'"_s);
     ASSERT(value.isEmpty() || (!isHTTPSpace(value[0]) && !isHTTPSpace(value[value.length() - 1])));
     if (!isValidHTTPHeaderValue((value)))
         return exceptionWithMessage(TypeError, "Header '"_s, name, "' has invalid value"_s);
-    if (guard == FetchHeaders::Guard::Immutable)
-        return Exception { TypeError, "Headers object's guard is 'immutable'"_s };
-    return true;
+    return {};
 }
 
-static ExceptionOr<void> appendToHeaderMap(const String& name, const String& value, HTTPHeaderMap& headers, FetchHeaders::Guard guard)
+static ExceptionOr<void> appendToHeaderMap(const String& name, const String& value, HTTPHeaderMap& headers)
 {
     // The common path here is a brand-new header with no leading/trailing HTTP
     // whitespace. Avoid taking ownership (and the atomic ref-count round-trip
@@ -120,12 +110,9 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
             }
         }
 
-        auto canWriteResult = canWriteHeader(headerName, normalizedValue, *valueToSet, guard);
-
-        if (canWriteResult.hasException())
-            return canWriteResult.releaseException();
-        if (!canWriteResult.releaseReturnValue())
-            return {};
+        auto valid = validateHeader(headerName, normalizedValue);
+        if (valid.hasException())
+            return valid.releaseException();
 
         if (headerName != HTTPHeaderName::SetCookie) {
             if (!headers.setIndex(index, *valueToSet))
@@ -143,30 +130,23 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
             return Exception { OutOfMemoryError };
         valueToSet = &combinedTemp;
     }
-    auto canWriteResult = canWriteHeader(name, normalizedValue, *valueToSet, guard);
-    if (canWriteResult.hasException())
-        return canWriteResult.releaseException();
-    if (!canWriteResult.releaseReturnValue())
-        return {};
+    auto valid = validateHeader(name, normalizedValue);
+    if (valid.hasException())
+        return valid.releaseException();
 
     if (!headers.setIndex(index, *valueToSet))
         headers.set(name, *valueToSet);
 
-    // if (guard == FetchHeaders::Guard::RequestNoCors)
-    //     removePrivilegedNoCORSRequestHeaders(headers);
-
     return {};
 }
 
-static ExceptionOr<void> appendToHeaderMap(const HTTPHeaderMap::HTTPHeaderMapConstIterator::KeyValue& header, HTTPHeaderMap& headers, FetchHeaders::Guard guard)
+static ExceptionOr<void> appendToHeaderMap(const HTTPHeaderMap::HTTPHeaderMapConstIterator::KeyValue& header, HTTPHeaderMap& headers)
 {
     String trimStorage;
     const String& normalizedValue = trimHTTPSpaceIfNeeded(header.value, trimStorage);
-    auto canWriteResult = canWriteHeader(header.key, normalizedValue, header.value, guard);
-    if (canWriteResult.hasException())
-        return canWriteResult.releaseException();
-    if (!canWriteResult.releaseReturnValue())
-        return {};
+    auto valid = validateHeader(header.key, normalizedValue);
+    if (valid.hasException())
+        return valid.releaseException();
     if (header.keyAsHTTPHeaderName)
         headers.add(header.keyAsHTTPHeaderName.value(), header.value);
     else
@@ -176,21 +156,21 @@ static ExceptionOr<void> appendToHeaderMap(const HTTPHeaderMap::HTTPHeaderMapCon
 }
 
 // https://fetch.spec.whatwg.org/#concept-headers-fill
-static ExceptionOr<void> fillHeaderMap(HTTPHeaderMap& headers, const FetchHeaders::Init& headersInit, FetchHeaders::Guard guard)
+static ExceptionOr<void> fillHeaderMap(HTTPHeaderMap& headers, const FetchHeaders::Init& headersInit)
 {
     if (std::holds_alternative<Vector<Vector<String>>>(headersInit)) {
         auto& sequence = std::get<Vector<Vector<String>>>(headersInit);
         for (auto& header : sequence) {
             if (header.size() != 2)
                 return Exception { TypeError, "Header sub-sequence must contain exactly two items"_s };
-            auto result = appendToHeaderMap(header[0], header[1], headers, guard);
+            auto result = appendToHeaderMap(header[0], header[1], headers);
             if (result.hasException())
                 return result.releaseException();
         }
     } else {
         auto& record = std::get<Vector<KeyValuePair<String, String>>>(headersInit);
         for (auto& header : record) {
-            auto result = appendToHeaderMap(header.key, header.value, headers, guard);
+            auto result = appendToHeaderMap(header.key, header.value, headers);
             if (result.hasException())
                 return result.releaseException();
         }
@@ -204,17 +184,17 @@ ExceptionOr<Ref<FetchHeaders>> FetchHeaders::create(std::optional<Init>&& header
     HTTPHeaderMap headers;
 
     if (headersInit) {
-        auto result = fillHeaderMap(headers, *headersInit, Guard::None);
+        auto result = fillHeaderMap(headers, *headersInit);
         if (result.hasException())
             return result.releaseException();
     }
 
-    return adoptRef(*new FetchHeaders { Guard::None, WTF::move(headers) });
+    return adoptRef(*new FetchHeaders { WTF::move(headers) });
 }
 
 ExceptionOr<void> FetchHeaders::fill(const Init& headerInit)
 {
-    return fillHeaderMap(m_headers.willChange(), headerInit, m_guard);
+    return fillHeaderMap(m_headers.willChange(), headerInit);
 }
 
 ExceptionOr<void> FetchHeaders::fill(const FetchHeaders& otherHeaders)
@@ -229,7 +209,7 @@ ExceptionOr<void> FetchHeaders::fill(const FetchHeaders& otherHeaders)
     }
 
     for (auto& header : otherHeaders.internalHeaders()) {
-        auto result = appendToHeaderMap(header, m_headers.willChange(), m_guard);
+        auto result = appendToHeaderMap(header, m_headers.willChange());
         if (result.hasException())
             return result.releaseException();
     }
@@ -239,14 +219,12 @@ ExceptionOr<void> FetchHeaders::fill(const FetchHeaders& otherHeaders)
 
 ExceptionOr<void> FetchHeaders::append(const String& name, const String& value)
 {
-    return appendToHeaderMap(name, value, m_headers.willChange(), m_guard);
+    return appendToHeaderMap(name, value, m_headers.willChange());
 }
 
 // https://fetch.spec.whatwg.org/#dom-headers-delete
 ExceptionOr<void> FetchHeaders::remove(const StringView name)
 {
-    ASSERT_WITH_MESSAGE(m_guard == FetchHeaders::Guard::None, "We don't use guards in Bun");
-
     HTTPHeaderName headerName;
     if (findHTTPHeaderName(name, headerName)) {
         m_headers.willChange().remove(headerName);
@@ -299,16 +277,11 @@ ExceptionOr<bool> FetchHeaders::has(const StringView name) const
 ExceptionOr<void> FetchHeaders::set(const HTTPHeaderName name, const String& value)
 {
     String normalizedValue = trimHTTPSpaceIfNeeded(value);
-    auto canWriteResult = canWriteHeader(name, normalizedValue, normalizedValue, m_guard);
-    if (canWriteResult.hasException())
-        return canWriteResult.releaseException();
-    if (!canWriteResult.releaseReturnValue())
-        return {};
+    auto valid = validateHeader(name, normalizedValue);
+    if (valid.hasException())
+        return valid.releaseException();
 
     m_headers.willChange().set(name, normalizedValue);
-
-    if (m_guard == FetchHeaders::Guard::RequestNoCors)
-        removePrivilegedNoCORSRequestHeaders(m_headers.willChange());
 
     return {};
 }
@@ -316,16 +289,11 @@ ExceptionOr<void> FetchHeaders::set(const HTTPHeaderName name, const String& val
 ExceptionOr<void> FetchHeaders::set(const String& name, const String& value)
 {
     String normalizedValue = trimHTTPSpaceIfNeeded(value);
-    auto canWriteResult = canWriteHeader(name, normalizedValue, normalizedValue, m_guard);
-    if (canWriteResult.hasException())
-        return canWriteResult.releaseException();
-    if (!canWriteResult.releaseReturnValue())
-        return {};
+    auto valid = validateHeader(name, normalizedValue);
+    if (valid.hasException())
+        return valid.releaseException();
 
     m_headers.willChange().set(name, normalizedValue);
-
-    if (m_guard == FetchHeaders::Guard::RequestNoCors)
-        removePrivilegedNoCORSRequestHeaders(m_headers.willChange());
 
     return {};
 }

@@ -1,9 +1,10 @@
 --- a/include/lsquic.h
 +++ b/include/lsquic.h
-@@ -2212,6 +2212,14 @@ uint64_t
+@@ -2204,6 +2204,14 @@ lsquic_engine_sreset_stats (const lsquic_engine_t *, uint64_t *sent,
+ uint64_t
  lsquic_conn_pings_received (const lsquic_conn_t *);
  
- /**
++/**
 + * The stream ID in the server's last GOAWAY frame: it did not process the
 + * requests at or above this ID (RFC 9114, Section 5.2).  UINT64_MAX until a
 + * client connection receives a GOAWAY frame.
@@ -11,13 +12,12 @@
 +lsquic_stream_id_t
 +lsquic_conn_goaway_stream_id (const lsquic_conn_t *);
 +
-+/**
-  * Set this connection's keep-alive PING cadence in microseconds,
-  * overriding the engine-wide settings.  0 disables keep-alive PINGs.
-  */
+ /**
+  * Opt this client connection in (or out) of migrating to the server's
+  * preferred address after the handshake.  Off by default; call before
 --- a/src/liblsquic/lsquic_full_conn_ietf.c
 +++ b/src/liblsquic/lsquic_full_conn_ietf.c
-@@ -9627,6 +9627,8 @@ on_goaway_client (void *ctx, uint64_t st
+@@ -9583,6 +9583,8 @@ on_goaway_client (void *ctx, uint64_t stream_id)
                  conn->ifc_u.cli.ifcli_min_goaway_stream_id);
              return;
          }
@@ -26,7 +26,7 @@
      }
      else
      {
-@@ -9649,6 +9651,22 @@ on_goaway_client (void *ctx, uint64_t st
+@@ -9605,6 +9607,22 @@ on_goaway_client (void *ctx, uint64_t stream_id)
  }
  
  

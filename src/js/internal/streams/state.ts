@@ -136,12 +136,6 @@ interface Internals {
   resumeRequestBody: ((stream: $Node.Readable, state: ReadableState) => boolean) | undefined;
   finishReadOfNothing: ((state: ReadableState) => void) | undefined;
   finishResume: ((stream: $Node.Readable, state: ReadableState) => void) | undefined;
-  readMoreLater: ((stream: $Node.Readable, state: ReadableState) => void) | undefined;
-  readMoreOnNextTick: ((stream: $Node.Readable, state: ReadableState) => void) | undefined;
-  emitReadableNow: ((stream: $Node.Readable) => void) | undefined;
-  finishEnd: ((state: ReadableState, stream: $Node.Readable) => void) | undefined;
-  onRequestBodyData:
-    ((this: $Node.IncomingMessage, chunk: Buffer | undefined, isLast: boolean, aborted: number) => void) | undefined;
   takeRequestCloseTick: ((request: $Node.IncomingMessage) => boolean) | undefined;
   destroyEndedRequest: ((state: ReadableState, stream: $Node.Readable) => boolean) | undefined;
 }
@@ -173,11 +167,6 @@ const internals: Internals = {
   resumeRequestBody: undefined,
   finishReadOfNothing: undefined,
   finishResume: undefined,
-  readMoreLater: undefined,
-  readMoreOnNextTick: undefined,
-  emitReadableNow: undefined,
-  finishEnd: undefined,
-  onRequestBodyData: undefined,
   takeRequestCloseTick: undefined,
   destroyEndedRequest: undefined,
 };

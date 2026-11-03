@@ -1,0 +1,96 @@
+--- a/src/liblsquic/lsquic_full_conn_ietf.c
++++ b/src/liblsquic/lsquic_full_conn_ietf.c
+@@ -452,7 +452,9 @@ struct ietf_full_conn
+     lsquic_packno_t             ifc_max_ack_packno[N_PNS];
+     lsquic_packno_t             ifc_max_non_probing;
+     struct {
+-        uint64_t    max_stream_send;
++        /* bun: named as in litespeedtech/lsquic#629.  See apply_trans_params(). */
++        uint64_t    max_stream_send_bidi_local;     /* Streams the peer opens */
++        uint64_t    max_stream_send_bidi_remote;    /* Streams this side opens */
+         uint8_t     ack_exp;
+     }                           ifc_cfg;
+     int                       (*ifc_process_incoming_packet)(
+@@ -1140,7 +1142,7 @@ create_bidi_stream_out (struct ietf_full_conn *conn)
+                 conn->ifc_enpub->enp_stream_if,
+                 conn->ifc_enpub->enp_stream_if_ctx,
+                 conn->ifc_settings->es_init_max_stream_data_bidi_local,
+-                conn->ifc_cfg.max_stream_send, flags);
++                conn->ifc_cfg.max_stream_send_bidi_remote, flags);
+     if (!stream)
+         return -1;
+     if (!lsquic_hash_insert(conn->ifc_pub.all_streams, &stream->id,
+@@ -3667,6 +3669,33 @@ apply_trans_params (struct ietf_full_conn *conn,
+ 
+     conn->ifc_max_stream_data_uni      = params->tp_init_max_stream_data_uni;
+ 
++    /* bun: RFC 9000 Section 18.2 picks a bidirectional stream's initial send
++     * limit by who opens it: the peer's bidi_remote for a stream this side
++     * opens, its bidi_local for a stream the peer opens.  Upstream kept one
++     * limit, picked by the connection's role, which is right only for a stream
++     * the client opens.  On a stream the server opens, each side sent up to
++     * the wrong window and the receiver closed with FLOW_CONTROL_ERROR.
++     */
++    conn->ifc_cfg.max_stream_send_bidi_local
++                                = params->tp_init_max_stream_data_bidi_local;
++    conn->ifc_cfg.max_stream_send_bidi_remote
++                                = params->tp_init_max_stream_data_bidi_remote;
++    if (conn->ifc_flags & IFC_HTTP)
++    {
++        /* bun: HTTP/3 has no server-opened bidirectional streams, so their
++         * limit keeps the value it had.  The transport parameter check only
++         * bounds the other limit from below, and with a smaller one
++         * stream_write_avail_with_frames() fails its assert on a stream that an
++         * HTTP/3 server opens anyway.
++         */
++        if (conn->ifc_flags & IFC_SERVER)
++            conn->ifc_cfg.max_stream_send_bidi_remote
++                                    = conn->ifc_cfg.max_stream_send_bidi_local;
++        else
++            conn->ifc_cfg.max_stream_send_bidi_local
++                                    = conn->ifc_cfg.max_stream_send_bidi_remote;
++    }
++
+     if (params->tp_init_max_data < conn->ifc_pub.conn_cap.cc_sent)
+     {
+         ABORT_WARN("peer specified init_max_data=%"PRIu64" bytes, which is "
+@@ -3682,10 +3711,14 @@ apply_trans_params (struct ietf_full_conn *conn,
+                              el = lsquic_hash_next(conn->ifc_pub.all_streams))
+     {
+         stream = lsquic_hashelem_getdata(el);
+-        if (is_our_stream(conn, stream))
+-            limit = params->tp_init_max_stream_data_bidi_remote;
++        /* bun: streams exist here only after 0-RTT.  Upstream gave a
++         * unidirectional stream a bidirectional stream's limit. */
++        if (SD_UNI == ((stream->id >> SD_SHIFT) & 1))
++            limit = conn->ifc_max_stream_data_uni;
++        else if (is_our_stream(conn, stream))
++            limit = conn->ifc_cfg.max_stream_send_bidi_remote;
+         else
+-            limit = params->tp_init_max_stream_data_bidi_local;
++            limit = conn->ifc_cfg.max_stream_send_bidi_local;
+         if (0 != lsquic_stream_set_max_send_off(stream, limit))
+         {
+             ABORT_WARN("cannot set peer-supplied max_stream_data=%"PRIu64
+@@ -3694,12 +3727,6 @@ apply_trans_params (struct ietf_full_conn *conn,
+         }
+     }
+ 
+-    if (conn->ifc_flags & IFC_SERVER)
+-        conn->ifc_cfg.max_stream_send
+-                                = params->tp_init_max_stream_data_bidi_local;
+-    else
+-        conn->ifc_cfg.max_stream_send
+-                                = params->tp_init_max_stream_data_bidi_remote;
+     conn->ifc_cfg.ack_exp = params->tp_ack_delay_exponent;
+ 
+     /* bun: es_idle_timeout_ms (ms-granular) takes precedence over the
+@@ -5441,7 +5468,7 @@ new_stream (struct ietf_full_conn *conn, lsquic_stream_id_t stream_id,
+ 
+     stream = lsquic_stream_new(stream_id, &conn->ifc_pub,
+                                iface, stream_ctx, initial_window,
+-                               conn->ifc_cfg.max_stream_send, flags);
++                               conn->ifc_cfg.max_stream_send_bidi_local, flags);
+     if (stream)
+     {
+         if (conn->ifc_bpus)

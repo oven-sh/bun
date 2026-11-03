@@ -182,7 +182,9 @@ export async function untilDestroyed(socket: Socket | undefined) {
   if (socket) await untilEarlierClosesWereHeard();
   for (let turn = 0; socket && turn < 1000; turn++) {
     const destroyed = attempt(() => socket.destroyed);
-    if (destroyed === "true" || (destroyed !== "false" && turn === 20)) return;
+    // Like in Node.js, 'close' comes a turn behind `destroyed`.
+    if (destroyed === "true") return nextTurn();
+    if (destroyed !== "false" && turn === 20) return;
     await nextTurn();
   }
 }

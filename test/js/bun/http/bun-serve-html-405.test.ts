@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { join } from "path";
 
@@ -96,11 +96,8 @@ test.skipIf(!isASAN || isWindows)(
   30_000,
 );
 
-// Graceful stop() leaves the keep-alive socket in the uws app's socket group.
-// A NewApp::destroy at lastChanceToFinalize would unlink that group from the
-// loop and orphan the socket, so the synchronous deinit path above is gated
-// on TERMINATED (set only by an abrupt stop or an app.close() that already
-// drained the group).
+// A socket still linked into the uws app when NewApp::destroy runs at
+// lastChanceToFinalize would be orphaned, which LSan reports as a direct leak.
 test.skipIf(!isASAN || isWindows)(
   "gracefully-stopped Bun.serve does not orphan a keep-alive socket at VM teardown",
   async () => {
@@ -128,3 +125,56 @@ test.skipIf(!isASAN || isWindows)(
   },
   30_000,
 );
+
+// `leak:uws_create_app` in leaksan.supp hides the server, so these children run without that entry.
+// They start the server after a tick to keep JSModuleLoader::evaluateNonVirtual (also suppressed)
+// off the allocation stacks, and pin it on globalThis so only the teardown can finalize it.
+describe.skipIf(!isASAN || isWindows)("VM teardown frees", () => {
+  test.concurrent.each([
+    [
+      "Bun.serve after stop()",
+      `
+        await Bun.sleep(0);
+        const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+        globalThis.keep = server;
+        await (await fetch("http://127.0.0.1:" + server.port + "/")).text();
+        await server.stop();
+      `,
+    ],
+    [
+      "node:http after close()",
+      `
+        import { createServer } from "node:http";
+        await Bun.sleep(0);
+        const server = createServer((req, res) => res.end("ok"));
+        globalThis.keep = server;
+        await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+        await (await fetch("http://127.0.0.1:" + server.address().port + "/")).text();
+        await new Promise(resolve => server.close(resolve));
+      `,
+    ],
+  ])(
+    "%s",
+    async (_, script) => {
+      const suppressions = (await Bun.file(join(import.meta.dirname, "../../../leaksan.supp")).text())
+        .split("\n")
+        .filter(line => line.trim() !== "leak:uws_create_app")
+        .join("\n");
+      using dir = tempDir("serve-teardown-leak", { "leaksan.supp": suppressions });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: {
+          ...bunEnv,
+          BUN_DESTRUCT_VM_ON_EXIT: "1",
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+          LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(String(dir), "leaksan.supp")}`,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    },
+    30_000,
+  );
+});

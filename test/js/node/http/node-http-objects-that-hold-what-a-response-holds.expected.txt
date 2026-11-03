@@ -9,8 +9,8 @@ before destroyed: undefined undefined
 before closed: boolean false
 before statusCode: number 200
 before statusMessage: undefined undefined
-before shouldKeepAlive: boolean true
-before chunkedEncoding: boolean false
+before shouldKeepAlive: undefined undefined
+before chunkedEncoding: undefined undefined
 before socket: string object
 before writableLength: string number
 before writableHighWaterMark: string number
@@ -26,8 +26,8 @@ after destroyed: undefined undefined
 after closed: boolean false
 after statusCode: number 200
 after statusMessage: undefined undefined
-after shouldKeepAlive: boolean true
-after chunkedEncoding: boolean false
+after shouldKeepAlive: undefined undefined
+after chunkedEncoding: undefined undefined
 after socket: string object
 after writableLength: string number
 after writableHighWaterMark: string number
@@ -42,8 +42,8 @@ the response destroyed: undefined undefined
 the response closed: boolean false
 the response statusCode: number 200
 the response statusMessage: undefined undefined
-the response shouldKeepAlive: boolean true
-the response chunkedEncoding: boolean false
+the response shouldKeepAlive: undefined undefined
+the response chunkedEncoding: undefined undefined
 the response socket: string object
 the response writableLength: string number
 the response writableHighWaterMark: string number
@@ -65,8 +65,8 @@ between destroyed: undefined undefined
 between closed: boolean false
 between statusCode: number 200
 between statusMessage: undefined undefined
-between shouldKeepAlive: boolean true
-between chunkedEncoding: boolean false
+between shouldKeepAlive: undefined undefined
+between chunkedEncoding: undefined undefined
 between socket: string object
 between writableLength: string number
 between writableHighWaterMark: string number
@@ -83,8 +83,8 @@ after destroyed: undefined undefined
 after closed: boolean false
 after statusCode: number 200
 after statusMessage: undefined undefined
-after shouldKeepAlive: boolean true
-after chunkedEncoding: boolean false
+after shouldKeepAlive: undefined undefined
+after chunkedEncoding: undefined undefined
 after socket: string object
 after writableLength: string number
 after writableHighWaterMark: string number
@@ -99,8 +99,8 @@ the response destroyed: undefined undefined
 the response closed: boolean false
 the response statusCode: number 200
 the response statusMessage: undefined undefined
-the response shouldKeepAlive: boolean true
-the response chunkedEncoding: boolean false
+the response shouldKeepAlive: undefined undefined
+the response chunkedEncoding: undefined undefined
 the response socket: string object
 the response writableLength: string number
 the response writableHighWaterMark: string number
@@ -124,8 +124,8 @@ after destroyed: undefined undefined
 after closed: boolean false
 after statusCode: number 200
 after statusMessage: undefined undefined
-after shouldKeepAlive: boolean true
-after chunkedEncoding: boolean false
+after shouldKeepAlive: undefined undefined
+after chunkedEncoding: undefined undefined
 after socket: string object
 after writableLength: string number
 after writableHighWaterMark: string number
@@ -145,8 +145,8 @@ the copy destroyed: undefined undefined
 the copy closed: boolean false
 the copy statusCode: number 200
 the copy statusMessage: undefined undefined
-the copy shouldKeepAlive: boolean true
-the copy chunkedEncoding: boolean false
+the copy shouldKeepAlive: undefined undefined
+the copy chunkedEncoding: undefined undefined
 the copy socket: string object
 the copy writableLength: string number
 the copy writableHighWaterMark: string number
@@ -161,8 +161,8 @@ the response destroyed: undefined undefined
 the response closed: boolean false
 the response statusCode: number 200
 the response statusMessage: undefined undefined
-the response shouldKeepAlive: boolean true
-the response chunkedEncoding: boolean false
+the response shouldKeepAlive: undefined undefined
+the response chunkedEncoding: undefined undefined
 the response socket: string object
 the response writableLength: string number
 the response writableHighWaterMark: string number
@@ -181,8 +181,8 @@ the copy destroyed: undefined undefined
 the copy closed: boolean false
 the copy statusCode: number 200
 the copy statusMessage: undefined undefined
-the copy shouldKeepAlive: boolean true
-the copy chunkedEncoding: boolean false
+the copy shouldKeepAlive: undefined undefined
+the copy chunkedEncoding: undefined undefined
 the copy socket: string object
 the copy writableLength: string number
 the copy writableHighWaterMark: string number
@@ -197,8 +197,8 @@ the response destroyed: undefined undefined
 the response closed: boolean false
 the response statusCode: number 200
 the response statusMessage: undefined undefined
-the response shouldKeepAlive: boolean true
-the response chunkedEncoding: boolean false
+the response shouldKeepAlive: undefined undefined
+the response chunkedEncoding: undefined undefined
 the response socket: string object
 the response writableLength: string number
 the response writableHighWaterMark: string number
@@ -237,9 +237,9 @@ the response ends: object ServerResponse
 the client reads ""
 == a plain object with the handle of the response
 writeHead: throws TypeError: what is called is not a function
-write: throws TypeError: undefined is not an object
-end: throws TypeError: undefined is not an object
-it holds req statusMessage statusCode [handle]
+write: throws TypeError: what is called is not a function
+end: throws TypeError: what is called is not a function
+it holds req statusMessage statusCode [handle] [kImplicitHeaderFromEnd]
 the response ends: object ServerResponse
 the client reads "HTTP/1.1 200 OK\r\nDate: ..\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
 == a server whose responses are made by NeverCallsTheConstructor

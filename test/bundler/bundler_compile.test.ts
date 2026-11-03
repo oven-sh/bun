@@ -428,6 +428,8 @@ describe("bundler", () => {
       "/entry.ts": /* js */ `
         import bar from './foo.file' with {type: "file"};
         if ((await Bun.file(bar).text()).trim() !== "abcd") throw "fail";
+        // The embedded file isn't on disk, and fetch() rejects a file: URL whose path doesn't exist.
+        if ((await (await fetch(Bun.pathToFileURL(bar))).text()).trim() !== "abcd") throw "fetch fail";
         console.log("Hello, world!");
       `,
       "/foo.file": /* js */ `
@@ -436,6 +438,43 @@ describe("bundler", () => {
     },
     outfile: "dist/out",
     run: { stdout: "Hello, world!" },
+  });
+  itBundled("compile/EmbeddedFileServeRoute", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import { embeddedFiles, file, serve } from "bun";
+        import asset from "./asset.txt" with { type: "file" };
+        import "./icon.ico" with { type: "file" };
+
+        const routes: Record<string, Blob> = { "/asset.txt": file(asset) };
+        for (const blob of embeddedFiles) {
+          // "icon-a1b2c3d4.ico" -> "/embedded/icon.ico"
+          routes["/embedded/" + blob.name.replace(/-[a-z0-9]+\\./, ".")] = blob;
+        }
+
+        using server = serve({
+          port: 0,
+          routes,
+          fetch: () => new Response("fallback", { status: 404 }),
+        });
+        for (const path of ["/asset.txt", "/embedded/asset.txt", "/embedded/icon.ico", "/missing"]) {
+          const res = await fetch(new URL(path, server.url));
+          console.log(path, res.status, res.headers.get("Content-Type"), JSON.stringify(await res.text()));
+        }
+      `,
+      "/asset.txt": "embedded text",
+      "/icon.ico": "not really an icon",
+    },
+    outfile: "dist/out",
+    run: {
+      stdout: `
+        /asset.txt 200 text/plain;charset=utf-8 "embedded text"
+        /embedded/asset.txt 200 text/plain;charset=utf-8 "embedded text"
+        /embedded/icon.ico 200 image/x-icon "not really an icon"
+        /missing 404 text/plain;charset=utf-8 "fallback"
+      `,
+    },
   });
   itBundled("compile/WorkerRelativePathNoExtension", {
     backend: "cli",

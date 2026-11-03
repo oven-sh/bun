@@ -6,7 +6,9 @@ import { join } from "path";
 test.concurrent(
   "request error doesn't leak",
   async () => {
-    expect(await bunRun(join(import.meta.dir, "request-constructor-leak-fixture.js"))).toSpawn();
+    const result = await bunRun(join(import.meta.dir, "request-constructor-leak-fixture.js"));
+    expect(result.stdout).toMatch(/^RSS: \d+ MB$/);
+    expect(result).toSpawn();
   },
   60_000,
 );
@@ -14,7 +16,9 @@ test.concurrent(
 test.concurrent(
   "response error doesn't leak",
   async () => {
-    expect(await bunRun(join(import.meta.dir, "response-constructor-leak-fixture.js"))).toSpawn();
+    const result = await bunRun(join(import.meta.dir, "response-constructor-leak-fixture.js"));
+    expect(result.stdout).toMatch(/^RSS: \d+ MB$/);
+    expect(result).toSpawn();
   },
   60_000,
 );
@@ -22,7 +26,9 @@ test.concurrent(
 test.concurrent(
   "server.fetch(string) doesn't leak the URL buffer",
   async () => {
-    expect(await bunRun(join(import.meta.dir, "server-fetch-string-leak-fixture.js"))).toSpawn();
+    const result = await bunRun(join(import.meta.dir, "server-fetch-string-leak-fixture.js"));
+    expect(result.stdout).toMatch(/^RSS delta: -?\d+(\.\d+)? MB$/);
+    expect(result).toSpawn();
   },
   60_000,
 );

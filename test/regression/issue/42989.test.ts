@@ -5,22 +5,34 @@ import { bunEnv, bunExe } from "harness";
 // Bun 1.3.14 printed this warning when the timeout fired. Bun 1.4.0 left it in
 // the stderr buffer until the process exited.
 //
-// The warning is only registered when `idleTimeout` is not passed, so the test
-// waits for the default 10 second timeout. A process that is killed never
-// flushes at exit, so the warning must already be on the pipe before SIGKILL.
+// The warning is only registered when `idleTimeout` is not passed, so the server
+// runs the timeout sweep by hand until the default 10 seconds are over. A process that is killed
+// never flushes at exit, so the warning must already be on the pipe before SIGKILL.
 test("Bun.serve prints the idle timeout warning when the timeout fires, not at exit", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
+      import { sweepSocketTimers } from "bun:internal-for-testing";
+      let aborted = false;
+      const arrived = Promise.withResolvers();
       const server = Bun.serve({
         port: 0,
         hostname: "127.0.0.1",
         development: true,
-        fetch: () => new Promise(() => {}),
+        fetch(req) {
+          req.signal.addEventListener("abort", () => (aborted = true));
+          arrived.resolve();
+          return new Promise(() => {});
+        },
       });
       fetch(server.url).catch(e => console.log("client error:", e.code));
+      await arrived.promise;
+      while (!aborted) {
+        await new Promise(setImmediate);
+        sweepSocketTimers(1);
+      }
       `,
     ],
     env: bunEnv,
@@ -44,4 +56,4 @@ test("Bun.serve prints the idle timeout warning when the timeout fires, not at e
   proc.kill("SIGKILL");
   const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
   expect(stderr).toContain("warn: Bun.serve() timed out a request after 10 seconds. Pass `idleTimeout` to configure.");
-}, 30_000);
+});

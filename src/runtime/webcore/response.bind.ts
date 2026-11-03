@@ -5,8 +5,8 @@ const js = { capability: "js", throws: true } as const;
 const getter = { getter: b.any.returning("string"), capability: "js" } as const;
 const cached = { ...getter, cache: true, ...js } as const;
 const headers = { ...cached, getter: b.any.returning("Headers") } as const;
-/** Reads the whole body. The `stream` field of the receiver says whether a script already read from it. */
-const read = { returns: b.any.returning("Promise"), ...js, passThis: true } as const;
+/** Reads the whole body. */
+const read = { returns: b.any.returning("Promise"), ...js } as const;
 
 /** Members of the trait `BodyMixin`. */
 const body = {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isCI, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, isWindows } from "harness";
 import { join } from "path";
 
 // A connection has one current response. The server socket gives the connection to the next
@@ -81,7 +81,6 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
         results: [
           returned("resume"),
           returned("pause"),
-          returned("pauseReads"),
           returned("notifyWhenReadParsed"),
           returned("flushHeaders"),
           threw("end", "ERR_STREAM_WRITE_AFTER_END"),
@@ -89,7 +88,6 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
           returned("abort"),
           returned("writeContinue"),
           returned("bufferedAmount"),
-          threw("cork", "ERR_STREAM_ALREADY_FINISHED"),
         ],
         stderr: "",
         exitCode: 0,
@@ -138,7 +136,7 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
     async () => {
       const head = (length: number) =>
         `HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: ${length}\r\n\r\n`;
-      const calls = ["write", "end", "writeHead", "flushHeaders", "writeContinue", "writeInformational", "cork"];
+      const calls = ["write", "end", "writeHead", "flushHeaders", "writeContinue", "writeInformational"];
       expect(await run("queued", transport)).toEqual({
         results: calls.map(call => ({
           call,
@@ -158,7 +156,16 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
     "the write that it left in the socket buffer goes out, and its drain handler is gone",
     async () => {
       expect(await run("draining", transport)).toEqual({
-        results: [{ displaced: true, pending: false, receivedAtLeastTheWrite: true }],
+        results: [
+          {
+            displaced: true,
+            pending: false,
+            // Winsock can take the whole write in one send(). Then no tail is held and no drain handler is armed.
+            heldTail: isWindows ? expect.any(Boolean) : true,
+            collected: 1,
+            afterTheWrite: "HTTP/1.1 ",
+          },
+        ],
         stderr: "",
         exitCode: 0,
         signalCode: null,
@@ -174,11 +181,51 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
         results: uses.map(use => ({
           use,
           queued: true,
+          pendingWhileQueued: true,
           switched: true,
           // req.destroy() destroys the socket of the request, which the WebSocket has.
           open: use !== "req.destroy",
           result: "returned",
           pending: false,
+        })),
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+    timeout,
+  );
+
+  test(
+    "a queued request with an incomplete body does not keep the server open after a WebSocket adopted the connection",
+    async () => {
+      expect(await run("adopted-with-body", transport)).toEqual({
+        results: ["req.destroy", "destroy", "nothing"].map(use => ({
+          use,
+          queued: true,
+          bodyBytes: 3,
+          switched: true,
+          open: use !== "req.destroy",
+          result: "returned",
+          serverClosed: true,
+        })),
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+    timeout,
+  );
+
+  test(
+    "req.destroy() on a queued request closes the connection and writes nothing",
+    async () => {
+      expect(await run("queued-destroyed", transport)).toEqual({
+        results: ["same read", "later read"].map(secondRequest => ({
+          secondRequest,
+          queued: true,
+          result: "returned",
+          received: "",
         })),
         stderr: "",
         exitCode: 0,

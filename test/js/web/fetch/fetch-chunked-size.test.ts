@@ -44,6 +44,74 @@ describe("fetch: chunked chunk-size token validation", () => {
     });
   });
 
+  // The server sends the head, and `rest(socket)` runs once a read of the body is pending.
+  async function readUntilError(rest: (socket: net.Socket) => void, headers = "") {
+    const reading = Promise.withResolvers<void>();
+    const { server, url } = await serveChunked(async socket => {
+      socket.write(head.replace("\r\n\r\n", `\r\n${headers}\r\n`));
+      await reading.promise;
+      rest(socket);
+    });
+    await using _s = server;
+    const reader = (await fetch(url)).body!.getReader();
+    const chunks: Uint8Array[] = [];
+    try {
+      let read = reader.read();
+      reading.resolve();
+      for (let result = await read; !result.done; result = await reader.read()) chunks.push(result.value);
+      return { body: Buffer.concat(chunks).toString(), code: "(stream ended)" };
+    } catch (e: any) {
+      return { body: Buffer.concat(chunks).toString(), code: e?.code };
+    }
+  }
+  // "C" is a hex digit, so this line is chunk-size 0xC followed by junk.
+  const malformed = "Connection: close\r\n\r\n";
+
+  // Node gives the reader the same bytes before its read rejects.
+  describe("a pending read gets the body bytes that arrived in the same read as", () => {
+    it.each<[string, (socket: net.Socket) => void, string]>([
+      ["a malformed chunk-size", socket => socket.write(`5\r\nhello\r\n${malformed}`), "InvalidHTTPResponse"],
+      ["the FIN that cuts the body short", socket => socket.end("5\r\nhello\r\n"), "ECONNRESET"],
+    ])("%s", async (_what, rest, code) => {
+      expect(await readUntilError(rest)).toEqual({ body: "hello", code });
+    });
+
+    it("a malformed chunk-size, after a chunk larger than one read", async () => {
+      const payload = Buffer.alloc(256 * 1024, "abcdefghijklmnopqrstuvwxyz").toString();
+      const { body, code } = await readUntilError(socket =>
+        socket.write(`${payload.length.toString(16)}\r\n${payload}\r\n${malformed}`),
+      );
+      expect({ length: body.length, same: body === payload, code }).toEqual({
+        length: payload.length,
+        same: true,
+        code: "InvalidHTTPResponse",
+      });
+    });
+  });
+
+  // Node delivers nothing here either: the error tears its gunzip down before it emits.
+  it.each([
+    ["a malformed chunk-size", (gz: Buffer) => gz, malformed, "InvalidHTTPResponse"],
+    [
+      "corrupt gzip data",
+      (gz: Buffer) => {
+        gz[gz.length >> 1] ^= 0xff;
+        gz[(gz.length >> 1) + 1] ^= 0xff;
+        return gz;
+      },
+      "0\r\n\r\n",
+      "ZlibError",
+    ],
+  ])("a pending read of a gzip body gets nothing ahead of %s", async (_what, damage, end, code) => {
+    const text = Buffer.alloc(8192, "the quick brown fox jumps over the lazy dog ");
+    const gz = damage(Buffer.from(Bun.gzipSync(text, { level: 1 })));
+    const rest = Buffer.concat([Buffer.from(`${gz.length.toString(16)}\r\n`), gz, Buffer.from(`\r\n${end}`)]);
+    expect(await readUntilError(socket => socket.write(rest), "Content-Encoding: gzip\r\n")).toEqual({
+      body: "",
+      code,
+    });
+  });
+
   describe("accepts well-formed chunk-size", () => {
     it.each([
       ["5", "hello"],

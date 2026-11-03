@@ -495,10 +495,7 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
     await recorder.waitForCalls(5);
     const error = notOpen("2 (CLOSING)");
     const callbacks = [`send ${error}`, `ping ${error}`, `pong ${error}`, `send ${error}`];
-    // The built-in queues 'close' inside terminate(), so it fires before callbacks queued afterwards.
-    expect(recorder.lines).toEqual(
-      builtin ? ["close 1006 Buffer()", ...callbacks] : [...callbacks, "close 1006 Buffer()"],
-    );
+    expect(recorder.lines).toEqual([...callbacks, "close 1006 Buffer()"]);
   });
 
   // On loopback, Winsock accepts the whole write, so there's never any backpressure.
@@ -891,10 +888,12 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
             { CERT: certificate.cert, KEY: certificate.key },
           );
           // On Node, 'close' comes last. The built-in emits it while the exception is still propagating.
+          // npm ws over TLS, as on Node: the 101 is still being written, so both messages leave in one writev(), and
+          // the exception ends its loop over their callbacks.
           expect(lines.sort()).toEqual([
             "close 1000",
             "large null",
-            "small null",
+            ...(builtin || !secure ? ["small null"] : []),
             'uncaught Error "thrown by the callback"',
           ]);
           expect(exitCode).toBe(0);

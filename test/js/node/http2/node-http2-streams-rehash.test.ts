@@ -12,18 +12,7 @@ const ASAN_MULTIPLIER = isDebug ? 10 : isASAN ? 3 : 1;
 // and dangled if a re-entrant JS callback inserted a new stream and triggered
 // a rehash. Streams are now heap-allocated and stored by pointer, so *Stream
 // is stable for the lifetime of the H2FrameParser regardless of map growth.
-// These three tests cover the call sites where this was observed under ASAN.
-
-test("session.request() from a stream 'timeout' listener during forEachStream does not UAF on hashmap rehash", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "--smol", path.join(import.meta.dir, "node-http2-foreach-rehash.fixture.js")],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), exitCode, stderr }).toMatchObject({ stdout: "OK", exitCode: 0 });
-});
+// These tests cover call sites where this was observed under ASAN.
 
 test(
   "http2 client request() does not hold *Stream across user-controlled options getters",
@@ -105,14 +94,11 @@ test(
   10_000 * ASAN_MULTIPLIER,
 );
 
-// handle_received_stream_id invoked the JS streamStart callback without arming the
-// dispatch guard while holding the just-created *Stream. JS reached from inside that
-// callback (here: EventEmitter.prototype.on, called by the Http2Stream constructor)
-// could close the stream and then re-enter parser.read() at dispatch depth 0, where
-// the deferred-close drain frees the Stream box; the native caller then wrote the
-// stream context through the dangling pointer (ASAN: heap-use-after-free in
-// Stream::set_context). The parser is driven directly because the hook must observe
-// the window inside the native callback, before setStreamContext runs.
+// JS reached from inside the streamStart callback (here: EventEmitter.prototype.on, called by the
+// Http2Stream constructor) can close the new stream and re-enter parser.read(), which forgets
+// closed streams. The native caller still holds the stream and used to write its context through
+// a dangling pointer (ASAN: heap-use-after-free). The parser is driven directly because the hook
+// must observe the window inside the native callback.
 test(
   "closing the new stream and re-entering read() inside the streamStart callback does not UAF",
   async () => {
@@ -140,8 +126,8 @@ test(
       if (armed && ev === "pause") {
         armed = false;
         hooked = true;
-        parser.rstStream(2, 8 /* NGHTTP2_CANCEL */); // queue the new stream's deferred close
-        parser.read(Buffer.from("PRI * HTTP/2.0\\r\\n\\r\\nSM\\r\\n\\r\\n")); // depth-0 read used to drain it
+        parser.rstStream(2, 8 /* NGHTTP2_CANCEL */);
+        parser.read(Buffer.from("PRI * HTTP/2.0\\r\\n\\r\\nSM\\r\\n\\r\\n"));
       }
       return origOn.call(this, ev, fn);
     };
@@ -157,35 +143,13 @@ test(
       console.error("unexpected stream id: " + id);
       process.exit(1);
     }
-    // The close must have been deferred, not drained inside the callback: the native
-    // entry is still alive (pre-fix this throws "Invalid stream id" on every build
-    // tier because the drain freed it), and no context may have been installed for
-    // the closed stream (a guard-only fix would return the Http2Stream here).
+    // No context may have been installed for the closed stream, which would pin the dead Http2Stream.
     let ctx;
     try {
       ctx = parser.getStreamContext(2);
-    } catch (e) {
-      console.error("getStreamContext threw: " + e.message);
-      process.exit(1);
-    }
+    } catch {}
     if (ctx !== undefined) {
       console.error("context installed for closed stream");
-      process.exit(1);
-    }
-    // One depth-0 read runs the deferred drain; the entry must actually go away.
-    parser.read(Buffer.alloc(0));
-    let drained = false;
-    try {
-      parser.getStreamContext(2);
-    } catch (e) {
-      if (e.message !== "Invalid stream id") {
-        console.error("unexpected getStreamContext error: " + e.message);
-        process.exit(1);
-      }
-      drained = true;
-    }
-    if (!drained) {
-      console.error("deferred close never drained");
       process.exit(1);
     }
     session.destroy();

@@ -1476,6 +1476,11 @@ function installBunExposeInternalsShim() {
         // tests exercising the > TIMEOUT_MAX clamp use the real threshold.
         exports: { kTimeout: Symbol.for("::buntimeout::"), TIMEOUT_MAX: 2 ** 31 - 1 },
       }));
+      // BoringSSL has no OpenSSL security levels. Tests only read this to pick between OpenSSL expectations.
+      build.module("internal/crypto/util", () => ({
+        loader: "object",
+        exports: { getOpenSSLSecLevel: () => 0 },
+      }));
       build.module("internal/webstreams/util", () => ({
         loader: "object",
         exports: {

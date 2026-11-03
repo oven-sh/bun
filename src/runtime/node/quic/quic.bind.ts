@@ -1,4 +1,5 @@
 import * as b from "../../../codegen/bindgen-lib.ts";
+import { SocketAddress } from "../../socket/SocketAddress.bind.ts";
 
 const js = { capability: "js", throws: true } as const;
 const objectIfOpen = { returns: b.any.returning("object", "undefined"), ...js } as const;
@@ -12,11 +13,15 @@ export const QuicEndpoint = b.class({
   proto: {
     address,
     closeGracefully: { capability: "js", passThis: true },
-    connect: { ...objectIfOpen, args: { address: b.any, options: b.any, sessionTicket: b.any }, passThis: true },
+    connect: {
+      ...objectIfOpen,
+      args: { address: SocketAddress, options: b.any, sessionTicket: b.any },
+      passThis: true,
+    },
     listen: { ...js, args: { options: b.any }, passThis: true },
     markBusy: { args: { busy: b.bool.loose } },
     releaseSocket: { capability: "js" },
-    setSNIContexts: { ...js, args: { entries: b.any, replace: b.any } },
+    setSNIContexts: { ...js, args: { entries: b.any, replace: b.bool } },
   },
 });
 
@@ -48,9 +53,9 @@ export const QuicStream = b.class({
     endWrite: { capability: "js" },
     getPriority: { returns: b.u32 },
     getReader: { returns: b.self, passThis: true },
-    initStreamingSource: {},
+    initStreamingSource: { capability: "heap", throws: true },
     pull: { ...js, args: { callback: b.any } },
-    resetStream: { args: { code: b.any }, capability: "js" },
+    resetStream: { args: { code: b.any }, returns: b.bool, capability: "js" },
     sendHeaders: { ...js, args: { kind: b.any, headers: b.any, flags: b.any }, returns: b.any.returning("boolean") },
     setPriority: { ...js, args: { priority: b.any } },
     setWakeup: { args: { callback: b.any }, capability: "js" },

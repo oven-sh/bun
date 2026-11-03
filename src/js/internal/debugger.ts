@@ -450,7 +450,6 @@ class Debugger {
             }
             socket.data.framer.onData(socket, bytes);
           },
-          drain: (_socket: FramedSocket) => {},
           close: (socket: FramedSocket) => {
             const socketData = socket.data;
             if (socketData) {
@@ -720,9 +719,6 @@ async function connectToUnixServer(
 
           socket.data.framer.onData(socket, bytes);
         },
-
-        // Ensure we always drain the socket.
-        drain: (_socket: FramedSocket) => {},
 
         close: (socket: FramedSocket) => {
           const socketData = socket.data;

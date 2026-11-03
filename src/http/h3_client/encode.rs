@@ -43,7 +43,12 @@ pub(crate) fn write_request(
         HTTPRequestBody::Bytes(_)
     );
 
-    let request = client.build_request(body_len);
+    let mut header_overflow = Vec::new();
+    let request = client.build_request(body_len, &mut header_overflow);
+    // lsxpack stores a field's length in 16 bits, so a longer method would be truncated.
+    if request.method.len() > usize::from(u16::MAX) {
+        return Err(crate::Error::HTTP3HeaderEncodingError);
+    }
     if verbose != HTTPVerboseLevel::None {
         let body = req_body.slice();
         crate::print_request(
@@ -138,14 +143,15 @@ pub(crate) fn write_request(
     // For streaming bodies the JS sink waits for can_stream to start
     // pumping; report progress now so it begins.
     if is_streaming {
-        client.progress_update_h3();
+        // Nothing of the response is here to decode, so this can't fail.
+        let _ = client.send_progress();
     }
     Ok(())
 }
 
 /// Push as much of the request body onto `qs` as flow control allows. Called
 /// from `write_request`, `callbacks.on_stream_writable`, and
-/// `ClientSession.stream_body_by_http_id` (when the JS sink delivers more bytes).
+/// `ClientSession::stream_request_body` (when the JS sink delivers more bytes).
 pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
     if stream.request_body_done {
         return;
@@ -184,7 +190,7 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
             qs.shutdown();
             client.state.request_stage = HTTPStage::Done;
         } else if !drained {
-            qs.want_write(true);
+            qs.want_write();
         } else if data_len > 0 {
             sb.report_drain();
         }
@@ -210,6 +216,6 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
         qs.shutdown();
         client.state.request_stage = HTTPStage::Done;
     } else {
-        qs.want_write(true);
+        qs.want_write();
     }
 }

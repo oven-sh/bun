@@ -1,5 +1,6 @@
 import events from "node:events";
 import http, { type IncomingMessage, type RequestListener, type Server, type ServerResponse } from "node:http";
+import { Socket } from "node:net";
 import stream from "node:stream";
 import { Worker } from "node:worker_threads";
 import { RawHttpConnection, get } from "../raw-http-client.ts";
@@ -205,7 +206,11 @@ if (mode === "worker") {
 } else {
   runProbe(async () => {
     report.recordUncaughtErrors();
-    process.on("warning", warning => report.current("warning", warning.name, warning.message.slice(0, 100)));
+    process.on("warning", (warning: Error & { emitter?: { server?: unknown } }) => {
+      // The probe's own client warns too, before or after the server has accepted it: that is up to the platform.
+      if (warning.emitter instanceof Socket && !warning.emitter.server) return;
+      report.current("warning", warning.name, warning.message.slice(0, 100));
+    });
     process.noDeprecation = false;
     const servers = createServers();
     changesBeforeListening[mode]?.();

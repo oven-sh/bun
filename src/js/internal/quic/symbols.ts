@@ -3,6 +3,7 @@
 const kInspect = Symbol.for("nodejs.util.inspect.custom");
 
 const kAttachFileHandle = Symbol("kAttachFileHandle");
+const kAvailable = Symbol("kAvailable");
 const kBlocked = Symbol("kBlocked");
 const kConnect = Symbol("kConnect");
 const kDrain = Symbol("kDrain");
@@ -31,11 +32,13 @@ const kRemoveSession = Symbol("kRemoveSession");
 const kRemoveStream = Symbol("kRemoveStream");
 const kReset = Symbol("kReset");
 const kSessionTicket = Symbol("kSessionTicket");
+const kStopSending = Symbol("kStopSending");
 const kTrailers = Symbol("kTrailers");
 const kVersionNegotiation = Symbol("kVersionNegotiation");
 
 export default {
   kAttachFileHandle,
+  kAvailable,
   kBlocked,
   kConnect,
   kDatagram,
@@ -65,6 +68,7 @@ export default {
   kRemoveStream,
   kReset,
   kSessionTicket,
+  kStopSending,
   kTrailers,
   kVersionNegotiation,
 } as const;

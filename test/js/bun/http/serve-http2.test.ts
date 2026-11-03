@@ -1,6 +1,7 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { setSocketOptions, sweepSocketTimers } from "bun:internal-for-testing";
+import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { randomBytes } from "crypto";
-import { bunEnv, bunExe, tempDir, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir, tls as tlsCert } from "harness";
 import http2 from "node:http2";
 import net from "node:net";
 import { join } from "node:path";
@@ -406,16 +407,28 @@ for (const secure of [true, false]) {
       for (const r of results) expect(sha256(r.body)).toBe(expected);
     }, 30000); // 40 MB through 64 KB client windows; slow on debug/ASAN
 
-    test("expect: 100-continue gets an interim response", async () => {
+    test.each(["100-continue", "100-Continue"])("expect: %s gets an interim response", async expectation => {
       const raw = await RawH2.connect(fx.port, secure);
       await raw.waitFor(f => f.type === T.SETTINGS);
-      raw.headers(1, [...baseHeaders("/echo", "POST"), ["expect", "100-continue"]], F.END_HEADERS);
+      raw.headers(1, [...baseHeaders("/echo", "POST"), ["expect", expectation]], F.END_HEADERS);
       const interim = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1);
       expect(decodeStatus(interim.payload)).toBe(100);
       expect(interim.flags & F.END_STREAM).toBe(0);
       raw.write(frame(T.DATA, F.END_STREAM, 1, Buffer.from("after-continue")));
       const d = await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && f.payload.length > 0);
       expect(d.payload.toString()).toBe("after-continue");
+      raw.close();
+    });
+
+    // A 100 Continue would start an upload that the 413 behind it refuses. HTTP/1.1 and HTTP/3 do the same.
+    test("answers 413 without an interim response when content-length exceeds maxRequestBodySize", async () => {
+      const raw = await RawH2.connect(fx.port, secure);
+      await raw.waitFor(f => f.type === T.SETTINGS);
+      // The default limit is 128 MiB.
+      const headers = [...baseHeaders("/echo", "POST"), ["expect", "100-continue"], ["content-length", "200000000"]];
+      raw.headers(1, headers as [string, string][], F.END_HEADERS);
+      const first = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1);
+      expect(decodeStatus(first.payload)).toBe(413);
       raw.close();
     });
 
@@ -970,4 +983,163 @@ describe("Bun.serve http2 in-process", () => {
       pendingRequests: 0,
     });
   });
+
+  // allowHalfOpen keeps the client's side open after the server's close_notify, so the client never answers it.
+  describe("a TLS client that never answers close_notify", () => {
+    async function pendingRequest(idleTimeout: number) {
+      const started = Promise.withResolvers<void>();
+      const aborted = Promise.withResolvers<void>();
+      const server = Bun.serve({
+        port: 0,
+        tls: tlsCert,
+        http2: true,
+        idleTimeout,
+        fetch(req) {
+          req.signal.addEventListener("abort", () => aborted.resolve());
+          started.resolve();
+          return new Promise<Response>(() => {});
+        },
+      });
+      const raw = await RawH2.connect(server.port!, true);
+      raw.socket.allowHalfOpen = true;
+      raw.socket.once("close", () => started.reject(new Error("closed before the request reached the handler")));
+      raw.headers(1, baseHeaders("/"));
+      await started.promise;
+      return { server, raw, aborted: aborted.promise };
+    }
+
+    test("stop(true) aborts the open stream and resolves", async () => {
+      const { server, raw, aborted } = await pendingRequest(0);
+      try {
+        await Promise.all([server.stop(true), aborted]);
+      } finally {
+        raw.close();
+      }
+    });
+
+    test("the idle timeout aborts the open stream", async () => {
+      const { server, raw, aborted } = await pendingRequest(1);
+      try {
+        sweepSocketTimers(2);
+        await aborted;
+      } finally {
+        raw.close();
+        await server.stop(true);
+      }
+    });
+  });
+
+  // Linux only: macOS sends to a reader that freed less than a segment of its window only at the next persist probe, seconds later.
+  test.skipIf(!isLinux).each([
+    ["cleartext", false],
+    ["TLS", true],
+  ] as const)("a slow reader stays connected until it stalls (%s)", async (_name, secure) => {
+    const onAbort = mock();
+    await using server = Bun.serve({
+      port: 0,
+      tls: secure ? tlsCert : undefined,
+      http2: true,
+      // Two sweeps, so each timeout comes a whole read after the timer was armed.
+      idleTimeout: 1,
+      fetch(req) {
+        req.signal.addEventListener("abort", onAbort);
+        return new Response(new Uint8Array(16 * 1024 * 1024));
+      },
+    });
+    // Both flow-control windows are wide open, so only the socket holds the response back.
+    const maxWindow = 0x7fffffff;
+    const streamWindow = Buffer.alloc(6);
+    streamWindow.writeUInt16BE(0x4 /* SETTINGS_INITIAL_WINDOW_SIZE */, 0);
+    streamWindow.writeUInt32BE(maxWindow, 2);
+    const connectionWindow = Buffer.alloc(4);
+    connectionWindow.writeUInt32BE(maxWindow - 65535);
+    const raw = await RawH2.connect(server.port!, secure, { settings: streamWindow });
+    // A small receive buffer makes every read open the window. The reads stay too small for a writable event on the server.
+    setSocketOptions(raw.socket, 2 /* SO_RCVBUF */, 128 * 1024);
+    let received = 0;
+    let wake = Promise.withResolvers<void>();
+    raw.socket.on("close", () => wake.resolve());
+    raw.socket.on("data", chunk => {
+      received += chunk.length;
+      wake.resolve();
+    });
+    try {
+      raw.write(frame(T.WINDOW_UPDATE, 0, 0, connectionWindow));
+      raw.headers(1, baseHeaders("/"));
+      for (let i = 0; i < 8; i++) {
+        const target = received + 256 * 1024;
+        raw.socket.resume();
+        while (received < target && !raw.closed) {
+          wake = Promise.withResolvers<void>();
+          await wake.promise;
+        }
+        raw.socket.pause();
+        sweepSocketTimers(1);
+      }
+      expect(onAbort).not.toHaveBeenCalled();
+
+      for (let i = 0; i < 8 && onAbort.mock.calls.length === 0; i++) sweepSocketTimers(1);
+      expect(onAbort).toHaveBeenCalledTimes(1);
+    } finally {
+      raw.close();
+    }
+  });
+});
+
+test.concurrent.each([
+  ["HTTP/2", "HTTP/1.1"],
+  ["HTTP/1.1", "HTTP/2"],
+])("development mode warns about the idle timeout once, whether %s or %s times out first", async (...order) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import { sweepSocketTimers } from "bun:internal-for-testing";
+      import http2 from "node:http2";
+      import net from "node:net";
+      let started = Promise.withResolvers();
+      let aborted = Promise.withResolvers();
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        development: true,
+        http2: true,
+        fetch(req) {
+          req.signal.addEventListener("abort", () => aborted.resolve());
+          started.resolve();
+          return new Promise(() => {});
+        },
+      });
+      for (const protocol of ${JSON.stringify(order)}) {
+        let client;
+        if (protocol === "HTTP/2") {
+          client = http2.connect("http://127.0.0.1:" + server.port);
+          client.request({ ":path": "/" }).on("error", () => {}).end();
+        } else {
+          client = net.connect(server.port, "127.0.0.1");
+          client.write("GET / HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\n");
+        }
+        client.on("error", () => {});
+        await started.promise;
+        // uWS arms the request's timer after the handler returns. The default 10 seconds are 4 sweeps.
+        await new Promise(setImmediate);
+        sweepSocketTimers(4);
+        await aborted.promise;
+        console.log(protocol, "timed out");
+        client.destroy();
+        started = Promise.withResolvers();
+        aborted = Promise.withResolvers();
+      }
+      await server.stop(true);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("warn: Bun.serve() timed out a request after 10 seconds. Pass `idleTimeout` to configure.\n");
+  expect(stdout).toBe(order.map(protocol => protocol + " timed out\n").join(""));
+  expect(exitCode).toBe(0);
 });

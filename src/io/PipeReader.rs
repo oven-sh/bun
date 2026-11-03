@@ -584,6 +584,11 @@ impl PosixBufferedReader {
         self.limit = ReadLimit(len);
     }
 
+    /// Returns true if `set_limit` asked for more bytes than the reader has read so far.
+    pub fn is_below_limit(&self) -> bool {
+        self.limit.0.is_some_and(|remaining| remaining > 0)
+    }
+
     // Exists for consistently with Windows.
     pub fn has_pending_read(&self) -> bool {
         // `is_watching()` (registered && !needs-rearm) rather than
@@ -1357,6 +1362,11 @@ impl WindowsBufferedReader {
     /// See `PosixBufferedReader::set_limit`.
     pub fn set_limit(&mut self, len: Option<usize>) {
         self.limit = ReadLimit(len);
+    }
+
+    /// See `PosixBufferedReader::is_below_limit`.
+    pub fn is_below_limit(&self) -> bool {
+        self.limit.0.is_some_and(|remaining| remaining > 0)
     }
 
     pub fn set_raw_mode(&mut self, value: bool) -> sys::Result<()> {

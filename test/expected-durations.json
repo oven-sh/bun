@@ -13185,13 +13185,6 @@
     "windows": 26300,
     "windows-aarch64": 27000
   },
-  "js/bun/http/server-url-invalid.test.ts": {
-    "default": 100,
-    "asan": 100,
-    "musl": 100,
-    "windows": 100,
-    "windows-aarch64": 100
-  },
   "js/bun/http/tls-bunfile-leak.test.ts": {
     "default": 100,
     "asan": 900,

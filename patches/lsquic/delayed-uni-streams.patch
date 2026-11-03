@@ -1,0 +1,85 @@
+--- a/src/liblsquic/lsquic_full_conn_ietf.c
++++ b/src/liblsquic/lsquic_full_conn_ietf.c
+@@ -2778,16 +2778,28 @@ maybe_create_delayed_streams (struct ietf_full_conn *conn)
+ }
+ 
+ 
+-/* bun: drain locally-initiated uni streams once MAX_STREAMS(uni) credit
+- * arrives (counterpart of maybe_create_delayed_streams for SD_UNI). */
+ static int
+ handshake_done_or_doing_sess_resume (const struct ietf_full_conn *);
+ 
++/* bun: until this is true, lsquic_conn_make_uni_stream() counts the request in
++ * ifc_n_delayed_uni_streams, as ifc_n_delayed_streams does for bidi. */
++static int
++can_create_uni_stream (const struct ietf_full_conn *conn)
++{
++    return handshake_done_or_doing_sess_resume(conn)
++        /* HTTP mode: on_settings_frame() creates the QPACK encoder stream.  A
++         * stream created before that takes its stream ID, and its credit when
++         * the peer only allows the three HTTP/3 streams. */
++        && (conn->ifc_flags & (IFC_HTTP|IFC_HAVE_PEER_SET)) != IFC_HTTP
++        && avail_streams_count(conn, conn->ifc_flags & IFC_SERVER, SD_UNI) > 0;
++}
++
++
++/* bun: counterpart of maybe_create_delayed_streams for SD_UNI. */
+ static void
+ maybe_create_delayed_uni_streams (struct ietf_full_conn *conn)
+ {
+-    while (conn->ifc_n_delayed_uni_streams
+-        && avail_streams_count(conn, conn->ifc_flags & IFC_SERVER, SD_UNI))
++    while (conn->ifc_n_delayed_uni_streams && can_create_uni_stream(conn))
+     {
+         if (0 != create_uni_stream_out(conn, LSQUIC_STREAM_DEFAULT_PRIO,
+                     conn->ifc_enpub->enp_stream_if,
+@@ -8980,24 +8992,15 @@ ietf_full_conn_ci_make_stream (struct lsquic_conn *lconn)
+ 
+ /* Bun patch: locally initiate a unidirectional stream using the engine's
+  * stream_if (raw QUIC, no HTTP).  Upstream lsquic_conn_make_stream is
+- * bidi-only; node:quic's createUnidirectionalStream needs this.  Unlike the
+- * bidi path there is no delayed-stream queue for uni: the caller is
+- * expected to wait for the handshake. */
++ * bidi-only; node:quic's createUnidirectionalStream needs this.  The stream
++ * is created now, or the request is counted and the stream is created later.
++ * A connection that is going away doesn't refuse it: GOAWAY only limits
++ * requests (RFC 9114, Section 5.2). */
+ void
+ lsquic_conn_make_uni_stream (struct lsquic_conn *lconn)
+ {
+     struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
+-    if (!handshake_done_or_doing_sess_resume(conn)
+-        || either_side_going_away(conn))
+-    {
+-        (void) conn->ifc_enpub->enp_stream_if->on_new_stream(
+-                                    conn->ifc_enpub->enp_stream_if_ctx, NULL);
+-        return;
+-    }
+-    /* Honor the peer's MAX_STREAMS(uni) credit: delay creation (the
+-     * caller's stream stays pending) until credit arrives, mirroring the
+-     * bidi delayed-stream queue. */
+-    if (0 == avail_streams_count(conn, conn->ifc_flags & IFC_SERVER, SD_UNI))
++    if (!can_create_uni_stream(conn))
+     {
+         ++conn->ifc_n_delayed_uni_streams;
+         LSQ_DEBUG("delayed uni stream creation.  Backlog size: %u",
+@@ -9011,6 +9014,19 @@ lsquic_conn_make_uni_stream (struct lsquic_conn *lconn)
+ }
+ 
+ 
++/* bun: lsquic_conn_cancel_pending_streams() for uni stream requests. */
++unsigned
++lsquic_conn_cancel_pending_uni_streams (struct lsquic_conn *lconn, unsigned n)
++{
++    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
++    if (n > conn->ifc_n_delayed_uni_streams)
++        conn->ifc_n_delayed_uni_streams = 0;
++    else
++        conn->ifc_n_delayed_uni_streams -= n;
++    return conn->ifc_n_delayed_uni_streams;
++}
++
++
+ static void
+ ietf_full_conn_ci_internal_error (struct lsquic_conn *lconn,
+                                                     const char *format, ...)

@@ -1,6 +1,6 @@
 // When `active_requests_count >= max_simultaneous_requests`, new fetch()
 // requests sit in the HTTP thread's queue without a socket. Their
-// `async_http_id` is therefore not in `socket_async_http_abort_tracker`, so
+// `async_http_id` is therefore not in the thread's table of started requests, so
 // `drainQueuedShutdowns` used to silently drop the abort and `drainEvents`
 // would early-return without touching the queue. If every active request was
 // itself hung, the aborted request's promise never settled even though

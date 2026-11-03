@@ -189,6 +189,26 @@ impl GarbageCollectionController {
         self.gc_last_heap_size.set(vm.block_bytes_allocated());
     }
 
+    /// Something outside the heap waits for a finalizer: a dropped `Response` holds a request slot that a `fetch()` needs.
+    pub fn collect_for_finalizers(&self) {
+        VirtualMachine::get()
+            .jsc_vm()
+            .collect_async_for_finalizers();
+        // As for `needs_ticks_to_finish`.
+        if cfg!(windows) && !self.disabled.get() {
+            self.heap_size_didnt_change_for_repeating_timer_ticks_count
+                .set(0);
+            self.gc_repeating_timer_fast.set(true);
+            Self::arm(
+                VirtualMachine::get_mut_ptr(),
+                core::ptr::addr_of!(self.gc_repeating_timer)
+                    .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
+                    .cast_mut(),
+                self.repeat_interval(),
+            );
+        }
+    }
+
     /// `Tag::GcRepeating` fire body: `BUN_GC_TIMER_INTERVAL` (default 1 s) in fast mode, 30 s in slow mode; drops to slow after 30 fires without heap growth beyond the chatter slack, back to fast when it grows.
     ///
     /// # Safety

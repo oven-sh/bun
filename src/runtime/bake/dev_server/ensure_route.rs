@@ -45,6 +45,7 @@ impl RequestEnsureRouteBundledCtx<'_> {
     }
 
     fn on_plugin_error(&mut self) -> JsResult<()> {
+        self.resp.write_status(b"500 Internal Server Error");
         self.resp.end(b"Plugin Error", false);
         Ok(())
     }
@@ -291,6 +292,7 @@ impl DevServer {
                         },
                         deferred_data_ptr,
                     );
+                    resp.suspend_timeout();
                     break 'brk Handler::BundledHtmlPage(ResponseAndMethod {
                         response: resp,
                         method,

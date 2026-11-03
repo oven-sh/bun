@@ -605,3 +605,33 @@ describe("Bun.connect TLS hostname verification", () => {
     }
   });
 });
+
+// undici passes `servername: null` when the origin's host is an IP address.
+describe("tls.connect({ servername: null }) to an IP address sends no SNI", () => {
+  for (const wrapsSocket of [false, true]) {
+    test(wrapsSocket ? "over options.socket" : "over its own connection", async () => {
+      const seen = Promise.withResolvers<unknown>();
+      const server = tls.createServer(ipSanCert, socket => {
+        seen.resolve(socket.servername);
+        socket.end();
+      });
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const options = { host: "127.0.0.1", port: (server.address() as AddressInfo).port };
+      const raw = wrapsSocket ? net.connect(options) : undefined;
+      try {
+        if (raw) await once(raw, "connect");
+        const socket = tls.connect({ ...options, socket: raw, ca: ipSanCert.cert, servername: null as any });
+        await once(socket, "secureConnect");
+        assert.deepStrictEqual(
+          { server: await seen.promise, client: socket.servername, authorized: socket.authorized },
+          { server: false, client: false, authorized: true },
+        );
+        socket.destroy();
+      } finally {
+        raw?.destroy();
+        server.close();
+      }
+    });
+  }
+});

@@ -230,8 +230,7 @@ describe("http3 response header field validation", () => {
   test("rejects a response carrying a connection-specific header field instead of delivering it", async () => {
     // RFC 9114 §4.2 forbids connection-specific fields in HTTP/3 responses. The
     // HTTP/2 client already rejects such response header blocks
-    // (h2_client/dispatch.rs is_malformed_response_field /
-    // is_malformed_response_value); this exercises the same validation on the
+    // (h2_client/dispatch.rs is_malformed_response_field); this exercises the same validation on the
     // HTTP/3 response path. Bun.serve's HTTP/3 writer strips `connection`,
     // `keep-alive`, `proxy-connection` and `upgrade` itself but forwards `te`
     // verbatim, so a handler returning `te: trailers` produces exactly the kind

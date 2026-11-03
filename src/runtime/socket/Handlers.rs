@@ -13,10 +13,11 @@ use bun_sys::Fd;
 use bun_uws as uws;
 
 use super::Listener as SocketListener;
+use super::SSLConfig;
 use super::SocketMode;
 use super::js_socket_handlers::{CALLBACK_COUNT, JSSocketHandlers};
 use super::listener::ListenerType;
-use super::{SSLConfig, SSLConfigFromJs};
+use super::ssl_config::ParsedTls;
 
 // ─── local shims (upstream-crate gaps) ──────────────────────────────────────
 unsafe extern "C" {
@@ -150,6 +151,14 @@ impl Handlers {
     }
     pub(crate) fn on_alpn_callback(&self) -> JSValue {
         self.cell.on_alpn_callback()
+    }
+    pub(crate) fn on_write_complete(&self) -> JSValue {
+        self.cell.on_write_complete()
+    }
+
+    /// The context of the script that gave these handlers.
+    pub(crate) fn context(&self) -> bun_jsc::ContextId {
+        self.context
     }
 
     /// Drops the `open` callback for every holder of this `Handlers` — a client
@@ -366,6 +375,7 @@ impl Handlers {
         let on_keylog = validated_callback!(on_keylog, "onKeylog");
         let on_server_name = validated_callback!(on_server_name, "onServerName");
         let on_alpn_callback = validated_callback!(on_alpn_callback, "onALPNCallback");
+        let on_write_complete = validated_callback!(on_write_complete, "onWriteComplete");
 
         if on_data.is_empty() && on_writable.is_empty() {
             return Err(global_object.throw_invalid_arguments(format_args!(
@@ -387,6 +397,7 @@ impl Handlers {
             on_keylog,
             on_server_name,
             on_alpn_callback,
+            on_write_complete,
         ])
     }
 
@@ -414,6 +425,13 @@ impl Handlers {
         let wrapped = Self::wrap_with_context(global_object, &reloaded.callbacks);
         self.cell.set_callbacks(global_object, &wrapped);
         self.binary_type.set(reloaded.binary_type);
+    }
+
+    /// Like [`apply_reload`](Self::apply_reload), but copies `source`'s callbacks, which are already context-wrapped.
+    pub(crate) fn copy_callbacks_from(&self, global_object: &JSGlobalObject, source: &Handlers) {
+        self.cell
+            .set_callbacks(global_object, &source.cell.callbacks());
+        self.binary_type.set(source.binary_type.get());
     }
 }
 
@@ -448,6 +466,8 @@ pub(crate) struct SocketConfig {
     pub(crate) hostname_or_unix: Utf8Bytes<'static>,
     pub(crate) port: Option<u16>,
     pub(crate) fd: Option<Fd>,
+    pub(crate) fd_is_write_only: bool,
+    pub(crate) local_binding: Option<(Box<[u8]>, u16)>,
     pub(crate) ssl: Option<SSLConfig>,
     pub(crate) handlers: Rc<Handlers>,
     pub(crate) default_data: JSValue,
@@ -457,6 +477,8 @@ pub(crate) struct SocketConfig {
     pub(crate) ipv6_only: bool,
     /// node:net's `pauseOnConnect`: the socket, or every accepted one, opens paused.
     pub(crate) pause_on_connect: bool,
+    /// node:net sets the private `$defaultTimeout` to false, because `net.Socket` keeps its own timer: an accepted socket then starts without the 120 second timeout.
+    pub(crate) default_timeout: bool,
 }
 
 impl SocketConfig {
@@ -471,9 +493,8 @@ impl SocketConfig {
             uws::LIBUS_LISTEN_DEFAULT
         };
 
-        if self.allow_half_open {
-            flags |= uws::LIBUS_SOCKET_ALLOW_HALF_OPEN;
-        }
+        // The loop never closes on a FIN. `NewSocket::on_end` applies `allow_half_open`.
+        flags |= uws::LIBUS_SOCKET_ALLOW_HALF_OPEN;
         if self.ipv6_only {
             flags |= uws::LIBUS_SOCKET_IPV6_ONLY;
         }
@@ -492,16 +513,18 @@ impl SocketConfig {
     ) -> JsResult<SocketConfig> {
         let mut result: SocketConfig = 'blk: {
             let ssl: Option<SSLConfig> = match &generated.tls {
-                SocketOptionsTLS::None => None,
-                SocketOptionsTLS::Boolean(b) => {
-                    if *b {
-                        Some(super::tls_true_defaults(vm, mode.is_server()))
-                    } else {
-                        None
-                    }
+                SocketOptionsTLS::None | SocketOptionsTLS::Boolean(false) => None,
+                SocketOptionsTLS::Boolean(true) => {
+                    Some(vm.tls_config(Default::default(), mode.is_server()))
                 }
                 SocketOptionsTLS::Object(ssl) => {
-                    SSLConfig::from_generated(vm, global, ssl, mode.is_server())?
+                    let parsed = ParsedTls::from_generated(vm, global, ssl, mode.is_server())?;
+                    // `Bun.listen({ tls: {} })` is plaintext. A client that passed an object asked for TLS.
+                    if mode.is_server() {
+                        parsed.or_none()
+                    } else {
+                        Some(parsed.or_defaults(vm, false))
+                    }
                 }
             };
             break 'blk SocketConfig {
@@ -509,13 +532,15 @@ impl SocketConfig {
                 port: None,
                 fd: generated.fd.map(|v| {
                     #[cfg(windows)]
-                    {
-                        Fd::from_system(v as u32 as usize as *mut core::ffi::c_void)
+                    if mode.is_server() || generated.fd_is_raw_socket {
+                        return Fd::from_system(v as u32 as usize as *mut core::ffi::c_void);
                     }
-                    #[cfg(not(windows))]
-                    {
-                        Fd::from_uv(v)
-                    }
+                    Fd::from_uv(v)
+                }),
+                fd_is_write_only: generated.fd_is_write_only,
+                local_binding: generated.local_address.map(|address| {
+                    let port = generated.local_port.unwrap_or(0.0).clamp(0.0, 65535.0) as u16;
+                    (address.into_utf8().into_vec().into_boxed_slice(), port)
                 }),
                 ssl,
                 handlers: Handlers::from_generated(global, &generated.handlers, mode)?,
@@ -524,29 +549,20 @@ impl SocketConfig {
                 } else {
                     generated.data.to_js()
                 },
-                exclusive: false,
-                allow_half_open: false,
-                reuse_port: false,
-                ipv6_only: false,
-                pause_on_connect: false,
+                exclusive: generated.exclusive,
+                allow_half_open: generated.allow_half_open,
+                reuse_port: generated.reuse_port,
+                ipv6_only: generated.ipv6_only,
+                pause_on_connect: generated.pause_on_connect,
+                default_timeout: true,
             };
         };
         // On any `?` below, `result` drops and releases what it owns — no
         // manual error-path cleanup needed.
 
-        result.exclusive = generated.exclusive;
-        result.allow_half_open = generated.allow_half_open;
-        result.reuse_port = generated.reuse_port;
-        result.ipv6_only = generated.ipv6_only;
-        result.pause_on_connect = generated.pause_on_connect;
-
         if result.fd.is_some() {
             // If a user passes a file descriptor then prefer it over hostname or unix
         } else if let Some(unix) = generated.unix_ {
-            if unix.length() == 0 {
-                return Err(global
-                    .throw_invalid_arguments(format_args!("Expected a non-empty \"unix\" path")));
-            }
             result.hostname_or_unix = unix.into_utf8();
             let slice = result.hostname_or_unix.slice();
             if slice.starts_with(b"file://")
@@ -593,8 +609,12 @@ impl SocketConfig {
         global_object: &JSGlobalObject,
         mode: SocketMode,
     ) -> JsResult<SocketConfig> {
-        SocketOptions::from_js(global_object, opts, |generated| {
+        let mut config = SocketOptions::from_js(global_object, opts, |generated| {
             Self::from_generated(vm, global_object, generated, mode)
-        })
+        })?;
+        config.default_timeout = opts
+            .fast_get(global_object, bun_jsc::BuiltinName::defaultTimeout)?
+            .is_none_or(|value| value.to_boolean());
+        Ok(config)
     }
 }

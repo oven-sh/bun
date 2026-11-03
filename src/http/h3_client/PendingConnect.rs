@@ -146,7 +146,7 @@ impl PendingConnect {
             if let Some(cl) = cl {
                 // HTTPClient outlives its h3 Stream; detach() nulled stream.client
                 // but `cl` is alive — `client_mut` centralises this backref upgrade.
-                super::client_session::client_mut(cl).fail_from_h2(err);
+                super::client_session::client_mut(cl).h3_upgrade_failed(err);
             }
         }
         let _ = super::LIVE_SESSIONS.fetch_sub(1, Ordering::Relaxed);

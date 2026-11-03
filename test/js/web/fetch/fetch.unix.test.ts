@@ -1,5 +1,5 @@
 import { serve, ServeOptions, Server } from "bun";
-import { afterAll, expect, it } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
 import { once } from "events";
 import { mkdirSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir, tls, tmpdirSync } from "harness";
@@ -547,6 +547,31 @@ it.skipIf(isWindows)("unix keep-alive entries are not evicted by TCP pool pressu
   }
 });
 
+it("rejects a unix option that isn't a string instead of connecting over TCP", async () => {
+  let requests = 0;
+  using tcp = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch() {
+      requests++;
+      return new Response("via TCP");
+    },
+  });
+  const send = (unix: unknown) =>
+    fetch(tcp.url, { unix } as any).then(
+      res => res.text(),
+      e => `${e.name} ${e.code}: ${e.message}`,
+    );
+  const sock = join(tmp_dir, "not-listening.sock");
+  for (const unix of [Buffer.from(sock), Bun.pathToFileURL(sock), { toString: () => sock }, 42, true, Symbol()]) {
+    expect(await send(unix)).toBe("TypeError ERR_INVALID_ARG_TYPE: fetch: 'unix' must be a string");
+  }
+  expect(requests).toBe(0);
+  for (const unix of ["", null, undefined, false, 0]) {
+    expect(await send(unix)).toBe("via TCP");
+  }
+});
+
 it("handle redirect to non-unix", async () => {
   startServer({
     async fetch(req) {
@@ -576,12 +601,10 @@ it("handle redirect to non-unix", async () => {
   }
 });
 
-// Following a redirect hands a reusable connection to the keep-alive pool,
-// keyed by the request URL's host and port. A unix-socket connection is not
-// reusable that way: the request URL below names the TCP server, so pooling
-// the unix connection would serve the TCP hop (and any later fetch of that
-// host:port) from the unix server.
-it("does not pool the unix-socket connection whose redirect is being followed", async () => {
+// The request URL below names the TCP server. If a redirected unix connection
+// were pooled under the URL's host and port, the plain fetch of that host:port
+// would reach the unix server.
+it("does not pool a redirected unix-socket connection under the URL's host and port", async () => {
   startServer({
     fetch(req) {
       return new Response(`tcp ${new URL(req.url).pathname}`);
@@ -599,8 +622,91 @@ it("does not pool the unix-socket connection whose redirect is being followed", 
 
   const results: string[] = [];
   for (let i = 0; i < 5; i++) {
-    const response = await fetch(`http://127.0.0.1:${server.port}/hello`, { unix: path });
-    results.push(`${response.status} ${response.redirected} ${await response.text()}`);
+    const redirected = await fetch(`http://127.0.0.1:${server.port}/hello`, { unix: path });
+    const direct = await fetch(`http://127.0.0.1:${server.port}/world`);
+    results.push(`${redirected.status} ${redirected.redirected} ${await redirected.text()} | ${await direct.text()}`);
   }
-  expect(results).toEqual(Array(5).fill("200 true tcp /world"));
+  expect(results).toEqual(Array(5).fill("200 true unix /world | tcp /world"));
+});
+
+// With `unix`, the URL's authority only fills in the Host header, so a redirect
+// to the same origin is still meant for the unix server. Most URLs below name a
+// live TCP listener, so a hop that leaves the socket shows up in `tcp`.
+describe("redirects over a unix socket", () => {
+  const auth = "Bearer daemon-token";
+  const cases: [name: string, path: string, init: RequestInit, unix: string[], tcp: string[], body: string][] = [
+    ["follows a relative Location", "/relative", {}, ["GET /relative", "GET /done"], [], "unix /done"],
+    ["follows an absolute same-origin Location", "/absolute", {}, ["GET /absolute", "GET /done"], [], "unix /done"],
+    ["stays across several hops", "/chain", {}, ["GET /chain", "GET /relative", "GET /done"], [], "unix /done"],
+    [
+      "resends a 307's body",
+      "/resend",
+      { method: "POST", body: "payload" },
+      ["POST /resend", "POST /echo"],
+      [],
+      "unix payload",
+    ],
+  ];
+
+  function start() {
+    const seen = { unix: [] as string[], tcp: [] as string[] };
+    const log = (list: string[], req: Request) =>
+      list.push(`${req.method} ${new URL(req.url).pathname} ${req.headers.get("authorization")}`);
+    startServer({
+      fetch(req) {
+        log(seen.tcp, req);
+        return new Response("tcp");
+      },
+    });
+    const origin = `http://127.0.0.1:${server.port}`;
+    const unix = startServerUnix({
+      async fetch(req) {
+        log(seen.unix, req);
+        const { pathname } = new URL(req.url);
+        const locations: Record<string, string> = {
+          "/relative": "/done",
+          "/absolute": `${origin}/done`,
+          "/chain": "/relative",
+          "/resend": "/echo",
+          "/leave": `http://localhost:${server.port}/done`,
+        };
+        const Location = locations[pathname];
+        if (Location) return new Response(null, { status: pathname === "/resend" ? 307 : 302, headers: { Location } });
+        return new Response(`unix ${pathname === "/echo" ? await req.text() : pathname}`);
+      },
+    });
+    return { seen, origin, unix };
+  }
+
+  it.each(cases)("%s", async (_, path, init, unixSeen, tcpSeen, body) => {
+    const { seen, origin, unix } = start();
+    const response = await fetch(origin + path, { ...init, unix, headers: { Authorization: auth } });
+    expect({ body: await response.text(), redirected: response.redirected, ...seen }).toEqual({
+      body,
+      redirected: true,
+      unix: unixSeen.map(line => `${line} ${auth}`),
+      tcp: tcpSeen,
+    });
+  });
+
+  it("works when nothing listens on the URL's host and port", async () => {
+    const { seen, unix } = start();
+    const response = await fetch("http://localhost/relative", { unix });
+    expect({ body: await response.text(), url: response.url, ...seen }).toEqual({
+      body: "unix /done",
+      url: "http://localhost/done",
+      unix: ["GET /relative null", "GET /done null"],
+      tcp: [],
+    });
+  });
+
+  it("leaves the socket, without credentials, for a cross-origin Location", async () => {
+    const { seen, origin, unix } = start();
+    const response = await fetch(`${origin}/leave`, { unix, headers: { Authorization: auth } });
+    expect({ body: await response.text(), ...seen }).toEqual({
+      body: "tcp",
+      unix: [`GET /leave ${auth}`],
+      tcp: ["GET /done null"],
+    });
+  });
 });

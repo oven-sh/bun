@@ -66,6 +66,10 @@ public:
     // Body.textStream(): the native source adapter decodes each chunk as UTF-8
     // text before enqueue.
     bool m_nativeTextMode : 1 { false };
+    // Set once a default reader is acquired with ReaderOwner::Native. Never cleared.
+    bool m_nonScriptConsumer : 1 { false };
+    // Rust's `BodyFacts` for the bytes of a Request or Response body. tee() copies them to both branches.
+    uint8_t m_bodyFacts : 3 { 0 };
 
     // [[reader]] — a default reader, a BYOB reader, or null (undefined).
     JSC::WriteBarrier<JSReadableStreamReaderBase> m_reader;
@@ -122,6 +126,11 @@ public:
     bool nativeHandleDetached() const
     {
         return m_transferred || m_consumedAsBody || (m_nativePtr.get().isInt32() && m_nativePtr.get().asInt32() == -1);
+    }
+    // Nothing has started or locked the native source: every byte is behind its handle, none in a controller's queue.
+    bool hasPendingNativeSource() const
+    {
+        return m_bunMode == BunStreamMode::NativePending && m_state == ReadableStreamState::Readable && !m_reader && !m_lockedWithoutReader && !nativeHandleDetached();
     }
     // A Body consumer holds this stream now. It stays disturbed and locked after the consumer lets go of it.
     void markConsumedAsBody()

@@ -2,7 +2,7 @@
 // `convertChunksToText` (BunStreamConsumers.cpp) allocates ONE of these and drives the
 // shared accumulator through it (the cell is the GC owner of the accumulated chunk
 // barriers). It is deliberately DISTINCT from `JSDirectStreamController`'s Text arm (the
-// two have different BOM behaviors); the accumulation LOGIC is shared through the ONE
+// two treat a BOM in a string chunk differently); the accumulation LOGIC is shared through the ONE
 // `BunTextAccumulator` value type below — "one implementation, two owners".
 // Internal cell: no prototype, no constructor, never exposed to JS.
 // DESTRUCTIBLE: the accumulator owns a WTF::StringBuilder + a WTF::Vector of barriers.

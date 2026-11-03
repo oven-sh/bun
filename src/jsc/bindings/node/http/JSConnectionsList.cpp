@@ -98,7 +98,7 @@ JSArray* JSConnectionsList::idle(JSGlobalObject* globalObject)
             continue;
         }
 
-        if (parser->impl()->lastMessageStart() == 0) {
+        if (parser->impl()->lastMessageStart() == 0 || !parser->impl()->receivedData()) {
             result->putDirectIndex(globalObject, i++, parser);
             RETURN_IF_EXCEPTION(scope, nullptr);
         }

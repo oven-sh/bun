@@ -415,12 +415,7 @@ impl Decompressor {
 
     /// [`decompress_to_vec`](Self::decompress_to_vec) with a doubling retry loop.
     ///
-    /// Clears `out` first (libdeflate restarts decompression from scratch on
-    /// each call), then repeatedly doubles `out`'s capacity on
-    /// [`Status::InsufficientSpace`] — clamped at `max_capacity` — until
-    /// success, hard error, or `out.capacity() >= max_capacity` (returned as
-    /// the final `InsufficientSpace`). On success, `out.len() == result.written`.
-    /// `Err` when a growth step cannot be allocated.
+    /// Returns [`Status::InsufficientSpace`] at `max_capacity`, and `Err` when `out` can't grow.
     pub fn decompress_to_vec_grow(
         &mut self,
         input: &[u8],
@@ -429,7 +424,6 @@ impl Decompressor {
         max_capacity: usize,
     ) -> core::result::Result<Result, AllocError> {
         loop {
-            out.clear();
             let result = self.decompress_to_vec(input, out, encoding);
             if result.status != Status::InsufficientSpace || out.capacity() >= max_capacity {
                 return Ok(result);

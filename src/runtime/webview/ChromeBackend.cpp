@@ -267,7 +267,6 @@ static constexpr us_socket_vtable_t s_cdpVTable = {
     .on_writable = cdpOnWritable,
     .on_close = cdpOnClose,
     .on_timeout = nullptr,
-    .on_long_timeout = nullptr,
     .on_end = cdpOnEnd,
     .on_connect_error = nullptr,
     .on_connecting_error = nullptr,

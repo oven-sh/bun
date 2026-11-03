@@ -19,7 +19,7 @@ import { bunEnv, bunExe, isLinux, isMusl } from "harness";
 // each scenario runs in its own process. Every test also does a real fetch()
 // through the seeded entry, which is consumed by usockets via
 // Bun__addrinfo_getRequestResult and start_connections().
-async function run(body: string, timeoutMs = 10_000) {
+async function run(body: string, timeoutMs = 10_000, execArgs: string[] = [], env: Record<string, string> = {}) {
   const fixture = /* js */ `
     const { dnsCacheSeed } = require("bun:internal-for-testing");
     if (typeof dnsCacheSeed !== "function") {
@@ -30,13 +30,14 @@ async function run(body: string, timeoutMs = 10_000) {
     ${body}
   `;
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", fixture],
+    cmd: [bunExe(), ...execArgs, "-e", fixture],
     env: {
       ...bunEnv,
       HTTP_PROXY: undefined,
       HTTPS_PROXY: undefined,
       http_proxy: undefined,
       https_proxy: undefined,
+      ...env,
     },
     stderr: "pipe",
     stdout: "pipe",
@@ -52,6 +53,45 @@ async function run(body: string, timeoutMs = 10_000) {
   }
   return { out, stderr, exitCode, signal: proc.signalCode };
 }
+
+const blackholePrelude = /* js */ `
+const { dlopen } = require("bun:ffi");
+const libc = dlopen("libc.so.6", {
+  socket:   { args: ["int","int","int"],           returns: "int" },
+  bind:     { args: ["int","ptr","int"],           returns: "int" },
+  listen:   { args: ["int","int"],                 returns: "int" },
+  connect:  { args: ["int","ptr","int"],           returns: "int" },
+  close:    { args: ["int"],                       returns: "int" },
+  setsockopt:{args: ["int","int","int","ptr","int"],returns:"int" },
+});
+const AF_INET=2, SOCK_STREAM=1, SOCK_NONBLOCK=0o4000, SOL_SOCKET=1, SO_REUSEADDR=2;
+function sockaddr_in(ip, port) {
+  const b = new Uint8Array(16);
+  new DataView(b.buffer).setUint16(0, AF_INET, true);
+  b[2] = (port>>8)&0xff; b[3] = port&0xff;
+  const o = ip.split(".").map(Number); b[4]=o[0]; b[5]=o[1]; b[6]=o[2]; b[7]=o[3];
+  return b;
+}
+const fds = [];
+// listen(fd, 0) + fill the one-slot accept queue so further SYNs to
+// ip:port are silently dropped (same EINPROGRESS a filtered network
+// produces).
+function blackhole(ip, port) {
+  const fd = libc.symbols.socket(AF_INET, SOCK_STREAM, 0);
+  if (fd < 0) throw new Error("socket() failed");
+  fds.push(fd);
+  const one = new Int32Array([1]);
+  libc.symbols.setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, one, 4);
+  if (libc.symbols.bind(fd, sockaddr_in(ip, port), 16) !== 0)
+    throw new Error("bind(" + ip + ":" + port + ") failed");
+  if (libc.symbols.listen(fd, 0) !== 0) throw new Error("listen() failed");
+  for (let i = 0; i < 8; i++) {
+    const c = libc.symbols.socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+    fds.push(c);
+    libc.symbols.connect(c, sockaddr_in(ip, port), 16);
+  }
+}
+`;
 
 describe.concurrent("getaddrinfo interleave (RFC 8305)", () => {
   test("fetch() through a seeded 4xAAAA + 4xA entry connects via the interleaved order", async () => {
@@ -123,42 +163,7 @@ describe.concurrent("getaddrinfo interleave (RFC 8305)", () => {
     async () => {
       const { out, stderr, exitCode, signal } = await run(
         /* js */ `
-        const { dlopen } = require("bun:ffi");
-        const libc = dlopen("libc.so.6", {
-          socket:   { args: ["int","int","int"],           returns: "int" },
-          bind:     { args: ["int","ptr","int"],           returns: "int" },
-          listen:   { args: ["int","int"],                 returns: "int" },
-          connect:  { args: ["int","ptr","int"],           returns: "int" },
-          close:    { args: ["int"],                       returns: "int" },
-          setsockopt:{args: ["int","int","int","ptr","int"],returns:"int" },
-        });
-        const AF_INET=2, SOCK_STREAM=1, SOCK_NONBLOCK=0o4000, SOL_SOCKET=1, SO_REUSEADDR=2;
-        function sockaddr_in(ip, port) {
-          const b = new Uint8Array(16);
-          new DataView(b.buffer).setUint16(0, AF_INET, true);
-          b[2] = (port>>8)&0xff; b[3] = port&0xff;
-          const o = ip.split(".").map(Number); b[4]=o[0]; b[5]=o[1]; b[6]=o[2]; b[7]=o[3];
-          return b;
-        }
-        const fds = [];
-        // listen(fd, 0) + fill the one-slot accept queue so further SYNs to
-        // ip:port are silently dropped (same EINPROGRESS a filtered network
-        // produces).
-        function blackhole(ip, port) {
-          const fd = libc.symbols.socket(AF_INET, SOCK_STREAM, 0);
-          if (fd < 0) throw new Error("socket() failed");
-          fds.push(fd);
-          const one = new Int32Array([1]);
-          libc.symbols.setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, one, 4);
-          if (libc.symbols.bind(fd, sockaddr_in(ip, port), 16) !== 0)
-            throw new Error("bind(" + ip + ":" + port + ") failed");
-          if (libc.symbols.listen(fd, 0) !== 0) throw new Error("listen() failed");
-          for (let i = 0; i < 8; i++) {
-            const c = libc.symbols.socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
-            fds.push(c);
-            libc.symbols.connect(c, sockaddr_in(ip, port), 16);
-          }
-        }
+        ${blackholePrelude}
 
         using server = Bun.serve({ port: 0, hostname: "::1", fetch: () => new Response("ok via ::1") });
         const port = server.port;
@@ -196,6 +201,91 @@ describe.concurrent("getaddrinfo interleave (RFC 8305)", () => {
         signal: null,
       });
       expect(out.ms).toBeLessThan(4000);
+    },
+    20_000,
+  );
+
+  test.skipIf(!isLinux || isMusl)(
+    "fetch() reaches the fifth address when two of the first four hang and two are refused",
+    async () => {
+      const { out, stderr, exitCode, signal } = await run(
+        /* js */ `
+        ${blackholePrelude}
+
+        using server = Bun.serve({ port: 0, hostname: "127.0.0.6", fetch: () => new Response("ok via 127.0.0.6") });
+        const port = server.port;
+        blackhole("127.0.0.2", port);
+        blackhole("127.0.0.3", port);
+        // Nothing listens on 127.0.0.4 or 127.0.0.5, so those connects are refused at once.
+        const host = "he-refill-" + port + ".test";
+        const order = dnsCacheSeed(host, ["127.0.0.2", "127.0.0.3", "127.0.0.4", "127.0.0.5", "127.0.0.6"]);
+
+        let result;
+        try {
+          const res = await fetch("http://" + host + ":" + port + "/", { signal: AbortSignal.timeout(4000) });
+          result = { ok: true, order, body: await res.text() };
+        } catch (e) {
+          result = { ok: false, order, err: e?.name ?? String(e) };
+        }
+        console.log(JSON.stringify(result));
+        for (const fd of fds) libc.symbols.close(fd);
+        process.exit(0);
+      `,
+        20_000,
+      );
+      expect({ out, stderr, exitCode, signal }).toEqual({
+        out: { ok: true, order: [4, 4, 4, 4, 4], body: "ok via 127.0.0.6" },
+        stderr: expect.any(String),
+        exitCode: 0,
+        signal: null,
+      });
+    },
+    20_000,
+  );
+
+  test.skipIf(!isLinux || isMusl)(
+    "a timeout set while every address still hangs fires when it's due",
+    async () => {
+      const { out, stderr, exitCode, signal } = await run(
+        /* js */ `
+        ${blackholePrelude}
+        const { sweepSocketTimers } = require("bun:internal-for-testing");
+
+        const free = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+        const port = free.port;
+        free.stop(true);
+        blackhole("127.0.0.2", port);
+        blackhole("127.0.0.3", port);
+        const host = "he-timeout-" + port + ".test";
+        dnsCacheSeed(host, ["127.0.0.2", "127.0.0.3"]);
+
+        const failed = Promise.withResolvers();
+        let early = true;
+        // Keeps the sweeps going, so that the timeout is set a moment after one.
+        using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+        sweepSocketTimers(1);
+        const ws = new WebSocket("ws://" + host + ":" + port);
+        ws.onerror = event => failed.resolve({ early, message: event.message.split(" failed: ")[1] });
+        // The next loop iteration dials both addresses.
+        await new Promise(resolve => setImmediate(resolve));
+        // A sweep runs every 4 seconds, and the 250th comes a moment too early.
+        sweepSocketTimers(1000 / 4);
+        early = false;
+        sweepSocketTimers(1);
+        console.log(JSON.stringify(await failed.promise));
+        for (const fd of fds) libc.symbols.close(fd);
+        process.exit(0);
+      `,
+        20_000,
+        [],
+        { BUN_CONFIG_WS_HANDSHAKE_TIMEOUT: "1000" },
+      );
+      expect({ out, stderr, exitCode, signal }).toEqual({
+        out: { early: false, message: "Timeout" },
+        stderr: expect.any(String),
+        exitCode: 0,
+        signal: null,
+      });
     },
     20_000,
   );
@@ -401,3 +491,63 @@ describe.concurrent(
     }
   },
 );
+
+// https://github.com/oven-sh/bun/issues/40178
+describe.concurrent("dns result order applies to fetch() and Bun.connect()", () => {
+  const seed = (addresses: string[]) => /* js */ `
+    console.log(JSON.stringify({ order: dnsCacheSeed("order.test", ${JSON.stringify(addresses)}) }));
+  `;
+
+  test.each([
+    ["ipv4first", ["::1", "::1", "127.0.0.1", "127.0.0.1"], [4, 6, 4, 6]],
+    ["ipv6first", ["127.0.0.1", "127.0.0.1", "::1", "::1"], [6, 4, 6, 4]],
+    ["verbatim", ["::1", "127.0.0.1"], [6, 4]],
+    ["ipv4first", ["::1", "::1", "::1"], [6, 6, 6]],
+  ])("--dns-result-order=%s packs %j as %j", async (flag, addresses, order) => {
+    const { out, stderr, exitCode } = await run(seed(addresses), 10_000, [`--dns-result-order=${flag}`]);
+    expect({ out, stderr, exitCode }).toEqual({ out: { order }, stderr: "", exitCode: 0 });
+  });
+
+  test("dns.setDefaultResultOrder() applies to later lookups and drops cached ones", async () => {
+    const { out, stderr, exitCode } = await run(/* js */ `
+      dnsCacheSeed("stale.test", ["::1", "127.0.0.1"]);
+      const before = Bun.dns.getCacheStats().size;
+      require("node:dns").setDefaultResultOrder("ipv4first");
+      const after = Bun.dns.getCacheStats().size;
+      const order = dnsCacheSeed("order.test", ["::1", "::1", "127.0.0.1", "127.0.0.1"]);
+      console.log(JSON.stringify({ before, after, order }));
+    `);
+    expect({ out, stderr, exitCode }).toEqual({
+      out: { before: 1, after: 0, order: [4, 6, 4, 6] },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("dns.setDefaultResultOrder() in a Worker only changes that Worker's dns.lookup() default", async () => {
+    const { out, stderr, exitCode } = await run(/* js */ `
+      const { once } = require("node:events");
+      const { Worker } = require("node:worker_threads");
+      dnsCacheSeed("cached.test", ["::1", "127.0.0.1"]);
+      const before = Bun.dns.getCacheStats().size;
+      const worker = new Worker(
+        \`
+        const dns = require("node:dns");
+        dns.setDefaultResultOrder("ipv4first");
+        require("node:worker_threads").parentPort.postMessage(dns.getDefaultResultOrder());
+        \`,
+        { eval: true },
+      );
+      const [inWorker] = await once(worker, "message");
+      await worker.terminate();
+      const after = Bun.dns.getCacheStats().size;
+      const order = dnsCacheSeed("order.test", ["::1", "::1", "127.0.0.1", "127.0.0.1"]);
+      console.log(JSON.stringify({ inWorker, onMain: require("node:dns").getDefaultResultOrder(), before, after, order }));
+    `);
+    expect({ out, stderr, exitCode }).toEqual({
+      out: { inWorker: "ipv4first", onMain: "verbatim", before: 1, after: 1, order: [6, 4, 6, 4] },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});

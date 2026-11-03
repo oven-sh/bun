@@ -31,6 +31,11 @@ pub(crate) fn proxy_for<'a>(
         .transpose()
 }
 
+/// `tunnelLiveCount()`
+pub(crate) fn tunnel_live_count() -> u32 {
+    bun_http::proxy_tunnel::LIVE_TUNNELS.load(core::sync::atomic::Ordering::Relaxed)
+}
+
 /// `parseURL(href)`: what the HTTP client's URL parser makes of `href`.
 pub(crate) fn parse_url(href: &[u8]) -> [(&'static [u8], &[u8]); 5] {
     let url = URL::parse(href);

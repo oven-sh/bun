@@ -120,7 +120,7 @@ fn write_stack_trace(w: &mut Vec<u8>, stack: &StackTrace) {
             w.push(b',');
         }
         write!(w, "{{\"line\":{},\"text\":", source_line.line + 1).unwrap();
-        write_string(w, &source_line.text);
+        write_source_line(w, &source_line.text);
         w.push(b'}');
     }
     w.extend_from_slice(b"]}");
@@ -171,7 +171,7 @@ fn write_message_data(w: &mut Vec<u8>, text: &[u8], location: Option<&Location>)
         w.extend_from_slice(b",\"namespace\":");
         write_string(w, &location.namespace);
         w.extend_from_slice(b",\"line_text\":");
-        write_string(w, location.line_text.as_deref().unwrap_or(b""));
+        write_source_line(w, location.line_text.as_deref().unwrap_or(b""));
         write!(
             w,
             ",\"line\":{},\"column\":{},\"offset\":{}}}",
@@ -180,6 +180,20 @@ fn write_message_data(w: &mut Vec<u8>, text: &[u8], location: Option<&Location>)
         .unwrap();
     }
     w.push(b'}');
+}
+
+/// Same cap as `MAX_LINE_LENGTH` in the terminal error printer, so the page doesn't carry a whole minified bundle.
+const MAX_SOURCE_LINE_LENGTH: usize = 1024;
+
+fn write_source_line(w: &mut Vec<u8>, text: &[u8]) {
+    if text.len() <= MAX_SOURCE_LINE_LENGTH {
+        return write_string(w, text);
+    }
+    let mut end = MAX_SOURCE_LINE_LENGTH;
+    while end > 0 && !strings::is_utf8_char_boundary(text[end]) {
+        end -= 1;
+    }
+    write_string(w, &[&text[..end], "…".as_bytes()].concat());
 }
 
 fn write_string(w: &mut Vec<u8>, bytes: &[u8]) {

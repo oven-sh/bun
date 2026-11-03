@@ -1,6 +1,7 @@
 import type { Server, Subprocess } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir, tempDirWithFiles } from "harness";
+import { writeFileSync } from "fs";
+import { bunEnv, bunExe, forEachLine, isDebug, isLinux, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 function replaceHash(html: string) {
@@ -1014,7 +1015,7 @@ describe("html route whose file a plugin resolves to a different file", () => {
       stdout: JSON.stringify({ devServer: [failurePage, failurePage], ...builtWithout[target] }),
       exitCode: 0,
     });
-    // Printed by the dev server (and by the development build when it fails too). Production says nothing.
+    // Printed by the dev server, and by the other two builds when they fail too.
     expect(stderr).toMatch(
       /error: Bundling "[^"]*index\.html" did not produce an html page for it\. A plugin may have resolved it to another file or loaded it as something other than html\./,
     );
@@ -1095,6 +1096,266 @@ test.concurrent("server.reload() while an html route's first bundle is still in 
   expect({ stdout, exitCode }, stderr).toEqual({
     stdout: JSON.stringify({ first: 200, second: 200, sameRouteBundle: true }),
     exitCode: 0,
+  });
+});
+
+// "/index.html" is also the bundler's output path for the page.
+test.concurrent.each([
+  { development: false, route: "/" },
+  { development: false, route: "/index.html" },
+  { development: { hmr: false }, route: "/" },
+  { development: { hmr: false }, route: "/index.html" },
+])("server.reload() keeps serving the chunks of a built html route (%j)", async ({ development, route }) => {
+  using dir = tempDir("bun-serve-html-reload-chunks", {
+    "index.html": `<!DOCTYPE html><html><head><link rel="stylesheet" href="./style.css"></head><body><script type="module" src="./app.ts"></script></body></html>`,
+    "style.css": `body { color: red; }`,
+    "app.ts": `console.log("app v1");`,
+    "serve.ts": /*ts*/ `
+      import html from "./index.html";
+      import { writeFileSync } from "node:fs";
+
+      const route = ${JSON.stringify(route)};
+      const options = {
+        port: 0,
+        hostname: "127.0.0.1",
+        development: ${JSON.stringify(development)},
+        routes: { [route]: html },
+        fetch: () => new Response("fallback", { status: 404 }),
+      };
+      using server = Bun.serve(options);
+      const get = async path => {
+        const res = await fetch(new URL(path, server.url));
+        return { status: res.status, body: await res.text() };
+      };
+      const chunks = async () => {
+        const page = (await get(route)).body;
+        return [/src="([^"]+\\.js)"/.exec(page)[1], /href="([^"]+\\.css)"/.exec(page)[1]];
+      };
+
+      const [js, css] = await chunks();
+      server.reload(options);
+      const afterReload = [(await get(js)).status, (await get(css)).status];
+
+      // The page still builds again after a reload, and the chunks of the previous build stay.
+      writeFileSync("app.ts", 'console.log("app v2");');
+      server.reload(options);
+      const [rebuilt] = await chunks();
+      console.log(JSON.stringify({
+        afterReload,
+        rebuilt: (await get(rebuilt)).body.includes("app v2"),
+        afterRebuild: (await get(js)).status,
+      }));
+    `,
+  });
+  const { stdout, stderr, exitCode } = await runServeFixture(dir);
+  expect({ stdout, exitCode }, stderr).toEqual({
+    stdout: JSON.stringify({ afterReload: [200, 200], rebuilt: true, afterRebuild: 200 }),
+    exitCode: 0,
+  });
+});
+
+describe("server.reload() that adds the first html route", () => {
+  const page = {
+    "index.html": `<!DOCTYPE html><html><head><title>t</title></head><body><script type="module" src="./app.ts"></script></body></html>`,
+    "app.ts": `console.log("app");`,
+  };
+
+  // `body` runs with `html`, the `api` routes and `probe(server)` in scope, and prints its result as JSON.
+  async function run(body: string) {
+    using dir = tempDir("bun-serve-html-reload-first-html-route", {
+      ...page,
+      "serve.ts": /*ts*/ `
+        import html from "./index.html";
+
+        const api = { "/api": () => new Response("api") };
+
+        async function probe(server) {
+          const page = await (await fetch(server.url)).text();
+          const script = page.match(/src="([^"]+\\.js)"/)?.[1] ?? "";
+          const url = new URL("/_bun/hmr", server.url);
+          url.protocol = "ws:";
+          const ws = new WebSocket(url);
+          const { promise: hmrSocket, resolve } = Promise.withResolvers();
+          ws.onopen = () => resolve(true);
+          ws.onerror = ws.onclose = () => resolve(false);
+          const result = {
+            script: script.replace(/[0-9a-z]{8,}/, "HASH"),
+            hmrSocket: await hmrSocket,
+            api: await (await fetch(new URL("/api", server.url))).text(),
+          };
+          ws.onclose = null;
+          ws.close();
+          return result;
+        }
+
+        ${body}
+      `,
+    });
+    const { stdout, stderr, exitCode } = await runServeFixture(dir);
+    return { result: stdout === "" ? null : JSON.parse(stdout), exitCode, stderr };
+  }
+  const devServer = { script: "/_bun/client/index-HASH.js", hmrSocket: true, api: "api" };
+  const bundled = { script: "/chunk-HASH.js", hmrSocket: false, api: "api" };
+
+  test.concurrent("starts the dev server", async () => {
+    const { stderr, ...rest } = await run(`
+      using server = Bun.serve({ port: 0, development: true, routes: api });
+      server.reload({ routes: { ...api, "/": html } });
+      const reloaded = await probe(server);
+      server.reload({ routes: { ...api, "/": html } });
+      console.log(JSON.stringify({ reloaded, reloadedAgain: await probe(server) }));
+    `);
+    expect(rest, stderr).toEqual({ result: { reloaded: devServer, reloadedAgain: devServer }, exitCode: 0 });
+  });
+
+  // reload() can't change the mode the server was started in.
+  test.concurrent.each([
+    ["true", "false", devServer],
+    ["{ hmr: false }", "true", bundled],
+  ])("follows Bun.serve's development: %s, not the reload's development: %s", async (started, reloaded, expected) => {
+    const { stderr, ...rest } = await run(`
+      using server = Bun.serve({ port: 0, development: ${started}, routes: api });
+      server.reload({ development: ${reloaded}, routes: { ...api, "/": html } });
+      console.log(JSON.stringify(await probe(server)));
+    `);
+    expect(rest, stderr).toEqual({ result: expected, exitCode: 0 });
+  });
+
+  // The dev server only speaks HTTP/1.1, and by the time of the reload the HTTP/2 app already serves connections.
+  test.concurrent("doesn't start the dev server on a server with http2: true", async () => {
+    const { stderr, ...rest } = await run(`
+      using server = Bun.serve({ port: 0, development: true, http2: true, routes: api });
+      server.reload({ routes: { ...api, "/": html } });
+      console.log(JSON.stringify(await probe(server)));
+    `);
+    expect(rest, stderr).toEqual({ result: bundled, exitCode: 0 });
+  });
+
+  test.concurrent("doesn't start the dev server for the route of a framework router", async () => {
+    const { stderr, ...rest } = await run(`
+      using server = Bun.serve({ port: 0, development: true, routes: api, fetch: () => new Response("old") });
+      const pages = { dir: import.meta.dir, style: "nextjs-pages" };
+      server.reload({ routes: { ...api, "/pages/*": pages }, fetch: () => new Response("new") });
+      console.log(JSON.stringify(await (await fetch(new URL("/other", server.url))).text()));
+    `);
+    expect(rest, stderr).toEqual({ result: "new", exitCode: 0 });
+  });
+
+  test.concurrent.skipIf(!isLinux)("throws and keeps the old routes when the dev server can't start", async () => {
+    using dir = tempDir("bun-serve-html-reload-dev-server-fails", {
+      ...page,
+      "serve.ts": /*ts*/ `
+        import { closeSync, openSync } from "node:fs";
+        import html from "./index.html";
+
+        using server = Bun.serve({
+          port: 0,
+          development: true,
+          routes: { "/api": () => new Response("api") },
+          fetch: () => new Response("old fallback"),
+        });
+        const text = async path => await (await fetch(new URL(path, server.url))).text();
+        const options = { routes: { "/": html }, fetch: () => new Response("new fallback") };
+
+        // Without a free file descriptor the dev server can't create its file watcher.
+        const held = [];
+        for (;;) {
+          try {
+            held.push(openSync("/dev/null", "r"));
+          } catch {
+            break;
+          }
+        }
+        let threw = null;
+        try {
+          server.reload(options);
+        } catch (e) {
+          threw = e.message;
+        } finally {
+          held.forEach(closeSync);
+        }
+        const failed = { threw, api: await text("/api"), page: await text("/") };
+
+        server.reload(options);
+        const script = (await text("/")).match(/src="([^"]+\\.js)"/)?.[1] ?? "";
+        const reloaded = { api: await text("/api"), script: script.replace(/[0-9a-z]{8,}/, "HASH") };
+        console.log(JSON.stringify({ failed, reloaded }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", 'ulimit -n 256 && exec "$@"', "sh", bunExe(), "serve.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ result: stdout === "" ? null : JSON.parse(stdout), exitCode }, stderr).toEqual({
+      result: {
+        failed: {
+          threw: "EMFILE while initializing file watcher for development server",
+          api: "api",
+          page: "old fallback",
+        },
+        reloaded: { api: "new fallback", script: "/_bun/client/index-HASH.js" },
+      },
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("starts the dev server when bun --hot runs Bun.serve() again", async () => {
+    const serveSource = (withHtml: boolean) => /*ts*/ `
+      import html from "./index.html";
+
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        development: true,
+        routes: ${withHtml} ? { "/": html } : {},
+        fetch: () => new Response("fallback"),
+      });
+      console.log(JSON.stringify({ withHtml: ${withHtml}, port: server.port }));
+    `;
+    using dir = tempDir("bun-serve-html-hot-first-html-route", { ...page, "serve.ts": serveSource(false) });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--hot", "--no-clear-screen", "serve.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const lines = forEachLine(proc.stdout);
+    async function portOfEvaluation(withHtml: boolean): Promise<number> {
+      for (;;) {
+        const { value, done } = await lines.next();
+        if (done) throw new Error("serve.ts exited");
+        const start = value.indexOf("{");
+        if (start === -1) continue;
+        const evaluation = JSON.parse(value.slice(start));
+        if (evaluation.withHtml === withHtml) return evaluation.port;
+      }
+    }
+
+    const port = await portOfEvaluation(false);
+    const before = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+
+    writeFileSync(join(String(dir), "serve.ts"), serveSource(true));
+    const portAfter = await portOfEvaluation(true);
+
+    const html = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/_bun/hmr`);
+    const { promise: hmrSocket, resolve } = Promise.withResolvers<boolean>();
+    ws.onopen = () => resolve(true);
+    ws.onerror = ws.onclose = () => resolve(false);
+    expect({
+      before,
+      samePort: portAfter === port,
+      script: html.match(/src="([^"]+\.js)"/)?.[1].replace(/[0-9a-z]{8,}/, "HASH"),
+      hmrSocket: await hmrSocket,
+    }).toEqual({ before: "fallback", samePort: true, script: "/_bun/client/index-HASH.js", hmrSocket: true });
+    ws.onclose = null;
+    ws.close();
   });
 });
 
@@ -1388,6 +1649,82 @@ test.concurrent("a route keeps failing when its broken module was imported throu
   });
   const { stdout, stderr, exitCode } = await runServeFixture(dir);
   expect({ stdout, exitCode }, stderr).toEqual({ stdout: "500 200 500", exitCode: 0 });
+});
+
+test.concurrent(
+  "a production route whose build failed answers every request with 500 and prints the error once",
+  async () => {
+    using dir = tempDir("bun-serve-html-build-failed", {
+      "index.html": `<!DOCTYPE html><html><head><script type="module" src="./missing.js"></script></head><body></body></html>`,
+      "serve.ts": /*ts*/ `
+      import net from "node:net";
+      import html from "./index.html";
+
+      using server = Bun.serve({ port: 0, development: false, idleTimeout: 0, routes: { "/": html } });
+      // This request waits for the build. The response has "Connection: close", so the server must close the socket.
+      const first = await new Promise((resolve, reject) => {
+        let response = "";
+        const socket = net.connect(server.port, "127.0.0.1", () => socket.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n"));
+        socket.on("data", chunk => (response += chunk));
+        socket.on("error", reject);
+        socket.on("close", () => resolve(response.split("\\r\\n")[0]));
+      });
+      const later = [];
+      for (const method of ["GET", "HEAD"]) {
+        const response = await fetch(server.url, { method });
+        later.push([response.status, response.headers.get("content-length"), await response.text()]);
+      }
+      console.log(JSON.stringify({ first, later }));
+    `,
+    });
+    const { stdout, stderr, exitCode } = await runServeFixture(dir);
+    expect(stderr.split(`Could not resolve: "./missing.js"`)).toHaveLength(2);
+    expect({ stdout, exitCode }, stderr).toEqual({
+      stdout: JSON.stringify({
+        first: "HTTP/1.1 500 Build Failed",
+        later: [
+          [500, "0", ""],
+          [500, "0", ""],
+        ],
+      }),
+      exitCode: 0,
+    });
+  },
+);
+
+test.concurrent("the dev server answers 500 after a plugin's setup() threw", async () => {
+  using dir = tempDir("bun-serve-html-plugin-setup-threw", {
+    "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+    "index.html": `<!DOCTYPE html><html><head><title>t</title></head><body></body></html>`,
+    "plugin.ts": /*ts*/ `
+      export default {
+        name: "throws-in-setup",
+        setup() {
+          throw new Error("setup failed on purpose");
+        },
+      };
+    `,
+    "serve.ts": /*ts*/ `
+      import html from "./index.html";
+
+      using server = Bun.serve({ port: 0, development: true, routes: { "/": html } });
+      const page = async () => {
+        const response = await fetch(server.url);
+        return [response.status, await response.text()];
+      };
+      // The first request waits for the plugin to load. The second one arrives after it failed.
+      console.log(JSON.stringify([await page(), await page()]));
+    `,
+  });
+  const { stdout, stderr, exitCode } = await runServeFixture(dir);
+  expect(stderr).toContain("setup failed on purpose");
+  expect({ stdout, exitCode }, stderr).toEqual({
+    stdout: JSON.stringify([
+      [500, ""],
+      [500, "Plugin Error"],
+    ]),
+    exitCode: 0,
+  });
 });
 
 // process.chdir() leaves the cached top-level directory with a trailing slash,
@@ -2010,3 +2347,25 @@ describe("production headers and import.meta.env", () => {
     expect(results).toEqual(cases.map(([, , expected]) => expected));
   });
 });
+
+// https://github.com/oven-sh/bun/issues/40479
+test.concurrent.each(["true", "false"])(
+  "bunfig [define] applies to an html route's scripts with development: %s",
+  async development => {
+    using dir = tempDir("bun-serve-html-define", {
+      "bunfig.toml": `[define]\nTOP_LEVEL = '"top"'\nBOTH = '"top"'\n\n[serve.static.define]\nBOTH = '"serve"'\n`,
+      "index.html": `<!DOCTYPE html><html><head><script type="module" src="./app.ts"></script></head><body></body></html>`,
+      "app.ts": `console.log("values:", TOP_LEVEL, BOTH);`,
+      "serve.ts": /*ts*/ `
+        import html from "./index.html";
+
+        using server = Bun.serve({ port: 0, development: ${development}, routes: { "/": html } });
+        const page = await fetch(server.url).then(res => res.text());
+        const script = await fetch(new URL(page.match(/<script[^>]*src="([^"]+)"/)[1], server.url)).then(res => res.text());
+        console.log(script.match(/"values:".*?\\)/)[0].replaceAll(" ", ""));
+      `,
+    });
+    const { stdout, stderr, exitCode } = await runServeFixture(dir);
+    expect({ stdout, exitCode }, stderr).toEqual({ stdout: `"values:","top","serve")`, exitCode: 0 });
+  },
+);

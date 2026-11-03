@@ -457,6 +457,38 @@ describe("unix domain socket without websocket", () => {
   }
 });
 
+test("the inspectee sends the rest of an answer after the frontend's FIN, then closes", async () => {
+  const size = 8 * 1024 * 1024;
+  const { promise: closed, resolve, reject } = Promise.withResolvers<void>();
+  let received = 0;
+  using listener = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    allowHalfOpen: true,
+    socket: {
+      open(socket) {
+        const params = { expression: `"x".repeat(${size})`, returnByValue: true };
+        new SocketFramer(() => {}).send(socket, JSON.stringify({ id: 1, method: "Runtime.evaluate", params }));
+      },
+      data(socket, bytes) {
+        // The answer is too big for one send, so the inspectee still holds most of it.
+        if (received === 0) socket.shutdown();
+        received += bytes.length;
+      },
+      close: () => resolve(),
+      error: (_socket, error) => reject(error),
+    },
+  });
+  await using _inspectee = spawn({
+    cmd: [bunExe(), join(import.meta.dir, "inspectee.js")],
+    env: { ...bunEnv, BUN_INSPECT: `tcp://127.0.0.1:${listener.port}` },
+    stdout: "ignore",
+    stderr: "inherit",
+  });
+  await closed;
+  expect(received).toBeGreaterThan(size);
+});
+
 /// TODO: this test is flaky because the inspect may not send all messages before the process exit
 /// we need to implement a way/option so we wait every message from the inspector before exiting
 test.todo("junit reporter", async () => {

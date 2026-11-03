@@ -37,13 +37,15 @@ leak:JSModuleLoader__import
 leak:dyld::ThreadLocalVariables
 leak:JSC__JSModuleLoader__loadAndEvaluateModule
 leak:uws_create_app
+# uws_create_app ends in a tail call to this, so an optimized build has no frame for the shim.
+leak:uWS::TemplatedApp<*>::create(ssl_ctx_st*)
 leak:uws_h3_create_app
 leak:lsquic_global_init
 leak:us_create_quic_client_context
 leak:lsquic_engine_connect
 leak:lsquic_engine_packet_in
 leak:lshpack_wrapper_decode
-leak:lshpack_wrapper_encode
+leak:lshpack_wrapper_encode_block
 leak:lshpack_wrapper_init
 leak:jsc.ipc.onData2
 leak:runtime.node.fs_events.InitLibrary

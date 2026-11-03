@@ -34,9 +34,9 @@ test("the accessors of a response answer for a plain object and for the prototyp
     connection: ["undefined", "object"],
     headersSent: ["boolean", "boolean"],
     writableLength: ["number", "number"],
-    writableNeedDrain: ["boolean", "boolean"],
-    writableHighWaterMark: ["number", "number"],
-    writableCorked: ["number", "number"],
+    writableNeedDrain: ["undefined", "undefined"],
+    writableHighWaterMark: ["undefined", "undefined"],
+    writableCorked: ["undefined", "undefined"],
   });
 });
 

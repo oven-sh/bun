@@ -28,6 +28,7 @@ struct Http2ResponseData {
         HTTP_CONNECTION_CLOSE = 16,
         HTTP_WROTE_CONTENT_LENGTH_HEADER = 32,
         HTTP_WROTE_DATE_HEADER = 64,
+        HTTP_REQUEST_BODY_TOO_LARGE = 128,
     };
 
     void *userData = nullptr;
@@ -53,6 +54,8 @@ struct Http2ResponseData {
     bool endAfterDrain = false;
 
     uint64_t offset = 0;
+    /* See HttpResponseData::requestBodyBudget. */
+    uint64_t requestBodyBudget = UINT64_MAX;
     uint8_t state = HTTP_RESPONSE_PENDING;
 
     void appendHeader(const char *name, unsigned nlen, const char *value, unsigned vlen) {

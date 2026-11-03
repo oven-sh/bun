@@ -12,6 +12,7 @@ const Writable = require("internal/streams/writable");
 const Readable = require("internal/streams/readable");
 const Duplex = require("internal/streams/duplex");
 const { destroyer } = require("internal/streams/destroy");
+const { addAbortSignal } = require("internal/streams/add-abort-signal");
 const { isDestroyed, isReadable, isWritable, isWritableEnded } = require("internal/streams/utils");
 const { kEmptyObject } = require("internal/shared");
 const { validateBoolean, validateObject, validateOneOf } = require("internal/validators");
@@ -36,14 +37,6 @@ const SafePromisePrototypeFinally = $Promise.prototype.finally;
 
 const constants_zlib = $processBindingConstants.zlib;
 
-function tryTransferToNativeReadable(stream: ReadableStream, options: StreamReadableFromReadableStreamOptions) {
-  const ptr = stream.$bunNativePtr;
-  if (!ptr || ptr === -1) {
-    return undefined;
-  }
-  return require("internal/streams/native-readable").constructNativeReadable(stream, options);
-}
-
 type DefaultReader = ReturnType<ReadableStream["getReader"]>;
 
 class ReadableFromWeb extends Readable {
@@ -52,19 +45,23 @@ class ReadableFromWeb extends Readable {
   #stream: ReadableStream | undefined;
   // node-fetch, undici: `stream` is a Response body, which text(), json(), ... lock for good.
   #responseBody: boolean;
+  // Readable.fromWeb() of a native stream passes the reader it took at the call, which is never released, as in Node.
+  #lockedForGood: boolean;
 
-  constructor(options: StreamReadableFromReadableStreamOptions, stream: ReadableStream) {
+  constructor(options: StreamReadableFromReadableStreamOptions, stream: ReadableStream, reader?: DefaultReader) {
     const { objectMode, highWaterMark, encoding, signal, responseBody = false } = options;
     super({
       objectMode,
       highWaterMark,
       encoding,
-      signal,
     });
-    this.#reader = undefined;
-    this.#stream = stream;
+    this.#reader = reader;
+    this.#stream = reader ? undefined : stream;
     this.#closed = false;
     this.#responseBody = responseBody;
+    this.#lockedForGood = reader !== undefined;
+    // Not through super(): an aborted signal calls _destroy() at once, which reads the fields above.
+    if (signal) addAbortSignal(signal, this);
   }
 
   // Locked before this wrapper opened it: a body method has the contents, nothing to read or cancel.
@@ -73,7 +70,7 @@ class ReadableFromWeb extends Readable {
   }
 
   #handleDone(reader: DefaultReader) {
-    reader.releaseLock();
+    if (!this.#lockedForGood) reader.releaseLock();
     this.#reader = undefined;
     this.#closed = true;
     this.push(null);
@@ -82,9 +79,11 @@ class ReadableFromWeb extends Readable {
   #handleError(reader: DefaultReader | undefined, error: Error) {
     if (reader) {
       this.#reader = undefined;
-      try {
-        reader.releaseLock();
-      } catch {}
+      if (!this.#lockedForGood) {
+        try {
+          reader.releaseLock();
+        } catch {}
+      }
     }
     this.#closed = true;
     this.destroy(error);
@@ -615,20 +614,22 @@ function newStreamReadableFromReadableStream(
   // Node acquires the reader at this point, so a locked stream throws here too.
   if (readableStream.locked) throw $ERR_INVALID_STATE_TypeError("ReadableStream is locked");
 
-  const nativeStream = tryTransferToNativeReadable(readableStream, options);
-
-  return (
-    nativeStream ||
-    new ReadableFromWeb(
-      {
-        highWaterMark,
-        encoding,
-        objectMode,
-        signal,
-      },
-      readableStream,
-    )
+  const nativeReadable = require("internal/streams/native-readable").tryConstructNativeReadable(
+    readableStream,
+    { highWaterMark, encoding, objectMode },
+    signal,
   );
+  if (nativeReadable) return nativeReadable;
+
+  // A native stream that something has started is locked from here on too, like one that gave up its handle.
+  const reader = readableStream.$bunNativePtr !== undefined ? readableStream.getReader() : undefined;
+  try {
+    return new ReadableFromWeb({ highWaterMark, encoding, objectMode, signal }, readableStream, reader);
+  } catch (error) {
+    // Nothing else can close the source of a stream that stays locked.
+    reader?.cancel(error);
+    throw error;
+  }
 }
 
 let dep0201Warned = false;

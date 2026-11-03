@@ -1,34 +1,25 @@
 // What the compiler reads in place of src/js/internal/http/FakeSocket.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 d93d41b56254446c0d11f40b311ed02bf9cfaa57ccb434b01ead3347bc42ae05.
+// Written against that file with the SHA-256 3bbff026b2c4b0a0f04c4c75c2bfd13cde10fc227ab1f57ef15f259a7782d87c.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
-const http = require("internal/http");
-const { kAutoDestroyed } = require("internal/shared");
-// A symbol taken out of a pattern is a plain `symbol` for the type checker, and what it keys is untyped.
-const kInternalSocketData: typeof http.kInternalSocketData = http.kInternalSocketData;
-const serverSymbol: typeof http.serverSymbol = http.serverSymbol;
 const Duplex = require("internal/streams/duplex");
 
 type FakeSocket = InstanceType<typeof FakeSocket>;
 var FakeSocket = class Socket extends Duplex {
-  [kInternalSocketData]?: [$Node.HttpServer, $Node.ServerResponse, Request];
   bytesRead = 0;
   bytesWritten = 0;
   connecting = false;
   timeout = 0;
   isServer = false;
 
-  #address: Partial<$Node.SocketAddressInfo> | undefined;
+  #address: Partial<$Node.SocketAddressInfo> = {};
   _httpMessage: $Node.OutgoingMessage | null | undefined;
   constructor(httpMessage: $Node.OutgoingMessage | null | undefined) {
     super();
     this._httpMessage = httpMessage;
   }
   address() {
-    // Call server.requestIP() without doing any property getter twice.
-    var internalData: [$Node.HttpServer, $Node.ServerResponse, Request] | undefined;
-    return (this.#address ??=
-      (internalData = this[kInternalSocketData])?.[0]?.[serverSymbol]?.requestIP(internalData[2]) ?? {});
+    return this.#address;
   }
 
   get bufferSize() {
@@ -42,11 +33,7 @@ var FakeSocket = class Socket extends Duplex {
     this.emit("timeout");
   };
 
-  _destroy(_err: Error | null, _callback: $Node.ErrorCallback) {
-    const socketData = this[kInternalSocketData];
-    if (!socketData) return; // sometimes 'this' is Socket not FakeSocket
-    if (!socketData[1]["req"][kAutoDestroyed]) socketData[1].end();
-  }
+  _destroy(_err: Error | null, _callback: $Node.ErrorCallback) {}
 
   _final(_callback: $Node.ErrorCallback) {}
 
@@ -120,12 +107,7 @@ var FakeSocket = class Socket extends Duplex {
     return this;
   }
 
-  setTimeout(timeout: number, callback?: () => void) {
-    const socketData = this[kInternalSocketData];
-    if (!socketData) return; // sometimes 'this' is Socket not FakeSocket
-
-    const http_res = socketData[1];
-    http_res?.req?.setTimeout(timeout, callback);
+  setTimeout(_timeout: number, _callback?: () => void) {
     return this;
   }
 

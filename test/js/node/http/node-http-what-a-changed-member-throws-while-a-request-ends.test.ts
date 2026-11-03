@@ -13,34 +13,30 @@ test("what a changed member of a request or of its socket throws goes where _rea
   expect({ stdout, stderr, exitCode }).toEqual({
     stdout: `GET, unread, with 'error' listeners
   req _consuming getter throws: uncaught get _consuming; the client: 200 ok
-  req _consuming setter throws: the request: set _consuming, the socket: set _consuming; the client: 200 ok
-  req _consuming read-only: the request: TypeError, the socket: TypeError; the client: 200 ok
+  req _consuming setter throws: the socket: set _consuming, the request: set _consuming; the client: 200 ok
+  req _consuming read-only: the socket: TypeError, the request: TypeError; the client: 200 ok
   req complete getter throws: the request: get complete; the client: 200 ok
   req socket getter throws: the request: get socket; the client: 200 ok
-  req upgrade getter throws: the request: get upgrade, the socket: get upgrade; the client: 200 ok
-  req _read getter throws: the request: get _read, the socket: get _read; the client: 200 ok
-  req _read throws when called: the request: call _read, the socket: call _read; the client: 200 ok
+  req upgrade getter throws: the socket: get upgrade, the request: get upgrade; the client: 200 ok
+  req _read getter throws: the socket: get _read, the request: get _read; the client: 200 ok
+  req _read throws when called: the socket: call _read, the request: call _read; the client: 200 ok
   req _destroy getter throws: the request: get _destroy; the client: 200 ok
   req _destroy throws when called: the request: call _destroy; the client: 200 ok
-  req @eofInProgress getter throws: the request: get @eofInProgress, the socket: get @eofInProgress; the client: 200 ok
-  req @eofInProgress setter throws: the request: set @eofInProgress, the socket: set @eofInProgress; the client: 200 ok
-  req @eofInProgress read-only: the request: TypeError, the socket: TypeError; the client: 200 ok
+  req @eofInProgress getter throws: the socket: get @eofInProgress, the request: get @eofInProgress; the client: 200 ok
+  req @eofInProgress setter throws: the socket: set @eofInProgress, the request: set @eofInProgress; the client: 200 ok
+  req @eofInProgress read-only: the socket: TypeError, the request: TypeError; the client: 200 ok
   req @handle setter throws: the request: set @handle; the client: 200 ok
   req @handle read-only: the request: TypeError; the client: 200 ok
   req @handle a number: the request: TypeError; the client: 200 ok
-  req @noBody getter throws: the request: get @noBody, the socket: get @noBody; the client: 200 ok
-  socket resume getter throws: the request: get resume, the socket: get resume; the client: 200 ok
-  socket resume a number: the request: TypeError, the socket: TypeError; the client: 200 ok
-  socket resume throws when called: the request: call resume, the socket: call resume; the client: 200 ok
-  socket readable getter throws: the request: get readable, the socket: get readable; the client: 200 ok
-  socket readableLength getter throws: the request: get readableLength, the socket: get readableLength; the client: 200 ok
-  socket readableHighWaterMark getter throws: the request: get readableHighWaterMark, the socket: get readableHighWaterMark; the client: 200 ok
-  socket _paused getter throws: the request: get _paused, the socket: get _paused; the client: 200 ok
-  socket parser getter throws: uncaught get parser, uncaught get parser, uncaught get parser; the client: 200 ok
-  socket @kUpgradeIncoming getter throws: the request: get @kUpgradeIncoming, the socket: get @kUpgradeIncoming; the client: 200 ok
-  socket @kUpgradeIncoming a number: the request: TypeError, the socket: TypeError; the client: 200 ok
-  socket @kHandoffResponse getter throws: the request: get @kHandoffResponse, the socket: get @kHandoffResponse; the client: 200 ok
-  socket @kStreamingEnabled getter throws: the request: get @kStreamingEnabled, the socket: get @kStreamingEnabled; the client: 200 ok
+  req @noBody getter throws: the socket: get @noBody, the request: get @noBody; the client: 200 ok
+  socket resume getter throws: the socket: get resume, the request: get resume; the client: 200 ok
+  socket resume a number: the socket: TypeError, the request: TypeError; the client: 200 ok
+  socket resume throws when called: the socket: call resume, the request: call resume; the client: 200 ok
+  socket readable getter throws: uncaught get readable, the socket: get readable, the request: get readable; the client: 200 ok
+  socket readableLength getter throws: nothing; the client: 200 ok
+  socket readableHighWaterMark getter throws: nothing; the client: 200 ok
+  socket _paused getter throws: uncaught get _paused, the socket: get _paused, the request: get _paused; the client: 200 ok
+  socket parser getter throws: uncaught get parser, the socket: get parser, the request: get parser, uncaught get parser; the client: 200 ok
 GET, unread, without 'error' listeners
   req _consuming getter throws: uncaught get _consuming; the client: 200 ok
   req _consuming setter throws: nothing; the client: 200 ok
@@ -62,45 +58,37 @@ GET, unread, without 'error' listeners
   socket resume getter throws: nothing; the client: 200 ok
   socket resume a number: nothing; the client: 200 ok
   socket resume throws when called: nothing; the client: 200 ok
-  socket readable getter throws: nothing; the client: 200 ok
+  socket readable getter throws: uncaught get readable; the client: 200 ok
   socket readableLength getter throws: nothing; the client: 200 ok
   socket readableHighWaterMark getter throws: nothing; the client: 200 ok
-  socket _paused getter throws: nothing; the client: 200 ok
-  socket parser getter throws: uncaught get parser, uncaught get parser, uncaught get parser; the client: 200 ok
-  socket @kUpgradeIncoming getter throws: nothing; the client: 200 ok
-  socket @kUpgradeIncoming a number: nothing; the client: 200 ok
-  socket @kHandoffResponse getter throws: nothing; the client: 200 ok
-  socket @kStreamingEnabled getter throws: nothing; the client: 200 ok
+  socket _paused getter throws: uncaught get _paused; the client: 200 ok
+  socket parser getter throws: uncaught get parser, uncaught get parser; the client: 200 ok
 POST, unread, with 'error' listeners
   req _consuming getter throws: uncaught get _consuming; the client: 200 ok
-  req _consuming setter throws: the request: set _consuming, the socket: set _consuming; the client: 200 ok
-  req _consuming read-only: the request: TypeError, the socket: TypeError; the client: 200 ok
+  req _consuming setter throws: the socket: set _consuming, the request: set _consuming; the client: 200 ok
+  req _consuming read-only: the socket: TypeError, the request: TypeError; the client: 200 ok
   req complete getter throws: the request: get complete; the client: 200 ok
   req socket getter throws: the request: get socket; the client: 200 ok
-  req upgrade getter throws: the request: get upgrade, the socket: get upgrade; the client: 200 ok
-  req _read getter throws: the request: get _read, the socket: get _read; the client: 200 ok
-  req _read throws when called: the request: call _read, the socket: call _read; the client: 200 ok
+  req upgrade getter throws: the socket: get upgrade, the request: get upgrade; the client: 200 ok
+  req _read getter throws: the socket: get _read, the request: get _read; the client: 200 ok
+  req _read throws when called: the socket: call _read, the request: call _read; the client: 200 ok
   req _destroy getter throws: the request: get _destroy; the client: 200 ok
   req _destroy throws when called: the request: call _destroy; the client: 200 ok
-  req @eofInProgress getter throws: the request: get @eofInProgress, the socket: get @eofInProgress; the client: 200 ok
+  req @eofInProgress getter throws: the socket: get @eofInProgress, the request: get @eofInProgress; the client: 200 ok
   req @eofInProgress setter throws: uncaught set @eofInProgress; the client: 200 ok
   req @eofInProgress read-only: uncaught TypeError; the client: 200 ok
   req @handle setter throws: the request: set @handle; the client: 200 ok
   req @handle read-only: the request: TypeError; the client: 200 ok
   req @handle a number: the request: TypeError; the client: 200 ok
-  req @noBody getter throws: the request: get @noBody, the socket: get @noBody; the client: 200 ok
-  socket resume getter throws: the request: get resume, the socket: get resume; the client: 200 ok
-  socket resume a number: the request: TypeError, the socket: TypeError; the client: 200 ok
-  socket resume throws when called: the request: call resume, the socket: call resume; the client: 200 ok
-  socket readable getter throws: the request: get readable, the socket: get readable; the client: 200 ok
-  socket readableLength getter throws: the request: get readableLength, the socket: get readableLength; the client: 200 ok
-  socket readableHighWaterMark getter throws: the request: get readableHighWaterMark, the socket: get readableHighWaterMark; the client: 200 ok
-  socket _paused getter throws: the request: get _paused, the socket: get _paused; the client: 200 ok
-  socket parser getter throws: uncaught get parser, uncaught get parser, uncaught get parser; the client: 200 ok
-  socket @kUpgradeIncoming getter throws: the request: get @kUpgradeIncoming, the socket: get @kUpgradeIncoming; the client: 200 ok
-  socket @kUpgradeIncoming a number: the request: TypeError, the socket: TypeError; the client: 200 ok
-  socket @kHandoffResponse getter throws: the request: get @kHandoffResponse, the socket: get @kHandoffResponse; the client: 200 ok
-  socket @kStreamingEnabled getter throws: the request: get @kStreamingEnabled, the socket: get @kStreamingEnabled; the client: 200 ok
+  req @noBody getter throws: the socket: get @noBody, the request: get @noBody; the client: 200 ok
+  socket resume getter throws: the socket: get resume, the request: get resume; the client: 200 ok
+  socket resume a number: the socket: TypeError, the request: TypeError; the client: 200 ok
+  socket resume throws when called: the socket: call resume, the request: call resume; the client: 200 ok
+  socket readable getter throws: the socket: get readable, the request: get readable; the client: 200 ok
+  socket readableLength getter throws: nothing; the client: 200 ok
+  socket readableHighWaterMark getter throws: nothing; the client: 200 ok
+  socket _paused getter throws: the socket: get _paused, the request: get _paused; the client: 200 ok
+  socket parser getter throws: uncaught get parser, the socket: get parser, the request: get parser, uncaught get parser; the client: 200 ok
 POST, unread, without 'error' listeners
   req _consuming getter throws: uncaught get _consuming; the client: 200 ok
   req _consuming setter throws: nothing; the client: 200 ok
@@ -126,39 +114,31 @@ POST, unread, without 'error' listeners
   socket readableLength getter throws: nothing; the client: 200 ok
   socket readableHighWaterMark getter throws: nothing; the client: 200 ok
   socket _paused getter throws: nothing; the client: 200 ok
-  socket parser getter throws: uncaught get parser, uncaught get parser, uncaught get parser; the client: 200 ok
-  socket @kUpgradeIncoming getter throws: nothing; the client: 200 ok
-  socket @kUpgradeIncoming a number: nothing; the client: 200 ok
-  socket @kHandoffResponse getter throws: nothing; the client: 200 ok
-  socket @kStreamingEnabled getter throws: nothing; the client: 200 ok
+  socket parser getter throws: uncaught get parser, uncaught get parser; the client: 200 ok
 GET, data, with 'error' listeners
-  req _consuming getter throws: the request: get _consuming, the socket: get _consuming; the client: ECONNRESET
-  req _consuming setter throws: the request: set _consuming, the socket: set _consuming; the client: ECONNRESET
-  req _consuming read-only: the request: TypeError, the socket: TypeError; the client: ECONNRESET
+  req _consuming getter throws: the socket: get _consuming, the request: get _consuming; the client: ECONNRESET
+  req _consuming setter throws: the socket: set _consuming, the request: set _consuming; the client: ECONNRESET
+  req _consuming read-only: the socket: TypeError, the request: TypeError; the client: ECONNRESET
   req complete getter throws: end, the request: get complete; the client: 200 ok
-  req upgrade getter throws: the request: get upgrade, the socket: get upgrade; the client: ECONNRESET
-  req _read getter throws: the request: get _read, the socket: get _read; the client: ECONNRESET
-  req _read throws when called: the request: call _read, the socket: call _read; the client: ECONNRESET
+  req upgrade getter throws: the socket: get upgrade, the request: get upgrade; the client: ECONNRESET
+  req _read getter throws: the socket: get _read, the request: get _read; the client: ECONNRESET
+  req _read throws when called: the socket: call _read, the request: call _read; the client: ECONNRESET
   req _destroy getter throws: end, the request: get _destroy; the client: 200 ok
   req _destroy throws when called: end, the request: call _destroy; the client: 200 ok
-  req @eofInProgress getter throws: the request: get @eofInProgress, the socket: get @eofInProgress; the client: ECONNRESET
-  req @eofInProgress setter throws: the request: set @eofInProgress, the socket: set @eofInProgress; the client: ECONNRESET
-  req @eofInProgress read-only: the request: TypeError, the socket: TypeError; the client: ECONNRESET
+  req @eofInProgress getter throws: the socket: get @eofInProgress, the request: get @eofInProgress; the client: ECONNRESET
+  req @eofInProgress setter throws: the socket: set @eofInProgress, the request: set @eofInProgress; the client: ECONNRESET
+  req @eofInProgress read-only: the socket: TypeError, the request: TypeError; the client: ECONNRESET
   req @handle setter throws: end, the request: set @handle; the client: 200 ok
   req @handle read-only: end, the request: TypeError; the client: 200 ok
-  req @noBody getter throws: the request: get @noBody, the socket: get @noBody; the client: ECONNRESET
-  socket resume getter throws: the request: get resume, the socket: get resume; the client: ECONNRESET
-  socket resume a number: the request: TypeError, the socket: TypeError; the client: ECONNRESET
-  socket resume throws when called: the request: call resume, the socket: call resume; the client: ECONNRESET
-  socket readable getter throws: the request: get readable, the socket: get readable; the client: ECONNRESET
-  socket readableLength getter throws: the request: get readableLength, the socket: get readableLength; the client: ECONNRESET
-  socket readableHighWaterMark getter throws: the request: get readableHighWaterMark, the socket: get readableHighWaterMark; the client: ECONNRESET
-  socket _paused getter throws: the request: get _paused, the socket: get _paused; the client: ECONNRESET
-  socket parser getter throws: uncaught get parser, end, uncaught get parser, uncaught get parser; the client: 200 ok
-  socket @kUpgradeIncoming getter throws: the request: get @kUpgradeIncoming, the socket: get @kUpgradeIncoming; the client: ECONNRESET
-  socket @kUpgradeIncoming a number: the request: TypeError, the socket: TypeError; the client: ECONNRESET
-  socket @kHandoffResponse getter throws: the request: get @kHandoffResponse, the socket: get @kHandoffResponse; the client: ECONNRESET
-  socket @kStreamingEnabled getter throws: the request: get @kStreamingEnabled, the socket: get @kStreamingEnabled; the client: ECONNRESET
+  req @noBody getter throws: the socket: get @noBody, the request: get @noBody; the client: ECONNRESET
+  socket resume getter throws: the socket: get resume, the request: get resume; the client: ECONNRESET
+  socket resume a number: the socket: TypeError, the request: TypeError; the client: ECONNRESET
+  socket resume throws when called: the socket: call resume, the request: call resume; the client: ECONNRESET
+  socket readable getter throws: uncaught get readable, the socket: get readable, the request: get readable; the client: 200 
+  socket readableLength getter throws: end; the client: 200 ok
+  socket readableHighWaterMark getter throws: end; the client: 200 ok
+  socket _paused getter throws: uncaught get _paused, the socket: get _paused, the request: get _paused; the client: 200 
+  socket parser getter throws: the socket: get parser, the request: get parser, uncaught get parser; the client: ECONNRESET
 GET, data, without 'error' listeners
   req _consuming getter throws: nothing; the client: ECONNRESET
   req _consuming setter throws: nothing; the client: ECONNRESET
@@ -178,43 +158,35 @@ GET, data, without 'error' listeners
   socket resume getter throws: nothing; the client: ECONNRESET
   socket resume a number: nothing; the client: ECONNRESET
   socket resume throws when called: nothing; the client: ECONNRESET
-  socket readable getter throws: nothing; the client: ECONNRESET
-  socket readableLength getter throws: nothing; the client: ECONNRESET
-  socket readableHighWaterMark getter throws: nothing; the client: ECONNRESET
-  socket _paused getter throws: nothing; the client: ECONNRESET
-  socket parser getter throws: uncaught get parser, end, uncaught get parser, uncaught get parser; the client: 200 ok
-  socket @kUpgradeIncoming getter throws: nothing; the client: ECONNRESET
-  socket @kUpgradeIncoming a number: nothing; the client: ECONNRESET
-  socket @kHandoffResponse getter throws: nothing; the client: ECONNRESET
-  socket @kStreamingEnabled getter throws: nothing; the client: ECONNRESET
+  socket readable getter throws: uncaught get readable; the client: 200 
+  socket readableLength getter throws: end; the client: 200 ok
+  socket readableHighWaterMark getter throws: end; the client: 200 ok
+  socket _paused getter throws: uncaught get _paused; the client: 200 
+  socket parser getter throws: uncaught get parser; the client: ECONNRESET
 POST, data, with 'error' listeners
-  req _consuming getter throws: the request: get _consuming, the socket: get _consuming; the client: ECONNRESET
-  req _consuming setter throws: the request: set _consuming, the socket: set _consuming; the client: ECONNRESET
-  req _consuming read-only: the request: TypeError, the socket: TypeError; the client: ECONNRESET
+  req _consuming getter throws: the socket: get _consuming, the request: get _consuming; the client: ECONNRESET
+  req _consuming setter throws: the socket: set _consuming, the request: set _consuming; the client: ECONNRESET
+  req _consuming read-only: the socket: TypeError, the request: TypeError; the client: ECONNRESET
   req complete getter throws: data 4, end, the request: get complete; the client: 200 ok
-  req upgrade getter throws: the request: get upgrade, the socket: get upgrade; the client: ECONNRESET
-  req _read getter throws: the request: get _read, the socket: get _read; the client: ECONNRESET
-  req _read throws when called: the request: call _read, the socket: call _read; the client: ECONNRESET
+  req upgrade getter throws: the socket: get upgrade, the request: get upgrade; the client: ECONNRESET
+  req _read getter throws: the socket: get _read, the request: get _read; the client: ECONNRESET
+  req _read throws when called: the socket: call _read, the request: call _read; the client: ECONNRESET
   req _destroy getter throws: data 4, end, the request: get _destroy; the client: 200 ok
   req _destroy throws when called: data 4, end, the request: call _destroy; the client: 200 ok
-  req @eofInProgress getter throws: the request: get @eofInProgress, the socket: get @eofInProgress; the client: ECONNRESET
-  req @eofInProgress setter throws: data 4, uncaught set @eofInProgress, the request: set @eofInProgress, the socket: set @eofInProgress; the client: ECONNRESET
-  req @eofInProgress read-only: data 4, uncaught TypeError, the request: TypeError, the socket: TypeError; the client: ECONNRESET
+  req @eofInProgress getter throws: the socket: get @eofInProgress, the request: get @eofInProgress; the client: ECONNRESET
+  req @eofInProgress setter throws: data 4, uncaught set @eofInProgress, the socket: set @eofInProgress, the request: set @eofInProgress; the client: ECONNRESET
+  req @eofInProgress read-only: data 4, uncaught TypeError, the socket: TypeError, the request: TypeError; the client: ECONNRESET
   req @handle setter throws: data 4, end, the request: set @handle; the client: 200 ok
   req @handle read-only: data 4, end, the request: TypeError; the client: 200 ok
-  req @noBody getter throws: the request: get @noBody, the socket: get @noBody; the client: ECONNRESET
-  socket resume getter throws: the request: get resume, the socket: get resume; the client: ECONNRESET
-  socket resume a number: the request: TypeError, the socket: TypeError; the client: ECONNRESET
-  socket resume throws when called: the request: call resume, the socket: call resume; the client: ECONNRESET
-  socket readable getter throws: the request: get readable, the socket: get readable; the client: ECONNRESET
-  socket readableLength getter throws: the request: get readableLength, the socket: get readableLength; the client: ECONNRESET
-  socket readableHighWaterMark getter throws: the request: get readableHighWaterMark, the socket: get readableHighWaterMark; the client: ECONNRESET
-  socket _paused getter throws: the request: get _paused, the socket: get _paused; the client: ECONNRESET
-  socket parser getter throws: data 4, uncaught get parser, end, uncaught get parser, uncaught get parser; the client: 200 ok
-  socket @kUpgradeIncoming getter throws: the request: get @kUpgradeIncoming, the socket: get @kUpgradeIncoming; the client: ECONNRESET
-  socket @kUpgradeIncoming a number: the request: TypeError, the socket: TypeError; the client: ECONNRESET
-  socket @kHandoffResponse getter throws: the request: get @kHandoffResponse, the socket: get @kHandoffResponse; the client: ECONNRESET
-  socket @kStreamingEnabled getter throws: the request: get @kStreamingEnabled, the socket: get @kStreamingEnabled; the client: ECONNRESET
+  req @noBody getter throws: the socket: get @noBody, the request: get @noBody; the client: ECONNRESET
+  socket resume getter throws: the socket: get resume, the request: get resume; the client: ECONNRESET
+  socket resume a number: the socket: TypeError, the request: TypeError; the client: ECONNRESET
+  socket resume throws when called: the socket: call resume, the request: call resume; the client: ECONNRESET
+  socket readable getter throws: the socket: get readable, the request: get readable; the client: ECONNRESET
+  socket readableLength getter throws: data 4, end; the client: 200 ok
+  socket readableHighWaterMark getter throws: data 4, end; the client: 200 ok
+  socket _paused getter throws: the socket: get _paused, the request: get _paused; the client: ECONNRESET
+  socket parser getter throws: the socket: get parser, the request: get parser, uncaught get parser; the client: ECONNRESET
 POST, data, without 'error' listeners
   req _consuming getter throws: nothing; the client: ECONNRESET
   req _consuming setter throws: nothing; the client: ECONNRESET
@@ -235,42 +207,34 @@ POST, data, without 'error' listeners
   socket resume a number: nothing; the client: ECONNRESET
   socket resume throws when called: nothing; the client: ECONNRESET
   socket readable getter throws: nothing; the client: ECONNRESET
-  socket readableLength getter throws: nothing; the client: ECONNRESET
-  socket readableHighWaterMark getter throws: nothing; the client: ECONNRESET
+  socket readableLength getter throws: data 4, end; the client: 200 ok
+  socket readableHighWaterMark getter throws: data 4, end; the client: 200 ok
   socket _paused getter throws: nothing; the client: ECONNRESET
-  socket parser getter throws: data 4, uncaught get parser, end, uncaught get parser, uncaught get parser; the client: 200 ok
-  socket @kUpgradeIncoming getter throws: nothing; the client: ECONNRESET
-  socket @kUpgradeIncoming a number: nothing; the client: ECONNRESET
-  socket @kHandoffResponse getter throws: nothing; the client: ECONNRESET
-  socket @kStreamingEnabled getter throws: nothing; the client: ECONNRESET
+  socket parser getter throws: uncaught get parser; the client: ECONNRESET
 POST, readable, with 'error' listeners
-  req _consuming getter throws: the request: get _consuming, the socket: get _consuming; the client: ECONNRESET
-  req _consuming setter throws: the request: set _consuming, the socket: set _consuming; the client: ECONNRESET
-  req _consuming read-only: the request: TypeError, the socket: TypeError; the client: ECONNRESET
+  req _consuming getter throws: the socket: get _consuming, the request: get _consuming; the client: ECONNRESET
+  req _consuming setter throws: the socket: set _consuming, the request: set _consuming; the client: ECONNRESET
+  req _consuming read-only: the socket: TypeError, the request: TypeError; the client: ECONNRESET
   req complete getter throws: read 4, end, the request: get complete; the client: 200 ok
-  req upgrade getter throws: the request: get upgrade, the socket: get upgrade; the client: ECONNRESET
-  req _read getter throws: the request: get _read, the socket: get _read; the client: ECONNRESET
-  req _read throws when called: the request: call _read, the socket: call _read; the client: ECONNRESET
+  req upgrade getter throws: the socket: get upgrade, the request: get upgrade; the client: ECONNRESET
+  req _read getter throws: the socket: get _read, the request: get _read; the client: ECONNRESET
+  req _read throws when called: the socket: call _read, the request: call _read; the client: ECONNRESET
   req _destroy getter throws: read 4, end, the request: get _destroy; the client: 200 ok
   req _destroy throws when called: read 4, end, the request: call _destroy; the client: 200 ok
-  req @eofInProgress getter throws: the request: get @eofInProgress, the socket: get @eofInProgress; the client: ECONNRESET
-  req @eofInProgress setter throws: uncaught set @eofInProgress, read 4, the request: set @eofInProgress, the socket: set @eofInProgress; the client: ECONNRESET
-  req @eofInProgress read-only: uncaught TypeError, read 4, the request: TypeError, the socket: TypeError; the client: ECONNRESET
+  req @eofInProgress getter throws: the socket: get @eofInProgress, the request: get @eofInProgress; the client: ECONNRESET
+  req @eofInProgress setter throws: uncaught set @eofInProgress, read 4, the socket: set @eofInProgress, the request: set @eofInProgress; the client: ECONNRESET
+  req @eofInProgress read-only: uncaught TypeError, read 4, the socket: TypeError, the request: TypeError; the client: ECONNRESET
   req @handle setter throws: read 4, end, the request: set @handle; the client: 200 ok
   req @handle read-only: read 4, end, the request: TypeError; the client: 200 ok
-  req @noBody getter throws: the request: get @noBody, the socket: get @noBody; the client: ECONNRESET
-  socket resume getter throws: the request: get resume, the socket: get resume; the client: ECONNRESET
-  socket resume a number: the request: TypeError, the socket: TypeError; the client: ECONNRESET
-  socket resume throws when called: the request: call resume, the socket: call resume; the client: ECONNRESET
-  socket readable getter throws: the request: get readable, the socket: get readable; the client: ECONNRESET
-  socket readableLength getter throws: the request: get readableLength, the socket: get readableLength; the client: ECONNRESET
-  socket readableHighWaterMark getter throws: the request: get readableHighWaterMark, the socket: get readableHighWaterMark; the client: ECONNRESET
-  socket _paused getter throws: the request: get _paused, the socket: get _paused; the client: ECONNRESET
-  socket parser getter throws: read 4, uncaught get parser, end, uncaught get parser, uncaught get parser; the client: 200 ok
-  socket @kUpgradeIncoming getter throws: the request: get @kUpgradeIncoming, the socket: get @kUpgradeIncoming; the client: ECONNRESET
-  socket @kUpgradeIncoming a number: the request: TypeError, the socket: TypeError; the client: ECONNRESET
-  socket @kHandoffResponse getter throws: the request: get @kHandoffResponse, the socket: get @kHandoffResponse; the client: ECONNRESET
-  socket @kStreamingEnabled getter throws: the request: get @kStreamingEnabled, the socket: get @kStreamingEnabled; the client: ECONNRESET
+  req @noBody getter throws: the socket: get @noBody, the request: get @noBody; the client: ECONNRESET
+  socket resume getter throws: the socket: get resume, the request: get resume; the client: ECONNRESET
+  socket resume a number: the socket: TypeError, the request: TypeError; the client: ECONNRESET
+  socket resume throws when called: the socket: call resume, the request: call resume; the client: ECONNRESET
+  socket readable getter throws: the socket: get readable, the request: get readable; the client: ECONNRESET
+  socket readableLength getter throws: read 4, end; the client: 200 ok
+  socket readableHighWaterMark getter throws: read 4, end; the client: 200 ok
+  socket _paused getter throws: the socket: get _paused, the request: get _paused; the client: ECONNRESET
+  socket parser getter throws: the socket: get parser, the request: get parser, uncaught get parser; the client: ECONNRESET
 POST, readable, without 'error' listeners
   req _consuming getter throws: nothing; the client: ECONNRESET
   req _consuming setter throws: nothing; the client: ECONNRESET
@@ -291,14 +255,10 @@ POST, readable, without 'error' listeners
   socket resume a number: nothing; the client: ECONNRESET
   socket resume throws when called: nothing; the client: ECONNRESET
   socket readable getter throws: nothing; the client: ECONNRESET
-  socket readableLength getter throws: nothing; the client: ECONNRESET
-  socket readableHighWaterMark getter throws: nothing; the client: ECONNRESET
+  socket readableLength getter throws: read 4, end; the client: 200 ok
+  socket readableHighWaterMark getter throws: read 4, end; the client: 200 ok
   socket _paused getter throws: nothing; the client: ECONNRESET
-  socket parser getter throws: read 4, uncaught get parser, end, uncaught get parser, uncaught get parser; the client: 200 ok
-  socket @kUpgradeIncoming getter throws: nothing; the client: ECONNRESET
-  socket @kUpgradeIncoming a number: nothing; the client: ECONNRESET
-  socket @kHandoffResponse getter throws: nothing; the client: ECONNRESET
-  socket @kStreamingEnabled getter throws: nothing; the client: ECONNRESET
+  socket parser getter throws: uncaught get parser; the client: ECONNRESET
 `,
     stderr: "",
     exitCode: 0,

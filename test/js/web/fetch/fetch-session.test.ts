@@ -43,18 +43,23 @@ function connectionCountingServer() {
   };
 }
 
-/** A keep-alive http server whose `closed` settles when its first connection goes away. */
+/** A keep-alive http server that counts connections. `closed` resolves with how the first one closed. */
 async function closeObservingServer() {
-  const closed = Promise.withResolvers<void>();
+  const closed = Promise.withResolvers<"FIN" | "RST">();
+  let connections = 0;
   const server = net.createServer(socket => {
+    connections++;
     socket.on("error", () => {});
-    socket.on("close", () => closed.resolve());
+    socket.on("close", hadError => closed.resolve(hadError ? "RST" : "FIN"));
     socket.on("data", () => socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"));
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   return {
     url: `http://127.0.0.1:${(server.address() as net.AddressInfo).port}/`,
+    get connections() {
+      return connections;
+    },
     closed: closed.promise,
     [Symbol.dispose]() {
       server.close();
@@ -166,10 +171,20 @@ describe("Bun.FetchSession", () => {
       using session = new Bun.FetchSession({ keepAlive: { idleTimeout: 1 } });
       expect(await (await fetch(server.url, { session })).text()).toBe("ok");
       // The client closes it; nothing else in this test would.
-      await server.closed;
+      expect(await server.closed).toBe("FIN");
     },
     20_000,
   );
+
+  // The timer closes the connection up to 8 seconds later. Reuse has to stop on time, and only the clock shows that.
+  test.concurrent("keepAlive.idleTimeout stops reuse after exactly that long", async () => {
+    using server = await closeObservingServer();
+    using session = new Bun.FetchSession({ keepAlive: { idleTimeout: 1 } });
+    expect(await (await fetch(server.url, { session, method: "POST" })).text()).toBe("ok");
+    await Bun.sleep(1_100);
+    expect(await (await fetch(server.url, { session, method: "POST" })).text()).toBe("ok");
+    expect(server.connections).toBe(2);
+  });
 
   test.concurrent("collecting a session closes its idle connections", async () => {
     using server = await closeObservingServer();

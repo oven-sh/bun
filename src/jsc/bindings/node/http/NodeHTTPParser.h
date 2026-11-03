@@ -97,7 +97,6 @@ struct StringPtr {
     size_t m_size;
 };
 
-#define HTTP_BOTH 0
 #define HTTP_REQUEST 1
 #define HTTP_RESPONSE 2
 
@@ -172,6 +171,7 @@ public:
 
     inline bool headersCompleted() const { return m_headersCompleted; }
     inline uint64_t lastMessageStart() const { return m_lastMessageStart; }
+    inline bool receivedData() const { return m_receivedData; }
 
     JSC::WriteBarrier<JSConnectionsList> m_connectionsList;
 
@@ -201,6 +201,7 @@ public:
     // Read once per header section; -1 until then.
     double m_maxHeaderPairs = -1;
     bool m_pendingPause = false;
+    bool m_receivedData = false;
     // Set while execute() is running llhttp over a buffer. Owned exclusively
     // by execute(); finish() must never clear it.
     bool m_inExecute = false;

@@ -3,13 +3,14 @@ use core::ffi::c_void;
 /// SAFETY CONTRACT (the single audited deref for every `node:quic` callback):
 ///
 /// * Every context pointer the shim hands back — the engine's `owner`
-///   (`ea_stream_if_ctx` / `peer_ctx`), a conn-ctx, or a stream-ctx — is a
+///   (`ea_stream_if_ctx`), a conn-ctx, or a stream-ctx — is a
 ///   pointer we ourselves installed: a `QuicEndpoint`, `QuicSession`, or
 ///   `QuicStream` stored inline in its JS wrapper, whose first field is the
 ///   `*const NqVtable` that `packages/bun-usockets/src/node_quic_shim.c` reads
 ///   back via `*(us_nq_vtable**)ctx`. Those structs are `#[repr(C)]` precisely
 ///   so that first-field read stays valid, and the shim never invents or
 ///   offsets a context pointer.
+/// * A server session is the ctx of its handshake's mini conn first, then of the promoted conn.
 /// * The only other value the shim can pass is NULL — teardown clears the
 ///   conn/stream ctx (and lsquic passes NULL for crypto/mini-conn streams that
 ///   never got one), so a null check is the whole liveness test. A non-null

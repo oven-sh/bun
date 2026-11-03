@@ -3,6 +3,9 @@ import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import http2 from "http2";
+import { once } from "node:events";
+import http from "node:http";
+import net from "node:net";
 
 describe("AsyncLocalStorage", () => {
   test("throw inside of AsyncLocalStorage.run() will be passed out", () => {
@@ -1768,6 +1771,28 @@ test("node:http: socket events of a server and of a client request run in the as
     stderr: "",
     exitCode: 0,
   });
+});
+
+test("node:http: 'close' of a server's socket runs in no store when the response that closes the connection waited for 'drain'", async () => {
+  const als = new AsyncLocalStorage<string>();
+  const { promise: storeAtClose, resolve: onClose } = Promise.withResolvers<string>();
+  const server = http.createServer((request, response) => {
+    request.socket.once("close", () => onClose(String(als.getStore())));
+    als.run("the request's store", () => {
+      expect(response.write(Buffer.alloc(3_000_000, "x"))).toBe(false);
+      response.once("drain", () => response.end());
+    });
+  });
+  als.run("the store at listen()", () => server.listen(0, "127.0.0.1"));
+  await once(server, "listening");
+  const client = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+  try {
+    client.resume().write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    expect(await storeAtClose).toBe("undefined");
+  } finally {
+    client.destroy();
+    server.close();
+  }
 });
 
 test("AsyncLocalStorage.bind() names the argument when it is not a function", () => {

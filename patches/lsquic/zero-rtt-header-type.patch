@@ -1,0 +1,18 @@
+--- a/src/liblsquic/lsquic_packet_out.c
++++ b/src/liblsquic/lsquic_packet_out.c
+@@ -264,7 +264,14 @@ lsquic_packet_out_new (struct lsquic_mm *mm, struct malo *malo, int use_cid,
+                 packet_out->po_header_type = HETY_INITIAL;
+         }
+         else
+-            packet_out->po_header_type = HETY_HANDSHAKE;
++            /* bun: Initial and Handshake packets get their type from
++             * send_ctl_allocate_packet() and the mini conn.  This default is
++             * left for a client's application packets before its handshake is
++             * done, which are sealed with the 0-RTT keys.  Upstream typed them
++             * Handshake and fixed that up only where it wrote a STREAM frame,
++             * so the server couldn't open a packet with only RESET_STREAM,
++             * STOP_SENDING or a BLOCKED frame. */
++            packet_out->po_header_type = HETY_0RTT;
+     }
+     packet_out->po_path = path;
+ 

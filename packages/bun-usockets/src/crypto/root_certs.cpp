@@ -48,18 +48,12 @@ static void us_cert_file_into_bio(void *ctx, const uint8_t *data, size_t len) {
 // Forward declarations for platform-specific functions
 // (Actual implementations are in platform-specific files)
 
-// bun_core::Global::CAStore, from --use-system-ca, --use-openssl-ca and --use-bundled-ca.
-enum class us_ca_store_t : uint8_t { bundled = 0, system = 1, openssl = 2 };
-extern "C" us_ca_store_t Bun__Node__CAStore;
-
-static us_ca_store_t us_ca_store() {
-  if (Bun__Node__CAStore != us_ca_store_t::bundled) {
-    return Bun__Node__CAStore;
-  }
-  // Not every command parses the flags.
-  const char *use_system_ca = getenv("NODE_USE_SYSTEM_CA");
-  return use_system_ca && strcmp(use_system_ca, "1") == 0 ? us_ca_store_t::system : us_ca_store_t::bundled;
-}
+// bun_core::Global decides from --use-*-ca and NODE_USE_SYSTEM_CA. tls.getCACertificates("default") lists the same sources.
+struct us_default_ca_sources_t {
+  bool bundled;
+  bool system;
+};
+extern "C" us_default_ca_sources_t Bun__defaultCASources();
 
 // Platform-specific system certificate loading implementations are separated:
 // - macOS: root_certs_darwin.cpp (Security framework with dynamic loading)
@@ -207,7 +201,7 @@ static const us_openssl_default_cert_file &us_get_openssl_default_cert_file() {
     const uint8_t *const *bundled_certs = nullptr;
     const size_t *bundled_lens = nullptr;
     size_t bundled_count =
-        us_ca_store() == us_ca_store_t::openssl ? 0 : us_bundled_root_certs_der(&bundled_certs, &bundled_lens);
+        Bun__defaultCASources().bundled ? us_bundled_root_certs_der(&bundled_certs, &bundled_lens) : 0;
     std::unordered_set<std::string_view> bundled;
     bundled.reserve(bundled_count);
     for (size_t i = 0; i < bundled_count; i++) {
@@ -296,10 +290,10 @@ extern "C" X509_STORE *us_get_default_ca_store() {
     return NULL;
   }
   X509_STORE_set_flags(store, X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS);
-  us_ca_store_t ca_store = us_ca_store();
+  us_default_ca_sources_t sources = Bun__defaultCASources();
 
   // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1099
-  if (ca_store != us_ca_store_t::openssl) {
+  if (sources.bundled) {
     X509_LAZY_CERT_SET *bundled = us_get_bundled_root_cert_set();
     if (bundled == NULL || !X509_STORE_add_lazy_cert_set(store, bundled)) {
       X509_STORE_free(store);
@@ -335,7 +329,7 @@ extern "C" X509_STORE *us_get_default_ca_store() {
     }
   }
 
-  if (ca_store == us_ca_store_t::system) {
+  if (sources.system) {
     const us_system_certs_t &system = us_get_root_system_certs();
     if (system.lazy != nullptr && !X509_STORE_add_lazy_cert_set(store, system.lazy)) {
       X509_STORE_free(store);

@@ -26,6 +26,19 @@ function replaceOn(holder: object, name: string, original: PropertyDescriptor) {
         original.set!.call(this, value);
       },
     });
+  } else if (typeof original.value !== "function") {
+    let stored = original.value;
+    Object.defineProperty(holder, name, {
+      configurable: true,
+      get() {
+        lines.push(`get ${name}: ${stored}`);
+        return stored;
+      },
+      set(value) {
+        lines.push(`set ${name}: ${value}`);
+        stored = value;
+      },
+    });
   } else {
     Object.defineProperty(holder, name, {
       configurable: true,
@@ -133,7 +146,7 @@ for (const [of, name, morePlaces] of members) {
   }
 }
 
-// A getter that answers otherwise than the accessor it stands for.
+// A getter that answers otherwise than the member it stands for.
 for (const [how, exchange] of Object.entries(exchanges)) {
   await run(`shouldKeepAlive of the response answers false, ${how}`, exchange, (_req, res) => {
     Object.defineProperty(res, "shouldKeepAlive", {

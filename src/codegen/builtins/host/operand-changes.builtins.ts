@@ -303,26 +303,6 @@ export default b.declarations(
   handlerOf("Bun.RedisClient.prototype.onclose", { this: b.operand("this"), args: [b.any] }),
   // It also answers the callback of a write that has not gone out whole, which was handed over like any operand.
   responseHandler("onwritable", { this: b.undefined, args: [b.f64] }),
-  // What the callback writes goes out in one piece when it returns.
-  b.method("%NodeHTTPResponse%.prototype.cork", {
-    args: { callback: b.callable },
-    returns: b.callbackResult("callback"),
-    capability: "js",
-    throws: true,
-    uses: {
-      this: handedOver,
-      callback: [
-        b.called({
-          afterwards: "TouchesOnlyWhatRowNames",
-          times: "Once",
-          this: b.undefined,
-          args: [],
-          result: "Returned",
-        }),
-      ],
-    },
-    implementation: b.hostCall,
-  }),
 
   // Each own member of the object is read and turned into a string.
   b.method("%ParsedShellScript%.prototype.setEnv", {

@@ -23,7 +23,7 @@ export const clusterRawBind = b.fn({
   capability: "js",
   throws: true,
 });
-export const clusterValidateFd = b.fn({ args: { fd: b.f64, wantDgram: b.bool }, returns: b.i32 });
+export const clusterAdoptFd = b.fn({ args: { fd: b.f64, wantDgram: b.bool }, returns: b.i32 });
 export const clusterCloseHandle = b.fn({ args: { fd: b.f64 } });
 
 /** `process[kHandle]` of a `cluster.Worker`, which takes any object as its process. */

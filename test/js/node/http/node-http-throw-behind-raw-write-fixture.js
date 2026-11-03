@@ -1,7 +1,6 @@
 // The first request of a connection arrives while a raw write of the socket is still in its
 // buffer: a 'connection' listener wrote more than the socket takes at once, and the client does
-// not read. Such a request is dispatched like a pipelined one. Its response waits in the queue,
-// and the socket has no current response yet. Then the dispatch throws.
+// not read. What its response writes goes out behind the raw write. Then the dispatch throws.
 //
 // usage: <tcp|tls> [mode]
 // Prints one JSON line for each mode. Node.js runs this file too.
@@ -57,7 +56,6 @@ const modes = {
 async function scenario(mode) {
   events = [];
   const thrown = Promise.withResolvers();
-  let queued;
   function fail(thrower, req) {
     events.push(req ? `${thrower} ${req.url}` : thrower);
     thrown.resolve();
@@ -86,18 +84,13 @@ async function scenario(mode) {
   const server = (isTLS ? https : http).createServer(options, (req, res) => {
     req.on("error", () => {});
     res.on("error", () => {});
-    // A queued response has no socket.
-    queued = res.socket === null;
     if (mode === "ended") res.end("done");
     if (mode === "destroyed") req.destroy();
     fail("request", req);
   });
   for (const eventName of ["checkContinue", "checkExpectation"]) {
     if (mode !== eventName) continue;
-    server.on(eventName, (req, res) => {
-      queued = res.socket === null;
-      fail(eventName, req);
-    });
+    server.on(eventName, req => fail(eventName, req));
   }
   server.on(isTLS ? "secureConnection" : "connection", socket => {
     socket.on("error", () => {});
@@ -141,7 +134,6 @@ async function scenario(mode) {
   server.closeAllConnections();
   return {
     mode,
-    queued,
     events,
     rawBytes: resets ? undefined : received >= rawLength && rawIntact ? "all" : Math.min(received, rawLength),
     response: response.replace(/Date: [^\r]+\r\n/g, ""),

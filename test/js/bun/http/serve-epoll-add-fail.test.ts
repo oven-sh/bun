@@ -1,12 +1,24 @@
 // An LD_PRELOAD shim makes epoll_ctl(EPOLL_CTL_ADD) fail with ENOSPC (what the
 // kernel returns when fs.epoll.max_user_watches is exhausted) so Bun.serve /
 // Bun.listen must throw and accepted connections must be closed, not parked.
+// The shim also makes getaddrinfo() fail for a few fixed names.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import net from "node:net";
 import { join } from "node:path";
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+
+// For `eai-<key>.test` the shim's getaddrinfo() returns EAI_<KEY>. The values are the error's code and its errno, which is Node's (libuv's UV_EAI_<KEY>).
+const EAI_CASES = {
+  noname: ["ENOTFOUND", -3008],
+  nodata: ["ENOTFOUND", -3007],
+  again: ["EAI_AGAIN", -3001],
+  fail: ["EBADRESP", -3004],
+  memory: ["ENOMEM", -3006],
+  family: ["EBADFAMILY", -3005],
+  addrfamily: ["EBADFAMILY", -3000],
+} as const;
 
 // FAIL_EPOLL_ADD=listener: listening TCP sockets (SO_ACCEPTCONN).
 // FAIL_EPOLL_ADD=accepted: connected SOCK_STREAM. FAIL_EPOLL_ADD=udp: SOCK_DGRAM.
@@ -15,10 +27,19 @@ const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
+#include <netdb.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
+
+// Not every libc's <netdb.h> has these two.
+#ifndef EAI_NODATA
+#define EAI_NODATA -5
+#endif
+#ifndef EAI_ADDRFAMILY
+#define EAI_ADDRFAMILY -9
+#endif
 
 static int (*real_epoll_ctl)(int, int, int, struct epoll_event *);
 static int mode = -1; // 0 = listener, 1 = accepted, 2 = udp
@@ -46,6 +67,42 @@ int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
     }
     return real_epoll_ctl(epfd, op, fd, event);
 }
+
+int getaddrinfo(const char *node, const char *service, const struct addrinfo *hints, struct addrinfo **res) {
+    static int (*real)(const char *, const char *, const struct addrinfo *, struct addrinfo **);
+    if (!real) real = (int (*)(const char *, const char *, const struct addrinfo *, struct addrinfo **)) dlsym(RTLD_NEXT, "getaddrinfo");
+${Object.keys(EAI_CASES)
+  .map(key => `    if (node && strcmp(node, "eai-${key}.test") == 0) return EAI_${key.toUpperCase()};`)
+  .join("\n")}
+    return real(node, service, hints, res);
+}
+`;
+
+const DNS_FIXTURE = /* js */ `
+const shape = ({ code, errno, syscall, hostname, message }) => ({ code, errno, syscall, hostname, message });
+const out = {};
+for (const hostname of ${JSON.stringify(Object.keys(EAI_CASES).map(key => `eai-${key}.test`))}) {
+  try {
+    Bun.serve({ hostname, port: 0, fetch: () => new Response() }).stop(true);
+    out["Bun.serve " + hostname] = "listening";
+  } catch (e) {
+    out["Bun.serve " + hostname] = shape(e);
+  }
+  try {
+    Bun.listen({ hostname, port: 0, socket: { data() {} } }).stop(true);
+    out["Bun.listen " + hostname] = "listening";
+  } catch (e) {
+    out["Bun.listen " + hostname] = shape(e);
+  }
+  for (const name of ["http", "net"]) {
+    out[name + " " + hostname] = await new Promise(resolve => {
+      const server = require("node:" + name).createServer();
+      server.on("error", e => resolve(shape(e)));
+      server.listen(0, hostname, () => server.close(() => resolve("listening")));
+    });
+  }
+}
+console.log(JSON.stringify(out));
 `;
 
 const SERVE_FIXTURE = /* js */ `
@@ -147,6 +204,7 @@ beforeAll(async () => {
     "fetch.js": FETCH_FIXTURE,
     "connect.js": CONNECT_FIXTURE,
     "udp.js": UDP_FIXTURE,
+    "dns.js": DNS_FIXTURE,
   });
   shimPath = join(String(dir), "shim.so");
   await using ccProc = Bun.spawn({
@@ -208,7 +266,7 @@ test.concurrent.skipIf(!isLinux || !cc)(
     const result = JSON.parse(line);
     expect(result).toEqual({
       ok: false,
-      errno: 28, // ENOSPC
+      errno: -28, // ENOSPC
       code: "ENOSPC",
       syscall: "listen",
       message: expect.any(String),
@@ -304,11 +362,11 @@ test.concurrent.skipIf(!isLinux || !cc)(
     expect({ stderr, line }).toEqual({ stderr: expect.any(String), line: expect.stringContaining("{") });
     const result = JSON.parse(line);
     // Synchronous NULL from us_socket_group_connect → do_connect() Err →
-    // handle_connect_error remaps the errno and rejects with syscall "connect".
+    // handle_connect_error rejects with the errno and syscall "connect".
     expect(result).toEqual({
       settled: "rejected",
-      code: "ECONNREFUSED",
-      errno: -111,
+      code: "ENOSPC",
+      errno: -28,
       syscall: "connect",
       message: expect.any(String),
     });
@@ -329,6 +387,29 @@ test.concurrent.skipIf(!isLinux || !cc)(
       errno: 28,
       message: expect.stringContaining("ENOSPC"),
     });
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent.skipIf(!isLinux || !cc)(
+  "listening on a hostname that doesn't resolve throws the getaddrinfo error",
+  async () => {
+    // Every listen fails before its epoll_ctl(), so the mode doesn't matter.
+    const { stdout, stderr, exitCode } = await runWithShim("dns.js", "udp");
+    const out: Record<string, object> = {};
+    for (const [key, [code, errno]] of Object.entries(EAI_CASES)) {
+      const hostname = `eai-${key}.test`;
+      for (const api of ["Bun.serve", "Bun.listen", "http", "net"]) {
+        out[`${api} ${hostname}`] = {
+          code,
+          errno,
+          syscall: "getaddrinfo",
+          hostname,
+          message: `getaddrinfo ${code} ${hostname}`,
+        };
+      }
+    }
+    expect({ out: JSON.parse(stdout || "null"), stderr }).toEqual({ out, stderr: "" });
     expect(exitCode).toBe(0);
   },
 );

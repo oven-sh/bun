@@ -108,7 +108,6 @@ static constexpr us_socket_vtable_t s_hostVTable = {
     .on_writable = hostOnWritable,
     .on_close = hostOnClose,
     .on_timeout = nullptr,
-    .on_long_timeout = nullptr,
     .on_end = hostOnEnd,
     .on_connect_error = nullptr,
     .on_connecting_error = nullptr,

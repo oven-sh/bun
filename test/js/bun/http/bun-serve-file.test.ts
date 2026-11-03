@@ -1,9 +1,24 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, tempDirWithFiles, tls } from "harness";
 import { mkfifo } from "mkfifo";
-import { closeSync, constants, openSync, readdirSync, unlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readSync,
+  statSync,
+  truncateSync,
+  unlinkSync,
+  utimesSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
+import { connect as netConnect } from "node:net";
 import { join } from "node:path";
+import { connect as tlsConnect } from "node:tls";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
 const files = {
@@ -21,6 +36,16 @@ const files = {
 };
 const ifRangeValidators = { "ETag": '"v1"', "Last-Modified": "Wed, 21 Oct 2015 07:28:00 GMT" };
 
+// toBe() elides the middle of multi-megabyte strings, so report the first character that differs.
+function expectSameText(actual: string, expected: string) {
+  expect(actual.length).toBe(expected.length);
+  if (actual === expected) return;
+  let at = 0;
+  while (actual[at] === expected[at]) at++;
+  const around = (text: string) => `index ${at}: ${text.slice(Math.max(0, at - 10), at + 10)}`;
+  expect(around(actual)).toBe(around(expected));
+}
+
 describe("Bun.file in serve routes", () => {
   let server: Server<undefined>;
   let tempDir: string;
@@ -35,6 +60,7 @@ describe("Bun.file in serve routes", () => {
   beforeAll(async () => {
     tempDir = tempDirWithFiles("bun-serve-file-test-", files);
 
+    const partialSlice = () => Bun.file(join(tempDir, "partial.txt")).slice(5, 10);
     const routes = {
       "/hello.txt": {
         GET: new Response(Bun.file(join(tempDir, "hello.txt"))),
@@ -81,6 +107,47 @@ describe("Bun.file in serve routes", () => {
       "/partial-empty-slice-stream-handler": () =>
         new Response(Bun.file(join(tempDir, "partial.txt")).slice(5, 5).stream()),
       "/partial-stream-handler": () => new Response(Bun.file(join(tempDir, "partial.txt")).stream()),
+      "/slice-handler": () => new Response(partialSlice()),
+      "/slice-handler-headers": () => new Response(partialSlice(), { headers: { "X-Custom": "1" } }),
+      "/slice-handler-headers-read": () => {
+        const res = new Response(partialSlice());
+        res.headers.get("X-Custom");
+        return res;
+      },
+      "/slice-handler-body-read": () => {
+        const res = new Response(partialSlice());
+        res.body;
+        return res;
+      },
+      "/slice-handler-form-data-refused": async () => {
+        const res = new Response(partialSlice());
+        // text/plain isn't a form type, so this rejects and leaves the body alone.
+        await res.formData().catch(() => {});
+        return res;
+      },
+      "/slice-handler-body-and-headers-read": () => {
+        const res = new Response(partialSlice());
+        res.body;
+        res.headers.get("X-Custom");
+        return res;
+      },
+      "/slice-handler-copy": () => {
+        const res = new Response(partialSlice());
+        return new Response(res.body, res);
+      },
+      "/slice-handler-copy-clone": () => {
+        const res = new Response(partialSlice());
+        return new Response(res.body, res).clone() as Response;
+      },
+      "/slice-handler-request-copy": () => {
+        const req = new Request("http://example.com/", { method: "POST", body: partialSlice() });
+        return new Response(req.body, req);
+      },
+      "/slice-handler-request-copy-headers-read": () => {
+        const req = new Request("http://example.com/", { method: "POST", body: partialSlice() });
+        req.headers.get("X-Custom");
+        return new Response(req.body, req);
+      },
       "/fd-not-supported.txt": (() => {
         // This would test file descriptors, but they're not supported yet
         return new Response(Bun.file(join(tempDir, "hello.txt")));
@@ -192,36 +259,13 @@ describe("Bun.file in serve routes", () => {
       expect(res.status).toBe(200);
       const bytes = await res.bytes();
       expect(bytes).toEqual(new Uint8Array([0x00, 0x01, 0x02, 0x03, 0xff, 0xfe, 0xfd]));
-      expect(res.headers.get("Content-Type")).toMatch(/application\/octet-stream/);
+      expect(res.headers.get("Content-Type")).toBe("application/octet-stream");
     });
 
     it("serves large file", async () => {
       const res = await fetch(new URL(`/large.txt`, server.url));
       expect(res.status).toBe(200);
-      const text = await res.text();
-      expect(text).toHaveLength(LARGE_SIZE);
-
-      if (files["large.txt"] !== text) {
-        console.log("Expected length:", files["large.txt"].length);
-        console.log("Actual length:", text.length);
-        console.log("First 100 chars expected:", files["large.txt"].slice(0, 100));
-        console.log("First 100 chars actual:", text.slice(0, 100));
-        console.log("Last 100 chars expected:", files["large.txt"].slice(-100));
-        console.log("Last 100 chars actual:", text.slice(-100));
-
-        // Find first difference
-        for (let i = 0; i < Math.min(files["large.txt"].length, text.length); i++) {
-          if (files["large.txt"][i] !== text[i]) {
-            console.log(`First difference at index ${i}:`);
-            console.log(`Expected: "${files["large.txt"][i]}" (code: ${files["large.txt"].charCodeAt(i)})`);
-            console.log(`Actual: "${text[i]}" (code: ${text.charCodeAt(i)})`);
-            console.log(`Context around difference: "${files["large.txt"].slice(Math.max(0, i - 10), i + 10)}"`);
-            console.log(`Actual context: "${text.slice(Math.max(0, i - 10), i + 10)}"`);
-            break;
-          }
-        }
-        throw new Error("large.txt is not the same");
-      }
+      expectSameText(await res.text(), files["large.txt"]);
 
       expect(res.headers.get("Content-Length")).toBe(LARGE_SIZE.toString());
 
@@ -258,7 +302,7 @@ describe("Bun.file in serve routes", () => {
       const res = await fetch(new URL(`/json.json`, server.url));
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ message: "test", number: 42 });
-      expect(res.headers.get("Content-Type")).toMatch(/application\/json/);
+      expect(res.headers.get("Content-Type")).toBe("application/json;charset=utf-8");
     });
 
     it("serves nested file", async () => {
@@ -280,13 +324,79 @@ describe("Bun.file in serve routes", () => {
       expect(res.status).toBe(200);
       expect(await res.text()).toBe("");
       expect(res.headers.get("Content-Length")).toBe("13"); // "Hello, World!" length
-      expect(res.headers.get("Content-Type")).toMatch(/text\/plain/);
+      expect(res.headers.get("Content-Type")).toBe("text/plain;charset=utf-8");
     });
 
     it("supports GET requests", async () => {
       const res = await fetch(new URL(`/hello.txt`, server.url), { method: "GET" });
       expect(res.status).toBe(200);
       expect(await res.text()).toBe("Hello, World!");
+    });
+
+    it("HEAD of a file from the fetch handler sends GET's headers and no body", async () => {
+      using handlerServer = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: () => new Response(Bun.file(join(tempDir, "partial.txt"))),
+      });
+
+      // A raw socket shows any body bytes after the head.
+      const { promise: closed, resolve, reject } = Promise.withResolvers<void>();
+      let wire = "";
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: handlerServer.port,
+        socket: {
+          open: socket => void socket.write("HEAD / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"),
+          data: (_, chunk) => void (wire += chunk.toString("latin1")),
+          close: () => resolve(),
+          error: (_, err) => reject(err),
+        },
+      });
+      await closed;
+      const [head, ...afterHead] = wire.split("\r\n\r\n");
+      const lines = head.toLowerCase().split("\r\n");
+
+      const ranged = await fetch(handlerServer.url, { method: "HEAD", headers: { Range: "bytes=2-5" } });
+      const unsatisfiable = await fetch(handlerServer.url, { method: "HEAD", headers: { Range: "bytes=99-" } });
+
+      expect({
+        status: lines[0],
+        contentType: lines.filter(line => line.startsWith("content-type:")),
+        contentLength: lines.filter(line => line.startsWith("content-length:")),
+        afterHead,
+        ranged: {
+          status: ranged.status,
+          contentLength: ranged.headers.get("Content-Length"),
+          contentRange: ranged.headers.get("Content-Range"),
+        },
+        unsatisfiable: { status: unsatisfiable.status, contentRange: unsatisfiable.headers.get("Content-Range") },
+      }).toEqual({
+        status: "http/1.1 200 ok",
+        contentType: ["content-type: text/plain;charset=utf-8"],
+        contentLength: ["content-length: 16"],
+        afterHead: [""],
+        ranged: { status: 206, contentLength: "4", contentRange: "bytes 2-5/16" },
+        unsatisfiable: { status: 416, contentRange: "bytes */16" },
+      });
+    });
+
+    it("sends the slice's length as Content-Length for a slice of an fd-backed file", async () => {
+      const fd = openSync(join(tempDir, "partial.txt"), "r");
+      try {
+        using handlerServer = Bun.serve({
+          port: 0,
+          fetch: () => new Response(Bun.file(fd).slice(5, 10)),
+        });
+        const probe = async (method: string) => {
+          const res = await fetch(handlerServer.url, { method });
+          return { status: res.status, contentLength: res.headers.get("Content-Length"), body: await res.text() };
+        };
+        expect(await probe("HEAD")).toEqual({ status: 200, contentLength: "5", body: "" });
+        expect(await probe("GET")).toEqual({ status: 200, contentLength: "5", body: "56789" });
+      } finally {
+        closeSync(fd);
+      }
     });
   });
 
@@ -304,6 +414,20 @@ describe("Bun.file in serve routes", () => {
       expect(res.status).toBe(201);
       expect(res.statusText).toBe("Created");
       expect(await res.text()).toBe("Hello, World!");
+    });
+
+    it("sends a disposition type with the automatic Content-Disposition filename", async () => {
+      using handlerServer = Bun.serve({
+        port: 0,
+        fetch: req => new Response(Bun.file(join(tempDir, new URL(req.url).pathname))),
+      });
+      const seen: Record<string, string | null> = {};
+      for (const name of ["binary.bin", "hello.txt"]) {
+        const res = await fetch(new URL(name, handlerServer.url));
+        await res.arrayBuffer();
+        seen[name] = res.headers.get("Content-Disposition");
+      }
+      expect(seen).toEqual({ "binary.bin": 'inline; filename="binary.bin"', "hello.txt": null });
     });
   });
 
@@ -382,6 +506,8 @@ describe("Bun.file in serve routes", () => {
         });
 
         expect(res.status).toBe(200);
+        expect(res.headers.get("Content-Length")).toBe("13");
+        expect(await res.text()).toBe(method === "GET" ? "Hello, World!" : "");
       });
     });
 
@@ -405,18 +531,25 @@ describe("Bun.file in serve routes", () => {
     });
 
     it("ignores If-Modified-Since for non-GET/HEAD requests", async () => {
-      const res1 = await fetch(new URL(`/hello.txt`, server.url));
+      // `/hello.txt` only accepts GET and HEAD, so a POST would hit the fallback handler.
+      // `/hello-blob.txt` accepts every method.
+      const res1 = await fetch(new URL(`/hello-blob.txt`, server.url));
       const lastModified = res1.headers.get("Last-Modified");
+      expect(lastModified).not.toBeEmpty();
+      const ifModifiedSince = new Date(Date.parse(lastModified!) + 10000).toISOString();
 
-      const res2 = await fetch(new URL(`/hello.txt`, server.url), {
-        method: "POST",
-        headers: {
-          "If-Modified-Since": new Date(Date.parse(lastModified!) + 10000).toISOString(),
-        },
+      const get = await fetch(new URL(`/hello-blob.txt`, server.url), {
+        headers: { "If-Modified-Since": ifModifiedSince },
       });
+      expect(get.status).toBe(304);
+      expect(await get.text()).toBe("");
 
-      // Should not return 304 for POST
-      expect(res2.status).not.toBe(304);
+      const post = await fetch(new URL(`/hello-blob.txt`, server.url), {
+        method: "POST",
+        headers: { "If-Modified-Since": ifModifiedSince },
+      });
+      expect(post.status).toBe(200);
+      expect(await post.text()).toBe("Hello, World!");
     });
 
     describe.each(["/hello.txt", "/hello-blob.txt"])("If-None-Match on %s", path => {
@@ -447,7 +580,7 @@ describe("Bun.file in serve routes", () => {
             },
           });
           expect(res.status).toBe(200);
-          if (method === "GET") expect(await res.text()).toBe("Hello, World!");
+          expect(await res.text()).toBe(method === "GET" ? "Hello, World!" : "");
         });
 
         it("still 304s for If-None-Match: * when If-Modified-Since is also present", async () => {
@@ -492,6 +625,7 @@ describe("Bun.file in serve routes", () => {
 
     // RFC 9110 §13.2.2 steps 1–2: If-Match / If-Unmodified-Since evaluate
     // first and short-circuit with 412 before If-None-Match / If-Modified-Since.
+    // fetch() never reads a HEAD body, so the "" expected for HEAD can't catch body bytes on the wire.
     describe.each(["GET", "HEAD"])("If-Match / If-Unmodified-Since (%s)", method => {
       it("If-Match: non-matching tag on a file route with ETag → 412", async () => {
         const res = await fetch(new URL(`/with-etag.txt`, server.url), {
@@ -508,7 +642,7 @@ describe("Bun.file in serve routes", () => {
           headers: { "If-Match": '"custom-etag"' },
         });
         expect(res.status).toBe(200);
-        if (method === "GET") expect(await res.text()).toBe("Hello, World!");
+        expect(await res.text()).toBe(method === "GET" ? "Hello, World!" : "");
       });
 
       it("If-Match: * on a file route without a stored ETag → 200", async () => {
@@ -517,6 +651,7 @@ describe("Bun.file in serve routes", () => {
           headers: { "If-Match": "*" },
         });
         expect(res.status).toBe(200);
+        expect(await res.text()).toBe(method === "GET" ? "Hello, World!" : "");
       });
 
       it("If-Match: tag list on a file route without a stored ETag → 412", async () => {
@@ -534,6 +669,7 @@ describe("Bun.file in serve routes", () => {
           headers: { "If-Match": 'W/"custom-etag"' },
         });
         expect(res.status).toBe(412);
+        expect(await res.text()).toBe("");
       });
 
       it("If-Unmodified-Since earlier than mtime → 412", async () => {
@@ -553,6 +689,7 @@ describe("Bun.file in serve routes", () => {
           headers: { "If-Unmodified-Since": lm! },
         });
         expect(res.status).toBe(200);
+        expect(await res.text()).toBe(method === "GET" ? "Hello, World!" : "");
       });
 
       it("If-Match failure + If-None-Match match → 412 (not 304)", async () => {
@@ -561,6 +698,7 @@ describe("Bun.file in serve routes", () => {
           headers: { "If-Match": '"zz"', "If-None-Match": '"custom-etag"' },
         });
         expect(res.status).toBe(412);
+        expect(await res.text()).toBe("");
       });
 
       it("If-Match failure + Range → 412 (no Content-Range)", async () => {
@@ -579,6 +717,7 @@ describe("Bun.file in serve routes", () => {
           headers: { "If-Match": '"custom-etag"', "If-Unmodified-Since": "Mon, 01 Jan 2001 00:00:00 GMT" },
         });
         expect(res.status).toBe(200);
+        expect(await res.text()).toBe(method === "GET" ? "Hello, World!" : "");
       });
     });
 
@@ -598,7 +737,7 @@ describe("Bun.file in serve routes", () => {
   });
 
   describe("Stress testing", () => {
-    test.each(["hello.txt", "large.txt"])(
+    test.each(["hello.txt", "large.txt"] as const)(
       "concurrent requests for %s",
       async filename => {
         const batchSize = 16;
@@ -612,13 +751,8 @@ describe("Bun.file in serve routes", () => {
             }),
           );
 
-          const results = await Promise.all(promises);
-
-          // Verify all responses are identical
-          const expected = results[0];
-          for (const result of results) {
-            expect(result?.length).toBe(expected.length);
-            expect(result).toBe(expected);
+          for (const result of await Promise.all(promises)) {
+            expectSameText(result, files[filename]);
           }
         }
 
@@ -757,6 +891,38 @@ describe("Bun.file in serve routes", () => {
       });
     });
 
+    it("a handler's slice is a 206 with Content-Range until the handler passes or reads headers", async () => {
+      const serve = async (pathname: string) => {
+        const res = await fetch(new URL(pathname, server.url));
+        return { status: res.status, contentRange: res.headers.get("Content-Range"), body: await res.text() };
+      };
+      const partial = { status: 206, contentRange: "bytes 5-9/*", body: "56789" };
+      const whole = { status: 200, contentRange: null, body: "56789" };
+      expect({
+        "no headers": await serve("/slice-handler"),
+        "body read": await serve("/slice-handler-body-read"),
+        "formData() refused": await serve("/slice-handler-form-data-refused"),
+        "copy": await serve("/slice-handler-copy"),
+        "clone of a copy": await serve("/slice-handler-copy-clone"),
+        "copy of a Request": await serve("/slice-handler-request-copy"),
+        "headers": await serve("/slice-handler-headers"),
+        "headers read": await serve("/slice-handler-headers-read"),
+        "body and headers read": await serve("/slice-handler-body-and-headers-read"),
+        "copy of a Request, headers read": await serve("/slice-handler-request-copy-headers-read"),
+      }).toEqual({
+        "no headers": partial,
+        "body read": partial,
+        "formData() refused": partial,
+        "copy": partial,
+        "clone of a copy": partial,
+        "copy of a Request": partial,
+        "headers": whole,
+        "headers read": whole,
+        "body and headers read": whole,
+        "copy of a Request, headers read": whole,
+      });
+    });
+
     // The slice is shorter than the file, so the byte budget runs out before
     // the reader reports EOF: the response completes inline while a deferred
     // completion still hops through the event loop. Repeated requests must
@@ -807,6 +973,86 @@ describe("Bun.file in serve routes", () => {
       }
     });
 
+    it("HEAD of a missing file or a directory from the fetch handler fails like GET", async () => {
+      const fetchFile = (req: Request) =>
+        new Response(Bun.file(new URL(req.url).pathname === "/dir" ? tempDir : join(tempDir, "nope.html")));
+      using withoutError = Bun.serve({ port: 0, fetch: fetchFile });
+      using withError = Bun.serve({
+        port: 0,
+        fetch: fetchFile,
+        error: e => new Response(new Blob([`err ${e.code}`], { type: "text/x-error" }), { status: 500 }),
+      });
+      const probe = async (server: Server<undefined>, pathname: string, method: string) => {
+        const res = await fetch(new URL(pathname, server.url), { method });
+        return [res.status, res.headers.get("Content-Length"), res.headers.get("Content-Type"), await res.text()];
+      };
+      const results: Record<string, unknown> = {};
+      for (const method of ["GET", "HEAD"]) {
+        for (const pathname of ["/missing", "/dir"]) {
+          results[`${method} ${pathname}`] = [
+            await probe(withoutError, pathname, method),
+            await probe(withError, pathname, method),
+          ];
+        }
+      }
+      expect(results).toEqual({
+        "GET /missing": [
+          [404, "0", null, ""],
+          [500, "10", "text/x-error", "err ENOENT"],
+        ],
+        "GET /dir": [
+          [404, "0", null, ""],
+          [500, "10", "text/x-error", "err EISDIR"],
+        ],
+        "HEAD /missing": [
+          [404, "0", null, ""],
+          [500, "10", "text/x-error", ""],
+        ],
+        "HEAD /dir": [
+          [404, "0", null, ""],
+          [500, "10", "text/x-error", ""],
+        ],
+      });
+    });
+
+    it("error()'s Response doesn't get the failed file's Content-Type or filename", async () => {
+      const replies = {
+        stream: () =>
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode("streamed"));
+                controller.close();
+              },
+            }),
+            { status: 500 },
+          ),
+        bodiless: () => new Response(null, { status: 404 }),
+      };
+      const probe = async (server: Server<undefined>, pathname: string, method: string) => {
+        const res = await fetch(new URL(pathname, server.url), { method });
+        await res.text();
+        return [res.status, res.headers.get("Content-Type"), res.headers.get("Content-Disposition")];
+      };
+      for (const [name, reply] of Object.entries(replies)) {
+        using afterFailedFile = Bun.serve({
+          port: 0,
+          fetch: req =>
+            new Response(Bun.file(new URL(req.url).pathname === "/dir" ? tempDir : join(tempDir, "nope.html"))),
+          error: reply,
+        });
+        const expected = [name === "stream" ? 500 : 404, null, null];
+        for (const method of ["GET", "HEAD"]) {
+          expect({
+            name,
+            method,
+            missing: await probe(afterFailedFile, "/missing", method),
+            dir: await probe(afterFailedFile, "/dir", method),
+          }).toEqual({ name, method, missing: expected, dir: expected });
+        }
+      }
+    });
+
     it("preserves custom status for empty files", async () => {
       const res = await fetch(new URL(`/empty-400.txt`, server.url));
       expect(res.status).toBe(400);
@@ -839,7 +1085,7 @@ describe("Bun.file in serve routes", () => {
       const res = await fetch(new URL(`/hello.txt`, server.url), { method: "HEAD" });
       expect(res.status).toBe(200);
       expect(res.headers.get("Content-Length")).toBe("13");
-      expect(res.headers.get("Content-Type")).toMatch(/text\/plain/);
+      expect(res.headers.get("Content-Type")).toBe("text/plain;charset=utf-8");
       expect(res.headers.get("Last-Modified")).not.toBeNull();
       expect(await res.text()).toBe("");
     });
@@ -853,7 +1099,12 @@ describe("Bun.file in serve routes", () => {
       // Abort immediately
       controller.abort();
 
-      await expect(promise).rejects.toThrow(/abort/i);
+      const error = await promise.then(
+        () => null,
+        e => e,
+      );
+      expect(error).toBeInstanceOf(DOMException);
+      expect(error.name).toBe("AbortError");
     });
   });
 
@@ -880,17 +1131,17 @@ describe("Bun.file in serve routes", () => {
   describe.concurrent("Content-Type detection", () => {
     it("detects text/plain for .txt files", async () => {
       const res = await fetch(new URL(`/hello.txt`, server.url));
-      expect(res.headers.get("Content-Type")).toMatch(/text\/plain/);
+      expect(res.headers.get("Content-Type")).toBe("text/plain;charset=utf-8");
     });
 
     it("detects application/json for .json files", async () => {
       const res = await fetch(new URL(`/json.json`, server.url));
-      expect(res.headers.get("Content-Type")).toMatch(/application\/json/);
+      expect(res.headers.get("Content-Type")).toBe("application/json;charset=utf-8");
     });
 
     it("detects application/octet-stream for binary files", async () => {
       const res = await fetch(new URL(`/binary.bin`, server.url));
-      expect(res.headers.get("Content-Type")).toMatch(/application\/octet-stream/);
+      expect(res.headers.get("Content-Type")).toBe("application/octet-stream");
     });
   });
 
@@ -951,8 +1202,11 @@ describe("Bun.file in serve routes", () => {
     it("ignores Range for non-GET/HEAD methods", async () => {
       // RFC 9110 §14.2: Range is only defined for GET.
       const res = await fetch(new URL(path, server.url), { method: "POST", headers: { Range: "bytes=0-3" } });
-      expect(res.status).not.toBe(206);
-      expect(res.headers.get("content-range")).toBeNull();
+      expect({
+        status: res.status,
+        contentRange: res.headers.get("content-range"),
+        body: await res.text(),
+      }).toEqual({ status: 200, contentRange: null, body });
     });
   });
 
@@ -1106,9 +1360,7 @@ describe("Bun.file in serve routes", () => {
       const res = await fetch(new URL("/slice-escape", server.url), { headers: { Range: "bytes=200-220" } });
       const bytes = new Uint8Array(await res.arrayBuffer());
       // Range must be ignored for sliced blobs: serve the 100-byte slice, never bytes 200-220.
-      expect(bytes.length).toBe(100);
-      expect(bytes[0]).toBe(0);
-      expect(bytes[99]).toBe(99);
+      expect(bytes).toEqual(Uint8Array.from({ length: 100 }, (_, i) => i));
       expect(res.headers.get("content-range")).not.toContain("/256");
     });
   });
@@ -1375,6 +1627,68 @@ test.skipIf(isWindows)("Response(Bun.file(FIFO)) frames the body as chunked, not
   }
 });
 
+// Sends one request on its own connection. `Connection: close` makes the server hang up when it's done,
+// so `body` is every byte after the head, whatever Content-Length says.
+function wireResponse(port: number, method: "GET" | "HEAD", path: string, { secure = false, headers = "" } = {}) {
+  const { promise, resolve, reject } = Promise.withResolvers<{
+    status: number;
+    head: string;
+    contentRange: string | null;
+    contentLength: string | null;
+    body: string;
+  }>();
+  const address = { host: "127.0.0.1", port };
+  const socket = secure ? tlsConnect({ ...address, ca: tls.cert }) : netConnect(address);
+  let raw = "";
+  socket.setEncoding("latin1");
+  socket.on("error", reject);
+  socket.on("data", chunk => (raw += chunk));
+  socket.on("close", () => {
+    const headEnd = raw.indexOf("\r\n\r\n");
+    if (headEnd === -1) return reject(new Error(`no response head in ${JSON.stringify(raw)}`));
+    const head = raw.slice(0, headEnd);
+    resolve({
+      status: Number(head.split(" ")[1]),
+      head,
+      contentRange: /^content-range:\s*(.*)$/im.exec(head)?.[1] ?? null,
+      contentLength: /^content-length:\s*(\d+)/im.exec(head)?.[1] ?? null,
+      body: raw.slice(headEnd + 4),
+    });
+  });
+  socket.write(`${method} ${path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n${headers}\r\n`);
+  return promise;
+}
+
+// fetch() rejects a response whose header has a control byte, so read the header off the wire.
+test("omits the automatic Content-Disposition for a file name that a quoted-string can't carry", async () => {
+  await using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch: req =>
+      new Response(new File(["x"], new URL(req.url).searchParams.get("name")!, { type: "application/octet-stream" })),
+  });
+  const sent = (basename: string) => `inline; filename="${basename}"`;
+  const expected: Record<string, string | null> = {
+    "plain.bin": sent("plain.bin"),
+    "tab\tname.bin": sent("tab\tname.bin"),
+    "!#[]~.bin": sent("!#[]~.bin"),
+    "café.bin": sent("café.bin"),
+    'quo"te.bin': null,
+    "ctl\x01name.bin": null,
+    "del\x7fname.bin": null,
+    // `\` is a path separator on Windows, so it never reaches the basename.
+    "report\\": isWindows ? sent("report") : null,
+    "back\\slash.bin": isWindows ? sent("slash.bin") : null,
+  };
+  const seen: Record<string, string | null> = {};
+  for (const name of Object.keys(expected)) {
+    const { head } = await wireResponse(server.port!, "GET", `/?name=${encodeURIComponent(name)}`);
+    const value = /^content-disposition: (.*)$/im.exec(head)?.[1];
+    seen[name] = value === undefined ? null : Buffer.from(value, "latin1").toString();
+  }
+  expect(seen).toEqual(expected);
+});
+
 // A file route serves the window of the Bun.file() slice it was built from,
 // given either the slice or its unread stream (which is turned back into the
 // slice). FileRoute used to clamp the window to the file size without taking
@@ -1406,36 +1720,9 @@ test("file routes frame a slice that reaches or starts past EOF by the bytes the
     fetch: () => new Response("fallback", { status: 404 }),
   });
 
-  // One GET on its own connection; `Connection: close` makes the server hang
-  // up once it considers the response finished, so `body` is every byte that
-  // followed the head, however many the head declared.
   async function wire(path: string) {
-    const { promise, resolve } = Promise.withResolvers<string>();
-    let captured = "";
-    await Bun.connect({
-      hostname: "127.0.0.1",
-      port: server.port!,
-      socket: {
-        open(socket) {
-          socket.write(`GET ${path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
-        },
-        data(_socket, chunk) {
-          captured += Buffer.from(chunk).toString("latin1");
-        },
-        close() {
-          resolve(captured);
-        },
-        error() {
-          resolve(captured);
-        },
-      },
-    });
-    const raw = await promise;
-    const headEnd = raw.indexOf("\r\n\r\n");
-    return {
-      contentLength: /^content-length:\s*(\d+)/im.exec(raw.slice(0, headEnd))?.[1] ?? null,
-      body: raw.slice(headEnd + 4),
-    };
+    const { contentLength, body } = await wireResponse(server.port!, "GET", path);
+    return { contentLength, body };
   }
 
   const results: Record<string, unknown> = {};
@@ -1454,6 +1741,153 @@ test("file routes frame a slice that reaches or starts past EOF by the bytes the
   });
 });
 
+test("a Bun.file() route drops Transfer-Encoding and Content-Length from the Response's headers", async () => {
+  using dir = tempDir("serve-file-route-framing-headers", { "a.txt": "file-body" });
+  const file = Bun.file(join(String(dir), "a.txt"));
+  await using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    routes: {
+      "/transfer-encoding": new Response(file, { headers: { "Transfer-Encoding": "chunked" } }),
+      "/content-length": new Response(file, { headers: { "Content-Length": "3" } }),
+      "/both": new Response(file, {
+        headers: { "Transfer-Encoding": "chunked", "Content-Length": "3", "X-Kept": "yes" },
+      }),
+    },
+  });
+  const framing = async (method: "GET" | "HEAD", path: string) => {
+    const { head, body } = await wireResponse(server.port!, method, path);
+    const headers = head
+      .toLowerCase()
+      .split("\r\n")
+      .filter(line => /^(content-length|transfer-encoding|x-kept):/.test(line));
+    return { headers: headers.sort(), body };
+  };
+  expect({
+    transferEncoding: await framing("GET", "/transfer-encoding"),
+    contentLength: await framing("GET", "/content-length"),
+    both: await framing("GET", "/both"),
+    head: await framing("HEAD", "/both"),
+  }).toEqual({
+    transferEncoding: { headers: ["content-length: 9"], body: "file-body" },
+    contentLength: { headers: ["content-length: 9"], body: "file-body" },
+    both: { headers: ["content-length: 9", "x-kept: yes"], body: "file-body" },
+    head: { headers: ["content-length: 9", "x-kept: yes"], body: "" },
+  });
+});
+
+test("a fetch handler frames a Bun.file() slice by the bytes it serves", async () => {
+  using dir = tempDir("serve-handler-slice-framing", {
+    "partial.txt": "0123456789ABCDEF",
+    "shrinks.txt": "0123456789ABCDEF",
+  });
+  const path = join(String(dir), "partial.txt");
+
+  // Stored as 11 bytes from byte 5. The file then shrinks to 11 bytes, so only 6 are left from byte 5.
+  const shrinks = Bun.file(join(String(dir), "shrinks.txt"));
+  expect(shrinks.size).toBe(16);
+  const sliceBeforeShrink = shrinks.slice(5);
+  writeFileSync(join(String(dir), "shrinks.txt"), "0123456789A");
+
+  const fd = openSync(path, "r");
+  try {
+    const windows: Record<string, () => Response> = {
+      "slice(5, 21)": () => new Response(Bun.file(path).slice(5, 21)),
+      "slice(5, 21) with a header": () => new Response(Bun.file(path).slice(5, 21), { headers: { "X-Custom": "1" } }),
+      "slice(5, 21).stream()": () => new Response(Bun.file(path).slice(5, 21).stream()),
+      "slice(16, 32)": () => new Response(Bun.file(path).slice(16, 32)),
+      "slice(5, 20)": () => new Response(Bun.file(path).slice(5, 20)),
+      "slice(0, 16)": () => new Response(Bun.file(path).slice(0, 16)),
+      "slice(5) of a file that shrank": () => new Response(sliceBeforeShrink),
+      "fd slice(5, 21)": () => new Response(Bun.file(fd).slice(5, 21)),
+    };
+    const names = Object.keys(windows);
+    const handler = (req: Request) => windows[names[Number(new URL(req.url).pathname.slice(1))]]();
+    await using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: handler });
+    await using secureServer = Bun.serve({ port: 0, hostname: "127.0.0.1", tls, fetch: handler });
+
+    const framing: Record<string, unknown> = {};
+    const statuses: Record<string, unknown> = {};
+    for (const [i, name] of names.entries()) {
+      const get = await wireResponse(server.port!, "GET", `/${i}`);
+      const secure = await wireResponse(secureServer.port!, "GET", `/${i}`, { secure: true });
+      const head = await wireResponse(server.port!, "HEAD", `/${i}`);
+      framing[name] = {
+        get: { contentLength: get.contentLength, body: get.body },
+        secure: { contentLength: secure.contentLength, body: secure.body },
+        head: { contentLength: head.contentLength, body: head.body },
+      };
+      statuses[name] = [get, secure, head].map(({ status, contentRange }) => `${status} ${contentRange}`);
+    }
+    const exactly = (body: string) => ({
+      get: { contentLength: String(body.length), body },
+      secure: { contentLength: String(body.length), body },
+      head: { contentLength: String(body.length), body: "" },
+    });
+    expect(framing).toEqual({
+      "slice(5, 21)": exactly("56789ABCDEF"),
+      "slice(5, 21) with a header": exactly("56789ABCDEF"),
+      "slice(5, 21).stream()": exactly("56789ABCDEF"),
+      "slice(16, 32)": exactly(""),
+      "slice(5, 20)": exactly("56789ABCDEF"),
+      "slice(0, 16)": exactly("0123456789ABCDEF"),
+      "slice(5) of a file that shrank": exactly("56789A"),
+      "fd slice(5, 21)": exactly("56789ABCDEF"),
+    });
+    const all = <T>(status: T) => [status, status, status];
+    expect(statuses).toEqual({
+      "slice(5, 21)": all("206 bytes 5-15/*"),
+      "slice(5, 21) with a header": all("200 null"),
+      "slice(5, 21).stream()": all("206 bytes 5-15/*"),
+      "slice(16, 32)": all(expect.stringMatching(/^206 /)),
+      "slice(5, 20)": all("206 bytes 5-15/*"),
+      "slice(0, 16)": all("200 null"),
+      "slice(5) of a file that shrank": all("206 bytes 5-10/*"),
+      "fd slice(5, 21)": all("200 null"),
+    });
+  } finally {
+    closeSync(fd);
+  }
+});
+
+test("reads a Bun.file(fd) body at its offset, not at the descriptor's position", async () => {
+  using dir = tempDir("serve-fd-position", { "partial.txt": "0123456789ABCDEF" });
+  const fd = openSync(join(String(dir), "partial.txt"), "r");
+  try {
+    const readAtPosition = (length: number) => {
+      const buffer = Buffer.alloc(length);
+      return buffer.toString("latin1", 0, readSync(fd, buffer, 0, length, null));
+    };
+    expect(readAtPosition(3)).toBe("012");
+
+    const handler = (req: Request) =>
+      new Response(req.url.endsWith("/slice") ? Bun.file(fd).slice(0, 4) : Bun.file(fd));
+    await using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: handler });
+    await using secureServer = Bun.serve({ port: 0, hostname: "127.0.0.1", tls, fetch: handler });
+    const get = async (port: number, path: string, options?: { secure?: boolean; headers?: string }) => {
+      const { status, contentLength, body } = await wireResponse(port, "GET", path, options);
+      return `${status} ${contentLength} ${body}`;
+    };
+    expect({
+      whole: await get(server.port!, "/"),
+      again: await get(server.port!, "/"),
+      secure: await get(secureServer.port!, "/", { secure: true }),
+      slice: await get(server.port!, "/slice"),
+      range: await get(server.port!, "/", { headers: "Range: bytes=0-3\r\n" }),
+      nextByteAtPosition: readAtPosition(1),
+    }).toEqual({
+      whole: "200 16 0123456789ABCDEF",
+      again: "200 16 0123456789ABCDEF",
+      secure: "200 16 0123456789ABCDEF",
+      slice: "200 4 0123",
+      range: "206 4 0123",
+      nextByteAtPosition: "3",
+    });
+  } finally {
+    closeSync(fd);
+  }
+});
+
 // kqueue doesn't wake a FIFO reader when an empty pipe's last writer closes.
 test.skipIf(!isLinux)("Response(Bun.file(fifo)) ends the body when the EOF arrives after the data", async () => {
   using dir = tempDir("serve-fifo-eof", {});
@@ -1470,6 +1904,135 @@ test.skipIf(!isLinux)("Response(Bun.file(fifo)) ends the body when the EOF arriv
   closeSync(writer);
   const last = await reader.read();
   expect({ first: Buffer.from(first.value!).toString(), done: last.done }).toEqual({ first: "hello", done: true });
+});
+
+describe.concurrent("Bun.file() body that ends short of its Content-Length", () => {
+  // Resolves once the server closes the connection. `onBody` runs on the first body bytes.
+  function getUntilClosed(server: Server<undefined>, secure: boolean, pathname: string, onBody = () => {}) {
+    const { promise, resolve, reject } = Promise.withResolvers<{ head: string; bodyLength: number; body: string }>();
+    const address = { host: "127.0.0.1", port: server.port! };
+    const socket = secure ? tlsConnect({ ...address, ca: tls.cert }) : netConnect(address);
+    let received = "";
+    let head = "";
+    let bodyLength = 0;
+    let body = "";
+    socket.on("error", reject);
+    socket.on("close", () => resolve({ head, bodyLength, body }));
+    socket.on("data", chunk => {
+      if (!head) {
+        received += chunk.toString("latin1");
+        const headEnd = received.indexOf("\r\n\r\n");
+        if (headEnd < 0) return;
+        head = received.slice(0, headEnd).toLowerCase();
+        chunk = Buffer.from(received.slice(headEnd + 4), "latin1");
+      }
+      if (chunk.length === 0) return;
+      if (bodyLength === 0) onBody();
+      bodyLength += chunk.length;
+      if (body.length < 64) body += chunk.toString("latin1", 0, 64);
+    });
+    socket.write(`GET ${pathname} HTTP/1.1\r\nHost: x\r\n\r\n`);
+    return promise;
+  }
+
+  // Sparse, and far bigger than the loopback socket buffers, so the server can't send it all before it shrinks.
+  const SIZE = 256 * 1024 * 1024;
+
+  test.each([
+    ["fetch handler", "/big.bin", false],
+    ["fetch handler", "/big.bin", true],
+    ["file route", "/route", false],
+    ["directory route", "/dir/big.bin", true],
+  ] as const)("closes the connection when the file shrinks mid-body (%s %s, tls: %p)", async (_, pathname, secure) => {
+    using dir = tempDir("serve-file-shrinks", { "big.bin": "" });
+    const path = join(String(dir), "big.bin");
+    truncateSync(path, SIZE);
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      idleTimeout: 0,
+      tls: secure ? tls : undefined,
+      routes: { "/route": new Response(Bun.file(path)), "/dir/*": { dir: String(dir) } },
+      fetch: () => new Response(Bun.file(path)),
+    });
+    let pendingWhenShrunk = -1;
+    const { head, bodyLength } = await getUntilClosed(server, secure, pathname, () => {
+      pendingWhenShrunk = server.pendingRequests;
+      truncateSync(path, 4096);
+    });
+    expect({ pendingWhenShrunk, contentLength: /^content-length: (\d+)$/m.exec(head)?.[1] }).toEqual({
+      pendingWhenShrunk: 1,
+      contentLength: String(SIZE),
+    });
+    expect(bodyLength).toBeLessThan(SIZE);
+  });
+
+  test.each([false, true])("keeps the connection open after a complete body (tls: %p)", async secure => {
+    using dir = tempDir("serve-file-complete", {
+      "small.bin": Buffer.alloc(1000, "a"),
+      "large.bin": Buffer.alloc(2 * 1024 * 1024, "b"),
+    });
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: secure ? tls : undefined,
+      fetch: req => new Response(Bun.file(join(String(dir), new URL(req.url).pathname))),
+    });
+    const address = { host: "127.0.0.1", port: server.port! };
+    const socket = secure ? tlsConnect({ ...address, ca: tls.cert }) : netConnect(address);
+    try {
+      const chunks: Buffer[] = [];
+      let closed = false;
+      let wake = Promise.withResolvers<void>();
+      socket.on("error", error => wake.reject(error));
+      socket.on("close", () => ((closed = true), wake.resolve()));
+      socket.on("data", chunk => (chunks.push(chunk), wake.resolve()));
+      const get = async (pathname: string) => {
+        socket.write(`GET ${pathname} HTTP/1.1\r\nHost: x\r\n\r\n`);
+        let received = Buffer.alloc(0);
+        while (true) {
+          received = Buffer.concat([received, ...chunks.splice(0)]);
+          const headEnd = received.indexOf("\r\n\r\n");
+          if (headEnd >= 0) {
+            const head = received.toString("latin1", 0, headEnd).toLowerCase();
+            const contentLength = Number(/^content-length: (\d+)$/m.exec(head)?.[1]);
+            if (received.length >= headEnd + 4 + contentLength)
+              return { contentLength, bodyLength: received.length - headEnd - 4, close: head.includes("connection:") };
+          }
+          if (closed) throw new Error(`the server closed the connection during ${pathname}`);
+          await wake.promise;
+          wake = Promise.withResolvers();
+        }
+      };
+      const complete = (length: number) => ({ contentLength: length, bodyLength: length, close: false });
+      expect([await get("/small.bin"), await get("/large.bin"), await get("/small.bin")]).toEqual([
+        complete(1000),
+        complete(2 * 1024 * 1024),
+        complete(1000),
+      ]);
+    } finally {
+      socket.destroy();
+    }
+  });
+
+  // fstat() reports a whole page for a sysfs attribute, and read() returns a few bytes.
+  test.skipIf(!isLinux)("sends a file whose stat size overstates it, then closes the connection", async () => {
+    const attribute = "/sys/devices/system/cpu/online";
+    const content = readFileSync(attribute, "latin1");
+    const { size } = statSync(attribute);
+    expect(size).toBeGreaterThan(content.length);
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      idleTimeout: 0,
+      fetch: () => new Response(Bun.file(attribute)),
+    });
+    const { head, body } = await getUntilClosed(server, false, "/");
+    expect({ headers: head.split("\r\n").filter(line => /^(content-length|connection):/.test(line)), body }).toEqual({
+      headers: [`content-length: ${size}`, "connection: close"],
+      body: content,
+    });
+  });
 });
 
 // A request that declares a body arms the request-body (onData) callback on
@@ -1554,6 +2117,7 @@ process.exit(0);
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout.trim()).toBe("file-response-started\nstill-serving");
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 }, 30_000);
 
@@ -1683,14 +2247,213 @@ test("file route serves a burst of concurrent requests after reloads", async () 
   expect(a).toBe("a-new");
 });
 
+// https://github.com/oven-sh/bun/issues/4292
+test.concurrent.each([true, false])(
+  "Response(Bun.file()) that can't be opened responds 404 or 403 (development: %p)",
+  async development => {
+    using dir = tempDir("serve-file-open-error", { "ok.txt": "ok", "noperm.txt": "secret", "sub/.keep": "" });
+    const paths = ["/ok.txt", "/missing.txt", "/ok.txt/child"];
+    // open() on a directory fails with a different errno on Windows.
+    if (!isWindows) paths.push("/sub");
+    // Root and Windows ignore the mode bits.
+    const canDeny = !isWindows && process.getuid!() !== 0;
+    if (canDeny) paths.push("/noperm.txt");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        require("node:fs").chmodSync("noperm.txt", 0);
+        const fetchFile = req => new Response(Bun.file("." + new URL(req.url).pathname));
+        const codes = [];
+        const servers = {
+          none: Bun.serve({ port: 0, development: ${development}, fetch: fetchFile }),
+          undefined: Bun.serve({ port: 0, development: ${development}, fetch: fetchFile, error: e => void codes.push(e.code) }),
+          response: Bun.serve({ port: 0, development: ${development}, fetch: fetchFile, error: e => new Response(e.code, { status: 410 }) }),
+        };
+        for (const [name, server] of Object.entries(servers)) {
+          for (const path of ${JSON.stringify(paths)}) {
+            const res = await fetch(new URL(path, server.url));
+            console.log(name, path, res.status, res.statusText, res.headers.get("content-length"), await res.text());
+          }
+          server.stop(true);
+        }
+        console.log(codes.join());
+      `,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const defaults = (name: string) => [
+      `${name} /ok.txt 200 OK 2 ok`,
+      `${name} /missing.txt 404 Not Found 0 `,
+      `${name} /ok.txt/child 404 Not Found 0 `,
+      ...(isWindows ? [] : [`${name} /sub 404 Not Found 0 `]),
+      ...(canDeny ? [`${name} /noperm.txt 403 Forbidden 0 `] : []),
+    ];
+    // Windows reports a path below a regular file as ENOENT.
+    const codes = ["ENOENT", ...(isWindows ? ["ENOENT"] : ["ENOTDIR", "EISDIR"]), ...(canDeny ? ["EACCES"] : [])];
+    expect({ stdout: stdout.split("\n"), stderr }).toEqual({
+      stdout: [
+        ...defaults("none"),
+        ...defaults("undefined"),
+        "response /ok.txt 200 OK 2 ok",
+        ...codes.map((code, i) => `response ${paths[i + 1]} 410 Gone ${code.length} ${code}`),
+        codes.join(),
+        "",
+      ],
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent.each([
+  ["throws", `() => { throw new Error("boom") }`, "boom"],
+  ["rejects", `() => Promise.reject(new Error("boom"))`, "boom"],
+  ["returns another missing file", `() => new Response(Bun.file("./404.html"))`, "404.html"],
+])("Response(Bun.file(missing)) responds 500 when error() %s", async (_, error, reported) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      using server = Bun.serve({
+        port: 0,
+        development: false,
+        fetch: () => new Response(Bun.file("./missing.txt")),
+        error: ${error},
+      });
+      console.log((await fetch(server.url)).status);
+    `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("500\n");
+  expect(stderr).toContain(reported);
+  expect(exitCode).toBe(1);
+});
+
+// Installs a seccomp filter that fails sendfile(2) with SENDFILE_ERRNO, except for a call that asks for SENDFILE_ALLOW_COUNT bytes.
+const sendfileRefusedFixture = `
+const { dlopen, ptr } = require("bun:ffi");
+const { SENDFILE_ERRNO, SENDFILE_ALLOW_COUNT, FILE } = process.env;
+let prctl;
+for (const name of ["libc.so.6", "libc.musl-x86_64.so.1", "libc.musl-aarch64.so.1"]) {
+  try {
+    prctl = dlopen(name, { prctl: { args: ["i32", "u64", "u64", "u64", "u64"], returns: "i32" } }).symbols.prctl;
+    break;
+  } catch {}
+}
+const LD_W_ABS = 0x20, JEQ_K = 0x15, RET_K = 0x06, RET_ALLOW = 0x7fff0000, RET_ERRNO = 0x00050000;
+const instructions = [
+  [LD_W_ABS, 0, 0, 0], // seccomp_data.nr
+  [JEQ_K, 0, 3, process.arch === "x64" ? 40 : 71], // __NR_sendfile
+  [LD_W_ABS, 0, 0, 40], // low half of seccomp_data.args[3], the count
+  [JEQ_K, 1, 0, Number(SENDFILE_ALLOW_COUNT)],
+  [RET_K, 0, 0, RET_ERRNO | Number(SENDFILE_ERRNO)],
+  [RET_K, 0, 0, RET_ALLOW],
+];
+const filter = new DataView(new ArrayBuffer(instructions.length * 8));
+instructions.forEach(([code, jt, jf, k], i) => {
+  filter.setUint16(i * 8, code, true);
+  filter.setUint8(i * 8 + 2, jt);
+  filter.setUint8(i * 8 + 3, jf);
+  filter.setUint32(i * 8 + 4, k, true);
+});
+const program = new DataView(new ArrayBuffer(16));
+program.setUint16(0, instructions.length, true);
+program.setBigUint64(8, BigInt(ptr(filter)), true);
+const PR_SET_NO_NEW_PRIVS = 38, PR_SET_SECCOMP = 22, SECCOMP_MODE_FILTER = 2n;
+if (!prctl || prctl(PR_SET_NO_NEW_PRIVS, 1n, 0n, 0n, 0n) || prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, BigInt(ptr(program)), 0n, 0n))
+  process.exit(3);
+if (!FILE) process.exit(0);
+
+using server = Bun.serve({
+  port: 0,
+  hostname: "127.0.0.1",
+  fetch: req => (req.url.endsWith("/probe") ? new Response("ok") : new Response(Bun.file(FILE))),
+});
+const { promise, resolve, reject } = Promise.withResolvers();
+const chunks = [];
+const client = require("node:net").connect(server.port, "127.0.0.1");
+client.pause();
+client.on("data", chunk => chunks.push(chunk));
+client.on("close", resolve);
+client.on("error", reject);
+client.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+// The server handles this request after the one above, so its first sendfile(2) call has returned.
+await (await fetch(new URL("/probe", server.url))).text();
+client.resume();
+await promise;
+const wire = Buffer.concat(chunks);
+const headEnd = wire.indexOf("\\r\\n\\r\\n");
+const body = wire.subarray(headEnd + 4);
+console.log(JSON.stringify({
+  status: wire.toString("latin1", 0, wire.indexOf("\\r\\n")),
+  contentLength: /^content-length: (\\d+)$/im.exec(wire.toString("latin1", 0, headEnd))?.[1],
+  bodyLength: body.length,
+  bodyMatches: body.equals(require("node:fs").readFileSync(FILE)),
+}));
+`;
+
+const canFilterSyscalls =
+  isLinux &&
+  (await Bun.spawn({
+    cmd: [bunExe(), "-e", sendfileRefusedFixture],
+    env: { ...bunEnv, SENDFILE_ERRNO: "22", SENDFILE_ALLOW_COUNT: "0" },
+    stdio: ["ignore", "ignore", "ignore"],
+  }).exited) === 0;
+
+describe.skipIf(!canFilterSyscalls)("falls back to read() and write() when sendfile(2) is refused", () => {
+  test.concurrent.each([
+    ["with EINVAL", 22, 2 * 1024 * 1024, false],
+    ["with ENOSYS", 38, 2 * 1024 * 1024, false],
+    ["with EOPNOTSUPP", 95, 2 * 1024 * 1024, false],
+    ["with EPERM", 1, 2 * 1024 * 1024, false],
+    // Bigger than the loopback socket buffers, so the first call can't send the whole file to the paused client.
+    ["after the first call sent part of the file", 22, 16 * 1024 * 1024, true],
+  ])("%s", async (_, errno, size, allowFirstCall) => {
+    const content = Buffer.alloc(size);
+    for (let i = 0; i < size; i += 4096) content.writeUInt32LE(i, i);
+    using dir = tempDir("serve-sendfile-refused", { "large.bin": content });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", sendfileRefusedFixture],
+      env: {
+        ...bunEnv,
+        FILE: join(String(dir), "large.bin"),
+        SENDFILE_ERRNO: String(errno),
+        SENDFILE_ALLOW_COUNT: String(allowFirstCall ? size : 0),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      status: "HTTP/1.1 200 OK",
+      contentLength: String(size),
+      bodyLength: size,
+      bodyMatches: true,
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
 // Linux file responses >= 1MB go through sendfile(2), which writes straight to
 // the socket fd. When the response header block only partially reaches the
 // kernel (its tail parked in the userspace socket buffer), the first sendfile
 // round must wait for that tail to flush; otherwise file bytes overtake it and
 // the client sees file bytes interleaved before the end of the headers. The
-// big x-pad header makes the partial header send happen on most iterations,
-// and the separate client process supplies the concurrent reads that open
-// kernel buffer space between the header write and the sendfile call.
+// big x-pad header is far larger than the kernel send buffer, so every header
+// write is partial. The separate client processes supply the concurrent reads
+// that open kernel buffer space between the header write and the sendfile call.
 test.skipIf(!isLinux)(
   "sendfile does not overtake a buffered response header tail",
   async () => {
@@ -1700,19 +2463,20 @@ test.skipIf(!isLinux)(
     // server thread, which is sticky per process; fresh client processes re-roll
     // it, so several short-lived clients catch what one long-lived client can
     // miss.
-    const ITERATIONS_PER_CLIENT = 16;
+    const ITERATIONS_PER_CLIENT = 8;
     const CLIENTS_PER_WAVE = 3;
     const WAVES = 3;
 
     using dir = tempDir("serve-sendfile-tail", {
       "client-fixture.ts": `
-      // One GET per fresh connection. Reads with plain blocking recv(2) via
-      // FFI: when response bytes land, the kernel wakes the parked task and
-      // sends the window-update ACK from kernel context within microseconds,
-      // which is what opens kernel send-buffer space right after the server's
-      // partial header write. The file is all 0xEE; headers are ASCII, so any
-      // 0xEE before the header terminator means sendfile bytes jumped ahead of
-      // the header tail.
+      // One GET per fresh connection, read with plain blocking recv(2) via
+      // FFI. SO_RCVBUF pins the receive window far below the header block, so
+      // the server's header write always stalls with most of the block parked
+      // in userspace. Each recv() of a full window sends a window-update ACK,
+      // which opens kernel send-buffer space. On many connections one of them
+      // lands between the partial header write and the first sendfile call.
+      // The file is all 0xEE and the header block is ASCII, so any 0xEE before
+      // the header terminator means sendfile bytes jumped ahead of the tail.
       import { dlopen, ptr } from "bun:ffi";
 
       const port = Number(process.env.PORT);
@@ -1747,15 +2511,28 @@ test.skipIf(!isLinux)(
       // struct timeval { i64 sec; i64 usec } for SO_RCVTIMEO (SOL_SOCKET=1, 20)
       const timeo = new Uint8Array(16);
       new DataView(timeo.buffer).setBigInt64(0, 10n, true);
+      // SO_RCVBUF (SOL_SOCKET=1, 8). Setting it also turns off receive buffer
+      // autotuning, so the window doesn't depend on the host's tcp_rmem.
+      const rcvbuf = new Int32Array([16 * 1024]);
 
       const request = Buffer.from("GET /file HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
-      const recvBuf = new Uint8Array(256 * 1024);
+      const terminator = Buffer.from("\\r\\n\\r\\n");
+      const expectedPad = Buffer.alloc(padSize, "p");
+      const expectedBody = Buffer.alloc(fileSize, 0xee);
+      // No other header contains a run of pad bytes this long.
+      const padMarker = expectedPad.subarray(0, 64);
+      // Fits the pad, the file and the other headers. Receiving straight into
+      // it keeps the per-recv work small and the window-update ACKs frequent.
+      const wire = Buffer.alloc(padSize + fileSize + 64 * 1024);
 
       function iteration(): { kind: string; detail?: string } {
         const fd = libc.socket(2, 1, 0); // AF_INET, SOCK_STREAM
         if (fd < 0) return { kind: "socket-failed" };
         try {
           if (libc.setsockopt(fd, 1, 20, ptr(timeo), 16) !== 0) {
+            return { kind: "setsockopt-failed" };
+          }
+          if (libc.setsockopt(fd, 1, 8, ptr(rcvbuf), 4) !== 0) {
             return { kind: "setsockopt-failed" };
           }
           if (libc.connect(fd, ptr(addr), 16) !== 0) {
@@ -1765,68 +2542,80 @@ test.skipIf(!isLinux)(
             return { kind: "send-failed" };
           }
 
-          // Read until header terminator + fileSize body bytes. The terminator
-          // is found incrementally (in corrupt runs it shows up after file
-          // bytes, but the byte count still adds up). The keep-alive socket
-          // never closes on its own, so an exact byte target is required.
-          const terminator = Buffer.from("\\r\\n\\r\\n");
-          const chunks: Buffer[] = [];
+          // Read until header terminator + fileSize body bytes. The keep-alive
+          // socket never closes on its own, so an exact byte target is
+          // required. Check header bytes as they arrive and stop at the first
+          // file byte, or the exact-length accounting would wait out the
+          // receive timeout on the scrambled stream.
           let total = 0;
+          let padStart = -1;
+          let verified = 0; // wire offset up to which the x-pad value has been compared
           let hdrEnd = -1;
           let expected = padSize + fileSize; // lower bound until hdrEnd is known
-          let earlyFileByte = -1;
-          while (total < expected) {
-            const n = Number(libc.recv(fd, ptr(recvBuf), recvBuf.length, 0));
+          let corrupt = "";
+          while (total < expected && total < wire.length) {
+            const n = Number(libc.recv(fd, ptr(wire, total), Math.min(256 * 1024, wire.length - total), 0));
             if (n <= 0) break; // EOF, error, or SO_RCVTIMEO after a 10s stall
-            const chunk = Buffer.from(recvBuf.subarray(0, n));
-            if (hdrEnd === -1) {
-              // A file byte before the header terminator already proves the
-              // corruption; stop here or the exact-length accounting below
-              // would wait out the receive timeout on the scrambled stream.
-              const fileByte = chunk.indexOf(0xee);
-              // Search for the terminator across the previous chunk boundary.
-              const prev = chunks.length > 0 ? chunks[chunks.length - 1] : Buffer.alloc(0);
-              const tail = prev.subarray(prev.length - Math.min(prev.length, 3));
-              const window = Buffer.concat([tail, chunk]);
-              const found = window.indexOf(terminator);
+            total += n;
+            if (hdrEnd !== -1) continue;
+
+            if (padStart === -1) {
+              padStart = wire.subarray(0, total).indexOf(padMarker);
+              if (padStart === -1) {
+                if (total < 32 * 1024) continue;
+                return { kind: "no-pad", detail: "no x-pad value in the first " + total + " bytes" };
+              }
+              verified = padStart;
+            }
+            const padEnd = padStart + padSize;
+            if (verified < padEnd) {
+              const upto = Math.min(total, padEnd);
+              const want = expectedPad.subarray(verified - padStart, upto - padStart);
+              if (!wire.subarray(verified, upto).equals(want)) {
+                const at = wire.subarray(0, upto).indexOf(0xee, verified);
+                corrupt =
+                  at === -1
+                    ? "x-pad bytes differ in [" + verified + ", " + upto + ")"
+                    : "file byte at " + at + " inside the x-pad value";
+                break;
+              }
+              verified = upto;
+            }
+            if (verified === padEnd) {
+              const seen = wire.subarray(0, total);
+              const fileByte = seen.indexOf(0xee, padEnd);
+              const found = seen.indexOf(terminator, padEnd);
               // Legit only when the body start (terminator end) is at or
               // before the first file byte.
-              if (found !== -1 && (fileByte === -1 || found + 4 - tail.length <= fileByte)) {
-                hdrEnd = total - tail.length + found;
+              if (found !== -1 && (fileByte === -1 || found + 4 <= fileByte)) {
+                hdrEnd = found;
                 expected = hdrEnd + 4 + fileSize;
               } else if (fileByte !== -1) {
-                earlyFileByte = total + fileByte;
-                chunks.push(chunk);
-                total += n;
+                corrupt = "file byte at " + fileByte + " before the header terminator";
                 break;
               }
             }
-            chunks.push(chunk);
-            total += n;
           }
 
-          if (earlyFileByte !== -1) {
-            return {
-              kind: "corrupt",
-              detail: "file byte at " + earlyFileByte + " before the header terminator, read " + total,
-            };
-          }
-          const buf = Buffer.concat(chunks);
+          if (corrupt) return { kind: "corrupt", detail: corrupt + ", read " + total };
           if (hdrEnd === -1) return { kind: "no-header-end", detail: "got " + total };
-          const firstFile = buf.indexOf(0xee);
-          if (firstFile !== -1 && firstFile < hdrEnd) {
-            return {
-              kind: "corrupt",
-              detail: "file byte at " + firstFile + " before header end at " + hdrEnd + ", total " + total,
-            };
+          // Everything in the header block outside the pad.
+          const head = wire.toString("latin1", 0, padStart) + wire.toString("latin1", padStart + padSize, hdrEnd);
+          if (head.includes("\\xee")) {
+            return { kind: "corrupt", detail: "file byte before the x-pad value" };
           }
-          const body = buf.subarray(hdrEnd + 4);
+          if (!head.startsWith("HTTP/1.1 200 OK\\r\\n")) {
+            return { kind: "bad-status", detail: head.slice(0, 64) };
+          }
+          const contentLength = /^content-length: (\\d+)$/im.exec(head)?.[1];
+          if (contentLength !== String(fileSize)) {
+            return { kind: "bad-content-length", detail: String(contentLength) };
+          }
+          const body = wire.subarray(hdrEnd + 4, total);
           if (body.length !== fileSize) {
             return { kind: "bad-body-length", detail: body.length + " of " + fileSize + ", total " + total };
           }
-          for (let o = 0; o < body.length; o += 65536) {
-            if (body[o] !== 0xee) return { kind: "bad-body-byte", detail: "offset " + o + " is " + body[o] };
-          }
+          if (!body.equals(expectedBody)) return { kind: "bad-body-byte" };
           return { kind: "ok" };
         } finally {
           libc.close(fd);
@@ -1839,39 +2628,40 @@ test.skipIf(!isLinux)(
         const r = iteration();
         if (r.kind === "ok") ok++;
         else failures.push(r);
-        if (r.kind === "corrupt") break; // one corruption decides the verdict
+        if (r.kind !== "ok") break; // the first failure decides the verdict
       }
       console.log(JSON.stringify({ ok, failures }));
     `,
     });
     await Bun.write(join(String(dir), "file.bin"), Buffer.alloc(FILE_SIZE, 0xee));
 
-    const pad = Buffer.alloc(PAD_SIZE, "p").toString();
+    // Built once. A debug build takes about 70ms to validate a 16MB header value.
+    const headers = new Headers({ "x-pad": Buffer.alloc(PAD_SIZE, "p").toString() });
     await using server = Bun.serve({
       port: 0,
       idleTimeout: 0,
       fetch() {
-        return new Response(Bun.file(join(String(dir), "file.bin")), {
-          headers: { "x-pad": pad },
-        });
+        return new Response(Bun.file(join(String(dir), "file.bin")), { headers });
       },
     });
 
-    const problems: unknown[] = [];
-    let cleanClients = 0;
-    for (let wave = 0; wave < WAVES && problems.length === 0; wave++) {
+    const clean = { stdout: JSON.stringify({ ok: ITERATIONS_PER_CLIENT, failures: [] }), stderr: "", exitCode: 0 };
+    for (let wave = 0; wave < WAVES; wave++) {
+      await using clients = new AsyncDisposableStack();
       const procs = Array.from({ length: CLIENTS_PER_WAVE }, () =>
-        Bun.spawn({
-          cmd: [bunExe(), join(String(dir), "client-fixture.ts")],
-          env: {
-            ...bunEnv,
-            PORT: String(server.port),
-            PAD_SIZE: String(PAD_SIZE),
-            FILE_SIZE: String(FILE_SIZE),
-            ITERATIONS: String(ITERATIONS_PER_CLIENT),
-          },
-          stderr: "pipe",
-        }),
+        clients.use(
+          Bun.spawn({
+            cmd: [bunExe(), join(String(dir), "client-fixture.ts")],
+            env: {
+              ...bunEnv,
+              PORT: String(server.port),
+              PAD_SIZE: String(PAD_SIZE),
+              FILE_SIZE: String(FILE_SIZE),
+              ITERATIONS: String(ITERATIONS_PER_CLIENT),
+            },
+            stderr: "pipe",
+          }),
+        ),
       );
       const results = await Promise.all(
         procs.map(async proc => {
@@ -1879,27 +2669,52 @@ test.skipIf(!isLinux)(
           return { stdout: stdout.trim(), stderr, exitCode };
         }),
       );
-      for (const { stdout, stderr, exitCode } of results) {
-        // Combined assert first, so a crashed client reports its exit code
-        // and raw output instead of a JSON parse error. stderr rides along
-        // for diagnostics but is not required to be empty.
-        expect({ exitCode, stdout, stderr }).toMatchObject({
-          exitCode: 0,
-          stdout: expect.stringContaining("{"),
-        });
-        const verdict = JSON.parse(stdout);
-        if (verdict.failures.length > 0 || verdict.ok !== ITERATIONS_PER_CLIENT) {
-          problems.push(verdict);
-        } else {
-          cleanClients++;
-        }
-      }
+      expect(results).toEqual(Array(CLIENTS_PER_WAVE).fill(clean));
     }
-    expect(problems).toEqual([]);
-    expect(cleanClients).toBe(WAVES * CLIENTS_PER_WAVE);
   },
-  90_000,
+  30_000,
 );
+
+test("sends a Bun.file() body in response to TRACE", async () => {
+  using dir = tempDir("serve-file-trace", { "payload.txt": "0123456789ABCDEF" });
+  await using server = Bun.serve({
+    port: 0,
+    fetch: () => new Response(Bun.file(join(String(dir), "payload.txt"))),
+  });
+
+  // A raw socket, so the result doesn't depend on how fetch() reads a TRACE response.
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  let received = "";
+  await Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port!,
+    socket: {
+      open: socket => void socket.write("TRACE / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"),
+      data: (_socket, chunk) => void (received += chunk.toString("latin1")),
+      close: () => resolve(received),
+      error: (_socket, err) => reject(err),
+    },
+  });
+  const [head, body] = (await promise).split("\r\n\r\n");
+  expect(head.toLowerCase()).toContain("content-length: 16");
+  expect(body).toBe("0123456789ABCDEF");
+});
+
+test.each([
+  [205, "0", ""],
+  [307, "5", "hello"],
+  [308, "5", "hello"],
+])("a %d Bun.file() route sends a Content-Length on a keep-alive connection", async (status, contentLength, body) => {
+  using dir = tempDir("serve-file-route-status", { "f.txt": "hello" });
+  await using server = Bun.serve({
+    port: 0,
+    routes: { "/r": new Response(Bun.file(join(String(dir), "f.txt")), { status, headers: { Location: "/" } }) },
+  });
+
+  const res = await fetch(`${server.url}r`, { redirect: "manual" });
+  expect({ status: res.status, contentLength: res.headers.get("content-length") }).toEqual({ status, contentLength });
+  expect(await res.text()).toBe(body);
+});
 
 // Unix-socket listeners reach the same Linux sendfile path as TCP (the
 // response handle is transport-agnostic), so pin body integrity for a >=1MB

@@ -134,6 +134,25 @@ pub(crate) struct CommentTracker {
 }
 
 impl CommentTracker {
+    /// Call before parsing a file. Keeps the allocations of the last one.
+    pub(crate) fn begin(&mut self) {
+        let CommentTracker {
+            mut pending,
+            mut set_aside,
+            mut undo_log,
+            ..
+        } = std::mem::take(self);
+        pending.clear();
+        set_aside.clear();
+        undo_log.clear();
+        *self = CommentTracker {
+            pending,
+            set_aside,
+            undo_log,
+            ..CommentTracker::default()
+        };
+    }
+
     /// Restores the pending comments to what they were when `undo_log` had `len` entries, except for the comments from
     /// `discarded_from` on.
     fn undo_until(&mut self, len: usize, discarded_from: u32) {
@@ -724,7 +743,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     fn set_aside_pending_comments_after(&mut self, start: u32) {
         let CommentTracker {
             pending, set_aside, ..
-        } = &mut self.comments;
+        } = &mut *self.comments;
         while let Some(comments) = pending.pop_if(|comments| comments.start >= start) {
             set_aside.push(comments);
         }
@@ -734,7 +753,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     fn put_back_pending_comments(&mut self) {
         let CommentTracker {
             pending, set_aside, ..
-        } = &mut self.comments;
+        } = &mut *self.comments;
         pending.extend(set_aside.drain(..).rev());
         self.update_max_relevant_node_start();
     }

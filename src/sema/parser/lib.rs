@@ -193,6 +193,7 @@ pub struct Scratch {
     stacks: parser::Stacks,
     /// Of the last parsed text.
     claims: bun_sema::bind::Claims,
+    comments: parser::CommentTracker,
     declared: parser::Declared,
     /// A file that's no longer needed. The next file reuses its lists and its box. It's boxed because a `FileBuilder`
     /// is large and gets moved around a lot.

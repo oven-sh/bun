@@ -28,6 +28,7 @@ use bun_sema::atom::{Atom, Intern, known};
 use bun_sema::bind::{ClaimLens, Claims};
 use bun_sema::hir::*;
 use bun_sema::util::SharedSort;
+pub(crate) use comments::CommentTracker;
 pub(crate) use declared::Declared;
 pub(crate) use recover::ListKind;
 pub use recover::keyword_suggestion;
@@ -209,7 +210,7 @@ pub(crate) struct Parser<'a, const GENERAL: bool, const COMMENTS: bool> {
     pub(crate) is_ecmascript: bool,
     pub(crate) options: Options,
     pub(crate) lx: Lexer<'a>,
-    comments: comments::CommentTracker,
+    comments: &'a mut CommentTracker,
     pub(crate) f: FileBuilder,
     pub(crate) s: Stacks,
     /// See [`Parser::CLAIMS`].
@@ -334,6 +335,7 @@ struct Seed<'a> {
     file: FileBuilder,
     stacks: Stacks,
     claims: &'a mut Claims,
+    comments: &'a mut CommentTracker,
     declared: Declared,
     options: Options,
     jsdoc: jsdoc::State,
@@ -404,11 +406,13 @@ pub(crate) fn run<'a>(
     let is_flow = options.dialect.flow && options.is_javascript && !options.is_json;
     let is_general = options.recovers || jsdoc.wanted != 0 || is_flow;
     scratch.claims.begin(!is_general && options.attach_comments);
+    scratch.comments.begin();
     let seed = Seed {
         lx,
         file,
         stacks,
         claims: &mut scratch.claims,
+        comments: &mut scratch.comments,
         declared,
         options,
         jsdoc,
@@ -494,6 +498,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             file,
             stacks,
             claims,
+            comments,
             declared,
             options,
             jsdoc,
@@ -520,7 +525,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             recovers: options.recovers,
             reads_jsdoc: jsdoc.wanted != 0,
             jsdoc,
-            comments: comments::CommentTracker::default(),
+            comments,
             lists: 0,
             // An empty range, so it contains no token.
             declaration_scan: stmt::DeclarationScan {

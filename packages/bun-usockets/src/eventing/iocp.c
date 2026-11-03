@@ -39,8 +39,8 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec *timeout
 _Static_assert(sizeof(struct timespec) == 16, "struct timespec is not two 64-bit slots");
 
 /* Keys of the packets that have no operation as their context. */
-#define LIBUS_IOCP_KEY_WAKE ((void *) 1)
-#define LIBUS_IOCP_KEY_TIMER ((void *) 2)
+#define LIBUS_IOCP_KEY_WAKE 1
+#define LIBUS_IOCP_KEY_TIMER 2
 
 enum {
     LIBUS_WAKE_AWAKE = 0,
@@ -798,10 +798,8 @@ void us_internal_async_set(struct us_internal_async *a, void (*cb)(struct us_int
 void us_internal_async_wakeup(struct us_internal_async *a) {
     struct us_loop_t *loop = ((struct us_internal_callback_t *) a)->loop;
     if (__atomic_exchange_n(&loop->wake_state, LIBUS_WAKE_NOTIFIED, __ATOMIC_ACQ_REL) == LIBUS_WAKE_SLEEPING) {
-        if (NtSetIoCompletion(loop->iocp, LIBUS_IOCP_KEY_WAKE, NULL, STATUS_SUCCESS, 0) != STATUS_SUCCESS) {
-            /* Out of memory for the packet. Leave it to the next wakeup to try again. */
-            unsigned int expected = LIBUS_WAKE_NOTIFIED;
-            __atomic_compare_exchange_n(&loop->wake_state, &expected, LIBUS_WAKE_SLEEPING, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+        if (!PostQueuedCompletionStatus(loop->iocp, 0, LIBUS_IOCP_KEY_WAKE, NULL)) {
+            BUN_PANIC("Waking the event loop failed");
         }
     }
 }
@@ -905,11 +903,11 @@ struct us_loop_t *us_create_loop(void (*wakeup_cb)(struct us_loop_t *loop), void
 static void us_internal_iocp_dispatch_ready_polls(struct us_loop_t *loop) {
     while (loop->current_ready_poll < loop->num_ready_polls) {
         /* A copy: a handler can run the loop, which refills ready_polls once it is through with them. */
-        const struct us_internal_iocp_entry_t entry = loop->ready_polls[loop->current_ready_poll++];
-        struct us_internal_iocp_op_t *op = entry.context;
+        const OVERLAPPED_ENTRY entry = loop->ready_polls[loop->current_ready_poll++];
+        struct us_internal_iocp_op_t *op = (struct us_internal_iocp_op_t *) entry.lpOverlapped;
         if (op) {
             op->on_complete(loop, op);
-        } else if (entry.key == LIBUS_IOCP_KEY_TIMER) {
+        } else if (entry.lpCompletionKey == LIBUS_IOCP_KEY_TIMER) {
             loop->timer_is_associated = 0;
         }
     }
@@ -917,14 +915,15 @@ static void us_internal_iocp_dispatch_ready_polls(struct us_loop_t *loop) {
 
 /* timeout_100ns: negative to wait for ever. */
 static void us_internal_iocp_fetch_ready_polls(struct us_loop_t *loop, ULONG max, int64_t timeout_100ns) {
-    LARGE_INTEGER timeout;
-    /* Negative: relative to now. */
-    timeout.QuadPart = -timeout_100ns;
+    DWORD timeout_ms = INFINITE;
+    if (timeout_100ns >= 0) {
+        const int64_t rounded_up = (timeout_100ns + LIBUS_100NS_PER_MS - 1) / LIBUS_100NS_PER_MS;
+        timeout_ms = rounded_up < INFINITE ? (DWORD) rounded_up : INFINITE - 1;
+    }
     ULONG count = 0;
-    NTSTATUS status = NtRemoveIoCompletionEx(loop->iocp, loop->ready_polls, max, &count, timeout_100ns < 0 ? NULL : &timeout, FALSE);
-    /* The count means nothing unless the status is exactly this one. */
-    if (status != STATUS_SUCCESS) {
-        if (status != (NTSTATUS) STATUS_TIMEOUT) {
+    /* The count means nothing after a failure. */
+    if (!GetQueuedCompletionStatusEx(loop->iocp, loop->ready_polls, max, &count, timeout_ms, FALSE)) {
+        if (GetLastError() != WAIT_TIMEOUT) {
             BUN_PANIC("Waiting on the event loop's completion port failed");
         }
         count = 0;
@@ -1006,7 +1005,7 @@ static int us_internal_iocp_arm_timer(struct us_loop_t *loop, int64_t timeout_10
     }
     loop->timer_deadline_ns = deadline_ns;
     if (!loop->timer_is_associated) {
-        if (NtAssociateWaitCompletionPacket(loop->timer_packet, loop->iocp, loop->timer, LIBUS_IOCP_KEY_TIMER, NULL, STATUS_SUCCESS, 0, NULL) != STATUS_SUCCESS) {
+        if (NtAssociateWaitCompletionPacket(loop->timer_packet, loop->iocp, loop->timer, (PVOID) LIBUS_IOCP_KEY_TIMER, NULL, STATUS_SUCCESS, 0, NULL) != STATUS_SUCCESS) {
             return 0;
         }
         loop->timer_is_associated = 1;

@@ -784,7 +784,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 
                 do {
                     #ifdef _WIN32
-                      const int recv_flags = MSG_PUSH_IMMEDIATE;
+                      const int recv_flags = 0;
                     #else
                       const int recv_flags = MSG_DONTWAIT;
                     #endif
@@ -899,8 +899,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         }
                         #undef LOOP_ISNT_VERY_BUSY_THRESHOLD
 #ifdef LIBUS_USE_IOCP
-                        /* One look at what arrived during on_data. A FIN has to be seen before the caller writes again:
-                         * the peer answers that write with a reset, and from then on Winsock reports only the reset. */
+                        /* One look at what arrived during on_data. A FIN that is seen now is reported as the end of the stream. Once
+                         * the caller has written again, the peer answers with a reset, and Winsock reports only the reset. */
                         if (s && !us_socket_is_closed(s) && !s->flags.is_paused && !us_internal_poll_is_pipe(&s->p) && repeat_recv_count++ == 0) {
                             continue;
                         }

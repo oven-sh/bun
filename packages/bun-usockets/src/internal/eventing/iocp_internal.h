@@ -40,9 +40,6 @@
 #define STATUS_PIPE_BROKEN ((NTSTATUS) 0xC000014BL)
 #endif
 
-NTSYSAPI NTSTATUS NTAPI NtRemoveIoCompletionEx(HANDLE port, struct us_internal_iocp_entry_t *entries, ULONG count,
-    PULONG num_removed, PLARGE_INTEGER timeout, BOOLEAN alertable);
-NTSYSAPI NTSTATUS NTAPI NtSetIoCompletion(HANDLE port, PVOID key, PVOID context, NTSTATUS status, ULONG_PTR information);
 /* to_cancel NULL: everything this process has pending on the file. */
 NTSYSAPI NTSTATUS NTAPI NtCancelIoFileEx(HANDLE file, PIO_STATUS_BLOCK to_cancel, PIO_STATUS_BLOCK io_status);
 NTSYSAPI NTSTATUS NTAPI NtReadFile(HANDLE file, HANDLE event, PIO_APC_ROUTINE apc_routine, PVOID apc_context,

@@ -39,15 +39,6 @@ enum {
     LIBUS_POLL_KIND_FOREIGN_PIPE = 4,
 };
 
-/* One packet taken off the completion port: FILE_IO_COMPLETION_INFORMATION, which is also OVERLAPPED_ENTRY. */
-struct us_internal_iocp_entry_t {
-    void *key;
-    void *context;
-    /* The NTSTATUS, in a pointer-sized slot. */
-    intptr_t status;
-    uintptr_t information;
-};
-
 /* Everything the kernel reports through the port names one of these as its context. It has to stay where
  * it is until on_complete runs, whatever was cancelled or closed in the meantime: the kernel fills `ov` in
  * when the packet is taken off the port, and the packet can be waiting in ready_polls for its turn. */
@@ -122,7 +113,7 @@ struct us_loop_t {
     /* The list that the resume-from-sleep callback walks. */
     struct us_loop_t *resume_prev, *resume_next;
 
-    alignas(LIBUS_EXT_ALIGNMENT) struct us_internal_iocp_entry_t ready_polls[1024];
+    alignas(LIBUS_EXT_ALIGNMENT) OVERLAPPED_ENTRY ready_polls[1024];
 };
 
 /* src/uws_sys/Poll.rs mirrors this struct, the kinds and the two event bits. */

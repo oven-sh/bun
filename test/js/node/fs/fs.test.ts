@@ -3298,8 +3298,8 @@ it.if(isPosix)("realpath reads its path the way Node does", async () => {
     ["w\\d/z", "/w\\d/z", "/w\\d/z"],
     ["w\\d/../file", "/file", "/file"],
     ["a\\..\\file", "ENOENT lstat", "ENOENT realpath"],
-    ["file/", "/file", "ENOTDIR realpath"],
-    ["file/..", "", "ENOTDIR realpath"],
+    ["file/", "/file", process.platform === "darwin" ? "/file" : "ENOTDIR realpath"],
+    ["file/..", "", process.platform === "darwin" ? "" : "ENOTDIR realpath"],
     ["nope/../file", "/file", "ENOENT realpath"],
     ["link/../y", "/y", "/dir/y"],
   ];
@@ -3414,6 +3414,54 @@ it.if(isLinux)("realpath.native throws ENOENT for a working directory that was r
   );
   expect(exitCode).toBe(0);
 });
+
+it.skipIf(process.platform !== "darwin" || process.geteuid?.() === 0)(
+  "realpath resolves a macOS directory without read permission",
+  async () => {
+    using dir = tempDir("fs-realpath-unreadable-leaf", {});
+    const root = realpathSync(String(dir));
+    const readable = join(root, "readable");
+    const unreadable = join(root, "unreadable");
+    const link = join(root, "link");
+    mkdirSync(readable);
+    mkdirSync(unreadable);
+    writeFileSync(join(unreadable, "child"), "");
+    symlinkSync("unreadable", link);
+    fs.chmodSync(unreadable, 0);
+    try {
+      expect(statSync(unreadable).mode & 0o777).toBe(0);
+      let openError;
+      try {
+        closeSync(openSync(unreadable, "r"));
+      } catch (error) {
+        openError = error;
+      }
+      expect(openError).toMatchObject({ code: "EACCES" });
+      const implementations = [
+        fs.realpathSync,
+        promisify(fs.realpath),
+        fs.realpathSync.native,
+        promisify(fs.realpath.native),
+        fs.promises.realpath,
+      ];
+      for (const [input, expected] of [
+        [readable, readable],
+        [unreadable, unreadable],
+        [link, unreadable],
+      ]) {
+        for (const implementation of implementations) {
+          expect(await implementation(input)).toBe(expected);
+        }
+      }
+      for (const implementation of implementations) {
+        const traverse = async () => implementation(join(unreadable, "child"));
+        await expect(traverse()).rejects.toMatchObject({ code: "EACCES" });
+      }
+    } finally {
+      fs.chmodSync(unreadable, 0o700);
+    }
+  },
+);
 
 it("promises.realpath is realpath.native", async () => {
   const { root } = path.parse(process.cwd());

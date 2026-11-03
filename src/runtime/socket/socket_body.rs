@@ -4265,15 +4265,14 @@ impl DuplexUpgradeContext {
                     Self::release_connection(this);
                     return;
                 }
-                // The transport closed while this task was queued: an engine
-                // started now could never handshake, and nothing would free it.
-                if this.upgrade.pending_close.replace(false) {
-                    this.upgrade.finish_close();
-                    return;
-                }
-                // The GC condemned the wrapper, and the stream with it: nothing can reach an engine started now.
-                if this.tls_this_ptr().is_some_and(|tls| tls.wrapper_gone()) {
+                // The GC condemned the wrapper, and the stream with it: no close may touch the stream.
+                let wrapper_gone = this.tls_this_ptr().is_some_and(|tls| tls.wrapper_gone());
+                if wrapper_gone {
                     this.upgrade.abandon_js_side();
+                }
+                // The transport closed while this task was queued, or nothing can reach the
+                // engine: one started now could never handshake, and nothing would free it.
+                if this.upgrade.pending_close.replace(false) || wrapper_gone {
                     this.upgrade.finish_close();
                     return;
                 }

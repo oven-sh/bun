@@ -310,12 +310,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // Rewrite "module.require()" to "require()" for Webpack compatibility.
                         // See https://github.com/webpack/webpack/pull/7750 for more info.
                         // This also makes correctness a little easier.
-                        //
-                        // In a `with` body `module` can be a property of the object. A bundle
-                        // needs the rewrite all the same: it is what loads the file. Without a
-                        // bundle the real `module.require` exists, so the call stays as written.
                         if identifier_opts.is_call_target()
                             && name == b"require"
+                            // `with` can shadow `module`. A bundle must rewrite to load the file.
                             && (p.options.bundle || !id.must_keep_due_to_with_stmt())
                         {
                             p.ignore_usage(p.module_ref);

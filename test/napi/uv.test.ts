@@ -701,4 +701,111 @@ describe.if(!isWindows)("uv stubs", () => {
     expect(result.advancedMs).toBeGreaterThanOrEqual(4);
     expect(exitCode).toBe(0);
   });
+  test.concurrent(
+    "uv_udp_t sends and receives on 127.0.0.1, and closing both handles lets the process exit",
+    async () => {
+      const { stdout, stderr, exitCode } = await runInChild(`console.log(JSON.stringify(addon.testUdpEcho(report)));`);
+      expect(stderr).toBe("");
+      expect(stateAndEvents(stdout)).toEqual({
+        // The datagram went out at once, but the send stays queued until its callback runs.
+        state: { count: 1, size: 4, active: 1, typeIsUdp: 1 },
+        events: [
+          "sent 0 0",
+          "server recv 4 1",
+          "reply 4 0",
+          "client recv 4 1",
+          "close server 1 0",
+          "close client 1 0",
+          "",
+        ].join("\n"),
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.concurrent("uv_close on a uv_udp_t cancels the queued sends before close_cb runs", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`addon.testUdpCloseCancels(report);`);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(
+      ["first 0 0", "queued 0 1", `second ${-constants.errno.ECANCELED} 0`, "close 1 0", ""].join("\n"),
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("uv_udp_t returns libuv's error codes", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`console.log(JSON.stringify(addon.testUdpErrors()));`);
+    expect(stderr).toBe("");
+    const { EINVAL, EDESTADDRREQ, EBADF, EBUSY, EALREADY, EISCONN, ENOTCONN } = constants.errno;
+    expect(JSON.parse(stdout)).toEqual([
+      -EINVAL, // uv_udp_init_ex with an unknown address family
+      -EINVAL, // uv_udp_init_ex with an unknown flag
+      0, // uv_udp_init
+      -EINVAL, // uv_udp_recv_start without an alloc_cb
+      -EDESTADDRREQ, // uv_udp_send without an address on a socket that isn't connected
+      -EBADF, // uv_fileno before the socket exists
+      -EINVAL, // uv_udp_bind with UV_UDP_IPV6ONLY to an IPv4 address
+      0, // uv_udp_bind
+      1, // uv_fileno returns the socket
+      -EBUSY, // uv_udp_open on a handle that has a socket
+      0, // uv_udp_recv_start
+      -EALREADY, // uv_udp_recv_start again
+      0, // uv_udp_recv_stop
+      0, // uv_udp_connect
+      -EISCONN, // uv_udp_connect again
+      -EISCONN, // uv_udp_try_send with an address on a connected socket
+      4, // uv_udp_try_send to the connected peer
+      0, // uv_udp_connect(NULL) disconnects
+      -ENOTCONN, // uv_udp_connect(NULL) again
+      -EINVAL, // uv_udp_set_ttl(0)
+      0, // uv_udp_set_ttl(64)
+      0, // uv_udp_set_broadcast
+      0, // uv_udp_set_multicast_ttl
+      0, // uv_udp_set_multicast_loop
+      1, // uv_send_buffer_size reads the buffer size
+      0, // uv_udp_using_recvmmsg
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("an unref'd uv_udp_t that is receiving lets the process exit", async () => {
+    // Nothing is ever sent to it. If unref didn't work, the child would never exit.
+    const { stdout, stderr, exitCode } = await runInChild(`console.log(JSON.stringify(addon.testUdpUnref()));`);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ active: 1, hasRef: 0 });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("uv_err_name and uv_strerror match libuv", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`console.log(JSON.stringify(addon.testErrorNames()));`);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([
+      "EINVAL",
+      "invalid argument",
+      "Unknown system error -99999",
+      "Unknown system error -99999",
+      "ECANCELED",
+      "resource temporarily unavailable",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+  test.concurrent("uv_ip4_addr, uv_ip6_addr and the name functions parse and format like libuv", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`console.log(JSON.stringify(addon.testIpAddresses()));`);
+    expect(stderr).toBe("");
+    const { EINVAL, EAFNOSUPPORT, ENOSPC } = constants.errno;
+    expect(JSON.parse(stdout)).toEqual({
+      ip4: 0,
+      ip4Port: 8080,
+      ip4Name: 0,
+      ip4String: "127.0.0.1",
+      ip4Invalid: -EINVAL,
+      // The zone index is dropped from the address and becomes sin6_scope_id.
+      ip6: 0,
+      ip6Name: 0,
+      ip6String: "fe80::1",
+      ip6Invalid: -EINVAL,
+      unknownFamily: -EAFNOSUPPORT,
+      tooSmall: -ENOSPC,
+    });
+    expect(exitCode).toBe(0);
+  });
 });

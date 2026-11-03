@@ -1090,6 +1090,18 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
             }
         }
         poll_tag::TERMINAL_POLL => feature_poll_arm!([Terminal], TerminalPoll),
+        poll_tag::UV_UDP => {
+            use crate::napi::uv_posix::UvUdpNode;
+            in_features!(
+                [NativeAddons],
+                (node: *mut UvUdpNode = owner.ptr.cast::<UvUdpNode>(), poll: *mut FilePoll = poll) {
+                    // SAFETY: tag matched, so `owner.ptr` is the `UvUdpNode` set at
+                    // `FilePoll::init`. A closed handle's poll is deinitialized, so a
+                    // registered poll's node is alive.
+                    unsafe { UvUdpNode::on_poll(node, poll) };
+                }
+            )
+        }
         // `OutputReader = BufferedReader` in install crate — separate tag for ownership.
         poll_tag::LIFECYCLE_SCRIPT_SUBPROCESS_OUTPUT_READER => {
             poll_arm!(bun_io::BufferedReader, |h| {

@@ -44,12 +44,6 @@ UV_EXTERN int uv_barrier_wait(uv_barrier_t* barrier)
     __builtin_unreachable();
 }
 
-UV_EXTERN uv_buf_t uv_buf_init(char* base, unsigned int len)
-{
-    __bun_throw_not_implemented("uv_buf_init");
-    __builtin_unreachable();
-}
-
 UV_EXTERN int uv_chdir(const char* dir)
 {
     __bun_throw_not_implemented("uv_chdir");
@@ -142,27 +136,9 @@ UV_EXTERN int uv_dlsym(uv_lib_t* lib, const char* name, void** ptr)
     __builtin_unreachable();
 }
 
-UV_EXTERN const char* uv_err_name(int err)
-{
-    __bun_throw_not_implemented("uv_err_name");
-    __builtin_unreachable();
-}
-
-UV_EXTERN char* uv_err_name_r(int err, char* buf, size_t buflen)
-{
-    __bun_throw_not_implemented("uv_err_name_r");
-    __builtin_unreachable();
-}
-
 UV_EXTERN int uv_exepath(char* buffer, size_t* size)
 {
     __bun_throw_not_implemented("uv_exepath");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_fileno(const uv_handle_t* handle, uv_os_fd_t* fd)
-{
-    __bun_throw_not_implemented("uv_fileno");
     __builtin_unreachable();
 }
 
@@ -742,52 +718,10 @@ UV_EXTERN int uv_if_indextoname(unsigned int ifindex,
     __builtin_unreachable();
 }
 
-UV_EXTERN int uv_inet_ntop(int af, const void* src, char* dst, size_t size)
-{
-    __bun_throw_not_implemented("uv_inet_ntop");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_inet_pton(int af, const char* src, void* dst)
-{
-    __bun_throw_not_implemented("uv_inet_pton");
-    __builtin_unreachable();
-}
-
 UV_EXTERN int uv_interface_addresses(uv_interface_address_t** addresses,
     int* count)
 {
     __bun_throw_not_implemented("uv_interface_addresses");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_ip4_addr(const char* ip, int port, struct sockaddr_in* addr)
-{
-    __bun_throw_not_implemented("uv_ip4_addr");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_ip4_name(const struct sockaddr_in* src, char* dst, size_t size)
-{
-    __bun_throw_not_implemented("uv_ip4_name");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_ip6_addr(const char* ip, int port, struct sockaddr_in6* addr)
-{
-    __bun_throw_not_implemented("uv_ip6_addr");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_ip6_name(const struct sockaddr_in6* src, char* dst, size_t size)
-{
-    __bun_throw_not_implemented("uv_ip6_name");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_ip_name(const struct sockaddr* src, char* dst, size_t size)
-{
-    __bun_throw_not_implemented("uv_ip_name");
     __builtin_unreachable();
 }
 
@@ -1175,12 +1109,6 @@ UV_EXTERN int uv_read_stop(uv_stream_t*)
     __builtin_unreachable();
 }
 
-UV_EXTERN int uv_recv_buffer_size(uv_handle_t* handle, int* value)
-{
-    __bun_throw_not_implemented("uv_recv_buffer_size");
-    __builtin_unreachable();
-}
-
 UV_EXTERN int uv_replace_allocator(uv_malloc_func malloc_func,
     uv_realloc_func realloc_func,
     uv_calloc_func calloc_func,
@@ -1280,12 +1208,6 @@ UV_EXTERN void uv_sem_wait(uv_sem_t* sem)
     __builtin_unreachable();
 }
 
-UV_EXTERN int uv_send_buffer_size(uv_handle_t* handle, int* value)
-{
-    __bun_throw_not_implemented("uv_send_buffer_size");
-    __builtin_unreachable();
-}
-
 UV_EXTERN int uv_set_process_title(const char* title)
 {
     __bun_throw_not_implemented("uv_set_process_title");
@@ -1373,18 +1295,6 @@ UV_EXTERN size_t uv_stream_get_write_queue_size(const uv_stream_t* stream)
 UV_EXTERN int uv_stream_set_blocking(uv_stream_t* handle, int blocking)
 {
     __bun_throw_not_implemented("uv_stream_set_blocking");
-    __builtin_unreachable();
-}
-
-UV_EXTERN const char* uv_strerror(int err)
-{
-    __bun_throw_not_implemented("uv_strerror");
-    __builtin_unreachable();
-}
-
-UV_EXTERN char* uv_strerror_r(int err, char* buf, size_t buflen)
-{
-    __bun_throw_not_implemented("uv_strerror_r");
     __builtin_unreachable();
 }
 
@@ -1604,97 +1514,6 @@ UV_EXTERN void uv_tty_set_vterm_state(uv_tty_vtermstate_t state)
     __builtin_unreachable();
 }
 
-UV_EXTERN int uv_udp_bind(uv_udp_t* handle,
-    const struct sockaddr* addr,
-    unsigned int flags)
-{
-    __bun_throw_not_implemented("uv_udp_bind");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_udp_connect(uv_udp_t* handle, const struct sockaddr* addr)
-{
-    __bun_throw_not_implemented("uv_udp_connect");
-    __builtin_unreachable();
-}
-
-UV_EXTERN size_t uv_udp_get_send_queue_count(const uv_udp_t* handle)
-{
-    __bun_throw_not_implemented("uv_udp_get_send_queue_count");
-    __builtin_unreachable();
-}
-
-UV_EXTERN size_t uv_udp_get_send_queue_size(const uv_udp_t* handle)
-{
-    __bun_throw_not_implemented("uv_udp_get_send_queue_size");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_udp_getpeername(const uv_udp_t* handle,
-    struct sockaddr* name,
-    int* namelen)
-{
-    __bun_throw_not_implemented("uv_udp_getpeername");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_udp_getsockname(const uv_udp_t* handle,
-    struct sockaddr* name,
-    int* namelen)
-{
-    __bun_throw_not_implemented("uv_udp_getsockname");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_udp_init(uv_loop_t*, uv_udp_t* handle)
-{
-    __bun_throw_not_implemented("uv_udp_init");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_udp_init_ex(uv_loop_t*, uv_udp_t* handle, unsigned int flags)
-{
-    __bun_throw_not_implemented("uv_udp_init_ex");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_udp_open(uv_udp_t* handle, uv_os_sock_t sock)
-{
-    __bun_throw_not_implemented("uv_udp_open");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_udp_recv_start(uv_udp_t* handle,
-    uv_alloc_cb alloc_cb,
-    uv_udp_recv_cb recv_cb)
-{
-    __bun_throw_not_implemented("uv_udp_recv_start");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_udp_recv_stop(uv_udp_t* handle)
-{
-    __bun_throw_not_implemented("uv_udp_recv_stop");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_udp_send(uv_udp_send_t* req,
-    uv_udp_t* handle,
-    const uv_buf_t bufs[],
-    unsigned int nbufs,
-    const struct sockaddr* addr,
-    uv_udp_send_cb send_cb)
-{
-    __bun_throw_not_implemented("uv_udp_send");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_udp_set_broadcast(uv_udp_t* handle, int on)
-{
-    __bun_throw_not_implemented("uv_udp_set_broadcast");
-    __builtin_unreachable();
-}
-
 UV_EXTERN int uv_udp_set_membership(uv_udp_t* handle,
     const char* multicast_addr,
     const char* interface_addr,
@@ -1711,18 +1530,6 @@ UV_EXTERN int uv_udp_set_multicast_interface(uv_udp_t* handle,
     __builtin_unreachable();
 }
 
-UV_EXTERN int uv_udp_set_multicast_loop(uv_udp_t* handle, int on)
-{
-    __bun_throw_not_implemented("uv_udp_set_multicast_loop");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_udp_set_multicast_ttl(uv_udp_t* handle, int ttl)
-{
-    __bun_throw_not_implemented("uv_udp_set_multicast_ttl");
-    __builtin_unreachable();
-}
-
 UV_EXTERN int uv_udp_set_source_membership(uv_udp_t* handle,
     const char* multicast_addr,
     const char* interface_addr,
@@ -1730,21 +1537,6 @@ UV_EXTERN int uv_udp_set_source_membership(uv_udp_t* handle,
     uv_membership membership)
 {
     __bun_throw_not_implemented("uv_udp_set_source_membership");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_udp_set_ttl(uv_udp_t* handle, int ttl)
-{
-    __bun_throw_not_implemented("uv_udp_set_ttl");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_udp_try_send(uv_udp_t* handle,
-    const uv_buf_t bufs[],
-    unsigned int nbufs,
-    const struct sockaddr* addr)
-{
-    __bun_throw_not_implemented("uv_udp_try_send");
     __builtin_unreachable();
 }
 
@@ -1756,12 +1548,6 @@ UV_EXTERN int uv_udp_try_send2(uv_udp_t* handle,
     unsigned int flags)
 {
     __bun_throw_not_implemented("uv_udp_try_send2");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_udp_using_recvmmsg(const uv_udp_t* handle)
-{
-    __bun_throw_not_implemented("uv_udp_using_recvmmsg");
     __builtin_unreachable();
 }
 

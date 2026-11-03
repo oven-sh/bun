@@ -1,5 +1,9 @@
 #include <node_api.h>
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+
 #include <pthread.h>
 #include <signal.h>
 #include <stdatomic.h>
@@ -1175,6 +1179,338 @@ static napi_value test_now(napi_env env, napi_callback_info info) {
   return result;
 }
 
+// --- uv_udp_t ----------------------------------------------------------------
+
+struct udp_test {
+  uv_udp_t server;
+  uv_udp_t client;
+  uv_udp_send_t send;
+  struct reporter reporter;
+  struct sockaddr_in server_addr;
+  char server_buf[64];
+  char client_buf[64];
+  int closed;
+};
+
+static struct sockaddr_in loopback(int port) {
+  struct sockaddr_in addr;
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(port);
+  inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+  return addr;
+}
+
+static int udp_port(uv_udp_t *handle) {
+  struct sockaddr_in addr;
+  int len = sizeof(addr);
+  if (uv_udp_getsockname(handle, (struct sockaddr *)&addr, &len) != 0)
+    return -1;
+  return ntohs(addr.sin_port);
+}
+
+static void udp_close_cb(uv_handle_t *handle) {
+  struct udp_test *test = handle->data;
+  report(&test->reporter,
+         handle == (uv_handle_t *)&test->server ? "close server"
+                                                : "close client",
+         uv_is_closing(handle), uv_is_active(handle));
+  if (++test->closed == 2) {
+    reporter_destroy(&test->reporter);
+    free(test);
+  }
+}
+
+static void udp_server_alloc(uv_handle_t *handle, size_t suggested,
+                             uv_buf_t *buf) {
+  struct udp_test *test = handle->data;
+  (void)suggested;
+  *buf = uv_buf_init(test->server_buf, sizeof(test->server_buf));
+}
+
+static void udp_client_alloc(uv_handle_t *handle, size_t suggested,
+                             uv_buf_t *buf) {
+  struct udp_test *test = handle->data;
+  (void)suggested;
+  *buf = uv_buf_init(test->client_buf, sizeof(test->client_buf));
+}
+
+// nread == 0 with no address means the socket had nothing more to read.
+static void udp_server_recv(uv_udp_t *handle, ssize_t nread,
+                            const uv_buf_t *buf, const struct sockaddr *addr,
+                            unsigned flags) {
+  struct udp_test *test = handle->data;
+  if (nread == 0 && addr == NULL)
+    return;
+  int from_client = addr != NULL && addr->sa_family == AF_INET &&
+                    ntohs(((const struct sockaddr_in *)addr)->sin_port) ==
+                        udp_port(&test->client);
+  report(&test->reporter, "server recv", (int32_t)nread,
+         from_client && flags == 0 && memcmp(buf->base, "ping", 4) == 0);
+  uv_buf_t reply = uv_buf_init("pong", 4);
+  report(&test->reporter, "reply", uv_udp_try_send(handle, &reply, 1, addr), 0);
+}
+
+static void udp_client_recv(uv_udp_t *handle, ssize_t nread,
+                            const uv_buf_t *buf, const struct sockaddr *addr,
+                            unsigned flags) {
+  struct udp_test *test = handle->data;
+  if (nread == 0 && addr == NULL)
+    return;
+  report(&test->reporter, "client recv", (int32_t)nread,
+         flags == 0 && memcmp(buf->base, "pong", 4) == 0);
+  uv_close((uv_handle_t *)&test->server, udp_close_cb);
+  uv_close((uv_handle_t *)&test->client, udp_close_cb);
+}
+
+static void udp_client_sent(uv_udp_send_t *req, int status) {
+  struct udp_test *test = req->handle->data;
+  // libuv takes the request off the queue before it calls back.
+  report(&test->reporter, "sent", status,
+         (int32_t)uv_udp_get_send_queue_count(req->handle));
+  uv_udp_recv_start(&test->server, udp_server_alloc, udp_server_recv);
+  uv_udp_recv_start(&test->client, udp_client_alloc, udp_client_recv);
+}
+
+// testUdpEcho(callback) binds a server to 127.0.0.1, and an unbound client
+// sends it "ping". When the send completes, both start receiving: the server
+// answers with uv_udp_try_send and the client closes both handles when "pong"
+// arrives. Reports `sent 0 0`, `server recv 4 1`, `reply 4 0`, `client recv 4
+// 1`, `close server 1 0`, `close client 1 0`. Returns the queue right after the
+// send.
+static napi_value test_udp_echo(napi_env env, napi_callback_info info) {
+  napi_value args[1];
+  get_args(env, info, args, 1);
+  struct udp_test *test = calloc(1, sizeof(*test));
+  reporter_init(&test->reporter, env, args[0]);
+  uv_loop_t *loop = get_loop(env, false);
+  test->server.data = test;
+  test->client.data = test;
+  struct sockaddr_in any = loopback(0);
+  if (uv_udp_init(loop, &test->server) != 0 ||
+      uv_udp_init(loop, &test->client) != 0 ||
+      uv_udp_bind(&test->server, (const struct sockaddr *)&any, 0) != 0) {
+    napi_throw_error(env, NULL, "uv_udp_init or uv_udp_bind failed");
+    return NULL;
+  }
+  test->server_addr = loopback(udp_port(&test->server));
+  uv_buf_t ping = uv_buf_init("ping", 4);
+  if (uv_udp_send(&test->send, &test->client, &ping, 1,
+                  (const struct sockaddr *)&test->server_addr,
+                  udp_client_sent) != 0) {
+    napi_throw_error(env, NULL, "uv_udp_send failed");
+    return NULL;
+  }
+  napi_value result;
+  napi_create_object(env, &result);
+  set_int32(env, result, "count",
+            (int32_t)uv_udp_get_send_queue_count(&test->client));
+  set_int32(env, result, "size",
+            (int32_t)uv_udp_get_send_queue_size(&test->client));
+  set_int32(env, result, "active", uv_is_active((uv_handle_t *)&test->client));
+  set_int32(env, result, "typeIsUdp",
+            uv_handle_get_type((uv_handle_t *)&test->client) == UV_UDP);
+  return result;
+}
+
+struct udp_cancel_test {
+  uv_udp_t handle;
+  uv_udp_send_t first;
+  uv_udp_send_t second;
+  struct reporter reporter;
+};
+
+static void udp_cancel_close_cb(uv_handle_t *handle) {
+  struct udp_cancel_test *test = handle->data;
+  report(&test->reporter, "close", uv_is_closing(handle),
+         (int32_t)uv_udp_get_send_queue_count(&test->handle));
+  reporter_destroy(&test->reporter);
+  free(test);
+}
+
+static void udp_second_sent(uv_udp_send_t *req, int status) {
+  struct udp_cancel_test *test = req->handle->data;
+  report(&test->reporter, "second", status,
+         (int32_t)uv_udp_get_send_queue_count(req->handle));
+}
+
+static void udp_first_sent(uv_udp_send_t *req, int status) {
+  struct udp_cancel_test *test = req->handle->data;
+  report(&test->reporter, "first", status,
+         (int32_t)uv_udp_get_send_queue_count(req->handle));
+  // A send from a send callback waits behind the callbacks, so closing the
+  // handle now cancels it.
+  struct sockaddr_in to = loopback(udp_port(&test->handle));
+  uv_buf_t buf = uv_buf_init("two", 3);
+  // Send first: the order of a call's arguments isn't defined.
+  int queued = uv_udp_send(&test->second, &test->handle, &buf, 1,
+                           (const struct sockaddr *)&to, udp_second_sent);
+  report(&test->reporter, "queued", queued,
+         (int32_t)uv_udp_get_send_queue_count(req->handle));
+  uv_close((uv_handle_t *)&test->handle, udp_cancel_close_cb);
+}
+
+// testUdpCloseCancels(callback) sends to itself, and from the send's callback
+// sends again and closes the handle. Reports `first 0 0`, `queued 0 1`,
+// `second -ECANCELED 0`, `close 1 0`.
+static napi_value test_udp_close_cancels(napi_env env,
+                                         napi_callback_info info) {
+  napi_value args[1];
+  get_args(env, info, args, 1);
+  struct udp_cancel_test *test = calloc(1, sizeof(*test));
+  reporter_init(&test->reporter, env, args[0]);
+  test->handle.data = test;
+  struct sockaddr_in any = loopback(0);
+  uv_udp_init_ex(get_loop(env, false), &test->handle, AF_INET);
+  uv_udp_bind(&test->handle, (const struct sockaddr *)&any, 0);
+  struct sockaddr_in to = loopback(udp_port(&test->handle));
+  uv_buf_t buf = uv_buf_init("one", 3);
+  uv_udp_send(&test->first, &test->handle, &buf, 1,
+              (const struct sockaddr *)&to, udp_first_sent);
+  return NULL;
+}
+
+static void unused_alloc_cb(uv_handle_t *handle, size_t suggested,
+                            uv_buf_t *buf) {
+  (void)handle;
+  (void)suggested;
+  *buf = uv_buf_init(NULL, 0);
+}
+
+static void unused_recv_cb(uv_udp_t *handle, ssize_t nread, const uv_buf_t *buf,
+                           const struct sockaddr *addr, unsigned flags) {
+  (void)handle;
+  (void)nread;
+  (void)buf;
+  (void)addr;
+  (void)flags;
+}
+
+static uv_udp_t errors_udp;
+static uv_udp_t errors_udp_bad;
+
+// testUdpErrors() returns the result of each call, in order. See uv.test.ts.
+static napi_value test_udp_errors(napi_env env, napi_callback_info info) {
+  (void)info;
+  uv_loop_t *loop = get_loop(env, false);
+  uv_udp_send_t req;
+  uv_buf_t buf = uv_buf_init("data", 4);
+  struct sockaddr_in any = loopback(0);
+  struct sockaddr_in discard = loopback(9);
+  int fd = -1;
+  int value = 0;
+  // One call per line, in order (an initializer list's order isn't defined).
+  int32_t results[32];
+  size_t n = 0;
+  results[n++] = uv_udp_init_ex(loop, &errors_udp_bad, 99);
+  results[n++] = uv_udp_init_ex(loop, &errors_udp_bad, AF_INET | (1 << 12));
+  results[n++] = uv_udp_init(loop, &errors_udp);
+  results[n++] = uv_udp_recv_start(&errors_udp, NULL, unused_recv_cb);
+  results[n++] = uv_udp_send(&req, &errors_udp, &buf, 1, NULL, NULL);
+  results[n++] = uv_fileno((uv_handle_t *)&errors_udp, &fd);
+  results[n++] =
+      uv_udp_bind(&errors_udp, (const struct sockaddr *)&any, UV_UDP_IPV6ONLY);
+  results[n++] = uv_udp_bind(&errors_udp, (const struct sockaddr *)&any, 0);
+  results[n++] = uv_fileno((uv_handle_t *)&errors_udp, &fd) == 0 && fd >= 0;
+  results[n++] = uv_udp_open(&errors_udp, fd);
+  results[n++] =
+      uv_udp_recv_start(&errors_udp, unused_alloc_cb, unused_recv_cb);
+  results[n++] =
+      uv_udp_recv_start(&errors_udp, unused_alloc_cb, unused_recv_cb);
+  results[n++] = uv_udp_recv_stop(&errors_udp);
+  results[n++] = uv_udp_connect(&errors_udp, (const struct sockaddr *)&discard);
+  results[n++] = uv_udp_connect(&errors_udp, (const struct sockaddr *)&discard);
+  results[n++] =
+      uv_udp_try_send(&errors_udp, &buf, 1, (const struct sockaddr *)&discard);
+  results[n++] = uv_udp_try_send(&errors_udp, &buf, 1, NULL);
+  results[n++] = uv_udp_connect(&errors_udp, NULL);
+  results[n++] = uv_udp_connect(&errors_udp, NULL);
+  results[n++] = uv_udp_set_ttl(&errors_udp, 0);
+  results[n++] = uv_udp_set_ttl(&errors_udp, 64);
+  results[n++] = uv_udp_set_broadcast(&errors_udp, 1);
+  results[n++] = uv_udp_set_multicast_ttl(&errors_udp, 1);
+  results[n++] = uv_udp_set_multicast_loop(&errors_udp, 1);
+  results[n++] =
+      uv_send_buffer_size((uv_handle_t *)&errors_udp, &value) == 0 && value > 0;
+  results[n++] = uv_udp_using_recvmmsg(&errors_udp);
+  uv_close((uv_handle_t *)&errors_udp, NULL);
+  return make_int32_array(env, results, n);
+}
+
+// testUdpUnref(callback) receives on a bound socket and unrefs it. Nothing
+// arrives and nothing else keeps the process alive, so it exits. Returns
+// { active, hasRef }.
+static uv_udp_t unref_udp;
+
+static napi_value test_udp_unref(napi_env env, napi_callback_info info) {
+  (void)info;
+  struct sockaddr_in any = loopback(0);
+  uv_udp_init(get_loop(env, false), &unref_udp);
+  uv_udp_bind(&unref_udp, (const struct sockaddr *)&any, 0);
+  uv_udp_recv_start(&unref_udp, unused_alloc_cb, unused_recv_cb);
+  uv_unref((uv_handle_t *)&unref_udp);
+  napi_value result;
+  napi_create_object(env, &result);
+  set_int32(env, result, "active", uv_is_active((uv_handle_t *)&unref_udp));
+  set_int32(env, result, "hasRef", uv_has_ref((uv_handle_t *)&unref_udp));
+  return result;
+}
+
+// testErrorNames() returns [uv_err_name, uv_strerror] for UV_EINVAL and an
+// unknown code, and what uv_err_name_r and uv_strerror_r write.
+static napi_value test_error_names(napi_env env, napi_callback_info info) {
+  (void)info;
+  char name[32], message[64];
+  const char *strings[] = {
+      uv_err_name(UV_EINVAL),
+      uv_strerror(UV_EINVAL),
+      uv_err_name(-99999),
+      uv_strerror(-99999),
+      uv_err_name_r(UV_ECANCELED, name, sizeof(name)),
+      uv_strerror_r(UV_EAGAIN, message, sizeof(message)),
+  };
+  napi_value array;
+  napi_create_array_with_length(env, 6, &array);
+  for (uint32_t i = 0; i < 6; i++) {
+    napi_value s;
+    napi_create_string_utf8(env, strings[i], NAPI_AUTO_LENGTH, &s);
+    napi_set_element(env, array, i, s);
+  }
+  return array;
+}
+
+// testIpAddresses() parses and formats addresses with uv_ip4_addr,
+// uv_ip6_addr and the name functions. See uv.test.ts.
+static napi_value test_ip_addresses(napi_env env, napi_callback_info info) {
+  (void)info;
+  struct sockaddr_in a4;
+  struct sockaddr_in6 a6;
+  struct sockaddr unknown;
+  char name[64], tiny[4];
+  napi_value result;
+  napi_create_object(env, &result);
+  set_int32(env, result, "ip4", uv_ip4_addr("127.0.0.1", 8080, &a4));
+  set_int32(env, result, "ip4Port", ntohs(a4.sin_port));
+  set_int32(env, result, "ip4Name", uv_ip4_name(&a4, name, sizeof(name)));
+  napi_value s;
+  napi_create_string_utf8(env, name, NAPI_AUTO_LENGTH, &s);
+  napi_set_named_property(env, result, "ip4String", s);
+  set_int32(env, result, "ip4Invalid", uv_ip4_addr("256.1.1.1", 0, &a4));
+  set_int32(env, result, "ip6", uv_ip6_addr("fe80::1%lo", 53, &a6));
+  set_int32(env, result, "ip6Name",
+            uv_ip_name((const struct sockaddr *)&a6, name, sizeof(name)));
+  napi_create_string_utf8(env, name, NAPI_AUTO_LENGTH, &s);
+  napi_set_named_property(env, result, "ip6String", s);
+  set_int32(env, result, "ip6Invalid", uv_ip6_addr("::g", 0, &a6));
+  memset(&unknown, 0, sizeof(unknown));
+  unknown.sa_family = AF_UNIX;
+  set_int32(env, result, "unknownFamily",
+            uv_ip_name(&unknown, name, sizeof(name)));
+  uv_ip4_addr("255.255.255.255", 0, &a4);
+  set_int32(env, result, "tooSmall", uv_ip4_name(&a4, tiny, sizeof(tiny)));
+  return result;
+}
+
 napi_value Init(napi_env env, napi_value exports) {
   // Register all test functions
   napi_value fn;
@@ -1281,6 +1617,24 @@ napi_value Init(napi_env env, napi_value exports) {
   napi_create_function(env, NULL, 0, test_tty_reset_mode_concurrent, NULL,
                        &fn);
   napi_set_named_property(env, exports, "testTtyResetModeConcurrent", fn);
+
+  napi_create_function(env, NULL, 0, test_udp_echo, NULL, &fn);
+  napi_set_named_property(env, exports, "testUdpEcho", fn);
+
+  napi_create_function(env, NULL, 0, test_udp_close_cancels, NULL, &fn);
+  napi_set_named_property(env, exports, "testUdpCloseCancels", fn);
+
+  napi_create_function(env, NULL, 0, test_udp_errors, NULL, &fn);
+  napi_set_named_property(env, exports, "testUdpErrors", fn);
+
+  napi_create_function(env, NULL, 0, test_udp_unref, NULL, &fn);
+  napi_set_named_property(env, exports, "testUdpUnref", fn);
+
+  napi_create_function(env, NULL, 0, test_error_names, NULL, &fn);
+  napi_set_named_property(env, exports, "testErrorNames", fn);
+
+  napi_create_function(env, NULL, 0, test_ip_addresses, NULL, &fn);
+  napi_set_named_property(env, exports, "testIpAddresses", fn);
 
   return exports;
 }

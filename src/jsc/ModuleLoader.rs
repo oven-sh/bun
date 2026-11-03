@@ -370,7 +370,9 @@ pub(crate) fn namespace_and_path(specifier: &[u8]) -> (&[u8], &[u8]) {
 }
 
 pub(crate) fn on_load_namespace_and_path(key: &[u8]) -> Option<(&[u8], &[u8])> {
-    has_extension_or_namespace(key).then(|| namespace_and_path(key))
+    // "<cwd>/[eval]" is no file. A dot in the name of the working directory reads as an extension.
+    (has_extension_or_namespace(key) && !VirtualMachine::get().is_eval_or_stdin_entry(key))
+        .then(|| namespace_and_path(key))
 }
 
 /// C++ entry point: length of `key`'s `onLoad` namespace (0 for `file`), or -1 if no `onLoad` runs for it.

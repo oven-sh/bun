@@ -5508,6 +5508,13 @@ impl VirtualMachine {
         result
     }
 
+    /// Whether `specifier` is the key of the code that `-e`, `-p`, stdin or cron mode runs. It is not on disk.
+    pub(crate) fn is_eval_or_stdin_entry(&self, specifier: &[u8]) -> bool {
+        self.module_loader.eval_source.is_some()
+            && (specifier.ends_with(bun_paths::path_literal!("/[eval]").as_bytes())
+                || specifier.ends_with(bun_paths::path_literal!("/[stdin]").as_bytes()))
+    }
+
     /// Note: `is_a_file_path` is a runtime
     /// arg to avoid duplicating the body for both monomorphizations.
     pub(crate) fn _resolve<'r>(
@@ -5548,10 +5555,7 @@ impl VirtualMachine {
             ret.path = result.path.as_bytes();
             return Ok(());
         }
-        if self.module_loader.eval_source.is_some()
-            && (specifier.ends_with(bun_paths::path_literal!("/[eval]").as_bytes())
-                || specifier.ends_with(bun_paths::path_literal!("/[stdin]").as_bytes()))
-        {
+        if self.is_eval_or_stdin_entry(specifier) {
             ret.path = specifier;
             return Ok(());
         }

@@ -2719,6 +2719,47 @@ describe.concurrent("onResolve is called for a specifier with no extension and n
   });
 });
 
+// `bun -e`, `bun -p`, standard input and cron mode run code that is not on disk. Its key is "[eval]" or "[stdin]" in
+// the working directory. A dot in the name of that directory read as an extension, and then onLoad was asked about it.
+describe.concurrent("onLoad is not asked about code that is not on disk", () => {
+  const files = {
+    "plugin.ts": `
+      Bun.plugin({
+        name: "answers",
+        setup(build) {
+          build.onLoad({ filter: /\\[(eval|stdin)\\]$/ }, () => ({ contents: "console.log('onLoad');", loader: "js" }));
+        },
+      });
+    `,
+    "my.app/job.ts": `export default { scheduled: () => console.log("ran") };`,
+    "job.ts": `export default { scheduled: () => console.log("ran") };`,
+  };
+  // Cron mode wraps the job in code of its own, and runs that.
+  const cron = ["run", "--cron-title=job", "--cron-period=* * * * *", "./job.ts"];
+  it.each([
+    ["-e", "my.app", ["-e", "console.log('ran')"], undefined],
+    ["-e", ".", ["-e", "console.log('ran')"], undefined],
+    ["-p", "my.app", ["-p", "'ran'"], undefined],
+    ["standard input", "my.app", ["-"], "console.log('ran')"],
+    ["standard input", ".", ["-"], "console.log('ran')"],
+    ["cron mode", "my.app", cron, undefined],
+    ["cron mode", ".", cron, undefined],
+  ])("from %s in the directory %s", async (_, cwd, [first, ...rest], stdin) => {
+    using dir = tempDir("plugin-onload-not-on-disk", files);
+    const preload = ["--preload", cwd === "." ? "./plugin.ts" : "../plugin.ts"];
+    await using proc = Bun.spawn({
+      cmd: first === "run" ? [bunExe(), "run", ...preload, ...rest] : [bunExe(), ...preload, first, ...rest],
+      cwd: resolve(String(dir), cwd),
+      env: bunEnv,
+      stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ran\n", stderr: "", exitCode: 0 });
+  });
+});
+
 // Non-entry files are transpiled off the main thread, where plugins can't run, but a macro's module may need one.
 describe.concurrent("a macro called in a file that is not the entry point", () => {
   const files = {

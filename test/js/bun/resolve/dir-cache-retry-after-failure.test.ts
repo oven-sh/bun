@@ -1085,6 +1085,65 @@ const files = {
         console.log("entry points that this thread missed meanwhile:", missed);
       },
 
+      async inflight() {
+        // A build that is under way. A plugin writes the module that the build asks for and declines,
+        // so the build looks the module up itself, in a directory that it listed before the module
+        // was there. A build takes a listing of its own as it is, and looks up once more what it
+        // does not find, unless the program handles the miss.
+        // "probe": the plugin first looks the module up at the runtime. That lookup misses and runs
+        // again, so the listing is no longer the build's own.
+        // "handled": the import sits in a try block. A build that does not find such a module
+        // succeeds, and leaves the import for the run time.
+        const { resolverCounters } = require("bun:internal-for-testing");
+        const run = async (label, { handled, probe, made = "gen.js", asked = "./gen.js", before = "" }) => {
+          const dir = path.join(root, "inflight", label);
+          const load = "require(" + JSON.stringify(asked) + ").v";
+          const use = handled
+            ? "let v; try { v = " + load + "; } catch { v = 'ABSENT'; } console.log(v);"
+            : "console.log(" + load + ");";
+          write(path.join(dir, "ent.js"), before + use);
+          const from = requireFrom(dir);
+          const writesThenDeclines = {
+            name: "writes-then-declines",
+            setup(build) {
+              build.onResolve({ filter: /gen(\\.js|\\/b\\.js)?$/ }, () => {
+                if (probe) {
+                  try {
+                    from.resolve(asked);
+                  } catch {}
+                }
+                write(path.join(dir, made), "exports.v = 'MADE BY THE PLUGIN';");
+                return undefined;
+              });
+            },
+          };
+          const ranAgain = resolverCounters().lookupsRunAgain;
+          const built = await Bun.build({
+            entrypoints: [path.join(dir, "ent.js")],
+            plugins: [writesThenDeclines],
+            target: "bun",
+            throw: false,
+          });
+          const answer = !built.success
+            ? "ERR " + built.logs.map(log => log.message).join("|")
+            : (await built.outputs[0].text()).includes("MADE BY THE PLUGIN")
+              ? "bundled"
+              : "left for the run time";
+          console.log(label, answer + ", lookups run again", resolverCounters().lookupsRunAgain - ranAgain);
+        };
+        // The first build of the process too: no build comes before IF1.
+        await run("IF1", { handled: false, probe: true });
+        await run("IF2", { handled: true, probe: true });
+        await run("IF3", { handled: false, probe: false });
+        await run("IF4", { handled: true, probe: false });
+        // A directory that the build has looked for, and that the plugin makes. ID1 asks for a
+        // file in it, ID2 and ID3 for the directory itself.
+        const early = "try { require('./gen/a.js'); } catch {}\\n";
+        await run("ID1", { handled: true, probe: false, made: "gen/b.js", asked: "./gen/b.js", before: early });
+        await run("ID2", { handled: true, probe: false, made: "gen/index.js", asked: "./gen", before: early });
+        await run("ID3", { handled: false, probe: false, made: "gen/index.js", asked: "./gen", before: early });
+      },
+
       async build() {
         // Bun.build() shares the cache across calls. Shapes of "installed after the
         // first build failed", and one of "written while the build runs".
@@ -1348,6 +1407,26 @@ describe.concurrent("a failed resolution sees them from each way to ask the reso
       ,
       }
     `);
+  });
+
+  test("a build under way looks up again what it does not find, unless the program handles the miss", async () => {
+    expect(await runGroup("inflight")).toEqual({
+      exitCode: 0,
+      stderr: "",
+      stdout: [
+        // The plugin's lookup ran again, and left a listing that is not the build's own: the build reads it again.
+        "IF1 bundled, lookups run again 1",
+        "IF2 bundled, lookups run again 1",
+        // The listing is the build's own: its lookup misses, and runs again unless the program handles the miss.
+        "IF3 bundled, lookups run again 1",
+        "IF4 left for the run time, lookups run again 0",
+        // A directory that was not there is opened again by each lookup of a build.
+        "ID1 bundled, lookups run again 0",
+        // The build listed the directory above without the new one, and takes its own listing as it is.
+        "ID2 left for the run time, lookups run again 0",
+        "ID3 bundled, lookups run again 1",
+      ].join("\n"),
+    });
   });
 });
 

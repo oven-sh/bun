@@ -80,35 +80,6 @@ impl Target {
     // `bake_graph()` stays in bun_bake (would back-edge into tier-6).
     // `out_extensions()` stays in bun_bundler (allocator-heavy, only used there).
 
-    const MAIN_FIELD_NAMES: [&'static str; 4] = [
-        "browser",
-        "module",
-        "main",
-        // https://github.com/jsforum/jsforum/issues/5
-        // Older packages might use jsnext:main in place of module
-        "jsnext:main",
-    ];
-
-    pub fn default_main_fields(self) -> &'static [&'static str] {
-        const NODE: &[&str] = &[Target::MAIN_FIELD_NAMES[2], Target::MAIN_FIELD_NAMES[1]];
-        const BROWSER: &[&str] = &[
-            Target::MAIN_FIELD_NAMES[0],
-            Target::MAIN_FIELD_NAMES[1],
-            Target::MAIN_FIELD_NAMES[3],
-            Target::MAIN_FIELD_NAMES[2],
-        ];
-        const BUN: &[&str] = &[
-            Target::MAIN_FIELD_NAMES[1],
-            Target::MAIN_FIELD_NAMES[2],
-            Target::MAIN_FIELD_NAMES[3],
-        ];
-        match self {
-            Target::Node => NODE,
-            Target::Browser => BROWSER,
-            Target::Bun | Target::BunMacro | Target::ServerComponentsSsr => BUN,
-        }
-    }
-
     pub fn default_conditions(self) -> &'static [&'static [u8]] {
         // Callers (`ESMConditions::init`) take byte slices, so surface
         // bytes directly rather than `&str`.

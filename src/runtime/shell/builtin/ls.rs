@@ -3,8 +3,8 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::io::Write as _;
 
-use bun_collections::HashMap;
-use bun_core::ZBox;
+use bun_collections::{HashMap, index_sort};
+use bun_core::{ZBox, ZStr, strings};
 use bun_sys::{E, FdExt, O, S, dir_iterator};
 
 use crate::shell::ExitCode;
@@ -52,7 +52,7 @@ pub(crate) struct ExecState {
 
 /// What one task found, as the main thread writes it.
 struct Section {
-    err: Option<bun_sys::Error>,
+    errs: Vec<bun_sys::Error>,
     output: Vec<u8>,
     /// Slots of the subtasks.
     children: Range<u32>,
@@ -121,22 +121,15 @@ impl Ls {
                 };
 
                 let argc = Builtin::of(interp, cmd).args_slice().len();
-                let task_count = match paths_start {
-                    Some(start) => argc - start,
-                    None => 1,
-                };
+                let operands = paths_start.unwrap_or(argc)..argc;
                 Self::state_mut(interp, cmd).state = State::Exec(ExecState {
                     err: None,
-                    task_count: AtomicUsize::new(task_count),
+                    task_count: AtomicUsize::new(1),
                     tasks_done: 0,
                     output_waiting: 0,
                     output_done: 0,
                     turn: Some(0),
-                    after: if task_count > 1 {
-                        vec![1..task_count as u32]
-                    } else {
-                        Vec::new()
-                    },
+                    after: Vec::new(),
                     parked: HashMap::new(),
                 });
 
@@ -153,38 +146,26 @@ impl Ls {
                 let opts = Self::state_mut(interp, cmd).opts;
                 let evtloop = Builtin::event_loop(interp, cmd);
                 let interp_ptr = interp.as_ctx_ptr();
-                if let Some(start) = paths_start {
-                    let print_directory = task_count > 1;
-                    for (slot, i) in (start..argc).enumerate() {
-                        let path = Builtin::of(interp, cmd).arg_bytes(i);
-                        let task = ShellLsTask::create(
-                            cmd,
-                            opts,
-                            task_count_ptr,
-                            cwd,
-                            ZBox::from_bytes(path),
-                            evtloop,
-                            interp_ptr,
-                        );
-                        // SAFETY: freshly heap-allocated.
-                        unsafe {
-                            (*task).print_directory = print_directory;
-                            (*task).slot = slot as u32;
-                            ShellTask::schedule_no_ref::<ShellLsTask>(task);
-                        }
+                let builtin = Builtin::of(interp, cmd);
+                // One task: it lists `.`, the one operand, or all the operands.
+                let path = match operands.len() {
+                    0 => ZBox::from_bytes(b"."),
+                    1 => ZBox::from_bytes(builtin.arg_bytes(operands.start)),
+                    _ => ZBox::default(),
+                };
+                let mut all_operands = Vec::new();
+                if operands.len() > 1 {
+                    for i in operands {
+                        all_operands.extend_from_slice(builtin.arg_bytes(i));
+                        all_operands.push(0);
                     }
-                } else {
-                    let task = ShellLsTask::create(
-                        cmd,
-                        opts,
-                        task_count_ptr,
-                        cwd,
-                        ZBox::from_bytes(b"."),
-                        evtloop,
-                        interp_ptr,
-                    );
-                    // SAFETY: freshly heap-allocated.
-                    unsafe { ShellTask::schedule_no_ref::<ShellLsTask>(task) };
+                }
+                let task =
+                    ShellLsTask::create(cmd, opts, task_count_ptr, cwd, path, evtloop, interp_ptr);
+                // SAFETY: freshly heap-allocated.
+                unsafe {
+                    (*task).operands = all_operands;
+                    ShellTask::schedule_no_ref::<ShellLsTask>(task);
                 }
                 Yield::suspended()
             }
@@ -242,11 +223,19 @@ impl Ls {
             }
         }
         loop {
-            if let Some(e) = section.err.take() {
-                let errstr = Builtin::task_error_to_string(interp, cmd, Kind::Ls, &e).to_vec();
-                if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-                    if exec.err.is_none() {
-                        exec.err = Some(e);
+            if !section.errs.is_empty() {
+                let mut errstr = Vec::new();
+                for e in section.errs {
+                    errstr.extend_from_slice(Builtin::task_error_to_string(
+                        interp,
+                        cmd,
+                        Kind::Ls,
+                        &e,
+                    ));
+                    if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+                        if exec.err.is_none() {
+                            exec.err = Some(e);
+                        }
                     }
                 }
                 Self::write(interp, cmd, IoKind::Stderr, &errstr);
@@ -326,11 +315,12 @@ impl Ls {
                 b'd' => opts.list_directories = true,
                 b'l' => opts.long_listing = true,
                 b'R' => opts.recursive = true,
+                b'r' => opts.reverse = true,
+                b'U' | b'f' => opts.unsorted = true,
                 // The remaining short flags are recognised but currently no-op.
-                b'r' | b'1' | b'b' | b'B' | b'c' | b'C' | b'D' | b'f' | b'F' | b'g' | b'G'
-                | b'h' | b'H' | b'i' | b'I' | b'k' | b'L' | b'm' | b'n' | b'N' | b'o' | b'p'
-                | b'q' | b'Q' | b's' | b'S' | b't' | b'T' | b'u' | b'U' | b'v' | b'w' | b'x'
-                | b'X' | b'Z' => {}
+                b'1' | b'b' | b'B' | b'c' | b'C' | b'D' | b'F' | b'g' | b'G' | b'h' | b'H'
+                | b'i' | b'I' | b'k' | b'L' | b'm' | b'n' | b'N' | b'o' | b'p' | b'q' | b'Q'
+                | b's' | b'S' | b't' | b'T' | b'u' | b'v' | b'w' | b'x' | b'X' | b'Z' => {}
                 _ => return ParseFlag::IllegalOption(Box::from(&flag[1..2])),
             }
         }
@@ -348,6 +338,8 @@ impl Ls {
 
 /// Opens the path, iterates its entries (or
 /// prints the path itself for files / `-d`), accumulating into `output`.
+/// With two or more operands, the first task lists the operands instead
+/// ([`Self::list_operands`]).
 pub(crate) struct ShellLsTask {
     pub cmd: NodeId,
     pub opts: Opts,
@@ -357,9 +349,11 @@ pub(crate) struct ShellLsTask {
     pub task_count: *const AtomicUsize,
     pub cwd: bun_sys::Fd,
     pub path: ZBox,
+    /// Two or more operands, each followed by a NUL. `path` is then empty.
+    operands: Vec<u8>,
     pub output: Vec<u8>,
     pub is_absolute: bool,
-    pub err: Option<bun_sys::Error>,
+    pub errs: Vec<bun_sys::Error>,
     /// Cached current time (seconds since epoch) for formatting timestamps.
     /// Cached once per task to avoid repeated syscalls.
     now_secs: u64,
@@ -391,9 +385,10 @@ impl ShellLsTask {
             task_count,
             cwd,
             path,
+            operands: Vec::new(),
             output: Vec::new(),
             is_absolute: false,
-            err: None,
+            errs: Vec::new(),
             now_secs: 0,
             event_loop,
             interp,
@@ -416,9 +411,10 @@ impl ShellLsTask {
             task_count: self.task_count,
             cwd: self.cwd,
             path,
+            operands: Vec::new(),
             output: Vec::new(),
             is_absolute: false,
-            err: None,
+            errs: Vec::new(),
             now_secs: 0,
             event_loop: self.event_loop,
             interp: self.interp,
@@ -482,6 +478,10 @@ impl ShellLsTask {
             this.now_secs = bun_core::time::timestamp().max(0) as u64;
         }
 
+        if !this.operands.is_empty() {
+            return this.list_operands();
+        }
+
         let fd = match shell_openat(this.cwd, this.path.as_zstr(), O::RDONLY | O::DIRECTORY, 0) {
             Err(open_err) => {
                 this.list_non_directory_operand(&open_err);
@@ -529,7 +529,7 @@ impl ShellLsTask {
             };
             this.schedule_subtasks(&subtasks);
             if let Err(e) = read {
-                this.err = Some(this.error_with_path(&e));
+                this.errs.push(this.error_with_path(&e));
             }
             return;
         }
@@ -538,32 +538,110 @@ impl ShellLsTask {
         this.output.push(b'\n');
     }
 
-    /// coreutils operand rule: `stat`, and on ENOENT or ELOOP `lstat` so a symlink is itself.
-    fn list_non_directory_operand(&mut self, open_err: &bun_sys::Error) {
-        match shell_statat(self.cwd, self.path.as_zstr()) {
-            // A directory that would not open: report the open error.
-            Ok(stat) if S::ISDIR(stat.st_mode as _) => {
-                self.err = Some(self.error_with_path(open_err));
-                return;
-            }
-            Ok(_) => {}
-            Err(e) if matches!(e.get_errno(), E::ENOENT | E::ELOOP) => {}
-            Err(e) => {
-                self.err = Some(self.error_with_path(&e));
-                return;
-            }
+    /// Lists two or more operands in the coreutils order. The operands that are not directories
+    /// come first, as the entries of this task's section. Each directory is then a subtask. Each
+    /// of the two groups is sorted by name: `-U` and `-f` keep the order of the command line, and
+    /// `-r` reverses the sort. The errors are in the order of the command line.
+    fn list_operands(&mut self) {
+        struct Found<'a> {
+            name: &'a [u8],
+            /// Its entry in `output`.
+            entry: Range<usize>,
         }
-        match shell_lstatat(self.cwd, self.path.as_zstr()) {
-            Ok(stat) => {
-                // An operand is never subject to the -a/-A filter.
-                let name = ZBox::from_bytes(self.path.as_bytes());
-                if self.opts.long_listing {
-                    self.add_entry_long_from_stat(name.as_bytes(), &stat);
-                } else {
-                    self.add_entry_short(name.as_bytes());
+        let operands = core::mem::take(&mut self.operands);
+        let mut entries: Vec<Found<'_>> = Vec::new();
+        let mut directories: Vec<Found<'_>> = Vec::new();
+        let mut rest = &operands[..];
+        while let Some(len) = strings::index_of_char_usize(rest, 0) {
+            let path = ZStr::from_buf(rest, len);
+            rest = &rest[len + 1..];
+            let name = path.as_bytes();
+            let start = self.output.len();
+            match Self::stat_operand(self.cwd, path) {
+                Err(e) => {
+                    self.errs.push(e);
+                    continue;
+                }
+                Ok(Some(stat)) => self.add_operand(name, &stat),
+                Ok(None) if !self.opts.list_directories => {
+                    directories.push(Found { name, entry: 0..0 });
+                    continue;
+                }
+                // `-d`: the name alone, and the directory has to open.
+                Ok(None) => match shell_openat(self.cwd, path, O::RDONLY | O::DIRECTORY, 0) {
+                    Ok(fd) => {
+                        fd.close();
+                        self.add_entry_short(name);
+                    }
+                    Err(e) => {
+                        self.errs.push(e.with_path(name));
+                        continue;
+                    }
+                },
+            }
+            entries.push(Found {
+                name,
+                entry: start..self.output.len(),
+            });
+        }
+
+        if !self.opts.unsorted {
+            for group in [&mut entries, &mut directories] {
+                index_sort::sort_slice_by(group, |a, b| a.name.cmp(b.name));
+                if self.opts.reverse {
+                    group.reverse();
                 }
             }
-            Err(e) => self.err = Some(self.error_with_path(&e)),
+            if !entries.is_sorted_by_key(|found| found.entry.start) {
+                let mut sorted = Vec::with_capacity(self.output.len());
+                for found in &entries {
+                    sorted.extend_from_slice(&self.output[found.entry.clone()]);
+                }
+                self.output = sorted;
+            }
+        }
+
+        let subtasks: Vec<*mut ShellLsTask> = directories
+            .iter()
+            .map(|found| self.subtask(ZBox::from_bytes(found.name)))
+            .collect();
+        self.schedule_subtasks(&subtasks);
+    }
+
+    /// An operand that did not open as a directory.
+    fn list_non_directory_operand(&mut self, open_err: &bun_sys::Error) {
+        match Self::stat_operand(self.cwd, self.path.as_zstr()) {
+            Ok(Some(stat)) => {
+                let name = ZBox::from_bytes(self.path.as_bytes());
+                self.add_operand(name.as_bytes(), &stat);
+            }
+            // A directory that would not open: report the open error.
+            Ok(None) => self.errs.push(self.error_with_path(open_err)),
+            Err(e) => self.errs.push(e),
+        }
+    }
+
+    /// coreutils operand rule: `stat`, and on ENOENT or ELOOP `lstat` so a symlink is itself.
+    /// `None`: the operand is a directory.
+    fn stat_operand(cwd: bun_sys::Fd, path: &ZStr) -> bun_sys::Result<Option<bun_sys::Stat>> {
+        match shell_statat(cwd, path) {
+            Ok(stat) if S::ISDIR(stat.st_mode as _) => return Ok(None),
+            Ok(_) => {}
+            Err(e) if matches!(e.get_errno(), E::ENOENT | E::ELOOP) => {}
+            Err(e) => return Err(e.with_path(path.as_bytes())),
+        }
+        match shell_lstatat(cwd, path) {
+            Ok(stat) => Ok(Some(stat)),
+            Err(e) => Err(e.with_path(path.as_bytes())),
+        }
+    }
+
+    /// An operand is never subject to the -a/-A filter.
+    fn add_operand(&mut self, name: &[u8], stat: &bun_sys::Stat) {
+        if self.opts.long_listing {
+            self.add_entry_long_from_stat(name, stat);
+        } else {
+            self.add_entry_short(name);
         }
     }
 
@@ -660,13 +738,13 @@ impl ShellLsTask {
         let ShellLsTask {
             cmd,
             slot,
-            err,
+            errs,
             output,
             children,
             ..
         } = *task;
         let section = Section {
-            err,
+            errs,
             output,
             children,
         };
@@ -860,4 +938,8 @@ pub(crate) struct Opts {
     pub(crate) long_listing: bool,
     /// `-R`, `--recursive` — list subdirectories recursively
     pub(crate) recursive: bool,
+    /// `-r` — reverse the sort of the operands
+    pub(crate) reverse: bool,
+    /// `-U`, `-f` — keep the operands in the order of the command line
+    pub(crate) unsorted: bool,
 }

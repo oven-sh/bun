@@ -8,7 +8,7 @@ use crate::bindgen::JsHeap;
 use crate::strong::Optional as Strong;
 use crate::virtual_machine::VirtualMachine;
 use bun_boringssl::c as boring;
-use bun_collections::StringArrayHashMap;
+use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::strings;
 use bun_core::{Mutex, Output};
 use bun_event_loop::MiniEventLoop::__bun_stdio_blob_store_new;
@@ -189,6 +189,31 @@ impl CleanupHook {
     }
 }
 
+/// What an addon gives to `node::AddEnvironmentCleanupHook`. It is the addon's code, so a call of it is unsafe.
+pub(crate) type EnvironmentCleanupHookFunction = unsafe extern "C" fn(*mut c_void);
+
+/// A hook of `node::AddEnvironmentCleanupHook`, the key of `RareData::environment_cleanup_hooks`.
+#[derive(Clone, Copy)]
+pub(crate) struct EnvironmentCleanupHook {
+    pub(crate) func: EnvironmentCleanupHookFunction,
+    pub(crate) arg: *mut c_void,
+    // No realm: a hook belongs to the VM, whichever isolate it was added through, as it belongs to the Environment in Node (https://github.com/nodejs/node/blob/v26.12.1/src/api/hooks.cc#L157-L177).
+}
+
+impl PartialEq for EnvironmentCleanupHook {
+    fn eq(&self, other: &Self) -> bool {
+        core::ptr::fn_addr_eq(self.func, other.func) && self.arg == other.arg
+    }
+}
+
+impl Eq for EnvironmentCleanupHook {}
+
+impl core::hash::Hash for EnvironmentCleanupHook {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        (self.func as usize, self.arg).hash(state);
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // RareData
 // ──────────────────────────────────────────────────────────────────────────
@@ -214,6 +239,10 @@ pub struct RareData {
     pub(crate) cleanup_hooks: Vec<CleanupHook>,
     /// Joins `cleanup_hooks` once `VirtualMachine::teardown` has everything back from other threads.
     pub(crate) cleanup_hooks_after_teardown_wait: Vec<CleanupHook>,
+    /// The hooks of `node::AddEnvironmentCleanupHook`, each with the ordinal of its `Add`, which orders them as in Node (https://github.com/nodejs/node/blob/v26.12.1/src/cleanup_queue.cc#L16-L40).
+    pub(crate) environment_cleanup_hooks: ArrayHashMap<EnvironmentCleanupHook, u64>,
+    /// The ordinal that the next hook of the VM gets.
+    pub(crate) next_cleanup_hook_ordinal: u64,
 
     pub(crate) file_polls: Option<Box<FilePollStore>>,
 
@@ -294,6 +323,8 @@ impl Default for RareData {
             hot_map: None,
             cleanup_hooks: Vec::new(),
             cleanup_hooks_after_teardown_wait: Vec::new(),
+            environment_cleanup_hooks: ArrayHashMap::new(),
+            next_cleanup_hook_ordinal: 0,
             file_polls: None,
             spawn_ipc_group: SocketGroup::default(),
             test_parallel_ipc_group: SocketGroup::default(),
@@ -833,6 +864,31 @@ impl RareData {
             .push(CleanupHook::from(global_this, ctx, func));
     }
 
+    /// A hook that is registered keeps its place. Node aborts (https://github.com/nodejs/node/blob/v26.12.1/src/api/hooks.cc#L167-L172), but `--hot` and a second `process.dlopen` run an addon's initializer again in the same isolate.
+    pub(crate) fn add_environment_cleanup_hook(&mut self, hook: EnvironmentCleanupHook) {
+        let entry = bun_core::handle_oom(self.environment_cleanup_hooks.get_or_put(hook));
+        if !entry.found_existing {
+            *entry.value_ptr = self.next_cleanup_hook_ordinal;
+            self.next_cleanup_hook_ordinal += 1;
+        }
+    }
+
+    /// Returns whether the hook was registered. One that is not is ignored, as in Node (https://github.com/nodejs/node/blob/v26.12.1/src/api/hooks.cc#L201-L202).
+    pub(crate) fn remove_environment_cleanup_hook(&mut self, hook: EnvironmentCleanupHook) -> bool {
+        self.environment_cleanup_hooks.swap_remove(&hook)
+    }
+
+    /// The hooks that are registered now, the one that was added last first.
+    pub(crate) fn environment_cleanup_hooks_newest_first(&self) -> Vec<EnvironmentCleanupHook> {
+        let mut hooks: Vec<(u64, EnvironmentCleanupHook)> = self
+            .environment_cleanup_hooks
+            .iter()
+            .map(|(hook, ordinal)| (*ordinal, *hook))
+            .collect();
+        hooks.sort_unstable_by_key(|&(ordinal, _)| core::cmp::Reverse(ordinal));
+        hooks.into_iter().map(|(_, hook)| hook).collect()
+    }
+
     /// The loop a first `spawn_sync_event_loop` call made.
     pub fn existing_spawn_sync_event_loop(&self) -> Option<&SpawnSyncEventLoop> {
         self.spawn_sync_event_loop_.as_deref()
@@ -1027,6 +1083,36 @@ enum StdinFdType {
     File = 0,
     Pipe = 1,
     Socket = 2,
+}
+
+/// `node::AddEnvironmentCleanupHook`. The hook goes to the VM of the calling thread: a thread that has none, and a null function, add nothing.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__addEnvironmentCleanupHook(
+    func: Option<EnvironmentCleanupHookFunction>,
+    arg: *mut c_void,
+) {
+    let Some(func) = func else { return };
+    let Some(vm) = VirtualMachine::get_or_null() else {
+        return;
+    };
+    // SAFETY: the VM of this thread, on its JS thread.
+    unsafe { (*vm).rare_data() }.add_environment_cleanup_hook(EnvironmentCleanupHook { func, arg });
+}
+
+/// `node::RemoveEnvironmentCleanupHook`, for the VM of the calling thread like the function above.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__removeEnvironmentCleanupHook(
+    func: Option<EnvironmentCleanupHookFunction>,
+    arg: *mut c_void,
+) {
+    let Some(func) = func else { return };
+    let Some(vm) = VirtualMachine::get_or_null() else {
+        return;
+    };
+    // SAFETY: the VM of this thread, on its JS thread.
+    if let Some(rare) = unsafe { (*vm).rare_data.as_deref_mut() } {
+        rare.remove_environment_cleanup_hook(EnvironmentCleanupHook { func, arg });
+    }
 }
 
 #[unsafe(no_mangle)]

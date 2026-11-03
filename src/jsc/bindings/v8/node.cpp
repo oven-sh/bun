@@ -24,6 +24,8 @@ using JSC::JSValue;
 #if !OS(WINDOWS)
 extern "C" struct uv_loop_s* Bun__VirtualMachine__uvLoop(void* bunVM);
 #endif
+extern "C" void Bun__addEnvironmentCleanupHook(void (*fun)(void* arg), void* arg);
+extern "C" void Bun__removeEnvironmentCleanupHook(void (*fun)(void* arg), void* arg);
 
 namespace node {
 
@@ -31,14 +33,17 @@ void AddEnvironmentCleanupHook(v8::Isolate* isolate,
     void (*fun)(void* arg),
     void* arg)
 {
-    // TODO
+    // Neither function reads the isolate, which can be the one of a collected realm. Node's Remove cannot rely on the current Environment either (https://github.com/nodejs/node/blob/v26.12.1/src/api/hooks.cc#L182-L188).
+    (void)isolate;
+    Bun__addEnvironmentCleanupHook(fun, arg);
 }
 
 void RemoveEnvironmentCleanupHook(v8::Isolate* isolate,
     void (*fun)(void* arg),
     void* arg)
 {
-    // TODO
+    (void)isolate;
+    Bun__removeEnvironmentCleanupHook(fun, arg);
 }
 
 struct uv_loop_s* GetCurrentEventLoop(v8::Isolate* isolate)

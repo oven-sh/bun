@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { jscDescribe } from "bun:jsc";
-import { beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import {
   bunEnv,
   bunExe,
@@ -8,8 +8,10 @@ import {
   expectRssDeltaBelow,
   isASAN,
   isBroken,
+  isDebug,
   isMusl,
   isWindows,
+  nodeExeAtLeast,
   nodeExeMatchingAbi,
   tempDir,
   tmpdirSync,
@@ -144,6 +146,181 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
   describe("module lifecycle", () => {
     it("can call a basic native function", async () => {
       await checkSameOutput("test_v8_native_call");
+    });
+  });
+
+  describe("node::AddEnvironmentCleanupHook", () => {
+    it("runs the hooks last added first when the main thread ends, except the ones that were removed", async () => {
+      const output = await checkSameOutput("test_v8_cleanup_hooks");
+      expect(output.split(/\r?\n/)).toEqual([
+        "the script ends",
+        "cleanup hook removed and added again",
+        "cleanup hook added last",
+        "cleanup hook that created a string",
+        "cleanup hook that adds another one",
+        "cleanup hook that removes another one",
+        "cleanup hook added first",
+        "cleanup hook added by a hook",
+      ]);
+    });
+
+    it("runs no hook after process.exit() on the main thread", async () => {
+      const output = await checkSameOutput("test_v8_cleanup_hooks_after_process_exit");
+      expect(output).toBe("process.exit() is next");
+    });
+
+    it.each(["the end of its script", "process.exit()", "worker.terminate()", "an uncaught error"])(
+      "runs the hooks of a Worker last added first when the Worker ends with %s",
+      async end => {
+        const output = await checkSameOutput("test_v8_cleanup_hooks_of_worker", JSON.stringify([end]));
+        expect(output.split(/\r?\n/)).toEqual([
+          "cleanup hook 3",
+          "cleanup hook 2",
+          "cleanup hook 1",
+          "the Worker has exited",
+        ]);
+      },
+    );
+
+    it("runs a hook again when it adds itself again while it runs", async () => {
+      const expected = [1, 2, 3].map(run => `cleanup hook that adds itself again: run ${run}`).join("\n");
+      expect(await runOnBun("add_a_cleanup_hook_that_adds_itself_again")).toEqual([expected, expected]);
+      // Node aborts there before 26.11.0, and the Node of a CI host can be older than the one whose headers the addon is built with.
+      if (nodeExeAtLeast("26.11.0")) {
+        expect(await checkSameOutput("add_a_cleanup_hook_that_adds_itself_again")).toBe(expected);
+      }
+    });
+
+    // Bun only: Node aborts at the second Add. `bun --hot` and a second process.dlopen run the initializer of an addon again, which adds its hooks again.
+    it("keeps a hook in its place and runs it once when it is added twice", async () => {
+      const expected = "cleanup hook added second\ncleanup hook added first, and again after the second";
+      expect(await runOnBun("add_a_cleanup_hook_twice")).toEqual([expected, expected]);
+    });
+
+    it("runs the next hook when a hook has thrown", async () => {
+      const output = await checkSameOutput(
+        "add_cleanup_hooks_that_throw_and_read",
+        `[{ name: "the name of an object" }]`,
+      );
+      expect(output.split(/\r?\n/)).toEqual([
+        "cleanup hook that throws",
+        "cleanup hook that reads a property: the name of an object",
+      ]);
+    });
+
+    // Bun only: Node looks for the environment of the isolate.
+    it("does not read the isolate that Add and Remove are called with", async () => {
+      const expected = "cleanup hook added without an isolate";
+      expect(await runOnBun("add_and_remove_cleanup_hooks_without_an_isolate")).toEqual([expected, expected]);
+    });
+
+    // Bun only: Node calls the null function, and looks for an environment on the thread of the addon.
+    it("ignores a null function, and a hook that a thread without an environment adds", async () => {
+      expect(await runOnBun("add_cleanup_hooks_that_are_ignored")).toEqual(["", ""]);
+    });
+
+    // Bun only: Node stops and joins the inner Worker before it runs the hooks of the outer one, so it prints these the other way around.
+    it("runs the hooks of a Worker while a Worker that it started still runs", async () => {
+      const expected = [
+        "cleanup hook of the outer Worker",
+        "cleanup hook 3",
+        "cleanup hook 2",
+        "cleanup hook 1",
+        "the outer Worker has exited",
+      ].join("\n");
+      expect(await runOnBun("test_v8_cleanup_hooks_of_nested_workers")).toEqual([expected, expected]);
+    });
+
+    const wrapsDestroyed = (created: number, before: number, byOwner: number) => [
+      `wraps: ${created} created, ${before} destroyed before the end, ${created - before - byOwner} by their hooks, ${byOwner} by the hook of their owner, 0 left`,
+      "hooks ran newest first: yes",
+      "each wrap was destroyed once: yes",
+    ];
+
+    it("destroys every node::ObjectWrap once, newest first, when the main thread ends", async () => {
+      const output = await checkSameOutput("test_v8_object_wrap_cleanup_hooks");
+      expect(output.split(/\r?\n/)).toEqual(["the script ends", ...wrapsDestroyed(1000, 143, 71)]);
+    });
+
+    it("destroys every node::ObjectWrap once, newest first, when a Worker ends", async () => {
+      const output = await checkSameOutput("test_v8_object_wrap_cleanup_hooks_of_worker");
+      expect(output.split(/\r?\n/)).toEqual([...wrapsDestroyed(1000, 143, 71), "the Worker has exited"]);
+    });
+
+    // Each wrap adds a hook and removes it. With a list that was searched for each of them, four times the wraps took 16 times as long.
+    it("adds and runs the hooks of four times as many node::ObjectWrap instances in less than eight times the time", async () => {
+      // A debug or ASAN build needs 40 times as long as a release build to end the Worker that makes the wraps.
+      const few = isDebug || isASAN ? 2_500 : 20_000;
+      const output = await runOn(Runtime.bun, BuildMode.release, "test_v8_object_wrap_cleanup_hooks_cost", `[${few}]`);
+      const lines = output
+        .replaceAll(/^\[\w+\].+$/gm, "")
+        .trim()
+        .split(/\r?\n/);
+      const { withFew, withMany } = JSON.parse(lines.pop()!);
+      // The second Worker counts the wraps of the first one too.
+      expect(lines).toEqual([...wrapsDestroyed(few, 0, 0), ...wrapsDestroyed(5 * few, 0, 0)]);
+      // Below a 64th of a second, the time is that of the Worker and not of its wraps.
+      expect(withMany / Math.max(withFew, 1 / 64)).toBeLessThan(8);
+    });
+
+    // Bun only. Each source is a file of `bun test --isolate`, which loads the addon. `bun test` ends with a requested
+    // exit, after which the hooks only run if the VM is destroyed.
+    async function hooksOfIsolatedFiles(sources: string[], env = {}) {
+      const addon = JSON.stringify(join(directories.bunRelease, "build", "Release", "v8tests.node"));
+      const names = sources.map((_, i) => `file-${i + 1}.test.js`);
+      const files = sources.map((source, i) => [
+        names[i],
+        `const addon = require(${addon});\nimport { test } from "bun:test";\n${source}`,
+      ]);
+      using dir = tempDir("v8-cleanup-hooks-isolate", Object.fromEntries(files));
+      await using proc = spawn({
+        cmd: [bunExe(), "test", "--isolate", ...names.map(name => `./${name}`)],
+        env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1", ...env },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { hooks: stdout.split(/\r?\n/).filter(line => line.startsWith("cleanup hook")), stderr, exitCode };
+    }
+
+    it("drops the hooks of a file of bun test --isolate when the file is done", async () => {
+      const { hooks, stderr, exitCode } = await hooksOfIsolatedFiles(
+        ["first", "second"].map(
+          name => `test("adds a cleanup hook", () => {
+            addon.add_cleanup_hooks("of the ${name} file");
+          });`,
+        ),
+      );
+      expect(hooks, stderr).toEqual(["cleanup hook of the second file"]);
+      expect(exitCode).toBe(0);
+    });
+
+    it("gives a hook to the file of bun test --isolate that adds it, whichever isolate the file adds it through", async () => {
+      const { hooks, stderr, exitCode } = await hooksOfIsolatedFiles(
+        [
+          // On a debug build the realm of the first file is never collected: a listener of its process object is a root.
+          `test("loads the addon", () => {});`,
+          `test("saves its isolate", () => {
+            addon.save_isolate();
+          });`,
+          `test("adds a hook through the isolate of the second file", () => {
+            addon.add_cleanup_hooks_through_saved_isolate("that the third file added through the isolate of the second");
+          });`,
+          `test("adds hooks once the realm of the second file is collected", () => {
+            Bun.gc(true);
+            addon.add_cleanup_hooks("of the fourth file");
+            addon.add_cleanup_hooks_through_saved_isolate("that the fourth file added through the isolate of the second");
+          });`,
+        ],
+        // A read of a collected realm then crashes.
+        { BUN_JSC_useZombieMode: "1" },
+      );
+      expect(hooks, stderr).toEqual([
+        "cleanup hook that the fourth file added through the isolate of the second",
+        "cleanup hook of the fourth file",
+      ]);
+      expect(exitCode).toBe(0);
     });
   });
 
@@ -552,6 +729,19 @@ async function checkSameOutput(testName: string, args?: string, thisValue?: any)
   return nodeResult;
 }
 
+// For a fixture that only Bun can run. Returns its output with the addon built in release mode and in debug mode. The
+// lines end with "\n" on every platform.
+function runOnBun(testName: string, jsArgs?: string) {
+  return Promise.all(
+    [BuildMode.release, BuildMode.debug].map(async buildMode =>
+      (await runOn(Runtime.bun, buildMode, testName, jsArgs))
+        .replaceAll("\r\n", "\n")
+        .replaceAll(/^\[\w+\].+$/gm, "")
+        .trim(),
+    ),
+  );
+}
+
 /**
  * @param jsArgs should eval() to an array
  * @param thisValue will be JSON stringified
@@ -667,11 +857,11 @@ async function buildStandaloneAddon(cwd: string) {
   }
 }
 
-async function runStandaloneAddon(cwd: string) {
+async function runStandaloneAddon(cwd: string, script = "run.js", exe = bunExe(), env = bunEnv) {
   await using proc = spawn({
-    cmd: [bunExe(), join(cwd, "run.js")],
+    cmd: [exe, join(cwd, script)],
     cwd,
-    env: bunEnv,
+    env,
     stdin: "inherit",
     stdout: "pipe",
     stderr: "pipe",
@@ -1220,3 +1410,271 @@ addon.string_utf8_length("\\u00ff".repeat(2 ** 30 + 1));
     10 * 60 * 1000,
   );
 });
+
+// Node has one queue for the cleanup hooks of the V8 API and those of Node-API. Bun has a queue for each kind.
+describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)(
+  "node::AddEnvironmentCleanupHook in a Node-API addon",
+  () => {
+    // The addon is built once. Each test runs a script of its own.
+    let dir: ReturnType<typeof tempDir> | undefined;
+    let cwd = "";
+
+    beforeAll(
+      async () => {
+        dir = tempDir("v8-cleanup-hooks-napi", {
+          ...standaloneAddonFiles(
+            "hybridhooks",
+            `// A Node-API addon that also adds cleanup hooks through the V8 API. NAPI_EXPERIMENTAL makes a finalizer run inside
+// the collection that finds its object dead.
+#define NAPI_EXPERIMENTAL
+#include <node.h>
+#include <node_api.h>
+#include <atomic>
+#include <chrono>
+#include <cstdio>
+#include <thread>
+#include <unordered_set>
+
+namespace hybrid_hooks_test {
+
+using namespace v8;
+
+// Never freed, so that a hook can ask for its state after the finalizer.
+struct InstanceData {
+  bool finalized = false;
+};
+
+void print_state(const char* hook, void* data) {
+  printf("cleanup hook of %s: the instance data of the env is %s\\n", hook,
+         static_cast<InstanceData*>(data)->finalized ? "finalized" : "alive");
+  fflush(stdout);
+}
+
+// The env exists before the addon can add a hook, so Node runs its cleanup, which finalizes the instance data, last.
+napi_value add_hooks_of_both_apis(napi_env env, napi_callback_info info) {
+  auto* data = new InstanceData();
+  napi_set_instance_data(
+      env, data,
+      [](napi_env env, void* data, void* hint) {
+        static_cast<InstanceData*>(data)->finalized = true;
+        printf("the instance data of the env is finalized\\n");
+        fflush(stdout);
+      },
+      nullptr);
+  napi_add_env_cleanup_hook(env, [](void* data) { print_state("Node-API", data); }, data);
+  node::AddEnvironmentCleanupHook(Isolate::GetCurrent(), [](void* data) { print_state("the V8 API", data); }, data);
+  return nullptr;
+}
+
+struct Owner;
+// Tells whether an owner is alive without reading its memory.
+std::unordered_set<Owner*> live_owners;
+int owners_destroyed_by_finalizers = 0;
+int hooks_run_for_destroyed_owners = 0;
+napi_env env_of_held = nullptr;
+napi_ref held = nullptr;
+
+// Like a node::ObjectWrap: it adds a hook for itself and removes it when it is destroyed.
+struct Owner {
+  Isolate* isolate;
+  explicit Owner(Isolate* isolate) : isolate(isolate) {
+    live_owners.insert(this);
+    node::AddEnvironmentCleanupHook(isolate, cleanup, this);
+  }
+  ~Owner() {
+    node::RemoveEnvironmentCleanupHook(isolate, cleanup, this);
+    live_owners.erase(this);
+  }
+  static void cleanup(void* owner) { hooks_run_for_destroyed_owners += !live_owners.count(static_cast<Owner*>(owner)); }
+};
+
+// The finalizer of the object that this returns destroys a new owner.
+napi_value create_owner(napi_env env, napi_callback_info info) {
+  napi_value object;
+  napi_create_object(env, &object);
+  napi_wrap(
+      env, object, new Owner(Isolate::GetCurrent()),
+      [](node_api_basic_env env, void* owner, void* hint) {
+        owners_destroyed_by_finalizers++;
+        delete static_cast<Owner*>(owner);
+      },
+      nullptr, nullptr);
+  return object;
+}
+
+void report_owners(void* unused) {
+  printf("finalizers destroyed owners while the hooks ran: %s\\n", owners_destroyed_by_finalizers > 0 ? "yes" : "no");
+  printf("hooks that ran for a destroyed owner: %d\\n", hooks_run_for_destroyed_owners);
+  fflush(stdout);
+}
+
+// The hook that reports is older than the owners that are made after this call, so it runs after their hooks.
+napi_value report_owners_at_cleanup(napi_env env, napi_callback_info info) {
+  node::AddEnvironmentCleanupHook(Isolate::GetCurrent(), report_owners, nullptr);
+  return nullptr;
+}
+
+// After a collection no free cell is at hand, so the scope of the next hook is allocated on the slow path, where
+// BUN_JSC_slowPathAllocsBetweenGCs collects. By then nothing refers to the objects of the owners.
+void release_held(void* isolate) {
+  static_cast<Isolate*>(isolate)->LowMemoryNotification();
+  napi_delete_reference(env_of_held, held);
+}
+
+// Keeps the argument alive until the hook that is added here runs, which is before the hooks of the owners.
+napi_value hold_until_cleanup(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value objects;
+  napi_get_cb_info(env, info, &argc, &objects, nullptr, nullptr);
+  env_of_held = env;
+  napi_create_reference(env, objects, 1, &held);
+  Isolate* isolate = Isolate::GetCurrent();
+  node::AddEnvironmentCleanupHook(isolate, release_held, isolate);
+  return nullptr;
+}
+
+std::atomic<bool> job_has_started{false};
+std::atomic<bool> job_may_end{false};
+std::atomic<bool> job_was_ended_by_a_hook{false};
+
+// The finalizer of the instance data adds a hook. While a job of an env is on the thread pool, Bun holds the
+// finalizers of the env back until its VM has waited for the pool, which is after it ran the cleanup hooks.
+napi_value add_finalizer_behind_a_job(napi_env env, napi_callback_info info) {
+  static Isolate* isolate = Isolate::GetCurrent();
+  napi_set_instance_data(
+      env, nullptr,
+      [](napi_env env, void* data, void* hint) {
+        node::AddEnvironmentCleanupHook(
+            isolate,
+            [](void* unused) {
+              printf("cleanup hook that a finalizer added after the job on the thread pool, which %s\\n",
+                     job_was_ended_by_a_hook ? "a cleanup hook ended" : "ended by itself");
+              fflush(stdout);
+            },
+            nullptr);
+      },
+      nullptr);
+  napi_value name;
+  napi_create_string_utf8(env, "a job that a cleanup hook ends", NAPI_AUTO_LENGTH, &name);
+  napi_async_work job;
+  napi_create_async_work(
+      env, nullptr, name,
+      [](napi_env env, void* data) {
+        job_has_started = true;
+        // Ends by itself where no cleanup hook runs, so that the Worker can exit there too.
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (!job_may_end && std::chrono::steady_clock::now() < deadline) {
+          std::this_thread::yield();
+        }
+        job_was_ended_by_a_hook = job_may_end.load();
+      },
+      [](napi_env env, napi_status status, void* data) {}, nullptr, &job);
+  napi_queue_async_work(env, job);
+  // The cleanup of the env runs this hook and then looks for its jobs on the thread pool. The hook that this one adds
+  // runs after that.
+  napi_add_env_cleanup_hook(
+      env,
+      [](void* unused) {
+        node::AddEnvironmentCleanupHook(isolate, [](void* unused) { job_may_end = true; }, nullptr);
+      },
+      nullptr);
+  return nullptr;
+}
+
+napi_value has_job_started(napi_env env, napi_callback_info info) {
+  napi_value started;
+  napi_get_boolean(env, job_has_started, &started);
+  return started;
+}
+
+napi_value init(napi_env env, napi_value exports) {
+  struct {
+    const char* name;
+    napi_callback callback;
+  } functions[] = {
+      {"addHooksOfBothApis", add_hooks_of_both_apis},
+      {"createOwner", create_owner},
+      {"reportOwnersAtCleanup", report_owners_at_cleanup},
+      {"holdUntilCleanup", hold_until_cleanup},
+      {"addFinalizerBehindAJob", add_finalizer_behind_a_job},
+      {"hasJobStarted", has_job_started},
+  };
+  for (auto& function : functions) {
+    napi_value value;
+    napi_create_function(env, function.name, NAPI_AUTO_LENGTH, function.callback, nullptr, &value);
+    napi_set_named_property(env, exports, function.name, value);
+  }
+  return exports;
+}
+
+}  // namespace hybrid_hooks_test
+
+NAPI_MODULE(NODE_GYP_MODULE_NAME, hybrid_hooks_test::init)`,
+            `require("./build/Release/hybridhooks").addHooksOfBothApis();
+console.log("the script ends");`,
+          ),
+          "finalizer.js": `const addon = require("./build/Release/hybridhooks");
+addon.reportOwnersAtCleanup();
+addon.holdUntilCleanup(Array.from({ length: 100 }, () => addon.createOwner()));`,
+          "thread-pool.js": `const { Worker, isMainThread } = require("node:worker_threads");
+if (isMainThread) {
+  new Worker(__filename).on("exit", code => console.log("the Worker exited with code", code));
+} else {
+  const addon = require("./build/Release/hybridhooks");
+  addon.addFinalizerBehindAJob();
+  (function exitOnceTheJobRuns() {
+    if (addon.hasJobStarted()) process.exit(0);
+    setImmediate(exitOnceTheJobRuns);
+  })();
+}`,
+        });
+        cwd = String(dir);
+        await buildStandaloneAddon(cwd);
+      },
+      10 * 60 * 1000,
+    );
+
+    afterAll(() => dir?.[Symbol.dispose]());
+
+    it("runs the hook of the V8 API before the cleanup of the Node-API env that was made before it", async () => {
+      const runs = await Promise.all(
+        [bunExe(), await nodeExeMatchingAbi()].map(exe => runStandaloneAddon(cwd, "run.js", exe)),
+      );
+      for (const { lines, err, exitCode } of runs) {
+        expect(lines, `stderr:\n${err}`).toEqual([
+          "the script ends",
+          "cleanup hook of the V8 API: the instance data of the env is alive",
+          "cleanup hook of Node-API: the instance data of the env is alive",
+          "the instance data of the env is finalized",
+        ]);
+        expect(exitCode).toBe(0);
+      }
+    });
+
+    // Bun only: Node waits for the thread pool before it runs a hook, and Bun after. Bun then runs the hooks again.
+    it("runs a hook that a Node-API finalizer adds once the VM of a Worker has waited for the thread pool", async () => {
+      const { lines, err, exitCode } = await runStandaloneAddon(cwd, "thread-pool.js");
+      expect(lines, `stderr:\n${err}`).toEqual([
+        "cleanup hook that a finalizer added after the job on the thread pool, which a cleanup hook ended",
+        "the Worker exited with code 0",
+      ]);
+      expect(exitCode).toBe(0);
+    });
+
+    // Bun only: the scope that it opens for a hook is a cell of the collector, and Node opens none.
+    it(
+      "does not run a hook that a finalizer removes in the collection that the handle scope of the hook starts",
+      async () => {
+        const env = { ...bunEnv, BUN_JSC_slowPathAllocsBetweenGCs: "1" };
+        const { lines, err, exitCode } = await runStandaloneAddon(cwd, "finalizer.js", bunExe(), env);
+        expect(lines, `stderr:\n${err}`).toEqual([
+          "finalizers destroyed owners while the hooks ran: yes",
+          "hooks that ran for a destroyed owner: 0",
+        ]);
+        expect(exitCode).toBe(0);
+      },
+      // With a collection at each slow-path allocation, a debug build takes 5 seconds to start.
+      isDebug || isASAN ? 60_000 : 30_000,
+    );
+  },
+);

@@ -149,22 +149,61 @@ const ways: [string, Record<string, string>][] = [
   ["with the test files from disk", { BUN_AOT_TEST_FILES_FROM_DISK: "1", BUN_AOT_TESTS_NAME_WHAT_THEY_USE: "1" }],
 ];
 
-for (const [project, files] of Object.entries({ keysThatTheFilesSpell, keysMadeAtRunTime })) {
-  for (const [way, env] of ways) {
-    test(`${project}, ${way}`, async () => {
-      using dir = tempDir("falsy-value-in-require-cache", files);
-      const said = async (flags: string[], env: Record<string, string>) => {
-        const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], String(dir), {
-          ...bunEnv,
-          ...env,
-        });
-        if (exitCode !== 0) console.error(stderr);
-        return { stdout, exitCode };
-      };
-      const plain = await said([], {});
-      expect(plain.exitCode).toBe(0);
-      expect(plain.stdout).toContain(" 1 2");
-      expect(await said(["--aot"], env)).toEqual(plain);
-    });
-  }
+// What the test files of a project print and how `bun test` ends: under plain Bun and compiled in every way.
+const projects = {
+  keysThatTheFilesSpell: {
+    files: keysThatTheFilesSpell,
+    printed: [
+      "counts: 1 2 false true",
+      "counts: 3",
+      "hooks: 1",
+      "hooks: 2",
+      "hooks: 3",
+      "imports: 1 2 2",
+      "imports: 1 1 1",
+      "imports: 1 1",
+      "imports: 1 1 1 true",
+      "imports: 1 1 false",
+      "imports: 2 true",
+      "shows: object true true",
+      "shows: undefined true true",
+      "shows: object true true 2",
+      "unloaded: 1 true",
+    ],
+    summary: ["11 pass", "0 fail", "Ran 11 tests across 5 files."],
+  },
+  keysMadeAtRunTime: {
+    files: keysMadeAtRunTime,
+    printed: [
+      "a 1 2, b 1 2, c 1 2, d 1 2",
+      "e 1 2, f 1 2, g 1 2, h 1 2, i 1 2, j 1 2, k 1 2",
+      "l 1 1, m 1 1",
+      "own: 1 2 3",
+    ],
+    summary: ["4 pass", "0 fail", "Ran 4 tests across 1 file."],
+  },
+};
+
+// The counts at the end of `bun test`, and its last line without the time.
+const summaryOf = (stderr: string) =>
+  stderr
+    .split("\n")
+    .filter(line => /^ \d+ |^Ran \d+ tests? across /.test(line))
+    .map(line => line.replace(/ \[[^\]]*\]$/, "").trim());
+
+for (const [project, { files, printed, summary }] of Object.entries(projects)) {
+  const runs = (flags: string[], env: Record<string, string>) => async () => {
+    using dir = tempDir("falsy-value-in-require-cache", files);
+    const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], String(dir), { ...bunEnv, ...env });
+    if (exitCode !== 0) console.error(stderr);
+    expect({
+      printed: stdout.split("\n").filter(line => line && !line.startsWith("bun test ")),
+      summary: summaryOf(stderr),
+      exitCode,
+    }).toEqual({ printed, summary, exitCode: 0 });
+  };
+  // A serial test keeps the builds of the two projects apart: no more than three run at once, whatever
+  // --max-concurrency is. With all six at once, the longest takes a debug build 170 s of the 270 s that a test has.
+  test.serial(`${project}, without --aot`, runs([], {}));
+  for (const [way, env] of ways) test.concurrent(`${project}, ${way}`, runs(["--aot"], env));
 }

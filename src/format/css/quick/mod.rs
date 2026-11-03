@@ -235,11 +235,8 @@ impl Block {
                 b"if" | b"else" | b"for" | b"each" | b"while" if syntax == Syntax::Scss => {
                     Around::ControlDirective
                 }
-                // The ones that the printer asks for by name when it prints what's in them, except where that's about
-                // something that's never taken.
-                b"custom-selector" | b"extend" | b"nest" | b"utility" | b"forward"
-                | b"namespace" | b"import" => Around::Other,
-                // It asks in any case. And `@name: {` of Less is a variable.
+                _ if is_asked_for_by_name(name) => Around::Other,
+                // `@name: {` of Less is a variable.
                 _ if skip(name, 0, LOWER | DIGIT | DASH) < name.len() => Around::Other,
                 _ => Around::Plain,
             },
@@ -264,6 +261,23 @@ struct StandingHead {
     at_rule: Option<(usize, (usize, usize))>,
     /// Where the statements start and end that it has read before this one, in the same block.
     before: Option<(usize, usize)>,
+}
+
+/// True for the at-rules that the printer asks for by name, in any case, when it prints their params or what's in them,
+/// except where that's about something that's never taken. A variable of Less is an at-rule to it, and so is the call of
+/// a mixin: `@import: a;`, `.else();`.
+fn is_asked_for_by_name(name: &[u8]) -> bool {
+    const NAMES: [&[u8]; 8] = [
+        b"else",
+        b"custom-selector",
+        b"extend",
+        b"nest",
+        b"utility",
+        b"forward",
+        b"namespace",
+        b"import",
+    ];
+    NAMES.iter().any(|it| name.eq_ignore_ascii_case(it))
 }
 
 /// White space between two statements.
@@ -1522,7 +1536,8 @@ impl<'a> Parser<'a> {
     /// `@name: value;` of Less. `colon` is where the name ends.
     fn read_less_variable(&mut self, start: usize, colon: usize) -> bool {
         let css = self.css;
-        if class(byte(css, colon + 1)) & BLANK == 0 {
+        if class(byte(css, colon + 1)) & BLANK == 0 || is_asked_for_by_name(&css[start + 1..colon])
+        {
             return false;
         }
         let value_start = skip(css, colon + 1, BLANK);
@@ -1562,6 +1577,9 @@ impl<'a> Parser<'a> {
             return false;
         }
         let paren = skip_long(css, first, LOWER | DIGIT | DASH | UNDERSCORE);
+        if is_asked_for_by_name(&css[start + 1..paren]) {
+            return false;
+        }
         if byte(css, paren) == b';' {
             // `.name;`
             let mut slot = self.slot();

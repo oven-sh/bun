@@ -663,6 +663,11 @@ describe.skipIf(!hasFlag)("style sheets", () => {
     "guards.less":
       "when (@b){}\nwhen~(){}\n.a when (@b) and (@c) {}\n.some-long-name when (@some-long-variable = some-long-value) {}\n",
     "slash-at-the-end.css": "a: b;\n/",
+    // To the printer, a variable of Less and the call of a mixin are at-rules, with a name that can mean something.
+    "names-of-at-rules.less":
+      "a{@import: @url serif some-long-name;}\n@namespace: b serif some-long-name another-long-name yet-another-long-name one-more;\n" +
+      "@NAMESPACE: b serif some-long-name another-long-name yet-another-long-name one-more;\n@utility: b * c;\n@forward: b as c-*;\n" +
+      "@d: b as c-*;\n@e: 'f' as *;\ng: h;\n@else: ();\ni: j;\n.else(k);\nl: m;\n.else;\n.import(n);\n@media: o;\n",
     // The second one is written from the memo.
     "line-break-in-a-value.html": "<style>a{--b: \n;--b: \n;}</style>\n",
     "line-break-in-a-value.vue": "<style>--A: b c\n// d;</style>\n<style>--A: b c\n// d;</style>\n",

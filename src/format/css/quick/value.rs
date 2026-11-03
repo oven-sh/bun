@@ -11,7 +11,7 @@
 use super::super::Parser as Syntax;
 use super::{
     BLANK, DASH, DIGIT, INDENTATION, LOWER, PLAIN, UNDERSCORE, UPPER, byte, class,
-    may_end_with_white_space, skip, skip_long,
+    is_asked_for_by_name, may_end_with_white_space, skip, skip_long,
 };
 
 /// Parentheses that are nested deeper than this are refused. It also bounds how deep `layout.rs` calls itself.
@@ -487,7 +487,10 @@ pub(super) fn end_of_simple_statement(
             return None;
         }
         let colon = skip_long(css, start + 1, ANY_NAME);
-        if syntax != Syntax::Less || colon == start + 1 || css.get(colon..colon + 2) != Some(b": ")
+        if syntax != Syntax::Less
+            || colon == start + 1
+            || css.get(colon..colon + 2) != Some(b": ")
+            || is_asked_for_by_name(&css[start + 1..colon])
         {
             return None;
         }
@@ -507,6 +510,7 @@ pub(super) fn end_of_simple_statement(
         }
         let end = skip_long(css, name, NAME);
         return match byte(css, end) {
+            _ if is_asked_for_by_name(&css[start + 1..end]) => None,
             b';' => Some((end + 1, true)),
             b'(' => {
                 let simple = read_simple_value(css, start + 1, syntax, quote, Owner::AtRule)?;
@@ -941,6 +945,7 @@ impl Scanner<'_> {
                     } else if byte(css, p) == b'*'
                         && css[p - 1] == b'-'
                         && self.owner == Owner::AtRule
+                        && is_scss
                         && !is_inside
                         && css[..term].ends_with(b" as ")
                     {
@@ -1109,6 +1114,7 @@ impl Scanner<'_> {
                 b'*' if place == Place::Next
                     && !is_inside
                     && self.owner == Owner::AtRule
+                    && is_scss
                     && byte(css, p + 1) == b';'
                     && css[..p].ends_with(b" as ") =>
                 {

@@ -158,11 +158,16 @@ pub(crate) fn find_imported_parts_in_js_order(
 
     let ChunkLayout {
         files,
-        part_ranges,
+        mut part_ranges,
         parts_prefix,
         namespace_objects,
         ..
     } = layout;
+    for &source_index in &files {
+        if this.script_takes_own_closure(chunk, source_index) {
+            join_part_ranges(&mut part_ranges, source_index);
+        }
+    }
     let mut parts_in_chunk_order: Vec<PartRange> =
         Vec::with_capacity(parts_prefix.len() + namespace_objects.len() + part_ranges.len());
     parts_in_chunk_order.extend_from_slice(&parts_prefix);
@@ -186,6 +191,23 @@ pub(crate) fn find_imported_parts_in_js_order(
         _ => unreachable!("findImportedPartsInJSOrder called on non-JS chunk"),
     }
     Ok(())
+}
+
+/// A file that prints inside its own closure needs one range. A dead part and `RANGE_SOURCE_BYTES_MAX` end a range:
+/// the ranges they leave are neighbors and become one. With another file between two of its ranges, the file keeps
+/// them and prints flat.
+fn join_part_ranges(part_ranges: &mut Vec<PartRange>, source_index: IndexInt) {
+    let is_of_file = |range: &PartRange| range.source_index.get() == source_index;
+    let (Some(first), Some(last)) = (
+        part_ranges.iter().position(is_of_file),
+        part_ranges.iter().rposition(is_of_file),
+    ) else {
+        return;
+    };
+    if part_ranges[first..=last].iter().all(is_of_file) {
+        part_ranges[first].part_index_end = part_ranges[last].part_index_end;
+        part_ranges.drain(first + 1..=last);
+    }
 }
 
 /// Parts `begin..end` of a file. They print together, ahead of the files that part `end` imports.

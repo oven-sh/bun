@@ -652,6 +652,11 @@ let init_moduleName = __esm(() => {
 - Variables are hoisted outside the wrapper, so no new scope isolation needed
 - Exception: a `KEEP_TOP_LEVEL_IN_WRAPPER` file (a file with no exports and a top-level name that a `with` body or a direct eval pins) hoists nothing. Its declarations print inside the wrapper with the names that the top-level scope gave them, so two files can each keep a name that must not be renamed
 
+_Unwrapped file_ (`wrap = .none`):
+
+- Its top-level symbols are top-level symbols of the chunk, and the renamer makes each name unique
+- Exception: the renamer cannot change a pinned name. An unwrapped `KEEP_TOP_LEVEL_IN_WRAPPER` file prints inside a closure that calls itself where the file runs (`LinkerContext::script_takes_own_closure`), when its chunk holds code of another file
+
 **Phase 5: Part-by-Part Symbol Processing**
 The function processes each part (logical code section) within files:
 
@@ -768,6 +773,7 @@ The renamed symbols are then used during final code generation to produce output
 - On an import cycle, the owner's order can put a part that evaluates code at load ahead of a binding that it reads, itself or through the functions that it names (`LoadTimeReads`). A walk from the next entry point by rank whose order does not then lays out that chunk (`find_safe_walks`). The other chunks keep the layout of their owner. With no such entry point, so does this one. The read is judged by `part.dependencies`, per statement: `const f = () => x` is no read of `x` (`Expr::can_be_moved`), and `const o = { f: () => x }` is one
 - Places the parts of a file in runs: a part prints after the files it imports and before the files that the next part imports
 - Collects the live parts of each run into part ranges. The runtime and the wrapped files go first in the chunk, then the namespace objects: a namespace object exists before any file runs
+- Joins the part ranges of a file that prints inside its own closure (`script_takes_own_closure`) into one range, unless another file prints between two of them
 - Records the other chunks in the order a walk from the chunk's files reaches their first file with side effects (`reached_chunks_in_order`), which orders the chunk's cross-chunk `import` statements
 
 #### `findImportedCSSFilesInJSOrder.rs`
@@ -802,6 +808,7 @@ The renamed symbols are then used during final code generation to produce output
 - Handles different module formats (ESM, CJS, IIFE)
 - Manages HMR (Hot Module Replacement) code generation
 - Processes wrapper functions and runtime calls
+- Prints an unwrapped file whose top-level names must not reach the chunk scope as `(() => { ... })();` (`script_takes_own_closure`). Kept `import` statements stay outside
 
 #### `generateCompileResultForJSChunk.rs`
 

@@ -439,10 +439,9 @@ describe("bytecode cache portability", () => {
     expectOutputs(outputs);
   });
 
-  // Last moved on every platform at once by JavaScriptCore's parser (parseProperty in parser/Parser.cpp): a shorthand
-  // property `{ name }` records the position of its name, no longer that of the token behind it. Twelve hashes and no
-  // size: the sources with a shorthand property (records.js, typescript.js), and the bundles, where `{ a: a }` is
-  // printed `{ a }`.
+  // Last moved on every platform at once by the bundler: a direct eval pins the top-level names of features.js and
+  // records.js, and their chunk also holds helpers of the runtime, so each file prints inside a closure that calls
+  // itself. Eight hashes and four sizes: the four builds of those two files.
   function expectOutputs(outputs: Record<string, unknown>) {
     expect(
       outputs,
@@ -465,17 +464,17 @@ describe("bytecode cache portability", () => {
           },
         },
         "bun build --bytecode --minify features.js": {
-          "js": "01891b9edc3e3f1e7cff44bd90d7d00543ddd64bd730cc4d111ad629436fb671",
+          "js": "2629d2549cc0b53802c193933bc3d918383e3206042c186246ea15d08cb6ccc9",
           "jsc": {
-            "bytes": 42528,
-            "sha256": "39135d12466ed6ca05c2adcd8d3f3d924fae51eba82f217114b248fe749c91f7",
+            "bytes": 42976,
+            "sha256": "189d51c73dab19f5add5fa9e50d55cea12b8009bf3b54491f780934f3d00148f",
           },
         },
         "bun build --bytecode --minify records.js": {
-          "js": "eba33198824cc48f618cb7be37d1321a9fa2daa7b3a1dee17bc67e9e81fc5a62",
+          "js": "9c35ee7684dbaea734fcdd6143fb17409f96e456f4e26808bff387597edd892b",
           "jsc": {
-            "bytes": 81040,
-            "sha256": "2780bd7a3907288a5afa5502d3722e1ee76afaea848dada1404f937a48f1641b",
+            "bytes": 81568,
+            "sha256": "b83a36a7877b80d234ae4aa287af8fe9fb2d39958ee6bef4500c0ff08d8f157f",
           },
         },
         "bun build --bytecode acorn/dist/acorn.mjs": {
@@ -500,10 +499,10 @@ describe("bytecode cache portability", () => {
           },
         },
         "bun build --bytecode features.js": {
-          "js": "fab10827f6eeeee6927c7678ff66d6a40806be1b347138f4f4c93dc3f479c5f5",
+          "js": "bce45383e43051b3e5d8f619eb452fd56799a10d30cd0d5f7b5a8f930555a410",
           "jsc": {
-            "bytes": 44424,
-            "sha256": "72b86629531c80faf331f984b5829e088282fc6d13995041ba0054fd6d54c9d7",
+            "bytes": 44864,
+            "sha256": "a4033e1db9e4c30ab074323957ff95d53f309b4165e9aa00c82dccd950562de6",
           },
         },
         "bun build --bytecode happy-dom/lib/index.js": {
@@ -542,10 +541,10 @@ describe("bytecode cache portability", () => {
           },
         },
         "bun build --bytecode records.js": {
-          "js": "7f7481845388ff377c5fbc630445cc90f235ba32f673d2c3cec030073c46b762",
+          "js": "e60c5394a1cdac2c55cb0c78e7e47f3508a3f9edf6f827928887bd49e390ddcc",
           "jsc": {
-            "bytes": 83848,
-            "sha256": "4eac33a0aa7091f63e38069e710f311b69e2bb4f85a241e24bd43383e8d9d1eb",
+            "bytes": 84368,
+            "sha256": "c79be79e77710e023a7d32f54ca30d05202677276539a2ea9eab219fc7aaacd9",
           },
         },
         "bun build --bytecode shapes.js": {

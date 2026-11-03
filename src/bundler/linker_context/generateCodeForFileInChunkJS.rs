@@ -217,6 +217,10 @@ pub fn generate_code_for_file_in_chunk_js(
 
     let namespace_export_part_index = bun_ast::NAMESPACE_EXPORT_PART_INDEX;
 
+    // The layout leaves a file in several ranges when another file prints between them. It then prints flat.
+    let own_closure = c.script_takes_own_closure(chunk, source_index as u32)
+        && is_only_code_range_of_file(chunk, part_range);
+
     stmts.reset();
 
     let part_index_for_lazy_default_export: u32 = 'brk: {
@@ -477,7 +481,12 @@ pub fn generate_code_for_file_in_chunk_js(
             part_stmts,
             chunk,
             temp_arena,
-            flags.wrap,
+            // An `import` statement that stays in the output cannot print inside the closure.
+            if own_closure {
+                WrapKind::Esm
+            } else {
+                flags.wrap
+            },
             &ast,
         ) {
             return PrintResult::Err(err.into());
@@ -507,6 +516,39 @@ pub fn generate_code_for_file_in_chunk_js(
     }
 
     let mut out_stmts = bun_ast::StoreSlice::new_mut(stmts.all_stmts.as_mut_slice());
+
+    if own_closure {
+        // "(() => { ... })();" An arrow: `this` and `arguments` stay those of the enclosing function.
+        if !stmts.all_stmts.is_empty() {
+            let closure = Expr::init(
+                E::Arrow {
+                    body: G::FnBody {
+                        stmts: out_stmts,
+                        loc: bun_ast::Loc::EMPTY,
+                    },
+                    ..Default::default()
+                },
+                bun_ast::Loc::EMPTY,
+            );
+            stmts.append(
+                StmtListWhich::OutsideWrapperPrefix,
+                Stmt::alloc(
+                    S::SExpr {
+                        value: Expr::init(
+                            E::Call {
+                                target: closure,
+                                ..Default::default()
+                            },
+                            bun_ast::Loc::EMPTY,
+                        ),
+                        ..Default::default()
+                    },
+                    bun_ast::Loc::EMPTY,
+                ),
+            );
+        }
+        out_stmts = bun_ast::StoreSlice::new_mut(stmts.outside_wrapper_prefix.as_mut_slice());
+    }
 
     // Optionally wrap all statements in a closure
     if needs_wrapper {
@@ -951,6 +993,28 @@ pub fn generate_code_for_file_in_chunk_js(
         source_ref,
         module_info,
     )
+}
+
+/// `part_range` holds every part of its file that prints in `chunk`, apart from the namespace object, which prints
+/// ahead of all files as a range of its own.
+#[cold]
+fn is_only_code_range_of_file(chunk: &Chunk, part_range: PartRange) -> bool {
+    let is_namespace_object = |range: &PartRange| {
+        range.part_index_begin == bun_ast::NAMESPACE_EXPORT_PART_INDEX
+            && range.part_index_end == bun_ast::NAMESPACE_EXPORT_PART_INDEX + 1
+    };
+    !is_namespace_object(&part_range)
+        && chunk
+            .content
+            .javascript()
+            .parts_in_chunk_in_order
+            .iter()
+            .filter(|range| {
+                range.source_index.get() == part_range.source_index.get()
+                    && !is_namespace_object(range)
+            })
+            .count()
+            == 1
 }
 
 fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump) {

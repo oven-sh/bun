@@ -4626,6 +4626,405 @@ describe("bundler", () => {
     run: { stdout: "A B undefined" },
   });
 
+  // A script that an unwrapped file loads with `import` has no wrapper. It
+  // prints where it runs, in the scope that the files of the chunk share. When
+  // the chunk holds code of another file, such a script prints inside a closure
+  // that calls itself there. The closure needs no caller, so no file runs
+  // earlier or later than before.
+  for (const [suffix, options] of [
+    ["", { format: "cjs" }],
+    ["CLI", { format: "cjs", backend: "cli" }],
+    ["Iife", { format: "iife" }],
+    ["Esm", { format: "esm" }],
+  ] as const) {
+    itBundled(`edgecase/WithPinnedNameOfImportedScript${suffix}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import "./a.js";
+          import "./free.js";
+          import "./c.js";
+          import "./b.js";
+          console.log("entry", typeof x);
+        `,
+        ...withPinnedNameScripts,
+      },
+      ...options,
+      run: { stdout: "a A o.x\nfree undefined\nc function number\nb B o.x\nentry undefined" },
+    });
+  }
+  // The namespace object of a script prints ahead of every file, outside of the closure.
+  for (const [suffix, options] of [
+    ["", {}],
+    ["MinifySyntax", { minifySyntax: true }],
+    ["MinifyWhitespace", { minifyWhitespace: true }],
+    ["MinifyIdentifiers", { minifyIdentifiers: true }],
+    ["Bytecode", { target: "bun", bytecode: true }],
+  ] as const) {
+    itBundled(`edgecase/WithPinnedNameOfNamespaceImportedScript${suffix}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import * as a from "./a.js";
+          import * as b from "./b.js";
+          console.log(typeof a, typeof b, readA({}), readB({}), readA({ x: "o.x" }), typeof x);
+        `,
+        "/a.js": /* js */ `
+          var x = "A";
+          globalThis.readA = function (o) { with (o) { return x; } };
+        `,
+        "/b.js": /* js */ `
+          var x = "B";
+          globalThis.readB = function (o) { with (o) { return x; } };
+        `,
+      },
+      format: "cjs",
+      ...options,
+      run: { stdout: "object object A B o.x undefined" },
+    });
+  }
+  // An entry point prints flat too. The CommonJS entry point of a cjs bundle
+  // reads the `this`, `arguments` and `module` of the output file, so the
+  // closure is an arrow function.
+  itBundled("edgecase/WithPinnedNameOfEntryPointThatRequires", {
+    files: {
+      "/entry.js": /* js */ `
+        var x = "E";
+        function read(o) { with (o) { return x; } }
+        console.log("entry", read({}), read({ x: "o.x" }), this === module.exports, arguments.length);
+        require("./free.js");
+      `,
+      "/free.js": withPinnedNameScripts["/free.js"],
+    },
+    format: "cjs",
+    run: { stdout: "entry E o.x true 5\nfree undefined" },
+  });
+  for (const [format, suffix] of [
+    ["cjs", ""],
+    ["iife", "Iife"],
+    ["esm", "Esm"],
+  ] as const) {
+    itBundled(`edgecase/WithPinnedNameOfEntryPointThatImports${suffix}`, {
+      files: {
+        "/entry.js": /* js */ `
+          var x = "E";
+          function read(o) { with (o) { return x; } }
+          console.log("entry", read({}), read({ x: "o.x" }));
+          import("./free.js");
+        `,
+        "/free.js": withPinnedNameScripts["/free.js"],
+      },
+      format,
+      run: { stdout: "entry E o.x\nfree undefined" },
+    });
+  }
+  // A script that is the only file of its chunk prints as it always did:
+  // loaded as a classic script, its top-level names are the globals of the page.
+  const flatScriptOutput = (name: string) => `// ${name}
+var x = "A";
+function read(o) {
+  with (o) {
+    return x;
+  }
+}
+console.log("a", read({}), read({ x: "o.x" }));
+`;
+  for (const [format, suffix] of [
+    ["cjs", ""],
+    ["iife", "Iife"],
+    ["esm", "Esm"],
+  ] as const) {
+    itBundled(`edgecase/WithPinnedNameOfOnlyFileInChunk${suffix}`, {
+      files: { "/entry.js": withPinnedNameScripts["/a.js"] },
+      format,
+      run: { stdout: "a A o.x" },
+      onAfterBundle(api) {
+        const flat = flatScriptOutput("entry.js");
+        expect(api.readFile("/out.js")).toBe(
+          format === "iife" ? `(() => {\n${flat.replace(/^(?=.)/gm, "  ")}})();\n` : flat,
+        );
+      },
+    });
+  }
+  // Without code splitting each entry point has its own copy of a file.
+  itBundled("edgecase/WithPinnedNameOfScriptThatIsAlsoAnEntryPoint", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./a.js";
+        import "./free.js";
+      `,
+      "/a.js": withPinnedNameScripts["/a.js"],
+      "/free.js": withPinnedNameScripts["/free.js"],
+    },
+    entryPoints: ["/entry.js", "/a.js"],
+    outdir: "/out",
+    format: "cjs",
+    run: [
+      { file: "/out/entry.js", stdout: "a A o.x\nfree undefined" },
+      { file: "/out/a.js", stdout: "a A o.x" },
+    ],
+    onAfterBundle(api) {
+      expect(api.readFile("/out/a.js")).toBe(flatScriptOutput("a.js"));
+    },
+  });
+  // The chunk that two entry points share has no import or export statement,
+  // so Bun loads it as a script.
+  itBundled("edgecase/WithPinnedNameOfScriptInSharedChunk", {
+    files: {
+      "/first.js": /* js */ `
+        import "./a.js";
+        import "./free.js";
+        import "./c.js";
+        console.log("first");
+      `,
+      "/second.js": /* js */ `
+        import "./a.js";
+        import "./free.js";
+        import "./c.js";
+        console.log("second");
+      `,
+      ...withPinnedNameScripts,
+    },
+    entryPoints: ["/first.js", "/second.js"],
+    outdir: "/out",
+    splitting: true,
+    format: "esm",
+    run: { file: "/out/first.js", stdout: "a A o.x\nfree undefined\nc function number\nfirst" },
+  });
+  // A script runs after the CommonJS file that its importer imports first, and
+  // before the wrapped ES module that its importer imports next.
+  for (const [format, suffix] of [
+    ["cjs", ""],
+    ["iife", "Iife"],
+  ] as const) {
+    itBundled(`edgecase/WithPinnedNameOfScriptImportedAfterCommonJS${suffix}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import "./lib.cjs";
+          import "./plugin.js";
+          console.log("entry", LIB.plugins.join(), typeof name);
+        `,
+        "/lib.cjs": /* js */ `
+          globalThis.LIB = { plugins: [], register(plugin) { this.plugins.push(plugin); } };
+        `,
+        "/plugin.js": /* js */ `
+          var name = "plugin";
+          function read(o) { with (o) { return name; } }
+          LIB.register(read({}));
+        `,
+      },
+      format,
+      run: { stdout: "entry plugin undefined" },
+    });
+    itBundled(`edgecase/WithPinnedNameOfScriptImportedBeforeWrappedModule${suffix}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import "./a.js";
+          import { steps } from "./module.mjs";
+          console.log("entry", steps, typeof x);
+          import("./module.mjs");
+        `,
+        "/a.js": /* js */ `
+          var x = "A";
+          function read(o) { with (o) { return x; } }
+          globalThis.STEPS = ["script " + read({})];
+        `,
+        "/module.mjs": /* js */ `
+          STEPS.push("module");
+          export const steps = STEPS.join();
+        `,
+      },
+      format,
+      run: { stdout: "entry script A,module undefined" },
+    });
+  }
+  // A package that Bun converts to an ES module is a CommonJS module again for
+  // a default import. This script then has the `__commonJS` wrapper and no closure.
+  itBundled("edgecase/WithPinnedNameOfDefaultImportedPackageScript", {
+    files: {
+      "/entry.js": /* js */ `
+        import React from "react";
+        console.log("entry", typeof React, globalThis.REACT, typeof version);
+      `,
+      "/node_modules/react/package.json": `{ "name": "react", "version": "18.2.0", "main": "index.js" }`,
+      "/node_modules/react/index.js": /* js */ `
+        var version = "R";
+        function read(o) { with (o) { return version; } }
+        globalThis.REACT = read({});
+      `,
+    },
+    format: "iife",
+    run: { stdout: "entry object R undefined" },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("var require_react = __commonJS(");
+    },
+  });
+  // The `<script src>` files of a page stay flat. In a browser, classic scripts
+  // share one scope, so the second script reads the `x` of the first one.
+  itBundled("edgecase/WithPinnedNameOfPageScript", {
+    files: {
+      "/index.html": `<!DOCTYPE html><html><head><script src="./a.js"></script><script src="./free.js"></script></head></html>`,
+      "/a.js": withPinnedNameScripts["/a.js"],
+      "/free.js": withPinnedNameScripts["/free.js"],
+    },
+    entryPoints: ["/index.html"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const chunk = api.readFile("/out/index.html").match(/src="\.\/([^"]+\.js)"/)![1];
+      api.writeFile("/out/run.cjs", `require("./${chunk}");`);
+    },
+    run: { file: "/out/run.cjs", stdout: "a A o.x\nfree string" },
+  });
+  itBundled("edgecase/WithPinnedNameOfPageScriptInSharedChunk", {
+    files: {
+      "/first.html": `<!DOCTYPE html><html><head><script src="./a.js"></script><script src="./free.js"></script><script src="./first.js"></script></head></html>`,
+      "/second.html": `<!DOCTYPE html><html><head><script src="./a.js"></script><script src="./free.js"></script><script src="./second.js"></script></head></html>`,
+      "/a.js": withPinnedNameScripts["/a.js"],
+      "/free.js": withPinnedNameScripts["/free.js"],
+      "/first.js": /* js */ `console.log("first");`,
+      "/second.js": /* js */ `console.log("second");`,
+    },
+    entryPoints: ["/first.html", "/second.html"],
+    outdir: "/out",
+    splitting: true,
+    onAfterBundle(api) {
+      const chunks = readdirSync(api.outdir).filter(file => file.endsWith(".js"));
+      const shared = chunks.filter(file => api.readFile("/out/" + file).includes(`console.log("free", typeof x);`));
+      expect(shared).toHaveLength(1);
+      expect(api.readFile("/out/" + shared[0])).toContain(`\nvar x = "A";\n`);
+    },
+  });
+  // A range of parts ends at a part that tree shaking removed, and after 128 KiB
+  // of source. The ranges of a script become one range, inside one closure.
+  itBundled("edgecase/WithPinnedNameOfScriptInSeveralRanges", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./big.js";
+        import "./free.js";
+      `,
+      "/big.js": /* js */ `
+        var x = "BIG";
+        function read(o) { with (o) { return x; } }
+        function unused() {}
+        var padding = "${Buffer.alloc(130 * 1024, "p").toString()}";
+        console.log("big", read({}), padding.length);
+      `,
+      "/free.js": withPinnedNameScripts["/free.js"],
+    },
+    format: "cjs",
+    run: { stdout: `big BIG ${130 * 1024}\nfree undefined` },
+  });
+  // `require.resolve()` of a file of the bundle puts that file between two
+  // ranges of the script. One closure cannot hold both ranges, so the script
+  // prints flat and the output is what it was.
+  itBundled("edgecase/WithPinnedNameOfScriptAroundAnotherFile", {
+    files: {
+      "/a.js": /* js */ `
+        var x = "A";
+        function read(o) { with (o) { return x; } }
+        console.log("a before", read({}));
+        var resolved = require.resolve("./f.js");
+        console.log("a after", read({}), typeof resolved);
+      `,
+      "/f.js": /* js */ `console.log("f runs");`,
+    },
+    entryPoints: ["/a.js", "/f.js"],
+    outdir: "/out",
+    format: "cjs",
+    target: "node",
+    run: { file: "/out/a.js", stdout: "a before A\nf runs\na after A string" },
+  });
+  // The helpers of the runtime read globals by name, so the runtime is code of another file.
+  itBundled("edgecase/WithPinnedNameThatTheRuntimeReads", {
+    files: {
+      "/entry.js": /* js */ `
+        var Object = { marker: "mine" };
+        function read(o) { with (o) { return Object; } }
+        console.log("entry", read({}).marker);
+        import("./dep.cjs").then(dep => console.log("dep", dep.default.value));
+      `,
+      "/dep.cjs": /* js */ `module.exports = { value: 1 };`,
+    },
+    format: "cjs",
+    run: { stdout: "entry mine\ndep 1" },
+  });
+  // In esm output the `import` statement of an external module stays at the top level.
+  itBundled("edgecase/WithPinnedNameOfScriptWithExternalImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./view.jsx";
+        import "./free.js";
+      `,
+      "/view.jsx": /* js */ `
+        var x = "V";
+        function read(o) { with (o) { return x; } }
+        console.log(<div title={read({})} />);
+      `,
+      "/free.js": withPinnedNameScripts["/free.js"],
+    },
+    external: ["react"],
+    format: "esm",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toMatch(
+        /^import \{ jsx(DEV)? \} from "react\/jsx(-dev)?-runtime";\n\(\(\) => \{$/m,
+      );
+    },
+  });
+  // A script that waits for an ES module with a top-level await keeps its
+  // `await` at the top level, so it prints flat.
+  itBundled("edgecase/WithPinnedNameOfScriptWithAsyncDependency", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./view.jsx";
+        import("my-jsx/jsx-dev-runtime");
+      `,
+      "/view.jsx": /* js */ `
+        /** @jsxImportSource my-jsx */
+        var x = "V";
+        function read(o) { with (o) { return x; } }
+        console.log(<div title={read({})} />);
+      `,
+      "/node_modules/my-jsx/package.json": `{ "name": "my-jsx", "version": "1.0.0", "type": "module" }`,
+      "/node_modules/my-jsx/jsx-dev-runtime.js": /* js */ `
+        export const jsxDEV = (type, props) => ({ type, props });
+        await 0;
+      `,
+    },
+    jsx: { runtime: "automatic", development: true },
+    format: "esm",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toMatch(/^await init_jsx_dev_runtime\(\);\nvar x = "V";$/m);
+    },
+  });
+  // A direct eval pins every top-level name of a CommonJS file.
+  itBundled("edgecase/EvalPinnedNameOfEntryPointThatRequires", {
+    files: {
+      "/entry.js": /* js */ `
+        var secret = "S";
+        const dep = require("./dep.js");
+        console.log("entry", eval("secret"), dep.seen);
+        eval("var late = 1");
+        console.log("late", dep.late());
+      `,
+      "/dep.js": /* js */ `
+        exports.seen = typeof secret;
+        exports.late = () => typeof late;
+      `,
+    },
+    format: "cjs",
+    run: { stdout: "entry S undefined\nlate undefined" },
+  });
+  itBundled("edgecase/EvalPinnedNameOfImportedScript", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./a.mjs";
+        import "./b.mjs";
+        console.log(readA(), readB(), typeof x);
+      `,
+      ...evalPinnedNameScripts,
+    },
+    format: "cjs",
+    run: { stdout: "A B undefined" },
+  });
+
   // Standard decorator lowering declares `var _init`, `var _dec` and a WeakMap per
   // accessor or `#private` next to each class. Every class needs its own.
   itBundled("edgecase/StandardDecoratorTemporariesPerClass", {

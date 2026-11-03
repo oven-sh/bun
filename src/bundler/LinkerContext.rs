@@ -519,6 +519,45 @@ impl<'a> LinkerContext<'a> {
         true
     }
 
+    /// An unwrapped `KEEP_TOP_LEVEL_IN_WRAPPER` file prints inside a closure that calls itself where the file
+    /// runs, so its top-level names stay out of the scope that the files of `chunk` share.
+    #[inline]
+    pub(crate) fn script_takes_own_closure(
+        &self,
+        chunk: &Chunk,
+        source_index: crate::IndexInt,
+    ) -> bool {
+        self.graph.ast.items_flags()[source_index as usize]
+            .contains(AstFlags::KEEP_TOP_LEVEL_IN_WRAPPER)
+            && self.pinned_script_takes_own_closure(chunk, source_index)
+    }
+
+    #[cold]
+    fn pinned_script_takes_own_closure(
+        &self,
+        chunk: &Chunk,
+        source_index: crate::IndexInt,
+    ) -> bool {
+        let flags = self.graph.meta.items_flags()[source_index as usize];
+        // An `await init_dep()` of the file has to stay at the top level. With no other code in the chunk
+        // the file prints flat; the runtime counts, because its helpers read globals by name.
+        if flags.wrap != WrapKind::None
+            || flags.is_async_or_has_async_dependency
+            || chunk.files_with_parts_in_chunk.count() < 2
+        {
+            return false;
+        }
+        // The `<script src>` files of a page stay flat: classic scripts share one scope.
+        let loaders = self.parse_graph().input_files.items_loader();
+        let import_records = self.graph.ast.items_import_records();
+        !self.graph.reachable_files.iter().any(|file| {
+            loaders[file.get() as usize] == Loader::Html
+                && import_records[file.get() as usize].iter().any(|record| {
+                    record.source_index.is_valid() && record.source_index.get() == source_index
+                })
+        })
+    }
+
     /// `bundle` is taken as a raw `*mut` because the caller invokes this as
     /// `self.linker.load(self, …)` — `self` *is*
     /// `(*bundle).linker`, so a `&mut BundleV2` here would alias the receiver

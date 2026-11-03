@@ -156,6 +156,8 @@ impl Ls {
                 };
                 let mut all_operands = Vec::new();
                 if operands.len() > 1 {
+                    let len = |i| builtin.arg_bytes(i).len() + 1;
+                    all_operands.reserve_exact(operands.clone().map(len).sum());
                     for i in operands {
                         all_operands.extend_from_slice(builtin.arg_bytes(i));
                         all_operands.push(0);
@@ -551,60 +553,68 @@ impl ShellLsTask {
     fn list_operands(&mut self) {
         struct Found<'a> {
             name: &'a [u8],
+            directory: bool,
             /// Its entry in `output`. Empty for a directory.
             entry: Range<usize>,
         }
         let operands = core::mem::take(&mut self.operands);
-        let mut entries: Vec<Found<'_>> = Vec::new();
-        let mut directories: Vec<Found<'_>> = Vec::new();
+        let mut found: Vec<Found<'_>> = Vec::with_capacity(strings::count_char(&operands, 0));
         let mut rest = &operands[..];
         while let Some(len) = strings::index_of_char_usize(rest, 0) {
             let path = ZStr::from_buf(rest, len);
             rest = &rest[len + 1..];
             let name = path.as_bytes();
             let start = self.output.len();
-            match Self::stat_operand(self.cwd, path) {
+            let directory = match Self::stat_operand(self.cwd, path) {
                 Err(e) => {
                     self.errs.push(e);
                     continue;
                 }
-                Ok(Some(stat)) => self.add_operand(name, &stat),
-                Ok(None) if !self.opts.list_directories => {
-                    directories.push(Found { name, entry: 0..0 });
-                    continue;
+                Ok(Some(stat)) => {
+                    self.add_operand(name, &stat);
+                    false
                 }
+                Ok(None) if !self.opts.list_directories => true,
                 // `-d`: the name alone, and the directory has to open.
                 Ok(None) => match shell_openat(self.cwd, path, O::RDONLY | O::DIRECTORY, 0) {
                     Ok(fd) => {
                         fd.close();
                         self.add_entry_short(name);
+                        false
                     }
                     Err(e) => {
                         self.errs.push(e.with_path(name));
                         continue;
                     }
                 },
-            }
-            entries.push(Found {
+            };
+            found.push(Found {
                 name,
+                directory,
                 entry: start..self.output.len(),
             });
         }
 
-        if !self.opts.unsorted {
-            for group in [&mut entries, &mut directories] {
-                index_sort::sort_slice_by(group, |a, b| a.name.cmp(b.name));
-                if self.opts.reverse {
-                    group.reverse();
-                }
+        let opts = self.opts;
+        let order = |a: &Found<'_>, b: &Found<'_>| {
+            let by_name = || match (opts.unsorted, opts.reverse) {
+                (true, _) => core::cmp::Ordering::Equal,
+                (false, false) => a.name.cmp(b.name),
+                (false, true) => b.name.cmp(a.name),
+            };
+            a.directory.cmp(&b.directory).then_with(by_name)
+        };
+        if !found.is_sorted_by(|a, b| order(a, b).is_le()) {
+            index_sort::sort_slice_by(&mut found, order);
+        }
+        let (entries, directories) =
+            found.split_at(found.partition_point(|found| !found.directory));
+        if !entries.is_sorted_by_key(|found| found.entry.start) {
+            let mut sorted = Vec::with_capacity(self.output.len());
+            for found in entries {
+                sorted.extend_from_slice(&self.output[found.entry.clone()]);
             }
-            if !entries.is_sorted_by_key(|found| found.entry.start) {
-                let mut sorted = Vec::with_capacity(self.output.len());
-                for found in &entries {
-                    sorted.extend_from_slice(&self.output[found.entry.clone()]);
-                }
-                self.output = sorted;
-            }
+            self.output = sorted;
         }
 
         let subtasks: Vec<*mut ShellLsTask> = directories

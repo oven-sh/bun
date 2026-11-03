@@ -225,7 +225,13 @@ it("self getter checks its receiver", () => {
   expect(self).toBe(globalThis);
 
   for (const receiver of [{}, 0, "", Symbol(), Object.create(globalThis), new Proxy(globalThis, {})]) {
-    expect(() => get.call(receiver)).toThrow(TypeError);
+    expect(() => get.call(receiver)).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_THIS",
+        message: "The self getter can only be used on the global object",
+      }),
+    );
   }
   expect(() => Reflect.get(globalThis, "self", {})).toThrow(TypeError);
   expect(() => new Proxy(globalThis, {}).self).toThrow(TypeError);
@@ -240,7 +246,7 @@ it("self setter checks its receiver", async () => {
        const results = [];
        for (const receiver of [{}, 0, new Proxy(globalThis, {})]) {
          try { set.call(receiver, "replaced"); results.push("set"); }
-         catch (error) { results.push(error.name); }
+         catch (error) { results.push(error.name + " " + error.code + " " + error.message); }
        }
        for (const assign of [
          () => Reflect.set(globalThis, "self", "replaced", {}),
@@ -262,10 +268,11 @@ it("self setter checks its receiver", async () => {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
+  const refused = "TypeError ERR_INVALID_THIS The self setter can only be used on the global object";
   expect(JSON.parse(stdout)).toEqual([
-    "TypeError",
-    "TypeError",
-    "TypeError",
+    refused,
+    refused,
+    refused,
     "TypeError",
     "TypeError",
     "TypeError",

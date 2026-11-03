@@ -1288,6 +1288,14 @@ function loadImpl(): Loaded {
           }
         });
         context!.global = context;
+        // The copied `self` accessor only accepts the main global as its receiver.
+        ObjectDefineProperty(context, "self", {
+          __proto__: null,
+          value: context,
+          writable: true,
+          enumerable: true,
+          configurable: true,
+        });
         const _console = new Console(this.output);
         ObjectDefineProperty(context, "console", {
           __proto__: null,

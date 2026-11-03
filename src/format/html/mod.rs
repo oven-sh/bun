@@ -104,6 +104,8 @@ pub fn parser_for_path(path: &[u8]) -> Option<Parser> {
 #[derive(Default)]
 pub struct Scratch {
     document: crate::Scratch,
+    /// What has read the last text that was one run, and what it has written.
+    runs: Option<(runs::Runs, Vec<u8>)>,
 }
 
 /// The `options` that Prettier's functions receive.
@@ -631,7 +633,14 @@ fn format_once(
         && let front_matter_len = front_matter::parse(&text).map_or(0, |it| it.end)
         && let Some(settings) = runs::Settings::new(parser, options, Some(path), front_matter_len)
     {
-        let (mut runs, mut printed) = (runs::Runs::new(settings), Vec::new());
+        let (mut runs, mut printed) = match scratch.runs.take() {
+            Some((mut runs, mut printed)) => {
+                runs.reset(settings);
+                printed.clear();
+                (runs, printed)
+            }
+            None => (runs::Runs::new(settings), Vec::new()),
+        };
         if let Some((span, is_in_text)) = runs.whole(&text, &mut printed)
             && options.line_ending.resolve(original) == crate::options::LineEnding::Lf
             && let Some(whole) = (if is_in_text { &text[..] } else { &printed[..] })
@@ -640,6 +649,7 @@ fn format_once(
             if front_matter_len == 0 && (is_in_text || !strings::contains_char(whole, 0)) {
                 out.extend_from_slice(whole);
                 out.push(b'\n');
+                scratch.runs = Some((runs, printed));
                 return Ok(None);
             }
             let options = options_of_text();

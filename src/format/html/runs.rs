@@ -11,6 +11,8 @@
 //! - behind it nothing, words, or children on lines of their own, and the end tag
 //! - a comment that nobody reads
 //! - words
+//! - words and elements with nothing but words in them that share lines, between two line breaks that are forced
+//! - a `<script>` and a `<style>`, whose code is left for its formatter
 //!
 //! Everything else ends the run: the child goes the long way, through the lexer and the parser. So does every element
 //! that is open at that place. The children in front of it, on each level, are runs of their own.
@@ -660,6 +662,13 @@ impl Runs {
             pieces: Vec::new(),
             marks: HtmlMarksBuffer::default(),
         }
+    }
+
+    /// Makes it ready for another text. Its buffers stay.
+    pub(crate) fn reset(&mut self, settings: Settings) {
+        self.settings = settings;
+        self.found.clear();
+        (self.next, self.scanned_to, self.is_new) = (0, 0, true);
     }
 
     /// True if the text has been looked at from `at` on.

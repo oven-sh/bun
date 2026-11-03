@@ -158,7 +158,8 @@ describe("bundler", () => {
   // An unknown at-rule statement is not a valid rule, so an "@import" after it
   // is still a valid import. The bundler inlines the file (or hoists an
   // external import), so the output must not hold the "@import" rule again.
-  // esbuild and lightningcss do not inline this import: they keep the rule.
+  // esbuild calls this import invalid: it warns and keeps the rule as written.
+  // lightningcss loads the file and keeps the rule.
   const importAfterUnknownAtRule: Record<string, { files: Record<string, string>; out: string }> = {
     Simple: {
       files: {
@@ -3426,7 +3427,8 @@ describe("bundler", () => {
     },
   });
 
-  // Only "@charset" and "@layer" statements are valid ahead of an "@import", and the parser rejects anything else.
+  // Only "@charset" and "@layer" statements are valid ahead of an "@import". The parser also takes an
+  // unknown at-rule statement there, and rejects any other rule.
   const importPrologueCases: Record<string, { files: Record<string, string>; out: string }> = {
     StatementBeforeExternalImport: {
       files: {

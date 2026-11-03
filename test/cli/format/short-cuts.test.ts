@@ -1533,6 +1533,31 @@ describe.skipIf(!hasFlag)("what breaks whether it fits or not, and what only loo
       ]),
     ),
     "closing-tag.jsx": "function a(a = <a>a\nb</a\n/**/>) {}\n",
+    // A comment at the end of a body without braces is printed before the \`else\`.
+    "before-else.ts": `
+      if (secondLink === linkMap) value = call(operands[2], operands[3], value, index, more) /* a
+       b */;
+      else if (secondLink === linkFilter) {
+      } else reached = appendParts(out, reached, call(endCallback, endThis, value, index, array));
+      if (a) b(() => {
+        c();
+      }) /* d */;
+      else e();
+      if (a) b(c) /* d */; else e();
+      if (a) b(c); /* d */ else e();
+      if (a) b(c); // d
+      else e();
+    `,
+    // A pattern that nothing is assigned to breaks with the declaration.
+    "patterns.ts": `
+      const users = new Map<string, { name: string }
+      function greet(id: string) {}
+      var a = 1, { b: c };
+      var { d: e }, f = 1;
+      var [g], h = 1;
+      var { i }, j;
+      let { k };
+    `,
     // What's after \`<T>\` is printed flat first.
     "assertions.ts": `
       x = <a>function () {

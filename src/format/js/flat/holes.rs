@@ -36,7 +36,8 @@ impl<'a> Hole<'a> {
                     group(&body).should_expand(true).fmt(f);
                 }
                 StmtKind::Enum(declaration) => {
-                    let body = format_with(|f| write_enum_body_after_head(statement, declaration, f));
+                    let body =
+                        format_with(|f| write_enum_body_after_head(statement, declaration, f));
                     group(&body).should_expand(true).fmt(f);
                 }
                 StmtKind::Module(module) => write_module_body_after_head(statement, module, f),

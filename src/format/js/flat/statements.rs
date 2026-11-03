@@ -329,6 +329,10 @@ impl<'a> Line<'_, 'a> {
 
     /// `a: T = 1`, on one line.
     fn declarator(&mut self, declarator: VarDecl<'a>) -> Written {
+        // A pattern that nothing is assigned to has no group of its own, and breaks with the declaration.
+        if declarator.init().is_none() && declarator.pat().tag() != PatTag::Ident {
+            return Err(Refused);
+        }
         self.pattern(declarator.pat())?;
         if declarator.is_definite() {
             self.byte(b'!')?;
@@ -455,14 +459,16 @@ impl<'a> Line<'_, 'a> {
                 self.is_too_wide |= is_too_wide;
                 return Err(Refused);
             }
-        } else if written.is_err()
-            || (!self.is_quiet && self.f.comments().is_owner(Node::Stmt(body)))
-        {
-            // How it's printed isn't known, so neither is whether it breaks. A comment in it can say to ignore it.
+        } else if written.is_err() {
+            // How it's printed isn't known, so neither is whether it breaks.
             return Err(Refused);
         }
         self.go_back_to(mark);
         self.check_source_up_to(body.span().start)?;
+        // A comment at its end can be printed before the `else`.
+        if self.has_comments_in(body.span()) {
+            return Err(Refused);
+        }
         self.end_text(Some(0))?;
         self.parts.push(Part::Hole(Hole::Statement(body)));
         self.checked_to = body.span().end;

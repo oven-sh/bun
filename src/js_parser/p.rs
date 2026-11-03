@@ -9130,6 +9130,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        let keep_top_level_in_wrapper =
+            self.module_scope().contains_with && self.with_pins_top_level_name();
+
         if wrap_mode == WrapMode::BunCommonjs && !self.options.features.remove_cjs_module_wrapper {
             // This transforms the user's code into.
             //
@@ -9325,11 +9328,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // When code splitting is enabled, always create wrapper_ref to match esbuild behavior.
             // The linker wraps every CommonJS file and may wrap a FORCE_CJS_TO_ESM file, so those need one too.
             // Otherwise, use needsWrapperRef() to optimize away unnecessary wrappers.
+            // A `keep_top_level_in_wrapper` file hoists nothing out of its wrapper, so it always needs one.
             if self.options.bundle
                 && (self.options.code_splitting
                     || exports_kind == js_ast::ExportsKind::Cjs
                     || force_cjs_to_esm
-                    || self.needs_wrapper_ref(parts.as_slice()))
+                    || self.needs_wrapper_ref(parts.as_slice())
+                    || keep_top_level_in_wrapper)
             {
                 use core::fmt::Write as _;
                 let mut buf = bun_alloc::ArenaString::new_in(arena);
@@ -9443,6 +9448,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             force_cjs_to_esm,
             commonjs_lifted_to_esm: force_cjs_to_esm && !self.has_es_module_syntax,
+            keep_top_level_in_wrapper,
             uses_module_ref,
             uses_exports_ref,
             uses_require_ref,
@@ -9600,6 +9606,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     _ => return true,
                 }
+            }
+        }
+        false
+    }
+
+    /// A file with exports is left out: its importers read its top-level symbols from the chunk scope.
+    #[cold]
+    fn with_pins_top_level_name(&self) -> bool {
+        if self.has_es_module_syntax || self.commonjs_named_exports.count() > 0 {
+            return false;
+        }
+        for member in self.module_scope().members.values() {
+            let symbol = &self.symbols[member.ref_.inner_index() as usize];
+            if symbol.must_not_be_renamed() && symbol.kind != js_ast::symbol::Kind::Unbound {
+                return true;
             }
         }
         false

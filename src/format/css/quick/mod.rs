@@ -101,17 +101,75 @@ fn skip(css: &[u8], at: usize, classes: u8) -> usize {
 #[inline]
 fn skip_long(css: &[u8], mut at: usize, classes: u8) -> usize {
     while let Some(bytes) = css.get(at..).and_then(|it| it.first_chunk::<8>()) {
-        let mut others = 0;
-        for (index, byte) in bytes.iter().enumerate() {
-            others |= u32::from(class(*byte) & classes == 0) << index;
-        }
+        let others = in_classes(u64::from_le_bytes(*bytes), classes) ^ HIGHEST_BITS;
         if others != 0 {
-            return at + others.trailing_zeros() as usize;
+            return at + (others.trailing_zeros() / 8) as usize;
         }
         at += 8;
     }
     skip(css, at, classes)
 }
+
+const ONES: u64 = 0x0101_0101_0101_0101;
+const HIGHEST_BITS: u64 = 0x80 * ONES;
+
+/// Eight bytes at once: the highest bit of each byte of the result is set if the byte of `bytes` is in one of `classes`.
+#[inline]
+const fn in_classes(bytes: u64, classes: u8) -> u64 {
+    // The same for the bytes from `first` to `last`, of eight bytes below 0x80. The other bits are anything.
+    const fn in_range(bytes: u64, first: u8, last: u8) -> u64 {
+        (bytes + (0x80 - first as u64) * ONES) & !(bytes + (0x7F - last as u64) * ONES)
+    }
+    let ascii = bytes & !HIGHEST_BITS;
+    let mut found = 0;
+    if classes & (LOWER | PLAIN) != 0 {
+        found |= in_range(ascii, b'a', b'z');
+    }
+    if classes & UPPER != 0 {
+        found |= in_range(ascii, b'A', b'Z');
+    }
+    if classes & DIGIT != 0 {
+        found |= in_range(ascii, b'0', b'9');
+    }
+    if classes & DASH != 0 {
+        found |= in_range(ascii, b'-', b'-');
+    }
+    if classes & (UNDERSCORE | PLAIN) != 0 {
+        found |= in_range(ascii, b'_', b'_');
+    }
+    if classes & (INDENTATION | PLAIN) != 0 {
+        found |= in_range(ascii, b' ', b' ');
+    }
+    if classes & INDENTATION != 0 {
+        found |= in_range(ascii, b'\t', b'\t');
+    }
+    if classes & NEWLINE != 0 {
+        found |= in_range(ascii, b'\n', b'\n');
+    }
+    if classes & PLAIN != 0 {
+        // `-./`, the digits and `:`. `@` and the capitals.
+        found |= in_range(ascii, b'-', b':') | in_range(ascii, b'@', b'Z');
+    }
+    found & !bytes & HIGHEST_BITS
+}
+
+// `in_classes` says what `CLASSES` says.
+const _: () = {
+    let mut classes = 0;
+    while classes < 256 {
+        let mut byte = 0;
+        while byte < 256 {
+            let expected = if CLASSES[byte] & classes as u8 != 0 {
+                HIGHEST_BITS
+            } else {
+                0
+            };
+            assert!(in_classes(byte as u64 * ONES, classes as u8) == expected);
+            byte += 1;
+        }
+        classes += 1;
+    }
+};
 
 // ───────────────────────────── what the parser leaves for the printer ─────────────────────────────
 

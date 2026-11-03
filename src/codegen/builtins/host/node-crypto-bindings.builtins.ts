@@ -12,6 +12,8 @@ export default b.declarations(
       "certExportPublicKey",
       "certExportChallenge",
       "getCurves",
+      "oneShotDigest",
+      "getHashes",
       "getCiphers",
       "getCipherInfo",
       "sign",

@@ -325,7 +325,7 @@ impl Lookup {
         let name: &[u8] = &source_map.external_source_names[source_idx];
 
         let display = if !source_map.has_resolved_source_names
-            && !source_map.is_standalone_module_graph
+            && source_map.standalone_module_graph.is_none()
             && bun_paths::is_absolute(base_filename)
         {
             // `platform::Auto` is a cfg-selected
@@ -364,24 +364,19 @@ impl Lookup {
                 break 'bytes crate::read_file_that_a_map_names(name)?;
             }
 
-            let provider = source_map.underlying_provider.provider()?;
-
             // Standalone module graph source maps are stored (in memory) compressed.
             // They are decompressed on demand.
-            if source_map.is_standalone_module_graph {
-                let serialized = source_map.standalone_module_graph_data();
+            if let Some(serialized) = source_map.standalone_module_graph {
                 if index >= source_map.external_source_names.len() {
                     return None;
                 }
 
-                // SAFETY: `standalone_module_graph_data` returns a pointer
-                // owned by the standalone module graph trailer; lifetime is
-                // process-static (mmapped). `source_file_contents` fills the
-                // per-index decompression cache through a `OnceLock`.
-                let code = unsafe { (*serialized).source_file_contents(index) };
+                let code = serialized.source_file_contents(index);
 
                 return Some(Utf8Bytes::Borrowed(code?));
             }
+
+            let provider = source_map.underlying_provider.provider()?;
 
             if let Some(parsed) = provider.get_source_map(
                 base_filename,

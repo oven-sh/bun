@@ -1576,6 +1576,9 @@ describe.skipIf(!hasFlag)("what breaks whether it fits or not, and what only loo
       'x = <a><b>t<c/><d/></b>{{eeee: ffff}}{" "}e</a>;\ne = <><b>ae<c/></b>{e} e</>;\ne = <><b>ae<c/></b><d>e</d> e</>;\n',
     "optional-targets.ts":
       "a?.bbbbbbbb.cccc = `/${dddd.eeeee}/`;\na?.b = c(dddddddd, eeeeeeee);\nf = a?.b.c = `${dddddddddd}`;\n",
+    // It stays on the line of the \`=\` if that fits up to the \`(\`.
+    "this-called.ts":
+      "a = this(bcd, efg);\nconst b = this(bcd) as E;\nclass A { a = this(bcd); }\na = this({ b: c });\na = new this(bcd, efg);\n",
     // A comment before the \`{\` is printed before the first statement, which starts after it.
     "static-blocks.ts":
       "class A { static /*\nd*/ { f(aaaaaaaaaa, bbbbbbbbbb); } }\nclass B { static /* c */ { f(aaaaaa, bbbbbb); } }\n",

@@ -218,16 +218,19 @@ impl<'a> Line<'_, 'a> {
                 ExprKind::Object(_) | ExprKind::Array(_) => return true,
                 ExprKind::Cond { test, .. } => return self.never_breaks(test),
                 ExprKind::Call(call) | ExprKind::New(call) => {
-                    let mut callee = call.callee();
-                    while callee.tag() == ExprTag::Dot {
-                        match callee.object() {
-                            Some(object) => callee = object,
+                    let callee = call.callee();
+                    let mut root = callee;
+                    while root.tag() == ExprTag::Dot {
+                        match root.object() {
+                            Some(object) => root = object,
                             None => return false,
                         }
                     }
+                    // `Line::call` writes the arguments of `this(..)` on one line.
                     return !call.args().is_empty()
                         && call.type_args().is_empty()
-                        && matches!(callee.tag(), ExprTag::Ident | ExprTag::This);
+                        && (root.tag() == ExprTag::Ident
+                            || (root.tag() == ExprTag::This && root != callee));
                 }
                 _ => return false,
             };

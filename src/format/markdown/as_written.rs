@@ -1653,6 +1653,10 @@ impl<'t> Reader<'t> {
                         }
                     }
                     let code = &text[start..end];
+                    // Where a definition is looked for, its label ends at the first `]`, which can be this one.
+                    if (is_in_link || is_in_image) && bun_core::strings::contains_char(code, b']') {
+                        return None;
+                    }
                     let has_spaces = code.len() > 2
                         && code.starts_with(b" ")
                         && code.ends_with(b" ")
@@ -1860,8 +1864,12 @@ impl<'t> Reader<'t> {
                 }
                 b'<' => match self.angle::<CELL>(at) {
                     Angle::Ends { end, .. } => {
-                        // `[[` is looked for in an address too.
-                        if bun_core::strings::index_of(text.get(at..end)?, b"[[").is_some() {
+                        // `[[` is looked for in an address too, and so is the `]` of a definition's label.
+                        let skipped = text.get(at..end)?;
+                        if bun_core::strings::index_of(skipped, b"[[").is_some()
+                            || ((is_in_link || is_in_image)
+                                && bun_core::strings::contains_char(skipped, b']'))
+                        {
                             return None;
                         }
                         at = end;

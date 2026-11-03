@@ -1899,6 +1899,8 @@ impl<'t> Reader<'t> {
                             {
                                 break;
                             }
+                            // It's a word if nothing starts an address here.
+                            leaf.has_word_marks = true;
                             at += 1;
                         }
                         let ends = match byte(at) {

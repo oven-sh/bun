@@ -494,6 +494,7 @@ describe("Markdown", () => {
     // Addresses.
     "See http://a.b/c_d, https://a.b/c?d=e&f#g (http://a.b/c) and www.a.b and WWW.A.B and a@b.c and a_b@c.d.\n",
     "http://a.b/*c* and http://a.b/_c_ and http://a.b`c` and http://a.b[c] and [http://a.b](http://a.b) and now. www\n",
+    "**a http://b_c.d e** and **a \u00e9http://b_c.d e** and **a xhttp://b_c.d e**\n",
     "http://a\u4e2d(*b* and www.a\u4e2d(*b*\n\nhttp://a\"(*b* and http://a'(*b*\n\nhttp://a](*b*\n\nhttp://a|(*b*\n\nhttp://a>(*b* and http://a}(*b* and http://a^(*b*\n",
     "**<http://a.b/[[c>]]**\n\n**<a:[[>]] b**\n\n<http://a.b/[[c>]]\n\n**<a b='[['>]]**\n\n**`[[`]]**\n",
     "<http://a.b> <a@b.c> <a b> <a> </a> <a b=\"c*d*\"> <a\nb> < a <= b <1@b.c> <!-- c --> <?php ?> <br/> a<b>c\n",
@@ -554,6 +555,7 @@ describe("Markdown", () => {
     const inputs = [
       "**\xffw\xc2\xa0** q**\n",
       "**a \xff** b**\n",
+      "**a \xffhttp://b_c.d e**\n",
       "a\xff_b\n",
       "| \xff   |\n| --- |\n| b   |\n",
       "# \xe2\x80\n\n- \xc3\n",

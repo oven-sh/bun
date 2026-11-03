@@ -1191,6 +1191,72 @@ c */ someMethodName(someParameterName: SomeParameterType, another: AnotherParame
   });
 });
 
+// Nothing can break in the head of such a call, so what's before it on the line breaks instead, if anything can.
+describe.skipIf(!hasFlag)("calls of test functions", () => {
+  const calls = [20, 45, 55, 65, 90].flatMap(length => {
+    const name = `should ${Buffer.alloc(100, "x")}`.slice(0, length);
+    return ["{}", "{\n  a();\n}"].flatMap(body => [
+      `it('${name}', async () => ${body})`,
+      `it('${name}', (done) => ${body})`,
+      `it('${name}', function () ${body})`,
+      `it('${name}', fakeAsync(() => ${body}))`,
+      `it.only('${name}', () => ${body})`,
+      `beforeEach(waitForAsync(() => ${body}))`,
+      `test('${name}', async ({ page }) => ${body})`,
+      `it(\`${name}\`, () => ${body})`,
+      `it('${name}', () => ${body}, 1000)`,
+    ]);
+  });
+  const places = [
+    "%;",
+    "await %;",
+    "return %;",
+    "return await %;",
+    "const x = %;",
+    "const [firstRadio, secondRadio, thirdRadio] = %;",
+    "const { firstRadio, secondRadio } = %;",
+    "x = %;",
+    "x.y = %;",
+    "const x = await %;",
+    "x = { a: % };",
+    "x = {\n  a: %,\n};",
+    "foo(%);",
+    "foo(a, %);",
+    "foo(%, a);",
+    "x = () => %;",
+    "const f = async () => await %;",
+    "x = [%];",
+    "x = a || %;",
+    "x = a ? % : b;",
+    "void %;",
+    "(%).then(a);",
+    "throw %;",
+    "if (%) a();",
+    "x = y = %;",
+    "for (const a of %) b();",
+    "x = `${%}`;",
+    "const veryLongNameOfAVariableThatTakesRoom = %;",
+    "this.veryLongNameOfAProperty.another = %;",
+  ];
+  const files = Object.fromEntries(
+    places.map((place, index) => [
+      `${index}.ts`,
+      `async function f() {\n${calls.map(call => place.replace("%", () => call)).join("\n")}\n}\n`,
+    ]),
+  );
+  files["members.ts"] = `class A {\n${calls.map(call => `a = ${call};`).join("\n")}\n}\n`;
+
+  test.concurrent.each([[], ["--print-width=60", "--no-semi"], ["--print-width=100", "--use-tabs"]])(
+    "%s %s",
+    async (...options) => {
+      const [withShortCuts, without] = await difference(files, options.filter(Boolean));
+      expect(withShortCuts).toEqual(without);
+      expect(without.stderr).toBe("");
+      expect(without.exitCode).toBe(0);
+    },
+  );
+});
+
 describe.skipIf(!hasFlag)("names, literals, member accesses, calls and operators", () => {
   const binary = "?? || && | ^ & == != === !== < <= > >= in instanceof << >> >>> + - * / % **".split(" ");
   const unary = ["!", "-", "+", "~", "typeof ", "void ", "delete ", "++", "--", "await "];

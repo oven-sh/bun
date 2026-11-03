@@ -93,6 +93,19 @@ fn function_before_last_argument<'a>(args: List<'a, Expr<'a>>) -> Option<Expr<'a
     })
 }
 
+/// True if nothing before `e` on its line can break: it's a statement, or what a statement awaits or returns.
+fn starts_statement(mut e: Expr<'_>) -> bool {
+    loop {
+        match e.parent() {
+            Node::Stmt(statement) => {
+                return matches!(statement.tag(), StmtTag::Expr | StmtTag::Return);
+            }
+            Node::Expr(parent) if parent.tag() == ExprTag::Await => e = parent,
+            _ => return false,
+        }
+    }
+}
+
 /// True if nothing can break in the call of a function of a test framework: `it("name", (done) => {`,
 /// `it("name", fakeAsync(() => {`, `beforeEach(waitForAsync(() => {`.
 fn is_unbreakable_test_call(call: Call<'_>) -> bool {
@@ -255,7 +268,7 @@ impl<'a> Line<'_, 'a> {
             if !is_unbreakable_test_call(call) {
                 return Err(Refused);
             }
-            (self.limit, self.breaks) = (usize::MAX, false);
+            self.keep_on_one_line(e);
         } else if breaks && is_member_chain {
             return self.member_chain(e);
         }
@@ -834,8 +847,16 @@ impl<'a> Line<'_, 'a> {
         if !is_unbreakable_test_call(call) {
             return Err(Refused);
         }
-        (self.limit, self.breaks) = (usize::MAX, false);
+        self.keep_on_one_line(e);
         Ok(true)
+    }
+
+    /// Nothing can break in `e`. So it's on one line however long it is, unless something before it breaks instead.
+    fn keep_on_one_line(&mut self, e: Expr<'a>) {
+        self.breaks = false;
+        if starts_statement(e) {
+            self.limit = usize::MAX;
+        }
     }
 
     /// The arguments of `e` after the `(`, of which `function`, which has statements in it, isn't the last:

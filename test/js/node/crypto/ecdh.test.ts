@@ -246,6 +246,20 @@ test("ECDH.convertKey - throws on invalid input", () => {
   }).toThrow("Invalid ECDH format: invalid-format");
 });
 
+// Node's code: https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_ec.cc#L371-L373
+test("ECDH.convertKey - throws ERR_CRYPTO_OPERATION_FAILED for a name that is not a curve", () => {
+  const publicKey = createECDH("prime256v1").generateKeys();
+
+  // "SHA256" is the short name of an OpenSSL object, so the name lookup succeeds. It is not a curve.
+  expect(() => ECDH.convertKey(publicKey, "SHA256")).toThrow(
+    expect.objectContaining({
+      name: "Error",
+      code: "ERR_CRYPTO_OPERATION_FAILED",
+      message: "Failed to get EC_GROUP",
+    }),
+  );
+});
+
 // Test that computeSecret reports an error instead of returning a buffer when the
 // instance has a public key but no private key (ECDH_compute_key fails in that case).
 test("ECDH - computeSecret throws when only a public key is set (no private key)", () => {
@@ -302,6 +316,24 @@ test("ECDH - the key getters throw ERR_CRYPTO_OPERATION_FAILED before a key exis
   expect(ecdh.getPublicKey()).toEqual(publicKey);
   expect(() => ecdh.getPrivateKey()).toThrow(noPrivateKey);
 });
+
+// Node's wrappers read the key first: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/crypto/diffiehellman.js#L167-L227
+test.each(["computeSecret", "setPublicKey", "setPrivateKey"])(
+  "ECDH - %s() without a key throws ERR_INVALID_ARG_TYPE",
+  method => {
+    // The object has no key pair. Like Node, computeSecret() rejects its argument before it checks the key pair.
+    const ecdh = createECDH("prime256v1") as any;
+
+    expect(() => ecdh[method]()).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message:
+          'The "key" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView. Received undefined',
+      }),
+    );
+  },
+);
 
 // The secp256k1 point of the private key "cafebabe" x 8, from Node's test-crypto-dh-curves.js.
 // It has the length and the prefix byte of a prime256v1 point, so only the curve equation rejects it.

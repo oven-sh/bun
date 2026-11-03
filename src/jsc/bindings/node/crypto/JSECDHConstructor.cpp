@@ -115,7 +115,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalO
 
     auto group = ncrypto::ECGroupPointer::NewByCurveName(nid);
     if (!group)
-        return throwVMError(lexicalGlobalObject, scope, "Failed to get EC_GROUP"_s);
+        return Bun::ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "Failed to get EC_GROUP"_s);
 
     auto point = ncrypto::ECPointPointer::New(group);
     if (!point)

@@ -75,11 +75,6 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncComputeSecret, (JSC::JSGlobalObject * gl
         return {};
     }
 
-    if (callFrame->argumentCount() < 1) {
-        throwError(globalObject, scope, ErrorCode::ERR_MISSING_ARGS, "ECDH.prototype.computeSecret requires a key argument"_s);
-        return {};
-    }
-
     JSC::JSValue keyValue = callFrame->argument(0);
     JSC::JSValue inputEncodingValue = callFrame->argument(1);
     JSC::JSValue outputEncodingValue = callFrame->argument(2);
@@ -218,11 +213,6 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncSetPublicKey, (JSC::JSGlobalObject * glo
         return {};
     }
 
-    if (callFrame->argumentCount() < 1) {
-        throwError(globalObject, scope, ErrorCode::ERR_MISSING_ARGS, "ECDH.prototype.setPublicKey requires a key argument"_s);
-        return {};
-    }
-
     JSC::JSValue keyValue = callFrame->argument(0);
     JSC::JSValue encodingValue = callFrame->argument(1);
 
@@ -274,11 +264,6 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncSetPrivateKey, (JSC::JSGlobalObject * gl
     auto* ecdh = dynamicDowncast<JSECDH>(callFrame->thisValue());
     if (!ecdh) {
         throwThisTypeError(*globalObject, scope, "ECDH"_s, "setPrivateKey"_s);
-        return {};
-    }
-
-    if (callFrame->argumentCount() < 1) {
-        throwError(globalObject, scope, ErrorCode::ERR_MISSING_ARGS, "ECDH.prototype.setPrivateKey requires a key argument"_s);
         return {};
     }
 

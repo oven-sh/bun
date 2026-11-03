@@ -1465,6 +1465,13 @@ describe.skipIf(!hasFlag)("where lines are written without a document", () => {
     "elements-wide.jsx": `function A() {\n  return (\n    <${"B".repeat(30)} ${"c".repeat(20)}="d" ${"e".repeat(19)}="f" />\n  );\n}\nfunction G() {\n  return (\n    <${"B".repeat(30)} ${"c".repeat(20)}="d" ${"e".repeat(20)}="f" />\n  );\n}\nfunction H() {\n  return <I j="${"k".repeat(80)}">{l}</I>;\n}\nfunction M() {\n  return <N>${"o".repeat(66)}</N>;\n}\nfunction P() {\n  return <N>${"o".repeat(67)}</N>;\n}\nfunction Q() {\n  return <N>${"é".repeat(66)}</N>;\n}\n`,
     "elements-odd.jsx": `a = <>{await (<B>\n  c d e f\n</B// g\n>)}</>;\nh = <div>{i ? (j ? <K /> : <L />) : null}</div>;\nm = <div>\n  First <div>\n    Second\n  </div> Third\n</div>;\nn = <style jsx>{\`\n  div { color: red }\n\`}</style>;\no = <P css={\`color: red\`} q={\`r\${s}\`} />;\nt = <U>{/* v */}</U>;\nw = <X>{" "}y{" "}</X>;\nz = <A b=<C /> />;\n`,
     "only-element.md": "```jsx\n<A b={{ c: 1 }}>...</A>\n```\n\n```jsx\n<A />;\n<B />\n```\n",
+    "elements-in-parentheses.jsx": `a = b[<c />];\nclass D {\n  e = <f />;\n}\ng = [...<h />];\n`,
+    // A name is printed without escapes, however it gets to the line.
+    "escaped-names.ts": `class A {\n  \\u0061b: C;\n  d\\u0065() {}\n}\ninterface F {\n  \\u0067: H;\n}\nconst i = { \\u006a: 1,\n  k: 2 };\n`,
+    // 80 columns, and a semicolon or not.
+    "union-width.ts": `type ${"A".repeat(30)} = "${"b".repeat(35)}" | "${"c".repeat(36)}";\ninterface D {\n  ${"e".repeat(30)}: "${"b".repeat(35)}" | "${"c".repeat(34)}";\n}\n`,
+    "ignored-mapped-type.ts": `type A= {\n    /* prettier-ignore */\n    [B in C]: D  |  E\n  }\n`,
+    "flow-other-kinds.js": `// @flow\ninterface A { b: C }\nenum D of string { E = "e" }\nswitch (f) {\n  case 1:\n    g();\n}\ndeclare class H { i(): void; [k: string]: J }\nfor (let l = 0; l < 1; l++) m();\n`,
     // Scripts in other languages.
     "component.vue": `<script setup lang="ts">\nimport { ref } from 'vue'\nconst aaaaaaaaaaaaaaaaaaaaaaaaa = bbbbbbbbbbbbbbbbbbbbbbbbbbb(ccccccccccccccccccc, dddddd)\nfunction e() {\n  return f(() => {\n    g('h')\n  })\n}\n</script>\n<template>\n  <div @click="e()">{{ a }}</div>\n</template>\n`,
     "page.html": `<html>\n<body>\n<div><div><script>\nconst aaaaaaaaaaaaaaaaaaaaaaa = bbbbbbbbbbbbbbbbbbbbbbb(ccccccccccccccccc, dddddd)\nfunction e() { return f(() => { g('h') }) }\n</script></div></div>\n</body>\n</html>\n`,
@@ -1478,6 +1485,7 @@ describe.skipIf(!hasFlag)("where lines are written without a document", () => {
     [["--print-width=60", "--use-tabs"]],
     [["--tab-width=8", "--single-quote", "--no-bracket-spacing"]],
     [["--no-semi"]],
+    [["--quote-props=consistent"]],
     [["--no-semi", "--trailing-comma=none", "--end-of-line=crlf"]],
     [["--trailing-comma=none", "--vue-indent-script-and-style"]],
     [["--bracket-same-line", "--jsx-single-quote", "--print-width=40"]],

@@ -17,7 +17,7 @@ pub(crate) fn write_case_head<'a>(case: Case<'a>, f: &mut Formatter<'a>) -> bool
         _ => 0,
     };
     let end = first.map_or_else(|| case.span().end, |first| first.span().start);
-    f.write_line(Span::new(case.span().start, end), after, |line| {
+    f.write_line(Span::new(case.span().start, end), (after, after), |line| {
         // Where the expression breaks is another matter.
         if line.breaks {
             return Err(Refused);
@@ -30,6 +30,9 @@ pub(crate) fn write_case_head<'a>(case: Case<'a>, f: &mut Formatter<'a>) -> bool
 
 impl<'a> Line<'_, 'a> {
     pub(super) fn statement(&mut self, statement: Stmt<'a>) -> Written {
+        if self.is_flow {
+            self.check_flow_statement(statement)?;
+        }
         match statement.kind() {
             StmtKind::Expr(expression) => {
                 // A directive, or a string in parentheses that would be one without them.
@@ -312,7 +315,7 @@ impl<'a> Line<'_, 'a> {
         if are_on_own_lines {
             self.end_indent();
         }
-        self.byte(b';')
+        self.semicolon()
     }
 
     /// `a: T = 1`, on one line.

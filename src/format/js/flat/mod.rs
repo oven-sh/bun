@@ -18,9 +18,10 @@
 //! 4. What is too wide is written once more ([`Line::breaks`]), with the line breaks that are certain then: the outermost
 //!    group breaks first.
 //! 5. Everything here is an "or else". What isn't known to be printed in exactly this way is [`Refused`], and the
-//!    printers in `print/` write it: comments, text that isn't plain ASCII, syntax that's missing below, and whatever
-//!    breaks whether it fits or not (an array of objects, a chain of three calls with a function among the arguments,
-//!    two functions as arguments).
+//!    printers in `print/` write it: comments, syntax that's missing below, and whatever breaks whether it fits or not
+//!    (an array of objects, a chain of three calls with a function among the arguments, two functions as arguments).
+//! 6. Bytes are counted for columns. Source that isn't plain ASCII gets an attempt of its own ([`Line::is_careful`]), in
+//!    which every text is measured.
 //!
 //! `bun fmt --no-short-cuts` turns it off, and the tests compare.
 
@@ -29,15 +30,15 @@ mod expressions;
 mod flow;
 mod functions;
 mod holes;
-mod signatures;
 mod jsx;
+mod signatures;
 mod statements;
 mod ts_declarations;
 mod types;
 
+pub(crate) use jsx::write_jsx_child;
 pub(crate) use statements::write_case_head;
 pub(crate) use ts_declarations::{write_enum_member, write_signature};
-pub(crate) use jsx::write_jsx_child;
 
 use crate::ir::element::{FormatElement, LineMode, Tag, Text, TextWidth, Token};
 use crate::js::parentheses::expression::{chain_expression_needs_parentheses, needs_parentheses};
@@ -298,8 +299,6 @@ struct Line<'f, 'a> {
     is_careful: bool,
     /// On one line it's too wide, so the outermost group breaks.
     breaks: bool,
-    /// The indentation isn't a guess.
-    is_certain: bool,
     /// There's no comment anywhere in the source of what's written.
     is_quiet: bool,
     is_flow: bool,
@@ -431,7 +430,6 @@ impl<'a> Formatter<'a> {
             is_odd: false,
             is_careful: false,
             breaks: false,
-            is_certain: state.is_certain,
             is_quiet: self.is_quiet(),
             is_flow: state.is_flow,
             has_semicolons: state.has_semicolons,
@@ -550,9 +548,6 @@ impl<'a> Formatter<'a> {
 /// the long way.
 pub(crate) fn write_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) -> bool {
     f.write_line(statement.span(), (0, 0), |line| {
-        if line.is_flow {
-            line.check_flow_statement(statement)?;
-        }
         if !line.has_semicolons {
             line.semicolon_before(statement)?;
         }

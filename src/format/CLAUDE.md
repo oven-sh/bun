@@ -348,6 +348,18 @@ bun bd fmt --debug-unprinted-comments out a.ts   # the comments that no printer 
 bun bd fmt --debug-unprinted-comments-oxfmt out a.ts
 ```
 
+## JavaScript: where lines are written without a document
+
+`js/flat/mod.rs` has the contract of the short cut. This is about where it applies: `ShortCuts::for_code` is the list of what turns it off for a file (the oxfmt flavor, `experimentalTernaries`, a cursor or a range, sorted imports or classes, JSX of MDX, HTML in a template, a `\r` that is not part of `\r\n`).
+
+- **Hosts.** Code in Markdown and MDX is a file of its own, with its own width. A script in HTML or Vue is written into the document of the host: `html::format_with` says that it formats again, the long way, if the printer finds a wrong guess (`ShortCuts::for_host`), `Writer::foreign` says how deep the script is indented if that is known (`start_at`), and `js.rs::with_file` makes the state of the script from that (`for_script`). A host that does not say so (Svelte, Angular, an attribute) gets none. What is printed to a text of its own (`print_to_text`) is `LongWay`: nobody formats it again.
+- **Flow** (`flat/flow.rs`): the nodes of TypeScript stand for something else, so what only Flow has is refused node by node: `check_flow_statement` at the top of `Line::statement`, `check_flow_member`, `check_flow_new`, `only_in_typescript`. Every type goes to `flow_type`, which knows few. **Who adds a kind of node to `flat/` asks what it stands for in Flow** (the table in `src/sema/parser/parser/flow.rs`).
+- **Without semicolons**: `Line::semicolon()` is the `;` that the printers write as `OptionalSemicolon`. `semicolon_before` is the one that a statement starts with.
+- **What follows on the line** is given as at least and at most: `write_line(span, (least, most), ..)`. It fits only with the most, it is too wide only with the least, and in between it is refused.
+- **Text that is not plain ASCII**: the first attempt counts bytes. If `check_source_up_to` meets a block of the source that is not plain, or the line is too wide and its source is not plain, there is a careful attempt: `source`, `long_bytes` and `string` measure every text (`Line::measure`), `Line::extra` is what the line has more bytes than columns. **A decision to break must not rest on bytes**: whoever finds "too wide" in the middle of an attempt and goes on with a hole asks `is_plain_source` for all that the hole hides.
+- **Block comments on the line of an item** count for its width, or move its start. `ShortCuts::has_block_comment_in_line` says whether the file has any, from the comment records, and only then is the source around an item looked at.
+- **JSX** (`flat/jsx.rs`): an element is one line, or its tags end lines. `print/jsx/child_list.rs` asks for each child that has a line of its own (`write_jsx_child`), also in an element that the printers write. What is between the tags is written by the printers, in a group: a fill is printed differently after a forced line break until a group starts.
+
 ## Performance rules
 
 The goal is to be faster per core than oxfmt and Biome.

@@ -69,6 +69,7 @@ pub(super) struct Mark {
     room: usize,
     start: usize,
     len: usize,
+    extra: usize,
     limit: usize,
     taken: usize,
     checked_to: u32,
@@ -82,6 +83,7 @@ impl<'a> Line<'_, 'a> {
             room: self.room,
             start: self.start,
             len: self.len,
+            extra: self.extra,
             limit: self.limit,
             taken: self.taken,
             checked_to: self.checked_to,
@@ -93,6 +95,7 @@ impl<'a> Line<'_, 'a> {
     /// Takes back what has been written since `mark`.
     pub(super) fn go_back_to(&mut self, mark: Mark) {
         (self.room, self.start, self.len) = (mark.room, mark.start, mark.len);
+        self.extra = mark.extra;
         (self.limit, self.taken, self.checked_to) = (mark.limit, mark.taken, mark.checked_to);
         self.breaks = mark.breaks;
         self.parts.truncate(mark.parts);

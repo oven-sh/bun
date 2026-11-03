@@ -158,7 +158,7 @@ impl<'a> Line<'_, 'a> {
                 self.head(func, true)?;
                 match func.has_body() {
                     true => self.body(func, true),
-                    false => self.byte(b';'),
+                    false => self.semicolon(),
                 }
             }
             AstNodes::TSIndexSignature(_) => {
@@ -176,7 +176,7 @@ impl<'a> Line<'_, 'a> {
                     self.token("readonly ")?;
                 }
                 self.index_signature(member)?;
-                self.byte(b';')
+                self.semicolon()
             }
             _ => Err(Refused),
         }
@@ -199,8 +199,11 @@ impl<'a> Line<'_, 'a> {
             }
             _ => {
                 let printed = printed_key(key, key.inner_span(self.f.file()), parent, self.f);
-                // A template can have a line break in it.
-                if !printed.iter().all(|byte| *byte >= b' ') {
+                // A template can have a line break in it, and a name is printed without escapes.
+                if !printed.iter().all(|byte| *byte >= b' ')
+                    || (matches!(key.kind(), KeyKind::Ident(_) | KeyKind::Private(_))
+                        && printed.contains(&b'\\'))
+                {
                     return Err(Refused);
                 }
                 if !key.is_computed() {

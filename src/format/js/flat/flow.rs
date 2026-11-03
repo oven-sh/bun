@@ -37,14 +37,33 @@ impl<'a> Line<'_, 'a> {
                 return Err(Refused);
             }
             StmtKind::Fn(func) if !func.has_body() => return Err(Refused),
+            // `opaque type`, `enum A of string`, `declare module`, `match`
+            StmtKind::Interface(_)
+            | StmtKind::Enum(_)
+            | StmtKind::Module(_)
+            | StmtKind::Switch { .. }
+            | StmtKind::ImportEquals(_)
+            | StmtKind::ExportAssign(_)
+            | StmtKind::ExportAsNamespace(_) => return Err(Refused),
             _ => {}
         }
         Ok(())
     }
 
-    /// Refuses a member with a word that has no flag: `proto`.
+    /// Refuses what's printed in another way in a Flow file, whatever it is.
+    pub(super) fn only_in_typescript(&self) -> Written {
+        match self.is_flow {
+            true => Err(Refused),
+            false => Ok(()),
+        }
+    }
+
+    /// Refuses a member with a word that has no flag, `proto`, and the members of an object type.
     pub(super) fn check_flow_member(&self, member: Member<'a>) -> Written {
-        match member.modifiers().iter().any(|it| it.flag().is_empty()) {
+        match member.modifiers().iter().any(|it| it.flag().is_empty())
+            || member.kind() == MemberKind::IndexSignature
+            || member.func().is_some_and(|func| !func.has_body())
+        {
             true => Err(Refused),
             false => Ok(()),
         }

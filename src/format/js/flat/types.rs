@@ -112,6 +112,10 @@ impl<'a> Line<'_, 'a> {
     /// `mark`, which is `:` or ` =`, and a type. Nothing before them can break, and nothing but a `;` follows.
     pub(super) fn last_type_after(&mut self, mark: &'static str, ty: TypeNode<'a>) -> Written {
         self.token(mark)?;
+        if self.is_flow {
+            self.byte(b' ')?;
+            return self.flow_type(ty);
+        }
         let ty = without_lone_operator(ty);
         match ty.kind() {
             TypeKind::Union(types) if self.breaks && !should_hug_type(types, self.f) => {
@@ -148,6 +152,14 @@ impl<'a> Line<'_, 'a> {
             return Err(Refused);
         }
         self.go_back_to(mark);
+        // Without semicolons it's too wide only if it is without one.
+        if !self.has_semicolons {
+            self.is_too_wide = false;
+            if self.types_between(types, " | ").is_ok() || !self.is_too_wide {
+                return Err(Refused);
+            }
+            self.go_back_to(mark);
+        }
         let count = types.len();
         for (index, member) in types.iter().enumerate() {
             if index > 0 {
@@ -165,6 +177,9 @@ impl<'a> Line<'_, 'a> {
     /// A type with nothing but closing brackets and `;` after it, and nothing before it that can break, so that it can
     /// end the line.
     pub(super) fn last_type(&mut self, ty: TypeNode<'a>) -> Written {
+        if self.is_flow {
+            return self.flow_type(ty);
+        }
         match ty.kind() {
             TypeKind::Mapped(_)
                 if self.breaks
@@ -172,6 +187,10 @@ impl<'a> Line<'_, 'a> {
                         && (self.f.source_text())
                             .has_line_terminator_after_skipping_comments(ty.span().start + 1)) =>
             {
+                // Without semicolons, one that's ignored is on the next line.
+                if !self.has_semicolons && self.has_comments_in(ty.span()) {
+                    return Err(Refused);
+                }
                 self.end_line_with_hole(Hole::Type(ty), ty.span(), 1)
             }
             TypeKind::Fn(func) if self.breaks => self.function_type(func, true),

@@ -5,7 +5,11 @@ use super::*;
 
 /// Writes `member` of an interface, or of a type literal whose members are each on a line. The caller writes the `;`.
 pub(crate) fn write_signature<'a>(member: Member<'a>, f: &mut Formatter<'a>) -> bool {
-    f.write_line(member.span(), 1, |line| line.type_member(member, true))
+    let least = u32::from(f.options().semicolons.is_always());
+    f.write_line(member.span(), (least, 1), |line| {
+        line.only_in_typescript()?;
+        line.type_member(member, true)
+    })
 }
 
 /// Writes `member` of an enum. The caller writes the comma.
@@ -15,7 +19,9 @@ pub(crate) fn write_enum_member<'a>(member: EnumMember<'a>, f: &mut Formatter<'a
             statement.kind(),
             StmtKind::Enum(declaration) if declaration.members().last() == Some(member)
         ));
-    f.write_line(member.span(), u32::from(has_comma), |line| {
+    let after = u32::from(has_comma);
+    f.write_line(member.span(), (after, after), |line| {
+        line.only_in_typescript()?;
         line.enum_member(member)
     })
 }
@@ -91,7 +97,7 @@ impl<'a> Line<'_, 'a> {
             innermost = nested;
         }
         let Some(span) = innermost.body_span() else {
-            return self.byte(b';');
+            return self.semicolon();
         };
         if is_empty_block(innermost.body()) {
             return self.token(" {}");

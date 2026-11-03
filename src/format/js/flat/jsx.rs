@@ -71,6 +71,10 @@ impl<'a> Line<'_, 'a> {
         let ExprKind::Jsx(jsx) = e.kind() else {
             return Err(Refused);
         };
+        // Also where nothing else does: `a[(<b />)]`
+        if needs_parentheses(e, self.f) {
+            return Err(Refused);
+        }
         match e.ast_parent() {
             // A conditional expression with an element in it has a layout of its own.
             AstNodes::ConditionalExpression(_) => return Err(Refused),
@@ -166,15 +170,16 @@ impl<'a> Line<'_, 'a> {
         span: Span,
         write: impl FnOnce(&mut Self) -> Written,
     ) -> Result<(), TooWide> {
-        let (len, extra, limit, checked_to) = (self.len, self.extra, self.limit, self.checked_to);
-        let (parts, breaks) = (self.parts.len(), std::mem::take(&mut self.breaks));
+        let mark = self.mark();
+        let breaks = std::mem::take(&mut self.breaks);
         let written = write(self);
         self.breaks = breaks;
         if written.is_ok() {
             return Ok(());
         }
         // Bytes have been counted, and the indentation can be a guess.
-        if !self.is_too_wide || !self.is_certain || self.is_careful || self.parts.len() != parts {
+        if !self.is_too_wide || !self.is_certain() || self.is_careful || self.has_parts_since(mark)
+        {
             return Err(TooWide::Perhaps);
         }
         if !self.f.is_plain_source(span) {
@@ -182,11 +187,11 @@ impl<'a> Line<'_, 'a> {
             return Err(TooWide::Perhaps);
         }
         // A comment further on would have been refused.
-        if !self.is_quiet && self.f.comments().has_comment_or_owner_in(span) {
+        if self.has_comments_in(span) {
             return Err(TooWide::Perhaps);
         }
         self.is_too_wide = false;
-        (self.len, self.extra, self.limit, self.checked_to) = (len, extra, limit, checked_to);
+        self.go_back_to(mark);
         Err(TooWide::Certainly)
     }
 

@@ -1654,10 +1654,8 @@ JSC_DEFINE_CUSTOM_SETTER(errorConstructorPrepareStackTraceSetter,
 #pragma mark - Globals
 
 // onmessage/onerror are CustomValue properties, so JSC invokes these callbacks
-// with the object that has the property as thisValue. A store with another
-// receiver (`new Proxy(globalThis, {}).onmessage = fn`) ends in a definition on
-// the global object, and Bun's JavaScriptCore gives the value of that definition
-// to the setter. Before WebKit 23777f3b79 such a store passed the Proxy here.
+// with the object that has the property as thisValue. A caller that passes
+// anything else gets the default global object, not a bad cast.
 static Zig::GlobalObject* globalObjectForEventHandler(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue thisValue)
 {
     if (auto* globalObject = dynamicDowncast<Zig::GlobalObject>(JSValue::decode(thisValue)))

@@ -87,6 +87,10 @@ const expectedFailures: Record<string, Record<string, string>> = {
     "bundler > jsx/AutomaticLocalShadowProd": untypedPackages,
     "bundler > autoImportTreeShaking > jsx/AutoImportDroppedWhenJsxUnusedBundledCjs": undeclaredIntrinsicElements,
     "bundler > autoImportTreeShaking > jsx/AutoImportKeptWhenJsxUsedBundledCjs": undeclaredIntrinsicElements,
+    "bundler > autoImportTreeShaking > jsx/AutoImportKeptWhenJsxUsedExportStarOfCjs": undeclaredIntrinsicElements,
+    "bundler > autoImportTreeShaking > jsx/AutoImportKeptWhenJsxUsedExportStarOfCjsSideEffectsFalse":
+      undeclaredIntrinsicElements,
+    "bundler > autoImportTreeShaking > jsx/AutoImportDroppedWhenJsxUnusedExportStarOfCjs": undeclaredIntrinsicElements,
     [`${fastRefresh} > jsx/FastRefreshClassStatementMethods.tsx`]: undeclaredGlobalProperty,
     [`${fastRefresh} > jsx/FastRefreshClassExpressionMethod.tsx`]: undeclaredGlobalProperty,
     [`${fastRefresh} > jsx/FastRefreshObjectMethodKeepsSuper.tsx`]: undeclaredGlobalProperty,

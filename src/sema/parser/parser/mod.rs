@@ -586,6 +586,9 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         if self.lx.has_legacy_octal {
             self.f.rare_syntax |= rare::LEGACY_OCTAL;
         }
+        if self.lx.has_escaped_name {
+            self.f.rare_syntax |= rare::ESCAPED_NAME;
+        }
         self.note_odd_exports();
         // `recycled_file` left nothing in it to drop, which the compiler can't know: it would look at every list.
         let _not_dropped = ManuallyDrop::new(std::mem::replace(file, self.f));

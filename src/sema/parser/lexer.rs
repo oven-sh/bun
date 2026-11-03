@@ -40,6 +40,8 @@ pub(crate) struct Lexer<'a> {
     pub(crate) newline_before: bool,
     /// The name or keyword has a Unicode escape, or the template piece has an invalid escape.
     pub(crate) has_escape: bool,
+    /// `rare::ESCAPED_NAME`
+    pub(crate) has_escaped_name: bool,
     pub(crate) rejection: Option<Rejection>,
     pub(crate) number: f64,
     pub(crate) stack_check: bun_core::StackCheck,
@@ -281,6 +283,7 @@ impl<'a> Lexer<'a> {
             token: T::Eof,
             newline_before: false,
             has_escape: false,
+            has_escaped_name: false,
             start: 0,
             end: 0,
             full_start: 0,
@@ -1097,6 +1100,7 @@ impl<'a> Lexer<'a> {
                 return self.reject(Rejection::InvalidEscape);
             };
             self.has_escape |= is_escape;
+            self.has_escaped_name |= is_escape;
             text.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
             pos += len;
         }

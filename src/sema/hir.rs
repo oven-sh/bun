@@ -1620,6 +1620,8 @@ pub mod rare {
     pub const ODD_JUMP: u32 = 1 << 21;
     /// A statement in the body of a function or of a namespace starts with `declare`.
     pub const NESTED_DECLARE: u32 = 1 << 22;
+    /// A name or a keyword is written with a Unicode escape: `\u0061`.
+    pub const ESCAPED_NAME: u32 = 1 << 23;
     /// An `await`, a `yield` or an `await using` is in a static block, or in a function in one.
     pub const SUSPENDS_IN_STATIC_BLOCK: u32 = 1 << 24;
     /// `await using a = b`

@@ -692,6 +692,33 @@ fn a_node_modules_directory_that_comes_or_goes_gives_a_new_slot() {
 }
 
 #[test]
+fn a_listing_that_takes_the_place_of_a_failure_gives_a_new_slot() {
+    with_project("failed-then-listed", |made| {
+        made.write("app/a.js", "");
+        let built = made.checked_info("app");
+        assert!(!built.has_node_modules() && built.package_json().is_none());
+        let dir = made.path("app");
+        made.remove("app");
+        made.write("app", "");
+        // The failure takes the place of the listing, in the slot that `built` holds by index.
+        assert_eq!(listing_error(&dir, next_generation()), Some(ENOTDIR));
+        made.remove("app");
+        made.write("app/package.json", r#"{ "name": "late" }"#);
+        made.mkdir("app/node_modules");
+        let later = next_generation();
+        // Read by key before the slot is checked: the new listing takes the place of the failure.
+        assert!(listed(&dir, later, b"package.json").is_some());
+        let now = made.info(later, "app").expect("a directory");
+        assert_ne!(slot(now), slot(built));
+        assert!(now.has_node_modules());
+        assert_eq!(
+            bstr::BStr::new(&now.package_json().expect("parsed").name),
+            "late"
+        );
+    });
+}
+
+#[test]
 fn a_changed_tsconfig_or_a_file_that_it_extends_gives_a_new_slot() {
     with_project("tsconfig", |made| {
         made.write(
@@ -993,6 +1020,74 @@ fn a_module_that_a_rerun_finds_in_a_new_directory_gets_the_package_json_above_it
 }
 
 #[test]
+fn a_module_below_a_directory_that_failed_for_an_earlier_build_gets_the_package_json_above_it() {
+    with_project("failed-for-a-build", |made| {
+        made.write("package.json", r#"{ "name": "top", "type": "module" }"#);
+        made.write("src/a", "");
+        let dir = [&made.path("src")[..], b"/"].concat();
+        let stmt = ast::ImportKind::Stmt;
+        // As a build does: its lookups check at the generation of the build.
+        made.resolver.generation = next_generation();
+        assert!(made.resolver.resolve(&dir, b"./a/x.js", stmt).is_err());
+        assert_eq!(listing_error(&made.path("src/a"), 0), Some(ENOTDIR));
+        made.remove("src/a");
+        made.write("src/a/sub/x.js", "");
+        for build in 0..3 {
+            let slots = DirInfo::slots_used();
+            made.resolver.generation = next_generation();
+            let found = made
+                .resolver
+                .resolve(&dir, b"./a/sub/x.js", stmt)
+                .expect("found");
+            let package = Result::deref_package_json(found.package_json);
+            assert_eq!(found.module_type, options::ModuleType::Esm);
+            assert_eq!(
+                package.map(|json| bstr::BStr::new(&json.name)),
+                Some("top".into())
+            );
+            // The first of these builds opens `src/a` again and fills its slot. The next ones keep it.
+            assert!(build == 0 || DirInfo::slots_used() == slots);
+        }
+        let (sub, a) = (made.info(0, "src/a/sub"), made.info(0, "src/a"));
+        assert!(a.is_some());
+        assert_eq!(sub.and_then(|sub| sub.get_parent()).map(slot), a.map(slot));
+    });
+}
+
+#[test]
+fn a_lookup_that_runs_again_opens_a_directory_that_failed_for_an_earlier_asker() {
+    with_project("failed-for-a-lookup", |made| {
+        made.write("node_modules/dep/index.js", "");
+        made.write("thing", "");
+        let top = [&made.path("")[..], b"/"].concat();
+        let stmt = ast::ImportKind::Stmt;
+        assert!(made.resolver.resolve(&top, b"./thing/x.js", stmt).is_err());
+        made.remove("thing");
+        made.write("thing/sub/y.js", "");
+        // This lookup finds its module, so it trusts what is cached: that `thing` cannot be listed.
+        assert!(
+            made.resolver
+                .resolve(&top, b"./thing/sub/y.js", stmt)
+                .is_ok()
+        );
+        let sub = [&made.path("thing/sub")[..], b"/"].concat();
+        // A miss from below `thing` runs again, and that run opens `thing`: the package above it is reached.
+        assert!(made.resolver.resolve(&sub, b"dep/index.js", stmt).is_ok());
+        let (below, thing) = (made.info(0, "thing/sub"), made.info(0, "thing"));
+        assert!(thing.is_some());
+        assert_eq!(
+            below.and_then(|below| below.get_parent()).map(slot),
+            thing.map(slot)
+        );
+        let (slots, ran_again) = (DirInfo::slots_used(), counters().0);
+        for _ in 0..3 {
+            assert!(made.resolver.resolve(&sub, b"dep/index.js", stmt).is_ok());
+        }
+        assert_eq!((DirInfo::slots_used(), counters().0), (slots, ran_again));
+    });
+}
+
+#[test]
 fn only_the_last_run_of_a_lookup_asks_the_package_manager() {
     with_project("package-manager", |made| {
         made.write(
@@ -1207,6 +1302,49 @@ fn a_directory_that_can_be_entered_and_not_listed_keeps_its_slot() {
             );
         }
         assert_eq!((DirInfo::slots_used(), counters().1), (slots, new_listings));
+    });
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn a_lookup_that_runs_again_enters_a_directory_that_could_not_be_listed_by_key() {
+    with_project("not-listed-by-key", |made| {
+        made.write("node_modules/dep/index.js", "");
+        made.mkdir("locked/app");
+        for open_to_all in ["", "node_modules", "node_modules/dep", "locked/app"] {
+            made.set_mode(open_to_all, 0o755);
+        }
+        made.set_mode("locked", 0o311);
+        let (locked_dir, app_dir) = (made.os_path("locked"), made.os_path("locked/app"));
+        // The project is removed when the test ends, also one that failed.
+        scopeguard::defer! {
+            use std::os::unix::fs::PermissionsExt as _;
+            let _ = std::fs::set_permissions(&locked_dir, std::fs::Permissions::from_mode(0o755));
+        }
+        let _unprivileged = WithoutPrivileges::new();
+        // A thread that cannot give up its privileges lists the directory, and one that has none may not reach it.
+        if std::fs::read_dir(&locked_dir).is_ok() || std::fs::metadata(&app_dir).is_err() {
+            return;
+        }
+        let top = [&made.path("")[..], b"/"].concat();
+        let stmt = ast::ImportKind::Stmt;
+        // A file directly in the directory is looked up in the listing of the directory: that it cannot be listed is cached.
+        assert!(made.resolver.resolve(&top, b"./locked/x.js", stmt).is_err());
+        let not_allowed = crate::Error::Sys(bun_errno::SystemErrno::EACCES);
+        assert_eq!(listing_error(&made.path("locked"), 0), Some(not_allowed));
+        let app = [&made.path("locked/app")[..], b"/"].concat();
+        assert!(made.resolver.resolve(&app, b"dep/index.js", stmt).is_ok());
+        let (below, locked) = (made.info(0, "locked/app"), made.info(0, "locked"));
+        assert!(locked.is_some());
+        assert_eq!(
+            below.and_then(|below| below.get_parent()).map(slot),
+            locked.map(slot)
+        );
+        let slots = DirInfo::slots_used();
+        for _ in 0..3 {
+            assert!(made.resolver.resolve(&app, b"dep/index.js", stmt).is_ok());
+        }
+        assert_eq!(DirInfo::slots_used(), slots);
     });
 }
 
